@@ -53,6 +53,11 @@ func TestThreadStateStreamSnapshotsSurviveReplaceAndCompletion(t *testing.T) {
 			if got := read(th.snapshotLocked()); got != "new-tail" {
 				t.Fatalf("replacement followed by delta = %q", got)
 			}
+			if kind == "arguments" {
+				th.applyStreamEventLocked("turn", providers.StreamEvent{
+					Type: providers.EventToolUseEnd, ToolCall: &providers.ToolCall{ID: "call", Name: "read_file"}, ToolResult: "done",
+				}, now)
+			}
 			th.finishTurnLocked("turn", TurnStatusCompleted, nil, now, "stop", "", false)
 			if got := read(th.snapshotLocked()); got != "new-tail" {
 				t.Fatalf("completed snapshot = %q", got)
@@ -195,6 +200,39 @@ func TestThreadStateMarksStreamedFinalAnswerTerminalOnTurnCompletion(t *testing.
 	answer := turn.Items[1]
 	if answer.Type != ThreadItemAgentMessage || answer.Status != ThreadItemStatusCompleted || !answer.Terminal {
 		t.Fatalf("final streamed answer = %+v, want completed terminal agent message", answer)
+	}
+}
+
+func TestThreadStateSettlesUnfinishedItemsAtTurnBoundary(t *testing.T) {
+	for _, status := range []TurnStatus{TurnStatusCompleted, TurnStatusFailed, TurnStatusInterrupted} {
+		t.Run(string(status), func(t *testing.T) {
+			now := time.Unix(0, 0).UTC()
+			th := newThreadState("thread", nil, "provider", "model", "/repo", false, now)
+			th.startTurnLocked("turn", providers.ChatMessage{Role: "user", Content: "inspect"}, now)
+			completed := providers.ToolCall{ID: "completed", Name: "read_file"}
+			th.applyStreamEventLocked("turn", providers.StreamEvent{Type: providers.EventToolUseStart, ToolCall: &completed}, now)
+			th.applyStreamEventLocked("turn", providers.StreamEvent{Type: providers.EventToolUseEnd, ToolCall: &completed, ToolResult: "file contents"}, now)
+			th.applyStreamEventLocked("turn", providers.StreamEvent{Type: providers.EventToolUseStart, ToolCall: &providers.ToolCall{ID: "draft", Name: "read_file"}}, now)
+			th.applyStreamEventLocked("turn", providers.StreamEvent{Type: providers.EventThinkingDelta, Content: "Partial reasoning"}, now)
+			th.applyStreamEventLocked("turn", providers.StreamEvent{Type: providers.EventContentDelta, Content: "Partial answer"}, now)
+
+			turn := th.finishTurnLocked("turn", status, nil, now.Add(time.Second), "", "", false)
+			if len(turn.Items) != 4 {
+				t.Fatalf("want user, executed tool, reasoning and answer; got %+v", turn.Items)
+			}
+			for _, item := range turn.Items {
+				if item.Status != ThreadItemStatusCompleted {
+					t.Errorf("terminal turn retained an unfinished item: %+v", item)
+				}
+			}
+			if turn.Items[1].Result != "file contents" || turn.Items[1].SourceID != "completed" ||
+				turn.Items[2].Text != "Partial reasoning" || turn.Items[3].Text != "Partial answer" {
+				t.Fatalf("terminal snapshot lost existing output: %+v", turn.Items)
+			}
+			if turn.Items[3].Terminal != (status == TurnStatusCompleted) {
+				t.Fatalf("partial answer promoted at %s boundary: %+v", status, turn.Items[3])
+			}
+		})
 	}
 }
 

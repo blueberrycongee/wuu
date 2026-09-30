@@ -121,6 +121,35 @@ afterEach(() => {
 });
 
 describe("TurnView", () => {
+  it.each(["interrupted", "failed", "completed"] as const)(
+    "settles streamed text when the turn becomes %s before item completion",
+    (status) => {
+      vi.useFakeTimers();
+      const items: ThreadItem[] = [
+        { ...makeReasoning("Partial reasoning"), status: "in_progress" },
+        { ...makeCommentary("Partial answer"), status: "in_progress" },
+      ];
+      const view = render(makeTurn("in_progress", items), true);
+      const streams = () => Array.from(view.querySelectorAll(".streaming-markdown"));
+      expect(streams()).toHaveLength(2);
+      expect(streams().every((stream) => stream.getAttribute("data-stream-state") === "streaming")).toBe(true);
+
+      rerender(makeTurn(status, items), true);
+      act(() => vi.advanceTimersByTime(500));
+      const toggle = view.querySelector<HTMLButtonElement>(".turn-process-toggle");
+      if (toggle?.getAttribute("aria-expanded") === "false") {
+        act(() => toggle.click());
+      }
+      expect(streams()).toHaveLength(2);
+      expect(view.textContent).toContain("Partial reasoning");
+      expect(view.textContent).toContain("Partial answer");
+      for (const stream of streams()) {
+        expect(stream.getAttribute("data-stream-state")).toBe("settled");
+        expect(stream.getAttribute("data-cursor-state")).toBe("fading");
+      }
+    },
+  );
+
   it("keeps the conversation timeline plugin surface on each real turn", async () => {
     await desktopPluginHost.activateGeneration({
       pluginId: "test:turn-timeline",
@@ -508,12 +537,13 @@ describe("TurnView", () => {
     expect(container.querySelector(".agent-block")).toBe(message);
     expect(container.querySelector("img")).toBe(firstImage);
 
-    update(makeTurn("interrupted", [first, { ...text, text: streamTextStore.get(streamKey) }]));
+    // A terminal turn snapshot carries its streamed items already settled.
+    const settledText = { ...text, text: streamTextStore.get(streamKey), status: "completed" as const };
+    update(makeTurn("interrupted", [first, settledText]));
     expect(container.querySelector(".agent-block")).toBe(message);
     expect(before(firstImage, message)).toBe(true);
 
     // A second output must not gather both images after all the commentary.
-    const settledText = { ...text, text: streamTextStore.get(streamKey), status: "completed" as const };
     const final = { ...makeFinalAnswer("The comparison"), terminal: false, status: "in_progress" as const };
     update(makeTurn("in_progress", [first, settledText, second, final]));
     const secondImage = container.querySelectorAll("img")[1];

@@ -90,6 +90,9 @@ async function run() {
   notify("turn/started", { thread_id: threadId, turn });
   await until(() => evaluate(() => document.querySelectorAll(".assistant-turn-shell").length === 1), "single acknowledged turn");
   assert(await evaluate(() => parseInt(document.querySelector(".turn-process-meta")?.textContent) >= 2));
+  const reasoning = { id: "reasoning-before-stop", type: "reasoning", status: "in_progress", text: "Partial reasoning stays readable after Stop." };
+  notify("item/started", { thread_id: threadId, turn_id: turnId, item: reasoning });
+  await until(() => evaluate(() => document.querySelector(".reasoning-stream")?.getAttribute("data-stream-state") === "streaming"), "live reasoning");
   await evaluate(() => document.querySelector(".composer-stop-button").click());
   const interruption = await until(() => gates.get("turn/interrupt"), "interrupt dispatch before admission response");
   await until(() => evaluate(() => document.querySelector('[data-wuu-state="pending"]')?.getAttribute("aria-busy") === "true"), "stop feedback");
@@ -108,13 +111,48 @@ async function run() {
   interruption.resolve();
   await sleep(50);
   assert(await evaluate(() => Boolean(document.querySelector('[data-wuu-state="pending"]'))), "RPC acknowledgement alone must not claim stopped");
-  notify("turn/completed", { thread_id: threadId, turn: { ...turn, status: "interrupted" } });
+  // The terminal turn must stop rendering even if an item completion was missed.
+  notify("turn/completed", { thread_id: threadId, turn: { ...turn, status: "interrupted", items: [...turn.items, reasoning] } });
   admission.resolve();
   await until(() => queued.length === 2, "held follow-ups");
   assert.deepEqual(queued.map((item) => item.text), ["Then verify the queue order", "Keep these messages after Stop"]);
   assert(queued.every((item) => item.hold === true && item.threadId === threadId));
   await until(() => evaluate(() => !document.querySelector('[data-wuu-state="pending"]')), "confirmed stop");
   assert(await evaluate(() => !document.querySelector(".composer-stop-button")), "late admission must not resurrect the turn");
+  const toggle = () => evaluate(() => {
+    const button = document.querySelector(".turn-process-toggle");
+    button.focus();
+    return button.getAttribute("aria-expanded") === "true";
+  });
+  if (!await toggle()) {
+    win.webContents.sendInputEvent({ type: "keyDown", keyCode: "Space" });
+    win.webContents.sendInputEvent({ type: "keyUp", keyCode: "Space" });
+  }
+  await until(toggle, "keyboard expansion after Stop");
+  const reasoningEvidence = [];
+  for (const theme of ["light", "dark"]) for (const width of [1100, 760]) for (const font of [14, 20]) {
+    win.setSize(width, 820);
+    await evaluate(setVisualTheme, theme, font);
+    const state = await until(() => evaluate(() => {
+      const stream = document.querySelector(".reasoning-stream");
+      if (stream?.getAttribute("data-stream-state") !== "settled") return null;
+      const cursor = stream.querySelector(".stream-cursor");
+      return {
+        text: stream.textContent, streamState: stream.dataset.streamState,
+        cursorState: stream.dataset.cursorState,
+        cursorOpacity: cursor ? getComputedStyle(cursor).opacity : null,
+        focused: document.activeElement === document.querySelector(".turn-process-toggle"),
+      };
+    }), "reasoning settles after Stop");
+    assert(state.text.includes(reasoning.text));
+    assert.equal(state.cursorState, "fading");
+    assert.equal(state.focused, true);
+    reasoningEvidence.push({ theme, width, font, ...state });
+    // A hidden window only paints on request; a stale frame would disagree with the DOM assertions above.
+    await evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    fs.writeFileSync(path.join(evidence, `reasoning-stopped-${theme}-${width}-${font}.png`), (await win.webContents.capturePage()).toPNG());
+  }
+  fs.writeFileSync(path.join(evidence, "reasoning-stopped.json"), JSON.stringify(reasoningEvidence, null, 2));
   fs.writeFileSync(path.join(evidence, "confirmed-stop.png"), (await win.webContents.capturePage()).toPNG());
   console.log("PASS: immediate queue, event-first timing, graphical Stop, terminal-before-RPC, ordered held inputs, two rendered layouts");
   win.destroy();

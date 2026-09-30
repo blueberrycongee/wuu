@@ -108,7 +108,7 @@ export function UserQuestionCard({ request, onAnswer, onCancel, onHold, onCustom
 
   useEffect(() => {
     if (!offer || !request.expires_at || submitting || drafting) {
-      if (drafting || submitting || !offer) setRemainingSeconds(null);
+      setRemainingSeconds(null);
       return;
     }
     const expiresAt = Date.parse(request.expires_at);
@@ -436,6 +436,7 @@ export function UserQuestionCard({ request, onAnswer, onCancel, onHold, onCustom
       })}
       <div className="user-question-actions">
         {error ? <span className="user-question-error" role="alert">{error}</span> : null}
+        {countdown ? <span role="timer">{countdown}</span> : null}
         <button
           className="user-question-cancel"
           aria-busy={pendingAction === "close"}
@@ -444,7 +445,7 @@ export function UserQuestionCard({ request, onAnswer, onCancel, onHold, onCustom
           type="button"
         >
           {pendingAction === "close" && <LoaderCircle className="control-busy-icon" aria-hidden="true" />}
-          <span>{countdown ?? t("userQuestion.cancel")}</span>
+          <span>{t("userQuestion.cancel")}</span>
         </button>
         <button
           className="user-question-submit"
