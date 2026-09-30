@@ -22,6 +22,10 @@ async function until(fn) {
 }
 async function key(keyCode) {
   win.webContents.sendInputEvent({ type: "keyDown", keyCode });
+  // Character events trigger the browser default action for native buttons.
+  if (keyCode === "Enter" || keyCode === "Space") {
+    win.webContents.sendInputEvent({ type: "char", keyCode: keyCode === "Enter" ? "\r" : " " });
+  }
   win.webContents.sendInputEvent({ type: "keyUp", keyCode });
   await frames();
 }
@@ -68,6 +72,7 @@ app.whenReady().then(async () => {
   await key("Escape");
   for (const activation of ["Enter", "Space"]) {
     await evaluate(() => document.querySelector(".conversation-title-rename").focus());
+    console.log(`Checking ${activation} activation`);
     await key(activation);
     await until(() => document.activeElement?.classList.contains("conversation-title-edit"));
     await key("Escape");
