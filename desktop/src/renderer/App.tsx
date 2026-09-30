@@ -4937,7 +4937,9 @@ export function App(): JSX.Element {
           engines={engineInventory}
           onUpdateExtensionPackage={updateExtensionPackage}
           onSaveProvider={async (provider, model, connection) => {
-            await updateRuntimeSettings(provider, model, undefined, connection, undefined);
+            // Setup writes workspace defaults like Model services; a restored
+            // conversation's ID would make the core refuse the connection.
+            await updateProviderSettings(provider, model, undefined, connection);
           }}
           onUpdateEngines={updateEngineInventory}
           onComplete={async () => {
