@@ -144,20 +144,13 @@
   }
 }
 
-.primary-button,
+/* Only the fork dialog's Cancel still uses this; it should move to
+ * .settings-button like the other dialogs, and this rule go with it. */
 .secondary-button {
   height: 36px;
   border-radius: var(--radius-sm);
   font-weight: var(--weight-semibold);
   padding: 0 14px;
-}
-
-.primary-button {
-  background: var(--ink);
-  color: var(--paper);
-}
-
-.secondary-button {
   background: var(--wuu-control-secondary-background, var(--responsive-secondary-button-bg));
   color: var(--wuu-color-text, var(--responsive-secondary-button-text));
 }

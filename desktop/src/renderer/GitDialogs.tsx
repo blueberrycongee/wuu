@@ -1,4 +1,4 @@
-import { CornerDownRight, Github, Loader2, Sparkles } from "./WuuIcons";
+import { Loader2, Sparkles } from "./WuuIcons";
 import {
   type FormEvent as ReactFormEvent,
   useState,
@@ -6,6 +6,8 @@ import {
 import type { GitCommitResult, GitPullRequestResult, GitStatusResult } from "../shared/protocol";
 import { humanizeBranchTitle } from "./RuntimeHelpers";
 import { Modal } from "./Modal";
+import { toastErrorMessage } from "./Toast";
+import { Tooltip } from "./Tooltip";
 import { useI18n } from "./i18n";
 
 export function CommitChangesDialog({
@@ -31,6 +33,7 @@ export function CommitChangesDialog({
   const staged = gitStatus?.staged_diff ?? { files: 0, additions: 0, deletions: 0 };
   const hasChanges = Boolean(gitStatus?.is_repo && (gitStatus.dirty_count > 0 || diff.files > 0 || staged.files > 0));
   const busy = submitting || generating;
+  const generateLabel = generating ? t("git.commit.generating") : t("git.commit.generate");
 
   async function submit(event: ReactFormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
@@ -43,7 +46,7 @@ export function CommitChangesDialog({
       await onCommit({ message, includeUnstaged });
       onCancel();
     } catch (commitError) {
-      setError(commitError instanceof Error ? commitError.message : t("git.commit.failed"));
+      setError(t("git.commit.failed", { reason: toastErrorMessage(commitError, t("common.unknown")) }));
     } finally {
       setSubmitting(false);
     }
@@ -60,7 +63,7 @@ export function CommitChangesDialog({
     try {
       setMessage(await onGenerateMessage({ includeUnstaged }));
     } catch (generateError) {
-      setError(generateError instanceof Error ? generateError.message : t("git.commit.generateFailed"));
+      setError(t("git.commit.generateFailed", { reason: toastErrorMessage(generateError, t("common.unknown")) }));
     } finally {
       setGenerating(false);
     }
@@ -69,37 +72,40 @@ export function CommitChangesDialog({
   return (
     <Modal
       ariaLabel={t("git.commit.title")}
-      icon={<CornerDownRight className="icon-lg" />}
       title={t("git.commit.title")}
       onClose={onCancel}
+      showCloseButton={false}
+      panelClassName="git-dialog"
       asForm
       onSubmit={(event) => void submit(event)}
       footer={
         <>
-          <button className="secondary-button" type="button" onClick={onCancel}>
+          <button className="settings-button settings-button-ghost" type="button" onClick={onCancel}>
             {t("common.cancel")}
           </button>
           <button
-            className="primary-button"
+            className="settings-button settings-button-primary"
             type="submit"
             disabled={!hasChanges || busy || !message.trim()}
           >
-            {t("common.continue")}
+            {submitting ? t("git.commit.submitting") : t("git.commit.submit")}
           </button>
         </>
       }
     >
-      <div className="environment-dialog-summary">
-        <span>{t("git.branch")}</span>
-        <strong>{branch ?? t("common.unknown")}</strong>
-        <span>{t("git.changes")}</span>
-        <strong>
+      <dl className="git-dialog-summary">
+        <dt>{t("git.branch")}</dt>
+        <dd>{branch ?? t("common.unknown")}</dd>
+        <dt>{t("git.changes")}</dt>
+        <dd>
           {t(diff.files === 1 ? "git.fileCountOne" : "git.fileCount", { count: formatNumber(diff.files) })}{" "}
-          <span className="additions">+{formatNumber(diff.additions)}</span>{" "}
-          <span className="deletions">-{formatNumber(diff.deletions)}</span>
-        </strong>
-      </div>
-      <label className="environment-toggle">
+          <span className="git-dialog-counts">
+            <span className="additions">+{formatNumber(diff.additions)}</span>{" "}
+            <span className="deletions">−{formatNumber(diff.deletions)}</span>
+          </span>
+        </dd>
+      </dl>
+      <label className="git-dialog-option">
         <input
           type="checkbox"
           checked={includeUnstaged}
@@ -107,31 +113,33 @@ export function CommitChangesDialog({
         />
         <span>{t("git.commit.includeUnstaged")}</span>
       </label>
-      <label className="environment-field">
+      <label className="git-dialog-field">
         <span>{t("git.commit.message")}</span>
-        <span className="environment-field-inline">
+        <span className="git-dialog-field-inline">
           <input
+            className="settings-input"
             value={message}
             placeholder={t("git.commit.messagePlaceholder")}
             onChange={(event) => setMessage(event.target.value)}
           />
-          <button
-            aria-label={generating ? t("git.commit.generating") : t("git.commit.generate")}
-            className="environment-generate-button"
-            disabled={!hasChanges || busy}
-            onClick={() => void generate()}
-            title={generating ? t("git.commit.generating") : t("git.commit.generate")}
-            type="button"
-          >
-            {generating ? (
-              <Loader2 className="icon-md environment-generate-spinner" />
-            ) : (
-              <Sparkles className="icon-md" />
-            )}
-          </button>
+          <Tooltip content={generateLabel}>
+            <button
+              aria-label={generateLabel}
+              className="settings-button settings-icon-button"
+              disabled={!hasChanges || busy}
+              onClick={() => void generate()}
+              type="button"
+            >
+              {generating ? (
+                <Loader2 className="icon settings-spin" aria-hidden="true" />
+              ) : (
+                <Sparkles className="icon" aria-hidden="true" />
+              )}
+            </button>
+          </Tooltip>
         </span>
       </label>
-      {error ? <div className="environment-dialog-error">{error}</div> : null}
+      {error ? <p className="environment-dialog-error" role="alert">{error}</p> : null}
     </Modal>
   );
 }
@@ -172,7 +180,7 @@ export function PullRequestDialog({
       const created = await onCreate({ title, body, draft });
       setResult(created);
     } catch (createError) {
-      setError(createError instanceof Error ? createError.message : t("git.pr.createFailed"));
+      setError(t("git.pr.createFailed", { reason: toastErrorMessage(createError, t("common.unknown")) }));
     } finally {
       setSubmitting(false);
     }
@@ -181,57 +189,51 @@ export function PullRequestDialog({
   return (
     <Modal
       ariaLabel={existingURL ? t("git.pr.title") : t("git.pr.createTitle")}
-      icon={<Github className="icon-lg" />}
       title={existingURL ? t("git.pr.title") : t("git.pr.createTitle")}
       onClose={onCancel}
+      showCloseButton={false}
+      panelClassName="git-dialog"
       asForm
       onSubmit={(event) => void submit(event)}
       footer={
         <>
-          <button className="secondary-button" type="button" onClick={onCancel}>
-            {t("common.close")}
+          <button className="settings-button settings-button-ghost" type="button" onClick={onCancel}>
+            {existingURL ? t("common.close") : t("common.cancel")}
           </button>
           <button
-            className="primary-button"
+            className="settings-button settings-button-primary"
             type="submit"
             disabled={blocked || submitting}
           >
-            {existingURL ? t("common.open") : t("common.continue")}
+            {existingURL ? t("common.open") : submitting ? t("git.pr.submitting") : t("git.pr.submit")}
           </button>
         </>
       }
     >
-      {blocked ? <div className="environment-dialog-error">{disabledReason}</div> : null}
+      {blocked ? <p className="environment-dialog-error" role="alert">{disabledReason}</p> : null}
       {existingURL ? (
-        <div className="environment-pr-result">
-          <span>{result?.already_exists ? t("git.pr.exists") : t("git.pr.ready")}</span>
-          <button
-            className="secondary-button"
-            type="button"
-            onClick={() => window.open(existingURL, "_blank", "noopener,noreferrer")}
-          >
-            {t("git.pr.open")}
-          </button>
-        </div>
+        <p className="git-dialog-result">{result && !result.already_exists ? t("git.pr.ready") : t("git.pr.exists")}</p>
       ) : (
         <>
-          <label className="environment-field">
+          <label className="git-dialog-field">
             <span>{t("git.pr.fieldTitle")}</span>
             <input
+              className="settings-input"
               value={title}
               placeholder={t("git.pr.titlePlaceholder")}
               onChange={(event) => setTitle(event.target.value)}
             />
           </label>
-          <label className="environment-field">
+          <label className="git-dialog-field">
             <span>{t("git.pr.description")}</span>
             <textarea
+              className="settings-input"
               value={body}
               placeholder={t("git.pr.descriptionPlaceholder")}
               onChange={(event) => setBody(event.target.value)}
             />
           </label>
-          <label className="environment-toggle">
+          <label className="git-dialog-option">
             <input
               type="checkbox"
               checked={draft}
@@ -241,7 +243,7 @@ export function PullRequestDialog({
           </label>
         </>
       )}
-      {error ? <div className="environment-dialog-error">{error}</div> : null}
+      {error ? <p className="environment-dialog-error" role="alert">{error}</p> : null}
     </Modal>
   );
 }

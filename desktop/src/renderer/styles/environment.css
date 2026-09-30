@@ -12,10 +12,6 @@
   --env-search-result-hover-bg: var(--surface-2);
   --env-search-result-shortcut-bg: var(--surface-3);
   --env-search-result-shortcut-text: var(--ink-soft);
-  --env-dialog-summary-text: var(--ink-soft);
-  --env-field-border: #e3e3df;
-  --env-pr-result-bg: #f4f7f3;
-  --env-pr-result-text: var(--wuu-color-success, #26703c);
   --env-tone-system: #4d6bfe;
   --env-tone-stable: #2f8a56;
   --env-tone-turn: #d28a1f;
@@ -515,9 +511,7 @@
   white-space: nowrap;
 }
 
-.environment-create-branch input,
-.environment-field input,
-.environment-field textarea {
+.environment-create-branch input {
   min-width: 0;
   flex: 1;
   border: 0;
@@ -1043,95 +1037,86 @@
   font-weight: var(--weight-semibold);
 }
 
-.environment-dialog-summary {
+/* Git commit and pull request dialogs: the facts, then the form, in the
+ * shared settings fields and buttons. Sized in em so larger text keeps the
+ * same line breaks. */
+.git-dialog {
+  --environment-dialog-max-width: 34em;
+  gap: var(--space-4);
+}
+
+.git-dialog h2 {
+  font-size: var(--font-title);
+  line-height: var(--line-ui);
+}
+
+.git-dialog > .environment-dialog-footer {
+  margin-top: var(--space-2);
+}
+
+.git-dialog-summary {
   display: grid;
   grid-template-columns: max-content minmax(0, 1fr);
-  gap: 10px 14px;
-  color: var(--env-dialog-summary-text);
+  gap: var(--space-2) var(--space-4);
+  margin: 0;
   font-size: var(--font-ui);
 }
 
-.environment-dialog-summary strong {
-  color: var(--ink);
-  text-align: right;
+.git-dialog-summary dt {
+  color: var(--ink-soft);
 }
 
-.environment-toggle {
+.git-dialog-summary dd {
+  min-width: 0;
+  margin: 0;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.git-dialog-counts {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.git-dialog-option {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: var(--space-2);
   color: var(--ink);
   font-size: var(--font-ui);
-  font-weight: var(--weight-semibold);
 }
 
-.environment-toggle input {
-  width: 16px;
-  height: 16px;
-  accent-color: var(--info);
+.git-dialog-option input {
+  width: var(--icon-size-sm);
+  height: var(--icon-size-sm);
+  flex: 0 0 auto;
+  margin: 0;
+  accent-color: var(--ink);
 }
 
-.environment-field {
+.git-dialog-field {
   display: grid;
-  gap: 7px;
-  color: var(--ink-tertiary);
+  min-width: 0;
+  gap: var(--space-2);
+  color: var(--ink-soft);
   font-size: var(--font-sm);
-  font-weight: var(--weight-semibold);
 }
 
-.environment-field input,
-.environment-field textarea {
-  width: 100%;
-  border: 1px solid var(--env-field-border);
-  border-radius: var(--radius-sm);
-  background: var(--paper);
-  color: var(--ink);
-  font-size: var(--font-ui);
-  padding: 10px 12px;
-}
-
-.environment-field textarea {
-  min-height: 92px;
+.git-dialog-field textarea {
+  min-height: calc(var(--font-ui) * 1.5 * 4 + var(--control-padding-block) * 2);
   resize: vertical;
 }
 
-/* Commit dialog: message input + inline AI-generate affordance (sparkle),
-   matching the icon-button ghost treatment used across dialogs. */
-.environment-field-inline {
+/* The message field and its generate button share one row and one height. */
+.git-dialog-field-inline {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
 }
 
-.environment-field-inline input {
-  flex: 1;
+.git-dialog-field-inline input {
+  flex: 1 1 auto;
   min-width: 0;
-}
-
-.environment-generate-button {
-  align-items: center;
-  background: var(--paper);
-  border: 1px solid var(--env-field-border);
-  border-radius: var(--radius-sm);
-  color: var(--ink-tertiary);
-  display: inline-flex;
-  flex-shrink: 0;
-  height: 38px;
-  justify-content: center;
-  width: 38px;
-}
-
-.environment-generate-button:hover:not(:disabled) {
-  color: var(--ink);
-}
-
-.environment-generate-button:disabled {
-  cursor: not-allowed;
-  opacity: 0.45;
-}
-
-.environment-generate-spinner {
-  animation: wuu-spin var(--motion-spin) linear infinite;
 }
 
 .environment-dialog-error {
@@ -1143,16 +1128,19 @@
   padding: 10px 12px;
 }
 
-.environment-pr-result {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  border-radius: var(--radius-sm);
-  background: var(--env-pr-result-bg);
-  color: var(--env-pr-result-text);
-  font-weight: var(--weight-semibold);
-  padding: 12px;
+/* Hook and gh output can run long: keep it readable and bounded. */
+.git-dialog .environment-dialog-error {
+  max-height: 12em;
+  margin: 0;
+  overflow: auto;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.git-dialog-result {
+  margin: 0;
+  color: var(--ink);
+  font-size: var(--font-ui);
 }
 
 .environment-dialog-footer {
