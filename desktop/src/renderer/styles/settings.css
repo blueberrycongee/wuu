@@ -1100,6 +1100,15 @@ button.settings-engine-expand:hover {
   height: var(--icon-size-lg);
 }
 
+.settings-subscription-main .provider-mark {
+  --provider-mark-size: var(--icon-size-lg);
+}
+
+.settings-subscription-main .provider-mark svg {
+  width: 100%;
+  height: 100%;
+}
+
 .settings-subscription-identity {
   display: grid;
   min-width: 0;
@@ -1185,11 +1194,51 @@ button.settings-engine-expand:hover {
  * https://github.com/robinebers/openusage (ProviderCard / WidgetRowView). */
 .settings-subscription-quota {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 16em), 1fr));
-  gap: var(--space-5);
+  min-width: 0;
+  gap: var(--space-3);
   padding: var(--space-4);
   background: var(--surface-1);
   border-radius: var(--radius-sm);
+}
+
+.settings-subscription-quota-heading,
+.settings-subscription-quota-title,
+.settings-subscription-account,
+.settings-subscription-terms {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-3);
+}
+
+.settings-subscription-quota-heading {
+  justify-content: space-between;
+}
+
+.settings-subscription-kind {
+  color: var(--ink);
+  font-weight: var(--weight-medium);
+}
+
+.settings-subscription-plan,
+.settings-subscription-account-name {
+  overflow-wrap: anywhere;
+  color: var(--ink);
+}
+
+.settings-subscription-quota-state,
+.settings-subscription-account-source,
+.settings-subscription-age,
+.settings-subscription-window-scope,
+.settings-subscription-empty {
+  color: var(--ink-tertiary);
+}
+
+.settings-subscription-windows {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 16em), 1fr));
+  gap: var(--space-4) var(--space-5);
 }
 
 .settings-subscription-window {
@@ -1199,6 +1248,37 @@ button.settings-engine-expand:hover {
   align-content: start;
   gap: var(--space-2);
   overflow-wrap: anywhere;
+}
+
+.settings-subscription-window-scope,
+.settings-subscription-window-display,
+.settings-subscription-age,
+.settings-subscription-empty {
+  margin: 0;
+}
+
+.settings-subscription-balances {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.settings-subscription-balance {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-3);
+  color: var(--ink-soft);
+  font-variant-numeric: tabular-nums;
+}
+
+.settings-subscription-balance-amount {
+  color: var(--ink);
+  font-weight: var(--weight-medium);
+  overflow-wrap: anywhere;
+}
+
+.settings-subscription-terms {
+  color: var(--ink-soft);
 }
 
 .settings-subscription-window meter {
@@ -1282,6 +1362,11 @@ button.settings-engine-expand:hover {
 .settings-subscription-skeleton-meter {
   height: 6px;
   border-radius: var(--radius-xs);
+}
+
+.settings-subscription-skeleton.settings-subscription-quota {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 16em), 1fr));
+  gap: var(--space-5);
 }
 
 @container settings-page (max-width: 32em) {

@@ -1281,6 +1281,7 @@ type ProviderSummary struct {
 	// not the external engine's credentials.
 	LatestRequest *EngineLatestRequest       `json:"latest_request,omitempty"`
 	LocalUsage    *session.SubscriptionUsage `json:"local_usage,omitempty"`
+	Quota         *SubscriptionQuota         `json:"quota,omitempty"`
 }
 
 type ProviderModelSummary struct {
@@ -1398,20 +1399,10 @@ type EngineInfo struct {
 }
 
 // SubscriptionQuota reports only upstream account allowances. Missing windows
-// never mean unlimited usage. CheckedAt identifies the age of the snapshot.
-type SubscriptionQuota struct {
-	Status    string                    `json:"status"`
-	CheckedAt string                    `json:"checked_at"`
-	Windows   []SubscriptionQuotaWindow `json:"windows,omitempty"`
-}
+// never mean unlimited usage. ObservedAt identifies the successful snapshot's age.
+type SubscriptionQuota = providers.Quota
 
-type SubscriptionQuotaWindow struct {
-	ID            string  `json:"id"`
-	Label         string  `json:"label,omitempty"`
-	UsedPercent   float64 `json:"used_percent"`
-	WindowMinutes int     `json:"window_minutes,omitempty"`
-	ResetsAt      string  `json:"resets_at,omitempty"`
-}
+type SubscriptionQuotaWindow = providers.QuotaWindow
 
 // EngineLatestRequest is one settled request the subscription dashboard can
 // prove from stored history. Usage is present only when that request's engine

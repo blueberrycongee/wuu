@@ -3,10 +3,12 @@ import { RefreshCw } from "./WuuIcons";
 import type { EngineListResult, ProviderSummary, SubscriptionQuota } from "../shared/protocol";
 import { EngineIcon } from "./EngineIcons";
 import { EngineAuthentication } from "./EngineAuthentication";
+import { ServiceMark, serviceIdentity } from "./ModelServicesPage";
 import { SelectMenu } from "./SelectMenu";
 import { useI18n } from "./i18n";
 import { SettingsPageHeader } from "./SettingsSection";
 import {
+  hasBuiltInSubscriptionControls,
   isCodexSubscription,
   selectSubscriptionModel,
   subscriptionSources,
@@ -60,12 +62,15 @@ export function SubscriptionDashboard({
         const snapshot = loadedInventory?.engines.find((item) => item.id === engine.id);
         return snapshot ? { ...snapshot, enabled: engine.enabled } : engine;
       }) } : undefined;
-      const currentProviders = providers ?? loadedInventory?.subscription_providers;
-      return subscriptionSources(refreshed, currentProviders?.map((provider) => {
+      const currentProviders = (providers ?? loadedInventory?.subscription_providers ?? []).map((current) => {
+        const snapshot = loadedInventory?.subscription_providers?.find((item) => item.name === current.name);
+        const provider = snapshot ? { ...snapshot, ...current, quota: snapshot.quota ?? current.quota } : current;
         const checked = authProviders.find((item) => item.name === provider.name);
         return checked ? { ...provider, reuse_codex_credentials: checked.reuse_codex_credentials,
-          codex_credential_source: checked.codex_credential_source, api_key_configured: checked.api_key_configured } : provider;
-      }));
+          codex_credential_source: checked.codex_credential_source, api_key_configured: checked.api_key_configured,
+          quota: provider.quota } : provider;
+      });
+      return subscriptionSources(refreshed, currentProviders);
     },
     [loadedInventory, inventory, providers, revision, authProviders],
   );
@@ -110,6 +115,8 @@ export function SubscriptionDashboard({
       setAuthError(error instanceof Error ? error.message : String(error));
     } finally {
       setPending("");
+      setLoadedInventory(undefined);
+      setRefreshVersion((value) => value + 1);
     }
   }
 
@@ -154,7 +161,8 @@ export function SubscriptionDashboard({
               <article key={source.key} className="settings-subscription" data-testid={`subscription-${source.kind}-${source.id}`}>
                 <div className="settings-subscription-row">
                   <div className="settings-subscription-main">
-                    <span className="settings-engine-row-icon" aria-hidden="true"><EngineIcon engine={source.kind === "engine" ? source.id : "wuu"} /></span>
+                    {source.provider ? <ServiceMark identity={serviceIdentity(source.provider, t)} />
+                      : <span className="settings-engine-row-icon" aria-hidden="true"><EngineIcon engine={source.id} /></span>}
                     <div className="settings-subscription-identity">
                       <h2 className="settings-subscription-name">{source.label}</h2>
                       {status ? <p className="settings-subscription-status">{t(status)}</p> : null}
@@ -162,11 +170,12 @@ export function SubscriptionDashboard({
                         <p className="settings-subscription-status">
                           {t(source.provider?.codex_credential_source === "explicit" ? "settings.codexSourceExplicit" : source.provider?.reuse_codex_credentials ? "settings.codexSourceLocal" : "settings.codexSourceSaved")}
                         </p>
-                      ) : null}
+                      ) : source.provider?.reuse_codex_credentials ? <p className="settings-subscription-status">{t(source.provider.codex_credential_source === "codex-cli" ? "settings.codexSourceLocal" : "settings.codexSourceSaved")}</p>
+                        : source.provider?.api_key_configured ? <p className="settings-subscription-status">{t("settings.subscriptionCredentialApiKey")}</p> : null}
                     </div>
                   </div>
                   <div className="settings-subscription-actions">
-                    {source.models.length > 0 ? (
+                    {source.models.length > 0 && (source.kind === "engine" || (source.provider && hasBuiltInSubscriptionControls(source.provider))) ? (
                       <SelectMenu
                         triggerClassName="settings-subscription-model-trigger"
                         value={source.selectedModel}
@@ -222,23 +231,82 @@ function QuotaSkeleton(): JSX.Element {
 }
 
 function Quota({ quota, now }: { quota?: SubscriptionQuota; now: number }): JSX.Element | null {
-  const { t } = useI18n();
-  const windows = quota?.status === "available" ? quota.windows?.filter((window) => Number.isFinite(window.used_percent) && window.used_percent >= 0) ?? [] : [];
-  if (!windows.length) return quota?.status === "unavailable" ? <p className="settings-subscription-status">{t("settings.subscriptionAllowance")} · {t("settings.subscriptionQuotaUnavailable")}</p> : null;
-  return <div className="settings-subscription-quota">
-    {windows.map((window) => {
-      const remaining = Math.max(0, 100 - window.used_percent);
-      const minutes = window.window_minutes;
-      const period = minutes ? minutes % 1440 === 0 ? t("settings.subscriptionDays", { count: minutes / 1440 }) : minutes % 60 === 0 ? t("settings.subscriptionHours", { count: minutes / 60 }) : t("settings.subscriptionMinutes", { count: minutes }) : t("settings.subscriptionAllowance");
-      const label = [window.label, period].filter(Boolean).join(" · ");
-      const reset = window.resets_at ? new Date(window.resets_at) : undefined;
-      const checkedAt = quota?.checked_at ? Date.parse(quota.checked_at) : NaN;
-      const expired = (reset && Number.isFinite(reset.getTime()) && reset.getTime() <= now) || (Number.isFinite(checkedAt) && now - checkedAt > 5 * 60_000);
-      return <div key={window.id} className="settings-subscription-window" data-exhausted={!expired && remaining === 0}>
-        <div className="settings-subscription-usage"><span>{label}</span><span className={expired ? undefined : "settings-subscription-remaining"}>{expired ? t("settings.subscriptionQuotaStale") : t("settings.subscriptionRemaining", { percent: new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }).format(remaining) })}</span></div>
-        {!expired ? <meter min={0} max={100} value={remaining} aria-label={label} aria-valuetext={t("settings.subscriptionRemaining", { percent: remaining })} /> : null}
-        {reset && Number.isFinite(reset.getTime()) ? <span className="settings-subscription-reset">{t("settings.subscriptionResets", { time: reset.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) })}</span> : null}
-      </div>;
-    })}
-  </div>;
+  const { t, formatNumber, formatDate } = useI18n();
+  if (!quota) return null;
+  const statusKey = quota.status === "stale" ? "settings.subscriptionQuotaRefreshFailed"
+    : quota.status === "unavailable" ? "settings.subscriptionQuotaUnavailable"
+      : quota.status === "sign_in" ? "settings.subscriptionSignIn"
+        : quota.status === "unsupported" ? "settings.subscriptionQuotaUnsupported" : null;
+  const observedAt = quota.observed_at ?? quota.checked_at;
+  const observedMillis = observedAt ? Date.parse(observedAt) : NaN;
+  const ageLabel = quota.observed_at ? "settings.subscriptionObserved" : "settings.subscriptionChecked";
+  const expiredSnapshot = quota.status === "available" && quota.expires_at !== undefined && Date.parse(quota.expires_at) <= now;
+  const showAccount = (quota.status === "available" || quota.status === "stale") && (quota.account?.label || quota.account?.source);
+  const windows = quota.status === "available" || quota.status === "stale" ? quota.windows ?? [] : [];
+  const balances = quota.status === "available" || quota.status === "stale" ? quota.balances ?? [] : [];
+
+  return <section className="settings-subscription-quota" aria-label={t("settings.subscriptionAllowance")}>
+    <div className="settings-subscription-quota-heading">
+      <div className="settings-subscription-quota-title">
+        <span className="settings-subscription-kind">{t(quota.kind === "plan" ? "settings.subscriptionKindPlan" : quota.kind === "balance" ? "settings.subscriptionKindBalance" : quota.kind === "subscription" ? "settings.subscriptionKindSubscription" : "settings.subscriptionAllowance")}</span>
+        {quota.plan ? <span className="settings-subscription-plan">{quota.plan}</span> : null}
+      </div>
+      {statusKey || expiredSnapshot ? <span className="settings-subscription-quota-state" role="status">{t(statusKey ?? "settings.subscriptionQuotaStale")}</span> : null}
+    </div>
+    {showAccount ? <div className="settings-subscription-account">
+      {quota.account?.label ? <span className="settings-subscription-account-name">{quota.account.label}</span> : null}
+      {quota.account?.source ? <span className="settings-subscription-account-source">{t("settings.subscriptionAccountSource", { source:
+        ["codex-cli", "codex-cli-readonly"].includes(quota.account.source) ? "Codex CLI"
+          : quota.account.source === "claude-code" ? "Claude Code"
+            : quota.account.source === "grok-cli" ? "Grok CLI"
+              : quota.account.source === "wuu-auth-store" ? "Wuu"
+                : ["explicit", "configured", "anthropic-oauth", "deepseek", "openrouter", "kimi-code", "zhipu"].includes(quota.account.source) ? t("settings.subscriptionCredentialConfigured")
+                  : quota.account.source,
+      })}</span> : null}
+    </div> : null}
+    {windows.length ? <div className="settings-subscription-windows">
+      {windows.map((window) => {
+        const percent = window.used_percent;
+        const hasPercent = typeof percent === "number" && Number.isFinite(percent) && percent >= 0;
+        const unlimited = window.unlimited === true;
+        const remaining = hasPercent ? Math.max(0, 100 - percent) : undefined;
+        const minutes = window.window_minutes;
+        const period = minutes && minutes > 0 ? minutes % 1440 === 0 ? t("settings.subscriptionDays", { count: minutes / 1440 }) : minutes % 60 === 0 ? t("settings.subscriptionHours", { count: minutes / 60 }) : t("settings.subscriptionMinutes", { count: minutes }) : undefined;
+        const periodOnly = /^(?:\d+ (?:hours|days|minutes)|Primary|Secondary|Daily|Weekly|Allowance)$/.test(window.label ?? "");
+        const label = (periodOnly && period ? period : [window.label, period].filter(Boolean).join(" · ")) || t("settings.subscriptionAllowance");
+        const resetMillis = window.resets_at ? Date.parse(window.resets_at) : NaN;
+        const expired = quota.status === "stale" || (quota.expires_at !== undefined && Date.parse(quota.expires_at) <= now)
+          || (Number.isFinite(resetMillis) && resetMillis <= now);
+        const readout = unlimited ? t(expired ? "settings.subscriptionLastKnownUnlimited" : "settings.subscriptionUnlimited")
+          : remaining === undefined ? t("settings.subscriptionQuotaUnknown")
+            : expired ? t("settings.subscriptionLastKnownRemaining", { percent: formatNumber(remaining, { maximumFractionDigits: 1 }) })
+              : t("settings.subscriptionRemaining", { percent: formatNumber(remaining, { maximumFractionDigits: 1 }) });
+        return <div key={window.id} className="settings-subscription-window" data-exhausted={!expired && remaining === 0}>
+          <div className="settings-subscription-usage"><span>{label}</span><span className={!expired && remaining === 0 ? "settings-subscription-remaining" : undefined}>{readout}</span></div>
+          {window.display ? <p className="settings-subscription-window-display">{window.display}</p> : null}
+          {window.model || window.scope ? <p className="settings-subscription-window-scope">{[window.model, window.scope].filter(Boolean).join(" · ")}</p> : null}
+          {!expired && !unlimited && remaining !== undefined ? <meter min={0} max={100} value={remaining} aria-label={label} aria-valuetext={readout} /> : null}
+          {window.resets_at && Number.isFinite(resetMillis) ? <span className="settings-subscription-reset">{t(expired ? "settings.subscriptionResetTime" : "settings.subscriptionResets", { time: formatDate(resetMillis, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) })}</span> : null}
+        </div>;
+      })}
+    </div> : null}
+    {quota.status === "available" && !windows.length && !balances.length ? <p className="settings-subscription-empty">{t("settings.subscriptionQuotaUnknown")}</p> : null}
+    {balances.length ? <div className="settings-subscription-balances" aria-label={t("settings.subscriptionBalances")}>
+      {balances.map((balance, index) => <div className="settings-subscription-balance" key={`${balance.currency}-${index}`}>
+        <span>{t("settings.subscriptionBalance", { currency: balance.currency })}</span>
+        <span className="settings-subscription-balance-amount">{balance.amount} {balance.currency}</span>
+      </div>)}
+    </div> : null}
+    {(quota.status === "available" || quota.status === "stale") && quota.reset_credits !== undefined
+      ? <div className="settings-subscription-terms">{t("settings.subscriptionResetCredits", { count: quota.reset_credits })}</div> : null}
+    {Number.isFinite(observedMillis) ? <p className="settings-subscription-age">{t(ageLabel, { age: formatAge(observedMillis, now, t) })}</p> : null}
+  </section>;
+}
+
+function formatAge(observedAt: number, now: number, t: (key: "settings.subscriptionAgeMinutes" | "settings.subscriptionAgeHours" | "settings.subscriptionAgeDays", options?: Record<string, string | number>) => string): string {
+  const minutes = Math.floor(Math.max(0, now - observedAt) / 60_000);
+  if (minutes < 60) return t("settings.subscriptionAgeMinutes", { count: minutes });
+  const hours = Math.floor(minutes / 60);
+  if (hours < 48) return t("settings.subscriptionAgeHours", { count: hours });
+  return t("settings.subscriptionAgeDays", { count: Math.floor(hours / 24) });
 }

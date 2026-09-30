@@ -1,7 +1,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { EngineListResult, ProviderSummary } from "../shared/protocol";
+import type { EngineListResult, ProviderSummary, SubscriptionQuota } from "../shared/protocol";
 import { clearDraftEngineMemory, readDraftEngineMemory } from "./DraftEngineMemory";
 import { SubscriptionDashboard } from "./SubscriptionDashboard";
 
@@ -57,6 +57,18 @@ const providers: ProviderSummary[] = [
   },
 ];
 
+function quota(overrides: Partial<SubscriptionQuota> = {}): SubscriptionQuota {
+  return {
+    status: "available",
+    kind: "subscription",
+    checked_at: new Date().toISOString(),
+    observed_at: new Date().toISOString(),
+    account: { id: "opaque-account-id", label: "Example account", source: "Codex CLI" },
+    windows: [{ id: "weekly", label: "Weekly", used_percent: 25, window_minutes: 10080 }],
+    ...overrides,
+  };
+}
+
 beforeEach(() => {
   window.wuu = { ...window.wuu, listEngines: vi.fn().mockResolvedValue(inventory) };
   clearDraftEngineMemory();
@@ -71,12 +83,12 @@ afterEach(() => {
   clearDraftEngineMemory();
 });
 
-async function render(onSelectBuiltinModel = vi.fn(), parentInventory = inventory) {
+async function render(onSelectBuiltinModel = vi.fn(), parentInventory = inventory, parentProviders: ProviderSummary[] | null = providers) {
   await act(async () => {
     root.render(
       <SubscriptionDashboard
         inventory={parentInventory}
-        providers={providers}
+        providers={parentProviders ?? undefined}
         onSelectBuiltinModel={onSelectBuiltinModel}
       />,
     );
@@ -122,6 +134,7 @@ describe("SubscriptionDashboard", () => {
     expect([...meters].map((meter) => meter.value)).toEqual([70, 0]);
     expect(container.querySelector('[data-testid="subscription-engine-codex"] meter')).toBeNull();
     expect(window.wuu.listEngines).toHaveBeenCalledWith({ include_quota: true });
+    expect(container.textContent).not.toContain("99999");
 
     // A manual refresh keeps the loaded allowance on screen.
     vi.mocked(window.wuu.listEngines).mockReturnValueOnce(new Promise(() => {}));
@@ -129,9 +142,109 @@ describe("SubscriptionDashboard", () => {
     expect(container.querySelectorAll("meter")).toHaveLength(2);
   });
 
+  it("keeps refreshed provider quota when parent inventory and provider models rerender", async () => {
+    vi.mocked(window.wuu.listEngines).mockResolvedValue({
+      engines: inventory.engines,
+      subscription_providers: [{ ...providers[1], quota: quota({ account: { id: "opaque-key-account", label: "Work account", source: "API key" } }) }],
+    });
+    await render();
+    const account = container.querySelector('[data-testid="subscription-builtin-xai-subscription"]')!;
+    expect(account.textContent).toContain("Work account");
+    expect(account.textContent).toContain("API key");
+    expect(account.querySelector("meter")?.value).toBe(75);
+
+    await act(async () => root.render(<SubscriptionDashboard
+      inventory={inventory}
+      providers={[{ ...providers[1], model: "grok-4.2", models: [{ id: "grok-4.2" }] }, providers[0]]}
+      onSelectBuiltinModel={vi.fn()}
+    />));
+    const rerendered = container.querySelector('[data-testid="subscription-builtin-xai-subscription"]')!;
+    expect(rerendered.textContent).toContain("Work account");
+    expect(rerendered.querySelector<HTMLMeterElement>("meter")?.value).toBe(75);
+    expect(rerendered.textContent).toContain("grok-4.2");
+    await act(async () => root.render(<SubscriptionDashboard inventory={inventory}
+      providers={[providers[0]]} onSelectBuiltinModel={vi.fn()} />));
+    expect(container.querySelector('[data-testid="subscription-builtin-xai-subscription"]')).toBeNull();
+  });
+
+  it("distinguishes unknown, zero, unlimited, balances and currencies without combining accounts", async () => {
+    vi.mocked(window.wuu.listEngines).mockResolvedValue({ engines: [], subscription_providers: [
+      { name: "unknown-key", type: "openai", model: "m", api_key_configured: true, quota: quota({
+        account: { id: "account-unknown", label: "Unknown account", source: "API key" },
+        windows: [{ id: "missing-percent", label: "Requests", display: "250 calls used" }],
+      }) },
+      { name: "empty-plan", type: "anthropic", model: "m", api_key_configured: true, quota: quota({
+        kind: "plan", account: { id: "account-zero", label: "Zero account", source: "API key" },
+        windows: [{ id: "zero", label: "Included usage", used_percent: 100 }],
+      }) },
+      { name: "unlimited-key", type: "google", model: "m", api_key_configured: true, quota: quota({
+        kind: "balance", account: { id: "account-unlimited", label: "Unlimited account", source: "API key" },
+        windows: [{ id: "unlimited", label: "Context", unlimited: true }],
+        balances: [{ currency: "USD", amount: "9007199254740993.123456789" }, { currency: "EUR", amount: "12.50" }],
+      }) },
+    ] });
+    await render(undefined, inventory, null);
+    const unknown = container.querySelector('[data-testid="subscription-builtin-unknown-key"]')!;
+    const zero = container.querySelector('[data-testid="subscription-builtin-empty-plan"]')!;
+    const unlimited = container.querySelector('[data-testid="subscription-builtin-unlimited-key"]')!;
+    expect(unknown.querySelector("meter")).toBeNull();
+    expect(unknown.querySelector('button[aria-haspopup="menu"]')).toBeNull();
+    expect(unknown.textContent).toContain("Unknown account");
+    expect(unknown.textContent).toContain("250 calls used");
+    expect(zero.querySelector("meter")?.value).toBe(0);
+    expect(unlimited.querySelector("meter")).toBeNull();
+    expect(unlimited.textContent).toContain("9007199254740993.123456789");
+    expect(unlimited.textContent).toContain("USD");
+    expect(unlimited.textContent).toContain("EUR");
+    expect(container.textContent).not.toContain("opaque-account-id");
+  });
+
+  it("retains stale snapshots as stale, never draws expired meters, and translates safe failure states", async () => {
+    vi.mocked(window.wuu.listEngines).mockResolvedValue({ engines: [], subscription_providers: [
+      { name: "stale-key", type: "openai", model: "m", api_key_configured: true, quota: quota({
+        status: "stale", checked_at: new Date().toISOString(), observed_at: new Date(Date.now() - 86_400_000).toISOString(),
+        expires_at: new Date(Date.now() - 1).toISOString(),
+        windows: [{ id: "last-known", label: "Monthly", used_percent: 45, window_minutes: 43200, resets_at: new Date(Date.now() - 1).toISOString() }],
+      }) },
+      { name: "sign-in-key", type: "openai", model: "m", quota: quota({ status: "sign_in", account: { id: "unverified", label: "Unverified account", source: "provider" }, windows: undefined }) },
+      { name: "unsupported-key", type: "openai", model: "m", quota: quota({ status: "unsupported", windows: undefined }) },
+      { name: "failed-key", type: "openai", model: "m", quota: quota({ status: "unavailable", error_code: "network", windows: undefined }) },
+    ] });
+    await render(undefined, inventory, null);
+    const stale = container.querySelector('[data-testid="subscription-builtin-stale-key"]')!;
+    expect(stale.querySelector("meter")).toBeNull();
+    expect(stale.textContent).toContain("55");
+    expect(stale.textContent).toContain("Example account");
+    const signIn = container.querySelector('[data-testid="subscription-builtin-sign-in-key"]')!;
+    expect(signIn.textContent).toBeTruthy();
+    expect(signIn.textContent).not.toContain("Unverified account");
+    const unsupported = container.querySelector('[data-testid="subscription-builtin-unsupported-key"]')!;
+    expect(unsupported.textContent).toBeTruthy();
+    expect(unsupported.textContent).not.toContain("Example account");
+    const failed = container.querySelector('[data-testid="subscription-builtin-failed-key"]')!;
+    expect(failed.textContent).toBeTruthy();
+    expect(failed.textContent).not.toContain("network");
+    expect(failed.textContent).not.toContain("Example account");
+  });
+
+  it("does not replace a known snapshot with empty data while manual refresh is pending or fails", async () => {
+    vi.mocked(window.wuu.listEngines).mockResolvedValue({ engines: [{
+      ...inventory.engines[0], quota: quota({ windows: [{ id: "known", used_percent: 20 }] }),
+    }] });
+    await render();
+    const request = vi.mocked(window.wuu.listEngines);
+    let fail!: (error: Error) => void;
+    request.mockReturnValueOnce(new Promise((_, reject) => { fail = reject; }));
+    await act(async () => { container.querySelector<HTMLButtonElement>("header button")!.click(); });
+    expect(container.querySelector<HTMLMeterElement>('[data-testid="subscription-engine-grok"] meter')?.value).toBe(80);
+    await act(async () => fail(new Error("offline")));
+    expect(container.querySelector('[role="alert"]')).not.toBeNull();
+  });
+
   it("does not present a reset or old snapshot as current remaining allowance", async () => {
     vi.mocked(window.wuu.listEngines).mockResolvedValue({ engines: [{ ...inventory.engines[0], quota: {
       status: "available", checked_at: new Date(Date.now() - 600_000).toISOString(),
+      expires_at: new Date(Date.now() - 1).toISOString(),
       windows: [{ id: "old", used_percent: 30 }],
     } }] });
     await render();
@@ -238,4 +351,5 @@ it("switches the Codex credential source without changing the model selection an
  await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="codex-check-login"]')!.click());
  expect(check).toHaveBeenCalledTimes(2);
  expect(container.querySelector('[role="alert"]')).toBeNull();
+ expect(window.wuu.listEngines).toHaveBeenCalledTimes(3);
 });

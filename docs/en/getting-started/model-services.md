@@ -40,18 +40,30 @@ SuperGrok subscription login, Grok CLI login, and an `XAI_API_KEY` are separate 
 
 ## Check subscriptions in the desktop app
 
-**Settings → Subscriptions** groups installed external agents and built-in
-subscription services. Choose models directly from each row. ACP agents that
+**Settings → Subscriptions** groups installed external agents and configured
+model services. Each account keeps its own subscription, plan windows, or prepaid
+balance; different accounts and currencies are never added together. Supported
+subscription rows retain their existing model controls. ACP agents that
 need account setup offer a sign-in button; choose a method to start authentication,
 which may open your browser. A model-loading failure is not proof that credentials
 are missing, and a static CLI model list does not establish login status.
 
-Codex account allowances come from the installed CLI and show remaining
-percentages and reset times. Refresh after a reset or when a snapshot is over
-five minutes old. Sources without account-quota support have no allowance meter;
+Quota readers use the selected connection's credential source. Supported sources
+are ChatGPT/Codex, Grok Build, Anthropic OAuth or local Claude Code, Kimi Code,
+Zhipu/Z.ai plans, and DeepSeek/OpenRouter balances. Browser SuperGrok and arbitrary
+compatible endpoints do not currently expose supported quota details.
+
+The page shows remaining percentages, reset times, account labels when available,
+and observation age. Missing values remain unknown; zero remaining means exhausted.
+Refresh after a reset or when a snapshot is over five minutes old. A temporary
+failure keeps the last successful observation when the reader can still identify
+the account, clearly marked for refresh without an active allowance meter;
+rejected authentication clears the old allowance.
+Saved observations survive restarts and cannot be reused for another account.
 ACP context-window occupancy and local token counts are not subscription quota.
-This page shows concise loading and sign-in failures rather than request history
-or raw agent logs. Use the refresh button to retry loading the catalog and quotas.
+This page shows concise loading and sign-in failures rather than raw agent logs.
+Quota refreshes do not submit model requests, change defaults, or select a spending
+route. Use the refresh button to retry loading the catalog and quotas.
 
 ## Configure the CLI
 
