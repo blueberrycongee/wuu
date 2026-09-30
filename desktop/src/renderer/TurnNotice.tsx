@@ -428,7 +428,10 @@ export function ContextCompactionNotice({
   const detail = inProgress ? undefined : contextCompactionDetail(text, reason, status);
   const state = failed ? "failed" : inProgress ? "in_progress" : "completed";
   const description = detail ? `${title} — ${detail}` : title;
-  const expandedDetail = failed ? normalized : summary || normalized;
+  // A recognized outcome line is already told by the title and detail; only a
+  // replacement summary or an unfamiliar diagnostic is worth unfolding.
+  const recognizedOutcome = /^Compacted history$/i.test(normalized) || parseContextCompactionNotice(normalized) !== undefined;
+  const expandedDetail = failed ? normalized : summary || (recognizedOutcome ? "" : normalized);
   const hasSummary = !inProgress && Boolean(expandedDetail);
   const [expanded, setExpanded] = useState(false);
   const waveRef = useLiveTextWave<HTMLSpanElement>(inProgress);
