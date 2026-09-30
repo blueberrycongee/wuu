@@ -1,36 +1,11 @@
 /* Component color tokens for workspace.css. Light-theme values; the dark
    theme overrides these in base.css theme blocks. */
 :root {
-  --workspace-panel-title-icon: var(--wuu-color-text-muted, #6d7378);
-  --workspace-tool-tab-text: var(--wuu-color-text-muted, #666d72);
-  --workspace-tab-highlight: rgba(255, 255, 255, 0.72);
-  --workspace-tab-active-bg: var(--surface-3);
-  --workspace-tab-close-icon: var(--wuu-color-text-muted, #8b9095);
-  --workspace-tab-focus-ring: var(--focus-ring);
-  --workspace-menu-item-hover-bg: #ebebe8;
-  --workspace-bottom-title-text: var(--wuu-color-text-muted, #747a7f);
-  --workspace-tool-card-text: var(--wuu-color-text, #272b2f);
-  --file-icon-code: #2563a8;
-  --file-icon-data: #6f3aa3;
-  --workspace-empty-icon-bg: var(--wuu-color-surface-muted, #f1f1ef);
-  --workspace-empty-icon-fg: var(--wuu-color-text-muted, #70767a);
-  --workspace-terminal-restart-hover-bg: #e2e2df;
-  --browser-nav-disabled: var(--wuu-color-text-muted, #c1c5c8);
-  --browser-url-border: var(--wuu-color-border-subtle, var(--hairline));
-  --browser-url-focus-border: var(--focus-ring);
-  --browser-url-focus-ring: var(--focus-ring);
-  --browser-url-error-ring: rgba(243, 167, 160, 0.32);
-  --browser-url-icon: var(--wuu-color-text-muted, #9099a0);
-  --browser-url-error-icon: var(--wuu-color-danger, #c33b2e);
-  --browser-url-placeholder: var(--wuu-color-text-muted, #a4a9ad);
-  --browser-home-bg: var(--wuu-color-canvas, #fcfcfb);
   --browser-status-overlay-bg: rgba(255, 255, 255, 0.86);
   --browser-error-text: var(--wuu-color-danger, #5d1f17);
   --browser-error-span-text: var(--wuu-color-danger, #6e2a22);
   --browser-retry-hover-bg: #93190f;
   --browser-loading-dot-bg: var(--wuu-color-info, #2f98ff);
-  --skills-section-border: var(--wuu-color-border-subtle, var(--hairline-soft));
-  --skill-artwork-neutral-bg: var(--wuu-color-surface-muted, #f4f4f1);
   --skill-mark-highlight: rgba(255, 255, 255, 0.54);
   /* Skill artwork mark palettes. --wuu-skill-mark-* are the public
      skin-overridable tokens; --skill-mark-* stay as component-local
@@ -81,44 +56,8 @@
   --hljs-tag: var(--wuu-syntax-tag, #9a4f55);
   --hljs-literal: var(--wuu-syntax-literal, #6f5ca7);
   --hljs-meta: var(--wuu-syntax-meta, #5f6870);
-  --diff-branch-arrow: var(--wuu-color-text-muted, #b2b6ba);
-  --diff-file-text: var(--wuu-color-text, #2c3034);
-  --diff-status-bg: #ecefec;
-  --diff-status-fg: #58615b;
-  --diff-added-bg: #e7f4eb;
-  --diff-added-fg: var(--wuu-color-success, #17813b);
-  --diff-renamed-bg: #eef2f7;
-  --diff-error-border: #f5ddd9;
-  --diff-truncated-border: #eee6d6;
-  --diff-truncated-text: var(--wuu-color-warning, #8a5a00);
-  --diff-line-meta-text: var(--wuu-color-text-muted, #6f7780);
-  --diff-hunk-bg: var(--wuu-color-surface-muted, #f1f4f7);
-  --diff-add-bg: #eef9f1;
-  --diff-add-text: var(--wuu-color-success, #146c34);
-  --diff-delete-bg: #fff1f0;
-  --diff-line-number-text: var(--wuu-color-text-muted, #8d949a);
-  --diff-tree-header-text: var(--wuu-color-text-muted, #868c91);
-  --diff-tree-row-icon: var(--wuu-color-text-muted, #7b8287);
-  --diff-tree-file-text: var(--wuu-color-text, #373b3f);
-  --diff-tree-count-text: var(--wuu-color-text-muted, #94999d);
-  --review-resizer-hover-bg: #aeb4b9;
   --review-overlay-bg: rgba(251, 251, 250, 0.92);
-  --provider-pill-bg: var(--wuu-color-surface-muted, #f2f2ef);
-  --provider-pill-text: var(--wuu-color-text-muted, #555a5f);
-  --codex-runtime-effort-text: var(--wuu-color-text-muted, #74797d);
-  --codex-effort-sheen: rgba(255, 255, 255, 0.22);
-  --codex-effort-sheen-soft: rgba(255, 255, 255, 0.1);
   --codex-runtime-trigger-icon: var(--wuu-color-text-muted, #707579);
-  --codex-menu-label-text: var(--wuu-color-text-muted, #9a9ea2);
-  --grid-guide-border: rgba(228, 0, 43, 0.42);
-  --grid-guide-fill: rgba(228, 0, 43, 0.075);
-  --grid-guide-inset: rgba(228, 0, 43, 0.36);
-  --grid-guide-row-major: rgba(0, 150, 140, 0.3);
-  --grid-guide-row-minor: rgba(0, 150, 140, 0.12);
-  --split-header-bg: rgba(255, 255, 255, 0.94);
-  --split-composer-bg: rgba(255, 255, 255, 0.96);
-  --split-composer-border: var(--wuu-color-border-subtle, #deded9);
-  --split-composer-shadow: rgba(32, 36, 39, 0.08);
 }
 
 .workspace-right-panel {
@@ -145,10 +84,6 @@
     opacity var(--workspace-panel-motion-duration) var(--workspace-panel-motion-ease),
     transform var(--workspace-panel-motion-duration) var(--workspace-panel-motion-ease);
   pointer-events: none;
-}
-
-.bottom-panel-open .workspace-right-panel {
-  bottom: auto;
 }
 
 .right-panel-open .workspace-right-panel {
@@ -235,7 +170,7 @@
 }
 
 .workspace-panel-compact-heading span {
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-size: var(--font-xs);
 }
 
@@ -280,7 +215,7 @@
 }
 
 .turn-file-diff-kicker {
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-size: var(--font-xs);
   font-weight: var(--weight-semibold);
 }
@@ -301,7 +236,7 @@
   min-width: 0;
   align-items: center;
   gap: 8px;
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-size: var(--font-sm);
   font-weight: var(--weight-semibold);
 }
@@ -344,7 +279,7 @@
   border: 0;
   border-radius: var(--radius-xs);
   background: transparent;
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   padding: 5px 9px;
   font: inherit;
   font-size: var(--font-sm);
@@ -363,7 +298,7 @@
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-size: var(--font-xs);
 }
 
@@ -421,7 +356,7 @@
   justify-content: center;
   flex-direction: column;
   gap: 8px;
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-family: inherit;
   font-size: var(--font-sm);
   text-align: center;
@@ -468,37 +403,6 @@
   word-break: break-word;
 }
 
-.workspace-panel-header,
-.workspace-bottom-header {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  justify-content: space-between;
-  border-bottom: 1px solid var(--hairline-soft);
-  padding: 0 14px;
-}
-
-.workspace-panel-title {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: 9px;
-  color: var(--ink);
-  font-size: var(--font-body);
-  font-weight: var(--weight-semibold);
-}
-
-.workspace-panel-title svg {
-  color: var(--workspace-panel-title-icon);
-  flex: 0 0 auto;
-}
-
-.workspace-panel-title span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .workspace-panel-back {
   width: 28px;
   height: 28px;
@@ -506,7 +410,6 @@
 }
 
 .workspace-panel-close,
-.workspace-panel-sidebar,
 .workspace-panel-add,
 .workspace-panel-globalize {
   width: var(--control-size-toolbar);
@@ -534,12 +437,16 @@
   display: none;
 }
 
+/* Tabs share the strip and shrink to their icon before it scrolls: a narrow
+ * inactive tab gives up its close button, then its label (queries below).
+ * The active tab keeps room for its name and close button. */
 .workspace-tool-tab {
+  container: workspace-tab / inline-size;
   display: flex;
   position: relative;
-  min-width: 88px;
+  min-width: calc(var(--icon-size) + var(--space-3) * 2);
   max-width: 200px;
-  height: 32px;
+  height: var(--control-size-toolbar);
   /* Uniform widths, matching the session strip. Also load-bearing for drag
    * reorder: horizontalListSortingStrategy assumes equal-size items, and the
    * old content-width tabs (flex: 0 1 auto) made mid-drag sibling offsets
@@ -547,9 +454,9 @@
   flex: 1 1 0%;
   align-items: center;
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-xs);
   background: transparent;
-  color: var(--workspace-tool-tab-text);
+  color: var(--ink-soft);
   overflow: hidden;
   /* Inherits -webkit-app-region: drag from .workspace-panel-tabbar so the
    * 8px strip above/below the tab (and the 2px gap between tabs) stays
@@ -637,8 +544,10 @@
 .workspace-tool-tab.active,
 .workspace-tool-tab.active:hover,
 .workspace-tool-tab.active:focus-within {
-  /* Share the session strip selection treatment. */
-  background: var(--workspace-tab-active-bg);
+  /* Share the session strip selection treatment. Room for the icon, a short
+   * name (about four characters) and the close button. */
+  min-width: calc(var(--space-3) + var(--icon-size) + 4em + var(--control-size-inline) + var(--space-3));
+  background: var(--surface-3);
   color: var(--ink-strong);
 }
 
@@ -653,7 +562,8 @@
   background: transparent;
   color: inherit;
   cursor: inherit;
-  padding: 0 3px 0 10px;
+  /* With the strip's own inset, the first icon sits on the pane inset. */
+  padding: 0 var(--space-1) 0 var(--space-3);
   text-align: left;
 }
 
@@ -672,10 +582,6 @@
   white-space: nowrap;
 }
 
-.workspace-tool-tab.active .workspace-tool-tab-main > span:not(.workspace-tab-dirty-indicator) {
-  font-weight: var(--weight-semibold);
-}
-
 .workspace-tab-dirty-indicator {
   width: 6px;
   height: 6px;
@@ -686,13 +592,11 @@
 
 .workspace-tool-tab-close {
   display: grid;
-  width: 24px;
-  height: 24px;
   flex: 0 0 auto;
   place-items: center;
   border-radius: var(--radius-pill);
   background: transparent;
-  color: var(--workspace-tab-close-icon);
+  color: var(--ink-tertiary);
   cursor: pointer;
   margin-right: 2px;
   opacity: 0;
@@ -710,8 +614,25 @@
 
 .workspace-tool-tab-main:focus-visible,
 .workspace-tool-tab-close:focus-visible {
-  outline: 2px solid var(--workspace-tab-focus-ring);
+  outline: 2px solid var(--focus-ring);
   outline-offset: -2px;
+}
+
+@container workspace-tab (max-width: 84px) {
+  .workspace-tool-tab:not(.active) .workspace-tool-tab-close {
+    display: none;
+  }
+}
+
+@container workspace-tab (max-width: 56px) {
+  .workspace-tool-tab-main {
+    justify-content: center;
+    padding: 0;
+  }
+
+  .workspace-tool-tab-main > span:not(.workspace-tab-dirty-indicator) {
+    display: none;
+  }
 }
 
 .workspace-tool-tab:hover .workspace-tool-tab-close,
@@ -738,7 +659,6 @@
 
 @container (min-width: 720px) {
   .workspace-tool-tab {
-    min-width: 96px;
     max-width: 248px;
   }
 }
@@ -752,8 +672,6 @@
 }
 
 .workspace-panel-body.picker {
-  position: absolute;
-  inset: 0;
   padding: 0;
 }
 
@@ -798,43 +716,9 @@
   z-index: 1;
 }
 
-.workspace-panel-loading-rail {
-  position: relative;
-  width: 96px;
-  height: 3px;
-  overflow: hidden;
-  border-radius: var(--radius-pill);
-  background: var(--surface-3);
-}
-
-.workspace-panel-loading-rail::after {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  width: 36px;
-  border-radius: inherit;
-  background: linear-gradient(90deg, transparent, var(--success) 48%, var(--ink));
-  content: "";
-  animation: workspace-panel-loading-scan 1200ms cubic-bezier(0.2, 0, 0, 1) infinite;
-}
-
-@keyframes workspace-panel-loading-scan {
-  from {
-    transform: translateX(-40px);
-  }
-  to {
-    transform: translateX(100px);
-  }
-}
-
-@container style(--motion-reduced: 1) {
-  .workspace-panel-loading-rail::after {
-    animation: none;
-  }
-}
-
 .workspace-right-panel.files .workspace-panel-body,
-.workspace-right-panel.terminal .workspace-panel-body {
+.workspace-right-panel.terminal .workspace-panel-body,
+.workspace-right-panel.browser .workspace-panel-body {
   padding: 0;
 }
 
@@ -901,11 +785,6 @@
   display: flex;
   grid-column: 1;
   padding: 10px 0;
-}
-
-.workspace-right-panel.compact-navigation[data-wuu-view="files"]
-  .workspace-file-tree-drag-handle {
-  display: none;
 }
 
 .workspace-right-panel.compact-navigation[data-wuu-view="file"]
@@ -1003,7 +882,7 @@
   position: absolute;
   inset: 0 auto 0 0;
   width: 1px;
-  background: var(--surface-2);
+  background: var(--hairline-soft);
   content: "";
   transition:
     background var(--motion-fast) var(--ease-out),
@@ -1049,37 +928,30 @@ html.resizing-workspace-file-split * {
   margin-right: 0;
 }
 
+/* Beside a document the tree can move to the other side: the button ends the
+ * search row, in the column the field leaves free for it. */
 .workspace-file-tree-drag-handle {
   display: grid;
   position: absolute;
   z-index: 1;
-  inset-block-start: 11px;
-  inset-inline-end: 8px;
-  width: 32px;
-  height: 26px;
+  inset-block-start: 10px;
+  inset-inline-end: 4px;
+  width: var(--control-size-toolbar);
+  height: var(--control-field-height);
   place-items: center;
-  border-radius: var(--radius-xs);
-  color: var(--ink-muted);
-  cursor: grab;
-  opacity: 0.52;
-  outline: 0;
-  user-select: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink-tertiary);
   -webkit-app-region: no-drag;
   transition:
     background var(--motion-fast) var(--ease-out),
-    color var(--motion-fast) var(--ease-out),
-    opacity var(--motion-fast) var(--ease-out);
+    color var(--motion-fast) var(--ease-out);
 }
 
 .workspace-file-tree-drag-handle:hover,
 .workspace-file-tree-drag-handle:focus-visible {
-  background: var(--ink-overlay-5);
+  background: var(--ink-overlay-4);
   color: var(--ink);
-  opacity: 1;
-}
-
-.workspace-file-tree-drag-handle:active {
-  cursor: grabbing;
 }
 
 .workspace-file-tree-drag-preview {
@@ -1191,7 +1063,7 @@ html.resizing-workspace-file-split * {
   max-height: 32px;
   margin: 0 auto -6px;
   overflow: hidden;
-  color: var(--text-primary);
+  color: var(--ink);
   background: var(--conversation-floating-surface-bg);
   /* Match the composer and its pending-message drawer in every open state. */
   border: 1px solid var(--hairline-soft);
@@ -1238,55 +1110,26 @@ html.resizing-workspace-file-split * {
   background: transparent;
 }
 
+/* The question being answered carries the product's one live-text wave,
+ * which also owns its reduced-motion behaviour. */
 .workspace-document-turn-waiting-query {
   grid-column: 1;
-  width: 100%;
+  max-width: calc(100% - 18px);
   min-width: 0;
   margin-left: 18px;
   overflow: hidden;
   justify-self: start;
-  background: linear-gradient(
-    100deg,
-    var(--ink-muted) 15%,
-    var(--ink) 42%,
-    var(--ink-muted) 68%
-  );
-  background-size: 240% 100%;
-  background-clip: text;
-  color: transparent;
+  color: var(--ink-soft);
   font-size: var(--font-ui);
-  font-weight: var(--weight-medium);
   line-height: 1.4;
   text-overflow: ellipsis;
   white-space: nowrap;
-  animation: workspace-document-waiting-query-shimmer 2.4s ease-in-out infinite;
-}
-
-@keyframes workspace-document-waiting-query-shimmer {
-  0%,
-  100% {
-    background-position: 100% 50%;
-    opacity: 0.62;
-  }
-
-  50% {
-    background-position: 0 50%;
-    opacity: 1;
-  }
-}
-
-@container style(--motion-reduced: 1) {
-  .workspace-document-turn-waiting-query {
-    background: none;
-    color: var(--ink-muted);
-    animation: none;
-  }
 }
 
 .workspace-document-turn-summary svg {
   grid-column: 2;
   justify-self: center;
-  color: var(--text-secondary);
+  color: var(--ink-tertiary);
 }
 
 .workspace-document-turn-details {
@@ -1302,7 +1145,7 @@ html.resizing-workspace-file-split * {
 .workspace-document-turn-result {
   min-width: 0;
   padding: 2px 2px 0;
-  color: var(--text-primary);
+  color: var(--ink);
 }
 
 .workspace-document-turn-result > .rich-content + .rich-content {
@@ -1343,27 +1186,22 @@ html.resizing-workspace-file-split * {
   padding-bottom: 180px;
 }
 
-/* Tool picker: the right panel with no open tab. Rows are a left-aligned
- * icon+label list, vertically centered as a group. There is no shortcut
- * column — these tools have no keybindings — so the list hugs content
- * instead of reserving a trailing gutter. Fill still marks hover, active,
- * and keyboard focus only. */
+/* Tool picker: the right panel with no open tab. A plain list on the file
+ * tree's axis, top-aligned, so the tree a choice opens appears where the
+ * list was. Fill marks hover, press and keyboard focus only. */
 .workspace-tool-menu {
   display: grid;
   height: 100%;
   min-width: 0;
-  justify-items: center;
-  align-content: safe center;
+  align-content: start;
   overflow-y: auto;
-  padding: var(--panel-padding);
+  padding: var(--space-3) var(--space-2);
 }
 
 .workspace-tool-menu-list {
   display: grid;
-  width: max-content;
-  max-width: 100%;
-  justify-items: stretch;
-  /* Same list rhythm as navigation rows: the row box separates items. */
+  width: 100%;
+  max-width: 32em;
   gap: 2px;
 }
 
@@ -1374,7 +1212,7 @@ html.resizing-workspace-file-split * {
   min-width: 0;
   min-height: var(--control-row-height);
   align-items: center;
-  column-gap: var(--space-2);
+  column-gap: var(--space-3);
   border-radius: var(--radius-xs);
   background: transparent;
   color: var(--ink);
@@ -1385,19 +1223,16 @@ html.resizing-workspace-file-split * {
     color var(--motion-fast) var(--ease-out);
 }
 
-.workspace-tool-menu-item:hover,
-.workspace-tool-menu-item.active {
-  background: var(--workspace-menu-item-hover-bg);
-}
-
-.workspace-tool-menu-item:focus-visible {
-  background: var(--workspace-menu-item-hover-bg);
-  outline: 2px solid var(--workspace-tab-focus-ring);
-  outline-offset: -2px;
+.workspace-tool-menu-item:hover {
+  background: var(--ink-overlay-4);
 }
 
 .workspace-tool-menu-item:active {
-  background: var(--surface-3);
+  background: var(--ink-overlay-8);
+}
+
+html[data-focus-modality="keyboard"] .workspace-tool-menu-item:focus-visible {
+  outline-offset: -2px;
 }
 
 .workspace-tool-menu-icon {
@@ -1410,7 +1245,6 @@ html.resizing-workspace-file-split * {
 }
 
 .workspace-tool-menu-item:hover .workspace-tool-menu-icon,
-.workspace-tool-menu-item.active .workspace-tool-menu-icon,
 .workspace-tool-menu-item:focus-visible .workspace-tool-menu-icon {
   color: var(--ink);
 }
@@ -1425,6 +1259,7 @@ html.resizing-workspace-file-split * {
 .workspace-tool-menu-copy strong,
 .workspace-tool-menu-copy span {
   min-width: 0;
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1437,101 +1272,8 @@ html.resizing-workspace-file-split * {
 }
 
 .workspace-tool-menu-copy span {
-  color: var(--ink-tertiary);
+  color: var(--ink-soft);
   font-size: var(--font-sm);
-  font-weight: var(--weight-medium);
-}
-
-.workspace-bottom-panel {
-  grid-column: 2;
-  grid-row: 2;
-  display: grid;
-  margin-right: 0;
-  min-width: 0;
-  min-height: 0;
-  grid-template-rows: 42px minmax(0, 1fr);
-  overflow: hidden;
-  border-top: 1px solid transparent;
-  background: var(--paper);
-  opacity: 0;
-  transform: translateY(14px);
-  transition:
-    border-color var(--motion-base) var(--ease-out),
-    opacity var(--motion-base) var(--ease-out),
-    transform var(--motion-base) var(--ease-out);
-  pointer-events: none;
-}
-
-.right-panel-open .workspace-bottom-panel {
-  margin-right: 0;
-}
-
-.bottom-panel-open .workspace-bottom-panel {
-  border-top-color: var(--hairline-soft);
-  opacity: 1;
-  transform: translateY(0);
-  pointer-events: auto;
-}
-
-.workspace-bottom-header {
-  border-bottom: 0;
-  padding: 0 12px;
-}
-
-.workspace-bottom-title {
-  color: var(--workspace-bottom-title-text);
-  font-size: var(--font-ui);
-  font-weight: var(--weight-semibold);
-}
-
-.workspace-tool-grid {
-  display: grid;
-  min-width: 0;
-  min-height: 0;
-  overflow: auto;
-  grid-auto-columns: minmax(148px, 1fr);
-  grid-auto-flow: column;
-  gap: 12px;
-  padding: 8px 40px 24px;
-}
-
-.workspace-tool-card {
-  display: grid;
-  min-width: 0;
-  height: 142px;
-  align-content: center;
-  justify-items: center;
-  gap: 8px;
-  border-radius: var(--radius-sm);
-  background: var(--surface-2);
-  color: var(--workspace-tool-card-text);
-  padding: 16px 12px;
-  text-align: center;
-}
-
-.workspace-tool-card:hover,
-.workspace-tool-card.active {
-  background: var(--surface-3);
-}
-
-.workspace-tool-card svg {
-  color: var(--ink-tertiary);
-}
-
-.workspace-tool-card-icon {
-  width: 25px;
-  height: 25px;
-}
-
-.workspace-tool-card strong {
-  font-size: var(--font-title);
-  font-weight: var(--weight-semibold);
-}
-
-.workspace-tool-card span {
-  color: var(--ink-muted);
-  font-size: var(--font-ui);
-  font-weight: var(--weight-medium);
 }
 
 .workspace-file-panel {
@@ -1547,7 +1289,7 @@ html.resizing-workspace-file-split * {
 
 .workspace-file-tree-limit {
   flex: 0 0 auto;
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-size: var(--font-sm);
   font-weight: var(--weight-medium);
   padding: 0 5px 6px;
@@ -1570,7 +1312,6 @@ html.resizing-workspace-file-split * {
   transform: none;
   will-change: auto;
 }
-
 
 /* Right-click menu on file-tree rows. The component (WorkspaceTreeContextMenu
    in WorkspaceFiles.tsx) positions the menu in viewport coordinates and
@@ -1614,38 +1355,35 @@ html.resizing-workspace-file-split * {
   outline: none;
 }
 
+/* The panel's one empty state: the missing thing, a reason only when the
+ * title does not say it, and at most one action. */
 .workspace-panel-empty {
   display: grid;
   height: 100%;
-  min-height: 180px;
+  min-height: 160px;
   place-content: center;
   justify-items: center;
-  gap: 8px;
+  gap: var(--space-2);
   color: var(--ink);
-  padding: 22px;
+  padding: var(--panel-padding);
   text-align: center;
 }
 
-.workspace-panel-empty-icon {
-  display: grid;
-  width: 42px;
-  height: 42px;
-  place-items: center;
-  border-radius: var(--radius-sm);
-  background: var(--workspace-empty-icon-bg);
-  color: var(--workspace-empty-icon-fg);
-}
-
 .workspace-panel-empty strong {
-  font-size: var(--font-title);
-  font-weight: var(--weight-semibold);
+  font-size: var(--font-ui);
+  font-weight: var(--weight-medium);
 }
 
 .workspace-panel-empty span {
-  max-width: 230px;
-  color: var(--ink-muted);
-  font-size: var(--font-ui);
-  line-height: 1.45;
+  max-width: 32em;
+  color: var(--ink-soft);
+  font-size: var(--font-sm);
+  line-height: var(--line-body);
+  overflow-wrap: anywhere;
+}
+
+.workspace-panel-empty > .settings-button {
+  margin-top: var(--space-2);
 }
 
 .workspace-terminal-workspace {
@@ -1682,25 +1420,26 @@ html.resizing-workspace-file-split * {
   color: var(--ink);
 }
 
+/* The run's header is a chrome row like Review's file row: the command on
+ * the pane inset, its state and Stop at the end, a hairline under it. */
 .workspace-agent-terminal-toolbar {
   display: flex;
   flex: 0 0 auto;
   min-width: 0;
-  min-height: 42px;
+  min-height: calc(var(--control-size-toolbar) + var(--space-2) * 2);
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--space-3);
   border-bottom: 1px solid var(--hairline-soft);
-  background: var(--surface-1);
-  padding: 7px 10px 7px 14px;
+  padding: var(--space-2) var(--control-toolbar-inset) var(--space-2) var(--pane-inset);
 }
 
 .workspace-agent-terminal-command {
   min-width: 0;
   overflow: hidden;
-  color: var(--ink-soft);
-  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
-  font-size: var(--font-sm);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: var(--appearance-code-size);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1709,51 +1448,26 @@ html.resizing-workspace-file-split * {
   display: flex;
   flex: 0 0 auto;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-3);
 }
 
 .workspace-agent-run-status {
   flex: 0 0 auto;
-  border-radius: var(--radius-pill);
-  background: var(--surface-2);
   color: var(--ink-soft);
-  font-size: var(--font-xs);
-  padding: 4px 8px;
+  font-size: var(--font-sm);
 }
 
 .workspace-agent-run-status.failed {
   color: var(--danger);
 }
 
-.workspace-agent-terminal-stop {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  border-radius: var(--radius-sm);
-  background: var(--surface-2);
-  color: var(--ink-soft);
-  font-size: var(--font-xs);
-  font-weight: var(--weight-semibold);
-  padding: 5px 8px;
-}
-
-.workspace-agent-terminal-stop:hover:not(:disabled) {
-  background: var(--surface-3);
-  color: var(--danger);
-}
-
-.workspace-agent-terminal-stop:disabled {
-  cursor: default;
-  opacity: 0.58;
-}
-
 .workspace-agent-terminal-error {
   flex: 0 0 auto;
   border-bottom: 1px solid var(--hairline-soft);
-  background: var(--surface-1);
   color: var(--danger);
-  font-size: var(--font-xs);
-  padding: 6px 14px;
+  font-size: var(--font-sm);
+  line-height: var(--line-body);
+  padding: var(--space-2) var(--pane-inset);
 }
 
 .workspace-terminal-screen {
@@ -1764,8 +1478,8 @@ html.resizing-workspace-file-split * {
   min-height: 0;
   overflow: hidden;
   color: var(--ink);
-  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: var(--appearance-code-size);
   line-height: 1.45;
 }
 
@@ -1775,8 +1489,10 @@ html.resizing-workspace-file-split * {
   height: 100%;
 }
 
+/* Output starts on the pane inset like the tab strip above it. The padding
+ * sits on .xterm, which the fit addon subtracts when it counts columns. */
 .workspace-terminal-host .xterm {
-  padding: 0;
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--pane-inset);
 }
 
 .workspace-terminal-host .xterm-screen {
@@ -1797,20 +1513,11 @@ html.resizing-workspace-file-split * {
   scrollbar-color: var(--scrollbar-thin-thumb) transparent;
 }
 
+/* An ended session keeps its output; the way back floats in the corner. */
 .workspace-terminal-restart {
   position: absolute;
-  right: 14px;
-  bottom: 12px;
-  border-radius: var(--radius-sm);
-  background: var(--surface-3);
-  color: var(--ink);
-  font-size: var(--font-sm);
-  font-weight: var(--weight-semibold);
-  padding: 6px 10px;
-}
-
-.workspace-terminal-restart:hover {
-  background: var(--workspace-terminal-restart-hover-bg);
+  right: var(--space-4);
+  bottom: var(--space-4);
 }
 
 .workspace-browser-panel {
@@ -1822,13 +1529,16 @@ html.resizing-workspace-file-split * {
   background: var(--paper);
 }
 
+/* A chrome row: the first and last glyphs sit on the pane inset and the
+ * hairline runs edge to edge. */
 .workspace-browser-toolbar {
   position: relative;
   display: grid;
+  min-height: calc(var(--control-size-toolbar) + var(--space-2) * 2);
   grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
-  column-gap: 8px;
-  padding: 6px 10px;
+  column-gap: var(--space-2);
+  padding: var(--space-2) var(--control-toolbar-inset);
   border-bottom: 1px solid var(--hairline-soft);
   background: transparent;
 }
@@ -1840,20 +1550,20 @@ html.resizing-workspace-file-split * {
 }
 
 .workspace-browser-nav {
-  width: 28px;
-  height: 28px;
+  width: var(--control-size-toolbar);
+  height: var(--control-size-toolbar);
   border-radius: var(--radius-sm);
   color: var(--ink-tertiary);
 }
 
 .workspace-browser-nav:hover:not(:disabled) {
-  background: var(--surface-3);
+  background: var(--ink-overlay-4);
   color: var(--ink);
 }
 
 .workspace-browser-nav:disabled {
-  color: var(--browser-nav-disabled);
-  cursor: not-allowed;
+  color: var(--ink-faint);
+  cursor: default;
 }
 
 .workspace-browser-url-form {
@@ -1865,7 +1575,7 @@ html.resizing-workspace-file-split * {
   min-width: 0;
   padding: 0 10px 0 12px;
   height: 28px;
-  border-radius: 10px;
+  border-radius: var(--radius-sm);
   background: transparent;
   border: 0;
   color: var(--ink-soft);
@@ -1905,10 +1615,6 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
     var(--browser-url-fade-ink) calc(100% - 16px),
     transparent
   );
-}
-
-.workspace-browser-url-input::placeholder {
-  color: var(--browser-url-placeholder);
 }
 
 .workspace-browser-url-input.has-error {
@@ -1971,31 +1677,6 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
 .workspace-browser-loading-bar[data-active="true"] {
   opacity: 1;
   animation: workspace-browser-pulse 1s ease-in-out infinite;
-}
-
-.workspace-browser-home {
-  position: absolute;
-  inset: 0;
-  z-index: 1;
-  background: var(--paper);
-  padding: 24px 12px;
-}
-
-.workspace-browser-home .workspace-panel-empty-icon {
-  width: auto;
-  height: auto;
-  background: transparent;
-  color: var(--ink-muted);
-}
-
-.workspace-browser-home strong {
-  font-size: var(--font-ui);
-  font-weight: var(--weight-semibold);
-}
-
-.workspace-browser-home span {
-  max-width: none;
-  font-size: var(--font-ui);
 }
 
 .workspace-browser-status {
@@ -2073,81 +1754,7 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   min-height: 0;
 }
 
-.workspace-title-icon {
-  display: grid;
-  width: 30px;
-  height: 30px;
-  place-items: center;
-  border-radius: var(--radius-sm);
-  background: var(--surface-3);
-  color: var(--ink);
-}
-
-.workspace-main-empty {
-  display: grid;
-  height: 100%;
-  min-height: 360px;
-  place-content: center;
-  justify-items: center;
-  gap: 10px;
-  color: var(--ink);
-  padding: 28px;
-  text-align: center;
-}
-
-.workspace-main-empty svg {
-  color: var(--ink-tertiary);
-}
-
-.workspace-main-empty strong {
-  font-size: var(--font-heading);
-  font-weight: var(--weight-semibold);
-}
-
-.workspace-main-empty span {
-  max-width: 360px;
-  color: var(--ink-muted);
-  font-size: var(--font-body);
-  font-weight: var(--weight-medium);
-  line-height: 1.45;
-}
-
-.workspace-main-empty button {
-  height: 34px;
-  border-radius: var(--radius-sm);
-  background: var(--surface-3);
-  color: var(--ink);
-  font-weight: var(--weight-semibold);
-  padding: 0 12px;
-}
-
-.workspace-main-empty button:hover {
-  background: var(--surface-4);
-}
-
-.skills-scroll-region {
-  background: var(--paper);
-}
-
-/* The plugins catalog is a .settings-page: the same UI-text column and
- * section rhythm as Settings. The titlebar names the page, so it opens on a
- * toolbar: search first, then the page's tools. */
-.catalog-toolbar {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.catalog-toolbar > .catalog-search {
-  flex: 1 1 auto;
-}
-
-/* The search gives up width first; the actions keep their labels. */
-.catalog-toolbar > .settings-button {
-  flex: none;
-}
-
+/* Catalog search fields: plugins and skills, model services. */
 .catalog-search {
   display: flex;
   min-width: 0;
@@ -2157,7 +1764,7 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   border: 1px solid var(--field-border);
   border-radius: var(--radius-sm);
   background: var(--field-bg);
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   padding: 0 var(--control-padding-inline);
   transition: background var(--motion-fast) var(--ease-out);
 }
@@ -2177,400 +1784,6 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   color: var(--ink);
   font: inherit;
   font-size: var(--font-ui);
-}
-
-.skills-catalog-error {
-  border-radius: var(--radius-sm);
-  background: var(--danger-soft);
-  color: var(--danger);
-  font-size: var(--font-ui);
-  line-height: 1.45;
-  padding: var(--compact-padding-block) var(--compact-padding-inline);
-}
-
-/* Skill rows match the settings service rows: mark, name over a one-line
- * description, the owning plugin, and a disclosure chevron. The chevron owns
- * the last column, so trailing labels end on one axis. */
-.catalog-row {
-  display: grid;
-  width: 100%;
-  min-width: 0;
-  min-height: calc(var(--control-field-height) + var(--space-3) * 2);
-  grid-template-columns: auto minmax(0, 1fr) auto auto;
-  align-items: center;
-  gap: var(--space-3);
-  border: 0;
-  padding: var(--space-3) 0;
-  background: transparent;
-  color: var(--ink);
-  cursor: pointer;
-  font: inherit;
-  text-align: left;
-}
-
-.catalog-row + .catalog-row {
-  border-top: 1px solid var(--hairline-soft);
-}
-
-.catalog-row > .settings-disclosure-chevron {
-  grid-column: 4;
-}
-
-.catalog-row:hover .settings-disclosure-chevron {
-  color: var(--ink);
-}
-
-.catalog-row-copy {
-  display: grid;
-  min-width: 0;
-  gap: 2px;
-}
-
-.catalog-row-title,
-.catalog-row-description {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.catalog-row-title {
-  color: var(--ink);
-  font-size: var(--font-ui);
-  line-height: 1.4;
-}
-
-.catalog-row-description {
-  color: var(--ink-soft);
-  font-size: var(--font-sm);
-  line-height: 1.5;
-}
-
-.catalog-row-meta {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  color: var(--ink-muted);
-  font-size: var(--font-sm);
-  line-height: 1.5;
-  white-space: nowrap;
-}
-
-/* The mark tile takes the settings row mark footprint, so plugin glyphs,
- * skill marks, and package artwork sit in one column at any size. */
-.skill-artwork {
-  display: grid;
-  width: var(--settings-mark-size);
-  height: var(--settings-mark-size);
-  flex: 0 0 auto;
-  place-items: center;
-  overflow: hidden;
-  border-radius: var(--radius-xs);
-  background: var(--surface-2);
-  color: var(--ink);
-}
-
-.skill-artwork svg {
-  width: var(--icon-size);
-  height: var(--icon-size);
-}
-
-.skill-artwork-plugin-brand .plugin-icon-asset {
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-}
-
-/* In a narrow column the trailing label moves under the description, so
- * the name keeps the width it needs. */
-@container settings-page (max-width: 32em) {
-  .catalog-row {
-    grid-template-columns: auto minmax(0, 1fr) auto;
-    row-gap: var(--space-1);
-  }
-
-  .catalog-row > :is(.settings-status, .catalog-row-meta) {
-    grid-column: 2;
-    grid-row: 2;
-    justify-self: start;
-  }
-
-  .catalog-row > .settings-disclosure-chevron {
-    grid-column: 3;
-  }
-}
-
-/* Alerts are the one boxed element in this panel: they carry a state, not a
- * grouping, so a soft tone plus an icon replaces bare colored text. */
-.plugin-detail-notices {
-  display: grid;
-  gap: 8px;
-}
-
-.plugin-detail-notice {
-  display: flex;
-  min-width: 0;
-  align-items: flex-start;
-  gap: 8px;
-  border: 1px solid color-mix(in srgb, var(--warning) 32%, transparent);
-  border-radius: var(--radius-sm);
-  padding: 10px 12px;
-  background: var(--warning-soft);
-  color: var(--ink);
-  font-size: var(--font-sm);
-  line-height: 1.5;
-}
-
-.plugin-detail-notice.is-error {
-  border-color: color-mix(in srgb, var(--danger) 32%, transparent);
-  background: var(--danger-soft);
-}
-
-/* Centered on the first line, wherever the text wraps. */
-.plugin-detail-notice svg {
-  flex: none;
-  margin-top: calc((var(--font-sm) * 1.5 - var(--icon-size-sm)) / 2);
-  color: var(--warning);
-}
-
-.plugin-detail-notice.is-error svg {
-  color: var(--danger);
-}
-
-.plugin-detail-notice span {
-  min-width: 0;
-  overflow-wrap: anywhere;
-  user-select: text;
-}
-
-.plugin-permission-group-label {
-  color: var(--ink-muted);
-  font-size: var(--font-sm);
-  line-height: 1.6;
-}
-
-/* Plugin settings read as one settings group: label and description on the
- * left, the control pinned right, and a status line only when there is
- * something to say (saving, an error, or a restart the change still needs). */
-.plugin-settings-editor {
-  display: grid;
-  min-width: 0;
-  gap: var(--space-3);
-}
-
-.plugin-settings-editor-title {
-  margin: 0;
-  color: var(--ink-strong);
-  font-size: var(--font-ui);
-  font-weight: var(--weight-semibold);
-  line-height: 1.4;
-}
-
-.plugin-settings-editor-body {
-  display: grid;
-  min-width: 0;
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-sm);
-  padding-inline: var(--card-padding);
-}
-
-.plugin-settings-editor-body > .plugin-contribution-conflict,
-.plugin-settings-editor-body > .plugin-contribution-warning {
-  margin-block: var(--space-3);
-}
-
-.plugin-setting.settings-row {
-  row-gap: 0;
-}
-
-.plugin-setting:last-child {
-  border-bottom: 0;
-}
-
-.plugin-setting .settings-input {
-  width: min(15em, 100%);
-}
-
-.plugin-setting-select {
-  min-width: min(10em, 100%);
-}
-
-.plugin-contribution-conflict,
-.plugin-contribution-warning {
-  display: grid;
-  gap: 6px;
-  border: 1px solid var(--warning);
-  border-radius: var(--radius-sm);
-  padding: 10px;
-  background: var(--warning-soft);
-  color: var(--ink);
-  font-size: var(--font-sm);
-}
-
-.plugin-contribution-conflict > div,
-.plugin-contribution-conflict > label {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-}
-
-.plugin-contribution-conflict span,
-.plugin-contribution-warning span {
-  color: var(--ink-secondary);
-}
-
-.plugin-contribution-conflict select {
-  min-width: 180px;
-}
-
-.plugin-setting-status {
-  display: flex;
-  min-width: 0;
-  grid-column: 1 / -1;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: var(--space-2);
-  color: var(--ink-soft);
-  font-size: var(--font-sm);
-  line-height: 1.5;
-  overflow-wrap: anywhere;
-}
-
-.plugin-setting-status:not(:empty) {
-  margin-top: var(--space-1);
-}
-
-.plugin-setting-status.is-error {
-  color: var(--danger);
-}
-
-.plugin-setting-status button {
-  min-height: auto;
-  padding: 0;
-}
-
-@container settings-page (max-width: 32em) {
-  .plugin-setting[data-setting-type="string"],
-  .plugin-setting[data-setting-type="number"] {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .plugin-setting .settings-input {
-    width: 100%;
-  }
-}
-
-.skills-empty {
-  display: grid;
-  min-height: 260px;
-  place-content: center;
-  justify-items: center;
-  gap: 9px;
-  color: var(--ink);
-  text-align: center;
-}
-
-.skills-empty svg {
-  color: var(--ink-tertiary);
-}
-
-.skills-empty strong {
-  font-size: var(--font-title);
-  font-weight: var(--weight-semibold);
-}
-
-.skills-empty span {
-  color: var(--ink-muted);
-  font-size: var(--font-body);
-}
-
-.environment-modal-backdrop:has(.skill-preview-dialog) {
-  align-items: center;
-  justify-items: center;
-  overflow: hidden;
-  padding: 32px;
-  background: var(--modal-backdrop-bg);
-}
-
-.skill-preview-dialog {
-  --environment-dialog-max-width: 760px;
-  display: grid;
-  width: min(760px, calc(100vw - 64px));
-  height: min(78vh, 820px);
-  max-height: calc(100vh - 64px);
-  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
-  overflow: hidden;
-}
-
-.skill-preview-dialog .environment-dialog-header {
-  padding-bottom: 12px;
-}
-
-.skill-preview-dialog .environment-dialog-icon {
-  width: auto;
-  height: auto;
-  border-radius: 0;
-  background: transparent;
-}
-
-.skill-preview-icon-title {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--ink-soft);
-  font-size: var(--font-ui);
-  font-weight: var(--weight-semibold);
-  line-height: 1.2;
-}
-
-.skill-preview-icon-title svg {
-  width: 18px;
-  height: 18px;
-}
-
-.skill-preview-dialog h2 {
-  margin: 0;
-}
-
-.skill-preview-dialog .environment-dialog-subtitle {
-  margin: 0;
-  color: var(--ink-soft);
-  font-size: var(--font-body);
-  line-height: 1.45;
-}
-
-.skill-preview-body {
-  min-height: 0;
-  border-top: 1px solid var(--hairline);
-  overflow: auto;
-  padding: 18px 6px 0 0;
-  overscroll-behavior: contain;
-}
-
-.skill-preview-body .rich-content {
-  color: var(--ink);
-  font-size: var(--font-body);
-  line-height: 1.55;
-}
-
-.skill-preview-body .rich-content > :first-child {
-  margin-top: 0;
-}
-
-.skill-preview-loading,
-.skill-preview-error {
-  color: var(--ink-muted);
-  font-size: var(--font-ui);
-  line-height: 1.45;
-  margin: 0 0 12px;
-}
-
-.skill-preview-error {
-  color: var(--danger);
-}
-
-.skill-preview-dialog .environment-dialog-footer {
-  margin-top: 18px;
 }
 
 .workspace-file-preview {
@@ -2615,7 +1828,7 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
 }
 
 .workspace-file-preview-header span {
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-size: var(--font-sm);
 }
 
@@ -2643,6 +1856,19 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   min-height: 0;
   place-items: center;
   overflow: auto;
+  background: var(--paper);
+  padding: var(--space-6);
+}
+
+/* The transparency grid sits behind the image only, where it tells
+ * transparent pixels apart; the panel around it stays paper. */
+.workspace-file-image-preview img {
+  display: block;
+  width: auto;
+  max-width: 100%;
+  height: auto;
+  max-height: 100%;
+  object-fit: contain;
   background:
     linear-gradient(45deg, var(--surface-2) 25%, transparent 25%),
     linear-gradient(-45deg, var(--surface-2) 25%, transparent 25%),
@@ -2655,17 +1881,6 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
     10px -10px,
     -10px 0;
   background-size: 20px 20px;
-  padding: 24px;
-}
-
-.workspace-file-image-preview img {
-  display: block;
-  width: auto;
-  max-width: 100%;
-  height: auto;
-  max-height: 100%;
-  object-fit: contain;
-  box-shadow: var(--shadow-card);
 }
 
 .workspace-file-pdf-preview {
@@ -2678,54 +1893,31 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   background: var(--paper);
 }
 
+/* The side inset follows the panel, not the window. */
 .workspace-markdown-reading {
   width: min(100%, 820px);
   min-height: 100%;
   color: var(--ink);
   margin: 0 auto;
-  padding: 26px clamp(18px, 4vw, 44px) 56px;
+  padding: var(--space-6) clamp(var(--pane-inset), 6cqi, 44px) 56px;
 }
 
 .workspace-markdown-reading .rich-content {
   gap: 13px;
-  font-size: 15px;
   line-height: 1.68;
 }
 
+/* Headings rank by size (appearance.css) and one weight, as in answers: no
+ * rules under them, natural tracking. */
 .workspace-markdown-reading .rich-heading {
   color: var(--ink);
-  font-size: 19px;
   font-weight: var(--weight-semibold);
   line-height: 1.35;
-}
-
-/* Heading hierarchy: h1 = page title, h2 = section, h3+ = sub-head. */
-.workspace-markdown-reading .rich-heading--h1 {
-  font-size: 28px;
-  font-weight: var(--weight-bold);
-  letter-spacing: -0.01em;
-  padding-bottom: 8px;
-  border-bottom: 1px solid var(--rule);
-}
-
-.workspace-markdown-reading .rich-heading--h2 {
-  font-size: 21px;
-  font-weight: var(--weight-semibold);
-  letter-spacing: -0.005em;
-  padding-bottom: 4px;
-  border-bottom: 1px solid var(--rule);
-}
-
-.workspace-markdown-reading .rich-heading--h3 {
-  font-size: 17px;
-  font-weight: var(--weight-semibold);
 }
 
 .workspace-markdown-reading .rich-heading--h4,
 .workspace-markdown-reading .rich-heading--h5,
 .workspace-markdown-reading .rich-heading--h6 {
-  font-size: 15px;
-  font-weight: var(--weight-semibold);
   color: var(--ink-soft);
 }
 
@@ -2786,51 +1978,26 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   padding: 0.1em 0.36em;
 }
 
-/* Block code: keeps the existing rich-code-block chrome (header + copy
-   button) and only overrides the inner <pre><code> and the outer frame. */
-.workspace-markdown-reading .rich-code-block {
-  --rich-code-padding-block: 12px;
-  --rich-code-line-height: 1.55;
-  margin: 14px 0;
-  border: 1px solid var(--rule);
-  border-radius: var(--radius-md);
-  background: var(--surface-2);
-  overflow: hidden;
-}
-
+/* Code blocks, quotes, rules and tables keep the answers' shared look. Code
+ * scrolls instead of wrapping, since a document keeps its own line breaks. */
 .workspace-markdown-reading .rich-code-block .rich-code {
-  margin: 0;
-  padding: var(--rich-code-padding-block) 14px;
-  background: transparent;
-  color: var(--ink);
-  font-family: var(--font-mono, "SFMono-Regular", Consolas, "Liberation Mono", monospace);
-  font-size: 12.5px;
-  line-height: var(--rich-code-line-height);
   white-space: pre;
   overflow-x: auto;
 }
 
-.workspace-markdown-reading .rich-code-block--no-header > .rich-code {
-  padding-right: 40px;
+/* As in answers, a table has no side frame: its outer cell text starts on the
+ * prose edge, and cells keep whole words while the wrapper scrolls. */
+.workspace-markdown-reading .rich-table-wrap :is(th, td) {
+  overflow-wrap: break-word;
+  word-break: normal;
 }
 
-.workspace-markdown-reading .rich-code-header {
-  background: var(--surface);
-  border-bottom: 1px solid var(--rule);
-  font-size: 11px;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--ink-muted);
+.workspace-markdown-reading .rich-table-wrap :is(th, td):first-child {
+  padding-inline-start: 0;
 }
 
-/* Blockquote. */
-.workspace-markdown-reading .rich-blockquote {
-  margin: 12px 0;
-  padding: 6px 14px;
-  border-left: 3px solid var(--wuu-accent);
-  background: color-mix(in srgb, var(--surface-2) 65%, transparent);
-  color: var(--ink-soft);
-  border-radius: 0 var(--radius-xs) var(--radius-xs) 0;
+.workspace-markdown-reading .rich-table-wrap :is(th, td):last-child {
+  padding-inline-end: 0;
 }
 
 /* Lists (react-markdown emits standard ul/ol when no override is supplied). */
@@ -2846,45 +2013,6 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
 
 .workspace-markdown-reading li > p {
   margin: 0;
-}
-
-/* Horizontal rule. */
-.workspace-markdown-reading .rich-rule {
-  margin: 22px 0;
-  border: 0;
-  border-top: 1px solid var(--rule);
-}
-
-/* Tables. */
-.workspace-markdown-reading .rich-table-wrap {
-  margin: 14px 0;
-  overflow-x: auto;
-  border: 1px solid var(--rule);
-  border-radius: var(--radius-md);
-}
-
-.workspace-markdown-reading .rich-table-wrap table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 14px;
-}
-
-.workspace-markdown-reading .rich-table-wrap th,
-.workspace-markdown-reading .rich-table-wrap td {
-  padding: 8px 14px;
-  border-bottom: 1px solid var(--rule);
-  text-align: left;
-  vertical-align: top;
-}
-
-.workspace-markdown-reading .rich-table-wrap th {
-  background: var(--surface-2);
-  font-weight: var(--weight-semibold);
-  color: var(--ink);
-}
-
-.workspace-markdown-reading .rich-table-wrap tr:last-child td {
-  border-bottom: 0;
 }
 
 /* Images. Raw HTML badges (e.g. shields.io) come in through img.rich-image
@@ -2917,28 +2045,11 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   text-align: right;
 }
 
-/* Monaco draws its own scrollbars instead of using the browser's native
-   pseudo-elements, so mirror the renderer-wide scrollbar tokens here. */
-.workspace-monaco-editor .monaco-scrollable-element > .scrollbar {
-  background: var(--scrollbar-track-bg);
-}
-
-.workspace-monaco-editor .monaco-scrollable-element > .scrollbar > .slider {
+/* Monaco draws its own scrollbars; the editor theme colours the thumb from the
+   scrollbar tokens and keeps it visible, since scroll position is part of what
+   an editor shows. Only the thumb's shape needs the product radius. */
+:is(.workspace-monaco-editor, .workspace-monaco-diff-editor) .monaco-scrollable-element > .scrollbar > .slider {
   border-radius: var(--scrollbar-radius);
-  background: transparent;
-  transition: background-color var(--motion-base) var(--ease-out);
-}
-
-.workspace-monaco-editor:hover .monaco-scrollable-element > .scrollbar > .slider {
-  background: var(--scrollbar-thumb);
-}
-
-.workspace-monaco-editor .monaco-scrollable-element > .scrollbar > .slider:hover {
-  background: var(--scrollbar-thumb-hover);
-}
-
-.workspace-monaco-editor .monaco-scrollable-element > .scrollbar > .slider.active {
-  background: var(--scrollbar-thumb-active);
 }
 
 .workspace-monaco-editor {
@@ -3021,264 +2132,314 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   color: var(--hljs-meta);
 }
 
-.workspace-diff-review {
+/* Review: the diff beside its change list. Below the split width
+ * (WorkspaceReviewPanels.tsx) the list folds into a switcher above a
+ * full-width diff. */
+.workspace-review-panel {
   display: grid;
   height: 100%;
+  min-width: 0;
   min-height: 0;
-  grid-template-rows: auto minmax(0, 1fr);
-  background: var(--paper);
-}
-
-.workspace-diff-header {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  justify-content: space-between;
-  gap: 14px;
-  border-bottom: 1px solid var(--hairline-soft);
-  min-height: 42px;
-  padding: 0 14px 0 18px;
-}
-
-.workspace-diff-header div,
-.workspace-diff-detail-header div {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: 8px;
-}
-
-.workspace-diff-header strong,
-.workspace-diff-detail-header strong,
-.workspace-diff-header span,
-.workspace-diff-detail-header span {
-  min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
+  /* Fill the panel's height; a lone auto row would only take its content's. */
+  grid-template-rows: minmax(0, 1fr);
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
-.workspace-diff-header strong,
-.workspace-diff-detail-header strong {
-  color: var(--ink);
-  font-size: var(--font-ui);
-  font-weight: var(--weight-semibold);
+.workspace-review-panel.has-diff:not(.single-file, .compact) {
+  grid-template-columns:
+    minmax(0, 1fr)
+    8px
+    minmax(220px, min(var(--workspace-review-tree-width, 280px), calc(100% - 428px)));
 }
 
-.workspace-diff-header span,
-.workspace-diff-detail-header span {
-  color: var(--ink-muted);
-  font-size: var(--font-sm);
-}
-
-.workspace-diff-header .icon-button {
-  width: 30px;
-  height: 30px;
-  flex: 0 0 auto;
-}
-
-.workspace-diff-title span {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.workspace-diff-branch-arrow {
-  color: var(--diff-branch-arrow);
-}
-
-.workspace-diff-summary {
-  display: inline-flex;
-  min-width: 0;
-  align-items: center;
-  gap: 9px;
-  color: var(--ink-muted);
-  font-size: var(--font-ui);
-  font-weight: var(--weight-semibold);
-}
-
-.workspace-diff-content {
-  display: grid;
+.workspace-review-resizer {
+  position: relative;
+  z-index: 2;
   min-width: 0;
   min-height: 0;
-  grid-template-columns: minmax(0, 1fr) minmax(270px, 320px);
+  cursor: col-resize;
+  outline: 0;
 }
 
-.workspace-diff-files {
+.workspace-review-resizer::before {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  background: var(--hairline-soft);
+  content: "";
+  transform: translateX(-50%);
+  transition:
+    background-color var(--motion-fast) var(--ease-out),
+    box-shadow var(--motion-fast) var(--ease-out);
+}
+
+.workspace-review-resizer:hover::before,
+.workspace-review-resizer:focus-visible::before,
+.workspace-review-panel.resizing-split .workspace-review-resizer::before {
+  background: var(--sidebar-resizer-hover-bg);
+  box-shadow: 0 0 0 1px var(--sidebar-resizer-hover-ring);
+}
+
+.workspace-review-tree-pane {
+  position: relative;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  border-right: 1px solid var(--hairline-soft);
-  background: transparent;
 }
 
-.workspace-diff-file-scroll,
-.workspace-diff-code-scroll {
-  min-width: 0;
-  min-height: 0;
-  height: 100%;
-  overflow: auto;
-}
-
-/* Pin the code-scroll into the 1fr row of .workspace-diff-detail. Without
-   this it auto-flows into the second `auto` row whenever the error row is
-   empty (almost always), so the scroll container collapses to its content
-   height instead of filling the remaining vertical space. */
-.workspace-diff-code-scroll {
-  grid-row: 3;
-}
-
-.workspace-diff-file-scroll {
+.workspace-review-overlay {
+  position: absolute;
+  inset: 70px 12px 12px;
   display: grid;
-  gap: 4px;
-  padding: 10px;
-}
-
-.workspace-diff-file {
-  display: grid;
-  min-width: 0;
-  min-height: 40px;
-  grid-template-columns: 24px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 8px;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--diff-file-text);
-  padding: 6px 8px;
-  text-align: left;
-}
-
-.workspace-diff-file:hover,
-.workspace-diff-file.active {
-  background: var(--surface-3);
-}
-
-.workspace-diff-file-status {
-  display: grid;
-  width: 22px;
-  height: 22px;
-  place-items: center;
-  border-radius: var(--radius-sm);
-  background: var(--diff-status-bg);
-  color: var(--diff-status-fg);
-  font-size: var(--font-xs);
-  font-weight: var(--weight-semibold);
-}
-
-.workspace-diff-file-status.added,
-.workspace-diff-file-status.untracked {
-  background: var(--diff-added-bg);
-  color: var(--diff-added-fg);
-}
-
-.workspace-diff-file-status.deleted {
-  background: var(--danger-soft);
-  color: var(--danger);
-}
-
-.workspace-diff-file-status.renamed,
-.workspace-diff-file-status.copied {
-  background: var(--diff-renamed-bg);
-  color: var(--info);
-}
-
-.workspace-diff-file-path {
-  min-width: 0;
-  overflow: hidden;
-  font-size: var(--font-ui);
-  font-weight: var(--weight-semibold);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.workspace-diff-file-stats {
-  display: inline-flex;
-  min-width: 0;
-  flex: 0 0 auto;
-  gap: 5px;
-  color: var(--ink-muted);
-  font-size: var(--font-sm);
-  font-weight: var(--weight-semibold);
-}
-
-.workspace-diff-detail {
-  display: grid;
-  min-width: 0;
-  min-height: 0;
-  /* Propagate the parent container's height down to the inner grid so the
-     `minmax(0, 1fr)` row can actually expand. In the bottom review panel
-     this matches the previous stretch behavior; in the right side panel
-     it's required because .workspace-review-diff-panel is a plain block
-     (no grid stretch) and the diff would otherwise collapse. */
-  height: 100%;
-  grid-template-rows: auto auto minmax(0, 1fr) auto;
-  background: var(--paper);
-  border-right: 1px solid var(--hairline-soft);
-}
-
-.workspace-diff-detail-header {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  justify-content: space-between;
-  min-height: 46px;
-  border-bottom: 1px solid var(--hairline-soft);
-  padding: 0 14px 0 18px;
-}
-
-.workspace-diff-file-meta {
-  display: inline-flex;
-  min-width: 0;
-  align-items: center;
-  gap: 7px;
-}
-
-.workspace-diff-file-meta > span:not(.additions):not(.deletions) + span:not(.additions):not(.deletions)::before {
-  margin-right: 7px;
-  color: var(--ink-faint);
-  content: "·";
-}
-
-.workspace-diff-error,
-.workspace-diff-truncated {
-  border-bottom: 1px solid var(--diff-error-border);
-  background: var(--danger-soft);
-  color: var(--danger);
-  font-size: var(--font-ui);
-  font-weight: var(--weight-medium);
-  padding: 9px 18px;
-}
-
-.workspace-diff-truncated {
-  /* Keep the truncated banner anchored to the last row of
-     .workspace-diff-detail (below the 1fr code-scroll), regardless of
-     whether the error row above is populated. */
-  grid-row: 4;
-  border-top: 1px solid var(--diff-truncated-border);
-  border-bottom: 0;
-  background: var(--warning-soft);
-  color: var(--diff-truncated-text);
-}
-
-.workspace-diff-empty {
-  display: grid;
-  min-height: 220px;
   place-content: center;
-  color: var(--ink-muted);
+  border-radius: var(--radius-sm);
+  background: var(--review-overlay-bg);
+  color: var(--ink-soft);
   font-size: var(--font-ui);
-  font-weight: var(--weight-medium);
-  padding: 20px;
   text-align: center;
 }
 
+.workspace-review-overlay.error {
+  color: var(--danger);
+}
+
+.workspace-review-diff-panel {
+  display: grid;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  overflow: hidden;
+  background: var(--paper);
+}
+
+/* The file row is a chrome row: its first glyph sits on the pane inset and
+ * the stepper's last glyph on the toolbar inset. */
+.workspace-diff-detail-header {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  min-height: calc(var(--control-size-toolbar) + var(--space-2) * 2);
+  align-items: center;
+  gap: var(--space-2);
+  border-bottom: 1px solid var(--hairline-soft);
+  padding: var(--space-2) var(--control-toolbar-inset) var(--space-2) var(--pane-inset);
+  container: review-file-header / inline-size;
+}
+
+.workspace-review-file-row,
+.workspace-review-switcher {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  align-items: baseline;
+  gap: var(--space-3);
+}
+
+.workspace-review-switcher {
+  min-height: var(--control-size-toolbar);
+  margin-inline-start: calc(var(--control-padding-inline) * -1);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: inherit;
+  padding: var(--space-1) var(--space-2) var(--space-1) var(--control-padding-inline);
+  text-align: start;
+  transition: background-color var(--motion-fast) var(--ease-out);
+}
+
+.workspace-review-switcher:hover,
+.workspace-review-switcher[aria-expanded="true"] {
+  background: var(--ink-overlay-4);
+}
+
+.workspace-review-switcher-chevron {
+  align-self: center;
+  flex: 0 0 auto;
+  color: var(--ink-tertiary);
+  transition: transform var(--motion-base) var(--ease-out);
+}
+
+.workspace-review-switcher[aria-expanded="true"] .workspace-review-switcher-chevron {
+  transform: rotate(180deg);
+}
+
+.workspace-review-file {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.workspace-review-file-name,
+.workspace-review-file-context {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The name keeps its width; the context gives way first. */
+.workspace-review-file-name {
+  flex: 0 1 auto;
+  color: var(--ink);
+  font-size: var(--font-ui);
+  font-weight: var(--weight-medium);
+}
+
+.workspace-review-file-context {
+  flex: 0 10000 auto;
+  color: var(--ink-soft);
+  font-size: var(--font-sm);
+}
+
+/* A folder path loses its start first, keeping the folder nearest the file. */
+.workspace-review-file-context.is-folder {
+  direction: rtl;
+  text-align: left;
+}
+
+.workspace-review-file-meta {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: baseline;
+  gap: var(--space-2);
+  color: var(--ink-soft);
+  font-size: var(--font-sm);
+  white-space: nowrap;
+}
+
+.workspace-change-counts {
+  display: inline-flex;
+  gap: var(--space-1);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* A narrow row (a small panel or large text) gives the name its own line and
+ * moves the folder, status and counts under it. The threshold follows the
+ * row's width in text, never the file, so stepping files keeps the height. */
+@container review-file-header (max-width: 26em) {
+  .workspace-review-file-row,
+  .workspace-review-switcher {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    grid-template-areas:
+      "name name chevron"
+      "context meta chevron";
+    align-items: baseline;
+    gap: 0 var(--space-3);
+  }
+
+  .workspace-review-file {
+    display: contents;
+  }
+
+  .workspace-review-file-name {
+    grid-area: name;
+  }
+
+  .workspace-review-file-context {
+    grid-area: context;
+  }
+
+  .workspace-review-file-meta {
+    grid-area: meta;
+  }
+
+  .workspace-review-switcher-chevron {
+    grid-area: chevron;
+  }
+}
+
+/* Narrower still, a folder could show only a letter or two: leave it to the
+ * change list. */
+@container review-file-header (max-width: 17em) {
+  .workspace-review-file-context {
+    display: none;
+  }
+
+  .workspace-review-file-meta {
+    grid-column: 1 / 3;
+  }
+}
+
+.workspace-review-stepper {
+  display: flex;
+  flex: 0 0 auto;
+}
+
+.workspace-review-stepper .icon-button {
+  width: var(--control-size-toolbar);
+  height: var(--control-size-toolbar);
+}
+
+/* The folded change list opens as a menu card under the file row. */
+.workspace-review-sheet {
+  position: absolute;
+  z-index: 5;
+  top: calc(100% + var(--space-1));
+  right: var(--space-2);
+  left: var(--space-2);
+  display: flex;
+  max-height: min(60vh, 520px);
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--menu-border);
+  border-radius: var(--menu-shell-radius);
+  background: var(--menu-bg);
+  box-shadow: var(--menu-shadow);
+  --enter-y: -4px;
+  animation: wuu-enter var(--motion-base) var(--ease-out) both;
+}
+
+.workspace-review-sheet .workspace-diff-tree {
+  flex: 1 1 auto;
+}
+
+.workspace-diff-error,
+.workspace-diff-empty {
+  display: grid;
+  min-height: 0;
+  place-content: center;
+  color: var(--ink-soft);
+  font-size: var(--font-ui);
+  line-height: var(--line-body);
+  padding: var(--panel-padding);
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+.workspace-diff-error {
+  color: var(--danger);
+}
+
+/* A notice, not an alarm: the preview stops, the change itself is intact. */
+.workspace-diff-truncated {
+  border-top: 1px solid var(--hairline-soft);
+  color: var(--ink-soft);
+  font-size: var(--font-sm);
+  line-height: var(--line-body);
+  padding: var(--space-2) var(--pane-inset);
+}
+
 .workspace-monaco-diff-editor {
-  grid-row: 3;
   width: 100%;
   height: 100%;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
   background: var(--paper);
+}
+
+.workspace-diff-code-scroll {
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  overflow: auto;
 }
 
 .workspace-diff-code {
@@ -3290,11 +2451,11 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   border-radius: 0;
   background: var(--paper);
   color: var(--ink);
-  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
-  font-size: 12px;
-  line-height: 1.58;
+  font-family: var(--font-mono);
+  font-size: var(--appearance-code-size);
+  line-height: 1.6;
   margin: 0;
-  padding: 12px 0 40px;
+  padding: var(--space-3) 0 var(--space-8);
   white-space: normal;
 }
 
@@ -3302,29 +2463,25 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   display: block;
   position: relative;
   min-width: 0;
-  min-height: 19px;
   box-sizing: border-box;
-  padding: 0 18px 0 104px;
+  padding: 0 var(--space-5) 0 104px;
 }
 
 .workspace-diff-line.meta {
-  color: var(--diff-line-meta-text);
+  color: var(--ink-soft);
 }
 
 .workspace-diff-line.hunk {
-  background: var(--diff-hunk-bg);
-  color: var(--info);
-  font-weight: var(--weight-semibold);
+  background: var(--surface-2);
+  color: var(--ink-soft);
 }
 
 .workspace-diff-line.add {
-  background: var(--diff-add-bg);
-  color: var(--diff-add-text);
+  background: color-mix(in srgb, var(--success) 8%, transparent);
 }
 
 .workspace-diff-line.delete {
-  background: var(--diff-delete-bg);
-  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
 }
 
 .workspace-diff-line-number {
@@ -3333,10 +2490,10 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   bottom: 0;
   width: 52px;
   box-sizing: border-box;
-  border-right: 1px solid var(--hairline-soft);
-  color: var(--diff-line-number-text);
+  color: var(--ink-tertiary);
   padding: 0 10px;
   text-align: right;
+  font-variant-numeric: tabular-nums;
   user-select: none;
 }
 
@@ -3357,47 +2514,66 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   word-break: break-word;
 }
 
+/* Change list. Rows share the file tree's height and type size so the two
+ * trees read as one family; the text axis starts one step in from the list
+ * edge and the trailing counts end on the pane inset. */
 .workspace-diff-tree {
   display: grid;
+  height: 100%;
   min-width: 0;
   min-height: 0;
   grid-template-rows: auto auto minmax(0, 1fr);
-  background: transparent;
+  overflow: hidden;
+  container: workspace-review-list / inline-size;
 }
 
 .workspace-diff-tree-header {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 12px 12px 7px;
-}
-
-.workspace-diff-tree-header div {
   display: grid;
   min-width: 0;
-  gap: 3px;
+  gap: 2px;
+  padding: var(--space-3) var(--pane-inset) var(--space-2) var(--space-4);
 }
 
-.workspace-diff-tree-header strong,
-.workspace-diff-tree-header span {
+.workspace-diff-tree-summary {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: var(--space-2);
+  font-size: var(--font-sm);
+}
+
+.workspace-diff-tree-summary strong {
+  color: var(--ink);
+  font-size: var(--font-ui);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+}
+
+.workspace-diff-tree-branch {
   min-width: 0;
   overflow: hidden;
+  color: var(--ink-soft);
+  font-size: var(--font-sm);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.workspace-diff-tree-header strong {
+.workspace-diff-search {
+  min-width: 0;
+  min-height: var(--control-field-height);
+  margin: 0 var(--space-2) var(--space-2);
+  border: 1px solid var(--field-border);
+  border-radius: var(--radius-sm);
+  background: var(--field-bg);
   color: var(--ink);
-  font-size: var(--font-title);
-  font-weight: var(--weight-semibold);
+  font: inherit;
+  font-size: var(--font-ui);
+  padding: var(--control-padding-block) var(--space-2);
+  transition: background-color var(--motion-fast) var(--ease-out);
 }
 
-.workspace-diff-tree-header span {
-  color: var(--diff-tree-header-text);
-  font-size: var(--font-sm);
-  font-weight: var(--weight-medium);
+.workspace-diff-search:hover {
+  background: var(--field-hover-bg);
 }
 
 .workspace-diff-tree-scroll {
@@ -3409,8 +2585,7 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
 .workspace-diff-tree-list {
   display: grid;
   min-width: 0;
-  gap: 1px;
-  padding: 2px 5px 12px;
+  padding: 0 var(--space-2) var(--space-3);
 }
 
 .workspace-diff-tree-node,
@@ -3421,59 +2596,38 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
 
 .workspace-diff-tree-row {
   display: grid;
+  width: 100%;
   min-width: 0;
-  /* Row height + font size mirror the file tree (pierre/trees, itemHeight
-     24 + --trees-font-size-override: --font-sm) so the two trees read as
-     the same component family. Active keeps its accent fill (see below) so
-     "selected diff" is still distinguishable from "hover". */
-  min-height: 24px;
-  /* Tightened chevron / icon columns (was 18px 18px) so the file name has
-     more room before the stat badge. Together with the narrower tree
-     indentation spacer below this stops common file names from getting
-     ellipsised inside the 280px review tree pane at deep paths. */
-  grid-template-columns: 14px 14px minmax(0, 1fr) auto;
+  min-height: var(--control-row-height);
+  grid-template-columns: var(--icon-size-sm) var(--icon-size-sm) minmax(0, 1fr) auto;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-2);
   border-radius: var(--radius-xs);
   background: transparent;
   color: var(--ink);
-  font-size: var(--font-sm);
-  padding-right: 8px;
+  font-size: var(--font-ui);
+  padding-block: 0;
+  padding-inline:
+    calc(var(--space-2) + var(--workspace-diff-tree-depth, 0) * var(--space-3))
+    var(--space-3);
   text-align: left;
+  transition: background-color var(--motion-fast) var(--ease-out);
 }
 
 .workspace-diff-tree-row:hover {
-  background: var(--surface-2);
+  background: var(--ink-overlay-4);
 }
 
 .workspace-diff-tree-row.active {
-  /* The active row is the file whose diff is shown in the diff pane, so it
-     needs to read as clearly distinct from a hover — using the same neutral
-     surface tint as hover (the old behavior) made it impossible to tell
-     which file's diff was on screen at a glance. */
-  background: var(--surface-3);
-  color: var(--ink);
+  background: var(--selection-surface);
 }
 
-.workspace-diff-tree-row.active svg {
-  color: var(--ink);
-}
-
-.workspace-diff-tree-row.active .workspace-diff-tree-count {
-  color: var(--ink-muted);
+html[data-focus-modality="keyboard"] .workspace-diff-tree-row:focus-visible {
+  outline-offset: -2px;
 }
 
 .workspace-diff-tree-row svg {
-  color: var(--diff-tree-row-icon);
-}
-
-.workspace-diff-tree-row.directory {
-  font-weight: var(--weight-semibold);
-}
-
-.workspace-diff-tree-row.file {
-  grid-template-columns: 14px 14px minmax(0, 1fr) auto;
-  color: var(--diff-tree-file-text);
+  color: var(--ink-tertiary);
 }
 
 .workspace-diff-tree-chevron {
@@ -3491,206 +2645,57 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   white-space: nowrap;
 }
 
-.workspace-diff-tree-count {
-  color: var(--diff-tree-count-text);
+.workspace-diff-tree-count,
+.workspace-diff-tree-stats {
+  color: var(--ink-tertiary);
   font-size: var(--font-sm);
-  font-weight: var(--weight-semibold);
+  font-variant-numeric: tabular-nums;
 }
 
-.workspace-diff-tree-spacer {
-  /* Spacer that mirrors the chevron column so the file icon lines up
-     under the folder icon in directory rows. The per-level indent step
-     lives in WorkspaceReviewPanels.tsx. */
-  width: 12px;
-}
-
+/* Counts first, the status letter last in a fixed column, so letters line
+ * up down the list whatever the counts' width. */
 .workspace-diff-tree-stats {
   display: inline-flex;
   min-width: 0;
-  align-items: center;
-  gap: 5px;
-  color: var(--ink-muted);
-  font-size: var(--font-sm);
-  font-weight: var(--weight-semibold);
+  align-items: baseline;
+  gap: var(--space-2);
 }
 
-.workspace-diff-tree-binary {
-  color: var(--ink-muted);
+.workspace-diff-file-status {
+  width: 1.2em;
+  color: var(--ink-soft);
+  font-weight: var(--weight-medium);
+  text-align: center;
+}
+
+.workspace-diff-file-status:is(.added, .untracked) {
+  color: var(--success);
+}
+
+.workspace-diff-file-status.deleted {
+  color: var(--danger);
+}
+
+.workspace-diff-tree-spacer {
+  width: var(--icon-size-sm);
+}
+
+/* A narrow list keeps the names and the status letter; per-file counts
+ * return once there is room, and the open file's header always has them. */
+@container workspace-review-list (max-width: 319px) {
+  .workspace-diff-tree-stats > :not(.workspace-diff-file-status) {
+    display: none;
+  }
 }
 
 .workspace-diff-tree-empty {
   display: grid;
-  min-height: 140px;
+  min-height: 120px;
   place-content: center;
-  color: var(--ink-muted);
+  color: var(--ink-soft);
   font-size: var(--font-ui);
-  font-weight: var(--weight-medium);
-  padding: 18px;
+  padding: var(--space-4);
   text-align: center;
-}
-
-.workspace-review-panel {
-  display: grid;
-  height: 100%;
-  min-width: 0;
-  min-height: 0;
-  --workspace-review-tree-width: 280px;
-  grid-template-columns: minmax(0, 1fr);
-  /* Fill the panel's vertical space. Without this the single grid row
-     defaults to auto and only takes the tallest child's content height,
-     leaving the bottom of the side panel empty. */
-  grid-template-rows: minmax(0, 1fr);
-  overflow: hidden;
-}
-
-.workspace-review-panel.has-diff {
-  grid-template-columns:
-    minmax(0, 1fr)
-    8px
-    minmax(220px, min(var(--workspace-review-tree-width), calc(100% - 420px)));
-}
-
-.workspace-review-panel.single-file.has-diff {
-  grid-template-columns: minmax(0, 1fr);
-}
-
-.workspace-review-panel.single-file .workspace-review-tree-pane {
-  display: none;
-}
-
-.workspace-review-panel.single-file .workspace-review-resizer {
-  display: none;
-}
-
-.workspace-review-resizer {
-  position: relative;
-  z-index: 2;
-  min-width: 0;
-  min-height: 0;
-  cursor: col-resize;
-  outline: 0;
-}
-
-.workspace-review-resizer::before {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 50%;
-  width: 1px;
-  background: var(--surface-3);
-  content: "";
-  transform: translateX(-50%);
-  transition:
-    background-color var(--motion-fast) var(--ease-out),
-    box-shadow var(--motion-fast) var(--ease-out);
-}
-
-.workspace-review-resizer:hover::before,
-.workspace-review-resizer:focus-visible::before,
-.workspace-review-panel.resizing-split .workspace-review-resizer::before {
-  background: var(--review-resizer-hover-bg);
-  box-shadow:
-    -3px 0 0 var(--ink-overlay-4),
-    3px 0 0 var(--ink-overlay-4);
-}
-
-.workspace-review-tree-pane {
-  position: relative;
-  min-width: 0;
-  min-height: 0;
-  overflow: hidden;
-  border-left: 1px solid var(--hairline-soft);
-}
-
-.workspace-review-panel.has-diff .workspace-review-tree-pane {
-  border-left: 0;
-}
-
-.workspace-review-panel:not(.has-diff) .workspace-review-tree-pane {
-  border-left: 0;
-}
-
-.workspace-review-tree-pane .workspace-diff-tree {
-  height: 100%;
-  overflow: hidden;
-  background: transparent;
-}
-
-.workspace-review-tree-pane .workspace-diff-tree-header {
-  padding: 12px 12px 7px;
-}
-
-.workspace-review-tree-pane .workspace-diff-tree-scroll {
-  height: 100%;
-}
-
-.workspace-review-tree-pane .workspace-diff-tree-list {
-  padding: 2px 5px 12px;
-}
-
-.workspace-review-overlay {
-  position: absolute;
-  inset: 70px 12px 12px;
-  display: grid;
-  place-content: center;
-  border-radius: var(--radius-sm);
-  background: var(--review-overlay-bg);
-  color: var(--ink-muted);
-  font-size: var(--font-ui);
-  font-weight: var(--weight-medium);
-  text-align: center;
-}
-
-.workspace-review-overlay.error {
-  color: var(--danger);
-}
-
-.workspace-review-diff-panel {
-  min-width: 0;
-  min-height: 0;
-  height: 100%;
-  overflow: hidden;
-  border-radius: 0;
-  background: var(--paper);
-}
-
-.workspace-review-diff-panel.workspace-diff-detail {
-  border-right: 0;
-}
-
-.workspace-review-diff-panel .workspace-diff-code {
-  padding-top: 10px;
-}
-
-.provider-pill {
-  display: inline-flex;
-  height: 28px;
-  align-items: center;
-  border-radius: var(--radius-sm);
-  background: var(--provider-pill-bg);
-  color: var(--provider-pill-text);
-  font-size: var(--font-sm);
-  font-weight: var(--weight-semibold);
-  padding: 0 10px;
-}
-
-.provider-pill:hover,
-.model-label:hover {
-  background: var(--surface-3);
-  color: var(--ink);
-}
-
-.model-label {
-  max-width: 220px;
-  overflow: hidden;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--ink);
-  font-size: var(--font-ui);
-  font-weight: var(--weight-semibold);
-  padding: 4px 8px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .codex-runtime-anchor {
@@ -3745,14 +2750,8 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
 /* Secondary to the model beside it: quieter ink, never a heavier weight. */
 .codex-runtime-effort {
   flex: 0 0 auto;
-  color: var(--codex-runtime-effort-text);
+  color: var(--ink-soft);
   font-weight: inherit;
-}
-
-.codex-runtime-trigger:hover,
-.codex-runtime-trigger[aria-expanded="true"] {
-  background: var(--surface-3);
-  color: var(--ink);
 }
 
 .codex-runtime-trigger:disabled {
@@ -3905,41 +2904,39 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   background: var(--menu-hover);
 }
 
+/* The one control in the panel that is dragged, so it is the one with weight:
+ * a capsule that fills with ink as the level rises, a dot for every level the
+ * model offers, and a knob inset in the capsule that snaps to them. */
 .codex-effort-slider {
+  --effort-knob: 20px;
+  --effort-track: 24px;
+  --effort-edge: 2px;
+  --effort-at: calc(var(--effort-edge) + var(--effort-knob) / 2 + (100% - var(--effort-knob) - var(--effort-edge) * 2) * var(--effort-ratio, 0));
   position: relative;
-  height: 30px;
+  height: 28px;
   touch-action: none;
 }
 
 .codex-effort-track {
   position: absolute;
-  top: 3px;
+  top: calc(50% - var(--effort-track) / 2);
   left: 0;
   right: 0;
-  height: 24px;
-  border-radius: var(--radius-pill);
-  pointer-events: none;
-  background: var(--surface-2);
-  box-shadow: inset 0 0 0 1px var(--hairline);
-  /* Clips the fill to the track's rounded ends, so the fill's square
-   * right edge still reads as a clean cap at 100% and the snap
-   * animation cannot overshoot past the track. */
+  height: var(--effort-track);
   overflow: hidden;
+  border-radius: var(--radius-pill);
+  background: var(--surface-4);
+  pointer-events: none;
 }
 
 .codex-effort-fill {
   position: absolute;
-  top: 0;
-  left: 0;
-  height: 100%;
-  width: var(--effort-progress);
-  /* Square right end: a rounded cap would peek out above and below the
-   * knob at interior stops. The opaque knob covers this edge instead,
-   * and the track clips it into a rounded cap at 100%. */
-  border-radius: var(--radius-pill) 0 0 var(--radius-pill);
+  inset: 0 auto 0 0;
+  /* Center the rounded fill cap on the knob at every stop. */
+  width: calc(var(--effort-at) + var(--effort-track) / 2);
+  border-radius: inherit;
   background: var(--interaction-accent);
-  pointer-events: none;
-  transition: width var(--motion-base) var(--ease-bounce);
+  transition: width var(--motion-base) var(--ease-out);
 }
 
 .codex-effort-stops {
@@ -3950,11 +2947,12 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
 
 .codex-effort-stops > span {
   position: absolute;
-  top: 13px;
-  width: 3px;
+  top: calc(50% - 2px);
+  left: calc(var(--effort-edge) + var(--effort-knob) / 2 + (100% - var(--effort-knob) - var(--effort-edge) * 2) * var(--effort-stop));
+  width: 4px;
   height: 4px;
-  border-radius: var(--radius-pill);
-  background: var(--ink-tertiary);
+  border-radius: var(--radius-circle);
+  background: var(--ink-muted);
   transform: translateX(-50%);
   transition: background-color var(--motion-fast) var(--ease-out);
 }
@@ -3965,37 +2963,38 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
 
 .codex-effort-knob {
   position: absolute;
-  top: 2px;
-  left: clamp(13px, var(--effort-progress), calc(100% - 13px));
-  width: 26px;
-  height: 26px;
-  transform: translateX(-50%);
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-pill);
+  top: calc(50% - var(--effort-knob) / 2);
+  left: var(--effort-at);
+  width: var(--effort-knob);
+  height: var(--effort-knob);
+  box-sizing: border-box;
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--radius-circle);
   background: var(--slider-thumb-bg);
   box-shadow: var(--shadow-soft);
+  transform: translateX(-50%);
   pointer-events: none;
-  transition: left var(--motion-base) var(--ease-bounce), transform var(--motion-fast) var(--ease-out);
+  transition: left var(--motion-base) var(--ease-out), scale var(--motion-fast) var(--ease-out);
 }
 
 /* The knob gives under the pointer while a level is being chosen. */
 .codex-effort-slider:not(.is-disabled):active .codex-effort-knob {
-  transform: translateX(-50%) scale(0.92);
+  scale: 0.9;
 }
 
 .codex-effort-slider input[type="range"] {
   position: absolute;
   inset: 0;
   width: 100%;
-  height: 30px;
+  height: 100%;
+  margin: 0;
   opacity: 0;
   cursor: pointer;
-  margin: 0;
 }
 
 html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visible) .codex-effort-knob {
-  border-color: var(--focus-ring);
-  box-shadow: 0 0 0 2px var(--paper), 0 0 0 4px var(--focus-ring);
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
 }
 
 html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visible) input {
@@ -4015,13 +3014,6 @@ html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visibl
   bottom: auto;
   transform-origin: top right;
   --menu-enter-y: -4px;
-}
-
-.codex-menu-label {
-  color: var(--codex-menu-label-text);
-  font-size: var(--font-xs);
-  font-weight: var(--weight-medium);
-  padding: 4px 8px 6px;
 }
 
 .codex-runtime-menu button {
@@ -4063,16 +3055,22 @@ html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visibl
    at the bottom; the popover still morphs in place as pages change.
    Row metrics are drawn for the default 14.5px UI size and grow with larger
    UI text, the same proportion the panel width follows in
-   ComposerRuntimeMenus.tsx. --runtime-rows is the row count of the current
-   page, set on the panel.
-   Summary stack: 1px border, --menu-inset, 2px gap, context row, model row.
-   With slider: +6px group gap (2px row gap + 4px slider margin) and 30px control. */
+   ComposerRuntimeMenus.tsx. --runtime-rows is the row count of a list page;
+   the summary reports its context line, effort block and full rows, which
+   stack 2px apart inside the menu inset and the 1px border. */
 .codex-model-menu.runtime-panel {
   --runtime-row: max(36px, calc(var(--font-ui) * 36 / 14.5));
   --runtime-context-row: max(22px, calc(var(--font-ui) * 22 / 14.5));
   --runtime-header: max(40px, calc(var(--font-ui) * 40 / 14.5));
+  --runtime-effort-block: 28px;
   --runtime-list: calc(var(--runtime-rows, 1) * (var(--runtime-row) + 1px) - 1px);
-  --runtime-summary: calc(2px + var(--menu-inset) * 2 + var(--runtime-context-row) + 2px + var(--runtime-row));
+  --runtime-summary: calc(
+    2px + var(--menu-inset) * 2
+    + var(--runtime-summary-context, 1) * var(--runtime-context-row)
+    + var(--runtime-summary-rows, 1) * var(--runtime-row)
+    + var(--runtime-summary-effort, 0) * var(--runtime-effort-block)
+    + (var(--runtime-summary-context, 1) + var(--runtime-summary-rows, 1) + var(--runtime-summary-effort, 0) - 1) * 2px
+  );
   position: relative;
   display: block;
   width: min(var(--runtime-panel-width, 224px), calc(100vw - 16px));
@@ -4087,10 +3085,6 @@ html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visibl
   border-color: var(--hairline-soft);
   box-shadow: var(--menu-shadow);
   transition: height var(--motion-base) var(--ease-out);
-}
-
-.codex-model-menu.runtime-panel.is-summary:has(.codex-effort-slider) {
-  height: calc(var(--runtime-summary) + 36px);
 }
 
 .codex-model-menu.runtime-panel.is-engines {
@@ -4145,6 +3139,7 @@ html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visibl
   padding: var(--menu-inset);
 }
 
+/* Where the model comes from, as a quiet path above it. */
 .runtime-panel-context {
   display: flex;
   min-width: 0;
@@ -4152,24 +3147,36 @@ html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visibl
   flex: 0 0 auto;
   align-items: center;
   gap: 4px;
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
 }
 
-.codex-runtime-menu .runtime-panel-context button {
+.codex-runtime-menu .runtime-panel-context button,
+.runtime-panel-context-item {
+  display: inline-flex;
   width: auto;
   height: var(--runtime-context-row);
+  min-width: 0;
   flex: 0 1 auto;
+  align-items: center;
   gap: 4px;
   padding: 0 4px;
+  border-radius: var(--radius-xs);
   color: var(--ink-tertiary);
   font-size: var(--font-xs);
   font-weight: var(--weight-medium);
   transition: color var(--motion-fast) var(--ease-out), background-color var(--motion-fast) var(--ease-out);
 }
 
+.runtime-panel-context-item > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* Engine names are a word long; the provider beside them can be any length,
  * so it alone gives way when the row runs short. */
-.codex-runtime-menu .runtime-panel-context button:has(> .engine-icon) {
+.runtime-panel-context :is(button, .runtime-panel-context-item):has(> .engine-icon) {
   flex-shrink: 0;
 }
 
@@ -4177,13 +3184,10 @@ html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visibl
   color: var(--ink);
 }
 
-.codex-runtime-menu .runtime-panel-context button > svg {
+.runtime-panel-context :is(button, .runtime-panel-context-item) > svg {
   width: var(--icon-size-xs);
   height: var(--icon-size-xs);
-  color: var(--ink-tertiary);
-}
-
-.runtime-panel-context button > svg.engine-icon {
+  flex: 0 0 auto;
   color: inherit;
 }
 
@@ -4207,28 +3211,24 @@ html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visibl
   flex: 1 1 auto !important;
 }
 
-.runtime-panel-effort-value {
-  flex: 0 0 auto !important;
-  color: var(--ink-soft);
-  font-size: var(--font-sm);
-  font-weight: var(--weight-medium);
-  --enter-opacity: 0.4;
-  --enter-y: 3px;
-  animation: wuu-enter var(--motion-base) var(--ease-out);
-}
-
 .runtime-panel-model > svg:last-child {
   color: var(--ink-tertiary);
 }
 
-.runtime-panel-handoff {
-  width: 100%;
-  max-width: 100%;
-  margin-top: 6px;
-  overflow: hidden;
-  text-align: left;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+/* The model row shows the live effort value above the slider. */
+.runtime-panel-effort {
+  height: var(--runtime-effort-block);
+  flex: 0 0 auto;
+  padding: 0 4px;
+}
+
+.codex-runtime-menu .runtime-panel-effort-value {
+  flex: 0 0 auto;
+  color: var(--ink);
+  font-size: var(--font-sm);
+  --enter-opacity: 0.4;
+  --enter-y: 3px;
+  animation: wuu-enter var(--motion-base) var(--ease-out);
 }
 
 .runtime-panel-header {
@@ -4310,11 +3310,6 @@ html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visibl
   gap: 1px;
 }
 
-.runtime-panel .codex-effort-slider {
-  flex: 0 0 auto;
-  margin: 4px 4px 0;
-}
-
 @container style(--motion-reduced: 1) {
   .codex-model-menu.runtime-panel {
     transition: none;
@@ -4329,6 +3324,7 @@ html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visibl
 
   .codex-runtime-trigger,
   .codex-runtime-trigger > svg.icon,
+  .codex-effort-fill,
   .codex-effort-knob {
     transition: none;
   }
@@ -4540,21 +3536,43 @@ html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visibl
   scrollbar-gutter: stable both-edges;
 }
 
-/* Speed is independent of the model and reasoning slider. */
-.codex-runtime-menu .runtime-panel-context .runtime-panel-fast,
-.codex-runtime-menu .runtime-panel-context .runtime-panel-speed-reset {
+/* Speed is independent of the model and the effort slider: a row that shows
+ * its state with a check, like the checked rows of the list pages. */
+.runtime-panel-fast-row {
+  display: flex;
+  height: var(--runtime-row);
   flex: 0 0 auto;
-  width: var(--runtime-context-row);
-  padding: 0;
+  align-items: center;
+  gap: 2px;
+}
+
+.codex-runtime-menu .runtime-panel-fast {
+  height: 100%;
+  flex: 1 1 auto;
+  gap: 8px;
+  padding: 0 4px;
+  border-radius: var(--radius-xs);
+  font-size: var(--font-menu);
+  font-weight: var(--weight-medium);
+}
+
+.codex-runtime-menu .runtime-panel-fast > svg {
+  color: var(--ink-soft);
+}
+
+.runtime-panel-fast .runtime-panel-fast-check {
+  visibility: hidden;
+}
+
+.runtime-panel-fast[aria-pressed="true"] .runtime-panel-fast-check {
+  visibility: visible;
+}
+
+.codex-runtime-menu .runtime-panel-fast-row .runtime-panel-speed-reset {
+  width: var(--runtime-row);
+  height: 100%;
+  flex: 0 0 auto;
   justify-content: center;
-}
-.codex-runtime-menu .runtime-panel-context .runtime-panel-speed-reset {
-  margin-left: auto;
-}
-.codex-runtime-menu .runtime-panel-fast[aria-pressed="true"],
-.codex-runtime-menu .runtime-panel-fast[aria-pressed="true"] > svg {
-  color: var(--interaction-accent);
-}
-.codex-runtime-menu .runtime-panel-fast[aria-pressed="true"] > svg {
-  fill: currentColor;
+  padding: 0;
+  color: var(--ink-tertiary);
 }

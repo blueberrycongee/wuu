@@ -178,7 +178,7 @@ export function gitChangeStatusLabel(status: GitChangeFile["status"]): string {
   }
 }
 
-function gitChangeStatusText(status: GitChangeFile["status"]): string {
+export function gitChangeStatusText(status: GitChangeFile["status"]): string {
   switch (status) {
     case "modified":
       return t("gitStatus.modified");
@@ -197,23 +197,6 @@ function gitChangeStatusText(status: GitChangeFile["status"]): string {
     default:
       return t("gitStatus.changed");
   }
-}
-
-export function gitChangeFilePathLabel(file: GitChangeFile): string {
-  return file.old_path && file.old_path !== file.path ? `${file.old_path} -> ${file.path}` : file.path;
-}
-
-export function gitChangeStatusDescription(file: GitChangeFile): string {
-  if (file.binary) {
-    return t("gitStatus.binaryDescription", {
-      status: gitChangeStatusText(file.status),
-    });
-  }
-  return t("gitStatus.textDescription", {
-    status: gitChangeStatusText(file.status),
-    additions: formatCurrentNumber(file.additions),
-    deletions: formatCurrentNumber(file.deletions),
-  });
 }
 
 export function gitDiffDisplayLines(patch: string): GitDiffDisplayLine[] {

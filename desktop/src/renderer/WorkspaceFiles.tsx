@@ -1,9 +1,7 @@
 import { useActiveContextMenu } from "./ActiveContextMenu";
-import { isTouchWebShell } from "./ComposerFocus";
 import { hostSupports } from "./HostCapabilities";
 import { preparePresortedFileTreeInput } from "@pierre/trees";
 import { FileTree, useFileTree } from "@pierre/trees/react";
-import { AlertCircle, FileText, FolderOpen, FolderX } from "./WuuIcons";
 import { type CSSProperties, Suspense, lazy, memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type {
   RuntimeContext,
@@ -22,6 +20,7 @@ import { desktopPlatform } from "./platform";
 import { FilePreviewPresentation } from "./plugins/FilePreviewPresentation";
 import { UILayerPortal } from "./ui/layers/UILayerHost";
 import { VideoPreview } from "./VideoPreview";
+import { WorkspacePanelEmpty } from "./WorkspacePanelEmpty";
 
 // monaco-editor is several MB of JS; a static import here would drag it into
 // the eager startup chunk. Load it only when a code editor actually mounts.
@@ -44,12 +43,12 @@ const WORKSPACE_FILE_TREE_STYLE: CSSProperties = {
 const WORKSPACE_TREE_CSS = `
   :host {
     --trees-fg-override: var(--wuu-workspace-file-tree-color, var(--ink));
-    --trees-fg-muted-override: var(--wuu-workspace-file-tree-muted-color, var(--ink-muted));
+    --trees-fg-muted-override: var(--wuu-workspace-file-tree-muted-color, var(--ink-tertiary));
     --trees-bg-override: var(--wuu-workspace-file-tree-background, transparent);
     --trees-bg-muted-override: var(--wuu-workspace-file-tree-muted-background, var(--surface-2));
     --trees-search-bg-override: var(--wuu-workspace-file-tree-search-background, transparent);
     --trees-selected-fg-override: var(--wuu-workspace-file-tree-selected-color, var(--ink-strong));
-    --trees-selected-bg-override: var(--wuu-workspace-file-tree-selected-background, var(--surface-3));
+    --trees-selected-bg-override: var(--wuu-workspace-file-tree-selected-background, var(--selection-surface));
     --trees-selected-focused-border-color-override: var(--wuu-workspace-file-tree-selected-border, transparent);
     --trees-border-color-override: var(--wuu-workspace-file-tree-border-color, transparent);
     --trees-font-family-override: var(--wuu-workspace-file-tree-font-family, var(--appearance-ui-font, system-ui, sans-serif));
@@ -71,12 +70,20 @@ const WORKSPACE_TREE_CSS = `
 
   [data-file-tree-search-input] {
     min-width: 0;
-    margin-inline-end: 40px;
     padding-inline: calc(var(--trees-item-padding-x) - 1px);
-    border: var(--wuu-workspace-file-tree-search-border, 1px solid var(--hairline-strong));
+    border: var(--wuu-workspace-file-tree-search-border, 1px solid var(--field-border));
     border-radius: var(--wuu-workspace-file-tree-search-radius, var(--radius-sm));
-    background: var(--wuu-workspace-file-tree-search-background, transparent);
+    background: var(--wuu-workspace-file-tree-search-background, var(--field-bg));
     color: var(--wuu-workspace-file-tree-color, var(--ink));
+  }
+
+  [data-file-tree-search-input]::placeholder {
+    color: var(--placeholder-ink);
+  }
+
+  /* Beside a document the dock handle sits at the end of the search row. */
+  :host-context(.workspace-files-tree.dockable) [data-file-tree-search-input] {
+    margin-inline-end: 40px;
   }
 
   :host-context(html[data-focus-modality="pointer"]) [data-file-tree-search-input]:focus-visible,
@@ -151,11 +158,11 @@ export function WorkspaceFileTree({
   }, [open, workspaceRoot, locale]);
 
   if (!workspaceRoot) {
-    return <WorkspacePanelEmpty title={t("workspace.files.noWorkspace")} hint={t("workspace.files.noWorkspaceDescription")} />;
+    return <WorkspacePanelEmpty title={t("workspace.files.noWorkspace")} />;
   }
 
   if (loading && !directories[""]) {
-    return <WorkspacePanelEmpty title={t("workspace.files.reading")} hint={t("workspace.files.readingDescription")} />;
+    return <WorkspacePanelEmpty title={t("workspace.files.reading")} />;
   }
 
   if (error) {
@@ -216,7 +223,8 @@ const WorkspaceFileTreeView = memo(function WorkspaceFileTreeView({ directories,
     flattenEmptyDirectories: false,
     initialExpansion: "closed",
     initialSelectedPaths: selectedFilePath ? [selectedFilePath] : [],
-    icons: { set: "complete", colored: true },
+    // File types keep their shapes; per-type colour would be decoration.
+    icons: { set: "complete", colored: false },
     // The virtualizer and its shadow DOM must agree on the touch target size.
     // Leave room for the full supported 13–20px UI range. Keep the model's
     // virtual offsets and rendered rows identical when font preferences change.
@@ -283,11 +291,6 @@ const WorkspaceFileTreeView = memo(function WorkspaceFileTreeView({ directories,
       const search = host.shadowRoot?.querySelector<HTMLInputElement>("[data-file-tree-search-input]");
       if (search) {
         search.placeholder = t("workspace.files.searchPlaceholder");
-        // The drag handle sits above the tree's shadow root, so reserve its
-        // light-DOM column on the input itself instead of overlapping it.
-        search.style.marginInlineEnd = "40px";
-        search.style.minWidth = "0";
-        search.style.outline = "none";
       }
       const options = host.shadowRoot?.querySelector<HTMLButtonElement>("[data-type='context-menu-trigger']");
       if (options) options.setAttribute("aria-label", t("workspace.files.options"));
@@ -581,34 +584,6 @@ function parentDirectoryPathsForFile(path: string): string[] {
   return segments.slice(0, -1).map((_, index) => segments.slice(0, index + 1).join("/"));
 }
 
-export function WorkspacePanelEmpty({
-  title,
-  description,
-  hint,
-  icon,
-  className
-}: {
-  title: string;
-  description?: string;
-  hint?: string;
-  icon?: JSX.Element;
-  className?: string;
-}): JSX.Element {
-  return (
-    <div
-      className={className ? `workspace-panel-empty ${className}` : "workspace-panel-empty"}
-      data-wuu-component="workspace-empty-state"
-    >
-      <div className="workspace-panel-empty-icon" data-wuu-component="workspace-empty-icon">
-        {icon ?? <FolderOpen size={24} />}
-      </div>
-      <strong>{title}</strong>
-      {description && <span>{description}</span>}
-      {hint && !isTouchWebShell() && <span>{hint}</span>}
-    </div>
-  );
-}
-
 export function formatWorkspaceRoot(root: string): string {
   const segments = root.split(/[\\/]/).filter(Boolean);
   return segments.at(-1) ?? root;
@@ -622,7 +597,6 @@ export function WorkspaceFilePreview({
   selection,
   anchor,
   refreshKey,
-  onOpenRightPanel,
   onOpenFile,
   onDirtyChange
 }: {
@@ -633,7 +607,6 @@ export function WorkspaceFilePreview({
   selection?: WorkspaceFileSelection;
   anchor?: string;
   refreshKey?: string;
-  onOpenRightPanel: () => void;
   onOpenFile?: (path: string) => void;
   onDirtyChange?: (state: WorkspaceFileDirtyState) => void;
 }): JSX.Element {
@@ -729,46 +702,19 @@ export function WorkspaceFilePreview({
   }, [activeContext?.cwd, dirtyStatePath, onDirtyChange]);
 
   if (!activeContext) {
-    return (
-      <div className="workspace-main-empty">
-        <FolderX size={36} />
-        <strong>{t("workspace.files.noWorkspace")}</strong>
-        {!isTouchWebShell() && <span>{t("workspace.files.previewNoWorkspaceDescription")}</span>}
-      </div>
-    );
+    return <WorkspacePanelEmpty title={t("workspace.files.noWorkspace")} />;
   }
 
   if (!selectedWorkspaceFilePath) {
-    return (
-      <div className="workspace-main-empty">
-        <FolderOpen size={38} />
-        <strong>{t("workspace.files.openFile")}</strong>
-        {!isTouchWebShell() && <span>{t("workspace.files.openFileDescription")}</span>}
-        <button type="button" onClick={onOpenRightPanel}>
-          {t("workspace.files.showTree")}
-        </button>
-      </div>
-    );
+    return <WorkspacePanelEmpty title={t("workspace.files.noContent")} />;
   }
 
   const fallback = loading ? (
-      <div className="workspace-main-empty">
-        <FileText size={36} />
-        <strong>{t("workspace.files.opening")}</strong>
-        <span>{selectedWorkspaceFilePath}</span>
-      </div>
+      <WorkspacePanelEmpty title={t("workspace.files.opening")} />
     ) : error ? (
-      <div className="workspace-main-empty">
-        <AlertCircle size={36} />
-        <strong>{t("workspace.files.openFailedTitle")}</strong>
-        <span>{error}</span>
-      </div>
+      <WorkspacePanelEmpty title={t("workspace.files.openFailedTitle")} description={error} />
     ) : !file ? (
-      <div className="workspace-main-empty">
-        <FileText size={36} />
-        <strong>{t("workspace.files.noContent")}</strong>
-        <span>{selectedWorkspaceFilePath}</span>
-      </div>
+      <WorkspacePanelEmpty title={t("workspace.files.noContent")} />
     ) : file.renderable_url ? (
       file.renderable_kind === "video" ? (
         <article className="workspace-file-preview readonly">
@@ -788,11 +734,19 @@ export function WorkspaceFilePreview({
       </article>
       )
     ) : file.binary ? (
-      <div className="workspace-main-empty">
-        <FileText size={36} />
-        <strong>{t("workspace.files.cannotPreview")}</strong>
-        <span>{t("workspace.files.binary", { path: file.path })}</span>
-      </div>
+      <WorkspacePanelEmpty
+        title={t("workspace.files.cannotPreview")}
+        description={t("workspace.files.binary")}
+        action={hostSupports("revealWorkspaceItem") ? (
+          <button
+            className="settings-button"
+            type="button"
+            onClick={() => void window.wuu.revealWorkspaceItem(`${activeContext.cwd}/${file.path}`)}
+          >
+            {t("workspace.files.revealInFileManager")}
+          </button>
+        ) : undefined}
+      />
     ) : (
       <article className="workspace-file-preview readonly">
         <div className={`workspace-file-editor-scroll ${isMarkdownReadingMode ? "markdown-reading" : "code"}`}>

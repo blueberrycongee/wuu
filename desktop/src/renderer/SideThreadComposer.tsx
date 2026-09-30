@@ -6,6 +6,7 @@ import {
   type ComposerVariant,
 } from "./ComposerView";
 import { useI18n } from "./i18n";
+import { statusMessageForError } from "./UserFacingErrors";
 
 const EMPTY_MODEL_STATE: CodexModelLoadState = {
   loading: false,
@@ -21,6 +22,8 @@ export type SideThreadComposerProps = {
   draft: string;
   running: boolean;
   disabledReason?: string;
+  /** A side request failure that no reply shows; reported above the input. */
+  error?: string;
   queryHistorySessionID: string;
   queryHistory: string[];
   onChangeDraft: (draft: string) => void;
@@ -38,6 +41,7 @@ export function SideThreadComposer({
   draft,
   running,
   disabledReason,
+  error,
   queryHistorySessionID,
   queryHistory,
   onChangeDraft,
@@ -72,7 +76,7 @@ export function SideThreadComposer({
       forceStopWhileRunning
       runtimeControlsDisabled
       tokensPerSecond={0}
-      status={disabledReason ?? ""}
+      status={disabledReason ?? (error ? statusMessageForError(error, t("sideThread.unavailable")) : "")}
       statusLiveProgress={false}
       readOnly={readOnly}
       projects={[]}

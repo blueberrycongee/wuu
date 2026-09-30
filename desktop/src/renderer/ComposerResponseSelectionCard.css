@@ -66,7 +66,7 @@
 }
 
 .composer-response-selection-comment::placeholder {
-  color: var(--ink-tertiary);
+  color: var(--placeholder-ink);
 }
 
 .composer-response-selection-comment:hover:not(:read-only) {
@@ -118,12 +118,6 @@
 .composer-response-selection-remove:hover {
   background: color-mix(in srgb, var(--danger) 10%, transparent);
   color: var(--danger);
-}
-
-.composer-response-selection-source:focus-visible,
-.composer-response-selection-remove:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 2px;
 }
 
 @container style(--motion-reduced: 1) {

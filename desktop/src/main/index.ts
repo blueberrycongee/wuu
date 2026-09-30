@@ -1896,7 +1896,9 @@ app.whenReady().then(async () => {
       codexPetWindowManager.setHints(hints ?? []),
   );
   ipcMain.handle("wuu:settings-usage", (event) =>
-    appServerRequest<SettingsUsageResponse>(event, "settings/usage"),
+    appServerRequest<SettingsUsageResponse>(event, "settings/usage", {
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    }),
   );
   ipcMain.handle("wuu:usage-overview", (event, params: UsageOverviewParams) =>
     appServerRequest<UsageOverviewResponse>(event, "usage/overview", params),

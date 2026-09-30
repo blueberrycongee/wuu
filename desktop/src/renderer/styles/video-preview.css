@@ -11,13 +11,17 @@
   min-height: 0;
   overflow: hidden;
   place-items: center;
-  background: var(--surface-1);
+  background: var(--paper);
 }
 
+/* The frame keeps the video's own proportions on the panel's paper, so the
+ * black canvas and the native controls stay with the picture instead of
+ * spanning the whole panel. */
 .video-preview video {
   display: block;
   width: 100%;
-  height: 100%;
+  height: auto;
+  max-height: 100%;
   min-width: 0;
   min-height: 0;
   object-fit: contain;
@@ -27,7 +31,7 @@
 .video-preview-error {
   margin: 0;
   padding: var(--panel-padding);
-  color: var(--ink-muted);
+  color: var(--ink-soft);
   font-size: var(--font-ui);
   overflow-wrap: anywhere;
 }

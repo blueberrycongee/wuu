@@ -1,14 +1,21 @@
 import { showErrorToast } from "./Toast";
-import { CircleAlert } from "./WuuIcons";
-import { useEffect, useState } from "react";
+import { ChevronRight, CircleAlert, TriangleAlert } from "./WuuIcons";
+import { useEffect, useId, useState } from "react";
 import type { ThreadItem, ThreadItemStatus, TurnError } from "../shared/protocol";
 import { isUnchangedContextCompaction, type TurnEventDisplay } from "./TurnEvents";
 import { userFacingErrorForMessage, type UserFacingErrorDisplay, type UserFacingErrorTone } from "./UserFacingErrors";
 import { formatCurrentNumber, translateCurrent as t } from "./i18n";
+import type { TranslationKey } from "./i18n/resources/zh-CN";
 import { ProcessSurfaceFold } from "./ProcessSurfaceFold";
 import { ProcessSurfaceMascot } from "./ProcessSurface";
 import { useLiveTextWave } from "./LiveTextWave";
+import { CollapsibleDetails } from "./CollapsibleMotion";
 import type { TurnStreamStatus } from "./AppState";
+import type { SettingsPage } from "./SettingsView";
+
+/** Window event a conversation notice sends to open Settings on a page. */
+export const OPEN_SETTINGS_EVENT = "wuu:open-settings";
+export type OpenSettingsDetail = { page: SettingsPage };
 
 export type SystemEventDisplay = {
   label: string;
@@ -132,132 +139,225 @@ export function StreamStatusNotice({
   );
 }
 
+/**
+ * A stream the core is still retrying. It keeps the failure card's frame and
+ * title, so when recovery gives up the same card gains its explanation and
+ * actions in place (TurnFailureNotice) instead of being replaced by a
+ * different shape.
+ */
 export function StreamReconnectNotice({
   item,
-  error,
-  onRetry,
 }: {
   item: ThreadItem;
-  error?: TurnError;
-  onRetry?: () => void | Promise<void>;
 }): JSX.Element | null {
   const inProgress = item.status === "in_progress";
   const retryAtMs = inProgress ? item.retry_at_ms : undefined;
   const countdown = useRetryCountdown(retryAtMs);
-  const [retrying, setRetrying] = useState(false);
-  async function retry(): Promise<void> {
-    if (!onRetry || retrying) return;
-    setRetrying(true);
-    try {
-      await onRetry();
-    } catch (error) {
-      showErrorToast(error);
-    } finally {
-      setRetrying(false);
-    }
-  }
-  if (item.status !== "in_progress" && item.status !== "failed") return null;
-  const failure = !inProgress && error?.recovery ? userFacingErrorForMessage(error, "turn") : undefined;
-  const title = failure?.title ?? streamReconnectTitle(item);
+  if (!inProgress) return null;
+  const kind = failureKind(undefined, reconnectReason(item), undefined, item.text);
+  const title = kind ? t(FAILURE_COPY[kind].title) : reconnectFallbackTitle(item);
   return (
-    <aside
-      className="stream-event-card stream-reconnect-notice"
-      role={inProgress ? "status" : "alert"}
-      aria-label={title}
-    >
-      <CircleAlert size={16} aria-hidden="true" className="stream-reconnect-icon" />
-      <span className="stream-reconnect-title">{title}</span>
-      {inProgress ? (
+    <aside className="turn-notice turn-failure is-retrying" role="status" aria-label={title}>
+      <TriangleAlert size={16} aria-hidden="true" className="turn-failure-icon" />
+      <div className="turn-failure-head">
+        <span className="turn-failure-title">{title}</span>
         <span
-          className="stream-reconnect-status"
+          className="turn-failure-status"
           role={countdown.waiting ? "progressbar" : undefined}
           aria-label={countdown.text}
           aria-valuemin={countdown.waiting ? 0 : undefined}
           aria-valuemax={countdown.waiting ? 100 : undefined}
           aria-valuenow={countdown.waiting ? Math.round(countdown.progress * 100) : undefined}
         >
-          {countdown.waiting ? (
-            <span
-              key={retryAtMs}
-              className="stream-reconnect-progress"
-              aria-hidden="true"
-              style={{ transform: `scaleX(${countdown.progress})` }}
-            />
-          ) : null}
-          <span className="stream-reconnect-status-text">{countdown.text}</span>
+          {countdown.text}
         </span>
-      ) : onRetry ? (
-        <button type="button" className="stream-reconnect-retry" disabled={retrying} onClick={() => void retry()}>
-          {t(retrying ? "appState.retryNow" : "appState.retryAction")}
-        </button>
-      ) : (
-        <span className="stream-reconnect-stopped">{t("error.cancelledTitle")}</span>
-      )}
-      {failure ? (
-        <SystemEventNotice
-          className="stream-reconnect-diagnostics"
-          event={{
-            label: t("error.recoveryDetails"),
-            expandedDetail: [failure.detail, failure.diagnostic].filter(Boolean).join("\n\n"),
-          }}
-        />
+      </div>
+    </aside>
+  );
+}
+
+type FailureKind = "auth" | "quota" | "model" | "rateLimit" | "unavailable" | "timeout" | "network" | "context";
+
+// Human words for the failures people actually meet. Anything else keeps the
+// classifier's title and offers only the retry and the technical details.
+const FAILURE_COPY: Record<FailureKind, { title: TranslationKey; body: TranslationKey }> = {
+  auth: { title: "turnFailure.auth", body: "turnFailure.authBody" },
+  quota: { title: "turnFailure.quota", body: "turnFailure.quotaBody" },
+  model: { title: "turnFailure.model", body: "turnFailure.modelBody" },
+  rateLimit: { title: "turnFailure.rateLimit", body: "turnFailure.rateLimitBody" },
+  unavailable: { title: "turnFailure.unavailable", body: "turnFailure.unavailableBody" },
+  timeout: { title: "turnFailure.timeout", body: "turnFailure.timeoutBody" },
+  network: { title: "turnFailure.network", body: "turnFailure.networkBody" },
+  context: { title: "turnFailure.context", body: "turnFailure.contextBody" },
+};
+
+/**
+ * Structured recovery facts win: the core names the failure category for
+ * both live turns and reconnect items. The HTTP status and the classifier's
+ * category cover history recorded before those fields existed.
+ */
+function failureKind(
+  error: TurnError | undefined,
+  reason: string | undefined,
+  display: UserFacingErrorDisplay | undefined,
+  message: string | undefined,
+): FailureKind | undefined {
+  switch (reason ?? error?.recovery?.failure_category) {
+    case "authentication":
+      return "auth";
+    case "quota":
+      return "quota";
+    case "rate_limit":
+      return "rateLimit";
+    case "overloaded":
+    case "server":
+      return "unavailable";
+    case "deadline":
+      return "timeout";
+    case "network":
+    case "incomplete_stream":
+      return "network";
+    case "context_overflow":
+      return "context";
+  }
+  const status = failureStatusCode(error, message);
+  if (display?.category === "auth" || status === 401 || status === 403) return "auth";
+  if (status === 404 || error?.code === "model_not_found") return "model";
+  if (status === 429) return "rateLimit";
+  if (status === 408 || status === 504) return "timeout";
+  if (status !== undefined && status >= 500) return "unavailable";
+  if (display?.category === "network") {
+    return /timeout|deadline exceeded/i.test(message ?? "") ? "timeout" : "network";
+  }
+  return undefined;
+}
+
+function failureStatusCode(error: TurnError | undefined, message: string | undefined): number | undefined {
+  if (typeof error?.status_code === "number" && error.status_code > 0) return Math.trunc(error.status_code);
+  const match = message?.match(/\bHTTP (\d{3})\b/);
+  return match ? Number(match[1]) : undefined;
+}
+
+/**
+ * A turn that ended in failure: what happened in plain words, the one next
+ * step, and the technical record behind a disclosure. Actions come from the
+ * caller, which offers them only on the latest turn.
+ */
+export function TurnFailureNotice({
+  display,
+  error,
+  reconnect,
+  onRetry,
+  onOpenSettings,
+}: {
+  display: UserFacingErrorDisplay;
+  error?: TurnError;
+  /** The failed stream_reconnect item when automatic recovery gave up. */
+  reconnect?: ThreadItem;
+  onRetry?: () => void | Promise<void>;
+  onOpenSettings?: () => void;
+}): JSX.Element {
+  const message = error?.message ?? display.diagnostic;
+  const kind = failureKind(error, reconnect ? reconnectReason(reconnect) : undefined, display, message);
+  const title = kind
+    ? t(FAILURE_COPY[kind].title)
+    : reconnect && !error
+      ? reconnectFallbackTitle(reconnect)
+      : display.title;
+  const status = failureStatusCode(error, message);
+  const retries = error?.recovery?.retry_count ?? reconnect?.retry_count ?? 0;
+  const guidance = kind ? t(FAILURE_COPY[kind].body) : "";
+  const body = retries > 0
+    ? t("turnFailure.retried", { count: formatCurrentNumber(retries), guidance })
+    : guidance;
+  const settingsFirst = kind === "auth" || kind === "quota" || kind === "model";
+  const openSettings = settingsFirst ? onOpenSettings : undefined;
+  // Replaying an oversized conversation fails the same way; the body names
+  // the step that helps instead.
+  const retry = kind === "context" ? undefined : onRetry;
+  const [retrying, setRetrying] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const detailsID = useId();
+  const recovery = error?.recovery ? display.detail : "";
+  const diagnostic = message?.trim() ?? "";
+  const hasDetails = Boolean(recovery || diagnostic);
+
+  async function runRetry(): Promise<void> {
+    if (!retry || retrying) return;
+    setRetrying(true);
+    try {
+      await retry();
+    } catch (retryError) {
+      showErrorToast(retryError);
+    } finally {
+      setRetrying(false);
+    }
+  }
+
+  return (
+    <aside className="turn-notice turn-failure" role="alert" aria-label={title}>
+      <CircleAlert size={16} aria-hidden="true" className="turn-failure-icon" />
+      <div className="turn-failure-head">
+        <span className="turn-failure-title">{title}</span>
+        {status ? <span className="turn-failure-code">HTTP {status}</span> : null}
+      </div>
+      {body ? <p className="turn-failure-body">{body}</p> : null}
+      {openSettings || retry || hasDetails ? (
+        <div className="turn-failure-actions">
+          {openSettings ? (
+            <button type="button" className="settings-button settings-button-primary" onClick={openSettings}>
+              {t("turnFailure.openSettings")}
+            </button>
+          ) : null}
+          {retry ? (
+            <button
+              type="button"
+              className={`settings-button${openSettings ? "" : " settings-button-primary"}`}
+              disabled={retrying}
+              onClick={() => void runRetry()}
+            >
+              {t(retrying ? "appState.retryNow" : "appState.retryAction")}
+            </button>
+          ) : null}
+          {hasDetails ? (
+            <button
+              type="button"
+              className="turn-failure-details-toggle"
+              aria-expanded={detailsOpen}
+              aria-controls={detailsID}
+              onClick={() => setDetailsOpen((open) => !open)}
+            >
+              {t("turnFailure.details")}
+              <ChevronRight className="turn-failure-details-chevron icon-xs" aria-hidden="true" />
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+      {hasDetails ? (
+        <CollapsibleDetails id={detailsID} expanded={detailsOpen} className="turn-failure-details">
+          {recovery ? <p className="turn-failure-recovery">{recovery}</p> : null}
+          {diagnostic ? <p className="turn-failure-diagnostic">{diagnostic}</p> : null}
+        </CollapsibleDetails>
       ) : null}
     </aside>
   );
 }
 
-/**
- * Short localized title for the failure that triggered a stream reconnect.
- * Prefers the item's structured `reason` (the provider's failure category);
- * the redacted cause text is only consulted for app-servers that predate the
- * category field, and anything unmapped reads as a generic request failure.
- */
-function streamReconnectTitle(item: ThreadItem): string {
-  const fromCategory = streamReconnectCategoryTitle(item.reason);
-  if (fromCategory) {
-    return fromCategory;
-  }
-  const reason = (item.text ?? "").toLowerCase();
-  if (reason.includes("authentication") || reason.includes("unauthorized")) {
-    return t("error.authTitle");
-  }
-  if (reason.includes("rate limit") || reason.includes("too many requests")) {
-    return `429 ${t("error.http429")}`;
-  }
-  if (reason.includes("overloaded")) {
-    return t("error.upstreamOverloaded");
-  }
-  if (reason.includes("timeout") || reason.includes("deadline")) {
-    return t("error.requestTimeout");
-  }
-  return t("error.requestFailedTitle");
+// Reconnect items from app-servers that predate the structured reason carry
+// only the redacted cause text.
+function reconnectReason(item: ThreadItem): string | undefined {
+  if (item.reason) return item.reason;
+  const text = (item.text ?? "").toLowerCase();
+  if (text.includes("authentication") || text.includes("unauthorized")) return "authentication";
+  if (text.includes("rate limit") || text.includes("too many requests")) return "rate_limit";
+  if (text.includes("overloaded")) return "overloaded";
+  if (text.includes("timeout") || text.includes("deadline")) return "deadline";
+  return undefined;
 }
 
-function streamReconnectCategoryTitle(
-  category: string | undefined,
-): string | undefined {
-  switch (category) {
-    case "authentication":
-      return t("error.authTitle");
-    case "rate_limit":
-    case "quota":
-      return `429 ${t("error.http429")}`;
-    case "overloaded":
-      return t("error.upstreamOverloaded");
-    case "server":
-      return t("error.providerTitle");
-    case "deadline":
-      return t("error.requestTimeout");
-    case "context_overflow":
-      return t("error.contextOverflowTitle");
-    case "request_too_large":
-      return t("error.requestTooLargeTitle");
-    case "network":
-    case "incomplete_stream":
-      return t("error.networkTitle");
-    default:
-      return undefined;
-  }
+// Only failures without their own copy above reach this title.
+function reconnectFallbackTitle(item: ThreadItem): string {
+  return t(item.reason === "request_too_large" ? "error.requestTooLargeTitle" : "error.requestFailedTitle");
 }
 
 function useRetryCountdown(retryAtMs: number | undefined) {
@@ -294,7 +394,9 @@ function useRetryCountdown(retryAtMs: number | undefined) {
   let text = t("appState.retryNow");
   if (remainingMs > 0) {
     const seconds = Math.max(1, Math.ceil(remainingMs / 1_000));
-    const minutes = Math.ceil(remainingMs / 60_000);
+    // Nearest minute: rounding up would call a 61-second wait "2 minutes"
+    // and then drop to "59 seconds" a moment later.
+    const minutes = Math.round(remainingMs / 60_000);
     text = remainingMs < 60_000
       ? t(seconds === 1 ? "appState.retrySecond" : "appState.retrySeconds", { count: formatCurrentNumber(seconds) })
       : t(minutes === 1 ? "appState.retryMinute" : "appState.retryMinutes", { count: formatCurrentNumber(minutes) });
@@ -326,7 +428,10 @@ export function ContextCompactionNotice({
   const detail = inProgress ? undefined : contextCompactionDetail(text, reason, status);
   const state = failed ? "failed" : inProgress ? "in_progress" : "completed";
   const description = detail ? `${title} — ${detail}` : title;
-  const expandedDetail = failed ? normalized : summary || normalized;
+  // A recognized outcome line is already told by the title and detail; only a
+  // replacement summary or an unfamiliar diagnostic is worth unfolding.
+  const recognizedOutcome = /^Compacted history$/i.test(normalized) || parseContextCompactionNotice(normalized) !== undefined;
+  const expandedDetail = failed ? normalized : summary || (recognizedOutcome ? "" : normalized);
   const hasSummary = !inProgress && Boolean(expandedDetail);
   const [expanded, setExpanded] = useState(false);
   const waveRef = useLiveTextWave<HTMLSpanElement>(inProgress);

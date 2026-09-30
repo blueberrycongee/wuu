@@ -21,6 +21,8 @@ const CONVERSATION_SEARCH_PREVIEW_LIMIT = 4;
 
 export type CloseConversationSearchOptions = {
   immediate?: boolean;
+  /** Choosing a result hands focus to the conversation it opens instead. */
+  restoreFocus?: boolean;
 };
 
 export type ConversationSearchState = {
@@ -94,6 +96,7 @@ export function useConversationSearch({
   const conversationSearchCloseTimerRef = useRef<number | undefined>(
     undefined,
   );
+  const focusBeforeOpenRef = useRef<HTMLElement | null>(null);
   const conversationSearchResults = conversationSearch.results;
 
   useEffect(() => {
@@ -206,6 +209,9 @@ export function useConversationSearch({
       conversationSearchCloseTimerRef.current = undefined;
     }
     onOpen();
+    const focused = document.activeElement;
+    focusBeforeOpenRef.current =
+      focused instanceof HTMLElement && focused !== document.body ? focused : null;
     queryRef.current.composing = false;
     setComposing(false);
     setConversationSearch((current) => ({
@@ -222,9 +228,12 @@ export function useConversationSearch({
       previewLoading: false,
       previewError: "",
     }));
-    window.requestAnimationFrame(() =>
-      conversationSearchInputRef.current?.focus(),
-    );
+    // The last query comes back selected: typing replaces it, and the
+    // arrow keys can still pick up where the previous search left off.
+    window.requestAnimationFrame(() => {
+      conversationSearchInputRef.current?.focus();
+      conversationSearchInputRef.current?.select();
+    });
   }
 
   function closeConversationSearch(
@@ -237,6 +246,16 @@ export function useConversationSearch({
     if (conversationSearchCloseTimerRef.current !== undefined) {
       window.clearTimeout(conversationSearchCloseTimerRef.current);
       conversationSearchCloseTimerRef.current = undefined;
+    }
+    const opener = focusBeforeOpenRef.current;
+    focusBeforeOpenRef.current = null;
+    // A control inside a collapsed rail would pin the drawer open by focus.
+    if (
+      options.restoreFocus !== false &&
+      opener?.isConnected &&
+      !opener.closest(".sidebar-collapsed :is(.sidebar, .settings-sidebar)")
+    ) {
+      opener.focus({ preventScroll: true });
     }
     const closeImmediately = options.immediate || prefersReducedMotion();
     setConversationSearch((current) => ({
@@ -320,7 +339,7 @@ export function useConversationSearch({
       resultsRequestRef.current !== conversationSearchRequestRef.current ||
       !conversationSearchResults.includes(result)
     ) return;
-    closeConversationSearch();
+    closeConversationSearch({ restoreFocus: false });
     onSelectThread(result.thread.id);
   }
 
@@ -384,19 +403,15 @@ export function useConversationSearch({
     queryRef.current = { query, composing };
     setComposing(composing);
     // Invalidate before debounce: old responses cannot become selectable
-    // under a new query, even before its request has been sent.
+    // under a new query, even before its request has been sent. The previous
+    // results stay on screen until the new ones arrive, so each keystroke
+    // does not collapse the palette to a loading line and back.
     conversationSearchRequestRef.current += 1;
-    conversationSearchPreviewRequestRef.current += 1;
     setConversationSearch((current) => ({
       ...current,
       query,
       loading: true,
       error: "",
-      results: [],
-      previewedThreadID: "",
-      previewedTurns: [],
-      previewLoading: false,
-      previewError: "",
       selectedIndex: 0,
     }));
   }

@@ -16,10 +16,11 @@ type HeatmapWeek = {
 /**
  * Usage summary under the empty conversation greeting. It renders nothing
  * until the host answers: an older host or a failed read leaves the greeting
- * alone instead of claiming zero usage. A store with no usage yet is a real
- * answer and shows zero totals with an empty heatmap. Once its entrance has
- * finished, the card hosts the greeting mascot's idle play. Memoized because
- * the home re-renders while the user types a draft.
+ * alone instead of claiming zero usage. A store with no usage yet has nothing
+ * to summarize either, so a first conversation starts from the greeting and
+ * the composer alone. Once its entrance has finished, the summary hosts the
+ * greeting mascot's idle play. Memoized because the home re-renders while the
+ * user types a draft.
  */
 export const EmptyHomeOverview = memo(function EmptyHomeOverview(): JSX.Element | null {
   const { locale, t, formatNumber } = useI18n();
@@ -78,6 +79,9 @@ export const EmptyHomeOverview = memo(function EmptyHomeOverview(): JSX.Element 
   const { metrics } = usage;
   const tokens =
     metrics.input_tokens + metrics.output_tokens + metrics.cache_creation_tokens + metrics.cache_read_tokens;
+  if (usage.total_sessions === 0 && tokens === 0) {
+    return null;
+  }
   // Newest week first: the heatmap drops whole older weeks when it narrows.
   const weeks = heatmapWeeks(buildUsageHeatmap(usage.days), locale).reverse();
 
@@ -120,19 +124,25 @@ export const EmptyHomeOverview = memo(function EmptyHomeOverview(): JSX.Element 
   );
 });
 
+// The heatmap always shows the trailing year, like the usage page, so it spans
+// the column and keeps its shape as history accrues; a young store's first
+// weeks stand out against the faint empty ones.
+//
 // Label the week holding a month's first day, so labels stay four or five
-// weeks apart. The two newest weeks go unlabeled: a label there would run
-// past the right edge.
+// weeks apart, and the first week shown when the next label is not close
+// enough to collide with it. The two newest weeks go unlabeled: a label there
+// would run past the right edge.
 function heatmapWeeks(cells: UsageHeatmapCell[], locale: string): HeatmapWeek[] {
   const monthFormat = new Intl.DateTimeFormat(locale, { month: "short" });
+  const month = (date: string): string => monthFormat.format(new Date(`${date}T12:00:00`));
   const weeks: HeatmapWeek[] = [];
   for (let index = 0; index < cells.length; index += 7) {
     const days = cells.slice(index, index + 7);
     const first = days.find((day) => day.date.endsWith("-01"));
-    weeks.push({
-      days,
-      month: first ? monthFormat.format(new Date(`${first.date}T12:00:00`)) : undefined,
-    });
+    weeks.push({ days, month: first ? month(first.date) : undefined });
+  }
+  if (!weeks[0].month && !weeks.slice(1, 3).some((week) => week.month)) {
+    weeks[0].month = month(weeks[0].days[0].date);
   }
   for (const week of weeks.slice(-2)) {
     week.month = undefined;

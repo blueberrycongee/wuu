@@ -104,6 +104,27 @@ jobs:
       - name: Build
         run: make build-desktop
 
+      - name: Guard titlebar rename interactions
+        timeout-minutes: 3
+        env:
+          WUU_TITLEBAR_OUTPUT: ${{ runner.temp }}/wuu-titlebar-evidence
+        run: |
+          mkdir -p "$WUU_TITLEBAR_OUTPUT"
+          set -o pipefail
+          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/titlebar-rename-e2e.cjs 2>&1 | tee "$WUU_TITLEBAR_OUTPUT/run.log"
+
+      - name: Upload titlebar rename evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: titlebar-rename-evidence
+          path: |
+            ${{ runner.temp }}/wuu-titlebar-evidence/*.json
+            ${{ runner.temp }}/wuu-titlebar-evidence/*.png
+            ${{ runner.temp }}/wuu-titlebar-evidence/*.log
+            ${{ runner.temp }}/wuu-titlebar-evidence/*.txt
+          retention-days: 14
+
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod

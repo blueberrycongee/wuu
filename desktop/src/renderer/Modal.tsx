@@ -6,7 +6,9 @@ import {
   type ReactNode,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
+  useState,
 } from "react";
 import { createPortal } from "react-dom";
 import { useI18n } from "./i18n";
@@ -23,6 +25,11 @@ import { useUILayerHost } from "./ui/layers/UILayerHost";
  * - Omit `onClose` to render a non-dismissible dialog.
  * - `closeDisabled` temporarily locks down every close affordance
  *   while an in-flight promise is still resolving.
+ *
+ * Focus model:
+ * - Focus moves into the panel on open (see `initialFocus`), Tab and
+ *   Shift+Tab wrap inside it, and on close it returns to the control that
+ *   held it before, if that control is still on the page.
  *
  * Form model:
  * - By default the panel is a `<div>`. Set `asForm` to render a
@@ -66,6 +73,15 @@ export function Modal({
   const layerHost = useUILayerHost();
   const panelRef = useRef<HTMLElement | null>(null);
   const dismissible = typeof onClose === "function" && !closeDisabled;
+  // Captured while rendering, before the panel or an autoFocus child takes
+  // focus in the commit.
+  const [opener] = useState(() => {
+    const focused = document.activeElement;
+    return focused instanceof HTMLElement && focused !== document.body ? focused : null;
+  });
+  useLayoutEffect(() => () => {
+    if (opener?.isConnected) opener.focus({ preventScroll: true });
+  }, [opener]);
 
   const setPanelRef = useCallback((node: HTMLElement | null) => {
     panelRef.current = node;
@@ -130,11 +146,39 @@ export function Modal({
     // Keep dialog keystrokes away from app-level shortcuts, but handle Escape
     // before stopping propagation so a focused input can still dismiss.
     event.stopPropagation();
+    if (event.key === "Tab") {
+      wrapTabFocus(event);
+      return;
+    }
     if (event.key !== "Escape" || !dismissible) {
       return;
     }
     event.preventDefault();
     onClose?.();
+  }
+
+  // aria-modal says the page behind is unavailable; Tab must agree.
+  function wrapTabFocus(event: ReactKeyboardEvent<HTMLElement>): void {
+    const focusable = Array.from(
+      panelRef.current?.querySelectorAll<HTMLElement>(
+        'button:not(:disabled), [href], input:not([type="hidden"]):not(:disabled), ' +
+          'select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])',
+      ) ?? [],
+    );
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (!first || !last) {
+      event.preventDefault();
+      return;
+    }
+    const active = document.activeElement;
+    if (event.shiftKey && (active === first || active === panelRef.current)) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && active === last) {
+      event.preventDefault();
+      first.focus();
+    }
   }
 
   const panelClass = ["environment-dialog", panelClassName]
@@ -145,7 +189,7 @@ export function Modal({
 
   const panelBody = (
     <>
-      {title || icon || (onClose && showCloseButton) ? (
+      {icon || (onClose && showCloseButton) ? (
         <div className="environment-dialog-header">
           {icon ? <span className="environment-dialog-icon">{icon}</span> : <span />}
           {onClose && showCloseButton ? (

@@ -8,7 +8,6 @@
   --token-gauge-tooltip-bg: var(--paper);
   --token-gauge-tooltip-border: var(--wuu-border-subtle, rgba(15, 17, 21, 0.08));
   --token-gauge-tooltip-shadow: var(--shadow-card);
-  --composer-token-gauge-focus-outline: var(--focus-ring);
 }
 
 .composer-token-gauge {

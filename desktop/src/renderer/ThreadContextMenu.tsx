@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { useActiveContextMenu } from "./ActiveContextMenu";
 import { placeContextMenu, type ContextMenuLayout } from "./ContextMenuPlacement";
+import { moveMenuFocus } from "./MenuKeyboardNavigation";
 import { UILayerPortal } from "./ui/layers/UILayerHost";
 
 /**
@@ -11,6 +12,10 @@ import { UILayerPortal } from "./ui/layers/UILayerHost";
  * The menu is positioned via fixed coordinates so callers can pass raw
  * clientX/clientY from a contextmenu event without computing offsets against
  * any parent container. Opening it dismisses any other context menu.
+ *
+ * Once placed it takes focus without highlighting an item, so the arrow keys
+ * enter from either end; Escape and Tab hand focus back to whatever held it
+ * when the menu opened.
  */
 
 export type ThreadContextMenuItem =
@@ -45,8 +50,14 @@ export function ThreadContextMenu({
   onClose: () => void;
 }): JSX.Element {
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const openerRef = useRef<HTMLElement | null>(null);
   const [layout, setLayout] = useState<ContextMenuLayout | null>(null);
   useActiveContextMenu(onClose);
+
+  useLayoutEffect(() => {
+    const focused = document.activeElement;
+    openerRef.current = focused instanceof HTMLElement && focused !== document.body ? focused : null;
+  }, []);
 
   useLayoutEffect(() => {
     const menuElement = menuRef.current;
@@ -71,6 +82,11 @@ export function ThreadContextMenu({
     );
   }, [x, y, items]);
 
+  const placed = layout !== null;
+  useEffect(() => {
+    if (placed) menuRef.current?.focus({ preventScroll: true });
+  }, [placed]);
+
   useEffect(() => {
     function handlePointerDown(event: PointerEvent): void {
       // Right-click is the opening gesture (and the leftover pointer burst
@@ -84,7 +100,8 @@ export function ThreadContextMenu({
       }
     }
     function handleKeyDown(event: KeyboardEvent): void {
-      if (event.key === "Escape") {
+      if (event.key === "Escape" || (event.key === "Tab" && menuRef.current?.contains(event.target as Node))) {
+        if (openerRef.current?.isConnected) openerRef.current.focus({ preventScroll: true });
         onClose();
       }
     }
@@ -124,7 +141,11 @@ export function ThreadContextMenu({
             : { left: x, top: y, visibility: "hidden" }
         }
         data-testid="thread-row-context-menu"
+        tabIndex={-1}
         onContextMenu={(event) => event.preventDefault()}
+        onKeyDown={(event) => {
+          moveMenuFocus(event, menuRef.current);
+        }}
       >
         {items.map((item, idx) => {
           if ("separator" in item) {
@@ -143,7 +164,7 @@ export function ThreadContextMenu({
               type="button"
               className="thread-row-context-menu-item"
               disabled={item.disabled}
-              style={item.danger ? { color: "var(--danger)" } : undefined}
+              data-tone={item.danger ? "danger" : undefined}
               onClick={() => {
                 if (item.disabled) return;
                 void item.onSelect();

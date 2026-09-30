@@ -9,6 +9,7 @@ import {
   useState,
 } from "react";
 import { SidebarNameDialog } from "./SidebarNameDialog";
+import { confirmAction } from "./ConfirmDialog";
 import type { DesktopProject, RuntimeContext } from "../shared/protocol";
 import {
   copyToClipboard,
@@ -267,7 +268,7 @@ export function WorkspaceGroup({
   const pendingWorkspace = pendingWorkspaceID === project.id;
   const loadingWorkspaceThreads = loadingWorkspaceThreadIDs?.has(project.id) ?? false;
   const isScratchPseudo = project.id === scratchPseudoWorkspaceID;
-  // A real workspace whose directory was moved away or deleted. Its "新建会话"
+  // A real workspace whose directory was moved away or deleted. Its "新建对话"
   // affordance is disabled so no session can be created in a cwd that is gone.
   const isMissing = !isScratchPseudo && project.missing === true;
   const workspaceSelectionMode =
@@ -1097,15 +1098,20 @@ function ThreadRows({
             { separator: true },
             {
               label: t("threadSidebar.delete"),
+              danger: true,
               // A running thread cannot be deleted (the server also rejects
               // it); disable the entry so the confirm dialog never promises
               // a deletion that will fail.
               disabled: isThreadRunning(contextMenu.thread),
-              onSelect: () => {
-                if (!window.confirm(t("threadSidebar.deleteConfirmation"))) {
-                  return;
-                }
-                onDelete(contextMenu.thread);
+              onSelect: async () => {
+                const thread = contextMenu.thread;
+                const confirmed = await confirmAction({
+                  title: t("threadSidebar.deleteTitle", { title: rowState(thread).title }),
+                  message: t("threadSidebar.deleteConfirmation"),
+                  confirmLabel: t("common.delete"),
+                  tone: "danger",
+                });
+                if (confirmed) onDelete(thread);
               },
             },
           ]}
@@ -1119,11 +1125,7 @@ function ThreadRows({
         onSubmit={submitRenameDialog}
         onClose={closeRenameDialog}
         dialogTitle={t("threadSidebar.rename")}
-        dialogTitleId="thread-rename-title"
         fieldLabel={t("threadSidebar.title")}
-        fieldAriaLabel={t("threadSidebar.title")}
-        placeholder={t("threadSidebar.title")}
-        icon={MessageSquare}
         submitLabel={t("common.save")}
         cancelLabel={t("common.cancel")}
       />

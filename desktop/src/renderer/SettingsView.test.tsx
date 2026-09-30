@@ -405,6 +405,22 @@ function click(element: Element | null | undefined): void {
 }
 
 describe("SettingsView model services", () => {
+  it("keeps connection actions available while the catalog loads and reports failure", async () => {
+    const api = installServicesStub();
+    let rejectCatalog!: (reason: Error) => void;
+    api.listCatalogProviders = vi.fn(() => new Promise<Awaited<ReturnType<WuuDesktopApi["listCatalogProviders"]>>>((_resolve, reject) => { rejectCatalog = reject; }));
+    renderSettings({ initialized: servicesInitialized(), initialPage: "providers" });
+    await flush();
+
+    expect(container.querySelector('[role="status"]')).not.toBeNull();
+    click(container.querySelector('[data-testid="settings-provider-custom"]'));
+    expect(document.querySelector('[data-testid="settings-provider-connect-base-url"]')).not.toBeNull();
+
+    await act(async () => { rejectCatalog(new Error("catalog unavailable")); });
+    expect(container.querySelector('[role="status"]')).toBeNull();
+    expect(container.querySelector('[data-testid="settings-provider-custom"]')).not.toBeNull();
+  });
+
   it("leads with the default model and names connected services by vendor", async () => {
     installServicesStub();
     renderSettings({ initialized: servicesInitialized(), initialPage: "providers", locale: "en-US" });
@@ -549,7 +565,7 @@ describe("SettingsView model services", () => {
     click(container.querySelector('[data-provider="deepseek"]'));
     click(container.querySelector('[aria-label="deepseek 的更多操作"], [aria-label="DeepSeek 的更多操作"]'));
     click([...document.querySelectorAll('[role="menuitem"]')].find((item) => item.textContent?.includes("删除服务")));
-    expect(container.textContent).toContain("这个模型服务正在被运行中的会话使用");
+    expect(container.textContent).toContain("这个模型服务正在被运行中的对话使用");
     expect(onRemoveProvider).not.toHaveBeenCalled();
 
     renderSettings({ initialized: servicesInitialized(), initialPage: "providers", onRemoveProvider, runningProviderNames: [] });
@@ -1242,7 +1258,6 @@ describe("SettingsView About section", () => {
     expect(rootText()).toContain("12.3M");
     expect(rootText()).toContain("1M");
     expect(rootText()).toContain("1.2k");
-    expect(rootText()).toContain("Skills 使用分析");
     expect(rootText()).toContain("review");
     expect(rootText()).toContain("4");
     expect(rootText()).toContain("unknown-count");
@@ -1253,13 +1268,9 @@ describe("SettingsView About section", () => {
       container.querySelectorAll<HTMLElement>(".settings-usage-stat-value"),
     ).find((element) => element.textContent === "12.3M");
     expect(await hoverTooltipText(totalInput ?? null)).toBe("12,345,678");
-    const modelInput = container.querySelector(".settings-usage-number");
+    const modelInput = container.querySelector(".settings-usage-table td:nth-child(3) .settings-usage-number");
     expect(modelInput?.textContent).toBe("1k");
     expect(await hoverTooltipText(modelInput)).toBe("1,000");
-    expect(rootText()).toContain("模型使用");
-    expect(rootText()).toContain("Token 用量趋势");
-    expect(rootText()).toContain("最近 30 天");
-    expect(rootText()).toContain("模型用量构成");
     expect(rootText()).toContain("缓存命中率");
     expect(rootText()).toContain("5%");
     expect(container.querySelectorAll(".settings-usage-stat")).toHaveLength(4);
@@ -1272,13 +1283,13 @@ describe("SettingsView About section", () => {
     expect(
       trend?.querySelector<HTMLElement>(`[aria-label^="${heatmapDates.at(-1)}"]`)?.getAttribute("aria-label"),
     ).toContain("总计 470k");
-    const modelChartRows = container.querySelectorAll(".settings-model-chart-row");
-    expect(modelChartRows).toHaveLength(1);
-    expect(modelChartRows[0]?.textContent).toContain("fake-model");
-    expect(modelChartRows[0]?.textContent).toContain("100%");
-    expect(
-      await hoverTooltipText(modelChartRows[0]?.querySelector<HTMLElement>(".settings-model-chart-share") ?? null),
-    ).toBe("1.3k");
+    const modelRows = container.querySelectorAll(".settings-usage-table tbody tr");
+    expect(modelRows).toHaveLength(1);
+    expect(modelRows[0]?.textContent).toContain("fake-model");
+    // A model's share keeps its token total in a hover tooltip.
+    const modelShare = modelRows[0]?.querySelector<HTMLElement>(".settings-usage-share") ?? null;
+    expect(modelShare?.textContent).toBe("100%");
+    expect(await hoverTooltipText(modelShare)).toBe("1.3k");
     const heatmap = container.querySelector(".settings-usage-heatmap");
     expect(heatmap).not.toBeNull();
     expect(heatmap?.getAttribute("aria-label")).toBe("每日用量热力图");
@@ -1362,7 +1373,7 @@ describe("SettingsView archive page", () => {
       archivedThreads: [],
     });
 
-    expect(container.textContent).toContain("暂无已归档的会话或群聊");
+    expect(container.textContent).toContain("暂无已归档的对话或群聊");
     expect(container.querySelector(".settings-archive-empty")).not.toBeNull();
     expect(container.querySelector(".settings-archive-list")).toBeNull();
   });
@@ -1415,7 +1426,7 @@ describe("SettingsView archive page", () => {
     const count = (group: Element | undefined) => group?.querySelector(".settings-archive-group-count");
     expect(groups[0]?.textContent).toContain("wuu");
     expect(count(groups[0])?.textContent).toBe("2");
-    expect(count(groups[0])?.getAttribute("aria-label")).toBe("2 个会话");
+    expect(count(groups[0])?.getAttribute("aria-label")).toBe("2 个对话");
     expect(groups[1]?.textContent).toContain("网站");
     expect(count(groups[1])?.textContent).toBe("1");
   });

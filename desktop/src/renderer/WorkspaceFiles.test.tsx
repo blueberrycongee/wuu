@@ -253,7 +253,7 @@ describe("WorkspaceFileTree", () => {
       expect(selected).toBeDefined();
       expect(selected!.path).toBe(name);
       expect(selected!.id).not.toBe(workspaceFileViewTab({ context, path: otherName }).id);
-      await render(<WorkspaceFilePreview activeContext={context} selectedFilePath={selected!.path} onOpenRightPanel={() => {}} />);
+      await render(<WorkspaceFilePreview activeContext={context} selectedFilePath={selected!.path} />);
       await settleDirectoryLoads();
       expect(readWorkspaceFile).toHaveBeenLastCalledWith(name, cwd);
       expect(container.textContent).toContain("selected contents");
@@ -261,7 +261,7 @@ describe("WorkspaceFileTree", () => {
 
       const absoluteTab = workspaceFileViewTab({ context, path: join(cwd, name) });
       expect(absoluteTab.id).toBe(selected!.id);
-      await render(<WorkspaceFilePreview activeContext={context} selectedFilePath={join(cwd, name)} onOpenRightPanel={() => {}} />);
+      await render(<WorkspaceFilePreview activeContext={context} selectedFilePath={join(cwd, name)} />);
       await settleDirectoryLoads();
       expect(container.textContent).toContain("selected contents");
     } finally {
@@ -272,37 +272,10 @@ describe("WorkspaceFileTree", () => {
   it.each(["C:\\repo", "\\\\server\\share\\repo"])("preserves Windows workspace paths under %j", async (cwd) => {
     const context: RuntimeContext = { kind: "no_project", cwd };
     const tab = workspaceFileViewTab({ context, path: `${cwd}\\src\\ note.txt` });
-    await render(<WorkspaceFilePreview activeContext={context} selectedFilePath={tab.path} onOpenRightPanel={() => {}} />);
+    await render(<WorkspaceFilePreview activeContext={context} selectedFilePath={tab.path} />);
     await settleDirectoryLoads();
     expect(readWorkspaceFile).toHaveBeenCalledWith("src/ note.txt", cwd);
     expect(container.textContent).toContain("button code");
-  });
-
-  it("reserves room beside the search field for the file-tree drag handle", async () => {
-    await render(
-      <WorkspaceFileTree activeContext={activeContext} open onOpenFile={() => {}} />,
-    );
-    await settleDirectoryLoads();
-
-    const unsafeStyle = treeShadowRoot().querySelector<HTMLStyleElement>(
-      "style[data-file-tree-unsafe-css]",
-    );
-    expect(unsafeStyle?.textContent).toMatch(
-      /\[data-file-tree-search-container\]\s*\{[^}]*box-sizing:\s*border-box;[^}]*width:\s*100%;[^}]*margin-inline:\s*0;[^}]*padding-inline:\s*var\(--trees-item-margin-x\);/s,
-    );
-    expect(unsafeStyle?.textContent).toMatch(
-      /\[data-file-tree-search-input\]\s*\{[^}]*min-width:\s*0;[^}]*margin-inline-end:\s*40px;[^}]*border:\s*var\(--wuu-workspace-file-tree-search-border,\s*1px solid var\(--hairline-strong\)\);[^}]*border-radius:\s*var\(--wuu-workspace-file-tree-search-radius,\s*var\(--radius-sm\)\);/s,
-    );
-    expect(unsafeStyle?.textContent).toMatch(
-      /:host-context\(html\[data-focus-modality="pointer"\]\) \[data-file-tree-search-input\]:focus-visible,[\s\S]*:host-context\(html\[data-focus-modality="pointer"\]\) \[data-file-tree-search-input\]\[data-file-tree-search-input-fake-focus="true"\]\s*\{[^}]*outline:\s*none;/,
-    );
-    const search = treeShadowRoot().querySelector<HTMLInputElement>(
-      "[data-file-tree-search-input]",
-    );
-    expect(search?.style.marginInlineEnd).toBe("40px");
-    expect(search?.style.minWidth).toBe("0");
-    expect(search?.style.borderColor).toBe("");
-    expect(search?.style.outline).toBe("none");
   });
 
   it("expands and scrolls to the selected workspace file path", async () => {
@@ -473,7 +446,7 @@ describe("WorkspaceFileTree", () => {
       <WorkspaceFilePreview
         activeContext={activeContext}
         selectedFilePath="/repo/src/components/Button.tsx"
-        onOpenRightPanel={() => {}}
+       
       />,
     );
 
@@ -486,7 +459,7 @@ describe("WorkspaceFileTree", () => {
   it("exports the complete selected file and reports native save failures", async () => {
     const exporter = vi.fn().mockRejectedValue(new Error("Share destination unavailable"));
     window.wuu.exportWorkspaceFile = exporter;
-    await render(<WorkspaceFilePreview activeContext={activeContext} selectedFilePath="src/components/Button.tsx" onOpenRightPanel={() => {}} />);
+    await render(<WorkspaceFilePreview activeContext={activeContext} selectedFilePath="src/components/Button.tsx" />);
     await settleDirectoryLoads();
     const button = container.querySelector<HTMLButtonElement>(".workspace-file-export-actions button");
     expect(button?.disabled).toBe(false);
@@ -502,7 +475,7 @@ describe("WorkspaceFileTree", () => {
         activeContext={activeContext}
         selectedFilePath="/repo/src/components/Button.tsx"
         refreshKey="running"
-        onOpenRightPanel={() => {}}
+       
       />,
     );
     await settleDirectoryLoads();
@@ -518,7 +491,7 @@ describe("WorkspaceFileTree", () => {
         activeContext={activeContext}
         selectedFilePath="/repo/src/components/Button.tsx"
         refreshKey="completed"
-        onOpenRightPanel={() => {}}
+       
       />,
     );
 
@@ -552,7 +525,7 @@ describe("WorkspaceFileTree", () => {
       <WorkspaceFilePreview
         activeContext={activeContext}
         selectedFilePath="/repo/AGENTS.txt"
-        onOpenRightPanel={() => {}}
+       
       />,
     );
 
@@ -581,7 +554,7 @@ describe("WorkspaceFileTree", () => {
       <WorkspaceFilePreview
         activeContext={activeContext}
         selectedFilePath="/repo/src/index.ts"
-        onOpenRightPanel={() => {}}
+       
       />,
     );
 
@@ -598,7 +571,7 @@ describe("WorkspaceFileTree", () => {
       <WorkspaceFilePreview
         activeContext={activeContext}
         selectedFilePath="/repo/src/index.ts"
-        onOpenRightPanel={() => {}}
+       
         onDirtyChange={onDirtyChange}
       />,
     );
@@ -627,7 +600,7 @@ describe("WorkspaceFileTree", () => {
       <WorkspaceFilePreview
         activeContext={activeContext}
         selectedFilePath="/repo/large.log"
-        onOpenRightPanel={() => {}}
+       
       />,
     );
 
@@ -649,7 +622,7 @@ describe("WorkspaceFileTree", () => {
       <WorkspaceFilePreview
         activeContext={activeContext}
         selectedFilePath="/repo/archive.dat"
-        onOpenRightPanel={() => {}}
+       
       />,
     );
 
@@ -672,7 +645,7 @@ describe("WorkspaceFileTree", () => {
       <WorkspaceFilePreview
         activeContext={activeContext}
         selectedFilePath="/repo/assets/mascot/wuu-mascot-concept-01.png"
-        onOpenRightPanel={() => {}}
+       
       />,
     );
 
@@ -699,7 +672,7 @@ describe("WorkspaceFileTree", () => {
       <WorkspaceFilePreview
         activeContext={activeContext}
         selectedFilePath="/repo/docs/spec.pdf"
-        onOpenRightPanel={() => {}}
+       
       />,
     );
 
@@ -722,7 +695,7 @@ describe("WorkspaceFileTree", () => {
       <WorkspaceFilePreview
         activeContext={activeContext}
         selectedFilePath="/repo/README.md"
-        onOpenRightPanel={() => {}}
+       
       />,
     );
 
@@ -747,7 +720,7 @@ describe("WorkspaceFileTree", () => {
         activeContext={activeContext}
         selectedFilePath="/repo/README.md"
         selection={{ startLineNumber: 3, startColumn: 1 }}
-        onOpenRightPanel={() => {}}
+       
       />,
     );
 

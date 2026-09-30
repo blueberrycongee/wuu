@@ -1,7 +1,7 @@
 import { Check, FileDiff, GitBranch, Plus, Search } from "./WuuIcons";
-import { type CSSProperties, useRef, useState } from "react";
+import { type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, useRef, useState } from "react";
 import type { GitStatusResult } from "../shared/protocol";
-import { FloatingMenuPortal } from "./ComposerFloatingMenu";
+import { FloatingMenuPortal, composerMenuWidth, handleFloatingMenuKeyDown, menuOpeningKey, useFloatingMenuFocus } from "./ComposerFloatingMenu";
 import { COMPOSER_PROJECT_MENU_WIDTH } from "./ComposerTypes";
 import { hostSupports } from "./HostCapabilities";
 import { useI18n } from "./i18n";
@@ -22,35 +22,34 @@ export function ComposerBranchPicker({
 }): JSX.Element {
   const { t } = useI18n();
   const anchorRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const branch = worktreeStart?.branch || gitStatus.branch || "HEAD";
   return (
-    <div className="composer-branch-control" ref={anchorRef} onKeyDown={(event) => {
-      if (event.key === "Escape" && open) {
-        event.stopPropagation();
-        onToggle();
-        anchorRef.current?.querySelector("button")?.focus();
-      }
-    }}>
-      <button type="button" className="hero-project-pill" aria-haspopup="menu"
+    <div className="composer-branch-control" ref={anchorRef}>
+      <button ref={triggerRef} type="button" className="hero-project-pill" aria-haspopup="menu"
         aria-expanded={open && !disabled}
         aria-label={t(worktreeStart ? "composer.worktreeStartBranchLabel" : "composer.switchBranch", { branch })}
         title={branch}
-        disabled={disabled} onClick={onToggle}>
+        disabled={disabled} onClick={onToggle}
+        onKeyDown={(event) => {
+          if (open ? event.key === "Escape" : menuOpeningKey(event)) onToggle();
+        }}>
         <GitBranch className="hero-project-pill-icon" />
         <span className="hero-project-pill-text">{branch}</span>
       </button>
       {open && !disabled ? (
-        <FloatingMenuPortal anchorRef={anchorRef} owner="composer-runtime" placement="above" align="left" width={COMPOSER_PROJECT_MENU_WIDTH}
+        <FloatingMenuPortal anchorRef={anchorRef} owner="composer-runtime" placement="above" align="left" width={composerMenuWidth(COMPOSER_PROJECT_MENU_WIDTH)}
           mobileSheet={{ label: t(worktreeStart ? "composer.worktreeStartBranch" : "git.branch"), onClose: onToggle }}>
           <ComposerBranchMenu gitStatus={gitStatus} selectedBranch={worktreeStart ? branch : gitStatus.branch}
-            checkout={!worktreeStart} onSelect={onSelect} onCreate={onCreate} />
+            checkout={!worktreeStart} onSelect={onSelect} onCreate={onCreate}
+            onKeyDown={(event) => handleFloatingMenuKeyDown(event, onToggle, triggerRef.current)} />
         </FloatingMenuPortal>
       ) : null}
     </div>
   );
 }
 
-function ComposerBranchMenu({ gitStatus, selectedBranch, checkout, onSelect, onCreate }: {
+function ComposerBranchMenu({ gitStatus, selectedBranch, checkout, onSelect, onCreate, onKeyDown }: {
   gitStatus: GitStatusResult;
   selectedBranch?: string;
   /** Choosing a branch checks it out in the project, rather than only
@@ -58,8 +57,11 @@ function ComposerBranchMenu({ gitStatus, selectedBranch, checkout, onSelect, onC
   checkout: boolean;
   onSelect: (branch: string) => void | Promise<void>;
   onCreate?: (branch: string) => Promise<void>;
+  onKeyDown: (event: ReactKeyboardEvent<HTMLElement>) => void;
 }): JSX.Element {
   const { t } = useI18n();
+  const menuRef = useRef<HTMLDivElement>(null);
+  useFloatingMenuFocus(menuRef);
   const [query, setQuery] = useState("");
   const [pending, setPending] = useState(false);
   const inFlight = useRef(false);
@@ -104,12 +106,12 @@ function ComposerBranchMenu({ gitStatus, selectedBranch, checkout, onSelect, onC
 
   const searchLabel = t(canCreate ? "composer.findOrCreateBranch" : "environment.searchBranches");
   return (
-    <div className="composer-project-menu composer-branch-menu" role="menu"
+    <div ref={menuRef} className="composer-project-menu composer-branch-menu" role="menu" onKeyDown={onKeyDown}
       aria-label={t(checkout ? "git.branch" : "composer.worktreeStartBranch")} aria-busy={pending}
-      style={{ "--composer-project-menu-width": `${COMPOSER_PROJECT_MENU_WIDTH}px` } as CSSProperties}>
+      style={{ "--composer-project-menu-width": `${composerMenuWidth(COMPOSER_PROJECT_MENU_WIDTH)}px` } as CSSProperties}>
       <label className="menu-search">
         <Search className="icon-sm" aria-hidden="true" />
-        <input autoFocus value={query} aria-label={searchLabel} placeholder={searchLabel}
+        <input value={query} aria-label={searchLabel} placeholder={searchLabel}
           onChange={(event) => setQuery(event.target.value)}
           onKeyDown={(event) => {
             if (event.key !== "Enter" || event.nativeEvent.isComposing) return;

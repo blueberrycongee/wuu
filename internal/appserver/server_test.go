@@ -10249,6 +10249,74 @@ func TestUsageOverviewBucketsTokenUsageByRequestedTimeZone(t *testing.T) {
 	}
 }
 
+func TestSettingsUsageBucketsDaysByRequestedTimeZone(t *testing.T) {
+	rt := newTestRuntime(t, &fakeClient{})
+	// 06:30 UTC on March 10 is still the evening of March 9 in Los Angeles
+	// (PDT, UTC-7), which is the day the desktop's calendar draws it on.
+	evening := time.Date(2026, time.March, 10, 6, 30, 0, 0, time.UTC)
+	sess, err := session.CreateWithMetadata(rt.SessionDir, "usage-settings-zone", rt.RootDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, rec := range []session.HistoryRecord{
+		{Role: "user", Content: "evening session"},
+		{
+			Role: "meta", Content: "token_usage", Provider: "openai", Model: "gpt-4o",
+			At: evening, InputTokens: 100, OutputTokens: 20,
+		},
+	} {
+		if err := session.AppendHistoryRecord(rt.SessionDir, sess.ID, rec); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	out := &lockedBuffer{}
+	srv := New(rt, out)
+	days := func(id string, params map[string]any) []SettingsUsageDay {
+		request := map[string]any{"id": id, "method": MethodSettingsUsage}
+		if params != nil {
+			request["params"] = params
+		}
+		raw, err := json.Marshal(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := srv.handleLine(context.Background(), raw); err != nil {
+			t.Fatalf("handleLine: %v", err)
+		}
+		return remarshal[SettingsUsageResponse](t, responseByID(t, parseOutput(t, out.String()), id)["result"]).Days
+	}
+
+	// Without a zone the series stays on UTC calendar days, as older clients expect.
+	if got := days("utc", nil); len(got) != 1 || got[0].Date != "2026-03-10" {
+		t.Fatalf("utc days=%+v, want March 10", got)
+	}
+	// The cached UTC snapshot must not answer a request for another zone.
+	if got := days("la", map[string]any{"timezone": "America/Los_Angeles"}); len(got) != 1 || got[0].Date != "2026-03-09" {
+		t.Fatalf("Los Angeles days=%+v, want March 9", got)
+	}
+}
+
+func TestSettingsUsageRejectsUnknownTimeZone(t *testing.T) {
+	rt := newTestRuntime(t, &fakeClient{})
+	out := &lockedBuffer{}
+	srv := New(rt, out)
+	raw, err := json.Marshal(map[string]any{
+		"id":     "1",
+		"method": MethodSettingsUsage,
+		"params": map[string]any{"timezone": "Mars/Olympus"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.handleLine(context.Background(), raw); err != nil {
+		t.Fatalf("handleLine: %v", err)
+	}
+	if responseByID(t, parseOutput(t, out.String()), "1")["error"] == nil {
+		t.Fatal("an unknown time zone must be a request error, not a silent UTC fallback")
+	}
+}
+
 func TestUsageOverviewReportsZeroWithoutRecordedUsage(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	out := &lockedBuffer{}

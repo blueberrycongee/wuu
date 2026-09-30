@@ -4,13 +4,13 @@ import * as React from "react";
 import { createComposerDrawer } from "../shared/ComposerDrawer";
 import { AttachmentImage } from "./AttachmentImage";
 import {
+  ArrowUp,
   CornerDownRight,
   CornerUpLeft,
   FileText,
   ListTodo,
   Paperclip,
   PencilLine,
-  Send,
   Square,
   LoaderCircle,
   RotateCw,
@@ -434,7 +434,7 @@ export function SplitPaneComposer({
                         title={sendLabel}
                         disabled={readOnly || sendDisabled || !hasDraft}
                       >
-                        <Send aria-hidden="true" />
+                        <ArrowUp aria-hidden="true" />
                       </button>
                     )}
                   </div>

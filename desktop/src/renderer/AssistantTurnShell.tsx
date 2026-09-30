@@ -1,6 +1,7 @@
 import { localTurnTiming } from "./LocalTurnTiming";
 import { ChevronRight } from "./WuuIcons";
 import {
+  type KeyboardEvent,
   type SyntheticEvent,
   useCallback,
   useEffect,
@@ -23,7 +24,7 @@ import { layoutAssistantTurn } from "./AssistantTurnLayout";
 import { LightweightStreamingText } from "./LightweightStreamingText";
 import { useLiveTextWave } from "./LiveTextWave";
 import { streamFieldValue } from "./ThreadItemText";
-import { StreamReconnectNotice, TurnEventNotice } from "./TurnNotice";
+import { TurnEventNotice } from "./TurnNotice";
 import { turnEventForItem } from "./TurnEvents";
 import {
   clearPausedTurnElapsed,
@@ -34,7 +35,7 @@ import {
   useLiveNow,
 } from "./TurnProgress";
 import { ProcessSurface, ProcessSurfaceMascot } from "./ProcessSurface";
-import { turnProgressContent } from "./TurnViewHelpers";
+import { turnEndedInFailure, turnProgressContent } from "./TurnViewHelpers";
 import { collectTurnSources } from "./ToolActivityHelpers";
 import { TurnSourcesRow } from "./TurnSourcesRow";
 import {
@@ -365,7 +366,7 @@ function TurnProcessFold({
   const processLabel = turnProcessTitle(
     turn,
     elapsedMs,
-    completedDuration !== undefined,
+    completedDuration !== undefined || pausedElapsedMs !== undefined,
     collapseRequested,
     answerReady,
   );
@@ -442,6 +443,9 @@ function TurnProcessFold({
             {part}
           </span>
         ))}
+        {hasDetails ? (
+          <ChevronRight className="turn-process-chevron icon-xs" aria-hidden />
+        ) : null}
       </span>
       {hasPreview ? (
         <span
@@ -483,18 +487,22 @@ return (
       id={detailsID}
     >
       <div className="turn-process-topline">
+        {/* A direct answer has nothing to fold, so its duration is a plain
+            label rather than a control that toggles nothing. */}
         <div
-          role="button"
-          tabIndex={0}
-          aria-expanded={expanded}
-          aria-controls={`${detailsID}-body`}
-          onClick={handleToggle}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" || event.key === " ") {
-              event.preventDefault();
-              handleToggle();
-            }
-          }}
+          {...(hasDetails ? {
+            role: "button",
+            tabIndex: 0,
+            "aria-expanded": expanded,
+            "aria-controls": `${detailsID}-body`,
+            onClick: handleToggle,
+            onKeyDown: (event: KeyboardEvent<HTMLDivElement>) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                handleToggle();
+              }
+            },
+          } : {})}
           className="turn-process-toggle"
         >
           {toggleContent}
@@ -648,11 +656,6 @@ function EntryRenderer({
       />
     );
   }
-  if (item.type === "stream_reconnect") {
-    // The reconnect row renders straight from the item (retry counters and
-    // countdown live on it), not through the generic turn-event projection.
-    return <StreamReconnectNotice item={item} />;
-  }
   if (item.type === "context_compaction" || item.type === "error") {
     const event = turnEventForItem(item);
     return event ? <TurnEventNotice event={event} /> : null;
@@ -790,6 +793,11 @@ function turnProcessTitle(
       ? taskFinishedLabel(elapsedMs)
       : translate("task.status.completed");
   }
+  // The failure card below says what went wrong; the fold header keeps the
+  // duration a finished turn shows.
+  if (turnEndedInFailure(turn)) {
+    return hasKnownDuration ? taskFinishedLabel(elapsedMs) : translate("messageFlow.activityFailed");
+  }
   if (turn.status === "interrupted") return translate("turn.orchestrationPaused");
   if (turn.status === "completed") {
     if (!hasKnownDuration) return translate("task.status.completed");
@@ -812,7 +820,7 @@ function turnProcessMetaParts(
   const parts: string[] = [];
   if (turn.status === "in_progress" && !answerReady) {
     parts.push(formatDuration(elapsedMs));
-  } else if (turn.status === "interrupted" && showPausedElapsed) {
+  } else if (turn.status === "interrupted" && showPausedElapsed && !turnEndedInFailure(turn)) {
     parts.push(formatDuration(elapsedMs));
   }
   return parts;

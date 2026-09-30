@@ -109,8 +109,7 @@ describe("EngineSettingsSection", () => {
     };
     render(missingClaude);
 
-    const claudeRadio = container.querySelector<HTMLInputElement>('[data-testid="settings-engine-claude-radio"]')!;
-    expect(claudeRadio.disabled).toBe(true);
+    expect(container.querySelector('input[data-testid="settings-engine-claude-radio"]:not(:disabled)')).toBeNull();
     expect(
       container.querySelector('[data-testid="settings-engine-claude-status"]')?.getAttribute("aria-label"),
     ).toContain("未安装");

@@ -339,13 +339,13 @@ describe("createThreadMutationActions", () => {
 
     expect(outcome).toEqual({
       ok: false,
-      error: "会话仍在运行，结束后再归档",
+      error: "对话仍在运行，结束后再归档",
       forceRetryable: true,
     });
     expect(api.archiveThread).not.toHaveBeenCalled();
     expect(harness.getAppState().threads[0]?.archived).toBe(false);
     expect(harness.getAppState().status).toBe("ready");
-    expect(toastMocks.showErrorToast).toHaveBeenCalledWith("会话仍在运行，结束后再归档");
+    expect(toastMocks.showErrorToast).toHaveBeenCalledWith("对话仍在运行，结束后再归档");
   });
 
   it("reports a remotely owned running turn without showing archive success", async () => {
@@ -371,12 +371,12 @@ describe("createThreadMutationActions", () => {
 
     expect(outcome).toEqual({
       ok: false,
-      error: "会话仍在运行，结束后再归档",
+      error: "对话仍在运行，结束后再归档",
       forceRetryable: true,
     });
     expect(harness.getAppState().threads[0]?.archived).toBe(false);
     expect(harness.getAppState().status).toBe("ready");
-    expect(toastMocks.showErrorToast).toHaveBeenCalledWith("会话仍在运行，结束后再归档");
+    expect(toastMocks.showErrorToast).toHaveBeenCalledWith("对话仍在运行，结束后再归档");
   });
 
   it("reuses a parked workspace draft when archiving the active thread", async () => {

@@ -1,6 +1,6 @@
 /// <reference path="../shared/jsx-compat.d.ts" />
 
-import { useLayoutEffect, useRef } from "react";
+import { Fragment, useLayoutEffect, useRef } from "react";
 import type {
   InputFile,
   InputImage,
@@ -17,8 +17,16 @@ import { ArtifactThreadContext } from "./ArtifactPreviewContext";
 import { TurnEditSummaryPresentation } from "./TurnEditSummaryPresentation";
 import { ENABLE_TURN_ARTIFACT_SUMMARY, ENABLE_TURN_EDIT_SUMMARY } from "./FeatureFlags";
 import type { TurnFileDiffSelection } from "./TurnFileDiffTypes";
-import { TurnEventNotice, StreamStatusNotice, StreamReconnectNotice } from "./TurnNotice";
+import {
+  OPEN_SETTINGS_EVENT,
+  type OpenSettingsDetail,
+  StreamReconnectNotice,
+  StreamStatusNotice,
+  TurnEventNotice,
+  TurnFailureNotice,
+} from "./TurnNotice";
 import { turnEventForTurn } from "./TurnEvents";
+import { userFacingErrorForMessage } from "./UserFacingErrors";
 import { isInternalUserNotificationItem } from "./InternalUserNotification";
 import { groupProjectEvents, ProjectEventGroup } from "./ProjectViews";
 import { turnIsAnswerReady, type TurnStreamStatus } from "./AppState";
@@ -27,6 +35,7 @@ import {
   messageFlowAgentMessageItemID,
   scrollToUserMessage,
   turnAnchorID,
+  turnEndedInFailure,
 } from "./TurnViewHelpers";
 import { desktopPluginHost } from "./plugins/DesktopPluginRuntime";
 import { PluginSurface } from "./plugins";
@@ -89,6 +98,10 @@ export function TurnView(props: TurnViewProps): JSX.Element | null {
     />
     </ArtifactThreadContext.Provider>
   );
+}
+
+function openModelServices(): void {
+  window.dispatchEvent(new CustomEvent<OpenSettingsDetail>(OPEN_SETTINGS_EVENT, { detail: { page: "providers" } }));
 }
 
 function workspaceTurnForPresentation(turn: Turn): Turn {
@@ -229,6 +242,30 @@ function TurnContent({
   const renderedStreamStatus = visibleStreamStatus ?? retainedStreamStatus;
   const retryMessage = userItems.at(-1);
   const event = turnEventForTurn(turn);
+  // A failed reconnect already carries the cause, so the turn event stays
+  // empty for it; either way one failure card explains the turn. A stop the
+  // reader asked for keeps the quiet row.
+  const failedReconnect = reconnectItems.find((item) => item.status === "failed");
+  const failureDisplay = failedReconnect
+    ? userFacingErrorForMessage(turn.error ?? failedReconnect.text ?? "", "turn")
+    : event?.presentation === "notice" && event.source === "turn" && event.notice.category !== "cancelled"
+      ? event.notice
+      : undefined;
+  const retryFailedTurn = isLatestTurn && turnEndedInFailure(turn) && retryMessage && onEditMessage && onSubmitEditMessage
+    ? () => onSubmitEditMessage(
+        turn.id, retryMessage, retryMessage.input_text ?? retryMessage.text ?? "",
+        retryMessage.images ?? [], retryMessage.files ?? [], retryMessage.content_parts,
+      )
+    : undefined;
+  const failureNotice = failureDisplay ? (
+    <TurnFailureNotice
+      display={failureDisplay}
+      error={turn.error}
+      reconnect={failedReconnect}
+      onRetry={retryFailedTurn}
+      onOpenSettings={isLatestTurn ? openModelServices : undefined}
+    />
+  ) : null;
   const incomplete = turn.status === "failed" || turn.status === "interrupted";
   const editSummary = ENABLE_TURN_EDIT_SUMMARY ? (
     <TurnEditSummaryPresentation
@@ -291,25 +328,15 @@ function TurnContent({
           }
         />
       ) : null}
-      {reconnectItems.map((item) => (
-        <StreamReconnectNotice
-          key={item.id}
-          item={item}
-          error={turn.error}
-          onRetry={isLatestTurn && turn.status === "failed" && retryMessage && onEditMessage && onSubmitEditMessage
-            ? () => onSubmitEditMessage(
-                turn.id, retryMessage, retryMessage.input_text ?? retryMessage.text ?? "",
-                retryMessage.images ?? [], retryMessage.files ?? [], retryMessage.content_parts,
-              )
-            : undefined}
-        />
-      ))}
+      {reconnectItems.map((item) => item === failedReconnect
+        ? <Fragment key={item.id}>{failureNotice}</Fragment>
+        : <StreamReconnectNotice key={item.id} item={item} />)}
       {renderedStreamStatus ? (
         <div className={visibleStreamStatus ? undefined : "turn-stream-status-spacer"} aria-hidden={!visibleStreamStatus || undefined}>
           <StreamStatusNotice status={renderedStreamStatus} />
         </div>
       ) : null}
-      {event ? <TurnEventNotice event={event} /> : null}
+      {event ? (failureDisplay ? failureNotice : <TurnEventNotice event={event} />) : null}
       {incomplete ? outputSummary : null}
     </section>
   );

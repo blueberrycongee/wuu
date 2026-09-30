@@ -1,16 +1,19 @@
+/* In the reading flow the card is framed like the other conversation cards;
+ * covering the composer, the composer's frame is its frame. */
 .user-question-card {
   box-sizing: border-box;
   margin: 4px 0 24px;
   padding: var(--card-padding);
-  border: 0;
+  border: 1px solid var(--message-flow-card-border);
   border-radius: var(--radius-lg);
-  background: var(--surface-1);
+  background: var(--message-flow-card-bg);
 }
 
 .composer-cover-accessory .user-question-card,
 .composer-top-accessory .user-question-card {
   margin: 0;
   width: 100%;
+  border: 0;
 }
 
 .user-question-after-turn {
@@ -37,26 +40,42 @@
   border-top: 1px solid var(--hairline-soft);
 }
 
+/* A short header labels the question; the question itself carries the
+ * card, and the options below read as body text. */
+.user-question-header {
+  margin: 0;
+  color: var(--ink-tertiary);
+  font-size: var(--font-sm);
+  font-weight: var(--weight-medium);
+  line-height: 1.5;
+}
+
 .user-question-prompt {
   margin: 0;
   color: var(--ink);
   font-size: var(--font-ui);
-  font-weight: var(--weight-semibold);
+  font-weight: var(--weight-medium);
   line-height: 1.5;
 }
 
-.user-question-body {
-  margin: 4px 0 0;
+:is(.user-question-header, .user-question-offer-title) + .user-question-prompt {
+  margin-top: var(--space-1);
+}
+
+.user-question-detail {
+  margin: var(--space-1) 0 0;
   color: var(--ink-soft);
   font-size: var(--font-ui);
   line-height: 1.55;
 }
 
-.user-question-detail {
-  margin: 4px 0 0;
-  color: var(--ink-soft);
-  font-size: var(--font-ui);
-  line-height: 1.55;
+.user-question-detail.is-code {
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: var(--appearance-code-size);
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
 .user-question-options {
@@ -65,16 +84,20 @@
   margin-top: 10px;
 }
 
+/* Option marks sit on the card's text edge; the hover and selection fill
+ * reaches past it into the card padding. */
 .user-question-option {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   column-gap: 10px;
   align-items: start;
-  width: 100%;
+  width: calc(100% + 2 * var(--space-2));
   box-sizing: border-box;
-  padding: 9px 10px;
+  margin-inline: calc(-1 * var(--space-2));
+  padding: var(--space-2);
   border: 0;
-  border-radius: var(--radius-xs);
+  /* Concentric with the card: its corner less the fill's inset from it. */
+  border-radius: var(--radius-sm);
   color: var(--ink);
   background: transparent;
   text-align: left;
@@ -88,11 +111,6 @@
 
 .user-question-option[data-active] {
   background: var(--surface-3);
-}
-
-.user-question-option:focus-visible {
-  outline: 1px solid var(--ink);
-  outline-offset: 1px;
 }
 
 .user-question-option-indicator {
@@ -123,12 +141,7 @@
 
 .user-question-option-label {
   font-size: var(--font-ui);
-  font-weight: var(--weight-medium);
   line-height: 1.45;
-}
-
-.user-question-option[data-active] .user-question-option-label {
-  font-weight: var(--weight-semibold);
 }
 
 .user-question-option-description {
@@ -155,7 +168,7 @@
   gap: 12px;
 }
 
-.user-question-offer-title .user-question-prompt {
+.user-question-offer-title > p {
   flex: 1;
   min-width: 0;
 }
@@ -193,9 +206,6 @@
 .user-question-option-offer {
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  padding: 10px 8px 10px 6px;
-  border-radius: var(--radius-sm);
-  background: transparent;
 }
 
 .user-question-option-offer:hover,
@@ -206,8 +216,8 @@
 .user-question-option-index {
   display: grid;
   place-items: center;
-  width: 24px;
-  height: 24px;
+  width: max(24px, round(up, calc(var(--font-sm) * 1.75), 2px));
+  height: max(24px, round(up, calc(var(--font-sm) * 1.75), 2px));
   border-radius: var(--radius-circle);
   color: var(--ink-soft);
   background: var(--surface-2);
@@ -241,11 +251,12 @@
   margin-top: 8px;
 }
 
+/* The draft row is a field holding its submit button, its corner the
+ * button's plus the inset between them. */
 .user-question-offer-footer.is-drafting {
-  min-height: 40px;
-  padding: 4px 4px 4px 8px;
+  padding: var(--space-1) var(--space-1) var(--space-1) var(--space-2);
   border: 0;
-  border-radius: var(--radius-pill);
+  border-radius: calc(var(--radius-sm) + var(--space-1));
   background: var(--surface-2);
 }
 
@@ -269,7 +280,7 @@
   gap: 8px;
   min-width: 0;
   flex: 1;
-  padding: 8px 4px;
+  padding: var(--space-2) 0;
   border: 0;
   color: var(--ink-tertiary);
   background: transparent;
@@ -302,28 +313,9 @@
   box-shadow: none;
 }
 
-.user-question-offer-input::placeholder {
-  color: var(--ink-tertiary);
-}
-
 .user-question-skip {
-  display: inline-flex;
-  align-items: center;
   flex: none;
-  padding: 7px 14px;
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-pill);
-  color: var(--ink-soft);
-  background: var(--paper);
-  font-size: var(--font-ui);
-  font-weight: var(--weight-medium);
   font-variant-numeric: tabular-nums;
-  cursor: pointer;
-}
-
-.user-question-skip:hover:not(:disabled) {
-  color: var(--ink);
-  background: var(--surface-2);
 }
 
 .user-question-custom {
@@ -339,10 +331,6 @@
   font-size: var(--font-ui);
   line-height: 1.5;
   transition: border-color var(--motion-fast) var(--ease-out);
-}
-
-.user-question-custom::placeholder {
-  color: var(--ink-tertiary);
 }
 
 .user-question-actions {
@@ -371,65 +359,6 @@
   height: var(--icon-size);
 }
 
-.user-question-actions button {
-  display: inline-flex;
-  align-items: center;
-  padding: 7px 16px;
-  border: 0;
-  border-radius: var(--radius-sm);
-  font-size: var(--font-ui);
-  font-weight: var(--weight-semibold);
-  cursor: pointer;
-  transition:
-    background-color var(--motion-fast) var(--ease-out),
-    opacity var(--motion-fast) var(--ease-out);
-}
-
-.user-question-actions button:disabled {
-  opacity: 0.45;
-  cursor: default;
-}
-
-.user-question-actions .user-question-cancel {
-  color: var(--ink-soft);
-  background: transparent;
-}
-
-.user-question-actions .user-question-cancel:hover:not(:disabled) {
-  color: var(--ink);
-  background: var(--ink-overlay-6);
-}
-
-.user-question-actions .user-question-submit,
-.user-question-offer-footer .user-question-submit {
-  color: var(--paper);
-  background: var(--ink);
-}
-
-.user-question-offer-footer .user-question-submit {
-  min-height: 32px;
-  padding: 0 14px;
-  border-radius: var(--radius-pill);
-  font-size: var(--font-ui);
-  font-weight: var(--weight-semibold);
-}
-
-.user-question-actions .user-question-submit:hover:not(:disabled) {
-  background: var(--ink-strong);
-}
-
-.user-question-actions button:focus-visible {
-  outline: 1px solid var(--ink);
-  outline-offset: 2px;
-}
-
-.user-question-actions .user-question-submit:disabled,
-.user-question-offer-footer .user-question-submit:disabled {
-  color: var(--paper);
-  background: var(--ink);
-  opacity: 0.28;
-}
-
 .user-question-card button[aria-busy="true"]:disabled {
   opacity: 1;
 }
@@ -437,7 +366,7 @@
 .user-question-error {
   margin-right: auto;
   color: var(--danger);
-  font-size: 12px;
+  font-size: var(--font-xs);
 }
 
 :root {
@@ -447,11 +376,7 @@
      legible against the message canvas instead of reading as a wider haze. */
   --composer-frame-shadow: var(--shadow-composer);
   --composer-surface-bg: var(--wuu-color-surface, #fdfdfe);
-  --composer-textarea-placeholder: var(--ink-muted);
   --composer-textarea-disabled: var(--wuu-color-text-muted, #6d7471);
-  --composer-send-button-disabled-text: rgba(255, 255, 255, 0.86);
-  --composer-slash-menu-bg: rgba(255, 255, 255, 0.96);
-  --composer-slash-menu-shadow: var(--shadow-pop);
   --composer-project-menu-icon: var(--wuu-color-text-muted, #6b7176);
   --composer-menu-note-warning-strong: var(--wuu-color-warning, #b45309);
 }
@@ -560,15 +485,6 @@
 
 .composer-frame-covered .composer[hidden] {
   display: none;
-}
-
-.runtime-panel-handoff {
-  height: 28px;
-  padding: 0 10px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  background: var(--paper);
-  font-size: 12px;
 }
 
 /* Hero (welcome) composer inherits the same dialog width as the dock composer
@@ -718,6 +634,18 @@
   box-shadow: inset 0 0 0 1px var(--ink-overlay-18);
 }
 
+/* The frame clips its contents, so the draft's keyboard ring would show only
+ * as a line under the text. The frame's edge, drawn above the input, becomes
+ * the ring instead; it stays inside the frame, clear of trays tucked behind. */
+html[data-focus-modality="keyboard"] .composer-frame:has(> .composer > textarea:focus-visible)::after {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+html[data-focus-modality="keyboard"] .composer > textarea:focus-visible {
+  outline: none;
+}
+
 .hero-composer-wrap .composer-frame {
   border-radius: var(--session-composer-radius, var(--radius-md));
   background: var(--composer-surface-bg);
@@ -789,11 +717,6 @@
 .composer-expand-button:active:not(:disabled) {
   color: var(--ink);
   transform: scale(0.96);
-}
-
-.composer-expand-button:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 1px;
 }
 
 .composer-expand-button:disabled {
@@ -912,17 +835,6 @@
   font-weight: 600;
 }
 
-.composer-input-header {
-  --composer-input-header-inline-padding: 8px;
-  --composer-input-header-row-height: 36px;
-  --composer-input-header-action-size: 28px;
-  border-bottom: 1px solid var(--hairline-soft);
-}
-
-.composer-input-header > * + * {
-  border-top: 1px solid var(--hairline-soft);
-}
-
 .composer-input-header-actions {
   display: flex;
   flex: 0 0 auto;
@@ -930,25 +842,11 @@
   gap: 1px;
 }
 
-.composer-input-header-label {
-  width: 36px;
-  overflow: hidden;
-  color: var(--ink-muted);
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0;
-  line-height: 1;
-  text-overflow: clip;
-  text-transform: uppercase;
-  user-select: none;
-  white-space: nowrap;
-}
-
 .composer-input-header-action {
   display: grid;
-  width: var(--composer-input-header-action-size, 28px);
-  height: var(--composer-input-header-action-size, 28px);
-  flex: 0 0 var(--composer-input-header-action-size, 28px);
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
   place-items: center;
   padding: 0;
   border: 0;
@@ -964,11 +862,6 @@
   color: var(--ink);
 }
 
-.composer-input-header-action:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 1px;
-}
-
 .composer-queue-list {
   display: flex;
   flex-direction: column;
@@ -982,8 +875,8 @@
   grid-template-columns: 18px minmax(0, 1fr) auto;
   align-items: center;
   gap: 8px;
-  min-height: var(--composer-input-header-row-height, 36px);
-  padding: 4px var(--composer-input-header-inline-padding, 8px);
+  min-height: 36px;
+  padding: 4px 8px;
   color: var(--ink);
   font-size: var(--font-sm);
   line-height: 1.5;
@@ -1013,8 +906,8 @@
 
 .composer-queue-index {
   color: var(--ink-tertiary);
-  font-size: 11px;
-  font-weight: 500;
+  font-size: var(--font-xs);
+  font-weight: var(--weight-medium);
   font-variant-numeric: tabular-nums;
   text-align: center;
   user-select: none;
@@ -1040,8 +933,6 @@
 }
 
 .composer-queue-preview:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 2px;
   border-radius: var(--radius-xs);
 }
 
@@ -1094,7 +985,7 @@
 
 .composer-accessory-drawer[data-tone="muted"] {
   background: var(--surface-1);
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
 }
 
 .composer-accessory-drawer[data-tone="warning"] {
@@ -1126,9 +1017,9 @@
   cursor: pointer;
 }
 
-.composer-drawer-summary-select:focus-visible {
-  border-radius: var(--radius-sm);
-  outline: 2px solid var(--conversation-floating-surface-focus);
+/* The summary row fills the drawer's clipped top edge, so its ring sits inside. */
+html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visible {
+  border-radius: var(--radius-xs);
   outline-offset: -2px;
 }
 
@@ -1192,7 +1083,7 @@
 }
 
 .composer-pending-drawer.expanded .composer-pending-preview {
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-weight: var(--weight-medium);
 }
 
@@ -1280,10 +1171,6 @@
   padding-bottom: 2px;
 }
 
-.composer textarea::placeholder {
-  color: var(--composer-textarea-placeholder);
-}
-
 .composer textarea:disabled {
   color: var(--composer-textarea-disabled);
   cursor: default;
@@ -1311,11 +1198,14 @@
   min-width: 0;
   align-items: center;
   gap: 8px;
+  /* Clip a toolbar squeezed past its controls, but leave room for their
+   * keyboard rings (2px ring at a 2px offset). */
+  overflow: clip;
+  overflow-clip-margin: 4px;
 }
 
 .composer-bar-left {
   flex: 1 1 auto;
-  overflow: hidden;
 }
 
 .composer-plugin-toolbar {
@@ -1368,7 +1258,6 @@
 .composer-bar-right {
   flex: 0 1 auto;
   justify-content: flex-end;
-  overflow: hidden;
   margin-left: auto;
 }
 
@@ -1383,14 +1272,7 @@
   color: var(--ink-muted);
 }
 
-                                                                       
-                                                              
-.composer-bar > svg,
-.composer-bar svg,
-.composer-context-bar > svg,
-.composer-context-bar svg,
-.split-composer-bar > svg,
-.split-composer-bar svg {
+.composer-bar svg {
   width: var(--icon-size);
   height: var(--icon-size);
   flex: 0 0 auto;
@@ -1428,11 +1310,6 @@
   transform: scale(0.96);
 }
 
-                                                                    
-                                                                   
-                                                                   
-                                                                   
-                                                                       
 .composer-tool-button:disabled {
   cursor: not-allowed;
 }
@@ -1440,16 +1317,6 @@
 .composer-tool-button:disabled:hover {
   background: transparent;
   color: var(--ink-muted);
-}
-
-                                                                     
-                                                                    
-.composer-context-bar svg + svg,
-.permission-chip svg + svg,
-.context-project-button svg + svg,
-.context-branch-chip svg + svg {
-  width: var(--icon-size-sm);
-  height: var(--icon-size-sm);
 }
 
 .composer-plus-menu-anchor {
@@ -1462,7 +1329,8 @@
   position: relative;
   display: inline-flex;
   min-width: 0;
-  max-width: 160px;
+  /* Grows with UI text like the model picker's cap. */
+  max-width: max(160px, calc(var(--font-ui) * 160 / 14.5));
   flex: 0 1 auto;
 }
 
@@ -1475,7 +1343,7 @@
   gap: 6px;
   border-radius: var(--radius-sm);
   background: transparent;
-  color: var(--ink-muted);
+  color: var(--ink-soft);
   /* Compact composer chrome matches the model picker and workspace bar, not
      the reading-size --font-ui used for menus and body copy. */
   font-size: var(--font-sm);
@@ -1576,19 +1444,14 @@
   background: var(--ink-strong);
 }
 
+/* Waiting for a draft: the same disc, muted, with its arrow still legible so
+ * it reads as Send not yet available rather than an empty circle. */
 .composer-send-button:disabled {
   cursor: default;
-  background: var(--surface-4);
-  color: var(--composer-send-button-disabled-text);
-}
-
-.composer-send-button:disabled:hover {
-  background: var(--surface-4);
+  color: var(--ink-muted);
 }
 
 .composer-stop-button {
-                                                                      
-                                                                       
   background: var(--ink);
   color: var(--paper);
 }
@@ -1646,11 +1509,6 @@
 .hero-project-pill[aria-expanded="true"] {
   background: var(--surface-2);
   color: var(--ink);
-}
-
-.hero-project-pill:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 2px;
 }
 
 .hero-project-pill-icon {
@@ -1719,12 +1577,38 @@
   inset: 2px;
 }
 
+/* The keyboard ring follows the surface drawn on ::before, not the taller hit
+ * box around it. */
+html[data-focus-modality="keyboard"] :is(
+  .composer-tool-button,
+  .permission-chip,
+  .codex-runtime-trigger,
+  .composer-action-button
+):focus-visible {
+  outline: none;
+}
+
+html[data-focus-modality="keyboard"] :is(
+  .composer-tool-button,
+  .permission-chip,
+  .codex-runtime-trigger,
+  .composer-action-button
+):focus-visible::before {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* Toolbar controls share one hover surface and a firmer one while their
+ * menu is open. */
 .composer-tool-button:hover:not(:disabled)::before,
 .permission-chip:hover::before,
-.permission-chip[aria-expanded="true"]::before,
-.hero-project-pill:hover::before,
-.hero-project-pill[aria-expanded="true"]::before {
+.codex-runtime-trigger:hover::before,
+.hero-project-pill:hover::before {
   background: var(--surface-2);
+}
+
+:is(.composer-tool-button, .permission-chip, .codex-runtime-trigger, .hero-project-pill)[aria-expanded="true"]::before {
+  background: var(--surface-3);
 }
 
 .composer-tool-button:hover:not(:disabled),
@@ -1733,11 +1617,6 @@
 .hero-project-pill:hover,
 .hero-project-pill[aria-expanded="true"] {
   background: transparent;
-}
-
-.codex-runtime-trigger:hover::before,
-.codex-runtime-trigger[aria-expanded="true"]::before {
-  background: var(--surface-3);
 }
 
 .codex-runtime-trigger:hover,
@@ -1759,7 +1638,7 @@
 
 .composer-send-button:disabled::before,
 .composer-send-button:disabled:hover::before {
-  background: var(--surface-4);
+  background: var(--surface-3);
 }
 
 .composer-send-button:disabled,
@@ -1870,44 +1749,28 @@
   background: var(--menu-hover);
 }
 
-.slash-command-meta {
-  color: var(--ink-tertiary);
-  font-size: var(--font-xs);
-  letter-spacing: 0.03em;
-  white-space: nowrap;
-}
-
 .slash-command-empty {
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-size: var(--font-menu);
   line-height: var(--line-ui);
   padding: 14px 12px 15px;
   text-align: center;
 }
 
-.permission-menu-anchor .access-menu,
-.hero-composer-wrap .permission-menu-anchor .access-menu {
-  top: auto;
-  bottom: calc(100% + 6px);
-  left: 0;
-  width: 176px;
-}
-
+/* The permission menu reads like its chip: the mode's symbol and name, and
+ * one line on what the mode allows. */
 .access-menu {
-  gap: 1px;
-  background: var(--menu-bg);
-  padding: var(--menu-inset);
-  width: 176px;
+  width: var(--composer-menu-width);
 }
 
-.mode-menu {
-  left: 170px;
-  width: 224px;
+.access-menu .permission-mode-icon {
+  flex: none;
+  color: var(--ink-soft);
 }
 
-.branch-menu {
-  left: 304px;
-  width: 300px;
+/* Unconfined carries its warning symbol and consequence line, not only red. */
+.access-menu .is-danger :is(.permission-mode-icon, .select-menu-item-label) {
+  color: var(--danger);
 }
 
 .composer-context-menu button {
@@ -1931,19 +1794,13 @@
   background: var(--menu-hover);
 }
 
-.composer-context-menu button:disabled {
-  opacity: 0.52;
+/* Menu rows sit 1px apart, so a row's ring stays inside it. */
+html[data-focus-modality="keyboard"] :is(.composer-context-menu, .composer-project-menu, .codex-runtime-menu, .access-menu) button:focus-visible {
+  outline-offset: -2px;
 }
 
-.composer-context-menu .permission-mode-option {
-  height: auto;
-  min-height: var(--control-row-height);
-  justify-content: flex-start;
-  gap: var(--menu-item-gap);
-  border: 0;
-  border-radius: var(--radius-xs);
-  padding: var(--menu-item-padding-block) var(--menu-item-padding-inline);
-  text-align: left;
+.composer-context-menu button:disabled {
+  opacity: 0.52;
 }
 
 .composer-context-menu button span {
@@ -1954,38 +1811,18 @@
   white-space: nowrap;
 }
 
-.permission-mode-option strong {
-  color: var(--ink);
-  flex: 1;
-  font-size: inherit;
-  font-weight: inherit;
-  line-height: inherit;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.permission-mode-option.danger strong {
-  color: var(--danger);
-}
-
-.permission-mode-option[aria-checked="true"] strong,
-.permission-mode-option[aria-checked="true"] svg {
-  color: var(--accent, var(--ink));
-}
-
 .composer-context-menu button svg {
   width: var(--icon-size-sm);
   height: var(--icon-size-sm);
   flex: 0 0 auto;
 }
 
-/* The add panel is a continuation of the input card, with quiet rows. */
+/* The plus and slash menus are one compact card above the input: rows of a
+ * symbol, the command, and one quieter piece of text on the same line. */
 .composer-context-menu.composer-plus-menu {
-  width: 100%;
+  width: var(--composer-menu-width);
   max-height: min(
-    320px,
+    360px,
     var(--floating-menu-available-height, calc(100vh - 180px))
   );
   gap: 0;
@@ -1994,59 +1831,52 @@
 }
 
 .composer-plus-menu-section {
-  padding: 6px 8px 4px;
-  color: var(--ink-muted);
+  padding: var(--space-3) var(--menu-item-padding-inline) var(--space-1);
+  color: var(--ink-tertiary);
   font-size: var(--font-xs);
   font-weight: var(--weight-medium);
   line-height: var(--line-ui);
   user-select: none;
 }
 
-.composer-plus-menu-section:not(:first-child) {
-  padding-top: 10px;
-}
-
 .composer-context-menu.composer-plus-menu button {
   height: auto;
   min-height: var(--control-row-height);
-  gap: 8px;
+  gap: var(--menu-item-gap);
   padding: var(--menu-item-padding-block) var(--menu-item-padding-inline);
   line-height: var(--line-ui);
   border-radius: var(--radius-xs);
-  color: var(--ink-soft);
+  color: var(--ink);
   font-weight: var(--weight-medium);
 }
 
+.composer-plus-menu button > svg {
+  width: var(--icon-size-sm);
+  height: var(--icon-size-sm);
+  color: var(--ink-soft);
+  stroke-width: 1.75;
+}
+
 .composer-plus-menu button .composer-plus-menu-item-title {
-  flex: 0 1 auto;
-  white-space: normal;
-  overflow-wrap: anywhere;
-  overflow: visible;
-  color: inherit;
-  font-weight: inherit;
+  flex: 0 0 auto;
+  max-width: 100%;
 }
 
 .composer-plus-menu button .composer-plus-menu-item-desc {
   flex: 1 1 0%;
-  color: color-mix(in srgb, var(--ink-soft) 55%, var(--paper));
-  font-size: var(--font-xs);
+  color: var(--ink-tertiary);
   font-weight: var(--weight-regular);
 }
 
-.composer-plus-menu button svg {
-  width: var(--icon-size-sm);
-  height: var(--icon-size-sm);
-  stroke-width: 1.75;
+/* In the plus menu the title leads and gives way first, and the command that
+ * runs it trails at the row's end like a shortcut. */
+.composer-plus-menu:not(.slash-command-menu) button .composer-plus-menu-item-title {
+  flex: 1 1 auto;
 }
 
-.composer-plus-menu button:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: -2px;
-}
-
-.composer-plus-button[aria-expanded="true"]::before {
-  border-radius: var(--radius-pill);
-  background: var(--ink-overlay-4);
+.composer-plus-menu:not(.slash-command-menu) button .composer-plus-menu-item-desc {
+  flex: 0 0 auto;
+  max-width: 50%;
 }
 
 .composer-menu-note,
@@ -2054,7 +1884,7 @@
   display: grid;
   gap: 4px;
   padding: 8px 9px;
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-size: var(--font-sm);
   line-height: 1.38;
 }
@@ -2149,7 +1979,7 @@
 .project-picker-heading {
   flex-shrink: 0;
   padding: var(--menu-inset) var(--menu-item-padding-inline) 0;
-  color: var(--codex-menu-label-text);
+  color: var(--ink-tertiary);
   font-size: var(--font-xs);
   font-weight: var(--weight-medium);
   line-height: var(--line-ui);
@@ -2161,7 +1991,7 @@
 }
 
 .project-picker-empty {
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   padding: var(--menu-item-padding-block) var(--menu-item-padding-inline);
   font-size: var(--font-menu);
   line-height: var(--line-ui);
@@ -2453,7 +2283,11 @@
   flex: 0 1 auto;
 }
 
+/* A flex container, so the branch pill is a flex item: as inline content it
+ * sat on a text baseline, and a glyph larger than the old 14px pushed the
+ * wrapper past the project group's height at large text. */
 .composer-branch-control {
+  display: flex;
   min-width: 0;
   flex: 0 1 auto;
 }
@@ -2465,7 +2299,7 @@
 /* A shared prefix such as codex/ steps back so the part people scan for,
  * the branch's own name, carries the row. */
 .composer-branch-prefix {
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-weight: var(--weight-regular);
 }
 
@@ -2479,7 +2313,7 @@
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-size: var(--font-xs);
   font-weight: var(--weight-regular);
   font-variant-numeric: tabular-nums;
@@ -2499,15 +2333,16 @@
   opacity: 1;
 }
 
+/* The context line uses the compact icon step of the toolbar chips, which
+ * grows with UI text. */
 @media (pointer: fine) {
   .composer-workspace-bar .hero-project-pill-icon,
   .composer-workspace-bar .hero-project-pill-icon svg {
-    width: 14px;
-    height: 14px;
-    flex-basis: 14px;
+    width: var(--icon-size-sm);
+    height: var(--icon-size-sm);
+    flex-basis: var(--icon-size-sm);
   }
 }
-
 
 .composer-stop-button svg.composer-stop-progress {
   width: 14px;

@@ -296,7 +296,7 @@ async function sidebarReadabilityState(win) {
   return evaluate(win, () => {
     const drawer = document.querySelector(".settings-sidebar");
     const backLabel = document.querySelector(".settings-back-button > span");
-    const providerLabel = document.querySelector(".settings-nav-item > span");
+    const providerLabel = document.querySelector(".settings-nav-item .settings-nav-label");
     if (
       !(drawer instanceof HTMLElement) ||
       !(backLabel instanceof HTMLElement) ||

@@ -3387,6 +3387,25 @@ describe("conversationSearchContextLabel (R4: no raw scratch paths in the UI)", 
       conversationSearchContextLabel(scratchThread, [otherWorkspace]),
     ).toBe("无工作区");
   });
+
+  it("keeps a relocated workspace's name on conversations recorded at its old path", () => {
+    // Relocating keeps the workspace id so its history reconnects; the label
+    // must follow that identity, as the sidebar does, not the stale cwd.
+    const project: DesktopProject = {
+      id: "proj-1",
+      name: "MyApp",
+      path: "/repo/moved/myapp",
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:00Z",
+    };
+    const thread: Thread = {
+      ...threadWithUserTexts(["hi"]),
+      id: "relocated-thread",
+      cwd: "/repo/myapp",
+      workspace_id: "proj-1",
+    };
+    expect(conversationSearchContextLabel(thread, [project])).toBe("MyApp");
+  });
 });
 
 describe("sessionTabLabel (draft tabs read as their workspace)", () => {

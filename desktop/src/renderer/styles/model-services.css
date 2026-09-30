@@ -1,25 +1,33 @@
 /* Model services. The page reads top-down by how often each part is used:
  * the default model is one filled card with the model name as its control,
  * connected services are bordered cards that open their own page, and
- * providers to add are quieter filled tiles. Levels differ by surface and
+ * providers to add are quiet unframed tiles. Levels differ by surface and
  * size rather than by adding frames. */
 
 .model-services {
   display: contents;
 }
 
-/* --- Vendor marks --------------------------------------------------------- */
+/* --- Vendor marks ---------------------------------------------------------
+ * A vendor logo stands bare in its column; a tile behind a monochrome glyph
+ * carries no meaning. A monogram (a vendor without artwork) and the generic
+ * glyphs (more services, custom endpoint) keep a hairline square, so a lone
+ * letter or a UI glyph still reads as a mark rather than as text. */
 
+/* Marks keep their proportion to the text beside them at every UI size. */
 .provider-mark {
-  --provider-mark-size: 36px;
+  --provider-mark-size: round(up, calc(var(--font-ui) * 2.5), 2px);
   display: grid;
   width: var(--provider-mark-size);
   height: var(--provider-mark-size);
   flex: 0 0 auto;
   place-items: center;
   border-radius: var(--radius-xs);
-  background: var(--surface-2);
   color: var(--ink-strong);
+}
+
+.provider-mark[data-mark="monogram"] {
+  box-shadow: inset 0 0 0 1px var(--hairline);
 }
 
 .provider-mark svg,
@@ -34,7 +42,6 @@
 }
 
 .provider-mark.is-quiet {
-  background: transparent;
   color: var(--ink-soft);
   box-shadow: inset 0 0 0 1px var(--hairline);
 }
@@ -57,10 +64,6 @@
   border-radius: var(--radius-sm);
   background: var(--surface-2);
   padding: var(--space-4) var(--space-4) var(--space-4) var(--space-4);
-}
-
-.model-default-card > .provider-mark {
-  background: var(--paper);
 }
 
 .model-default-copy {
@@ -168,15 +171,6 @@
   .model-default-effort {
     grid-column: 2;
   }
-
-  /* One icon action stays beside the title instead of taking a line. */
-  .model-services > .settings-page-header {
-    grid-template-columns: minmax(0, 1fr) auto;
-  }
-
-  .model-services > .settings-page-header .settings-page-actions {
-    margin-block: calc((var(--settings-title-line) - var(--control-field-height)) / 2);
-  }
 }
 
 /* --- Connected services ----------------------------------------------------- */
@@ -282,29 +276,15 @@
 }
 
 .model-service-tile .provider-mark {
-  --provider-mark-size: 32px;
-}
-
-.model-service-tile .provider-mark.is-quiet {
-  background: transparent;
+  --provider-mark-size: round(up, calc(var(--font-ui) * 2.2), 2px);
 }
 
 .model-service-tile:hover:not(:disabled) {
   background: var(--surface-1);
 }
 
-.model-service-tile:hover:not(:disabled) .provider-mark:not(.is-quiet) {
-  background: var(--surface-3);
-}
-
 .model-service-tile:disabled {
   opacity: 0.55;
-}
-
-.model-service-tile.is-placeholder {
-  --pulse-opacity: 0.55;
-  background: var(--surface-1);
-  animation: wuu-pulse 1.6s var(--ease-out) infinite;
 }
 
 .model-service-tile-name {
@@ -312,26 +292,6 @@
   font-size: var(--font-ui);
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.model-services-empty {
-  display: grid;
-  gap: var(--space-1);
-  border: 1px dashed var(--hairline-strong);
-  border-radius: var(--radius-sm);
-  padding: var(--space-6) var(--space-5);
-  text-align: center;
-}
-
-.model-services-empty strong {
-  color: var(--ink-strong);
-  font-size: var(--font-title);
-  font-weight: var(--weight-semibold);
-}
-
-.model-services-empty span {
-  color: var(--ink-soft);
-  font-size: var(--font-ui);
 }
 
 /* --- Service page --------------------------------------------------------- */
@@ -345,7 +305,7 @@
 }
 
 .model-service-hero > .provider-mark {
-  --provider-mark-size: 52px;
+  --provider-mark-size: round(up, calc(var(--font-ui) * 3.6), 2px);
 }
 
 .model-service-hero-copy {
@@ -437,13 +397,8 @@
   text-align: left;
 }
 
-.model-choice-main.is-static,
-.model-choice-main.is-action {
+.model-choice-main.is-static {
   color: var(--ink-soft);
-}
-
-.model-choice-main.is-action:hover:not(:disabled) {
-  color: var(--ink-strong);
 }
 
 .model-choice-check {
@@ -588,27 +543,9 @@
   border: 1px solid var(--hairline);
 }
 
-.model-connect-segments {
-  display: inline-flex;
-  width: fit-content;
-  border-radius: var(--radius-sm);
-  background: var(--surface-1);
-  padding: 2px;
-}
-
-.model-connect-segments button {
-  min-height: calc(var(--control-field-height) - 4px);
-  border-radius: calc(var(--radius-sm) - 2px);
-  background: transparent;
-  color: var(--ink-soft);
-  font-size: var(--font-sm);
-  padding: var(--control-padding-block) var(--space-3);
-}
-
-.model-connect-segments button[aria-pressed="true"] {
-  background: var(--paper);
-  box-shadow: var(--shadow-soft);
-  color: var(--ink-strong);
+/* The protocol choice is the shared segmented control, sized to its options. */
+.model-connect-field > .theme-segmented {
+  justify-self: start;
 }
 
 .model-connect-toggle {
@@ -662,7 +599,7 @@
 }
 
 .model-browse-row .provider-mark {
-  --provider-mark-size: 32px;
+  --provider-mark-size: round(up, calc(var(--font-ui) * 2.2), 2px);
 }
 
 .model-browse-copy {
@@ -683,18 +620,12 @@
 }
 
 .model-browse-copy > small {
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-size: var(--font-xs);
 }
 
 .model-service-remove-dialog {
   --environment-dialog-max-width: 440px;
-}
-
-@container style(--motion-reduced: 1) {
-  .model-service-tile.is-placeholder {
-    animation: none;
-  }
 }
 
 /* Cards with and without a badge end their chevrons on one axis. */

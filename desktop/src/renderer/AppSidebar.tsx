@@ -2,8 +2,6 @@ import { hostSupports } from "./HostCapabilities";
 import { SidebarAccountMenu } from "./SidebarAccountMenu";
 import { MobileSidebar } from "./MobileSidebar";
 import {
-  Archive,
-  Bell,
   ChevronRight,
   Folder,
   FolderMinus,
@@ -74,6 +72,7 @@ import {
 import { SidebarCollapseBody, SidebarSection } from "./SidebarSection";
 import { SidebarHoverFactsContext, type SidebarHoverFacts } from "./SidebarHoverCard";
 import { SidebarNameDialog } from "./SidebarNameDialog";
+import { confirmAction } from "./ConfirmDialog";
 import { ThreadContextMenu } from "./ThreadContextMenu";
 import {
   SessionOrganizationProvider,
@@ -92,6 +91,7 @@ import { SidebarPointerSensor } from "./SidebarPointerSensor";
 import { PluginBlocksIcon } from "./PluginBlocksIcon";
 import { PluginIcon } from "./PublicIcon";
 import { SidebarBrand } from "./SidebarBrand";
+import { moveMenuFocus } from "./MenuKeyboardNavigation";
 import { useI18n } from "./i18n";
 import {
   NavigationPresentation,
@@ -606,6 +606,9 @@ export function AppSidebar({
     (view) => view.id === workbenchSnapshot.activeViewByRegion.primary,
   );
   const activeThreadID = activePluginMainView ? undefined : nativeActiveThreadID;
+  const pluginCatalogActive = !activePluginMainView && state.sessionTabs.some(
+    (tab) => tab.id === state.activeSessionTabID && tab.kind === "skills",
+  );
   const pluginNavigationEntries = useMemo(
     () => primaryViewNavigation(declaredPluginNavigationEntries, workbenchSnapshot),
     [declaredPluginNavigationEntries, workbenchSnapshot],
@@ -641,6 +644,14 @@ export function AppSidebar({
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
   const dropAnimation = useDropAnimation();
+  const addWorkspaceTriggerRef = useRef<HTMLButtonElement>(null);
+  const addWorkspaceMenuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!workspaceMenuOpen) return;
+    addWorkspaceMenuRef.current
+      ?.querySelector<HTMLElement>('[role="menuitem"]:not(:disabled)')
+      ?.focus({ preventScroll: true });
+  }, [workspaceMenuOpen]);
   const [draggingSectionID, setDraggingSectionID] = useState<string | undefined>();
   const [sidebarSortIndicator, setSidebarSortIndicator] = useState<{
     id: string;
@@ -1017,6 +1028,11 @@ export function AppSidebar({
   }
   const pinnedRows = pinnedThreads;
   const hasPinnedRows = validPinnedItems.length > 0;
+  // An empty Pinned group has nothing to say until something that can be
+  // pinned is picked up; then it appears as the drop target.
+  const pinnedGroupShown = hasPinnedRows
+    || folderDragThreadID !== undefined
+    || draggingSectionID !== undefined;
   const pinnedHeadingDropTargetID = pinnedItemSortableIDs[0] ?? PINNED_APPEND_DROP_ID;
   const pinnedHasRunning = pinnedRows.some((thread) => isThreadExecuting(thread));
   const pinnedHasUnread = pinnedRows.some((thread) =>
@@ -1074,8 +1090,9 @@ export function AppSidebar({
     [activeThreadID, allSidebarThreads, state.lastViewedTurnByThreadID],
   );
   const visibleFunctionalGroupOrder = useMemo(() => functionalGroupOrder.filter(
-    (id) => id !== "projects" || onCreateProject || projectIndex.projects.length > 0,
-  ), [functionalGroupOrder, onCreateProject, projectIndex]);
+    (id) => (id !== "projects" || onCreateProject || projectIndex.projects.length > 0)
+      && (id !== "pinned" || pinnedGroupShown),
+  ), [functionalGroupOrder, onCreateProject, pinnedGroupShown, projectIndex]);
   // Projects list apart from workspaces unless the user pinned or filed them.
   const projectRows = useMemo(() => projectIndex.projects
     .filter((thread) => !thread.pinned && !organization.folderByThreadID[thread.id])
@@ -1765,7 +1782,8 @@ export function AppSidebar({
         </div>
         <SidebarBrand
           unreadViewOpen={unreadViewOpen}
-          unreadCount={attentionCount}
+          attentionCount={attentionCount}
+          hasUnread={unreadThreads.length > 0}
           onToggleUnreadView={onToggleUnreadView}
           onClearUnread={() => onMarkThreadsViewed(unreadThreads)}
         />
@@ -1798,6 +1816,16 @@ export function AppSidebar({
                 headingID="sidebar-unread-heading"
                 title={t("sidebar.unreadConversations")}
                 count={unreadThreads.length}
+                action={(
+                  <button
+                    className="sidebar-heading-text-action"
+                    type="button"
+                    data-attention-action="mark-read"
+                    onClick={() => onMarkThreadsViewed(unreadThreads)}
+                  >
+                    {t("sidebar.markAllRead")}
+                  </button>
+                )}
               >
                 {unreadThreads.map((thread) => (
                   <AttentionThreadRow
@@ -1827,10 +1855,7 @@ export function AppSidebar({
               </AttentionSection>
             ) : null}
             {runningThreads.length === 0 && unreadThreads.length === 0 && recentThreads.length === 0 ? (
-              <div className="sidebar-unread-empty" role="status">
-                <Bell aria-hidden="true" />
-                <span>{t("sidebar.attentionEmpty")}</span>
-              </div>
+              <p className="sidebar-unread-empty" role="status">{t("sidebar.attentionEmpty")}</p>
             ) : null}
           </section>
         ) : (
@@ -1857,6 +1882,7 @@ export function AppSidebar({
           </button>
           <button
             className="nav-item"
+            aria-current={pluginCatalogActive ? "page" : undefined}
             onClick={() => activateNative(onOpenSkillsTab)}
             disabled={!hasRuntimeContext}
           >
@@ -2130,8 +2156,25 @@ export function AppSidebar({
                   )}
                   onToggleCollapsed={() => toggleFunctionalGroupCollapsed(groupID)}
                   action={(
-                    <div className="sidebar-add-workspace" ref={workspaceMenuRef}>
+                    <div
+                      className="sidebar-add-workspace"
+                      ref={workspaceMenuRef}
+                      onKeyDown={(event) => {
+                        if (!workspaceMenuOpen) return;
+                        if (moveMenuFocus(event, addWorkspaceMenuRef.current)) return;
+                        if (event.key === "Escape" || event.key === "Tab") {
+                          // Tab resumes the native order from the trigger.
+                          if (event.key === "Escape") {
+                            event.preventDefault();
+                            event.stopPropagation();
+                          }
+                          addWorkspaceTriggerRef.current?.focus();
+                          onToggleWorkspaceMenu();
+                        }
+                      }}
+                    >
                       <button
+                        ref={addWorkspaceTriggerRef}
                         className="sidebar-functional-action"
                         type="button"
                         aria-label={t("sidebar.addWorkspace")}
@@ -2143,7 +2186,7 @@ export function AppSidebar({
                         <Plus aria-hidden="true" />
                       </button>
                       {workspaceMenuOpen ? (
-                        <div className="project-add-menu" role="menu">
+                        <div className="project-add-menu" role="menu" ref={addWorkspaceMenuRef}>
                           <button role="menuitem" disabled={!hostSupports("createBlankProject")} onClick={onCreateWorkspace}>
                             <FolderPlus className="icon-xl" />
                             <span>{t("sidebar.newBlankWorkspace")}</span>
@@ -2238,12 +2281,18 @@ export function AppSidebar({
               { separator: true },
               {
                 label: t("sidebar.deleteGroup"),
-                onSelect: () => {
-                  if (!window.confirm(t("sidebar.deleteGroupConfirmation"))) return;
-                  if (groupContextMenu.pinned) {
-                    unpinContainer({ kind: "folder", id: groupContextMenu.group.id });
-                  }
-                  organization.deleteFolder(groupContextMenu.group.id);
+                danger: true,
+                onSelect: async () => {
+                  const { group, pinned } = groupContextMenu;
+                  const confirmed = await confirmAction({
+                    title: t("sidebar.deleteGroupTitle", { name: group.name }),
+                    message: t("sidebar.deleteGroupConfirmation"),
+                    confirmLabel: t("common.delete"),
+                    tone: "danger",
+                  });
+                  if (!confirmed) return;
+                  if (pinned) unpinContainer({ kind: "folder", id: group.id });
+                  organization.deleteFolder(group.id);
                 },
               },
             ]}
@@ -2259,11 +2308,8 @@ export function AppSidebar({
           dialogTitle={groupNameDialog?.action === "rename"
             ? t("sidebar.renameFolder")
             : t("sidebar.newFolder")}
-          dialogTitleId="session-organization-name-title"
           fieldLabel={t("sidebar.folderNamePrompt")}
-          fieldAriaLabel={t("sidebar.folderNamePrompt")}
           placeholder={t("sidebar.folderNamePrompt")}
-          icon={Folder}
           submitLabel={t(groupNameDialog?.action === "rename" ? "common.save" : "common.create")}
           cancelLabel={t("common.cancel")}
           submitDisabled={groupNamePending || groupName.trim().length === 0 || (
@@ -2525,20 +2571,23 @@ function AttentionSection({
   headingID,
   title,
   count,
+  action,
   children,
 }: {
   headingID: string;
   title: string;
   count: number;
+  action?: ReactNode;
   children: ReactNode;
 }): JSX.Element {
   return (
     <section className="sidebar-attention-section" aria-labelledby={headingID}>
-      <header className="sidebar-unread-heading" id={headingID}>
-        <span>{title}</span>
-        <span className="sidebar-unread-count" aria-live="polite">
-          {count}
-        </span>
+      <header className="sidebar-unread-heading">
+        <h2 className="sidebar-unread-heading-label" id={headingID}>
+          {title}
+          <span className="sidebar-unread-count" aria-live="polite">{count}</span>
+        </h2>
+        {action}
       </header>
       <div className="sidebar-unread-list">{children}</div>
     </section>

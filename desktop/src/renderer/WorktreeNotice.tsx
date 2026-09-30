@@ -24,15 +24,15 @@ export function WorktreeNotice({
     <section className="fork-worktree-notice" aria-label={t(forked ? "worktree.forkedAria" : "worktree.created")}>
       <details className="fork-worktree-card">
         <summary className="fork-worktree-summary">
-          <span className="fork-worktree-glyph">
-            <Split className="icon" aria-hidden="true" />
-          </span>
+          <Split className="fork-worktree-glyph icon" aria-hidden="true" />
           <span className="fork-worktree-summary-text">
             <strong>{t("worktree.created")}</strong>
             <span>{t(forked ? "worktree.forkedFromConversation" : "worktree.startedSeparately")}</span>
           </span>
           <ChevronDown className="fork-worktree-chevron icon" aria-hidden="true" />
         </summary>
+        {/* The facts appear once; the copy action carries the same record as
+            text for a bug report. */}
         <div className="fork-worktree-details">
           <dl className="fork-worktree-meta">
             <div>
@@ -50,19 +50,14 @@ export function WorktreeNotice({
               <dd>{worktree.path}</dd>
             </div>
           </dl>
-          <div className="fork-worktree-code-block">
-            <MessageCopyButton
-              getText={() => log}
-              className="fork-worktree-copy"
-              iconSize={13}
-              idleLabel={t("worktree.copyLog")}
-              copiedLabel={t("worktree.logCopied")}
-              failedLabel={t("common.copyFailed")}
-            />
-            <pre className="fork-worktree-code">
-              <code>{log}</code>
-            </pre>
-          </div>
+          <MessageCopyButton
+            getText={() => log}
+            className="fork-worktree-copy"
+            iconSize={13}
+            idleLabel={t("worktree.copyLog")}
+            copiedLabel={t("worktree.logCopied")}
+            failedLabel={t("common.copyFailed")}
+          />
         </div>
       </details>
     </section>

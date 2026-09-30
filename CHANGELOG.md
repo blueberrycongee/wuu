@@ -40,7 +40,44 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   along a dotted arc that splits into its colourful agents, and they dive into
   a toy-block fort built around the Applications folder.
 
+- Desktop interface refinement across the sidebar, conversation, composer,
+  workspace panel, Settings, Plugins, and first-run setup. Corners follow a
+  6, 8, and 16px scale, with pills kept for switches, dots, and badges. The
+  light theme's selection surface is quieter. Secondary text, placeholders,
+  menu group labels, and diff counts stay above 4.5:1 contrast, and diff
+  additions and deletions use the status colors everywhere. The Chinese
+  interface calls a conversation 对话 throughout.
+
+- The Plugins page lists plugins and skills in bordered groups like Settings
+  instead of card grids, and plugin pages share Settings' controls, title row,
+  and empty states. First-run setup is built from the product's own controls
+  and saves the connection as the workspace default.
+
+- A failed turn shows one card: what happened in plain words, the next step
+  (open model providers, retry), and the technical record under Details.
+  Automatic recovery that gives up offers a retry, and a conversation too long
+  for the model points to /compact instead.
+
+- Composer menus work from the keyboard and their focus rings follow what is
+  visible. The model picker shows its reasoning effort as a labelled capsule
+  with a live level, and reasoning effort and permission modes use one
+  vocabulary in each language. Review fits the width of its panel, and editors
+  and diffs take their colors from the product's roles.
+
+- The empty home greets first: its usage card keeps its frame, but the totals
+  become one line of facts above a full-width year of activity, drawn in a blue
+  ramp whose four levels read apart.
+
+- Dialogs keep keyboard focus inside while open, and menus, dialogs, and the
+  search palette return it to the control that opened them. Native
+  confirmation sheets became an in-app dialog in desktop and connected Web
+  workspaces, the environment card appears only where it describes something,
+  and the bell's first-run bubble became a mark-all-read action.
+
 ### Fixed
+- Edit conversation titles from the desktop title bar with a double click, while
+  preserving keyboard rename and the surrounding window drag area.
+
 - Load explicitly selected skills deterministically through `/skill` drafts, preserving
   source identity, thread checkout, queued instructions, and built-in command behavior.
   Resolve project-local selections to the chosen checkout, including the first turn
@@ -87,6 +124,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Keep desktop text diffs readable when file contents mention Git binary markers.
 - Show Git patches for oversized text previews and submodule changes instead of
   comparing incomplete or unavailable file contents.
+- The usage page buckets its days in the desktop's time zone instead of UTC.
+  `settings/usage` accepts an optional IANA `timezone`; an unknown name is
+  rejected.
 
 - Harden MCP transport compatibility, request timeouts, OAuth refresh recovery,
   local server cleanup, bounded reads, catalog refreshes, and oversized results.

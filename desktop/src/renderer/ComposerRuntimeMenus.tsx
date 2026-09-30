@@ -16,7 +16,6 @@ import {
   FolderPlus,
   FolderX,
   Gauge,
-  GitBranch,
   GitCommitHorizontal,
   GitCompare,
   GitPullRequest,
@@ -34,6 +33,7 @@ import {
   Search,
   Settings,
   Shield,
+  ShieldCheck,
   Terminal,
   TriangleAlert,
   Zap,
@@ -46,15 +46,21 @@ import type {
   EngineInfo,
   EngineModelInfo,
   EnginePermissionModeInfo,
-  GitStatusResult,
   InitializeResult,
   PermissionSummary,
   ProviderModelSummary,
   ProviderSummary,
   RuntimeContext
 } from "../shared/protocol";
-import { MESSAGE_FLOW_FONT_SIZE_RANGE } from "../shared/protocol";
-import { FloatingMenuPortal, isInsideFloatingMenu } from "./ComposerFloatingMenu";
+import {
+  FloatingMenuPortal,
+  composerMenuWidth,
+  handleFloatingMenuKeyDown,
+  isInsideFloatingMenu,
+  menuOpeningKey,
+  moveFloatingMenuFocus,
+  useFloatingMenuFocus
+} from "./ComposerFloatingMenu";
 import type { ComposerSlashCommand } from "./ComposerSlashCommands";
 import type {
   CodexModelLoadState,
@@ -63,14 +69,12 @@ import type {
   FloatingMenuPlacement,
   PermissionMode
 } from "./ComposerTypes";
-import { COMPOSER_PROJECT_MENU_WIDTH } from "./ComposerTypes";
+import { COMPOSER_COMMAND_MENU_WIDTH, COMPOSER_PROJECT_MENU_WIDTH } from "./ComposerTypes";
 import { lastEffortForEngineModel } from "./DraftEngineMemory";
 import { engineLabel } from "./EngineDisplay";
 import { EngineIcon } from "./EngineIcons";
 import { lastEffortForRuntimeModel, lastModelForProvider } from "./DraftRuntimeMemory";
 import {
-  codexEffortOptions,
-  displayCodexModelName,
   effectiveModelSpeed,
   orderedEffortOptions,
   providerIsCodex,
@@ -160,15 +164,11 @@ function EngineOptionsMenu({
 export type RuntimePanelView = "summary" | "engines" | "providers" | "models";
 type RuntimePanelDirection = "forward" | "back";
 
-// The panel is drawn at 224px for the default UI size and widens with larger
-// UI text so model names keep the same room. The floating layer positions the
-// panel from this number, so it is resolved here rather than in CSS.
 const RUNTIME_PANEL_WIDTH = 224;
+export const PERMISSION_MENU_WIDTH = 264;
 
 export function runtimePanelWidth(): number {
-  const uiSize = Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--font-ui"));
-  const defaultSize = MESSAGE_FLOW_FONT_SIZE_RANGE.default;
-  return uiSize > defaultSize ? Math.round((RUNTIME_PANEL_WIDTH * uiSize) / defaultSize) : RUNTIME_PANEL_WIDTH;
+  return composerMenuWidth(RUNTIME_PANEL_WIDTH);
 }
 
 // The panel morphs between pages with a height transition, so its shell
@@ -180,25 +180,6 @@ function runtimePanelStyle(rows: number, width?: number): CSSProperties {
     "--runtime-rows": String(Math.max(rows, 1)),
     ...(width ? { "--runtime-panel-width": `${width}px` } : {}),
   } as CSSProperties;
-}
-
-// Panels opened from the composer trigger take focus so the keyboard can
-// drive them: each page focuses its search field, its checked row, or its
-// primary row. Touch shells skip this so a phone keyboard does not pop up.
-function useRuntimePanelFocus(panelRef: RefObject<HTMLElement | null>, pageKey: string, enabled: boolean): void {
-  useEffect(() => {
-    if (!enabled || isTouchWebShell()) return undefined;
-    // The floating layer reveals the panel after its first measurement.
-    const frame = requestAnimationFrame(() => {
-      const page = panelRef.current;
-      const target = page?.querySelector<HTMLElement>("input[type='search']")
-        ?? page?.querySelector<HTMLElement>("[aria-checked='true']:not(:disabled)")
-        ?? page?.querySelector<HTMLElement>(".runtime-panel-model")
-        ?? page?.querySelector<HTMLElement>("button:not(:disabled)");
-      target?.focus({ preventScroll: true });
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [enabled, pageKey, panelRef]);
 }
 
 // Arrow keys move between the current page's rows; the effort slider keeps
@@ -215,19 +196,7 @@ function handleRuntimePanelKeyDown(
     showSummary();
     return;
   }
-  if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
-  const target = event.target as HTMLElement;
-  if (target instanceof HTMLInputElement && target.type === "range") return;
-  const items = Array.from(
-    event.currentTarget.querySelectorAll<HTMLElement>("input[type='search'], button:not(:disabled)")
-  );
-  if (items.length === 0) return;
-  event.preventDefault();
-  const index = items.indexOf(target);
-  const next = index < 0
-    ? event.key === "ArrowDown" ? 0 : items.length - 1
-    : Math.min(items.length - 1, Math.max(0, index + (event.key === "ArrowDown" ? 1 : -1)));
-  items[next]?.focus();
+  moveFloatingMenuFocus(event);
 }
 
 function RuntimePanelHeader({ title, onBack }: { title: string; onBack: () => void }): JSX.Element {
@@ -242,13 +211,16 @@ function RuntimePanelHeader({ title, onBack }: { title: string; onBack: () => vo
   );
 }
 
+// The summary reads top down: where the model comes from (engine and model
+// service, when there is a choice to show), the model, how hard it thinks,
+// then the optional speed row.
 function RuntimePanelSummary({
   engine,
   engineId,
   provider,
+  showEngine,
   engineLocked,
-  hideEngine = false,
-  compactSummary = false,
+  lockedDescription,
   model,
   effortOptions,
   selectedEffort,
@@ -260,15 +232,14 @@ function RuntimePanelSummary({
   onOpenEngines,
   onOpenProviders,
   onOpenModels,
-  onHandoff,
   onSelectEffort
 }: {
   engine: string;
   engineId: string;
   provider?: string;
+  showEngine: boolean;
   engineLocked: boolean;
-  hideEngine?: boolean;
-  compactSummary?: boolean;
+  lockedDescription?: string;
   model: string;
   effortOptions: string[];
   selectedEffort: string;
@@ -278,9 +249,9 @@ function RuntimePanelSummary({
   speedDisabled?: boolean;
   onSelectSpeed?: (speed: string) => void | Promise<boolean>;
   onOpenEngines: () => void;
+  // Absent when the engine offers a single model service.
   onOpenProviders?: () => void;
   onOpenModels: () => void;
-  onHandoff?: () => void;
   onSelectEffort: (effort: string) => void;
 }): JSX.Element {
   const { t } = useI18n();
@@ -304,119 +275,153 @@ function RuntimePanelSummary({
     setPreviewEffort(selectedEffort);
   }, [selectedEffort]);
 
+  const engineName = engineLabel(engine);
+  // A bound conversation cannot switch engines, so the engine is a label that
+  // says why rather than a way into a list of choices it cannot take.
+  const engineItem = engineLocked ? (
+    <Tooltip content={lockedDescription}>
+      <span className="runtime-panel-context-item" aria-label={lockedDescription ? `${engineName} · ${lockedDescription}` : engineName}>
+        <EngineIcon engine={engineId} />
+        <span>{engineName}</span>
+        <Lock aria-hidden="true" />
+      </span>
+    </Tooltip>
+  ) : (
+    <Tooltip content={t("runtime.engineNamed", { engine: engineName })}>
+      <button type="button" aria-label={t("runtime.engineNamed", { engine: engineName })} onClick={onOpenEngines}>
+        <EngineIcon engine={engineId} />
+        <span>{engineName}</span>
+      </button>
+    </Tooltip>
+  );
+  const providerItem = provider ? (onOpenProviders ? (
+    <Tooltip content={t("runtime.providerNamed", { provider })}>
+      <button type="button" aria-label={t("runtime.providerNamed", { provider })} onClick={onOpenProviders}>
+        <span>{provider}</span>
+        <ChevronDown aria-hidden="true" />
+      </button>
+    </Tooltip>
+  ) : (
+    <span className="runtime-panel-context-item"><span>{provider}</span></span>
+  )) : null;
+
   return (
     <div className="runtime-panel-summary">
-      <div className="runtime-panel-context">
-        {onSelectSpeed ? <button
-          type="button"
-          className="runtime-panel-fast"
-          aria-label={t("runtime.fastMode")}
-          aria-pressed={displayedSpeed ? displayedSpeed === "fast" : "mixed"}
-          title={t(displayedSpeed === "fast" ? "runtime.fastModeOn" : displayedSpeed === "standard" ? "runtime.fastModeOff" : "runtime.fastModeDefault")}
-          disabled={speedDisabled || speedSaving}
-          onClick={() => { void changeSpeed(displayedSpeed === "fast" ? "standard" : "fast"); }}
-        ><Zap aria-hidden="true" /></button> : null}
-        {!hideEngine ? <button type="button" onClick={onOpenEngines}>
-          <EngineIcon engine={engineId} />
-          <span>{engineLabel(engine)}</span>
-          {engineLocked ? <Lock aria-hidden="true" /> : null}
-        </button> : null}
-        {provider && onOpenProviders ? (
-          <>
-            {!hideEngine ? <span className="runtime-panel-context-separator" aria-hidden="true">/</span> : null}
-            <button type="button" onClick={onOpenProviders}>
-              <span>{provider}</span>
-            </button>
-          </>
-        ) : null}
-        {onSelectSpeed ? <button
-          className="runtime-panel-speed-reset"
-          type="button"
-          aria-label={t("runtime.resetSpeed")}
-          title={t("runtime.resetSpeed")}
-          disabled={speedDisabled || speedSaving || !requestedSpeed}
-          onClick={() => { void changeSpeed(""); }}
-        ><RotateCcw aria-hidden="true" /></button> : null}
-      </div>
-      <button type="button" className="runtime-panel-model" onClick={onOpenModels}>
+      {showEngine || providerItem ? (
+        <div className="runtime-panel-context">
+          {showEngine ? engineItem : null}
+          {showEngine && providerItem ? <span className="runtime-panel-context-separator" aria-hidden="true">/</span> : null}
+          {providerItem}
+        </div>
+      ) : null}
+      <button type="button" className="runtime-panel-model" data-menu-autofocus onClick={onOpenModels}>
         <span className="runtime-panel-model-name">{model}</span>
-        <span key={previewEffort} className="runtime-panel-effort-value">{variantLabel(previewEffort)}</span>
+        {effortOptions.length > 1 ? (
+          <span key={previewEffort} className="runtime-panel-effort-value">{variantLabel(previewEffort)}</span>
+        ) : null}
         <ChevronRight aria-hidden="true" />
       </button>
       {effortOptions.length > 1 ? (
-        <div className={compactSummary ? "runtime-panel-effort-row" : undefined} style={compactSummary ? undefined : { display: "contents" }}>
-        <EffortSelector
-          options={effortOptions}
-          selectedVariant={selectedEffort}
-          disabled={effortDisabled}
-          onPreviewEffort={setPreviewEffort}
-          onSelectEffort={onSelectEffort}
-        />
+        <div className="runtime-panel-effort">
+          <EffortSelector
+            options={effortOptions}
+            selectedVariant={selectedEffort}
+            disabled={effortDisabled}
+            onPreviewEffort={setPreviewEffort}
+            onSelectEffort={onSelectEffort}
+          />
         </div>
       ) : null}
-      {onHandoff ? (
-        <button type="button" className="runtime-panel-handoff" onClick={onHandoff}>
-          {t("runtime.handoffToNewSession")}
-        </button>
+      {onSelectSpeed ? (
+        <div className="runtime-panel-fast-row">
+          <button
+            type="button"
+            className="runtime-panel-fast"
+            aria-label={t("runtime.fastMode")}
+            aria-pressed={displayedSpeed ? displayedSpeed === "fast" : "mixed"}
+            title={t(displayedSpeed === "fast" ? "runtime.fastModeOn" : displayedSpeed === "standard" ? "runtime.fastModeOff" : "runtime.fastModeDefault")}
+            disabled={speedDisabled || speedSaving}
+            onClick={() => { void changeSpeed(displayedSpeed === "fast" ? "standard" : "fast"); }}
+          >
+            <Zap aria-hidden="true" />
+            <span>{t("runtime.fastMode")}</span>
+            <Check className="runtime-panel-fast-check" aria-hidden="true" />
+          </button>
+          {/* Only an explicit choice can be reset to the configured default. */}
+          {requestedSpeed ? (
+            <button
+              className="runtime-panel-speed-reset"
+              type="button"
+              aria-label={t("runtime.resetSpeed")}
+              title={t("runtime.resetSpeed")}
+              disabled={speedDisabled || speedSaving}
+              onClick={() => { void changeSpeed(""); }}
+            ><RotateCcw aria-hidden="true" /></button>
+          ) : null}
+        </div>
       ) : null}
     </div>
   );
+}
+
+// The shell morphs between pages, so the summary's height comes from the rows
+// it shows rather than from its content.
+function runtimeSummaryStyle({ context, effort, rows }: { context: boolean; effort: boolean; rows: number }): CSSProperties {
+  return {
+    "--runtime-summary-context": context ? "1" : "0",
+    "--runtime-summary-effort": effort ? "1" : "0",
+    "--runtime-summary-rows": String(rows),
+  } as CSSProperties;
 }
 
 type PermissionModeState = PermissionMode;
 
 type PermissionModeOption = {
   mode: PermissionMode;
+  // The chip and the menu name a mode with the same words on every engine.
   label: string;
-  chipLabel: string;
+  // One line on what the mode allows; for an external engine, the native mode
+  // Wuu selects, in the words of that engine's own documentation.
+  hint: string;
   icon: IconComponent;
   tone: ChipTone;
 };
 
-function permissionModeLabels(engine?: string): Record<PermissionMode, { label: string; chipLabel: string }> {
+function permissionModeLabel(mode: PermissionMode): string {
+  switch (mode) {
+    case "read_only":
+      return translate("runtime.permission.readOnly");
+    case "unconfined":
+      return translate("runtime.permission.unconfined");
+    default:
+      return translate("runtime.permission.standard");
+  }
+}
+
+function permissionModeHint(mode: PermissionMode): string {
+  switch (mode) {
+    case "read_only":
+      return translate("runtime.permission.readOnlyHint");
+    case "unconfined":
+      return translate("runtime.permission.unconfinedHint");
+    default:
+      return translate("runtime.permission.standardHint");
+  }
+}
+
+// Mode names the external programs use for the setting Wuu passes them.
+function nativePermissionModeNames(engine?: string): Partial<Record<PermissionMode, string>> {
   switch (engine?.trim().toLowerCase()) {
     case "codex":
-      return {
-        standard: { label: "Workspace Write", chipLabel: "Workspace Write" },
-        read_only: { label: "Read Only", chipLabel: "Read Only" },
-        unconfined: { label: "Danger Full Access", chipLabel: "Danger Full Access" }
-      };
+      return { standard: "Workspace Write", read_only: "Read Only", unconfined: "Danger Full Access" };
     case "claude":
-      return {
-        standard: { label: "Don't Ask", chipLabel: "Don't Ask" },
-        read_only: { label: "Plan", chipLabel: "Plan" },
-        unconfined: { label: "Bypass Permissions", chipLabel: "Bypass Permissions" }
-      };
+      return { standard: "Don't Ask", read_only: "Plan", unconfined: "Bypass Permissions" };
     case "cursor":
-      return {
-        standard: { label: "Agent", chipLabel: "Agent" },
-        read_only: { label: "Plan", chipLabel: "Plan" },
-        unconfined: {
-          label: translate("runtime.permission.unconfined"),
-          chipLabel: translate("runtime.permission.unconfined")
-        }
-      };
+      return { standard: "Agent", read_only: "Plan" };
     case "devin":
-      return {
-        standard: { label: "Ask", chipLabel: "Ask" },
-        read_only: { label: "Ask", chipLabel: "Ask" },
-        unconfined: { label: "Bypass", chipLabel: "Bypass" }
-      };
+      return { standard: "Ask", unconfined: "Bypass" };
     default:
-      return {
-        standard: {
-          label: translate("runtime.permission.standardLabel"),
-          chipLabel: translate("runtime.permission.standard")
-        },
-        read_only: {
-          label: translate("runtime.permission.readOnly"),
-          chipLabel: translate("runtime.permission.readOnly")
-        },
-        unconfined: {
-          label: translate("runtime.permission.unconfined"),
-          chipLabel: translate("runtime.permission.unconfined")
-        }
-      };
+      return {};
   }
 }
 
@@ -431,36 +436,28 @@ function permissionModeIcons(mode: PermissionMode): { icon: IconComponent; tone:
   }
 }
 
-function advertisedPermissionLabel(
-  advertised: EnginePermissionModeInfo | undefined,
-  fallback: { label: string; chipLabel: string }
-): { label: string; chipLabel: string } {
-  const label = advertised?.label?.trim();
-  if (!label) {
-    return fallback;
-  }
-  return { label, chipLabel: label };
+function permissionModeOptionFor(
+  mode: PermissionMode,
+  engine?: string,
+  advertised?: readonly EnginePermissionModeInfo[],
+): PermissionModeOption {
+  const hint = advertised?.find((item) => item.mode === mode)?.label?.trim()
+    || nativePermissionModeNames(engine)[mode]
+    || permissionModeHint(mode);
+  return { mode, label: permissionModeLabel(mode), hint, ...permissionModeIcons(mode) };
 }
 
 function permissionModeOptions(
   engine?: string,
   advertised?: readonly EnginePermissionModeInfo[],
 ): PermissionModeOption[] {
-  const labels = permissionModeLabels(engine);
   const catalog = advertised?.filter((mode) => mode.mode === "standard" || mode.mode === "read_only" || mode.mode === "unconfined");
   const modes: PermissionMode[] = catalog && catalog.length > 0
     ? catalog.map((mode) => mode.mode)
     : engineOffersReadOnly(engine)
       ? ["standard", "read_only", "unconfined"]
       : ["standard", "unconfined"];
-  return modes.map((mode) => {
-    const native = catalog?.find((item) => item.mode === mode);
-    return {
-      mode,
-      ...advertisedPermissionLabel(native, labels[mode]),
-      ...permissionModeIcons(mode)
-    };
-  });
+  return modes.map((mode) => permissionModeOptionFor(mode, engine, catalog));
 }
 
 function engineOffersReadOnly(engine?: string): boolean {
@@ -490,22 +487,13 @@ export function permissionModeFromSummary(permissions?: PermissionSummary): Perm
   }
 }
 
-export function permissionModeHasAdvancedOverrides(_permissions?: PermissionSummary): boolean {
-  return false;
-}
-
 export function permissionModeOption(
   mode: PermissionModeState,
   engine?: string,
   advertised?: readonly EnginePermissionModeInfo[],
-): Omit<PermissionModeOption, "mode"> & { mode: PermissionModeState } {
-  const options = permissionModeOptions(engine, advertised);
-  const match = options.find((option) => option.mode === mode);
-  if (match) {
-    return match;
-  }
-  const labels = permissionModeLabels(engine);
-  return { mode, ...advertisedPermissionLabel(undefined, labels[mode] ?? labels.standard), ...permissionModeIcons(mode) };
+): PermissionModeOption {
+  return permissionModeOptions(engine, advertised).find((option) => option.mode === mode)
+    ?? permissionModeOptionFor(mode, engine, advertised);
 }
 
 export type HandoffRuntimePicker = {
@@ -537,7 +525,6 @@ export function RuntimePicker({
   onSelectEngineEffort,
   onToggleMenu,
   onSelectModel,
-  onHandoffModel,
   onSelectEffort,
   handoff
 }: {
@@ -558,7 +545,6 @@ export function RuntimePicker({
   onSelectEngineEffort?: (effort: string) => void;
   onToggleMenu: (menu: Exclude<CodexRuntimeMenu, null>) => void;
   onSelectModel: (provider: string, model: string, variant?: string) => void | Promise<boolean>;
-  onHandoffModel?: (provider: string, model: string) => void;
   onSelectEffort: (variant: string) => void | Promise<boolean>;
   handoff?: HandoffRuntimePicker;
 }): JSX.Element {
@@ -591,13 +577,13 @@ export function RuntimePicker({
   const triggerEngineName = engineLabel(selectedEngine, externalEngineInfo);
   const triggerLabel = handoff
     ? handoff.model
-      ? runtimeTriggerLabel(initialized, currentProviderModel, currentCodexModel, handoff.model)
+      ? runtimeTriggerLabel(handoff.model, codexProvider, currentProviderModel, currentCodexModel)
       : handoff.provider
         ? `${handoff.provider} · ${t("runtime.selectModel")}`
         : t("runtime.selectModel")
     : externalEngine
       ? externalModelInfo?.display_name || engineModel || t("runtime.engineDefaultModel")
-      : runtimeTriggerLabel(initialized, currentProviderModel, currentCodexModel, targetModel);
+      : runtimeTriggerLabel(targetModel, codexProvider, currentProviderModel, currentCodexModel);
   // A level is only worth naming when the model offers a choice; a lone
   // "Default" next to a model without levels reads as a setting it lacks.
   const effortLevels = externalEngine
@@ -618,6 +604,13 @@ export function RuntimePicker({
   useEffect(() => {
     if (!open) return undefined;
     function handleKeyDown(event: KeyboardEvent): void {
+      // Tab leaves the panel from its trigger, not from the portal at the
+      // end of the document.
+      if (event.key === "Tab" && event.target instanceof Node && isInsideFloatingMenu(event.target, "codex-runtime")) {
+        triggerRef.current?.focus();
+        onToggleMenu("model");
+        return;
+      }
       // Pages handle Escape first when it only steps back to the summary.
       if (event.key !== "Escape" || event.defaultPrevented) return;
       event.preventDefault();
@@ -695,7 +688,6 @@ export function RuntimePicker({
               selectedModel={targetModel}
               selectedVariant={targetVariant}
               onSelectModel={handoff?.onSelectModel ?? onSelectModel}
-              onHandoffModel={handoff ? undefined : onHandoffModel}
               onSelectEffort={handoff?.onSelectEffort ?? onSelectEffort}
               onSelectSpeed={handoff ? undefined : onSelectSpeed}
               engineOptions={engineOptions}
@@ -708,7 +700,6 @@ export function RuntimePicker({
               }}
               filterQuery={handoff?.filterQuery ?? ""}
               forcedView={handoff?.forcedView}
-              hideHandoff={Boolean(handoff)}
               onSelectProvider={handoff?.onSelectProvider}
               width={panelWidth}
               autoFocus
@@ -768,7 +759,7 @@ function EngineRuntimeMenu({
   const [direction, setDirection] = useState<RuntimePanelDirection>("forward");
   const [query, setQuery] = useState("");
   const [optimistic, setOptimistic] = useState<{ model: string; effort: string } | null>(null);
-  useRuntimePanelFocus(panelRef, `${engine?.id ?? "engine"}:${view}`, true);
+  useFloatingMenuFocus(panelRef, `${engine?.id ?? "engine"}:${view}`);
   useEffect(() => {
     setOptimistic(null);
   }, [selectedModel, selectedEffort]);
@@ -816,7 +807,14 @@ function EngineRuntimeMenu({
       ref={panelRef}
       className={`codex-runtime-menu codex-model-menu runtime-panel is-${view}`}
       role="menu"
-      style={runtimePanelStyle(view === "models" ? filteredModels.length : engineOptions.length, width)}
+      style={{
+        ...runtimePanelStyle(view === "models" ? filteredModels.length : engineOptions.length, width),
+        ...runtimeSummaryStyle({
+          context: true,
+          effort: effortOptions.length > 1,
+          rows: 1 + (effectiveModel?.fast_mode && onSelectSpeed ? 1 : 0),
+        }),
+      }}
       onKeyDown={(event) => handleRuntimePanelKeyDown(event, view, showSummary)}
     >
       <div key={`${engine?.id ?? "engine"}:${view}`} className={`runtime-panel-page is-${direction}`}>
@@ -824,7 +822,9 @@ function EngineRuntimeMenu({
           <RuntimePanelSummary
             engine={engineLabel(selectedEngine, engine)}
             engineId={selectedEngine}
+            showEngine
             engineLocked={engineLocked}
+            lockedDescription={lockedDescription}
             model={effectiveModel?.display_name || effectiveModelID || t("runtime.engineDefaultModel")}
             effortOptions={effortOptions}
             selectedEffort={effectiveEffort}
@@ -933,7 +933,6 @@ export function RuntimeModelMenu({
   selectedModel,
   selectedVariant,
   onSelectModel,
-  onHandoffModel,
   onSelectEffort,
   onSelectSpeed,
   engineOptions,
@@ -944,10 +943,6 @@ export function RuntimeModelMenu({
   onSelectEngine,
   filterQuery = "",
   forcedView,
-  hideHandoff = false,
-  embedded = false,
-  hideEngine = false,
-  compactSummary = false,
   onSelectProvider,
   width,
   autoFocus = false,
@@ -958,7 +953,6 @@ export function RuntimeModelMenu({
   selectedModel: string;
   selectedVariant: string;
   onSelectModel: (provider: string, model: string, variant?: string) => void | Promise<boolean>;
-  onHandoffModel?: (provider: string, model: string) => void;
   onSelectEffort: (variant: string) => void | Promise<boolean>;
   onSelectSpeed?: (speed: string) => void | Promise<boolean>;
   engineOptions: EngineOption[];
@@ -969,10 +963,6 @@ export function RuntimeModelMenu({
   onSelectEngine: (id: string) => void;
   filterQuery?: string;
   forcedView?: RuntimePanelView;
-  hideHandoff?: boolean;
-  embedded?: boolean;
-  hideEngine?: boolean;
-  compactSummary?: boolean;
   onSelectProvider?: (providerId: string) => void;
   width?: number;
   // Only a panel the user opened from its trigger takes focus; the handoff
@@ -1001,7 +991,7 @@ export function RuntimeModelMenu({
     setView(forcedView);
   }, [forcedView]);
 
-  useRuntimePanelFocus(panelRef, view, autoFocus);
+  useFloatingMenuFocus(panelRef, view, autoFocus);
 
   const openView = (nextView: RuntimePanelView): void => {
     setDirection("forward");
@@ -1075,6 +1065,8 @@ export function RuntimeModelMenu({
         .filter((group) => group.models.length > 0)
     : scopedGroups;
 
+  // The engine is worth naming only when there is another one to pick.
+  const showEngine = engineOptions.length > 1 || selectedEngine !== "wuu";
   const effectiveCodex = providerIsCodex(initialized, effectiveProviderName);
   const effortOptions = providerModelVariantOptions(effectiveProvider, effectiveModelID, effectiveVariant);
   const effectiveModel = scopedGroups
@@ -1097,9 +1089,16 @@ export function RuntimeModelMenu({
   return (
     <div
       ref={panelRef}
-      className={`codex-runtime-menu codex-model-menu runtime-panel is-${view}${embedded ? " is-embedded" : ""}`}
+      className={`codex-runtime-menu codex-model-menu runtime-panel is-${view}`}
       role="menu"
-      style={runtimePanelStyle(pageRows, width)}
+      style={{
+        ...runtimePanelStyle(pageRows, width),
+        ...runtimeSummaryStyle({
+          context: showEngine || Boolean(effectiveProviderName),
+          effort: effortOptions.length > 1,
+          rows: 1 + (effectiveModel?.fast_mode && onSelectSpeed ? 1 : 0),
+        }),
+      }}
       onKeyDown={(event) => handleRuntimePanelKeyDown(event, view, showSummary)}
     >
       <div key={view} className={`runtime-panel-page is-${direction}`}>
@@ -1108,9 +1107,9 @@ export function RuntimeModelMenu({
             engine={selectedEngine}
             engineId={selectedEngine}
             provider={effectiveProviderName}
+            showEngine={showEngine}
             engineLocked={engineLocked}
-            hideEngine={hideEngine}
-            compactSummary={compactSummary}
+            lockedDescription={lockedDescription}
             model={effectiveModel ? providerModelDisplayName(effectiveModel) : effectiveModelID || t("runtime.selectModel")}
             effortOptions={effortOptions}
             selectedEffort={effectiveVariant}
@@ -1120,9 +1119,8 @@ export function RuntimeModelMenu({
             speedDisabled={running}
             onSelectSpeed={effectiveModel?.fast_mode ? onSelectSpeed : undefined}
             onOpenEngines={() => openView("engines")}
-            onOpenProviders={() => openView("providers")}
+            onOpenProviders={providers.length > 1 ? () => openView("providers") : undefined}
             onOpenModels={() => openView("models")}
-            onHandoff={hideHandoff || !onHandoffModel ? undefined : () => onHandoffModel(effectiveProviderName, effectiveModelID)}
             onSelectEffort={(variant) => {
               setOptimistic((current) =>
                 current ? { ...current, variant } : { provider: selectedProvider, model: selectedModel, variant }
@@ -1246,6 +1244,10 @@ export function RuntimeModelMenu({
   );
 }
 
+// A discrete slider over the levels the model offers, weakest on the left.
+// Dragging previews the level in the heading above; the choice commits once on
+// release (or on a keyboard step) instead of once per intermediate position,
+// so tuning never spams the runtime stream.
 function EffortSelector({
   options,
   selectedVariant,
@@ -1267,6 +1269,7 @@ function EffortSelector({
   const activePointer = useRef<number | null>(null);
   const sliderRef = useRef<HTMLDivElement>(null);
   const displayIndex = previewIndex ?? selectedIndex;
+  const lastIndex = Math.max(orderedOptions.length - 1, 1);
 
   useEffect(() => {
     setPreviewIndex(null);
@@ -1293,33 +1296,36 @@ function EffortSelector({
     if (next !== undefined && index !== selectedIndex) onSelectEffort(next);
   };
 
-  // The capsule assigns an equal span to each discrete level. Handle pointer
-  // coordinates directly so the hit regions match the visible segments;
-  // native range events continue to provide keyboard interaction.
+  // Stops sit at the two ends of the capsule and evenly between them; a pointer
+  // snaps to the nearest one. The knob travels inside the capsule's edge.
   const previewPointer = (clientX: number): void => {
-    const rect = sliderRef.current?.getBoundingClientRect();
-    if (!rect || rect.width <= 0) return;
-    const ratio = (clientX - rect.left) / rect.width;
+    const slider = sliderRef.current;
+    const rect = slider?.getBoundingClientRect();
+    if (!slider || !rect || rect.width <= 0) return;
+    const style = getComputedStyle(slider);
+    const knob = Number.parseFloat(style.getPropertyValue("--effort-knob")) || 0;
+    const edge = Number.parseFloat(style.getPropertyValue("--effort-edge")) || 0;
+    const ratio = (clientX - rect.left - edge - knob / 2) / Math.max(rect.width - knob - edge * 2, 1);
     if (!Number.isFinite(ratio)) return;
-    previewTo(Math.min(orderedOptions.length - 1, Math.max(0, Math.floor(ratio * orderedOptions.length))));
+    previewTo(Math.min(orderedOptions.length - 1, Math.max(0, Math.round(ratio * lastIndex))));
   };
-  const progress = `${((displayIndex + 1) / orderedOptions.length) * 100}%`;
+  const stop = (index: number): string => String(index / lastIndex);
 
   return (
     <div
       ref={sliderRef}
       className={`codex-effort-slider${disabled ? " is-disabled" : ""}`}
-      style={{ "--effort-progress": progress } as CSSProperties}
+      style={{ "--effort-ratio": stop(displayIndex) } as CSSProperties}
     >
       <span className="codex-effort-track" aria-hidden="true">
         <span className="codex-effort-fill" />
       </span>
       <span className="codex-effort-stops" aria-hidden="true">
-        {orderedOptions.slice(0, -1).map((variant, index) => (
+        {orderedOptions.map((variant, index) => (
           <span
             key={variant || `default-${index}`}
-            className={index < displayIndex ? "is-filled" : ""}
-            style={{ left: `${((index + 1) / orderedOptions.length) * 100}%` }}
+            className={index <= displayIndex ? "is-filled" : ""}
+            style={{ "--effort-stop": stop(index) } as CSSProperties}
           />
         ))}
       </span>
@@ -1401,16 +1407,18 @@ function rememberedVariantForRuntimeModel(provider: ProviderSummary, model: Prov
   return lastEffortForRuntimeModel(provider.name, model.id) ?? defaultVariantForRuntimeModel(provider, model);
 }
 
+// Codex subscription slugs drop their shared "gpt-" prefix; every other model
+// keeps its own name, so "GPT-5.2" is not cut to "5.2".
 function runtimeTriggerLabel(
-  initialized: InitializeResult,
+  modelId: string,
+  codexProvider: boolean,
   providerModel?: ProviderModelSummary,
   codexModel?: CodexModelSummary,
-  fallbackModelId = initialized.model
 ): string {
   if (codexModel) {
     return shortCodexModelLabel(codexModel.slug);
   }
-  return shortCodexModelLabel(providerModel?.display_name || fallbackModelId);
+  return codexProvider ? shortCodexModelLabel(modelId) : providerModel?.display_name || modelId;
 }
 
 function configuredRuntimeModelForProvider(
@@ -1487,7 +1495,18 @@ export function ComposerPlusButton({
 }): JSX.Element {
   const { t } = useI18n();
   const triggerRef = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
+  const [openedFromEnd, setOpenedFromEnd] = useState(false);
+  useFloatingMenuFocus(menuRef, "", open, openedFromEnd);
+  const menuWidth = open ? composerMenuWidth(COMPOSER_COMMAND_MENU_WIDTH) : COMPOSER_COMMAND_MENU_WIDTH;
+  const builtInCommands = commands.filter((command) => command.kind !== "skill");
+  const skillCommands = commands.filter((command) => command.kind === "skill");
+  const selectCommand = (command: ComposerSlashCommand): void => {
+    setOpen(false);
+    onSelectCommand(command);
+  };
 
   useEffect(() => {
     if (!open) {
@@ -1522,6 +1541,7 @@ export function ComposerPlusButton({
   return (
     <div className="composer-plus-menu-anchor" ref={triggerRef}>
       <button
+        ref={buttonRef}
         className="composer-tool-button composer-plus-button"
         type="button"
         aria-haspopup="menu"
@@ -1530,7 +1550,16 @@ export function ComposerPlusButton({
         title={t("composer.plusMenu")}
         disabled={disabled}
         onPointerDown={(event) => { if (isTouchWebShell()) event.preventDefault(); }}
-        onClick={() => setOpen((current) => !current)}
+        onClick={() => {
+          setOpenedFromEnd(false);
+          setOpen((current) => !current);
+        }}
+        onKeyDown={(event) => {
+          const side = open ? undefined : menuOpeningKey(event);
+          if (!side) return;
+          setOpenedFromEnd(side === "end");
+          setOpen(true);
+        }}
       >
         <Plus aria-hidden="true" />
       </button>
@@ -1541,12 +1570,17 @@ export function ComposerPlusButton({
           placement="above"
           align="left"
           offset={4}
-          width={320}
-          matchAnchorWidth
+          width={menuWidth}
           mobileSheet={{ label: t("composer.plusMenu"), onClose: () => setOpen(false) }}
         >
-          <div className="composer-context-menu composer-plus-menu" role="menu" aria-label={t("composer.plusMenu")}>
-            <div className="composer-plus-menu-section" role="presentation">{t("composer.plusSectionAdd")}</div>
+          <div
+            ref={menuRef}
+            className="composer-context-menu composer-plus-menu"
+            role="menu"
+            aria-label={t("composer.plusMenu")}
+            style={{ "--composer-menu-width": `${menuWidth}px` } as CSSProperties}
+            onKeyDown={(event) => handleFloatingMenuKeyDown(event, () => setOpen(false), buttonRef.current)}
+          >
             {mobileAttachments ? (
               <ComposerMobileAttachmentChoices
                 onTakePhoto={() => {
@@ -1576,32 +1610,50 @@ export function ComposerPlusButton({
                 <span className="composer-plus-menu-item-desc">{t("composer.addAttachmentHint")}</span>
               </button>
             )}
-            <div className="composer-plus-menu-section" role="presentation">{t("composer.plusSectionCommands")}</div>
-            {commands.map((command) => (
-              <Tooltip content={command.disabledReason} key={command.id}>
-                <button
-                  role="menuitem"
-                  type="button"
-                  disabled={Boolean(command.disabledReason)}
-                  onClick={() => {
-                    setOpen(false);
-                    onSelectCommand(command);
-                  }}
-                >
-                  <SlashCommandIcon command={command} />
-                  <span className="composer-plus-menu-item-title">
-                    {command.kind === "skill" ? command.description : command.title}
-                  </span>
-                  <span className="composer-plus-menu-item-desc">
-                    {command.kind === "skill" ? command.title : command.description}
-                  </span>
-                </button>
-              </Tooltip>
-            ))}
+            <PlusMenuCommands label={t("composer.plusSectionCommands")} commands={builtInCommands} onSelect={selectCommand} />
+            <PlusMenuCommands label={t("composer.plusSectionSkills")} commands={skillCommands} onSelect={selectCommand} />
           </div>
         </FloatingMenuPortal>
       ) : null}
     </div>
+  );
+}
+
+// One group of the plus menu. A command's title leads and the slash command
+// that runs it trails like a shortcut; a skill is its name, which is already
+// what one types. The longer description waits in the tooltip.
+function PlusMenuCommands({
+  label,
+  commands,
+  onSelect
+}: {
+  label: string;
+  commands: ComposerSlashCommand[];
+  onSelect: (command: ComposerSlashCommand) => void;
+}): JSX.Element | null {
+  if (commands.length === 0) return null;
+  return (
+    <>
+      <div className="composer-plus-menu-section" role="presentation">{label}</div>
+      {commands.map((command) => (
+        <Tooltip content={command.disabledReason ?? command.description} key={command.id}>
+          <button
+            role="menuitem"
+            type="button"
+            disabled={Boolean(command.disabledReason)}
+            onClick={() => onSelect(command)}
+          >
+            <SlashCommandIcon command={command} />
+            <span className="composer-plus-menu-item-title">
+              {command.kind === "skill" ? command.name : command.title}
+            </span>
+            {command.kind === "skill" ? null : (
+              <span className="composer-plus-menu-item-desc">/{command.name}</span>
+            )}
+          </button>
+        </Tooltip>
+      ))}
+    </>
   );
 }
 
@@ -1660,12 +1712,9 @@ export function SlashCommandIcon({ command }: { command: ComposerSlashCommand })
   }
 }
 
-type AccessOption = {
+type AccessOption = PermissionModeOption & {
   key: string;
-  mode: PermissionMode;
   approveForMe: boolean;
-  label: string;
-  tone: ChipTone;
 };
 
 function accessOptions(
@@ -1675,19 +1724,15 @@ function accessOptions(
 ): AccessOption[] {
   const options: AccessOption[] = [];
   for (const option of permissionModeOptions(engine, advertised)) {
-    options.push({
-      key: option.mode,
-      mode: option.mode,
-      approveForMe: false,
-      label: option.label,
-      tone: option.tone,
-    });
+    options.push({ ...option, key: option.mode, approveForMe: false });
     if (includeApproveForMe && option.mode === "standard") {
       options.push({
         key: "approve_for_me",
         mode: "standard",
         approveForMe: true,
         label: translate("runtime.permission.approveForMe"),
+        hint: translate("runtime.permission.approveForMeHint"),
+        icon: ShieldCheck,
         tone: "neutral",
       });
     }
@@ -1695,80 +1740,56 @@ function accessOptions(
   return options;
 }
 
+// The permission menu uses the shared select rows: the mode's symbol (the
+// same one its chip shows), its name, and one line on what it allows.
 export function AccessMenu({
   permissions,
   engine,
   permissionModes,
   disabled,
-  onSelect
+  onSelect,
+  onKeyDown
 }: {
   permissions?: PermissionSummary;
   engine?: string;
   permissionModes?: readonly EnginePermissionModeInfo[];
   disabled: boolean;
   onSelect: (mode: PermissionMode, approveForMe?: boolean) => void;
+  onKeyDown: (event: ReactKeyboardEvent<HTMLElement>) => void;
 }): JSX.Element {
   useI18n();
+  const menuRef = useRef<HTMLDivElement>(null);
+  useFloatingMenuFocus(menuRef);
   const mode = permissionModeFromSummary(permissions);
   const approveForMeOn = mode === "standard" && Boolean(permissions?.approve_for_me);
   const showApproveForMe = (engine || "wuu") === "wuu";
   return (
-    <div className="composer-context-menu access-menu" role="menu">
+    <div
+      ref={menuRef}
+      className="select-menu-panel access-menu"
+      role="menu"
+      style={{ "--composer-menu-width": `${composerMenuWidth(PERMISSION_MENU_WIDTH)}px` } as CSSProperties}
+      onKeyDown={onKeyDown}
+    >
       {accessOptions(engine, showApproveForMe, permissionModes).map((option) => {
         const selected = mode === option.mode && option.approveForMe === approveForMeOn;
+        const Icon = option.icon;
         return (
           <button
             key={option.key}
-            className={`permission-mode-option ${option.tone}`}
+            className={`select-menu-item permission-mode-option${option.tone === "danger" ? " is-danger" : ""}`}
             role="menuitemradio"
             aria-checked={selected}
-            aria-label={option.label}
             type="button"
             disabled={disabled}
             onClick={() => onSelect(option.mode, showApproveForMe ? option.approveForMe : undefined)}
           >
-            <strong>{option.label}</strong>
-            {selected ? <Check aria-hidden="true" /> : null}
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
-
-
-export function BranchMenu({
-  gitStatus,
-  onSelectBranch
-}: {
-  gitStatus: GitStatusResult;
-  onSelectBranch: (branch: string) => void;
-}): JSX.Element {
-  const { t } = useI18n();
-  const branches = gitStatus.branches ?? [];
-  return (
-    <div className="composer-context-menu branch-menu" role="menu">
-      {gitStatus.dirty_count > 0 ? (
-        <div className="composer-menu-note warning">
-          <strong>{t("runtime.uncommittedChanges")}</strong>
-          <span>{t(gitStatus.dirty_count === 1 ? "runtime.dirtyFileWarningOne" : "runtime.dirtyFileWarning", { count: gitStatus.dirty_count })}</span>
-        </div>
-      ) : null}
-      {branches.length === 0 ? <div className="composer-menu-empty">{t("runtime.noLocalBranches")}</div> : null}
-      {branches.map((branch) => {
-        const selected = branch === gitStatus.branch;
-        return (
-          <button
-            key={branch}
-            role="menuitem"
-            type="button"
-            disabled={selected || !hostSupports("checkoutGitBranch")}
-            onClick={() => onSelectBranch(branch)}
-          >
-            <GitBranch className="icon-lg" />
-            <span>{branch}</span>
-            {selected ? <Check className="icon" /> : null}
+            <Icon className="permission-mode-icon" aria-hidden="true" />
+            <span className="select-menu-item-text">
+              <span className="select-menu-item-label">{option.label}</span>
+              <span className="select-menu-item-hint">{option.hint}</span>
+            </span>
+            <Check className="select-menu-check" aria-hidden="true" />
           </button>
         );
       })}
@@ -1785,6 +1806,7 @@ export function WorkspacePickerMenu({
   onSelectNoProject,
   onCreateWorkspace,
   onOpenWorkspace,
+  onKeyDown,
 }: {
   projects: DesktopProject[];
   activeContext?: RuntimeContext;
@@ -1794,8 +1816,11 @@ export function WorkspacePickerMenu({
   onSelectNoProject: () => void;
   onCreateWorkspace: () => void;
   onOpenWorkspace: () => void;
+  onKeyDown: (event: ReactKeyboardEvent<HTMLElement>) => void;
 }): JSX.Element {
   const { t } = useI18n();
+  const menuRef = useRef<HTMLDivElement>(null);
+  useFloatingMenuFocus(menuRef);
   const normalizedQuery = query.trim().toLocaleLowerCase();
   const filteredWorkspaces = normalizedQuery
     ? projects.filter((project) => project.name.toLocaleLowerCase().includes(normalizedQuery) || project.path.toLocaleLowerCase().includes(normalizedQuery))
@@ -1806,11 +1831,11 @@ export function WorkspacePickerMenu({
   const noProject = activeContext?.kind === "no_project";
 
   return (
-    <div className="composer-project-menu" role="menu"
-      style={{ "--composer-project-menu-width": `${COMPOSER_PROJECT_MENU_WIDTH}px` } as CSSProperties}>
+    <div ref={menuRef} className="composer-project-menu" role="menu" onKeyDown={onKeyDown}
+      style={{ "--composer-project-menu-width": `${composerMenuWidth(COMPOSER_PROJECT_MENU_WIDTH)}px` } as CSSProperties}>
       <label className="menu-search project-search">
         <Search className="icon-sm" aria-hidden="true" />
-        <input autoFocus={!isTouchWebShell()} value={query} aria-label={t("runtime.searchWorkspaces")} placeholder={t("runtime.searchWorkspaces")}
+        <input value={query} aria-label={t("runtime.searchWorkspaces")} placeholder={t("runtime.searchWorkspaces")}
           onChange={(event) => setQuery(event.target.value)} />
       </label>
       <div className="project-picker-list">

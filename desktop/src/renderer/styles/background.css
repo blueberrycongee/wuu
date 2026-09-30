@@ -19,7 +19,7 @@ html[data-app-background] body {
 
 html[data-app-background] :is(
   .conversation-pane, .settings-main, .workspace-right-panel,
-  .workspace-panel-body, .workspace-bottom-panel, .side-thread-panel,
+  .workspace-panel-body, .side-thread-panel,
   .account-screen, .plugin-workbench-view-primary,
   .plugin-view-content, .empty-home, .project-empty-pane,
   .skills-scroll-region, .conversation-split-pane

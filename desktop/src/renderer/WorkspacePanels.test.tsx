@@ -20,9 +20,12 @@ import {
   type WorkspaceViewTab,
 } from "./WorkspaceViewTabs";
 import { hoverTooltipText, unhoverTooltip } from "./tooltipTestUtils";
+import { confirmAction } from "./ConfirmDialog";
 import type { HeaderSnapshotV1, PresentationHost } from "../shared/workbench";
 import { PluginHost } from "./plugins/PluginHost";
 import { WorkbenchController } from "./plugins/Workbench";
+
+vi.mock("./ConfirmDialog", () => ({ confirmAction: vi.fn() }));
 
 // Renders the cwd it received so tests can assert which context prop
 // (activeContext vs workspaceContext) actually reached the terminal panel,
@@ -630,6 +633,13 @@ describe("WorkspaceRightPanel", () => {
     expect(split.dataset.treeSide).toBe("left");
     expect(window.localStorage.getItem("wuu.desktop.fileTreeSide")).toBe("left");
 
+    // The same control moves the tree across without a drag.
+    act(() => tree.querySelector<HTMLButtonElement>(".workspace-file-tree-drag-handle")!.click());
+    expect(split.dataset.treeSide).toBe("right");
+    expect(window.localStorage.getItem("wuu.desktop.fileTreeSide")).toBe("right");
+    act(() => tree.querySelector<HTMLButtonElement>(".workspace-file-tree-drag-handle")!.click());
+    expect(split.dataset.treeSide).toBe("left");
+
     act(() => {
       separator.dispatchEvent(
         new MouseEvent("pointerdown", { bubbles: true, button: 0, clientX: 320 }),
@@ -666,7 +676,7 @@ describe("WorkspaceRightPanel", () => {
   it("clamps the tree width so the file content keeps usable space", () => {
     expect(clampWorkspaceFileTreeWidth(100)).toBe(WORKSPACE_FILE_TREE_MIN_WIDTH);
     expect(clampWorkspaceFileTreeWidth(900)).toBe(WORKSPACE_FILE_TREE_MAX_WIDTH);
-    expect(clampWorkspaceFileTreeWidth(480, 600)).toBe(360);
+    expect(clampWorkspaceFileTreeWidth(480, 600)).toBe(240);
   });
 
   it("temporarily shrinks the file tree when the panel gets narrow", async () => {
@@ -711,7 +721,7 @@ describe("WorkspaceRightPanel", () => {
       expect(split.style.getPropertyValue("--workspace-file-tree-width")).toBe("180px");
       expect(window.localStorage.getItem("wuu.desktop.fileTreeWidth")).toBe("320");
 
-      panelWidth = 600;
+      panelWidth = 700;
       act(() => resizeCallback?.([], {} as ResizeObserver));
       expect(split.style.getPropertyValue("--workspace-file-tree-width")).toBe("320px");
     } finally {
@@ -819,11 +829,11 @@ describe("WorkspaceRightPanel", () => {
       const split = container!.querySelector<HTMLElement>(".workspace-files-split")!;
       Object.defineProperty(split, "getBoundingClientRect", {
         configurable: true,
-        value: () => ({ width: 479 }),
+        value: () => ({ width: 600 }),
       });
       act(() => resizeCallback?.([], {} as ResizeObserver));
       expect(split.style.getPropertyValue("--workspace-file-tree-width")).toBe(
-        `${479 - WORKSPACE_FILE_CONTENT_MIN_WIDTH}px`,
+        `${600 - WORKSPACE_FILE_CONTENT_MIN_WIDTH}px`,
       );
     } finally {
       if (originalResizeObserver) {
@@ -948,7 +958,6 @@ describe("WorkspaceRightPanel", () => {
   it("closes a readonly file without dirty-state confirmation", async () => {
     const onCloseTab = vi.fn();
     const onDirtyFileTabsChange = vi.fn();
-    const confirmDiscard = vi.spyOn(window, "confirm");
     const fileTab = workspaceFileViewTab({
       context: {
         kind: "project",
@@ -977,7 +986,7 @@ describe("WorkspaceRightPanel", () => {
       container?.querySelector<HTMLButtonElement>(".workspace-tool-tab-close")?.click();
     });
 
-    expect(confirmDiscard).not.toHaveBeenCalled();
+    expect(confirmAction).not.toHaveBeenCalled();
     expect(onCloseTab).toHaveBeenCalledWith(fileTab.id);
   });
 
@@ -1122,7 +1131,7 @@ describe("WorkspaceRightPanel", () => {
     );
   });
 
-  it("shows the tool picker when there is no active tab, and marks open tools active", () => {
+  it("shows the tool picker when there is no active tab", () => {
     const onOpenTool = vi.fn();
     const filesTab = workspaceToolViewTab("files");
 
@@ -1139,12 +1148,36 @@ describe("WorkspaceRightPanel", () => {
     expect(panel).toBeTruthy();
     const picker = panel?.querySelector(".workspace-tool-menu");
     expect(picker).toBeTruthy();
-    expect(picker?.querySelector(".workspace-tool-menu-item.active")?.textContent).toContain("文件");
-
     act(() => {
       picker?.querySelectorAll<HTMLButtonElement>(".workspace-tool-menu-item")[1]?.click();
     });
     expect(onOpenTool).toHaveBeenCalledWith("review");
+  });
+
+  it("walks the tool picker with arrow keys, wrapping at the ends", () => {
+    mount(<WorkspaceRightPanel {...baseProps()} tabs={[]} activeTabID={undefined} />);
+
+    const items = Array.from(
+      container?.querySelectorAll<HTMLButtonElement>(".workspace-tool-menu-item") ?? [],
+    );
+    expect(items.length).toBeGreaterThan(2);
+    const press = (key: string): void => {
+      act(() => {
+        document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+      });
+    };
+
+    items[0].focus();
+    press("ArrowDown");
+    expect(document.activeElement).toBe(items[1]);
+    press("End");
+    expect(document.activeElement).toBe(items.at(-1));
+    press("ArrowDown");
+    expect(document.activeElement).toBe(items[0]);
+    press("ArrowUp");
+    expect(document.activeElement).toBe(items.at(-1));
+    press("Home");
+    expect(document.activeElement).toBe(items[0]);
   });
 });
 

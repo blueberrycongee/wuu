@@ -6,12 +6,9 @@ import { initialState, type ThreadSummary } from "../../src/renderer/AppState";
 import { applyMessageFlowFontSize } from "../../src/renderer/MessageFlowFontSizeSection";
 import { WuuUIRoot } from "../../src/renderer/ui/layers/UILayerHost";
 import { I18nProvider } from "../../src/renderer/i18n";
-import { CLEAR_UNREAD_HINT_SEEN_KEY } from "../../src/renderer/SidebarBrand";
 import "../../src/renderer/styles.css";
 
 const noop = () => {};
-// Keep onboarding copy out of the accessory comparison in this isolated profile.
-localStorage.setItem(CLEAR_UNREAD_HINT_SEEN_KEY, "true");
 const date = "2026-09-17T00:00:00Z";
 const params = new URLSearchParams(location.search);
 const project = { id: "preview", name: "wuu", path: "/preview", created_at: date, updated_at: date };

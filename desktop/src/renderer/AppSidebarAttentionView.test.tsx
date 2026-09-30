@@ -98,6 +98,15 @@ function runningThread(
   };
 }
 
+// A settled session whose latest answer has not been opened yet.
+function answeredThread(id: string, createdAt: string): Thread {
+  return {
+    ...runningThread(id, createdAt),
+    status: "idle",
+    latest_completed_turn_id: `${id}-turn-1`,
+  };
+}
+
 function emitNotification(method: string, params: Record<string, unknown>): void {
   const event = {
     kind: "notification",
@@ -273,5 +282,38 @@ describe("sidebar attention view", () => {
     });
 
     expect(runningRowLabels()).toEqual(["thread-newer", "thread-older"]);
+  });
+
+  it("marks every unread conversation read from the unread heading", async () => {
+    installWuuApi([
+      runningThread("thread-running", "2026-01-03T00:00:00Z"),
+      answeredThread("thread-newer", "2026-01-02T00:00:00Z"),
+      answeredThread("thread-older", "2026-01-01T00:00:00Z"),
+    ]);
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<App />);
+    });
+    await flushAsync();
+
+    act(() => container.querySelector<HTMLButtonElement>(".sidebar-notifications-button")!.click());
+    const labels = (state: "running" | "has-unread" | "settled"): Array<string | null> =>
+      [...container.querySelectorAll<HTMLElement>(".sidebar-attention-section .thread-row")]
+        .filter((row) => state === "settled"
+          ? !row.classList.contains("running") && !row.classList.contains("has-unread")
+          : row.classList.contains(state))
+        .map((row) => row.querySelector(".thread-row-main")!.getAttribute("aria-label"));
+    const markRead = (): HTMLButtonElement | null =>
+      container.querySelector<HTMLButtonElement>('[data-attention-action="mark-read"]');
+    expect(labels("has-unread")).toEqual(["thread-newer", "thread-older"]);
+
+    act(() => markRead()!.click());
+
+    expect(labels("has-unread")).toEqual([]);
+    // Read rows stay in view instead of vanishing under the pointer, and
+    // running work is not something a read receipt can settle.
+    expect(labels("settled")).toEqual(["thread-newer", "thread-older"]);
+    expect(labels("running")).toEqual(["thread-running"]);
+    expect(markRead()).toBeNull();
   });
 });

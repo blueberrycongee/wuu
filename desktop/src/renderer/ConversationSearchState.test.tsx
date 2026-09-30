@@ -106,3 +106,36 @@ it("ignores stale errors and responses after closing", async () => {
   expect(h.cacheThreads).not.toHaveBeenCalled();
   expect(h.api.conversationSearchResults).toEqual([]);
 });
+
+it("returns focus to where it was when dismissed, but not when a result is chosen", async () => {
+  const h = setup();
+  await advance(0);
+  const match = result("recent");
+  await act(async () => h.pending[0].resolve({ results: [match] }));
+  // The palette opened with focus in the composer; reopen it from there.
+  act(() => h.api.closeConversationSearch({ immediate: true }));
+  const composer = document.createElement("textarea");
+  const input = document.createElement("input");
+  document.body.append(composer, input);
+  const openFrom = async (): Promise<void> => {
+    composer.focus();
+    act(() => h.api.toggleConversationSearch());
+    input.focus();
+    await advance(0);
+  };
+  const key = (name: string) => ({ key: name, nativeEvent: { isComposing: false },
+    preventDefault: () => {} }) as unknown as ReactKeyboardEvent<HTMLInputElement>;
+
+  await openFrom();
+  act(() => h.api.handleConversationSearchKeyDown(key("Escape")));
+  expect(document.activeElement).toBe(composer);
+
+  await openFrom();
+  await act(async () => h.pending.at(-1)!.resolve({ results: [match] }));
+  act(() => h.api.selectConversationSearchResult(h.api.conversationSearchResults[0]));
+  expect(h.onSelectThread).toHaveBeenCalledWith("recent");
+  // The chosen conversation takes focus next; the composer it left does not.
+  expect(document.activeElement).not.toBe(composer);
+  composer.remove();
+  input.remove();
+});

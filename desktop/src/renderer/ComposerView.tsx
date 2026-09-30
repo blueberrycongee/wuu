@@ -2,15 +2,17 @@ import { COMPOSER_ATTACHMENT_ACCEPT } from "./ComposerMessages";
 import { effectiveModelSpeed } from "./RuntimeHelpers";
 import {
   ChevronDown,
-  ChevronUp,
   Folder,
   FolderOpen,
+  Maximize2,
   MessageSquare,
+  Minimize2,
   ArrowUp,
   ShieldCheck,
   Split,
 } from "./WuuIcons";
 import {
+  type CSSProperties,
   type ClipboardEvent as ReactClipboardEvent,
   type DragEvent as ReactDragEvent,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -72,7 +74,7 @@ import {
   type ComposerImage,
   type QueuedComposerMessage
 } from "./ComposerMessages";
-import { FloatingMenuPortal } from "./ComposerFloatingMenu";
+import { FloatingMenuPortal, composerMenuWidth, handleFloatingMenuKeyDown, menuOpeningKey } from "./ComposerFloatingMenu";
 import { ComposerBranchPicker } from "./ComposerBranchPicker";
 import { ComposerContextMenu } from "./ComposerContextMenu";
 import { ComposerQueueStrip, ComposerStopIcon } from "./ComposerInputSections";
@@ -85,6 +87,7 @@ import { ComposerPluginToolbar } from "./plugins/ComposerPluginToolbar";
 import {
   AccessMenu,
   ComposerPlusButton,
+  PERMISSION_MENU_WIDTH,
   WorkspacePickerMenu,
   RuntimePicker,
   RuntimeModelMenu,
@@ -101,7 +104,7 @@ import type {
   ComposerWorktreeControl,
   PermissionMode
 } from "./ComposerTypes";
-import { COMPOSER_PROJECT_MENU_WIDTH, composerStatusIsLiveProgress, composerStatusText } from "./ComposerTypes";
+import { COMPOSER_COMMAND_MENU_WIDTH, COMPOSER_PROJECT_MENU_WIDTH, composerStatusIsLiveProgress, composerStatusText } from "./ComposerTypes";
 import type { WorkspacePanelView } from "./WorkspacePanels";
 import { ComposerRuntimeMeters } from "./ComposerRuntimeMeters";
 import { ComposerPresentation } from "./plugins/ComposerPresentation";
@@ -126,7 +129,7 @@ export type {
 } from "./ComposerTypes";
 export { FloatingMenuPortal, isInsideFloatingMenu } from "./ComposerFloatingMenu";
 export { SplitPaneComposer } from "./ComposerInputSections";
-export { permissionModeFromSummary, permissionModeHasAdvancedOverrides } from "./ComposerRuntimeMenus";
+export { permissionModeFromSummary } from "./ComposerRuntimeMenus";
 
 export function Composer({
   variant = "dock",
@@ -456,6 +459,8 @@ export function Composer({
       : t("composer.send");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const composerFrameRef = useRef<HTMLDivElement>(null);
+  const workspacePillRef = useRef<HTMLButtonElement>(null);
+  const permissionChipRef = useRef<HTMLButtonElement>(null);
   const attachmentInputRef = useRef<HTMLInputElement>(null);
   const photosInputRef = useRef<HTMLInputElement>(null);
   const submitAfterCompositionRef = useRef(false);
@@ -625,7 +630,7 @@ export function Composer({
   const approveForMeOn = permissionMode === "standard" && Boolean(initialized?.permissions?.approve_for_me);
   const permissionChipLabel = approveForMeOn
     ? t("runtime.permission.approveForMe")
-    : permissionOption.chipLabel;
+    : permissionOption.label;
   const PermissionChipIcon = approveForMeOn ? ShieldCheck : permissionOption.icon;
   const workspacePillLabel = heroWorkspacePillLabel(activeContext, activeWorkspace);
   const workspacePillTitle =
@@ -650,6 +655,7 @@ export function Composer({
     && slashDismissedValue !== prompt
   );
   const selectedSlashCommand = slashMenuOpen ? visibleSlashCommands[selectedSlashIndex] : undefined;
+  const commandMenuWidth = slashMenuOpen ? composerMenuWidth(COMPOSER_COMMAND_MENU_WIDTH) : COMPOSER_COMMAND_MENU_WIDTH;
   const slashMenuID = `composer-slash-commands-${variant}`;
   const { resetQueryHistoryNavigation, handleQueryHistoryKeyDown } = useComposerQueryHistory({
     disabled: readOnly || hasAttachments || hasCollapsedPromptBlocks,
@@ -1088,14 +1094,14 @@ export function Composer({
             placement="above"
             align="left"
             offset={variant === "hero" ? 10 : 8}
-            width={320}
-            matchAnchorWidth
+            width={commandMenuWidth}
           >
             <div
               className="composer-context-menu composer-plus-menu slash-command-menu"
               id={slashMenuID}
               role="listbox"
               aria-label={t("composer.slashCommands")}
+              style={{ "--composer-menu-width": `${commandMenuWidth}px` } as CSSProperties}
             >
               {visibleSlashCommands.length > 0 ? (
                 <div className="slash-command-list scrollbar-hidden">
@@ -1173,6 +1179,7 @@ export function Composer({
                   disabled={workspacePillTitle === workspacePillLabel}
                 >
                   <button
+                    ref={workspacePillRef}
                     className="hero-project-pill"
                     type="button"
                     aria-haspopup="menu"
@@ -1180,6 +1187,9 @@ export function Composer({
                     aria-label={t("composer.switchWorkspace", { workspace: workspacePillLabel })}
                     onPointerDown={(event) => { if (mobileWeb) event.preventDefault(); }}
                     onClick={onToggleMenu}
+                    onKeyDown={(event) => {
+                      if (!menuOpen && menuOpeningKey(event)) onToggleMenu();
+                    }}
                   >
                     <span className="hero-project-pill-icon" aria-hidden="true">
                       <WorkspacePillIcon />
@@ -1193,7 +1203,7 @@ export function Composer({
                     owner="composer-runtime"
                     placement="above"
                     align="left"
-                    width={COMPOSER_PROJECT_MENU_WIDTH}
+                    width={composerMenuWidth(COMPOSER_PROJECT_MENU_WIDTH)}
                     mobileSheet={{ label: t("composer.switchWorkspace", { workspace: workspacePillLabel }), onClose: onToggleMenu }}
                   >
                     <WorkspacePickerMenu
@@ -1205,6 +1215,7 @@ export function Composer({
                       onSelectNoProject={onSelectNoProject}
                       onCreateWorkspace={onCreateWorkspace}
                       onOpenWorkspace={onOpenWorkspace}
+                      onKeyDown={(event) => handleFloatingMenuKeyDown(event, onToggleMenu, workspacePillRef.current)}
                     />
                   </FloatingMenuPortal>
                 ) : null}
@@ -1336,7 +1347,7 @@ export function Composer({
                 disabled={readOnly}
                 onClick={toggleComposerExpansion}
               >
-                {isComposerExpanded ? <ChevronDown aria-hidden="true" /> : <ChevronUp aria-hidden="true" />}
+                {isComposerExpanded ? <Minimize2 aria-hidden="true" /> : <Maximize2 aria-hidden="true" />}
               </button>
             ) : null}
             <div
@@ -1366,6 +1377,7 @@ export function Composer({
                 {!textOnly ? (
                   <div className="permission-menu-anchor" ref={accessMenuRef}>
                     <button
+                      ref={permissionChipRef}
                       className={`permission-chip tone-${permissionOption.tone}`}
                       type="button"
                       aria-haspopup="menu"
@@ -1374,6 +1386,9 @@ export function Composer({
                       disabled={!initialized || readOnly || running || permissionLocked}
                       onPointerDown={(event) => { if (mobileWeb) event.preventDefault(); }}
                       onClick={onToggleAccessMenu}
+                      onKeyDown={(event) => {
+                        if (!accessMenuOpen && menuOpeningKey(event)) onToggleAccessMenu();
+                      }}
                     >
                       <PermissionChipIcon aria-hidden="true" />
                       <span>{permissionChipLabel}</span>
@@ -1386,7 +1401,7 @@ export function Composer({
                         placement="above"
                         align="left"
                         offset={6}
-                        width={176}
+                        width={composerMenuWidth(PERMISSION_MENU_WIDTH)}
                         mobileSheet={{ label: t("composer.permissionMode", { mode: permissionChipLabel }), onClose: onToggleAccessMenu }}
                       >
                         <AccessMenu
@@ -1394,7 +1409,11 @@ export function Composer({
                           engine={activeEngine}
                           permissionModes={enginePermissionModes}
                           disabled={!initialized || readOnly || running}
-                          onSelect={onSelectPermissionMode}
+                          onSelect={(mode, approveForMe) => {
+                            permissionChipRef.current?.focus();
+                            onSelectPermissionMode(mode, approveForMe);
+                          }}
+                          onKeyDown={(event) => handleFloatingMenuKeyDown(event, onToggleAccessMenu, permissionChipRef.current)}
                         />
                       </FloatingMenuPortal>
                     ) : null}
@@ -1414,6 +1433,7 @@ export function Composer({
                       fallbackContextUsage={contextUsage}
                       activeEngine={activeEngine}
                     />
+                    {/* Until the runtime reports, there is no model to name. */}
                     {initialized ? (
                       <RuntimePicker
                         initialized={initialized}
@@ -1433,24 +1453,10 @@ export function Composer({
                         onSelectEngineEffort={onSelectEngineEffort}
                         onToggleMenu={onToggleCodexRuntimeMenu}
                         onSelectModel={onSelectRuntimeModel}
-                        onHandoffModel={(provider, model) => {
-                          if (codexRuntimeMenu === "model") onToggleCodexRuntimeMenu("model");
-                          setPrompt(handoffPromptFromSelection(provider, model, ""));
-                          focusComposerAtEndSoon();
-                        }}
                         onSelectEffort={onSelectRuntimeEffort}
 
                       />
-                    ) : (
-                      <>
-                        <button className="provider-pill" type="button" onClick={onOpenSettings}>
-                          provider
-                        </button>
-                        <button className="model-label" type="button" onClick={onOpenSettings}>
-                          model
-                        </button>
-                      </>
-                    )}
+                    ) : null}
                   </>
                 )}
                 <button
@@ -1501,7 +1507,6 @@ export function Composer({
               engineLocked
               running={false}
               onSelectEngine={() => {}}
-              hideHandoff
               filterQuery={canSubmitHandoffDraft(handoffDraft) ? "" : handoffDraft.filterQuery}
               forcedView={canSubmitHandoffDraft(handoffDraft) ? "summary" : handoffDraft.pickerView}
               onSelectProvider={(provider) => {

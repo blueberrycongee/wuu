@@ -6,6 +6,7 @@ import {
   type ReactNode,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   useSyncExternalStore,
@@ -26,6 +27,7 @@ import { restrictToHorizontalAxis } from "@dnd-kit/modifiers";
 import { horizontalListSortingStrategy, SortableContext, useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { useDropAnimation, useSortableTransition } from "./SortableMotion";
+import { motionDurationMs } from "./motion";
 import {
   createWindowResizeSettleScheduler,
   isWindowResizing,
@@ -39,7 +41,9 @@ import {
   GripHorizontal,
   Maximize2,
   Minimize2,
+  PanelLeft,
   PanelLeftOpen,
+  PanelRight,
   PanelRightOpen,
   Plus,
   ShieldCheck,
@@ -59,11 +63,11 @@ import { WorkspaceBrowserPanel } from "./WorkspaceBrowserPanel";
 import {
   WorkspaceFilePreview,
   WorkspaceFileTree,
-  WorkspacePanelEmpty,
   type WorkspaceFileDirtyState,
 } from "./WorkspaceFiles";
 import { WorkspaceReviewPanel } from "./WorkspaceReviewPanels";
 import { ProjectPanel } from "./ProjectPanels";
+import { confirmAction } from "./ConfirmDialog";
 import { WorkspacePanelLoading } from "./LoadingViews";
 import type { WorkspaceFileViewTab, WorkspaceViewTab } from "./WorkspaceViewTabs";
 import { handleTabListKeyDown, useTabCloseFocusRestoration } from "./TabKeyboardNavigation";
@@ -108,18 +112,19 @@ export type WorkspacePanelView = "files" | "review" | "terminal" | "browser";
 const WORKSPACE_TOOL_ITEMS: Array<{
   id: WorkspacePanelView;
   titleKey: TranslationKey;
-  subtitleKey: TranslationKey;
 }> = [
-  { id: "files", titleKey: "workspace.tool.files", subtitleKey: "workspace.tool.filesDescription" },
-  { id: "review", titleKey: "workspace.tool.review", subtitleKey: "workspace.tool.reviewDescription" },
-  { id: "terminal", titleKey: "workspace.tool.terminal", subtitleKey: "workspace.tool.terminalDescription" },
-  { id: "browser", titleKey: "workspace.tool.browser", subtitleKey: "workspace.tool.browserDescription" },
+  { id: "files", titleKey: "workspace.tool.files" },
+  { id: "review", titleKey: "workspace.tool.review" },
+  { id: "terminal", titleKey: "workspace.tool.terminal" },
+  { id: "browser", titleKey: "workspace.tool.browser" },
 ];
 
 export const WORKSPACE_FILE_TREE_DEFAULT_WIDTH = 320;
 export const WORKSPACE_FILE_TREE_MIN_WIDTH = 180;
 export const WORKSPACE_FILE_TREE_MAX_WIDTH = 480;
-export const WORKSPACE_FILE_CONTENT_MIN_WIDTH = 240;
+// Code and prose need this much beside the tree; a narrower panel gives the
+// document the whole width and keeps the tree one step away.
+export const WORKSPACE_FILE_CONTENT_MIN_WIDTH = 360;
 const WORKSPACE_FILE_TREE_COLLAPSE_THRESHOLD = 140;
 const WORKSPACE_FILE_TREE_WIDTH_STEP = 24;
 const WORKSPACE_FILE_TREE_WIDTH_KEY = "wuu.desktop.fileTreeWidth";
@@ -292,6 +297,11 @@ export function WorkspaceRightPanel({
   const stackedFileView = !compactNavigation && fileSplitStacked && activeTab?.kind === "file";
   // The saved visibility is untouched; a stacked document only sets it aside.
   const fileTreeDocked = fileTreeVisible && !stackedFileView;
+  // The Files tab is the tree itself; beside a document the tree follows the
+  // saved choice.
+  const fileTreeShown = compactNavigation || activeTab?.kind === "files" || fileTreeDocked;
+  const fileTreeBesideDocument = activeTab?.kind === "file" && fileTreeDocked && !compactNavigation;
+  const moveFileTreeLabel = t(fileTreeSide === "right" ? "workspace.moveFileTreeLeft" : "workspace.moveFileTreeRight");
   const [draggingFileTree, setDraggingFileTree] = useState(false);
   const [fileTreeDropSide, setFileTreeDropSide] = useState<WorkspaceFileTreeSide | undefined>(undefined);
   const [bodyPrewarmed, setBodyPrewarmed] = useState(false);
@@ -312,6 +322,31 @@ export function WorkspaceRightPanel({
     visibleTabs.map((tab) => tab.id),
     addButtonRef,
   );
+
+  // Tabs shrink before the strip scrolls; once it does, the active tab is
+  // brought into view, again after a newcomer has grown to its width.
+  useLayoutEffect(() => {
+    const strip = tabListRef.current;
+    if (!strip || !activeTabID) {
+      return undefined;
+    }
+    const reveal = (): void => {
+      const tab = strip.querySelector<HTMLElement>(".workspace-tool-tab.active");
+      if (!tab) {
+        return;
+      }
+      const stripBox = strip.getBoundingClientRect();
+      const tabBox = tab.getBoundingClientRect();
+      if (tabBox.left < stripBox.left) {
+        strip.scrollLeft -= stripBox.left - tabBox.left;
+      } else if (tabBox.right > stripBox.right) {
+        strip.scrollLeft += tabBox.right - stripBox.right;
+      }
+    };
+    reveal();
+    const timer = window.setTimeout(reveal, motionDurationMs("--motion-base", 180));
+    return () => window.clearTimeout(timer);
+  }, [activeTabID, tabListRef, visibleTabs.length]);
 
   useEffect(() => {
     if (!prewarm && !open) {
@@ -482,7 +517,7 @@ export function WorkspaceRightPanel({
     setFileTreeVisible(visible);
   }
 
-  function startFileTreeDockDrag(event: ReactDragEvent<HTMLDivElement>): void {
+  function startFileTreeDockDrag(event: ReactDragEvent<HTMLElement>): void {
     const dragPreview = fileTreeDragPreviewRef.current;
     if (!dragPreview) {
       return;
@@ -528,7 +563,7 @@ export function WorkspaceRightPanel({
     finishFileTreeDockDrag();
   }
 
-  function handleFileTreeDockKeyDown(event: ReactKeyboardEvent<HTMLDivElement>): void {
+  function handleFileTreeDockKeyDown(event: ReactKeyboardEvent<HTMLElement>): void {
     if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
       event.preventDefault();
       moveFileTree(event.key === "ArrowLeft" ? "left" : "right");
@@ -573,11 +608,16 @@ export function WorkspaceRightPanel({
     });
   }, []);
 
-  function requestCloseTab(tab: WorkspaceViewTab): void {
+  async function requestCloseTab(tab: WorkspaceViewTab): Promise<void> {
     if (
       tab.kind === "file" &&
       dirtyFileTabIDs.has(tab.id) &&
-      !window.confirm(t("workspace.unsavedCloseConfirm"))
+      !(await confirmAction({
+        title: t("workspace.unsavedCloseTitle"),
+        message: t("workspace.unsavedCloseConfirm", { name: workspaceViewTabLabel(tab) }),
+        confirmLabel: t("workspace.discardChanges"),
+        tone: "danger",
+      }))
     ) {
       return;
     }
@@ -623,7 +663,7 @@ export function WorkspaceRightPanel({
 
   return (
     <aside
-      className={`workspace-right-panel${compactNavigation ? " compact-navigation" : ""}${activeTab ? " detail" : " tools"}${activeTab?.kind === "review" ? " review" : ""}${activeTab?.kind === "diff" ? " diff" : ""}${activeTab?.kind === "files" || activeTab?.kind === "file" ? " files" : ""}${activeTab?.kind === "terminal" ? " terminal" : ""}${focusedComposer && activeTab?.kind === "file" ? " document-focus" : ""}`}
+      className={`workspace-right-panel${compactNavigation ? " compact-navigation" : ""}${activeTab ? " detail" : " tools"}${activeTab?.kind === "review" ? " review" : ""}${activeTab?.kind === "diff" ? " diff" : ""}${activeTab?.kind === "files" || activeTab?.kind === "file" ? " files" : ""}${activeTab?.kind === "terminal" ? " terminal" : ""}${activeTab?.kind === "browser" ? " browser" : ""}${focusedComposer && activeTab?.kind === "file" ? " document-focus" : ""}`}
       data-wuu-component="workspace-panel"
       data-wuu-view={activeTab?.kind ?? "picker"}
       data-sheet={
@@ -655,7 +695,7 @@ export function WorkspaceRightPanel({
           onSelectTab={compactNavigation ? undefined : onSelectTab}
           onCloseTab={compactNavigation ? undefined : (tabId) => {
             const tab = tabs.find((candidate) => candidate.id === tabId);
-            if (tab) requestCloseTab(tab);
+            if (tab) void requestCloseTab(tab);
           }}
           fallback={compactNavigation ? (
             <>
@@ -698,6 +738,7 @@ export function WorkspaceRightPanel({
               role="tablist"
               aria-label={t("workspace.artifactsAndTools")}
               data-enter-ready={enterReady ? "" : undefined}
+              data-scroll-fade="inline"
               onKeyDown={handleTabListKeyDown}
             >
               {tabEntries.map((entry) => {
@@ -730,8 +771,8 @@ export function WorkspaceRightPanel({
                     open={open}
                     reorderable={visibleTabs.length > 1}
                     onSelect={() => onSelectTab(tab.id)}
-                    onClose={() => requestCloseTab(tab)}
-                    onDoubleClick={() => requestCloseTab(tab)}
+                    onClose={() => void requestCloseTab(tab)}
+                    onDoubleClick={() => void requestCloseTab(tab)}
                   />
                 );
               })}
@@ -812,7 +853,7 @@ export function WorkspaceRightPanel({
             type="button"
             aria-label={t("workspace.closeTab", { label: workspaceViewTabLabel(activeTab) })}
             disabled={!open}
-            onClick={() => requestCloseTab(activeTab)}
+            onClick={() => void requestCloseTab(activeTab)}
           >
             <X className="icon" />
           </button>
@@ -824,7 +865,7 @@ export function WorkspaceRightPanel({
         <>
           <div className={`workspace-panel-body${activeTab ? "" : " picker"}`}>
             <div
-              className={`workspace-files-split${resizingFileSplit ? " resizing" : ""}${fileTreeDocked ? "" : " tree-hidden"}${draggingFileTree ? " tree-dragging" : ""}`}
+              className={`workspace-files-split${resizingFileSplit ? " resizing" : ""}${fileTreeShown ? "" : " tree-hidden"}${draggingFileTree ? " tree-dragging" : ""}`}
               data-wuu-component="workspace-files"
               data-tree-drop-side={fileTreeDropSide}
               data-tree-side={fileTreeSide}
@@ -854,13 +895,6 @@ export function WorkspaceRightPanel({
                       }
                     />
                   ))}
-                  {activeTab?.kind === "files" ? (
-                    <WorkspacePanelEmpty
-                      title={t("workspace.selectFile")}
-                      hint={t("workspace.selectFileDescription")}
-                      icon={<FileText size={24} />}
-                    />
-                  ) : null}
                 </div>
                 {focusedComposer && activeTab?.kind === "file" ? (
                   <div className="workspace-document-composer" data-testid="workspace-document-composer">
@@ -870,7 +904,7 @@ export function WorkspaceRightPanel({
               </section>
               <div
                 className="workspace-files-resizer"
-                hidden={!fileTreeDocked}
+                hidden={!fileTreeBesideDocument}
                 role="separator"
                 aria-label={t("workspace.resizeFileContentTree")}
                 aria-orientation="vertical"
@@ -883,37 +917,42 @@ export function WorkspaceRightPanel({
                 onKeyDown={handleFileSplitKeyDown}
               />
               <section
-                className="workspace-files-tree"
+                className={`workspace-files-tree${fileTreeBesideDocument ? " dockable" : ""}`}
                 data-wuu-component="workspace-file-tree"
                 aria-label={t("workspace.fileTree")}
-                hidden={!compactNavigation && !fileTreeDocked}
+                hidden={!fileTreeShown}
                 ref={fileTreeRef}
               >
-                <div
-                  className="workspace-file-tree-drag-handle"
-                  role="button"
-                  tabIndex={0}
-                  draggable
-                  aria-label={t("workspace.dragFileTree")}
-                  title={t("workspace.dragFileTree")}
-                  onDragStart={startFileTreeDockDrag}
-                  onDragEnd={finishFileTreeDockDrag}
-                  onKeyDown={handleFileTreeDockKeyDown}
-                >
-                  <GripHorizontal size={15} strokeWidth={1.8} />
-                </div>
+                {/* Docking sides only mean something beside a document: the
+                    button moves the tree across, and can also be dragged. */}
+                {fileTreeBesideDocument ? (
+                  <Tooltip content={moveFileTreeLabel} side="bottom">
+                    <button
+                      className="workspace-file-tree-drag-handle"
+                      type="button"
+                      draggable
+                      aria-label={moveFileTreeLabel}
+                      onClick={() => moveFileTree(fileTreeSide === "right" ? "left" : "right")}
+                      onDragStart={startFileTreeDockDrag}
+                      onDragEnd={finishFileTreeDockDrag}
+                      onKeyDown={handleFileTreeDockKeyDown}
+                    >
+                      {fileTreeSide === "right" ? <PanelLeft className="icon" /> : <PanelRight className="icon" />}
+                    </button>
+                  </Tooltip>
+                ) : null}
                 <WorkspaceFileTree
                   activeContext={workspaceContext}
                   open={
                     open &&
-                    (compactNavigation || fileTreeVisible) &&
+                    fileTreeShown &&
                     (activeTab?.kind === "files" || activeTab?.kind === "file")
                   }
                   selectedFilePath={selectedFilePath}
                   onOpenFile={onOpenFile}
                 />
               </section>
-              {!fileTreeDocked ? (
+              {activeTab?.kind === "file" && !fileTreeDocked ? (
                 <button
                   className={`icon-button workspace-file-tree-reveal ${fileTreeSide}`}
                   type="button"
@@ -981,7 +1020,6 @@ export function WorkspaceRightPanel({
               >
                 {!activeTab ? (
                   <WorkspaceToolPicker
-                    tabs={tabs}
                     pluginTools={pluginTools}
                     onSelectTool={onOpenTool}
                     onSelectPluginTool={onOpenPluginTool}
@@ -1098,7 +1136,6 @@ function WorkspaceFileResource({
         selection={tab.selection}
         refreshKey={refreshKey}
         selectedFilePath={tab.path}
-        onOpenRightPanel={() => {}}
         onOpenFile={handleOpenFile}
         onDirtyChange={handleDirtyChange}
       />
@@ -1152,7 +1189,8 @@ function SortableWorkspaceViewTab({
       data-wuu-active={active ? "true" : "false"}
       data-wuu-state={isDragging ? "dragging" : undefined}
     >
-      <Tooltip content={tooltip} disabled={tooltip === label}>
+      {/* A narrow tab may show only its icon, so the name is always a hover away. */}
+      <Tooltip content={tooltip}>
         <button
           ref={setActivatorNodeRef}
           className="workspace-tool-tab-main"
@@ -1223,28 +1261,41 @@ function WorkspaceViewTabPreview({
 }
 
 function WorkspaceToolPicker({
-  tabs,
   pluginTools,
   onSelectTool,
   onSelectPluginTool,
 }: {
-  tabs: WorkspaceViewTab[];
   pluginTools: readonly RegisteredPluginViewEntry[];
   onSelectTool: (view: WorkspacePanelView) => void;
   onSelectPluginTool: (entry: RegisteredPluginViewEntry) => void;
 }): JSX.Element {
   const { t } = useI18n();
+  // The list moves like a menu: arrows walk the tools, Home and End jump.
+  function handleKeyDown(event: ReactKeyboardEvent<HTMLDivElement>): void {
+    const items = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>(".workspace-tool-menu-item"));
+    const index = items.indexOf(document.activeElement as HTMLButtonElement);
+    const target =
+      event.key === "ArrowDown" ? items[(index + 1) % items.length]
+        : event.key === "ArrowUp" ? items[(index - 1 + items.length) % items.length]
+          : event.key === "Home" ? items[0]
+            : event.key === "End" ? items.at(-1)
+              : undefined;
+    if (target) {
+      event.preventDefault();
+      target.focus();
+    }
+  }
   return (
     <div
       className="workspace-tool-menu"
       aria-label={t("workspace.tools")}
       data-wuu-component="workspace-tool-picker"
     >
-      <div className="workspace-tool-menu-list">
+      <div className="workspace-tool-menu-list" onKeyDown={handleKeyDown}>
         {WORKSPACE_TOOL_ITEMS.map((item) => (
           <button
             key={item.id}
-            className={`workspace-tool-menu-item${tabs.some((tab) => tab.kind === item.id) ? " active" : ""}`}
+            className="workspace-tool-menu-item"
             data-wuu-component="workspace-tool"
             type="button"
             onClick={() => onSelectTool(item.id)}
@@ -1262,7 +1313,7 @@ function WorkspaceToolPicker({
           return (
             <button
               key={tabID}
-              className={`workspace-tool-menu-item${tabs.some((tab) => tab.id === tabID) ? " active" : ""}`}
+              className="workspace-tool-menu-item"
               data-wuu-component="workspace-tool"
               data-wuu-plugin={item.pluginId}
               type="button"
@@ -1280,56 +1331,6 @@ function WorkspaceToolPicker({
         })}
       </div>
     </div>
-  );
-}
-
-export function WorkspaceBottomPanel({
-  open,
-  selectedView,
-  onSelectTool,
-  onClose
-}: {
-  open: boolean;
-  selectedView: WorkspacePanelView;
-  onSelectTool: (view: WorkspacePanelView) => void;
-  onClose: () => void;
-}): JSX.Element {
-  const { t } = useI18n();
-  return (
-    <section className="workspace-bottom-panel" aria-hidden={!open}>
-      <div className="workspace-bottom-header">
-        <div className="workspace-bottom-title">{t("workspace.toolsShort")}</div>
-        <button
-          className="icon-button workspace-panel-close"
-          type="button"
-          aria-label={t("workspace.closeBottomPanel")}
-          disabled={!open}
-          onClick={onClose}
-        >
-          <X className="icon" />
-        </button>
-      </div>
-      {open ? (
-        <div
-          className="workspace-tool-grid"
-          aria-label={t("workspace.tools")}
-        >
-          {WORKSPACE_TOOL_ITEMS.map((item) => (
-            <button
-              key={item.id}
-              className={`workspace-tool-card${item.id === selectedView ? " active" : ""}`}
-              data-wuu-component="workspace-tool"
-              type="button"
-              onClick={() => onSelectTool(item.id)}
-            >
-              <WorkspaceToolIcon view={item.id} className="workspace-tool-card-icon" />
-              <strong>{t(item.titleKey)}</strong>
-              <span>{t(item.subtitleKey)}</span>
-            </button>
-          ))}
-        </div>
-      ) : null}
-    </section>
   );
 }
 

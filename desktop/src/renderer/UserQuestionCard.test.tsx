@@ -2,7 +2,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { UserQuestionRequest, WuuDesktopApi } from "../shared/protocol";
-import { I18nProvider, setActiveLocale } from "./i18n";
+import { I18nProvider, setActiveLocale, translate } from "./i18n";
 import { UserQuestionCard } from "./UserQuestionCard";
 
 let root: Root | undefined;
@@ -34,6 +34,8 @@ function offerRequest(overrides: Partial<UserQuestionRequest> = {}): UserQuestio
     ...overrides,
   };
 }
+
+const skipIn = (seconds: number): string => translate("en-US", "userQuestion.skipCountdown", { seconds });
 
 describe("UserQuestionCard", () => {
   it.each(["answer", "cancel"] as const)("keeps pending %s feedback on its action and recovers after failure", async (action) => {
@@ -109,7 +111,7 @@ describe("UserQuestionCard", () => {
       }
     });
     const submit = Array.from(container.querySelectorAll("button"))
-      .find((button) => button.textContent === "Continue");
+      .find((button) => button.textContent === translate("en-US", "userQuestion.continue"));
     await act(async () => { submit?.click(); });
 
     expect(onAnswer).toHaveBeenCalledWith({
@@ -218,7 +220,7 @@ describe("UserQuestionCard", () => {
         </I18nProvider>,
       );
     });
-    expect(container.textContent).not.toContain("Your input is needed");
+    expect(container.textContent).not.toContain(translate("en-US", "userQuestion.kicker"));
     const option = Array.from(container.querySelectorAll("button"))
       .find((button) => button.textContent?.includes("Safe"));
     await act(async () => { option?.click(); });
@@ -255,13 +257,13 @@ describe("UserQuestionCard", () => {
 
     const skip = Array.from(container.querySelectorAll("button"))
       .find((button) => button.className.includes("user-question-skip"));
-    expect(skip?.textContent).toBe("(20s)");
+    expect(skip?.textContent).toBe(skipIn(20));
     expect(container.querySelector(".user-question-option-index")?.textContent).toBe("1");
 
     await act(async () => {
       vi.advanceTimersByTime(19_000);
     });
-    expect(skip?.textContent).toBe("(1s)");
+    expect(skip?.textContent).toBe(skipIn(1));
     expect(onCancel).not.toHaveBeenCalled();
 
     await act(async () => {
@@ -301,8 +303,8 @@ describe("UserQuestionCard", () => {
       .find((button) => button.className.includes("user-question-skip"));
     const custom = Array.from(container.querySelectorAll("button"))
       .find((button) => button.className.includes("user-question-offer-custom"));
-    expect(skip?.textContent).toBe("(20s)");
-    expect(custom?.textContent).toBe("No, and tell Wuu what to do differently");
+    expect(skip?.textContent).toBe(skipIn(20));
+    expect(custom?.textContent).toBe(translate("en-US", "userQuestion.custom"));
 
     await act(async () => {
       container.querySelector(".user-question-card")?.dispatchEvent(
@@ -310,7 +312,7 @@ describe("UserQuestionCard", () => {
       );
       vi.advanceTimersByTime(5_000);
     });
-    expect(skip?.textContent).toBe("(15s)");
+    expect(skip?.textContent).toBe(skipIn(15));
     expect(onHold).not.toHaveBeenCalled();
 
     await act(async () => { custom?.click(); });
@@ -357,7 +359,7 @@ describe("UserQuestionCard", () => {
     await renderCard();
     const custom = Array.from(container.querySelectorAll("button"))
       .find((button) => button.className.includes("user-question-offer-custom"));
-    expect(custom?.textContent).toContain("No, and tell Wuu what to do differently");
+    expect(custom?.textContent).toContain(translate("en-US", "userQuestion.custom"));
     await act(async () => { custom?.click(); });
     expect(onHold).toHaveBeenCalledTimes(1);
     expect(container.querySelector("input.user-question-offer-input")).toBeTruthy();

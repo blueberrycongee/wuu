@@ -16,7 +16,11 @@ import {
   type ComposerDraftState,
   type SessionTab,
 } from "./AppState";
+import { confirmAction } from "./ConfirmDialog";
 import { createWorkspaceRuntimeActions } from "./WorkspaceRuntimeActions";
+
+// The removal flow awaits the in-app confirmation; each test answers it.
+vi.mock("./ConfirmDialog", () => ({ confirmAction: vi.fn() }));
 
 function projectContext(id = "project-1"): RuntimeContext {
   return { kind: "project", project_id: id, cwd: `/tmp/${id}` };
@@ -478,7 +482,7 @@ describe("createWorkspaceRuntimeActions", () => {
       configurable: true,
       value: { removeProject } as Partial<WuuDesktopApi>,
     });
-    vi.spyOn(window, "confirm").mockReturnValue(false);
+    vi.mocked(confirmAction).mockResolvedValue(false);
     const harness = buildActions({
       initial: {
         ...initialState,
@@ -508,7 +512,7 @@ describe("createWorkspaceRuntimeActions", () => {
       configurable: true,
       value: { removeProject } as Partial<WuuDesktopApi>,
     });
-    vi.spyOn(window, "confirm").mockReturnValue(true);
+    vi.mocked(confirmAction).mockResolvedValue(true);
     const loadRuntime = vi.fn();
     const harness = buildActions({
       initial: {
@@ -556,7 +560,7 @@ describe("createWorkspaceRuntimeActions", () => {
       configurable: true,
       value: { removeProject } as Partial<WuuDesktopApi>,
     });
-    vi.spyOn(window, "confirm").mockReturnValue(true);
+    vi.mocked(confirmAction).mockResolvedValue(true);
     const harness = buildActions({
       initial: {
         ...initialState,

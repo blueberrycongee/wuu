@@ -111,9 +111,9 @@ describe("SideThreadPanel", () => {
     expect(document.activeElement).toBe(container.querySelector("textarea"));
   });
 
-  it("keeps shell actions, errors, and resize semantics", () => {
+  it("keeps shell actions and resize semantics", () => {
     const onClose = vi.fn();
-    const container = renderPanel(makeEntry({ lastError: "rate limited" }), {
+    const container = renderPanel(makeEntry(), {
       onClose,
     });
     act(() => {
@@ -122,9 +122,6 @@ describe("SideThreadPanel", () => {
       )?.click();
     });
     expect(onClose).toHaveBeenCalledTimes(1);
-    expect(container.querySelector('[role="alert"]')?.textContent).toBe(
-      "rate limited",
-    );
     expect(
       container
         .querySelector(".side-thread-panel__resizer")

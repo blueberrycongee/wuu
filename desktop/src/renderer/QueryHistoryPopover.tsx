@@ -1,16 +1,10 @@
 /**
- * QueryHistoryPopover — hover-on-input past-query quick jump.
- *
- * Mirrors the ChatGPT "hover the input box, see past queries, click to jump"
- * affordance. Lists the current thread's past user messages in chronological
- * order; clicking one scrolls the corresponding message into view.
- *
- * The popover is meant to be mounted inside `FloatingMenuPortal` (so it can
- * escape the composer overflow context). The parent owns the open/close
- * state and the hover anchor ref; this component is a pure presentational
- * list of past queries.
+ * QueryHistoryPopover — the list of past queries the query-history rail
+ * opens. The rail owns focus, the active option and dismissal; this list only
+ * renders the options. Pointer presses keep focus where it was, so the rail
+ * stays a select-only combobox for assistive technology.
  */
-import type { JSX } from "react";
+import { useEffect, type JSX } from "react";
 import { useI18n } from "./i18n";
 
 export type QueryHistoryEntry = {
@@ -19,68 +13,62 @@ export type QueryHistoryEntry = {
   text: string;
 };
 
-export type QueryHistoryPopoverProps = {
-  entries: QueryHistoryEntry[];
-  /**
-   * Soft cap on how many entries to render. Anything beyond this is
-   * collapsed into a single "+N more" footer. Defaults to no cap so
-   * the caller can decide.
-   */
-  maxItems?: number;
-  onSelect: (entry: QueryHistoryEntry) => void;
-};
-
-const PREVIEW_MAX_CHARS = 64;
-
-function previewText(text: string): string {
-  const trimmed = text.trim();
-  if (trimmed.length <= PREVIEW_MAX_CHARS) {
-    return trimmed;
-  }
-  return `${trimmed.slice(0, PREVIEW_MAX_CHARS)}…`;
+/** The option id the rail names as its active descendant. */
+export function queryHistoryOptionID(listID: string, index: number): string {
+  return `${listID}-option-${index}`;
 }
 
+export type QueryHistoryPopoverProps = {
+  id: string;
+  width: number;
+  entries: QueryHistoryEntry[];
+  activeIndex: number;
+  onActivate: (index: number) => void;
+  onSelect: (entry: QueryHistoryEntry) => void;
+  onMouseEnter: () => void;
+  onMouseLeave: () => void;
+};
+
 export function QueryHistoryPopover({
+  id,
+  width,
   entries,
-  maxItems,
+  activeIndex,
+  onActivate,
   onSelect,
+  onMouseEnter,
+  onMouseLeave,
 }: QueryHistoryPopoverProps): JSX.Element {
   const { t } = useI18n();
-  if (entries.length === 0) {
-    return (
-      <div
-        className="query-history-popover"
-        role="dialog"
-        aria-label={t("queryHistory.label")}
-      >
-        <div className="query-history-empty">{t("queryHistory.empty")}</div>
-      </div>
-    );
-  }
-  const visible = maxItems !== undefined ? entries.slice(0, maxItems) : entries;
+
+  useEffect(() => {
+    document.getElementById(queryHistoryOptionID(id, activeIndex))?.scrollIntoView({ block: "nearest" });
+  }, [id, activeIndex]);
+
   return (
     <div
-      className="query-history-popover"
-      role="dialog"
-      aria-label={t("queryHistory.label")}
+      id={id}
+      className="select-menu-panel query-history-popover"
+      role="listbox"
+      aria-label={t("queryHistory.list")}
+      style={{ width }}
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
+      onMouseDown={(event) => event.preventDefault()}
     >
-      <div
-        className="environment-panel-body query-history-list"
-        role="listbox"
-        aria-label={t("queryHistory.list")}
-      >
-        {visible.map((entry) => (
-          <button
+      <div className="select-menu-options">
+        {entries.map((entry, index) => (
+          <div
             key={`${entry.turnID}:${entry.itemID}`}
-            type="button"
-            className="environment-row query-history-item"
+            id={queryHistoryOptionID(id, index)}
+            className="select-menu-item query-history-item"
             role="option"
-            aria-selected={false}
-            onMouseDown={(event) => event.preventDefault()}
+            aria-selected={index === activeIndex}
+            onMouseEnter={() => onActivate(index)}
             onClick={() => onSelect(entry)}
           >
-            <strong className="query-history-text">{previewText(entry.text)}</strong>
-          </button>
+            <span className="query-history-text">{entry.text.trim()}</span>
+          </div>
         ))}
       </div>
     </div>

@@ -54,6 +54,7 @@ import {
 import { ConversationSplitPane } from "./ConversationSplitPane";
 import type { HistoryMessageEditState } from "./ConversationHistoryActions";
 import { SidePanelToggleIcon } from "./SidePanelToggleIcon";
+import { Tooltip } from "./Tooltip";
 import { ViewSwitchLoading } from "./LoadingViews";
 import type { TurnFileDiffSelection } from "./TurnFileDiffTypes";
 import { useI18n } from "./i18n";
@@ -369,7 +370,13 @@ function ConversationTitleText({
           className="conversation-title-rename"
           aria-label={t("thread.rename.editNamed", { title })}
           title={t("threadSidebar.rename")}
-          onClick={() => {
+          onClick={(event) => {
+            // Keyboard activation has detail 0; pointer clicks wait for a double click.
+            if (event.detail !== 0) return;
+            setDraft(title);
+            setEditing(true);
+          }}
+          onDoubleClick={() => {
             setDraft(title);
             setEditing(true);
           }}
@@ -447,16 +454,17 @@ export function ConversationTitleContent({
       >
         <ArrowLeft aria-hidden="true" />
       </button> : (
-      <button
-        className="icon-button session-tab-new"
-        type="button"
-        aria-label={t("tabs.newConversation")}
-        title={t("tabs.newConversation")}
-        disabled={!state.activeContext}
-        onClick={onStartNewThread}
-      >
-        <SquarePen aria-hidden="true" />
-      </button>)}
+      <Tooltip content={t("tabs.newConversation")} side="bottom">
+        <button
+          className="icon-button session-tab-new"
+          type="button"
+          aria-label={t("tabs.newConversation")}
+          disabled={!state.activeContext}
+          onClick={onStartNewThread}
+        >
+          <SquarePen aria-hidden="true" />
+        </button>
+      </Tooltip>)}
       <ConversationTitleText
         title={title}
         editable={Boolean(onRenameTitle) && !navigateBack}
@@ -565,34 +573,38 @@ export function ConversationTitleActions({
       onToggleRightPanel={onToggleRightPanel}
     /></div>;
   }
+  const environmentLabel = environmentPanelVisible
+    ? t("shell.hideEnvironmentInfo")
+    : t("shell.showEnvironmentInfo");
+  const rightPanelLabel = t(rightPanelOpen ? "shell.closeRightSidebar" : "shell.openRightSidebar");
   return (
     <div className="title-actions">
       {management}
-      {pluginPageVisible ? null : <button
+      {pluginPageVisible ? null : (
+        <Tooltip content={environmentLabel} side="bottom">
+          <button
             ref={environmentToggleRef}
             className={`icon-button environment-toggle-button${environmentPanelVisible ? " active" : ""}`}
             type="button"
-            aria-label={
-              environmentPanelVisible
-                ? t("shell.hideEnvironmentInfo")
-                : t("shell.showEnvironmentInfo")
-            }
+            aria-label={environmentLabel}
             aria-pressed={environmentPanelVisible}
             onClick={onToggleEnvironmentPanel}
           >
             <Info />
-      </button>}
-      <button
-            className="icon-button side-panel-toggle-button"
-            type="button"
-            aria-label={t(
-              rightPanelOpen ? "shell.closeRightSidebar" : "shell.openRightSidebar",
-            )}
-            aria-pressed={rightPanelOpen}
-            onClick={onToggleRightPanel}
-          >
-            <SidePanelToggleIcon side="right" open={rightPanelOpen} />
-      </button>
+          </button>
+        </Tooltip>
+      )}
+      <Tooltip content={rightPanelLabel} side="bottom">
+        <button
+          className="icon-button side-panel-toggle-button"
+          type="button"
+          aria-label={rightPanelLabel}
+          aria-pressed={rightPanelOpen}
+          onClick={onToggleRightPanel}
+        >
+          <SidePanelToggleIcon side="right" open={rightPanelOpen} />
+        </button>
+      </Tooltip>
     </div>
   );
 }

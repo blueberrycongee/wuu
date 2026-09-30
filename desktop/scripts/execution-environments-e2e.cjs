@@ -58,7 +58,7 @@ app.whenReady().then(async () => {
  await fill("Name","isolated-tools");
  await fill("Image","wuu-execution:local");
  await fill("CPU cores","2");
- await fill("Memory limit (MiB)","2048");
+ await fill("Memory limit","2048");
  const samples=[];
  for(const theme of ["light","dark"]) for(const font of [14,20]) for(const width of [1180,640]) {
   win.setContentSize(width,860);
@@ -84,7 +84,7 @@ app.whenReady().then(async () => {
  await settle(win);
  fs.writeFileSync(path.join(evidence,'keyboard-menu.png'),(await win.webContents.capturePage()).toPNG());
  win.webContents.sendInputEvent({type:'keyDown',keyCode:'Escape'});win.webContents.sendInputEvent({type:'keyUp',keyCode:'Escape'});
- await evaluate(win,()=>[...document.querySelectorAll('[data-testid="settings-execution-environments"] button')].find(b=>b.textContent.trim()==='Remove profile').click());
+ await evaluate(win,()=>document.querySelector('[data-testid="settings-execution-environments"] button[aria-label="Remove isolated-tools"]').click());
  await waitFor(win,()=>document.querySelector('[aria-label="Default for new conversations"]').textContent.includes('Local'));
  fs.writeFileSync(path.join(evidence,'receipt.json'),JSON.stringify({settings,samples,verified:['create profile','save numeric limits','select default','keyboard menu','delete active profile','light and dark','14px and 20px','wide and narrow']},null,2));
  console.log('Execution environment settings acceptance passed');win.destroy();app.quit();

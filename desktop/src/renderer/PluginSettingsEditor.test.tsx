@@ -64,7 +64,8 @@ describe("PluginSettingsEditor", () => {
       key: "feature.enabled",
       value: true,
     });
-    expect(field("feature.enabled").textContent).toContain("已保存并立即生效");
+    // A live setting already shows its new value; only a pending restart is worth a line.
+    expect(field("feature.enabled").querySelector(".plugin-setting-status")?.textContent).toBe("");
 
     const numberInput = field("retry.count").querySelector<HTMLInputElement>("input")!;
     await changeInput(numberInput, "8");
@@ -102,7 +103,7 @@ describe("PluginSettingsEditor", () => {
       value: "Unsaved draft",
     }));
     expect(input.value).toBe("Unsaved draft");
-    expect(field("display.name").textContent).toContain("已保存并立即生效");
+    expect(field("display.name").querySelector(".plugin-setting-status")?.textContent).toBe("");
   });
 
   it("shows read API errors with a retry action", async () => {
@@ -159,13 +160,10 @@ describe("PluginSettingsEditor", () => {
     }
 
     await renderEditor({ ...pluginRecord(), id: "alpha-conflict", contributions: {} });
-    const select = container.querySelector<HTMLSelectElement>("[data-conflict-key='surface:conversation.timeline'] select")!;
-    expect(select.value).toBe("zeta-conflict");
-    await act(async () => {
-      const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set;
-      setter?.call(select, "alpha-conflict");
-      select.dispatchEvent(new Event("change", { bubbles: true }));
-    });
+    const trigger = container.querySelector<HTMLButtonElement>("[data-conflict-key='surface:conversation.timeline'] .select-menu-trigger")!;
+    expect(trigger.textContent).toContain("zeta-conflict");
+    await act(async () => trigger.click());
+    await act(async () => document.querySelector<HTMLElement>('[role="menuitemradio"][data-value="alpha-conflict"]')?.click());
     expect(setPluginConflictPreference).toHaveBeenCalledWith("surface:conversation.timeline", "alpha-conflict");
     expect(desktopPluginHost.getSurfaceSnapshot("conversation.timeline").at(-1)?.pluginId).toBe("alpha-conflict");
   });

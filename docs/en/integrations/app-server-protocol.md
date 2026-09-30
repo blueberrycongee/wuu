@@ -325,7 +325,9 @@ usage records, not conversation content. Optional
 boundaries; omitted means UTC, and an unknown zone is a request error. A store
 without records returns zero totals and an empty `days` list. Like
 `local_usage`, these values exclude unreported and external activity and are
-not billing totals.
+not billing totals. `settings/usage`, the desktop usage page's full snapshot,
+accepts the same optional `timezone`; the desktop sends its own so each daily
+bar lands on the day its calendar draws.
 
 ## Notifications
 

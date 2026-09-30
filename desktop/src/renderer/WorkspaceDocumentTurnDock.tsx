@@ -118,7 +118,8 @@ export function WorkspaceDocumentTurnDock({
           >
             {waitingQuery && !expanded ? (
               <span
-                className="workspace-document-turn-waiting-query"
+                className="workspace-document-turn-waiting-query wuu-live-text-wave"
+                data-text={waitingQuery}
                 role="status"
                 aria-live="polite"
               >

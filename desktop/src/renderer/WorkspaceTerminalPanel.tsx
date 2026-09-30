@@ -2,7 +2,7 @@ import { isTouchWebShell } from "./ComposerFocus";
 import { hostSupports } from "./HostCapabilities";
 import type { FitAddon as XtermFitAddon } from "@xterm/addon-fit";
 import type { Terminal as XtermTerminal, ITerminalOptions, ITheme } from "@xterm/xterm";
-import { Square, Terminal } from "./WuuIcons";
+import { Square } from "./WuuIcons";
 import {
   useCallback,
   useEffect,
@@ -25,8 +25,9 @@ import {
   type AgentRunRecord,
 } from "./TerminalRuns";
 import { WorkspacePanelLoading } from "./LoadingViews";
-import { WorkspacePanelEmpty } from "./WorkspaceFiles";
+import { WorkspacePanelEmpty } from "./WorkspacePanelEmpty";
 import { desktopApiErrorMessage } from "./WorkspaceReviewHelpers";
+import { resolveCssColors } from "./CssColors";
 import { translateCurrent, useI18n } from "./i18n";
 import { TruncatedText } from "./TruncatedText";
 import {
@@ -113,44 +114,61 @@ function workspaceTerminalStyle(host: HTMLElement | undefined, name: string, fal
   return value || fallback;
 }
 
+// Black and white stay readable on either paper, so they take steps of the
+// ink ramp in the order terminals expect (black, bright black, white, bright
+// white) instead of literal black and white.
+const WORKSPACE_TERMINAL_NEUTRALS: Record<AppliedTheme, Record<"black" | "brightBlack" | "white" | "brightWhite", string>> = {
+  light: {
+    black: "var(--ink-strong)",
+    brightBlack: "var(--ink-soft)",
+    white: "var(--ink-tertiary)",
+    brightWhite: "var(--ink-muted)",
+  },
+  dark: {
+    black: "var(--ink-muted)",
+    brightBlack: "var(--ink-tertiary)",
+    white: "var(--ink)",
+    brightWhite: "var(--ink-strong)",
+  },
+};
+
+// Hues are the product's status and syntax roles, so output reads like the
+// rest of the app and extension themes reach it through those tokens.
+const WORKSPACE_TERMINAL_HUES = {
+  red: "var(--danger)",
+  green: "var(--success)",
+  yellow: "var(--warning)",
+  blue: "var(--hljs-keyword)",
+  magenta: "var(--hljs-function)",
+  cyan: "color-mix(in oklab, var(--info) 50%, var(--success))",
+};
+
+// Bright variants step toward the strongest ink: lighter on dark paper,
+// darker on light paper, so they gain contrast instead of losing it.
+function brightTerminalHue(color: string): string {
+  return `color-mix(in srgb, ${color} 75%, var(--ink-strong))`;
+}
+
 function workspaceTerminalTheme(theme: AppliedTheme, host?: HTMLElement): ITheme {
-  const defaults: ITheme = theme === "dark"
-    ? {
-      background: "#1d2024",
-      black: "#858c93",
-      blue: "#58a6ff",
-      cursor: "#f2f3f4",
-      foreground: "#e4e6e8",
-      green: "#4cc38a",
-      red: "#f0705f",
-      selectionBackground: "#3a4046",
-      yellow: "#d9a84e",
-    }
-    : {
-      background: "#ffffff",
-      black: "#24292f",
-      blue: "#2f98ff",
-      cursor: "#202427",
-      foreground: "#1f2328",
-      green: "#1f9d46",
-      red: "#b42318",
-      selectionBackground: "#d7e9ff",
-      yellow: "#ffc21a",
-    };
-  return {
-    /* The terminal is a host mechanism, not a private theme island. Derive its
-       palette from the existing public semantic contract so bundled and
-       third-party themes affect it without adding terminal-specific API. */
-    background: workspaceTerminalStyle(host, "--wuu-color-canvas", defaults.background ?? "#ffffff"),
-    black: workspaceTerminalStyle(host, "--wuu-color-text-muted", defaults.black ?? "#24292f"),
-    blue: workspaceTerminalStyle(host, "--wuu-color-info", defaults.blue ?? "#2f98ff"),
-    cursor: workspaceTerminalStyle(host, "--wuu-color-text", defaults.cursor ?? "#202427"),
-    foreground: workspaceTerminalStyle(host, "--wuu-color-text", defaults.foreground ?? "#1f2328"),
-    green: workspaceTerminalStyle(host, "--wuu-color-success", defaults.green ?? "#1f9d46"),
-    red: workspaceTerminalStyle(host, "--wuu-color-danger", defaults.red ?? "#b42318"),
-    selectionBackground: workspaceTerminalStyle(host, "--wuu-color-live-highlight", defaults.selectionBackground ?? "#d7e9ff"),
-    yellow: workspaceTerminalStyle(host, "--wuu-color-warning", defaults.yellow ?? "#ffc21a"),
-  };
+  const hues = WORKSPACE_TERMINAL_HUES;
+  return resolveCssColors(
+    {
+      background: "var(--paper)",
+      foreground: "var(--ink)",
+      cursor: "var(--ink)",
+      cursorAccent: "var(--paper)",
+      selectionBackground: "var(--selection-bg)",
+      ...WORKSPACE_TERMINAL_NEUTRALS[theme],
+      ...hues,
+      brightRed: brightTerminalHue(hues.red),
+      brightGreen: brightTerminalHue(hues.green),
+      brightYellow: brightTerminalHue(hues.yellow),
+      brightBlue: brightTerminalHue(hues.blue),
+      brightMagenta: brightTerminalHue(hues.magenta),
+      brightCyan: brightTerminalHue(hues.cyan),
+    },
+    host,
+  );
 }
 
 function workspaceTerminalOptions({
@@ -171,6 +189,9 @@ function workspaceTerminalOptions({
     fontFamily: workspaceTerminalStyle(host, "--wuu-workspace-terminal-font-family", typography.fontFamily),
     fontSize: typography.fontSize,
     lineHeight: 1.6,
+    // Programs may paint their own 256-colour or truecolor text; xterm lifts
+    // anything below body-text contrast against its background.
+    minimumContrastRatio: 4.5,
     scrollback: 10000,
     theme: workspaceTerminalTheme(currentAppliedTheme(), host),
   };
@@ -378,7 +399,7 @@ export function WorkspaceTerminalPanel({
   }, [activeContext?.cwd, managedInventoryReady, requestedRun, runs.length, userTerminal]);
 
   if (!activeContext?.cwd) {
-    return <WorkspacePanelEmpty title={t("workspace.files.noWorkspace")} hint={t("workspace.terminal.noWorkspaceDescription")} icon={<Terminal size={24} />} />;
+    return <WorkspacePanelEmpty title={t("workspace.files.noWorkspace")} />;
   }
 
   return (
@@ -408,8 +429,7 @@ export function WorkspaceTerminalPanel({
         ) : (
           <WorkspacePanelEmpty
             title={t("workspace.terminal.noRuns")}
-            hint={t("workspace.terminal.noRunsDescription")}
-            icon={<Terminal size={24} />}
+            description={t("workspace.terminal.noRunsDescription")}
           />
         )}
       </div>
@@ -704,14 +724,14 @@ function AgentTerminalPane({
             {managedRunStatusLabel(run, currentProcess, stopping)}
           </span>
           {live && processID ? (
-            <button type="button" className="workspace-agent-terminal-stop" disabled={stopping} onClick={() => void stopProcess()}>
-              <Square size={12} fill="currentColor" />
+            <button type="button" className="settings-button" disabled={stopping} onClick={() => void stopProcess()}>
+              <Square className="icon-xs" fill="currentColor" aria-hidden="true" />
               {stopping ? t("workspace.terminal.stopping") : t("workspace.terminal.stop")}
             </button>
           ) : null}
         </div>
       </header>
-      {terminalError ? <div className="workspace-agent-terminal-error">{terminalError}</div> : null}
+      {terminalError ? <div className="workspace-agent-terminal-error" role="alert">{terminalError}</div> : null}
       <div
         className="workspace-terminal-screen"
         data-wuu-component="workspace-terminal-screen"
@@ -896,6 +916,12 @@ function UserTerminalPane({
       });
       stopObservingAppearance = observeTerminalAppearance(openedTerminal, container, fitAndResize);
 
+      // An ended session takes no more input, so it stops showing a cursor.
+      function endTerminalInput(): void {
+        openedTerminal.options.disableStdin = true;
+        openedTerminal.write("\x1b[?25l");
+      }
+
       function handleTerminalEvent(event: TerminalSessionEvent): void {
         if (event.type === "data") {
           openedTerminal.write(event.text);
@@ -904,12 +930,14 @@ function UserTerminalPane({
         if (event.type === "exit") {
           openedTerminal.writeln("");
           openedTerminal.writeln(`[${terminalExitText(event)}]`);
+          endTerminalInput();
           setTerminalState("exited");
           sessionIDRef.current = undefined;
           return;
         }
         openedTerminal.writeln("");
         openedTerminal.writeln(`[${translateCurrent("workspace.terminal.error", { message: event.message })}]`);
+        endTerminalInput();
         setTerminalState("error");
         sessionIDRef.current = undefined;
       }
@@ -984,6 +1012,7 @@ function UserTerminalPane({
           return;
         }
         openedTerminal.writeln(desktopApiErrorMessage(error, translateCurrent("workspace.terminal.startFailed")));
+        endTerminalInput();
         setTerminalState("error");
       }
     })();
@@ -1012,7 +1041,7 @@ function UserTerminalPane({
   }, [onShellChange, resourceID, restartKey, workspaceRoot]);
 
   if (!workspaceRoot) {
-    return <WorkspacePanelEmpty title={t("workspace.files.noWorkspace")} hint={t("workspace.terminal.noWorkspaceDescription")} icon={<Terminal size={24} />} />;
+    return <WorkspacePanelEmpty title={t("workspace.files.noWorkspace")} />;
   }
 
   return (
@@ -1029,7 +1058,11 @@ function UserTerminalPane({
         {([['Esc','\x1b'],['Tab','\t'],['Ctrl-C','\x03'],['↑','\x1b[A'],['↓','\x1b[B'],['←','\x1b[D'],['→','\x1b[C']] as const).map(([label,data])=><button key={label} type="button" onPointerDown={event=>event.preventDefault()} onClick={()=>{const id=sessionIDRef.current;if(id)void window.wuu.writeTerminalSession(id,data).catch(()=>setTerminalState('error'));}}>{label}</button>)}
       </div>}
       {terminalState === "exited" || terminalState === "error" ? (
-        <button className="workspace-terminal-restart" type="button" onClick={() => setRestartKey((current) => current + 1)}>
+        <button
+          className="settings-button workspace-terminal-restart"
+          type="button"
+          onClick={() => setRestartKey((current) => current + 1)}
+        >
           {t("workspace.terminal.restart")}
         </button>
       ) : null}

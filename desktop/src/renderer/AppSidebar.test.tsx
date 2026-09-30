@@ -70,6 +70,8 @@ const sidebarWorkspaces: DesktopProject[] = [
 
 interface RenderOptions {
   expandedSidebarSectionIDs?: Set<string>;
+  pinnedThreads?: ThreadSummary[];
+  onTogglePinned?: (thread: ThreadSummary) => void;
   workspaceThreadsByWorkspaceID?: Record<string, ThreadSummary[]>;
   activeThreadID?: string;
   pendingThreadID?: string;
@@ -107,12 +109,14 @@ function SidebarHarness({ options }: { options: RenderOptions }): JSX.Element {
     collapsedSidebarSectionIDs = new Set(),
     onCreateProject,
     onAdoptIntoProject,
+    pinnedThreads = [],
+    onTogglePinned = () => {},
   } = options;
   return (
     <AppSidebar
       state={state}
       sidebarWorkspaces={sidebarWorkspaces}
-      pinnedThreads={[]}
+      pinnedThreads={pinnedThreads}
       activeThreadID={activeThreadID}
       pendingThreadID={pendingThreadID}
       pendingWorkspaceID={undefined}
@@ -141,7 +145,7 @@ function SidebarHarness({ options }: { options: RenderOptions }): JSX.Element {
       }}
       onToggleConversationSearch={() => {}}
       onSelectThread={onSelectThread}
-      onTogglePinned={() => {}}
+      onTogglePinned={onTogglePinned}
       onArchiveThread={() => {}}
       onDeleteThread={() => {}}
       onRenameThread={() => {}}
@@ -176,7 +180,14 @@ describe("AppSidebar layout", () => {
     window.localStorage.setItem("wuu.desktop.sidebarFunctionalGroupOrder", JSON.stringify(saved));
     const order = () => [...container.querySelectorAll<HTMLElement>(".sidebar-main > .sidebar-functional-group")]
       .map((element) => element.dataset.functionalGroupId ?? element.dataset.sectionId);
-    renderSidebar({ onCreateProject: vi.fn() });
+    // Pinned shows only once it holds something, so give it a session.
+    const pinned: ThreadSummary = {
+      id: "pinned-1", title: "Pinned session", cwd: "/repo/wuu", workspace_id: "project-1",
+      status: "idle", pinned: true, archived: false,
+      created_at: "2026-09-17T00:00:00Z", updated_at: "2026-09-17T00:00:00Z",
+      preview: "", model_provider: "test", model: "test", turns: [], turn_count: 0,
+    };
+    renderSidebar({ onCreateProject: vi.fn(), pinnedThreads: [pinned] });
     expect(order()).toEqual(expected);
   });
 
@@ -248,7 +259,7 @@ describe("AppSidebar layout", () => {
     };
     renderSidebar(options);
     act(() => container.querySelector<HTMLButtonElement>(".sidebar-notifications-button")!.click());
-    expect(container.querySelector("#sidebar-unread-heading")?.nextElementSibling?.textContent).toContain(unread.title);
+    expect(container.querySelector('[aria-labelledby="sidebar-unread-heading"] .sidebar-unread-list')?.textContent).toContain(unread.title);
     expect(container.querySelector("#sidebar-recent-heading")).toBeNull();
 
     renderSidebar({
@@ -266,7 +277,7 @@ describe("AppSidebar layout", () => {
       },
     });
     expect(container.querySelector("#sidebar-unread-heading")).toBeNull();
-    expect(container.querySelector("#sidebar-recent-heading")?.nextElementSibling?.textContent).toContain(unread.title);
+    expect(container.querySelector('[aria-labelledby="sidebar-recent-heading"] .sidebar-unread-list')?.textContent).toContain(unread.title);
     expect(container.querySelector('[aria-current="page"] .thread-row-title')?.textContent).toBe(unread.title);
     expect(container.querySelector(".sidebar-unread-view")?.textContent).not.toContain(idle.title);
     expect(container.querySelector<HTMLElement>(".sidebar-notifications-button")?.dataset.hasUnread).toBeUndefined();
@@ -447,7 +458,7 @@ describe("AppSidebar layout", () => {
     renderSidebar(viewedOptions);
     expect(hasProjectUnread()).toBe(false);
     act(() => container.querySelector<HTMLButtonElement>(".sidebar-notifications-button")!.click());
-    const unreadList = container.querySelector("#sidebar-unread-heading")?.nextElementSibling;
+    const unreadList = container.querySelector('[aria-labelledby="sidebar-unread-heading"] .sidebar-unread-list');
     expect(unreadList?.textContent).toContain(member.title);
     expect(unreadList?.textContent).not.toContain(project.title);
     act(() => container.querySelector<HTMLButtonElement>(".sidebar-notifications-button")!.click());
@@ -501,6 +512,41 @@ describe("AppSidebar layout", () => {
     expect(projectRow.classList.contains("drop-active")).toBe(true);
     drag(projectRow, "drop");
     expect(adopt).toHaveBeenCalledWith("coordinator", "chat");
+  });
+
+  it("offers the empty Pinned group as a drop target only while a conversation is dragged", () => {
+    const onTogglePinned = vi.fn();
+    renderSidebar({
+      expandedSidebarSectionIDs: new Set(["project-1"]),
+      workspaceThreadsByWorkspaceID: { "project-1": [sidebarThread("chat", "Ordinary conversation")] },
+      onTogglePinned,
+    });
+    const pinnedGroup = () => container.querySelector<HTMLElement>('[data-functional-group-id="pinned"]');
+    expect(pinnedGroup()).toBeNull();
+
+    const conversation = [...container.querySelectorAll<HTMLElement>(".thread-row")]
+      .find((row) => row.textContent?.includes("Ordinary conversation"))!;
+    const data = new Map<string, string>();
+    const transfer = {
+      get types() { return [...data.keys()]; },
+      setData: (type: string, value: string) => { data.set(type, value); },
+      getData: (type: string) => data.get(type) ?? "",
+      setDragImage: () => {},
+      effectAllowed: "",
+      dropEffect: "",
+    };
+    const drag = (target: HTMLElement, type: string) => {
+      const event = new Event(type, { bubbles: true, cancelable: true });
+      Object.defineProperty(event, "dataTransfer", { value: transfer });
+      act(() => { target.dispatchEvent(event); });
+    };
+    drag(conversation, "dragstart");
+    const heading = pinnedGroup()?.querySelector<HTMLElement>(".sidebar-functional-heading");
+    expect(heading).toBeTruthy();
+    drag(heading!, "dragover");
+    drag(heading!, "drop");
+    drag(conversation, "dragend");
+    expect(onTogglePinned).toHaveBeenCalledWith(expect.objectContaining({ id: "chat" }));
   });
 
   it("offers a first project when there is none", () => {

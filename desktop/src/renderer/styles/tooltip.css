@@ -18,10 +18,12 @@
   z-index: 2147483500;
   max-width: 280px;
   padding: 5px 9px;
-  border: 1px solid var(--hairline-strong);
+  /* The one material every transient layer shares: menus, hover cards,
+   * tooltips, and notices. */
+  border: 1px solid var(--menu-border);
   border-radius: var(--radius-xs);
-  background: var(--surface-3);
-  box-shadow: var(--shadow-card);
+  background: var(--menu-bg);
+  box-shadow: var(--menu-shadow);
   color: var(--ink);
   font-size: var(--font-sm);
   line-height: 1.4;

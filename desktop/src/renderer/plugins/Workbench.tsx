@@ -27,6 +27,7 @@ import type {
   RegisteredViewType,
 } from "./PluginHost";
 import { useI18n } from "../i18n";
+import { X } from "../WuuIcons";
 import { createPluginTranslator } from "./pluginI18n";
 import { PluginPresentation } from "./PluginPresentation";
 
@@ -619,7 +620,7 @@ interface WorkbenchViewProps {
 function WorkbenchView({ controller, definition, view, siblingViews }: WorkbenchViewProps): JSX.Element {
   const View = definition.render;
   const host = React.useMemo(() => controller.createViewHostAPI(view), [controller, view]);
-  const { locale } = useI18n();
+  const { locale, t } = useI18n();
   const translate = React.useMemo(
     () => createPluginTranslator(controller.host, locale),
     [controller.host, locale],
@@ -627,7 +628,7 @@ function WorkbenchView({ controller, definition, view, siblingViews }: Workbench
   return (
     <section className={`plugin-workbench-view plugin-workbench-view-${view.region}`} data-plugin-id={view.pluginId}>
       {view.region !== "primary" ? <header className="plugin-workbench-view-header">
-        <div role="tablist" aria-label="Plugin views">
+        <div role="tablist" aria-label={t("plugins.viewTabs")}>
           {siblingViews.map((sibling) => (
             <button
               key={sibling.id}
@@ -642,7 +643,15 @@ function WorkbenchView({ controller, definition, view, siblingViews }: Workbench
             </button>
           ))}
         </div>
-        <button type="button" aria-label="Close plugin view" onClick={() => void controller.closeView(view.id)}>×</button>
+        <button
+          type="button"
+          className="settings-button settings-button-ghost settings-icon-button"
+          aria-label={t("common.close")}
+          title={t("common.close")}
+          onClick={() => void controller.closeView(view.id)}
+        >
+          <X className="icon" aria-hidden="true" />
+        </button>
       </header> : null}
       <PluginErrorBoundary
         key={`${view.pluginId}:${view.generation}:${view.id}`}
@@ -673,7 +682,7 @@ export function PluginViewContent({
   onFailure?: () => void;
 }): JSX.Element {
   const snapshot = React.useSyncExternalStore(controller.subscribe, controller.getSnapshot);
-  const { locale } = useI18n();
+  const { locale, t } = useI18n();
   const definition = snapshot.viewTypes.find((view) =>
     view.pluginId === pluginId && view.id === viewTypeId);
   const view = React.useMemo<WorkbenchViewState | undefined>(() => definition ? Object.freeze({
@@ -695,7 +704,7 @@ export function PluginViewContent({
     [controller.host, locale, snapshot],
   );
   if (!definition || !host || !view) {
-    return <div className="plugin-workbench-error" role="status">Plugin view is unavailable.</div>;
+    return <div className="plugin-workbench-error" role="status">{t("plugins.viewUnavailable")}</div>;
   }
   const View = definition.render;
   return (

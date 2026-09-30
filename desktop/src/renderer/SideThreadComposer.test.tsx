@@ -21,6 +21,7 @@ function renderComposer({
   draft = "",
   running = false,
   disabledReason,
+  error,
   onChangeDraft = () => {},
   onSend = () => {},
   onInterrupt = () => {},
@@ -29,6 +30,7 @@ function renderComposer({
   draft?: string;
   running?: boolean;
   disabledReason?: string;
+  error?: string;
   onChangeDraft?: (draft: string) => void;
   onSend?: (prompt: string) => void;
   onInterrupt?: () => void;
@@ -41,6 +43,7 @@ function renderComposer({
         draft={draft}
         running={running}
         disabledReason={disabledReason}
+        error={error}
         queryHistorySessionID="side-1"
         queryHistory={[]}
         onChangeDraft={onChangeDraft}
@@ -79,6 +82,15 @@ describe("SideThreadComposer", () => {
     act(() => items[0]?.click());
     expect(onReset).toHaveBeenCalledTimes(1);
     expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it("reports a side request failure above the input and keeps the draft editable", () => {
+    renderComposer({ draft: "retry me", error: "stream request failed: HTTP 503" });
+
+    const feedback = container.querySelector('.composer-feedback[role="status"]');
+    expect(feedback?.textContent?.trim()).toBeTruthy();
+    expect(feedback?.textContent).not.toContain("stream request failed");
+    expect((container.querySelector("textarea") as HTMLTextAreaElement).disabled).toBe(false);
   });
 
   it("keeps the side composer focusable during a running turn", () => {

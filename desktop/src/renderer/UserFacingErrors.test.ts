@@ -93,7 +93,7 @@ describe("userFacingErrorForMessage", () => {
     const display = userFacingErrorForMessage("401 unauthorized", "turn");
     expect(display.category).toBe("auth");
     expect(display.title).toBe("401 未授权");
-    expect(display.detail).toContain("Provider");
+    expect(display.detail).toBe(t("error.authDetail"));
   });
 
   it("uses a keyword-based title when no HTTP code is present in the error", () => {
@@ -110,8 +110,7 @@ describe("userFacingErrorForMessage", () => {
 
     expect(display.category).toBe("provider");
     expect(display.title).toBe("回答未完整返回");
-    expect(display.detail).toContain("response.completed");
-    expect(display.detail).toContain("这次回答可能不完整");
+    expect(display.detail).toBe(t("error.responseIncompleteDetail"));
   });
 
   it("falls back to the category title when the message has no specific identifier", () => {
@@ -249,7 +248,7 @@ describe("userFacingErrorForMessage", () => {
       // The message-embedded status wins over the structured status_code
       // fact so the wording survives a history rebuild (tab switch).
       expect(display.title).toBe("400 请求无效");
-      expect(display.detail).toBe("Provider 认为这次请求参数无效。原始错误已留在调试信息中。");
+      expect(display.detail).toBe(t("error.invalidRequestDetail"));
     });
 
     it("falls back to the localized invalid-request title for stream-sourced 400s", () => {
@@ -265,7 +264,7 @@ describe("userFacingErrorForMessage", () => {
       expect(display.category).toBe("invalid_request");
       expect(display.tone).toBe("error");
       expect(display.title).toBe("请求参数无效");
-      expect(display.detail).toBe("Provider 认为这次请求参数无效。原始错误已留在调试信息中。");
+      expect(display.detail).toBe(t("error.invalidRequestDetail"));
     });
 
     it("degrades an unknown wire category to the internal-error rendering", () => {

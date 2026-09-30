@@ -41,34 +41,27 @@
   --instruction-files-error-fallback: var(--wuu-color-danger, #d3524f);
   --stream-cursor-default-color: #2f4a5f;
   --reasoning-stream-cursor-color: var(--gray-500);
-  --turn-progress-label-color: var(--wuu-color-text-muted, var(--gray-550));
-  --turn-progress-label-icon-color: var(--wuu-color-text-muted, var(--gray-500));
-  --turn-progress-detail-color: var(--wuu-color-text-muted, var(--gray-450));
-  --turn-progress-sweep-highlight: #202724;
-  --turn-progress-sweep-base: #7b8580;
-  --turn-progress-failed-rule-bg: #f2d3cf;
-  --turn-process-entry-color: var(--wuu-color-text-muted, var(--gray-550));
-  --process-control-color-fallback: var(--wuu-color-text-muted, var(--gray-450));
+  --turn-process-entry-color: var(--ink-tertiary);
+  --process-control-color-fallback: var(--ink-tertiary);
   --activity-toggle-hover-color: var(--gray-650);
-  --activity-toggle-hover-svg-color: var(--gray-550);
   --activity-toggle-hover-color-alt: var(--wuu-color-text-muted, var(--gray-600));
   --activity-detail-color: var(--wuu-color-text-muted, var(--gray-550));
-  --diff-insert-color: var(--wuu-color-success, #12a150);
-  --diff-delete-color: var(--wuu-color-danger, #cf2e2e);
+  /* Diff counts are status text: the status roles already pass contrast on
+   * the canvas, where the brighter diff greens did not. */
+  --diff-insert-color: var(--success);
+  --diff-delete-color: var(--danger);
   --rich-link-color: var(--wuu-color-link, #0969da);
   --rich-link-hover-color: var(--wuu-color-link-hover, #0550ae);
   /* Prose surfaces share the neutral ramp: blocks recede, inline code
    * gets a small contrast step without resembling a selected control. */
   --message-flow-card-bg: var(--surface-1);
   --message-flow-card-border: var(--hairline);
-  --message-flow-card-divider: var(--hairline-soft);
   --message-flow-card-header-bg: var(--message-flow-card-bg);
   --message-flow-card-hover-bg: var(--wuu-color-surface, var(--surface-1));
   --message-flow-card-shadow: var(--shadow-soft);
   /* Embedded cards use a middle radius between controls and full panels. */
   --message-flow-card-radius: 12px;
   --surface-chip: var(--surface-2);
-  --fork-worktree-copy-bg: rgba(255, 255, 255, 0.84);
   --fork-worktree-focus-ring: var(--focus-ring);
   --rich-blockquote-color: var(--wuu-color-text-muted, var(--gray-650));
   --rich-rule-color: var(--wuu-border-subtle, var(--gray-250));
@@ -84,10 +77,8 @@
   --project-empty-content-color: var(--wuu-color-text-muted, var(--gray-600));
   --project-empty-actions-border: var(--wuu-border-subtle, var(--hairline));
   --project-empty-actions-hover-bg: var(--gray-50);
-  --diff-insert-bg: rgba(18, 161, 80, 0.08);
-  --diff-insert-text-color: var(--wuu-color-success, #0a6b34);
-  --diff-delete-bg: rgba(207, 46, 46, 0.08);
-  --diff-delete-text-color: var(--wuu-color-danger, #a82525);
+  --diff-insert-bg: color-mix(in srgb, var(--success) 8%, transparent);
+  --diff-delete-bg: color-mix(in srgb, var(--danger) 8%, transparent);
   --artifact-preview-overlay-bg: rgba(8, 10, 12, 0.78);
   --artifact-preview-shell-border: rgba(255, 255, 255, 0.14);
   --artifact-preview-frame-bg: #fff;
@@ -149,7 +140,7 @@
   border: 1px solid var(--hairline);
   border-radius: var(--radius-sm);
   background: var(--surface-1);
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   cursor: pointer;
   font: inherit;
   font-size: var(--font-sm);
@@ -228,7 +219,7 @@
 }
 
 .turn-collapsed-reply {
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-size: var(--font-sm);
 }
 
@@ -268,21 +259,9 @@
 }
 
 .conversation-split-width .assistant-turn-shell {
-                                                                  
-                                                                 
-                                                                 
-                                          
   width: 100%;
 }
 
-                                                              
-                                                                   
-                                                                
-                                                                    
-                                                               
-                                                                    
-                                                                  
-                                                                 
 .turn-answer-body {
   display: flex;
   flex-direction: column;
@@ -301,10 +280,6 @@
   gap: var(--conversation-image-gap);
 }
 
-                                                                    
-                                                                     
-                                                                      
-                                        
 .message {
   max-width: min(var(--conversation-message-max-width), var(--conversation-message-max-inline));
   border-radius: var(--radius-sm);
@@ -324,12 +299,6 @@
     var(--wuu-message-user-color, var(--user-message-fg-color)) 14%,
     transparent
   );
-                                                         
-                                                           
-                                                             
-                                                              
-                                                       
-                            
   --user-message-background: var(--wuu-message-user-background, var(--user-message-bg-color));
   background: var(--user-message-background);
   border: var(--wuu-message-user-border, 0);
@@ -351,8 +320,6 @@
      break lands between turns, not inside one. */
   margin-bottom: var(--conversation-user-message-trailing-gap);
   border-radius: var(--radius-lg);
-                                                                        
-                                                     
   scroll-margin-top: 12px;
 }
 
@@ -376,7 +343,7 @@
   padding: 2px 0;
   border: 0;
   background: none;
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font: inherit;
   text-align: right;
   cursor: pointer;
@@ -415,10 +382,6 @@
   justify-items: end;
 }
 
-                                                                         
-                                                                     
-                                                                     
-                                        
 .user-message-block.user-message-jump-flash > .user-message-motion > .user-message,
 .user-message-block.user-message-jump-flash > .user-message-motion > .user-message-edit {
   animation: user-message-jump-flash 800ms var(--ease-out);
@@ -884,7 +847,7 @@
 }
 
 .user-message-time {
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-size: var(--font-sm);
   font-weight: var(--weight-medium);
   font-variant-numeric: tabular-nums;
@@ -1005,7 +968,7 @@
 
 .message-file-meta {
   overflow: hidden;
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-size: var(--font-xs);
   font-weight: var(--weight-medium);
   text-overflow: ellipsis;
@@ -1022,7 +985,7 @@
   border: 0;
   border-radius: var(--radius-sm);
   background: transparent;
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   cursor: pointer;
   font-size: var(--font-xs);
   font-weight: var(--weight-semibold);
@@ -1138,13 +1101,13 @@
 .plugin-conversation-card {
   width: 100%;
   max-width: none;
-  margin: 2px 0 22px;
+  margin: 0 0 var(--conversation-turn-boundary-gap);
 }
 
-.conversation-split-width .context-composition-card,
-.conversation-split-width .instruction-files-card,
-.conversation-split-width .plugin-conversation-card {
-  width: 100%;
+/* The latest turn leaves its trailing gap to the composer clearance, so a
+ * card placed after it takes the turn boundary itself. */
+.conversation-width .turn[data-latest-turn="true"] + :is(.context-composition-card, .instruction-files-card, .plugin-conversation-card) {
+  margin-top: var(--conversation-turn-boundary-gap);
 }
 
 .plugin-conversation-card-shell {
@@ -1193,22 +1156,21 @@
   font-size: var(--font-sm);
 }
 
+/* Slash-command results are content cards in the reading flow, framed like
+ * code blocks and the failure card rather than like a panel. */
 .context-composition-card-inner,
 .instruction-files-card-inner {
   position: relative;
   display: grid;
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-lg);
-  background: var(--surface-1);
-  padding: 16px 18px;
+  border: 1px solid var(--message-flow-card-border);
+  border-radius: var(--message-flow-card-radius);
+  background: var(--message-flow-card-bg);
+  padding: var(--card-padding);
 }
 
-.context-composition-card-inner {
-  gap: 16px;
-}
-
+.context-composition-card-inner,
 .instruction-files-card-inner {
-  gap: 14px;
+  gap: var(--space-4);
 }
 
 .context-composition-dismiss,
@@ -1218,7 +1180,7 @@
   right: 10px;
   width: 24px;
   height: 24px;
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   opacity: 0;
   transition:
     opacity var(--motion-base) var(--ease-out),
@@ -1276,9 +1238,8 @@
 }
 
 .context-composition-headline strong {
-  font-size: 24px;
+  font-size: var(--font-display);
   font-weight: var(--weight-semibold);
-  letter-spacing: -0.02em;
   line-height: 1.05;
   color: var(--ink-strong);
   font-variant-numeric: tabular-nums;
@@ -1363,7 +1324,7 @@
 
 .context-composition-meta-item {
   font-size: var(--font-xs);
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   white-space: nowrap;
 }
 
@@ -1376,7 +1337,7 @@
 .context-composition-runtime {
   margin-left: auto;
   font-size: var(--font-xs);
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
@@ -1398,7 +1359,7 @@
 
 .context-category-row.is-excluded .context-category-label,
 .context-category-row.is-excluded .context-category-tokens {
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
 }
 
 .context-category-row.is-excluded .context-category-swatch {
@@ -1407,9 +1368,9 @@
 
 .context-category-swatch {
   flex: 0 0 auto;
-  width: 7px;
-  height: 7px;
-  border-radius: 2px;
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-circle);
   background: var(--ink-overlay-18);
 }
 
@@ -1420,20 +1381,19 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: var(--font-ui);
-  font-weight: var(--weight-medium);
   color: var(--ink);
 }
 
+/* Badge recipe shared with the model services Default badge. */
 .context-category-tag {
   flex-shrink: 0;
-  margin-left: -2px;
-  padding: 0 7px;
+  padding: 0 var(--space-2);
   border-radius: var(--radius-pill);
-  background: var(--ink-overlay-6);
-  font-size: 10px;
+  background: var(--selection-surface);
+  font-size: var(--font-xs);
   font-weight: var(--weight-medium);
-  line-height: 16px;
-  color: var(--ink-muted);
+  line-height: 1.6;
+  color: var(--ink);
 }
 
 .context-category-tokens {
@@ -1441,7 +1401,7 @@
   min-width: 3.5em;
   text-align: right;
   font-size: var(--font-ui);
-  font-weight: var(--weight-semibold);
+  font-weight: var(--weight-medium);
   color: var(--ink);
   font-variant-numeric: tabular-nums;
 }
@@ -1451,7 +1411,7 @@
   min-width: 2.8em;
   text-align: right;
   font-size: var(--font-xs);
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
@@ -1460,19 +1420,18 @@
 
 .instruction-files-groups {
   display: grid;
-  gap: 14px;
+  gap: var(--space-4);
 }
 
 .instruction-files-group {
   display: grid;
-  gap: 3px;
+  gap: var(--space-1);
 }
 
 .instruction-files-group-label {
   font-size: var(--font-xs);
-  font-weight: var(--weight-semibold);
-  letter-spacing: 0.05em;
-  color: var(--ink-muted);
+  font-weight: var(--weight-medium);
+  color: var(--ink-tertiary);
 }
 
 .instruction-files-list {
@@ -1490,7 +1449,7 @@
   margin: 0 -8px;
   padding: 7px 8px;
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--ink);
   font: inherit;
@@ -1512,7 +1471,7 @@
 .instruction-file-chevron {
   width: 13px;
   height: 13px;
-  color: var(--ink-faint);
+  color: var(--ink-muted);
   transition: transform var(--motion-base) var(--ease-out);
 }
 
@@ -1534,13 +1493,12 @@
   white-space: nowrap;
   font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
   font-size: var(--font-sm);
-  font-weight: var(--weight-medium);
 }
 
 .instruction-file-size {
   flex-shrink: 0;
   font-size: var(--font-xs);
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-variant-numeric: tabular-nums;
 }
 
@@ -1579,9 +1537,10 @@
 .agent-block-with-action-slot > .agent-message-actions {
   min-height: calc(var(--conversation-message-action-size) + var(--conversation-answer-hover-action-gap));
   position: relative;
-  /* Inset the icon slightly from the prose axis for optical alignment while
-   * keeping the full button target and custom theme offset available. */
-  margin-inline-start: var(--wuu-message-actions-inline-offset, calc((var(--conversation-message-action-icon-size, 15px) - var(--conversation-message-action-size)) / 2 + 2px));
+  /* The first glyph's icon box sits on the prose edge, as toolbar glyphs do
+   * on the pane inset; the button's larger target reaches past it. Themes
+   * can still set their own offset. */
+  margin-inline-start: var(--wuu-message-actions-inline-offset, calc((var(--conversation-message-action-icon-size, 15px) - var(--conversation-message-action-size)) / 2));
   padding-top: var(--conversation-answer-hover-action-gap);
 }
 
@@ -1730,13 +1689,6 @@
   overflow-wrap: anywhere;
 }
 
-                                                                                
-                                                                               
-                                                                                
-                                                                           
-                                                                         
-                                                         
-
 .streaming-markdown {
   display: block;
   position: relative;
@@ -1766,13 +1718,6 @@
   gap: var(--conversation-prose-block-gap, 24px);
 }
 
-                                                                     
-                                                                
-                                                                 
-                                                              
-                                              
-                                                                    
-                                                                          
 .stream-cursor {
   /* Layout-stable slot. The wrapper takes zero flow width so inserting
      or removing the cursor does not shift the trailing character of a
@@ -1814,7 +1759,6 @@
   bottom: 0;
 }
 
-                                                                         
 .streaming-markdown[data-cursor-state="fading"] .stream-cursor {
   transition: opacity var(--motion-base) var(--ease-out);
   opacity: 0;
@@ -1829,92 +1773,10 @@
   color: inherit;
 }
 
-                                                        
 @container style(--motion-reduced: 1) {
   .streaming-markdown[data-cursor-state="fading"] .stream-cursor {
     transition: none;
   }
-}
-
-
-.turn-progress {
-  display: inline-flex;
-  width: fit-content;
-  max-width: 100%;
-  margin: 6px 0 -2px;
-  color: var(--ink-muted);
-  font-size: var(--conversation-process-font-size);
-  font-weight: var(--conversation-process-font-weight);
-  line-height: var(--conversation-process-line-height);
-}
-
-.turn-progress-header {
-  display: flex;
-  min-width: 0;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-}
-
-.turn-progress-label {
-  display: flex;
-  min-width: 0;
-  align-items: flex-start;
-  gap: 8px;
-  color: var(--turn-progress-label-color);
-  font-size: var(--conversation-process-font-size);
-  font-weight: var(--conversation-process-font-weight);
-  line-height: var(--conversation-process-line-height);
-}
-
-.turn-progress-label svg {
-  flex: 0 0 auto;
-  color: var(--turn-progress-label-icon-color);
-  margin-top: 1px;
-}
-
-.turn-progress-copy {
-  display: grid;
-  min-width: 0;
-  gap: 2px;
-}
-
-.turn-progress-title {
-  display: inline-block;
-  min-width: 0;
-}
-
-.turn-progress-duration {
-  color: var(--ink-muted);
-  font-variant-numeric: tabular-nums;
-}
-
-.turn-progress-detail {
-  overflow-wrap: anywhere;
-  color: var(--turn-progress-detail-color);
-  font-size: var(--conversation-process-font-size);
-  font-weight: var(--conversation-process-font-weight);
-  line-height: var(--conversation-process-line-height);
-}
-
-.turn-progress-rule {
-  position: relative;
-  height: 1px;
-  overflow: hidden;
-  background: var(--rule);
-}
-
-.turn-progress.in_progress .turn-progress-title {
-  color: var(--turn-progress-sweep-base);
-}
-
-.turn-progress.failed .turn-progress-label svg,
-.turn-progress.failed .turn-progress-title {
-  color: var(--danger);
-}
-
-.turn-progress.failed .turn-progress-rule {
-  background: var(--turn-progress-failed-rule-bg);
 }
 
 .turn-process-fold {
@@ -1950,7 +1812,6 @@
   border: 0;
   background: transparent;
   color: inherit;
-  cursor: pointer;
   font: inherit;
   font-weight: var(--conversation-process-font-weight);
   line-height: var(--conversation-process-line-height);
@@ -1964,15 +1825,32 @@
   min-width: 0;
 }
 
-.turn-process-toggle:hover,
-.turn-process-toggle:focus-visible {
-  color: var(--ink-tertiary);
-  outline: 0;
+.turn-process-toggle[role="button"] {
+  cursor: pointer;
 }
 
 .turn-process-toggle svg {
   flex: 0 0 auto;
   color: currentColor;
+}
+
+/* The fold's chevron matches the nested process and reasoning folds, so a
+ * collapsed turn says it holds more than its duration. */
+.turn-process-header > .turn-process-chevron {
+  align-self: center;
+  color: var(--ink-tertiary);
+  transform: rotate(0deg);
+  transition:
+    color var(--motion-fast) var(--ease-out),
+    transform var(--motion-base) var(--ease-out);
+}
+
+.turn-process-toggle[aria-expanded="true"] .turn-process-chevron {
+  transform: rotate(90deg);
+}
+
+.turn-process-toggle[role="button"]:hover :is(.turn-process-title, .turn-process-meta, .turn-process-chevron) {
+  color: var(--activity-toggle-hover-color);
 }
 
 .turn-process-header {
@@ -1989,26 +1867,14 @@
   flex: 0 0 auto;
   min-width: 0;
   overflow: hidden;
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   text-overflow: ellipsis;
   white-space: nowrap;
-                                                                 
-                                                                
-                                                              
-                                                                
-                                          
   font-size: var(--conversation-process-font-size);
   font-weight: var(--conversation-process-font-weight);
   line-height: var(--conversation-process-line-height);
 }
 
-                                                               
-                                                               
-                                                              
-                                         
-                                                                 
-                                                                  
-                                                              
 .turn-process-live-dot {
   display: inline-block;
   flex: 0 0 auto;
@@ -2018,10 +1884,6 @@
   background: var(--ink-muted);
   margin-right: 6px;
   vertical-align: middle;
-                                                                  
-                                                                    
-                                                                 
-                                
   --pulse-opacity: 0.4;
   animation: wuu-pulse 1.2s ease-in-out infinite;
 }
@@ -2035,24 +1897,20 @@
 
 .turn-process-meta {
   flex: 0 0 auto;
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-size: var(--conversation-process-font-size);
+  font-variant-numeric: tabular-nums;
   font-weight: var(--conversation-process-font-weight);
   line-height: var(--conversation-process-line-height);
 }
 
-                                                             
-                                                                
-                                                                  
-                                                                
-                                                              
 .turn-process-preview {
   display: flex;
   flex: 1 1 0;
   min-width: 0;
   align-items: center;
   overflow: hidden;
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-size: var(--conversation-process-font-size);
   font-weight: var(--conversation-process-font-weight);
   line-height: var(--conversation-process-line-height);
@@ -2068,18 +1926,6 @@
   white-space: nowrap;
 }
 
-                                                               
-                                                                 
-                                                                 
-                                                                   
-                                                                  
-                                                  
-
-                                                                   
-                                                                 
-                                                             
-                                                               
-                                                                
 .collapsible-details {
   /* Drive the fold body height directly with height: 0 / auto.
      interpolate-size: allow-keywords lets the browser transition
@@ -2240,11 +2086,6 @@
 }
 
 .activity-row {
-                                                                  
-                                                                  
-                                                               
-                                                                 
-                                                              
   display: inline-flex;
   min-width: 0;
   min-height: 0;
@@ -2325,9 +2166,6 @@
   flex: 0 0 auto;
 }
 
-                                                                
-                                                                   
-                                                                    
 .activity-summary {
   display: inline-flex;
   align-items: center;
@@ -2346,15 +2184,6 @@
 }
 
 .activity-details {
-                                                                     
-                                                                
-                                                                 
-                                                                     
-                                                               
-                                                                     
-                                                                    
-                                                                 
-                                                   
   display: none;
 }
 
@@ -2796,28 +2625,42 @@
   color: var(--conversation-process-control-color, var(--process-control-color-fallback));
 }
 
-.stream-event-card {
-  width: 100%;
+/* The turn's answer did not arrive. The retrying state and the settled
+ * failure share one frame, so the card that counts down to a retry is the
+ * card that later explains what went wrong and offers the next step. The
+ * symbol keeps its own column: a wrapped title, the explanation and the
+ * actions all start on one text edge, --card-padding inside the frame. */
+.turn-failure {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: var(--space-3);
   min-width: 0;
   box-sizing: border-box;
-  padding: 12px 14px;
-  border: 1px solid var(--hairline);
-  border-radius: 12px;
-  background: var(--surface-1);
+  padding: var(--card-padding);
+  border: 1px solid var(--message-flow-card-border);
+  border-radius: var(--message-flow-card-radius);
+  background: var(--message-flow-card-bg);
   color: var(--ink);
-  font-size: var(--conversation-process-font-size);
+  font-size: var(--conversation-message-font-size);
   line-height: var(--conversation-process-line-height);
 }
 
-.stream-reconnect-notice {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 10px;
+.turn-failure > :not(.turn-failure-icon) {
+  grid-column: 2;
 }
 
-.stream-reconnect-diagnostics {
-  grid-column: 1 / -1;
+/* Centered on the title's first line. The status colour pairs with the
+ * symbol and the title; it is never the only signal. */
+.turn-failure-icon {
+  grid-row: 1;
+  width: var(--icon-size);
+  height: var(--icon-size);
+  margin-top: calc((var(--conversation-process-line-height) - var(--icon-size)) / 2);
+  color: var(--danger);
+}
+
+.turn-failure.is-retrying .turn-failure-icon {
+  color: var(--warning);
 }
 
 /*
@@ -2827,72 +2670,115 @@
  * rest. After a user bubble, subtract the bubble's trailing gap so the
  * visible band stays 16px rather than 24px.
  */
-.turn > .stream-reconnect-notice {
+.turn > .turn-failure {
   margin-top: calc(
     var(--conversation-process-answer-gap) - var(--conversation-turn-item-gap)
   );
 }
 
-.turn > .user-message-block + .stream-reconnect-notice {
+.turn > .user-message-block + .turn-failure {
   margin-top: calc(
     var(--conversation-process-answer-gap) - var(--conversation-turn-item-gap) -
       var(--conversation-user-message-trailing-gap)
   );
 }
 
-.stream-reconnect-title {
+.turn-failure-head {
+  display: flex;
   min-width: 0;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.turn-failure-title {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-weight: var(--weight-medium);
+}
+
+.turn-failure-code,
+.turn-failure-status {
+  flex: none;
+  color: var(--ink-tertiary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* The countdown owns the trailing edge, so the title never moves while the
+ * seconds change width. */
+.turn-failure-status {
+  margin-inline-start: auto;
+}
+
+.turn-failure-body {
+  margin: var(--space-1) 0 0;
+  color: var(--ink-soft);
   overflow-wrap: anywhere;
 }
 
-.stream-reconnect-status,
-.stream-reconnect-retry,
-.stream-reconnect-stopped {
-  position: relative;
-  overflow: hidden;
-  padding: 3px 10px;
-  border: 0;
-  border-radius: 999px;
-  background: var(--surface-2);
-  color: inherit;
-  font: inherit;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-  min-height: 26px;
-  display: inline-flex;
+.turn-failure-actions {
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
 }
 
-.stream-reconnect-status {
-  min-width: 84px;
-  text-align: center;
+/* A text disclosure, not a third button: the technical record is for the
+ * reader who asks for it. Its ink starts on the text edge when it stands
+ * alone and keeps a group gap after the actions. */
+.turn-failure-details-toggle {
+  display: inline-flex;
+  min-height: var(--control-field-height);
+  align-items: center;
+  gap: var(--space-1);
+  border: 0;
+  background: transparent;
+  color: var(--ink-tertiary);
+  cursor: pointer;
+  font: inherit;
+  padding: 0;
+  transition: color var(--motion-fast) var(--ease-out);
 }
 
-.stream-reconnect-progress {
-  position: absolute;
-  inset: 0;
-  background: color-mix(in srgb, var(--ink) 14%, transparent);
-  transform-origin: left center;
-  /* One step per countdown tick (TurnNotice updates every 100ms), so the
-   * bar reads as continuous travel rather than a ladder transition. */
-  transition: transform 100ms linear;
+.settings-button + .turn-failure-details-toggle {
+  margin-inline-start: var(--space-2);
 }
 
-.stream-reconnect-status-text { position: relative; }
-.stream-reconnect-retry { cursor: pointer; }
-.stream-reconnect-retry:disabled { cursor: default; }
-.stream-reconnect-retry:hover:not(:disabled) { background: var(--surface-3); }
-.stream-reconnect-retry:focus-visible {
-  outline: 2px solid var(--ink);
-  outline-offset: 2px;
+.turn-failure-details-toggle:hover {
+  color: var(--ink-soft);
 }
 
-.stream-reconnect-stopped {
-  color: var(--ink-muted);
+.turn-failure-details-toggle > .turn-failure-details-chevron {
+  width: var(--icon-size-xs);
+  height: var(--icon-size-xs);
+  transition: rotate var(--motion-base) var(--ease-out);
 }
 
-@container style(--motion-reduced: 1) {
-  .stream-reconnect-progress { transition: none; }
+.turn-failure-details-toggle[aria-expanded="true"] > .turn-failure-details-chevron {
+  rotate: 90deg;
+}
+
+.turn-failure-details > .collapsible-details-inner {
+  display: grid;
+  row-gap: var(--space-2);
+  padding-top: var(--space-3);
+}
+
+.turn-failure-recovery {
+  margin: 0;
+  color: var(--ink-soft);
+  white-space: pre-line;
+}
+
+.turn-failure-diagnostic {
+  margin: 0;
+  color: var(--ink-soft);
+  font-family: var(--font-mono);
+  font-size: var(--appearance-code-size);
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 /* Retain the actual wrapping notice height after settlement. */
@@ -2930,9 +2816,7 @@
 :root[data-renderer-hidden] .turn-process-live-dot,
 :root[data-renderer-hidden] .tool-activity-marker.is-running,
 :root[data-renderer-hidden] .turn-source-avatar[data-load-state="loading"]::before,
-:root[data-renderer-hidden] .wuu-launch-mark::after,
-:root[data-renderer-hidden] .wuu-launch-mark span,
-:root[data-renderer-hidden] .wuu-launch-rail::after,
+:root[data-renderer-hidden] .loading-rail::after,
 .cached-conversation-pane[data-active="false"] .turn-process-live-dot,
 .cached-conversation-pane[data-active="false"] .tool-activity-marker.is-running,
 .cached-conversation-pane[data-active="false"] .turn-source-avatar[data-load-state="loading"]::before {
@@ -2966,17 +2850,17 @@
   text-decoration: none;
 }
 
+/* Fold chevrons take the row's ink: a disclosure mark needs 3:1 as much as
+ * its label needs 4.5:1. */
 .process-surface-chevron {
   flex: 0 0 auto;
   color: currentColor;
-  opacity: 0.7;
   transform: rotate(0deg);
   transition: transform var(--motion-base) var(--ease-out);
 }
 
 .process-surface-fold[open] > .process-surface-row .process-surface-chevron {
   transform: rotate(90deg);
-  opacity: 1;
 }
 
 @supports (interpolate-size: allow-keywords) and selector(::details-content) {
@@ -3360,10 +3244,6 @@
 }
 
 .rich-content :not(pre) > code {
-                                                              
-                                                              
-                                                                
-                                                              
   border: 0;
   border-radius: var(--radius-xs);
   background: var(--wuu-inline-code-background, var(--surface-chip));
@@ -3421,9 +3301,6 @@
   display: block;
   max-width: 100%;
   max-height: 420px;
-                                                              
-                                                           
-                                                                    
   border: 1px solid var(--hairline);
   border-radius: var(--radius-media);
   background: var(--surface-1);
@@ -3433,10 +3310,6 @@
 .rich-code {
   max-height: 460px;
   min-width: 0;
-                                                                   
-                                                                  
-                                                                    
-                                  
   border: 0;
   background: var(--message-flow-card-bg);
   border-radius: var(--radius-sm);
@@ -3509,13 +3382,13 @@
   background: var(--message-flow-card-header-bg);
 }
 
+/* The fence's language as written, in the metadata role: UI chrome, not
+ * code, so it follows the UI size rather than the code size. */
 .rich-code-language {
   font-family: inherit;
-  font-size: 10px;
-  font-weight: var(--weight-semibold);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--ink-muted);
+  font-size: var(--font-xs);
+  font-weight: var(--weight-medium);
+  color: var(--ink-tertiary);
   pointer-events: none;
   user-select: none;
 }
@@ -3526,7 +3399,7 @@
   padding: 0;
   border: 0;
   background: none;
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font: inherit;
   cursor: pointer;
 }
@@ -3544,7 +3417,7 @@
 .rich-code-plain-note {
   margin-left: auto;
   margin-right: 8px;
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-size: inherit;
   user-select: none;
 }
@@ -3556,11 +3429,11 @@
   height: 24px;
   background: none;
   box-shadow: none;
-  opacity: 0.5;
+  /* Quiet at rest, yet a control mark that clears 3:1. */
+  color: var(--ink-muted);
+  opacity: 1;
   pointer-events: auto;
-  transition:
-    color var(--motion-fast) var(--ease-out),
-    opacity var(--motion-fast) var(--ease-out);
+  transition: color var(--motion-fast) var(--ease-out);
 }
 
 /* Even glyph in the 24px box keeps --rich-code-copy-glyph-offset whole. */
@@ -3570,14 +3443,12 @@
 }
 
 .rich-code-block:hover .rich-code-copy,
-.rich-code-copy:hover,
 .rich-code-copy:focus-visible {
-  opacity: 1;
+  color: var(--ink-tertiary);
 }
 
-.rich-code-copy.copied,
-.rich-code-copy.failed {
-  opacity: 1;
+.rich-code-copy:hover {
+  color: var(--ink);
 }
 
 /* Code block copy keeps the inherited icon color in the copied state.
@@ -3599,19 +3470,21 @@
 .fork-worktree-card {
   display: block;
   overflow: hidden;
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-sm);
-  background: var(--surface-1);
+  border: 1px solid var(--message-flow-card-border);
+  border-radius: var(--message-flow-card-radius);
+  background: var(--message-flow-card-bg);
 }
 
+/* The glyph keeps its own column, so the title, the consequence below it and
+ * the facts in the open card share one text edge. */
 .fork-worktree-summary {
   display: grid;
-  grid-template-columns: 24px minmax(0, 1fr) 18px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   width: 100%;
   min-width: 0;
   align-items: center;
-  gap: 10px;
-  padding: 12px 14px;
+  column-gap: var(--space-3);
+  padding: var(--card-padding);
   color: var(--ink);
   cursor: pointer;
   list-style: none;
@@ -3632,12 +3505,8 @@
 }
 
 .fork-worktree-glyph {
-  display: grid;
-  width: 24px;
-  height: 24px;
-  place-items: center;
-  border-radius: var(--radius-sm);
-  background: var(--paper);
+  align-self: start;
+  margin-top: calc((var(--font-ui) * 1.35 - var(--icon-size)) / 2);
   color: var(--ink-tertiary);
 }
 
@@ -3654,17 +3523,17 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: var(--font-ui);
-  font-weight: var(--weight-semibold);
+  font-weight: var(--weight-medium);
+  line-height: 1.35;
 }
 
 .fork-worktree-summary-text span {
   min-width: 0;
   overflow: hidden;
-  color: var(--ink-tertiary);
+  color: var(--ink-soft);
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: var(--font-sm);
-  font-weight: var(--weight-medium);
 }
 
 .fork-worktree-chevron {
@@ -3678,86 +3547,66 @@
 
 .fork-worktree-details {
   display: grid;
-  gap: 12px;
-  padding: 0 14px 14px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  column-gap: var(--space-3);
+  padding: 0 var(--card-padding) var(--card-padding) calc(var(--card-padding) + var(--icon-size) + var(--space-3));
 }
 
+/* One label column for every fact, so the values share an edge whatever
+ * the label lengths in the current language. */
 .fork-worktree-meta {
   display: grid;
-  gap: 8px;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: var(--space-2) var(--space-3);
+  align-items: baseline;
   margin: 0;
   padding: 0;
 }
 
 .fork-worktree-meta div {
-  display: grid;
-  grid-template-columns: 72px minmax(0, 1fr);
-  gap: 10px;
-  align-items: start;
+  display: contents;
 }
 
 .fork-worktree-meta dt {
-  color: var(--ink-tertiary);
+  color: var(--ink-soft);
   font-size: var(--font-sm);
-  font-weight: var(--weight-semibold);
 }
 
 .fork-worktree-meta dd {
   min-width: 0;
   margin: 0;
   color: var(--ink);
-  font-family: "SFMono-Regular", Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: var(--font-sm);
   line-height: 1.5;
   overflow-wrap: anywhere;
 }
 
-.fork-worktree-code-block {
-  position: relative;
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-sm);
-  background: var(--paper);
-  overflow: hidden;
-}
-
-.fork-worktree-code {
-  max-height: 260px;
-  margin: 0;
-  overflow: auto;
-  background: transparent;
-  color: var(--ink-tertiary);
-  font-family: "SFMono-Regular", Consolas, monospace;
-  font-size: var(--font-sm);
-  line-height: 1.5;
-  padding: 12px 42px 12px 12px;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
-.fork-worktree-code code {
-  font: inherit;
-}
-
-.fork-worktree-copy {
-  position: absolute;
-  top: 10px;
-  right: 10px;
+/* A plain icon button in the open card, not the floating copy pill used on
+ * message hover. */
+.fork-worktree-copy,
+.fork-worktree-copy:hover,
+.fork-worktree-copy:focus-visible {
   --message-copy-rest-transform: none;
   width: 26px;
   height: 26px;
-  background: var(--fork-worktree-copy-bg);
+  border-radius: var(--radius-xs);
   box-shadow: none;
-  opacity: 0.72;
+  opacity: 1;
   pointer-events: auto;
   transform: none;
 }
 
-.fork-worktree-code-block:hover .fork-worktree-copy,
+.fork-worktree-copy {
+  background: transparent;
+  color: var(--ink-tertiary);
+}
+
 .fork-worktree-copy:hover,
-.fork-worktree-copy:focus-visible,
-.fork-worktree-copy.copied,
-.fork-worktree-copy.failed {
-  opacity: 1;
+.fork-worktree-copy:focus-visible {
+  background: var(--ink-overlay-6);
+  color: var(--ink);
 }
 
 /*
@@ -3805,10 +3654,6 @@
 
 .rich-blockquote {
   margin: 0;
-                                                               
-                                                               
-                                                           
-                                                                  
   border-left: 2px solid var(--hairline-strong);
   color: var(--rich-blockquote-color);
   padding: 2px 0 2px 16px;
@@ -3909,21 +3754,6 @@
   margin-top: 2px;
 }
 
-                                                                 
-                                                                    
-                                                                
-                                                           
-                                                               
-                                                           
-                                                              
-                                                                
-                                                            
-                                                                 
-                                                                
-                                                                     
-                                                                
-                                                               
-                                              
 .turn-reasoning-fold {
   min-width: 0;
 }
@@ -3950,9 +3780,6 @@
   display: none;
 }
 
-                                                                  
-                                                                    
-                           
 .turn-reasoning-summary:hover,
 .turn-reasoning-summary:focus-visible {
   text-decoration: underline;
@@ -3967,19 +3794,6 @@
   min-width: 0;
 }
 
-                                                                 
-                                                                  
-                                                                 
-                                                       
-
-                                                            
-                                                               
-                                                                 
-                                                                
-                                                                     
-                                                               
-                                                                      
-                                              
 /* (the overlay, keyframes, and reduced-motion handling for
    `.turn-reasoning-summary-text.is-streaming` live with the unified
    process-surface shimmer selectors above) */
@@ -3987,21 +3801,14 @@
 .turn-reasoning-chevron {
   flex: 0 0 auto;
   color: currentColor;
-  opacity: 0.7;
   transform: rotate(0deg);
   transition: transform var(--motion-base) var(--ease-out);
 }
 
 .turn-reasoning-fold[open] > .turn-reasoning-summary .turn-reasoning-chevron {
   transform: rotate(90deg);
-  opacity: 1;
 }
 
-                                                                     
-                                                                   
-                                                                  
-                                                               
-                                        
 .turn-reasoning-body {
   display: grid;
   grid-template-rows: 0fr;
@@ -4020,18 +3827,9 @@
   min-height: 0;
   overflow: hidden;
   padding: 4px 0 2px 20px;
-                                                                    
-                                                               
-                                                                    
-                                    
   color: var(--wuu-ink-soft);
 }
 
-                                                                      
-                                                                  
-                                                                  
-                                                                     
-                                                  
 .turn-reasoning-scroll {
   max-height: var(--conversation-process-fold-max-height, min(320px, 40vh));
   min-height: 0;
@@ -4094,30 +3892,11 @@ pre {
 }
 
   
-                           
   
-                                                                         
-                                                                     
-                                                                       
-                                                                   
-                                                      
   
-                                              
-                                                          
-                                                                    
-                                                                   
-                                                                      
-                                                        
-                                                                       
    
 
-                                                                     
-                                                               
-                                         
   
-                                                                      
-                                                                   
-                                                          
    
 .system-line {
   border: 0;
@@ -4158,13 +3937,15 @@ pre {
   row-gap: var(--space-6);
 }
 
+/* The greeting follows the UI size between the display and hero roles, so
+ * at large text it still leads the summary numbers beneath it. */
 .empty-home h2 {
   min-width: 0;
   overflow-wrap: anywhere;
   margin: 0;
   color: var(--ink);
   font-family: var(--empty-home-title-font);
-  font-size: clamp(26px, 2.1vw, 30px);
+  font-size: clamp(var(--font-display), 2.1vw, var(--font-hero));
   font-weight: 460;
   letter-spacing: 0;
   line-height: 1.2;
@@ -4199,12 +3980,13 @@ pre {
   user-select: none;
 }
 
-/* Usage overview under the greeting: one quiet card groups the totals with
-   their heatmap. It appears only once the host answers, so it enters in
-   stages: the card rises in, the totals settle, and the weeks follow in time
-   order. Every delay and duration comes from the motion ladder, so reduced
-   motion shows the final state at once. The idle play waits for this
-   entrance to finish (EmptyHomeOverview). */
+/* Usage overview under the greeting: the totals and their heatmap in one
+   card, framed like the composer beneath it so the two read as a pair. It
+   appears only once the host answers, so it enters in stages: the summary
+   rises in, the totals settle, and the weeks follow in time order. Every
+   delay and duration comes from the motion ladder, so reduced motion shows
+   the final state at once. The idle play waits for this entrance to finish
+   (EmptyHomeOverview). */
 .empty-home-overview {
   position: relative;
   grid-column: 1 / -1;
@@ -4219,13 +4001,12 @@ pre {
   animation: wuu-enter var(--motion-slow) var(--ease-out) both;
 }
 
-/* Stats wrap to fewer columns before a number would need truncating;
-   6em of UI text holds a six-character value such as "12.3M" or "12,345"
-   at the heading size. */
+/* Totals read as one line of facts at their natural widths; they wrap as a
+   whole when the column narrows instead of truncating a number. */
 .empty-home-stats {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 6em), 1fr));
-  gap: var(--space-4);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3) var(--space-8);
   margin: 0;
   --enter-y: 6px;
   animation: wuu-enter var(--motion-slow) var(--ease-out) both;
@@ -4240,28 +4021,26 @@ pre {
 }
 
 .empty-home-stats dt {
-  overflow-wrap: anywhere;
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-size: var(--font-sm);
   line-height: 1.3;
 }
 
 .empty-home-stats dd {
   margin: 0;
-  overflow: hidden;
   color: var(--ink);
-  font-size: var(--font-heading);
+  font-size: var(--font-title);
   font-variant-numeric: tabular-nums;
   font-weight: var(--weight-medium);
   line-height: 1.2;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 /* Square cells stay between a readable floor and ceiling. When the column
    cannot fit every week at the floor, whole older weeks wrap onto a clipped
    second line instead of shrinking the cells further. The newest week is
-   the first child, so row-reverse keeps it at the right edge. */
+   the first child, so row-reverse keeps it last; a column wider than the
+   year at the ceiling leaves the weeks on its leading edge. */
 .empty-home-heatmap {
   container-type: inline-size;
   min-width: 0;
@@ -4273,7 +4052,7 @@ pre {
   display: flex;
   flex-flow: row-reverse wrap;
   align-content: flex-start;
-  justify-content: space-between;
+  justify-content: flex-end;
   column-gap: var(--empty-home-heatmap-gap);
   /* Keep cqi on this box's height, not in an inherited cell-size variable:
      otherwise every day needs style recalculation on each resize frame. */
@@ -4318,16 +4097,18 @@ pre {
 
 /* A month label starts at its week and runs across the following weeks. */
 .empty-home-heatmap-month {
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-size: var(--font-xs);
   line-height: 1.25;
   white-space: nowrap;
   user-select: none;
 }
 
+/* Days without use stay a faint grid so the few active days carry the
+   picture. */
 .empty-home-heatmap-week i {
   border-radius: 2px;
-  background: var(--hairline-soft);
+  background: var(--ink-overlay-4);
 }
 
 .empty-home-heatmap-week i[data-level="1"] {
@@ -4347,8 +4128,9 @@ pre {
 }
 
 /* The idle play's little ball leaves the greeting mascot and plays on the
-   heatmap (useEmptyHomePlay). The layer is the card's padding box, so the
-   ball can start above the card and ripple past the heatmap's clip. Each
+   heatmap (useEmptyHomePlay). The layer covers the overview and paints
+   outside it, so the ball can start above the totals and ripple past the
+   heatmap's clip. Each
    sprite is a track that carries x around a body that carries y. The ball
    wears the mascot's colours; the eyes keep it legible where the body matches
    the surface, as they do for the mascot itself. */
@@ -4494,7 +4276,7 @@ pre {
 }
 
 .empty-home-actions small {
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-size: var(--font-ui);
   font-weight: var(--weight-medium);
   line-height: 1.35;
@@ -4547,7 +4329,7 @@ pre {
   box-shadow: var(--shadow-modal);
   --enter-y: 8px;
   --enter-scale: 0.96;
-  animation: wuu-enter 620ms var(--ease-out) both;
+  animation: wuu-enter var(--motion-slower) var(--ease-out) both;
 }
 
 .wuu-launch-mascot {
@@ -4560,62 +4342,37 @@ pre {
   -webkit-user-drag: none;
 }
 
-.wuu-launch-mark {
+/* The one indeterminate rail for loading that covers a region: a
+ * conversation switch, the settings view, a workspace panel. It is a rhythm
+ * like a spinner's, so it keeps moving under reduced motion: it reports
+ * ongoing work. */
+.loading-rail {
   position: relative;
-  display: inline-flex;
-  align-items: baseline;
-  gap: 3px;
-  color: var(--ink);
-  font-size: 40px;
-  font-weight: var(--weight-bold);
-  line-height: 1;
-}
-
-.wuu-launch-mark::after {
-  display: inline-block;
-  width: 8px;
-  height: 32px;
-  margin-left: 6px;
-  border-radius: var(--radius-xs);
-  background: var(--success);
-  content: "";
-  transform: translateY(4px);
-  animation: wuu-caret 900ms steps(1, end) infinite;
-}
-
-.wuu-launch-mark span {
-  display: inline-block;
-  letter-spacing: 0;
-  transform-origin: 50% 100%;
-  animation: wuu-mark-rise 1400ms cubic-bezier(0.2, 0, 0, 1) infinite;
-}
-
-.wuu-launch-mark span:nth-child(2) {
-  animation-delay: 100ms;
-}
-
-.wuu-launch-mark span:nth-child(3) {
-  animation-delay: 200ms;
-}
-
-.wuu-launch-rail {
-  position: relative;
-  width: 148px;
+  width: 96px;
   height: 3px;
   overflow: hidden;
   border-radius: var(--radius-pill);
   background: var(--surface-3);
 }
 
-.wuu-launch-rail::after {
+.loading-rail::after {
   position: absolute;
-  top: 0;
-  bottom: 0;
-  width: 46px;
+  inset: 0 auto 0 0;
+  width: 40%;
   border-radius: inherit;
-  background: linear-gradient(90deg, transparent, var(--success) 48%, var(--ink));
+  background: var(--ink-soft);
   content: "";
-  animation: wuu-rail-scan 1200ms cubic-bezier(0.2, 0, 0, 1) infinite;
+  animation: loading-rail-scan 1200ms linear infinite;
+}
+
+/* From just outside the start to just outside the end, whatever the width. */
+@keyframes loading-rail-scan {
+  from {
+    translate: -100% 0;
+  }
+  to {
+    translate: 250% 0;
+  }
 }
 
 .view-switch-loading,
@@ -4624,7 +4381,6 @@ pre {
   display: grid;
   align-content: center;
   justify-items: center;
-  gap: 18px;
 }
 
 .view-switch-loading {
@@ -4649,78 +4405,6 @@ pre {
 
 .conversation-pane.environment-panel-reserved .view-switch-loading-conversation {
   padding-right: var(--environment-panel-content-inset);
-}
-
-.view-switch-mark {
-  gap: 3px;
-  color: var(--ink);
-  font-size: 40px;
-}
-
-.view-switch-mark::after {
-  width: 8px;
-  height: 32px;
-  margin-left: 6px;
-  transform: translateY(4px);
-}
-
-.view-switch-rail {
-  width: 148px;
-  height: 3px;
-}
-
-.view-switch-rail::after {
-  width: 46px;
-}
-
-@keyframes wuu-mark-rise {
-  0%,
-  100% {
-    opacity: 0.64;
-    transform: translateY(0);
-  }
-  38% {
-    opacity: 1;
-    transform: translateY(-8px);
-  }
-  70% {
-    opacity: 0.86;
-    transform: translateY(0);
-  }
-}
-
-@keyframes wuu-caret {
-  0%,
-  45% {
-    opacity: 1;
-  }
-  46%,
-  100% {
-    opacity: 0;
-  }
-}
-
-@keyframes wuu-rail-scan {
-  from {
-    transform: translateX(-56px);
-  }
-  to {
-    transform: translateX(158px);
-  }
-}
-
-@container style(--motion-reduced: 1) {
-  .wuu-launch-glass,
-  .wuu-launch-mark::after,
-  .wuu-launch-mark span,
-  .wuu-launch-rail::after {
-    animation: none;
-  }
-
-  .wuu-launch-mark span {
-    opacity: 1;
-    transform: none;
-  }
 }
 
 .project-empty-actions {
@@ -4988,7 +4672,7 @@ pre {
 .tool-diff-preview-truncated {
   flex-shrink: 0;
   font-size: var(--font-xs);
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
 }
 
 .tool-diff-preview-body {
@@ -5005,7 +4689,7 @@ pre {
 .tool-diff-preview-summary {
   display: block;
   padding: 8px 12px;
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   white-space: normal;
 }
 
@@ -5028,7 +4712,7 @@ pre {
 
 .tool-diff-line-number {
   padding: 0 8px;
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   text-align: right;
   user-select: none;
   font-variant-numeric: tabular-nums;
@@ -5046,7 +4730,7 @@ pre {
 }
 
 .tool-diff-line-insert .tool-diff-line-content {
-  color: var(--diff-insert-text-color);
+  color: var(--diff-insert-color);
 }
 
 .tool-diff-line-delete {
@@ -5054,7 +4738,7 @@ pre {
 }
 
 .tool-diff-line-delete .tool-diff-line-content {
-  color: var(--diff-delete-text-color);
+  color: var(--diff-delete-color);
 }
 
 .tool-diff-line-equal {
@@ -5141,7 +4825,7 @@ pre {
   flex-shrink: 0;
   align-items: center;
   gap: 8px;
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-size: var(--font-sm);
 }
 
@@ -5188,7 +4872,7 @@ pre {
   border-radius: var(--radius-media);
   overflow: hidden;
   background: transparent;
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-size: var(--font-xs);
   overflow-wrap: anywhere;
 }
@@ -5205,7 +4889,7 @@ pre {
 }
 
 .turn-artifact-unavailable {
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-size: var(--font-xs);
 }
 
@@ -5284,7 +4968,7 @@ pre {
 }
 
 .artifact-preview-toolbar span {
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-size: var(--font-xs);
 }
 
@@ -5368,7 +5052,7 @@ pre {
   display: grid;
   min-height: 240px;
   place-items: center;
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-size: var(--font-sm);
 }
 
@@ -5547,7 +5231,7 @@ button.turn-edit-summary-overview:focus-visible {
   display: block;
   min-width: 0;
   overflow: hidden;
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-family: var(--font-mono, "SFMono-Regular", Consolas, monospace);
   font-size: var(--font-xs);
   line-height: 1.35;
@@ -5556,7 +5240,7 @@ button.turn-edit-summary-overview:focus-visible {
 }
 
 .turn-edit-summary-overview-meta {
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-size: var(--font-xs);
   line-height: 1.35;
 }
@@ -5625,7 +5309,7 @@ button.turn-edit-summary-overview:focus-visible {
   gap: 10px;
   padding: 8px 12px;
   font-size: var(--font-sm);
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   text-align: center;
 }
 
@@ -5683,7 +5367,7 @@ button.turn-edit-summary-overview:focus-visible {
   background: var(--ink-overlay-6);
   font-size: var(--font-sm);
   line-height: 1;
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   flex: 0 0 auto;
 }
 
@@ -5860,7 +5544,7 @@ button.turn-sources-pill:focus-visible {
    * is set on the button itself so screen readers and copy/paste
    * both get the number. */
   background: var(--paper);
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-size: 10px;
   font-weight: var(--weight-semibold, 600);
   line-height: 1;
@@ -5920,7 +5604,7 @@ button.turn-sources-pill:focus-visible {
   display: block;
   font-size: var(--font-xs);
   line-height: var(--line-ui);
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;

@@ -3,10 +3,6 @@
   background: var(--field-hover-bg);
 }
 
-.catalog-search input::placeholder {
-  color: var(--ink-tertiary);
-}
-
 @container style(--motion-reduced: 1) {
   .catalog-search {
     transition: none;
@@ -45,20 +41,12 @@
   font-size: var(--font-ui);
 }
 
-.menu-search input::placeholder {
-  color: var(--ink-tertiary);
-}
-
 .menu-search svg {
   flex: 0 0 auto;
 }
 
 .menu-search.conversation-search-input-wrap {
   border-bottom: 0;
-}
-
-.workspace-diff-search {
-  margin: 0 8px 7px;
 }
 
 /* Host settings and extension settings share the same switch. The target is

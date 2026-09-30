@@ -59,10 +59,11 @@ export function AppearanceTypography({ section = "text" }: { section?: "text" | 
     { key: "codeFont", label: "settings.codeFont" },
   ] as const;
   const fontsAreDefault = preferences.uiFont === appearanceDefaults.uiFont && preferences.codeFont === appearanceDefaults.codeFont;
+  // Resetting is offered only when there is something to reset.
   return <SettingsSection
     title={t("settings.sectionText")}
     testID="settings-typography"
-    actions={<button type="button" className="settings-button settings-button-ghost" disabled={fontsAreDefault}
+    actions={fontsAreDefault ? undefined : <button type="button" className="settings-button settings-button-ghost"
       onClick={() => update({ uiFont: appearanceDefaults.uiFont, codeFont: appearanceDefaults.codeFont })}>{t("settings.resetFonts")}</button>}
   >
     <SettingsGroup>

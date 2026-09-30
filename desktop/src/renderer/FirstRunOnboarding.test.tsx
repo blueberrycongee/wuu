@@ -187,8 +187,9 @@ describe("FirstRunOnboarding", () => {
 
     expect(container.querySelector(".onboarding-stage-provider")).not.toBeNull();
     expect(container.querySelector("input")).toBeNull();
-    expect(container.querySelector("dl")?.textContent).toContain("openai");
-    expect(container.querySelector("dl")?.textContent).toContain("gpt-5");
+    expect(container.querySelector(".model-service-tile")).toBeNull();
+    expect(container.querySelector(".onboarding-connection")?.textContent).toContain("openai");
+    expect(container.querySelector(".onboarding-connection")?.textContent).toContain("gpt-5");
     await clickButton("继续");
     expect(container.querySelector(".onboarding-stage-ready")).not.toBeNull();
   });
@@ -209,7 +210,7 @@ describe("FirstRunOnboarding", () => {
       );
     });
     await clickButton("开始设置");
-    expect(container.textContent).toContain("正在准备随包插件");
+    expect(container.querySelector(".onboarding-status[role=status]")).not.toBeNull();
 
     await act(async () => {
       root.render(
@@ -229,11 +230,12 @@ describe("FirstRunOnboarding", () => {
       );
     });
 
-    expect(container.textContent).not.toContain("正在准备随包插件");
-    const selectedPlugins = () => [...container.querySelectorAll(".onboarding-plugin[aria-pressed=true] strong")]
-      .map((node) => node.textContent);
+    expect(container.querySelector(".onboarding-status")).toBeNull();
+    const selectedPlugins = () => [...container.querySelectorAll(".onboarding-plugin")]
+      .filter((row) => row.querySelector("[role=switch]")?.getAttribute("aria-checked") === "true")
+      .map((row) => row.querySelector(".catalog-row-title")?.textContent);
     expect(selectedPlugins()).toEqual(["automation"]);
-    expect(container.querySelector(".onboarding-presets .is-selected")?.textContent).toBe("推荐");
+    expect(container.querySelector(".onboarding-presets [aria-pressed=true]")?.textContent).toBe("推荐");
     await clickButton("全部");
     expect(selectedPlugins()).toHaveLength(6);
     await clickButton("推荐");
@@ -304,7 +306,7 @@ describe("FirstRunOnboarding", () => {
     for (const id of ONBOARDING_PLUGIN_ORDER) {
       await clickPlugin(id);
       selected.push(id);
-      expect(container.querySelectorAll(".onboarding-plugin[aria-pressed=true]")).toHaveLength(selected.length);
+      expect(container.querySelectorAll(".onboarding-plugin [role=switch][aria-checked=true]")).toHaveLength(selected.length);
       const expected = selected.filter((pluginID) => pluginID !== "subagent");
       expect(wornCapabilities().sort()).toEqual([...expected].sort());
       for (const decoration of expected) {
@@ -389,11 +391,13 @@ describe("FirstRunOnboarding", () => {
     expect(update).toHaveBeenCalledWith({ id: "plugin:bundled:ask-user", action: "disable" });
     expect(complete).not.toHaveBeenCalled();
 
-    expect(container.textContent).toContain("先决定谁来执行任务");
+    expect(container.querySelector(".onboarding-stage-runtime")).not.toBeNull();
     await clickButton("继续");
 
-    await clickButton("稍后配置");
-    expect(container.textContent).toContain("你的 Wuu 已经准备好了");
+    await clickButton("稍后连接");
+    expect(container.querySelector(".onboarding-stage-ready")).not.toBeNull();
+    // Without a model, the last step says so instead of claiming Wuu can answer.
+    expect(container.querySelector(".onboarding-stage-ready .onboarding-lead")).not.toBeNull();
     expect(complete).not.toHaveBeenCalled();
 
     await clickButton("开始使用 Wuu");
@@ -404,7 +408,61 @@ describe("FirstRunOnboarding", () => {
     root = createRoot(container);
   });
 
-  it("configures Grok Build without asking for an API key", async () => {
+  it("connects a catalog service with only its key and makes it the default", async () => {
+    const save = vi.fn(async () => undefined);
+    window.wuu.listCatalogProviders = vi.fn(async (provider?: string) => ({
+      providers: [{
+        id: "deepseek",
+        name: "DeepSeek",
+        type: "openai-compatible",
+        base_url: "https://api.deepseek.com",
+        model_count: 2,
+        default_model: "deepseek-chat",
+        ...(provider ? { models: [{ id: "deepseek-chat", tool_call: true }, { id: "deepseek-reasoner", tool_call: true }] } : {}),
+      }],
+    }));
+    await act(async () => {
+      root.render(
+        <I18nProvider>
+          <FirstRunOnboarding
+            inventory={[plugin("ask-user", false)]}
+            providers={[]}
+            onUpdateExtensionPackage={vi.fn(async () => undefined)}
+            onSaveProvider={save}
+            onComplete={vi.fn(async () => undefined)}
+          />
+        </I18nProvider>,
+      );
+    });
+    await clickButton("开始设置");
+    await clickButton("极简");
+    await clickButton("继续");
+    await clickButton("继续");
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>(".model-service-tile[data-catalog=deepseek]")!.click();
+    });
+    const key = document.querySelector<HTMLInputElement>("[data-testid=settings-provider-connect-key]")!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(key, "sk-test");
+      key.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>("[data-testid=settings-provider-connect]")!.click();
+    });
+
+    expect(save).toHaveBeenCalledWith("deepseek", "deepseek-chat", {
+      type: "openai-compatible",
+      create_provider: true,
+      keep_selection: false,
+      base_url: "https://api.deepseek.com",
+      api_key: "sk-test",
+    });
+    expect(container.querySelector(".onboarding-stage-ready")).not.toBeNull();
+    expect(container.querySelector(".onboarding-stage-ready .onboarding-lead")).toBeNull();
+  });
+
+  it("connects Grok Build without asking for an API key", async () => {
     const save = vi.fn(async () => undefined);
     await act(async () => {
       root.render(
@@ -424,19 +482,50 @@ describe("FirstRunOnboarding", () => {
     await clickButton("继续");
     await clickButton("继续");
 
-    const type = container.querySelector("select") as HTMLSelectElement;
     await act(async () => {
-      type.value = "grok-build";
-      type.dispatchEvent(new Event("change", { bubbles: true }));
+      container.querySelector<HTMLButtonElement>(".model-service-tile[data-subscription=grok-build]")!.click();
     });
-    expect(container.textContent).toContain("grok login");
-    expect(container.querySelector("input[type='password']")).toBeNull();
-    await clickButton("继续");
+    expect(document.querySelector("[data-testid=settings-provider-connect-key]")).toBeNull();
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>("[data-testid=settings-provider-connect]")!.click();
+    });
     expect(save).toHaveBeenCalledWith("grok-build", "grok-4.5", {
       type: "grok-build",
       create_provider: true,
-      base_url: "https://cli-chat-proxy.grok.com/v1",
+      keep_selection: false,
     });
+    expect(container.querySelector(".onboarding-stage-ready")).not.toBeNull();
+  });
+
+  it("opens each step on its title and takes the primary action on Enter", async () => {
+    const update = vi.fn(async () => undefined);
+    await act(async () => {
+      root.render(
+        <I18nProvider>
+          <FirstRunOnboarding
+            inventory={[plugin("automation", false)]}
+            providers={[]}
+            onUpdateExtensionPackage={update}
+            onSaveProvider={vi.fn(async () => undefined)}
+            onComplete={vi.fn(async () => undefined)}
+          />
+        </I18nProvider>,
+      );
+    });
+    const title = () => container.querySelector<HTMLHeadingElement>(".onboarding-heading > h1");
+    const pressEnter = async () => {
+      await act(async () => {
+        document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+      });
+    };
+    expect(document.activeElement).toBe(title());
+    await pressEnter();
+    expect(container.querySelector(".onboarding-stage-plugins")).not.toBeNull();
+    expect(document.activeElement).toBe(title());
+    await pressEnter();
+    expect(update).toHaveBeenCalledWith({ id: "plugin:bundled:automation", action: "enable" });
+    expect(container.querySelector(".onboarding-stage-runtime")).not.toBeNull();
+    expect(document.activeElement).toBe(title());
   });
 
   it("lets the user confirm a discovered Codex login before using it", async () => {
@@ -506,12 +595,12 @@ describe("FirstRunOnboarding", () => {
     await clickButton("继续");
     expect(save).not.toHaveBeenCalled();
     if (mode === "skip") {
-      await clickButton("稍后配置");
+      await clickButton("稍后连接");
     } else {
       const reuse = container.querySelector<HTMLButtonElement>('[data-testid="onboarding-reuse-codex"]')!;
       await act(async () => reuse.click());
       if (mode === "retry") {
-        expect(container.querySelector('[role="alert"]')?.textContent).toBe("Connection unavailable");
+        expect(container.querySelector('[role="alert"]')?.textContent).toContain("Connection unavailable");
         expect(container.querySelector(".onboarding-stage-provider")).not.toBeNull();
         expect(reuse.disabled).toBe(false);
         await act(async () => reuse.click());
@@ -558,32 +647,40 @@ describe("FirstRunOnboarding", () => {
       );
     });
 
-    expect(container.querySelector("[data-testid=\"onboarding-preview-exit\"]")?.textContent).toBe("退出预览");
+    expect(container.querySelector("[data-testid=\"onboarding-preview-exit\"]")).not.toBeNull();
     await clickButton("开始设置");
-    expect(container.querySelectorAll('.onboarding-plugin[aria-pressed="true"]').length).toBeGreaterThan(0);
+    expect(container.querySelectorAll('.onboarding-plugin [role=switch][aria-checked="true"]').length).toBeGreaterThan(0);
     await clickPlugin("Goal");
     expect(mascotStage()?.querySelector('[data-onboarding-capability="goal"]')).not.toBeNull();
     await clickButton("继续");
-    const installedChoice = container.querySelector<HTMLButtonElement>(`[data-testid="onboarding-engine-${installed}"]`)!;
+    const installedChoice = container.querySelector<HTMLInputElement>(`[data-testid="onboarding-engine-${installed}"]`)!;
     expect(installedChoice.disabled).toBe(false);
-    expect(container.querySelector<HTMLButtonElement>(`[data-testid="onboarding-engine-${missing}"]`)?.disabled).toBe(true);
+    // An agent that cannot run is not offered; Settings is where it gets installed.
+    expect(container.querySelector(`[data-testid="onboarding-engine-${missing}"]`)).toBeNull();
     await act(async () => installedChoice.click());
-    expect(installedChoice.getAttribute("aria-checked")).toBe("true");
+    expect(installedChoice.checked).toBe(true);
     await clickButton("继续");
     expect(container.querySelector('[data-testid="onboarding-reuse-codex"]')).toBeNull();
-    const inputs = [...container.querySelectorAll<HTMLInputElement>("input")];
-    expect(inputs).toHaveLength(3);
-    expect(inputs.every((input) => input.value === "")).toBe(true);
     if (mode === "skip") {
-      await clickButton("稍后配置");
+      await clickButton("稍后连接");
     } else {
       await act(async () => {
-        for (const [index, value] of ["preview-provider", "preview-model", "not-a-real-key"].entries()) {
-          Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(inputs[index], value);
-          inputs[index].dispatchEvent(new Event("input", { bubbles: true }));
-        }
+        container.querySelector<HTMLButtonElement>("[data-testid=settings-provider-custom]")!.click();
       });
-      await clickButton("继续");
+      for (const [testID, value] of [
+        ["settings-provider-connect-base-url", "https://preview.invalid/v1"],
+        ["settings-provider-connect-key", "not-a-real-key"],
+        ["settings-provider-connect-model", "preview-model"],
+      ]) {
+        const input = document.querySelector<HTMLInputElement>(`[data-testid=${testID}]`)!;
+        await act(async () => {
+          Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value);
+          input.dispatchEvent(new Event("input", { bubbles: true }));
+        });
+      }
+      await act(async () => {
+        document.querySelector<HTMLButtonElement>("[data-testid=settings-provider-connect]")!.click();
+      });
     }
     expect(container.querySelector(".onboarding-stage-ready")).not.toBeNull();
     await clickButton("开始使用 Wuu");
@@ -605,13 +702,14 @@ describe("FirstRunOnboarding", () => {
     });
   }
 
+  // Clicks the plugin's row, which labels its switch.
   async function clickPlugin(name: string): Promise<void> {
-    const button = [...container.querySelectorAll(".onboarding-plugin")].find(
-      (candidate) => candidate.querySelector("strong")?.textContent === name,
+    const row = [...container.querySelectorAll(".onboarding-plugin")].find(
+      (candidate) => candidate.querySelector(".catalog-row-title")?.textContent === name,
     );
-    expect(button, `missing plugin ${name}`).toBeDefined();
+    expect(row, `missing plugin ${name}`).toBeDefined();
     await act(async () => {
-      button?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      row?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
   }
 
