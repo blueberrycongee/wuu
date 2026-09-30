@@ -120,6 +120,8 @@ Go 核心，使用一次性配置、Git 夹具和本地模型服务，真正在 
 
 不可逆或会打断工作的操作通过 [`ConfirmDialog.tsx`](../../../desktop/src/renderer/ConfirmDialog.tsx) 里的 `confirmAction` 询问。它像被替换的原生提示一样返回用户的回答，并沿用产品自己的字体、主题和文案：标题写明对象，一句话说明标题没有说清的后果，确认按钮重复动词；销毁数据的操作用 `tone: "danger"` 标记。不要调用 `window.confirm`。
 
+Agent 的提问或引擎的批准请求是一张卡片：作为提示盖在输入框上，或在阅读流里紧挨着对应回合。巡检里的 Agent 不会拿到 `ask_user`，引擎批准也需要真实引擎，所以通过 `/dev/question-card/` 预览正式的卡片，可选参数包括 `theme=dark`、`size=20`、`lang=en`、`width=`、`inline`、`two`、`approval`、`long`、`multi` 和 `expires`。请求均为示例数据，不会发送任何内容。
+
 ## 巡检整个产品
 
 `npm --prefix desktop run test:e2e:ui-tour` 使用一次性配置和主目录、示例项目与脚本化的本地模型服务，驱动真实的 Electron 应用、preload 和 Go 核心，不涉及账号或模型。它通过真实输入框生成对话（纯文本、工具调用、思考过程、被拒绝的凭据），再在由主题、界面字号和窗口宽度组成的矩阵中，逐个外观访问主要界面：主页、对话、输入栏菜单、工作区面板标签、搜索、插件、账户菜单和每个设置页。默认矩阵是浅色、深色、20px 界面字号和 720px 宽的窗口。

@@ -138,6 +138,8 @@ A turn that ends in failure shows one card: what happened in plain words, the HT
 
 Irreversible or disruptive actions ask through `confirmAction` in [`ConfirmDialog.tsx`](../../../desktop/src/renderer/ConfirmDialog.tsx), which resolves to the answer like the native prompt it replaced and follows the product's type, theme, and copy. The title names the object, one sentence states the consequence the title does not, and the confirm button repeats the verb; `tone: "danger"` marks actions that destroy data. Do not call `window.confirm`.
 
+A question the agent asks, or an engine's approval request, is one card: over the composer as an offer, or in the reading flow beside its turn. The tour's agent is never offered `ask_user` and engine approvals need an engine, so preview the production card at `/dev/question-card/` with optional `theme=dark`, `size=20`, `lang=en`, `width=`, `inline`, `two`, `approval`, `long`, `multi`, and `expires`. Its requests are synthetic and nothing is sent.
+
 ## Walk the whole product
 
 `npm --prefix desktop run test:e2e:ui-tour` drives the real Electron app, preload, and Go core with a disposable profile and home directory, synthetic projects, and a scripted local provider, so no account or model is involved. It seeds conversations through the real composer (plain text, tool calls, reasoning, a rejected credential), then visits the main surfaces — home, conversations, composer menus, workspace panel tabs, search, Plugins, the account menu, and every Settings page — in each appearance of a matrix of theme, UI text size, and window width. The default matrix is light, dark, 20px UI text, and a 720px window.
