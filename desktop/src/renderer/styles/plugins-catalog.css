@@ -458,8 +458,9 @@ button.catalog-row,
 }
 
 /* What the plugin adds and what it asks to do are rows without an open
- * target unless they open something; they keep the row height. */
-.catalog-row:is(.plugin-contribution, .plugin-permission-row) {
+ * target unless they open something, like the services onboarding lists as
+ * connected; they keep the row height. */
+.catalog-row:is(.plugin-contribution, .plugin-permission-row, .onboarding-connection) {
   min-height: calc(var(--control-field-height) + var(--space-3) * 2);
   padding: var(--space-3) 0;
   cursor: default;

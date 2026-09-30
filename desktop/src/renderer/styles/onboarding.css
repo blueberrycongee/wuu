@@ -1,226 +1,117 @@
-:root {
-  --onboarding-white: var(--paper);
-  --onboarding-ink-strong: var(--ink-strong);
-  --onboarding-ink: var(--ink);
-  --onboarding-ink-hover: var(--ink-strong);
-  --onboarding-ink-selected: var(--ink);
-  --onboarding-ink-check: var(--ink);
-  --onboarding-copy: var(--ink-soft);
-  --onboarding-copy-strong: var(--ink-soft);
-  --onboarding-copy-description: var(--ink-soft);
-  --onboarding-copy-card: var(--ink-tertiary);
-  --onboarding-copy-muted: var(--ink-tertiary);
-  --onboarding-copy-loading: var(--ink-tertiary);
-  --onboarding-copy-back: var(--ink-tertiary);
-  --onboarding-copy-label: var(--ink-soft);
-  --onboarding-progress-idle: var(--hairline-strong);
-  --onboarding-surface-soft: var(--surface-1);
-  --onboarding-surface-selected: var(--surface-2);
-  --onboarding-border: var(--hairline);
-  --onboarding-border-focus: var(--hairline-strong);
-  --onboarding-error: var(--danger);
-}
+/* First-run setup. The window opens at 920x720 and cannot be resized, so the
+ * column narrows only on small displays. Each step is a title, its choices
+ * and the actions that move on, built from the product's own controls. */
 
 .first-run-onboarding {
   position: fixed;
   inset: 0;
-  z-index: 1000;
   display: grid;
   grid-template-rows: var(--window-titlebar-height) minmax(0, 1fr);
   overflow: hidden;
-  background: var(--onboarding-white);
-  color: var(--onboarding-ink-strong);
-  font-family: inherit;
+  background: var(--paper);
+  color: var(--ink);
 }
 
 .onboarding-chrome {
   display: grid;
   grid-template-columns: 1fr auto 1fr;
-  height: var(--window-titlebar-height);
-  min-height: var(--window-titlebar-height);
   align-items: center;
-  padding: 0 var(--window-titlebar-padding-inline);
+  padding-inline: var(--window-titlebar-padding-inline);
   -webkit-app-region: drag;
 }
 
-.onboarding-wordmark {
-  font-size: 17px;
-  font-weight: 720;
-  letter-spacing: -0.04em;
-}
-
-.onboarding-chrome-end {
-  justify-self: end;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-height: max(30px, var(--control-row-height));
-  height: auto;
-  -webkit-app-region: no-drag;
-}
-
-.onboarding-preview-exit {
-  -webkit-app-region: no-drag;
-  min-height: max(28px, var(--control-row-height));
-  height: auto;
-  padding: 0 12px;
-  border: 1px solid var(--onboarding-border);
-  border-radius: var(--radius-pill);
-  background: transparent;
-  color: var(--onboarding-copy-back);
-  font: inherit;
-  font-size: var(--font-sm);
-  font-weight: 560;
-  letter-spacing: -0.01em;
-}
-
+/* Finished steps are ink dots, the current step a short capsule, the steps
+ * still to come faint dots. */
 .onboarding-progress {
   grid-column: 2;
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: var(--space-2);
 }
 
 .onboarding-progress-dot {
-  width: 5px;
-  height: 5px;
+  width: 6px;
+  height: 6px;
   border-radius: var(--radius-pill);
-  background: var(--onboarding-progress-idle);
-  transition: width var(--motion-base) var(--ease-out), background-color var(--motion-base) var(--ease-out);
+  background: var(--hairline-strong);
+  transition:
+    width var(--motion-base) var(--ease-out),
+    background-color var(--motion-base) var(--ease-out);
 }
 
-.onboarding-progress-dot.is-active {
-  width: 16px;
-  background: var(--onboarding-ink-check);
+.onboarding-progress-dot[data-state] {
+  background: var(--ink-strong);
 }
 
+.onboarding-progress-dot[data-state="current"] {
+  width: 18px;
+}
+
+.onboarding-preview-exit {
+  grid-column: 3;
+  justify-self: end;
+  -webkit-app-region: no-drag;
+}
+
+/* A step keeps its title at the top and its actions at the bottom, so
+ * neither moves as the steps change length; the choices take the space
+ * between. */
 .onboarding-stage {
   display: flex;
-  flex-direction: column;
-  width: min(824px, 100%);
   box-sizing: border-box;
-  align-self: center;
-  max-height: calc(100% - 32px);
-  margin: 0 auto;
+  width: min(100%, calc(var(--content-column-width) + var(--page-padding) * 2));
   min-height: 0;
-  padding: 8px 32px 24px;
-  gap: 24px;
-}
-
-.onboarding-body {
-  flex: 0 1 auto;
-  min-height: 0;
-  overflow: auto;
-  scrollbar-gutter: stable;
-  padding: 2px;
-}
-
-.onboarding-mascot {
-  display: block;
-  flex: 0 0 auto;
-}
-
-.onboarding-masthead h1 {
-  margin: 0;
-  color: var(--onboarding-ink-strong);
-  font-size: var(--font-hero);
-  font-weight: 590;
-  letter-spacing: -0.02em;
-  line-height: 1.2;
-}
-
-.onboarding-primary,
-.onboarding-secondary,
-.onboarding-back,
-.onboarding-presets button,
-.onboarding-plugin {
-  -webkit-app-region: no-drag;
-  font: inherit;
-}
-
-.onboarding-primary,
-.onboarding-secondary {
-  min-height: 42px;
-  border: 1px solid transparent;
-  border-radius: var(--radius-md);
-  padding: 0 20px;
-  cursor: pointer;
-  font-size: var(--font-ui);
-  font-weight: var(--weight-medium);
-  transition: transform var(--motion-fast) var(--ease-out), opacity var(--motion-fast) var(--ease-out), background-color var(--motion-fast) var(--ease-out);
-}
-
-.onboarding-primary {
-  background: var(--onboarding-ink);
-  color: var(--onboarding-white);
-}
-
-.onboarding-primary:hover:not(:disabled) {
-  background: var(--onboarding-ink-hover);
-}
-
-.onboarding-primary:disabled {
-  cursor: default;
-  opacity: 0.45;
-}
-
-.onboarding-secondary {
-  background: var(--onboarding-surface-soft);
-  color: var(--onboarding-copy-strong);
-}
-
-.onboarding-secondary:hover:not(:disabled) {
-  background: var(--onboarding-surface-selected);
-}
-
-.onboarding-panel,
-.onboarding-welcome {
-  display: flex;
   flex-direction: column;
-  flex: 0 1 auto;
-  min-height: 0;
-  width: 100%;
+  gap: var(--space-6);
+  margin-inline: auto;
+  padding: var(--space-2) var(--page-padding) var(--page-padding);
+}
+
+
+.onboarding-masthead {
+  display: grid;
+  flex: none;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-6);
+}
+
+.onboarding-heading {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-2);
   --enter-y: 8px;
   animation: wuu-enter var(--motion-slow) var(--ease-out) both;
 }
 
-.onboarding-stage-runtime,
-.onboarding-stage-provider {
-  width: min(824px, 100%);
+.onboarding-heading > h1 {
+  margin: 0;
+  color: var(--ink-strong);
+  font-size: var(--font-display);
+  font-weight: var(--weight-semibold);
+  line-height: 1.25;
+  overflow-wrap: anywhere;
 }
 
-.onboarding-stage-plugins {
-  align-self: start;
-  gap: 16px;
+/* A step's title takes focus when the step opens so that it is announced;
+ * it is not a control and draws no ring. */
+.first-run-onboarding .onboarding-heading > h1:focus-visible {
+  outline: none;
 }
 
-.onboarding-stage-plugins .onboarding-masthead {
-  min-height: clamp(64px, calc(100vh - 600px), 120px);
+.onboarding-lead {
+  max-width: 60ch;
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: var(--font-ui);
+  line-height: 1.5;
 }
 
-.onboarding-stage-plugins .onboarding-masthead .onboarding-plugin-mascot-stage {
-  width: 144px;
-  height: clamp(64px, calc(100vh - 600px), 120px);
-}
-
-.onboarding-stage-plugins .onboarding-masthead .onboarding-mascot-pack {
-  transform: translate(-50%, -50%) scale(0.5);
-}
-
-.onboarding-plugins-panel .onboarding-plugin {
-  min-height: 68px;
-  padding-block: 8px;
-}
-
-.onboarding-plugins-panel .onboarding-actions {
-  margin-top: 16px;
-}
-
-/* Sparse steps form one focal group, not an empty form with a pinned footer. */
+/* Welcome and ready are greetings: the mascot over a title in the home
+ * greeting's serif, centred above their one action. */
 .onboarding-stage-welcome,
 .onboarding-stage-ready {
-  overflow: auto;
-  gap: 32px;
+  justify-content: center;
   text-align: center;
 }
 
@@ -228,60 +119,20 @@
 .onboarding-stage-ready .onboarding-masthead {
   display: flex;
   flex-direction: column-reverse;
-  gap: 24px;
-}
-
-.onboarding-welcome .onboarding-actions {
-  justify-content: center;
-  margin-top: 0;
-}
-
-.onboarding-connection-summary {
-  display: grid;
-  gap: 12px;
-  margin: 0;
-}
-
-.onboarding-connection-summary > div {
-  border: 0;
-  border-radius: var(--radius-md);
-  padding: 16px;
-  overflow-wrap: anywhere;
-  background: var(--onboarding-surface-soft);
-}
-
-.onboarding-connection-summary dt {
-  font-size: var(--font-ui);
-  font-weight: var(--weight-medium);
-}
-
-.onboarding-connection-summary dd {
-  margin: 6px 0 0;
-  color: var(--onboarding-copy-muted);
-  font-size: var(--font-ui);
-}
-
-.onboarding-provider-description {
-  max-width: 640px;
-  margin: 0 0 16px;
-  color: var(--onboarding-copy-description);
-  font-size: var(--font-ui);
-  line-height: 1.65;
-}
-
-.onboarding-connection-alternative {
-  margin: 0 0 16px;
-  color: var(--onboarding-copy-muted);
-  font-size: var(--font-sm);
-}
-
-.onboarding-masthead {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: 24px;
-  flex: 0 0 auto;
-  min-height: 140px;
+}
+
+.onboarding-stage-welcome .onboarding-heading > h1,
+.onboarding-stage-ready .onboarding-heading > h1 {
+  font-family: var(--empty-home-title-font);
+  font-size: var(--font-hero);
+  font-weight: var(--weight-medium);
+  line-height: 1.2;
+}
+
+.onboarding-stage-welcome .onboarding-lead,
+.onboarding-stage-ready .onboarding-lead {
+  margin-inline: auto;
 }
 
 .onboarding-masthead .onboarding-plugin-mascot-stage {
@@ -437,390 +288,164 @@
 .equipment-progress-current { stroke: var(--equipment-accent); }
 .equipment-progress-next { opacity: 0.25; }
 
+/* Inside the steps the mascot is a small companion beside the title. */
+:is(.onboarding-stage-plugins, .onboarding-stage-runtime, .onboarding-stage-provider) .onboarding-plugin-mascot-stage {
+  width: 120px;
+  height: 100px;
+}
+
+:is(.onboarding-stage-plugins, .onboarding-stage-runtime, .onboarding-stage-provider) .onboarding-mascot-pack {
+  transform: translate(-50%, -50%) scale(0.5);
+}
+
+/* The choices scroll between the title and the actions, and the edge fade
+ * says when there are more. The inline bleed keeps row hover surfaces and
+ * focus rings inside the scroller while the text stays on the column edge. */
+.onboarding-body {
+  display: flex;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--space-4);
+  margin-inline: calc(var(--space-2) * -1);
+  overflow: auto;
+  padding: var(--space-1) var(--space-2);
+}
+
+.onboarding-body > * {
+  --enter-y: 8px;
+  animation: wuu-enter var(--motion-slow) var(--ease-out) both;
+}
+
 .onboarding-presets {
-  display: inline-flex;
-  gap: 8px;
-  flex-wrap: wrap;
+  align-self: flex-start;
 }
 
-.onboarding-presets button {
-  min-width: 76px;
-  border: 0;
-  border-radius: var(--radius-pill);
-  padding: 8px 14px;
-  background: transparent;
-  color: var(--onboarding-copy-muted);
-  cursor: pointer;
-  font-size: var(--font-sm);
-  font-weight: 620;
-}
-
-.onboarding-presets button.is-selected {
-  background: var(--onboarding-surface-selected);
-  color: var(--onboarding-ink-selected);
-}
-
-.onboarding-plugin-grid,
-.onboarding-choice-grid {
+.onboarding-plugins {
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 10px;
-  align-content: start;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 18em), 1fr));
+  gap: var(--space-1) var(--space-6);
 }
 
-.onboarding-presets {
-  margin-bottom: 16px;
-}
-
-.onboarding-plugin-grid {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-}
-
-.onboarding-plugin-grid > :nth-child(n) {
-  grid-column: span 2;
-}
-
-.onboarding-plugin-grid > :last-child:nth-child(odd) {
-  grid-column: 2 / span 2;
+/* A plugin reads like its catalog row, with the switch that turns it on;
+ * an agent reads like its Settings row, with the radio that makes it the
+ * default. The whole row is the control's label. */
+.onboarding-plugin,
+.onboarding-engine {
+  display: grid;
+  min-width: 0;
+  align-items: center;
+  column-gap: var(--space-3);
+  margin-inline: calc(var(--space-2) * -1);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2);
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--ease-out);
 }
 
 .onboarding-plugin {
+  grid-template-columns: var(--icon-size-lg) minmax(0, 1fr) auto;
+}
+
+.onboarding-plugin > .settings-switch {
+  grid-column: 3;
+  grid-row: 1 / span 2;
+}
+
+.onboarding-engines {
   display: grid;
-  grid-template-columns: 36px minmax(0, 1fr) 22px;
-  align-items: center;
-  gap: 10px;
-  min-height: 76px;
-  border: 0;
-  border-radius: var(--radius-md);
-  padding: 12px;
-  background: var(--onboarding-surface-soft);
-  color: var(--onboarding-ink);
-  cursor: pointer;
-  text-align: left;
-  transition: background-color var(--motion-fast) var(--ease-out);
+  gap: var(--space-1);
 }
 
-.onboarding-plugin:hover:not(:disabled) {
-  background: var(--onboarding-surface-selected);
+.onboarding-engine {
+  grid-template-columns: auto var(--icon-size-lg) minmax(0, 1fr);
 }
 
-.onboarding-plugin.is-selected {
-  background: var(--onboarding-surface-selected);
+.onboarding-engine > .settings-engine-radio {
+  grid-column: 1;
+  grid-row: 1;
 }
 
-.onboarding-plugin-icon {
-  display: grid;
-  width: 36px;
-  height: 36px;
-  place-items: center;
-  overflow: hidden;
-  border: 0;
-  border-radius: var(--radius-xs);
-  background: transparent;
+.onboarding-engine > .catalog-row-mark {
+  grid-column: 2;
 }
 
-.onboarding-plugin-icon > svg,
-.onboarding-plugin-icon > img,
-.onboarding-plugin-icon .plugin-icon-themed {
-  width: 25px;
-  height: 25px;
+.onboarding-engine > :is(.catalog-row-title, .catalog-row-description) {
+  grid-column: 3;
 }
 
-.onboarding-plugin-copy {
-  display: grid;
-  min-width: 0;
-  gap: 5px;
+.onboarding-plugin:hover,
+.onboarding-engine:hover {
+  background: var(--surface-1);
 }
 
-.onboarding-plugin-copy strong {
-  overflow: hidden;
-  font-size: var(--font-ui);
-  font-weight: var(--weight-medium);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.onboarding-plugin-copy > span {
-  display: -webkit-box;
-  overflow: hidden;
-  color: var(--onboarding-copy-card);
+.onboarding-recommended {
+  margin-inline-start: var(--space-2);
+  color: var(--ink-tertiary);
   font-size: var(--font-sm);
-  line-height: 1.45;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
 }
 
-.onboarding-plugin-check {
-  display: grid;
-  width: 20px;
-  height: 20px;
-  place-items: center;
-  padding: 0;
-  color: var(--onboarding-ink-check);
-}
-
-.onboarding-plugin-check svg {
-  width: 13px;
-  height: 13px;
-  stroke-width: 2.5;
-}
-
-.onboarding-choice {
-  display: grid;
-  grid-template-columns: 36px minmax(0, 1fr) 22px;
-  align-items: center;
-  gap: 13px;
-  min-height: 76px;
-  border: 0;
-  border-radius: var(--radius-md);
-  padding: 14px;
-  background: var(--onboarding-surface-soft);
-  color: var(--onboarding-ink);
-  cursor: pointer;
-  text-align: left;
-  transition: background-color var(--motion-fast) var(--ease-out);
-}
-
-.onboarding-choice:hover:not(:disabled) {
-  background: var(--onboarding-surface-selected);
-}
-
-.onboarding-choice.is-selected {
-  background: var(--onboarding-surface-selected);
-}
-
-.onboarding-choice:disabled {
-  cursor: default;
-  opacity: 0.62;
-}
-
-.onboarding-choice-copy {
-  display: grid;
-  min-width: 0;
-  gap: 5px;
-}
-
-.onboarding-choice-copy strong {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: var(--font-ui);
-  font-weight: var(--weight-medium);
-}
-
-.onboarding-choice-copy em {
-  font-size: var(--font-xs);
-  font-style: normal;
-  font-weight: 620;
-  color: var(--onboarding-copy-muted);
-}
-
-.onboarding-choice-copy > span {
-  color: var(--onboarding-copy-card);
-  font-size: var(--font-sm);
-  line-height: 1.45;
-}
-
-.onboarding-reuse {
-  display: grid;
-  width: 100%;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-  align-items: start;
-  gap: 8px;
-  margin-bottom: 20px;
-  padding: 14px;
-  border: 0;
-  border-radius: var(--radius-md);
-  background: var(--onboarding-surface-soft);
-  color: var(--onboarding-ink);
-  transition: background-color var(--motion-fast) var(--ease-out);
-}
-
-.onboarding-reuse:hover:not(:disabled) {
-  background: var(--onboarding-surface-selected);
-}
-
-.onboarding-reuse:disabled {
-  cursor: default;
-  opacity: 0.62;
-}
-
-.onboarding-reuse strong {
-  font-size: var(--font-ui);
-  font-weight: var(--weight-medium);
-}
-
-.onboarding-reuse > span {
-  color: var(--onboarding-copy-card);
-  font-size: var(--font-sm);
-  line-height: 1.45;
-}
-
-.onboarding-loading {
-  display: flex;
-  min-height: 180px;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  color: var(--onboarding-copy-loading);
-  font-size: var(--font-ui);
-}
-
-.onboarding-loading svg {
-  width: 17px;
-}
-
-.onboarding-actions {
-  display: flex;
-  flex-shrink: 0;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  margin-top: 24px;
-}
-
-.onboarding-actions-end {
-  justify-content: flex-end;
-}
-
-/* Equal footprints keep navigation balanced; fill establishes priority. */
-.onboarding-actions .onboarding-primary,
-.onboarding-actions .onboarding-back {
-  box-sizing: border-box;
-  display: inline-flex;
-  flex: 0 0 auto;
-  align-items: center;
-  justify-content: center;
-  width: 120px;
-  min-height: max(42px, var(--control-row-height));
-  height: auto;
-  padding: 0 16px;
-  border-radius: var(--radius-pill);
-  white-space: nowrap;
-}
-
-.onboarding-back {
-  border: 1px solid var(--onboarding-border-focus);
-  background: transparent;
-  color: var(--onboarding-copy-back);
-  cursor: pointer;
-  font-size: var(--font-ui);
-  font-weight: 560;
-  transition: border-color var(--motion-fast) var(--ease-out), background-color var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out);
-}
-
-.onboarding-back:hover:not(:disabled) {
-  border-color: var(--onboarding-copy-back);
-  background: var(--onboarding-surface-soft);
-  color: var(--onboarding-ink);
-}
-
-.onboarding-back:disabled {
-  cursor: default;
-  opacity: 0.45;
-}
-
-.onboarding-action-group {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-}
-
-.onboarding-provider-form {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 14px;
-}
-
-.onboarding-provider-form label {
-  display: grid;
-  gap: 7px;
-}
-
-.onboarding-provider-form label > span {
-  color: var(--onboarding-copy-label);
-  font-size: var(--font-sm);
-  font-weight: 620;
-}
-
-.onboarding-provider-form input,
-.onboarding-provider-form select {
-  box-sizing: border-box;
-  width: 100%;
-  min-height: max(42px, var(--control-row-height));
-  height: auto;
-  border: 1px solid transparent;
-  border-radius: var(--radius-md);
-  outline: none;
-  padding: 0 12px;
-  background: var(--onboarding-surface-soft);
-  color: var(--onboarding-ink);
-  font: inherit;
-  font-size: var(--font-ui);
-  transition: border-color var(--motion-fast) var(--ease-out), box-shadow var(--motion-fast) var(--ease-out);
-}
-
-.onboarding-error {
-  margin: 16px 0 0;
-  color: var(--onboarding-error);
+.onboarding-note {
+  margin: 0;
+  color: var(--ink-tertiary);
   font-size: var(--font-sm);
   line-height: 1.5;
 }
 
-.is-spinning {
-  animation: wuu-spin var(--motion-spin) linear infinite;
+.onboarding-status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  color: var(--ink-tertiary);
+  font-size: var(--font-ui);
+  line-height: 1.5;
 }
 
-@media (max-width: 720px) {
-  .onboarding-chrome {
-    padding-inline: 22px;
-  }
-
-  .onboarding-stage {
-    padding-inline: 20px;
-  }
-
-  .onboarding-plugin-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .onboarding-plugin-grid > :nth-child(n) {
-    grid-column: auto;
-  }
-
-  .onboarding-masthead {
-    gap: 12px;
-  }
-
-  .onboarding-action-group,
-  .onboarding-actions {
-    flex-wrap: wrap;
-  }
+.onboarding-error {
+  display: grid;
+  flex: none;
+  gap: 2px;
+  margin: 0;
+  color: var(--danger);
+  font-size: var(--font-ui);
+  line-height: 1.5;
 }
 
+.onboarding-error > span {
+  color: var(--ink-soft);
+  font-size: var(--font-sm);
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+/* Back leads the row with its text on the column edge; the actions that move
+ * on end it. */
+.onboarding-actions {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.onboarding-actions > .settings-button-ghost:first-child {
+  margin-inline: calc(var(--control-padding-inline) * -1) auto;
+}
+
+.onboarding-stage-welcome .onboarding-actions,
+.onboarding-stage-ready .onboarding-actions {
+  justify-content: center;
+}
+
+/* The companions' transitions use their own timing; reduced motion stops
+ * them with the rest of the motion. */
 @container style(--motion-reduced: 1) {
-  .onboarding-welcome,
-  .onboarding-panel,
-  .onboarding-progress-dot,
-  .onboarding-primary,
-  .onboarding-back,
-  .onboarding-plugin,
   .onboarding-plugin-mascot-stage *,
   .onboarding-plugin-mascot-stage *::before,
   .onboarding-plugin-mascot-stage *::after {
     animation: none !important;
     transition: none !important;
   }
-
-}
-
-.onboarding-presets button:hover:not(:disabled) {
-  background: var(--onboarding-surface-selected);
-}
-
-.onboarding-plugin:disabled {
-  cursor: default;
-  opacity: 0.62;
 }

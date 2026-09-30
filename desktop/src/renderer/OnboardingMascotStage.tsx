@@ -26,6 +26,10 @@ export function OnboardingMascotStage({
       data-onboarding-split={split ? "" : undefined}
       data-onboarding-engine={engineID || undefined}
       aria-hidden="true"
+      // Decoration only. The equipment is portaled into an SVG group, and
+      // Chromium makes an SVG element with focus listeners (React attaches
+      // them to every portal container) a Tab stop; inert keeps it out.
+      inert
     >
       <div className="onboarding-mascot-pack">
         {COMPANIONS.map((color, index) => (

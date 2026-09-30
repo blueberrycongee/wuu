@@ -23,9 +23,8 @@ export const ONBOARDING_ENGINES: readonly {
   id: string;
   label: string;
   readyDescription: TranslationKey;
-  missingDescription: TranslationKey;
 }[] = [
-  { id: "wuu", label: "Wuu", readyDescription: "onboarding.engine.wuu", missingDescription: "onboarding.engine.wuu" },
-  { id: "codex", label: "Codex", readyDescription: "onboarding.engine.codexReady", missingDescription: "onboarding.engine.codexMissing" },
-  { id: "claude", label: "Claude Code", readyDescription: "onboarding.engine.claudeReady", missingDescription: "onboarding.engine.claudeMissing" },
+  { id: "wuu", label: "Wuu", readyDescription: "onboarding.engine.wuu" },
+  { id: "codex", label: "Codex", readyDescription: "onboarding.engine.codexReady" },
+  { id: "claude", label: "Claude Code", readyDescription: "onboarding.engine.claudeReady" },
 ];
