@@ -18,6 +18,7 @@ import (
 	proc "github.com/blueberrycongee/wuu/internal/process"
 	"github.com/blueberrycongee/wuu/internal/processsandbox"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/toolctx"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
 
@@ -377,4 +378,26 @@ func TestPTCLocalCancelThenNextProgram(t *testing.T) {
 	if result.IsError {
 		t.Fatal(result.TextProjection())
 	}
+}
+
+func TestPTCStateUsesBoundExecutionWorkspace(t *testing.T) {
+	kit := newCodeModeTestToolkit(t)
+	kit.SetSessionID("worktree-state")
+	first, second := t.TempDir(), t.TempDir()
+	run := func(root, code, want string) {
+		t.Helper()
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		ctx = toolctx.WithWorktreeBinding(ctx, kit.RootDir(), root)
+		runtime := agent.NewTurnToolRuntime(agent.ToolRuntimeConfig{Executor: kit, RunContext: ctx})
+		defer runtime.Cancel()
+		args, _ := json.Marshal(map[string]any{"code": code, "description": "Use workspace checkpoint"})
+		messages, err := runtime.ExecuteFinalCalls(ctx, []providers.ToolCall{{ID: "program", Name: "run_code", Arguments: string(args)}}, nil)
+		if err != nil || len(messages) != 1 || messages[0].ToolResult == nil || messages[0].ToolResult.IsError || messages[0].Content != want {
+			t.Fatalf("workspace state=%+v %v", messages, err)
+		}
+	}
+	run(first, `store("checkpoint",1); return load("checkpoint");`, `1`)
+	run(second, `return typeof load("checkpoint");`, `"undefined"`)
+	run(first, `return load("checkpoint");`, `1`)
 }

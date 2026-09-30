@@ -92,7 +92,7 @@ func (e *CodeModeExecTool) ExecuteResultCall(ctx context.Context, call providers
 		return toolresult.Result{}, err
 	}
 	result, err := e.toolkit.CodeModeService().Run(ctx, codemode.RunRequest{Code: args.Code, TimeoutMS: timeout, Tools: definitions},
-		codemode.RunOptions{StateScope: e.toolkit.codeModeStateScope(), CWD: cwd, Executor: executor, Sandbox: policy, SandboxProvider: e.toolkit.env.ProcessSandboxProvider})
+		codemode.RunOptions{StateScope: e.toolkit.codeModeStateScope(cwd), CWD: cwd, Executor: executor, Sandbox: policy, SandboxProvider: e.toolkit.env.ProcessSandboxProvider})
 	if err != nil {
 		return toolresult.Result{}, err
 	}
@@ -231,10 +231,10 @@ func (t *Toolkit) CodeModeDirectCallAllowed(name string) bool {
 }
 
 // State is host-scoped and cannot address another conversation or workspace.
-func (t *Toolkit) codeModeStateScope() string {
+func (t *Toolkit) codeModeStateScope(executionRoot string) string {
 	if t.env.SessionID == "" || t.env.SessionID == "session-pending" {
 		return ""
 	}
-	identity, _ := json.Marshal([]string{t.env.SessionID, t.env.AgentID, t.env.RootDir})
+	identity, _ := json.Marshal([]string{t.env.SessionID, t.env.AgentID, executionRoot})
 	return string(identity)
 }

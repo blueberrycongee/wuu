@@ -1807,5 +1807,5 @@ func (t *Toolkit) RunEnvironmentCode(ctx context.Context, service *codemode.Serv
 	if err != nil {
 		return codemode.RunResult{}, err
 	}
-	return service.Run(ctx, request, codemode.RunOptions{StateScope: t.codeModeStateScope(), CWD: t.env.RootDir, Executor: executor, Sandbox: policy})
+	return service.Run(ctx, request, codemode.RunOptions{StateScope: t.codeModeStateScope(t.env.RootDir), CWD: t.env.RootDir, Executor: executor, Sandbox: policy})
 }
