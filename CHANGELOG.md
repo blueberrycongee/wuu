@@ -57,9 +57,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Dialogs keep keyboard focus inside while open, and menus, dialogs, and the
   search palette return it to the control that opened them. Native
-  confirmation sheets became an in-app dialog, the environment card appears
-  only where it describes something, and the bell's first-run bubble became a
-  mark-all-read action.
+  confirmation sheets became an in-app dialog in desktop and connected Web
+  workspaces, the environment card appears only where it describes something,
+  and the bell's first-run bubble became a mark-all-read action.
 
 ### Fixed
 - Edit conversation titles from the desktop title bar with a double click, while

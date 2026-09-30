@@ -12,6 +12,7 @@ import {
   startThemePreferenceSync,
 } from "../../../desktop/src/renderer/Theme";
 import { ToastViewport } from "../../../desktop/src/renderer/Toast";
+import { ConfirmDialogHost } from "../../../desktop/src/renderer/ConfirmDialog";
 import { WuuUIRoot } from "../../../desktop/src/renderer/ui/layers/UILayerHost";
 
 applyPlatformStamp();
@@ -33,6 +34,7 @@ export default function WebWorkspace(): React.JSX.Element {
       <WuuUIRoot>
         <App />
         <ToastViewport />
+        <ConfirmDialogHost />
       </WuuUIRoot>
   );
 }
