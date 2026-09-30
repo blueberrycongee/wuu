@@ -9,7 +9,9 @@ import {
   activeThreadIDForState,
   activeTurnIDForThread,
   composerDraftHasContent,
+  resolveThreadRuntimeContext,
   threadForTab,
+  threadFromRecord,
   threadItemFromRecord,
   type AppState,
   type ComposerDraftState,
@@ -261,6 +263,10 @@ export function useComposerPendingState({
     useState<PendingComposerMessagesByThread>({});
   const pendingComposerMessagesByThreadRef =
     useRef<PendingComposerMessagesByThread>({});
+  // Accepted queue input held by this client when a Core process exited. The
+  // new Core has no memory of it, so its resume snapshot must not erase the
+  // only remaining copy.
+  const heldAcrossCoreExitRef = useRef<Record<string, QueuedComposerMessage[]>>({});
 
   function setPendingComposerMessagesByThreadNow(
     messagesByThread: PendingComposerMessagesByThread,
@@ -313,9 +319,63 @@ export function useComposerPendingState({
     );
   }
 
+  async function reholdQueuedMessages(
+    threadID: string,
+    messages: QueuedComposerMessage[],
+  ): Promise<void> {
+    const state = getAppState();
+    const thread = threadForTab(state, threadID);
+    // One at a time: the new Core appends held input in call order.
+    for (const message of messages) {
+      try {
+        await window.wuu.queueTurn(
+          threadID,
+          message.text.trim(),
+          inputImagesFromComposer(message.images),
+          message.id,
+          inputFilesFromComposer(message.files),
+          thread?.permission_mode,
+          message.activeDocument,
+          message.contentParts,
+          thread ? resolveThreadRuntimeContext(thread, state.projects) : undefined,
+          true,
+        );
+        updateThreadPendingComposerMessages(threadID, (previous) => ({
+          ...previous,
+          queued: previous.queued.map((candidate) =>
+            candidate.id === message.id
+              ? { ...candidate, held: true, operationState: undefined }
+              : candidate,
+          ),
+        }));
+      } catch (error) {
+        removePendingComposerMessageByID(threadID, message.id, "queue");
+        preserveFailedComposerMessage(threadID, message);
+        setStatus(
+          error instanceof Error
+            ? error.message
+            : translateCurrent("app.queueFailed"),
+        );
+      }
+    }
+  }
+
   function syncPendingComposerMessagesFromServerEvent(
     event: ServerEvent,
   ): void {
+    if (event.kind === "server-exit") {
+      const next = { ...heldAcrossCoreExitRef.current };
+      for (const [threadID, pending] of Object.entries(
+        pendingComposerMessagesByThreadRef.current,
+      )) {
+        const accepted = pending.queued.filter(
+          (message) => !message.held && !message.operationState,
+        );
+        if (accepted.length > 0) next[threadID] = accepted;
+      }
+      heldAcrossCoreExitRef.current = next;
+      return;
+    }
     if (event.kind !== "notification") {
       return;
     }
@@ -350,11 +410,46 @@ export function useComposerPendingState({
       if (!snapshot) {
         return;
       }
-      updateThreadPendingComposerMessages(snapshot.threadID, (previous) =>
-        method === "thread/resumed"
-          ? applyAuthoritativeComposerSnapshot(previous, snapshot.messages)
-          : applyHeldComposerSnapshot(previous, snapshot.messages),
-      );
+      const survivors = method === "thread/resumed"
+        ? heldAcrossCoreExitRef.current[snapshot.threadID]
+        : undefined;
+      let lost: QueuedComposerMessage[] = [];
+      if (survivors) {
+        heldAcrossCoreExitRef.current = Object.fromEntries(
+          Object.entries(heldAcrossCoreExitRef.current).filter(([threadID]) => threadID !== snapshot.threadID),
+        );
+        const known = new Set([
+          ...snapshot.messages.map((message) => message.id),
+          ...materializedComposerMessageIDs(threadFromRecord(recordValue(params, "thread"))),
+        ]);
+        const current = pendingComposerMessagesByThreadRef.current[snapshot.threadID]?.queued ?? [];
+        lost = survivors.filter(
+          (message) => !known.has(message.id) && current.some((candidate) => candidate.id === message.id),
+        );
+      }
+      updateThreadPendingComposerMessages(snapshot.threadID, (previous) => {
+        if (method !== "thread/resumed") {
+          return applyHeldComposerSnapshot(previous, snapshot.messages);
+        }
+        const lostIDs = new Set(lost.map((message) => message.id));
+        // Keep lost input visible while it is handed to the new Core.
+        return applyAuthoritativeComposerSnapshot(
+          {
+            ...previous,
+            queued: previous.queued.map((message) =>
+              lostIDs.has(message.id) ? { ...message, operationState: "sending" } : message,
+            ),
+          },
+          snapshot.messages,
+        );
+      });
+      if (lost.length > 0) {
+        void reholdQueuedMessages(snapshot.threadID, lost);
+      }
+      if (method === "turn/held") {
+        const reason = stringValue(params, "error");
+        if (reason) setStatus(reason);
+      }
       return;
     }
     if (method === "turn/queued" || method === "turn/steered") {
