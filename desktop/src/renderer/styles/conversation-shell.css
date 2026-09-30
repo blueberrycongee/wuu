@@ -1090,7 +1090,7 @@
 
 .run-debug-section h3 {
   margin: 0;
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-size: var(--font-xs);
   font-weight: var(--weight-semibold);
   text-transform: uppercase;
@@ -1116,7 +1116,7 @@
 .run-debug-event span,
 .run-debug-event small,
 .run-debug-item span {
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-size: var(--font-xs);
   font-weight: var(--weight-medium);
 }
@@ -1229,7 +1229,7 @@
 .run-debug-empty {
   border: 1px dashed var(--shell-run-debug-empty-border);
   border-radius: var(--radius-sm);
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-size: var(--font-ui);
   font-weight: var(--weight-medium);
   padding: 10px;

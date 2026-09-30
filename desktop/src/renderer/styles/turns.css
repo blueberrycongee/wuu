@@ -41,14 +41,8 @@
   --instruction-files-error-fallback: var(--wuu-color-danger, #d3524f);
   --stream-cursor-default-color: #2f4a5f;
   --reasoning-stream-cursor-color: var(--gray-500);
-  --turn-progress-label-color: var(--wuu-color-text-muted, var(--gray-550));
-  --turn-progress-label-icon-color: var(--wuu-color-text-muted, var(--gray-500));
-  --turn-progress-detail-color: var(--wuu-color-text-muted, var(--gray-450));
-  --turn-progress-sweep-highlight: #202724;
-  --turn-progress-sweep-base: #7b8580;
-  --turn-progress-failed-rule-bg: #f2d3cf;
-  --turn-process-entry-color: var(--wuu-color-text-muted, var(--gray-550));
-  --process-control-color-fallback: var(--wuu-color-text-muted, var(--gray-450));
+  --turn-process-entry-color: var(--ink-tertiary);
+  --process-control-color-fallback: var(--ink-tertiary);
   --activity-toggle-hover-color: var(--gray-650);
   --activity-toggle-hover-svg-color: var(--gray-550);
   --activity-toggle-hover-color-alt: var(--wuu-color-text-muted, var(--gray-600));
@@ -1699,7 +1693,6 @@
   overflow-wrap: anywhere;
 }
 
-
 .streaming-markdown {
   display: block;
   position: relative;
@@ -1788,87 +1781,6 @@
   .streaming-markdown[data-cursor-state="fading"] .stream-cursor {
     transition: none;
   }
-}
-
-
-.turn-progress {
-  display: inline-flex;
-  width: fit-content;
-  max-width: 100%;
-  margin: 6px 0 -2px;
-  color: var(--ink-tertiary);
-  font-size: var(--conversation-process-font-size);
-  font-weight: var(--conversation-process-font-weight);
-  line-height: var(--conversation-process-line-height);
-}
-
-.turn-progress-header {
-  display: flex;
-  min-width: 0;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-}
-
-.turn-progress-label {
-  display: flex;
-  min-width: 0;
-  align-items: flex-start;
-  gap: 8px;
-  color: var(--turn-progress-label-color);
-  font-size: var(--conversation-process-font-size);
-  font-weight: var(--conversation-process-font-weight);
-  line-height: var(--conversation-process-line-height);
-}
-
-.turn-progress-label svg {
-  flex: 0 0 auto;
-  color: var(--turn-progress-label-icon-color);
-  margin-top: 1px;
-}
-
-.turn-progress-copy {
-  display: grid;
-  min-width: 0;
-  gap: 2px;
-}
-
-.turn-progress-title {
-  display: inline-block;
-  min-width: 0;
-}
-
-.turn-progress-duration {
-  color: var(--ink-tertiary);
-  font-variant-numeric: tabular-nums;
-}
-
-.turn-progress-detail {
-  overflow-wrap: anywhere;
-  color: var(--turn-progress-detail-color);
-  font-size: var(--conversation-process-font-size);
-  font-weight: var(--conversation-process-font-weight);
-  line-height: var(--conversation-process-line-height);
-}
-
-.turn-progress-rule {
-  position: relative;
-  height: 1px;
-  overflow: hidden;
-  background: var(--rule);
-}
-
-.turn-progress.in_progress .turn-progress-title {
-  color: var(--turn-progress-sweep-base);
-}
-
-.turn-progress.failed .turn-progress-label svg,
-.turn-progress.failed .turn-progress-title {
-  color: var(--danger);
-}
-
-.turn-progress.failed .turn-progress-rule {
-  background: var(--turn-progress-failed-rule-bg);
 }
 
 .turn-process-fold {
@@ -2017,7 +1929,6 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-
 
 .collapsible-details {
   /* Drive the fold body height directly with height: 0 / auto.
@@ -3887,7 +3798,6 @@
   min-width: 0;
 }
 
-
 /* (the overlay, keyframes, and reduced-motion handling for
    `.turn-reasoning-summary-text.is-streaming` live with the unified
    process-surface shimmer selectors above) */
@@ -4766,7 +4676,7 @@ pre {
 .tool-diff-preview-truncated {
   flex-shrink: 0;
   font-size: var(--font-xs);
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
 }
 
 .tool-diff-preview-body {
@@ -4783,7 +4693,7 @@ pre {
 .tool-diff-preview-summary {
   display: block;
   padding: 8px 12px;
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   white-space: normal;
 }
 
@@ -4806,7 +4716,7 @@ pre {
 
 .tool-diff-line-number {
   padding: 0 8px;
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   text-align: right;
   user-select: none;
   font-variant-numeric: tabular-nums;
@@ -4919,7 +4829,7 @@ pre {
   flex-shrink: 0;
   align-items: center;
   gap: 8px;
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-size: var(--font-sm);
 }
 
@@ -4966,7 +4876,7 @@ pre {
   border-radius: var(--radius-media);
   overflow: hidden;
   background: transparent;
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-size: var(--font-xs);
   overflow-wrap: anywhere;
 }
@@ -4983,7 +4893,7 @@ pre {
 }
 
 .turn-artifact-unavailable {
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-size: var(--font-xs);
 }
 
@@ -5062,7 +4972,7 @@ pre {
 }
 
 .artifact-preview-toolbar span {
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-size: var(--font-xs);
 }
 
@@ -5146,7 +5056,7 @@ pre {
   display: grid;
   min-height: 240px;
   place-items: center;
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-size: var(--font-sm);
 }
 
@@ -5325,7 +5235,7 @@ button.turn-edit-summary-overview:focus-visible {
   display: block;
   min-width: 0;
   overflow: hidden;
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-family: var(--font-mono, "SFMono-Regular", Consolas, monospace);
   font-size: var(--font-xs);
   line-height: 1.35;
@@ -5334,7 +5244,7 @@ button.turn-edit-summary-overview:focus-visible {
 }
 
 .turn-edit-summary-overview-meta {
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-size: var(--font-xs);
   line-height: 1.35;
 }
@@ -5403,7 +5313,7 @@ button.turn-edit-summary-overview:focus-visible {
   gap: 10px;
   padding: 8px 12px;
   font-size: var(--font-sm);
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   text-align: center;
 }
 
