@@ -49,8 +49,8 @@ export async function activate(api) {
     "automation.schedule.daily": "每天", "automation.schedule.weekdays": "工作日", "automation.schedule.weekly": "每周",
     "automation.advanced": "更多设置", "automation.resize": "调整自动化编辑区宽度", "automation.close": "关闭", "automation.group.details": "执行设置", "automation.group.schedule": "时间安排",
     "automation.field.target": "运行于", "automation.field.project": "项目", "automation.field.time": "时间", "automation.field.isolation": "隔离运行",
-    "automation.target.new": "每次新会话", "automation.target.thread": "指定会话",
-    "automation.target.search": "搜索会话", "automation.target.chats": "会话", "automation.target.pinned": "已置顶", "automation.target.empty": "没有匹配的会话",
+    "automation.target.new": "每次新对话", "automation.target.thread": "指定对话",
+    "automation.target.search": "搜索对话", "automation.target.chats": "对话", "automation.target.pinned": "已置顶", "automation.target.empty": "没有匹配的对话",
     "automation.placeholder.name": "任务标题", "automation.placeholder.prompt": "描述这次自动化要做什么", "automation.placeholder.schedule": "0 9 * * 1-5",
   }});
   api.registerStyle({ id: "automation-catalog", css: `

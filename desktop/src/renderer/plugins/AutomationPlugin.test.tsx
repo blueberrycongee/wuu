@@ -99,9 +99,9 @@ it("supports keyboard selection and dismisses only the open menu with Escape", a
   expect(ui.container.querySelector('[role="listbox"]')).toBeNull();
   expect(ui.container.querySelector('button[aria-label="星期"]')).not.toBeNull();
   await ui.click("运行于");
-  await ui.edit('input[aria-label="搜索会话"]', "investigation");
+  await ui.edit('input[aria-label="搜索对话"]', "investigation");
   expect(ui.container.querySelectorAll('[role="option"]')).toHaveLength(1);
-  await act(async () => ui.container.querySelector('input[aria-label="搜索会话"]')!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+  await act(async () => ui.container.querySelector('input[aria-label="搜索对话"]')!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
   expect(ui.container.querySelector('[role="listbox"]')).toBeNull();
   expect(ui.container.querySelector("aside")).not.toBeNull();
   expect(document.activeElement?.getAttribute("aria-label")).toBe("运行于");
