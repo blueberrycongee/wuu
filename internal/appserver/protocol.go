@@ -2091,6 +2091,8 @@ type TurnUnsteeredNotification struct {
 type TurnHeldNotification struct {
 	ThreadID string            `json:"thread_id"`
 	Messages []HeldUserMessage `json:"messages"`
+	// Error is set when queued input was held because its admission failed.
+	Error string `json:"error,omitempty"`
 }
 
 type TurnEventNotification struct {

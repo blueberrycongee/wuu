@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/hooks"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/session"
 )
@@ -392,5 +394,56 @@ func TestExplicitlyHeldQueueDoesNotStartAfterStopSettles(t *testing.T) {
 	restored, err := New(rt, &lockedBuffer{}).loadHeldUserTurns(threadID)
 	if err != nil || len(restored) != 2 {
 		t.Fatalf("held input not recoverable: %+v, %v", restored, err)
+	}
+}
+
+func TestQueuedAdmissionRejectionKeepsInputHeldWithReason(t *testing.T) {
+	rt := newTestRuntime(t, &fakeClient{response: providersResponse("must not run")})
+	rt.HookDispatcher = hooks.NewDispatcher(hooks.NewRegistry(map[hooks.Event][]hooks.HookConfig{
+		hooks.UserPromptSubmit: {{Command: `echo 'prompt rejected by configured hook' >&2; exit 2`}},
+	}))
+	out := &lockedBuffer{}
+	s := New(rt, out)
+	if err := s.handleLine(context.Background(), []byte(`{"id":"1","method":"thread/start"}`)); err != nil {
+		t.Fatal(err)
+	}
+	threadID := remarshal[ThreadStartResult](t, responseByID(t, parseOutput(t, out.String()), "1")["result"]).Thread.ID
+	s.enqueueQueuedUserTurn(threadID, queuedTurn{id: "rejected", msg: providers.ChatMessage{Role: "user", Content: "keep me"}})
+	s.enqueueQueuedUserTurn(threadID, queuedTurn{id: "withdrawn", msg: providers.ChatMessage{Role: "user", Content: "user removed me"}})
+	if _, ok := s.removeQueuedUserTurn(threadID, "withdrawn"); !ok {
+		t.Fatal("withdraw queued turn")
+	}
+
+	s.drainQueuedTurns(threadID)
+
+	held, err := s.loadHeldUserTurns(threadID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(held) != 1 || held[0].id != "rejected" || held[0].msg.Content != "keep me" {
+		t.Fatalf("rejected input must remain held and editable; withdrawn input must not: %+v", held)
+	}
+	var reason string
+	for _, message := range parseOutput(t, out.String()) {
+		params, _ := message["params"].(map[string]any)
+		switch message["method"] {
+		case NotificationTurnHeld:
+			reason, _ = params["error"].(string)
+		case NotificationTurnDequeued:
+			if params["queue_id"] == "rejected" {
+				t.Fatalf("rejected input was reported as removed: %+v", message)
+			}
+		}
+	}
+	if !strings.Contains(reason, "prompt rejected by configured hook") {
+		t.Fatalf("client was not told why the queued input was rejected: %q", reason)
+	}
+	th := s.thread(threadID)
+	th.mu.Lock()
+	defer th.mu.Unlock()
+	for _, msg := range th.History {
+		if msg.Role == "user" {
+			t.Fatalf("rejected input entered history: %+v", msg)
+		}
 	}
 }

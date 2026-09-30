@@ -15,7 +15,7 @@ import {
   type ConversationPaneID,
 } from "./AppState";
 import {
-  composerFileFromFile,
+  composerFilePlaceholder,
   composerImagePlaceholder,
   isComposerImageFile,
   isComposerDocumentFile,
@@ -69,32 +69,44 @@ export type ComposerDraftStateController = {
 
 type ComposerAttachmentTargets = {
   onImagePlaceholder: (placeholder: ComposerImage) => void;
-  onImageEncoded: (encoded: ComposerImage) => void;
-  onFile: (file: ComposerFile) => void;
+  onImageEncoded: (id: string, encoded?: ComposerImage) => void;
+  onFilePlaceholder: (placeholder: ComposerFile) => void;
+  onFileEncoded: (id: string, encoded?: ComposerFile) => void;
 };
 
 export async function buildComposerAttachments(
   files: File[],
-  onImagePlaceholder: (placeholder: ComposerImage) => void,
-  onImageEncoded: (encoded: ComposerImage) => void,
-  onFile: (file: ComposerFile) => void,
+  targets: ComposerAttachmentTargets,
 ): Promise<void> {
-  const imageFiles = files.filter(isComposerImageFile);
-  const documentFiles = files.filter(isComposerDocumentFile);
   await Promise.all([
-    ...imageFiles.map(async (file) => {
+    ...files.filter(isComposerImageFile).map(async (file) => {
       const placeholder = composerImagePlaceholder(file);
-      onImagePlaceholder(placeholder);
-      const encoded = await placeholder.encodePromise;
-      if (encoded) {
-        onImageEncoded(encoded);
+      targets.onImagePlaceholder(placeholder);
+      try {
+        targets.onImageEncoded(placeholder.id, await placeholder.encodePromise);
+      } catch (error) {
+        targets.onImageEncoded(placeholder.id);
+        throw error;
       }
     }),
-    ...documentFiles.map(async (file) => {
-      const attachment = await composerFileFromFile(file);
-      onFile(attachment);
+    ...files.filter(isComposerDocumentFile).map(async (file) => {
+      const placeholder = composerFilePlaceholder(file);
+      targets.onFilePlaceholder(placeholder);
+      try {
+        targets.onFileEncoded(placeholder.id, await placeholder.encodePromise);
+      } catch (error) {
+        targets.onFileEncoded(placeholder.id);
+        throw error;
+      }
     }),
   ]);
+}
+
+// Completion can replace or remove an existing slot, never recreate a draft
+// that the user has already sent, removed, or closed.
+function settleAttachment<T extends { id: string }>(items: T[], id: string, encoded?: T): T[] {
+  if (!items.some((item) => item.id === id)) return items;
+  return items.flatMap((item) => item.id === id ? encoded ? [encoded] : [] : [item]);
 }
 
 async function attachComposerAttachmentFilesToDraft(
@@ -111,18 +123,15 @@ async function attachComposerAttachmentFilesToDraft(
     return;
   }
   try {
-    await buildComposerAttachments(
-      files,
-      targets.onImagePlaceholder,
-      targets.onImageEncoded,
-      targets.onFile,
-    );
+    await buildComposerAttachments(files, targets);
   } catch (error) {
     showErrorToast(error, translateCurrent("composer.attachment.addFailed"));
   }
 }
 
-export function useComposerDraftState(): ComposerDraftStateController {
+export function useComposerDraftState(
+  updateStoredDrafts?: (update: (draft: ComposerDraftState) => ComposerDraftState) => void,
+): ComposerDraftStateController {
   const [prompt, setPromptState] = useState("");
   const [promptRevision, setPromptRevision] = useState(0);
   const promptRef = useRef("");
@@ -173,17 +182,38 @@ export function useComposerDraftState(): ComposerDraftStateController {
   const [splitComposerDrafts, setSplitComposerDrafts] = useState<
     Record<ConversationPaneID, ComposerDraftState>
   >(initialSplitComposerDrafts);
+  function updateSavedAttachmentDrafts(update: (draft: ComposerDraftState) => ComposerDraftState): void {
+    setSplitComposerDrafts((current) => {
+      const primary = update(current.primary);
+      const secondary = update(current.secondary);
+      return primary === current.primary && secondary === current.secondary ? current : { primary, secondary };
+    });
+    updateStoredDrafts?.(update);
+  }
+
+  function onImageEncoded(id: string, encoded?: ComposerImage): void {
+    setComposerImages((current) => settleAttachment(current, id, encoded));
+    updateSavedAttachmentDrafts((draft) => {
+      const images = settleAttachment(draft.images, id, encoded);
+      return images === draft.images ? draft : { ...draft, images };
+    });
+  }
+
+  function onFileEncoded(id: string, encoded?: ComposerFile): void {
+    setComposerFiles((current) => settleAttachment(current, id, encoded));
+    updateSavedAttachmentDrafts((draft) => {
+      const files = settleAttachment(draft.files, id, encoded);
+      return files === draft.files ? draft : { ...draft, files };
+    });
+  }
+
   async function attachComposerAttachmentFiles(files: File[]): Promise<void> {
     await attachComposerAttachmentFilesToDraft(files, {
       onImagePlaceholder: (placeholder) =>
         setComposerImages((current) => [...current, placeholder]),
-      onImageEncoded: (encoded) =>
-        setComposerImages((current) =>
-          current.map((existing) =>
-            existing.id === encoded.id ? encoded : existing,
-          ),
-        ),
-      onFile: (file) => setComposerFiles((current) => [...current, file]),
+      onImageEncoded,
+      onFilePlaceholder: (placeholder) => setComposerFiles((current) => [...current, placeholder]),
+      onFileEncoded,
     });
   }
 
@@ -229,18 +259,13 @@ export function useComposerDraftState(): ComposerDraftStateController {
           ...draft,
           images: [...draft.images, placeholder],
         })),
-      onImageEncoded: (encoded) =>
+      onImageEncoded,
+      onFilePlaceholder: (placeholder) =>
         updateSplitComposerDraft(pane, (draft) => ({
           ...draft,
-          images: draft.images.map((existing) =>
-            existing.id === encoded.id ? encoded : existing,
-          ),
+          files: [...draft.files, placeholder],
         })),
-      onFile: (file) =>
-        updateSplitComposerDraft(pane, (draft) => ({
-          ...draft,
-          files: [...draft.files, file],
-        })),
+      onFileEncoded,
     });
   }
 
