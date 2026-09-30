@@ -51,11 +51,12 @@ Wuu 以黑白与中性色为品牌基础，不强制指定一种标志性色相�
 | --- | --- | --- |
 | 画布与表面 | `--paper`、`--surface-1` 至 `--surface-4` | 区分底层、次级和强调表面；表面编号不等于阴影高度 |
 | 文字 | `--ink-strong`、`--ink`、`--ink-soft` | 重要信息、正文、次要说明；正文保持易读，不把所有文字加粗 |
-| 弱化文字 | `--ink-tertiary`、`--ink-muted`、`--ink-faint` | 依用途选择；不能用弱对比解决布局拥挤，必要信息不依赖最浅一档 |
+| 弱化文字 | `--ink-tertiary`、`--ink-muted`、`--ink-faint` | `--ink-tertiary` 是文字可用的最弱一档，对比度保持在 4.5:1 以上；`--ink-muted`（约 3:1）只用于图标、箭头和禁用标记，`--ink-faint` 用于不承载信息的标记；不能用弱对比解决布局拥挤 |
+| 占位符 | `--placeholder-ink` | 输入框里的示例文字，由 `::placeholder` 统一设置，字段不再各自取色；区别于已输入的文字和标签，对比度在 4.5:1 以上 |
 | 三档线条 | `--hairline-soft`、`--hairline`、`--hairline-strong` | 同一表面内分隔、独立容器边界、较强控件边界；不为每条线创建灰色 |
 | 功能边界与焦点 | `--control-boundary`、`--focus-ring` | 表达可操作边界和键盘焦点，与装饰分隔线区分 |
 | 选中 | `--selection-surface` | 使用明确的选中底色，不借用警告或成功色 |
-| 状态 | `--success`、`--warning`、`--danger`、`--info` | 成功、注意、危险和信息；配合文字或图标，不只靠颜色区分 |
+| 状态 | `--success`、`--warning`、`--danger`、`--info` | 成功、注意、危险和信息；配合文字或图标，不只靠颜色区分。所有界面里的 diff 新增与删除都取自 `--success` 和 `--danger` |
 
 成功、警告和危险的轻底色分别为 `--success-soft`、`--warning-soft`、`--danger-soft`。状态色不是通用正文色，也不保证在任意填充背景上可读。彩色填充上的文字使用适用的 `--ink-on-accent` 等角色，并检查实际组合。深色主题不是把浅色反相：它单独调整表面、文字和状态色。
 

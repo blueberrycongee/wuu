@@ -51,11 +51,12 @@ Brand identity, action emphasis, and status are separate concerns. Primary actio
 | --- | --- | --- |
 | Canvas and surfaces | `--paper`, `--surface-1` through `--surface-4` | Base, secondary, and emphasized surfaces; surface numbers are not shadow levels |
 | Text | `--ink-strong`, `--ink`, `--ink-soft` | Important content, body, secondary descriptions; keep body text readable and normally weighted |
-| Quieter text | `--ink-tertiary`, `--ink-muted`, `--ink-faint` | Select by purpose; low contrast must not conceal crowding or carry essential information |
+| Quieter text | `--ink-tertiary`, `--ink-muted`, `--ink-faint` | `--ink-tertiary` is the quietest ink for words and stays above 4.5:1; `--ink-muted` (about 3:1) is for icons, chevrons, and disabled marks, and `--ink-faint` for marks that carry no information; low contrast must not conceal crowding |
+| Placeholder | `--placeholder-ink` | Example text in fields, set once on `::placeholder` so no field picks its own; distinct from entered text and labels, above 4.5:1 |
 | Three line tiers | `--hairline-soft`, `--hairline`, `--hairline-strong` | Within-surface separators, independent frames, stronger control boundaries; no local gray per line |
 | Functional boundary and focus | `--control-boundary`, `--focus-ring` | Identify controls and keyboard focus, distinct from decorative separators |
 | Selection | `--selection-surface` | A clear selection surface, not a borrowed warning or success color |
-| Status | `--success`, `--warning`, `--danger`, `--info` | Success, caution, danger, information; combine with text or icons, never color alone |
+| Status | `--success`, `--warning`, `--danger`, `--info` | Success, caution, danger, information; combine with text or icons, never color alone. Diff additions and deletions in every surface draw from `--success` and `--danger` |
 
 Success, warning, and danger tints are `--success-soft`, `--warning-soft`, and `--danger-soft`. Status colors are not general-purpose body colors or automatically readable on arbitrary fills. Use appropriate content roles such as `--ink-on-accent` on colored surfaces, then check the actual pair. Dark mode adjusts surfaces, text, and status independently rather than inverting light colors.
 
