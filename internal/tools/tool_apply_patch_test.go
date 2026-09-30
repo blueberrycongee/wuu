@@ -205,6 +205,142 @@ func TestToolkit_ApplyPatchMultipleChunksPerFile(t *testing.T) {
 	}
 }
 
+func TestToolkit_ApplyPatchNamedContext(t *testing.T) {
+	tests := []struct {
+		name, before, chunks, want, wantError string
+	}{
+		{
+			name:   "duplicate body before context",
+			before: "def other():\n    return 1\n\ndef target():\n    return 1\n",
+			chunks: "@@ def target():\n-    return 1\n+    return 2\n",
+			want:   "def other():\n    return 1\n\ndef target():\n    return 2\n",
+		},
+		{
+			name:      "stale body only before context",
+			before:    "def other():\n    return 1\n\ndef target():\n    return 2\n",
+			chunks:    "@@ def target():\n-    return 1\n+    return 3\n",
+			wantError: "anchor_not_found",
+		},
+		{
+			name:      "missing context",
+			before:    "def other():\n    return 1\n",
+			chunks:    "@@ def missing():\n-    return 1\n+    return 3\n",
+			wantError: "anchor_not_found",
+		},
+		{
+			name:   "unnamed unique anchor",
+			before: "def other():\n    return 1\n\ndef target():\n    return 2\n",
+			chunks: "@@\n-    return 2\n+    return 3\n",
+			want:   "def other():\n    return 1\n\ndef target():\n    return 3\n",
+		},
+		{
+			name:   "forward contexts after insertion",
+			before: "def other():\n    return 1\n\ndef target():\n    return 1\n\ndef last():\n    return 2\n",
+			chunks: "@@ def target():\n-    return 1\n+    log()\n+    return 3\n@@ def last():\n-    return 2\n+    return 4\n",
+			want:   "def other():\n    return 1\n\ndef target():\n    log()\n    return 3\n\ndef last():\n    return 4\n",
+		},
+		{
+			name:      "context cannot seek backward",
+			before:    "def first():\n    return 1\n\ndef last():\n    return 2\n",
+			chunks:    "@@ def last():\n-    return 2\n+    return 3\n@@ def first():\n-    return 1\n+    return 4\n",
+			wantError: "anchor_not_found",
+		},
+		{
+			name:      "later unnamed chunk cannot escape context",
+			before:    "def first():\n    return 1\n\ndef last():\n    return 2\n",
+			chunks:    "@@ def last():\n-    return 2\n+    return 3\n@@\n-    return 1\n+    return 4\n",
+			wantError: "anchor_not_found",
+		},
+		{
+			name:      "ambiguous body after context",
+			before:    "def target():\n    log()\n    log()\n",
+			chunks:    "@@ def target():\n-    log()\n+    trace()\n",
+			wantError: "ambiguous_anchor",
+		},
+		{
+			name:      "ambiguous context",
+			before:    "def target():\n    return 1\n\ndef target():\n    return 2\n",
+			chunks:    "@@ def target():\n-    return 2\n+    return 3\n",
+			wantError: "ambiguous_anchor",
+		},
+		{
+			name:   "indented context",
+			before: "class Example:\n    def other():\n        return 1\n\n    def target():\n        return 1\n",
+			chunks: "@@     def target():\n-        return 1\n+        return 2\n",
+			want:   "class Example:\n    def other():\n        return 1\n\n    def target():\n        return 2\n",
+		},
+		{
+			name:   "context with trailing whitespace",
+			before: "def target():  \n    return 1\n",
+			chunks: "@@ def target():  \n-    return 1\n+    return 2\n",
+			want:   "def target():  \n    return 2\n",
+		},
+		{
+			name:      "context whitespace mismatch",
+			before:    "def target():  \n    return 1\n",
+			chunks:    "@@ def target():\n-    return 1\n+    return 2\n",
+			wantError: "anchor_not_found",
+		},
+		{
+			name:   "insert after context",
+			before: "def other():\n    return 1\n\ndef target():\n    return 2\n",
+			chunks: "@@ def target():\n+    log()\n",
+			want:   "def other():\n    return 1\n\ndef target():\n    log()\n    return 2\n",
+		},
+	}
+	for _, tt := range tests {
+		for _, eol := range []string{"\n", "\r\n"} {
+			for _, dryRun := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%s/eol=%q/dry_run=%t", tt.name, eol, dryRun), func(t *testing.T) {
+					root := t.TempDir()
+					path := filepath.Join(root, "sample.py")
+					before := strings.ReplaceAll(tt.before, "\n", eol)
+					mustWriteFile(t, path, before)
+					otherPath := filepath.Join(root, "other.txt")
+					mustWriteFile(t, otherPath, "unchanged\n")
+					kit, err := New(root)
+					if err != nil {
+						t.Fatal(err)
+					}
+					kit.SetEditToolMode(EditToolModePatch)
+					hooks := 0
+					kit.SetOnFileChanged(func(string) { hooks++ })
+					// A later invalid context must also prevent earlier file plans from writing.
+					patch := "*** Begin Patch\n*** Update File: other.txt\n@@\n-unchanged\n+changed\n*** Update File: sample.py\n" + tt.chunks + "*** End Patch"
+					args, err := json.Marshal(map[string]any{"patchText": patch, "dry_run": dryRun})
+					if err != nil {
+						t.Fatal(err)
+					}
+					result, err := kit.ExecuteResult(context.Background(), providers.ToolCall{
+						Name: "apply_patch", Arguments: string(args),
+					})
+					if tt.wantError != "" {
+						if err == nil || !result.IsError || !strings.Contains(err.Error(), tt.wantError) {
+							t.Errorf("expected %s, got result=%s, err=%v", tt.wantError, result.TextProjection(), err)
+						}
+					} else if err != nil || result.IsError {
+						t.Errorf("valid patch failed: result=%s, err=%v", result.TextProjection(), err)
+					}
+					want := strings.ReplaceAll(tt.want, "\n", eol)
+					wantOther, wantHooks := "changed\n", 2
+					if tt.wantError != "" || dryRun {
+						want, wantOther, wantHooks = before, "unchanged\n", 0
+					}
+					if got := mustReadFile(t, path); got != want {
+						t.Errorf("patched file = %q, want %q", got, want)
+					}
+					if got := mustReadFile(t, otherPath); got != wantOther {
+						t.Errorf("earlier file = %q, want %q", got, wantOther)
+					}
+					if hooks != wantHooks {
+						t.Errorf("file-change hooks = %d, want %d", hooks, wantHooks)
+					}
+				})
+			}
+		}
+	}
+}
+
 func TestApplyPatchPreservesFileLineEndings(t *testing.T) {
 	for _, fileEOL := range []string{"\n", "\r\n"} {
 		for _, patchEOL := range []string{"\n", "\r\n"} {
