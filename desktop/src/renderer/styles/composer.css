@@ -142,6 +142,13 @@
   background: var(--paper);
 }
 
+/* Several offered questions can outgrow the space above the composer. */
+.user-question-card-form {
+  max-height: 60vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
 .user-question-offer-title {
   display: flex;
   align-items: flex-start;

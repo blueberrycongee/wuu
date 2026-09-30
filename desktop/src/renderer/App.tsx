@@ -3085,6 +3085,7 @@ export function App(): JSX.Element {
         hideExpandButton={composerNavigation}
         topAccessory={pendingUserQuestionOffer ? (
           <UserQuestionCard
+            key={pendingUserQuestionOffer.request_id}
             request={pendingUserQuestionOffer}
             onAnswer={async (answer) => {
               const prompt = formatUserQuestionSteerPrompt(pendingUserQuestionOffer, answer);
