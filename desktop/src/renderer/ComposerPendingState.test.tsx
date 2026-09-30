@@ -1013,6 +1013,52 @@ describe("useComposerPendingState", () => {
       ]);
     });
 
+    it("recovers a queue accepted by the old Core while its RPC response is pending", async () => {
+      type QueueResult = Awaited<ReturnType<WuuDesktopApi["queueTurn"]>>;
+      let resolveOldCoreResponse!: (value: QueueResult) => void;
+      const oldCoreResponse = new Promise<QueueResult>((resolve) => {
+        resolveOldCoreResponse = resolve;
+      });
+      const queueTurn = vi.fn()
+        .mockReturnValueOnce(oldCoreResponse)
+        .mockResolvedValueOnce({ queued: { id: "queue-1", thread_id: "thread-a" } });
+      installWuuStub({ queueTurn });
+      const hook = await renderComposerPendingState();
+      act(() => {
+        hook.get().enqueueComposerMessage("thread-a", {
+          ...message("queue-1", "Follow up"),
+          operationState: "sending",
+        });
+      });
+
+      // The old Core accepted this request, but its RPC response has not reached
+      // the renderer when the process exits.
+      const originalRequest = queueTurn(
+        "thread-a", "Follow up", [], "queue-1", [], undefined, undefined,
+        undefined, undefined, false,
+      );
+      expect(queueTurn).toHaveBeenCalledOnce();
+
+      await act(async () => {
+        hook.get().syncPendingComposerMessagesFromServerEvent(exited);
+        hook.get().syncPendingComposerMessagesFromServerEvent(resumed());
+      });
+
+      expect(queueTurn).toHaveBeenCalledTimes(2);
+      expect(queueTurn.mock.calls[1].slice(0, 4)).toEqual([
+        "thread-a", "Follow up", [], "queue-1",
+      ]);
+      expect(queueTurn.mock.calls[1][9]).toBe(true);
+      expect(hook.get().pendingComposerMessagesByThread["thread-a"]?.queued).toEqual([
+        expect.objectContaining({ id: "queue-1", held: true, operationState: undefined }),
+      ]);
+
+      resolveOldCoreResponse({ queued: { id: "queue-1", thread_id: "thread-a" } });
+      await expect(originalRequest).resolves.toEqual({
+        queued: { id: "queue-1", thread_id: "thread-a" },
+      });
+    });
+
     it.each([
       ["the new Core still has it", resumed([], [{ id: "queue-1", thread_id: "thread-a", origin: "queue", prompt: "Follow up" }])],
       ["it already ran", resumed([{ id: "turn-1", status: "completed", items: [{ id: "item-1", type: "user_message", source_id: "queue-1" }] }])],

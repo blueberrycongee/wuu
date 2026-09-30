@@ -369,7 +369,9 @@ export function useComposerPendingState({
         pendingComposerMessagesByThreadRef.current,
       )) {
         const accepted = pending.queued.filter(
-          (message) => !message.held && !message.operationState,
+          (message) =>
+            !message.held &&
+            (!message.operationState || message.operationState === "sending"),
         );
         if (accepted.length > 0) next[threadID] = accepted;
       }
