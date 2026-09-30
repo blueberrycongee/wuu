@@ -37,6 +37,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Editing a message after context compaction now retracts the selected message
   and following messages, preserving the correct conversation on resume and fork.
+- Keep ordinary project conversations rooted in the selected folder after project
+  relocation, while preserving custom directories and linked worktrees.
 - Keep attachments in their original conversation draft when file preparation
   finishes after switching conversations or closing a split pane. Pending files
   remain removable, and sends wait for their bytes before submitting.

@@ -340,3 +340,16 @@ describe("ProjectManager runtime context availability", () => {
     expect(persisted.active_context).toEqual(listed.active_context);
   });
 });
+
+ it("retains relocation roots across reloads and adding the existing path", async () => {
+  const first = await createProjectDir("first");
+  const second = await createProjectDir("second");
+  const third = await createProjectDir("third");
+  const manager = new ProjectManager();
+  const id = manager.add(first).projects[0].id;
+  manager.relocate(id, second);
+  new ProjectManager().add(second);
+  new ProjectManager().relocate(id, third);
+  const saved = JSON.parse(await readFile(canonicalStorePath(), "utf8"));
+  expect(saved.projects[0]).toMatchObject({id, path: third, previous_paths: [first, second]});
+});

@@ -18,8 +18,10 @@ import type {
 } from "../shared/protocol";
 import { writeTextFileAtomicSync } from "./atomicFile";
 
+type StoredProject = DesktopProject & { previous_paths?: string[] };
+
 type ProjectStore = {
-  projects: DesktopProject[];
+  projects: StoredProject[];
   active_context?: RuntimeContext;
 };
 
@@ -139,7 +141,8 @@ export class ProjectManager {
     );
     const existing =
       existingIndex >= 0 ? this.store.projects[existingIndex] : undefined;
-    const project: DesktopProject = {
+    const project: StoredProject = {
+      ...existing,
       id: existing ? existing.id : newProjectID(),
       name: projectName(resolvedPath),
       path: resolvedPath,
@@ -204,6 +207,10 @@ export class ProjectManager {
     // reconnects at the new location — this is the remedy for a moved folder.
     this.store.projects[index] = {
       ...this.store.projects[index],
+      previous_paths: [...new Set([
+        ...(this.store.projects[index].previous_paths ?? []),
+        this.store.projects[index].path,
+      ])].filter(path => path !== resolvedPath),
       name: projectName(resolvedPath),
       path: resolvedPath,
       updated_at: new Date().toISOString(),
@@ -349,7 +356,7 @@ function readProjectStoreFile(path: string): ProjectStore | undefined {
     throw invalidProjectStoreError(path, "active_project_id is invalid");
   }
 
-  const projects = record.projects as DesktopProject[];
+  const projects = record.projects as StoredProject[];
   let activeContext: RuntimeContext | undefined;
   try {
     activeContext =
@@ -403,12 +410,14 @@ function isRuntimeContext(value: unknown): value is RuntimeContext {
   return context.kind === "no_project" && typeof context.cwd === "string";
 }
 
-function isDesktopProject(value: unknown): value is DesktopProject {
+function isDesktopProject(value: unknown): value is StoredProject {
   if (!value || typeof value !== "object") {
     return false;
   }
-  const project = value as Partial<DesktopProject>;
+  const project = value as Partial<StoredProject>;
   return (
+    (project.previous_paths === undefined ||
+      (Array.isArray(project.previous_paths) && project.previous_paths.every(path => typeof path === "string"))) &&
     typeof project.id === "string" &&
     typeof project.name === "string" &&
     typeof project.path === "string" &&
