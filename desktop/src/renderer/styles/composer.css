@@ -306,10 +306,6 @@
   box-shadow: none;
 }
 
-.user-question-offer-input::placeholder {
-  color: var(--placeholder-ink);
-}
-
 .user-question-skip {
   flex: none;
   font-variant-numeric: tabular-nums;
@@ -328,10 +324,6 @@
   font-size: var(--font-ui);
   line-height: 1.5;
   transition: border-color var(--motion-fast) var(--ease-out);
-}
-
-.user-question-custom::placeholder {
-  color: var(--placeholder-ink);
 }
 
 .user-question-actions {
@@ -1172,10 +1164,6 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
   padding-bottom: 2px;
 }
 
-.composer textarea::placeholder {
-  color: var(--placeholder-ink);
-}
-
 .composer textarea:disabled {
   color: var(--composer-textarea-disabled);
   cursor: default;
@@ -1762,7 +1750,6 @@ html[data-focus-modality="keyboard"] :is(
   text-align: center;
 }
 
-
 /* The permission menu reads like its chip: the mode's symbol and name, and
  * one line on what the mode allows. */
 .access-menu {
@@ -2345,7 +2332,6 @@ html[data-focus-modality="keyboard"] :is(.composer-context-menu, .composer-proje
     flex-basis: var(--icon-size-sm);
   }
 }
-
 
 .composer-stop-button svg.composer-stop-progress {
   width: 14px;

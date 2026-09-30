@@ -1313,7 +1313,6 @@ html[data-focus-modality="keyboard"] .workspace-tool-menu-item:focus-visible {
   will-change: auto;
 }
 
-
 /* Right-click menu on file-tree rows. The component (WorkspaceTreeContextMenu
    in WorkspaceFiles.tsx) positions the menu in viewport coordinates and
    clamps it to the right/bottom edge of the viewport; this CSS only gives
@@ -1616,10 +1615,6 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
     var(--browser-url-fade-ink) calc(100% - 16px),
     transparent
   );
-}
-
-.workspace-browser-url-input::placeholder {
-  color: var(--placeholder-ink);
 }
 
 .workspace-browser-url-input.has-error {
@@ -2579,10 +2574,6 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
 
 .workspace-diff-search:hover {
   background: var(--field-hover-bg);
-}
-
-.workspace-diff-search::placeholder {
-  color: var(--placeholder-ink);
 }
 
 .workspace-diff-tree-scroll {

@@ -3,10 +3,6 @@
   background: var(--field-hover-bg);
 }
 
-.catalog-search input::placeholder {
-  color: var(--placeholder-ink);
-}
-
 @container style(--motion-reduced: 1) {
   .catalog-search {
     transition: none;
@@ -43,10 +39,6 @@
   color: var(--ink);
   font: inherit;
   font-size: var(--font-ui);
-}
-
-.menu-search input::placeholder {
-  color: var(--placeholder-ink);
 }
 
 .menu-search svg {

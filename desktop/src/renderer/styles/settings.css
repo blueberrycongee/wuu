@@ -241,7 +241,6 @@
   }
 }
 
-
 /* Once the settings rail is collapsed, the titlebar starts at the window
  * edge. Keep the toggle clear of the macOS traffic lights, matching the
  * main conversation titlebar reservation. */
@@ -632,10 +631,6 @@
     background var(--motion-fast) var(--ease-out),
     border-color var(--motion-fast) var(--ease-out),
     box-shadow var(--motion-fast) var(--ease-out);
-}
-
-.settings-input::placeholder {
-  color: var(--placeholder-ink);
 }
 
 .settings-input:hover:not(:disabled) {
@@ -2229,10 +2224,6 @@ button.settings-engine-expand:hover {
   color: var(--ink);
   font: inherit;
   font-size: var(--font-ui);
-}
-
-.settings-archive-search input::placeholder {
-  color: var(--placeholder-ink);
 }
 
 .settings-archive-group {

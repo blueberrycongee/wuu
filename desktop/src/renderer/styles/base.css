@@ -535,6 +535,11 @@
   color: inherit;
 }
 
+/* One placeholder colour for every field; components do not set their own. */
+::placeholder {
+  color: var(--placeholder-ink);
+}
+
 /* Every plugin contribution (slot or surface) renders inside this
  * host-owned boundary carrying the public data-wuu-* coordinates, so a
  * theme plugin's CSS snippets can address plugin UI by plugin, slot, or

@@ -421,11 +421,6 @@
     box-shadow var(--motion-fast) var(--ease-out);
 }
 
-.plugin-ui-input::placeholder,
-.plugin-ui-textarea::placeholder {
-  color: var(--ink-tertiary);
-}
-
 .plugin-ui-input:not(:disabled):hover,
 .plugin-ui-textarea:not(:disabled):hover {
   background: var(--field-hover-bg);
