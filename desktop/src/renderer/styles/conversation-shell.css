@@ -1397,7 +1397,7 @@ button.conversation-status-capsule,
 
 .conversation-status-secondary {
   flex: 0 0 auto;
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-weight: var(--weight-regular);
   font-variant-numeric: tabular-nums;
 }
@@ -1600,7 +1600,7 @@ button.conversation-status-capsule,
   overflow: hidden;
   border-radius: var(--radius-pill);
   background: var(--shell-jump-progress-step-bg);
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-size: var(--font-xs);
   font-weight: var(--weight-semibold);
   line-height: 1;

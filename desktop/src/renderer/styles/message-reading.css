@@ -46,7 +46,7 @@
   display: grid;
   place-items: center;
   padding: var(--space-3);
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-size: var(--font-sm);
 }
 
