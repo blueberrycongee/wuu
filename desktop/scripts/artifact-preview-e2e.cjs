@@ -138,18 +138,18 @@ app.whenReady().then(async () => {
     }
   }
   win.setContentSize(1440, 900);
-  await evaluate(win, () => document.querySelector(".artifact-preview-actions button:last-child").click());
+  await evaluate(win, () => [...document.querySelectorAll(".artifact-preview-actions button")].at(-1).click());
   await waitFor(win, () => !document.querySelector(".artifact-preview-panel"));
   emit(win, "turn/completed", { thread_id: threadID, turn: completed });
   await settle(win);
   assert.equal(await evaluate(win, () => Boolean(document.querySelector(".artifact-preview-panel"))), false);
   await evaluate(win, () => document.querySelector('[data-wuu-component="turn-artifacts"] button').click());
   await waitFor(win, () => Boolean(document.querySelector(".artifact-preview-panel iframe")));
-  await evaluate(win, () => document.querySelector(".artifact-preview-actions button:last-child").click());
+  await evaluate(win, () => [...document.querySelectorAll(".artifact-preview-actions button")].at(-1).click());
   await waitFor(win, () => !document.querySelector(".artifact-preview-panel"));
   await complete(win, 1);
   await waitFor(win, () => document.querySelector(".artifact-preview-text")?.textContent.startsWith("Delivered text snapshot"));
-  await evaluate(win, () => document.querySelector(".artifact-preview-actions button:last-child").click());
+  await evaluate(win, () => [...document.querySelectorAll(".artifact-preview-actions button")].at(-1).click());
   await waitFor(win, () => !document.querySelector(".artifact-preview-panel"));
   for (const index of [2, 3]) {
     await complete(win, index);
@@ -329,7 +329,7 @@ app.whenReady().then(async () => {
   await evaluate(win, async () => {
     window.closedVideo = document.querySelector('.artifact-preview-panel video');
     await window.closedVideo.play();
-    document.querySelector('.artifact-preview-actions button:last-child').click();
+    [...document.querySelectorAll(".artifact-preview-actions button")].at(-1).click();
   });
   await waitFor(win, () => !document.querySelector('.artifact-preview-panel'));
   await waitFor(win, () => window.closedVideo.paused);

@@ -462,6 +462,7 @@ export const enUS = {
   "artifacts.retainedStopped": "Stopped · {count} file(s) retained",
   "artifacts.openNamed": "Open {name}",
   "artifacts.previewNamed": "Preview {name}",
+  "artifacts.download": "Download",
   "artifacts.downloadNamed": "Download {name}",
   "artifacts.previewUnavailable": "Preview is unavailable for this format. You can still download it or open it from the workspace.",
   "artifacts.videoUnavailable": "This video could not be played. The file may be unavailable or use an unsupported codec. Download it to try another player.",

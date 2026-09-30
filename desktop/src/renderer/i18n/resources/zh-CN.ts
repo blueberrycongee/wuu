@@ -459,6 +459,7 @@ export const zhCN = {
   "artifacts.retainedStopped": "已停止 · 已保留 {count} 个文件",
   "artifacts.openNamed": "打开 {name}",
   "artifacts.previewNamed": "预览 {name}",
+  "artifacts.download": "下载",
   "artifacts.downloadNamed": "下载 {name}",
   "artifacts.previewUnavailable": "此格式暂不支持预览，你仍可以下载或在工作区中打开。",
   "artifacts.videoUnavailable": "无法播放此视频，文件可能不可用或使用了不支持的编码。你可以下载后使用其他播放器打开。",

@@ -19,6 +19,7 @@ import {
   turnOutputSummaryVisible,
 } from "./TurnOutputSummaryCard";
 import { Tooltip } from "./Tooltip";
+import { TruncatedText } from "./TruncatedText";
 import { useArtifactPreview } from "./ArtifactPreviewContext";
 import { VideoPreview } from "./VideoPreview";
 import { videoMimeType } from "../shared/videoMimeType";
@@ -551,18 +552,21 @@ export function ArtifactPreview({
       <div className={mode === "panel" ? "artifact-preview-content" : "artifact-preview-shell"} ref={dialogRef} tabIndex={-1}>
         <header className="artifact-preview-toolbar">
           <div>
-            <strong>{artifact.name}</strong>
-            <span>{artifact.mimeType}</span>
+            <TruncatedText as="strong" text={artifact.name} />
           </div>
           <div className="artifact-preview-actions">
             {source ? (
-              <button type="button" onClick={download} aria-label={t("artifacts.downloadNamed", { name: artifact.name })}>
-                <Download className="icon" aria-hidden="true" />
-              </button>
+              <Tooltip content={t("artifacts.download")}>
+                <button type="button" onClick={download} aria-label={t("artifacts.downloadNamed", { name: artifact.name })}>
+                  <Download className="icon" aria-hidden="true" />
+                </button>
+              </Tooltip>
             ) : null}
-            <button type="button" onClick={onClose} aria-label={t("common.close")}>
-              <X className="icon" aria-hidden="true" />
-            </button>
+            <Tooltip content={t("common.close")}>
+              <button type="button" onClick={onClose} aria-label={t("common.close")}>
+                <X className="icon" aria-hidden="true" />
+              </button>
+            </Tooltip>
           </div>
         </header>
         {downloadError && <p role="alert">{downloadError}</p>}
