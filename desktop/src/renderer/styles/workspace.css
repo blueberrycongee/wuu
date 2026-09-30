@@ -1075,7 +1075,7 @@ html.resizing-workspace-file-split * {
   max-height: 32px;
   margin: 0 auto -6px;
   overflow: hidden;
-  color: var(--text-primary);
+  color: var(--ink);
   background: var(--conversation-floating-surface-bg);
   /* Match the composer and its pending-message drawer in every open state. */
   border: 1px solid var(--hairline-soft);
@@ -1122,55 +1122,26 @@ html.resizing-workspace-file-split * {
   background: transparent;
 }
 
+/* The question being answered carries the product's one live-text wave,
+ * which also owns its reduced-motion behaviour. */
 .workspace-document-turn-waiting-query {
   grid-column: 1;
-  width: 100%;
+  max-width: calc(100% - 18px);
   min-width: 0;
   margin-left: 18px;
   overflow: hidden;
   justify-self: start;
-  background: linear-gradient(
-    100deg,
-    var(--ink-muted) 15%,
-    var(--ink) 42%,
-    var(--ink-muted) 68%
-  );
-  background-size: 240% 100%;
-  background-clip: text;
-  color: transparent;
+  color: var(--ink-soft);
   font-size: var(--font-ui);
-  font-weight: var(--weight-medium);
   line-height: 1.4;
   text-overflow: ellipsis;
   white-space: nowrap;
-  animation: workspace-document-waiting-query-shimmer 2.4s ease-in-out infinite;
-}
-
-@keyframes workspace-document-waiting-query-shimmer {
-  0%,
-  100% {
-    background-position: 100% 50%;
-    opacity: 0.62;
-  }
-
-  50% {
-    background-position: 0 50%;
-    opacity: 1;
-  }
-}
-
-@container style(--motion-reduced: 1) {
-  .workspace-document-turn-waiting-query {
-    background: none;
-    color: var(--ink-muted);
-    animation: none;
-  }
 }
 
 .workspace-document-turn-summary svg {
   grid-column: 2;
   justify-self: center;
-  color: var(--text-secondary);
+  color: var(--ink-tertiary);
 }
 
 .workspace-document-turn-details {
@@ -1186,7 +1157,7 @@ html.resizing-workspace-file-split * {
 .workspace-document-turn-result {
   min-width: 0;
   padding: 2px 2px 0;
-  color: var(--text-primary);
+  color: var(--ink);
 }
 
 .workspace-document-turn-result > .rich-content + .rich-content {
