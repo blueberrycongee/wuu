@@ -2,6 +2,7 @@ package appserver
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -33,6 +34,9 @@ func (s *Server) loadHeldUserTurns(threadID string) ([]queuedTurn, error) {
 }
 
 func (s *Server) replaceHeldUserTurns(threadID string, turns []queuedTurn) error {
+	if s == nil || s.rt == nil {
+		return errors.New("held user work requires a session store")
+	}
 	rows := make([]session.HeldUserWork, 0, len(turns))
 	for _, turn := range turns {
 		messageJSON, err := json.Marshal(turn.msg)
@@ -192,8 +196,26 @@ func (s *Server) pendingUserMessageSummaries(threadID string) []HeldUserMessage 
 }
 
 func (s *Server) notifyHeldUserTurns(threadID string, turns []queuedTurn) {
+	s.notifyHeldUserTurnsWithError(threadID, turns, "")
+}
+
+func (s *Server) notifyHeldUserTurnsWithError(threadID string, turns []queuedTurn, reason string) {
 	_ = s.writeNotification(NotificationTurnHeld, TurnHeldNotification{
 		ThreadID: threadID,
 		Messages: heldUserMessageSummaries(threadID, turns),
+		Error:    reason,
 	})
+}
+
+// holdRejectedQueuedTurn keeps queued input whose admission failed after the
+// client was told it was queued. The client gets the reason and an editable
+// paused copy rather than a silent removal.
+func (s *Server) holdRejectedQueuedTurn(threadID string, entry queuedTurn, cause error) error {
+	entry.origin = session.HeldUserWorkOriginQueue
+	held, err := s.appendHeldUserTurns(threadID, []queuedTurn{entry})
+	if err != nil {
+		return err
+	}
+	s.notifyHeldUserTurnsWithError(threadID, held, cause.Error())
+	return nil
 }
