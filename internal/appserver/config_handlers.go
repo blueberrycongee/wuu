@@ -1471,6 +1471,7 @@ func (s *Server) handleConfigModelUpdate(req Request) error {
 			credentials.Type = "api_key"
 			credentials.APIKey = authKeyForStore
 			credentials.AuthToken = ""
+			credentials.Source = authstorage.SourceSaved
 		}); err != nil {
 			return s.writeResponse(req.ID, nil, err)
 		}
@@ -1484,6 +1485,7 @@ func (s *Server) handleConfigModelUpdate(req Request) error {
 			credentials.Type = "auth_token"
 			credentials.AuthToken = authTokenForStore
 			credentials.APIKey = ""
+			credentials.Source = authstorage.SourceSaved
 		}); err != nil {
 			return s.writeResponse(req.ID, nil, err)
 		}

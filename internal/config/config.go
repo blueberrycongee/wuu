@@ -76,6 +76,13 @@ type MCPServerConfig struct {
 	ToolOverrides map[string]MCPToolOverride `json:"tool_overrides,omitempty"`
 }
 
+// definesServer reports whether the entry says how to reach a server, as
+// opposed to only carrying startup preferences for one defined elsewhere.
+func (c MCPServerConfig) definesServer() bool {
+	return c.Command != "" || len(c.Args) > 0 || c.URL != "" || c.Transport != "" ||
+		len(c.Env) > 0 || len(c.Headers) > 0 || c.OAuth != nil
+}
+
 type MCPOAuthConfig struct {
 	ClientID     string   `json:"client_id,omitempty"`
 	ClientSecret string   `json:"client_secret,omitempty"`
@@ -1615,6 +1622,14 @@ func UpdateGeneralSettings(configPath string, update GeneralSettingsUpdate) erro
 			} else {
 				server["enabled"] = false
 			}
+			// An entry with nothing left is not a definition; keeping it would
+			// shadow a same-named server defined elsewhere.
+			if len(server) == 0 {
+				delete(mcpServers, name)
+			}
+		}
+		if len(mcpServers) == 0 {
+			delete(raw, "mcp_servers")
 		}
 	}
 

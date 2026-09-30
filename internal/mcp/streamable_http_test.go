@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -595,5 +596,76 @@ func TestNormalizeTransportAliases(t *testing.T) {
 	}
 	if _, err := normalizeTransport("ws"); err == nil {
 		t.Fatal("normalizeTransport should reject unknown names")
+	}
+}
+
+// sentSignalTransport reports once a request has been handed to the server, so
+// a test can cancel only while the call is waiting for its response.
+type sentSignalTransport struct {
+	Transport
+	method string
+	sent   chan struct{}
+	once   sync.Once
+}
+
+func (t *sentSignalTransport) Send(ctx context.Context, req Request) error {
+	err := t.Transport.Send(ctx, req)
+	if req.Method == t.method && err == nil {
+		t.once.Do(func() { close(t.sent) })
+	}
+	return err
+}
+
+// Cancelling a call sends notifications/cancelled. A server that accepts the
+// notification but never finishes the response must not keep the caller waiting.
+func TestCancelledCallDoesNotWaitForStalledCancelNotification(t *testing.T) {
+	previous := cancelNotificationTimeout
+	cancelNotificationTimeout = 100 * time.Millisecond
+	defer func() { cancelNotificationTimeout = previous }()
+
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		var req Request
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		switch req.Method {
+		case "tools/call":
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+		case "notifications/cancelled":
+			w.WriteHeader(http.StatusAccepted)
+		}
+		w.(http.Flusher).Flush()
+		<-release
+	}))
+	defer srv.Close()
+	defer close(release)
+
+	inner := NewStreamableHTTPTransport(srv.URL, nil)
+	defer inner.Close()
+	transport := &sentSignalTransport{Transport: inner, method: "tools/call", sent: make(chan struct{})}
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		<-transport.sent
+		cancel()
+	}()
+	done := make(chan error, 1)
+	go func() {
+		_, err := call(ctx, transport, newInFlight(), "tools/call", map[string]any{"name": "slow"})
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("call error = %v, want context canceled", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("cancelled call waited for the cancel notification response")
 	}
 }

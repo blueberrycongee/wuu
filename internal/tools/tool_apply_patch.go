@@ -373,7 +373,7 @@ func parseApplyPatchChunks(lines []string, start, end int) ([]applyPatchChunk, i
 			return nil, i, fmt.Errorf("Update File chunk must start with @@: %q", line)
 		}
 		chunk := applyPatchChunk{
-			ContextHint: strings.TrimSpace(strings.TrimPrefix(line, "@@")),
+			ContextHint: strings.TrimPrefix(strings.TrimPrefix(line, "@@"), " "),
 		}
 		i++
 		for i < end {
@@ -730,8 +730,18 @@ func applyPatchChunks(content string, chunks []applyPatchChunk) (string, error) 
 	}
 	lines, trailingNewline := splitPatchContentLines(content)
 	cursor := 0
+	forwardOnly := false
 	for _, chunk := range chunks {
-		idx, err := findPatchChunk(lines, chunk.OldLines, cursor, chunk.EndOfFile)
+		if chunk.ContextHint != "" {
+			idx, err := findPatchChunk(lines, []string{chunk.ContextHint}, cursor, false, true)
+			if err != nil {
+				return "", fmt.Errorf("context %q: %w", chunk.ContextHint, err)
+			}
+			cursor = idx + 1
+			// Later chunks must not fall back before an explicit context.
+			forwardOnly = true
+		}
+		idx, err := findPatchChunk(lines, chunk.OldLines, cursor, chunk.EndOfFile, forwardOnly)
 		if err != nil {
 			return "", err
 		}
@@ -795,7 +805,7 @@ func countContentLines(content string) int {
 	return count
 }
 
-func findPatchChunk(lines, oldLines []string, cursor int, endOfFile bool) (int, error) {
+func findPatchChunk(lines, oldLines []string, cursor int, endOfFile, forwardOnly bool) (int, error) {
 	if len(oldLines) == 0 {
 		if endOfFile {
 			return len(lines), nil
@@ -807,7 +817,7 @@ func findPatchChunk(lines, oldLines []string, cursor int, endOfFile bool) (int, 
 	}
 
 	matches := findLineSequence(lines, oldLines, cursor)
-	if len(matches) == 0 && cursor > 0 {
+	if len(matches) == 0 && cursor > 0 && !forwardOnly {
 		matches = findLineSequence(lines, oldLines, 0)
 	}
 	if len(matches) == 0 {
