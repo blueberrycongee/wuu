@@ -37,6 +37,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Editing a message after context compaction now retracts the selected message
   and following messages, preserving the correct conversation on resume and fork.
+- Keep queued input the Core rejected or lost: a message refused at admission
+  (for example by a `UserPromptSubmit` hook) is held with the reason, and queued
+  messages survive a Core restart as paused input instead of being removed.
 - Keep ordinary project conversations rooted in the selected folder after project
   relocation, while preserving custom directories and linked worktrees.
 - Keep attachments in their original conversation draft when file preparation
@@ -48,6 +51,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Keep a trusted project `.mcp.json` server's definition when its settings
   switch is toggled off and back on; startup preferences layer over the project
   entry rather than replacing it.
+
+- Bound MCP call cleanup: a cancelled call no longer waits on the server's answer
+  to `notifications/cancelled`, and stdio sends stop when their call ends rather
+  than blocking on a full pipe. The transport closes if a frame may be half-written.
 
 ## [2026.9.29] - 2026-09-29
 

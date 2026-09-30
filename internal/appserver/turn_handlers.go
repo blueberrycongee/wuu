@@ -3521,10 +3521,19 @@ func (s *Server) drainQueuedTurns(threadID string) {
 				ThreadID: threadID, QueueID: reference.QueueID, Error: err.Error(),
 			})
 		}
-		_ = s.writeNotification(NotificationTurnDequeued, TurnDequeuedNotification{
-			ThreadID: threadID,
-			QueueID:  entry.id,
-		})
+		if entry.snapshot.PluginTurn == nil {
+			if holdErr := s.holdRejectedQueuedTurn(threadID, entry, err); holdErr == nil {
+				err = nil
+			} else {
+				providers.DebugLogf("hold rejected queued turn for thread %q: %v", threadID, holdErr)
+			}
+		}
+		if err != nil {
+			_ = s.writeNotification(NotificationTurnDequeued, TurnDequeuedNotification{
+				ThreadID: threadID,
+				QueueID:  entry.id,
+			})
+		}
 	}
 	requeued := requeueCandidate && !cancelled
 	s.clearQueuedTurnDrain(threadID)
