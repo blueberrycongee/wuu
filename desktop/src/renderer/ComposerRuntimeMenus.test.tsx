@@ -134,8 +134,28 @@ describe("RuntimePicker", () => {
     expect(onSelectSpeed).toHaveBeenCalledWith(next);
     await act(async () => document.querySelector<HTMLButtonElement>(".runtime-panel-speed-reset")?.click());
     expect(onSelectSpeed).toHaveBeenLastCalledWith("");
+    expect(document.activeElement).toBe(button);
     expect(button?.getAttribute("aria-pressed")).toBe(String(defaultSpeed === "fast"));
     expect(document.querySelector<HTMLButtonElement>(".runtime-panel-speed-reset")?.disabled).toBe(true);
+  });
+
+  it("keeps a speed save focused while preventing duplicate requests", async () => {
+    let finish!: (saved: boolean) => void;
+    const onSelectSpeed = vi.fn(() => new Promise<boolean>((resolve) => { finish = resolve; }));
+    const initialized = runtimeWithEffort();
+    initialized.speed = "standard";
+    initialized.providers![0].models![0].fast_mode = true;
+    renderPicker("model", initialized, vi.fn(), vi.fn(), vi.fn(), createRef(), { onSelectSpeed });
+    const button = document.querySelector<HTMLButtonElement>('button[aria-label="Fast mode"]')!;
+    act(() => { button.focus(); button.click(); });
+    expect(button.disabled).toBe(false);
+    expect(button.getAttribute("aria-disabled")).toBe("true");
+    expect(button.getAttribute("aria-busy")).toBe("true");
+    act(() => button.click());
+    expect(onSelectSpeed).toHaveBeenCalledTimes(1);
+    await act(async () => finish(true));
+    expect(document.activeElement).toBe(button);
+    expect(button.getAttribute("aria-disabled")).toBeNull();
   });
 
   it("omits speed controls when the model does not support fast mode", () => {

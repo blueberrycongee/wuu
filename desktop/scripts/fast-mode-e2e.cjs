@@ -75,6 +75,8 @@ async function capturePanel(win, name) {
       font: getComputedStyle(panel).getPropertyValue('--font-ui').trim(), theme: document.documentElement.dataset.theme,
       viewport: { width: innerWidth, height: innerHeight },
       nestedButton: Boolean(fast.parentElement.closest('button')),
+      focusedFast: document.activeElement === fast, focusModality: document.documentElement.dataset.focusModality,
+      focusOutline: getComputedStyle(fast).outlineStyle,
       crop: { x: Math.max(0, Math.floor(p.x - 8)), y: Math.max(0, Math.floor(p.y - 8)), width: Math.min(innerWidth - Math.max(0, Math.floor(p.x - 8)), Math.ceil(p.width + 16)), height: Math.min(innerHeight - Math.max(0, Math.floor(p.y - 8)), Math.ceil(p.height + 16)) },
     };
   });
@@ -130,7 +132,9 @@ async function run() {
   await waitFor(main, () => document.querySelector('button[aria-label="Fast mode"]'));
   assert.equal(await evaluate(main, () => document.querySelector('button[aria-label="Fast mode"]').getAttribute('aria-pressed')), 'false');
   main.focus(); main.webContents.focus();
-  await evaluate(main, () => document.querySelector('button[aria-label="Fast mode"]').focus());
+  await evaluate(main, () => document.querySelector('.runtime-panel-model').focus());
+  await key(main, 'Home');
+  assert(await evaluate(main, () => document.activeElement === document.querySelector('.runtime-panel-fast')), 'Keyboard navigation reaches the speed control.');
   const beforeToggle = await capturePanel(main, 'provider-standard');
   await key(main, 'Space');
   await waitFor(main, async id => (await window.wuu.resumeThread(id)).thread.speed === 'fast', threadID);

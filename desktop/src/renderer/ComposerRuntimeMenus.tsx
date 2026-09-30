@@ -257,10 +257,12 @@ function RuntimePanelSummary({
   const { t } = useI18n();
   const [pendingSpeed, setPendingSpeed] = useState<string | undefined>(undefined);
   const [speedSaving, setSpeedSaving] = useState(false);
+  const fastButtonRef = useRef<HTMLButtonElement>(null);
   useEffect(() => setPendingSpeed(undefined), [speed, model]);
   const requestedSpeed = pendingSpeed ?? speed;
   const displayedSpeed = effectiveModelSpeed(requestedSpeed, defaultSpeed);
   const fastModeHint = `${t(displayedSpeed === "fast" ? "runtime.fastModeOn" : displayedSpeed === "standard" ? "runtime.fastModeOff" : "runtime.fastModeDefault")} · ${t("runtime.fastModeHint")}`;
+  // A saving toggle stays focusable; native disabled would blur keyboard input.
   const changeSpeed = async (next: string): Promise<void> => {
     if (!onSelectSpeed || speedSaving) return;
     setPendingSpeed(next);
@@ -321,10 +323,13 @@ function RuntimePanelSummary({
                 <button
                   type="button"
                   className="runtime-panel-fast"
+                  ref={fastButtonRef}
                   aria-label={t("runtime.fastMode")}
                   aria-description={fastModeHint}
                   aria-pressed={displayedSpeed ? displayedSpeed === "fast" : "mixed"}
-                  disabled={speedDisabled || speedSaving}
+                  disabled={speedDisabled}
+                  aria-disabled={speedSaving || undefined}
+                  aria-busy={speedSaving || undefined}
                   onClick={() => { void changeSpeed(displayedSpeed === "fast" ? "standard" : "fast"); }}
                 ><Zap aria-hidden="true" /></button>
               </Tooltip>
@@ -334,7 +339,12 @@ function RuntimePanelSummary({
                   type="button"
                   aria-label={t("runtime.resetSpeed")}
                   disabled={!requestedSpeed || speedDisabled || speedSaving}
-                  onClick={() => { void changeSpeed(""); }}
+                  onClick={() => {
+                    // Reset becomes unavailable after this action; keep focus on
+                    // the related toggle rather than dropping it onto the page.
+                    fastButtonRef.current?.focus();
+                    void changeSpeed("");
+                  }}
                 ><RotateCcw aria-hidden="true" /></button>
               </Tooltip>
             </div>

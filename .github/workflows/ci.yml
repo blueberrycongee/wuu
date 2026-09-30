@@ -131,9 +131,11 @@ jobs:
           cache-dependency-path: go.sum
 
       - name: Build desktop fixture core
+        id: build-fixture-core
         run: go build -o "${{ runner.temp }}/wuu-session-switch-core" ./cmd/wuu
 
       - name: Verify compact Fast mode controls
+        if: ${{ !cancelled() && steps.build-fixture-core.outcome == 'success' }}
         timeout-minutes: 5
         shell: bash
         env:
@@ -154,6 +156,7 @@ jobs:
           retention-days: 14
 
       - name: Verify worktree skill selection
+        if: ${{ !cancelled() && steps.build-fixture-core.outcome == 'success' }}
         timeout-minutes: 5
         shell: bash
         env:
