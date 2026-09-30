@@ -758,7 +758,7 @@ describe("Composer send control", () => {
     expect(onSend).toHaveBeenCalledWith("刚刚输入的内容");
   });
 
-  it("commits keystrokes while deferred composer chrome is suspended", async () => {
+  it.each(["Enter", "button"])("commits keystrokes with %s while deferred composer chrome is suspended", async (submission) => {
     const host = new PluginHost({ react: React });
     const onSend = vi.fn();
     let released = false;
@@ -769,22 +769,27 @@ describe("Composer send control", () => {
         resolve();
       };
     });
+    let suspendChrome: () => void = () => {};
+    function SlowToolbar(): JSX.Element {
+      const [suspended, setSuspended] = useState(false);
+      suspendChrome = () => setSuspended(true);
+      if (suspended && !released) throw pending;
+      return <span>toolbar ready</span>;
+    }
     await host.activateGeneration({
       pluginId: "slow-composer-chrome",
       generation: "one",
       register(api) {
         api.registerSlot("composer.toolbar", {
           id: "slow-toolbar",
-          render(context) {
-            if (context.hasDraft && !released) {
-              throw pending;
-            }
-            return api.react.createElement("span", null, "toolbar ready");
+          render() {
+            return api.react.createElement(SlowToolbar);
           },
         });
       },
     });
-    renderComposer({ prompt: "", setPrompt: () => {}, pluginHost: host, onSend });
+    // Keep Send enabled while a later input update is held in the transition.
+    renderComposer({ prompt: "previous draft", setPrompt: () => suspendChrome(), pluginHost: host, onSend });
     const textarea = container.querySelector<HTMLTextAreaElement>("textarea");
     if (!textarea) throw new Error("composer textarea not rendered");
 
@@ -796,11 +801,15 @@ describe("Composer send control", () => {
     expect(container.querySelector('[data-testid="composer-suspended"]')).toBeNull();
     expect(container.querySelector(".composer-frame")).not.toBeNull();
     act(() => {
-      textarea.dispatchEvent(new KeyboardEvent("keydown", {
-        key: "Enter",
-        bubbles: true,
-        cancelable: true,
-      }));
+      if (submission === "button") {
+        container.querySelector<HTMLButtonElement>(".composer-send-button")?.click();
+      } else {
+        textarea.dispatchEvent(new KeyboardEvent("keydown", {
+          key: "Enter",
+          bubbles: true,
+          cancelable: true,
+        }));
+      }
     });
     expect(onSend).toHaveBeenCalledWith("输入不应等待工具栏");
 

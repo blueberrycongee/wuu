@@ -796,7 +796,12 @@ export function Composer({
   }
 
   function submitComposer(): void {
-    submitDraft();
+    // The textarea can be ahead of the deferred composer chrome when Send is clicked.
+    const visiblePrompt = textareaRef.current?.value ?? visiblePromptValue;
+    const currentPrompt = hasCollapsedPromptBlocks
+      ? `${collapsedPromptPrefix}${visiblePrompt}`
+      : visiblePrompt;
+    submitDraft(currentPrompt);
   }
 
   function submitDraft(promptOverride = prompt): void {
