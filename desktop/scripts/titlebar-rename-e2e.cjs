@@ -51,7 +51,8 @@ app.whenReady().then(async () => {
     nodeIntegration: false, sandbox: false, backgroundThrottling: false,
   } });
   await win.loadFile(path.join(desktop, "out/renderer/index.html"));
-  await until(() => Boolean(document.querySelector(".conversation-title-rename")));
+  await until(() => Boolean(document.querySelector(".turn"))
+    && document.querySelector(".conversation-title-rename")?.textContent.includes("Resize fixture"));
   win.focus(); win.webContents.focus();
   const point = await evaluate(() => {
     const rect = document.querySelector(".conversation-title-rename").getBoundingClientRect();
