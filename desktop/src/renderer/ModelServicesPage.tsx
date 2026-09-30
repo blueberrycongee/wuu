@@ -230,8 +230,10 @@ function errorMessage(error: unknown, t: Translate): string {
   return error instanceof Error && error.message ? error.message : t("provider.saveFailed");
 }
 
-function useCatalogProviders(version: number): { providers?: CatalogProviderSummary[]; failed: boolean } {
-  const [state, setState] = useState<{ providers?: CatalogProviderSummary[]; failed: boolean }>({ failed: false });
+type CatalogState = { providers?: CatalogProviderSummary[]; failed: boolean };
+
+export function useCatalogProviders(version: number): CatalogState {
+  const [state, setState] = useState<CatalogState>({ failed: false });
   useEffect(() => {
     if (!hostSupports("listCatalogProviders") || typeof window.wuu?.listCatalogProviders !== "function") {
       setState({ failed: true });
@@ -255,13 +257,11 @@ export function ModelServicesPage({
   onRemoveProvider,
   onRefreshModelCatalog,
 }: ModelServicesPageProps): JSX.Element {
-  const { t, locale } = useI18n();
+  const { t } = useI18n();
   const rootRef = useRef<HTMLDivElement>(null);
   const providers = initialized?.providers ?? [];
   const labels = useMemo(() => serviceLabels(providers, t), [providers, t]);
   const [openService, setOpenService] = useState("");
-  const [connectTarget, setConnectTarget] = useState<ConnectTarget | null>(null);
-  const [browsing, setBrowsing] = useState(false);
   const [catalogVersion, setCatalogVersion] = useState(0);
   const [catalogRefreshing, setCatalogRefreshing] = useState(false);
   const catalog = useCatalogProviders(catalogVersion);
@@ -290,11 +290,6 @@ export function ModelServicesPage({
     }
   }
 
-  function startConnect(target: ConnectTarget): void {
-    setBrowsing(false);
-    setConnectTarget(target);
-  }
-
   return (
     <div className="model-services" ref={rootRef} data-testid="settings-providers">
       {detailProvider ? (
@@ -318,15 +313,106 @@ export function ModelServicesPage({
           initialized={initialized}
           running={running}
           catalog={catalog}
-          featured={FEATURED_SERVICES[locale.startsWith("zh") ? "zh" : "en"]}
+          defaultOn={!defaultUsable}
           catalogRefreshing={catalogRefreshing}
           onRefreshCatalog={() => void refreshCatalog()}
           onOpenService={setOpenService}
-          onConnect={startConnect}
-          onBrowse={() => setBrowsing(true)}
           onSave={onSave}
         />
       )}
+    </div>
+  );
+}
+
+/**
+ * The providers a person can connect and the dialogs that connect them.
+ * Model services lists these under its services; first-run onboarding offers
+ * the same choices, so a connection is made the same way in both places.
+ */
+export function ServiceConnector({
+  providers,
+  running,
+  catalog,
+  defaultOn,
+  onSave,
+  onConnected,
+}: {
+  providers: readonly ProviderSummary[];
+  running: boolean;
+  catalog: CatalogState;
+  defaultOn: boolean;
+  onSave: SaveProvider;
+  onConnected: (name: string) => void;
+}): JSX.Element {
+  const { t, locale } = useI18n();
+  const [connectTarget, setConnectTarget] = useState<ConnectTarget | null>(null);
+  const [browsing, setBrowsing] = useState(false);
+  const connectedCatalogIDs = new Set(providers.map((provider) => provider.catalog_id).filter(Boolean));
+  const tiles = FEATURED_SERVICES[locale.startsWith("zh") ? "zh" : "en"]
+    .map((id) => catalog.providers?.find((provider) => provider.id === id))
+    .filter((provider): provider is CatalogProviderSummary => Boolean(provider) && !connectedCatalogIDs.has(provider!.id))
+    .slice(0, FEATURED_LIMIT);
+  const subscriptions = (["xai-subscription", "grok-build"] as const).filter((type) =>
+    !providers.some((provider) => (type === "grok-build" ? isGrokBuildType(provider.type) : isXAISubscriptionType(provider.type))),
+  );
+
+  function startConnect(target: ConnectTarget): void {
+    setBrowsing(false);
+    setConnectTarget(target);
+  }
+
+  return (
+    <>
+      <div className="model-service-tiles" data-testid="settings-provider-tiles">
+        {catalog.providers === undefined && !catalog.failed
+          ? Array.from({ length: 6 }, (_, index) => <span key={index} className="model-service-tile is-placeholder" aria-hidden="true" />)
+          : tiles.map((provider) => {
+            const name = catalogServiceName(provider.id, provider.name, t);
+            return (
+              <button
+                key={provider.id}
+                type="button"
+                className="model-service-tile"
+                data-catalog={provider.id}
+                disabled={running}
+                onClick={() => startConnect({ kind: "catalog", provider })}
+              >
+                <ProviderMark id={provider.id} label={name} />
+                <span className="model-service-tile-name">{name}</span>
+              </button>
+            );
+          })}
+        {isTouchWebShell() ? null : subscriptions.map((type) => (
+          <button
+            key={type}
+            type="button"
+            className="model-service-tile"
+            data-subscription={type}
+            disabled={running}
+            onClick={() => startConnect({ kind: "subscription", type })}
+          >
+            <span className="provider-mark" aria-hidden="true"><EngineIcon engine="grok" className="provider-mark-engine" /></span>
+            <span className="model-service-tile-name">{type === "grok-build" ? t("provider.grokBuild") : t("provider.xaiSubscription")}</span>
+          </button>
+        ))}
+        {catalog.providers?.length ? (
+          <button type="button" className="model-service-tile" disabled={running} onClick={() => setBrowsing(true)}>
+            <span className="provider-mark is-quiet" aria-hidden="true"><Search className="icon" /></span>
+            <span className="model-service-tile-name">{t("provider.moreServices")}</span>
+          </button>
+        ) : null}
+        <button
+          type="button"
+          className="model-service-tile"
+          data-testid="settings-provider-custom"
+          disabled={running}
+          onClick={() => startConnect({ kind: "custom" })}
+        >
+          <span className="provider-mark is-quiet" aria-hidden="true"><Code2 className="icon" /></span>
+          <span className="model-service-tile-name">{t("provider.customEndpoint")}</span>
+        </button>
+      </div>
+      {catalog.failed ? <p className="settings-section-note">{t("provider.catalogUnavailable")}</p> : null}
       {browsing ? (
         <BrowseServicesDialog
           catalog={catalog}
@@ -339,16 +425,16 @@ export function ModelServicesPage({
           target={connectTarget}
           providers={providers}
           running={running}
-          defaultOn={!defaultUsable}
+          defaultOn={defaultOn}
           onClose={() => setConnectTarget(null)}
           onSave={onSave}
           onConnected={(name) => {
             setConnectTarget(null);
-            setOpenService(name);
+            onConnected(name);
           }}
         />
       ) : null}
-    </div>
+    </>
   );
 }
 
@@ -362,36 +448,24 @@ function ServicesOverview({
   initialized,
   running,
   catalog,
-  featured,
+  defaultOn,
   catalogRefreshing,
   onRefreshCatalog,
   onOpenService,
-  onConnect,
-  onBrowse,
   onSave,
 }: {
   providers: readonly ProviderSummary[];
   labels: ReadonlyMap<string, string>;
   initialized?: InitializeResult;
   running: boolean;
-  catalog: { providers?: CatalogProviderSummary[]; failed: boolean };
-  featured: readonly string[];
+  catalog: CatalogState;
+  defaultOn: boolean;
   catalogRefreshing: boolean;
   onRefreshCatalog: () => void;
   onOpenService: (name: string) => void;
-  onConnect: (target: ConnectTarget) => void;
-  onBrowse: () => void;
   onSave: SaveProvider;
 }): JSX.Element {
   const { t } = useI18n();
-  const connectedCatalogIDs = new Set(providers.map((provider) => provider.catalog_id).filter(Boolean));
-  const tiles = featured
-    .map((id) => catalog.providers?.find((provider) => provider.id === id))
-    .filter((provider): provider is CatalogProviderSummary => Boolean(provider) && !connectedCatalogIDs.has(provider!.id))
-    .slice(0, FEATURED_LIMIT);
-  const subscriptions = (["xai-subscription", "grok-build"] as const).filter((type) =>
-    !providers.some((provider) => (type === "grok-build" ? isGrokBuildType(provider.type) : isXAISubscriptionType(provider.type))),
-  );
 
   return (
     <>
@@ -463,56 +537,14 @@ function ServicesOverview({
       ) : null}
 
       <SettingsSection title={t("provider.addSection")}>
-        <div className="model-service-tiles" data-testid="settings-provider-tiles">
-          {catalog.providers === undefined && !catalog.failed
-            ? Array.from({ length: 6 }, (_, index) => <span key={index} className="model-service-tile is-placeholder" aria-hidden="true" />)
-            : tiles.map((provider) => {
-              const name = catalogServiceName(provider.id, provider.name, t);
-              return (
-                <button
-                  key={provider.id}
-                  type="button"
-                  className="model-service-tile"
-                  data-catalog={provider.id}
-                  disabled={running}
-                  onClick={() => onConnect({ kind: "catalog", provider })}
-                >
-                  <ProviderMark id={provider.id} label={name} />
-                  <span className="model-service-tile-name">{name}</span>
-                </button>
-              );
-            })}
-          {isTouchWebShell() ? null : subscriptions.map((type) => (
-            <button
-              key={type}
-              type="button"
-              className="model-service-tile"
-              data-subscription={type}
-              disabled={running}
-              onClick={() => onConnect({ kind: "subscription", type })}
-            >
-              <span className="provider-mark" aria-hidden="true"><EngineIcon engine="grok" className="provider-mark-engine" /></span>
-              <span className="model-service-tile-name">{type === "grok-build" ? t("provider.grokBuild") : t("provider.xaiSubscription")}</span>
-            </button>
-          ))}
-          {catalog.providers?.length ? (
-            <button type="button" className="model-service-tile" disabled={running} onClick={onBrowse}>
-              <span className="provider-mark is-quiet" aria-hidden="true"><Search className="icon" /></span>
-              <span className="model-service-tile-name">{t("provider.moreServices")}</span>
-            </button>
-          ) : null}
-          <button
-            type="button"
-            className="model-service-tile"
-            data-testid="settings-provider-custom"
-            disabled={running}
-            onClick={() => onConnect({ kind: "custom" })}
-          >
-            <span className="provider-mark is-quiet" aria-hidden="true"><Code2 className="icon" /></span>
-            <span className="model-service-tile-name">{t("provider.customEndpoint")}</span>
-          </button>
-        </div>
-        {catalog.failed ? <p className="settings-section-note">{t("provider.catalogUnavailable")}</p> : null}
+        <ServiceConnector
+          providers={providers}
+          running={running}
+          catalog={catalog}
+          defaultOn={defaultOn}
+          onSave={onSave}
+          onConnected={onOpenService}
+        />
       </SettingsSection>
     </>
   );
