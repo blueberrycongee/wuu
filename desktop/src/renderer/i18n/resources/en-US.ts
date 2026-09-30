@@ -1223,6 +1223,7 @@ export const enUS = {
   "search.noConversations": "No conversations",
   "search.preview": "Conversation preview",
   "search.currentConversation": "Current",
+  "search.archived": "Archived",
   "search.loadingPreview": "Loading preview…",
   "search.noPreview": "No preview available",
   "time.justNow": "Just now",

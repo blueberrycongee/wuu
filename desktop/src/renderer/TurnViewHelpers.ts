@@ -36,27 +36,28 @@ export function userMessageAnchorID(turnID: string, itemID: string): string {
   return `user-msg-${turnID}-${itemID}`;
 }
 
+export function messageAnchorID(turnID: string, itemID: string): string {
+  return `message-${turnID}-${itemID}`;
+}
+
 export const CONVERSATION_TURN_REVEAL_EVENT =
   "wuu:conversation-turn-reveal";
 
 export type ConversationTurnRevealDetail = {
   turnID: string;
+  itemID?: string;
 };
 
-export function requestConversationTurnReveal(turnID: string): void {
+export function requestConversationTurnReveal(turnID: string, itemID?: string): void {
   if (typeof window === "undefined") {
     return;
   }
   window.dispatchEvent(
     new CustomEvent<ConversationTurnRevealDetail>(
       CONVERSATION_TURN_REVEAL_EVENT,
-      { detail: { turnID } },
+      { detail: { turnID, itemID } },
     ),
   );
-}
-
-function userMessageAnchorSelector(turnID: string, itemID: string): string {
-  return `#${userMessageAnchorID(turnID, itemID)}`;
 }
 
 export type UserMessageAnchor = {
@@ -341,7 +342,7 @@ function scrollAnchorIntoContainer(
   const step = (now: number): void => {
     jumpGlideFrames.delete(container);
     // Any other writer — the reader's wheel, a drag, a follow — takes over.
-    if (Math.abs(container.scrollTop - commanded) > 1) return;
+    if (node.closest('[inert]') || Math.abs(container.scrollTop - commanded) > 1) return;
     const { position, done } = glide.step(now, targetTop, container.clientHeight);
     container.scrollTop = position;
     commanded = container.scrollTop;
@@ -351,14 +352,15 @@ function scrollAnchorIntoContainer(
   jumpGlideFrames.set(container, window.requestAnimationFrame(step));
 }
 
-function attemptJump(turnID: string, itemID: string, highlight: boolean): boolean {
+function attemptJump(anchorID: string, highlight: boolean, expandMessage = false): boolean {
   if (typeof document === "undefined") {
     return false;
   }
-  const node = document.querySelector<HTMLElement>(
-    userMessageAnchorSelector(turnID, itemID),
-  );
-  if (!node) {
+  const node = document.getElementById(anchorID);
+  if (!node || node.closest('[inert]')) {
+    return false;
+  }
+  if (expandMessage && (node.closest('.turn-process-fold.collapsed') || node.querySelector('.user-message-long-card.collapsed'))) {
     return false;
   }
   // The .turn ancestor has `content-visibility: auto`, which lets the
@@ -401,14 +403,31 @@ export function scrollToUserMessage(
   itemID: string,
   options?: { highlight?: boolean },
 ): void {
+  scrollToMessageAnchor(turnID, userMessageAnchorID(turnID, itemID), options);
+}
+
+export function scrollToConversationMessage(turnID: string, item: ThreadItem): () => void {
+  const anchorID = item.type === "user_message"
+    ? userMessageAnchorID(turnID, item.id)
+    : messageAnchorID(turnID, item.id);
+  return scrollToMessageAnchor(turnID, anchorID, { itemID: item.id });
+}
+
+function scrollToMessageAnchor(
+  turnID: string,
+  anchorID: string,
+  options?: { highlight?: boolean; itemID?: string },
+): () => void {
   const highlight = options?.highlight ?? true;
   if (typeof window === "undefined") {
-    return;
+    return () => {};
   }
-  requestConversationTurnReveal(turnID);
+  requestConversationTurnReveal(turnID, options?.itemID);
+  let timer: number | undefined;
   let attemptIndex = 0;
   const tryOnce = (): void => {
-    if (attemptJump(turnID, itemID, highlight)) {
+    if (options?.itemID) requestConversationTurnReveal(turnID, options.itemID);
+    if (attemptJump(anchorID, highlight, Boolean(options?.itemID))) {
       return;
     }
     const nextDelay = JUMP_RETRY_DELAYS_MS[attemptIndex + 1];
@@ -416,9 +435,13 @@ export function scrollToUserMessage(
       return;
     }
     attemptIndex += 1;
-    window.setTimeout(tryOnce, nextDelay);
+    timer = window.setTimeout(tryOnce, nextDelay);
   };
-  tryOnce();
+  // Item jumps may expand a collapsed turn. Wait for that React commit rather
+  // than landing on its collapsed user-prompt placeholder.
+  if (options?.itemID) timer = window.setTimeout(tryOnce, 0);
+  else tryOnce();
+  return () => window.clearTimeout(timer);
 }
 
 /**

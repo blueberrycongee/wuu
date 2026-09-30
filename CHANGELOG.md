@@ -19,6 +19,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Conversation search uses a single list with project labels and highlighted
+  matching excerpts. Message matches navigate to their history position, and
+  keyword searches include archived conversations without restoring them.
+
 - Recommend only the Automation plugin during first-run setup; other bundled
   plugins remain available for manual selection.
 
