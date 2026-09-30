@@ -144,6 +144,8 @@ export async function activate(api) {
     .plugin-automation-history-status { display:inline-flex; color:var(--ink-muted); }
     .plugin-automation-history-status svg { width:var(--icon-size-sm); height:var(--icon-size-sm); }
     .plugin-automation-history-status[data-run="failed"] { color:var(--danger); }
+    /* A failed run's own message is detail under its date; the mark already says it failed. */
+    .plugin-automation-history-detail { margin:0; padding-inline-start:calc(var(--icon-size-sm) + var(--space-2)); color:var(--ink-soft); overflow-wrap:anywhere; user-select:text; }
     .plugin-automation-more { position:relative; }
     .plugin-automation-more summary { display:grid; place-items:center; list-style:none; cursor:pointer; width:var(--control-field-height); height:var(--control-field-height); border-radius:var(--radius-sm); color:var(--wuu-color-text-muted, var(--ink-soft)); }
     .plugin-automation-more summary::-webkit-details-marker { display:none; }
@@ -475,7 +477,7 @@ export async function activate(api) {
             task && dirty ? h("span", { className: "plugin-automation-detail-status", role: "status" }, tr("automation.unsaved")) : null,
             h(Button, { variant: "ghost", disabled: busy, onClick: onClose }, tr("automation.cancel")),
             h(Button, { type: "submit", variant: "primary", disabled: busy || !draft.prompt.trim() || (!!task && !dirty) }, tr(task ? "automation.save" : "automation.create"))) : null),
-        runs.length ? h("section", { className: "plugin-automation-history" }, h("h3", { className: "plugin-automation-group-title" }, tr("automation.history")), runs.slice(0, 5).map((run) => h("div", { key: run.id }, h("div", { className: "plugin-automation-history-row" }, h(RunStatus, { tr, run }), h("time", null, formatDateTime(run.triggered_at, draft.timezone, locale))), run.error ? h("p", { className: "plugin-automation-error" }, run.error) : null))) : null));
+        runs.length ? h("section", { className: "plugin-automation-history" }, h("h3", { className: "plugin-automation-group-title" }, tr("automation.history")), runs.slice(0, 5).map((run) => h("div", { key: run.id }, h("div", { className: "plugin-automation-history-row" }, h(RunStatus, { tr, run }), h("time", null, formatDateTime(run.triggered_at, draft.timezone, locale))), run.error ? h("p", { className: "plugin-automation-history-detail" }, run.error) : null))) : null));
   }
 
   function useEditorResize() {

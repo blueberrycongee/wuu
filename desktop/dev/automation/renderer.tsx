@@ -20,13 +20,15 @@ document.documentElement.dataset.theme = params.get("theme") === "dark" ? "dark"
 startFocusModality();
 applyMessageFlowFontSize(Number(params.get("font")) || 14);
 const workspace = { id: "wuu", name: "wuu", root: "/projects/wuu", available: true };
-let tasks = [
+// `empty` starts with no automations; `long` gives one a name and prompt that wrap.
+let tasks = params.has("empty") ? [] : [
+  ...(params.has("long") ? [{ id: "long", title: "每个工作日早上汇总这个项目最近的变更、待办工作和需要我关注的评审请求", prompt: "汇总这个项目最近二十四小时的提交、合并请求和未解决的评审意见，按紧急程度排序，并标出需要我今天决定的事项。", cron: "30 8 * * 1-5", timezone: "Asia/Shanghai", mode: "new_thread", recurring: true, paused: false, workspace_mode: "shared", next_run_at: "2026-09-16T00:30:00Z" }] : []),
   { id: "brief", title: "每日简报", prompt: "汇总这个项目最近的变更、待办工作，以及今天需要我关注的事项。", cron: "0 8 * * 1-5", timezone: "Asia/Shanghai", mode: "new_thread", recurring: true, paused: false, workspace_mode: "shared", next_run_at: "2026-09-16T00:00:00Z" },
   { id: "review", title: "每周回顾", prompt: "回顾本周进展，整理已完成的工作、尚未解决的问题和下周重点。", cron: "0 16 * * 5", timezone: "Asia/Shanghai", mode: "new_thread", recurring: true, paused: true, workspace_mode: "worktree", next_run_at: "2026-09-18T08:00:00Z" },
 ];
 // A failed run on a recurring task and a finished one-shot task, so the list
 // shows both a run problem and the completed section.
-const runs = [
+const runs = params.has("empty") ? [] : [
   { id: "run-brief", task_id: "brief", status: "failed", triggered_at: "2026-09-15T00:00:00Z", error: "Provider rate limit reached" },
   { id: "run-once", task_id: "release", status: "completed", triggered_at: "2026-09-14T09:00:00Z", completed_at: "2026-09-14T09:03:00Z", task: { id: "release", title: "发布前检查", prompt: "检查发布分支的构建、测试和发布说明。", cron: "0 17 14 9 *", timezone: "Asia/Shanghai", mode: "new_thread", recurring: false, paused: false, workspace_mode: "shared" } },
 ];
