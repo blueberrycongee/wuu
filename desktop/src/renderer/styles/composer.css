@@ -2276,7 +2276,11 @@ html[data-focus-modality="keyboard"] :is(.composer-context-menu, .composer-proje
   flex: 0 1 auto;
 }
 
+/* A flex container, so the branch pill is a flex item: as inline content it
+ * sat on a text baseline, and a glyph larger than the old 14px pushed the
+ * wrapper past the project group's height at large text. */
 .composer-branch-control {
+  display: flex;
   min-width: 0;
   flex: 0 1 auto;
 }
