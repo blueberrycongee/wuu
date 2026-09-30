@@ -34,6 +34,7 @@ import (
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/process"
 	"github.com/blueberrycongee/wuu/internal/processsandbox"
+	"github.com/blueberrycongee/wuu/internal/providerfactory"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/providers/codex"
 	"github.com/blueberrycongee/wuu/internal/runtime"
@@ -2640,6 +2641,46 @@ func TestServerConfigModelUpdatePersistsProviderConnection(t *testing.T) {
 	credentials, err := store.Get("fake-provider")
 	if err != nil || credentials.APIKey != "new-key" {
 		t.Fatalf("provider key was not saved to auth store: credentials=%+v err=%v", credentials, err)
+	}
+}
+
+// Saving a key must not change which credential the provider uses once its
+// configuration is read back: the ambient default env var is not the key the
+// user just entered for this service.
+func TestServerConfigModelUpdateSavedKeyIsUsedOverAmbientCredential(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "sk-ambient")
+	rt := newTestRuntime(t, &fakeClient{})
+	if err := os.WriteFile(rt.ConfigPath, []byte(`{
+  "default_provider": "fake-provider",
+  "providers": {
+    "fake-provider": {
+      "type": "openai-compatible",
+      "base_url": "https://custom.example.test/v1",
+      "api_key": "sk-explicit",
+      "model": "fake-model"
+    }
+  }
+}
+`), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	out := &lockedBuffer{}
+	srv := New(rt, out)
+	req := `{"id":"1","method":"config/model/update","params":{"provider":"fake-provider","model":"fake-model","api_key":"sk-explicit"}}`
+	if err := srv.handleLine(context.Background(), []byte(req)); err != nil {
+		t.Fatalf("config/model/update: %v", err)
+	}
+	data, err := os.ReadFile(rt.ConfigPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var persisted config.Config
+	if err := json.Unmarshal(data, &persisted); err != nil {
+		t.Fatalf("decode persisted config: %v", err)
+	}
+	key, err := providerfactory.ResolveAPIKeyWithHome(persisted.Providers["fake-provider"], "fake-provider", os.Getenv("HOME"))
+	if err != nil || key != "sk-explicit" {
+		t.Fatalf("after saving, the provider resolves %q (err %v); want the saved key, not the ambient credential", key, err)
 	}
 }
 
