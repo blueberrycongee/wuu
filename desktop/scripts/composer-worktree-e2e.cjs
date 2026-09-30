@@ -101,6 +101,18 @@ async function capture(win, name) {
   await settle(win);
   fs.writeFileSync(path.join(output, name), (await win.webContents.capturePage()).toPNG());
 }
+async function setAppearance(win, { theme, fontSize, width }) {
+  win.setContentSize(width, 820);
+  await evaluate(win, ({ theme, fontSize }) => {
+    document.documentElement.dataset.theme = theme;
+    document.documentElement.style.setProperty('--conversation-message-font-size', `${fontSize}px`);
+  }, { theme, fontSize });
+  await settle(win);
+  await waitFor(win, expectedWidth => Math.abs(innerWidth - expectedWidth) <= 2
+    && !document.documentElement.classList.contains('window-resizing')
+    && !document.documentElement.classList.contains('layout-motion-active'), width / win.webContents.getZoomFactor());
+  await settle(win);
+}
 async function captureCrop(win, rect) {
   // DOM rectangles are CSS pixels; Electron capture rectangles are DIP.
   const zoom = win.webContents.getZoomFactor();
@@ -233,13 +245,12 @@ async function run() {
   await capture(main, '04a-current-worktree-info.png');
   const inspectorGeometry = [];
   for (const theme of ['light', 'dark']) for (const fontSize of [14, 20]) for (const width of [1280, 760]) {
-    main.setContentSize(width, 820);
-    await evaluate(main, ({ theme, fontSize }) => {
-      document.documentElement.dataset.theme = theme;
-      document.documentElement.style.setProperty('--conversation-message-font-size', `${fontSize}px`);
-      const toggle = document.querySelector('.environment-toggle-button');
-      if (!toggle.classList.contains('active')) toggle.click();
-    }, { theme, fontSize });
+    // Close before resizing; the shell applies deferred panel-fit changes at
+    // resize settlement, so reopening earlier can race its dismissal.
+    await click(main, '.environment-panel-close-row button');
+    await waitFor(main, () => !document.querySelector('.environment-panel'));
+    await setAppearance(main, { theme, fontSize, width });
+    await click(main, '.environment-toggle-button');
     await waitFor(main, () => document.querySelector('.environment-panel.open .fork-worktree-card'));
     for (const expanded of [false, true]) {
       await evaluate(main, expanded => {
@@ -336,11 +347,7 @@ async function run() {
   const worktreesBeforeDismissal = worktreeCount();
   const forkDismissals = [];
   for (const theme of ['light', 'dark']) for (const fontSize of [14, 20]) for (const width of [1280, 760]) {
-    main.setContentSize(width, 820);
-    await evaluate(main, ({ theme, fontSize }) => {
-      document.documentElement.dataset.theme = theme;
-      document.documentElement.style.setProperty('--conversation-message-font-size', `${fontSize}px`);
-    }, { theme, fontSize });
+    await setAppearance(main, { theme, fontSize, width });
     for (const dismissal of ['backdrop', 'Escape']) {
       await evaluate(main, () => {
         const opener = [...document.querySelectorAll('.cached-conversation-pane[data-active="true"] .agent-message-actions button:has(svg[data-icon="split"])')].at(-1);
@@ -403,6 +410,8 @@ async function run() {
     Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(input, 'Rebind workspace fixture');
     input.dispatchEvent(new Event('input', { bubbles: true }));
   });
+  await waitFor(main, () => document.querySelector('.composer textarea')?.value === 'Rebind workspace fixture'
+    && document.querySelector('.composer-send-button[data-wuu-state="send"]:not(:disabled)'));
   await click(main, '.composer-send-button');
   await waitFor(main, () => [...document.querySelectorAll('.user-message-motion')].some(node => node.textContent.includes('Rebind workspace fixture'))
     && document.querySelector('.composer-send-button[data-wuu-state="send"]'));
