@@ -1111,10 +1111,14 @@ func (s *Server) ensureThreadRuntime(th *threadState) (*runtime.ThreadRuntime, e
 	var detached detachedThreadRuntime
 	if existing != nil && !running {
 		selectionMismatch := !s.threadRuntimeMatchesSelectionLocked(th, existing)
-		if th.pendingRuntimeReset || selectionMismatch {
+		workspaceMismatch := existing.Toolkit != nil && sessionWorkspacePath(existing.Toolkit.RootDir()) != sessionWorkspacePath(th.CWD)
+		if th.pendingRuntimeReset || selectionMismatch || workspaceMismatch {
 			if !threadRuntimeHasOutstandingWork(th.ID, existing) {
 				detached = detachThreadRuntimeLocked(th)
 				existing = nil
+			} else if workspaceMismatch {
+				th.mu.Unlock()
+				return nil, errors.New("session workspace changed while background agents are running; retry after they settle")
 			} else if selectionMismatch {
 				// The idle runtime was built for a different selection and
 				// cannot be rebuilt while background agents still depend on

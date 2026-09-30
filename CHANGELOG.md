@@ -40,6 +40,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Keep queued input the Core rejected or lost: a message refused at admission
   (for example by a `UserPromptSubmit` hook) is held with the reason, and queued
   messages survive a Core restart as paused input instead of being removed.
+- Keep ordinary project conversations rooted in the selected folder after project
+  relocation, while preserving custom directories and linked worktrees.
 - Keep attachments in their original conversation draft when file preparation
   finishes after switching conversations or closing a split pane. Pending files
   remain removable, and sends wait for their bytes before submitting.
