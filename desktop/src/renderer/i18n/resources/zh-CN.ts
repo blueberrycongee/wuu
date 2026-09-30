@@ -2095,7 +2095,7 @@ export const zhCN = {
   "composer.openFailedDraft": "打开草稿",
   "composer.discardFailedDraft": "丢弃未发送的草稿",
   "composer.noModelConfigured": "请先配置模型服务商，再发送消息",
-  "messageFlow.activityFailed": "过程失败",
+  "messageFlow.activityFailed": "未完成",
   "messageFlow.activityLog": "过程记录",
   "messageFlow.stillGenerating": "仍在生成",
   "messageFlow.finalizing": "正在收尾",

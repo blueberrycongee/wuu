@@ -871,7 +871,9 @@ it("removes the recovery card immediately on item removal without duplicating st
   expect(container.querySelector(".turn-failure")).toBeNull();
 });
 
-it("routes a failed turn retry through the existing history retry action", async () => {
+// Automatic recovery that gives up settles the turn as interrupted, not
+// failed; its card explains the same failure and needs the same retry.
+it.each(["failed", "interrupted"] as const)("routes the retry of a turn that ended %s through the existing history retry action", async (status) => {
   const user: ThreadItem = {
     id: "user", type: "user_message", status: "completed", text: "Display text", input_text: "Check this",
     images: [{ media_type: "image/png", data: "image-bytes" }],
@@ -884,7 +886,7 @@ it("routes a failed turn retry through the existing history retry action", async
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
-  const turn = makeTurn("failed", [user, item]);
+  const turn = makeTurn(status, [user, item]);
   act(() => { root!.render(<ImagePreviewProvider><TurnView turn={turn} isLatestTurn onEditMessage={onEditMessage} onSubmitEditMessage={onSubmitEditMessage} onStreamFrame={() => {}} /></ImagePreviewProvider>); });
   const retryButton = () => [...container!.querySelectorAll<HTMLButtonElement>(".turn-failure-actions button")]
     .find((button) => button.textContent === t("appState.retryAction"));

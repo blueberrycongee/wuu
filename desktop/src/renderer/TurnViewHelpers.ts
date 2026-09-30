@@ -421,6 +421,17 @@ export function scrollToUserMessage(
   tryOnce();
 }
 
+/**
+ * Automatic recovery that gives up settles a turn as interrupted rather than
+ * failed; either way the turn ended in a failure its card explains.
+ */
+export function turnEndedInFailure(turn: Turn): boolean {
+  return turn.status === "failed" || (
+    turn.status === "interrupted" &&
+    turn.items.some((item) => item.type === "stream_reconnect" && item.status === "failed")
+  );
+}
+
 export function turnProgressContent(
   turn: Turn,
   elapsedMs: number,

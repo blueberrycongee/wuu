@@ -2098,7 +2098,7 @@ export const enUS = {
   "composer.openFailedDraft": "Open draft",
   "composer.discardFailedDraft": "Discard unsent draft",
   "composer.noModelConfigured": "Configure a model provider before sending",
-  "messageFlow.activityFailed": "Activity failed",
+  "messageFlow.activityFailed": "Incomplete",
   "messageFlow.activityLog": "Activity log",
   "messageFlow.stillGenerating": "Still generating",
   "messageFlow.finalizing": "Finalizing",

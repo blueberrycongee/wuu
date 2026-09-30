@@ -35,7 +35,7 @@ import {
   useLiveNow,
 } from "./TurnProgress";
 import { ProcessSurface, ProcessSurfaceMascot } from "./ProcessSurface";
-import { turnProgressContent } from "./TurnViewHelpers";
+import { turnEndedInFailure, turnProgressContent } from "./TurnViewHelpers";
 import { collectTurnSources } from "./ToolActivityHelpers";
 import { TurnSourcesRow } from "./TurnSourcesRow";
 import {
@@ -366,7 +366,7 @@ function TurnProcessFold({
   const processLabel = turnProcessTitle(
     turn,
     elapsedMs,
-    completedDuration !== undefined,
+    completedDuration !== undefined || pausedElapsedMs !== undefined,
     collapseRequested,
     answerReady,
   );
@@ -793,6 +793,11 @@ function turnProcessTitle(
       ? taskFinishedLabel(elapsedMs)
       : translate("task.status.completed");
   }
+  // The failure card below says what went wrong; the fold header keeps the
+  // duration a finished turn shows.
+  if (turnEndedInFailure(turn)) {
+    return hasKnownDuration ? taskFinishedLabel(elapsedMs) : translate("messageFlow.activityFailed");
+  }
   if (turn.status === "interrupted") return translate("turn.orchestrationPaused");
   if (turn.status === "completed") {
     if (!hasKnownDuration) return translate("task.status.completed");
@@ -815,7 +820,7 @@ function turnProcessMetaParts(
   const parts: string[] = [];
   if (turn.status === "in_progress" && !answerReady) {
     parts.push(formatDuration(elapsedMs));
-  } else if (turn.status === "interrupted" && showPausedElapsed) {
+  } else if (turn.status === "interrupted" && showPausedElapsed && !turnEndedInFailure(turn)) {
     parts.push(formatDuration(elapsedMs));
   }
   return parts;

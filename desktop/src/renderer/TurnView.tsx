@@ -35,6 +35,7 @@ import {
   messageFlowAgentMessageItemID,
   scrollToUserMessage,
   turnAnchorID,
+  turnEndedInFailure,
 } from "./TurnViewHelpers";
 import { desktopPluginHost } from "./plugins/DesktopPluginRuntime";
 import { PluginSurface } from "./plugins";
@@ -250,7 +251,7 @@ function TurnContent({
     : event?.presentation === "notice" && event.source === "turn" && event.notice.category !== "cancelled"
       ? event.notice
       : undefined;
-  const retryFailedTurn = isLatestTurn && turn.status === "failed" && retryMessage && onEditMessage && onSubmitEditMessage
+  const retryFailedTurn = isLatestTurn && turnEndedInFailure(turn) && retryMessage && onEditMessage && onSubmitEditMessage
     ? () => onSubmitEditMessage(
         turn.id, retryMessage, retryMessage.input_text ?? retryMessage.text ?? "",
         retryMessage.images ?? [], retryMessage.files ?? [], retryMessage.content_parts,
