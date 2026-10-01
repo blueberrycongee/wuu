@@ -421,6 +421,60 @@ describe("session tab switch latency", () => {
     delete (globalThis as { wuu?: WuuDesktopApi }).wuu;
   });
 
+  it.each([false, true, "error"] as const)("waits for confirmed Git status before automatically opening workspace info (repository=%s)", async (isRepository) => {
+    vi.useFakeTimers();
+    vi.stubGlobal("innerWidth", 1600);
+    vi.stubGlobal("innerHeight", 900);
+    installWuuApi();
+    const status = deferred<Awaited<ReturnType<typeof window.wuu.gitStatus>>>();
+    vi.mocked(window.wuu.gitStatus).mockReturnValue(status.promise);
+    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+    expect(activeSessionTabLabel()).toContain("session switch A");
+    expect(window.wuu.gitStatus).toHaveBeenCalled();
+    const toggle = container.querySelector<HTMLButtonElement>(".environment-toggle-button")!;
+    expect(toggle.getAttribute("aria-pressed")).toBe("false");
+    expect(container.querySelector(".environment-panel")).toBeNull();
+
+    await act(async () => {
+      if (isRepository === "error") status.reject(new Error("Git status temporarily unavailable"));
+      else status.resolve({ is_repo: isRepository, dirty_count: 0 });
+    });
+    await flushAsync();
+    expect(toggle.getAttribute("aria-pressed")).toBe(String(isRepository === true));
+    if (isRepository === true) {
+      // A user's dismissal must survive later conversation/status refreshes.
+      await act(async () => { toggle.click(); });
+      await act(async () => { threadRowButton("session switch B")!.click(); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+      expect(toggle.getAttribute("aria-pressed")).toBe("false");
+    } else {
+      expect(container.querySelector(".environment-panel")).toBeNull();
+    }
+  });
+
+  it.each([false, true])("preserves explicit workspace-info intent while Git detection is pending (dismiss=%s)", async (dismiss) => {
+    vi.useFakeTimers();
+    vi.stubGlobal("innerWidth", 1600);
+    vi.stubGlobal("innerHeight", 900);
+    installWuuApi();
+    const status = deferred<Awaited<ReturnType<typeof window.wuu.gitStatus>>>();
+    vi.mocked(window.wuu.gitStatus).mockReturnValue(status.promise);
+    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+    const toggle = container.querySelector<HTMLButtonElement>(".environment-toggle-button")!;
+    expect(toggle.getAttribute("aria-pressed")).toBe("false");
+    await act(async () => { toggle.click(); });
+    expect(toggle.getAttribute("aria-pressed")).toBe("true");
+    if (dismiss) await act(async () => { toggle.click(); });
+    await act(async () => { status.resolve({ is_repo: dismiss, dirty_count: 0 }); });
+    await flushAsync();
+    expect(toggle.getAttribute("aria-pressed")).toBe(String(!dismiss));
+    await act(async () => { threadRowButton("session switch B")!.click(); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+    expect(toggle.getAttribute("aria-pressed")).toBe(String(!dismiss));
+  });
+
   it("persists the latest mounted effort-slider choice before the previous request settles", async () => {
     const { threadsByID } = installWuuApi();
     threadsByID.set(threadAID, { ...threadA(), model_variant: "high", model_effort: "high" });

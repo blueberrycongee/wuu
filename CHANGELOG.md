@@ -110,6 +110,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Wait for confirmed Git status before automatically opening workspace info,
+  avoiding a brief panel expansion and collapse in non-Git folders.
+
 - Preserve each conversation’s composer draft across related-session split
   opening, replacement, closing, and navigation; prevent delayed loads from
   overriding newer navigation or pane choices.
