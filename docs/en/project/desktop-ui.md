@@ -27,6 +27,12 @@ The [mascot lab](../../../desktop/dev/mascot/README.md) uses `npm --prefix deskt
 
 ## Conversation image previews
 
+Images returned while inspecting files or reading tool output start folded.
+Expand the filename row to load the preview, then click the image to enlarge it.
+Explicitly presented image artifacts, message attachments, and Markdown images
+remain directly visible. This distinction also applies to PTC and background
+tool results.
+
 Message and inline tool images reserve a responsive 4:3 preview area before
 loading. The complete image fits inside without cropping or upscaling; portrait
 and panoramic images may leave space around them. Loading failures keep the same
