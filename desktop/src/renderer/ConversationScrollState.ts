@@ -1400,15 +1400,16 @@ export function useConversationScrollState({
       // The browser can emit an unchanged or tiny upward scroll event while
       // the viewport is still inside the bottom band. If that re-arms
       // auto-follow, the next scroll/layout signal yanks the viewport back to
-      // the bottom before the jump reaches its target. Only an actual downward
-      // move back to the latest content should clear this jump guard.
+      // the bottom before the jump reaches its target. History prepends can
+      // also raise scrollTop while preserving the bottom reading anchor;
+      // only explicit input toward latest should clear this jump guard.
       if (followMotionRef.current) {
         // Reaching the old bottom must not finish the submit animation before
         // React inserts the optimistic turn or the diff receipt finishes exiting.
         nextAutoFollow = true;
         setAutoFollow(true);
         setAutoFollowOverflowAnchor(node, true);
-      } else if (scrolledDown && !selectionPausedAutoFollowRef.current) {
+      } else if (scrolledDown && userScrollIntentRef.current === "latest" && !selectionPausedAutoFollowRef.current) {
         suppressAutoFollowRearmRef.current = false;
         nextAutoFollow = true;
         setAutoFollow(true);

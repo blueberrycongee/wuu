@@ -939,6 +939,28 @@ describe("useConversationScrollState — high-frequency stream", () => {
     expect(layout.scrollTop).toBe(2000 - 600 - 8);
   });
 
+  it("does not let a history prepend rearm follow before a pending jump starts", () => {
+    mount({ scrollHeight: 2000, clientHeight: 600 });
+    if (!layout || !handle || !node) throw new Error("not mounted");
+    flushScheduledScroll();
+    act(() => {
+      handle!.disableConversationAutoFollow();
+      // Revealing an old turn preserves the current reading anchor, which
+      // raises scrollTop while the viewport is still at the latest message.
+      layout!.scrollHeight += 10000;
+      layout!.scrollTop += 10000;
+      node!.dispatchEvent(new Event("scroll", { bubbles: false }));
+      // The jump's first write precedes its native scroll event. A resize
+      // observer must not overwrite it using follow mode rearmed by layout.
+      layout!.scrollTop = 5000;
+      layout!.scrollHeight += 208;
+      flushResizeObservers();
+      handle!.scheduleStreamScroll();
+    });
+    flushScheduledScroll();
+    expect(layout.scrollTop).toBe(5000);
+  });
+
   it("does not let content resize re-enable follow after the user scrolls away", () => {
     mount({ scrollHeight: 2000, clientHeight: 600 });
     if (!layout || !node) throw new Error("not mounted");

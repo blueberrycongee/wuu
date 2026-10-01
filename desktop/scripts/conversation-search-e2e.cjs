@@ -214,47 +214,6 @@ async function armFlash(win) {
   await waitFor(win, () => !document.querySelector('.user-message-jump-flash'));
   await evaluate(win, () => {
     window.__searchFlashes = [];
-    window.__searchScrollTrace = [];
-    if (!window.__searchScrollTraceInstalled) {
-      window.__searchScrollTraceInstalled = true;
-      const record = entry => {
-        window.__searchScrollTrace.push({ at: performance.now(), ...entry });
-        if (window.__searchScrollTrace.length > 120) window.__searchScrollTrace.shift();
-      };
-      const scrollTop = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollTop');
-      const visibility = Object.getOwnPropertyDescriptor(CSSStyleDeclaration.prototype, 'contentVisibility');
-      window.__searchVisibilityTraceAvailable = typeof visibility?.set === 'function';
-      if (window.__searchVisibilityTraceAvailable) {
-        Object.defineProperty(CSSStyleDeclaration.prototype, 'contentVisibility', { ...visibility, set(value) {
-          record({ kind: 'visibility-write', value, stack: new Error().stack });
-          visibility.set.call(this, value);
-        } });
-      }
-      Object.defineProperty(Element.prototype, 'scrollTop', { ...scrollTop, set(value) {
-        if (this.classList?.contains('scroll-region')) {
-          record({ kind: 'write', value, stack: new Error().stack });
-        }
-        scrollTop.set.call(this, value);
-      } });
-      document.addEventListener('scroll', event => {
-        if (event.target instanceof Element && event.target.classList.contains('scroll-region')) {
-          record({ kind: 'scroll', top: scrollTop.get.call(event.target),
-            active: document.querySelector('.cached-conversation-pane[data-active="true"]')?.getAttribute('data-thread-id') });
-        }
-      }, true);
-      for (const type of ['wheel', 'pointerdown', 'touchstart', 'keydown']) {
-        document.addEventListener(type, event => record({ kind: 'input', type, key: event.key }), true);
-      }
-      new MutationObserver(records => {
-        for (const change of records) {
-          const node = change.target;
-          if (node instanceof Element && node.classList.contains('turn') &&
-            (node.style.contentVisibility || change.oldValue?.includes('content-visibility'))) {
-            record({ kind: 'turn-visibility', id: node.id, value: node.style.contentVisibility });
-          }
-        }
-      }).observe(document.body, { subtree: true, attributes: true, attributeFilter: ['style'], attributeOldValue: true });
-    }
     window.__searchFlashObserver?.disconnect();
     const collect = () => {
       for (const node of document.querySelectorAll('.user-message-jump-flash')) {
@@ -568,8 +527,6 @@ run().catch(async error => {
         active: document.querySelector('.cached-conversation-pane[data-active="true"]')?.getAttribute('data-thread-id'),
         dialog: document.querySelector('.conversation-search-dialog')?.outerHTML,
         flashes: window.__searchFlashes,
-        scrollTrace: window.__searchScrollTrace,
-        visibilityTraceAvailable: window.__searchVisibilityTraceAvailable,
         viewport: (() => {
           const node = document.querySelector('.conversation-pane > .scroll-region');
           return node && { rect: node.getBoundingClientRect().toJSON(), scrollTop: node.scrollTop,
