@@ -307,13 +307,37 @@ function findScrollContainer(start: HTMLElement): HTMLElement | null {
   return null;
 }
 
-const jumpGlideFrames = new WeakMap<HTMLElement, number>();
+const jumpGlides = new WeakMap<HTMLElement, () => void>();
 
 function scrollAnchorIntoContainer(
   node: HTMLElement,
   container: HTMLElement,
   match?: Range,
-): void {
+): () => void {
+  jumpGlides.get(container)?.();
+  // A descendant Range can expose its full offset while an offscreen turn
+  // still contributes its old collapsed size to scrollHeight. Keep the turn
+  // laid out until placement settles, so the target is not clamped to latest.
+  const turn = node.closest<HTMLElement>(".turn");
+  const priorVisibility = turn?.style.contentVisibility ?? "";
+  if (turn) turn.style.contentVisibility = "visible";
+  const inputTypes = ["wheel", "pointerdown", "touchstart"] as const;
+  const cancelForKey = (event: KeyboardEvent): void => {
+    if (event.target instanceof Element && event.target.closest("input,textarea,[contenteditable=true]")) return;
+    if (["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)) cancel();
+  };
+  let frame: number | undefined;
+  let cancelled = false;
+  const cancel = (): void => {
+    if (cancelled) return;
+    cancelled = true;
+    if (frame !== undefined) window.cancelAnimationFrame(frame);
+    for (const type of inputTypes) container.removeEventListener(type, cancel, true);
+    container.removeEventListener("keydown", cancelForKey, true);
+    if (turn) turn.style.contentVisibility = priorVisibility;
+    if (jumpGlides.get(container) === cancel) jumpGlides.delete(container);
+  };
+  jumpGlides.set(container, cancel);
   // Fenced code and tables have their own scroll surfaces. Reveal the text
   // inside them before measuring its position in the conversation viewport.
   for (let parent = match?.startContainer.parentElement; parent && parent !== container; parent = parent.parentElement) {
@@ -339,14 +363,14 @@ function scrollAnchorIntoContainer(
     ),
   );
   if (Math.abs(targetTop - container.scrollTop) < 2) {
-    return;
+    cancel();
+    return cancel;
   }
-  const pending = jumpGlideFrames.get(container);
-  if (pending !== undefined) window.cancelAnimationFrame(pending);
   if (prefersReducedMotion()) {
     container.scrollTop = targetTop;
     syncConversationRenderWindow(container);
-    return;
+    cancel();
+    return cancel;
   }
   // The conversation's programmatic trajectory. A native smooth scroll runs
   // on the compositor and would cross turns that are still skipped; writing
@@ -354,41 +378,40 @@ function scrollAnchorIntoContainer(
   const glide = createScrollGlide();
   glide.start(container.scrollTop);
   let commanded = container.scrollTop;
+  // At reduced desktop zoom a one-device-pixel layout adjustment exceeds one
+  // CSS pixel. Explicit input still cancels before its first scroll event.
+  const roundingTolerance = Math.max(1, 1 / window.devicePixelRatio) + 0.01;
+  for (const type of inputTypes) container.addEventListener(type, cancel, { capture: true, passive: true });
+  container.addEventListener("keydown", cancelForKey, true);
   const step = (now: number): void => {
-    jumpGlideFrames.delete(container);
+    frame = undefined;
     // Any other writer — the reader's wheel, a drag, a follow — takes over.
-    if (node.closest('[inert]') || Math.abs(container.scrollTop - commanded) > 1) return;
+    if (node.closest('[inert]') || Math.abs(container.scrollTop - commanded) > roundingTolerance) {
+      cancel();
+      return;
+    }
     const { position, done } = glide.step(now, targetTop, container.clientHeight);
     container.scrollTop = position;
     commanded = container.scrollTop;
     syncConversationRenderWindow(container);
-    if (!done) jumpGlideFrames.set(container, window.requestAnimationFrame(step));
+    if (done) cancel();
+    else frame = window.requestAnimationFrame(step);
   };
-  jumpGlideFrames.set(container, window.requestAnimationFrame(step));
+  frame = window.requestAnimationFrame(step);
+  return cancel;
 }
 
-function attemptJump(anchorID: string, highlight: boolean, expandMessage = false, query?: string): boolean {
+function attemptJump(anchorID: string, highlight: boolean, expandMessage = false, query?: string): (() => void) | undefined {
   if (typeof document === "undefined") {
-    return false;
+    return undefined;
   }
   const node = document.getElementById(anchorID);
   if (!node || node.closest('[inert]')) {
-    return false;
+    return undefined;
   }
   if (expandMessage && (node.closest('.turn-process-fold.collapsed') || node.querySelector('.user-message-long-card.collapsed'))) {
-    return false;
+    return undefined;
   }
-  // The .turn ancestor has `content-visibility: auto`, which lets the
-  // browser skip layout and paint while the turn is off-screen. The
-  // anchor is still in the DOM tree, so querySelector finds it, but its
-  // position inside a skipped turn is unknown until that turn lays out.
-  // Reading any layout property on a skipped subtree forces the browser to
-  // compute the real layout, so the subsequent scroll math sees the
-  // actual position. Without this, the first click on a query whose
-  // turn is above the current scroll viewport either scrolls to the
-  // wrong offset or bails out (targetTop ≈ currentScrollTop), and the
-  // user has to scroll up manually before the second click works.
-  void node.offsetWidth;
   const container = findScrollContainer(node);
   if (!container) {
     // Fallback: still flash the target so the user gets feedback, even
@@ -396,7 +419,7 @@ function attemptJump(anchorID: string, highlight: boolean, expandMessage = false
     if (highlight) {
       flashJumpTarget(node);
     }
-    return true;
+    return () => {};
   }
   let matchRange: Range | undefined;
   if (query) {
@@ -433,11 +456,11 @@ function attemptJump(anchorID: string, highlight: boolean, expandMessage = false
       }
     }
   }
-  scrollAnchorIntoContainer(node, container, matchRange);
+  const cancel = scrollAnchorIntoContainer(node, container, matchRange);
   if (highlight) {
     flashJumpTarget(node);
   }
-  return true;
+  return cancel;
 }
 
 /**
@@ -474,10 +497,12 @@ function scrollToMessageAnchor(
   }
   requestConversationTurnReveal(turnID, options?.itemID);
   let timer: number | undefined;
+  let cancelGlide: (() => void) | undefined;
   let attemptIndex = 0;
   const tryOnce = (): void => {
     if (options?.itemID) requestConversationTurnReveal(turnID, options.itemID);
-    if (attemptJump(anchorID, highlight, Boolean(options?.itemID), options?.query)) {
+    cancelGlide = attemptJump(anchorID, highlight, Boolean(options?.itemID), options?.query);
+    if (cancelGlide) {
       return;
     }
     const nextDelay = JUMP_RETRY_DELAYS_MS[attemptIndex + 1];
@@ -491,7 +516,7 @@ function scrollToMessageAnchor(
   // than landing on its collapsed user-prompt placeholder.
   if (options?.itemID) timer = window.setTimeout(tryOnce, 0);
   else tryOnce();
-  return () => window.clearTimeout(timer);
+  return () => { window.clearTimeout(timer); cancelGlide?.(); };
 }
 
 /**

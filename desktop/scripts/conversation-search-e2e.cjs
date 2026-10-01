@@ -81,6 +81,7 @@ const log = message => {
   fs.appendFileSync(path.join(output, 'run.log'), `${message}\n`);
 };
 fs.writeFileSync(path.join(output, 'run.log'), 'Conversation search synthetic E2E\n');
+const recordCheck = check => { checks.push(check); log(`PASS ${check.name}`); };
 // Record actual handlers without replacing results. Reject inference even if an
 // Enter key accidentally escapes the palette into the composer.
 const originalHandle = ipcMain.handle.bind(ipcMain);
@@ -263,13 +264,17 @@ async function matchingArticle(win, session, turn, needle, sourceSelector) {
   assert.equal(await evaluate(win, id => !!document.getElementById(id), `user-msg-${turnID}-${turnID}-item-1`), true, 'Existing user message anchors must remain intact');
   const init = await evaluate(win, () => window.wuu.initialize());
   assert.equal(init.workspace_root, projects[sessions.find(s => s.id === session).project].path, 'Search must switch the actual Go workspace');
-  checks.push({ name: `message jump ${session}`, ...evidence });
-  await capture(win, `${session}-jump`);
+  recordCheck({ name: `message jump ${session}`, ...evidence });
+  await capture(win, `${session}-${needle === lateNeedle ? "late-" : sourceSelector ? "code-" : ""}jump`);
 }
 async function capture(win, name) {
   await evaluate(win, async () => {
     await document.fonts.ready;
-    await Promise.all(document.getAnimations().filter(a => Number.isFinite(a.effect.getComputedTiming().endTime)).map(a => a.finished.catch(() => {})));
+    // Cached inactive panes can pause finite transitions indefinitely.
+    await Promise.all(document.getAnimations().filter(a => a.playState === 'running'
+      && Number.isFinite(a.effect.getComputedTiming().endTime)
+      && !(a.effect.target instanceof Element && a.effect.target.closest('[inert]')))
+      .map(a => a.finished.catch(() => {})));
     await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
   });
   const file = `${name}.png`;
@@ -323,6 +328,7 @@ db.commit()
     return window.wuu && input && !input.disabled && !input.readOnly;
   });
   main.show(); main.focus(); main.setSize(1380, 900);
+  main.webContents.setBackgroundThrottling(false);
   main.webContents.debugger.attach('1.3');
 
   await evaluate(main, () => document.querySelector('.composer textarea').focus());
@@ -335,7 +341,7 @@ db.commit()
   await capture(main, 'empty-initial');
   await close(main);
   assert.equal(await evaluate(main, () => document.activeElement === document.querySelector('.composer textarea')), true, 'Escape restores opener focus');
-  checks.push({ name: 'empty pinned/recent, single column, Escape focus' });
+  recordCheck({ name: 'empty pinned/recent, single column, Escape focus' });
 
   await open(main);
   const titles = await query(main, 'Shared planning');
@@ -346,7 +352,7 @@ db.commit()
   assert.equal(duplicates.length, 2, 'Only same-project title collisions need a date');
   assert.notEqual(duplicates[0].text, duplicates[1].text);
   await capture(main, 'duplicate-title-results');
-  checks.push({ name: 'same-project duplicate titles have distinct dates', duplicates });
+  recordCheck({ name: 'same-project duplicate titles have distinct dates', duplicates });
   key(main, 'Down');
   await waitFor(main, () => document.querySelectorAll('.conversation-search-result')[1]?.getAttribute('aria-selected') === 'true');
   key(main, 'Up');
@@ -370,7 +376,7 @@ db.commit()
   await waitFor(main, () => document.querySelectorAll('.conversation-search-result')[1]?.getAttribute('aria-selected') === 'true');
   key(main, 'Enter');
   await active(main, titles[1].thread.id);
-  checks.push({ name: 'ArrowDown/ArrowUp/Enter and composition no accidental selection' });
+  recordCheck({ name: 'ArrowDown/ArrowUp/Enter and composition no accidental selection' });
 
   await open(main); await query(main, 'History review');
   assert.equal(await evaluate(main, () => !!document.querySelector('.conversation-search-result-snippet')), false);
@@ -401,7 +407,7 @@ db.commit()
   assert.equal(lateHits[0].message_seq, 10);
   await armFlash(main); key(main, 'Enter');
   await matchingArticle(main, 'search-history', 5, lateNeedle);
-  checks.push({ name: 'oversized historical body scrolls to a late multi-paragraph match' });
+  recordCheck({ name: 'oversized historical body scrolls to a late multi-paragraph match' });
   await open(main); await query(main, oldNeedle); await armFlash(main);
   await clickResult(main, longTitle, 'Search Beta');
   await matchingArticle(main, 'search-history', 5, oldNeedle);
@@ -414,7 +420,7 @@ db.commit()
   const stored = spawnSync('python3', ['-c', "import sqlite3,sys; print(sqlite3.connect(sys.argv[1]).execute('SELECT archived_at FROM sessions WHERE id=?', ('search-archive',)).fetchone()[0])", path.join(home, 'sessions/sessions.sqlite3')], { encoding: 'utf8' });
   assert.equal(stored.status, 0, stored.stderr);
   assert.equal(stored.stdout.trim(), archivedAt, 'Resume must preserve ArchivedAt exactly');
-  checks.push({ name: 'archived search/resume retains persisted ArchivedAt', archivedAt });
+  recordCheck({ name: 'archived search/resume retains persisted ArchivedAt', archivedAt });
 
   await open(main); await query(main, 'cobaltneedle');
   await capture(main, 'archived-current-result');
@@ -426,7 +432,7 @@ db.commit()
   await open(main); await query(main, 'Highlight'); await armFlash(main);
   key(main, 'Enter');
   await matchingArticle(main, 'search-process', 2, 'Highlight', '.rich-code code');
-  checks.push({ name: 'code body match wins over an identically named toolbar control' });
+  recordCheck({ name: 'code body match wins over an identically named toolbar control' });
 
   await open(main);
   const userHit = await query(main, 'opal-user-detail');
@@ -441,7 +447,7 @@ db.commit()
     const r = node.getBoundingClientRect(), v = viewport.getBoundingClientRect();
     return r.top < v.bottom && r.bottom > v.top;
   }, undefined, 'long user message expanded at its search target');
-  checks.push({ name: 'long user message search reveals collapsed content' });
+  recordCheck({ name: 'long user message search reveals collapsed content' });
   await capture(main, 'long-user-jump');
 
   await open(main);
@@ -450,7 +456,7 @@ db.commit()
   key(main, 'Down'); key(main, 'Enter'); await frames(main);
   assert.equal(await evaluate(main, () => !!document.querySelector('.conversation-search-dialog')), true, 'Empty results must not select a conversation');
   await close(main);
-  checks.push({ name: 'no matches / Enter no-op' });
+  recordCheck({ name: 'no matches / Enter no-op' });
 
   // Real persisted settings APIs, not CSS or fixture-only preferences. Font size
   // is applied by the settings UI/preload rather than broadcast by its setter;
@@ -490,7 +496,7 @@ db.commit()
       assert.ok(geometry.rows.every(row => row.rect.left >= geometry.dialog.left && row.rect.right <= geometry.dialog.right + 1), 'All results belong to the same bounded column');
       assert.ok(geometry.rows.every((row, i, rows) => i === 0 || row.rect.top >= rows[i - 1].rect.bottom - 1), 'Results must stack vertically, not form multiple columns');
       const name = `${theme}-${size}px-${width}-${state}`;
-      checks.push({ name, geometry });
+      recordCheck({ name, geometry });
       await capture(main, name);
     }
     await close(main);
@@ -517,6 +523,11 @@ run().catch(async error => {
         active: document.querySelector('.cached-conversation-pane[data-active="true"]')?.getAttribute('data-thread-id'),
         dialog: document.querySelector('.conversation-search-dialog')?.outerHTML,
         flashes: window.__searchFlashes,
+        viewport: (() => {
+          const node = document.querySelector('.conversation-pane > .scroll-region');
+          return node && { rect: node.getBoundingClientRect().toJSON(), scrollTop: node.scrollTop,
+            scrollHeight: node.scrollHeight, clientHeight: node.clientHeight, devicePixelRatio };
+        })(),
       })), null, 2));
       fs.writeFileSync(path.join(output, 'failure.png'), (await main.webContents.capturePage()).toPNG());
     } catch (captureError) { log(`Failure capture: ${captureError}`); }

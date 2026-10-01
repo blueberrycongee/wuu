@@ -147,6 +147,31 @@ function settleJump(): void {
 }
 
 describe("scrollToUserMessage", () => {
+  it("tolerates one device pixel of layout rounding while a jump starts at reduced zoom", () => {
+    const descriptor = Object.getOwnPropertyDescriptor(window, "devicePixelRatio");
+    Object.defineProperty(window, "devicePixelRatio", { configurable: true, value: 0.5 });
+    try {
+      const { container } = mountAnchor({ variant: "scroll-region", containerScrollHeight: 2400 });
+      scrollToUserMessage("turn-1", "item-1");
+      container.scrollTop = 2;
+      settleJump();
+      expect(container.scrollTop).toBe(1136);
+    } finally {
+      if (descriptor) Object.defineProperty(window, "devicePixelRatio", descriptor);
+      else Reflect.deleteProperty(window, "devicePixelRatio");
+    }
+  });
+
+  it("yields immediately to wheel input even when its scroll delta is tiny", () => {
+    const { container } = mountAnchor({ variant: "scroll-region", containerScrollHeight: 2400 });
+    scrollToUserMessage("turn-1", "item-1");
+    vi.advanceTimersByTime(40);
+    const stoppedAt = container.scrollTop;
+    container.dispatchEvent(new WheelEvent("wheel", { deltaY: 1, bubbles: true }));
+    settleJump();
+    expect(container.scrollTop).toBe(stoppedAt);
+  });
+
   it("scrolls the .scroll-region container so the anchor lands below the top padding", () => {
     const { container, node } = mountAnchor({
       variant: "scroll-region",
