@@ -238,14 +238,13 @@ export function StreamingMarkdown({
     !endsWithFenceCloser(lastStableBlock.trimEnd())
       ? lastStableBlockIndex
       : -1;
-  // An open Mermaid fence in the tail cannot accept the inline cursor
-  // sentinel — it would leak into the diagram source and break parsing — so
-  // it uses the zero-flow-height sibling cursor like closed fences do.
   const tailHasOpenMermaidFence =
     split.inFence && split.openFenceLanguage?.toLowerCase() === "mermaid";
+  // Keep the synthetic cursor outside an open code fence so copied and
+  // selected code stays exact, including when an unfinished fence settles.
   const cursorNeedsBlockTail = showCursor && (
     endsWithFenceCloser(split.tail) ||
-    tailHasOpenMermaidFence ||
+    split.inFence ||
     (tailIsEmpty && lastStableBlockIndex >= 0 && cursorStableBlockIndex < 0)
   );
   // A cursor after a trailing newline creates an extra line box even when

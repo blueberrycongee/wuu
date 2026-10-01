@@ -135,6 +135,37 @@ describe("StreamingMarkdown", () => {
     expect(document.querySelector(".streaming-markdown")?.textContent).not.toContain("\uE000");
   });
 
+  it.each(["```typescript", "  ```javascript", "```text", "```"])(
+    "copies and selects an unfinished %s fence without adding cursor text", async (opener) => {
+      const key = streamTextKey("turn", "s10", "text");
+      // A real private-use character belongs to the code and must survive.
+      const sourceCode = 'const marker = "\uE000";\n// growing  ';
+      const text = `${opener}\n${sourceCode}`;
+      const copy = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
+      try {
+        streamTextStore.seed(key, text);
+        const props = { streamKey: key, initialText: text, isLive: true, phase: "final_answer" as const };
+        mount(props);
+        for (const isLive of [true, false]) {
+          rerender({ ...props, isLive });
+          const surface = container!.querySelector(".streaming-markdown")!;
+          const code = surface.querySelector(".rich-code-block code")!;
+          expect(code.textContent).toBe(sourceCode + "\n");
+          const range = document.createRange();
+          range.selectNodeContents(code);
+          expect(range.toString()).toBe(sourceCode + "\n");
+          const copyButton = surface.querySelector<HTMLButtonElement>(".rich-code-copy")!;
+          await act(async () => { copyButton.click(); });
+          expect(copy).toHaveBeenLastCalledWith(sourceCode);
+          expect(surface.querySelectorAll(".stream-cursor")).toHaveLength(1);
+          expect(code.querySelector(".stream-cursor")).toBeNull();
+        }
+      } finally {
+        copy.mockRestore();
+      }
+    },
+  );
+
   it("leaves no trailing cursor paragraph under a fence-final message after settle", () => {
     const key = streamTextKey("turn", "s11", "text");
     const text = "```text\n请使用 web-shader-extractor skill\n```";
