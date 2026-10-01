@@ -2,6 +2,10 @@ import type { SetStateAction } from "react";
 import type { Thread } from "../shared/protocol";
 import {
   activeThreadIDForState,
+  cloneComposerDraft,
+  cloneSessionTabDraft,
+  composerDraftHasContent,
+  createThreadSessionTab,
   draftSessionTabForContext,
   ensureSessionTab,
   isThreadRunning,
@@ -9,6 +13,8 @@ import {
   threadSessionTabID,
   upsertThread,
   type AppState,
+  type ComposerDraftState,
+  type ConversationPaneID,
   type SessionTab,
   type ThreadSummary,
 } from "./AppState";
@@ -36,9 +42,10 @@ function withThreadTitle(
 export type ThreadMutationActionsDeps = {
   getAppState: () => AppState;
   setAppState: SetAppState;
-  getActiveThreadID: () => string | undefined;
   nextDraftSessionTab: (context: NonNullable<AppState["activeContext"]>) => SessionTab;
   clearPrimaryComposerDraft: () => void;
+  restorePrimaryComposerDraft: (draft: ComposerDraftState) => void;
+  getSplitComposerDrafts: () => Record<ConversationPaneID, ComposerDraftState>;
   resetSplitComposerDrafts: () => void;
   updateCachedSidebarThread: (thread: Thread) => void;
   updateCachedSidebarThreadPinned: (threadID: string, pinned: boolean) => void;
@@ -96,19 +103,32 @@ export function createThreadMutationActions(
     showErrorToast(status);
   }
 
-  function clearActiveComposer(): void {
-    deps.clearPrimaryComposerDraft();
-    deps.resetSplitComposerDrafts();
-  }
-
-  function workspaceDraftOrNew(current: AppState): SessionTab | undefined {
-    if (!current.activeContext) {
+  function prepareConfirmedThreadRemoval(threadID: string): SessionTab | undefined {
+    const current = deps.getAppState();
+    if (current.thread && current.secondaryThread && current.activeContext
+      && (current.thread.id === threadID || current.secondaryThread.id === threadID)) {
+      const survivingPane = current.thread.id === threadID ? "secondary" : "primary";
+      const survivingThread = survivingPane === "primary" ? current.thread : current.secondaryThread;
+      const draft = cloneComposerDraft(deps.getSplitComposerDrafts()[survivingPane]);
+      deps.restorePrimaryComposerDraft(draft);
+      deps.resetSplitComposerDrafts();
+      return createThreadSessionTab(survivingThread, current.activeContext, draft);
+    }
+    if (threadID !== activeThreadIDForState(current)) {
       return undefined;
     }
-    return (
-      draftSessionTabForContext(current.sessionTabs, current.activeContext) ??
-      deps.nextDraftSessionTab(current.activeContext)
-    );
+    const fallback = current.activeContext
+      ? draftSessionTabForContext(current.sessionTabs, current.activeContext)
+        ?? deps.nextDraftSessionTab(current.activeContext)
+      : undefined;
+    const draft = fallback ? cloneSessionTabDraft(fallback) : undefined;
+    if (draft && composerDraftHasContent(draft)) {
+      deps.restorePrimaryComposerDraft(draft);
+    } else {
+      deps.clearPrimaryComposerDraft();
+    }
+    deps.resetSplitComposerDrafts();
+    return fallback;
   }
 
   async function toggleThreadPinned(thread: ThreadSummary): Promise<void> {
@@ -230,14 +250,6 @@ export function createThreadMutationActions(
       setStatus(error);
       return { ok: false, error, forceRetryable: true };
     }
-    deps.clearThreadPendingComposerMessages(thread.id);
-    const archivedActiveThread = thread.id === deps.getActiveThreadID();
-    const fallbackDraft = archivedActiveThread
-      ? workspaceDraftOrNew(currentState)
-      : undefined;
-    if (archivedActiveThread) {
-      clearActiveComposer();
-    }
     // Reflect the archive in the visible lists on the click: the sidebar row
     // disappears and Settings → Archive gains the entry immediately. Pane and
     // session-tab teardown stays on the server confirmation so a rejection
@@ -256,6 +268,10 @@ export function createThreadMutationActions(
       const result = force
         ? await window.wuu.archiveThread(thread.id, true, true)
         : await window.wuu.archiveThread(thread.id, true);
+      // Destructive local cleanup follows server confirmation and belongs
+      // only to the conversation that is still active now.
+      deps.clearThreadPendingComposerMessages(thread.id);
+      const fallbackTab = prepareConfirmedThreadRemoval(thread.id);
       // Archived conversations remain in AppState for Settings → Archive, and
       // the optimistic flip already dropped the sidebar row; the confirmation
       // only needs to tear down the panes/tabs that still show the thread.
@@ -269,7 +285,7 @@ export function createThreadMutationActions(
           result.thread.id,
           true,
           nextTabs,
-          fallbackDraft,
+          fallbackTab,
         );
       });
       return { ok: true };
@@ -364,23 +380,17 @@ export function createThreadMutationActions(
     ) {
       return;
     }
-    deps.clearThreadPendingComposerMessages(thread.id);
-    const deletedActiveThread = thread.id === deps.getActiveThreadID();
-    const fallbackDraft = deletedActiveThread
-      ? workspaceDraftOrNew(currentState)
-      : undefined;
-    if (deletedActiveThread) {
-      clearActiveComposer();
-    }
     try {
       await window.wuu.deleteThread(thread.id);
+      deps.clearThreadPendingComposerMessages(thread.id);
+      const fallbackTab = prepareConfirmedThreadRemoval(thread.id);
       deps.removeCachedSidebarThread(thread.id);
       deps.setAppState((current) => {
         const nextTabs = removeSessionTab(
           current.sessionTabs,
           threadSessionTabID(thread.id),
         );
-        return archiveMarkThreadState(current, thread.id, false, nextTabs, fallbackDraft);
+        return archiveMarkThreadState(current, thread.id, false, nextTabs, fallbackTab);
       });
     } catch (error) {
       setStatus(
@@ -396,25 +406,24 @@ export function createThreadMutationActions(
     threadID: string,
     archived: boolean,
     nextTabs: AppState["sessionTabs"],
-    fallbackDraft: SessionTab | undefined,
+    fallbackTab: SessionTab | undefined,
   ): AppState {
+    const closingSplit = Boolean(current.thread && current.secondaryThread
+      && (current.thread.id === threadID || current.secondaryThread.id === threadID));
+    const remainingThread = current.thread?.id === threadID
+      ? current.secondaryThread
+      : current.thread;
     return {
       ...current,
-      thread: current.thread?.id === threadID ? undefined : current.thread,
-      secondaryThread:
-        current.secondaryThread?.id === threadID
-          ? undefined
-          : current.secondaryThread,
-      activePane:
-        current.activePane === "secondary" &&
-        current.secondaryThread?.id === threadID
-          ? "primary"
-          : current.activePane,
-      sessionTabs: fallbackDraft ? ensureSessionTab(nextTabs, fallbackDraft) : nextTabs,
+      thread: remainingThread,
+      secondaryThread: closingSplit || current.secondaryThread?.id === threadID
+        ? undefined : current.secondaryThread,
+      activePane: closingSplit ? "primary" : current.activePane,
+      sessionTabs: fallbackTab ? ensureSessionTab(nextTabs, fallbackTab) : nextTabs,
       activeSessionTabID:
         current.activeSessionTabID === threadSessionTabID(threadID) &&
-        fallbackDraft
-          ? fallbackDraft.id
+        fallbackTab
+          ? fallbackTab.id
           : current.activeSessionTabID,
       // Keep the thread in `threads` when archiving so the Settings → Archive
       // page can list every archived session; the sidebar already filters by
@@ -428,7 +437,8 @@ export function createThreadMutationActions(
                 ? { ...candidate, archived: true }
                 : candidate,
             ),
-      running: activeThreadIDForState(current) === threadID ? false : current.running,
+      running: activeThreadIDForState(current) === threadID
+        ? isThreadRunning(remainingThread) : current.running,
       status: "ready",
     };
   }

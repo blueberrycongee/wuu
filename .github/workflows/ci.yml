@@ -146,6 +146,48 @@ jobs:
           set -o pipefail
           xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/fast-mode-e2e.cjs 2>&1 | tee "$WUU_FAST_OUTPUT/run.log"
 
+      - name: Verify conversation search navigation
+        if: ${{ !cancelled() && steps.build-fixture-core.outcome == 'success' }}
+        timeout-minutes: 7
+        shell: bash
+        env:
+          WUU_SEARCH_OUTPUT: ${{ runner.temp }}/wuu-conversation-search-evidence
+          WUU_DESKTOP_CORE: ${{ runner.temp }}/wuu-session-switch-core
+        run: |
+          mkdir -p "$WUU_SEARCH_OUTPUT"
+          set -o pipefail
+          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/conversation-search-e2e.cjs 2>&1 | tee "$WUU_SEARCH_OUTPUT/process.log"
+
+      - name: Guard conversation history jump
+        if: ${{ !cancelled() && steps.build-fixture-core.outcome == 'success' }}
+        timeout-minutes: 3
+        shell: bash
+        env:
+          WUU_SCROLL_E2E_ONLY: history-jump
+          WUU_SCROLL_E2E_OUTPUT: ${{ runner.temp }}/wuu-conversation-history-jump-evidence
+        run: |
+          mkdir -p "$WUU_SCROLL_E2E_OUTPUT"
+          set -o pipefail
+          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/conversation-scroll-e2e.cjs 2>&1 | tee "$WUU_SCROLL_E2E_OUTPUT/run.log"
+
+      - name: Upload conversation history jump evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: conversation-history-jump-evidence
+          path: ${{ runner.temp }}/wuu-conversation-history-jump-evidence
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Upload conversation search evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: conversation-search-evidence
+          path: ${{ runner.temp }}/wuu-conversation-search-evidence
+          if-no-files-found: ignore
+          retention-days: 14
+
       - name: Upload Fast mode evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -189,6 +231,25 @@ jobs:
         with:
           name: request-lifecycle-evidence
           path: ${{ runner.temp }}/wuu-request-lifecycle-evidence/
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Guard account quota behavior and layout
+        timeout-minutes: 5
+        shell: bash
+        env:
+          WUU_QUOTA_OUTPUT: ${{ runner.temp }}/wuu-subscription-quota-evidence
+        run: |
+          mkdir -p "$WUU_QUOTA_OUTPUT"
+          set -o pipefail
+          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/subscription-quota-e2e.cjs 2>&1 | tee "$WUU_QUOTA_OUTPUT/run.log"
+
+      - name: Upload account quota evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: subscription-quota-evidence
+          path: ${{ runner.temp }}/wuu-subscription-quota-evidence/
           if-no-files-found: ignore
           retention-days: 14
 

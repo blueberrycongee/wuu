@@ -939,6 +939,28 @@ describe("useConversationScrollState — high-frequency stream", () => {
     expect(layout.scrollTop).toBe(2000 - 600 - 8);
   });
 
+  it("does not let a history prepend rearm follow before a pending jump starts", () => {
+    mount({ scrollHeight: 2000, clientHeight: 600 });
+    if (!layout || !handle || !node) throw new Error("not mounted");
+    flushScheduledScroll();
+    act(() => {
+      handle!.disableConversationAutoFollow();
+      // Revealing an old turn preserves the current reading anchor, which
+      // raises scrollTop while the viewport is still at the latest message.
+      layout!.scrollHeight += 10000;
+      layout!.scrollTop += 10000;
+      node!.dispatchEvent(new Event("scroll", { bubbles: false }));
+      // The jump's first write precedes its native scroll event. A resize
+      // observer must not overwrite it using follow mode rearmed by layout.
+      layout!.scrollTop = 5000;
+      layout!.scrollHeight += 208;
+      flushResizeObservers();
+      handle!.scheduleStreamScroll();
+    });
+    flushScheduledScroll();
+    expect(layout.scrollTop).toBe(5000);
+  });
+
   it("does not let content resize re-enable follow after the user scrolls away", () => {
     mount({ scrollHeight: 2000, clientHeight: 600 });
     if (!layout || !node) throw new Error("not mounted");
@@ -1020,6 +1042,25 @@ describe("useConversationScrollState — high-frequency stream", () => {
     flushScheduledScroll();
 
     expect(layout.scrollTop).toBe(1180);
+  });
+
+  it("does not turn a paused reader into a follower when reflow raises the clamped scroll position", () => {
+    mount({ scrollHeight: 2400, clientHeight: 400 });
+    if (!layout || !handle || !node) throw new Error("not mounted");
+    flushScheduledScroll();
+    layout.scrollTop = 1700;
+    fireUserScroll();
+    act(() => {
+      // Above-viewport growth and below-viewport collapse can make a native
+      // anchor clamp downward at the new bottom without any return gesture.
+      layout!.scrollHeight = 2600;
+      layout!.scrollTop = 2200;
+      node!.dispatchEvent(new Event("scroll"));
+    });
+    expect(handle.captureConversationScrollPosition()?.autoFollow).toBe(false);
+    act(() => { layout!.scrollHeight += 350; flushResizeObservers(); handle!.scheduleStreamScroll(); });
+    flushScheduledScroll();
+    expect(layout.scrollTop).toBe(2200);
   });
 
   it("keeps following when layout shrink clamps the viewport to the new bottom", () => {

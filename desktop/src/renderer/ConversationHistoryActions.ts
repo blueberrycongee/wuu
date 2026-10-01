@@ -4,6 +4,8 @@ import type { ForkMode } from "./ConversationForkDialog";
 import {
   cloneComposerDraft,
   composerDraftHasContent,
+  createThreadSessionTab,
+  ensureSessionTab,
   emptyComposerDraft,
   initialSplitComposerDrafts,
   isThreadRunning,
@@ -12,6 +14,7 @@ import {
   sameRuntimeContext,
   updateThreadByID,
   upsertTurn,
+  upsertThread,
   type AppState,
   type ComposerDraftState,
   type ConversationPaneID,
@@ -24,7 +27,7 @@ import {
   type ComposerImage,
   type QueuedComposerMessage,
 } from "./ComposerMessages";
-import { lastUserMessageAnchor, scrollToUserMessage } from "./TurnViewHelpers";
+import { lastUserMessageAnchor } from "./TurnViewHelpers";
 import { localizedText, translateCurrent as t } from "./i18n";
 import { showErrorToast } from "./Toast";
 import { rememberCollapsedPromptParts } from "./ComposerCollapsedPrompt";
@@ -80,6 +83,7 @@ export type ConversationHistoryActionsDeps = {
   rememberConversationScrollForEdit: () => void;
   /** Restore the snapshot captured by `rememberConversationScrollForEdit`. */
   restoreConversationScrollForEdit: () => void;
+  jumpToUserMessage: (turnID: string, itemID: string, options?: { highlight?: boolean }) => void;
   threadHasPendingComposerMessages: (threadID: string) => boolean;
   sendComposerMessageToThread: (
     message: QueuedComposerMessage,
@@ -135,17 +139,25 @@ export function createConversationHistoryActions(
     itemID: string,
     mode: ForkMode,
   ): Promise<void> {
-    const activeContext = deps.appStateRef.current.activeContext;
+    const origin = deps.appStateRef.current;
+    const activeContext = origin.activeContext;
     if (!activeContext || sourceThread.read_only) {
       return;
     }
+    const ownsCurrentView = (): boolean => {
+      const current = deps.appStateRef.current;
+      return sameRuntimeContext(current.activeContext, activeContext)
+        && current.activeContext?.cwd === activeContext.cwd
+        && current.activeSessionTabID === origin.activeSessionTabID
+        && current.thread?.id === origin.thread?.id
+        && current.secondaryThread?.id === origin.secondaryThread?.id
+        && current.activePane === origin.activePane;
+    };
     if (mode === "worktree") {
       let gitStatus = deps.appStateRef.current.gitStatus;
       if (!gitStatus) {
         gitStatus = await window.wuu.gitStatus();
-        if (
-          !sameRuntimeContext(deps.appStateRef.current.activeContext, activeContext)
-        ) {
+        if (!ownsCurrentView()) {
           return;
         }
         const refreshedStatus = gitStatus;
@@ -187,6 +199,20 @@ export function createConversationHistoryActions(
         ),
         "thread/fork did not return a thread",
       );
+      // Keep a completed fork discoverable without taking the view or draft
+      // that the user opened while the backend was creating it.
+      if (!ownsCurrentView()) {
+        deps.setAppState((current) => ({
+          ...current,
+          sessionTabs: ensureSessionTab(
+            current.sessionTabs, createThreadSessionTab(fork, activeContext),
+          ),
+          threads: sameRuntimeContext(current.activeContext, activeContext)
+            ? upsertThread(current.threads, fork)
+            : current.threads,
+        }));
+        return;
+      }
       deps.enableConversationAutoFollow();
       const currentState = deps.appStateRef.current;
       const sourcePane =
@@ -246,7 +272,7 @@ export function createConversationHistoryActions(
       target.itemID,
       mode,
     );
-    deps.setPendingFork(undefined);
+    deps.setPendingFork((current) => current === target ? undefined : current);
   }
 
   async function forkThreadFromMessage(
@@ -310,15 +336,15 @@ deps.rememberConversationScrollForEdit();
       pane,
       submitting: false,
     });
-    // Bring the editor into view deliberately — `scrollToUserMessage` is the
-    // same helper the query-history popover uses, so the jump matches the
+    // Bring the editor into view through the same owned jump command as
+    // the query-history popover, so the jump matches the
     // existing scroll contract (smooth scroll, 64px headroom, no surprise
     // auto-follow disarms). The highlight pulse is skipped here: replaying
     // the light flash over the bubble as it swaps into the black editor
     // reads as a glitch instead of jump feedback. The helper retries on a
     // short cadence, which covers the case where the editor hasn't mounted
     // yet on the first synchronous attempt.
-    scrollToUserMessage(turnID, item.id, { highlight: false });
+    deps.jumpToUserMessage(turnID, item.id, { highlight: false });
   }
 
   function cancelEditingThreadMessage(): void {

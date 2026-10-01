@@ -7,6 +7,7 @@ import {
 import { streamFieldValue } from "./ThreadItemText";
 import { prefersReducedMotion } from "./motion";
 import { createScrollGlide } from "./ScrollGlide";
+import { conversationSearchPattern } from "./ConversationSearchDisplay";
 import { syncConversationRenderWindow } from "./ConversationRenderWindow";
 import { formatCurrentNumber, getActiveLocale, translateCurrent as t } from "./i18n";
 
@@ -36,27 +37,28 @@ export function userMessageAnchorID(turnID: string, itemID: string): string {
   return `user-msg-${turnID}-${itemID}`;
 }
 
+export function messageAnchorID(turnID: string, itemID: string): string {
+  return `message-${turnID}-${itemID}`;
+}
+
 export const CONVERSATION_TURN_REVEAL_EVENT =
   "wuu:conversation-turn-reveal";
 
 export type ConversationTurnRevealDetail = {
   turnID: string;
+  itemID?: string;
 };
 
-export function requestConversationTurnReveal(turnID: string): void {
+export function requestConversationTurnReveal(turnID: string, itemID?: string): void {
   if (typeof window === "undefined") {
     return;
   }
   window.dispatchEvent(
     new CustomEvent<ConversationTurnRevealDetail>(
       CONVERSATION_TURN_REVEAL_EVENT,
-      { detail: { turnID } },
+      { detail: { turnID, itemID } },
     ),
   );
-}
-
-function userMessageAnchorSelector(turnID: string, itemID: string): string {
-  return `#${userMessageAnchorID(turnID, itemID)}`;
 }
 
 export type UserMessageAnchor = {
@@ -288,137 +290,184 @@ function flashJumpTarget(node: HTMLElement): void {
   }, JUMP_HIGHLIGHT_DURATION_MS);
 }
 
-function findScrollContainer(start: HTMLElement): HTMLElement | null {
-  // Walk up looking for the conversation pane's scroll surface. We probe
-  // both the single-pane (.scroll-region) and split-pane containers so
-  // the same helper works whether split mode is active or not.
-  let parent: HTMLElement | null = start.parentElement;
-  while (parent) {
-    if (
-      parent.classList.contains("scroll-region") ||
-      parent.classList.contains("conversation-split-body")
-    ) {
-      return parent;
+export type ConversationMessageJumpScope = {
+  viewport: HTMLElement;
+  content: HTMLElement;
+  /** Includes the controller's thread/pane binding and operation generation. */
+  isCurrent: () => boolean;
+};
+
+type ConversationMessageJumpOptions = {
+  highlight?: boolean;
+  scope: ConversationMessageJumpScope;
+  onComplete?: () => void;
+};
+
+const messageJumps = new WeakMap<HTMLElement, () => void>();
+
+function searchMatchRange(node: HTMLElement, query?: string): Range | undefined {
+  let matchRange: Range | undefined;
+  if (query) {
+    // Markdown block boundaries are searchable whitespace even when the DOM
+    // has no literal text node between its paragraphs. Preserve an offset map
+    // so a phrase spanning blocks or inline formatting still lands on its text.
+    const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT);
+    const runs: { node: Node; start: number; end: number }[] = [];
+    let text = "";
+    let previousBlock: Element | null = null;
+    let textNode: Node | null;
+    while ((textNode = walker.nextNode())) {
+      if (textNode.parentElement?.closest(".rich-code-header,.message-actions,.message-copy-button,[aria-hidden=true]")) continue;
+      if (textNode instanceof Element) {
+        if (textNode.tagName === "BR") text += "\n";
+        continue;
+      }
+      const block = textNode.parentElement?.closest("p,h1,h2,h3,h4,h5,h6,li,pre,td,th,blockquote,div") ?? null;
+      if (text && block !== previousBlock) text += "\n";
+      previousBlock = block;
+      const start = text.length;
+      text += textNode.textContent ?? "";
+      runs.push({ node: textNode, start, end: text.length });
     }
-    parent = parent.parentElement;
-  }
-  return null;
-}
-
-const jumpGlideFrames = new WeakMap<HTMLElement, number>();
-
-function scrollAnchorIntoContainer(
-  node: HTMLElement,
-  container: HTMLElement,
-): void {
-  const containerRect = container.getBoundingClientRect();
-  const nodeRect = node.getBoundingClientRect();
-  const currentOffset =
-    nodeRect.top - containerRect.top + container.scrollTop;
-  const targetTop = Math.max(
-    0,
-    Math.min(
-      currentOffset - JUMP_TOP_OFFSET_PX,
-      container.scrollHeight - container.clientHeight,
-    ),
-  );
-  if (Math.abs(targetTop - container.scrollTop) < 2) {
-    return;
-  }
-  const pending = jumpGlideFrames.get(container);
-  if (pending !== undefined) window.cancelAnimationFrame(pending);
-  if (prefersReducedMotion()) {
-    container.scrollTop = targetTop;
-    syncConversationRenderWindow(container);
-    return;
-  }
-  // The conversation's programmatic trajectory. A native smooth scroll runs
-  // on the compositor and would cross turns that are still skipped; writing
-  // each frame here renders them before that frame paints.
-  const glide = createScrollGlide();
-  glide.start(container.scrollTop);
-  let commanded = container.scrollTop;
-  const step = (now: number): void => {
-    jumpGlideFrames.delete(container);
-    // Any other writer — the reader's wheel, a drag, a follow — takes over.
-    if (Math.abs(container.scrollTop - commanded) > 1) return;
-    const { position, done } = glide.step(now, targetTop, container.clientHeight);
-    container.scrollTop = position;
-    commanded = container.scrollTop;
-    syncConversationRenderWindow(container);
-    if (!done) jumpGlideFrames.set(container, window.requestAnimationFrame(step));
-  };
-  jumpGlideFrames.set(container, window.requestAnimationFrame(step));
-}
-
-function attemptJump(turnID: string, itemID: string, highlight: boolean): boolean {
-  if (typeof document === "undefined") {
-    return false;
-  }
-  const node = document.querySelector<HTMLElement>(
-    userMessageAnchorSelector(turnID, itemID),
-  );
-  if (!node) {
-    return false;
-  }
-  // The .turn ancestor has `content-visibility: auto`, which lets the
-  // browser skip layout and paint while the turn is off-screen. The
-  // anchor is still in the DOM tree, so querySelector finds it, but its
-  // position inside a skipped turn is unknown until that turn lays out.
-  // Reading any layout property on a skipped subtree forces the browser to
-  // compute the real layout, so the subsequent scroll math sees the
-  // actual position. Without this, the first click on a query whose
-  // turn is above the current scroll viewport either scrolls to the
-  // wrong offset or bails out (targetTop ≈ currentScrollTop), and the
-  // user has to scroll up manually before the second click works.
-  void node.offsetWidth;
-  const container = findScrollContainer(node);
-  if (!container) {
-    // Fallback: still flash the target so the user gets feedback, even
-    // if we couldn't locate the scroll container for an exact offset.
-    if (highlight) {
-      flashJumpTarget(node);
+    const match = conversationSearchPattern(query)?.exec(text);
+    if (match) for (const run of runs) {
+      if (!matchRange && match.index < run.end) {
+        matchRange = document.createRange();
+        matchRange.setStart(run.node, match.index - run.start);
+      }
+      if (matchRange && match.index + match[0].length <= run.end) {
+        matchRange.setEnd(run.node, match.index + match[0].length - run.start);
+        break;
+      }
     }
-    return true;
   }
-  scrollAnchorIntoContainer(node, container);
-  if (highlight) {
-    flashJumpTarget(node);
-  }
-  return true;
+  return matchRange;
 }
 
-/**
- * Scroll the user message at `turnID`/`itemID` into the visible area of
- * the conversation scroll surface. Adds a short highlight pulse to the
- * target so the jump is unmistakable, unless `highlight: false` is passed
- * (used when opening the inline editor, where the bubble→editor swap must
- * not replay the pulse). Safe to call before the anchor is mounted —
- * retries a few frames before giving up.
- */
+/** Jump within one visible conversation; the caller owns cancellation. */
 export function scrollToUserMessage(
   turnID: string,
   itemID: string,
-  options?: { highlight?: boolean },
-): void {
-  const highlight = options?.highlight ?? true;
-  if (typeof window === "undefined") {
-    return;
-  }
-  requestConversationTurnReveal(turnID);
+  options: ConversationMessageJumpOptions,
+): () => void {
+  return scrollToMessageAnchor(turnID, userMessageAnchorID(turnID, itemID), options);
+}
+
+export function scrollToConversationMessage(
+  turnID: string,
+  item: ThreadItem,
+  query: string | undefined,
+  options: ConversationMessageJumpOptions,
+): () => void {
+  const anchorID = item.type === "user_message"
+    ? userMessageAnchorID(turnID, item.id)
+    : messageAnchorID(turnID, item.id);
+  return scrollToMessageAnchor(turnID, anchorID, { ...options, itemID: item.id, query });
+}
+
+function scrollToMessageAnchor(
+  turnID: string,
+  anchorID: string,
+  options: ConversationMessageJumpOptions & { itemID?: string; query?: string },
+): () => void {
+  if (typeof window === "undefined") return () => undefined;
+  const { viewport, content } = options.scope;
+  let cancelled = false;
+  let timer: number | undefined;
+  let frame: number | undefined;
+  let laidOutTurn: HTMLElement | null = null;
+  let priorVisibility = "";
+  const inputTypes = ["wheel", "pointerdown", "touchstart"] as const;
+  const cancelForKey = (event: KeyboardEvent): void => {
+    if (event.target instanceof Element && event.target.closest("input,textarea,[contenteditable=true]")) return;
+    if (["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)) cancel();
+  };
+  const current = (): boolean => !cancelled && viewport.isConnected && content.isConnected &&
+    (content === viewport || viewport.contains(content)) && !content.closest('[inert], [aria-hidden="true"]') &&
+    options.scope.isCurrent();
+  const cancel = (): void => {
+    if (cancelled) return;
+    cancelled = true;
+    if (timer !== undefined) window.clearTimeout(timer);
+    if (frame !== undefined) window.cancelAnimationFrame(frame);
+    for (const type of inputTypes) viewport.removeEventListener(type, cancel, true);
+    viewport.removeEventListener("keydown", cancelForKey, true);
+    if (laidOutTurn) laidOutTurn.style.contentVisibility = priorVisibility;
+    if (messageJumps.get(viewport) === cancel) messageJumps.delete(viewport);
+    options.onComplete?.();
+  };
+  messageJumps.get(viewport)?.();
+  messageJumps.set(viewport, cancel);
+  for (const type of inputTypes) viewport.addEventListener(type, cancel, { capture: true, passive: true });
+  viewport.addEventListener("keydown", cancelForKey, true);
   let attemptIndex = 0;
   const tryOnce = (): void => {
-    if (attemptJump(turnID, itemID, highlight)) {
+    timer = undefined;
+    if (!current()) { cancel(); return; }
+    if (options.itemID) requestConversationTurnReveal(turnID, options.itemID);
+    const node = content.querySelector<HTMLElement>(`#${anchorID}`);
+    if (!node || node.closest('[inert], [aria-hidden="true"]') || (options.itemID &&
+      (node.closest('.turn-process-fold.collapsed') || node.querySelector('.user-message-long-card.collapsed')))) {
+      const nextDelay = JUMP_RETRY_DELAYS_MS[++attemptIndex];
+      if (nextDelay === undefined) { cancel(); return; }
+      timer = window.setTimeout(tryOnce, nextDelay);
       return;
     }
-    const nextDelay = JUMP_RETRY_DELAYS_MS[attemptIndex + 1];
-    if (nextDelay === undefined) {
+    // A descendant Range can have full geometry while the skipped turn still
+    // contributes a collapsed scrollHeight. Hold its layout until placement ends.
+    laidOutTurn = node.closest<HTMLElement>(".turn");
+    priorVisibility = laidOutTurn?.style.contentVisibility ?? "";
+    if (laidOutTurn) laidOutTurn.style.contentVisibility = "visible";
+    void node.offsetWidth;
+    const match = searchMatchRange(node, options.query);
+    // Reveal text in nested code/table surfaces before measuring the viewport target.
+    for (let parent = match?.startContainer.parentElement; parent && parent !== viewport; parent = parent.parentElement) {
+      const style = getComputedStyle(parent);
+      const bounds = parent.getBoundingClientRect();
+      const target = match!.getBoundingClientRect();
+      if (/auto|scroll/.test(style.overflowY) && parent.scrollHeight > parent.clientHeight) {
+        parent.scrollTop += target.top - bounds.top - JUMP_TOP_OFFSET_PX;
+      }
+      if (/auto|scroll/.test(style.overflowX) && parent.scrollWidth > parent.clientWidth) {
+        parent.scrollLeft += target.left - bounds.left - JUMP_TOP_OFFSET_PX;
+      }
+    }
+    const targetRect = match?.getBoundingClientRect() ?? node.getBoundingClientRect();
+    const targetTop = Math.max(0, Math.min(
+      targetRect.top - viewport.getBoundingClientRect().top + viewport.scrollTop - JUMP_TOP_OFFSET_PX,
+      viewport.scrollHeight - viewport.clientHeight,
+    ));
+    if (options.highlight !== false) flashJumpTarget(node);
+    if (Math.abs(targetTop - viewport.scrollTop) < 2) { cancel(); return; }
+    if (prefersReducedMotion()) {
+      viewport.scrollTop = targetTop;
+      syncConversationRenderWindow(viewport);
+      cancel();
       return;
     }
-    attemptIndex += 1;
-    window.setTimeout(tryOnce, nextDelay);
+    const glide = createScrollGlide();
+    glide.start(viewport.scrollTop);
+    let commanded = viewport.scrollTop;
+    // One device pixel of rounding can exceed a CSS pixel at reduced desktop zoom.
+    const roundingTolerance = Math.max(1, 1 / window.devicePixelRatio) + 0.01;
+    const step = (now: number): void => {
+      frame = undefined;
+      if (!current() || Math.abs(viewport.scrollTop - commanded) > roundingTolerance) { cancel(); return; }
+      const { position, done } = glide.step(now, targetTop, viewport.clientHeight);
+      viewport.scrollTop = position;
+      commanded = viewport.scrollTop;
+      syncConversationRenderWindow(viewport);
+      if (done) cancel();
+      else frame = window.requestAnimationFrame(step);
+    };
+    frame = window.requestAnimationFrame(step);
   };
-  tryOnce();
+  if (!current()) { cancel(); return cancel; }
+  requestConversationTurnReveal(turnID, options.itemID);
+  // Item addressing may expand a collapsed message in the next React commit.
+  if (options.itemID) timer = window.setTimeout(tryOnce, 0);
+  else tryOnce();
+  return cancel;
 }
 
 /**

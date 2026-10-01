@@ -95,6 +95,7 @@ function providerSource(provider: ProviderSummary): SubscriptionSource {
     catalogFailed: false,
     models,
     selectedModel: provider.model,
+    quota: provider.quota,
     provider,
   };
 }
@@ -113,6 +114,10 @@ function uniqueModels(provider: ProviderSummary): { id: string; label: string }[
 }
 
 function isBuiltInSubscription(provider: ProviderSummary): boolean {
+  return provider.quota !== undefined || hasBuiltInSubscriptionControls(provider);
+}
+
+export function hasBuiltInSubscriptionControls(provider: ProviderSummary): boolean {
   return isCodexSubscription(provider.type) || provider.reuse_codex_credentials === true || isXAI(provider.type) || isGrokBuild(provider.type);
 }
 
