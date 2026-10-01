@@ -1806,7 +1806,16 @@ func (s *Server) handleTurnInterrupt(req Request) error {
 	if err := s.takeSessionControl(threadID, session.ControlPaused); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	_, err := s.interruptThreadExecution(threadID, "", "")
+	runID := s.activeExecutionRunID(threadID)
+	if runID != "" {
+		// An accepted Run can be between turns while a schema correction waits
+		// for project capacity, including legacy members with no control fence.
+		s.setExecutionRunInterruptStatus(runID, execution.StatusInterrupted)
+	}
+	turnActive, err := s.interruptThreadExecution(threadID, "", "")
+	if err == nil && !turnActive && runID != "" {
+		_, err = s.failAndDetachExecutionRun(runID, execution.StatusInterrupted, "interrupted", "cancelled", context.Canceled)
+	}
 	return s.writeResponse(req.ID, OKResult{OK: err == nil}, err)
 }
 
@@ -3044,14 +3053,8 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 		return
 	}
 	if executionRetryPrompt != "" {
-		if retryErr := s.startExecutionSchemaRetry(context.Background(), th, turnRuntime, executionRetryPrompt); retryErr != nil {
-			providers.DebugLogf("start structured-output retry for run %q: %v", turnRuntime.ExecutionRunID, retryErr)
-			failedRun, settleErr := s.failAndDetachExecutionRun(turnRuntime.ExecutionRunID, execution.StatusFailed, "structured_output_retry_failed", "internal", retryErr)
-			if settleErr != nil {
-				providers.DebugLogf("settle structured-output retry failure for run %q: %v", turnRuntime.ExecutionRunID, settleErr)
-			} else {
-				notify(NotificationRunUpdated, RunUpdatedNotification{Run: failedRun})
-			}
+		if retryErr := s.startOrDeferExecutionSchemaRetry(context.Background(), th, turnRuntime, executionRetryPrompt); retryErr != nil {
+			s.failExecutionSchemaRetry(turnRuntime.ExecutionRunID, retryErr)
 		}
 		return
 	}
@@ -3433,6 +3436,10 @@ func (s *Server) findQueuedUserTurn(threadID, queueID string) (queuedTurn, bool)
 }
 
 func (s *Server) kickQueuedTurnDrain(threadID string) {
+	s.tryDrainQueuedTurns(threadID, false)
+}
+
+func (s *Server) tryDrainQueuedTurns(threadID string, synchronous bool) (capacityFull bool) {
 	if s == nil || s.closed.Load() {
 		return
 	}
@@ -3459,10 +3466,14 @@ func (s *Server) kickQueuedTurnDrain(threadID string) {
 	s.drainingQueuedTurns[threadID] = true
 	s.queuedTurnMu.Unlock()
 
+	if synchronous {
+		return s.drainQueuedTurns(threadID)
+	}
 	_ = s.startBackground(func() { s.drainQueuedTurns(threadID) })
+	return
 }
 
-func (s *Server) drainQueuedTurns(threadID string) {
+func (s *Server) drainQueuedTurns(threadID string) (capacityFull bool) {
 	if s == nil {
 		return
 	}
@@ -3502,6 +3513,7 @@ func (s *Server) drainQueuedTurns(threadID string) {
 	started, err := s.startQueuedTurn(context.Background(), threadID, entry)
 	executionBusy := errors.Is(err, errThreadExecutionBusy)
 	retryableAdmission := errors.Is(err, errRetryableTurnAdmission)
+	capacityFull = errors.Is(err, session.ErrProjectWorkerCapacity)
 	requeueCandidate := !started && (err == nil || executionBusy || retryableAdmission)
 	cancelled := s.settleQueuedTurnClaim(threadID, entry, requeueCandidate)
 	if errors.Is(err, errQueuedTurnCancelled) || cancelled {
@@ -3539,12 +3551,16 @@ func (s *Server) drainQueuedTurns(threadID string) {
 	requeued := requeueCandidate && !cancelled
 	s.clearQueuedTurnDrain(threadID)
 	if requeued && (executionBusy || retryableAdmission) {
+		if capacityFull && s.deferProjectCapacityRetry(threadID, "queued", func() bool { return s.tryDrainQueuedTurns(threadID, true) }) {
+			return
+		}
 		s.scheduleThreadExecutionLeaseRetry(func() { s.kickQueuedTurnDrain(threadID) })
 		return
 	}
 	if requeued || s.hasQueuedUserTurns(threadID) {
 		s.kickQueuedTurnDrain(threadID)
 	}
+	return
 }
 
 func (s *Server) startThreadUserTurn(ctx context.Context, th *threadState, userMsg providers.ChatMessage, snapshot turnRuntimeSnapshot, failIfRunning bool, readOnlyPolicy turnReadOnlyPolicy) (startedThreadTurn, bool, error) {
@@ -4132,6 +4148,10 @@ func (s *Server) clearQueuedTurnDrain(threadID string) {
 }
 
 func (s *Server) kickAgentCompletionDrain(threadID string) {
+	s.tryDrainAgentCompletionTurns(threadID, false)
+}
+
+func (s *Server) tryDrainAgentCompletionTurns(threadID string, synchronous bool) (capacityFull bool) {
 	if s == nil || s.closed.Load() {
 		return
 	}
@@ -4155,10 +4175,14 @@ func (s *Server) kickAgentCompletionDrain(threadID string) {
 	s.drainingAgentCompletionTurns[threadID] = true
 	s.agentCompletionMu.Unlock()
 
+	if synchronous {
+		return s.drainAgentCompletionTurns(threadID)
+	}
 	_ = s.startBackground(func() { s.drainAgentCompletionTurns(threadID) })
+	return
 }
 
-func (s *Server) drainAgentCompletionTurns(threadID string) {
+func (s *Server) drainAgentCompletionTurns(threadID string) (capacityFull bool) {
 	if s == nil {
 		return
 	}
@@ -4216,6 +4240,7 @@ func (s *Server) drainAgentCompletionTurns(threadID string) {
 	started, err := s.startSyntheticTurn(context.Background(), threadID, combineAgentCompletionMessages(current), current)
 	executionBusy := errors.Is(err, errThreadExecutionBusy)
 	retryableAdmission := errors.Is(err, errRetryableTurnAdmission)
+	capacityFull = errors.Is(err, session.ErrProjectWorkerCapacity)
 	if err != nil && !executionBusy {
 		providers.DebugLogf("start agent completion turn for thread %q: %v", threadID, err)
 	}
@@ -4227,11 +4252,15 @@ func (s *Server) drainAgentCompletionTurns(threadID string) {
 	s.clearAgentCompletionDrain(threadID)
 	if requeued {
 		if executionBusy || retryableAdmission {
+			if capacityFull && s.deferProjectCapacityRetry(threadID, "completion", func() bool { return s.tryDrainAgentCompletionTurns(threadID, true) }) {
+				return
+			}
 			s.scheduleThreadExecutionLeaseRetry(func() { s.kickAgentCompletionDrain(threadID) })
 			return
 		}
 		s.kickAgentCompletionDrain(threadID)
 	}
+	return
 }
 
 func (s *Server) startSyntheticTurn(ctx context.Context, threadID string, userMsg providers.ChatMessage, pending []agentCompletionTurn) (bool, error) {

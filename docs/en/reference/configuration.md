@@ -109,10 +109,16 @@ Put shared project rules in `AGENTS.md`. The core `instructions` object controls
 `agent.max_parallel` sets the generic anonymous-worker execution capacity. It defaults to `5`; `0` means use that default, and negative values are invalid.
 
 ```json
-{ "agent": { "max_parallel": 5 } }
+{ "agent": { "max_parallel": 5, "project_max_parallel": 0 } }
 ```
 
 Queued workers and workers waiting for children do not occupy normal execution slots. This is an execution-capacity setting, not a request to delegate every task or a limit on all background processes. [Subagent behavior](../desktop/subagents.md) belongs to the enabled delegation plugin.
+
+`agent.project_max_parallel` separately limits new managed-worker admissions for each Project Agent lead. `0` (the default) inherits the resolved `agent.max_parallel`; negative values are invalid. Lead and persistent side sessions are outside this worker pool. Legacy managed sessions with no explicit role count as workers.
+
+The limit uses shared durable session membership and operating-system execution leases. Prelaunch reservations and short metadata mutations can conservatively occupy capacity. A stopped worker releases capacity only after execution cleanup finishes. Lowering the limit or adopting an already-running conversation does not cancel work; later admissions wait until occupancy falls below the limit.
+
+The effective configuration is read on each new admission. Servers sharing a session store must use the same policy for a common bound; independent stores or machines do not share a global pool. Durable queued project input retries with bounded, coalesced backoff after remote completion or process exit, without model requests while waiting. Worker ordering is best-effort across servers, not global FIFO. Manual turn starts report full capacity before appending user input.
 
 ## Explicit automation configuration
 

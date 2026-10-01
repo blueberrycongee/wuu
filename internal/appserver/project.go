@@ -146,7 +146,11 @@ func projectIDForSession(metadata session.Session) string {
 func (s *Server) afterProjectTurn(th *threadState, turn Turn, compactOnly bool) {
 	th.mu.Lock()
 	source := th.Source
+	projectID := th.ProjectID
 	th.mu.Unlock()
+	if source == projectSessionSource {
+		s.startBackground(func() { s.kickProjectInboxDrain(projectID) })
+	}
 	switch {
 	case source == projectSessionSource && !compactOnly:
 		s.startBackground(func() {
@@ -462,7 +466,7 @@ func (s *Server) ensureOwnedThreadLoaded(id string) (*threadState, error) {
 // running turn or, for input that wakes the session, starts one. Input that
 // cannot be admitted now stays pending for the session's next turn start or
 // end, the next delivery, or the next start-up.
-func (s *Server) drainSessionInbox(target string) {
+func (s *Server) drainSessionInboxTarget(target string, allowStart bool) (capacityFull bool) {
 	if !projectAgentEnabled {
 		return
 	}
@@ -528,7 +532,7 @@ func (s *Server) drainSessionInbox(target string) {
 				snapshot.Control = &control
 			}
 		}
-		if !wake {
+		if !wake || !allowStart {
 			// Do not fall through to starting a turn if the target became idle
 			// between inspecting the inbox and admitting this informational input.
 			if _, ok := s.steerSessionInput(th, msg, snapshot); !ok {
@@ -539,8 +543,10 @@ func (s *Server) drainSessionInbox(target string) {
 		if _, ok, err := s.trySubmitSessionInput(context.Background(), th, msg, sessionIfRunningSteer, snapshot); err != nil || !ok {
 			if err != nil {
 				providers.DebugLogf("deliver inbox %q: %v", message.ClientID, err)
+				capacityFull = errors.Is(err, session.ErrProjectWorkerCapacity)
 			}
 			return
 		}
 	}
+	return
 }

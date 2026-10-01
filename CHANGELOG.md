@@ -10,6 +10,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Add per-project managed-worker admission capacity with durable lease arbitration and bounded inbox retries; lead and side coordination remain available.
+
 - GPT-6.1 Sol and Fast model entries with Responses tool calling, supported
   reasoning levels, updated cache pricing, and existing Codex subscription-login
   reuse and account-discovered aliases.

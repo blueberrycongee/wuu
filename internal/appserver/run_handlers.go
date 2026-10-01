@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -23,6 +24,16 @@ type runTracker struct {
 	validator       *structuredoutput.Validator
 	retries         int
 	interruptStatus execution.Status
+	control         *session.Control
+	schemaRetry     *executionSchemaRetry
+}
+
+type executionSchemaRetry struct {
+	projectID string
+	thread    *threadState
+	snapshot  turnRuntimeSnapshot
+	prompt    string
+	queuedAt  time.Time
 }
 
 func (s *Server) handleRunStart(ctx context.Context, req Request) error {
@@ -79,6 +90,16 @@ func (s *Server) handleRunStart(ctx context.Context, req Request) error {
 		return s.writeRunError(req.ID, "internal_error", err)
 	}
 
+	// A structured-output correction is automatic continuation of this input.
+	// Preserve its original control revision rather than accepting a newer fence
+	// after a capacity wait or an intervening user stop.
+	var retryControl *session.Control
+	if control, found, err := session.ReadControl(s.rt.SessionDir, params.ThreadID); err != nil {
+		return s.writeRunError(req.ID, "internal_error", err)
+	} else if found && control.State == session.ControlActive {
+		retryControl = &control
+	}
+
 	params.Request.HasPrompt = params.Prompt != ""
 	params.Request.ImageCount = len(images)
 	params.Request.FileCount = len(files)
@@ -107,6 +128,7 @@ func (s *Server) handleRunStart(ctx context.Context, req Request) error {
 	snapshot := turnRuntimeSnapshot{}.withPermissions(permissions)
 	snapshot.PermissionExplicit = params.PermissionMode != nil
 	snapshot.ExecutionRunID = run.ID
+	snapshot.Control = retryControl
 	var threadRuntime *runtime.ThreadRuntime
 	started, ok, admissionErr := s.startThreadUserTurnWithAdmission(
 		ctx, th, userMsg, snapshot, true, turnReadOnlyIgnore,
@@ -139,6 +161,12 @@ func (s *Server) handleRunStart(ctx context.Context, req Request) error {
 		return s.writeRunError(req.ID, "internal_error", errors.Join(err, persistErr))
 	}
 	s.registerExecutionRun(run, validator)
+	s.runMu.Lock()
+	if tracker := s.runs[run.ID]; tracker != nil {
+		tracker.control = retryControl
+	}
+	s.runMu.Unlock()
+	started.runtime.Control = retryControl
 
 	launch, accepted := s.reserveBackground(func() {
 		s.runTurn(started.ctx, th, threadRuntime, started.turnID, started.runtime, started.history)
@@ -414,24 +442,40 @@ func (s *Server) startExecutionSchemaRetry(ctx context.Context, th *threadState,
 	if th == nil || strings.TrimSpace(snapshot.ExecutionRunID) == "" {
 		return errors.New("structured-output retry requires an attached execution run")
 	}
+	if snapshot.Control == nil {
+		snapshot.Control = s.executionRunControl(snapshot.ExecutionRunID)
+	}
+	if err := s.validateExecutionSchemaRetry(snapshot); err != nil {
+		return err
+	}
 	userMsg, err := userMessageFromPrompt(prompt, nil, nil)
 	if err != nil {
 		return err
 	}
 	var threadRuntime *runtime.ThreadRuntime
-	started, ok, err := s.startThreadUserTurnWithAdmission(ctx, th, userMsg, snapshot, true, turnReadOnlyIgnore,
-		turnAdmissionHooks{afterLease: func(admitted *threadState, _ *providers.ChatMessage) error {
-			var runtimeErr error
-			threadRuntime, runtimeErr = s.ensureThreadRuntimeAfterAdmission(admitted)
-			return runtimeErr
-		}},
+	started, ok, err := s.startThreadUserTurnWithAdmission(ctx, th, userMsg, snapshot, false, turnReadOnlyIgnore,
+		turnAdmissionHooks{
+			afterLease: func(admitted *threadState, _ *providers.ChatMessage) error {
+				if err := s.validateExecutionSchemaRetry(snapshot); err != nil {
+					return err
+				}
+				var runtimeErr error
+				threadRuntime, runtimeErr = s.ensureThreadRuntimeAfterAdmission(admitted)
+				return runtimeErr
+			},
+			beforeUserAppendLocked: func(_ *threadState) (func() error, error) {
+				err := s.validateExecutionSchemaRetry(snapshot)
+				return nil, err
+			},
+		},
 	)
 	if err != nil {
 		return err
 	}
 	if !ok {
-		return fmt.Errorf("thread %q is busy during structured-output retry", th.ID)
+		return fmt.Errorf("thread %q is busy during structured-output retry: %w", th.ID, errThreadExecutionBusy)
 	}
+	started.runtime.Control = snapshot.Control
 	if err := s.attachExecutionTurn(started.runtime.ExecutionRunID, th.ID, started.turnID, started.admittedAt); err != nil {
 		return errors.Join(err, s.abortStartedThreadTurnDurably(th, started, err))
 	}
@@ -446,6 +490,174 @@ func (s *Server) startExecutionSchemaRetry(ctx context.Context, th *threadState,
 	}
 	launch.Commit()
 	return nil
+}
+
+// Automatic agent/process continuations carry the Run ID but may create a fresh
+// runtime snapshot. Keep the accepted Run's fence across those continuations.
+func (s *Server) executionRunControl(runID string) *session.Control {
+	s.runMu.Lock()
+	defer s.runMu.Unlock()
+	if tracker := s.runs[runID]; tracker != nil {
+		return tracker.control
+	}
+	return nil
+}
+
+func (s *Server) validateExecutionSchemaRetry(snapshot turnRuntimeSnapshot) error {
+	if s.closed.Load() {
+		return errServerClosed
+	}
+	runID := snapshot.ExecutionRunID
+	s.runMu.Lock()
+	tracker := s.runs[runID]
+	if tracker == nil || s.activeRunByThread[tracker.threadID] != runID {
+		s.runMu.Unlock()
+		return errExecutionRunChanged
+	}
+	interruptStatus := tracker.interruptStatus
+	s.runMu.Unlock()
+	if interruptStatus != "" {
+		return context.Canceled
+	}
+	if snapshot.Control != nil {
+		if err := session.ValidateControl(s.rt.SessionDir, *snapshot.Control); err != nil {
+			return err
+		}
+	}
+	run, err := s.runStore.Get(context.Background(), runID)
+	if err != nil {
+		return err
+	}
+	if run.Status.Terminal() {
+		return errExecutionRunChanged
+	}
+	return nil
+}
+
+func (s *Server) startOrDeferExecutionSchemaRetry(ctx context.Context, th *threadState, snapshot turnRuntimeSnapshot, prompt string) error {
+	err := s.startExecutionSchemaRetry(ctx, th, snapshot, prompt)
+	if !errors.Is(err, session.ErrProjectWorkerCapacity) {
+		return err
+	}
+	metadata, found, readErr := session.Find(s.rt.SessionDir, th.ID)
+	if readErr != nil {
+		return readErr
+	}
+	if !found {
+		return session.ErrSessionNotFound
+	}
+	projectID := metadata.ID
+	if metadata.Source == projectSessionSource {
+		projectID = metadata.ParentID
+	}
+	if snapshot.Control == nil {
+		snapshot.Control = s.executionRunControl(snapshot.ExecutionRunID)
+	}
+	if snapshot.Control == nil {
+		// Adoption can happen while an ordinary Run is already executing. Its
+		// first capacity deferral begins using the member's current fence.
+		control, found, err := session.ReadControl(s.rt.SessionDir, th.ID)
+		if err != nil {
+			return err
+		}
+		if found {
+			if control.State != session.ControlActive {
+				return session.ErrControlChanged
+			}
+			snapshot.Control = &control
+		}
+	}
+	if err := s.validateExecutionSchemaRetry(snapshot); err != nil {
+		return err
+	}
+	s.runMu.Lock()
+	tracker := s.runs[snapshot.ExecutionRunID]
+	if tracker == nil {
+		s.runMu.Unlock()
+		return errExecutionRunChanged
+	}
+	if tracker.control == nil {
+		tracker.control = snapshot.Control
+	}
+	if tracker.schemaRetry == nil {
+		tracker.schemaRetry = &executionSchemaRetry{projectID: projectID, thread: th, snapshot: snapshot, prompt: prompt, queuedAt: time.Now().UTC()}
+	}
+	s.runMu.Unlock()
+	s.kickProjectInboxDrain(projectID)
+	return nil
+}
+
+// Capacity deferrals remain part of their accepted Run and share the project's
+// bounded timer. Validation still runs when this pass already knows the pool is
+// full, so a stopped or detached run does not retain a useless retry loop.
+func (s *Server) drainExecutionSchemaRetries(projectID string, allowStart bool) (pending, capacityFull bool) {
+	s.runMu.Lock()
+	var retries []*executionSchemaRetry
+	for _, tracker := range s.runs {
+		if retry := tracker.schemaRetry; retry != nil && retry.projectID == projectID {
+			retries = append(retries, retry)
+		}
+	}
+	s.runMu.Unlock()
+	sort.Slice(retries, func(i, j int) bool {
+		if retries[i].queuedAt.Equal(retries[j].queuedAt) {
+			return retries[i].snapshot.ExecutionRunID < retries[j].snapshot.ExecutionRunID
+		}
+		return retries[i].queuedAt.Before(retries[j].queuedAt)
+	})
+	for _, retry := range retries {
+		runID := retry.snapshot.ExecutionRunID
+		err := s.validateExecutionSchemaRetry(retry.snapshot)
+		if err == nil && !allowStart {
+			pending = true
+			continue
+		}
+		s.runMu.Lock()
+		tracker := s.runs[runID]
+		if tracker == nil || tracker.schemaRetry != retry {
+			s.runMu.Unlock()
+			continue
+		}
+		// Remove before launch: a fast model may already queue its next schema
+		// correction before startExecutionSchemaRetry returns.
+		tracker.schemaRetry = nil
+		s.runMu.Unlock()
+		if err == nil {
+			err = s.startExecutionSchemaRetry(context.Background(), retry.thread, retry.snapshot, retry.prompt)
+		}
+		if errors.Is(err, session.ErrProjectWorkerCapacity) {
+			capacityFull, allowStart = true, false
+		}
+		if errors.Is(err, errRetryableTurnAdmission) || errors.Is(err, errThreadExecutionBusy) {
+			s.runMu.Lock()
+			if tracker := s.runs[runID]; tracker != nil {
+				if tracker.schemaRetry == nil {
+					tracker.schemaRetry = retry
+				}
+				pending = true
+			}
+			s.runMu.Unlock()
+			continue
+		}
+		if err != nil {
+			s.failExecutionSchemaRetry(runID, err)
+		}
+	}
+	return pending, capacityFull
+}
+
+func (s *Server) failExecutionSchemaRetry(runID string, cause error) {
+	providers.DebugLogf("start structured-output retry for run %q: %v", runID, cause)
+	status, category := execution.StatusFailed, "internal"
+	if errors.Is(cause, context.Canceled) || errors.Is(cause, session.ErrControlChanged) || errors.Is(cause, errExecutionRunChanged) || errors.Is(cause, errServerClosed) {
+		status, category = s.executionRunInterruptStatus(runID), "cancelled"
+	}
+	run, err := s.failAndDetachExecutionRun(runID, status, "structured_output_retry_failed", category, cause)
+	if err != nil {
+		providers.DebugLogf("settle structured-output retry failure for run %q: %v", runID, err)
+		return
+	}
+	_ = s.writeNotification(NotificationRunUpdated, RunUpdatedNotification{Run: run})
 }
 
 func (s *Server) detachExecutionRun(runID string) {

@@ -31,6 +31,18 @@ type ThreadExecutionLease struct {
 // durable thread across app-server instances and processes. A false acquired
 // result means another live owner currently holds the lease.
 func TryAcquireThreadExecutionLease(sessDir, threadID string) (*ThreadExecutionLease, bool, error) {
+	return TryAcquireThreadExecutionLeaseWithProjectLimit(sessDir, threadID, 0)
+}
+
+// ErrProjectWorkerCapacity means another managed worker must release execution
+// ownership before a new worker can be admitted. The caller may retry.
+var ErrProjectWorkerCapacity = errors.New("project worker admission capacity is full")
+
+// TryAcquireThreadExecutionLeaseWithProjectLimit atomically admits execution
+// within a project's worker capacity. Zero disables the project limit. Membership
+// is read from durable storage; lead and side sessions do not consume capacity.
+// Existing leases (including mutations) conservatively occupy worker capacity.
+func TryAcquireThreadExecutionLeaseWithProjectLimit(sessDir, threadID string, limit int) (*ThreadExecutionLease, bool, error) {
 	sessDir = strings.TrimSpace(sessDir)
 	threadID = strings.TrimSpace(threadID)
 	if sessDir == "" {
@@ -73,6 +85,17 @@ func TryAcquireThreadExecutionLease(sessDir, threadID string) (*ThreadExecutionL
 		_ = db.Close()
 		return nil, false, nil
 	}
+	// Hold the target before counting, so an already-owned target stays busy
+	// rather than being misreported as project capacity. All execution contenders
+	// serialize their membership snapshot, count and acquisition in this transaction.
+	if limit > 0 {
+		if err := checkProjectExecutionCapacity(tx, sessDir, threadID, limit); err != nil {
+			_ = unlockThreadExecutionFile(file)
+			_ = file.Close()
+			_ = db.Close()
+			return nil, false, err
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		_ = unlockThreadExecutionFile(file)
 		_ = file.Close()
@@ -82,6 +105,42 @@ func TryAcquireThreadExecutionLease(sessDir, threadID string) (*ThreadExecutionL
 	return &ThreadExecutionLease{
 		file: file, db: db, threadID: threadID, resetGeneration: resetGeneration,
 	}, true, nil
+}
+
+func checkProjectExecutionCapacity(tx *sql.Tx, sessDir, threadID string, limit int) error {
+	var projectID string
+	err := tx.QueryRow(`SELECT parent_id FROM sessions WHERE id=? AND source='project-session'
+  AND project_role IN ('','worker') AND parent_id<>'' AND archived_at IS NULL`, threadID).Scan(&projectID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read project admission membership: %w", err)
+	}
+	rows, err := tx.Query(`SELECT id FROM sessions WHERE parent_id=? AND source='project-session'
+  AND project_role IN ('','worker') AND archived_at IS NULL AND id<>?`, projectID, threadID)
+	if err != nil {
+		return fmt.Errorf("list project admission members: %w", err)
+	}
+	defer rows.Close()
+	occupied := 0
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return err
+		}
+		active, err := ThreadExecutionActive(sessDir, id)
+		if err != nil {
+			return err
+		}
+		if active {
+			occupied++
+			if occupied >= limit {
+				return fmt.Errorf("project %q worker limit %d reached: %w", projectID, limit, ErrProjectWorkerCapacity)
+			}
+		}
+	}
+	return rows.Err()
 }
 
 // RequestThreadExecutionReset asks the live owner of threadID to interrupt its

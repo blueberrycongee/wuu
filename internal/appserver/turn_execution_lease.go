@@ -4,11 +4,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/session"
 )
 
@@ -83,11 +85,28 @@ func (s *Server) tryAcquireThreadExecutionLeaseLocked(th *threadState) (bool, er
 		}
 		return false, errors.New("session directory is required for durable thread execution")
 	}
-	lease, acquired, err := session.TryAcquireThreadExecutionLease(s.rt.SessionDir, th.ID)
+	// Embedded runtimes may have no configuration file; they retain the
+	// default policy. A configured but malformed file still rejects admission.
+	cfg := config.Config{}
+	var err error
+	if s.rt.ConfigLoadMode != runtime.ConfigLoadFile || strings.TrimSpace(s.rt.ConfigPath) != "" {
+		cfg, _, err = s.rt.LoadEffectiveConfig()
+	}
+	if err != nil && !errors.Is(err, os.ErrNotExist) && !errors.Is(err, config.ErrConfigNotFound) {
+		th.admissionReserved = false
+		if newPluginLease {
+			th.releasePluginGenerationExecutionLeaseLocked()
+		}
+		return false, fmt.Errorf("load worker admission policy: %w", err)
+	}
+	lease, acquired, err := session.TryAcquireThreadExecutionLeaseWithProjectLimit(s.rt.SessionDir, th.ID, cfg.Agent.ProjectMaxParallelValue())
 	if err != nil {
 		th.admissionReserved = false
 		if newPluginLease {
 			th.releasePluginGenerationExecutionLeaseLocked()
+		}
+		if errors.Is(err, session.ErrProjectWorkerCapacity) {
+			return false, errors.Join(errRetryableTurnAdmission, err)
 		}
 		return false, fmt.Errorf("acquire execution lease for thread %q: %w", th.ID, err)
 	}

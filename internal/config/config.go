@@ -294,6 +294,9 @@ type AgentConfig struct {
 	// MaxParallel limits concurrently executing anonymous workers. Queued
 	// workers do not count toward the limit. Zero selects the default.
 	MaxParallel int `json:"max_parallel,omitempty"`
+	// ProjectMaxParallel limits new managed-worker admissions per project.
+	// Lead and side sessions are excluded. Zero inherits MaxParallelValue.
+	ProjectMaxParallel int `json:"project_max_parallel,omitempty"`
 	// Temperature overrides model/provider sampling when greater than zero.
 	// Zero means Auto: omit the request field and let the provider or model
 	// compatibility layer choose.
@@ -357,6 +360,14 @@ type AgentConfig struct {
 	// user-facing contract is still unclear: the main agent loses some
 	// direct write tools but not every mutating capability.
 	ExperimentalCoordinatorMode bool `json:"experimental_coordinator_mode,omitempty"`
+}
+
+// ProjectMaxParallelValue resolves the per-project worker admission limit.
+func (a AgentConfig) ProjectMaxParallelValue() int {
+	if a.ProjectMaxParallel == 0 {
+		return a.MaxParallelValue()
+	}
+	return a.ProjectMaxParallel
 }
 
 // MaxParallelValue resolves the configured worker concurrency limit.
@@ -784,6 +795,9 @@ func (c Config) Validate() error {
 
 	if c.Agent.MaxSteps < 0 {
 		return errors.New("agent.max_steps cannot be negative (use 0 for unlimited)")
+	}
+	if c.Agent.ProjectMaxParallel < 0 {
+		return errors.New("agent.project_max_parallel cannot be negative (use 0 to inherit agent.max_parallel)")
 	}
 	if c.Agent.MaxParallel < 0 {
 		return errors.New("agent.max_parallel cannot be negative (use 0 for default)")
