@@ -21,6 +21,7 @@ const VIEWPORT = ".conversation-pane > .scroll-region";
 // rows inside a long conversation is an unpainted (blank) band.
 const BLANK_RUN_LIMIT_PX = 160;
 const now = new Date().toISOString();
+let testWindow;
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function evaluate(win, fn, ...args) {
@@ -425,8 +426,14 @@ async function verifyHistoryJump(win, results) {
   const modifiers = [process.platform === "darwin" ? "meta" : "control"];
   win.webContents.sendInputEvent({ type: "keyDown", keyCode: "P", modifiers });
   win.webContents.sendInputEvent({ type: "keyUp", keyCode: "P", modifiers });
-  await until(win, () => Boolean(document.querySelector(".conversation-search-dialog input")), "conversation search");
+  // Mounting precedes the palette's rAF focus handoff. Native typing must
+  // wait for its actual input owner, rather than reaching the old composer.
+  await until(win, () => {
+    const input = document.querySelector(".conversation-search-dialog input");
+    return input && document.activeElement === input;
+  }, "the history search input to own focus");
   await win.webContents.insertText("Question 3:");
+  await until(win, () => document.querySelector(".conversation-search-dialog input")?.value === "Question 3:", "the history query to reach the search input");
   await until(win, () => {
     const result = document.querySelector(".conversation-search-result");
     return result?.textContent.includes("Question 3:") &&
@@ -456,6 +463,7 @@ app.whenReady().then(async () => {
       contextIsolation: true, sandbox: false, backgroundThrottling: false,
     },
   });
+  testWindow = win;
   // Keyboard-driven UI (conversation search) must not depend on whether this
   // window is the one the OS focused while the suite runs.
   win.webContents.debugger.attach("1.3");
@@ -663,7 +671,22 @@ app.whenReady().then(async () => {
   assert.deepEqual(errors, [], `Renderer errors: ${errors.join("\n")}`);
   win.destroy();
   app.exit(0);
-}).catch(error => {
+}).catch(async error => {
   console.error(error);
+  if (testWindow && !testWindow.isDestroyed()) {
+    try {
+      const state = await evaluate(testWindow, () => ({
+        query: document.querySelector(".conversation-search-dialog input")?.value,
+        composer: document.querySelector(".composer textarea")?.value,
+        focus: document.activeElement && { tag: document.activeElement.tagName, role: document.activeElement.getAttribute("role"), className: document.activeElement.className },
+        resultsBusy: document.querySelector(".conversation-search-results")?.getAttribute("aria-busy"),
+        results: [...document.querySelectorAll(".conversation-search-result")].map(result => ({ selected: result.getAttribute("aria-selected"), text: result.textContent?.slice(0, 500) })),
+      }));
+      fs.writeFileSync(path.join(output, "failure-state.json"), JSON.stringify({ error: String(error), ...state }, null, 2));
+      fs.writeFileSync(path.join(output, "failure.png"), (await testWindow.webContents.capturePage()).toPNG());
+    } catch (captureError) {
+      console.error("Failed to capture synthetic scroll-fixture state:", captureError);
+    }
+  }
   app.exit(1);
 });

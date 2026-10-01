@@ -56,8 +56,27 @@ async function key(win, keyCode) {
   await evaluate(win, () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
 }
 async function capturePanel(win, name, fastSupported = true) {
-  await evaluate(win, () => Promise.all(document.querySelector('.runtime-panel').getAnimations({ subtree: true }).map(animation => animation.finished.catch(() => {}))));
-  await evaluate(win, () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  // An asynchronous runtime reply can cancel and replace a transition after
+  // getAnimations() was read. Recheck each frame instead of awaiting one snapshot.
+  await evaluate(win, () => new Promise((resolve, reject) => {
+    let frame;
+    let settledFrames = 0;
+    const timeout = setTimeout(() => {
+      cancelAnimationFrame(frame);
+      reject(new Error('Runtime panel animations did not settle'));
+    }, 30000);
+    const check = () => {
+      const panel = document.querySelector('.runtime-panel');
+      const active = panel?.getAnimations({ subtree: true }).some(animation => animation.pending || animation.playState === 'running');
+      settledFrames = panel && !active ? settledFrames + 1 : 0;
+      if (settledFrames >= 2) {
+        clearTimeout(timeout);
+        return resolve();
+      }
+      frame = requestAnimationFrame(check);
+    };
+    frame = requestAnimationFrame(check);
+  }));
   const state = await evaluate(win, () => {
     const panel = document.querySelector('.runtime-panel');
     const context = panel.querySelector('.runtime-panel-context');

@@ -475,6 +475,9 @@ jobs:
       - name: Test macOS process sandbox
         run: go test ./internal/processsandbox -count=1
 
+      - name: Test macOS PTY lifecycle
+        run: go test ./internal/process -run '^Test(PTY|ManagerTTY|StartTTY|WriteStdinToTTY)' -count=1
+
       - name: Test native helper
         run: make test-native
 
