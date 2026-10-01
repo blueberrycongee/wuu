@@ -1,18 +1,20 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import type { Thread, ThreadSearchResultItem } from "../shared/protocol";
 import { conversationSearchPattern } from "./ConversationSearchDisplay";
 import { scrollToConversationMessage } from "./TurnViewHelpers";
 import { showErrorToast } from "./Toast";
+import { updateThreadByID, updateTurnItem, type AppState } from "./AppState";
 
 // Activation can render a cached snapshot before its resume completes. Keep the
 // search address until that snapshot is reconciled, then reveal its actual item.
 export function useConversationSearchNavigation({
-  thread, switching, activateThread, disableAutoFollow,
+  thread, switching, activateThread, disableAutoFollow, setAppState,
 }: {
   thread?: Thread;
   switching: boolean;
   activateThread: (id: string) => Promise<void>;
   disableAutoFollow: () => void;
+  setAppState: Dispatch<SetStateAction<AppState>>;
 }): (result: ThreadSearchResultItem, query: string) => void {
   const [target, setTarget] = useState<{
     result: ThreadSearchResultItem; query: string; ready: boolean;
@@ -20,6 +22,9 @@ export function useConversationSearchNavigation({
   const handled = useRef<typeof target>(undefined);
   const loadingPage = useRef("");
   const cancelJump = useRef<(() => void) | undefined>(undefined);
+  const loadingContent = useRef("");
+  const currentDestination = useRef({ target, threadID: thread?.id });
+  currentDestination.current = { target, threadID: thread?.id };
 
   // Streaming snapshots must not cancel retries while an old turn mounts.
   // Only a destination change or unmount abandons the pending jump.
@@ -32,12 +37,18 @@ export function useConversationSearchNavigation({
       return;
     }
     const seq = target.result.message_seq;
-    const turn = thread.turns.find(turn => turn.items.some(item => item.seq === seq));
+    const turn = thread.turns.find(turn => turn.items.some(item => item.seq === seq &&
+      (item.type === "user_message" || item.type === "agent_message")));
     if (!turn) {
-      const cursor = thread.history_cursor;
+      // A page can contain only the trailing tool items of an assistant
+      // message. They share its sequence; its text can be on the prior page.
+      const passedAddress = thread.turns.some(turn => turn.items.some(item =>
+        item.seq !== undefined && seq !== undefined && item.seq < seq));
+      const cursor = passedAddress ? undefined : thread.history_cursor;
       if (cursor && window.wuu.loadEarlierThreadHistory && loadingPage.current !== cursor) {
         loadingPage.current = cursor;
         void window.wuu.loadEarlierThreadHistory(thread.id, cursor).catch(error => {
+          if (currentDestination.current.target !== target || currentDestination.current.threadID !== thread.id) return;
           handled.current = target;
           showErrorToast(error);
         });
@@ -46,6 +57,31 @@ export function useConversationSearchNavigation({
       return;
     }
     const items = turn.items.filter(item => item.seq === seq);
+    const preview = items.find(item =>
+      (item.type === "user_message" || item.type === "agent_message") && item.remote_content_ref);
+    if (preview?.remote_content_ref && window.wuu.readRemoteItem) {
+      const ref = preview.remote_content_ref;
+      if (loadingContent.current === ref) return;
+      loadingContent.current = ref;
+      const stillCurrent = () => currentDestination.current.target === target &&
+        currentDestination.current.threadID === thread.id;
+      // A full-text hit can occur beyond the history page's leading preview.
+      // Hydrate only the addressed message and wait for its rendered snapshot.
+      void window.wuu.readRemoteItem(ref).then(complete => {
+        if (!stillCurrent()) return;
+        if (complete.id !== preview.id || complete.type !== preview.type) {
+          throw new Error("Content changed during download");
+        }
+        setAppState(current => updateThreadByID(current, thread.id, currentThread =>
+          updateTurnItem(currentThread, turn.id, preview.id, item =>
+            item.remote_content_ref === ref ? complete : item)));
+      }).catch(error => {
+        if (!stillCurrent()) return;
+        handled.current = target;
+        showErrorToast(error);
+      });
+      return;
+    }
     const item = items.find(item =>
       (item.type === "user_message" || item.type === "agent_message") &&
       conversationSearchPattern(target.query)?.test(item.text ?? ""));
@@ -58,14 +94,15 @@ export function useConversationSearchNavigation({
     disableAutoFollow();
     const frame = window.requestAnimationFrame(() => {
       disableAutoFollow();
-      cancelJump.current = scrollToConversationMessage(turn.id, item);
+      cancelJump.current = scrollToConversationMessage(turn.id, item, target.query);
       handled.current = target;
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [target, thread, switching, disableAutoFollow]);
+  }, [target, thread, switching, disableAutoFollow, setAppState]);
 
   return (result, query) => {
     loadingPage.current = "";
+    loadingContent.current = "";
     const next = result.message_seq ? { result, query, ready: false } : undefined;
     setTarget(next);
     void activateThread(result.thread.id).then(() => {

@@ -7,6 +7,7 @@ import {
 import { streamFieldValue } from "./ThreadItemText";
 import { prefersReducedMotion } from "./motion";
 import { createScrollGlide } from "./ScrollGlide";
+import { conversationSearchPattern } from "./ConversationSearchDisplay";
 import { syncConversationRenderWindow } from "./ConversationRenderWindow";
 import { formatCurrentNumber, getActiveLocale, translateCurrent as t } from "./i18n";
 
@@ -311,9 +312,23 @@ const jumpGlideFrames = new WeakMap<HTMLElement, number>();
 function scrollAnchorIntoContainer(
   node: HTMLElement,
   container: HTMLElement,
+  match?: Range,
 ): void {
+  // Fenced code and tables have their own scroll surfaces. Reveal the text
+  // inside them before measuring its position in the conversation viewport.
+  for (let parent = match?.startContainer.parentElement; parent && parent !== container; parent = parent.parentElement) {
+    const style = getComputedStyle(parent);
+    const bounds = parent.getBoundingClientRect();
+    const target = match!.getBoundingClientRect();
+    if (/auto|scroll/.test(style.overflowY) && parent.scrollHeight > parent.clientHeight) {
+      parent.scrollTop += target.top - bounds.top - JUMP_TOP_OFFSET_PX;
+    }
+    if (/auto|scroll/.test(style.overflowX) && parent.scrollWidth > parent.clientWidth) {
+      parent.scrollLeft += target.left - bounds.left - JUMP_TOP_OFFSET_PX;
+    }
+  }
   const containerRect = container.getBoundingClientRect();
-  const nodeRect = node.getBoundingClientRect();
+  const nodeRect = match?.getBoundingClientRect() ?? node.getBoundingClientRect();
   const currentOffset =
     nodeRect.top - containerRect.top + container.scrollTop;
   const targetTop = Math.max(
@@ -352,7 +367,7 @@ function scrollAnchorIntoContainer(
   jumpGlideFrames.set(container, window.requestAnimationFrame(step));
 }
 
-function attemptJump(anchorID: string, highlight: boolean, expandMessage = false): boolean {
+function attemptJump(anchorID: string, highlight: boolean, expandMessage = false, query?: string): boolean {
   if (typeof document === "undefined") {
     return false;
   }
@@ -383,7 +398,42 @@ function attemptJump(anchorID: string, highlight: boolean, expandMessage = false
     }
     return true;
   }
-  scrollAnchorIntoContainer(node, container);
+  let matchRange: Range | undefined;
+  if (query) {
+    // Markdown block boundaries are searchable whitespace even when the DOM
+    // has no literal text node between its paragraphs. Preserve an offset map
+    // so a phrase spanning blocks or inline formatting still lands on its text.
+    const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT);
+    const runs: { node: Node; start: number; end: number }[] = [];
+    let text = "";
+    let previousBlock: Element | null = null;
+    let textNode: Node | null;
+    while ((textNode = walker.nextNode())) {
+      if (textNode.parentElement?.closest(".rich-code-header,.message-actions,.message-copy-button,[aria-hidden=true]")) continue;
+      if (textNode instanceof Element) {
+        if (textNode.tagName === "BR") text += "\n";
+        continue;
+      }
+      const block = textNode.parentElement?.closest("p,h1,h2,h3,h4,h5,h6,li,pre,td,th,blockquote,div") ?? null;
+      if (text && block !== previousBlock) text += "\n";
+      previousBlock = block;
+      const start = text.length;
+      text += textNode.textContent ?? "";
+      runs.push({ node: textNode, start, end: text.length });
+    }
+    const match = conversationSearchPattern(query)?.exec(text);
+    if (match) for (const run of runs) {
+      if (!matchRange && match.index < run.end) {
+        matchRange = document.createRange();
+        matchRange.setStart(run.node, match.index - run.start);
+      }
+      if (matchRange && match.index + match[0].length <= run.end) {
+        matchRange.setEnd(run.node, match.index + match[0].length - run.start);
+        break;
+      }
+    }
+  }
+  scrollAnchorIntoContainer(node, container, matchRange);
   if (highlight) {
     flashJumpTarget(node);
   }
@@ -406,17 +456,17 @@ export function scrollToUserMessage(
   scrollToMessageAnchor(turnID, userMessageAnchorID(turnID, itemID), options);
 }
 
-export function scrollToConversationMessage(turnID: string, item: ThreadItem): () => void {
+export function scrollToConversationMessage(turnID: string, item: ThreadItem, query?: string): () => void {
   const anchorID = item.type === "user_message"
     ? userMessageAnchorID(turnID, item.id)
     : messageAnchorID(turnID, item.id);
-  return scrollToMessageAnchor(turnID, anchorID, { itemID: item.id });
+  return scrollToMessageAnchor(turnID, anchorID, { itemID: item.id, query });
 }
 
 function scrollToMessageAnchor(
   turnID: string,
   anchorID: string,
-  options?: { highlight?: boolean; itemID?: string },
+  options?: { highlight?: boolean; itemID?: string; query?: string },
 ): () => void {
   const highlight = options?.highlight ?? true;
   if (typeof window === "undefined") {
@@ -427,7 +477,7 @@ function scrollToMessageAnchor(
   let attemptIndex = 0;
   const tryOnce = (): void => {
     if (options?.itemID) requestConversationTurnReveal(turnID, options.itemID);
-    if (attemptJump(anchorID, highlight, Boolean(options?.itemID))) {
+    if (attemptJump(anchorID, highlight, Boolean(options?.itemID), options?.query)) {
       return;
     }
     const nextDelay = JUMP_RETRY_DELAYS_MS[attemptIndex + 1];

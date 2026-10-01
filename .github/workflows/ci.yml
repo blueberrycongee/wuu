@@ -146,6 +146,27 @@ jobs:
           set -o pipefail
           xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/fast-mode-e2e.cjs 2>&1 | tee "$WUU_FAST_OUTPUT/run.log"
 
+      - name: Verify conversation search navigation
+        if: ${{ !cancelled() && steps.build-fixture-core.outcome == 'success' }}
+        timeout-minutes: 7
+        shell: bash
+        env:
+          WUU_SEARCH_OUTPUT: ${{ runner.temp }}/wuu-conversation-search-evidence
+          WUU_DESKTOP_CORE: ${{ runner.temp }}/wuu-session-switch-core
+        run: |
+          mkdir -p "$WUU_SEARCH_OUTPUT"
+          set -o pipefail
+          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/conversation-search-e2e.cjs 2>&1 | tee "$WUU_SEARCH_OUTPUT/process.log"
+
+      - name: Upload conversation search evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: conversation-search-evidence
+          path: ${{ runner.temp }}/wuu-conversation-search-evidence
+          if-no-files-found: ignore
+          retention-days: 14
+
       - name: Upload Fast mode evidence
         if: always()
         uses: actions/upload-artifact@v4

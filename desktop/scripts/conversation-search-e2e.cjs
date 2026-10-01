@@ -47,12 +47,14 @@ const projects = ['Alpha', 'Beta'].map((name, index) => {
 });
 const longTitle = ('History review — ' + 'long searchable conversation title with wrapping and truncation '.repeat(5)).trim();
 const oldNeedle = 'cobaltneedle-old-answer';
+const lateNeedle = 'sapphire oversized tail';
 const archivedNeedle = 'cobaltneedle-archived-answer';
 const archivedAt = '2026-01-02T00:00:00Z';
 const sessions = [
   { id: 'search-alpha', title: 'Shared planning', project: 0, turns: 3, updated: '2026-01-04T00:00:00Z' },
   { id: 'search-beta', title: 'Shared planning', project: 1, turns: 3, updated: '2026-01-03T00:00:00Z' },
-  { id: 'search-history', title: longTitle, project: 1, turns: 140, updated: '2026-01-05T00:00:00Z', needle: oldNeedle, matchTurn: 5 },
+  { id: 'search-alpha-older', title: 'Shared planning', project: 0, turns: 3, updated: '2025-11-03T09:00:00Z' },
+  { id: 'search-history', title: longTitle, project: 1, turns: 140, updated: '2026-01-05T00:00:00Z', needle: oldNeedle, matchTurn: 5, lateNeedle },
   { id: 'search-pinned', title: 'Pinned checklist', project: 0, turns: 3, updated: '2026-01-01T00:00:00Z', pinned: '2026-01-02T00:00:00Z' },
   { id: 'search-recent', title: 'Recent notes', project: 0, turns: 3, updated: '2026-01-06T00:00:00Z' },
   { id: 'search-archive', title: 'Archived investigation', project: 0, turns: 4, updated: '2026-01-07T00:00:00Z', archived: archivedAt, needle: archivedNeedle, matchTurn: 2 },
@@ -219,32 +221,43 @@ async function armFlash(win) {
     window.__searchFlashObserver.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['class'] });
   });
 }
-async function matchingArticle(win, session, turn, needle) {
+async function matchingArticle(win, session, turn, needle, sourceSelector) {
   await active(win, session);
   const id = anchor(session, turn);
-  const evidence = await waitFor(win, ({ id, needle }) => {
+  const evidence = await waitFor(win, ({ id, needle, sourceSelector }) => {
     const pane = document.querySelector('.cached-conversation-pane[data-active="true"]');
     const node = document.getElementById(id);
     const viewport = document.querySelector('.conversation-pane > .scroll-region');
     const flash = window.__searchFlashes.find(entry => entry.id === id);
-    if (!node || !pane?.contains(node) || !node.matches('article') || !node.textContent.includes(needle) || !flash || !viewport) return false;
+    if (!node || !pane?.contains(node) || !node.matches('article') || !needle.split(/\s+/).every(word => node.textContent.includes(word)) || !flash || !viewport) return false;
     const r = node.getBoundingClientRect(), v = viewport.getBoundingClientRect();
     if (r.height <= 0 || r.bottom <= v.top || r.top >= v.bottom || r.right <= v.left || r.left >= v.right) return false;
     // An enormous article can intersect the viewport while the matching text
-    // remains offscreen. Check the actual needle, placed at the answer's start.
-    const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
+    // remains offscreen. Check the actual needle, including late full-body hits.
+    const source = sourceSelector ? node.querySelector(sourceSelector) : node;
+    const walker = document.createTreeWalker(source, NodeFilter.SHOW_TEXT);
     let textNode;
+    const words = needle.split(/\s+/), matches = [];
     while ((textNode = walker.nextNode())) {
-      const index = textNode.textContent.indexOf(needle);
-      if (index < 0) continue;
-      const range = document.createRange();
-      range.setStart(textNode, index); range.setEnd(textNode, index + needle.length);
-      const match = range.getBoundingClientRect();
-      if (match.height <= 0 || match.top < v.top || match.bottom > v.bottom) return false;
-      return { id, flash, article: r.toJSON(), match: match.toJSON(), viewport: v.toJSON(), flashes: window.__searchFlashes };
+      let offset = 0;
+      while (matches.length < words.length) {
+        const word = words[matches.length];
+        const index = textNode.textContent.indexOf(word, offset);
+        if (index < 0) break;
+        const range = document.createRange();
+        range.setStart(textNode, index); range.setEnd(textNode, index + word.length);
+        matches.push(range.getBoundingClientRect());
+        offset = index + word.length;
+      }
+      if (matches.length === words.length) {
+        if (matches.some(match => match.height <= 0 || match.top < v.top || match.bottom > v.bottom)) return false;
+        const innerViewport = source.closest('.rich-code')?.getBoundingClientRect();
+        if (innerViewport && matches.some(match => match.top < innerViewport.top || match.bottom > innerViewport.bottom)) return false;
+        return { id, flash, article: r.toJSON(), matches: matches.map(match => match.toJSON()), viewport: v.toJSON(), flashes: window.__searchFlashes };
+      }
     }
     return false;
-  }, { id, needle }, `matching assistant article ${id} highlighted and in viewport`);
+  }, { id, needle, sourceSelector }, `matching assistant article ${id} highlighted and in viewport`);
   assert.ok(evidence.flashes.every(flash => flash.id === id), 'Search jump highlighted the wrong message (user/first/latest turn)');
   const turnID = `${session}-turn-${String(turn).padStart(4, '0')}`;
   assert.equal(await evaluate(win, id => !!document.getElementById(id), `user-msg-${turnID}-${turnID}-item-1`), true, 'Existing user message anchors must remain intact');
@@ -290,7 +303,10 @@ for s in json.loads(sys.argv[2]):
         user='Synthetic question '+str(t)
         if s.get('user') and t==2: user=('Long request context. '*90)+'opal-user-detail'
         answer='## Synthetic answer '+str(t)+'\\n\\n'+('Readable long content with **formatting**, without external inference. '*25)
-        if t==s.get('matchTurn'): answer='The exact historical assistant finding is '+s['needle']+'.\\n\\n'+answer
+        if t==s.get('matchTurn'):
+            answer='The exact historical assistant finding is '+s['needle']+'.\\n\\n'+answer
+            if s.get('lateNeedle'): answer += ('\\n\\nMore archived context. '*4000)+'\\n\\n'+'\\n\\n'.join(s['lateNeedle'].split())
+        if s.get('process') and t==2: answer += '\\n\\n'+chr(96)*3+'text\\n'+('ordinary code line\\n'*1000)+'Highlight\\n'+chr(96)*3
         for r,(role,text) in enumerate([('user',user),('assistant',answer)]):
             phase='commentary' if s.get('process') and t==2 and role=='assistant' else ''
             db.execute('INSERT INTO session_messages (session_id,seq,role,content,at,phase) VALUES (?,?,?,?,?,?)', (s['id'],(t-1)*2+r+1,role,text,'2026-01-01T00:00:00Z',phase))
@@ -312,7 +328,7 @@ db.commit()
   await evaluate(main, () => document.querySelector('.composer textarea').focus());
   await open(main);
   const empty = await query(main, '');
-  assert.equal(empty.length, 7);
+  assert.equal(empty.length, 8);
   assert.equal(empty[0].thread.id, 'search-pinned', 'Pinned conversation must precede recent conversations');
   assert.equal(empty[1].thread.id, 'search-recent', 'Unpinned suggestions must be recent first');
   assert.ok(empty.every(r => !r.thread.archived));
@@ -323,9 +339,14 @@ db.commit()
 
   await open(main);
   const titles = await query(main, 'Shared planning');
-  assert.equal(titles.length, 2);
+  assert.equal(titles.length, 3);
   assert.equal(await evaluate(main, () => [...document.querySelectorAll('.conversation-search-result')].every(button =>
-    !button.querySelector('.conversation-search-result-snippet') && button.querySelector('.conversation-search-result-context')?.textContent.trim())), true, 'Title results need distinct project context, not repeated snippets');
+    !button.querySelector('.conversation-search-result-snippet:not(:has(time))') && button.querySelector('.conversation-search-result-context')?.textContent.trim())), true, 'Title results need distinct project context, not repeated snippets');
+  const duplicates = await evaluate(main, () => [...document.querySelectorAll('.conversation-search-result time')].map(node => ({ text: node.textContent, datetime: node.dateTime })));
+  assert.equal(duplicates.length, 2, 'Only same-project title collisions need a date');
+  assert.notEqual(duplicates[0].text, duplicates[1].text);
+  await capture(main, 'duplicate-title-results');
+  checks.push({ name: 'same-project duplicate titles have distinct dates', duplicates });
   key(main, 'Down');
   await waitFor(main, () => document.querySelectorAll('.conversation-search-result')[1]?.getAttribute('aria-selected') === 'true');
   key(main, 'Up');
@@ -376,7 +397,12 @@ db.commit()
   })), true, 'Body hits require matching highlighted snippets inline inside result buttons');
   assert.equal(await evaluate(main, () => [...document.querySelectorAll('.conversation-search-result')].find(button =>
     button.querySelector('.conversation-search-result-title')?.textContent === 'Archived investigation')?.querySelector('.conversation-search-result-archived')?.textContent.trim().length > 0), true, 'Archived hit needs a visible label');
-  await armFlash(main);
+  const lateHits = await query(main, lateNeedle);
+  assert.equal(lateHits[0].message_seq, 10);
+  await armFlash(main); key(main, 'Enter');
+  await matchingArticle(main, 'search-history', 5, lateNeedle);
+  checks.push({ name: 'oversized historical body scrolls to a late multi-paragraph match' });
+  await open(main); await query(main, oldNeedle); await armFlash(main);
   await clickResult(main, longTitle, 'Search Beta');
   await matchingArticle(main, 'search-history', 5, oldNeedle);
 
@@ -397,6 +423,10 @@ db.commit()
   await open(main); await query(main, 'opal-process-detail'); await armFlash(main);
   key(main, 'Enter');
   await matchingArticle(main, 'search-process', 2, 'opal-process-detail');
+  await open(main); await query(main, 'Highlight'); await armFlash(main);
+  key(main, 'Enter');
+  await matchingArticle(main, 'search-process', 2, 'Highlight', '.rich-code code');
+  checks.push({ name: 'code body match wins over an identically named toolbar control' });
 
   await open(main);
   const userHit = await query(main, 'opal-user-detail');

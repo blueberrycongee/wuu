@@ -6,7 +6,7 @@ import { primaryShortcutLabel } from "./platform";
 import type { ConversationSearchState } from "./ConversationSearchState";
 import { conversationSearchContextLabel } from "./AppState";
 import { threadDisplayTitle } from "./ThreadTitles";
-import { useI18n } from "./i18n";
+import { formatCurrentDate, useI18n } from "./i18n";
 
 function SearchMatchText({ text, query }: { text: string; query: string }): JSX.Element {
   const pattern = conversationSearchPattern(query);
@@ -51,6 +51,23 @@ export function ConversationSearchOverlay({
   }, [state.selectedIndex, results, dialogRef]);
   if (!state.open && !state.closing) return null;
 
+  const rows = results.map(result => {
+    const title = threadDisplayTitle(result.thread, threads, t("search.untitledConversation"));
+    const context = conversationSearchContextLabel(result.thread, projects);
+    const snippet = conversationSearchPattern(state.query)?.test(title) && !result.message_seq
+      ? ""
+      : conversationSearchVisibleSnippet({ query: state.query, snippet: result.snippet, title });
+    return { result, title, context, snippet, key: JSON.stringify([title, context, snippet]) };
+  });
+  const counts = new Map<string, number>();
+  for (const row of rows) counts.set(row.key, (counts.get(row.key) ?? 0) + 1);
+  const datedRows = rows.map(row => ({
+    ...row,
+    date: (counts.get(row.key) ?? 0) > 1
+      ? formatCurrentDate(row.result.thread.updated_at, { dateStyle: "medium", timeStyle: "short" }) : "",
+    preview: conversationSearchVisibleSnippet({ query: state.query || row.title, snippet: row.result.thread.preview, title: row.title }),
+  }));
+
   return (
     <div
       className={`app-modal-backdrop conversation-search-overlay${state.closing ? " closing" : ""}`}
@@ -93,15 +110,21 @@ export function ConversationSearchOverlay({
         {state.error ? <div className="conversation-search-error" role="alert">{state.error}</div> : null}
         <div className="conversation-search-results" id="conversation-search-results" role="listbox"
           aria-label={t("search.conversations")} aria-busy={state.loading}>
-          {results.map((result, index) => {
+          {datedRows.map(({ result, title, context, snippet, key, date, preview }, index) => {
             const thread = result.thread;
-            const title = threadDisplayTitle(thread, threads, t("search.untitledConversation"));
-            const context = conversationSearchContextLabel(thread, projects);
-            // Title matches already explain the result; repeating the title as
-            // an excerpt costs a row without helping distinguish conversations.
-            const snippet = conversationSearchPattern(state.query)?.test(title) && !result.message_seq
-              ? ""
-              : conversationSearchVisibleSnippet({ query: state.query, snippet: result.snippet, title });
+            const peers = date ? datedRows.filter(row => row.key === key && row.date === date) : [];
+            let detail = "";
+            if (peers.length > 1) {
+              detail = preview;
+              if (!detail || peers.some(row => row.result !== result && row.preview === detail)) {
+                // Forks can share even their timestamp and first message.
+                // Show only enough of the stable ID to separate those rows.
+                let length = 6;
+                while (length < thread.id.length && peers.some(row => row.result !== result &&
+                  row.result.thread.id.slice(-length) === thread.id.slice(-length))) length++;
+                detail = thread.id.slice(-length);
+              }
+            }
             const active = thread.id === activeThreadID;
             const selected = state.selectedIndex === index;
             return (
@@ -126,6 +149,12 @@ export function ConversationSearchOverlay({
                 {snippet ? (
                   <span className="conversation-search-result-snippet">
                     <SearchMatchText text={snippet} query={state.query} />
+                  </span>
+                ) : null}
+                {date ? (
+                  <span className="conversation-search-result-snippet">
+                    <time dateTime={thread.updated_at}>{date}</time>
+                    {detail ? ` · ${detail}` : ""}
                   </span>
                 ) : null}
               </button>

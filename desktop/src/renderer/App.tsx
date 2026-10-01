@@ -3544,6 +3544,7 @@ export function App(): JSX.Element {
     switching: viewSwitchPending,
     activateThread,
     disableAutoFollow: disableConversationAutoFollow,
+    setAppState: setState,
   });
 
   useEffect(() => {
