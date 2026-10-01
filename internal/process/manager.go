@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/processsandbox"
@@ -229,6 +230,24 @@ type processHandle struct {
 	processStartTime string
 }
 
+type ptySession struct {
+	master    *os.File
+	exitRead  *os.File
+	exitWrite *os.File
+	conn      syscall.RawConn
+	exitConn  syscall.RawConn
+}
+
+func (p *ptySession) Close() error {
+	_ = p.exitWrite.Close()
+	return p.master.Close()
+}
+
+func (p *ptySession) close() {
+	_ = p.Close()
+	_ = p.exitRead.Close()
+}
+
 func NewManager(rootDir string, runtimeDirs ...string) (*Manager, error) {
 	return NewManagerWithHostGeneration(rootDir, newHostGenerationID(), runtimeDirs...)
 }
@@ -437,8 +456,9 @@ func (m *Manager) Start(ctx context.Context, opt StartOptions) (*Process, error)
 	}
 	var stdin io.WriteCloser
 	var ptyFile *os.File
+	var tty *ptySession
 	if opt.TTY {
-		ptyFile, err = startPTYProcess(cmd)
+		tty, err = startPTYProcess(cmd)
 		if err != nil {
 			_ = logf.Close()
 			p.Status = StatusFailed
@@ -448,7 +468,8 @@ func (m *Manager) Start(ctx context.Context, opt StartOptions) (*Process, error)
 			m.publish(Event{Type: EventFailed, Process: *p})
 			return p, fmt.Errorf("start pty process: %w", err)
 		}
-		stdin = ptyFile
+		ptyFile = tty.master
+		stdin = tty
 	} else {
 		stdin, err = cmd.StdinPipe()
 		if err != nil {
@@ -484,6 +505,9 @@ func (m *Manager) Start(ctx context.Context, opt StartOptions) (*Process, error)
 		if stdin != nil {
 			_ = stdin.Close()
 		}
+		if tty != nil {
+			tty.close()
+		}
 		_ = cmd.Wait()
 		_ = logf.Close()
 		p.Status = StatusFailed
@@ -502,7 +526,7 @@ func (m *Manager) Start(ctx context.Context, opt StartOptions) (*Process, error)
 	if opt.TTY {
 		go func() {
 			defer close(handle.done)
-			m.waitPTY(id, cmd, logf, ptyFile)
+			m.waitPTY(id, cmd, logf, tty)
 		}()
 	} else {
 		go func() {
@@ -618,15 +642,16 @@ func (m *Manager) wait(id string, cmd *exec.Cmd, logf *os.File) {
 	m.finishWait(id, cmd, err, discarded)
 }
 
-func (m *Manager) waitPTY(id string, cmd *exec.Cmd, logf *os.File, ptyFile *os.File) {
+func (m *Manager) waitPTY(id string, cmd *exec.Cmd, logf *os.File, tty *ptySession) {
 	copyDone := make(chan struct{})
 	go func() {
-		_, _ = io.Copy(logf, ptyFile)
+		copyPTYOutput(logf, tty)
 		close(copyDone)
 	}()
 	err := cmd.Wait()
-	_ = ptyFile.Close()
+	_ = tty.exitWrite.Close()
 	<-copyDone
+	tty.close()
 	_ = logf.Close()
 	_, discarded, _ := compactProcessLog(filepath.Join(m.logDir, id+".log"), terminalProcessLogMaxBytes)
 	m.finishWait(id, cmd, err, discarded)
