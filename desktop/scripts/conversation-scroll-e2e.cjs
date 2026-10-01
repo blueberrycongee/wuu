@@ -7,7 +7,7 @@ const { app, BrowserWindow } = require("electron");
 // bridge and native input: wheel, scrollbar-free programmatic jumps, clicks
 // and sidebar toggles. Checks what a reader sees — the reading position, the
 // following state and painted pixels — while output streams.
-// WUU_SCROLL_E2E_ONLY=inspection or history-jump selects one native regression.
+// WUU_SCROLL_E2E_ONLY=inspection, history-jump, or submission-reflow selects one native regression.
 const desktop = path.resolve(__dirname, "..");
 const output = process.env.WUU_SCROLL_E2E_OUTPUT || path.join(desktop, "out/conversation-scroll");
 fs.mkdirSync(output, { recursive: true });
@@ -418,6 +418,48 @@ async function inspectProcess(win, results, turnID) {
   record(results, "completed inspection starts from the beginning", { history });
 }
 
+async function verifySubmissionReflow(win, results) {
+  await typeAndSend(win, "Keep this submitted question visible while history reflows.");
+  await until(win, () => document.querySelector('[data-user-message-id="sent-user-2"]'), "accepted reflow query");
+  await frames(win, 2);
+  await until(win, () => !document.documentElement.hasAttribute("data-submit-glide"), "the full submission glide to finish");
+  await settleScroll(win);
+  const read = () => evaluate(win, selector => {
+    const viewport = document.querySelector(selector);
+    const message = viewport.querySelector('[data-user-message-id="sent-user-2"]');
+    if (!message?.textContent.includes("Keep this submitted question")) throw new Error("Submitted reflow target is missing");
+    const box = viewport.getBoundingClientRect(), rect = message.getBoundingClientRect();
+    return { top: rect.top - box.top, bottom: rect.bottom - box.top, height: viewport.clientHeight,
+      documentTop: viewport.scrollTop + rect.top - box.top, scrollTop: viewport.scrollTop,
+      tail: viewport.querySelector(".scroll-region-content").style.paddingBottom };
+  }, VIEWPORT);
+  const initial = await read();
+  const samples = [{ phase: "placed", ...initial }];
+  const [width, height] = win.getContentSize();
+  const resize = async (nextWidth, phase) => {
+    win.setContentSize(nextWidth, height);
+    await until(win, () => !document.documentElement.classList.contains("window-resizing"), "window resize to settle");
+    await frames(win, 4);
+    await settleScroll(win);
+    const next = await read();
+    samples.push({ phase, ...next });
+    fs.writeFileSync(path.join(output, "submission-reflow-state.json"), JSON.stringify(samples, null, 2));
+    assert.ok(next.top >= -1 && next.bottom <= next.height + 1, `Submitted query left the viewport: ${JSON.stringify(next)}`);
+    assert.ok(Math.abs(next.top - initial.top) <= 2, `Reflow moved the held query: ${initial.top} -> ${next.top}`);
+    return next;
+  };
+  const narrow = await resize(width - 300, "narrow");
+  assert.ok(Math.abs(narrow.documentTop - initial.documentTop) > 100, "Earlier history must actually reflow");
+  await resize(width, "restored");
+  emit(win, "item/started", { thread_id: THREAD_ID, turn_id: "sent-turn-2", item: {
+    id: "reflow-short-reply", type: "agent_message", status: "in_progress", text: "A short reply keeps the query's reading space."
+  } });
+  await until(win, () => document.querySelector('[data-turn-id="sent-turn-2"]')?.textContent.includes("A short reply"), "the short response");
+  await resize(width - 220, "short-reply-narrow");
+  await resize(width, "short-reply-restored");
+  record(results, "submitted query stays anchored through history reflow and a short reply", { samples });
+}
+
 async function verifyHistoryJump(win, results) {
   // Search remains a visible, keyboard-accessible entry point after removing
   // the message navigation rails. Keep the paint and exact landing contract.
@@ -474,7 +516,7 @@ app.whenReady().then(async () => {
     errors.push(event.message);
     console.error(`renderer error: ${event.message}`);
   });
-  await win.loadFile(path.join(desktop, "out/renderer/index.html"));
+  await win.loadFile(process.env.WUU_SCROLL_E2E_RENDERER || path.join(desktop, "out/renderer/index.html"));
   await until(win, () => Boolean(document.querySelector(".composer textarea")), "composer");
   await typeAndSend(win, "Boot");
   // Let the first submission be accepted and placed before history arrives.
@@ -508,6 +550,15 @@ app.whenReady().then(async () => {
   const liveAgent = live.items[1];
   emit(win, "thread/resumed", { thread: thread(THREAD_ID, [bootTurn, ...history, live], true) });
   await until(win, () => document.querySelectorAll(".turn").length >= 38, "history to render");
+  if (process.env.WUU_SCROLL_E2E_ONLY === "submission-reflow") {
+    emit(win, "turn/completed", { thread_id: THREAD_ID, turn: { ...live, status: "completed", completed_at: now } });
+    await frames(win, 4);
+    await verifySubmissionReflow(win, results);
+    assert.deepEqual(errors, [], `Renderer errors: ${errors.join("\n")}`);
+    win.destroy();
+    app.exit(0);
+    return;
+  }
   if (process.env.WUU_SCROLL_E2E_ONLY === "history-jump") {
     await verifyHistoryJump(win, results);
     assert.deepEqual(errors, [], `Renderer errors: ${errors.join("\n")}`);
