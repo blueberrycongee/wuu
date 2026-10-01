@@ -546,3 +546,54 @@ describe("createConversationHistoryActions", () => {
     });
   });
 });
+
+
+describe("fork completion ownership", () => {
+  it.each(["conversation", "workspace", "split", "page"] as const)(
+    "retains the newer %s view and its draft when a delayed fork finishes",
+    async (navigation) => {
+      const source = thread("source", { turns: [turn("turn-1", [userItem()])] });
+      const target = thread("target");
+      const context = projectContext();
+      const api = installWuuApi();
+      let resolve!: (value: { thread: Thread }) => void;
+      api.forkThread.mockReturnValue(new Promise((complete) => { resolve = complete; }));
+      const harness = buildActions({ initial: {
+        ...initialState, activeContext: context, thread: source,
+        threads: [source, target], activeSessionTabID: threadSessionTabID(source.id),
+        sessionTabs: [createThreadSessionTab(source, context), createThreadSessionTab(target, context)],
+      } });
+      const pending = harness.actions.forkThreadFromMessage(source, "turn-1", "item-1");
+      expect(api.forkThread).toHaveBeenCalledOnce();
+      const nextContext = navigation === "workspace"
+        ? { ...context, project_id: "project-2", cwd: "/tmp/project-2" }
+        : context;
+      const next = {
+        ...harness.getAppState(), activeContext: nextContext,
+        thread: navigation === "conversation" || navigation === "workspace" ? target : source,
+        secondaryThread: navigation === "split" ? target : undefined,
+        activeSessionTabID: navigation === "page" ? "skills" : threadSessionTabID(
+          navigation === "conversation" || navigation === "workspace" ? target.id : source.id),
+      };
+      harness.setAppState(next);
+      const draft = { prompt: "new target draft", images: [], files: [] };
+      harness.setDraft(draft);
+      harness.setDraft(draft, "secondary");
+      resolve({ thread: thread("fork-result") });
+      await pending;
+
+      expect(harness.getAppState().thread?.id).toBe(next.thread.id);
+      expect(harness.getAppState().secondaryThread).toBe(next.secondaryThread);
+      expect(harness.getAppState().activeContext).toEqual(nextContext);
+      expect(harness.getAppState().activeSessionTabID).toBe(next.activeSessionTabID);
+      expect(harness.getComposerState().prompt).toBe(draft.prompt);
+      expect(harness.getComposerState().splitDrafts.secondary).toEqual(draft);
+      expect(harness.enableConversationAutoFollow).not.toHaveBeenCalled();
+      expect(harness.getAppState().sessionTabs).toContainEqual(
+        createThreadSessionTab(thread("fork-result"), context));
+      if (navigation === "workspace") {
+        expect(harness.getAppState().threads).toEqual(next.threads);
+      }
+    },
+  );
+});
