@@ -2893,8 +2893,9 @@ export function App(): JSX.Element {
       (environmentPanelHasRoom &&
         !environmentPanelDismissed &&
         !emptyConversation &&
-        // A folder outside Git has nothing to show until asked for.
-        state.gitStatus?.is_repo !== false));
+        // Wait for repository detection so non-Git folders do not briefly
+        // open and close the panel while their status is still unknown.
+        state.gitStatus?.is_repo === true));
   const environmentPanelVisible = environmentPanelTargetVisible;
   const environmentPanelMotionState: EnvironmentPanelMotionState =
     environmentPanelVisible ? "open" : "closing";

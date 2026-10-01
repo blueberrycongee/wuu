@@ -170,16 +170,16 @@ func TestRenderBashModelView(t *testing.T) {
 			fields: map[string]any{"exit_code": 1, "stdout_tail": "--- FAIL: TestThing\n", "stderr_tail": "", "verification": map[string]any{
 				"kind": "verification", "scope": "targeted", "passed": false,
 				"failure_summary": map[string]any{"failed": true, "failing_tests": []string{"TestThing"}},
-				"repeat_guard":    map[string]any{"previous_failed_runs": 0, "max_failed_runs_without_revision_change": 2},
+				"repeat_guard":    map[string]any{"previous_failed_runs": 0},
 			}},
 			exact: "--- FAIL: TestThing\nExit code 1",
 		},
 		{
-			name: "cut failing verification keeps its summary and the repeat guard",
+			name: "cut failing verification keeps its summary and failure history",
 			fields: map[string]any{"exit_code": 1, "stdout_tail": "... 900 bytes omitted ...\nok\n", "stdout_tail_truncated": true, "stderr_tail": "", "verification": map[string]any{
 				"kind": "verification", "scope": "targeted", "passed": false,
 				"failure_summary": map[string]any{"failed": true, "failing_tests": []string{"TestThingHidden"}},
-				"repeat_guard":    map[string]any{"previous_failed_runs": 1, "max_failed_runs_without_revision_change": 2},
+				"repeat_guard":    map[string]any{"previous_failed_runs": 1},
 			}},
 			want: []string{"Exit code 1", "TestThingHidden", "2 times"},
 		},
