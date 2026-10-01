@@ -27,6 +27,7 @@ const (
 	workspaceDigestMaxFiles        = 5000
 	workspaceDigestMaxBytes        = 32 * 1024 * 1024
 	workspaceDigestMaxBytesPerFile = 1024 * 1024
+	repeatedToolInputPriorLimit    = 2
 )
 
 // ToolExecutionRecord captures benchmark-oriented facts about one tool
@@ -107,6 +108,14 @@ func (t *Toolkit) ToolTelemetry() []ToolExecutionRecord {
 }
 
 func (t *Toolkit) executeKnownToolResult(ctx context.Context, call providers.ToolCall, tool Tool) (toolresult.Result, error) {
+	return t.executeKnownToolResultWithRepeatPolicy(ctx, call, tool, false)
+}
+
+func (t *Toolkit) executeKnownToolResultAllowRepeated(ctx context.Context, call providers.ToolCall, tool Tool) (toolresult.Result, error) {
+	return t.executeKnownToolResultWithRepeatPolicy(ctx, call, tool, true)
+}
+
+func (t *Toolkit) executeKnownToolResultWithRepeatPolicy(ctx context.Context, call providers.ToolCall, tool Tool, allowRepeated bool) (toolresult.Result, error) {
 	info := buildToolInfoForArgs(tool, t.toolExposure(call.Name), call.Arguments)
 	startedAt := time.Now()
 	remoteWorkspace := t.env.ExecutionEnvironment != nil && (executionenv.WorkspaceTool(call.Name) || call.Name == codeModeExecToolName)
@@ -133,6 +142,18 @@ func (t *Toolkit) executeKnownToolResult(ctx context.Context, call providers.Too
 	if err := t.checkPermission(ctx, info, call); err != nil {
 		decision.Action = ToolPolicyDeny
 		decision.Reason = "workspace boundary"
+		t.recordToolExecution(ctx, call, info, decision, startedAt, revisionBefore, revisionBefore, "", "", "", false, err, nil)
+		return toolresult.Result{}, err
+	}
+
+	if priorRepeats := t.repeatedToolInputCount(call, revisionBefore); !remoteWorkspace && !allowRepeated && priorRepeats >= repeatedToolInputPriorLimit {
+		err := repeatedToolInputError{
+			ToolName:        call.Name,
+			ArgumentsSHA256: toolArgumentsSHA256(call.Arguments),
+			Revision:        revisionBefore,
+			PriorRepeats:    priorRepeats,
+			MaxPriorRepeats: repeatedToolInputPriorLimit,
+		}
 		t.recordToolExecution(ctx, call, info, decision, startedAt, revisionBefore, revisionBefore, "", "", "", false, err, nil)
 		return toolresult.Result{}, err
 	}
@@ -205,6 +226,100 @@ func validateToolArgumentsJSON(raw string) error {
 		return errors.New("tool arguments must be a JSON object")
 	}
 	return nil
+}
+
+type repeatedToolInputError struct {
+	ToolName        string
+	ArgumentsSHA256 string
+	Revision        string
+	PriorRepeats    int
+	MaxPriorRepeats int
+}
+
+func (e repeatedToolInputError) Error() string {
+	return fmt.Sprintf(
+		"tool %q blocked repeated identical input: error_kind=repeated_tool_input args_sha256=%s prior_repeats=%d max_prior_repeats=%d workspace_revision=%s safe_retry=%q model_next_action=%q",
+		e.ToolName,
+		e.ArgumentsSHA256,
+		e.PriorRepeats,
+		e.MaxPriorRepeats,
+		e.Revision,
+		"inspect prior tool evidence, change the input, wait for new evidence, or change the workspace before retrying",
+		"stop repeating the same call; use existing observations or choose a different next action",
+	)
+}
+
+func (t *Toolkit) repeatedToolInputCount(call providers.ToolCall, revision string) int {
+	// Context transitions depend on the active window, not filesystem changes.
+	// The agent owns admission at the completed tool-batch boundary.
+	if call.Name == newContextToolName {
+		return 0
+	}
+	// Programs can advance checkpoints or poll external state without changing
+	// the workspace. Nested leaf calls retain their own repeated-input guards.
+	if call.Name == codeModeExecToolName {
+		return 0
+	}
+	if t == nil || t.env == nil || isRepeatablePollingTool(call) {
+		return 0
+	}
+	revision = strings.TrimSpace(revision)
+	if revision == "" {
+		return 0
+	}
+	argumentsSHA256 := toolArgumentsSHA256(call.Arguments)
+	var count int
+	for _, record := range t.env.toolTelemetry.snapshot() {
+		if record.Name != call.Name ||
+			record.ArgumentsSHA256 != argumentsSHA256 ||
+			strings.TrimSpace(record.RevisionBefore) != revision {
+			continue
+		}
+		count++
+	}
+	return count
+}
+
+func isRepeatablePollingTool(call providers.ToolCall) bool {
+	name := strings.TrimSpace(call.Name)
+	if strings.HasPrefix(name, "mcp_plugin_cua_mac_computer_computer_") {
+		var args struct {
+			Action string `json:"action"`
+		}
+		if err := json.Unmarshal([]byte(call.Arguments), &args); err == nil && args.Action == "observe" {
+			return true
+		}
+	}
+	if name == browserToolName {
+		// Re-observing/re-screenshotting the same tab is the browser's polling
+		// idiom (a page settles between identical calls), so exempt it from the
+		// repeated-input guard the way CUA observe is exempt.
+		var args struct {
+			Action string `json:"action"`
+		}
+		if err := json.Unmarshal([]byte(call.Arguments), &args); err == nil {
+			switch args.Action {
+			case "observe", "screenshot", "wait_for", "tabs":
+				return true
+			}
+		}
+	}
+	if name == "bash" {
+		var args bashArgs
+		if err := decodeArgs(call.Arguments, &args); err == nil {
+			return bashCommandLooksLikeVerification(args.Command)
+		}
+	}
+	if name == "process" {
+		var args processArgs
+		if err := decodeArgs(call.Arguments, &args); err == nil {
+			switch strings.TrimSpace(args.Action) {
+			case processActionList, processActionRead:
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (t *Toolkit) recordToolExecution(
