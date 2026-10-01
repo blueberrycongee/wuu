@@ -104,7 +104,7 @@ it("deduplicates identical published snapshots per turn without hiding new versi
   const first = presentedImage("first", "old");
   const turn = { id: "turn", items: [first, presentedImage("repeat", "old"), presentedImage("revision", "new"), presentedImage("other", "old", "other.svg")] } as Turn;
   expect(collectTurnArtifacts(turn).map(a => a.itemId)).toEqual(["first", "revision", "other"]);
-  expect(collectTurnArtifacts({ ...turn, id: "next", items: [first] })).toHaveLength(1);
+  expect(collectTurnArtifacts({ ...turn, id: "next", items: [first] } as Turn)).toHaveLength(1);
   const mixed: ThreadItem = { ...first, result_detail: { content: [first.result_detail!.content![0], { type: "text", text: "Compared with itself" }, first.result_detail!.content![0]] } };
   expect(collectTurnArtifacts({ ...turn, items: [mixed] }).map(a => a.type)).toEqual(["image", "text", "image"]);
 });
