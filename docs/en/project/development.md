@@ -66,6 +66,29 @@ It uses a temporary profile and synthetic content, not your Wuu data. Run it in
 a graphical desktop session; it does not validate native dialog appearance or
 packaged-app behavior.
 
+### Streaming renderer diagnostics
+
+Run the synthetic long-answer fixture after installing desktop dependencies:
+
+```sh
+(cd desktop && ./node_modules/.bin/electron scripts/streaming-render-perf.cjs)
+```
+
+On headless Linux, add `--no-sandbox --ozone-platform=headless` before the script.
+The fixture uses production React, the real Markdown renderer and CSS, and no
+inference or accounts. It measures synchronous tail commits after 25, 100 and
+400 completed paragraphs, plus a separate V8 sampled-allocation pass. It checks
+that completed DOM nodes survive and all appended text appears. These diagnostic
+measurements exclude provider cadence and physical paint latency; they are not CI
+timing gates.
+
+Results and disposable profile files go to `desktop/out/streaming-performance/`;
+set `WUU_STREAM_PERF_OUTPUT` to keep separate runs. Set
+`WUU_STREAM_PERF_BASE_REF=<commit>` to build just the streaming component from an
+earlier revision against the same fixture and dependencies. Alternate baseline
+and candidate runs, and compare raw samples and source/bundle hashes in
+`results.json`; the checkout commit alone does not identify uncommitted source.
+
 ### Session switch performance guard
 
 After installing dependencies, build the core and desktop, then run the real

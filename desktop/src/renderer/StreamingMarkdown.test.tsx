@@ -353,6 +353,47 @@ describe("StreamingMarkdown", () => {
     );
   });
 
+  it("keeps completed blocks readable as the cursor moves between promoted prose and the live tail", async () => {
+    const key = streamTextKey("turn", "s3", "text");
+    const props = { streamKey: key, initialText: "", isLive: true, phase: "final_answer" as const };
+    streamTextStore.seed(key, "First **completed** paragraph.\n\nSecond paragraph.\n\n");
+    mount(props);
+    const surface = container!.querySelector(".streaming-markdown")!;
+    const firstParagraph = surface.querySelector(".rich-paragraph");
+    expect(surface.querySelector(".stream-cursor")?.closest(".rich-paragraph")?.textContent).toBe("Second paragraph.");
+
+    for (const chunk of ["Third", " paragraph.", "\n\n", "Fourth paragraph."]) {
+      await act(async () => {
+        streamTextStore.append(key, chunk);
+        await vi.advanceTimersByTimeAsync(STREAM_TEXT_NOTIFY_INTERVAL_MS + 20);
+      });
+      expect(surface.querySelector(".rich-paragraph")).toBe(firstParagraph);
+      expect(firstParagraph?.querySelector("strong")?.textContent).toBe("completed");
+      const paragraphs = surface.querySelectorAll(".rich-paragraph");
+      expect(surface.querySelectorAll(".stream-cursor")).toHaveLength(1);
+      expect(surface.querySelector(".stream-cursor")?.closest(".rich-paragraph")).toBe(paragraphs[paragraphs.length - 1]);
+    }
+
+    rerender({ ...props, isLive: false });
+    expect(surface.querySelector(".rich-paragraph")).toBe(firstParagraph);
+    expect(surface.textContent).toBe("First completed paragraph.Second paragraph.Third paragraph.Fourth paragraph.");
+  });
+
+  it("updates file actions in completed blocks when the caller changes", () => {
+    const key = streamTextKey("turn", "s4", "text");
+    const firstOpen = vi.fn();
+    const secondOpen = vi.fn();
+    const props = { streamKey: key, initialText: "", cwd: "/repo/wuu", isLive: true, phase: "final_answer" as const };
+    streamTextStore.seed(key, "Open [source](./src/main.ts).\n\nLive tail");
+    mount({ ...props, onOpenFile: firstOpen });
+    rerender({ ...props, onOpenFile: secondOpen });
+    const link = container!.querySelector<HTMLButtonElement>(".rich-file-link");
+    expect(link).not.toBeNull();
+    act(() => link!.click());
+    expect(firstOpen).not.toHaveBeenCalled();
+    expect(secondOpen).toHaveBeenCalledWith("./src/main.ts");
+  });
+
   it("keeps the cursor inside a streaming list item", async () => {
     const key = streamTextKey("turn", "s7", "text");
     streamTextStore.seed(key, "- first item");

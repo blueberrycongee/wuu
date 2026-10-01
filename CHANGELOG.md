@@ -23,6 +23,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Reuse completed Markdown blocks while new text streams, reducing repeated
+  rendering and allocation work in long answers.
+- Reduce repeated schema inspection when opening session history and metadata.
+
 - Video attachments show larger, unobstructed previews with only a play button;
   native controls appear on playback.
 

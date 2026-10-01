@@ -258,6 +258,32 @@ export function StreamingMarkdown({
     ? insertCursorBeforeTrailingWhitespace(displayTail)
     : displayTail;
 
+  // Reuse the whole finished-block subtree while only the live tail changes.
+  // Memoizing MarkdownContent alone still reconciles every preceding wrapper
+  // on each stream notification, making tail updates grow with answer length.
+  const stableBlockNodes = useMemo(
+    () => visibleBlocks.map((block, index) => (
+      <div className="streaming-markdown-block" key={index}>
+        <MemoMarkdownContent
+          text={
+            index === cursorStableBlockIndex
+              ? insertCursorBeforeTrailingWhitespace(block)
+              : block
+          }
+          cwd={cwd}
+          onOpenFile={onOpenFile}
+          renderText={
+            index === cursorStableBlockIndex
+              ? stableCursorTextRenderer
+              : undefined
+          }
+          renderMermaid={renderMermaid}
+        />
+      </div>
+    )),
+    [visibleBlocks, cursorStableBlockIndex, cwd, onOpenFile, stableCursorTextRenderer, renderMermaid],
+  );
+
   /* ------------------------------- Render -------------------------------- */
   return (
     <div
@@ -266,27 +292,7 @@ export function StreamingMarkdown({
       data-stream-state={phase}
       data-cursor-state={cursorState}
     >
-      {visibleBlocks.map((block, index) => (
-        // Keep stable blocks keyed separately so settled text does not remount
-        // into one large markdown tree when streaming ends.
-        <div className="streaming-markdown-block" key={index}>
-          <MemoMarkdownContent
-            text={
-              index === cursorStableBlockIndex
-                ? insertCursorBeforeTrailingWhitespace(block)
-                : block
-            }
-            cwd={cwd}
-            onOpenFile={onOpenFile}
-            renderText={
-              index === cursorStableBlockIndex
-                ? stableCursorTextRenderer
-                : undefined
-            }
-            renderMermaid={renderMermaid}
-          />
-        </div>
-      ))}
+      {stableBlockNodes}
       <MarkdownContent
         text={tailText}
         cwd={cwd}

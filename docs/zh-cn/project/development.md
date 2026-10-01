@@ -60,6 +60,26 @@ make build-go
 崩溃，检查恢复、重试上限、窗口隔离和 IPC。测试使用临时配置目录和模拟内容，不读取
 你的 Wuu 数据。请在图形桌面会话中运行；它不验证原生对话框外观或打包应用行为。
 
+### 流式渲染诊断
+
+安装桌面依赖后，运行合成长回答用例：
+
+```sh
+(cd desktop && ./node_modules/.bin/electron scripts/streaming-render-perf.cjs)
+```
+
+无图形界面的 Linux 可在脚本路径前加上 `--no-sandbox --ozone-platform=headless`。
+用例使用生产版 React、实际 Markdown 渲染器和 CSS，不使用推理或账号。它分别在
+25、100 和 400 个已完成段落后测量尾部同步提交，并单独运行 V8 分配采样；同时检查
+已完成 DOM 节点保持挂载，追加文本完整显示。结果不包含提供商输出节奏或实际屏幕
+呈现延迟，只用于诊断，不作为 CI 耗时门槛。
+
+结果和临时浏览器配置写入 `desktop/out/streaming-performance/`；可设置
+`WUU_STREAM_PERF_OUTPUT` 分别保存多次运行。设置
+`WUU_STREAM_PERF_BASE_REF=<commit>` 可在相同用例和依赖下，仅替换旧版本的流式组件。
+交替运行基线和候选版本，比较 `results.json` 中的原始样本、源码与构建文件哈希；
+仅凭检出的提交号不能识别未提交的源码修改。
+
 ### 会话切换性能护栏
 
 安装依赖后构建核心与桌面，在图形桌面会话中运行真实 Electron/main/preload/Go 测试：
