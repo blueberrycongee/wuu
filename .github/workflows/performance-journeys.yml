@@ -81,6 +81,9 @@ jobs:
             xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox \
               desktop/scripts/session-switch-e2e.cjs 2>&1 | tee "$output/run.log"
           }
+          # Retain the warmup pair separately; do not mix first-process/font-cache
+          # initialization with the three measured pairs below.
+          for variant in baseline candidate; do run_case "$variant" warmup 0 1; done
           for repetition in 1 2 3; do
             if [ "$repetition" = 2 ]; then variants="candidate baseline"; else variants="baseline candidate"; fi
             for variant in $variants; do run_case "$variant" "$repetition" 0 1; done

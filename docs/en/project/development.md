@@ -168,6 +168,8 @@ For each baseline/candidate run, use the same final harness, fixture counts,
 window size, dependency versions and machine, with matching full desktop and Go
 builds selected by `WUU_SWITCH_MAIN` and `WUU_DESKTOP_CORE`. Record at least
 three alternating pairs and retain every raw result, log and artifact hash.
+The scoped CI comparison retains an initial warmup pair separately before those
+three pairs; do not pool warmup samples with measured results.
 Do not pool initial opens with repeats or traced runs with untraced runs.
 Headless Linux can use `--no-sandbox --ozone-platform=headless`; its frame cadence
 is a property of that rig. Two frames are paint opportunities, not physical
