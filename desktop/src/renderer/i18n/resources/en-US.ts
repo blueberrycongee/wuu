@@ -1880,6 +1880,7 @@ export const enUS = {
   "composer.attachment.videoTooLarge": "\"{name}\" exceeds the {limit}MB video size limit",
   "composer.attachment.videoUnavailable": "The selected model or connection does not support video. Choose a video-capable model and connection.",
   "composer.attachment.playVideo": "Play video {name}",
+  "composer.attachment.videoPlaybackFailed": "This video could not be played.",
   "composer.attachment.pdfOnly": "Only PDF files are supported",
   "composer.attachment.imageProcessFailed": "Unable to process image",
   "composer.attachment.imageEncodeFailed": "Unable to encode image",

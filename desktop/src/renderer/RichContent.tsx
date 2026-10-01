@@ -360,7 +360,7 @@ function markdownComponents(
   };
 }
 
-function RichCodeBlock({
+export function RichCodeBlock({
   code,
   displayedCode,
   language

@@ -1877,6 +1877,7 @@ export const zhCN = {
   "composer.attachment.videoTooLarge": "「{name}」超过视频 {limit}MB 大小上限",
   "composer.attachment.videoUnavailable": "当前模型或连接不支持视频，请切换到支持视频的模型和连接。",
   "composer.attachment.playVideo": "播放视频 {name}",
+  "composer.attachment.videoPlaybackFailed": "无法播放此视频。",
   "composer.attachment.pdfOnly": "仅支持 PDF 文件",
   "composer.attachment.imageProcessFailed": "无法处理图片",
   "composer.attachment.imageEncodeFailed": "无法编码图片",

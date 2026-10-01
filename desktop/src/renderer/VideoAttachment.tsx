@@ -1,7 +1,6 @@
-import { useEffect, useState } from "react";
-import { Film } from "./WuuIcons";
+import { useEffect, useRef, useState } from "react";
+import { Film, Play } from "./WuuIcons";
 import type { InputFile } from "../shared/protocol";
-import { formatFileSize } from "./AttachmentFormat";
 import { useI18n } from "./i18n";
 import "./styles/video-attachment.css";
 
@@ -27,15 +26,52 @@ export function formatVideoDuration(seconds: number): string {
 export function VideoAttachment({ file }: { file: InputFile }): JSX.Element {
   const { t } = useI18n();
   const src = useVideoObjectURL(file);
-  const [duration, setDuration] = useState(0);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const [activeSource, setActiveSource] = useState<string>();
+  const [failedSource, setFailedSource] = useState<string>();
   const filename = file.filename || "video";
-  useEffect(() => setDuration(0), [src]);
-  return <div className="video-attachment">
-    {src ? <video src={src} controls preload="metadata" playsInline aria-label={t("composer.attachment.playVideo", { name: filename })}
-      onLoadedMetadata={event => setDuration(event.currentTarget.duration)} /> : <Film size={20} aria-hidden="true" />}
-    <span className="video-attachment-caption"><span title={filename}>{filename}</span><small>
-      {duration > 0 && Number.isFinite(duration) ? `${formatVideoDuration(duration)} · ` : ""}
-      {formatFileSize(file.data)}
-    </small></span>
-  </div>;
+  const active = Boolean(src && activeSource === src);
+  const failed = Boolean(src && failedSource === src);
+  return (
+    <div className="video-attachment">
+      {failed ? (
+        <p className="video-attachment-error" role="alert">{t("composer.attachment.videoPlaybackFailed")}</p>
+      ) : src ? (
+        <>
+          <video
+            key={src}
+            ref={videoRef}
+            src={src}
+            controls={active}
+            tabIndex={active ? 0 : -1}
+            preload="metadata"
+            playsInline
+            aria-label={t("composer.attachment.playVideo", { name: filename })}
+            onLoadedMetadata={event => {
+              // Chromium may leave metadata-only previews blank until a seek.
+              event.currentTarget.currentTime = 0.001;
+            }}
+            onError={() => setFailedSource(src)}
+          />
+          {!active ? (
+            <button
+              type="button"
+              className="video-attachment-play"
+              aria-label={t("composer.attachment.playVideo", { name: filename })}
+              onClick={() => {
+                const video = videoRef.current!;
+                // Reveal native controls before moving keyboard focus to the player.
+                video.controls = true;
+                setActiveSource(src);
+                video.focus();
+                void video.play().catch(() => setFailedSource(src));
+              }}
+            >
+              <span className="video-attachment-play-icon"><Play size={22} aria-hidden="true" /></span>
+            </button>
+          ) : null}
+        </>
+      ) : <Film size={24} aria-hidden="true" />}
+    </div>
+  );
 }

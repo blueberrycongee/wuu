@@ -3570,28 +3570,30 @@
   overflow-wrap: anywhere;
 }
 
-.workspace-tool-record > summary {
+:is(.workspace-tool-record, .program-tool-record) > summary {
   width: fit-content;
   max-width: 100%;
   cursor: pointer;
   list-style: none;
 }
 
-.workspace-tool-record > summary::-webkit-details-marker {
+:is(.workspace-tool-record, .program-tool-record) > summary::-webkit-details-marker {
   display: none;
 }
 
-.workspace-tool-record > summary:focus-visible {
+:is(.workspace-tool-record, .program-tool-record) > summary:focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: 3px;
   border-radius: var(--radius-xs);
 }
 
-.workspace-tool-chevron {
+.workspace-tool-chevron,
+.program-tool-chevron {
   flex-shrink: 0;
 }
 
-.workspace-tool-record[open] .workspace-tool-chevron {
+.workspace-tool-record[open] .workspace-tool-chevron,
+.program-tool-record[open] .program-tool-chevron {
   transform: rotate(180deg);
 }
 
@@ -3608,6 +3610,32 @@
 
 .workspace-tool-details p {
   margin: var(--space-2) 0 0;
+}
+
+.program-tool-record > summary {
+  display: flex;
+  width: 100%;
+  min-height: 1lh;
+  align-items: center;
+}
+
+.program-tool-label {
+  flex: 1;
+  min-width: 0;
+}
+
+.program-tool-details {
+  margin: var(--space-2) 0 0 22px;
+}
+
+.program-tool-details .rich-code-block {
+  margin: 0;
+}
+
+.program-tool-details p {
+  margin: var(--space-2) 0 0;
+  color: var(--ink-soft);
+  overflow-wrap: anywhere;
 }
 
 /* A plain icon button in the open card, not the floating copy pill used on
