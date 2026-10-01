@@ -110,10 +110,13 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
-- Preserve Home/End effort selections when an older settings response arrives
-  while the key is held after reopening the runtime picker.
+- Preserve each conversation’s composer draft across related-session split
+  opening, replacement, closing, and navigation; prevent delayed loads from
+  overriding newer navigation or pane choices.
 - Keep image inspections in aggregated tool activity, with previews loaded on
   expansion while explicitly presented images retain their output order.
+- Preserve Home/End effort selections when an older settings response arrives
+  while the key is held after reopening the runtime picker.
 - Preserve the latest reasoning-effort choice during pending updates, keeping
   queued runtime changes with their original conversation and workspace.
 - Keep streaming cursor markers out of copied or selected unfinished backtick and tilde code blocks.

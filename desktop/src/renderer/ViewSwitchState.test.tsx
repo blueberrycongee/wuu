@@ -49,6 +49,15 @@ async function renderViewSwitchState(): Promise<{
 }
 
 describe("useViewSwitchState", () => {
+  it("captures the current generation without starting a switch", async () => {
+    const hook = await renderViewSwitchState();
+    const requestID = hook.get().getCurrentViewSwitchRequestID();
+    expect(hook.get().pendingViewSwitch).toBeUndefined();
+    expect(hook.get().isCurrentViewSwitchRequest(requestID)).toBe(true);
+    act(() => { hook.get().beginInstantThreadSwitch("other"); });
+    expect(hook.get().isCurrentViewSwitchRequest(requestID)).toBe(false);
+  });
+
   it("blocks sends immediately but only marks an uncached thread busy after the loading delay", async () => {
     vi.useFakeTimers();
     const hook = await renderViewSwitchState();

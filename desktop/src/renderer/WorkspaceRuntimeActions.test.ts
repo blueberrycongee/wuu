@@ -8,6 +8,7 @@ import type {
 } from "../shared/protocol";
 import {
   createDraftSessionTab,
+  captureComposerDrafts,
   createThreadSessionTab,
   emptyComposerDraft,
   initialState,
@@ -68,10 +69,12 @@ function buildActions({
   initial,
   draft = emptyComposerDraft(),
   loadRuntime = vi.fn(),
+  splitDrafts,
 }: {
   initial: AppState;
   draft?: ComposerDraftState;
   loadRuntime?: ReturnType<typeof vi.fn>;
+  splitDrafts?: Record<"primary" | "secondary", ComposerDraftState>;
 }) {
   let appState = initial;
   let currentDraft = draft;
@@ -95,7 +98,7 @@ function buildActions({
     setAppState: (update) => {
       appState = typeof update === "function" ? update(appState) : update;
     },
-    getPrimaryComposerDraft: () => currentDraft,
+    getComposerDraftSnapshot: () => captureComposerDrafts(appState, appState.secondaryThread && splitDrafts ? splitDrafts : currentDraft),
     restorePrimaryComposerDraft,
     clearPrimaryComposerDraft,
     restoreLoadedRuntimeComposerDraft: vi.fn(),
@@ -124,10 +127,12 @@ afterEach(() => {
 });
 
 describe("createWorkspaceRuntimeActions", () => {
-  it("preserves an unsent draft when the project workspace plus opens a session", async () => {
+  it.each([false, true])("preserves unsent drafts when the workspace plus opens a session (split=%s)", async (split) => {
     const context = projectContext();
     const source = thread();
     const sourceTab = createThreadSessionTab(source, context);
+    const secondary = thread("secondary");
+    const secondaryTab = createThreadSessionTab(secondary, context);
     const harness = buildActions({
       initial: {
         ...initialState,
@@ -135,10 +140,13 @@ describe("createWorkspaceRuntimeActions", () => {
         activeProjectId: "project-1",
         projects: [project()],
         thread: source,
-        sessionTabs: [sourceTab],
-        activeSessionTabID: sourceTab.id,
+        secondaryThread: split ? secondary : undefined,
+        activePane: split ? "secondary" : "primary",
+        sessionTabs: split ? [sourceTab, secondaryTab] : [sourceTab],
+        activeSessionTabID: split ? secondaryTab.id : sourceTab.id,
       },
-      draft: { prompt: "keep this draft", images: [], files: [] },
+      draft: { prompt: split ? "stale global" : "keep this draft", images: [], files: [] },
+      splitDrafts: split ? { primary: { prompt: "keep this draft", images: [], files: [] }, secondary: { prompt: "secondary edit", images: [], files: [] } } : undefined,
     });
 
     await harness.actions.startNewThreadInWorkspace("project-1");
@@ -147,6 +155,7 @@ describe("createWorkspaceRuntimeActions", () => {
     expect(sessionTabPrompt(harness.getAppState().sessionTabs, sourceTab.id)).toBe(
       "keep this draft",
     );
+    if (split) expect(sessionTabPrompt(harness.getAppState().sessionTabs, secondaryTab.id)).toBe("secondary edit");
   });
 
   it("focuses the existing project draft instead of adding another one", async () => {

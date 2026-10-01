@@ -7,11 +7,13 @@ import {
   composerDraftHasContent,
   draftSessionTabForContext,
   ensureSessionTab,
-  persistActiveSessionTabDraft,
+  persistComposerDrafts,
+  refreshComposerDrafts,
   sameRuntimeContext,
   withLoadedRuntimeSessionTab,
   type AppState,
   type ComposerDraftState,
+  type ComposerDraftSnapshot,
   type SessionTab,
 } from "./AppState";
 import { seedDraftRuntimeFromMemory } from "./DraftRuntimeMemory";
@@ -25,7 +27,7 @@ type SetAppState = (update: SetStateAction<AppState>) => void;
 export type WorkspaceRuntimeActionsDeps = {
   getAppState: () => AppState;
   setAppState: SetAppState;
-  getPrimaryComposerDraft: () => ComposerDraftState;
+  getComposerDraftSnapshot: () => ComposerDraftSnapshot;
   restorePrimaryComposerDraft: (draft: ComposerDraftState) => void;
   clearPrimaryComposerDraft: () => void;
   restoreLoadedRuntimeComposerDraft: (
@@ -75,7 +77,7 @@ export function createWorkspaceRuntimeActions(
   function activateWorkspaceDraft(
     context: NonNullable<AppState["activeContext"]>,
   ): void {
-    const draft = deps.getPrimaryComposerDraft();
+    const draft = deps.getComposerDraftSnapshot();
     const currentState = deps.getAppState();
     const existingDraft = draftSessionTabForContext(
       currentState.sessionTabs,
@@ -87,7 +89,7 @@ export function createWorkspaceRuntimeActions(
       }
       deps.restorePrimaryComposerDraft(cloneSessionTabDraft(existingDraft));
       deps.setAppState((current) => ({
-        ...persistActiveSessionTabDraft(current, draft),
+        ...persistComposerDrafts(current, draft),
         thread: undefined,
         secondaryThread: undefined,
         activePane: "primary",
@@ -101,7 +103,7 @@ export function createWorkspaceRuntimeActions(
     const nextTab = deps.nextDraftSessionTab(context);
     deps.clearPrimaryComposerDraft();
     deps.setAppState((current) => {
-      const withDraft = persistActiveSessionTabDraft(current, draft);
+      const withDraft = persistComposerDrafts(current, draft);
       return seedDraftRuntimeFromMemory({
         ...withDraft,
         thread: undefined,
@@ -158,12 +160,7 @@ export function createWorkspaceRuntimeActions(
     const requestID = deps.beginViewSwitch(switchKind, switchTarget);
     deps.closeWorkspaceMenus();
 
-    const outgoingDraft = deps.getPrimaryComposerDraft();
-    const carryDraft =
-      activeSessionTab(currentState)?.kind === "draft" &&
-      composerDraftHasContent(outgoingDraft)
-        ? outgoingDraft
-        : undefined;
+    let outgoingDraft = deps.getComposerDraftSnapshot();
     try {
       const workspaceState = await selectContext();
       const loadedState = await loadRuntime(workspaceState, {
@@ -172,6 +169,9 @@ export function createWorkspaceRuntimeActions(
       if (!deps.finishViewSwitch(requestID)) {
         return false;
       }
+      outgoingDraft = refreshComposerDrafts(outgoingDraft, deps.getComposerDraftSnapshot());
+      const carryDraft = activeSessionTab(currentState)?.kind === "draft" && composerDraftHasContent(outgoingDraft.activeDraft)
+        ? outgoingDraft.activeDraft : undefined;
       deps.restoreLoadedRuntimeComposerDraft(loadedState, carryDraft);
       deps.setAppState((current) => {
         const next = applyLoadedRuntimeWithDraftCarry(
@@ -224,7 +224,7 @@ export function createWorkspaceRuntimeActions(
       return true;
     }
     const requestID = deps.beginViewSwitch("workspace", projectId);
-    const outgoingDraft = deps.getPrimaryComposerDraft();
+    let outgoingDraft = deps.getComposerDraftSnapshot();
     try {
       const workspaceState = await window.wuu.selectProject(projectId);
       const loadedState = await loadRuntime(workspaceState, {
@@ -241,10 +241,11 @@ export function createWorkspaceRuntimeActions(
         loadedState.activeContext,
       );
       if (existingDraft && !deps.isDraftPending?.(existingDraft.id)) {
+        outgoingDraft = refreshComposerDrafts(outgoingDraft, deps.getComposerDraftSnapshot());
         deps.restoreLoadedRuntimeComposerDraft(loadedState);
         deps.setAppState((current) => {
           const next = withLoadedRuntimeSessionTab(
-            persistActiveSessionTabDraft(current, outgoingDraft),
+            persistComposerDrafts(current, outgoingDraft),
             loadedState,
           );
           return {
@@ -259,10 +260,11 @@ export function createWorkspaceRuntimeActions(
         });
         return true;
       }
+      outgoingDraft = refreshComposerDrafts(outgoingDraft, deps.getComposerDraftSnapshot());
       deps.clearPrimaryComposerDraft();
       const nextTab = deps.nextDraftSessionTab(loadedState.activeContext);
       deps.setAppState((current) => {
-        const withDraft = persistActiveSessionTabDraft(current, outgoingDraft);
+        const withDraft = persistComposerDrafts(current, outgoingDraft);
         return {
           ...withDraft,
           ...loadedState,
@@ -290,7 +292,7 @@ export function createWorkspaceRuntimeActions(
     const currentState = deps.getAppState();
     const requestID = deps.beginViewSwitch("runtime", "create-project");
     deps.closeWorkspaceMenus();
-    const outgoingDraft = deps.getPrimaryComposerDraft();
+    let outgoingDraft = deps.getComposerDraftSnapshot();
     try {
       const workspaceState = await window.wuu.createBlankProject();
       if (sameRuntimeContext(workspaceState.active_context, currentState.activeContext)) {
@@ -307,10 +309,11 @@ export function createWorkspaceRuntimeActions(
       if (!deps.finishViewSwitch(requestID)) {
         return;
       }
+      outgoingDraft = refreshComposerDrafts(outgoingDraft, deps.getComposerDraftSnapshot());
       deps.restoreLoadedRuntimeComposerDraft(loadedState);
       deps.setAppState((current) =>
         withLoadedRuntimeSessionTab(
-          persistActiveSessionTabDraft(current, outgoingDraft),
+          persistComposerDrafts(current, outgoingDraft),
           loadedState,
         ),
       );
@@ -326,7 +329,7 @@ export function createWorkspaceRuntimeActions(
     const currentState = deps.getAppState();
     const requestID = deps.beginViewSwitch("runtime", "choose-project");
     deps.closeWorkspaceMenus();
-    const outgoingDraft = deps.getPrimaryComposerDraft();
+    let outgoingDraft = deps.getComposerDraftSnapshot();
     try {
       const workspaceState = await window.wuu.chooseProjectFolder();
       if (sameRuntimeContext(workspaceState.active_context, currentState.activeContext)) {
@@ -345,9 +348,10 @@ export function createWorkspaceRuntimeActions(
       if (!deps.finishViewSwitch(requestID)) {
         return;
       }
+      outgoingDraft = refreshComposerDrafts(outgoingDraft, deps.getComposerDraftSnapshot());
       deps.clearPrimaryComposerDraft();
       deps.setAppState((current) => {
-        const persisted = persistActiveSessionTabDraft(current, outgoingDraft);
+        const persisted = persistComposerDrafts(current, outgoingDraft);
         const destinationWorkspaceID =
           loadedState.activeContext?.kind === "project"
             ? loadedState.activeContext.project_id
@@ -384,7 +388,7 @@ export function createWorkspaceRuntimeActions(
     // Read the state the removal applies to after the answer, not before it.
     const currentState = deps.getAppState();
     const requestID = deps.beginViewSwitch("runtime", "remove-project");
-    const outgoingDraft = deps.getPrimaryComposerDraft();
+    let outgoingDraft = deps.getComposerDraftSnapshot();
     try {
       const workspaceState = await window.wuu.removeProject(projectId);
       if (sameRuntimeContext(workspaceState.active_context, currentState.activeContext)) {
@@ -403,11 +407,12 @@ export function createWorkspaceRuntimeActions(
       if (!deps.finishViewSwitch(requestID)) {
         return;
       }
+      outgoingDraft = refreshComposerDrafts(outgoingDraft, deps.getComposerDraftSnapshot());
       deps.restoreLoadedRuntimeComposerDraft(loadedState);
       deps.setAppState((current) =>
         withLoadedRuntimeSessionTab(
           withoutWorkspaceSessionTabs(
-            persistActiveSessionTabDraft(current, outgoingDraft),
+            persistComposerDrafts(current, outgoingDraft),
             projectId,
           ),
           loadedState,
@@ -424,7 +429,7 @@ export function createWorkspaceRuntimeActions(
   async function relocateProject(projectId: string): Promise<void> {
     const currentState = deps.getAppState();
     const requestID = deps.beginViewSwitch("runtime", "relocate-project");
-    const outgoingDraft = deps.getPrimaryComposerDraft();
+    let outgoingDraft = deps.getComposerDraftSnapshot();
     const previousCwd = currentState.activeContext?.cwd;
     const wasActive = currentState.activeProjectId === projectId;
     try {
@@ -444,10 +449,11 @@ export function createWorkspaceRuntimeActions(
       if (!deps.finishViewSwitch(requestID)) {
         return;
       }
+      outgoingDraft = refreshComposerDrafts(outgoingDraft, deps.getComposerDraftSnapshot());
       deps.restoreLoadedRuntimeComposerDraft(loadedState);
       deps.setAppState((current) =>
         withLoadedRuntimeSessionTab(
-          persistActiveSessionTabDraft(current, outgoingDraft),
+          persistComposerDrafts(current, outgoingDraft),
           loadedState,
         ),
       );
@@ -482,7 +488,7 @@ export function createWorkspaceRuntimeActions(
     const currentState = deps.getAppState();
     const requestID = deps.beginViewSwitch("runtime", "no-project:fresh");
     deps.closeWorkspaceMenus();
-    const outgoingDraft = deps.getPrimaryComposerDraft();
+    let outgoingDraft = deps.getComposerDraftSnapshot();
     try {
       const workspaceState = await window.wuu.selectNoProject(true);
       const loadedState = await loadRuntime(workspaceState, {
@@ -499,19 +505,21 @@ export function createWorkspaceRuntimeActions(
         loadedState.activeContext,
       );
       if (existingDraft && !deps.isDraftPending?.(existingDraft.id)) {
+        outgoingDraft = refreshComposerDrafts(outgoingDraft, deps.getComposerDraftSnapshot());
         deps.restoreLoadedRuntimeComposerDraft(loadedState);
         deps.setAppState((current) =>
           withLoadedRuntimeSessionTab(
-            persistActiveSessionTabDraft(current, outgoingDraft),
+            persistComposerDrafts(current, outgoingDraft),
             loadedState,
           ),
         );
         return true;
       }
       const nextTab = deps.nextDraftSessionTab(loadedState.activeContext);
+      outgoingDraft = refreshComposerDrafts(outgoingDraft, deps.getComposerDraftSnapshot());
       deps.clearPrimaryComposerDraft();
       deps.setAppState((current) => {
-        const withDraft = persistActiveSessionTabDraft(current, outgoingDraft);
+        const withDraft = persistComposerDrafts(current, outgoingDraft);
         return {
           ...withDraft,
           ...loadedState,

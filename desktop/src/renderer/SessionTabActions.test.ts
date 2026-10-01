@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { RuntimeContext } from "../shared/protocol";
+import type { RuntimeContext, Thread } from "../shared/protocol";
 import {
   createDraftSessionTab,
+  captureComposerDrafts,
   createThreadSessionTab,
   emptyComposerDraft,
   initialState,
@@ -28,9 +29,11 @@ function sessionTabPrompt(tabs: SessionTab[], id: string): string | undefined {
 function buildActions({
   initial,
   draft = emptyComposerDraft(),
+  splitDrafts,
 }: {
   initial: AppState;
   draft?: ComposerDraftState;
+  splitDrafts?: Record<"primary" | "secondary", ComposerDraftState>;
 }) {
   let appState = initial;
   let currentDraft = draft;
@@ -57,7 +60,7 @@ function buildActions({
     setAppState: (update) => {
       appState = typeof update === "function" ? update(appState) : update;
     },
-    getPrimaryComposerDraft: () => currentDraft,
+    getComposerDraftSnapshot: () => captureComposerDrafts(appState, appState.secondaryThread && splitDrafts ? splitDrafts : currentDraft),
     restorePrimaryComposerDraft,
     clearPrimaryComposerDraft,
     resetSplitComposerDrafts,
@@ -74,6 +77,7 @@ function buildActions({
   return {
     actions,
     getAppState: () => appState,
+    setAppState: (state: AppState) => { appState = state; },
     getCurrentDraft: () => currentDraft,
     clearPrimaryComposerDraft,
     restorePrimaryComposerDraft,
@@ -96,6 +100,45 @@ afterEach(() => {
 });
 
 describe("createSessionTabActions", () => {
+  it.each(["primary", "secondary"] as const)("saves both %s-active split drafts before a new conversation", async (activePane) => {
+    const context = projectContext();
+    const a: Thread = { id: "split-a", title: "A", preview: "A", cwd: context.cwd, status: "idle", model_provider: "fake", model: "fake", pinned: false, archived: false, created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z", turns: [] };
+    const b = { ...a, id: "split-b", title: "B" };
+    const aTab = createThreadSessionTab(a, context);
+    const bTab = createThreadSessionTab(b, context);
+    const initial: AppState = { ...initialState, activeContext: context, thread: a, secondaryThread: b, activePane, sessionTabs: [aTab, bTab], activeSessionTabID: activePane === "primary" ? aTab.id : bTab.id };
+    const splitDrafts = { primary: { prompt: "A edited", images: [], files: [] }, secondary: { prompt: "B edited", images: [], files: [] } };
+    const harness = buildActions({ initial, draft: { prompt: "stale global", images: [], files: [] }, splitDrafts });
+    await harness.actions.startNewThread();
+    expect(sessionTabPrompt(harness.getAppState().sessionTabs, aTab.id)).toBe("A edited");
+    expect(sessionTabPrompt(harness.getAppState().sessionTabs, bTab.id)).toBe("B edited");
+    expect(harness.getCurrentDraft().prompt).toBe("");
+    expect(harness.getAppState().secondaryThread).toBeUndefined();
+  });
+
+  it.each(["draft", "thread"])("restores attachment bytes that settle in the target %s during a runtime switch", async (kind) => {
+    const sourceContext = projectContext();
+    const targetContext = projectContext("project-2");
+    const source = createDraftSessionTab("source", sourceContext);
+    const targetThread: Thread = { id: "target", title: "Target", preview: "Target", cwd: targetContext.cwd, status: "idle", model_provider: "fake", model: "fake", pinned: false, archived: false, created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z", turns: [] };
+    const draft = { prompt: "Target", images: [], files: [{ id: "pdf", media_type: "application/pdf", data: "" }] };
+    const target = kind === "draft" ? createDraftSessionTab("target", targetContext, draft) : createThreadSessionTab(targetThread, targetContext, draft);
+    Object.defineProperty(window, "wuu", { configurable: true, value: { resumeThread: vi.fn().mockResolvedValue({ thread: targetThread }) } });
+    const harness = buildActions({ initial: { ...initialState, activeContext: sourceContext, sessionTabs: [source, target], activeSessionTabID: source.id } });
+    let finish!: (state: Partial<AppState>) => void;
+    harness.selectRuntimeContext.mockResolvedValue({ active_context: targetContext, projects: [] });
+    harness.loadRuntime.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+    const navigation = harness.actions.selectSessionTab(target.id);
+    await Promise.resolve();
+    // Attachment completion updates its stored slot while the runtime IPC waits.
+    const current = harness.getAppState();
+    harness.setAppState({ ...current, sessionTabs: current.sessionTabs.map(tab => tab.id === target.id ? { ...target, files: [{ id: "pdf", media_type: "application/pdf", data: "encoded" }] } : tab) });
+    finish({ activeContext: targetContext });
+    await navigation;
+    expect(harness.getCurrentDraft().files[0].data).toBe("encoded");
+    expect(harness.getAppState().sessionTabs.find(tab => tab.id === target.id)).toMatchObject({ files: [{ data: "encoded" }] });
+  });
+
   it("focuses an already active draft without creating or clearing it", async () => {
     const context = projectContext();
     const draftTab = createDraftSessionTab("draft:active", context);

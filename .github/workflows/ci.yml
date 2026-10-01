@@ -102,7 +102,10 @@ jobs:
         run: make test-desktop
 
       - name: Build
-        run: make build-desktop
+        shell: bash
+        run: |
+          make build-desktop
+          find desktop/out/renderer -type f -print0 | sort -z | xargs -0 sha256sum > "${{ runner.temp }}/wuu-initial-renderer.sha256"
 
       - name: Guard titlebar rename interactions
         timeout-minutes: 3
@@ -279,7 +282,7 @@ jobs:
       - name: Guard image layout stability
         shell: bash
         env:
-          WUU_E2E_HIDDEN: "true"
+          # Keep native windows visible inside Xvfb so rAF checks use display cadence.
           WUU_IMAGE_LAYOUT_OUTPUT: ${{ runner.temp }}/wuu-image-layout-evidence
         run: |
           mkdir -p "$WUU_IMAGE_LAYOUT_OUTPUT"
@@ -330,9 +333,12 @@ jobs:
       - name: Verify programmatic tool settings
         shell: bash
         run: |
-          (cd desktop && ./node_modules/.bin/electron-vite build)
           mkdir -p desktop/out/e2e/ptc
+          cp "${{ runner.temp }}/wuu-initial-renderer.sha256" desktop/out/e2e/ptc/renderer-before.sha256
+          sha256sum --quiet --check desktop/out/e2e/ptc/renderer-before.sha256
           xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/ptc-settings-e2e.cjs 2>&1 | tee desktop/out/e2e/ptc/run.log
+          find desktop/out/renderer -type f -print0 | sort -z | xargs -0 sha256sum > desktop/out/e2e/ptc/renderer-after.sha256
+          cmp desktop/out/e2e/ptc/renderer-before.sha256 desktop/out/e2e/ptc/renderer-after.sha256
 
       - name: Upload programmatic tool settings evidence
         if: always()
@@ -343,6 +349,7 @@ jobs:
             desktop/out/e2e/ptc/*.png
             desktop/out/e2e/ptc/*.json
             desktop/out/e2e/ptc/*.log
+            desktop/out/e2e/ptc/*.sha256
           if-no-files-found: ignore
           retention-days: 14
 
@@ -422,6 +429,9 @@ jobs:
 
       - name: Test macOS process sandbox
         run: go test ./internal/processsandbox -count=1
+
+      - name: Test macOS PTY lifecycle
+        run: go test ./internal/process -run '^Test(PTY|ManagerTTY|StartTTY|WriteStdinToTTY)' -count=1
 
       - name: Test native helper
         run: make test-native
