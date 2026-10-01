@@ -693,7 +693,9 @@ export function useConversationScrollState({
     if (Math.abs(viewport.scrollTop - ownedTop) > 1) viewport.scrollTop = ownedTop;
     const actualTop = clampScrollTop(viewport, viewport.scrollTop);
     programmaticScrollTopRef.current = actualTop;
-    lastConversationScrollTopRef.current = actualTop;
+    // Preserve the commanded subpixel remainder when a native write rounds or
+    // the correction is below one pixel; repeated small reflows must not drift.
+    lastConversationScrollTopRef.current = ownedTop;
     rememberActiveThreadScrollSnapshot(viewport, false, actualTop);
     return placement.messageHeight;
   }, [activeThreadID, ensureTailRange, submittedMessage]);

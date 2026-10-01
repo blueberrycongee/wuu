@@ -969,6 +969,32 @@ it.each([
   expect(api.captureConversationScrollPosition()?.autoFollow).toBe(true);
 });
 
+it.each([
+  { step: 0.5, rounded: false }, { step: -0.5, rounded: false },
+  { step: 0.2, rounded: true }, { step: -0.2, rounded: true },
+])("retains subpixel holding compensation (step=$step, rounded=$rounded)", ({ step, rounded }) => {
+  naturalHeight = 6000;
+  messageBottom = 5850;
+  render({ messageID: "old" });
+  submit();
+  const node = api.conversationScrollRef.current!;
+  if (rounded) {
+    const descriptor = Object.getOwnPropertyDescriptor(node, "scrollTop")!;
+    Object.defineProperty(node, "scrollTop", { ...descriptor, set: value => descriptor.set!.call(node, Math.round(value)) });
+  }
+  const heldTop = messageBottom - messageHeight - scrollTop();
+  for (let index = 0; index < 20; index++) {
+    naturalHeight += step;
+    messageBottom += step;
+    act(() => {
+      for (const callback of [...resizeCallbacks]) callback([], {} as ResizeObserver);
+      api.handleConversationScroll();
+    });
+  }
+  expect(Math.abs(messageBottom - messageHeight - scrollTop() - heldTop)).toBeLessThanOrEqual(1);
+  expect(api.captureConversationScrollPosition()?.submissionPhase).toBe("holding");
+});
+
 it.each([-2500, 2500])("rebases response-fill ownership when history moves by %i during the glide", offset => {
   naturalHeight = 6000;
   messageBottom = 5850;
