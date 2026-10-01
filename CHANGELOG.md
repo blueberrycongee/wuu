@@ -32,6 +32,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Conversation search uses a single list with project labels and highlighted
+  matching excerpts. Message matches navigate to and briefly highlight their
+  history position. Keyword searches include archived conversations without
+  restoring them.
+
 - Group model-service discovery into subscriptions, direct providers, gateways,
   and local endpoints, with searchable catalogs and connection status. Keep
   saved connections and current model selection separate from discovery, with

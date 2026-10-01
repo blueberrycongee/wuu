@@ -9,6 +9,8 @@ import {
   firstUserMessageAnchor,
   lastUserMessageAnchor,
   scrollToUserMessage,
+  scrollToConversationMessage,
+  messageAnchorID,
   threadReplySnippet,
   truncateReplyPreview,
   turnReplySnippet,
@@ -149,6 +151,31 @@ function settleJump(): void {
 }
 
 describe("scrollToUserMessage", () => {
+  it("tolerates one device pixel of layout rounding while a jump starts at reduced zoom", () => {
+    const descriptor = Object.getOwnPropertyDescriptor(window, "devicePixelRatio");
+    Object.defineProperty(window, "devicePixelRatio", { configurable: true, value: 0.5 });
+    try {
+      const { container } = mountAnchor({ variant: "scroll-region", containerScrollHeight: 2400 });
+      scrollToUserMessage("turn-1", "item-1", { scope: jumpScope(container) });
+      container.scrollTop = 2;
+      settleJump();
+      expect(container.scrollTop).toBe(1136);
+    } finally {
+      if (descriptor) Object.defineProperty(window, "devicePixelRatio", descriptor);
+      else Reflect.deleteProperty(window, "devicePixelRatio");
+    }
+  });
+
+  it("yields immediately to wheel input even when its scroll delta is tiny", () => {
+    const { container } = mountAnchor({ variant: "scroll-region", containerScrollHeight: 2400 });
+    scrollToUserMessage("turn-1", "item-1", { scope: jumpScope(container) });
+    vi.advanceTimersByTime(40);
+    const stoppedAt = container.scrollTop;
+    container.dispatchEvent(new WheelEvent("wheel", { deltaY: 1, bubbles: true }));
+    settleJump();
+    expect(container.scrollTop).toBe(stoppedAt);
+  });
+
   it("scrolls the .scroll-region container so the anchor lands below the top padding", () => {
     const { container, node } = mountAnchor({
       variant: "scroll-region",
@@ -287,6 +314,55 @@ describe("scrollToUserMessage", () => {
     scrollToUserMessage("missing", "missing", { scope: jumpScope(document.createElement("div")) });
     await vi.runAllTimersAsync();
     expect(document.body.innerHTML).toBe("");
+  });
+});
+
+describe("scoped search message jumps", () => {
+  const item = { id: "answer-1", type: "agent_message" as const, text: "needle" };
+  it("reveals an assistant search target only inside the owning pane", () => {
+    const background = mountAnchor({ variant: "scroll-region", nodeOffsetTop: 500 });
+    const active = mountAnchor({ variant: "scroll-region", nodeOffsetTop: 700 });
+    for (const node of [background.node, active.node]) node.id = messageAnchorID("turn-1", item.id);
+    scrollToConversationMessage("turn-1", item, undefined, { scope: jumpScope(active.container) });
+    settleJump();
+    expect(background.container.scrollTop).toBe(0);
+    expect(active.container.scrollTop).toBe(636);
+  });
+
+  it("abandons the initial search reveal when its owner changes before layout", () => {
+    const { container, node } = mountAnchor({ variant: "scroll-region", nodeOffsetTop: 700 });
+    node.id = messageAnchorID("turn-1", item.id);
+    let current = true;
+    scrollToConversationMessage("turn-1", item, undefined, {
+      scope: { ...jumpScope(container), isCurrent: () => current },
+    });
+    current = false; container.scrollTop = 300;
+    settleJump();
+    expect(container.scrollTop).toBe(300);
+  });
+
+  it("lets a newer history jump cancel an older pending search reveal", () => {
+    const { container, node } = mountAnchor({ variant: "scroll-region", nodeOffsetTop: 700 });
+    scrollToConversationMessage("turn-1", item, undefined, { scope: jumpScope(container) });
+    scrollToUserMessage("turn-1", "item-1", { scope: jumpScope(container) });
+    const answer = document.createElement("div"); answer.id = messageAnchorID("turn-1", item.id);
+    answer.getBoundingClientRect = () => ({ ...node.getBoundingClientRect(), top: 100 });
+    container.appendChild(answer);
+    settleJump();
+    expect(container.scrollTop).toBe(636);
+  });
+
+  it("releases temporary turn layout when the scoped search jump is cancelled", () => {
+    const { container, node } = mountAnchor({ variant: "scroll-region", nodeOffsetTop: 700 });
+    const turn = document.createElement("div"); turn.className = "turn"; turn.style.contentVisibility = "auto";
+    container.appendChild(turn); turn.appendChild(node); node.id = messageAnchorID("turn-1", item.id);
+    const cancel = scrollToConversationMessage("turn-1", item, undefined, { scope: jumpScope(container) });
+    vi.advanceTimersByTime(1);
+    expect(turn.style.contentVisibility).toBe("visible");
+    cancel();
+    expect(turn.style.contentVisibility).toBe("auto");
+    const stoppedAt = container.scrollTop; settleJump();
+    expect(container.scrollTop).toBe(stoppedAt);
   });
 });
 

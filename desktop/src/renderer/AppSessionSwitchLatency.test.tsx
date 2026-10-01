@@ -452,6 +452,43 @@ describe("session tab switch latency", () => {
     expect(slider.value).toBe(slider.max);
   });
 
+  it("preserves Home after reopening the effort picker while End is still pending", async () => {
+    const { threadsByID } = installWuuApi();
+    threadsByID.set(threadAID, { ...threadA(), model_variant: "", model_effort: "" });
+    const workspaceDefaults = initialized();
+    workspaceDefaults.providers![0].models = [{ id: "model-a", supported_efforts: ["low", "medium", "high"] }];
+    vi.mocked(window.wuu.initialize).mockResolvedValue(workspaceDefaults);
+    const first = deferred<InitializeResult>();
+    const update = vi.fn().mockReturnValueOnce(first.promise).mockResolvedValue(workspaceDefaults);
+    window.wuu.updateRuntimeSettings = update;
+    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await flushAsync();
+    const toggle = () => container.querySelector<HTMLButtonElement>(".codex-runtime-trigger")!.click();
+    await act(async () => { toggle(); });
+    let slider = document.querySelector<HTMLInputElement>('.codex-effort-slider input[type="range"]')!;
+    expect(slider.value).toBe(slider.min);
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(slider, slider.max);
+      slider.dispatchEvent(new Event("input", { bubbles: true }));
+      slider.dispatchEvent(new KeyboardEvent("keyup", { key: "End", bubbles: true }));
+    });
+    expect(update.mock.calls.map(call => call[4])).toEqual(["high"]);
+    await act(async () => { toggle(); });
+    await act(async () => { toggle(); });
+    slider = document.querySelector<HTMLInputElement>('.codex-effort-slider input[type="range"]')!;
+    expect(slider.value).toBe(slider.min);
+    // Native Home does not emit input/change when the range already shows min.
+    await act(async () => {
+      slider.focus();
+      slider.dispatchEvent(new KeyboardEvent("keydown", { key: "Home", bubbles: true }));
+      slider.dispatchEvent(new KeyboardEvent("keyup", { key: "Home", bubbles: true }));
+    });
+    await act(async () => { first.resolve(workspaceDefaults); });
+    await flushAsync();
+    expect(update.mock.calls.map(call => call[4])).toEqual(["high", ""]);
+    expect(slider.value).toBe(slider.min);
+  });
+
   it("keeps the rendered target draft when a delayed fork completes after switching", async () => {
     const { threadsByID } = installWuuApi();
     const source = threadA();

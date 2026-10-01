@@ -49,7 +49,7 @@ import {
   StreamReconnectNotice,
   TurnNotice,
 } from "./TurnNotice";
-import { userMessageAnchorID } from "./TurnViewHelpers";
+import { CONVERSATION_TURN_REVEAL_EVENT, type ConversationTurnRevealDetail, messageAnchorID, userMessageAnchorID } from "./TurnViewHelpers";
 import { requestOpenThreadInSplit } from "./ConversationSplitBridge";
 import { isProjectEvent, ProjectEventRow } from "./ProjectViews";
 import {
@@ -319,6 +319,7 @@ function BuiltInThreadItemView({
             />
           ) : (
             <UserMessageContent
+              anchorID={userMessageAnchorID(turnID, item.id)}
               text={displayText}
               contentParts={item.content_parts}
               images={item.images ?? []}
@@ -407,6 +408,7 @@ function BuiltInThreadItemView({
         (copyable || item.status === "in_progress");
       return (
         <AssistantResponseArticle
+          id={messageAnchorID(turnID, item.id)}
           turnID={turnID}
           itemID={item.id}
           settled={item.status === "completed" && turnStatus === "completed" && !streaming}
@@ -484,6 +486,7 @@ function BuiltInThreadItemView({
 }
 
 function UserMessageContent({
+  anchorID,
   text,
   contentParts,
   images,
@@ -491,6 +494,7 @@ function UserMessageContent({
   cwd,
   onOpenFile,
 }: {
+  anchorID: string;
   text: string;
   contentParts?: MessageContentPart[];
   images: InputImage[];
@@ -519,6 +523,19 @@ function UserMessageContent({
   const { collapsible, expanded, toggleExpanded } = useLongTextCollapse(bubbleText);
   const collapsed = collapsible && !expanded;
   const displayedText = collapsed ? collapsedLongTextPreview(bubbleText) : bubbleText;
+  useEffect(() => {
+    if (!collapsed) return;
+    const reveal = (event: Event): void => {
+      const { turnID, itemID } = (event as CustomEvent<ConversationTurnRevealDetail>).detail;
+      if (!itemID || userMessageAnchorID(turnID, itemID) !== anchorID) return;
+      // Jump retries can arrive before the expansion's effect cleanup. Consume
+      // this listener now so a second reveal cannot toggle the message closed.
+      window.removeEventListener(CONVERSATION_TURN_REVEAL_EVENT, reveal);
+      toggleExpanded();
+    };
+    window.addEventListener(CONVERSATION_TURN_REVEAL_EVENT, reveal);
+    return () => window.removeEventListener(CONVERSATION_TURN_REVEAL_EVENT, reveal);
+  }, [anchorID, collapsed, toggleExpanded]);
 
   return (
     <>

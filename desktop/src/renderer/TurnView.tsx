@@ -33,14 +33,13 @@ import { turnIsAnswerReady, type TurnStreamStatus } from "./AppState";
 import {
   latestAgentMessageItemID,
   messageFlowAgentMessageItemID,
-  scrollToUserMessage,
   turnAnchorID,
   turnEndedInFailure,
 } from "./TurnViewHelpers";
 import { desktopPluginHost } from "./plugins/DesktopPluginRuntime";
 import { PluginSurface } from "./plugins";
 
-export { latestAgentMessageItemID, scrollToUserMessage };
+export { latestAgentMessageItemID };
 
 export type TurnViewProps = {
   turn: Turn;

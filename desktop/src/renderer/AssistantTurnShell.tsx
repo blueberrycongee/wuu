@@ -35,7 +35,7 @@ import {
   useLiveNow,
 } from "./TurnProgress";
 import { ProcessSurface, ProcessSurfaceMascot } from "./ProcessSurface";
-import { turnEndedInFailure, turnProgressContent } from "./TurnViewHelpers";
+import { CONVERSATION_TURN_REVEAL_EVENT, type ConversationTurnRevealDetail, turnEndedInFailure, turnProgressContent } from "./TurnViewHelpers";
 import { collectTurnSources } from "./ToolActivityHelpers";
 import { TurnSourcesRow } from "./TurnSourcesRow";
 import {
@@ -284,6 +284,18 @@ function TurnProcessFold({
   const userToggledRef = useRef(false);
   const autoCollapsePendingRef = useRef(false);
   const previousExpanded = useRef(expanded);
+  useEffect(() => {
+    const reveal = (event: Event): void => {
+      const { turnID, itemID } = (event as CustomEvent<ConversationTurnRevealDetail>).detail;
+      if (turnID !== turn.id || !itemID || !entries.some(entry =>
+        (entry.items ?? [entry.item]).some(item => item.id === itemID))) return;
+      userToggledRef.current = true;
+      autoCollapsePendingRef.current = false;
+      setExpanded(true);
+    };
+    window.addEventListener(CONVERSATION_TURN_REVEAL_EVENT, reveal);
+    return () => window.removeEventListener(CONVERSATION_TURN_REVEAL_EVENT, reveal);
+  }, [turn.id, entries]);
   // A hidden pane does not render, so an answer handoff that happened while
   // it was cached is still pending. Apply it in this commit. The passive
   // effect below would close the fold after paint and play the height
