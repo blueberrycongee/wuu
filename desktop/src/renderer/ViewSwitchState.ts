@@ -26,6 +26,7 @@ export type ViewSwitchStateController = {
   finishViewSwitch: (requestID: number) => boolean;
   cancelViewSwitch: () => void;
   isCurrentViewSwitchRequest: (requestID: number) => boolean;
+  getCurrentViewSwitchRequestID: () => number;
 };
 
 export function useViewSwitchState({
@@ -108,6 +109,8 @@ export function useViewSwitchState({
     setPendingViewSwitch(undefined);
   }, [clearViewSwitchDelay]);
 
+  const getCurrentViewSwitchRequestID = useCallback(() => viewSwitchRequestRef.current, []);
+
   const isCurrentViewSwitchRequest = useCallback(
     (requestID: number): boolean => viewSwitchRequestRef.current === requestID,
     [],
@@ -140,5 +143,6 @@ export function useViewSwitchState({
     finishViewSwitch,
     cancelViewSwitch,
     isCurrentViewSwitchRequest,
+    getCurrentViewSwitchRequestID,
   };
 }

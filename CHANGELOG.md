@@ -109,6 +109,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   and the bell's first-run bubble became a mark-all-read action.
 
 ### Fixed
+
+- Preserve composer drafts when opening related sessions in split view and
+  prevent delayed loads from overriding newer navigation or pane choices.
 - Preserve the latest reasoning-effort choice during pending updates, keeping
   queued runtime changes with their original conversation and workspace.
 - Keep streaming cursor markers out of copied or selected unfinished backtick and tilde code blocks.

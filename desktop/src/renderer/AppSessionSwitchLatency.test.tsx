@@ -489,6 +489,109 @@ describe("session tab switch latency", () => {
     expect(slider.value).toBe(slider.min);
   });
 
+  it.each(["switch", "away-and-back"])("does not reopen a related-session split after newer cached navigation: %s", async (navigation) => {
+    const { threadsByID, resumeThread } = installWuuApi();
+    const child = { ...threadB(), id: "related-child", preview: "related child" };
+    threadsByID.set(child.id, child);
+    const source = threadA();
+    source.turns[0].items[0] = { ...source.turns[0].items[0], origin: "host", presentation_kind: "session_message", related_session_id: child.id };
+    threadsByID.set(threadAID, source);
+    turnListFixture.renderTurns = true;
+    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await flushAsync();
+    // Cache B before requesting the child, so switching to B is immediate even
+    // when its next background resume is behind the child in the IPC stream.
+    await act(async () => { threadRowButton("session switch B")!.click(); });
+    await flushAsync();
+    await act(async () => { threadRowButton("session switch A")!.click(); });
+    await flushAsync();
+    const childResume = deferred<{ thread: Thread }>();
+    const bResume = deferred<{ thread: Thread }>();
+    const aResume = deferred<{ thread: Thread }>();
+    resumeThread.mockImplementation((id: string) => id === child.id ? childResume.promise
+      : id === threadBID ? bResume.promise : id === threadAID ? aResume.promise : Promise.resolve({ thread: threadsByID.get(id) }));
+    const sourceButton = container.querySelector<HTMLButtonElement>(".session-message-source");
+    expect(sourceButton).not.toBeNull();
+    await act(async () => { sourceButton!.click(); });
+    expect(resumeThread).toHaveBeenLastCalledWith(child.id);
+    await act(async () => { threadRowButton("session switch B")!.click(); });
+    expect(activeThreadProbe()?.dataset.threadId).toBe(threadBID);
+    expect(container.querySelector(".conversation-split-pane")).toBeNull();
+    if (navigation === "away-and-back") {
+      await act(async () => { threadRowButton("session switch A")!.click(); });
+      expect(activeThreadProbe()?.dataset.threadId).toBe(threadAID);
+    }
+    // The real bridge emits each resume snapshot before resolving its IPC call.
+    // Deliver both notifications and responses in FIFO request order.
+    await act(async () => { emitNotification("thread/resumed", { thread: child }); childResume.resolve({ thread: child }); });
+    await flushAsync();
+    const splitAfterOldResume = [...container.querySelectorAll<HTMLElement>(".conversation-split-pane")].map(node => node.dataset.threadId);
+    await act(async () => { emitNotification("thread/resumed", { thread: threadB() }); bResume.resolve({ thread: threadB() }); });
+    if (navigation === "away-and-back") await act(async () => { emitNotification("thread/resumed", { thread: source }); aResume.resolve({ thread: source }); });
+    await flushAsync();
+    const splitAfterAllResponses = [...container.querySelectorAll<HTMLElement>(".conversation-split-pane")].map(node => node.dataset.threadId);
+    expect({ splitAfterOldResume, splitAfterAllResponses }).toEqual({ splitAfterOldResume: [], splitAfterAllResponses: [] });
+    expect(activeThreadProbe()?.dataset.threadId).toBe(navigation === "switch" ? threadBID : threadAID);
+  });
+
+  it.each([false, true])("preserves the primary draft when opening and closing a related-session split (delayed=%s)", async (delayed) => {
+    const { threadsByID, resumeThread } = installWuuApi();
+    const child = { ...threadB(), id: "related-child", preview: "related child" };
+    threadsByID.set(child.id, child);
+    const source = threadA();
+    source.turns[0].items[0] = { ...source.turns[0].items[0], origin: "host", presentation_kind: "session_message", related_session_id: child.id };
+    threadsByID.set(threadAID, source);
+    turnListFixture.renderTurns = true;
+    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await flushAsync();
+    act(() => setMainComposerPrompt("unsent primary draft"));
+    expect(mainComposerTextarea().value).toBe("unsent primary draft");
+    const pending = deferred<{ thread: Thread }>();
+    if (delayed) resumeThread.mockImplementationOnce(() => pending.promise);
+    await act(async () => { container.querySelector<HTMLButtonElement>(".session-message-source")!.click(); });
+    if (delayed) {
+      act(() => setMainComposerPrompt("newer primary draft"));
+      await act(async () => { emitNotification("thread/resumed", { thread: child }); pending.resolve({ thread: child }); });
+    }
+    await flushAsync();
+    const whileSplit = container.querySelector<HTMLTextAreaElement>(`.conversation-split-pane[data-thread-id="${threadAID}"] textarea`)!.value;
+    await act(async () => { container.querySelector<HTMLButtonElement>(".conversation-split-close")!.click(); });
+    await flushAsync();
+    const afterClose = mainComposerTextarea().value;
+    const expected = delayed ? "newer primary draft" : "unsent primary draft";
+    expect({ whileSplit, afterClose }).toEqual({ whileSplit: expected, afterClose: expected });
+  });
+
+  it("keeps only the latest related-session request and restores replaced pane drafts", async () => {
+    const { threadsByID, resumeThread } = installWuuApi();
+    const first = { ...threadB(), id: "first-child", preview: "first child" };
+    const second = { ...threadB(), id: "second-child", preview: "second child" };
+    threadsByID.set(first.id, first); threadsByID.set(second.id, second);
+    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await flushAsync();
+    const firstRead = deferred<{ thread: Thread }>();
+    const secondRead = deferred<{ thread: Thread }>();
+    resumeThread.mockImplementationOnce(() => firstRead.promise).mockImplementationOnce(() => secondRead.promise);
+    await act(async () => { requestOpenThreadInSplit(first.id); requestOpenThreadInSplit(second.id); });
+    await act(async () => { emitNotification("thread/resumed", { thread: first }); firstRead.resolve({ thread: first }); });
+    const stalePane = container.querySelector(".conversation-split-pane");
+    await act(async () => { emitNotification("thread/resumed", { thread: second }); secondRead.resolve({ thread: second }); });
+    await flushAsync();
+    const secondary = () => container.querySelector<HTMLTextAreaElement>(`.conversation-split-pane[data-thread-id="${second.id}"] textarea`)!;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(secondary(), "draft for second child");
+      secondary().dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => { requestOpenThreadInSplit(first.id); });
+    const firstChildDraft = container.querySelector<HTMLTextAreaElement>(`.conversation-split-pane[data-thread-id="${first.id}"] textarea`)!.value;
+    await act(async () => { requestOpenThreadInSplit(second.id); });
+    const recoveredDraft = secondary().value;
+    await act(async () => { requestOpenThreadInSplit(second.id); });
+    expect({ stalePaneOpened: !!stalePane, firstChildDraft, recoveredDraft, repeatedDraft: secondary().value }).toEqual({
+      stalePaneOpened: false, firstChildDraft: "", recoveredDraft: "draft for second child", repeatedDraft: "draft for second child",
+    });
+  });
+
   it("keeps the rendered target draft when a delayed fork completes after switching", async () => {
     const { threadsByID } = installWuuApi();
     const source = threadA();
