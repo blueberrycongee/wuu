@@ -60,37 +60,83 @@ jobs:
             npm --prefix "$tree/desktop" run build
           done
 
-      - name: Compare synthetic user journeys
+      - name: Retain minimal application builds
+        shell: bash
+        run: |
+          builds="$RUNNER_TEMP/wuu-performance-builds"
+          mkdir -p "$builds"
+          for variant in baseline candidate; do
+            tree="$GITHUB_WORKSPACE"
+            if [ "$variant" = baseline ]; then tree="$RUNNER_TEMP/wuu-performance-baseline"; fi
+            tar -C "$tree" -czf "$builds/$variant-app.tar.gz" desktop/out desktop/build/bin/wuu-core
+            python3 - "$tree" "$builds/$variant-manifest.json" "$variant" <<'PYTHON'
+          import hashlib, json, pathlib, subprocess, sys
+          root, output, variant = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2]), sys.argv[3]
+          paths = [root/'desktop/build/bin/wuu-core', root/'desktop/package-lock.json']
+          paths += sorted(path for path in (root/'desktop/out').rglob('*') if path.is_file())
+          manifest = {
+              'variant': variant,
+              'sourceCommit': subprocess.check_output(['git', '-C', str(root), 'rev-parse', 'HEAD'], text=True).strip(),
+              'sourceTree': subprocess.check_output(['git', '-C', str(root), 'rev-parse', 'HEAD^{tree}'], text=True).strip(),
+              'sha256': {str(path.relative_to(root)): hashlib.sha256(path.read_bytes()).hexdigest() for path in paths},
+              'scope': 'Diagnostic application bundles only; dependencies, caches and runtime profiles are excluded.',
+          }
+          output.write_text(json.dumps(manifest, indent=2))
+          PYTHON
+          done
+
+      - name: Upload baseline application build
+        uses: actions/upload-artifact@v4
+        with:
+          name: performance-build-baseline
+          retention-days: 7
+          compression-level: 0
+          path: ${{ runner.temp }}/wuu-performance-builds/baseline-*
+
+      - name: Upload candidate application build
+        uses: actions/upload-artifact@v4
+        with:
+          name: performance-build-candidate
+          retention-days: 7
+          compression-level: 0
+          path: ${{ runner.temp }}/wuu-performance-builds/candidate-*
+
+      - name: Attribute paced-stream responsiveness
         shell: bash
         run: |
           run_case() {
-            variant="$1"; label="$2"; sidebar="$3"; paced="$4"
-            tree="$GITHUB_WORKSPACE"
-            if [ "$variant" = baseline ]; then tree="$RUNNER_TEMP/wuu-performance-baseline"; fi
-            output="$RUNNER_TEMP/wuu-performance-evidence/$variant-$label"
+            cell="$1"; label="$2"
+            case "$cell" in
+              A) ui=baseline; core=baseline ;;
+              B) ui=candidate; core=baseline ;;
+              C) ui=baseline; core=candidate ;;
+              D) ui=candidate; core=candidate ;;
+            esac
+            ui_tree="$GITHUB_WORKSPACE"; core_tree="$GITHUB_WORKSPACE"
+            if [ "$ui" = baseline ]; then ui_tree="$RUNNER_TEMP/wuu-performance-baseline"; fi
+            if [ "$core" = baseline ]; then core_tree="$RUNNER_TEMP/wuu-performance-baseline"; fi
+            output="$RUNNER_TEMP/wuu-performance-evidence/$cell-$label"
             mkdir -p "$output"
-            WUU_SWITCH_MAIN="$tree/desktop/out/main/index.js" \
-            WUU_DESKTOP_CORE="$tree/desktop/build/bin/wuu-core" \
-            WUU_SWITCH_BUILD_COMMIT="$(git -C "$tree" rev-parse HEAD)" \
+            WUU_SWITCH_MAIN="$ui_tree/desktop/out/main/index.js" \
+            WUU_DESKTOP_CORE="$core_tree/desktop/build/bin/wuu-core" \
+            WUU_SWITCH_BUILD_COMMIT="$(git -C "$ui_tree" rev-parse HEAD)" \
+            WUU_SWITCH_CORE_BUILD_COMMIT="$(git -C "$core_tree" rev-parse HEAD)" \
             WUU_SWITCH_BUILD_KIND=production-vite \
             WUU_SWITCH_OUTPUT="$output" \
-            WUU_SWITCH_ROUNDS=3 \
+            WUU_SWITCH_ROUNDS=1 \
             WUU_SWITCH_TURNS=160 \
-            WUU_SWITCH_PACED_STREAM="$paced" \
-            WUU_SWITCH_SIDEBAR_THREADS="$sidebar" \
+            WUU_SWITCH_PACED_STREAM=1 \
+            WUU_SWITCH_STREAM_ONLY=1 \
             xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox \
               desktop/scripts/session-switch-e2e.cjs 2>&1 | tee "$output/run.log"
           }
-          # Retain the warmup pair separately; do not mix first-process/font-cache
-          # initialization with the three measured pairs below.
-          for variant in baseline candidate; do run_case "$variant" warmup 0 1; done
-          for repetition in 1 2 3; do
-            if [ "$repetition" = 2 ]; then variants="candidate baseline"; else variants="baseline candidate"; fi
-            for variant in $variants; do run_case "$variant" "$repetition" 0 1; done
+          # A=baseline, B=UI-only, C=core-only, D=both. Keep warmups separate.
+          for cell in A B C D; do run_case "$cell" warmup; done
+          repetition=0
+          for order in "A B D C" "B C A D" "C D B A" "D A C B"; do
+            repetition=$((repetition + 1))
+            for cell in $order; do run_case "$cell" "$repetition"; done
           done
-          # Larger metadata population is a separate stress pair, not pooled
-          # with the repeated startup/navigation/streaming measurements.
-          for variant in baseline candidate; do run_case "$variant" sidebar-1500 1500 0; done
 
       - name: Upload synthetic measurements
         if: always()

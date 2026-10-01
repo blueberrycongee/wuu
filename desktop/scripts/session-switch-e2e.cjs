@@ -7,6 +7,8 @@
 // WUU_SWITCH_STREAM=1 also streams 128 KiB from a local synthetic SSE provider
 // across workspace switches, through the real core, IPC, and renderer.
 // WUU_SWITCH_PACED_STREAM=1 measures native send, paced Markdown and typing.
+// WUU_SWITCH_STREAM_ONLY=1 runs only native long-conversation setup and streaming.
+// WUU_SWITCH_CORE_BUILD_COMMIT identifies a separately selected core in hybrid runs.
 // WUU_SWITCH_SIDEBAR_THREADS=1500 adds metadata-only sidebar history.
 // WUU_SWITCH_ROUNDS controls warm repeats. Defaults live in the budget fixture.
 // WUU_SWITCH_INIT_DELAY_MS injects a readiness fault; never pool it with baseline.
@@ -50,6 +52,11 @@ const initDelayMs = Number(process.env.WUU_SWITCH_INIT_DELAY_MS || 0);
 const subscriptionTurns = Number(process.env.WUU_SWITCH_SUBSCRIPTION_TURNS || 0);
 const sidebarThreads = Number(process.env.WUU_SWITCH_SIDEBAR_THREADS || 0);
 const pacedStream = process.env.WUU_SWITCH_PACED_STREAM === '1';
+const streamOnly = process.env.WUU_SWITCH_STREAM_ONLY === '1';
+if (streamOnly) {
+  assert.ok(pacedStream, 'Stream-only mode requires paced streaming');
+  assert.equal(subscriptionTurns, 0, 'Stream-only mode excludes subscription diagnostics');
+}
 assert.ok(Number.isInteger(sidebarThreads) && sidebarThreads >= 0);
 assert.ok(Number.isInteger(subscriptionTurns) && subscriptionTurns >= 0 && subscriptionTurns % 2 === 0);
 assert.ok(Number.isInteger(rounds) && rounds > 0, 'Rounds must be a positive integer');
@@ -448,7 +455,7 @@ async function checkPacedStreaming(win) {
   await win.webContents.insertText('Run the local paced Markdown fixture.');
   await waitFor(win, () => { const send = document.querySelector('.composer-send-button'); return send && !send.disabled; });
   await evaluate(win, () => {
-    const probe = window.__pacedProbe = { frames: [], longTasks: [], mutations: 0, deltas: 0 };
+    const probe = window.__pacedProbe = { frames: [], longTasks: [], mutations: 0, deltas: 0, receivedCharacters: 0, cachedPanes: [...document.querySelectorAll('.cached-conversation-pane')].map(pane => pane.getAttribute('data-thread-id')) };
     probe.longObserver = new PerformanceObserver(list => probe.longTasks.push(...list.getEntries().map(e => ({ start: e.startTime, duration: e.duration }))));
     probe.longObserver.observe({ type: 'longtask' });
     probe.mutationObserver = new MutationObserver(list => { probe.mutations += list.length; });
@@ -458,15 +465,20 @@ async function checkPacedStreaming(win) {
       if (event.message.params?.thread_id !== 'switch-thread-5') return;
       if (event.message.method === 'item/agentMessage/delta') {
         probe.firstDeltaAt ??= performance.now();
+        probe.receivedCharacters += event.message.params.delta.length;
         probe.deltas++;
       }
-      if (event.message.method === 'turn/completed') probe.completedAt = performance.now();
+      if (event.message.method === 'turn/completed') {
+        probe.completedAt = performance.now();
+        if (window.__switchTrace) performance.mark('paced-completed');
+      }
     });
     // Capture native keyboard submission before React handles the event.
     document.addEventListener('keydown', event => {
       if (event.key !== 'Enter' || !event.target.matches('.composer textarea')) return;
       probe.start = event.timeStamp;
       probe.trusted = event.isTrusted;
+      if (window.__switchTrace) performance.mark('paced-send');
     }, { capture: true, once: true });
     let firstFrames = 0;
     let finalFrames = 0;
@@ -485,11 +497,18 @@ async function checkPacedStreaming(win) {
         };
         if (probe.firstContentAt === undefined) {
           firstFrames = visibleMarker('WUU-PACED-START') ? firstFrames + 1 : 0;
-          if (firstFrames >= 2) probe.firstContentAt = performance.now();
+          if (firstFrames >= 2) {
+            probe.firstContentAt = performance.now();
+            if (window.__switchTrace) performance.mark('paced-first-frame');
+          }
         }
         if (probe.completedAt !== undefined) {
           finalFrames = visibleMarker('WUU-PACED-END') ? finalFrames + 1 : 0;
-          if (finalFrames >= 2) { probe.finalContentAt = performance.now(); return; }
+          if (finalFrames >= 2) {
+            probe.finalContentAt = performance.now();
+            if (window.__switchTrace) performance.mark('paced-final-frame');
+            return;
+          }
         }
       }
       requestAnimationFrame(tick);
@@ -514,6 +533,10 @@ async function checkPacedStreaming(win) {
   const cadenceMs = 16;
   const chunks = [];
   let typing;
+  let typingTrigger;
+  let typingDispatchStartedMs;
+  let typingDispatchCompletedMs;
+  let typingFrameObservedMs;
   const streamStart = performance.now();
   for (let offset = 0; offset < text.length; offset += chunkBytes) {
     // Pace from absolute deadlines so provider cadence does not accumulate drift.
@@ -522,29 +545,42 @@ async function checkPacedStreaming(win) {
     chunks.push(performance.now() - hostStart);
     providerResponse.write(`data: ${JSON.stringify({ id: 'fixture', object: 'chat.completion.chunk', choices: [{ index: 0, delta: { content: text.slice(offset, offset + chunkBytes) }, finish_reason: null }] })}\n\n`);
     if (!typing && offset >= text.length / 3) {
+      typingTrigger = { chunkIndex: chunks.length - 1, chunksWritten: chunks.length, writtenCharacters: Math.min(offset + chunkBytes, text.length), hostOffsetMs: performance.now() - hostStart };
       // The text is deliberately left unsent, and must survive stream settlement.
       typing = (async () => {
         await evaluate(win, () => {
           const input = document.querySelector('.composer textarea');
           input.focus();
           input.addEventListener('beforeinput', event => {
-            window.__pacedProbe.typingStart = event.timeStamp;
-            window.__pacedProbe.typingTrusted = event.isTrusted;
+            const p = window.__pacedProbe;
+            p.typingStart = event.timeStamp;
+            p.typingTrusted = event.isTrusted;
+            p.typingProgress = { receivedCharacters: p.receivedCharacters, deltaEvents: p.deltas, renderedTextCharacters: document.querySelector('.cached-conversation-pane[data-active="true"] .turn[data-latest-turn="true"] [data-stream-state]')?.textContent.length ?? 0 };
+            if (window.__switchTrace) performance.mark('paced-input');
           }, { once: true });
         });
+        typingDispatchStartedMs = performance.now() - hostStart;
         await win.webContents.insertText('Draft preserved during streaming');
-        return evaluate(win, () => new Promise((resolve, reject) => {
+        typingDispatchCompletedMs = performance.now() - hostStart;
+        const frameMs = await evaluate(win, () => new Promise((resolve, reject) => {
           const deadline = performance.now() + 30000;
           let frames = 0;
           const tick = () => {
             if (performance.now() > deadline) return reject(new Error('Typing during streaming never rendered'));
             const input = document.querySelector('.composer textarea');
             frames = input?.value === 'Draft preserved during streaming' && document.activeElement === input && !input.disabled ? frames + 1 : 0;
-            if (frames >= 2) return resolve(performance.now() - window.__pacedProbe.typingStart);
+            if (frames >= 2) {
+              const p = window.__pacedProbe;
+              p.typingFrameAt = performance.now();
+              if (window.__switchTrace) performance.mark('paced-input-frame');
+              return resolve(p.typingFrameAt - p.typingStart);
+            }
             requestAnimationFrame(tick);
           };
           requestAnimationFrame(tick);
         }));
+        typingFrameObservedMs = performance.now() - hostStart;
+        return frameMs;
       })();
     }
   }
@@ -560,12 +596,12 @@ async function checkPacedStreaming(win) {
     p.longObserver.disconnect();
     p.mutations += p.mutationObserver.takeRecords().length;
     p.mutationObserver.disconnect();
-    return { start: p.start, trusted: p.trusted, typingTrusted: p.typingTrusted, firstDeltaMs: p.firstDeltaAt - p.start, firstContentFrameMs: p.firstContentAt - p.start, completedMs: p.completedAt - p.start, finalContentFrameMs: p.finalContentAt - p.start, frames: p.frames, longTasks: p.longTasks.filter(t => t.start + t.duration > p.start && t.start < p.finalContentAt), mutations: p.mutations, rendererDeltaEvents: p.deltas };
+    return { start: p.start, trusted: p.trusted, typingTrusted: p.typingTrusted, typingStartMs: p.typingStart - p.start, typingFrameAtMs: p.typingFrameAt - p.start, typingProgress: p.typingProgress, cachedPanes: p.cachedPanes, firstDeltaMs: p.firstDeltaAt - p.start, firstContentFrameMs: p.firstContentAt - p.start, completedMs: p.completedAt - p.start, finalContentFrameMs: p.finalContentAt - p.start, frames: p.frames, longTasks: p.longTasks.filter(t => t.start + t.duration > p.start && t.start < p.finalContentAt), mutations: p.mutations, rendererDeltaEvents: p.deltas };
   });
   const after = await debug.sendCommand('Performance.getMetrics');
   const processAfter = app.getAppMetrics();
   assert.ok(probe.trusted && probe.typingTrusted, 'Expected native send and text input');
-  for (const timing of [probe.firstDeltaMs, probe.firstContentFrameMs, probe.completedMs, probe.finalContentFrameMs, typingFrameMs]) {
+  for (const timing of [probe.typingStartMs, probe.typingFrameAtMs, typingDispatchStartedMs, typingDispatchCompletedMs, typingFrameObservedMs, probe.firstDeltaMs, probe.firstContentFrameMs, probe.completedMs, probe.finalContentFrameMs, typingFrameMs]) {
     assert.ok(Number.isFinite(timing) && timing >= 0, 'Missing renderer journey endpoint');
   }
   assert.equal(await evaluate(win, () => document.querySelector('.composer textarea')?.value), 'Draft preserved during streaming');
@@ -574,8 +610,9 @@ async function checkPacedStreaming(win) {
   assert.deepEqual(persisted.items.filter(item => item.type === 'agent_message').map(item => item.text), [text]);
   const prior = Object.fromEntries(before.metrics.map(m => [m.name, m.value]));
   const renderer = Object.fromEntries(after.metrics.filter(m => ['LayoutCount', 'RecalcStyleCount', 'LayoutDuration', 'RecalcStyleDuration', 'ScriptDuration', 'TaskDuration', 'JSHeapUsedSize'].includes(m.name)).map(m => [m.name, { before: prior[m.name], after: m.value, delta: m.value - prior[m.name] }]));
+  const typingLongTasks = probe.longTasks.filter(task => task.start + task.duration > probe.start + probe.typingStartMs && task.start < probe.start + probe.typingFrameAtMs).map(task => ({ startMs: task.start - probe.start, durationMs: task.duration, overlapMs: Math.min(task.start + task.duration, probe.start + probe.typingFrameAtMs) - Math.max(task.start, probe.start + probe.typingStartMs) }));
   const frameGaps = [...probe.frames].sort((a, b) => a - b);
-  const result = { schemaVersion: 1, submission: 'native-enter', scope: 'Native Enter submission through the selected Electron/main/preload/Go application build and paced synthetic local SSE to two renderer frame opportunities. No real model, external account, production telemetry, or physical-display proof. Frame gaps reflect this rig cadence, not a 120 Hz claim.', bytes: Buffer.byteLength(text), chunkBytes, cadenceMs, providerReceivedMs: providerReceivedAt - hostStart, providerEndMs, providerChunksAtMs: chunks, ...probe, typingFrameMs, frameSummary: { count: frameGaps.length, p50: frameGaps[Math.ceil(frameGaps.length * .5) - 1], p95: frameGaps[Math.ceil(frameGaps.length * .95) - 1], max: frameGaps.at(-1), over20Ms: frameGaps.filter(x => x > 20).length, over33_34Ms: frameGaps.filter(x => x > 33.34).length }, renderer, processBefore, processAfter, wireBytes: wireBytes - bytesBefore, rpc: timings.slice(rpcStart).map(t => ({ channel: t.channel, startMs: t.startedAt - hostStart, ms: t.ms })) };
+  const result = { schemaVersion: 2, submission: 'native-enter', streamOnly, profileOnly: cpuProfileEnabled || traceEnabled, typingTrigger, typingHost: { dispatchStartedMs: typingDispatchStartedMs, dispatchCompletedMs: typingDispatchCompletedMs, frameObservedMs: typingFrameObservedMs, dispatchToFrameMs: typingFrameObservedMs - typingDispatchStartedMs }, typingLongTasks, typingLongTaskOverlapMs: typingLongTasks.reduce((sum, task) => sum + task.overlapMs, 0), scope: 'Native Enter submission through the selected Electron/main/preload/Go application build and paced synthetic local SSE to two renderer frame opportunities. No real model, external account, production telemetry, or physical-display proof. Frame gaps reflect this rig cadence, not a 120 Hz claim.', bytes: Buffer.byteLength(text), chunkBytes, cadenceMs, providerReceivedMs: providerReceivedAt - hostStart, providerEndMs, providerChunksAtMs: chunks, ...probe, typingFrameMs, frameSummary: { count: frameGaps.length, p50: frameGaps[Math.ceil(frameGaps.length * .5) - 1], p95: frameGaps[Math.ceil(frameGaps.length * .95) - 1], max: frameGaps.at(-1), over20Ms: frameGaps.filter(x => x > 20).length, over33_34Ms: frameGaps.filter(x => x > 33.34).length }, renderer, processBefore, processAfter, wireBytes: wireBytes - bytesBefore, rpc: timings.slice(rpcStart).map(t => ({ channel: t.channel, startMs: t.startedAt - hostStart, ms: t.ms })) };
   fs.writeFileSync(path.join(output, 'paced-stream-results.json'), JSON.stringify(result, null, 2));
   console.log('PACED_STREAM', JSON.stringify({ firstContentFrameMs: probe.firstContentFrameMs, finalContentFrameMs: probe.finalContentFrameMs, typingFrameMs, frameSummary: result.frameSummary, longTasks: probe.longTasks.length, mutations: probe.mutations, rendererDeltaEvents: probe.rendererDeltaEvents }));
   providerServer.close();
@@ -796,22 +833,27 @@ startFixtureProvider().then(() => import(pathToFileURL(mainBundle).href)).then(a
     await main.webContents.debugger.sendCommand('Profiler.enable');
     await main.webContents.debugger.sendCommand('Profiler.start');
   }
-  await checkSubscriptionNavigation(main);
-  for (const index of [1, 5, 0]) await switchTo(main, index, 'initial-pass');
-  for (let round = 0; round < rounds; round++) {
-    for (const index of [1, 5, 0]) await switchTo(main, index, 'repeat');
+  if (streamOnly) {
+    // Match the full journey's final cached panes: small 0, then long 1 and 5.
+    for (const index of [1, 5]) await switchTo(main, index, 'stream-setup');
+  } else {
+    await checkSubscriptionNavigation(main);
+    for (const index of [1, 5, 0]) await switchTo(main, index, 'initial-pass');
+    for (let round = 0; round < rounds; round++) {
+      for (const index of [1, 5, 0]) await switchTo(main, index, 'repeat');
+    }
+    for (const index of [2, 3, 4, 5, 0, 1, 5, 0]) await switchTo(main, index, 'pool-churn');
+    let releaseArchive;
+    archiveGate = new Promise(resolve => { releaseArchive = resolve; });
+    await switchTo(main, 5, 'archive-blocked');
+    const archiveDeadline = Date.now() + 30000;
+    while (!archiveBlocked) {
+      assert.ok(Date.now() < archiveDeadline, 'Archive blocking scenario never reached its gate');
+      await delay(25);
+    }
+    releaseArchive();
+    archiveGate = undefined;
   }
-  for (const index of [2, 3, 4, 5, 0, 1, 5, 0]) await switchTo(main, index, 'pool-churn');
-  let releaseArchive;
-  archiveGate = new Promise(resolve => { releaseArchive = resolve; });
-  await switchTo(main, 5, 'archive-blocked');
-  const archiveDeadline = Date.now() + 30000;
-  while (!archiveBlocked) {
-    assert.ok(Date.now() < archiveDeadline, 'Archive blocking scenario never reached its gate');
-    await delay(25);
-  }
-  releaseArchive();
-  archiveGate = undefined;
   // Cached UI can be interactive before its background resume returns. Drain
   // that work before subscribing for the separate snapshot protocol check.
   await evaluate(main, () => window.wuu.initialize());
@@ -833,16 +875,6 @@ startFixtureProvider().then(() => import(pathToFileURL(mainBundle).href)).then(a
     unsubscribe();
     if (!rejected || snapshots.length) throw new Error('Failed resume published a snapshot or did not reject');
   }, turns);
-  if (traceEnabled) {
-    const usage = await contentTracing.getTraceBufferUsage();
-    await contentTracing.stopRecording(path.join(output, 'trace.json'));
-    assert.ok(usage.percentage < 1, 'Trace buffer filled; recording is incomplete');
-  }
-  if (cpuProfileEnabled) {
-    const { profile } = await main.webContents.debugger.sendCommand('Profiler.stop');
-    fs.writeFileSync(path.join(output, 'renderer.cpuprofile'), JSON.stringify(profile));
-    await main.webContents.debugger.sendCommand('Profiler.disable');
-  }
   const groups = {};
   for (const result of results) {
     const key = `${result.scenario}/${result.history}/${result.firstOpen ? 'first' : 'revisit'}/spawn-${result.coreSpawns}`;
@@ -865,17 +897,23 @@ startFixtureProvider().then(() => import(pathToFileURL(mainBundle).href)).then(a
   const rendererAssets = path.join(path.dirname(fileURLToPath(main.webContents.getURL())), 'assets');
   const metadata = {
     buildKind: process.env.WUU_SWITCH_BUILD_KIND || 'production-vite',
-    schemaVersion: 4, recordedAt: new Date().toISOString(), sourceCommit: git(['rev-parse', 'HEAD']),
+    schemaVersion: 5, recordedAt: new Date().toISOString(), sourceCommit: git(['rev-parse', 'HEAD']),
     sourceChanges: git(['status', '--short']),
     productSourceCommit: process.env.WUU_SWITCH_BUILD_COMMIT || git(['-C', path.dirname(mainBundle), 'rev-parse', 'HEAD']),
-    productSourceChanges: git(['-C', path.dirname(mainBundle), 'status', '--short']), platform: process.platform, arch: process.arch,
+    coreSourceCommit: process.env.WUU_SWITCH_CORE_BUILD_COMMIT || null,
+    productSourceChanges: (() => {
+      const state = spawnSync('git', ['-C', path.dirname(mainBundle), 'status', '--short'], { encoding: 'utf8' });
+      if (state.status === 0) return state.stdout.trim();
+      assert.ok(process.env.WUU_SWITCH_BUILD_COMMIT, 'A retained build needs its explicit source commit and artifact hashes');
+      return null;
+    })(), platform: process.platform, arch: process.arch,
     osRelease: os.release(), cpu: os.cpus()[0].model, cpuCount: os.cpus().length,
-    versions: process.versions, turns, rounds, safeMode, variant, initDelayMs, subscriptionTurns, sidebarThreads, pacedStream,
+    versions: process.versions, turns, rounds, safeMode, variant, initDelayMs, subscriptionTurns, sidebarThreads, pacedStream, streamOnly,
     hostLoadAverage: os.loadavg(), totalMemoryBytes: os.totalmem(), freeMemoryBytes: os.freemem(),
     startupEndpoint: 'Main bundle import to restored conversation, then focused editable input, native inserted draft and enabled Send for two frames. Excludes synthetic data seeding and Electron executable startup; includes host polling and probe IPC. Cold profile with warm filesystem cache, not a physical-paint measurement.',
     databaseBytes: fs.statSync(path.join(home, 'sessions/sessions.sqlite3')).size,
     subscriptionEndpoint: 'Host CDP mouse dispatch to target workspace draft, focused editable input, inserted text and enabled Send plus two frames. Includes dispatch, polling and probe IPC overhead. Startup is measured separately from main import to the initial conversation frame, excluding fixture creation.',
-    traceEnabled, cpuProfileEnabled, checkBudget, budget: checkBudget ? budget : null,
+    traceEnabled, cpuProfileEnabled, profileOnly: traceEnabled || cpuProfileEnabled, profilingScope: 'Post-startup journeys including enabled paced streaming; exclude profiled runs from timing comparisons', checkBudget, budget: checkBudget ? budget : null,
     zoomFactor: main.webContents.getZoomFactor(), windowSize: main.getSize(),
     coreSha256: hash(process.env.WUU_DESKTOP_CORE), harnessSha256: hash(__filename),
     mainSha256: hash(mainBundle),
@@ -892,7 +930,7 @@ startFixtureProvider().then(() => import(pathToFileURL(mainBundle).href)).then(a
     `Work budget: ${checkBudget ? 'enforced' : 'diagnostic only'}. Trace: ${traceEnabled ? 'enabled; exclude from timing baselines' : 'disabled'}. CPU profile: ${cpuProfileEnabled ? 'enabled; exclude from timing baselines' : 'disabled'}.`, '',
     '| Repeated large-fixture work | Observed maximum | Configured ceiling |',
     '| --- | ---: | ---: |',
-    ...Object.entries(budget.ceilings).map(([counter, ceiling]) => `| ${counter} | ${Math.max(...results.filter(r => r.scenario === 'repeat' && r.history === 'large').map(r => r.work[counter]))} | ${ceiling} |`), '',
+    ...Object.entries(budget.ceilings).map(([counter, ceiling]) => `| ${counter} | ${results.some(r => r.scenario === 'repeat' && r.history === 'large') ? Math.max(...results.filter(r => r.scenario === 'repeat' && r.history === 'large').map(r => r.work[counter])) : 'not run'} | ${ceiling} |`), '',
     '| Scenario / history / first visit / observed spawns | n | Content P50 / P75 (ms) | Interactive P50 / P75 (ms) |',
     '| --- | ---: | ---: | ---: |',
     ...Object.entries(summary).map(([key, s]) => `| ${key} | ${s.n} | ${s.contentFrameMs.p50.toFixed(1)} / ${s.contentFrameMs.p75.toFixed(1)} | ${s.interactiveFrameMs.p50.toFixed(1)} / ${s.interactiveFrameMs.p75.toFixed(1)} |`),
@@ -900,6 +938,16 @@ startFixtureProvider().then(() => import(pathToFileURL(mainBundle).href)).then(a
   ].join('\n');
   fs.writeFileSync(path.join(output, 'report.md'), report);
   await checkStreaming(main);
+  if (traceEnabled) {
+    const usage = await contentTracing.getTraceBufferUsage();
+    await contentTracing.stopRecording(path.join(output, 'trace.json'));
+    assert.ok(usage.percentage < 1, 'Trace buffer filled; recording is incomplete');
+  }
+  if (cpuProfileEnabled) {
+    const { profile } = await main.webContents.debugger.sendCommand('Profiler.stop');
+    fs.writeFileSync(path.join(output, 'renderer.cpuprofile'), JSON.stringify(profile));
+    await main.webContents.debugger.sendCommand('Profiler.disable');
+  }
   fs.writeFileSync(path.join(output, 'final.png'), (await main.webContents.capturePage()).toPNG());
   console.log('RESULTS', path.join(output, 'results.json'));
   clearTimeout(timeout);

@@ -158,6 +158,25 @@ intervals within each domain, not raw renderer and host timestamps. Process
 snapshots cover Electron, not Go-core CPU or total process-tree memory. Heap
 snapshots are ungc'd observations, not allocation counts or leak proof.
 
+For focused attribution, add `WUU_SWITCH_STREAM_ONLY=1`. It retains startup,
+opens long conversations 1 then 5 natively, and checks the snapshot protocol
+before streaming; the recorded cached panes should match the full journey's
+0/1/5 population. Other switch/churn scenarios are omitted and are not claimed
+as coverage. Keep this workload separate from full-journey results.
+`WUU_SWITCH_BUILD_COMMIT` identifies the selected UI build, and
+`WUU_SWITCH_CORE_BUILD_COMMIT` identifies a separately selected core for hybrid
+UI/core comparisons. Both executable/bundle hashes remain recorded. Retained
+builds outside a Git checkout need the explicit UI commit; their source-change
+state is null, so retain their verified build manifest alongside the results.
+
+Typing stays at the fixed one-third provider-write point. Results record its
+zero-based chunk index, emitted/received character progress, rendered text size,
+renderer input/frame offsets, host dispatch-to-frame envelope, and overlapping
+long tasks. These distinguish event handling from host/IPC scheduling and stream
+phase without changing the trigger to favor a result. `WUU_SWITCH_CPU_PROFILE=1`
+and `WUU_SWITCH_TRACE=1` now include paced streaming. Such outputs are labeled
+`profileOnly`; analyze them separately, never as ordinary timing samples.
+
 For a populated sidebar, add `WUU_SWITCH_SIDEBAR_THREADS=1500` (30 additional projects) or
 `5000` (50 additional projects). These are metadata-only synthetic histories with pinned,
 archived, scratch and legacy cwd-associated sessions; they do not simulate live
