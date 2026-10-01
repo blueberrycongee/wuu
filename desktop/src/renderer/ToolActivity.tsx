@@ -30,11 +30,15 @@ const TOOL_ACTIVITY_REVEAL_INTERVAL_MS = 85;
 
 export function ToolActivityTimeline({
   items,
+  cwd,
   revealItems = false,
   streaming = false,
+  showInspectionPreviews = false,
 }: {
   items: ThreadItem[];
+  cwd?: string;
   revealItems?: boolean;
+  showInspectionPreviews?: boolean;
   /**
    * When true, in-progress tool rows fake-stream their summary line at
    * a deliberate cadence. Flips to false the moment an agent_message in
@@ -78,8 +82,10 @@ export function ToolActivityTimeline({
       {items.slice(0, visibleCount).map((item) => (
         <ToolActivityTimelineItem
           item={item}
+          cwd={cwd}
           key={item.id}
           streaming={streaming && item.status === "in_progress"}
+          showInspectionPreviews={showInspectionPreviews}
         />
       ))}
     </div>
@@ -88,14 +94,21 @@ export function ToolActivityTimeline({
 
 const ToolActivityTimelineItem = memo(function ToolActivityTimelineItem({
   item,
+  cwd,
   streaming,
+  showInspectionPreviews,
 }: {
   item: ThreadItem;
+  cwd?: string;
   streaming: boolean;
+  showInspectionPreviews: boolean;
 }): JSX.Element {
+  const inspections = showInspectionPreviews
+    ? collectTurnArtifacts({ items: [item] }).filter(artifact => artifact.foldPreview) : [];
   const fallback = (
     <div className="activity-timeline-item">
       <ToolActivityRow items={[item]} streaming={streaming} />
+      {inspections.length > 0 ? <TurnInlineArtifactOutputs artifacts={inspections} cwd={cwd} inspectionExpanded /> : null}
     </div>
   );
   return (
@@ -241,7 +254,7 @@ export function ToolActivityRow({
 }
 
 function RemoteToolResult({ item, complete }: { item: ThreadItem; complete: boolean }): JSX.Element {
-  const artifacts = complete ? collectTurnArtifacts({id:item.id,items:[item],items_view:"full",status:"completed"}) : [];
+  const artifacts = complete ? collectTurnArtifacts({ items: [item] }) : [];
   const text = item.result || item.text || item.result_detail?.content?.filter(part => part.type === "text").map(part => part.text ?? "").join("\n") || item.arguments || "";
   return <>
     <pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", maxHeight: 480, overflowY: "auto" }}>{text}</pre>

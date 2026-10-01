@@ -7,7 +7,7 @@ const { app, BrowserWindow } = require("electron");
 // bridge and native input: wheel, scrollbar-free programmatic jumps, clicks
 // and sidebar toggles. Checks what a reader sees — the reading position, the
 // following state and painted pixels — while output streams.
-// WUU_SCROLL_E2E_ONLY=inspection selects the native tool/reasoning regression.
+// WUU_SCROLL_E2E_ONLY=inspection or history-jump selects one native regression.
 const desktop = path.resolve(__dirname, "..");
 const output = process.env.WUU_SCROLL_E2E_OUTPUT || path.join(desktop, "out/conversation-scroll");
 fs.mkdirSync(output, { recursive: true });
@@ -77,8 +77,8 @@ function completedTurn(prefix, index) {
   return {
     id: `${prefix}-turn-${index}`, status: "completed", items_view: "full", started_at: now, completed_at: now, duration_ms: 1000,
     items: [
-      { id: `${prefix}-user-${index}`, type: "user_message", status: "completed", text: `Question ${index + 1}: explain part ${index + 1} of the system.` },
-      { id: `${prefix}-agent-${index}`, type: "agent_message", status: "completed", text: answer(index) },
+      { id: `${prefix}-user-${index}`, seq: index * 2 + 1, type: "user_message", status: "completed", text: `Question ${index + 1}: explain part ${index + 1} of the system.` },
+      { id: `${prefix}-agent-${index}`, seq: index * 2 + 2, type: "agent_message", status: "completed", text: answer(index) },
     ],
   };
 }
@@ -417,6 +417,37 @@ async function inspectProcess(win, results, turnID) {
   record(results, "completed inspection starts from the beginning", { history });
 }
 
+async function verifyHistoryJump(win, results) {
+  // Search remains a visible, keyboard-accessible entry point after removing
+  // the message navigation rails. Keep the paint and exact landing contract.
+  await wheel(win, -400, 30);
+  await settleScroll(win);
+  const modifiers = [process.platform === "darwin" ? "meta" : "control"];
+  win.webContents.sendInputEvent({ type: "keyDown", keyCode: "P", modifiers });
+  win.webContents.sendInputEvent({ type: "keyUp", keyCode: "P", modifiers });
+  await until(win, () => Boolean(document.querySelector(".conversation-search-dialog input")), "conversation search");
+  await win.webContents.insertText("Question 3:");
+  await until(win, () => {
+    const result = document.querySelector(".conversation-search-result");
+    return result?.textContent.includes("Question 3:") &&
+      document.querySelector('.conversation-search-results[aria-busy="false"]');
+  }, "the addressed history search result");
+  const historyJump = await longestBlankRun(win, () => {
+    win.webContents.sendInputEvent({ type: "keyDown", keyCode: "Enter" });
+    win.webContents.sendInputEvent({ type: "keyUp", keyCode: "Enter" });
+  }, 900);
+  await settleScroll(win);
+  const landed = await evaluate(win, selector => {
+    const node = document.querySelector(selector);
+    const message = document.querySelector('[data-user-message-id="history-user-2"]');
+    if (!message?.textContent.includes("Question 3:")) throw new Error("Addressed history search target is missing");
+    return message.getBoundingClientRect().top - node.getBoundingClientRect().top;
+  }, VIEWPORT);
+  assert.ok(historyJump.worst <= BLANK_RUN_LIMIT_PX, `Jumping to Question 3 painted a ${historyJump.worst}px blank band`);
+  assert.ok(landed >= 0 && landed <= 120, `The jump must land on the selected message: ${landed}`);
+  record(results, "jumping to a past query paints every frame and lands on it", { blank: historyJump.worst, landed });
+}
+
 app.whenReady().then(async () => {
   const win = new BrowserWindow({
     width: 1240, height: 820, show: process.env.WUU_E2E_HIDDEN !== "true",
@@ -425,7 +456,7 @@ app.whenReady().then(async () => {
       contextIsolation: true, sandbox: false, backgroundThrottling: false,
     },
   });
-  // Focus-driven UI (the query history rail) must not depend on whether this
+  // Keyboard-driven UI (conversation search) must not depend on whether this
   // window is the one the OS focused while the suite runs.
   win.webContents.debugger.attach("1.3");
   win.webContents.on("did-finish-load", () => void win.webContents.debugger.sendCommand("Emulation.setFocusEmulationEnabled", { enabled: true }));
@@ -469,6 +500,13 @@ app.whenReady().then(async () => {
   const liveAgent = live.items[1];
   emit(win, "thread/resumed", { thread: thread(THREAD_ID, [bootTurn, ...history, live], true) });
   await until(win, () => document.querySelectorAll(".turn").length >= 38, "history to render");
+  if (process.env.WUU_SCROLL_E2E_ONLY === "history-jump") {
+    await verifyHistoryJump(win, results);
+    assert.deepEqual(errors, [], `Renderer errors: ${errors.join("\n")}`);
+    win.destroy();
+    app.exit(0);
+    return;
+  }
   // The boot message finishes its placement, then its reply is followed.
   await until(win, selector => {
     const node = document.querySelector(selector);
@@ -541,31 +579,7 @@ app.whenReady().then(async () => {
   }
   record(results, "large scrolls after a sidebar toggle paint every frame", { up: flingUp.worst, down: flingDown.worst });
 
-  // --- Jumping to a past query renders every frame of the jump and lands on the message.
-  await wheel(win, -400, 30);
-  await settleScroll(win);
-  // The rail is a select-only combobox: focus it and ArrowDown opens its list. It steps
-  // aside below a 968px conversation pane, which is why the window is 1240px wide.
-  await evaluate(win, () => document.querySelector(".query-history-rail-ticks").focus());
-  win.webContents.sendInputEvent({ type: "keyDown", keyCode: "Down" });
-  win.webContents.sendInputEvent({ type: "keyUp", keyCode: "Down" });
-  await until(win, () => document.querySelectorAll(".query-history-item").length > 20, "query history");
-  const target = await evaluate(win, () => {
-    const items = [...document.querySelectorAll(".query-history-item")];
-    const item = items.find(entry => entry.textContent.includes("Question 3:"));
-    item.click();
-    return item.textContent.slice(0, 40);
-  });
-  const historyJump = await longestBlankRun(win, async () => undefined, 900);
-  await settleScroll(win);
-  const landed = await evaluate(win, selector => {
-    const node = document.querySelector(selector);
-    const message = document.querySelector('[data-user-message-id="history-user-2"]');
-    return message.getBoundingClientRect().top - node.getBoundingClientRect().top;
-  }, VIEWPORT);
-  assert.ok(historyJump.worst <= BLANK_RUN_LIMIT_PX, `Jumping to ${target} painted a ${historyJump.worst}px blank band`);
-  assert.ok(landed >= 0 && landed <= 120, `The jump must land on the selected message: ${landed}`);
-  record(results, "jumping to a past query paints every frame and lands on it", { blank: historyJump.worst, landed });
+  await verifyHistoryJump(win, results);
 
   // --- Sending: the message rises into its reading position and stays through a sidebar toggle.
   await evaluate(win, () => document.querySelector(".jump-to-latest-pill")?.click());

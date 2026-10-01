@@ -295,7 +295,6 @@
   --conversation-floating-surface-focus: var(--focus-ring);
   --shell-jump-progress-step-bg: color-mix(in srgb, var(--wuu-color-text, #e4e8eb) 6%, transparent);
   --shell-jump-progress-step-in-progress-bg: color-mix(in srgb, var(--wuu-color-text, #e4e8eb) 20%, transparent);
-  --shell-turn-rail-bar-bg: rgba(174, 178, 186, 0.4);
 
   color-scheme: dark;
 }

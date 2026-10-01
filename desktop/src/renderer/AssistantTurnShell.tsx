@@ -605,6 +605,7 @@ function EntryRenderer({
     return (
       <ProcessSurface
         processItems={entry.items ?? [item]}
+        cwd={cwd}
         streaming={streaming}
         active={activeGray}
         provider={turn.model_provider}

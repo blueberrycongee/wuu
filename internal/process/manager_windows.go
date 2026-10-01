@@ -20,8 +20,14 @@ func ptySupported() bool { return false }
 
 // startPTYProcess is unreachable behind ptySupported; it exists so both
 // platforms expose the same surface.
-func startPTYProcess(cmd *exec.Cmd) (*os.File, error) {
+func startPTYProcess(cmd *exec.Cmd) (*ptySession, error) {
 	return nil, errors.New("tty processes are not supported on windows")
+}
+
+func copyPTYOutput(_ *os.File, _ *ptySession) {}
+
+func (_ *ptySession) Write(_ []byte) (int, error) {
+	return 0, errors.New("tty processes are not supported on windows")
 }
 
 func resizePTY(_ *os.File, _, _ int) error {
