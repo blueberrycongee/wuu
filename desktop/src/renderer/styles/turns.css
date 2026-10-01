@@ -399,7 +399,21 @@
   }
 }
 
+.agent-block.user-message-jump-flash {
+  animation: agent-message-jump-flash 800ms var(--ease-out);
+}
+
+@keyframes agent-message-jump-flash {
+  0%, 100% {
+    background: transparent;
+  }
+  18% {
+    background: var(--user-message-jump-flash-bg);
+  }
+}
+
 @container style(--motion-reduced: 1) {
+  .agent-block.user-message-jump-flash,
   .user-message-block.user-message-jump-flash > .user-message-motion > .user-message,
   .user-message-block.user-message-jump-flash > .user-message-motion > .user-message-edit {
     animation: none;

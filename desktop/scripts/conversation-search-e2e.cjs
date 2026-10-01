@@ -218,7 +218,11 @@ async function armFlash(win) {
     const collect = () => {
       for (const node of document.querySelectorAll('.user-message-jump-flash')) {
         if (!window.__searchFlashes.some(entry => entry.id === node.id)) {
-          window.__searchFlashes.push({ id: node.id, tag: node.tagName, text: node.textContent });
+          const animations = node.getAnimations({ subtree: true }).map(animation => ({
+            duration: animation.effect.getComputedTiming().duration,
+            backgrounds: animation.effect.getKeyframes().map(frame => frame.backgroundColor).filter(Boolean),
+          }));
+          window.__searchFlashes.push({ id: node.id, tag: node.tagName, text: node.textContent, animations });
         }
       }
     };
@@ -263,6 +267,8 @@ async function matchingArticle(win, session, turn, needle, sourceSelector) {
     }
     return false;
   }, { id, needle, sourceSelector }, `matching assistant article ${id} highlighted and in viewport`);
+  assert.ok(evidence.flash.animations.some(animation => animation.duration > 0 &&
+    new Set(animation.backgrounds).size > 1), 'Assistant search target must visibly animate its background');
   assert.ok(evidence.flashes.every(flash => flash.id === id), 'Search jump highlighted the wrong message (user/first/latest turn)');
   const turnID = `${session}-turn-${String(turn).padStart(4, '0')}`;
   assert.equal(await evaluate(win, id => !!document.getElementById(id), `user-msg-${turnID}-${turnID}-item-1`), true, 'Existing user message anchors must remain intact');
@@ -451,6 +457,9 @@ db.commit()
     const r = node.getBoundingClientRect(), v = viewport.getBoundingClientRect();
     return r.top < v.bottom && r.bottom > v.top;
   }, undefined, 'long user message expanded at its search target');
+  assert.equal(await evaluate(main, () => window.__searchFlashes.some(flash =>
+    flash.animations.some(animation => animation.duration > 0 && new Set(animation.backgrounds).size > 1))),
+  true, 'User search target must retain its visible background animation');
   recordCheck({ name: 'long user message search reveals collapsed content' });
   await capture(main, 'long-user-jump');
 

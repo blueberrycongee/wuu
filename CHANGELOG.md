@@ -24,8 +24,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 ### Changed
 
 - Conversation search uses a single list with project labels and highlighted
-  matching excerpts. Message matches navigate to their history position, and
-  keyword searches include archived conversations without restoring them.
+  matching excerpts. Message matches navigate to and briefly highlight their
+  history position. Keyword searches include archived conversations without
+  restoring them.
 
 - Fast mode and its reset action share the model popover header, keeping the
   model and reasoning controls compact with keyboard access and cost hints.
