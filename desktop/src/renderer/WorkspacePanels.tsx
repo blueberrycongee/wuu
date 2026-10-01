@@ -34,11 +34,13 @@ import {
 } from "./WindowResizeState";
 import {
   ArrowLeft,
+  ChevronDown,
   FileDiff,
   FileText,
   FolderOpen,
   Globe,
   GripHorizontal,
+  LayoutGrid,
   Maximize2,
   Minimize2,
   PanelLeft,
@@ -203,6 +205,7 @@ export function WorkspaceRightPanel({
   onOpenTool,
   onOpenPluginTool = () => undefined,
   onShowTools,
+  onResumeTab = onSelectTab,
   onCloseTab,
   onDirtyFileTabsChange,
   onReorderTabs,
@@ -242,6 +245,7 @@ export function WorkspaceRightPanel({
   onOpenTool: (view: WorkspacePanelView) => void;
   onOpenPluginTool?: (entry: RegisteredPluginViewEntry) => void;
   onShowTools: () => void;
+  onResumeTab?: (id: string) => void;
   onCloseTab: (id: string) => void;
   onDirtyFileTabsChange?: (dirty: boolean) => void;
   onReorderTabs: (activeID: string, overID: string) => void;
@@ -282,7 +286,7 @@ export function WorkspaceRightPanel({
   }
   const fileTabs = tabs.filter((tab): tab is WorkspaceFileViewTab => tab.kind === "file");
   const visibleTabs = tabs;
-  const showingPicker = !activeTab;
+  const showingPicker = !activeTab || activeTab.kind === "new";
   const [dirtyFileTabIDs, setDirtyFileTabIDs] = useState<Set<string>>(() => new Set());
   const enterReady = useStripEnterReady();
   const tabEntries = useTabExitRetention(visibleTabs, (tab) => tab.id);
@@ -646,7 +650,7 @@ export function WorkspaceRightPanel({
     };
   });
   const navigateBack = compactNavigation && open ? () => {
-    if (!activeTab) onClose();
+    if (showingPicker) onClose();
     else if (activeTab.kind === "file") onOpenTool("files");
     else onShowTools();
   } : undefined;
@@ -663,7 +667,7 @@ export function WorkspaceRightPanel({
 
   return (
     <aside
-      className={`workspace-right-panel${compactNavigation ? " compact-navigation" : ""}${activeTab ? " detail" : " tools"}${activeTab?.kind === "review" ? " review" : ""}${activeTab?.kind === "diff" ? " diff" : ""}${activeTab?.kind === "files" || activeTab?.kind === "file" ? " files" : ""}${activeTab?.kind === "terminal" ? " terminal" : ""}${activeTab?.kind === "browser" ? " browser" : ""}${focusedComposer && activeTab?.kind === "file" ? " document-focus" : ""}`}
+      className={`workspace-right-panel${compactNavigation ? " compact-navigation" : ""}${showingPicker ? " tools" : " detail"}${activeTab?.kind === "review" ? " review" : ""}${activeTab?.kind === "diff" ? " diff" : ""}${activeTab?.kind === "files" || activeTab?.kind === "file" ? " files" : ""}${activeTab?.kind === "terminal" ? " terminal" : ""}${activeTab?.kind === "browser" ? " browser" : ""}${focusedComposer && activeTab?.kind === "file" ? " document-focus" : ""}`}
       data-wuu-component="workspace-panel"
       data-wuu-view={activeTab?.kind ?? "picker"}
       data-sheet={
@@ -803,10 +807,9 @@ export function WorkspaceRightPanel({
         <span className="workspace-panel-tabbar-spacer" />
         <button
           ref={addButtonRef}
-          className={`icon-button workspace-panel-add${showingPicker ? " active" : ""}`}
+          className="icon-button workspace-panel-add"
           type="button"
-          aria-label={t("workspace.chooseTool")}
-          aria-pressed={showingPicker}
+          aria-label={t("workspace.newPage")}
           disabled={!open}
           onClick={onShowTools}
         >
@@ -863,7 +866,7 @@ export function WorkspaceRightPanel({
       </div>
       {bodyMounted ? (
         <>
-          <div className={`workspace-panel-body${activeTab ? "" : " picker"}`}>
+          <div className={`workspace-panel-body${showingPicker ? " picker" : ""}`}>
             <div
               className={`workspace-files-split${resizingFileSplit ? " resizing" : ""}${fileTreeShown ? "" : " tree-hidden"}${draggingFileTree ? " tree-dragging" : ""}`}
               data-wuu-component="workspace-files"
@@ -1018,9 +1021,11 @@ export function WorkspaceRightPanel({
                 className="workspace-panel-content-swap"
                 key={activeTab?.id ?? "picker"}
               >
-                {!activeTab ? (
+                {showingPicker ? (
                   <WorkspaceToolPicker
                     pluginTools={pluginTools}
+                    tabs={tabs}
+                    onResumeTab={onResumeTab}
                     onSelectTool={onOpenTool}
                     onSelectPluginTool={onOpenPluginTool}
                   />
@@ -1262,18 +1267,26 @@ function WorkspaceViewTabPreview({
 
 function WorkspaceToolPicker({
   pluginTools,
+  tabs,
+  onResumeTab,
   onSelectTool,
   onSelectPluginTool,
 }: {
   pluginTools: readonly RegisteredPluginViewEntry[];
+  tabs: readonly WorkspaceViewTab[];
+  onResumeTab: (id: string) => void;
   onSelectTool: (view: WorkspacePanelView) => void;
   onSelectPluginTool: (entry: RegisteredPluginViewEntry) => void;
 }): JSX.Element {
   const { t } = useI18n();
+  const resumableTabs = tabs.filter((tab) =>
+    tab.kind === "file" || tab.kind === "diff" || tab.kind === "artifact",
+  ).slice(-4).reverse();
   // The list moves like a menu: arrows walk the tools, Home and End jump.
   function handleKeyDown(event: ReactKeyboardEvent<HTMLDivElement>): void {
-    const items = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>(".workspace-tool-menu-item"));
-    const index = items.indexOf(document.activeElement as HTMLButtonElement);
+    const items = Array.from(event.currentTarget.querySelectorAll<HTMLElement>(".workspace-tool-menu-item, .workspace-tool-menu-more > summary"))
+      .filter((item) => item.tagName === "SUMMARY" || !item.closest("details:not([open])"));
+    const index = items.indexOf(document.activeElement as HTMLElement);
     const target =
       event.key === "ArrowDown" ? items[(index + 1) % items.length]
         : event.key === "ArrowUp" ? items[(index - 1 + items.length) % items.length]
@@ -1290,46 +1303,85 @@ function WorkspaceToolPicker({
       className="workspace-tool-menu"
       aria-label={t("workspace.tools")}
       data-wuu-component="workspace-tool-picker"
+      onKeyDown={handleKeyDown}
     >
-      <div className="workspace-tool-menu-list" onKeyDown={handleKeyDown}>
-        {WORKSPACE_TOOL_ITEMS.map((item) => (
-          <button
-            key={item.id}
-            className="workspace-tool-menu-item"
-            data-wuu-component="workspace-tool"
-            type="button"
-            onClick={() => onSelectTool(item.id)}
-          >
-            <span className="workspace-tool-menu-icon" aria-hidden="true">
-              <WorkspaceToolIcon view={item.id} className="icon" />
-            </span>
-            <span className="workspace-tool-menu-copy">
-              <strong>{t(item.titleKey)}</strong>
-            </span>
-          </button>
-        ))}
-        {pluginTools.map((item) => {
-          const tabID = `plugin:${item.pluginId}:${item.id}`;
-          return (
+      <section className="workspace-tool-menu-section" aria-label={t("workspace.tools")}>
+        <h2>{t("workspace.tools")}</h2>
+        <div className="workspace-tool-menu-list">
+          {WORKSPACE_TOOL_ITEMS.map((item) => (
             <button
-              key={tabID}
+              key={item.id}
               className="workspace-tool-menu-item"
               data-wuu-component="workspace-tool"
-              data-wuu-plugin={item.pluginId}
+              data-wuu-tool={item.id}
               type="button"
-              onClick={() => onSelectPluginTool(item)}
+              onClick={() => onSelectTool(item.id)}
             >
               <span className="workspace-tool-menu-icon" aria-hidden="true">
-                <PluginIcon icon={item.icon} pluginId={item.pluginId} fingerprint={item.generation} className="icon" />
+                <WorkspaceToolIcon view={item.id} className="icon" />
               </span>
               <span className="workspace-tool-menu-copy">
-                <strong>{item.title}</strong>
-                {item.description ? <span>{item.description}</span> : null}
+                <strong>{t(item.titleKey)}</strong>
               </span>
             </button>
-          );
-        })}
-      </div>
+          ))}
+        </div>
+        {pluginTools.length > 0 ? (
+          <details className="workspace-tool-menu-more">
+            <summary>
+              <span className="workspace-tool-menu-icon" aria-hidden="true"><LayoutGrid className="icon" /></span>
+              <span>{t("workspace.moreTools")}</span>
+              <ChevronDown className="icon workspace-tool-menu-chevron" aria-hidden="true" />
+            </summary>
+            <div className="workspace-tool-menu-list">
+              {pluginTools.map((item) => {
+                const tabID = `plugin:${item.pluginId}:${item.id}`;
+                return (
+                  <button
+                    key={tabID}
+                    className="workspace-tool-menu-item"
+                    data-wuu-component="workspace-tool"
+                    data-wuu-plugin={item.pluginId}
+                    type="button"
+                    onClick={() => onSelectPluginTool(item)}
+                  >
+                    <span className="workspace-tool-menu-icon" aria-hidden="true">
+                      <PluginIcon icon={item.icon} pluginId={item.pluginId} fingerprint={item.generation} className="icon" />
+                    </span>
+                    <span className="workspace-tool-menu-copy">
+                      <strong>{item.title}</strong>
+                      {item.description ? <span>{item.description}</span> : null}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </details>
+        ) : null}
+      </section>
+      {resumableTabs.length > 0 ? (
+        <section className="workspace-tool-menu-section" aria-label={t("workspace.continueViewing")}>
+          <h2>{t("workspace.continueViewing")}</h2>
+          <div className="workspace-tool-menu-list">
+            {resumableTabs.map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                className="workspace-tool-menu-item workspace-tool-menu-resume"
+                data-wuu-component="workspace-resume-tab"
+                title={workspaceViewTabTooltip(tab)}
+                onClick={() => onResumeTab(tab.id)}
+              >
+                <span className="workspace-tool-menu-icon" aria-hidden="true"><WorkspaceViewTabIcon tab={tab} className="icon" /></span>
+                <span className="workspace-tool-menu-copy">
+                  <strong>{workspaceViewTabLabel(tab)}</strong>
+                  {tab.kind === "file" || tab.kind === "diff" ? <span>{tab.path}</span> : null}
+                </span>
+              </button>
+            ))}
+          </div>
+        </section>
+      ) : null}
     </div>
   );
 }
@@ -1352,12 +1404,14 @@ function workspaceToolFor(view: WorkspacePanelView): (typeof WORKSPACE_TOOL_ITEM
 }
 
 function workspaceViewTabLabel(tab: WorkspaceViewTab): string {
+  if (tab.kind === "new") return translateCurrent("workspace.newPage");
   return tab.kind === "diff" || tab.kind === "file" || tab.kind === "plugin" || tab.kind === "artifact" || tab.kind === "project"
     ? tab.title
     : translateCurrent(workspaceToolFor(tab.kind).titleKey);
 }
 
 function workspaceViewTabTooltip(tab: WorkspaceViewTab): string {
+  if (tab.kind === "new") return translateCurrent("workspace.newPage");
   if (tab.kind === "plugin" || tab.kind === "artifact" || tab.kind === "project") return tab.title;
   return tab.kind === "diff" || tab.kind === "file"
     ? tab.path
@@ -1365,6 +1419,7 @@ function workspaceViewTabTooltip(tab: WorkspaceViewTab): string {
 }
 
 function WorkspaceViewTabIcon({ tab, className }: { tab: WorkspaceViewTab; className?: string }): JSX.Element {
+  if (tab.kind === "new") return <LayoutGrid className={className} />;
   if (tab.kind === "diff") {
     return <FileDiff className={className} />;
   }

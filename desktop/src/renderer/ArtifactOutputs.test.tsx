@@ -191,9 +191,9 @@ it("lists multiple presented files in the same summary rows as file changes", as
   } finally { act(() => root.unmount()); container.remove(); }
 });
 
-it("omits image-stream text and inspector controls without changing image order or the underlying result", async () => {
+it.each(["read_file", "run_code", "process"])("folds inspection images from %s without changing image order or the underlying result", async (name) => {
   const metadata = 'Application observation: frame=(100,200,800,600); coordinate space=normalized';
-  const turn = { id: "turn", items: [{ id: "observe", type: "tool_call", result_detail: { content: [
+  const turn = { id: "turn", items: [{ id: "observe", type: "tool_call", name, result_detail: { content: [
     { type: "image", mime_type: "image/png", data: "Zmlyc3Q=", name: "Before" },
     { type: "text", text: JSON.stringify({ frame: [100, 200, 800, 600] }) },
     { type: "text", text: metadata },
@@ -205,10 +205,16 @@ it("omits image-stream text and inspector controls without changing image order 
     const original = JSON.stringify(turn);
     const artifacts = collectTurnArtifacts(turn);
     await act(async () => root.render(<TurnInlineArtifactOutputs artifacts={artifacts} />));
-    expect(container.textContent).toBe("");
+    expect(container.querySelector("img")).toBeNull();
+    const folds = Array.from(container.querySelectorAll("details"));
+    expect(folds).toHaveLength(2);
+    await act(async () => {
+      for (const fold of folds) { fold.open = true; fold.dispatchEvent(new Event("toggle")); }
+    });
     expect(Array.from(container.querySelectorAll("img"), image => image.alt)).toEqual(["Before", "After"]);
-    expect(container.querySelector("details")).toBeNull();
-    expect(container.querySelectorAll("button")).toHaveLength(2);
+    expect(container.textContent).not.toContain(metadata);
+    await act(async () => { folds[0].open = false; folds[0].dispatchEvent(new Event("toggle")); });
+    expect(Array.from(container.querySelectorAll("img"), image => image.alt)).toEqual(["After"]);
     expect(artifacts.filter(artifact => artifact.type === "text").map(artifact => artifact.text))
       .toEqual(turn.items[0].result_detail!.content!.filter(part => part.type === "text").map(part => part.text));
     expect(JSON.stringify(turn)).toBe(original);
@@ -225,11 +231,14 @@ it("renders deferred tool-result images as loadable attachments instead of unava
     await act(async()=>root.render(<TurnInlineArtifactOutputs artifacts={artifacts}/>));
     expect(container.querySelector(".turn-artifact-unavailable")).toBeNull();
     expect(window.wuu.readRemoteAttachment).not.toHaveBeenCalled();
-    expect(container.textContent).not.toContain("Screenshot");
-    expect(container.querySelector("button")).not.toBeNull();
+    expect(container.querySelector("button")).toBeNull();
+    await act(async () => {
+      const fold = container.querySelector("details")!;
+      fold.open = true; fold.dispatchEvent(new Event("toggle"));
+    });
+    expect(window.wuu.readRemoteAttachment).not.toHaveBeenCalled();
     await act(async()=>container.querySelector("button")!.click());
     expect(window.wuu.readRemoteAttachment).toHaveBeenCalledWith("thread:source");
     expect(container.querySelector("img")?.src).toBe("data:image/png;base64,aW1hZ2U=");
-    expect(container.textContent).toBe("");
   } finally {act(()=>root.unmount());container.remove();window.wuu=prior;}
 });

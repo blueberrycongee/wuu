@@ -25,6 +25,42 @@ const projectContext: RuntimeContext = {
   cwd: "/repo/project",
 };
 
+describe("new workspace pages", () => {
+  it("replaces the selected new page in place and restores the previous tool on close", () => {
+    const terminal = workspaceToolViewTab("terminal");
+    const page = { kind: "new", id: "new:1" } as const;
+    let state = openViewTab(initialWorkspaceViewTabsState, terminal);
+    state = openViewTab(state, page);
+    state = openViewTab(state, workspaceToolViewTab("browser"), { activate: false });
+    state = openViewTab(state, workspaceToolViewTab("review"), { replaceActiveNewTab: true });
+    expect(state.tabs.map((tab) => tab.id)).toEqual(["terminal", "review", "browser"]);
+    expect(state.activeTabID).toBe("review");
+    expect(closeViewTab(state, "review").activeTabID).toBe("terminal");
+  });
+
+  it("focuses an existing singleton without duplicating it or consuming other new pages", () => {
+    let state = openViewTab(initialWorkspaceViewTabsState, workspaceToolViewTab("terminal"));
+    state = openViewTab(state, { kind: "new", id: "new:1" });
+    state = openViewTab(state, { kind: "new", id: "new:2" });
+    state = openViewTab(state, workspaceToolViewTab("terminal"), { replaceActiveNewTab: true });
+    expect(state.tabs.map((tab) => tab.id)).toEqual(["terminal", "new:1"]);
+    expect(state.activeTabID).toBe("terminal");
+    expect(closeViewTab(state, "terminal").activeTabID).toBe("new:1");
+  });
+
+  it("keeps a new page during background opens and resumes an existing file atomically", () => {
+    const file = workspaceFileViewTab({ context: projectContext, path: "src/main.ts" });
+    let state = openViewTab(initialWorkspaceViewTabsState, file);
+    state = openViewTab(state, { kind: "new", id: "new:1" });
+    state = openViewTab(state, workspaceToolViewTab("files"), { activate: false, replaceActiveNewTab: true });
+    expect(state.activeTabID).toBe("new:1");
+    state = openViewTab(state, file, { replaceActiveNewTab: true });
+    expect(state.tabs).toEqual([file]);
+    expect(state.activeFileTabID).toBe(file.id);
+    expect(state.activationHistory).not.toContain("new:1");
+  });
+});
+
 it("keeps delivered snapshots separate from editable files, deduplicates repeats, and retains new versions", () => {
   const artifact = {
     id: "delivery", itemId: "tool", index: 0, type: "file" as const,

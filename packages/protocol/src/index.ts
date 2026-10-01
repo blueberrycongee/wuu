@@ -710,6 +710,7 @@ export type ProviderSummary = {
   models?: ProviderModelSummary[];
   latest_request?: EngineLatestRequest;
   local_usage?: SubscriptionUsage;
+  quota?: SubscriptionQuota;
 };
 
 export type ProviderModelSummary = {
@@ -1093,15 +1094,27 @@ export type SubscriptionUsage = {
 
 /** Upstream account allowance; never inferred from Wuu token usage. */
 export type SubscriptionQuota = {
-  status: "available" | "unavailable";
+  status: "available" | "stale" | "unavailable" | "sign_in" | "unsupported";
+  kind?: "subscription" | "plan" | "balance";
+  account?: { id: string; label?: string; source?: string };
+  plan?: string;
   checked_at: string;
+  observed_at?: string;
+  expires_at?: string;
+  error_code?: "network" | "rate_limited" | "sign_in" | "invalid_response" | "unsupported";
   windows?: {
     id: string;
     label?: string;
-    used_percent: number;
+    used_percent?: number;
     window_minutes?: number;
     resets_at?: string;
+    display?: string;
+    model?: string;
+    scope?: string;
+    unlimited?: boolean;
   }[];
+  balances?: { currency: string; amount: string }[];
+  reset_credits?: number;
 };
 
 /** Newest settled request recorded for one engine. Usage is omitted unless the engine reported tokens. */

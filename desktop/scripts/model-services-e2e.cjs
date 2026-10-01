@@ -94,7 +94,9 @@ async function setAppearance(win, { theme, size, width }) {
   await evaluate(win, ({ theme, size }) => {
     document.documentElement.setAttribute('data-theme', theme);
     document.documentElement.style.setProperty('--appearance-scale', String(size / 14));
+    document.documentElement.style.setProperty('--conversation-message-font-size', `${size}px`);
   }, { theme, size });
+  assert.equal(await evaluate(win, () => parseFloat(getComputedStyle(document.querySelector('.model-service-card-title')).fontSize)), size, 'The layout matrix must use the requested UI font size.');
 }
 // Nothing on the page may clip its text or overflow the settings column.
 const layoutProblems = win => evaluate(win, () => {
@@ -137,6 +139,33 @@ async function run() {
   await waitFor(main, () => document.querySelector('[data-testid="settings-default-model"]') && document.querySelector('[data-catalog="deepseek"]'));
   assert.match(await evaluate(main, () => document.querySelector('[data-testid="settings-default-model"]').textContent), /fixture/);
   await capture(main, '01-overview.png');
+
+  // The grouped catalog searches the complete directory, preserves the
+  // custom endpoint action on no results, and survives close/reopen without
+  // creating or choosing a service.
+  const configBeforeBrowsing = readConfig();
+  await click(main, '[data-testid="settings-provider-browse"]');
+  await waitFor(main, () => Boolean(document.querySelector('.model-browse-dialog')));
+  await capture(main, '01b-grouped-catalog.png');
+  assert.ok(await evaluate(main, () => Boolean(document.querySelector('.model-browse-dialog [data-catalog-group="api"]'))));
+  assert.ok(await evaluate(main, () => Boolean(document.querySelector('.model-browse-dialog [data-catalog-group="relay"]'))));
+  await type(main, '.model-browse-dialog input[type="search"]', '  DEEPSEEK  ');
+  await waitFor(main, () => document.querySelectorAll('.model-browse-dialog [data-catalog]').length === 1);
+  assert.equal(await evaluate(main, () => document.querySelector('.model-browse-dialog [data-catalog]').dataset.catalog), 'deepseek');
+  await type(main, '.model-browse-dialog input[type="search"]', 'no-such-service-e2e');
+  await waitFor(main, () => document.querySelectorAll('.model-browse-dialog [data-catalog], .model-browse-dialog [data-subscription]').length === 0);
+  assert.ok(await evaluate(main, () => Boolean(document.querySelector('.model-browse-dialog .environment-dialog-footer button'))));
+  main.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' });
+  main.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Escape' });
+  await waitFor(main, () => !document.querySelector('[role="dialog"]'));
+  await click(main, '[data-testid="settings-provider-browse"]');
+  await waitFor(main, () => document.querySelector('.model-browse-dialog input[type="search"]')?.value === '');
+  await click(main, '.model-browse-dialog [data-catalog="deepseek"]');
+  await waitFor(main, () => Boolean(document.querySelector('.model-connect-dialog')));
+  assert.equal(await evaluate(main, () => Boolean(document.querySelector('.model-browse-dialog'))), false);
+  await click(main, '.model-connect-dialog .environment-dialog-header .icon-button');
+  await waitFor(main, () => !document.querySelector('[role="dialog"]'));
+  assert.deepEqual(readConfig(), configBeforeBrowsing, 'Browsing and dismissing leave saved services and the default unchanged.');
 
   // A catalog provider: its endpoint and a suggested model come from the
   // catalog, so the key is the only thing to type. The working default stays.

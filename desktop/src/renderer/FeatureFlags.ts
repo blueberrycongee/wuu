@@ -19,8 +19,8 @@ export const ENABLE_TURN_ARTIFACT_SUMMARY = true;
 export const ENABLE_ACCOUNT =
   import.meta.env.DEV && import.meta.env.VITE_ENABLE_ACCOUNT !== "false";
 
-/** Keep the subscription dashboard development-only until it is ready to ship. */
-export const ENABLE_SUBSCRIPTIONS = import.meta.env.DEV;
+/** Subscription visibility follows quota-aware provider data in production. */
+export const ENABLE_SUBSCRIPTIONS = true;
 
 /**
  * Embedded browser. The workspace panel and the agent's page are one tab.

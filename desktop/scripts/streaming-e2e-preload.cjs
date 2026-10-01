@@ -89,6 +89,16 @@ contextBridge.exposeInMainWorld("wuu", {
   }),
   initialize: async () => ({
     protocol_version: "e2e",
+    ...(process.env.WUU_WORKSPACE_NEW_TAB_E2E ? { extension_inventory: [{
+      id: "user:workspace-e2e", name: "Workspace E2E", kind: "plugin",
+      provenance: { kind: "plugin", source: "user", scope: "user" },
+      state: "granted", approval_state: "granted", enabled: true, fingerprint: "workspace-e2e",
+      desktop: { entry: "desktop.js" },
+      contributions: { workspace_tools: [{
+        id: "notes", view: "notes", title: "Workspace notes with a long descriptive title",
+        description: "An installed extension exposed through the public workspace tool contract.",
+      }] },
+    }] } : {}),
     features: { project_agent: Boolean(process.env.WUU_PROJECT_PANEL_E2E) },
     provider: "e2e",
     model: "mock-stream",
@@ -100,6 +110,11 @@ contextBridge.exposeInMainWorld("wuu", {
     model,
     providers: [{ name: provider, type: "mock", model, connection_locked: true }]
   }),
+  ...(process.env.WUU_WORKSPACE_NEW_TAB_E2E ? {
+    loadPluginDesktopModule: async ({ id, fingerprint }) => ({
+      id, fingerprint, digest: "a".repeat(64), url: "wuu-plugin://module/workspace-new-tab-e2e.js",
+    }),
+  } : {}),
   startThread: async (params = {}) => {
     if (process.env.WUU_REQUEST_LIFECYCLE_E2E) await ipcRenderer.invoke("test:request-lifecycle", "thread/start");
     startedThreadCount += 1;
