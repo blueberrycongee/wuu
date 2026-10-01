@@ -592,6 +592,46 @@ describe("session tab switch latency", () => {
     });
   });
 
+  it.each([
+    { activePane: "primary", direct: false }, { activePane: "secondary", direct: false },
+    { activePane: "primary", direct: true }, { activePane: "secondary", direct: true },
+  ])("preserves both split drafts from $activePane (direct pane promotion=$direct)", async ({ activePane, direct }) => {
+    const { threadsByID } = installWuuApi();
+    const third = { ...threadB(), id: "thread-third", preview: "third conversation" };
+    threadsByID.set(third.id, third);
+    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await flushAsync();
+    await act(async () => { threadRowButton("session switch B")!.click(); });
+    await flushAsync();
+    await act(async () => { threadRowButton("session switch A")!.click(); });
+    await flushAsync();
+    act(() => setMainComposerPrompt("older global A draft"));
+    await act(async () => { requestOpenThreadInSplit(threadBID); });
+    await flushAsync();
+    const pane = (id: string) => container.querySelector<HTMLElement>(`.conversation-split-pane[data-thread-id="${id}"]`)!;
+    const setSplit = (id: string, text: string) => {
+      const input = pane(id).querySelector<HTMLTextAreaElement>("textarea")!;
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(input, text);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    };
+    act(() => { setSplit(threadAID, "new draft for A"); setSplit(threadBID, "new draft for B"); });
+    const activeID = activePane === "primary" ? threadAID : threadBID;
+    act(() => pane(activeID).dispatchEvent(new Event("pointerdown", { bubbles: true })));
+    expect(pane(activeID).classList.contains("active")).toBe(true);
+    // All calls settle in request order; there is no delayed or reversed IPC.
+    const destination = direct ? (activePane === "primary" ? "session switch B" : "session switch A") : "third conversation";
+    await act(async () => { threadRowButton(destination)!.click(); });
+    await flushAsync();
+    expect(mainComposerTextarea().value).toBe(direct ? (activePane === "primary" ? "new draft for B" : "new draft for A") : "");
+    await act(async () => { threadRowButton("session switch A")!.click(); });
+    await flushAsync();
+    const restoredA = mainComposerTextarea().value;
+    await act(async () => { threadRowButton("session switch B")!.click(); });
+    await flushAsync();
+    const restoredB = mainComposerTextarea().value;
+    expect({ restoredA, restoredB }).toEqual({ restoredA: "new draft for A", restoredB: "new draft for B" });
+  });
+
   it("keeps the rendered target draft when a delayed fork completes after switching", async () => {
     const { threadsByID } = installWuuApi();
     const source = threadA();
@@ -645,6 +685,32 @@ describe("session tab switch latency", () => {
     expect(activeThreadProbe()?.dataset.threadId).toBe(threadAID);
     expect(mainComposerTextarea().value).toBe("unsent archive draft");
     expect(container.querySelectorAll(`${mainComposerSelector} ${attachmentCardSelector}`)).toHaveLength(1);
+  });
+
+  it.each([
+    { split: false, failure: false }, { split: true, failure: false },
+    { split: false, failure: true }, { split: true, failure: true },
+  ])("keeps attachment completion while a cold navigation waits (split=$split, failure=$failure)", async ({ split, failure }) => {
+    const { threadsByID, resumeThread } = installWuuApi();
+    const third = { ...threadB(), id: "cold-third", preview: "cold third" };
+    threadsByID.set(third.id, third);
+    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await flushAsync();
+    if (split) await act(async () => { requestOpenThreadInSplit(threadBID); });
+    const ownerID = split ? threadBID : threadAID;
+    const owner = split ? container.querySelector(`.conversation-split-pane[data-thread-id="${ownerID}"]`)! : container.querySelector(mainComposerSelector)!;
+    const attachment = await pickPendingAttachment(owner, "png");
+    const pending = deferred<{ thread: Thread }>();
+    resumeThread.mockImplementationOnce(() => pending.promise);
+    await act(async () => { threadRowButton("cold third")!.click(); });
+    expect(resumeThread).toHaveBeenLastCalledWith(third.id);
+    if (failure) await attachment.fail(); else await attachment.finish();
+    await act(async () => { emitNotification("thread/resumed", { thread: third }); pending.resolve({ thread: third }); });
+    await flushAsync();
+    await act(async () => { threadRowButton(split ? "session switch B" : "session switch A")!.click(); });
+    await flushAsync();
+    if (failure) expect(container.querySelector(`${mainComposerSelector} ${attachmentCardSelector}`)).toBeNull();
+    else expect(container.querySelector(`${mainComposerSelector} img`)?.getAttribute("src")).toBe(`data:image/png;base64,${attachment.data}`);
   });
 
   it.each(["pdf", "png", "mp4"] as const)("keeps a pending %s on its original draft after switching conversations", async (extension) => {

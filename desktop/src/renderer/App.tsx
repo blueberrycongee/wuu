@@ -118,6 +118,7 @@ import {
   activeTurnIDForThread,
   bindActiveSessionTabToThread,
   cloneSessionTabDraft,
+  captureComposerDrafts,
   cloneComposerDraft,
   sessionTabDraftForThread,
   composerDraftHasContent,
@@ -3553,6 +3554,16 @@ export function App(): JSX.Element {
     );
   }
 
+  function currentComposerDraftSnapshot() {
+    const current = appStateRef.current;
+    return captureComposerDrafts(
+      current,
+      current.thread && current.secondaryThread
+        ? composerDraftsRef.current.split
+        : composerDraftsRef.current.primary(),
+    );
+  }
+
   const {
     selectWorkspaceForNewThread,
     startNewThreadInWorkspace,
@@ -3564,7 +3575,7 @@ export function App(): JSX.Element {
   } = createWorkspaceRuntimeActions({
     getAppState: () => appStateRef.current,
     setAppState: setState,
-    getPrimaryComposerDraft: currentPrimaryComposerDraft,
+    getComposerDraftSnapshot: currentComposerDraftSnapshot,
     restorePrimaryComposerDraft,
     clearPrimaryComposerDraft: () =>
       restorePrimaryComposerDraft(emptyComposerDraft()),
@@ -3589,7 +3600,7 @@ export function App(): JSX.Element {
     setAppState: setState,
     getActiveThreadID: () => activeThreadID,
     getPendingViewSwitch: () => pendingViewSwitch,
-    getPrimaryComposerDraft: currentPrimaryComposerDraft,
+    getComposerDraftSnapshot: currentComposerDraftSnapshot,
     restorePrimaryComposerDraft,
     resetSplitComposerDrafts: () =>
       setSplitComposerDrafts(initialSplitComposerDrafts()),
@@ -3659,7 +3670,7 @@ export function App(): JSX.Element {
   } = createSessionTabActions({
     getAppState: () => appStateRef.current,
     setAppState: setState,
-    getPrimaryComposerDraft: currentPrimaryComposerDraft,
+    getComposerDraftSnapshot: currentComposerDraftSnapshot,
     restorePrimaryComposerDraft,
     clearPrimaryComposerDraft: () =>
       restorePrimaryComposerDraft(emptyComposerDraft()),
@@ -4018,7 +4029,7 @@ export function App(): JSX.Element {
     getAppState: () => appStateRef.current,
     setAppState: setState,
     getActiveTitle: () => activeTitle,
-    getPrimaryComposerDraft: currentPrimaryComposerDraft,
+    getComposerDraftSnapshot: currentComposerDraftSnapshot,
     setSplitComposerDrafts,
     restorePrimaryComposerDraft,
     
