@@ -107,7 +107,9 @@ jobs:
     name: Go check
     runs-on: ubuntu-latest
     needs: [go-validation, project-agent-check]
-    if: ${{ always() }}
+    # Cancelled post-merge pushes need no new failure; PRs and real Go failures
+    # keep the strict gate because skipped required checks can permit merging.
+    if: ${{ always() && (github.event_name != 'push' || !cancelled() || contains(needs.*.result, 'failure')) }}
     steps:
       - name: Require both Go suites
         env:
