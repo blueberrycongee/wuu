@@ -226,6 +226,8 @@ type Env struct {
 	// Tools check for nil and return a clear error rather than panic.
 	SessionID  string
 	SessionDir string // absolute session artifact path for result budgeting
+	// CodeModeStateOwner can bind attached side-chat state to its parent lifetime.
+	CodeModeStateOwner string
 	// SessionsDir overrides the user-level SQLite session store location for
 	// tools that read conversations by ID. Empty keeps the canonical WUU_HOME
 	// lookup used by ordinary runtimes.

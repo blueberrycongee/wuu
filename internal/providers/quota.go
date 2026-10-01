@@ -1,13 +1,16 @@
 package providers
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -109,13 +112,106 @@ func QuotaAccountID(source, endpoint, identity string) string {
 	return hex.EncodeToString(sum[:16])
 }
 
-// ReadQuotaJSON performs the bounded, status-classifying HTTP operation used
-// by quota adapters. Neither upstream response bodies nor transport details
-// are surfaced through its safe errors.
+type quotaReadFlight struct {
+	done    chan struct{}
+	cancel  context.CancelFunc
+	waiters int
+	body    []byte
+	err     error
+}
+
+var quotaReads = struct {
+	sync.Mutex
+	pending map[[32]byte]*quotaReadFlight
+}{pending: make(map[[32]byte]*quotaReadFlight)}
+
+var quotaDefaultTransport, _ = http.DefaultTransport.(*http.Transport)
+
+// ReadQuotaJSON shares only concurrently pending default-policy GET reads.
+// Adapters resolve credentials before constructing the request, so changed
+// tokens, account headers, endpoints and client timeouts cannot share a flight.
+// Neither request identities nor completed responses are retained or logged.
 func ReadQuotaJSON(client *http.Client, req *http.Request) ([]byte, error) {
 	if client == nil {
 		client = &http.Client{Timeout: quotaRequestTimeout}
 	}
+	transport, standardTransport := http.DefaultTransport.(*http.Transport)
+	deadline, hasDeadline := req.Context().Deadline()
+	if req.Method != http.MethodGet || req.URL == nil || req.Cancel != nil || (req.Body != nil && req.Body != http.NoBody) ||
+		client.Transport != nil || client.Jar != nil || client.CheckRedirect != nil ||
+		!standardTransport || transport != quotaDefaultTransport ||
+		(hasDeadline && time.Until(deadline) > quotaRequestTimeout) {
+		// Custom policies can attach identity in Do or depend on context. Keep
+		// those reads, and explicitly longer deadlines, on their original path.
+		return readQuotaJSON(client, req)
+	}
+	if req.Context().Err() != nil {
+		return nil, NewQuotaError(QuotaErrorNetwork)
+	}
+	hash := sha256.New()
+	// These fields contain only JSON-supported types. Encoding directly into
+	// the digest avoids retaining a second plaintext credential serialization.
+	_ = json.NewEncoder(hash).Encode(struct {
+		Method, URL, Host string
+		Header            http.Header
+		Timeout           time.Duration
+		Close             bool
+	}{req.Method, req.URL.String(), req.Host, req.Header, client.Timeout, req.Close})
+	var key [32]byte
+	copy(key[:], hash.Sum(nil))
+	quotaReads.Lock()
+	if req.Context().Err() != nil {
+		quotaReads.Unlock()
+		return nil, NewQuotaError(QuotaErrorNetwork)
+	}
+	flight := quotaReads.pending[key]
+	if flight == nil {
+		// Each caller owns only its wait. The shared read keeps the existing
+		// default bound and stops earlier when no valid caller still needs it.
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(req.Context()), quotaRequestTimeout)
+		// A caller may return on cancellation while another still waits. Own
+		// the request and client policy before that caller can reuse either.
+		request := req.Clone(ctx)
+		sharedClient := &http.Client{Transport: transport, Timeout: client.Timeout}
+		flight = &quotaReadFlight{done: make(chan struct{}), cancel: cancel}
+		quotaReads.pending[key] = flight
+		go func() {
+			body, err := readQuotaJSON(sharedClient, request)
+			quotaReads.Lock()
+			flight.body, flight.err = body, err
+			if quotaReads.pending[key] == flight {
+				delete(quotaReads.pending, key)
+			}
+			close(flight.done)
+			quotaReads.Unlock()
+			cancel()
+		}()
+	}
+	flight.waiters++
+	quotaReads.Unlock()
+	defer func() {
+		quotaReads.Lock()
+		flight.waiters--
+		if flight.waiters == 0 && quotaReads.pending[key] == flight {
+			delete(quotaReads.pending, key)
+			flight.cancel()
+		}
+		quotaReads.Unlock()
+	}()
+	select {
+	case <-req.Context().Done():
+		return nil, NewQuotaError(QuotaErrorNetwork)
+	case <-flight.done:
+		if req.Context().Err() != nil {
+			return nil, NewQuotaError(QuotaErrorNetwork)
+		}
+		return bytes.Clone(flight.body), flight.err
+	}
+}
+
+// Neither upstream response bodies nor transport details are surfaced through
+// safe errors. This same operation serves isolated and shared reads.
+func readQuotaJSON(client *http.Client, req *http.Request) ([]byte, error) {
 	if _, ok := req.Context().Deadline(); !ok {
 		ctx, cancel := context.WithTimeout(req.Context(), quotaRequestTimeout)
 		defer cancel()

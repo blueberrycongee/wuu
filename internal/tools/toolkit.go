@@ -277,6 +277,7 @@ func (t *Toolkit) CloneForRoot(rootDir string) (*Toolkit, error) {
 		AllowMutations:              t.env.AllowMutations,
 		boundaryConfigured:          t.env.boundaryConfigured,
 		SessionID:                   t.env.SessionID,
+		CodeModeStateOwner:          t.env.CodeModeStateOwner,
 		SessionDir:                  t.env.SessionDir,
 		SessionsDir:                 t.env.SessionsDir,
 		AgentID:                     t.env.AgentID,
@@ -533,6 +534,13 @@ func (t *Toolkit) Skills() []skills.Skill {
 // SetSessionID sets the current session ID.
 func (t *Toolkit) SetSessionID(id string) {
 	t.env.SessionID = id
+	t.env.CodeModeStateOwner = id
+}
+
+// SetCodeModeStateOwner binds state cleanup to a host-owned parent conversation.
+// Call after SetSessionID; the scope identity itself remains unchanged.
+func (t *Toolkit) SetCodeModeStateOwner(id string) {
+	t.env.CodeModeStateOwner = id
 }
 
 // SessionID returns the session currently bound to this toolkit.
@@ -1807,5 +1815,5 @@ func (t *Toolkit) RunEnvironmentCode(ctx context.Context, service *codemode.Serv
 	if err != nil {
 		return codemode.RunResult{}, err
 	}
-	return service.Run(ctx, request, codemode.RunOptions{StateScope: t.codeModeStateScope(t.env.RootDir), CWD: t.env.RootDir, Executor: executor, Sandbox: policy})
+	return service.Run(ctx, request, codemode.RunOptions{StateScope: t.codeModeStateScope(t.env.RootDir), StateOwner: t.env.CodeModeStateOwner, CWD: t.env.RootDir, Executor: executor, Sandbox: policy})
 }

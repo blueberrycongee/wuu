@@ -273,6 +273,17 @@ The older `clients/mobile`, `clients/mobile-web`, and `clients/mobile-app` phone
 
 [The main CI workflow](../../../.github/workflows/ci.yml) runs repository metadata checks, Go checks/tests, desktop checks/tests/builds, and SDK/client checks/tests/builds. It skips changes confined to `docs/` and `docs-site/`. Go CI supplies PostgreSQL for database-backed coverage.
 
+Desktop CI installs the Electron binary once before parallel unit tests. The
+Electron package downloads on first import, so concurrent workers must not race
+to extract into the same installation directory.
+
+The `Go check` summary requires both Go jobs to succeed. It always runs for pull
+requests, so a failed, skipped, or cancelled dependency cannot pass that gate.
+For post-merge `push` runs only, cancelling the whole workflow skips or cancels
+the summary unless a Go dependency actually failed; a real failure still fails it.
+This exception does not apply to pull requests because GitHub accepts a skipped
+required check for merging. It does not change repository protection rules.
+
 macOS pull requests test the native helper; pushes to `main` also package a desktop directory. Windows runs selected native process/sandbox tests and desktop type checking, with unpacked packaging on `main`. The full desktop unit suite runs on Ubuntu. These jobs cover different boundaries rather than repeating the same full suite on every OS.
 
 [The documentation workflow](../../../.github/workflows/docs.yml) checks policy and builds the site when documentation, site, landing, or relevant build files change. Pull requests build without deployment; `main` builds deploy to GitHub Pages. Tagged product releases use a separate workflow and do not publish standalone CLI archives.
