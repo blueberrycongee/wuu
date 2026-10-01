@@ -436,6 +436,8 @@ export function useConversationScrollState({
   const motionFrameRef = useRef<number | undefined>(undefined);
   const messageJumpCancelRef = useRef<(() => void) | undefined>(undefined);
   const motionGenerationRef = useRef(0);
+  // Pending navigation survives layout/follow writes, but not a newer intent.
+  const scrollIntentGenerationRef = useRef(0);
   const inactiveScrollIntentRef = useRef(new WeakMap<HTMLElement, {
     threadID: string; direction: "away" | "latest"; at: number;
   }>());
@@ -576,8 +578,9 @@ export function useConversationScrollState({
     if (content.style.paddingTop !== value) content.style.paddingTop = value;
   }, []);
 
-  const cancelScrollMotion = useCallback((): void => {
+  const cancelScrollMotion = useCallback((options?: { preserveIntent: boolean }): void => {
     motionGenerationRef.current += 1;
+    if (!options?.preserveIntent) scrollIntentGenerationRef.current += 1;
     messageJumpCancelRef.current?.();
     messageJumpCancelRef.current = undefined;
     reflowSubmittedMotionRef.current = undefined;
@@ -613,7 +616,7 @@ export function useConversationScrollState({
     options: { revealScrollbar?: boolean } = {}
   ): void {
     pointerScrollGestureRef.current = undefined;
-    cancelScrollMotion();
+    cancelScrollMotion({ preserveIntent: true });
     clearUserScrollIntent();
     cancelBottomOverscroll(node);
     suppressAutoFollowRearmRef.current = false;
@@ -1187,9 +1190,9 @@ export function useConversationScrollState({
   const captureConversationScrollIntent = useCallback((): (() => boolean) => {
     const viewport = conversationViewport();
     const binding = bindingGenerationRef.current;
-    const motion = motionGenerationRef.current;
+    const intent = scrollIntentGenerationRef.current;
     return () => Boolean(viewport) && conversationViewport() === viewport &&
-      bindingGenerationRef.current === binding && motionGenerationRef.current === motion;
+      bindingGenerationRef.current === binding && scrollIntentGenerationRef.current === intent;
   }, [activePane, splitConversation]);
 
   const jumpToMessage = useCallback((turnID: string, item: string | ThreadItem, options?: { highlight?: boolean; query?: string }): (() => void) => {
@@ -1197,14 +1200,14 @@ export function useConversationScrollState({
     if (!viewport || !activeThreadID) return () => undefined;
     disableConversationAutoFollow();
     const content = viewport.querySelector<HTMLElement>('.cached-conversation-pane[data-active="true"]') ?? viewport;
-    const isCurrent = captureConversationScrollIntent();
+    const isIntentCurrent = captureConversationScrollIntent();
     const motionGeneration = motionGenerationRef.current;
     let pending = true;
     const jumpOptions = {
       highlight: options?.highlight,
       scope: {
         viewport, content,
-        isCurrent,
+        isCurrent: () => isIntentCurrent() && motionGenerationRef.current === motionGeneration,
       },
       onComplete: () => {
         pending = false;
@@ -1716,7 +1719,7 @@ export function useConversationScrollState({
     );
     const handleWheel = (event: WheelEvent): void => {
       // Input supersedes delayed search placement even before a glide exists.
-      if (event.deltaY !== 0 || event.deltaX !== 0) motionGenerationRef.current += 1;
+      if (event.deltaY !== 0 || event.deltaX !== 0) scrollIntentGenerationRef.current += 1;
       if (event.deltaY !== 0 && (motionFrameRef.current !== undefined || messageJumpCancelRef.current !== undefined || submissionPhase())) disableConversationAutoFollow();
       if (eventTargetsNestedAutoFollowScroll(event.target, node)) {
         if (event.deltaY < 0) {
@@ -1753,7 +1756,7 @@ export function useConversationScrollState({
       }
     };
     const handlePointerDown = (event: PointerEvent): void => {
-      motionGenerationRef.current += 1;
+      scrollIntentGenerationRef.current += 1;
       if (eventTargetsConversationDisclosure(event.target)) {
         clearUserScrollIntent();
         return;
@@ -1820,7 +1823,7 @@ export function useConversationScrollState({
       }
     };
     const handleTouchStart = (event: TouchEvent): void => {
-      motionGenerationRef.current += 1;
+      scrollIntentGenerationRef.current += 1;
       if (eventTargetsConversationDisclosure(event.target)) {
         clearUserScrollIntent();
         touchLastYRef.current = event.touches[0]?.clientY;
