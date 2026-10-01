@@ -59,6 +59,9 @@ func (s *Session) NewSideThreadRunner(sideThreadID, rootDir string, selected Thr
 		kit.ConfigureSurfaceForProviderModel(runner.ProviderName, model, true)
 		ConfigureToolkitPermissions(kit, config.ResolvedPermissions{Mode: config.PermissionModeReadOnly})
 		kit.SetSessionID(id)
+		if len(parentSession) > 0 {
+			kit.SetCodeModeStateOwner(parentSession[0])
+		}
 		kit.SetAgentIdentity(id, agentthread.RootPath)
 		kit.SetFileScopeRoots(workspaces.BoundaryRoots(kit.RootDir(), s.WuuHome))
 		if len(parentSession) > 0 {

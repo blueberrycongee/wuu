@@ -99,6 +99,52 @@ func runPTCProgram(t *testing.T, kit *Toolkit, code string) toolresult.Result {
 	return *messages[0].ToolResult
 }
 
+func TestPTCStateOwnerFollowsConversationLifetime(t *testing.T) {
+	parent := newCodeModeTestToolkit(t)
+	parent.SetSessionID("parent")
+	parent.SetAgentIdentity("parent", "root")
+	clone := func(sessionID, actorID, root, owner string) *Toolkit {
+		t.Helper()
+		kit, err := parent.CloneForRoot(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		kit.SetSessionID(sessionID)
+		kit.SetAgentIdentity(actorID, "root")
+		if owner != "" {
+			kit.SetCodeModeStateOwner(owner)
+		}
+		return kit
+	}
+	worker := clone("parent", "worker", t.TempDir(), "")
+	oldSide := clone("old-side", "old-side", parent.RootDir(), "parent")
+	newSide := clone("new-side", "new-side", parent.RootDir(), "parent")
+	// Rebinding an inherited side-owner override to an independent session must
+	// replace the owner, just as a new conversation/fork runtime does.
+	fork, err := oldSide.CloneForRoot(parent.RootDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	fork.SetSessionID("fork")
+	fork.SetAgentIdentity("fork", "root")
+	for _, kit := range []*Toolkit{parent, worker, oldSide, newSide, fork} {
+		if result := runPTCProgram(t, kit, `store("saved", 1);`); result.IsError {
+			t.Fatalf("seed state: %+v", result)
+		}
+	}
+	parent.CodeModeService().ForgetOwner("parent")
+	for _, kit := range []*Toolkit{parent, worker, oldSide, newSide} {
+		result := runPTCProgram(t, kit, `return typeof load("saved");`)
+		if result.IsError || result.TextProjection() != `"undefined"` {
+			t.Fatalf("deleted owner retained actor/root state: %+v", result)
+		}
+	}
+	result := runPTCProgram(t, fork, `return load("saved");`)
+	if result.IsError || result.TextProjection() != "1" {
+		t.Fatalf("independent fork lost its state: %+v", result)
+	}
+}
+
 func TestPTCProgramReviewBeforeNestedEffects(t *testing.T) {
 	// Denial and missing-reviewer cases must stop before execution. An allow
 	// must execute the program without exempting nested commands from review.

@@ -3,6 +3,7 @@ package codemode
 import (
 	"context"
 	"fmt"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -401,12 +402,13 @@ func TestNodeStateSessionAggregateAndScopeBounds(t *testing.T) {
 		code := fmt.Sprintf(`store("x","x".repeat(%d));`, MaxStateBytes-5)
 		for i := 0; i < MaxServiceStateBytes/MaxStateBytes; i++ {
 			opts.StateScope = fmt.Sprintf("actor-%d", i)
+			opts.StateOwner = fmt.Sprintf("owner-%d", i)
 			result, err := s.Run(context.Background(), RunRequest{Code: code}, opts)
 			if err != nil || result.Error != "" {
 				t.Fatalf("aggregate seed %d=%+v %v", i, result, err)
 			}
 		}
-		opts.StateScope = "overflow"
+		opts.StateScope, opts.StateOwner = "overflow", "overflow-owner"
 		result, err := s.Run(context.Background(), RunRequest{Code: `store("x",true);`}, opts)
 		if err != nil || !strings.Contains(result.Error, "state") {
 			t.Fatalf("aggregate state accepted=%+v %v", result, err)
@@ -415,15 +417,21 @@ func TestNodeStateSessionAggregateAndScopeBounds(t *testing.T) {
 		if err != nil || result.Error != "" || string(result.Value) != `"undefined"` {
 			t.Fatalf("aggregate rejection partially committed=%+v %v", result, err)
 		}
-		opts.StateScope = "actor-0"
+		opts.StateScope, opts.StateOwner = "actor-0", "owner-0"
 		result, err = s.Run(context.Background(), RunRequest{Code: `store("x",0);`}, opts)
 		if err != nil || result.Error != "" {
 			t.Fatalf("cannot reduce full aggregate=%+v %v", result, err)
 		}
-		opts.StateScope = "overflow"
+		opts.StateScope, opts.StateOwner = "overflow", "overflow-owner"
 		result, err = s.Run(context.Background(), RunRequest{Code: `store("x",true); return load("x");`}, opts)
 		if err != nil || result.Error != "" || string(result.Value) != "true" {
 			t.Fatalf("aggregate capacity was not released=%+v %v", result, err)
+		}
+		s.ForgetOwner("owner-1")
+		opts.StateScope = "released-owner-capacity"
+		result, err = s.Run(context.Background(), RunRequest{Code: code}, opts)
+		if err != nil || result.Error != "" {
+			t.Fatalf("owner deletion did not reclaim committed bytes=%+v %v", result, err)
 		}
 	})
 	t.Run("scope count", func(t *testing.T) {
@@ -465,6 +473,168 @@ func TestNodeStateSessionAggregateAndScopeBounds(t *testing.T) {
 			t.Fatalf("closed service remains usable: %v", err)
 		}
 	})
+}
+
+func TestNodeStateOwnerReleaseKeepsOtherConversations(t *testing.T) {
+	s := nodeService(t)
+	opts := RunOptions{CWD: t.TempDir()}
+	for _, scope := range []string{"root", "worker", "other-root", "fork"} {
+		opts.StateScope, opts.StateOwner = scope, "conversation"
+		if scope == "fork" {
+			opts.StateOwner = "independent-conversation"
+		}
+		result, err := s.Run(context.Background(), RunRequest{Code: `store("saved", 1);`}, opts)
+		if err != nil || result.Error != "" {
+			t.Fatalf("seed %s: %+v %v", scope, result, err)
+		}
+	}
+	// Scope identities cannot silently migrate between lifetime owners.
+	opts.StateScope, opts.StateOwner = "root", "independent-conversation"
+	if _, err := s.Run(context.Background(), RunRequest{Code: `store("saved", 2);`}, opts); err == nil {
+		t.Fatal("an existing scope accepted a different owner")
+	}
+	s.ForgetOwner("")
+	s.ForgetOwner("conversation")
+	for _, scope := range []string{"root", "worker", "other-root", "fork"} {
+		opts.StateScope, opts.StateOwner = scope, "conversation"
+		want := `"undefined"`
+		if scope == "fork" {
+			opts.StateOwner, want = "independent-conversation", `"number"`
+		}
+		result, err := s.Run(context.Background(), RunRequest{Code: `return typeof load("saved");`}, opts)
+		if err != nil || result.Error != "" || string(result.Value) != want {
+			t.Fatalf("owner isolation for %s: %+v %v", scope, result, err)
+		}
+	}
+}
+
+func TestNodeStateOwnerReleaseCancelsWaitingPrograms(t *testing.T) {
+	s := nodeService(t)
+	entered, canceled, released := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	release := func() { once.Do(func() { close(released) }) }
+	t.Cleanup(release)
+	invoked := make(chan struct{}, 1)
+	opts := RunOptions{CWD: t.TempDir(), StateScope: "actor", StateOwner: "conversation", Executor: nodeExecutor(func(ctx context.Context, call providers.ToolCall) (toolresult.Result, error) {
+		if call.Name == "wait" {
+			close(entered)
+			<-ctx.Done()
+			close(canceled)
+			<-released
+			return toolresult.Result{}, ctx.Err()
+		}
+		invoked <- struct{}{}
+		return toolresult.FromText("unexpected"), nil
+	})}
+	previousContext, previousCancel := context.WithCancel(context.Background())
+	defer previousCancel()
+	previous := make(chan RunResult, 1)
+	go func() {
+		result, err := s.Run(previousContext, RunRequest{Code: `store("saved", 1); await tools.wait({});`, Tools: []ToolDefinition{{Name: "wait"}}}, opts)
+		if err != nil {
+			result.Error = err.Error()
+		}
+		previous <- result
+	}()
+	select {
+	case <-entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("prior program never entered its tool")
+	}
+	previousCancel()
+	<-canceled
+	next := make(chan RunResult, 1)
+	go func() {
+		result, err := s.Run(context.Background(), RunRequest{Code: `store("saved", 2); await tools.next({});`, Tools: []ToolDefinition{{Name: "next"}}}, opts)
+		if err != nil {
+			result.Error = err.Error()
+		}
+		next <- result
+	}()
+	// Wait for the second public Run to register before deleting its owner.
+	// Its predecessor still holds the executor, so it cannot have been admitted.
+	deadline := time.After(10 * time.Second)
+	for {
+		s.mu.Lock()
+		registered := len(s.active) == 2
+		s.mu.Unlock()
+		if registered {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("waiting program was not registered for cancellation")
+		default:
+			runtime.Gosched()
+		}
+	}
+	s.ForgetOwner("conversation")
+	select {
+	case result := <-next:
+		if result.Error != context.Canceled.Error() {
+			t.Fatalf("owner deletion did not cancel waiting program: %+v", result)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("waiting program outlived its deleted owner")
+	}
+	release()
+	<-previous
+	select {
+	case <-invoked:
+		t.Fatal("a waiting program ran after its owner was deleted")
+	default:
+	}
+	result, err := s.Run(context.Background(), RunRequest{Code: `return typeof load("saved");`}, opts)
+	if err != nil || result.Error != "" || string(result.Value) != `"undefined"` {
+		t.Fatalf("late completion restored deleted state: %+v %v", result, err)
+	}
+}
+
+func TestNodeStateOwnerReleaseDuringSuccessfulCleanup(t *testing.T) {
+	s := nodeService(t)
+	cleaning, released := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	release := func() { once.Do(func() { close(released) }) }
+	t.Cleanup(release)
+	opts := RunOptions{CWD: t.TempDir(), StateScope: "actor", StateOwner: "conversation", Executor: nodeExecutor(func(ctx context.Context, _ providers.ToolCall) (toolresult.Result, error) {
+		// The program has returned successfully, so normal cleanup cancels
+		// execution I/O while the owning lifetime is still valid.
+		<-ctx.Done()
+		close(cleaning)
+		<-released
+		return toolresult.Result{}, ctx.Err()
+	})}
+	result, err := s.Run(context.Background(), RunRequest{Code: `store("saved", 1);`}, opts)
+	if err != nil || result.Error != "" {
+		t.Fatalf("seed=%+v %v", result, err)
+	}
+	done := make(chan RunResult, 1)
+	go func() {
+		result, err := s.Run(context.Background(), RunRequest{Code: `tools.wait({}); store("saved", 2); return "done";`, Tools: []ToolDefinition{{Name: "wait"}}}, opts)
+		if err != nil {
+			result.Error = err.Error()
+		}
+		done <- result
+	}()
+	select {
+	case <-cleaning:
+	case <-time.After(10 * time.Second):
+		t.Fatal("successful program did not enter execution cleanup")
+	}
+	s.ForgetOwner("conversation")
+	release()
+	select {
+	case result := <-done:
+		if result.Error != context.Canceled.Error() || len(result.Value) != 0 {
+			t.Fatalf("deleted owner accepted late successful completion: %+v", result)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("program did not finish after cleanup")
+	}
+	result, err = s.Run(context.Background(), RunRequest{Code: `return typeof load("saved");`}, opts)
+	if err != nil || result.Error != "" || string(result.Value) != `"undefined"` {
+		t.Fatalf("successful cleanup restored deleted state: %+v %v", result, err)
+	}
 }
 
 func TestNodeStateSurvivesMutableGuestIntrinsics(t *testing.T) {
