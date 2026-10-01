@@ -1372,8 +1372,7 @@ func (s *Server) handleConfigModelUpdate(req Request) error {
 		}
 		providerCfg.BaseURL = baseURL
 	}
-	apiKeyForConfig := params.APIKey
-	authTokenForConfig := params.AuthToken
+	var apiKeyForConfig, authTokenForConfig *string
 	authKeyForStore := ""
 	authTokenForStore := ""
 	if params.APIKey != nil {
@@ -1387,8 +1386,7 @@ func (s *Server) handleConfigModelUpdate(req Request) error {
 			providerCfg.AuthTokenEnv = ""
 			empty := ""
 			apiKeyForConfig = &empty
-		} else {
-			apiKeyForConfig = nil
+			authTokenForConfig = &empty
 		}
 	}
 	if params.AuthToken != nil {
@@ -1403,8 +1401,6 @@ func (s *Server) handleConfigModelUpdate(req Request) error {
 			empty := ""
 			authTokenForConfig = &empty
 			apiKeyForConfig = &empty
-		} else {
-			authTokenForConfig = nil
 		}
 	}
 	variant := s.currentVariant()
