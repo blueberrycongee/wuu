@@ -804,7 +804,7 @@ export class CodexPetWindowManager {
     this.createWindow(pet);
   }
 
-  setSize(size: CodexPetSize): void {
+  setSize(size: CodexPetSize, commit = true): void {
     if (size === this.size) return;
     this.size = size;
     // Switching to a preset clears any in-flight custom scale. The
@@ -818,7 +818,7 @@ export class CodexPetWindowManager {
     if (pet && this.win && !this.win.isDestroyed()) {
       this.applyView(pet);
     }
-    if (this.onSizeChange) {
+    if (commit && this.onSizeChange) {
       this.onSizeChange(size);
     }
   }

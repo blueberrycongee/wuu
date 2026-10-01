@@ -1270,7 +1270,8 @@ app.whenReady().then(async () => {
   // time. setSize is a no-op when the persisted size equals the default. A
   // persisted continuous scale (edge-drag resize) overrides the preset — it
   // must be applied after setSize, which clears any scale override.
-  codexPetWindowManager.setSize(getCodexPetSize());
+  // Restoration must not persist a preset change and erase the saved scale.
+  codexPetWindowManager.setSize(getCodexPetSize(), false);
   const persistedPetScale = getCodexPetScale();
   if (persistedPetScale !== undefined) {
     codexPetWindowManager.setScale(persistedPetScale);

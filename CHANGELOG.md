@@ -128,6 +128,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Preserve saved pet scale during startup when a nondefault size preset is stored, without rewriting pet preferences.
+
 - Honor remote stops before the first structured-output correction when an
   ordinary Run is adopted into a project, including stops during admission.
 
