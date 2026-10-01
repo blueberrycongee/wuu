@@ -144,7 +144,7 @@ async function close(win) {
   await waitFor(win, () => !document.querySelector('.conversation-search-dialog'));
 }
 async function query(win, text) {
-  const current = await evaluate(win, () => {
+  let current = await evaluate(win, () => {
     const input = document.querySelector('.conversation-search-dialog input');
     input.focus();
     input.select();
@@ -157,11 +157,15 @@ async function query(win, text) {
     await waitFor(win, () => document.querySelector('.conversation-search-dialog input')?.value === 'synthetic-query-reset');
     await frames(win);
     await evaluate(win, () => document.querySelector('.conversation-search-dialog input').select());
+    current = 'synthetic-query-reset';
   }
   const offset = rpc.length;
-  // Clear first, including the empty-query case, through native input/React.
-  key(win, 'Backspace');
-  await waitFor(win, () => document.querySelector('.conversation-search-dialog input')?.value === '');
+  // Do not queue deletion against an already-empty input: a delayed native
+  // Backspace could otherwise remove the last character of insertText below.
+  if (current) {
+    key(win, 'Backspace');
+    await waitFor(win, () => document.querySelector('.conversation-search-dialog input')?.value === '');
+  }
   if (text) await win.webContents.insertText(text);
   await waitFor(win, text => document.querySelector('.conversation-search-dialog input')?.value === text, text);
   await waitHost(() => rpc.slice(offset).some(r => r.channel === 'wuu:thread-search' && r.args[0] === text && r.completed), `search response for ${JSON.stringify(text)}`);
