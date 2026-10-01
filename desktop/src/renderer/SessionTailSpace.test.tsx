@@ -930,6 +930,63 @@ it("cancels an in-flight bubble animation when the user scrolls", () => {
   expect(scrollTop()).toBe(away);
 });
 
+it.each([
+  { offset: -2500, resizeFirst: false }, { offset: -2500, resizeFirst: true },
+  { offset: 2500, resizeFirst: false }, { offset: 2500, resizeFirst: true },
+])("holds the submitted query through history reflow (offset=$offset, resizeFirst=$resizeFirst)", ({ offset, resizeFirst }) => {
+  naturalHeight = 6000;
+  messageBottom = 5850;
+  render({ messageID: "old" });
+  submit();
+  const heldTop = messageBottom - messageHeight - scrollTop();
+  const clearance = tailSpace();
+  expect(api.captureConversationScrollPosition()?.submissionPhase).toBe("holding");
+  naturalHeight += offset;
+  messageBottom += offset;
+  act(() => {
+    // Native scroll/clamp delivery and ResizeObserver can arrive in either order.
+    if (resizeFirst) for (const callback of [...resizeCallbacks]) callback([], {} as ResizeObserver);
+    api.handleConversationScroll();
+    if (!resizeFirst) for (const callback of [...resizeCallbacks]) callback([], {} as ResizeObserver);
+  });
+  expect(messageBottom - messageHeight - scrollTop()).toBeCloseTo(heldTop);
+  expect(tailSpace()).toBeCloseTo(clearance);
+  expect(api.captureConversationScrollPosition()?.submissionPhase).toBe("holding");
+  act(() => {
+    api.handleConversationScroll();
+    for (const callback of [...resizeCallbacks]) callback([], {} as ResizeObserver);
+  });
+  expect(messageBottom - messageHeight - scrollTop()).toBeCloseTo(heldTop);
+  expect(tailSpace()).toBeCloseTo(clearance);
+  // Saving and restoring must retain the rebased reservation exactly once.
+  render({ id: "b", messageID: "other" });
+  render({ id: "a", messageID: "submitted", running: true });
+  settle(0);
+  expect(messageBottom - messageHeight - scrollTop()).toBeCloseTo(heldTop);
+  expect(tailSpace()).toBeCloseTo(clearance);
+  grow(clearance + 10);
+  expect(tailSpace()).toBe(0);
+  expect(api.captureConversationScrollPosition()?.autoFollow).toBe(true);
+});
+
+it.each([-2500, 2500])("rebases response-fill ownership when history moves by %i during the glide", offset => {
+  naturalHeight = 6000;
+  messageBottom = 5850;
+  render({ messageID: "old" });
+  act(() => api.requestSubmittedQueryScroll("submitted"));
+  render({ messageID: "submitted", running: true });
+  tick(0); tick(80);
+  naturalHeight += offset;
+  messageBottom += offset;
+  render({ messageID: "submitted", running: true });
+  settle(360);
+  expect(api.captureConversationScrollPosition()?.submissionPhase).toBe("holding");
+  const clearance = tailSpace();
+  expect(clearance).toBeGreaterThan(0);
+  grow(clearance + 10);
+  expect(api.captureConversationScrollPosition()?.autoFollow).toBe(true);
+});
+
 it("keeps the bubble on its screen trajectory when earlier content collapses during submission", () => {
   render({ messageID: "old" });
   act(() => api.requestSubmittedQueryScroll("submitted"));

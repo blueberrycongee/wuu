@@ -250,6 +250,30 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      - name: Guard submitted query reflow
+        if: ${{ !cancelled() && steps.build-fixture-core.outcome == 'success' }}
+        timeout-minutes: 3
+        shell: bash
+        env:
+          WUU_SCROLL_E2E_ONLY: submission-reflow
+          WUU_SCROLL_E2E_OUTPUT: ${{ runner.temp }}/wuu-submission-reflow-evidence
+        run: |
+          mkdir -p "$WUU_SCROLL_E2E_OUTPUT"
+          set -o pipefail
+          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/conversation-scroll-e2e.cjs 2>&1 | tee "$WUU_SCROLL_E2E_OUTPUT/run.log"
+
+      - name: Upload submitted query reflow evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: submission-reflow-evidence
+          path: |
+            ${{ runner.temp }}/wuu-submission-reflow-evidence/*.json
+            ${{ runner.temp }}/wuu-submission-reflow-evidence/*.png
+            ${{ runner.temp }}/wuu-submission-reflow-evidence/*.log
+          if-no-files-found: ignore
+          retention-days: 14
+
       - name: Upload conversation search evidence
         if: always()
         uses: actions/upload-artifact@v4

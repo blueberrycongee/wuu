@@ -135,6 +135,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   completed history at the beginning, and keep tools and reasoning in event
   order without a delayed scroll after opening.
 
+- Keep submitted questions anchored while earlier history reflows during or
+  after placement, and resume following when the reply fills the reserved space.
+
 - Edit conversation titles from the desktop title bar with a double click, while
   preserving keyboard rename and the surrounding window drag area.
 

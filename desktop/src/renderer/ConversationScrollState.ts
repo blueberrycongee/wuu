@@ -679,6 +679,25 @@ export function useConversationScrollState({
     getRestorationOffset,
   });
 
+  const restoreHeldSubmission = useCallback((viewport: HTMLElement): number | undefined => {
+    const submission = submissionRef.current;
+    const message = submittedMessage();
+    if (!submission || !message) return undefined;
+    const placement = submittedMessagePlacement(viewport, message);
+    const offset = submission.documentTop === undefined ? 0 : placement.documentTop - submission.documentTop;
+    const ownedTop = Math.max(0, lastConversationScrollTopRef.current + offset);
+    // Both scroll delivery and ResizeObserver can see this reflow first. Save
+    // the new anchor before either path snapshots it, so compensation is once.
+    submission.documentTop = placement.documentTop;
+    ensureTailRange(ownedTop, offset);
+    if (Math.abs(viewport.scrollTop - ownedTop) > 1) viewport.scrollTop = ownedTop;
+    const actualTop = clampScrollTop(viewport, viewport.scrollTop);
+    programmaticScrollTopRef.current = actualTop;
+    lastConversationScrollTopRef.current = actualTop;
+    rememberActiveThreadScrollSnapshot(viewport, false, actualTop);
+    return placement.messageHeight;
+  }, [activeThreadID, ensureTailRange, submittedMessage]);
+
   const scrollConversationToBottom = useCallback((): void => {
     if (previousThreadRef.current !== activeThreadID) return;
     const node = conversationViewport();
@@ -687,19 +706,13 @@ export function useConversationScrollState({
       !userScrollIntentRef.current && !pointerScrollGestureRef.current && !selectionPausedAutoFollowRef.current &&
       lastConversationScrollTopRef.current > previousMax && node.scrollTop >= previousMax - 1
       ? lastConversationScrollTopRef.current : undefined;
-    // Active placement owns the screen-space trajectory. Once it has settled,
-    // preserve the held scroll position if a larger viewport clamps its range.
+    let heldMessageHeight: number | undefined;
+    // Placement owns a trajectory; holding owns the submitted query's screen
+    // position, including when earlier content rewraps or changes height.
     if (scrollModeRef.current === "placing") {
       reflowSubmittedMotionRef.current?.();
-    } else if (scrollModeRef.current === "holding") {
-      const ownedTop = lastConversationScrollTopRef.current;
-      ensureTailRange(ownedTop);
-      const viewport = conversationViewport();
-      if (viewport && Math.abs(viewport.scrollTop - ownedTop) > 1) {
-        // Unlike a new programmatic scroll, this must not cancel placement.
-        viewport.scrollTop = ownedTop;
-        programmaticScrollTopRef.current = clampScrollTop(viewport, viewport.scrollTop);
-      }
+    } else if (node && scrollModeRef.current === "holding") {
+      heldMessageHeight = restoreHeldSubmission(node);
     }
     // Child-only mounts must start their entrance with placement, not on a
     // later parent render after the bubble has already painted at full opacity.
@@ -715,7 +728,7 @@ export function useConversationScrollState({
     // layout effect is not guaranteed to run when the exact bubble appears.
     if (scrollModeRef.current === "pending") positionSubmittedMessageRef.current?.(true);
     if (node && scrollModeRef.current === "holding" &&
-      tailFilled(submittedMessage()?.getBoundingClientRect().height ?? 0)) {
+      tailFilled(heldMessageHeight ?? submittedMessage()?.getBoundingClientRect().height ?? 0)) {
       setAutoFollow(true);
     }
     if (!node || !isFollowing()) {
@@ -740,7 +753,7 @@ export function useConversationScrollState({
     syncTailLayout,
     tailFilled,
     submittedMessage,
-    ensureTailRange,
+    restoreHeldSubmission,
     reconcileSubmittedArrival,
   ]);
 
@@ -964,8 +977,11 @@ export function useConversationScrollState({
         animatedMessage = replacement;
         anchorDirty = true;
       }
+      let precedingLayoutOffset = 0;
       if (anchorDirty) {
+        const previousDocumentTop = anchor.documentTop;
         anchor = submitGlideAnchor(viewport, animatedMessage);
+        precedingLayoutOffset = anchor.documentTop - previousDocumentTop;
         if (submissionRef.current) submissionRef.current.documentTop = anchor.documentTop;
         anchorDirty = false;
       }
@@ -984,10 +1000,11 @@ export function useConversationScrollState({
         !reservedRange ||
         reservedRange.clientHeight !== anchor.viewportHeight ||
         range > reservedRange.target + 0.5 ||
+        precedingLayoutOffset !== 0 ||
         done
       ) {
         reservedRange = { target: range, clientHeight: anchor.viewportHeight };
-        submissionFrameCallbacks.current.ensureTailRange(range);
+        submissionFrameCallbacks.current.ensureTailRange(range, precedingLayoutOffset);
         anchor.followTop = latestFollowScrollTop(viewport);
       }
       viewport.scrollTop = top;
@@ -1332,11 +1349,10 @@ export function useConversationScrollState({
       // Wheel/key/touch/scrollbar and content actions release ownership before
       // their scroll event. Native anchoring, clamping and coalesced rAF events
       // must not enable bottom-follow or consume the submission's reservation.
-      if (scrollModeRef.current === "holding") {
-        node.scrollTop = clampScrollTop(node, lastConversationScrollTopRef.current);
-      }
+      const heldMessageHeight = scrollModeRef.current === "holding" ? restoreHeldSubmission(node) : undefined;
       programmaticScrollTopRef.current = undefined;
-      rememberActiveThreadScrollSnapshot(node, false);
+      // The holding correction already saved the measured query anchor.
+      if (heldMessageHeight === undefined) rememberActiveThreadScrollSnapshot(node, false);
       return;
     }
     if (disclosureResized && !userScrollIntentRef.current &&
