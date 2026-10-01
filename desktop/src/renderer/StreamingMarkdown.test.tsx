@@ -135,7 +135,7 @@ describe("StreamingMarkdown", () => {
     expect(document.querySelector(".streaming-markdown")?.textContent).not.toContain("\uE000");
   });
 
-  it.each(["```typescript", "  ```javascript", "```text", "```"])(
+  it.each(["```typescript", "  ```javascript", "```text", "```", "~~~python", "  ~~~text", "~~~"])(
     "copies and selects an unfinished %s fence without adding cursor text", async (opener) => {
       const key = streamTextKey("turn", "s10", "text");
       // A real private-use character belongs to the code and must survive.
@@ -483,6 +483,19 @@ describe("splitIntoStableBlocks", () => {
     expect(result.tail).toBe(
       "```ts\nconst a = 1;\n\nconst b = 2;\nstill typing"
     );
+  });
+
+  it.each([
+    ["~~~text", "```", "~~~"],
+    ["```text", "~~~", "```"],
+    ["````text", "```", "````"],
+    ["~~~~text", "~~~", "~~~~"],
+    ["  ~~~text", "  ```", "  ~~~"],
+  ])("keeps %s open across mismatched delimiter %s", (opener, mismatched, closer) => {
+    const open = `${opener}\nvalue\n${mismatched}\n\nmore code\n`;
+    expect(splitIntoStableBlocks(open)).toEqual({ blocks: [], tail: open });
+    const closed = `${open}${closer}\n\n`;
+    expect(splitIntoStableBlocks(closed + "after")).toEqual({ blocks: [closed], tail: "after" });
   });
 
   it("treats a closed fenced code block as a single stable block", () => {

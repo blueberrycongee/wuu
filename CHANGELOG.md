@@ -90,7 +90,7 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   and the bell's first-run bubble became a mark-all-read action.
 
 ### Fixed
-- Keep streaming cursor markers out of copied or selected unfinished backtick code blocks.
+- Keep streaming cursor markers out of copied or selected unfinished backtick and tilde code blocks.
 - Preserve conversation drafts and queued messages across delayed forks and
   failed archive or delete requests; keep the surviving split-pane draft.
 - Keep selected Anthropic credentials isolated from ambient credentials and
