@@ -136,14 +136,14 @@ function renderRail({
   activeTurnID,
   scrollContainerRef,
   getScrollContainer,
-  onWheelScrollAway,
+  onUserScroll,
   onSelectQueryHistory,
 }: {
   turns?: Turn[];
   activeTurnID?: string;
   scrollContainerRef?: RefObject<HTMLElement | null>;
   getScrollContainer?: () => HTMLElement | null;
-  onWheelScrollAway?: () => void;
+  onUserScroll?: (direction: "away" | "latest") => void;
   onSelectQueryHistory: (entry: QueryHistoryEntry) => void;
 }): void {
   container = document.createElement("div");
@@ -156,7 +156,7 @@ function renderRail({
         activeTurnID={activeTurnID}
         scrollContainerRef={scrollContainerRef}
         getScrollContainer={getScrollContainer}
-        onWheelScrollAway={onWheelScrollAway}
+        onUserScroll={onUserScroll}
         onSelectQueryHistory={onSelectQueryHistory}
       />,
     );
@@ -297,7 +297,7 @@ describe("ConversationTurnRail", () => {
     let scrollAwayIntentCount = 0;
     renderRail({
       scrollContainerRef: { current: scrollNode },
-      onWheelScrollAway: () => {
+      onUserScroll: () => {
         scrollAwayIntentCount += 1;
       },
       onSelectQueryHistory: () => {},

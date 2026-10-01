@@ -172,6 +172,7 @@ function buildActions({
   let codexRuntimeMenu: CodexRuntimeMenu = null;
   const clearThreadPendingComposerMessages = vi.fn();
   const variantByModel = new Map<string, string>();
+  const pendingRuntimeSelections = new Map<string, Promise<void>>();
   const actions = createRuntimeSettingsActions({
     getAppState: () => appState,
     setAppState: (update) => {
@@ -197,9 +198,12 @@ function buildActions({
     },
     clearThreadPendingComposerMessages,
     variantByModel,
+    pendingRuntimeSelections,
   });
   return {
     actions,
+    pendingRuntimeSelections,
+    setAppState: (state: AppState) => { appState = state; },
     getAppState: () => appState,
     getCodexModels: () => modelState,
     getRuntimeMenus: () => ({
@@ -626,6 +630,86 @@ describe("createRuntimeSettingsActions", () => {
     expect(harness.getAppState().thread?.model_variant).toBe("");
     expect(harness.getAppState().thread?.model_effort).toBe("");
     expect(harness.getAppState().initialized?.variant).toBe("medium");
+  });
+
+  it.each([false, true])("keeps the latest effort when returning to the saved value before reset settles (reject=%s)", async (rejectFirst) => {
+    const api = installWuuApi();
+    let resolveFirst!: (value: unknown) => void;
+    let reject!: (error: Error) => void;
+    api.updateRuntimeSettings.mockImplementationOnce(() => new Promise((resolve, fail) => {
+      resolveFirst = resolve;
+      reject = fail;
+    }));
+    const primary = { ...thread(), model_variant: "high", model_effort: "high" };
+    const harness = buildActions({ initial: {
+      ...initialState, initialized: initialized(), thread: primary, threads: [primary],
+    } });
+
+    const reset = harness.actions.selectRuntimeEffort("");
+    const restore = harness.actions.selectRuntimeEffort("high");
+    if (rejectFirst) reject(new Error("first selection rejected"));
+    else resolveFirst({ provider: "codex", model: "gpt-5", effort: "medium", variant: "medium" });
+    await Promise.all([reset, restore]);
+
+    expect(api.updateRuntimeSettings.mock.calls.map(call => call[4])).toEqual(["", "high"]);
+    expect(harness.getAppState().thread?.model_variant).toBe("high");
+    expect(readDraftRuntimeMemory()?.effort).toBe("high");
+    expect(harness.pendingRuntimeSelections.size).toBe(0);
+  });
+
+  it("keeps queued selections on their captured workspace without blocking another thread", async () => {
+    const api = installWuuApi();
+    const contextA = { kind: "project" as const, project_id: "A", cwd: "/tmp/A" };
+    const contextB = { kind: "project" as const, project_id: "B", cwd: "/tmp/B" };
+    const primary = { ...thread("A"), model_variant: "high", model_effort: "high", cwd: contextA.cwd };
+    const other = { ...thread("B"), model: "model-b", model_variant: "low", model_effort: "low", cwd: contextB.cwd };
+    const defaultsA = initialized();
+    const defaultsB = initialized({ model: "model-b", workspace_root: contextB.cwd });
+    let resolveFirst!: (value: unknown) => void;
+    api.updateRuntimeSettings.mockImplementation((_provider, _model, _effort, _connection, _variant, _permission, id) =>
+      Promise.resolve(id === "A" ? defaultsA : defaultsB));
+    api.updateRuntimeSettings.mockImplementationOnce(() => new Promise((resolve) => { resolveFirst = resolve; }));
+    const harness = buildActions({ initial: {
+      ...initialState, activeContext: contextA, initialized: defaultsA, thread: primary, threads: [primary],
+    } });
+    const reset = harness.actions.selectRuntimeEffort("");
+    const restore = harness.actions.selectRuntimeEffort("high");
+    harness.setAppState({ ...initialState, activeContext: contextB, initialized: defaultsB, thread: other, threads: [other] });
+    await harness.actions.selectRuntimeEffort("medium");
+    expect(api.updateRuntimeSettings.mock.calls.map(call => call[6])).toEqual(["A", "B"]);
+    resolveFirst(defaultsA);
+    await Promise.all([reset, restore]);
+
+    expect(api.updateRuntimeSettings.mock.calls.map(call => [call[4], call[6], call[8]])).toEqual([
+      ["", "A", contextA], ["medium", "B", contextB], ["high", "A", contextA],
+    ]);
+    expect(harness.getAppState().thread?.id).toBe("B");
+    expect(harness.getAppState().thread?.model_variant).toBe("medium");
+    expect(harness.getAppState().initialized?.model).toBe("model-b");
+    expect(readDraftRuntimeMemory()).toMatchObject({ model: "model-b", effort: "medium" });
+    expect(harness.pendingRuntimeSelections.size).toBe(0);
+  });
+
+  it("does not overwrite a newer draft selection when an old thread request settles", async () => {
+    const api = installWuuApi();
+    let resolveFirst!: (value: unknown) => void;
+    api.updateRuntimeSettings.mockImplementationOnce(() => new Promise((resolve) => { resolveFirst = resolve; }));
+    const primary = { ...thread(), model_variant: "high" };
+    const context = { kind: "no_project" as const, cwd: "/tmp/project-1" };
+    const harness = buildActions({ initial: {
+      ...initialState, initialized: initialized(), activeContext: context, thread: primary, threads: [primary],
+    } });
+    const reset = harness.actions.selectRuntimeEffort("");
+    const restore = harness.actions.selectRuntimeEffort("high");
+    harness.setAppState({ ...harness.getAppState(), thread: undefined });
+    await harness.actions.selectRuntimeEffort("low");
+    resolveFirst({ provider: "codex", model: "gpt-5", effort: "medium", variant: "medium" });
+    await Promise.all([reset, restore]);
+
+    expect(harness.getAppState().thread).toBeUndefined();
+    expect(harness.getAppState().initialized?.variant).toBe("low");
+    expect(readDraftRuntimeMemory()?.effort).toBe("low");
+    expect(harness.pendingRuntimeSelections.size).toBe(0);
   });
 
   it("skips the reset when the thread effort is already the model default", async () => {

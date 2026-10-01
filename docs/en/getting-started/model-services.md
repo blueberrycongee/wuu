@@ -16,6 +16,13 @@ The first-run form offers a simpler connection setup. Use Settings for a custom 
 
 The composer's selection belongs to the conversation, or to the draft before its first message. Settings also lets you set workspace defaults; changing a conversation's model does not silently replace those defaults.
 
+For Anthropic-compatible connections, an explicit credential in configuration
+(or its named environment variable) takes priority over a saved credential.
+Selecting either source prevents an unrelated ambient API key or bearer token
+from being added to the request. Explicitly configuring both headers remains
+supported. Saving a new API key in Settings replaces the previous bearer token,
+including its configured environment-variable reference.
+
 ## Current OpenAI and Anthropic models
 
 The catalog includes `gpt-6.1-sol`, `gpt-6-sol`, `gpt-6-luna`, `claude-opus-5-5`, and `claude-fable-5-1`. Existing conversation and workspace selections remain unchanged; select a new model when you want to use it.
@@ -172,6 +179,8 @@ deletes a key and reports whether it existed. Mutating a loaded value does not
 change stored state until `store` is called again. Successful completion commits
 staged changes; errors, cancellation and resource-limit failures preserve the
 previous state. Completed tool effects are never rolled back or replayed.
+Identical programs may run again to advance checkpoints or poll external state;
+repeated-input protection still applies to the nested tools themselves.
 
 State is explicitly stored, memory-only, and isolated by conversation, actor and
 workspace. Rebuilding the same conversation or changing its model retains that

@@ -1686,6 +1686,7 @@ app.whenReady().then(async () => {
       permissionMode?: string,
       threadID?: string,
       speed?: string,
+      targetContext?: RuntimeContext,
     ) =>
       appServerRequest<ConfigModelUpdateResult>(event, "config/model/update", {
         // Omitted provider/model are inherited from the target thread, so
@@ -1722,7 +1723,7 @@ app.whenReady().then(async () => {
         ...(connection?.approve_for_me === undefined
           ? {}
           : { approve_for_me: connection.approve_for_me }),
-      }),
+      }, targetContext),
   );
   ipcMain.handle(
     "wuu:config-advanced-update",

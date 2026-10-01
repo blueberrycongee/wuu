@@ -5,10 +5,11 @@ import type { Thread, ThreadItem } from "../shared/protocol";
 import { initialState, type AppState } from "./AppState";
 import { useConversationSearchNavigation } from "./ConversationSearchNavigation";
 
-const { jump, showErrorToast } = vi.hoisted(() => ({
-  jump: vi.fn(() => () => {}), showErrorToast: vi.fn(),
-}));
-vi.mock("./TurnViewHelpers", () => ({ scrollToConversationMessage: jump }));
+const { jump, cancelJump, unscopedJump, showErrorToast } = vi.hoisted(() => {
+  const cancelJump = vi.fn();
+  return { jump: vi.fn(() => cancelJump), cancelJump, unscopedJump: vi.fn(() => () => {}), showErrorToast: vi.fn() };
+});
+vi.mock("./TurnViewHelpers", () => ({ scrollToConversationMessage: unscopedJump }));
 vi.mock("./Toast", () => ({ showErrorToast }));
 let root: Root;
 afterEach(() => {
@@ -39,7 +40,7 @@ function setup(items?: ThreadItem[]) {
     [state, setState] = useState<AppState>({ ...initialState, thread, threads: [thread] });
     navigate = useConversationSearchNavigation({
       thread: state.thread, switching: false, activateThread: async () => {},
-      disableAutoFollow: () => {}, setAppState: setState,
+      captureConversationScrollIntent: () => () => true, jumpToConversationMessage: jump, setAppState: setState,
     });
     return null;
   }
@@ -103,4 +104,14 @@ it("continues an item-split history page past tools sharing the addressed messag
   await act(async () => vi.advanceTimersByTimeAsync(30));
   expect(window.wuu.loadEarlierThreadHistory).toHaveBeenCalledExactlyOnceWith("history", "earlier-items");
   expect(jump).toHaveBeenCalledWith("old-turn", full, "late needle");
+});
+
+it("cancels the controller-owned search jump when its destination changes", async () => {
+  const h = setup([{ id: "answer", seq: 7, type: "agent_message", text: "late needle" }]);
+  await h.select();
+  await act(async () => vi.advanceTimersByTimeAsync(30));
+  expect(jump).toHaveBeenCalledOnce();
+  expect(unscopedJump).not.toHaveBeenCalled();
+  h.leave();
+  expect(cancelJump).toHaveBeenCalledOnce();
 });

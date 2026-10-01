@@ -9,6 +9,8 @@ import {
   firstUserMessageAnchor,
   lastUserMessageAnchor,
   scrollToUserMessage,
+  scrollToConversationMessage,
+  messageAnchorID,
   threadReplySnippet,
   truncateReplyPreview,
   turnReplySnippet,
@@ -141,6 +143,8 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+const jumpScope = (container: HTMLElement) => ({ viewport: container, content: container, isCurrent: () => true });
+
 /** The jump glides over frames; advance until it lands. */
 function settleJump(): void {
   vi.advanceTimersByTime(2000);
@@ -152,7 +156,7 @@ describe("scrollToUserMessage", () => {
     Object.defineProperty(window, "devicePixelRatio", { configurable: true, value: 0.5 });
     try {
       const { container } = mountAnchor({ variant: "scroll-region", containerScrollHeight: 2400 });
-      scrollToUserMessage("turn-1", "item-1");
+      scrollToUserMessage("turn-1", "item-1", { scope: jumpScope(container) });
       container.scrollTop = 2;
       settleJump();
       expect(container.scrollTop).toBe(1136);
@@ -164,7 +168,7 @@ describe("scrollToUserMessage", () => {
 
   it("yields immediately to wheel input even when its scroll delta is tiny", () => {
     const { container } = mountAnchor({ variant: "scroll-region", containerScrollHeight: 2400 });
-    scrollToUserMessage("turn-1", "item-1");
+    scrollToUserMessage("turn-1", "item-1", { scope: jumpScope(container) });
     vi.advanceTimersByTime(40);
     const stoppedAt = container.scrollTop;
     container.dispatchEvent(new WheelEvent("wheel", { deltaY: 1, bubbles: true }));
@@ -182,7 +186,7 @@ describe("scrollToUserMessage", () => {
       nodeOffsetTop: 600,
     });
 
-    scrollToUserMessage("turn-1", "item-1");
+    scrollToUserMessage("turn-1", "item-1", { scope: jumpScope(container) });
     expect(node.classList.contains("user-message-jump-flash")).toBe(true);
     settleJump();
 
@@ -201,7 +205,7 @@ describe("scrollToUserMessage", () => {
       nodeOffsetTop: 600,
     });
 
-    scrollToUserMessage("turn-1", "item-1", { highlight: false });
+    scrollToUserMessage("turn-1", "item-1", { highlight: false, scope: jumpScope(container) });
     settleJump();
 
     expect(container.scrollTop).toBe(600 - 64);
@@ -218,7 +222,7 @@ describe("scrollToUserMessage", () => {
       nodeOffsetTop: 700,
     });
 
-    scrollToUserMessage("turn-1", "item-1");
+    scrollToUserMessage("turn-1", "item-1", { scope: jumpScope(container) });
     expect(node.classList.contains("user-message-jump-flash")).toBe(true);
     settleJump();
 
@@ -235,7 +239,7 @@ describe("scrollToUserMessage", () => {
       nodeOffsetTop: 1600,
     });
 
-    scrollToUserMessage("turn-1", "item-1");
+    scrollToUserMessage("turn-1", "item-1", { scope: jumpScope(container) });
     settleJump();
 
     expect(container.scrollTop).toBe(800);
@@ -255,7 +259,7 @@ describe("scrollToUserMessage", () => {
     );
     existing?.remove();
 
-    scrollToUserMessage("turn-1", "item-1");
+    scrollToUserMessage("turn-1", "item-1", { scope: jumpScope(container) });
 
     expect(container.scrollTop).toBe(0);
 
@@ -286,11 +290,79 @@ describe("scrollToUserMessage", () => {
     expect(container.scrollTop).toBe(600 - 64);
   });
 
+  it("does not let an outgoing hidden pane's delayed anchor scroll the shared viewport", async () => {
+    const { container, node } = mountAnchor({ variant: "scroll-region", containerHeight: 800, containerScrollHeight: 1800, nodeOffsetTop: 600 });
+    const pane = document.createElement("div"); container.appendChild(pane); pane.appendChild(node); node.remove();
+    let current = true;
+    scrollToUserMessage("turn-1", "item-1", { scope: { viewport: container, content: pane, isCurrent: () => current } });
+    current = false; pane.setAttribute("aria-hidden", "true"); pane.appendChild(node); container.scrollTop = 700;
+    await vi.runAllTimersAsync();
+    expect(container.scrollTop).toBe(700);
+  });
+
+  it("cancels a jump retry even when the same pane becomes current again", async () => {
+    const { container, node } = mountAnchor({ variant: "scroll-region", containerHeight: 800, containerScrollHeight: 1800, nodeOffsetTop: 600 });
+    node.remove();
+    const cancel = scrollToUserMessage("turn-1", "item-1", { scope: { viewport: container, content: container, isCurrent: () => true } });
+    cancel(); container.appendChild(node); container.scrollTop = 700;
+    await vi.runAllTimersAsync();
+    expect(container.scrollTop).toBe(700);
+  });
+
   it("does nothing when no anchor exists and retries are exhausted", async () => {
     // No DOM at all — the helper should give up silently.
-    scrollToUserMessage("missing", "missing");
+    scrollToUserMessage("missing", "missing", { scope: jumpScope(document.createElement("div")) });
     await vi.runAllTimersAsync();
     expect(document.body.innerHTML).toBe("");
+  });
+});
+
+describe("scoped search message jumps", () => {
+  const item = { id: "answer-1", type: "agent_message" as const, text: "needle" };
+  it("reveals an assistant search target only inside the owning pane", () => {
+    const background = mountAnchor({ variant: "scroll-region", nodeOffsetTop: 500 });
+    const active = mountAnchor({ variant: "scroll-region", nodeOffsetTop: 700 });
+    for (const node of [background.node, active.node]) node.id = messageAnchorID("turn-1", item.id);
+    scrollToConversationMessage("turn-1", item, undefined, { scope: jumpScope(active.container) });
+    settleJump();
+    expect(background.container.scrollTop).toBe(0);
+    expect(active.container.scrollTop).toBe(636);
+  });
+
+  it("abandons the initial search reveal when its owner changes before layout", () => {
+    const { container, node } = mountAnchor({ variant: "scroll-region", nodeOffsetTop: 700 });
+    node.id = messageAnchorID("turn-1", item.id);
+    let current = true;
+    scrollToConversationMessage("turn-1", item, undefined, {
+      scope: { ...jumpScope(container), isCurrent: () => current },
+    });
+    current = false; container.scrollTop = 300;
+    settleJump();
+    expect(container.scrollTop).toBe(300);
+  });
+
+  it("lets a newer history jump cancel an older pending search reveal", () => {
+    const { container, node } = mountAnchor({ variant: "scroll-region", nodeOffsetTop: 700 });
+    scrollToConversationMessage("turn-1", item, undefined, { scope: jumpScope(container) });
+    scrollToUserMessage("turn-1", "item-1", { scope: jumpScope(container) });
+    const answer = document.createElement("div"); answer.id = messageAnchorID("turn-1", item.id);
+    answer.getBoundingClientRect = () => ({ ...node.getBoundingClientRect(), top: 100 });
+    container.appendChild(answer);
+    settleJump();
+    expect(container.scrollTop).toBe(636);
+  });
+
+  it("releases temporary turn layout when the scoped search jump is cancelled", () => {
+    const { container, node } = mountAnchor({ variant: "scroll-region", nodeOffsetTop: 700 });
+    const turn = document.createElement("div"); turn.className = "turn"; turn.style.contentVisibility = "auto";
+    container.appendChild(turn); turn.appendChild(node); node.id = messageAnchorID("turn-1", item.id);
+    const cancel = scrollToConversationMessage("turn-1", item, undefined, { scope: jumpScope(container) });
+    vi.advanceTimersByTime(1);
+    expect(turn.style.contentVisibility).toBe("visible");
+    cancel();
+    expect(turn.style.contentVisibility).toBe("auto");
+    const stoppedAt = container.scrollTop; settleJump();
+    expect(container.scrollTop).toBe(stoppedAt);
   });
 });
 

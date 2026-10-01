@@ -9,7 +9,8 @@ import {
   flushWindowResizeSettle,
   WINDOW_RESIZING_CLASS,
 } from "./WindowResizeState";
-import type { Turn } from "../shared/protocol";
+import type { Thread, ThreadItem, Turn } from "../shared/protocol";
+import { useConversationSearchNavigation } from "./ConversationSearchNavigation";
 
 function makeLongTurns(): Turn[] {
   return [
@@ -781,5 +782,148 @@ describe("useConversationScrollState — dock composer height", () => {
     flushResizeObserversFor(frame);
     await act(async () => { await new Promise(requestAnimationFrame); });
     expect(pane.style.getPropertyValue("--conversation-input-inset")).toBe("400px");
+  });
+});
+
+describe("split conversation scroll ownership", () => {
+  let host: HTMLDivElement;
+  let root: Root;
+  let current: ReturnType<typeof useConversationScrollState>;
+  let navigate: ReturnType<typeof useConversationSearchNavigation>;
+  let activation: Promise<void> | undefined;
+  let searchThread: Thread;
+  let remotePreview = false;
+  let completeItem: ThreadItem | undefined;
+  const layouts = new Map<string, StubbedLayout>();
+  const nodes = new Map<string, HTMLDivElement>();
+  const turns = makeLongTurns();
+  function SplitProbe({ pane }: { pane: "primary" | "secondary" }): ReactNode {
+    current = useConversationScrollState({
+      activeThreadID: pane === "primary" ? "thread-A" : "thread-B",
+      primaryThreadID: "thread-A", secondaryThreadID: "thread-B",
+      activePane: pane, splitConversation: true, primaryTurns: turns, secondaryTurns: turns,
+      emptyConversation: false, initialized: true, nativeScrollBounce: false,
+    });
+    searchThread = {
+      id: pane === "primary" ? "thread-A" : "thread-B", title: "Search", preview: "", cwd: "/fixture",
+      status: "idle", model_provider: "fixture", model: "fixture", created_at: "", updated_at: "",
+      turns: [{ id: "late-turn", status: "completed", items_view: "full", items: [completeItem ?? {
+        id: "late-item", type: "agent_message", seq: 7, text: "needle",
+        remote_content_ref: remotePreview ? "remote:answer" : undefined,
+      }] }],
+    };
+    navigate = useConversationSearchNavigation({
+      thread: searchThread, switching: false, activateThread: () => activation ?? Promise.resolve(),
+      captureConversationScrollIntent: current.captureConversationScrollIntent,
+      jumpToConversationMessage: current.jumpToConversationMessage,
+      setAppState: () => {},
+    });
+    return createElement("div", null, ...(["primary", "secondary"] as const).map((id) => createElement("div", {
+      key: id, className: "conversation-split-body", "data-pane": id,
+      ref: (node: HTMLDivElement | null) => {
+        current.splitPaneRefs.current[id] = node;
+        if (node && !nodes.has(id)) {
+          nodes.set(id, node);
+          layouts.set(id, stubLayout(node, { scrollHeight: 2400, clientHeight: 400 }));
+        }
+      },
+      onScroll: (event: { currentTarget: HTMLElement }) => current.handleConversationScroll(event.currentTarget),
+    })));
+  }
+  const render = (pane: "primary" | "secondary") => act(() => root.render(createElement(SplitProbe, { pane })));
+  const scroll = (pane: string, top: number) => act(() => {
+    const node = nodes.get(pane)!; node.scrollTop = top; node.dispatchEvent(new Event("scroll"));
+  });
+  beforeEach(() => {
+    activation = undefined; remotePreview = false; completeItem = undefined;
+    host = document.createElement("div"); document.body.append(host); root = createRoot(host);
+  });
+  afterEach(() => {
+    act(() => root.unmount()); host.remove(); nodes.clear(); layouts.clear(); vi.restoreAllMocks(); vi.useRealTimers();
+    Reflect.deleteProperty(window, "wuu");
+  });
+  it("keeps inactive native layout clamping out of the active thread's follow state and restore snapshot", () => {
+    render("secondary"); act(() => current.disableConversationAutoFollow()); scroll("secondary", 1800);
+    render("primary"); act(() => current.disableConversationAutoFollow()); scroll("primary", 700);
+    layouts.get("secondary")!.scrollHeight = 1200;
+    scroll("secondary", 800);
+    expect(current.captureConversationScrollPosition()?.autoFollow).toBe(false);
+    render("secondary"); render("primary");
+    expect(nodes.get("primary")!.scrollTop).toBe(700);
+  });
+  it.each([
+    ["history", "switch-away-and-back"], ["history", "wheel-without-movement"],
+    ["search", "switch-away-and-back"], ["search", "wheel-without-movement"],
+  ])("cancels delayed %s jumps on %s", async (kind, interrupt) => {
+    vi.useFakeTimers();
+    render("primary"); act(() => current.disableConversationAutoFollow()); scroll("primary", 700);
+    act(() => {
+      if (kind === "search") current.jumpToConversationMessage("late-turn", { id: "late-item", type: "agent_message" });
+      else current.jumpToUserMessage("late-turn", "late-item");
+    });
+    if (interrupt === "switch-away-and-back") { render("secondary"); render("primary"); }
+    else act(() => nodes.get("primary")!.dispatchEvent(new WheelEvent("wheel", { deltaY: 1, bubbles: true })));
+    const anchor = document.createElement("div"); anchor.id = kind === "search" ? "message-late-turn-late-item" : "user-msg-late-turn-late-item";
+    anchor.getBoundingClientRect = () => ({ top: 0, left: 0, right: 20, bottom: 20, width: 20, height: 20, x: 0, y: 0, toJSON: () => ({}) });
+    nodes.get("primary")!.appendChild(anchor);
+    await act(async () => vi.runAllTimersAsync());
+    expect(nodes.get("primary")!.scrollTop).toBe(700);
+  });
+
+  it.each(["frame-gap", "activation-away-and-back", "hydration-input"])("keeps newer reading intent during a pending search: %s", async (interrupt) => {
+    vi.useFakeTimers();
+    let finishActivation: (() => void) | undefined;
+    let finishRead: ((item: ThreadItem) => void) | undefined;
+    if (interrupt === "activation-away-and-back") activation = new Promise<void>(resolve => { finishActivation = resolve; });
+    if (interrupt === "hydration-input") {
+      remotePreview = true;
+      window.wuu = { readRemoteItem: () => new Promise<ThreadItem>(resolve => { finishRead = resolve; }) } as unknown as typeof window.wuu;
+    }
+    render("primary"); act(() => current.disableConversationAutoFollow()); scroll("primary", 700);
+    const anchor = document.createElement("div"); anchor.id = "message-late-turn-late-item";
+    anchor.getBoundingClientRect = () => ({ top: 0, left: 0, right: 20, bottom: 20, width: 20, height: 20, x: 0, y: 0, toJSON: () => ({}) });
+    nodes.get("primary")!.appendChild(anchor);
+    await act(async () => navigate({ thread: searchThread, message_seq: 7, snippet: "needle" }, "needle"));
+    if (interrupt === "activation-away-and-back") {
+      render("secondary"); render("primary");
+      await act(async () => finishActivation!());
+    } else {
+      act(() => nodes.get("primary")!.dispatchEvent(new WheelEvent("wheel", { deltaY: 1, bubbles: true })));
+      if (interrupt === "hydration-input") {
+        completeItem = { id: "late-item", type: "agent_message", seq: 7, text: "needle" };
+        await act(async () => finishRead!(completeItem!));
+        render("primary");
+      }
+    }
+    await act(async () => vi.runAllTimersAsync());
+    expect(nodes.get("primary")!.scrollTop).toBe(700);
+  });
+
+  it("starts the search after its requested destination arrives without newer input", async () => {
+    vi.useFakeTimers();
+    let finishActivation!: () => void;
+    activation = new Promise<void>(resolve => { finishActivation = resolve; });
+    render("secondary"); act(() => current.disableConversationAutoFollow()); scroll("secondary", 700);
+    const destination = searchThread;
+    const anchor = document.createElement("div"); anchor.id = "message-late-turn-late-item";
+    anchor.getBoundingClientRect = () => ({ top: 0, left: 0, right: 20, bottom: 20, width: 20, height: 20, x: 0, y: 0, toJSON: () => ({}) });
+    nodes.get("secondary")!.appendChild(anchor);
+    render("primary");
+    await act(async () => navigate({ thread: destination, message_seq: 7, snippet: "needle" }, "needle"));
+    render("secondary");
+    await act(async () => finishActivation());
+    await act(async () => vi.runAllTimersAsync());
+    expect(nodes.get("secondary")!.scrollTop).toBe(636);
+  });
+
+  it("retains a reader's wheel movement over an inactive pane without changing the active pane", () => {
+    render("secondary"); render("primary");
+    act(() => current.disableConversationAutoFollow()); scroll("primary", 700);
+    act(() => nodes.get("secondary")!.dispatchEvent(new WheelEvent("wheel", { deltaY: -100, bubbles: true })));
+    scroll("secondary", 1700);
+    expect(nodes.get("primary")!.scrollTop).toBe(700);
+    render("secondary");
+    expect(nodes.get("secondary")!.scrollTop).toBe(1700);
+    expect(current.captureConversationScrollPosition()?.autoFollow).toBe(false);
   });
 });

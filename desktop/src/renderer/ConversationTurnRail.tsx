@@ -105,8 +105,7 @@ export function ConversationTurnRail({
   scrollContainerRef,
   getScrollContainer,
   maxVisibleTurns = CONVERSATION_TURN_RAIL_VISIBLE_LIMIT,
-  onWheelScrollAway,
-  onDragScrollAway,
+  onUserScroll,
   onSelectQueryHistory,
 }: {
   turns: Turn[];
@@ -114,8 +113,7 @@ export function ConversationTurnRail({
   scrollContainerRef?: RefObject<HTMLElement | null>;
   getScrollContainer?: () => HTMLElement | null;
   maxVisibleTurns?: number;
-  onWheelScrollAway?: () => void;
-  onDragScrollAway?: () => void;
+  onUserScroll?: (direction: "away" | "latest") => void;
   onSelectQueryHistory: (entry: QueryHistoryEntry) => void;
 }): JSX.Element | null {
   const { t, formatNumber } = useI18n();
@@ -405,9 +403,7 @@ export function ConversationTurnRail({
       }
 
       const previousScrollTop = scrollNode.scrollTop;
-      if (deltaY < 0 && previousScrollTop > 0) {
-        onWheelScrollAway?.();
-      }
+      onUserScroll?.(deltaY < 0 ? "away" : "latest");
       scrollNode.scrollTop = previousScrollTop + deltaY;
       syncConversationRenderWindow(scrollNode);
       if (scrollNode.scrollTop !== previousScrollTop) {
@@ -417,7 +413,7 @@ export function ConversationTurnRail({
 
     container.addEventListener("wheel", handleWheel, { passive: false });
     return () => container.removeEventListener("wheel", handleWheel);
-  }, [onWheelScrollAway, resolveScrollContainer]);
+  }, [onUserScroll, resolveScrollContainer]);
 
   // Press-and-drag scrolling: the user presses anywhere on the rail, then
   // moves the mouse up/down. We translate vertical pointer movement into a
@@ -486,6 +482,7 @@ export function ConversationTurnRail({
       // the hover state, and the highlight then follows the pointer as
       // we translate the drag into scrollTop changes.
       setDraggingTurnID(closestTurnIDAt(pointerY(event)));
+      onUserScroll?.("away");
       if (event.clientY < railRect.top || event.clientY > railRect.bottom) {
         const ratio = Math.min(
           1,
@@ -498,9 +495,7 @@ export function ConversationTurnRail({
         // have shifted under a stationary mouse).
         setDraggingTurnID(closestTurnIDAt(pointerY(event)));
       }
-      if (event.clientY > railRect.top + railRect.height / 2) {
-        onDragScrollAway?.();
-      }
+
     }
 
     function handlePointerMove(event: PointerEvent): void {
@@ -519,6 +514,7 @@ export function ConversationTurnRail({
         drag.maxScrollTop,
       );
       if (scrollNode.scrollTop !== nextScrollTop) {
+        onUserScroll?.(nextScrollTop < scrollNode.scrollTop ? "away" : "latest");
         scrollNode.scrollTop = nextScrollTop;
         syncConversationRenderWindow(scrollNode);
         drag.moved = true;
@@ -559,7 +555,7 @@ export function ConversationTurnRail({
       window.removeEventListener("pointerup", endDrag);
       window.removeEventListener("pointercancel", endDrag);
     };
-  }, [onDragScrollAway, resolveScrollContainer]);
+  }, [onUserScroll, resolveScrollContainer]);
 
   // Click a bar through the same query-history selection path used by
   // the docked environment-panel list. That parent path disables
