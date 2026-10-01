@@ -25,6 +25,7 @@ type runTracker struct {
 	retries         int
 	interruptStatus execution.Status
 	control         *session.Control
+	controlBaseline *session.Control
 	schemaRetry     *executionSchemaRetry
 }
 
@@ -94,10 +95,14 @@ func (s *Server) handleRunStart(ctx context.Context, req Request) error {
 	// Preserve its original control revision rather than accepting a newer fence
 	// after a capacity wait or an intervening user stop.
 	var retryControl *session.Control
+	controlBaseline := session.Control{SessionID: params.ThreadID}
 	if control, found, err := session.ReadControl(s.rt.SessionDir, params.ThreadID); err != nil {
 		return s.writeRunError(req.ID, "internal_error", err)
-	} else if found && control.State == session.ControlActive {
-		retryControl = &control
+	} else if found {
+		controlBaseline = control
+		if control.State == session.ControlActive {
+			retryControl = &control
+		}
 	}
 
 	params.Request.HasPrompt = params.Prompt != ""
@@ -164,6 +169,7 @@ func (s *Server) handleRunStart(ctx context.Context, req Request) error {
 	s.runMu.Lock()
 	if tracker := s.runs[run.ID]; tracker != nil {
 		tracker.control = retryControl
+		tracker.controlBaseline = &controlBaseline
 	}
 	s.runMu.Unlock()
 	started.runtime.Control = retryControl
@@ -445,6 +451,9 @@ func (s *Server) startExecutionSchemaRetry(ctx context.Context, th *threadState,
 	if snapshot.Control == nil {
 		snapshot.Control = s.executionRunControl(snapshot.ExecutionRunID)
 	}
+	if snapshot.ExecutionControlBaseline == nil {
+		snapshot.ExecutionControlBaseline = s.executionRunControlBaseline(snapshot.ExecutionRunID)
+	}
 	if err := s.validateExecutionSchemaRetry(snapshot); err != nil {
 		return err
 	}
@@ -503,6 +512,15 @@ func (s *Server) executionRunControl(runID string) *session.Control {
 	return nil
 }
 
+func (s *Server) executionRunControlBaseline(runID string) *session.Control {
+	s.runMu.Lock()
+	defer s.runMu.Unlock()
+	if tracker := s.runs[runID]; tracker != nil {
+		return tracker.controlBaseline
+	}
+	return nil
+}
+
 func (s *Server) validateExecutionSchemaRetry(snapshot turnRuntimeSnapshot) error {
 	if s.closed.Load() {
 		return errServerClosed
@@ -521,6 +539,11 @@ func (s *Server) validateExecutionSchemaRetry(snapshot turnRuntimeSnapshot) erro
 	}
 	if snapshot.Control != nil {
 		if err := session.ValidateControl(s.rt.SessionDir, *snapshot.Control); err != nil {
+			return err
+		}
+	}
+	if baseline := snapshot.ExecutionControlBaseline; baseline != nil {
+		if err := session.ValidateContinuationControl(s.rt.SessionDir, *baseline); err != nil {
 			return err
 		}
 	}
@@ -553,19 +576,8 @@ func (s *Server) startOrDeferExecutionSchemaRetry(ctx context.Context, th *threa
 	if snapshot.Control == nil {
 		snapshot.Control = s.executionRunControl(snapshot.ExecutionRunID)
 	}
-	if snapshot.Control == nil {
-		// Adoption can happen while an ordinary Run is already executing. Its
-		// first capacity deferral begins using the member's current fence.
-		control, found, err := session.ReadControl(s.rt.SessionDir, th.ID)
-		if err != nil {
-			return err
-		}
-		if found {
-			if control.State != session.ControlActive {
-				return session.ErrControlChanged
-			}
-			snapshot.Control = &control
-		}
+	if snapshot.ExecutionControlBaseline == nil {
+		snapshot.ExecutionControlBaseline = s.executionRunControlBaseline(snapshot.ExecutionRunID)
 	}
 	if err := s.validateExecutionSchemaRetry(snapshot); err != nil {
 		return err

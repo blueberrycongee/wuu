@@ -117,3 +117,29 @@ func ValidateControl(dir string, expected Control) error {
 	}
 	return nil
 }
+
+// ValidateContinuationControl fences automatic continuation of an explicit Run.
+// Unlike manager instructions, the Run may start without active control. It may
+// cross one adoption from absent/released control, but never a later revision.
+func ValidateContinuationControl(dir string, baseline Control) error {
+	current, found, err := ReadControl(dir, baseline.SessionID)
+	if err != nil {
+		return err
+	}
+	if !found {
+		current = Control{SessionID: baseline.SessionID}
+	}
+	return validateContinuationBaseline(current, baseline)
+}
+
+func validateContinuationBaseline(current, baseline Control) error {
+	if current == baseline {
+		return nil
+	}
+	if (baseline.State == "" || baseline.State == ControlReleased) &&
+		current.SessionID == baseline.SessionID && current.State == ControlActive &&
+		current.Revision == baseline.Revision+1 {
+		return nil
+	}
+	return ErrControlChanged
+}

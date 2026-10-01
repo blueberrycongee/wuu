@@ -931,6 +931,16 @@ func AppendHistoryRecordReturningSeq(sessDir, id string, rec HistoryRecord) (int
 // AppendControlledHistoryRecord atomically fences automatic input against a
 // control change. An accepted input cannot appear after a committed takeover.
 func AppendControlledHistoryRecord(sessDir, id string, rec HistoryRecord, control *Control) (int, error) {
+	return appendFencedHistoryRecord(sessDir, id, rec, control, nil)
+}
+
+// AppendContinuationHistoryRecord checks a Run's original control baseline in
+// the history transaction, including adoption or stop during admission hooks.
+func AppendContinuationHistoryRecord(sessDir, id string, rec HistoryRecord, control *Control, baseline Control) (int, error) {
+	return appendFencedHistoryRecord(sessDir, id, rec, control, &baseline)
+}
+
+func appendFencedHistoryRecord(sessDir, id string, rec HistoryRecord, control, baseline *Control) (int, error) {
 	db, err := openStore(sessDir)
 	if err != nil {
 		return 0, err
@@ -958,6 +968,19 @@ func AppendControlledHistoryRecord(sessDir, id string, rec HistoryRecord, contro
 		}
 		if control.SessionID != id || manager != control.ManagerID || revision != control.Revision || state != ControlActive {
 			return 0, ErrControlChanged
+		}
+	}
+	if baseline != nil {
+		if baseline.SessionID != id {
+			return 0, ErrControlChanged
+		}
+		current := Control{SessionID: id}
+		err := tx.QueryRow(`SELECT manager_id,revision,state FROM session_controls WHERE session_id=?`, id).Scan(&current.ManagerID, &current.Revision, &current.State)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return 0, err
+		}
+		if err := validateContinuationBaseline(current, *baseline); err != nil {
+			return 0, err
 		}
 	}
 	if rec.Role == "user" && rec.ClientID != "" {

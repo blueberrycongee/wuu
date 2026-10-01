@@ -132,6 +132,9 @@ type turnRuntimeSnapshot struct {
 	ExecutionRunID           string
 	PluginTurn               *pluginTurnReference
 	Control                  *session.Control
+	// ExecutionControlBaseline retains the explicit Run admission fence even
+	// when the conversation had no manager before its later adoption.
+	ExecutionControlBaseline *session.Control
 	RequestContext           []agent.ContextSegment
 	ActiveDocument           *ActiveDocument
 }
@@ -3753,7 +3756,7 @@ func (s *Server) startThreadUserTurnWithAdmission(ctx context.Context, th *threa
 		}
 	}
 	if th.PersistHistory && !userAlreadyPersisted {
-		seq, err := appendControlledChatMessage(s.rt.SessionDir, th.ID, userMsg, snapshot.Control)
+		seq, err := appendControlledChatMessage(s.rt.SessionDir, th.ID, userMsg, snapshot.Control, snapshot.ExecutionControlBaseline)
 		if err != nil {
 			th.releaseThreadExecutionLeaseLocked()
 			th.mu.Unlock()

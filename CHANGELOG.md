@@ -128,6 +128,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Honor remote stops before the first structured-output correction when an
+  ordinary Run is adopted into a project, including stops during admission.
+
 - Wait for confirmed Git status before automatically opening workspace info,
   avoiding a brief panel expansion and collapse in non-Git folders.
 
