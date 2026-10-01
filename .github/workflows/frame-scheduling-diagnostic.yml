@@ -1,0 +1,56 @@
+name: Frame scheduling diagnostic
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [perf/ci-frame-scheduling-20261001]
+    paths:
+      - desktop/scripts/frame-scheduling-diagnostic.cjs
+      - .github/workflows/frame-scheduling-diagnostic.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: frame-scheduling-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  diagnose:
+    name: Compare native window visibility
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      - name: Install locked Electron dependencies
+        run: npm ci --prefix desktop
+
+      - name: Record hidden and shown frame scheduling
+        shell: bash
+        env:
+          WUU_FRAME_DIAGNOSTIC_OUTPUT: ${{ runner.temp }}/wuu-frame-scheduling
+        run: |
+          mkdir -p "$WUU_FRAME_DIAGNOSTIC_OUTPUT"
+          export WUU_FRAME_DIAGNOSTIC_COMMIT="$(git rev-parse HEAD)"
+          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/frame-scheduling-diagnostic.cjs 2>&1 | tee "$WUU_FRAME_DIAGNOSTIC_OUTPUT/run.log"
+
+      - name: Upload frame scheduling evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frame-scheduling-evidence
+          path: |
+            ${{ runner.temp }}/wuu-frame-scheduling/*.json
+            ${{ runner.temp }}/wuu-frame-scheduling/*.log
+            ${{ runner.temp }}/wuu-frame-scheduling/*.txt
+          retention-days: 14
+          if-no-files-found: ignore
