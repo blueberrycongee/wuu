@@ -1002,18 +1002,24 @@ func TestManagerUnsubscribeStopsLifecycleDelivery(t *testing.T) {
 	m.Subscribe(events)
 	m.Unsubscribe(events)
 
-	if _, err := m.Start(context.Background(), StartOptions{
+	// Observe completion separately so registry writes finish before TempDir cleanup.
+	completed := make(chan Event, 4)
+	m.Subscribe(completed)
+	defer m.Unsubscribe(completed)
+	started, err := m.Start(context.Background(), StartOptions{
 		Command:   "exit 0",
 		OwnerKind: OwnerMainAgent,
 		OwnerID:   "main",
 		Lifecycle: LifecycleManaged,
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
+	waitForProcessEvent(t, completed, started.ID, EventStopped, EventCauseNaturalExit)
 	select {
 	case event := <-events:
 		t.Fatalf("received event after unsubscribe: %+v", event)
-	case <-time.After(200 * time.Millisecond):
+	default:
 	}
 }
 

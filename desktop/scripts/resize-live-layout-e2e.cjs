@@ -16,7 +16,7 @@ const publicTokens = [...new Set([...fs.readFileSync(path.join(desktopRoot, "src
   .matchAll(/"(--(?:wuu|hljs)-[a-z0-9-]+)"/g)].map(match => match[1]))];
 assert.ok(publicTokens.length > 0 && publicTokens.includes("--wuu-color-link") && publicTokens.some(name => name.startsWith("--hljs-")), "generated public theme and syntax token lists are loaded");
 const tokenNames = publicTokens.concat(["--font-ui", "--font-body", "--font-code", "--space-1", "--space-2", "--space-4", "--conversation-message-font-size", "--conversation-reading-line-height"]);
-const result = { renderer, scriptSha256: crypto.createHash("sha256").update(fs.readFileSync(__filename)).digest("hex"), publicTokenCount: publicTokens.length, cases: [], motions: [], checks: [], errors: [] };
+const result = { mode: process.env.WUU_RESIZE_DIAGNOSTIC === "panels" ? "panel-diagnostic" : "correctness", renderer, scriptSha256: crypto.createHash("sha256").update(fs.readFileSync(__filename)).digest("hex"), publicTokenCount: publicTokens.length, cases: [], motions: [], checks: [], errors: [] };
 const userData = fs.mkdtempSync(path.join(os.tmpdir(), "wuu-resize-live-"));
 app.setPath("userData", userData);
 process.env.WUU_RESIZE_E2E_CWD = repoRoot;
@@ -75,23 +75,80 @@ async function snapshot(name) {
   result.cases.push({ name, ...snapshot });
   save();
 }
-async function drag(selector, delta) {
-  await evaluate(async ({ selector, delta }) => {
+async function drag(selector, delta, steps = 40, interval = 16) {
+  await evaluate(async ({ selector, delta, steps, interval }) => {
     const handle = document.querySelector(selector);
     if (!handle) throw new Error(`Missing ${selector}`);
     const box = handle.getBoundingClientRect();
     const x = box.left + box.width / 2;
     handle.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, button: 0, clientX: x, pointerId: 13 }));
     await new Promise(requestAnimationFrame);
-    for (let i = 0; i <= 40; i++) {
-      const fraction = i <= 20 ? i / 20 : (40 - i) / 20;
+    for (let i = 0; i <= steps; i++) {
+      const fraction = i <= steps / 2 ? i / (steps / 2) : (steps - i) / (steps / 2);
       window.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, button: 0, clientX: x + delta * fraction, pointerId: 13 }));
-      await new Promise(resolve => setTimeout(resolve, 16));
+      await new Promise(resolve => setTimeout(resolve, interval));
     }
     await new Promise(requestAnimationFrame);
     window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, button: 0, clientX: x, pointerId: 13 }));
-  }, { selector, delta });
+  }, { selector, delta, steps, interval });
 }
+// Opt-in diagnostic, separate from the per-frame geometry correctness probe.
+// It records work and frame opportunities, not physical presentation latency.
+async function panelDiagnostic() {
+  result.diagnostic = { inputSteps: 81, inputIntervalMs: 12, cpuProfile: false, perFrameGeometryReads: false, panels: [] };
+  win.webContents.debugger.attach("1.3");
+  await win.webContents.debugger.sendCommand("Performance.enable");
+  const metrics = async () => Object.fromEntries((await win.webContents.debugger.sendCommand("Performance.getMetrics")).metrics.map(metric => [metric.name, metric.value]));
+  async function measure(name, selector, delta, property) {
+    await settle();
+    const beforeGeometry = await geometry();
+    await evaluate(property => {
+      const shell = document.querySelector(".app-shell");
+      const probe = { frames: [], widthStyleChanges: 0 };
+      let previousWidth = shell.style.getPropertyValue(property), previousTime;
+      probe.observer = new MutationObserver(() => {
+        // Inline style reads do not request computed style or layout.
+        const width = shell.style.getPropertyValue(property);
+        if (width !== previousWidth) { probe.widthStyleChanges++; previousWidth = width; }
+      });
+      probe.observer.observe(shell, { attributes: true, attributeFilter: ["style"] });
+      const sample = now => {
+        if (previousTime !== undefined) probe.frames.push({ dt: now - previousTime, dragging: document.documentElement.classList.contains("window-resizing") });
+        previousTime = now;
+        probe.raf = requestAnimationFrame(sample);
+      };
+      probe.raf = requestAnimationFrame(sample);
+      window.__resizePanelDiagnostic = probe;
+    }, property);
+    const before = await metrics();
+    const start = performance.now();
+    await drag(selector, delta, 80, 12);
+    const actionDurationMs = performance.now() - start;
+    await delay(350);
+    const after = await metrics();
+    const observations = await evaluate(() => {
+      const probe = window.__resizePanelDiagnostic;
+      cancelAnimationFrame(probe.raf);
+      probe.observer.disconnect();
+      delete window.__resizePanelDiagnostic;
+      return { frames: probe.frames, widthStyleChanges: probe.widthStyleChanges };
+    });
+    const counters = Object.fromEntries(["LayoutCount", "RecalcStyleCount", "LayoutDuration", "RecalcStyleDuration", "ScriptDuration", "TaskDuration"].map(name => [name, after[name] - before[name]]));
+    const afterGeometry = await geometry();
+    assert.ok(Math.abs(afterGeometry.top - beforeGeometry.top) <= 2, `${name}: round trip preserves endpoint`);
+    result.diagnostic.panels.push({ name, actionDurationMs, ...counters, ...observations, beforeGeometry, afterGeometry });
+    save();
+  }
+  await measure("left-empty", ".sidebar-resizer", 190, "--sidebar-width");
+  await click(".title-actions .side-panel-toggle-button");
+  await until(() => document.querySelector(".workspace-right-panel-resizer"), "right panel");
+  await measure("right-empty", ".workspace-right-panel-resizer", -140, "--workspace-right-panel-width");
+  assert.deepEqual(result.errors, [], "no renderer errors");
+  result.passed = true;
+  save();
+  console.log(JSON.stringify(result.diagnostic));
+}
+
 async function motion(name, action, requireDragging = true) {
   phase = name;
   await settle();
@@ -248,24 +305,57 @@ async function streamAndSubmission() {
       offset: message.getBoundingClientRect().top - viewport.getBoundingClientRect().top,
       scrollTop: viewport.scrollTop, scrollHeight: viewport.scrollHeight,
       owner: viewport.style.overflowAnchor,
-      placing: !!viewport.querySelector(".scroll-region-content[data-submit-placing]")
+      placing: !!viewport.querySelector(".scroll-region-content[data-submit-placing]"),
+      glide: document.documentElement.hasAttribute("data-submit-glide")
     };
   });
   save();
   assert.equal(result.submissionBeforeResize.submittedMessageCount, 1, "one accepted submission is rendered");
   assert.equal(result.submissionBeforeResize.turnOrder.at(-1), "resize-submitted-turn-1", "accepted submission is the latest turn");
   await drag(".workspace-right-panel-resizer", -140);
-  await until(() => !document.querySelector(".scroll-region-content[data-submit-placing]"), "placement completes");
+  // The content attribute clears early to reveal status; the root flag owns the full glide.
+  await until(() => !document.documentElement.hasAttribute("data-submit-glide"), "submission glide completes");
   await settle();
   async function submittedGeometry() {
     return evaluate(() => {
       const viewport = document.querySelector(".conversation-pane>.scroll-region");
       const message = document.querySelector('[data-user-message-id="resize-submitted-user-1"]');
       const box = viewport.getBoundingClientRect(), rect = message.getBoundingClientRect();
-      return { offset: rect.top - box.top, bottom: rect.bottom - box.top, height: box.height, owner: viewport.style.overflowAnchor };
+      const content = viewport.querySelector(".scroll-region-content");
+      const paddingBottom = Number.parseFloat(content.style.paddingBottom) || 0;
+      const paddingTop = Number.parseFloat(content.style.paddingTop) || 0;
+      const contentHeight = content.getBoundingClientRect().height;
+      return {
+        offset: rect.top - box.top, bottom: rect.bottom - box.top, height: box.height,
+        scrollTop: viewport.scrollTop, scrollHeight: viewport.scrollHeight,
+        documentTop: viewport.scrollTop + rect.top - box.top,
+        contentHeight, paddingBottom, paddingTop, naturalHeight: contentHeight - paddingBottom - paddingTop,
+        owner: viewport.style.overflowAnchor, glide: document.documentElement.hasAttribute("data-submit-glide")
+      };
     });
   }
-  const held = await submittedGeometry();
+  async function stableSubmittedGeometry(name) {
+    const samples = [];
+    let stableFrames = 0;
+    for (let index = 0; index < 180; index++) {
+      await frames();
+      const current = await submittedGeometry();
+      const previous = samples.at(-1);
+      samples.push(current);
+      const stable = previous && !current.glide && ["offset", "scrollTop", "naturalHeight", "paddingBottom"]
+        .every(key => Math.abs(current[key] - previous[key]) <= 0.25);
+      stableFrames = stable ? stableFrames + 1 : 0;
+      if (stableFrames >= 4) {
+        result[name] = samples;
+        save();
+        return current;
+      }
+    }
+    result[name] = samples;
+    save();
+    throw new Error("Submitted message geometry did not settle");
+  }
+  const held = await stableSubmittedGeometry("placementSettling");
   result.placementAttempt = held;
   save();
   assert.ok(held.offset >= -1 && held.bottom <= held.height + 1, "submitted query remains visible");
@@ -273,9 +363,13 @@ async function streamAndSubmission() {
   phase = "held query during short reply and resize";
   emit("item/started", { thread_id: identity.thread_id, turn_id: "resize-submitted-turn-1", item: { id: "resize-submitted-answer", type: "agent_message", status: "in_progress", text: "A short answer preserves the submitted question's reading position." } });
   await until(() => document.querySelector('[data-turn-id="resize-submitted-turn-1"]')?.textContent.includes("A short answer"), "short reply");
+  result.replyBeforeResize = await submittedGeometry();
+  save();
   await drag(".workspace-right-panel-resizer", -100);
   await settle();
-  const heldAfter = await submittedGeometry();
+  const heldAfter = await stableSubmittedGeometry("holdingSettling");
+  result.holdingAttempt = { before: held, after: heldAfter };
+  save();
   assert.ok(Math.abs(heldAfter.offset - held.offset) <= 2, "held query keeps its endpoint");
   check(phase, { before: held, after: heldAfter });
   emit("turn/completed", { thread_id: identity.thread_id, turn: {
@@ -303,6 +397,13 @@ app.whenReady().then(async () => {
   }));
   result.runtime = { display: screen.getPrimaryDisplay(), gpu: app.getGPUFeatureStatus(), zoom: win.webContents.getZoomFactor(), viewport: await evaluate(() => ({ width: innerWidth, height: innerHeight, ratio: devicePixelRatio, visibility: document.visibilityState })) };
   assert.ok(result.runtime.viewport.width >= 800 && result.runtime.viewport.height >= 600, "valid desktop viewport");
+  if (process.env.WUU_RESIZE_DIAGNOSTIC === "panels") {
+    await evaluate(() => document.fonts.ready);
+    await panelDiagnostic();
+    win.destroy();
+    app.quit();
+    return;
+  }
   for (const [width, font, theme] of [[1380, 14, "light"], [1100, 20, "dark"], [820, 20, "light"], [1380, 14, "dark"]]) {
     win.setContentSize(width, 860);
     await evaluate(({ font, theme }) => {
@@ -366,7 +467,10 @@ app.whenReady().then(async () => {
   await until(() => !document.querySelector(".conversation-split-pane"), "close split");
   await click(".title-actions .side-panel-toggle-button");
   await until(() => document.querySelector(".workspace-right-panel-resizer"), "restore browser panel");
-  await click('[data-wuu-tool="browser"]');
+  await until(() => document.querySelector(".workspace-browser-host") || document.querySelector('[data-wuu-tool="browser"]'), "restored browser or tool picker");
+  if (!await evaluate(() => Boolean(document.querySelector(".workspace-browser-host")))) {
+    await click('[data-wuu-tool="browser"]');
+  }
   await until(() => document.querySelector(".workspace-browser-host"), "restore browser host");
   await settle();
   await streamAndSubmission();

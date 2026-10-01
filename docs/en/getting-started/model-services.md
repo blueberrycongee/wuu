@@ -179,8 +179,9 @@ deletes a key and reports whether it existed. Mutating a loaded value does not
 change stored state until `store` is called again. Successful completion commits
 staged changes; errors, cancellation and resource-limit failures preserve the
 previous state. Completed tool effects are never rolled back or replayed.
-Identical programs may run again to advance checkpoints or poll external state;
-repeated-input protection still applies to the nested tools themselves.
+Identical programs and nested tool calls may run again to advance checkpoints,
+observe changed state, or retry a failed operation. Repetition alone does not
+block execution; each call still passes its normal permission and resource checks.
 
 State is explicitly stored, memory-only, and isolated by conversation, actor and
 workspace. Rebuilding the same conversation or changing its model retains that

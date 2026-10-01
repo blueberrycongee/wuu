@@ -41,7 +41,7 @@ func TestBashRunRecordsFullLogSHA256(t *testing.T) {
 	}
 }
 
-func TestBashRunAddsVerificationSummaryAndRepeatGuard(t *testing.T) {
+func TestBashRunAddsVerificationSummaryAndRetryEvidence(t *testing.T) {
 	root := t.TempDir()
 	mustWriteFile(t, filepath.Join(root, "go.mod"), "module example.com/bashverify\n\ngo 1.22\n")
 	mustWriteFile(t, filepath.Join(root, "fail_test.go"), `package bashverify
@@ -60,7 +60,7 @@ func TestBashVerificationFailure(t *testing.T) {
 		Name:      "bash",
 		Arguments: `{"command":"go test ./...","scope":"targeted","purpose":"verify bash summary"}`,
 	}
-	for i := 0; i < maxRepeatedRunTestFailures; i++ {
+	for i := 0; i < 3; i++ {
 		resp, err := executeEnvelope(kit, context.Background(), call)
 		if err != nil {
 			t.Fatalf("bash verification run %d: %v", i+1, err)
@@ -76,16 +76,11 @@ func TestBashVerificationFailure(t *testing.T) {
 			t.Fatalf("failing go test should not pass: %+v", parsed.Verification)
 		}
 		if !parsed.Verification.FailureSummary.Failed || !containsString(parsed.Verification.FailureSummary.FailingTests, "TestBashVerificationFailure") {
-			t.Fatalf("failure summary did not identify failing test: %+v", parsed.Verification.FailureSummary)
+			t.Fatalf("failure summary did not identify failing test: %+v\n%s", parsed.Verification.FailureSummary, resp)
 		}
-		if parsed.Verification.RepeatGuard["max_failed_runs_without_revision_change"] != float64(maxRepeatedRunTestFailures) {
-			t.Fatalf("verification repeat guard missing: %+v", parsed.Verification.RepeatGuard)
+		if parsed.Verification.RepeatGuard["previous_failed_runs"] != float64(i) {
+			t.Fatalf("verification failure history missing: %+v", parsed.Verification.RepeatGuard)
 		}
-	}
-
-	_, err := executeEnvelope(kit, context.Background(), call)
-	if err == nil || !strings.Contains(err.Error(), "bash blocked repeated failing verification command") {
-		t.Fatalf("expected bash verification repeat guard, got %v", err)
 	}
 }
 

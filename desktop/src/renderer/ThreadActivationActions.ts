@@ -6,7 +6,8 @@ import {
   ensureSessionTab,
   isThreadRunning,
   mergeListedThreads,
-  persistActiveSessionTabDraft,
+  persistComposerDrafts,
+  refreshComposerDrafts,
   reconcileResumedThreadTurns,
   requireThread,
   resolveThreadRuntimeContext,
@@ -19,6 +20,7 @@ import {
   upsertThread,
   type AppState,
   type ComposerDraftState,
+  type ComposerDraftSnapshot,
 } from "./AppState";
 import {
   loadRuntimeConfiguration as defaultLoadRuntimeConfiguration,
@@ -37,7 +39,7 @@ export type ThreadActivationActionsDeps = {
   setAppState: SetAppState;
   getActiveThreadID: () => string | undefined;
   getPendingViewSwitch: () => PendingViewSwitch | undefined;
-  getPrimaryComposerDraft: () => ComposerDraftState;
+  getComposerDraftSnapshot: () => ComposerDraftSnapshot;
   restorePrimaryComposerDraft: (draft: ComposerDraftState) => void;
   resetSplitComposerDrafts: () => void;
   getSidebarThreads: () => Thread[];
@@ -114,8 +116,8 @@ export function createThreadActivationActions(
       return;
     }
     
-    const outgoingDraft = deps.getPrimaryComposerDraft();
-    const targetDraft = sessionTabDraftForThread(currentState, threadID);
+    let outgoingDraft = deps.getComposerDraftSnapshot();
+    let targetDraft = sessionTabDraftForThread(persistComposerDrafts(currentState, outgoingDraft), threadID);
     const sourceContext = currentState.activeContext;
     const localThread = findKnownThread(threadID);
     const localThreadContext = localThread
@@ -131,7 +133,7 @@ export function createThreadActivationActions(
       deps.restorePrimaryComposerDraft(targetDraft);
       deps.resetSplitComposerDrafts();
       deps.setAppState((current) => {
-        const withDraft = persistActiveSessionTabDraft(current, outgoingDraft);
+        const withDraft = persistComposerDrafts(current, outgoingDraft);
         const optimisticThread =
           findKnownThread(threadID, withDraft) ?? localThread;
         return {
@@ -235,10 +237,12 @@ export function createThreadActivationActions(
       ) {
         return;
       }
+      outgoingDraft = refreshComposerDrafts(outgoingDraft, deps.getComposerDraftSnapshot());
+      targetDraft = sessionTabDraftForThread(persistComposerDrafts(deps.getAppState(), outgoingDraft), thread.id);
       deps.restorePrimaryComposerDraft(targetDraft);
       deps.resetSplitComposerDrafts();
       deps.setAppState((current) => {
-        const withDraft = persistActiveSessionTabDraft(current, outgoingDraft);
+        const withDraft = persistComposerDrafts(current, outgoingDraft);
         const reconciled = reconcileResumedThreadTurns(
           thread,
           current.threads.find((item) => item.id === thread.id),
@@ -275,8 +279,8 @@ export function createThreadActivationActions(
     threadID: string,
   ): Promise<void> {
     const currentState = deps.getAppState();
-    const outgoingDraft = deps.getPrimaryComposerDraft();
-    const targetDraft = sessionTabDraftForThread(currentState, threadID);
+    let outgoingDraft = deps.getComposerDraftSnapshot();
+    let targetDraft = sessionTabDraftForThread(persistComposerDrafts(currentState, outgoingDraft), threadID);
     const localThread = findKnownThread(threadID, currentState);
     const canSwitchInstantly =
       localThread !== undefined &&
@@ -292,7 +296,7 @@ export function createThreadActivationActions(
       deps.restorePrimaryComposerDraft(targetDraft);
       deps.resetSplitComposerDrafts();
       deps.setAppState((current) => {
-        const withDraft = persistActiveSessionTabDraft(current, outgoingDraft);
+        const withDraft = persistComposerDrafts(current, outgoingDraft);
         const optimisticThread = findKnownThread(threadID, withDraft) ?? localThread;
         return {
           ...withDraft,
@@ -332,15 +336,17 @@ export function createThreadActivationActions(
       }
       // An instant switch already restored the target draft. The user may have
       // edited it while initialization was pending, so do not restore it twice.
-      const resumedDraft = canSwitchInstantly ? deps.getPrimaryComposerDraft() : targetDraft;
       if (!canSwitchInstantly) {
+        outgoingDraft = refreshComposerDrafts(outgoingDraft, deps.getComposerDraftSnapshot());
+        targetDraft = sessionTabDraftForThread(persistComposerDrafts(deps.getAppState(), outgoingDraft), thread.id);
         deps.restorePrimaryComposerDraft(targetDraft);
         deps.resetSplitComposerDrafts();
       }
+      const resumedDraft = canSwitchInstantly ? deps.getComposerDraftSnapshot().activeDraft : targetDraft;
       deps.setAppState((current) => {
         const withDraft = canSwitchInstantly
           ? current
-          : persistActiveSessionTabDraft(current, outgoingDraft);
+          : persistComposerDrafts(current, outgoingDraft);
         const localThread = conversationPaneThreadsByID(
           current.threads,
           current.thread,
@@ -534,8 +540,8 @@ export function createThreadActivationActions(
       return;
     }
     
-    const outgoingDraft = deps.getPrimaryComposerDraft();
-    const targetDraft = sessionTabDraftForThread(currentState, agent.id);
+    let outgoingDraft = deps.getComposerDraftSnapshot();
+    let targetDraft = sessionTabDraftForThread(persistComposerDrafts(currentState, outgoingDraft), agent.id);
     const sourceContext = currentState.activeContext;
     const requestID = deps.beginViewSwitch("thread", agent.id);
     try {
@@ -549,10 +555,12 @@ export function createThreadActivationActions(
       ) {
         return;
       }
+      outgoingDraft = refreshComposerDrafts(outgoingDraft, deps.getComposerDraftSnapshot());
+      targetDraft = sessionTabDraftForThread(persistComposerDrafts(deps.getAppState(), outgoingDraft), thread.id);
       deps.restorePrimaryComposerDraft(targetDraft);
       deps.resetSplitComposerDrafts();
       deps.setAppState((current) => {
-        const withDraft = persistActiveSessionTabDraft(current, outgoingDraft);
+        const withDraft = persistComposerDrafts(current, outgoingDraft);
         const reconciled = reconcileResumedThreadTurns(
           thread,
           current.threads.find((item) => item.id === thread.id),

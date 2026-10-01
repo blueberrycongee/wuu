@@ -83,6 +83,12 @@ Linux 无界面 Electron 需要
 `--ozone-platform=headless --ozone-override-screen-size=1440,1000`，
 否则默认显示尺寸可能太小，无法形成有效的桌面视口。
 
+低探针面板诊断使用同一命令和产物选择参数，增加 `WUU_RESIZE_DIAGNOSTIC=panels`。
+它在空输入框场景中，分别以相同的 81 个输入步骤往返拖动左右侧栏，复用真实 resize
+处理器。JSON 包含 CDP style/layout 计数、动作耗时、rAF 间隔和观察到的 inline
+宽度变化；不逐帧读取几何尺寸、不注入 CSS、不做 CPU profile、不录屏，也不设置耗时门槛。
+在相同显示条件下顺序运行基线与候选，分别保存结果。此诊断模式独立于完整正确性门禁。
+
 ### 会话切换性能护栏
 
 安装依赖后构建核心与桌面，在图形桌面会话中运行真实 Electron/main/preload/Go 测试：

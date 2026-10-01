@@ -91,6 +91,15 @@ these instrumented layout checks with low-probe timing runs. Linux headless
 Electron needs `--ozone-platform=headless --ozone-override-screen-size=1440,1000`;
 otherwise the default display may be too small for a meaningful viewport.
 
+For a low-probe panel diagnostic, set `WUU_RESIZE_DIAGNOSTIC=panels` with the
+same command and artifact selectors. It reuses the real resize handlers for 81
+identical input steps per empty-composer left/right round trip. JSON includes
+CDP style/layout counters, action duration, rAF intervals, and observed inline
+width changes. It does not read per-frame geometry, inject CSS, profile CPU,
+record video, or enforce a latency threshold. Run baseline and candidate
+sequentially under the same display conditions, using separate output files;
+this mode is independent of the full correctness gate.
+
 ### Session switch performance guard
 
 After installing dependencies, build the core and desktop, then run the real

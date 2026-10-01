@@ -20,7 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 40
     env:
-      BASE_SHA: 68f6d8a2eea6337fd1086595044ea97b76a1bc24
+      BASE_SHA: 0498ccf59c92ae97583623630348620bb6e8f2f5
       GOMAXPROCS: '2'
       GOFLAGS: -p=2
     steps:
@@ -150,6 +150,28 @@ jobs:
           done
           # A smaller configured history is a separate functional control.
           for variant in baseline candidate; do run_startup "$variant" small 20 0; done
+
+      - name: Measure panel style work
+        if: ${{ always() && steps.builds.outcome == 'success' }}
+        shell: bash
+        run: |
+          run_panels() {
+            variant="$1"; label="$2"
+            tree="$GITHUB_WORKSPACE"
+            if [ "$variant" = baseline ]; then tree="$RUNNER_TEMP/wuu-performance-baseline"; fi
+            output="$RUNNER_TEMP/wuu-performance-evidence/panels-$variant-$label"
+            mkdir -p "$output"
+            WUU_RESIZE_DIAGNOSTIC=panels WUU_E2E_RENDERER="$tree/desktop/out/renderer/index.html" \
+            WUU_RESIZE_OUTPUT="$output/results.json" \
+              xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox \
+              desktop/scripts/resize-live-layout-e2e.cjs 2>&1 | tee "$output/run.log"
+          }
+          for variant in baseline candidate; do run_panels "$variant" warmup; done
+          repetition=0
+          for order in "baseline candidate" "candidate baseline" "baseline candidate"; do
+            repetition=$((repetition + 1))
+            for variant in $order; do run_panels "$variant" "$repetition"; done
+          done
 
       - name: Compare live resize layout
         if: ${{ always() && steps.builds.outcome == 'success' }}
