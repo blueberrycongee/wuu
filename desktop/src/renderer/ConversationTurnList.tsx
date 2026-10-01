@@ -288,19 +288,22 @@ export function ConversationTurnList({
     const handleRevealTurn = (event: Event): void => {
       const detail = (event as CustomEvent<ConversationTurnRevealDetail>).detail;
       const turnIndex = turns.findIndex((turn) => turn.id === detail?.turnID);
-      if (turnIndex < 0 || turnIndex >= visibleStartIndex) {
+      if (turnIndex < 0) {
         return;
       }
-      setTurnWindow({
-        threadID,
-        visibleCount: turns.length - turnIndex,
-        coldWindowed: turnWindow.coldWindowed,
-      });
+      if (detail.itemID) expandTurn(detail.turnID);
+      if (turnIndex < visibleStartIndex) {
+        setTurnWindow({
+          threadID,
+          visibleCount: turns.length - turnIndex,
+          coldWindowed: turnWindow.coldWindowed,
+        });
+      }
     };
     window.addEventListener(CONVERSATION_TURN_REVEAL_EVENT, handleRevealTurn);
     return () =>
       window.removeEventListener(CONVERSATION_TURN_REVEAL_EVENT, handleRevealTurn);
-  }, [threadID, turnWindow.coldWindowed, turns, visibleStartIndex]);
+  }, [expandTurn, threadID, turnWindow.coldWindowed, turns, visibleStartIndex]);
 
   useEffect(() => {
     // A failed page remains retryable on the next scroll; keep the error visible

@@ -199,7 +199,7 @@ it("browses uploads, read_file output and message images in display order withou
   // Earlier history mounts after the recent turn but belongs before it.
   renderConversations([uploadTurn, toolTurn]);
   act(() => {
-    const fold = container.querySelector<HTMLDetailsElement>(".turn-artifact-inline-list details")!;
+    const fold = container.querySelector<HTMLDetailsElement>(".turn-process-entry .process-surface-fold")!;
     fold.open = true; fold.dispatchEvent(new Event("toggle"));
   });
   const opener = container.querySelector<HTMLButtonElement>(".turn-artifact-inline-image button")!;
@@ -260,7 +260,7 @@ it("loads remote originals on navigation and ignores results after moving away",
   try {
     renderConversations([uploadTurn, remote, toolTurn]);
     act(() => {
-      const fold = container.querySelector<HTMLDetailsElement>(".turn-artifact-inline-list details")!;
+      const fold = container.querySelector<HTMLDetailsElement>(".turn-process-entry .process-surface-fold")!;
       fold.open = true; fold.dispatchEvent(new Event("toggle"));
     });
     expect(read).not.toHaveBeenCalled();

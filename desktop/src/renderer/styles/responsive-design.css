@@ -435,10 +435,6 @@
   margin-bottom: var(--dock-composer-height);
 }
 
-.app-shell.compact-navigation .conversation-turn-rail {
-  display: none;
-}
-
 @media (pointer: coarse) {
   /* Keep the desktop lockup: wordmark, then the bell. */
   .sidebar-brand {

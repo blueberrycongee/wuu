@@ -7353,8 +7353,8 @@ func TestServerThreadSearchMatchesHistoryAcrossWorkspaces(t *testing.T) {
 	}
 	msgs := parseOutput(t, out.String())
 	userResult := remarshal[ThreadSearchResult](t, responseByID(t, msgs, "1")["result"])
-	if len(userResult.Results) != 2 {
-		t.Fatalf("expected matches from both workspaces, got %+v", userResult.Results)
+	if len(userResult.Results) != 3 {
+		t.Fatalf("expected active and archived matches from both workspaces, got %+v", userResult.Results)
 	}
 	resultIDs := map[string]bool{}
 	for _, result := range userResult.Results {
@@ -7362,9 +7362,12 @@ func TestServerThreadSearchMatchesHistoryAcrossWorkspaces(t *testing.T) {
 		if !strings.Contains(result.Snippet, "delta-vector") {
 			t.Fatalf("expected user query snippet, got %q", result.Snippet)
 		}
+		if result.Thread.ID == archivedThread.ID && !result.Thread.Archived {
+			t.Fatal("expected archived search result to retain its archive status")
+		}
 	}
-	if !resultIDs[userThread.ID] || !resultIDs[otherThread.ID] {
-		t.Fatalf("expected user and other workspace threads, got %+v", userResult.Results)
+	if !resultIDs[userThread.ID] || !resultIDs[otherThread.ID] || !resultIDs[archivedThread.ID] {
+		t.Fatalf("expected user, archived, and other workspace threads, got %+v", userResult.Results)
 	}
 	assistantResult := remarshal[ThreadSearchResult](t, responseByID(t, msgs, "2")["result"])
 	if len(assistantResult.Results) != 1 || assistantResult.Results[0].Thread.ID != assistantThread.ID {

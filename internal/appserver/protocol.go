@@ -1715,6 +1715,8 @@ type ThreadSearchResult struct {
 type ThreadSearchResultItem struct {
 	Thread  Thread `json:"thread"`
 	Snippet string `json:"snippet,omitempty"`
+	// MessageSeq addresses the winning history message; omitted for title and empty-query matches.
+	MessageSeq int `json:"message_seq,omitempty"`
 }
 
 // ThreadPreviewParams asks the server to materialize the first N turns of a

@@ -49,7 +49,7 @@ export type TurnArtifact = Readonly<{
   delivered?: boolean;
 }>;
 
-export function collectTurnArtifacts(turn: Turn): readonly TurnArtifact[] {
+export function collectTurnArtifacts(turn: Pick<Turn, "items">): readonly TurnArtifact[] {
   const artifacts: TurnArtifact[] = [];
   const presented = new Map<string, string>();
   for (const item of turn.items) {
@@ -117,10 +117,12 @@ export function TurnInlineArtifactOutputs({
   artifacts,
   cwd,
   onOpenFile,
+  inspectionExpanded = false,
 }: {
   artifacts: readonly TurnArtifact[];
   cwd?: string;
   onOpenFile?: (path: string) => void;
+  inspectionExpanded?: boolean;
 }): JSX.Element | null {
   const [preview, setPreview] = useState<TurnArtifact>();
   // The image stream is visual output, not another tool-result inspector.
@@ -138,6 +140,7 @@ export function TurnInlineArtifactOutputs({
             onOpenFile={onOpenFile}
             onPreview={openPreview}
             variant="inline"
+            inspectionExpanded={inspectionExpanded}
           />
         ))}
       </div>
@@ -280,12 +283,14 @@ function ArtifactRenderer({
   onOpenFile,
   onPreview,
   variant,
+  inspectionExpanded = false,
 }: {
   artifact: TurnArtifact;
   cwd?: string;
   onOpenFile?: (path: string) => void;
   onPreview?: (artifact: TurnArtifact) => void;
   variant: "inline" | "card";
+  inspectionExpanded?: boolean;
 }): JSX.Element {
   const { t } = useI18n();
   const [expanded, setExpanded] = useState(false);
@@ -328,7 +333,7 @@ function ArtifactRenderer({
       fallback={fallback}
     />
   );
-  if (variant === "inline" && artifact.foldPreview) {
+  if (variant === "inline" && artifact.foldPreview && !inspectionExpanded) {
     return (
       <div className="process-surface">
         <ProcessSurfaceFold

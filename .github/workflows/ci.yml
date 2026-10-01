@@ -102,7 +102,10 @@ jobs:
         run: make test-desktop
 
       - name: Build
-        run: make build-desktop
+        shell: bash
+        run: |
+          make build-desktop
+          find desktop/out/renderer -type f -print0 | sort -z | xargs -0 sha256sum > "${{ runner.temp }}/wuu-initial-renderer.sha256"
 
       - name: Guard titlebar rename interactions
         timeout-minutes: 3
@@ -125,6 +128,29 @@ jobs:
             ${{ runner.temp }}/wuu-titlebar-evidence/*.txt
           retention-days: 14
 
+      - name: Guard image inspection aggregation
+        timeout-minutes: 3
+        shell: bash
+        env:
+          WUU_ARTIFACT_E2E_ONLY: inspection
+          WUU_ARTIFACT_OUTPUT: ${{ runner.temp }}/wuu-image-inspection-evidence
+        run: |
+          mkdir -p "$WUU_ARTIFACT_OUTPUT"
+          set -o pipefail
+          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/artifact-preview-e2e.cjs 2>&1 | tee "$WUU_ARTIFACT_OUTPUT/run.log"
+
+      - name: Upload image inspection evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: image-inspection-evidence
+          path: |
+            ${{ runner.temp }}/wuu-image-inspection-evidence/*.json
+            ${{ runner.temp }}/wuu-image-inspection-evidence/*.png
+            ${{ runner.temp }}/wuu-image-inspection-evidence/*.log
+          if-no-files-found: ignore
+          retention-days: 14
+
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -145,6 +171,48 @@ jobs:
           mkdir -p "$WUU_FAST_OUTPUT"
           set -o pipefail
           xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/fast-mode-e2e.cjs 2>&1 | tee "$WUU_FAST_OUTPUT/run.log"
+
+      - name: Verify conversation search navigation
+        if: ${{ !cancelled() && steps.build-fixture-core.outcome == 'success' }}
+        timeout-minutes: 7
+        shell: bash
+        env:
+          WUU_SEARCH_OUTPUT: ${{ runner.temp }}/wuu-conversation-search-evidence
+          WUU_DESKTOP_CORE: ${{ runner.temp }}/wuu-session-switch-core
+        run: |
+          mkdir -p "$WUU_SEARCH_OUTPUT"
+          set -o pipefail
+          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/conversation-search-e2e.cjs 2>&1 | tee "$WUU_SEARCH_OUTPUT/process.log"
+
+      - name: Guard conversation history jump
+        if: ${{ !cancelled() && steps.build-fixture-core.outcome == 'success' }}
+        timeout-minutes: 3
+        shell: bash
+        env:
+          WUU_SCROLL_E2E_ONLY: history-jump
+          WUU_SCROLL_E2E_OUTPUT: ${{ runner.temp }}/wuu-conversation-history-jump-evidence
+        run: |
+          mkdir -p "$WUU_SCROLL_E2E_OUTPUT"
+          set -o pipefail
+          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/conversation-scroll-e2e.cjs 2>&1 | tee "$WUU_SCROLL_E2E_OUTPUT/run.log"
+
+      - name: Upload conversation history jump evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: conversation-history-jump-evidence
+          path: ${{ runner.temp }}/wuu-conversation-history-jump-evidence
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Upload conversation search evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: conversation-search-evidence
+          path: ${{ runner.temp }}/wuu-conversation-search-evidence
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Upload Fast mode evidence
         if: always()
@@ -214,7 +282,7 @@ jobs:
       - name: Guard image layout stability
         shell: bash
         env:
-          WUU_E2E_HIDDEN: "true"
+          # Keep native windows visible inside Xvfb so rAF checks use display cadence.
           WUU_IMAGE_LAYOUT_OUTPUT: ${{ runner.temp }}/wuu-image-layout-evidence
         run: |
           mkdir -p "$WUU_IMAGE_LAYOUT_OUTPUT"
@@ -265,9 +333,12 @@ jobs:
       - name: Verify programmatic tool settings
         shell: bash
         run: |
-          (cd desktop && ./node_modules/.bin/electron-vite build)
           mkdir -p desktop/out/e2e/ptc
+          cp "${{ runner.temp }}/wuu-initial-renderer.sha256" desktop/out/e2e/ptc/renderer-before.sha256
+          sha256sum --quiet --check desktop/out/e2e/ptc/renderer-before.sha256
           xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/ptc-settings-e2e.cjs 2>&1 | tee desktop/out/e2e/ptc/run.log
+          find desktop/out/renderer -type f -print0 | sort -z | xargs -0 sha256sum > desktop/out/e2e/ptc/renderer-after.sha256
+          cmp desktop/out/e2e/ptc/renderer-before.sha256 desktop/out/e2e/ptc/renderer-after.sha256
 
       - name: Upload programmatic tool settings evidence
         if: always()
@@ -278,6 +349,7 @@ jobs:
             desktop/out/e2e/ptc/*.png
             desktop/out/e2e/ptc/*.json
             desktop/out/e2e/ptc/*.log
+            desktop/out/e2e/ptc/*.sha256
           if-no-files-found: ignore
           retention-days: 14
 
@@ -357,6 +429,9 @@ jobs:
 
       - name: Test macOS process sandbox
         run: go test ./internal/processsandbox -count=1
+
+      - name: Test macOS PTY lifecycle
+        run: go test ./internal/process -run '^Test(PTY|ManagerTTY|StartTTY|WriteStdinToTTY)' -count=1
 
       - name: Test native helper
         run: make test-native

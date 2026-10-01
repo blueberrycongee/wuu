@@ -14,6 +14,7 @@ const desktop = path.resolve(__dirname, '..');
 const output = process.env.WUU_FAST_OUTPUT || path.join(desktop, 'out/fast-mode-e2e');
 fs.mkdirSync(output, { recursive: true });
 const layoutEvidence = [];
+let endpointCase;
 const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'wuu-fast-mode-'));
 const home = path.join(fixture, 'home');
 const project = path.join(fixture, 'project');
@@ -55,8 +56,27 @@ async function key(win, keyCode) {
   await evaluate(win, () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
 }
 async function capturePanel(win, name, fastSupported = true) {
-  await evaluate(win, () => Promise.all(document.querySelector('.runtime-panel').getAnimations({ subtree: true }).map(animation => animation.finished.catch(() => {}))));
-  await evaluate(win, () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  // An asynchronous runtime reply can cancel and replace a transition after
+  // getAnimations() was read. Recheck each frame instead of awaiting one snapshot.
+  await evaluate(win, () => new Promise((resolve, reject) => {
+    let frame;
+    let settledFrames = 0;
+    const timeout = setTimeout(() => {
+      cancelAnimationFrame(frame);
+      reject(new Error('Runtime panel animations did not settle'));
+    }, 30000);
+    const check = () => {
+      const panel = document.querySelector('.runtime-panel');
+      const active = panel?.getAnimations({ subtree: true }).some(animation => animation.pending || animation.playState === 'running');
+      settledFrames = panel && !active ? settledFrames + 1 : 0;
+      if (settledFrames >= 2) {
+        clearTimeout(timeout);
+        return resolve();
+      }
+      frame = requestAnimationFrame(check);
+    };
+    frame = requestAnimationFrame(check);
+  }));
   const state = await evaluate(win, () => {
     const panel = document.querySelector('.runtime-panel');
     const context = panel.querySelector('.runtime-panel-context');
@@ -246,6 +266,7 @@ async function run() {
       }, { theme, font });
       await openPanel(fastSupported);
       for (const endpoint of ['Home', 'End']) {
+        endpointCase = { fastSupported, theme, font, width, endpoint };
         await evaluate(main, () => document.querySelector('.codex-effort-slider input').focus());
         await key(main, endpoint);
         await waitFor(main, endpoint => {
@@ -328,6 +349,15 @@ async function run() {
 run().catch(async error => {
   console.error(error, 'FIXTURE', fixture);
   fs.writeFileSync(path.join(output, 'failure.txt'), String(error.stack));
-  if (main && !main.isDestroyed()) fs.writeFileSync(path.join(output, 'failure.png'), (await main.webContents.capturePage()).toPNG());
+  if (main && !main.isDestroyed()) {
+    const slider = await evaluate(main, () => {
+      const input = document.querySelector('.codex-effort-slider input');
+      return { value: input?.value, min: input?.min, max: input?.max, disabled: input?.disabled,
+        focused: document.activeElement === input, activeTag: document.activeElement?.tagName,
+        activeClass: document.activeElement?.className };
+    });
+    fs.writeFileSync(path.join(output, 'failure-state.json'), JSON.stringify({ endpointCase, slider }, null, 2));
+    fs.writeFileSync(path.join(output, 'failure.png'), (await main.webContents.capturePage()).toPNG());
+  }
   server.close(); app.exit(1);
 });

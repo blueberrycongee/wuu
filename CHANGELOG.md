@@ -32,6 +32,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Conversation search uses a single list with project labels and highlighted
+  matching excerpts. Message matches navigate to and briefly highlight their
+  history position. Keyword searches include archived conversations without
+  restoring them.
+
 - Group model-service discovery into subscriptions, direct providers, gateways,
   and local endpoints, with searchable catalogs and connection status. Keep
   saved connections and current model selection separate from discovery, with
@@ -104,6 +109,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   and the bell's first-run bubble became a mark-all-read action.
 
 ### Fixed
+
+- Keep image inspections in aggregated tool activity, with previews loaded on
+  expansion while explicitly presented images retain their output order.
 - Preserve the latest reasoning-effort choice during pending updates, keeping
   queued runtime changes with their original conversation and workspace.
 - Keep streaming cursor markers out of copied or selected unfinished backtick and tilde code blocks.
