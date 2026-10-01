@@ -33,8 +33,8 @@ jobs:
       - name: Check repository metadata
         run: make repository-check
 
-  go-check:
-    name: Go check
+  go-validation:
+    name: Go validation
     runs-on: ubuntu-latest
     env:
       WUU_TEST_DATABASE_URL: postgres://wuu:wuu_test@127.0.0.1:5432/wuu_test?sslmode=disable
@@ -67,12 +67,55 @@ jobs:
       - name: Test
         run: make test-go
 
-      - name: Test experimental Project Agent
-        run: go test -tags project_agent ./internal/appserver
-
       - name: Build
         if: github.event_name == 'push'
         run: make build-go
+
+  project-agent-check:
+    name: Project Agent check
+    runs-on: ubuntu-latest
+    env:
+      WUU_TEST_DATABASE_URL: postgres://wuu:wuu_test@127.0.0.1:5432/wuu_test?sslmode=disable
+    services:
+      postgres:
+        image: postgres:18-bookworm
+        env:
+          POSTGRES_USER: wuu
+          POSTGRES_PASSWORD: wuu_test
+          POSTGRES_DB: wuu_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U wuu -d wuu_test"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+
+      - name: Test experimental Project Agent
+        # Keep the entire suite: this tag changes shared recovery and lifecycle paths.
+        run: go test -tags project_agent ./internal/appserver
+
+  go-check:
+    name: Go check
+    runs-on: ubuntu-latest
+    needs: [go-validation, project-agent-check]
+    if: ${{ always() }}
+    steps:
+      - name: Require both Go suites
+        env:
+          GO_VALIDATION_RESULT: ${{ needs.go-validation.result }}
+          PROJECT_AGENT_RESULT: ${{ needs.project-agent-check.result }}
+        run: |
+          test "$GO_VALIDATION_RESULT" = success
+          test "$PROJECT_AGENT_RESULT" = success
 
   desktop-check:
     name: Desktop check
@@ -104,7 +147,9 @@ jobs:
       - name: Build
         shell: bash
         run: |
-          make build-desktop
+          # These fixtures keep phone access disabled. Clients check builds the
+          # Web shell; macOS/Windows packaging still builds its bundled copy.
+          (cd desktop && node_modules/.bin/electron-vite build)
           find desktop/out/renderer -type f -print0 | sort -z | xargs -0 sha256sum > "${{ runner.temp }}/wuu-initial-renderer.sha256"
 
       - name: Guard titlebar rename interactions

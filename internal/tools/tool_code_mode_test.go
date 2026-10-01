@@ -414,29 +414,31 @@ func TestPTCRepeatedProgramAdvancesCheckpoint(t *testing.T) {
 	}
 }
 
-func TestPTCRepeatedProgramKeepsLeafObservations(t *testing.T) {
+func TestPTCRepeatedProgramPreservesLeafGuard(t *testing.T) {
 	kit := newCodeModeTestToolkit(t)
 	if err := os.WriteFile(filepath.Join(kit.RootDir(), "fixture.txt"), []byte("unchanged"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	for i := 1; i <= 3; i++ {
 		result := runPTCProgram(t, kit, `await tools.read_file({path:"fixture.txt"}); return true;`)
-		if result.IsError {
-			t.Fatalf("read %d: %+v", i, result)
+		if i < 3 {
+			if result.IsError {
+				t.Fatalf("read %d: %+v", i, result)
+			}
+		} else {
+			if !result.IsError {
+				t.Fatalf("third leaf read succeeded: %+v", result)
+			}
+			guardedLeaf := false
+			for _, record := range kit.ToolTelemetry() {
+				if record.Name == "read_file" && record.ErrorKind == "repeated_tool_input" {
+					guardedLeaf = true
+				}
+			}
+			if !guardedLeaf {
+				t.Fatalf("third leaf read must retain its own repeat guard: %+v", result)
+			}
 		}
-	}
-	var reads []ToolExecutionRecord
-	for _, record := range kit.ToolTelemetry() {
-		if record.Name == "read_file" {
-			reads = append(reads, record)
-		}
-	}
-	if len(reads) != 3 || !reads[2].Success || reads[2].ResultAction != "read_unchanged" {
-		t.Fatalf("repeated leaf observation must retain its successful unchanged result: %+v", reads)
-	}
-	kit.DisableTools("read_file")
-	if result := runPTCProgram(t, kit, `await tools.read_file({path:"fixture.txt"}); return true;`); !result.IsError {
-		t.Fatalf("repetition must not bypass disabled leaf tools: %+v", result)
 	}
 }
 
@@ -447,105 +449,6 @@ func TestPTCRepeatedProgramAllowsLeafPolling(t *testing.T) {
 		result := runPTCProgram(t, kit, `await tools.process({action:"list"}); return true;`)
 		if result.IsError {
 			t.Fatalf("poll %d: %+v", i, result)
-		}
-	}
-}
-
-func TestPTCRepeatedReadObservesCurrentState(t *testing.T) {
-	for _, scenario := range []string{"dirty tracked file", "retry missing ignored file", "intervening observations"} {
-		t.Run(scenario, func(t *testing.T) {
-			kit := newCodeModeTestToolkit(t)
-			root := kit.RootDir()
-			path := filepath.Join(root, "fixture.txt")
-			mustWriteFile(t, path, "initial")
-			if scenario == "retry missing ignored file" {
-				mustWriteFile(t, filepath.Join(root, ".gitignore"), "fixture.txt\n")
-				if err := os.Remove(path); err != nil {
-					t.Fatal(err)
-				}
-			}
-			runGitFixture(t, root, "init", "-q")
-			runGitFixture(t, root, "add", ".")
-			runGitFixture(t, root, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-qm", "fixture")
-			const program = `const result = await tools.read_file({path:"fixture.txt"}); return result.content[0].text;`
-			for attempt := 1; attempt <= 3; attempt++ {
-				want := "initial"
-				if scenario == "dirty tracked file" || (scenario == "retry missing ignored file" && attempt == 3) {
-					want = fmt.Sprintf("version-%d", attempt)
-					mustWriteFile(t, path, want)
-				}
-				result := runPTCProgram(t, kit, program)
-				if scenario == "retry missing ignored file" && attempt < 3 {
-					if !result.IsError {
-						t.Fatalf("missing file attempt %d succeeded: %+v", attempt, result)
-					}
-					continue
-				}
-				if result.IsError || ((scenario != "intervening observations" || attempt == 1) && !strings.Contains(result.TextProjection(), want)) {
-					t.Fatalf("attempt %d must read current content %q: %+v", attempt, want, result)
-				}
-				if scenario == "intervening observations" && attempt < 3 {
-					other := runPTCProgram(t, kit, `await tools.list_files({}); return true;`)
-					if other.IsError {
-						t.Fatalf("intervening observation failed: %+v", other)
-					}
-				}
-			}
-		})
-	}
-}
-
-func TestPTCVerificationRetryObservesChangedFile(t *testing.T) {
-	kit := newCodeModeTestToolkit(t)
-	root := kit.RootDir()
-	kit.SetSessionDir(t.TempDir())
-	mustWriteFile(t, filepath.Join(root, ".gitignore"), "node_modules/\n")
-	mustWriteFile(t, filepath.Join(root, "status.txt"), "initial")
-	runGitFixture(t, root, "init", "-q")
-	runGitFixture(t, root, "add", ".")
-	runGitFixture(t, root, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-qm", "fixture")
-	runner := filepath.Join(root, "node_modules", ".bin", "vitest")
-	mustWriteFile(t, runner, "#!/bin/sh\nif test \"$(cat status.txt)\" = green; then echo PASS; exit 0; else echo FAIL; exit 1; fi\n")
-	if err := os.Chmod(runner, 0755); err != nil {
-		t.Fatal(err)
-	}
-	const program = `const result = await tools.bash({command:"npx vitest --run"}); return JSON.parse(result.content[0].text).exit_code;`
-	for attempt, state := range []string{"first-failure", "second-failure", "green"} {
-		mustWriteFile(t, filepath.Join(root, "status.txt"), state)
-		result := runPTCProgram(t, kit, program)
-		if attempt < 2 {
-			if result.IsError || result.TextProjection() != "1" {
-				t.Fatalf("verification %d must return failing exit code: %+v", attempt+1, result)
-			}
-			continue
-		}
-		if result.IsError || result.TextProjection() != "0" {
-			t.Fatalf("verification must execute after the repair: %+v", result)
-		}
-	}
-}
-
-type codeModeStatusProbe struct{ status string }
-
-func (*codeModeStatusProbe) Name() string { return "mcp_test_job_status" }
-func (p *codeModeStatusProbe) Definition() providers.ToolDefinition {
-	return providers.ToolDefinition{Name: p.Name(), InputSchema: map[string]any{"type": "object"}}
-}
-func (p *codeModeStatusProbe) Execute(context.Context, string) (string, error) {
-	return p.status, nil
-}
-func (*codeModeStatusProbe) IsReadOnly() bool        { return true }
-func (*codeModeStatusProbe) IsConcurrencySafe() bool { return true }
-
-func TestPTCRepeatedPollingObservesExternalState(t *testing.T) {
-	kit := newCodeModeTestToolkit(t)
-	probe := &codeModeStatusProbe{}
-	kit.registry = NewRegistry(append(kit.registry.All(), probe)...)
-	for _, status := range []string{"queued", "running", "completed"} {
-		probe.status = status
-		result := runPTCProgram(t, kit, `const result = await tools.mcp_test_job_status({}); return result.content[0].text;`)
-		if result.IsError || result.TextProjection() != fmt.Sprintf("%q", status) {
-			t.Fatalf("poll must observe external state %q: %+v", status, result)
 		}
 	}
 }

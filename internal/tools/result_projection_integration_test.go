@@ -61,8 +61,8 @@ func runFakeList(t *testing.T, mode string) (providers.ToolCall, string, []ToolE
 	kit.env.ToolResultProjectionMode = mode
 
 	call := providers.ToolCall{ID: "call-int", Name: "list_files", Arguments: "{}"}
-	returned, err := kit.executeKnownToolResult(
-		context.Background(), call, fakeListTool{text: listEnvelope(3000)})
+	returned, err := kit.executeKnownToolResultWithRepeatPolicy(
+		context.Background(), call, fakeListTool{text: listEnvelope(3000)}, true)
 	if err != nil {
 		t.Fatalf("execute (mode=%s): %v", mode, err)
 	}
@@ -167,8 +167,8 @@ func TestChokePoint_OverBudgetBashUsesGenericSettlement(t *testing.T) {
 		},
 	})
 	call := providers.ToolCall{ID: "call-over", Name: "bash", Arguments: `{"command":"go test"}`}
-	returned, err := kit.executeKnownToolResult(
-		context.Background(), call, fakeBashTool{text: raw})
+	returned, err := kit.executeKnownToolResultWithRepeatPolicy(
+		context.Background(), call, fakeBashTool{text: raw}, true)
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
@@ -243,7 +243,7 @@ func TestBashViewSurvivesStorageAndRequestPreparation(t *testing.T) {
 	}
 	call := providers.ToolCall{ID: "bash-storage", Name: "bash", Arguments: `{}`}
 	raw := `{"action":"run","exit_code":0,"duration_ms":5,"output":"ok\nwarning\n","stdout_tail":"ok\n","stderr_tail":"warning\n","stdout_tail_truncated":false,"stderr_tail_truncated":false}`
-	result, err := kit.executeKnownToolResult(context.Background(), call, fakeBashTool{text: raw})
+	result, err := kit.executeKnownToolResultWithRepeatPolicy(context.Background(), call, fakeBashTool{text: raw}, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -310,8 +310,8 @@ func TestChokePoint_EnvOverrideBeatsConfiguredMode(t *testing.T) {
 	kit.env.SessionDir = t.TempDir()
 	kit.env.ToolResultProjectionMode = "off" // env override should win
 	call := providers.ToolCall{ID: "c", Name: "list_files", Arguments: "{}"}
-	returned, err := kit.executeKnownToolResult(
-		context.Background(), call, fakeListTool{text: listEnvelope(3000)})
+	returned, err := kit.executeKnownToolResultWithRepeatPolicy(
+		context.Background(), call, fakeListTool{text: listEnvelope(3000)}, true)
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
@@ -369,7 +369,7 @@ func TestRichMediaSettlement_IsStableAndKeepsNativeObservation(t *testing.T) {
 	kit.env.SessionDir = t.TempDir()
 	tool := fakeRichMediaTool{text: strings.Repeat("semantic evidence line\n", 3_000)}
 	call := providers.ToolCall{ID: "call-rich", Name: tool.Name(), Arguments: "{}"}
-	returned, err := kit.executeKnownToolResult(context.Background(), call, tool)
+	returned, err := kit.executeKnownToolResultWithRepeatPolicy(context.Background(), call, tool, true)
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}

@@ -218,7 +218,7 @@ type bashVerificationResult struct {
 	Passed            bool               `json:"passed"`
 	FailureSummary    testFailureSummary `json:"failure_summary"`
 	WorkspaceRevision string             `json:"workspace_revision,omitempty"`
-	RepeatGuard       map[string]any     `json:"repeat_guard,omitempty"` // Legacy wire name for advisory failure history.
+	RepeatGuard       map[string]any     `json:"repeat_guard,omitempty"`
 	CommandHash       string             `json:"command_hash,omitempty"`
 	NextSuggestions   []string           `json:"next_suggestions,omitempty"`
 }
@@ -252,6 +252,18 @@ func (t *BashTool) executeRun(ctx context.Context, args bashArgs) (string, error
 
 	revision := workspaceRevision(ctx, t.env.RevisionRoot(ctx))
 	commandHash := sha256Hex([]byte(command))
+	if verification && revision != "" {
+		previousFailures := t.env.ConsecutiveTestFailures(commandHash, revision)
+		if previousFailures >= maxRepeatedRunTestFailures {
+			return "", repeatedBashVerificationFailureError{
+				PreviousFailures: previousFailures,
+				MaxFailures:      maxRepeatedRunTestFailures,
+				Revision:         revision,
+				CommandHash:      commandHash,
+			}
+		}
+	}
+
 	result, err := executeShellCommandInDir(ctx, t.env, command, timeout, runCWD)
 	if err != nil {
 		return "", err
@@ -320,8 +332,28 @@ func (t *BashTool) enrichVerificationResult(command, commandHash, revision strin
 		WorkspaceRevision: revision,
 		CommandHash:       commandHashPrefix(commandHash),
 		RepeatGuard: map[string]any{
-			"previous_failed_runs": previousFailures,
+			"previous_failed_runs":                    previousFailures,
+			"max_failed_runs_without_revision_change": maxRepeatedRunTestFailures,
 		},
 		NextSuggestions: runTestNextSuggestions(shellResult, failureSummary),
 	}
+}
+
+type repeatedBashVerificationFailureError struct {
+	PreviousFailures int
+	MaxFailures      int
+	Revision         string
+	CommandHash      string
+}
+
+func (e repeatedBashVerificationFailureError) Error() string {
+	return fmt.Sprintf(
+		"bash blocked repeated failing verification command: error_kind=repeated_failure_same_revision previous_failed_runs=%d max_failed_runs_without_revision_change=%d workspace_revision=%s command_hash=%s safe_retry=%q model_next_action=%q",
+		e.PreviousFailures,
+		e.MaxFailures,
+		e.Revision,
+		commandHashPrefix(e.CommandHash),
+		"change code, narrow the command, or inspect the verification failure and full log before rerunning",
+		"read the latest failure evidence, form a new hypothesis, patch minimally, then rerun targeted verification after the workspace revision changes",
+	)
 }
