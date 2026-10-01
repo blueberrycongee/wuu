@@ -899,6 +899,57 @@ describe("split conversation scroll ownership", () => {
     expect(nodes.get("primary")!.scrollTop).toBe(700);
   });
 
+  it.each(["activation", "hydration"])("keeps a pending search through ordinary following layout before %s completes", async (phase) => {
+    vi.useFakeTimers();
+    let finishActivation!: () => void;
+    if (phase === "activation") activation = new Promise<void>(resolve => { finishActivation = resolve; });
+    remotePreview = phase === "hydration";
+    let finishRead!: (item: ThreadItem) => void;
+    window.wuu = { readRemoteItem: () => new Promise<ThreadItem>(resolve => { finishRead = resolve; }) } as unknown as typeof window.wuu;
+    render("primary");
+    const anchor = document.createElement("div"); anchor.id = "message-late-turn-late-item";
+    anchor.getBoundingClientRect = () => ({ top: 0, left: 0, right: 20, bottom: 20, width: 20, height: 20, x: 0, y: 0, toJSON: () => ({}) });
+    nodes.get("primary")!.appendChild(anchor);
+    await act(async () => navigate({ thread: searchThread, message_seq: 7, snippet: "needle" }, "needle"));
+    if (phase === "hydration") expect(finishRead).toBeTypeOf("function");
+    // Resize/stream/history layout can maintain the latest view while the
+    // requested full text is loading; it is not a newer navigation choice.
+    act(() => current.scheduleStreamScroll());
+    await act(async () => vi.advanceTimersByTimeAsync(40));
+    const beforeHydration = nodes.get("primary")!.scrollTop;
+    completeItem = { id: "late-item", type: "agent_message", seq: 7, text: "needle" };
+    await act(async () => {
+      if (phase === "activation") finishActivation();
+      else finishRead(completeItem!);
+    });
+    render("primary");
+    await act(async () => vi.runAllTimersAsync());
+    expect(nodes.get("primary")!.scrollTop).toBe(beforeHydration - 64);
+  });
+
+  it.each(["pointer", "latest", "message"])("keeps a newer %s intent after following layout during search activation", async (intent) => {
+    vi.useFakeTimers();
+    let finishActivation!: () => void;
+    activation = new Promise<void>(resolve => { finishActivation = resolve; });
+    render("primary");
+    const anchor = document.createElement("div"); anchor.id = "message-late-turn-late-item";
+    anchor.getBoundingClientRect = () => ({ top: 0, left: 0, right: 20, bottom: 20, width: 20, height: 20, x: 0, y: 0, toJSON: () => ({}) });
+    nodes.get("primary")!.appendChild(anchor);
+    await act(async () => navigate({ thread: searchThread, message_seq: 7, snippet: "needle" }, "needle"));
+    act(() => current.scheduleStreamScroll());
+    await act(async () => vi.advanceTimersByTimeAsync(40));
+    act(() => {
+      if (intent === "pointer") nodes.get("primary")!.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+      else if (intent === "latest") current.jumpToLatest();
+      else current.jumpToConversationMessage("late-turn", { id: "late-item", type: "agent_message" });
+    });
+    await act(async () => vi.runAllTimersAsync());
+    const newerTop = nodes.get("primary")!.scrollTop;
+    await act(async () => finishActivation());
+    await act(async () => vi.runAllTimersAsync());
+    expect(nodes.get("primary")!.scrollTop).toBe(newerTop);
+  });
+
   it("starts the search after its requested destination arrives without newer input", async () => {
     vi.useFakeTimers();
     let finishActivation!: () => void;
