@@ -2,6 +2,9 @@
  * distinguish editable controls; selection uses fill, never a border. */
 
 :root {
+  --subscription-canvas: var(--wuu-color-surface-muted, #f4f4f6);
+  --subscription-card: var(--wuu-color-surface, #ffffff);
+  --subscription-meter: var(--wuu-color-accent, #4f46e5);
   /* Usage charts and the home overview share one ramp: a single blue stepped
    * in lightness, so the four levels and an empty day each read at a glance
    * (neighbouring steps differ by about 1.6:1 in luminance, and the lightest
@@ -1060,32 +1063,45 @@ button.settings-engine-expand:hover {
   flex: 0 0 auto;
 }
 
+/* Allowances are compared across services, so this dashboard uses the pane
+ * width rather than the narrower label/control column used by forms. */
+.settings-page:has(> .settings-subscriptions) {
+  --settings-column-width: calc(var(--font-ui) * 78);
+  --settings-pad: var(--space-4);
+}
+
+.settings-main:has(.settings-subscriptions) {
+  background: var(--subscription-canvas);
+}
+
 .settings-subscriptions {
-  gap: var(--settings-gap);
+  gap: var(--space-4);
 }
 
 .settings-subscription-list {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 22em), 1fr));
-  align-items: start;
-  gap: var(--space-3);
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 18.5em), 1fr));
+  align-items: stretch;
+  gap: var(--space-2);
 }
 
 .settings-subscription {
   display: grid;
   min-width: 0;
+  align-content: start;
   gap: var(--space-3);
-  padding: var(--space-3);
+  padding: calc(var(--space-2) + 2px) var(--space-3) var(--space-3);
   border: 1px solid var(--hairline);
-  border-radius: var(--radius-sm);
-  background: var(--surface-1);
+  border-radius: calc(var(--radius-sm) + 2px);
+  background: var(--subscription-card);
   container: subscription-card / inline-size;
 }
 
 .settings-subscription-source {
   display: grid;
   min-width: 0;
-  gap: var(--space-1);
+  align-content: start;
+  gap: calc(var(--space-1) + 2px);
 }
 
 .settings-subscription-source + .settings-subscription-source {
@@ -1096,8 +1112,9 @@ button.settings-engine-expand:hover {
 .settings-subscription-main {
   display: flex;
   min-width: 0;
-  align-items: start;
+  align-items: center;
   gap: var(--space-2);
+  margin-bottom: var(--space-1);
 }
 
 .settings-subscription-main .settings-engine-row-icon,
@@ -1121,15 +1138,17 @@ button.settings-engine-expand:hover {
 }
 
 .settings-subscription-name {
+  flex: 1 1 auto;
   min-width: 0;
   margin: 0;
   overflow-wrap: anywhere;
   color: var(--ink);
-  font-size: inherit;
-  font-weight: var(--weight-medium);
+  font-size: var(--font-ui);
+  font-weight: var(--weight-semibold);
 }
 
 .settings-subscription-status {
+  font-size: var(--font-xs);
   margin: 0;
   overflow-wrap: anywhere;
   color: var(--ink-soft);
@@ -1141,26 +1160,47 @@ button.settings-engine-expand:hover {
   flex-wrap: wrap;
   min-width: 0;
   gap: var(--space-2);
+  margin-top: var(--space-1);
+}
+
+.settings-subscription-controls {
+  display: flex;
+  min-width: 0;
+  max-width: 44%;
+  align-items: center;
+  gap: var(--space-1);
+  margin-left: auto;
+}
+
+.settings-subscription-controls:empty {
+  display: none;
+}
+
+.settings-subscription-account > .settings-subscription-controls {
+  max-width: 100%;
+}
+
+.settings-subscription-controls .select-menu {
+  min-width: 0;
+  width: auto;
+  max-width: 100%;
 }
 
 .settings-subscription-more {
-  margin-left: auto;
   flex: 0 0 auto;
+  width: var(--control-size-inline);
+  min-height: var(--control-size-inline);
 }
 
 .settings-subscription-actions .settings-engine-auth {
   flex: 1 0 100%;
 }
 
-.settings-subscription-actions .select-menu {
-  width: auto;
-  max-width: min(100%, 12em);
-  flex: 0 1 auto;
-  margin-left: auto;
-}
-
 .select-menu-trigger.settings-subscription-model-trigger {
-  padding-inline: var(--space-1);
+  min-height: var(--control-size-inline);
+  height: auto;
+  padding: 0 var(--space-1);
+  font-size: var(--font-xs);
   border-color: transparent;
   background: transparent;
   color: var(--ink-soft);
@@ -1186,14 +1226,16 @@ button.settings-engine-expand:hover {
   align-items: baseline;
   justify-content: space-between;
   flex-wrap: wrap;
-  gap: var(--space-1) var(--space-2);
+  gap: 2px var(--space-1);
   color: var(--ink-soft);
+  font-size: var(--font-xs);
   font-variant-numeric: tabular-nums;
 }
 
 .settings-subscription-remaining {
   color: var(--ink);
-  font-weight: var(--weight-medium);
+  font-weight: var(--weight-semibold);
+  white-space: nowrap;
 }
 
 .settings-subscription-quota {
@@ -1204,6 +1246,8 @@ button.settings-engine-expand:hover {
 
 .settings-subscription-account {
   display: flex;
+  flex-wrap: wrap;
+  font-size: var(--font-xs);
   min-width: 0;
   align-items: baseline;
   justify-content: space-between;
@@ -1215,22 +1259,24 @@ button.settings-engine-expand:hover {
   max-width: 50%;
   flex: 0 0 auto;
   overflow-wrap: anywhere;
+  margin-left: auto;
   text-align: right;
   color: var(--ink-soft);
 }
 
 .settings-subscription-account-name {
+  flex: 1 1 8em;
   min-width: 0;
   overflow-wrap: anywhere;
-  color: var(--ink);
+  color: var(--ink-soft);
 }
 
 .settings-subscription-quota-state,
-.settings-subscription-account-source,
 .settings-subscription-age,
 .settings-subscription-window-scope,
 .settings-subscription-empty {
   color: var(--ink-tertiary);
+  font-size: var(--font-xs);
 }
 
 .settings-subscription-windows,
@@ -1240,12 +1286,12 @@ button.settings-engine-expand:hover {
   gap: var(--space-2) var(--space-4);
 }
 
-.settings-subscription-window:only-child {
+.settings-subscription-window:not(:has(meter)):only-child {
   grid-column: 1 / -1;
 }
 
 .settings-subscription-window {
-  --subscription-meter-fill: var(--info);
+  --subscription-meter-fill: var(--subscription-meter);
   display: grid;
   min-width: 0;
   grid-row: span 3;
@@ -1261,7 +1307,6 @@ button.settings-engine-expand:hover {
   gap: var(--space-1);
 }
 
-.settings-subscription-account-source,
 .settings-subscription-quota-state,
 .settings-subscription-window-scope,
 .settings-subscription-window-display,
@@ -1272,6 +1317,7 @@ button.settings-engine-expand:hover {
 
 .settings-subscription-balances {
   display: grid;
+  font-size: var(--font-xs);
   gap: var(--space-2);
 }
 
@@ -1285,9 +1331,12 @@ button.settings-engine-expand:hover {
 }
 
 .settings-subscription-balance-amount {
+  min-width: 0;
+  margin-left: auto;
+  text-align: right;
   color: var(--ink);
-  font-size: 1.15em;
-  font-weight: var(--weight-medium);
+  font-size: var(--font-title);
+  font-weight: var(--weight-semibold);
   overflow-wrap: anywhere;
 }
 
@@ -1321,6 +1370,7 @@ button.settings-engine-expand:hover {
 
 .settings-subscription-reset {
   color: var(--ink-tertiary);
+  font-size: var(--font-xs);
 }
 
 .settings-subscription-window[data-exhausted="true"] {
@@ -1369,7 +1419,7 @@ button.settings-engine-expand:hover {
   border-radius: var(--radius-xs);
 }
 
-@container subscription-card (max-width: 19em) {
+@container subscription-card (max-width: 15em) {
   .settings-subscription-windows,
   .settings-subscription-skeleton.settings-subscription-quota {
     grid-template-columns: minmax(0, 1fr);

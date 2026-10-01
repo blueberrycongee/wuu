@@ -17,7 +17,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Production subscription dashboard with account-scoped quota observations,
   plan windows, prepaid balances, reset times, freshness, and explicit failure
   states. Compact service cards group separate accounts with parallel quota
-  windows and account-specific credential menus. Successful observations survive
+  windows and account-specific credential menus. Compact attribution, reset
+  countdowns, and exact reset-time tooltips keep the focus on available quota.
+  Successful observations survive
   restarts without being reused for another account. Quota reads do not submit
   inference or change model routing.
 
@@ -29,6 +31,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   centered percentage indicator, saved zoom, and a 50%–200% range.
 
 ### Changed
+
+- Group model-service discovery into subscriptions, direct providers, gateways,
+  and local endpoints, with searchable catalogs and connection status. Keep
+  saved connections and current model selection separate from discovery, with
+  compact quota cards and account-specific controls.
 
 - Use programmatic tool calling by default for ordinary built-in-engine tools,
   while preserving explicit global/model-family opt-outs and direct interaction,

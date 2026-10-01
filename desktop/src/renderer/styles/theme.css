@@ -15,6 +15,9 @@
  */
 
 :root[data-theme="dark"] {
+  --subscription-canvas: var(--wuu-color-canvas, #1a1a1e);
+  --subscription-card: var(--wuu-color-surface, #232327);
+  --subscription-meter: var(--wuu-color-accent, #a5b4fc);
   /* --- Neutral gray ramp, dark declaration. Same slots as the light
    *     ramp in base.css: 0-350 surfaces/hairlines (deeper = further
    *     from the reader), 400-650 text grays, 800-900 strong text. --- */

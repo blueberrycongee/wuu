@@ -227,6 +227,33 @@ describe("SubscriptionDashboard", () => {
     expect(failed.textContent).not.toContain("Example account");
   });
 
+  it("keeps the exact reset instant accessible while the visible countdown ages without requests", async () => {
+    vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] });
+    try {
+      const observed = Date.UTC(2026, 8, 30, 12, 0);
+      vi.setSystemTime(observed);
+      const reset = new Date(observed + 90_000).toISOString();
+      vi.mocked(window.wuu.listEngines).mockResolvedValue({ engines: [{ ...inventory.engines[0], quota: quota({
+        windows: [{ id: "short", used_percent: 20, resets_at: reset }],
+      }) }] });
+      await render();
+      const resetTime = container.querySelector<HTMLTimeElement>("time[datetime]")!;
+      expect(resetTime).not.toBeNull();
+      expect(resetTime.dateTime).toBe(reset);
+      expect(resetTime.getAttribute("aria-label")).toBe(resetTime.title);
+      expect(resetTime.title).toContain("2026");
+      const original = resetTime.textContent;
+      await act(async () => vi.advanceTimersByTime(60_000));
+      expect(resetTime.textContent).not.toBe(original);
+      expect(window.wuu.listEngines).toHaveBeenCalledTimes(1);
+      await act(async () => vi.advanceTimersByTime(60_000));
+      expect(container.querySelector("meter")).toBeNull();
+      expect(resetTime.dateTime).toBe(reset);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("does not replace a known snapshot with empty data while manual refresh is pending or fails", async () => {
     vi.mocked(window.wuu.listEngines).mockResolvedValue({ engines: [{
       ...inventory.engines[0], quota: quota({ windows: [{ id: "known", used_percent: 20 }] }),
@@ -337,7 +364,7 @@ it("switches the Codex credential source without changing the model selection an
  const provider: ProviderSummary = { name: "codex-login", type: "openai-codex", model: "test-model", codex_credential_source: "wuu-auth-store" };
  const updated = { ...provider, reuse_codex_credentials: true, codex_credential_source: "codex-cli" };
  const useLogin = vi.fn().mockResolvedValue({ providers: [updated] });
- const check = vi.fn().mockRejectedValue(new Error("Login expired"));
+ const check = vi.fn().mockRejectedValue(new Error("Authentication transport failed: secret-fixture-token /private-fixture/account.json"));
  window.wuu.useCodexCredentials = useLogin;
  window.wuu.loadCodexModels = check;
  const select = vi.fn();
@@ -351,7 +378,9 @@ it("switches the Codex credential source without changing the model selection an
  expect(useLogin).toHaveBeenCalledWith("codex-login");
  expect(select).not.toHaveBeenCalled();
  expect(check).toHaveBeenCalledWith("codex-login");
- expect(container.querySelector('[role="alert"]')?.textContent).toContain("Login expired");
+ expect(container.querySelector('[role="alert"]')?.textContent).toBeTruthy();
+ expect(container.textContent).not.toContain("secret-fixture-token");
+ expect(container.textContent).not.toContain("/private-fixture/account.json");
  check.mockResolvedValue({ providers: [updated], models: [{ id: "test-model" }] });
  await openActions();
  await act(async () => document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')[1]!.click());

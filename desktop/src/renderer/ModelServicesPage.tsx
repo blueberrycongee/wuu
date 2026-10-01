@@ -93,15 +93,27 @@ const SERVICE_NAMES: Readonly<Record<string, string>> = {
   "minimax-cn": "MiniMax",
   minimax: "MiniMax",
   zai: "Z.AI",
+  "kimi-code-plan-cn": "Kimi Code",
+  "kimi-code-plan-global": "Kimi Code",
 };
 
-// The first providers offered, most likely first for each language. Services
-// already connected drop out; the rest stay one click away under "More".
+// Frequently used services come first for each language. The complete
+// catalog remains one click away, with existing connections marked in place.
 const FEATURED_SERVICES: Readonly<Record<"zh" | "en", readonly string[]>> = {
   zh: ["deepseek", "moonshotai-cn", "zhipuai", "alibaba-cn", "volcengine", "siliconflow-cn", "minimax-cn", "openrouter", "openai", "anthropic"],
   en: ["openai", "anthropic", "openrouter", "deepseek", "xai", "moonshotai", "zai", "minimax", "alibaba", "siliconflow"],
 };
-const FEATURED_LIMIT = 8;
+// Keep gateway discovery separate from direct vendor APIs. Unrecognized
+// catalog services remain available in the general API group.
+const GATEWAY_SERVICES = new Set([
+  "openrouter", "siliconflow", "siliconflow-cn", "togetherai", "fireworks-ai",
+  "deepinfra", "huggingface", "302ai", "aihubmix", "opencode", "opencode-go",
+  "cline-pass", "modelscope", "nvidia", "vercel", "helicone", "llmgateway",
+]);
+
+function isLocalCatalogService(provider: CatalogProviderSummary): boolean {
+  return ["localhost", "127.0.0.1", "[::1]"].includes(hostFromBaseURL(provider.base_url));
+}
 const MODEL_SEARCH_THRESHOLD = 8;
 
 export function catalogServiceName(id: string, fallback: string, t: Translate): string {
@@ -347,14 +359,11 @@ export function ServiceConnector({
   const { t, locale } = useI18n();
   const [connectTarget, setConnectTarget] = useState<ConnectTarget | null>(null);
   const [browsing, setBrowsing] = useState(false);
-  const connectedCatalogIDs = new Set(providers.map((provider) => provider.catalog_id).filter(Boolean));
-  const tiles = FEATURED_SERVICES[locale.startsWith("zh") ? "zh" : "en"]
+  const featuredIDs = FEATURED_SERVICES[locale.startsWith("zh") ? "zh" : "en"];
+  const featured = featuredIDs
     .map((id) => catalog.providers?.find((provider) => provider.id === id))
-    .filter((provider): provider is CatalogProviderSummary => Boolean(provider) && !connectedCatalogIDs.has(provider!.id))
-    .slice(0, FEATURED_LIMIT);
-  const subscriptions = (["xai-subscription", "grok-build"] as const).filter((type) =>
-    !providers.some((provider) => (type === "grok-build" ? isGrokBuildType(provider.type) : isXAISubscriptionType(provider.type))),
-  );
+    .filter((provider): provider is CatalogProviderSummary => Boolean(provider));
+  const local = (catalog.providers ?? []).filter(isLocalCatalogService);
 
   function startConnect(target: ConnectTarget): void {
     setBrowsing(false);
@@ -366,57 +375,45 @@ export function ServiceConnector({
       {catalog.providers === undefined && !catalog.failed ? (
         <p className="settings-section-note" role="status">{t("settings.loading")}</p>
       ) : null}
-      <div className="model-service-tiles" data-testid="settings-provider-tiles">
-        {tiles.map((provider) => {
-          const name = catalogServiceName(provider.id, provider.name, t);
-          return (
-            <button
-              key={provider.id}
-              type="button"
-              className="model-service-tile"
-              data-catalog={provider.id}
-              disabled={running}
-              onClick={() => startConnect({ kind: "catalog", provider })}
-            >
-              <ProviderMark id={provider.id} label={name} />
-              <span className="model-service-tile-name">{name}</span>
-            </button>
-          );
-        })}
-        {isTouchWebShell() ? null : subscriptions.map((type) => (
-          <button
-            key={type}
-            type="button"
-            className="model-service-tile"
-            data-subscription={type}
-            disabled={running}
-            onClick={() => startConnect({ kind: "subscription", type })}
-          >
-            <span className="provider-mark" aria-hidden="true"><EngineIcon engine="grok" className="provider-mark-engine" /></span>
-            <span className="model-service-tile-name">{type === "grok-build" ? t("provider.grokBuild") : t("provider.xaiSubscription")}</span>
-          </button>
-        ))}
-        {catalog.providers?.length ? (
-          <button type="button" className="model-service-tile" disabled={running} onClick={() => setBrowsing(true)}>
-            <span className="provider-mark is-quiet" aria-hidden="true"><Search className="icon" /></span>
-            <span className="model-service-tile-name">{t("provider.moreServices")}</span>
-          </button>
-        ) : null}
-        <button
-          type="button"
-          className="model-service-tile"
-          data-testid="settings-provider-custom"
+      <div className="model-service-catalog" data-testid="settings-provider-tiles">
+        <CatalogServiceGroups
+          catalogProviders={[...featured, ...local.filter((provider) => !featuredIDs.includes(provider.id))]}
+          providers={providers}
           disabled={running}
-          onClick={() => startConnect({ kind: "custom" })}
-        >
-          <span className="provider-mark is-quiet" aria-hidden="true"><Code2 className="icon" /></span>
-          <span className="model-service-tile-name">{t("provider.customEndpoint")}</span>
-        </button>
+          onConnect={startConnect}
+        />
+        <div className="model-service-catalog-actions">
+          <button
+            type="button"
+            className="settings-button settings-button-ghost model-service-custom-action"
+            data-testid="settings-provider-custom"
+            disabled={running}
+            onClick={() => startConnect({ kind: "custom" })}
+          >
+            <Plus className="icon" aria-hidden="true" />
+            {t("provider.customEndpoint")}
+          </button>
+          {catalog.providers?.length ? (
+            <button
+              type="button"
+              className="settings-button settings-button-ghost"
+              data-testid="settings-provider-browse"
+              disabled={running}
+              onClick={() => setBrowsing(true)}
+            >
+              <Search className="icon" aria-hidden="true" />
+              {t("provider.moreServices")}
+              <ChevronRight className="icon-sm" aria-hidden="true" />
+            </button>
+          ) : null}
+        </div>
       </div>
       {catalog.failed ? <p className="settings-section-note">{t("provider.catalogUnavailable")}</p> : null}
       {browsing ? (
         <BrowseServicesDialog
           catalog={catalog}
+          providers={providers}
+          disabled={running}
           onClose={() => setBrowsing(false)}
           onConnect={startConnect}
         />
@@ -617,7 +614,7 @@ function DefaultModelCard({
             searchable={optionCount > MODEL_SEARCH_THRESHOLD}
             searchPlaceholder={t("provider.searchModels")}
             emptyMessage={t("provider.noModelMatches")}
-            disabled={running || optionCount === 0}
+            disabled={running || pending !== null || optionCount === 0}
             onChange={(value) => {
               const [nextProvider = "", nextModel = ""] = value.split("\n");
               const target = providers.find((item) => item.name === nextProvider);
@@ -646,7 +643,7 @@ function DefaultModelCard({
               ariaLabel={t("provider.reasoningEffort")}
               value={variant}
               align="right"
-              disabled={running}
+              disabled={running || pending !== null}
               options={effortOptions.map((option) => ({ value: option, label: variantLabel(option) }))}
               onChange={(next) => void commit({ provider: providerName, model: modelID, variant: next })}
             />
@@ -1231,59 +1228,130 @@ function ModelChoices({
 /*  Connecting                                                                  */
 /* -------------------------------------------------------------------------- */
 
+function CatalogServiceGroups({
+  catalogProviders,
+  providers,
+  query = "",
+  disabled,
+  onConnect,
+}: {
+  catalogProviders: readonly CatalogProviderSummary[];
+  providers: readonly ProviderSummary[];
+  query?: string;
+  disabled: boolean;
+  onConnect: (target: ConnectTarget) => void;
+}): JSX.Element {
+  const { t } = useI18n();
+  const normalized = query.trim().toLocaleLowerCase();
+  const names = catalogProviders.map((provider) => catalogServiceName(provider.id, provider.name, t));
+  const entries = catalogProviders.map((provider, index) => ({
+    provider,
+    name: names[index],
+    host: hostFromBaseURL(provider.base_url),
+    ambiguous: names.indexOf(names[index]) !== names.lastIndexOf(names[index]),
+    connected: providers.filter((item) => item.catalog_id === provider.id),
+  })).filter((entry) => !normalized || `${entry.name} ${entry.provider.name} ${entry.provider.id} ${entry.host}`.toLocaleLowerCase().includes(normalized));
+  const subscriptions = isTouchWebShell() ? [] : (["xai-subscription", "grok-build"] as const)
+    .map((type) => ({
+      type,
+      name: type === "grok-build" ? t("provider.grokBuild") : t("provider.xaiSubscription"),
+      connected: providers.filter((provider) => type === "grok-build" ? isGrokBuildType(provider.type) : isXAISubscriptionType(provider.type)),
+    }))
+    .filter((entry) => !normalized || `${entry.name} ${entry.type}`.toLocaleLowerCase().includes(normalized));
+  const groups = [
+    { id: "api", title: t("provider.catalogAPI"), hint: t("provider.catalogAPIHint"), entries: entries.filter((entry) => !isLocalCatalogService(entry.provider) && !GATEWAY_SERVICES.has(entry.provider.id)) },
+    { id: "relay", title: t("provider.catalogRelay"), hint: t("provider.catalogRelayHint"), entries: entries.filter((entry) => !isLocalCatalogService(entry.provider) && GATEWAY_SERVICES.has(entry.provider.id)) },
+    { id: "local", title: t("provider.catalogLocal"), hint: undefined, entries: entries.filter((entry) => isLocalCatalogService(entry.provider)) },
+  ];
+
+  function connectionState(connected: readonly ProviderSummary[]): JSX.Element | null {
+    if (!connected.length) return null;
+    const ready = connected.some((provider) => !serviceIdentity(provider, t).attention);
+    const label = ready ? t("provider.connectedSection") : serviceIdentity(connected[0], t).attention;
+    return <span className="model-catalog-state" data-ready={ready ? "" : undefined} role="img" aria-label={label} title={label}>
+      <span className="model-catalog-state-dot" />
+      {connected.length > 1 ? <span>{connected.length}</span> : null}
+    </span>;
+  }
+
+  return <>
+    {subscriptions.length ? (
+      <section className="model-catalog-group" aria-label={t("provider.catalogSubscription")}>
+        <div className="model-catalog-heading"><h3>{t("provider.catalogSubscription")}</h3><span>{t("provider.catalogSubscriptionHint")}</span></div>
+        <div className="model-service-tiles">
+          {subscriptions.map((entry) => (
+            <button
+              key={entry.type}
+              type="button"
+              className="model-service-tile"
+              data-subscription={entry.type}
+              disabled={disabled}
+              onClick={() => onConnect({ kind: "subscription", type: entry.type })}
+            >
+              <span className="provider-mark" aria-hidden="true"><EngineIcon engine="grok" className="provider-mark-engine" /></span>
+              <span className="model-catalog-name-line"><span className="model-service-tile-name">{entry.name}</span>{connectionState(entry.connected)}</span>
+            </button>
+          ))}
+        </div>
+      </section>
+    ) : null}
+    {groups.filter((group) => group.entries.length > 0).map((group) => (
+      <section key={group.id} className="model-catalog-group" data-catalog-group={group.id} aria-label={group.title}>
+        <div className="model-catalog-heading"><h3>{group.title}</h3>{group.hint ? <span>{group.hint}</span> : null}</div>
+        <div className="model-service-tiles">
+          {group.entries.map((entry) => (
+            <button
+              key={entry.provider.id}
+              type="button"
+              className="model-service-tile"
+              data-catalog={entry.provider.id}
+              disabled={disabled}
+              onClick={() => onConnect({ kind: "catalog", provider: entry.provider })}
+            >
+              <ProviderMark id={entry.provider.id} label={entry.name} />
+              <span className="model-browse-copy">
+                <span className="model-catalog-name-line"><span className="model-service-tile-name">{entry.name}</span>{connectionState(entry.connected)}</span>
+                {entry.ambiguous ? <small>{entry.host}</small> : null}
+              </span>
+            </button>
+          ))}
+        </div>
+      </section>
+    ))}
+    {entries.length === 0 && subscriptions.length === 0 ? <p className="settings-group-empty">{t("provider.noServiceMatches")}</p> : null}
+  </>;
+}
+
 function BrowseServicesDialog({
   catalog,
+  providers,
+  disabled,
   onClose,
   onConnect,
 }: {
-  catalog: { providers?: CatalogProviderSummary[]; failed: boolean };
+  catalog: CatalogState;
+  providers: readonly ProviderSummary[];
+  disabled: boolean;
   onClose: () => void;
   onConnect: (target: ConnectTarget) => void;
 }): JSX.Element {
   const { t } = useI18n();
   const [query, setQuery] = useState("");
-  const normalized = query.trim().toLocaleLowerCase();
-  const named = (catalog.providers ?? []).map((provider) => ({
-    provider,
-    name: catalogServiceName(provider.id, provider.name, t),
-    host: hostFromBaseURL(provider.base_url),
-  }));
-  // Regional endpoints share a vendor name; only they show their host.
-  const nameCounts = new Map<string, number>();
-  for (const entry of named) nameCounts.set(entry.name, (nameCounts.get(entry.name) ?? 0) + 1);
-  const entries = named.map((entry) => ({ ...entry, ambiguous: (nameCounts.get(entry.name) ?? 0) > 1 }));
-  const visible = normalized
-    ? entries.filter((entry) => `${entry.name} ${entry.provider.name} ${entry.provider.id} ${entry.host}`.toLocaleLowerCase().includes(normalized))
-    : entries;
   return (
     <Modal
       ariaLabel={t("provider.browseTitle")}
       title={t("provider.browseTitle")}
       panelClassName="model-dialog model-browse-dialog"
       onClose={onClose}
+      footer={
+        <button type="button" className="settings-button settings-button-ghost model-service-custom-action" disabled={disabled} onClick={() => onConnect({ kind: "custom" })}>
+          <Plus className="icon" aria-hidden="true" />{t("provider.customEndpoint")}
+        </button>
+      }
     >
       <CatalogSearchField value={query} placeholder={t("provider.searchServices")} onValueChange={setQuery} />
       <div className="model-browse-list" data-scroll-fade="">
-        <button type="button" className="model-browse-row" onClick={() => onConnect({ kind: "custom" })}>
-          <span className="provider-mark is-quiet" aria-hidden="true"><Code2 className="icon" /></span>
-          <span className="model-browse-copy"><span>{t("provider.customEndpoint")}</span></span>
-        </button>
-        {visible.map((entry) => (
-          <button
-            key={entry.provider.id}
-            type="button"
-            className="model-browse-row"
-            data-catalog={entry.provider.id}
-            onClick={() => onConnect({ kind: "catalog", provider: entry.provider })}
-          >
-            <ProviderMark id={entry.provider.id} label={entry.name} />
-            <span className="model-browse-copy">
-              <span>{entry.name}</span>
-              {entry.ambiguous ? <small>{entry.host}</small> : null}
-            </span>
-          </button>
-        ))}
-        {visible.length === 0 ? <p className="settings-group-empty">{t("provider.noServiceMatches")}</p> : null}
+        <CatalogServiceGroups catalogProviders={catalog.providers ?? []} providers={providers} query={query} disabled={disabled} onConnect={onConnect} />
       </div>
     </Modal>
   );

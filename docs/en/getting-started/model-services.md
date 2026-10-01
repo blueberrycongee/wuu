@@ -57,7 +57,10 @@ Zhipu/Z.ai plans, and DeepSeek/OpenRouter balances. Browser SuperGrok and arbitr
 compatible endpoints do not currently expose supported quota details.
 
 The page shows remaining percentages, reset times, account labels when available,
-and observation age. Missing values remain unknown; zero remaining means exhausted.
+and compact credential attribution. Reset countdowns keep the next renewal visible;
+the exact date and time zone are available in its tooltip and accessible name.
+Fresh observation times live in the credential tooltip; stale readings show their
+age directly. Missing values remain unknown; zero remaining means exhausted.
 Refresh after a reset or when a snapshot is over five minutes old. A temporary
 failure keeps the last successful observation when the reader can still identify
 the account, clearly marked for refresh without an active allowance meter;

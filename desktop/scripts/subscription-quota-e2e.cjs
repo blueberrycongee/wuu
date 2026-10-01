@@ -8,10 +8,10 @@ const http = require('node:http');
 const https = require('node:https');
 const { spawnSync } = require('node:child_process');
 const { pathToFileURL } = require('node:url');
-const { app } = require('electron');
+const { app, BrowserWindow } = require('electron');
 
 const desktop = path.resolve(__dirname, '..');
-const output = path.resolve(desktop, '../.amp/in/artifacts/subscription-quota-e2e');
+const output = path.resolve(process.env.WUU_QUOTA_OUTPUT || path.join(desktop, 'out/subscription-quota-e2e'));
 const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'wuu-quota-'));
 const home = path.join(fixture, 'wuu');
 const userHome = path.join(fixture, 'user');
@@ -126,7 +126,18 @@ async function capture(win, name) {
     await document.fonts.ready;
     await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
   });
-  fs.writeFileSync(path.join(output, name), (await win.webContents.capturePage()).toPNG());
+  const bounds = await evaluate(win, () => {
+    const page = document.querySelector('.settings-page').getBoundingClientRect();
+    const x = Math.max(0, Math.floor(page.x)), y = Math.max(0, Math.floor(page.y));
+    return { x, y, width: Math.min(innerWidth - x, Math.ceil(page.width)), height: Math.min(innerHeight - y, Math.ceil(page.height)) };
+  });
+  const zoom = win.webContents.getZoomFactor();
+  const [width, height] = win.getContentSize();
+  const x = Math.floor(bounds.x * zoom), y = Math.floor(bounds.y * zoom);
+  const crop = { x, y, width: Math.min(width - x, Math.ceil(bounds.width * zoom)), height: Math.min(height - y, Math.ceil(bounds.height * zoom)) };
+  const captured = await win.webContents.capturePage(crop);
+  assert.deepEqual(captured.getSize(), { width: crop.width, height: crop.height }, 'Captured evidence must match its requested dimensions.');
+  fs.writeFileSync(path.join(output, name), captured.toPNG());
   shots.push(name);
 }
 async function refresh(win) {
@@ -193,6 +204,11 @@ async function run() {
       && !team.textContent.includes('personal@example.test');
   }), true, 'A shared service card must retain each account and its independent allowance.');
   assert.equal(await evaluate(main, selector => Boolean(document.querySelector(`${selector} .select-menu`)), card('deepseek')), false);
+  const resetTimes = await evaluate(main, selector => [...document.querySelectorAll(`${selector} .settings-subscription-reset time`)].map(time => ({
+    datetime: time.dateTime, exact: time.getAttribute('aria-label'), title: time.title,
+  })), card('personal'));
+  assert.equal(resetTimes.length, 2);
+  assert.ok(resetTimes.every(time => time.exact === time.title && time.exact.includes(String(new Date().getFullYear())) && Number.isFinite(Date.parse(time.datetime))));
   await capture(main, '01-fresh-light.png');
   await evaluate(main, selector => document.querySelector(selector).scrollIntoView({ block: 'start' }), card('personal'));
   await capture(main, '01-accounts-light.png');
@@ -222,13 +238,13 @@ async function run() {
     }, { theme, size });
     const problems = await evaluate(main, () => {
       const page = document.querySelector('.settings-page').getBoundingClientRect();
-      return [...document.querySelectorAll('.settings-subscription-name, .settings-subscription-usage, .settings-subscription-balance, .settings-subscription-account, .settings-subscription-model-trigger')]
+      return [...document.querySelectorAll('.settings-subscription-name, .settings-subscription-usage, .settings-subscription-balance, .settings-subscription-account, .settings-subscription-model-trigger, .settings-subscription-metadata, .settings-subscription-reset, .settings-subscription-plan, .settings-subscription-account-source, .settings-subscription-age')]
         .filter(node => { const rect = node.getBoundingClientRect(); return rect.right > page.right + 1 || rect.left < page.left - 1 || node.scrollWidth > node.clientWidth + 1; })
         .map(node => node.textContent);
     });
     assert.deepEqual(problems, [], `${theme}, ${size}px, ${width}px`);
     layouts.push({ theme, size, width });
-    if ((theme === 'dark' && size === 14 && width === 1280) || (size === 20 && width === 760)) await capture(main, `02-${theme}-${size}-${width}.png`);
+    await capture(main, `02-${theme}-${size}-${width}.png`);
   }
   main.setSize(1280, 1000);
   await evaluate(main, () => { document.documentElement.setAttribute('data-theme', 'light'); document.documentElement.style.setProperty('--conversation-message-font-size', '14px'); document.documentElement.style.setProperty('--appearance-scale', '1'); });
@@ -263,11 +279,38 @@ async function run() {
     const persisted = fs.readFileSync(path.join(home, 'quota-snapshots', file), 'utf8');
     assert.ok(!persisted.includes(firstToken) && !persisted.includes(secondToken) && !persisted.includes('fixture-deepseek'));
   }
+  const { build } = await import('vite');
+  await build({ configFile: false, root: path.join(desktop, 'dev/subscriptions'), base: './', logLevel: 'warn',
+    build: { outDir: path.join(fixture, 'preview') } });
+  const preview = new BrowserWindow({ show: false, width: 980, height: 1000,
+    webPreferences: { backgroundThrottling: false, offscreen: process.env.WUU_E2E_OFFSCREEN === '1' } });
+  const visualCases = [
+    { name: 'empty', empty: '1' },
+    { name: 'unattributed', unattributed: '1' },
+    { name: 'loading', detecting: '1', delay: '30000' },
+    { name: 'long', long: '1' },
+    { name: 'states', states: '1' },
+    { name: 'failures', failures: '1', codex: '1' },
+  ];
+  for (const theme of ['light', 'dark']) for (const state of visualCases) {
+    const viewport = { width: state.name === 'long' ? 440 : 980, height: 1000 };
+    preview.setContentSize(viewport.width, viewport.height);
+    await preview.loadFile(path.join(fixture, 'preview/index.html'), { query: { ...state, theme, size: '20', lang: 'en' } });
+    await waitFor(preview, () => Boolean(document.querySelector('[data-testid="settings-subscriptions"]')));
+    if (state.name !== 'loading') await waitFor(preview, () => document.querySelector('[data-testid="settings-subscriptions"]').getAttribute('aria-busy') === 'false');
+    if (state.name === 'unattributed') assert.equal(await evaluate(preview, () => Boolean(document.querySelector('[data-testid="subscription-engine-codex"] .settings-subscription-age'))), true, 'An observation without credential attribution keeps its visible age.');
+    assert.deepEqual(await evaluate(preview, () => ({ width: innerWidth, height: innerHeight })), viewport, 'Preview must render at the requested viewport.');
+    await capture(preview, `05-${state.name}-${theme}.png`);
+    assert.deepEqual(await evaluate(preview, () => [...document.querySelectorAll('.settings-subscription-name, .settings-subscription-plan, .settings-subscription-account-name, .settings-subscription-metadata, .settings-subscription-balance')]
+      .filter(node => { const r = node.getBoundingClientRect(); return r.right > innerWidth + 1 || r.left < -1 || node.scrollWidth > node.clientWidth + 1; })
+      .map(node => node.textContent)), [], `${state.name} must fit the viewport`);
+  }
+  preview.destroy();
   fs.writeFileSync(path.join(output, 'evidence.json'), JSON.stringify({
     fresh: fresh.subscription_providers.map(provider => ({ name: provider.name, quota: provider.quota })),
-    stale, layouts, requests, shots, configUnchanged: true, inferenceRequests: 0,
+    stale, layouts, visualCases: visualCases.map(state => state.name), requests, shots, configUnchanged: true, inferenceRequests: 0,
   }, null, 2));
-  console.log(`Subscription quota E2E passed; artifacts in ${output}`);
+  console.log("Subscription quota E2E passed; synthetic UI evidence saved.");
 }
 function cleanup() {
   clearTimeout(timeout);

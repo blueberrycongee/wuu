@@ -32,8 +32,36 @@ const providers: ProviderSummary[] = params.has("empty") ? [] : [
   { name: "DeepSeek", type: "openai-compatible", catalog_id: "deepseek", model: "deepseek-chat", api_key_configured: true,
     quota: { status: "available", kind: "balance", checked_at: new Date().toISOString(), observed_at: new Date().toISOString(), account: { id: "preview-deepseek-key", source: "deepseek" }, balances: [{ currency: "USD", amount: "12.3400" }, { currency: "CNY", amount: "0" }] } },
 ];
+if (params.has("unattributed") && inventory.engines.length) {
+  inventory.engines[0].quota!.account = undefined;
+}
+if (params.has("long") && inventory.engines.length) {
+  inventory.engines[0].quota!.account!.label = "personal-with-a-long-account-name@example.test";
+  inventory.engines[0].quota!.plan = "Annual team subscription with extended usage";
+  providers[1].quota!.balances![0].amount = "9007199254740993.123456789";
+}
 if (params.has("codex")) {
   providers.push({ name: "openai-codex", type: "openai-codex", model: "gpt-6-astra", reuse_codex_credentials: false, codex_credential_source: "wuu-auth-store", api_key_configured: true });
+}
+if (params.has("healthy")) {
+  const snapshot = inventory.engines.find((engine) => engine.id === "claude")?.quota;
+  if (snapshot) {
+    snapshot.status = "available";
+    snapshot.observed_at = new Date().toISOString();
+    snapshot.expires_at = new Date(Date.now() + 1800000).toISOString();
+    snapshot.windows![0].resets_at = new Date(Date.now() + 172800000).toISOString();
+  }
+}
+if (params.has("accounts")) {
+  providers.push(...["Personal", "Team"].map((name, index): ProviderSummary => ({
+    name: name.toLowerCase(), type: "openai-codex", model: "gpt-5.4", api_key_configured: true,
+    models: [{ id: "gpt-5.4", display_name: "GPT-5.4" }, { id: "gpt-5.4-mini", display_name: "GPT-5.4 Mini" }],
+    quota: { status: "available", kind: "subscription", plan: index ? "Team" : "Plus",
+      checked_at: new Date().toISOString(), observed_at: new Date().toISOString(),
+      account: { id: `preview-${name}`, label: `${name.toLowerCase()}@example.test`, source: "wuu-auth-store" },
+      windows: [{ id: "weekly", label: "Weekly", used_percent: index ? 60 : 20, window_minutes: 10080 }],
+    },
+  })));
 }
 if (params.has("states") && inventory.engines.length) {
   inventory.engines[0].quota!.windows![0].used_percent = 100;
@@ -90,7 +118,7 @@ window.wuu = {
 
 function Preview() {
   const [sources, setSources] = useState(providers);
-  return <main style={{ height: "100vh", overflow: "auto" }}><div className="settings-page">
+  return <main style={{ height: "100vh", overflow: "auto", background: "var(--subscription-canvas)" }}><div className="settings-page">
     <SubscriptionDashboard inventory={params.has("detecting") ? undefined : parentInventory} providers={params.has("detecting") ? undefined : sources} onSelectBuiltinModel={async (name, model) => setSources((current) => current.map((source) => source.name === name ? { ...source, model } : source))} />
   </div></main>;
 }

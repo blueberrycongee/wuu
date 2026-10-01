@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { MoreHorizontal, RefreshCw } from "./WuuIcons";
-import type { EngineListResult, ProviderSummary, SubscriptionQuota } from "../shared/protocol";
+import type { EngineListResult, ProviderSummary } from "../shared/protocol";
 import { EngineIcon } from "./EngineIcons";
 import { EngineAuthentication } from "./EngineAuthentication";
 import { ServiceMark, serviceIdentity } from "./ModelServicesPage";
@@ -25,10 +25,10 @@ export function SubscriptionDashboard({
   providers?: readonly ProviderSummary[];
   onSelectBuiltinModel: (provider: string, model: string) => Promise<void>;
 }): JSX.Element {
-  const { t } = useI18n();
+  const { t, formatDate } = useI18n();
   const [error, setError] = useState<"" | "settings.subscriptionRefreshFailed" | "settings.subscriptionModelFailed">("");
   const [authProviders, setAuthProviders] = useState<ProviderSummary[]>([]);
-  const [authError, setAuthError] = useState("");
+  const [authError, setAuthError] = useState(false);
   const [checkedProvider, setCheckedProvider] = useState("");
   const [pending, setPending] = useState("");
   const [revision, setRevision] = useState(0);
@@ -114,7 +114,7 @@ export function SubscriptionDashboard({
   async function checkCodexLogin(source: SubscriptionSource, useLocal: boolean): Promise<void> {
     if (pending) return;
     setPending(source.key);
-    setAuthError("");
+    setAuthError(false);
     setCheckedProvider("");
     try {
       if (useLocal) {
@@ -124,8 +124,8 @@ export function SubscriptionDashboard({
       const result = await window.wuu.loadCodexModels(source.id);
       setAuthProviders(result.providers);
       setCheckedProvider(source.id);
-    } catch (error) {
-      setAuthError(error instanceof Error ? error.message : String(error));
+    } catch {
+      setAuthError(true);
     } finally {
       setPending("");
       setLoadedInventory(undefined);
@@ -165,12 +165,7 @@ export function SubscriptionDashboard({
             const identity = first.provider ? serviceIdentity(first.provider, t) : undefined;
             return (
               <article key={key} className="settings-subscription" aria-label={identity?.label ?? first.label}>
-                <div className="settings-subscription-main">
-                  {identity ? <ServiceMark identity={identity} />
-                    : <span className="settings-engine-row-icon" aria-hidden="true"><EngineIcon engine={first.id} /></span>}
-                  <h2 className="settings-subscription-name">{identity?.label ?? first.label}</h2>
-                </div>
-                {accounts.map((source) => {
+                {accounts.map((source, index) => {
                   const showAuthentication = source.engine?.protocol === "acp" && source.engine.enabled && source.engine.binary_ok
                     && (source.login !== "ready" || source.catalogFailed);
                   const status = source.login === "unavailable" ? "settings.subscriptionUnavailable"
@@ -183,57 +178,69 @@ export function SubscriptionDashboard({
                   const origin = account?.source;
                   const observedAt = source.quota?.observed_at ?? source.quota?.checked_at;
                   const observedMillis = observedAt ? Date.parse(observedAt) : NaN;
-                  const credential = origin ? t("settings.subscriptionAccountSource", { source:
-                    ["codex-cli", "codex-cli-readonly"].includes(origin) ? "Codex CLI"
-                      : origin === "claude-code" ? "Claude Code"
-                        : origin === "grok-cli" ? "Grok CLI"
-                          : origin === "wuu-auth-store" ? "Wuu"
-                            : ["explicit", "configured", "anthropic-oauth", "deepseek", "openrouter", "kimi-code", "zhipu"].includes(origin) ? t("settings.subscriptionCredentialConfigured")
-                              : origin,
-                  }) : isCodexSubscription(source.provider?.type) || source.provider?.reuse_codex_credentials
-                    ? t(source.provider?.codex_credential_source === "explicit" ? "settings.codexSourceExplicit" : source.provider?.reuse_codex_credentials ? "settings.codexSourceLocal" : "settings.codexSourceSaved")
-                    : source.provider?.api_key_configured ? t("settings.subscriptionCredentialApiKey") : undefined;
+                  const credentialSource = origin || source.provider?.codex_credential_source;
+                  const credential = credentialSource ?
+                    ["codex-cli", "codex-cli-readonly"].includes(credentialSource) ? "Codex CLI"
+                      : credentialSource === "claude-code" ? "Claude Code"
+                        : credentialSource === "grok-cli" ? "Grok CLI"
+                          : credentialSource === "wuu-auth-store" ? "Wuu"
+                            : ["explicit", "configured", "anthropic-oauth", "deepseek", "openrouter", "kimi-code", "zhipu"].includes(credentialSource) ? t("settings.subscriptionCredentialConfigured")
+                              : credentialSource
+                    : source.provider?.reuse_codex_credentials ? "Codex CLI"
+                      : source.provider?.api_key_configured ? t("settings.subscriptionCredentialApiKey") : undefined;
+                  const sourceLabel = [source.provider && accountName !== source.id && !serviceNamedConnection ? source.id : undefined, credential].filter(Boolean).join(" · ");
+                  const observedLabel = Number.isFinite(observedMillis) ? t(source.quota?.observed_at ? "settings.subscriptionObserved" : "settings.subscriptionChecked", { age: formatAge(observedMillis, now, t) }) : undefined;
+                  const showObservationAge = !sourceLabel && source.quota?.status === "available" && !(source.quota.expires_at && Date.parse(source.quota.expires_at) <= now);
+                  const observationTitle = Number.isFinite(observedMillis) ? formatDate(observedMillis, { year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", timeZoneName: "short" }) : undefined;
                   const showModel = source.models.length > 0 && (source.kind === "engine" || (source.provider && hasBuiltInSubscriptionControls(source.provider)));
-                  return <section key={source.key} className="settings-subscription-source" data-testid={`subscription-${source.kind}-${source.id}`}>
-                    {accountName || (observed && source.quota?.plan) ? <div className="settings-subscription-account">
-                      {accountName ? <span className="settings-subscription-account-name">{accountName}</span> : null}
-                      {observed && source.quota?.plan ? <span className="settings-subscription-plan">{source.quota.plan}</span> : null}
+                  const controls = <div className="settings-subscription-controls">
+                    {showModel ? <SelectMenu
+                      triggerClassName="settings-subscription-model-trigger"
+                      value={source.selectedModel}
+                      disabled={!!pending || source.login === "unavailable"}
+                      ariaLabel={`${source.label} ${t("settings.subscriptionModel")}`}
+                      placeholder={t("settings.subscriptionModelUnset")}
+                      onChange={(model) => void choose(source, model)}
+                      options={source.models.map((model) => ({ value: model.id, label: model.label }))}
+                      flip
+                    /> : null}
+                    {isCodexSubscription(source.provider?.type) ? <button
+                      type="button"
+                      className="settings-button settings-button-ghost settings-icon-button settings-subscription-more"
+                      data-testid="subscription-account-actions"
+                      aria-label={pending === source.key ? t("settings.codexChecking") : t("provider.moreActions", { name: accountName ?? source.label })}
+                      aria-haspopup="menu"
+                      aria-expanded={menu?.sourceKey === source.key}
+                      disabled={!!pending}
+                      onClick={(event) => {
+                        const bounds = event.currentTarget.getBoundingClientRect();
+                        setMenu({ sourceKey: source.key, x: bounds.right, y: bounds.bottom + 4 });
+                      }}
+                    >{pending === source.key ? <RefreshCw className="icon settings-spin" aria-hidden="true" /> : <MoreHorizontal className="icon" aria-hidden="true" />}</button> : null}
+                  </div>;
+                  const attribution = [sourceLabel && t("settings.subscriptionAccountSource", { source: sourceLabel }), observedLabel, observationTitle].filter(Boolean).join(" · ");
+                  return <section key={source.key} className="settings-subscription-source" title={attribution} data-testid={`subscription-${source.kind}-${source.id}`}>
+                    {index === 0 ? <div className="settings-subscription-main">
+                      {identity ? <ServiceMark identity={identity} />
+                        : <span className="settings-engine-row-icon" aria-hidden="true"><EngineIcon engine={first.id} /></span>}
+                      <h2 className="settings-subscription-name">{identity?.label ?? first.label}</h2>
+                      {accounts.length === 1 ? controls : null}
                     </div> : null}
-                    {credential ? <p className="settings-subscription-account-source">
-                      {source.provider && accountName !== source.id && !serviceNamedConnection ? `${source.id} · ` : null}{credential}
-                    </p> : null}
+                    {accountName || (observed && source.quota?.plan) || accounts.length > 1 ? <div className="settings-subscription-account" title={attribution}>
+                      <span className="settings-subscription-account-name">{accountName || sourceLabel}</span>
+
+                      {observed && source.quota?.plan ? <span className="settings-subscription-plan">{source.quota.plan}</span> : null}
+                      {accounts.length > 1 ? controls : null}
+                    </div> : null}
+                    {sourceLabel ? <span className="sr-only">{t("settings.subscriptionAccountSource", { source: sourceLabel })}</span> : null}
                     {status ? <p className="settings-subscription-status">{t(status)}</p> : null}
                     {quotaLoading && source.engine?.enabled && source.engine.binary_ok && source.engine.capabilities?.includes("account-quota")
                       ? <QuotaSkeleton />
-                      : <Quota quota={source.quota} now={now} />}
-                    {Number.isFinite(observedMillis) || showModel || showAuthentication || isCodexSubscription(source.provider?.type) ? <div className="settings-subscription-actions">
-                      {Number.isFinite(observedMillis) ? <p className="settings-subscription-age">{t(source.quota?.observed_at ? "settings.subscriptionObserved" : "settings.subscriptionChecked", { age: formatAge(observedMillis, now, t) })}</p> : null}
-                      {showModel ? <SelectMenu
-                          triggerClassName="settings-subscription-model-trigger"
-                          value={source.selectedModel}
-                          disabled={!!pending || source.login === "unavailable"}
-                          ariaLabel={`${source.label} ${t("settings.subscriptionModel")}`}
-                          placeholder={t("settings.subscriptionModelUnset")}
-                          onChange={(model) => void choose(source, model)}
-                          options={source.models.map((model) => ({ value: model.id, label: model.label }))}
-                          flip
-                        /> : null}
+                      : <Quota source={source} now={now} />}
+                    {(observedLabel && showObservationAge) || showAuthentication ? <div className="settings-subscription-actions">
+                      {observedLabel && showObservationAge ? <time className="settings-subscription-age" dateTime={observedAt} title={observationTitle}>{observedLabel}</time> : null}
                       {showAuthentication ? <EngineAuthentication engineID={source.id} compact onAuthenticated={() => setRefreshVersion((value) => value + 1)} /> : null}
-                      {isCodexSubscription(source.provider?.type) ? <button
-                        type="button"
-                        className="settings-button settings-button-ghost settings-icon-button settings-subscription-more"
-                        data-testid="subscription-account-actions"
-                        aria-label={pending === source.key ? t("settings.codexChecking") : t("provider.moreActions", { name: accountName ?? source.label })}
-                        aria-haspopup="menu"
-                        aria-expanded={menu?.sourceKey === source.key}
-                        disabled={!!pending}
-                        onClick={(event) => {
-                          const bounds = event.currentTarget.getBoundingClientRect();
-                          setMenu({ sourceKey: source.key, x: bounds.right, y: bounds.bottom + 4 });
-                        }}
-                      >{pending === source.key ? <RefreshCw className="icon settings-spin" aria-hidden="true" /> : <MoreHorizontal className="icon" aria-hidden="true" />}</button> : null}
-                    </div>
-                      : null}
+                    </div> : null}
                     {checkedProvider === source.id ? <p className="settings-subscription-status" role="status">{t("settings.codexLoginVerified")}</p> : null}
                   </section>;
                 })}
@@ -246,7 +253,7 @@ export function SubscriptionDashboard({
         { label: t("settings.codexUseLocal"), disabled: !!pending, onSelect: () => checkCodexLogin(menuSource, true) },
         { label: t("settings.codexCheckLogin"), disabled: !!pending, onSelect: () => checkCodexLogin(menuSource, false) },
       ]} /> : null}
-      {authError ? <p className="settings-subscription-status" role="alert">{authError}</p> : null}
+      {authError ? <p className="settings-subscription-status" role="alert">{t("settings.subscriptionLoginFailed")}</p> : null}
       {error ? <p className="settings-subscription-status" role="alert">{t(error)}</p> : null}
     </section>
   );
@@ -269,8 +276,9 @@ function QuotaSkeleton(): JSX.Element {
   </div>;
 }
 
-function Quota({ quota, now }: { quota?: SubscriptionQuota; now: number }): JSX.Element | null {
+function Quota({ source, now }: { source: SubscriptionSource; now: number }): JSX.Element | null {
   const { t, formatNumber, formatDate } = useI18n();
+  const quota = source.quota;
   if (!quota) return null;
   const statusKey = quota.status === "stale" ? "settings.subscriptionQuotaRefreshFailed"
     : quota.status === "unavailable" ? "settings.subscriptionQuotaUnavailable"
@@ -280,8 +288,10 @@ function Quota({ quota, now }: { quota?: SubscriptionQuota; now: number }): JSX.
   const windows = quota.status === "available" || quota.status === "stale" ? quota.windows ?? [] : [];
   const balances = quota.status === "available" || quota.status === "stale" ? quota.balances ?? [] : [];
 
+  const observation = Date.parse(quota.observed_at ?? quota.checked_at);
+  const observationAge = Number.isFinite(observation) ? t(quota.observed_at ? "settings.subscriptionObserved" : "settings.subscriptionChecked", { age: formatAge(observation, now, t) }) : "";
   return <section className="settings-subscription-quota" aria-label={t(quota.kind === "plan" ? "settings.subscriptionKindPlan" : quota.kind === "balance" ? "settings.subscriptionKindBalance" : quota.kind === "subscription" ? "settings.subscriptionKindSubscription" : "settings.subscriptionAllowance")}>
-    {statusKey || expiredSnapshot ? <p className="settings-subscription-quota-state" role="status">{t(statusKey ?? "settings.subscriptionQuotaStale")}</p> : null}
+    {statusKey || expiredSnapshot ? <p className="settings-subscription-quota-state" role="status">{[t(statusKey ?? "settings.subscriptionQuotaStale"), (quota.status === "stale" || expiredSnapshot) && observationAge].filter(Boolean).join(" · ")}</p> : null}
     {windows.length ? <div className="settings-subscription-windows">
       {windows.map((window) => {
         const percent = window.used_percent;
@@ -290,7 +300,7 @@ function Quota({ quota, now }: { quota?: SubscriptionQuota; now: number }): JSX.
         const remaining = hasPercent ? Math.max(0, 100 - percent) : undefined;
         const minutes = window.window_minutes;
         const period = minutes && minutes > 0 ? minutes % 1440 === 0 ? t("settings.subscriptionDays", { count: minutes / 1440 }) : minutes % 60 === 0 ? t("settings.subscriptionHours", { count: minutes / 60 }) : t("settings.subscriptionMinutes", { count: minutes }) : undefined;
-        const periodOnly = /^(?:\d+ (?:hours|days|minutes)|Primary|Secondary|Daily|Weekly|Allowance)$/.test(window.label ?? "");
+        const periodOnly = /^(?:\d+ (?:hours|days|minutes)|Primary|Secondary|Daily|Weekly|Weekly allowance|Rolling window|Requests|Allowance)$/i.test(window.label ?? "");
         const label = (periodOnly && period ? period : [window.label, period].filter(Boolean).join(" · ")) || t("settings.subscriptionAllowance");
         const resetMillis = window.resets_at ? Date.parse(window.resets_at) : NaN;
         const expired = quota.status === "stale" || (quota.expires_at !== undefined && Date.parse(quota.expires_at) <= now)
@@ -299,23 +309,34 @@ function Quota({ quota, now }: { quota?: SubscriptionQuota; now: number }): JSX.
           : remaining === undefined ? t("settings.subscriptionQuotaUnknown")
             : expired ? t("settings.subscriptionLastKnownRemaining", { percent: formatNumber(remaining, { maximumFractionDigits: 1 }) })
               : t("settings.subscriptionRemaining", { percent: formatNumber(remaining, { maximumFractionDigits: 1 }) });
-        return <div key={window.id} className="settings-subscription-window" data-exhausted={!expired && remaining === 0}>
+        const resetTitle = Number.isFinite(resetMillis) ? t("settings.subscriptionResetTime", { time: formatDate(resetMillis, { year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", timeZoneName: "short" }) }) : undefined;
+        const resetMinutes = Math.max(1, Math.ceil((resetMillis - now) / 60_000));
+        const resetDuration = resetMinutes < 60 ? t("settings.subscriptionMinutes", { count: resetMinutes })
+          : resetMinutes < 1440 ? [t("settings.subscriptionHours", { count: Math.floor(resetMinutes / 60) }), resetMinutes % 60 ? t("settings.subscriptionMinutes", { count: resetMinutes % 60 }) : ""].filter(Boolean).join(" ")
+            : [t("settings.subscriptionDays", { count: Math.floor(resetMinutes / 1440) }), Math.floor(resetMinutes % 1440 / 60) ? t("settings.subscriptionHours", { count: Math.floor(resetMinutes % 1440 / 60) }) : ""].filter(Boolean).join(" ");
+        const knownLabels = [source.id, source.label, source.selectedModel, source.models.find((model) => model.id === source.selectedModel)?.label].map((value) => value?.toLowerCase());
+        const scope = [window.model, window.scope].filter((value) => value && value.toLowerCase() !== "all models" && !knownLabels.includes(value.toLowerCase())).join(" · ");
+        return <div key={window.id} className="settings-subscription-window" title={[window.model, window.scope, resetTitle].filter(Boolean).join(" · ")} data-exhausted={!expired && remaining === 0}>
           <div className="settings-subscription-window-heading">
             <div className="settings-subscription-usage"><span>{label}</span><span className="settings-subscription-remaining">{readout}</span></div>
             {window.display ? <p className="settings-subscription-window-display">{window.display}</p> : null}
-            {window.model || window.scope ? <p className="settings-subscription-window-scope">{[window.model, window.scope].filter(Boolean).join(" · ")}</p> : null}
+            {scope ? <p className="settings-subscription-window-scope">{scope}</p> : null}
           </div>
           {!expired && !unlimited && remaining !== undefined ? <meter min={0} max={100} value={remaining} aria-label={label} aria-valuetext={readout} /> : <span aria-hidden="true" />}
-          <span className="settings-subscription-reset">{window.resets_at && Number.isFinite(resetMillis) ? t(expired ? "settings.subscriptionResetTime" : "settings.subscriptionResets", { time: formatDate(resetMillis, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) }) : null}</span>
+          <span className="settings-subscription-reset">{window.resets_at && resetTitle ? <time className={resetMillis <= now ? "sr-only" : undefined} dateTime={window.resets_at} title={resetTitle} aria-label={resetTitle}>{resetMillis <= now
+            ? t("settings.subscriptionResetTime", { time: formatDate(resetMillis, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) })
+            : t("settings.subscriptionResetsIn", { time: resetDuration })}</time> : null}</span>
         </div>;
       })}
     </div> : null}
     {quota.status === "available" && !windows.length && !balances.length ? <p className="settings-subscription-empty">{t("settings.subscriptionQuotaUnknown")}</p> : null}
     {balances.length ? <div className="settings-subscription-balances" aria-label={t("settings.subscriptionBalances")}>
-      {balances.map((balance, index) => <div className="settings-subscription-balance" key={`${balance.currency}-${index}`}>
-        <span>{t("settings.subscriptionBalance", { currency: balance.currency })}</span>
-        <span className="settings-subscription-balance-amount">{balance.amount} {balance.currency}</span>
-      </div>)}
+      <div className="settings-subscription-balance">
+        <span>{t("settings.subscriptionKindBalance")}</span>
+        <span className="settings-subscription-balance-amount">{balances.map((balance, index) => <span key={`${balance.currency}-${index}`}>
+          {index > 0 ? " · " : ""}{balance.amount} {balance.currency}
+        </span>)}</span>
+      </div>
     </div> : null}
     {(quota.status === "available" || quota.status === "stale") && quota.reset_credits !== undefined
       ? <div className="settings-subscription-terms">{t("settings.subscriptionResetCredits", { count: quota.reset_credits })}</div> : null}
