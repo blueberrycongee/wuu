@@ -116,10 +116,13 @@ import {
   activeTurnIDForThread,
   bindActiveSessionTabToThread,
   cloneSessionTabDraft,
+  captureComposerDrafts,
+  cloneComposerDraft,
   sessionTabDraftForThread,
   composerDraftHasContent,
   conversationPaneThreadsByID,
   createDraftSessionTab,
+  createThreadSessionTab,
   emptyComposerDraft,
   ensureSessionTab,
   handleStreamingNotification,
@@ -1008,6 +1011,7 @@ export function App(): JSX.Element {
     finishViewSwitch,
     cancelViewSwitch,
     isCurrentViewSwitchRequest,
+    getCurrentViewSwitchRequestID,
   } = useViewSwitchState();
   const windowResizingRef = useRef(false);
   const environmentPanelHasRoomRef = useRef(environmentPanelHasRoom);
@@ -2564,21 +2568,58 @@ export function App(): JSX.Element {
   // Details actions on subagent completion messages split the conversation
   // and open the child session in the secondary pane. The App owns thread
   // state, so it registers the bridge handler once; message buttons call it.
+  const relatedSplitRequestRef = useRef(0);
   const handleOpenThreadInSplit = useStableCallback((threadID: string) => {
+    const origin = appStateRef.current;
+    const context = origin.activeContext;
+    if (!origin.thread || !context) return;
+    const requestID = ++relatedSplitRequestRef.current;
+    const viewRequestID = getCurrentViewSwitchRequestID();
+    const ownsView = (current = appStateRef.current): boolean =>
+      requestID === relatedSplitRequestRef.current && isCurrentViewSwitchRequest(viewRequestID)
+      && sameRuntimeContext(current.activeContext, context) && current.activeContext?.cwd === context.cwd
+      && current.activeSessionTabID === origin.activeSessionTabID && current.activePane === origin.activePane
+      && current.thread?.id === origin.thread?.id && current.secondaryThread?.id === origin.secondaryThread?.id;
     void (async () => {
       try {
         const thread = requireThread(
           await window.wuu.resumeThread(threadID),
           t("thread.childResumeMissing"),
         );
-        setState((current) => ({
-          ...current,
-          secondaryThread: thread,
-          activePane: current.activePane === "secondary" ? "secondary" : "primary",
-          threads: upsertThread(current.threads, thread),
-        }));
+        // Resume snapshots may still refresh the cache. Only the request's
+        // current view may accept its layout and composer ownership change.
+        if (!ownsView()) return;
+        const current = appStateRef.current;
+        const drafts = composerDraftsRef.current;
+        const primaryDraft = current.secondaryThread
+          ? cloneComposerDraft(drafts.split.primary) : drafts.primary();
+        const secondaryDraft = current.secondaryThread?.id === thread.id
+          ? cloneComposerDraft(drafts.split.secondary) : sessionTabDraftForThread(current, thread.id);
+        const previousSecondaryDraft = cloneComposerDraft(drafts.split.secondary);
+        setSplitComposerDrafts({ primary: primaryDraft, secondary: secondaryDraft });
+        setState((latest) => {
+          if (!ownsView(latest)) return latest;
+          let tabs = latest.sessionTabs;
+          if (latest.secondaryThread && latest.secondaryThread.id !== thread.id) {
+            tabs = ensureSessionTab(tabs, createThreadSessionTab(
+              latest.secondaryThread,
+              resolveThreadRuntimeContext(latest.secondaryThread, latest.projects) ?? context,
+              previousSecondaryDraft,
+            ));
+          }
+          tabs = ensureSessionTab(tabs, createThreadSessionTab(
+            thread, resolveThreadRuntimeContext(thread, latest.projects) ?? context, secondaryDraft,
+          ));
+          return {
+            ...latest,
+            secondaryThread: thread,
+            activeSessionTabID: latest.activePane === "secondary" ? threadSessionTabID(thread.id) : latest.activeSessionTabID,
+            sessionTabs: tabs,
+            threads: upsertThread(latest.threads, thread),
+          };
+        });
       } catch (error) {
-        showErrorToast(
+        if (ownsView()) showErrorToast(
           error instanceof Error ? error.message : t("thread.childLoadFailed"),
         );
       }
@@ -2586,7 +2627,10 @@ export function App(): JSX.Element {
   });
   useEffect(() => {
     setOpenThreadInSplitHandler(handleOpenThreadInSplit);
-    return () => setOpenThreadInSplitHandler(undefined);
+    return () => {
+      relatedSplitRequestRef.current += 1;
+      setOpenThreadInSplitHandler(undefined);
+    };
   }, [handleOpenThreadInSplit]);
   const handleCachedPaneOpenFileDiff = useStableCallback(
     (thread: Thread, selection: TurnFileDiffSelection) => {
@@ -2849,8 +2893,9 @@ export function App(): JSX.Element {
       (environmentPanelHasRoom &&
         !environmentPanelDismissed &&
         !emptyConversation &&
-        // A folder outside Git has nothing to show until asked for.
-        state.gitStatus?.is_repo !== false));
+        // Wait for repository detection so non-Git folders do not briefly
+        // open and close the panel while their status is still unknown.
+        state.gitStatus?.is_repo === true));
   const environmentPanelVisible = environmentPanelTargetVisible;
   const environmentPanelMotionState: EnvironmentPanelMotionState =
     environmentPanelVisible ? "open" : "closing";
@@ -3485,6 +3530,16 @@ export function App(): JSX.Element {
     );
   }
 
+  function currentComposerDraftSnapshot() {
+    const current = appStateRef.current;
+    return captureComposerDrafts(
+      current,
+      current.thread && current.secondaryThread
+        ? composerDraftsRef.current.split
+        : composerDraftsRef.current.primary(),
+    );
+  }
+
   const {
     selectWorkspaceForNewThread,
     startNewThreadInWorkspace,
@@ -3496,7 +3551,7 @@ export function App(): JSX.Element {
   } = createWorkspaceRuntimeActions({
     getAppState: () => appStateRef.current,
     setAppState: setState,
-    getPrimaryComposerDraft: currentPrimaryComposerDraft,
+    getComposerDraftSnapshot: currentComposerDraftSnapshot,
     restorePrimaryComposerDraft,
     clearPrimaryComposerDraft: () =>
       restorePrimaryComposerDraft(emptyComposerDraft()),
@@ -3521,7 +3576,7 @@ export function App(): JSX.Element {
     setAppState: setState,
     getActiveThreadID: () => activeThreadID,
     getPendingViewSwitch: () => pendingViewSwitch,
-    getPrimaryComposerDraft: currentPrimaryComposerDraft,
+    getComposerDraftSnapshot: currentComposerDraftSnapshot,
     restorePrimaryComposerDraft,
     resetSplitComposerDrafts: () =>
       setSplitComposerDrafts(initialSplitComposerDrafts()),
@@ -3591,7 +3646,7 @@ export function App(): JSX.Element {
   } = createSessionTabActions({
     getAppState: () => appStateRef.current,
     setAppState: setState,
-    getPrimaryComposerDraft: currentPrimaryComposerDraft,
+    getComposerDraftSnapshot: currentComposerDraftSnapshot,
     restorePrimaryComposerDraft,
     clearPrimaryComposerDraft: () =>
       restorePrimaryComposerDraft(emptyComposerDraft()),
@@ -3950,7 +4005,7 @@ export function App(): JSX.Element {
     getAppState: () => appStateRef.current,
     setAppState: setState,
     getActiveTitle: () => activeTitle,
-    getPrimaryComposerDraft: currentPrimaryComposerDraft,
+    getComposerDraftSnapshot: currentComposerDraftSnapshot,
     setSplitComposerDrafts,
     restorePrimaryComposerDraft,
     

@@ -421,6 +421,60 @@ describe("session tab switch latency", () => {
     delete (globalThis as { wuu?: WuuDesktopApi }).wuu;
   });
 
+  it.each([false, true, "error"] as const)("waits for confirmed Git status before automatically opening workspace info (repository=%s)", async (isRepository) => {
+    vi.useFakeTimers();
+    vi.stubGlobal("innerWidth", 1600);
+    vi.stubGlobal("innerHeight", 900);
+    installWuuApi();
+    const status = deferred<Awaited<ReturnType<typeof window.wuu.gitStatus>>>();
+    vi.mocked(window.wuu.gitStatus).mockReturnValue(status.promise);
+    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+    expect(activeSessionTabLabel()).toContain("session switch A");
+    expect(window.wuu.gitStatus).toHaveBeenCalled();
+    const toggle = container.querySelector<HTMLButtonElement>(".environment-toggle-button")!;
+    expect(toggle.getAttribute("aria-pressed")).toBe("false");
+    expect(container.querySelector(".environment-panel")).toBeNull();
+
+    await act(async () => {
+      if (isRepository === "error") status.reject(new Error("Git status temporarily unavailable"));
+      else status.resolve({ is_repo: isRepository, dirty_count: 0 });
+    });
+    await flushAsync();
+    expect(toggle.getAttribute("aria-pressed")).toBe(String(isRepository === true));
+    if (isRepository === true) {
+      // A user's dismissal must survive later conversation/status refreshes.
+      await act(async () => { toggle.click(); });
+      await act(async () => { threadRowButton("session switch B")!.click(); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+      expect(toggle.getAttribute("aria-pressed")).toBe("false");
+    } else {
+      expect(container.querySelector(".environment-panel")).toBeNull();
+    }
+  });
+
+  it.each([false, true])("preserves explicit workspace-info intent while Git detection is pending (dismiss=%s)", async (dismiss) => {
+    vi.useFakeTimers();
+    vi.stubGlobal("innerWidth", 1600);
+    vi.stubGlobal("innerHeight", 900);
+    installWuuApi();
+    const status = deferred<Awaited<ReturnType<typeof window.wuu.gitStatus>>>();
+    vi.mocked(window.wuu.gitStatus).mockReturnValue(status.promise);
+    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+    const toggle = container.querySelector<HTMLButtonElement>(".environment-toggle-button")!;
+    expect(toggle.getAttribute("aria-pressed")).toBe("false");
+    await act(async () => { toggle.click(); });
+    expect(toggle.getAttribute("aria-pressed")).toBe("true");
+    if (dismiss) await act(async () => { toggle.click(); });
+    await act(async () => { status.resolve({ is_repo: dismiss, dirty_count: 0 }); });
+    await flushAsync();
+    expect(toggle.getAttribute("aria-pressed")).toBe(String(!dismiss));
+    await act(async () => { threadRowButton("session switch B")!.click(); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+    expect(toggle.getAttribute("aria-pressed")).toBe(String(!dismiss));
+  });
+
   it("persists the latest mounted effort-slider choice before the previous request settles", async () => {
     const { threadsByID } = installWuuApi();
     threadsByID.set(threadAID, { ...threadA(), model_variant: "high", model_effort: "high" });
@@ -489,6 +543,149 @@ describe("session tab switch latency", () => {
     expect(slider.value).toBe(slider.min);
   });
 
+  it.each(["switch", "away-and-back"])("does not reopen a related-session split after newer cached navigation: %s", async (navigation) => {
+    const { threadsByID, resumeThread } = installWuuApi();
+    const child = { ...threadB(), id: "related-child", preview: "related child" };
+    threadsByID.set(child.id, child);
+    const source = threadA();
+    source.turns[0].items[0] = { ...source.turns[0].items[0], origin: "host", presentation_kind: "session_message", related_session_id: child.id };
+    threadsByID.set(threadAID, source);
+    turnListFixture.renderTurns = true;
+    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await flushAsync();
+    // Cache B before requesting the child, so switching to B is immediate even
+    // when its next background resume is behind the child in the IPC stream.
+    await act(async () => { threadRowButton("session switch B")!.click(); });
+    await flushAsync();
+    await act(async () => { threadRowButton("session switch A")!.click(); });
+    await flushAsync();
+    const childResume = deferred<{ thread: Thread }>();
+    const bResume = deferred<{ thread: Thread }>();
+    const aResume = deferred<{ thread: Thread }>();
+    resumeThread.mockImplementation((id: string) => id === child.id ? childResume.promise
+      : id === threadBID ? bResume.promise : id === threadAID ? aResume.promise : Promise.resolve({ thread: threadsByID.get(id) }));
+    const sourceButton = container.querySelector<HTMLButtonElement>(".session-message-source");
+    expect(sourceButton).not.toBeNull();
+    await act(async () => { sourceButton!.click(); });
+    expect(resumeThread).toHaveBeenLastCalledWith(child.id);
+    await act(async () => { threadRowButton("session switch B")!.click(); });
+    expect(activeThreadProbe()?.dataset.threadId).toBe(threadBID);
+    expect(container.querySelector(".conversation-split-pane")).toBeNull();
+    if (navigation === "away-and-back") {
+      await act(async () => { threadRowButton("session switch A")!.click(); });
+      expect(activeThreadProbe()?.dataset.threadId).toBe(threadAID);
+    }
+    // The real bridge emits each resume snapshot before resolving its IPC call.
+    // Deliver both notifications and responses in FIFO request order.
+    await act(async () => { emitNotification("thread/resumed", { thread: child }); childResume.resolve({ thread: child }); });
+    await flushAsync();
+    const splitAfterOldResume = [...container.querySelectorAll<HTMLElement>(".conversation-split-pane")].map(node => node.dataset.threadId);
+    await act(async () => { emitNotification("thread/resumed", { thread: threadB() }); bResume.resolve({ thread: threadB() }); });
+    if (navigation === "away-and-back") await act(async () => { emitNotification("thread/resumed", { thread: source }); aResume.resolve({ thread: source }); });
+    await flushAsync();
+    const splitAfterAllResponses = [...container.querySelectorAll<HTMLElement>(".conversation-split-pane")].map(node => node.dataset.threadId);
+    expect({ splitAfterOldResume, splitAfterAllResponses }).toEqual({ splitAfterOldResume: [], splitAfterAllResponses: [] });
+    expect(activeThreadProbe()?.dataset.threadId).toBe(navigation === "switch" ? threadBID : threadAID);
+  });
+
+  it.each([false, true])("preserves the primary draft when opening and closing a related-session split (delayed=%s)", async (delayed) => {
+    const { threadsByID, resumeThread } = installWuuApi();
+    const child = { ...threadB(), id: "related-child", preview: "related child" };
+    threadsByID.set(child.id, child);
+    const source = threadA();
+    source.turns[0].items[0] = { ...source.turns[0].items[0], origin: "host", presentation_kind: "session_message", related_session_id: child.id };
+    threadsByID.set(threadAID, source);
+    turnListFixture.renderTurns = true;
+    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await flushAsync();
+    act(() => setMainComposerPrompt("unsent primary draft"));
+    expect(mainComposerTextarea().value).toBe("unsent primary draft");
+    const pending = deferred<{ thread: Thread }>();
+    if (delayed) resumeThread.mockImplementationOnce(() => pending.promise);
+    await act(async () => { container.querySelector<HTMLButtonElement>(".session-message-source")!.click(); });
+    if (delayed) {
+      act(() => setMainComposerPrompt("newer primary draft"));
+      await act(async () => { emitNotification("thread/resumed", { thread: child }); pending.resolve({ thread: child }); });
+    }
+    await flushAsync();
+    const whileSplit = container.querySelector<HTMLTextAreaElement>(`.conversation-split-pane[data-thread-id="${threadAID}"] textarea`)!.value;
+    await act(async () => { container.querySelector<HTMLButtonElement>(".conversation-split-close")!.click(); });
+    await flushAsync();
+    const afterClose = mainComposerTextarea().value;
+    const expected = delayed ? "newer primary draft" : "unsent primary draft";
+    expect({ whileSplit, afterClose }).toEqual({ whileSplit: expected, afterClose: expected });
+  });
+
+  it("keeps only the latest related-session request and restores replaced pane drafts", async () => {
+    const { threadsByID, resumeThread } = installWuuApi();
+    const first = { ...threadB(), id: "first-child", preview: "first child" };
+    const second = { ...threadB(), id: "second-child", preview: "second child" };
+    threadsByID.set(first.id, first); threadsByID.set(second.id, second);
+    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await flushAsync();
+    const firstRead = deferred<{ thread: Thread }>();
+    const secondRead = deferred<{ thread: Thread }>();
+    resumeThread.mockImplementationOnce(() => firstRead.promise).mockImplementationOnce(() => secondRead.promise);
+    await act(async () => { requestOpenThreadInSplit(first.id); requestOpenThreadInSplit(second.id); });
+    await act(async () => { emitNotification("thread/resumed", { thread: first }); firstRead.resolve({ thread: first }); });
+    const stalePane = container.querySelector(".conversation-split-pane");
+    await act(async () => { emitNotification("thread/resumed", { thread: second }); secondRead.resolve({ thread: second }); });
+    await flushAsync();
+    const secondary = () => container.querySelector<HTMLTextAreaElement>(`.conversation-split-pane[data-thread-id="${second.id}"] textarea`)!;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(secondary(), "draft for second child");
+      secondary().dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => { requestOpenThreadInSplit(first.id); });
+    const firstChildDraft = container.querySelector<HTMLTextAreaElement>(`.conversation-split-pane[data-thread-id="${first.id}"] textarea`)!.value;
+    await act(async () => { requestOpenThreadInSplit(second.id); });
+    const recoveredDraft = secondary().value;
+    await act(async () => { requestOpenThreadInSplit(second.id); });
+    expect({ stalePaneOpened: !!stalePane, firstChildDraft, recoveredDraft, repeatedDraft: secondary().value }).toEqual({
+      stalePaneOpened: false, firstChildDraft: "", recoveredDraft: "draft for second child", repeatedDraft: "draft for second child",
+    });
+  });
+
+  it.each([
+    { activePane: "primary", direct: false }, { activePane: "secondary", direct: false },
+    { activePane: "primary", direct: true }, { activePane: "secondary", direct: true },
+  ])("preserves both split drafts from $activePane (direct pane promotion=$direct)", async ({ activePane, direct }) => {
+    const { threadsByID } = installWuuApi();
+    const third = { ...threadB(), id: "thread-third", preview: "third conversation" };
+    threadsByID.set(third.id, third);
+    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await flushAsync();
+    await act(async () => { threadRowButton("session switch B")!.click(); });
+    await flushAsync();
+    await act(async () => { threadRowButton("session switch A")!.click(); });
+    await flushAsync();
+    act(() => setMainComposerPrompt("older global A draft"));
+    await act(async () => { requestOpenThreadInSplit(threadBID); });
+    await flushAsync();
+    const pane = (id: string) => container.querySelector<HTMLElement>(`.conversation-split-pane[data-thread-id="${id}"]`)!;
+    const setSplit = (id: string, text: string) => {
+      const input = pane(id).querySelector<HTMLTextAreaElement>("textarea")!;
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(input, text);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    };
+    act(() => { setSplit(threadAID, "new draft for A"); setSplit(threadBID, "new draft for B"); });
+    const activeID = activePane === "primary" ? threadAID : threadBID;
+    act(() => pane(activeID).dispatchEvent(new Event("pointerdown", { bubbles: true })));
+    expect(pane(activeID).classList.contains("active")).toBe(true);
+    // All calls settle in request order; there is no delayed or reversed IPC.
+    const destination = direct ? (activePane === "primary" ? "session switch B" : "session switch A") : "third conversation";
+    await act(async () => { threadRowButton(destination)!.click(); });
+    await flushAsync();
+    expect(mainComposerTextarea().value).toBe(direct ? (activePane === "primary" ? "new draft for B" : "new draft for A") : "");
+    await act(async () => { threadRowButton("session switch A")!.click(); });
+    await flushAsync();
+    const restoredA = mainComposerTextarea().value;
+    await act(async () => { threadRowButton("session switch B")!.click(); });
+    await flushAsync();
+    const restoredB = mainComposerTextarea().value;
+    expect({ restoredA, restoredB }).toEqual({ restoredA: "new draft for A", restoredB: "new draft for B" });
+  });
+
   it("keeps the rendered target draft when a delayed fork completes after switching", async () => {
     const { threadsByID } = installWuuApi();
     const source = threadA();
@@ -542,6 +739,32 @@ describe("session tab switch latency", () => {
     expect(activeThreadProbe()?.dataset.threadId).toBe(threadAID);
     expect(mainComposerTextarea().value).toBe("unsent archive draft");
     expect(container.querySelectorAll(`${mainComposerSelector} ${attachmentCardSelector}`)).toHaveLength(1);
+  });
+
+  it.each([
+    { split: false, failure: false }, { split: true, failure: false },
+    { split: false, failure: true }, { split: true, failure: true },
+  ])("keeps attachment completion while a cold navigation waits (split=$split, failure=$failure)", async ({ split, failure }) => {
+    const { threadsByID, resumeThread } = installWuuApi();
+    const third = { ...threadB(), id: "cold-third", preview: "cold third" };
+    threadsByID.set(third.id, third);
+    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await flushAsync();
+    if (split) await act(async () => { requestOpenThreadInSplit(threadBID); });
+    const ownerID = split ? threadBID : threadAID;
+    const owner = split ? container.querySelector(`.conversation-split-pane[data-thread-id="${ownerID}"]`)! : container.querySelector(mainComposerSelector)!;
+    const attachment = await pickPendingAttachment(owner, "png");
+    const pending = deferred<{ thread: Thread }>();
+    resumeThread.mockImplementationOnce(() => pending.promise);
+    await act(async () => { threadRowButton("cold third")!.click(); });
+    expect(resumeThread).toHaveBeenLastCalledWith(third.id);
+    if (failure) await attachment.fail(); else await attachment.finish();
+    await act(async () => { emitNotification("thread/resumed", { thread: third }); pending.resolve({ thread: third }); });
+    await flushAsync();
+    await act(async () => { threadRowButton(split ? "session switch B" : "session switch A")!.click(); });
+    await flushAsync();
+    if (failure) expect(container.querySelector(`${mainComposerSelector} ${attachmentCardSelector}`)).toBeNull();
+    else expect(container.querySelector(`${mainComposerSelector} img`)?.getAttribute("src")).toBe(`data:image/png;base64,${attachment.data}`);
   });
 
   it.each(["pdf", "png", "mp4"] as const)("keeps a pending %s on its original draft after switching conversations", async (extension) => {
@@ -1143,5 +1366,54 @@ describe("session tab switch latency", () => {
     expect(resumeThread).toHaveBeenCalledWith(threadAID);
     expect(activeThreadProbe()?.dataset.latestUserText).toBe("New managed input");
     expect(container.querySelector(".composer-stop-button")).not.toBeNull();
+  });
+
+  it.each([
+    { key: "End", initial: "high", pending: "", responseBeforeKeyUp: false },
+    { key: "Home", initial: "", pending: "high", responseBeforeKeyUp: true },
+    { key: "End", initial: "high", pending: "", responseBeforeKeyUp: true },
+  ])("preserves $key after reopening while an earlier effort response arrives before keyup=$responseBeforeKeyUp", async ({ key, initial, pending, responseBeforeKeyUp }) => {
+    const { threadsByID } = installWuuApi();
+    threadsByID.set(threadAID, { ...threadA(), model_variant: initial, model_effort: initial });
+    const workspaceDefaults = initialized();
+    workspaceDefaults.providers![0].models = [{ id: "model-a", supported_efforts: ["low", "medium", "high"] }];
+    vi.mocked(window.wuu.initialize).mockResolvedValue(workspaceDefaults);
+    const first = deferred<InitializeResult>();
+    const update = vi.fn().mockReturnValueOnce(first.promise).mockResolvedValue(workspaceDefaults);
+    window.wuu.updateRuntimeSettings = update;
+    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await flushAsync();
+    const toggle = () => container.querySelector<HTMLButtonElement>(".codex-runtime-trigger")!.click();
+    await act(async () => { toggle(); });
+    let slider = document.querySelector<HTMLInputElement>('.codex-effort-slider input[type="range"]')!;
+    const endpoint = (): string => key === "Home" ? slider.min : slider.max;
+    expect(slider.value).toBe(endpoint());
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(slider, key === "Home" ? slider.max : slider.min);
+      slider.dispatchEvent(new Event("input", { bubbles: true }));
+      slider.dispatchEvent(new KeyboardEvent("keyup", { key: key === "Home" ? "End" : "Home", bubbles: true }));
+    });
+    expect(update.mock.calls.map(call => call[4])).toEqual([pending]);
+    await act(async () => { toggle(); });
+    await act(async () => { toggle(); });
+    await act(async () => { await new Promise<void>(resolve => requestAnimationFrame(() => resolve())); });
+    slider = document.querySelector<HTMLInputElement>('.codex-effort-slider input[type="range"]')!;
+    expect(slider.value).toBe(endpoint());
+    // Home/End at the displayed endpoint produces no native input/change event.
+    await act(async () => {
+      slider.focus();
+      slider.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
+    });
+    if (responseBeforeKeyUp) {
+      await act(async () => { first.resolve(workspaceDefaults); });
+      await flushAsync();
+      expect(slider.value).not.toBe(endpoint());
+      expect(document.activeElement).toBe(slider);
+    }
+    await act(async () => { slider.dispatchEvent(new KeyboardEvent("keyup", { key, bubbles: true })); });
+    if (!responseBeforeKeyUp) await act(async () => { first.resolve(workspaceDefaults); });
+    await flushAsync();
+    expect(update.mock.calls.map(call => call[4])).toEqual([pending, initial]);
+    expect(slider.value).toBe(endpoint());
   });
 });
