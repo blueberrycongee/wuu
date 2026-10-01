@@ -1,7 +1,7 @@
 // Real Electron/main/preload/Go coverage with a disposable profile and HTTP
 // provider. Build core and desktop first; WUU_FAST_CORE can override the binary.
 // No account or paid inference is used.
-// Artifacts (wire requests, persisted state, screenshots) are kept in FIXTURE.
+// Evidence (wire requests, persisted state, cropped screenshots) is kept outside the temporary profile.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -11,6 +11,9 @@ const { spawnSync } = require('node:child_process');
 const { pathToFileURL } = require('node:url');
 const { app, BrowserWindow } = require('electron');
 const desktop = path.resolve(__dirname, '..');
+const output = process.env.WUU_FAST_OUTPUT || path.join(desktop, 'out/fast-mode-e2e');
+fs.mkdirSync(output, { recursive: true });
+const layoutEvidence = [];
 const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'wuu-fast-mode-'));
 const home = path.join(fixture, 'home');
 const project = path.join(fixture, 'project');
@@ -45,6 +48,83 @@ async function waitFor(win, fn, arg, timeout = 30000) {
   }
   throw new Error(`Timed out: ${fn}`);
 }
+async function key(win, keyCode) {
+  win.webContents.sendInputEvent({ type: 'keyDown', keyCode });
+  if (keyCode === 'Space' || keyCode === 'Enter') win.webContents.sendInputEvent({ type: 'char', keyCode: keyCode === 'Space' ? ' ' : '\r' });
+  win.webContents.sendInputEvent({ type: 'keyUp', keyCode });
+  await evaluate(win, () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+}
+async function capturePanel(win, name, fastSupported = true) {
+  await evaluate(win, () => Promise.all(document.querySelector('.runtime-panel').getAnimations({ subtree: true }).map(animation => animation.finished.catch(() => {}))));
+  await evaluate(win, () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  const state = await evaluate(win, () => {
+    const panel = document.querySelector('.runtime-panel');
+    const context = panel.querySelector('.runtime-panel-context');
+    const source = panel.querySelector('.runtime-panel-context-source');
+    const fast = panel.querySelector('.runtime-panel-fast');
+    const reset = panel.querySelector('.runtime-panel-speed-reset');
+    const model = panel.querySelector('.runtime-panel-model');
+    const slider = panel.querySelector('.runtime-panel-effort');
+    const track = panel.querySelector('.codex-effort-track');
+    const knob = panel.querySelector('.codex-effort-knob');
+    const range = panel.querySelector('.codex-effort-slider input');
+    const leadingIcon = source.querySelector('.engine-icon');
+    const modelName = panel.querySelector('.runtime-panel-model-name');
+    const font = getComputedStyle(modelName);
+    const canvas = document.createElement('canvas').getContext('2d');
+    canvas.font = `${font.fontWeight} ${font.fontSize} ${font.fontFamily}`;
+    const text = document.createRange();
+    text.selectNodeContents(modelName);
+    const modelInkLeft = text.getBoundingClientRect().left - canvas.measureText(modelName.textContent).actualBoundingBoxLeft;
+    const iconBox = leadingIcon.getBBox();
+    const iconRect = leadingIcon.getBoundingClientRect();
+    const leadingInkLeft = iconRect.left + iconBox.x * iconRect.width / leadingIcon.viewBox.baseVal.width;
+    const rect = node => { const r = node.getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height, left: r.left, right: r.right, top: r.top, bottom: r.bottom }; };
+    const p = rect(panel);
+    return {
+      panel: p, context: rect(context), source: rect(source), fast: fast ? rect(fast) : null, reset: reset ? rect(reset) : null, model: rect(model), slider: slider ? rect(slider) : null,
+      track: rect(track), knob: rect(knob), endpoint: range.value === range.min ? 'min' : range.value === range.max ? 'max' : 'middle',
+      modelInkLeft, leadingInkLeft, modelOutlineOffset: getComputedStyle(model).outlineOffset, knobOutlineOffset: getComputedStyle(knob).outlineOffset,
+      pressed: fast?.getAttribute('aria-pressed') ?? null, resetDisabled: reset?.disabled ?? null,
+      bottomInset: parseFloat(getComputedStyle(panel.querySelector('.runtime-panel-summary')).paddingBottom) + parseFloat(getComputedStyle(panel).borderBottomWidth),
+      fastColor: fast ? getComputedStyle(fast).color : null, fastBackground: fast ? getComputedStyle(fast).backgroundColor : null,
+      font: getComputedStyle(panel).getPropertyValue('--font-ui').trim(), theme: document.documentElement.dataset.theme,
+      viewport: { width: innerWidth, height: innerHeight },
+      nestedButton: Boolean(fast?.parentElement.closest('button')),
+      focusedFast: document.activeElement === fast, focusModality: document.documentElement.dataset.focusModality,
+      focusOutline: fast ? getComputedStyle(fast).outlineStyle : null,
+      crop: { x: Math.max(0, Math.floor(p.x - 8)), y: Math.max(0, Math.floor(p.y - 8)), width: Math.min(innerWidth - Math.max(0, Math.floor(p.x - 8)), Math.ceil(p.width + 16)), height: Math.min(innerHeight - Math.max(0, Math.floor(p.y - 8)), Math.ceil(p.height + 16)) },
+    };
+  });
+  state.zoomFactor = win.webContents.getZoomFactor();
+  layoutEvidence.push({ name, ...state });
+  fs.writeFileSync(path.join(output, 'layout-evidence.json'), JSON.stringify(layoutEvidence, null, 2));
+  assert.equal(Boolean(state.fast), fastSupported, 'Only supported models show speed controls.');
+  assert.equal(Boolean(state.reset), fastSupported, 'Reset belongs to the available speed control.');
+  assert(!state.nestedButton, 'Speed must be independent of the model navigation button.');
+  if (state.fast) {
+    // Browser geometry can differ by a fractional CSS pixel at non-integer zoom.
+    assert(state.fast.width >= 27.5 && state.fast.height >= 27.5, `The compact speed toggle retains a usable hit target: ${JSON.stringify(state.fast)}`);
+    assert(state.fast.top >= state.context.top - 1 && state.fast.bottom <= state.context.bottom + 1, 'Fast mode shares the existing context header.');
+    assert(state.source.right <= state.fast.left + 0.5 && state.fast.right <= state.reset.left + 0.5, 'Header labels, speed and reset must not overlap.');
+    assert(state.fast.bottom <= state.model.top + 1, 'Speed controls must not cover the model row.');
+    assert(Math.abs(state.reset.right - state.model.right) <= 0.5, 'Header controls and the model button share their trailing painted edge.');
+  }
+  assert(Math.abs(state.modelInkLeft - state.track.left) <= 2 && Math.abs(state.leadingInkLeft - state.track.left) <= 2,
+    'Leading glyphs, model text and the slider share a guide, allowing natural glyph bearings.');
+  if (state.endpoint === 'min') assert(Math.abs(state.knob.left - state.track.left) <= 0.5, 'The thumb outer edge reaches the leading guide.');
+  if (state.endpoint === 'max') assert(Math.abs(state.knob.right - state.model.right) <= 0.5, 'The thumb outer edge reaches the same trailing guide as the model button.');
+  assert(Number.parseFloat(state.modelOutlineOffset) <= 0 && Number.parseFloat(state.knobOutlineOffset) <= 0,
+    'Focus rings must not move the visible edges outside the alignment guides.');
+  assert(state.panel.left >= 0 && state.panel.right <= state.viewport.width && state.panel.top >= 0 && state.panel.bottom <= state.viewport.height, 'The popover stays inside the window.');
+  const last = state.slider || state.model;
+  assert(last.bottom <= state.panel.bottom + 0.5 && Math.abs(state.panel.bottom - last.bottom - state.bottomInset) <= 1,
+    'The summary ends at its normal inset without a leftover speed row.');
+  // DOM rectangles use CSS pixels; Electron capture rectangles use DIP.
+  const crop = Object.fromEntries(Object.entries(state.crop).map(([key, value]) => [key, Math.round(value * state.zoomFactor)]));
+  fs.writeFileSync(path.join(output, `${name}.png`), (await win.webContents.capturePage(crop)).toPNG());
+  return state;
+}
 let main;
 app.on('browser-window-created', (_event, win) => { main ||= win; });
 const timeout = setTimeout(() => { console.error('E2E timeout', fixture); app.exit(1); }, 120000);
@@ -59,7 +139,7 @@ async function run() {
   process.env.WUU_TEST_CODEX_DEFAULT_TIER = 'fast';
   fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({
     default_provider: 'fixture', engines,
-    providers: { fixture: { type: 'openai-compatible', base_url: `http://127.0.0.1:${server.address().port}/v1`, api_key: 'fixture-only', model: 'fixture', models: { fixture: { fast_mode: true, variants: { low: { reasoningEffort: 'low' }, high: { reasoningEffort: 'high' } } } } } },
+    providers: { fixture: { type: 'openai-compatible', base_url: `http://127.0.0.1:${server.address().port}/v1`, api_key: 'fixture-only', model: 'fixture', models: { fixture: { name: 'Fixture model with a deliberately long display name', fast_mode: true, variants: { low: { reasoningEffort: 'low' }, high: { reasoningEffort: 'high' } } }, 'fixture-basic': { name: 'Basic fixture model', fast_mode: false, variants: { low: { reasoningEffort: 'low' }, high: { reasoningEffort: 'high' } } } } } },
   }));
   fs.writeFileSync(path.join(home, 'projects.json'), JSON.stringify({ projects: [{ id: 'fixture', name: 'Fast mode fixture', path: project, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' }], active_context: { kind: 'project', project_id: 'fixture', cwd: project } }));
   fs.writeFileSync(path.join(home, 'desktop-settings.json'), JSON.stringify({ onboarding_version: 100, language: 'en', theme: 'light' }));
@@ -78,8 +158,18 @@ async function run() {
   await evaluate(main, () => document.querySelector('.codex-runtime-trigger').click());
   await waitFor(main, () => document.querySelector('button[aria-label="Fast mode"]'));
   assert.equal(await evaluate(main, () => document.querySelector('button[aria-label="Fast mode"]').getAttribute('aria-pressed')), 'false');
-  await evaluate(main, () => document.querySelector('button[aria-label="Fast mode"]').click());
+  main.focus(); main.webContents.focus();
+  await evaluate(main, () => document.querySelector('.runtime-panel-model').focus());
+  await key(main, 'Home');
+  assert(await evaluate(main, () => document.activeElement === document.querySelector('.runtime-panel-fast')), 'Keyboard navigation reaches the speed control.');
+  const beforeToggle = await capturePanel(main, 'provider-standard');
+  await key(main, 'Space');
   await waitFor(main, async id => (await window.wuu.resumeThread(id)).thread.speed === 'fast', threadID);
+  const afterToggle = await capturePanel(main, 'provider-fast-keyboard');
+  assert.equal(afterToggle.pressed, 'true');
+  assert.deepEqual(afterToggle.fast, beforeToggle.fast, 'Toggling speed must not move its target.');
+  assert.notEqual(afterToggle.fastBackground, beforeToggle.fastBackground, 'Fast mode has a distinct enabled surface.');
+  assert(await evaluate(main, () => document.activeElement === document.querySelector('.runtime-panel-fast') && getComputedStyle(document.activeElement).outlineStyle !== 'none'), 'Keyboard activation retains a visible focus ring.');
   async function turn(marker, expectedTier) {
     await evaluate(main, async ({ id, marker }) => {
       window.__fastModeCompleted = false;
@@ -96,14 +186,18 @@ async function run() {
     assert.equal(request.body.reasoning_effort, 'high');
   }
   await turn('fast-mode-fast', 'priority');
-  async function openPanel() {
-    if (!await evaluate(main, () => Boolean(document.querySelector('button[aria-label="Fast mode"]')))) await evaluate(main, () => document.querySelector('.codex-runtime-trigger').click());
-    await waitFor(main, () => document.querySelector('button[aria-label="Fast mode"]:not(:disabled)'));
+  async function openPanel(fastSupported = true) {
+    if (!await evaluate(main, () => Boolean(document.querySelector('.runtime-panel')))) await evaluate(main, () => document.querySelector('.codex-runtime-trigger').click());
+    await waitFor(main, () => document.querySelector('.runtime-panel.is-summary .runtime-panel-model'));
+    if (fastSupported) await waitFor(main, () => document.querySelector('button[aria-label="Fast mode"]:not(:disabled)'));
+    // Opening schedules model autofocus; finish that frame before choosing a
+    // slider endpoint or the initial focus can overwrite the test's input.
+    await evaluate(main, () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   }
   await openPanel();
   await evaluate(main, () => document.querySelector('button[aria-label="Fast mode"]').focus());
   await evaluate(main, () => Promise.all(document.querySelector('.runtime-panel').getAnimations({ subtree: true }).map(animation => animation.finished.catch(() => {}))));
-  fs.writeFileSync(path.join(fixture, 'light-wide-fast.png'), (await main.webContents.capturePage()).toPNG());
+  await capturePanel(main, 'light-wide-fast');
   await evaluate(main, () => document.querySelector('button[aria-label="Fast mode"]').click());
   await waitFor(main, async id => (await window.wuu.resumeThread(id)).thread.speed === 'standard', threadID);
   await turn('fast-mode-standard', 'default');
@@ -122,7 +216,7 @@ async function run() {
   await openPanel();
   await evaluate(main, () => Promise.all(document.querySelector('.runtime-panel').getAnimations({ subtree: true }).map(animation => animation.finished.catch(() => {}))));
   await evaluate(main, () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-  fs.writeFileSync(path.join(fixture, 'dark-narrow-default.png'), (await main.webContents.capturePage()).toPNG());
+  await capturePanel(main, 'dark-narrow-default');
   const persisted = await evaluate(main, async id => (await window.wuu.resumeThread(id)).thread, threadID);
   assert.equal(persisted.model_variant, 'high');
   assert.ok(!persisted.speed);
@@ -132,6 +226,41 @@ async function run() {
     document.documentElement.setAttribute('data-theme', 'light');
     document.documentElement.style.removeProperty('--conversation-message-font-size');
     document.documentElement.style.removeProperty('--appearance-scale');
+  });
+  // Exercise the live slider at both endpoints, with and without speed support.
+  for (const fastSupported of [true, false]) {
+    if (!fastSupported) {
+      await openPanel();
+      await evaluate(main, () => document.querySelector('.runtime-panel-model').click());
+      await waitFor(main, () => [...document.querySelectorAll('.codex-model-item')].some(item => item.textContent.includes('Basic fixture model')));
+      await evaluate(main, () => [...document.querySelectorAll('.codex-model-item')].find(item => item.textContent.includes('Basic fixture model')).click());
+      await waitFor(main, () => document.querySelector('.runtime-panel-model-name')?.textContent === 'Basic fixture model'
+        && !document.querySelector('.runtime-panel-fast'));
+    }
+    for (const theme of ['light', 'dark']) for (const font of [14, 20]) for (const width of [1280, 760]) {
+      await evaluate(main, () => { if (document.querySelector('.runtime-panel')) document.querySelector('.codex-runtime-trigger').click(); });
+      main.setContentSize(width, 820);
+      await evaluate(main, ({ theme, font }) => {
+        document.documentElement.dataset.theme = theme;
+        document.documentElement.style.setProperty('--conversation-message-font-size', `${font}px`);
+      }, { theme, font });
+      await openPanel(fastSupported);
+      for (const endpoint of ['Home', 'End']) {
+        await evaluate(main, () => document.querySelector('.codex-effort-slider input').focus());
+        await key(main, endpoint);
+        await waitFor(main, endpoint => {
+          const input = document.querySelector('.codex-effort-slider input');
+          return input.value === (endpoint === 'Home' ? input.min : input.max);
+        }, endpoint);
+        await capturePanel(main, `aligned-${fastSupported ? 'fast' : 'basic'}-${theme}-${font}-${width}-${endpoint.toLowerCase()}`, fastSupported);
+      }
+    }
+  }
+  await evaluate(main, () => document.querySelector('.codex-runtime-trigger').click());
+  main.setContentSize(1380, 860);
+  await evaluate(main, () => {
+    document.documentElement.dataset.theme = 'light';
+    document.documentElement.style.removeProperty('--conversation-message-font-size');
   });
   const native = await evaluate(main, async () => {
     const result = await window.wuu.startThread({ engine: 'codex', model: 'gpt-6-astra', effort: 'high' });
@@ -145,7 +274,7 @@ async function run() {
   await openPanel();
   assert.equal(await evaluate(main, () => document.querySelector('button[aria-label="Fast mode"]').getAttribute('aria-pressed')), 'true');
   await evaluate(main, () => Promise.all(document.querySelector('.runtime-panel').getAnimations({ subtree: true }).map(animation => animation.finished.catch(() => {}))));
-  fs.writeFileSync(path.join(fixture, 'codex-inherited-fast.png'), (await main.webContents.capturePage()).toPNG());
+  await capturePanel(main, 'codex-inherited-fast');
   for (const [speed, tier, slash] of [['standard', 'default'], ['', 'fast'], ['standard', 'default', true], ['fast', 'fast']]) {
     await openPanel();
     if (slash) {
@@ -179,11 +308,26 @@ async function run() {
       const visual = await evaluate(main, () => { const button = document.querySelector('button[aria-label="Fast mode"]'); return { pressed: button.getAttribute('aria-pressed'), disabled: button.disabled, color: getComputedStyle(button.querySelector('svg')).color, accent: getComputedStyle(button).getPropertyValue('--interaction-accent') }; });
       console.log('CODEX_VISUAL', JSON.stringify(visual));
       assert.equal(visual.pressed, 'true');
-      fs.writeFileSync(path.join(fixture, 'codex-fast.png'), (await main.webContents.capturePage()).toPNG());
+      await capturePanel(main, 'codex-fast');
     }
   }
-  fs.writeFileSync(path.join(fixture, 'results.json'), JSON.stringify({ threadID, nativeThreadID: native, requests, persisted }, null, 2));
-  console.log('PASS: fast / standard / inherited speed reached the provider and native Codex; model and effort preserved. Artifacts:', fixture);
+  for (const theme of ['light', 'dark']) for (const font of [14, 20]) for (const width of [1280, 760]) {
+    await evaluate(main, () => { if (document.querySelector('.runtime-panel')) document.querySelector('.codex-runtime-trigger').click(); });
+    main.setContentSize(width, 820);
+    await evaluate(main, ({ theme, font }) => {
+      document.documentElement.dataset.theme = theme;
+      document.documentElement.style.setProperty('--conversation-message-font-size', `${font}px`);
+    }, { theme, font });
+    await openPanel();
+    await capturePanel(main, `codex-${theme}-${font}-${width}`);
+  }
+  fs.writeFileSync(path.join(output, 'results.json'), JSON.stringify({ threadID, nativeThreadID: native, requests, persisted, layoutEvidence }, null, 2));
+  console.log('PASS: fast / standard / inherited speed reached the provider and native Codex; model and effort preserved. Artifacts:', output);
   clearTimeout(timeout); server.close(); app.quit();
 }
-run().catch(error => { console.error(error, 'FIXTURE', fixture); server.close(); app.exit(1); });
+run().catch(async error => {
+  console.error(error, 'FIXTURE', fixture);
+  fs.writeFileSync(path.join(output, 'failure.txt'), String(error.stack));
+  if (main && !main.isDestroyed()) fs.writeFileSync(path.join(output, 'failure.png'), (await main.webContents.capturePage()).toPNG());
+  server.close(); app.exit(1);
+});

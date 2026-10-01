@@ -139,6 +139,8 @@ A plugin opens as its own page, with a back link to the catalog. The header hold
 
 Preview `/dev/extensions/` with optional `theme=dark`, `size=20`, `lang=en`, `long`, and `empty` parameters. Skills and plugin packages are synthetic and cover every plugin state; switches and detail actions change only the preview's state.
 
+The fork destination dialog offers the current directory and a new worktree. Click outside or press Escape to dismiss it without creating a conversation; focus returns to the message action. Dismissal is temporarily locked while a fork is being created.
+
 ## Failed turns and confirmations
 
 A turn that ends in failure shows one card: what happened in plain words, the HTTP status as a quiet code when there is one, the next step as a button, and the technical record behind **Details**. A rejected credential, an exhausted quota, or a model the service does not have leads with **Open model providers** and offers **Retry** beside it. Rate limits, overload, timeouts, and network failures offer **Retry**. A conversation too long for the model offers no retry, because replaying it fails the same way, and says to run `/compact` or start a new one. Only the latest turn carries actions.
