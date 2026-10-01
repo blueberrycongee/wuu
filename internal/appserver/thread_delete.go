@@ -94,6 +94,11 @@ func (s *Server) handleThreadDelete(req Request) error {
 		// and remains eligible for a later idempotent cleanup attempt.
 		providers.DebugLogf("commit side thread delete for %q: %v", id, err)
 	}
+	// Code-mode state outlives cached thread runtimes, but never a successful
+	// permanent delete. This also covers owners already evicted from s.threads.
+	if s.rt.CodeMode != nil {
+		s.rt.CodeMode.ForgetOwner(id)
+	}
 
 	// Remove the in-memory owner and stop its subscriptions before deleting
 	// runtime artifacts. Otherwise an idle thread leaves the AgentControl and

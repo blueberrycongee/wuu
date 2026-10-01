@@ -186,7 +186,9 @@ block execution; each call still passes its normal permission and resource check
 State is explicitly stored, memory-only, and isolated by conversation, actor and
 workspace. Rebuilding the same conversation or changing its model retains that
 scope; a fork, another actor or another workspace cannot read it. Restarting the
-runtime clears it. Do not store credentials. Each scope supports 256 keys and
+runtime clears it. Archiving retains it. Permanent deletion releases the handling
+core's state for that conversation, its workers and attached side chats. Do not
+store credentials. Each scope supports 256 keys and
 1 MiB of JSON; the shared session runtime supports 64 retained scopes and 16 MiB.
 Overlapping programs in one scope are rejected. Limits fail visibly without
 silent eviction; use `remove` or overwrite a checkpoint to reclaim space.
