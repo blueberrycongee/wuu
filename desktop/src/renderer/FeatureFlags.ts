@@ -6,7 +6,6 @@ export const ENABLE_REMOTE_CONTROL =
 
 /** Temporarily hidden to keep the conversation focused; retain the edit data and components. */
 export const ENABLE_TURN_EDIT_SUMMARY = false;
-export const ENABLE_CONVERSATION_TURN_RAIL = false;
 
 /** Explicit file deliveries remain accessible beside their conversation. */
 export const ENABLE_TURN_ARTIFACT_SUMMARY = true;

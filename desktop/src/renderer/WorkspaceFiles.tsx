@@ -223,8 +223,7 @@ const WorkspaceFileTreeView = memo(function WorkspaceFileTreeView({ directories,
     flattenEmptyDirectories: false,
     initialExpansion: "closed",
     initialSelectedPaths: selectedFilePath ? [selectedFilePath] : [],
-    // File types keep their shapes; per-type colour would be decoration.
-    icons: { set: "complete", colored: false },
+    icons: { set: "complete", colored: true },
     // The virtualizer and its shadow DOM must agree on the touch target size.
     // Leave room for the full supported 13–20px UI range. Keep the model's
     // virtual offsets and rendered rows identical when font preferences change.

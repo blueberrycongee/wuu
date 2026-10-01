@@ -47,7 +47,6 @@
   .scroll-region,
   .dock-composer-wrap,
   .jump-to-latest-cluster,
-  .conversation-turn-rail,
   .environment-side-stack
 ) {
   visibility: hidden;

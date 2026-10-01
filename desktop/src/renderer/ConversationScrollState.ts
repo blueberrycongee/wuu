@@ -1396,7 +1396,7 @@ export function useConversationScrollState({
       setAutoFollow(false);
       setAutoFollowOverflowAnchor(node, false);
     } else if (returnedToLatest && suppressAutoFollowRearmRef.current) {
-      // Query-history / turn-rail jumps are programmatic smooth scrolls.
+      // Jumps to an earlier message are programmatic smooth scrolls.
       // The browser can emit an unchanged or tiny upward scroll event while
       // the viewport is still inside the bottom band. If that re-arms
       // auto-follow, the next scroll/layout signal yanks the viewport back to
