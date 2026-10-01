@@ -290,7 +290,6 @@ export function useConversationScrollState({
   jumpToUserMessage: (turnID: string, itemID: string, options?: { highlight?: boolean }) => void;
   jumpToConversationMessage: (turnID: string, item: ThreadItem, query?: string) => () => void;
   captureConversationScrollIntent: () => () => boolean;
-  recordConversationScrollIntent: (direction: "away" | "latest") => void;
   /** Position this submission once its optimistic bubble has mounted. */
   requestSubmittedQueryScroll: (messageID: string) => void;
   acknowledgeSubmittedMessage: (pendingID: string, messageID: string) => void;
@@ -1186,14 +1185,6 @@ export function useConversationScrollState({
     }
   }, [activePane, activeThreadID, cancelScrollMotion, setAutoFollow, splitConversation]);
 
-  const recordConversationScrollIntent = useCallback((direction: "away" | "latest"): void => {
-    const node = conversationViewport();
-    if (!node) return;
-    markUserScrollIntent(direction, direction === "away" ? clampScrollTop(node, node.scrollTop) : undefined);
-    if (direction === "away") disableConversationAutoFollow();
-    else selectionPausedAutoFollowRef.current = false;
-  }, [activePane, disableConversationAutoFollow, markUserScrollIntent, splitConversation]);
-
   // A search may still be loading its message after the destination mounts.
   // Capture the current owner without starting or reserving a scroll.
   const captureConversationScrollIntent = useCallback((): (() => boolean) => {
@@ -1513,7 +1504,7 @@ export function useConversationScrollState({
       setAutoFollow(false);
       setAutoFollowOverflowAnchor(node, false);
     } else if (returnedToLatest && suppressAutoFollowRearmRef.current) {
-      // Query-history / turn-rail jumps are programmatic smooth scrolls.
+      // Jumps to an earlier message are programmatic smooth scrolls.
       // The browser can emit an unchanged or tiny upward scroll event while
       // the viewport is still inside the bottom band. If that re-arms
       // auto-follow, the next scroll/layout signal yanks the viewport back to
@@ -2090,7 +2081,6 @@ export function useConversationScrollState({
     jumpToUserMessage,
     jumpToConversationMessage,
     captureConversationScrollIntent,
-    recordConversationScrollIntent,
     disableConversationAutoFollow,
     captureConversationScrollPosition,
     restoreConversationScrollPosition,

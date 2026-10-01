@@ -42,8 +42,10 @@ and wide/narrow windows. This does not validate a live app-server or browser eng
 
 ## Conversation image previews
 
-Images returned while inspecting files or reading tool output start folded.
-Expand the filename row to load the preview, then click the image to enlarge it.
+Images returned while inspecting files or reading tool output stay inside the
+aggregated tool activity. Expand that process row to load its image previews,
+then click an image to enlarge it. Inspection images do not split tool groups
+or become separate output rows.
 Explicitly presented image artifacts, message attachments, and Markdown images
 remain directly visible. This distinction also applies to PTC and background
 tool results.

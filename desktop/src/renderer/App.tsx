@@ -80,8 +80,6 @@ import {
   type ComposerVariant,
   type PermissionMode,
 } from "./ComposerView";
-import type { QueryHistoryEntry } from "./QueryHistoryPopover";
-import { QueryHistoryRail } from "./QueryHistoryRail";
 import { UserQuestionCard } from "./UserQuestionCard";
 import { ConversationSearchOverlay } from "./ConversationSearchOverlay";
 import {
@@ -209,7 +207,6 @@ import {
 } from "./RuntimeHelpers";
 import type { SettingsPage } from "./SettingsView";
 import {
-  ENABLE_CONVERSATION_TURN_RAIL,
   ENABLE_EMBEDDED_BROWSER,
   ENABLE_ACCOUNT,
 } from "./FeatureFlags";
@@ -238,7 +235,6 @@ import {
 } from "./UserFacingErrors";
 import { TurnView } from "./TurnView";
 import { OPEN_SETTINGS_EVENT, type OpenSettingsDetail } from "./TurnNotice";
-import { ConversationTurnRail } from "./ConversationTurnRail";
 import {
   WorkspaceRightPanel,
 } from "./WorkspacePanels";
@@ -1643,13 +1639,6 @@ export function App(): JSX.Element {
       : undefined;
   const splitConversation = Boolean(state.thread && state.secondaryThread);
 
-  function handleQueryHistorySelect(entry: QueryHistoryEntry): void {
-    // Stop auto-follow before we jump — otherwise the next stream tick
-    // would drag the scroll position back to the bottom and undo the
-    // jump before the user even registers it happened.
-    jumpToUserMessage(entry.turnID, entry.itemID);
-  }
-
   useEffect(() => {
     const root = document.documentElement;
     let resizeEndTimer: number | undefined;
@@ -2301,27 +2290,20 @@ export function App(): JSX.Element {
     onOpen: openWorkspaceArtifactTab,
   });
 
-  // Past user queries for the input-box hover popover. We collect them
-  // in turn order, oldest first, so the popover mirrors the order in
-  // which the user asked them. Empty / handoff / image-only items are
-  // skipped — they have nothing to show in a quick-jump list.
-  const pastQueries = useMemo<QueryHistoryEntry[]>(() => {
-    const entries: QueryHistoryEntry[] = [];
+  // Past user queries for the composer's history recall, oldest first. Empty,
+  // handoff and image-only items have no text to recall and are skipped.
+  const composerQueryHistory = useMemo(() => {
+    const queries: string[] = [];
     for (const turn of turns) {
       for (const item of turn.items) {
         const text = queryTextForUserItem(item);
-        if (!text) {
-          continue;
+        if (text) {
+          queries.push(text);
         }
-        entries.push({ turnID: turn.id, itemID: item.id, text });
       }
     }
-    return entries;
+    return queries;
   }, [turns]);
-  const composerQueryHistory = useMemo(
-    () => pastQueries.map((entry) => entry.text),
-    [pastQueries],
-  );
   const showingPrimaryPluginView = usePrimaryPluginViewCover();
   const mainConversationDockVisible =
     Boolean(state.initialized) &&
@@ -2381,7 +2363,6 @@ export function App(): JSX.Element {
     jumpToUserMessage,
     jumpToConversationMessage,
     captureConversationScrollIntent,
-    recordConversationScrollIntent,
     disableConversationAutoFollow,
     captureConversationScrollPosition,
     restoreConversationScrollPosition,
@@ -2415,12 +2396,6 @@ export function App(): JSX.Element {
       scrollRegion.scrollTop = 0;
     }
   }, [activeManagementTabID, conversationScrollRef]);
-  const conversationRailScrollContainer = useCallback((): HTMLElement | null => {
-    if (splitConversation) {
-      return splitPaneRefs.current[state.activePane] ?? null;
-    }
-    return conversationScrollRef.current;
-  }, [conversationScrollRef, splitConversation, splitPaneRefs, state.activePane]);
   const focusMainComposer = useCallback(
     (
       target: ComposerVariant,
@@ -5295,19 +5270,6 @@ export function App(): JSX.Element {
         </header>
 
         )}
-        {/* Unmount the hidden rail so compact scrolling does not measure turns
-            or update navigation state for controls that cannot be used. */}
-        {ENABLE_CONVERSATION_TURN_RAIL && !compactNavigation ? (
-          <ConversationTurnRail
-            turns={turns}
-            activeTurnID={turns[turns.length - 1]?.id}
-            scrollContainerRef={conversationScrollRef}
-            getScrollContainer={conversationRailScrollContainer}
-            onUserScroll={recordConversationScrollIntent}
-            onSelectQueryHistory={handleQueryHistorySelect}
-          />
-        ) : null}
-
         <ConversationSidePanels
           state={state}
           environmentPanelVisible={environmentPanelVisible}
@@ -5397,12 +5359,6 @@ export function App(): JSX.Element {
               />
             ) : (
               <>
-                {!activeThreadReadOnly ? (
-                  <QueryHistoryRail
-                    entries={pastQueries}
-                    onSelect={handleQueryHistorySelect}
-                  />
-                ) : null}
                 {splitConversation && state.thread && state.secondaryThread ? (
                   <ConversationSplitLayoutRenderer
                     state={state}

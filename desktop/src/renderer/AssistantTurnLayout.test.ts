@@ -7,7 +7,7 @@ import { layoutAssistantTurn } from "./AssistantTurnLayout";
 it("splits grouped activity at image results without hiding later work or changing its live status", () => {
   const tool = (id: string, image = false): ThreadItem => ({
     id, type: "tool_call", name: "render", status: "completed",
-    result_detail: image ? { content: [{ type: "image", mime_type: "image/png", data: id }] } : undefined,
+    result_detail: image ? { content: [{ type: "image", mime_type: "image/png", data: id, artifact: { placement: "inline" } }] } : undefined,
   });
   const items: ThreadItem[] = [
     tool("prepare"), tool("first-image", true), tool("check"), tool("second-image", true),
@@ -30,4 +30,21 @@ it("splits grouped activity at image results without hiding later work or changi
   expect(activity[1].settled).toBe(false);
   expect(activity[1].streaming).toBe(true);
   expect([...processItems, ...activity.flatMap((entry) => entry.items ?? [entry.item])]).toEqual(items);
+});
+
+
+it.each(["in_progress", "completed"] as const)("keeps ordinary image inspection in one process group (%s)", (status) => {
+  const items: ThreadItem[] = [
+    { id: "prepare", type: "tool_call", name: "run_shell", status: "completed" },
+    ...["one", "two", "three"].map((id): ThreadItem => ({ id, type: "tool_call", name: "read_file", status: "completed",
+      result_detail: { content: [{ type: "text", text: "Image metadata" }, { type: "image", name: `${id}.png`, mime_type: "image/png", data: id }] } })),
+    { id: "reasoning", type: "reasoning", text: "Compare images", status },
+  ];
+  const turn: Turn = { id: "turn", items, status, items_view: "full" };
+  const artifacts = collectTurnArtifacts(turn);
+  const layout = layoutAssistantTurn(turn, buildAssistantTurnDisplay(turn, undefined)!, artifacts);
+  expect(layout.processEntries).toHaveLength(1);
+  expect(layout.processEntries[0].items).toEqual(items);
+  expect(layout.output).toEqual([]);
+  expect(artifacts.filter(item => item.type === "image").map(item => item.data)).toEqual(["one", "two", "three"]);
 });

@@ -109,6 +109,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   and the bell's first-run bubble became a mark-all-read action.
 
 ### Fixed
+
+- Keep image inspections in aggregated tool activity, with previews loaded on
+  expansion while explicitly presented images retain their output order.
 - Preserve the latest reasoning-effort choice during pending updates, keeping
   queued runtime changes with their original conversation and workspace.
 - Keep streaming cursor markers out of copied or selected unfinished backtick and tilde code blocks.
