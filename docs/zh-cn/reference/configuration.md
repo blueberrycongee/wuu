@@ -24,7 +24,7 @@ Wuu 把模型连接和执行选择放在用户配置中，项目可以补充行�
 |---|---|
 | `default_provider`、`providers` | 选择模型服务、端点、凭据和连接选项 |
 | `instructions`、旧字段 `memory` | 控制指令发现，包括用户路径 |
-| `agent.model_roles`、`agent.model_aliases` | 路由模型工作 |
+| `agent.model_roles`、`agent.model_aliases`、`agent.project_models` | 路由模型工作 |
 | `agent.permission_mode` | 设置本地执行权限 |
 
 改变 JSON 字段大小写不能绕过限制。其他允许的项目字段仍可能影响提示、工具、Hook 和服务，因此这种过滤不代表陌生仓库可以安全执行。
@@ -74,6 +74,23 @@ Kimi 使用独立的消息级工具声明协议；这条规则不启用其 Respo
 `providers.<name>.models.<model>.options.native_tool_search` 可以显式允许兼容端点
 在 auto 模式下使用原生加载，或用 `false` 关闭原生加载而保留客户端发现。只有端点确实实现了对应模型的原生协议
 时才启用；仅接受未知字段并不够。
+
+## Project Agent 模型选择
+
+在启用 Project Agent 的构建中，主 Agent 使用会话模型。可以在设置 → 运行时中
+分别选择 Side 和 Worker 的默认模型，也可以修改用户配置：
+
+```json
+{ "agent": { "project_models": {
+  "side": { "provider": "anthropic", "model": "your-side-model" },
+  "worker": { "provider": "openai", "model": "your-worker-model" }
+} } }
+```
+
+使用已配置的服务名称和模型 ID。省略角色或留空时继承主 Agent 模型。服务支持时，
+每个选择也接受 `effort` 和 `variant`。默认值只影响新建成员，已有会话保留保存的
+选择；创建时明确指定的 `model_alias` 优先于角色默认值。参见
+[app-server 协议](../automation/app-server.md)。
 
 ## 指令与插件设置
 

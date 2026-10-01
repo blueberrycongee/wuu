@@ -30,6 +30,7 @@ import type {
   CodexPetSettingsUpdate,
   EngineListResult,
   EngineUpdateParams,
+  ProjectModelsConfig,
   RuntimeAdvancedSettingsUpdate,
   RuntimeGeneralSettingsUpdate,
 } from "../shared/protocol";
@@ -49,7 +50,7 @@ import {
 import { SidePanelToggleIcon } from "./SidePanelToggleIcon";
 import { useSidebarDrawerState } from "./SidebarDrawerState";
 import { sidebarDrawerExitMs, sidebarMotionMs } from "./AppLayoutState";
-import { SelectMenu } from "./SelectMenu";
+import { SelectMenu, type SelectMenuOption } from "./SelectMenu";
 import type {
   CodexPetsSnapshot,
   DesktopBuildInfo,
@@ -832,6 +833,7 @@ export function SettingsView({
                 onTemperatureChange={setTemperatureDraft}
                 onCommitField={commitAdvancedField}
                 onGeneralSave={onGeneralSave}
+                onAdvancedSave={onAdvancedSave}
               />
             ) : activePage === "general" ? (
               <SettingsGeneralPage
@@ -964,7 +966,8 @@ function SettingsRuntimePage({
   onMaxStepsChange,
   onTemperatureChange,
   onCommitField,
-  onGeneralSave
+  onGeneralSave,
+  onAdvancedSave
 }: {
   initialized: InitializeResult | undefined;
   running: boolean;
@@ -987,6 +990,7 @@ function SettingsRuntimePage({
   onTemperatureChange: (value: string) => void;
   onCommitField: (field: AdvancedNumericField) => void;
   onGeneralSave: (settings: RuntimeGeneralSettingsUpdate) => Promise<void>;
+  onAdvancedSave: (settings: RuntimeAdvancedSettingsUpdate) => Promise<void>;
 }): JSX.Element {
   const { t } = useI18n();
   const ptc = initialized?.general_settings?.ptc ?? { enabled: true };
@@ -994,6 +998,39 @@ function SettingsRuntimePage({
   const [ptcError, setPTCError] = useState("");
   const [ptcFamily, setPTCFamily] = useState("gpt");
   const ptcFamilyValue = ptc.families?.[ptcFamily];
+  const [projectModelsBusy, setProjectModelsBusy] = useState(false);
+  const [projectModelsError, setProjectModelsError] = useState<{ role: "side" | "worker"; message: string }>();
+  const projectModels = initialized?.project_models ?? {};
+  const projectModelOptions: SelectMenuOption[] = [{ value: "", label: t("settings.projectModelInherit") }];
+  for (const provider of initialized?.providers ?? []) {
+    const models = provider.models ?? [];
+    for (const id of new Set([provider.model, ...models.map((model) => model.id)].filter(Boolean))) {
+      const model = models.find((model) => model.id === id);
+      projectModelOptions.push({
+        value: JSON.stringify([provider.name, id]),
+        label: `${provider.name} / ${model?.display_name || id}`,
+        hint: model?.display_name && model.display_name !== id ? id : undefined,
+      });
+    }
+  }
+  for (const selection of [projectModels.side, projectModels.worker]) {
+    if (!selection?.provider || !selection.model) continue;
+    const value = JSON.stringify([selection.provider, selection.model]);
+    if (!projectModelOptions.some((option) => option.value === value)) {
+      projectModelOptions.push({ value, label: `${selection.provider} / ${selection.model}` });
+    }
+  }
+  async function saveProjectModel(role: "side" | "worker", value: string): Promise<void> {
+    const [provider, model] = value ? JSON.parse(value) as [string, string] : ["", ""];
+    const current = projectModels[role];
+    if ((current?.provider ?? "") === provider && (current?.model ?? "") === model) return;
+    const next: ProjectModelsConfig = { ...projectModels, [role]: value ? { provider, model } : {} };
+    setProjectModelsBusy(true);
+    setProjectModelsError(undefined);
+    try { await onAdvancedSave({ project_models: next }); }
+    catch (error) { setProjectModelsError({ role, message: error instanceof Error ? error.message : t("settings.saveFailed") }); }
+    finally { setProjectModelsBusy(false); }
+  }
   async function savePTC(next: NonNullable<RuntimeGeneralSettingsUpdate["ptc"]>): Promise<void> {
     setPTCBusy(true);
     setPTCError("");
@@ -1061,6 +1098,22 @@ function SettingsRuntimePage({
   return (
     <>
       <SettingsPageHeader title={t("settings.runtime")} description={t("settings.runtimeDescription")} />
+      {initialized?.features?.project_agent && (
+        <SettingsSection title={t("settings.projectModels")} description={t("settings.projectModelsDescription")}>
+          <div className="settings-form"><SettingsGroup>
+            {(["side", "worker"] as const).map((role) => {
+              const selection = projectModels[role];
+              const value = selection?.provider && selection.model ? JSON.stringify([selection.provider, selection.model]) : "";
+              const label = t(role === "side" ? "settings.projectSideModel" : "settings.projectWorkerModel");
+              return <SettingsRow key={role} title={label} error={projectModelsError?.role === role ? projectModelsError.message : undefined}>
+                <SelectMenu triggerClassName="settings-select-trigger" ariaLabel={label} dataTestid={`project-${role}-model`}
+                  value={value} options={projectModelOptions} searchable flip disabled={running || projectModelsBusy}
+                  onChange={(next) => void saveProjectModel(role, next)} />
+              </SettingsRow>;
+            })}
+          </SettingsGroup></div>
+        </SettingsSection>
+      )}
       <SettingsSection title={t("settings.sectionCompaction")} testID="settings-advanced">
         <SettingsGroup>
           <SettingsRow

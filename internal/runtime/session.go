@@ -148,6 +148,7 @@ type Session struct {
 	CodeMode                 *codemode.Service
 	WorkerClient             providers.StreamClient
 	ModelRoles               modelroles.Set
+	ProjectModels            config.ProjectModelsConfig
 	ModelBudget              modelbudget.Budget
 	WorkerModelBudget        modelbudget.Budget
 	BaseSystemPrompt         string
@@ -251,6 +252,7 @@ func (s *Session) cloneForThreadModel() *Session {
 		ActivityRegistry:            s.ActivityRegistry,
 		WorkerClient:                s.WorkerClient,
 		ModelRoles:                  s.ModelRoles,
+		ProjectModels:               s.ProjectModels,
 		ModelBudget:                 s.ModelBudget,
 		WorkerModelBudget:           s.WorkerModelBudget,
 		BaseSystemPrompt:            s.BaseSystemPrompt,
@@ -745,6 +747,7 @@ func NewSession(opts Options) (*Session, error) {
 		ActivityRegistry:            activityRegistry,
 		WorkerClient:                workerClient,
 		ModelRoles:                  roleSelections,
+		ProjectModels:               cfg.Agent.ProjectModels,
 		ModelBudget:                 modelBudget,
 		WorkerModelBudget:           workerModelBudget,
 		BaseSystemPrompt:            baseSystemPrompt,

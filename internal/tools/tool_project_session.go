@@ -26,6 +26,9 @@ type ProjectSessionRequest struct {
 	Query      string `json:"query,omitempty"`
 	Limit      int    `json:"limit,omitempty"`
 	Before     int    `json:"before,omitempty"`
+	Block      *bool  `json:"block,omitempty"`
+	TurnID     string `json:"turn_id,omitempty"`
+	TimeoutMS  int    `json:"timeout_ms,omitempty"`
 }
 
 // ProjectSessionHandler serves a coordinator's session tool calls. callID is
@@ -42,7 +45,7 @@ func (t *ProjectSessionTool) IsConcurrencySafe() bool    { return true }
 func (t *ProjectSessionTool) Classify(raw string) ToolClassification {
 	var request ProjectSessionRequest
 	_ = json.Unmarshal([]byte(raw), &request)
-	return ToolClassification{ReadOnly: request.Action == "list" || request.Action == "inspect", ConcurrencySafe: true}
+	return ToolClassification{ReadOnly: request.Action == "list" || request.Action == "inspect" || request.Action == "wait", ConcurrencySafe: true}
 }
 
 func (t *ProjectSessionTool) Definition() providers.ToolDefinition {
@@ -55,22 +58,25 @@ func (t *ProjectSessionTool) Definition() providers.ToolDefinition {
 		Description: "Start and manage the sessions that do this project's work. " +
 			"list shows your sessions with their state. " +
 			"create starts a session from a self-contained brief: the goal, constraints, acceptance checks and what to leave alone; the session does not see this conversation. " +
-			"It works in its own Git worktree unless workspace is shared. " +
+			"Workers default to their own Git worktree when available. side creates or resumes the persistent Side Agent in the shared workspace, steering it when running. " +
 			"send gives an existing session its next instruction or a correction, steering a running turn. " +
-			"stop interrupts a running turn. inspect reads recent history without waiting. " +
+			"Dispatches are durable and replay-safe. side waits by default; create and send return immediately unless block is true. wait returns the selected turn status and final output; timeout or caller cancellation leaves the child running. stop interrupts and revokes earlier queued dispatches. inspect reads recent history without waiting. " +
 			"Only the lead uses send/stop. Any active team member may message another member or the lead directly; preserve user authorization boundaries and copy consequential decisions to the lead. Messages are durable and attributed to the sender. " +
 			"The lead receives final reports. End your turn instead of polling or sending acknowledgements that add no information.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"action":      map[string]any{"type": "string", "enum": []string{"list", "create", "send", "message", "stop", "inspect"}},
+				"action":      map[string]any{"type": "string", "enum": []string{"list", "create", "side", "send", "wait", "message", "stop", "inspect"}},
+				"block":       map[string]any{"type": "boolean", "description": "Wait for this dispatch. Defaults true for side, false for create/send."},
+				"turn_id":     str("wait: exact turn to observe; omit for the current or latest turn."),
+				"timeout_ms":  map[string]any{"type": "integer", "minimum": 1, "description": "Maximum time to wait; the host bounds it. Expiry does not stop the session."},
 				"role":        map[string]any{"type": "string", "enum": []string{"side", "worker"}, "description": "create: worker by default. Only the lead can create the project's persistent side; repeated side creation returns the existing session without sending the prompt. Lead and side can create workers; workers cannot create sessions."},
-				"model_alias": str("create: optional configured model alias. Omit to inherit the lead's model; use an appropriate cheaper model for bounded work when configured."),
+				"model_alias": str("create/new side: optional configured model alias overriding the user's role default. Without a role default, inherit the lead model. Existing sessions keep their saved model."),
 				"wake":        map[string]any{"type": "boolean", "description": "message: true only when a reply or action is needed now. Default false stores information for the recipient's next turn."},
-				"session_id":  str("Target session for send, message, stop and inspect; message can also address the project lead."),
+				"session_id":  str("Target session for send, wait, message, stop and inspect; message can also address the project lead."),
 				"title":       str("Short name for a new session."),
-				"prompt":      str("The brief for create, or the next instruction for send."),
-				"workspace":   map[string]any{"type": "string", "enum": []string{"worktree", "shared"}, "description": "worktree (default in a Git workspace) isolates changes on the session's own branch until they are delivered; shared edits the workspace directly and suits a single writer."},
+				"prompt":      str("The brief for create/side, or the next instruction for send/message."),
+				"workspace":   map[string]any{"type": "string", "enum": []string{"worktree", "shared"}, "description": "New workers default to worktree in a Git workspace; new sides default to shared. Worktree isolates files on the session's own branch; shared requires coordinating a single writer per scope. Existing sessions keep their workspace."},
 				"query":       str("Search text for inspect."),
 				"limit":       map[string]any{"type": "integer", "minimum": 1, "maximum": 30},
 				"before":      map[string]any{"type": "integer", "description": "inspect records before this sequence."},

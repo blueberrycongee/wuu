@@ -39,6 +39,11 @@ import (
 //     instruct it;
 //   - host-generated delegation is mistaken for user authorization or loses
 //     attribution when no plugin runtime is loaded.
+//   - a persistent side drops a new brief or duplicates a replayed dispatch;
+//   - a dispatch blocked by an execution lease disappears on restart or runs
+//     after a stop has invalidated its control fence;
+//   - waiting cancels delegated work, returns another turn, or loses completion
+//     when it happens before the waiter subscribes.
 
 func newProjectFixture(t *testing.T) (*Server, *rpcClient, *projectCalls, *runtime.Session) {
 	t.Helper()
@@ -179,6 +184,255 @@ func deliveredClientIDs(t *testing.T, rt *runtime.Session, threadID, prefix stri
 		}
 	}
 	return ids
+}
+
+func TestProjectPersistentSideDispatchesAndReplays(t *testing.T) {
+	srv, client, calls, rt := newProjectFixture(t)
+	lead := startProject(t, client, "Persistent implementation")
+	handler := srv.projectSessionHandler(lead.ID)
+	no := false
+	request := tools.ProjectSessionRequest{Action: "side", Prompt: "First implementation brief", Block: &no}
+	first, err := handler(context.Background(), "first-side", request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	side := first.(projectSessionView)
+	if side.Workspace != "shared" {
+		t.Fatalf("side workspace = %q", side.Workspace)
+	}
+	call := calls.next(t, request.Prompt)
+	request.Prompt = "Correct the implementation boundary"
+	second, err := handler(context.Background(), "correct-side", request)
+	if err != nil || second.(projectSessionView).SessionID != side.SessionID {
+		t.Fatalf("side follow-up = %+v, %v", second, err)
+	}
+	if _, err := handler(context.Background(), "correct-side", request); err != nil {
+		t.Fatal(err)
+	}
+	call.response <- providersResponse("First pass")
+	correction := calls.next(t, request.Prompt)
+	correction.response <- providersResponse("Corrected implementation")
+	waitForThread(t, srv, side.SessionID, func(th Thread) bool { return th.Status == ThreadStatusIdle && th.LatestCompletedTurnID != "" })
+	if ids := deliveredClientIDs(t, rt, side.SessionID, "project:"+lead.ID+":correct-side"); len(ids) != 1 {
+		t.Fatalf("correction deliveries = %v", ids)
+	}
+	if len(projectManagedSessions(t, client, lead.ID)) != 1 {
+		t.Fatal("persistent side was duplicated")
+	}
+}
+
+func TestProjectDispatchRecoversOrIsFencedByStop(t *testing.T) {
+	for _, stop := range []bool{false, true} {
+		t.Run(map[bool]string{false: "recover", true: "stop"}[stop], func(t *testing.T) {
+			srv, client, calls, rt := newProjectFixture(t)
+			lead := startProject(t, client, "Durable dispatch")
+			created, err := srv.projectSessionHandler(lead.ID)(context.Background(), "create-queued", tools.ProjectSessionRequest{Action: "create", Prompt: "Initial worker brief", Workspace: "shared"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			worker := created.(projectSessionView)
+			calls.next(t, "Initial worker brief").response <- providersResponse("Initial work complete")
+			completed := waitForThread(t, srv, worker.SessionID, func(th Thread) bool { return th.Status == ThreadStatusIdle && th.LatestCompletedTurnID != "" })
+			lease, acquired, err := session.TryAcquireThreadExecutionLease(rt.SessionDir, worker.SessionID)
+			if err != nil || !acquired {
+				t.Fatalf("lease = %v, %v", acquired, err)
+			}
+			defer lease.Release()
+			queued, err := srv.projectSessionHandler(lead.ID)(context.Background(), "queued-followup", tools.ProjectSessionRequest{Action: "send", SessionID: worker.SessionID, Prompt: "Durable follow-up brief"})
+			if err != nil || queued.(projectSessionView).State != "queued" {
+				t.Fatalf("queued = %+v, %v", queued, err)
+			}
+			if stop {
+				if err := srv.takeSessionControl(worker.SessionID, session.ControlPaused); err != nil {
+					t.Fatal(err)
+				}
+			}
+			srv.Close()
+			if err := lease.Release(); err != nil {
+				t.Fatal(err)
+			}
+			reopened := New(rt, &lockedBuffer{})
+			t.Cleanup(reopened.Close)
+			reopened.recoverProjectInbox()
+			if stop {
+				pending, err := session.PendingInbox(rt.SessionDir, worker.SessionID)
+				if err != nil || len(pending) != 0 {
+					t.Fatalf("stopped dispatch pending = %+v, %v", pending, err)
+				}
+				if ids := deliveredClientIDs(t, rt, worker.SessionID, "project:"+lead.ID+":queued-followup"); len(ids) != 0 {
+					t.Fatalf("stopped work delivered: %v", ids)
+				}
+				return
+			}
+			calls.next(t, "Durable follow-up brief").response <- providersResponse("Recovered work complete")
+			waitForThread(t, reopened, worker.SessionID, func(th Thread) bool {
+				return th.Status == ThreadStatusIdle && th.LatestCompletedTurnID != completed.LatestCompletedTurnID
+			})
+			reopened.recoverProjectInbox()
+			if ids := deliveredClientIDs(t, rt, worker.SessionID, "project:"+lead.ID+":queued-followup"); len(ids) != 1 {
+				t.Fatalf("recovered deliveries = %v", ids)
+			}
+		})
+	}
+}
+
+func TestProjectBlockingCorrectionWaitsForItsOwnOutput(t *testing.T) {
+	srv, client, calls, _ := newProjectFixture(t)
+	lead := startProject(t, client, "Blocking correction")
+	handler := srv.projectSessionHandler(lead.ID)
+	no := false
+	_, err := handler(context.Background(), "start-side", tools.ProjectSessionRequest{Action: "side", Prompt: "Initial blocking work", Block: &no})
+	if err != nil {
+		t.Fatal(err)
+	}
+	initial := calls.next(t, "Initial blocking work")
+	type response struct {
+		value any
+		err   error
+	}
+	done := make(chan response, 1)
+	go func() {
+		value, err := handler(context.Background(), "correct-side", tools.ProjectSessionRequest{Action: "side", Prompt: "Requested correction output"})
+		done <- response{value, err}
+	}()
+	// Observe enqueue rather than sleeping to race the original completion.
+	side := projectManagedSessions(t, client, lead.ID)[0]
+	th := srv.thread(side.ID)
+	waitForThread(t, srv, side.ID, func(_ Thread) bool {
+		_, admitted := srv.findSessionInput(th, "project:"+lead.ID+":correct-side")
+		return admitted
+	})
+	initial.response <- providersResponse("Prior output is not the correction")
+	correction := calls.next(t, "Requested correction output")
+	correction.response <- providersResponse("Requested correction completed")
+	select {
+	case result := <-done:
+		if result.err != nil || result.value.(projectSessionView).FinalOutput != "Requested correction completed" {
+			t.Fatalf("blocking correction = %+v, %v", result.value, result.err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("blocking correction did not finish")
+	}
+}
+
+func TestProjectWaitTimeoutAndCompletedTurn(t *testing.T) {
+	srv, client, calls, _ := newProjectFixture(t)
+	lead := startProject(t, client, "Wait for implementation")
+	handler := srv.projectSessionHandler(lead.ID)
+	no := false
+	created, err := handler(context.Background(), "waiting-side", tools.ProjectSessionRequest{Action: "side", Prompt: "Implementation to wait for", Block: &no})
+	if err != nil {
+		t.Fatal(err)
+	}
+	side := created.(projectSessionView)
+	call := calls.next(t, "Implementation to wait for")
+	request := tools.ProjectSessionRequest{Action: "wait", SessionID: side.SessionID, TurnID: side.TurnID, TimeoutMS: 1}
+	waited, err := handler(context.Background(), "timeout", request)
+	if err != nil || !waited.(projectSessionView).TimedOut {
+		t.Fatalf("timeout = %+v, %v", waited, err)
+	}
+	th := srv.thread(side.SessionID)
+	th.mu.Lock()
+	running := th.running
+	th.mu.Unlock()
+	if !running {
+		t.Fatal("wait timeout stopped implementation")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := handler(ctx, "cancelled-wait", request); err != context.Canceled {
+		t.Fatalf("cancelled wait = %v", err)
+	}
+	call.response <- providersResponse("Verified implementation output")
+	waitForThread(t, srv, side.SessionID, func(th Thread) bool { return th.Status == ThreadStatusIdle && th.LatestCompletedTurnID != "" })
+	request.TimeoutMS = 1000
+	waited, err = handler(context.Background(), "completed-wait", request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := waited.(projectSessionView)
+	if result.TimedOut || result.TurnID != side.TurnID || result.TurnStatus != TurnStatusCompleted || result.FinalOutput != "Verified implementation output" {
+		t.Fatalf("completed wait = %+v", result)
+	}
+	request.TurnID = "unknown-turn"
+	if _, err := handler(context.Background(), "unknown-wait", request); err == nil {
+		t.Fatal("unknown turn accepted")
+	}
+}
+
+func TestProjectCreationPersistsInitialDispatch(t *testing.T) {
+	srv, client, calls, rt := newProjectFixture(t)
+	lead := startProject(t, client, "Atomic launch")
+	th, err := srv.createHostSessionThread(projectSessionOwner, projectSessionSource, "", hostSessionCreateParams{
+		RequestID: "atomic-launch", Name: "Atomic worker", ParentSessionID: lead.ID,
+		Visibility: sessionVisibilityUser, ContextSource: sessionContextFresh, Workspace: "shared",
+		WorkspaceID: rt.WorkspaceID, ProjectRole: "worker",
+		InitialInput: &session.InboxMessage{ClientID: "atomic-launch", RelatedSessionID: lead.ID, Cause: "project", Content: "Recover initial dispatch", Wake: true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	control, found, err := session.ReadControl(rt.SessionDir, th.ID)
+	if err != nil || !found || control.State != session.ControlActive {
+		t.Fatalf("initial control = %+v, %v", control, err)
+	}
+	pending, err := session.PendingInbox(rt.SessionDir, th.ID)
+	if err != nil || len(pending) != 1 {
+		t.Fatalf("initial dispatch = %+v, %v", pending, err)
+	}
+	srv.Close()
+	reopened := New(rt, &lockedBuffer{})
+	t.Cleanup(reopened.Close)
+	calls.next(t, "Recover initial dispatch").response <- providersResponse("Initial dispatch recovered")
+	waitForThread(t, reopened, th.ID, func(th Thread) bool { return th.Status == ThreadStatusIdle && th.LatestCompletedTurnID != "" })
+	reopened.recoverProjectInbox()
+	if ids := deliveredClientIDs(t, rt, th.ID, "atomic-launch"); len(ids) != 1 {
+		t.Fatalf("initial dispatch deliveries = %v", ids)
+	}
+}
+
+// Role defaults must persist into children, explicit aliases take precedence,
+// and changing a default must not silently switch the existing persistent side.
+func TestProjectRoleModelsPersistAndRespectOverrides(t *testing.T) {
+	srv, client, _, rt := newProjectFixture(t)
+	if err := os.WriteFile(rt.ConfigPath, []byte(
+		`{"default_provider":"fake-provider","providers":{"fake-provider":{"type":"openai-compatible","base_url":"http://127.0.0.1:1","api_key":"test-key","model":"fake-model"}},"agent":{"project_models":{"side":{"provider":"fake-provider","model":"side-model"},"worker":{"provider":"fake-provider","model":"worker-model"}},"model_aliases":{"override":{"provider":"fake-provider","model":"override-model"}}}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	lead := startProject(t, client, "Role model choices")
+	cfg, _, err := rt.LoadEffectiveConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt.ProjectModels = cfg.Agent.ProjectModels
+	handler := srv.projectSessionHandler(lead.ID)
+	for _, tc := range []struct{ role, alias, model string }{
+		{"side", "", "side-model"}, {"worker", "", "worker-model"}, {"worker", "override", "override-model"},
+	} {
+		result, err := handler(context.Background(), tc.model, tools.ProjectSessionRequest{Action: "create", Role: tc.role, ModelAlias: tc.alias, Prompt: tc.model, Workspace: "shared"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		child, found, err := session.Find(rt.SessionDir, result.(projectSessionView).SessionID)
+		if err != nil || !found || child.Provider != "fake-provider" || child.Model != tc.model {
+			t.Fatalf("child = %+v, %v", child, err)
+		}
+	}
+	current, _, err := session.Find(rt.SessionDir, lead.ID)
+	if err != nil || current.Model != "fake-model" {
+		t.Fatalf("lead changed = %+v, %v", current, err)
+	}
+	if err := config.UpdateAdvancedRuntime(rt.ConfigPath, rt.ProviderName, config.AdvancedRuntimeUpdate{ProjectModels: &config.ProjectModelsConfig{Side: config.ModelRoleConfig{Provider: "fake-provider", Model: "replacement-model"}}}); err != nil {
+		t.Fatal(err)
+	}
+	result, err := handler(context.Background(), "existing-side", tools.ProjectSessionRequest{Action: "create", Role: "side"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	child, _, err := session.Find(rt.SessionDir, result.(projectSessionView).SessionID)
+	if err != nil || child.Model != "side-model" {
+		t.Fatalf("persistent side switched = %+v, %v", child, err)
+	}
 }
 
 func TestProjectDelegatesAndReportsResultOnce(t *testing.T) {

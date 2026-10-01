@@ -372,6 +372,7 @@ export function createRuntimeSettingsActions(
               settings.model_aliases ??
               current.initialized.model_aliases,
             model_roles: updated.model_roles ?? current.initialized.model_roles,
+            project_models: updated.project_models ?? current.initialized.project_models,
             providers: updated.providers ?? current.initialized.providers,
           }
         : current.initialized,

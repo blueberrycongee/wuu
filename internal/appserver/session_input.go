@@ -34,7 +34,7 @@ func isGeneratedSessionInput(origin string) bool {
 }
 
 func (s *Server) validateInboxInput(msg providers.ChatMessage) error {
-	if isGeneratedSessionInput(msg.Origin) && (msg.Cause == "project_message" || msg.Cause == projectCauseResult) {
+	if isGeneratedSessionInput(msg.Origin) && (msg.Cause == "project_message" || msg.Cause == "project" || msg.Cause == projectCauseResult) {
 		return session.ValidateInboxControls(s.rt.SessionDir, msg.ClientID)
 	}
 	return nil

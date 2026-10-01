@@ -21,6 +21,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Desktop app zoom shortcuts (Command/Ctrl + plus, minus, and zero), with a
   centered percentage indicator, saved zoom, and a 50%–200% range.
 
+- Independent Side Agent and Worker model defaults for Project Agent, with
+  desktop selectors, lead-model inheritance, and saved-session model retention.
+- Durable project-session dispatches and bounded result waits, with persistent
+  Side sessions, running-work corrections, restart recovery, and stop fencing.
+
 ### Changed
 
 - Video attachments show larger, unobstructed previews with only a play button;

@@ -29,6 +29,20 @@ type InboxMessage struct {
 
 // EnqueueInbox records a message once; repeating a client ID is a no-op.
 func EnqueueInbox(dir string, message InboxMessage) error {
+	db, err := openStore(dir)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	storeWriteMu.Lock()
+	defer storeWriteMu.Unlock()
+	return insertInbox(db, message)
+}
+
+// Both ordinary enqueue and atomic session creation use the same insert.
+func insertInbox(db interface {
+	Exec(string, ...any) (sql.Result, error)
+}, message InboxMessage) error {
 	if strings.TrimSpace(message.ClientID) == "" || strings.TrimSpace(message.SessionID) == "" {
 		return errors.New("inbox message requires a client ID and target session")
 	}
@@ -39,13 +53,6 @@ func EnqueueInbox(dir string, message InboxMessage) error {
 	if err != nil {
 		return err
 	}
-	db, err := openStore(dir)
-	if err != nil {
-		return err
-	}
-	defer db.Close()
-	storeWriteMu.Lock()
-	defer storeWriteMu.Unlock()
 	_, err = db.Exec(`INSERT OR IGNORE INTO session_inbox(client_id,session_id,related_session_id,cause,content,wake,created_at,controls_json) VALUES(?,?,?,?,?,?,?,?)`,
 		message.ClientID, message.SessionID, message.RelatedSessionID, message.Cause, message.Content, message.Wake, timeText(message.CreatedAt), string(controls))
 	return err

@@ -202,13 +202,14 @@ type ConfigErrorNotification struct {
 }
 
 type ConfigChangedNotification struct {
-	Provider     string                       `json:"provider"`
-	Model        string                       `json:"model"`
-	Effort       string                       `json:"effort,omitempty"`
-	Variant      string                       `json:"variant,omitempty"`
-	ModelRoles   []ModelRoleSummary           `json:"model_roles,omitempty"`
-	ModelAliases map[string]ModelAliasSummary `json:"model_aliases,omitempty"`
-	Providers    []ProviderSummary            `json:"providers,omitempty"`
+	Provider      string                       `json:"provider"`
+	Model         string                       `json:"model"`
+	Effort        string                       `json:"effort,omitempty"`
+	Variant       string                       `json:"variant,omitempty"`
+	ModelRoles    []ModelRoleSummary           `json:"model_roles,omitempty"`
+	ModelAliases  map[string]ModelAliasSummary `json:"model_aliases,omitempty"`
+	ProjectModels config.ProjectModelsConfig   `json:"project_models,omitempty"`
+	Providers     []ProviderSummary            `json:"providers,omitempty"`
 }
 
 type Request struct {
@@ -293,6 +294,7 @@ type InitializeResult struct {
 	ToolSurface        *ToolSurfaceSummary          `json:"tool_surface,omitempty"`
 	ModelRoles         []ModelRoleSummary           `json:"model_roles,omitempty"`
 	ModelAliases       map[string]ModelAliasSummary `json:"model_aliases,omitempty"`
+	ProjectModels      config.ProjectModelsConfig   `json:"project_models,omitempty"`
 	Providers          []ProviderSummary            `json:"providers,omitempty"`
 	AdvancedSettings   AdvancedSettingsSummary      `json:"advanced_settings"`
 	GeneralSettings    GeneralSettingsSummary       `json:"general_settings"`
@@ -422,6 +424,7 @@ type ConfigReadResult struct {
 	ToolSurface        *ToolSurfaceSummary          `json:"tool_surface,omitempty"`
 	ModelRoles         []ModelRoleSummary           `json:"model_roles,omitempty"`
 	ModelAliases       map[string]ModelAliasSummary `json:"model_aliases,omitempty"`
+	ProjectModels      config.ProjectModelsConfig   `json:"project_models,omitempty"`
 	Providers          []ProviderSummary            `json:"providers,omitempty"`
 	AdvancedSettings   AdvancedSettingsSummary      `json:"advanced_settings"`
 	GeneralSettings    GeneralSettingsSummary       `json:"general_settings"`
@@ -1081,12 +1084,14 @@ type ConfigAdvancedUpdateParams struct {
 	DisableAutoCompact      *bool                         `json:"disable_auto_compact,omitempty"`
 	ProviderContextWindow   *int                          `json:"provider_context_window,omitempty"`
 	ModelAliases            *map[string]ModelAliasSummary `json:"model_aliases,omitempty"`
+	ProjectModels           *config.ProjectModelsConfig   `json:"project_models,omitempty"`
 	VerificationModel       *ModelAliasSummary            `json:"verification_model,omitempty"`
 }
 
 type ConfigAdvancedUpdateResult struct {
 	AdvancedSettings AdvancedSettingsSummary      `json:"advanced_settings"`
 	ModelAliases     map[string]ModelAliasSummary `json:"model_aliases,omitempty"`
+	ProjectModels    config.ProjectModelsConfig   `json:"project_models,omitempty"`
 	ModelRoles       []ModelRoleSummary           `json:"model_roles,omitempty"`
 	Providers        []ProviderSummary            `json:"providers,omitempty"`
 }

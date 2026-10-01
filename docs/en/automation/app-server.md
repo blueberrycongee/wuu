@@ -68,7 +68,8 @@ other sessions through its `session` tool. Each managed session is an
 ordinary thread with `source: "project-session"` and `project_id` naming its
 coordinator, and its `session_control` names the project as `manager_name`.
 A worktree session's changes stay in its worktree until the team delivers them with
-ordinary Git commands; no protocol step waits for a user decision.
+ordinary Git commands. Commit, merge, push and PR mutations each require user
+authorization or an established workflow; delegation cannot expand authority.
 
 Managed threads expose `project_role: "side" | "worker"`; older members default to
 worker. `session create` accepts `role` (worker by default) and optional
@@ -77,9 +78,29 @@ live side without sending a new prompt. Lead and side can create workers. All
 active members can `list`, `inspect`, and `message`; only the lead can `send` and
 `stop`. Messages stay in the project and include `prompt`, `session_id`, and
 optional `wake` (false by default). Stopping or directly messaging a member keeps
-its project membership and does not invalidate queued team messages.
+its project membership. Stopping revokes earlier queued automatic input; a later
+explicit dispatch remains possible without returning control.
 
-The coordinator receives host events as user items with `origin: "plugin"`,
+`session side` creates or resumes the persistent side with a new brief, steering
+its running turn. Side defaults to shared workspace; workers default to isolated
+Git worktrees when available. Dispatches are durable and replay-safe, including
+the first brief committed with session creation. Busy dispatches return
+`state: "queued"` and retry after recovery.
+
+`side` waits by default; `create` and `send` return immediately unless `block: true`.
+`wait` takes `session_id` and an optional precise `turn_id`; the lead can wait for
+members, and the side can wait for workers. Results include `turn_id`, `turn_status`
+and terminal `final_output`. `timeout_ms` defaults to 60000 and is capped at 300000;
+expiry returns `timed_out: true`. Timeout or caller cancellation never stops the child.
+
+The lead uses its conversation model. `agent.project_models.side` and `.worker`
+select provider/model defaults for new members; empty selections inherit the lead.
+A creation-time `model_alias` overrides the role default. Existing sessions retain
+their saved model. `config/advanced/update` accepts `project_models` with the same
+shape; initialize, config reads, updates and config-change events return the current
+defaults. Desktop runtime settings expose both choices when `features.project_agent` is true.
+
+The coordinator receives host events as user items with `origin: "host"`,
 `related_session_id` naming the session, and a `cause`:
 
 | Cause | Event | Starts a turn when idle |

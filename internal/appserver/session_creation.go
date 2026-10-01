@@ -46,6 +46,7 @@ type hostSessionCreateParams struct {
 	ToolPolicy      *hostSessionToolPolicy
 	Seed            *session.ContextSeed
 	Launch          *hostSessionLaunchParams
+	InitialInput    *session.InboxMessage
 }
 
 type hostSessionToolPolicy struct {
@@ -229,7 +230,13 @@ func (s *Server) createHostSessionThread(owner, source, id string, params hostSe
 	if err := s.rt.PinExecutionEnvironment(id, params.ParentSessionID); err != nil {
 		return nil, err
 	}
-	created, err := session.CreateInitializedWithLaunch(s.rt.SessionDir, initial, records, seed, launch)
+	var created *session.Session
+	var err error
+	if params.InitialInput != nil {
+		created, err = session.CreateInitializedWithInbox(s.rt.SessionDir, initial, records, seed, launch, *params.InitialInput)
+	} else {
+		created, err = session.CreateInitializedWithLaunch(s.rt.SessionDir, initial, records, seed, launch)
+	}
 	if err != nil {
 		if artifactStateDir != "" {
 			_ = os.RemoveAll(statepath.SessionArtifactDir(artifactStateDir, id))

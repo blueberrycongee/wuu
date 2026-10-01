@@ -3,6 +3,7 @@ package appserver
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -466,6 +467,15 @@ func (th *threadState) notifyIdleLocked() {
 		close(ch)
 	}
 	th.idleWaiters = nil
+}
+
+func (th *threadState) removeIdleWaiterLocked(waiter <-chan struct{}) {
+	for index, ch := range th.idleWaiters {
+		if ch == waiter {
+			th.idleWaiters = slices.Delete(th.idleWaiters, index, index+1)
+			return
+		}
+	}
 }
 
 func threadCurrentTurnIsAnswerReady(th *threadState) bool {

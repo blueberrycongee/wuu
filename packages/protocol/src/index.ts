@@ -164,6 +164,7 @@ export type InitializeResult = {
   extension_inventory?: ExtensionInventoryRecord[];
   model_roles?: ModelRoleSummary[];
   model_aliases?: Record<string, ModelAliasSummary>;
+  project_models?: ProjectModelsConfig;
   providers?: ProviderSummary[];
   advanced_settings?: AdvancedSettingsSummary;
   general_settings?: GeneralSettingsSummary;
@@ -554,6 +555,7 @@ export type ConfigChangedNotification = {
   variant?: string;
   model_roles?: ModelRoleSummary[];
   model_aliases?: Record<string, ModelAliasSummary>;
+  project_models?: ProjectModelsConfig;
   providers?: ProviderSummary[];
 };
 
@@ -743,6 +745,11 @@ export type ModelAliasSummary = {
   model: string;
   effort?: string;
   variant?: string;
+};
+
+export type ProjectModelsConfig = {
+  side?: Partial<ModelAliasSummary>;
+  worker?: Partial<ModelAliasSummary>;
 };
 
 export type ModelCapabilitySummary = {
@@ -1041,12 +1048,14 @@ export type RuntimeAdvancedSettingsUpdate = {
   disable_auto_compact?: boolean;
   provider_context_window?: number;
   model_aliases?: Record<string, ModelAliasSummary>;
+  project_models?: ProjectModelsConfig;
   verification_model?: ModelAliasSummary;
 };
 
 export type ConfigAdvancedUpdateResult = {
   advanced_settings: AdvancedSettingsSummary;
   model_aliases?: Record<string, ModelAliasSummary>;
+  project_models?: ProjectModelsConfig;
   model_roles?: ModelRoleSummary[];
   providers?: ProviderSummary[];
 };

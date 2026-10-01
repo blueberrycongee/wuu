@@ -24,7 +24,7 @@ Normal startup removes these fields from every project layer, including `setting
 |---|---|
 | `default_provider`, `providers` | Select model services, endpoints, credentials, and connection options |
 | `instructions`, legacy `memory` | Control instruction discovery, including user paths |
-| `agent.model_roles`, `agent.model_aliases` | Route model work |
+| `agent.model_roles`, `agent.model_aliases`, `agent.project_models` | Route model work |
 | `agent.permission_mode` | Set local execution authority |
 
 Case changes in JSON keys do not bypass the restriction. Other allowed project fields can still affect prompts, tools, hooks, and services, so this filtering does not make an unfamiliar repository safe to execute.
@@ -78,6 +78,25 @@ report the change; this is a configuration-time choice, not an API retry. A mode
 can explicitly enable a compatible endpoint in auto mode, or disable native
 discovery with `false` while keeping client discovery. Only enable it when the endpoint implements the model's native
 protocol; accepting unknown fields is not sufficient.
+
+## Project Agent model choices
+
+In builds with Project Agent enabled, the lead uses the conversation model. Set
+Side and Worker defaults independently in Settings → Runtime, or in the user
+configuration:
+
+```json
+{ "agent": { "project_models": {
+  "side": { "provider": "anthropic", "model": "your-side-model" },
+  "worker": { "provider": "openai", "model": "your-worker-model" }
+} } }
+```
+
+Use configured provider names and model IDs. Omit a role or leave it empty to
+inherit the lead model. Each selection also accepts `effort` and `variant` when
+the provider supports them. Defaults apply to newly created members; existing
+sessions retain their saved selection. A creation-time `model_alias` overrides
+the role default. See the [app-server protocol](../automation/app-server.md).
 
 ## Instructions and plugin settings
 

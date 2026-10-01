@@ -87,6 +87,7 @@ func (s *Server) handleInitialize(req Request) error {
 		ToolSurface:        toolSurface,
 		ModelRoles:         s.currentModelRoleSummaries(),
 		ModelAliases:       s.currentModelAliasSummaries(),
+		ProjectModels:      s.rt.ProjectModels,
 		Providers:          s.providerSummaries(),
 		AdvancedSettings:   s.currentAdvancedSettingsSummary(),
 		GeneralSettings:    s.currentGeneralSettingsSummary(),
@@ -112,6 +113,7 @@ func (s *Server) handleConfigRead(req Request) error {
 		ToolSurface:        toolSurface,
 		ModelRoles:         s.currentModelRoleSummaries(),
 		ModelAliases:       s.currentModelAliasSummaries(),
+		ProjectModels:      s.rt.ProjectModels,
 		Providers:          s.providerSummaries(),
 		AdvancedSettings:   s.currentAdvancedSettingsSummary(),
 		GeneralSettings:    s.currentGeneralSettingsSummary(),
@@ -1017,7 +1019,7 @@ func (s *Server) handleConfigAdvancedUpdate(req Request) error {
 	}
 	modelAliases := modelAliasConfigUpdate(params.ModelAliases)
 	verificationModel := modelRoleConfigUpdate(params.VerificationModel)
-	if modelAliases != nil || verificationModel != nil {
+	if modelAliases != nil || verificationModel != nil || params.ProjectModels != nil {
 		candidate, _, err := s.rt.LoadEffectiveConfig()
 		if err != nil {
 			return s.writeResponse(req.ID, nil, err)
@@ -1033,6 +1035,9 @@ func (s *Server) handleConfigAdvancedUpdate(req Request) error {
 		if verificationModel != nil {
 			candidate.Agent.ModelRoles.Verification = *verificationModel
 		}
+		if params.ProjectModels != nil {
+			candidate.Agent.ProjectModels = *params.ProjectModels
+		}
 		if err := candidate.Validate(); err != nil {
 			return s.writeResponse(req.ID, nil, err)
 		}
@@ -1047,6 +1052,7 @@ func (s *Server) handleConfigAdvancedUpdate(req Request) error {
 		ProviderContextWindow:   params.ProviderContextWindow,
 		ModelAliases:            modelAliases,
 		VerificationModel:       verificationModel,
+		ProjectModels:           params.ProjectModels,
 	}); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
@@ -1073,6 +1079,7 @@ func (s *Server) handleConfigAdvancedUpdate(req Request) error {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	s.rt.ModelRoles = roleSelections
+	s.rt.ProjectModels = cfg.Agent.ProjectModels
 	modelBudget := runtime.ResolveModelBudget(s.rt.Model, ruleProviderCfg, cfg.Agent.MaxContextTokens)
 	s.rt.ModelBudget = modelBudget
 	workerBudget := runtime.ResolveModelBudget(roleSelections.Worker.Model, roleSelections.Worker.RuleProviderConfig, cfg.Agent.MaxContextTokens)
@@ -1096,6 +1103,7 @@ func (s *Server) handleConfigAdvancedUpdate(req Request) error {
 	return s.writeResponse(req.ID, ConfigAdvancedUpdateResult{
 		AdvancedSettings: s.currentAdvancedSettingsSummary(),
 		ModelAliases:     modelAliasSummaries(cfg.Agent.ModelAliases),
+		ProjectModels:    cfg.Agent.ProjectModels,
 		ModelRoles:       s.currentModelRoleSummaries(),
 		Providers:        s.providerSummaries(),
 	}, nil)
@@ -1639,6 +1647,7 @@ func (s *Server) applyModelSelectionToRuntime(
 		s.rt.ReadinessIssues = nil
 	}
 	s.rt.ModelRoles = roleSelections
+	s.rt.ProjectModels = cfg.Agent.ProjectModels
 	apiModel := modelcatalog.APIModel(ruleProviderCfg, model)
 	if roleSelections.Title.Inherited {
 		if client != nil {

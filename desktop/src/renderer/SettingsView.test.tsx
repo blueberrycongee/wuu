@@ -102,6 +102,31 @@ function emptyCodexPetsSnapshot(overrides: Partial<CodexPetsSnapshot> = {}): Cod
   };
 }
 
+// Protect the user-facing save boundary: changing one role preserves the other
+// and cannot change the lead conversation selection.
+it("saves project side selection without changing the worker or lead", async () => {
+  installBuildInfoStub({ core: {}, desktop: {} } as BuildInfoResult);
+  const onAdvancedSave = vi.fn().mockResolvedValue(undefined);
+  renderSettings({
+    initialized: baseInitialized({
+      features: { project_agent: true },
+      project_models: { side: { provider: "fake", model: "side-model", effort: "high" }, worker: { provider: "fake", model: "worker-model" } },
+      providers: [{ name: "fake", type: "openai-compatible", model: "fake-model", models: [{ id: "side-model" }, { id: "next-side" }, { id: "worker-model" }] }],
+    }),
+    initialPage: "advanced", onAdvancedSave, locale: "en-US",
+  });
+  await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="project-side-model"]')?.click(); });
+  const option = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')).find((item) => item.textContent?.includes("side-model"));
+  expect(option).toBeDefined();
+  await act(async () => { option?.click(); });
+  expect(onAdvancedSave).not.toHaveBeenCalled();
+  await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="project-side-model"]')?.click(); });
+  const replacement = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')).find((item) => item.textContent?.includes("next-side"));
+  expect(replacement).toBeDefined();
+  await act(async () => { replacement?.click(); });
+  expect(onAdvancedSave).toHaveBeenCalledWith({ project_models: { side: { provider: "fake", model: "next-side" }, worker: { provider: "fake", model: "worker-model" } } });
+});
+
 function readyEngineInventory(): EngineListResult {
   return {
     engines: [

@@ -266,6 +266,16 @@ func CreateInitialized(sessDir string, sess Session, records []HistoryRecord) (*
 }
 
 func CreateInitializedWithLaunch(sessDir string, sess Session, records []HistoryRecord, seed ContextSeed, launch SessionLaunchRecord) (*Session, error) {
+	return createInitialized(sessDir, sess, records, seed, launch, nil)
+}
+
+// CreateInitializedWithInbox commits the session, its initial execution fence,
+// and first dispatch together, so recovery cannot lose the initial brief.
+func CreateInitializedWithInbox(sessDir string, sess Session, records []HistoryRecord, seed ContextSeed, launch SessionLaunchRecord, input InboxMessage) (*Session, error) {
+	return createInitialized(sessDir, sess, records, seed, launch, &input)
+}
+
+func createInitialized(sessDir string, sess Session, records []HistoryRecord, seed ContextSeed, launch SessionLaunchRecord, input *InboxMessage) (*Session, error) {
 	sess.ID = strings.TrimSpace(sess.ID)
 	if sess.ID == "" {
 		sess.ID = NewID()
@@ -327,6 +337,21 @@ func CreateInitializedWithLaunch(sessDir string, sess Session, records []History
 	}
 	if err := insertSessionTx(tx, sess); err != nil {
 		return nil, err
+	}
+	if input != nil {
+		control := Control{SessionID: sess.ID, ManagerID: sess.ParentID, Revision: 1, State: ControlActive}
+		if control.ManagerID == "" {
+			return nil, errors.New("initial dispatch needs a manager")
+		}
+		if _, err := tx.Exec(`INSERT INTO session_controls(session_id,manager_id,revision,state) VALUES(?,?,?,?)`, control.SessionID, control.ManagerID, control.Revision, control.State); err != nil {
+			return nil, err
+		}
+		message := *input
+		message.SessionID = sess.ID
+		message.Controls = append(append([]Control(nil), message.Controls...), control)
+		if err := insertInbox(tx, message); err != nil {
+			return nil, err
+		}
 	}
 	for index, record := range records {
 		if err := insertHistoryRecordTx(tx, sess.ID, index+1, record); err != nil {

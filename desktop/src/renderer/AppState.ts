@@ -680,6 +680,7 @@ function reduceNotification(
           variant: params.variant,
           model_roles: params.model_roles,
           model_aliases: params.model_aliases,
+          project_models: params.project_models,
           providers: params.providers,
         },
       };

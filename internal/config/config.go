@@ -328,6 +328,9 @@ type AgentConfig struct {
 	// unlike model_roles entries, aliases never inherit from the active main
 	// selection. Project layers cannot define aliases.
 	ModelAliases map[string]ModelRoleConfig `json:"model_aliases,omitempty"`
+	// ProjectModels selects defaults for newly created project members. Empty
+	// selections inherit the lead; existing sessions retain their saved model.
+	ProjectModels ProjectModelsConfig `json:"project_models,omitempty"`
 	// DisableAutoCompact turns off the proactive auto-compact pass
 	// that fires when the conversation reaches the model's usable input
 	// window after reserving output headroom. The reactive overflow
@@ -388,6 +391,11 @@ type ModelRoleConfig struct {
 	Variant  string `json:"variant,omitempty"`
 }
 
+type ProjectModelsConfig struct {
+	Side   ModelRoleConfig `json:"side,omitempty"`
+	Worker ModelRoleConfig `json:"worker,omitempty"`
+}
+
 type AdvancedRuntimeUpdate struct {
 	MaxSteps                *int
 	MaxContextTokens        *int
@@ -401,6 +409,7 @@ type AdvancedRuntimeUpdate struct {
 	// values. Settings uses this to add, edit, and delete aliases in one call.
 	ModelAliases      map[string]*ModelRoleConfig
 	VerificationModel *ModelRoleConfig
+	ProjectModels     *ProjectModelsConfig
 }
 
 type GeneralSettingsUpdate struct {
@@ -803,6 +812,13 @@ func (c Config) Validate() error {
 	if err := validateModelAliasesConfig(c); err != nil {
 		return err
 	}
+	for role, selection := range map[string]ModelRoleConfig{"side": c.Agent.ProjectModels.Side, "worker": c.Agent.ProjectModels.Worker} {
+		if selection != (ModelRoleConfig{}) {
+			if err := validateConfiguredModelSelection(c, "agent.project_models."+role, selection); err != nil {
+				return err
+			}
+		}
+	}
 
 	return nil
 }
@@ -853,26 +869,30 @@ func validateModelAliasesConfig(c Config) error {
 		}
 		seen[name] = rawName
 
-		providerName := strings.TrimSpace(alias.Provider)
-		if providerName == "" {
-			return fmt.Errorf("agent.model_aliases.%s.provider is required", name)
-		}
-		providerCfg, ok := c.Providers[providerName]
-		if !ok {
-			return fmt.Errorf("agent.model_aliases.%s.provider %q not found in providers", name, providerName)
-		}
-		model := strings.TrimSpace(alias.Model)
-		if model == "" {
-			return fmt.Errorf("agent.model_aliases.%s.model is required", name)
-		}
-		if err := validateAliasEffortVariant(name, alias, providerCfg, model); err != nil {
+		if err := validateConfiguredModelSelection(c, "agent.model_aliases."+name, alias); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func validateAliasEffortVariant(aliasName string, alias ModelRoleConfig, providerCfg ProviderConfig, model string) error {
+func validateConfiguredModelSelection(c Config, path string, selection ModelRoleConfig) error {
+	provider := strings.TrimSpace(selection.Provider)
+	if provider == "" {
+		return fmt.Errorf("%s.provider is required", path)
+	}
+	providerCfg, ok := c.Providers[provider]
+	if !ok {
+		return fmt.Errorf("%s.provider %q not found in providers", path, provider)
+	}
+	model := strings.TrimSpace(selection.Model)
+	if model == "" {
+		return fmt.Errorf("%s.model is required", path)
+	}
+	return validateModelEffortVariant(path, selection, providerCfg, model)
+}
+
+func validateModelEffortVariant(path string, alias ModelRoleConfig, providerCfg ProviderConfig, model string) error {
 	modelCfg, ok := providerCfg.Models[model]
 	if !ok {
 		return nil
@@ -899,7 +919,7 @@ func validateAliasEffortVariant(aliasName string, alias ModelRoleConfig, provide
 			continue
 		}
 		if _, ok := valid[value]; !ok {
-			return fmt.Errorf("agent.model_aliases.%s.%s %q is not supported by model %q", aliasName, field.name, value, model)
+			return fmt.Errorf("%s.%s %q is not supported by model %q", path, field.name, value, model)
 		}
 	}
 	return nil
@@ -1449,6 +1469,13 @@ func UpdateAdvancedRuntime(configPath, providerName string, update AdvancedRunti
 	setOptionalFloat(agent, "compact_threshold_pct", update.CompactThresholdPct, 0)
 	setOptionalInt(agent, "compact_keep_recent_tokens", update.CompactKeepRecentTokens)
 	setOptionalBool(agent, "disable_auto_compact", update.DisableAutoCompact)
+	if update.ProjectModels != nil {
+		if *update.ProjectModels == (ProjectModelsConfig{}) {
+			delete(agent, "project_models")
+		} else {
+			agent["project_models"] = *update.ProjectModels
+		}
+	}
 	if update.ModelAliases != nil {
 		aliases := make(map[string]any, len(update.ModelAliases))
 		for rawName, alias := range update.ModelAliases {
