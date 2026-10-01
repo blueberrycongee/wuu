@@ -1,3 +1,10 @@
+:root {
+  /* Media controls stay legible over video in either application theme. */
+  --video-attachment-play-color: #fff;
+  --video-attachment-play-background: rgb(0 0 0 / 60%);
+  --video-attachment-play-hover-background: rgb(0 0 0 / 75%);
+}
+
 .video-attachment {
   width: 260px;
   max-width: 100%;
@@ -32,7 +39,7 @@
   padding: 0;
   border: 0;
   background: transparent;
-  color: #fff;
+  color: var(--video-attachment-play-color);
   cursor: pointer;
 }
 
@@ -42,12 +49,12 @@
   height: 44px;
   place-items: center;
   border-radius: var(--radius-circle);
-  background: rgb(0 0 0 / 60%);
+  background: var(--video-attachment-play-background);
   transition: background var(--motion-fast) var(--ease-out);
 }
 
 .video-attachment-play:hover .video-attachment-play-icon {
-  background: rgb(0 0 0 / 75%);
+  background: var(--video-attachment-play-hover-background);
 }
 
 .video-attachment-play:focus-visible {
