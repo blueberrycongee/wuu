@@ -14,6 +14,15 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   reasoning levels, updated cache pricing, and existing Codex subscription-login
   reuse and account-discovered aliases.
 
+- Production subscription dashboard with account-scoped quota observations,
+  plan windows, prepaid balances, reset times, freshness, and explicit failure
+  states. Compact service cards group separate accounts with parallel quota
+  windows and account-specific credential menus. Compact attribution, reset
+  countdowns, and exact reset-time tooltips keep the focus on available quota.
+  Successful observations survive
+  restarts without being reused for another account. Quota reads do not submit
+  inference or change model routing.
+
 - Selectable execution environments for workspace tools, with isolated or shared
   filesystems, retained profiles, remote process controls, artifact transfer,
   and desktop configuration.
@@ -22,6 +31,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   centered percentage indicator, saved zoom, and a 50%–200% range.
 
 ### Changed
+
+- Group model-service discovery into subscriptions, direct providers, gateways,
+  and local endpoints, with searchable catalogs and connection status. Keep
+  saved connections and current model selection separate from discovery, with
+  compact quota cards and account-specific controls.
 
 - Video attachments show larger, unobstructed previews with only a play button;
   native controls appear on playback.

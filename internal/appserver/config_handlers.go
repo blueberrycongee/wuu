@@ -2534,12 +2534,6 @@ func (s *Server) providerSummaries() []ProviderSummary {
 	return summaries
 }
 
-func builtInSubscriptionProvider(summary ProviderSummary) bool {
-	return summary.ReuseCodexCredentials ||
-		config.IsXAISubscriptionProvider(summary.Type) ||
-		config.IsGrokBuildProvider(summary.Type)
-}
-
 // A conversation can select the same discovered connections shown in the
 // picker. Save only the connection so subsequent runtime builds and restarts
 // resolve the pin without changing workspace defaults or other conversations.

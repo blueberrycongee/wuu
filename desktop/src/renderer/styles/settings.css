@@ -2,6 +2,9 @@
  * distinguish editable controls; selection uses fill, never a border. */
 
 :root {
+  --subscription-canvas: var(--wuu-color-surface-muted, #f4f4f6);
+  --subscription-card: var(--wuu-color-surface, #ffffff);
+  --subscription-meter: var(--wuu-color-accent, #4f46e5);
   /* Usage charts and the home overview share one ramp: a single blue stepped
    * in lightness, so the four levels and an empty day each read at a glance
    * (neighbouring steps differ by about 1.6:1 in luminance, and the lightest
@@ -1060,99 +1063,151 @@ button.settings-engine-expand:hover {
   flex: 0 0 auto;
 }
 
+/* Allowances are compared across services, so this dashboard uses the pane
+ * width rather than the narrower label/control column used by forms. */
+.settings-page:has(> .settings-subscriptions) {
+  --settings-column-width: calc(var(--font-ui) * 78);
+  --settings-pad: var(--space-4);
+}
+
+.settings-main:has(.settings-subscriptions) {
+  background: var(--subscription-canvas);
+}
+
 .settings-subscriptions {
-  gap: var(--settings-gap);
+  gap: var(--space-4);
 }
 
 .settings-subscription-list {
   display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 18.5em), 1fr));
+  align-items: stretch;
+  gap: var(--space-2);
 }
 
 .settings-subscription {
   display: grid;
   min-width: 0;
+  align-content: start;
   gap: var(--space-3);
-  padding-block: var(--space-4);
+  padding: calc(var(--space-2) + 2px) var(--space-3) var(--space-3);
+  border: 1px solid var(--hairline);
+  border-radius: calc(var(--radius-sm) + 2px);
+  background: var(--subscription-card);
+  container: subscription-card / inline-size;
 }
 
-.settings-subscription + .settings-subscription {
-  border-top: 1px solid var(--hairline);
-}
-
-.settings-subscription-row {
+.settings-subscription-source {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 15em);
-  align-items: center;
-  min-height: var(--control-field-height);
-  gap: var(--space-3) var(--space-5);
+  min-width: 0;
+  align-content: start;
+  gap: calc(var(--space-1) + 2px);
+}
+
+.settings-subscription-source + .settings-subscription-source {
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--hairline-soft);
 }
 
 .settings-subscription-main {
   display: flex;
   min-width: 0;
   align-items: center;
-  gap: var(--space-3);
+  gap: var(--space-2);
+  margin-bottom: var(--space-1);
 }
 
 .settings-subscription-main .settings-engine-row-icon,
 .settings-subscription-main .engine-icon {
-  width: var(--icon-size-lg);
-  height: var(--icon-size-lg);
+  width: var(--icon-size);
+  height: var(--icon-size);
 }
 
-.settings-subscription-identity {
-  display: grid;
-  min-width: 0;
-  gap: var(--space-1);
+.settings-subscription-main .provider-mark {
+  --provider-mark-size: var(--icon-size);
+}
+
+.settings-subscription-main :is(.provider-mark, .settings-engine-row-icon) {
+  margin-block: calc((1lh - var(--icon-size)) / 2);
+  flex: 0 0 auto;
+}
+
+.settings-subscription-main .provider-mark svg {
+  width: 100%;
+  height: 100%;
 }
 
 .settings-subscription-name {
+  flex: 1 1 auto;
   min-width: 0;
   margin: 0;
   overflow-wrap: anywhere;
   color: var(--ink);
-  font-size: inherit;
-  font-weight: var(--weight-medium);
+  font-size: var(--font-ui);
+  font-weight: var(--weight-semibold);
 }
 
 .settings-subscription-status {
+  font-size: var(--font-xs);
   margin: 0;
   overflow-wrap: anywhere;
   color: var(--ink-soft);
 }
 
 .settings-subscription-actions {
-  display: grid;
-  justify-items: end;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
   min-width: 0;
   gap: var(--space-2);
+  margin-top: var(--space-1);
 }
 
-.settings-codex-login {
-  display: grid;
-  gap: var(--space-2);
-  margin-top: var(--space-3);
-}
-
-.settings-codex-login .settings-subscription-actions {
+.settings-subscription-controls {
   display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
+  min-width: 0;
+  max-width: 44%;
+  align-items: center;
+  gap: var(--space-1);
+  margin-left: auto;
 }
 
-.settings-subscription-actions .select-menu {
-  width: 100%;
+.settings-subscription-controls:empty {
+  display: none;
+}
+
+.settings-subscription-account > .settings-subscription-controls {
   max-width: 100%;
 }
 
+.settings-subscription-controls .select-menu {
+  min-width: 0;
+  width: auto;
+  max-width: 100%;
+}
+
+.settings-subscription-more {
+  flex: 0 0 auto;
+  width: var(--control-size-inline);
+  min-height: var(--control-size-inline);
+}
+
+.settings-subscription-actions .settings-engine-auth {
+  flex: 1 0 100%;
+}
+
 .select-menu-trigger.settings-subscription-model-trigger {
+  min-height: var(--control-size-inline);
+  height: auto;
+  padding: 0 var(--space-1);
+  font-size: var(--font-xs);
   border-color: transparent;
   background: transparent;
   color: var(--ink-soft);
 }
 
 .settings-subscription-model-trigger .select-menu-value {
-  text-align: right;
+  text-align: left;
 }
 
 .select-menu-trigger.settings-subscription-model-trigger:hover:not(:disabled),
@@ -1163,7 +1218,7 @@ button.settings-engine-expand:hover {
 }
 
 .settings-engine-auth-compact .settings-engine-auth-actions {
-  justify-content: flex-end;
+  justify-content: flex-start;
 }
 
 .settings-subscription-usage {
@@ -1171,40 +1226,128 @@ button.settings-engine-expand:hover {
   align-items: baseline;
   justify-content: space-between;
   flex-wrap: wrap;
-  gap: var(--space-1) var(--space-3);
+  gap: 2px var(--space-1);
   color: var(--ink-soft);
+  font-size: var(--font-xs);
   font-variant-numeric: tabular-nums;
 }
 
 .settings-subscription-remaining {
   color: var(--ink);
-  font-weight: var(--weight-medium);
+  font-weight: var(--weight-semibold);
+  white-space: nowrap;
 }
 
-/* Provider-grouped metrics follow OpenUsage's dashboard hierarchy:
- * https://github.com/robinebers/openusage (ProviderCard / WidgetRowView). */
 .settings-subscription-quota {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 16em), 1fr));
-  gap: var(--space-5);
-  padding: var(--space-4);
-  background: var(--surface-1);
-  border-radius: var(--radius-sm);
+  min-width: 0;
+  gap: var(--space-2);
+}
+
+.settings-subscription-account {
+  display: flex;
+  flex-wrap: wrap;
+  font-size: var(--font-xs);
+  min-width: 0;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.settings-subscription-plan {
+  min-width: 0;
+  max-width: 50%;
+  flex: 0 0 auto;
+  overflow-wrap: anywhere;
+  margin-left: auto;
+  text-align: right;
+  color: var(--ink-soft);
+}
+
+.settings-subscription-account-name {
+  flex: 1 1 8em;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--ink-soft);
+}
+
+.settings-subscription-quota-state,
+.settings-subscription-age,
+.settings-subscription-window-scope,
+.settings-subscription-empty {
+  color: var(--ink-tertiary);
+  font-size: var(--font-xs);
+}
+
+.settings-subscription-windows,
+.settings-subscription-skeleton.settings-subscription-quota {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-2) var(--space-4);
+}
+
+.settings-subscription-window:not(:has(meter)):only-child {
+  grid-column: 1 / -1;
 }
 
 .settings-subscription-window {
-  --subscription-meter-fill: var(--info);
+  --subscription-meter-fill: var(--subscription-meter);
   display: grid;
   min-width: 0;
-  align-content: start;
-  gap: var(--space-2);
+  grid-row: span 3;
+  grid-template-rows: subgrid;
+  grid-template-columns: minmax(0, 1fr);
+  row-gap: var(--space-1);
   overflow-wrap: anywhere;
+}
+
+.settings-subscription-window-heading {
+  display: grid;
+  align-content: start;
+  gap: var(--space-1);
+}
+
+.settings-subscription-quota-state,
+.settings-subscription-window-scope,
+.settings-subscription-window-display,
+.settings-subscription-age,
+.settings-subscription-empty {
+  margin: 0;
+}
+
+.settings-subscription-balances {
+  display: grid;
+  font-size: var(--font-xs);
+  gap: var(--space-2);
+}
+
+.settings-subscription-balance {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-3);
+  color: var(--ink-soft);
+  font-variant-numeric: tabular-nums;
+}
+
+.settings-subscription-balance-amount {
+  min-width: 0;
+  margin-left: auto;
+  text-align: right;
+  color: var(--ink);
+  font-size: var(--font-title);
+  font-weight: var(--weight-semibold);
+  overflow-wrap: anywhere;
+}
+
+.settings-subscription-terms {
+  color: var(--ink-soft);
 }
 
 .settings-subscription-window meter {
   appearance: none;
   width: 100%;
-  height: 6px;
+  height: var(--space-1);
   border: 0;
   border-radius: var(--radius-xs);
   overflow: hidden;
@@ -1214,7 +1357,7 @@ button.settings-engine-expand:hover {
 .settings-subscription-window meter::-webkit-meter-bar {
   border: 0;
   background: var(--surface-3);
-  height: 6px;
+  height: var(--space-1);
 }
 
 .settings-subscription-window meter::-webkit-meter-optimum-value {
@@ -1227,6 +1370,7 @@ button.settings-engine-expand:hover {
 
 .settings-subscription-reset {
   color: var(--ink-tertiary);
+  font-size: var(--font-xs);
 }
 
 .settings-subscription-window[data-exhausted="true"] {
@@ -1247,24 +1391,15 @@ button.settings-engine-expand:hover {
 }
 
 .settings-subscription-skeleton-icon {
-  width: var(--icon-size-lg);
-  height: var(--icon-size-lg);
+  width: var(--icon-size);
+  height: var(--icon-size);
   flex: 0 0 auto;
+  margin-block: calc((1lh - var(--icon-size)) / 2);
   border-radius: var(--radius-xs);
 }
 
 .settings-subscription-skeleton-name {
   width: 7em;
-}
-
-/* Stands in for the model trigger's label and chevron, inside the trigger's
- * height, inline padding, and 1px transparent border, so it lines up with the
- * loaded label in both the wide and stacked rows. */
-.settings-subscription-skeleton-model {
-  width: 6em;
-  height: 0.75em;
-  margin: calc((var(--control-field-height) - 0.75em) / 2) calc(var(--control-padding-inline) + 1px);
-  border-radius: var(--radius-xs);
 }
 
 .settings-subscription-skeleton-period {
@@ -1276,30 +1411,18 @@ button.settings-engine-expand:hover {
 }
 
 .settings-subscription-skeleton-reset {
-  width: 9em;
+  width: min(9em, 100%);
 }
 
 .settings-subscription-skeleton-meter {
-  height: 6px;
+  height: var(--space-1);
   border-radius: var(--radius-xs);
 }
 
-@container settings-page (max-width: 32em) {
-  .settings-subscription-row {
+@container subscription-card (max-width: 15em) {
+  .settings-subscription-windows,
+  .settings-subscription-skeleton.settings-subscription-quota {
     grid-template-columns: minmax(0, 1fr);
-    gap: var(--space-2);
-  }
-
-  .settings-subscription-actions {
-    justify-items: start;
-  }
-
-  .settings-subscription-model-trigger .select-menu-value {
-    text-align: left;
-  }
-
-  .settings-engine-auth-compact .settings-engine-auth-actions {
-    justify-content: flex-start;
   }
 }
 

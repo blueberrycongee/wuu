@@ -423,7 +423,10 @@ describe("SettingsView model services", () => {
 
   it("leads with the default model and names connected services by vendor", async () => {
     installServicesStub();
-    renderSettings({ initialized: servicesInitialized(), initialPage: "providers", locale: "en-US" });
+    const initialized = servicesInitialized();
+    const beforeBrowsing = structuredClone(initialized);
+    const onSave = vi.fn(async () => {});
+    renderSettings({ initialized, initialPage: "providers", locale: "en-US", onSave });
     await flush();
 
     const defaultCard = container.querySelector('[data-testid="settings-default-model"]');
@@ -433,10 +436,26 @@ describe("SettingsView model services", () => {
     expect(cards.map((card) => card.getAttribute("aria-label"))).toEqual(["ChatGPT", "DeepSeek", "OpenRouter"]);
     expect(cards[0]?.textContent).toContain("Default");
     expect(cards[2]?.textContent).toContain("API key missing");
-    // A connected vendor is not offered again.
-    const tiles = [...container.querySelectorAll('[data-testid="settings-provider-tiles"] [data-catalog]')];
-    expect(tiles.map((tile) => tile.getAttribute("data-catalog"))).not.toContain("deepseek");
+    // Connected vendors stay discoverable and can add a separate connection.
+    const connectedTile = container.querySelector<HTMLButtonElement>('[data-testid="settings-provider-tiles"] [data-catalog="deepseek"]');
+    expect(connectedTile?.querySelector('[role="img"][data-ready]')?.getAttribute("aria-label")).toBeTruthy();
+    expect(connectedTile?.disabled).toBe(false);
     expect(container.querySelector('[data-testid="settings-provider-custom"]')).not.toBeNull();
+
+    click(connectedTile);
+    await flush();
+    const dialog = document.querySelector('[role="dialog"]')!;
+    const name = dialog.querySelector<HTMLInputElement>('[data-testid="settings-provider-connect-name"]')!.value;
+    expect(name).not.toBe("");
+    expect(initialized.providers?.map((provider) => provider.name)).not.toContain(name);
+    expect(dialog.querySelector('[data-testid="settings-provider-connect-default"]')?.getAttribute("aria-checked")).toBe("false");
+    expect(onSave).not.toHaveBeenCalled();
+    act(() => setInputValue(dialog.querySelector<HTMLInputElement>('[data-testid="settings-provider-connect-key"]')!, "sk-another-connection"));
+    click(dialog.querySelector('.environment-dialog-footer button[type="button"]'));
+
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(onSave).not.toHaveBeenCalled();
+    expect(initialized).toEqual(beforeBrowsing);
   });
 
   it("saves another service's key without changing the default", async () => {
