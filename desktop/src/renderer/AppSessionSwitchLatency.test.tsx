@@ -4,7 +4,7 @@
  * snapshot can refresh status/turns, but the click must not wait for that IPC
  * round trip before the active tab and conversation pane change.
  */
-import { act } from "react";
+import { act, Fragment, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
@@ -16,13 +16,17 @@ import type {
   WuuDesktopApi,
 } from "../shared/protocol";
 
+const turnListFixture = vi.hoisted(() => ({ renderTurns: false }));
+
 vi.mock("./ConversationTurnList", () => ({
   ConversationTurnList: ({
     threadID,
     turns,
+    renderTurn,
   }: {
     threadID: string;
-    turns: Array<{ status?: string; items?: Array<{ type: string; text?: string }> }>;
+    turns: Turn[];
+    renderTurn: (turn: Turn) => ReactNode;
   }): JSX.Element => (
     <div
       data-testid="turn-list-probe"
@@ -31,7 +35,9 @@ vi.mock("./ConversationTurnList", () => ({
       data-latest-turn-status={turns.at(-1)?.status}
       data-latest-user-text={turns.at(-1)?.items?.find(item => item.type === "user_message")?.text}
       data-latest-agent-text={turns.at(-1)?.items?.find(item => item.type === "agent_message")?.text}
-    />
+    >
+      {turnListFixture.renderTurns ? turns.map(turn => <Fragment key={turn.id}>{renderTurn(turn)}</Fragment>) : null}
+    </div>
   ),
 }));
 
@@ -395,6 +401,7 @@ const attachmentCardSelector = ".composer-attachment-card";
 describe("session tab switch latency", () => {
   beforeEach(() => {
     installWindowStubs();
+    turnListFixture.renderTurns = false;
     serverEventHandlers = [];
     container = document.createElement("div");
     document.body.appendChild(container);
@@ -412,6 +419,61 @@ describe("session tab switch latency", () => {
     container.remove();
     Reflect.deleteProperty(globalThis, "ResizeObserver");
     delete (globalThis as { wuu?: WuuDesktopApi }).wuu;
+  });
+
+  it("keeps the rendered target draft when a delayed fork completes after switching", async () => {
+    const { threadsByID } = installWuuApi();
+    const source = threadA();
+    source.turns[0].items[1] = { ...source.turns[0].items[1], terminal: true, status: "completed" };
+    threadsByID.set(threadAID, source);
+    turnListFixture.renderTurns = true;
+    const fork = deferred<{ thread: Thread }>();
+    window.wuu.forkThread = vi.fn(() => fork.promise);
+    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await flushAsync();
+    const forkButton = container.querySelector<HTMLButtonElement>(
+      '.agent-message-actions [aria-label="分叉"]');
+    expect(forkButton).not.toBeNull();
+    await act(async () => { forkButton!.click(); });
+    const destination = document.querySelector<HTMLButtonElement>(".fork-dialog-option:not(:disabled)");
+    expect(destination).not.toBeNull();
+    await act(async () => { destination!.click(); });
+    expect(window.wuu.forkThread).toHaveBeenCalledOnce();
+    await act(async () => { threadRowButton("session switch B")!.click(); });
+    await act(async () => { setMainComposerPrompt("draft owned by B"); });
+
+    await act(async () => { fork.resolve({ thread: { ...threadA(), id: "delayed-fork", preview: "delayed fork" } }); });
+    await flushAsync();
+
+    expect(activeThreadProbe()?.dataset.threadId).toBe(threadBID);
+    expect(mainComposerTextarea().value).toBe("draft owned by B");
+    await act(async () => { threadRowButton("session switch A")!.click(); });
+    expect(mainComposerTextarea().value).toBe("");
+    await act(async () => { threadRowButton("session switch B")!.click(); });
+    expect(mainComposerTextarea().value).toBe("draft owned by B");
+  });
+
+  it("keeps the rendered composer draft and attachment when archive fails", async () => {
+    installWuuApi();
+    const archive = deferred<{ thread: Thread }>();
+    window.wuu.archiveThread = vi.fn(() => archive.promise);
+    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await flushAsync();
+    const attachment = await pickPendingAttachment(container.querySelector(mainComposerSelector)!, "pdf");
+    await attachment.finish();
+    await act(async () => { setMainComposerPrompt("unsent archive draft"); });
+    const row = threadRowButton("session switch A")!.closest(".thread-row");
+    const archiveButton = row?.querySelector<HTMLButtonElement>(".thread-row-action.archive");
+    expect(archiveButton).not.toBeNull();
+    await act(async () => { archiveButton!.click(); });
+    expect(window.wuu.archiveThread).toHaveBeenCalledOnce();
+    expect(mainComposerTextarea().value).toBe("unsent archive draft");
+    await act(async () => { archive.reject(new Error("synthetic archive failure")); });
+    await flushAsync();
+
+    expect(activeThreadProbe()?.dataset.threadId).toBe(threadAID);
+    expect(mainComposerTextarea().value).toBe("unsent archive draft");
+    expect(container.querySelectorAll(`${mainComposerSelector} ${attachmentCardSelector}`)).toHaveLength(1);
   });
 
   it.each(["pdf", "png", "mp4"] as const)("keeps a pending %s on its original draft after switching conversations", async (extension) => {
