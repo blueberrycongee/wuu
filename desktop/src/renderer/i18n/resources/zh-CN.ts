@@ -1245,6 +1245,7 @@ export const zhCN = {
   "search.noConversations": "暂无对话",
   "search.preview": "对话预览",
   "search.currentConversation": "当前",
+  "search.archived": "已归档",
   "search.loadingPreview": "加载预览中…",
   "search.noPreview": "暂无预览",
   "time.justNow": "刚刚",

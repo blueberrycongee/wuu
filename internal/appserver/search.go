@@ -28,8 +28,10 @@ type threadSearchSource struct {
 }
 
 type threadSearchCandidate struct {
-	text string
-	rank int
+	text        string
+	rank        int
+	messageSeq  int
+	fromMessage bool
 }
 
 func (s *Server) handleThreadSearch(req Request) error {
@@ -57,9 +59,6 @@ func (s *Server) handleThreadSearch(req Request) error {
 	if query != "" {
 		for _, source := range sources {
 			title := source.entry.thread.Title
-			if strings.TrimSpace(title) == "" {
-				title = source.entry.thread.Preview
-			}
 			if !strings.Contains(normalizeThreadSearchText(title), query) {
 				continue
 			}
@@ -82,6 +81,9 @@ func (s *Server) handleThreadSearch(req Request) error {
 	}()
 	strongMatches := len(results)
 	for _, source := range sources {
+		if query == "" && source.entry.thread.Archived {
+			continue
+		}
 		// All titles are accounted for. Once a page of conversation-or-better
 		// matches exists, remaining sources can only lose the tie-break.
 		if strongMatches >= limit {
@@ -90,17 +92,17 @@ func (s *Server) handleThreadSearch(req Request) error {
 		if titleMatches[source.entry.thread.ID] {
 			continue
 		}
-		// Resolve metadata first. Only a technical match or a miss needs
-		// history: it may contain a higher-ranked conversation match.
+		// Empty-query suggestions need only metadata when available. Body
+		// searches must resolve history even when preview metadata matches,
+		// so the winning snippet can carry the actual message address.
 		candidates := threadSearchCandidates(source.entry.thread, nil)
 		snippet := ""
 		rank := 0
-		if query != "" {
-			snippet, rank = threadSearchMatchSnippet(candidates, query)
-		} else {
+		messageSeq := 0
+		if query == "" {
 			snippet = threadSearchDefaultSnippet(candidates)
 		}
-		if snippet == "" || (query != "" && rank < threadSearchConversationRank) {
+		if query != "" || snippet == "" {
 			if source.live == nil && searchDB == nil {
 				searchDB, err = session.OpenStore(s.rt.SessionDir)
 				if err != nil {
@@ -113,7 +115,7 @@ func (s *Server) handleThreadSearch(req Request) error {
 			}
 			candidates = threadSearchCandidates(source.entry.thread, history)
 			if query != "" {
-				snippet, rank = threadSearchMatchSnippet(candidates, query)
+				snippet, rank, messageSeq = threadSearchMatchSnippet(candidates, query)
 			} else {
 				snippet = threadSearchDefaultSnippet(candidates)
 			}
@@ -123,7 +125,7 @@ func (s *Server) handleThreadSearch(req Request) error {
 		}
 		results = append(results, threadSearchResultEntry{
 			entry:  source.entry,
-			result: ThreadSearchResultItem{Thread: source.entry.thread, Snippet: snippet},
+			result: ThreadSearchResultItem{Thread: source.entry.thread, Snippet: snippet, MessageSeq: messageSeq},
 			rank:   rank,
 		})
 		if rank >= threadSearchConversationRank {
@@ -152,9 +154,6 @@ func (s *Server) threadSearchSources() ([]threadSearchSource, error) {
 		if sess.Visibility == pluginhost.SessionVisibilityPlugin {
 			continue
 		}
-		if sess.ArchivedAt != nil {
-			continue
-		}
 		entry := threadEntryFromSession(sess, s.rt.ProviderName, s.rt.Model)
 		sourcesByID[sess.ID] = threadSearchSource{entry: entry}
 	}
@@ -163,7 +162,7 @@ func (s *Server) threadSearchSources() ([]threadSearchSource, error) {
 	defer s.mu.Unlock()
 	for _, th := range s.threads {
 		th.mu.Lock()
-		thread := th.snapshotLocked()
+		thread := th.listSnapshotLocked(true)
 		visibility := th.Visibility
 		entry := threadListEntry{thread: thread, pinnedAt: th.PinnedAt}
 		th.mu.Unlock()
@@ -174,11 +173,7 @@ func (s *Server) threadSearchSources() ([]threadSearchSource, error) {
 		if thread.Ephemeral {
 			continue
 		}
-		if thread.ReadOnly {
-			continue
-		}
-		if thread.Archived {
-			delete(sourcesByID, thread.ID)
+		if thread.ReadOnly && !thread.Archived {
 			continue
 		}
 		sourcesByID[thread.ID] = threadSearchSource{
@@ -263,9 +258,6 @@ func threadSearchCandidates(thread Thread, history []providers.ChatMessage) []th
 		{text: thread.Preview, rank: threadSearchConversationRank},
 		{text: thread.Model, rank: threadSearchTechnicalRank},
 	}
-	if strings.TrimSpace(thread.Title) == "" {
-		candidates[1].rank = threadSearchTitleRank // Preview is the displayed fallback title.
-	}
 	for _, msg := range history {
 		if msg.Hidden {
 			continue
@@ -280,7 +272,7 @@ func threadSearchCandidatesFromMessage(msg providers.ChatMessage) []threadSearch
 	rank := threadSearchTechnicalRank
 	add := func(text string) {
 		if text != "" {
-			candidates = append(candidates, threadSearchCandidate{text: text, rank: rank})
+			candidates = append(candidates, threadSearchCandidate{text: text, rank: rank, messageSeq: msg.Seq, fromMessage: true})
 		}
 	}
 	if msg.Role == "user" || msg.Role == "assistant" {
@@ -312,14 +304,17 @@ func threadSearchCandidatesFromMessage(msg providers.ChatMessage) []threadSearch
 	return candidates
 }
 
-func threadSearchMatchSnippet(candidates []threadSearchCandidate, query string) (string, int) {
+func threadSearchMatchSnippet(candidates []threadSearchCandidate, query string) (string, int, int) {
 	var best threadSearchCandidate
 	for _, candidate := range candidates {
-		if candidate.rank > best.rank && strings.Contains(normalizeThreadSearchText(candidate.text), query) {
+		// Keep the chronological first message at equal rank, but let an
+		// addressed message replace matching metadata at that same rank.
+		if (candidate.rank > best.rank || (candidate.rank == best.rank && !best.fromMessage && candidate.messageSeq > 0)) &&
+			strings.Contains(normalizeThreadSearchText(candidate.text), query) {
 			best = candidate
 		}
 	}
-	return threadSearchExcerpt(best.text, query), best.rank
+	return threadSearchExcerpt(best.text, query), best.rank, best.messageSeq
 }
 
 func threadSearchDefaultSnippet(candidates []threadSearchCandidate) string {

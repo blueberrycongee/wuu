@@ -1296,13 +1296,12 @@ function EffortSelector({
     setPreviewIndex(null);
     onPreviewEffort?.(orderedOptions[selectedIndex] ?? selectedVariant);
   };
-  const commit = (): void => {
+  const commit = (index = pendingIndex.current): void => {
     activePointer.current = null;
-    const index = pendingIndex.current;
     pendingIndex.current = null;
     if (disabled || index === null) return;
     const next = orderedOptions[index];
-    if (next !== undefined && index !== selectedIndex) onSelectEffort(next);
+    if (next !== undefined) onSelectEffort(next);
   };
 
   // Stops sit at the two ends of the capsule and evenly between them; a pointer
@@ -1359,14 +1358,16 @@ function EffortSelector({
         onPointerMove={(event) => {
           if (activePointer.current === event.pointerId) previewPointer(event.clientX);
         }}
-        onPointerUp={commit}
+        onPointerUp={() => commit()}
         onPointerCancel={cancel}
         onLostPointerCapture={() => {
           if (activePointer.current !== null) cancel();
         }}
         onChange={(event) => previewTo(Number(event.currentTarget.value))}
         onKeyUp={(event) => {
-          if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown"].includes(event.key)) commit();
+          // Home/End at an existing endpoint emit no input event. The pick
+          // still supersedes a pending write from an earlier panel instance.
+          if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown"].includes(event.key)) commit(Number(event.currentTarget.value));
         }}
         onBlur={cancel}
       />

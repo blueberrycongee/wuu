@@ -352,6 +352,12 @@ describe("ConversationTurnList", () => {
     ).not.toBeNull();
   });
 
+  it("expands an old turn when navigation targets an assistant message", () => {
+    mountTurns(Array.from({ length: TURN_LIST_COLLAPSE_THRESHOLD + 10 }, (_, index) => makeTurn(index)));
+    act(() => requestConversationTurnReveal("turn-2", "agent-2"));
+    expect(container.querySelector('[data-testid="full-turn"][data-turn-id="turn-2"]')).not.toBeNull();
+  });
+
   it("always full-renders in-progress and forced turns", () => {
     const turns = Array.from(
       { length: TURN_LIST_COLLAPSE_THRESHOLD + 10 },

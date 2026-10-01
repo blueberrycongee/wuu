@@ -91,7 +91,7 @@ it("waits for IME commit and does not interpret candidate confirmation as select
   const match = result("中文");
   await act(async () => h.pending[1].resolve({ results: [match] }));
   act(() => h.api.selectConversationSearchResult(match));
-  expect(h.onSelectThread).toHaveBeenCalledWith("中文");
+  expect(h.onSelectThread).toHaveBeenCalledWith(match, "中文");
 });
 
 it("ignores stale errors and responses after closing", async () => {
@@ -133,7 +133,7 @@ it("returns focus to where it was when dismissed, but not when a result is chose
   await openFrom();
   await act(async () => h.pending.at(-1)!.resolve({ results: [match] }));
   act(() => h.api.selectConversationSearchResult(h.api.conversationSearchResults[0]));
-  expect(h.onSelectThread).toHaveBeenCalledWith("recent");
+  expect(h.onSelectThread).toHaveBeenCalledWith(match, "");
   // The chosen conversation takes focus next; the composer it left does not.
   expect(document.activeElement).not.toBe(composer);
   composer.remove();

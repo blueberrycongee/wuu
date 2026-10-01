@@ -90,6 +90,7 @@ import {
 } from "./ConversationScrollState";
 import { PullToNewSession } from "./PullToNewSession";
 import { useConversationSearch } from "./ConversationSearchState";
+import { useConversationSearchNavigation } from "./ConversationSearchNavigation";
 import {
   SideThreadPanel,
   type SideThreadPanelHandle,
@@ -1575,7 +1576,7 @@ export function App(): JSX.Element {
       setEnvironmentDialog(null);
       setPendingFork(undefined);
     },
-    onSelectThread: (threadID) => void activateThread(threadID),
+    onSelectThread: (result, query) => openSearchResult(result, query),
   });
 
   // Cmd/Ctrl+P toggles the conversation search overlay. Mirrors the
@@ -2378,6 +2379,8 @@ export function App(): JSX.Element {
     enableConversationAutoFollow,
     jumpToLatest: jumpConversationToLatest,
     jumpToUserMessage,
+    jumpToConversationMessage,
+    captureConversationScrollIntent,
     recordConversationScrollIntent,
     disableConversationAutoFollow,
     captureConversationScrollPosition,
@@ -3558,6 +3561,15 @@ export function App(): JSX.Element {
     cancelViewSwitch,
     isCurrentViewSwitchRequest,
     selectRuntimeContext,
+  });
+
+  const openSearchResult = useConversationSearchNavigation({
+    thread: activeThread,
+    switching: viewSwitchPending,
+    activateThread,
+    captureConversationScrollIntent,
+    jumpToConversationMessage,
+    setAppState: setState,
   });
 
   useEffect(() => {
