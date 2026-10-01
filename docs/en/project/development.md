@@ -135,6 +135,10 @@ The older `clients/mobile`, `clients/mobile-web`, and `clients/mobile-app` phone
 
 [The main CI workflow](../../../.github/workflows/ci.yml) runs repository metadata checks, Go checks/tests, desktop checks/tests/builds, and SDK/client checks/tests/builds. It skips changes confined to `docs/` and `docs-site/`. Go CI supplies PostgreSQL for database-backed coverage.
 
+Desktop CI installs the Electron binary once before parallel unit tests. The
+Electron package downloads on first import, so concurrent workers must not race
+to extract into the same installation directory.
+
 The `Go check` summary requires both Go jobs to succeed. It always runs for pull
 requests, so a failed, skipped, or cancelled dependency cannot pass that gate.
 For post-merge `push` runs only, cancelling the whole workflow skips or cancels

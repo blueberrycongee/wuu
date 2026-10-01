@@ -139,6 +139,10 @@ jobs:
           npm ci --prefix desktop
           npm ci --prefix clients/core
           npm ci --prefix clients/mobile-web
+          # Electron downloads lazily on require; parallel Vitest workers must
+          # not extract into the same dist directory at the same time.
+          node desktop/node_modules/electron/install.js
+          node -e 'require("./desktop/node_modules/electron")'
 
       - name: Typecheck
         run: make check-desktop
