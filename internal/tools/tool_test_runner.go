@@ -9,11 +9,6 @@ import (
 	"strings"
 )
 
-// maxRepeatedRunTestFailures bounds how many times the unified bash tool will
-// re-run the same failing verification command against an unchanged workspace
-// revision before refusing (see tool_bash.go).
-const maxRepeatedRunTestFailures = 2
-
 // The verification-classification, npx-runner-resolution, and
 // failure-summary helpers below are shared infrastructure for the unified
 // bash tool (see tool_bash.go). The former standalone run_test tool was

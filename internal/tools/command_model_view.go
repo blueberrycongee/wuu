@@ -110,9 +110,8 @@ func bashStatusLines(r shellExecutionResult) []string {
 			}
 		}
 		failures := intJSONNumber(v.RepeatGuard["previous_failed_runs"]) + 1
-		limit := intJSONNumber(v.RepeatGuard["max_failed_runs_without_revision_change"])
-		if failures >= limit && limit > 0 {
-			lines = append(lines, fmt.Sprintf("This check has failed %d times at the same workspace revision; rerunning it is blocked until files change.", failures))
+		if failures > 1 {
+			lines = append(lines, fmt.Sprintf("This check has failed %d times with this workspace marker; inspect the latest failure before retrying.", failures))
 		}
 	}
 	return lines
