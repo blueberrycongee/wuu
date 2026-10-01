@@ -1985,36 +1985,11 @@ export function threadBelongsToWorkspace(
   return sameDesktopPath(threadWorkspacePath(thread), project.path);
 }
 
-type ThreadWorkspaceIndex = {
-  ids: ReadonlySet<string>;
-  normalizedPaths: ReadonlySet<string>;
-  // Stale workspace IDs retain the exact-path fallback used by legacy sessions.
-  exactPaths: ReadonlySet<string>;
-};
-
-// Build once per batch so legacy session paths and registered workspace paths
-// are normalized once, rather than once for every session/workspace pair.
-export function indexThreadWorkspaces(
-  projects: Pick<DesktopProject, "id" | "path">[],
-): ThreadWorkspaceIndex {
-  return {
-    ids: new Set(projects.map((project) => project.id)),
-    normalizedPaths: new Set(projects.map((project) => cleanDesktopPath(project.path))),
-    exactPaths: new Set(projects.map((project) => project.path)),
-  };
-}
-
 function threadBelongsToAnyWorkspace(
   thread: Pick<Thread, "cwd" | "workspace_id" | "worktree">,
-  projects: Pick<DesktopProject, "id" | "path">[] | ThreadWorkspaceIndex,
+  projects: Pick<DesktopProject, "id" | "path">[],
 ): boolean {
-  if (Array.isArray(projects)) {
-    return projects.some((project) => threadBelongsToWorkspace(thread, project));
-  }
-  if (projects.ids.size === 0) return false;
-  return thread.workspace_id?.trim()
-    ? projects.ids.has(thread.workspace_id)
-    : projects.normalizedPaths.has(cleanDesktopPath(threadWorkspacePath(thread)));
+  return projects.some((project) => threadBelongsToWorkspace(thread, project));
 }
 
 function sameDesktopPath(left: string, right: string): boolean {
@@ -2037,8 +2012,8 @@ function cleanDesktopPath(path: string): string {
 export const SCRATCH_PSEUDO_PROJECT_ID = "__wuu_scratch__";
 
 export function isScratchThread(
-  thread: Pick<Thread, "workspace_kind" | "workspace_id" | "cwd" | "worktree">,
-  projects: DesktopProject[] | ThreadWorkspaceIndex,
+  thread: Pick<Thread, "workspace_kind" | "cwd" | "worktree">,
+  projects: DesktopProject[],
 ): boolean {
   if (threadBelongsToAnyWorkspace(thread, projects)) {
     return false;
@@ -2050,9 +2025,7 @@ export function isScratchThread(
     return false;
   }
   const projectPath = threadWorkspacePath(thread);
-  return Array.isArray(projects)
-    ? !projects.some((project) => project.path === projectPath)
-    : !projects.exactPaths.has(projectPath);
+  return !projects.some((project) => project.path === projectPath);
 }
 
 /**
@@ -2115,12 +2088,11 @@ export function scratchThreads(
   threads: Thread[],
   projects: DesktopProject[],
 ): Thread[] {
-  const workspaceIndex = indexThreadWorkspaces(projects);
   return sortThreads(threads).filter(
     (thread) =>
       !thread.pinned &&
       !thread.archived &&
-      isScratchThread(thread, workspaceIndex),
+      isScratchThread(thread, projects),
   );
 }
 
@@ -2128,11 +2100,10 @@ export function scratchThreadSummaries(
   threads: ThreadSummary[],
   projects: DesktopProject[],
 ): ThreadSummary[] {
-  const workspaceIndex = indexThreadWorkspaces(projects);
   return sortThreadSummaries(threads).filter(
     (thread) =>
       !thread.pinned &&
-      isScratchThread(thread, workspaceIndex),
+      isScratchThread(thread, projects),
   );
 }
 

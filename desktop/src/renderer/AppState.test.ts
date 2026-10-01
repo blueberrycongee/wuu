@@ -3174,43 +3174,6 @@ describe("sidebar pin/archive matrix", () => {
     expect(pinned).not.toContain("scratch-archived-pinned");
   });
 
-  it.each([
-    ["unregistered scratch", { cwd: "/scratch/new", workspace_kind: "scratch" }, true],
-    ["legacy unregistered path", { cwd: "/scratch/new" }, true],
-    ["registered path overrides scratch kind", { cwd: " /repo/project/// ", workspace_kind: "scratch" }, false],
-    ["known workspace survives relocation", { cwd: "/repo/old", workspace_id: "project-1", workspace_kind: "scratch" }, false],
-    ["unknown workspace preserves scratch kind", { cwd: "/repo/project", workspace_id: "removed", workspace_kind: "scratch" }, true],
-    ["unknown workspace still respects an exact legacy path", { cwd: "/repo/project", workspace_id: "removed" }, false],
-    ["unknown workspace does not adopt a normalized legacy path", { cwd: "/repo/project/", workspace_id: "removed" }, true],
-    ["workspace IDs are not trimmed for identity", { cwd: "/scratch/new", workspace_id: " project-1 ", workspace_kind: "scratch" }, true],
-    ["blank workspace ID falls back to path", { cwd: "/repo/project", workspace_id: "  " }, false],
-    ["unloaded project is not scratch", { cwd: "/repo/removed", workspace_kind: "project" }, false],
-    ["worktree uses its base repository", { cwd: "/worktrees/fork", worktree: { path: "/worktrees/fork", base_repo: " /repo/project/ ", base_head: "abc" } }, false],
-    ["detached worktree remains scratch", { cwd: "/worktrees/fork", worktree: { path: "/worktrees/fork", base_repo: "/repo/removed", base_head: "abc" } }, true],
-    ["blank worktree base falls back to cwd", { cwd: "/repo/project", worktree: { path: "/repo/project", base_repo: " ", base_head: "abc" } }, false],
-    ["root path retains its slash", { cwd: "/", workspace_kind: "scratch" }, false],
-  ] as const)("preserves scratch membership for %s", (_name, overrides, scratch) => {
-    const projects: DesktopProject[] = [
-      { id: "project-1", name: "project", path: "/repo/project", created_at: "", updated_at: "" },
-      { id: "alias", name: "alias", path: " /repo/project/// ", created_at: "", updated_at: "" },
-      { id: "root", name: "root", path: "/", created_at: "", updated_at: "" },
-    ];
-    const all = summaries([{ id: "session", ...overrides }]);
-    expect(isScratchThread(all[0], projects)).toBe(scratch);
-    expect(scratchThreadSummaries(all, projects).map((thread) => thread.id))
-      .toEqual(scratch ? ["session"] : []);
-  });
-
-  it("refreshes scratch membership after workspace registration and relocation", () => {
-    const all = summaries([{ id: "session", cwd: "/repo/new", workspace_kind: "scratch" }]);
-    const projects: DesktopProject[] = [];
-    expect(scratchThreadSummaries(all, projects)).toEqual(all);
-    projects.push({ id: "project-1", name: "project", path: "/repo/new", created_at: "", updated_at: "" });
-    expect(scratchThreadSummaries(all, projects)).toEqual([]);
-    projects[0].path = "/repo/moved";
-    expect(scratchThreadSummaries(all, projects)).toEqual(all);
-  });
-
   it("scratchThreadSummaries drops pinned and archived entries (move semantics)", () => {
     const all = summaries([
       { id: "scratch-live" },

@@ -25,7 +25,6 @@ vi.mock("./TurnView", () => ({
     return <section data-turn-id={turn.id} data-testid={`full-${turn.id}`} />;
   },
   latestAgentMessageItemID: (): undefined => undefined,
-  scrollToUserMessage: (): void => {},
 }));
 
 vi.mock("./TurnViewHelpers", async (importOriginal) => {

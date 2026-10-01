@@ -204,10 +204,6 @@ func buildClient(provider config.ProviderConfig, providerName string) (providers
 		return nil, err
 	}
 
-	// Resolve auth token for anthropic providers (Bearer auth, aligned with
-	// the Anthropic SDK's ANTHROPIC_AUTH_TOKEN support).
-	authToken := resolveAuthToken(provider, providerName)
-
 	switch profile.Wire {
 	case wireOpenAIChat, wireOpenAIResponses:
 		if profile.Auth == authGrokBuild {
@@ -271,9 +267,8 @@ func buildClient(provider config.ProviderConfig, providerName string) (providers
 		}
 		return client, nil
 	case wireAnthropicMessages:
-		// API key is optional when auth token is available.
-		apiKey, apiKeyErr := resolveAPIKey(provider, providerName)
-		if apiKeyErr != nil && authToken == "" {
+		apiKey, authToken, apiKeyErr := resolveAnthropicCredentials(provider, providerName)
+		if apiKeyErr != nil {
 			return nil, apiKeyErr
 		}
 		client, newErr := anthropic.New(anthropic.ClientConfig{
@@ -422,6 +417,37 @@ func resolveExplicitAPIKey(provider config.ProviderConfig) string {
 		return strings.TrimSpace(os.Getenv(envKey))
 	}
 	return ""
+}
+
+// Resolve the connection's credentials as a pair. Independently falling back
+// for each header can send an unrelated ambient credential to a custom endpoint.
+func resolveAnthropicCredentials(provider config.ProviderConfig, providerName string) (string, string, error) {
+	apiKey := resolveExplicitAPIKey(provider)
+	authToken := strings.TrimSpace(provider.AuthToken)
+	if authToken == "" {
+		authToken = strings.TrimSpace(os.Getenv(strings.TrimSpace(provider.AuthTokenEnv)))
+	}
+	// Explicit dual-header configurations remain supported, but neither header
+	// may acquire another credential source when one was explicitly selected.
+	if apiKey != "" || authToken != "" {
+		return apiKey, authToken, nil
+	}
+	if stored, ok := storedCredentials(os.Getenv("HOME"), providerName); ok && stored.Source == authstorage.SourceSaved {
+		if key := storedAPIKey(stored, provider, providerName); key != "" {
+			return key, "", nil
+		}
+		if token := strings.TrimSpace(stored.AuthToken); token != "" {
+			return "", token, nil
+		}
+	}
+	// Preserve the environment/default behavior for connections without a
+	// selected credential, including older imported auth-store entries.
+	apiKey, err := resolveAPIKey(provider, providerName)
+	authToken = resolveAuthToken(provider, providerName)
+	if authToken != "" {
+		err = nil
+	}
+	return apiKey, authToken, err
 }
 
 // resolveAuthToken resolves a Bearer auth token from config or environment.

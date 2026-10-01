@@ -1,3 +1,4 @@
+const startupEntryNs = process.hrtime.bigint();
 // Real Electron/main/preload/Go round trips against disposable synthetic data.
 // Build Electron and the core first; WUU_DESKTOP_CORE selects the tested binary.
 // No external inference is sent. Timings are diagnostic, not hardware-dependent gates.
@@ -16,6 +17,8 @@
 // WUU_SWITCH_TRACE=1 records a Chromium trace; exclude traced runs from baselines.
 // WUU_SWITCH_CPU_PROFILE=1 records renderer CPU samples; exclude from baselines.
 // WUU_SWITCH_OUTPUT selects an evidence directory separate from fixture data.
+// startup-e2e.cjs reuses this fixture and endpoint for fresh-process startup.
+// WUU_STARTUP_PREPARE_ONLY=1 prepares modern pinned data without importing the app.
 // WUU_SWITCH_SUBSCRIPTION_TURNS=30000 adds ~2 GiB of unrelated subscription
 // history, two built-in services, and cross-project new-draft regression checks.
 const assert = require('node:assert/strict');
@@ -27,6 +30,11 @@ const { spawnSync } = require('node:child_process');
 const http = require('node:http');
 const childProcess = require('node:child_process');
 const { syncBuiltinESMExports } = require('node:module');
+const prepareOnly = process.env.WUU_STARTUP_PREPARE_ONLY === '1';
+const startupOnly = prepareOnly || process.env.WUU_STARTUP_ONLY === '1';
+const preparedFixture = process.env.WUU_STARTUP_PREPARED;
+const selectedIndex = startupOnly ? Number(process.env.WUU_STARTUP_SELECTED || 1) : 0;
+const startupProbe = startupOnly && !prepareOnly ? require('./startup-probe.cjs')(startupEntryNs) : null;
 const originalSpawn = childProcess.spawn;
 let wireBytes = 0;
 let coreSpawns = 0;
@@ -34,6 +42,7 @@ childProcess.spawn = (...args) => {
   const child = originalSpawn(...args);
   if (args[0] === process.env.WUU_DESKTOP_CORE) {
     coreSpawns++;
+    startupProbe?.observeCore(child, args[1] || [], args[2]);
     child.stdout.on('data', chunk => { wireBytes += typeof chunk === 'string' ? Buffer.byteLength(chunk) : chunk.length; });
   }
   return child;
@@ -47,7 +56,7 @@ const mainBundle = path.resolve(process.env.WUU_SWITCH_MAIN || path.join(desktop
 const turns = Number(process.env.WUU_SWITCH_TURNS || budget.fixture.turns);
 const rounds = Number(process.env.WUU_SWITCH_ROUNDS || budget.fixture.rounds);
 const variant = process.env.WUU_SWITCH_VARIANT || budget.fixture.variant;
-const safeMode = process.env.WUU_SWITCH_SAFE_MODE || budget.fixture.safeMode;
+const safeMode = process.env.WUU_SWITCH_SAFE_MODE || (startupOnly ? '0' : budget.fixture.safeMode);
 const initDelayMs = Number(process.env.WUU_SWITCH_INIT_DELAY_MS || 0);
 const subscriptionTurns = Number(process.env.WUU_SWITCH_SUBSCRIPTION_TURNS || 0);
 const sidebarThreads = Number(process.env.WUU_SWITCH_SIDEBAR_THREADS || 0);
@@ -62,13 +71,29 @@ assert.ok(Number.isInteger(subscriptionTurns) && subscriptionTurns >= 0 && subsc
 assert.ok(Number.isInteger(rounds) && rounds > 0, 'Rounds must be a positive integer');
 assert.ok(Number.isInteger(turns) && turns > 0, 'Turns must be a positive integer');
 assert.ok(Number.isFinite(initDelayMs) && initDelayMs >= 0, 'Invalid readiness delay');
-const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'wuu-session-switch-'));
+assert.ok(Number.isInteger(selectedIndex) && selectedIndex >= 0 && selectedIndex < 6, 'Invalid startup conversation index');
+if (startupOnly) {
+  assert.equal(pacedStream || streamOnly || subscriptionTurns > 0 || initDelayMs > 0, false, 'Startup excludes streaming and fault injection');
+  assert.ok(prepareOnly || preparedFixture, 'Measured startup requires a separately prepared synthetic fixture');
+}
+const prepareDirectory = prepareOnly && process.env.WUU_STARTUP_PREPARE_DIR;
+if (prepareDirectory) fs.mkdirSync(prepareDirectory);
+const fixture = preparedFixture || prepareDirectory || fs.mkdtempSync(path.join(os.tmpdir(), 'wuu-session-switch-'));
+if (preparedFixture) {
+  const marker = JSON.parse(fs.readFileSync(path.join(fixture, 'startup-fixture.json'), 'utf8'));
+  assert.equal(marker.synthetic, true, 'Only generated synthetic fixtures are accepted');
+  assert.equal(fs.existsSync(path.join(fixture, 'profile')), false, 'Startup requires a fresh Electron profile');
+}
 const output = process.env.WUU_SWITCH_OUTPUT || fixture;
 fs.mkdirSync(output, { recursive: true });
 const traceEnabled = process.env.WUU_SWITCH_TRACE === '1';
 const cpuProfileEnabled = process.env.WUU_SWITCH_CPU_PROFILE === '1';
 const checkBudget = process.env.WUU_SWITCH_CHECK_BUDGET === '1';
+if (startupOnly) {
+  assert.equal(traceEnabled || cpuProfileEnabled, false, 'Startup profiling is unsupported; switch profiling starts after startup');
+}
 if (checkBudget) {
+  assert.equal(startupOnly, false, 'Startup is a separate diagnostic workload');
   assert.equal(subscriptionTurns, 0, 'Subscription history is a separate diagnostic workload');
   assert.equal(sidebarThreads, 0, 'Large sidebar is a separate diagnostic workload');
   assert.equal(pacedStream, false, 'Paced streaming is a separate diagnostic workload');
@@ -78,23 +103,27 @@ if (checkBudget) {
   assert.equal(cpuProfileEnabled, false, 'CPU profiling is not a comparable budget workload');
 }
 const home = path.join(fixture, 'home');
-fs.mkdirSync(home);
-app.setPath('userData', path.join(fixture, 'profile'));
+fs.mkdirSync(home, { recursive: true });
+app.setPath('userData', path.join(fixture, prepareOnly ? 'preparation-profile' : 'profile'));
 process.env.WUU_HOME = home;
 {
   // Never discover real subscription credentials or start installed engines.
   process.env.HOME = path.join(fixture, 'user-home');
-  fs.mkdirSync(process.env.HOME);
+  fs.mkdirSync(process.env.HOME, { recursive: true });
   process.env.CODEX_HOME = path.join(process.env.HOME, '.codex');
   process.env.GROK_HOME = path.join(process.env.HOME, '.grok');
 }
 process.env.WUU_DESKTOP_CORE ||= path.join(desktop, 'build/bin/wuu-core');
-process.env.WUU_ENABLE_BROWSER = '0';
+process.env.WUU_ENABLE_BROWSER = startupOnly ? '1' : '0';
 process.env.WUU_SAFE_MODE = safeMode;
-process.env.WUU_DESKTOP_DISABLE_DEV_CACHE_CLEANUP = '1';
+process.env.WUU_DESKTOP_DISABLE_DEV_CACHE_CLEANUP = startupOnly ? '0' : '1';
 // A shell inherited from make dev must still exercise this checkout's build.
 delete process.env.ELECTRON_RENDERER_URL;
-const projects = Array.from({ length: 6 }, (_, i) => {
+let projects;
+if (preparedFixture) {
+  projects = JSON.parse(fs.readFileSync(path.join(home, 'projects.json'), 'utf8')).projects.filter(project => /^project-[0-9]+$/.test(project.id));
+} else {
+projects = Array.from({ length: 6 }, (_, i) => {
   const cwd = path.join(fixture, `project-${i}`);
   fs.mkdirSync(cwd);
   return { id: `project-${i}`, name: `Switch project ${i}`, path: cwd, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' };
@@ -105,15 +134,17 @@ const sidebarProjects = Array.from({ length: sidebarThreads ? (sidebarThreads >=
   return { id: `sidebar-project-${i}`, name: `Sidebar project ${i}`, path: cwd, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' };
 });
 fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({ default_provider: 'fixture', providers: { fixture: { type: 'openai-compatible', base_url: 'http://127.0.0.1:1/v1', api_key: 'fixture-only', model: 'fixture' } } }));
-if (subscriptionTurns) {
+if (subscriptionTurns || startupOnly) {
   const configPath = path.join(home, 'config.json');
   const config = JSON.parse(fs.readFileSync(configPath));
-  config.providers['subscription-grok'] = { type: 'grok-build', model: 'grok-4.5' };
-  config.providers['subscription-codex'] = { type: 'openai-codex', model: 'gpt-5', reuse_codex_credentials: true };
+  if (subscriptionTurns) {
+    config.providers['subscription-grok'] = { type: 'grok-build', model: 'grok-4.5' };
+    config.providers['subscription-codex'] = { type: 'openai-codex', model: 'gpt-5', reuse_codex_credentials: true };
+  }
   config.engines = Object.fromEntries(['codex', 'claude', 'cursor', 'devin', 'grok', 'hermes', 'pi', 'opencode', 'antigravity'].map(id => [id, { enabled: false }]));
   fs.writeFileSync(configPath, JSON.stringify(config));
 }
-fs.writeFileSync(path.join(home, 'projects.json'), JSON.stringify({ projects: [...projects, ...sidebarProjects], active_context: { kind: 'project', project_id: projects[0].id, cwd: projects[0].path } }));
+fs.writeFileSync(path.join(home, 'projects.json'), JSON.stringify({ projects: [...projects, ...sidebarProjects], active_context: { kind: 'project', project_id: projects[selectedIndex].id, cwd: projects[selectedIndex].path } }));
 fs.writeFileSync(path.join(home, 'desktop-settings.json'), JSON.stringify({ onboarding_version: 100, language: 'en', theme: process.env.WUU_SWITCH_VARIANT === 'narrow' ? 'dark' : 'light' }));
 const boot = spawnSync(process.env.WUU_DESKTOP_CORE, ['app-server', '--safe-mode', '--workdir', projects[0].path], {
   env: process.env, input: '{"jsonrpc":"2.0","id":1,"method":"thread/start","params":{}}\n', encoding: 'utf8', timeout: 30000,
@@ -146,9 +177,17 @@ if int(sys.argv[3]):
         provider='subscription-grok' if t%2==0 else 'subscription-codex'
         for r,(role,content,tokens) in enumerate([('user','Synthetic request',0),('assistant','Synthetic historical content. '*2300,0),('meta','token_usage',7),('meta','turn_terminal',7)]):
             db.execute('INSERT INTO session_messages (session_id,seq,role,content,at,provider,model,input_tokens,stop_reason) VALUES (?,?,?,?,?,?,?,?,?)', (sid,t*4+r+1,role,content,'2026-01-01T00:00:00Z',provider,'fixture',tokens,'completed' if r==3 else ''))
+if sys.argv[5]=='1': db.execute("UPDATE sessions SET permission_mode='standard'")
 db.commit()
-`, home, String(turns), String(subscriptionTurns), String(sidebarThreads)], { encoding: 'utf8' });
+`, home, String(turns), String(subscriptionTurns), String(sidebarThreads), startupOnly ? '1' : '0'], { encoding: 'utf8' });
 assert.equal(seed.status, 0, seed.stderr);
+}
+if (prepareOnly) {
+  fs.writeFileSync(path.join(fixture, 'startup-fixture.json'), JSON.stringify({ synthetic: true, fixture, turns, sidebarThreads, selectedIndex, permissionMode: 'standard' }, null, 2));
+  console.log('PREPARED_STARTUP', fixture);
+  app.exit(0);
+}
+startupProbe?.mark('fixture-ready');
 const timings = [];
 const originalHandle = ipcMain.handle.bind(ipcMain);
 let archiveGate;
@@ -160,13 +199,14 @@ let failSubscription = false;
 ipcMain.handle = (channel, listener) => originalHandle(channel, async (...args) => {
   const start = performance.now();
   // Insert at invocation, not completion, so overlapping RPCs keep attribution.
-  const timing = { channel, startedAt: start, ms: null };
+  const timing = { channel, startedAt: start, ...(startupProbe ? { launchMs: startupProbe.launchMs() } : {}), ms: null };
   timings.push(timing);
   const subscriptionRead = channel === 'wuu:engines-list' && args[1]?.include_quota === true;
   if (subscriptionRead) subscriptionEntered = true;
   const delayInitialization = measuring && channel === 'wuu:initialize' && initDelayMs > 0;
   try {
     const result = await listener(...args);
+    if (startupProbe && channel === 'wuu:initialize') startupProbe.initialized(result);
     if (subscriptionRead) {
       timing.historyResponseMs = +(performance.now() - start).toFixed(1);
       if (subscriptionGate) await subscriptionGate;
@@ -425,6 +465,7 @@ async function checkStreaming(win) {
 }
 async function checkStartup(win, launchStart) {
   await evaluate(win, () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  startupProbe?.mark('restored-pane-two-frames');
   const conversationFrameMs = performance.now() - launchStart;
   await waitFor(win, () => {
     const input = document.querySelector('.composer textarea');
@@ -432,23 +473,29 @@ async function checkStartup(win, launchStart) {
     input.focus();
     return document.activeElement === input;
   });
+  if (startupProbe) {
+    startupProbe.mark('editable-composer-focused');
+    await evaluate(win, () => document.querySelector('.composer textarea').addEventListener('beforeinput', event => { window.__startupInput = { trusted: event.isTrusted, inputType: event.inputType, timeStamp: event.timeStamp, disabled: event.target.disabled, readOnly: event.target.readOnly, inert: !!event.target.closest('[inert]') }; }, { once: true }));
+  }
   await win.webContents.insertText('Startup typeability probe');
-  await evaluate(win, () => new Promise((resolve, reject) => {
+  await evaluate(win, startupOnly => new Promise((resolve, reject) => {
     const deadline = performance.now() + 30000;
     let frames = 0;
     const check = () => {
       if (performance.now() > deadline) return reject(new Error('Startup draft never became send-ready'));
       const input = document.querySelector('.composer textarea');
       const send = document.querySelector('.composer-send-button');
-      frames = input?.value === 'Startup typeability probe' && document.activeElement === input && !input.disabled && send && !send.disabled ? frames + 1 : 0;
+      const rect = startupOnly ? input?.getBoundingClientRect() : null;
+      const valid = !startupOnly || (!input?.readOnly && !input?.closest('[inert]') && rect?.width > 0 && rect.height > 0 && rect.bottom > 0 && rect.top < innerHeight);
+      frames = valid && input?.value === 'Startup typeability probe' && document.activeElement === input && !input.disabled && send && !send.disabled ? frames + 1 : 0;
       if (frames >= 2) return resolve();
       requestAnimationFrame(check);
     };
     requestAnimationFrame(check);
-  }));
+  }), startupOnly);
   startup = { conversationFrameMs, interactiveFrameMs: performance.now() - launchStart, coreSpawns, rpc: timings.map(t => ({ ...t })) };
   console.log('STARTUP', JSON.stringify(startup));
-  await clearDraft(win, 'Startup typeability probe');
+  if (!startupOnly) await clearDraft(win, 'Startup typeability probe');
 }
 async function checkPacedStreaming(win) {
   await evaluate(win, () => document.querySelector('.composer textarea').focus());
@@ -799,26 +846,38 @@ async function switchTo(win, index, scenario) {
   await clearDraft(win, draft);
 }
 let main;
-app.on('browser-window-created', (_event, win) => { main ||= win; });
-const timeout = setTimeout(() => { console.error('E2E timeout', fixture); app.exit(1); }, 120000 + rounds * 15000 + (process.env.WUU_SWITCH_STREAM === '1' || pacedStream ? 60000 : 0));
+app.on('browser-window-created', (_event, win) => { main ||= win; if (win === main) startupProbe?.observeWindow(win); });
+const timeout = setTimeout(() => { console.error('E2E timeout', fixture); app.exit(1); }, startupOnly ? 30000 : 120000 + rounds * 15000 + (process.env.WUU_SWITCH_STREAM === '1' || pacedStream ? 60000 : 0));
 const launchStart = performance.now();
-startFixtureProvider().then(() => import(pathToFileURL(mainBundle).href)).then(async () => {
+startFixtureProvider().then(() => { startupProbe?.mark('product-main-import'); return import(pathToFileURL(mainBundle).href); }).then(async () => {
   while (!main) await delay(25);
   main.webContents.on('console-message', (_e, level, message) => { if (level >= 3) console.error(message); });
-  await waitFor(main, () => document.querySelector('.composer textarea'));
-  main.show();
-  main.focus();
+  if (startupProbe) {
+    await waitFor(main, () => location.protocol === 'file:' && document.readyState !== 'loading');
+    await startupProbe.verifyDisplay(main, evaluate);
+  }
+  await waitFor(main, () => !!document.querySelector('.composer textarea'));
+  startupProbe?.mark('composer-dom-observed');
+  if (!startupOnly) { main.show(); main.focus(); }
   await evaluate(main, enabled => { window.__switchTrace = enabled; }, traceEnabled);
-  main.webContents.debugger.attach('1.3');
+  if (!main.webContents.debugger.isAttached()) main.webContents.debugger.attach('1.3');
   await main.webContents.debugger.sendCommand('Performance.enable');
-  main.setSize(process.env.WUU_SWITCH_VARIANT === 'narrow' ? 820 : 1380, 860);
-  if (process.env.WUU_SWITCH_VARIANT === 'narrow') await evaluate(main, () => {
+  if (!startupOnly) main.setSize(process.env.WUU_SWITCH_VARIANT === 'narrow' ? 820 : 1380, 860);
+  if (!startupOnly && process.env.WUU_SWITCH_VARIANT === 'narrow') await evaluate(main, () => {
     document.documentElement.style.setProperty('--conversation-message-font-size', '20px');
     document.documentElement.style.setProperty('--appearance-scale', String(20 / 14));
   });
   console.log('FIXTURE', fixture);
-  await waitFor(main, () => document.querySelector('.cached-conversation-pane[data-active="true"][data-thread-id="switch-thread-0"]'));
+  await waitFor(main, index => !!document.querySelector(`.cached-conversation-pane[data-active="true"][data-thread-id="switch-thread-${index}"]`), selectedIndex);
+  if (startupProbe) {
+    await waitFor(main, lastTurn => !!document.querySelector('.cached-conversation-pane[data-active="true"]')?.textContent.includes('Result ' + lastTurn), (selectedIndex === 1 || selectedIndex === 5 ? turns : 3) - 1);
+    startupProbe.mark('restored-pane-dom-observed');
+  }
   await checkStartup(main, launchStart);
+  if (startupProbe) {
+    await startupProbe.finish({ win: main, evaluate, output, fixture, projects, selectedIndex, turns, sidebarThreads, safeMode, mainBundle, harness: __filename, timings, startup });
+    clearTimeout(timeout); app.quit(); return;
+  }
   await evaluate(main, () => { for (const group of document.querySelectorAll('.project-group')) { const button = group.querySelector('button[aria-expanded="false"]'); button?.click(); } });
   const startupDeadline = Date.now() + 30000;
   while (timings.some(t => t.ms === null)) {

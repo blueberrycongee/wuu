@@ -55,7 +55,6 @@ import { useDropAnimation, useSortableTransition } from "./SortableMotion";
 import type { DesktopProject } from "../shared/protocol";
 import {
   isScratchThread,
-  indexThreadWorkspaces,
   threadBelongsToWorkspace,
   isThreadExecuting,
   isThreadUnread,
@@ -1104,7 +1103,6 @@ export function AppSidebar({
     const byID = new Map(allSidebarThreads.map((thread) => [thread.id, thread]));
     const projectIDs = new Set(projectIndex.projects.map((thread) => thread.id));
     const projects = sidebarWorkspaces.filter((project) => project.id !== SCRATCH_PSEUDO_PROJECT_ID);
-    const workspaceIndex = indexThreadWorkspaces(projects);
     for (const [workspaceID, threads] of Object.entries(workspaceThreadsByWorkspaceID)) {
       const project = projects.find((candidate) => candidate.id === workspaceID);
       // Cached buckets can overlap while a fork's workspace metadata refreshes.
@@ -1113,7 +1111,7 @@ export function AppSidebar({
         (thread) => !thread.pinned && !organization.folderByThreadID[thread.id] &&
           !projectIDs.has(thread.id) && !projectIndex.managedSessionIDs.has(thread.id) && (
           workspaceID === SCRATCH_PSEUDO_PROJECT_ID
-            ? isScratchThread(thread, workspaceIndex)
+            ? isScratchThread(thread, projects)
             : project !== undefined && threadBelongsToWorkspace(thread, project)
         ),
       );

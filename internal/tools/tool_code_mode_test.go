@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -400,4 +401,54 @@ func TestPTCStateUsesBoundExecutionWorkspace(t *testing.T) {
 	run(first, `store("checkpoint",1); return load("checkpoint");`, `1`)
 	run(second, `return typeof load("checkpoint");`, `"undefined"`)
 	run(first, `return load("checkpoint");`, `1`)
+}
+
+func TestPTCRepeatedProgramAdvancesCheckpoint(t *testing.T) {
+	kit := newCodeModeTestToolkit(t)
+	kit.SetSessionID("stateful-program")
+	for i := 1; i <= 4; i++ {
+		result := runPTCProgram(t, kit, `store("page", (load("page") ?? 0) + 1); return load("page");`)
+		if result.IsError || result.TextProjection() != fmt.Sprint(i) {
+			t.Fatalf("checkpoint step %d: %+v", i, result)
+		}
+	}
+}
+
+func TestPTCRepeatedProgramPreservesLeafGuard(t *testing.T) {
+	kit := newCodeModeTestToolkit(t)
+	if err := os.WriteFile(filepath.Join(kit.RootDir(), "fixture.txt"), []byte("unchanged"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for i := 1; i <= 3; i++ {
+		result := runPTCProgram(t, kit, `await tools.read_file({path:"fixture.txt"}); return true;`)
+		if i < 3 {
+			if result.IsError {
+				t.Fatalf("read %d: %+v", i, result)
+			}
+		} else {
+			if !result.IsError {
+				t.Fatalf("third leaf read succeeded: %+v", result)
+			}
+			guardedLeaf := false
+			for _, record := range kit.ToolTelemetry() {
+				if record.Name == "read_file" && record.ErrorKind == "repeated_tool_input" {
+					guardedLeaf = true
+				}
+			}
+			if !guardedLeaf {
+				t.Fatalf("third leaf read must retain its own repeat guard: %+v", result)
+			}
+		}
+	}
+}
+
+func TestPTCRepeatedProgramAllowsLeafPolling(t *testing.T) {
+	t.Setenv("WUU_HOME", t.TempDir())
+	kit := newCodeModeTestToolkit(t)
+	for i := 0; i < 4; i++ {
+		result := runPTCProgram(t, kit, `await tools.process({action:"list"}); return true;`)
+		if result.IsError {
+			t.Fatalf("poll %d: %+v", i, result)
+		}
+	}
 }

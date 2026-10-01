@@ -255,6 +255,11 @@ func (t *Toolkit) repeatedToolInputCount(call providers.ToolCall, revision strin
 	if call.Name == newContextToolName {
 		return 0
 	}
+	// Programs can advance checkpoints or poll external state without changing
+	// the workspace. Nested leaf calls retain their own repeated-input guards.
+	if call.Name == codeModeExecToolName {
+		return 0
+	}
 	if t == nil || t.env == nil || isRepeatablePollingTool(call) {
 		return 0
 	}

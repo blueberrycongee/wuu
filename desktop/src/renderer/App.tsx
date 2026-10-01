@@ -80,8 +80,6 @@ import {
   type ComposerVariant,
   type PermissionMode,
 } from "./ComposerView";
-import type { QueryHistoryEntry } from "./QueryHistoryPopover";
-import { QueryHistoryRail } from "./QueryHistoryRail";
 import { UserQuestionCard } from "./UserQuestionCard";
 import { ConversationSearchOverlay } from "./ConversationSearchOverlay";
 import {
@@ -90,6 +88,7 @@ import {
 } from "./ConversationScrollState";
 import { PullToNewSession } from "./PullToNewSession";
 import { useConversationSearch } from "./ConversationSearchState";
+import { useConversationSearchNavigation } from "./ConversationSearchNavigation";
 import {
   SideThreadPanel,
   type SideThreadPanelHandle,
@@ -208,7 +207,6 @@ import {
 } from "./RuntimeHelpers";
 import type { SettingsPage } from "./SettingsView";
 import {
-  ENABLE_CONVERSATION_TURN_RAIL,
   ENABLE_EMBEDDED_BROWSER,
   ENABLE_ACCOUNT,
 } from "./FeatureFlags";
@@ -235,9 +233,8 @@ import {
   rawErrorMessage,
   statusMessageForError,
 } from "./UserFacingErrors";
-import { scrollToUserMessage, TurnView } from "./TurnView";
+import { TurnView } from "./TurnView";
 import { OPEN_SETTINGS_EVENT, type OpenSettingsDetail } from "./TurnNotice";
-import { ConversationTurnRail } from "./ConversationTurnRail";
 import {
   WorkspaceRightPanel,
 } from "./WorkspacePanels";
@@ -1029,7 +1026,10 @@ export function App(): JSX.Element {
   const appStateRef = useRef<AppState>(initialState);
   const runningThreadReconcileInFlightRef = useRef("");
   const workspaceHasDirtyFilesRef = useRef(false);
-  const lastFocusOutsideWorkspaceRef = useRef<HTMLElement | null>(null);
+  const lastFocusOutsideWorkspaceRef = useRef<{
+    element: HTMLElement;
+    owner: string;
+  } | null>(null);
   const previousWorkspaceFocusModeRef = useRef({
     fullPanel: false,
     open: false,
@@ -1100,6 +1100,7 @@ export function App(): JSX.Element {
     preserveFailedComposerMessage,
   });
   const runtimeVariantByModelRef = useRef(new Map<string, string>());
+  const pendingRuntimeSelectionsRef = useRef(new Map<string, Promise<void>>());
   const cachedThreadPaneHistoryRef = useRef<string[]>([]);
   const cachedConversationPaneThreadsRef = useRef(new Map<string, Thread>());
   const draftSessionTabCounterRef = useRef(0);
@@ -1122,17 +1123,24 @@ export function App(): JSX.Element {
     };
   }, []);
 
-  useEffect(() => {
+  const workspaceFocusOwner = JSON.stringify([
+    state.activeContext ? runtimeContextKey(state.activeContext) : "",
+    state.activeContext?.cwd,
+    state.activeSessionTabID,
+    activeThreadIDForState(state),
+    activeThreadForState(state)?.cwd,
+  ]);
+  useLayoutEffect(() => {
     const handleFocusIn = (event: FocusEvent): void => {
       const target = event.target;
       const workspacePanel = appShellRef.current?.querySelector(".workspace-right-panel");
       if (target instanceof HTMLElement && !workspacePanel?.contains(target)) {
-        lastFocusOutsideWorkspaceRef.current = target;
+        lastFocusOutsideWorkspaceRef.current = { element: target, owner: workspaceFocusOwner };
       }
     };
     document.addEventListener("focusin", handleFocusIn);
     return () => document.removeEventListener("focusin", handleFocusIn);
-  }, []);
+  }, [workspaceFocusOwner]);
 
   useLayoutEffect(() => {
     const fullPanel = rightPanelOpen && rightPanelGlobalized;
@@ -1151,22 +1159,29 @@ export function App(): JSX.Element {
         ?.querySelector<HTMLButtonElement>(
           '.workspace-right-panel [role="tab"][aria-selected="true"]',
         )
-        ?.focus();
+        ?.focus({ preventScroll: true });
       return;
     }
     if ((previous.fullPanel && !fullPanel) || (previous.open && !rightPanelOpen)) {
+      if (viewSwitchPending) return;
       const previousFocus = lastFocusOutsideWorkspaceRef.current;
-      if (previousFocus?.isConnected && !previousFocus.closest("[inert]")) {
-        previousFocus.focus();
+      // Focus return must not reveal old history or follow a reused control into
+      // a different conversation. Reading position remains owned by scrolling.
+      if (
+        previousFocus?.owner === workspaceFocusOwner &&
+        previousFocus.element.isConnected &&
+        !previousFocus.element.closest('[inert], [hidden], [aria-hidden="true"], .conversation-split-pane:not(.active)')
+      ) {
+        previousFocus.element.focus({ preventScroll: true });
         return;
       }
       appShellRef.current
         ?.querySelector<HTMLHeadingElement>(
           ".conversation-title-heading h1",
         )
-        ?.focus();
+        ?.focus({ preventScroll: true });
     }
-  }, [rightPanelGlobalized, rightPanelOpen, sidebarDrawerMode, sidebarDrawerVisible]);
+  }, [rightPanelGlobalized, rightPanelOpen, sidebarDrawerMode, sidebarDrawerVisible, viewSwitchPending, workspaceFocusOwner]);
 
   // Workspace panel (file tree / file preview / terminal / review) root: follows the
   // active thread's own cwd when it differs from state.activeContext — the
@@ -1557,7 +1572,7 @@ export function App(): JSX.Element {
       setEnvironmentDialog(null);
       setPendingFork(undefined);
     },
-    onSelectThread: (threadID) => void activateThread(threadID),
+    onSelectThread: (result, query) => openSearchResult(result, query),
   });
 
   // Cmd/Ctrl+P toggles the conversation search overlay. Mirrors the
@@ -1623,14 +1638,6 @@ export function App(): JSX.Element {
       ? t("app.worktreeRequiresGit")
       : undefined;
   const splitConversation = Boolean(state.thread && state.secondaryThread);
-
-  function handleQueryHistorySelect(entry: QueryHistoryEntry): void {
-    // Stop auto-follow before we jump — otherwise the next stream tick
-    // would drag the scroll position back to the bottom and undo the
-    // jump before the user even registers it happened.
-    disableConversationAutoFollow();
-    scrollToUserMessage(entry.turnID, entry.itemID);
-  }
 
   useEffect(() => {
     const root = document.documentElement;
@@ -2283,27 +2290,20 @@ export function App(): JSX.Element {
     onOpen: openWorkspaceArtifactTab,
   });
 
-  // Past user queries for the input-box hover popover. We collect them
-  // in turn order, oldest first, so the popover mirrors the order in
-  // which the user asked them. Empty / handoff / image-only items are
-  // skipped — they have nothing to show in a quick-jump list.
-  const pastQueries = useMemo<QueryHistoryEntry[]>(() => {
-    const entries: QueryHistoryEntry[] = [];
+  // Past user queries for the composer's history recall, oldest first. Empty,
+  // handoff and image-only items have no text to recall and are skipped.
+  const composerQueryHistory = useMemo(() => {
+    const queries: string[] = [];
     for (const turn of turns) {
       for (const item of turn.items) {
         const text = queryTextForUserItem(item);
-        if (!text) {
-          continue;
+        if (text) {
+          queries.push(text);
         }
-        entries.push({ turnID: turn.id, itemID: item.id, text });
       }
     }
-    return entries;
+    return queries;
   }, [turns]);
-  const composerQueryHistory = useMemo(
-    () => pastQueries.map((entry) => entry.text),
-    [pastQueries],
-  );
   const showingPrimaryPluginView = usePrimaryPluginViewCover();
   const mainConversationDockVisible =
     Boolean(state.initialized) &&
@@ -2360,6 +2360,9 @@ export function App(): JSX.Element {
     handleConversationScroll,
     enableConversationAutoFollow,
     jumpToLatest: jumpConversationToLatest,
+    jumpToUserMessage,
+    jumpToConversationMessage,
+    captureConversationScrollIntent,
     disableConversationAutoFollow,
     captureConversationScrollPosition,
     restoreConversationScrollPosition,
@@ -2368,6 +2371,8 @@ export function App(): JSX.Element {
     discardSubmittedMessage,
   } = useConversationScrollState({
     activeThreadID,
+    primaryThreadID: state.thread?.id,
+    secondaryThreadID: state.secondaryThread?.id,
     activePane: state.activePane,
     splitConversation,
     primaryTurns: state.thread?.turns,
@@ -2391,12 +2396,6 @@ export function App(): JSX.Element {
       scrollRegion.scrollTop = 0;
     }
   }, [activeManagementTabID, conversationScrollRef]);
-  const conversationRailScrollContainer = useCallback((): HTMLElement | null => {
-    if (splitConversation) {
-      return splitPaneRefs.current[state.activePane] ?? null;
-    }
-    return conversationScrollRef.current;
-  }, [conversationScrollRef, splitConversation, splitPaneRefs, state.activePane]);
   const focusMainComposer = useCallback(
     (
       target: ComposerVariant,
@@ -3539,6 +3538,15 @@ export function App(): JSX.Element {
     selectRuntimeContext,
   });
 
+  const openSearchResult = useConversationSearchNavigation({
+    thread: activeThread,
+    switching: viewSwitchPending,
+    activateThread,
+    captureConversationScrollIntent,
+    jumpToConversationMessage,
+    setAppState: setState,
+  });
+
   useEffect(() => {
     const subscribe = window.wuu.onBrowserDock;
     if (typeof subscribe !== "function") return undefined;
@@ -3866,8 +3874,9 @@ export function App(): JSX.Element {
   } = createThreadMutationActions({
     getAppState: () => appStateRef.current,
     setAppState: setState,
-    getActiveThreadID: () => activeThreadID,
     nextDraftSessionTab,
+    restorePrimaryComposerDraft,
+    getSplitComposerDrafts: () => composerDraftsRef.current.split,
     clearPrimaryComposerDraft: () =>
       restorePrimaryComposerDraft(emptyComposerDraft()),
     resetSplitComposerDrafts: () =>
@@ -3928,6 +3937,7 @@ export function App(): JSX.Element {
     clearThreadPendingComposerMessages,
     requestThreadStop,
     variantByModel: runtimeVariantByModelRef.current,
+    pendingRuntimeSelections: pendingRuntimeSelectionsRef.current,
   });
 
   const {
@@ -3989,6 +3999,7 @@ export function App(): JSX.Element {
     enableConversationAutoFollow,
     rememberConversationScrollForEdit,
     restoreConversationScrollForEdit,
+    jumpToUserMessage,
     threadHasPendingComposerMessages,
     sendComposerMessageToThread,
     worktreeForkNonGitReason: t("app.worktreeRequiresGit"),
@@ -5259,20 +5270,6 @@ export function App(): JSX.Element {
         </header>
 
         )}
-        {/* Unmount the hidden rail so compact scrolling does not measure turns
-            or update navigation state for controls that cannot be used. */}
-        {ENABLE_CONVERSATION_TURN_RAIL && !compactNavigation ? (
-          <ConversationTurnRail
-            turns={turns}
-            activeTurnID={turns[turns.length - 1]?.id}
-            scrollContainerRef={conversationScrollRef}
-            getScrollContainer={conversationRailScrollContainer}
-            onWheelScrollAway={disableConversationAutoFollow}
-            onDragScrollAway={disableConversationAutoFollow}
-            onSelectQueryHistory={handleQueryHistorySelect}
-          />
-        ) : null}
-
         <ConversationSidePanels
           state={state}
           environmentPanelVisible={environmentPanelVisible}
@@ -5362,12 +5359,6 @@ export function App(): JSX.Element {
               />
             ) : (
               <>
-                {!activeThreadReadOnly ? (
-                  <QueryHistoryRail
-                    entries={pastQueries}
-                    onSelect={handleQueryHistorySelect}
-                  />
-                ) : null}
                 {splitConversation && state.thread && state.secondaryThread ? (
                   <ConversationSplitLayoutRenderer
                     state={state}

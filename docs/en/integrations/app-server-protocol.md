@@ -54,6 +54,15 @@ remain invalid; this is recovery behavior, not downgrade compatibility.
 | `thread/list`, `thread/listAll`, `thread/listArchived`, `thread/search` | Method-specific filters | Session metadata |
 | `thread/rename`, `thread/pin`, `thread/archive`, `thread/delete` | Target and method-specific changes | Updated state or operation result |
 
+`thread/search` accepts `query` and `limit` (at most 100). Its `results` contain
+thread metadata, a `snippet`, and an optional `message_seq` identifying the
+matching persisted message. Multiple rendered items may share that sequence;
+clients should use the query to distinguish them. Title and empty-query results
+omit the address. Older hosts may omit it for all results. A nonempty query
+includes archived conversations without changing their archive state; an empty
+query returns only unarchived suggestions. Plugin-private sessions and hidden
+messages are excluded.
+
 `thread/start` persists by default. `ephemeral: true` creates an in-memory session
 that cannot be restored after the server exits. Engine binding is fixed at
 creation. New external-engine sessions default to `unconfined` when permission
@@ -263,13 +272,40 @@ preference. Do not infer an installed program or authenticated account from the
 preference alone.
 
 For subscription views, `engine/list` accepts optional `{ "include_quota": true }`.
-It reads account allowances through supported installed CLIs (currently Codex)
-and includes `subscription_providers` for built-in subscription services. Engine
-`quota` contains `status` (`available` or `unavailable`), `checked_at`, and optional
-`windows` with `id`, `label`, `used_percent`, `window_minutes`, and `resets_at`.
-Missing quota is unsupported or not queried, never unlimited. Clients must not
-infer account allowance from ACP context usage or local tokens, and should mark
-old snapshots as needing refresh rather than refill them at the reset time.
+It reads upstream allowances using the credentials of each configured provider
+and supported installed agents, and returns configured services in
+`subscription_providers`. Each provider or engine may contain `quota`:
+
+- `status`: `available`, `stale`, `unavailable`, `sign_in`, or `unsupported`.
+- `kind`: subscription, plan, or balance. `plan` is optional upstream metadata.
+- `account`: an opaque, source-scoped `id`, optional account `label`, and
+  credential `source`. Raw tokens and keys are never returned.
+- `checked_at`: latest attempt; `observed_at`: last successful observation;
+  `expires_at`: freshness deadline, currently five minutes after observation.
+- `windows`: `id`, optional `label`, `used_percent`, `window_minutes`, `resets_at`,
+  `model`, `scope`, `display`, and explicitly reported `unlimited`.
+- `balances`: currency and decimal-string `amount`; currencies and accounts
+  must remain separate. Optional `reset_credits` reports upstream reset credits.
+- `error_code`: safe failure category, not a raw upstream response.
+
+Adapters cover native ChatGPT/Codex and Grok Build subscriptions, Anthropic OAuth,
+Kimi Code and Zhipu/Z.ai plan windows, and DeepSeek/OpenRouter prepaid balances.
+External Codex uses its CLI account request; external Claude Code and Grok read
+their own local login. Default macOS Claude credentials may use Keychain; custom
+credential directories never borrow the default login. Browser SuperGrok,
+arbitrary compatible endpoints, and agents without an adapter are unsupported.
+
+Missing percentages are unknown, not zero or unlimited. Exhaustion may be
+reported at or above 100%. Clients must not infer account allowance from ACP
+context usage or local tokens, or refill a snapshot at its reset time. A
+transient failure retains a credential-scoped successful observation as `stale`
+when the reader can identify the account; observation and expiry times stay
+unchanged. Authentication rejection discards that account's cached allowance.
+Observations are persisted across server restarts and cannot move to another
+account when a service's credentials change. Collection is bounded to eight
+seconds across sources. Reading quota submits no inference and does not change
+model selection, workspace defaults, or routing policy.
+
 Only this opt-in subscription response reads historical statistics. `initialize`,
 configuration responses, ordinary `engine/list`, and `engine/update` omit
 `latest_request` and `local_usage`; clients needing them must load the subscription

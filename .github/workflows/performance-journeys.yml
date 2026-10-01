@@ -20,7 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 40
     env:
-      BASE_SHA: 0ae09dc4c8fe187a8b3885666f2709c6cf4f040c
+      BASE_SHA: 68f6d8a2eea6337fd1086595044ea97b76a1bc24
       GOMAXPROCS: '2'
       GOFLAGS: -p=2
     steps:
@@ -48,6 +48,7 @@ jobs:
         run: git worktree add --detach "$RUNNER_TEMP/wuu-performance-baseline" "$BASE_SHA"
 
       - name: Build both production applications sequentially
+        id: builds
         env:
           NODE_OPTIONS: --max-old-space-size=4096
         run: |
@@ -55,12 +56,18 @@ jobs:
             npm ci --prefix "$tree/desktop"
             npm ci --prefix "$tree/clients/core"
             npm ci --prefix "$tree/clients/mobile-web"
-            mkdir -p "$tree/desktop/build/bin"
-            (cd "$tree" && go build -o desktop/build/bin/wuu-core ./cmd/wuu)
+            node "$tree/desktop/scripts/build-core.cjs"
             npm --prefix "$tree/desktop" run build
           done
 
+      - name: Verify restored-history ownership under race detection
+        run: >-
+          go test -race ./internal/appserver
+          -run '^(TestPersistedThreadLoadPreservesActiveTranscript|TestEditedBranchSurvivesReloadAndFork|TestFreshContextRecoverySurvivesTurnAndReload|TestServerThreadFork|TestHistoryPagesSurviveAppendsAndRejectRemovedBoundary|TestResumeResponseOnlyRetainsHistoryWithoutBroadcast)'
+          -count=1 -timeout=5m
+
       - name: Retain minimal application builds
+        if: ${{ always() && steps.builds.outcome == 'success' }}
         shell: bash
         run: |
           builds="$RUNNER_TEMP/wuu-performance-builds"
@@ -68,11 +75,12 @@ jobs:
           for variant in baseline candidate; do
             tree="$GITHUB_WORKSPACE"
             if [ "$variant" = baseline ]; then tree="$RUNNER_TEMP/wuu-performance-baseline"; fi
-            tar -C "$tree" -czf "$builds/$variant-app.tar.gz" desktop/out desktop/build/bin/wuu-core
+            tar -C "$tree" -czf "$builds/$variant-app.tar.gz" desktop/out desktop/build/bin
             python3 - "$tree" "$builds/$variant-manifest.json" "$variant" <<'PYTHON'
           import hashlib, json, pathlib, subprocess, sys
           root, output, variant = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2]), sys.argv[3]
-          paths = [root/'desktop/build/bin/wuu-core', root/'desktop/package-lock.json']
+          paths = [root/'desktop/package-lock.json', root/'go.mod', root/'go.sum']
+          paths += sorted(path for path in (root/'desktop/build/bin').iterdir() if path.is_file())
           paths += sorted(path for path in (root/'desktop/out').rglob('*') if path.is_file())
           manifest = {
               'variant': variant,
@@ -86,6 +94,7 @@ jobs:
           done
 
       - name: Upload baseline application build
+        if: ${{ always() && steps.builds.outcome == 'success' }}
         uses: actions/upload-artifact@v4
         with:
           name: performance-build-baseline
@@ -94,6 +103,7 @@ jobs:
           path: ${{ runner.temp }}/wuu-performance-builds/baseline-*
 
       - name: Upload candidate application build
+        if: ${{ always() && steps.builds.outcome == 'success' }}
         uses: actions/upload-artifact@v4
         with:
           name: performance-build-candidate
@@ -101,42 +111,66 @@ jobs:
           compression-level: 0
           path: ${{ runner.temp }}/wuu-performance-builds/candidate-*
 
-      - name: Attribute paced-stream responsiveness
+      - name: Compare fresh-process conversation restoration
+        if: ${{ always() && steps.builds.outcome == 'success' }}
         shell: bash
         run: |
-          run_case() {
-            cell="$1"; label="$2"
-            case "$cell" in
-              A) ui=baseline; core=baseline ;;
-              B) ui=candidate; core=baseline ;;
-              C) ui=baseline; core=candidate ;;
-              D) ui=candidate; core=candidate ;;
-            esac
-            ui_tree="$GITHUB_WORKSPACE"; core_tree="$GITHUB_WORKSPACE"
-            if [ "$ui" = baseline ]; then ui_tree="$RUNNER_TEMP/wuu-performance-baseline"; fi
-            if [ "$core" = baseline ]; then core_tree="$RUNNER_TEMP/wuu-performance-baseline"; fi
-            output="$RUNNER_TEMP/wuu-performance-evidence/$cell-$label"
+          run_startup() {
+            variant="$1"; label="$2"; turns="$3"; sidebar="$4"
+            tree="$GITHUB_WORKSPACE"
+            if [ "$variant" = baseline ]; then tree="$RUNNER_TEMP/wuu-performance-baseline"; fi
+            fixture="$RUNNER_TEMP/wuu-startup-$variant-$label"
+            output="$RUNNER_TEMP/wuu-performance-evidence/startup-$variant-$label"
             mkdir -p "$output"
-            WUU_SWITCH_MAIN="$ui_tree/desktop/out/main/index.js" \
-            WUU_DESKTOP_CORE="$core_tree/desktop/build/bin/wuu-core" \
-            WUU_SWITCH_BUILD_COMMIT="$(git -C "$ui_tree" rev-parse HEAD)" \
-            WUU_SWITCH_CORE_BUILD_COMMIT="$(git -C "$core_tree" rev-parse HEAD)" \
+            # Seed every trial with the same baseline core, outside the launch clock.
+            WUU_STARTUP_PREPARE_ONLY=1 WUU_STARTUP_PREPARE_DIR="$fixture" \
+            WUU_SWITCH_TURNS="$turns" WUU_SWITCH_SIDEBAR_THREADS="$sidebar" \
+            WUU_DESKTOP_CORE="$RUNNER_TEMP/wuu-performance-baseline/desktop/build/bin/wuu-core" \
+              desktop/node_modules/.bin/electron --no-sandbox --ozone-platform=headless \
+              desktop/scripts/session-switch-e2e.cjs >"$output/prepare.log" 2>&1
+            # Resolve every normal bundled helper from the selected exact source.
+            for helper in "$tree"/desktop/build/bin/wuu-*-plugin; do
+              name="$(basename "$helper" | sed 's/^wuu-//;s/-plugin$//;y/abcdefghijklmnopqrstuvwxyz-/ABCDEFGHIJKLMNOPQRSTUVWXYZ_/')"
+              export "WUU_${name}_PLUGIN_HELPER=$helper"
+            done
+            WUU_SOURCE_ROOT="$tree" WUU_SWITCH_SAFE_MODE=0 \
+            WUU_SWITCH_MAIN="$tree/desktop/out/main/index.js" \
+            WUU_DESKTOP_CORE="$tree/desktop/build/bin/wuu-core" \
+            WUU_SWITCH_BUILD_COMMIT="$(git -C "$tree" rev-parse HEAD)" \
+            WUU_SWITCH_CORE_BUILD_COMMIT="$(git -C "$tree" rev-parse HEAD)" \
             WUU_SWITCH_BUILD_KIND=production-vite \
-            WUU_SWITCH_OUTPUT="$output" \
-            WUU_SWITCH_ROUNDS=1 \
-            WUU_SWITCH_TURNS=160 \
-            WUU_SWITCH_PACED_STREAM=1 \
-            WUU_SWITCH_STREAM_ONLY=1 \
-            xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox \
-              desktop/scripts/session-switch-e2e.cjs 2>&1 | tee "$output/run.log"
+              node desktop/scripts/startup-e2e.cjs "$fixture" "$output"
           }
-          # A=baseline, B=UI-only, C=core-only, D=both. Keep warmups separate.
-          for cell in A B C D; do run_case "$cell" warmup; done
+          # Exclude the first pair from measured repetitions; no OS cache flushing.
+          for variant in baseline candidate; do run_startup "$variant" warmup 3000 1500; done
           repetition=0
-          for order in "A B D C" "B C A D" "C D B A" "D A C B"; do
+          for order in "baseline candidate" "candidate baseline" "baseline candidate"; do
             repetition=$((repetition + 1))
-            for cell in $order; do run_case "$cell" "$repetition"; done
+            for variant in $order; do run_startup "$variant" "$repetition" 3000 1500; done
           done
+          # A smaller configured history is a separate functional control.
+          for variant in baseline candidate; do run_startup "$variant" small 20 0; done
+
+      - name: Compare live resize layout
+        if: ${{ always() && steps.builds.outcome == 'success' }}
+        shell: bash
+        run: |
+          status=0
+          for variant in baseline candidate; do
+            tree="$GITHUB_WORKSPACE"
+            if [ "$variant" = baseline ]; then tree="$RUNNER_TEMP/wuu-performance-baseline"; fi
+            output="$RUNNER_TEMP/wuu-performance-evidence/resize-$variant"
+            mkdir -p "$output"
+            compare=""
+            if [ "$variant" = candidate ]; then compare="$RUNNER_TEMP/wuu-performance-evidence/resize-baseline/results.json"; fi
+            if ! WUU_E2E_RENDERER="$tree/desktop/out/renderer/index.html" \
+                 WUU_RESIZE_OUTPUT="$output/results.json" WUU_RESIZE_COMPARE="$compare" \
+                 xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox \
+                 desktop/scripts/resize-live-layout-e2e.cjs 2>&1 | tee "$output/run.log"; then
+              status=1
+            fi
+          done
+          exit "$status"
 
       - name: Upload synthetic measurements
         if: always()

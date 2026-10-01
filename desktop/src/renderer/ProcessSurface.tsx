@@ -22,6 +22,7 @@ import {
 } from "./AutoFollowScroll";
 import { AnimatedProcessText } from "./ProcessTextMotion";
 import { ProcessSurfaceFold } from "./ProcessSurfaceFold";
+import { collectTurnArtifacts } from "./ArtifactOutputs";
 import { translateCurrent as translate, useI18n } from "./i18n";
 import {
   useWorkspaceBrowserOpen,
@@ -200,6 +201,7 @@ type ProcessSurfaceProps = {
    * not have to split tools from reasoning first.
    */
   processItems: ThreadItem[];
+  cwd?: string;
   /**
    * True while any process item is still receiving deltas. Drives the
    * tool/reasoning reveal behavior while the fold stays compact until
@@ -239,6 +241,7 @@ function isToolActivityItem(item: ThreadItem): boolean {
 
 export function ProcessSurface({
   processItems,
+  cwd,
   streaming,
   active,
   provider,
@@ -255,7 +258,9 @@ export function ProcessSurface({
   const toolSegments = buildToolActivityProcessSegments(toolItems);
   const hasReasoning = reasoningItems.length > 0;
   const hasMultipleTools = toolItems.length > 1;
-  const hasDetails = hasReasoning || hasMultipleTools;
+  const hasInspection = !hasReasoning && !hasMultipleTools
+    && collectTurnArtifacts({ items: toolItems }).some(artifact => artifact.foldPreview);
+  const hasDetails = hasReasoning || hasMultipleTools || hasInspection;
   const detailRuns: ThreadItem[][] = [];
   for (const item of processItems) {
     if (!isToolActivityItem(item) && item.type !== "reasoning") continue;
@@ -410,7 +415,7 @@ export function ProcessSurface({
       >
         {detailRuns.map(items => items[0].type === "tool_call" ? (
           <div className="process-surface-tool-list" key={items[0].id}>
-            <ToolActivityTimeline items={items} />
+            <ToolActivityTimeline items={items} cwd={cwd} showInspectionPreviews={expanded} />
           </div>
         ) : renderReasoningItem ? (
           <div className="process-surface-reasoning-list" key={items[0].id}>

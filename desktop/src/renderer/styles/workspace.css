@@ -3420,6 +3420,16 @@ html[data-focus-modality="keyboard"] .runtime-panel-summary :is(
 }
 
 .conversation-width {
+  /* Shell geometry belongs to the enclosing layout, not the message tree.
+     Stop these private tokens at the flow boundary so each live panel-width
+     write does not restyle every message. The flow still rewraps at its real
+     width; shared theme, typography, and spacing tokens keep inheriting. */
+  --sidebar-width: initial;
+  --sidebar-open-width: initial;
+  --workspace-right-panel-width: initial;
+  --workspace-right-panel-reserved-width: initial;
+  --environment-panel-content-inset: initial;
+  --conversation-visible-inset-right: initial;
   /* Outer width, horizontal padding, and 12-col grid come from .session-flow.
      Each flow item owns its semantic trailing boundary; the grid itself must
      not add another anonymous row gap between turns. */

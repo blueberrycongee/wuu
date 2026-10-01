@@ -60,25 +60,28 @@ make build-go
 崩溃，检查恢复、重试上限、窗口隔离和 IPC。测试使用临时配置目录和模拟内容，不读取
 你的 Wuu 数据。请在图形桌面会话中运行；它不验证原生对话框外观或打包应用行为。
 
-### 流式渲染诊断
+### 实时缩放布局护栏
 
-安装桌面依赖后，运行合成长回答用例：
+桌面生产构建完成后，在图形会话中运行
+`npm --prefix desktop run test:e2e:resize-live-layout`。CI 可以用
+`xvfb-run --auto-servernum` 直接调用 Electron 脚本，不需要再次构建 renderer。
+测试复用 `resize-e2e-preload.cjs` 的长 Markdown 消息流，注入合成通知并记录浏览器
+宿主边界；它不启动真实 Go 进程或嵌入式浏览器。
 
-```sh
-(cd desktop && ./node_modules/.bin/electron scripts/streaming-render-perf.cjs)
-```
+`desktop/out/e2e/resize-live-layout.json` 记录公开主题/语法 token、宿主几何尺寸，
+以及左右拖动和收起/展开动画中的中间消息宽度与文字行数。测试还检查流式跟随、
+暂停阅读的终点锚定，以及重新排版期间的提交问题定位和保持。
+连续样本用于证明拖动中真实换行；终点检查本身不能证明每个绘制帧的滚动偏移都不变。
+CI 不使用实际耗时性能门槛。
 
-无图形界面的 Linux 可在脚本路径前加上 `--no-sandbox --ozone-platform=headless`。
-用例使用生产版 React、实际 Markdown 渲染器和 CSS，不使用推理或账号。它分别在
-25、100 和 400 个已完成段落后测量尾部同步提交，并单独运行 V8 分配采样；同时检查
-已完成 DOM 节点保持挂载，追加文本完整显示。结果不包含提供商输出节奏或实际屏幕
-呈现延迟，只用于诊断，不作为 CI 耗时门槛。
-
-结果和临时浏览器配置写入 `desktop/out/streaming-performance/`；可设置
-`WUU_STREAM_PERF_OUTPUT` 分别保存多次运行。设置
-`WUU_STREAM_PERF_BASE_REF=<commit>` 可在相同用例和依赖下，仅替换旧版本的流式组件。
-交替运行基线和候选版本，比较 `results.json` 中的原始样本、源码与构建文件哈希；
-仅凭检出的提交号不能识别未提交的源码修改。
+在相同环境对源码构建的 A/B 版本做对比时，先运行基线，再运行候选。
+用 `WUU_E2E_RENDERER` 分别选择构建后的 `out/renderer/index.html`，用
+`WUU_RESIZE_OUTPUT` 保存独立 JSON。候选运行设置 `WUU_RESIZE_COMPARE` 为基线
+JSON 路径，就会比较全部公开 token 和稳定后的宿主几何尺寸。此 driver 不注入 CSS。
+不要把这类带布局探针的检查与低探针耗时样本混合。
+Linux 无界面 Electron 需要
+`--ozone-platform=headless --ozone-override-screen-size=1440,1000`，
+否则默认显示尺寸可能太小，无法形成有效的桌面视口。
 
 ### 会话切换性能护栏
 
@@ -151,9 +154,50 @@ CI 检查大历史样本的重复切换，恢复调用、布局及样式重算�
 基线与候选使用相同最终测试脚本、机器、窗口、依赖和数据量，通过
 `WUU_SWITCH_MAIN` 和 `WUU_DESKTOP_CORE` 选择各自匹配的完整构建。至少交错
 运行三组，保留原始数据、日志和构建哈希，分开首次打开、重复切换及采样运行。
-专用 CI 对比会先运行并保留一组预热，再测量三组；预热样本不并入结果。
+预热样本应单独保留，不并入测量结果。
 无图形 Linux 可用 `--no-sandbox --ozone-platform=headless`；两帧仅表示绘制
 机会，不证明物理显示或 120 Hz。墙钟耗时仅供诊断，不作为 CI 阈值。
+
+### 新进程启动诊断
+
+可选的 `startup-e2e.cjs` 驱动在创建 Electron 子进程前启动单调时钟。
+先用 `WUU_STARTUP_PREPARE_ONLY=1`、指向新目录的 `WUU_STARTUP_PREPARE_DIR`
+以及通常的 turn/sidebar 数量准备一次性数据。准备阶段复用切换 fixture，
+将所有运行时记录固定为 `permission_mode=standard`，默认选择会话 1，
+并写入合成 fixture 标记，不导入桌面应用。每次试验都用同一 seed core
+和数量单独准备新 fixture；不要传入真实 WUU home 或复用 Electron profile。
+
+```bash
+# 依赖、生产包和内置 helper 必须已构建。
+WUU_STARTUP_PREPARE_ONLY=1 WUU_STARTUP_PREPARE_DIR="$PWD/.tmp/startup-a" \
+  WUU_SWITCH_TURNS=3000 WUU_SWITCH_SIDEBAR_THREADS=1500 \
+  WUU_DESKTOP_CORE="$SEED_CORE" desktop/node_modules/.bin/electron \
+  --no-sandbox --ozone-platform=headless desktop/scripts/session-switch-e2e.cjs
+WUU_SWITCH_MAIN="$MAIN_BUNDLE" WUU_DESKTOP_CORE="$TEST_CORE" \
+  WUU_SWITCH_BUILD_COMMIT="$UI_COMMIT" WUU_SWITCH_CORE_BUILD_COMMIT="$CORE_COMMIT" \
+  node desktop/scripts/startup-e2e.cjs .tmp/startup-a .tmp/startup-a-results
+```
+
+测量进程默认启用正常的内置扩展。使用保留构建时，提供已核验的 helper
+路径和 source root，并保留 helper 清单；结果记录 core 实际环境、初始化
+扩展清单及显式 helper 文件哈希。安全模式是单独标记的对照。这是已配置的
+返回用户 fixture，不是全新安装的 onboarding 测量，也不使用真实凭据、
+账号或推理服务。
+
+Linux 驱动在创建窗口前配置 1440×1000 的无头显示器。产品自行决定初始
+窗口尺寸；harness 不会在导航后调整大小或手动显示窗口。零 viewport
+按无效测试环境失败。结果保留显示器、工作区、缩放、可见性及合成状态。
+终点要求目标历史的最后标记已出现、原生可信输入进入可见可编辑的 composer，
+并且输入值和可用的 Send 按钮持续两个动画帧。不据此声称物理呈现或 OS 冷启动。
+
+`startup-results.json` 区分父进程 spawn、窗口/导航、前后台 core 请求、
+main IPC、历史 DOM 及输入就绪。core 响应与 main IPC 耗时重叠，不能相加。
+同步偏好 IPC 只覆盖 main handler，不含 renderer 往返。回溯读取的
+PaintTiming 保留 renderer 导航时钟；CDP 计数从 debugger 连接后开始，
+更早的解析/执行和首次 React commit 不在覆盖范围。子进程枚举失败时
+helper CPU/IO 不可用。不要混合新进程、普通切换、流式、profile 或旧诊断
+harness 数据。隔离 core 优化时使用完全相同的 UI，保留全部重复样本，
+并以最终 main 修订作为优化基线。
 
 ## 原生手机与远程服务
 

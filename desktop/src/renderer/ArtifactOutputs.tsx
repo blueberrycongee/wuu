@@ -39,6 +39,7 @@ export type TurnArtifact = Readonly<{
   remoteRef?: string;
   text?: string;
   foldText?: boolean;
+  foldPreview?: boolean;
   uri?: string;
   resource?: unknown;
   placement: "inline" | "turn_end";
@@ -48,7 +49,7 @@ export type TurnArtifact = Readonly<{
   delivered?: boolean;
 }>;
 
-export function collectTurnArtifacts(turn: Turn): readonly TurnArtifact[] {
+export function collectTurnArtifacts(turn: Pick<Turn, "items">): readonly TurnArtifact[] {
   const artifacts: TurnArtifact[] = [];
   const presented = new Map<string, string>();
   for (const item of turn.items) {
@@ -63,7 +64,7 @@ export function collectTurnArtifacts(turn: Turn): readonly TurnArtifact[] {
       // Re-publishing an unchanged snapshot in the same turn should not repeat
       // its preview. Preserve ordered mixed results and different file versions.
       if (artifact.type !== "text" && artifact.sha256) {
-        const key = JSON.stringify([artifact.sha256, artifact.name, artifact.mimeType, artifact.placement, artifact.delivered]);
+        const key = JSON.stringify([artifact.sha256, artifact.name, artifact.mimeType, artifact.placement, artifact.delivered, artifact.foldPreview]);
         const owner = presented.get(key);
         if (owner && owner !== item.id) return;
         presented.set(key, item.id);
@@ -116,10 +117,12 @@ export function TurnInlineArtifactOutputs({
   artifacts,
   cwd,
   onOpenFile,
+  inspectionExpanded = false,
 }: {
   artifacts: readonly TurnArtifact[];
   cwd?: string;
   onOpenFile?: (path: string) => void;
+  inspectionExpanded?: boolean;
 }): JSX.Element | null {
   const [preview, setPreview] = useState<TurnArtifact>();
   // The image stream is visual output, not another tool-result inspector.
@@ -137,6 +140,7 @@ export function TurnInlineArtifactOutputs({
             onOpenFile={onOpenFile}
             onPreview={openPreview}
             variant="inline"
+            inspectionExpanded={inspectionExpanded}
           />
         ))}
       </div>
@@ -279,13 +283,17 @@ function ArtifactRenderer({
   onOpenFile,
   onPreview,
   variant,
+  inspectionExpanded = false,
 }: {
   artifact: TurnArtifact;
   cwd?: string;
   onOpenFile?: (path: string) => void;
   onPreview?: (artifact: TurnArtifact) => void;
   variant: "inline" | "card";
+  inspectionExpanded?: boolean;
 }): JSX.Element {
+  const { t } = useI18n();
+  const [expanded, setExpanded] = useState(false);
   const fallback = artifact.type === "text" ? (
     <div className="turn-artifact-text-part">
       <ToolResultText text={artifact.text ?? ""} folded={artifact.foldText} cwd={cwd} onOpenFile={onOpenFile} />
@@ -309,7 +317,7 @@ function ArtifactRenderer({
       onPreview={onPreview}
     />
   );
-  return (
+  const content = (
     <WorkbenchContentRenderer
       controller={desktopWorkbenchController}
       category="tool-result"
@@ -325,6 +333,22 @@ function ArtifactRenderer({
       fallback={fallback}
     />
   );
+  if (variant === "inline" && artifact.foldPreview && !inspectionExpanded) {
+    return (
+      <div className="process-surface">
+        <ProcessSurfaceFold
+          open={expanded}
+          onToggle={(event) => setExpanded(event.currentTarget.open)}
+          summary={<span className="process-surface-summary-line">
+            <TruncatedText className="process-surface-summary-text" text={t("toolActivity.viewTarget", { target: artifact.name })} />
+          </span>}
+        >
+          {expanded ? content : null}
+        </ProcessSurfaceFold>
+      </div>
+    );
+  }
+  return content;
 }
 
 function ToolResultText({ text, folded, cwd, onOpenFile }: { text: string; folded?: boolean; cwd?: string; onOpenFile?: (path: string) => void }): JSX.Element {
@@ -652,6 +676,9 @@ function artifactFromContentPart(
     data,
     text,
     foldText: part.type === "text" && !part.artifact?.placement,
+    // Explicit presentation survives PTC/background forwarding; ordinary tool
+    // images are inspection evidence and mount only when the user expands them.
+    foldPreview: mimeType.startsWith("image/") && !part.artifact?.placement,
     uri,
     resource: part.resource,
     placement,

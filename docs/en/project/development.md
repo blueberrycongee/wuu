@@ -66,28 +66,30 @@ It uses a temporary profile and synthetic content, not your Wuu data. Run it in
 a graphical desktop session; it does not validate native dialog appearance or
 packaged-app behavior.
 
-### Streaming renderer diagnostics
+### Live resize layout guard
 
-Run the synthetic long-answer fixture after installing desktop dependencies:
+After a desktop production build, run `npm --prefix desktop run test:e2e:resize-live-layout`
+in a graphical session. CI can use `xvfb-run --auto-servernum` with the Electron
+script directly; it does not rebuild the renderer. The fixture reuses the long
+Markdown history from `resize-e2e-preload.cjs`, with synthetic notifications and
+browser-host bounds. It does not exercise a real Go process or embedded browser.
 
-```sh
-(cd desktop && ./node_modules/.bin/electron scripts/streaming-render-perf.cjs)
-```
+The JSON artifact at `desktop/out/e2e/resize-live-layout.json` records public
+theme/syntax tokens, host geometry, intermediate message widths and text line
+counts during left/right drags and collapse/expand animations. It also checks
+stream-following, paused-reader endpoint anchoring, and submitted-query placement
+and holding during reflow. Continuous samples establish live rewrapping; endpoint
+checks alone do not prove every painted frame keeps an identical scroll offset.
+There is no CI wall-clock performance threshold.
 
-On headless Linux, add `--no-sandbox --ozone-platform=headless` before the script.
-The fixture uses production React, the real Markdown renderer and CSS, and no
-inference or accounts. It measures synchronous tail commits after 25, 100 and
-400 completed paragraphs, plus a separate V8 sampled-allocation pass. It checks
-that completed DOM nodes survive and all appended text appears. These diagnostic
-measurements exclude provider cadence and physical paint latency; they are not CI
-timing gates.
-
-Results and disposable profile files go to `desktop/out/streaming-performance/`;
-set `WUU_STREAM_PERF_OUTPUT` to keep separate runs. Set
-`WUU_STREAM_PERF_BASE_REF=<commit>` to build just the streaming component from an
-earlier revision against the same fixture and dependencies. Alternate baseline
-and candidate runs, and compare raw samples and source/bundle hashes in
-`results.json`; the checkout commit alone does not identify uncommitted source.
+For a same-environment source-built A/B comparison, run the driver against the
+baseline first, then the candidate. Set `WUU_E2E_RENDERER` to each built
+`out/renderer/index.html` and `WUU_RESIZE_OUTPUT` to separate JSON files. On the
+candidate run, set `WUU_RESIZE_COMPARE` to the baseline JSON to compare all public
+tokens and settled host geometry. No CSS is injected by this driver. Do not pool
+these instrumented layout checks with low-probe timing runs. Linux headless
+Electron needs `--ozone-platform=headless --ozone-override-screen-size=1440,1000`;
+otherwise the default display may be too small for a meaningful viewport.
 
 ### Session switch performance guard
 
@@ -187,12 +189,60 @@ For each baseline/candidate run, use the same final harness, fixture counts,
 window size, dependency versions and machine, with matching full desktop and Go
 builds selected by `WUU_SWITCH_MAIN` and `WUU_DESKTOP_CORE`. Record at least
 three alternating pairs and retain every raw result, log and artifact hash.
-The scoped CI comparison retains an initial warmup pair separately before those
-three pairs; do not pool warmup samples with measured results.
+Keep warmup samples separate from measured results.
 Do not pool initial opens with repeats or traced runs with untraced runs.
 Headless Linux can use `--no-sandbox --ozone-platform=headless`; its frame cadence
 is a property of that rig. Two frames are paint opportunities, not physical
 presentation or a claim of 120 Hz. Wall-clock timings remain informational.
+
+### Fresh-process startup diagnostics
+
+The optional `startup-e2e.cjs` driver starts its monotonic clock before spawning
+Electron. Prepare disposable data separately with `WUU_STARTUP_PREPARE_ONLY=1`,
+`WUU_STARTUP_PREPARE_DIR` set to a new directory, and the usual turn/sidebar
+counts. Preparation uses the existing switch fixture, pins every runtime row to
+`permission_mode=standard`, selects conversation 1 by default, and writes a
+synthetic-fixture marker. It does not import the desktop application. Prepare a
+fresh fixture for every trial, using the same seed core and counts; do not pass
+a real WUU home or reuse an Electron profile.
+
+```bash
+# Dependencies, production bundles and bundled helpers must already be built.
+WUU_STARTUP_PREPARE_ONLY=1 WUU_STARTUP_PREPARE_DIR="$PWD/.tmp/startup-a" \
+  WUU_SWITCH_TURNS=3000 WUU_SWITCH_SIDEBAR_THREADS=1500 \
+  WUU_DESKTOP_CORE="$SEED_CORE" desktop/node_modules/.bin/electron \
+  --no-sandbox --ozone-platform=headless desktop/scripts/session-switch-e2e.cjs
+WUU_SWITCH_MAIN="$MAIN_BUNDLE" WUU_DESKTOP_CORE="$TEST_CORE" \
+  WUU_SWITCH_BUILD_COMMIT="$UI_COMMIT" WUU_SWITCH_CORE_BUILD_COMMIT="$CORE_COMMIT" \
+  node desktop/scripts/startup-e2e.cjs .tmp/startup-a .tmp/startup-a-results
+```
+
+The measured process uses normal bundled extensions by default. For retained
+builds, supply their verified helper paths/source root and preserve the helper
+manifest; results record resolved core environments, initialization inventory,
+and explicit helper artifact hashes. Safe mode is a separately labeled control.
+The configured returning-user fixture is not a pristine first-launch/onboarding
+measurement. It uses no real credentials, accounts or inference.
+
+On Linux the driver establishes a 1440×1000 headless display before window
+creation. The product chooses its own initial window size; the harness neither
+resizes nor manually shows it after navigation. A zero viewport fails as an
+invalid rig. Results preserve display/work area, zoom, visibility and compositor
+state. The endpoint requires the selected history's final marker, native trusted
+input into a visible editable composer, and its draft plus enabled Send over two
+animation frames. Physical presentation and OS-cold launch are not claimed.
+
+`startup-results.json` distinguishes parent-spawn, window/navigation, active and
+background core requests, main IPC, history DOM, and typed readiness. Core
+response bytes and main IPC timings overlap; do not add them. Sync preference
+IPC timings cover only the main handler, not renderer roundtrips. Retrospective
+PaintTiming entries retain their renderer navigation clock. Renderer CDP counters
+start after debugger attachment; earlier parse/evaluation and the first React
+commit are uncovered. Helper CPU/IO is unavailable where child enumeration fails.
+Keep fresh-process runs separate from ordinary switch, streaming, profiled, and
+older diagnostic harness results. Compare the same exact UI when isolating a
+core-only change, retain all repetitions, and use the final main revision as the
+optimization baseline.
 
 ## Native phones and remote services
 

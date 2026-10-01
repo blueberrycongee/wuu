@@ -238,14 +238,13 @@ export function StreamingMarkdown({
     !endsWithFenceCloser(lastStableBlock.trimEnd())
       ? lastStableBlockIndex
       : -1;
-  // An open Mermaid fence in the tail cannot accept the inline cursor
-  // sentinel — it would leak into the diagram source and break parsing — so
-  // it uses the zero-flow-height sibling cursor like closed fences do.
   const tailHasOpenMermaidFence =
     split.inFence && split.openFenceLanguage?.toLowerCase() === "mermaid";
+  // Keep the synthetic cursor outside an open code fence so copied and
+  // selected code stays exact, including when an unfinished fence settles.
   const cursorNeedsBlockTail = showCursor && (
     endsWithFenceCloser(split.tail) ||
-    tailHasOpenMermaidFence ||
+    split.inFence ||
     (tailIsEmpty && lastStableBlockIndex >= 0 && cursorStableBlockIndex < 0)
   );
   // A cursor after a trailing newline creates an extra line box even when
@@ -258,32 +257,6 @@ export function StreamingMarkdown({
     ? insertCursorBeforeTrailingWhitespace(displayTail)
     : displayTail;
 
-  // Reuse the whole finished-block subtree while only the live tail changes.
-  // Memoizing MarkdownContent alone still reconciles every preceding wrapper
-  // on each stream notification, making tail updates grow with answer length.
-  const stableBlockNodes = useMemo(
-    () => visibleBlocks.map((block, index) => (
-      <div className="streaming-markdown-block" key={index}>
-        <MemoMarkdownContent
-          text={
-            index === cursorStableBlockIndex
-              ? insertCursorBeforeTrailingWhitespace(block)
-              : block
-          }
-          cwd={cwd}
-          onOpenFile={onOpenFile}
-          renderText={
-            index === cursorStableBlockIndex
-              ? stableCursorTextRenderer
-              : undefined
-          }
-          renderMermaid={renderMermaid}
-        />
-      </div>
-    )),
-    [visibleBlocks, cursorStableBlockIndex, cwd, onOpenFile, stableCursorTextRenderer, renderMermaid],
-  );
-
   /* ------------------------------- Render -------------------------------- */
   return (
     <div
@@ -292,7 +265,27 @@ export function StreamingMarkdown({
       data-stream-state={phase}
       data-cursor-state={cursorState}
     >
-      {stableBlockNodes}
+      {visibleBlocks.map((block, index) => (
+        // Keep stable blocks keyed separately so settled text does not remount
+        // into one large markdown tree when streaming ends.
+        <div className="streaming-markdown-block" key={index}>
+          <MemoMarkdownContent
+            text={
+              index === cursorStableBlockIndex
+                ? insertCursorBeforeTrailingWhitespace(block)
+                : block
+            }
+            cwd={cwd}
+            onOpenFile={onOpenFile}
+            renderText={
+              index === cursorStableBlockIndex
+                ? stableCursorTextRenderer
+                : undefined
+            }
+            renderMermaid={renderMermaid}
+          />
+        </div>
+      ))}
       <MarkdownContent
         text={tailText}
         cwd={cwd}
@@ -348,6 +341,18 @@ export function containsMermaidFence(text: string): boolean {
   return /(^|\n)```[ \t]*mermaid[ \t]*\r?\n/i.test(text);
 }
 
+type MarkdownFence = { marker: "`" | "~"; length: number; info: string };
+
+function parseMarkdownFence(line: string): MarkdownFence | undefined {
+  const match = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+  if (!match || (match[1][0] === "`" && match[2].includes("`"))) return undefined;
+  return { marker: match[1][0] as "`" | "~", length: match[1].length, info: match[2].trim() };
+}
+
+function closesMarkdownFence(open: MarkdownFence, candidate: MarkdownFence): boolean {
+  return candidate.marker === open.marker && candidate.length >= open.length && candidate.info === "";
+}
+
 function endsWithFenceCloser(text: string): boolean {
   // Cursor insertion trims trailing whitespace too. Inspect the same boundary
   // or a final newline can place the sentinel on the closing fence itself.
@@ -360,44 +365,23 @@ function endsWithFenceCloser(text: string): boolean {
   // first so ordinary prose does not allocate and scan every preceding line.
   const finalLineStart = text.lastIndexOf("\n") + 1;
   const finalLine = text.slice(finalLineStart);
-  const finalMatch = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(finalLine);
-  if (!finalMatch || finalMatch[2].trim() !== "") {
+  const finalFence = parseMarkdownFence(finalLine);
+  if (!finalFence || finalFence.info !== "") {
     return false;
   }
 
-  const finalMarker = finalMatch[1][0] as "`" | "~";
-  const finalMarkerLength = finalMatch[1].length;
-  let activeFence: { marker: "`" | "~"; length: number } | undefined;
+  let activeFence: MarkdownFence | undefined;
   const precedingLines = text.slice(0, finalLineStart).split("\n");
   for (const line of precedingLines) {
-    const match = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
-    if (!match) {
-      continue;
-    }
-
-    const marker = match[1][0] as "`" | "~";
+    const fence = parseMarkdownFence(line);
+    if (!fence) continue;
     if (!activeFence) {
-      if (marker === "`" && match[2].includes("`")) {
-        continue;
-      }
-      activeFence = { marker, length: match[1].length };
-      continue;
+      activeFence = fence;
+    } else if (closesMarkdownFence(activeFence, fence)) {
+      activeFence = undefined;
     }
-
-    const isCloser =
-      marker === activeFence.marker &&
-      match[1].length >= activeFence.length &&
-      match[2].trim() === "";
-    if (!isCloser) {
-      continue;
-    }
-    activeFence = undefined;
   }
-  return Boolean(
-    activeFence &&
-    activeFence.marker === finalMarker &&
-    finalMarkerLength >= activeFence.length,
-  );
+  return Boolean(activeFence && closesMarkdownFence(activeFence, finalFence));
 }
 
 function insertCursorBeforeTrailingWhitespace(text: string): string {
@@ -415,6 +399,7 @@ type StableBlockScanState = StableBlockSplit & {
   scanOffset: number;
   blockStart: number;
   inFence: boolean;
+  openFence: MarkdownFence | undefined;
   /** A list stays open across blank lines until a dedented block arrives. */
   listContentIndent: number | undefined;
   pendingListBoundary: number | undefined;
@@ -460,8 +445,7 @@ function scanStableBlocks(
   let blocks = previous?.blocks ?? [];
   const previousBlocks = blocks;
   let blocksCopied = false;
-  let inFence = previous?.inFence ?? false;
-  let openFenceLanguage = previous?.openFenceLanguage;
+  let openFence = previous?.openFence;
   let blockStart = previous?.blockStart ?? 0;
   let scanOffset = previous?.scanOffset ?? 0;
   let listContentIndent = previous?.listContentIndent;
@@ -486,8 +470,8 @@ function scanStableBlocks(
     const lineStart = scanOffset;
     const line = text.slice(lineStart, lineEnd);
     const blank = line.trim().length === 0;
-    const listMarker = !inFence && line.match(/^ {0,3}(?:[-+*]|\d{1,9}[.)])(?:[ \t]+|$)/);
-    if (!inFence && !blank) {
+    const listMarker = !openFence && line.match(/^ {0,3}(?:[-+*]|\d{1,9}[.)])(?:[ \t]+|$)/);
+    if (!openFence && !blank) {
       if (pendingListBoundary !== undefined) {
         const indentation = markdownColumnWidth(line.match(/^[ \t]*/)?.[0] ?? "");
         if (!listMarker && indentation < (listContentIndent ?? 0)) {
@@ -501,45 +485,17 @@ function scanStableBlocks(
         listContentIndent = Math.min(listContentIndent ?? indent, indent);
       }
     }
-    let fenceStart = lineStart;
-    // CommonMark allows fenced code blocks to be indented by up to three
-    // spaces. The Markdown parser accepts that form, so this lightweight
-    // boundary scanner must do the same or a blank line inside the fence gets
-    // promoted into a stable-block boundary.
-    while (
-      fenceStart < lineEnd &&
-      fenceStart - lineStart < 3 &&
-      text.charCodeAt(fenceStart) === 32 /* space */
-    ) {
-      fenceStart += 1;
-    }
-    const startsBacktickFence =
-      lineEnd - fenceStart >= 3 &&
-      text.charCodeAt(fenceStart) === 96 &&
-      text.charCodeAt(fenceStart + 1) === 96 &&
-      text.charCodeAt(fenceStart + 2) === 96;
-    if (startsBacktickFence) {
-      if (!inFence) {
-        inFence = true;
-        openFenceLanguage = text.slice(fenceStart + 3, lineEnd).trim();
-      } else {
-        let isCloser = true;
-        for (let index = fenceStart + 3; index < lineEnd; index += 1) {
-          const code = text.charCodeAt(index);
-          if (code !== 32 /* space */ && code !== 9 /* tab */) {
-            isCloser = false;
-            break;
-          }
-        }
-        if (isCloser) {
-          inFence = false;
-          openFenceLanguage = undefined;
-        }
+    const fence = parseMarkdownFence(line);
+    if (fence) {
+      if (!openFence) {
+        openFence = fence;
+      } else if (closesMarkdownFence(openFence, fence)) {
+        openFence = undefined;
       }
     }
 
     scanOffset = lineEnd + 1;
-    if (!inFence && blank) {
+    if (!openFence && blank) {
       if (listContentIndent !== undefined) {
         // A later indented paragraph or another item can still belong to the
         // same list. Wait for a complete, dedented line before freezing it.
@@ -556,10 +512,11 @@ function scanStableBlocks(
     textLength: text.length,
     scanOffset,
     blockStart,
-    inFence,
+    inFence: Boolean(openFence),
+    openFence,
     listContentIndent,
     pendingListBoundary,
-    openFenceLanguage,
+    openFenceLanguage: openFence?.info,
     blocks,
     tail: text.slice(blockStart),
   };
