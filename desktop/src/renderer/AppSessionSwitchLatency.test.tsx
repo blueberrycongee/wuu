@@ -452,9 +452,14 @@ describe("session tab switch latency", () => {
     expect(slider.value).toBe(slider.max);
   });
 
-  it("preserves Home after reopening the effort picker while End is still pending", async () => {
+  it.each([
+    { key: "Home", initial: "", pending: "high", responseBeforeKeyUp: false },
+    { key: "End", initial: "high", pending: "", responseBeforeKeyUp: false },
+    { key: "Home", initial: "", pending: "high", responseBeforeKeyUp: true },
+    { key: "End", initial: "high", pending: "", responseBeforeKeyUp: true },
+  ])("preserves $key after reopening while an earlier effort response arrives before keyup=$responseBeforeKeyUp", async ({ key, initial, pending, responseBeforeKeyUp }) => {
     const { threadsByID } = installWuuApi();
-    threadsByID.set(threadAID, { ...threadA(), model_variant: "", model_effort: "" });
+    threadsByID.set(threadAID, { ...threadA(), model_variant: initial, model_effort: initial });
     const workspaceDefaults = initialized();
     workspaceDefaults.providers![0].models = [{ id: "model-a", supported_efforts: ["low", "medium", "high"] }];
     vi.mocked(window.wuu.initialize).mockResolvedValue(workspaceDefaults);
@@ -466,27 +471,35 @@ describe("session tab switch latency", () => {
     const toggle = () => container.querySelector<HTMLButtonElement>(".codex-runtime-trigger")!.click();
     await act(async () => { toggle(); });
     let slider = document.querySelector<HTMLInputElement>('.codex-effort-slider input[type="range"]')!;
-    expect(slider.value).toBe(slider.min);
+    const endpoint = (): string => key === "Home" ? slider.min : slider.max;
+    expect(slider.value).toBe(endpoint());
     await act(async () => {
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(slider, slider.max);
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(slider, key === "Home" ? slider.max : slider.min);
       slider.dispatchEvent(new Event("input", { bubbles: true }));
-      slider.dispatchEvent(new KeyboardEvent("keyup", { key: "End", bubbles: true }));
+      slider.dispatchEvent(new KeyboardEvent("keyup", { key: key === "Home" ? "End" : "Home", bubbles: true }));
     });
-    expect(update.mock.calls.map(call => call[4])).toEqual(["high"]);
+    expect(update.mock.calls.map(call => call[4])).toEqual([pending]);
     await act(async () => { toggle(); });
     await act(async () => { toggle(); });
+    await act(async () => { await new Promise<void>(resolve => requestAnimationFrame(() => resolve())); });
     slider = document.querySelector<HTMLInputElement>('.codex-effort-slider input[type="range"]')!;
-    expect(slider.value).toBe(slider.min);
-    // Native Home does not emit input/change when the range already shows min.
+    expect(slider.value).toBe(endpoint());
+    // Home/End at the displayed endpoint produces no native input/change event.
     await act(async () => {
       slider.focus();
-      slider.dispatchEvent(new KeyboardEvent("keydown", { key: "Home", bubbles: true }));
-      slider.dispatchEvent(new KeyboardEvent("keyup", { key: "Home", bubbles: true }));
+      slider.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
     });
-    await act(async () => { first.resolve(workspaceDefaults); });
+    if (responseBeforeKeyUp) {
+      await act(async () => { first.resolve(workspaceDefaults); });
+      await flushAsync();
+      expect(slider.value).not.toBe(endpoint());
+      expect(document.activeElement).toBe(slider);
+    }
+    await act(async () => { slider.dispatchEvent(new KeyboardEvent("keyup", { key, bubbles: true })); });
+    if (!responseBeforeKeyUp) await act(async () => { first.resolve(workspaceDefaults); });
     await flushAsync();
-    expect(update.mock.calls.map(call => call[4])).toEqual(["high", ""]);
-    expect(slider.value).toBe(slider.min);
+    expect(update.mock.calls.map(call => call[4])).toEqual([pending, initial]);
+    expect(slider.value).toBe(endpoint());
   });
 
   it("keeps the rendered target draft when a delayed fork completes after switching", async () => {

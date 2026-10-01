@@ -1275,6 +1275,7 @@ function EffortSelector({
   const selectedIndex = matchedIndex >= 0 ? matchedIndex : orderedOptions.length - 1;
   const [previewIndex, setPreviewIndex] = useState<number | null>(null);
   const pendingIndex = useRef<number | null>(null);
+  const endpointKey = useRef<{ key: string; index: number } | null>(null);
   const activePointer = useRef<number | null>(null);
   const sliderRef = useRef<HTMLDivElement>(null);
   const displayIndex = previewIndex ?? selectedIndex;
@@ -1291,12 +1292,14 @@ function EffortSelector({
     onPreviewEffort?.(orderedOptions[index] ?? selectedVariant);
   };
   const cancel = (): void => {
+    endpointKey.current = null;
     activePointer.current = null;
     pendingIndex.current = null;
     setPreviewIndex(null);
     onPreviewEffort?.(orderedOptions[selectedIndex] ?? selectedVariant);
   };
   const commit = (index = pendingIndex.current): void => {
+    endpointKey.current = null;
     activePointer.current = null;
     pendingIndex.current = null;
     if (disabled || index === null) return;
@@ -1364,10 +1367,19 @@ function EffortSelector({
           if (activePointer.current !== null) cancel();
         }}
         onChange={(event) => previewTo(Number(event.currentTarget.value))}
+        onKeyDown={(event) => {
+          if (disabled) return;
+          if (event.key === "Home" || event.key === "End") {
+            // An older settings response can replace the displayed value while
+            // this key is held, even when the key produced no input event.
+            endpointKey.current = { key: event.key, index: event.key === "Home" ? 0 : orderedOptions.length - 1 };
+          }
+        }}
         onKeyUp={(event) => {
-          // Home/End at an existing endpoint emit no input event. The pick
-          // still supersedes a pending write from an earlier panel instance.
-          if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown"].includes(event.key)) commit(Number(event.currentTarget.value));
+          if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown"].includes(event.key)) {
+            const endpoint = endpointKey.current;
+            commit(endpoint?.key === event.key ? endpoint.index : Number(event.currentTarget.value));
+          }
         }}
         onBlur={cancel}
       />

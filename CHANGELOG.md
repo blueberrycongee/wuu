@@ -110,6 +110,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Preserve Home/End effort selections when an older settings response arrives
+  while the key is held after reopening the runtime picker.
 - Keep image inspections in aggregated tool activity, with previews loaded on
   expansion while explicitly presented images retain their output order.
 - Preserve the latest reasoning-effort choice during pending updates, keeping
