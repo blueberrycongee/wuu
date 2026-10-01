@@ -3866,8 +3866,9 @@ export function App(): JSX.Element {
   } = createThreadMutationActions({
     getAppState: () => appStateRef.current,
     setAppState: setState,
-    getActiveThreadID: () => activeThreadID,
     nextDraftSessionTab,
+    restorePrimaryComposerDraft,
+    getSplitComposerDrafts: () => composerDraftsRef.current.split,
     clearPrimaryComposerDraft: () =>
       restorePrimaryComposerDraft(emptyComposerDraft()),
     resetSplitComposerDrafts: () =>
