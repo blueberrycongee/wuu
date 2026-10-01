@@ -421,6 +421,37 @@ describe("session tab switch latency", () => {
     delete (globalThis as { wuu?: WuuDesktopApi }).wuu;
   });
 
+  it("persists the latest mounted effort-slider choice before the previous request settles", async () => {
+    const { threadsByID } = installWuuApi();
+    threadsByID.set(threadAID, { ...threadA(), model_variant: "high", model_effort: "high" });
+    const workspaceDefaults = initialized();
+    workspaceDefaults.providers![0].models = [{ id: "model-a", supported_efforts: ["low", "medium", "high"] }];
+    vi.mocked(window.wuu.initialize).mockResolvedValue(workspaceDefaults);
+    const first = deferred<InitializeResult>();
+    const update = vi.fn().mockReturnValueOnce(first.promise).mockResolvedValue(workspaceDefaults);
+    window.wuu.updateRuntimeSettings = update;
+    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await flushAsync();
+    await act(async () => { container.querySelector<HTMLButtonElement>(".codex-runtime-trigger")!.click(); });
+    const slider = document.querySelector<HTMLInputElement>('.codex-effort-slider input[type="range"]')!;
+    expect(slider).not.toBeNull();
+    const choose = async (value: string, key: string): Promise<void> => {
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(slider, value);
+        slider.dispatchEvent(new Event("input", { bubbles: true }));
+        slider.dispatchEvent(new KeyboardEvent("keyup", { key, bubbles: true }));
+      });
+    };
+    await choose(slider.min, "Home");
+    await choose(slider.max, "End");
+    await act(async () => { first.resolve(workspaceDefaults); });
+    await flushAsync();
+
+    expect(update.mock.calls.map(call => call[4])).toEqual(["", "high"]);
+    expect(update.mock.calls.every(call => call[6] === threadAID)).toBe(true);
+    expect(slider.value).toBe(slider.max);
+  });
+
   it("keeps the rendered target draft when a delayed fork completes after switching", async () => {
     const { threadsByID } = installWuuApi();
     const source = threadA();

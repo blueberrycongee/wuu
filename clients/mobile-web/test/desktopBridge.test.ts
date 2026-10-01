@@ -428,6 +428,18 @@ describe("workspace routing", () => {
     }, 30_000, "/computer/alpha");
   });
 
+  it("keeps delayed runtime selections in their captured workspace after navigation", async () => {
+    remote.call.mockResolvedValue(workspaces);
+    const bridge = await connectBridge();
+    await bridge.api.selectProject("beta");
+    await bridge.api.updateRuntimeSettings(undefined, undefined, undefined, undefined, "high", undefined, "thread-alpha", undefined,
+      { kind: "project", project_id: "alpha", cwd: "/computer/alpha" });
+    expect(remote.call).toHaveBeenLastCalledWith("config/model/update", {
+      thread_id: "thread-alpha", variant: "high",
+    }, 30_000, "/computer/alpha");
+    expect((await bridge.api.listProjects()).active_context?.cwd).toBe("/computer/beta");
+  });
+
   it("routes background and worktree events to their owning project after switching", async () => {
     remote.call.mockResolvedValue(workspaces);
     const bridge = await connectBridge();

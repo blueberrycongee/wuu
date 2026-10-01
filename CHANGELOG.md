@@ -90,6 +90,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   and the bell's first-run bubble became a mark-all-read action.
 
 ### Fixed
+- Preserve the latest reasoning-effort choice during pending updates, keeping
+  queued runtime changes with their original conversation and workspace.
 - Keep streaming cursor markers out of copied or selected unfinished backtick and tilde code blocks.
 - Preserve conversation drafts and queued messages across delayed forks and
   failed archive or delete requests; keep the surviving split-pane draft.

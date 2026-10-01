@@ -1100,6 +1100,7 @@ export function App(): JSX.Element {
     preserveFailedComposerMessage,
   });
   const runtimeVariantByModelRef = useRef(new Map<string, string>());
+  const pendingRuntimeSelectionsRef = useRef(new Map<string, Promise<void>>());
   const cachedThreadPaneHistoryRef = useRef<string[]>([]);
   const cachedConversationPaneThreadsRef = useRef(new Map<string, Thread>());
   const draftSessionTabCounterRef = useRef(0);
@@ -3929,6 +3930,7 @@ export function App(): JSX.Element {
     clearThreadPendingComposerMessages,
     requestThreadStop,
     variantByModel: runtimeVariantByModelRef.current,
+    pendingRuntimeSelections: pendingRuntimeSelectionsRef.current,
   });
 
   const {
