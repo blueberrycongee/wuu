@@ -6,12 +6,14 @@ import {
   summarizeToolActivity,
   parseJSONRecord,
   stringValue,
+  readableToolActivityName,
 } from "./ToolActivityHelpers";
 import { ChevronDown } from "./WuuIcons";
 import { ToolActivityPresenter } from "./plugins/ToolActivityPresenter";
 import { ToolActivityMarker } from "./ToolActivityMarker";
 import { useI18n } from "./i18n";
 import { RemoteItemContent } from "./RemoteItemContent";
+import { RichCodeBlock } from "./RichContent";
 import { collectTurnArtifacts, TurnInlineArtifactOutputs, TurnEndArtifactOutputs } from "./ArtifactOutputs";
 import { ENABLE_TURN_ARTIFACT_SUMMARY } from "./FeatureFlags";
 export type { JsonRecord } from "./ToolActivityHelpers";
@@ -101,6 +103,32 @@ const ToolActivityTimelineItem = memo(function ToolActivityTimelineItem({
   );
 });
 
+function ProgramToolRecord({ item, code }: { item: ThreadItem; code: string }): JSX.Element {
+  const [open, setOpen] = useState(false);
+  const description = stringValue(parseJSONRecord(item.arguments), "description");
+  return (
+    <details
+      className="program-tool-record activity-group"
+      data-status={item.status}
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+    >
+      <summary className="activity-row activity-summary">
+        <ToolActivityMarker kind="command" running={item.status === "in_progress"} />
+        <span className="activity-copy program-tool-label">
+          <span className="activity-summary-text">{description || readableToolActivityName(item)}</span>
+        </span>
+        <ChevronDown className="program-tool-chevron icon-sm" aria-hidden="true" />
+      </summary>
+      {open ? (
+        <div className="program-tool-details">
+          <RichCodeBlock code={code} displayedCode={code} language="typescript" />
+          {item.error ? <p>{item.error}</p> : null}
+        </div>
+      ) : null}
+    </details>
+  );
+}
+
 // Ordinary tool activity rows are one line of plain prose. We no longer render
 // a separate collapsible "details" block: in nearly every case
 // (list_files, read_file, grep, run_shell with a readable label) the
@@ -110,6 +138,7 @@ const ToolActivityTimelineItem = memo(function ToolActivityTimelineItem({
 // into the conversation: users care about the agent's eventual outcome, not
 // whether every intermediate attempt completed. Workspace switches expose their
 // destination and failure inside a disclosure because they change later tool roots.
+// PTC programs show their supplied description and disclose source on demand.
 export function ToolActivityRow({
   items,
   streaming = false,
@@ -150,6 +179,14 @@ export function ToolActivityRow({
         </div>
       </details>
     );
+  }
+
+  if (items.length === 1 && items[0].name === "run_code") {
+    const code = parseJSONRecord(items[0].arguments)?.code;
+    // Keep source verbatim; stringValue trims meaningful indentation and newlines.
+    if (typeof code === "string" && code.trim()) {
+      return <ProgramToolRecord key={items[0].id} item={items[0]} code={code} />;
+    }
   }
 
   // Each section carries both an action verb (title) and a target (detail).

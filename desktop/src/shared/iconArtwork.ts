@@ -175,6 +175,7 @@ export const iconArtwork = {
   PieChart: [path("M10 3.5a9 9 0 1 0 10.5 10.5H10ZM14 3v7h7c-.7-4-3-6.3-7-7Z")],
   Pin: pin,
   PinOff: [path("m3 3 18 18M10 4h5l-.6 6M7.5 12l-.7 2h5.7M12 16v5")],
+  Play: [path("M8 5.5 19 12 8 18.5Z", true)],
   Plug: plug,
   PlugZap: [path("M7 3v5M4 8h11v3c0 4-2 6-5.5 6S4 15 4 11V8Zm5.5 9v4m10-18-3 6h5l-3 6")],
   Plus: [plus],

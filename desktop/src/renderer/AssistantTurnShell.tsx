@@ -706,42 +706,16 @@ function ReasoningFold({
   }${streaming ? " is-streaming" : ""}`;
   const waveRef = useLiveTextWave<HTMLSpanElement>(Boolean(activeGray));
   const [open, setOpen] = useState(false);
-  const reasoningScroll = useAutoFollowScrollContainer();
+  const reasoningScroll = useAutoFollowScrollContainer({ open, initialAutoFollow: streaming });
 
   const handleReasoningStreamFrame = useCallback((): void => {
     onStreamFrame();
     reasoningScroll.scheduleScrollToBottom();
   }, [onStreamFrame, reasoningScroll]);
 
-  // When the user opens this fold, land at the latest reasoning. After
-  // that, keep following only while the user stays near the bottom.
   const handleToggle = useCallback((event: SyntheticEvent<HTMLDetailsElement>) => {
-    const details = event.currentTarget;
-    const nextOpen = details.open;
-    setOpen(nextOpen);
-    if (!nextOpen) return;
-    const body = details.querySelector(
-      ".turn-reasoning-body",
-    ) as HTMLElement | null;
-    if (!body) return;
-    let settled = false;
-    const snapToBottom = (transitionEvent?: Event) => {
-      const propertyName = (transitionEvent as TransitionEvent | undefined)
-        ?.propertyName;
-      if (propertyName && propertyName !== "grid-template-rows") {
-        return;
-      }
-      if (settled) return;
-      settled = true;
-      body.removeEventListener("transitionend", snapToBottom);
-      reasoningScroll.scrollToBottom({ force: true, revealScrollbar: true });
-    };
-    body.addEventListener("transitionend", snapToBottom);
-    // Fallback when transitionend never fires (reduced motion, or the
-    // grid already settled before the listener attached). The body's
-    // grid-template-rows transition runs on --motion-slow.
-    window.setTimeout(snapToBottom, motionDurationMs("--motion-slow", 280));
-  }, [reasoningScroll]);
+    setOpen(event.currentTarget.open);
+  }, []);
   return (
     <details
       className="turn-reasoning-fold"

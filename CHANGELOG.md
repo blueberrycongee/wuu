@@ -28,6 +28,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   history position. Keyword searches include archived conversations without
   restoring them.
 
+- Video attachments show larger, unobstructed previews with only a play button;
+  native controls appear on playback.
+
 - Fast mode and its reset action share the model popover header, keeping the
   model and reasoning controls compact with keyboard access and cost hints.
   Leading icons, labels, and slider share a content guide; the thumb reaches
@@ -92,6 +95,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   and the bell's first-run bubble became a mark-all-read action.
 
 ### Fixed
+- Preserve reading positions when reopening tool and reasoning details, start
+  completed history at the beginning, and keep tools and reasoning in event
+  order without a delayed scroll after opening.
+
 - Edit conversation titles from the desktop title bar with a double click, while
   preserving keyboard rename and the surrounding window drag area.
 

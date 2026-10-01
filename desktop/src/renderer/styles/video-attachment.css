@@ -1,6 +1,72 @@
-.video-attachment { width: 180px; max-width: 100%; min-width: 0; }
-.video-attachment video { display: block; width: 100%; height: 102px; object-fit: contain; border-radius: 6px; background: var(--surface); }
-.video-attachment-caption { display: flex; align-items: baseline; gap: 6px; margin-top: 4px; font-size: var(--font-xs); }
-.video-attachment-caption > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
-.video-attachment-caption small { flex-shrink: 0; color: var(--ink-soft); }
-.composer-file-attachment:has(.video-attachment) { padding: 6px; }
+.video-attachment {
+  width: 260px;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  border-radius: var(--radius-media);
+  box-sizing: border-box;
+  position: relative;
+  display: grid;
+  aspect-ratio: 16 / 9;
+  place-items: center;
+  background: var(--surface-2);
+  color: var(--ink-soft);
+}
+
+.video-attachment video {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.video-attachment-play {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  width: 100%;
+  height: 100%;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #fff;
+  cursor: pointer;
+}
+
+.video-attachment-play-icon {
+  display: grid;
+  width: 44px;
+  height: 44px;
+  place-items: center;
+  border-radius: var(--radius-circle);
+  background: rgb(0 0 0 / 60%);
+  transition: background var(--motion-fast) var(--ease-out);
+}
+
+.video-attachment-play:hover .video-attachment-play-icon {
+  background: rgb(0 0 0 / 75%);
+}
+
+.video-attachment-play:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -3px;
+}
+
+.video-attachment-error {
+  margin: 0;
+  padding: 16px;
+  font-size: var(--font-sm);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+/* The shared preview owns its frame, including in the legacy composer. */
+.composer-file-attachment:has(.video-attachment) {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}

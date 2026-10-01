@@ -309,7 +309,7 @@ function stubScrollLayout(
     configurable: true,
     get: () => layout.scrollTop,
     set: (v: number) => {
-      layout.scrollTop = v;
+      layout.scrollTop = Math.max(0, Math.min(v, layout.scrollHeight - layout.clientHeight));
     },
   });
   return layout;
@@ -1128,11 +1128,7 @@ describe("AssistantTurnShell — reasoning fold (rule 3)", () => {
     expect(groups[0].querySelectorAll(".activity-group")).toHaveLength(2);
   });
 
-  it("snaps the reasoning scroll container to the bottom when the fold opens", async () => {
-    // Reasoning text tends to be long. When the user clicks "查看思考
-    // 过程" they usually want to see where the model is *now*, not the
-    // first lines of deliberation — so opening the fold should land
-    // the scroll container at scrollHeight.
+  it("opens completed reasoning at the beginning", async () => {
     const turn = makeTurn("completed", [
       makeReasoning("long internal deliberation ".repeat(50)),
       makeFinalAnswer("short answer"),
@@ -1155,7 +1151,7 @@ describe("AssistantTurnShell — reasoning fold (rule 3)", () => {
     // React's onToggle handler run.
     await openReasoningFold(fold);
 
-    expect(layout.scrollTop).toBe(1000);
+    expect(layout.scrollTop).toBe(0);
   });
 
   it("keeps live reasoning pinned to the latest while the user stays at the bottom", async () => {
@@ -1173,7 +1169,7 @@ describe("AssistantTurnShell — reasoning fold (rule 3)", () => {
     });
 
     await openReasoningFold(fold);
-    expect(layout.scrollTop).toBe(1000);
+    expect(layout.scrollTop).toBe(800);
 
     layout.scrollHeight = 1300;
     await withManualAnimationFrames(async (flush) => {
@@ -1183,7 +1179,7 @@ describe("AssistantTurnShell — reasoning fold (rule 3)", () => {
       await flush();
     });
 
-    expect(layout.scrollTop).toBe(1300);
+    expect(layout.scrollTop).toBe(1100);
   });
 
   it("keeps reasoning selection paused after a pointer press without scroll movement", async () => {
@@ -1257,7 +1253,7 @@ describe("AssistantTurnShell — reasoning fold (rule 3)", () => {
     });
 
     await openReasoningFold(fold);
-    expect(layout.scrollTop).toBe(1000);
+    expect(layout.scrollTop).toBe(800);
 
     vi.useFakeTimers();
     const now = vi.spyOn(performance, "now");
@@ -1283,7 +1279,7 @@ describe("AssistantTurnShell — reasoning fold (rule 3)", () => {
       now.mockRestore();
     }
 
-    expect(layout.scrollTop).toBe(layout.scrollHeight);
+    expect(layout.scrollTop).toBe(layout.scrollHeight - layout.clientHeight);
   });
 
   it("keeps auto-follow armed when rapid reasoning growth fires a layout scroll before resize settles", async () => {
@@ -1304,7 +1300,7 @@ describe("AssistantTurnShell — reasoning fold (rule 3)", () => {
       await withManualAnimationFrames(async (flush) => {
         await openReasoningFold(fold);
         await flush();
-        expect(layout.scrollTop).toBe(1000);
+        expect(layout.scrollTop).toBe(800);
 
         layout.scrollHeight = 1300;
         act(() => {
@@ -1315,7 +1311,7 @@ describe("AssistantTurnShell — reasoning fold (rule 3)", () => {
         await flush();
       });
 
-      expect(layout.scrollTop).toBe(1300);
+      expect(layout.scrollTop).toBe(1100);
     });
   });
 
@@ -1334,7 +1330,7 @@ describe("AssistantTurnShell — reasoning fold (rule 3)", () => {
     });
 
     await openReasoningFold(fold);
-    expect(layout.scrollTop).toBe(1000);
+    expect(layout.scrollTop).toBe(800);
 
     act(() => {
       layout.scrollTop = 240;

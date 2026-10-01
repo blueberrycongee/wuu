@@ -269,6 +269,12 @@ Use a CSS transition from the ladder for motion whose geometry is already known:
 
 Opening or closing tool/reasoning details preserves the reader's scroll mode. A conversation following the latest content continues following through the height transition; a paused conversation keeps its reading position. Wheel, touch, keyboard scrolling, scrollbar dragging, and text selection take precedence over layout correction.
 
+Inside a bounded inspection strip, tools and reasoning follow their event order.
+The first opening of live activity starts at the latest content; completed
+history starts at the beginning. Closing and reopening restore the strip's
+reading position and follow/pause mode, including after hidden content grows.
+Position before paint, without a delayed forced scroll after the opening motion.
+
 Sending a query reserves reading space below the bubble. Expanded details may temporarily occupy that space, but closing them restores what remains after actual response growth or deliberate browsing. A temporarily empty gap is not proof that the response has filled the reservation. Inspect repeated toggles while streaming, including a fold taller than the remaining gap and a session switch with the fold open.
 
 Earlier-history paging inserts rows above the viewport. A paused reader's offset belongs to native scroll anchoring, so the manual prepend correction applies only while the offset still sits where the page was requested; adding the inserted height on top of anchoring moves the whole stream down by that height the moment the page arrives, which reads as a jump.

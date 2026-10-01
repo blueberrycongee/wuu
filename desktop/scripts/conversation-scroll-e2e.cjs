@@ -7,6 +7,7 @@ const { app, BrowserWindow } = require("electron");
 // bridge and native input: wheel, scrollbar-free programmatic jumps, clicks
 // and sidebar toggles. Checks what a reader sees — the reading position, the
 // following state and painted pixels — while output streams.
+// WUU_SCROLL_E2E_ONLY=inspection selects the native tool/reasoning regression.
 const desktop = path.resolve(__dirname, "..");
 const output = process.env.WUU_SCROLL_E2E_OUTPUT || path.join(desktop, "out/conversation-scroll");
 fs.mkdirSync(output, { recursive: true });
@@ -284,6 +285,138 @@ const stopTracking = win => evaluate(win, () => {
   return window.__messageTrack;
 });
 
+async function inspectProcess(win, results, turnID) {
+  // --- Inspection preserves its own reading position, including native details layout.
+  const processItems = [];
+  for (let index = 0; index < 24; index++) {
+    processItems.push({
+      id: `inspection-tool-${index}`, type: "tool_call", status: "completed", name: "read_file",
+      arguments: JSON.stringify({ path: `inspection-file-${index}.ts` }),
+    });
+    if (index === 10) processItems.push({
+      id: "inspection-reason-middle", type: "reasoning", status: "completed",
+      text: "Middle inspection reasoning.\n\n" + "An earlier reasoning paragraph. ".repeat(80),
+    });
+  }
+  const liveReasoning = {
+    id: "inspection-reason-live", type: "reasoning", status: "in_progress",
+    text: "Current inspection reasoning.\n\n" + "Latest reasoning remains readable while inspecting earlier tools. ".repeat(60),
+  };
+  processItems.push(liveReasoning);
+  for (const item of processItems) emit(win, "item/started", { thread_id: THREAD_ID, turn_id: turnID, item });
+  const foldSelector = `[data-turn-id="${turnID}"] details.process-surface-fold`;
+  await until(win, selector => document.querySelector(selector)?.textContent.includes("Current inspection reasoning."), "inspection records", 8000, foldSelector);
+  await frames(win, 12);
+  const processGeometry = () => evaluate(win, (selector, viewportSelector) => {
+    const fold = document.querySelector(selector);
+    const body = fold.querySelector(".process-surface-body");
+    const bounds = fold.querySelector("summary").getBoundingClientRect();
+    const viewport = document.querySelector(viewportSelector).getBoundingClientRect();
+    return { open: fold.open, top: body.scrollTop, max: body.scrollHeight - body.clientHeight,
+      summaryTop: bounds.top - viewport.top, anchor: body.style.overflowAnchor,
+      width: body.clientWidth, height: body.clientHeight,
+      fontSize: getComputedStyle(body.querySelector(".activity-row")).fontSize };
+  }, foldSelector, VIEWPORT);
+  const toggleProcess = async () => {
+    const bounds = await evaluate(win, selector => {
+      const rect = document.querySelector(selector).querySelector("summary").getBoundingClientRect();
+      return { x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) };
+    }, foldSelector);
+    win.webContents.sendInputEvent({ type: "mouseDown", ...bounds, button: "left", clickCount: 1 });
+    win.webContents.sendInputEvent({ type: "mouseUp", ...bounds, button: "left", clickCount: 1 });
+    await frames(win, 20);
+  };
+  const order = await evaluate(win, selector => {
+    const text = document.querySelector(selector).querySelector(".process-surface-body").textContent;
+    return [text.indexOf("inspection-file-10.ts"), text.indexOf("Middle inspection reasoning."), text.indexOf("inspection-file-11.ts")];
+  }, foldSelector);
+  assert.ok(order[0] >= 0 && order[0] < order[1] && order[1] < order[2], `Inspection order differs from events: ${order}`);
+
+  const inspectionCases = [
+    { theme: "light", size: 14, width: 1240, reduced: false },
+    { theme: "dark", size: 14, width: 1240, reduced: false },
+    { theme: "light", size: 20, width: 720, reduced: false },
+    { theme: "dark", size: 20, width: 720, reduced: true },
+  ];
+  for (const [index, appearance] of inspectionCases.entries()) {
+    win.setSize(appearance.width, 920);
+    await evaluate(win, appearance => {
+      document.querySelector(".environment-panel-close-row button")?.click();
+      const shell = document.querySelector(".app-shell");
+      if (shell.classList.contains("right-panel-open")) document.querySelector(".workspace-panel-close")?.click();
+      if (!shell.classList.contains("sidebar-collapsed") || shell.classList.contains("sidebar-drawer-open")) {
+        document.querySelector('[data-wuu-component="sidebar-toggle"], .sidebar-collapse-toggle')?.click();
+      }
+      document.documentElement.dataset.theme = appearance.theme;
+      document.documentElement.dataset.appearanceMotion = appearance.reduced ? "reduce" : "system";
+      document.documentElement.style.setProperty("--conversation-message-font-size", `${appearance.size}px`);
+      window.dispatchEvent(new Event("wuu-content-size-change"));
+    }, appearance);
+    await until(win, () => !document.querySelector(".app-shell").classList.contains("sidebar-animating") &&
+      !document.documentElement.classList.contains("layout-motion-active"), "inspection layout to settle");
+    await frames(win, 20);
+    const beforeOpen = await processGeometry();
+    await toggleProcess();
+    const opened = await processGeometry();
+    assert.ok(opened.open && opened.max > 200, `The inspection fixture must overflow: ${JSON.stringify(opened)}`);
+    if (index === 0) assert.ok(opened.max - opened.top <= 1, `First live inspection must start at latest: ${JSON.stringify(opened)}`);
+    assert.ok(Math.abs(opened.summaryTop - beforeOpen.summaryTop) <= 2, `Opening moved the inspection summary: ${JSON.stringify({ beforeOpen, opened })}`);
+    if (index === 0) {
+      emit(win, "item/reasoning/delta", { thread_id: THREAD_ID, turn_id: turnID, item_id: liveReasoning.id, delta: "\n\nNew reasoning while following latest. ".repeat(30) });
+      await frames(win, 20);
+      const followed = await processGeometry();
+      assert.ok(followed.max > opened.max && followed.max - followed.top <= 1, `Live inspection must follow appended output: ${JSON.stringify({ opened, followed })}`);
+    }
+    const readingTop = await evaluate(win, selector => {
+      const body = document.querySelector(selector).querySelector(".process-surface-body");
+      body.dispatchEvent(new WheelEvent("wheel", { deltaY: -100, bubbles: true }));
+      body.scrollTop = Math.min(180, (body.scrollHeight - body.clientHeight) / 2);
+      return body.scrollTop;
+    }, foldSelector);
+    await frames(win, 3);
+    emit(win, "item/reasoning/delta", { thread_id: THREAD_ID, turn_id: turnID, item_id: liveReasoning.id, delta: "\n\nNew reasoning below the reading point. ".repeat(30) });
+    await frames(win, 20);
+    const grown = await processGeometry();
+    assert.ok(Math.abs(grown.top - readingTop) <= 1 && grown.anchor === "auto", `Streaming stole inspection reading: ${JSON.stringify({ readingTop, grown })}`);
+    await toggleProcess();
+    const closed = await processGeometry();
+    assert.ok(!closed.open, "Inspection must close through a native click");
+    emit(win, "item/reasoning/delta", { thread_id: THREAD_ID, turn_id: turnID, item_id: liveReasoning.id, delta: "\n\nHidden reasoning growth. ".repeat(30) });
+    await frames(win, 12);
+    await toggleProcess();
+    const reopened = await processGeometry();
+    assert.ok(Math.abs(reopened.top - readingTop) <= 1 && reopened.anchor === "auto", `Reopening lost inspection reading: ${JSON.stringify({ readingTop, reopened })}`);
+    assert.ok(Math.abs(reopened.summaryTop - closed.summaryTop) <= 2, `Reopening moved the inspection summary: ${JSON.stringify({ closed, reopened })}`);
+    fs.writeFileSync(path.join(output, `inspection-${index}.png`), (await win.webContents.capturePage()).toPNG());
+    record(results, "native inspection preserves event order and reading position", { appearance, order, readingTop, opened, grown, closed, reopened });
+    await toggleProcess();
+  }
+  win.setSize(1240, 820);
+  await evaluate(win, () => {
+    document.documentElement.dataset.theme = "light";
+    document.documentElement.dataset.appearanceMotion = "system";
+    document.documentElement.style.removeProperty("--conversation-message-font-size");
+    window.dispatchEvent(new Event("wuu-content-size-change"));
+  });
+  await frames(win, 12);
+  emit(win, "item/started", { thread_id: THREAD_ID, turn_id: turnID, item: {
+    id: "inspection-history-boundary", type: "agent_message", phase: "commentary", status: "completed", text: "Completed inspection history follows.",
+  } });
+  for (const item of processItems) emit(win, "item/started", { thread_id: THREAD_ID, turn_id: turnID, item: {
+    ...item, id: `history-${item.id}`, status: "completed",
+  } });
+  await until(win, selector => document.querySelectorAll(selector).length === 2, "completed inspection history", 8000, foldSelector);
+  await evaluate(win, selector => document.querySelectorAll(selector)[1].querySelector("summary").click(), foldSelector);
+  await frames(win, 20);
+  const history = await evaluate(win, selector => {
+    const fold = document.querySelectorAll(selector)[1];
+    const body = fold.querySelector(".process-surface-body");
+    return { open: fold.open, top: body.scrollTop, max: body.scrollHeight - body.clientHeight, anchor: body.style.overflowAnchor };
+  }, foldSelector);
+  assert.ok(history.open && history.max > 200 && history.top === 0 && history.anchor === "auto", `Completed inspection must start from the beginning: ${JSON.stringify(history)}`);
+  record(results, "completed inspection starts from the beginning", { history });
+}
+
 app.whenReady().then(async () => {
   const win = new BrowserWindow({
     width: 1240, height: 820, show: process.env.WUU_E2E_HIDDEN !== "true",
@@ -319,6 +452,17 @@ app.whenReady().then(async () => {
   emit(win, "turn/completed", { thread_id: THREAD_ID, turn: bootTurn });
   const history = Array.from({ length: 36 }, (_, index) => completedTurn("history", index));
   const results = [];
+  if (process.env.WUU_SCROLL_E2E_ONLY === "inspection") {
+    await typeAndSend(win, "Inspect this process without losing my reading position.");
+    await until(win, () => Boolean(document.querySelector('[data-user-message-id="sent-user-2"]')) &&
+      !document.querySelector(".scroll-region-content[data-submit-placing]"), "inspection submission placement");
+    await frames(win, 12);
+    await inspectProcess(win, results, "sent-turn-2");
+    assert.deepEqual(errors, [], `Renderer errors: ${errors.join("\n")}`);
+    win.destroy();
+    app.exit(0);
+    return;
+  }
 
   // --- Output streams while the reader takes over and hands back control.
   const live = liveTurn("live-a");
