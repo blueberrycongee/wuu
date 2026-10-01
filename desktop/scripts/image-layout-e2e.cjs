@@ -4,6 +4,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const http = require("node:http");
+const { performance } = require("node:perf_hooks");
 const { app, BrowserWindow, nativeImage } = require("electron");
 
 const desktop = path.resolve(__dirname, "..");
@@ -16,6 +17,17 @@ const viewportSelector = ".conversation-pane > .scroll-region";
 const activeSelector = '.cached-conversation-pane[data-active="true"]';
 const marker = "IMAGE-LAYOUT-READING-MARKER";
 const results = [];
+const diagnostic = process.env.WUU_IMAGE_LAYOUT_DIAGNOSTIC === "1";
+const selectedCase = diagnostic ? process.env.WUU_IMAGE_LAYOUT_CASE : undefined;
+const scheduling = [];
+let phase = "startup";
+let sequence = 0;
+const persistScheduling = () => {
+  if (diagnostic) fs.writeFileSync(path.join(output, "scheduling.json"), JSON.stringify({
+    selectedCase: selectedCase || "all", hidden: process.env.WUU_E2E_HIDDEN === "true",
+    versions: process.versions, sourceCommit: process.env.WUU_FRAME_DIAGNOSTIC_COMMIT || null, scheduling,
+  }, null, 2));
+};
 let win;
 let pending = [];
 let requestCount;
@@ -35,7 +47,25 @@ const server = http.createServer((request, response) => {
   }
 });
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
-const evaluate = (fn, ...args) => win.webContents.executeJavaScript(`(${fn})(${args.map(arg => JSON.stringify(arg)).join(",")})`, true);
+const evaluate = async (fn, ...args) => {
+  const code = `(${fn})(${args.map(arg => JSON.stringify(arg)).join(",")})`;
+  if (!diagnostic) return win.webContents.executeJavaScript(code, true);
+  const id = ++sequence;
+  const requestedEpochMs = performance.timeOrigin + performance.now();
+  const result = await win.webContents.executeJavaScript(`(async () => {
+    const enteredEpochMs = performance.timeOrigin + performance.now();
+    const value = await (${code});
+    return { value, timeOrigin: performance.timeOrigin, enteredEpochMs, finishedEpochMs: performance.timeOrigin + performance.now(), visibility: document.visibilityState };
+  })()`, true);
+  const receivedEpochMs = performance.timeOrigin + performance.now();
+  scheduling.push({ id, phase, operation: fn.name || fn.toString().slice(0, 90), requestedEpochMs, receivedEpochMs,
+    rendererTimeOrigin: result.timeOrigin, enteredEpochMs: result.enteredEpochMs, finishedEpochMs: result.finishedEpochMs,
+    visibility: result.visibility, nativeVisible: win.isVisible(),
+    ...(Array.isArray(result.value) && result.value.every(value => typeof value === "number") ? { frameTimes: result.value } : {}),
+  });
+  persistScheduling();
+  return result.value;
+};
 async function until(fn, ...args) {
   const deadline = Date.now() + 10000;
   while (Date.now() < deadline) {
@@ -44,18 +74,26 @@ async function until(fn, ...args) {
   }
   throw new Error(`Timed out: ${fn}`);
 }
-const frames = (count = 4) => evaluate(count => new Promise(resolve => {
-  const tick = () => --count ? requestAnimationFrame(tick) : resolve();
+const frames = (count = 4) => evaluate((count, trace) => new Promise(resolve => {
+  const times = [];
+  const tick = timestamp => {
+    if (trace) times.push(timestamp);
+    if (--count) requestAnimationFrame(tick); else resolve(trace ? times : undefined);
+  };
   requestAnimationFrame(tick);
-}), count);
+}), count, diagnostic);
 async function select(id) {
+  phase = `select:${id}:click`;
   await evaluate(id => {
     const row = [...document.querySelectorAll(".thread-row")].find(row => row.textContent.includes(id));
     if (!row) throw new Error(`Missing conversation ${id}`);
     row.querySelector(".thread-row-main").click();
   }, id);
+  phase = `select:${id}:active-turn`;
   await until((selector, id) => document.querySelector(`${selector} [data-turn-id]`)?.dataset.turnId === `${id}-0`, activeSelector, id);
+  phase = `select:${id}:frames`;
   await frames();
+  phase = "geometry";
 }
 function geometry() {
   const viewport = document.querySelector(".conversation-pane > .scroll-region");
@@ -98,7 +136,10 @@ function threads(url, kind, count) {
   }));
 }
 async function capture(name) {
+  const requestedEpochMs = performance.timeOrigin + performance.now();
   fs.writeFileSync(path.join(output, `${name}.png`), (await win.webContents.capturePage()).toPNG());
+  if (diagnostic) { scheduling.push({ phase, operation: `capture:${name}`, requestedEpochMs,
+    receivedEpochMs: performance.timeOrigin + performance.now() }); persistScheduling(); }
 }
 
 app.whenReady().then(async () => {
@@ -117,16 +158,18 @@ app.whenReady().then(async () => {
       ["history", 3, false, 420], ["bottom", 1, false, 420], ["history", 1, true, 420],
     ]) {
       const name = `${kind}-${mode}-${count}${broken ? "-failed" : ""}-${width}`;
+      if (selectedCase && name !== selectedCase) continue;
+      phase = name;
       pending = []; released = false; fail = broken; requestCount = count;
       const allRequests = new Promise(resolve => { requestsReady = resolve; });
       const url = `http://127.0.0.1:${server.address().port}/fixture.png?case=${name}`;
       const fixture = path.join(output, "threads.json");
       fs.writeFileSync(fixture, JSON.stringify(threads(url, kind, count)));
       process.env.WUU_IMAGE_LAYOUT_FIXTURE = fixture;
-      win = new BrowserWindow({ width, height: 820, show: process.env.WUU_E2E_HIDDEN !== "true", webPreferences: {
+      win = new BrowserWindow({ width, height: 820, ...(diagnostic && process.env.WUU_FRAME_DIAGNOSTIC_FRAMELESS === "1" ? { frame: false } : {}), show: process.env.WUU_E2E_HIDDEN !== "true", webPreferences: {
         preload: path.join(__dirname, "image-layout-e2e-preload.cjs"), contextIsolation: true, sandbox: false, backgroundThrottling: false,
       } });
-      await win.loadFile(path.join(desktop, "out/renderer/index.html"));
+      await win.loadFile(diagnostic && process.env.WUU_IMAGE_LAYOUT_RENDERER || path.join(desktop, "out/renderer/index.html"));
       await until(() => document.querySelectorAll(".thread-row").length === 2);
       await select("pictures");
       if (width === 420) {
@@ -236,6 +279,7 @@ app.whenReady().then(async () => {
       win.destroy();
     }
   }
+  assert.ok(results.length === (selectedCase ? 1 : 21), "Every selected image scenario must finish");
   assert.ok(results.every(result => result.shifted <= 1 && result.warm.every(frame => Math.abs(frame.markerY - result.after.markerY) <= 1)),
     `Image completion must not move reading content: ${results.filter(result => result.shifted > 1).map(result => `${result.name}=${result.shifted}px`).join(", ")}`);
   server.close(); app.exit(0);
