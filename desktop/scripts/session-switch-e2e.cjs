@@ -6,6 +6,8 @@
 // WUU_SWITCH_MAIN may select a separately built baseline main-process bundle.
 // WUU_SWITCH_STREAM=1 also streams 128 KiB from a local synthetic SSE provider
 // across workspace switches, through the real core, IPC, and renderer.
+// WUU_SWITCH_PACED_STREAM=1 measures native send, paced Markdown and typing.
+// WUU_SWITCH_SIDEBAR_THREADS=1500 adds metadata-only sidebar history.
 // WUU_SWITCH_ROUNDS controls warm repeats. Defaults live in the budget fixture.
 // WUU_SWITCH_INIT_DELAY_MS injects a readiness fault; never pool it with baseline.
 // WUU_SWITCH_CHECK_BUDGET=1 checks settled work counters, never wall-clock time.
@@ -46,6 +48,9 @@ const variant = process.env.WUU_SWITCH_VARIANT || budget.fixture.variant;
 const safeMode = process.env.WUU_SWITCH_SAFE_MODE || budget.fixture.safeMode;
 const initDelayMs = Number(process.env.WUU_SWITCH_INIT_DELAY_MS || 0);
 const subscriptionTurns = Number(process.env.WUU_SWITCH_SUBSCRIPTION_TURNS || 0);
+const sidebarThreads = Number(process.env.WUU_SWITCH_SIDEBAR_THREADS || 0);
+const pacedStream = process.env.WUU_SWITCH_PACED_STREAM === '1';
+assert.ok(Number.isInteger(sidebarThreads) && sidebarThreads >= 0);
 assert.ok(Number.isInteger(subscriptionTurns) && subscriptionTurns >= 0 && subscriptionTurns % 2 === 0);
 assert.ok(Number.isInteger(rounds) && rounds > 0, 'Rounds must be a positive integer');
 assert.ok(Number.isInteger(turns) && turns > 0, 'Turns must be a positive integer');
@@ -58,6 +63,8 @@ const cpuProfileEnabled = process.env.WUU_SWITCH_CPU_PROFILE === '1';
 const checkBudget = process.env.WUU_SWITCH_CHECK_BUDGET === '1';
 if (checkBudget) {
   assert.equal(subscriptionTurns, 0, 'Subscription history is a separate diagnostic workload');
+  assert.equal(sidebarThreads, 0, 'Large sidebar is a separate diagnostic workload');
+  assert.equal(pacedStream, false, 'Paced streaming is a separate diagnostic workload');
   assert.deepEqual({ turns, rounds, variant, safeMode }, budget.fixture);
   assert.equal(initDelayMs, 0, 'Fault injection is not a comparable budget workload');
   assert.equal(traceEnabled, false, 'Tracing is not a comparable budget workload');
@@ -67,7 +74,7 @@ const home = path.join(fixture, 'home');
 fs.mkdirSync(home);
 app.setPath('userData', path.join(fixture, 'profile'));
 process.env.WUU_HOME = home;
-if (subscriptionTurns) {
+{
   // Never discover real subscription credentials or start installed engines.
   process.env.HOME = path.join(fixture, 'user-home');
   fs.mkdirSync(process.env.HOME);
@@ -85,6 +92,11 @@ const projects = Array.from({ length: 6 }, (_, i) => {
   fs.mkdirSync(cwd);
   return { id: `project-${i}`, name: `Switch project ${i}`, path: cwd, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' };
 });
+const sidebarProjects = Array.from({ length: sidebarThreads ? (sidebarThreads >= 5000 ? 50 : 30) : 0 }, (_, i) => {
+  const cwd = path.join(fixture, `sidebar-project-${i}`);
+  fs.mkdirSync(cwd);
+  return { id: `sidebar-project-${i}`, name: `Sidebar project ${i}`, path: cwd, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' };
+});
 fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({ default_provider: 'fixture', providers: { fixture: { type: 'openai-compatible', base_url: 'http://127.0.0.1:1/v1', api_key: 'fixture-only', model: 'fixture' } } }));
 if (subscriptionTurns) {
   const configPath = path.join(home, 'config.json');
@@ -94,7 +106,7 @@ if (subscriptionTurns) {
   config.engines = Object.fromEntries(['codex', 'claude', 'cursor', 'devin', 'grok', 'hermes', 'pi', 'opencode', 'antigravity'].map(id => [id, { enabled: false }]));
   fs.writeFileSync(configPath, JSON.stringify(config));
 }
-fs.writeFileSync(path.join(home, 'projects.json'), JSON.stringify({ projects, active_context: { kind: 'project', project_id: projects[0].id, cwd: projects[0].path } }));
+fs.writeFileSync(path.join(home, 'projects.json'), JSON.stringify({ projects: [...projects, ...sidebarProjects], active_context: { kind: 'project', project_id: projects[0].id, cwd: projects[0].path } }));
 fs.writeFileSync(path.join(home, 'desktop-settings.json'), JSON.stringify({ onboarding_version: 100, language: 'en', theme: process.env.WUU_SWITCH_VARIANT === 'narrow' ? 'dark' : 'light' }));
 const boot = spawnSync(process.env.WUU_DESKTOP_CORE, ['app-server', '--safe-mode', '--workdir', projects[0].path], {
   env: process.env, input: '{"jsonrpc":"2.0","id":1,"method":"thread/start","params":{}}\n', encoding: 'utf8', timeout: 30000,
@@ -102,11 +114,12 @@ const boot = spawnSync(process.env.WUU_DESKTOP_CORE, ['app-server', '--safe-mode
 assert.equal(boot.status, 0, boot.stderr);
 const seed = spawnSync('python3', ['-c', `
 import json, sqlite3, sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 home=Path(sys.argv[1]); projects=json.loads((home/'projects.json').read_text())['projects']
 db=sqlite3.connect(home/'sessions/sessions.sqlite3')
 db.execute('DELETE FROM sessions')
-for i,p in enumerate(projects):
+for i,p in enumerate(projects[:6]):
     turns=int(sys.argv[2]) if i in (1,5) else 3
     sid='switch-thread-'+str(i)
     db.execute('INSERT INTO sessions (id,created_at,updated_at,title,cwd,workspace_id,provider,model,entries) VALUES (?,?,?,?,?,?,?,?,?)', (sid,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z','Switch session '+str(i),p['path'],p['id'],'fixture','fixture',turns*2))
@@ -114,6 +127,11 @@ for i,p in enumerate(projects):
         for r,role in enumerate(('user','assistant')):
             text=('Session '+str(i)+' question '+str(t)) if r==0 else ('## Result '+str(t)+'\\n\\nA realistic paragraph with **formatting** and code.\\n\\n'+('Example content for history measurement. '*30)+'\\n\\n')*3
             db.execute('INSERT INTO session_messages (session_id,seq,role,content,at) VALUES (?,?,?,?,?)',(sid,t*2+r+1,role,text,'2026-01-01T00:00:00Z'))
+for i in range(int(sys.argv[4])):
+    p=None if i%5==0 else projects[6+i%(len(projects)-6)]
+    created=(datetime(2026,1,1,tzinfo=timezone.utc)+timedelta(minutes=i*997%int(sys.argv[4]))).isoformat()
+    updated=(datetime(2026,1,1,tzinfo=timezone.utc)+timedelta(minutes=i*991%int(sys.argv[4]))).isoformat()
+    db.execute('INSERT INTO sessions (id,created_at,updated_at,title,cwd,workspace_id,provider,model,entries,pinned_at,archived_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)', ('sidebar-thread-'+str(i),created,updated,'Sidebar history '+str(i),p['path'] if p else str(home/'scratch'/str(i)),p['id'] if p and i%3!=0 else '', 'fixture','fixture',0,created if i%40==0 else None,created if i%31==0 else None))
 if int(sys.argv[3]):
     sid='unrelated-subscription-history'
     db.execute('INSERT INTO sessions (id,created_at,updated_at,title,cwd,provider,model) VALUES (?,?,?,?,?,?,?)', (sid,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z','Unrelated history','/synthetic-unrelated','subscription-grok','fixture'))
@@ -122,7 +140,7 @@ if int(sys.argv[3]):
         for r,(role,content,tokens) in enumerate([('user','Synthetic request',0),('assistant','Synthetic historical content. '*2300,0),('meta','token_usage',7),('meta','turn_terminal',7)]):
             db.execute('INSERT INTO session_messages (session_id,seq,role,content,at,provider,model,input_tokens,stop_reason) VALUES (?,?,?,?,?,?,?,?,?)', (sid,t*4+r+1,role,content,'2026-01-01T00:00:00Z',provider,'fixture',tokens,'completed' if r==3 else ''))
 db.commit()
-`, home, String(turns), String(subscriptionTurns)], { encoding: 'utf8' });
+`, home, String(turns), String(subscriptionTurns), String(sidebarThreads)], { encoding: 'utf8' });
 assert.equal(seed.status, 0, seed.stderr);
 const timings = [];
 const originalHandle = ipcMain.handle.bind(ipcMain);
@@ -271,10 +289,12 @@ async function showSessionSidebar(win) {
 let providerServer;
 let providerResponse;
 let receiveProviderRequest;
+let providerReceivedAt;
 const providerRequest = new Promise(resolve => { receiveProviderRequest = resolve; });
 async function startFixtureProvider() {
-  if (process.env.WUU_SWITCH_STREAM !== '1') return;
+  if (process.env.WUU_SWITCH_STREAM !== '1' && !pacedStream) return;
   providerServer = http.createServer((req, res) => {
+    console.log('FIXTURE_PROVIDER_REQUEST', req.method, req.url);
     if (req.method !== 'POST' || req.url !== '/v1/chat/completions') {
       res.writeHead(404).end();
       return;
@@ -283,6 +303,7 @@ async function startFixtureProvider() {
     req.on('end', () => {
       res.writeHead(200, { 'Content-Type': 'text/event-stream' });
       providerResponse = res;
+      providerReceivedAt = performance.now();
       receiveProviderRequest();
     });
   });
@@ -294,6 +315,7 @@ async function startFixtureProvider() {
 }
 async function checkStreaming(win) {
   if (!providerServer) return;
+  if (pacedStream) return checkPacedStreaming(win);
   // Streaming switches check recovery separately from the idle draft benchmark.
   async function switchStreamingTo(index) {
     await showSessionSidebar(win);
@@ -358,6 +380,174 @@ async function checkStreaming(win) {
   console.log('STREAM', JSON.stringify(result));
   providerServer.close();
 }
+async function checkStartup(win, launchStart) {
+  await evaluate(win, () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  const conversationFrameMs = performance.now() - launchStart;
+  await waitFor(win, () => {
+    const input = document.querySelector('.composer textarea');
+    if (!input || input.disabled || input.readOnly || input.closest('[inert]')) return false;
+    input.focus();
+    return document.activeElement === input;
+  });
+  await win.webContents.insertText('Startup typeability probe');
+  await evaluate(win, () => new Promise((resolve, reject) => {
+    const deadline = performance.now() + 30000;
+    let frames = 0;
+    const check = () => {
+      if (performance.now() > deadline) return reject(new Error('Startup draft never became send-ready'));
+      const input = document.querySelector('.composer textarea');
+      const send = document.querySelector('.composer-send-button');
+      frames = input?.value === 'Startup typeability probe' && document.activeElement === input && !input.disabled && send && !send.disabled ? frames + 1 : 0;
+      if (frames >= 2) return resolve();
+      requestAnimationFrame(check);
+    };
+    requestAnimationFrame(check);
+  }));
+  startup = { conversationFrameMs, interactiveFrameMs: performance.now() - launchStart, coreSpawns, rpc: timings.map(t => ({ ...t })) };
+  console.log('STARTUP', JSON.stringify(startup));
+  await evaluate(win, () => document.querySelector('.composer textarea').select());
+  win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Backspace' });
+  win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Backspace' });
+  await waitFor(win, () => document.querySelector('.composer textarea')?.value === '');
+}
+async function checkPacedStreaming(win) {
+  await evaluate(win, () => document.querySelector('.composer textarea').focus());
+  await win.webContents.insertText('Run the local paced Markdown fixture.');
+  await waitFor(win, () => { const send = document.querySelector('.composer-send-button'); return send && !send.disabled; });
+  await evaluate(win, () => {
+    const probe = window.__pacedProbe = { frames: [], longTasks: [], mutations: 0, deltas: 0 };
+    probe.longObserver = new PerformanceObserver(list => probe.longTasks.push(...list.getEntries().map(e => ({ start: e.startTime, duration: e.duration }))));
+    probe.longObserver.observe({ type: 'longtask' });
+    probe.mutationObserver = new MutationObserver(list => { probe.mutations += list.length; });
+    probe.mutationObserver.observe(document.querySelector('.conversation-pane'), { childList: true, characterData: true, subtree: true });
+    probe.unsubscribe = window.wuu.onServerEvent(event => {
+      if (event.kind !== 'notification') return;
+      if (event.message.params?.thread_id !== 'switch-thread-5') return;
+      if (event.message.method === 'item/agentMessage/delta') {
+        probe.firstDeltaAt ??= performance.now();
+        probe.deltas++;
+      }
+      if (event.message.method === 'turn/completed') probe.completedAt = performance.now();
+    });
+    // Capture native keyboard submission before React handles the event.
+    document.addEventListener('keydown', event => {
+      if (event.key !== 'Enter' || !event.target.matches('.composer textarea')) return;
+      probe.start = event.timeStamp;
+      probe.trusted = event.isTrusted;
+    }, { capture: true, once: true });
+    let firstFrames = 0;
+    let finalFrames = 0;
+    const tick = timestamp => {
+      if (probe.stop) return;
+      if (probe.start !== undefined) {
+        if (probe.lastFrame !== undefined) probe.frames.push(timestamp - probe.lastFrame);
+        probe.lastFrame = timestamp;
+        const pane = document.querySelector('.cached-conversation-pane[data-active="true"][data-thread-id="switch-thread-5"]');
+        const turn = pane?.querySelector('.turn[data-latest-turn="true"]');
+        const visibleMarker = marker => {
+          const node = [...(turn?.querySelectorAll('p') || [])].find(p => p.textContent.includes(marker));
+          const rect = node?.getBoundingClientRect();
+          const viewport = document.querySelector('.conversation-pane > .scroll-region')?.getBoundingClientRect();
+          return rect && viewport && rect.height > 0 && rect.bottom > viewport.top && rect.top < viewport.bottom;
+        };
+        if (probe.firstContentAt === undefined) {
+          firstFrames = visibleMarker('WUU-PACED-START') ? firstFrames + 1 : 0;
+          if (firstFrames >= 2) probe.firstContentAt = performance.now();
+        }
+        if (probe.completedAt !== undefined) {
+          finalFrames = visibleMarker('WUU-PACED-END') ? finalFrames + 1 : 0;
+          if (finalFrames >= 2) { probe.finalContentAt = performance.now(); return; }
+        }
+      }
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  });
+  const debug = win.webContents.debugger;
+  const before = await debug.sendCommand('Performance.getMetrics');
+  const processBefore = app.getAppMetrics();
+  const hostStart = performance.now();
+  const bytesBefore = wireBytes;
+  const rpcStart = timings.length;
+  await evaluate(win, () => document.querySelector('.composer textarea').focus());
+  win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Enter' });
+  win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Enter' });
+  await Promise.race([providerRequest, delay(30000).then(() => { throw new Error('Native send did not reach the synthetic provider'); })]);
+  const text = 'WUU-PACED-START\n\n' + Array.from({ length: 36 }, (_, i) =>
+    `## Section ${i}\n\n` + 'A **formatted** answer with [local context](#context), a stable paragraph, and useful details. '.repeat(8) +
+    '\n\n```typescript\nconst values = [1, 2, 3];\nconst result = values.map(value => value * 2);\n```\n\n' +
+    '| Step | Result |\n| --- | --- |\n| Read | Complete |\n| Verify | Preserved |\n\n').join('') + 'WUU-PACED-END';
+  const chunkBytes = 256;
+  const cadenceMs = 16;
+  const chunks = [];
+  let typing;
+  const streamStart = performance.now();
+  for (let offset = 0; offset < text.length; offset += chunkBytes) {
+    // Pace from absolute deadlines so provider cadence does not accumulate drift.
+    const due = streamStart + chunks.length * cadenceMs;
+    if (performance.now() < due) await delay(due - performance.now());
+    chunks.push(performance.now() - hostStart);
+    providerResponse.write(`data: ${JSON.stringify({ id: 'fixture', object: 'chat.completion.chunk', choices: [{ index: 0, delta: { content: text.slice(offset, offset + chunkBytes) }, finish_reason: null }] })}\n\n`);
+    if (!typing && offset >= text.length / 3) {
+      // The text is deliberately left unsent, and must survive stream settlement.
+      typing = (async () => {
+        await evaluate(win, () => {
+          const input = document.querySelector('.composer textarea');
+          input.focus();
+          input.addEventListener('beforeinput', event => {
+            window.__pacedProbe.typingStart = event.timeStamp;
+            window.__pacedProbe.typingTrusted = event.isTrusted;
+          }, { once: true });
+        });
+        await win.webContents.insertText('Draft preserved during streaming');
+        return evaluate(win, () => new Promise((resolve, reject) => {
+          const deadline = performance.now() + 30000;
+          let frames = 0;
+          const tick = () => {
+            if (performance.now() > deadline) return reject(new Error('Typing during streaming never rendered'));
+            const input = document.querySelector('.composer textarea');
+            frames = input?.value === 'Draft preserved during streaming' && document.activeElement === input && !input.disabled ? frames + 1 : 0;
+            if (frames >= 2) return resolve(performance.now() - window.__pacedProbe.typingStart);
+            requestAnimationFrame(tick);
+          };
+          requestAnimationFrame(tick);
+        }));
+      })();
+    }
+  }
+  const providerEndMs = performance.now() - hostStart;
+  providerResponse.end(`data: ${JSON.stringify({ id: 'fixture', object: 'chat.completion.chunk', choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n`);
+  const typingFrameMs = await typing;
+  await waitFor(win, () => window.__pacedProbe.finalContentAt !== undefined);
+  const probe = await evaluate(win, () => {
+    const p = window.__pacedProbe;
+    p.stop = true;
+    p.unsubscribe();
+    p.longTasks.push(...p.longObserver.takeRecords().map(e => ({ start: e.startTime, duration: e.duration })));
+    p.longObserver.disconnect();
+    p.mutations += p.mutationObserver.takeRecords().length;
+    p.mutationObserver.disconnect();
+    return { start: p.start, trusted: p.trusted, typingTrusted: p.typingTrusted, firstDeltaMs: p.firstDeltaAt - p.start, firstContentFrameMs: p.firstContentAt - p.start, completedMs: p.completedAt - p.start, finalContentFrameMs: p.finalContentAt - p.start, frames: p.frames, longTasks: p.longTasks.filter(t => t.start + t.duration > p.start && t.start < p.finalContentAt), mutations: p.mutations, rendererDeltaEvents: p.deltas };
+  });
+  const after = await debug.sendCommand('Performance.getMetrics');
+  const processAfter = app.getAppMetrics();
+  assert.ok(probe.trusted && probe.typingTrusted, 'Expected native send and text input');
+  for (const timing of [probe.firstDeltaMs, probe.firstContentFrameMs, probe.completedMs, probe.finalContentFrameMs, typingFrameMs]) {
+    assert.ok(Number.isFinite(timing) && timing >= 0, 'Missing renderer journey endpoint');
+  }
+  assert.equal(await evaluate(win, () => document.querySelector('.composer textarea')?.value), 'Draft preserved during streaming');
+  const persisted = await evaluate(win, async () => (await window.wuu.resumeThread('switch-thread-5')).thread.turns.at(-1));
+  assert.equal(persisted.status, 'completed');
+  assert.deepEqual(persisted.items.filter(item => item.type === 'agent_message').map(item => item.text), [text]);
+  const prior = Object.fromEntries(before.metrics.map(m => [m.name, m.value]));
+  const renderer = Object.fromEntries(after.metrics.filter(m => ['LayoutCount', 'RecalcStyleCount', 'LayoutDuration', 'RecalcStyleDuration', 'ScriptDuration', 'TaskDuration', 'JSHeapUsedSize'].includes(m.name)).map(m => [m.name, { before: prior[m.name], after: m.value, delta: m.value - prior[m.name] }]));
+  const frameGaps = [...probe.frames].sort((a, b) => a - b);
+  const result = { schemaVersion: 1, submission: 'native-enter', scope: 'Native Enter submission through the selected Electron/main/preload/Go application build and paced synthetic local SSE to two renderer frame opportunities. No real model, external account, production telemetry, or physical-display proof. Frame gaps reflect this rig cadence, not a 120 Hz claim.', bytes: Buffer.byteLength(text), chunkBytes, cadenceMs, providerReceivedMs: providerReceivedAt - hostStart, providerEndMs, providerChunksAtMs: chunks, ...probe, typingFrameMs, frameSummary: { count: frameGaps.length, p50: frameGaps[Math.ceil(frameGaps.length * .5) - 1], p95: frameGaps[Math.ceil(frameGaps.length * .95) - 1], max: frameGaps.at(-1), over20Ms: frameGaps.filter(x => x > 20).length, over33_34Ms: frameGaps.filter(x => x > 33.34).length }, renderer, processBefore, processAfter, wireBytes: wireBytes - bytesBefore, rpc: timings.slice(rpcStart).map(t => ({ channel: t.channel, startMs: t.startedAt - hostStart, ms: t.ms })) };
+  fs.writeFileSync(path.join(output, 'paced-stream-results.json'), JSON.stringify(result, null, 2));
+  console.log('PACED_STREAM', JSON.stringify({ firstContentFrameMs: probe.firstContentFrameMs, finalContentFrameMs: probe.finalContentFrameMs, typingFrameMs, frameSummary: result.frameSummary, longTasks: probe.longTasks.length, mutations: probe.mutations, rendererDeltaEvents: probe.rendererDeltaEvents }));
+  providerServer.close();
+}
+
 // Startup automatically restores project 0 before the first measured click.
 const seen = new Set([0]);
 async function switchTo(win, index, scenario) {
@@ -543,7 +733,7 @@ async function switchTo(win, index, scenario) {
 }
 let main;
 app.on('browser-window-created', (_event, win) => { main ||= win; });
-const timeout = setTimeout(() => { console.error('E2E timeout', fixture); app.exit(1); }, 120000 + rounds * 15000 + (process.env.WUU_SWITCH_STREAM === '1' ? 60000 : 0));
+const timeout = setTimeout(() => { console.error('E2E timeout', fixture); app.exit(1); }, 120000 + rounds * 15000 + (process.env.WUU_SWITCH_STREAM === '1' || pacedStream ? 60000 : 0));
 const launchStart = performance.now();
 startFixtureProvider().then(() => import(pathToFileURL(mainBundle).href)).then(async () => {
   while (!main) await delay(25);
@@ -561,15 +751,7 @@ startFixtureProvider().then(() => import(pathToFileURL(mainBundle).href)).then(a
   });
   console.log('FIXTURE', fixture);
   await waitFor(main, () => document.querySelector('.cached-conversation-pane[data-active="true"][data-thread-id="switch-thread-0"]'));
-  if (subscriptionTurns) {
-    await evaluate(main, () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-    startup = {
-      conversationFrameMs: +(performance.now() - launchStart).toFixed(1),
-      coreSpawns,
-      rpc: timings.map(t => ({ ...t })),
-    };
-    console.log('STARTUP', JSON.stringify(startup));
-  }
+  await checkStartup(main, launchStart);
   await evaluate(main, () => { for (const group of document.querySelectorAll('.project-group')) { const button = group.querySelector('button[aria-expanded="false"]'); button?.click(); } });
   const startupDeadline = Date.now() + 30000;
   while (timings.some(t => t.ms === null)) {
@@ -652,10 +834,15 @@ startFixtureProvider().then(() => import(pathToFileURL(mainBundle).href)).then(a
   };
   const rendererAssets = path.join(path.dirname(fileURLToPath(main.webContents.getURL())), 'assets');
   const metadata = {
-    schemaVersion: 3, recordedAt: new Date().toISOString(), sourceCommit: git(['rev-parse', 'HEAD']),
-    sourceChanges: git(['status', '--short']), platform: process.platform, arch: process.arch,
+    buildKind: process.env.WUU_SWITCH_BUILD_KIND || 'production-vite',
+    schemaVersion: 4, recordedAt: new Date().toISOString(), sourceCommit: git(['rev-parse', 'HEAD']),
+    sourceChanges: git(['status', '--short']),
+    productSourceCommit: process.env.WUU_SWITCH_BUILD_COMMIT || git(['-C', path.dirname(mainBundle), 'rev-parse', 'HEAD']),
+    productSourceChanges: git(['-C', path.dirname(mainBundle), 'status', '--short']), platform: process.platform, arch: process.arch,
     osRelease: os.release(), cpu: os.cpus()[0].model, cpuCount: os.cpus().length,
-    versions: process.versions, turns, rounds, safeMode, variant, initDelayMs, subscriptionTurns,
+    versions: process.versions, turns, rounds, safeMode, variant, initDelayMs, subscriptionTurns, sidebarThreads, pacedStream,
+    hostLoadAverage: os.loadavg(), totalMemoryBytes: os.totalmem(), freeMemoryBytes: os.freemem(),
+    startupEndpoint: 'Main bundle import to restored conversation, then focused editable input, native inserted draft and enabled Send for two frames. Excludes synthetic data seeding and Electron executable startup; includes host polling and probe IPC. Cold profile with warm filesystem cache, not a physical-paint measurement.',
     databaseBytes: fs.statSync(path.join(home, 'sessions/sessions.sqlite3')).size,
     subscriptionEndpoint: 'Host CDP mouse dispatch to target workspace draft, focused editable input, inserted text and enabled Send plus two frames. Includes dispatch, polling and probe IPC overhead. Startup is measured separately from main import to the initial conversation frame, excluding fixture creation.',
     traceEnabled, cpuProfileEnabled, checkBudget, budget: checkBudget ? budget : null,
@@ -690,6 +877,10 @@ startFixtureProvider().then(() => import(pathToFileURL(mainBundle).href)).then(a
 }).catch(async error => {
   if (main && !main.isDestroyed()) {
     const state = await evaluate(main, () => ({
+      paced: window.__pacedProbe && { latestTurns: [...document.querySelectorAll('.cached-conversation-pane[data-active="true"] .turn')].slice(-1).map(t => ({ latest: t.getAttribute('data-latest-turn'), lastParagraph: [...t.querySelectorAll('p')].at(-1)?.textContent })), start: window.__pacedProbe.start, trusted: window.__pacedProbe.trusted, firstDeltaAt: window.__pacedProbe.firstDeltaAt, completedAt: window.__pacedProbe.completedAt, firstContentAt: window.__pacedProbe.firstContentAt, finalContentAt: window.__pacedProbe.finalContentAt },
+      draft: document.querySelector('.composer textarea')?.value,
+      send: document.querySelector('.composer-send-button')?.outerHTML,
+      notifications: document.querySelector('[data-toast-viewport]')?.textContent,
       start: window.__switchProbe?.start,
       inputEvents: window.__switchProbe?.inputEvents,
       active: document.querySelector('.cached-conversation-pane[data-active="true"]')?.getAttribute('data-thread-id'),

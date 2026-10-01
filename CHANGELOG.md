@@ -26,6 +26,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Reuse completed Markdown blocks while new text streams, reducing repeated
   rendering and allocation work in long answers.
 - Reduce repeated schema inspection when opening session history and metadata.
+- Classify sidebar sessions with a per-batch workspace index, avoiding repeated
+  path normalization across registered workspaces.
+- Release acknowledged remote-control output without copying the pending replay
+  buffer, preserving reconnect ordering and queue limits.
 
 - Video attachments show larger, unobstructed previews with only a play button;
   native controls appear on playback.

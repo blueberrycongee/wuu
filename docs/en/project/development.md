@@ -138,6 +138,41 @@ necessarily a cold process start; keep those measurements separate. The fixture
 also saves `subscription-navigation.png`. The held response tests navigation
 independence, not a database lock or an account-service outage.
 
+### End-to-end journey diagnostics
+
+The same fixture always records startup through a restored conversation and a
+native typed draft with Send enabled for two animation frames. Startup begins at
+main-bundle import, after synthetic data seeding, so it excludes the Electron
+executable launch. Use fresh fixture profiles and alternate independently built
+baseline and candidate bundles. Filesystem caches are not flushed.
+
+Set `WUU_SWITCH_PACED_STREAM=1` to send a real composer message through the
+production preload, main process and Go core to a local synthetic SSE provider.
+It streams formatted paragraphs, code and tables in 256-byte chunks with 16 ms
+absolute-deadline pacing. The fixture verifies persisted text, native input,
+first and final rendered response markers, and an unsent draft typed during
+streaming. `paced-stream-results.json` includes raw frame gaps, provider write
+times, renderer event times, long tasks, DOM mutations, CDP work/heap metrics and
+Electron process CPU/memory snapshots. These are separate clock domains: compare
+intervals within each domain, not raw renderer and host timestamps. Process
+snapshots cover Electron, not Go-core CPU or total process-tree memory. Heap
+snapshots are ungc'd observations, not allocation counts or leak proof.
+
+For a populated sidebar, add `WUU_SWITCH_SIDEBAR_THREADS=1500` (30 additional projects) or
+`5000` (50 additional projects). These are metadata-only synthetic histories with pinned,
+archived, scratch and legacy cwd-associated sessions; they do not simulate live
+running processes. This opt-in workload is separate from the existing work-count
+budget and cannot run with `WUU_SWITCH_CHECK_BUDGET=1`.
+
+For each baseline/candidate run, use the same final harness, fixture counts,
+window size, dependency versions and machine, with matching full desktop and Go
+builds selected by `WUU_SWITCH_MAIN` and `WUU_DESKTOP_CORE`. Record at least
+three alternating pairs and retain every raw result, log and artifact hash.
+Do not pool initial opens with repeats or traced runs with untraced runs.
+Headless Linux can use `--no-sandbox --ozone-platform=headless`; its frame cadence
+is a property of that rig. Two frames are paint opportunities, not physical
+presentation or a claim of 120 Hz. Wall-clock timings remain informational.
+
 ## Native phones and remote services
 
 The active phone implementations are SwiftUI on iOS and Jetpack Compose on Android in [`clients/native`](../../../clients/native/README.md) (Chinese). Their dedicated verification command is:

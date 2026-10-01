@@ -92,6 +92,7 @@ app.whenReady().then(async () => {
     sourceRef: baseRef || execFileSync("git", ["rev-parse", "HEAD"], { cwd: repoRoot, encoding: "utf8" }).trim(),
     sourceSha256: sha256(source),
     bundleSha256: sha256(fs.readFileSync(path.join(output, "bundle.js"))),
+    stylesheetSha256: sha256(fs.readFileSync(path.join(output, "bundle.css"))),
     versions: process.versions,
     iterations: 80, warmup: 10, rounds, allocationRounds,
     summary: [25, 100, 400].map((blocks) => {
