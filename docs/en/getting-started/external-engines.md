@@ -46,7 +46,7 @@ ACP engines that advertise models on `session/new` appear in the composer picker
 
 ## Fast mode
 
-Open the model popover and use the lightning button when the selected model advertises acceleration. Speed is independent of reasoning effort. It is saved per conversation, remains editable while an existing conversation is idle, and applies to the next request. Reset restores the engine's configured default. `/fast`, `/fast on`, `/fast off`, and `/fast status` use the same selection. Faster processing can consume more credits or cost more; the account and service determine availability.
+Open the model popover and use the lightning button in its header when the selected model advertises acceleration. Speed is independent of reasoning effort. It is saved per conversation, remains editable while an existing conversation is idle, and applies to the next request. Reset restores the engine's configured default. `/fast`, `/fast on`, `/fast off`, and `/fast status` use the same selection. Faster processing can consume more credits or cost more; the account and service determine availability.
 
 Codex discovers support from its live model catalog and sends `serviceTier: "fast"` or `"default"` on native thread creation, resume, and turns. The Claude engine passes an explicit `fastMode` setting for eligible Opus selections. ACP discovers per-model select options, including grouped choices, and uses the advertised `fast-mode`, `fast_mode`, `speed`, or `service_tier` ID and values with `session/set_config_option`. Model changes refresh the complete option list before speed is applied. Agents without a recognized advertised selector do not show this control; OpenCode's current integration does not advertise one.
 

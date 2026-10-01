@@ -3,10 +3,10 @@
  * `@testing-library/react`, so we drive the component through
  * `react-dom/client.createRoot` directly. Options are found by their
  * order (local first, worktree second), not by their copy. Backdrop and
- * Escape dismissal and focus return belong to the shared `Modal` tests.
+ * Escape dismissal and focus return are verified through the real shared Modal.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { act, createElement, type ReactElement } from "react";
+import { act, createElement, useState, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { ConversationForkDialog } from "./ConversationForkDialog";
 
@@ -60,6 +60,39 @@ describe("ConversationForkDialog", () => {
     expect(title).toBeTruthy();
     expect(dialog?.getAttribute("aria-label")).toBe(title);
     expect(options()).toHaveLength(2);
+  });
+
+  it.each(["backdrop", "Escape"])("dismisses via %s without forking and restores focus on repeated opens", (dismissal) => {
+    const onChoose = vi.fn();
+    function Harness(): ReactElement {
+      const [open, setOpen] = useState(false);
+      return createElement("div", null,
+        createElement("button", { type: "button", onClick: () => setOpen(true), "data-testid": "fork-opener" }, "Fork"),
+        open ? createElement(ConversationForkDialog, { onCancel: () => setOpen(false), onChoose }) : null,
+      );
+    }
+    mount(createElement(Harness));
+    const opener = document.querySelector<HTMLButtonElement>('[data-testid="fork-opener"]')!;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      act(() => { opener.focus(); opener.click(); });
+      const dialog = document.querySelector<HTMLElement>('[role="dialog"]')!;
+      // Only the two destinations are actions; dismissal does not compete with them.
+      expect([...dialog.querySelectorAll("button")]).toEqual(options());
+      expect(document.activeElement).toBe(localOption());
+      act(() => dialog.querySelector<HTMLElement>("h2")!.click());
+      expect(document.querySelector('[role="dialog"]')).toBe(dialog);
+      act(() => worktreeOption().focus());
+      pressKey(worktreeOption(), "Tab");
+      expect(document.activeElement).toBe(localOption());
+      if (dismissal === "backdrop") {
+        act(() => document.querySelector<HTMLElement>(".modal-backdrop")!.click());
+      } else {
+        pressKey(localOption(), "Escape");
+      }
+      expect(document.querySelector('[role="dialog"]')).toBeNull();
+      expect(document.activeElement).toBe(opener);
+      expect(onChoose).not.toHaveBeenCalled();
+    }
   });
 
   it("invokes onChoose(\"local\") when the local option is clicked", async () => {
@@ -143,6 +176,10 @@ describe("ConversationForkDialog", () => {
     expect(localOption().disabled).toBe(true);
     expect(worktreeOption().disabled).toBe(true);
     expect(localOption().getAttribute("aria-busy")).toBe("true");
+    pressKey(localOption(), "Escape");
+    act(() => document.querySelector<HTMLElement>(".modal-backdrop")!.click());
+    expect(onCancel).not.toHaveBeenCalled();
+    expect(onChoose).toHaveBeenCalledTimes(1);
 
     // Resolve inside act() so the busy-mode-reset state update lands
     // inside a flushed transition — otherwise React 19 logs a noisy

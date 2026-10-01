@@ -98,7 +98,8 @@ describe("RuntimePicker", () => {
     const speed = vi.fn().mockResolvedValue(true);
     const effort = vi.fn();
     const model = vi.fn();
-    renderPicker("model", runtimeWithEffort(), vi.fn(), effort, model, createRef(), {
+    const toggleMenu = vi.fn();
+    renderPicker("model", runtimeWithEffort(), toggleMenu, effort, model, createRef(), {
       activeEngine: "codex", engineLocked: true, engineModel: "gpt-6-astra", engineEffort: "high", engineSpeed: "standard",
       onSelectSpeed: speed,
       engines: [{ id: "codex", enabled: true, binary_ok: true, models: [{ id: "gpt-6-astra", fast_mode: true, supported_efforts: ["low", "high"] }] }],
@@ -109,6 +110,10 @@ describe("RuntimePicker", () => {
     expect(speed).toHaveBeenCalledWith("fast");
     expect(effort).not.toHaveBeenCalled();
     expect(model).not.toHaveBeenCalled();
+    expect(toggleMenu).not.toHaveBeenCalled();
+    expect(document.querySelector(".runtime-panel.is-summary")).not.toBeNull();
+    expect(button?.getAttribute("aria-description")).toBeTruthy();
+    expect(button?.parentElement?.closest("button")).toBeNull();
   });
 
   it.each([
@@ -122,13 +127,46 @@ describe("RuntimePicker", () => {
       onSelectSpeed,
       engines: [{ id: "codex", enabled: true, binary_ok: true, models: [{ id: "gpt-6-astra", fast_mode: true, default_speed: defaultSpeed }] }],
     });
+    // Wait for the opening frame's automatic focus before simulating input.
+    await act(async () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
     const button = document.querySelector<HTMLButtonElement>('button[aria-label="Fast mode"]');
     expect(button?.getAttribute("aria-pressed")).toBe(String(enabled));
+    expect(document.querySelector<HTMLButtonElement>(".runtime-panel-speed-reset")?.disabled).toBe(!speed);
     await act(async () => button?.click());
     expect(onSelectSpeed).toHaveBeenCalledWith(next);
     await act(async () => document.querySelector<HTMLButtonElement>(".runtime-panel-speed-reset")?.click());
     expect(onSelectSpeed).toHaveBeenLastCalledWith("");
+    expect(document.activeElement).toBe(button);
     expect(button?.getAttribute("aria-pressed")).toBe(String(defaultSpeed === "fast"));
+    expect(document.querySelector<HTMLButtonElement>(".runtime-panel-speed-reset")?.disabled).toBe(true);
+  });
+
+  it("keeps a speed save focused while preventing duplicate requests", async () => {
+    let finish!: (saved: boolean) => void;
+    const onSelectSpeed = vi.fn(() => new Promise<boolean>((resolve) => { finish = resolve; }));
+    const initialized = runtimeWithEffort();
+    initialized.speed = "standard";
+    initialized.providers![0].models![0].fast_mode = true;
+    renderPicker("model", initialized, vi.fn(), vi.fn(), vi.fn(), createRef(), { onSelectSpeed });
+    // Wait for the opening frame's automatic focus before simulating input.
+    await act(async () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+    const button = document.querySelector<HTMLButtonElement>('button[aria-label="Fast mode"]')!;
+    act(() => { button.focus(); button.click(); });
+    expect(button.disabled).toBe(false);
+    expect(button.getAttribute("aria-disabled")).toBe("true");
+    expect(button.getAttribute("aria-busy")).toBe("true");
+    act(() => button.click());
+    expect(onSelectSpeed).toHaveBeenCalledTimes(1);
+    await act(async () => finish(true));
+    expect(document.activeElement).toBe(button);
+    expect(button.getAttribute("aria-disabled")).toBeNull();
+  });
+
+  it("omits speed controls when the model does not support fast mode", () => {
+    const initialized = runtimeWithEffort();
+    renderPicker("model", initialized, vi.fn(), vi.fn(), vi.fn(), createRef(), { onSelectSpeed: vi.fn() });
+    expect(document.querySelector('button[aria-label="Fast mode"]')).toBeNull();
+    expect(document.querySelector(".runtime-panel-speed-reset")).toBeNull();
   });
 
   it("restores the speed toggle after a rejected update", async () => {
@@ -256,7 +294,7 @@ describe("RuntimePicker", () => {
     expect(rows()).toBe("1");
   });
 
-  it("reaches the effort slider and the rows below it with the arrow keys", async () => {
+  it("reaches inline speed controls above the model and the effort slider with the arrow keys", async () => {
     const initialized = runtimeWithEffort();
     initialized.providers![0].models![0].fast_mode = true;
     renderPicker("model", initialized, vi.fn(), vi.fn(), vi.fn(), createRef(), { onSelectSpeed: vi.fn().mockResolvedValue(true) });
@@ -265,6 +303,10 @@ describe("RuntimePicker", () => {
       act(() => { document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true })); });
     };
 
+    expect(document.activeElement).toBe(document.querySelector(".runtime-panel-model"));
+    press("ArrowUp");
+    expect(document.activeElement).toBe(document.querySelector(".runtime-panel-fast"));
+    press("ArrowDown");
     expect(document.activeElement).toBe(document.querySelector(".runtime-panel-model"));
     press("ArrowDown");
     const slider = document.querySelector<HTMLInputElement>('.codex-effort-slider input[type="range"]')!;

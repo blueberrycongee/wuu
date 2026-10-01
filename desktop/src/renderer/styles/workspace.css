@@ -2906,11 +2906,11 @@ html[data-focus-modality="keyboard"] .workspace-diff-tree-row:focus-visible {
 
 /* The one control in the panel that is dragged, so it is the one with weight:
  * a capsule that fills with ink as the level rises, a dot for every level the
- * model offers, and a knob inset in the capsule that snaps to them. */
+ * model offers, and a knob that reaches the capsule endpoints. */
 .codex-effort-slider {
   --effort-knob: 20px;
   --effort-track: 24px;
-  --effort-edge: 2px;
+  --effort-edge: 0px;
   --effort-at: calc(var(--effort-edge) + var(--effort-knob) / 2 + (100% - var(--effort-knob) - var(--effort-edge) * 2) * var(--effort-ratio, 0));
   position: relative;
   height: 28px;
@@ -3067,9 +3067,9 @@ html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visibl
   --runtime-summary: calc(
     2px + var(--menu-inset) * 2
     + var(--runtime-summary-context, 1) * var(--runtime-context-row)
-    + var(--runtime-summary-rows, 1) * var(--runtime-row)
+    + var(--runtime-row)
     + var(--runtime-summary-effort, 0) * var(--runtime-effort-block)
-    + (var(--runtime-summary-context, 1) + var(--runtime-summary-rows, 1) + var(--runtime-summary-effort, 0) - 1) * 2px
+    + (var(--runtime-summary-context, 1) + var(--runtime-summary-effort, 0)) * 2px
   );
   position: relative;
   display: block;
@@ -3130,6 +3130,7 @@ html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visibl
 }
 
 .runtime-panel-summary {
+  --runtime-content-inset: var(--space-1);
   display: flex;
   height: 100%;
   min-height: 0;
@@ -3150,6 +3151,14 @@ html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visibl
   color: var(--ink-tertiary);
 }
 
+.runtime-panel-context-source {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 4px;
+}
+
 .codex-runtime-menu .runtime-panel-context button,
 .runtime-panel-context-item {
   display: inline-flex;
@@ -3159,7 +3168,7 @@ html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visibl
   flex: 0 1 auto;
   align-items: center;
   gap: 4px;
-  padding: 0 4px;
+  padding: 0 var(--runtime-content-inset);
   border-radius: var(--radius-xs);
   color: var(--ink-tertiary);
   font-size: var(--font-xs);
@@ -3201,7 +3210,7 @@ html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visibl
   height: var(--runtime-row);
   flex: 0 0 auto;
   gap: 8px;
-  padding: 0 4px;
+  padding: 0 var(--runtime-content-inset);
   border-radius: var(--radius-xs);
   font-size: var(--font-menu);
   font-weight: var(--weight-medium);
@@ -3215,11 +3224,21 @@ html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visibl
   color: var(--ink-tertiary);
 }
 
-/* The model row shows the live effort value above the slider. */
+/* Lead with the same content guide as text and icons. The thumb's outer
+ * edges reach this guide and the trailing button edge, without a second inset. */
 .runtime-panel-effort {
   height: var(--runtime-effort-block);
   flex: 0 0 auto;
-  padding: 0 4px;
+  padding-inline: var(--runtime-content-inset) 0;
+}
+
+/* Focus stays within the painted control edge so keyboard use does not move
+ * either visual guide. The slider keeps its full input hit area. */
+html[data-focus-modality="keyboard"] .runtime-panel-summary :is(
+  button:focus-visible,
+  .codex-effort-slider:has(input:focus-visible) .codex-effort-knob
+) {
+  outline-offset: -2px;
 }
 
 .codex-runtime-menu .runtime-panel-effort-value {
@@ -3536,43 +3555,31 @@ html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visibl
   scrollbar-gutter: stable both-edges;
 }
 
-/* Speed is independent of the model and the effort slider: a row that shows
- * its state with a check, like the checked rows of the list pages. */
-.runtime-panel-fast-row {
+/* Keep speed separate from model navigation without taking a full row. The
+ * reset keeps its slot when inherited, so toggling never moves either target. */
+.runtime-panel-speed-controls {
   display: flex;
-  height: var(--runtime-row);
   flex: 0 0 auto;
   align-items: center;
   gap: 2px;
 }
 
-.codex-runtime-menu .runtime-panel-fast {
-  height: 100%;
-  flex: 1 1 auto;
-  gap: 8px;
-  padding: 0 4px;
-  border-radius: var(--radius-xs);
-  font-size: var(--font-menu);
-  font-weight: var(--weight-medium);
-}
-
-.codex-runtime-menu .runtime-panel-fast > svg {
-  color: var(--ink-soft);
-}
-
-.runtime-panel-fast .runtime-panel-fast-check {
-  visibility: hidden;
-}
-
-.runtime-panel-fast[aria-pressed="true"] .runtime-panel-fast-check {
-  visibility: visible;
-}
-
-.codex-runtime-menu .runtime-panel-fast-row .runtime-panel-speed-reset {
-  width: var(--runtime-row);
-  height: 100%;
+.codex-runtime-menu .runtime-panel-speed-controls button {
+  width: var(--runtime-context-row);
+  height: var(--runtime-context-row);
   flex: 0 0 auto;
   justify-content: center;
   padding: 0;
+  border-radius: var(--radius-xs);
   color: var(--ink-tertiary);
+}
+
+.codex-runtime-menu .runtime-panel-speed-controls button > svg {
+  width: var(--icon-size);
+  height: var(--icon-size);
+}
+
+.codex-runtime-menu .runtime-panel-fast[aria-pressed="true"] {
+  color: var(--interaction-accent);
+  background: var(--selection-surface);
 }
