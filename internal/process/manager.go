@@ -222,6 +222,11 @@ type processHandle struct {
 	stdin   io.WriteCloser
 	ptyFile *os.File
 	done    chan struct{}
+	// An adopted command may outlive its leader while a descendant owns an
+	// output pipe. Retain launch identity, not just a persisted process-group ID.
+	command          *CommandHandle
+	pid              int
+	processStartTime string
 }
 
 func NewManager(rootDir string, runtimeDirs ...string) (*Manager, error) {
@@ -959,8 +964,12 @@ func (m *Manager) Stop(id string) (*Process, error) {
 	handle := m.handles[id]
 	if p.Status == StatusStopped || p.Status == StatusFailed {
 		m.mu.Unlock()
-		waitForProcessMonitor(handle)
-		return p, nil
+		return p, waitForProcessMonitor(handle)
+	}
+	ownedCommand := handle != nil && handle.command != nil
+	if ownedCommand && (handle.pid != p.PID || handle.command.tree.ID() != p.PGID || handle.processStartTime != p.ProcessStartTime) {
+		m.mu.Unlock()
+		return p, fmt.Errorf("process %q record does not match its owned command; refusing to signal it", id)
 	}
 	running, err := processMatchesRecord(p)
 	if err != nil {
@@ -973,7 +982,7 @@ func (m *Manager) Stop(id string) (*Process, error) {
 		m.mu.Unlock()
 		return p, err
 	}
-	if !running {
+	if !running && !ownedCommand {
 		delete(m.handles, id)
 		p.Status = StatusStopped
 		p.StoppedAt = time.Now()
@@ -985,8 +994,7 @@ func (m *Manager) Stop(id string) (*Process, error) {
 		}
 		m.mu.Unlock()
 		m.publish(Event{Type: EventStopped, Cause: EventCauseRequestedStop, Process: *p})
-		waitForProcessMonitor(handle)
-		return p, nil
+		return p, waitForProcessMonitor(handle)
 	}
 	p.Status = StatusStopping
 	p.UpdatedAt = time.Now()
@@ -1020,15 +1028,20 @@ func (m *Manager) Stop(id string) (*Process, error) {
 	if !stopped {
 		return cur, fmt.Errorf("process group %d did not stop after SIGKILL", cur.PGID)
 	}
-	waitForProcessMonitor(handle)
-	return cur, nil
+	if err := waitForProcessMonitor(handle); err != nil {
+		return cur, err
+	}
+	return m.Get(id)
 }
 
-func waitForProcessMonitor(handle *processHandle) {
+func waitForProcessMonitor(handle *processHandle) error {
 	if handle == nil || handle.done == nil {
-		return
+		return nil
 	}
-	<-handle.done
+	if !waitForCommand(handle.done, DefaultStopGracePeriod) {
+		return errors.New("process output monitor did not finish after stop")
+	}
+	return nil
 }
 
 func (m *Manager) waitForStop(id string, deadline time.Time) (*Process, bool, error) {
@@ -1650,7 +1663,10 @@ func (m *Manager) Adopt(id string, cmd *exec.Cmd, handle *CommandHandle, logf *o
 		m.mu.Unlock()
 		return nil, err
 	}
-	adopted := &processHandle{done: make(chan struct{})}
+	adopted := &processHandle{
+		done: make(chan struct{}), command: handle,
+		pid: p.PID, processStartTime: p.ProcessStartTime,
+	}
 	m.handles[id] = adopted
 	m.mu.Unlock()
 	m.publish(Event{Type: EventStarted, Process: *p})
