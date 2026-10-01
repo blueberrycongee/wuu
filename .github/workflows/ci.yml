@@ -125,6 +125,29 @@ jobs:
             ${{ runner.temp }}/wuu-titlebar-evidence/*.txt
           retention-days: 14
 
+      - name: Guard image inspection aggregation
+        timeout-minutes: 3
+        shell: bash
+        env:
+          WUU_ARTIFACT_E2E_ONLY: inspection
+          WUU_ARTIFACT_OUTPUT: ${{ runner.temp }}/wuu-image-inspection-evidence
+        run: |
+          mkdir -p "$WUU_ARTIFACT_OUTPUT"
+          set -o pipefail
+          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/artifact-preview-e2e.cjs 2>&1 | tee "$WUU_ARTIFACT_OUTPUT/run.log"
+
+      - name: Upload image inspection evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: image-inspection-evidence
+          path: |
+            ${{ runner.temp }}/wuu-image-inspection-evidence/*.json
+            ${{ runner.temp }}/wuu-image-inspection-evidence/*.png
+            ${{ runner.temp }}/wuu-image-inspection-evidence/*.log
+          if-no-files-found: ignore
+          retention-days: 14
+
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod

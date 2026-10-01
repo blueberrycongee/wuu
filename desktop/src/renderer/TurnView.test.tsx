@@ -455,6 +455,43 @@ describe("TurnView", () => {
     expect(agentBlock?.querySelector(".turn-edit-summary-card")).toBeTruthy();
   });
 
+  it.each([1, 3])("keeps %s image inspection tools in the process fold with previews on demand", async (count) => {
+    const inspect = (index: number): ThreadItem => ({
+      id: `inspect-${index}`, type: "tool_call", name: "read_file", status: "completed",
+      arguments: JSON.stringify({ path: `inspection-${index}.svg` }),
+      result_detail: { content: [
+        { type: "text", text: `Inspection metadata ${index}` },
+        { type: "image", name: `inspection-${index}.svg`, mime_type: "image/svg+xml", data: btoa('<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40"><rect width="40" height="40" fill="blue"/></svg>') },
+      ] },
+    });
+    const tools = Array.from({ length: count }, (_, index) => inspect(index));
+    const turn = makeTurn("completed", [...tools, makeFinalAnswer("Checked.")]);
+    container = document.createElement("div"); document.body.append(container); root = createRoot(container);
+    act(() => root!.render(<ImagePreviewProvider><TurnView turn={turn} isLatestTurn onStreamFrame={() => {}} /></ImagePreviewProvider>));
+    expect(container.querySelectorAll('.turn-answer-body [data-wuu-component="turn-artifacts-inline"]')).toHaveLength(0);
+    expect(container.querySelectorAll('img')).toHaveLength(0);
+    await act(async () => { container!.querySelector<HTMLElement>('.turn-process-toggle')!.click(); });
+    expect(container.querySelectorAll('.turn-process-entry')).toHaveLength(1);
+    const process = container.querySelector<HTMLDetailsElement>('.turn-process-entry .process-surface-fold')!;
+    expect(process).not.toBeNull();
+    await act(async () => { process.open = true; process.dispatchEvent(new Event("toggle")); });
+    expect(process.querySelectorAll('img')).toHaveLength(count);
+    await act(async () => { process.open = false; process.dispatchEvent(new Event("toggle")); });
+    expect(container.querySelectorAll('img')).toHaveLength(0);
+  });
+
+  it("resolves grouped inspection images against their owning conversation directory", async () => {
+    const turn = makeTurn("completed", [{ id: "relative-inspection", type: "tool_call", name: "read_file", status: "completed",
+      result_detail: { content: [{ type: "image", mime_type: "image/png", uri: "images/preview.png", name: "preview.png" }] },
+    }]);
+    container = document.createElement("div"); document.body.append(container); root = createRoot(container);
+    act(() => root!.render(<ImagePreviewProvider><TurnView turn={turn} cwd="/workspace/owning-thread" onStreamFrame={() => {}} /></ImagePreviewProvider>));
+    const process = container.querySelector<HTMLDetailsElement>('.turn-process-entry .process-surface-fold')!;
+    await act(async () => { process.open = true; process.dispatchEvent(new Event("toggle")); });
+    const source = container.querySelector('img')?.getAttribute('src');
+    expect(source).toBe(`wuu-file://local/${btoa('/workspace/owning-thread/images/preview.png').replace(/=+$/, '')}`);
+  });
+
   it("keeps explicit artifact previews separate from the unchanged file-diff summary", () => {
     const uri = "wuu-artifact://workspace/thread/artifact/chart.svg?sha256=old";
     const turn = makeTurn("completed", [
