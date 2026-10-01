@@ -174,6 +174,45 @@ async function waitFor(win, fn, arg, timeout = 30000) {
   }
   throw new Error(`Timed out: ${fn}`);
 }
+async function clearDraft(win, expected) {
+  // History restoration commits its value before the deferred caret placement.
+  // Let that native history action settle before beginning a new selection.
+  await evaluate(win, () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  await evaluate(win, expected => {
+    const input = document.querySelector('.composer textarea');
+    if (input?.value !== expected) throw new Error('Draft changed before cleanup');
+    input.focus();
+  }, expected);
+  const modifiers = [process.platform === 'darwin' ? 'meta' : 'control'];
+  win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'A', modifiers });
+  win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'A', modifiers });
+  await evaluate(win, expected => new Promise((resolve, reject) => {
+    const deadline = performance.now() + 30000;
+    let frames = 0;
+    const check = () => {
+      if (performance.now() > deadline) return reject(new Error('Native Select All did not preserve the full draft selection'));
+      const input = document.querySelector('.composer textarea');
+      const ready = input?.value === expected && document.activeElement === input && input.selectionStart === 0 && input.selectionEnd === expected.length;
+      frames = ready ? frames + 1 : 0;
+      if (frames >= 2) {
+        window.__cleanupInput = undefined;
+        input.addEventListener('beforeinput', event => {
+          window.__cleanupInput = { trusted: event.isTrusted, inputType: event.inputType, value: input.value, start: input.selectionStart, end: input.selectionEnd };
+        }, { once: true });
+        return resolve();
+      }
+      requestAnimationFrame(check);
+    };
+    requestAnimationFrame(check);
+  }), expected);
+  win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Backspace' });
+  win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Backspace' });
+  await waitFor(win, () => document.querySelector('.composer textarea')?.value === '');
+  assert.deepEqual(await evaluate(win, () => window.__cleanupInput), {
+    trusted: true, inputType: 'deleteContentBackward', value: expected, start: 0, end: expected.length,
+  }, 'Native deletion did not operate on the complete selected draft');
+}
+
 const results = [];
 const subscriptionResults = [];
 let startup;
@@ -219,10 +258,7 @@ async function checkSubscriptionNavigation(win) {
     const result = { scenario, index, readyMs, coreSpawns: coreSpawns - spawnStart, rpc: timings.slice(rpcStart).map(t => ({ ...t })) };
     subscriptionResults.push(result);
     console.log('SUBSCRIPTION', JSON.stringify(result));
-    await evaluate(win, () => document.querySelector('.composer textarea').select());
-    win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Backspace' });
-    win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Backspace' });
-    await waitFor(win, () => document.querySelector('.composer textarea')?.value === '');
+    await clearDraft(win, 'subscription navigation probe');
   }
   await newDraft(2, 'first-project-visit-new-draft');
   let release;
@@ -536,10 +572,7 @@ async function switchTo(win, index, scenario) {
   win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Down' });
   await waitFor(win, text => document.querySelector('.composer textarea')?.value === text, draft);
   // Clear without submitting; the fixture never invokes inference.
-  await evaluate(win, () => document.querySelector('.composer textarea').select());
-  win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Backspace' });
-  win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Backspace' });
-  await waitFor(win, () => document.querySelector('.composer textarea')?.value === '');
+  await clearDraft(win, draft);
 }
 let main;
 app.on('browser-window-created', (_event, win) => { main ||= win; });
@@ -690,6 +723,8 @@ startFixtureProvider().then(() => import(pathToFileURL(mainBundle).href)).then(a
 }).catch(async error => {
   if (main && !main.isDestroyed()) {
     const state = await evaluate(main, () => ({
+      cleanupInput: window.__cleanupInput,
+      selection: (() => { const input = document.querySelector('.composer textarea'); return input && { start: input.selectionStart, end: input.selectionEnd, focused: document.activeElement === input }; })(),
       start: window.__switchProbe?.start,
       inputEvents: window.__switchProbe?.inputEvents,
       active: document.querySelector('.cached-conversation-pane[data-active="true"]')?.getAttribute('data-thread-id'),
