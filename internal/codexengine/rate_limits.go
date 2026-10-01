@@ -12,11 +12,13 @@ type RateLimitWindow struct {
 
 type RateLimitSnapshot struct {
 	LimitName string           `json:"limitName"`
+	PlanType  string           `json:"planType"`
 	Primary   *RateLimitWindow `json:"primary"`
 	Secondary *RateLimitWindow `json:"secondary"`
 }
 
 type RateLimitsResponse struct {
+	AccountID  string                       `json:"accountId"`
 	RateLimits RateLimitSnapshot            `json:"rateLimits"`
 	ByLimitID  map[string]RateLimitSnapshot `json:"rateLimitsByLimitId"`
 }

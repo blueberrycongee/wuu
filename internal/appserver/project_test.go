@@ -44,6 +44,8 @@ import (
 //     after a stop has invalidated its control fence;
 //   - waiting cancels delegated work, returns another turn, or loses completion
 //     when it happens before the waiter subscribes.
+//   - a remote executor's unfinished history is mistaken for completion, or
+//     a later execution prevents reading an earlier completed result.
 
 func newProjectFixture(t *testing.T) (*Server, *rpcClient, *projectCalls, *runtime.Session) {
 	t.Helper()
@@ -357,6 +359,164 @@ func TestProjectWaitTimeoutAndCompletedTurn(t *testing.T) {
 	request.TurnID = "unknown-turn"
 	if _, err := handler(context.Background(), "unknown-wait", request); err == nil {
 		t.Fatal("unknown turn accepted")
+	}
+}
+
+func TestProjectWaitObservesRemoteTurnCompletion(t *testing.T) {
+	owner, client, calls, rt := newProjectFixture(t)
+	lead := startProject(t, client, "Cross-host results")
+	no := false
+	created, err := owner.projectSessionHandler(lead.ID)(context.Background(), "remote-side", tools.ProjectSessionRequest{
+		Action: "side", Prompt: "First remote task", Block: &no,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	side := created.(projectSessionView)
+	held := calls.next(t, "First remote task")
+	active, err := session.ThreadExecutionActive(rt.SessionDir, side.SessionID)
+	if err != nil || !active {
+		t.Fatalf("owner execution lease = %v, %v", active, err)
+	}
+	observer := New(rt, &lockedBuffer{})
+	t.Cleanup(observer.Close)
+	handler := observer.projectSessionHandler(lead.ID)
+	request := tools.ProjectSessionRequest{Action: "wait", SessionID: side.SessionID, TimeoutMS: 1}
+	for _, turnID := range []string{"", side.TurnID} {
+		request.TurnID = turnID
+		value, err := handler(context.Background(), "remote-wait", request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		view := value.(projectSessionView)
+		if !view.TimedOut || view.State != "running" || view.TurnID != side.TurnID || view.TurnStatus != TurnStatusInProgress || view.FinalOutput != "" {
+			t.Fatalf("unfinished remote result = %+v", view)
+		}
+	}
+	held.response <- providersResponse("First remote result")
+	waitForThread(t, owner, side.SessionID, func(th Thread) bool {
+		return th.Status == ThreadStatusIdle && th.LatestCompletedTurnID == side.TurnID
+	})
+	records, err := session.LoadActiveHistoryRecords(rt.SessionDir, side.SessionID, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Provider compaction can retain the original first row while omitting
+	// terminal metadata. The physical active transcript still owns the result.
+	var checkpoint []session.HistoryRecord
+	for _, record := range records {
+		if record.Role != "meta" {
+			checkpoint = append(checkpoint, record)
+		}
+	}
+	if err := session.RewriteHistoryRecordsAtBaseline(rt.SessionDir, side.SessionID, checkpoint, records[len(records)-1].Seq); err != nil {
+		t.Fatal(err)
+	}
+	request.TimeoutMS = 1000
+	value, err := handler(context.Background(), "completed-remote-wait", request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	view := value.(projectSessionView)
+	if view.TimedOut || view.TurnStatus != TurnStatusCompleted || view.FinalOutput != "First remote result" {
+		t.Fatalf("completed remote result = %+v", view)
+	}
+	_, err = owner.projectSessionHandler(lead.ID)(context.Background(), "next-remote-task", tools.ProjectSessionRequest{
+		Action: "side", Prompt: "Next remote task", Block: &no,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	next := calls.next(t, "Next remote task")
+	defer func() { next.response <- providersResponse("Next remote result") }()
+	value, err = handler(context.Background(), "previous-remote-wait", request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	view = value.(projectSessionView)
+	if view.TimedOut || view.State != "running" || view.TurnID != side.TurnID || view.TurnStatus != TurnStatusCompleted || view.FinalOutput != "First remote result" {
+		t.Fatalf("previous result while a later remote turn runs = %+v", view)
+	}
+}
+
+// Starting another host must not announce a remote worker's unfinished turn
+// merely because its local display snapshot has no running goroutine.
+func TestProjectRecoveryDoesNotReportRemoteActiveTurn(t *testing.T) {
+	owner, client, calls, rt := newProjectFixture(t)
+	lead := startProject(t, client, "Recovery terminal evidence")
+	created, err := owner.projectSessionHandler(lead.ID)(context.Background(), "held-worker", tools.ProjectSessionRequest{
+		Action: "create", Prompt: "Work held in the remote provider", Workspace: "shared",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	worker := created.(projectSessionView)
+	calls.next(t, "Work held in the remote provider")
+	if worker.TurnID == "" {
+		t.Fatal("dispatch did not identify its admitted turn")
+	}
+	if active, err := session.ThreadExecutionActive(rt.SessionDir, worker.SessionID); err != nil || !active {
+		t.Fatalf("remote execution lease = %v, %v", active, err)
+	}
+
+	observer := New(rt, &lockedBuffer{})
+	t.Cleanup(observer.Close)
+	observer.recoverProjectInbox()
+	resultID := projectResultClientID(worker.SessionID, worker.TurnID)
+	if found, err := session.InboxHas(rt.SessionDir, resultID); err != nil || found {
+		t.Fatalf("unfinished remote turn was reported as a project result: found=%v, err=%v", found, err)
+	}
+}
+
+func TestProjectWaitRequiresTerminalEvidenceWithoutExecutor(t *testing.T) {
+	srv, client, calls, rt := newProjectFixture(t)
+	lead := startProject(t, client, "Unsettled result")
+	member, err := srv.createHostSessionThread(projectSessionOwner, projectSessionSource, "", hostSessionCreateParams{
+		RequestID: "unsettled-member", Name: "Unsettled worker", ParentSessionID: lead.ID,
+		Visibility: sessionVisibilityUser, ContextSource: sessionContextFresh, Workspace: "shared",
+		WorkspaceID: rt.WorkspaceID, ProjectRole: "worker",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A process can exit after admitting the user input and before persisting
+	// a terminal record. An absent lease does not make that turn successful.
+	if _, err := session.ChangeControl(rt.SessionDir, member.ID, lead.ID, session.ControlActive, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.AppendHistoryRecord(rt.SessionDir, member.ID, session.HistoryRecord{
+		Role: "user", Content: "Admitted but not settled", At: time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	value, err := srv.projectSessionHandler(lead.ID)(context.Background(), "unsettled-wait", tools.ProjectSessionRequest{
+		Action: "wait", SessionID: member.ID, TimeoutMS: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	view := value.(projectSessionView)
+	if !view.TimedOut || view.State != "idle" || view.TurnStatus != TurnStatusInProgress || view.FinalOutput != "" {
+		t.Fatalf("unsettled result without executor = %+v", view)
+	}
+	oldTurnID := view.TurnID
+	_, err = srv.projectSessionHandler(lead.ID)(context.Background(), "next-local-task", tools.ProjectSessionRequest{
+		Action: "send", SessionID: member.ID, Prompt: "Next local task",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	next := calls.next(t, "Next local task")
+	defer func() { next.response <- providersResponse("Next local result") }()
+	value, err = srv.projectSessionHandler(lead.ID)(context.Background(), "unsettled-local-wait", tools.ProjectSessionRequest{
+		Action: "wait", SessionID: member.ID, TurnID: oldTurnID, TimeoutMS: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	view = value.(projectSessionView)
+	if !view.TimedOut || view.State != "running" || view.TurnStatus != TurnStatusInProgress || view.FinalOutput != "" {
+		t.Fatalf("unsettled result during a later local turn = %+v", view)
 	}
 }
 
@@ -1140,4 +1300,31 @@ func TestProjectPeerSteerDoesNotOutliveSenderControl(t *testing.T) {
 		t.Fatalf("revoked peer steer reached the model: %v", ids)
 	}
 	calls.assertIdle(t)
+}
+
+// Adopted ordinary conversations are workers and must be waitable by the side.
+func TestProjectSideWaitsForAdoptedWorker(t *testing.T) {
+	srv, client, calls, _ := newProjectFixture(t)
+	lead := startProject(t, client, "Adopted worker wait")
+	no := false
+	value, err := srv.projectSessionHandler(lead.ID)(context.Background(), "side", tools.ProjectSessionRequest{Action: "side", Prompt: "side stays busy", Block: &no})
+	if err != nil {
+		t.Fatal(err)
+	}
+	side := value.(projectSessionView)
+	calls.next(t, "side stays busy")
+	var ordinary ThreadStartResult
+	client.rpc(t, MethodThreadStart, ThreadStartParams{}, &ordinary)
+	var adopted ProjectSessionResult
+	client.rpc(t, MethodProjectSession, ProjectSessionParams{Action: "adopt", ProjectID: lead.ID, SessionID: ordinary.Thread.ID}, &adopted)
+	var turn TurnStartResult
+	client.rpc(t, MethodTurnStart, TurnStartParams{ThreadID: ordinary.Thread.ID, Prompt: "adopted worker busy"}, &turn)
+	calls.next(t, "adopted worker busy")
+	result, err := srv.projectSessionHandler(side.SessionID)(context.Background(), "wait-adopted", tools.ProjectSessionRequest{Action: "wait", SessionID: ordinary.Thread.ID, TurnID: turn.Turn.ID, TimeoutMS: 1})
+	if err != nil {
+		t.Fatalf("side cannot wait for adopted worker: %v", err)
+	}
+	if !result.(projectSessionView).TimedOut {
+		t.Fatalf("expected in-flight wait timeout: %+v", result)
+	}
 }

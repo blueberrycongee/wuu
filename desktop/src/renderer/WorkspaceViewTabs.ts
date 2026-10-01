@@ -76,12 +76,15 @@ export function workspaceProjectViewTab(projectID: string, title: string): Works
 }
 
 export type WorkspaceViewTab =
+  | { kind: "new"; id: string }
   | WorkspaceToolViewTab
   | WorkspaceDiffViewTab
   | WorkspaceFileViewTab
   | WorkspacePluginViewTab
   | WorkspaceArtifactViewTab
   | WorkspaceProjectViewTab;
+
+type WorkspaceViewTabOpenOptions = { activate?: boolean; replaceActiveNewTab?: boolean };
 
 export type WorkspaceViewTabsState = {
   tabs: WorkspaceViewTab[];
@@ -206,28 +209,38 @@ export function workspaceFileBasename(path: string): string {
 
 /**
  * Opens `tab`, replacing an existing resource with the same id or appending
- * a new one. Opening the first file replaces the temporary Files browser
- * entry; closing the final file restores that entry.
+ * a new one. A picker selection consumes only the active new page, keeping
+ * its position unless the resource already has a tab. Background opens never
+ * consume new pages. Files replace the temporary Files browser entry.
  */
 export function openViewTab(
   state: WorkspaceViewTabsState,
   tab: WorkspaceViewTab,
-  options: { activate?: boolean } = {},
+  options: WorkspaceViewTabOpenOptions = {},
 ): WorkspaceViewTabsState {
   const activate = options.activate !== false;
-  if (tab.kind === "file") {
-    const existingFileIndex = state.tabs.findIndex((candidate) => candidate.id === tab.id);
-    const tabsWithoutBrowser = state.tabs.filter((candidate) => candidate.kind !== "files");
-    const adjustedFileIndex = tabsWithoutBrowser.findIndex((candidate) => candidate.id === tab.id);
-    const tabs = existingFileIndex < 0
-      ? [...tabsWithoutBrowser, tab]
-      : tabsWithoutBrowser.map((candidate, index) => (index === adjustedFileIndex ? tab : candidate));
-    return activate ? focusViewTab({ ...state, tabs }, tab.id) : { ...state, tabs };
-  }
-  const index = state.tabs.findIndex((candidate) => candidate.id === tab.id);
-  const tabs =
-    index < 0 ? [...state.tabs, tab] : state.tabs.map((candidate, i) => (i === index ? tab : candidate));
-  return activate ? focusViewTab({ ...state, tabs }, tab.id) : { ...state, tabs };
+  const replacingIndex = activate && options.replaceActiveNewTab
+    ? state.tabs.findIndex((candidate) => candidate.id === state.activeTabID && candidate.kind === "new")
+    : -1;
+  const replacingID = replacingIndex < 0 ? undefined : state.tabs[replacingIndex].id;
+  const remaining = state.tabs.filter((candidate) =>
+    candidate.id !== replacingID && (tab.kind !== "file" || candidate.kind !== "files"),
+  );
+  const index = remaining.findIndex((candidate) => candidate.id === tab.id);
+  const insertionIndex = replacingIndex < 0 ? remaining.length
+    : state.tabs.slice(0, replacingIndex).filter((candidate) => remaining.includes(candidate)).length;
+  const tabs = index < 0
+    ? [...remaining.slice(0, insertionIndex), tab, ...remaining.slice(insertionIndex)]
+    : remaining.map((candidate, i) => i === index ? tab : candidate);
+  const nextState = replacingID
+    ? {
+        ...state,
+        tabs,
+        activeTabID: undefined,
+        activationHistory: state.activationHistory.filter((id) => id !== replacingID),
+      }
+    : { ...state, tabs };
+  return activate ? focusViewTab(nextState, tab.id) : nextState;
 }
 
 /** Focuses the tab with the given id (or the tool picker, when `id` is undefined). */
@@ -330,15 +343,13 @@ export function reorderViewTabs(
 }
 
 /**
- * React binding over the pure WorkspaceViewTabs state machine above. Not
- * yet wired into the app shell — WorkspaceToolState.ts composes this hook
- * to back the unified right-panel tab strip (tool tabs + diff tabs).
+ * React binding composed by WorkspaceToolState.ts for the right-panel tabs.
  */
 export function useWorkspaceViewTabs(): {
   tabs: WorkspaceViewTab[];
   activeTabID: string | undefined;
   activeFileTabID: string | undefined;
-  openTab: (tab: WorkspaceViewTab, options?: { activate?: boolean }) => void;
+  openTab: (tab: WorkspaceViewTab, options?: WorkspaceViewTabOpenOptions) => void;
   focusTab: (id: string | undefined) => void;
   closeTab: (id: string) => void;
   closeTabsWhere: (predicate: (tab: WorkspaceViewTab) => boolean) => void;
@@ -347,7 +358,7 @@ export function useWorkspaceViewTabs(): {
 } {
   const [state, setState] = useState<WorkspaceViewTabsState>(initialWorkspaceViewTabsState);
 
-  const openTab = useCallback((tab: WorkspaceViewTab, options?: { activate?: boolean }) => {
+  const openTab = useCallback((tab: WorkspaceViewTab, options?: WorkspaceViewTabOpenOptions) => {
     setState((current) => openViewTab(current, tab, options));
   }, []);
   const focusTab = useCallback((id: string | undefined) => {

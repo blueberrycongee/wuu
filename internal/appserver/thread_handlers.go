@@ -499,7 +499,10 @@ func (s *Server) loadPersistedThreadState(id string, now time.Time) (*threadStat
 		return nil, err
 	}
 	threadCWD := firstNonEmpty(loaded.metadata.CWD, s.rt.RootDir)
-	th := newThreadState(id, loaded.history, s.rt.ProviderName, s.rt.Model, threadCWD, true, now)
+	// The persisted display projection below owns turns; do not build and
+	// discard a second projection from the provider history first.
+	th := newThreadState(id, nil, s.rt.ProviderName, s.rt.Model, threadCWD, true, now)
+	th.History = cloneHistory(loaded.history)
 	th.historyHeadSeq = loaded.baselineSeq
 	th.Turns = turnsFromPersistedHistory(id, loaded.displayHistory, now, s.resolveParticipantSummary)
 	s.restorePluginToolLabels(th.Turns)
@@ -568,9 +571,13 @@ func (s *Server) loadPersistedThreadSnapshot(id string) (persistedThreadSnapshot
 	}
 	rawHistory := append([]persistedMessage(nil), displayHistory...)
 	displayHistory = displayHistoryAcrossProviderCheckpoint(displayHistory, providerRecords)
-	tokenMetas, err := loadMetaMessages(s.rt.SessionDir, id)
-	if err != nil {
-		return persistedThreadSnapshot{}, err
+	// Usage belongs to the active physical transcript, including records a
+	// provider checkpoint omits. Reuse that read before display normalization.
+	tokenMetas := make([]persistedMessage, 0)
+	for _, rec := range rawHistory {
+		if strings.EqualFold(strings.TrimSpace(rec.Role), "meta") {
+			tokenMetas = append(tokenMetas, rec)
+		}
 	}
 	relocated := relocatedSessionMetadata(metadata, s.registeredWorkspaces())
 	loaded := persistedThreadSnapshot{

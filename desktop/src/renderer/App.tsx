@@ -80,8 +80,6 @@ import {
   type ComposerVariant,
   type PermissionMode,
 } from "./ComposerView";
-import type { QueryHistoryEntry } from "./QueryHistoryPopover";
-import { QueryHistoryRail } from "./QueryHistoryRail";
 import { UserQuestionCard } from "./UserQuestionCard";
 import { ConversationSearchOverlay } from "./ConversationSearchOverlay";
 import {
@@ -90,6 +88,7 @@ import {
 } from "./ConversationScrollState";
 import { PullToNewSession } from "./PullToNewSession";
 import { useConversationSearch } from "./ConversationSearchState";
+import { useConversationSearchNavigation } from "./ConversationSearchNavigation";
 import {
   SideThreadPanel,
   type SideThreadPanelHandle,
@@ -117,10 +116,13 @@ import {
   activeTurnIDForThread,
   bindActiveSessionTabToThread,
   cloneSessionTabDraft,
+  captureComposerDrafts,
+  cloneComposerDraft,
   sessionTabDraftForThread,
   composerDraftHasContent,
   conversationPaneThreadsByID,
   createDraftSessionTab,
+  createThreadSessionTab,
   emptyComposerDraft,
   ensureSessionTab,
   handleStreamingNotification,
@@ -208,7 +210,6 @@ import {
 } from "./RuntimeHelpers";
 import type { SettingsPage } from "./SettingsView";
 import {
-  ENABLE_CONVERSATION_TURN_RAIL,
   ENABLE_EMBEDDED_BROWSER,
   ENABLE_ACCOUNT,
 } from "./FeatureFlags";
@@ -235,9 +236,8 @@ import {
   rawErrorMessage,
   statusMessageForError,
 } from "./UserFacingErrors";
-import { scrollToUserMessage, TurnView } from "./TurnView";
+import { TurnView } from "./TurnView";
 import { OPEN_SETTINGS_EVENT, type OpenSettingsDetail } from "./TurnNotice";
-import { ConversationTurnRail } from "./ConversationTurnRail";
 import {
   WorkspaceRightPanel,
 } from "./WorkspacePanels";
@@ -744,6 +744,7 @@ export function App(): JSX.Element {
     openWorkspaceProjectTab,
     syncWorkspaceProjectTab,
     showWorkspaceToolPicker,
+    resumeWorkspaceViewTab,
     focusWorkspaceViewTab,
     closeWorkspaceViewTab,
     closeWorkspaceViewTabsWhere,
@@ -1010,6 +1011,7 @@ export function App(): JSX.Element {
     finishViewSwitch,
     cancelViewSwitch,
     isCurrentViewSwitchRequest,
+    getCurrentViewSwitchRequestID,
   } = useViewSwitchState();
   const windowResizingRef = useRef(false);
   const environmentPanelHasRoomRef = useRef(environmentPanelHasRoom);
@@ -1028,7 +1030,10 @@ export function App(): JSX.Element {
   const appStateRef = useRef<AppState>(initialState);
   const runningThreadReconcileInFlightRef = useRef("");
   const workspaceHasDirtyFilesRef = useRef(false);
-  const lastFocusOutsideWorkspaceRef = useRef<HTMLElement | null>(null);
+  const lastFocusOutsideWorkspaceRef = useRef<{
+    element: HTMLElement;
+    owner: string;
+  } | null>(null);
   const previousWorkspaceFocusModeRef = useRef({
     fullPanel: false,
     open: false,
@@ -1099,6 +1104,7 @@ export function App(): JSX.Element {
     preserveFailedComposerMessage,
   });
   const runtimeVariantByModelRef = useRef(new Map<string, string>());
+  const pendingRuntimeSelectionsRef = useRef(new Map<string, Promise<void>>());
   const cachedThreadPaneHistoryRef = useRef<string[]>([]);
   const cachedConversationPaneThreadsRef = useRef(new Map<string, Thread>());
   const draftSessionTabCounterRef = useRef(0);
@@ -1121,17 +1127,24 @@ export function App(): JSX.Element {
     };
   }, []);
 
-  useEffect(() => {
+  const workspaceFocusOwner = JSON.stringify([
+    state.activeContext ? runtimeContextKey(state.activeContext) : "",
+    state.activeContext?.cwd,
+    state.activeSessionTabID,
+    activeThreadIDForState(state),
+    activeThreadForState(state)?.cwd,
+  ]);
+  useLayoutEffect(() => {
     const handleFocusIn = (event: FocusEvent): void => {
       const target = event.target;
       const workspacePanel = appShellRef.current?.querySelector(".workspace-right-panel");
       if (target instanceof HTMLElement && !workspacePanel?.contains(target)) {
-        lastFocusOutsideWorkspaceRef.current = target;
+        lastFocusOutsideWorkspaceRef.current = { element: target, owner: workspaceFocusOwner };
       }
     };
     document.addEventListener("focusin", handleFocusIn);
     return () => document.removeEventListener("focusin", handleFocusIn);
-  }, []);
+  }, [workspaceFocusOwner]);
 
   useLayoutEffect(() => {
     const fullPanel = rightPanelOpen && rightPanelGlobalized;
@@ -1150,22 +1163,29 @@ export function App(): JSX.Element {
         ?.querySelector<HTMLButtonElement>(
           '.workspace-right-panel [role="tab"][aria-selected="true"]',
         )
-        ?.focus();
+        ?.focus({ preventScroll: true });
       return;
     }
     if ((previous.fullPanel && !fullPanel) || (previous.open && !rightPanelOpen)) {
+      if (viewSwitchPending) return;
       const previousFocus = lastFocusOutsideWorkspaceRef.current;
-      if (previousFocus?.isConnected && !previousFocus.closest("[inert]")) {
-        previousFocus.focus();
+      // Focus return must not reveal old history or follow a reused control into
+      // a different conversation. Reading position remains owned by scrolling.
+      if (
+        previousFocus?.owner === workspaceFocusOwner &&
+        previousFocus.element.isConnected &&
+        !previousFocus.element.closest('[inert], [hidden], [aria-hidden="true"], .conversation-split-pane:not(.active)')
+      ) {
+        previousFocus.element.focus({ preventScroll: true });
         return;
       }
       appShellRef.current
         ?.querySelector<HTMLHeadingElement>(
           ".conversation-title-heading h1",
         )
-        ?.focus();
+        ?.focus({ preventScroll: true });
     }
-  }, [rightPanelGlobalized, rightPanelOpen, sidebarDrawerMode, sidebarDrawerVisible]);
+  }, [rightPanelGlobalized, rightPanelOpen, sidebarDrawerMode, sidebarDrawerVisible, viewSwitchPending, workspaceFocusOwner]);
 
   // Workspace panel (file tree / file preview / terminal / review) root: follows the
   // active thread's own cwd when it differs from state.activeContext — the
@@ -1556,7 +1576,7 @@ export function App(): JSX.Element {
       setEnvironmentDialog(null);
       setPendingFork(undefined);
     },
-    onSelectThread: (threadID) => void activateThread(threadID),
+    onSelectThread: (result, query) => openSearchResult(result, query),
   });
 
   // Cmd/Ctrl+P toggles the conversation search overlay. Mirrors the
@@ -1622,14 +1642,6 @@ export function App(): JSX.Element {
       ? t("app.worktreeRequiresGit")
       : undefined;
   const splitConversation = Boolean(state.thread && state.secondaryThread);
-
-  function handleQueryHistorySelect(entry: QueryHistoryEntry): void {
-    // Stop auto-follow before we jump — otherwise the next stream tick
-    // would drag the scroll position back to the bottom and undo the
-    // jump before the user even registers it happened.
-    disableConversationAutoFollow();
-    scrollToUserMessage(entry.turnID, entry.itemID);
-  }
 
   useEffect(() => {
     const root = document.documentElement;
@@ -2282,27 +2294,20 @@ export function App(): JSX.Element {
     onOpen: openWorkspaceArtifactTab,
   });
 
-  // Past user queries for the input-box hover popover. We collect them
-  // in turn order, oldest first, so the popover mirrors the order in
-  // which the user asked them. Empty / handoff / image-only items are
-  // skipped — they have nothing to show in a quick-jump list.
-  const pastQueries = useMemo<QueryHistoryEntry[]>(() => {
-    const entries: QueryHistoryEntry[] = [];
+  // Past user queries for the composer's history recall, oldest first. Empty,
+  // handoff and image-only items have no text to recall and are skipped.
+  const composerQueryHistory = useMemo(() => {
+    const queries: string[] = [];
     for (const turn of turns) {
       for (const item of turn.items) {
         const text = queryTextForUserItem(item);
-        if (!text) {
-          continue;
+        if (text) {
+          queries.push(text);
         }
-        entries.push({ turnID: turn.id, itemID: item.id, text });
       }
     }
-    return entries;
+    return queries;
   }, [turns]);
-  const composerQueryHistory = useMemo(
-    () => pastQueries.map((entry) => entry.text),
-    [pastQueries],
-  );
   const showingPrimaryPluginView = usePrimaryPluginViewCover();
   const mainConversationDockVisible =
     Boolean(state.initialized) &&
@@ -2359,6 +2364,9 @@ export function App(): JSX.Element {
     handleConversationScroll,
     enableConversationAutoFollow,
     jumpToLatest: jumpConversationToLatest,
+    jumpToUserMessage,
+    jumpToConversationMessage,
+    captureConversationScrollIntent,
     disableConversationAutoFollow,
     captureConversationScrollPosition,
     restoreConversationScrollPosition,
@@ -2367,6 +2375,8 @@ export function App(): JSX.Element {
     discardSubmittedMessage,
   } = useConversationScrollState({
     activeThreadID,
+    primaryThreadID: state.thread?.id,
+    secondaryThreadID: state.secondaryThread?.id,
     activePane: state.activePane,
     splitConversation,
     primaryTurns: state.thread?.turns,
@@ -2390,12 +2400,6 @@ export function App(): JSX.Element {
       scrollRegion.scrollTop = 0;
     }
   }, [activeManagementTabID, conversationScrollRef]);
-  const conversationRailScrollContainer = useCallback((): HTMLElement | null => {
-    if (splitConversation) {
-      return splitPaneRefs.current[state.activePane] ?? null;
-    }
-    return conversationScrollRef.current;
-  }, [conversationScrollRef, splitConversation, splitPaneRefs, state.activePane]);
   const focusMainComposer = useCallback(
     (
       target: ComposerVariant,
@@ -2564,21 +2568,58 @@ export function App(): JSX.Element {
   // Details actions on subagent completion messages split the conversation
   // and open the child session in the secondary pane. The App owns thread
   // state, so it registers the bridge handler once; message buttons call it.
+  const relatedSplitRequestRef = useRef(0);
   const handleOpenThreadInSplit = useStableCallback((threadID: string) => {
+    const origin = appStateRef.current;
+    const context = origin.activeContext;
+    if (!origin.thread || !context) return;
+    const requestID = ++relatedSplitRequestRef.current;
+    const viewRequestID = getCurrentViewSwitchRequestID();
+    const ownsView = (current = appStateRef.current): boolean =>
+      requestID === relatedSplitRequestRef.current && isCurrentViewSwitchRequest(viewRequestID)
+      && sameRuntimeContext(current.activeContext, context) && current.activeContext?.cwd === context.cwd
+      && current.activeSessionTabID === origin.activeSessionTabID && current.activePane === origin.activePane
+      && current.thread?.id === origin.thread?.id && current.secondaryThread?.id === origin.secondaryThread?.id;
     void (async () => {
       try {
         const thread = requireThread(
           await window.wuu.resumeThread(threadID),
           t("thread.childResumeMissing"),
         );
-        setState((current) => ({
-          ...current,
-          secondaryThread: thread,
-          activePane: current.activePane === "secondary" ? "secondary" : "primary",
-          threads: upsertThread(current.threads, thread),
-        }));
+        // Resume snapshots may still refresh the cache. Only the request's
+        // current view may accept its layout and composer ownership change.
+        if (!ownsView()) return;
+        const current = appStateRef.current;
+        const drafts = composerDraftsRef.current;
+        const primaryDraft = current.secondaryThread
+          ? cloneComposerDraft(drafts.split.primary) : drafts.primary();
+        const secondaryDraft = current.secondaryThread?.id === thread.id
+          ? cloneComposerDraft(drafts.split.secondary) : sessionTabDraftForThread(current, thread.id);
+        const previousSecondaryDraft = cloneComposerDraft(drafts.split.secondary);
+        setSplitComposerDrafts({ primary: primaryDraft, secondary: secondaryDraft });
+        setState((latest) => {
+          if (!ownsView(latest)) return latest;
+          let tabs = latest.sessionTabs;
+          if (latest.secondaryThread && latest.secondaryThread.id !== thread.id) {
+            tabs = ensureSessionTab(tabs, createThreadSessionTab(
+              latest.secondaryThread,
+              resolveThreadRuntimeContext(latest.secondaryThread, latest.projects) ?? context,
+              previousSecondaryDraft,
+            ));
+          }
+          tabs = ensureSessionTab(tabs, createThreadSessionTab(
+            thread, resolveThreadRuntimeContext(thread, latest.projects) ?? context, secondaryDraft,
+          ));
+          return {
+            ...latest,
+            secondaryThread: thread,
+            activeSessionTabID: latest.activePane === "secondary" ? threadSessionTabID(thread.id) : latest.activeSessionTabID,
+            sessionTabs: tabs,
+            threads: upsertThread(latest.threads, thread),
+          };
+        });
       } catch (error) {
-        showErrorToast(
+        if (ownsView()) showErrorToast(
           error instanceof Error ? error.message : t("thread.childLoadFailed"),
         );
       }
@@ -2586,7 +2627,10 @@ export function App(): JSX.Element {
   });
   useEffect(() => {
     setOpenThreadInSplitHandler(handleOpenThreadInSplit);
-    return () => setOpenThreadInSplitHandler(undefined);
+    return () => {
+      relatedSplitRequestRef.current += 1;
+      setOpenThreadInSplitHandler(undefined);
+    };
   }, [handleOpenThreadInSplit]);
   const handleCachedPaneOpenFileDiff = useStableCallback(
     (thread: Thread, selection: TurnFileDiffSelection) => {
@@ -2849,8 +2893,9 @@ export function App(): JSX.Element {
       (environmentPanelHasRoom &&
         !environmentPanelDismissed &&
         !emptyConversation &&
-        // A folder outside Git has nothing to show until asked for.
-        state.gitStatus?.is_repo !== false));
+        // Wait for repository detection so non-Git folders do not briefly
+        // open and close the panel while their status is still unknown.
+        state.gitStatus?.is_repo === true));
   const environmentPanelVisible = environmentPanelTargetVisible;
   const environmentPanelMotionState: EnvironmentPanelMotionState =
     environmentPanelVisible ? "open" : "closing";
@@ -3485,6 +3530,16 @@ export function App(): JSX.Element {
     );
   }
 
+  function currentComposerDraftSnapshot() {
+    const current = appStateRef.current;
+    return captureComposerDrafts(
+      current,
+      current.thread && current.secondaryThread
+        ? composerDraftsRef.current.split
+        : composerDraftsRef.current.primary(),
+    );
+  }
+
   const {
     selectWorkspaceForNewThread,
     startNewThreadInWorkspace,
@@ -3496,7 +3551,7 @@ export function App(): JSX.Element {
   } = createWorkspaceRuntimeActions({
     getAppState: () => appStateRef.current,
     setAppState: setState,
-    getPrimaryComposerDraft: currentPrimaryComposerDraft,
+    getComposerDraftSnapshot: currentComposerDraftSnapshot,
     restorePrimaryComposerDraft,
     clearPrimaryComposerDraft: () =>
       restorePrimaryComposerDraft(emptyComposerDraft()),
@@ -3521,7 +3576,7 @@ export function App(): JSX.Element {
     setAppState: setState,
     getActiveThreadID: () => activeThreadID,
     getPendingViewSwitch: () => pendingViewSwitch,
-    getPrimaryComposerDraft: currentPrimaryComposerDraft,
+    getComposerDraftSnapshot: currentComposerDraftSnapshot,
     restorePrimaryComposerDraft,
     resetSplitComposerDrafts: () =>
       setSplitComposerDrafts(initialSplitComposerDrafts()),
@@ -3536,6 +3591,15 @@ export function App(): JSX.Element {
     cancelViewSwitch,
     isCurrentViewSwitchRequest,
     selectRuntimeContext,
+  });
+
+  const openSearchResult = useConversationSearchNavigation({
+    thread: activeThread,
+    switching: viewSwitchPending,
+    activateThread,
+    captureConversationScrollIntent,
+    jumpToConversationMessage,
+    setAppState: setState,
   });
 
   useEffect(() => {
@@ -3582,7 +3646,7 @@ export function App(): JSX.Element {
   } = createSessionTabActions({
     getAppState: () => appStateRef.current,
     setAppState: setState,
-    getPrimaryComposerDraft: currentPrimaryComposerDraft,
+    getComposerDraftSnapshot: currentComposerDraftSnapshot,
     restorePrimaryComposerDraft,
     clearPrimaryComposerDraft: () =>
       restorePrimaryComposerDraft(emptyComposerDraft()),
@@ -3865,8 +3929,9 @@ export function App(): JSX.Element {
   } = createThreadMutationActions({
     getAppState: () => appStateRef.current,
     setAppState: setState,
-    getActiveThreadID: () => activeThreadID,
     nextDraftSessionTab,
+    restorePrimaryComposerDraft,
+    getSplitComposerDrafts: () => composerDraftsRef.current.split,
     clearPrimaryComposerDraft: () =>
       restorePrimaryComposerDraft(emptyComposerDraft()),
     resetSplitComposerDrafts: () =>
@@ -3927,6 +3992,7 @@ export function App(): JSX.Element {
     clearThreadPendingComposerMessages,
     requestThreadStop,
     variantByModel: runtimeVariantByModelRef.current,
+    pendingRuntimeSelections: pendingRuntimeSelectionsRef.current,
   });
 
   const {
@@ -3939,7 +4005,7 @@ export function App(): JSX.Element {
     getAppState: () => appStateRef.current,
     setAppState: setState,
     getActiveTitle: () => activeTitle,
-    getPrimaryComposerDraft: currentPrimaryComposerDraft,
+    getComposerDraftSnapshot: currentComposerDraftSnapshot,
     setSplitComposerDrafts,
     restorePrimaryComposerDraft,
     
@@ -3988,6 +4054,7 @@ export function App(): JSX.Element {
     enableConversationAutoFollow,
     rememberConversationScrollForEdit,
     restoreConversationScrollForEdit,
+    jumpToUserMessage,
     threadHasPendingComposerMessages,
     sendComposerMessageToThread,
     worktreeForkNonGitReason: t("app.worktreeRequiresGit"),
@@ -5258,20 +5325,6 @@ export function App(): JSX.Element {
         </header>
 
         )}
-        {/* Unmount the hidden rail so compact scrolling does not measure turns
-            or update navigation state for controls that cannot be used. */}
-        {ENABLE_CONVERSATION_TURN_RAIL && !compactNavigation ? (
-          <ConversationTurnRail
-            turns={turns}
-            activeTurnID={turns[turns.length - 1]?.id}
-            scrollContainerRef={conversationScrollRef}
-            getScrollContainer={conversationRailScrollContainer}
-            onWheelScrollAway={disableConversationAutoFollow}
-            onDragScrollAway={disableConversationAutoFollow}
-            onSelectQueryHistory={handleQueryHistorySelect}
-          />
-        ) : null}
-
         <ConversationSidePanels
           state={state}
           environmentPanelVisible={environmentPanelVisible}
@@ -5361,12 +5414,6 @@ export function App(): JSX.Element {
               />
             ) : (
               <>
-                {!activeThreadReadOnly ? (
-                  <QueryHistoryRail
-                    entries={pastQueries}
-                    onSelect={handleQueryHistorySelect}
-                  />
-                ) : null}
                 {splitConversation && state.thread && state.secondaryThread ? (
                   <ConversationSplitLayoutRenderer
                     state={state}
@@ -5567,6 +5614,7 @@ export function App(): JSX.Element {
           onOpenTool={openWorkspaceTool}
           onOpenPluginTool={openWorkspacePluginTool}
           onShowTools={showWorkspaceToolPicker}
+          onResumeTab={resumeWorkspaceViewTab}
           onCloseTab={closeWorkspaceViewTab}
           onDirtyFileTabsChange={rememberWorkspaceDirtyFiles}
           onReorderTabs={reorderWorkspaceViewTabs}

@@ -163,12 +163,13 @@ export function useAutoFollowScrollContainer({
   bottomThreshold = AUTO_FOLLOW_BOTTOM_THRESHOLD_PX,
   observeKey,
   open,
-  openScrollDelayMs = 0,
+  initialAutoFollow = true,
 }: {
   bottomThreshold?: number;
   observeKey?: string;
   open?: boolean;
-  openScrollDelayMs?: number;
+  /** First-open placement; later opens preserve the reader's position and mode. */
+  initialAutoFollow?: boolean;
 } = {}): {
   scrollRef: RefObject<HTMLDivElement | null>;
   autoFollowRef: MutableRefObject<boolean>;
@@ -184,6 +185,11 @@ export function useAutoFollowScrollContainer({
 } {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const autoFollowRef = useRef(true);
+  const openRef = useRef(open);
+  openRef.current = open;
+  const firstOpenAutoFollowRef = useRef(initialAutoFollow);
+  firstOpenAutoFollowRef.current = initialAutoFollow;
+  const openedRef = useRef(false);
   const selectionPausedAutoFollowRef = useRef(false);
   const pointerScrollGestureRef = useRef<
     { node: HTMLElement; scrollTop: number; scrollHeight: number; resumeScrollTop?: number } | undefined
@@ -247,7 +253,7 @@ export function useAutoFollowScrollContainer({
   const scrollToBottom = useCallback(
     (options: { force?: boolean; revealScrollbar?: boolean; animate?: boolean } = {}): void => {
       const node = scrollRef.current;
-      if (!node || (!options.force && !autoFollowRef.current)) {
+      if (!node || openRef.current === false || (!options.force && !autoFollowRef.current)) {
         return;
       }
       if (options.force) {
@@ -325,7 +331,7 @@ export function useAutoFollowScrollContainer({
 
   const handleScrollFrame = useCallback((): void => {
     const node = scrollRef.current;
-    if (!node) {
+    if (!node || openRef.current === false) {
       return;
     }
     const programmaticTop = programmaticScrollTopRef.current;
@@ -560,22 +566,14 @@ export function useAutoFollowScrollContainer({
     if (!open) {
       return undefined;
     }
-    selectionPausedAutoFollowRef.current = false;
-    setAutoFollow(true);
-    lastScrollTopRef.current = 0;
-    // Opening is a restore, not a later arrival. A zero-delay timer would
-    // overwrite a caller's saved reading position after the first paint.
-    if (openScrollDelayMs === 0) {
-      scrollToBottom({ force: true, revealScrollbar: true });
-      return;
+    if (!openedRef.current) {
+      openedRef.current = true;
+      autoFollowRef.current = firstOpenAutoFollowRef.current;
     }
-    const timer = window.setTimeout(() => {
-      scrollToBottom({ force: true, revealScrollbar: true });
-    }, openScrollDelayMs);
-    return () => {
-      window.clearTimeout(timer);
-    };
-  }, [open, openScrollDelayMs, scrollToBottom, setAutoFollow]);
+    // Hidden native details can reset their DOM offset. Restore the last
+    // visible reading position before paint; a later timer would steal input.
+    restoreScrollPosition(lastScrollTopRef.current, autoFollowRef.current);
+  }, [open, restoreScrollPosition]);
 
   useEffect(() => {
     return () => {

@@ -9,16 +9,19 @@ import {
   draftSessionTabForContext,
   ensureSessionTab,
   isThreadRunning,
-  persistActiveSessionTabDraft,
+  persistComposerDrafts,
+  refreshComposerDrafts,
   reconcileResumedThreadTurns,
   requireThread,
   runtimeContextKey,
   sameRuntimeContext,
+  sessionTabDraftForThread,
   threadNeedsResumeOnReselect,
   threadSessionTabID,
   upsertThread,
   type AppState,
   type ComposerDraftState,
+  type ComposerDraftSnapshot,
   type SessionTab,
 } from "./AppState";
 import {
@@ -36,7 +39,7 @@ type ViewSwitchKind = "thread" | "workspace" | "runtime";
 export type SessionTabActionsDeps = {
   getAppState: () => AppState;
   setAppState: SetAppState;
-  getPrimaryComposerDraft: () => ComposerDraftState;
+  getComposerDraftSnapshot: () => ComposerDraftSnapshot;
   restorePrimaryComposerDraft: (draft: ComposerDraftState) => void;
   clearPrimaryComposerDraft: () => void;
   resetSplitComposerDrafts: () => void;
@@ -108,7 +111,7 @@ export function createSessionTabActions(
       currentState.activeContext,
     );
     if (tab.kind === "skills") {
-      const outgoingDraft = deps.getPrimaryComposerDraft();
+      let outgoingDraft = deps.getComposerDraftSnapshot();
       const requestID = sameContext
         ? undefined
         : deps.beginViewSwitch("runtime", runtimeContextKey(tab.context));
@@ -124,9 +127,10 @@ export function createSessionTabActions(
         if (requestID === undefined) {
           deps.cancelViewSwitch();
         }
+        outgoingDraft = refreshComposerDrafts(outgoingDraft, deps.getComposerDraftSnapshot());
         deps.resetSplitComposerDrafts();
         deps.setAppState((current) => {
-          const withDraft = persistActiveSessionTabDraft(
+          const withDraft = persistComposerDrafts(
             current,
             outgoingDraft,
           );
@@ -153,7 +157,7 @@ export function createSessionTabActions(
       return;
     }
     if (tab.kind === "draft") {
-      const outgoingDraft = deps.getPrimaryComposerDraft();
+      let outgoingDraft = deps.getComposerDraftSnapshot();
       const requestID = sameContext
         ? undefined
         : deps.beginViewSwitch("runtime", runtimeContextKey(tab.context));
@@ -169,10 +173,12 @@ export function createSessionTabActions(
         if (requestID === undefined) {
           deps.cancelViewSwitch();
         }
-        deps.restorePrimaryComposerDraft(cloneSessionTabDraft(tab));
+        outgoingDraft = refreshComposerDrafts(outgoingDraft, deps.getComposerDraftSnapshot());
+        const targetTab = deps.getAppState().sessionTabs.find(item => item.id === tab.id) ?? tab;
+        deps.restorePrimaryComposerDraft(cloneSessionTabDraft(targetTab));
         deps.resetSplitComposerDrafts();
         deps.setAppState((current) => {
-          const withDraft = persistActiveSessionTabDraft(
+          const withDraft = persistComposerDrafts(
             current,
             outgoingDraft,
           );
@@ -184,7 +190,7 @@ export function createSessionTabActions(
             thread: undefined,
             secondaryThread: undefined,
             activePane: "primary",
-            sessionTabs: ensureSessionTab(next.sessionTabs, tab),
+            sessionTabs: ensureSessionTab(next.sessionTabs, targetTab),
             activeSessionTabID: tab.id,
             allowThreadAutoActivation: false,
             running: false,
@@ -204,8 +210,8 @@ export function createSessionTabActions(
       await deps.selectThread(tab.threadID);
       return;
     }
-    const outgoingDraft = deps.getPrimaryComposerDraft();
-    const targetDraft = cloneSessionTabDraft(tab);
+    let outgoingDraft = deps.getComposerDraftSnapshot();
+    let targetDraft = cloneSessionTabDraft(outgoingDraft.tabs.find(({ tab: owner }) => owner.id === tab.id)?.tab ?? tab);
     const localThread = currentThreadSnapshot(
       conversationPaneThreadsByID(
         currentState.threads,
@@ -224,7 +230,7 @@ export function createSessionTabActions(
       deps.restorePrimaryComposerDraft(targetDraft);
       deps.resetSplitComposerDrafts();
       deps.setAppState((current) => {
-        const withDraft = persistActiveSessionTabDraft(current, outgoingDraft);
+        const withDraft = persistComposerDrafts(current, outgoingDraft);
         const optimisticThread =
           conversationPaneThreadsByID(
             withDraft.threads,
@@ -267,12 +273,14 @@ export function createSessionTabActions(
         return;
       }
       if (!canSwitchInstantly) {
+        outgoingDraft = refreshComposerDrafts(outgoingDraft, deps.getComposerDraftSnapshot());
+        targetDraft = sessionTabDraftForThread(persistComposerDrafts(deps.getAppState(), outgoingDraft), tab.threadID);
         deps.restorePrimaryComposerDraft(targetDraft);
         deps.resetSplitComposerDrafts();
       }
-      const currentDraft = canSwitchInstantly ? deps.getPrimaryComposerDraft() : targetDraft;
+      const currentDraft = canSwitchInstantly ? deps.getComposerDraftSnapshot().activeDraft : targetDraft;
       deps.setAppState((current) => {
-        const withDraft = canSwitchInstantly ? current : persistActiveSessionTabDraft(current, outgoingDraft);
+        const withDraft = canSwitchInstantly ? current : persistComposerDrafts(current, outgoingDraft);
         const cachedThread =
           conversationPaneThreadsByID(
             withDraft.threads,
@@ -549,30 +557,34 @@ export function createSessionTabActions(
     }
     deps.cancelViewSwitch();
     
-    const outgoingDraft = deps.getPrimaryComposerDraft();
+    const outgoingDraft = deps.getComposerDraftSnapshot();
     deps.clearPrimaryComposerDraft();
     const nextTab =
       activeSessionTab(currentState)?.kind === "draft" &&
       !deps.isDraftPending?.(currentState.activeSessionTabID) &&
-      !outgoingDraft.prompt.trim() &&
-      outgoingDraft.images.length === 0 &&
-      outgoingDraft.files.length === 0
+      !outgoingDraft.activeDraft.prompt.trim() &&
+      outgoingDraft.activeDraft.images.length === 0 &&
+      outgoingDraft.activeDraft.files.length === 0
         ? activeSessionTab(currentState)
         : deps.nextDraftSessionTab(currentState.activeContext);
     if (!nextTab) {
       return;
     }
-    deps.setAppState((current) => seedDraftRuntimeFromMemory({
-      ...persistActiveSessionTabDraft(current, outgoingDraft),
-      thread: undefined,
-      secondaryThread: undefined,
-      activePane: "primary",
-      sessionTabs: ensureSessionTab(current.sessionTabs, nextTab),
-      activeSessionTabID: nextTab.id,
-      allowThreadAutoActivation: false,
-      running: false,
-      status: "ready",
-    }));
+    deps.resetSplitComposerDrafts();
+    deps.setAppState((current) => {
+      const withDraft = persistComposerDrafts(current, outgoingDraft);
+      return seedDraftRuntimeFromMemory({
+        ...withDraft,
+        thread: undefined,
+        secondaryThread: undefined,
+        activePane: "primary",
+        sessionTabs: ensureSessionTab(withDraft.sessionTabs, nextTab),
+        activeSessionTabID: nextTab.id,
+        allowThreadAutoActivation: false,
+        running: false,
+        status: "ready",
+      });
+    });
   }
 
   return {

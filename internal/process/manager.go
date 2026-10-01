@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/processsandbox"
@@ -222,6 +223,29 @@ type processHandle struct {
 	stdin   io.WriteCloser
 	ptyFile *os.File
 	done    chan struct{}
+	// An adopted command may outlive its leader while a descendant owns an
+	// output pipe. Retain launch identity, not just a persisted process-group ID.
+	command          *CommandHandle
+	pid              int
+	processStartTime string
+}
+
+type ptySession struct {
+	master    *os.File
+	exitRead  *os.File
+	exitWrite *os.File
+	conn      syscall.RawConn
+	exitConn  syscall.RawConn
+}
+
+func (p *ptySession) Close() error {
+	_ = p.exitWrite.Close()
+	return p.master.Close()
+}
+
+func (p *ptySession) close() {
+	_ = p.Close()
+	_ = p.exitRead.Close()
 }
 
 func NewManager(rootDir string, runtimeDirs ...string) (*Manager, error) {
@@ -432,8 +456,9 @@ func (m *Manager) Start(ctx context.Context, opt StartOptions) (*Process, error)
 	}
 	var stdin io.WriteCloser
 	var ptyFile *os.File
+	var tty *ptySession
 	if opt.TTY {
-		ptyFile, err = startPTYProcess(cmd)
+		tty, err = startPTYProcess(cmd)
 		if err != nil {
 			_ = logf.Close()
 			p.Status = StatusFailed
@@ -443,7 +468,8 @@ func (m *Manager) Start(ctx context.Context, opt StartOptions) (*Process, error)
 			m.publish(Event{Type: EventFailed, Process: *p})
 			return p, fmt.Errorf("start pty process: %w", err)
 		}
-		stdin = ptyFile
+		ptyFile = tty.master
+		stdin = tty
 	} else {
 		stdin, err = cmd.StdinPipe()
 		if err != nil {
@@ -479,6 +505,9 @@ func (m *Manager) Start(ctx context.Context, opt StartOptions) (*Process, error)
 		if stdin != nil {
 			_ = stdin.Close()
 		}
+		if tty != nil {
+			tty.close()
+		}
 		_ = cmd.Wait()
 		_ = logf.Close()
 		p.Status = StatusFailed
@@ -497,7 +526,7 @@ func (m *Manager) Start(ctx context.Context, opt StartOptions) (*Process, error)
 	if opt.TTY {
 		go func() {
 			defer close(handle.done)
-			m.waitPTY(id, cmd, logf, ptyFile)
+			m.waitPTY(id, cmd, logf, tty)
 		}()
 	} else {
 		go func() {
@@ -613,15 +642,16 @@ func (m *Manager) wait(id string, cmd *exec.Cmd, logf *os.File) {
 	m.finishWait(id, cmd, err, discarded)
 }
 
-func (m *Manager) waitPTY(id string, cmd *exec.Cmd, logf *os.File, ptyFile *os.File) {
+func (m *Manager) waitPTY(id string, cmd *exec.Cmd, logf *os.File, tty *ptySession) {
 	copyDone := make(chan struct{})
 	go func() {
-		_, _ = io.Copy(logf, ptyFile)
+		copyPTYOutput(logf, tty)
 		close(copyDone)
 	}()
 	err := cmd.Wait()
-	_ = ptyFile.Close()
+	_ = tty.exitWrite.Close()
 	<-copyDone
+	tty.close()
 	_ = logf.Close()
 	_, discarded, _ := compactProcessLog(filepath.Join(m.logDir, id+".log"), terminalProcessLogMaxBytes)
 	m.finishWait(id, cmd, err, discarded)
@@ -959,8 +989,12 @@ func (m *Manager) Stop(id string) (*Process, error) {
 	handle := m.handles[id]
 	if p.Status == StatusStopped || p.Status == StatusFailed {
 		m.mu.Unlock()
-		waitForProcessMonitor(handle)
-		return p, nil
+		return p, waitForProcessMonitor(handle)
+	}
+	ownedCommand := handle != nil && handle.command != nil
+	if ownedCommand && (handle.pid != p.PID || handle.command.tree.ID() != p.PGID || handle.processStartTime != p.ProcessStartTime) {
+		m.mu.Unlock()
+		return p, fmt.Errorf("process %q record does not match its owned command; refusing to signal it", id)
 	}
 	running, err := processMatchesRecord(p)
 	if err != nil {
@@ -973,7 +1007,7 @@ func (m *Manager) Stop(id string) (*Process, error) {
 		m.mu.Unlock()
 		return p, err
 	}
-	if !running {
+	if !running && !ownedCommand {
 		delete(m.handles, id)
 		p.Status = StatusStopped
 		p.StoppedAt = time.Now()
@@ -985,8 +1019,7 @@ func (m *Manager) Stop(id string) (*Process, error) {
 		}
 		m.mu.Unlock()
 		m.publish(Event{Type: EventStopped, Cause: EventCauseRequestedStop, Process: *p})
-		waitForProcessMonitor(handle)
-		return p, nil
+		return p, waitForProcessMonitor(handle)
 	}
 	p.Status = StatusStopping
 	p.UpdatedAt = time.Now()
@@ -1020,15 +1053,20 @@ func (m *Manager) Stop(id string) (*Process, error) {
 	if !stopped {
 		return cur, fmt.Errorf("process group %d did not stop after SIGKILL", cur.PGID)
 	}
-	waitForProcessMonitor(handle)
-	return cur, nil
+	if err := waitForProcessMonitor(handle); err != nil {
+		return cur, err
+	}
+	return m.Get(id)
 }
 
-func waitForProcessMonitor(handle *processHandle) {
+func waitForProcessMonitor(handle *processHandle) error {
 	if handle == nil || handle.done == nil {
-		return
+		return nil
 	}
-	<-handle.done
+	if !waitForCommand(handle.done, DefaultStopGracePeriod) {
+		return errors.New("process output monitor did not finish after stop")
+	}
+	return nil
 }
 
 func (m *Manager) waitForStop(id string, deadline time.Time) (*Process, bool, error) {
@@ -1650,7 +1688,10 @@ func (m *Manager) Adopt(id string, cmd *exec.Cmd, handle *CommandHandle, logf *o
 		m.mu.Unlock()
 		return nil, err
 	}
-	adopted := &processHandle{done: make(chan struct{})}
+	adopted := &processHandle{
+		done: make(chan struct{}), command: handle,
+		pid: p.PID, processStartTime: p.ProcessStartTime,
+	}
 	m.handles[id] = adopted
 	m.mu.Unlock()
 	m.publish(Event{Type: EventStarted, Process: *p})

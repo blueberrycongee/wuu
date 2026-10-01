@@ -21,13 +21,11 @@ import {
   type HistoryMessageEditState,
   type PendingForkState,
 } from "./ConversationHistoryActions";
-import * as TurnViewHelpers from "./TurnViewHelpers";
 import { resolveLocalizedText, setActiveLocale } from "./i18n";
 
-// `scrollToUserMessage` schedules retry timeouts that would otherwise leak
-// across tests in jsdom (no DOM anchor is mounted, so the helper keeps
-// retrying). Replace it with a synchronous stub that just records calls.
-vi.spyOn(TurnViewHelpers, "scrollToUserMessage").mockImplementation(() => {});
+// The scroll controller owns asynchronous navigation; these action tests
+// record the requested message without mounting a viewport.
+const jumpToUserMessage = vi.fn();
 
 const originalWuu = (window as unknown as { wuu?: unknown }).wuu;
 
@@ -234,6 +232,7 @@ function buildActions({
     enableConversationAutoFollow,
     rememberConversationScrollForEdit,
     restoreConversationScrollForEdit,
+    jumpToUserMessage,
     threadHasPendingComposerMessages: () => hasPendingMessages,
     sendComposerMessageToThread,
     worktreeForkNonGitReason: "当前工作目录不是 git 仓库，不能创建 git worktree",
@@ -263,6 +262,7 @@ function buildActions({
     enableConversationAutoFollow,
     rememberConversationScrollForEdit,
     restoreConversationScrollForEdit,
+    jumpToUserMessage,
     restorePrimaryComposerDraft,
     sendComposerMessageToThread,
   };
@@ -408,7 +408,7 @@ describe("createConversationHistoryActions", () => {
     // The editor also needs to be visible — the previous flow relied on
     // the browser's default focus-scroll, which both moved the scroll
     // unexpectedly and triggered the auto-follow disarm above.
-    expect(TurnViewHelpers.scrollToUserMessage).toHaveBeenCalledWith(
+    expect(jumpToUserMessage).toHaveBeenCalledWith(
       "turn-1",
       "item-1",
       { highlight: false },
@@ -545,4 +545,55 @@ describe("createConversationHistoryActions", () => {
       files: [],
     });
   });
+});
+
+
+describe("fork completion ownership", () => {
+  it.each(["conversation", "workspace", "split", "page"] as const)(
+    "retains the newer %s view and its draft when a delayed fork finishes",
+    async (navigation) => {
+      const source = thread("source", { turns: [turn("turn-1", [userItem()])] });
+      const target = thread("target");
+      const context = projectContext();
+      const api = installWuuApi();
+      let resolve!: (value: { thread: Thread }) => void;
+      api.forkThread.mockReturnValue(new Promise((complete) => { resolve = complete; }));
+      const harness = buildActions({ initial: {
+        ...initialState, activeContext: context, thread: source,
+        threads: [source, target], activeSessionTabID: threadSessionTabID(source.id),
+        sessionTabs: [createThreadSessionTab(source, context), createThreadSessionTab(target, context)],
+      } });
+      const pending = harness.actions.forkThreadFromMessage(source, "turn-1", "item-1");
+      expect(api.forkThread).toHaveBeenCalledOnce();
+      const nextContext = navigation === "workspace"
+        ? { ...context, project_id: "project-2", cwd: "/tmp/project-2" }
+        : context;
+      const next = {
+        ...harness.getAppState(), activeContext: nextContext,
+        thread: navigation === "conversation" || navigation === "workspace" ? target : source,
+        secondaryThread: navigation === "split" ? target : undefined,
+        activeSessionTabID: navigation === "page" ? "skills" : threadSessionTabID(
+          navigation === "conversation" || navigation === "workspace" ? target.id : source.id),
+      };
+      harness.setAppState(next);
+      const draft = { prompt: "new target draft", images: [], files: [] };
+      harness.setDraft(draft);
+      harness.setDraft(draft, "secondary");
+      resolve({ thread: thread("fork-result") });
+      await pending;
+
+      expect(harness.getAppState().thread?.id).toBe(next.thread.id);
+      expect(harness.getAppState().secondaryThread).toBe(next.secondaryThread);
+      expect(harness.getAppState().activeContext).toEqual(nextContext);
+      expect(harness.getAppState().activeSessionTabID).toBe(next.activeSessionTabID);
+      expect(harness.getComposerState().prompt).toBe(draft.prompt);
+      expect(harness.getComposerState().splitDrafts.secondary).toEqual(draft);
+      expect(harness.enableConversationAutoFollow).not.toHaveBeenCalled();
+      expect(harness.getAppState().sessionTabs).toContainEqual(
+        createThreadSessionTab(thread("fork-result"), context));
+      if (navigation === "workspace") {
+        expect(harness.getAppState().threads).toEqual(next.threads);
+      }
+    },
+  );
 });

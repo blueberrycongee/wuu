@@ -2,7 +2,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ComposerDraftState } from "./AppState";
-import { cloneSessionTabDraft, createDraftSessionTab, initialState, type AppState } from "./AppState";
+import { captureComposerDrafts, cloneSessionTabDraft, createDraftSessionTab, initialState, type AppState } from "./AppState";
 import { createWorkspaceActions } from "./WorkspaceActions";
 import type { ComposerFile, ComposerImage } from "./ComposerMessages";
 import {
@@ -132,7 +132,7 @@ describe("useComposerDraftState", () => {
       getAppState: () => state,
       setAppState: (update) => { state = typeof update === "function" ? update(state) : update; },
       getActiveTitle: () => "Draft",
-      getPrimaryComposerDraft: () => hook.get().currentPrimaryComposerDraft(),
+      getComposerDraftSnapshot: () => captureComposerDrafts(state, hook.get().currentPrimaryComposerDraft()),
       restorePrimaryComposerDraft: (value) => hook.get().restorePrimaryComposerDraft(value),
       setSplitComposerDrafts: (value) => hook.get().setSplitComposerDrafts(value),
       cancelViewSwitch: vi.fn(), setContextCompositionEntries: vi.fn(), setInstructionFilesEntries: vi.fn(),

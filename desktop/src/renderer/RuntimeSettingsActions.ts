@@ -7,6 +7,7 @@ import type {
 } from "../shared/protocol";
 import {
   activeThreadForState,
+  sameRuntimeContext,
   threadForPane,
   updateThreadByID,
   type AppState,
@@ -38,6 +39,7 @@ export type RuntimeSettingsActionsDeps = {
   clearThreadPendingComposerMessages: (threadID: string) => void;
   requestThreadStop?: (thread: Thread) => Promise<void>;
   variantByModel: Map<string, string>;
+  pendingRuntimeSelections: Map<string, Promise<void>>;
 };
 
 export type RuntimeSettingsActions = {
@@ -97,6 +99,14 @@ export function createRuntimeSettingsActions(
     return JSON.stringify([scope, provider.trim(), model.trim()]);
   }
 
+  function selectionViewIsCurrent(source: AppState): boolean {
+    const current = deps.getAppState();
+    return activeThreadForState(source)?.id === activeThreadForState(current)?.id
+      && ((!source.activeContext && !current.activeContext)
+        || (sameRuntimeContext(source.activeContext, current.activeContext)
+          && source.activeContext?.cwd === current.activeContext?.cwd));
+  }
+
   // Settings save workspace defaults; composer changes only the target
   // conversation (or a local selection before its first send).
   async function sendRuntimeSelection(
@@ -108,6 +118,7 @@ export function createRuntimeSettingsActions(
       return;
     }
     const targetThread = scope === "session" ? activeThreadForState(state) : undefined;
+    const targetContext = state.activeContext ? { ...state.activeContext } : undefined;
     if (scope === "session" && !targetThread && !update.connection) {
       // Before thread/start this is a window-local draft selection, not a
       // provider default. The first send passes it explicitly to thread/start.
@@ -220,7 +231,11 @@ export function createRuntimeSettingsActions(
       update.approveForMe !== undefined &&
       update.approveForMe !==
         (targetThread?.approve_for_me ?? state.initialized.permissions?.approve_for_me ?? false);
+    const previousSelection = targetThread
+      ? deps.pendingRuntimeSelections.get(targetThread.id)
+      : undefined;
     if (
+      !previousSelection &&
       !providerChanged &&
       !modelChanged &&
       !effortChanged &&
@@ -231,12 +246,22 @@ export function createRuntimeSettingsActions(
     ) {
       return;
     }
+    // An equal-to-persisted pick can reverse an older pending change. Keep
+    // thread writes ordered, with this queue surviving action-factory rerenders.
+    let releaseSelection: (() => void) | undefined;
+    const selectionCompletion = targetThread
+      ? new Promise<void>((resolve) => { releaseSelection = resolve; })
+      : undefined;
+    if (targetThread && selectionCompletion) {
+      deps.pendingRuntimeSelections.set(targetThread.id, selectionCompletion);
+    }
     try {
+      if (previousSelection) await previousSelection;
       const connectionPayload = {
         ...nextConnection,
         ...(update.approveForMe === undefined ? {} : { approve_for_me: update.approveForMe }),
       };
-      const updated = await window.wuu.updateRuntimeSettings(
+      const requestArgs: Parameters<typeof window.wuu.updateRuntimeSettings> = [
         nextProvider,
         nextModel,
         nextEffort,
@@ -245,10 +270,12 @@ export function createRuntimeSettingsActions(
         nextPermissionMode,
         targetThread?.id,
         update.speed,
-      );
+      ];
+      if (targetContext) requestArgs.push(targetContext);
+      const updated = await window.wuu.updateRuntimeSettings(...requestArgs);
       // Saving another service leaves the default, and the draft memory that
       // mirrors it, where they were.
-      if (scope === "workspace" && !nextConnection?.keep_selection) {
+      if (scope === "workspace" && !nextConnection?.keep_selection && selectionViewIsCurrent(state)) {
         // Settings writes the workspace default, which is the same "last pick"
         // the composer memory tracks. Recording it keeps the next new
         // conversation on the model just chosen in Settings instead of an older
@@ -261,9 +288,15 @@ export function createRuntimeSettingsActions(
         );
       }
       deps.setAppState((current) => {
-        // The result is workspace-effective, so initialized takes it
-        // wholesale.
-        const initialized = current.initialized
+        // Workspace defaults from an older thread request must not replace
+        // a newer conversation or draft's visible runtime selection.
+        const sameContext = !targetContext || (
+          sameRuntimeContext(current.activeContext, targetContext)
+          && current.activeContext?.cwd === targetContext.cwd
+        );
+        const ownsCurrentView = scope === "workspace"
+          || activeThreadForState(current)?.id === targetThread?.id;
+        const initialized = current.initialized && sameContext && ownsCurrentView
           ? {
               ...current.initialized,
               provider: updated.provider,
@@ -313,6 +346,11 @@ export function createRuntimeSettingsActions(
         showErrorToast(error, translateCurrent("runtime.settingsUpdateFailed"));
       }
       throw error;
+    } finally {
+      releaseSelection?.();
+      if (targetThread && deps.pendingRuntimeSelections.get(targetThread.id) === selectionCompletion) {
+        deps.pendingRuntimeSelections.delete(targetThread.id);
+      }
     }
   }
 
@@ -536,7 +574,7 @@ export function createRuntimeSettingsActions(
     // alone was too easy to miss against the optimistic highlight.
     try {
       await sendRuntimeSelection({ provider, model, variant: nextVariant });
-      rememberDraftRuntime(provider, model, nextVariant);
+      if (selectionViewIsCurrent(state)) rememberDraftRuntime(provider, model, nextVariant);
       return true;
     } catch {
       return false;
@@ -551,11 +589,13 @@ export function createRuntimeSettingsActions(
     try {
       await sendRuntimeSelection({ variant: nextVariant });
       const targetThread = activeThreadForState(state);
-      rememberDraftRuntime(
-        targetThread?.model_provider ?? state.initialized.provider,
-        targetThread?.model ?? state.initialized.model,
-        nextVariant,
-      );
+      if (selectionViewIsCurrent(state)) {
+        rememberDraftRuntime(
+          targetThread?.model_provider ?? state.initialized.provider,
+          targetThread?.model ?? state.initialized.model,
+          nextVariant,
+        );
+      }
       return true;
     } catch {
       return false;
@@ -572,7 +612,8 @@ export function createRuntimeSettingsActions(
   }
 
   async function selectPermissionMode(mode: PermissionMode, approveForMe?: boolean): Promise<void> {
-    if (!deps.getAppState().initialized || deps.getViewContextSwitchPending()) {
+    const state = deps.getAppState();
+    if (!state.initialized || deps.getViewContextSwitchPending()) {
       return;
     }
     try {
@@ -582,23 +623,24 @@ export function createRuntimeSettingsActions(
       });
       // Remember the choice so the next new conversation (another tab or a
       // relaunch) starts with it instead of the workspace default.
-      writeDraftPermissionMemory(mode);
-      if (approveForMe !== undefined) {
-        writeDraftApproveForMeMemory(approveForMe);
+      if (selectionViewIsCurrent(state)) {
+        writeDraftPermissionMemory(mode);
+        if (approveForMe !== undefined) writeDraftApproveForMeMemory(approveForMe);
       }
     } catch {
       // sendRuntimeSelection reports the failure through the shared toast.
     }
-    deps.setAccessMenuOpen(false);
+    if (selectionViewIsCurrent(state)) deps.setAccessMenuOpen(false);
   }
 
   async function setApproveForMe(enabled: boolean): Promise<void> {
-    if (!deps.getAppState().initialized || deps.getViewContextSwitchPending()) {
+    const state = deps.getAppState();
+    if (!state.initialized || deps.getViewContextSwitchPending()) {
       return;
     }
     try {
       await sendRuntimeSelection({ approveForMe: enabled });
-      writeDraftApproveForMeMemory(enabled);
+      if (selectionViewIsCurrent(state)) writeDraftApproveForMeMemory(enabled);
     } catch {
       // sendRuntimeSelection reports the failure through the shared toast.
     }

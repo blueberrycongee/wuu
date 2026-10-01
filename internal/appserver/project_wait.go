@@ -50,7 +50,7 @@ func (s *Server) waitProjectSession(ctx context.Context, project, actor session.
 	if err != nil {
 		return nil, err
 	}
-	if actor.ID != project.ID && (actor.ProjectRole != "side" || metadata.ProjectRole != "worker") {
+	if actor.ID != project.ID && (actor.ProjectRole != "side" || projectRoleForSession(metadata) != "worker") {
 		return nil, errors.New("only the lead can wait for members; the side can wait for workers")
 	}
 	timeout := projectWaitDefault
@@ -95,18 +95,9 @@ func (s *Server) waitProjectSession(ctx context.Context, project, actor session.
 				s.drainSessionInbox(metadata.ID)
 			}
 		}
-		th.mu.Lock()
-		running := th.running
-		turns := cloneTurns(th.Turns)
-		th.mu.Unlock()
-		// Read remote completion without claiming ownership or repairing another
-		// host's in-progress history.
-		if !running {
-			loaded, err := s.loadPersistedThreadSnapshot(metadata.ID)
-			if err != nil {
-				return nil, err
-			}
-			turns = turnsFromPersistedHistory(metadata.ID, loaded.displayHistory, time.Now().UTC(), s.resolveParticipantSummary)
+		turns, err := s.loadDurableProjectTurns(metadata.ID)
+		if err != nil {
+			return nil, err
 		}
 		if turnID == "" {
 			if clientID == "" && len(turns) > 0 {

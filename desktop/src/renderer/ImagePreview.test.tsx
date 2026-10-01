@@ -198,6 +198,10 @@ it("browses uploads, read_file output and message images in display order withou
   renderConversations([toolTurn]);
   // Earlier history mounts after the recent turn but belongs before it.
   renderConversations([uploadTurn, toolTurn]);
+  act(() => {
+    const fold = container.querySelector<HTMLDetailsElement>(".turn-process-entry .process-surface-fold")!;
+    fold.open = true; fold.dispatchEvent(new Event("toggle"));
+  });
   const opener = container.querySelector<HTMLButtonElement>(".turn-artifact-inline-image button")!;
   expect(opener).not.toBeNull();
   opener.focus();
@@ -255,6 +259,10 @@ it("loads remote originals on navigation and ignores results after moving away",
     images: [{ media_type: "image/png", data: "", remote_ref: "thread:remote" }] }] };
   try {
     renderConversations([uploadTurn, remote, toolTurn]);
+    act(() => {
+      const fold = container.querySelector<HTMLDetailsElement>(".turn-process-entry .process-surface-fold")!;
+      fold.open = true; fold.dispatchEvent(new Event("toggle"));
+    });
     expect(read).not.toHaveBeenCalled();
     act(() => container.querySelector<HTMLImageElement>(".message-image")!.click());
     key("ArrowRight");

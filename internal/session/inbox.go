@@ -163,9 +163,17 @@ func ValidateInboxControls(dir, clientID string) error {
 	if err != nil || !ok {
 		return err
 	}
+	defer db.Close()
+	return validateInboxControls(db, clientID)
+}
+
+// Use the history append's transaction when consuming input: a sender can be
+// stopped while a prompt hook runs after the earlier admission check.
+func validateInboxControls(db interface {
+	QueryRow(string, ...any) *sql.Row
+}, clientID string) error {
 	var encoded string
-	err = db.QueryRow(`SELECT controls_json FROM session_inbox WHERE client_id=?`, clientID).Scan(&encoded)
-	db.Close()
+	err := db.QueryRow(`SELECT controls_json FROM session_inbox WHERE client_id=?`, clientID).Scan(&encoded)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
@@ -177,8 +185,17 @@ func ValidateInboxControls(dir, clientID string) error {
 		return err
 	}
 	for _, control := range controls {
-		if err := ValidateControl(dir, control); err != nil {
+		var current Control
+		err := db.QueryRow(`SELECT session_id,manager_id,revision,state FROM session_controls WHERE session_id=?`, control.SessionID).
+			Scan(&current.SessionID, &current.ManagerID, &current.Revision, &current.State)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrControlChanged
+		}
+		if err != nil {
 			return err
+		}
+		if current.ManagerID != control.ManagerID || current.Revision != control.Revision || current.State != ControlActive {
+			return ErrControlChanged
 		}
 	}
 	return nil

@@ -16,17 +16,52 @@ document.documentElement.style.setProperty("--wuu-font-size-ui", `${params.get("
 const usage = { input_tokens: 146800, output_tokens: 24100, cache_creation_tokens: 0, cache_read_tokens: 31000, reported_turns: 12 };
 const inventory: EngineListResult = { engines: params.has("empty") ? [] : [
   { id: "codex", display_name: "Codex", capabilities: ["account-quota"], enabled: true, binary_ok: true, models: [{ id: "gpt-5.4", display_name: "GPT-5.4", is_default: true }], local_usage: usage,
-    quota: { status: "available", checked_at: new Date().toISOString(), windows: [
-      { id: "short", used_percent: 36, window_minutes: 300, resets_at: new Date(Date.now() + 7200000).toISOString() },
-      { id: "weekly", used_percent: 71, window_minutes: 10080, resets_at: new Date(Date.now() + 172800000).toISOString() },
+    quota: { status: "available", kind: "subscription", plan: "Plus", checked_at: new Date().toISOString(), observed_at: new Date().toISOString(), expires_at: new Date(Date.now() + 1800000).toISOString(), account: { id: "preview-codex", label: "Personal account", source: "codex-cli" }, windows: [
+      { id: "short", label: "Rolling window", used_percent: 36, window_minutes: 300, resets_at: new Date(Date.now() + 7200000).toISOString(), model: "GPT-5.4", scope: "Codex" },
+      { id: "weekly", label: "Weekly allowance", used_percent: 71, window_minutes: 10080, resets_at: new Date(Date.now() + 172800000).toISOString() },
     ] } },
-  { id: "grok", display_name: params.has("long") ? "Grok — subscription-with-a-long-account-name@example.test" : "Grok", protocol: "acp", enabled: true, binary_ok: true, models: [{ id: "grok-4.7", display_name: "Grok 4.7", is_default: true }], local_usage: usage },
-  { id: "claude", display_name: "Claude Code", enabled: true, binary_ok: true, models: [{ id: "sonnet", display_name: "Claude Sonnet", is_default: true }] },
+  { id: "grok", display_name: params.has("long") ? "Grok — subscription-with-a-long-account-name@example.test" : "Grok", protocol: "acp", enabled: true, binary_ok: true, models: [{ id: "grok-4.7", display_name: "Grok 4.7", is_default: true }], local_usage: usage,
+    quota: { status: "available", kind: "subscription", checked_at: new Date().toISOString(), observed_at: new Date().toISOString(), account: { id: "preview-grok", label: "Work space", source: "Agent login" }, windows: [{ id: "unknown", label: "Requests", window_minutes: 60, scope: "All models" }] } },
+  { id: "claude", display_name: "Claude Code", enabled: true, binary_ok: true, models: [{ id: "sonnet", display_name: "Claude Sonnet", is_default: true }],
+    quota: { status: "stale", kind: "subscription", plan: "Max", checked_at: new Date().toISOString(), observed_at: new Date(Date.now() - 86400000).toISOString(), expires_at: new Date(Date.now() - 3600000).toISOString(), account: { id: "preview-claude", label: "Team account", source: "claude-code" }, windows: [{ id: "stale", label: "Opus", used_percent: 45, window_minutes: 10080, resets_at: new Date(Date.now() - 3600000).toISOString() }] } },
   { id: "cursor", display_name: "Cursor", protocol: "acp", enabled: false, binary_ok: true },
 ] };
-const providers: ProviderSummary[] = params.has("empty") ? [] : [{ name: "SuperGrok", type: "xai-subscription", model: "grok-4.7", models: [{ id: "grok-4.7", display_name: "Grok 4.7" }, { id: "grok-4-fast", display_name: "Grok 4 Fast" }], api_key_configured: true, local_usage: usage }];
+const providers: ProviderSummary[] = params.has("empty") ? [] : [
+  { name: "Grok Build", type: "grok-build", model: "grok-4.7", models: [{ id: "grok-4.7", display_name: "Grok 4.7" }, { id: "grok-4-fast", display_name: "Grok 4 Fast" }], api_key_configured: true, local_usage: usage,
+    quota: { status: "available", kind: "subscription", checked_at: new Date().toISOString(), observed_at: new Date().toISOString(), account: { id: "preview-grok-build", source: "grok-cli" }, windows: [{ id: "subscription", used_percent: 18, window_minutes: 1440 }] } },
+  { name: "DeepSeek", type: "openai-compatible", catalog_id: "deepseek", model: "deepseek-chat", api_key_configured: true,
+    quota: { status: "available", kind: "balance", checked_at: new Date().toISOString(), observed_at: new Date().toISOString(), account: { id: "preview-deepseek-key", source: "deepseek" }, balances: [{ currency: "USD", amount: "12.3400" }, { currency: "CNY", amount: "0" }] } },
+];
+if (params.has("unattributed") && inventory.engines.length) {
+  inventory.engines[0].quota!.account = undefined;
+}
+if (params.has("long") && inventory.engines.length) {
+  inventory.engines[0].quota!.account!.label = "personal-with-a-long-account-name@example.test";
+  inventory.engines[0].quota!.plan = "Annual team subscription with extended usage";
+  providers[1].quota!.balances![0].amount = "9007199254740993.123456789";
+}
 if (params.has("codex")) {
   providers.push({ name: "openai-codex", type: "openai-codex", model: "gpt-6-astra", reuse_codex_credentials: false, codex_credential_source: "wuu-auth-store", api_key_configured: true });
+}
+if (params.has("healthy")) {
+  const snapshot = inventory.engines.find((engine) => engine.id === "claude")?.quota;
+  if (snapshot) {
+    snapshot.status = "available";
+    snapshot.observed_at = new Date().toISOString();
+    snapshot.expires_at = new Date(Date.now() + 1800000).toISOString();
+    snapshot.windows![0].resets_at = new Date(Date.now() + 172800000).toISOString();
+  }
+}
+if (params.has("accounts")) {
+  providers.push(...["Personal", "Team"].map((name, index): ProviderSummary => ({
+    name: name.toLowerCase(), type: "openai-codex", model: "gpt-5.4", api_key_configured: true,
+    models: [{ id: "gpt-5.4", display_name: "GPT-5.4" }, { id: "gpt-5.4-mini", display_name: "GPT-5.4 Mini" }],
+    quota: { status: "available", kind: "subscription", plan: index ? "Team" : "Plus",
+      checked_at: new Date().toISOString(), observed_at: new Date().toISOString(),
+      account: { id: `preview-${name}`, label: `${name.toLowerCase()}@example.test`, source: "wuu-auth-store" },
+      windows: [{ id: "weekly", label: "Weekly", used_percent: index ? 60 : 20, window_minutes: 10080 }],
+    },
+  })));
 }
 if (params.has("states") && inventory.engines.length) {
   inventory.engines[0].quota!.windows![0].used_percent = 100;
@@ -36,6 +71,7 @@ if (params.has("states") && inventory.engines.length) {
   inventory.engines[2].capabilities = ["account-quota"];
   inventory.engines[2].quota = { status: "unavailable", checked_at: new Date().toISOString() };
   inventory.engines[3].models = [{ id: "auto", display_name: "Auto" }];
+  providers[0].quota = { ...providers[0].quota!, status: "stale", observed_at: new Date(Date.now() - 86400000).toISOString() };
 }
 if (params.has("failures")) {
   inventory.engines[0].quota = undefined;
@@ -82,7 +118,7 @@ window.wuu = {
 
 function Preview() {
   const [sources, setSources] = useState(providers);
-  return <main style={{ height: "100vh", overflow: "auto" }}><div className="settings-page">
+  return <main style={{ height: "100vh", overflow: "auto", background: "var(--subscription-canvas)" }}><div className="settings-page">
     <SubscriptionDashboard inventory={params.has("detecting") ? undefined : parentInventory} providers={params.has("detecting") ? undefined : sources} onSelectBuiltinModel={async (name, model) => setSources((current) => current.map((source) => source.name === name ? { ...source, model } : source))} />
   </div></main>;
 }

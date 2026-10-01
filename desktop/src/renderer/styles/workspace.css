@@ -114,7 +114,7 @@
 }
 
 /* With no tab open there is no strip to separate from its content. */
-.workspace-right-panel:has(> .workspace-panel-body.picker) > .workspace-panel-tabbar {
+.workspace-right-panel:not(:has(.workspace-tool-tab)):has(> .workspace-panel-body.picker) > .workspace-panel-tabbar {
   box-shadow: none;
 }
 
@@ -1186,52 +1186,69 @@ html.resizing-workspace-file-split * {
   padding-bottom: 180px;
 }
 
-/* Tool picker: the right panel with no open tab. A plain list on the file
- * tree's axis, top-aligned, so the tree a choice opens appears where the
- * list was. Fill marks hover, press and keyboard focus only. */
 .workspace-tool-menu {
   display: grid;
   height: 100%;
   min-width: 0;
   align-content: start;
+  justify-items: center;
+  gap: var(--section-gap);
   overflow-y: auto;
-  padding: var(--space-3) var(--space-2);
+  padding: var(--space-8) var(--panel-padding);
+}
+
+.workspace-tool-menu-section {
+  width: 100%;
+  min-width: 0;
+  max-width: 32em;
+}
+
+.workspace-tool-menu-section h2 {
+  margin: 0 0 var(--section-heading-gap);
+  color: var(--ink);
+  font-size: var(--font-ui);
+  font-weight: var(--weight-medium);
+  line-height: 1.5;
 }
 
 .workspace-tool-menu-list {
   display: grid;
   width: 100%;
-  max-width: 32em;
-  gap: 2px;
+  gap: var(--space-2);
 }
 
-.workspace-tool-menu-item {
+.workspace-tool-menu-item,
+.workspace-tool-menu-more > summary {
   display: grid;
   grid-template-columns: var(--icon-size) minmax(0, 1fr);
   width: 100%;
   min-width: 0;
-  min-height: var(--control-row-height);
+  min-height: max(var(--control-row-height), calc(var(--font-ui) * 1.5 + var(--space-3) * 2));
   align-items: center;
   column-gap: var(--space-3);
-  border-radius: var(--radius-xs);
-  background: transparent;
+  border-radius: var(--radius-sm);
+  background: var(--surface-1);
   color: var(--ink);
-  padding: var(--space-1) var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--font-ui);
+  line-height: 1.5;
   text-align: start;
   transition:
     background-color var(--motion-fast) var(--ease-out),
     color var(--motion-fast) var(--ease-out);
 }
 
-.workspace-tool-menu-item:hover {
+.workspace-tool-menu-item:hover,
+.workspace-tool-menu-more > summary:hover {
   background: var(--ink-overlay-4);
 }
 
-.workspace-tool-menu-item:active {
+.workspace-tool-menu-item:active,
+.workspace-tool-menu-more > summary:active {
   background: var(--ink-overlay-8);
 }
 
-html[data-focus-modality="keyboard"] .workspace-tool-menu-item:focus-visible {
+html[data-focus-modality="keyboard"] .workspace-tool-menu :is(button, summary):focus-visible {
   outline-offset: -2px;
 }
 
@@ -1240,7 +1257,7 @@ html[data-focus-modality="keyboard"] .workspace-tool-menu-item:focus-visible {
   width: var(--icon-size);
   height: var(--icon-size);
   place-items: center;
-  color: var(--ink-tertiary);
+  color: var(--ink-soft);
   transition: color var(--motion-fast) var(--ease-out);
 }
 
@@ -1273,7 +1290,34 @@ html[data-focus-modality="keyboard"] .workspace-tool-menu-item:focus-visible {
 
 .workspace-tool-menu-copy span {
   color: var(--ink-soft);
-  font-size: var(--font-sm);
+  font-size: var(--font-ui);
+}
+
+.workspace-tool-menu-more {
+  margin-top: var(--space-2);
+}
+
+.workspace-tool-menu-more > summary {
+  grid-template-columns: var(--icon-size) minmax(0, 1fr) var(--icon-size);
+  cursor: pointer;
+  list-style: none;
+}
+
+.workspace-tool-menu-more > summary::-webkit-details-marker {
+  display: none;
+}
+
+.workspace-tool-menu-more > .workspace-tool-menu-list {
+  margin-top: var(--space-2);
+}
+
+.workspace-tool-menu-chevron {
+  color: var(--ink-soft);
+  transition: transform var(--motion-fast) var(--ease-out);
+}
+
+.workspace-tool-menu-more[open] .workspace-tool-menu-chevron {
+  transform: rotate(180deg);
 }
 
 .workspace-file-panel {
@@ -3376,6 +3420,16 @@ html[data-focus-modality="keyboard"] .runtime-panel-summary :is(
 }
 
 .conversation-width {
+  /* Shell geometry belongs to the enclosing layout, not the message tree.
+     Stop these private tokens at the flow boundary so each live panel-width
+     write does not restyle every message. The flow still rewraps at its real
+     width; shared theme, typography, and spacing tokens keep inheriting. */
+  --sidebar-width: initial;
+  --sidebar-open-width: initial;
+  --workspace-right-panel-width: initial;
+  --workspace-right-panel-reserved-width: initial;
+  --environment-panel-content-inset: initial;
+  --conversation-visible-inset-right: initial;
   /* Outer width, horizontal padding, and 12-col grid come from .session-flow.
      Each flow item owns its semantic trailing boundary; the grid itself must
      not add another anonymous row gap between turns. */

@@ -25,7 +25,30 @@ It renders the real first-run component without the product preload, app-server,
 
 The [mascot lab](../../../desktop/dev/mascot/README.md) uses `npm --prefix desktop run lab:mascot`. Use the full `make dev` path when the change depends on native behavior, IPC, or real session state. Keep temporary screenshots in ignored output directories and use synthetic content in committed fixtures.
 
+## Workspace new pages
+
+The right panel's plus button creates a closable **New page** tab. Choosing a tool
+replaces that page in place; if the tool is already open, Wuu closes the new page
+and focuses its existing tab. Installed extensions appear under **More tools**.
+**Continue viewing** links to up to four currently open files, diffs, or delivered
+artifacts; it is absent when none are open. Closing a page restores
+the previously active tab.
+
+Run `npm --prefix desktop run test:e2e:workspace-new-tab` for production-renderer
+checks of selection, singleton reuse, close recovery, keyboard navigation, and
+extension loading through a synthetic bridge. Screenshots and `results.json` in
+`desktop/out/workspace-new-tab-e2e/` cover light/dark themes, 14px/20px UI sizes,
+and wide/narrow windows. This does not validate a live app-server or browser engine.
+
 ## Conversation image previews
+
+Images returned while inspecting files or reading tool output stay inside the
+aggregated tool activity. Expand that process row to load its image previews,
+then click an image to enlarge it. Inspection images do not split tool groups
+or become separate output rows.
+Explicitly presented image artifacts, message attachments, and Markdown images
+remain directly visible. This distinction also applies to PTC and background
+tool results.
 
 Message and inline tool images reserve a responsive 4:3 preview area before
 loading. The complete image fits inside without cropping or upscaling; portrait
@@ -268,6 +291,12 @@ Use a CSS transition from the ladder for motion whose geometry is already known:
 ## Conversation disclosure scrolling
 
 Opening or closing tool/reasoning details preserves the reader's scroll mode. A conversation following the latest content continues following through the height transition; a paused conversation keeps its reading position. Wheel, touch, keyboard scrolling, scrollbar dragging, and text selection take precedence over layout correction.
+
+Inside a bounded inspection strip, tools and reasoning follow their event order.
+The first opening of live activity starts at the latest content; completed
+history starts at the beginning. Closing and reopening restore the strip's
+reading position and follow/pause mode, including after hidden content grows.
+Position before paint, without a delayed forced scroll after the opening motion.
 
 Sending a query reserves reading space below the bubble. Expanded details may temporarily occupy that space, but closing them restores what remains after actual response growth or deliberate browsing. A temporarily empty gap is not proof that the response has filled the reservation. Inspect repeated toggles while streaming, including a fold taller than the remaining gap and a session switch with the fold open.
 

@@ -14,6 +14,15 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   reasoning levels, updated cache pricing, and existing Codex subscription-login
   reuse and account-discovered aliases.
 
+- Production subscription dashboard with account-scoped quota observations,
+  plan windows, prepaid balances, reset times, freshness, and explicit failure
+  states. Compact service cards group separate accounts with parallel quota
+  windows and account-specific credential menus. Compact attribution, reset
+  countdowns, and exact reset-time tooltips keep the focus on available quota.
+  Successful observations survive
+  restarts without being reused for another account. Quota reads do not submit
+  inference or change model routing.
+
 - Selectable execution environments for workspace tools, with isolated or shared
   filesystems, retained profiles, remote process controls, artifact transfer,
   and desktop configuration.
@@ -27,6 +36,27 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   Side sessions, running-work corrections, restart recovery, and stop fencing.
 
 ### Changed
+
+- Share equivalent quota HTTP reads only while they are pending, preserving
+  credential isolation, independent cancellation, and fresh later refreshes.
+
+- Limit private shell-geometry style updates inside message flow, reducing
+  repeated styling while long conversations reflow during resizing.
+- Reduce repeated schema inspection when opening session history and metadata.
+- Reuse loaded history during conversation restoration instead of rereading it
+  and building a turn projection that is immediately discarded.
+- Release acknowledged remote-control output without copying the pending replay
+  buffer, preserving reconnect ordering and queue limits.
+
+- Conversation search uses a single list with project labels and highlighted
+  matching excerpts. Message matches navigate to and briefly highlight their
+  history position. Keyword searches include archived conversations without
+  restoring them.
+
+- Group model-service discovery into subscriptions, direct providers, gateways,
+  and local endpoints, with searchable catalogs and connection status. Keep
+  saved connections and current model selection separate from discovery, with
+  compact quota cards and account-specific controls.
 
 - Video attachments show larger, unobstructed previews with only a play button;
   native controls appear on playback.
@@ -95,6 +125,38 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   and the bell's first-run bubble became a mark-all-read action.
 
 ### Fixed
+
+- Wait for confirmed Git status before automatically opening workspace info,
+  avoiding a brief panel expansion and collapse in non-Git folders.
+
+- Preserve each conversation’s composer draft across related-session split
+  opening, replacement, closing, and navigation; prevent delayed loads from
+  overriding newer navigation or pane choices.
+- Keep image inspections in aggregated tool activity, with previews loaded on
+  expansion while explicitly presented images retain their output order.
+- Preserve Home/End effort selections when an older settings response arrives
+  while the key is held after reopening the runtime picker.
+- Preserve the latest reasoning-effort choice during pending updates, keeping
+  queued runtime changes with their original conversation and workspace.
+- Keep streaming cursor markers out of copied or selected unfinished backtick and tilde code blocks.
+- Preserve conversation drafts and queued messages across delayed forks and
+  failed archive or delete requests; keep the surviving split-pane draft.
+- Keep selected Anthropic credentials isolated from ambient credentials and
+  clear old bearer settings when saving a replacement API key.
+- Allow repeated stateful tool programs while retaining repeated-input guards
+  on their individual tool calls.
+
+- Keep conversation reading positions owned by their thread and pane across
+  interrupted history jumps, split-pane reflow, and browser-panel focus return;
+  preserve paused reading until an explicit return-to-latest gesture.
+
+- Preserve reading positions when reopening tool and reasoning details, start
+  completed history at the beginning, and keep tools and reasoning in event
+  order without a delayed scroll after opening.
+
+- Keep submitted questions anchored while earlier history reflows during or
+  after placement, and resume following when the reply fills the reserved space.
+
 - Edit conversation titles from the desktop title bar with a double click, while
   preserving keyboard rename and the surrounding window drag area.
 
@@ -106,9 +168,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Respect named `@@` context in file patches so edits cannot silently target
   matching code before that context; reject missing or ambiguous context before
   writing.
-- Stopping a background command now kills remaining child processes after its
-  parent exits, including children that could leave a promoted command's stop
-  request waiting indefinitely for output pipes to close.
+- Stopping a background command now kills remaining child processes even when
+  its parent has already exited before the stop request, with bounded output
+  cleanup for promoted commands.
 
 - Stop reasoning and partial-answer streaming indicators when a turn ends,
   retaining received text and discarding unfinished tool drafts.

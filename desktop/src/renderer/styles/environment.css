@@ -580,12 +580,8 @@
 .conversation-search-dialog {
   display: flex;
   flex-direction: column;
-  /* Keep the two-pane search surface compact enough to read as a command
-     palette rather than a replacement page. The outer min lets unusually
-     narrow windows shrink safely without a breakpoint that makes the dialog
-     wider again. */
-  width: min(clamp(560px, 58vw, 800px), calc(100vw - 24px));
-  max-height: min(560px, calc(100vh - 160px));
+  width: min(680px, 100%);
+  max-height: min(640px, 76vh);
   gap: 10px;
   overflow: hidden;
   border-radius: var(--menu-radius);
@@ -607,7 +603,7 @@
 .conversation-search-input-wrap {
   display: grid;
   width: 100%;
-  min-height: 36px;
+  min-height: 44px;
   height: auto;
   grid-template-columns: 24px minmax(0, 1fr) 28px;
   gap: 8px;
@@ -622,7 +618,7 @@
 
 .conversation-search-input-wrap input {
   font-size: var(--font-ui);
-  font-weight: var(--weight-medium);
+  font-weight: var(--weight-regular);
   letter-spacing: 0;
 }
 
@@ -680,6 +676,8 @@
 
 .conversation-search-results {
   display: grid;
+  flex: 1 1 auto;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 24%) auto;
   grid-auto-rows: max-content;
   min-height: 0;
   align-content: start;
@@ -691,14 +689,15 @@
 .conversation-search-result {
   display: grid;
   min-height: 42px;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
   align-items: center;
-  gap: 12px;
+  gap: 4px 12px;
   border-radius: var(--radius-xs);
   background: transparent;
   color: var(--env-search-result-text);
   cursor: pointer;
-  padding: 6px 10px 6px 12px;
+  padding: 10px 10px 10px 12px;
   text-align: left;
   transition:
     opacity var(--motion-fast) var(--ease-out),
@@ -711,10 +710,13 @@
   background: var(--env-search-result-hover-bg);
 }
 
-.conversation-search-result-current {
-  grid-column: 2;
-  color: var(--ink-tertiary);
-  font-size: var(--font-xs);
+.conversation-search-result-status {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  color: var(--ink-secondary);
+  font-size: var(--font-sm);
   white-space: nowrap;
 }
 
@@ -739,29 +741,18 @@
   white-space: nowrap;
 }
 
-.conversation-search-result-title mark {
-  background: var(--env-search-result-hover-bg);
+.conversation-search-result mark {
+  background: transparent;
   color: var(--ink);
   font-weight: var(--weight-semibold);
 }
 
 .conversation-search-result-shortcut {
-  grid-column: 2;
-  opacity: 0;
-  transition: opacity var(--motion-fast) var(--ease-out);
+  flex-shrink: 0;
 }
 
 .conversation-search-result-shortcut.empty {
   visibility: hidden;
-}
-
-.conversation-search-result:hover .conversation-search-result-shortcut,
-.conversation-search-result:focus-visible .conversation-search-result-shortcut {
-  opacity: 1;
-}
-
-.conversation-search-result.selected .conversation-search-result-shortcut {
-  opacity: 1;
 }
 
 .conversation-search-empty {
@@ -775,193 +766,30 @@
 
 /* Loading lines wait out a fast answer, like the view-switch indicator
  * (ViewSwitchState.ts), instead of flashing for one request. */
-:is(.conversation-search-empty[data-loading], .conversation-search-preview-loading) {
+.conversation-search-empty[data-loading] {
   animation: wuu-fade-in var(--motion-base) var(--ease-out) 180ms both;
 }
 
-/* Two-pane body — result list on the left, preview pane on the right. The
- * list keeps its own vertical scroll (long result lists); the preview pane
- * scrolls independently so a long conversation does not push the list off
- * screen. */
-.conversation-search-body {
-  display: grid;
-  flex: 1 1 auto;
-  min-height: 0;
-  grid-template-columns: minmax(220px, 1fr) minmax(0, 1fr);
-  gap: 16px;
-}
-
-/* Without results there is no preview; the message spans the palette. */
-.conversation-search-body:not(:has(> .conversation-search-preview)) {
-  grid-template-columns: minmax(0, 1fr);
-}
-
-/* Keep the preview in the same flat surface as the result list. Spacing,
- * rather than another card outline, separates navigation from detail. */
-.conversation-search-preview {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  min-height: 0;
-  gap: 14px;
-  padding: 4px 10px 10px 0;
-  overflow-y: auto;
-}
-
-.conversation-search-preview > * {
-  flex-shrink: 0;
-}
-
-.conversation-search-preview-header {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  gap: 4px;
-}
-
-.conversation-search-preview-title {
-  min-width: 0;
-  margin: 0;
-  color: var(--ink);
-  font-size: var(--font-body);
-  font-weight: var(--weight-semibold);
-  line-height: 1.4;
-  word-break: break-word;
-  /* The thread title can be a long markdown query (the user's first
-   * turn when they paste a doc into the composer) — without a height
-   * cap it wraps into a multi-paragraph block and pushes the per-turn
-   * preview rows below the header out of view. Cap to one line + an
-   * ellipsis here; the `title` attribute on the <h2> (added in the
-   * ConversationSearchOverlay.tsx side of this fix) still exposes
-   * the full text on hover so the information is not lost. */
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.conversation-search-preview-meta {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-  color: var(--ink-tertiary);
-  font-size: var(--font-sm);
-  font-weight: var(--weight-medium);
-}
-
-.conversation-search-preview-context,
-.conversation-search-preview-time {
+.conversation-search-result-context {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  text-align: right;
+  color: var(--ink-secondary);
+  font-size: var(--font-sm);
 }
 
-.conversation-search-preview-sep {
-  color: var(--ink-muted);
-}
-
-.conversation-search-preview-snippet {
+.conversation-search-result-snippet {
+  grid-column: 1 / -1;
   min-width: 0;
-  max-height: 4.65em;
-  color: var(--ink);
+  color: var(--ink-secondary);
   font-size: var(--font-sm);
   font-weight: var(--weight-regular);
-  line-height: 1.55;
-  word-break: break-word;
+  line-height: var(--line-ui);
   overflow: hidden;
-}
-
-.conversation-search-preview-snippet .rich-content {
-  gap: 4px;
-}
-
-.conversation-search-preview-loading,
-.conversation-search-preview-empty {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 80px;
-  color: var(--ink-tertiary);
-  font-size: var(--font-sm);
-  font-weight: var(--weight-medium);
-}
-
-.conversation-search-preview-error {
-  border-radius: var(--radius-sm);
-  background: var(--env-search-error-bg, var(--surface-2));
-  color: var(--env-search-error-text, var(--ink));
-  font-size: var(--font-sm);
-  font-weight: var(--weight-medium);
-  padding: 8px 10px;
-}
-
-.conversation-search-preview-turns {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  gap: 24px;
-}
-
-.conversation-search-preview-turn-group {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  gap: 10px;
-}
-
-.conversation-search-preview-turn {
-  display: flex;
-  flex-direction: row;
-  align-items: flex-start;
-  min-width: 0;
-  padding: 0;
-}
-
-.conversation-search-preview-turn.role-user {
-  /* Mirror the chat surface: user bubbles align right with the same
-   * warm-grey background, hugging the text instead of stretching
-   * across the preview pane. */
-  justify-content: flex-end;
-}
-
-.conversation-search-preview-turn.role-assistant {
-  /* Assistant text reads flush left, no background — same as the live
-   * chat stream where participant messages fill the row. */
-  justify-content: flex-start;
-}
-
-.conversation-search-preview-text {
-  min-width: 0;
-  color: var(--ink);
-  font-size: var(--font-sm);
-  font-weight: var(--weight-regular);
-  line-height: 1.55;
-  overflow-wrap: anywhere;
-  user-select: text;
-  -webkit-user-select: text;
-}
-
-.conversation-search-preview-turn.role-user .conversation-search-preview-text {
-  /* Hug the text so short queries stay compact; cap at 85% so longer
-   * Markdown messages still retain the chat-bubble shape. */
-  flex: 0 1 auto;
-  max-width: 85%;
-  background: var(--chat-user-message-bg);
-  /* The conversation bubble's shape at preview size: the same corner to
-   * height ratio and a wider side inset than the top one. */
-  border-radius: var(--radius-sm);
-  padding: 5px 12px;
-}
-
-.conversation-search-preview-turn.role-assistant .conversation-search-preview-text {
-  /* Assistant fills the row, just like a participant's message in the
-   * live chat. */
-  flex: 1 1 auto;
-}
-
-.conversation-search-preview-text > .rich-content {
-  min-width: 0;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 @media (max-width: 720px) {
@@ -976,7 +804,23 @@
 
   .conversation-search-result {
     min-height: 48px;
+  }
+}
+
+@media (max-width: 480px) {
+  .conversation-search-results {
     grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .conversation-search-result-context {
+    grid-column: 1;
+    grid-row: 2;
+    text-align: left;
+  }
+
+  .conversation-search-result-status {
+    grid-column: 2;
+    grid-row: 1 / 3;
   }
 }
 

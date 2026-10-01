@@ -8,10 +8,150 @@ import (
 	"testing"
 	"time"
 
+	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/session"
 )
+
+func TestThreadSearchMessageAddressAndArchiveScope(t *testing.T) {
+	rt := newTestRuntime(t, &fakeClient{})
+	for _, id := range []string{"body", "archived", "archived-disk"} {
+		if _, err := session.CreateWithMetadata(rt.SessionDir, id, rt.RootDir); err != nil {
+			t.Fatal(err)
+		}
+		if err := rewriteChatHistory(rt.SessionDir, id, []providers.ChatMessage{
+			{Role: "user", Content: "An unrelated opening"},
+			{Role: "assistant", Content: "A warm introduction", ReasoningContent: "cobalt quartz reasoning"},
+			{Role: "user", Content: "A later question"},
+			{Role: "assistant", Content: "The cobalt answer"},
+			{Role: "assistant", Content: "Another cobalt answer"},
+			{Role: "assistant", Content: "forbidden hidden answer", Hidden: true},
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if err := session.UpdateIndex(rt.SessionDir, id, 6, "An unrelated opening"); err != nil {
+			t.Fatal(err)
+		}
+		if id != "body" {
+			if _, err := session.UpdateArchived(rt.SessionDir, id, true); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	for _, id := range []string{"private", "private-live"} {
+		if _, err := session.CreateManagedWithMetadata(rt.SessionDir, id, rt.RootDir, session.ManagedMetadata{
+			Owner: "test-plugin", Visibility: pluginhost.SessionVisibilityPlugin,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if err := rewriteChatHistory(rt.SessionDir, id, []providers.ChatMessage{{Role: "user", Content: "forbidden cobalt quartz"}}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := session.UpdateArchived(rt.SessionDir, id, true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out := &lockedBuffer{}
+	srv := New(rt, out)
+	now := time.Now()
+	archived, err := srv.loadPersistedThreadState("archived", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	archived.ReadOnly = true // Archived display threads must still be searchable.
+	srv.threads["archived"] = archived
+	private, err := srv.loadPersistedThreadState("private-live", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.threads[private.ID] = private
+	srv.threads["title"] = &threadState{ID: "title", Title: "Cobalt plan", UpdatedAt: now,
+		History: []providers.ChatMessage{{Seq: 12, Role: "user", Content: "cobalt body"}}}
+	srv.threads["technical"] = &threadState{ID: "technical", Title: "Logs", UpdatedAt: now, PinnedAt: &now,
+		History: []providers.ChatMessage{{Seq: 17, Role: "tool", Content: "cobalt output"}}}
+	srv.threads["unaddressed"] = &threadState{ID: "unaddressed", Title: "Draft", UpdatedAt: now,
+		History: []providers.ChatMessage{
+			{Role: "assistant", Content: "first amber draft"},
+			{Seq: 21, Role: "assistant", Content: "second amber draft"},
+		}}
+	for i, query := range []string{"", "CoBaLt", "quartz", "forbidden", "unrelated opening", "amber"} {
+		params, _ := json.Marshal(ThreadSearchParams{Query: query})
+		id := fmt.Sprint(i)
+		rawID, _ := json.Marshal(id)
+		if err := srv.handleThreadSearch(Request{ID: rawID, Params: params}); err != nil {
+			t.Fatal(err)
+		}
+		response := responseByID(t, parseOutput(t, out.String()), id)
+		if response["error"] != nil {
+			t.Fatalf("search failed: %+v", response)
+		}
+		results := remarshal[ThreadSearchResult](t, response["result"]).Results
+		rawResults := response["result"].(map[string]any)["results"].([]any)
+		for j, result := range results {
+			if len(result.Thread.Turns) != 0 {
+				t.Fatalf("search must return metadata-only threads: %+v", result.Thread)
+			}
+			if result.MessageSeq == 0 {
+				if _, present := rawResults[j].(map[string]any)["message_seq"]; present {
+					t.Fatalf("unaddressed results must omit message_seq: %+v", rawResults[j])
+				}
+			}
+		}
+		if query == "" {
+			if len(results) != 4 {
+				t.Fatalf("quick-switch must exclude private and archived conversations: %+v", results)
+			}
+			for _, result := range results {
+				if result.Thread.Archived || result.MessageSeq != 0 {
+					t.Fatalf("quick-switch must exclude archives and message addresses: %+v", result)
+				}
+			}
+			continue
+		}
+		if query == "forbidden" {
+			if len(results) != 0 {
+				t.Fatalf("hidden messages and private sessions must not leak: %+v", results)
+			}
+			continue
+		}
+		if query == "amber" {
+			if len(results) != 1 || results[0].MessageSeq != 0 || results[0].Snippet != "first amber draft" {
+				t.Fatalf("equal-rank messages must retain chronological first match: %+v", results)
+			}
+			continue
+		}
+		if query == "quartz" || query == "unrelated opening" {
+			if len(results) != 3 {
+				t.Fatalf("expected active and both persisted archives: %+v", results)
+			}
+			for _, result := range results {
+				wantSeq := 2
+				if query == "unrelated opening" {
+					wantSeq = 1 // Matching preview metadata must resolve to the real message.
+				}
+				if result.MessageSeq != wantSeq {
+					t.Fatalf("query %q: unexpected message address: %+v", query, result)
+				}
+			}
+			continue
+		}
+		if len(results) != 5 || results[0].Thread.ID != "title" || results[0].MessageSeq != 0 {
+			t.Fatalf("title matches must open normally, with archived body matches included: %+v", results)
+		}
+		for _, result := range results[1:4] {
+			if result.MessageSeq != 4 || result.Snippet != "The cobalt answer" {
+				t.Fatalf("body result must address the matching message, not the opening: %+v", result)
+			}
+			if result.Thread.Archived != strings.HasPrefix(result.Thread.ID, "archived") {
+				t.Fatalf("persisted archive status must survive search: %+v", result)
+			}
+		}
+		if results[4].Thread.ID != "technical" || results[4].MessageSeq != 17 {
+			t.Fatalf("technical matches must retain their address but rank below body/title: %+v", results)
+		}
+	}
+}
 
 func TestThreadSearchLazyHistoryPreservesResults(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})

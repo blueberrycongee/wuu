@@ -105,7 +105,19 @@ worktree 改动留在成员的 worktree 里。`thread/control/take` 和 `thread/
 
 ## 查询订阅状态
 
-`engine/list` 可选参数 `{ "include_quota": true }` 通过支持的本地 CLI（目前为 Codex）读取账户额度，并返回内置订阅来源 `subscription_providers`。`quota` 包含 `status`（`available` 或 `unavailable`）、`checked_at` 和可选 `windows`；窗口提供 `id`、`label`、`used_percent`、`window_minutes`、`resets_at`。缺失额度表示未支持或未查询，不代表无限额度。过期快照应提示刷新，不能在重置时间自行补满。
+`engine/list` 可选参数 `{ "include_quota": true }` 使用各模型服务和支持的外部 Agent 自己的凭据查询上游额度，返回已配置服务 `subscription_providers`。服务或引擎可附带 `quota`：
+
+- `status`：`available`、`stale`、`unavailable`、`sign_in` 或 `unsupported`。
+- `kind`：订阅、套餐或余额；`plan` 为可选的上游套餐信息。
+- `account`：不透明、按来源隔离的 `id`，可选账号 `label` 和凭据 `source`；不返回 token 或密钥。
+- `checked_at` 为最近尝试时间，`observed_at` 为最后成功读取时间，`expires_at` 为新鲜度期限，目前为成功读取后五分钟。
+- `windows` 提供 `id`，以及可选的 `label`、`used_percent`、`window_minutes`、`resets_at`、`model`、`scope`、`display` 和上游明确报告的 `unlimited`。
+- `balances` 保留币种及十进制字符串 `amount`，不合并不同币种或账号；可选 `reset_credits` 表示上游重置次数。
+- `error_code` 为安全的失败类别，不包含上游原始响应。
+
+已接入原生 ChatGPT/Codex、Grok Build 订阅、Anthropic OAuth、Kimi Code 和智谱/Z.ai 套餐周期，以及 DeepSeek/OpenRouter 预付余额。外部 Codex 通过 CLI 账号请求读取；外部 Claude Code 和 Grok 使用自己的本机登录。macOS 默认 Claude 登录可读取钥匙串，但自定义凭据目录不会借用默认账号。浏览器 SuperGrok、任意兼容端点和没有适配器的 Agent 暂不支持。
+
+缺失百分比表示未知，不是零或无限；上游可用 100% 或更大数值表示耗尽。ACP 上下文占用和本地 token 不能推导账号额度，过期快照也不能在重置时间自行补满。暂时读取失败且仍能确认账号时，保留该凭据来源的最后成功快照为 `stale`，不改成功读取时间或到期时间；认证被拒绝时丢弃该账号的缓存额度。快照跨服务重启保留，更换凭据不会继承另一个账号的数据。所有来源的采集共用八秒期限。额度查询不发起推理，不更改模型选择、工作区默认值或路由策略。
 
 只有上述按需订阅响应读取历史统计。`initialize`、配置响应、普通 `engine/list` 和 `engine/update` 不附带 `latest_request` 与 `local_usage`；需要统计的客户端应独立加载订阅快照，不阻塞导航。所有请求来源共用一次历史扫描；扫描失败时保留服务清单，统计字段缺失而非零值。
 

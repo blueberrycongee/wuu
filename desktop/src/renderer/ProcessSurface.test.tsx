@@ -1024,7 +1024,7 @@ describe("ProcessSurface", () => {
         configurable: true,
         get: () => layout.scrollTop,
         set: (value) => {
-          layout.scrollTop = value;
+          layout.scrollTop = Math.max(0, Math.min(value, layout.scrollHeight - layout.clientHeight));
         },
       });
       return layout;
@@ -1051,7 +1051,34 @@ describe("ProcessSurface", () => {
       expect(mock?.textContent).toBe("reason-1");
     });
 
-    it("snaps the fold body to the bottom when the fold opens", async () => {
+    it("shows interleaved tools and reasoning in event order", () => {
+      const { container } = render({
+        processItems: [
+          makeReadFile("tool-1", "first.ts"),
+          makeReasoning("reason-1", "middle reasoning"),
+          makeReadFile("tool-2", "last.ts"),
+        ],
+        streaming: false,
+        renderReasoningItem: item => <span>{item.text}</span>,
+      });
+      const text = container.querySelector(".process-surface-body")!.textContent!;
+      expect(text.indexOf("first.ts")).toBeLessThan(text.indexOf("middle reasoning"));
+      expect(text.indexOf("middle reasoning")).toBeLessThan(text.indexOf("last.ts"));
+    });
+
+    it("starts completed history at the beginning", () => {
+      const { container } = render({
+        processItems: [makeReasoning("reason-1", "thinking aloud", "completed")],
+        streaming: false,
+        renderReasoningItem: item => <span>{item.text}</span>,
+      });
+      const details = container.querySelector<HTMLDetailsElement>("details.process-surface-fold")!;
+      const layout = stubScrollLayout(details.querySelector<HTMLElement>(".process-surface-body")!, {});
+      setProcessFoldOpen(details, true);
+      expect(layout.scrollTop).toBe(0);
+    });
+
+    it("positions a live fold at latest before its first paint", () => {
       const { container } = render({
         processItems: [makeReasoning("reason-1", "thinking aloud", "completed")],
         streaming: true,
@@ -1075,15 +1102,10 @@ describe("ProcessSurface", () => {
 
       setProcessFoldOpen(details, true);
 
-      // The fold-open snap fires ~280ms after opening. Wait it out.
-      await act(async () => {
-        await new Promise((resolve) => setTimeout(resolve, 320));
-      });
-
-      expect(layout.scrollTop).toBe(1000);
+      expect(layout.scrollTop).toBe(800);
     });
 
-    it("snaps again on every fold re-open so the user always lands on the latest reasoning", async () => {
+    it("restores reading history after closing, hidden growth and reopening", () => {
       const { container } = render({
         processItems: [makeReasoning("reason-1", "thinking aloud", "completed")],
         streaming: true,
@@ -1100,12 +1122,8 @@ describe("ProcessSurface", () => {
         clientHeight: 200,
       });
 
-      // First snap.
       setProcessFoldOpen(details, true);
-      await act(async () => {
-        await new Promise((resolve) => setTimeout(resolve, 320));
-      });
-      expect(layout.scrollTop).toBe(1000);
+      expect(layout.scrollTop).toBe(800);
 
       // User scrolls up to read earlier reasoning.
       act(() => {
@@ -1116,16 +1134,37 @@ describe("ProcessSurface", () => {
         body!.dispatchEvent(new UIEvent("scroll", { bubbles: true }));
       });
 
-      // User collapses then re-expands the fold; the scroll should
-      // snap back to the latest reasoning so they land on it instead
-      // of where they were when they collapsed.
       setProcessFoldOpen(details, false);
+      layout.scrollHeight += 300;
+      // Native hidden layout can reset the DOM offset; the reading snapshot survives.
+      layout.scrollTop = 0;
+      act(() => body!.dispatchEvent(new UIEvent("scroll", { bubbles: true })));
       setProcessFoldOpen(details, true);
-      await act(async () => {
-        await new Promise((resolve) => setTimeout(resolve, 320));
-      });
+      expect(layout.scrollTop).toBe(240);
+    });
 
-      expect(layout.scrollTop).toBe(1000);
+    it("does not override upward scrolling during the opening motion", () => {
+      vi.useFakeTimers();
+      try {
+        const { container } = render({
+          processItems: [makeReasoning("reason-1", "thinking aloud", "in_progress")],
+          streaming: true,
+          renderReasoningItem: item => <span>{item.text}</span>,
+        });
+        const details = container.querySelector<HTMLDetailsElement>("details.process-surface-fold")!;
+        const body = details.querySelector<HTMLElement>(".process-surface-body")!;
+        const layout = stubScrollLayout(body, {});
+        setProcessFoldOpen(details, true);
+        act(() => {
+          body.dispatchEvent(new WheelEvent("wheel", { deltaY: -100 }));
+          layout.scrollTop = 240;
+          body.dispatchEvent(new Event("scroll"));
+          vi.advanceTimersByTime(500);
+        });
+        expect(layout.scrollTop).toBe(240);
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 });

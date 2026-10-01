@@ -35,7 +35,7 @@ import {
   useLiveNow,
 } from "./TurnProgress";
 import { ProcessSurface, ProcessSurfaceMascot } from "./ProcessSurface";
-import { turnEndedInFailure, turnProgressContent } from "./TurnViewHelpers";
+import { CONVERSATION_TURN_REVEAL_EVENT, type ConversationTurnRevealDetail, turnEndedInFailure, turnProgressContent } from "./TurnViewHelpers";
 import { collectTurnSources } from "./ToolActivityHelpers";
 import { TurnSourcesRow } from "./TurnSourcesRow";
 import {
@@ -284,6 +284,18 @@ function TurnProcessFold({
   const userToggledRef = useRef(false);
   const autoCollapsePendingRef = useRef(false);
   const previousExpanded = useRef(expanded);
+  useEffect(() => {
+    const reveal = (event: Event): void => {
+      const { turnID, itemID } = (event as CustomEvent<ConversationTurnRevealDetail>).detail;
+      if (turnID !== turn.id || !itemID || !entries.some(entry =>
+        (entry.items ?? [entry.item]).some(item => item.id === itemID))) return;
+      userToggledRef.current = true;
+      autoCollapsePendingRef.current = false;
+      setExpanded(true);
+    };
+    window.addEventListener(CONVERSATION_TURN_REVEAL_EVENT, reveal);
+    return () => window.removeEventListener(CONVERSATION_TURN_REVEAL_EVENT, reveal);
+  }, [turn.id, entries]);
   // A hidden pane does not render, so an answer handoff that happened while
   // it was cached is still pending. Apply it in this commit. The passive
   // effect below would close the fold after paint and play the height
@@ -593,6 +605,7 @@ function EntryRenderer({
     return (
       <ProcessSurface
         processItems={entry.items ?? [item]}
+        cwd={cwd}
         streaming={streaming}
         active={activeGray}
         provider={turn.model_provider}
@@ -694,42 +707,16 @@ function ReasoningFold({
   }${streaming ? " is-streaming" : ""}`;
   const waveRef = useLiveTextWave<HTMLSpanElement>(Boolean(activeGray));
   const [open, setOpen] = useState(false);
-  const reasoningScroll = useAutoFollowScrollContainer();
+  const reasoningScroll = useAutoFollowScrollContainer({ open, initialAutoFollow: streaming });
 
   const handleReasoningStreamFrame = useCallback((): void => {
     onStreamFrame();
     reasoningScroll.scheduleScrollToBottom();
   }, [onStreamFrame, reasoningScroll]);
 
-  // When the user opens this fold, land at the latest reasoning. After
-  // that, keep following only while the user stays near the bottom.
   const handleToggle = useCallback((event: SyntheticEvent<HTMLDetailsElement>) => {
-    const details = event.currentTarget;
-    const nextOpen = details.open;
-    setOpen(nextOpen);
-    if (!nextOpen) return;
-    const body = details.querySelector(
-      ".turn-reasoning-body",
-    ) as HTMLElement | null;
-    if (!body) return;
-    let settled = false;
-    const snapToBottom = (transitionEvent?: Event) => {
-      const propertyName = (transitionEvent as TransitionEvent | undefined)
-        ?.propertyName;
-      if (propertyName && propertyName !== "grid-template-rows") {
-        return;
-      }
-      if (settled) return;
-      settled = true;
-      body.removeEventListener("transitionend", snapToBottom);
-      reasoningScroll.scrollToBottom({ force: true, revealScrollbar: true });
-    };
-    body.addEventListener("transitionend", snapToBottom);
-    // Fallback when transitionend never fires (reduced motion, or the
-    // grid already settled before the listener attached). The body's
-    // grid-template-rows transition runs on --motion-slow.
-    window.setTimeout(snapToBottom, motionDurationMs("--motion-slow", 280));
-  }, [reasoningScroll]);
+    setOpen(event.currentTarget.open);
+  }, []);
   return (
     <details
       className="turn-reasoning-fold"

@@ -1,7 +1,8 @@
-const { contextBridge } = require("electron");
+const { contextBridge, ipcRenderer } = require("electron");
 
 const cwd = process.env.WUU_RESIZE_E2E_CWD || process.cwd();
 const runtimeContext = { kind: "no_project", cwd };
+const liveLayout = process.env.WUU_RESIZE_LIVE_E2E === "1";
 let generalSettings = { git_attribution_enabled: true, ptc: { enabled: true } };
 const now = new Date().toISOString();
 const terminalListeners = new Set();
@@ -102,6 +103,30 @@ function projectList() {
     active_context: runtimeContext
   };
 }
+
+// Keep synthetic snapshots consistent with notifications, including a later resume.
+// The handler runs once, before renderer subscribers receive each notification.
+if (liveLayout) {
+  ipcRenderer.on("test:server-event", (_event, payload) => {
+    const { method, params } = payload.message || {};
+    if (params?.thread_id !== resizeThread.id) return;
+    if (method === "turn/started" || method === "turn/completed") {
+      const index = turns.findIndex(turn => turn.id === params.turn.id);
+      if (index < 0) turns.push(params.turn);
+      else turns[index] = params.turn;
+      resizeThread.status = method === "turn/started" ? "running" : "idle";
+      return;
+    }
+    const turn = turns.find(turn => turn.id === params.turn_id);
+    if (turn && method === "item/started") {
+      if (!turn.items.some(item => item.id === params.item.id)) turn.items.push(params.item);
+    } else if (turn && method === "item/agentMessage/delta") {
+      const item = turn.items.find(item => item.id === params.item_id);
+      if (item) item.text += params.delta;
+    }
+  });
+}
+let submittedTurns = 0;
 
 contextBridge.exposeInMainWorld("wuu", {
   listProjects: async () => projectList(),
@@ -293,11 +318,37 @@ contextBridge.exposeInMainWorld("wuu", {
   onSideThreadEvent: () => () => undefined,
   pinThread: async (_id, pinned) => ({ pinned }),
   archiveThread: async () => ({ ok: true }),
-  startTurn: async () => ({ turn: null }),
+  startTurn: async (_threadID, text, images = [], _files, _permission, _document, _parts, _context, clientID) => {
+    if (!liveLayout) return { turn: null };
+    submittedTurns += 1;
+    const turn = {
+      id: `resize-submitted-turn-${submittedTurns}`,
+      status: "in_progress",
+      items_view: "full",
+      started_at: new Date().toISOString(),
+      items: [{ id: `resize-submitted-user-${submittedTurns}`, type: "user_message", status: "completed", text, images, source_id: clientID }]
+    };
+    turns.push(turn);
+    resizeThread.status = "running";
+    return { turn };
+  },
   interruptTurn: async () => ({ ok: true }),
   respondToServerRequest: async () => undefined,
   rejectServerRequest: async () => undefined,
-  onServerEvent: () => () => undefined,
+  onServerEvent: liveLayout ? handler => {
+    const listener = (_event, payload) => handler(payload);
+    ipcRenderer.on("test:server-event", listener);
+    return () => ipcRenderer.removeListener("test:server-event", listener);
+  } : () => () => undefined,
+  // These report renderer host geometry only; no embedded browser is launched.
+  ...(liveLayout ? {
+    browserSurface: async (workdir, tabID) => ({ workdir, tabID, url: "https://resize.invalid/local-fixture", title: "Local responsive fixture", loading: false, canGoBack: false, canGoForward: false }),
+    reportBrowserBounds: (workdir, tabID, rect) => ipcRenderer.send("test:browser-bounds", { workdir, tabID, rect }),
+    reportBrowserPiPHostLayout: payload => ipcRenderer.send("test:pip-host", payload),
+    onBrowserSurface: () => () => undefined,
+    onBrowserInvalidate: () => () => undefined,
+    suppressBrowserOverlay: () => undefined
+  } : {}),
   onTerminalEvent: (handler) => {
     terminalListeners.add(handler);
     return () => terminalListeners.delete(handler);

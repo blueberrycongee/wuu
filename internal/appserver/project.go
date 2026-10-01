@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/blueberrycongee/wuu/internal/agentengine"
 	"github.com/blueberrycongee/wuu/internal/providers"
@@ -367,6 +368,34 @@ func (s *Server) restoreProjectMembership(id string, old session.Control) error 
 	return nil
 }
 
+// loadDurableProjectTurns reads output and terminal evidence from one active
+// physical transcript. Provider checkpoints may omit terminal metadata; cached
+// UI turns can default unfinished history to completed while a later turn runs.
+func (s *Server) loadDurableProjectTurns(id string) ([]Turn, error) {
+	history, err := loadPersistedMessages(s.rt.SessionDir, id, true)
+	if err != nil {
+		return nil, err
+	}
+	turns := turnsFromPersistedHistory(id, history, time.Now().UTC(), s.resolveParticipantSummary)
+	terminals := make(map[string]TurnStatus)
+	for _, record := range history {
+		if record.Role == "meta" && record.Content == turnTerminalHistoryRecord && record.ClientID != "" {
+			if status, ok := parseTurnTerminalStatus(record.StopReason); ok {
+				terminals[record.ClientID] = status
+			}
+		}
+	}
+	// A missing lease is not proof of success after a crash. A later turn's
+	// lease likewise must not hide an earlier exact terminal result.
+	for index := range turns {
+		turns[index].Status = TurnStatusInProgress
+		if status, ok := terminals[turns[index].ID]; ok {
+			turns[index].Status = status
+		}
+	}
+	return turns, nil
+}
+
 // recoverProjectInbox freezes and reports managed turns that ended while no
 // host was running, then retries undelivered coordinator input. Each step is
 // idempotent, so running them again never duplicates a delivery.
@@ -391,14 +420,18 @@ func (s *Server) recoverProjectInbox() {
 			continue
 		}
 		th.mu.Lock()
-		var last *Turn
-		if !th.running && len(th.Turns) > 0 {
-			turn := th.Turns[len(th.Turns)-1]
-			last = &turn
-		}
+		running := th.running
 		th.mu.Unlock()
-		if last != nil {
-			s.recordProjectResult(th, *last)
+		if running {
+			continue
+		}
+		turns, err := s.loadDurableProjectTurns(sessionID)
+		if err != nil {
+			providers.DebugLogf("recover project result %q: %v", sessionID, err)
+			continue
+		}
+		if len(turns) > 0 {
+			s.recordProjectResult(th, turns[len(turns)-1])
 		}
 	}
 	targets, err := session.InboxTargets(s.rt.SessionDir)

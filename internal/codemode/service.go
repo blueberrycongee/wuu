@@ -124,6 +124,9 @@ type RunOptions struct {
 	// Empty disables store/load/remove. Only one program may run in a scope at a time.
 	// A canceled predecessor is drained before admission; live overlaps are rejected.
 	StateScope string
+	// StateOwner is the host conversation whose deletion ends this state lifetime.
+	// Actors and execution roots keep distinct scopes under the same owner.
+	StateOwner string
 }
 type RunResult struct {
 	Logs  []string
@@ -141,13 +144,14 @@ type Service struct {
 	mu         sync.Mutex
 	closed     bool
 	closedCh   chan struct{}
-	active     map[string]context.CancelFunc
+	active     map[string]activeRun
 	done       sync.WaitGroup
 	scopes     map[string]*stateScope
 	stateBytes int
 }
 
 type stateScope struct {
+	owner string
 	ctx   context.Context
 	done  chan struct{}
 	bytes int
@@ -156,8 +160,13 @@ type stateScope struct {
 	values map[string]string
 }
 
+type activeRun struct {
+	owner  string
+	cancel context.CancelFunc
+}
+
 func NewService(config ServiceConfig) *Service {
-	return &Service{config: config, active: map[string]context.CancelFunc{}, scopes: map[string]*stateScope{}, closedCh: make(chan struct{})}
+	return &Service{config: config, active: map[string]activeRun{}, scopes: map[string]*stateScope{}, closedCh: make(chan struct{})}
 }
 
 func (s *Service) Close() error {
@@ -168,12 +177,41 @@ func (s *Service) Close() error {
 	}
 	s.scopes = nil
 	s.stateBytes = 0
-	for _, cancel := range s.active {
-		cancel()
+	for _, run := range s.active {
+		run.cancel()
 	}
 	s.mu.Unlock()
 	s.done.Wait()
 	return nil
+}
+
+// ForgetOwner releases one deleted conversation's state and cancels its already
+// registered programs, including calls waiting for a canceled predecessor.
+// Hosts must prevent new calls for deleted conversations through their normal
+// lifecycle admission; this does not keep a permanent tombstone for the owner.
+func (s *Service) ForgetOwner(owner string) {
+	if owner == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, run := range s.active {
+		if run.owner == owner {
+			run.cancel()
+		}
+	}
+	for key, scope := range s.scopes {
+		if scope.owner != owner {
+			continue
+		}
+		s.stateBytes -= scope.bytes
+		// A running program may still be serializing its committed snapshot.
+		// Drop the reference without mutating that immutable map.
+		scope.values, scope.bytes = nil, 0
+		if scope.done == nil {
+			delete(s.scopes, key)
+		}
+	}
 }
 
 // Run retains printed/returned values, media, and successful store()/remove() mutations.
@@ -203,9 +241,29 @@ func (s *Service) Run(parent context.Context, request RunRequest, opts RunOption
 		lifetime, cancelDeadline = context.WithTimeout(parent, time.Duration(timeout)*time.Millisecond)
 		defer cancelDeadline()
 	}
-	var ctx context.Context
-	var cancel context.CancelFunc
+	ownerContext, cancelOwner := context.WithCancel(lifetime)
+	defer cancelOwner()
+	// Execution cleanup cancels its I/O even after a successful program. Keep
+	// that distinct from owner cancellation, which also prevents state commit.
+	ctx, cancel := context.WithCancel(ownerContext)
+	defer cancel()
 	id := rand.Text()
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return result, errors.New("PTC runtime is closed")
+	}
+	// Register before waiting for scope admission so owner deletion and Close
+	// also cancel/drain callers that have not started an interpreter yet.
+	s.active[id] = activeRun{owner: opts.StateOwner, cancel: cancelOwner}
+	s.done.Add(1)
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		delete(s.active, id)
+		s.mu.Unlock()
+		s.done.Done()
+	}()
 	var scope *stateScope
 	var committed map[string]string
 	var staged map[string]string
@@ -216,13 +274,17 @@ func (s *Service) Run(parent context.Context, request RunRequest, opts RunOption
 			s.mu.Unlock()
 			return result, errors.New("PTC runtime is closed")
 		}
-		if lifetime.Err() != nil {
+		if ownerContext.Err() != nil {
 			s.mu.Unlock()
-			result.Error = lifetime.Err().Error()
+			result.Error = ownerContext.Err().Error()
 			return result, nil
 		}
 		if opts.StateScope != "" {
 			scope = s.scopes[opts.StateScope]
+			if scope != nil && scope.owner != opts.StateOwner {
+				s.mu.Unlock()
+				return result, errors.New("PTC state scope belongs to a different owner")
+			}
 			if scope != nil && scope.done != nil {
 				if scope.ctx.Err() == nil {
 					s.mu.Unlock()
@@ -235,9 +297,10 @@ func (s *Service) Run(parent context.Context, request RunRequest, opts RunOption
 				select {
 				case <-drained:
 					continue
-				case <-lifetime.Done():
-					result.Error = lifetime.Err().Error()
-					return result, nil
+				case <-ownerContext.Done():
+					// Recheck under the lock so Close keeps its established
+					// closed-runtime error even when both signals are ready.
+					continue
 				case <-s.closedCh:
 					return result, errors.New("PTC runtime is closed")
 				}
@@ -247,29 +310,24 @@ func (s *Service) Run(parent context.Context, request RunRequest, opts RunOption
 					s.mu.Unlock()
 					return result, fmt.Errorf("PTC state scope limit exceeded (%d)", MaxStateScopes)
 				}
-				scope = &stateScope{}
+				scope = &stateScope{owner: opts.StateOwner}
 				s.scopes[opts.StateScope] = scope
 			}
 		}
-		ctx, cancel = context.WithCancel(lifetime)
 		if scope != nil {
 			scope.ctx, scope.done = ctx, make(chan struct{})
 			committed = scope.values
 		}
-		s.active[id] = cancel
-		s.done.Add(1)
 		s.mu.Unlock()
 		break
 	}
-	defer cancel()
 	defer func() {
 		s.mu.Lock()
-		delete(s.active, id)
 		if scope != nil {
 			if completed && err == nil && result.Error == "" {
 				switch {
-				case lifetime.Err() != nil:
-					result.Error = lifetime.Err().Error()
+				case ownerContext.Err() != nil:
+					result.Error = ownerContext.Err().Error()
 				case s.closed:
 					result.Error = context.Canceled.Error()
 				default:
@@ -294,7 +352,6 @@ func (s *Service) Run(parent context.Context, request RunRequest, opts RunOption
 			scope.ctx, scope.done = nil, nil
 		}
 		s.mu.Unlock()
-		s.done.Done()
 	}()
 	node := s.config.NodeExecutable
 	if node == "" {

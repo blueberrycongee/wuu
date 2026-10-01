@@ -347,7 +347,7 @@ func TestStopStopsProcessGroup(t *testing.T) {
 }
 
 func TestStopKillsDescendantsAfterLeaderExit(t *testing.T) {
-	for _, mode := range []string{"pipe", "tty", "adopted"} {
+	for _, mode := range []string{"pipe", "tty", "adopted", "adopted-exited", "adopted-exited-identity-mismatch", "adopted-exited-group-mismatch"} {
 		t.Run(mode, func(t *testing.T) {
 			root := t.TempDir()
 			m, err := NewManager(root, filepath.Join(root, "runtime"))
@@ -362,7 +362,7 @@ sh -c 'trap "" TERM HUP; echo $$ > child.pid; touch ready; while :; do sleep 1; 
 wait
 `
 			var p *Process
-			if mode == "adopted" {
+			if strings.HasPrefix(mode, "adopted") {
 				id, logPath := m.ReserveProcessLog()
 				logf, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 				if err != nil {
@@ -414,6 +414,37 @@ wait
 				t.Fatalf("child process group = %d, want %d: %v", pgid, p.PGID, err)
 			}
 
+			if strings.HasPrefix(mode, "adopted-exited") {
+				// Exit only the leader before Stop; its child keeps the
+				// adopted stdout copy alive and ignores the later SIGTERM.
+				leader, err := os.FindProcess(p.PID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := leader.Signal(syscall.SIGTERM); err != nil {
+					t.Fatal(err)
+				}
+				waitForProcessExit(t, p.PID)
+				select {
+				case <-monitor.done:
+					t.Fatal("descendant did not retain stdout")
+				default:
+				}
+			}
+
+			mismatch := strings.HasSuffix(mode, "mismatch")
+			if mismatch {
+				changed := *p
+				if mode == "adopted-exited-identity-mismatch" {
+					changed.ProcessStartTime = "different-launch"
+				} else {
+					changed.PGID++
+				}
+				if err := m.save(&changed); err != nil {
+					t.Fatal(err)
+				}
+			}
+
 			stopDone := make(chan error, 1)
 			started := time.Now()
 			go func() {
@@ -422,6 +453,15 @@ wait
 			}()
 			select {
 			case err := <-stopDone:
+				if mismatch {
+					if err == nil {
+						t.Fatal("Stop accepted a record that does not match its owned command")
+					}
+					if !processExists(childPID) {
+						t.Fatal("Stop signaled descendants despite mismatched ownership")
+					}
+					return
+				}
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -962,18 +1002,24 @@ func TestManagerUnsubscribeStopsLifecycleDelivery(t *testing.T) {
 	m.Subscribe(events)
 	m.Unsubscribe(events)
 
-	if _, err := m.Start(context.Background(), StartOptions{
+	// Observe completion separately so registry writes finish before TempDir cleanup.
+	completed := make(chan Event, 4)
+	m.Subscribe(completed)
+	defer m.Unsubscribe(completed)
+	started, err := m.Start(context.Background(), StartOptions{
 		Command:   "exit 0",
 		OwnerKind: OwnerMainAgent,
 		OwnerID:   "main",
 		Lifecycle: LifecycleManaged,
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
+	waitForProcessEvent(t, completed, started.ID, EventStopped, EventCauseNaturalExit)
 	select {
 	case event := <-events:
 		t.Fatalf("received event after unsubscribe: %+v", event)
-	case <-time.After(200 * time.Millisecond):
+	default:
 	}
 }
 

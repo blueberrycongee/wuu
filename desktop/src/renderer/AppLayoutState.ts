@@ -782,8 +782,8 @@ export function useAppLayoutState({
 
   // Sidebar / right-panel drags resize the conversation viewport every frame.
   // Reuse the window-resize deferred-scroll path so ResizeObserver consumers
-  // (ConversationScrollState, AutoFollowScroll, ConversationTurnRail) stop
-  // forcing layout + scrollTop writes on every pointermove.
+  // (ConversationScrollState, AutoFollowScroll) stop forcing layout +
+  // scrollTop writes on every pointermove.
   useEffect(() => {
     if (!resizingSidebar && !resizingRightPanel && !resizingSplit) {
       return undefined;

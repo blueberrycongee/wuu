@@ -92,7 +92,7 @@ func (e *CodeModeExecTool) ExecuteResultCall(ctx context.Context, call providers
 		return toolresult.Result{}, err
 	}
 	result, err := e.toolkit.CodeModeService().Run(ctx, codemode.RunRequest{Code: args.Code, TimeoutMS: timeout, Tools: definitions},
-		codemode.RunOptions{StateScope: e.toolkit.codeModeStateScope(cwd), CWD: cwd, Executor: executor, Sandbox: policy, SandboxProvider: e.toolkit.env.ProcessSandboxProvider})
+		codemode.RunOptions{StateScope: e.toolkit.codeModeStateScope(cwd), StateOwner: e.toolkit.env.CodeModeStateOwner, CWD: cwd, Executor: executor, Sandbox: policy, SandboxProvider: e.toolkit.env.ProcessSandboxProvider})
 	if err != nil {
 		return toolresult.Result{}, err
 	}

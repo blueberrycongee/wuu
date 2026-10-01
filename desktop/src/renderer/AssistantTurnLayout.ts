@@ -17,7 +17,7 @@ export function layoutAssistantTurn(
   artifacts: readonly TurnArtifact[],
 ): { processEntries: TurnEntry[]; output: Output[] } {
   const positions = new Map(turn.items.map((item, index) => [item.id, index * 2]));
-  const inline = artifacts.filter((artifact) => artifact.placement === "inline" && artifact.type !== "text");
+  const inline = artifacts.filter((artifact) => artifact.placement === "inline" && artifact.type !== "text" && !artifact.foldPreview);
   if (inline.length === 0) {
     return {
       processEntries: display.entries.filter((entry) => entry.position === "process"),

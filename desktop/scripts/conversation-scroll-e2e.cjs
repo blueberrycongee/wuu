@@ -7,6 +7,7 @@ const { app, BrowserWindow } = require("electron");
 // bridge and native input: wheel, scrollbar-free programmatic jumps, clicks
 // and sidebar toggles. Checks what a reader sees — the reading position, the
 // following state and painted pixels — while output streams.
+// WUU_SCROLL_E2E_ONLY=inspection, history-jump, or submission-reflow selects one native regression.
 const desktop = path.resolve(__dirname, "..");
 const output = process.env.WUU_SCROLL_E2E_OUTPUT || path.join(desktop, "out/conversation-scroll");
 fs.mkdirSync(output, { recursive: true });
@@ -20,6 +21,7 @@ const VIEWPORT = ".conversation-pane > .scroll-region";
 // rows inside a long conversation is an unpainted (blank) band.
 const BLANK_RUN_LIMIT_PX = 160;
 const now = new Date().toISOString();
+let testWindow;
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function evaluate(win, fn, ...args) {
@@ -76,8 +78,8 @@ function completedTurn(prefix, index) {
   return {
     id: `${prefix}-turn-${index}`, status: "completed", items_view: "full", started_at: now, completed_at: now, duration_ms: 1000,
     items: [
-      { id: `${prefix}-user-${index}`, type: "user_message", status: "completed", text: `Question ${index + 1}: explain part ${index + 1} of the system.` },
-      { id: `${prefix}-agent-${index}`, type: "agent_message", status: "completed", text: answer(index) },
+      { id: `${prefix}-user-${index}`, seq: index * 2 + 1, type: "user_message", status: "completed", text: `Question ${index + 1}: explain part ${index + 1} of the system.` },
+      { id: `${prefix}-agent-${index}`, seq: index * 2 + 2, type: "agent_message", status: "completed", text: answer(index) },
     ],
   };
 }
@@ -284,6 +286,217 @@ const stopTracking = win => evaluate(win, () => {
   return window.__messageTrack;
 });
 
+async function inspectProcess(win, results, turnID) {
+  // --- Inspection preserves its own reading position, including native details layout.
+  const processItems = [];
+  for (let index = 0; index < 24; index++) {
+    processItems.push({
+      id: `inspection-tool-${index}`, type: "tool_call", status: "completed", name: "read_file",
+      arguments: JSON.stringify({ path: `inspection-file-${index}.ts` }),
+    });
+    if (index === 10) processItems.push({
+      id: "inspection-reason-middle", type: "reasoning", status: "completed",
+      text: "Middle inspection reasoning.\n\n" + "An earlier reasoning paragraph. ".repeat(80),
+    });
+  }
+  const liveReasoning = {
+    id: "inspection-reason-live", type: "reasoning", status: "in_progress",
+    text: "Current inspection reasoning.\n\n" + "Latest reasoning remains readable while inspecting earlier tools. ".repeat(60),
+  };
+  processItems.push(liveReasoning);
+  for (const item of processItems) emit(win, "item/started", { thread_id: THREAD_ID, turn_id: turnID, item });
+  const foldSelector = `[data-turn-id="${turnID}"] details.process-surface-fold`;
+  await until(win, selector => document.querySelector(selector)?.textContent.includes("Current inspection reasoning."), "inspection records", 8000, foldSelector);
+  await frames(win, 12);
+  const processGeometry = () => evaluate(win, (selector, viewportSelector) => {
+    const fold = document.querySelector(selector);
+    const body = fold.querySelector(".process-surface-body");
+    const bounds = fold.querySelector("summary").getBoundingClientRect();
+    const viewport = document.querySelector(viewportSelector).getBoundingClientRect();
+    return { open: fold.open, top: body.scrollTop, max: body.scrollHeight - body.clientHeight,
+      summaryTop: bounds.top - viewport.top, anchor: body.style.overflowAnchor,
+      width: body.clientWidth, height: body.clientHeight,
+      fontSize: getComputedStyle(body.querySelector(".activity-row")).fontSize };
+  }, foldSelector, VIEWPORT);
+  const toggleProcess = async () => {
+    const bounds = await evaluate(win, selector => {
+      const rect = document.querySelector(selector).querySelector("summary").getBoundingClientRect();
+      return { x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) };
+    }, foldSelector);
+    win.webContents.sendInputEvent({ type: "mouseDown", ...bounds, button: "left", clickCount: 1 });
+    win.webContents.sendInputEvent({ type: "mouseUp", ...bounds, button: "left", clickCount: 1 });
+    await frames(win, 20);
+  };
+  const order = await evaluate(win, selector => {
+    const text = document.querySelector(selector).querySelector(".process-surface-body").textContent;
+    return [text.indexOf("inspection-file-10.ts"), text.indexOf("Middle inspection reasoning."), text.indexOf("inspection-file-11.ts")];
+  }, foldSelector);
+  assert.ok(order[0] >= 0 && order[0] < order[1] && order[1] < order[2], `Inspection order differs from events: ${order}`);
+
+  const inspectionCases = [
+    { theme: "light", size: 14, width: 1240, reduced: false },
+    { theme: "dark", size: 14, width: 1240, reduced: false },
+    { theme: "light", size: 20, width: 720, reduced: false },
+    { theme: "dark", size: 20, width: 720, reduced: true },
+  ];
+  for (const [index, appearance] of inspectionCases.entries()) {
+    win.setSize(appearance.width, 920);
+    await evaluate(win, appearance => {
+      document.querySelector(".environment-panel-close-row button")?.click();
+      const shell = document.querySelector(".app-shell");
+      if (shell.classList.contains("right-panel-open")) document.querySelector(".workspace-panel-close")?.click();
+      if (!shell.classList.contains("sidebar-collapsed") || shell.classList.contains("sidebar-drawer-open")) {
+        document.querySelector('[data-wuu-component="sidebar-toggle"], .sidebar-collapse-toggle')?.click();
+      }
+      document.documentElement.dataset.theme = appearance.theme;
+      document.documentElement.dataset.appearanceMotion = appearance.reduced ? "reduce" : "system";
+      document.documentElement.style.setProperty("--conversation-message-font-size", `${appearance.size}px`);
+      window.dispatchEvent(new Event("wuu-content-size-change"));
+    }, appearance);
+    await until(win, () => !document.querySelector(".app-shell").classList.contains("sidebar-animating") &&
+      !document.documentElement.classList.contains("layout-motion-active"), "inspection layout to settle");
+    await frames(win, 20);
+    const beforeOpen = await processGeometry();
+    await toggleProcess();
+    const opened = await processGeometry();
+    assert.ok(opened.open && opened.max > 200, `The inspection fixture must overflow: ${JSON.stringify(opened)}`);
+    if (index === 0) assert.ok(opened.max - opened.top <= 1, `First live inspection must start at latest: ${JSON.stringify(opened)}`);
+    assert.ok(Math.abs(opened.summaryTop - beforeOpen.summaryTop) <= 2, `Opening moved the inspection summary: ${JSON.stringify({ beforeOpen, opened })}`);
+    if (index === 0) {
+      emit(win, "item/reasoning/delta", { thread_id: THREAD_ID, turn_id: turnID, item_id: liveReasoning.id, delta: "\n\nNew reasoning while following latest. ".repeat(30) });
+      await frames(win, 20);
+      const followed = await processGeometry();
+      assert.ok(followed.max > opened.max && followed.max - followed.top <= 1, `Live inspection must follow appended output: ${JSON.stringify({ opened, followed })}`);
+    }
+    const readingTop = await evaluate(win, selector => {
+      const body = document.querySelector(selector).querySelector(".process-surface-body");
+      body.dispatchEvent(new WheelEvent("wheel", { deltaY: -100, bubbles: true }));
+      body.scrollTop = Math.min(180, (body.scrollHeight - body.clientHeight) / 2);
+      return body.scrollTop;
+    }, foldSelector);
+    await frames(win, 3);
+    emit(win, "item/reasoning/delta", { thread_id: THREAD_ID, turn_id: turnID, item_id: liveReasoning.id, delta: "\n\nNew reasoning below the reading point. ".repeat(30) });
+    await frames(win, 20);
+    const grown = await processGeometry();
+    assert.ok(Math.abs(grown.top - readingTop) <= 1 && grown.anchor === "auto", `Streaming stole inspection reading: ${JSON.stringify({ readingTop, grown })}`);
+    await toggleProcess();
+    const closed = await processGeometry();
+    assert.ok(!closed.open, "Inspection must close through a native click");
+    emit(win, "item/reasoning/delta", { thread_id: THREAD_ID, turn_id: turnID, item_id: liveReasoning.id, delta: "\n\nHidden reasoning growth. ".repeat(30) });
+    await frames(win, 12);
+    await toggleProcess();
+    const reopened = await processGeometry();
+    assert.ok(Math.abs(reopened.top - readingTop) <= 1 && reopened.anchor === "auto", `Reopening lost inspection reading: ${JSON.stringify({ readingTop, reopened })}`);
+    assert.ok(Math.abs(reopened.summaryTop - closed.summaryTop) <= 2, `Reopening moved the inspection summary: ${JSON.stringify({ closed, reopened })}`);
+    fs.writeFileSync(path.join(output, `inspection-${index}.png`), (await win.webContents.capturePage()).toPNG());
+    record(results, "native inspection preserves event order and reading position", { appearance, order, readingTop, opened, grown, closed, reopened });
+    await toggleProcess();
+  }
+  win.setSize(1240, 820);
+  await evaluate(win, () => {
+    document.documentElement.dataset.theme = "light";
+    document.documentElement.dataset.appearanceMotion = "system";
+    document.documentElement.style.removeProperty("--conversation-message-font-size");
+    window.dispatchEvent(new Event("wuu-content-size-change"));
+  });
+  await frames(win, 12);
+  emit(win, "item/started", { thread_id: THREAD_ID, turn_id: turnID, item: {
+    id: "inspection-history-boundary", type: "agent_message", phase: "commentary", status: "completed", text: "Completed inspection history follows.",
+  } });
+  for (const item of processItems) emit(win, "item/started", { thread_id: THREAD_ID, turn_id: turnID, item: {
+    ...item, id: `history-${item.id}`, status: "completed",
+  } });
+  await until(win, selector => document.querySelectorAll(selector).length === 2, "completed inspection history", 8000, foldSelector);
+  await evaluate(win, selector => document.querySelectorAll(selector)[1].querySelector("summary").click(), foldSelector);
+  await frames(win, 20);
+  const history = await evaluate(win, selector => {
+    const fold = document.querySelectorAll(selector)[1];
+    const body = fold.querySelector(".process-surface-body");
+    return { open: fold.open, top: body.scrollTop, max: body.scrollHeight - body.clientHeight, anchor: body.style.overflowAnchor };
+  }, foldSelector);
+  assert.ok(history.open && history.max > 200 && history.top === 0 && history.anchor === "auto", `Completed inspection must start from the beginning: ${JSON.stringify(history)}`);
+  record(results, "completed inspection starts from the beginning", { history });
+}
+
+async function verifySubmissionReflow(win, results) {
+  await typeAndSend(win, "Keep this submitted question visible while history reflows.");
+  await until(win, () => document.querySelector('[data-user-message-id="sent-user-2"]'), "accepted reflow query");
+  await frames(win, 2);
+  await until(win, () => !document.documentElement.hasAttribute("data-submit-glide"), "the full submission glide to finish");
+  await settleScroll(win);
+  const read = () => evaluate(win, selector => {
+    const viewport = document.querySelector(selector);
+    const message = viewport.querySelector('[data-user-message-id="sent-user-2"]');
+    if (!message?.textContent.includes("Keep this submitted question")) throw new Error("Submitted reflow target is missing");
+    const box = viewport.getBoundingClientRect(), rect = message.getBoundingClientRect();
+    return { top: rect.top - box.top, bottom: rect.bottom - box.top, height: viewport.clientHeight,
+      documentTop: viewport.scrollTop + rect.top - box.top, scrollTop: viewport.scrollTop,
+      tail: viewport.querySelector(".scroll-region-content").style.paddingBottom };
+  }, VIEWPORT);
+  const initial = await read();
+  const samples = [{ phase: "placed", ...initial }];
+  const [width, height] = win.getContentSize();
+  const resize = async (nextWidth, phase) => {
+    win.setContentSize(nextWidth, height);
+    await until(win, () => !document.documentElement.classList.contains("window-resizing"), "window resize to settle");
+    await frames(win, 4);
+    await settleScroll(win);
+    const next = await read();
+    samples.push({ phase, ...next });
+    fs.writeFileSync(path.join(output, "submission-reflow-state.json"), JSON.stringify(samples, null, 2));
+    assert.ok(next.top >= -1 && next.bottom <= next.height + 1, `Submitted query left the viewport: ${JSON.stringify(next)}`);
+    assert.ok(Math.abs(next.top - initial.top) <= 2, `Reflow moved the held query: ${initial.top} -> ${next.top}`);
+    return next;
+  };
+  const narrow = await resize(width - 300, "narrow");
+  assert.ok(Math.abs(narrow.documentTop - initial.documentTop) > 100, "Earlier history must actually reflow");
+  await resize(width, "restored");
+  emit(win, "item/started", { thread_id: THREAD_ID, turn_id: "sent-turn-2", item: {
+    id: "reflow-short-reply", type: "agent_message", status: "in_progress", text: "A short reply keeps the query's reading space."
+  } });
+  await until(win, () => document.querySelector('[data-turn-id="sent-turn-2"]')?.textContent.includes("A short reply"), "the short response");
+  await resize(width - 220, "short-reply-narrow");
+  await resize(width, "short-reply-restored");
+  record(results, "submitted query stays anchored through history reflow and a short reply", { samples });
+}
+
+async function verifyHistoryJump(win, results) {
+  // Search remains a visible, keyboard-accessible entry point after removing
+  // the message navigation rails. Keep the paint and exact landing contract.
+  await wheel(win, -400, 30);
+  await settleScroll(win);
+  const modifiers = [process.platform === "darwin" ? "meta" : "control"];
+  win.webContents.sendInputEvent({ type: "keyDown", keyCode: "P", modifiers });
+  win.webContents.sendInputEvent({ type: "keyUp", keyCode: "P", modifiers });
+  // Mounting precedes the palette's rAF focus handoff. Native typing must
+  // wait for its actual input owner, rather than reaching the old composer.
+  await until(win, () => {
+    const input = document.querySelector(".conversation-search-dialog input");
+    return input && document.activeElement === input;
+  }, "the history search input to own focus");
+  await win.webContents.insertText("Question 3:");
+  await until(win, () => document.querySelector(".conversation-search-dialog input")?.value === "Question 3:", "the history query to reach the search input");
+  await until(win, () => {
+    const result = document.querySelector(".conversation-search-result");
+    return result?.textContent.includes("Question 3:") &&
+      document.querySelector('.conversation-search-results[aria-busy="false"]');
+  }, "the addressed history search result");
+  const historyJump = await longestBlankRun(win, () => {
+    win.webContents.sendInputEvent({ type: "keyDown", keyCode: "Enter" });
+    win.webContents.sendInputEvent({ type: "keyUp", keyCode: "Enter" });
+  }, 900);
+  await settleScroll(win);
+  const landed = await evaluate(win, selector => {
+    const node = document.querySelector(selector);
+    const message = document.querySelector('[data-user-message-id="history-user-2"]');
+    if (!message?.textContent.includes("Question 3:")) throw new Error("Addressed history search target is missing");
+    return message.getBoundingClientRect().top - node.getBoundingClientRect().top;
+  }, VIEWPORT);
+  assert.ok(historyJump.worst <= BLANK_RUN_LIMIT_PX, `Jumping to Question 3 painted a ${historyJump.worst}px blank band`);
+  assert.ok(landed >= 0 && landed <= 120, `The jump must land on the selected message: ${landed}`);
+  record(results, "jumping to a past query paints every frame and lands on it", { blank: historyJump.worst, landed });
+}
+
 app.whenReady().then(async () => {
   const win = new BrowserWindow({
     width: 1240, height: 820, show: process.env.WUU_E2E_HIDDEN !== "true",
@@ -292,7 +505,8 @@ app.whenReady().then(async () => {
       contextIsolation: true, sandbox: false, backgroundThrottling: false,
     },
   });
-  // Focus-driven UI (the query history rail) must not depend on whether this
+  testWindow = win;
+  // Keyboard-driven UI (conversation search) must not depend on whether this
   // window is the one the OS focused while the suite runs.
   win.webContents.debugger.attach("1.3");
   win.webContents.on("did-finish-load", () => void win.webContents.debugger.sendCommand("Emulation.setFocusEmulationEnabled", { enabled: true }));
@@ -302,7 +516,7 @@ app.whenReady().then(async () => {
     errors.push(event.message);
     console.error(`renderer error: ${event.message}`);
   });
-  await win.loadFile(path.join(desktop, "out/renderer/index.html"));
+  await win.loadFile(process.env.WUU_SCROLL_E2E_RENDERER || path.join(desktop, "out/renderer/index.html"));
   await until(win, () => Boolean(document.querySelector(".composer textarea")), "composer");
   await typeAndSend(win, "Boot");
   // Let the first submission be accepted and placed before history arrives.
@@ -319,12 +533,39 @@ app.whenReady().then(async () => {
   emit(win, "turn/completed", { thread_id: THREAD_ID, turn: bootTurn });
   const history = Array.from({ length: 36 }, (_, index) => completedTurn("history", index));
   const results = [];
+  if (process.env.WUU_SCROLL_E2E_ONLY === "inspection") {
+    await typeAndSend(win, "Inspect this process without losing my reading position.");
+    await until(win, () => Boolean(document.querySelector('[data-user-message-id="sent-user-2"]')) &&
+      !document.querySelector(".scroll-region-content[data-submit-placing]"), "inspection submission placement");
+    await frames(win, 12);
+    await inspectProcess(win, results, "sent-turn-2");
+    assert.deepEqual(errors, [], `Renderer errors: ${errors.join("\n")}`);
+    win.destroy();
+    app.exit(0);
+    return;
+  }
 
   // --- Output streams while the reader takes over and hands back control.
   const live = liveTurn("live-a");
   const liveAgent = live.items[1];
   emit(win, "thread/resumed", { thread: thread(THREAD_ID, [bootTurn, ...history, live], true) });
   await until(win, () => document.querySelectorAll(".turn").length >= 38, "history to render");
+  if (process.env.WUU_SCROLL_E2E_ONLY === "submission-reflow") {
+    emit(win, "turn/completed", { thread_id: THREAD_ID, turn: { ...live, status: "completed", completed_at: now } });
+    await frames(win, 4);
+    await verifySubmissionReflow(win, results);
+    assert.deepEqual(errors, [], `Renderer errors: ${errors.join("\n")}`);
+    win.destroy();
+    app.exit(0);
+    return;
+  }
+  if (process.env.WUU_SCROLL_E2E_ONLY === "history-jump") {
+    await verifyHistoryJump(win, results);
+    assert.deepEqual(errors, [], `Renderer errors: ${errors.join("\n")}`);
+    win.destroy();
+    app.exit(0);
+    return;
+  }
   // The boot message finishes its placement, then its reply is followed.
   await until(win, selector => {
     const node = document.querySelector(selector);
@@ -397,31 +638,7 @@ app.whenReady().then(async () => {
   }
   record(results, "large scrolls after a sidebar toggle paint every frame", { up: flingUp.worst, down: flingDown.worst });
 
-  // --- Jumping to a past query renders every frame of the jump and lands on the message.
-  await wheel(win, -400, 30);
-  await settleScroll(win);
-  // The rail is a select-only combobox: focus it and ArrowDown opens its list. It steps
-  // aside below a 968px conversation pane, which is why the window is 1240px wide.
-  await evaluate(win, () => document.querySelector(".query-history-rail-ticks").focus());
-  win.webContents.sendInputEvent({ type: "keyDown", keyCode: "Down" });
-  win.webContents.sendInputEvent({ type: "keyUp", keyCode: "Down" });
-  await until(win, () => document.querySelectorAll(".query-history-item").length > 20, "query history");
-  const target = await evaluate(win, () => {
-    const items = [...document.querySelectorAll(".query-history-item")];
-    const item = items.find(entry => entry.textContent.includes("Question 3:"));
-    item.click();
-    return item.textContent.slice(0, 40);
-  });
-  const historyJump = await longestBlankRun(win, async () => undefined, 900);
-  await settleScroll(win);
-  const landed = await evaluate(win, selector => {
-    const node = document.querySelector(selector);
-    const message = document.querySelector('[data-user-message-id="history-user-2"]');
-    return message.getBoundingClientRect().top - node.getBoundingClientRect().top;
-  }, VIEWPORT);
-  assert.ok(historyJump.worst <= BLANK_RUN_LIMIT_PX, `Jumping to ${target} painted a ${historyJump.worst}px blank band`);
-  assert.ok(landed >= 0 && landed <= 120, `The jump must land on the selected message: ${landed}`);
-  record(results, "jumping to a past query paints every frame and lands on it", { blank: historyJump.worst, landed });
+  await verifyHistoryJump(win, results);
 
   // --- Sending: the message rises into its reading position and stays through a sidebar toggle.
   await evaluate(win, () => document.querySelector(".jump-to-latest-pill")?.click());
@@ -505,7 +722,22 @@ app.whenReady().then(async () => {
   assert.deepEqual(errors, [], `Renderer errors: ${errors.join("\n")}`);
   win.destroy();
   app.exit(0);
-}).catch(error => {
+}).catch(async error => {
   console.error(error);
+  if (testWindow && !testWindow.isDestroyed()) {
+    try {
+      const state = await evaluate(testWindow, () => ({
+        query: document.querySelector(".conversation-search-dialog input")?.value,
+        composer: document.querySelector(".composer textarea")?.value,
+        focus: document.activeElement && { tag: document.activeElement.tagName, role: document.activeElement.getAttribute("role"), className: document.activeElement.className },
+        resultsBusy: document.querySelector(".conversation-search-results")?.getAttribute("aria-busy"),
+        results: [...document.querySelectorAll(".conversation-search-result")].map(result => ({ selected: result.getAttribute("aria-selected"), text: result.textContent?.slice(0, 500) })),
+      }));
+      fs.writeFileSync(path.join(output, "failure-state.json"), JSON.stringify({ error: String(error), ...state }, null, 2));
+      fs.writeFileSync(path.join(output, "failure.png"), (await testWindow.webContents.capturePage()).toPNG());
+    } catch (captureError) {
+      console.error("Failed to capture synthetic scroll-fixture state:", captureError);
+    }
+  }
   app.exit(1);
 });
