@@ -783,3 +783,73 @@ describe("useConversationScrollState — dock composer height", () => {
     expect(pane.style.getPropertyValue("--conversation-input-inset")).toBe("400px");
   });
 });
+
+describe("split conversation scroll ownership", () => {
+  let host: HTMLDivElement;
+  let root: Root;
+  let current: ReturnType<typeof useConversationScrollState>;
+  const layouts = new Map<string, StubbedLayout>();
+  const nodes = new Map<string, HTMLDivElement>();
+  const turns = makeLongTurns();
+  function SplitProbe({ pane }: { pane: "primary" | "secondary" }): ReactNode {
+    current = useConversationScrollState({
+      activeThreadID: pane === "primary" ? "thread-A" : "thread-B",
+      primaryThreadID: "thread-A", secondaryThreadID: "thread-B",
+      activePane: pane, splitConversation: true, primaryTurns: turns, secondaryTurns: turns,
+      emptyConversation: false, initialized: true, nativeScrollBounce: false,
+    });
+    return createElement("div", null, ...(["primary", "secondary"] as const).map((id) => createElement("div", {
+      key: id, className: "conversation-split-body", "data-pane": id,
+      ref: (node: HTMLDivElement | null) => {
+        current.splitPaneRefs.current[id] = node;
+        if (node && !nodes.has(id)) {
+          nodes.set(id, node);
+          layouts.set(id, stubLayout(node, { scrollHeight: 2400, clientHeight: 400 }));
+        }
+      },
+      onScroll: (event: { currentTarget: HTMLElement }) => current.handleConversationScroll(event.currentTarget),
+    })));
+  }
+  const render = (pane: "primary" | "secondary") => act(() => root.render(createElement(SplitProbe, { pane })));
+  const scroll = (pane: string, top: number) => act(() => {
+    const node = nodes.get(pane)!; node.scrollTop = top; node.dispatchEvent(new Event("scroll"));
+  });
+  beforeEach(() => {
+    host = document.createElement("div"); document.body.append(host); root = createRoot(host);
+  });
+  afterEach(() => {
+    act(() => root.unmount()); host.remove(); nodes.clear(); layouts.clear(); vi.restoreAllMocks(); vi.useRealTimers();
+  });
+  it("keeps inactive native layout clamping out of the active thread's follow state and restore snapshot", () => {
+    render("secondary"); act(() => current.disableConversationAutoFollow()); scroll("secondary", 1800);
+    render("primary"); act(() => current.disableConversationAutoFollow()); scroll("primary", 700);
+    layouts.get("secondary")!.scrollHeight = 1200;
+    scroll("secondary", 800);
+    expect(current.captureConversationScrollPosition()?.autoFollow).toBe(false);
+    render("secondary"); render("primary");
+    expect(nodes.get("primary")!.scrollTop).toBe(700);
+  });
+  it.each(["switch-away-and-back", "wheel-without-movement"])("cancels delayed message jumps on %s", async (interrupt) => {
+    vi.useFakeTimers();
+    render("primary"); act(() => current.disableConversationAutoFollow()); scroll("primary", 700);
+    act(() => current.jumpToUserMessage("late-turn", "late-item"));
+    if (interrupt === "switch-away-and-back") { render("secondary"); render("primary"); }
+    else act(() => nodes.get("primary")!.dispatchEvent(new WheelEvent("wheel", { deltaY: 1, bubbles: true })));
+    const anchor = document.createElement("div"); anchor.id = "user-msg-late-turn-late-item";
+    anchor.getBoundingClientRect = () => ({ top: 0, left: 0, right: 20, bottom: 20, width: 20, height: 20, x: 0, y: 0, toJSON: () => ({}) });
+    nodes.get("primary")!.appendChild(anchor);
+    await act(async () => vi.runAllTimersAsync());
+    expect(nodes.get("primary")!.scrollTop).toBe(700);
+  });
+
+  it("retains a reader's wheel movement over an inactive pane without changing the active pane", () => {
+    render("secondary"); render("primary");
+    act(() => current.disableConversationAutoFollow()); scroll("primary", 700);
+    act(() => nodes.get("secondary")!.dispatchEvent(new WheelEvent("wheel", { deltaY: -100, bubbles: true })));
+    scroll("secondary", 1700);
+    expect(nodes.get("primary")!.scrollTop).toBe(700);
+    render("secondary");
+    expect(nodes.get("secondary")!.scrollTop).toBe(1700);
+    expect(current.captureConversationScrollPosition()?.autoFollow).toBe(false);
+  });
+});

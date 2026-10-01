@@ -21,13 +21,11 @@ import {
   type HistoryMessageEditState,
   type PendingForkState,
 } from "./ConversationHistoryActions";
-import * as TurnViewHelpers from "./TurnViewHelpers";
 import { resolveLocalizedText, setActiveLocale } from "./i18n";
 
-// `scrollToUserMessage` schedules retry timeouts that would otherwise leak
-// across tests in jsdom (no DOM anchor is mounted, so the helper keeps
-// retrying). Replace it with a synchronous stub that just records calls.
-vi.spyOn(TurnViewHelpers, "scrollToUserMessage").mockImplementation(() => {});
+// The scroll controller owns asynchronous navigation; these action tests
+// record the requested message without mounting a viewport.
+const jumpToUserMessage = vi.fn();
 
 const originalWuu = (window as unknown as { wuu?: unknown }).wuu;
 
@@ -234,6 +232,7 @@ function buildActions({
     enableConversationAutoFollow,
     rememberConversationScrollForEdit,
     restoreConversationScrollForEdit,
+    jumpToUserMessage,
     threadHasPendingComposerMessages: () => hasPendingMessages,
     sendComposerMessageToThread,
     worktreeForkNonGitReason: "当前工作目录不是 git 仓库，不能创建 git worktree",
@@ -263,6 +262,7 @@ function buildActions({
     enableConversationAutoFollow,
     rememberConversationScrollForEdit,
     restoreConversationScrollForEdit,
+    jumpToUserMessage,
     restorePrimaryComposerDraft,
     sendComposerMessageToThread,
   };
@@ -408,7 +408,7 @@ describe("createConversationHistoryActions", () => {
     // The editor also needs to be visible — the previous flow relied on
     // the browser's default focus-scroll, which both moved the scroll
     // unexpectedly and triggered the auto-follow disarm above.
-    expect(TurnViewHelpers.scrollToUserMessage).toHaveBeenCalledWith(
+    expect(jumpToUserMessage).toHaveBeenCalledWith(
       "turn-1",
       "item-1",
       { highlight: false },

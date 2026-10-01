@@ -235,7 +235,7 @@ import {
   rawErrorMessage,
   statusMessageForError,
 } from "./UserFacingErrors";
-import { scrollToUserMessage, TurnView } from "./TurnView";
+import { TurnView } from "./TurnView";
 import { OPEN_SETTINGS_EVENT, type OpenSettingsDetail } from "./TurnNotice";
 import { ConversationTurnRail } from "./ConversationTurnRail";
 import {
@@ -1029,7 +1029,10 @@ export function App(): JSX.Element {
   const appStateRef = useRef<AppState>(initialState);
   const runningThreadReconcileInFlightRef = useRef("");
   const workspaceHasDirtyFilesRef = useRef(false);
-  const lastFocusOutsideWorkspaceRef = useRef<HTMLElement | null>(null);
+  const lastFocusOutsideWorkspaceRef = useRef<{
+    element: HTMLElement;
+    owner: string;
+  } | null>(null);
   const previousWorkspaceFocusModeRef = useRef({
     fullPanel: false,
     open: false,
@@ -1123,17 +1126,24 @@ export function App(): JSX.Element {
     };
   }, []);
 
-  useEffect(() => {
+  const workspaceFocusOwner = JSON.stringify([
+    state.activeContext ? runtimeContextKey(state.activeContext) : "",
+    state.activeContext?.cwd,
+    state.activeSessionTabID,
+    activeThreadIDForState(state),
+    activeThreadForState(state)?.cwd,
+  ]);
+  useLayoutEffect(() => {
     const handleFocusIn = (event: FocusEvent): void => {
       const target = event.target;
       const workspacePanel = appShellRef.current?.querySelector(".workspace-right-panel");
       if (target instanceof HTMLElement && !workspacePanel?.contains(target)) {
-        lastFocusOutsideWorkspaceRef.current = target;
+        lastFocusOutsideWorkspaceRef.current = { element: target, owner: workspaceFocusOwner };
       }
     };
     document.addEventListener("focusin", handleFocusIn);
     return () => document.removeEventListener("focusin", handleFocusIn);
-  }, []);
+  }, [workspaceFocusOwner]);
 
   useLayoutEffect(() => {
     const fullPanel = rightPanelOpen && rightPanelGlobalized;
@@ -1152,22 +1162,29 @@ export function App(): JSX.Element {
         ?.querySelector<HTMLButtonElement>(
           '.workspace-right-panel [role="tab"][aria-selected="true"]',
         )
-        ?.focus();
+        ?.focus({ preventScroll: true });
       return;
     }
     if ((previous.fullPanel && !fullPanel) || (previous.open && !rightPanelOpen)) {
+      if (viewSwitchPending) return;
       const previousFocus = lastFocusOutsideWorkspaceRef.current;
-      if (previousFocus?.isConnected && !previousFocus.closest("[inert]")) {
-        previousFocus.focus();
+      // Focus return must not reveal old history or follow a reused control into
+      // a different conversation. Reading position remains owned by scrolling.
+      if (
+        previousFocus?.owner === workspaceFocusOwner &&
+        previousFocus.element.isConnected &&
+        !previousFocus.element.closest('[inert], [hidden], [aria-hidden="true"], .conversation-split-pane:not(.active)')
+      ) {
+        previousFocus.element.focus({ preventScroll: true });
         return;
       }
       appShellRef.current
         ?.querySelector<HTMLHeadingElement>(
           ".conversation-title-heading h1",
         )
-        ?.focus();
+        ?.focus({ preventScroll: true });
     }
-  }, [rightPanelGlobalized, rightPanelOpen, sidebarDrawerMode, sidebarDrawerVisible]);
+  }, [rightPanelGlobalized, rightPanelOpen, sidebarDrawerMode, sidebarDrawerVisible, viewSwitchPending, workspaceFocusOwner]);
 
   // Workspace panel (file tree / file preview / terminal / review) root: follows the
   // active thread's own cwd when it differs from state.activeContext — the
@@ -1629,8 +1646,7 @@ export function App(): JSX.Element {
     // Stop auto-follow before we jump — otherwise the next stream tick
     // would drag the scroll position back to the bottom and undo the
     // jump before the user even registers it happened.
-    disableConversationAutoFollow();
-    scrollToUserMessage(entry.turnID, entry.itemID);
+    jumpToUserMessage(entry.turnID, entry.itemID);
   }
 
   useEffect(() => {
@@ -2361,6 +2377,8 @@ export function App(): JSX.Element {
     handleConversationScroll,
     enableConversationAutoFollow,
     jumpToLatest: jumpConversationToLatest,
+    jumpToUserMessage,
+    recordConversationScrollIntent,
     disableConversationAutoFollow,
     captureConversationScrollPosition,
     restoreConversationScrollPosition,
@@ -2369,6 +2387,8 @@ export function App(): JSX.Element {
     discardSubmittedMessage,
   } = useConversationScrollState({
     activeThreadID,
+    primaryThreadID: state.thread?.id,
+    secondaryThreadID: state.secondaryThread?.id,
     activePane: state.activePane,
     splitConversation,
     primaryTurns: state.thread?.turns,
@@ -3992,6 +4012,7 @@ export function App(): JSX.Element {
     enableConversationAutoFollow,
     rememberConversationScrollForEdit,
     restoreConversationScrollForEdit,
+    jumpToUserMessage,
     threadHasPendingComposerMessages,
     sendComposerMessageToThread,
     worktreeForkNonGitReason: t("app.worktreeRequiresGit"),
@@ -5270,8 +5291,7 @@ export function App(): JSX.Element {
             activeTurnID={turns[turns.length - 1]?.id}
             scrollContainerRef={conversationScrollRef}
             getScrollContainer={conversationRailScrollContainer}
-            onWheelScrollAway={disableConversationAutoFollow}
-            onDragScrollAway={disableConversationAutoFollow}
+            onUserScroll={recordConversationScrollIntent}
             onSelectQueryHistory={handleQueryHistorySelect}
           />
         ) : null}

@@ -1022,6 +1022,25 @@ describe("useConversationScrollState — high-frequency stream", () => {
     expect(layout.scrollTop).toBe(1180);
   });
 
+  it("does not turn a paused reader into a follower when reflow raises the clamped scroll position", () => {
+    mount({ scrollHeight: 2400, clientHeight: 400 });
+    if (!layout || !handle || !node) throw new Error("not mounted");
+    flushScheduledScroll();
+    layout.scrollTop = 1700;
+    fireUserScroll();
+    act(() => {
+      // Above-viewport growth and below-viewport collapse can make a native
+      // anchor clamp downward at the new bottom without any return gesture.
+      layout!.scrollHeight = 2600;
+      layout!.scrollTop = 2200;
+      node!.dispatchEvent(new Event("scroll"));
+    });
+    expect(handle.captureConversationScrollPosition()?.autoFollow).toBe(false);
+    act(() => { layout!.scrollHeight += 350; flushResizeObservers(); handle!.scheduleStreamScroll(); });
+    flushScheduledScroll();
+    expect(layout.scrollTop).toBe(2200);
+  });
+
   it("keeps following when layout shrink clamps the viewport to the new bottom", () => {
     mount({ scrollHeight: 2200, clientHeight: 600 });
     if (!layout || !handle || !node) throw new Error("not mounted");

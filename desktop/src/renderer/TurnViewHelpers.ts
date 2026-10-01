@@ -288,137 +288,85 @@ function flashJumpTarget(node: HTMLElement): void {
   }, JUMP_HIGHLIGHT_DURATION_MS);
 }
 
-function findScrollContainer(start: HTMLElement): HTMLElement | null {
-  // Walk up looking for the conversation pane's scroll surface. We probe
-  // both the single-pane (.scroll-region) and split-pane containers so
-  // the same helper works whether split mode is active or not.
-  let parent: HTMLElement | null = start.parentElement;
-  while (parent) {
-    if (
-      parent.classList.contains("scroll-region") ||
-      parent.classList.contains("conversation-split-body")
-    ) {
-      return parent;
-    }
-    parent = parent.parentElement;
-  }
-  return null;
-}
+export type ConversationMessageJumpScope = {
+  viewport: HTMLElement;
+  content: HTMLElement;
+  /** Includes the controller's thread/pane binding and operation generation. */
+  isCurrent: () => boolean;
+};
 
-const jumpGlideFrames = new WeakMap<HTMLElement, number>();
-
-function scrollAnchorIntoContainer(
-  node: HTMLElement,
-  container: HTMLElement,
-): void {
-  const containerRect = container.getBoundingClientRect();
-  const nodeRect = node.getBoundingClientRect();
-  const currentOffset =
-    nodeRect.top - containerRect.top + container.scrollTop;
-  const targetTop = Math.max(
-    0,
-    Math.min(
-      currentOffset - JUMP_TOP_OFFSET_PX,
-      container.scrollHeight - container.clientHeight,
-    ),
-  );
-  if (Math.abs(targetTop - container.scrollTop) < 2) {
-    return;
-  }
-  const pending = jumpGlideFrames.get(container);
-  if (pending !== undefined) window.cancelAnimationFrame(pending);
-  if (prefersReducedMotion()) {
-    container.scrollTop = targetTop;
-    syncConversationRenderWindow(container);
-    return;
-  }
-  // The conversation's programmatic trajectory. A native smooth scroll runs
-  // on the compositor and would cross turns that are still skipped; writing
-  // each frame here renders them before that frame paints.
-  const glide = createScrollGlide();
-  glide.start(container.scrollTop);
-  let commanded = container.scrollTop;
-  const step = (now: number): void => {
-    jumpGlideFrames.delete(container);
-    // Any other writer — the reader's wheel, a drag, a follow — takes over.
-    if (Math.abs(container.scrollTop - commanded) > 1) return;
-    const { position, done } = glide.step(now, targetTop, container.clientHeight);
-    container.scrollTop = position;
-    commanded = container.scrollTop;
-    syncConversationRenderWindow(container);
-    if (!done) jumpGlideFrames.set(container, window.requestAnimationFrame(step));
-  };
-  jumpGlideFrames.set(container, window.requestAnimationFrame(step));
-}
-
-function attemptJump(turnID: string, itemID: string, highlight: boolean): boolean {
-  if (typeof document === "undefined") {
-    return false;
-  }
-  const node = document.querySelector<HTMLElement>(
-    userMessageAnchorSelector(turnID, itemID),
-  );
-  if (!node) {
-    return false;
-  }
-  // The .turn ancestor has `content-visibility: auto`, which lets the
-  // browser skip layout and paint while the turn is off-screen. The
-  // anchor is still in the DOM tree, so querySelector finds it, but its
-  // position inside a skipped turn is unknown until that turn lays out.
-  // Reading any layout property on a skipped subtree forces the browser to
-  // compute the real layout, so the subsequent scroll math sees the
-  // actual position. Without this, the first click on a query whose
-  // turn is above the current scroll viewport either scrolls to the
-  // wrong offset or bails out (targetTop ≈ currentScrollTop), and the
-  // user has to scroll up manually before the second click works.
-  void node.offsetWidth;
-  const container = findScrollContainer(node);
-  if (!container) {
-    // Fallback: still flash the target so the user gets feedback, even
-    // if we couldn't locate the scroll container for an exact offset.
-    if (highlight) {
-      flashJumpTarget(node);
-    }
-    return true;
-  }
-  scrollAnchorIntoContainer(node, container);
-  if (highlight) {
-    flashJumpTarget(node);
-  }
-  return true;
-}
+const messageJumps = new WeakMap<HTMLElement, () => void>();
 
 /**
- * Scroll the user message at `turnID`/`itemID` into the visible area of
- * the conversation scroll surface. Adds a short highlight pulse to the
- * target so the jump is unmistakable, unless `highlight: false` is passed
- * (used when opening the inline editor, where the bubble→editor swap must
- * not replay the pulse). Safe to call before the anchor is mounted —
- * retries a few frames before giving up.
+ * Jump within one visible conversation. The caller owns the returned cancellation
+ * handle, including retries while a requested history turn mounts.
  */
 export function scrollToUserMessage(
   turnID: string,
   itemID: string,
-  options?: { highlight?: boolean },
-): void {
-  const highlight = options?.highlight ?? true;
-  if (typeof window === "undefined") {
-    return;
-  }
-  requestConversationTurnReveal(turnID);
+  options: { highlight?: boolean; scope: ConversationMessageJumpScope; onComplete?: () => void },
+): () => void {
+  if (typeof window === "undefined") return () => undefined;
+  const { viewport, content } = options.scope;
+  let cancelled = false;
+  let timer: number | undefined;
+  let frame: number | undefined;
+  const current = (): boolean => !cancelled && viewport.isConnected && content.isConnected &&
+    (content === viewport || viewport.contains(content)) && !content.closest('[aria-hidden="true"]') &&
+    options.scope.isCurrent();
+  const cancel = (): void => {
+    if (cancelled) return;
+    cancelled = true;
+    if (timer !== undefined) window.clearTimeout(timer);
+    if (frame !== undefined) window.cancelAnimationFrame(frame);
+    if (messageJumps.get(viewport) === cancel) messageJumps.delete(viewport);
+    options?.onComplete?.();
+  };
+  messageJumps.get(viewport)?.();
+  messageJumps.set(viewport, cancel);
   let attemptIndex = 0;
   const tryOnce = (): void => {
-    if (attemptJump(turnID, itemID, highlight)) {
+    timer = undefined;
+    if (!current()) { cancel(); return; }
+    const node = content.querySelector<HTMLElement>(userMessageAnchorSelector(turnID, itemID));
+    if (!node || node.closest('[aria-hidden="true"]')) {
+      const nextDelay = JUMP_RETRY_DELAYS_MS[++attemptIndex];
+      if (nextDelay === undefined) { cancel(); return; }
+      timer = window.setTimeout(tryOnce, nextDelay);
       return;
     }
-    const nextDelay = JUMP_RETRY_DELAYS_MS[attemptIndex + 1];
-    if (nextDelay === undefined) {
+    // A skipped turn's child geometry is unknown until it has laid out.
+    void node.offsetWidth;
+    const targetTop = Math.max(0, Math.min(
+      node.getBoundingClientRect().top - viewport.getBoundingClientRect().top + viewport.scrollTop - JUMP_TOP_OFFSET_PX,
+      viewport.scrollHeight - viewport.clientHeight,
+    ));
+    if (options?.highlight !== false) flashJumpTarget(node);
+    if (Math.abs(targetTop - viewport.scrollTop) < 2) { cancel(); return; }
+    if (prefersReducedMotion()) {
+      viewport.scrollTop = targetTop;
+      syncConversationRenderWindow(viewport);
+      cancel();
       return;
     }
-    attemptIndex += 1;
-    window.setTimeout(tryOnce, nextDelay);
+    const glide = createScrollGlide();
+    glide.start(viewport.scrollTop);
+    let commanded = viewport.scrollTop;
+    const step = (now: number): void => {
+      frame = undefined;
+      if (!current() || Math.abs(viewport.scrollTop - commanded) > 1) { cancel(); return; }
+      const { position, done } = glide.step(now, targetTop, viewport.clientHeight);
+      viewport.scrollTop = position;
+      commanded = viewport.scrollTop;
+      syncConversationRenderWindow(viewport);
+      if (done) cancel();
+      else frame = window.requestAnimationFrame(step);
+    };
+    frame = window.requestAnimationFrame(step);
   };
+  requestConversationTurnReveal(turnID);
   tryOnce();
+  return cancel;
 }
 
 /**

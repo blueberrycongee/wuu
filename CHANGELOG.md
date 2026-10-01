@@ -100,6 +100,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Allow repeated stateful tool programs while retaining repeated-input guards
   on their individual tool calls.
 
+- Keep conversation reading positions owned by their thread and pane across
+  interrupted history jumps, split-pane reflow, and browser-panel focus return;
+  preserve paused reading until an explicit return-to-latest gesture.
+
 - Preserve reading positions when reopening tool and reasoning details, start
   completed history at the beginning, and keep tools and reasoning in event
   order without a delayed scroll after opening.

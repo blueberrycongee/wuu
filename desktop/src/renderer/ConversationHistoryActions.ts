@@ -27,7 +27,7 @@ import {
   type ComposerImage,
   type QueuedComposerMessage,
 } from "./ComposerMessages";
-import { lastUserMessageAnchor, scrollToUserMessage } from "./TurnViewHelpers";
+import { lastUserMessageAnchor } from "./TurnViewHelpers";
 import { localizedText, translateCurrent as t } from "./i18n";
 import { showErrorToast } from "./Toast";
 import { rememberCollapsedPromptParts } from "./ComposerCollapsedPrompt";
@@ -83,6 +83,7 @@ export type ConversationHistoryActionsDeps = {
   rememberConversationScrollForEdit: () => void;
   /** Restore the snapshot captured by `rememberConversationScrollForEdit`. */
   restoreConversationScrollForEdit: () => void;
+  jumpToUserMessage: (turnID: string, itemID: string, options?: { highlight?: boolean }) => void;
   threadHasPendingComposerMessages: (threadID: string) => boolean;
   sendComposerMessageToThread: (
     message: QueuedComposerMessage,
@@ -335,15 +336,15 @@ deps.rememberConversationScrollForEdit();
       pane,
       submitting: false,
     });
-    // Bring the editor into view deliberately — `scrollToUserMessage` is the
-    // same helper the query-history popover uses, so the jump matches the
+    // Bring the editor into view through the same owned jump command as
+    // the query-history popover, so the jump matches the
     // existing scroll contract (smooth scroll, 64px headroom, no surprise
     // auto-follow disarms). The highlight pulse is skipped here: replaying
     // the light flash over the bubble as it swaps into the black editor
     // reads as a glitch instead of jump feedback. The helper retries on a
     // short cadence, which covers the case where the editor hasn't mounted
     // yet on the first synchronous attempt.
-    scrollToUserMessage(turnID, item.id, { highlight: false });
+    deps.jumpToUserMessage(turnID, item.id, { highlight: false });
   }
 
   function cancelEditingThreadMessage(): void {

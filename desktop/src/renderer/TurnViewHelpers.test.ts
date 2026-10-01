@@ -141,6 +141,8 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+const jumpScope = (container: HTMLElement) => ({ viewport: container, content: container, isCurrent: () => true });
+
 /** The jump glides over frames; advance until it lands. */
 function settleJump(): void {
   vi.advanceTimersByTime(2000);
@@ -157,7 +159,7 @@ describe("scrollToUserMessage", () => {
       nodeOffsetTop: 600,
     });
 
-    scrollToUserMessage("turn-1", "item-1");
+    scrollToUserMessage("turn-1", "item-1", { scope: jumpScope(container) });
     expect(node.classList.contains("user-message-jump-flash")).toBe(true);
     settleJump();
 
@@ -176,7 +178,7 @@ describe("scrollToUserMessage", () => {
       nodeOffsetTop: 600,
     });
 
-    scrollToUserMessage("turn-1", "item-1", { highlight: false });
+    scrollToUserMessage("turn-1", "item-1", { highlight: false, scope: jumpScope(container) });
     settleJump();
 
     expect(container.scrollTop).toBe(600 - 64);
@@ -193,7 +195,7 @@ describe("scrollToUserMessage", () => {
       nodeOffsetTop: 700,
     });
 
-    scrollToUserMessage("turn-1", "item-1");
+    scrollToUserMessage("turn-1", "item-1", { scope: jumpScope(container) });
     expect(node.classList.contains("user-message-jump-flash")).toBe(true);
     settleJump();
 
@@ -210,7 +212,7 @@ describe("scrollToUserMessage", () => {
       nodeOffsetTop: 1600,
     });
 
-    scrollToUserMessage("turn-1", "item-1");
+    scrollToUserMessage("turn-1", "item-1", { scope: jumpScope(container) });
     settleJump();
 
     expect(container.scrollTop).toBe(800);
@@ -230,7 +232,7 @@ describe("scrollToUserMessage", () => {
     );
     existing?.remove();
 
-    scrollToUserMessage("turn-1", "item-1");
+    scrollToUserMessage("turn-1", "item-1", { scope: jumpScope(container) });
 
     expect(container.scrollTop).toBe(0);
 
@@ -261,9 +263,28 @@ describe("scrollToUserMessage", () => {
     expect(container.scrollTop).toBe(600 - 64);
   });
 
+  it("does not let an outgoing hidden pane's delayed anchor scroll the shared viewport", async () => {
+    const { container, node } = mountAnchor({ variant: "scroll-region", containerHeight: 800, containerScrollHeight: 1800, nodeOffsetTop: 600 });
+    const pane = document.createElement("div"); container.appendChild(pane); pane.appendChild(node); node.remove();
+    let current = true;
+    scrollToUserMessage("turn-1", "item-1", { scope: { viewport: container, content: pane, isCurrent: () => current } });
+    current = false; pane.setAttribute("aria-hidden", "true"); pane.appendChild(node); container.scrollTop = 700;
+    await vi.runAllTimersAsync();
+    expect(container.scrollTop).toBe(700);
+  });
+
+  it("cancels a jump retry even when the same pane becomes current again", async () => {
+    const { container, node } = mountAnchor({ variant: "scroll-region", containerHeight: 800, containerScrollHeight: 1800, nodeOffsetTop: 600 });
+    node.remove();
+    const cancel = scrollToUserMessage("turn-1", "item-1", { scope: { viewport: container, content: container, isCurrent: () => true } });
+    cancel(); container.appendChild(node); container.scrollTop = 700;
+    await vi.runAllTimersAsync();
+    expect(container.scrollTop).toBe(700);
+  });
+
   it("does nothing when no anchor exists and retries are exhausted", async () => {
     // No DOM at all — the helper should give up silently.
-    scrollToUserMessage("missing", "missing");
+    scrollToUserMessage("missing", "missing", { scope: jumpScope(document.createElement("div")) });
     await vi.runAllTimersAsync();
     expect(document.body.innerHTML).toBe("");
   });
