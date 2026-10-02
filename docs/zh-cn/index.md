@@ -4,9 +4,9 @@ Wuu 是面向本地项目的 AI Agent 工作台。你可以交给 Agent 一个�
 
 ## 开始一个任务
 
-[快速开始](getting-started/index.md)介绍从安装桌面应用到检查第一个结果的完整过程。当前发布流程提供 Apple 芯片 macOS 预览版，应用自带 Wuu 核心程序。习惯使用终端的用户也可以从源码[安装 CLI](getting-started/installation.md#从源码安装-cli)。
+[安装并开始任务](getting-started/index.md)。当前发布流程提供 Apple 芯片 macOS 预览版，应用自带 Wuu 核心程序。习惯使用终端的用户也可以从源码[安装 CLI](getting-started/installation.md#从源码安装-cli)。
 
-日常使用时，可以先了解怎样选择[工作区](desktop/workspaces.md)、管理[对话与分叉](desktop/conversations.md)，以及检查[文件、改动和命令输出](desktop/workspace-tools.md)。
+选择[工作区](desktop/workspaces.md)、管理[对话与分叉](desktop/conversations.md)，以及检查[文件、改动和命令输出](desktop/workspace-tools.md)。
 
 ## 配置工作环境
 

@@ -22,7 +22,7 @@ Read this project without changing any files. Explain what it does and how to ru
 
 Once you recognize the project and its test commands, switch to **Standard** for a small edit. Describe the result you want and ask the agent to run the relevant checks. The [first-task guide](first-task.md) walks through this step.
 
-Open `/diff` to review Git changes and read the command results before accepting the work. A reply saying “done” does not establish that a test passed. Continue in the same conversation for corrections or follow-up work.
+Review Git changes with `/diff` and confirm the test command passed before accepting the work. Continue in the same conversation for corrections or follow-up work.
 
 Prompts, relevant file contents, and tool results can be sent to the selected model service. Read [permissions](../reference/permissions.md) and the [security model](../reference/security-model.md) before using private projects.
 
