@@ -31,12 +31,6 @@ export const SIDEBAR_DEFAULT_WIDTH = 296;
 // its contents harder to scan.
 export const SIDEBAR_MIN_WIDTH = 240;
 export const SIDEBAR_MAX_WIDTH = 520;
-// The desktop opens at 1280px. Below that design width, the whole sidebar
-// range scales together; wider windows keep the familiar pixel sizes.
-export const SIDEBAR_SCALE_REFERENCE_WINDOW_WIDTH = 1280;
-// Fonts and icons do not scale with the window, so the readable floor must not
-// scale down either. Narrow windows auto-collapse the rail into a drawer.
-export const SIDEBAR_SCALED_MIN_WIDTH = SIDEBAR_MIN_WIDTH;
 export const SIDEBAR_AUTO_COLLAPSE_WINDOW_WIDTH = 900;
 // Below this width the renderer switches from multi-column/tab rails to
 // single-surface navigation. Touch phones retain it in landscape; tablets and
@@ -110,66 +104,16 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
 }
 
-function sidebarWindowScale(windowWidth: number): number {
-  return Math.min(1, Math.max(0, windowWidth) / SIDEBAR_SCALE_REFERENCE_WINDOW_WIDTH);
-}
-
-function sidebarMinWidthForWindow(windowWidth: number): number {
-  return Math.max(
-    SIDEBAR_SCALED_MIN_WIDTH,
-    Math.floor(SIDEBAR_MIN_WIDTH * sidebarWindowScale(windowWidth))
-  );
-}
-
-function sidebarMaxWidthForWindow(windowWidth: number): number {
-  return Math.max(
-    sidebarMinWidthForWindow(windowWidth),
-    Math.floor(SIDEBAR_MAX_WIDTH * sidebarWindowScale(windowWidth))
-  );
-}
-
-function sidebarCollapseWidthForWindow(windowWidth: number): number {
-  return Math.floor(SIDEBAR_COLLAPSE_WIDTH * sidebarWindowScale(windowWidth));
-}
-
-function sidebarShouldCollapse(width: number, windowWidth: number): boolean {
-  return width <= sidebarCollapseWidthForWindow(windowWidth);
+function sidebarShouldCollapse(width: number): boolean {
+  return width <= SIDEBAR_COLLAPSE_WIDTH;
 }
 
 function sidebarShouldAutoCollapseForWindow(width: number): boolean {
   return width < SIDEBAR_AUTO_COLLAPSE_WINDOW_WIDTH;
 }
 
-export function clampSidebarWidthForWindow(width: number, windowWidth: number): number {
-  const scale = sidebarWindowScale(windowWidth);
-  return clamp(
-    Math.floor(clamp(width, SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH) * scale),
-    sidebarMinWidthForWindow(windowWidth),
-    sidebarMaxWidthForWindow(windowWidth)
-  );
-}
-
-function clampSidebarDisplayWidth(width: number, windowWidth: number): number {
-  return clamp(
-    width,
-    sidebarMinWidthForWindow(windowWidth),
-    sidebarMaxWidthForWindow(windowWidth)
-  );
-}
-
-function sidebarPreferredWidthForDisplay(width: number, windowWidth: number): number {
-  const scale = sidebarWindowScale(windowWidth);
-  if (scale === 0) {
-    return SIDEBAR_DEFAULT_WIDTH;
-  }
-  if (width <= sidebarMinWidthForWindow(windowWidth)) {
-    return SIDEBAR_MIN_WIDTH;
-  }
-  return clamp(
-    Math.round(clampSidebarDisplayWidth(width, windowWidth) / scale),
-    SIDEBAR_MIN_WIDTH,
-    SIDEBAR_MAX_WIDTH
-  );
+function clampSidebarWidth(width: number): number {
+  return clamp(width, SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH);
 }
 
 // Number(null) is 0, not NaN, so a missing key must be checked explicitly —
@@ -406,7 +350,8 @@ export function useAppLayoutState({
     sidebarAutoCollapsedRef.current = false;
     setSidebarCollapsedState(collapsed);
   }, []);
-  const sidebarWidth = clampSidebarWidthForWindow(sidebarPreferredWidth, windowWidth);
+  // Window resizing changes the canvas, not the user-selected sidebar width.
+  const sidebarWidth = sidebarPreferredWidth;
   const screenShortSide = Math.min(window.screen.width, window.screen.height);
   const phoneNavigation = isTouchWebShell() && screenShortSide > 0 && screenShortSide < COMPACT_NAVIGATION_WINDOW_WIDTH;
   const compactNavigation = phoneNavigation || windowWidth < COMPACT_NAVIGATION_WINDOW_WIDTH;
@@ -473,13 +418,13 @@ export function useAppLayoutState({
 
   const writeLiveSidebarWidth = useCallback(
     (nextWidth: number): void => {
-      const clampedWidth = clampSidebarDisplayWidth(nextWidth, windowWidth);
+      const clampedWidth = clampSidebarWidth(nextWidth);
       for (const root of sidebarLayoutRoots()) {
         root.style.setProperty("--sidebar-width", `${clampedWidth}px`);
         root.style.setProperty("--sidebar-open-width", `${clampedWidth}px`);
       }
     },
-    [sidebarLayoutRoots, windowWidth]
+    [sidebarLayoutRoots]
   );
 
   // A drag that ends collapsed leaves the live writer's clamped-to-minimum
@@ -490,12 +435,12 @@ export function useAppLayoutState({
   // that variable: --sidebar-width must stay 0 while collapsed).
   const restoreSidebarOpenWidth = useCallback(
     (nextWidth: number): void => {
-      const clampedWidth = clampSidebarDisplayWidth(nextWidth, windowWidth);
+      const clampedWidth = clampSidebarWidth(nextWidth);
       for (const root of sidebarLayoutRoots()) {
         root.style.setProperty("--sidebar-open-width", `${clampedWidth}px`);
       }
     },
-    [sidebarLayoutRoots, windowWidth]
+    [sidebarLayoutRoots]
   );
 
   const writeLiveWorkspaceRightPanelWidth = useCallback(
@@ -535,7 +480,7 @@ export function useAppLayoutState({
 
   const applySidebarWidth = useCallback(
     (nextWidth: number): void => {
-      if (sidebarShouldCollapse(nextWidth, windowWidth)) {
+      if (sidebarShouldCollapse(nextWidth)) {
         if (!sidebarCollapsed && !resizingSidebar) {
           startSidebarMotion();
         }
@@ -553,9 +498,9 @@ export function useAppLayoutState({
         startSidebarMotion();
       }
       setSidebarCollapsed(false);
-      setSidebarPreferredWidth(sidebarPreferredWidthForDisplay(nextWidth, windowWidth));
+      setSidebarPreferredWidth(clampSidebarWidth(nextWidth));
     },
-    [onCloseWorkspaceMenu, resizingSidebar, sidebarCollapsed, startSidebarMotion, windowWidth]
+    [onCloseWorkspaceMenu, resizingSidebar, sidebarCollapsed, startSidebarMotion]
   );
 
   const applyWorkspaceRightPanelWidth = useCallback(
@@ -616,7 +561,7 @@ export function useAppLayoutState({
     (event: PointerEvent, session: SidebarResizeSession): void => {
       const nextWidth = session.startWidth + event.clientX - session.startX;
       session.currentWidth = nextWidth;
-      if (sidebarShouldCollapse(nextWidth, windowWidth)) {
+      if (sidebarShouldCollapse(nextWidth)) {
         sidebarLive.cancel();
         applySidebarWidth(nextWidth);
         session.collapsedDuringDrag = true;
@@ -632,14 +577,14 @@ export function useAppLayoutState({
         session.collapsedDuringDrag = false;
         return;
       }
-      if (nextWidth <= sidebarMinWidthForWindow(windowWidth)) {
+      if (nextWidth <= SIDEBAR_MIN_WIDTH) {
         sidebarLive.cancel();
         applySidebarWidth(nextWidth);
         return;
       }
       sidebarLive.schedule(nextWidth);
     },
-    [applySidebarWidth, sidebarLive, windowWidth]
+    [applySidebarWidth, sidebarLive]
   );
 
   const handleSidebarResizeEnd = useCallback(
@@ -648,7 +593,7 @@ export function useAppLayoutState({
         if (session.currentWidth === session.startWidth) {
           sidebarLive.cancel();
         } else {
-          if (session.currentWidth > sidebarCollapseWidthForWindow(windowWidth)) {
+          if (!sidebarShouldCollapse(session.currentWidth)) {
             sidebarLive.flush();
           } else {
             sidebarLive.cancel();
@@ -656,9 +601,7 @@ export function useAppLayoutState({
               sidebarPreferredWidth <= SIDEBAR_MIN_WIDTH
                 ? SIDEBAR_DEFAULT_WIDTH
                 : sidebarPreferredWidth;
-            restoreSidebarOpenWidth(
-              clampSidebarWidthForWindow(openPreference, windowWidth)
-            );
+            restoreSidebarOpenWidth(openPreference);
           }
           applySidebarWidth(session.currentWidth);
         }
@@ -670,7 +613,6 @@ export function useAppLayoutState({
       restoreSidebarOpenWidth,
       sidebarLive,
       sidebarPreferredWidth,
-      windowWidth,
     ]
   );
 
@@ -757,17 +699,13 @@ export function useAppLayoutState({
           onCloseWorkspaceMenu();
         }
         setSidebarCollapsedState(true);
-        setSidebarPreferredWidth((width) =>
-          width <= SIDEBAR_MIN_WIDTH ? SIDEBAR_DEFAULT_WIDTH : width
-        );
       } else if (restoreAutoCollapsedSidebar) {
         sidebarAutoCollapsedRef.current = false;
         startSidebarMotion();
         setSidebarCollapsedState(false);
       }
       // The right panel keeps its remembered width; render clamps it to the
-      // window, as the sidebar's width is, so a narrow window cannot shrink it
-      // for good.
+      // available window space without replacing the saved preference.
     }
 
     window.addEventListener("resize", handleResize);

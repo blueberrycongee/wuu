@@ -46,6 +46,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   work batches and consolidated review feedback, reusing valid verification and
   useful running processes across follow-ups.
 
+- Keep the desktop sidebar at the user-selected pixel width when resizing the
+  window, including widths saved by dragging in a narrow window.
+
 - Show the enabled composer worktree control in theme-aware blue so it is easy
   to distinguish from the neutral off state.
 
