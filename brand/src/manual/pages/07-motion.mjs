@@ -18,8 +18,8 @@ export const character = page({
   chapter: 6, id: "motion-character",
   body: `
   <div class="grid">
-    <div class="span-4">${title("运动性格", "How the ball moves")}
-      <p class="lead">小球像一个有分量、很专注的东西：眼睛先动，身体几乎不动。它的动作短、少，而且每一个动作都对应一件真实发生的事。</p>
+    <div class="span-4">${title("动效参数", "Motion parameters")}
+      <p class="lead">状态变化以眼睛为主；身体仅在完成时回落。</p>
       <table class="spec" style="margin-top:32px">
         <thead><tr><th>动作</th><th>时长</th><th>什么时候</th></tr></thead>
         <tbody>
@@ -69,8 +69,8 @@ export const states = page({
   body: `
   <div class="grid">
     <div class="span-3">${title("状态", "States")}
-      <p class="lead">产品现有的 15 种活动归为 8 个状态姿态。每个状态只改变眼睛；颜色和形体不变。</p>
-      <p class="body" style="margin-top:20px">产品里的活动图形（过程行中的终端提示符、铅笔、弧线）是功能反馈，由产品维护，不在品牌资产里重画。</p>
+      <p class="lead">15 种活动对应 8 个姿态，球身颜色不变。</p>
+      <p class="body" style="margin-top:20px">过程行活动图形由产品维护。</p>
     </div>
     <div class="span-9 start-4">
       <table class="spec" style="table-layout:fixed">
@@ -93,8 +93,8 @@ export const boundaries = page({
   chapter: 6, id: "motion-boundaries",
   body: `
   <div class="grid">
-    <div class="span-4">${title("识别与反馈的边界", "Identity or feedback")}
-      <p class="lead">小球在两种情况下出现：作为品牌符号，它几乎不动；作为工作中的 Wuu，它用眼睛报告状态。两种用法不能互换。</p>
+    <div class="span-4">${title("动效使用范围", "Motion usage")}
+      <p class="lead">标识保持静止，会话头像随状态变化。</p>
       <table class="spec" style="margin-top:32px">
         <thead><tr><th></th><th>品牌符号</th><th>工作中的 Wuu</th></tr></thead>
         <tbody>
@@ -121,8 +121,8 @@ export const reduced = page({
     <div class="span-4">${title("减少动态效果", "Reduced motion")}
       <p class="lead">系统的“减少动态效果”和应用内的动效设置效果相同：状态直接切换到最终姿态，没有眨眼、回落和循环。</p>
       <div class="rule-list" style="margin-top:32px;--rl:1fr">
-        <div class="body"><strong>姿态保留。</strong>静止的眼睛仍然表达状态，所以信息不会丢失。</div>
-        <div class="body"><strong>文字始终在场。</strong>状态旁边总有文字，例如“正在运行测试”，不依赖动画。</div>
+        <div class="body"><strong>保留最终姿态。</strong></div>
+        <div class="body"><strong>保留状态文字。</strong>例如“正在运行测试”。</div>
         <div class="body"><strong>不做替代动画。</strong>不改成闪烁、淡入淡出循环或颜色变化。</div>
       </div>
       <div class="plate two codeblock" style="padding:18px 20px;margin-top:28px">WuuBall.mount(el, {<br>&nbsp;&nbsp;px: 28, state: "work",<br>&nbsp;&nbsp;reducedMotion: settings.motion === "reduce"<br>});<br><span style="color:var(--text-3)">// 未传入时跟随 prefers-reduced-motion</span></div>
@@ -140,7 +140,7 @@ export const reduced = page({
       </table>
       <div class="plate" style="margin-top:28px;padding:22px 26px;display:flex;gap:28px;align-items:center">
         <div data-wuu-live="rest,think,work,done" data-px="64" data-every="1800" data-reduced="1"></div>
-        <div class="small" style="flex:1">这是一只开启了减少动态效果的实时小球：它每 1.8 秒切换一次状态，但没有过渡、眨眼和循环。交互式演示见 <span class="mono">brand/assets/motion/index.html</span>。</div>
+        <div class="small" style="flex:1">每 1.8 秒切换状态，无过渡。交互演示： <span class="mono">brand/assets/motion/index.html</span>。</div>
       </div>
     </div>
   </div>`,

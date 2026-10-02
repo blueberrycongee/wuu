@@ -35,13 +35,13 @@ export const roles = page({
   chapter: 2, id: "ball-roles",
   body: `
   <div class="grid">
-    <div class="span-4">${title("小球是什么", "What the ball is, and is not")}
-      <p class="lead">小球是 Wuu 在屏幕上的存在感。它有三种用法，每一种有自己的规则；把它们混在一起，是现在品牌不一致的根源。</p>
-      <div class="label" style="margin-top:48px">它不是</div>
+    <div class="span-4">${title("小球的三种用法", "Ball roles")}
+      <p class="lead">品牌符号、Wuu 头像、其他 agent。</p>
+      <div class="label" style="margin-top:48px">使用限制</div>
       <div class="rule-list" style="margin-top:10px;--rl:1fr">
-        <div class="body"><strong>不是吉祥物。</strong>不穿戏服，不说台词，不出现在与 agent 无关的营销场景里。</div>
-        <div class="body"><strong>不是通用加载图标。</strong>下载、保存等与 agent 无关的等待用产品自己的进度控件。</div>
-        <div class="body"><strong>不是装饰点。</strong>一个版面里最多出现一个品牌小球；agent 小球群除外。</div>
+        <div class="body">不加戏服或台词，不用于与 agent 无关的营销场景。</div>
+        <div class="body">下载、保存使用产品的进度控件。</div>
+        <div class="body">一个版面最多一只品牌小球；agent 小球群除外。</div>
       </div>
     </div>
     <div class="span-7 start-6">
@@ -70,15 +70,15 @@ export const construction = page({
   body: `
   <div class="grid">
     <div class="span-4">${title("小球的构造", "Construction")}
-      <p class="lead">一个平面的圆，两只胶囊形的眼睛。所有识别都来自眼睛的位置和比例，所以这几组数不能改。</p>
+      <p class="lead">使用生成资产，保留眼睛的位置与比例。</p>
       <table class="spec" style="margin-top:36px">
-        <thead><tr><th>参数</th><th>值（D = 100）</th><th>作用</th></tr></thead>
+        <thead><tr><th>参数</th><th>值（D = 100）</th><th>说明</th></tr></thead>
         <tbody>
-          <tr><td>眼宽 × 眼高</td><td class="num">${T.ball.optical.display.eyeWidth} × ${T.ball.optical.display.eyeHeight}</td><td>胶囊比例约 1 : 2.2，读作“眼睛”而不是“竖线”</td></tr>
-          <tr><td>眼距（中心）</td><td class="num">${T.ball.optical.display.gap}</td><td>两眼靠近，脸显得专注</td></tr>
-          <tr><td>视线中心</td><td class="num">+${T.ball.optical.display.gazeX}, ${T.ball.optical.display.gazeY}</td><td>看向右上；避免居中竖眼读成暂停键</td></tr>
-          <tr><td>眼轴倾斜</td><td class="num">${T.ball.optical.display.lean}°</td><td>轻微歪头；也让两眼不再平行对称</td></tr>
-          <tr><td>外侧眼收窄</td><td class="num">${T.ball.optical.display.foreshorten} × 偏离度</td><td>平面圆也能读出球面</td></tr>
+          <tr><td>眼宽 × 眼高</td><td class="num">${T.ball.optical.display.eyeWidth} × ${T.ball.optical.display.eyeHeight}</td><td>胶囊比例约 1 : 2.2</td></tr>
+          <tr><td>眼距（中心）</td><td class="num">${T.ball.optical.display.gap}</td><td>两眼中心距离</td></tr>
+          <tr><td>视线中心</td><td class="num">+${T.ball.optical.display.gazeX}, ${T.ball.optical.display.gazeY}</td><td>视线偏右上</td></tr>
+          <tr><td>眼轴倾斜</td><td class="num">${T.ball.optical.display.lean}°</td><td>眼轴顺时针倾斜</td></tr>
+          <tr><td>外侧眼收窄</td><td class="num">${T.ball.optical.display.foreshorten} × 偏离度</td><td>外侧眼透视缩放</td></tr>
         </tbody>
       </table>
       <p class="cap" style="margin-top:14px">数值定义在 <span class="mono">tokens.json → ball.optical</span>；图形由 <span class="mono">src/geometry.mjs</span> 生成。</p>
@@ -96,7 +96,7 @@ export const optical = page({
   body: `
   <div class="grid">
     <div class="span-4">${title("三种光学尺寸", "Optical sizes")}
-      <p class="lead">同一双眼睛在 16 px 时不到 2 px 宽。小尺寸用更大的眼睛，并且仍然偏向右上，保证它读作一张在看东西的脸，而不是暂停键。</p>
+      <p class="lead">按最终显示直径选用版本；小尺寸版加大眼睛。</p>
       <table class="spec" style="margin-top:36px">
         <thead><tr><th>版本</th><th>渲染直径</th><th>眼宽 × 高</th><th>视线</th><th>倾斜</th></tr></thead>
         <tbody>${["display", "small", "micro"].map((k) => { const o = T.ball.optical[k]; const r = k === "display" ? `> ${T.ball.opticalBreakpoints.small} px` : k === "small" ? `${T.ball.opticalBreakpoints.micro + 1}–${T.ball.opticalBreakpoints.small} px` : `≤ ${T.ball.opticalBreakpoints.micro} px`; return `<tr><td>${{ display: "展示 Display", small: "小 Small", micro: "微 Micro" }[k]}</td><td class="num">${r}</td><td class="num">${o.eyeWidth} × ${o.eyeHeight}</td><td class="num">+${o.gazeX}, ${o.gazeY}</td><td class="num">${o.lean}°</td></tr>`; }).join("")}</tbody>
@@ -194,11 +194,11 @@ export const wordmarkPage = page({
   body: `
   <div class="grid">
     <div class="span-4">${title("文字标识", "The wordmark")}
-      <p class="lead">“wuu” 由同一个碗形画成：w 是两只碗共用一根更短、更细的中笔，u 是同一只碗加一根到基线的尾笔。</p>
+      <p class="lead">使用自绘 “wuu” 字标，不用字体重新排。</p>
       <div class="rule-list" style="margin-top:36px;--rl:1fr">
         <div class="body"><strong>全小写。</strong>标识里只有 “wuu” 这一种写法；正文里的名称见“名称的写法”。</div>
-        <div class="body"><strong>方圆的碗底。</strong>碗形介于圆和方之间，和界面里的圆角卡片、输入框属于同一族形状。</div>
-        <div class="body"><strong>平切的笔端。</strong>小球已经足够圆，字标用平切笔端保持清楚和克制。</div>
+        <div class="body"><strong>碗底。</strong>w 与 u 共用曲线。</div>
+        <div class="body"><strong>笔端。</strong>平切，不改为圆头。</div>
         <div class="body"><strong>自绘，不是字体。</strong>不要用任何字体重新排 “wuu”；需要文字时用 Hanken Grotesk 写 “Wuu”。</div>
       </div>
     </div>
@@ -232,7 +232,7 @@ export const lockups = page({
   body: `
   <div class="grid">
     <div class="span-4">${title("组合方式", "Lockups")}
-      <p class="lead">所有尺寸用字标的 x 高度 X 表示。球的中心对齐 x 高度带的中线，所以它在字标上下各伸出一样多。</p>
+      <p class="lead">X 为字标 x 高度；小球与其垂直居中。</p>
       <table class="spec" style="margin-top:36px">
         <thead><tr><th>组合</th><th>用在</th></tr></thead>
         <tbody>
@@ -335,8 +335,8 @@ export const misuses = page({
   body: `
   <div class="grid">
     <div class="span-3">${title("误用", "Misuse")}
-      <p class="lead">这些改动都会削弱识别，或者让小球变成另一种东西。</p>
-      <p class="body" style="margin-top:20px">需要变化时，从已有的资产、光学尺寸和状态姿态中选择；它们已经覆盖了实际用途。</p>
+      <p class="lead">以下为禁用示例。</p>
+      <p class="body" style="margin-top:20px">从现有资产、光学尺寸和状态姿态中选择。</p>
     </div>
     <div class="span-9 start-4">
       <div class="grid" style="grid-template-columns:repeat(4,1fr);column-gap:20px;row-gap:24px">
@@ -362,7 +362,7 @@ export const naming = page({
   body: `
   <div class="grid">
     <div class="span-4">${title("名称的写法", "Writing the name")}
-      <p class="lead">正文里写 Wuu，命令和包名写 <code>wuu</code>，小写的 “wuu” 只存在于标识里。</p>
+      <p class="lead">正文写 Wuu；命令、包名和字标写 <code>wuu</code>。</p>
     </div>
     <div class="span-7 start-6">
       <table class="spec">

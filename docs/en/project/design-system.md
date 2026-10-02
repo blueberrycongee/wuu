@@ -2,11 +2,11 @@
 
 Wuu prioritizes sustained reading and frequent actions. Paper and ink tones form the foundation; shape and typography establish identity; color communicates status and necessary interaction cues. Establish hierarchy with position, space, type size, and weight before adding borders or shadows.
 
-This specification and its visual boards maintain the desktop foundations for designers, developers, and coding agents. They are not a reskin proposal or a claim that every existing screen already conforms. Native phone interfaces share the information and interaction principles, not literal desktop pixel dimensions.
+This specification and its visual boards maintain the desktop foundations for designers, developers, and coding agents. Some existing screens may not yet conform. Native phone interfaces share the information and interaction principles, not literal desktop pixel dimensions.
 
 ## Visual boards
 
-The boards cover color, space/radius/elevation, and typography using Wuu's own variables, not the palette or fonts of external references. Each has light and dark high-resolution PNG versions, with bilingual labels in one shared asset set.
+The boards cover color, space/radius/elevation, and typography using Wuu's variables. Each has light and dark high-resolution PNG versions, with bilingual labels in one shared asset set.
 
 | Board | Light | Dark |
 | --- | --- | --- |
@@ -41,9 +41,9 @@ These are internal renderer roles, not all public API promises. Extensions use t
 
 ### Identity and emphasis
 
-Wuu's identity is monochrome-first, with paper, ink, and neutral surfaces rather than a mandatory signature hue. The black-and-white app icon, consistent shapes, typography, and space provide recognition. The [brand guidelines](brand.md) define the ball, wordmark, and brand colours for communication; product tokens change only through this specification. Neutral does not mean a flat gray interface: use readable tonal contrast and clear hierarchy, with light and dark themes expressing the same roles.
+Use paper, ink and neutral surfaces as the foundation, with clear contrast and hierarchy in both themes. The [brand guidelines](brand.md) cover the ball, wordmark and communication assets; product tokens follow this specification.
 
-Brand identity, action emphasis, and status are separate concerns. Primary actions can use strong foreground/background contrast without a saturated brand fill. Links, keyboard focus, and selection need recognizable interaction cues; success, warning, and danger need distinct meanings. Color supports these purposes rather than decorating every heading or selected item. Never rely on color alone for an essential distinction.
+Use contrast for primary actions and distinct cues for links, focus, selection and status. Do not rely on colour alone for an essential distinction.
 
 ### Color roles
 
@@ -155,4 +155,4 @@ make build-docs
 
 The [generator](../../../desktop/scripts/generate-design-system.cjs) uses installed desktop Electron and esbuild, loads the four foundation stylesheets, and applies runtime default sizes and fonts. A disposable profile avoids product accounts and personal preferences. Six generated PNGs live in `docs/en/assets/design-system/` and are shared by both languages; do not paint over their values. Generation requires a graphical environment. Font glyphs depend on the platform, so inspect regeneration differences on the same platform.
 
-Before adding a component, look for existing roles and shared implementations. Add a variable only for a recurring, semantically different need. Review purpose, preferences, real states, and readability rather than pixel similarity to an external reference.
+Before adding a component, look for existing roles and shared implementations. Add a variable only for a recurring, semantically different need. Review purpose, preferences, real states and readability.

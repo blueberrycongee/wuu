@@ -13,7 +13,7 @@ export const appIconPage = page({
   body: `
   <div class="grid">
     <div class="span-4">${title("应用图标", "App icon")}
-      <p class="lead">应用图标保留现有的已批准图标，本次不重画。它代表应用本身，出现在程序坞、安装窗口、下载按钮和应用列表里。</p>
+      <p class="lead">沿用已批准图标。用于程序坞、安装窗口、下载入口与应用列表。</p>
       <table class="spec" style="margin-top:32px">
         <thead><tr><th style="width:180px">文件</th><th>用途</th></tr></thead>
         <tbody>
@@ -24,7 +24,7 @@ export const appIconPage = page({
       </table>
       <div class="rule-list" style="margin-top:28px;--rl:1fr">
         <div class="body"><strong>不重画，不改色。</strong>炭灰渐变、28° 倾斜的眼睛和三道动势线都是图标原稿的一部分。</div>
-        <div class="body"><strong>图标和品牌小球各用各的。</strong>两者共用胶囊形的眼睛；渐变、倾斜和动势线只属于图标，不用在标识、头像或插画上。</div>
+        <div class="body">图标的渐变、28° 倾斜眼睛和动势线不用于标识、头像或插画。</div>
         <div class="body"><strong>不当作标识使用。</strong>网站导航、文档和物料用组合标识或小球，不用应用图标代替。</div>
       </div>
     </div>
@@ -35,7 +35,7 @@ export const appIconPage = page({
           <div class="plate" style="padding:22px 26px;display:flex;gap:24px;align-items:flex-end">${[128, 64, 32].map((px) => `<div style="text-align:center">${appIcon(px)}<div class="cap num" style="margin-top:8px">${px}</div></div>`).join("")}</div>
           <div class="plate" style="padding:22px 26px">
             <div class="h4">图标与品牌小球</div>
-            <div class="row" style="--g:22px;margin-top:14px">${appIcon(72)}${ball(56)}<span class="cap" style="flex:1">同一种胶囊眼睛。图标有自己的配色与构图；品牌小球是平面墨色、眼睛看向右上。</span></div>
+            <div class="row" style="--g:22px;margin-top:14px">${appIcon(72)}${ball(56)}<span class="cap" style="flex:1">应用图标 / 品牌小球</span></div>
           </div>
         </div>
       </div>
@@ -105,7 +105,7 @@ export const productLight = page({
   body: `
   <div class="grid">
     <div class="span-3">${title("产品界面 · 亮色", "Product, light")}
-      <p class="lead">品牌在产品里只出现在三处：侧栏顶部的标识、会话中 Wuu 的头像、子 agent 的彩色小球。其余全部交给中性色和排版。</p>
+      <p class="lead">侧栏用组合标识；Wuu 用墨色头像，子 agent 用彩色头像。</p>
       <div class="rule-list" style="margin-top:28px;--rl:1fr">
         <div class="body">侧栏中运行中的会话用 14 px 的工作姿态小球，代替通用的加载圈。</div>
         <div class="body">失败只出现在出错的那一步：红色文字与图标，小球颜色不变。</div>
@@ -122,7 +122,7 @@ export const productDark = page({
   body: `
   <div class="grid">
     <div class="span-3">${title("产品界面 · 暗色", "Product, dark")}
-      <p class="lead">暗色主题里 Wuu 的小球换成纸色，agent 小球用暗色一组；层级靠表面明度，而不是阴影。</p>
+      <p class="lead">Wuu 头像用纸色，agent 用暗色色组。</p>
       <p class="body" style="margin-top:24px">diff 的增删底色使用状态色的暗色浅底，文字保持 4.5 : 1 以上。</p>
       <p class="cap" style="margin-top:20px">提案示意，非当前产品界面；示例数据。</p>
     </div>
@@ -135,11 +135,11 @@ export const productHome = page({
   body: `
   <div class="grid">
     <div class="span-3">${title("首页空状态", "Empty home")}
-      <p class="lead">没有打开会话时，小球和问候并排出现。这是产品里小球最大的地方，但它仍然安静：只在空闲时偶尔眨眼。</p>
+      <p class="lead">小球与问候并排，空闲时偶尔眨眼。</p>
       <div class="rule-list" style="margin-top:28px;--rl:1fr">
         <div class="body">问候用标题字号与 Bold，不用衬线体。</div>
         <div class="body">用量热力图只用中性色阶：从表面 3 到墨色，不再使用蓝色。</div>
-        <div class="body">热力图的小游戏属于产品彩蛋，由产品决定是否保留；品牌不要求它。</div>
+        <div class="body">热力图交互由产品定义。</div>
       </div>
       <p class="cap" style="margin-top:20px">提案示意，非当前产品界面；示例数据。</p>
     </div>
@@ -160,7 +160,7 @@ function website() {
     </div>
     <div class="abs" style="right:-60px;bottom:-230px">${ball(640)}</div></div>`;
   const features = `<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:48px;padding:56px 72px;border-top:1px solid ${P["line-1"]}">
-    ${[["FileDiff", "工作就在一处", "对话、文件、改动和终端在同一个窗口里。从提问到检查结果，不必来回切换。"], ["Cpu", "模型由你选择", "连接自己的模型服务，按任务选择合适的模型。"], ["Puzzle", "用插件补上所需", "加入工具、技能、视图和主题，让 Wuu 适应你的工作方式。"]].map(([n, h, t]) => `<div>${ico(n, 22, P.text)}<div style="font:700 20px/1.3 var(--brand);margin-top:16px">${h}</div><div style="font:400 15.5px/1.7 var(--brand);color:${P["text-2"]};margin-top:8px">${t}</div></div>`).join("")}</div>`;
+    ${[["FileDiff", "工作就在一处", "在同一窗口查看对话、文件、diff 和终端。"], ["Cpu", "模型由你选择", "连接并选择自己的模型服务。"], ["Puzzle", "用插件补上所需", "安装工具、技能、视图和主题。"]].map(([n, h, t]) => `<div>${ico(n, 22, P.text)}<div style="font:700 20px/1.3 var(--brand);margin-top:16px">${h}</div><div style="font:400 15.5px/1.7 var(--brand);color:${P["text-2"]};margin-top:8px">${t}</div></div>`).join("")}</div>`;
   const agents = `<div style="margin:0 72px;background:${P.surface};border-radius:20px;padding:44px 48px;display:flex;align-items:center;gap:48px">
     <div style="width:420px"><div style="font:700 30px/1.25 var(--brand)">一个任务，几个 agent 一起做</div><div style="font:400 15.5px/1.7 var(--brand);color:${P["text-2"]};margin-top:12px">Wuu 把任务分给子 agent，并把每一步的结果放回同一个会话里。</div></div>
     <div style="margin-left:auto">${illoRow()}</div></div>`;
@@ -175,7 +175,7 @@ export const web = page({
   body: `
   <div class="grid">
     <div class="span-3">${title("官网首页", "Website")}
-      <p class="lead">首屏只做三件事：说清产品是什么、给出下载、让人记住小球。大尺寸裁切的小球占据右下角，文字在左侧留白里。</p>
+      <p class="lead">首页布局提案。</p>
       <div class="rule-list" style="margin-top:28px;--rl:1fr">
         <div class="body">风景照退出首屏；功能区用产品图标和截图。</div>
         <div class="body">一整页只有一只品牌小球；agent 小球群只出现在讲协作的段落里。</div>
@@ -201,8 +201,8 @@ function docsPage() {
     <div style="display:grid;grid-template-columns:260px 1fr 220px">
       <div style="padding:26px 22px;border-right:1px solid ${P["line-1"]}">${nav.map((t, i) => `<div style="padding:6px 10px;border-radius:7px;font:${i === 3 ? 500 : 400} 13.5px/1.5 var(--brand);color:${i === 3 ? P.text : P["text-2"]};${i === 3 ? `background:${P["surface-3"]}` : ""}">${t}</div>`).join("")}</div>
       <div style="padding:40px 64px"><div style="font:500 13px var(--brand);color:${P["text-3"]}">开始使用</div><div style="font:700 34px/1.25 var(--brand);margin-top:8px">完成第一个任务</div>
-        <p style="font:400 16px/1.75 var(--brand);color:${P["text-2"]};margin-top:18px;max-width:600px">先连接一个模型服务，再选择一个本地文件夹作为工作区。Wuu 会在当前权限模式内读取文件、修改代码和运行命令，并把每一处改动留给你检查。</p>
-        <div style="margin-top:18px;border-radius:12px;background:${P.surface};padding:18px 20px;display:flex;gap:16px;align-items:center;max-width:600px">${illoMini()}<div style="font:400 14px/1.6 var(--brand);color:${P["text-2"]}"><strong style="color:${P.text}">提示</strong>　第一次可以用只读模式试试，Wuu 不会修改任何文件。</div></div>
+        <p style="font:400 16px/1.75 var(--brand);color:${P["text-2"]};margin-top:18px;max-width:600px">连接模型服务，选择工作区，再输入任务。</p>
+        <div style="margin-top:18px;border-radius:12px;background:${P.surface};padding:18px 20px;display:flex;gap:16px;align-items:center;max-width:600px">${illoMini()}<div style="font:400 14px/1.6 var(--brand);color:${P["text-2"]}"><strong style="color:${P.text}">提示</strong>　只读模式不修改文件。</div></div>
         <div style="font:700 21px/1.4 var(--brand);margin-top:30px">1. 连接模型服务</div>
         <p style="font:400 16px/1.75 var(--brand);color:${P["text-2"]};margin-top:8px;max-width:600px">打开“设置 → 模型服务”，选择服务商并填入凭据。</p></div>
       <div style="padding:40px 22px;border-left:1px solid ${P["line-1"]}"><div style="font:600 12px var(--brand);color:${P["text-3"]};letter-spacing:.06em">本页内容</div>${["连接模型服务", "选择工作区", "描述任务", "检查改动"].map((t, i) => `<div style="font:400 13px/1.5 var(--brand);color:${i ? P["text-3"] : P.text};margin-top:10px">${t}</div>`).join("")}</div>
@@ -215,7 +215,7 @@ export const docs = page({
   body: `
   <div class="grid">
     <div class="span-3">${title("文档站与 README", "Docs and README")}
-      <p class="lead">文档是阅读场景：标识小，正文宽松，提示框用表面色而不是彩色。README 顶部用横幅，并提供亮暗两张图。</p>
+      <p class="lead">文档布局与亮暗 README 横幅提案。</p>
       <div class="plate two codeblock" style="padding:16px 18px;margin-top:28px;font-size:11.5px">&lt;picture&gt;<br>&nbsp;&lt;source media="(prefers-color-scheme: dark)"<br>&nbsp;&nbsp;srcset="brand/assets/social/readme-banner-dark.png"&gt;<br>&nbsp;&lt;img alt="Wuu"<br>&nbsp;&nbsp;src="brand/assets/social/readme-banner-light.png"&gt;<br>&lt;/picture&gt;</div>
       <p class="cap" style="margin-top:14px">提案示意；是否替换 README 与文档站主题需另行决定。</p>
     </div>
@@ -234,7 +234,7 @@ export const social = page({
   body: `
   <div class="grid">
     <div class="span-3">${title("社交与发布", "Social and releases")}
-      <p class="lead">分享图和发布卡片用同一套版式：左上标识，左侧大标题，右下一只小球。发布卡片用“完成”姿态。</p>
+      <p class="lead">分享图与发布卡片模板。发布卡片使用“完成”姿态。</p>
       <table class="spec" style="margin-top:28px">
         <thead><tr><th>素材</th><th>尺寸</th></tr></thead>
         <tbody><tr><td>分享图（中 / 英）</td><td class="num">1200 × 630</td></tr><tr><td>发布卡片</td><td class="num">1200 × 675</td></tr><tr><td>社交头像</td><td class="num">400 × 400</td></tr></tbody>
@@ -255,7 +255,7 @@ export const installer = page({
   body: `
   <div class="grid">
     <div class="span-3">${title("安装窗口与幻灯片", "Installer and slides")}
-      <p class="lead">安装窗口只说一件事：把 Wuu 拖进“应用程序”。应用图标本身就是小球，所以背景里只有一条路径和一行提示，不再放第二只小球。</p>
+      <p class="lead">安装背景保留拖动路径与提示，不另放品牌小球。</p>
       <p class="body" style="margin-top:20px">演示文稿的封面沿用封面页版式；内页用手册的 12 栏网格与字号层级，不加页眉装饰。</p>
       <p class="cap" style="margin-top:20px">安装背景为提案；替换 <span class="mono">desktop/build/dmg-background*.png</span> 需另行评审。</p>
     </div>

@@ -8,22 +8,22 @@ export const roles = page({
   chapter: 3, id: "colour-roles",
   body: `
   <div class="grid">
-    <div class="span-4">${title("色彩的分工", "What each colour is for")}
-      <p class="lead">颜色按职责分成五组。每一组只做自己的事：品牌色不表示状态，状态色不做装饰，agent 色不上文字。</p>
-      <p class="body" style="margin-top:24px">判断用哪种颜色时，先问它要传达什么：<strong>这是 Wuu</strong>，<strong>这是哪个 agent</strong>，<strong>发生了什么</strong>，还是<strong>可以操作</strong>。说不出来，就用中性色。</p>
+    <div class="span-4">${title("色彩用途", "Colour roles")}
+      <p class="lead">品牌、中性色、agent、状态与交互。</p>
+
     </div>
     <div class="span-7 start-6">
       <table class="spec">
         <thead><tr><th style="width:190px">组</th><th style="width:220px">颜色</th><th>可以</th><th>不可以</th></tr></thead>
         <tbody>
-          <tr><td><div class="h4">品牌 · 墨与纸</div><div class="cap">这是 Wuu</div></td><td><div class="row" style="--g:6px">${chip(C.brand.ink, 40, 40)}${chip(C.brand.paper, 40, 40)}</div></td><td>标识、Wuu 的小球、主按钮、正文</td><td>不换成其他颜色，也不做渐变</td></tr>
-          <tr><td><div class="h4">中性色阶</div><div class="cap">承载内容</div></td><td><div class="row" style="--g:4px">${["canvas", "surface-2", "surface-3", "line-2", "text-3", "text-2"].map((k) => chip(L[k], 26, 40, 6)).join("")}</div></td><td>底色、表面、分隔线、次要文字、选中态</td><td>不用低对比灰字承载必要信息</td></tr>
-          <tr><td><div class="h4">agent 色</div><div class="cap">这是哪个 agent</div></td><td><div class="row" style="--g:4px">${AGENTS.map((a) => chip(C.agent[a].light, 26, 40, 13)).join("")}</div></td><td>其他 agent 的球身、插画、按 agent 区分的图表</td><td>不上文字、按钮、状态和 Wuu 自己</td></tr>
-          <tr><td><div class="h4">功能状态色</div><div class="cap">发生了什么</div></td><td><div class="row" style="--g:4px">${["success", "warning", "danger", "info"].map((k) => chip(C.status[k].light, 40, 40, 6)).join("")}</div></td><td>成功、警告、错误、信息；总是配文字或图标</td><td>不做品牌装饰，不单独用颜色表达</td></tr>
-          <tr><td><div class="h4">交互</div><div class="cap">可以操作</div></td><td><div class="row" style="--g:6px">${chip(C.interaction.primary.light, 40, 40)}<div class="sw" style="width:40px;height:40px;border-radius:8px;box-shadow:0 0 0 2px ${C.interaction.focus.light};background:#fff"></div></div></td><td>主按钮用墨色；键盘焦点用 2 px 蓝色环</td><td>不为每个选中项加彩色</td></tr>
+          <tr><td><div class="h4">品牌 · 墨与纸</div></td><td><div class="row" style="--g:6px">${chip(C.brand.ink, 40, 40)}${chip(C.brand.paper, 40, 40)}</div></td><td>标识、Wuu 的小球、主按钮、正文</td><td>不换成其他颜色，也不做渐变</td></tr>
+          <tr><td><div class="h4">中性色阶</div></td><td><div class="row" style="--g:4px">${["canvas", "surface-2", "surface-3", "line-2", "text-3", "text-2"].map((k) => chip(L[k], 26, 40, 6)).join("")}</div></td><td>底色、表面、分隔线、次要文字、选中态</td><td>不用低对比灰字承载必要信息</td></tr>
+          <tr><td><div class="h4">agent 色</div></td><td><div class="row" style="--g:4px">${AGENTS.map((a) => chip(C.agent[a].light, 26, 40, 13)).join("")}</div></td><td>其他 agent 的球身、插画、按 agent 区分的图表</td><td>不上文字、按钮、状态和 Wuu 自己</td></tr>
+          <tr><td><div class="h4">功能状态色</div></td><td><div class="row" style="--g:4px">${["success", "warning", "danger", "info"].map((k) => chip(C.status[k].light, 40, 40, 6)).join("")}</div></td><td>成功、警告、错误、信息；总是配文字或图标</td><td>不做品牌装饰，不单独用颜色表达</td></tr>
+          <tr><td><div class="h4">交互</div></td><td><div class="row" style="--g:6px">${chip(C.interaction.primary.light, 40, 40)}<div class="sw" style="width:40px;height:40px;border-radius:8px;box-shadow:0 0 0 2px ${C.interaction.focus.light};background:#fff"></div></div></td><td>主按钮用墨色；键盘焦点用 2 px 蓝色环</td><td>不为每个选中项加彩色</td></tr>
         </tbody>
       </table>
-      <p class="cap" style="margin-top:14px">焦点环与信息色同为蓝色：两者都表示“这里可以关注”，并且都不与品牌色竞争。</p>
+
     </div>
   </div>
   <div class="abs" style="left:80px;right:80px;bottom:96px">
@@ -71,11 +71,11 @@ export const neutralsLight = page({
   body: `
   <div class="grid">
     <div class="span-5">${title("中性色 · 亮色", "Neutrals, light")}
-      <p class="lead">色相 100°、彩度 0.004 左右的“石色”：比冷灰温和，比米色中性。每一级按与底色的对比度选出，而不是等距取值。</p>
+      <p class="lead">石色：色相 100°，彩度约 0.004。各级对比度见下表。</p>
     </div>
     <div class="span-6 start-7" style="padding-top:8px">
-      <div class="label">为什么是石色</div>
-      <p class="body" style="margin-top:8px">米色让代码和截图偏黄，也接近其他 AI 产品的品牌底色；蓝灰显得冰冷。石色在长时间阅读下最安静，墨色的小球也最干净。</p>
+      <div class="label">底色比较</div>
+
       <div style="margin-top:16px">${hueCompare()}</div>
     </div>
   </div>
@@ -88,12 +88,12 @@ export const neutralsDark = page({
   body: `
   <div class="grid">
     <div class="span-5">${title("中性色 · 暗色", "Neutrals, dark")}
-      <p class="lead">暗色不是亮色的反相。底色压到接近墨色，表面逐级提亮；文字不用纯白，避免在暗底上发光刺眼。</p>
+      <p class="lead">底色接近墨色，表面逐级提亮；正文不用纯白。</p>
     </div>
     <div class="span-6 start-7" style="padding-top:8px">
       <div class="label">在暗色里</div>
       <div class="rule-list" style="margin-top:10px;--rl:1fr">
-        <div class="body">Wuu 的小球换成纸色 <span class="mono">${D.ball}</span>，眼睛是底色，看起来是在暗处“亮着”。</div>
+        <div class="body">Wuu 的小球换成纸色 <span class="mono">${D.ball}</span>，眼睛用底色。</div>
         <div class="body">表面层级靠明度区分，不靠阴影；阴影只留给弹出层和对话框。</div>
       </div>
       <div class="row" style="--g:18px;margin-top:18px">${G.ballSVG({ px: 48, body: D.ball, eye: D["ball-eye"] })}${lockup(16, { ink: D.ball, eye: D["ball-eye"] })}</div>
@@ -108,10 +108,10 @@ export const agents = page({
   body: `
   <div class="grid">
     <div class="span-4">${title("agent 色", "Agent colours")}
-      <p class="lead">七个颜色的 OKLCH 明度都是 0.84，彩度相同，所以没有哪一个更抢眼。它们只出现在球身上，眼睛始终是墨色。</p>
+      <p class="lead">七种浅色，OKLCH 明度 0.84；眼睛用墨色。</p>
       <div class="rule-list" style="margin-top:32px;--rl:1fr">
         <div class="body"><strong>稳定分配。</strong>同一个服务商或 agent 在所有会话里颜色不变；按标识符散列到七色之一。</div>
-        <div class="body"><strong>Wuu 不参与分配。</strong>Wuu 自己永远是墨色，所以不会和任何 agent 撞色。</div>
+        <div class="body"><strong>Wuu 不参与分配。</strong>亮色主题用墨色，暗色主题用纸色。</div>
         <div class="body"><strong>只在球和插画上。</strong>不做文字色、按钮色、选中色或状态色。需要标注 agent 名字时，文字用中性色。</div>
         <div class="body"><strong>超过七个时</strong>，靠形体与名字区分，不再增加颜色。</div>
       </div>
@@ -140,10 +140,10 @@ export const status = page({
   body: `
   <div class="grid">
     <div class="span-4">${title("状态色与品牌色", "Status next to brand")}
-      <p class="lead">状态色饱和、偏深，而且面积小；agent 色浅、柔和，只在球上。两者在明度上相差很远，所以放在一起也不会被误读。</p>
+      <p class="lead">状态用深色、小面积，并配文字或图标。</p>
       <div class="rule-list" style="margin-top:32px;--rl:1fr">
-        <div class="body"><strong>失败时球不变色。</strong>agent 失败了，它的球还是原来的颜色；失败由眼睛的姿态、红色文字和图标表达。</div>
-        <div class="body"><strong>状态总配文字或图标。</strong>色弱用户和黑白截图里也能看懂。</div>
+        <div class="body"><strong>失败时球不变色。</strong>失败由眼睛姿态、红色文字和图标表示。</div>
+        <div class="body"><strong>不只靠颜色区分状态。</strong>始终配文字或图标。</div>
         <div class="body"><strong>浅底只做提示条。</strong>浅色状态底配同色相深色文字，对比度不低于 4.5 : 1。</div>
       </div>
     </div>
@@ -179,7 +179,7 @@ export const proportions = page({
   body: `
   <div class="grid">
     <div class="span-4">${title("用量比例", "Proportions")}
-      <p class="lead">中性色撑起画面，墨色给出重心，彩色只占很小的面积。比例随场景变化，但彩色从不做大面积背景，只有插画和社交图例外。</p>
+      <p class="lead">比例可按内容调整。大面积彩色背景仅用于插画和社交图。</p>
     </div>
     <div class="span-7 start-6">
       ${[

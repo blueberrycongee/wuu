@@ -6,9 +6,9 @@ export const tokensPage = page({
   body: `
   <div class="grid">
     <div class="span-4">${title("设计变量", "Tokens")}
-      <p class="lead">所有数值只定义一次：<span class="mono">brand/tokens/tokens.json</span>。CSS、标识、图标、手册页面都从它生成。</p>
+      <p class="lead">色值、几何与动效参数：<span class="mono">brand/tokens/tokens.json</span>。</p>
       <div class="plate two codeblock" style="padding:18px 20px;margin-top:28px;font-size:12px">@import "brand/tokens/wuu-brand.css";<br><br>.hero {<br>&nbsp;&nbsp;background: var(--wuu-brand-canvas);<br>&nbsp;&nbsp;color: var(--wuu-brand-text);<br>&nbsp;&nbsp;font: var(--wuu-brand-type-display-weight)<br>&nbsp;&nbsp;&nbsp;&nbsp;var(--wuu-brand-type-display-size)/1.05<br>&nbsp;&nbsp;&nbsp;&nbsp;var(--wuu-brand-font-brand);<br>}<br><span style="color:var(--text-3)">/* 暗色：在祖先元素上加 .wuu-brand-dark */</span></div>
-      <p class="body" style="margin-top:18px">变量名带 <span class="mono">--wuu-brand-</span> 前缀，官网和物料可以直接使用，不会和产品内部变量冲突。</p>
+      <p class="body" style="margin-top:18px">CSS 变量前缀：<span class="mono">--wuu-brand-</span>。</p>
     </div>
     <div class="span-7 start-6">
       <div class="label">采用到产品时的对应关系（建议）</div>
@@ -19,7 +19,7 @@ export const tokensPage = page({
             ["canvas", "--paper", "底色"], ["surface", "--surface-1", "卡片、输入框"], ["surface-2", "--surface-2", "次级区域"], ["surface-3 / selection", "--selection-surface", "选中"],
             ["text", "--ink-strong", "标题与正文"], ["text-2", "--ink-soft", "次要正文"], ["text-3", "--ink-tertiary", "说明、元信息"], ["text-4", "--ink-faint", "占位、禁用"],
             ["line-1", "--hairline-soft", "表面内分隔"], ["line-2", "--hairline", "区块边界"], ["boundary", "--control-boundary", "控件边界 3 : 1"],
-            ["focus", "--focus-ring", "键盘焦点"], ["success … info", "--success … --info", "状态"], ["ink", "--wuu-accent", "现为朱红，建议改为墨色"],
+            ["focus", "--focus-ring", "键盘焦点"], ["success … info", "--success … --info", "状态"], ["ink", "--wuu-accent", "产品默认使用强前景色"],
           ].map(([b, p, n]) => { const k = b.split(" ")[0]; const hex = C.light[k] ?? (k === "focus" ? C.interaction.focus.light : k === "ink" ? C.brand.ink : k === "success" ? C.status.success.light : ""); return `<tr><td class="mono" style="font-size:12px">${b}</td><td class="mono" style="font-size:12px">${p}</td><td><div class="row" style="--g:6px"><span class="sw" style="width:14px;height:14px;border-radius:4px;background:${hex}"></span><span class="mono" style="font-size:11px">${hex}</span></div></td><td>${n}</td></tr>`; }).join("")}
         </tbody>
       </table>
@@ -33,7 +33,7 @@ export const assets = page({
   body: `
   <div class="grid">
     <div class="span-4">${title("素材清单", "Assets")}
-      <p class="lead">所有素材都有生成器。改动 <span class="mono">tokens.json</span> 或页面源文件后，重新运行生成命令，不要手改导出文件。</p>
+      <p class="lead">修改源文件后重新生成，不手改导出文件。</p>
       <div class="plate two codeblock" style="padding:18px 20px;margin-top:28px;font-size:12px">npm ci --prefix brand<br>npm --prefix brand run build<br><span style="color:var(--text-3)"># 标识、图标、CSS 变量、手册 HTML</span><br><br>npm ci --prefix desktop<br>npm --prefix brand run render<br><span style="color:var(--text-3)"># 分享图、安装背景、文档预览图、PDF</span></div>
       <p class="body" style="margin-top:18px">渲染需要本机安装思源黑体（Source Han Sans SC 或 Noto Sans CJK SC）；缺少时脚本会停止并提示。</p>
     </div>

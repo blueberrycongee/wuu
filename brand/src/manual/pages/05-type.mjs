@@ -8,12 +8,8 @@ export const families = page({
   body: `
   <div class="grid">
     <div class="span-4">${title("字体", "Typefaces")}
-      <p class="lead">品牌传播用三款开源字体。产品界面继续使用系统字体，尊重用户在设置中的选择。</p>
-      <div class="rule-list" style="margin-top:32px;--rl:1fr">
-        <div class="body"><strong>为什么是 Hanken Grotesk。</strong>字宽和 x 高度与思源黑体接近，混排时不忽大忽小；小字号仍然松弛。比 Inter 少见，又不像展示字体那样有态度。</div>
-        <div class="body"><strong>为什么是 Fragment Mono。</strong>和 Hanken 同属怪诞体结构，命令和变量名放进正文不显突兀。</div>
-        <div class="body"><strong>中文不换字体。</strong>思源黑体在中文开源项目里最稳定、授权最清楚，字重齐全。</div>
-      </div>
+      <p class="lead">品牌字体见右表。产品界面跟随系统与用户设置。</p>
+
     </div>
     <div class="span-7 start-6 stack" style="--s:0px">
       ${[
@@ -36,8 +32,8 @@ export const scale = page({
   <div class="grid">
     <div class="span-3">${title("字号层级", "Type scale")}
       <p class="lead">用于官网、文档、社交图和物料。层级靠字号和字重拉开，同一版面最多用四级。</p>
-      <p class="body" style="margin-top:20px">中文标题用 Bold 700，与 Hanken 的 600 视觉重量相当；中文不加负字距。</p>
-      <p class="body" style="margin-top:14px">产品界面使用自己的比例：界面字号默认 14.5 px，其他层级按比例派生，代码字号独立。见 <span class="mono">docs/en/project/design-system.md</span>。</p>
+      <p class="body" style="margin-top:20px">中文标题用 700 字重，不加负字距；拉丁字母标题用 600。</p>
+      <p class="body" style="margin-top:14px">产品界面与代码字号独立设置；默认值以产品设计系统为准。见 <span class="mono">docs/en/project/design-system.md</span>。</p>
     </div>
     <div class="span-9 start-4">
       <table class="spec" style="table-layout:fixed">
@@ -58,7 +54,7 @@ export const mixed = page({
   body: `
   <div class="grid">
     <div class="span-4">${title("中英混排", "Setting Chinese with Latin")}
-      <p class="lead">Wuu 的文字里总有英文、命令和数字。规则的目标是让两种文字在同一行里节奏一致。</p>
+      <p class="lead">中英文与数字之间留空格；命令和路径用等宽字体。</p>
       <table class="spec" style="margin-top:32px">
         <thead><tr><th>项目</th><th>中文</th><th>英文</th></tr></thead>
         <tbody>
@@ -73,7 +69,7 @@ export const mixed = page({
     <div class="span-7 start-6">
       <div class="label" style="margin-bottom:6px">空格</div>
       ${ex(true, "在 Wuu 里打开 3 个项目，占用 20 MB。", "中英文、数字与单位之间留空格")}
-      ${ex(false, "在Wuu里打开3个项目，占用20MB。", "挤在一起，英文像被粘住")}
+      ${ex(false, "在Wuu里打开3个项目，占用20MB。", "缺少空格")}
       <div class="label" style="margin:26px 0 6px">标点</div>
       ${ex(true, "运行 <code>wuu exec</code> 后，查看输出。", "中文句子用全角标点；命令保持原样")}
       ${ex(false, "运行 wuu exec 后,查看输出.", "中文里混用半角逗号和句号")}
@@ -100,11 +96,11 @@ export const specimen = page({
       <div class="plate" style="padding:36px 40px;margin-top:12px;height:640px;overflow:hidden">
         <div class="cap">快速开始 · 3 分钟</div>
         <div style="font:700 30px/1.25 var(--brand);margin-top:10px;letter-spacing:-.005em">完成第一个任务</div>
-        <p style="font:400 16px/1.75 var(--brand);color:var(--text-2);margin-top:16px">先连接一个模型服务，再选择一个本地文件夹作为工作区。Wuu 会在当前权限模式内读取文件、修改代码和运行命令，并把每一处改动留给你检查。</p>
-        <p style="font:400 16px/1.75 var(--brand);color:var(--text-2);margin-top:13px">如果只是想了解项目，可以先用只读模式：</p>
+        <p style="font:400 16px/1.75 var(--brand);color:var(--text-2);margin-top:16px">连接模型服务，选择工作区，再输入任务。只需了解项目时，可用只读模式。</p>
+        <p style="font:400 16px/1.75 var(--brand);color:var(--text-2);margin-top:13px">只读运行：</p>
         <div class="codeblock" style="background:var(--surface-2);border-radius:10px;padding:14px 16px;margin-top:12px;font-size:13.5px">wuu exec --permission-mode read_only \\<br>&nbsp;&nbsp;"review this project and explain how to run its tests"</div>
         <div style="font:700 19px/1.4 var(--brand);margin-top:26px">检查改动</div>
-        <p style="font:400 16px/1.75 var(--brand);color:var(--text-2);margin-top:8px">任务结束后，右侧面板会列出改动的文件。逐个查看 diff，确认后再继续下一步。</p>
+        <p style="font:400 16px/1.75 var(--brand);color:var(--text-2);margin-top:8px">任务结束后，在右侧“改动”面板查看 diff。</p>
         <p style="font:400 15px/1.65 var(--brand);color:var(--text-2);margin-top:18px;border-top:1px solid var(--line-1);padding-top:16px">Connect a model provider, then choose a local folder. Wuu reads files, edits code and runs commands within the active permission mode.</p>
       </div>
     </div>

@@ -38,6 +38,10 @@ missing. On Linux without a display, run the render command under `xvfb-run`. Th
 images go to the ignored `artifacts/brand/` directory; attach them to a release or share them
 directly rather than committing them.
 
+The **Brand assets** pull-request workflow runs the same build and render commands. Its
+`brand-render` artifact contains the generated manual, previews, template PNGs and all pages
+for visual review. It does not commit files or deploy anything.
+
 The manual draws UI icons from `desktop/src/shared/iconArtwork.ts`, so it needs Node 22 or newer
 (type stripping). Edit the sources, never the generated files: `manual/index.html`,
 `tokens/wuu-brand.css`, `assets/**/*.svg|png` and `docs/en/assets/brand/*.png`.

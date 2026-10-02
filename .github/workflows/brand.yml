@@ -1,0 +1,66 @@
+name: Brand assets
+
+on:
+  pull_request:
+    paths:
+      - "brand/**"
+      - "docs/en/assets/brand/**"
+      - "assets/app-icon*"
+      - "desktop/src/shared/iconArtwork.ts"
+      - "desktop/package-lock.json"
+      - ".node-version"
+      - ".github/workflows/brand.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: brand-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  render:
+    name: Render brand manual
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+
+      - name: Install render dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y fonts-noto-cjk xvfb
+          npm ci --prefix brand --no-audit --no-fund
+          npm ci --prefix desktop --no-audit --no-fund
+
+      - name: Generate assets and manual
+        run: npm --prefix brand run build
+
+      - name: Render manual and previews
+        shell: bash
+        run: |
+          mkdir -p artifacts/brand
+          xvfb-run --auto-servernum --server-args="-screen 0 1920x1200x24" desktop/node_modules/.bin/electron --no-sandbox brand/scripts/render.cjs 2>&1 | tee artifacts/brand/render.log
+          git rev-parse HEAD > artifacts/brand/source-commit.txt
+
+      - name: Upload regenerated assets and visual evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: brand-render
+          path: |
+            artifacts/brand/
+            brand/manual/
+            brand/fonts/
+            brand/assets/motion/
+            assets/app-icon.png
+            brand/assets/social/
+            brand/assets/installer/
+            docs/en/assets/brand/
+          if-no-files-found: error
+          retention-days: 14

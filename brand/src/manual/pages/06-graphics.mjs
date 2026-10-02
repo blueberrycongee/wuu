@@ -21,7 +21,7 @@ export const icons = page({
   body: `
   <div class="grid">
     <div class="span-4">${title("图标", "Icons")}
-      <p class="lead">界面图标只用产品已有的 Wuu 图标：24 单位网格、1.75 描边、圆头圆角、开放轮廓。官网和文档也用这一套，不另画一种风格。</p>
+      <p class="lead">沿用产品图标：24 单位网格，1.75 描边，圆头圆角。</p>
       <div class="rule-list" style="margin-top:32px;--rl:1fr">
         <div class="body"><strong>实心胶囊是唯一的“面”。</strong>终端光标这类小元素用实心胶囊，它和小球的眼睛是同一种形状，让图标站在小球旁边也协调。</div>
         <div class="body"><strong>小球不进图标。</strong>不把小球画成功能图标，也不给图标加眼睛。</div>
@@ -95,7 +95,7 @@ export const illustration = page({
   body: `
   <div class="grid">
     <div class="span-4">${title("插画：一群小球", "Illustration")}
-      <p class="lead">插画只讲一件事：谁在做什么。角色只有小球，道具只有简单的卡片、线条和方块，它们代表界面里的内容。</p>
+      <p class="lead">用小球、卡片、线条和方块表示任务。</p>
       <div class="rule-list" style="margin-top:32px;--rl:1fr">
         <div class="body"><strong>一只墨色小球，至多五只 agent 小球。</strong>Wuu 永远最大、最靠前；agent 按 agent 色区分。</div>
         <div class="body"><strong>平面。</strong>没有描边、渐变、投影和高光；一条地平线就够了。</div>
@@ -106,10 +106,10 @@ export const illustration = page({
     </div>
     <div class="span-7 start-6">
       <div class="plate center" style="height:340px">${illoTeam()}</div>
-      <div class="cap" style="margin-top:8px">多个 agent 协作：Wuu 看着整体，三个子 agent 各看各的任务</div>
+      <div class="cap" style="margin-top:8px">多 agent 协作</div>
       <div class="grid" style="grid-template-columns:1fr 1fr;column-gap:24px;margin-top:24px">
         <div><div class="plate center" style="height:300px">${illoEmpty(380, 280)}</div><div class="cap" style="margin-top:8px">空状态：还没有会话</div></div>
-        <div><div class="plate center" style="height:300px">${illoPlugins(380, 280)}</div><div class="cap" style="margin-top:8px">插件：新增的能力是一块块积木</div></div>
+        <div><div class="plate center" style="height:300px">${illoPlugins(380, 280)}</div><div class="cap" style="margin-top:8px">插件</div></div>
       </div>
     </div>
   </div>`,
@@ -120,7 +120,7 @@ export const imagery = page({
   body: `
   <div class="grid">
     <div class="span-4">${title("截图与影像", "Screenshots and imagery")}
-      <p class="lead">Wuu 最好的图像是它自己的界面。截图是主要影像；照片不属于品牌识别的一部分。</p>
+      <p class="lead">优先用产品截图。</p>
       <div class="rule-list" style="margin-top:32px;--rl:1fr">
         <div class="body"><strong>裁到要说明的地方。</strong>只保留和这句话有关的面板，放大到文字能读。</div>
         <div class="body"><strong>平放，不加设备外壳。</strong>不倾斜、不加透视、不放进笔记本电脑模型。圆角 12 px，1 px 分隔线描边。</div>
@@ -151,7 +151,7 @@ export const crop = page({
   body: `
   <div class="grid">
     <div class="span-4">${title("大尺寸裁切构图", "The large-format crop")}
-      <p class="lead">借用自方向 B 的唯一规则：在封面、首屏和社交图这种大幅面上，小球可以大到被画面边缘裁掉一部分。</p>
+      <p class="lead">封面、首屏和社交图可裁切球身，须保留双眼。</p>
       <table class="spec" style="margin-top:32px">
         <thead><tr><th style="width:64px">条件</th><th>要求</th></tr></thead>
         <tbody>
@@ -163,7 +163,7 @@ export const crop = page({
           <tr><td>方向</td><td>品牌姿态的眼睛在右上，所以通常裁左边和下边；裁右边时只裁掉很少一部分</td></tr>
         </tbody>
       </table>
-      <p class="body" style="margin-top:18px">应用图标有自己已批准的构图，不适用这条规则，也不作为它的依据，见第 08 章。</p>
+      <p class="body" style="margin-top:18px">应用图标沿用原稿，见第 08 章。</p>
     </div>
     <div class="span-7 start-6">
       <div class="grid" style="grid-template-columns:1.6fr 1fr;column-gap:24px">

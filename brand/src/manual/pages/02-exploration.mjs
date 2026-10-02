@@ -41,7 +41,7 @@ export const DIRS = {
   A: {
     key: "A", zh: "墨点", en: "Ink", paper: "#F7F7F4", ink: C.brand.ink, soft: "#6E6D6A", line: "#E3E2DE", card: "#FFFFFF",
     lockup: (x) => lockup(x), icon: (px) => icon(px), avatar: (px) => staticBall(px, "rest"),
-    bet: "把小球当作一个排版元素：平面墨色、完整的圆、眼睛偏向右上。颜色留给其他 agent，品牌本身几乎只有墨与纸。",
+    bet: "平面墨色小球，视线朝右上；彩色留给其他 agent。",
     pros: ["从 16 px 到海报都是同一个图形", "放进密集界面不抢内容", "单色输出无需改稿"],
     cons: ["色彩存在感弱，需要靠构图和 agent 色补足", "如果排版平庸，整体会显得寡淡"],
     swatches: ["#F7F7F4", "#E8E8E5", "#D7D6D3", "#908F8C", "#4D4C4A", "#141411", "|", ...AGENTS.map((a) => C.agent[a].light)],
@@ -53,7 +53,7 @@ export const DIRS = {
   B: {
     key: "B", zh: "出框", en: "Frame", paper: "#FFFFFF", ink: "#111111", soft: "#666", line: "#E6E6E6", card: "#F4F4F4",
     lockup: frameLockup, icon: frameIcon, avatar: (px) => G.ballSVG({ px, body: "#111111", eye: "#FFFFFF" }),
-    bet: "让小球从画面边缘探进来，尺度夸张，配一块高饱和的朱红色场。识别靠冲击力和裁切构图。",
+    bet: "大尺寸裁切小球，搭配朱红背景。",
     pros: ["海报、首屏和社交图的冲击力最强", "朱红色场在程序坞和信息流中醒目"],
     cons: ["缩小后裁掉了眼睛，16–32 px 只剩色块", "头像必须是完整的球，裁切无法进入产品", "朱红与错误状态色同一色相，会误读"],
     swatches: [V, "#111111", "#FFFFFF", "#F4F4F4", "#8A8A8A"],
@@ -65,7 +65,7 @@ export const DIRS = {
   C: {
     key: "C", zh: "软物", en: "Soft", paper: "#FBF4EE", ink: "#3A2227", soft: "#8A6C70", line: "#EEDFD6", card: "#FFFFFF",
     lockup: softLockup, icon: softIcon, avatar: (px) => softBall(px),
-    bet: "把小球做成一个有质感的软玩具：粉色、高光、投影，圆头字标，渐变背景。识别靠角色本身的可爱。",
+    bet: "粉色小球、高光与投影，搭配圆头字标和渐变背景。",
     pros: ["第一眼最亲切", "适合贴纸、周边和轻松的社交内容"],
     cons: ["渐变与高光在 16 px 糊成一团，无法单色输出", "粉色选中态与错误提示的浅红底相混", "玩具感与“检查代码改动”的场景不符，容易过时"],
     swatches: ["#FBF4EE", "#FFE3E6", "#FF9FAA", "#E86A7C", "#D9CCF5", "#3A2227"],
@@ -112,7 +112,7 @@ const dirPage = (k) => {
         <div class="label">方向 ${k}</div>
         <div style="font:600 40px/1.15 var(--brand);margin-top:10px">${d.zh}<span style="font-weight:500;color:var(--text-3);font-size:24px;margin-left:12px">${d.en}</span></div>
         <p class="body" style="margin-top:20px">${d.bet}</p>
-        <div class="label" style="margin-top:36px">成立的地方</div>
+        <div class="label" style="margin-top:36px">优点</div>
         <div class="rule-list" style="margin-top:10px;--rl:1fr">${d.pros.map((t) => `<div class="body">${t}</div>`).join("")}</div>
         <div class="label" style="margin-top:28px">问题</div>
         <div class="rule-list" style="margin-top:10px;--rl:1fr">${d.cons.map((t) => `<div class="body">${t}</div>`).join("")}</div>
@@ -126,9 +126,9 @@ export const overview = page({
   chapter: 1, id: "directions",
   body: `
   <div class="grid">
-    <div class="span-4">${title("三个方向", "Three directions, one question")}
-      <p class="lead">三个方向回答同一个问题：小球在品牌里是什么？它们的差别在材料、尺度和颜色的职责，而不只是色板。</p>
-      <p class="body" style="margin-top:24px">每个方向都放进同一组触点：组合标识、应用图标的四个尺寸、官网首屏、产品侧栏与会话、色彩。之后用同一组压力测试比较。</p>
+    <div class="span-4">${title("三个方向", "Three directions")}
+      <p class="lead">比较平面、裁切和立体三种方向。</p>
+      <p class="body" style="margin-top:24px">对照场景：标识、图标、官网、产品界面、色彩。</p>
     </div>
     <div class="span-7 start-6 stack" style="--s:22px">
       ${["A", "B", "C"].map((k) => { const d = DIRS[k]; return `
@@ -173,7 +173,7 @@ export const stress = page({
   body: `
   <div class="grid">
     <div class="span-3">${title("压力测试", "Stress test")}
-      <p class="lead">漂亮的封面不能说明问题。五项测试都来自真实用途：浏览器标签、单色输出、暗色界面、与状态色并置、多个 agent 同屏。</p>
+      <p class="lead">比较小尺寸、单色、暗色、错误提示与多 agent 场景。</p>
     </div>
     <div class="span-9 start-4">
       <table class="spec" style="table-layout:fixed">
@@ -196,17 +196,17 @@ export const decision = page({
   chapter: 1, id: "decision",
   body: `
   <div class="grid">
-    <div class="span-4">${title("选择 A，<br>借用 B 的一条规则", "Direction A, with one rule from B")}
-      <p class="lead">墨点在所有测试中都成立，缺点是色彩弱。我们不给它加一个品牌强调色，而是把颜色交给产品里本来就存在的东西：其他 agent。</p>
+    <div class="span-4">${title("采用方案", "Selected direction")}
+      <p class="lead">采用 A 的标识与中性色；大幅面可用 B 的裁切构图。</p>
     </div>
     <div class="span-7 start-6">
       <div class="rule-list" style="--rl:150px 1fr">
         <div><span class="h4">保留自 A</span><span class="body">平面墨色的完整小球；偏向右上的眼睛；纸与墨的中性色；自绘的 “wuu” 字标。</span></div>
-        <div><span class="h4">借用自 B</span><span class="body">大尺寸裁切构图：只用于封面、官网首屏、社交图等大幅面，且两只眼睛必须完整留在画面内。<strong>头像、标识和小尺寸永远用完整的球。</strong></span></div>
-        <div><span class="h4">放弃 B 的</span><span class="body">朱红色场。它和错误状态同色相，放进产品就会误读。</span></div>
-        <div><span class="h4">放弃 C 的</span><span class="body">渐变、高光、投影和圆头字标。它们无法缩小、无法单色，也不适合审查代码的场景。</span></div>
-        <div><span class="h4">应用图标</span><span class="body">保留现有的已批准图标，不重画。方向 A 中“小球坐在底边”的图标方案经评审未采用。</span></div>
-        <div><span class="h4">新增</span><span class="body">agent 色：七个明度相同的浅色，只用在其他 agent 的球身和插画里。Wuu 自己永远是墨色。</span></div>
+        <div><span class="h4">借用自 B</span><span class="body">封面、官网首屏、社交图可裁切球身，保留双眼。头像、标识和小尺寸用完整小球。</span></div>
+        <div><span class="h4">放弃 B 的</span><span class="body">朱红背景：易与错误状态混淆。</span></div>
+        <div><span class="h4">放弃 C 的</span><span class="body">渐变、高光、投影和圆头字标：小尺寸与单色输出表现较差。</span></div>
+        <div><span class="h4">应用图标</span><span class="body">保留已批准图标；不采用 A 的图标草案。</span></div>
+        <div><span class="h4">新增</span><span class="body">七种浅色用于其他 agent；Wuu 用墨色。</span></div>
       </div>
     </div>
   </div>

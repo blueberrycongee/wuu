@@ -1,8 +1,8 @@
 # Wuu brand guidelines
 
-Wuu's brand is ink and paper with one character: the ball. Its eyes carry all of its identity and state. Other agents and models appear as the same ball in seven agent colours; Wuu itself is always ink. The complete manual is [`brand/manual/index.html`](../../../brand/manual/index.html) (open it in a browser; written in Chinese). Its sources, assets and generators are in [`brand/`](../../../brand/README.md).
+[Full manual](../../../brand/manual/index.html) (Chinese; open in a browser) · [Assets and build commands](../../../brand/README.md)
 
-These guidelines define the identity and show proposed applications. They do not change the desktop app, the website or this documentation site; adopting them there is separate work.
+These guidelines contain brand assets and application proposals. Adoption in the desktop app, website and docs site needs separate review.
 
 ![Manual cover](../assets/brand/manual-cover.png)
 
@@ -10,38 +10,44 @@ These guidelines define the identity and show proposed applications. They do not
 
 | Use | Colour | Eyes |
 | --- | --- | --- |
-| Brand symbol: logo, website, documentation, materials | Ink (paper on dark grounds) | Fixed brand pose, looking up and to the right |
-| Wuu at work: its own avatar in a conversation | Ink (paper in dark theme) | Follow the activity state |
-| Other agents: subagents, project agents, models, providers | One of seven agent colours | Follow the activity state; ink eyes |
+| Brand symbol | Ink; paper on dark backgrounds | Fixed, looking up and right |
+| Wuu in a conversation | Ink; paper in dark theme | Follow the activity state |
+| Other agents, models and providers | One of seven agent colours | Ink; follow the activity state |
 
-- The eyes never sit centred and upright: two upright capsules on a disc read as a pause button. The offset gaze is what makes it a face.
-- Use the optical size that matches the rendered diameter: display above 40 px, small from 21 to 40 px, micro at 20 px and below (each micro eye lands on whole pixels at 16 px).
-- The ball is not a mascot, a generic loading indicator or a decoration. A layout holds at most one brand ball; a group of agent balls is the exception.
-- Do not add a mouth, blush, limbs, gradients, highlights, shadows or outlines, and do not put product accessories on the brand symbol.
+- Choose assets by displayed diameter: display above 40 px, small at 21–40 px, micro at 20 px and below
+- Keep the eye position, tilt and proportions; do not centre them upright
+- Use at most one brand ball per layout, except agent groups. Use product progress controls for downloads and saves
+- Do not add a mouth, blush, limbs, gradients, highlights, shadows or outlines; keep product accessories off the brand symbol
 
 ![Ball construction](../assets/brand/manual-ball-construction.png)
 
 ## Wordmark and lockups
 
-The wordmark "wuu" is drawn from one bowl: the w is two bowls sharing a shorter, lighter middle stem; each u is the same bowl with a flat spur. Use only the supplied files; never retype it in a font. In prose, write **Wuu** in both languages and `wuu` for the command.
+Use the supplied wordmark files; do not retype them in a font. Write **Wuu** in prose and `wuu` for the command.
 
-Lockup dimensions are multiples of the wordmark x-height X. The horizontal lockup is the default (ball 1.4 X, gap 0.34 X); the stacked lockup suits square formats. Keep 1 X of clear space around lockups and 0.25 D around the symbol. The horizontal lockup has a minimum x-height of 7 px on screen and a minimum width of 14 mm in print; the symbol has a minimum of 12 px and 4 mm.
+X is the wordmark x-height; D is the ball diameter:
+
+| Item | Specification |
+| --- | --- |
+| Horizontal lockup (default) | Ball 1.4 X, gap 0.34 X |
+| Stacked lockup | Near-square formats |
+| Clear space | 1 X around lockups; 0.25 D around the ball |
+| Minimum lockup | 7 px x-height on screen; 14 mm wide in print |
+| Minimum ball | 12 px on screen; 4 mm in print |
 
 ![Lockups](../assets/brand/manual-lockups.png)
 
 ## Colour
 
-Each colour group has one job:
+| Group | Use | Limits |
+| --- | --- | --- |
+| Ink `#141411`, paper `#F7F7F4` | Logo, Wuu avatar, primary buttons, body text | No other hues or gradients |
+| Stone neutrals | Grounds, surfaces, lines, secondary text, selection | Keep essential text readable |
+| Agent colours | Other agents' balls, illustrations, per-agent charts | No text, controls, status or Wuu |
+| Status colours | Success, warning, danger, info | Include text or an icon; no decoration |
+| Interaction colours | Ink primary button, 2 px blue focus ring | Do not colour every selection |
 
-| Group | Tells you | Used for | Never for |
-| --- | --- | --- | --- |
-| Ink `#141411` and paper `#F7F7F4` | This is Wuu | Logo, Wuu's ball, primary buttons, body text | Other hues or gradients |
-| Stone neutrals | Content structure | Grounds, surfaces, lines, secondary text, selection | Essential information in low-contrast grey |
-| Agent colours | Which agent | Other agents' balls, illustration, per-agent charts | Text, controls, status, Wuu itself |
-| Status colours | What happened | Success, warning, danger, info, always with text or an icon | Decoration |
-| Interaction | You can act here | Ink primary button, 2 px blue focus ring | Colouring every selected item |
-
-Neutrals are chosen by contrast against the ground, not by even steps: body text 17.2 : 1, secondary 8 : 1, tertiary 4.8 : 1, placeholder 3 : 1. Agent colours share OKLCH lightness 0.84, so none is louder; status colours are darker and saturated, so the two never read as each other. When an agent fails, its ball keeps its colour; the failure is carried by its eyes, red text and an icon.
+Neutral contrast ratios: body 17.2 : 1, secondary 8 : 1, tertiary 4.8 : 1, placeholder 3 : 1. Agent colours use OKLCH lightness 0.84; include names to distinguish them. On failure, keep the ball colour and use its eye pose, red text and an icon.
 
 ![Colour roles](../assets/brand/manual-colour-roles.png)
 
@@ -49,35 +55,34 @@ Neutrals are chosen by contrast against the ground, not by even steps: body text
 
 ## Typography
 
-| Face | Role | Licence |
+| Typeface | Use | Licence |
 | --- | --- | --- |
-| Hanken Grotesk | Latin headlines and text in brand communication | SIL OFL 1.1, bundled in `brand/fonts/` |
-| Source Han Sans SC / Noto Sans CJK SC | Chinese | SIL OFL 1.1, install from the official releases |
-| Fragment Mono | Commands, paths and variable names; ligatures off | SIL OFL 1.1, bundled in `brand/fonts/` |
-| System UI font | The product interface, following user settings | Operating system |
+| Hanken Grotesk | Latin brand headings and body text | SIL OFL 1.1, bundled |
+| Source Han Sans SC / Noto Sans CJK SC | Chinese | SIL OFL 1.1, install from official releases |
+| Fragment Mono | Commands, paths, variable names; ligatures off | SIL OFL 1.1, bundled |
+| System font | Product UI, following user settings | Operating system |
 
-Put a space between Chinese and Latin text and between numbers and units. Use full-width punctuation in Chinese sentences, monospace for commands and paths, and weight rather than italics for emphasis.
+Add spaces between Chinese and Latin text and between numbers and units. Use full-width Chinese punctuation, monospace for commands and paths, and weight for emphasis.
 
 ![Typefaces](../assets/brand/manual-type-families.png)
 
 ## Motion
 
-The eyes move first; the body barely moves. Motion reuses the product's durations and its ease-out and ease-in curves.
-
-| Motion | Timing | When |
+| Motion | Timing | Use |
 | --- | --- | --- |
-| Gaze change | 180 ms, ease-out | A state changes |
-| Blink | 60 + 40 + 90 ms, every 3.8–8.2 s | Rest, listening, needs you |
-| Settle | 280 ms, squash at most 6 % | Once, when a turn completes |
-| Working drift | 1600 ms period | Only while thinking or working |
+| Gaze change | 180 ms, ease-out | State changes |
+| Blink | 60 + 40 + 90 ms, every 3.8–8.2 s | Rest, listening, waiting for confirmation |
+| Settle | 280 ms, squash at most 6 % | Once per completed turn |
+| Working drift | 1600 ms period | Thinking and working |
 
-The product's 15 activities map to eight poses: rest, listen, think, work, wait, done, failed and paused. With reduced motion, from the system or from the app's Motion setting, states switch directly to their final pose, with no blinks, settles or loops; the pose and the accompanying text still carry the state. The reference implementation and a demo are in [`brand/assets/motion/`](../../../brand/assets/motion/wuu-ball.js).
+Fifteen activities map to eight poses. With reduced motion, switch directly to the final pose, keep state text, and stop blinks, settles and loops. [Reference implementation](../../../brand/assets/motion/wuu-ball.js)
 
 ![Motion states](../assets/brand/manual-motion-states.png)
 
 ## Applications
 
-The app icon keeps its approved artwork in `assets/app-icon-source.*`; the brand does not redraw it. Its charcoal gradient, 28° eyes and motion marks belong to the icon only: do not carry them into the logo, avatars or illustrations, and do not use the app icon in place of the logo. At large formats (covers, website heroes, social images) the ball may be cropped by one or two edges if both eyes stay fully visible and text never overlaps it.
+- Keep the approved app icon in `assets/app-icon-source.*`. Its gradient, 28° eyes and motion marks are not for logos, avatars or illustrations. Do not substitute the app icon for the logo
+- Covers, heroes and social images may crop the ball on up to two edges. Keep both eyes visible and text off the ball
 
 ![App icon](../assets/brand/manual-app-icon.png)
 
@@ -85,8 +90,10 @@ The app icon keeps its approved artwork in `assets/app-icon-source.*`; the brand
 
 ![Website proposal](../assets/brand/manual-website.png)
 
-## Maintenance
+## Maintenance and licensing
 
-Every value is defined once, in `brand/tokens/tokens.json`. Change it there, run `npm --prefix brand run build` and `npm --prefix brand run render` (see [`brand/README.md`](../../../brand/README.md)), and review the regenerated manual and previews. Do not edit exported files. The product's own design foundations remain in [the design system](design-system.md); product tokens change only through that process.
+Edit values in `brand/tokens/tokens.json`. Run `npm --prefix brand run build` and `npm --prefix brand run render`, then inspect the output; do not edit exports. See [brand/README.md](../../../brand/README.md) for requirements. Product tokens remain governed by the [design system](design-system.md).
 
-Not yet verified: trademark availability, user research, whether the app icon needs a variant below 32 px, print colours, rendering on Windows and macOS, and colour-vision simulation of the agent colours.
+Brand assets ship under MIT. MIT grants no trademark rights; brand-use terms need maintainer confirmation.
+
+Not yet verified: trademarks, user research, app icons below 32 px, print colours, Windows/macOS rendering, and agent colour-vision simulation.

@@ -4,9 +4,9 @@ Wuu is an AI agent workspace for local projects. Give an agent a task, follow it
 
 ## Start a task
 
-The [quick start](getting-started/index.md) takes you from installing the desktop app to checking your first result. The current release workflow produces an Apple silicon macOS preview; the app includes its own Wuu core. Terminal users can [install the CLI](getting-started/installation.md#install-the-cli) from source.
+[Install and start a task](getting-started/index.md). The current release workflow produces an Apple silicon macOS preview; the app includes its own Wuu core. Terminal users can [install the CLI](getting-started/installation.md#install-the-cli) from source.
 
-For everyday work, learn how to select a [workspace](desktop/workspaces.md), manage [conversations and forks](desktop/conversations.md), and inspect [files, diffs, and command output](desktop/workspace-tools.md).
+Select a [workspace](desktop/workspaces.md), manage [conversations and forks](desktop/conversations.md), and inspect [files, diffs, and command output](desktop/workspace-tools.md).
 
 ## Configure your workspace
 
