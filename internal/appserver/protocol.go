@@ -1807,13 +1807,14 @@ type ThreadRenameResult struct {
 	Thread Thread `json:"thread"`
 }
 
-// ThreadDeleteParams is the input for the `thread/delete` method: the user
-// permanently removes a conversation. Only archived or otherwise idle (not
-// running) threads are eligible. Deletion removes the session row (chat
-// history cascades via foreign keys), the workspace-scoped session artifact
-// directory, and any fork worktree bound to the thread.
+// ThreadDeleteParams permanently removes an idle conversation, its history,
+// side conversation, and session artifacts. Clean managed worktrees are reclaimed;
+// worktrees with user changes are preserved. Running threads or agents block deletion.
 type ThreadDeleteParams struct {
 	ThreadID string `json:"thread_id"`
+	// OnlyIfArchived rejects a session restored before its deletion transaction.
+	// Omitting it retains ordinary deletion of idle, unarchived conversations.
+	OnlyIfArchived bool `json:"only_if_archived,omitempty"`
 }
 
 type ThreadDeleteResult struct {

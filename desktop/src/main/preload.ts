@@ -409,8 +409,8 @@ const api: WuuDesktopApi = {
     ipcRenderer.invoke("wuu:thread-organization-update", threadId, folderId),
   archiveThread: (threadId: string, archived: boolean, force?: boolean) =>
     ipcRenderer.invoke("wuu:thread-archive", threadId, archived, force),
-  deleteThread: (threadId: string) =>
-    ipcRenderer.invoke("wuu:thread-delete", threadId),
+  deleteThread: (threadId: string, options?: { onlyIfArchived?: boolean }) =>
+    ipcRenderer.invoke("wuu:thread-delete", threadId, options),
   compactThread: (threadId: string) =>
     ipcRenderer.invoke("wuu:thread-compact-start", threadId),
   renameThread: (threadId: string, title: string) =>

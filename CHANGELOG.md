@@ -10,6 +10,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Delete all archived conversations from Settings, with an all-workspace count,
+  irreversible-action confirmation, archived-only safety checks, and partial-failure retry.
+
 - Add per-project managed-worker admission capacity with durable lease arbitration and bounded inbox retries; lead and side coordination remain available.
 
 - GPT-6.1 Sol and Fast model entries with Responses tool calling, supported

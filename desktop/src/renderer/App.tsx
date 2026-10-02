@@ -155,6 +155,7 @@ import {
   sessionTabForLoadedRuntime,
   setThreadForPane,
   sortThreads,
+  mergeListedThreads,
   summarizeWorkspaceThreadsForSidebar,
   summarizeThreadsForSidebar,
   threadBelongsToWorkspace,
@@ -217,6 +218,7 @@ import { ArchiveTip } from "./ArchiveTip";
 import { TopNotice } from "./TopNotice";
 import { UILayerPortal } from "./ui/layers/UILayerHost";
 import { showErrorToast, showToast } from "./Toast";
+import { useArchiveDeletion } from "./useArchiveDeletion";
 import { setOpenThreadInSplitHandler } from "./ConversationSplitBridge";
 import { CircleAlert, RefreshCw } from "./WuuIcons";
 import type {
@@ -3926,6 +3928,7 @@ export function App(): JSX.Element {
     archiveThread,
     unarchiveThread,
     deleteThread,
+    deleteArchivedThread,
   } = createThreadMutationActions({
     getAppState: () => appStateRef.current,
     setAppState: setState,
@@ -3940,6 +3943,15 @@ export function App(): JSX.Element {
     updateCachedSidebarThreadPinned,
     removeCachedSidebarThread,
     clearThreadPendingComposerMessages,
+  });
+
+  const archiveDeletion = useArchiveDeletion(deleteArchivedThread, (archived) => {
+    // Other workspaces keep independent live-sidebar caches. Reconcile them
+    // even if the freshly discovered archive is followed by Cancel.
+    for (const thread of archived) removeCachedSidebarThread(thread.id);
+    setState(current => ({ ...current,
+      threads: mergeListedThreads(current.threads, [...current.threads.filter(thread => !thread.archived), ...archived]),
+    }));
   });
 
   function commitConversationTitle(nextTitle: string): void {
@@ -4993,6 +5005,9 @@ export function App(): JSX.Element {
               };
             })}
           onUnarchiveThread={(thread) => void unarchiveThread(thread)}
+          archiveDeletion={archiveDeletion}
+          onDeleteAllArchivedThreads={() => void archiveDeletion.removeAll()}
+          onRetryArchiveDeletion={() => void archiveDeletion.retry()}
         />
       </>
     );

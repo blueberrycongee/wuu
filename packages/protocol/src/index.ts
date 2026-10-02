@@ -2920,7 +2920,8 @@ export type WuuDesktopApi = {
   // Permanently deletes a conversation (history, artifacts, and any fork
   // worktree). Mirrors the `thread/delete` RPC; running threads are rejected
   // server-side.
-  deleteThread: (threadId: string) => Promise<{ thread_id: string }>;
+  // onlyIfArchived is checked atomically with deletion; restored sessions are rejected.
+  deleteThread: (threadId: string, options?: { onlyIfArchived?: boolean }) => Promise<{ thread_id: string }>;
   compactThread: (threadId: string) => Promise<{ turn: Turn }>;
   startTurn: (
     threadId: string,

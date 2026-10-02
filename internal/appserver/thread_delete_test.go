@@ -702,3 +702,311 @@ func TestServerThreadDeleteCleansForkWorktree(t *testing.T) {
 		t.Fatalf("fork session should be gone after thread/delete")
 	}
 }
+
+func TestServerThreadDeleteOnlyIfArchivedPreservesRestoredData(t *testing.T) {
+	for _, test := range []struct {
+		name           string
+		archived       bool
+		restored       bool
+		onlyIfArchived bool
+		wantError      bool
+	}{
+		{name: "archived", archived: true, onlyIfArchived: true},
+		{name: "active", onlyIfArchived: true, wantError: true},
+		{name: "restored", archived: true, restored: true, onlyIfArchived: true, wantError: true},
+		{name: "ordinary active delete"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			rt := newTestRuntime(t, &fakeClient{})
+			out := &lockedBuffer{}
+			srv := New(rt, out)
+			t.Cleanup(srv.Close)
+			const threadID = "guarded-delete"
+			if _, err := session.CreateWithMetadata(rt.SessionDir, threadID, rt.RootDir); err != nil {
+				t.Fatal(err)
+			}
+			if err := session.AppendHistoryRecord(rt.SessionDir, threadID, session.HistoryRecord{Role: "user", Content: "keep my history"}); err != nil {
+				t.Fatal(err)
+			}
+			if test.archived {
+				if _, err := session.UpdateArchived(rt.SessionDir, threadID, true); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if test.restored {
+				if _, err := session.UpdateArchived(rt.SessionDir, threadID, false); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := srv.sideThreadStore.BeginTurn(threadID, "side question", "side-user", "side-assistant"); err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := srv.sideThreadStore.FinishTurn(threadID, "side-assistant", "keep my reply", sidethread.StatusCompleted, ""); err != nil {
+				t.Fatal(err)
+			}
+			dispatchPayload(t, srv, "delete", MethodThreadDelete, map[string]any{
+				"thread_id": threadID, "only_if_archived": test.onlyIfArchived,
+			})
+			response := responseByID(t, parseOutput(t, out.String()), "delete")
+			if gotError := response["error"] != nil; gotError != test.wantError {
+				t.Fatalf("delete error = %t, want %t: %+v", gotError, test.wantError, response)
+			}
+			if _, found, err := session.Find(rt.SessionDir, threadID); err != nil || found != test.wantError {
+				t.Fatalf("session retained = %t, want %t: %v", found, test.wantError, err)
+			}
+			if exists, err := srv.sideThreadStore.Exists(threadID); err != nil || exists != test.wantError {
+				t.Fatalf("side thread retained = %t, want %t: %v", exists, test.wantError, err)
+			}
+			if !test.wantError {
+				return
+			}
+			if !strings.Contains(fmt.Sprint(response["error"]), "not archived") {
+				t.Fatalf("guard rejection did not explain archive eligibility: %+v", response)
+			}
+			history, err := session.LoadHistoryRecords(rt.SessionDir, threadID, true)
+			if err != nil || len(history) != 1 || history[0].Content != "keep my history" {
+				t.Fatalf("rejected deletion changed history: %+v, %v", history, err)
+			}
+			side, err := srv.sideThreadStore.Load(threadID)
+			if err != nil || len(side.Messages) != 2 || side.Messages[1].Text != "keep my reply" {
+				t.Fatalf("rejected deletion changed side history: %+v, %v", side, err)
+			}
+			if _, err := os.Stat(filepath.Join(srv.sideThreadStore.Dir(), ".deleting", threadID+".json")); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("rejected deletion did not roll back side staging: %v", err)
+			}
+		})
+	}
+}
+
+func TestServerThreadDeleteArchivedUsesGlobalStoreAndForeignArtifacts(t *testing.T) {
+	for _, queued := range []bool{false, true} {
+		t.Run(fmt.Sprintf("queued_%t", queued), func(t *testing.T) {
+			rt := newTestRuntime(t, &fakeClient{})
+			rt.WuuHome = t.TempDir()
+			rt.StateDir, _ = statepath.WorkspaceDirByID(rt.WuuHome, "current-workspace")
+			rt.SessionDir = statepath.SessionsDir(rt.WuuHome)
+			out := &lockedBuffer{}
+			srv := New(rt, out)
+			t.Cleanup(srv.Close)
+			const threadID = "foreign-archive-delete"
+			foreignStateDir, err := statepath.WorkspaceDirByID(rt.WuuHome, "foreign-workspace")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := session.CreateWithMetadata(rt.SessionDir, threadID, filepath.Join(t.TempDir(), "foreign-project")); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := session.UpdateArchived(rt.SessionDir, threadID, true); err != nil {
+				t.Fatal(err)
+			}
+			artifactDir := statepath.SessionArtifactDir(foreignStateDir, threadID)
+			if err := os.MkdirAll(filepath.Join(artifactDir, "workers"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if queued {
+				store := harness.NewStore(filepath.Join(artifactDir, "harness"))
+				if err := store.UpsertQueueItem(harness.QueueItem{ID: "queued-worker", TaskID: "worker", Kind: "agent_spawn", Payload: json.RawMessage(`{}`)}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			otherStore := t.TempDir()
+			if _, err := session.CreateWithMetadata(otherStore, threadID, rt.RootDir); err != nil {
+				t.Fatal(err)
+			}
+			dispatchPayload(t, srv, "list", MethodThreadListArchived, ThreadListParams{CWD: rt.RootDir})
+			listed := remarshal[ThreadListResult](t, responseByID(t, parseOutput(t, out.String()), "list")["result"])
+			if len(listed.Threads) != 1 || listed.Threads[0].ID != threadID {
+				t.Fatalf("foreign archived session missing from global list: %+v", listed)
+			}
+			dispatchPayload(t, srv, "delete", MethodThreadDelete, map[string]any{"thread_id": threadID, "only_if_archived": true})
+			response := responseByID(t, parseOutput(t, out.String()), "delete")
+			if gotError := response["error"] != nil; gotError != queued {
+				t.Fatalf("delete error = %t, want %t: %+v", gotError, queued, response)
+			}
+			if queued && !strings.Contains(fmt.Sprint(response["error"]), "active agents") {
+				t.Fatalf("foreign queued worker rejection lost its reason: %+v", response)
+			}
+			if _, found, err := session.Find(rt.SessionDir, threadID); err != nil || found != queued {
+				t.Fatalf("foreign archived session retained = %t, want %t: %v", found, queued, err)
+			}
+			_, artifactErr := os.Stat(artifactDir)
+			if queued && artifactErr != nil {
+				t.Fatalf("rejected deletion removed foreign artifacts: %v", artifactErr)
+			}
+			if !queued && !errors.Is(artifactErr, os.ErrNotExist) {
+				t.Fatalf("foreign artifacts survived deletion: %v", artifactErr)
+			}
+			if _, found, err := session.Find(otherStore, threadID); err != nil || !found {
+				t.Fatalf("deletion escaped the configured session store: found=%t err=%v", found, err)
+			}
+		})
+	}
+}
+
+func TestServerThreadDeleteArchivedRechecksRestoreAfterSideStaging(t *testing.T) {
+	rt := newTestRuntime(t, &fakeClient{})
+	out := &lockedBuffer{}
+	srv := New(rt, out)
+	t.Cleanup(srv.Close)
+	const threadID = "restore-after-side-stage"
+	if _, err := session.CreateWithMetadata(rt.SessionDir, threadID, rt.RootDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.AppendHistoryRecord(rt.SessionDir, threadID, session.HistoryRecord{Role: "user", Content: "survive restoration"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := session.UpdateArchived(rt.SessionDir, threadID, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := srv.sideThreadStore.BeginTurn(threadID, "side question", "side-user", "side-assistant"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := srv.sideThreadStore.FinishTurn(threadID, "side-assistant", "side reply", sidethread.StatusCompleted, ""); err != nil {
+		t.Fatal(err)
+	}
+	srv.deleteSessionForTest = func(id string) (session.Session, error) {
+		if _, err := os.Stat(filepath.Join(srv.sideThreadStore.Dir(), ".deleting", id+".json")); err != nil {
+			t.Fatalf("side deletion was not staged before restore: %v", err)
+		}
+		// Another archive caller may restore after any handler-level precheck.
+		if _, err := session.UpdateArchived(rt.SessionDir, id, false); err != nil {
+			t.Fatal(err)
+		}
+		srv.deleteSessionForTest = nil
+		return srv.deleteThreadSession(id, true)
+	}
+	dispatchPayload(t, srv, "delete", MethodThreadDelete, map[string]any{"thread_id": threadID, "only_if_archived": true})
+	response := responseByID(t, parseOutput(t, out.String()), "delete")
+	if response["error"] == nil || !strings.Contains(fmt.Sprint(response["error"]), "not archived") {
+		t.Fatalf("restore before the delete transaction must reject deletion: %+v", response)
+	}
+	metadata, found, err := session.Find(rt.SessionDir, threadID)
+	if err != nil || !found || metadata.ArchivedAt != nil {
+		t.Fatalf("restored session was changed: found=%t metadata=%+v err=%v", found, metadata, err)
+	}
+	history, err := session.LoadHistoryRecords(rt.SessionDir, threadID, true)
+	if err != nil || len(history) != 1 || history[0].Content != "survive restoration" {
+		t.Fatalf("restored history changed: %+v, %v", history, err)
+	}
+	side, err := srv.sideThreadStore.Load(threadID)
+	if err != nil || len(side.Messages) != 2 || side.Messages[1].Text != "side reply" {
+		t.Fatalf("side staging was not rolled back: %+v, %v", side, err)
+	}
+}
+
+func TestServerThreadDeleteKeepsUnrelatedGlobalArtifacts(t *testing.T) {
+	rt := newTestRuntime(t, &fakeClient{})
+	rt.WuuHome = t.TempDir()
+	rt.StateDir = t.TempDir()
+	out := &lockedBuffer{}
+	srv := New(rt, out)
+	t.Cleanup(srv.Close)
+	const threadID = "same-id-different-store"
+	if _, err := session.CreateWithMetadata(rt.SessionDir, threadID, rt.RootDir); err != nil {
+		t.Fatal(err)
+	}
+	foreignStateDir, err := statepath.WorkspaceDirByID(rt.WuuHome, "unrelated-global-workspace")
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifactDir := statepath.SessionArtifactDir(foreignStateDir, threadID)
+	store := harness.NewStore(filepath.Join(artifactDir, "harness"))
+	if err := store.UpsertQueueItem(harness.QueueItem{ID: "unrelated-worker", TaskID: "worker", Kind: "agent_spawn", Payload: json.RawMessage(`{}`)}); err != nil {
+		t.Fatal(err)
+	}
+	dispatchPayload(t, srv, "delete", MethodThreadDelete, ThreadDeleteParams{ThreadID: threadID})
+	response := responseByID(t, parseOutput(t, out.String()), "delete")
+	if response["error"] != nil {
+		t.Fatalf("unrelated global artifact blocked custom-store deletion: %+v", response)
+	}
+	if _, err := os.Stat(artifactDir); err != nil {
+		t.Fatalf("custom-store deletion removed unrelated global artifact: %v", err)
+	}
+}
+
+func TestServerThreadDeleteRejectsSymlinkedForeignArtifactPaths(t *testing.T) {
+	for _, root := range []string{"sessions", "worktrees"} {
+		for _, linkParent := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s_parent_%t", root, linkParent), func(t *testing.T) {
+				rt := newTestRuntime(t, &fakeClient{})
+				rt.WuuHome = t.TempDir()
+				rt.SessionDir = statepath.SessionsDir(rt.WuuHome)
+				rt.StateDir, _ = statepath.WorkspaceDirByID(rt.WuuHome, "current")
+				out := &lockedBuffer{}
+				srv := New(rt, out)
+				t.Cleanup(srv.Close)
+				const threadID = "foreign-symlink"
+				if _, err := session.CreateWithMetadata(rt.SessionDir, threadID, rt.RootDir); err != nil {
+					t.Fatal(err)
+				}
+				foreignStateDir, err := statepath.WorkspaceDirByID(rt.WuuHome, "foreign")
+				if err != nil {
+					t.Fatal(err)
+				}
+				outside := t.TempDir()
+				marker := filepath.Join(outside, "keep.txt")
+				if err := os.WriteFile(marker, []byte("unrelated user data"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				link := filepath.Join(foreignStateDir, root, threadID)
+				if linkParent {
+					link = filepath.Dir(link)
+				}
+				if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(outside, link); err != nil {
+					t.Skipf("symlinks unavailable: %v", err)
+				}
+				dispatchPayload(t, srv, "delete", MethodThreadDelete, ThreadDeleteParams{ThreadID: threadID})
+				response := responseByID(t, parseOutput(t, out.String()), "delete")
+				if response["error"] == nil {
+					t.Fatalf("delete traversed unsafe foreign artifact path: %+v", response)
+				}
+				if _, found, err := session.Find(rt.SessionDir, threadID); err != nil || !found {
+					t.Fatalf("unsafe artifact path did not preserve session: found=%t err=%v", found, err)
+				}
+				if _, err := os.Stat(marker); err != nil {
+					t.Fatalf("unsafe artifact path changed external data: %v", err)
+				}
+			})
+		}
+	}
+}
+
+func TestServerThreadDeleteRejectsSymlinkedForeignWorkspace(t *testing.T) {
+	rt := newTestRuntime(t, &fakeClient{})
+	rt.WuuHome = t.TempDir()
+	rt.SessionDir = statepath.SessionsDir(rt.WuuHome)
+	rt.StateDir, _ = statepath.WorkspaceDirByID(rt.WuuHome, "current")
+	out := &lockedBuffer{}
+	srv := New(rt, out)
+	t.Cleanup(srv.Close)
+	const threadID = "foreign-workspace-symlink"
+	if _, err := session.CreateWithMetadata(rt.SessionDir, threadID, rt.RootDir); err != nil {
+		t.Fatal(err)
+	}
+	outside := t.TempDir()
+	artifactDir := statepath.SessionArtifactDir(outside, threadID)
+	store := harness.NewStore(filepath.Join(artifactDir, "harness"))
+	if err := store.UpsertQueueItem(harness.QueueItem{ID: "queued-worker", TaskID: "worker", Kind: "agent_spawn", Payload: json.RawMessage(`{}`)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(rt.WuuHome, "workspaces"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(rt.WuuHome, "workspaces", "linked-workspace")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	dispatchPayload(t, srv, "delete", MethodThreadDelete, ThreadDeleteParams{ThreadID: threadID})
+	response := responseByID(t, parseOutput(t, out.String()), "delete")
+	if response["error"] == nil {
+		t.Fatalf("unsafe workspace path bypassed active worker protection: %+v", response)
+	}
+	if _, found, err := session.Find(rt.SessionDir, threadID); err != nil || !found {
+		t.Fatalf("unsafe workspace path did not preserve session: found=%t err=%v", found, err)
+	}
+	if queue, err := store.ListQueueItems(); err != nil || len(queue) != 1 || queue[0].ID != "queued-worker" {
+		t.Fatalf("unsafe workspace path changed queued work: %+v, %v", queue, err)
+	}
+}

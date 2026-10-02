@@ -26,6 +26,7 @@ const (
 
 var (
 	ErrSessionNotFound     = errors.New("session not found")
+	ErrSessionNotArchived  = errors.New("session is not archived")
 	ErrHistoryUnavailable  = errors.New("session history unavailable")
 	ErrHistorySnapshotGone = errors.New("history snapshot is no longer available")
 )
@@ -801,6 +802,16 @@ func (s Session) WorktreeInfo() (WorktreeInfo, bool) {
 
 // Delete removes a session and its durable history records.
 func Delete(sessDir, id string) (Session, error) {
+	return deleteSession(sessDir, id, false)
+}
+
+// DeleteArchived removes a session and its durable history only if it remains
+// archived in the deletion transaction. A restored session is left unchanged.
+func DeleteArchived(sessDir, id string) (Session, error) {
+	return deleteSession(sessDir, id, true)
+}
+
+func deleteSession(sessDir, id string, onlyIfArchived bool) (Session, error) {
 	id = strings.TrimSpace(id)
 	if id == "" {
 		return Session{}, fmt.Errorf("%w: %q", ErrSessionNotFound, id)
@@ -826,6 +837,11 @@ func Delete(sessDir, id string) (Session, error) {
 	}
 	if !ok {
 		return Session{}, fmt.Errorf("%w: %q", ErrSessionNotFound, id)
+	}
+	// Read the same durable archive state used by listing inside this transaction.
+	// A handler-level check would race with another process restoring the session.
+	if onlyIfArchived && deleted.ArchivedAt == nil {
+		return Session{}, fmt.Errorf("%w: %q", ErrSessionNotArchived, id)
 	}
 	if _, err := tx.Exec(`DELETE FROM plugin_turn_lifecycle_outbox
 		WHERE EXISTS (

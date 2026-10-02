@@ -50,6 +50,15 @@ Schema 修正回合，因此单个 `turn/completed` 不代表整次运行结束�
 等待后重试。不带 `thread_id` 的请求修改未来
 对话的默认设置；加上 `keep_selection: true` 则只保存服务的连接，不把它设为默认。不要通过 `turn/start` 临时覆盖单个回合的权限模式。
 
+## 删除已归档对话
+
+`thread/listArchived` 返回当前会话存储中的全部已归档对话，包括其他工作区的对话。
+删除这份列表快照时，为每个 ID 单独调用 `thread/delete`，并设置
+`only_if_archived: true`。每次请求独立执行永久删除，客户端应报告各项失败。
+如果对话在删除事务开始前已恢复，服务会拒绝删除，保留聊天记录和侧聊内容。
+正在运行的对话、活跃子 Agent 或正在运行的侧聊也会阻止删除。
+省略 `only_if_archived` 时，仍可删除普通空闲对话。
+
 ## 运行项目
 
 `thread/start` 带 `project: {"name": "..."}` 时，在工作区创建项目主 Agent。返回的会话带

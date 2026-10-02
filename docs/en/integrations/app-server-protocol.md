@@ -54,6 +54,17 @@ remain invalid; this is recovery behavior, not downgrade compatibility.
 | `thread/list`, `thread/listAll`, `thread/listArchived`, `thread/search` | Method-specific filters | Session metadata |
 | `thread/rename`, `thread/pin`, `thread/archive`, `thread/delete` | Target and method-specific changes | Updated state or operation result |
 
+`thread/listArchived` lists archived conversations across the configured session
+store, regardless of the caller's workspace. `thread/delete` takes `thread_id`
+and optional `only_if_archived: true`. Deletion is permanent and rejects running
+threads, active agents, and running side conversations. The archive-only option
+checks the persisted archive state in the deletion transaction: a conversation
+restored since the list was read is rejected without losing its history or side
+conversation. Omitting the option retains ordinary idle-conversation deletion.
+Clients deleting an archive snapshot should send one guarded request per ID and
+report individual failures; the operation is not an atomic batch. Successful
+requests return `{ "thread_id": "..." }`.
+
 `thread/search` accepts `query` and `limit` (at most 100). Its `results` contain
 thread metadata, a `snippet`, and an optional `message_seq` identifying the
 matching persisted message. Multiple rendered items may share that sequence;
