@@ -1,0 +1,90 @@
+/* Reuse the response-selection menu's appearance from the established main UI. */
+.selection-action-menu {
+  position: fixed;
+  z-index: 220;
+  box-sizing: border-box;
+  max-width: calc(100vw - 16px);
+  padding: var(--menu-inset);
+  border: 1px solid var(--menu-border);
+  border-radius: var(--menu-shell-radius);
+  background: var(--menu-bg);
+  color: var(--ink);
+  font-size: var(--font-ui);
+  line-height: var(--line-ui);
+  box-shadow: var(--menu-shadow);
+  animation: menu-enter var(--menu-enter-duration) var(--menu-enter-easing) both;
+}
+.selection-action-menu-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 2px; max-width: 100%; }
+.selection-action-menu-controls > button {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 var(--space-3);
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color var(--motion-fast) var(--ease-out);
+}
+.selection-action-menu-controls > button:hover { background: var(--menu-hover); }
+.selection-action-menu-controls > button:disabled { color: var(--ink-muted); cursor: default; }
+.selection-action-menu-controls > button:disabled:hover { background: transparent; }
+.selection-action-menu-controls > button:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
+.selection-action-comment-toggle { position: relative; }
+.selection-action-comment-toggle::before {
+  content: "";
+  position: absolute;
+  inset-inline-start: -2px;
+  inset-block: 7px;
+  border-inline-start: 1px solid var(--hairline-soft);
+}
+.selection-action-menu-commenting {
+  width: min(360px, calc(100vw - 16px));
+  padding: var(--space-1) var(--space-1) var(--space-1) var(--space-2);
+  border-radius: 20px;
+}
+.selection-action-menu-commenting .selection-action-menu-controls { align-items: flex-end; flex-wrap: nowrap; gap: var(--space-2); }
+.selection-action-comment-input {
+  flex: 1 1 0;
+  box-sizing: border-box;
+  width: 0;
+  min-width: 0;
+  min-height: 28px;
+  max-height: calc(var(--font-ui) * 1.5 * 5 + 10px);
+  padding: 5px var(--space-2);
+  resize: none;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  line-height: 1.5;
+  field-sizing: content;
+  overflow-x: hidden;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.selection-action-comment-input::placeholder { color: var(--ink-tertiary); }
+.selection-action-menu-controls > .selection-action-comment-submit {
+  display: grid;
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  place-items: center;
+  border-radius: var(--radius-circle);
+  background: var(--ink);
+  color: var(--paper);
+}
+.selection-action-menu-controls > .selection-action-comment-submit:hover { background: var(--ink-strong); }
+.selection-action-menu-controls > .selection-action-comment-submit:disabled { background: var(--surface-3); color: var(--ink-muted); }
+.selection-action-comment-submit .icon { width: var(--icon-size-sm); height: var(--icon-size-sm); }
+.selection-action-menu-status { margin: 6px var(--space-2) 2px; overflow-wrap: anywhere; }
+@container style(--motion-reduced: 1) {
+  .selection-action-menu { animation: none; }
+  .selection-action-menu-controls > button { transition: none; }
+}

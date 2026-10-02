@@ -110,11 +110,48 @@ afterEach(() => {
 });
 
 describe("ThreadItemView", () => {
+  it.each([false, true])("aligns selection actions and comments to the same source start for reverse=%s", (reverse) => {
+    vi.spyOn(HTMLElement.prototype, "getClientRects").mockReturnValue([{}] as unknown as DOMRectList);
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      if (this.classList.contains("response-selection-toolbar")) return new DOMRect(0, 0, this.classList.contains("selection-action-menu-commenting") ? 360 : 280, this.classList.contains("selection-action-menu-commenting") ? 100 : 40);
+      return new DOMRect(0, 0, 1000, 700);
+    });
+    Object.defineProperty(Range.prototype, "getBoundingClientRect", { configurable: true, value: function () {
+      return this.collapsed ? new DOMRect(reverse ? 320 : 520, reverse ? 220 : 244, 0, 24) : new DOMRect(320, 220, 200, 48);
+    } });
+    render({ item: makeFinalAnswer("completed"), turnStatus: "completed", streaming: false });
+    const text = container!.querySelector(".agent-text p")!.firstChild!;
+    act(() => {
+      window.getSelection()!.setBaseAndExtent(text, reverse ? 18 : 0, text, reverse ? 0 : 18);
+      document.dispatchEvent(new Event("selectionchange"));
+    });
+    const actions = document.querySelector<HTMLElement>(".response-selection-toolbar")!;
+    expect(Number.parseFloat(actions.style.left)).toBe(320);
+    expect(window.innerHeight - Number.parseFloat(actions.style.bottom)).toBe(212);
+    act(() => actions.querySelector<HTMLButtonElement>(".selection-action-comment-toggle")!.click());
+    const comment = document.querySelector<HTMLElement>(".response-selection-toolbar")!;
+    expect(Number.parseFloat(comment.style.left)).toBe(320);
+    expect(window.innerHeight - Number.parseFloat(comment.style.bottom)).toBe(212);
+    expect(document.activeElement).toBe(comment.querySelector("textarea"));
+  });
+
+  it("keeps selection actions within the viewport and falls below a top-edge passage", () => {
+    vi.spyOn(HTMLElement.prototype, "getClientRects").mockReturnValue([{}] as unknown as DOMRectList);
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 0, 280, 40));
+    Object.defineProperty(Range.prototype, "getBoundingClientRect", { configurable: true, value: () => new DOMRect(window.innerWidth - 108, 12, 100, 24) });
+    render({ item: makeFinalAnswer("completed"), turnStatus: "completed", streaming: false });
+    const range = document.createRange(); range.selectNodeContents(container!.querySelector(".agent-text p")!);
+    act(() => { window.getSelection()!.removeAllRanges(); window.getSelection()!.addRange(range); document.dispatchEvent(new Event("selectionchange")); });
+    const actions = document.querySelector<HTMLElement>(".response-selection-toolbar")!;
+    expect(Number.parseFloat(actions.style.left)).toBe(window.innerWidth - 288);
+    expect(Number.parseFloat(actions.style.top)).toBe(44);
+  });
+
   it("captures rendered UTF-16 selection in its owning thread and rejects changed or hidden sources", async () => {
     render({ item: { ...makeFinalAnswer("completed"), text: "A😀 **bold** tail" }, turnStatus: "completed", streaming: false });
     container!.dataset.threadId = "owner";
     vi.spyOn(HTMLElement.prototype, "getClientRects").mockReturnValue([{}] as unknown as DOMRectList);
-    Object.defineProperty(Range.prototype, "getBoundingClientRect", { configurable: true, value: () => ({ left: 20, top: 80 }) });
+    Object.defineProperty(Range.prototype, "getBoundingClientRect", { configurable: true, value: () => new DOMRect(20, 80, 160, 20) });
     const textRoot = container!.querySelector<HTMLElement>(".agent-text")!;
     const bold = textRoot.querySelector("strong")!.firstChild!;
     const range = document.createRange();
@@ -174,7 +211,7 @@ describe("ThreadItemView", () => {
   it("adds an optional comment beside a selected passage and cancels back to the quote actions", () => {
     render({ item: makeFinalAnswer("completed"), turnStatus: "completed", streaming: false });
     vi.spyOn(HTMLElement.prototype, "getClientRects").mockReturnValue([{}] as unknown as DOMRectList);
-    Object.defineProperty(Range.prototype, "getBoundingClientRect", { configurable: true, value: () => ({ left: 20, top: 80, bottom: 100 }) });
+    Object.defineProperty(Range.prototype, "getBoundingClientRect", { configurable: true, value: () => new DOMRect(20, 80, 160, 20) });
     const range = document.createRange();
     range.selectNodeContents(container!.querySelector(".agent-text p")!);
     act(() => {
@@ -185,23 +222,23 @@ describe("ThreadItemView", () => {
     const received: ResponseSelection[] = [];
     const listener = (event: Event) => received.push((event as CustomEvent<ResponseSelection>).detail);
     window.addEventListener("wuu:add-response-selection", listener);
-    act(() => document.querySelector<HTMLButtonElement>(".response-selection-comment-toggle")!.click());
-    let input = document.querySelector<HTMLTextAreaElement>(".response-selection-comment-input")!;
+    act(() => document.querySelector<HTMLButtonElement>(".response-selection-toolbar .selection-action-comment-toggle")!.click());
+    let input = document.querySelector<HTMLTextAreaElement>(".response-selection-toolbar .selection-action-comment-input")!;
     expect(document.activeElement).toBe(input);
     expect(received).toHaveLength(0);
-    expect(window.getSelection()!.toString()).toBe("Final answer text.");
+    expect(document.querySelector(".response-selection-toolbar")).not.toBeNull();
     act(() => input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
-    expect(document.querySelector(".response-selection-comment-input")).toBeNull();
-    expect(document.activeElement).toBe(document.querySelector(".response-selection-comment-toggle"));
-    act(() => document.querySelector<HTMLButtonElement>(".response-selection-comment-toggle")!.click());
-    input = document.querySelector<HTMLTextAreaElement>(".response-selection-comment-input")!;
+    expect(document.querySelector(".response-selection-toolbar .selection-action-comment-input")).toBeNull();
+    expect(document.activeElement).toBe(document.querySelector(".response-selection-toolbar .selection-action-comment-toggle"));
+    act(() => document.querySelector<HTMLButtonElement>(".response-selection-toolbar .selection-action-comment-toggle")!.click());
+    input = document.querySelector<HTMLTextAreaElement>(".response-selection-toolbar .selection-action-comment-input")!;
     act(() => {
       Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(input, "  Explain this choice  ");
       input.dispatchEvent(new Event("input", { bubbles: true }));
       document.dispatchEvent(new Event("selectionchange"));
     });
-    expect(document.querySelector(".response-selection-comment-input")).toBe(input);
-    act(() => document.querySelector<HTMLButtonElement>(".response-selection-add")!.click());
+    expect(document.querySelector(".response-selection-toolbar .selection-action-comment-input")).toBe(input);
+    act(() => document.querySelector<HTMLButtonElement>(".response-selection-toolbar .selection-action-comment-submit")!.click());
     expect(received).toHaveLength(1);
     expect(received[0]).toMatchObject({ text: "Final answer text.", comment: "Explain this choice", source: { thread_id: "owner", start_offset: 0, end_offset: 18 } });
     expect(document.querySelector(".response-selection-toolbar")).toBeNull();
@@ -211,7 +248,7 @@ describe("ThreadItemView", () => {
   it("does not quote assistant controls or editable embedded content", () => {
     render({ item: makeFinalAnswer("completed"), turnStatus: "completed", streaming: false });
     vi.spyOn(HTMLElement.prototype, "getClientRects").mockReturnValue([{}] as unknown as DOMRectList);
-    Object.defineProperty(Range.prototype, "getBoundingClientRect", { configurable: true, value: () => ({ left: 20, top: 80 }) });
+    Object.defineProperty(Range.prototype, "getBoundingClientRect", { configurable: true, value: () => new DOMRect(20, 80, 160, 20) });
     const textRoot = container!.querySelector(".agent-text")!;
     for (const html of ['<button>Copy code</button>', '<span contenteditable="true">Editable</span>']) {
       textRoot.innerHTML = html;
@@ -224,6 +261,34 @@ describe("ThreadItemView", () => {
       });
       expect(document.querySelector(".response-selection-toolbar")).toBeNull();
     }
+  });
+
+  it("keeps a long response selection that crosses a code control without quoting the control", () => {
+    render({ item: makeFinalAnswer("completed"), turnStatus: "completed", streaming: false });
+    vi.spyOn(HTMLElement.prototype, "getClientRects").mockReturnValue([{}] as unknown as DOMRectList);
+    Object.defineProperty(Range.prototype, "getBoundingClientRect", { configurable: true, value: () => new DOMRect(20, 80, 160, 20) });
+    const root = container!.querySelector<HTMLElement>(".agent-text")!;
+    root.innerHTML = "<p>Opening paragraph</p><button>Copy code</button><p>Closing paragraph</p>";
+    const range = document.createRange();
+    range.setStart(root.querySelector("p")!.firstChild!, 0);
+    range.setEnd(root.querySelectorAll("p")[1].firstChild!, "Closing paragraph".length);
+    const received: ResponseSelection[] = [];
+    const listener = (event: Event) => received.push((event as CustomEvent<ResponseSelection>).detail);
+    window.addEventListener("wuu:add-response-selection", listener);
+    act(() => {
+      window.getSelection()!.removeAllRanges();
+      window.getSelection()!.addRange(range);
+      document.dispatchEvent(new Event("selectionchange"));
+    });
+    expect(document.querySelector(".response-selection-toolbar")).not.toBeNull();
+    act(() => root.dispatchEvent(new Event("scroll")));
+    expect(document.querySelector(".response-selection-toolbar")).not.toBeNull();
+    act(() => document.querySelector<HTMLButtonElement>(".response-selection-toolbar button")!.click());
+    expect(received).toHaveLength(1);
+    expect(received[0].text).toContain("Opening paragraph");
+    expect(received[0].text).toContain("Closing paragraph");
+    expect(received[0].text).not.toContain("Copy code");
+    window.removeEventListener("wuu:add-response-selection", listener);
   });
 
   it("renders references readably and preserves reference metadata and raw prompt during inline edits", () => {

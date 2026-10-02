@@ -4,6 +4,7 @@ import type {
   SideThreadEvent,
   SideThreadMessage,
   SideThreadSummary,
+  SideThreadSelection,
 } from "../shared/protocol";
 
 export type SideThreadEntryState = {
@@ -13,6 +14,7 @@ export type SideThreadEntryState = {
   summary: SideThreadSummary | null;
   messages: SideThreadMessage[];
   draft: string;
+  draftSelection?: SideThreadSelection;
   streaming: boolean;
   lastError?: string;
 };
@@ -93,6 +95,7 @@ export type SideThreadAction =
   | { type: "open"; mainThreadId: string }
   | { type: "close"; mainThreadId: string }
   | { type: "setDraft"; mainThreadId: string; draft: string }
+  | { type: "setDraftSelection"; mainThreadId: string; selection: SideThreadSelection | undefined }
   | { type: "mergeSummary"; mainThreadId: string; summary: SideThreadSummary }
   | { type: "appendMessage"; mainThreadId: string; message: SideThreadMessage }
   | {
@@ -134,6 +137,8 @@ export function reduceSideThreadStore(
         ...entry,
         draft: action.draft
       }));
+    case "setDraftSelection":
+      return updateEntry(store, action.mainThreadId, (entry) => ({ ...entry, draftSelection: action.selection }));
     case "mergeSummary":
       return mergeSummarySnapshot(store, action.mainThreadId, action.summary);
     case "appendMessage":

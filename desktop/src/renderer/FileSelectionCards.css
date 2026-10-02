@@ -1,0 +1,279 @@
+.file-selection-groups {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.file-selection-cards {
+  min-width: 0;
+  font-size: var(--font-ui);
+  color: var(--ink);
+}
+
+.file-selection-quote-chip {
+  display: inline-flex;
+  align-items: center;
+  width: clamp(180px, calc(var(--font-ui) * 16), 280px);
+  max-width: 100%;
+  border: 1px solid var(--hairline-soft);
+  border-radius: var(--radius-sm);
+  background: var(--surface-1);
+}
+
+.file-selection-quote-chip .file-selection-tag {
+  min-width: 0;
+  flex: 1;
+  min-height: 52px;
+  border: 0;
+  background: transparent;
+}
+
+.file-selection-quote-icon {
+  display: grid;
+  flex: 0 0 auto;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  border-radius: var(--radius-xs);
+  background: var(--surface-2);
+  color: var(--ink-muted);
+}
+.file-selection-quote-icon svg { width: var(--icon-size-sm); height: var(--icon-size-sm); }
+.file-selection-quote-summary { display: grid; min-width: 0; gap: 2px; text-align: left; }
+.file-selection-quote-summary strong, .file-selection-quote-summary small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-ui);
+  line-height: var(--line-ui);
+}
+.file-selection-quote-summary strong { font-weight: var(--weight-regular); }
+.file-selection-quote-summary small { color: var(--ink-muted); font-size: var(--font-xs); }
+
+.file-selection-quote-chip .file-selection-tag > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-selection-quote-remove {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 4px;
+  margin-right: 4px;
+  border: 1px solid var(--hairline);
+  border-radius: 50%;
+  background: var(--paper);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.file-selection-quote-remove svg { width: var(--icon-size-sm); height: var(--icon-size-sm); }
+.file-selection-quote-remove:hover { background: var(--menu-hover); }
+.file-selection-quote-remove:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+
+.file-selection-quote-entry { display: flex; align-items: flex-start; gap: 8px; }
+.file-selection-quote-entry + .file-selection-quote-entry { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--hairline); }
+.file-selection-quote-text { flex: 1; min-width: 0; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+.file-selection-tag,
+.file-selection-action,
+button.file-selection-location {
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.file-selection-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  padding: 5px 10px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  background: var(--surface-1);
+}
+
+.file-selection-tag:hover,
+.file-selection-tag[aria-expanded="true"],
+.file-selection-action:hover {
+  background: var(--menu-hover);
+}
+
+.file-selection-panel {
+  width: min(420px, var(--floating-menu-available-width, calc(100vw - 16px)));
+  max-height: min(480px, var(--floating-menu-available-height, 70vh));
+  overflow: auto;
+  overscroll-behavior: contain;
+  box-sizing: border-box;
+  padding: 12px;
+  border: 1px solid var(--menu-border);
+  border-radius: var(--menu-radius);
+  background: var(--menu-bg);
+  backdrop-filter: blur(12px);
+  box-shadow: var(--menu-shadow);
+  color: var(--ink);
+  font-size: var(--font-ui);
+  line-height: 1.5;
+}
+
+.file-selection-panel-heading,
+.file-selection-card-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.file-selection-panel-heading > span {
+  flex: 1;
+}
+
+.file-selection-card {
+  padding-top: 12px;
+}
+
+.file-selection-card + .file-selection-card {
+  margin-top: 12px;
+  border-top: 1px solid var(--hairline);
+}
+
+.file-selection-location {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  text-align: left;
+}
+
+button.file-selection-location {
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+button.file-selection-location:hover {
+  text-decoration: underline;
+}
+
+.file-selection-location > span {
+  display: block;
+  color: var(--ink-soft);
+}
+
+.file-selection-action {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 6px;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+}
+
+.file-selection-tag svg,
+.file-selection-card-heading > svg,
+.file-selection-action svg {
+  width: var(--icon-size-sm);
+  height: var(--icon-size-sm);
+  flex-shrink: 0;
+}
+
+.file-selection-path {
+  margin-top: 4px;
+  color: var(--ink-soft);
+  overflow-wrap: anywhere;
+}
+
+.file-selection-comment {
+  margin: 8px 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.file-selection-location-notice {
+  margin: 8px 0;
+  color: var(--ink-soft);
+  overflow-wrap: anywhere;
+}
+
+.file-selection-original {
+  margin-top: 8px;
+}
+
+.file-selection-comment-editor {
+  margin-top: 8px;
+}
+
+.file-selection-comment-editor textarea {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: 6em;
+  max-height: 12em;
+  padding: 8px;
+  resize: vertical;
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--radius-xs);
+  background: var(--field-bg);
+  color: var(--ink);
+  font: inherit;
+  field-sizing: content;
+  overflow-x: hidden;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.file-selection-comment-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.file-selection-comment-actions button {
+  min-height: 32px;
+  padding: 4px 10px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-xs);
+  background: var(--surface-1);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.file-selection-original summary {
+  cursor: pointer;
+  color: var(--ink-soft);
+}
+
+.file-selection-original pre {
+  margin: 8px 0 0;
+  padding: 8px;
+  max-height: 240px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--surface-1);
+  border-radius: var(--radius-xs);
+  font-family: var(--font-mono);
+  font-size: var(--appearance-code-size, 11px);
+}
+
+.file-selection-tag:focus-visible,
+.file-selection-comment-editor textarea:focus-visible,
+.file-selection-panel button:focus-visible,
+.file-selection-original summary:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}

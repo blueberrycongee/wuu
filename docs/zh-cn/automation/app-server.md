@@ -112,6 +112,36 @@ worktree 改动留在成员的 worktree 里。`thread/control/take` 和 `thread/
 `project/session` 修改项目成员：`adopt` 传入 `project_id` 和 `session_id`，把项目所在工作区
 的普通对话交给项目管理；`release` 让托管会话重新成为普通对话。两者都返回更新后的 `thread`。
 
+## 输入内容分段
+
+`turn/start`、`turn/queue`、`turn/update-queued` 和 `turn/steer` 接受可选的
+`content_parts`，用于在 `prompt` 之外保存有序的展示元数据。二进制附件仍使用
+`images` / `files`。
+
+| `type` | 字段 |
+| --- | --- |
+| `text` | `text: string` |
+| `pasted_text` | `text: string`，可选 `title: string` |
+| `file_selection` | `text: string`、`source: FileSelectionSource`、`intent: "comment" \| "edit" \| "quote"`、`id: string`，可选 `comment: string` |
+| `response_selection` | `text: string`、`selection: ResponseSelection`，引用已完成的助手回复 |
+
+`FileSelectionSource` 包含字符串字段 `workspace`、`path`、`quote`、`revision`，
+以及整数字段 `start_line`、`start_column`、`end_line`、`end_column`。行号和
+UTF-16 列号均从 1 开始，结束位置不包含在选区内。`revision` 标识捕获时的文件
+内容，不一定是 Git 版本号。服务端检查必需元数据、意图值、正数坐标及范围顺序，
+不读取文件或核实其版本。
+
+文件选区的 `text` 必须包含模型可见的完整序列化文本块，包括来源上下文、意图和
+可选评论。客户端按顺序拼接各段文本形成 `prompt`。只有拼接结果与提交的提示词
+在去除首尾空白后相同，服务端才保留有效元数据；服务端不重建或解析客户端的
+序列化格式。未知或无效分段会被丢弃，文本不匹配时丢弃展示元数据，但不修改
+提示词。Provider 和引擎使用规范消息文本；Codex 接收普通文本输入，无需特殊的
+`text_elements`。
+
+已接受的元数据会随历史和暂存队列回放保留。客户端必须容忍未知字段和分段类型；
+无法展示元数据时，回退到完整的消息 `text` 或队列 `prompt`。模型所需的上下文
+不能只保存在元数据中。
+
 ## 查询订阅状态
 
 `engine/list` 可选参数 `{ "include_quota": true }` 使用各模型服务和支持的外部 Agent 自己的凭据查询上游额度，返回已配置服务 `subscription_providers`。服务或引擎可附带 `quota`：

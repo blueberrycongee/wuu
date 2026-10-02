@@ -19,7 +19,12 @@ import {
 import { type DragEvent as ReactDragEvent, type KeyboardEvent as ReactKeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useOptionalImagePreview } from "./ImagePreview";
 import { isComposerTextComposing } from "./ComposerSlashCommands";
-import { useCollapsedComposerPrompt } from "./ComposerCollapsedPrompt";
+import {
+  CollapsedComposerPromptCard,
+  rememberCollapsedPromptParts,
+  useCollapsedComposerPrompt
+} from "./ComposerCollapsedPrompt";
+import { useFileSelectionActions } from "./FileSelectionContext";
 import { ComposerAttachmentTray } from "./ComposerAttachmentTray";
 import {
   WORKSPACE_FILE_DRAG_MIME,
@@ -194,6 +199,8 @@ export function SplitPaneComposer({
     handlePaste: handleCollapsedComposerPaste,
     revealBlock: revealCollapsedPromptBlock,
     removeBlock: removeCollapsedPromptBlock,
+    updateFileComment,
+    removeFileSelection,
     contentPartsForPrompt: collapsedContentPartsForPrompt,
   } = useCollapsedComposerPrompt({
     prompt,
@@ -201,6 +208,9 @@ export function SplitPaneComposer({
     focusComposerSoon,
     storageKey: queryHistorySessionID
   });
+  const fileSelectionActions = useFileSelectionActions();
+  const fileSelectionParts = collapsedPromptBlocks.flatMap((block) =>
+    block.part?.type === "file_selection" ? [block.part] : []);
 
   const { resetQueryHistoryNavigation, handleQueryHistoryKeyDown } = useComposerQueryHistory({
     disabled: readOnly || hasAttachments || hasCollapsedPromptBlocks,
@@ -267,7 +277,9 @@ export function SplitPaneComposer({
     if (readOnly || sendDisabled || submittedDraftRef.current === draftSignature) return;
     resetQueryHistoryNavigation();
     const contentParts = collapsedContentPartsForPrompt(prompt);
-    const accepted = contentParts ? onSend(prompt, contentParts) : onSend();
+    const canonicalPrompt = contentParts ? contentParts.map((part) => part.text).join("") : prompt;
+    if (contentParts && queryHistorySessionID) rememberCollapsedPromptParts(queryHistorySessionID, canonicalPrompt, contentParts);
+    const accepted = contentParts ? onSend(canonicalPrompt, contentParts) : onSend();
     if (accepted === false) return;
     submittedDraftRef.current = draftSignature;
     // Keep focus restoration in the user action, without viewport scrolling.
@@ -312,11 +324,15 @@ export function SplitPaneComposer({
               files={files}
               selections={selections}
               pastedTexts={collapsedPromptBlocks}
+              fileSelections={fileSelectionParts}
+              onRemoveFileSelection={readOnly ? undefined : removeFileSelection}
+              onEditFileSelection={readOnly ? undefined : (part, comment) => updateFileComment(part.id, comment)}
+              onOpenSelectedFile={fileSelectionActions ? (path) => fileSelectionActions.openFile(path) : undefined}
               resetKey={queryHistorySessionID}
               onRemoveImage={onRemoveImage}
               onRemoveFile={onRemoveFile}
               onChangeSelection={readOnly ? undefined : onChangeSelection}
-              onRemoveSelection={onRemoveSelection}
+              onRemoveSelection={readOnly ? undefined : onRemoveSelection}
               onRevealText={revealCollapsedPromptBlock}
               onRemoveText={removeCollapsedPromptBlock}
             />

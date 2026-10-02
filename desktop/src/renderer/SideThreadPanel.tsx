@@ -11,6 +11,7 @@ import {
   type ReactNode,
 } from "react";
 import { PanelRightClose } from "./WuuIcons";
+import { MessageCirclePlus } from "lucide-react";
 import { useAutoFollowScrollContainer } from "./AutoFollowScroll";
 import { ConversationTurnList } from "./ConversationTurnList";
 import { sideThreadMessagesToTurns } from "./SideThreadTurns";
@@ -153,7 +154,11 @@ export const SideThreadPanel = forwardRef<SideThreadPanelHandle, SideThreadPanel
           role="log"
           aria-live="polite"
         >
-          <div className="conversation-width session-flow side-thread-panel__conversation">
+          {turns.length === 0 && !entry.streaming ? <div className="side-thread-panel__empty">
+            <MessageCirclePlus aria-hidden="true" />
+            <strong>{t("sideThread.emptyTitle")}</strong>
+            <span>{t("sideThread.emptyDescription")}</span>
+          </div> : <div className="conversation-width session-flow side-thread-panel__conversation">
             <ConversationTurnList
               threadID={entry.summary?.side_thread_id ?? `side:${mainThreadId}`}
               turns={turns}
@@ -168,7 +173,7 @@ export const SideThreadPanel = forwardRef<SideThreadPanelHandle, SideThreadPanel
                 />
               )}
             />
-          </div>
+          </div>}
         </div>
 
         <div ref={footerRef} className="side-thread-panel__footer">

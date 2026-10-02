@@ -12,6 +12,7 @@ import type {
 import type { WorkspaceFileSelection } from "./LinkTargets";
 import { WORKSPACE_FILE_DRAG_MIME } from "./ComposerMessages";
 import { RichContent } from "./RichContent";
+import { FileSelectionSurface } from "./FileSelectionSurface";
 import type { WorkspaceMonacoViewState } from "./WorkspaceMonacoEditor";
 import { desktopApiErrorMessage } from "./WorkspaceReviewHelpers";
 import { workspacePathToSlash } from "./WorkspacePaths";
@@ -748,32 +749,38 @@ export function WorkspaceFilePreview({
       />
     ) : (
       <article className="workspace-file-preview readonly">
-        <div className={`workspace-file-editor-scroll ${isMarkdownReadingMode ? "markdown-reading" : "code"}`}>
-          {isMarkdownReadingMode ? (
-            <div className="workspace-markdown-reading" ref={markdownHostRef}>
-              <RichContent
-                text={draftText}
-                cwd={activeContext.cwd}
-                onOpenFile={onOpenFile}
-                allowRawHtml
-              />
+        <FileSelectionSurface key={`${activeContext.cwd}:${file.path}`} workspace={activeContext.cwd} path={file.path} text={draftText} active={active}>
+          {(selectionControls) => (
+            <div className={`workspace-file-editor-scroll ${isMarkdownReadingMode ? "markdown-reading" : "code"}`}>
+              {isMarkdownReadingMode ? (
+                <div className="workspace-markdown-reading" ref={markdownHostRef}>
+                  <RichContent
+                    text={draftText}
+                    cwd={activeContext.cwd}
+                    onOpenFile={onOpenFile}
+                    allowRawHtml
+                    sourceMapping
+                  />
+                </div>
+              ) : active ? (
+                <Suspense fallback={null}>
+                  <WorkspaceMonacoEditor
+                    {...selectionControls}
+                    initialViewState={editorViewStateRef.current}
+                    path={file.path}
+                    resourceID={editorResourceID ?? `${activeContext.cwd}:${file.path}`}
+                    selection={selection}
+                    text={draftText}
+                    readOnly
+                    onViewStateChange={(viewState) => {
+                      editorViewStateRef.current = viewState;
+                    }}
+                  />
+                </Suspense>
+              ) : null}
             </div>
-          ) : active ? (
-            <Suspense fallback={null}>
-              <WorkspaceMonacoEditor
-                initialViewState={editorViewStateRef.current}
-                path={file.path}
-                resourceID={editorResourceID ?? `${activeContext.cwd}:${file.path}`}
-                selection={selection}
-                text={draftText}
-                readOnly
-                onViewStateChange={(viewState) => {
-                  editorViewStateRef.current = viewState;
-                }}
-              />
-            </Suspense>
-          ) : null}
-        </div>
+          )}
+        </FileSelectionSurface>
       </article>
     );
   const presentation = (
