@@ -184,6 +184,11 @@ function validatePayload(call, expected, comment, prompt) {
 async function run() {
   win = new BrowserWindow({ width: 1200, height: 820, show: process.env.WUU_E2E_VISIBLE === "true", webPreferences: { preload: path.join(__dirname, "response-selection-e2e-preload.cjs"), contextIsolation: true, nodeIntegration: false, sandbox: false, backgroundThrottling: false } });
   win.webContents.on("console-message", ({ level, message }) => { if (level >= 3) report.errors.push(message); });
+  // The synthetic bridge never needs remote resources or a live provider.
+  win.webContents.session.webRequest.onBeforeRequest({ urls: ["http://*/*", "https://*/*", "ws://*/*", "wss://*/*"] }, (details, callback) => {
+    report.errors.push(`Unexpected network request: ${details.url}`);
+    callback({ cancel: true });
+  });
   await win.loadFile(process.env.WUU_E2E_RENDERER || path.join(desktop, "out/renderer/index.html"));
   await until(selector => !!document.querySelector(selector), "settled response", surface);
   await evaluate(() => {
@@ -236,6 +241,7 @@ async function run() {
     await closeQuotePanel();
   }
   report.cases.push("light/dark, default/large font, wide/narrow quote card and editor geometry");
+  if (report.errors.length) throw new Error(`Unexpected renderer or network errors: ${JSON.stringify(report.errors)}`);
   report.status = "passed";
 }
 if (browserPreview) servePreview();

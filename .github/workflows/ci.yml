@@ -151,12 +151,52 @@ jobs:
         run: make test-desktop
 
       - name: Build
+        id: build-renderer
         shell: bash
         run: |
           # These fixtures keep phone access disabled. Clients check builds the
           # Web shell; macOS/Windows packaging still builds its bundled copy.
           (cd desktop && node_modules/.bin/electron-vite build)
           find desktop/out/renderer -type f -print0 | sort -z | xargs -0 sha256sum > "${{ runner.temp }}/wuu-initial-renderer.sha256"
+
+      - name: Guard file selections and side-chat chips
+        if: ${{ !cancelled() && steps.build-renderer.outcome == 'success' }}
+        timeout-minutes: 5
+        shell: bash
+        env:
+          WUU_E2E_VISIBLE: "true"
+          WUU_E2E_OUTPUT: ${{ runner.temp }}/wuu-file-selection-evidence
+        run: |
+          mkdir -p "$WUU_E2E_OUTPUT"
+          set -o pipefail
+          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/file-selection-e2e.cjs 2>&1 | tee "$WUU_E2E_OUTPUT/run.log"
+
+      - name: Guard response selections and native comment focus
+        if: ${{ !cancelled() && steps.build-renderer.outcome == 'success' }}
+        timeout-minutes: 3
+        shell: bash
+        env:
+          WUU_E2E_VISIBLE: "true"
+          WUU_SELECTION_E2E_OUTPUT: ${{ runner.temp }}/wuu-response-selection-evidence
+        run: |
+          mkdir -p "$WUU_SELECTION_E2E_OUTPUT"
+          set -o pipefail
+          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/response-selection-e2e.cjs 2>&1 | tee "$WUU_SELECTION_E2E_OUTPUT/run.log"
+
+      - name: Upload selection visual evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: selection-visual-evidence
+          path: |
+            ${{ runner.temp }}/wuu-file-selection-evidence/*.png
+            ${{ runner.temp }}/wuu-file-selection-evidence/*.json
+            ${{ runner.temp }}/wuu-file-selection-evidence/*.log
+            ${{ runner.temp }}/wuu-response-selection-evidence/*.png
+            ${{ runner.temp }}/wuu-response-selection-evidence/*.json
+            ${{ runner.temp }}/wuu-response-selection-evidence/*.log
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Guard titlebar rename interactions
         timeout-minutes: 3

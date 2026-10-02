@@ -83,6 +83,16 @@ contextBridge.exposeInMainWorld("wuu", {
     thread.status = "running";
     return { turn: clone(turn) };
   },
+  // Selection-chip capture uses a lazy, empty side thread and never runs inference.
+  openSideThread: async mainThreadId => {
+    if (mainThreadId !== thread.id) throw new Error(`Unexpected side owner: ${mainThreadId}`);
+    return { summary: null };
+  },
+  getSideThreadHistory: async () => null,
+  sendSideThreadMessage: async () => { throw new Error("Side submission is outside this visual fixture"); },
+  interruptSideThread: async () => ({ ok: true }),
+  resetSideThread: async () => ({ ok: true }),
+  onSideThreadEvent: () => () => undefined,
   interruptTurn: async () => ({ ok: true }),
   respondToServerRequest: async () => undefined, rejectServerRequest: async () => undefined,
   onServerEvent: listener => { listeners.add(listener); return () => listeners.delete(listener); },

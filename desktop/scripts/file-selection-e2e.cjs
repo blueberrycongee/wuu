@@ -13,7 +13,7 @@ const output = process.env.WUU_E2E_OUTPUT || fs.mkdtempSync(path.join(os.tmpdir(
 fs.mkdirSync(output, { recursive: true });
 app.setPath("userData", path.join(output, "profile"));
 process.env.WUU_FILE_SELECTION_E2E_CWD = path.resolve(desktopRoot, "..");
-const report = { renderer, output, cases: [], screenshots: [], errors: [], layoutObservations: [] };
+const report = { boundary: "Built Electron renderer; in-memory preload, no Go/provider or real user data", renderer, output, cases: [], screenshots: [], errors: [], layoutObservations: [] };
 let win;
 let phase = "startup";
 app.on("window-all-closed", () => {});
@@ -65,6 +65,7 @@ async function run() {
     await evaluate(({ theme, size }) => {
       document.documentElement.dataset.theme = theme;
       document.documentElement.style.setProperty("--conversation-message-font-size", `${size}px`);
+      document.documentElement.style.setProperty("--ui-font-size", `${size}px`);
       window.dispatchEvent(new Event("wuu-content-size-change"));
     }, variant);
     await openFiles();
@@ -78,6 +79,22 @@ async function run() {
       const quote = file.endsWith(".md") ? "Select this Markdown passage for review." : text;
       const draft = `Keep this independent draft (${label}).`;
       await fill("[data-main-conversation-composer] textarea", draft);
+
+      phase = `${label}: side-chat selection`;
+      await selectFile(file, quote);
+      await clickButton(".file-selection-action-menu", "Ask in side chat");
+      await waitFor(() => Boolean(document.querySelector(".side-thread-panel .composer-selection-chip")), "side selection chip");
+      await visibleGeometry(".side-thread-panel .composer-selection-chip");
+      await screenshot(`${label}-side-chip`);
+      await click(".side-thread-panel .composer-selection-chip");
+      await waitFor(expected => document.querySelector(".composer-selection-panel .composer-selection-quote")?.textContent === expected.replace(/\s+/g, " ").trim(), "side selection details", quote);
+      await visibleGeometry(".composer-selection-panel");
+      await screenshot(`${label}-side-selection-details`);
+      await clickButton(".composer-selection-panel", "Remove");
+      await waitFor(() => !document.querySelector(".side-thread-panel .composer-selection-chip"), "side selection removed");
+      await click(".side-thread-panel__close");
+      assert.equal(await evaluate(composerValue), draft, "Side selection must preserve the main draft");
+      assert.equal((await snapshot()).submissions.length, initial.submissions.length, "Opening a side selection must not submit a main turn");
 
       phase = `${label}: quote`;
       await selectFile(file, quote);
@@ -114,7 +131,7 @@ async function run() {
       phase = `${label}: comment`;
       await selectFile(file, quote);
       await clickButton(".file-selection-action-menu", "Comment");
-      const comment = `Explain this selection (${label}).`;
+      let comment = `Explain this selection (${label}).`;
       await fill(".file-selection-action-menu textarea", comment);
       await screenshot(`${label}-comment-form`);
       await clickButton(".file-selection-action-menu", "Comment");
@@ -137,11 +154,31 @@ async function run() {
       for (const target of commentLayout) assert.ok(target.inViewport && target.reachable,
         `Document comment content must be visible and hit-testable: ${JSON.stringify(target)}`);
       await screenshot(`${label}-document-comment`);
+      phase = `${label}: saved comment edit dismissal`;
+      await clickButton(".file-selection-comments", "Edit comment");
+      await waitFor(expected => document.querySelector(".file-selection-action-menu textarea")?.value === expected, "saved comment editor", comment);
+      await fill(".file-selection-action-menu textarea", `Discard this unsaved comment edit (${label}).`);
+      await screenshot(`${label}-saved-comment-editor`);
+      await press("Escape");
+      await waitFor(() => !document.querySelector(".file-selection-action-menu textarea"), "saved comment editor dismissed");
+      assert.equal(await evaluate(() => document.activeElement?.classList.contains("selection-action-comment-toggle")), true, "Escape returns focus to the comment toggle");
+      assert.equal(await evaluate(() => document.querySelector(".file-selection-comments .file-selection-comment > p")?.textContent), comment, "Escape must preserve the saved comment");
+      await screenshot(`${label}-saved-comment-escape-focus`);
+      await press("Escape");
       await click("[data-main-conversation-composer] .composer-selection-chip");
       await waitFor(expected => document.querySelector(".composer-selection-panel")?.textContent.includes(expected), "comment chip details", comment);
       assert.equal(await evaluate(() => document.querySelector(".composer-selection-panel .composer-selection-quote")?.textContent), quote.replace(/\s+/g, " ").trim());
       await screenshot(`${label}-comment-chip`);
+      phase = `${label}: live comment chip editor`;
+      await clickButton(".composer-selection-panel", "Edit");
+      comment = `Explain this selection (${label}). Keep the quoted source intact while reviewing a longer comment, including repeated words and punctuation. 第二行 😀\nAlso check how this wraps in a narrow window.`;
+      await fill(".composer-selection-comment-input", comment);
+      await screenshot(`${label}-comment-chip-editor`);
       await press("Escape");
+      await waitFor(() => !document.querySelector(".composer-selection-panel"), "chip editor dismissed");
+      assert.equal(await evaluate(() => document.activeElement?.classList.contains("composer-selection-chip")), true, "Escape restores chip focus");
+      assert.equal(await evaluate(() => document.querySelector(".file-selection-comments .file-selection-comment > p")?.textContent), comment, "Live comment edits survive Escape");
+      await screenshot(`${label}-comment-chip-escape-focus`);
 
       phase = `${label}: inline edit preserving draft and comment`;
       await selectFile(file, quote);
@@ -185,7 +222,7 @@ async function run() {
       assert.ok(sent.prompt.includes(draft), "Normal send must include the main draft");
       await evaluate(() => window.selectionE2E.complete());
       await waitFor(() => composerValue() === "" && !document.querySelector("[data-main-conversation-composer] .composer-selection-chip"), "sent composer cleared");
-      report.cases.push({ variant, file, quote, quoted, edit, sent, checks: ["toolbar", "quote-payload", "document-comment-hit-tests", "comment-chip", "inline-edit-preserves-draft-and-comment", "completion-refresh", "comment-payload"] });
+      report.cases.push({ variant, file, quote, quoted, edit, sent, checks: ["side-selection-chip", "saved-comment-edit-dismissal", "live-comment-edit-and-focus", "toolbar", "quote-payload", "document-comment-hit-tests", "comment-chip", "inline-edit-preserves-draft-and-comment", "completion-refresh", "comment-payload"] });
       writeReport();
       console.log(`PASS ${label}`);
     }
@@ -325,6 +362,10 @@ async function visibleGeometry(selector) {
 }
 
 async function screenshot(name) {
+  await evaluate(() => Promise.race([
+    Promise.all(document.getAnimations().map(animation => animation.finished.catch(() => undefined))),
+    new Promise(resolve => setTimeout(resolve, 1500)),
+  ]));
   await frame();
   const target = path.join(output, `${name}.png`);
   fs.writeFileSync(target, (await win.webContents.capturePage()).toPNG());
