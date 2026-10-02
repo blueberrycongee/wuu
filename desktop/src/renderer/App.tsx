@@ -3006,6 +3006,12 @@ export function App(): JSX.Element {
     if (!activeThreadID) {
       return;
     }
+    if (rightPanelGlobalized) {
+      // The destination remounts the main composer; publish its input-local
+      // draft before leaving the document surface.
+      setPrompt(currentPrimaryComposerDraft().prompt);
+    }
+    revealConversationFromFocusedWorkspace();
     if (!sideThread.entry?.open) {
       setEnvironmentPanelOpen(false);
       setEnvironmentPanelDismissed(true);

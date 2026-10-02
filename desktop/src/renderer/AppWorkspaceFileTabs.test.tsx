@@ -422,6 +422,42 @@ describe("workspace file tabs", () => {
     await flushAsync();
   }
 
+  it.each([1280, 600])("reveals a side selection from the focused workspace at width %i without losing the main draft", async (width) => {
+    setInnerWidth(width);
+    Object.assign(window.wuu, {
+      openSideThread: vi.fn().mockResolvedValue({ summary: null }),
+      getSideThreadHistory: vi.fn().mockResolvedValue(null),
+      sendSideThreadMessage: vi.fn(),
+      interruptSideThread: vi.fn().mockResolvedValue({ ok: true }),
+      resetSideThread: vi.fn().mockResolvedValue({ ok: true }),
+      onSideThreadEvent: vi.fn(() => () => {}),
+    });
+    await openSelectionDocument();
+    if (width === 1280) {
+      await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="展开为全面板"]')!.click());
+      await flushAsync();
+    }
+    expect(container.querySelector(".conversation-pane")?.hasAttribute("inert")).toBe(true);
+    await typeMainPrompt("Keep the main question");
+    act(() => selectionActions!.askSide!(selectionSource));
+    await flushAsync();
+    await act(async () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+    expect(container.querySelector(".conversation-pane")?.hasAttribute("inert")).toBe(false);
+    const side = container.querySelector<HTMLElement>(".side-thread-panel")!;
+    expect(side.closest("[inert]")).toBeNull();
+    expect(side.querySelector(".composer-selection-chip")).not.toBeNull();
+    expect(document.activeElement).toBe(side.querySelector("textarea"));
+    expect(container.querySelector<HTMLTextAreaElement>("[data-main-conversation-composer] textarea")!.value).toBe("Keep the main question");
+    expect(window.wuu.startTurn).not.toHaveBeenCalled();
+    expect(window.wuu.sendSideThreadMessage).not.toHaveBeenCalled();
+    if (width === 600) {
+      await act(async () => side.querySelector<HTMLButtonElement>(".side-thread-panel__close")!.click());
+      await act(async () => container.querySelector<HTMLButtonElement>(".rich-file-link")!.click());
+      await flushAsync();
+    }
+    expect(container.querySelector(".workspace-file-resource.active .workspace-file-preview")?.textContent).toContain("Artifact");
+  });
+
   it("restores file selection chips after first turn failure with untouched draft", async () => {
     await openSelectionDocument();
     await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="在 对话 中新建对话"]')!.click());
