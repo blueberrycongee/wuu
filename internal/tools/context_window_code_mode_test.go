@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/toolctx"
+	"path/filepath"
 	"testing"
 )
 
@@ -50,7 +51,10 @@ func TestCodeModeControlToolsRemainDirectOnly(t *testing.T) {
 func TestPTCDirectWorkspaceControlDoesNotRequireDiscovery(t *testing.T) {
 	kit := newCodeModeTestToolkit(t)
 	kit.SetToolSearchEnabled(true)
-	target := t.TempDir()
+	target, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	changed := ""
 	kit.SetOnSessionWorkspaceChanged(func(root string) error { changed = root; return nil })
 	args, _ := json.Marshal(map[string]any{"root": target})
