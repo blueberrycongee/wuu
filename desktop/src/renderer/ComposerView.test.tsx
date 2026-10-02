@@ -760,6 +760,7 @@ describe.each(["main", "split"] as const)("%s composer file selections", (varian
     render({ initialPrompt: file.text, queryHistorySessionID: owner });
     openComments();
     const editor = document.querySelector<HTMLTextAreaElement>(".composer-response-selection-comment")!;
+    await act(async () => { await vi.waitFor(() => expect(document.activeElement).toBe(editor)); });
     expect(document.activeElement).toBe(editor);
     await act(async () => {
       setTextareaValue(editor, "Keep typing here");
@@ -770,7 +771,7 @@ describe.each(["main", "split"] as const)("%s composer file selections", (varian
     expect(container.querySelector<HTMLTextAreaElement>("textarea")!.value).toBe("");
   });
 
-  it("dismisses selection editing with Escape without reopening or losing the draft", () => {
+  it("dismisses selection editing with Escape without reopening or losing the draft", async () => {
     const owner = `file-selection-escape-${variant}`;
     const file = fileSelection("escape-comment");
     const prompt = file.text + "Keep this follow-up";
@@ -778,6 +779,7 @@ describe.each(["main", "split"] as const)("%s composer file selections", (varian
     render({ initialPrompt: prompt, queryHistorySessionID: owner });
     openComments();
     const editor = document.querySelector<HTMLTextAreaElement>(".composer-response-selection-comment")!;
+    await act(async () => { await vi.waitFor(() => expect(document.activeElement).toBe(editor)); });
     expect(document.activeElement).toBe(editor);
     act(() => setTextareaValue(editor, "Keep the edited comment"));
     act(() => editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })));
@@ -789,7 +791,7 @@ describe.each(["main", "split"] as const)("%s composer file selections", (varian
     expect(document.querySelector<HTMLTextAreaElement>(".composer-response-selection-comment")?.value).toBe("Keep the edited comment");
   });
 
-  it("opens a focusable attachment and transfers focus into its comment editor", () => {
+  it("opens a focusable attachment and transfers focus into its comment editor", async () => {
     const owner = `file-selection-keyboard-${variant}`;
     const file = fileSelection("keyboard-comment");
     rememberCollapsedPromptParts(owner, file.text, [file]);
@@ -799,6 +801,7 @@ describe.each(["main", "split"] as const)("%s composer file selections", (varian
     act(() => trigger.focus());
     expect(document.activeElement).toBe(trigger);
     act(() => trigger.click());
+    await act(async () => { await vi.waitFor(() => expect(document.activeElement).toBe(document.querySelector(".composer-response-selection-comment"))); });
     expect(document.activeElement).toBe(document.querySelector(".composer-response-selection-comment"));
   });
 

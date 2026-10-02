@@ -121,15 +121,28 @@ async function select(text, last = false, physical = false, backward = false, al
   }, surface, text, last, backward);
   if (physical) {
     await evaluate(() => window.getSelection().removeAllRanges());
+    win.focus();
     win.webContents.focus();
     const from = backward ? selected.to : selected.from;
     const to = backward ? selected.from : selected.to;
-    win.webContents.sendInputEvent({ type: "mouseDown", ...from, button: "left", clickCount: 1 });
+    const hit = await evaluate((selector, point) => {
+      const root = document.querySelector(selector);
+      const target = document.elementFromPoint(point.x, point.y);
+      return { inSource: root?.contains(target), target: target?.className };
+    }, surface, from);
+    if (!hit.inSource) throw new Error(`Native drag start missed its source: ${JSON.stringify({ from, to, hit })}`);
+    await win.webContents.debugger.sendCommand("Input.dispatchMouseEvent", { type: "mouseMoved", ...from });
+    await win.webContents.debugger.sendCommand("Input.dispatchMouseEvent", { type: "mousePressed", ...from, button: "left", buttons: 1, clickCount: 1 });
     for (let step = 1; step <= 10; step++) {
-      win.webContents.sendInputEvent({ type: "mouseMove", x: Math.round(from.x + (to.x - from.x) * step / 10), y: Math.round(from.y + (to.y - from.y) * step / 10), button: "left" });
+      await win.webContents.debugger.sendCommand("Input.dispatchMouseEvent", { type: "mouseMoved", x: Math.round(from.x + (to.x - from.x) * step / 10), y: Math.round(from.y + (to.y - from.y) * step / 10), button: "left", buttons: 1 });
     }
-    win.webContents.sendInputEvent({ type: "mouseUp", ...to, button: "left", clickCount: 1 });
-    await until(text => window.getSelection()?.toString() === text, "physical drag selected exact text", text);
+    await win.webContents.debugger.sendCommand("Input.dispatchMouseEvent", { type: "mouseReleased", ...to, button: "left", buttons: 0, clickCount: 1 });
+    try {
+      await until(text => window.getSelection()?.toString() === text, "physical drag selected exact text", text);
+    } catch (error) {
+      const actual = await evaluate(() => ({ text: window.getSelection()?.toString(), focused: document.hasFocus(), active: document.activeElement?.className }));
+      throw new Error(`${error.message}: ${JSON.stringify({ expected: text, actual, from, to })}`);
+    }
   }
   await until(() => !!document.querySelector(".response-selection-toolbar button"), "native selection toolbar");
   return selected;
@@ -290,6 +303,8 @@ async function placementCoverage() {
 }
 async function run() {
   win = new BrowserWindow({ width: 1200, height: 820, show: process.env.WUU_E2E_VISIBLE === "true", webPreferences: { preload: path.join(__dirname, "response-selection-e2e-preload.cjs"), contextIsolation: true, nodeIntegration: false, sandbox: false, backgroundThrottling: false } });
+  win.setContentSize(1200, 820);
+  win.webContents.debugger.attach("1.3");
   win.webContents.on("console-message", ({ level, message }) => { if (level >= 3) report.errors.push(message); });
   // The synthetic bridge never needs remote resources or a live provider.
   win.webContents.session.webRequest.onBeforeRequest({ urls: ["http://*/*", "https://*/*", "ws://*/*", "wss://*/*"] }, (details, callback) => {
@@ -302,6 +317,7 @@ async function run() {
     for (const toggle of document.querySelectorAll('.environment-toggle-button[aria-pressed="true"], .title-actions .side-panel-toggle-button[aria-pressed="true"]')) toggle.click();
     if (!document.querySelector(".app-shell").classList.contains("sidebar-collapsed")) document.querySelector(".sidebar-toggle-button").click();
   });
+  await settle();
   const drag = await add("Native drag selection", false, true);
   await checkSource(drag);
   await screenshot("physical-drag-source");

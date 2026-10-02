@@ -34,13 +34,16 @@ export function ComposerQuoteCard({ text, comment = "", meta, className, notice,
   }
   useEffect(() => {
     if (!open) return;
-    (panelRef.current?.querySelector<HTMLTextAreaElement>("textarea:not([readonly])") ?? panelRef.current)?.focus();
+    // The portal starts hidden until its layout effect resolves a position.
+    const focusFrame = requestAnimationFrame(() => {
+      (panelRef.current?.querySelector<HTMLTextAreaElement>("textarea:not([readonly])") ?? panelRef.current)?.focus({ preventScroll: true });
+    });
     const dismiss = (event: MouseEvent): void => {
       const target = event.target as Node;
       if (!anchorRef.current?.contains(target) && !panelRef.current?.contains(target)) setOpen(false);
     };
     document.addEventListener("mousedown", dismiss);
-    return () => document.removeEventListener("mousedown", dismiss);
+    return () => { cancelAnimationFrame(focusFrame); document.removeEventListener("mousedown", dismiss); };
   }, [open]);
   return <>
     <ComposerDocumentCard ref={anchorRef}
