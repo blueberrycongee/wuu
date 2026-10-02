@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type ComponentPropsWithou
 import { createPortal } from "react-dom";
 import type { ResponseSelection } from "../shared/protocol";
 import { SelectionActionMenu } from "./SelectionActionMenu";
+import { selectionActionMenuMetrics, selectionActionMenuPosition } from "./SelectionActionMenuPosition";
 import { showToast } from "./Toast";
 import { translateCurrent, useI18n } from "./i18n";
 import "./ResponseSelection.css";
@@ -58,20 +59,6 @@ function validatedRange(root: HTMLElement, selection: ResponseSelection): Range 
     }
     offset = next;
   }
-}
-
-function selectionFocusRect(selection: Selection, range: Range): DOMRect {
-  if (selection.focusNode) {
-    try {
-      const focus = document.createRange();
-      focus.setStart(selection.focusNode, selection.focusOffset);
-      focus.collapse(true);
-      return focus.getBoundingClientRect();
-    } catch {
-      // A detached focus endpoint can occur while a streamed response settles.
-    }
-  }
-  return range.getBoundingClientRect();
 }
 
 /** Only mounted, visible, exact source matches can be navigated to. */
@@ -150,13 +137,21 @@ export function AssistantResponseArticle({ turnID, itemID, settled, children, ..
     const toolbar = toolbarRef.current;
     const anchor = anchorRef.current;
     if (!captured || !toolbar || !anchor) return;
-    const bounds = toolbar.getBoundingClientRect();
-    const left = Math.max(8, Math.min(anchor.left, window.innerWidth - bounds.width - 8));
-    // Above the passage the panel is pinned by its bottom edge, so a growing
-    // comment extends upward and never covers the quoted text.
-    setPosition(anchor.top - bounds.height - 8 >= 8
-      ? { left, bottom: window.innerHeight - anchor.top + 8, transformOrigin: "bottom left", "--menu-enter-y": "4px" }
-      : { left, top: Math.max(8, Math.min(anchor.bottom + 8, window.innerHeight - bounds.height - 8)), transformOrigin: "top left", "--menu-enter-y": "-4px" });
+    const menu = selectionActionMenuMetrics(toolbar, { width: 360, height: 44 });
+    const placed = selectionActionMenuPosition(anchor, menu, { left: 8, top: 8, right: window.innerWidth - 8, bottom: window.innerHeight - 8 });
+    setPosition(placed.above
+      ? { left: placed.left, bottom: window.innerHeight - placed.top - menu.height, transformOrigin: "bottom center", "--menu-enter-y": "4px" }
+      : { left: placed.left, top: placed.top, transformOrigin: "top center", "--menu-enter-y": "-4px" });
+  }, [captured, commenting, positionRevision]);
+  useEffect(() => {
+    const toolbar = toolbarRef.current;
+    if (!captured || !toolbar || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => setPositionRevision(current => current + 1));
+    observer.observe(toolbar);
+    return () => observer.disconnect();
+  }, [captured, commenting]);
+  useLayoutEffect(() => {
+    if (!captured) return;
     if (commenting) {
       const root = ref.current!.querySelector<HTMLElement>(".agent-text")!;
       const range = validatedRange(root, captured);
@@ -172,7 +167,7 @@ export function AssistantResponseArticle({ turnID, itemID, settled, children, ..
       commentToggleRef.current?.focus({ preventScroll: true });
       returnToToggleRef.current = false;
     }
-  }, [captured, commenting, positionRevision]);
+  }, [captured, commenting]);
   useEffect(() => {
     // Focus moves into the comment input, so the native selection stops
     // painting; keep the passage marked until the comment is added or dropped.
@@ -236,7 +231,7 @@ export function AssistantResponseArticle({ turnID, itemID, settled, children, ..
         thread_id: threadID, turn_id: turnID, item_id: itemID, start_offset: start, end_offset: start + rangeText.length,
         ...(text === rangeText ? {} : { range_text: rangeText }),
       } };
-      anchorRef.current = selectionFocusRect(native, range);
+      anchorRef.current = range.getBoundingClientRect();
       sourceHighlight?.clear();
       setCommenting(false);
       setComment("");
@@ -255,12 +250,11 @@ export function AssistantResponseArticle({ turnID, itemID, settled, children, ..
     const key = (event: KeyboardEvent) => { if (event.key === "Escape") clear(); };
     const scroll = (event: Event) => {
       if (dragging || !capturedRef.current || toolbarRef.current?.contains(event.target as Node)) return;
-      const native = window.getSelection();
       const root = article.querySelector<HTMLElement>(".agent-text");
-      if (!native || native.rangeCount !== 1 || native.isCollapsed || !root || !visible(article)) return clear();
-      const range = native.getRangeAt(0);
-      if (!root.contains(range.startContainer) || !root.contains(range.endContainer)) return clear();
-      const anchor = selectionFocusRect(native, range);
+      if (!root || !visible(article)) return clear();
+      const range = validatedRange(root, capturedRef.current);
+      if (!range) return clear();
+      const anchor = range.getBoundingClientRect();
       if (anchor.bottom < 0 || anchor.top > window.innerHeight) return clear();
       anchorRef.current = anchor;
       setPositionRevision(current => current + 1);

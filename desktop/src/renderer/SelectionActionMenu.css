@@ -24,6 +24,11 @@
 }
 .selection-action-menu-controls::-webkit-scrollbar { display: none; }
 
+.selection-action-menu:not(.selection-action-menu-commenting) .selection-action-menu-controls {
+  flex-wrap: wrap;
+  overflow: visible;
+}
+
 .selection-action-menu-controls > button {
   display: inline-flex;
   align-items: center;

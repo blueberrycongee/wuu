@@ -3,6 +3,7 @@ import { useFileSelectionActions } from "./FileSelectionContext";
 import { fileSelectionLineIndex, fileSelectionRevision, fileSelectionSource, findFileSelectionDOMAnchor, mapFileDOMSelection, type FileSelectionRange, type FileSelectionSource } from "./FileSelectionMapping";
 import { useI18n } from "./i18n";
 import { SelectionActionMenu } from "./SelectionActionMenu";
+import { selectionActionMenuMetrics, selectionActionMenuPosition } from "./SelectionActionMenuPosition";
 import { ArrowUp } from "./WuuIcons";
 import { UILayerPortal } from "./ui/layers/UILayerHost";
 import "./FileSelectionSurface.css";
@@ -180,15 +181,11 @@ export function FileSelectionSurface({ workspace, path, text, active = true, chi
       }
       const width = Math.min(form ? 360 : 400, right - left);
       const height = bottom - top;
-      const popupHeight = Math.min(popup.current?.offsetHeight || (form ? 260 : 44), height);
-      const placeAbove = Boolean(anchor && anchor.top - popupHeight - 8 >= top);
-      const anchorTop = placeAbove && anchor
-        ? anchor.top - popupHeight - 8
-        : (anchor?.bottom ?? top) + 8;
+      const menu = selectionActionMenuMetrics(popup.current, { width, height: form ? 260 : 44 });
+      const placed = selectionActionMenuPosition(anchor ?? { left, right: left, top, bottom: top }, menu, { left, top, right, bottom });
       setPosition({
-        left: Math.max(left, Math.min(anchor?.left ?? left, right - width)),
-        top: Math.max(top, Math.min(anchorTop, bottom - popupHeight)), width, height,
-        markerPlacement: placeAbove ? "after" : "before",
+        left: placed.left, top: placed.top, width, height,
+        markerPlacement: placed.above ? "after" : "before",
       });
     };
     place();
@@ -251,7 +248,7 @@ export function FileSelectionSurface({ workspace, path, text, active = true, chi
     </aside>}
     {enabled && current && position && <UILayerPortal layer="popover">
       {form?.kind === "edit" ? <div ref={popup} className="file-selection-popup" data-wuu-component="popover" data-wuu-layer="popover"
-        style={{ left: position.left, top: position.top, maxWidth: position.width, maxHeight: position.height }}
+        style={{ left: position.left, top: position.top, width: position.width, maxWidth: position.width, maxHeight: position.height }}
         onPointerDown={event => { if ((event.target as Element).closest("button")) event.preventDefault(); }}>
         <form onSubmit={async event => {
           event.preventDefault();

@@ -87,6 +87,7 @@ export function WorkspaceMonacoEditor({
   const onViewStateChangeRef = useRef(onViewStateChange);
   const onSelectionChangeRef = useRef(onSelectionChange);
   const decorationRef = useRef<monaco.editor.IEditorDecorationsCollection | null>(null);
+  const anchorDecorationRef = useRef<monaco.editor.IEditorDecorationsCollection | null>(null);
   const language = useMemo(() => monacoLanguageForPath(path), [path]);
 
   useEffect(() => {
@@ -125,6 +126,10 @@ export function WorkspaceMonacoEditor({
     const changeDisposable = editor.onDidChangeModelContent(() => {
       onChangeRef.current?.(model.getValue());
     });
+    // A public range decoration gives exact painted spans for wrapping and
+    // bidi text without reading Monaco's private selection DOM.
+    const anchorDecorations = editor.createDecorationsCollection();
+    anchorDecorationRef.current = anchorDecorations;
     const reportSelection = () => {
       const range = editor.getSelection();
       if (!range || range.isEmpty()) { onSelectionChangeRef.current?.(null); return; }
@@ -133,13 +138,23 @@ export function WorkspaceMonacoEditor({
       onSelectionChangeRef.current?.({
         ...mapped,
         getRect: () => {
-          const start = editor.getScrolledVisiblePosition(range.getStartPosition());
-          const end = editor.getScrolledVisiblePosition(range.getEndPosition());
+          if (!monaco.Range.equalsRange(anchorDecorations.getRange(0), range)) {
+            anchorDecorations.set([{ range, options: { className: "file-selection-anchor" } }]);
+          }
+          editor.render();
           const bounds = host.getBoundingClientRect();
-          // Return an offscreen anchor when both endpoints have left the view.
-          if (!start && !end) return new DOMRect(bounds.left, bounds.top - 100, 0, 0);
-          const point = end ?? start!;
-          return new DOMRect(bounds.left + point.left, bounds.top + point.top, 1, point.height);
+          const layout = editor.getLayoutInfo();
+          const left = bounds.left + layout.contentLeft;
+          const right = left + layout.contentWidth;
+          const rects = Array.from(host.querySelectorAll<HTMLElement>(".file-selection-anchor"))
+            .flatMap(element => Array.from(element.getClientRects()))
+            .map(rect => ({ left: Math.max(left, rect.left), right: Math.min(right, rect.right),
+              top: Math.max(bounds.top, rect.top), bottom: Math.min(bounds.bottom, rect.bottom) }))
+            .filter(rect => rect.right > rect.left && rect.bottom > rect.top);
+          if (rects.length === 0) return new DOMRect(bounds.left, bounds.top - 100, 0, 0);
+          const x = Math.min(...rects.map(rect => rect.left));
+          const y = Math.min(...rects.map(rect => rect.top));
+          return new DOMRect(x, y, Math.max(...rects.map(rect => rect.right)) - x, Math.max(...rects.map(rect => rect.bottom)) - y);
         },
       });
     };
@@ -178,6 +193,8 @@ export function WorkspaceMonacoEditor({
       window.removeEventListener("pointerup", up, true);
       window.removeEventListener("pointercancel", up, true);
       scrollDisposable.dispose();
+      anchorDecorations.clear();
+      anchorDecorationRef.current = null;
       decorationRef.current?.clear();
       decorationRef.current = null;
       editor.dispose();
@@ -213,6 +230,7 @@ export function WorkspaceMonacoEditor({
   }, [readOnly]);
 
   useEffect(() => {
+    if (!persistentSelection) anchorDecorationRef.current?.clear();
     decorationRef.current?.set(persistentSelection ? [{
       range: sourceMonacoRange(persistentSelection, text),
       options: { className: "file-selection-persistent", stickiness: monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges },
