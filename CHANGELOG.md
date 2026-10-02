@@ -42,6 +42,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Smooth streamed text fade-in with finer opacity steps and avoid revisiting
+  text elements on opacity-only animation frames.
+
 - Refine Project Agent guidance for settled implementation decisions, coherent
   work batches and consolidated review feedback, reusing valid verification and
   useful running processes across follow-ups.

@@ -4,6 +4,9 @@ import { useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { prefersReducedMotion, subscribeReducedMotion } from "./motion";
 
 const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+// Halve opacity jumps while bounding style writes per chunk, including on
+// high-refresh displays.
+const VEIL_OPACITY_STEPS = 16;
 
 type Chunk = { start: number; end: number; born: number; duration: number; progress: number };
 
@@ -155,7 +158,7 @@ export function useStreamVeil(
       // that are still fading. Release the painter only after they finish.
       if (!latestLive.current && painted.size === 0) setPainting(false);
     };
-    const paint = (now: number): void => {
+    const paint = (now: number, rangesChanged = false): void => {
       if (disabled()) { clear(); needsBaseline = true; finishIfIdle(); return; }
       const spans = veil.sample(now);
       const active = new Set<string>();
@@ -164,12 +167,10 @@ export function useStreamVeil(
         active.add(key);
         const state = painted.get(key);
         if (!state) continue;
-        // Eight opacity steps keep the fade, but a live highlight does not
-        // invalidate style on every animation frame.
-        const step = span.opacity >= 1 ? 8 : Math.round(span.opacity * 8);
+        const step = Math.round(span.opacity * VEIL_OPACITY_STEPS);
         if (state.step === step) continue;
         state.step = step;
-        const mixed = step / 8;
+        const mixed = step / VEIL_OPACITY_STEPS;
         for (const group of state.groups.values()) {
           // Mutate the existing declaration, not the stylesheet or its rules.
           group.rule.style.color = `color-mix(in srgb, ${group.color} ${mixed * 100}%, transparent)`;
@@ -179,19 +180,24 @@ export function useStreamVeil(
         if (active.has(key)) continue;
         for (const group of state.groups.values()) removeGroup(group);
         painted.delete(key);
+        rangesChanged = true;
       }
       // Attribute-scoped rules keep animation invalidation local to active
       // text elements; a universal ::highlight rule dirties long histories.
-      const parents = new Set<HTMLElement>();
-      for (const state of painted.values()) {
-        for (const entry of state.entries) {
-          const parent = entry.node.parentElement;
-          if (parent) parents.add(parent);
+      // Opacity-only frames do not change range ownership, so do not walk
+      // their text nodes again until a range is rebound or finishes fading.
+      if (rangesChanged) {
+        const parents = new Set<HTMLElement>();
+        for (const state of painted.values()) {
+          for (const entry of state.entries) {
+            const parent = entry.node.parentElement;
+            if (parent) parents.add(parent);
+          }
         }
+        for (const parent of markedParents) if (!parents.has(parent)) parent.removeAttribute("data-stream-veil");
+        for (const parent of parents) if (!markedParents.has(parent)) parent.setAttribute("data-stream-veil", name);
+        markedParents = parents;
       }
-      for (const parent of markedParents) if (!parents.has(parent)) parent.removeAttribute("data-stream-veil");
-      for (const parent of parents) if (!markedParents.has(parent)) parent.setAttribute("data-stream-veil", name);
-      markedParents = parents;
       if (spans.length && frame === undefined) {
         frame = requestAnimationFrame(time => { frame = undefined; paint(time); });
       } else if (!spans.length && frame !== undefined) {
@@ -266,13 +272,13 @@ export function useStreamVeil(
           state.groups.delete(color);
         }
         // New ranges start transparent. The next paint must write the
-        // current step even when opacity has not crossed another eighth.
+        // current opacity even when it has not crossed another step.
         state.step = -1;
       }
       veil.discardPrefix(committed);
       offset += committed;
       knownStableBlocks = latestStableBlocks.current;
-      paint(now);
+      paint(now, true);
     };
     painter.current = { update };
     const reset = (): void => { colorEpoch += 1; needsBaseline = true; update(); };
