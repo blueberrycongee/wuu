@@ -142,7 +142,7 @@ function FileSelectionCardGroup({ parts, onRemove, onEdit, onOpenFile }: FileSel
       ><X aria-hidden="true" /></button> : null}
       </div>
       {open ? (
-        <FloatingMenuPortal anchorRef={anchorRef} owner="composer-attach" placement="above" align="left" width={420} flip>
+        <FloatingMenuPortal anchorRef={anchorRef} owner="composer-attach" placement="above" align="left" width={420} boundarySelector=".composer-frame, .composer-frame-shell, .composer-stack, .conversation-pane, .side-thread-panel, .workspace-file-layout" flip>
           <div
             ref={panelRef}
             id={panelID}

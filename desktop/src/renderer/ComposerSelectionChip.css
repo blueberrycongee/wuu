@@ -29,9 +29,10 @@
 
 .composer-selection-panel {
   box-sizing: border-box;
-  width: min(420px, calc(100vw - 16px));
+  width: min(420px, var(--floating-menu-available-width, calc(100vw - 16px)));
   max-height: min(440px, var(--floating-menu-available-height, 60dvh));
-  overflow-y: auto;
+  overflow: auto;
+  overscroll-behavior: contain;
   border: 1px solid var(--menu-border);
   border-radius: var(--menu-shell-radius);
   background: linear-gradient(var(--menu-bg), var(--menu-bg)), var(--paper);
@@ -42,16 +43,40 @@
 }
 .composer-selection-entry {
   display: grid;
-  grid-template-columns: 24px minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-2);
+  padding: var(--space-3);
+}
+
+.composer-selection-entry + .composer-selection-entry { border-top: 1px solid var(--hairline-soft); }
+.composer-selection-panel-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   gap: var(--space-2);
   padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--hairline-soft);
+  color: var(--ink-soft);
 }
-.composer-selection-entry:hover,
-.composer-selection-entry:focus-within { background: var(--surface-2); }
-.composer-selection-entry + .composer-selection-entry { border-top: 1px solid var(--hairline-soft); }
-.composer-selection-number { color: var(--ink-soft); }
+.composer-selection-panel-heading > span { min-width: 0; overflow-wrap: anywhere; }
+.composer-selection-panel-heading button {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-xs);
+  color: var(--ink-soft);
+  background: transparent;
+  cursor: pointer;
+}
+.composer-selection-panel-heading button:hover { background: var(--menu-hover); }
+.composer-selection-panel-heading svg { width: var(--icon-size-sm); height: var(--icon-size-sm); }
 .composer-selection-content { min-width: 0; }
-.composer-selection-heading { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); color: var(--ink-soft); }
+.composer-selection-heading > span { min-width: 0; overflow-wrap: anywhere; }
+.composer-selection-heading { margin-bottom: var(--space-2); display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); color: var(--ink-soft); }
 .composer-selection-actions { display: flex; align-items: center; flex: none; gap: var(--space-1); }
 .composer-selection-actions button {
   display: grid;
@@ -68,35 +93,37 @@
 .composer-selection-actions button:hover { background: var(--menu-hover); color: var(--ink); }
 .composer-selection-actions svg { width: var(--icon-size-sm); height: var(--icon-size-sm); }
 .composer-selection-quote {
-  display: -webkit-box;
+  display: block;
+  box-sizing: border-box;
   width: 100%;
-  padding: 0;
+  max-height: 6em;
+  padding: 0 0 0 var(--space-2);
   border: 0;
+  border-inline-start: 2px solid var(--hairline-strong);
   background: transparent;
   color: var(--ink);
   font: inherit;
   line-height: 1.45;
   text-align: start;
   overflow-wrap: anywhere;
-  overflow: hidden;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
+  overflow: auto;
+  white-space: pre-wrap;
   cursor: pointer;
 }
 .composer-selection-quote:hover { text-decoration: underline; text-decoration-color: var(--hairline-strong); }
-.composer-selection-comment { margin-top: var(--space-1); }
+.composer-selection-comment { margin-top: var(--space-3); }
 .composer-selection-comment > span { color: var(--ink-soft); }
-.composer-selection-comment p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.composer-selection-comment p { margin: var(--space-1) 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .composer-selection-comment-input {
   box-sizing: border-box;
   width: 100%;
   min-width: 0;
   max-width: 100%;
-  min-height: 48px;
+  min-height: 4.5em;
   max-height: 9em;
   margin-top: var(--space-2);
   padding: var(--space-2);
-  resize: vertical;
+  resize: none;
   border: 1px solid var(--hairline);
   border-radius: var(--radius-xs);
   background: var(--field-bg);

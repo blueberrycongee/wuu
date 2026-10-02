@@ -1,4 +1,4 @@
-import { MessageSquare, Pencil, Trash2 } from "lucide-react";
+import { MessageSquare, Pencil, Trash2, X } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 import type { FileSelectionSource, ResponseSelection } from "../shared/protocol";
 import { FloatingMenuPortal } from "./ComposerFloatingMenu";
@@ -99,18 +99,22 @@ export function ComposerSelectionChip({ items, onChangeResponse, onRemoveRespons
       onClick={() => { cancelClose(); setOpen(true); }}
       onKeyDown={(event) => {
         if (event.key === "Tab" && !event.shiftKey && open) {
-          const first = panelRef.current?.querySelector<HTMLButtonElement>("button");
+          const first = panelRef.current?.querySelector<HTMLButtonElement>(".composer-selection-actions button, .composer-selection-quote");
           if (first) { event.preventDefault(); first.focus(); }
         }
       }}>
       <MessageSquare aria-hidden="true" /><span>{label}</span>
     </button>
-    {open ? <FloatingMenuPortal anchorRef={anchorRef} owner="composer-attach" placement="above" align="left" width={420} flip
+    {open ? <FloatingMenuPortal anchorRef={anchorRef} owner="composer-attach" placement="above" align="left" width={420} boundarySelector=".composer-frame, .composer-frame-shell, .composer-stack, .conversation-pane, .side-thread-panel, .workspace-file-layout" flip
       mobileSheet={{ label, onClose: close }}>
       <div ref={panelRef} id={panelID} className="composer-selection-panel" role="dialog" aria-label={label}
         onPointerEnter={cancelClose} onPointerLeave={scheduleClose}
         onFocus={cancelClose} onBlur={(event) => { if (!contains(event.relatedTarget)) scheduleClose(); }}>
-        {items.map((item, index) => {
+        <div className="composer-selection-panel-heading">
+          <span>{label}</span>
+          <button type="button" aria-label={t("common.close")} onClick={() => { anchorRef.current?.focus({ preventScroll: true }); close(); }}><X aria-hidden="true" /></button>
+        </div>
+        {items.map((item) => {
           const id = item.type === "response" ? item.selection.id : item.type === "file" ? item.part.id : "side-file";
           const quote = item.type === "response" ? item.selection.text : item.type === "file" ? item.part.source.quote : item.source.quote;
           const comment = item.type === "response" ? item.selection.comment ?? "" : item.type === "file" ? item.part.comment ?? "" : "";
@@ -121,10 +125,9 @@ export function ComposerSelectionChip({ items, onChangeResponse, onRemoveRespons
             : item.type === "file" && onRemoveFile ? () => onRemoveFile(item.part.id)
               : item.type === "side-file" ? onRemoveSideFile : undefined;
           return <section className="composer-selection-entry" key={id}>
-            <span className="composer-selection-number" aria-hidden="true">{index + 1}.</span>
             <div className="composer-selection-content">
               <div className="composer-selection-heading">
-                <span>{locale === "zh-CN" ? "所选文本：" : "Selected text:"}</span>
+                <span title={source?.path}>{source ? source.path.split(/[\\/]/).pop() : t("responseSelection.quote")}</span>
                 <div className="composer-selection-actions">
                   {editable ? <button type="button" aria-label={t("common.edit")}
                     onClick={() => setEditingID(editingID === id ? null : id)}><Pencil aria-hidden="true" /></button> : null}
@@ -136,7 +139,7 @@ export function ComposerSelectionChip({ items, onChangeResponse, onRemoveRespons
                 onClick={() => {
                   if (item.type === "response") { if (navigateToResponseSelection(item.selection)) close(); }
                   else if (source && onOpenFile) void navigateToFile(source);
-                }}>{quote.replace(/\s+/g, " ").trim()}</button>
+                }}>{quote}</button>
               {editingID === id && editable ? <textarea autoFocus className="composer-selection-comment-input" wrap="soft"
                 aria-label={t("responseSelection.optionalComment")}
                 placeholder={t("responseSelection.optionalComment")}
@@ -146,7 +149,7 @@ export function ComposerSelectionChip({ items, onChangeResponse, onRemoveRespons
                   else if (item.type === "file") onEditFile?.(item.part, event.target.value);
                 }}
                 onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); setEditingID(null); anchorRef.current?.focus(); } }} />
-                : comment ? <div className="composer-selection-comment"><span>{locale === "zh-CN" ? "用户评论：" : "Comment:"}</span><p>{comment}</p></div> : null}
+                : comment ? <div className="composer-selection-comment"><span>{locale === "zh-CN" ? "批注" : "Comment"}</span><p>{comment}</p></div> : null}
             </div>
           </section>;
         })}

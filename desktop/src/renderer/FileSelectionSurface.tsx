@@ -73,7 +73,7 @@ export function FileSelectionSurface({ workspace, path, text, active = true, chi
   const [revealSelection, setRevealSelection] = useState<FileSelectionControls["revealSelection"]>();
   const submissionRef = useRef(0);
   const sendingRef = useRef(false);
-  const [position, setPosition] = useState<{ left: number; top: number; width: number; height: number; markerPlacement: "before" | "after" } | null>(null);
+  const [position, setPosition] = useState<{ left: number; top: number; width: number; height: number } | null>(null);
   const formRef = useRef(form);
   formRef.current = form;
   const enabled = Boolean(actions && active);
@@ -185,7 +185,6 @@ export function FileSelectionSurface({ workspace, path, text, active = true, chi
       const placed = selectionActionMenuPosition(anchor ?? { left, right: left, top, bottom: top }, menu, { left, top, right, bottom });
       setPosition({
         left: placed.left, top: placed.top, width, height,
-        markerPlacement: placed.above ? "after" : "before",
       });
     };
     place();
@@ -282,11 +281,11 @@ export function FileSelectionSurface({ workspace, path, text, active = true, chi
           {sending && <p role="status">{labels.sending}</p>}
         </form>
       </div> : <SelectionActionMenu ref={popup} className="file-selection-action-menu"
-        style={{ left: position.left, top: position.top, maxWidth: position.width, maxHeight: position.height, overflow: form?.kind === "comment" ? "visible" : "auto" }}
-        label={labels.tools} addLabel={labels.quote} commentLabel={labels.comment} commentPlaceholder={labels.commentLabel}
+        style={{ left: position.left, top: position.top, maxWidth: position.width, maxHeight: position.height, overflow: "auto" }}
+        cancelLabel={labels.close} label={labels.tools} addLabel={labels.quote} commentLabel={labels.comment} commentPlaceholder={labels.commentLabel}
         commenting={form?.kind === "comment"} comment={form?.kind === "comment" ? form.value : ""}
         allowEmptyComment={!form?.id}
-        commentMarkerPlacement={position.markerPlacement}
+        quote={current.source.quote}
         onCommentChange={value => setForm(previous => previous?.kind === "comment" ? { ...previous, value } : previous)}
         onAdd={() => { actions!.addQuote(current.source); close(); }} onCommentStart={() => startForm("comment")}
         onCommentCancel={() => { returnToComment.current = true; setForm(null); }}

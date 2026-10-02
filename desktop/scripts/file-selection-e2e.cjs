@@ -99,8 +99,9 @@ async function run() {
       assert.ok(sideLayout.viewportWidth < 760 || sideLayout.main.width >= 352 - 1,
         `Side chat must preserve the established main-column minimum: ${JSON.stringify(sideLayout)}`);
       await click(".side-thread-panel .composer-selection-chip");
-      await waitFor(expected => document.querySelector(".composer-selection-panel .composer-selection-quote")?.textContent === expected.replace(/\s+/g, " ").trim(), "side selection details", quote);
+      await waitFor(expected => document.querySelector(".composer-selection-panel .composer-selection-quote")?.textContent === expected, "side selection details", quote);
       await visibleGeometry(".composer-selection-panel");
+      await checkAnnotationPanel(`${label}-side-selection-details`, ".side-thread-panel .composer-selection-chip");
       await screenshot(`${label}-side-selection-details`);
       await clickButton(".composer-selection-panel", "Remove");
       await waitFor(() => !document.querySelector(".side-thread-panel .composer-selection-chip"), "side selection removed");
@@ -121,7 +122,7 @@ async function run() {
       await frame();
       await visibleGeometry("[data-main-conversation-composer] .composer-selection-chip");
       await click("[data-main-conversation-composer] .composer-selection-chip");
-      await waitFor(expected => document.querySelector(".composer-selection-quote")?.textContent === expected.replace(/\s+/g, " ").trim(), "opened original text", quote);
+      await waitFor(expected => document.querySelector(".composer-selection-quote")?.textContent === expected, "opened original text", quote);
       await visibleGeometry(".composer-selection-panel");
       await screenshot(`${label}-quote-tag`);
       await press("Escape");
@@ -183,18 +184,28 @@ async function run() {
       await press("Escape");
       await click("[data-main-conversation-composer] .composer-selection-chip");
       await waitFor(expected => document.querySelector(".composer-selection-panel")?.textContent.includes(expected), "comment chip details", comment);
-      assert.equal(await evaluate(() => document.querySelector(".composer-selection-panel .composer-selection-quote")?.textContent), quote.replace(/\s+/g, " ").trim());
+      assert.equal(await evaluate(() => document.querySelector(".composer-selection-panel .composer-selection-quote")?.textContent), quote);
+      await checkAnnotationPanel(`${label}-comment-chip`, "[data-main-conversation-composer] .composer-selection-chip");
       await screenshot(`${label}-comment-chip`);
       phase = `${label}: live comment chip editor`;
       await clickButton(".composer-selection-panel", "Edit");
-      comment = `Explain this selection (${label}). Keep the quoted source intact while reviewing a longer comment, including repeated words and punctuation. 第二行 😀\nAlso check how this wraps in a narrow window.`;
+      comment = `Explain this selection (${label}). Keep the quoted source intact while reviewing a longer comment, including repeated words and punctuation. 第二行 😀\nAlso check how this wraps in a narrow window.\n${"中文注释需要完整保留。".repeat(12)}\n${"unbroken_annotation_".repeat(24)}`;
       await fill(".composer-selection-comment-input", comment);
+      await checkAnnotationPanel(`${label}-comment-chip-editor`, "[data-main-conversation-composer] .composer-selection-chip");
       await screenshot(`${label}-comment-chip-editor`);
       await press("Escape");
       await waitFor(() => !document.querySelector(".composer-selection-panel"), "chip editor dismissed");
       assert.equal(await evaluate(() => document.activeElement?.classList.contains("composer-selection-chip")), true, "Escape restores chip focus");
       assert.equal(await evaluate(() => document.querySelector(".file-selection-comments .file-selection-comment > p")?.textContent), comment, "Live comment edits survive Escape");
       await screenshot(`${label}-comment-chip-escape-focus`);
+      await click("[data-main-conversation-composer] .composer-selection-chip");
+      await clickButton(".composer-selection-panel", "Edit");
+      await waitFor(expected => document.querySelector(".composer-selection-comment-input")?.value === expected,
+        "reopened annotation retains complete long comment", comment);
+      await checkAnnotationPanel(`${label}-comment-chip-reopened`, "[data-main-conversation-composer] .composer-selection-chip");
+      await click("[data-main-conversation-composer] textarea");
+      await waitFor(() => !document.querySelector(".composer-selection-panel"), "outside click dismisses annotation editor");
+      assert.equal(await evaluate(composerValue), draft, "Dismissing an annotation must retain the independent composer draft");
 
       phase = `${label}: inline edit preserving draft and comment`;
       await selectFile(file, quote);
@@ -421,6 +432,30 @@ async function visibleGeometry(selector) {
   return rect;
 }
 
+async function checkAnnotationPanel(name, anchorSelector) {
+  await frame();
+  const geometry = await evaluate(anchorSelector => {
+    const anchor = document.querySelector(anchorSelector);
+    const owner = anchor?.closest(".composer-frame") ?? anchor?.closest(".composer");
+    const panel = document.querySelector(".composer-selection-panel");
+    if (!owner || !panel) throw new Error("Missing annotation panel or owning composer");
+    const input = panel.querySelector("textarea");
+    return { owner: owner.getBoundingClientRect().toJSON(), panel: panel.getBoundingClientRect().toJSON(),
+      viewport: { width: innerWidth, height: innerHeight },
+      scrollWidth: panel.scrollWidth, clientWidth: panel.clientWidth,
+      input: input ? { value: input.value, scrollWidth: input.scrollWidth, clientWidth: input.clientWidth } : null };
+  }, anchorSelector);
+  report.layoutObservations.push({ name, annotation: geometry });
+  assert.ok(geometry.panel.left >= Math.max(0, geometry.owner.left) - 1 &&
+    geometry.panel.right <= Math.min(geometry.viewport.width, geometry.owner.right) + 1,
+    `${name}: annotation must remain in its owning composer column: ${JSON.stringify(geometry)}`);
+  assert.ok(geometry.panel.top >= -1 && geometry.panel.bottom <= geometry.viewport.height + 1,
+    `${name}: annotation must stay in the viewport`);
+  assert.ok(geometry.scrollWidth <= geometry.clientWidth + 1, `${name}: annotation must not scroll horizontally`);
+  if (geometry.input) assert.ok(geometry.input.scrollWidth <= geometry.input.clientWidth + 1,
+    `${name}: long annotation text must wrap without horizontal overflow: ${JSON.stringify(geometry.input)}`);
+}
+
 async function checkFilePlacement(name) {
   await frame();
   const geometry = await evaluate(() => {
@@ -443,12 +478,11 @@ async function checkFilePlacement(name) {
     if (!sourceRects.length) throw new Error("No painted source selection to measure");
     const source = { left: Math.min(...sourceRects.map(rect => rect.left)), right: Math.max(...sourceRects.map(rect => rect.right)),
       top: Math.min(...sourceRects.map(rect => rect.top)), bottom: Math.max(...sourceRects.map(rect => rect.bottom)) };
-    const box = popup.getBoundingClientRect(), marker = popup.querySelector(".selection-action-comment-marker")?.getBoundingClientRect();
+    const box = popup.getBoundingClientRect();
     const input = popup.querySelector("textarea"), inputBox = input?.getBoundingClientRect();
-    return { source, sourceRects, popup: box.toJSON(), marker: marker?.toJSON(),
+    return { source, sourceRects, popup: box.toJSON(),
       bounds: { left: Math.max(8, hostBox.left + 8), right: Math.min(innerWidth - 8, hostBox.right - 8), top: Math.max(8, hostBox.top + 8), bottom: Math.min(innerHeight - 8, hostBox.bottom - 8) },
-      complete: { left: Math.min(box.left, marker?.left ?? box.left), right: Math.max(box.right, marker?.right ?? box.right),
-        top: Math.min(box.top, marker?.top ?? box.top), bottom: Math.max(box.bottom, marker?.bottom ?? box.bottom) },
+      complete: { left: box.left, right: box.right, top: box.top, bottom: box.bottom },
       input: input ? { width: inputBox.width, clientWidth: input.clientWidth, scrollWidth: input.scrollWidth, value: input.value } : null };
   });
   report.layoutObservations.push({ name, placement: geometry });
@@ -460,7 +494,7 @@ async function checkFilePlacement(name) {
   const belowFits = bounds.bottom - source.bottom >= fullHeight + 8;
   if (aboveFits) assert.ok(complete.bottom <= source.top + 1, `${name}: prefer above when it fits`);
   else if (belowFits) assert.ok(complete.top >= source.bottom - 1, `${name}: below fallback must clear the source`);
-  if (aboveFits || belowFits) assert.ok(!geometry.sourceRects.some(rect => complete.left < rect.right && complete.right > rect.left && complete.top < rect.bottom && complete.bottom > rect.top), `${name}: popup/marker must not obscure selected text`);
+  if (aboveFits || belowFits) assert.ok(!geometry.sourceRects.some(rect => complete.left < rect.right && complete.right > rect.left && complete.top < rect.bottom && complete.bottom > rect.top), `${name}: popup must not obscure selected text`);
   if (geometry.input) assert.ok(geometry.input.scrollWidth <= geometry.input.clientWidth + 1, `${name}: instruction text must wrap without horizontal clipping: ${JSON.stringify(geometry.input)}`);
   return geometry;
 }

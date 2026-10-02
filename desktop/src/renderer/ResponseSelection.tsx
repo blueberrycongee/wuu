@@ -307,9 +307,9 @@ export function AssistantResponseArticle({ turnID, itemID, settled, children, ..
     {children}
     {captured && settled ? createPortal(<SelectionActionMenu key={commenting ? "comment" : "actions"} ref={toolbarRef}
       className="response-selection-toolbar" style={position} label={t("responseSelection.actions")}
-      addLabel={t("responseSelection.add")} commentLabel={t("responseSelection.comment")}
+      cancelLabel={t("common.cancel")} addLabel={t("responseSelection.add")} commentLabel={t("responseSelection.comment")}
       commentPlaceholder={t("responseSelection.commentPlaceholder")} commenting={commenting} comment={comment}
-      commentMarkerPlacement={position.bottom !== undefined ? "after" : "before"}
+      quote={captured.text}
       onCommentChange={setComment} onAdd={addSelection} onCommentStart={() => setCommenting(true)}
       onCommentCancel={() => { returnToToggleRef.current = true; setCommenting(false); setComment(""); }}
       onCommentSubmit={addSelection} commentToggleRef={commentToggleRef} commentInputRef={commentRef}

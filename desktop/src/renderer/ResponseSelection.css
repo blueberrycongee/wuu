@@ -3,6 +3,8 @@
 /* A sent quote sits above the message like an attachment card. */
 .response-selection-reference {
   display: grid;
+  box-sizing: border-box;
+  min-width: 0;
   justify-self: end;
   width: fit-content;
   max-width: min(472px, 100%);

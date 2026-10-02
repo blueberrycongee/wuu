@@ -139,6 +139,7 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   and the bell's first-run bubble became a mark-all-read action.
 
 ### Fixed
+- Keep annotation previews inside their composer column, with readable multiline editors and complete quoted excerpts.
 
 - Preserve saved pet scale during startup when a nondefault size preset is stored, without rewriting pet preferences.
 

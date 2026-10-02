@@ -48,7 +48,6 @@ function type(value: string) {
 describe("file selection surface", () => {
   it("centers the measured toolbar and comment above the selected passage without covering it", () => {
     vi.mocked(HTMLElement.prototype.getBoundingClientRect).mockImplementation(function (this: HTMLElement) {
-      if (this.classList.contains("selection-action-comment-marker")) return new DOMRect(0, 88, 24, 24);
       if (this.classList.contains("file-selection-action-menu")) return new DOMRect(0, 0, this.classList.contains("selection-action-menu-commenting") ? 360 : 200, this.classList.contains("selection-action-menu-commenting") ? 80 : 40);
       return new DOMRect(0, 0, 700, 600);
     });
@@ -60,7 +59,7 @@ describe("file selection surface", () => {
     click("Comment");
     const comment = document.querySelector<HTMLElement>(".file-selection-action-menu")!;
     expect(Number.parseFloat(comment.style.left)).toBe(170);
-    expect(Number.parseFloat(comment.style.top)).toBe(120);
+    expect(Number.parseFloat(comment.style.top)).toBe(152);
     expect(document.activeElement).toBe(comment.querySelector("textarea"));
   });
 

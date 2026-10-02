@@ -184,6 +184,28 @@ function validatePayload(call, expected, comment, prompt) {
   if (prompt && (parts.at(-1).type !== "text" || parts.at(-1).text !== prompt)) throw new Error("Prompt part mismatch");
   if (!call.args[1].includes(quote.trimEnd()) || (prompt && !call.args[1].includes(prompt))) throw new Error("Flattened prompt lost quote/comment or prompt");
 }
+async function checkAnnotationPanel(name) {
+  await settle();
+  const geometry = await evaluate(selector => {
+    const anchor = document.querySelector(selector);
+    const owner = anchor?.closest(".composer-frame") ?? anchor?.closest(".composer");
+    const panel = document.querySelector(".composer-selection-panel");
+    if (!owner || !panel) throw new Error("Missing annotation panel or owning composer");
+    const input = panel.querySelector("textarea");
+    return { owner: owner.getBoundingClientRect().toJSON(), panel: panel.getBoundingClientRect().toJSON(),
+      viewport: { width: innerWidth, height: innerHeight }, scrollWidth: panel.scrollWidth, clientWidth: panel.clientWidth,
+      input: input ? { scrollWidth: input.scrollWidth, clientWidth: input.clientWidth, value: input.value } : null };
+  }, card);
+  report.measurements.push({ name, annotation: geometry });
+  if (geometry.panel.left < Math.max(0, geometry.owner.left) - 1 ||
+    geometry.panel.right > Math.min(geometry.viewport.width, geometry.owner.right) + 1)
+    throw new Error(`${name}: annotation escaped its owning composer column: ${JSON.stringify(geometry)}`);
+  if (geometry.panel.top < -1 || geometry.panel.bottom > geometry.viewport.height + 1 ||
+    geometry.scrollWidth > geometry.clientWidth + 1 ||
+    (geometry.input && geometry.input.scrollWidth > geometry.input.clientWidth + 1))
+    throw new Error(`${name}: annotation or editor overflow: ${JSON.stringify(geometry)}`);
+}
+
 async function checkPlacement(name, expected, expectedSide) {
   await settle();
   const geometry = await evaluate(({ selector, start, end }) => {
@@ -198,19 +220,17 @@ async function checkPlacement(name, expected, expectedSide) {
     }
     const toolbar = document.querySelector(".response-selection-toolbar");
     const popup = toolbar.getBoundingClientRect();
-    const marker = toolbar.querySelector(".selection-action-comment-marker")?.getBoundingClientRect();
     const bounds = range.getBoundingClientRect();
     return { viewport: { width: innerWidth, height: innerHeight }, source: bounds.toJSON(),
       sourceRects: [...range.getClientRects()].filter(rect => rect.width && rect.height).map(rect => rect.toJSON()),
-      popup: popup.toJSON(), marker: marker?.toJSON(),
-      complete: { left: Math.min(popup.left, marker?.left ?? popup.left), right: Math.max(popup.right, marker?.right ?? popup.right),
-        top: Math.min(popup.top, marker?.top ?? popup.top), bottom: Math.max(popup.bottom, marker?.bottom ?? popup.bottom) } };
+      popup: popup.toJSON(),
+      complete: { left: popup.left, right: popup.right, top: popup.top, bottom: popup.bottom } };
   }, { selector: surface, start: expected.start, end: expected.end });
   report.measurements.push({ name: `${name}-source-placement`, ...geometry });
   const { source, popup, complete, viewport } = geometry;
   const expectedLeft = Math.max(8, Math.min((source.left + source.right - popup.width) / 2, viewport.width - 8 - popup.width));
   if (Math.abs(popup.left - expectedLeft) > 2) throw new Error(`${name}: popup is not centered on the complete source range: ${JSON.stringify(geometry)}`);
-  if (complete.left < -1 || complete.top < -1 || complete.right > viewport.width + 1 || complete.bottom > viewport.height + 1) throw new Error(`${name}: popup or marker left the viewport`);
+  if (complete.left < -1 || complete.top < -1 || complete.right > viewport.width + 1 || complete.bottom > viewport.height + 1) throw new Error(`${name}: popup left the viewport`);
   const height = complete.bottom - complete.top;
   const aboveFits = source.top >= height + 16;
   const belowFits = viewport.height - source.bottom >= height + 16;
@@ -219,7 +239,7 @@ async function checkPlacement(name, expected, expectedSide) {
   if (aboveFits && !above) throw new Error(`${name}: popup should be above the source: ${JSON.stringify(geometry)}`);
   if (!aboveFits && belowFits && !below) throw new Error(`${name}: top-edge fallback overlaps the source: ${JSON.stringify(geometry)}`);
   if (expectedSide && !(expectedSide === "above" ? above : below)) throw new Error(`${name}: expected ${expectedSide} placement: ${JSON.stringify(geometry)}`);
-  if ((aboveFits || belowFits) && geometry.sourceRects.some(rect => complete.left < rect.right && complete.right > rect.left && complete.top < rect.bottom && complete.bottom > rect.top)) throw new Error(`${name}: comment marker/popup obscures selected text`);
+  if ((aboveFits || belowFits) && geometry.sourceRects.some(rect => complete.left < rect.right && complete.right > rect.left && complete.top < rect.bottom && complete.bottom > rect.top)) throw new Error(`${name}: comment popup obscures selected text`);
   await screenshot(name);
   return geometry;
 }
@@ -243,8 +263,16 @@ async function placementCoverage() {
   const edge = await select("Repeated 😀 café 中文 target.", true);
   await checkPlacement("placement-narrow-edge", edge);
   await click(".response-selection-toolbar .selection-action-comment-toggle");
-  await win.webContents.insertText("Keep this narrow comment readable. 第二行 😀\nThe source and its marker must stay separate.");
+  await win.webContents.insertText("Keep this narrow comment readable. 第二行 😀\nThe source and its annotation must stay separate.");
   await checkPlacement("placement-narrow-comment", edge);
+  await click(".response-selection-toolbar .selection-action-comment-heading button");
+  await until(() => !document.querySelector(".response-selection-toolbar textarea"), "cancel annotation input");
+  const cancelFocus = await evaluate(() => document.activeElement?.classList.contains("selection-action-comment-toggle"));
+  if (!cancelFocus) throw new Error("Cancel annotation did not return focus to its comment action");
+  await click(".response-selection-toolbar .selection-action-comment-toggle");
+  await until(() => document.querySelector(".response-selection-toolbar textarea")?.value === "",
+    "cancelled source comment reopens without discarded draft");
+  report.cases.push("source annotation cancel button restores action focus and clears its unsaved draft on reopen");
   win.setContentSize(760, 420);
   const top = await select("Native drag selection", false, false, false, "start");
   await click(".response-selection-toolbar .selection-action-comment-toggle");
@@ -299,7 +327,9 @@ async function run() {
   await send(quote, "", "");
   report.cases.push("quote-only submission retains rich metadata and flattened quote");
 
-  await add("Repeated 😀 café 中文 target.", true);
+  const multilineQuote = await evaluate(selector => document.querySelector(selector).textContent, surface);
+  await add(multilineQuote);
+  const longComment = `Long annotation with English and 中文.\n${"中文需要保持完整并正确换行。".repeat(16)}\n${"unbroken_annotation_".repeat(32)}`;
   for (const [width, height, font, theme] of [[1200, 820, 14, "light"], [1200, 820, 20, "dark"], [390, 820, 14, "dark"], [390, 820, 20, "light"]]) {
     win.setContentSize(width, height);
     await evaluate((font, theme) => {
@@ -315,10 +345,22 @@ async function run() {
       const rect = node.getBoundingClientRect();
       return rect.width > 0 && rect.left >= 0 && rect.right <= innerWidth + 1 && rect.top >= 0 && rect.bottom <= innerHeight + 1;
     }, "quote editor within viewport");
+    await checkAnnotationPanel(`${theme}-${width}-${font}-quote`);
+    const shownQuote = await evaluate(() => document.querySelector(".composer-selection-quote")?.textContent);
+    if (shownQuote !== multilineQuote) throw new Error("Annotation quote lost original whitespace or text");
+    await click(".composer-selection-actions button:first-child");
+    await input(".composer-selection-comment-input", longComment);
+    await checkAnnotationPanel(`${theme}-${width}-${font}-long-comment`);
     await screenshot(`${theme}-${width}-${font}`);
     await closeQuotePanel();
+    await click(card);
+    await click(".composer-selection-actions button:first-child");
+    await until(expected => document.querySelector(".composer-selection-comment-input")?.value === expected,
+      "long comment survives dismissal and reopening", longComment);
+    await checkAnnotationPanel(`${theme}-${width}-${font}-reopened`);
+    await closeQuotePanel();
   }
-  report.cases.push("light/dark, default/large font, wide/narrow quote card and editor geometry");
+  report.cases.push("light/dark, default/20px font, wide/narrow owning-column bounds, exact multiline quote, long Chinese/English/unbroken comment wrapping and dismiss/reopen retention");
   await placementCoverage();
   if (report.errors.length) throw new Error(`Unexpected renderer or network errors: ${JSON.stringify(report.errors)}`);
   report.status = "passed";

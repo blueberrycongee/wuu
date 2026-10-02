@@ -58,7 +58,7 @@ export function ComposerResponseSelectionCard({ selection, onChange, onRemove }:
       onRemove={onRemove}
     />
     {open ? <FloatingMenuPortal anchorRef={anchorRef} owner="composer-attach"
-      placement="above" align="left" width={360} flip
+      placement="above" align="left" width={360} boundarySelector=".composer-frame, .composer-frame-shell, .composer-stack, .conversation-pane, .side-thread-panel, .workspace-file-layout" flip
       mobileSheet={{ label: t("responseSelection.quote"), onClose: close }}>
       <div ref={panelRef} className="composer-response-selection-popover" role="dialog"
         aria-label={t("responseSelection.quote")} tabIndex={-1}

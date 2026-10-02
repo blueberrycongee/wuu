@@ -156,6 +156,7 @@ export function FloatingMenuPortal({
   crossAxisOffset = 0,
   width,
   matchAnchorWidth = false,
+  boundarySelector,
   // When true, flip to the opposite side of the trigger if the
   // requested placement doesn't have room. Use this for dropdowns
   // whose content height is uncertain (model pickers, tag pickers)
@@ -176,6 +177,8 @@ export function FloatingMenuPortal({
   crossAxisOffset?: number;
   width: number;
   matchAnchorWidth?: boolean;
+  /** Keep annotation previews inside their owning reading/composer column. */
+  boundarySelector?: string;
   flip?: boolean;
   mobileSheet?: { label: string; onClose: () => void };
   children: ReactNode;
@@ -206,12 +209,14 @@ export function FloatingMenuPortal({
       const viewportMargin = 8;
       const visible = visibleViewport();
       const rect = anchor.getBoundingClientRect();
-      const menuWidth = matchAnchorWidth && rect.width > 0 ? rect.width : width;
+      const boundary = boundarySelector ? anchor.closest(boundarySelector)?.getBoundingClientRect() : undefined;
+      const minLeft = Math.max(visible.left + viewportMargin, boundary?.left ?? -Infinity);
+      const right = Math.min(visible.left + visible.width - viewportMargin, boundary?.right ?? Infinity);
+      const menuWidth = Math.min(matchAnchorWidth && rect.width > 0 ? rect.width : width, Math.max(0, right - minLeft));
       const baseLeft = align === "right" ? rect.right - menuWidth
         : align === "center" ? rect.left + (rect.width - menuWidth) / 2
         : rect.left;
-      const minLeft = visible.left + viewportMargin;
-      const maxLeft = Math.max(minLeft, visible.left + visible.width - menuWidth - viewportMargin);
+      const maxLeft = Math.max(minLeft, right - menuWidth);
       const left = clamp(baseLeft + crossAxisOffset, minLeft, maxLeft);
 
       // Auto-flip: if the requested side has less than the panel's actual
@@ -254,7 +259,7 @@ export function FloatingMenuPortal({
         // surface might intentionally pin above.
         zIndex: 220,
       };
-      if (matchAnchorWidth) {
+      if (matchAnchorWidth || boundarySelector) {
         nextStyle.width = menuWidth;
       }
 
@@ -292,6 +297,7 @@ export function FloatingMenuPortal({
       // CSS custom property — React's CSSProperties type doesn't allow
       // arbitrary `--*` keys, so the cast is the standard escape hatch.
       const styleVariables = nextStyle as Record<string, string>;
+      styleVariables["--floating-menu-available-width"] = `${menuWidth}px`;
       styleVariables["--floating-menu-available-height"] = `${availableHeight}px`;
       styleVariables["--select-menu-max-height"] = `${availableHeight}px`;
 
@@ -301,12 +307,7 @@ export function FloatingMenuPortal({
     }
 
     function measurePanel(): void {
-      if (measuredPanelHeight !== null) {
-        return;
-      }
-      const panel = layerRef.current?.querySelector(
-        ".select-menu-panel"
-      ) as HTMLElement | null;
+      const panel = layerRef.current?.firstElementChild as HTMLElement | null;
       if (!panel) {
         return;
       }
@@ -322,7 +323,7 @@ export function FloatingMenuPortal({
     // React re-run useLayoutEffect so the flip decision can be refined
     // against the actual box (not the 320px estimate). The rAF guarantees
     // the panel has been laid out at least once.
-    const measurement = measuredPanelHeight === null ? requestAnimationFrame(measurePanel) : undefined;
+    const measurement = requestAnimationFrame(measurePanel);
 
     const viewport = window.visualViewport;
     let frame: number | undefined;
@@ -332,6 +333,8 @@ export function FloatingMenuPortal({
     // The web shell applies viewport height in rAF. Measure after that write,
     // and observe the containing layout so position changes need no new resize.
     const observer = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(schedule);
+    const panelObserver = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(measurePanel);
+    if (layerRef.current?.firstElementChild) panelObserver?.observe(layerRef.current.firstElementChild);
     for (let node = anchorRef.current; node; node = node.parentElement) observer?.observe(node);
     window.addEventListener("resize", schedule);
     window.addEventListener("scroll", schedule, true);
@@ -339,6 +342,7 @@ export function FloatingMenuPortal({
     viewport?.addEventListener("scroll", schedule);
     return () => {
       observer?.disconnect();
+      panelObserver?.disconnect();
       if (frame !== undefined) cancelAnimationFrame(frame);
       if (measurement !== undefined) cancelAnimationFrame(measurement);
       window.removeEventListener("resize", schedule);
@@ -350,6 +354,7 @@ export function FloatingMenuPortal({
     align,
     anchorRef,
     crossAxisOffset,
+    boundarySelector,
     flip,
     matchAnchorWidth,
     measuredPanelHeight,
