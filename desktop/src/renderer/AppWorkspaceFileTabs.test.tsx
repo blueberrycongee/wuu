@@ -422,7 +422,7 @@ describe("workspace file tabs", () => {
     await flushAsync();
   }
 
-  it.each([1280, 600])("reveals a side selection from the focused workspace at width %i without losing the main draft", async (width) => {
+  it.each([2000, 1280, 600])("reveals a side selection from the focused workspace at width %i without losing the main draft", async (width) => {
     setInnerWidth(width);
     Object.assign(window.wuu, {
       openSideThread: vi.fn().mockResolvedValue({ summary: null }),
@@ -433,7 +433,7 @@ describe("workspace file tabs", () => {
       onSideThreadEvent: vi.fn(() => () => {}),
     });
     await openSelectionDocument();
-    if (width === 1280) {
+    if (width >= 1280) {
       await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="展开为全面板"]')!.click());
       await flushAsync();
     }
@@ -450,7 +450,8 @@ describe("workspace file tabs", () => {
     expect(container.querySelector<HTMLTextAreaElement>("[data-main-conversation-composer] textarea")!.value).toBe("Keep the main question");
     expect(window.wuu.startTurn).not.toHaveBeenCalled();
     expect(window.wuu.sendSideThreadMessage).not.toHaveBeenCalled();
-    if (width === 600) {
+    expect(container.querySelector(".workspace-right-panel")?.getAttribute("aria-hidden")).toBe(width === 2000 ? "false" : "true");
+    if (width !== 2000) {
       await act(async () => side.querySelector<HTMLButtonElement>(".side-thread-panel__close")!.click());
       await act(async () => container.querySelector<HTMLButtonElement>(".rich-file-link")!.click());
       await flushAsync();

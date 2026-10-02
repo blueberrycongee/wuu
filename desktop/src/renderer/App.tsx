@@ -184,6 +184,7 @@ import {
   SIDEBAR_MAX_WIDTH,
   SIDEBAR_MIN_WIDTH,
   sidebarMotionMs,
+  WORKSPACE_CONVERSATION_SAFE_WIDTH,
   WORKSPACE_RIGHT_PANEL_MAX_WIDTH,
   WORKSPACE_RIGHT_PANEL_MIN_WIDTH,
   useAppLayoutState,
@@ -3012,6 +3013,9 @@ export function App(): JSX.Element {
       setPrompt(currentPrimaryComposerDraft().prompt);
     }
     revealConversationFromFocusedWorkspace();
+    if (rightPanelOpen && window.innerWidth - effectiveSidebarWidth - clampedWorkspaceRightPanelWidth - sideThread.width < WORKSPACE_CONVERSATION_SAFE_WIDTH) {
+      setRightPanelOpenWithMotion(false);
+    }
     if (!sideThread.entry?.open) {
       setEnvironmentPanelOpen(false);
       setEnvironmentPanelDismissed(true);

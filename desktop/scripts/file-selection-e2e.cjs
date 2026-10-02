@@ -86,6 +86,18 @@ async function run() {
       await waitFor(() => Boolean(document.querySelector(".side-thread-panel .composer-selection-chip")), "side selection chip");
       await visibleGeometry(".side-thread-panel .composer-selection-chip");
       await screenshot(`${label}-side-chip`);
+      const sideLayout = await evaluate(() => {
+        const main = document.querySelector(".conversation-pane > .scroll-region");
+        const side = document.querySelector(".side-thread-panel");
+        return { main: main.getBoundingClientRect().toJSON(), side: side.getBoundingClientRect().toJSON(),
+          mainInert: Boolean(main.closest("[inert]")), viewportWidth: innerWidth };
+      });
+      report.layoutObservations.push({ label, sideLayout });
+      assert.equal(sideLayout.mainInert, false, "The side-chat destination must leave the main conversation interactive");
+      assert.ok(sideLayout.main.right <= sideLayout.side.left + 1, "Main and side chat must not overlap");
+      // AppLayoutState's existing 352px minimum protects the main reading area.
+      assert.ok(sideLayout.viewportWidth < 760 || sideLayout.main.width >= 352 - 1,
+        `Side chat must preserve the established main-column minimum: ${JSON.stringify(sideLayout)}`);
       await click(".side-thread-panel .composer-selection-chip");
       await waitFor(expected => document.querySelector(".composer-selection-panel .composer-selection-quote")?.textContent === expected.replace(/\s+/g, " ").trim(), "side selection details", quote);
       await visibleGeometry(".composer-selection-panel");
@@ -268,6 +280,14 @@ async function openFiles() {
 }
 
 async function openFile(file) {
+  await evaluate(() => {
+    const expand = Array.from(document.querySelectorAll("button")).find(button => /expand to full panel|展开为全面板/i.test(button.getAttribute("aria-label") || ""));
+    expand?.click();
+  });
+  await waitFor(file => {
+    const root = document.querySelector(".workspace-file-tree-frame file-tree-container")?.shadowRoot;
+    return Array.from(root?.querySelectorAll("[data-item-path]") ?? []).some(row => row.getAttribute("data-item-path") === file);
+  }, "file tree row ready after expanding", file);
   await evaluate(file => {
     const root = document.querySelector(".workspace-file-tree-frame file-tree-container")?.shadowRoot;
     const row = Array.from(root?.querySelectorAll("[data-item-path]") ?? []).find(row => row.getAttribute("data-item-path") === file);
@@ -275,10 +295,6 @@ async function openFile(file) {
     row.click();
   }, file);
   await waitFor(file => window.selectionE2E.snapshot().reads.some(read => read.path === file) && Boolean(document.querySelector(".workspace-file-resource.active .file-selection-surface")), "selection surface", file);
-  await evaluate(() => {
-    const expand = Array.from(document.querySelectorAll("button")).find(button => /expand to full panel|展开为全面板/i.test(button.getAttribute("aria-label") || ""));
-    expand?.click();
-  });
   await waitFor(() => Boolean(document.querySelector(".workspace-document-composer [data-main-conversation-composer]")), "document composer");
   await frame();
 }
