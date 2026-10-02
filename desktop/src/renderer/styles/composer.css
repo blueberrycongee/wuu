@@ -586,10 +586,10 @@
   color: var(--ink);
 }
 
-/* On reads like the other composer toggles (Fast mode): accent label and icon. */
+/* Keep worktree selection distinct from the composer's neutral controls. */
 .composer-worktree-toggle[aria-pressed="true"],
 .composer-worktree-toggle[aria-pressed="true"] .hero-project-pill-icon {
-  color: var(--interaction-accent);
+  color: var(--info);
 }
 
 .composer-worktree-toggle:disabled {
