@@ -428,6 +428,7 @@ async function click(selector) {
 }
 
 async function mouseClick(point) {
+  await focusWindow();
   const position = { x: Math.round(point.x), y: Math.round(point.y) };
   win.webContents.sendInputEvent({ type: "mouseMove", ...position });
   win.webContents.sendInputEvent({ type: "mouseDown", button: "left", clickCount: 1, ...position });
@@ -436,14 +437,23 @@ async function mouseClick(point) {
 }
 
 async function press(keyCode, modifiers = []) {
+  await focusWindow();
   win.webContents.sendInputEvent({ type: "keyDown", keyCode, modifiers });
   win.webContents.sendInputEvent({ type: "keyUp", keyCode, modifiers });
   await frame();
 }
 
+async function focusWindow() {
+  win.focus();
+  win.webContents.focus();
+  await waitFor(() => document.hasFocus(), "native input focus");
+}
+
 async function fill(selector, value) {
   await click(selector);
-  await press("A", [process.platform === "darwin" ? "meta" : "control"]);
+  // Injected Cmd+A does not invoke macOS menu accelerators; use the native edit command.
+  win.webContents.selectAll();
+  await frame();
   await win.webContents.insertText(value);
   await waitFor(({ selector, value }) => document.querySelector(selector)?.value === value, "typed input", { selector, value });
 }
