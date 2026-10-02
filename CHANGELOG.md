@@ -42,6 +42,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Refine Project Agent guidance for settled implementation decisions, coherent
+  work batches and consolidated review feedback, reusing valid verification and
+  useful running processes across follow-ups.
+
 - Show the enabled composer worktree control in theme-aware blue so it is easy
   to distinguish from the neutral off state.
 
