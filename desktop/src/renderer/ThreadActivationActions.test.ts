@@ -7,6 +7,7 @@ import type {
   Thread,
 } from "../shared/protocol";
 import {
+  captureComposerDrafts,
   createThreadSessionTab,
   emptyComposerDraft,
   initialState,
@@ -141,7 +142,7 @@ function buildActions({
     },
     getActiveThreadID: () => activeThreadID,
     getPendingViewSwitch: () => pendingViewSwitch,
-    getPrimaryComposerDraft: () => currentDraft,
+    getComposerDraftSnapshot: () => captureComposerDrafts(appState, currentDraft),
     restorePrimaryComposerDraft,
     resetSplitComposerDrafts,
     getSidebarThreads: () => sidebarThreads,

@@ -14,6 +14,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/agentcontrol"
 	"github.com/blueberrycongee/wuu/internal/agentthread"
 	"github.com/blueberrycongee/wuu/internal/capability"
+	"github.com/blueberrycongee/wuu/internal/executionenv"
 	proc "github.com/blueberrycongee/wuu/internal/process"
 	"github.com/blueberrycongee/wuu/internal/processsandbox"
 	"github.com/blueberrycongee/wuu/internal/skills"
@@ -201,9 +202,10 @@ func (s *webEvidenceState) snapshot() []webEvidenceEntry {
 // construction time. It replaces the old approach of making every
 // handler a method on *Toolkit.
 type Env struct {
-	RootDir     string
-	WorkspaceID string
-	StateDir    string
+	ExecutionEnvironment executionenv.Executor
+	RootDir              string
+	WorkspaceID          string
+	StateDir             string
 	// Unconfined is the explicit escape hatch for lifting path confinement.
 	// Default false means file tools stay inside FileScopeRoots/RootDir.
 	Unconfined     bool
@@ -224,6 +226,8 @@ type Env struct {
 	// Tools check for nil and return a clear error rather than panic.
 	SessionID  string
 	SessionDir string // absolute session artifact path for result budgeting
+	// CodeModeStateOwner can bind attached side-chat state to its parent lifetime.
+	CodeModeStateOwner string
 	// SessionsDir overrides the user-level SQLite session store location for
 	// tools that read conversations by ID. Empty keeps the canonical WUU_HOME
 	// lookup used by ordinary runtimes.

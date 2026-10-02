@@ -303,9 +303,13 @@ type Server struct {
 	projectCreateMu sync.Mutex
 	// inboxMu orders deliveries into a session so pending input is admitted
 	// in creation order.
-	inboxMu    sync.Mutex
-	sideTurnMu sync.Mutex
-	sideTurns  map[string]*sideThreadTurn
+	inboxMu                sync.Mutex
+	projectInboxMu         sync.Mutex
+	projectCapacityRetries map[string]map[string]func() bool
+	projectInboxDrains     map[string]*projectInboxDrain
+	projectInboxAfterFunc  func(time.Duration, func()) func()
+	sideTurnMu             sync.Mutex
+	sideTurns              map[string]*sideThreadTurn
 }
 
 func New(rt *runtime.Session, out io.Writer) *Server {
@@ -693,6 +697,7 @@ func (s *Server) Close() {
 	}
 	s.closeOnce.Do(func() {
 		s.closed.Store(true)
+		s.closeProjectInboxDrains()
 		s.cancelEngineAuth("")
 		if s.storageMaintenanceCancel != nil {
 			s.storageMaintenanceCancel()

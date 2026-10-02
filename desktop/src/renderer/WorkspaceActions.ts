@@ -6,9 +6,10 @@ import {
   ensureSessionTab,
   emptyComposerDraft,
   initialSplitComposerDrafts,
-  persistActiveSessionTabDraft,
+  persistComposerDrafts,
   type AppState,
   type ComposerDraftState,
+  type ComposerDraftSnapshot,
 } from "./AppState";
 import type { ContextCompositionEntry } from "./ContextCompositionCard";
 import type { InstructionFilesEntry } from "./InstructionFilesCard";
@@ -22,7 +23,7 @@ export type WorkspaceActionsDeps = {
   getAppState: () => AppState;
   setAppState: SetAppState;
   getActiveTitle: () => string;
-  getPrimaryComposerDraft: () => ComposerDraftState;
+  getComposerDraftSnapshot: () => ComposerDraftSnapshot;
   setSplitComposerDrafts: Dispatch<
     SetStateAction<Record<"primary" | "secondary", ComposerDraftState>>
   >;
@@ -65,11 +66,11 @@ export function createWorkspaceActions(
       return;
     }
     const tab = createSkillsSessionTab(state.activeContext);
-    const draft = deps.getPrimaryComposerDraft();
+    const draft = deps.getComposerDraftSnapshot();
     deps.restorePrimaryComposerDraft(emptyComposerDraft());
     deps.setSplitComposerDrafts(initialSplitComposerDrafts());
     deps.setAppState((current) => {
-      const persisted = persistActiveSessionTabDraft(current, draft);
+      const persisted = persistComposerDrafts(current, draft);
       return {
         ...persisted,
         secondaryThread: undefined,

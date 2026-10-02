@@ -4,6 +4,7 @@ import {
   buildComposerSlashCommands,
   buildSideThreadSlashCommands,
   composerSlashPrompt,
+  composerSkillPrompt,
   filterComposerSlashCommands,
 } from "./ComposerSlashCommands";
 import type { InitializeResult, SkillSummary } from "../shared/protocol";
@@ -50,6 +51,14 @@ function skill(overrides: Partial<SkillSummary> & Pick<SkillSummary, "name">): S
 }
 
 describe("composer slash commands", () => {
+  it("preserves an explicit project-relative selection without an absolute-path fallback", () => {
+    const project = { root: "/fixture/repo", path: ".agents/skills/compact/SKILL.md" };
+    const prompt = composerSkillPrompt({ name: "compact", source: "project", path: "/fixture/repo/.agents/skills/compact/SKILL.md", project }, "first turn");
+    const [header, , args] = prompt.split("\n");
+    expect(JSON.parse(header!.slice("/skill ".length))).toEqual({ name: "compact", source: "project", project });
+    expect(args).toBe("first turn");
+  });
+
   it("rebuilds built-in and side-thread commands in the active language", () => {
     setActiveLocale("en-US");
 
@@ -133,8 +142,9 @@ describe("composer slash commands", () => {
 
     expect(visible.map((command) => command.name)).toEqual(["slides"]);
     expect(visible[0]?.kind).toBe("skill");
-    expect(composerSlashPrompt(visible[0]!, "")).toBe("/slides ");
-    expect(composerSlashPrompt(visible[0]!, "quarterly roadmap")).toBe("/slides quarterly roadmap");
+    expect(composerSlashPrompt(visible[0]!, "")).toContain("slides");
+    expect(composerSlashPrompt(visible[0]!, "")).toMatch(/^\/skill /);
+    expect(composerSlashPrompt(visible[0]!, "quarterly roadmap")).toContain("quarterly roadmap");
     expect(filterComposerSlashCommands(commands, "internal-only")).toEqual([]);
   });
 

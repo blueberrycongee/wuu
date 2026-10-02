@@ -1,6 +1,7 @@
 import { localTurnTiming } from "./LocalTurnTiming";
 import { ChevronRight } from "./WuuIcons";
 import {
+  type KeyboardEvent,
   type SyntheticEvent,
   useCallback,
   useEffect,
@@ -23,7 +24,7 @@ import { layoutAssistantTurn } from "./AssistantTurnLayout";
 import { LightweightStreamingText } from "./LightweightStreamingText";
 import { useLiveTextWave } from "./LiveTextWave";
 import { streamFieldValue } from "./ThreadItemText";
-import { StreamReconnectNotice, TurnEventNotice } from "./TurnNotice";
+import { TurnEventNotice } from "./TurnNotice";
 import { turnEventForItem } from "./TurnEvents";
 import {
   clearPausedTurnElapsed,
@@ -34,7 +35,7 @@ import {
   useLiveNow,
 } from "./TurnProgress";
 import { ProcessSurface, ProcessSurfaceMascot } from "./ProcessSurface";
-import { turnProgressContent } from "./TurnViewHelpers";
+import { CONVERSATION_TURN_REVEAL_EVENT, type ConversationTurnRevealDetail, turnEndedInFailure, turnProgressContent } from "./TurnViewHelpers";
 import { collectTurnSources } from "./ToolActivityHelpers";
 import { TurnSourcesRow } from "./TurnSourcesRow";
 import {
@@ -283,6 +284,18 @@ function TurnProcessFold({
   const userToggledRef = useRef(false);
   const autoCollapsePendingRef = useRef(false);
   const previousExpanded = useRef(expanded);
+  useEffect(() => {
+    const reveal = (event: Event): void => {
+      const { turnID, itemID } = (event as CustomEvent<ConversationTurnRevealDetail>).detail;
+      if (turnID !== turn.id || !itemID || !entries.some(entry =>
+        (entry.items ?? [entry.item]).some(item => item.id === itemID))) return;
+      userToggledRef.current = true;
+      autoCollapsePendingRef.current = false;
+      setExpanded(true);
+    };
+    window.addEventListener(CONVERSATION_TURN_REVEAL_EVENT, reveal);
+    return () => window.removeEventListener(CONVERSATION_TURN_REVEAL_EVENT, reveal);
+  }, [turn.id, entries]);
   // A hidden pane does not render, so an answer handoff that happened while
   // it was cached is still pending. Apply it in this commit. The passive
   // effect below would close the fold after paint and play the height
@@ -365,7 +378,7 @@ function TurnProcessFold({
   const processLabel = turnProcessTitle(
     turn,
     elapsedMs,
-    completedDuration !== undefined,
+    completedDuration !== undefined || pausedElapsedMs !== undefined,
     collapseRequested,
     answerReady,
   );
@@ -442,6 +455,9 @@ function TurnProcessFold({
             {part}
           </span>
         ))}
+        {hasDetails ? (
+          <ChevronRight className="turn-process-chevron icon-xs" aria-hidden />
+        ) : null}
       </span>
       {hasPreview ? (
         <span
@@ -483,18 +499,22 @@ return (
       id={detailsID}
     >
       <div className="turn-process-topline">
+        {/* A direct answer has nothing to fold, so its duration is a plain
+            label rather than a control that toggles nothing. */}
         <div
-          role="button"
-          tabIndex={0}
-          aria-expanded={expanded}
-          aria-controls={`${detailsID}-body`}
-          onClick={handleToggle}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" || event.key === " ") {
-              event.preventDefault();
-              handleToggle();
-            }
-          }}
+          {...(hasDetails ? {
+            role: "button",
+            tabIndex: 0,
+            "aria-expanded": expanded,
+            "aria-controls": `${detailsID}-body`,
+            onClick: handleToggle,
+            onKeyDown: (event: KeyboardEvent<HTMLDivElement>) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                handleToggle();
+              }
+            },
+          } : {})}
           className="turn-process-toggle"
         >
           {toggleContent}
@@ -585,6 +605,7 @@ function EntryRenderer({
     return (
       <ProcessSurface
         processItems={entry.items ?? [item]}
+        cwd={cwd}
         streaming={streaming}
         active={activeGray}
         provider={turn.model_provider}
@@ -648,11 +669,6 @@ function EntryRenderer({
       />
     );
   }
-  if (item.type === "stream_reconnect") {
-    // The reconnect row renders straight from the item (retry counters and
-    // countdown live on it), not through the generic turn-event projection.
-    return <StreamReconnectNotice item={item} />;
-  }
   if (item.type === "context_compaction" || item.type === "error") {
     const event = turnEventForItem(item);
     return event ? <TurnEventNotice event={event} /> : null;
@@ -691,42 +707,16 @@ function ReasoningFold({
   }${streaming ? " is-streaming" : ""}`;
   const waveRef = useLiveTextWave<HTMLSpanElement>(Boolean(activeGray));
   const [open, setOpen] = useState(false);
-  const reasoningScroll = useAutoFollowScrollContainer();
+  const reasoningScroll = useAutoFollowScrollContainer({ open, initialAutoFollow: streaming });
 
   const handleReasoningStreamFrame = useCallback((): void => {
     onStreamFrame();
     reasoningScroll.scheduleScrollToBottom();
   }, [onStreamFrame, reasoningScroll]);
 
-  // When the user opens this fold, land at the latest reasoning. After
-  // that, keep following only while the user stays near the bottom.
   const handleToggle = useCallback((event: SyntheticEvent<HTMLDetailsElement>) => {
-    const details = event.currentTarget;
-    const nextOpen = details.open;
-    setOpen(nextOpen);
-    if (!nextOpen) return;
-    const body = details.querySelector(
-      ".turn-reasoning-body",
-    ) as HTMLElement | null;
-    if (!body) return;
-    let settled = false;
-    const snapToBottom = (transitionEvent?: Event) => {
-      const propertyName = (transitionEvent as TransitionEvent | undefined)
-        ?.propertyName;
-      if (propertyName && propertyName !== "grid-template-rows") {
-        return;
-      }
-      if (settled) return;
-      settled = true;
-      body.removeEventListener("transitionend", snapToBottom);
-      reasoningScroll.scrollToBottom({ force: true, revealScrollbar: true });
-    };
-    body.addEventListener("transitionend", snapToBottom);
-    // Fallback when transitionend never fires (reduced motion, or the
-    // grid already settled before the listener attached). The body's
-    // grid-template-rows transition runs on --motion-slow.
-    window.setTimeout(snapToBottom, motionDurationMs("--motion-slow", 280));
-  }, [reasoningScroll]);
+    setOpen(event.currentTarget.open);
+  }, []);
   return (
     <details
       className="turn-reasoning-fold"
@@ -790,6 +780,11 @@ function turnProcessTitle(
       ? taskFinishedLabel(elapsedMs)
       : translate("task.status.completed");
   }
+  // The failure card below says what went wrong; the fold header keeps the
+  // duration a finished turn shows.
+  if (turnEndedInFailure(turn)) {
+    return hasKnownDuration ? taskFinishedLabel(elapsedMs) : translate("messageFlow.activityFailed");
+  }
   if (turn.status === "interrupted") return translate("turn.orchestrationPaused");
   if (turn.status === "completed") {
     if (!hasKnownDuration) return translate("task.status.completed");
@@ -812,7 +807,7 @@ function turnProcessMetaParts(
   const parts: string[] = [];
   if (turn.status === "in_progress" && !answerReady) {
     parts.push(formatDuration(elapsedMs));
-  } else if (turn.status === "interrupted" && showPausedElapsed) {
+  } else if (turn.status === "interrupted" && showPausedElapsed && !turnEndedInFailure(turn)) {
     parts.push(formatDuration(elapsedMs));
   }
   return parts;

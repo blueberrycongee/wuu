@@ -9,7 +9,7 @@
   grid-template-rows: var(--window-titlebar-height) minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
-  border-left: 1px solid var(--hairline-strong);
+  border-left: 1px solid var(--hairline-soft);
   background: var(--paper);
   color: var(--ink);
 }
@@ -39,8 +39,7 @@
 
 .side-thread-panel__resizer::before {
   position: absolute;
-  top: 12px;
-  bottom: 12px;
+  inset: 0;
   left: 50%;
   width: 1px;
   border-radius: var(--radius-pill);
@@ -56,8 +55,8 @@
 .side-thread-panel__resizer:hover::before,
 .side-thread-panel__resizer:focus-visible::before,
 .resizing-side-thread .side-thread-panel__resizer::before {
-  background: var(--sidebar-resizer-hover-bg, rgba(31, 35, 40, 0.16));
-  box-shadow: 0 0 0 1px var(--sidebar-resizer-hover-ring, rgba(31, 35, 40, 0.08));
+  background: var(--sidebar-resizer-hover-bg);
+  box-shadow: 0 0 0 1px var(--sidebar-resizer-hover-ring);
 }
 
 .resizing-side-thread,
@@ -72,13 +71,15 @@
   }
 }
 
+/* The header shares the conversation titlebar's row and axes: the title
+ * starts on the pane inset and the close glyph ends on it. */
 .side-thread-panel__header {
   display: flex;
+  min-width: 0;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding: 0 12px;
-  box-shadow: inset 0 -1px 0 var(--hairline-soft);
+  gap: var(--control-toolbar-gap);
+  padding: 0 var(--control-toolbar-inset) 0 var(--window-titlebar-padding-inline);
   /* The panel spans the titlebar row, so this header is the only drag
    * strip on the right of the conversation pane. Match .titlebar and
    * .workspace-panel-tabbar; interactive children opt out below. */
@@ -90,50 +91,33 @@
   -webkit-app-region: no-drag;
 }
 
-/* When the workspace right panel is closed, this header sits on the
- * window's right edge and must clear the Windows controls overlay. */
+/* With the workspace right panel closed, this header runs along the
+ * window's right edge and clears the OS window controls like .titlebar:
+ * the Windows controls overlay, or Linux's frameless caption buttons. */
 .app-shell:not(.right-panel-open) .side-thread-panel__header {
-  padding-right: max(12px, var(--window-controls-inset-right));
+  padding-right: max(var(--control-toolbar-inset), var(--window-controls-inset-right));
 }
 
-.side-thread-panel__heading {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
+:root[data-platform="linux"] .app-shell:not(.right-panel-open) .side-thread-panel__header {
+  padding-right: var(--linux-caption-width);
 }
 
+/* The side panel takes the window's top-right corner from the conversation
+ * titlebar, which then keeps its neutral end padding. */
+.conversation-pane.side-thread-panel-visible .titlebar {
+  padding-right: var(--control-toolbar-inset);
+}
+
+/* Same role and ink as the conversation title beside it. */
 .side-thread-panel__title {
-  font-size: var(--font-ui);
-  font-weight: 600;
-  letter-spacing: 0.01em;
-  color: var(--ink);
-}
-
-.side-thread-panel__close {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  padding: 0;
-  color: var(--ink-muted, var(--ink));
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: var(--radius-xs);
-  cursor: pointer;
-  transition:
-    background-color var(--motion-fast) var(--ease-out),
-    border-color var(--motion-fast) var(--ease-out),
-    color var(--motion-fast) var(--ease-out);
-}
-
-.side-thread-panel__close:hover,
-.side-thread-panel__close:focus-visible {
-  background: var(--surface-2, rgba(31, 35, 40, 0.04));
-  border-color: var(--hairline-strong);
-  color: var(--ink);
-  outline: none;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--ink-strong);
+  font-size: var(--font-body);
+  font-weight: var(--weight-medium);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .side-thread-panel__body {
@@ -182,15 +166,6 @@
   color: var(--ink);
   font-size: calc(var(--font-ui) + 2px);
   font-weight: var(--weight-medium);
-}
-
-.side-thread-panel__error {
-  padding: 8px 12px;
-  font-size: var(--font-sm);
-  line-height: 1.5;
-  color: var(--turn-warning-text, #b1271b);
-  background: var(--surface-2, rgba(177, 39, 27, 0.05));
-  border-top: 1px solid var(--hairline-soft);
 }
 
 .side-thread-panel__footer {

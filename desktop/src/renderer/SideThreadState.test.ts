@@ -11,7 +11,8 @@ import {
   createEmptySideThreadEntry,
   createInitialSideThreadStore,
   ensureSideThreadEntry,
-  reduceSideThreadStore
+  reduceSideThreadStore,
+  sideThreadRequestError
 } from "./SideThreadState";
 
 function summary(overrides: Partial<SideThreadSummary> = {}): SideThreadSummary {
@@ -519,6 +520,30 @@ describe("SideThreadState", () => {
       });
       expect(next.byThread["main-1"]?.lastError).toBe("rate limited");
       expect(next.byThread["main-1"]?.streaming).toBe(false);
+      // The failed reply shows the error, so the composer does not repeat it.
+      expect(sideThreadRequestError(next.byThread["main-1"]!)).toBeUndefined();
+    });
+
+    it("surfaces an error that no reply shows", () => {
+      const store = reduceSideThreadStore(createInitialSideThreadStore(), {
+        type: "applyEvent",
+        event: {
+          type: "error",
+          side_thread_id: "side-1",
+          main_thread_id: "main-1",
+          revision: 1,
+          message_id: "m-missing",
+          error_message: "rate limited"
+        }
+      });
+      expect(sideThreadRequestError(store.byThread["main-1"]!)).toBe("rate limited");
+
+      const sendFailed = reduceSideThreadStore(createInitialSideThreadStore(), {
+        type: "setError",
+        mainThreadId: "main-1",
+        error: "provider unavailable"
+      });
+      expect(sideThreadRequestError(sendFailed.byThread["main-1"]!)).toBe("provider unavailable");
     });
 
     it("keeps the provider error when the failed status arrives last", () => {

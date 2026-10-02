@@ -176,6 +176,13 @@ func (s *Server) processManagerForThread(threadID string) *process.Manager {
 			manager = th.execRuntime.ProcessManager
 		}
 		th.mu.Unlock()
+		if manager == nil && s.rt != nil {
+			var err error
+			manager, err = s.rt.RemoteProcesses(threadID)
+			if err != nil {
+				return nil
+			}
+		}
 		if manager != nil {
 			return manager
 		}

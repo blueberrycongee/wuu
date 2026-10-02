@@ -239,6 +239,9 @@ func (s *Server) handleThreadStart(req Request) error {
 	} else {
 		id = "ephemeral-" + id
 	}
+	if err := s.rt.PinExecutionEnvironment(id, ""); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
 	history := make([]providers.ChatMessage, 0, 1)
 	if prompt := strings.TrimSpace(s.rt.StreamRunner.SystemPrompt); prompt != "" {
 		history = append(history, providers.ChatMessage{Role: "system", Content: prompt})
@@ -496,7 +499,10 @@ func (s *Server) loadPersistedThreadState(id string, now time.Time) (*threadStat
 		return nil, err
 	}
 	threadCWD := firstNonEmpty(loaded.metadata.CWD, s.rt.RootDir)
-	th := newThreadState(id, loaded.history, s.rt.ProviderName, s.rt.Model, threadCWD, true, now)
+	// The persisted display projection below owns turns; do not build and
+	// discard a second projection from the provider history first.
+	th := newThreadState(id, nil, s.rt.ProviderName, s.rt.Model, threadCWD, true, now)
+	th.History = cloneHistory(loaded.history)
 	th.historyHeadSeq = loaded.baselineSeq
 	th.Turns = turnsFromPersistedHistory(id, loaded.displayHistory, now, s.resolveParticipantSummary)
 	s.restorePluginToolLabels(th.Turns)
@@ -511,15 +517,16 @@ func (s *Server) loadPersistedThreadState(id string, now time.Time) (*threadStat
 }
 
 type persistedThreadSnapshot struct {
-	metadata         session.Session
-	history          []providers.ChatMessage
-	repairedHistory  []providers.ChatMessage
-	repairNeeded     bool
-	baselineSeq      int
-	displayHistory   []persistedMessage
-	rawHistory       []persistedMessage
-	tokenMetas       []persistedMessage
-	pluginGeneration session.PluginGenerationSnapshot
+	metadata           session.Session
+	workspaceRelocated bool
+	history            []providers.ChatMessage
+	repairedHistory    []providers.ChatMessage
+	repairNeeded       bool
+	baselineSeq        int
+	displayHistory     []persistedMessage
+	rawHistory         []persistedMessage
+	tokenMetas         []persistedMessage
+	pluginGeneration   session.PluginGenerationSnapshot
 }
 
 // loadPersistedThreadSnapshot is deliberately read-only. Loading or resuming a
@@ -564,19 +571,25 @@ func (s *Server) loadPersistedThreadSnapshot(id string) (persistedThreadSnapshot
 	}
 	rawHistory := append([]persistedMessage(nil), displayHistory...)
 	displayHistory = displayHistoryAcrossProviderCheckpoint(displayHistory, providerRecords)
-	tokenMetas, err := loadMetaMessages(s.rt.SessionDir, id)
-	if err != nil {
-		return persistedThreadSnapshot{}, err
+	// Usage belongs to the active physical transcript, including records a
+	// provider checkpoint omits. Reuse that read before display normalization.
+	tokenMetas := make([]persistedMessage, 0)
+	for _, rec := range rawHistory {
+		if strings.EqualFold(strings.TrimSpace(rec.Role), "meta") {
+			tokenMetas = append(tokenMetas, rec)
+		}
 	}
+	relocated := relocatedSessionMetadata(metadata, s.registeredWorkspaces())
 	loaded := persistedThreadSnapshot{
-		metadata:         metadata,
-		repairedHistory:  repaired,
-		repairNeeded:     !reflect.DeepEqual(repaired, history),
-		baselineSeq:      historyHeadSeq,
-		displayHistory:   displayHistory,
-		rawHistory:       rawHistory,
-		tokenMetas:       tokenMetas,
-		pluginGeneration: pluginGeneration,
+		metadata:           relocated,
+		workspaceRelocated: relocated.CWD != metadata.CWD || relocated.WorktreeBaseRepo != metadata.WorktreeBaseRepo,
+		repairedHistory:    repaired,
+		repairNeeded:       !reflect.DeepEqual(repaired, history),
+		baselineSeq:        historyHeadSeq,
+		displayHistory:     displayHistory,
+		rawHistory:         rawHistory,
+		tokenMetas:         tokenMetas,
+		pluginGeneration:   pluginGeneration,
 	}
 	systemPrompt := s.rt.StreamRunner.SystemPrompt
 	// The active runtime prompt is configuration, not conversation data. Use it
@@ -747,6 +760,11 @@ func (s *Server) handleThreadFork(req Request) error {
 		_, _ = session.Delete(s.rt.SessionDir, sess.ID)
 		cleanupWorktree()
 		return s.writeResponse(req.ID, nil, stateDirErr)
+	}
+	if err := s.rt.PinExecutionEnvironment(sess.ID, source.thread.ID); err != nil {
+		_, _ = session.Delete(s.rt.SessionDir, sess.ID)
+		cleanupWorktree()
+		return s.writeResponse(req.ID, nil, err)
 	}
 	if err := preserveForkArtifacts(stateDir, source.thread.ID, sess.ID, history); err != nil {
 		_, _ = session.Delete(s.rt.SessionDir, sess.ID)
@@ -969,7 +987,7 @@ func (s *Server) loadForkSourceThread(id string, now time.Time) (forkSourceThrea
 	if metadata, ok, err := session.Find(s.rt.SessionDir, id); err != nil {
 		return forkSourceThread{}, err
 	} else if ok {
-		applySessionMetadata(th, metadata)
+		applySessionMetadata(th, relocatedSessionMetadata(metadata, s.registeredWorkspaces()))
 	}
 	th.mu.Lock()
 	thread := th.snapshotLocked()
@@ -1005,6 +1023,10 @@ func (s *Server) handleThreadList(req Request) error {
 	sessions, err := session.ListForCWD(s.rt.SessionDir, targetCWD, targetWorkspaceID, 0)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
+	}
+	registered := s.registeredWorkspaces()
+	for i := range sessions {
+		sessions[i] = relocatedSessionMetadata(sessions[i], registered)
 	}
 	s.refreshListedSessionMetadata(sessions)
 	// Agent worker sessions are persisted alongside regular conversations, but
@@ -1099,6 +1121,10 @@ func (s *Server) handleThreadListAll(req Request) error {
 	}
 	agentThreadIDs := make(map[string]struct{})
 	rootIDs, err := s.rootThreadIDs()
+	registered := s.registeredWorkspaces()
+	for i := range sessions {
+		sessions[i] = relocatedSessionMetadata(sessions[i], registered)
+	}
 	s.refreshListedSessionMetadata(sessions)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
@@ -1176,6 +1202,10 @@ func (s *Server) handleThreadListArchived(req Request) error {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	entries := make(map[string]threadListEntry, len(sessions))
+	registered := s.registeredWorkspaces()
+	for i := range sessions {
+		sessions[i] = relocatedSessionMetadata(sessions[i], registered)
+	}
 	s.refreshListedSessionMetadata(sessions)
 	for _, sess := range sessions {
 		if sess.Visibility == pluginhost.SessionVisibilityPlugin {
@@ -2140,6 +2170,7 @@ func (s *Server) mostRecentVisibleThreadID() (string, error) {
 }
 
 func (s *Server) threadAfterMetadataUpdate(metadata session.Session) (Thread, error) {
+	metadata = relocatedSessionMetadata(metadata, s.registeredWorkspaces())
 	control, err := s.readThreadSessionControl(metadata.ID)
 	if err != nil {
 		return Thread{}, err

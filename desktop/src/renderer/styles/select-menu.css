@@ -274,7 +274,7 @@
 
 .select-menu-group-label {
   padding: var(--menu-inset) var(--menu-item-padding-inline) var(--space-1);
-  color: var(--codex-menu-label-text);
+  color: var(--ink-tertiary);
   font-size: var(--font-xs);
   font-weight: var(--weight-medium);
   line-height: var(--line-ui);
@@ -361,7 +361,7 @@
 
 .select-menu-empty {
   padding: var(--compact-padding-block) var(--menu-item-padding-inline);
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-size: var(--font-sm);
   line-height: 1.38;
 }

@@ -246,10 +246,24 @@ describe("ConversationTitleContent presentation boundary", () => {
     input.dispatchEvent(new Event("input", { bubbles: true }));
   }
 
+  function openTitleEditor(): void {
+    const button = container.querySelector<HTMLButtonElement>(".conversation-title-rename");
+    act(() => button?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, detail: 2 })));
+  }
+
+  it("requires a double click for pointer rename while keeping keyboard activation", () => {
+    renderTitle(vi.fn());
+    const button = container.querySelector<HTMLButtonElement>(".conversation-title-rename")!;
+    act(() => button.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 })));
+    expect(container.querySelector(".conversation-title-edit")).toBeNull();
+    act(() => button.click());
+    expect(container.querySelector(".conversation-title-edit")).not.toBeNull();
+  });
+
   it("renames the conversation from the title", () => {
     const onRenameTitle = vi.fn();
     renderTitle(onRenameTitle);
-    act(() => container.querySelector<HTMLButtonElement>(".conversation-title-rename")?.click());
+    openTitleEditor();
     const input = container.querySelector<HTMLInputElement>(".conversation-title-edit");
     expect(input?.value).toBe("新建对话");
     act(() => {
@@ -264,7 +278,7 @@ describe("ConversationTitleContent presentation boundary", () => {
   it("leaves the title unchanged on Escape, a blank name, or the same text", () => {
     const onRenameTitle = vi.fn();
     renderTitle(onRenameTitle, "发布说明");
-    const open = () => act(() => container.querySelector<HTMLButtonElement>(".conversation-title-rename")?.click());
+    const open = openTitleEditor;
     open();
     let input = container.querySelector<HTMLInputElement>(".conversation-title-edit")!;
     act(() => {
@@ -294,7 +308,7 @@ describe("ConversationTitleContent presentation boundary", () => {
   it("does not commit an in-progress edit when Enter is composing", () => {
     const onRenameTitle = vi.fn();
     renderTitle(onRenameTitle);
-    act(() => container.querySelector<HTMLButtonElement>(".conversation-title-rename")?.click());
+    openTitleEditor();
     const input = container.querySelector<HTMLInputElement>(".conversation-title-edit")!;
     act(() => {
       setInputValue(input, "发布说明");
@@ -307,7 +321,7 @@ describe("ConversationTitleContent presentation boundary", () => {
   it("drops an open edit when the conversation changes", () => {
     const onRenameTitle = vi.fn();
     const props = renderTitle(onRenameTitle, "第一会话题", "one");
-    act(() => container.querySelector<HTMLButtonElement>(".conversation-title-rename")?.click());
+    openTitleEditor();
     act(() => {
       setInputValue(container.querySelector<HTMLInputElement>(".conversation-title-edit")!, "未保存");
     });

@@ -193,6 +193,16 @@ function installWuuApi(): void {
       truncated: false,
       text: "# Artifact\n",
     }),
+    browserSurface: vi.fn().mockResolvedValue(null),
+    browserCommand: vi.fn(async (params: Parameters<NonNullable<WuuDesktopApi["browserCommand"]>>[0]) => ({
+      workdir: params.workdir, tabID: params.tabID, url: params.url,
+      title: "Browser fixture", loading: false, canGoBack: false, canGoForward: false,
+    })),
+    reportBrowserBounds: vi.fn(),
+    suppressBrowserOverlay: vi.fn(),
+    onBrowserSurface: vi.fn(() => () => {}),
+    onBrowserUserInput: vi.fn(() => () => {}),
+    onBrowserTabAdopted: vi.fn(() => () => {}),
     writeWorkspaceFile: vi.fn(),
     revealWorkspaceItem: vi.fn().mockResolvedValue(undefined),
     onServerEvent: vi.fn((handler: (event: ServerEvent) => void) => {
@@ -297,6 +307,77 @@ describe("workspace file tabs", () => {
     expect(container.querySelector(".project-panel")).toBeNull();
     expect(container.querySelector(".workspace-tool-tab.active")?.textContent).toContain("README.md");
     expect(container.querySelector(".workspace-right-panel")?.textContent).not.toContain("Project Beta");
+  });
+
+  it("returns focus after closing the browser without scrolling back to its historical link", async () => {
+    const thread = completedThread();
+    thread.turns[0].items[1].text = "Open [reference](https://example.com/history).";
+    vi.mocked(window.wuu.listThreads).mockResolvedValue({ threads: [thread] });
+    vi.mocked(window.wuu.resumeThread).mockResolvedValue({ thread });
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<App />);
+    });
+    await flushAsync();
+    const link = container.querySelector<HTMLAnchorElement>('a[href="https://example.com/history"]')!;
+    expect(link).not.toBeNull();
+    await act(async () => {
+      link.focus();
+      link.click();
+    });
+    await flushAsync();
+    expect(container.querySelector(".workspace-browser-panel")).not.toBeNull();
+    const viewport = container.querySelector<HTMLElement>(".conversation-pane > .scroll-region")!;
+    await act(async () => {
+      container.querySelector<HTMLInputElement>(".workspace-browser-panel input")!.focus();
+      viewport.dispatchEvent(new WheelEvent("wheel", { deltaY: 900, bubbles: true }));
+      viewport.scrollTop = 1800;
+      viewport.dispatchEvent(new Event("scroll", { bubbles: true }));
+    });
+    const restoreFocus = vi.spyOn(link, "focus");
+    const close = container.querySelector<HTMLButtonElement>(".workspace-panel-close")!;
+    await act(async () => {
+      close.focus();
+      close.click();
+    });
+    await flushAsync();
+    expect(document.activeElement).toBe(link);
+    expect(restoreFocus).toHaveBeenCalledWith({ preventScroll: true });
+    // jsdom has no layout; native Electron coverage checks the reading geometry.
+  });
+
+  it("does not restore a reused conversation control after its owning thread changes", async () => {
+    const first = completedThread();
+    const second = { ...completedThread(), id: "other-thread", preview: "Other conversation" };
+    const threads = [first, second];
+    vi.mocked(window.wuu.listThreads).mockResolvedValue({ threads });
+    vi.mocked(window.wuu.resumeThread).mockImplementation(async (id) => ({ thread: threads.find((thread) => thread.id === id)! }));
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<App />);
+    });
+    await flushAsync();
+    const composer = container.querySelector<HTMLTextAreaElement>(".composer textarea")!;
+    expect(composer).not.toBeNull();
+    await act(async () => {
+      composer.focus();
+      container.querySelector<HTMLButtonElement>(".rich-file-link")!.click();
+    });
+    await flushAsync();
+    const close = container.querySelector<HTMLButtonElement>(".workspace-panel-close")!;
+    await act(async () => close.focus());
+    const select = Array.from(container.querySelectorAll<HTMLButtonElement>(".sidebar button"))
+      .find((entry) => entry.textContent === "Other conversation")!;
+    expect(select).toBeDefined();
+    await act(async () => select.click());
+    await flushAsync();
+    expect(container.querySelector(".conversation-title-heading h1")?.textContent).toBe("Other conversation");
+    expect(composer.isConnected).toBe(true);
+    const restoreFocus = vi.spyOn(composer, "focus");
+    await act(async () => close.click());
+    await flushAsync();
+    expect(restoreFocus).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(container.querySelector(".conversation-title-heading h1"));
   });
 
   async function openSelectionDocument(): Promise<void> {

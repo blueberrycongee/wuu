@@ -18,6 +18,7 @@ func Handler() pluginapi.Handler {
 			RequiredServices: pluginapi.RequireHostServices(pluginapi.KernelUserQuestionOfferService),
 			Tools: []pluginapi.Tool{{
 				ID:          "ask_user",
+				DirectOnly:  true,
 				Description: "Offer the user one or more focused questions without pausing the current turn. Prefer clear choices. A later user reply, if any, arrives as ordinary steering input rather than this tool result.",
 				InputSchema: questionInputSchema(),
 				Display:     &pluginapi.ToolDisplay{Kind: "ask-user", Text: "Asked the user", Capability: "interaction"},

@@ -82,12 +82,15 @@ export function useSessionTailSpace({
     syncLayout();
   }, [syncLayout, viewportRef]);
 
-  const ensureRange = useCallback((targetScrollTop: number) => {
+  const ensureRange = useCallback((targetScrollTop: number, precedingLayoutOffset = 0) => {
     const node = viewportRef.current;
     if (!enabled || !node) return;
     // Track the placement, including an earlier receipt collapsing. Keeping
     // the old extent after its target moved would leave extra offscreen space
     // and delay resuming follow. This only runs while placement owns scrolling.
+    // Reflow before the submitted query is not new response output. Rebase
+    // its growth baseline with the extent, including the saved thread entry.
+    reservedNaturalHeight.current = Math.max(0, reservedNaturalHeight.current + precedingLayoutOffset);
     extent.current = targetScrollTop + node.clientHeight;
     syncLayout();
   }, [enabled, syncLayout, viewportRef]);

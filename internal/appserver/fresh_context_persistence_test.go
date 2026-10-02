@@ -8,15 +8,101 @@ import (
 	"net/http/httptest"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/agent"
+	"github.com/blueberrycongee/wuu/internal/hooks"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/providers/openai"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 	sessionstore "github.com/blueberrycongee/wuu/internal/session"
 )
+
+func TestThreadCompactHooksPreserveRejectedCheckpoint(t *testing.T) {
+	for _, strategy := range []string{"summary", "fresh-window"} {
+		for _, blockedEvent := range []hooks.Event{hooks.PreCompact, hooks.PostCompact} {
+			t.Run(strategy+"/"+string(blockedEvent), func(t *testing.T) {
+				client := &fakeClient{response: providers.ChatResponse{Content: "synthetic summary"}}
+				rt := newTestRuntime(t, client)
+				rt.StreamRunner.CompactKeepRecentTokens = 1
+				if strategy == "fresh-window" {
+					rt.StreamRunner.CompactionRegistry = &agent.CompactionRegistry{Default: agent.DefaultContextWindowProvider{}}
+				}
+				dispatcher := hooks.NewDispatcher(hooks.NewRegistry(map[hooks.Event][]hooks.HookConfig{
+					blockedEvent: {{Type: "command", Command: `echo '{"continue":false,"reason":"checkpoint must remain active"}'`, Timeout: 3}},
+				}))
+				var before, after atomic.Int32
+				rt.StreamRunner.BeforeCompact = func(ctx context.Context, reason agent.CompactReason) error {
+					before.Add(1)
+					_, err := dispatcher.Dispatch(ctx, hooks.PreCompact, &hooks.Input{CWD: rt.RootDir, CompactReason: string(reason)})
+					return err
+				}
+				rt.StreamRunner.AfterCompact = func(ctx context.Context, reason agent.CompactReason, compactErr error) error {
+					after.Add(1)
+					input := &hooks.Input{CWD: rt.RootDir, CompactReason: string(reason)}
+					if compactErr != nil {
+						input.Error = compactErr.Error()
+					}
+					_, err := dispatcher.Dispatch(ctx, hooks.PostCompact, input)
+					return err
+				}
+				out := &lockedBuffer{}
+				srv := New(rt, out)
+				if err := srv.handleLine(context.Background(), []byte(`{"id":"start","method":"thread/start"}`)); err != nil {
+					t.Fatal(err)
+				}
+				threadID := remarshal[ThreadStartResult](t, responseByID(t, parseOutput(t, out.String()), "start")["result"]).Thread.ID
+				history := []providers.ChatMessage{
+					{Role: "user", Content: "Keep the original requirement active until the checkpoint hook approves."},
+					{Role: "assistant", Content: strings.Repeat("completed progress ", 2000)},
+					{Role: "user", Content: "continue the task"},
+					{Role: "assistant", Content: strings.Repeat("more progress ", 1000)},
+				}
+				if err := appendChatMessages(rt.SessionDir, threadID, history); err != nil {
+					t.Fatal(err)
+				}
+				original, err := loadChatMessages(rt.SessionDir, threadID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				raw, err := json.Marshal(map[string]any{
+					"id": "compact", "method": MethodThreadCompactStart,
+					"params": ThreadCompactStartParams{ThreadID: threadID},
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := srv.handleLine(context.Background(), raw); err != nil {
+					t.Fatal(err)
+				}
+				terminalMethod := NotificationTurnCompleted
+				if strategy == "fresh-window" {
+					terminalMethod = NotificationTurnError
+				}
+				waitForMethod(t, out, terminalMethod)
+				persisted, err := loadChatMessages(rt.SessionDir, threadID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !reflect.DeepEqual(persisted, original) {
+					t.Errorf("blocking %s changed the durable active checkpoint: messages=%d, want %d", blockedEvent, len(persisted), len(original))
+				}
+				wantAfter := int32(0)
+				if blockedEvent == hooks.PostCompact {
+					wantAfter = 1
+				}
+				if before.Load() != 1 || after.Load() != wantAfter {
+					t.Errorf("compact callbacks: pre=%d post=%d, want 1/%d", before.Load(), after.Load(), wantAfter)
+				}
+				if blockedEvent == hooks.PreCompact || strategy == "fresh-window" {
+					assertFakeClientRequestCount(t, client, 0)
+				}
+			})
+		}
+	}
+}
 
 func TestFreshContextRecoverySurvivesTurnAndReload(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})

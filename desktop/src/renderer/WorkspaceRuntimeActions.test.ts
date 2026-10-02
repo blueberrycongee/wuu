@@ -8,6 +8,7 @@ import type {
 } from "../shared/protocol";
 import {
   createDraftSessionTab,
+  captureComposerDrafts,
   createThreadSessionTab,
   emptyComposerDraft,
   initialState,
@@ -16,7 +17,11 @@ import {
   type ComposerDraftState,
   type SessionTab,
 } from "./AppState";
+import { confirmAction } from "./ConfirmDialog";
 import { createWorkspaceRuntimeActions } from "./WorkspaceRuntimeActions";
+
+// The removal flow awaits the in-app confirmation; each test answers it.
+vi.mock("./ConfirmDialog", () => ({ confirmAction: vi.fn() }));
 
 function projectContext(id = "project-1"): RuntimeContext {
   return { kind: "project", project_id: id, cwd: `/tmp/${id}` };
@@ -64,10 +69,12 @@ function buildActions({
   initial,
   draft = emptyComposerDraft(),
   loadRuntime = vi.fn(),
+  splitDrafts,
 }: {
   initial: AppState;
   draft?: ComposerDraftState;
   loadRuntime?: ReturnType<typeof vi.fn>;
+  splitDrafts?: Record<"primary" | "secondary", ComposerDraftState>;
 }) {
   let appState = initial;
   let currentDraft = draft;
@@ -91,7 +98,7 @@ function buildActions({
     setAppState: (update) => {
       appState = typeof update === "function" ? update(appState) : update;
     },
-    getPrimaryComposerDraft: () => currentDraft,
+    getComposerDraftSnapshot: () => captureComposerDrafts(appState, appState.secondaryThread && splitDrafts ? splitDrafts : currentDraft),
     restorePrimaryComposerDraft,
     clearPrimaryComposerDraft,
     restoreLoadedRuntimeComposerDraft: vi.fn(),
@@ -120,10 +127,12 @@ afterEach(() => {
 });
 
 describe("createWorkspaceRuntimeActions", () => {
-  it("preserves an unsent draft when the project workspace plus opens a session", async () => {
+  it.each([false, true])("preserves unsent drafts when the workspace plus opens a session (split=%s)", async (split) => {
     const context = projectContext();
     const source = thread();
     const sourceTab = createThreadSessionTab(source, context);
+    const secondary = thread("secondary");
+    const secondaryTab = createThreadSessionTab(secondary, context);
     const harness = buildActions({
       initial: {
         ...initialState,
@@ -131,10 +140,13 @@ describe("createWorkspaceRuntimeActions", () => {
         activeProjectId: "project-1",
         projects: [project()],
         thread: source,
-        sessionTabs: [sourceTab],
-        activeSessionTabID: sourceTab.id,
+        secondaryThread: split ? secondary : undefined,
+        activePane: split ? "secondary" : "primary",
+        sessionTabs: split ? [sourceTab, secondaryTab] : [sourceTab],
+        activeSessionTabID: split ? secondaryTab.id : sourceTab.id,
       },
-      draft: { prompt: "keep this draft", images: [], files: [] },
+      draft: { prompt: split ? "stale global" : "keep this draft", images: [], files: [] },
+      splitDrafts: split ? { primary: { prompt: "keep this draft", images: [], files: [] }, secondary: { prompt: "secondary edit", images: [], files: [] } } : undefined,
     });
 
     await harness.actions.startNewThreadInWorkspace("project-1");
@@ -143,6 +155,7 @@ describe("createWorkspaceRuntimeActions", () => {
     expect(sessionTabPrompt(harness.getAppState().sessionTabs, sourceTab.id)).toBe(
       "keep this draft",
     );
+    if (split) expect(sessionTabPrompt(harness.getAppState().sessionTabs, secondaryTab.id)).toBe("secondary edit");
   });
 
   it("focuses the existing project draft instead of adding another one", async () => {
@@ -478,7 +491,7 @@ describe("createWorkspaceRuntimeActions", () => {
       configurable: true,
       value: { removeProject } as Partial<WuuDesktopApi>,
     });
-    vi.spyOn(window, "confirm").mockReturnValue(false);
+    vi.mocked(confirmAction).mockResolvedValue(false);
     const harness = buildActions({
       initial: {
         ...initialState,
@@ -508,7 +521,7 @@ describe("createWorkspaceRuntimeActions", () => {
       configurable: true,
       value: { removeProject } as Partial<WuuDesktopApi>,
     });
-    vi.spyOn(window, "confirm").mockReturnValue(true);
+    vi.mocked(confirmAction).mockResolvedValue(true);
     const loadRuntime = vi.fn();
     const harness = buildActions({
       initial: {
@@ -556,7 +569,7 @@ describe("createWorkspaceRuntimeActions", () => {
       configurable: true,
       value: { removeProject } as Partial<WuuDesktopApi>,
     });
-    vi.spyOn(window, "confirm").mockReturnValue(true);
+    vi.mocked(confirmAction).mockResolvedValue(true);
     const harness = buildActions({
       initial: {
         ...initialState,

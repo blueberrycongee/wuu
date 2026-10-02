@@ -230,6 +230,7 @@ const api: WuuDesktopApi = {
     permissionMode?: string,
     threadId?: string,
     speed?: string,
+    targetContext?: RuntimeContext,
   ) =>
     ipcRenderer.invoke(
       "wuu:config-model-update",
@@ -241,6 +242,7 @@ const api: WuuDesktopApi = {
       permissionMode,
       threadId,
       speed,
+      targetContext,
     ),
   removeProvider: (
     provider: string,
@@ -271,7 +273,7 @@ const api: WuuDesktopApi = {
   getPluginStorage: (params) => ipcRenderer.invoke("wuu:plugin-storage-get", params),
   setPluginStorage: (params) => ipcRenderer.invoke("wuu:plugin-storage-set", params),
   requestPluginRuntime: (params) => ipcRenderer.invoke("wuu:plugin-runtime-request", params),
-  listSkills: () => ipcRenderer.invoke("wuu:skill-list"),
+  listSkills: (params) => ipcRenderer.invoke("wuu:skill-list", params),
   readSkillContent: (params) => ipcRenderer.invoke("wuu:skill-content", params),
   returnManagedSession: (params) => ipcRenderer.invoke("wuu:session-control-return", params),
   takeOverManagedSession: (params) => ipcRenderer.invoke("wuu:session-control-take", params),
@@ -407,8 +409,8 @@ const api: WuuDesktopApi = {
     ipcRenderer.invoke("wuu:thread-organization-update", threadId, folderId),
   archiveThread: (threadId: string, archived: boolean, force?: boolean) =>
     ipcRenderer.invoke("wuu:thread-archive", threadId, archived, force),
-  deleteThread: (threadId: string) =>
-    ipcRenderer.invoke("wuu:thread-delete", threadId),
+  deleteThread: (threadId: string, options?: { onlyIfArchived?: boolean }) =>
+    ipcRenderer.invoke("wuu:thread-delete", threadId, options),
   compactThread: (threadId: string) =>
     ipcRenderer.invoke("wuu:thread-compact-start", threadId),
   renameThread: (threadId: string, title: string) =>

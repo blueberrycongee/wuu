@@ -81,6 +81,7 @@ import type {
   SkillContentParams,
   SkillContentResult,
   SkillListResult,
+  SkillListParams,
   RuntimeContext,
   RuntimeAdvancedSettingsUpdate,
   RuntimeGeneralSettingsUpdate,
@@ -1269,7 +1270,8 @@ app.whenReady().then(async () => {
   // time. setSize is a no-op when the persisted size equals the default. A
   // persisted continuous scale (edge-drag resize) overrides the preset — it
   // must be applied after setSize, which clears any scale override.
-  codexPetWindowManager.setSize(getCodexPetSize());
+  // Restoration must not persist a preset change and erase the saved scale.
+  codexPetWindowManager.setSize(getCodexPetSize(), false);
   const persistedPetScale = getCodexPetScale();
   if (persistedPetScale !== undefined) {
     codexPetWindowManager.setScale(persistedPetScale);
@@ -1685,6 +1687,7 @@ app.whenReady().then(async () => {
       permissionMode?: string,
       threadID?: string,
       speed?: string,
+      targetContext?: RuntimeContext,
     ) =>
       appServerRequest<ConfigModelUpdateResult>(event, "config/model/update", {
         // Omitted provider/model are inherited from the target thread, so
@@ -1721,7 +1724,7 @@ app.whenReady().then(async () => {
         ...(connection?.approve_for_me === undefined
           ? {}
           : { approve_for_me: connection.approve_for_me }),
-      }),
+      }, targetContext),
   );
   ipcMain.handle(
     "wuu:config-advanced-update",
@@ -1851,8 +1854,8 @@ app.whenReady().then(async () => {
         },
       ),
   );
-  ipcMain.handle("wuu:skill-list", (event) =>
-    appServerRequest(event, "skill/list"),
+  ipcMain.handle("wuu:skill-list", (event, params?: SkillListParams) =>
+    appServerRequest(event, "skill/list", params),
   );
   ipcMain.handle("wuu:skill-content", async (event, params: SkillContentParams): Promise<SkillContentResult> => {
     return readCatalogSkill(await appServerRequest<SkillListResult>(event, "skill/list"),params);
@@ -1895,7 +1898,9 @@ app.whenReady().then(async () => {
       codexPetWindowManager.setHints(hints ?? []),
   );
   ipcMain.handle("wuu:settings-usage", (event) =>
-    appServerRequest<SettingsUsageResponse>(event, "settings/usage"),
+    appServerRequest<SettingsUsageResponse>(event, "settings/usage", {
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    }),
   );
   ipcMain.handle("wuu:usage-overview", (event, params: UsageOverviewParams) =>
     appServerRequest<UsageOverviewResponse>(event, "usage/overview", params),
@@ -2233,9 +2238,10 @@ app.whenReady().then(async () => {
         force: force === true ? true : undefined,
       }),
   );
-  ipcMain.handle("wuu:thread-delete", (event, threadId: string) =>
+  ipcMain.handle("wuu:thread-delete", (event, threadId: string, options?: { onlyIfArchived?: boolean }) =>
     appServerRequest<{ thread_id: string }>(event, "thread/delete", {
       thread_id: threadId,
+      ...(options?.onlyIfArchived ? { only_if_archived: true } : {}),
     }),
   );
   ipcMain.handle("wuu:thread-compact-start", (event, threadId: string) =>

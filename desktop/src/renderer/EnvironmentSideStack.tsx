@@ -72,6 +72,7 @@ export function EnvironmentSideStack({
         panelRef={panelRef}
         motionState={closing ? "closing" : motionState}
         initialized={state.initialized}
+        thread={state.thread}
         gitStatus={state.gitStatus}
         activeMenu={activeMenu}
         running={running}

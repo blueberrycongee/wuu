@@ -10,6 +10,12 @@ Delete is permanent: it removes saved history and cleans up associated artifacts
 
 After the first send, the workspace sidebar immediately shows the pending conversation. You can switch away and return while it is being created. Stop cancels this wait and retains your input; a late creation response does not send the cancelled message or keep an unused empty conversation. Starting another conversation uses a separate draft.
 
+## Find a conversation
+
+Open **Search conversations** in the sidebar or press **Command + P** (**Ctrl + P** on Windows and Linux). With no query, pinned conversations appear first, followed by recently updated conversations. Type to search titles and history across projects, including archived conversations. Results show their project and, for content matches, a highlighted excerpt in the same row. Otherwise identical results also show their last-updated date and time.
+
+Use the arrow keys and Enter, or click a result. Addressable user and assistant message matches reveal and highlight the matching message, including older turns. Long messages load their full content and scroll to the matching text. Title, metadata, and tool-record matches open the conversation normally. Opening an archived result does not restore it to the sidebar. Escape closes search and returns focus to the control that opened it.
+
 ## Choose where a new conversation works
 
 Above a new conversation's input, the project control shows the workspace it belongs to. In a Git project, a second control holds the branch and a **Worktree** toggle:

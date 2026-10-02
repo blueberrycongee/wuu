@@ -2,6 +2,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SelectMenu, type SelectMenuGroup } from "./SelectMenu";
+import { Modal } from "./Modal";
 
 let container: HTMLDivElement;
 let root: Root | null = null;
@@ -26,6 +27,7 @@ afterEach(() => {
   container.remove();
   delete document.documentElement.dataset.hostKind;
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 // jsdom has no real layout; the FloatingMenuPortal reads getBoundingClientRect
@@ -179,7 +181,72 @@ describe("SelectMenu", () => {
     expect(onChange).not.toHaveBeenCalled();
   });
 
-  it("filters a searchable option list by label, value, or keywords", () => {
+  it("focuses a visible searchable menu after opening and returns focus on Escape", async () => {
+    // Browsers cannot focus an input while its positioning portal is hidden.
+    // jsdom does not enforce that browser rule, so reproduce it here.
+    const focus = HTMLElement.prototype.focus;
+    vi.spyOn(HTMLElement.prototype, "focus").mockImplementation(function (this: HTMLElement, options?: FocusOptions) {
+      for (let node: HTMLElement | null = this; node; node = node.parentElement) {
+        if (getComputedStyle(node).visibility === "hidden") return;
+      }
+      focus.call(this, options);
+    });
+    mount(<SelectMenu value="apple" onChange={() => {}} options={FRUIT} searchable />);
+    trigger().focus();
+    keyOn(trigger(), " ");
+    const search = document.querySelector<HTMLInputElement>(".select-menu-search input")!;
+    await vi.waitFor(() => expect(document.activeElement).toBe(search));
+    keyOn(search, "Escape");
+    expect(panel()).toBeNull();
+    expect(document.activeElement).toBe(trigger());
+  });
+
+  it.each(["close", "Escape", "unmount"])("cancels deferred search focus on %s", (action) => {
+    const frames = new Map<number, FrameRequestCallback>();
+    let nextFrame = 0;
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+      frames.set(++nextFrame, callback);
+      return nextFrame;
+    });
+    vi.stubGlobal("cancelAnimationFrame", (id: number) => frames.delete(id));
+    mount(<SelectMenu value="apple" onChange={() => {}} options={FRUIT} searchable />);
+    openMenu();
+    expect(frames.size).toBeGreaterThan(0);
+    if (action === "close") {
+      openMenu(); // Clicking the open trigger dismisses the menu.
+    } else if (action === "Escape") {
+      keyOn(trigger(), "Escape");
+    } else {
+      act(() => root?.unmount());
+      root = null;
+    }
+    expect(panel()).toBeNull();
+    expect(frames.size).toBe(0);
+  });
+
+  it.each(["before focus", "after focus"])("keeps the enclosing dialog open on menu Escape %s", async (when) => {
+    const closeDialog = vi.fn();
+    if (when === "before focus") {
+      vi.stubGlobal("requestAnimationFrame", () => 1);
+      vi.stubGlobal("cancelAnimationFrame", () => {});
+    }
+    mount(<Modal ariaLabel="Model settings" onClose={closeDialog}>
+      <SelectMenu value="apple" onChange={() => {}} options={FRUIT} searchable />
+    </Modal>);
+    const button = document.querySelector<HTMLButtonElement>(".select-menu-trigger")!;
+    keyOn(button, " ");
+    if (when === "after focus") {
+      const search = document.querySelector<HTMLInputElement>(".select-menu-search input")!;
+      await vi.waitFor(() => expect(document.activeElement).toBe(search));
+    }
+    keyOn(document.activeElement!, "Escape");
+    expect(panel()).toBeNull();
+    expect(closeDialog).not.toHaveBeenCalled();
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+    expect(document.activeElement).toBe(button);
+  });
+
+  it("filters a searchable option list by label, value, or keywords", async () => {
     mount(
       <SelectMenu
         value="apple"
@@ -192,7 +259,7 @@ describe("SelectMenu", () => {
     );
     openMenu();
     const search = document.querySelector<HTMLInputElement>(".select-menu-search input")!;
-    expect(document.activeElement).toBe(search);
+    await vi.waitFor(() => expect(document.activeElement).toBe(search));
 
     act(() => {
       const valueSetter = Object.getOwnPropertyDescriptor(

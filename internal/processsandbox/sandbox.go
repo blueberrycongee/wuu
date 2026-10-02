@@ -23,6 +23,7 @@ var ErrUnavailable = errors.New("filesystem process sandbox is unavailable")
 
 var denialSignatures = []string{
 	"operation not permitted",
+	"permission denied",
 	"read-only file system",
 }
 
@@ -111,7 +112,7 @@ func ApplyWithProvider(ctx context.Context, cmd *exec.Cmd, policy Policy, provid
 }
 
 // Supported reports whether this build has a filesystem process sandbox
-// backend. Wuu currently ships the backend on macOS, its desktop platform.
+// backend available on this host. Linux requires Landlock ABI 3 or later.
 func Supported() bool { return platformSupported() }
 
 // IsDenied classifies a failed confined execution using the diagnostic dialect
@@ -156,7 +157,7 @@ func (c ResultClassifier) IsRunnerFailure(exitCode int, output string) bool {
 func builtInResultClassifier() ResultClassifier {
 	return ResultClassifier{
 		DenialSignatures:        append([]string(nil), denialSignatures...),
-		RunnerFailureSignatures: []string{"sandbox-exec:"},
+		RunnerFailureSignatures: []string{"sandbox-exec:", "wuu-filesystem-sandbox:"},
 	}
 }
 

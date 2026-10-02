@@ -25,7 +25,44 @@ It renders the real first-run component without the product preload, app-server,
 
 The [mascot lab](../../../desktop/dev/mascot/README.md) uses `npm --prefix desktop run lab:mascot`. Use the full `make dev` path when the change depends on native behavior, IPC, or real session state. Keep temporary screenshots in ignored output directories and use synthetic content in committed fixtures.
 
+## Archived conversations
+
+Settings → Archive lists archived conversations across all workspaces. **Delete
+all archived** refreshes that catalog, then confirms its exact count, including
+conversations hidden by search or workspace filters. Deletion permanently removes
+conversation history and owned artifacts; clean managed worktrees are reclaimed
+while dirty worktrees are kept. Unarchived conversations are never selected, and
+a conversation restored before deletion is protected by the server.
+
+Only the confirmed snapshot is processed. Progress disables repeated submissions
+and restore buttons. Partial failures keep their remaining archived conversations
+available for a separate confirmed retry; newly archived conversations are not
+added to that retry. Cancel or dismiss the confirmation to keep the conversations.
+
+## Workspace new pages
+
+The right panel's plus button creates a closable **New page** tab. Choosing a tool
+replaces that page in place; if the tool is already open, Wuu closes the new page
+and focuses its existing tab. Installed extensions appear under **More tools**.
+**Continue viewing** links to up to four currently open files, diffs, or delivered
+artifacts; it is absent when none are open. Closing a page restores
+the previously active tab.
+
+Run `npm --prefix desktop run test:e2e:workspace-new-tab` for production-renderer
+checks of selection, singleton reuse, close recovery, keyboard navigation, and
+extension loading through a synthetic bridge. Screenshots and `results.json` in
+`desktop/out/workspace-new-tab-e2e/` cover light/dark themes, 14px/20px UI sizes,
+and wide/narrow windows. This does not validate a live app-server or browser engine.
+
 ## Conversation image previews
+
+Images returned while inspecting files or reading tool output stay inside the
+aggregated tool activity. Expand that process row to load its image previews,
+then click an image to enlarge it. Inspection images do not split tool groups
+or become separate output rows.
+Explicitly presented image artifacts, message attachments, and Markdown images
+remain directly visible. This distinction also applies to PTC and background
+tool results.
 
 Message and inline tool images reserve a responsive 4:3 preview area before
 loading. The complete image fits inside without cropping or upscaling; portrait
@@ -106,6 +143,13 @@ leaves the project's checkout alone and captures light/dark, default/large-font,
 wide/narrow, and non-Git states in `artifacts/composer-worktree/`. The window is
 visible, so the pointer's position can add a hover surface to a capture.
 
+The current worktree belongs in the environment information panel, with its
+repository, base commit and path. It does not insert a creation banner into the
+conversation. Agent workspace switches stay at their tool-call position in the
+process trail; expand a record to see that invocation's destination or failure.
+Later switches do not rewrite earlier records. The same E2E checks a switch back
+to the project and captures both the tool record and the current-worktree panel.
+
 ## Settings pages
 
 Settings groups pages by task: **Agents & models** (model providers, agents, runtime), **App** (general, appearance), **Extensions** (MCP servers and plugin pages), and **Data** (usage, archive). Page IDs are part of the plugin settings snapshot, so they stay stable when a label or group changes; the runtime page keeps the `advanced` ID.
@@ -114,7 +158,7 @@ Every page shares one column measured in UI text, so the title stays in place wh
 
 A row that works says nothing about it. Only a state that needs a look gets a symbol — a warning triangle for a missing credential or a pending decision, a circled mark for a failure — and the symbol's accessible name and tooltip carry the reason, so the meaning never rests on color. The Agent page lists detected agents in the default radio group; agents Wuu cannot find wait under **Not installed**, each with an install action and its path override, instead of repeating why on every row. Agents expand in place under their own row. Rows without a disclosure reserve its footprint so trailing controls end on one axis. The titlebar gains its hairline only after content scrolls beneath it.
 
-**Model services** is built for bring-your-own-key use and reads by how often each part is used. The default model comes first as one filled card whose model name is the picker, with the reasoning effort beside it; new conversations start there. Connected services follow as bordered cards with their vendor mark, a **Default** badge, and a warning when a key or sign-in is missing. Providers to add are quieter tiles: likely vendors for the interface language, subscription sign-ins, **More providers** for the whole model catalog, and **Custom endpoint** for any OpenAI- or Anthropic-compatible URL. The page carries no explanatory lines; a service's name, mark, and model count say what it is. Connecting asks only for the key — the catalog supplies the endpoint and a suggested model — and becomes the default only when switched on, which it is when the current default cannot answer. A service card opens its own page with a way back: its connection (key, Base URL, or sign-in), edited in place without changing the row's height, and its models, whose names share the row labels' edge while a trailing check marks the model the service uses. Hidden choices wait under a disclosure, and **Add model** takes an unlisted model ID. Dialogs put their mark, title, and close button on one row, and each dropdown lines its options up under the text of its trigger. Editing a service never changes the default; **Make default** does. Vendor marks are the bundled models.dev logos, so no artwork is fetched.
+**Model providers** is built for bring-your-own-key use and reads by how often each part is used. The default model comes first as one filled card whose model name is the picker, with the reasoning effort beside it; new conversations start there. Connected services follow as bordered cards with their vendor mark, a **Default** badge, and a warning when a key or sign-in is missing. Providers to add are quieter tiles: likely vendors for the interface language, subscription sign-ins, **More providers** for the whole model catalog, and **Custom endpoint** for any OpenAI- or Anthropic-compatible URL. The page carries no explanatory lines; a service's name, mark, and model count say what it is. Connecting asks only for the key — the catalog supplies the endpoint and a suggested model — and becomes the default only when switched on, which it is when the current default cannot answer. A service card opens its own page with a way back: its connection (key, Base URL, or sign-in), edited in place without changing the row's height, and its models, whose names share the row labels' edge while a trailing check marks the model the service uses. Hidden choices wait under a disclosure, and **Add model** takes an unlisted model ID. Dialogs put their mark, title, and close button on one row, and each dropdown lines its options up under the text of its trigger. Editing a service never changes the default; **Make default** does. Vendor marks are the bundled models.dev logos, so no artwork is fetched.
 
 `npm --prefix desktop run test:e2e:model-services` drives these flows through Electron and the Go core with a disposable profile, credential store, and local provider: it connects a catalog provider without moving the default, chooses and hides its models, makes a custom endpoint the default, removes a service with its key, and sends a turn that must reach the new default with the saved key. Screenshots and `evidence.json` go to `artifacts/model-services-e2e/`.
 
@@ -126,11 +170,29 @@ Preview `/dev/settings/` with `page` set to a page ID, and optional `theme=dark`
 
 The Plugins page, named **Plugins** like its sidebar entry, uses the settings page column. The titlebar already names it, so the page opens on a toolbar: search, then reload and local install. **Plugins** and **Skills** are separate tabs with their counts; a catalog without plugins opens on Skills. A search hides every group it leaves empty.
 
-Plugins are grouped by what they need from you. **Needs attention** is a list: each row names the plugin and the one most serious reason — it failed to start or misses a requirement, then a staged update, a changed or unapproved package, or a conflict — and opens the plugin's page, where that decision is made. **On** and **Off** are grids of cards: the mark, the name over a two-line tagline, and a switch on the name's line that turns a trusted plugin on or off in place. Turning on a plugin that is not approved yet opens its page when it asks for permissions and approves it directly otherwise. Cards show the manifest's display name and tagline, not the plugin ID. Skill rows end in the owning plugin's name, when there is one, and a chevron that opens the preview.
+Plugins are grouped by what they need from you, each group a bordered list like a settings group. **Needs attention** rows name the plugin and the one most serious reason — it failed to start or misses a requirement, then a staged update, a changed or unapproved package, or a conflict — and open the plugin's page, where that decision is made. **On** and **Off** rows carry the mark, the name over a one-line tagline, a switch that turns a trusted plugin on or off in place, and a chevron to the plugin's page. Turning on a plugin that is not approved yet opens its page when it asks for permissions and approves it directly otherwise. Rows show the manifest's display name and tagline, not the plugin ID. Skills are listed the same way, under **Official skills** and **Your skills**; a skill row ends in the owning plugin's name, when there is one, and a chevron that opens the preview.
 
 A plugin opens as its own page, with a back link to the catalog. The header holds the mark, name, and tagline, and either the switch or the decision the plugin waits for (approve, or approve an update); rejecting, revoking, and removing live in the more menu. Notices follow: why approval is needed, an update being ready, the runtime error, or a missing or conflicting plugin. Below come the manifest's long description, **In Wuu** (the sidebar pages, workspace tools, settings pages, commands, skills, and themes it adds), and the plugin's settings as ordinary settings rows. Permissions appear only while approving. Versions, fingerprints, paths, grant scopes, and agent tools stay off the page.
 
 Preview `/dev/extensions/` with optional `theme=dark`, `size=20`, `lang=en`, `long`, and `empty` parameters. Skills and plugin packages are synthetic and cover every plugin state; switches and detail actions change only the preview's state.
+
+The fork destination dialog offers the current directory and a new worktree. Click outside or press Escape to dismiss it without creating a conversation; focus returns to the message action. Dismissal is temporarily locked while a fork is being created.
+
+## Failed turns and confirmations
+
+A turn that ends in failure shows one card: what happened in plain words, the HTTP status as a quiet code when there is one, the next step as a button, and the technical record behind **Details**. A rejected credential, an exhausted quota, or a model the service does not have leads with **Open model providers** and offers **Retry** beside it. Rate limits, overload, timeouts, and network failures offer **Retry**. A conversation too long for the model offers no retry, because replaying it fails the same way, and says to run `/compact` or start a new one. Only the latest turn carries actions.
+
+Irreversible or disruptive actions ask through `confirmAction` in [`ConfirmDialog.tsx`](../../../desktop/src/renderer/ConfirmDialog.tsx), which resolves to the answer like the native prompt it replaced and follows the product's type, theme, and copy. The title names the object, one sentence states the consequence the title does not, and the confirm button repeats the verb; `tone: "danger"` marks actions that destroy data. Do not call `window.confirm`.
+
+A question the agent asks, or an engine's approval request, is one card: over the composer as an offer, or in the reading flow beside its turn. The tour's agent is never offered `ask_user` and engine approvals need an engine, so preview the production card at `/dev/question-card/` with optional `theme=dark`, `size=20`, `lang=en`, `width=`, `inline`, `two`, `approval`, `long`, `multi`, and `expires`. Its requests are synthetic and nothing is sent.
+
+## Walk the whole product
+
+`npm --prefix desktop run test:e2e:ui-tour` drives the real Electron app, preload, and Go core with a disposable profile and home directory, synthetic projects, and a scripted local provider, so no account or model is involved. It seeds conversations through the real composer (plain text, tool calls, reasoning, a rejected credential), then visits the main surfaces — home, conversations, composer menus, workspace panel tabs, search, Plugins, the account menu, and every Settings page — in each appearance of a matrix of theme, UI text size, and window width. The default matrix is light, dark, 20px UI text, and a 720px window.
+
+Each stop saves a screenshot and a geometry audit. Horizontal overflow fails the run. The audit only records the corner radii in use, text under 4.5:1, clipped text, and controls under 24px, so two revisions can be compared. The run also walks the journeys between surfaces and fails when one breaks: a draft survives Settings and conversation switches, the selected row follows navigation, closing a menu or search returns focus to where it came from, and a long conversation keeps its reading position across a switch.
+
+Screenshots, `audit.json`, and `report.json` go to `artifacts/ui-tour-e2e/`, which each run clears; `WUU_TOUR_OUTPUT` moves it. `WUU_TOUR_ONLY=settings,plugins` selects stops by substring, `WUU_TOUR_MATRIX=dark:20:1280` replaces the appearances, `WUU_TOUR_CORE` points at another core binary, and `WUU_E2E_HIDDEN=true` renders without showing or focusing any window. The screenshots are evidence to look at, not a visual gate, and fonts differ between platforms.
 
 ## Shared typography and geometry
 
@@ -244,6 +306,12 @@ Use a CSS transition from the ladder for motion whose geometry is already known:
 
 Opening or closing tool/reasoning details preserves the reader's scroll mode. A conversation following the latest content continues following through the height transition; a paused conversation keeps its reading position. Wheel, touch, keyboard scrolling, scrollbar dragging, and text selection take precedence over layout correction.
 
+Inside a bounded inspection strip, tools and reasoning follow their event order.
+The first opening of live activity starts at the latest content; completed
+history starts at the beginning. Closing and reopening restore the strip's
+reading position and follow/pause mode, including after hidden content grows.
+Position before paint, without a delayed forced scroll after the opening motion.
+
 Sending a query reserves reading space below the bubble. Expanded details may temporarily occupy that space, but closing them restores what remains after actual response growth or deliberate browsing. A temporarily empty gap is not proof that the response has filled the reservation. Inspect repeated toggles while streaming, including a fold taller than the remaining gap and a session switch with the fold open.
 
 Earlier-history paging inserts rows above the viewport. A paused reader's offset belongs to native scroll anchoring, so the manual prepend correction applies only while the offset still sits where the page was requested; adding the inserted height on top of anchoring moves the whole stream down by that height the moment the page arrives, which reads as a jump.
@@ -284,4 +352,4 @@ The utility uses self-scroll timelines and an alpha mask, with no overlay or Rea
 
 Check light and dark themes, default and large fonts, wide and narrow windows, empty and long content, and keyboard focus. Combine states that can coexist, such as selected, running, unread, hovered, disabled, and dragging. Look for clipping, overlaps, moving click targets, and labels displaced by hidden actions or placeholders.
 
-For scrolling changes, inspect the top, middle, and bottom with both short and overflowing content. Append streaming content, scroll away from the bottom, close and reopen folds, switch sessions, and resize. Confirm follow/pause behavior, text selection, menus, and scrollbars remain usable. Report the conditions actually inspected; one screenshot or a passing unit suite is not full visual acceptance.
+For scrolling changes, inspect the top, middle, and bottom with both short and overflowing content. Append streaming content, scroll away from the bottom, close and reopen folds, switch sessions, and resize. Confirm follow/pause behavior, text selection, menus, and scrollbars remain usable. Report the conditions actually inspected; one screenshot or a passing unit suite is not full visual acceptance. For a change that touches shared components or tokens, run the UI tour and read its screenshots across the matrix.

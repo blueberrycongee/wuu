@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/blueberrycongee/wuu/internal/executionenv"
 	"io"
 	"os"
 	"os/exec"
@@ -26,7 +27,6 @@ const (
 	workspaceDigestMaxFiles        = 5000
 	workspaceDigestMaxBytes        = 32 * 1024 * 1024
 	workspaceDigestMaxBytesPerFile = 1024 * 1024
-	repeatedToolInputPriorLimit    = 2
 )
 
 // ToolExecutionRecord captures benchmark-oriented facts about one tool
@@ -107,17 +107,13 @@ func (t *Toolkit) ToolTelemetry() []ToolExecutionRecord {
 }
 
 func (t *Toolkit) executeKnownToolResult(ctx context.Context, call providers.ToolCall, tool Tool) (toolresult.Result, error) {
-	return t.executeKnownToolResultWithRepeatPolicy(ctx, call, tool, false)
-}
-
-func (t *Toolkit) executeKnownToolResultAllowRepeated(ctx context.Context, call providers.ToolCall, tool Tool) (toolresult.Result, error) {
-	return t.executeKnownToolResultWithRepeatPolicy(ctx, call, tool, true)
-}
-
-func (t *Toolkit) executeKnownToolResultWithRepeatPolicy(ctx context.Context, call providers.ToolCall, tool Tool, allowRepeated bool) (toolresult.Result, error) {
 	info := buildToolInfoForArgs(tool, t.toolExposure(call.Name), call.Arguments)
 	startedAt := time.Now()
-	revisionBefore := workspaceRevision(ctx, t.env.RootDir)
+	remoteWorkspace := t.env.ExecutionEnvironment != nil && (executionenv.WorkspaceTool(call.Name) || call.Name == codeModeExecToolName)
+	revisionBefore := ""
+	if !remoteWorkspace {
+		revisionBefore = workspaceRevision(ctx, t.env.RootDir)
+	}
 	// Hand the freshly computed revision to the tool so read-only tools can
 	// reuse it instead of re-running git for the same root.
 	ctx = toolctx.WithWorkspaceRevision(ctx, t.env.RootDir, revisionBefore)
@@ -141,29 +137,14 @@ func (t *Toolkit) executeKnownToolResultWithRepeatPolicy(ctx context.Context, ca
 		return toolresult.Result{}, err
 	}
 
-	if priorRepeats := t.repeatedToolInputCount(call, revisionBefore); !allowRepeated && priorRepeats >= repeatedToolInputPriorLimit {
-		err := repeatedToolInputError{
-			ToolName:        call.Name,
-			ArgumentsSHA256: toolArgumentsSHA256(call.Arguments),
-			Revision:        revisionBefore,
-			PriorRepeats:    priorRepeats,
-			MaxPriorRepeats: repeatedToolInputPriorLimit,
-		}
-		t.recordToolExecution(ctx, call, info, decision, startedAt, revisionBefore, revisionBefore, "", "", "", false, err, nil)
-		return toolresult.Result{}, err
-	}
-
 	var result toolresult.Result
 	var err error
-	if callAware, ok := tool.(CallAwareRichTool); ok {
-		result, err = callAware.ExecuteResultCall(ctx, call)
-	} else if richTool, ok := tool.(RichTool); ok {
-		result, err = richTool.ExecuteResult(ctx, call.Arguments)
+	if t.env.ExecutionEnvironment != nil && executionenv.WorkspaceTool(call.Name) {
+		result, err = t.env.ExecutionEnvironment.Execute(ctx, executionenv.ToolRequest{GitAttributionEnabled: !t.env.GitAttributionDisabled, Call: call, PermissionMode: t.env.PermissionMode, Actor: t.env.AgentID})
 	} else {
-		var text string
-		text, err = tool.Execute(ctx, call.Arguments)
-		result = toolresult.FromText(text)
+		result, err = executeToolResult(ctx, tool, call)
 	}
+
 	if err != nil {
 		result.IsError = true
 	}
@@ -190,7 +171,7 @@ func (t *Toolkit) executeKnownToolResultWithRepeatPolicy(ctx context.Context, ca
 	}
 
 	revisionAfter := revisionBefore
-	if !info.ReadOnly {
+	if !info.ReadOnly && !remoteWorkspace {
 		// A mutating tool may have changed the workspace; recompute so the
 		// telemetry record shows the post-execution state. Read-only tools
 		// cannot mutate, so their before/after revisions are identical and
@@ -224,95 +205,6 @@ func validateToolArgumentsJSON(raw string) error {
 		return errors.New("tool arguments must be a JSON object")
 	}
 	return nil
-}
-
-type repeatedToolInputError struct {
-	ToolName        string
-	ArgumentsSHA256 string
-	Revision        string
-	PriorRepeats    int
-	MaxPriorRepeats int
-}
-
-func (e repeatedToolInputError) Error() string {
-	return fmt.Sprintf(
-		"tool %q blocked repeated identical input: error_kind=repeated_tool_input args_sha256=%s prior_repeats=%d max_prior_repeats=%d workspace_revision=%s safe_retry=%q model_next_action=%q",
-		e.ToolName,
-		e.ArgumentsSHA256,
-		e.PriorRepeats,
-		e.MaxPriorRepeats,
-		e.Revision,
-		"inspect prior tool evidence, change the input, wait for new evidence, or change the workspace before retrying",
-		"stop repeating the same call; use existing observations or choose a different next action",
-	)
-}
-
-func (t *Toolkit) repeatedToolInputCount(call providers.ToolCall, revision string) int {
-	// Context transitions depend on the active window, not filesystem changes.
-	// The agent owns admission at the completed tool-batch boundary.
-	if call.Name == newContextToolName {
-		return 0
-	}
-	if t == nil || t.env == nil || isRepeatablePollingTool(call) {
-		return 0
-	}
-	revision = strings.TrimSpace(revision)
-	if revision == "" {
-		return 0
-	}
-	argumentsSHA256 := toolArgumentsSHA256(call.Arguments)
-	var count int
-	for _, record := range t.env.toolTelemetry.snapshot() {
-		if record.Name != call.Name ||
-			record.ArgumentsSHA256 != argumentsSHA256 ||
-			strings.TrimSpace(record.RevisionBefore) != revision {
-			continue
-		}
-		count++
-	}
-	return count
-}
-
-func isRepeatablePollingTool(call providers.ToolCall) bool {
-	name := strings.TrimSpace(call.Name)
-	if strings.HasPrefix(name, "mcp_plugin_cua_mac_computer_computer_") {
-		var args struct {
-			Action string `json:"action"`
-		}
-		if err := json.Unmarshal([]byte(call.Arguments), &args); err == nil && args.Action == "observe" {
-			return true
-		}
-	}
-	if name == browserToolName {
-		// Re-observing/re-screenshotting the same tab is the browser's polling
-		// idiom (a page settles between identical calls), so exempt it from the
-		// repeated-input guard the way CUA observe is exempt.
-		var args struct {
-			Action string `json:"action"`
-		}
-		if err := json.Unmarshal([]byte(call.Arguments), &args); err == nil {
-			switch args.Action {
-			case "observe", "screenshot", "wait_for", "tabs":
-				return true
-			}
-		}
-	}
-	if name == "bash" {
-		var args bashArgs
-		if err := decodeArgs(call.Arguments, &args); err == nil {
-			return bashCommandLooksLikeVerification(args.Command)
-		}
-	}
-	if name == "process" {
-		var args processArgs
-		if err := decodeArgs(call.Arguments, &args); err == nil {
-			switch strings.TrimSpace(args.Action) {
-			case processActionList, processActionRead:
-				return true
-			}
-		}
-	}
-	return false
 }
 
 func (t *Toolkit) recordToolExecution(

@@ -26,13 +26,11 @@ import { applyMessageFlowFontSize } from "../../src/renderer/MessageFlowFontSize
 import { desktopPluginHost } from "../../src/renderer/plugins/DesktopPluginRuntime";
 import { WuuUIRoot } from "../../src/renderer/ui/layers/UILayerHost";
 import { I18nProvider } from "../../src/renderer/i18n";
-import { CLEAR_UNREAD_HINT_SEEN_KEY } from "../../src/renderer/SidebarBrand";
 import { ListTodo } from "../../src/renderer/WuuIcons";
 import "../../src/renderer/styles.css";
 import "./fixture.css";
 
 const noop = () => {};
-localStorage.setItem(CLEAR_UNREAD_HINT_SEEN_KEY, "true");
 const params = new URLSearchParams(location.search);
 const date = "2026-09-25T08:00:00Z";
 const workspace = { id: "preview", name: "wuu", path: "/preview", created_at: date, updated_at: date };

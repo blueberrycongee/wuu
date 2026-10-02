@@ -18,7 +18,7 @@ func SupportsDynamicToolLoading(model string) bool {
 // their discovery positions. Kimi rejects messages containing both tools and
 // content, so declarations must be separate system messages.
 func applyDynamicToolLoading(payload *chatCompletionsRequest, req providers.ChatRequest) {
-	if !req.NativeDeferredToolDiscovery || !SupportsDynamicToolLoading(req.Model) {
+	if !providers.NativeToolDiscoveryEnabled(req.NativeDeferredToolDiscovery, req.Tools) || !SupportsDynamicToolLoading(req.Model) {
 		return
 	}
 	deferred := providers.DiscoveredToolNamesFromMessages(req.Messages)

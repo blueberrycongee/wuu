@@ -13,6 +13,9 @@ import type {
   Turn,
 } from "../shared/protocol";
 import {
+  captureComposerDrafts,
+  refreshComposerDrafts,
+  persistComposerDrafts,
   activeTodoUpdateForThread,
   activeThreadForState,
   activeTurnIsAnswerReady,
@@ -3246,7 +3249,7 @@ describe("applyLoadedRuntimeWithDraftCarry (R2: draft follows a pill switch)", (
     const next = applyLoadedRuntimeWithDraftCarry(
       current,
       loadedState,
-      outgoingDraft,
+      captureComposerDrafts(current, outgoingDraft),
     );
 
     // Lands on the pre-existing draft tab for the target context...
@@ -3283,7 +3286,7 @@ describe("applyLoadedRuntimeWithDraftCarry (R2: draft follows a pill switch)", (
     const next = applyLoadedRuntimeWithDraftCarry(
       current,
       loadedState,
-      emptyDraft,
+      captureComposerDrafts(current, emptyDraft),
     );
 
     // A brand new draft tab is created for the target context, still empty.
@@ -3322,7 +3325,7 @@ describe("applyLoadedRuntimeWithDraftCarry (R2: draft follows a pill switch)", (
     const next = applyLoadedRuntimeWithDraftCarry(
       current,
       loadedState,
-      outgoingDraft,
+      captureComposerDrafts(current, outgoingDraft),
     );
 
     // The thread tab keeps the in-progress reply (ordinary persist path)...
@@ -3338,6 +3341,47 @@ describe("applyLoadedRuntimeWithDraftCarry (R2: draft follows a pill switch)", (
       (tab) => tab.id === next.activeSessionTabID,
     );
     expect(draftOf(resultNewTab!)).toBe("");
+  });
+});
+
+describe("composer draft ownership across navigation", () => {
+  it("persists both captured pane owners without touching a newer active tab", () => {
+    const context: RuntimeContext = { kind: "no_project", cwd: "/tmp" };
+    const a = { ...threadWithUserTexts(["A"]), id: "draft-owner-a", cwd: context.cwd };
+    const b = { ...a, id: "draft-owner-b" };
+    const c = { ...a, id: "draft-owner-c" };
+    const primary: ComposerDraftState = {
+      prompt: "A draft", images: [{ id: "image", media_type: "image/png", data: "AA==" }],
+      files: [{ id: "file", filename: "notes.txt", media_type: "text/plain", data: "bm90ZXM=" }],
+      selections: [{ id: "quote", text: "quoted", source: { thread_id: a.id, turn_id: "turn", item_id: "item", start_offset: 0, end_offset: 6 } }],
+    };
+    const secondary: ComposerDraftState = { prompt: "B draft", images: [], files: [] };
+    const state: AppState = {
+      ...initialState, activeContext: context, thread: a, secondaryThread: b, activePane: "secondary",
+      sessionTabs: [createThreadSessionTab(a, context)], activeSessionTabID: threadSessionTabID(b.id),
+    };
+    const snapshot = captureComposerDrafts(state, { primary, secondary });
+    const newer = createThreadSessionTab(c, context, { prompt: "new C edit", images: [], files: [] });
+    const next = persistComposerDrafts({ ...state, thread: c, secondaryThread: undefined, activePane: "primary", sessionTabs: [...state.sessionTabs, newer], activeSessionTabID: newer.id }, snapshot);
+    expect(next.activeSessionTabID).toBe(newer.id);
+    expect(next.sessionTabs.find(tab => tab.id === newer.id)).toBe(newer);
+    expect(next.sessionTabs.find(tab => tab.id === threadSessionTabID(a.id))).toMatchObject(primary);
+    expect(next.sessionTabs.find(tab => tab.id === threadSessionTabID(b.id))).toMatchObject(secondary);
+    expect(snapshot.activeDraft.prompt).toBe("B draft");
+    const rebound = captureComposerDrafts({ ...state, thread: c, secondaryThread: undefined, activePane: "primary", sessionTabs: [newer], activeSessionTabID: newer.id }, { prompt: "latest C", images: [], files: [] });
+    expect(refreshComposerDrafts(snapshot, rebound)).toEqual(snapshot);
+    const settled = refreshComposerDrafts(snapshot, captureComposerDrafts(state, { primary, secondary: { ...secondary, prompt: "latest B" } }));
+    expect(settled.activeDraft.prompt).toBe("latest B");
+    expect(persistComposerDrafts(state, settled).sessionTabs.find(tab => tab.id === threadSessionTabID(b.id))).toMatchObject({ prompt: "latest B" });
+    // Existing owners closed while navigation waits must stay closed; a split
+    // child without a tab still needs its first durable draft entry.
+    const afterClose = persistComposerDrafts({ ...state, sessionTabs: [newer], activeSessionTabID: newer.id }, snapshot);
+    expect(afterClose.sessionTabs.map(tab => tab.id)).toEqual([newer.id, threadSessionTabID(b.id)]);
+    primary.images[0].data = "changed";
+    primary.files[0].filename = "changed.txt";
+    primary.selections![0].source.thread_id = "changed";
+    const saved = next.sessionTabs.find(tab => tab.id === threadSessionTabID(a.id))!;
+    expect(saved).toMatchObject({ images: [{ data: "AA==" }], files: [{ filename: "notes.txt" }], selections: [{ source: { thread_id: a.id } }] });
   });
 });
 
@@ -3386,6 +3430,25 @@ describe("conversationSearchContextLabel (R4: no raw scratch paths in the UI)", 
     expect(
       conversationSearchContextLabel(scratchThread, [otherWorkspace]),
     ).toBe("无工作区");
+  });
+
+  it("keeps a relocated workspace's name on conversations recorded at its old path", () => {
+    // Relocating keeps the workspace id so its history reconnects; the label
+    // must follow that identity, as the sidebar does, not the stale cwd.
+    const project: DesktopProject = {
+      id: "proj-1",
+      name: "MyApp",
+      path: "/repo/moved/myapp",
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:00Z",
+    };
+    const thread: Thread = {
+      ...threadWithUserTexts(["hi"]),
+      id: "relocated-thread",
+      cwd: "/repo/myapp",
+      workspace_id: "proj-1",
+    };
+    expect(conversationSearchContextLabel(thread, [project])).toBe("MyApp");
   });
 });
 

@@ -465,26 +465,40 @@ func RunToolLoop(
 			fixedTokens := estimateOutboundRequestTokens(fixedRequest)
 			beforeTokens := fixedTokens + estimateFreshContextMessages(messages)
 			beforeMessages := compactNoticeMessageCount(messages)
-			archive, archiveErr := cfg.ArchiveHistory(ctx, providers.CloneChatMessages(durableNewMessages))
-			if archiveErr == nil {
-				messages = applyArchivedHistorySeqs(messages, durableNewMessages, archive.Seqs)
-				providerMessages = applyArchivedHistorySeqs(providerMessages, durableNewMessages, archive.Seqs)
-				durableNewMessages = nil
-				if archive.HeadSeq > historyArchiveHeadSeq {
-					historyArchiveHeadSeq = archive.HeadSeq
-				}
+			if cfg.OnCompactStart != nil {
+				cfg.OnCompactStart(CompactReasonNewContext)
 			}
 			var replacement []providers.ChatMessage
-			freshErr := archiveErr
+			var freshErr, hookErr error
+			if cfg.BeforeCompact != nil {
+				hookErr = cfg.BeforeCompact(ctx, CompactReasonNewContext)
+				freshErr = hookErr
+			}
 			if freshErr == nil {
-				if forceOverflowTrim {
-					var smaller bool
-					replacement, smaller = forceTrimOverflowHistory(messages)
-					if !smaller {
-						freshErr = ErrFreshContextNotSmaller
+				archive, archiveErr := cfg.ArchiveHistory(ctx, providers.CloneChatMessages(durableNewMessages))
+				freshErr = archiveErr
+				if freshErr == nil {
+					messages = applyArchivedHistorySeqs(messages, durableNewMessages, archive.Seqs)
+					providerMessages = applyArchivedHistorySeqs(providerMessages, durableNewMessages, archive.Seqs)
+					durableNewMessages = nil
+					if archive.HeadSeq > historyArchiveHeadSeq {
+						historyArchiveHeadSeq = archive.HeadSeq
 					}
-				} else {
-					replacement, freshErr = cfg.FreshContext(ctx, providers.CloneChatMessages(messages), historyArchiveHeadSeq, fixedTokens, targetTokens)
+					if forceOverflowTrim {
+						var smaller bool
+						replacement, smaller = forceTrimOverflowHistory(messages)
+						if !smaller {
+							freshErr = ErrFreshContextNotSmaller
+						}
+					} else {
+						replacement, freshErr = cfg.FreshContext(ctx, providers.CloneChatMessages(messages), historyArchiveHeadSeq, fixedTokens, targetTokens)
+					}
+				}
+				if cfg.AfterCompact != nil {
+					hookErr = cfg.AfterCompact(ctx, CompactReasonNewContext, freshErr)
+					if hookErr != nil {
+						freshErr = hookErr
+					}
 				}
 			}
 			if freshErr == nil && compactChanged(messages, replacement) {
@@ -533,7 +547,7 @@ func RunToolLoop(
 					Reason: CompactReasonNewContext, Status: CompactAttemptFailed,
 					TokensBefore: beforeTokens, MessagesBefore: beforeMessages, Error: freshContextFailure,
 				})
-				if cfg.CompactOnly || forceOverflowTrim {
+				if hookErr != nil || cfg.CompactOnly || forceOverflowTrim {
 					return loopResultSnapshot(messages, startLen, historyRewritten, totalIn, totalOut, totalCacheCreation, totalCacheRead), freshErr
 				}
 			}
@@ -649,6 +663,7 @@ func RunToolLoop(
 				return loopResultSnapshot(messages, startLen, historyRewritten, totalIn, totalOut, totalCacheCreation, totalCacheRead), err
 			}
 		}
+		req.NativeDeferredToolDiscovery = providers.NativeToolDiscoveryEnabled(req.NativeDeferredToolDiscovery, req.Tools)
 		if freshContextApplied {
 			targetTokens := cfg.FreshContextTokens
 			if targetTokens <= 0 {
@@ -804,11 +819,10 @@ func RunToolLoop(
 					cfg.OnCompactStart(CompactReasonOverflow)
 				}
 				var compacted []providers.ChatMessage
-				var cerr error
+				var cerr, hookErr error
 				if cfg.BeforeCompact != nil {
-					if hookErr := cfg.BeforeCompact(ctx, CompactReasonOverflow); hookErr != nil {
-						cerr = hookErr
-					}
+					hookErr = cfg.BeforeCompact(ctx, CompactReasonOverflow)
+					cerr = hookErr
 				}
 				var lineage *providers.InferenceOperationLineage
 				if cerr == nil {
@@ -825,7 +839,8 @@ func RunToolLoop(
 						cerr = errors.New("compaction replacement did not shrink under the local context estimator")
 					}
 					if cfg.AfterCompact != nil {
-						if hookErr := cfg.AfterCompact(ctx, CompactReasonOverflow, cerr); hookErr != nil {
+						hookErr = cfg.AfterCompact(ctx, CompactReasonOverflow, cerr)
+						if hookErr != nil {
 							cerr = hookErr
 						}
 					}
@@ -877,6 +892,9 @@ func RunToolLoop(
 						Error:          cerr.Error(),
 						OutputLimit:    compact.IsSummaryOutputLimit(cerr),
 					}, usageBefore))
+				}
+				if hookErr != nil {
+					return loopResultSnapshot(messages, startLen, historyRewritten, totalIn, totalOut, totalCacheCreation, totalCacheRead), hookErr
 				}
 				if trimmed, ok := forceTrimOverflowHistory(messages); ok {
 					resetTranscript(trimmed)

@@ -730,6 +730,42 @@ describe("CodexPetWindowManager", () => {
     expect(onSizeChange).toHaveBeenCalledWith("large");
   });
 
+  it.each([
+    ["default", true],
+    ["large", true],
+    ["large", false],
+  ] as const)("restores %s geometry (enabled=%s) without committing a user change", (size, enabled) => {
+    const onSizeChange = vi.fn();
+    const onScaleChange = vi.fn();
+    const manager = new CodexPetWindowManager(
+      () => undefined,
+      () => undefined,
+      onSizeChange,
+      onScaleChange,
+    );
+
+    manager.setSize(size, false);
+    manager.setScale(0.63);
+    expect(onSizeChange).not.toHaveBeenCalled();
+    expect(onScaleChange).not.toHaveBeenCalled();
+    expect(codexPetElectronMocks.BrowserWindow).not.toHaveBeenCalled();
+
+    manager.sync(enabledSnapshot({ enabled }));
+    if (!enabled) {
+      expect(codexPetElectronMocks.BrowserWindow).not.toHaveBeenCalled();
+      manager.sync(enabledSnapshot());
+    }
+    expect(codexPetElectronMocks.BrowserWindow).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ width: 145, height: 155 }),
+    );
+
+    // Restoring geometry must not disable subsequent user persistence.
+    manager.setScale(0.7, true);
+    expect(onScaleChange).toHaveBeenCalledExactlyOnceWith(0.7);
+    manager.setSize("small");
+    expect(onSizeChange).toHaveBeenCalledExactlyOnceWith("small");
+  });
+
   it("live-resizes on setScale() without notifying the host until commit", () => {
     const onSizeChange = vi.fn();
     const onScaleChange = vi.fn();

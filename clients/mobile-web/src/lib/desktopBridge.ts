@@ -719,7 +719,8 @@ export class RemoteDesktopBridge {
         this.call("thread/rename", { thread_id: threadId, title }),
       archiveThread: (threadId: string, archived: boolean, force?: boolean) =>
         this.call("thread/archive", { thread_id: threadId, archived, force }),
-      deleteThread: (threadId: string) => this.call("thread/delete", { thread_id: threadId }),
+      deleteThread: (threadId: string, options?: { onlyIfArchived?: boolean }) =>
+        this.call("thread/delete", { thread_id: threadId, ...(options?.onlyIfArchived ? { only_if_archived: true } : {}) }),
       compactThread: (threadId: string) => this.call("thread/compact/start", { thread_id: threadId }),
 
       returnManagedSession: (params) => this.call("thread/control/return", params),
@@ -813,7 +814,7 @@ export class RemoteDesktopBridge {
       listMCPServers: () => this.call("mcp/list"),
       startXAILogin: () => this.call("auth/xai/login/start"),
       readSkillContent: (params) => this.call("desktop/skill/content",params),
-      listSkills: () => this.call("skill/list"),
+      listSkills: (params) => this.call("skill/list", params),
       listInstructionFiles: () => this.call("instructions/list"),
       getSessionOrganization: () => this.call("sessionOrganization/list"),
       getSettingsUsage: () => this.call("settings/usage"),
@@ -861,7 +862,7 @@ export class RemoteDesktopBridge {
       takeoverActivity: (thread_id, activity_id) => this.call("activity/takeover", { thread_id, activity_id }),
       releaseActivity: (thread_id, activity_id) => this.call("activity/release", { thread_id, activity_id }),
       stopActivity: (thread_id, activity_id) => this.call("activity/stop", { thread_id, activity_id }),
-      updateRuntimeSettings: (provider, model, effort, connection, variant, permissionMode, threadId, speed) =>
+      updateRuntimeSettings: (provider, model, effort, connection, variant, permissionMode, threadId, speed, targetContext) =>
         this.call("config/model/update", {
           ...(provider ? { provider } : {}),
           ...(model ? { model } : {}),
@@ -871,7 +872,7 @@ export class RemoteDesktopBridge {
           ...(variant === undefined ? {} : { variant }),
           ...(speed === undefined ? {} : { speed }),
           ...(permissionMode === undefined ? {} : { permission_mode: permissionMode }),
-        }),
+        }, targetContext?.cwd),
       removeProvider: (provider, options) => this.call("config/provider/remove", {
         provider, fallback_provider: options?.fallbackProvider, fallback_model: options?.fallbackModel,
       }),

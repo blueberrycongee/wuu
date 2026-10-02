@@ -99,9 +99,9 @@ it("supports keyboard selection and dismisses only the open menu with Escape", a
   expect(ui.container.querySelector('[role="listbox"]')).toBeNull();
   expect(ui.container.querySelector('button[aria-label="星期"]')).not.toBeNull();
   await ui.click("运行于");
-  await ui.edit('input[aria-label="搜索会话"]', "investigation");
+  await ui.edit('input[aria-label="搜索对话"]', "investigation");
   expect(ui.container.querySelectorAll('[role="option"]')).toHaveLength(1);
-  await act(async () => ui.container.querySelector('input[aria-label="搜索会话"]')!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+  await act(async () => ui.container.querySelector('input[aria-label="搜索对话"]')!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
   expect(ui.container.querySelector('[role="listbox"]')).toBeNull();
   expect(ui.container.querySelector("aside")).not.toBeNull();
   expect(document.activeElement?.getAttribute("aria-label")).toBe("运行于");
@@ -150,6 +150,8 @@ it("resizes the editor with pointer and keyboard, clamps bounds, and preserves w
 it("keeps the editor mounted through the close motion and cancels it when reopened", async () => {
   const ui = await mount();
   await ui.click("新建自动化");
+  // A new automation starts in its first field, not on the close button.
+  expect(document.activeElement).toBe(ui.container.querySelector("form input"));
   const body = () => ui.container.querySelector(".plugin-automation-body");
   expect(body()?.getAttribute("data-panel")).toBe("true");
   expect(body()?.getAttribute("data-closing")).toBeNull();
@@ -170,18 +172,9 @@ it("keeps the editor mounted through the close motion and cancels it when reopen
 });
 
 it("closes the editor immediately when motion is reduced", async () => {
-  const matchMedia = window.matchMedia;
-  window.matchMedia = ((query: string) => ({
-    matches: query.includes("prefers-reduced-motion"),
-    media: query,
-    onchange: null,
-    addListener: vi.fn(),
-    removeListener: vi.fn(),
-    addEventListener: vi.fn(),
-    removeEventListener: vi.fn(),
-    dispatchEvent: vi.fn(),
-  })) as typeof window.matchMedia;
-  cleanups.push(() => { window.matchMedia = matchMedia; });
+  // Either reduced-motion source zeroes the host's panel exit token.
+  document.documentElement.style.setProperty("--environment-panel-exit-duration", "0ms");
+  cleanups.push(() => { document.documentElement.style.removeProperty("--environment-panel-exit-duration"); });
   const ui = await mount();
   await ui.click("新建自动化");
   await ui.click("关闭");

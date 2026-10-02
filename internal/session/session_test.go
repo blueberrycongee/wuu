@@ -705,6 +705,7 @@ func TestMigrateLegacySessionMessagesRemainsReadable(t *testing.T) {
 			forked_from_item_id TEXT NOT NULL DEFAULT '',
 			pinned_at TEXT,
 			archived_at TEXT,
+			pin_group_id TEXT NOT NULL DEFAULT '',
 			worktree_path TEXT NOT NULL DEFAULT '',
 			worktree_base_head TEXT NOT NULL DEFAULT '',
 			worktree_base_repo TEXT NOT NULL DEFAULT ''
@@ -759,6 +760,30 @@ func TestMigrateLegacySessionMessagesRemainsReadable(t *testing.T) {
 	}
 	if len(history) != 1 || history[0].Content != "hello" {
 		t.Fatalf("unexpected migrated history: %+v", history)
+	}
+
+	// Migration must keep columns added after a retired column was dropped and
+	// remain idempotent when a later public operation opens the store again.
+	if _, err := SetProjectMembership(dir, "thread-1", "project-session", "project-1", "instructions"); err != nil {
+		t.Fatal(err)
+	}
+	parts := json.RawMessage(`[{"type":"text","text":"new history"}]`)
+	if err := AppendHistoryRecord(dir, "thread-1", HistoryRecord{
+		Role: "user", Content: "new history", ContentParts: parts, RetryCount: 2, MaxRetries: 3,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	history, err = LoadHistoryRecords(dir, "thread-1", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(history) != 2 || history[0].Content != "hello" || history[1].Content != "new history" ||
+		string(history[1].ContentParts) != string(parts) || history[1].RetryCount != 2 || history[1].MaxRetries != 3 {
+		t.Fatalf("history changed after reopening migrated store: %+v", history)
+	}
+	saved, ok, err := Find(dir, "thread-1")
+	if err != nil || !ok || saved.Source != "project-session" || saved.ParentID != "project-1" {
+		t.Fatalf("migrated session metadata = %+v, found=%v, err=%v", saved, ok, err)
 	}
 }
 
@@ -1152,5 +1177,64 @@ func TestSetRuntimeSelectionAllowsEmptyModelForProtocolEngines(t *testing.T) {
 	}
 	if _, err := SetRuntimeSelection(dir, "thread-wuu", RuntimeSelection{Provider: "kimi"}); err == nil {
 		t.Fatal("wuu sessions still require a model")
+	}
+}
+
+func TestDeleteArchivedChecksDurableArchiveState(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		archived bool
+		restored bool
+	}{
+		{name: "archived", archived: true},
+		{name: "active"},
+		{name: "restored", archived: true, restored: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			dir := t.TempDir()
+			const id = "archive-only-delete"
+			if _, err := CreateWithMetadata(dir, id, "/synthetic/project"); err != nil {
+				t.Fatal(err)
+			}
+			if err := AppendHistoryRecord(dir, id, HistoryRecord{Role: "user", Content: "durable history"}); err != nil {
+				t.Fatal(err)
+			}
+			if test.archived {
+				if _, err := UpdateArchived(dir, id, true); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if test.restored {
+				if _, err := UpdateArchived(dir, id, false); err != nil {
+					t.Fatal(err)
+				}
+			}
+			deleted, err := DeleteArchived(dir, id)
+			if test.archived && !test.restored {
+				if err != nil || deleted.ID != id || deleted.ArchivedAt == nil {
+					t.Fatalf("archived deletion failed: %+v, %v", deleted, err)
+				}
+				if _, found, err := Find(dir, id); err != nil || found {
+					t.Fatalf("deleted session remains: found=%t err=%v", found, err)
+				}
+				if _, err := LoadHistoryRecords(dir, id, true); !errors.Is(err, ErrSessionNotFound) {
+					t.Fatalf("deleted history remains available: %v", err)
+				}
+				if _, err := DeleteArchived(dir, id); !errors.Is(err, ErrSessionNotFound) {
+					t.Fatalf("repeat guarded delete = %v, want ErrSessionNotFound", err)
+				}
+				return
+			}
+			if !errors.Is(err, ErrSessionNotArchived) {
+				t.Fatalf("active deletion error = %v, want ErrSessionNotArchived", err)
+			}
+			history, err := LoadHistoryRecords(dir, id, true)
+			if err != nil || len(history) != 1 || history[0].Content != "durable history" {
+				t.Fatalf("guard rejection changed history: %+v, %v", history, err)
+			}
+			if _, err := Delete(dir, id); err != nil {
+				t.Fatalf("ordinary deletion must remain available for active sessions: %v", err)
+			}
+		})
 	}
 }

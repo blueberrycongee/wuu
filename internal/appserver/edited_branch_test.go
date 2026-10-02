@@ -34,6 +34,7 @@ func TestEditedBranchSurvivesReloadAndFork(t *testing.T) {
 			original := []providers.ChatMessage{
 				{Role: "user", Content: "kept prompt"}, {Role: "assistant", Content: "kept answer", Phase: providers.MessagePhaseFinalAnswer},
 				{Role: "user", Content: "obsolete prompt"}, {Role: "assistant", Content: "obsolete answer", Phase: providers.MessagePhaseFinalAnswer},
+				{Role: "user", Content: "later prompt"}, {Role: "assistant", Content: "later answer", Phase: providers.MessagePhaseFinalAnswer},
 			}
 			if err := rewriteChatHistory(rt.SessionDir, sess.ID, original); err != nil {
 				t.Fatal(err)
@@ -47,7 +48,8 @@ func TestEditedBranchSurvivesReloadAndFork(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if err := rewriteChatHistoryAtBaseline(rt.SessionDir, sess.ID, history[2:], 4); err != nil {
+				// Both projections have a second turn, but it refers to different prompts.
+				if err := rewriteChatHistoryAtBaseline(rt.SessionDir, sess.ID, history[2:], 6); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -96,9 +98,15 @@ func TestEditedBranchSurvivesReloadAndFork(t *testing.T) {
 			for cycle := 0; cycle < 2; cycle++ {
 				prefix := fmt.Sprintf("cycle-%d-", cycle)
 				turn := current.Turns[targetTurn]
-				rpc(prefix+"edit", MethodThreadEditMessage, ThreadEditMessageParams{ThreadID: sess.ID, TurnID: turn.ID, ItemID: turn.Items[0].ID})
+				edited := remarshal[ThreadEditMessageResult](t, rpc(prefix+"edit", MethodThreadEditMessage, ThreadEditMessageParams{ThreadID: sess.ID, TurnID: turn.ID, ItemID: turn.Items[0].ID})["result"])
+				if edited.Draft.Prompt != turn.Items[0].Text {
+					t.Errorf("restored draft = %q, want selected prompt %q", edited.Draft.Prompt, turn.Items[0].Text)
+				}
+				assertTexts("edit", edited.Thread, kept)
 				cold()
 				assertTexts("immediate reload", resume(prefix+"empty"), kept)
+				immediateFork := remarshal[ThreadForkResult](t, rpc(prefix+"immediate-fork", MethodThreadFork, ThreadForkParams{ThreadID: sess.ID, Mode: "local"})["result"]).Thread
+				assertTexts("immediate fork", immediateFork, kept)
 				rpc(prefix+"replacement", MethodTurnStart, TurnStartParams{ThreadID: sess.ID, Prompt: "replacement prompt"})
 				waitForTurnCompletedCountForThread(t, out, sess.ID, cycle+1)
 				cold()
@@ -152,6 +160,73 @@ func TestEditedBranchSurvivesReloadAndFork(t *testing.T) {
 				t.Fatal("editing changed physical audit records")
 			}
 		})
+	}
+}
+
+func TestEditedBranchRejectsTargetReleasedFromProviderContext(t *testing.T) {
+	rt := newTestRuntime(t, &fakeClient{})
+	out := &lockedBuffer{}
+	srv := New(rt, out)
+	t.Cleanup(srv.Close)
+	sess, err := session.CreateWithMetadata(rt.SessionDir, "released-edit-target", rt.RootDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := []providers.ChatMessage{
+		{Role: "user", Content: "released prompt"}, {Role: "assistant", Content: "released answer", Phase: providers.MessagePhaseFinalAnswer},
+		{Role: "user", Content: "retained prompt"}, {Role: "assistant", Content: "retained answer", Phase: providers.MessagePhaseFinalAnswer},
+	}
+	if err := rewriteChatHistory(rt.SessionDir, sess.ID, original); err != nil {
+		t.Fatal(err)
+	}
+	history, err := loadChatMessages(rt.SessionDir, sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rewriteChatHistoryAtBaseline(rt.SessionDir, sess.ID, history[2:], 4); err != nil {
+		t.Fatal(err)
+	}
+	before, err := session.LoadProviderHistorySnapshot(rt.SessionDir, sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rpc := func(id, method string, params any) map[string]any {
+		t.Helper()
+		payload, err := json.Marshal(map[string]any{"id": id, "method": method, "params": params})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := srv.handleLine(context.Background(), payload); err != nil {
+			t.Fatal(err)
+		}
+		return responseByID(t, parseOutput(t, out.String()), id)
+	}
+	resumed := rpc("initial", MethodThreadResume, ThreadResumeParams{SessionID: sess.ID, ResponseOnly: true})
+	if resumed["error"] != nil {
+		t.Fatal(resumed["error"])
+	}
+	current := remarshal[ThreadResumeResult](t, resumed["result"]).Thread
+	turn := current.Turns[0]
+	response := rpc("edit", MethodThreadEditMessage, ThreadEditMessageParams{ThreadID: sess.ID, TurnID: turn.ID, ItemID: turn.Items[0].ID})
+	if response["error"] == nil {
+		t.Errorf("released target resolved to a recycled position: %+v", response["result"])
+	}
+	after, err := session.LoadProviderHistorySnapshot(rt.SessionDir, sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(after, before) {
+		t.Error("rejected edit changed persisted provider history")
+	}
+	srv.mu.Lock()
+	delete(srv.threads, sess.ID)
+	srv.mu.Unlock()
+	reloaded := rpc("reload", MethodThreadResume, ThreadResumeParams{SessionID: sess.ID, ResponseOnly: true})
+	if reloaded["error"] != nil {
+		t.Fatal(reloaded["error"])
+	}
+	if got := remarshal[ThreadResumeResult](t, reloaded["result"]).Thread; !reflect.DeepEqual(got.Turns, current.Turns) {
+		t.Errorf("rejected edit changed visible history: got %+v, want %+v", got.Turns, current.Turns)
 	}
 }
 

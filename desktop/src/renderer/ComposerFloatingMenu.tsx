@@ -1,7 +1,9 @@
 import {
   type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
   type RefObject,
+  useEffect,
   useLayoutEffect,
   useRef,
   useState
@@ -11,6 +13,7 @@ import type {
   FloatingMenuOwner,
   FloatingMenuPlacement
 } from "./ComposerTypes";
+import { MESSAGE_FLOW_FONT_SIZE_RANGE } from "../shared/protocol";
 import { UILayerPortal } from "./ui/layers/UILayerHost";
 import { isTouchWebShell } from "./ComposerFocus";
 import { ComposerMobileSheet } from "./ComposerMobileSheet";
@@ -18,6 +21,100 @@ import { ComposerMobileSheet } from "./ComposerMobileSheet";
 export function isInsideFloatingMenu(target: Node, owner: FloatingMenuOwner): boolean {
   const element = target instanceof Element ? target : target.parentElement;
   return Boolean(element?.closest('[data-floating-menu-owner="' + owner + '"]'));
+}
+
+// Composer menus are drawn for the default UI size and widen with larger UI
+// text so their labels keep the same room. The floating layer positions a menu
+// from this number, so it is resolved here rather than in CSS.
+export function composerMenuWidth(base: number): number {
+  const uiSize = Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--font-ui"));
+  const defaultSize = MESSAGE_FLOW_FONT_SIZE_RANGE.default;
+  return uiSize > defaultSize ? Math.round((base * uiSize) / defaultSize) : base;
+}
+
+const MENU_FOCUS_TARGETS = "input:not(:disabled), button:not(:disabled)";
+
+/**
+ * Moves focus into a click-open menu once the floating layer has revealed it
+ * (a hidden layer cannot take focus): to its search field, else its checked
+ * row, else the row marked data-menu-autofocus, else its first row, or its last
+ * row when ArrowUp opened it. Pass a new pageKey when the menu swaps pages.
+ * Touch shells keep focus where it is so a phone keyboard does not open.
+ */
+export function useFloatingMenuFocus(
+  menuRef: RefObject<HTMLElement | null>,
+  pageKey = "",
+  enabled = true,
+  fromEnd = false,
+): void {
+  useEffect(() => {
+    if (!enabled || isTouchWebShell()) return undefined;
+    const frame = requestAnimationFrame(() => {
+      const menu = menuRef.current;
+      const rows = Array.from(menu?.querySelectorAll<HTMLElement>("button:not(:disabled)") ?? []);
+      const target = menu?.querySelector<HTMLElement>("input:not([type='range'])")
+        ?? menu?.querySelector<HTMLElement>("[aria-checked='true']:not(:disabled)")
+        ?? menu?.querySelector<HTMLElement>("[data-menu-autofocus]:not(:disabled)")
+        ?? (fromEnd ? rows.at(-1) : rows[0]);
+      target?.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [enabled, fromEnd, pageKey, menuRef]);
+}
+
+/**
+ * ArrowUp and ArrowDown, Home and End move between a menu's fields and enabled
+ * rows, wrapping at the ends. A slider is one more row: it keeps Left, Right,
+ * Home and End for its own steps, as a search field keeps Home and End for its
+ * caret. Returns whether focus moved.
+ */
+export function moveFloatingMenuFocus(event: ReactKeyboardEvent<HTMLElement>): boolean {
+  const { key } = event;
+  if (key !== "ArrowDown" && key !== "ArrowUp" && key !== "Home" && key !== "End") return false;
+  const target = event.target as HTMLElement;
+  if (target instanceof HTMLInputElement && (key === "Home" || key === "End")) return false;
+  const items = Array.from(event.currentTarget.querySelectorAll<HTMLElement>(MENU_FOCUS_TARGETS));
+  if (items.length === 0) return false;
+  event.preventDefault();
+  const index = items.indexOf(target);
+  const next = key === "Home" ? 0
+    : key === "End" ? items.length - 1
+    : index < 0 ? (key === "ArrowDown" ? 0 : items.length - 1)
+    : (index + (key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
+  items[next]?.focus();
+  return true;
+}
+
+/**
+ * The keyboard contract of the composer's click-open menus: arrow movement,
+ * Escape closes and returns focus to the trigger, and Tab closes and carries
+ * on from the trigger rather than from the portal at the end of the document.
+ */
+export function handleFloatingMenuKeyDown(
+  event: ReactKeyboardEvent<HTMLElement>,
+  close: () => void,
+  trigger: HTMLElement | null | undefined,
+): void {
+  if (moveFloatingMenuFocus(event)) return;
+  if (event.key === "Escape") {
+    event.preventDefault();
+    event.stopPropagation();
+    trigger?.focus();
+    close();
+  } else if (event.key === "Tab") {
+    trigger?.focus();
+    close();
+  }
+}
+
+/**
+ * ArrowDown and ArrowUp on a closed menu's trigger open it: "start" focuses the
+ * first row, "end" the last. Returns undefined for any other key.
+ */
+export function menuOpeningKey(event: ReactKeyboardEvent<HTMLElement>): "start" | "end" | undefined {
+  if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return undefined;
+  event.preventDefault();
+  return event.key === "ArrowUp" ? "end" : "start";
 }
 
 function clamp(value: number, min: number, max: number): number {

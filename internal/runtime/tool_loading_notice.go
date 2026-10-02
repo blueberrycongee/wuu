@@ -39,8 +39,8 @@ func warnUnsupportedNativeToolLoadingOnce(providerCfg config.ProviderConfig, mod
 		return
 	}
 	fmt.Fprintf(unsupportedNativeWarnWriter,
-		"wuu: agent.tool_loading = %q, but %s with model %q does not support provider-native deferred tool discovery. Falling back to %q, which declares every tool up front.\n",
-		config.ToolLoadingNative, provider, model, config.ToolLoadingFlat)
+		"wuu: agent.tool_loading = %q, but %s with model %q does not support provider-native deferred tool discovery. Falling back to %q, which loads schemas through ordinary tool discovery.\n",
+		config.ToolLoadingNative, provider, model, config.ToolLoadingClient)
 }
 
 // resetUnsupportedNativeWarnings clears the process-level dedupe set.

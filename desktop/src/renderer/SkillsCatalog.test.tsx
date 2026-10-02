@@ -2,6 +2,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ExtensionInventoryRecord, SkillSummary, WuuDesktopApi } from "../shared/protocol";
+import { ConfirmDialogHost } from "./ConfirmDialog";
 import { SkillsCatalog } from "./SkillsCatalog";
 
 const toastMocks = vi.hoisted(() => ({
@@ -59,7 +60,7 @@ describe("SkillsCatalog", () => {
 
     expect(onInstallPluginPackage).toHaveBeenCalledOnce();
     expect(container.querySelector(".skills-catalog-error")).toBeNull();
-    expect(container.textContent).toContain("暂无 Skills");
+    expect(container.querySelector(".settings-group-empty")).toBeTruthy();
   });
 
   it("shows install errors as a toast instead of inline catalog state", async () => {
@@ -84,6 +85,27 @@ describe("SkillsCatalog", () => {
     );
     expect(container.textContent).not.toContain("Package manifest is invalid");
     expect(container.querySelector(".skills-catalog-error")).toBeNull();
+  });
+
+  it("reports a failed skill load with a retry instead of an empty list", async () => {
+    installSkillList([existingSkill]);
+    (window.wuu.listSkills as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("core unavailable"));
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<SkillsCatalog />);
+    });
+
+    const notice = container.querySelector<HTMLElement>(".skills-catalog-error");
+    expect(notice?.getAttribute("role")).toBe("alert");
+    expect(notice?.textContent).toContain("core unavailable");
+    expect(container.querySelector(".settings-group-empty")).toBeNull();
+
+    await act(async () => {
+      notice?.querySelector("button")?.click();
+    });
+    expect(container.querySelector(".skills-catalog-error")).toBeNull();
+    expect(skillButton(existingSkill.name)).toBeTruthy();
   });
 
   it("refreshes the complete extension catalog through the parent runtime", async () => {
@@ -324,7 +346,7 @@ describe("SkillsCatalog", () => {
     expect(container.textContent).toContain("Control macOS apps through Accessibility.");
     // A catalog without package actions lists plugins read-only.
     expect(container.querySelector('[role="switch"]')).toBeNull();
-    expect(container.querySelector(".skill-artwork-plugin-brand [data-icon=\"layout-grid\"]")).toBeTruthy();
+    expect(container.querySelector(".plugin-row .catalog-row-mark [data-icon=\"layout-grid\"]")).toBeTruthy();
     // A plugin's skill names its plugin the way the plugin card does.
     await selectTab("skills");
     expect(container.querySelector(".catalog-row-meta")?.textContent).toBe("Computer Use for Mac");
@@ -355,7 +377,7 @@ describe("SkillsCatalog", () => {
     expect(loadPluginIcon).toHaveBeenCalledWith({
       id: "plugin:user:brand-artwork", fingerprint: "brand-revision", path: "assets/brand.svg",
     });
-    const image = container.querySelector(".skill-artwork img");
+    const image = container.querySelector(".catalog-row-mark img");
     expect(image?.getAttribute("src")).toBe("data:image/svg+xml,%3Csvg/%3E");
     expect(image?.getAttribute("alt")).toBe("");
   });
@@ -469,7 +491,6 @@ describe("SkillsCatalog", () => {
 
   it("renders Remove only for user-installed plugins and removes by plugin ID after confirmation", async () => {
     installSkillList([]);
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
     const onRemovePluginPackage = vi.fn().mockResolvedValue({
       id: "community-tools",
       removed: true,
@@ -518,10 +539,13 @@ describe("SkillsCatalog", () => {
     await act(async () => {
       root = createRoot(container);
       root.render(
-        <SkillsCatalog
-          extensionInventory={extensionInventory}
-          onRemovePluginPackage={onRemovePluginPackage}
-        />,
+        <>
+          <SkillsCatalog
+            extensionInventory={extensionInventory}
+            onRemovePluginPackage={onRemovePluginPackage}
+          />
+          <ConfirmDialogHost />
+        </>,
       );
     });
 
@@ -537,9 +561,20 @@ describe("SkillsCatalog", () => {
       buttonByText("移除")?.click();
     });
 
-    expect(confirm).toHaveBeenCalledWith(
-      "确定移除用户插件 community-tools？Wuu 中已安装的插件文件将被删除。",
-    );
+    // Declining keeps the plugin; nothing is removed until it is confirmed.
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>('[role="dialog"] [data-confirm-action="cancel"]')?.click();
+    });
+    expect(onRemovePluginPackage).not.toHaveBeenCalled();
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>('[aria-label="community-tools 的更多操作"]')?.click();
+    });
+    await act(async () => {
+      buttonByText("移除")?.click();
+    });
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>('[role="dialog"] [data-confirm-action="confirm"]')?.click();
+    });
     expect(onRemovePluginPackage).toHaveBeenCalledWith("community-tools");
     await act(async () => {
       container.querySelector<HTMLButtonElement>('[data-testid="plugin-page-back"]')?.click();
@@ -690,6 +725,17 @@ describe("SkillsCatalog", () => {
     expect(pluginSwitch("dream")?.disabled).toBe(true);
     expect(document.querySelector('[role="dialog"]')).toBeNull();
     await act(async () => finish());
+    // The switch changes the plugin, not the row's place under the pointer.
+    await act(async () => {
+      root!.render(
+        <SkillsCatalog
+          extensionInventory={[plugin("dream", false), plugin("todo", false)]}
+          onUpdateExtensionPackage={onUpdateExtensionPackage}
+        />,
+      );
+    });
+    expect(pluginSwitch("todo")?.getAttribute("aria-checked")).toBe("false");
+    expect(pluginGroup("todo")).toBe("已启用");
     await act(async () => {
       pluginSwitch("dream")!.click();
     });
@@ -698,6 +744,19 @@ describe("SkillsCatalog", () => {
       fingerprint: "sha256:dream",
       action: "enable",
     });
+    // Entering the catalog again groups plugins by their current state.
+    await act(async () => {
+      root!.unmount();
+      root = createRoot(container);
+      root.render(
+        <SkillsCatalog
+          extensionInventory={[plugin("dream", true), plugin("todo", false)]}
+          onUpdateExtensionPackage={onUpdateExtensionPackage}
+        />,
+      );
+    });
+    expect(pluginGroup("todo")).toBe("未启用");
+    expect(pluginGroup("dream")).toBe("已启用");
   });
 
   it("grants a pending plugin that asks for no permissions from its page", async () => {
@@ -857,13 +916,17 @@ function skillButton(name: string): HTMLButtonElement | undefined {
 }
 
 function pluginSwitch(name: string): HTMLButtonElement | undefined {
-  return Array.from(container.querySelectorAll<HTMLButtonElement>('.plugin-card [role="switch"]')).find(
-    (button) => button.closest(".plugin-card")?.querySelector(".plugin-card-name")?.textContent === name,
+  return Array.from(container.querySelectorAll<HTMLButtonElement>('.plugin-row [role="switch"]')).find(
+    (button) => button.closest(".plugin-row")?.querySelector(".catalog-row-title")?.textContent === name,
   );
 }
 
+function pluginGroup(name: string): string | undefined {
+  return pluginSwitch(name)?.closest("section")?.querySelector(".settings-section-title")?.textContent ?? undefined;
+}
+
 function attentionLabels(): string[] {
-  return Array.from(container.querySelectorAll(".plugin-attention-row .plugin-attention-reason")).map(
+  return Array.from(container.querySelectorAll(".plugin-row .plugin-attention-reason")).map(
     (reason) => reason.textContent ?? "",
   );
 }

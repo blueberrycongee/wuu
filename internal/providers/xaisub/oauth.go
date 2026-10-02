@@ -57,9 +57,9 @@ type OAuthSource struct {
 	baseURL    string
 	home       string
 	httpClient *http.Client
-	mu         sync.Mutex
-	cached     credentials
-	hasCached  bool
+	// mu serializes refreshes. The auth store is the only copy of the session:
+	// a sign-in or sign-out elsewhere must reach every source built from it.
+	mu sync.Mutex
 }
 
 type credentials struct {
@@ -116,11 +116,6 @@ func (s *OAuthSource) Credentials(ctx context.Context, forceRefresh bool) (crede
 	if err := ctx.Err(); err != nil {
 		return credentials{}, err
 	}
-	if !forceRefresh && s.hasCached && strings.TrimSpace(s.cached.accessToken) != "" &&
-		!credentialExpiring(s.cached, refreshSkew) {
-		return s.cached, nil
-	}
-
 	store, err := authstorage.ForHome(s.home)
 	if err != nil {
 		return credentials{}, err
@@ -147,8 +142,6 @@ func (s *OAuthSource) Credentials(ctx context.Context, forceRefresh bool) (crede
 		}
 		creds = credentialsFromStore(state)
 	}
-	s.cached = creds
-	s.hasCached = true
 	return creds, nil
 }
 

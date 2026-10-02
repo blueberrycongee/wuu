@@ -224,8 +224,8 @@ describe("first-party desktop plugin lifecycle", () => {
 
   it.each([
     ["automation", "automation.catalog", "还没有自动化任务"],
-    ["memory", "memory.settings", "记忆概览"],
-    ["dream", "dream.settings", "后台记忆整合"],
+    ["memory", "memory.settings", "笔记本原文"],
+    ["dream", "dream.settings", "后台整合"],
   ] as const)("renders the real %s view with localized host UI", async (pluginId, viewTypeId, expectedText) => {
     const host = new PluginHost({
       react: React,

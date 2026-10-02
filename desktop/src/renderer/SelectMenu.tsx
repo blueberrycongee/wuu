@@ -73,7 +73,7 @@ export function SelectMenu({
   align = "left",
   searchable = false,
   searchPlaceholder,
-  emptyMessage = "没有可选项",
+  emptyMessage,
   // When true, the floating menu flips to the opposite side of the
   // trigger if the requested placement doesn't have enough viewport
   // room (e.g. a long provider × model list inside a centered modal).
@@ -179,7 +179,10 @@ export function SelectMenu({
     if (searchable) {
       setActiveIndex(-1);
       if (!isTouchWebShell()) {
-        searchInputRef.current?.focus();
+        // The portal starts hidden while it computes its position. Focusing
+        // before that layout update commits is ignored by real browsers.
+        const frame = requestAnimationFrame(() => searchInputRef.current?.focus());
+        return () => cancelAnimationFrame(frame);
       }
       return;
     }
@@ -232,6 +235,14 @@ export function SelectMenu({
     if (disabled) {
       return;
     }
+    // Escape may arrive before the deferred menu focus has left the trigger.
+    if (open && event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      setOpen(false);
+      setSearchQuery("");
+      return;
+    }
     if (
       event.key === "ArrowDown" ||
       event.key === "ArrowUp" ||
@@ -247,6 +258,7 @@ export function SelectMenu({
   function handleMenuKeyDown(event: ReactKeyboardEvent<HTMLDivElement>): void {
     if (event.key === "Escape") {
       event.preventDefault();
+      event.stopPropagation();
       setOpen(false);
       setSearchQuery("");
       triggerRef.current?.focus();
@@ -342,7 +354,7 @@ export function SelectMenu({
             ) : null}
             <div className="select-menu-options">
               {flatOptions.length === 0 ? (
-                <div className="select-menu-empty">{emptyMessage}</div>
+                <div className="select-menu-empty">{emptyMessage ?? t("common.noOptions")}</div>
               ) : null}
               {resolvedGroups.map((group, groupIndex) => (
                 <div className="select-menu-group" key={group.label ?? `group-${groupIndex}`}>

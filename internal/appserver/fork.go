@@ -252,8 +252,8 @@ func editHistoryBeforeUserMessage(history []providers.ChatMessage, sourceThreadI
 		return nil, ThreadEditDraft{}, fmt.Errorf("item_id is required")
 	}
 	projection := projectHistory(sourceThreadID, history, time.Time{})
-	origin, ok := projectionOriginForTarget(projection, turns, targetTurnID, targetItemID)
-	if !ok || origin.StartIndex < 0 || origin.StartIndex >= len(history) {
+	origin, err := forkOriginAtTarget(projection, turns, targetTurnID, targetItemID, ThreadItem{})
+	if err != nil || origin.StartIndex < 0 || origin.StartIndex >= len(history) {
 		return nil, ThreadEditDraft{}, fmt.Errorf("editable user message not found")
 	}
 	if origin.Item.Type != ThreadItemUserMessage {

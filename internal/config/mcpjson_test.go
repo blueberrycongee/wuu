@@ -455,3 +455,49 @@ func TestEmitMCPJsonDiags_DedupAcrossReloads(t *testing.T) {
 		t.Fatalf("already-warned names should not repeat, got %q", buf.String())
 	}
 }
+
+// TestMCPJson_StartupPreferenceKeepsProjectDefinition covers the settings
+// switch: turning a trusted project server off and on again must not leave a
+// native entry that hides the definition in .mcp.json.
+func TestMCPJson_StartupPreferenceKeepsProjectDefinition(t *testing.T) {
+	home := isolatedHome(t)
+	workdir := t.TempDir()
+	configPath := writeBaseConfig(t, home, `{
+  "default_provider": "main",
+  "providers": {"main": {"type": "openai-compatible", "base_url": "https://b/v1", "api_key_env": "K", "model": "m"}}
+}`)
+	writeMCPJson(t, workdir, `{"mcpServers": {"shared": {"command": "project-cmd", "args": ["--serve"]}}}`)
+	writeProjectSettings(t, workdir, localSettingsFile, `{"mcp_json": {"enable_all": true}}`)
+	toggle := func(enabled bool) {
+		t.Helper()
+		if err := UpdateGeneralSettings(configPath, GeneralSettingsUpdate{MCPEnabledToggles: map[string]*bool{"shared": &enabled}}); err != nil {
+			t.Fatalf("toggle %v: %v", enabled, err)
+		}
+	}
+	load := func() MCPServerConfig {
+		t.Helper()
+		cfg, _, err := LoadFrom(workdir, home)
+		if err != nil {
+			t.Fatalf("LoadFrom: %v", err)
+		}
+		return cfg.MCPServers["shared"]
+	}
+
+	toggle(false)
+	disabled := load()
+	if disabled.Command != "project-cmd" || disabled.Enabled == nil || *disabled.Enabled {
+		t.Fatalf("disabled server must keep its project definition and stay off: %+v", disabled)
+	}
+	toggle(true)
+	enabled := load()
+	if enabled.Command != "project-cmd" || !reflect.DeepEqual(enabled.Args, []string{"--serve"}) || (enabled.Enabled != nil && !*enabled.Enabled) {
+		t.Fatalf("re-enabled server lost its project definition: %+v", enabled)
+	}
+	raw, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "mcp_servers") {
+		t.Fatalf("re-enabling left an empty native entry behind:\n%s", raw)
+	}
+}

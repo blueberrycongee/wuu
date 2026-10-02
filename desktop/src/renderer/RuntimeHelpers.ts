@@ -1,5 +1,6 @@
 import type { CodexModelSummary, GitStatusResult, InitializeResult, ProviderModelSummary, ProviderSummary } from "../shared/protocol";
 import { translateCurrent as t } from "./i18n";
+import type { TranslationKey } from "./i18n/resources/zh-CN";
 
 export function effectiveModelSpeed(speed?: string, defaultSpeed?: string): string | undefined {
   return speed || defaultSpeed;
@@ -23,42 +24,28 @@ export function shortCodexModelLabel(model: string): string {
   return model.replace(/^gpt-/i, "");
 }
 
-export function codexEffortLabel(effort: string): string {
-  switch (effort) {
-    case "":
-      return "Default";
-    case "none":
-      return "None";
-    case "minimal":
-      return "Minimal";
-    case "low":
-      return "Low";
-    case "medium":
-      return "Medium";
-    case "high":
-      return "High";
-    case "xhigh":
-      return "Extra high";
-    case "max":
-      return "Max";
-    case "ultra":
-      return "Ultra";
-    default:
-      return effort;
-  }
-}
+const EFFORT_LABEL_KEYS: Record<string, TranslationKey> = {
+  "": "runtime.effort.default",
+  none: "runtime.effort.none",
+  minimal: "runtime.effort.minimal",
+  low: "runtime.effort.low",
+  medium: "runtime.effort.medium",
+  high: "runtime.effort.high",
+  xhigh: "runtime.effort.xhigh",
+  max: "runtime.effort.max",
+  ultra: "runtime.effort.ultra",
+};
 
-export function effortLabel(effort: string): string {
-  return codexEffortLabel(effort);
-}
-
+// Levels the catalog does not name show their own id.
 export function variantLabel(variant: string): string {
-  return codexEffortLabel(variant);
+  const key = EFFORT_LABEL_KEYS[variant];
+  return key ? t(key) : variant;
 }
 
+// Thinking off is the weakest choice; the provider's default sits above it.
 const EFFORT_RANK: Record<string, number> = {
-  "": 0,
-  none: 1,
+  none: 0,
+  "": 1,
   minimal: 2,
   low: 3,
   medium: 4,

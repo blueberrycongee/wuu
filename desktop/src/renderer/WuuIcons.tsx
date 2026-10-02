@@ -138,6 +138,7 @@ export const PencilLine = createIcon("PencilLine");
 export const PieChart = createIcon("PieChart");
 export const Pin = createIcon("Pin");
 export const PinOff = createIcon("PinOff");
+export const Play = createIcon("Play");
 export const Plug = createIcon("Plug");
 export const PlugZap = createIcon("PlugZap");
 export const Plus = createIcon("Plus");

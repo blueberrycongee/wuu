@@ -5,7 +5,8 @@ import type { InitializeResult } from "../shared/protocol";
 import { writeDraftRuntimeMemory } from "./DraftRuntimeMemory";
 import { permissionModeOption, RuntimePicker } from "./ComposerRuntimeMenus";
 import type { CodexRuntimeMenu } from "./ComposerTypes";
-import { setActiveLocale } from "./i18n";
+import { setActiveLocale, translateCurrent } from "./i18n";
+import { variantLabel } from "./RuntimeHelpers";
 
 describe("RuntimePicker", () => {
   let container: HTMLDivElement;
@@ -97,7 +98,8 @@ describe("RuntimePicker", () => {
     const speed = vi.fn().mockResolvedValue(true);
     const effort = vi.fn();
     const model = vi.fn();
-    renderPicker("model", runtimeWithEffort(), vi.fn(), effort, model, createRef(), {
+    const toggleMenu = vi.fn();
+    renderPicker("model", runtimeWithEffort(), toggleMenu, effort, model, createRef(), {
       activeEngine: "codex", engineLocked: true, engineModel: "gpt-6-astra", engineEffort: "high", engineSpeed: "standard",
       onSelectSpeed: speed,
       engines: [{ id: "codex", enabled: true, binary_ok: true, models: [{ id: "gpt-6-astra", fast_mode: true, supported_efforts: ["low", "high"] }] }],
@@ -108,6 +110,10 @@ describe("RuntimePicker", () => {
     expect(speed).toHaveBeenCalledWith("fast");
     expect(effort).not.toHaveBeenCalled();
     expect(model).not.toHaveBeenCalled();
+    expect(toggleMenu).not.toHaveBeenCalled();
+    expect(document.querySelector(".runtime-panel.is-summary")).not.toBeNull();
+    expect(button?.getAttribute("aria-description")).toBeTruthy();
+    expect(button?.parentElement?.closest("button")).toBeNull();
   });
 
   it.each([
@@ -121,13 +127,46 @@ describe("RuntimePicker", () => {
       onSelectSpeed,
       engines: [{ id: "codex", enabled: true, binary_ok: true, models: [{ id: "gpt-6-astra", fast_mode: true, default_speed: defaultSpeed }] }],
     });
+    // Wait for the opening frame's automatic focus before simulating input.
+    await act(async () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
     const button = document.querySelector<HTMLButtonElement>('button[aria-label="Fast mode"]');
     expect(button?.getAttribute("aria-pressed")).toBe(String(enabled));
+    expect(document.querySelector<HTMLButtonElement>(".runtime-panel-speed-reset")?.disabled).toBe(!speed);
     await act(async () => button?.click());
     expect(onSelectSpeed).toHaveBeenCalledWith(next);
     await act(async () => document.querySelector<HTMLButtonElement>(".runtime-panel-speed-reset")?.click());
     expect(onSelectSpeed).toHaveBeenLastCalledWith("");
+    expect(document.activeElement).toBe(button);
     expect(button?.getAttribute("aria-pressed")).toBe(String(defaultSpeed === "fast"));
+    expect(document.querySelector<HTMLButtonElement>(".runtime-panel-speed-reset")?.disabled).toBe(true);
+  });
+
+  it("keeps a speed save focused while preventing duplicate requests", async () => {
+    let finish!: (saved: boolean) => void;
+    const onSelectSpeed = vi.fn(() => new Promise<boolean>((resolve) => { finish = resolve; }));
+    const initialized = runtimeWithEffort();
+    initialized.speed = "standard";
+    initialized.providers![0].models![0].fast_mode = true;
+    renderPicker("model", initialized, vi.fn(), vi.fn(), vi.fn(), createRef(), { onSelectSpeed });
+    // Wait for the opening frame's automatic focus before simulating input.
+    await act(async () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+    const button = document.querySelector<HTMLButtonElement>('button[aria-label="Fast mode"]')!;
+    act(() => { button.focus(); button.click(); });
+    expect(button.disabled).toBe(false);
+    expect(button.getAttribute("aria-disabled")).toBe("true");
+    expect(button.getAttribute("aria-busy")).toBe("true");
+    act(() => button.click());
+    expect(onSelectSpeed).toHaveBeenCalledTimes(1);
+    await act(async () => finish(true));
+    expect(document.activeElement).toBe(button);
+    expect(button.getAttribute("aria-disabled")).toBeNull();
+  });
+
+  it("omits speed controls when the model does not support fast mode", () => {
+    const initialized = runtimeWithEffort();
+    renderPicker("model", initialized, vi.fn(), vi.fn(), vi.fn(), createRef(), { onSelectSpeed: vi.fn() });
+    expect(document.querySelector('button[aria-label="Fast mode"]')).toBeNull();
+    expect(document.querySelector(".runtime-panel-speed-reset")).toBeNull();
   });
 
   it("restores the speed toggle after a rejected update", async () => {
@@ -147,7 +186,7 @@ describe("RuntimePicker", () => {
     const trigger = document.querySelector<HTMLButtonElement>(".codex-runtime-trigger");
     expect(trigger?.getAttribute("aria-expanded")).toBe("false");
     expect(trigger?.textContent).toContain("Claude Sonnet");
-    expect(trigger?.textContent).toContain("Medium");
+    expect(trigger?.textContent).toContain(variantLabel("medium"));
     expect(trigger?.textContent).not.toContain("Wuu");
     expect(trigger?.getAttribute("aria-label")).toContain("Wuu");
 
@@ -164,7 +203,7 @@ describe("RuntimePicker", () => {
 
     const trigger = document.querySelector<HTMLButtonElement>(".codex-runtime-trigger");
     expect(trigger?.querySelector(".codex-runtime-effort")).toBeNull();
-    expect(trigger?.getAttribute("aria-label")).not.toContain("Default");
+    expect(trigger?.getAttribute("aria-label")).not.toContain(variantLabel(""));
   });
 
   it("shows the level stored in effort when the variant column is empty", () => {
@@ -174,7 +213,7 @@ describe("RuntimePicker", () => {
     renderPicker(null, initialized);
 
     const trigger = document.querySelector<HTMLButtonElement>(".codex-runtime-trigger");
-    expect(trigger?.textContent).toContain("Max");
+    expect(trigger?.textContent).toContain(variantLabel("max"));
   });
 
   it("uses the configured inventory even when stale discovery contains a removed model", () => {
@@ -199,14 +238,13 @@ describe("RuntimePicker", () => {
     expect(document.querySelector(".codex-main-menu")).toBeNull();
 
     expect(menu?.classList.contains("is-summary")).toBe(true);
-    expect(menu?.textContent).toContain("Wuu");
     expect(menu?.textContent).toContain("work");
     expect(menu?.textContent).toContain("Claude Sonnet");
-    expect(menu?.textContent).toContain("Medium");
+    expect(menu?.textContent).toContain(variantLabel("medium"));
     expect(menu?.querySelector(".select-menu-search input")).toBeNull();
     const effortSlider = menu?.querySelector<HTMLInputElement>('.codex-effort-slider input[type="range"]');
     expect(effortSlider?.value).toBe("2");
-    expect(effortSlider?.getAttribute("aria-valuetext")).toBe("Medium");
+    expect(effortSlider?.getAttribute("aria-valuetext")).toBe(variantLabel("medium"));
     expect(menu?.querySelector(".codex-effort-slider")?.textContent).toBe("");
 
     act(() => menu?.querySelector<HTMLButtonElement>(".runtime-panel-model")?.click());
@@ -254,6 +292,30 @@ describe("RuntimePicker", () => {
       search.dispatchEvent(new Event("input", { bubbles: true }));
     });
     expect(rows()).toBe("1");
+  });
+
+  it("reaches inline speed controls above the model and the effort slider with the arrow keys", async () => {
+    const initialized = runtimeWithEffort();
+    initialized.providers![0].models![0].fast_mode = true;
+    renderPicker("model", initialized, vi.fn(), vi.fn(), vi.fn(), createRef(), { onSelectSpeed: vi.fn().mockResolvedValue(true) });
+    await act(async () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+    const press = (key: string): void => {
+      act(() => { document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true })); });
+    };
+
+    expect(document.activeElement).toBe(document.querySelector(".runtime-panel-model"));
+    press("ArrowUp");
+    expect(document.activeElement).toBe(document.querySelector(".runtime-panel-fast"));
+    press("ArrowDown");
+    expect(document.activeElement).toBe(document.querySelector(".runtime-panel-model"));
+    press("ArrowDown");
+    const slider = document.querySelector<HTMLInputElement>('.codex-effort-slider input[type="range"]')!;
+    expect(document.activeElement).toBe(slider);
+    const level = slider.value;
+    // Up and Down leave the slider; Left and Right stay its own steps.
+    press("ArrowDown");
+    expect(document.activeElement).toBe(document.querySelector(".runtime-panel-fast"));
+    expect(slider.value).toBe(level);
   });
 
   it("steps back with Escape before closing the panel", () => {
@@ -403,7 +465,21 @@ describe("RuntimePicker", () => {
     expect(items).toEqual(["Grok 4.6", "Grok 4.5"]);
   });
 
-  it("keeps every engine visible when the current conversation locks engine switching", () => {
+  it("names the engine only when another one can be chosen", () => {
+    renderPicker("model", runtimeWithEffort(), vi.fn(), vi.fn(), vi.fn(), createRef<HTMLDivElement>(), {
+      engines: [{ id: "wuu", enabled: true, binary_ok: true }],
+    });
+    expect(document.querySelector('.runtime-panel-context [aria-label*="Wuu"]')).toBeNull();
+
+    renderPicker("model", runtimeWithEffort(), vi.fn(), vi.fn(), vi.fn(), createRef<HTMLDivElement>(), {
+      engines: [{ id: "wuu", enabled: true, binary_ok: true }, { id: "codex", enabled: true, binary_ok: true }],
+      onSelectEngine: vi.fn(),
+    });
+    act(() => document.querySelector<HTMLButtonElement>('.runtime-panel-context button[aria-label*="Wuu"]')?.click());
+    expect(document.querySelectorAll(".runtime-engine-option")).toHaveLength(2);
+  });
+
+  it("explains a bound engine instead of opening choices it cannot take", () => {
     renderPicker(
       "model",
       runtimeWithEffort(),
@@ -421,34 +497,41 @@ describe("RuntimePicker", () => {
       }
     );
 
-    const engineContext = document.querySelector<HTMLButtonElement>(".runtime-panel-context button");
-    act(() => engineContext?.click());
-    const choices = Array.from(
-      document.querySelectorAll<HTMLButtonElement>(".runtime-engine-option")
-    );
-    expect(choices.map((choice) => choice.querySelector(".runtime-engine-option-name")?.textContent)).toEqual([
-      "Wuu",
-      "Codex"
-    ]);
-    expect(choices.every((choice) => choice.disabled)).toBe(true);
+    const context = document.querySelector<HTMLElement>(".runtime-panel-context")!;
+    expect(context.querySelector("button")).toBeNull();
+    expect(context.querySelector("[aria-label]")?.getAttribute("aria-label"))
+      .toContain(translateCurrent("runtime.engineLockedDescription"));
+    expect(document.querySelector(".runtime-engine-option")).toBeNull();
   });
 
   it("builds permission labels in the active language", () => {
     setActiveLocale("en-US");
 
     expect(permissionModeOption("standard")).toMatchObject({
-      label: "Full trust within workspace",
-      chipLabel: "Standard",
+      label: translateCurrent("runtime.permission.standard"),
+      hint: translateCurrent("runtime.permission.standardHint"),
     });
   });
 
-  it("uses advertised ACP permission labels when the engine publishes them", () => {
+  it.each(["codex", "claude", "cursor", "devin"])(
+    "names %s modes with the shared words and keeps the engine's own mode as the hint",
+    (engine) => {
+      for (const mode of ["standard", "unconfined"] as const) {
+        const option = permissionModeOption(mode, engine);
+        expect(option.label).toBe(permissionModeOption(mode).label);
+        expect(option.hint).not.toBe("");
+        expect(option.hint).not.toBe(option.label);
+      }
+    },
+  );
+
+  it("shows advertised ACP permission labels as the hint under the shared name", () => {
     expect(permissionModeOption("unconfined", "devin", [
       { mode: "standard", id: "ask", label: "Ask" },
       { mode: "unconfined", id: "bypass", label: "Bypass Permissions" },
     ])).toMatchObject({
-      label: "Bypass Permissions",
-      chipLabel: "Bypass Permissions",
+      label: permissionModeOption("unconfined").label,
+      hint: "Bypass Permissions",
       tone: "danger",
     });
   });
@@ -655,8 +738,8 @@ describe("RuntimePicker", () => {
     const slider = document.querySelector<HTMLInputElement>('.codex-effort-slider input[type="range"]')!;
     expect(slider.max).toBe("4");
     expect(slider.value).toBe("4");
-    expect(slider.getAttribute("aria-valuetext")).toBe("Extra high");
-    expect(document.querySelector(".runtime-panel-model .runtime-panel-effort-value")?.textContent).toBe("Extra high");
+    expect(slider.getAttribute("aria-valuetext")).toBe(variantLabel("xhigh"));
+    expect(document.querySelector(".runtime-panel-model .runtime-panel-effort-value")?.textContent).toBe(variantLabel("xhigh"));
   });
 
   it("selects a discrete effort by dragging the unlabeled slider", () => {
@@ -669,7 +752,7 @@ describe("RuntimePicker", () => {
       slider.dispatchEvent(new Event("input", { bubbles: true }));
     });
 
-    expect(document.querySelector(".runtime-panel-model .runtime-panel-effort-value")?.textContent).toBe("High");
+    expect(document.querySelector(".runtime-panel-model .runtime-panel-effort-value")?.textContent).toBe(variantLabel("high"));
     expect(document.querySelector(".codex-effort-slider + .runtime-panel-effort-value")).toBeNull();
     expect(onSelectEffort).not.toHaveBeenCalled();
 
@@ -678,10 +761,10 @@ describe("RuntimePicker", () => {
     expect(onSelectEffort).toHaveBeenCalledTimes(1);
     expect(onSelectEffort).toHaveBeenCalledWith("high");
     expect(slider.value).toBe("3");
-    expect(slider.getAttribute("aria-valuetext")).toBe("High");
+    expect(slider.getAttribute("aria-valuetext")).toBe(variantLabel("high"));
   });
 
-  it("maps pointer spans and cancels a drag without saving", () => {
+  it("snaps the pointer to the nearest level and cancels a drag without saving", () => {
     const onSelectEffort = vi.fn();
     renderPicker("model", runtimeWithEffort(), vi.fn(), onSelectEffort);
     const slider = document.querySelector<HTMLInputElement>('.codex-effort-slider input[type="range"]')!;
@@ -828,7 +911,7 @@ describe("RuntimePicker", () => {
     // model's own default before the stream round-trip.
     expect(document.querySelector(".runtime-panel-model-name")?.textContent).toBe("Model B");
     const selectedEffort = document.querySelector<HTMLInputElement>('.codex-effort-slider input[type="range"]');
-    expect(selectedEffort?.getAttribute("aria-valuetext")).toBe("Medium");
+    expect(selectedEffort?.getAttribute("aria-valuetext")).toBe(variantLabel("medium"));
   });
 
   it("restores the last effort when selecting a previously used model", () => {

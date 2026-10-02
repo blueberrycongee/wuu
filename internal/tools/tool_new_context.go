@@ -23,7 +23,8 @@ func (*NewContextTool) Execute(context.Context, string) (string, error) {
 
 func (*NewContextTool) Definition() providers.ToolDefinition {
 	return providers.ToolDefinition{
-		Name: newContextToolName,
+		DirectOnly: true,
+		Name:       newContextToolName,
 		Description: "Request a fresh context window after this tool batch. Save a recovery checkpoint with notes first: the host releases the active transcript without summarizing it. " +
 			"Files, processes and permissions remain unchanged. Read the checkpoint and recover missing history after the switch.",
 		InputSchema: map[string]any{

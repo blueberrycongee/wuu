@@ -3,7 +3,6 @@
 :root {
   --image-preview-overlay-bg: rgba(8, 10, 12, 0.82);
   --image-preview-toolbar-text: #f3f4f5;
-  --image-preview-title-text: rgba(243, 244, 245, 0.92);
   --image-preview-toolbar-border: rgba(255, 255, 255, 0.12);
   --image-preview-toolbar-actions-bg: rgba(20, 24, 28, 0.4);
   --image-preview-toolbar-button-hover: rgba(255, 255, 255, 0.12);
@@ -34,35 +33,25 @@
   flex-wrap: wrap;
   align-items: center;
   justify-content: center;
-  gap: 12px;
+  gap: var(--space-3);
   width: fit-content;
   max-width: calc(100% - 32px);
   margin: 0 auto 16px;
-  padding: 4px 8px;
+  /* One geometry with menus: square buttons in a shell whose corner is the
+   * button's plus the inset. */
+  padding: var(--space-1);
   border: 1px solid var(--image-preview-toolbar-border);
-  border-radius: var(--radius-lg);
+  border-radius: calc(var(--radius-sm) + var(--space-1));
   background: var(--image-preview-toolbar-actions-bg);
   color: var(--image-preview-toolbar-text);
   font-size: var(--font-ui);
   user-select: none;
 }
 
-.image-preview-title {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-weight: 500;
-  letter-spacing: 0.01em;
-  color: var(--image-preview-title-text);
-}
-
 .image-preview-toolbar-actions {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 4px;
+  gap: 2px;
   max-width: 100%;
   flex-wrap: wrap;
   justify-content: center;
@@ -87,7 +76,7 @@
   flex: 0 0 auto;
   padding: 0;
   border: 0;
-  border-radius: var(--radius-pill);
+  border-radius: var(--radius-sm);
   background: transparent;
   color: inherit;
   cursor: pointer;
@@ -108,8 +97,8 @@
 }
 
 .image-preview-toolbar-button .icon {
-  width: 16px;
-  height: 16px;
+  width: var(--icon-size);
+  height: var(--icon-size);
 }
 
 .image-preview-actual-size {

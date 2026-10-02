@@ -70,10 +70,22 @@ function storeWithoutUsage(): UsageOverviewResponse {
   };
 }
 
+function storeWithUsage(): UsageOverviewResponse {
+  const today = new Date();
+  const date = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+  const store = storeWithoutUsage();
+  return {
+    ...store,
+    total_sessions: 3,
+    metrics: { ...store.metrics, input_tokens: 1_200, active_days: 1 },
+    days: [{ date, input_tokens: 1_200, output_tokens: 0, cache_creation_tokens: 0, cache_read_tokens: 0, cache_hit_rate: 0, turns: 3, agents: 0 }],
+  };
+}
+
 describe("EmptyHomeOverview", () => {
   it("starts idle play after the entrance and resumes it after input interrupts", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
-    installWuuStub({ getUsageOverview: vi.fn().mockResolvedValue(storeWithoutUsage()) });
+    installWuuStub({ getUsageOverview: vi.fn().mockResolvedValue(storeWithUsage()) });
     // The card's entrance runs until the test finishes it.
     let finishEntrance!: () => void;
     const entrance = { finished: new Promise<void>((resolve) => (finishEntrance = resolve)) };
@@ -126,8 +138,16 @@ describe("EmptyHomeOverview", () => {
     expect(view.querySelector(".empty-home-overview")).toBeNull();
   });
 
-  it("shows zero totals and an empty heatmap for a store without usage", async () => {
-    const getUsageOverview = vi.fn().mockResolvedValue(storeWithoutUsage());
+  it("leaves a first conversation to the greeting when there is no usage yet", async () => {
+    installWuuStub({ getUsageOverview: vi.fn().mockResolvedValue(storeWithoutUsage()) });
+
+    const view = await renderOverview();
+
+    expect(view.querySelector(".empty-home-overview")).toBeNull();
+  });
+
+  it("summarizes recorded usage on the renderer's calendar", async () => {
+    const getUsageOverview = vi.fn().mockResolvedValue(storeWithUsage());
     installWuuStub({ getUsageOverview });
 
     const view = await renderOverview();
@@ -137,9 +157,8 @@ describe("EmptyHomeOverview", () => {
       timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     });
     const values = [...view.querySelectorAll(".empty-home-stats dd")].map((value) => value.textContent);
-    expect(values).toEqual(["0", "0", "0"]);
+    expect(values).toEqual(["3", "1.2k", "1"]);
     const cells = [...view.querySelectorAll(".empty-home-heatmap-week i")];
-    expect(cells.length).toBeGreaterThan(0);
-    expect(cells.every((cell) => cell.getAttribute("data-level") === "0")).toBe(true);
+    expect(cells.some((cell) => cell.getAttribute("data-level") !== "0")).toBe(true);
   });
 });

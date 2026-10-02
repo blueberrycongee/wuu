@@ -4,8 +4,10 @@ import {
   createDraftSessionTab,
   createThreadSessionTab,
   initialState,
+  initialSplitComposerDrafts,
   threadSessionTabID,
   type AppState,
+  type ComposerDraftState,
   type ThreadSummary,
 } from "./AppState";
 import { createThreadMutationActions } from "./ThreadMutationActions";
@@ -91,13 +93,13 @@ function installWuuApi(baseThread: Thread): {
 
 function buildActions({
   initial,
-  activeThreadID,
 }: {
   initial: AppState;
-  activeThreadID?: string;
 }) {
   let appState = initial;
   const clearPrimaryComposerDraft = vi.fn();
+  let splitDrafts = initialSplitComposerDrafts();
+  const restorePrimaryComposerDraft = vi.fn();
   const resetSplitComposerDrafts = vi.fn();
   const updateCachedSidebarThread = vi.fn();
   const updateCachedSidebarThreadPinned = vi.fn();
@@ -108,10 +110,11 @@ function buildActions({
     setAppState: (update) => {
       appState = typeof update === "function" ? update(appState) : update;
     },
-    getActiveThreadID: () => activeThreadID,
     nextDraftSessionTab: (context) =>
       createDraftSessionTab("draft:fallback", context),
     clearPrimaryComposerDraft,
+    restorePrimaryComposerDraft,
+    getSplitComposerDrafts: () => splitDrafts,
     resetSplitComposerDrafts,
     updateCachedSidebarThread,
     updateCachedSidebarThreadPinned,
@@ -122,6 +125,9 @@ function buildActions({
   return {
     actions,
     getAppState: () => appState,
+    setAppState: (state: AppState) => { appState = state; },
+    setSplitDrafts: (drafts: Record<"primary" | "secondary", ComposerDraftState>) => { splitDrafts = drafts; },
+    restorePrimaryComposerDraft,
     clearPrimaryComposerDraft,
     resetSplitComposerDrafts,
     updateCachedSidebarThread,
@@ -280,7 +286,6 @@ describe("createThreadMutationActions", () => {
         activeSessionTabID: threadSessionTabID(base.id),
         status: "ready",
       },
-      activeThreadID: base.id,
     });
 
     const outcome = await harness.actions.archiveThread(summary(base));
@@ -339,13 +344,13 @@ describe("createThreadMutationActions", () => {
 
     expect(outcome).toEqual({
       ok: false,
-      error: "会话仍在运行，结束后再归档",
+      error: "对话仍在运行，结束后再归档",
       forceRetryable: true,
     });
     expect(api.archiveThread).not.toHaveBeenCalled();
     expect(harness.getAppState().threads[0]?.archived).toBe(false);
     expect(harness.getAppState().status).toBe("ready");
-    expect(toastMocks.showErrorToast).toHaveBeenCalledWith("会话仍在运行，结束后再归档");
+    expect(toastMocks.showErrorToast).toHaveBeenCalledWith("对话仍在运行，结束后再归档");
   });
 
   it("reports a remotely owned running turn without showing archive success", async () => {
@@ -371,12 +376,12 @@ describe("createThreadMutationActions", () => {
 
     expect(outcome).toEqual({
       ok: false,
-      error: "会话仍在运行，结束后再归档",
+      error: "对话仍在运行，结束后再归档",
       forceRetryable: true,
     });
     expect(harness.getAppState().threads[0]?.archived).toBe(false);
     expect(harness.getAppState().status).toBe("ready");
-    expect(toastMocks.showErrorToast).toHaveBeenCalledWith("会话仍在运行，结束后再归档");
+    expect(toastMocks.showErrorToast).toHaveBeenCalledWith("对话仍在运行，结束后再归档");
   });
 
   it("reuses a parked workspace draft when archiving the active thread", async () => {
@@ -399,7 +404,6 @@ describe("createThreadMutationActions", () => {
         activeSessionTabID: threadTab.id,
         status: "ready",
       },
-      activeThreadID: base.id,
     });
 
     await harness.actions.archiveThread(summary(base));
@@ -432,6 +436,23 @@ describe("createThreadMutationActions", () => {
     expect(api.deleteThread).toHaveBeenCalledWith(base.id);
     expect(harness.removeCachedSidebarThread).toHaveBeenCalledWith(base.id);
     expect(harness.getAppState().threads).toHaveLength(0);
+  });
+
+  it("only removes an archived conversation after a guarded server deletion succeeds", async () => {
+    const archived = { ...thread("archived"), archived: true };
+    const active = thread("active");
+    const api = installWuuApi(archived);
+    const harness = buildActions({ initial: { ...initialState, activeContext: projectContext(),
+      thread: active, threads: [archived, active], status: "ready" } });
+    api.deleteThread.mockRejectedValueOnce(new Error("no longer archived"));
+    await expect(harness.actions.deleteArchivedThread(archived.id)).rejects.toThrow("no longer archived");
+    expect(harness.getAppState().threads).toHaveLength(2);
+    expect(harness.removeCachedSidebarThread).not.toHaveBeenCalled();
+    await harness.actions.deleteArchivedThread(archived.id);
+    expect(api.deleteThread).toHaveBeenLastCalledWith(archived.id, { onlyIfArchived: true });
+    expect(harness.getAppState().threads.map(item => item.id)).toEqual([active.id]);
+    expect(harness.getAppState().thread?.id).toBe(active.id);
+    expect(harness.removeCachedSidebarThread).toHaveBeenCalledWith(archived.id);
   });
 
   it("optimistically unarchives before the server confirms", async () => {
@@ -520,7 +541,6 @@ describe("createThreadMutationActions", () => {
         activeSessionTabID: threadTab.id,
         status: "ready",
       },
-      activeThreadID: base.id,
     });
 
     const pending = harness.actions.archiveThread(summary(base));
@@ -559,4 +579,104 @@ describe("createThreadMutationActions", () => {
     expect(harness.getAppState().threads[0]?.archived).toBe(false);
     expect(harness.getAppState().thread?.id).toBe(base.id);
   });
+});
+
+
+describe("archive draft ownership", () => {
+  it("preserves drafts and pending messages when archive is rejected", async () => {
+    const context = projectContext();
+    const base = thread();
+    const api = installWuuApi(base);
+    api.archiveThread.mockRejectedValueOnce(new Error("storage unavailable"));
+    const harness = buildActions({ initial: {
+      ...initialState, activeContext: context, thread: base,
+      threads: [base], sessionTabs: [createThreadSessionTab(base, context)],
+      activeSessionTabID: threadSessionTabID(base.id),
+    } });
+
+    const result = await harness.actions.archiveThread(summary(base));
+
+    expect(result.ok).toBe(false);
+    expect(harness.clearPrimaryComposerDraft).not.toHaveBeenCalled();
+    expect(harness.resetSplitComposerDrafts).not.toHaveBeenCalled();
+    expect(harness.clearThreadPendingComposerMessages).not.toHaveBeenCalled();
+  });
+
+  it("does not clear a newer conversation draft when archive succeeds after navigation", async () => {
+    const context = projectContext();
+    const base = thread();
+    const target = thread("target");
+    const api = installWuuApi(base);
+    let resolve!: (value: { thread: Thread }) => void;
+    api.archiveThread.mockReturnValue(new Promise((complete) => { resolve = complete; }));
+    const harness = buildActions({ initial: {
+      ...initialState, activeContext: context, thread: base,
+      threads: [base, target], sessionTabs: [createThreadSessionTab(base, context)],
+      activeSessionTabID: threadSessionTabID(base.id),
+    } });
+    const pending = harness.actions.archiveThread(summary(base));
+    expect(harness.clearPrimaryComposerDraft).not.toHaveBeenCalled();
+    expect(harness.clearThreadPendingComposerMessages).not.toHaveBeenCalled();
+    harness.setAppState({ ...harness.getAppState(), thread: target,
+      activeSessionTabID: threadSessionTabID(target.id) });
+    resolve({ thread: { ...base, archived: true } });
+    await pending;
+
+    expect(harness.getAppState().thread).toBe(target);
+    expect(harness.getAppState().activeSessionTabID).toBe(threadSessionTabID(target.id));
+    expect(harness.clearPrimaryComposerDraft).not.toHaveBeenCalled();
+    expect(harness.resetSplitComposerDrafts).not.toHaveBeenCalled();
+    expect(harness.clearThreadPendingComposerMessages).toHaveBeenCalledWith(base.id);
+  });
+});
+
+
+describe("confirmed thread removal", () => {
+  it("preserves drafts and pending messages when deletion fails", async () => {
+    const base = thread();
+    const api = installWuuApi(base);
+    api.deleteThread.mockRejectedValueOnce(new Error("storage unavailable"));
+    const harness = buildActions({ initial: {
+      ...initialState, activeContext: projectContext(), thread: base,
+      threads: [base], activeSessionTabID: threadSessionTabID(base.id),
+    } });
+
+    await harness.actions.deleteThread(summary(base));
+
+    expect(harness.clearPrimaryComposerDraft).not.toHaveBeenCalled();
+    expect(harness.resetSplitComposerDrafts).not.toHaveBeenCalled();
+    expect(harness.clearThreadPendingComposerMessages).not.toHaveBeenCalled();
+    expect(harness.getAppState().thread).toBe(base);
+  });
+
+  it.each(["primary", "secondary"] as const)(
+    "preserves the surviving split draft when archiving the %s pane", async (pane) => {
+      const primary = thread("primary");
+      const secondary = thread("secondary");
+      const removed = pane === "primary" ? primary : secondary;
+      const retained = pane === "primary" ? secondary : primary;
+      const context = projectContext();
+      installWuuApi(removed);
+      const harness = buildActions({ initial: {
+        ...initialState, activeContext: context, thread: primary, secondaryThread: secondary,
+        activePane: pane, threads: [primary, secondary],
+        activeSessionTabID: threadSessionTabID(removed.id),
+        sessionTabs: [createThreadSessionTab(primary, context), createThreadSessionTab(secondary, context)],
+      } });
+      const drafts = {
+        primary: { prompt: "primary draft", images: [], files: [] },
+        secondary: { prompt: "secondary draft", images: [], files: [] },
+      };
+      harness.setSplitDrafts(drafts);
+
+      await harness.actions.archiveThread(summary(removed));
+
+      expect(harness.getAppState().thread).toBe(retained);
+      expect(harness.getAppState().secondaryThread).toBeUndefined();
+      expect(harness.getAppState().activeSessionTabID).toBe(threadSessionTabID(retained.id));
+      expect(harness.restorePrimaryComposerDraft).toHaveBeenCalledWith(
+        drafts[pane === "primary" ? "secondary" : "primary"]);
+      expect(harness.clearPrimaryComposerDraft).not.toHaveBeenCalled();
+    },
+  );
 });

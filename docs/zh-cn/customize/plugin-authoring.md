@@ -95,6 +95,11 @@ UI 声明放在 `contributes.slots`、`surfaces`、`presenters`、`navigation`�
 
 模型工具注册在初始化结果的 `tools` 数组中，每个工具需要 `id`、`description` 和对象类型的 `input_schema`，宿主会生成带命名空间的公开名称。`execution_scopes` 可限制工具在 `root` 或 `child` 中可用；`activity` 描述只读性、并发安全、风险和是否编排子工具。应如实声明副作用，不要把写入工具标成只读来绕过调度或权限检查。这些声明属于可信扩展契约，不是沙箱。
 
+会话启用 PTC 时，普通工具默认作为程序内绑定。用户交互、显式交付或必须保留
+为模型直调的生命周期控制可声明 `direct_only: true`。此类工具留在顶层工具
+列表，并拒绝嵌套调用。这个可选标记不授予权限，也不改变执行作用域；未声明
+时仍使用普通路由。不要将这项宿主元数据放入参数 schema。
+
 `executeTool` 接收参数以及 `cwd`、调用 ID、可用的会话和轮次标识等上下文。即使有 schema，也应验证参数。结果格式为 `{ result: { content: [...] } }`，工具失败时设置 `is_error: true`。内容可包含文本和支持的富结果部分。需要成为会话产物的文件应使用 `importArtifact`，不要只返回可能消失的临时路径。
 
 能力单独声明 ID、`kind` 和版本。当前支持的能力 ID 为：

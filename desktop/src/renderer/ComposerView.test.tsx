@@ -13,6 +13,8 @@ import {
 } from "./ComposerView";
 import { ImagePreviewProvider } from "./ImagePreview";
 import { ConversationSplitPane } from "./ConversationSplitPane";
+import { permissionModeOption } from "./ComposerRuntimeMenus";
+import { COMPOSER_COMMAND_MENU_WIDTH } from "./ComposerTypes";
 import { translateCurrent } from "./i18n";
 import { WorkbenchConnectionContext } from "./WorkbenchConnectionContext";
 import { ComposerTokenGauge } from "./ComposerTokenGauge";
@@ -476,6 +478,7 @@ function renderStatefulComposer(props: {
   textOnly?: boolean;
   onPasteAttachmentFiles?: (files: File[]) => void;
   queryHistorySessionID?: string;
+  skillThreadID?: string;
   initialized?: InitializeResult;
   running?: boolean;
   handoffDisabledReason?: string;
@@ -568,6 +571,7 @@ function renderStatefulComposer(props: {
           onInterrupt={() => {}}
           tokensPerSecond={0}
           queryHistorySessionID={props.queryHistorySessionID}
+          skillThreadID={props.skillThreadID}
         />
       </ImagePreviewProvider>
     );
@@ -895,7 +899,7 @@ describe("Composer send control", () => {
     expect(onSend).toHaveBeenCalledWith("刚刚输入的内容");
   });
 
-  it("commits keystrokes while deferred composer chrome is suspended", async () => {
+  it.each(["Enter", "button"])("commits keystrokes with %s while deferred composer chrome is suspended", async (submission) => {
     const host = new PluginHost({ react: React });
     const onSend = vi.fn();
     let released = false;
@@ -906,22 +910,27 @@ describe("Composer send control", () => {
         resolve();
       };
     });
+    let suspendChrome: () => void = () => {};
+    function SlowToolbar(): JSX.Element {
+      const [suspended, setSuspended] = useState(false);
+      suspendChrome = () => setSuspended(true);
+      if (suspended && !released) throw pending;
+      return <span>toolbar ready</span>;
+    }
     await host.activateGeneration({
       pluginId: "slow-composer-chrome",
       generation: "one",
       register(api) {
         api.registerSlot("composer.toolbar", {
           id: "slow-toolbar",
-          render(context) {
-            if (context.hasDraft && !released) {
-              throw pending;
-            }
-            return api.react.createElement("span", null, "toolbar ready");
+          render() {
+            return api.react.createElement(SlowToolbar);
           },
         });
       },
     });
-    renderComposer({ prompt: "", setPrompt: () => {}, pluginHost: host, onSend });
+    // Keep Send enabled while a later input update is held in the transition.
+    renderComposer({ prompt: "previous draft", setPrompt: () => suspendChrome(), pluginHost: host, onSend });
     const textarea = container.querySelector<HTMLTextAreaElement>("textarea");
     if (!textarea) throw new Error("composer textarea not rendered");
 
@@ -933,11 +942,15 @@ describe("Composer send control", () => {
     expect(container.querySelector('[data-testid="composer-suspended"]')).toBeNull();
     expect(container.querySelector(".composer-frame")).not.toBeNull();
     act(() => {
-      textarea.dispatchEvent(new KeyboardEvent("keydown", {
-        key: "Enter",
-        bubbles: true,
-        cancelable: true,
-      }));
+      if (submission === "button") {
+        container.querySelector<HTMLButtonElement>(".composer-send-button")?.click();
+      } else {
+        textarea.dispatchEvent(new KeyboardEvent("keydown", {
+          key: "Enter",
+          bubbles: true,
+          cancelable: true,
+        }));
+      }
     });
     expect(onSend).toHaveBeenCalledWith("输入不应等待工具栏");
 
@@ -1895,7 +1908,8 @@ describe("Composer send control", () => {
     const menuBottom = window.innerHeight - parseFloat(slashLayer!.style.bottom);
     expect(menuBottom).toBeGreaterThan(shell.getBoundingClientRect().top);
     expect(menuBottom).toBeLessThanOrEqual(frame.getBoundingClientRect().top);
-    expect(slashLayer!.style.width).toBe(`${frame.getBoundingClientRect().width}px`);
+    expect(slashLayer!.querySelector<HTMLElement>(".slash-command-menu")?.style.getPropertyValue("--composer-menu-width"))
+      .toBe(`${COMPOSER_COMMAND_MENU_WIDTH}px`);
     expect(slashLayer!.style.left).toBe(`${frame.getBoundingClientRect().left}px`);
   });
 
@@ -2062,18 +2076,19 @@ describe("Composer send control", () => {
     });
     expect(plusButton?.getAttribute("aria-expanded")).toBe("true");
 
+    // A compact card on the input's leading edge, not a band as wide as the input.
     const menu = document.body.querySelector<HTMLElement>('[data-floating-menu-owner="composer-plus"]');
-    expect(menu?.style.width).toBe("640px");
+    expect(menu?.style.width).toBe("");
+    expect(menu?.querySelector<HTMLElement>(".composer-plus-menu")?.style.getPropertyValue("--composer-menu-width"))
+      .toBe(`${COMPOSER_COMMAND_MENU_WIDTH}px`);
     expect(menu?.style.left).toBe("80px");
     expect(menu?.style.bottom).toBe(`${window.innerHeight - 400 + 4}px`);
     expect(menu?.style.getPropertyValue("--floating-menu-available-height")).toBe("388px");
-    expect(menu?.querySelectorAll(".composer-plus-menu-section")).toHaveLength(2);
-    expect(menu?.textContent).toContain("添加");
-    expect(menu?.textContent).toContain("添加附件");
-    expect(menu?.textContent).toContain("图片或 PDF");
-    expect(menu?.textContent).toContain("命令");
-    expect(menu?.textContent).toContain("审查当前更改");
-    expect(menu?.textContent).not.toContain("打开斜杠命令");
+    // Every command row names the slash command that runs it.
+    const reviewRow = Array.from(menu?.querySelectorAll("button") ?? []).find(
+      (button) => button.textContent?.includes(translateCurrent("slash.review.title")),
+    );
+    expect(reviewRow?.querySelector(".composer-plus-menu-item-desc")?.textContent).toBe("/review");
 
     const attachmentItem = Array.from(menu?.querySelectorAll("button") ?? []).find(
       (button) => button.textContent?.includes("添加附件"),
@@ -2186,37 +2201,43 @@ describe("Composer send control", () => {
     expect(runtimeButton?.disabled).toBe(false);
   });
 
-  it("inserts a selected skill slash command into the composer", async () => {
+  it.each([
+    { draftID: "draft-tab", threadID: undefined, expected: undefined },
+    { draftID: "draft-tab", threadID: "persisted-thread", expected: { thread_id: "persisted-thread" } },
+  ])("loads skill catalogs using the real thread identity: $threadID", async ({ draftID, threadID, expected }) => {
+    installSkillList([]);
+    renderStatefulComposer({
+      activeContext: { kind: "project", project_id: "repo", cwd: "/repo" },
+      queryHistorySessionID: draftID,
+      skillThreadID: threadID,
+    });
+    await act(async () => { await Promise.resolve(); });
+    expect(window.wuu.listSkills).toHaveBeenCalledWith(expected);
+  });
+
+  it.each(["review", "commit", "audit", "compact", "release-check"])("preserves explicitly selected %s skill identity", async (name) => {
     const setPrompt = vi.fn();
-    installSkillList([
-      {
-        name: "slides",
-        description: "Create slide decks",
-        source: "bundled",
-        user_invocable: true,
-        disable_model_invoke: false,
-      },
-    ]);
+    const path = `/synthetic/skills/${name}/SKILL.md`;
+    installSkillList([{ name, path, source: "user", description: "Run the selected workflow", user_invocable: true, disable_model_invoke: true }]);
     renderComposer({
-      prompt: "/sli",
+      prompt: `/${name}`,
       setPrompt,
       activeContext: { kind: "project", project_id: "repo", cwd: "/repo" },
     });
-
     await act(async () => {
       await Promise.resolve();
     });
-
     const skillButton = document.body.querySelector<HTMLButtonElement>(
-      '.slash-command-item[data-command-name="slides"]',
+      `.slash-command-item[id$="-skill:${name}"]`,
     );
-    expect(skillButton).not.toBeUndefined();
-
+    expect(skillButton).not.toBeNull();
     act(() => {
       skillButton?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
     });
-
-    expect(setPrompt).toHaveBeenCalledWith("/slides ");
+    const prompt = setPrompt.mock.calls.at(-1)?.[0];
+    expect(prompt).toContain(name);
+    expect(prompt).toContain(path);
+    expect(JSON.parse(prompt.split("\n")[0].slice("/skill ".length))).toEqual({ name, source: "user", path });
   });
 
   it("shows both the command name and the description on a skill row", async () => {
@@ -2752,7 +2773,7 @@ describe("Composer queue strip", () => {
     });
 
     expect(container.querySelector(".composer-pending-preview")?.textContent).toBe(
-      "当前回复已中断；这些 Steer 和 Queue 不会自动执行。",
+      translateCurrent("composer.heldNotice"),
     );
     expect(container.querySelector(".composer-pending-title")).toBeNull();
     expect(container.querySelector(".composer-pending-drawer")?.classList.contains("expanded")).toBe(true);
@@ -2932,44 +2953,40 @@ describe("Composer permission menu", () => {
     expect(permissionModeFromSummary({ mode: "unconfined" })).toBe("unconfined");
   });
 
-  it("shows the everyday permission modes in the composer menu", () => {
-    const onSelectPermissionMode = vi.fn();
-    renderComposer({
-      accessMenuOpen: true,
-      permissions: { mode: "standard" },
-      onSelectPermissionMode,
-    });
+  function accessRows(): HTMLButtonElement[] {
+    return Array.from(document.body.querySelectorAll<HTMLButtonElement>('.access-menu [role="menuitemradio"]'));
+  }
 
-    const chip = container.querySelector<HTMLButtonElement>(
-      "button[aria-label=\"权限模式：标准\"]",
-    );
-    expect(chip).not.toBeNull();
-    expect(chip?.disabled).toBe(false);
+  function rowLabel(row: Element | undefined): string | undefined {
+    return row?.querySelector(".select-menu-item-label")?.textContent ?? undefined;
+  }
 
-    const labels = Array.from(
-      document.body.querySelectorAll<HTMLButtonElement>(
-        "button[role=\"menuitemradio\"] strong",
-      ),
-    ).map((label) => label.textContent?.trim());
-    expect(labels).toEqual(["工作区内完全信任", "替我审批", "只读", "无边界"]);
-    expect(document.body.textContent).not.toContain("平衡");
-    expect(document.body.textContent).not.toContain("严格");
-    const menuLabels = Array.from(
-      document.body.querySelectorAll<HTMLButtonElement>(
-        ".access-menu button strong",
-      ),
-    ).map((label) => label.textContent?.trim());
-    expect(menuLabels).toEqual(["工作区内完全信任", "替我审批", "只读", "无边界"]);
+  function accessRow(mode: PermissionMode, approveForMe = false): HTMLButtonElement | undefined {
+    const label = approveForMe ? translateCurrent("runtime.permission.approveForMe") : permissionModeOption(mode).label;
+    return accessRows().find((row) => rowLabel(row) === label);
+  }
 
-    const checkedLabels = Array.from(
-      document.body.querySelectorAll<HTMLButtonElement>(
-        "button[role=\"menuitemradio\"][aria-checked=\"true\"] strong",
-      ),
-    ).map((label) => label.textContent?.trim());
-    expect(checkedLabels).toEqual(["工作区内完全信任"]);
-    expect(document.body.querySelector(
-      "button[role=\"menuitemradio\"][aria-checked=\"true\"] svg",
-    )).not.toBeNull();
+  it.each([
+    { mode: "standard" },
+    { mode: "standard", approve_for_me: true },
+    { mode: "read_only" },
+    { mode: "unconfined" },
+  ])("names the current mode with the same words on the chip and in the menu: %j", (permissions) => {
+    renderComposer({ accessMenuOpen: true, permissions });
+
+    const chip = container.querySelector<HTMLButtonElement>(".permission-chip")!;
+    expect(chip.disabled).toBe(false);
+    const rows = accessRows();
+    expect(rows).toHaveLength(4);
+    expect(new Set(rows.map(rowLabel)).size).toBe(4);
+    const checked = rows.filter((row) => row.getAttribute("aria-checked") === "true");
+    expect(checked).toHaveLength(1);
+    expect(chip.textContent).toBe(rowLabel(checked[0]));
+    expect(chip.getAttribute("aria-label")).toContain(chip.textContent);
+    // Each mode explains itself in one secondary line rather than a longer name.
+    for (const row of rows) {
+      expect(row.querySelector(".select-menu-item-hint")?.textContent).toBeTruthy();
+    }
     expect(document.body.textContent).not.toContain("profile:");
     expect(document.body.textContent).not.toContain("reviewer:");
   });
@@ -3019,13 +3036,13 @@ describe("Composer permission menu", () => {
       activeEngine: "grok",
       permissions: { mode: "unconfined" },
     });
-    const labels = Array.from(
-      document.body.querySelectorAll<HTMLButtonElement>(".access-menu button strong"),
-    ).map((label) => label.textContent?.trim());
-    expect(labels).toEqual(["工作区内完全信任", "无边界"]);
+    expect(accessRows().map(rowLabel)).toEqual([
+      permissionModeOption("standard").label,
+      permissionModeOption("unconfined").label,
+    ]);
   });
 
-  it("shows advertised ACP permission labels in the unified access menu", () => {
+  it("keeps advertised ACP permission labels visible under the shared mode names", () => {
     const onSelectPermissionMode = vi.fn();
     renderComposer({
       accessMenuOpen: true,
@@ -3045,15 +3062,13 @@ describe("Composer permission menu", () => {
         },
       ],
     });
-    const labels = Array.from(
-      document.body.querySelectorAll<HTMLButtonElement>(".access-menu button strong"),
-    ).map((label) => label.textContent?.trim());
-    expect(labels).toEqual(["Ask", "Plan", "Bypass Permissions"]);
-    const plan = Array.from(
-      document.body.querySelectorAll<HTMLButtonElement>("button[role=\"menuitemradio\"]"),
-    ).find((button) => button.textContent?.includes("Plan"));
+    const rows = accessRows();
+    expect(rows.map(rowLabel)).toEqual(
+      (["standard", "read_only", "unconfined"] as const).map((mode) => permissionModeOption(mode).label),
+    );
+    expect(rows.map((row) => row.querySelector(".select-menu-item-hint")?.textContent)).toEqual(["Ask", "Plan", "Bypass Permissions"]);
     act(() => {
-      plan?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+      accessRow("read_only")?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
     });
     expect(onSelectPermissionMode).toHaveBeenCalledWith("read_only", undefined);
   });
@@ -3066,13 +3081,8 @@ describe("Composer permission menu", () => {
       onSelectPermissionMode,
     });
 
-    const standard = Array.from(
-      document.body.querySelectorAll<HTMLButtonElement>(
-        "button[role=\"menuitemradio\"]",
-      ),
-    ).find((button) => button.textContent?.includes("工作区内完全信任"));
     act(() => {
-      standard?.dispatchEvent(
+      accessRow("standard")?.dispatchEvent(
         new MouseEvent("click", { bubbles: true, cancelable: true }),
       );
     });
@@ -3098,47 +3108,24 @@ describe("Composer permission menu", () => {
     expect(onSelectPermissionMode).toHaveBeenCalledWith("standard", true);
   });
 
-  it("shows Approve for me as selected on the chip and with a check in the menu", () => {
+  it("marks Approve for me, not Standard, while it is on", () => {
     renderComposer({
       accessMenuOpen: true,
       permissions: { mode: "standard", approve_for_me: true },
     });
 
-    const chip = container.querySelector<HTMLButtonElement>(
-      "button[aria-label=\"权限模式：替我审批\"]",
-    );
-    expect(chip).not.toBeNull();
-    expect(chip?.textContent).toContain("替我审批");
-
-    const radios = Array.from(
-      document.body.querySelectorAll<HTMLButtonElement>("button[role=\"menuitemradio\"]"),
-    );
-    const approveForMe = radios.find((button) => button.textContent?.includes("替我审批"));
-    const standard = radios.find((button) => button.textContent?.includes("工作区内完全信任"));
-    expect(approveForMe?.getAttribute("aria-checked")).toBe("true");
-    expect(approveForMe?.querySelector("svg")).not.toBeNull();
-    expect(standard?.getAttribute("aria-checked")).toBe("false");
-    expect(standard?.querySelector("svg")).toBeNull();
+    expect(accessRow("standard", true)?.getAttribute("aria-checked")).toBe("true");
+    expect(accessRow("standard")?.getAttribute("aria-checked")).toBe("false");
   });
 
-  it("does not mark Approve for me selected when it is off", () => {
+  it("marks Standard, not Approve for me, while it is off", () => {
     renderComposer({
       accessMenuOpen: true,
       permissions: { mode: "standard", approve_for_me: false },
     });
 
-    expect(container.querySelector<HTMLButtonElement>(
-      "button[aria-label=\"权限模式：标准\"]",
-    )).not.toBeNull();
-
-    const radios = Array.from(
-      document.body.querySelectorAll<HTMLButtonElement>("button[role=\"menuitemradio\"]"),
-    );
-    const approveForMe = radios.find((button) => button.textContent?.includes("替我审批"));
-    const standard = radios.find((button) => button.textContent?.includes("工作区内完全信任"));
-    expect(approveForMe?.getAttribute("aria-checked")).toBe("false");
-    expect(approveForMe?.querySelector("svg")).toBeNull();
-    expect(standard?.getAttribute("aria-checked")).toBe("true");
+    expect(accessRow("standard", true)?.getAttribute("aria-checked")).toBe("false");
+    expect(accessRow("standard")?.getAttribute("aria-checked")).toBe("true");
   });
 
   it("keeps Approve for me selectable from unconfined mode", () => {
@@ -3148,23 +3135,211 @@ describe("Composer permission menu", () => {
       permissions: { mode: "unconfined", approve_for_me: true },
       onSelectPermissionMode,
     });
-    const radios = Array.from(
-      document.body.querySelectorAll<HTMLButtonElement>("button[role=\"menuitemradio\"]"),
-    );
-    const approveForMe = radios.find((button) => button.textContent?.includes("替我审批"));
-    const unconfined = radios.find((button) => button.textContent?.includes("无边界"));
-    expect(approveForMe).not.toBeUndefined();
+    const approveForMe = accessRow("standard", true);
     expect(approveForMe?.disabled).toBe(false);
     expect(approveForMe?.getAttribute("aria-checked")).toBe("false");
-    expect(approveForMe?.querySelector("svg")).toBeNull();
-    expect(unconfined?.getAttribute("aria-checked")).toBe("true");
-    expect(container.querySelector<HTMLButtonElement>(
-      "button[aria-label=\"权限模式：无边界\"]",
-    )).not.toBeNull();
+    expect(accessRow("unconfined")?.getAttribute("aria-checked")).toBe("true");
     act(() => {
       approveForMe?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
     });
     expect(onSelectPermissionMode).toHaveBeenCalledWith("standard", true);
+  });
+});
+
+describe("Composer menu keyboard", () => {
+  const project: DesktopProject = {
+    id: "project-1",
+    name: "wuu",
+    path: "/repo/wuu",
+    created_at: "2026-06-26T00:00:00.000Z",
+    updated_at: "2026-06-26T00:00:00.000Z",
+  };
+
+  // The app owns the project, branch and permission menus' open state; the
+  // harness holds it the same way so opening and closing run the real paths.
+  function renderMenuComposer(): void {
+    function Harness(): JSX.Element {
+      const [menuOpen, setMenuOpen] = useState(false);
+      const [accessMenuOpen, setAccessMenuOpen] = useState(false);
+      const [branchMenuOpen, setBranchMenuOpen] = useState(false);
+      const [workspaceFilter, setWorkspaceFilter] = useState("");
+      const menuRef = React.useRef<HTMLDivElement>(null);
+      const accessMenuRef = React.useRef<HTMLDivElement>(null);
+      const codexRuntimeRef = React.useRef<HTMLDivElement>(null);
+      return (
+        <ImagePreviewProvider>
+          <Composer
+            variant="hero"
+            canSelectWorkspace
+            prompt=""
+            setPrompt={() => {}}
+            files={[]}
+            images={[]}
+            queuedMessages={[]}
+            guideMessages={[]}
+            running={false}
+            status="ready"
+            readOnly={false}
+            initialized={initialized({ mode: "standard" })}
+            projects={[project]}
+            activeContext={{ kind: "project", project_id: project.id, cwd: project.path }}
+            activeWorkspace={project}
+            gitStatus={{ is_repo: true, branch: "main", dirty_count: 0, branches: ["main", "feature/menus"] }}
+            codexModels={{ loading: false, error: "", models: [] }}
+            codexRuntimeMenu={null}
+            codexRuntimeRef={codexRuntimeRef}
+            menuOpen={menuOpen}
+            accessMenuOpen={accessMenuOpen}
+            branchMenuOpen={branchMenuOpen}
+            menuRef={menuRef}
+            accessMenuRef={accessMenuRef}
+            workspaceFilter={workspaceFilter}
+            setWorkspaceFilter={setWorkspaceFilter}
+            onToggleMenu={() => setMenuOpen((open) => !open)}
+            onToggleAccessMenu={() => setAccessMenuOpen((open) => !open)}
+            onToggleBranchMenu={() => setBranchMenuOpen((open) => !open)}
+            onToggleCodexRuntimeMenu={() => {}}
+            onSelectRuntimeModel={() => {}}
+            onSelectRuntimeEffort={() => {}}
+            onSelectPermissionMode={() => {}}
+            onOpenSettings={() => {}}
+            onOpenSkillsCatalog={() => {}}
+            onSelectWorkspace={() => {}}
+            onSelectNoProject={() => {}}
+            onSelectGitBranch={() => {}}
+            onCreateWorkspace={() => {}}
+            onOpenWorkspace={() => {}}
+            onStartNewThread={() => {}}
+            onOpenWorkspaceTool={() => {}}
+            onPasteAttachmentFiles={() => {}}
+            onRemoveFile={() => {}}
+            onRemoveImage={() => {}}
+            onRemoveQueuedMessage={() => {}}
+            onRemoveGuideMessage={() => {}}
+            onGuideQueuedMessage={() => {}}
+            onEditQueuedMessage={() => {}}
+            onEditGuideMessage={() => {}}
+            onSend={() => {}}
+            onInterrupt={() => {}}
+          />
+        </ImagePreviewProvider>
+      );
+    }
+    act(() => {
+      root = createRoot(container);
+      root.render(<Harness />);
+    });
+  }
+
+  function press(key: string, target: Element | null = document.activeElement): void {
+    act(() => {
+      target?.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+    });
+  }
+
+  async function openFrom(trigger: HTMLButtonElement): Promise<void> {
+    act(() => trigger.click());
+    // Menus take focus once the floating layer has been positioned and shown.
+    await act(async () => nextAnimationFrame());
+  }
+
+  function menuItems(owner: string): HTMLButtonElement[] {
+    return Array.from(document.body.querySelectorAll<HTMLButtonElement>(
+      `[data-floating-menu-owner="${owner}"] [role^="menuitem"]:not(:disabled)`,
+    ));
+  }
+
+  it("moves through the plus menu with the arrow keys and returns to its button", async () => {
+    renderMenuComposer();
+    const plus = container.querySelector<HTMLButtonElement>(".composer-plus-button")!;
+    await openFrom(plus);
+
+    const items = menuItems("composer-plus");
+    expect(items.length).toBeGreaterThan(2);
+    expect(document.activeElement).toBe(items[0]);
+    press("ArrowDown");
+    expect(document.activeElement).toBe(items[1]);
+    press("End");
+    expect(document.activeElement).toBe(items.at(-1));
+    press("ArrowDown");
+    expect(document.activeElement).toBe(items[0]);
+    press("ArrowUp");
+    expect(document.activeElement).toBe(items.at(-1));
+
+    press("Escape");
+    expect(document.body.querySelector('[data-floating-menu-owner="composer-plus"]')).toBeNull();
+    expect(document.activeElement).toBe(plus);
+  });
+
+  it("opens the plus menu from its button with the arrow keys", async () => {
+    renderMenuComposer();
+    const plus = container.querySelector<HTMLButtonElement>(".composer-plus-button")!;
+    plus.focus();
+    press("ArrowUp", plus);
+    await act(async () => nextAnimationFrame());
+
+    expect(plus.getAttribute("aria-expanded")).toBe("true");
+    expect(document.activeElement).toBe(menuItems("composer-plus").at(-1));
+  });
+
+  it("leaves the plus menu on Tab from its button instead of the end of the document", async () => {
+    renderMenuComposer();
+    const plus = container.querySelector<HTMLButtonElement>(".composer-plus-button")!;
+    await openFrom(plus);
+
+    press("Tab");
+    expect(document.body.querySelector('[data-floating-menu-owner="composer-plus"]')).toBeNull();
+    expect(document.activeElement).toBe(plus);
+  });
+
+  it("starts the permission menu on the current mode and closes it with Escape", async () => {
+    renderMenuComposer();
+    const chip = container.querySelector<HTMLButtonElement>(".permission-chip")!;
+    await openFrom(chip);
+
+    const items = menuItems("composer-access");
+    const checked = items.find((item) => item.getAttribute("aria-checked") === "true");
+    expect(checked).toBeDefined();
+    expect(document.activeElement).toBe(checked);
+    press("ArrowDown");
+    expect(document.activeElement).toBe(items[items.indexOf(checked!) + 1]);
+
+    press("Escape");
+    expect(document.body.querySelector('[data-floating-menu-owner="composer-access"]')).toBeNull();
+    expect(chip.getAttribute("aria-expanded")).toBe("false");
+    expect(document.activeElement).toBe(chip);
+  });
+
+  it("types into the project search as soon as the project menu opens", async () => {
+    renderMenuComposer();
+    const pill = container.querySelector<HTMLButtonElement>(".composer-workspace-bar .hero-project-pill")!;
+    await openFrom(pill);
+
+    const menu = document.body.querySelector<HTMLElement>(".composer-project-menu:not(.composer-branch-menu)")!;
+    const search = menu.querySelector<HTMLInputElement>("input")!;
+    expect(document.activeElement).toBe(search);
+    press("ArrowDown");
+    expect(document.activeElement).toBe(menu.querySelector('[role="menuitemradio"]'));
+
+    press("Escape");
+    expect(document.body.querySelector(".composer-project-menu")).toBeNull();
+    expect(document.activeElement).toBe(pill);
+  });
+
+  it("types into the branch search as soon as the branch menu opens", async () => {
+    renderMenuComposer();
+    const pill = container.querySelector<HTMLButtonElement>(".composer-branch-control .hero-project-pill")!;
+    await openFrom(pill);
+
+    const menu = document.body.querySelector<HTMLElement>(".composer-branch-menu")!;
+    expect(document.activeElement).toBe(menu.querySelector("input"));
+    // The checked-out branch cannot be chosen again, so the arrows pass it.
+    press("ArrowDown");
+    expect(document.activeElement?.getAttribute("title")).toBe("feature/menus");
+
+    press("Escape");
+    expect(document.body.querySelector(".composer-branch-menu")).toBeNull();
+    expect(document.activeElement).toBe(pill);
   });
 });
 
@@ -3402,7 +3577,7 @@ describe("Composer expand button", () => {
     const button = container.querySelector<HTMLButtonElement>(".composer-expand-button");
     expect(button).not.toBeNull();
     expect(button?.disabled).toBe(true);
-    expect(button?.getAttribute("title")).toBe("只读会话不可展开");
+    expect(button?.getAttribute("title")).toBe("只读对话不可展开");
     expect(stack?.classList.contains("is-expanded")).toBe(false);
   });
 });

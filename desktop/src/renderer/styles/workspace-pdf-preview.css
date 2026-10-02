@@ -8,7 +8,6 @@
   color-scheme: light dark;
   /* A PDF page is content: it keeps paper-white regardless of theme. */
   --pdf-page-bg: #ffffff;
-  --pdf-page-shadow: var(--shadow-card);
 }
 
 * {
@@ -21,27 +20,27 @@
   height: 100%;
   min-width: 0;
   min-height: 0;
-  grid-template-rows: 38px minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
   background: var(--paper);
   color: var(--ink);
-  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
-    "Segoe UI", sans-serif;
 }
 
+/* A chrome row like Review's file row: the page count on the pane inset, the
+ * zoom controls ending on the toolbar inset. */
 .workspace-pdf-toolbar {
   display: flex;
   min-width: 0;
+  min-height: calc(var(--control-size-toolbar) + var(--space-2) * 2);
   align-items: center;
   justify-content: space-between;
   border-bottom: 1px solid var(--hairline-soft);
   background: var(--paper);
-  padding: 0 10px 0 14px;
+  padding: var(--space-2) var(--control-toolbar-inset) var(--space-2) var(--pane-inset);
 }
 
 .workspace-pdf-page-count {
-  min-width: 52px;
-  color: var(--ink-muted);
-  font-size: var(--font-xs, 11px);
+  color: var(--ink-soft);
+  font-size: var(--font-sm);
   font-variant-numeric: tabular-nums;
 }
 
@@ -53,19 +52,34 @@
 
 .workspace-pdf-zoom-controls button {
   display: grid;
-  height: 26px;
-  min-width: 26px;
+  height: var(--control-size-toolbar);
+  min-width: var(--control-size-toolbar);
   place-items: center;
   border: 0;
   border-radius: var(--radius-sm);
   background: transparent;
-  color: var(--ink-muted);
+  color: var(--ink-soft);
   font: inherit;
 }
 
+.workspace-pdf-zoom-controls button svg {
+  width: var(--icon-size);
+  height: var(--icon-size);
+}
+
 .workspace-pdf-zoom-controls button:not(:disabled):hover {
-  background: var(--surface-2);
+  background: var(--ink-overlay-4);
   color: var(--ink);
+}
+
+/* The shadow root keeps the document's focus rules out; restate the ring. */
+button:focus-visible {
+  outline: none;
+}
+
+:host-context(html[data-focus-modality="keyboard"]) button:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
 }
 
 .workspace-pdf-zoom-controls button:disabled {
@@ -73,9 +87,9 @@
 }
 
 .workspace-pdf-zoom-controls .workspace-pdf-zoom-value {
-  min-width: 48px;
-  padding: 0 6px;
-  font-size: var(--font-xs, 11px);
+  min-width: 4.5em;
+  padding: 0 var(--space-1);
+  font-size: var(--font-sm);
   font-variant-numeric: tabular-nums;
 }
 
@@ -102,7 +116,6 @@
   margin: 0 auto 18px;
   border: 1px solid var(--hairline);
   background-color: var(--pdf-page-bg);
-  box-shadow: var(--pdf-page-shadow);
 }
 
 .workspace-pdf-status {
@@ -113,8 +126,8 @@
   justify-items: center;
   gap: 6px;
   background: var(--paper);
-  color: var(--ink-muted);
-  font-size: var(--font-sm, 12px);
+  color: var(--ink-soft);
+  font-size: var(--font-ui);
   text-align: center;
 }
 
@@ -125,5 +138,5 @@
 
 .workspace-pdf-status.error span {
   max-width: 420px;
-  color: var(--ink-muted);
+  color: var(--ink-soft);
 }

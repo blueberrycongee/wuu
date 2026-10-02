@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/agentthread"
@@ -20,10 +21,13 @@ import (
 )
 
 type pluginToolExecutor struct {
-	inner    agent.ToolExecutor
-	host     *pluginhost.Host
-	threadID string
-	cwd      string
+	inner             agent.ToolExecutor
+	host              *pluginhost.Host
+	threadID          string
+	cwd               string
+	surfaceMu         sync.Mutex
+	freezeDepth       int
+	frozenDefinitions []providers.ToolDefinition
 }
 
 func newPluginToolExecutor(inner agent.ToolExecutor, host *pluginhost.Host, threadID, cwd string) agent.ToolExecutor {
@@ -65,15 +69,36 @@ func replacePluginToolHost(executor agent.ToolExecutor, host *pluginhost.Host, t
 func (e *pluginToolExecutor) Definitions() []providers.ToolDefinition {
 	inner := e.inner.Definitions()
 	if kit, ok := e.inner.(*tools.Toolkit); ok && kit.CodeModeOnly() {
+		for _, definition := range e.pluginDefinitions() {
+			if definition.DirectOnly {
+				inner = append(inner, definition)
+			}
+		}
 		return inner
 	}
 	return append(inner, e.pluginDefinitions()...)
 }
 
 func (e *pluginToolExecutor) pluginDefinitions() []providers.ToolDefinition {
+	e.surfaceMu.Lock()
+	defer e.surfaceMu.Unlock()
+	if e.freezeDepth == 0 {
+		return e.livePluginDefinitions()
+	}
+	definitions := append([]providers.ToolDefinition(nil), e.frozenDefinitions...)
+	for i := range definitions {
+		definitions[i].InputSchema = providers.CloneLoadableToolDefinition(providers.LoadableToolDefinition{InputSchema: definitions[i].InputSchema}).InputSchema
+	}
+	return definitions
+}
+
+func (e *pluginToolExecutor) livePluginDefinitions() []providers.ToolDefinition {
 	registered := e.host.ToolDefinitions()
 	plugin := make([]providers.ToolDefinition, 0, len(registered))
 	for _, definition := range registered {
+		if kit, ok := e.inner.(*tools.Toolkit); ok && kit.IsToolDisabled(definition.Name) {
+			continue
+		}
 		if e.pluginToolAllowed(definition.Name) {
 			plugin = append(plugin, definition)
 		}
@@ -94,7 +119,14 @@ func (e *pluginToolExecutor) FinalizeToolResult(call providers.ToolCall, result 
 }
 
 func (e *pluginToolExecutor) ExecuteResult(ctx context.Context, call providers.ToolCall) (toolresult.Result, error) {
-	if kit, ok := e.inner.(*tools.Toolkit); ok && kit.CodeModeOnly() && call.Name != "run_code" && call.Name != "new_context" && !toolctx.IsNestedCall(ctx) {
+	directOnly := false
+	if tool, ok := e.host.Tool(call.Name); ok {
+		directOnly = tool.Registration.DirectOnly
+	}
+	if directOnly && toolctx.IsNestedCall(ctx) {
+		return toolresult.Result{}, fmt.Errorf("tool %q must be called directly", call.Name)
+	}
+	if kit, ok := e.inner.(*tools.Toolkit); ok && kit.CodeModeOnly() && !directOnly && !kit.CodeModeDirectCallAllowed(call.Name) && !toolctx.IsNestedCall(ctx) {
 		return toolresult.Result{}, errors.New("PTC mode requires calling tools inside run_code")
 	}
 
@@ -232,4 +264,29 @@ func (e *pluginToolExecutor) DiscoveredTools(call providers.ToolCall) []provider
 		return nil
 	}
 	return provider.DiscoveredTools(call)
+}
+
+func (e *pluginToolExecutor) FreezeToolSurface() {
+	if freezer, ok := e.inner.(agent.ToolSurfaceFreezer); ok {
+		freezer.FreezeToolSurface()
+	}
+	e.surfaceMu.Lock()
+	defer e.surfaceMu.Unlock()
+	if e.freezeDepth == 0 {
+		e.frozenDefinitions = e.livePluginDefinitions()
+	}
+	e.freezeDepth++
+}
+func (e *pluginToolExecutor) UnfreezeToolSurface() {
+	e.surfaceMu.Lock()
+	if e.freezeDepth > 0 {
+		e.freezeDepth--
+	}
+	if e.freezeDepth == 0 {
+		e.frozenDefinitions = nil
+	}
+	e.surfaceMu.Unlock()
+	if freezer, ok := e.inner.(agent.ToolSurfaceFreezer); ok {
+		freezer.UnfreezeToolSurface()
+	}
 }

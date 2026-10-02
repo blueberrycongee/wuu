@@ -203,7 +203,7 @@ func (s *Server) handlePluginPackageInstall(req Request) error {
 			Pending:            true,
 			ActiveFingerprint:  pending.ActiveFingerprint,
 			ExtensionInventory: s.currentExtensionInventory(),
-			Skills:             skillSummaries(s.rt.Skills),
+			Skills:             s.skillSummaries(s.rt.Skills, s.rt.RootDir),
 		}, nil)
 	} else if !os.IsNotExist(statErr) {
 		return s.writeResponse(req.ID, nil, fmt.Errorf("inspect installed plugin package %q: %w", inspected.ID, statErr))
@@ -330,7 +330,7 @@ func (s *Server) handlePluginPackageRemove(req Request) error {
 		ID:                 removed.ID,
 		Removed:            removed.Removed,
 		ExtensionInventory: s.currentExtensionInventory(),
-		Skills:             skillSummaries(s.rt.Skills),
+		Skills:             s.skillSummaries(s.rt.Skills, s.rt.RootDir),
 	}, nil)
 }
 
@@ -552,7 +552,7 @@ func (s *Server) refreshPluginPackages() ([]ExtensionInventoryRecord, []SkillSum
 		return nil, nil, err
 	}
 	s.schedulePluginTurnLifecycleReplay()
-	return s.currentExtensionInventory(), skillSummaries(s.rt.Skills), nil
+	return s.currentExtensionInventory(), s.skillSummaries(s.rt.Skills, s.rt.RootDir), nil
 }
 
 // refreshPluginCatalog updates the installed-package inventory without
@@ -563,7 +563,7 @@ func (s *Server) refreshPluginCatalog() ([]ExtensionInventoryRecord, []SkillSumm
 	if err := s.rt.RefreshPluginCatalog(); err != nil {
 		return nil, nil, err
 	}
-	return s.currentExtensionInventory(), skillSummaries(s.rt.Skills), nil
+	return s.currentExtensionInventory(), s.skillSummaries(s.rt.Skills, s.rt.RootDir), nil
 }
 
 func pluginPackageMetadata(item pluginpkg.PackageInspection) PluginPackageMetadata {

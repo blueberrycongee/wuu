@@ -7,7 +7,7 @@
 import { act, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { ContextCompactionNotice, StreamReconnectNotice, TurnNotice } from "./TurnNotice";
+import { ContextCompactionNotice, StreamReconnectNotice, TurnFailureNotice, TurnNotice } from "./TurnNotice";
 import { userFacingErrorForMessage } from "./UserFacingErrors";
 import { setActiveLocale, translateCurrent as t } from "./i18n";
 
@@ -328,26 +328,37 @@ describe("TurnNotice process row", () => {
       />,
     );
 
-    const notice = host.querySelector("aside.stream-reconnect-notice");
+    const notice = host.querySelector("aside.turn-failure.is-retrying");
     expect(notice?.querySelector("[role=progressbar]")?.getAttribute("aria-valuenow")).toBe("0");
-    expect(notice?.textContent).toContain("429 触发限流");
-
-    expect(notice?.textContent).toContain("2 秒后重试");
+    expect(notice?.textContent).toContain(t("turnFailure.rateLimit"));
+    expect(notice?.textContent).toContain(t("appState.retrySeconds", { count: "2" }));
     // The redacted provider cause stays out of the row; the structured
     // category maps to a localized title instead.
     expect(notice?.textContent).not.toContain("connection reset");
+    expect(notice?.querySelector("button")).toBeNull();
 
     act(() => {
       vi.advanceTimersByTime(1_000);
     });
-    expect(notice?.textContent).toContain("1 秒后重试");
+    expect(notice?.textContent).toContain(t("appState.retrySecond", { count: "1" }));
     expect(notice?.querySelector("[role=progressbar]")?.getAttribute("aria-valuenow")).toBe("50");
 
     act(() => {
       vi.advanceTimersByTime(1_000);
     });
-    expect(notice?.textContent).toContain("正在重试");
+    expect(notice?.textContent).toContain(t("appState.retryNow"));
     expect(notice?.querySelector("[role=progressbar]")).toBeNull();
+  });
+
+  it("counts a wait just over a minute as one minute, not two", () => {
+    const host = mount(
+      <StreamReconnectNotice
+        item={{ id: "retry", type: "stream_reconnect", status: "in_progress", reason: "server", retry_at_ms: Date.now() + 61_000 }}
+      />,
+    );
+    expect(host.textContent).toContain(t("appState.retryMinute", { count: "1" }));
+    act(() => { vi.advanceTimersByTime(2_000); });
+    expect(host.textContent).toContain(t("appState.retrySeconds", { count: "59" }));
   });
 
   it("resets progress for the next attempt and removes a recovered card", () => {
@@ -364,42 +375,75 @@ describe("TurnNotice process row", () => {
     expect(host.querySelector("aside")).toBeNull();
     expect(vi.getTimerCount()).toBe(0);
   });
+});
 
-  it("offers an actionable retry only after automatic recovery fails", async () => {
+describe("TurnFailureNotice", () => {
+  const serverError = {
+    message: "stream request failed: HTTP 500: 500 Internal Server Error: fixture failure",
+    category: "provider" as const,
+    status_code: 500,
+    recovery: { attempt_count: 11, retry_count: 10, max_attempts: 11, submission_count: 11, stop_reason: "retry_limit", failure_category: "server" },
+  };
+  const authError = {
+    message: "stream request failed: HTTP 401: 401 Unauthorized: {\"error\":{\"message\":\"Incorrect API key provided.\"}}",
+    code: "invalid_request_error",
+    category: "auth" as const,
+    status_code: 401,
+    recovery: { attempt_count: 1, retry_count: 0, max_attempts: 11, submission_count: 1, stop_reason: "non_retryable", failure_category: "authentication" },
+  };
+  const buttons = (host: HTMLElement) => [...host.querySelectorAll<HTMLButtonElement>(".turn-failure-actions > button:not(.turn-failure-details-toggle)")];
+
+  it("offers Model services before a retry when the service rejects the credentials", async () => {
     const retry = vi.fn();
-    const item = { id: "retry", type: "stream_reconnect", status: "in_progress" } as const;
-    const host = mount(<StreamReconnectNotice item={item} onRetry={retry} />);
-    expect(host.querySelector("button")).toBeNull();
-    expect(host.textContent).toContain(t("appState.retryNow"));
-    act(() => { root?.render(<StreamReconnectNotice item={{ ...item, status: "failed" }} onRetry={retry} />); });
-    await act(async () => { host.querySelector("button")?.click(); });
+    const openSettings = vi.fn();
+    const host = mount(
+      <TurnFailureNotice display={userFacingErrorForMessage(authError, "turn")} error={authError} onRetry={retry} onOpenSettings={openSettings} />,
+    );
+    const aside = host.querySelector("aside.turn-failure");
+    expect(aside?.getAttribute("role")).toBe("alert");
+    expect(aside?.querySelector(".turn-failure-title")?.textContent).toBe(t("turnFailure.auth"));
+    expect(aside?.querySelector(".turn-failure-body")?.textContent).toBe(t("turnFailure.authBody"));
+    const [first, second] = buttons(host);
+    expect(first.textContent).toBe(t("turnFailure.openSettings"));
+    expect(second.textContent).toBe(t("appState.retryAction"));
+    act(() => { first.click(); });
+    expect(openSettings).toHaveBeenCalledOnce();
+    await act(async () => { second.click(); });
     expect(retry).toHaveBeenCalledOnce();
-    expect(host.querySelector("[role=progressbar]")).toBeNull();
   });
 
-  it("exposes recovery diagnostics without disabling manual retry", async () => {
-    const retry = vi.fn();
-    const error = {
-      message: "stream error (server_error): fixture failure", category: "provider" as const,
-      recovery: { attempt_count: 3, retry_count: 2, max_attempts: 3, submission_count: 3, stop_reason: "retry_limit", failure_category: "server" },
-    };
-    const host = mount(<StreamReconnectNotice item={{ id: "retry", type: "stream_reconnect", status: "failed" }} error={error} onRetry={retry} />);
-    const fold = host.querySelector("details")!;
-    expect(fold.open).toBe(false);
-    act(() => { fold.open = true; fold.dispatchEvent(new Event("toggle")); });
-    expect(fold.open).toBe(true);
-    const display = userFacingErrorForMessage(error, "turn");
-    expect(fold.textContent).toContain(display.detail);
-    expect(fold.textContent).toContain(error.message);
-    await act(async () => { host.querySelector("button")?.click(); });
-    expect(retry).toHaveBeenCalledOnce();
+  it("keeps the technical record behind a closed disclosure", () => {
+    const host = mount(<TurnFailureNotice display={userFacingErrorForMessage(serverError, "turn")} error={serverError} />);
+    const toggle = host.querySelector<HTMLButtonElement>(".turn-failure-details-toggle")!;
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(host.querySelector(".turn-failure-diagnostic")).toBeNull();
+    act(() => { toggle.click(); });
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    expect(host.querySelector(".turn-failure-diagnostic")?.textContent).toBe(serverError.message);
+    expect(host.querySelector(".turn-failure-recovery")?.textContent).toBe(userFacingErrorForMessage(serverError, "turn").detail);
+  });
+
+  it("says that automatic recovery already retried before it gave up", () => {
+    const host = mount(<TurnFailureNotice display={userFacingErrorForMessage(serverError, "turn")} error={serverError} onRetry={vi.fn()} />);
+    expect(host.querySelector(".turn-failure-title")?.textContent).toBe(t("turnFailure.unavailable"));
+    expect(host.querySelector(".turn-failure-body")?.textContent).toBe(
+      t("turnFailure.retried", { count: "10", guidance: t("turnFailure.unavailableBody") }),
+    );
+    expect(buttons(host).map((button) => button.textContent)).toEqual([t("appState.retryAction")]);
+  });
+
+  it("does not offer a retry that would overflow the context again", () => {
+    const error = { ...serverError, status_code: undefined, recovery: { ...serverError.recovery, retry_count: 0, failure_category: "context_overflow" } };
+    const host = mount(<TurnFailureNotice display={userFacingErrorForMessage(error, "turn")} error={error} onRetry={vi.fn()} onOpenSettings={vi.fn()} />);
+    expect(host.querySelector(".turn-failure-title")?.textContent).toBe(t("turnFailure.context"));
+    expect(buttons(host)).toHaveLength(0);
   });
 
   it("disables manual retry until submission settles", async () => {
     let finish!: () => void;
     const retry = vi.fn(() => new Promise<void>((resolve) => { finish = resolve; }));
-    const host = mount(<StreamReconnectNotice item={{ id: "retry", type: "stream_reconnect", status: "failed" }} onRetry={retry} />);
-    const button = host.querySelector("button")!;
+    const host = mount(<TurnFailureNotice display={userFacingErrorForMessage(serverError, "turn")} error={serverError} onRetry={retry} />);
+    const button = buttons(host)[0];
     act(() => { button.click(); });
     expect(button.disabled).toBe(true);
     act(() => { button.click(); });
@@ -408,66 +452,37 @@ describe("TurnNotice process row", () => {
     expect(button.disabled).toBe(false);
   });
 
-  it("marks a failed stream reconnect row as stopped without retry counts", () => {
-    const host = mount(
-      <StreamReconnectNotice
-        item={{
-          id: "reconnect-1",
-          type: "stream_reconnect",
-          status: "failed",
-          text: "connection reset by peer",
-          reason: "network",
-          retry_count: 5,
-          max_retries: 5,
-        }}
-      />,
-    );
-
-    const notice = host.querySelector("aside.stream-reconnect-notice");
-    expect(notice?.getAttribute("role")).toBe("alert");
-    expect(notice?.textContent).toContain("已停止");
-    expect(notice?.textContent).toContain("网络异常");
-    expect(notice?.textContent).not.toContain("次重试");
-    expect(notice?.textContent).not.toContain("秒后重试");
+  it("explains a historical failure without offering actions", () => {
+    const item = { id: "reconnect-1", type: "stream_reconnect", status: "failed", text: "connection reset by peer", reason: "network", retry_count: 5, max_retries: 5 } as const;
+    const host = mount(<TurnFailureNotice display={userFacingErrorForMessage(item.text, "turn")} reconnect={item} />);
+    expect(host.querySelector(".turn-failure-title")?.textContent).toBe(t("turnFailure.network"));
+    expect(buttons(host)).toHaveLength(0);
   });
 
   it.each([
-    ["authentication", undefined, "认证失败"],
-    ["rate_limit", undefined, "429 触发限流"],
-    ["quota", undefined, "429 触发限流"],
-    ["overloaded", undefined, "上游过载"],
-    ["server", undefined, "模型服务异常"],
-    ["deadline", undefined, "请求超时"],
-    ["network", undefined, "网络异常"],
-    ["incomplete_stream", undefined, "网络异常"],
-    ["context_overflow", undefined, "上下文超出模型上限"],
-    ["request_too_large", undefined, "请求超出大小限制"],
+    ["authentication", undefined, "turnFailure.auth"],
+    ["rate_limit", undefined, "turnFailure.rateLimit"],
+    ["quota", undefined, "turnFailure.quota"],
+    ["overloaded", undefined, "turnFailure.unavailable"],
+    ["server", undefined, "turnFailure.unavailable"],
+    ["deadline", undefined, "turnFailure.timeout"],
+    ["network", undefined, "turnFailure.network"],
+    ["incomplete_stream", undefined, "turnFailure.network"],
+    ["context_overflow", undefined, "turnFailure.context"],
+    ["request_too_large", undefined, "error.requestTooLargeTitle"],
     // App-servers that predate the structured category only carry the
-    // redacted cause text; unmapped causes read as a generic request failure.
-    [undefined, "Authentication failed", "认证失败"],
-    [undefined, "Provider is overloaded", "上游过载"],
-    [undefined, "connection reset by peer", "请求失败"],
-  ])(
-    "titles the reconnect row from category %s or the redacted cause",
-    (reason, text, title) => {
-      const host = mount(
-        <StreamReconnectNotice
-          item={{
-            id: "reconnect-1",
-            type: "stream_reconnect",
-            status: "failed",
-            text,
-            reason,
-            retry_count: 1,
-            max_retries: 1,
-          }}
-        />,
-      );
-
-      const notice = host.querySelector("aside.stream-reconnect-notice");
-      expect(notice?.textContent).toContain(title);
+    // redacted cause text.
+    [undefined, "Authentication failed", "turnFailure.auth"],
+    [undefined, "Provider is overloaded", "turnFailure.unavailable"],
+    [undefined, "connection reset by peer", "turnFailure.network"],
+  ] as const)(
+    "titles a failed reconnect from category %s or the redacted cause",
+    (reason, text, titleKey) => {
+      const item = { id: "reconnect-1", type: "stream_reconnect", status: "failed", text, reason, retry_count: 1, max_retries: 1 } as const;
+      const host = mount(<TurnFailureNotice display={userFacingErrorForMessage(text ?? "", "turn")} reconnect={item} />);
+      expect(host.querySelector(".turn-failure-title")?.textContent).toBe(t(titleKey));
       if (text) {
-        expect(notice?.textContent).not.toContain(text);
+        expect(host.querySelector(".turn-failure-head")?.textContent).not.toContain(text);
       }
     },
   );

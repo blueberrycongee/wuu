@@ -12,7 +12,7 @@ import {
   useRef,
   useState
 } from "react";
-import { ChevronLeft, ChevronRight, Download, Maximize2, Minus, RotateCw, X, ZoomIn } from "./WuuIcons";
+import { ChevronLeft, ChevronRight, Download, Maximize2, Minus, Plus, RotateCw, X } from "./WuuIcons";
 import { useI18n } from "./i18n";
 import { imagePreviewSelection } from "./ImagePreviewGallery";
 
@@ -337,7 +337,7 @@ function ImagePreviewOverlay({ item, index, count, onNavigate, onClose }: {
           </span>
           <button type="button" className="image-preview-toolbar-button" onClick={() => zoomAt(1.25)}
             disabled={!ready || scale >= 8} aria-label={t("imagePreview.zoomIn")} title={t("imagePreview.zoomIn")}>
-            <ZoomIn className="icon" aria-hidden="true" />
+            <Plus className="icon" aria-hidden="true" />
           </button>
           <button type="button" className="image-preview-toolbar-button" onClick={() => setView(fittedView)}
             disabled={!ready} aria-label={t("imagePreview.fit")} title={t("imagePreview.fit")}>

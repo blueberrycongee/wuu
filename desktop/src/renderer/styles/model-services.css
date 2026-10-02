@@ -1,25 +1,38 @@
-/* Model services. The page reads top-down by how often each part is used:
- * the default model is one filled card with the model name as its control,
- * connected services are bordered cards that open their own page, and
- * providers to add are quieter filled tiles. Levels differ by surface and
- * size rather than by adding frames. */
+/* Model services share the subscription page's quiet canvas. The current
+ * choice and saved connections have a surface; discovery uses bare rows. */
 
 .model-services {
   display: contents;
 }
 
-/* --- Vendor marks --------------------------------------------------------- */
+.settings-main:has(.model-services) {
+  background: var(--subscription-canvas);
+}
 
+.model-services .settings-group {
+  background: var(--subscription-card);
+}
+
+/* --- Vendor marks ---------------------------------------------------------
+ * A vendor logo stands bare in its column; a tile behind a monochrome glyph
+ * carries no meaning. A monogram (a vendor without artwork) and the generic
+ * glyphs (more services, custom endpoint) keep a hairline square, so a lone
+ * letter or a UI glyph still reads as a mark rather than as text. */
+
+/* Marks keep their proportion to the text beside them at every UI size. */
 .provider-mark {
-  --provider-mark-size: 36px;
+  --provider-mark-size: round(up, calc(var(--font-ui) * 2.5), 2px);
   display: grid;
   width: var(--provider-mark-size);
   height: var(--provider-mark-size);
   flex: 0 0 auto;
   place-items: center;
   border-radius: var(--radius-xs);
-  background: var(--surface-2);
   color: var(--ink-strong);
+}
+
+.provider-mark[data-mark="monogram"] {
+  box-shadow: inset 0 0 0 1px var(--hairline);
 }
 
 .provider-mark svg,
@@ -34,7 +47,6 @@
 }
 
 .provider-mark.is-quiet {
-  background: transparent;
   color: var(--ink-soft);
   box-shadow: inset 0 0 0 1px var(--hairline);
 }
@@ -53,14 +65,10 @@
   align-items: center;
   gap: var(--space-3);
   /* Matches the service cards' border so marks and names share one axis. */
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
-  background: var(--surface-2);
-  padding: var(--space-4) var(--space-4) var(--space-4) var(--space-4);
-}
-
-.model-default-card > .provider-mark {
-  background: var(--paper);
+  border: 1px solid var(--hairline-soft);
+  border-radius: var(--radius-md);
+  background: var(--subscription-card);
+  padding: var(--space-4);
 }
 
 .model-default-copy {
@@ -70,10 +78,8 @@
   gap: 2px;
 }
 
-/* The select spans the column so its menu does too; the trigger inside
- * stays as wide as the name. */
-/* The menu takes this box's width and edge. Starting it one menu inset plus
- * item padding before the name puts the options' text under the name. */
+/* The menu spans the column while its trigger hugs the name. Offset by
+ * the menu inset and item padding to align the options with the model text. */
 .model-default-select {
   --model-default-text-inset: calc(var(--menu-inset) + var(--space-2));
   justify-self: stretch;
@@ -93,8 +99,8 @@
   border-radius: var(--radius-xs);
   background: transparent;
   color: var(--ink-strong);
-  font-size: var(--font-title);
-  font-weight: var(--weight-semibold);
+  font-size: calc(var(--font-ui) * 1.15);
+  font-weight: var(--weight-medium);
   line-height: 1.35;
   padding: 2px var(--space-2) 2px var(--model-default-text-inset);
 }
@@ -168,15 +174,6 @@
   .model-default-effort {
     grid-column: 2;
   }
-
-  /* One icon action stays beside the title instead of taking a line. */
-  .model-services > .settings-page-header {
-    grid-template-columns: minmax(0, 1fr) auto;
-  }
-
-  .model-services > .settings-page-header .settings-page-actions {
-    margin-block: calc((var(--settings-title-line) - var(--control-field-height)) / 2);
-  }
 }
 
 /* --- Connected services ----------------------------------------------------- */
@@ -198,9 +195,9 @@
   grid-template-columns: auto minmax(0, 1fr) auto auto;
   align-items: center;
   gap: var(--space-3);
-  border: 1px solid var(--hairline);
+  border: 1px solid var(--hairline-soft);
   border-radius: var(--radius-sm);
-  background: transparent;
+  background: var(--subscription-card);
   color: var(--ink);
   padding: var(--space-3) var(--space-4);
   text-align: left;
@@ -210,8 +207,8 @@
 }
 
 .model-service-card:hover {
-  border-color: var(--hairline-strong);
-  background: var(--surface-1);
+  border-color: var(--hairline);
+  background: color-mix(in srgb, var(--subscription-card) 94%, var(--ink));
 }
 
 .model-service-card:hover .settings-disclosure-chevron {
@@ -257,81 +254,142 @@
 
 /* --- Providers to add -------------------------------------------------------- */
 
-/* Tiles use the card grid's width and column gap, so with twice its columns
- * every other tile starts on a card's edge. Each tile's hover fill reaches
- * past its cell by its padding, which keeps the mark on the cell's edge. */
+.model-service-catalog,
+.model-browse-list {
+  container-type: inline-size;
+  container-name: service-catalog;
+}
+
+.model-service-catalog {
+  display: grid;
+  gap: var(--space-5);
+}
+
+.model-catalog-group {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.model-catalog-heading {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.model-catalog-heading h3 {
+  margin: 0;
+  color: var(--ink-strong);
+  font-size: var(--font-ui);
+  font-weight: var(--weight-medium);
+  line-height: 1.5;
+}
+
+.model-catalog-heading > span {
+  color: var(--ink-tertiary);
+  font-size: var(--font-sm);
+  line-height: 1.5;
+}
+
 .model-service-tiles {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 10.5em), 1fr));
-  gap: var(--space-2) var(--space-3);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 2px var(--space-4);
 }
 
 .model-service-tile {
   display: flex;
   margin-inline: calc(var(--space-2) * -1);
   min-width: 0;
-  min-height: calc(var(--control-field-height) + var(--space-3));
+  min-height: calc(var(--control-field-height) + var(--space-2));
   align-items: center;
-  gap: var(--space-3);
-  border-radius: var(--radius-sm);
+  gap: var(--space-2);
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--ink);
-  padding: var(--space-2);
+  padding: 4px var(--space-2);
   text-align: left;
   transition: background var(--motion-fast) var(--ease-out);
 }
 
 .model-service-tile .provider-mark {
-  --provider-mark-size: 32px;
+  --provider-mark-size: round(up, calc(var(--font-ui) * 1.72), 2px);
 }
 
-.model-service-tile .provider-mark.is-quiet {
-  background: transparent;
+.model-service-tile .provider-mark svg,
+.model-service-tile .provider-mark .provider-mark-engine {
+  width: 78%;
+  height: 78%;
 }
 
 .model-service-tile:hover:not(:disabled) {
-  background: var(--surface-1);
-}
-
-.model-service-tile:hover:not(:disabled) .provider-mark:not(.is-quiet) {
-  background: var(--surface-3);
+  background: var(--ink-overlay-4);
 }
 
 .model-service-tile:disabled {
   opacity: 0.55;
 }
 
-.model-service-tile.is-placeholder {
-  --pulse-opacity: 0.55;
-  background: var(--surface-1);
-  animation: wuu-pulse 1.6s var(--ease-out) infinite;
-}
-
 .model-service-tile-name {
+  min-width: 0;
   overflow: hidden;
   font-size: var(--font-ui);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.model-services-empty {
-  display: grid;
-  gap: var(--space-1);
-  border: 1px dashed var(--hairline-strong);
-  border-radius: var(--radius-sm);
-  padding: var(--space-6) var(--space-5);
-  text-align: center;
+.model-catalog-name-line {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-2);
 }
 
-.model-services-empty strong {
-  color: var(--ink-strong);
-  font-size: var(--font-title);
-  font-weight: var(--weight-semibold);
+.model-catalog-state {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+  color: var(--ink-tertiary);
+  font-size: var(--font-xs);
 }
 
-.model-services-empty span {
-  color: var(--ink-soft);
-  font-size: var(--font-ui);
+.model-catalog-state-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--warning);
+}
+
+.model-catalog-state[data-ready] .model-catalog-state-dot {
+  background: var(--success);
+}
+
+.model-service-catalog-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  border-top: 1px solid var(--hairline-soft);
+  padding-top: var(--space-3);
+}
+
+.model-service-custom-action {
+  color: var(--wuu-accent);
+}
+
+@container service-catalog (max-width: 36em) {
+  .model-service-tiles {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@container service-catalog (max-width: 22em) {
+  .model-service-tiles {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 /* --- Service page --------------------------------------------------------- */
@@ -345,7 +403,7 @@
 }
 
 .model-service-hero > .provider-mark {
-  --provider-mark-size: 52px;
+  --provider-mark-size: round(up, calc(var(--font-ui) * 3.6), 2px);
 }
 
 .model-service-hero-copy {
@@ -437,13 +495,8 @@
   text-align: left;
 }
 
-.model-choice-main.is-static,
-.model-choice-main.is-action {
+.model-choice-main.is-static {
   color: var(--ink-soft);
-}
-
-.model-choice-main.is-action:hover:not(:disabled) {
-  color: var(--ink-strong);
 }
 
 .model-choice-check {
@@ -588,27 +641,9 @@
   border: 1px solid var(--hairline);
 }
 
-.model-connect-segments {
-  display: inline-flex;
-  width: fit-content;
-  border-radius: var(--radius-sm);
-  background: var(--surface-1);
-  padding: 2px;
-}
-
-.model-connect-segments button {
-  min-height: calc(var(--control-field-height) - 4px);
-  border-radius: calc(var(--radius-sm) - 2px);
-  background: transparent;
-  color: var(--ink-soft);
-  font-size: var(--font-sm);
-  padding: var(--control-padding-block) var(--space-3);
-}
-
-.model-connect-segments button[aria-pressed="true"] {
-  background: var(--paper);
-  box-shadow: var(--shadow-soft);
-  color: var(--ink-strong);
+/* The protocol choice is the shared segmented control, sized to its options. */
+.model-connect-field > .theme-segmented {
+  justify-self: start;
 }
 
 .model-connect-toggle {
@@ -628,11 +663,12 @@
 }
 
 .model-browse-dialog {
-  --environment-dialog-max-width: 560px;
-  height: min(72vh, 640px);
-  /* Title row, search, list. */
-  grid-template-rows: auto auto minmax(0, 1fr);
+  --environment-dialog-max-width: 900px;
+  height: min(82vh, 780px);
+  /* Title, search, independently scrolling catalog, custom endpoint. */
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
   overflow: hidden;
+  background: var(--subscription-canvas);
 }
 
 .model-browse-list {
@@ -640,29 +676,18 @@
   align-self: stretch;
   align-content: start;
   min-height: 0;
-  gap: 2px;
+  gap: var(--space-5);
   overflow: auto;
   margin-inline: calc(var(--space-2) * -1);
+  padding-inline: var(--space-2);
+  padding-block: var(--space-2);
+  scrollbar-gutter: stable;
 }
 
-.model-browse-row {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: var(--space-3);
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--ink);
-  padding: var(--space-2);
-  text-align: left;
-}
-
-.model-browse-row:hover {
-  background: var(--surface-1);
-}
-
-.model-browse-row .provider-mark {
-  --provider-mark-size: 32px;
+.model-browse-dialog > .environment-dialog-footer {
+  justify-content: flex-start;
+  border-top: 1px solid var(--hairline-soft);
+  padding-top: var(--space-3);
 }
 
 .model-browse-copy {
@@ -683,18 +708,12 @@
 }
 
 .model-browse-copy > small {
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-size: var(--font-xs);
 }
 
 .model-service-remove-dialog {
   --environment-dialog-max-width: 440px;
-}
-
-@container style(--motion-reduced: 1) {
-  .model-service-tile.is-placeholder {
-    animation: none;
-  }
 }
 
 /* Cards with and without a badge end their chevrons on one axis. */

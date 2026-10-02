@@ -66,6 +66,15 @@ vi.mock("@xterm/xterm", () => ({
 
 vi.mock("@xterm/xterm/css/xterm.css", () => ({}));
 
+// jsdom cannot compute color-mix(); resolve each role to the theme that was
+// applied when the palette was read, which is what these tests observe.
+vi.mock("./CssColors", () => ({
+  resolveCssColors: (colors: Record<string, string>) =>
+    Object.fromEntries(
+      Object.entries(colors).map(([key, value]) => [key, `${document.documentElement.dataset.theme}:${value}`]),
+    ),
+}));
+
 vi.mock("@xterm/addon-fit", () => ({
   FitAddon: vi.fn().mockImplementation(() => ({
     fit: vi.fn(),
@@ -311,6 +320,26 @@ describe("WorkspaceTerminalPanel", () => {
     expect(terminalInstances[0]?.write).not.toHaveBeenCalledWith("second");
   });
 
+  it("stops taking input when the shell exits and restarts on request", async () => {
+    await render(<WorkspaceTerminalPanel activeContext={worktreeContext} />);
+    await vi.waitFor(() => expect(startTerminalSession).toHaveBeenCalledTimes(1));
+    expect(container.querySelector(".workspace-terminal-restart")).toBeNull();
+
+    act(() => {
+      for (const handler of terminalEventHandlers) {
+        handler({ type: "exit", id: "term-1", exit_code: 0, duration_ms: 1000 } as TerminalSessionEvent);
+      }
+    });
+
+    expect(terminalInstances[0]?.options.disableStdin).toBe(true);
+    const restart = container.querySelector<HTMLButtonElement>(".workspace-terminal-restart");
+    expect(restart).not.toBeNull();
+    act(() => restart?.click());
+    await vi.waitFor(() => expect(startTerminalSession).toHaveBeenCalledTimes(2));
+    expect(terminalInstances.at(-1)?.options.disableStdin).toBeFalsy();
+    expect(container.querySelector(".workspace-terminal-restart")).toBeNull();
+  });
+
   it("updates an open terminal from code preferences without restarting its session", async () => {
     saveAppearance({ ...appearanceDefaults, codeSize: 15, codeFont: "Monaco" });
     await render(<WorkspaceTerminalPanel activeContext={worktreeContext} />);
@@ -342,12 +371,15 @@ describe("WorkspaceTerminalPanel", () => {
   it("uses the applied theme and updates an open terminal when it changes", async () => {
     await render(<WorkspaceTerminalPanel activeContext={worktreeContext} />);
 
-    expect(terminalConstructorOptions[0]?.theme?.background).toBe("#ffffff");
+    const initial = terminalConstructorOptions[0]?.theme ?? {};
+    expect(Object.values(initial).length).toBeGreaterThan(0);
+    expect(Object.values(initial).every((color) => color.startsWith("light:"))).toBe(true);
 
     document.documentElement.dataset.theme = "dark";
     await vi.waitFor(() => {
-      expect(terminalInstances[0]?.options.theme?.background).toBe("#1d2024");
-      expect(terminalInstances[0]?.options.theme?.foreground).toBe("#e4e6e8");
+      const repainted = terminalInstances[0]?.options.theme ?? {};
+      expect(Object.keys(repainted).sort()).toEqual(Object.keys(initial).sort());
+      expect(Object.values(repainted).every((color) => color.startsWith("dark:"))).toBe(true);
     });
   });
 

@@ -51,7 +51,7 @@
   min-width: 0;
   grid-template-columns: 1fr auto 1fr;
   align-items: center;
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-size: var(--font-sm);
   line-height: max(24px, calc(var(--font-sm) + 10px));
 }
@@ -132,7 +132,7 @@ html[data-focus-modality="keyboard"] button.project-event-name:focus-visible {
   width: max(24px, calc(var(--font-sm) + 10px));
   height: max(24px, calc(var(--font-sm) + 10px));
   border-radius: var(--radius-xs);
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   padding: 0;
 }
 
@@ -148,7 +148,7 @@ html[data-focus-modality="keyboard"] button.project-event-name:focus-visible {
   overflow: auto;
   border-radius: var(--radius-sm);
   background: var(--surface-1);
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-size: var(--font-sm);
   padding: var(--space-2) var(--space-3);
   text-align: left;
@@ -226,7 +226,7 @@ html[data-focus-modality="keyboard"] .session-control-project:focus-visible {
 
 .project-panel-heading {
   margin: var(--space-3) 0 0;
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-size: var(--font-sm);
   font-weight: var(--weight-medium);
 }
@@ -331,7 +331,7 @@ html[data-focus-modality="keyboard"] .session-control-project:focus-visible {
 }
 
 .project-panel-row-meta {
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-size: var(--font-xs);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -345,6 +345,6 @@ html[data-focus-modality="keyboard"] .project-panel-row-main:focus-visible {
 
 .project-panel-empty {
   margin: 0;
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-size: var(--font-sm);
 }

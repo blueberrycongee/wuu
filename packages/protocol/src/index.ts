@@ -164,6 +164,7 @@ export type InitializeResult = {
   extension_inventory?: ExtensionInventoryRecord[];
   model_roles?: ModelRoleSummary[];
   model_aliases?: Record<string, ModelAliasSummary>;
+  project_models?: ProjectModelsConfig;
   providers?: ProviderSummary[];
   advanced_settings?: AdvancedSettingsSummary;
   general_settings?: GeneralSettingsSummary;
@@ -274,7 +275,36 @@ export type PTCSettings = {
   families?: Record<string, boolean>;
 };
 
+export type ExecutionEnvironmentProfile = {
+ user?: string;
+ python?: string;
+ known_hosts_file?: string;
+ host_workspace?: string;
+ mount_read_only?: boolean;
+  backend: "docker" | "ssh" | "singularity" | "modal" | "daytona" | "vercel_sandbox" | "command";
+  image?: string;
+  host?: string;
+  port?: number;
+  identity_file?: string;
+  workspace?: string;
+  worker?: string;
+  shared?: boolean;
+  persistent?: boolean;
+  network?: "enabled" | "none";
+  cpus?: number;
+  memory_mb?: number;
+  lifetime_seconds?: number;
+  forward_env?: string[];
+  command?: string[];
+};
+
+export type ExecutionEnvironmentSettings = {
+  default?: string;
+  profiles?: Record<string, ExecutionEnvironmentProfile>;
+};
+
 export type GeneralSettingsSummary = {
+  execution_environments?: ExecutionEnvironmentSettings;
   ptc?: PTCSettings;
   git_attribution_enabled?: boolean;
   mcp_server_enabled: Record<string, boolean>;
@@ -294,6 +324,8 @@ export type ModelProfileSummary = {
 };
 
 export type ToolSurfaceSummary = {
+  nested_tool_names?: string[];
+  nested_capability_map?: Record<string, string>;
   profile_name: string;
   provider?: string;
   model?: string;
@@ -523,6 +555,7 @@ export type ConfigChangedNotification = {
   variant?: string;
   model_roles?: ModelRoleSummary[];
   model_aliases?: Record<string, ModelAliasSummary>;
+  project_models?: ProjectModelsConfig;
   providers?: ProviderSummary[];
 };
 
@@ -679,6 +712,7 @@ export type ProviderSummary = {
   models?: ProviderModelSummary[];
   latest_request?: EngineLatestRequest;
   local_usage?: SubscriptionUsage;
+  quota?: SubscriptionQuota;
 };
 
 export type ProviderModelSummary = {
@@ -712,6 +746,11 @@ export type ModelAliasSummary = {
   model: string;
   effort?: string;
   variant?: string;
+};
+
+export type ProjectModelsConfig = {
+  side?: Partial<ModelAliasSummary>;
+  worker?: Partial<ModelAliasSummary>;
 };
 
 export type ModelCapabilitySummary = {
@@ -771,6 +810,11 @@ export type ProviderModelVariantSummary = {
   options?: Record<string, JsonValue>;
 };
 
+export type SkillProjectIdentity = {
+  root: string;
+  path: string;
+};
+
 export type SkillSummary = {
   name: string;
   description?: string;
@@ -778,6 +822,7 @@ export type SkillSummary = {
   trigger_condition?: string;
   source: string;
   path?: string;
+  project?: SkillProjectIdentity;
   argument_hint?: string;
   model?: string;
   context?: string;
@@ -792,6 +837,10 @@ export type SkillSummary = {
   paths?: string[];
   effort?: string;
   version?: string;
+};
+
+export type SkillListParams = {
+  thread_id?: string;
 };
 
 export type SkillListResult = {
@@ -1000,17 +1049,20 @@ export type RuntimeAdvancedSettingsUpdate = {
   disable_auto_compact?: boolean;
   provider_context_window?: number;
   model_aliases?: Record<string, ModelAliasSummary>;
+  project_models?: ProjectModelsConfig;
   verification_model?: ModelAliasSummary;
 };
 
 export type ConfigAdvancedUpdateResult = {
   advanced_settings: AdvancedSettingsSummary;
   model_aliases?: Record<string, ModelAliasSummary>;
+  project_models?: ProjectModelsConfig;
   model_roles?: ModelRoleSummary[];
   providers?: ProviderSummary[];
 };
 
 export type RuntimeGeneralSettingsUpdate = {
+  execution_environments?: ExecutionEnvironmentSettings;
   ptc?: PTCSettings;
   git_attribution_enabled?: boolean;
   mcp_enabled_toggles?: Record<string, boolean>;
@@ -1051,15 +1103,27 @@ export type SubscriptionUsage = {
 
 /** Upstream account allowance; never inferred from Wuu token usage. */
 export type SubscriptionQuota = {
-  status: "available" | "unavailable";
+  status: "available" | "stale" | "unavailable" | "sign_in" | "unsupported";
+  kind?: "subscription" | "plan" | "balance";
+  account?: { id: string; label?: string; source?: string };
+  plan?: string;
   checked_at: string;
+  observed_at?: string;
+  expires_at?: string;
+  error_code?: "network" | "rate_limited" | "sign_in" | "invalid_response" | "unsupported";
   windows?: {
     id: string;
     label?: string;
-    used_percent: number;
+    used_percent?: number;
     window_minutes?: number;
     resets_at?: string;
+    display?: string;
+    model?: string;
+    scope?: string;
+    unlimited?: boolean;
   }[];
+  balances?: { currency: string; amount: string }[];
+  reset_credits?: number;
 };
 
 /** Newest settled request recorded for one engine. Usage is omitted unless the engine reported tokens. */
@@ -1747,6 +1811,8 @@ export type ThreadHandoffParams = {
 export type ThreadSearchResultItem = {
   thread: Thread;
   snippet?: string;
+  /** Stable address of the winning history message; absent for title and empty-query matches. */
+  message_seq?: number;
 };
 
 export type ThreadSearchResult = {
@@ -2335,9 +2401,12 @@ export type ModelUsage = {
   sessions: number;
 };
 
-// SettingsUsageQuery is the input for the settings/usage RPC. It takes
-// no parameters: the snapshot always covers the full recorded history.
-export type SettingsUsageQuery = Record<string, never>;
+// SettingsUsageQuery is the input for the settings/usage RPC. The snapshot
+// always covers the full recorded history. `timezone` optionally names the IANA
+// zone (such as "America/Los_Angeles") whose calendar days bucket `days`, so
+// they line up with the calendar the desktop draws; omitted means UTC and an
+// unknown zone is a request error.
+export type SettingsUsageQuery = { timezone?: string };
 
 // SettingsUsageMetrics is the headline number block shown at the top of
 // the desktop usage page. Every number is summed across the full
@@ -2695,7 +2764,8 @@ export type WuuDesktopApi = {
     variant?: string,
     permissionMode?: string,
     threadId?: string,
-    speed?: string
+    speed?: string,
+    targetContext?: RuntimeContext
   ) => Promise<ConfigModelUpdateResult>;
   removeProvider: (
     provider: string,
@@ -2743,7 +2813,7 @@ export type WuuDesktopApi = {
   takeoverActivity: (threadId: string, activityId: string) => Promise<ActivityActionResult>;
   releaseActivity: (threadId: string, activityId: string) => Promise<ActivityReleaseResult>;
   stopActivity: (threadId: string, activityId: string) => Promise<ActivityActionResult>;
-  listSkills: () => Promise<SkillListResult>;
+  listSkills: (params?: SkillListParams) => Promise<SkillListResult>;
   readSkillContent: (params: SkillContentParams) => Promise<SkillContentResult>;
   returnManagedSession: (params: { thread_id: string; revision: number }) => Promise<{ control: NonNullable<Thread["session_control"]> }>;
   takeOverManagedSession?: (params: { thread_id: string; revision: number }) => Promise<{ control: NonNullable<Thread["session_control"]> }>;
@@ -2877,7 +2947,8 @@ export type WuuDesktopApi = {
   // Permanently deletes a conversation (history, artifacts, and any fork
   // worktree). Mirrors the `thread/delete` RPC; running threads are rejected
   // server-side.
-  deleteThread: (threadId: string) => Promise<{ thread_id: string }>;
+  // onlyIfArchived is checked atomically with deletion; restored sessions are rejected.
+  deleteThread: (threadId: string, options?: { onlyIfArchived?: boolean }) => Promise<{ thread_id: string }>;
   compactThread: (threadId: string) => Promise<{ turn: Turn }>;
   startTurn: (
     threadId: string,

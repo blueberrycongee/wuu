@@ -461,7 +461,7 @@ func (s *Server) sendSideThreadMessageWithSelection(mainID, prompt string, selec
 			return nil, err
 		}
 	}
-	runner, err := s.rt.NewSideThreadRunner(sideThreadID, s.mainThreadRoot(mainID), s.mainThreadModelSelection(mainID))
+	runner, err := s.rt.NewSideThreadRunner(sideThreadID, s.mainThreadRoot(mainID), s.mainThreadModelSelection(mainID), mainID)
 	if err != nil {
 		return nil, err
 	}

@@ -27,6 +27,7 @@
             "zh-cn/desktop/workspaces.md",
             "zh-cn/desktop/conversations.md",
             "zh-cn/desktop/workspace-tools.md",
+            "zh-cn/desktop/execution-environments.md",
             "zh-cn/desktop/projects.md",
             "zh-cn/desktop/subagents.md"
           ]
@@ -118,6 +119,7 @@
             "en/desktop/workspaces.md",
             "en/desktop/conversations.md",
             "en/desktop/workspace-tools.md",
+            "en/desktop/execution-environments.md",
             "en/desktop/projects.md",
             "en/desktop/subagents.md"
           ]

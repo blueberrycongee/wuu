@@ -1,0 +1,59 @@
+name: Execution environments
+
+on:
+  pull_request:
+    paths:
+      - 'internal/executionenv/**'
+      - 'internal/executionworker/**'
+      - 'internal/processsandbox/**'
+      - 'internal/process/**'
+      - 'internal/tools/**'
+      - 'containers/execution/**'
+      - '.github/workflows/execution-environments.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  docker-tools:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build the execution image
+        run: docker build -f containers/execution/Dockerfile -t wuu-execution:ci .
+      - name: Exercise isolated workspace tools and recovery
+        env:
+          WUU_EXECUTION_E2E_IMAGE: wuu-execution:ci
+        run: |
+          set -o pipefail
+          go test ./internal/executionworker -run TestDocker -count=1 -v | tee execution-environments.log
+      - name: Exercise terminal transport
+        run: |
+          set -o pipefail
+          go build -o "$RUNNER_TEMP/wuu-worker" ./cmd/wuu
+          WUU_EXECUTION_E2E_WORKER="$RUNNER_TEMP/wuu-worker" go test ./internal/executionworker -run TestPTYTransportEndToEnd -count=1 -v | tee -a execution-environments.log
+      - name: Install the Linux container runtime
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download v1.5.4 --repo apptainer/apptainer --pattern apptainer_1.5.4_amd64.deb --dir "$RUNNER_TEMP"
+          sudo apt-get update
+          sudo apt-get install -y "$RUNNER_TEMP/apptainer_1.5.4_amd64.deb"
+          apptainer build "$RUNNER_TEMP/execution.sif" docker-daemon:wuu-execution:ci
+      - name: Exercise the Linux container runtime
+        run: |
+          set -o pipefail
+          WUU_EXECUTION_E2E_SIF="$RUNNER_TEMP/execution.sif" go test ./internal/executionworker -run TestSingularity -count=1 -v | tee -a execution-environments.log
+      - name: Preserve the execution receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: execution-environments
+          path: execution-environments.log
+          if-no-files-found: ignore

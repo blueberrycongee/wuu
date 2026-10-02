@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/blueberrycongee/wuu/internal/capability"
+	"github.com/blueberrycongee/wuu/internal/executionenv"
 	"github.com/blueberrycongee/wuu/internal/extensions"
 	"github.com/blueberrycongee/wuu/internal/grokbuildspec"
 	"github.com/blueberrycongee/wuu/internal/securefs"
@@ -37,6 +38,7 @@ const (
 	ToolLoadingAuto   ToolLoadingMode = "auto"
 	ToolLoadingFlat   ToolLoadingMode = "flat"
 	ToolLoadingNative ToolLoadingMode = "native"
+	ToolLoadingClient ToolLoadingMode = "client"
 )
 
 // ErrConfigNotFound is returned by LoadFrom when none of the candidate
@@ -75,6 +77,13 @@ type MCPServerConfig struct {
 	ToolOverrides map[string]MCPToolOverride `json:"tool_overrides,omitempty"`
 }
 
+// definesServer reports whether the entry says how to reach a server, as
+// opposed to only carrying startup preferences for one defined elsewhere.
+func (c MCPServerConfig) definesServer() bool {
+	return c.Command != "" || len(c.Args) > 0 || c.URL != "" || c.Transport != "" ||
+		len(c.Env) > 0 || len(c.Headers) > 0 || c.OAuth != nil
+}
+
 type MCPOAuthConfig struct {
 	ClientID     string   `json:"client_id,omitempty"`
 	ClientSecret string   `json:"client_secret,omitempty"`
@@ -91,11 +100,12 @@ type MCPToolOverride struct {
 
 // Config holds CLI runtime settings.
 type Config struct {
-	DefaultProvider string                    `json:"default_provider"`
-	Providers       map[string]ProviderConfig `json:"providers"`
-	Agent           AgentConfig               `json:"agent"`
-	Hooks           map[string][]HookEntry    `json:"hooks,omitempty"`
-	Instructions    InstructionFilesConfig    `json:"instructions,omitempty"`
+	ExecutionEnvironments executionenv.Config       `json:"execution_environments,omitempty"`
+	DefaultProvider       string                    `json:"default_provider"`
+	Providers             map[string]ProviderConfig `json:"providers"`
+	Agent                 AgentConfig               `json:"agent"`
+	Hooks                 map[string][]HookEntry    `json:"hooks,omitempty"`
+	Instructions          InstructionFilesConfig    `json:"instructions,omitempty"`
 	// MCPServers maps server name to connection config. When present, wuu
 	// connects to each server at startup (in the background) and exposes
 	// its tools to the agent.
@@ -112,13 +122,13 @@ type Config struct {
 	// Engines configures external agent engines (codex, claude) in the
 	// desktop settings. Nil means auto-detection from the CLI binaries.
 	Engines *EnginesConfig `json:"engines,omitempty"`
-	// PTC is optional programmatic tool calling through a fresh Node process.
+	// PTC controls programmatic tool calling through an isolated interpreter.
 	PTC PTCConfig `json:"ptc,omitempty"`
 	// Accept retired settings without activating a runtime with broader authority. Remove after saved configurations have dropped code_mode.
 	LegacyCodeMode json.RawMessage `json:"code_mode,omitempty"`
 }
 
-// PTCConfig controls the optional Node runtime. A family override takes
+// PTCConfig controls the isolated tool runtime. A family override takes
 // precedence over Enabled; omitted families inherit the global switch.
 type PTCConfig struct {
 	Enabled        bool            `json:"enabled"`
@@ -284,6 +294,9 @@ type AgentConfig struct {
 	// MaxParallel limits concurrently executing anonymous workers. Queued
 	// workers do not count toward the limit. Zero selects the default.
 	MaxParallel int `json:"max_parallel,omitempty"`
+	// ProjectMaxParallel limits new managed-worker admissions per project.
+	// Lead and side sessions are excluded. Zero inherits MaxParallelValue.
+	ProjectMaxParallel int `json:"project_max_parallel,omitempty"`
 	// Temperature overrides model/provider sampling when greater than zero.
 	// Zero means Auto: omit the request field and let the provider or model
 	// compatibility layer choose.
@@ -318,6 +331,9 @@ type AgentConfig struct {
 	// unlike model_roles entries, aliases never inherit from the active main
 	// selection. Project layers cannot define aliases.
 	ModelAliases map[string]ModelRoleConfig `json:"model_aliases,omitempty"`
+	// ProjectModels selects defaults for newly created project members. Empty
+	// selections inherit the lead; existing sessions retain their saved model.
+	ProjectModels ProjectModelsConfig `json:"project_models,omitempty"`
 	// DisableAutoCompact turns off the proactive auto-compact pass
 	// that fires when the conversation reaches the model's usable input
 	// window after reserving output headroom. The reactive overflow
@@ -334,25 +350,24 @@ type AgentConfig struct {
 	// disabled, only the embedded data ships with each wuu binary
 	// is used.
 	CatwalkAutoupdate bool `json:"catwalk_autoupdate,omitempty"`
-	// ToolLoading controls how Wuu exposes large/deferred tool surfaces.
-	// Empty means "auto": supported first-party models use their native
-	// deferred-loading protocol; every other path uses a flat tool list.
-	// Valid: auto, flat, native.
-	//
-	// The retired "wuu_tool_search" / "tool_search" values still parse, but
-	// resolve to auto and print a one-time deprecation notice. Wuu's own
-	// progressive loading rewrote the top-level tools array mid-conversation,
-	// which invalidated the provider prompt cache after the insertion point.
+	// ToolLoading selects native discovery when supported, otherwise client
+	// discovery. Explicit flat declares all tools. Valid: auto, client, flat, native.
 	ToolLoading ToolLoadingMode `json:"tool_loading,omitempty"`
-	// ToolSearch is a legacy alias kept for older config files. New configs
-	// should use tool_loading. true now means auto, not Wuu progressive
-	// loading, which no longer exists.
+	// ToolSearch is a legacy alias: true selects auto and false selects flat.
 	ToolSearch *bool `json:"tool_search,omitempty"`
 	// ExperimentalCoordinatorMode exposes the old coordinator slash mode
 	// for local experimentation. Disabled by default because the mode's
 	// user-facing contract is still unclear: the main agent loses some
 	// direct write tools but not every mutating capability.
 	ExperimentalCoordinatorMode bool `json:"experimental_coordinator_mode,omitempty"`
+}
+
+// ProjectMaxParallelValue resolves the per-project worker admission limit.
+func (a AgentConfig) ProjectMaxParallelValue() int {
+	if a.ProjectMaxParallel == 0 {
+		return a.MaxParallelValue()
+	}
+	return a.ProjectMaxParallel
 }
 
 // MaxParallelValue resolves the configured worker concurrency limit.
@@ -387,6 +402,11 @@ type ModelRoleConfig struct {
 	Variant  string `json:"variant,omitempty"`
 }
 
+type ProjectModelsConfig struct {
+	Side   ModelRoleConfig `json:"side,omitempty"`
+	Worker ModelRoleConfig `json:"worker,omitempty"`
+}
+
 type AdvancedRuntimeUpdate struct {
 	MaxSteps                *int
 	MaxContextTokens        *int
@@ -400,9 +420,11 @@ type AdvancedRuntimeUpdate struct {
 	// values. Settings uses this to add, edit, and delete aliases in one call.
 	ModelAliases      map[string]*ModelRoleConfig
 	VerificationModel *ModelRoleConfig
+	ProjectModels     *ProjectModelsConfig
 }
 
 type GeneralSettingsUpdate struct {
+	ExecutionEnvironments *executionenv.Config `json:"execution_environments,omitempty"`
 	PTC                   *PTCConfig
 	GitAttributionEnabled *bool
 	MCPEnabledToggles     map[string]*bool // server name → enabled; nil = skip
@@ -544,7 +566,7 @@ func readConfig(path string) (Config, error) {
 // the settings-layer merger (settings_layer.go) so both honor identical schema
 // strictness.
 func decodeConfig(data []byte, sourcePath string) (Config, error) {
-	var cfg Config
+	cfg := Config{PTC: PTCConfig{Enabled: true}}
 	sanitized := stripLegacyPermissionKeys(data)
 	dec := json.NewDecoder(bytes.NewReader(sanitized))
 	dec.DisallowUnknownFields()
@@ -681,6 +703,9 @@ func (c Config) ResolveProvider(name string) (ProviderConfig, string, error) {
 
 // Validate performs semantic checks.
 func (c Config) Validate() error {
+	if err := c.ExecutionEnvironments.Validate(); err != nil {
+		return err
+	}
 	if len(c.Providers) == 0 {
 		return errors.New("providers is required")
 	}
@@ -771,6 +796,9 @@ func (c Config) Validate() error {
 	if c.Agent.MaxSteps < 0 {
 		return errors.New("agent.max_steps cannot be negative (use 0 for unlimited)")
 	}
+	if c.Agent.ProjectMaxParallel < 0 {
+		return errors.New("agent.project_max_parallel cannot be negative (use 0 to inherit agent.max_parallel)")
+	}
 	if c.Agent.MaxParallel < 0 {
 		return errors.New("agent.max_parallel cannot be negative (use 0 for default)")
 	}
@@ -787,7 +815,7 @@ func (c Config) Validate() error {
 		return errors.New("agent.compact_keep_recent_tokens cannot be negative (use 0 for default)")
 	}
 	if strings.TrimSpace(string(c.Agent.ToolLoading)) != "" && NormalizeToolLoadingMode(c.Agent.ToolLoading) == "" {
-		return errors.New("agent.tool_loading must be one of auto, flat, or native")
+		return errors.New("agent.tool_loading must be one of auto, client, flat, or native")
 	}
 	if err := validatePermissionConfig(c.Agent); err != nil {
 		return err
@@ -797,6 +825,13 @@ func (c Config) Validate() error {
 	}
 	if err := validateModelAliasesConfig(c); err != nil {
 		return err
+	}
+	for role, selection := range map[string]ModelRoleConfig{"side": c.Agent.ProjectModels.Side, "worker": c.Agent.ProjectModels.Worker} {
+		if selection != (ModelRoleConfig{}) {
+			if err := validateConfiguredModelSelection(c, "agent.project_models."+role, selection); err != nil {
+				return err
+			}
+		}
 	}
 
 	return nil
@@ -848,26 +883,30 @@ func validateModelAliasesConfig(c Config) error {
 		}
 		seen[name] = rawName
 
-		providerName := strings.TrimSpace(alias.Provider)
-		if providerName == "" {
-			return fmt.Errorf("agent.model_aliases.%s.provider is required", name)
-		}
-		providerCfg, ok := c.Providers[providerName]
-		if !ok {
-			return fmt.Errorf("agent.model_aliases.%s.provider %q not found in providers", name, providerName)
-		}
-		model := strings.TrimSpace(alias.Model)
-		if model == "" {
-			return fmt.Errorf("agent.model_aliases.%s.model is required", name)
-		}
-		if err := validateAliasEffortVariant(name, alias, providerCfg, model); err != nil {
+		if err := validateConfiguredModelSelection(c, "agent.model_aliases."+name, alias); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func validateAliasEffortVariant(aliasName string, alias ModelRoleConfig, providerCfg ProviderConfig, model string) error {
+func validateConfiguredModelSelection(c Config, path string, selection ModelRoleConfig) error {
+	provider := strings.TrimSpace(selection.Provider)
+	if provider == "" {
+		return fmt.Errorf("%s.provider is required", path)
+	}
+	providerCfg, ok := c.Providers[provider]
+	if !ok {
+		return fmt.Errorf("%s.provider %q not found in providers", path, provider)
+	}
+	model := strings.TrimSpace(selection.Model)
+	if model == "" {
+		return fmt.Errorf("%s.model is required", path)
+	}
+	return validateModelEffortVariant(path, selection, providerCfg, model)
+}
+
+func validateModelEffortVariant(path string, alias ModelRoleConfig, providerCfg ProviderConfig, model string) error {
 	modelCfg, ok := providerCfg.Models[model]
 	if !ok {
 		return nil
@@ -894,7 +933,7 @@ func validateAliasEffortVariant(aliasName string, alias ModelRoleConfig, provide
 			continue
 		}
 		if _, ok := valid[value]; !ok {
-			return fmt.Errorf("agent.model_aliases.%s.%s %q is not supported by model %q", aliasName, field.name, value, model)
+			return fmt.Errorf("%s.%s %q is not supported by model %q", path, field.name, value, model)
 		}
 	}
 	return nil
@@ -921,6 +960,7 @@ func Default() Config {
 	nativeCompaction := true
 	grokBuild := ApplyGrokBuildProviderDefaults(ProviderConfig{Type: "grok-build"})
 	return Config{
+		PTC:             PTCConfig{Enabled: true},
 		DefaultProvider: "openai",
 		Providers: map[string]ProviderConfig{
 			"openai": {
@@ -1057,7 +1097,7 @@ func (a AgentConfig) ToolLoadingPreference() ToolLoadingMode {
 		if mode := NormalizeToolLoadingMode(a.ToolLoading); mode != "" {
 			if isRetiredToolLoadingMode(a.ToolLoading) {
 				warnRetiredToolLoadingOnce(raw, fmt.Sprintf(
-					"wuu: agent.tool_loading = %q was removed and now behaves as %q. Wuu's own progressive tool loading rewrote the tools array mid-conversation and invalidated the provider prompt cache. Set agent.tool_loading to auto, flat, or native to silence this notice.",
+					"wuu: agent.tool_loading = %q was removed and now behaves as %q. Set agent.tool_loading to auto, client, flat, or native to silence this notice.",
 					raw, ToolLoadingAuto))
 			}
 			return mode
@@ -1092,6 +1132,8 @@ func NormalizeToolLoadingMode(mode ToolLoadingMode) ToolLoadingMode {
 		return ToolLoadingFlat
 	case string(ToolLoadingNative):
 		return ToolLoadingNative
+	case string(ToolLoadingClient):
+		return ToolLoadingClient
 	case "wuu_tool_search", "tool_search":
 		return ToolLoadingAuto
 	default:
@@ -1441,6 +1483,13 @@ func UpdateAdvancedRuntime(configPath, providerName string, update AdvancedRunti
 	setOptionalFloat(agent, "compact_threshold_pct", update.CompactThresholdPct, 0)
 	setOptionalInt(agent, "compact_keep_recent_tokens", update.CompactKeepRecentTokens)
 	setOptionalBool(agent, "disable_auto_compact", update.DisableAutoCompact)
+	if update.ProjectModels != nil {
+		if *update.ProjectModels == (ProjectModelsConfig{}) {
+			delete(agent, "project_models")
+		} else {
+			agent["project_models"] = *update.ProjectModels
+		}
+	}
 	if update.ModelAliases != nil {
 		aliases := make(map[string]any, len(update.ModelAliases))
 		for rawName, alias := range update.ModelAliases {
@@ -1545,6 +1594,11 @@ func UpdateAdvancedRuntime(configPath, providerName string, update AdvancedRunti
 }
 
 func UpdateGeneralSettings(configPath string, update GeneralSettingsUpdate) error {
+	if update.ExecutionEnvironments != nil {
+		if err := update.ExecutionEnvironments.Validate(); err != nil {
+			return err
+		}
+	}
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		return err
@@ -1554,6 +1608,9 @@ func UpdateGeneralSettings(configPath string, update GeneralSettingsUpdate) erro
 		return err
 	}
 
+	if update.ExecutionEnvironments != nil {
+		raw["execution_environments"] = update.ExecutionEnvironments
+	}
 	if update.PTC != nil {
 		delete(raw, "code_mode")
 		ptc, _ := raw["ptc"].(map[string]any)
@@ -1601,6 +1658,14 @@ func UpdateGeneralSettings(configPath string, update GeneralSettingsUpdate) erro
 			} else {
 				server["enabled"] = false
 			}
+			// An entry with nothing left is not a definition; keeping it would
+			// shadow a same-named server defined elsewhere.
+			if len(server) == 0 {
+				delete(mcpServers, name)
+			}
+		}
+		if len(mcpServers) == 0 {
+			delete(raw, "mcp_servers")
 		}
 	}
 

@@ -51,7 +51,7 @@ import {
   StreamReconnectNotice,
   TurnNotice,
 } from "./TurnNotice";
-import { userMessageAnchorID } from "./TurnViewHelpers";
+import { CONVERSATION_TURN_REVEAL_EVENT, type ConversationTurnRevealDetail, messageAnchorID, userMessageAnchorID } from "./TurnViewHelpers";
 import { requestOpenThreadInSplit } from "./ConversationSplitBridge";
 import { isProjectEvent, ProjectEventRow } from "./ProjectViews";
 import {
@@ -225,6 +225,7 @@ function BuiltInThreadItemView({
   editSummaryCard,
 }: ThreadItemViewProps): JSX.Element | null {
   const { t, formatDate } = useI18n();
+  const streamLive = item.status === "in_progress" && turnStatus === "in_progress";
   // Only a live item/turn completion handoff should animate. Historical
   // completed messages mount without this marker, so virtualized content does
   // not replay the entrance while the user scrolls.
@@ -321,6 +322,7 @@ function BuiltInThreadItemView({
             />
           ) : (
             <UserMessageContent
+              anchorID={userMessageAnchorID(turnID, item.id)}
               text={displayText}
               contentParts={item.content_parts}
               images={item.images ?? []}
@@ -409,6 +411,7 @@ function BuiltInThreadItemView({
         (copyable || item.status === "in_progress");
       return (
         <AssistantResponseArticle
+          id={messageAnchorID(turnID, item.id)}
           turnID={turnID}
           itemID={item.id}
           settled={item.status === "completed" && turnStatus === "completed" && !streaming}
@@ -426,6 +429,7 @@ function BuiltInThreadItemView({
               item={item}
               cwd={cwd}
               onOpenFile={onOpenFile}
+              live={streamLive}
               pendingCompanionReasoning={pendingCompanionReasoning}
               onStreamFrame={onStreamFrame}
             />
@@ -457,6 +461,7 @@ function BuiltInThreadItemView({
             item={item}
             cwd={cwd}
             onOpenFile={onOpenFile}
+            live={streamLive}
             onStreamFrame={onStreamFrame}
           />
         </article>
@@ -484,6 +489,7 @@ function BuiltInThreadItemView({
 }
 
 function UserMessageContent({
+  anchorID,
   text,
   contentParts,
   images,
@@ -491,6 +497,7 @@ function UserMessageContent({
   cwd,
   onOpenFile,
 }: {
+  anchorID: string;
   text: string;
   contentParts?: MessageContentPart[];
   images: InputImage[];
@@ -520,6 +527,19 @@ function UserMessageContent({
   const { collapsible, expanded, toggleExpanded } = useLongTextCollapse(bubbleText);
   const collapsed = collapsible && !expanded;
   const displayedText = collapsed ? collapsedLongTextPreview(bubbleText) : bubbleText;
+  useEffect(() => {
+    if (!collapsed) return;
+    const reveal = (event: Event): void => {
+      const { turnID, itemID } = (event as CustomEvent<ConversationTurnRevealDetail>).detail;
+      if (!itemID || userMessageAnchorID(turnID, itemID) !== anchorID) return;
+      // Jump retries can arrive before the expansion's effect cleanup. Consume
+      // this listener now so a second reveal cannot toggle the message closed.
+      window.removeEventListener(CONVERSATION_TURN_REVEAL_EVENT, reveal);
+      toggleExpanded();
+    };
+    window.addEventListener(CONVERSATION_TURN_REVEAL_EVENT, reveal);
+    return () => window.removeEventListener(CONVERSATION_TURN_REVEAL_EVENT, reveal);
+  }, [anchorID, collapsed, toggleExpanded]);
 
   return (
     <>
@@ -914,6 +934,7 @@ function AgentMessageContent({
   item,
   cwd,
   onOpenFile,
+  live,
   pendingCompanionReasoning,
   onStreamFrame,
 }: {
@@ -921,6 +942,8 @@ function AgentMessageContent({
   item: ThreadItem;
   cwd?: string;
   onOpenFile?: (path: string) => void;
+  /** The item is in progress inside a turn that is still running. */
+  live: boolean;
   /**
    * True when the turn has a reasoning block that the model just finished
    * writing. The first answer item waits a short beat so the reasoning
@@ -930,12 +953,10 @@ function AgentMessageContent({
   onStreamFrame: () => void;
 }): JSX.Element {
   const streamKeyValue = streamTextKey(turnID, item.id, "text");
-  // isLive is driven entirely by `item.status`: once the back-end marks
-  // the item completed the surface must settle, no matter what the
-  // streaming buffer looks like. This is what makes "two places
-  // streaming at once" impossible — there's exactly one source of
-  // liveness and it changes atomically when the back-end commits.
-  const isLive = item.status === "in_progress";
+  // Liveness comes from the back-end state alone: once the item or its turn
+  // is terminal the surface must settle, whatever the streaming buffer holds.
+  // A terminal turn ends every stream even if an item completion was missed.
+  const isLive = live;
   // Hold the cursor back when a just-completed reasoning block is still
   // visually settling. The reasoning and text streams are sequential on
   // the wire, but the cursor reveal and the next text's reveal can briefly
@@ -993,16 +1014,18 @@ function ReasoningContent({
   item,
   cwd,
   onOpenFile,
+  live,
   onStreamFrame,
 }: {
   turnID: string;
   item: ThreadItem;
   cwd?: string;
   onOpenFile?: (path: string) => void;
+  live: boolean;
   onStreamFrame: () => void;
 }): JSX.Element {
   const streamKeyValue = streamTextKey(turnID, item.id, "text");
-  const isLive = item.status === "in_progress";
+  const isLive = live;
 
   const hasBufferedStream = streamTextStore.has(streamKeyValue);
   const canReleaseBufferedStream = !isLive && typeof item.text === "string" && item.text.length > 0;

@@ -23,6 +23,7 @@ import {
   Search,
   Settings,
   Smartphone,
+  Trash2,
   X,
   type IconComponent
 } from "./WuuIcons";
@@ -30,6 +31,7 @@ import type {
   CodexPetSettingsUpdate,
   EngineListResult,
   EngineUpdateParams,
+  ProjectModelsConfig,
   RuntimeAdvancedSettingsUpdate,
   RuntimeGeneralSettingsUpdate,
 } from "../shared/protocol";
@@ -49,7 +51,7 @@ import {
 import { SidePanelToggleIcon } from "./SidePanelToggleIcon";
 import { useSidebarDrawerState } from "./SidebarDrawerState";
 import { sidebarDrawerExitMs, sidebarMotionMs } from "./AppLayoutState";
-import { SelectMenu } from "./SelectMenu";
+import { SelectMenu, type SelectMenuOption } from "./SelectMenu";
 import type {
   CodexPetsSnapshot,
   DesktopBuildInfo,
@@ -75,12 +77,14 @@ export type ArchivedSessionView = {
   archive_project_id?: string;
   archive_project_name?: string;
 };
-import { ENABLE_PTC_SETTINGS, ENABLE_REMOTE_CONTROL, ENABLE_SUBSCRIPTIONS } from "./FeatureFlags";
+import { ENABLE_REMOTE_CONTROL, ENABLE_SUBSCRIPTIONS } from "./FeatureFlags";
 import { AppearanceTypography } from "./AppearanceTypography";
 import { BackgroundSettings } from "./background/BackgroundSettings";
-import { SettingsRow } from "./SettingsRow";
+import { ExecutionEnvironmentSettings } from "./ExecutionEnvironmentSettings";
+import { SettingsInputUnit, SettingsRow } from "./SettingsRow";
 import { SettingsGroup, SettingsPageHeader, SettingsSection, type SettingsStatusTone } from "./SettingsSection";
 import { toastErrorMessage } from "./Toast";
+import type { ArchiveDeletionState } from "./useArchiveDeletion";
 import { EngineSettingsSection } from "./EngineSettingsSection";
 import { ModelServicesPage } from "./ModelServicesPage";
 import { SubscriptionDashboard } from "./SubscriptionDashboard";
@@ -208,6 +212,9 @@ export function SettingsView({
   onSidebarSeparatorKey,
   archivedThreads,
   onUnarchiveThread,
+  archiveDeletion,
+  onDeleteAllArchivedThreads,
+  onRetryArchiveDeletion,
   // The settings rail shares the main sidebar's state and handlers wholesale:
   // same persisted width + collapse flag, same drag-to-collapse resize
   // session, same toggle motion.
@@ -246,9 +253,12 @@ export function SettingsView({
   onCodexPetsUpdate: (settings: CodexPetSettingsUpdate) => Promise<CodexPetsSnapshot>;
   onSidebarResizeStart: (event: ReactPointerEvent<HTMLDivElement>) => void;
   onSidebarSeparatorKey: (event: ReactKeyboardEvent<HTMLDivElement>) => void;
-  // 归档页只读侧边栏归档清单 + 恢复回调。列表为空时渲染空态卡片。
+  // The archive catalog spans all workspaces; filtering only changes the view.
   archivedThreads?: readonly ArchivedSessionView[];
   onUnarchiveThread: (thread: ArchivedSessionView) => void;
+  archiveDeletion?: ArchiveDeletionState;
+  onDeleteAllArchivedThreads?: () => void;
+  onRetryArchiveDeletion?: () => void;
   sidebarCollapsed: boolean;
   sidebarAnimating: boolean;
   onToggleSidebar: () => void;
@@ -831,6 +841,7 @@ export function SettingsView({
                 onTemperatureChange={setTemperatureDraft}
                 onCommitField={commitAdvancedField}
                 onGeneralSave={onGeneralSave}
+                onAdvancedSave={onAdvancedSave}
               />
             ) : activePage === "general" ? (
               <SettingsGeneralPage
@@ -868,6 +879,9 @@ export function SettingsView({
               <SettingsArchivePage
                 archivedThreads={archivedThreads ?? []}
                 onUnarchiveThread={onUnarchiveThread}
+                deletion={archiveDeletion}
+                onDeleteAll={onDeleteAllArchivedThreads}
+                onRetry={onRetryArchiveDeletion}
               />
             ) : (
               <SettingsUsagePage
@@ -911,7 +925,7 @@ function SettingsNavItem({
   icon: ReactNode;
   active: boolean;
   onClick: () => void;
-  children: ReactNode;
+  children: string;
 }): JSX.Element {
   return (
     <button
@@ -922,7 +936,8 @@ function SettingsNavItem({
       onClick={onClick}
     >
       {icon}
-      <span>{children}</span>
+      {/* Plugin page names can outgrow the rail; a clipped one shows in full on hover. */}
+      <TruncatedText className="settings-nav-label" text={children} />
     </button>
   );
 }
@@ -962,7 +977,8 @@ function SettingsRuntimePage({
   onMaxStepsChange,
   onTemperatureChange,
   onCommitField,
-  onGeneralSave
+  onGeneralSave,
+  onAdvancedSave
 }: {
   initialized: InitializeResult | undefined;
   running: boolean;
@@ -985,13 +1001,47 @@ function SettingsRuntimePage({
   onTemperatureChange: (value: string) => void;
   onCommitField: (field: AdvancedNumericField) => void;
   onGeneralSave: (settings: RuntimeGeneralSettingsUpdate) => Promise<void>;
+  onAdvancedSave: (settings: RuntimeAdvancedSettingsUpdate) => Promise<void>;
 }): JSX.Element {
   const { t } = useI18n();
-  const ptc = initialized?.general_settings?.ptc ?? { enabled: false };
+  const ptc = initialized?.general_settings?.ptc ?? { enabled: true };
   const [ptcBusy, setPTCBusy] = useState(false);
   const [ptcError, setPTCError] = useState("");
   const [ptcFamily, setPTCFamily] = useState("gpt");
   const ptcFamilyValue = ptc.families?.[ptcFamily];
+  const [projectModelsBusy, setProjectModelsBusy] = useState(false);
+  const [projectModelsError, setProjectModelsError] = useState<{ role: "side" | "worker"; message: string }>();
+  const projectModels = initialized?.project_models ?? {};
+  const projectModelOptions: SelectMenuOption[] = [{ value: "", label: t("settings.projectModelInherit") }];
+  for (const provider of initialized?.providers ?? []) {
+    const models = provider.models ?? [];
+    for (const id of new Set([provider.model, ...models.map((model) => model.id)].filter(Boolean))) {
+      const model = models.find((model) => model.id === id);
+      projectModelOptions.push({
+        value: JSON.stringify([provider.name, id]),
+        label: `${provider.name} / ${model?.display_name || id}`,
+        hint: model?.display_name && model.display_name !== id ? id : undefined,
+      });
+    }
+  }
+  for (const selection of [projectModels.side, projectModels.worker]) {
+    if (!selection?.provider || !selection.model) continue;
+    const value = JSON.stringify([selection.provider, selection.model]);
+    if (!projectModelOptions.some((option) => option.value === value)) {
+      projectModelOptions.push({ value, label: `${selection.provider} / ${selection.model}` });
+    }
+  }
+  async function saveProjectModel(role: "side" | "worker", value: string): Promise<void> {
+    const [provider, model] = value ? JSON.parse(value) as [string, string] : ["", ""];
+    const current = projectModels[role];
+    if ((current?.provider ?? "") === provider && (current?.model ?? "") === model) return;
+    const next: ProjectModelsConfig = { ...projectModels, [role]: value ? { provider, model } : {} };
+    setProjectModelsBusy(true);
+    setProjectModelsError(undefined);
+    try { await onAdvancedSave({ project_models: next }); }
+    catch (error) { setProjectModelsError({ role, message: error instanceof Error ? error.message : t("settings.saveFailed") }); }
+    finally { setProjectModelsBusy(false); }
+  }
   async function savePTC(next: NonNullable<RuntimeGeneralSettingsUpdate["ptc"]>): Promise<void> {
     setPTCBusy(true);
     setPTCError("");
@@ -1053,17 +1103,28 @@ function SettingsRuntimePage({
         disabled={fieldsDisabled}
       />
     );
-    // A numeric placeholder (the default) keeps its unit; a word ("Auto") does not.
-    return options.unit ? (
-      <span className="settings-input-unit" data-unit={options.unit}
-        data-unit-placeholder={/^[\d.,\s]+$/.test(options.placeholder ?? "") || undefined}
-        style={{ "--settings-unit-chars": options.unit.length } as CSSProperties}>{input}</span>
-    ) : input;
+    return options.unit ? <SettingsInputUnit unit={options.unit} placeholder={options.placeholder}>{input}</SettingsInputUnit> : input;
   };
 
   return (
     <>
       <SettingsPageHeader title={t("settings.runtime")} description={t("settings.runtimeDescription")} />
+      {initialized?.features?.project_agent && (
+        <SettingsSection title={t("settings.projectModels")} description={t("settings.projectModelsDescription")}>
+          <div className="settings-form"><SettingsGroup>
+            {(["side", "worker"] as const).map((role) => {
+              const selection = projectModels[role];
+              const value = selection?.provider && selection.model ? JSON.stringify([selection.provider, selection.model]) : "";
+              const label = t(role === "side" ? "settings.projectSideModel" : "settings.projectWorkerModel");
+              return <SettingsRow key={role} title={label} error={projectModelsError?.role === role ? projectModelsError.message : undefined}>
+                <SelectMenu triggerClassName="settings-select-trigger" ariaLabel={label} dataTestid={`project-${role}-model`}
+                  value={value} options={projectModelOptions} searchable flip disabled={running || projectModelsBusy}
+                  onChange={(next) => void saveProjectModel(role, next)} />
+              </SettingsRow>;
+            })}
+          </SettingsGroup></div>
+        </SettingsSection>
+      )}
       <SettingsSection title={t("settings.sectionCompaction")} testID="settings-advanced">
         <SettingsGroup>
           <SettingsRow
@@ -1149,7 +1210,8 @@ function SettingsRuntimePage({
           </SettingsRow>
         </SettingsGroup>
       </SettingsSection>
-      {ENABLE_PTC_SETTINGS && <SettingsSection title={t("settings.ptcTitle")} testID="settings-ptc">
+      <ExecutionEnvironmentSettings value={initialized?.general_settings?.execution_environments ?? {}} disabled={fieldsDisabled} onSave={onGeneralSave} />
+      <SettingsSection title={t("settings.ptcTitle")} testID="settings-ptc">
         <SettingsGroup>
           <SettingsRow title={t("settings.ptcEnabled")} description={t("settings.ptcDescription")}>
             <button className="settings-switch" type="button" role="switch"
@@ -1185,7 +1247,7 @@ function SettingsRuntimePage({
           </SettingsRow>
           {ptcError ? <p className="settings-error" role="alert">{ptcError}</p> : null}
         </SettingsGroup>
-      </SettingsSection>}
+      </SettingsSection>
       <SettingsSection title={t("settings.sectionGit")} testID="settings-git">
         <SettingsGroup>
           <SettingsRow
@@ -1244,6 +1306,7 @@ function SettingsGeneralPage({
   const codexPetSelectedID = codexPets?.selected_id ?? "";
   const codexPetEnabled = Boolean(codexPets?.enabled);
   const codexPetStatus = codexPetLocalError || codexPetsError;
+  const codexPetsHome = codexPets?.home ?? "~/.wuu/pets";
 
   async function refreshCodexPets(): Promise<void> {
     setCodexPetBusy(true);
@@ -1277,69 +1340,53 @@ function SettingsGeneralPage({
           <SettingsRow title={t("settings.language")}>
             <LanguagePreferenceControl />
           </SettingsRow>
-          {hostSupports("listCodexPets") ? <>
-          <SettingsRow title={t("settings.codexPet")}>
-            {codexPetOptions.length > 0 ? (
-              <SelectMenu
-                className="settings-codex-pet-select"
-                triggerClassName="settings-select-trigger"
-                ariaLabel={t("settings.selectPet")}
-                dataTestid="settings-codex-pet-select"
-                value={codexPetSelectedID}
-                disabled={codexPetsLoading || codexPetBusy || !codexPetEnabled}
-                onChange={(next) => void updateCodexPets({ selected_id: next })}
-                options={codexPetOptions.map((pet) => ({
-                  value: pet.id,
-                  label: pet.display_name
-                }))}
-              />
-            ) : (
-              <span className="settings-row-control-value">{t("settings.noLocalPets")}</span>
-            )}
-            {/* The folder it reads belongs with the action that reads it. */}
-            <button
-              className="settings-button settings-button-ghost settings-icon-button"
-              type="button"
-              title={isTouchWebShell() ? t("settings.refreshPets") : t("settings.petSource", { path: codexPets?.home ?? "~/.wuu/pets" })}
-              aria-label={t("settings.refreshPets")}
-              disabled={codexPetsLoading || codexPetBusy}
-              onClick={() => void refreshCodexPets()}
+          {hostSupports("listCodexPets") ? (
+            // The row names what it has found and where to add more; the
+            // refresh action rereads that folder.
+            <SettingsRow
+              title={t("settings.codexPet")}
+              description={!codexPetsLoading && codexPetOptions.length === 0 ? t("settings.petsNotFound", { path: codexPetsHome }) : undefined}
+              error={codexPetStatus || codexPets?.errors[0]}
             >
-              <RefreshCw className="icon" aria-hidden="true" />
-            </button>
-            <button
-              className="settings-switch"
-              type="button"
-              role="switch"
-              aria-checked={codexPetEnabled}
-              data-testid="settings-codex-pet-enabled"
-              disabled={codexPetsLoading || codexPetBusy || codexPetOptions.length === 0}
-              onClick={() => void updateCodexPets({ enabled: !codexPetEnabled })}
-            >
-              <span className="settings-switch-thumb" aria-hidden="true" />
-              <span className="sr-only">{codexPetEnabled ? t("settings.disablePet") : t("settings.enablePet")}</span>
-            </button>
-          </SettingsRow>
-          {codexPetsLoading ||
-          codexPetOptions.length === 0 ||
-          codexPets?.errors.length ||
-          codexPetStatus ? (
-            <div className="settings-row settings-row-block settings-row-note">
-              {codexPetsLoading ? <small className="settings-muted-line">{t("settings.loadingPets")}</small> : null}
-              {!codexPetsLoading && codexPetOptions.length === 0 ? (
-                <small className="settings-muted-line">
-                  {t("settings.petInstallHint")}
-                </small>
+              {codexPetOptions.length > 0 ? (
+                <SelectMenu
+                  className="settings-codex-pet-select"
+                  triggerClassName="settings-select-trigger"
+                  ariaLabel={t("settings.selectPet")}
+                  dataTestid="settings-codex-pet-select"
+                  value={codexPetSelectedID}
+                  disabled={codexPetsLoading || codexPetBusy || !codexPetEnabled}
+                  onChange={(next) => void updateCodexPets({ selected_id: next })}
+                  options={codexPetOptions.map((pet) => ({
+                    value: pet.id,
+                    label: pet.display_name
+                  }))}
+                />
               ) : null}
-              {codexPets?.errors.length ? (
-                <small className="settings-muted-line settings-error">
-                  {codexPets.errors[0]}
-                </small>
-              ) : null}
-              {codexPetStatus ? <small className="settings-muted-line settings-error">{codexPetStatus}</small> : null}
-            </div>
+              <button
+                className="settings-button settings-button-ghost settings-icon-button"
+                type="button"
+                title={isTouchWebShell() ? t("settings.refreshPets") : t("settings.petSource", { path: codexPetsHome })}
+                aria-label={t("settings.refreshPets")}
+                disabled={codexPetsLoading || codexPetBusy}
+                onClick={() => void refreshCodexPets()}
+              >
+                <RefreshCw className="icon" aria-hidden="true" />
+              </button>
+              <button
+                className="settings-switch"
+                type="button"
+                role="switch"
+                aria-checked={codexPetEnabled}
+                data-testid="settings-codex-pet-enabled"
+                disabled={codexPetsLoading || codexPetBusy || codexPetOptions.length === 0}
+                onClick={() => void updateCodexPets({ enabled: !codexPetEnabled })}
+              >
+                <span className="settings-switch-thumb" aria-hidden="true" />
+                <span className="sr-only">{codexPetEnabled ? t("settings.disablePet") : t("settings.enablePet")}</span>
+              </button>
+            </SettingsRow>
           ) : null}
-          </> : null}
         </SettingsGroup>
       </SettingsSection>
 
@@ -1474,9 +1521,17 @@ function SettingsMCPPage({
     new Set([...mcpServers.map((server) => server.name), ...Object.keys(mcpEnabledDraft)]),
   ).sort((a, b) => a.localeCompare(b));
 
+  // Servers are defined only in the user configuration; the page says where,
+  // since it cannot add one itself.
+  const configLocation = { file: "~/.wuu/config.json", key: "mcp_servers" } as const;
+  const description = t("settings.mcpDescription").split(/(\{\w+\})/).map((part, index) => {
+    const name = /^\{(\w+)\}$/.exec(part)?.[1] as keyof typeof configLocation | undefined;
+    return name && name in configLocation ? <code key={index}>{configLocation[name]}</code> : part;
+  });
+
   return (
     <>
-      <SettingsPageHeader title={t("settings.mcpServers")} description={t("settings.mcpDescription")} />
+      <SettingsPageHeader title={t("settings.mcpServers")} description={description} />
       <SettingsSection testID="settings-mcp">
         <SettingsGroup>
           {mcpLoading && mcpRowNames.length === 0 ? (
@@ -1622,9 +1677,15 @@ function SettingsMCPPage({
 function SettingsArchivePage({
   archivedThreads,
   onUnarchiveThread,
+  deletion,
+  onDeleteAll,
+  onRetry,
 }: {
   archivedThreads: readonly ArchivedSessionView[];
   onUnarchiveThread: (thread: ArchivedSessionView) => void;
+  deletion?: ArchiveDeletionState;
+  onDeleteAll?: () => void;
+  onRetry?: () => void;
 }): JSX.Element {
   const { t, formatDate } = useI18n();
   const [query, setQuery] = useState("");
@@ -1672,9 +1733,37 @@ function SettingsArchivePage({
 
   return (
     <>
-      <SettingsPageHeader title={t("settings.archive")} />
-      <div className="settings-archive-page">
-        <div className="settings-archive-toolbar" role="search" aria-label={t("settings.archiveFilter")}>
+      <SettingsPageHeader
+        title={t("settings.archive")}
+        actions={(
+          <button
+            type="button"
+            className="settings-button settings-button-danger settings-archive-delete-all"
+            disabled={!onDeleteAll || deletion?.pending}
+            onClick={onDeleteAll}
+          >
+            {deletion?.pending ? <Loader2 className="icon spin" aria-hidden="true" /> : <Trash2 className="icon" aria-hidden="true" />}
+            {deletion?.progress
+              ? t("settings.deletingArchived", deletion.progress)
+              : t("settings.deleteAllArchived")}
+          </button>
+        )}
+      />
+      <div className="settings-archive-page" aria-busy={deletion?.pending || undefined}>
+        {deletion?.result || deletion?.error ? (
+          <div className="settings-archive-delete-result" role={deletion.error || deletion.result?.failed ? "alert" : "status"}>
+            {deletion.result ? <p>{t("settings.deleteArchivedResult", deletion.result)}</p> : null}
+            {deletion.error ? <p className="settings-error">{deletion.error}</p> : null}
+            {deletion.failedIDs.length > 0 ? (
+              <button type="button" className="settings-button settings-button-ghost settings-archive-delete-retry"
+                disabled={deletion.pending} onClick={onRetry}>
+                {t("settings.retryArchiveDeletion", { count: deletion.failedIDs.length })}
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+        {/* Nothing archived means nothing to search or filter. */}
+        {sortedThreads.length > 0 ? <div className="settings-archive-toolbar" role="search" aria-label={t("settings.archiveFilter")}>
           <label className="settings-archive-search">
             <Search className="icon" aria-hidden="true" />
             <span className="sr-only">{t("settings.archiveSearch")}</span>
@@ -1694,18 +1783,15 @@ function SettingsArchivePage({
             options={[{ value: "all", label: t("settings.allWorkspaces") }, ...workspaceOptions]}
             flip
           />
-        </div>
+        </div> : null}
         {sortedThreads.length === 0 || noMatches ? (
-          <div className="settings-archive-empty" role="status">
-            <Archive className="settings-archive-empty-icon" aria-hidden="true" />
-            <p className="settings-archive-empty-title">
-              {noMatches ? t("settings.noArchiveMatches") : t("settings.noArchivedItems")}
-            </p>
-            {noMatches || isTouchWebShell() ? null : (
-              <p className="settings-archive-empty-hint">
-                {t("settings.archiveHint")}
-              </p>
-            )}
+          <div className="settings-group">
+            <div className="settings-group-empty settings-archive-empty" role="status">
+              <span>{noMatches ? t("settings.noArchiveMatches") : t("settings.noArchivedItems")}</span>
+              {noMatches || isTouchWebShell() ? null : (
+                <span className="settings-archive-empty-hint">{t("settings.archiveHint")}</span>
+              )}
+            </div>
           </div>
         ) : (
           <div className="settings-archive-groups" aria-label={t("settings.archivedList")}>
@@ -1739,6 +1825,7 @@ function SettingsArchivePage({
                           className="settings-button settings-button-ghost settings-icon-button settings-archive-restore"
                           aria-label={t("settings.restoreConversation", { title })}
                           title={t("settings.restore")}
+                          disabled={deletion?.pending}
                           onClick={() => onUnarchiveThread(thread)}
                         >
                           <RotateCcw className="icon" aria-hidden="true" />
@@ -1801,7 +1888,7 @@ function SettingsUsagePage({
   loading: boolean;
   error: string;
 }): JSX.Element {
-  const { locale, t, formatNumber } = useI18n();
+  const { locale, t, formatNumber, formatDate } = useI18n();
   const formatUsageValue = (value: number, options?: Intl.NumberFormatOptions): string =>
     Number.isFinite(value) ? formatNumber(value, options) : "—";
   const formatCompactUsageValue = (value: number): string => formatCompactUsageNumber(value, locale);
@@ -1815,15 +1902,9 @@ function SettingsUsagePage({
   }, 0);
   const usageTrend = buildUsageTrend(usage?.days ?? []);
   const maxTrendTotal = usageTrend.reduce((max, day) => Math.max(max, usageTokenTotal(day)), 0);
-  const modelChart = (usage?.model_breakdowns ?? []).slice(0, 6).map((model) => ({
-    ...model,
-    total: model.input_tokens + model.output_tokens + model.cache_creation_tokens + model.cache_read_tokens,
-  }));
-  const maxModelTotal = modelChart.reduce((max, model) => Math.max(max, model.total), 0);
-  const allModelTotal = (usage?.model_breakdowns ?? []).reduce(
-    (total, model) => total + model.input_tokens + model.output_tokens + model.cache_creation_tokens + model.cache_read_tokens,
-    0,
-  );
+  const modelTotal = (model: SettingsUsageResponse["model_breakdowns"][number]): number =>
+    model.input_tokens + model.output_tokens + model.cache_creation_tokens + model.cache_read_tokens;
+  const allModelTotal = (usage?.model_breakdowns ?? []).reduce((total, model) => total + modelTotal(model), 0);
   const heatmapCols = heatmap.length > 0 ? Math.ceil(heatmap.length / 7) : 12;
 
   // Keep grid height = 7 × cell-size so cells stay square as panel resizes
@@ -1870,6 +1951,9 @@ function SettingsUsagePage({
     }
   }
   const header = <SettingsPageHeader title={t("settings.usage")} />;
+  // The totals cover every recorded day, so the page says since when.
+  const firstDay = usage?.metrics.date_range[0];
+  const since = firstDay ? t("settings.usageSince", { date: formatUsageSinceDate(firstDay, formatDate) }) : undefined;
   if (loading) {
     return (
       <>
@@ -1885,8 +1969,10 @@ function SettingsUsagePage({
       <>
         {header}
         <div className="settings-usage-page" data-testid="settings-usage">
-          <div className="settings-empty" role={error ? "alert" : undefined}>
-            {error || t("settings.noUsage")}
+          <div className="settings-group">
+            <p className="settings-group-empty" role={error ? "alert" : undefined} data-error={error ? "" : undefined}>
+              {error || t("settings.noUsage")}
+            </p>
           </div>
         </div>
       </>
@@ -1894,7 +1980,7 @@ function SettingsUsagePage({
   }
   return (
     <>
-    {header}
+    <SettingsPageHeader title={t("settings.usage")} description={since} />
     <div className="settings-usage-page" data-testid="settings-usage">
       <div className="settings-group settings-usage-stats">
         <UsageStat
@@ -1918,11 +2004,14 @@ function SettingsUsagePage({
       <section className="settings-section settings-usage-chart" aria-labelledby="settings-usage-trend-title">
         <header className="settings-section-header">
           <h2 id="settings-usage-trend-title" className="settings-section-title">
-            {t("settings.usageTrend")}
+            {t("settings.last30Days")}
           </h2>
-          <span className="settings-section-meta">{t("settings.last30Days")}</span>
         </header>
         <div className="settings-group settings-usage-card">
+          {/* The plot's top edge is the busiest day; its value is the scale. */}
+          <span className="settings-usage-chart-scale" aria-hidden="true">
+            {maxTrendTotal > 0 ? formatCompactUsageValue(maxTrendTotal) : null}
+          </span>
           <div className="settings-usage-trend" role="list" aria-label={t("settings.usageTrend")}>
             {usageTrend.map((day) => {
               const total = usageTokenTotal(day);
@@ -1950,7 +2039,7 @@ function SettingsUsagePage({
       <section className="settings-section" aria-labelledby="settings-usage-heatmap-title">
         <header className="settings-section-header">
           <h2 id="settings-usage-heatmap-title" className="settings-section-title">
-            {t("settings.usageHeatmap")}
+            {t("settings.pastYear")}
           </h2>
         </header>
         <div className="settings-group settings-usage-card settings-heatmap-panel">
@@ -2000,75 +2089,9 @@ function SettingsUsagePage({
         </div>
       </section>
 
-      <section className="settings-section settings-skill-usage" aria-labelledby="settings-skill-usage-title">
-        <header className="settings-section-header">
-          <h2 id="settings-skill-usage-title" className="settings-section-title">
-            {t("settings.skillUsage")}
-          </h2>
-          <span className="settings-section-meta">{t("settings.skillUsageCount")}</span>
-        </header>
-        <div className="settings-group settings-usage-card">
-          {skillUsage.length ? (
-            <div className="settings-skill-usage-list">
-              {skillUsage.slice(0, 8).map((skill, index) => {
-                const count = Number.isFinite(skill.count) ? Math.max(0, skill.count) : undefined;
-                const width = count !== undefined && maxSkillCount > 0 ? Math.max(6, (count / maxSkillCount) * 100) : 0;
-                return (
-                  <div className="settings-skill-usage-row" key={skill.name}>
-                    <div className="settings-skill-usage-label">
-                      <span className="settings-skill-usage-rank">{String(index + 1).padStart(2, "0")}</span>
-                      <strong>{skill.name}</strong>
-                    </div>
-                    <div className="settings-skill-usage-bar" aria-hidden="true">
-                      <span style={{ width: `${width}%` }} />
-                    </div>
-                    <span className="settings-skill-usage-value">{formatUsageNumber(count, formatNumber)}</span>
-                  </div>
-                );
-              })}
-            </div>
-          ) : (
-            <p className="settings-group-empty">{t("settings.noSkillUsage")}</p>
-          )}
-        </div>
-      </section>
-
-      {modelChart.length > 0 ? (
-        <section className="settings-section settings-model-chart" aria-labelledby="settings-model-chart-title">
-          <header className="settings-section-header">
-            <h2 id="settings-model-chart-title" className="settings-section-title">
-              {t("settings.modelDistribution")}
-            </h2>
-            <span className="settings-section-meta">{t("settings.tokenShare")}</span>
-          </header>
-          <div className="settings-group settings-usage-card">
-            <div className="settings-model-chart-list">
-              {modelChart.map((model) => {
-                const width = maxModelTotal > 0 ? Math.max(2, (model.total / maxModelTotal) * 100) : 0;
-                const share = allModelTotal > 0 ? model.total / allModelTotal : 0;
-                return (
-                  <div className="settings-model-chart-row" key={`${model.provider}\n${model.model}`}>
-                    <div className="settings-model-chart-label">
-                      <strong>{model.model || t("settings.unknownModel")}</strong>
-                      <small>{model.provider || t("settings.unknownProvider")}</small>
-                    </div>
-                    <div className="settings-model-chart-bar" aria-hidden="true">
-                      <span style={{ width: `${width}%` }} />
-                    </div>
-                    <Tooltip content={formatCompactUsageValue(model.total)}>
-                      <span className="settings-model-chart-share">{formatPercent(share)}</span>
-                    </Tooltip>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        </section>
-      ) : null}
-
       <section className="settings-section" aria-labelledby="settings-model-usage-title">
         <header className="settings-section-header">
-          <h2 id="settings-model-usage-title" className="settings-section-title">{t("settings.modelUsage")}</h2>
+          <h2 id="settings-model-usage-title" className="settings-section-title">{t("settings.usageByModel")}</h2>
         </header>
         {usage.model_breakdowns.length > 0 ? (
           <div className="settings-group settings-usage-table-wrap">
@@ -2076,6 +2099,7 @@ function SettingsUsagePage({
               <thead>
                 <tr>
                   <th scope="col">{t("settings.model")}</th>
+                  <th scope="col" className="settings-usage-num">{t("settings.tokenShare")}</th>
                   <th scope="col" className="settings-usage-num">{t("settings.usageInput")}</th>
                   <th scope="col" className="settings-usage-num">{t("settings.usageOutput")}</th>
                   <th scope="col" className="settings-usage-num">{t("settings.hitRate")}</th>
@@ -2085,13 +2109,21 @@ function SettingsUsagePage({
                 {usage.model_breakdowns.map((b) => {
                   const prompt = b.input_tokens + b.cache_read_tokens;
                   const rate = prompt > 0 ? b.cache_read_tokens / prompt : undefined;
+                  const total = modelTotal(b);
                   return (
                     <tr key={`${b.provider}\n${b.model}`}>
                       <td>
                         <div className="settings-usage-model">
-                          <strong>{b.provider || t("settings.unknownProvider")}</strong>
-                          <small>{b.model || t("settings.unknownModel")}</small>
+                          <strong>{b.model || t("settings.unknownModel")}</strong>
+                          <small>{b.provider || t("settings.unknownProvider")}</small>
                         </div>
+                      </td>
+                      <td className="settings-usage-num" data-label={t("settings.tokenShare")}>
+                        <Tooltip content={formatCompactUsageValue(total)}>
+                          <span className="settings-usage-number settings-usage-share">
+                            {formatPercent(allModelTotal > 0 ? total / allModelTotal : undefined)}
+                          </span>
+                        </Tooltip>
                       </td>
                       <td className="settings-usage-num" data-label={t("settings.usageInput")}>
                         <Tooltip content={formatUsageValue(b.input_tokens)}>
@@ -2122,6 +2154,35 @@ function SettingsUsagePage({
           </div>
         )}
       </section>
+
+      <section className="settings-section settings-skill-usage" aria-labelledby="settings-skill-usage-title">
+        <header className="settings-section-header">
+          <h2 id="settings-skill-usage-title" className="settings-section-title">
+            {t("settings.skillCalls")}
+          </h2>
+        </header>
+        <div className="settings-group settings-usage-card">
+          {skillUsage.length ? (
+            <div className="settings-skill-usage-list">
+              {skillUsage.slice(0, 8).map((skill) => {
+                const count = Number.isFinite(skill.count) ? Math.max(0, skill.count) : undefined;
+                const width = count !== undefined && maxSkillCount > 0 ? Math.max(6, (count / maxSkillCount) * 100) : 0;
+                return (
+                  <div className="settings-skill-usage-row" key={skill.name}>
+                    <span className="settings-skill-usage-label">{skill.name}</span>
+                    <div className="settings-skill-usage-bar" aria-hidden="true">
+                      <span style={{ width: `${width}%` }} />
+                    </div>
+                    <span className="settings-skill-usage-value">{formatUsageNumber(count, formatNumber)}</span>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <p className="settings-group-empty">{t("settings.noSkillUsage")}</p>
+          )}
+        </div>
+      </section>
     </div>
     </>
   );
@@ -2141,9 +2202,9 @@ function SettingsUsageSkeleton(): JSX.Element {
       <section className="settings-section" aria-hidden="true">
         <div className="settings-section-header">
           <span className="settings-usage-skeleton-line settings-usage-skeleton-heading" />
-          <span className="settings-usage-skeleton-line settings-usage-skeleton-period" />
         </div>
         <div className="settings-group settings-usage-card">
+          <span className="settings-usage-chart-scale" />
           <div className="settings-usage-skeleton-trend">
             {[24, 28, 34, 30, 38, 44, 50, 46, 40, 34, 38, 46, 54, 62, 56, 48, 42, 46, 52, 60, 68, 62, 54, 48, 42, 46, 54, 60, 56, 50].map((height, index) => (
               <i className="settings-usage-skeleton-trend-day" key={index} style={{ height: `${height}%` }} />
@@ -2171,7 +2232,6 @@ function SettingsUsageSkeleton(): JSX.Element {
       <section className="settings-section" aria-hidden="true">
         <div className="settings-section-header">
           <span className="settings-usage-skeleton-line settings-usage-skeleton-heading" />
-          <span className="settings-usage-skeleton-line settings-usage-skeleton-period" />
         </div>
         <div className="settings-group settings-usage-card settings-usage-skeleton-list">
           {[0, 1, 2, 3].map((item) => (
@@ -2354,6 +2414,19 @@ function formatPercent(value: number | undefined): string {
     return "—";
   }
   return `${Math.round(Math.max(0, Math.min(1, value)) * 100)}%`;
+}
+
+function formatUsageSinceDate(
+  date: string,
+  formatDate: (value: Date | number | string, options?: Intl.DateTimeFormatOptions) => string,
+): string {
+  const day = new Date(`${date}T12:00:00`);
+  if (Number.isNaN(day.getTime())) return date;
+  return formatDate(day, {
+    ...(day.getFullYear() === new Date().getFullYear() ? {} : { year: "numeric" }),
+    month: "long",
+    day: "numeric",
+  });
 }
 
 function formatUsageChartDate(date: string | undefined, locale: string): string {

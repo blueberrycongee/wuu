@@ -216,7 +216,7 @@ html[data-focus-modality="keyboard"] .composer-media-card :is(.composer-media-ca
   align-items: center;
   gap: var(--space-2);
   /* The trailing inset is the remove control's footprint plus a reading gap. */
-  padding: 0 calc(var(--composer-attachment-remove-size) + var(--space-2)) 0 var(--space-2);
+  padding: 0 calc(var(--composer-attachment-remove-size) + var(--space-2)) 0 var(--space-3);
   border: 0;
   border-radius: inherit;
   background: transparent;
@@ -234,19 +234,12 @@ button.composer-document-card-main:hover {
   background: var(--surface-2);
 }
 
-button.composer-document-card-main:hover .composer-document-card-icon {
-  background: var(--surface-3);
-}
-
+/* The glyph names the kind of document; the card is its only frame. */
 .composer-document-card-icon {
   display: grid;
-  height: calc(100% - var(--space-2) * 2);
-  aspect-ratio: 1;
   flex: 0 0 auto;
   place-items: center;
-  border-radius: var(--radius-xs);
-  background: var(--surface-2);
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
 }
 
 .composer-document-card-text {
@@ -268,7 +261,7 @@ button.composer-document-card-main:hover .composer-document-card-icon {
 
 .composer-document-card-meta {
   overflow: hidden;
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-size: var(--font-xs);
   line-height: var(--line-ui);
   text-overflow: ellipsis;

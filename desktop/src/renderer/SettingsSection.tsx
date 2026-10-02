@@ -11,7 +11,7 @@ export function SettingsPageHeader({
   actions,
 }: {
   title: string;
-  description?: string;
+  description?: ReactNode;
   actions?: ReactNode;
 }): JSX.Element {
   return (
@@ -64,15 +64,3 @@ export function SettingsGroup({ children }: { children: ReactNode }): JSX.Elemen
 }
 
 export type SettingsStatusTone = "success" | "warning" | "danger" | "neutral";
-
-/** A status label with a tone dot. The label carries the meaning; the dot
- * only reinforces it, so tone never relies on color alone. */
-export function SettingsStatus({
-  tone,
-  children,
-}: {
-  tone: SettingsStatusTone;
-  children: ReactNode;
-}): JSX.Element {
-  return <span className="settings-status" data-tone={tone}>{children}</span>;
-}

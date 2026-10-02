@@ -15,6 +15,9 @@
  */
 
 :root[data-theme="dark"] {
+  --subscription-canvas: var(--wuu-color-canvas, #1a1a1e);
+  --subscription-card: var(--wuu-color-surface, #232327);
+  --subscription-meter: var(--wuu-color-accent, #a5b4fc);
   /* --- Neutral gray ramp, dark declaration. Same slots as the light
    *     ramp in base.css: 0-350 surfaces/hairlines (deeper = further
    *     from the reader), 400-650 text grays, 800-900 strong text. --- */
@@ -56,10 +59,10 @@
 
   --hairline: var(--wuu-color-border-subtle, var(--gray-250));
   --hairline-strong: var(--wuu-color-border-strong, var(--gray-350));
-  --rule: var(--hairline-strong);
   --control-boundary: var(--wuu-color-border-strong, var(--gray-450));
   --slider-thumb-bg: var(--wuu-color-text, var(--gray-900));
   --selection-surface: var(--wuu-color-surface-elevated, var(--gray-200));
+  --placeholder-ink: var(--gray-500);
   --field-bg: var(--wuu-control-field-background, var(--surface-1));
   --field-hover-bg: var(--wuu-control-field-background, var(--surface-2));
 
@@ -112,54 +115,23 @@
 
   --menu-bg: var(--wuu-color-surface-elevated, rgb(30, 33, 37));
   --menu-hover: var(--wuu-color-surface-muted, #2b2f34);
-
-  --sidebar-glass-bg: linear-gradient(180deg, rgba(26, 29, 32, 0.94), rgba(20, 22, 24, 0.9));
-  --sidebar-glass-border: rgba(228, 232, 235, 0.12);
-  --sidebar-glass-highlight: rgba(255, 255, 255, 0.06);
-  --sidebar-glass-hover: var(--wuu-nav-item-hover-background, var(--ink-overlay-4));
+  --sidebar-row-hover-bg: var(--wuu-nav-item-hover-background, var(--ink-overlay-4));
 
   --scrollbar-thumb: rgba(170, 178, 186, 0.22);
   --scrollbar-thumb-hover: rgba(170, 190, 210, 0.34);
   --scrollbar-thumb-active: rgba(170, 190, 210, 0.48);
   --scrollbar-thin-thumb: rgba(200, 206, 212, 0.16);
 
-  --turn-warning-text-strong: #e2bd6b;
-
   /* ---- Component tokens (declared at the top of each component
      stylesheet with light values; dark redefinitions live here,
      grouped by file) ---- */
 
   /* workspace.css */
-  --workspace-panel-title-icon: var(--wuu-color-text-muted, #9aa0a5);
-  --workspace-tool-tab-text: var(--wuu-color-text-muted, #a2a8ad);
-  --workspace-tab-highlight: rgba(255, 255, 255, 0.07);
-  --workspace-tab-active-bg: var(--surface-3);
-  --workspace-tab-close-icon: var(--wuu-color-text-muted, #969ba0);
-  --workspace-tab-focus-ring: var(--focus-ring);
-  --workspace-menu-item-hover-bg: #2b2f34;
-  --workspace-bottom-title-text: var(--wuu-color-text-muted, #9aa0a5);
-  --workspace-tool-card-text: var(--wuu-color-text, #dde0e3);
-  --file-icon-code: #6aa9e9;
-  --file-icon-data: #b28ae0;
-  --workspace-empty-icon-bg: var(--wuu-color-surface-muted, #24282c);
-  --workspace-empty-icon-fg: var(--wuu-color-text-muted, #9aa0a5);
-  --workspace-terminal-restart-hover-bg: #33383d;
-  --browser-nav-disabled: var(--wuu-color-text-muted, #565c62);
-  --browser-url-border: var(--wuu-color-border-subtle, var(--hairline));
-  --browser-url-focus-border: var(--focus-ring);
-  --browser-url-focus-ring: var(--focus-ring);
-  --browser-url-error-ring: rgba(240, 112, 95, 0.3);
-  --browser-url-icon: var(--wuu-color-text-muted, #868d94);
-  --browser-url-error-icon: var(--wuu-color-danger, #f0705f);
-  --browser-url-placeholder: var(--ink-tertiary);
-  --browser-home-bg: var(--wuu-color-canvas, #17191c);
   --browser-status-overlay-bg: rgba(20, 22, 24, 0.86);
   --browser-error-text: var(--wuu-color-danger, #f2b8ae);
   --browser-error-span-text: var(--wuu-color-danger, #e59c90);
   --browser-retry-hover-bg: #c0392b;
   --browser-loading-dot-bg: var(--wuu-color-info, #58a6ff);
-  --skills-section-border: var(--wuu-color-border-subtle, var(--hairline-soft));
-  --skill-artwork-neutral-bg: var(--wuu-color-surface-muted, #24282c);
   /* Skill artwork marks: the token light values live in workspace.css.
      Dark keeps the same hue families but steps saturation and luminance
      down a notch so the marks read as calm identity colors instead of
@@ -190,51 +162,15 @@
   --hljs-tag: var(--wuu-syntax-tag, #e39aa0);
   --hljs-literal: var(--wuu-syntax-literal, #b0a0e8);
   --hljs-meta: var(--wuu-syntax-meta, #98a1a9);
-  --diff-branch-arrow: var(--wuu-color-text-muted, #565c62);
-  --diff-file-text: var(--wuu-color-text, #dde0e3);
-  --diff-status-bg: #232a26;
-  --diff-status-fg: #a4b0a8;
-  --diff-added-bg: #17301f;
-  --diff-added-fg: var(--wuu-color-success, #4cc38a);
-  --diff-renamed-bg: #1d242c;
-  --diff-error-border: #4a2b26;
-  --diff-truncated-border: #40371f;
-  --diff-truncated-text: var(--wuu-color-warning, #d9a84e);
-  --diff-line-meta-text: var(--wuu-color-text-muted, #8b939b);
-  --diff-hunk-bg: var(--wuu-color-surface-muted, #1d2126);
-  --diff-add-bg: #142519;
-  --diff-add-text: var(--wuu-color-success, #4cc38a);
-  --diff-delete-bg: #2c1a18;
-  --diff-line-number-text: var(--wuu-color-text-muted, #6d757d);
-  --diff-tree-header-text: var(--wuu-color-text-muted, #8b9196);
-  --diff-tree-row-icon: var(--wuu-color-text-muted, #8b9196);
-  --diff-tree-file-text: var(--wuu-color-text, #d5d8db);
-  --diff-tree-count-text: var(--wuu-color-text-muted, #757b80);
-  --review-resizer-hover-bg: #4a5157;
   --review-overlay-bg: rgba(18, 20, 22, 0.92);
-  --provider-pill-bg: var(--wuu-color-surface-muted, #24282c);
-  --provider-pill-text: var(--wuu-color-text-muted, #aab0b5);
-  --codex-runtime-effort-text: var(--wuu-color-text-muted, #8f959a);
-  --codex-effort-sheen: rgba(16, 19, 22, 0.2);
-  --codex-effort-sheen-soft: rgba(16, 19, 22, 0.09);
   --codex-runtime-trigger-icon: var(--wuu-color-text-muted, #8f959a);
-  --codex-menu-label-text: var(--wuu-color-text-muted, #757b80);
-  --split-header-bg: rgba(24, 27, 30, 0.94);
-  --split-composer-bg: rgba(24, 27, 30, 0.96);
-  --split-composer-border: var(--wuu-color-border-subtle, #33383d);
-  --split-composer-shadow: rgba(0, 0, 0, 0.4);
 
   /* composer.css / composer-context-meter.css / chat.css */
   --composer-frame-shadow: var(--shadow-composer);
   --composer-surface-bg: var(--surface-1);
-  --composer-textarea-placeholder: var(--ink-tertiary);
   --composer-textarea-disabled: var(--wuu-color-text-muted, #757b78);
-  --composer-send-button-disabled-text: var(--ink-muted);
-  --composer-slash-menu-bg: rgba(30, 33, 37, 0.98);
-  --composer-slash-menu-shadow: var(--shadow-pop);
   --composer-project-menu-icon: var(--wuu-color-text-muted, #9aa0a5);
   --composer-menu-note-warning-strong: var(--wuu-color-warning, #e2a04a);
-  --composer-context-meter-focus-outline: var(--focus-ring);
   --composer-context-meter-tooltip-divider: var(--wuu-border-subtle, rgba(228, 232, 235, 0.1));
   --context-meter-tooltip-bg: var(--wuu-color-surface-elevated, var(--surface-3));
   --context-meter-tooltip-border: var(--wuu-color-border-strong, var(--hairline-strong));
@@ -242,39 +178,19 @@
   --token-gauge-tooltip-bg: var(--wuu-color-surface-elevated, var(--surface-3));
   --token-gauge-tooltip-border: var(--wuu-color-border-strong, var(--hairline-strong));
   --token-gauge-tooltip-shadow: var(--shadow-card);
-  --composer-token-gauge-focus-outline: var(--focus-ring);
   --chat-user-message-bg: var(--wuu-message-user-background, var(--user-message-bg-color, #253247));
 
   /* environment.css */
   /* Dialog text follows the shared ink ladder. */
-  --env-deletions-text: var(--wuu-color-danger, #f0705f);
-  --env-archive-confirm-bg: rgba(240, 112, 95, 0.15);
   --env-create-branch-btn-bg: var(--surface-2);
-  --env-search-input-text: var(--ink-soft);
-  --env-search-input-placeholder: var(--ink-muted);
   --env-search-clear-btn-text: var(--ink-soft);
   --env-search-clear-btn-hover-bg: var(--surface-2);
   --env-search-error-bg: #341c18;
   --env-search-error-text: var(--wuu-color-danger, #f2a08f);
   --env-search-result-text: var(--ink);
   --env-search-result-hover-bg: var(--surface-2);
-  --env-search-result-active-bg: var(--surface-3);
-  --env-search-result-snippet-text: var(--ink-soft);
   --env-search-result-shortcut-bg: var(--surface-3);
   --env-search-result-shortcut-text: var(--ink-soft);
-  --env-dialog-summary-text: var(--ink-soft);
-  --env-field-border: var(--hairline);
-  --env-pr-result-bg: #17251c;
-  --env-pr-result-text: var(--wuu-color-success, #4cc38a);
-  --env-context-error-border: rgba(240, 112, 95, 0.35);
-  --env-context-bar-bg: rgba(228, 232, 235, 0.1);
-  --env-context-bar-inset-top: rgba(255, 255, 255, 0.06);
-  --env-context-bar-inset-bottom: rgba(0, 0, 0, 0.3);
-  --env-context-bar-outer-shadow: rgba(0, 0, 0, 0.3);
-  --env-context-segment-shadow-inset: rgba(0, 0, 0, 0.5);
-  --env-context-segment-shadow-outer: rgba(0, 0, 0, 0.35);
-  --env-context-bar-gradient-mid: rgba(255, 255, 255, 0.04);
-  --env-context-bar-gradient-bottom: rgba(0, 0, 0, 0.2);
   --env-tone-system: #7a90ff;
   --env-tone-stable: #4cc38a;
   --env-tone-turn: #e0a848;
@@ -284,16 +200,13 @@
   --env-tone-deferred: #99a19d;
 
   /* settings.css */
-  --settings-button-primary-hover: #ffffff;
-  --settings-heatmap-level-1: #1f3a5e;
-  --settings-heatmap-level-2: #2c568c;
-  --settings-heatmap-level-3: #3d74cc;
-  --settings-heatmap-level-4: #6ea3e8;
+  --settings-heatmap-level-1: #2d4870;
+  --settings-heatmap-level-2: #426fb1;
+  --settings-heatmap-level-3: #5d98f0;
+  --settings-heatmap-level-4: #91c6ff;
 
   /* responsive-design.css
      (image-preview.css is a dark overlay in both themes — no override) */
-  --responsive-secondary-button-bg: var(--wuu-control-secondary-background, #2b2f34);
-  --responsive-secondary-button-text: var(--wuu-color-text, #ccd1d5);
 
   /* workbench.css — host primitives still resolve through public theme
      tokens, so extension themes remain authoritative. */
@@ -306,18 +219,10 @@
   --sidebar-material-fill: var(--surface-1);
   --sidebar-material-edge: rgba(255, 255, 255, 0.16);
   --sidebar-material-inner-edge: rgba(255, 255, 255, 0.055);
-  --sidebar-material-highlight: transparent;
-  --sidebar-material-veil-1: transparent;
-  --sidebar-material-veil-2: transparent;
   --sidebar-drawer-edge: rgba(255, 255, 255, 0.42);
   --sidebar-drawer-inner-edge: rgba(255, 255, 255, 0.24);
   --sidebar-edge-shadow: 1px 0 16px rgba(20, 24, 28, 0.025);
-  --sidebar-glass-shadow-ambient: rgba(0, 0, 0, 0.3);
-  --sidebar-glass-shadow-elevated: rgba(0, 0, 0, 0.5);
-  --sidebar-glass-overlay-bright: rgba(255, 255, 255, 0.06);
-  --sidebar-glass-overlay-light: rgba(255, 255, 255, 0.02);
-  --sidebar-glass-overlay-accent: rgba(209, 220, 211, 0.03);
-  --sidebar-glass-overlay-highlight-strong: rgba(255, 255, 255, 0.05);
+  --sidebar-hover-card-rim: rgba(255, 255, 255, 0.06);
   --sidebar-drawer-bg: var(--wuu-color-surface-muted, #1a1d20);
   /* Navigation shares one selection surface across both themes. */
   --sidebar-row-selected-bg: var(--selection-surface);
@@ -330,19 +235,7 @@
   --sidebar-row-icon-hover-bg-default: var(--ink-overlay-6);
   --sidebar-row-action-archive-confirm-bg: rgba(240, 112, 95, 0.15);
   --sidebar-thread-list-button-hover-bg: var(--ink-overlay-6);
-  --sidebar-thread-row-dot-default: var(--ink-overlay-18);
-  --sidebar-thread-row-dot-hover: var(--ink-overlay-18);
-  --sidebar-thread-row-dot-active: var(--ink-overlay-18);
   --sidebar-thread-spinner-notch: rgba(228, 232, 235, 0.22);
-  --sidebar-thread-child-agent-separator: var(--ink-overlay-12);
-  --sidebar-thread-child-agent-hover-bg: rgba(120, 160, 132, 0.1);
-  --sidebar-thread-child-agent-focus-shadow: rgba(120, 160, 132, 0.25);
-  --sidebar-thread-child-agent-active-bg: rgba(120, 160, 132, 0.16);
-  --sidebar-thread-child-agent-active-ring: rgba(120, 160, 132, 0.15);
-  --sidebar-thread-child-agent-pending-bg: rgba(120, 160, 132, 0.1);
-  --sidebar-thread-child-agent-branch-color: rgba(120, 160, 132, 0.5);
-  --sidebar-thread-child-agent-completed-status: var(--ink-tertiary);
-  --sidebar-thread-child-agent-cancelled-status: #bd9a82;
   --sidebar-settings-button-hover-ring: rgba(255, 255, 255, 0.08);
 
   /* turns.css — conversation body, process fold, waiting animation. */
@@ -351,35 +244,24 @@
   --user-message-fg-color: #fff;
   --user-message-link-color: var(--wuu-color-link, #60a5fa);
   --user-message-link-hover-color: var(--wuu-color-link-hover, #79b8ff);
-  --user-message-edit-button-primary-hover-bg: var(--gray-900);
-  --user-message-edit-button-disabled-fg: rgba(20, 23, 26, 0.7);
   --message-copy-bg: rgba(38, 42, 46, 0.85);
   --message-file-bg: rgba(38, 42, 46, 0.9);
   --message-file-fg: var(--wuu-color-text, var(--gray-800));
   --stream-cursor-default-color: #9fc2dd;
   --reasoning-stream-cursor-color: var(--gray-550);
-  --turn-progress-label-color: var(--wuu-color-text-muted, var(--gray-600));
-  --turn-progress-label-icon-color: var(--wuu-color-text-muted, var(--gray-550));
-  --turn-progress-detail-color: var(--wuu-color-text-muted, var(--gray-500));
-  --turn-progress-sweep-highlight: #dfe6e2;
-  --turn-progress-sweep-base: #79837e;
-  --turn-progress-failed-rule-bg: #4a2b26;
   --turn-process-entry-color: var(--wuu-color-text-muted, var(--gray-600));
   --process-control-color-fallback: var(--ink-tertiary);
   --activity-toggle-hover-color: var(--gray-700);
-  --activity-toggle-hover-svg-color: var(--gray-650);
   --activity-toggle-hover-color-alt: var(--wuu-color-text-muted, var(--gray-650));
   --activity-detail-color: var(--wuu-color-text-muted, #989ea3);
-  --diff-insert-color: var(--wuu-color-success, #3fb970);
-  --diff-delete-color: var(--wuu-color-danger, #ef6a5e);
+  --diff-insert-color: var(--success);
+  --diff-delete-color: var(--danger);
   --rich-link-color: var(--wuu-color-link, #60a5fa);
   --rich-link-hover-color: var(--wuu-color-link-hover, #79b8ff);
   --message-flow-card-bg: var(--surface-1);
   --message-flow-card-border: var(--hairline);
-  --message-flow-card-divider: var(--hairline-soft);
   --message-flow-card-hover-bg: var(--wuu-color-surface, var(--surface-1));
   --surface-chip: var(--surface-2);
-  --fork-worktree-copy-bg: rgba(38, 42, 46, 0.9);
   --fork-worktree-focus-ring: var(--focus-ring);
   --rich-blockquote-color: var(--wuu-color-text-muted, #a3a9ae);
   --rich-rule-color: var(--wuu-border-subtle, #33383d);
@@ -391,10 +273,8 @@
   --project-empty-content-color: var(--wuu-color-text-muted, #989ea3);
   --project-empty-actions-border: var(--wuu-border-subtle, var(--hairline));
   --project-empty-actions-hover-bg: #24282c;
-  --diff-insert-bg: rgba(63, 185, 112, 0.12);
-  --diff-insert-text-color: var(--wuu-color-success, #4cc38a);
-  --diff-delete-bg: rgba(239, 106, 94, 0.12);
-  --diff-delete-text-color: var(--wuu-color-danger, #f0857a);
+  --diff-insert-bg: color-mix(in srgb, var(--success) 12%, transparent);
+  --diff-delete-bg: color-mix(in srgb, var(--danger) 12%, transparent);
   /* conversation-shell.css */
   --shell-process-control-color: var(--ink-tertiary);
   --shell-session-tab-active-bg: var(--surface-3);
@@ -403,7 +283,6 @@
   --shell-session-tab-status-running-notch: rgba(228, 232, 235, 0.22);
   --shell-session-tab-pending-count-bg: rgba(228, 232, 235, 0.12);
   --shell-session-tab-active-pending-count-bg: rgba(228, 232, 235, 0.16);
-  --shell-session-tab-drag-overlay-ring: rgba(20, 22, 24, 0.72);
   --shell-todo-card-bg: var(--wuu-color-surface-elevated, var(--surface-3));
   --shell-todo-card-border: var(--wuu-color-border-subtle, var(--hairline));
   --shell-todo-card-ink: var(--wuu-color-text, var(--ink-strong));
@@ -416,7 +295,6 @@
   --conversation-floating-surface-focus: var(--focus-ring);
   --shell-jump-progress-step-bg: color-mix(in srgb, var(--wuu-color-text, #e4e8eb) 6%, transparent);
   --shell-jump-progress-step-in-progress-bg: color-mix(in srgb, var(--wuu-color-text, #e4e8eb) 20%, transparent);
-  --shell-turn-rail-bar-bg: rgba(174, 178, 186, 0.4);
 
   color-scheme: dark;
 }

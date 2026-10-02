@@ -11,8 +11,8 @@
   min-width: 0;
   min-height: 0;
   flex-direction: column;
-  color: var(--text-primary);
-  background: var(--wuu-color-canvas, var(--paper, #fff));
+  color: var(--ink);
+  background: var(--wuu-color-canvas, var(--paper));
 }
 
 .plugin-workbench-view-overlay {
@@ -21,7 +21,7 @@
   margin: auto;
   width: min(920px, calc(100vw - 48px));
   height: min(720px, calc(100vh - 48px));
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--hairline);
   border-radius: var(--menu-radius);
   box-shadow: var(--shadow-modal);
 }
@@ -29,7 +29,7 @@
 .plugin-workbench-view-auxiliary {
   left: auto;
   width: min(420px, 100%);
-  border-left: 1px solid var(--border-subtle);
+  border-left: 1px solid var(--hairline);
 }
 
 .conversation-pane > .plugin-workbench-view-primary {
@@ -47,48 +47,48 @@
   .scroll-region,
   .dock-composer-wrap,
   .jump-to-latest-cluster,
-  .conversation-turn-rail,
   .environment-side-stack
 ) {
   visibility: hidden;
   pointer-events: none;
 }
 
+/* An overlay or side view names its tabs and ends on the shared close
+ * button; the tabs use the compact row radius. */
 .plugin-workbench-view-header {
   display: flex;
-  min-height: 38px;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  padding: 0 8px;
-  border-bottom: 1px solid var(--border-subtle);
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  border-bottom: 1px solid var(--hairline-soft);
 }
 
 .plugin-workbench-view-header [role="tablist"] {
   display: flex;
   min-width: 0;
-  gap: 4px;
+  gap: var(--space-1);
   overflow-x: auto;
 }
 
-.plugin-workbench-view-header button,
+.plugin-workbench-view-header [role="tab"],
 .plugin-workbench-status button,
 .plugin-workbench-error button {
   border: 0;
   border-radius: var(--radius-xs);
-  padding: 5px 8px;
+  padding: var(--space-1) var(--space-2);
   color: inherit;
   background: transparent;
 }
 
-.plugin-workbench-view-header button:hover,
+.plugin-workbench-view-header [role="tab"]:hover,
 .plugin-workbench-status button:hover,
 .plugin-workbench-error button:hover {
-  background: var(--surface-hover, rgba(127, 127, 127, 0.14));
+  background: var(--ink-overlay-6);
 }
 
 .plugin-workbench-view-header [aria-selected="true"] {
-  background: var(--surface-selected, rgba(127, 127, 127, 0.18));
+  background: var(--selection-surface);
 }
 
 .plugin-workbench-view > :last-child:not(.plugin-workbench-view-header) {
@@ -146,14 +146,41 @@
   gap: var(--section-gap);
 }
 
+/* In Settings a kit section reads like a native settings section: the
+ * semibold title, the quieter scope line, the same heading gap. */
 .settings-scroll .plugin-ui-section {
-  gap: var(--section-heading-gap);
+  gap: var(--space-3);
+}
+
+.settings-scroll .plugin-ui-section-header {
+  gap: 2px;
 }
 
 .settings-scroll .plugin-ui-section-header h2 {
   color: var(--ink-strong);
   font-size: var(--font-ui);
-  font-weight: var(--weight-medium);
+  font-weight: var(--weight-semibold);
+}
+
+.settings-scroll .plugin-ui-section-header p {
+  color: var(--ink-soft);
+  font-size: var(--font-sm);
+}
+
+/* An empty section there is one quiet line at a row's height, like a
+ * settings group with nothing in it, not a centred poster. */
+.settings-scroll .plugin-ui-state {
+  min-height: calc(var(--control-field-height) + var(--space-3) * 2);
+  place-content: center start;
+  justify-items: start;
+  padding: 0;
+  text-align: start;
+}
+
+.settings-scroll .plugin-ui-state strong {
+  color: var(--ink-tertiary);
+  font-size: var(--font-ui);
+  font-weight: var(--weight-regular);
 }
 
 .plugin-ui-page[data-wuu-density="compact"] {
@@ -221,7 +248,7 @@
 .plugin-ui-section-header p,
 .plugin-ui-field-description,
 .plugin-ui-state p {
-  color: var(--wuu-color-text-muted, var(--ink-muted));
+  color: var(--ink-soft);
 }
 
 .plugin-ui-stack {
@@ -319,7 +346,7 @@
   border: 0;
   border-radius: var(--wuu-radius-control, var(--radius-sm));
   padding: 0;
-  color: var(--wuu-color-text-muted, var(--ink-muted));
+  color: var(--ink-soft);
   background: transparent;
   cursor: pointer;
   font: inherit;
@@ -391,11 +418,6 @@
     background-color var(--motion-fast) var(--ease-out),
     border-color var(--motion-fast) var(--ease-out),
     box-shadow var(--motion-fast) var(--ease-out);
-}
-
-.plugin-ui-input::placeholder,
-.plugin-ui-textarea::placeholder {
-  color: var(--ink-tertiary);
 }
 
 .plugin-ui-input:not(:disabled):hover,
@@ -492,9 +514,9 @@
   display: flex;
   gap: 4px;
   padding: 3px;
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--hairline);
   border-radius: var(--radius-sm);
-  color: var(--text-secondary);
-  background: var(--surface-primary, var(--background));
+  color: var(--ink-soft);
+  background: var(--paper);
   box-shadow: var(--shadow-card);
 }

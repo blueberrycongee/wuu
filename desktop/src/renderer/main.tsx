@@ -16,6 +16,7 @@ import { applyThemePreference, startThemePreferenceSync } from "./Theme";
 import "./styles.css";
 import { I18nProvider } from "./i18n";
 import { ToastViewport } from "./Toast";
+import { ConfirmDialogHost } from "./ConfirmDialog";
 import { WuuUIRoot } from "./ui/layers/UILayerHost";
 
 // The preload script already stamped data-theme for the first paint;
@@ -96,6 +97,7 @@ ReactDOM.createRoot(rendererRoot).render(
         ? <AccountScreen standalone driver={window.wuu.remoteAccount} onBack={() => { void window.wuu.closeAccountWindow?.(); }} />
         : <App />}
       <ToastViewport />
+      <ConfirmDialogHost />
     </WuuUIRoot>
   </I18nProvider>,
 );

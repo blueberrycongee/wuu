@@ -214,3 +214,37 @@ func TestRejectsNonHTTPSVerificationURI(t *testing.T) {
 		t.Fatal("expected untrusted verification URI error")
 	}
 }
+
+// A sign-in writes the auth store, not the sources already built from it, so a
+// long-lived source (a shared client, an existing conversation) must follow the
+// store instead of going on with the token it cached before.
+func TestOAuthSourceFollowsAuthStoreAfterSignInAndSignOut(t *testing.T) {
+	home := t.TempDir()
+	signIn := func(access string) {
+		t.Helper()
+		if err := PersistTokens(home, TokenResponse{AccessToken: access, RefreshToken: "refresh-" + access, ExpiresIn: time.Hour}, ""); err != nil {
+			t.Fatalf("PersistTokens: %v", err)
+		}
+	}
+	signIn("old-access")
+	source := NewOAuthSource(OAuthConfig{Home: home})
+	token := func() (string, error) {
+		creds, err := source.Credentials(context.Background(), false)
+		return creds.accessToken, err
+	}
+	if got, err := token(); err != nil || got != "old-access" {
+		t.Fatalf("first token = %q, %v", got, err)
+	}
+
+	signIn("new-access")
+	if got, err := token(); err != nil || got != "new-access" {
+		t.Fatalf("after signing in again the source sent %q (err %v), want the new token", got, err)
+	}
+
+	if err := DeleteTokens(home); err != nil {
+		t.Fatalf("DeleteTokens: %v", err)
+	}
+	if got, err := token(); err == nil {
+		t.Fatalf("after signing out the source still sent %q", got)
+	}
+}

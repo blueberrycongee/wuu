@@ -13,6 +13,8 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/authstorage"
 	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/modelcatalog"
+	"github.com/blueberrycongee/wuu/internal/modelvariant"
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
 
@@ -67,24 +69,37 @@ func TestBuildClient_OpenAICodexUsesCodexCredentialsWhenConfigured(t *testing.T)
 		if got := r.Header.Get("chatgpt-account-id"); got != "acct_factory" {
 			t.Fatalf("chatgpt-account-id = %q", got)
 		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Error(err)
+			return
+		}
+		if body["model"] != "gpt-6.1-sol" || body["service_tier"] != "priority" {
+			t.Errorf("subscription request model/tier = %v/%v", body["model"], body["service_tier"])
+		}
+		if reasoning, _ := body["reasoning"].(map[string]any); reasoning["effort"] != "medium" {
+			t.Errorf("subscription reasoning = %v", reasoning)
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}]}`))
 	}))
 	defer server.Close()
 
-	client, err := BuildClient(config.ProviderConfig{
+	_, provider := modelcatalog.EnrichProvider("openai-codex", config.ProviderConfig{
 		Type:                  "openai-codex",
 		BaseURL:               server.URL,
 		WireAPI:               "responses",
-		Model:                 "gpt-5-codex",
+		Model:                 "gpt-6.1-sol-fast",
 		ReuseCodexCredentials: true,
-	}, "openai-codex")
+	}, "gpt-6.1-sol-fast")
+	client, err := BuildClient(provider, "openai-codex")
 	if err != nil {
 		t.Fatalf("BuildClient returned error: %v", err)
 	}
 	resp, err := client.Chat(context.Background(), providers.ChatRequest{
-		Model:    "gpt-5-codex",
-		Messages: []providers.ChatMessage{{Role: "user", Content: "hello"}},
+		Model:           modelcatalog.APIModel(provider, provider.Model),
+		ProviderOptions: modelvariant.BaseOptionsForProvider("openai-codex", provider, provider.Model),
+		Messages:        []providers.ChatMessage{{Role: "user", Content: "hello"}},
 	})
 	if err != nil {
 		t.Fatalf("Chat returned error: %v", err)
@@ -606,5 +621,73 @@ func TestNativeDiscoveryRejectsKnownUnsupportedModels(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// A key saved for a provider through settings is an explicit choice for that
+// service. The type's implicit default env var is ambient, so it must not
+// replace the saved key; anything else keeps the existing env-over-store order.
+func TestResolveAPIKey_SavedKeyVersusEnvironment(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		stored   authstorage.Credentials
+		provider config.ProviderConfig
+		env      map[string]string
+		want     string
+	}{
+		{"saved key beats the implicit default env", authstorage.Credentials{Type: "api_key", APIKey: "sk-saved", Source: authstorage.SourceSaved},
+			config.ProviderConfig{Type: "openai-compatible", BaseURL: "https://custom.example/v1"},
+			map[string]string{"OPENAI_API_KEY": "sk-ambient"}, "sk-saved"},
+		{"unmarked stored key keeps env priority", authstorage.Credentials{Type: "api_key", APIKey: "sk-stored"},
+			config.ProviderConfig{Type: "openai-compatible", BaseURL: "https://custom.example/v1"},
+			map[string]string{"OPENAI_API_KEY": "sk-ambient"}, "sk-ambient"},
+		{"explicit api_key_env beats a saved key", authstorage.Credentials{Type: "api_key", APIKey: "sk-saved", Source: authstorage.SourceSaved},
+			config.ProviderConfig{Type: "openai-compatible", BaseURL: "https://custom.example/v1", APIKeyEnv: "CUSTOM_SERVICE_KEY"},
+			map[string]string{"CUSTOM_SERVICE_KEY": "sk-chosen-env", "OPENAI_API_KEY": "sk-ambient"}, "sk-chosen-env"},
+		{"unset explicit api_key_env falls back to the saved key, not ambient", authstorage.Credentials{Type: "api_key", APIKey: "sk-saved", Source: authstorage.SourceSaved},
+			config.ProviderConfig{Type: "openai-compatible", BaseURL: "https://custom.example/v1", APIKeyEnv: "CUSTOM_SERVICE_KEY"},
+			map[string]string{"CUSTOM_SERVICE_KEY": "", "OPENAI_API_KEY": "sk-ambient"}, "sk-saved"},
+		{"config api_key still wins", authstorage.Credentials{Type: "api_key", APIKey: "sk-saved", Source: authstorage.SourceSaved},
+			config.ProviderConfig{Type: "openai-compatible", BaseURL: "https://custom.example/v1", APIKey: "sk-config"},
+			map[string]string{"OPENAI_API_KEY": "sk-ambient"}, "sk-config"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for key, value := range tc.env {
+				t.Setenv(key, value)
+			}
+			home := t.TempDir()
+			store, err := authstorage.ForHome(home)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := store.Set("myapi", tc.stored); err != nil {
+				t.Fatal(err)
+			}
+			got, err := ResolveAPIKeyWithHome(tc.provider, "myapi", home)
+			if err != nil || got != tc.want {
+				t.Fatalf("key = %q, err = %v, want %q", got, err, tc.want)
+			}
+		})
+	}
+}
+
+func TestResolveAuthToken_SavedTokenBeatsImplicitDefaultEnv(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("ANTHROPIC_AUTH_TOKEN", "ambient-token")
+	store, err := authstorage.ForHome(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Set("anthropic", authstorage.Credentials{Type: "auth_token", AuthToken: "saved-token", Source: authstorage.SourceSaved}); err != nil {
+		t.Fatal(err)
+	}
+	provider := config.ProviderConfig{Type: "anthropic", BaseURL: "https://api.anthropic.com", Model: "claude"}
+	if got := resolveAuthToken(provider, "anthropic"); got != "saved-token" {
+		t.Fatalf("auth token = %q, want the saved token", got)
+	}
+	provider.AuthTokenEnv = "ANTHROPIC_AUTH_TOKEN"
+	if got := resolveAuthToken(provider, "anthropic"); got != "ambient-token" {
+		t.Fatalf("explicit auth_token_env = %q, want it to win", got)
 	}
 }

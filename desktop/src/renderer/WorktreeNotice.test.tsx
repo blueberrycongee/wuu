@@ -26,18 +26,15 @@ afterEach(() => {
 });
 
 describe("WorktreeNotice", () => {
-  it("renders a foldable worktree creation record", () => {
+  it("renders foldable current worktree metadata", () => {
     mount(createElement(WorktreeNotice, { thread: worktreeForkThread() }));
 
     const details = document.querySelector(".fork-worktree-card");
-    const code = document.querySelector(".fork-worktree-code");
+    const facts = [...document.querySelectorAll(".fork-worktree-meta dd")].map((fact) => fact.textContent);
 
     expect(details).toHaveProperty("open", false);
-    expect(code?.textContent).toContain("分离 HEAD d955824f");
-    expect(code?.textContent).toContain("基础仓库 /repo/project");
-    expect(code?.textContent).toContain(
-      "工作树已创建于 /Users/me/.wuu/worktrees/fork-1/project",
-    );
+    expect(facts).toEqual(["/repo/project", "d955824f", "/Users/me/.wuu/worktrees/fork-1/project"]);
+    expect(document.querySelector(".fork-worktree-copy")).not.toBeNull();
   });
 
   it("does not render for local forks", () => {

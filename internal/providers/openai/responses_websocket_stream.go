@@ -808,7 +808,7 @@ func (c *Client) readResponsesWebSocket(ctx context.Context, session, fallbackSe
 			c.responsesWebSocketReleaseLocked(session, readCh)
 			c.responsesWebSocketInvalidateConnectionLocked(session, websocket.StatusInternalError, "response_failed")
 			session.mu.Unlock()
-			err := event.asError()
+			err := event.asWebSocketError()
 			lease.FailError(err)
 			emit.Send(providers.StreamEvent{Type: providers.EventError, Error: err})
 			return
@@ -818,12 +818,23 @@ func (c *Client) readResponsesWebSocket(ctx context.Context, session, fallbackSe
 			c.responsesWebSocketReleaseLocked(session, readCh)
 			c.responsesWebSocketInvalidateConnectionLocked(session, websocket.StatusInternalError, "response_error")
 			session.mu.Unlock()
-			err := event.asError()
+			err := event.asWebSocketError()
 			lease.FailError(err)
 			emit.Send(providers.StreamEvent{Type: providers.EventError, Error: err})
 			return
 		}
 	}
+}
+
+func (e responsesStreamEvent) asWebSocketError() error {
+	err := e.asError()
+	var streamErr *providers.StreamError
+	if errors.As(err, &streamErr) && streamErr.Code == "previous_response_not_found" {
+		// The invalidated connection also drops continuation state, so the
+		// shared recovery loop can replay the retained full request safely.
+		streamErr.Retryable = true
+	}
+	return err
 }
 
 func responsesWebSocketProviderState(fullPayload, requestPayload responsesRequest, configuredTransport providers.StreamTransportMode, meta responsesWebSocketRequestMeta) *providers.ProviderStateSummary {

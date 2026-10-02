@@ -43,6 +43,8 @@ type InitializeResult struct {
 
 // ToolRegistration is one model-visible tool owned by a plugin process.
 type ToolRegistration struct {
+	// DirectOnly exposes control tools directly and rejects nested invocation.
+	DirectOnly      bool                       `json:"direct_only,omitempty"`
 	ID              string                     `json:"id"`
 	Description     string                     `json:"description"`
 	InputSchema     map[string]any             `json:"input_schema"`

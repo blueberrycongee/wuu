@@ -6,7 +6,7 @@ export const ONBOARDING_PLUGIN_ORDER = [
   "ask-user", "todo", "goal", "automation", "subagent", "peers", "memory", "dream",
 ] as const;
 
-export const RECOMMENDED_PLUGIN_IDS = new Set<string>(["todo", "automation"]);
+export const RECOMMENDED_PLUGIN_IDS = new Set<string>(["automation"]);
 
 export const PLUGIN_DESCRIPTION_KEYS: Readonly<Record<string, TranslationKey>> = {
   "ask-user": "onboarding.plugin.askUser",
@@ -23,9 +23,8 @@ export const ONBOARDING_ENGINES: readonly {
   id: string;
   label: string;
   readyDescription: TranslationKey;
-  missingDescription: TranslationKey;
 }[] = [
-  { id: "wuu", label: "Wuu", readyDescription: "onboarding.engine.wuu", missingDescription: "onboarding.engine.wuu" },
-  { id: "codex", label: "Codex", readyDescription: "onboarding.engine.codexReady", missingDescription: "onboarding.engine.codexMissing" },
-  { id: "claude", label: "Claude Code", readyDescription: "onboarding.engine.claudeReady", missingDescription: "onboarding.engine.claudeMissing" },
+  { id: "wuu", label: "Wuu", readyDescription: "onboarding.engine.wuu" },
+  { id: "codex", label: "Codex", readyDescription: "onboarding.engine.codexReady" },
+  { id: "claude", label: "Claude Code", readyDescription: "onboarding.engine.claudeReady" },
 ];

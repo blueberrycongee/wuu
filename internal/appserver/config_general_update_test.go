@@ -71,14 +71,14 @@ func TestAttributionUpdateDuringTurnDefersRuntimeChange(t *testing.T) {
 		t.Fatalf("rejected update changed attribution: %v", err)
 	}
 
-	if err := srv.handleLine(context.Background(), []byte(`{"id":"ptc","method":"config/general/update","params":{"ptc":{"enabled":true}}}`)); err != nil {
+	if err := srv.handleLine(context.Background(), []byte(`{"id":"ptc","method":"config/general/update","params":{"ptc":{"enabled":false}}}`)); err != nil {
 		t.Fatal(err)
 	}
 	if responseByID(t, parseOutput(t, out.String()), "ptc")["error"] == nil {
 		t.Fatal("PTC update should be rejected during a turn")
 	}
 	cfg, _, err = config.LoadPath(rt.ConfigPath)
-	if err != nil || cfg.PTC.Enabled {
+	if err != nil || !cfg.PTC.Enabled {
 		t.Fatalf("rejected PTC update changed configuration: %v", err)
 	}
 
@@ -121,5 +121,50 @@ func TestAttributionUpdateDuringTurnDefersRuntimeChange(t *testing.T) {
 	}
 	if nextRuntime == activeRuntime || nextRuntime.Toolkit.GitAttributionEnabled() {
 		t.Fatal("next runtime did not adopt saved attribution")
+	}
+}
+
+// Exercise configuration persistence, creation and fork through the public RPC
+// path without provisioning resources or requiring an inference service.
+func TestExecutionEnvironmentSelectionSurvivesSettingsChanges(t *testing.T) {
+	rt := newTestRuntime(t, &fakeClient{})
+	if err := os.WriteFile(rt.ConfigPath, []byte(`{"default_provider":"fake-provider","providers":{"fake-provider":{"type":"openai-compatible","base_url":"https://example.test/v1","model":"fake-model"}}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	out := &lockedBuffer{}
+	srv := New(rt, out)
+	defer srv.Close()
+	send := func(id, method, params string) map[string]any {
+		t.Helper()
+		raw := fmt.Sprintf(`{"id":%q,"method":%q,"params":%s}`, id, method, params)
+		if err := srv.handleLine(context.Background(), []byte(raw)); err != nil {
+			t.Fatal(err)
+		}
+		response := responseByID(t, parseOutput(t, out.String()), id)
+		if response["error"] != nil {
+			t.Fatalf("%s: %v", method, response["error"])
+		}
+		return response
+	}
+	original := remarshal[ThreadStartResult](t, send("original", "thread/start", `{}`)["result"]).Thread.ID
+	send("remote", "config/general/update", `{"execution_environments":{"default":"remote","profiles":{"remote":{"backend":"command","command":["unused-test-adapter"]}}}}`)
+	remote := remarshal[ThreadStartResult](t, send("new", "thread/start", `{}`)["result"]).Thread.ID
+	send("local", "config/general/update", `{"execution_environments":{"default":"local"}}`)
+	for _, item := range []struct {
+		id     string
+		remote bool
+	}{{original, false}, {remote, true}} {
+		manager, err := rt.RemoteProcesses(item.id)
+		if err != nil || (manager != nil) != item.remote {
+			t.Fatalf("pinned choice: %v, remote=%v", err, manager != nil)
+		}
+	}
+	fork := remarshal[ThreadForkResult](t, send("fork", "thread/fork", fmt.Sprintf(`{"thread_id":%q,"mode":"local"}`, remote))["result"]).Thread.ID
+	if manager, err := rt.RemoteProcesses(fork); err != nil || manager == nil {
+		t.Fatalf("fork lost selected profile: %v", err)
+	}
+	saved, _, err := config.LoadPath(rt.ConfigPath)
+	if err != nil || saved.ExecutionEnvironments.Default != "local" {
+		t.Fatalf("saved default: %v %+v", err, saved.ExecutionEnvironments)
 	}
 }

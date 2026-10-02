@@ -494,7 +494,11 @@ func TestMergeModelConfigPreservesCatalogCompatibilityMaps(t *testing.T) {
 }
 
 func TestGPT6SolLunaPreserveExplicitTransport(t *testing.T) {
-	for _, model := range []string{"gpt-6-sol", "gpt-6-luna"} {
+	for _, model := range []string{"gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol", "gpt-6.1-sol-fast"} {
+		_, official := EnrichProvider("openai", config.ProviderConfig{Type: "openai", Model: model}, model)
+		if official.WireAPI != "responses" {
+			t.Fatalf("%s default transport = %q, want responses", model, official.WireAPI)
+		}
 		for _, endpoint := range []string{"https://api.openai.com/v1", "https://gateway.example/v1"} {
 			_, provider := EnrichProvider("openai", config.ProviderConfig{Type: "openai", BaseURL: endpoint, Model: model, WireAPI: "chat"}, model)
 			if provider.WireAPI != "chat" {

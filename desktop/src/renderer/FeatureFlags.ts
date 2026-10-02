@@ -6,7 +6,6 @@ export const ENABLE_REMOTE_CONTROL =
 
 /** Temporarily hidden to keep the conversation focused; retain the edit data and components. */
 export const ENABLE_TURN_EDIT_SUMMARY = false;
-export const ENABLE_CONVERSATION_TURN_RAIL = false;
 
 /** Explicit file deliveries remain accessible beside their conversation. */
 export const ENABLE_TURN_ARTIFACT_SUMMARY = true;
@@ -19,15 +18,8 @@ export const ENABLE_TURN_ARTIFACT_SUMMARY = true;
 export const ENABLE_ACCOUNT =
   import.meta.env.DEV && import.meta.env.VITE_ENABLE_ACCOUNT !== "false";
 
-/** Keep the subscription dashboard development-only until it is ready to ship. */
-export const ENABLE_SUBSCRIPTIONS = import.meta.env.DEV;
-
-/**
- * PTC settings stay hidden in release builds until the feature matures. The
- * runtime keeps honoring saved settings; set VITE_ENABLE_PTC=true to build them in.
- */
-export const ENABLE_PTC_SETTINGS =
-  import.meta.env.DEV || import.meta.env.VITE_ENABLE_PTC === "true";
+/** Subscription visibility follows quota-aware provider data in production. */
+export const ENABLE_SUBSCRIPTIONS = true;
 
 /**
  * Embedded browser. The workspace panel and the agent's page are one tab.

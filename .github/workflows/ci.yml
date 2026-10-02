@@ -33,8 +33,8 @@ jobs:
       - name: Check repository metadata
         run: make repository-check
 
-  go-check:
-    name: Go check
+  go-validation:
+    name: Go validation
     runs-on: ubuntu-latest
     env:
       WUU_TEST_DATABASE_URL: postgres://wuu:wuu_test@127.0.0.1:5432/wuu_test?sslmode=disable
@@ -67,12 +67,57 @@ jobs:
       - name: Test
         run: make test-go
 
-      - name: Test experimental Project Agent
-        run: go test -tags project_agent ./internal/appserver
-
       - name: Build
         if: github.event_name == 'push'
         run: make build-go
+
+  project-agent-check:
+    name: Project Agent check
+    runs-on: ubuntu-latest
+    env:
+      WUU_TEST_DATABASE_URL: postgres://wuu:wuu_test@127.0.0.1:5432/wuu_test?sslmode=disable
+    services:
+      postgres:
+        image: postgres:18-bookworm
+        env:
+          POSTGRES_USER: wuu
+          POSTGRES_PASSWORD: wuu_test
+          POSTGRES_DB: wuu_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U wuu -d wuu_test"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+
+      - name: Test experimental Project Agent
+        # Keep the entire suite: this tag changes shared recovery and lifecycle paths.
+        run: go test -tags project_agent ./internal/appserver
+
+  go-check:
+    name: Go check
+    runs-on: ubuntu-latest
+    needs: [go-validation, project-agent-check]
+    # Cancelled post-merge pushes need no new failure; PRs and real Go failures
+    # keep the strict gate because skipped required checks can permit merging.
+    if: ${{ always() && (github.event_name != 'push' || !cancelled() || contains(needs.*.result, 'failure')) }}
+    steps:
+      - name: Require both Go suites
+        env:
+          GO_VALIDATION_RESULT: ${{ needs.go-validation.result }}
+          PROJECT_AGENT_RESULT: ${{ needs.project-agent-check.result }}
+        run: |
+          test "$GO_VALIDATION_RESULT" = success
+          test "$PROJECT_AGENT_RESULT" = success
 
   desktop-check:
     name: Desktop check
@@ -94,6 +139,10 @@ jobs:
           npm ci --prefix desktop
           npm ci --prefix clients/core
           npm ci --prefix clients/mobile-web
+          # Electron downloads lazily on require; parallel Vitest workers must
+          # not extract into the same dist directory at the same time.
+          node desktop/node_modules/electron/install.js
+          node -e 'require("./desktop/node_modules/electron")'
 
       - name: Typecheck
         run: make check-desktop
@@ -102,12 +151,213 @@ jobs:
         run: make test-desktop
 
       - name: Build
-        run: make build-desktop
+        shell: bash
+        run: |
+          # These fixtures keep phone access disabled. Clients check builds the
+          # Web shell; macOS/Windows packaging still builds its bundled copy.
+          (cd desktop && node_modules/.bin/electron-vite build)
+          find desktop/out/renderer -type f -print0 | sort -z | xargs -0 sha256sum > "${{ runner.temp }}/wuu-initial-renderer.sha256"
+
+      - name: Guard titlebar rename interactions
+        timeout-minutes: 3
+        env:
+          WUU_TITLEBAR_OUTPUT: ${{ runner.temp }}/wuu-titlebar-evidence
+        run: |
+          mkdir -p "$WUU_TITLEBAR_OUTPUT"
+          set -o pipefail
+          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/titlebar-rename-e2e.cjs 2>&1 | tee "$WUU_TITLEBAR_OUTPUT/run.log"
+
+      - name: Upload titlebar rename evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: titlebar-rename-evidence
+          path: |
+            ${{ runner.temp }}/wuu-titlebar-evidence/*.json
+            ${{ runner.temp }}/wuu-titlebar-evidence/*.png
+            ${{ runner.temp }}/wuu-titlebar-evidence/*.log
+            ${{ runner.temp }}/wuu-titlebar-evidence/*.txt
+          retention-days: 14
+
+      - name: Guard image inspection aggregation
+        timeout-minutes: 3
+        shell: bash
+        env:
+          WUU_ARTIFACT_E2E_ONLY: inspection
+          WUU_ARTIFACT_OUTPUT: ${{ runner.temp }}/wuu-image-inspection-evidence
+        run: |
+          mkdir -p "$WUU_ARTIFACT_OUTPUT"
+          set -o pipefail
+          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/artifact-preview-e2e.cjs 2>&1 | tee "$WUU_ARTIFACT_OUTPUT/run.log"
+
+      - name: Upload image inspection evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: image-inspection-evidence
+          path: |
+            ${{ runner.temp }}/wuu-image-inspection-evidence/*.json
+            ${{ runner.temp }}/wuu-image-inspection-evidence/*.png
+            ${{ runner.temp }}/wuu-image-inspection-evidence/*.log
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - name: Build desktop fixture core
+        id: build-fixture-core
+        run: go build -o "${{ runner.temp }}/wuu-session-switch-core" ./cmd/wuu
+
+      - name: Verify compact Fast mode controls
+        if: ${{ !cancelled() && steps.build-fixture-core.outcome == 'success' }}
+        timeout-minutes: 5
+        shell: bash
+        env:
+          WUU_FAST_OUTPUT: ${{ runner.temp }}/wuu-fast-mode-evidence
+          WUU_FAST_CORE: ${{ runner.temp }}/wuu-session-switch-core
+        run: |
+          mkdir -p "$WUU_FAST_OUTPUT"
+          set -o pipefail
+          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/fast-mode-e2e.cjs 2>&1 | tee "$WUU_FAST_OUTPUT/run.log"
+
+      - name: Verify conversation search navigation
+        if: ${{ !cancelled() && steps.build-fixture-core.outcome == 'success' }}
+        timeout-minutes: 7
+        shell: bash
+        env:
+          WUU_SEARCH_OUTPUT: ${{ runner.temp }}/wuu-conversation-search-evidence
+          WUU_DESKTOP_CORE: ${{ runner.temp }}/wuu-session-switch-core
+        run: |
+          mkdir -p "$WUU_SEARCH_OUTPUT"
+          set -o pipefail
+          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/conversation-search-e2e.cjs 2>&1 | tee "$WUU_SEARCH_OUTPUT/process.log"
+
+      - name: Guard conversation history jump
+        if: ${{ !cancelled() && steps.build-fixture-core.outcome == 'success' }}
+        timeout-minutes: 3
+        shell: bash
+        env:
+          WUU_SCROLL_E2E_ONLY: history-jump
+          WUU_SCROLL_E2E_OUTPUT: ${{ runner.temp }}/wuu-conversation-history-jump-evidence
+        run: |
+          mkdir -p "$WUU_SCROLL_E2E_OUTPUT"
+          set -o pipefail
+          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/conversation-scroll-e2e.cjs 2>&1 | tee "$WUU_SCROLL_E2E_OUTPUT/run.log"
+
+      - name: Upload conversation history jump evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: conversation-history-jump-evidence
+          path: ${{ runner.temp }}/wuu-conversation-history-jump-evidence
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Guard submitted query reflow
+        if: ${{ !cancelled() && steps.build-fixture-core.outcome == 'success' }}
+        timeout-minutes: 3
+        shell: bash
+        env:
+          WUU_SCROLL_E2E_ONLY: submission-reflow
+          WUU_SCROLL_E2E_OUTPUT: ${{ runner.temp }}/wuu-submission-reflow-evidence
+        run: |
+          mkdir -p "$WUU_SCROLL_E2E_OUTPUT"
+          set -o pipefail
+          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/conversation-scroll-e2e.cjs 2>&1 | tee "$WUU_SCROLL_E2E_OUTPUT/run.log"
+
+      - name: Upload submitted query reflow evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: submission-reflow-evidence
+          path: |
+            ${{ runner.temp }}/wuu-submission-reflow-evidence/*.json
+            ${{ runner.temp }}/wuu-submission-reflow-evidence/*.png
+            ${{ runner.temp }}/wuu-submission-reflow-evidence/*.log
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Upload conversation search evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: conversation-search-evidence
+          path: ${{ runner.temp }}/wuu-conversation-search-evidence
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Upload Fast mode evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fast-mode-evidence
+          path: ${{ runner.temp }}/wuu-fast-mode-evidence
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Verify worktree skill selection
+        if: ${{ !cancelled() && steps.build-fixture-core.outcome == 'success' }}
+        timeout-minutes: 5
+        shell: bash
+        env:
+          WUU_WORKTREE_OUTPUT: ${{ runner.temp }}/wuu-composer-worktree-evidence
+          WUU_WORKTREE_CORE: ${{ runner.temp }}/wuu-session-switch-core
+        run: |
+          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/composer-worktree-e2e.cjs 2>&1 | tee "$WUU_WORKTREE_OUTPUT.log"
+
+      - name: Upload worktree skill evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: composer-worktree-skill-evidence
+          path: ${{ runner.temp }}/wuu-composer-worktree-evidence*
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Guard request lifecycle
+        timeout-minutes: 5
+        shell: bash
+        env:
+          WUU_REQUEST_LIFECYCLE_OUTPUT: ${{ runner.temp }}/wuu-request-lifecycle-evidence
+        run: |
+          mkdir -p "$WUU_REQUEST_LIFECYCLE_OUTPUT"
+          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/request-lifecycle-e2e.cjs 2>&1 | tee "$WUU_REQUEST_LIFECYCLE_OUTPUT/run.log"
+
+      - name: Upload request lifecycle evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: request-lifecycle-evidence
+          path: ${{ runner.temp }}/wuu-request-lifecycle-evidence/
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Guard account quota behavior and layout
+        timeout-minutes: 5
+        shell: bash
+        env:
+          WUU_QUOTA_OUTPUT: ${{ runner.temp }}/wuu-subscription-quota-evidence
+        run: |
+          mkdir -p "$WUU_QUOTA_OUTPUT"
+          set -o pipefail
+          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/subscription-quota-e2e.cjs 2>&1 | tee "$WUU_QUOTA_OUTPUT/run.log"
+
+      - name: Upload account quota evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: subscription-quota-evidence
+          path: ${{ runner.temp }}/wuu-subscription-quota-evidence/
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Guard image layout stability
         shell: bash
         env:
-          WUU_E2E_HIDDEN: "true"
+          # Keep native windows visible inside Xvfb so rAF checks use display cadence.
           WUU_IMAGE_LAYOUT_OUTPUT: ${{ runner.temp }}/wuu-image-layout-evidence
         run: |
           mkdir -p "$WUU_IMAGE_LAYOUT_OUTPUT"
@@ -126,11 +376,6 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache-dependency-path: go.sum
-
       - name: Check session switch budget ratchet
         env:
           PERF_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
@@ -147,7 +392,6 @@ jobs:
           WUU_SWITCH_OUTPUT: ${{ runner.temp }}/wuu-session-switch-evidence
           WUU_DESKTOP_CORE: ${{ runner.temp }}/wuu-session-switch-core
         run: |
-          go build -o "$WUU_DESKTOP_CORE" ./cmd/wuu
           mkdir -p "$WUU_SWITCH_OUTPUT"
           xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/session-switch-e2e.cjs 2>&1 | tee "$WUU_SWITCH_OUTPUT/run.log"
 
@@ -157,6 +401,48 @@ jobs:
         with:
           name: session-switch-evidence
           path: ${{ runner.temp }}/wuu-session-switch-evidence/
+          if-no-files-found: ignore
+          retention-days: 14
+
+
+      - name: Verify programmatic tool settings
+        shell: bash
+        run: |
+          mkdir -p desktop/out/e2e/ptc
+          cp "${{ runner.temp }}/wuu-initial-renderer.sha256" desktop/out/e2e/ptc/renderer-before.sha256
+          sha256sum --quiet --check desktop/out/e2e/ptc/renderer-before.sha256
+          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/ptc-settings-e2e.cjs 2>&1 | tee desktop/out/e2e/ptc/run.log
+          find desktop/out/renderer -type f -print0 | sort -z | xargs -0 sha256sum > desktop/out/e2e/ptc/renderer-after.sha256
+          cmp desktop/out/e2e/ptc/renderer-before.sha256 desktop/out/e2e/ptc/renderer-after.sha256
+
+      - name: Upload programmatic tool settings evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ptc-settings-evidence
+          path: |
+            desktop/out/e2e/ptc/*.png
+            desktop/out/e2e/ptc/*.json
+            desktop/out/e2e/ptc/*.log
+            desktop/out/e2e/ptc/*.sha256
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Guard live resize layout
+        timeout-minutes: 3
+        env:
+          WUU_RESIZE_OUTPUT: ${{ runner.temp }}/wuu-resize-live-evidence/results.json
+        run: |
+          mkdir -p "$(dirname "$WUU_RESIZE_OUTPUT")"
+          set -o pipefail
+          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/resize-live-layout-e2e.cjs 2>&1 | tee "$(dirname "$WUU_RESIZE_OUTPUT")/run.log"
+
+      - name: Upload live resize evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: resize-live-evidence
+          path: ${{ runner.temp }}/wuu-resize-live-evidence
           if-no-files-found: ignore
           retention-days: 14
 
@@ -236,6 +522,9 @@ jobs:
 
       - name: Test macOS process sandbox
         run: go test ./internal/processsandbox -count=1
+
+      - name: Test macOS PTY lifecycle
+        run: go test ./internal/process -run '^Test(PTY|ManagerTTY|StartTTY|WriteStdinToTTY)' -count=1
 
       - name: Test native helper
         run: make test-native

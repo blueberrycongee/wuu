@@ -186,6 +186,8 @@ type ServiceChangedNotice struct {
 }
 
 type Tool struct {
+	// DirectOnly exposes control tools directly and rejects nested invocation.
+	DirectOnly      bool           `json:"direct_only,omitempty"`
 	ID              string         `json:"id"`
 	Description     string         `json:"description"`
 	InputSchema     map[string]any `json:"input_schema"`

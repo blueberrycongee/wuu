@@ -34,6 +34,7 @@ import (
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/process"
 	"github.com/blueberrycongee/wuu/internal/processsandbox"
+	"github.com/blueberrycongee/wuu/internal/providerfactory"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/providers/codex"
 	"github.com/blueberrycongee/wuu/internal/runtime"
@@ -2092,7 +2093,7 @@ func TestServerConfigAdvancedUpdatePersistsAndRefreshesRuntime(t *testing.T) {
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 
-	req := `{"id":"1","method":"config/advanced/update","params":{"max_steps":12,"max_context_tokens":256000,"temperature":0.4,"compact_threshold_pct":0.5,"compact_keep_recent_tokens":20000,"disable_auto_compact":true,"provider_context_window":512000,"model_aliases":{"cheap":{"provider":"fake-provider","model":"cheap-model:latest","effort":"low"}},"verification_model":{"provider":"fake-provider","model":"verification-model"}}}`
+	req := `{"id":"1","method":"config/advanced/update","params":{"max_steps":12,"max_context_tokens":256000,"temperature":0.4,"compact_threshold_pct":0.5,"compact_keep_recent_tokens":20000,"disable_auto_compact":true,"provider_context_window":512000,"model_aliases":{"cheap":{"provider":"fake-provider","model":"cheap-model:latest","effort":"low"}},"project_models":{"side":{"provider":"fake-provider","model":"side-model"},"worker":{"provider":"fake-provider","model":"worker-model"}},"verification_model":{"provider":"fake-provider","model":"verification-model"}}}`
 	if err := srv.handleLine(context.Background(), []byte(req)); err != nil {
 		t.Fatalf("config/advanced/update: %v", err)
 	}
@@ -2115,6 +2116,7 @@ func TestServerConfigAdvancedUpdatePersistsAndRefreshesRuntime(t *testing.T) {
 		t.Fatalf("unexpected verification model: %+v", role)
 	}
 	if rt.StreamRunner.MaxSteps != 12 ||
+		result.ProjectModels.Side.Model != "side-model" || result.ProjectModels.Worker.Model != "worker-model" ||
 		rt.StreamRunner.Temperature != 0.4 ||
 		rt.StreamRunner.CompactThresholdPct != 0.5 ||
 		rt.StreamRunner.CompactKeepRecentTokens != 20000 ||
@@ -2640,6 +2642,46 @@ func TestServerConfigModelUpdatePersistsProviderConnection(t *testing.T) {
 	credentials, err := store.Get("fake-provider")
 	if err != nil || credentials.APIKey != "new-key" {
 		t.Fatalf("provider key was not saved to auth store: credentials=%+v err=%v", credentials, err)
+	}
+}
+
+// Saving a key must not change which credential the provider uses once its
+// configuration is read back: the ambient default env var is not the key the
+// user just entered for this service.
+func TestServerConfigModelUpdateSavedKeyIsUsedOverAmbientCredential(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "sk-ambient")
+	rt := newTestRuntime(t, &fakeClient{})
+	if err := os.WriteFile(rt.ConfigPath, []byte(`{
+  "default_provider": "fake-provider",
+  "providers": {
+    "fake-provider": {
+      "type": "openai-compatible",
+      "base_url": "https://custom.example.test/v1",
+      "api_key": "sk-explicit",
+      "model": "fake-model"
+    }
+  }
+}
+`), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	out := &lockedBuffer{}
+	srv := New(rt, out)
+	req := `{"id":"1","method":"config/model/update","params":{"provider":"fake-provider","model":"fake-model","api_key":"sk-explicit"}}`
+	if err := srv.handleLine(context.Background(), []byte(req)); err != nil {
+		t.Fatalf("config/model/update: %v", err)
+	}
+	data, err := os.ReadFile(rt.ConfigPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var persisted config.Config
+	if err := json.Unmarshal(data, &persisted); err != nil {
+		t.Fatalf("decode persisted config: %v", err)
+	}
+	key, err := providerfactory.ResolveAPIKeyWithHome(persisted.Providers["fake-provider"], "fake-provider", os.Getenv("HOME"))
+	if err != nil || key != "sk-explicit" {
+		t.Fatalf("after saving, the provider resolves %q (err %v); want the saved key, not the ambient credential", key, err)
 	}
 }
 
@@ -3188,6 +3230,46 @@ func TestServerConfigCodexModels(t *testing.T) {
 	}
 	if got := rt.StreamRunner.ProviderOptions["reasoningEffort"]; got != "xhigh" {
 		t.Fatalf("fast runtime reasoning effort = %#v in %#v", got, rt.StreamRunner.ProviderOptions)
+	}
+}
+
+func TestGPT61SolSubscriptionModelSelection(t *testing.T) {
+	rt := newTestRuntime(t, &fakeClient{})
+	if err := os.WriteFile(rt.ConfigPath, []byte(`{
+		"default_provider":"openai-codex",
+		"providers":{"openai-codex":{"type":"openai-codex","model":"gpt-5.5","reuse_codex_credentials":true}}
+	}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	out := &lockedBuffer{}
+	srv := New(rt, out)
+	live := []codex.ModelInfo{{Slug: "gpt-6.1-sol", DefaultReasoningLevel: "medium", SupportedReasoning: []string{"low", "medium", "high", "xhigh", "max"}}}
+	summaries := codexModelSummaries(live)
+	if len(summaries) != 2 || summaries[1].Slug != "gpt-6.1-sol-fast" {
+		t.Fatalf("subscription aliases = %+v", summaries)
+	}
+	if got := codexModelSummaries([]codex.ModelInfo{{Slug: "unknown-model"}}); len(got) != 1 {
+		t.Fatalf("unadvertised subscription models added: %+v", got)
+	}
+	srv.cacheCodexModels("openai-codex", live)
+	for _, model := range []string{"gpt-6.1-sol", "gpt-6.1-sol-fast"} {
+		request := fmt.Sprintf(`{"id":%q,"method":"config/model/update","params":{"provider":"openai-codex","model":%q,"variant":"max"}}`, model, model)
+		if err := srv.handleLine(context.Background(), []byte(request)); err != nil {
+			t.Fatal(err)
+		}
+		response := responseByID(t, parseOutput(t, out.String()), model)
+		if response["error"] != nil {
+			t.Fatalf("model update: %v", response)
+		}
+		if rt.StreamRunner.APIModel != "gpt-6.1-sol" || rt.StreamRunner.ProviderOptions["reasoningEffort"] != "max" {
+			t.Fatalf("runtime model/options = %s/%v", rt.StreamRunner.APIModel, rt.StreamRunner.ProviderOptions)
+		}
+		if rt.StreamRunner.ContextWindowOverride != 1050000 || rt.StreamRunner.MaxInputTokens != 272000 {
+			t.Fatalf("subscription budget = %d/%d", rt.StreamRunner.ContextWindowOverride, rt.StreamRunner.MaxInputTokens)
+		}
+		if model == "gpt-6.1-sol-fast" && rt.StreamRunner.ProviderOptions["serviceTier"] != "priority" {
+			t.Fatalf("fast options = %v", rt.StreamRunner.ProviderOptions)
+		}
 	}
 }
 
@@ -4862,6 +4944,56 @@ func TestServerTurnStartRendersLightweightSlashCommandForModel(t *testing.T) {
 	}
 	if len(sessions) != 1 || sessions[0].Summary != "/debug login failure" {
 		t.Fatalf("session summary should use slash display text: %+v", sessions)
+	}
+}
+
+func TestServerTurnStartLoadsExplicitSkillIdentity(t *testing.T) {
+	for _, method := range []string{MethodTurnStart, MethodTurnQueue} {
+		for _, name := range []string{"review", "commit", "audit", "compact", "release-check"} {
+			t.Run(method+"/"+name, func(t *testing.T) {
+				client := &fakeClient{response: providers.ChatResponse{Content: "done"}}
+				rt := newTestRuntime(t, client)
+				skill := skills.Skill{Name: name, Source: "user", Path: filepath.Join(t.TempDir(), "quoted \"技能\"", "SKILL.md"), UserInvocable: true, DisableModelInvoke: true, Content: "selected instructions ${ARGUMENTS}"}
+				rt.Skills = []skills.Skill{skill}
+				out := &lockedBuffer{}
+				srv := New(rt, out)
+				if err := srv.handleLine(context.Background(), []byte(`{"id":"1","method":"thread/start"}`)); err != nil {
+					t.Fatal(err)
+				}
+				threadID := remarshal[ThreadStartResult](t, responseByID(t, parseOutput(t, out.String()), "1")["result"]).Thread.ID
+				identity, _ := json.Marshal(map[string]string{"name": name, "source": skill.Source, "path": skill.Path})
+				prompt := "/skill " + string(identity) + "\n\nquarterly roadmap"
+				raw, _ := json.Marshal(map[string]any{"id": "2", "method": method, "params": TurnStartParams{ThreadID: threadID, Prompt: prompt}})
+				if err := srv.handleLine(context.Background(), raw); err != nil {
+					t.Fatal(err)
+				}
+				if method == MethodTurnStart {
+					started := remarshal[TurnStartResult](t, responseByID(t, parseOutput(t, out.String()), "2")["result"])
+					if len(started.Turn.Items) != 1 || started.Turn.Items[0].Text != prompt {
+						t.Fatalf("lost selected identity: %+v", started.Turn.Items)
+					}
+				} else {
+					queued := remarshal[TurnQueueResult](t, responseByID(t, parseOutput(t, out.String()), "2")["result"])
+					if queued.Queued.ThreadID != threadID || queued.Queued.Preview != prompt {
+						t.Fatalf("queued skill lost selected identity: %+v", queued)
+					}
+				}
+				_ = waitForMethod(t, out, NotificationTurnCompleted)
+				client.mu.Lock()
+				defer client.mu.Unlock()
+				if len(client.requests) != 1 || len(client.requests[0].Messages) < 2 {
+					t.Fatalf("expected a model turn, got %d requests", len(client.requests))
+				}
+				modelPrompt := client.requests[0].Messages[1].Content
+				if !strings.Contains(modelPrompt, "selected instructions quarterly roadmap") || strings.HasPrefix(modelPrompt, "/skill ") {
+					t.Fatalf("selected instructions were not loaded: %s", modelPrompt)
+				}
+				persisted, err := loadChatMessages(rt.SessionDir, threadID)
+				if err != nil || len(persisted) == 0 || persisted[0].DisplayContent != prompt || persisted[0].Content != modelPrompt {
+					t.Fatalf("skill identity and loaded instructions must survive persistence: %+v, %v", persisted, err)
+				}
+			})
+		}
 	}
 }
 
@@ -7222,8 +7354,8 @@ func TestServerThreadSearchMatchesHistoryAcrossWorkspaces(t *testing.T) {
 	}
 	msgs := parseOutput(t, out.String())
 	userResult := remarshal[ThreadSearchResult](t, responseByID(t, msgs, "1")["result"])
-	if len(userResult.Results) != 2 {
-		t.Fatalf("expected matches from both workspaces, got %+v", userResult.Results)
+	if len(userResult.Results) != 3 {
+		t.Fatalf("expected active and archived matches from both workspaces, got %+v", userResult.Results)
 	}
 	resultIDs := map[string]bool{}
 	for _, result := range userResult.Results {
@@ -7231,9 +7363,12 @@ func TestServerThreadSearchMatchesHistoryAcrossWorkspaces(t *testing.T) {
 		if !strings.Contains(result.Snippet, "delta-vector") {
 			t.Fatalf("expected user query snippet, got %q", result.Snippet)
 		}
+		if result.Thread.ID == archivedThread.ID && !result.Thread.Archived {
+			t.Fatal("expected archived search result to retain its archive status")
+		}
 	}
-	if !resultIDs[userThread.ID] || !resultIDs[otherThread.ID] {
-		t.Fatalf("expected user and other workspace threads, got %+v", userResult.Results)
+	if !resultIDs[userThread.ID] || !resultIDs[otherThread.ID] || !resultIDs[archivedThread.ID] {
+		t.Fatalf("expected user, archived, and other workspace threads, got %+v", userResult.Results)
 	}
 	assistantResult := remarshal[ThreadSearchResult](t, responseByID(t, msgs, "2")["result"])
 	if len(assistantResult.Results) != 1 || assistantResult.Results[0].Thread.ID != assistantThread.ID {
@@ -10155,6 +10290,74 @@ func TestUsageOverviewBucketsTokenUsageByRequestedTimeZone(t *testing.T) {
 		result.Days[0].Date != "2026-03-09" || result.Days[0].InputTokens != 100 ||
 		result.Days[1].Date != "2026-03-10" || result.Days[1].CacheReadTokens != 30 {
 		t.Fatalf("days=%+v, want March 9 and March 10 in Los Angeles", result.Days)
+	}
+}
+
+func TestSettingsUsageBucketsDaysByRequestedTimeZone(t *testing.T) {
+	rt := newTestRuntime(t, &fakeClient{})
+	// 06:30 UTC on March 10 is still the evening of March 9 in Los Angeles
+	// (PDT, UTC-7), which is the day the desktop's calendar draws it on.
+	evening := time.Date(2026, time.March, 10, 6, 30, 0, 0, time.UTC)
+	sess, err := session.CreateWithMetadata(rt.SessionDir, "usage-settings-zone", rt.RootDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, rec := range []session.HistoryRecord{
+		{Role: "user", Content: "evening session"},
+		{
+			Role: "meta", Content: "token_usage", Provider: "openai", Model: "gpt-4o",
+			At: evening, InputTokens: 100, OutputTokens: 20,
+		},
+	} {
+		if err := session.AppendHistoryRecord(rt.SessionDir, sess.ID, rec); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	out := &lockedBuffer{}
+	srv := New(rt, out)
+	days := func(id string, params map[string]any) []SettingsUsageDay {
+		request := map[string]any{"id": id, "method": MethodSettingsUsage}
+		if params != nil {
+			request["params"] = params
+		}
+		raw, err := json.Marshal(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := srv.handleLine(context.Background(), raw); err != nil {
+			t.Fatalf("handleLine: %v", err)
+		}
+		return remarshal[SettingsUsageResponse](t, responseByID(t, parseOutput(t, out.String()), id)["result"]).Days
+	}
+
+	// Without a zone the series stays on UTC calendar days, as older clients expect.
+	if got := days("utc", nil); len(got) != 1 || got[0].Date != "2026-03-10" {
+		t.Fatalf("utc days=%+v, want March 10", got)
+	}
+	// The cached UTC snapshot must not answer a request for another zone.
+	if got := days("la", map[string]any{"timezone": "America/Los_Angeles"}); len(got) != 1 || got[0].Date != "2026-03-09" {
+		t.Fatalf("Los Angeles days=%+v, want March 9", got)
+	}
+}
+
+func TestSettingsUsageRejectsUnknownTimeZone(t *testing.T) {
+	rt := newTestRuntime(t, &fakeClient{})
+	out := &lockedBuffer{}
+	srv := New(rt, out)
+	raw, err := json.Marshal(map[string]any{
+		"id":     "1",
+		"method": MethodSettingsUsage,
+		"params": map[string]any{"timezone": "Mars/Olympus"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.handleLine(context.Background(), raw); err != nil {
+		t.Fatalf("handleLine: %v", err)
+	}
+	if responseByID(t, parseOutput(t, out.String()), "1")["error"] == nil {
+		t.Fatal("an unknown time zone must be a request error, not a silent UTC fallback")
 	}
 }
 

@@ -62,16 +62,12 @@ func (s *Server) handleEngineList(req Request) error {
 		Settings: s.engineSettingsFromConfig(),
 	}
 	if params.IncludeQuota {
-		for _, provider := range s.providerSummaries() {
-			if builtInSubscriptionProvider(provider) {
-				result.SubscriptionProviders = append(result.SubscriptionProviders, provider)
-			}
-		}
+		result.SubscriptionProviders = append([]ProviderSummary(nil), s.providerSummaries()...)
 		// Historical statistics belong to the opt-in dashboard request, not
 		// navigation or the composer inventory. Copy providers before enriching
 		// them so cached configuration summaries remain history-free.
 		s.attachSubscriptionActivity(result.Engines, result.SubscriptionProviders)
-		s.attachSubscriptionQuotas(result.Engines)
+		s.attachSubscriptionQuotas(result.Engines, result.SubscriptionProviders)
 	}
 	return s.writeResponse(req.ID, result, nil)
 }
@@ -134,6 +130,9 @@ func (s *Server) engineInventory() []EngineInfo {
 			Version:      desc.Version,
 			Capabilities: append([]string(nil), desc.Capabilities...),
 			Enabled:      s.rt.EngineAvailable(id),
+		}
+		if id == "claude" || id == "grok" {
+			info.Capabilities = append(info.Capabilities, "account-quota")
 		}
 		switch id {
 		case "codex":

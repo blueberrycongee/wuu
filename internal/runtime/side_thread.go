@@ -12,6 +12,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/modelvariant"
 	"github.com/blueberrycongee/wuu/internal/providerfactory"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/statepath"
 	"github.com/blueberrycongee/wuu/internal/workspaces"
 )
 
@@ -30,7 +31,7 @@ Use your read-only tools when current workspace evidence is needed. You may insp
 // rooted at the main thread's workspace, and protected by ReadOnlyBoundary.
 // It shares no mutable callbacks, tool ledger, or usage tracker with the main
 // thread.
-func (s *Session) NewSideThreadRunner(sideThreadID, rootDir string, selected ThreadModelSelection) (*agent.StreamRunner, error) {
+func (s *Session) NewSideThreadRunner(sideThreadID, rootDir string, selected ThreadModelSelection, parentSession ...string) (*agent.StreamRunner, error) {
 	if s == nil || s.StreamRunner == nil {
 		return nil, errors.New("stream runner is required")
 	}
@@ -49,6 +50,8 @@ func (s *Session) NewSideThreadRunner(sideThreadID, rootDir string, selected Thr
 		if err != nil {
 			return nil, err
 		}
+		_, threadSkills := s.guidanceForRoot(kit.RootDir(), nil)
+		kit.SetSkills(threadSkills)
 		model := strings.TrimSpace(runner.APIModel)
 		if model == "" {
 			model = strings.TrimSpace(runner.Model)
@@ -56,8 +59,20 @@ func (s *Session) NewSideThreadRunner(sideThreadID, rootDir string, selected Thr
 		kit.ConfigureSurfaceForProviderModel(runner.ProviderName, model, true)
 		ConfigureToolkitPermissions(kit, config.ResolvedPermissions{Mode: config.PermissionModeReadOnly})
 		kit.SetSessionID(id)
+		if len(parentSession) > 0 {
+			kit.SetCodeModeStateOwner(parentSession[0])
+		}
 		kit.SetAgentIdentity(id, agentthread.RootPath)
 		kit.SetFileScopeRoots(workspaces.BoundaryRoots(kit.RootDir(), s.WuuHome))
+		if len(parentSession) > 0 {
+			stateDir, err := s.executionStateDir()
+			if err != nil {
+				return nil, err
+			}
+			if err := s.configureExecutionEnvironment(kit, parentSession[0], statepath.SessionArtifactDir(stateDir, parentSession[0])); err != nil {
+				return nil, err
+			}
+		}
 
 		var toolExecutor agent.ToolExecutor = newPluginAwareToolExecutor(kit, s.PluginHost, s.HookDispatcher, id, "", root)
 		runner.Tools = toolExecutor

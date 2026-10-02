@@ -366,19 +366,31 @@ func TestPartitionToolCallsUsesCallArguments(t *testing.T) {
 }
 
 func TestRunToolLoop_ForwardsNativeDeferredToolDiscovery(t *testing.T) {
-	step := &fakeStep{results: []StepResult{{Content: "ok"}}}
-	_, err := RunToolLoop(context.Background(), []providers.ChatMessage{userMsg("hi")}, LoopConfig{
-		Model:                       "m",
-		NativeDeferredToolDiscovery: true,
-	}, step)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(step.calls) != 1 {
-		t.Fatalf("expected one call, got %d", len(step.calls))
-	}
-	if !step.calls[0].NativeDeferredToolDiscovery {
-		t.Fatal("expected ChatRequest to carry NativeDeferredToolDiscovery")
+	for _, name := range []string{"tool_search", "run_code", "transformed"} {
+		toolName := name
+		if name == "transformed" {
+			toolName = "tool_search"
+		}
+		step := &fakeStep{results: []StepResult{{Content: "ok"}}}
+		_, err := RunToolLoop(context.Background(), []providers.ChatMessage{
+			{Role: "system", Content: "[Conversation summary]", DiscoveredTools: []providers.LoadableToolDefinition{{Name: "previously_loaded", Description: "prior schema", InputSchema: map[string]any{"type": "object"}}}},
+			userMsg("hi"),
+		}, LoopConfig{
+			Model: "m", Tools: &fakeLoopTools{defs: []providers.ToolDefinition{{Name: toolName}}},
+			NativeDeferredToolDiscovery: true,
+			BeforeRequest: func(_ context.Context, req *providers.ChatRequest) error {
+				if name == "transformed" {
+					req.Tools = []providers.ToolDefinition{{Name: "run_code"}}
+				}
+				return nil
+			},
+		}, step)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(step.calls) != 1 || step.calls[0].NativeDeferredToolDiscovery != (name == "tool_search") {
+			t.Fatalf("discovery protocol did not follow the exposed surface for %s: %+v", name, step.calls)
+		}
 	}
 }
 
@@ -1921,6 +1933,61 @@ func TestRunToolLoop_CompactLifecycleCallbacksWrapProactiveAndReactive(t *testin
 			want := []string{"pre:" + string(tt.reason), "compact", "post:" + string(tt.reason)}
 			if strings.Join(events, ",") != strings.Join(want, ",") {
 				t.Fatalf("lifecycle events = %v, want %v", events, want)
+			}
+		})
+	}
+}
+
+func TestRunToolLoop_OverflowCompactHookRejectionStopsRecovery(t *testing.T) {
+	for _, stage := range []string{"pre", "post", "post-summary-failure", "summary-failure-control"} {
+		t.Run(stage, func(t *testing.T) {
+			overflow := providers.NewProviderStreamError("context_length_exceeded", "")
+			step := &fakeStep{results: []StepResult{{}, {Content: "must not run"}}, errs: []error{overflow, nil}}
+			hookErr := errors.New("checkpoint must remain active")
+			var summaryErr error
+			if stage == "post-summary-failure" || stage == "summary-failure-control" {
+				summaryErr = errors.New("summary unavailable")
+			}
+			var attempts []CompactAttemptInfo
+			compactCalls := 0
+			cfg := LoopConfig{
+				Model: "test",
+				Compact: func(_ context.Context, messages []providers.ChatMessage) ([]providers.ChatMessage, error) {
+					compactCalls++
+					return messages[len(messages)-1:], summaryErr
+				},
+				BeforeCompact: func(context.Context, CompactReason) error {
+					if stage == "pre" {
+						return hookErr
+					}
+					return nil
+				},
+				AfterCompact: func(_ context.Context, _ CompactReason, err error) error {
+					if !errors.Is(err, summaryErr) {
+						t.Fatalf("post hook received %v, want %v", err, summaryErr)
+					}
+					if stage == "summary-failure-control" {
+						return nil
+					}
+					return hookErr
+				},
+				OnCompactAttempt: func(info CompactAttemptInfo) { attempts = append(attempts, info) },
+			}
+			history := append(fallbackHistory(), userMsg("continue"))
+			result, err := RunToolLoop(context.Background(), history, cfg, step)
+			if stage == "summary-failure-control" {
+				if err != nil || len(step.calls) != 2 || !result.HistoryRewritten || len(step.calls[1].Messages) >= len(history) {
+					t.Fatalf("summary failure did not recover: err=%v requests=%d rewritten=%v", err, len(step.calls), result.HistoryRewritten)
+				}
+			} else if !errors.Is(err, hookErr) || len(step.calls) != 1 || result.HistoryRewritten || len(result.NewMessages) != 0 {
+				t.Fatalf("hook rejection was bypassed: err=%v requests=%d rewritten=%v new=%d", err, len(step.calls), result.HistoryRewritten, len(result.NewMessages))
+			}
+			wantCompactCalls := 1
+			if stage == "pre" {
+				wantCompactCalls = 0
+			}
+			if compactCalls != wantCompactCalls || len(attempts) != 1 || attempts[0].Status != CompactAttemptFailed {
+				t.Fatalf("compact calls=%d attempts=%+v", compactCalls, attempts)
 			}
 		})
 	}

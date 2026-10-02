@@ -680,6 +680,7 @@ function reduceNotification(
           variant: params.variant,
           model_roles: params.model_roles,
           model_aliases: params.model_aliases,
+          project_models: params.project_models,
           providers: params.providers,
         },
       };
@@ -1949,8 +1950,7 @@ function conversationSearchContextLabel(
   thread: Thread,
   projects: DesktopProject[],
 ): string {
-  const projectPath = threadWorkspacePath(thread);
-  const project = projects.find((candidate) => candidate.path === projectPath);
+  const project = projects.find((candidate) => threadBelongsToWorkspace(thread, candidate));
   return project?.name ?? t("appState.noWorkspace");
 }
 
@@ -2322,23 +2322,83 @@ function removeSessionTab(tabs: SessionTab[], tabID: string): SessionTab[] {
   return tabs.filter((tab) => tab.id !== tabID);
 }
 
-function persistActiveSessionTabDraft(
+type ComposerDraftSnapshot = {
+  activeTabID: string;
+  activeDraft: ComposerDraftState;
+  tabs: Array<{ tab: SessionTab; createIfMissing: boolean }>;
+};
+
+// Capture draft owners before navigation changes the active tab or clears the
+// split composers. A later completion must never assign them to its current tab.
+function captureComposerDrafts(
   state: AppState,
-  draft: ComposerDraftState,
-): AppState {
-  const activeTabID = state.activeSessionTabID;
+  drafts: ComposerDraftState | Record<ConversationPaneID, ComposerDraftState>,
+): ComposerDraftSnapshot {
+  if ("primary" in drafts) {
+    const tabs: ComposerDraftSnapshot["tabs"] = [];
+    for (const pane of ["primary", "secondary"] as const) {
+      const thread = pane === "primary" ? state.thread : state.secondaryThread;
+      if (!thread) continue;
+      const existing = state.sessionTabs.find(
+        tab => tab.id === threadSessionTabID(thread.id),
+      );
+      const context = existing?.context ?? resolveThreadRuntimeContext(thread, state.projects);
+      tabs.push({
+        tab: createThreadSessionTab(thread, context, drafts[pane]),
+        createIfMissing: !existing,
+      });
+    }
+    return {
+      activeTabID: state.activeSessionTabID,
+      activeDraft: cloneComposerDraft(drafts[state.activePane]),
+      tabs,
+    };
+  }
+  const tab = activeSessionTab(state);
   return {
-    ...state,
-    sessionTabs: state.sessionTabs.map((tab) =>
-      tab.id === activeTabID && (tab.kind === "draft" || tab.kind === "thread")
-        ? {
-            ...tab,
-            selections: undefined,
-            ...cloneComposerDraft(draft),
-          }
-        : tab,
-    ),
+    activeTabID: state.activeSessionTabID,
+    activeDraft: cloneComposerDraft(drafts),
+    tabs: tab && (tab.kind === "draft" || tab.kind === "thread")
+      ? [{
+          tab: { ...tab, selections: undefined, ...cloneComposerDraft(drafts) },
+          createIfMissing: false,
+        }]
+      : [],
   };
+}
+
+// Encoding and edits can finish while a cold navigation waits. Refresh only
+// the original owners, before clearing/restoring any destination composer.
+function refreshComposerDrafts(
+  snapshot: ComposerDraftSnapshot,
+  latest: ComposerDraftSnapshot,
+): ComposerDraftSnapshot {
+  const tabs = snapshot.tabs.map((entry) => {
+    const current = latest.tabs.find(({ tab }) => tab.id === entry.tab.id);
+    return current ? {
+      ...entry,
+      tab: { ...entry.tab, selections: undefined, ...cloneSessionTabDraft(current.tab) },
+    } : entry;
+  });
+  const active = tabs.find(({ tab }) => tab.id === snapshot.activeTabID);
+  return { ...snapshot, tabs, activeDraft: active ? cloneSessionTabDraft(active.tab) : snapshot.activeDraft };
+}
+
+function persistComposerDrafts(
+  state: AppState,
+  snapshot: ComposerDraftSnapshot,
+): AppState {
+  let tabs = state.sessionTabs;
+  for (const { tab: captured, createIfMissing } of snapshot.tabs) {
+    const existing = tabs.find(tab => tab.id === captured.id);
+    if (!existing && !createIfMissing) continue;
+    tabs = ensureSessionTab(tabs, {
+      ...(existing ?? captured),
+      selections: undefined,
+      ...cloneSessionTabDraft(captured),
+    });
+  }
+  return { ...state, sessionTabs: tabs };
 }
 
 // composerDraftHasContent tells apart a truly blank draft from one the user
@@ -2371,20 +2431,20 @@ function composerDraftHasContent(draft: ComposerDraftState): boolean {
  * draft) and leaves the old tab's stored draft untouched, rather than
  * persisting the outgoing content into it. When the outgoing tab is a
  * thread (an actual conversation, not a fresh draft) or the draft is empty,
- * this is exactly the previous persistActiveSessionTabDraft +
+ * this is the ordinary persistComposerDrafts +
  * withLoadedRuntimeSessionTab pairing.
  */
 function applyLoadedRuntimeWithDraftCarry(
   current: AppState,
   loadedState: Partial<AppState>,
-  outgoingDraft: ComposerDraftState,
+  outgoingDraft: ComposerDraftSnapshot,
 ): AppState {
   const carry =
-    activeSessionTab(current)?.kind === "draft" &&
-    composerDraftHasContent(outgoingDraft);
+    outgoingDraft.tabs.find(({ tab }) => tab.id === outgoingDraft.activeTabID)?.tab.kind === "draft" &&
+    composerDraftHasContent(outgoingDraft.activeDraft);
   const persisted = carry
     ? current
-    : persistActiveSessionTabDraft(current, outgoingDraft);
+    : persistComposerDrafts(current, outgoingDraft);
   const next = withLoadedRuntimeSessionTab(persisted, loadedState);
   if (!carry) {
     return next;
@@ -2397,7 +2457,7 @@ function applyLoadedRuntimeWithDraftCarry(
         ? {
             ...tab,
             selections: undefined,
-            ...cloneComposerDraft(outgoingDraft),
+            ...cloneComposerDraft(outgoingDraft.activeDraft),
           }
         : tab,
     ),
@@ -3642,7 +3702,9 @@ export {
   reconcileListedThreadState,
   openForkThreadAsPrimary,
   parseTodoUpdateArguments,
-  persistActiveSessionTabDraft,
+  captureComposerDrafts,
+  refreshComposerDrafts,
+  persistComposerDrafts,
   pinnedThreads,
   pinnedThreadSummaries,
   presentationRunningThreadIDs,
@@ -3694,4 +3756,4 @@ export {
   withLoadedRuntimeSessionTab,
 };
 
-export type { AppState, ComposerDraftState, ComposerRunningAction, ConversationPaneID, SessionTab };
+export type { AppState, ComposerDraftSnapshot, ComposerDraftState, ComposerRunningAction, ConversationPaneID, SessionTab };

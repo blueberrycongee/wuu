@@ -16,6 +16,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/hooks"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/toolctx"
 	"github.com/blueberrycongee/wuu/internal/toolerrors"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
 	"github.com/blueberrycongee/wuu/internal/tools"
@@ -47,8 +48,9 @@ func (e *recordingToolExecutor) AuthorizeTool(_ context.Context, call providers.
 }
 
 type pluginToolTestClient struct {
-	executed bool
-	scopes   []string
+	executed   bool
+	scopes     []string
+	directOnly bool
 }
 
 type denyPluginAuthorizer struct{ calls int }
@@ -64,7 +66,7 @@ func (c *pluginToolTestClient) Status() pluginhost.Status {
 }
 func (c *pluginToolTestClient) Close(context.Context) error { return nil }
 func (c *pluginToolTestClient) Tools() []pluginhost.ToolRegistration {
-	return []pluginhost.ToolRegistration{{ID: "change", Description: "change state", ExecutionScopes: c.scopes, InputSchema: map[string]any{"type": "object"}}}
+	return []pluginhost.ToolRegistration{{ID: "change", DirectOnly: c.directOnly, Description: "change state", ExecutionScopes: c.scopes, InputSchema: map[string]any{"type": "object"}}}
 }
 func (c *pluginToolTestClient) ExecuteTool(context.Context, pluginhost.ToolExecuteParams) (pluginhost.ToolExecuteResult, error) {
 	c.executed = true
@@ -222,6 +224,23 @@ func TestCodeModeOnlyIncludesPluginToolsInNestedSurface(t *testing.T) {
 		t.Fatalf("plugin bridge: %+v %v", messages, err)
 	}
 
+	kit.DisableTools(name)
+	nested, err = kit.CodeModeNestedSurface()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, definition := range nested {
+		if definition.Name == name {
+			t.Fatal("disabled plugin remained discoverable")
+		}
+	}
+	client.executed = false
+	_, err = executor.(agent.RichToolExecutor).ExecuteResult(toolctx.WithNestedCall(ctx), providers.ToolCall{ID: "stale-binding", Name: name, Arguments: "{}"})
+	if err == nil || client.executed {
+		t.Fatalf("disabled plugin bypassed live authorization: %v", err)
+	}
+	kit.EnableTools(name)
+
 	executor = replacePluginToolHost(executor, pluginhost.New(), "thread", root)
 	nested, err = kit.CodeModeNestedSurface()
 	if err != nil {
@@ -230,6 +249,106 @@ func TestCodeModeOnlyIncludesPluginToolsInNestedSurface(t *testing.T) {
 	for _, def := range nested {
 		if def.Name == name {
 			t.Fatal("replaced plugin host left a stale code-mode catalog")
+		}
+	}
+}
+
+func TestPTCDirectOnlyPluginRouting(t *testing.T) {
+	kit, err := tools.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	kit.SetBoundary(tools.UnconfinedBoundary())
+	kit.ConfigureSurfaceForProviderModel("openai", "gpt-5", true)
+	service := codemode.NewService(codemode.ServiceConfig{})
+	defer service.Close()
+	kit.ConfigurePTC(service, config.PTCConfig{Enabled: true})
+	client := &pluginToolTestClient{directOnly: true}
+	host := pluginhost.New(client)
+	name := host.ToolDefinitions()[0].Name
+	executor := newPluginToolExecutor(kit, host, "thread", kit.RootDir())
+	found := false
+	for _, def := range executor.Definitions() {
+		if def.Name == name {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("direct-only extension unavailable")
+	}
+	nested, err := kit.CodeModeNestedSurface()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, def := range nested {
+		if def.Name == name {
+			t.Fatal("direct-only extension exposed as binding")
+		}
+	}
+	rich := executor.(agent.RichToolExecutor)
+	if _, err := rich.ExecuteResult(toolctx.WithNestedCall(context.Background()), providers.ToolCall{Name: name, Arguments: `{}`}); err == nil || client.executed {
+		t.Fatal("nested control executed")
+	}
+	if _, err := rich.ExecuteResult(context.Background(), providers.ToolCall{Name: name, Arguments: `{}`}); err != nil || !client.executed {
+		t.Fatalf("direct control: %v", err)
+	}
+	kit.DisableTools(name)
+	for _, def := range executor.Definitions() {
+		if def.Name == name {
+			t.Fatal("disabled direct extension exposed")
+		}
+	}
+}
+
+func TestPTCProductionWrappersPinPluginSurfaceUntilRunEnds(t *testing.T) {
+	kit, err := tools.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	kit.ConfigureSurfaceForProviderModel("openai", "gpt-5", true)
+	service := codemode.NewService(codemode.ServiceConfig{})
+	defer service.Close()
+	kit.ConfigurePTC(service, config.PTCConfig{Enabled: true})
+	client := &pluginToolTestClient{}
+	host := pluginhost.New(client)
+	name := host.ToolDefinitions()[0].Name
+	executor := newPluginAwareToolExecutor(kit, host, hooks.NewDispatcher(hooks.NewRegistry(nil)), "thread", "thread", kit.RootDir())
+	freezer, ok := executor.(agent.ToolSurfaceFreezer)
+	if !ok {
+		t.Fatal("production wrapper lost snapshot lifecycle")
+	}
+	freezer.FreezeToolSurface()
+	freezer.FreezeToolSurface()
+	defer freezer.UnfreezeToolSurface()
+	_, found := host.RetirePlugin(context.Background(), client.ID(), fmt.Errorf("retired"))
+	if !found {
+		t.Fatal("plugin retirement failed")
+	}
+	freezer.UnfreezeToolSurface()
+	nested, err := kit.CodeModeNestedSurface()
+	if err != nil {
+		t.Fatal(err)
+	}
+	found = false
+	for _, def := range nested {
+		if def.Name == name {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("frozen schema changed in active run")
+	}
+	if _, err := executor.(agent.RichToolExecutor).ExecuteResult(toolctx.WithNestedCall(context.Background()), providers.ToolCall{Name: name, Arguments: `{}`}); err == nil || client.executed {
+		t.Fatal("snapshot allowed a retired tool to execute")
+	}
+	freezer.UnfreezeToolSurface()
+	nested, err = kit.CodeModeNestedSurface()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, def := range nested {
+		if def.Name == name {
+			t.Fatal("next run kept retired schema")
 		}
 	}
 }

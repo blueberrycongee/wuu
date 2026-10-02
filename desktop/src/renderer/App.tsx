@@ -1,3 +1,4 @@
+import { composerSkillPrompt } from "./ComposerSlashCommands";
 import { forgetLocalTurnTiming } from "./LocalTurnTiming";
 import { subscribeServerEvents } from "./ServerEvents";
 import { PhoneNavigationContext } from "./PhoneNavigationContext";
@@ -54,6 +55,7 @@ import type {
 import {
   OPTIMISTIC_TURN_ID_PREFIX,
   awaitComposerImages,
+  awaitComposerFiles,
   createComposerMessage,
   composerContextFromMessage,
   createOptimisticCompactTurn,
@@ -75,18 +77,12 @@ import {
 } from "./greetings";
 import {
   Composer,
-  FloatingMenuPortal,
   isInsideFloatingMenu,
   type CodexModelLoadState,
   type CodexRuntimeMenu,
   type ComposerVariant,
   type PermissionMode,
 } from "./ComposerView";
-import {
-  QueryHistoryPopover,
-  type QueryHistoryEntry,
-} from "./QueryHistoryPopover";
-import { QueryHistoryRail } from "./QueryHistoryRail";
 import { UserQuestionCard } from "./UserQuestionCard";
 import { ConversationSearchOverlay } from "./ConversationSearchOverlay";
 import {
@@ -95,6 +91,7 @@ import {
 } from "./ConversationScrollState";
 import { PullToNewSession } from "./PullToNewSession";
 import { useConversationSearch } from "./ConversationSearchState";
+import { useConversationSearchNavigation } from "./ConversationSearchNavigation";
 import {
   SideThreadPanel,
   type SideThreadPanelHandle,
@@ -122,10 +119,13 @@ import {
   activeTurnIDForThread,
   bindActiveSessionTabToThread,
   cloneSessionTabDraft,
+  captureComposerDrafts,
+  cloneComposerDraft,
   sessionTabDraftForThread,
   composerDraftHasContent,
   conversationPaneThreadsByID,
   createDraftSessionTab,
+  createThreadSessionTab,
   emptyComposerDraft,
   ensureSessionTab,
   handleStreamingNotification,
@@ -158,6 +158,7 @@ import {
   sessionTabForLoadedRuntime,
   setThreadForPane,
   sortThreads,
+  mergeListedThreads,
   summarizeWorkspaceThreadsForSidebar,
   summarizeThreadsForSidebar,
   threadBelongsToWorkspace,
@@ -213,7 +214,6 @@ import {
 } from "./RuntimeHelpers";
 import type { SettingsPage } from "./SettingsView";
 import {
-  ENABLE_CONVERSATION_TURN_RAIL,
   ENABLE_EMBEDDED_BROWSER,
   ENABLE_ACCOUNT,
 } from "./FeatureFlags";
@@ -221,6 +221,7 @@ import { ArchiveTip } from "./ArchiveTip";
 import { TopNotice } from "./TopNotice";
 import { UILayerPortal } from "./ui/layers/UILayerHost";
 import { showErrorToast, showToast } from "./Toast";
+import { useArchiveDeletion } from "./useArchiveDeletion";
 import { setOpenThreadInSplitHandler } from "./ConversationSplitBridge";
 import { CircleAlert, RefreshCw } from "./WuuIcons";
 import type {
@@ -240,8 +241,8 @@ import {
   rawErrorMessage,
   statusMessageForError,
 } from "./UserFacingErrors";
-import { scrollToUserMessage, TurnView } from "./TurnView";
-import { ConversationTurnRail } from "./ConversationTurnRail";
+import { TurnView } from "./TurnView";
+import { OPEN_SETTINGS_EVENT, type OpenSettingsDetail } from "./TurnNotice";
 import {
   WorkspaceRightPanel,
 } from "./WorkspacePanels";
@@ -310,6 +311,7 @@ import {
 } from "./ConversationHistoryActions";
 import { localizedText, resolveLocalizedText, translateCurrent, useI18n } from "./i18n";
 import { CachedConversationPanes } from "./CachedConversationPanes";
+import { observeAppearance } from "./AppearancePreferences";
 import {
   retainCachedConversationPaneThreads,
   selectCachedConversationPaneIDs,
@@ -335,24 +337,27 @@ const ENGINE_INVENTORY_STALE_MS = 6 * 60 * 60 * 1000;
 // docked. Transitions retarget mid-flight, so rapid toggles stay continuous.
 type WorkspaceSheetPhase = "docked" | "arming" | "open" | "exiting" | "docking";
 const ENVIRONMENT_PANEL_WIDTH_PX = 328;
-const ENVIRONMENT_PANEL_WIDTH_CSS = `${ENVIRONMENT_PANEL_WIDTH_PX}px`;
-const ENVIRONMENT_PANEL_RESERVED_WIDTH_PX = 372;
+// The panel's width grows with the UI text size, like
+// --environment-panel-width in conversation-shell.css; the reserved column
+// adds the gap to the conversation.
+const ENVIRONMENT_PANEL_WIDTH_PER_UI_PX = ENVIRONMENT_PANEL_WIDTH_PX / 14.5;
+const ENVIRONMENT_PANEL_FLOW_GAP_PX = 44;
 // The info panel docks beside the conversation only while the conversation
 // pane keeps a readable column next to it: the reserved width, two 32px page
 // insets and a 480px column, the width at which the composer's controls stop
 // fitting. The window alone cannot decide this, because the sidebar and the
 // right panel take their share first. A narrower pane shows it as an overlay.
-const ENVIRONMENT_PANEL_ROOM_PANE_WIDTH_PX = ENVIRONMENT_PANEL_RESERVED_WIDTH_PX + 2 * 32 + 480;
 const ENVIRONMENT_PANEL_ROOM_MIN_HEIGHT_PX = 680;
 
 function environmentPanelFits(paneWidth: number): boolean {
-  return paneWidth >= ENVIRONMENT_PANEL_ROOM_PANE_WIDTH_PX &&
+  const uiSize = parseFloat(getComputedStyle(document.documentElement).fontSize) || 14.5;
+  const panelWidth = Math.max(
+    ENVIRONMENT_PANEL_WIDTH_PX,
+    Math.ceil((uiSize * ENVIRONMENT_PANEL_WIDTH_PER_UI_PX) / 4) * 4,
+  );
+  return paneWidth >= panelWidth + ENVIRONMENT_PANEL_FLOW_GAP_PX + 2 * 32 + 480 &&
     window.innerHeight >= ENVIRONMENT_PANEL_ROOM_MIN_HEIGHT_PX;
 }
-// Cap on the number of bars rendered in the always-visible rail. The
-// rail is a thin at-a-glance index; if there are more queries than fit,
-// we collapse the tail into a single bar.
-const QUERY_HISTORY_RAIL_MAX_BARS = 20;
 type EnvironmentDialog = "commit" | "pull-request" | null;
 /**
  * True when a turn/start failure means the user has no usable model
@@ -477,7 +482,17 @@ export function App(): JSX.Element {
     moveSplitDraftToGlobalComposer,
     currentPrimaryComposerDraft,
     restorePrimaryComposerDraft,
-  } = useComposerDraftState();
+  } = useComposerDraftState((update) => {
+    setState((current) => {
+      const sessionTabs = current.sessionTabs.map((tab) => {
+        if (tab.kind !== "draft" && tab.kind !== "thread") return tab;
+        const draft = update(tab);
+        return draft === tab ? tab : { ...tab, ...draft };
+      });
+      return sessionTabs.every((tab, index) => tab === current.sessionTabs[index])
+        ? current : { ...current, sessionTabs };
+    });
+  });
   useEffect(() => {
     const addSelection = (event: Event) => {
       const selection = (event as CustomEvent<ResponseSelection>).detail;
@@ -502,6 +517,14 @@ export function App(): JSX.Element {
     window.addEventListener("wuu:add-response-selection", addSelection);
     return () => window.removeEventListener("wuu:add-response-selection", addSelection);
   }, [setComposerSelections, setSplitComposerDrafts]);
+  // Conversation notices link to a settings page, such as Model services
+  // after a rejected credential. The handler only calls state setters, so
+  // the first render's copy stays valid.
+  useEffect(() => {
+    const open = (event: Event): void => openSettingsPage((event as CustomEvent<OpenSettingsDetail>).detail.page);
+    window.addEventListener(OPEN_SETTINGS_EVENT, open);
+    return () => window.removeEventListener(OPEN_SETTINGS_EVENT, open);
+  }, []);
   const [historyMessageEdit, setHistoryMessageEdit] =
     useState<HistoryMessageEditState | undefined>(undefined);
   const fileSelectionDraftOwners = useRef(new Map<string, string>());
@@ -727,6 +750,7 @@ export function App(): JSX.Element {
     openWorkspaceProjectTab,
     syncWorkspaceProjectTab,
     showWorkspaceToolPicker,
+    resumeWorkspaceViewTab,
     focusWorkspaceViewTab,
     closeWorkspaceViewTab,
     closeWorkspaceViewTabsWhere,
@@ -993,10 +1017,8 @@ export function App(): JSX.Element {
     finishViewSwitch,
     cancelViewSwitch,
     isCurrentViewSwitchRequest,
+    getCurrentViewSwitchRequestID,
   } = useViewSwitchState();
-  const queryHistoryRailRef = useRef<HTMLDivElement | null>(null);
-  const [queryHistoryOpen, setQueryHistoryOpen] = useState(false);
-  const queryHistoryCloseTimerRef = useRef<number | undefined>(undefined);
   const windowResizingRef = useRef(false);
   const environmentPanelHasRoomRef = useRef(environmentPanelHasRoom);
   const pendingEnvironmentPanelHasRoomRef = useRef<boolean | undefined>(
@@ -1014,7 +1036,10 @@ export function App(): JSX.Element {
   const appStateRef = useRef<AppState>(initialState);
   const runningThreadReconcileInFlightRef = useRef("");
   const workspaceHasDirtyFilesRef = useRef(false);
-  const lastFocusOutsideWorkspaceRef = useRef<HTMLElement | null>(null);
+  const lastFocusOutsideWorkspaceRef = useRef<{
+    element: HTMLElement;
+    owner: string;
+  } | null>(null);
   const previousWorkspaceFocusModeRef = useRef({
     fullPanel: false,
     open: false,
@@ -1085,6 +1110,7 @@ export function App(): JSX.Element {
     preserveFailedComposerMessage,
   });
   const runtimeVariantByModelRef = useRef(new Map<string, string>());
+  const pendingRuntimeSelectionsRef = useRef(new Map<string, Promise<void>>());
   const cachedThreadPaneHistoryRef = useRef<string[]>([]);
   const cachedConversationPaneThreadsRef = useRef(new Map<string, Thread>());
   const draftSessionTabCounterRef = useRef(0);
@@ -1107,17 +1133,24 @@ export function App(): JSX.Element {
     };
   }, []);
 
-  useEffect(() => {
+  const workspaceFocusOwner = JSON.stringify([
+    state.activeContext ? runtimeContextKey(state.activeContext) : "",
+    state.activeContext?.cwd,
+    state.activeSessionTabID,
+    activeThreadIDForState(state),
+    activeThreadForState(state)?.cwd,
+  ]);
+  useLayoutEffect(() => {
     const handleFocusIn = (event: FocusEvent): void => {
       const target = event.target;
       const workspacePanel = appShellRef.current?.querySelector(".workspace-right-panel");
       if (target instanceof HTMLElement && !workspacePanel?.contains(target)) {
-        lastFocusOutsideWorkspaceRef.current = target;
+        lastFocusOutsideWorkspaceRef.current = { element: target, owner: workspaceFocusOwner };
       }
     };
     document.addEventListener("focusin", handleFocusIn);
     return () => document.removeEventListener("focusin", handleFocusIn);
-  }, []);
+  }, [workspaceFocusOwner]);
 
   useLayoutEffect(() => {
     const fullPanel = rightPanelOpen && rightPanelGlobalized;
@@ -1136,22 +1169,29 @@ export function App(): JSX.Element {
         ?.querySelector<HTMLButtonElement>(
           '.workspace-right-panel [role="tab"][aria-selected="true"]',
         )
-        ?.focus();
+        ?.focus({ preventScroll: true });
       return;
     }
     if ((previous.fullPanel && !fullPanel) || (previous.open && !rightPanelOpen)) {
+      if (viewSwitchPending) return;
       const previousFocus = lastFocusOutsideWorkspaceRef.current;
-      if (previousFocus?.isConnected && !previousFocus.closest("[inert]")) {
-        previousFocus.focus();
+      // Focus return must not reveal old history or follow a reused control into
+      // a different conversation. Reading position remains owned by scrolling.
+      if (
+        previousFocus?.owner === workspaceFocusOwner &&
+        previousFocus.element.isConnected &&
+        !previousFocus.element.closest('[inert], [hidden], [aria-hidden="true"], .conversation-split-pane:not(.active)')
+      ) {
+        previousFocus.element.focus({ preventScroll: true });
         return;
       }
       appShellRef.current
         ?.querySelector<HTMLHeadingElement>(
           ".conversation-title-heading h1",
         )
-        ?.focus();
+        ?.focus({ preventScroll: true });
     }
-  }, [rightPanelGlobalized, rightPanelOpen, sidebarDrawerMode, sidebarDrawerVisible]);
+  }, [rightPanelGlobalized, rightPanelOpen, sidebarDrawerMode, sidebarDrawerVisible, viewSwitchPending, workspaceFocusOwner]);
 
   // Workspace panel (file tree / file preview / terminal / review) root: follows the
   // active thread's own cwd when it differs from state.activeContext — the
@@ -1543,7 +1583,7 @@ export function App(): JSX.Element {
       setEnvironmentDialog(null);
       setPendingFork(undefined);
     },
-    onSelectThread: (threadID) => void activateThread(threadID),
+    onSelectThread: (result, query) => openSearchResult(result, query),
   });
 
   // Cmd/Ctrl+P toggles the conversation search overlay. Mirrors the
@@ -1609,48 +1649,6 @@ export function App(): JSX.Element {
       ? t("app.worktreeRequiresGit")
       : undefined;
   const splitConversation = Boolean(state.thread && state.secondaryThread);
-
-  // Past-query popover control. The rail beside the scrollbar is the hover
-  // target; we close on a short delay so the user can travel from the rail
-  // into the floating list without it snapping shut.
-  function openQueryHistory(): void {
-    if (activeThreadReadOnly || pastQueries.length === 0) {
-      return;
-    }
-    cancelQueryHistoryClose();
-    setQueryHistoryOpen(true);
-  }
-
-  function scheduleQueryHistoryClose(): void {
-    cancelQueryHistoryClose();
-    queryHistoryCloseTimerRef.current = window.setTimeout(() => {
-      queryHistoryCloseTimerRef.current = undefined;
-      setQueryHistoryOpen(false);
-    }, 200);
-  }
-
-  function cancelQueryHistoryClose(): void {
-    if (queryHistoryCloseTimerRef.current !== undefined) {
-      window.clearTimeout(queryHistoryCloseTimerRef.current);
-      queryHistoryCloseTimerRef.current = undefined;
-    }
-  }
-
-  function handleQueryHistorySelect(entry: QueryHistoryEntry): void {
-    cancelQueryHistoryClose();
-    setQueryHistoryOpen(false);
-    // Stop auto-follow before we jump — otherwise the next stream tick
-    // would drag the scroll position back to the bottom and undo the
-    // jump before the user even registers it happened.
-    disableConversationAutoFollow();
-    scrollToUserMessage(entry.turnID, entry.itemID);
-  }
-
-  useEffect(() => {
-    return () => {
-      cancelQueryHistoryClose();
-    };
-  }, []);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -1750,7 +1748,12 @@ export function App(): JSX.Element {
     };
     update();
     window.addEventListener("resize", update);
-    return () => window.removeEventListener("resize", update);
+    // The panel widens with the UI text size, so a size change moves the fit.
+    const stopObservingAppearance = observeAppearance(update);
+    return () => {
+      window.removeEventListener("resize", update);
+      stopObservingAppearance();
+    };
   }, [environmentPanelPaneOffset]);
 
   useLayoutEffect(() => {
@@ -2298,27 +2301,20 @@ export function App(): JSX.Element {
     onOpen: openWorkspaceArtifactTab,
   });
 
-  // Past user queries for the input-box hover popover. We collect them
-  // in turn order, oldest first, so the popover mirrors the order in
-  // which the user asked them. Empty / handoff / image-only items are
-  // skipped — they have nothing to show in a quick-jump list.
-  const pastQueries = useMemo<QueryHistoryEntry[]>(() => {
-    const entries: QueryHistoryEntry[] = [];
+  // Past user queries for the composer's history recall, oldest first. Empty,
+  // handoff and image-only items have no text to recall and are skipped.
+  const composerQueryHistory = useMemo(() => {
+    const queries: string[] = [];
     for (const turn of turns) {
       for (const item of turn.items) {
         const text = queryTextForUserItem(item);
-        if (!text) {
-          continue;
+        if (text) {
+          queries.push(text);
         }
-        entries.push({ turnID: turn.id, itemID: item.id, text });
       }
     }
-    return entries;
+    return queries;
   }, [turns]);
-  const composerQueryHistory = useMemo(
-    () => pastQueries.map((entry) => entry.text),
-    [pastQueries],
-  );
   const showingPrimaryPluginView = usePrimaryPluginViewCover();
   const mainConversationDockVisible =
     Boolean(state.initialized) &&
@@ -2375,6 +2371,9 @@ export function App(): JSX.Element {
     handleConversationScroll,
     enableConversationAutoFollow,
     jumpToLatest: jumpConversationToLatest,
+    jumpToUserMessage,
+    jumpToConversationMessage,
+    captureConversationScrollIntent,
     disableConversationAutoFollow,
     captureConversationScrollPosition,
     restoreConversationScrollPosition,
@@ -2383,6 +2382,8 @@ export function App(): JSX.Element {
     discardSubmittedMessage,
   } = useConversationScrollState({
     activeThreadID,
+    primaryThreadID: state.thread?.id,
+    secondaryThreadID: state.secondaryThread?.id,
     activePane: state.activePane,
     splitConversation,
     primaryTurns: state.thread?.turns,
@@ -2406,12 +2407,6 @@ export function App(): JSX.Element {
       scrollRegion.scrollTop = 0;
     }
   }, [activeManagementTabID, conversationScrollRef]);
-  const conversationRailScrollContainer = useCallback((): HTMLElement | null => {
-    if (splitConversation) {
-      return splitPaneRefs.current[state.activePane] ?? null;
-    }
-    return conversationScrollRef.current;
-  }, [conversationScrollRef, splitConversation, splitPaneRefs, state.activePane]);
   const focusMainComposer = useCallback(
     (
       target: ComposerVariant,
@@ -2580,21 +2575,58 @@ export function App(): JSX.Element {
   // Details actions on subagent completion messages split the conversation
   // and open the child session in the secondary pane. The App owns thread
   // state, so it registers the bridge handler once; message buttons call it.
+  const relatedSplitRequestRef = useRef(0);
   const handleOpenThreadInSplit = useStableCallback((threadID: string) => {
+    const origin = appStateRef.current;
+    const context = origin.activeContext;
+    if (!origin.thread || !context) return;
+    const requestID = ++relatedSplitRequestRef.current;
+    const viewRequestID = getCurrentViewSwitchRequestID();
+    const ownsView = (current = appStateRef.current): boolean =>
+      requestID === relatedSplitRequestRef.current && isCurrentViewSwitchRequest(viewRequestID)
+      && sameRuntimeContext(current.activeContext, context) && current.activeContext?.cwd === context.cwd
+      && current.activeSessionTabID === origin.activeSessionTabID && current.activePane === origin.activePane
+      && current.thread?.id === origin.thread?.id && current.secondaryThread?.id === origin.secondaryThread?.id;
     void (async () => {
       try {
         const thread = requireThread(
           await window.wuu.resumeThread(threadID),
           t("thread.childResumeMissing"),
         );
-        setState((current) => ({
-          ...current,
-          secondaryThread: thread,
-          activePane: current.activePane === "secondary" ? "secondary" : "primary",
-          threads: upsertThread(current.threads, thread),
-        }));
+        // Resume snapshots may still refresh the cache. Only the request's
+        // current view may accept its layout and composer ownership change.
+        if (!ownsView()) return;
+        const current = appStateRef.current;
+        const drafts = composerDraftsRef.current;
+        const primaryDraft = current.secondaryThread
+          ? cloneComposerDraft(drafts.split.primary) : drafts.primary();
+        const secondaryDraft = current.secondaryThread?.id === thread.id
+          ? cloneComposerDraft(drafts.split.secondary) : sessionTabDraftForThread(current, thread.id);
+        const previousSecondaryDraft = cloneComposerDraft(drafts.split.secondary);
+        setSplitComposerDrafts({ primary: primaryDraft, secondary: secondaryDraft });
+        setState((latest) => {
+          if (!ownsView(latest)) return latest;
+          let tabs = latest.sessionTabs;
+          if (latest.secondaryThread && latest.secondaryThread.id !== thread.id) {
+            tabs = ensureSessionTab(tabs, createThreadSessionTab(
+              latest.secondaryThread,
+              resolveThreadRuntimeContext(latest.secondaryThread, latest.projects) ?? context,
+              previousSecondaryDraft,
+            ));
+          }
+          tabs = ensureSessionTab(tabs, createThreadSessionTab(
+            thread, resolveThreadRuntimeContext(thread, latest.projects) ?? context, secondaryDraft,
+          ));
+          return {
+            ...latest,
+            secondaryThread: thread,
+            activeSessionTabID: latest.activePane === "secondary" ? threadSessionTabID(thread.id) : latest.activeSessionTabID,
+            sessionTabs: tabs,
+            threads: upsertThread(latest.threads, thread),
+          };
+        });
       } catch (error) {
-        showErrorToast(
+        if (ownsView()) showErrorToast(
           error instanceof Error ? error.message : t("thread.childLoadFailed"),
         );
       }
@@ -2602,7 +2634,10 @@ export function App(): JSX.Element {
   });
   useEffect(() => {
     setOpenThreadInSplitHandler(handleOpenThreadInSplit);
-    return () => setOpenThreadInSplitHandler(undefined);
+    return () => {
+      relatedSplitRequestRef.current += 1;
+      setOpenThreadInSplitHandler(undefined);
+    };
   }, [handleOpenThreadInSplit]);
   const handleCachedPaneOpenFileDiff = useStableCallback(
     (thread: Thread, selection: TurnFileDiffSelection) => {
@@ -2853,14 +2888,21 @@ export function App(): JSX.Element {
     state.initialized &&
     !poppedOutMode &&
     !rightPanelGlobalized &&
-    !sideThreadPanelVisible,
+    !sideThreadPanelVisible &&
+    // The card describes the conversation's workspace; pages that replace the
+    // conversation have nothing for it to describe.
+    !showingManagementCatalog &&
+    !showingPrimaryPluginView,
   );
   const environmentPanelTargetVisible =
     environmentPanelCanShow &&
     (environmentPanelOpen ||
       (environmentPanelHasRoom &&
         !environmentPanelDismissed &&
-        !emptyConversation));
+        !emptyConversation &&
+        // Wait for repository detection so non-Git folders do not briefly
+        // open and close the panel while their status is still unknown.
+        state.gitStatus?.is_repo === true));
   const environmentPanelVisible = environmentPanelTargetVisible;
   const environmentPanelMotionState: EnvironmentPanelMotionState =
     environmentPanelVisible ? "open" : "closing";
@@ -2900,9 +2942,6 @@ export function App(): JSX.Element {
     "--workspace-right-panel-width": `${clampedWorkspaceRightPanelWidth}px`,
     "--side-thread-width": `${sideThread.width}px`,
     "--conversation-split-left": `${splitLeftPercent}%`,
-    "--environment-panel-width": ENVIRONMENT_PANEL_WIDTH_CSS,
-    "--environment-panel-reserved-width": `${ENVIRONMENT_PANEL_RESERVED_WIDTH_PX}px`,
-    "--environment-panel-edge-gap": "18px",
   } as CSSProperties;
   const pullRequestDisabledReason = pullRequestUnavailableReason(
     state.gitStatus,
@@ -3097,6 +3136,7 @@ export function App(): JSX.Element {
         hideExpandButton={composerNavigation}
         topAccessory={pendingUserQuestionOffer ? (
           <UserQuestionCard
+            key={pendingUserQuestionOffer.request_id}
             request={pendingUserQuestionOffer}
             onAnswer={async (answer) => {
               const prompt = formatUserQuestionSteerPrompt(pendingUserQuestionOffer, answer);
@@ -3337,6 +3377,7 @@ export function App(): JSX.Element {
           else void interrupt();
         }}
         queryHistorySessionID={activeThread?.id ?? currentSessionTab?.id}
+        skillThreadID={activeThread?.id}
         queryHistory={composerQueryHistory}
         requestedHandoffIntent={requestedHandoffIntentForThread(activeThread)}
       />
@@ -3344,9 +3385,9 @@ export function App(): JSX.Element {
     );
   }
 
-  function openProviderSettings(): void {
+  function openSettingsPage(page: SettingsPage): void {
     closeWorkspaceMenus();
-    setSettingsInitialPage("providers");
+    setSettingsInitialPage(page);
     setSettingsOpen(true);
   }
 
@@ -3357,7 +3398,7 @@ export function App(): JSX.Element {
       dedupeKey: "composer:no-model-configured",
       action: {
         label: t("common.goConfigure"),
-        onClick: openProviderSettings,
+        onClick: () => openSettingsPage("providers"),
       },
     });
   }
@@ -3503,6 +3544,16 @@ export function App(): JSX.Element {
     );
   }
 
+  function currentComposerDraftSnapshot() {
+    const current = appStateRef.current;
+    return captureComposerDrafts(
+      current,
+      current.thread && current.secondaryThread
+        ? composerDraftsRef.current.split
+        : composerDraftsRef.current.primary(),
+    );
+  }
+
   const {
     selectWorkspaceForNewThread,
     startNewThreadInWorkspace,
@@ -3514,7 +3565,7 @@ export function App(): JSX.Element {
   } = createWorkspaceRuntimeActions({
     getAppState: () => appStateRef.current,
     setAppState: setState,
-    getPrimaryComposerDraft: currentPrimaryComposerDraft,
+    getComposerDraftSnapshot: currentComposerDraftSnapshot,
     restorePrimaryComposerDraft,
     clearPrimaryComposerDraft: () =>
       restorePrimaryComposerDraft(emptyComposerDraft()),
@@ -3539,7 +3590,7 @@ export function App(): JSX.Element {
     setAppState: setState,
     getActiveThreadID: () => activeThreadID,
     getPendingViewSwitch: () => pendingViewSwitch,
-    getPrimaryComposerDraft: currentPrimaryComposerDraft,
+    getComposerDraftSnapshot: currentComposerDraftSnapshot,
     restorePrimaryComposerDraft,
     resetSplitComposerDrafts: () =>
       setSplitComposerDrafts(initialSplitComposerDrafts()),
@@ -3554,6 +3605,15 @@ export function App(): JSX.Element {
     cancelViewSwitch,
     isCurrentViewSwitchRequest,
     selectRuntimeContext,
+  });
+
+  const openSearchResult = useConversationSearchNavigation({
+    thread: activeThread,
+    switching: viewSwitchPending,
+    activateThread,
+    captureConversationScrollIntent,
+    jumpToConversationMessage,
+    setAppState: setState,
   });
 
   useEffect(() => {
@@ -3623,7 +3683,7 @@ export function App(): JSX.Element {
   } = createSessionTabActions({
     getAppState: () => appStateRef.current,
     setAppState: setState,
-    getPrimaryComposerDraft: currentPrimaryComposerDraft,
+    getComposerDraftSnapshot: currentComposerDraftSnapshot,
     restorePrimaryComposerDraft,
     clearPrimaryComposerDraft: () =>
       restorePrimaryComposerDraft(emptyComposerDraft()),
@@ -3819,7 +3879,7 @@ export function App(): JSX.Element {
     }
   }
 
-  function trySkillFromCatalog(skill: { name: string }): void {
+  function trySkillFromCatalog(skill: SkillSummary): void {
     const origin = document.activeElement;
     const context = appStateRef.current.activeContext;
     if (!context) {
@@ -3830,7 +3890,7 @@ export function App(): JSX.Element {
       setComposerImages([]);
       setComposerFiles([]);
       setComposerSelections([]);
-      setPrompt(`/${skill.name} `);
+      setPrompt(composerSkillPrompt(skill));
       requestMainComposerFocus("hero", origin);
     });
   }
@@ -3903,11 +3963,13 @@ export function App(): JSX.Element {
     archiveThread,
     unarchiveThread,
     deleteThread,
+    deleteArchivedThread,
   } = createThreadMutationActions({
     getAppState: () => appStateRef.current,
     setAppState: setState,
-    getActiveThreadID: () => activeThreadID,
     nextDraftSessionTab,
+    restorePrimaryComposerDraft,
+    getSplitComposerDrafts: () => composerDraftsRef.current.split,
     clearPrimaryComposerDraft: () =>
       restorePrimaryComposerDraft(emptyComposerDraft()),
     resetSplitComposerDrafts: () =>
@@ -3916,6 +3978,15 @@ export function App(): JSX.Element {
     updateCachedSidebarThreadPinned,
     removeCachedSidebarThread,
     clearThreadPendingComposerMessages,
+  });
+
+  const archiveDeletion = useArchiveDeletion(deleteArchivedThread, (archived) => {
+    // Other workspaces keep independent live-sidebar caches. Reconcile them
+    // even if the freshly discovered archive is followed by Cancel.
+    for (const thread of archived) removeCachedSidebarThread(thread.id);
+    setState(current => ({ ...current,
+      threads: mergeListedThreads(current.threads, [...current.threads.filter(thread => !thread.archived), ...archived]),
+    }));
   });
 
   function commitConversationTitle(nextTitle: string): void {
@@ -3968,6 +4039,7 @@ export function App(): JSX.Element {
     clearThreadPendingComposerMessages,
     requestThreadStop,
     variantByModel: runtimeVariantByModelRef.current,
+    pendingRuntimeSelections: pendingRuntimeSelectionsRef.current,
   });
 
   const {
@@ -3980,7 +4052,7 @@ export function App(): JSX.Element {
     getAppState: () => appStateRef.current,
     setAppState: setState,
     getActiveTitle: () => activeTitle,
-    getPrimaryComposerDraft: currentPrimaryComposerDraft,
+    getComposerDraftSnapshot: currentComposerDraftSnapshot,
     setSplitComposerDrafts,
     restorePrimaryComposerDraft,
     
@@ -4029,6 +4101,7 @@ export function App(): JSX.Element {
     enableConversationAutoFollow,
     rememberConversationScrollForEdit,
     restoreConversationScrollForEdit,
+    jumpToUserMessage,
     threadHasPendingComposerMessages,
     sendComposerMessageToThread,
     worktreeForkNonGitReason: t("app.worktreeRequiresGit"),
@@ -4317,9 +4390,8 @@ export function App(): JSX.Element {
     const pendingKey = () => admission?.thread?.id ?? queueKey;
     const text = message.text.trim();
     const imageCount = message.images.length;
-    const files = inputFilesFromComposer(message.files);
     if (
-      (!text && imageCount === 0 && files.length === 0) ||
+      (!text && imageCount === 0 && message.files.length === 0) ||
       (!targetThread && !admission) ||
       targetThread?.read_only ||
       !currentState.activeContext ||
@@ -4352,7 +4424,10 @@ export function App(): JSX.Element {
         return !stillPending;
       }
       const targetContext = resolveThreadRuntimeContext(targetThread, currentState.projects);
-      const encodedImages = await awaitComposerImages(message.images);
+      const [encodedImages, encodedFiles] = await Promise.all([
+        awaitComposerImages(message.images), awaitComposerFiles(message.files),
+      ]);
+      const files = inputFilesFromComposer(encodedFiles);
       if (
         !pendingComposerMessagesByThreadRef.current[targetThread.id]?.queued.some(
           (candidate) => candidate.id === message.id,
@@ -4389,6 +4464,7 @@ export function App(): JSX.Element {
                 ...candidate,
                 id: result.queued.id || message.id,
                 images: encodedImages,
+                files: encodedFiles,
                 operationState: undefined,
               }
             : candidate,
@@ -4429,10 +4505,9 @@ export function App(): JSX.Element {
     const currentState = appStateRef.current;
     const targetContext = targetThread ? resolveThreadRuntimeContext(targetThread, currentState.projects) : undefined;
     const text = message.text.trim();
-    const files = inputFilesFromComposer(message.files);
     const turnID = targetThread ? activeTurnIDForThread(targetThread) : undefined;
     if (
-      (!text && message.images.length === 0 && files.length === 0) ||
+      (!text && message.images.length === 0 && message.files.length === 0) ||
       !targetThread ||
       targetThread.read_only ||
       !turnID ||
@@ -4450,7 +4525,10 @@ export function App(): JSX.Element {
       ],
     }));
     try {
-      const encodedImages = await awaitComposerImages(message.images);
+      const [encodedImages, encodedFiles] = await Promise.all([
+        awaitComposerImages(message.images), awaitComposerFiles(message.files),
+      ]);
+      const files = inputFilesFromComposer(encodedFiles);
       if (
         !pendingComposerMessagesByThreadRef.current[targetThread.id]?.guides.some(
           (candidate) => candidate.id === message.id,
@@ -4481,7 +4559,7 @@ export function App(): JSX.Element {
         ...previous,
         guides: previous.guides.map((candidate) =>
           candidate.id === message.id
-            ? { ...candidate, images: encodedImages, operationState: undefined }
+            ? { ...candidate, images: encodedImages, files: encodedFiles, operationState: undefined }
             : candidate,
         ),
       }));
@@ -4522,9 +4600,8 @@ export function App(): JSX.Element {
     const currentState = appStateRef.current;
     const text = message.text.trim();
     const imageCount = message.images.length;
-    const files = inputFilesFromComposer(message.files);
     if (
-      (!text && imageCount === 0 && files.length === 0) ||
+      (!text && imageCount === 0 && message.files.length === 0) ||
       !currentState.activeContext ||
       !currentState.initialized ||
       targetThread?.read_only ||
@@ -4733,8 +4810,11 @@ export function App(): JSX.Element {
         ),
       );
       clearPendingThreadCreation(optimisticTurn.id);
-      const encodedImages = await Promise.race([awaitComposerImages(message.images), admission.cancelled]);
-      if (!encodedImages || admission.stopRequested) {
+      const attachments = await Promise.race([
+        Promise.all([awaitComposerImages(message.images), awaitComposerFiles(message.files)]),
+        admission.cancelled,
+      ]);
+      if (!attachments || admission.stopRequested) {
         const settle = (current: AppState) => updateThreadByID(current, thread.id,
           (value) => interruptOptimisticTurn(value, optimisticTurn.id, Date.now()),
           activeThreadIDForState(current) === thread.id ? { running: false } : {});
@@ -4743,7 +4823,9 @@ export function App(): JSX.Element {
         return true;
       }
       admission.sent = true;
+      const [encodedImages, encodedFiles] = attachments;
       const images = inputImagesFromComposer(encodedImages);
+      const files = inputFilesFromComposer(encodedFiles);
       const result = await window.wuu.startTurn(
         thread.id,
         text,
@@ -4980,6 +5062,9 @@ export function App(): JSX.Element {
               };
             })}
           onUnarchiveThread={(thread) => void unarchiveThread(thread)}
+          archiveDeletion={archiveDeletion}
+          onDeleteAllArchivedThreads={() => void archiveDeletion.removeAll()}
+          onRetryArchiveDeletion={() => void archiveDeletion.retry()}
         />
       </>
     );
@@ -4994,7 +5079,9 @@ export function App(): JSX.Element {
           engines={engineInventory}
           onUpdateExtensionPackage={updateExtensionPackage}
           onSaveProvider={async (provider, model, connection) => {
-            await updateRuntimeSettings(provider, model, undefined, connection, undefined);
+            // Setup writes workspace defaults like Model services; a restored
+            // conversation's ID would make the core refuse the connection.
+            await updateProviderSettings(provider, model, undefined, connection);
           }}
           onUpdateEngines={updateEngineInventory}
           onComplete={async () => {
@@ -5312,7 +5399,7 @@ export function App(): JSX.Element {
           <ConversationTitleActions
             state={state}
             compactNavigation={compactNavigation}
-            pluginPageVisible={showingPrimaryPluginView}
+            pluginPageVisible={showingPrimaryPluginView || showingManagementCatalog}
             onStartNewThread={startNewThreadWithComposerFocus}
             environmentToggleRef={environmentToggleRef}
             environmentPanelVisible={environmentPanelVisible}
@@ -5323,20 +5410,6 @@ export function App(): JSX.Element {
         </header>
 
         )}
-        {/* Unmount the hidden rail so compact scrolling does not measure turns
-            or update navigation state for controls that cannot be used. */}
-        {ENABLE_CONVERSATION_TURN_RAIL && !compactNavigation ? (
-          <ConversationTurnRail
-            turns={turns}
-            activeTurnID={turns[turns.length - 1]?.id}
-            scrollContainerRef={conversationScrollRef}
-            getScrollContainer={conversationRailScrollContainer}
-            onWheelScrollAway={disableConversationAutoFollow}
-            onDragScrollAway={disableConversationAutoFollow}
-            onSelectQueryHistory={handleQueryHistorySelect}
-          />
-        ) : null}
-
         <ConversationSidePanels
           state={state}
           environmentPanelVisible={environmentPanelVisible}
@@ -5387,6 +5460,7 @@ export function App(): JSX.Element {
                 onOpenFile={openWorkspaceFile}
                 running={sideThread.entry.streaming}
                 disabledReason={sideThread.sendDisabledReason}
+                error={sideThread.requestError}
                 queryHistorySessionID={
                   sideThread.entry.summary?.side_thread_id ?? `side:${activeThreadID}`
                 }
@@ -5428,16 +5502,6 @@ export function App(): JSX.Element {
               />
             ) : (
               <>
-                {!activeThreadReadOnly ? (
-                  <QueryHistoryRail
-                    entries={pastQueries}
-                    maxBars={QUERY_HISTORY_RAIL_MAX_BARS}
-                    active={queryHistoryOpen}
-                    railRef={queryHistoryRailRef}
-                    onHoverStart={openQueryHistory}
-                    onHoverEnd={scheduleQueryHistoryClose}
-                  />
-                ) : null}
                 {splitConversation && state.thread && state.secondaryThread ? (
                   <ConversationSplitLayoutRenderer
                     state={state}
@@ -5638,6 +5702,7 @@ export function App(): JSX.Element {
           onOpenTool={openWorkspaceTool}
           onOpenPluginTool={openWorkspacePluginTool}
           onShowTools={showWorkspaceToolPicker}
+          onResumeTab={resumeWorkspaceViewTab}
           onCloseTab={closeWorkspaceViewTab}
           onDirtyFileTabsChange={rememberWorkspaceDirtyFiles}
           onReorderTabs={reorderWorkspaceViewTabs}
@@ -5709,31 +5774,6 @@ export function App(): JSX.Element {
           onCancel={() => setPendingFork(undefined)}
           onChoose={choosePendingFork}
         />
-      ) : null}
-      {queryHistoryOpen &&
-      !activeThreadReadOnly &&
-      pastQueries.length > 0 ? (
-        <FloatingMenuPortal
-          anchorRef={queryHistoryRailRef}
-          owner="composer-query-history"
-          placement="middle"
-          align="right"
-          crossAxisOffset={-8}
-          width={ENVIRONMENT_PANEL_WIDTH_PX}
-        >
-          <div
-            onMouseEnter={cancelQueryHistoryClose}
-            onMouseLeave={scheduleQueryHistoryClose}
-            style={{
-              width: `min(${ENVIRONMENT_PANEL_WIDTH_CSS}, calc(100vw - 32px))`,
-            }}
-          >
-            <QueryHistoryPopover
-              entries={pastQueries}
-              onSelect={handleQueryHistorySelect}
-            />
-          </div>
-        </FloatingMenuPortal>
       ) : null}
       <DesktopWorkbench
         host={desktopPluginHost}

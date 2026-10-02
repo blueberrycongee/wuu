@@ -1,5 +1,5 @@
 import { ArrowRight, Circle, CircleDot, LoaderCircle, Pencil, Square, SquareCheck, X } from "./WuuIcons";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   UserQuestionAnswer,
   UserQuestion,
@@ -72,6 +72,16 @@ function approvalOptionText(
   return { label: t(keys.label), description: t(keys.description) };
 }
 
+/** An approval's detail is the command, file path or permission list it asks
+ * about, so it keeps its own lines in code type. */
+function QuestionDetail({ question }: { question: UserQuestion }): JSX.Element {
+  return (
+    <p className={`user-question-detail${approvalKind(question) ? " is-code" : ""}`}>
+      {question.detail}
+    </p>
+  );
+}
+
 type Props = {
   request: UserQuestionRequest;
   onAnswer: (answer: UserQuestionAnswer) => Promise<void>;
@@ -90,7 +100,10 @@ export function UserQuestionCard({ request, onAnswer, onCancel, onHold, onCustom
   const [remainingSeconds, setRemainingSeconds] = useState<number | null>(null);
   const [drafting, setDrafting] = useState(false);
   const offer = request.mode === "offer";
-  const offerQuestion = offer ? request.questions[0] : undefined;
+  // A single-question offer is a compact choice. Several questions need every
+  // answer collected before submitting, so they use the full form.
+  const offerQuestion = offer && request.questions.length === 1 ? request.questions[0] : undefined;
+  const held = useRef(false);
   const offerLead = offerQuestion
     ? approvalQuestionText(request, offerQuestion, t)?.header
       || offerQuestion.header
@@ -105,7 +118,7 @@ export function UserQuestionCard({ request, onAnswer, onCancel, onHold, onCustom
 
   useEffect(() => {
     if (!offer || !request.expires_at || submitting || drafting) {
-      if (drafting || submitting || !offer) setRemainingSeconds(null);
+      setRemainingSeconds(null);
       return;
     }
     const expiresAt = Date.parse(request.expires_at);
@@ -129,11 +142,13 @@ export function UserQuestionCard({ request, onAnswer, onCancel, onHold, onCustom
   }, [drafting, offer, onCancel, request.expires_at, request.request_id, submitting]);
 
   function keepOffer(): void {
-    if (!offer || submitting) return;
+    if (!offer || submitting || held.current) return;
+    held.current = true;
     void onHold?.();
   }
 
   function toggle(questionID: string, label: string, multiSelect: boolean): Record<string, string[]> {
+    if (!offerQuestion) keepOffer();
     const values = selected[questionID] ?? [];
     const next = multiSelect
       ? values.includes(label)
@@ -177,7 +192,7 @@ export function UserQuestionCard({ request, onAnswer, onCancel, onHold, onCustom
 
   async function chooseOption(questionID: string, label: string, multiSelect: boolean): Promise<void> {
     const nextSelected = toggle(questionID, label, multiSelect);
-    if (offer && !multiSelect) {
+    if (offerQuestion && !multiSelect) {
       await submit(nextSelected);
     }
   }
@@ -218,12 +233,16 @@ export function UserQuestionCard({ request, onAnswer, onCancel, onHold, onCustom
     });
   }
 
-  if (offer && offerQuestion) {
+  const countdown = remainingSeconds != null && remainingSeconds > 0
+    ? t("userQuestion.countdown", { seconds: remainingSeconds })
+    : null;
+
+  if (offerQuestion) {
     const approvalText = approvalQuestionText(request, offerQuestion, t);
     const header = approvalText?.header || offerQuestion.header;
     const prompt = approvalText?.question || offerQuestion.question;
-    const countdown = remainingSeconds != null && remainingSeconds > 0
-      ? t("userQuestion.countdown", { seconds: remainingSeconds })
+    const skipCountdown = remainingSeconds != null && remainingSeconds > 0
+      ? t("userQuestion.skipCountdown", { seconds: remainingSeconds })
       : null;
     return (
       <section
@@ -231,7 +250,7 @@ export function UserQuestionCard({ request, onAnswer, onCancel, onHold, onCustom
         className="user-question-card user-question-card-offer"
       >
         <div className="user-question-offer-title">
-          <p className="user-question-prompt">{header || prompt}</p>
+          {header ? <p className="user-question-header">{header}</p> : <p className="user-question-prompt">{prompt}</p>}
           <button
             aria-label={t("userQuestion.cancel")}
             className="user-question-close"
@@ -243,8 +262,8 @@ export function UserQuestionCard({ request, onAnswer, onCancel, onHold, onCustom
             {pendingAction === "close" ? <LoaderCircle className="control-busy-icon" aria-hidden="true" /> : <X />}
           </button>
         </div>
-        {header ? <p className="user-question-body">{prompt}</p> : null}
-        {offerQuestion.detail ? <p className="user-question-detail">{offerQuestion.detail}</p> : null}
+        {header ? <p className="user-question-prompt">{prompt}</p> : null}
+        {offerQuestion.detail ? <QuestionDetail question={offerQuestion} /> : null}
         {offerQuestion.options?.length ? (
           <div
             className="user-question-options user-question-options-offer"
@@ -322,7 +341,7 @@ export function UserQuestionCard({ request, onAnswer, onCancel, onHold, onCustom
           )}
           {drafting ? (
             <button
-              className="user-question-submit"
+              className="settings-button settings-button-primary user-question-submit"
               aria-busy={pendingAction === "custom"}
               disabled={submitting || !(custom[offerQuestion.id]?.trim())}
               onClick={() => void submitOfferCustom()}
@@ -333,14 +352,14 @@ export function UserQuestionCard({ request, onAnswer, onCancel, onHold, onCustom
             </button>
           ) : (
             <button
-              className="user-question-skip"
+              className="settings-button user-question-skip"
               aria-busy={pendingAction === "skip"}
               disabled={submitting}
               onClick={() => cancelQuestion("skip")}
               type="button"
             >
               {pendingAction === "skip" && <LoaderCircle className="control-busy-icon" aria-hidden="true" />}
-              <span>{countdown ?? t("userQuestion.skip")}</span>
+              <span>{skipCountdown ?? t("userQuestion.skip")}</span>
             </button>
           )}
         </div>
@@ -351,7 +370,7 @@ export function UserQuestionCard({ request, onAnswer, onCancel, onHold, onCustom
   return (
     <section
       aria-label={t("userQuestion.kicker")}
-      className="user-question-card"
+      className={`user-question-card${offer ? " user-question-card-offer user-question-card-form" : ""}`}
     >
       <p className="user-question-kicker">{t("userQuestion.kicker")}</p>
       {request.questions.map((question) => {
@@ -361,13 +380,9 @@ export function UserQuestionCard({ request, onAnswer, onCancel, onHold, onCustom
         const lead = header || prompt;
         return (
           <div className="user-question-field" key={question.id}>
-            <p className="user-question-prompt">{lead}</p>
-            {header ? (
-              <p className="user-question-body">{prompt}</p>
-            ) : null}
-            {question.detail ? (
-              <p className="user-question-detail">{question.detail}</p>
-            ) : null}
+            {header ? <p className="user-question-header">{header}</p> : null}
+            <p className="user-question-prompt">{prompt}</p>
+            {question.detail ? <QuestionDetail question={question} /> : null}
             {question.options?.length ? (
               <div
                 className="user-question-options"
@@ -411,13 +426,14 @@ export function UserQuestionCard({ request, onAnswer, onCancel, onHold, onCustom
                 })}
               </div>
             ) : null}
-            {question.allow_custom && !offer ? (
+            {question.allow_custom ? (
               <input
                 aria-label={t("userQuestion.customAriaLabel", { question: lead })}
                 className="user-question-custom"
                 disabled={submitting}
                 onChange={(event) => {
                   const value = event.currentTarget.value;
+                  keepOffer();
                   setCustom((current) => ({ ...current, [question.id]: value }));
                 }}
                 placeholder={t("userQuestion.customPlaceholder")}
@@ -429,8 +445,9 @@ export function UserQuestionCard({ request, onAnswer, onCancel, onHold, onCustom
       })}
       <div className="user-question-actions">
         {error ? <span className="user-question-error" role="alert">{error}</span> : null}
+        {countdown ? <span role="timer">{countdown}</span> : null}
         <button
-          className="user-question-cancel"
+          className="settings-button settings-button-ghost user-question-cancel"
           aria-busy={pendingAction === "close"}
           disabled={submitting}
           onClick={() => cancelQuestion("close")}
@@ -440,7 +457,7 @@ export function UserQuestionCard({ request, onAnswer, onCancel, onHold, onCustom
           <span>{t("userQuestion.cancel")}</span>
         </button>
         <button
-          className="user-question-submit"
+          className="settings-button settings-button-primary user-question-submit"
           aria-busy={pendingAction === "answer"}
           disabled={!complete || submitting}
           onClick={() => void submit()}

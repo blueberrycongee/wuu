@@ -100,7 +100,7 @@ func buildToolInfoForArgs(tool Tool, exposure ToolExposure, argsJSON string) Too
 }
 
 func (t *Toolkit) toolExposure(name string) ToolExposure {
-	if t.isToolDisabled(name) {
+	if t.IsToolDisabled(name) {
 		return ToolExposureHidden
 	}
 	// The bash-first surface collapses every command entry point into a

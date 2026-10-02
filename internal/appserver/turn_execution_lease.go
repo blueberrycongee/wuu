@@ -4,11 +4,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/session"
 )
 
@@ -83,11 +85,28 @@ func (s *Server) tryAcquireThreadExecutionLeaseLocked(th *threadState) (bool, er
 		}
 		return false, errors.New("session directory is required for durable thread execution")
 	}
-	lease, acquired, err := session.TryAcquireThreadExecutionLease(s.rt.SessionDir, th.ID)
+	// Embedded runtimes may have no configuration file; they retain the
+	// default policy. A configured but malformed file still rejects admission.
+	cfg := config.Config{}
+	var err error
+	if s.rt.ConfigLoadMode != runtime.ConfigLoadFile || strings.TrimSpace(s.rt.ConfigPath) != "" {
+		cfg, _, err = s.rt.LoadEffectiveConfig()
+	}
+	if err != nil && !errors.Is(err, os.ErrNotExist) && !errors.Is(err, config.ErrConfigNotFound) {
+		th.admissionReserved = false
+		if newPluginLease {
+			th.releasePluginGenerationExecutionLeaseLocked()
+		}
+		return false, fmt.Errorf("load worker admission policy: %w", err)
+	}
+	lease, acquired, err := session.TryAcquireThreadExecutionLeaseWithProjectLimit(s.rt.SessionDir, th.ID, cfg.Agent.ProjectMaxParallelValue())
 	if err != nil {
 		th.admissionReserved = false
 		if newPluginLease {
 			th.releasePluginGenerationExecutionLeaseLocked()
+		}
+		if errors.Is(err, session.ErrProjectWorkerCapacity) {
+			return false, errors.Join(errRetryableTurnAdmission, err)
 		}
 		return false, fmt.Errorf("acquire execution lease for thread %q: %w", th.ID, err)
 	}
@@ -122,6 +141,19 @@ func (s *Server) refreshDurableThreadHistoryLocked(th *threadState) error {
 		loaded, err = s.loadPersistedThreadSnapshot(th.ID)
 		if err != nil {
 			return fmt.Errorf("reload repaired state for thread %q: %w", th.ID, err)
+		}
+	}
+	if loaded.workspaceRelocated {
+		root, id, err := s.sessionWorkspace(loaded.metadata)
+		if err != nil {
+			return err
+		}
+		if !s.ownsSessionWorkspace(root, id) {
+			return errors.New("session must execute in its relocated project runtime")
+		}
+		m := loaded.metadata
+		if _, err := session.UpdateWorkspaceBinding(s.rt.SessionDir, th.ID, m.CWD, m.WorktreePath, m.WorktreeBaseHEAD, m.WorktreeBaseRepo); err != nil {
+			return err
 		}
 	}
 	// Durable state is authoritative once execution ownership is ours. A

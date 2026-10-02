@@ -4,11 +4,16 @@ import { LightweightStreamingText } from "./LightweightStreamingText";
 import {
   buildToolActivitySections,
   summarizeToolActivity,
+  parseJSONRecord,
+  stringValue,
+  readableToolActivityName,
 } from "./ToolActivityHelpers";
+import { ChevronDown } from "./WuuIcons";
 import { ToolActivityPresenter } from "./plugins/ToolActivityPresenter";
 import { ToolActivityMarker } from "./ToolActivityMarker";
 import { useI18n } from "./i18n";
 import { RemoteItemContent } from "./RemoteItemContent";
+import { RichCodeBlock } from "./RichContent";
 import { collectTurnArtifacts, TurnInlineArtifactOutputs, TurnEndArtifactOutputs } from "./ArtifactOutputs";
 import { ENABLE_TURN_ARTIFACT_SUMMARY } from "./FeatureFlags";
 export type { JsonRecord } from "./ToolActivityHelpers";
@@ -25,11 +30,15 @@ const TOOL_ACTIVITY_REVEAL_INTERVAL_MS = 85;
 
 export function ToolActivityTimeline({
   items,
+  cwd,
   revealItems = false,
   streaming = false,
+  showInspectionPreviews = false,
 }: {
   items: ThreadItem[];
+  cwd?: string;
   revealItems?: boolean;
+  showInspectionPreviews?: boolean;
   /**
    * When true, in-progress tool rows fake-stream their summary line at
    * a deliberate cadence. Flips to false the moment an agent_message in
@@ -73,8 +82,10 @@ export function ToolActivityTimeline({
       {items.slice(0, visibleCount).map((item) => (
         <ToolActivityTimelineItem
           item={item}
+          cwd={cwd}
           key={item.id}
           streaming={streaming && item.status === "in_progress"}
+          showInspectionPreviews={showInspectionPreviews}
         />
       ))}
     </div>
@@ -83,14 +94,21 @@ export function ToolActivityTimeline({
 
 const ToolActivityTimelineItem = memo(function ToolActivityTimelineItem({
   item,
+  cwd,
   streaming,
+  showInspectionPreviews,
 }: {
   item: ThreadItem;
+  cwd?: string;
   streaming: boolean;
+  showInspectionPreviews: boolean;
 }): JSX.Element {
+  const inspections = showInspectionPreviews
+    ? collectTurnArtifacts({ items: [item] }).filter(artifact => artifact.foldPreview) : [];
   const fallback = (
     <div className="activity-timeline-item">
       <ToolActivityRow items={[item]} streaming={streaming} />
+      {inspections.length > 0 ? <TurnInlineArtifactOutputs artifacts={inspections} cwd={cwd} inspectionExpanded /> : null}
     </div>
   );
   return (
@@ -98,14 +116,42 @@ const ToolActivityTimelineItem = memo(function ToolActivityTimelineItem({
   );
 });
 
-// A single tool activity row is one line of plain prose. We no longer render
+function ProgramToolRecord({ item, code }: { item: ThreadItem; code: string }): JSX.Element {
+  const [open, setOpen] = useState(false);
+  const description = stringValue(parseJSONRecord(item.arguments), "description");
+  return (
+    <details
+      className="program-tool-record activity-group"
+      data-status={item.status}
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+    >
+      <summary className="activity-row activity-summary">
+        <ToolActivityMarker kind="command" running={item.status === "in_progress"} />
+        <span className="activity-copy program-tool-label">
+          <span className="activity-summary-text">{description || readableToolActivityName(item)}</span>
+        </span>
+        <ChevronDown className="program-tool-chevron icon-sm" aria-hidden="true" />
+      </summary>
+      {open ? (
+        <div className="program-tool-details">
+          <RichCodeBlock code={code} displayedCode={code} language="typescript" />
+          {item.error ? <p>{item.error}</p> : null}
+        </div>
+      ) : null}
+    </details>
+  );
+}
+
+// Ordinary tool activity rows are one line of plain prose. We no longer render
 // a separate collapsible "details" block: in nearly every case
 // (list_files, read_file, grep, run_shell with a readable label) the
 // toggle summary and the detail command text were the same string, so
 // the previous toggle+details pair read as the same tool call shown
 // twice. Tool failures remain available in debug data, but are not promoted
 // into the conversation: users care about the agent's eventual outcome, not
-// whether every intermediate attempt completed.
+// whether every intermediate attempt completed. Workspace switches expose their
+// destination and failure inside a disclosure because they change later tool roots.
+// PTC programs show their supplied description and disclose source on demand.
 export function ToolActivityRow({
   items,
   streaming = false,
@@ -121,9 +167,40 @@ export function ToolActivityRow({
   streaming?: boolean;
 }): JSX.Element {
   // Locale changes must reach rows inside the memoized activity timeline.
-  useI18n();
+  const { t } = useI18n();
   const summary = summarizeToolActivity(items);
   const sections = buildToolActivitySections(items);
+
+  // Workspace changes retain the destination of this invocation. Reading the
+  // thread's current worktree here would rewrite history after the next switch.
+  if (items.length === 1 && items[0].name === "set_session_workspace") {
+    const item = items[0];
+    const destination = stringValue(parseJSONRecord(item.result), "root")
+      ?? stringValue(parseJSONRecord(item.arguments), "root");
+    return (
+      <details className="workspace-tool-record activity-group" data-status={item.status}>
+        <summary className="activity-row activity-summary">
+          <ToolActivityMarker kind="command" running={summary.running} />
+          <span className="activity-copy">{t(summary.failed
+            ? "toolActivity.workspaceFailed"
+            : summary.running ? "toolActivity.workspaceSwitching" : "toolActivity.workspaceSwitched")}</span>
+          <ChevronDown className="workspace-tool-chevron icon-sm" aria-hidden="true" />
+        </summary>
+        <div className="workspace-tool-details">
+          {destination ? <code>{destination}</code> : null}
+          {item.error ? <p>{item.error}</p> : null}
+        </div>
+      </details>
+    );
+  }
+
+  if (items.length === 1 && items[0].name === "run_code") {
+    const code = parseJSONRecord(items[0].arguments)?.code;
+    // Keep source verbatim; stringValue trims meaningful indentation and newlines.
+    if (typeof code === "string" && code.trim()) {
+      return <ProgramToolRecord key={items[0].id} item={items[0]} code={code} />;
+    }
+  }
 
   // Each section carries both an action verb (title) and a target (detail).
   // Concatenate them so the rendered row reads as "动词 目标" — without
@@ -177,7 +254,7 @@ export function ToolActivityRow({
 }
 
 function RemoteToolResult({ item, complete }: { item: ThreadItem; complete: boolean }): JSX.Element {
-  const artifacts = complete ? collectTurnArtifacts({id:item.id,items:[item],items_view:"full",status:"completed"}) : [];
+  const artifacts = complete ? collectTurnArtifacts({ items: [item] }) : [];
   const text = item.result || item.text || item.result_detail?.content?.filter(part => part.type === "text").map(part => part.text ?? "").join("\n") || item.arguments || "";
   return <>
     <pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", maxHeight: 480, overflowY: "auto" }}>{text}</pre>

@@ -29,7 +29,7 @@ token, so anything you do not override keeps the built-in appearance:
 
 The contract defines **82 public tokens** (**7**
 legacy compatibility aliases) and **16 syntax-highlighting
-tokens**; **53** of them are currently wired into host surfaces.
+tokens**; **54** of them are currently wired into host surfaces.
 "Wired" means host styles already reference the token and overrides take effect;
 "Not wired (reserved)" means the token is declared but the host does not consume
 it yet, so overrides do not change anything.
@@ -68,7 +68,7 @@ it yet, so overrides do not change anything.
 | `--wuu-control-secondary-background` | Secondary control background | Wired |
 | `--wuu-control-field-background` | Input field background | Wired |
 | `--wuu-control-icon-background` | Icon button background | Wired |
-| `--wuu-badge-neutral-background` | Neutral badge background | Wired |
+| `--wuu-badge-neutral-background` | Neutral badge background | Not wired (reserved) |
 | `--wuu-inline-code-background` | Inline code background | Wired |
 | `--wuu-message-user-background` | User message bubble background | Wired |
 | `--wuu-message-user-color` | User message text color | Wired |
@@ -99,8 +99,8 @@ it yet, so overrides do not change anything.
 | --- | --- | --- |
 | `--wuu-font-family-ui` | UI font family | Not wired (reserved) |
 | `--wuu-font-family-mono` | Monospace font family (code) | Not wired (reserved) |
-| `--wuu-font-size-ui` | UI font size | Not wired (reserved) |
-| `--wuu-font-size-body` | Font size for body text such as messages | Not wired (reserved) |
+| `--wuu-font-size-ui` | UI font size | Wired |
+| `--wuu-font-size-body` | Font size for body text such as messages | Wired |
 | `--wuu-line-height-body` | Body text line height | Not wired (reserved) |
 
 ### Spacing

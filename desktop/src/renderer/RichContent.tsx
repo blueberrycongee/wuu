@@ -385,7 +385,7 @@ function markdownComponents(
   ])) as Components;
 }
 
-function RichCodeBlock({
+export function RichCodeBlock({
   code,
   displayedCode,
   language

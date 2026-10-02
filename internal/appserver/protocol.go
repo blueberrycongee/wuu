@@ -9,6 +9,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/capability"
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/execution"
+	"github.com/blueberrycongee/wuu/internal/executionenv"
 	"github.com/blueberrycongee/wuu/internal/extensions"
 	"github.com/blueberrycongee/wuu/internal/insight"
 	"github.com/blueberrycongee/wuu/internal/modelroles"
@@ -202,13 +203,14 @@ type ConfigErrorNotification struct {
 }
 
 type ConfigChangedNotification struct {
-	Provider     string                       `json:"provider"`
-	Model        string                       `json:"model"`
-	Effort       string                       `json:"effort,omitempty"`
-	Variant      string                       `json:"variant,omitempty"`
-	ModelRoles   []ModelRoleSummary           `json:"model_roles,omitempty"`
-	ModelAliases map[string]ModelAliasSummary `json:"model_aliases,omitempty"`
-	Providers    []ProviderSummary            `json:"providers,omitempty"`
+	Provider      string                       `json:"provider"`
+	Model         string                       `json:"model"`
+	Effort        string                       `json:"effort,omitempty"`
+	Variant       string                       `json:"variant,omitempty"`
+	ModelRoles    []ModelRoleSummary           `json:"model_roles,omitempty"`
+	ModelAliases  map[string]ModelAliasSummary `json:"model_aliases,omitempty"`
+	ProjectModels config.ProjectModelsConfig   `json:"project_models,omitempty"`
+	Providers     []ProviderSummary            `json:"providers,omitempty"`
 }
 
 type Request struct {
@@ -293,6 +295,7 @@ type InitializeResult struct {
 	ToolSurface        *ToolSurfaceSummary          `json:"tool_surface,omitempty"`
 	ModelRoles         []ModelRoleSummary           `json:"model_roles,omitempty"`
 	ModelAliases       map[string]ModelAliasSummary `json:"model_aliases,omitempty"`
+	ProjectModels      config.ProjectModelsConfig   `json:"project_models,omitempty"`
 	Providers          []ProviderSummary            `json:"providers,omitempty"`
 	AdvancedSettings   AdvancedSettingsSummary      `json:"advanced_settings"`
 	GeneralSettings    GeneralSettingsSummary       `json:"general_settings"`
@@ -422,6 +425,7 @@ type ConfigReadResult struct {
 	ToolSurface        *ToolSurfaceSummary          `json:"tool_surface,omitempty"`
 	ModelRoles         []ModelRoleSummary           `json:"model_roles,omitempty"`
 	ModelAliases       map[string]ModelAliasSummary `json:"model_aliases,omitempty"`
+	ProjectModels      config.ProjectModelsConfig   `json:"project_models,omitempty"`
 	Providers          []ProviderSummary            `json:"providers,omitempty"`
 	AdvancedSettings   AdvancedSettingsSummary      `json:"advanced_settings"`
 	GeneralSettings    GeneralSettingsSummary       `json:"general_settings"`
@@ -1081,20 +1085,23 @@ type ConfigAdvancedUpdateParams struct {
 	DisableAutoCompact      *bool                         `json:"disable_auto_compact,omitempty"`
 	ProviderContextWindow   *int                          `json:"provider_context_window,omitempty"`
 	ModelAliases            *map[string]ModelAliasSummary `json:"model_aliases,omitempty"`
+	ProjectModels           *config.ProjectModelsConfig   `json:"project_models,omitempty"`
 	VerificationModel       *ModelAliasSummary            `json:"verification_model,omitempty"`
 }
 
 type ConfigAdvancedUpdateResult struct {
 	AdvancedSettings AdvancedSettingsSummary      `json:"advanced_settings"`
 	ModelAliases     map[string]ModelAliasSummary `json:"model_aliases,omitempty"`
+	ProjectModels    config.ProjectModelsConfig   `json:"project_models,omitempty"`
 	ModelRoles       []ModelRoleSummary           `json:"model_roles,omitempty"`
 	Providers        []ProviderSummary            `json:"providers,omitempty"`
 }
 
 type ConfigGeneralUpdateParams struct {
-	PTC                   *config.PTCConfig `json:"ptc,omitempty"`
-	GitAttributionEnabled *bool             `json:"git_attribution_enabled,omitempty"`
-	MCPEnabledToggles     map[string]*bool  `json:"mcp_enabled_toggles,omitempty"`
+	ExecutionEnvironments *executionenv.Config `json:"execution_environments,omitempty"`
+	PTC                   *config.PTCConfig    `json:"ptc,omitempty"`
+	GitAttributionEnabled *bool                `json:"git_attribution_enabled,omitempty"`
+	MCPEnabledToggles     map[string]*bool     `json:"mcp_enabled_toggles,omitempty"`
 }
 
 type ConfigGeneralUpdateResult struct {
@@ -1102,9 +1109,10 @@ type ConfigGeneralUpdateResult struct {
 }
 
 type GeneralSettingsSummary struct {
-	PTC                   config.PTCConfig `json:"ptc"`
-	GitAttributionEnabled bool             `json:"git_attribution_enabled"`
-	MCPServerEnabled      map[string]bool  `json:"mcp_server_enabled"`
+	ExecutionEnvironments executionenv.Config `json:"execution_environments"`
+	PTC                   config.PTCConfig    `json:"ptc"`
+	GitAttributionEnabled bool                `json:"git_attribution_enabled"`
+	MCPServerEnabled      map[string]bool     `json:"mcp_server_enabled"`
 }
 
 type AdvancedSettingsSummary struct {
@@ -1135,27 +1143,39 @@ type ConfigCodexModelsResult struct {
 	Models    []CodexModelSummary `json:"models"`
 }
 
+// SkillProjectIdentity binds an originating workspace to a discovered instruction
+// file relative to its skill-discovery repository boundary.
+type SkillProjectIdentity struct {
+	Root string `json:"root"`
+	Path string `json:"path"`
+}
+
 type SkillSummary struct {
-	Name                  string   `json:"name"`
-	Description           string   `json:"description,omitempty"`
-	WhenToUse             string   `json:"when_to_use,omitempty"`
-	TriggerCondition      string   `json:"trigger_condition,omitempty"`
-	Source                string   `json:"source"`
-	Path                  string   `json:"path,omitempty"`
-	ArgumentHint          string   `json:"argument_hint,omitempty"`
-	Model                 string   `json:"model,omitempty"`
-	Context               string   `json:"context,omitempty"`
-	Agent                 string   `json:"agent,omitempty"`
-	AllowedTools          []string `json:"allowed_tools,omitempty"`
-	RequiredContext       []string `json:"required_context,omitempty"`
-	Examples              []string `json:"examples,omitempty"`
-	VerificationChecklist []string `json:"verification_checklist,omitempty"`
-	ProgressiveDisclosure string   `json:"progressive_disclosure,omitempty"`
-	UserInvocable         bool     `json:"user_invocable"`
-	DisableModelInvoke    bool     `json:"disable_model_invoke"`
-	Paths                 []string `json:"paths,omitempty"`
-	Effort                string   `json:"effort,omitempty"`
-	Version               string   `json:"version,omitempty"`
+	Name                  string                `json:"name"`
+	Description           string                `json:"description,omitempty"`
+	WhenToUse             string                `json:"when_to_use,omitempty"`
+	TriggerCondition      string                `json:"trigger_condition,omitempty"`
+	Source                string                `json:"source"`
+	Path                  string                `json:"path,omitempty"`
+	Project               *SkillProjectIdentity `json:"project,omitempty"`
+	ArgumentHint          string                `json:"argument_hint,omitempty"`
+	Model                 string                `json:"model,omitempty"`
+	Context               string                `json:"context,omitempty"`
+	Agent                 string                `json:"agent,omitempty"`
+	AllowedTools          []string              `json:"allowed_tools,omitempty"`
+	RequiredContext       []string              `json:"required_context,omitempty"`
+	Examples              []string              `json:"examples,omitempty"`
+	VerificationChecklist []string              `json:"verification_checklist,omitempty"`
+	ProgressiveDisclosure string                `json:"progressive_disclosure,omitempty"`
+	UserInvocable         bool                  `json:"user_invocable"`
+	DisableModelInvoke    bool                  `json:"disable_model_invoke"`
+	Paths                 []string              `json:"paths,omitempty"`
+	Effort                string                `json:"effort,omitempty"`
+	Version               string                `json:"version,omitempty"`
+}
+
+type SkillListParams struct {
+	ThreadID string `json:"thread_id,omitempty"`
 }
 
 type SkillListResult struct {
@@ -1267,6 +1287,7 @@ type ProviderSummary struct {
 	// not the external engine's credentials.
 	LatestRequest *EngineLatestRequest       `json:"latest_request,omitempty"`
 	LocalUsage    *session.SubscriptionUsage `json:"local_usage,omitempty"`
+	Quota         *SubscriptionQuota         `json:"quota,omitempty"`
 }
 
 type ProviderModelSummary struct {
@@ -1384,20 +1405,10 @@ type EngineInfo struct {
 }
 
 // SubscriptionQuota reports only upstream account allowances. Missing windows
-// never mean unlimited usage. CheckedAt identifies the age of the snapshot.
-type SubscriptionQuota struct {
-	Status    string                    `json:"status"`
-	CheckedAt string                    `json:"checked_at"`
-	Windows   []SubscriptionQuotaWindow `json:"windows,omitempty"`
-}
+// never mean unlimited usage. ObservedAt identifies the successful snapshot's age.
+type SubscriptionQuota = providers.Quota
 
-type SubscriptionQuotaWindow struct {
-	ID            string  `json:"id"`
-	Label         string  `json:"label,omitempty"`
-	UsedPercent   float64 `json:"used_percent"`
-	WindowMinutes int     `json:"window_minutes,omitempty"`
-	ResetsAt      string  `json:"resets_at,omitempty"`
-}
+type SubscriptionQuotaWindow = providers.QuotaWindow
 
 // EngineLatestRequest is one settled request the subscription dashboard can
 // prove from stored history. Usage is present only when that request's engine
@@ -1712,6 +1723,8 @@ type ThreadSearchResult struct {
 type ThreadSearchResultItem struct {
 	Thread  Thread `json:"thread"`
 	Snippet string `json:"snippet,omitempty"`
+	// MessageSeq addresses the winning history message; omitted for title and empty-query matches.
+	MessageSeq int `json:"message_seq,omitempty"`
 }
 
 // ThreadPreviewParams asks the server to materialize the first N turns of a
@@ -1797,13 +1810,14 @@ type ThreadRenameResult struct {
 	Thread Thread `json:"thread"`
 }
 
-// ThreadDeleteParams is the input for the `thread/delete` method: the user
-// permanently removes a conversation. Only archived or otherwise idle (not
-// running) threads are eligible. Deletion removes the session row (chat
-// history cascades via foreign keys), the workspace-scoped session artifact
-// directory, and any fork worktree bound to the thread.
+// ThreadDeleteParams permanently removes an idle conversation, its history,
+// side conversation, and session artifacts. Clean managed worktrees are reclaimed;
+// worktrees with user changes are preserved. Running threads or agents block deletion.
 type ThreadDeleteParams struct {
 	ThreadID string `json:"thread_id"`
+	// OnlyIfArchived rejects a session restored before its deletion transaction.
+	// Omitting it retains ordinary deletion of idle, unarchived conversations.
+	OnlyIfArchived bool `json:"only_if_archived,omitempty"`
 }
 
 type ThreadDeleteResult struct {
@@ -2091,6 +2105,8 @@ type TurnUnsteeredNotification struct {
 type TurnHeldNotification struct {
 	ThreadID string            `json:"thread_id"`
 	Messages []HeldUserMessage `json:"messages"`
+	// Error is set when queued input was held because its admission failed.
+	Error string `json:"error,omitempty"`
 }
 
 type TurnEventNotification struct {
@@ -2575,9 +2591,14 @@ type WorkflowSnapshotPayload struct {
 	EstimatedOutputTokens      int    `json:"estimated_output_tokens"`
 }
 
-// SettingsUsageQuery is the input for the settings/usage RPC. It carries
-// no parameters: the snapshot always covers the full recorded history.
-type SettingsUsageQuery struct{}
+// SettingsUsageQuery is the input for the settings/usage RPC. The snapshot
+// always covers the full recorded history. TimeZone optionally names the IANA
+// zone, such as "America/Los_Angeles", whose calendar days bucket the daily
+// series so they line up with the calendar the desktop draws. Empty means UTC;
+// an unknown zone is an error rather than a silent UTC fallback.
+type SettingsUsageQuery struct {
+	TimeZone string `json:"timezone,omitempty"`
+}
 
 // SettingsUsageMetrics is the headline number block shown at the top of the
 // desktop usage page. Totals are weighted by token count across every
@@ -2600,9 +2621,9 @@ type SettingsUsageMetrics struct {
 }
 
 // SettingsUsageDay is one calendar day of token activity, bucketed by the
-// token_usage row's At timestamp (UTC for settings/usage, the requested zone
-// for usage/overview). Days are emitted in ascending date order; gaps in the
-// visible window are filled in by the desktop.
+// token_usage row's At timestamp in the requested zone (UTC when the request
+// names none). Days are emitted in ascending date order; gaps in the visible
+// window are filled in by the desktop.
 type SettingsUsageDay struct {
 	Date                string  `json:"date"`
 	InputTokens         int     `json:"input_tokens"`

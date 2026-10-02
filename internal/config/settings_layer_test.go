@@ -561,6 +561,7 @@ func TestLoadFrom_ProjectSecurityKeysAreCaseInsensitive(t *testing.T) {
       "model": "cloud-model"
     }
   },
+  "ptc": {"enabled":false},
   "memory": {"user_dirs": ["~/.wuu"]},
   "agent": {
     "permission_mode": "read_only",
@@ -716,14 +717,16 @@ func TestLoadFrom_StripsProjectModelAliases(t *testing.T) {
   "agent": {
     "model_aliases": {
       "user-alias": {"provider": "main", "model": "user-model"}
-    }
+    },
+    "project_models": {"side": {"provider": "main", "model": "user-side"}}
   }
 }`)
 	projectPath := writeBaseConfigPath(t, workdir, `{
   "agent": {
     "model_aliases": {
       "project-alias": {"provider": "main", "model": "project-model"}
-    }
+    },
+    "project_models": {"side": {"provider": "main", "model": "untrusted-side"}}
   }
 }`)
 
@@ -737,6 +740,9 @@ func TestLoadFrom_StripsProjectModelAliases(t *testing.T) {
 	})
 	if _, ok := cfg.Agent.ModelAliases["project-alias"]; ok {
 		t.Fatalf("project alias was not stripped: %+v", cfg.Agent.ModelAliases)
+	}
+	if cfg.Agent.ProjectModels.Side.Model != "user-side" {
+		t.Fatalf("project layer replaced user role choice: %+v", cfg.Agent.ProjectModels)
 	}
 	if got := cfg.Agent.ModelAliases["user-alias"]; got.Provider != "main" || got.Model != "user-model" {
 		t.Fatalf("user alias was lost or changed: %+v", cfg.Agent.ModelAliases)

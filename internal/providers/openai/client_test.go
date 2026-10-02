@@ -1837,7 +1837,7 @@ func TestResponsesChat_SerializesDeferredToolDefinition(t *testing.T) {
 			t.Fatalf("decode request body: %v", err)
 		}
 		tools, ok := body["tools"].([]any)
-		if !ok || len(tools) != 1 {
+		if !ok || len(tools) != 2 {
 			t.Fatalf("unexpected tools payload: %#v", body["tools"])
 		}
 		tool, ok := tools[0].(map[string]any)
@@ -1869,6 +1869,7 @@ func TestResponsesChat_SerializesDeferredToolDefinition(t *testing.T) {
 				InputSchema:  map[string]any{"type": "object"},
 				DeferLoading: true,
 			},
+			{Name: "tool_search", InputSchema: map[string]any{"type": "object"}},
 		},
 	})
 	if err != nil {

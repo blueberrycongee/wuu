@@ -97,9 +97,6 @@
   --hairline: var(--wuu-color-border-subtle, var(--gray-250));
   --hairline-strong: var(--wuu-color-border-strong, var(--gray-350));
   --hairline-soft: var(--wuu-border-subtle, var(--ink-overlay-6));
-  /* In-flow horizontal rules (turn progress, markdown <hr>/heading
-     underlines) read as strong document rules: control tier. */
-  --rule: var(--hairline-strong);
   /* Ink-overlay alpha steps. Pre-tokenised so future opacity tweaks
      happen here, not scattered across CSS files. */
   --ink-overlay-4: rgba(31, 35, 40, 0.04);
@@ -144,7 +141,9 @@
   --modal-backdrop-bg: var(--wuu-color-overlay-backdrop, rgba(38, 42, 46, 0.24));
 
                                                                           
-  --success: var(--wuu-color-success, #1f9d55);
+  /* Text-safe: 5.4:1 on white, 4.8:1 on --success-soft. Additions, added files and
+     success marks all read from this one green. */
+  --success: var(--wuu-color-success, #137a3d);
   --success-soft: #eaf4e8;
   --warning: var(--wuu-color-warning, #8a5b10);
   --warning-soft: #fff3dc;
@@ -166,8 +165,11 @@
   --control-boundary: var(--wuu-color-border-strong, var(--gray-500));
   --interaction-accent: var(--wuu-accent);
   /* Selection is opaque so sidebar material cannot tint or darken it. */
-  --selection-surface: var(--wuu-color-surface-elevated, var(--gray-200));
+  --selection-surface: var(--wuu-color-surface-elevated, var(--gray-150));
   --slider-thumb-bg: var(--wuu-color-surface-elevated, var(--paper));
+  /* Placeholder text must read as an example, never as a filled value, and still
+     clear 4.5:1. Distinct from entered text (--ink) and from --ink-soft labels. */
+  --placeholder-ink: var(--gray-600);
   --field-bg: var(--wuu-control-field-background, var(--paper));
   --field-hover-bg: var(--wuu-control-field-background, var(--surface-1));
   --field-border: var(--hairline-strong);
@@ -191,19 +193,22 @@
                                                                   
                                                                         
   /* Product radius scale. Use roles, not one-off pixels:
-   *   xs     inner hover, nested highlights, compact chips
-   *   sm     controls (buttons, fields, avatars, small cards)
-   *   md/lg  panels and composer-sized surfaces (lg is an alias of md)
+   *   xs     inner hover, nested highlights, compact chips, menu rows
+   *   sm     controls (buttons, fields, small cards)
+   *   md/lg  panels, dialogs and the composer (lg is an alias of md)
    *   overlay menus/dialogs (defaults to panel; themes may separate it)
-   *   pill   capsules, tracks, badges
+   *   pill   switch tracks, badges, capsules
    *   circle avatars, dots, knobs
+   * Corners stay tight so a control reads as a control: a 32px field with an
+   * 8px corner is a rectangle, not a pill. Nested corners follow their inset
+   * (panel 16 = control 8 + 8px padding; menu shell = row 6 + 6px inset).
    * Geometry that is not a product role stays explicit: 0, inherit,
    * mixed speech-bubble tails, and parent-minus-padding concentric calcs. */
-  --radius-xs: var(--wuu-radius-inner, 8px);
+  --radius-xs: var(--wuu-radius-inner, 6px);
   /* Media keeps shallow corners to preserve image content at thumbnail sizes. */
   --radius-media: var(--radius-xs);
-  --radius-sm: var(--wuu-radius-control, 12px);
-  --radius-md: var(--wuu-radius-panel, 22px);
+  --radius-sm: var(--wuu-radius-control, 8px);
+  --radius-md: var(--wuu-radius-panel, 16px);
   --radius-lg: var(--radius-md);
   --radius-pill: 999px;
   --radius-circle: 50%;
@@ -322,10 +327,7 @@
   /* Deliberate exception: session skeleton loading is an ambient state, its
    * spinner breathes slower than the active-progress --motion-spin rhythm. */
   --session-loading-spin-duration: 1400ms;
---sidebar-glass-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(247, 247, 245, 0.9));
-  --sidebar-glass-border: rgba(17, 19, 21, 0.11);
-  --sidebar-glass-highlight: rgba(255, 255, 255, 0.62);
-  --sidebar-glass-hover: var(--wuu-nav-item-hover-background, var(--ink-overlay-4));
+  --sidebar-row-hover-bg: var(--wuu-nav-item-hover-background, var(--ink-overlay-4));
 
   /* Scrollbar tokens — unify every scrollbar in the renderer.
    * The default state hides the thumb (transparent, over a transparent track)
@@ -361,10 +363,7 @@
   --window-titlebar-padding-inline: var(--pane-inset);
   --window-titlebar-leading-inset: max(var(--window-titlebar-padding-inline), calc(var(--window-controls-inset-left) + 10px));
 
-  --turn-warning-border: var(--warning-border);
-  --turn-warning-bg: var(--warning-soft);
   --turn-warning-text: var(--warning);
-  --turn-warning-text-strong: #7a4e0d;
 
   /* Top corners the OS window chrome owns: macOS puts the traffic lights
    * on the left, while Windows draws the controls overlay on the right.
@@ -534,6 +533,11 @@
 ::selection {
   background: var(--selection-bg);
   color: inherit;
+}
+
+/* One placeholder colour for every field; components do not set their own. */
+::placeholder {
+  color: var(--placeholder-ink);
 }
 
 /* Every plugin contribution (slot or surface) renders inside this

@@ -92,6 +92,8 @@ export type ComposerImage = InputImage & {
 
 export type ComposerFile = InputFile & {
   id: string;
+  /** Pending file bytes stay with this attachment slot through draft moves. */
+  encodePromise?: Promise<ComposerFile>;
 };
 
 export type QueuedComposerMessage = {
@@ -172,6 +174,10 @@ export async function composerImageFromFile(file: File): Promise<ComposerImage> 
 }
 
 export async function composerFileFromFile(file: File): Promise<ComposerFile> {
+  return composerFilePlaceholder(file).encodePromise!;
+}
+
+export function composerFilePlaceholder(file: File): ComposerFile {
   const videoType = composerVideoMediaType(file);
   if (!isPDFFile(file) && !videoType) {
     throw new Error(translateCurrent("composer.attachment.documentsOnly"));
@@ -187,12 +193,18 @@ export async function composerFileFromFile(file: File): Promise<ComposerFile> {
       })
     );
   }
-  const data = await bufferToBase64(await file.arrayBuffer());
-  return {
+  const placeholder = {
     id: nextComposerAttachmentID(),
     media_type: videoType ?? "application/pdf",
-    data,
+    data: "",
     filename: file.name.trim() || "attachment.pdf"
+  };
+  return {
+    ...placeholder,
+    encodePromise: (async () => ({
+      ...placeholder,
+      data: await bufferToBase64(await file.arrayBuffer()),
+    }))(),
   };
 }
 
@@ -375,6 +387,10 @@ export async function awaitComposerImages(
       data: replacement.data
     };
   });
+}
+
+export async function awaitComposerFiles(files: ComposerFile[]): Promise<ComposerFile[]> {
+  return Promise.all(files.map((file) => file.encodePromise ?? file));
 }
 
 function optimisticInputImagesFromComposer(images: ComposerImage[]): InputImage[] {

@@ -190,7 +190,11 @@ func (s *Server) restorePendingProcessCompletionsOnThreadResume(threadID string)
 	if threadID == "" {
 		return
 	}
-	pending, err := s.rt.ProcessManager.PendingCompletions()
+	manager := s.processManagerForThread(threadID)
+	if manager == nil {
+		return
+	}
+	pending, err := manager.PendingCompletions()
 	if err != nil {
 		providers.DebugLogf("inspect pending process completions while resuming thread %q: %v", threadID, err)
 		return
@@ -203,7 +207,7 @@ func (s *Server) restorePendingProcessCompletionsOnThreadResume(threadID string)
 		}
 	}
 	if !needsRuntime {
-		pendingRechecks, recheckErr := s.rt.ProcessManager.PendingRechecks()
+		pendingRechecks, recheckErr := manager.PendingRechecks()
 		if recheckErr != nil {
 			providers.DebugLogf("inspect pending process rechecks while resuming thread %q: %v", threadID, recheckErr)
 			return

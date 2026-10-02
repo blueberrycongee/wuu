@@ -3,6 +3,7 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -19,6 +20,7 @@ import {
   SIDE_THREAD_MIN_WIDTH,
   type SideThreadEntryState,
 } from "./SideThreadState";
+import { Tooltip } from "./Tooltip";
 import { latestAgentMessageItemID, TurnView } from "./TurnView";
 import { useI18n } from "./i18n";
 
@@ -54,6 +56,7 @@ export const SideThreadPanel = forwardRef<SideThreadPanelHandle, SideThreadPanel
     ref,
   ) {
     const { t } = useI18n();
+    const titleID = useId();
     const panelRef = useRef<HTMLElement | null>(null);
     const composerHostRef = useRef<HTMLDivElement | null>(null);
     const footerRef = useRef<HTMLDivElement | null>(null);
@@ -118,7 +121,7 @@ export const SideThreadPanel = forwardRef<SideThreadPanelHandle, SideThreadPanel
         data-main-thread-id={mainThreadId}
         data-streaming={entry.streaming ? "true" : "false"}
         data-wuu-component="side-thread"
-        aria-label={t("sideThread.title")}
+        aria-labelledby={titleID}
       >
         <button
           type="button"
@@ -132,18 +135,17 @@ export const SideThreadPanel = forwardRef<SideThreadPanelHandle, SideThreadPanel
           onPointerDown={onResizeStart}
         />
         <header className="side-thread-panel__header">
-          <div className="side-thread-panel__heading">
-            <span className="side-thread-panel__title">{t("sideThread.title")}</span>
-          </div>
-          <button
-            type="button"
-            className="side-thread-panel__close"
-            onClick={onClose}
-            aria-label={t("sideThread.collapse")}
-            title={t("sideThread.collapse")}
-          >
-            <PanelRightClose size={16} strokeWidth={1.75} />
-          </button>
+          <h2 id={titleID} className="side-thread-panel__title">{t("sideThread.title")}</h2>
+          <Tooltip content={t("sideThread.collapse")}>
+            <button
+              type="button"
+              className="icon-button side-thread-panel__close"
+              onClick={onClose}
+              aria-label={t("sideThread.collapse")}
+            >
+              <PanelRightClose />
+            </button>
+          </Tooltip>
         </header>
 
         <div
@@ -175,12 +177,6 @@ export const SideThreadPanel = forwardRef<SideThreadPanelHandle, SideThreadPanel
         </div>
 
         <div ref={footerRef} className="side-thread-panel__footer">
-          {entry.lastError ? (
-            <div className="side-thread-panel__error" role="alert">
-              {entry.lastError}
-            </div>
-          ) : null}
-
           <div ref={composerHostRef} className="side-thread-panel__composer-host">
             {composer}
           </div>

@@ -731,10 +731,7 @@ func providerOptionBool(value any) (bool, bool) {
 }
 
 func shouldEnableAnthropicToolSearch(req providers.ChatRequest, support anthropicToolSearchSupport) bool {
-	if !hasToolSearchTool(req.Tools) {
-		return false
-	}
-	if !req.NativeDeferredToolDiscovery {
+	if !providers.NativeToolDiscoveryEnabled(req.NativeDeferredToolDiscovery, req.Tools) {
 		return false
 	}
 	return SupportsNativeToolSearchWhenExplicitlyEnabled(req.Model, req.ProviderOptions)
@@ -781,15 +778,6 @@ func SupportsNativeToolSearchByDefault(baseURL, model string, options map[string
 		return enabled
 	}
 	return isFirstPartyAnthropicBaseURL(baseURL)
-}
-
-func hasToolSearchTool(defs []providers.ToolDefinition) bool {
-	for _, def := range defs {
-		if strings.EqualFold(def.Name, "tool_search") {
-			return true
-		}
-	}
-	return false
 }
 
 func modelSupportsAnthropicToolReference(model string) bool {

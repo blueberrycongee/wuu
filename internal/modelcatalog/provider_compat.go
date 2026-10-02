@@ -31,7 +31,7 @@ func applyProviderCompatibilityDefaults(providerID string, provider config.Provi
 		if strings.TrimSpace(provider.WireAPI) == "" {
 			for _, id := range append([]string{provider.Model}, modelIDs...) {
 				switch APIModel(provider, id) {
-				case "gpt-6-sol", "gpt-6-luna":
+				case "gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol":
 					provider.WireAPI = "responses"
 				}
 			}
@@ -424,26 +424,33 @@ func applyOpenAIGPT6AstraCatalog(provider *Provider) {
 
 // https://developers.openai.com/api/docs/models/gpt-6-sol
 // https://developers.openai.com/api/docs/models/gpt-6-luna
+// https://developers.openai.com/api/docs/models/gpt-6.1-sol
 // https://developers.openai.com/api/docs/pricing
 func applyOpenAIGPT6SolLunaCatalog(provider *Provider) {
 	for _, spec := range []struct {
-		id, name, family string
-		input, output    float64
+		id, name, family         string
+		input, output, cacheRead float64
+		supportsNone             bool
 	}{
-		{"gpt-6-sol", "GPT-6 Sol", "gpt-sol", 2, 10},
-		{"gpt-6-luna", "GPT-6 Luna", "gpt-luna", 0.1, 0.5},
+		{"gpt-6-sol", "GPT-6 Sol", "gpt-sol", 2, 10, 0.2, true},
+		{"gpt-6-luna", "GPT-6 Luna", "gpt-luna", 0.1, 0.5, 0.01, true},
+		{"gpt-6.1-sol", "GPT-6.1 Sol", "gpt-sol", 2, 10, 0.1, false},
 	} {
+		efforts := []string{"low", "medium", "high", "xhigh", "max"}
+		if spec.supportsNone {
+			efforts = append([]string{"none"}, efforts...)
+		}
 		for _, fast := range []bool{false, true} {
-			input, output := spec.input, spec.output
+			input, output, cacheRead := spec.input, spec.output, spec.cacheRead
 			model := Model{
 				ID: spec.id, Name: spec.name, Family: spec.family,
 				Reasoning:        true,
-				ReasoningOptions: officialEffortOptions(false, "none", "low", "medium", "high", "xhigh", "max"),
+				ReasoningOptions: officialEffortOptions(false, efforts...),
 				Attachment:       officialBool(true), ToolCall: officialBool(true),
 				StructuredOutput: officialBool(true), Temperature: officialBool(false),
 				Modalities:       &Modalities{Input: []string{"text", "image"}, Output: []string{"text"}},
 				Limit:            &Limit{Context: 1_050_000, Input: 922_000, Output: 128_000},
-				SupportedEfforts: []string{"none", "low", "medium", "high", "xhigh", "max"},
+				SupportedEfforts: efforts,
 				DefaultVariant:   "medium",
 			}
 			if fast {
@@ -453,11 +460,12 @@ func applyOpenAIGPT6SolLunaCatalog(provider *Provider) {
 				model.Options = map[string]any{"serviceTier": "priority"}
 				input *= 2
 				output *= 2
+				cacheRead *= 2
 			}
 			model.Cost = map[string]any{
-				"input": input, "output": output, "cache_read": input / 10, "cache_write": input * 1.25,
+				"input": input, "output": output, "cache_read": cacheRead, "cache_write": input * 1.25,
 				"tiers": []any{map[string]any{
-					"input": input * 2, "output": output * 1.5, "cache_read": input / 5, "cache_write": input * 2.5,
+					"input": input * 2, "output": output * 1.5, "cache_read": cacheRead * 2, "cache_write": input * 2.5,
 					"tier": map[string]any{"size": 272000, "type": "context"},
 				}},
 			}

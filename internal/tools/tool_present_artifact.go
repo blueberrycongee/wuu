@@ -29,6 +29,7 @@ func (t *PresentArtifactTool) IsConcurrencySafe() bool { return true }
 
 func (t *PresentArtifactTool) Definition() providers.ToolDefinition {
 	return providers.ToolDefinition{
+		DirectOnly:  true,
 		Name:        t.Name(),
 		Description: "Present an existing local file to the user as a standalone artifact, separate from file-change diffs. Saves an immutable snapshot: images (including SVG) appear inline with click-to-enlarge; other files appear as output cards. After creating a requested image, diagram, chart, or document with code, call this tool with its path. Use only for intended deliverables, not every file you read or edit. This displays the artifact to the user; it does not inspect the image for you. Do not duplicate the preview with Markdown images. Maximum file size: 256 MiB.",
 		InputSchema: map[string]any{

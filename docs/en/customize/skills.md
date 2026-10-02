@@ -10,6 +10,8 @@ In the desktop composer, enter `/skills` to open the catalog. Search the discove
 /release-check 2026.9.1
 ```
 
+Selecting a skill from the menu or catalog inserts a `/skill` draft with an explicit identity. Keep that identity intact and add your request below it. Project-local selections bind the originating workspace and a repository-relative instruction file; the selected conversation checkout supplies that file’s version and resources, including the first turn of a new worktree. Browsing the catalog does not create a worktree. User, plugin, and other external selections retain absolute-path identities. On submission, Wuu matches the identity against the discovered, permitted catalog before calling the model, including skills hidden from automatic selection. Missing, out-of-scope, or cross-project selections are rejected; existing absolute-path drafts are never silently remapped. Bare built-in commands such as `/review` and `/compact` retain their usual behavior.
+
 The Wuu engine gives the model a catalog of skill names and descriptions. When a task matches, it can use `load_skill` to read the full workflow. A missing description or `disable-model-invocation: true` keeps a skill out of that automatic-selection catalog. `user-invocable` controls whether it is offered for direct user invocation.
 
 Availability depends on the workspace, discovered sources, and current tool surface. A skill that requires unavailable tools may be filtered out. Refresh the catalog after installing or editing one, and inspect the source path if the wrong version appears.

@@ -13,7 +13,7 @@ import {
   buildToolActivityProcessSegments,
   type ToolActivityProcessSegment,
 } from "./ToolActivityHelpers";
-import { ToolActivityTimeline } from "./ToolActivity";
+import { ToolActivityRow, ToolActivityTimeline } from "./ToolActivity";
 import { ToolActivityPresenter } from "./plugins/ToolActivityPresenter";
 import { ConversationProcessPresentation } from "./plugins/ConversationProcessPresentation";
 import {
@@ -22,6 +22,7 @@ import {
 } from "./AutoFollowScroll";
 import { AnimatedProcessText } from "./ProcessTextMotion";
 import { ProcessSurfaceFold } from "./ProcessSurfaceFold";
+import { collectTurnArtifacts } from "./ArtifactOutputs";
 import { translateCurrent as translate, useI18n } from "./i18n";
 import {
   useWorkspaceBrowserOpen,
@@ -44,16 +45,7 @@ import {
   useConversationBecameRenderActive,
   useConversationRenderActive,
 } from "./ConversationRenderActivity";
-import { motionDurationMs, useReducedMotion } from "./motion";
-
-/**
- * How much longer than the fold's --motion-base height transition to wait
- * after it opens before snapping the reasoning scroll container to the
- * bottom. The margin gives the body height time to settle before we read
- * `scrollHeight`, so the first snap lands on the actual final extent
- * instead of a mid-transition value. An instant fold snaps at once.
- */
-const REASONING_FOLD_OPEN_SNAP_MARGIN_MS = 100;
+import { motionDurationMs } from "./motion";
 
 function useDebouncedProcessSummary(
   segments: ToolActivityProcessSegment[],
@@ -209,6 +201,7 @@ type ProcessSurfaceProps = {
    * not have to split tools from reasoning first.
    */
   processItems: ThreadItem[];
+  cwd?: string;
   /**
    * True while any process item is still receiving deltas. Drives the
    * tool/reasoning reveal behavior while the fold stays compact until
@@ -248,6 +241,7 @@ function isToolActivityItem(item: ThreadItem): boolean {
 
 export function ProcessSurface({
   processItems,
+  cwd,
   streaming,
   active,
   provider,
@@ -264,7 +258,16 @@ export function ProcessSurface({
   const toolSegments = buildToolActivityProcessSegments(toolItems);
   const hasReasoning = reasoningItems.length > 0;
   const hasMultipleTools = toolItems.length > 1;
-  const hasDetails = hasReasoning || hasMultipleTools;
+  const hasInspection = !hasReasoning && !hasMultipleTools
+    && collectTurnArtifacts({ items: toolItems }).some(artifact => artifact.foldPreview);
+  const hasDetails = hasReasoning || hasMultipleTools || hasInspection;
+  const detailRuns: ThreadItem[][] = [];
+  for (const item of processItems) {
+    if (!isToolActivityItem(item) && item.type !== "reasoning") continue;
+    const previous = detailRuns.at(-1);
+    if (previous?.[0].type === item.type) previous.push(item);
+    else detailRuns.push([item]);
+  }
   const reasoningStreaming =
     streaming &&
     reasoningItems.some((item) => item.status === "in_progress");
@@ -304,19 +307,12 @@ export function ProcessSurface({
     }
   }, [hasDetails]);
 
-  // The fold body is the single bounded scroll container for the whole
-  // expanded area (tool trail + reasoning). Auto-follow lives here so the
-  // combined content stays pinned to the latest item while streaming,
-  // and snaps to the bottom on every open.
-  const reducedMotion = useReducedMotion();
-  const openScrollDelayMs = useMemo(
-    () => reducedMotion ? 0 : motionDurationMs("--motion-base", 180) + REASONING_FOLD_OPEN_SNAP_MARGIN_MS,
-    [reducedMotion],
-  );
+  // Live first visits start at the current activity; history starts at the
+  // beginning. Reopening retains the reader's position and following mode.
   const processScroll = useAutoFollowScrollContainer({
     observeKey: processItems.map((item) => item.id).join("|"),
     open: expanded,
-    openScrollDelayMs,
+    initialAutoFollow: streaming,
   });
 
   const handleToggle = (
@@ -399,7 +395,11 @@ export function ProcessSurface({
     </span>
   );
 
-  const nativeFallback = (
+  const nativeFallback = toolItems.length === 1 && !hasReasoning && toolItems[0].name === "set_session_workspace" ? (
+    <div className={className}>
+      <ToolActivityRow items={toolItems} streaming={streaming} />
+    </div>
+  ) : (
     <div className={className}>
       <ProcessSurfaceFold
         summary={summaryLine}
@@ -413,14 +413,13 @@ export function ProcessSurface({
         bodyRef={processScroll.scrollRef}
         bodyProps={{ [AUTO_FOLLOW_NESTED_SCROLL_ATTR]: "true" }}
       >
-        {hasMultipleTools ? (
-          <div className="process-surface-tool-list">
-            <ToolActivityTimeline items={toolItems} />
+        {detailRuns.map(items => items[0].type === "tool_call" ? (
+          <div className="process-surface-tool-list" key={items[0].id}>
+            <ToolActivityTimeline items={items} cwd={cwd} showInspectionPreviews={expanded} />
           </div>
-        ) : null}
-        {hasReasoning && renderReasoningItem ? (
-          <div className="process-surface-reasoning-list">
-            {reasoningItems.map((item) => (
+        ) : renderReasoningItem ? (
+          <div className="process-surface-reasoning-list" key={items[0].id}>
+            {items.map((item) => (
               <div
                 key={item.id}
                 className="process-surface-reasoning-item"
@@ -432,7 +431,7 @@ export function ProcessSurface({
               </div>
             ))}
           </div>
-        ) : null}
+        ) : null)}
       </ProcessSurfaceFold>
     </div>
   );

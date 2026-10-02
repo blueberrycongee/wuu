@@ -8,7 +8,8 @@ const { app, BrowserWindow } = require("electron");
 const { buildSync } = require("esbuild");
 
 const desktopRoot = path.resolve(__dirname, "..");
-const output = path.join(desktopRoot, "out", "artifact-preview-e2e");
+const output = path.resolve(process.env.WUU_ARTIFACT_OUTPUT || path.join(desktopRoot, "out", "artifact-preview-e2e"));
+const inspectionOnly = process.env.WUU_ARTIFACT_E2E_ONLY === "inspection";
 fs.mkdirSync(output, { recursive: true });
 const profile = fs.mkdtempSync(path.join(output, "profile-"));
 app.setPath("userData", profile);
@@ -109,6 +110,7 @@ app.whenReady().then(async () => {
     input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
   });
   await waitFor(win, () => document.querySelector(".conversation-width")?.textContent.includes("Preview delivered files"));
+  if (!inspectionOnly) {
   const completed = await complete(win, 0);
   await waitFor(win, () => Boolean(document.querySelector(".artifact-preview-panel iframe")));
   const frame = await waitForValue(() => win.webContents.mainFrame.frames.find((frame) => frame.url.startsWith("wuu-artifact:")), "managed HTML frame");
@@ -138,18 +140,18 @@ app.whenReady().then(async () => {
     }
   }
   win.setContentSize(1440, 900);
-  await evaluate(win, () => document.querySelector(".artifact-preview-actions button:last-child").click());
+  await evaluate(win, () => [...document.querySelectorAll(".artifact-preview-actions button")].at(-1).click());
   await waitFor(win, () => !document.querySelector(".artifact-preview-panel"));
   emit(win, "turn/completed", { thread_id: threadID, turn: completed });
   await settle(win);
   assert.equal(await evaluate(win, () => Boolean(document.querySelector(".artifact-preview-panel"))), false);
   await evaluate(win, () => document.querySelector('[data-wuu-component="turn-artifacts"] button').click());
   await waitFor(win, () => Boolean(document.querySelector(".artifact-preview-panel iframe")));
-  await evaluate(win, () => document.querySelector(".artifact-preview-actions button:last-child").click());
+  await evaluate(win, () => [...document.querySelectorAll(".artifact-preview-actions button")].at(-1).click());
   await waitFor(win, () => !document.querySelector(".artifact-preview-panel"));
   await complete(win, 1);
   await waitFor(win, () => document.querySelector(".artifact-preview-text")?.textContent.startsWith("Delivered text snapshot"));
-  await evaluate(win, () => document.querySelector(".artifact-preview-actions button:last-child").click());
+  await evaluate(win, () => [...document.querySelectorAll(".artifact-preview-actions button")].at(-1).click());
   await waitFor(win, () => !document.querySelector(".artifact-preview-panel"));
   for (const index of [2, 3]) {
     await complete(win, index);
@@ -329,7 +331,7 @@ app.whenReady().then(async () => {
   await evaluate(win, async () => {
     window.closedVideo = document.querySelector('.artifact-preview-panel video');
     await window.closedVideo.play();
-    document.querySelector('.artifact-preview-actions button:last-child').click();
+    [...document.querySelectorAll(".artifact-preview-actions button")].at(-1).click();
   });
   await waitFor(win, () => !document.querySelector('.artifact-preview-panel'));
   await waitFor(win, () => window.closedVideo.paused);
@@ -354,8 +356,88 @@ app.whenReady().then(async () => {
   await waitFor(win, () => Boolean(document.querySelector('.video-preview [role="alert"]')));
   assert.ok(await evaluate(win, () => document.querySelector('.artifact-preview-actions button')?.getAttribute('aria-label')), 'Download remains available for an unplayable file');
   fs.writeFileSync(path.join(output, 'video-error.png'), (await win.webContents.capturePage()).toPNG());
+
+  // Closing the active preview reveals the next tab until all previews close.
+  for (let remaining = 10; remaining > 0 && await evaluate(win, () => Boolean(document.querySelector('.artifact-preview-panel'))); remaining--) {
+    await evaluate(win, () => [...document.querySelectorAll('.artifact-preview-actions button')].at(-1).click());
+    await settle(win);
+  }
+  await waitFor(win, () => !document.querySelector('.artifact-preview-panel'));
+  await evaluate(win, () => document.querySelector('.environment-panel-close-row button')?.click());
+  await waitFor(win, () => !document.querySelector('.environment-panel'));
+  }
+  const inspectionTurn = { id: 'image-inspection-turn', status: 'completed', items_view: 'full', items: [
+    { id: 'inspection-user', type: 'user_message', status: 'completed', text: 'Inspect images and deliver the result.' },
+    ...['read_file', 'run_code', 'process'].map((name, index) => ({
+      id: `inspection-${index}`, type: 'tool_call', name, status: 'completed',
+      result_detail: { content: [{
+        type: 'image', mime_type: 'image/svg+xml', uri: delivery(2).result_detail.content[0].uri,
+        name: index === 0 ? 'A very long inspected screenshot filename for checking narrow windows and large fonts.svg' : `${name}-inspection.svg`,
+      }] },
+    })),
+    { ...delivery(3), id: 'inspection-delivery' },
+    { id: 'inspection-answer', type: 'agent_message', status: 'completed', text: 'The requested image is ready.' },
+  ] };
+  emit(win, 'turn/started', { thread_id: threadID, turn: { ...inspectionTurn, status: 'in_progress', items: [] } });
+  for (const item of inspectionTurn.items) emit(win, 'item/completed', { thread_id: threadID, turn_id: inspectionTurn.id, item });
+  emit(win, 'turn/completed', { thread_id: threadID, turn: inspectionTurn });
+  await waitFor(win, () => document.querySelectorAll('[data-turn-id="image-inspection-turn"] .turn-process-entry .process-surface-fold').length === 1);
+  const inspectionEvidence = [];
+  for (const theme of ['light', 'dark']) {
+    for (const size of [14, 20]) {
+      await win.webContents.executeJavaScript(`document.documentElement.dataset.theme=${JSON.stringify(theme)};document.documentElement.style.setProperty('--conversation-message-font-size','${size}px');document.documentElement.style.setProperty('--appearance-scale','${size / 14}');window.dispatchEvent(new Event('wuu-content-size-change'))`);
+      for (const width of [1440, 760]) {
+        win.setContentSize(width, 900);
+        await settle(win);
+        assert.equal(await evaluate(win, () => document.querySelectorAll('[data-turn-id="image-inspection-turn"] .turn-artifact-inline-list img').length), 1, 'Only the explicitly delivered image appears before inspection is expanded');
+        await evaluate(win, () => document.querySelector('.environment-panel-close-row button')?.click());
+        await waitFor(win, () => !document.querySelector('.environment-panel'));
+        await evaluate(win, () => document.querySelector('[data-turn-id="image-inspection-turn"] .turn-process-entry .process-surface-fold > summary').scrollIntoView({ block: 'center' }));
+        await settle(win);
+        const geometry = await evaluate(win, () => [...document.querySelectorAll('[data-turn-id="image-inspection-turn"] .turn-process-entry .process-surface-fold > summary')].map(summary => {
+          const rect = summary.getBoundingClientRect();
+          return { left: rect.left, right: rect.right, width: innerWidth, height: rect.height };
+        }));
+        assert.ok(geometry.every(row => row.left >= 0 && row.right <= row.width && row.height > 0), 'Inspection rows must fit the reading area');
+        fs.writeFileSync(path.join(output, `inspection-collapsed-${theme}-${size}-${width}.png`), (await win.webContents.capturePage()).toPNG());
+        await evaluate(win, () => {
+          const summary = document.querySelector('[data-turn-id="image-inspection-turn"] .turn-process-entry .process-surface-fold > summary');
+          summary.focus();
+        });
+        await win.webContents.debugger.sendCommand('Input.dispatchKeyEvent', { type: 'keyDown', key: ' ', code: 'Space', windowsVirtualKeyCode: 32 });
+        await win.webContents.debugger.sendCommand('Input.dispatchKeyEvent', { type: 'keyUp', key: ' ', code: 'Space', windowsVirtualKeyCode: 32 });
+        await waitFor(win, () => {
+          const fold = document.querySelector('[data-turn-id="image-inspection-turn"] .turn-process-entry .process-surface-fold');
+          const image = fold.querySelector('img');
+          return fold.open && image?.complete && image.naturalWidth > 0;
+        });
+        assert.equal(await evaluate(win, () => document.querySelectorAll('[data-turn-id="image-inspection-turn"] .turn-artifact-inline-list img').length), 4);
+        await evaluate(win, () => Promise.all(document.querySelector('[data-turn-id="image-inspection-turn"]').getAnimations({ subtree: true })
+          .filter(animation => Number.isFinite(animation.effect.getComputedTiming().endTime))
+          .map(animation => animation.finished.catch(() => {}))));
+        await settle(win);
+        fs.writeFileSync(path.join(output, `inspection-expanded-${theme}-${size}-${width}.png`), (await win.webContents.capturePage()).toPNG());
+        await evaluate(win, () => {
+          const opener = document.querySelector('[data-turn-id="image-inspection-turn"] .turn-process-entry .process-surface-body .turn-artifact-inline-list button');
+          opener.focus();
+          opener.click();
+        });
+        await waitFor(win, () => Boolean(document.querySelector('.image-preview-image.loaded')));
+        await evaluate(win, () => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
+        await waitFor(win, () => !document.querySelector('.image-preview-overlay'));
+        assert.equal(await evaluate(win, () => document.activeElement === document.querySelector('[data-turn-id="image-inspection-turn"] .turn-process-entry .process-surface-body .turn-artifact-inline-list button')), true);
+        await evaluate(win, () => document.querySelector('[data-turn-id="image-inspection-turn"] .turn-process-entry .process-surface-fold > summary').click());
+        await waitFor(win, () => !document.querySelector('[data-turn-id="image-inspection-turn"] .turn-process-entry .process-surface-fold').open);
+        inspectionEvidence.push({ theme, size, width, geometry, collapsedImages: 1, expandedImages: 4 });
+      }
+    }
+  }
+  fs.writeFileSync(path.join(output, 'inspection-evidence.json'), JSON.stringify(inspectionEvidence, null, 2));
+  console.log('Image inspection e2e passed: reads, PTC and background results collapsed, explicit delivery visible, expand/collapse, enlarge, focus restoration, light/dark, 14/20px, wide/narrow.');
+  if (!inspectionOnly) {
   console.log('Video preview e2e passed: managed/local playback, no autoplay, seeking, range bytes, card reopen, failure fallback, light/dark, 14/20px, wide/narrow layout.');
   console.log("Artifact preview e2e passed: completion, managed HTML/text/images, sandbox, dismissal, manual reopen, light/dark, 14/20px, wide/narrow geometry, portrait/panorama fit, gallery navigation, boundaries and focus restoration.");
+  }
   win.destroy();
   app.exit(0);
 }).catch((error) => { console.error(error); app.exit(1); });

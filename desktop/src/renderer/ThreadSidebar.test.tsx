@@ -5,7 +5,8 @@ import { ThreadContextMenu } from "./ThreadContextMenu";
 import { PinnedThreadList, WorkspaceGroup, WorkspaceList } from "./ThreadSidebar";
 import type { DesktopProject, Thread } from "../shared/protocol";
 import { SCRATCH_PSEUDO_PROJECT_ID, summarizeThreadsForSidebar } from "./AppState";
-import { setActiveLocale } from "./i18n";
+import { setActiveLocale, translateCurrent } from "./i18n";
+import { ConfirmDialogHost } from "./ConfirmDialog";
 
 let container: HTMLDivElement;
 let root: Root | null = null;
@@ -355,41 +356,23 @@ describe("WorkspaceList", () => {
       button?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
     });
 
-    const overlay = document.body.querySelector(
-      ".app-modal-backdrop.conversation-search-overlay.sidebar-name-dialog-overlay",
-    );
-    expect(overlay).not.toBeNull();
-    expect(container.querySelector(".sidebar-name-dialog")).toBeNull();
-    const dialog = document.body.querySelector(".sidebar-name-dialog");
-    expect(dialog?.getAttribute("role")).toBe("dialog");
-    expect(dialog?.firstElementChild?.classList.contains("sidebar-name-dialog-header")).toBe(true);
-    expect(dialog?.querySelector(".sidebar-name-dialog-title")?.textContent).toBe("重命名对话");
-
-    const input = document.body.querySelector<HTMLInputElement>(
-      ".sidebar-name-dialog-input",
-    );
+    // The dialog renders outside the list, prefilled and focused.
+    const dialog = document.body.querySelector<HTMLElement>('[role="dialog"]');
+    expect(dialog).not.toBeNull();
+    expect(container.contains(dialog)).toBe(false);
+    const input = dialog!.querySelector<HTMLInputElement>("input");
     expect(input?.value).toBe("Old title");
-    const field = dialog?.querySelector(".sidebar-name-dialog-field");
-    expect(field?.querySelector(".sidebar-name-dialog-label")?.textContent).toBe("会话标题");
-    expect(field?.contains(input)).toBe(true);
-    const actions = dialog?.lastElementChild;
-    expect(actions?.classList.contains("sidebar-name-dialog-actions")).toBe(true);
-    expect(actions?.classList.contains("conversation-search-status")).toBe(false);
-    expect(actions?.textContent?.replace(/\s/g, "")).toBe("取消保存");
+    expect(document.activeElement).toBe(input);
 
     act(() => {
       changeInput(input!, "New title");
     });
-    const save = Array.from(document.body.querySelectorAll("button")).find(
-      (el) => el.textContent === "保存",
-    );
-    expect(save).not.toBeUndefined();
     act(() => {
-      save?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      dialog!.querySelector<HTMLButtonElement>('button[type="submit"]')!.click();
     });
 
     expect(onRename).toHaveBeenCalledWith(thread, "New title");
-    expect(document.body.querySelector(".sidebar-name-dialog")).toBeNull();
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull();
   });
 
   it("opens the same rename dialog from the context menu instead of window.prompt", () => {
@@ -435,7 +418,7 @@ describe("WorkspaceList", () => {
 
       const item = Array.from(
         document.body.querySelectorAll(".thread-row-context-menu-item"),
-      ).find((el) => el.textContent === "重命名对话");
+      ).find((el) => el.textContent === translateCurrent("threadSidebar.rename"));
       expect(item).not.toBeUndefined();
       act(() => {
         item?.dispatchEvent(
@@ -443,25 +426,14 @@ describe("WorkspaceList", () => {
         );
       });
 
-      const overlay = document.body.querySelector(
-        ".app-modal-backdrop.conversation-search-overlay.sidebar-name-dialog-overlay",
-      );
-      expect(overlay).not.toBeNull();
-      expect(container.querySelector(".sidebar-name-dialog")).toBeNull();
-      const dialog = document.body.querySelector(".sidebar-name-dialog");
-      expect(dialog?.getAttribute("role")).toBe("dialog");
-      const input = document.body.querySelector<HTMLInputElement>(
-        ".sidebar-name-dialog-input",
-      );
+      const dialog = document.body.querySelector<HTMLElement>('[role="dialog"]');
+      const input = dialog?.querySelector<HTMLInputElement>("input");
       expect(input?.value).toBe("Old title");
       act(() => {
         changeInput(input!, "New title");
       });
-      const save = Array.from(document.body.querySelectorAll("button")).find(
-        (el) => el.textContent === "保存",
-      );
       act(() => {
-        save?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+        dialog!.querySelector<HTMLButtonElement>('button[type="submit"]')!.click();
       });
 
       expect(onRename).toHaveBeenCalledWith(thread, "New title");
@@ -469,6 +441,51 @@ describe("WorkspaceList", () => {
     } finally {
       window.prompt = originalPrompt;
     }
+  });
+
+  it("deletes a conversation only after the in-app confirmation is accepted", async () => {
+    const [thread] = summarizeThreadsForSidebar([
+      makeWorkspaceThread("thread-delete", "/repo/wuu", "Scratch notes"),
+    ]);
+    const onDelete = vi.fn();
+    act(() => {
+      root = createRoot(container);
+      root.render(
+        <>
+          <PinnedThreadList
+            threads={[thread]}
+            lastViewedTurnByThreadID={{}}
+            onSelect={() => {}}
+            onTogglePinned={() => {}}
+            onArchive={() => {}}
+            onDelete={onDelete}
+          />
+          <ConfirmDialogHost />
+        </>,
+      );
+    });
+    async function chooseDelete(): Promise<void> {
+      act(() => {
+        container.querySelector(".thread-row")?.dispatchEvent(
+          new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 10, clientY: 10 }),
+        );
+      });
+      const item = Array.from(document.body.querySelectorAll<HTMLButtonElement>(".thread-row-context-menu-item"))
+        .find((el) => el.textContent === translateCurrent("threadSidebar.delete"));
+      await act(async () => item?.click());
+    }
+    const answer = (name: "confirm" | "cancel") => act(async () => {
+      document.body.querySelector<HTMLButtonElement>(`[role="dialog"] [data-confirm-action="${name}"]`)?.click();
+    });
+
+    await chooseDelete();
+    expect(document.body.querySelector('[role="dialog"]')?.textContent).toContain("Scratch notes");
+    await answer("cancel");
+    expect(onDelete).not.toHaveBeenCalled();
+
+    await chooseDelete();
+    await answer("confirm");
+    expect(onDelete).toHaveBeenCalledWith(thread);
   });
 
   it("never auto-expands the active section — expansion is header-toggle only", () => {
@@ -596,7 +613,7 @@ describe("WorkspaceList", () => {
 
     const workspaceRow = container.querySelector(".project-row");
     expect(workspaceRow?.classList.contains("has-unread")).toBe(true);
-    expect(workspaceRow?.getAttribute("aria-label")).toContain("有未读会话");
+    expect(workspaceRow?.getAttribute("aria-label")).toContain("有未读对话");
     expect(workspaceRow?.querySelector(".project-row-unread")).not.toBeNull();
   });
 
@@ -655,9 +672,9 @@ describe("WorkspaceList", () => {
       '.thread-row-main[aria-label^="Middle session"]',
     );
     const leafRow = container.querySelector(
-      '.thread-row-main[aria-label^="Middle session，分叉自其他会话"]',
+      '.thread-row-main[aria-label^="Middle session，分叉自其他对话"]',
     );
-    expect(middleRow?.getAttribute("aria-label")).not.toContain("分叉自其他会话");
+    expect(middleRow?.getAttribute("aria-label")).not.toContain("分叉自其他对话");
     expect(leafRow).not.toBeNull();
   });
 });
@@ -722,8 +739,8 @@ describe("WorkspaceGroup remove workspace", () => {
       );
     });
 
-    expect(container.textContent).toContain("正在加载会话");
-    expect(container.textContent).not.toContain("还没有会话");
+    expect(container.textContent).toContain("正在加载对话");
+    expect(container.textContent).not.toContain("还没有对话");
     expect(container.querySelector(".project-row-loading")).not.toBeNull();
   });
 
@@ -744,7 +761,7 @@ describe("WorkspaceGroup remove workspace", () => {
     expect(document.body.querySelector(".thread-row-context-menu")).not.toBeNull();
     const item = Array.from(
       document.body.querySelectorAll(".thread-row-context-menu-item"),
-    ).find((el) => el.textContent === "移除工作区");
+    ).find((el) => el.textContent === translateCurrent("threadSidebar.removeWorkspace"));
     expect(item).not.toBeUndefined();
 
     act(() => {
@@ -837,7 +854,7 @@ describe("WorkspaceGroup missing workspace", () => {
     missing,
   });
 
-  it("dims a missing workspace and disables its 新建会话 button", () => {
+  it("dims a missing workspace and disables its 新建对话 button", () => {
     renderWorkspace(makeWorkspace(true));
     expect(container.querySelector(".project-group-missing")).not.toBeNull();
     const newThread = container.querySelector<HTMLButtonElement>(

@@ -5,9 +5,11 @@ package process
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -344,6 +346,169 @@ func TestStopStopsProcessGroup(t *testing.T) {
 	}
 }
 
+func TestStopKillsDescendantsAfterLeaderExit(t *testing.T) {
+	for _, mode := range []string{"pipe", "tty", "adopted", "adopted-exited", "adopted-exited-identity-mismatch", "adopted-exited-group-mismatch"} {
+		t.Run(mode, func(t *testing.T) {
+			root := t.TempDir()
+			m, err := NewManager(root, filepath.Join(root, "runtime"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			// The child announces readiness only after installing its signal
+			// handlers. It also inherits stdout to exercise adopted pipe readers.
+			command := `
+trap 'printf cleaned > cleanup; exit 0' TERM
+sh -c 'trap "" TERM HUP; echo $$ > child.pid; touch ready; while :; do sleep 1; done' &
+wait
+`
+			var p *Process
+			if strings.HasPrefix(mode, "adopted") {
+				id, logPath := m.ReserveProcessLog()
+				logf, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { _ = logf.Close() })
+				cmd := mustManagedCommand(t, command, root)
+				cmd.Stdout = io.MultiWriter(io.Discard, logf)
+				cmd.Stderr = logf
+				handle, err := StartCommand(cmd)
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() {
+					_ = handle.tree.Kill()
+					_ = handle.Wait()
+				})
+				p, err = m.Adopt(id, cmd, handle, logf, AdoptOptions{
+					Command: command, CWD: root, OwnerKind: OwnerMainAgent, OwnerID: "main", Lifecycle: LifecycleManaged,
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				p, err = m.Start(context.Background(), StartOptions{
+					Command: command, OwnerKind: OwnerMainAgent, OwnerID: "main", Lifecycle: LifecycleManaged, TTY: mode == "tty",
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			m.mu.Lock()
+			monitor := m.handles[p.ID]
+			m.mu.Unlock()
+			t.Cleanup(func() {
+				_ = ProcessTreeFromID(p.PGID).Kill()
+				waitForProcessMonitor(monitor)
+			})
+			waitForTestFile(t, filepath.Join(root, "ready"))
+			childText, err := os.ReadFile(filepath.Join(root, "child.pid"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			childPID, err := strconv.Atoi(strings.TrimSpace(string(childText)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if pgid, err := syscall.Getpgid(childPID); err != nil || pgid != p.PGID {
+				t.Fatalf("child process group = %d, want %d: %v", pgid, p.PGID, err)
+			}
+
+			if strings.HasPrefix(mode, "adopted-exited") {
+				// Exit only the leader before Stop; its child keeps the
+				// adopted stdout copy alive and ignores the later SIGTERM.
+				leader, err := os.FindProcess(p.PID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := leader.Signal(syscall.SIGTERM); err != nil {
+					t.Fatal(err)
+				}
+				waitForProcessExit(t, p.PID)
+				select {
+				case <-monitor.done:
+					t.Fatal("descendant did not retain stdout")
+				default:
+				}
+			}
+
+			mismatch := strings.HasSuffix(mode, "mismatch")
+			if mismatch {
+				changed := *p
+				if mode == "adopted-exited-identity-mismatch" {
+					changed.ProcessStartTime = "different-launch"
+				} else {
+					changed.PGID++
+				}
+				if err := m.save(&changed); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			stopDone := make(chan error, 1)
+			started := time.Now()
+			go func() {
+				_, err := m.Stop(p.ID)
+				stopDone <- err
+			}()
+			select {
+			case err := <-stopDone:
+				if mismatch {
+					if err == nil {
+						t.Fatal("Stop accepted a record that does not match its owned command")
+					}
+					if !processExists(childPID) {
+						t.Fatal("Stop signaled descendants despite mismatched ownership")
+					}
+					return
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("stop did not finish after the leader exited; a descendant may still hold stdout open")
+			}
+			stopped, err := m.Get(p.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if stopped.Status != StatusStopped || stopped.TerminalCause != EventCauseRequestedStop || stopped.ExitCode != 0 {
+				t.Fatalf("TERM-aware leader did not exit cleanly after stop: %+v", stopped)
+			}
+			if _, err := os.Stat(filepath.Join(root, "cleanup")); err != nil {
+				t.Fatalf("leader's SIGTERM cleanup did not run: %v", err)
+			}
+			waitForProcessExit(t, childPID)
+			t.Logf("stop completed in %s; leader %d and descendant %d exited", time.Since(started), p.PID, childPID)
+		})
+	}
+}
+
+func TestStopDoesNotSignalTerminalRecords(t *testing.T) {
+	root := t.TempDir()
+	m, err := NewManager(root, filepath.Join(root, "runtime"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd, pgid, _ := startExternalProcessGroup(t, root)
+	identity, _, _, err := readProcessIdentity(cmd.Process.Pid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, status := range []Status{StatusStopped, StatusFailed} {
+		record := &Process{ID: "proc-terminal", Status: status, PID: cmd.Process.Pid, PGID: pgid, ProcessStartTime: identity}
+		if err := m.save(record); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := m.Stop(record.ID); err != nil {
+			t.Fatal(err)
+		}
+		if err := cmd.Process.Signal(syscall.Signal(0)); err != nil {
+			t.Fatalf("stopping a %s record signaled a live process: %v", status, err)
+		}
+	}
+}
+
 func TestStopRefusesReusedProcessID(t *testing.T) {
 	root := t.TempDir()
 	m, err := NewManager(root, filepath.Join(root, "state", "runtime"))
@@ -543,7 +708,7 @@ func TestStartTTYProvidesTerminalSemantics(t *testing.T) {
 	root := t.TempDir()
 	m, _ := NewManager(root, filepath.Join(root, "state", "runtime"))
 	ttyProc, err := m.Start(context.Background(), StartOptions{
-		Command:   "if test -t 1; then echo MODE_TTY; else echo MODE_PIPE; fi; printf 'ENV=%s|%s|%s|%s\\n' \"$TERM\" \"$COLORTERM\" \"$CLICOLOR\" \"$FORCE_COLOR\"; printf '\\033[31mCOLOR_RED\\033[0m\\n'; sleep 1",
+		Command:   "if test -t 1; then echo MODE_TTY; else echo MODE_PIPE; fi; printf 'ENV=%s|%s|%s|%s\\n' \"$TERM\" \"$COLORTERM\" \"$CLICOLOR\" \"$FORCE_COLOR\"; printf '\\033[31mCOLOR_RED\\033[0m\\n'; read -r done",
 		OwnerKind: OwnerMainAgent,
 		OwnerID:   "main",
 		Lifecycle: LifecycleSession,
@@ -554,7 +719,7 @@ func TestStartTTYProvidesTerminalSemantics(t *testing.T) {
 	}
 	defer m.Stop(ttyProc.ID)
 	pipeProc, err := m.Start(context.Background(), StartOptions{
-		Command:   "if test -t 1; then echo MODE_TTY; else echo MODE_PIPE; fi; sleep 1",
+		Command:   "if test -t 1; then echo MODE_TTY; else echo MODE_PIPE; fi; read -r done",
 		OwnerKind: OwnerMainAgent,
 		OwnerID:   "main",
 		Lifecycle: LifecycleSession,
@@ -565,10 +730,25 @@ func TestStartTTYProvidesTerminalSemantics(t *testing.T) {
 	defer m.Stop(pipeProc.ID)
 
 	ttyOffset := int64(0)
-	ttyOut, err := m.ReadOutputSnapshot(context.Background(), ttyProc.ID, OutputReadOptions{OffsetBytes: &ttyOffset, Wait: 2 * time.Second})
-	if err != nil {
-		t.Fatal(err)
+	deadline := time.Now().Add(2 * time.Second)
+	var ttyOut OutputSnapshot
+	var output strings.Builder
+	// A snapshot can end between writes; wait for the final line before checking all output.
+	for time.Now().Before(deadline) {
+		ttyOut, err = m.ReadOutputSnapshot(context.Background(), ttyProc.ID, OutputReadOptions{
+			OffsetBytes: &ttyOffset,
+			Wait:        time.Until(deadline),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		output.WriteString(ttyOut.Output)
+		ttyOffset = ttyOut.EndOffset
+		if strings.Contains(output.String(), "\x1b[31mCOLOR_RED\x1b[0m") {
+			break
+		}
 	}
+	ttyOut.Output = output.String()
 	if !ttyOut.Process.TTY || !strings.Contains(ttyOut.Output, "MODE_TTY") {
 		t.Fatalf("expected tty process output, got %+v output=%q", ttyOut.Process, ttyOut.Output)
 	}
@@ -822,18 +1002,24 @@ func TestManagerUnsubscribeStopsLifecycleDelivery(t *testing.T) {
 	m.Subscribe(events)
 	m.Unsubscribe(events)
 
-	if _, err := m.Start(context.Background(), StartOptions{
+	// Observe completion separately so registry writes finish before TempDir cleanup.
+	completed := make(chan Event, 4)
+	m.Subscribe(completed)
+	defer m.Unsubscribe(completed)
+	started, err := m.Start(context.Background(), StartOptions{
 		Command:   "exit 0",
 		OwnerKind: OwnerMainAgent,
 		OwnerID:   "main",
 		Lifecycle: LifecycleManaged,
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
+	waitForProcessEvent(t, completed, started.ID, EventStopped, EventCauseNaturalExit)
 	select {
 	case event := <-events:
 		t.Fatalf("received event after unsubscribe: %+v", event)
-	case <-time.After(200 * time.Millisecond):
+	default:
 	}
 }
 

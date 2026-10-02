@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/processsandbox"
@@ -183,6 +184,7 @@ type OutputSnapshot struct {
 }
 
 type Manager struct {
+	remote  RemoteTransport
 	rootDir string
 	// hostGenerationID is shared by Managers belonging to one top-level
 	// app-server lifetime and stamped on every command they start. The handles
@@ -221,6 +223,29 @@ type processHandle struct {
 	stdin   io.WriteCloser
 	ptyFile *os.File
 	done    chan struct{}
+	// An adopted command may outlive its leader while a descendant owns an
+	// output pipe. Retain launch identity, not just a persisted process-group ID.
+	command          *CommandHandle
+	pid              int
+	processStartTime string
+}
+
+type ptySession struct {
+	master    *os.File
+	exitRead  *os.File
+	exitWrite *os.File
+	conn      syscall.RawConn
+	exitConn  syscall.RawConn
+}
+
+func (p *ptySession) Close() error {
+	_ = p.exitWrite.Close()
+	return p.master.Close()
+}
+
+func (p *ptySession) close() {
+	_ = p.Close()
+	_ = p.exitRead.Close()
 }
 
 func NewManager(rootDir string, runtimeDirs ...string) (*Manager, error) {
@@ -322,6 +347,9 @@ func (m *Manager) SetRootDir(rootDir string) {
 // bind a SessionID before using it; internal callers may use it for legitimate
 // non-thread work and provide RootThreadID when they own that association.
 func (m *Manager) Start(ctx context.Context, opt StartOptions) (*Process, error) {
+	if m.remote != nil {
+		return nil, errors.New("remote commands must start through the execution environment")
+	}
 	if strings.TrimSpace(opt.Command) == "" {
 		return nil, errors.New("command is required")
 	}
@@ -428,8 +456,9 @@ func (m *Manager) Start(ctx context.Context, opt StartOptions) (*Process, error)
 	}
 	var stdin io.WriteCloser
 	var ptyFile *os.File
+	var tty *ptySession
 	if opt.TTY {
-		ptyFile, err = startPTYProcess(cmd)
+		tty, err = startPTYProcess(cmd)
 		if err != nil {
 			_ = logf.Close()
 			p.Status = StatusFailed
@@ -439,7 +468,8 @@ func (m *Manager) Start(ctx context.Context, opt StartOptions) (*Process, error)
 			m.publish(Event{Type: EventFailed, Process: *p})
 			return p, fmt.Errorf("start pty process: %w", err)
 		}
-		stdin = ptyFile
+		ptyFile = tty.master
+		stdin = tty
 	} else {
 		stdin, err = cmd.StdinPipe()
 		if err != nil {
@@ -475,6 +505,9 @@ func (m *Manager) Start(ctx context.Context, opt StartOptions) (*Process, error)
 		if stdin != nil {
 			_ = stdin.Close()
 		}
+		if tty != nil {
+			tty.close()
+		}
 		_ = cmd.Wait()
 		_ = logf.Close()
 		p.Status = StatusFailed
@@ -493,7 +526,7 @@ func (m *Manager) Start(ctx context.Context, opt StartOptions) (*Process, error)
 	if opt.TTY {
 		go func() {
 			defer close(handle.done)
-			m.waitPTY(id, cmd, logf, ptyFile)
+			m.waitPTY(id, cmd, logf, tty)
 		}()
 	} else {
 		go func() {
@@ -609,15 +642,16 @@ func (m *Manager) wait(id string, cmd *exec.Cmd, logf *os.File) {
 	m.finishWait(id, cmd, err, discarded)
 }
 
-func (m *Manager) waitPTY(id string, cmd *exec.Cmd, logf *os.File, ptyFile *os.File) {
+func (m *Manager) waitPTY(id string, cmd *exec.Cmd, logf *os.File, tty *ptySession) {
 	copyDone := make(chan struct{})
 	go func() {
-		_, _ = io.Copy(logf, ptyFile)
+		copyPTYOutput(logf, tty)
 		close(copyDone)
 	}()
 	err := cmd.Wait()
-	_ = ptyFile.Close()
+	_ = tty.exitWrite.Close()
 	<-copyDone
+	tty.close()
 	_ = logf.Close()
 	_, discarded, _ := compactProcessLog(filepath.Join(m.logDir, id+".log"), terminalProcessLogMaxBytes)
 	m.finishWait(id, cmd, err, discarded)
@@ -679,6 +713,11 @@ func (m *Manager) finishWait(id string, cmd *exec.Cmd, err error, discardedLogBy
 }
 
 func (m *Manager) List() ([]Process, error) {
+	if m.remote != nil {
+		var result []Process
+		err := m.remoteRequest("list", nil, &result)
+		return result, err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	files, err := filepath.Glob(filepath.Join(m.registryDir, "*.json"))
@@ -706,6 +745,11 @@ func (m *Manager) List() ([]Process, error) {
 }
 
 func (m *Manager) Get(id string) (*Process, error) {
+	if m.remote != nil {
+		var result Process
+		err := m.remoteRequest("get", map[string]any{"id": id}, &result)
+		return &result, err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.load(id)
@@ -720,10 +764,15 @@ func (m *Manager) ReadOutput(id string, maxBytes int) (string, bool, error) {
 }
 
 func (m *Manager) ReadOutputSnapshot(ctx context.Context, id string, opt OutputReadOptions) (OutputSnapshot, error) {
-	started := time.Now()
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if m.remote != nil {
+		var result OutputSnapshot
+		err := m.remote.Request(ctx, "read", map[string]any{"id": id, "options": opt}, &result)
+		return result, err
+	}
+	started := time.Now()
 	if opt.MaxBytes <= 0 {
 		opt.MaxBytes = 32 * 1024
 	}
@@ -849,6 +898,11 @@ func isLiveStatus(status Status) bool {
 }
 
 func (m *Manager) WriteStdin(id string, input string) (*Process, error) {
+	if m.remote != nil {
+		var result Process
+		err := m.remoteRequest("write", map[string]any{"id": id, "input": input}, &result)
+		return &result, err
+	}
 	m.mu.Lock()
 	p, err := m.load(id)
 	if err != nil {
@@ -873,6 +927,11 @@ func (m *Manager) WriteStdin(id string, input string) (*Process, error) {
 }
 
 func (m *Manager) InputAvailable(id string) bool {
+	if m.remote != nil {
+		var result bool
+		_ = m.remoteRequest("input_available", map[string]any{"id": id}, &result)
+		return result
+	}
 	m.mu.Lock()
 	handle := m.handles[id]
 	m.mu.Unlock()
@@ -880,6 +939,11 @@ func (m *Manager) InputAvailable(id string) bool {
 }
 
 func (m *Manager) ResizeTTY(id string, cols, rows int) (*Process, error) {
+	if m.remote != nil {
+		var result Process
+		err := m.remoteRequest("resize", map[string]any{"id": id, "cols": cols, "rows": rows}, &result)
+		return &result, err
+	}
 	if cols < 1 || rows < 1 {
 		return nil, errors.New("terminal size must be positive")
 	}
@@ -911,6 +975,11 @@ func (m *Manager) ResizeTTY(id string, cols, rows int) (*Process, error) {
 }
 
 func (m *Manager) Stop(id string) (*Process, error) {
+	if m.remote != nil {
+		var result Process
+		err := m.remoteRequest("stop", map[string]any{"id": id}, &result)
+		return &result, err
+	}
 	m.mu.Lock()
 	p, err := m.load(id)
 	if err != nil {
@@ -920,8 +989,12 @@ func (m *Manager) Stop(id string) (*Process, error) {
 	handle := m.handles[id]
 	if p.Status == StatusStopped || p.Status == StatusFailed {
 		m.mu.Unlock()
-		waitForProcessMonitor(handle)
-		return p, nil
+		return p, waitForProcessMonitor(handle)
+	}
+	ownedCommand := handle != nil && handle.command != nil
+	if ownedCommand && (handle.pid != p.PID || handle.command.tree.ID() != p.PGID || handle.processStartTime != p.ProcessStartTime) {
+		m.mu.Unlock()
+		return p, fmt.Errorf("process %q record does not match its owned command; refusing to signal it", id)
 	}
 	running, err := processMatchesRecord(p)
 	if err != nil {
@@ -934,7 +1007,7 @@ func (m *Manager) Stop(id string) (*Process, error) {
 		m.mu.Unlock()
 		return p, err
 	}
-	if !running {
+	if !running && !ownedCommand {
 		delete(m.handles, id)
 		p.Status = StatusStopped
 		p.StoppedAt = time.Now()
@@ -946,8 +1019,7 @@ func (m *Manager) Stop(id string) (*Process, error) {
 		}
 		m.mu.Unlock()
 		m.publish(Event{Type: EventStopped, Cause: EventCauseRequestedStop, Process: *p})
-		waitForProcessMonitor(handle)
-		return p, nil
+		return p, waitForProcessMonitor(handle)
 	}
 	p.Status = StatusStopping
 	p.UpdatedAt = time.Now()
@@ -956,47 +1028,45 @@ func (m *Manager) Stop(id string) (*Process, error) {
 		return p, fmt.Errorf("persist stopping process: %w", err)
 	}
 	m.mu.Unlock()
-	if err := ProcessTreeFromID(p.PGID).Terminate(); err != nil {
+	tree := ProcessTreeFromID(p.PGID)
+	if err := tree.Terminate(); err != nil {
 		return p, fmt.Errorf("terminate process group %d: %w", p.PGID, err)
 	}
-	cur, stopped, err := m.waitForStop(id, time.Now().Add(2*time.Second))
-	if err != nil || stopped {
-		if stopped {
-			waitForProcessMonitor(handle)
-		}
-		return cur, err
-	}
-
-	running, err = processMatchesRecord(cur)
+	cur, _, err := m.waitForStop(id, time.Now().Add(DefaultStopGracePeriod))
 	if err != nil {
 		return cur, err
 	}
-	if !running {
-		cur, err := m.reconcileStopped(id)
-		if err == nil {
-			waitForProcessMonitor(handle)
-		}
+
+	// The verified leader may have exited while descendants still hold output
+	// pipes open. Finish this stop against the original group before waiting
+	// for the monitor, but reject a PID reused during the grace period.
+	if _, err := processMatchesRecord(p); err != nil {
 		return cur, err
 	}
-	if err := ProcessTreeFromID(cur.PGID).Kill(); err != nil {
-		return cur, fmt.Errorf("kill process group %d: %w", cur.PGID, err)
+	if err := tree.Kill(); err != nil {
+		return cur, fmt.Errorf("kill process group %d: %w", tree.ID(), err)
 	}
-	cur, stopped, err = m.waitForStop(id, time.Now().Add(2*time.Second))
+	cur, stopped, err := m.waitForStop(id, time.Now().Add(DefaultStopGracePeriod))
 	if err != nil {
 		return cur, err
 	}
 	if !stopped {
 		return cur, fmt.Errorf("process group %d did not stop after SIGKILL", cur.PGID)
 	}
-	waitForProcessMonitor(handle)
-	return cur, nil
+	if err := waitForProcessMonitor(handle); err != nil {
+		return cur, err
+	}
+	return m.Get(id)
 }
 
-func waitForProcessMonitor(handle *processHandle) {
+func waitForProcessMonitor(handle *processHandle) error {
 	if handle == nil || handle.done == nil {
-		return
+		return nil
 	}
-	<-handle.done
+	if !waitForCommand(handle.done, DefaultStopGracePeriod) {
+		return errors.New("process output monitor did not finish after stop")
+	}
+	return nil
 }
 
 func (m *Manager) waitForStop(id string, deadline time.Time) (*Process, bool, error) {
@@ -1243,6 +1313,11 @@ func (m *Manager) PendingCompletions() ([]Process, error) {
 }
 
 func (m *Manager) CompletionPending(id string) (bool, error) {
+	if m.remote != nil {
+		var result bool
+		err := m.remoteRequest("completion_pending", map[string]any{"id": id}, &result)
+		return result, err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	p, err := m.load(id)
@@ -1253,6 +1328,11 @@ func (m *Manager) CompletionPending(id string) (bool, error) {
 }
 
 func (m *Manager) MarkCompletionDelivered(id, consumer string) (*Process, error) {
+	if m.remote != nil {
+		var result Process
+		err := m.remoteRequest("completion_delivered", map[string]any{"id": id, "consumer": consumer}, &result)
+		return &result, err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	p, err := m.load(id)
@@ -1395,6 +1475,11 @@ func (m *Manager) signalRecheckScheduler() {
 // SetRecheck updates a live process's recheck schedule. Zero minutes cancels
 // the schedule and drops any fired-but-undelivered recheck.
 func (m *Manager) SetRecheck(id string, minutes int) (*Process, error) {
+	if m.remote != nil {
+		var result Process
+		err := m.remoteRequest("recheck", map[string]any{"id": id, "minutes": minutes}, &result)
+		return &result, err
+	}
 	if minutes < 0 || minutes > MaxRecheckMinutes {
 		return nil, fmt.Errorf("recheck_minutes must be between 0 and %d", MaxRecheckMinutes)
 	}
@@ -1429,6 +1514,11 @@ func (m *Manager) SetRecheck(id string, minutes int) (*Process, error) {
 // conversation. A process started in resume mode keeps the owning turn (and
 // wuu exec) waiting; switching a long-lived service to detached releases it.
 func (m *Manager) SetCompletionMode(id string, mode CompletionMode) (*Process, error) {
+	if m.remote != nil {
+		var result Process
+		err := m.remoteRequest("completion_mode", map[string]any{"id": id, "mode": mode}, &result)
+		return &result, err
+	}
 	if mode != CompletionModeResume && mode != CompletionModeDetached {
 		return nil, fmt.Errorf("completion_mode must be %q or %q", CompletionModeResume, CompletionModeDetached)
 	}
@@ -1470,6 +1560,11 @@ func (m *Manager) PendingRechecks() ([]Process, error) {
 // been queued for the owning thread. Rechecks are periodic, so a delivery
 // lost after this point self-heals at the next interval.
 func (m *Manager) MarkRecheckDelivered(id string) (*Process, error) {
+	if m.remote != nil {
+		var result Process
+		err := m.remoteRequest("recheck_delivered", map[string]any{"id": id}, &result)
+		return &result, err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	p, err := m.load(id)
@@ -1522,6 +1617,9 @@ type AdoptOptions struct {
 // completion delivery, and Stop all go through the manager from here. On
 // error the caller retains the command and should stop it itself.
 func (m *Manager) Adopt(id string, cmd *exec.Cmd, handle *CommandHandle, logf *os.File, opt AdoptOptions) (*Process, error) {
+	if m.remote != nil {
+		return nil, errors.New("cannot adopt a host process into a remote environment")
+	}
 	if cmd == nil || cmd.Process == nil {
 		return nil, errors.New("running command is required")
 	}
@@ -1590,7 +1688,10 @@ func (m *Manager) Adopt(id string, cmd *exec.Cmd, handle *CommandHandle, logf *o
 		m.mu.Unlock()
 		return nil, err
 	}
-	adopted := &processHandle{done: make(chan struct{})}
+	adopted := &processHandle{
+		done: make(chan struct{}), command: handle,
+		pid: p.PID, processStartTime: p.ProcessStartTime,
+	}
 	m.handles[id] = adopted
 	m.mu.Unlock()
 	m.publish(Event{Type: EventStarted, Process: *p})
@@ -1614,6 +1715,11 @@ func (m *Manager) CleanupSession() error {
 }
 
 func (m *Manager) CleanupSessionWithResult() (CleanupResult, error) {
+	if m.remote != nil {
+		var result CleanupResult
+		err := m.remoteRequest("cleanup", nil, &result)
+		return result, err
+	}
 	result := CleanupResult{}
 	list, err := m.List()
 	if err != nil {

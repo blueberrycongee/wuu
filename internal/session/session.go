@@ -26,6 +26,7 @@ const (
 
 var (
 	ErrSessionNotFound     = errors.New("session not found")
+	ErrSessionNotArchived  = errors.New("session is not archived")
 	ErrHistoryUnavailable  = errors.New("session history unavailable")
 	ErrHistorySnapshotGone = errors.New("history snapshot is no longer available")
 )
@@ -266,6 +267,16 @@ func CreateInitialized(sessDir string, sess Session, records []HistoryRecord) (*
 }
 
 func CreateInitializedWithLaunch(sessDir string, sess Session, records []HistoryRecord, seed ContextSeed, launch SessionLaunchRecord) (*Session, error) {
+	return createInitialized(sessDir, sess, records, seed, launch, nil)
+}
+
+// CreateInitializedWithInbox commits the session, its initial execution fence,
+// and first dispatch together, so recovery cannot lose the initial brief.
+func CreateInitializedWithInbox(sessDir string, sess Session, records []HistoryRecord, seed ContextSeed, launch SessionLaunchRecord, input InboxMessage) (*Session, error) {
+	return createInitialized(sessDir, sess, records, seed, launch, &input)
+}
+
+func createInitialized(sessDir string, sess Session, records []HistoryRecord, seed ContextSeed, launch SessionLaunchRecord, input *InboxMessage) (*Session, error) {
 	sess.ID = strings.TrimSpace(sess.ID)
 	if sess.ID == "" {
 		sess.ID = NewID()
@@ -327,6 +338,21 @@ func CreateInitializedWithLaunch(sessDir string, sess Session, records []History
 	}
 	if err := insertSessionTx(tx, sess); err != nil {
 		return nil, err
+	}
+	if input != nil {
+		control := Control{SessionID: sess.ID, ManagerID: sess.ParentID, Revision: 1, State: ControlActive}
+		if control.ManagerID == "" {
+			return nil, errors.New("initial dispatch needs a manager")
+		}
+		if _, err := tx.Exec(`INSERT INTO session_controls(session_id,manager_id,revision,state) VALUES(?,?,?,?)`, control.SessionID, control.ManagerID, control.Revision, control.State); err != nil {
+			return nil, err
+		}
+		message := *input
+		message.SessionID = sess.ID
+		message.Controls = append(append([]Control(nil), message.Controls...), control)
+		if err := insertInbox(tx, message); err != nil {
+			return nil, err
+		}
 	}
 	for index, record := range records {
 		if err := insertHistoryRecordTx(tx, sess.ID, index+1, record); err != nil {
@@ -776,6 +802,16 @@ func (s Session) WorktreeInfo() (WorktreeInfo, bool) {
 
 // Delete removes a session and its durable history records.
 func Delete(sessDir, id string) (Session, error) {
+	return deleteSession(sessDir, id, false)
+}
+
+// DeleteArchived removes a session and its durable history only if it remains
+// archived in the deletion transaction. A restored session is left unchanged.
+func DeleteArchived(sessDir, id string) (Session, error) {
+	return deleteSession(sessDir, id, true)
+}
+
+func deleteSession(sessDir, id string, onlyIfArchived bool) (Session, error) {
 	id = strings.TrimSpace(id)
 	if id == "" {
 		return Session{}, fmt.Errorf("%w: %q", ErrSessionNotFound, id)
@@ -801,6 +837,11 @@ func Delete(sessDir, id string) (Session, error) {
 	}
 	if !ok {
 		return Session{}, fmt.Errorf("%w: %q", ErrSessionNotFound, id)
+	}
+	// Read the same durable archive state used by listing inside this transaction.
+	// A handler-level check would race with another process restoring the session.
+	if onlyIfArchived && deleted.ArchivedAt == nil {
+		return Session{}, fmt.Errorf("%w: %q", ErrSessionNotArchived, id)
 	}
 	if _, err := tx.Exec(`DELETE FROM plugin_turn_lifecycle_outbox
 		WHERE EXISTS (
@@ -906,6 +947,16 @@ func AppendHistoryRecordReturningSeq(sessDir, id string, rec HistoryRecord) (int
 // AppendControlledHistoryRecord atomically fences automatic input against a
 // control change. An accepted input cannot appear after a committed takeover.
 func AppendControlledHistoryRecord(sessDir, id string, rec HistoryRecord, control *Control) (int, error) {
+	return appendFencedHistoryRecord(sessDir, id, rec, control, nil)
+}
+
+// AppendContinuationHistoryRecord checks a Run's original control baseline in
+// the history transaction, including adoption or stop during admission hooks.
+func AppendContinuationHistoryRecord(sessDir, id string, rec HistoryRecord, control *Control, baseline Control) (int, error) {
+	return appendFencedHistoryRecord(sessDir, id, rec, control, &baseline)
+}
+
+func appendFencedHistoryRecord(sessDir, id string, rec HistoryRecord, control, baseline *Control) (int, error) {
 	db, err := openStore(sessDir)
 	if err != nil {
 		return 0, err
@@ -933,6 +984,24 @@ func AppendControlledHistoryRecord(sessDir, id string, rec HistoryRecord, contro
 		}
 		if control.SessionID != id || manager != control.ManagerID || revision != control.Revision || state != ControlActive {
 			return 0, ErrControlChanged
+		}
+	}
+	if baseline != nil {
+		if baseline.SessionID != id {
+			return 0, ErrControlChanged
+		}
+		current := Control{SessionID: id}
+		err := tx.QueryRow(`SELECT manager_id,revision,state FROM session_controls WHERE session_id=?`, id).Scan(&current.ManagerID, &current.Revision, &current.State)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return 0, err
+		}
+		if err := validateContinuationBaseline(current, *baseline); err != nil {
+			return 0, err
+		}
+	}
+	if rec.Role == "user" && rec.ClientID != "" {
+		if err := validateInboxControls(tx, rec.ClientID); err != nil {
+			return 0, err
 		}
 	}
 	seq, err := appendHistoryRecordTx(tx, id, rec)
@@ -1171,6 +1240,7 @@ func configureDB(db *sql.DB) error {
 }
 
 func migrateSchema(db *sql.DB) error {
+	migration := schemaMigration{db: db, columns: make(map[string]map[string]bool)}
 	stmts := []string{
 		`CREATE TABLE IF NOT EXISTS sessions (
 			id TEXT PRIMARY KEY,
@@ -1656,19 +1726,19 @@ func migrateSchema(db *sql.DB) error {
 			return fmt.Errorf("migrate sessions database: %w", err)
 		}
 	}
-	if err := addColumnIfMissing(db, "inference_operations", "workflow_id", "TEXT NOT NULL DEFAULT ''"); err != nil {
+	if err := migration.addColumnIfMissing("inference_operations", "workflow_id", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
-	if err := addColumnIfMissing(db, "inference_operations", "parent_operation_id", "TEXT NOT NULL DEFAULT ''"); err != nil {
+	if err := migration.addColumnIfMissing("inference_operations", "parent_operation_id", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
-	if err := addColumnIfMissing(db, "inference_operations", "attempt_limit", "INTEGER NOT NULL DEFAULT 1"); err != nil {
+	if err := migration.addColumnIfMissing("inference_operations", "attempt_limit", "INTEGER NOT NULL DEFAULT 1"); err != nil {
 		return err
 	}
-	if err := addColumnIfMissing(db, "inference_operations", "failure_message", "TEXT NOT NULL DEFAULT ''"); err != nil {
+	if err := migration.addColumnIfMissing("inference_operations", "failure_message", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
-	if err := addColumnIfMissing(db, "inference_attempts", "failure_message", "TEXT NOT NULL DEFAULT ''"); err != nil {
+	if err := migration.addColumnIfMissing("inference_attempts", "failure_message", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
 	// Existing journal rows predate workflow identity. Give each historical
@@ -1709,147 +1779,147 @@ WHERE workflow_id = ''`); err != nil {
 		ON inference_operations(workflow_id, created_at, id)`); err != nil {
 		return fmt.Errorf("migrate inference workflow index: %w", err)
 	}
-	if err := addColumnIfMissing(db, "tool_invocations", "parent_invocation_id", "TEXT NOT NULL DEFAULT ''"); err != nil {
+	if err := migration.addColumnIfMissing("tool_invocations", "parent_invocation_id", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
-	if err := addColumnIfMissing(db, "session_messages", "phase", "TEXT NOT NULL DEFAULT ''"); err != nil {
+	if err := migration.addColumnIfMissing("session_messages", "phase", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
-	if err := addColumnIfMissing(db, "session_messages", "display_content", "TEXT NOT NULL DEFAULT ''"); err != nil {
+	if err := migration.addColumnIfMissing("session_messages", "display_content", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
-	if err := addColumnIfMissing(db, "session_messages", "origin", "TEXT NOT NULL DEFAULT ''"); err != nil {
+	if err := migration.addColumnIfMissing("session_messages", "origin", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
-	if err := addColumnIfMissing(db, "session_messages", "origin_id", "TEXT NOT NULL DEFAULT ''"); err != nil {
+	if err := migration.addColumnIfMissing("session_messages", "origin_id", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
-	if err := addColumnIfMissing(db, "session_messages", "cause", "TEXT NOT NULL DEFAULT ''"); err != nil {
+	if err := migration.addColumnIfMissing("session_messages", "cause", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
-	if err := addColumnIfMissing(db, "session_messages", "presentation_kind", "TEXT NOT NULL DEFAULT ''"); err != nil {
+	if err := migration.addColumnIfMissing("session_messages", "presentation_kind", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
-	if err := addColumnIfMissing(db, "session_messages", "related_session_id", "TEXT NOT NULL DEFAULT ''"); err != nil {
+	if err := migration.addColumnIfMissing("session_messages", "related_session_id", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
-	if err := addColumnIfMissing(db, "session_messages", "read_only", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+	if err := migration.addColumnIfMissing("session_messages", "read_only", "INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return err
 	}
-	if err := addColumnIfMissing(db, "session_messages", "provider_item_id", "TEXT NOT NULL DEFAULT ''"); err != nil {
+	if err := migration.addColumnIfMissing("session_messages", "provider_item_id", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
-	if err := addColumnIfMissing(db, "session_messages", "provider_item_model", "TEXT NOT NULL DEFAULT ''"); err != nil {
+	if err := migration.addColumnIfMissing("session_messages", "provider_item_model", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
-	if err := addColumnIfMissing(db, "session_messages", "hidden", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+	if err := migration.addColumnIfMissing("session_messages", "hidden", "INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return err
 	}
-	if err := addColumnIfMissing(db, "session_messages", "content_parts_json", "TEXT NOT NULL DEFAULT ''"); err != nil {
+	if err := migration.addColumnIfMissing("session_messages", "content_parts_json", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
-	if err := addColumnIfMissing(db, "session_messages", "cache_creation_tokens", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+	if err := migration.addColumnIfMissing("session_messages", "cache_creation_tokens", "INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return err
 	}
-	if err := addColumnIfMissing(db, "session_messages", "cache_read_tokens", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+	if err := migration.addColumnIfMissing("session_messages", "cache_read_tokens", "INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return err
 	}
-	if err := addColumnIfMissing(db, "session_messages", "context_tokens", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+	if err := migration.addColumnIfMissing("session_messages", "context_tokens", "INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return err
 	}
-	if err := addColumnIfMissing(db, "session_messages", "retry_count", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+	if err := migration.addColumnIfMissing("session_messages", "retry_count", "INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return err
 	}
-	if err := addColumnIfMissing(db, "session_messages", "max_retries", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+	if err := migration.addColumnIfMissing("session_messages", "max_retries", "INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return err
 	}
-	if err := addColumnIfMissing(db, "session_messages", "tool_result_kind", "TEXT NOT NULL DEFAULT ''"); err != nil {
+	if err := migration.addColumnIfMissing("session_messages", "tool_result_kind", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
-	if err := addColumnIfMissing(db, "session_messages", "tool_invocation_id", "TEXT NOT NULL DEFAULT ''"); err != nil {
+	if err := migration.addColumnIfMissing("session_messages", "tool_invocation_id", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
-	if err := addColumnIfMissing(db, "session_messages", "tool_result_json", "TEXT NOT NULL DEFAULT ''"); err != nil {
+	if err := migration.addColumnIfMissing("session_messages", "tool_result_json", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
-	if err := addColumnIfMissing(db, "session_messages", "finish_reason", "TEXT NOT NULL DEFAULT ''"); err != nil {
+	if err := migration.addColumnIfMissing("session_messages", "finish_reason", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
-	if err := addColumnIfMissing(db, "session_messages", "stop_reason", "TEXT NOT NULL DEFAULT ''"); err != nil {
+	if err := migration.addColumnIfMissing("session_messages", "stop_reason", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
-	if err := addColumnIfMissing(db, "session_messages", "truncated", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+	if err := migration.addColumnIfMissing("session_messages", "truncated", "INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return err
 	}
-	if err := addColumnIfMissing(db, "session_messages", "discovered_tools_json", "TEXT NOT NULL DEFAULT ''"); err != nil {
+	if err := migration.addColumnIfMissing("session_messages", "discovered_tools_json", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
-	if err := addColumnIfMissing(db, "session_messages", "provider", "TEXT NOT NULL DEFAULT ''"); err != nil {
+	if err := migration.addColumnIfMissing("session_messages", "provider", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
-	if err := addColumnIfMissing(db, "session_messages", "model", "TEXT NOT NULL DEFAULT ''"); err != nil {
+	if err := migration.addColumnIfMissing("session_messages", "model", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
-	if err := addColumnIfMissing(db, "sessions", "worktree_path", "TEXT NOT NULL DEFAULT ''"); err != nil {
+	if err := migration.addColumnIfMissing("sessions", "worktree_path", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
-	if err := addColumnIfMissing(db, "sessions", "archive_reason", "TEXT NOT NULL DEFAULT ''"); err != nil {
+	if err := migration.addColumnIfMissing("sessions", "archive_reason", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
-	if err := addColumnIfMissing(db, "sessions", "worktree_base_head", "TEXT NOT NULL DEFAULT ''"); err != nil {
+	if err := migration.addColumnIfMissing("sessions", "worktree_base_head", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
-	if err := addColumnIfMissing(db, "sessions", "worktree_base_repo", "TEXT NOT NULL DEFAULT ''"); err != nil {
+	if err := migration.addColumnIfMissing("sessions", "worktree_base_repo", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
-	if err := addColumnIfMissing(db, "sessions", "workspace_id", "TEXT NOT NULL DEFAULT ''"); err != nil {
+	if err := migration.addColumnIfMissing("sessions", "workspace_id", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
-	if err := addColumnIfMissing(db, "sessions", "source", "TEXT NOT NULL DEFAULT ''"); err != nil {
+	if err := migration.addColumnIfMissing("sessions", "source", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
 	for _, column := range []string{"owner", "visibility", "parent_id", "context_source", "creation_request_id"} {
-		if err := addColumnIfMissing(db, "sessions", column, "TEXT NOT NULL DEFAULT ''"); err != nil {
+		if err := migration.addColumnIfMissing("sessions", column, "TEXT NOT NULL DEFAULT ''"); err != nil {
 			return err
 		}
 	}
 	if _, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_managed_request ON sessions(owner, creation_request_id) WHERE owner <> '' AND creation_request_id <> ''`); err != nil {
 		return fmt.Errorf("migrate managed session request index: %w", err)
 	}
-	if err := addColumnIfMissing(db, "sessions", "provider", "TEXT NOT NULL DEFAULT ''"); err != nil {
+	if err := migration.addColumnIfMissing("sessions", "provider", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
-	if err := addColumnIfMissing(db, "sessions", "model", "TEXT NOT NULL DEFAULT ''"); err != nil {
+	if err := migration.addColumnIfMissing("sessions", "model", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
-	if err := addColumnIfMissing(db, "sessions", "variant", "TEXT NOT NULL DEFAULT ''"); err != nil {
+	if err := migration.addColumnIfMissing("sessions", "variant", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
-	if err := addColumnIfMissing(db, "sessions", "speed", "TEXT NOT NULL DEFAULT ''"); err != nil {
+	if err := migration.addColumnIfMissing("sessions", "speed", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
-	if err := addColumnIfMissing(db, "sessions", "effort", "TEXT NOT NULL DEFAULT ''"); err != nil {
+	if err := migration.addColumnIfMissing("sessions", "effort", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
-	if err := addColumnIfMissing(db, "sessions", "permission_mode", "TEXT NOT NULL DEFAULT ''"); err != nil {
+	if err := migration.addColumnIfMissing("sessions", "permission_mode", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
-	if err := addColumnIfMissing(db, "sessions", "approve_for_me", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+	if err := migration.addColumnIfMissing("sessions", "approve_for_me", "INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return err
 	}
-	if err := addColumnIfMissing(db, "sessions", "engine_id", "TEXT NOT NULL DEFAULT ''"); err != nil {
+	if err := migration.addColumnIfMissing("sessions", "engine_id", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
-	if err := addColumnIfMissing(db, "sessions", "engine_ref", "TEXT NOT NULL DEFAULT ''"); err != nil {
+	if err := migration.addColumnIfMissing("sessions", "engine_ref", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
-	if err := addColumnIfMissing(db, "sessions", "instructions", "TEXT NOT NULL DEFAULT ''"); err != nil {
+	if err := migration.addColumnIfMissing("sessions", "instructions", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
-	if err := addColumnIfMissing(db, "sessions", "tool_policy_json", "TEXT NOT NULL DEFAULT ''"); err != nil {
+	if err := migration.addColumnIfMissing("sessions", "tool_policy_json", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
-	if err := addColumnIfMissing(db, "sessions", "folder_id", "TEXT NOT NULL DEFAULT ''"); err != nil {
+	if err := migration.addColumnIfMissing("sessions", "folder_id", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
 	// Pin groups are gone: pinned state lives solely in pinned_at. Drop the
@@ -1869,10 +1939,10 @@ WHERE workflow_id = ''`); err != nil {
 	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_sessions_worktree_workspace ON sessions(worktree_base_repo, workspace_id)`); err != nil {
 		return fmt.Errorf("migrate sessions database: %w", err)
 	}
-	if err := addColumnIfMissing(db, "inference_journal_runtimes", "pid", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+	if err := migration.addColumnIfMissing("inference_journal_runtimes", "pid", "INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return err
 	}
-	if err := addColumnIfMissing(db, "sessions", "seed_id", "TEXT NOT NULL DEFAULT ''"); err != nil {
+	if err := migration.addColumnIfMissing("sessions", "seed_id", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
 	// Collaboration was removed without migration: its named-agent identity
@@ -1891,30 +1961,42 @@ WHERE workflow_id = ''`); err != nil {
 	if _, err := db.Exec(`DROP TABLE IF EXISTS session_candidates`); err != nil {
 		return fmt.Errorf("drop retired project candidates: %w", err)
 	}
-	if err := addColumnIfMissing(db, "session_inbox", "cause", "TEXT NOT NULL DEFAULT ''"); err != nil {
+	if err := migration.addColumnIfMissing("session_inbox", "cause", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
-	if err := addColumnIfMissing(db, "session_inbox", "wake", "INTEGER NOT NULL DEFAULT 1"); err != nil {
+	if err := migration.addColumnIfMissing("session_inbox", "wake", "INTEGER NOT NULL DEFAULT 1"); err != nil {
 		return err
 	}
-	if err := addColumnIfMissing(db, "sessions", "project_role", "TEXT NOT NULL DEFAULT ''"); err != nil {
+	if err := migration.addColumnIfMissing("sessions", "project_role", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
 	if _, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_project_side ON sessions(parent_id) WHERE source='project-session' AND project_role='side' AND archived_at IS NULL`); err != nil {
 		return err
 	}
-	if err := addColumnIfMissing(db, "session_inbox", "controls_json", "TEXT NOT NULL DEFAULT '[]'"); err != nil {
+	if err := migration.addColumnIfMissing("session_inbox", "controls_json", "TEXT NOT NULL DEFAULT '[]'"); err != nil {
 		return err
 	}
 	return nil
 }
 
-func addColumnIfMissing(db *sql.DB, table, column, definition string) error {
-	rows, err := db.Query(fmt.Sprintf(`PRAGMA table_info(%s)`, table))
+// Schema inspection is shared only within one migration. Each store open reads
+// the schema again, including after an external restore or another process's
+// migration, instead of retaining assumptions about a database path.
+type schemaMigration struct {
+	db      *sql.DB
+	columns map[string]map[string]bool
+}
+
+func (m *schemaMigration) tableColumns(table string) (map[string]bool, error) {
+	if columns, ok := m.columns[table]; ok {
+		return columns, nil
+	}
+	rows, err := m.db.Query(fmt.Sprintf(`PRAGMA table_info(%s)`, table))
 	if err != nil {
-		return fmt.Errorf("inspect %s columns: %w", table, err)
+		return nil, fmt.Errorf("inspect %s columns: %w", table, err)
 	}
 	defer rows.Close()
+	columns := make(map[string]bool)
 	for rows.Next() {
 		var cid int
 		var name, typ string
@@ -1922,23 +2004,34 @@ func addColumnIfMissing(db *sql.DB, table, column, definition string) error {
 		var defaultValue sql.NullString
 		var pk int
 		if err := rows.Scan(&cid, &name, &typ, &notNull, &defaultValue, &pk); err != nil {
-			return fmt.Errorf("scan %s columns: %w", table, err)
+			return nil, fmt.Errorf("scan %s columns: %w", table, err)
 		}
-		if strings.EqualFold(name, column) {
-			return nil
-		}
+		columns[strings.ToLower(name)] = true
 	}
 	if err := rows.Err(); err != nil {
-		return fmt.Errorf("scan %s columns: %w", table, err)
+		return nil, fmt.Errorf("scan %s columns: %w", table, err)
 	}
-	if _, err := db.Exec(fmt.Sprintf(`ALTER TABLE %s ADD COLUMN %s %s`, table, column, definition)); err != nil {
+	m.columns[table] = columns
+	return columns, nil
+}
+
+func (m *schemaMigration) addColumnIfMissing(table, column, definition string) error {
+	columns, err := m.tableColumns(table)
+	if err != nil {
+		return err
+	}
+	key := strings.ToLower(column)
+	if columns[key] {
+		return nil
+	}
+	if _, err := m.db.Exec(fmt.Sprintf(`ALTER TABLE %s ADD COLUMN %s %s`, table, column, definition)); err != nil {
 		// Multiple workspace app-servers share one sessions DB and migrate
 		// concurrently; treat a racing ADD as success when the column landed.
-		if strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
-			return nil
+		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+			return fmt.Errorf("add %s.%s column: %w", table, column, err)
 		}
-		return fmt.Errorf("add %s.%s column: %w", table, column, err)
 	}
+	columns[key] = true
 	return nil
 }
 

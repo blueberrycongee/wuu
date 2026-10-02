@@ -60,7 +60,12 @@ func (s *spool) ackTo(seq uint64) {
 		s.bytes -= len(s.entries[i].line)
 	}
 	if i > 0 {
-		s.entries = append([]spoolEntry(nil), s.entries[i:]...)
+		// Release acknowledged payloads without copying the pending stream.
+		clear(s.entries[:i])
+		s.entries = s.entries[i:]
+		if len(s.entries) == 0 {
+			s.entries = nil
+		}
 	}
 	if seq+1 > s.base {
 		s.base = seq + 1

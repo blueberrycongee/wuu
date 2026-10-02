@@ -37,6 +37,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/skills"
 	"github.com/blueberrycongee/wuu/internal/statepath"
 	"github.com/blueberrycongee/wuu/internal/subagent"
+	"github.com/blueberrycongee/wuu/internal/tools"
 	"github.com/blueberrycongee/wuu/internal/version"
 )
 
@@ -86,6 +87,7 @@ func (s *Server) handleInitialize(req Request) error {
 		ToolSurface:        toolSurface,
 		ModelRoles:         s.currentModelRoleSummaries(),
 		ModelAliases:       s.currentModelAliasSummaries(),
+		ProjectModels:      s.rt.ProjectModels,
 		Providers:          s.providerSummaries(),
 		AdvancedSettings:   s.currentAdvancedSettingsSummary(),
 		GeneralSettings:    s.currentGeneralSettingsSummary(),
@@ -111,6 +113,7 @@ func (s *Server) handleConfigRead(req Request) error {
 		ToolSurface:        toolSurface,
 		ModelRoles:         s.currentModelRoleSummaries(),
 		ModelAliases:       s.currentModelAliasSummaries(),
+		ProjectModels:      s.rt.ProjectModels,
 		Providers:          s.providerSummaries(),
 		AdvancedSettings:   s.currentAdvancedSettingsSummary(),
 		GeneralSettings:    s.currentGeneralSettingsSummary(),
@@ -220,6 +223,7 @@ func (s *Server) currentGeneralSettingsSummary() GeneralSettingsSummary {
 	if cfg, _, err := s.rt.LoadEffectiveConfig(); err == nil {
 		summary.GitAttributionEnabled = cfg.Agent.GitAttributionEnabledValue()
 		summary.PTC = cfg.PTC
+		summary.ExecutionEnvironments = cfg.ExecutionEnvironments
 		activePluginServers := make(map[string]bool)
 		for _, item := range s.rt.Plugins {
 			for name := range item.MCPServers {
@@ -998,7 +1002,7 @@ func (s *Server) handleExtensionCatalogRefresh(req Request) error {
 	}
 	return s.writeResponse(req.ID, ExtensionCatalogRefreshResult{
 		ExtensionInventory: s.currentExtensionInventory(),
-		Skills:             skillSummaries(s.rt.Skills),
+		Skills:             s.skillSummaries(s.rt.Skills, s.rt.RootDir),
 	}, nil)
 }
 
@@ -1015,7 +1019,7 @@ func (s *Server) handleConfigAdvancedUpdate(req Request) error {
 	}
 	modelAliases := modelAliasConfigUpdate(params.ModelAliases)
 	verificationModel := modelRoleConfigUpdate(params.VerificationModel)
-	if modelAliases != nil || verificationModel != nil {
+	if modelAliases != nil || verificationModel != nil || params.ProjectModels != nil {
 		candidate, _, err := s.rt.LoadEffectiveConfig()
 		if err != nil {
 			return s.writeResponse(req.ID, nil, err)
@@ -1031,6 +1035,9 @@ func (s *Server) handleConfigAdvancedUpdate(req Request) error {
 		if verificationModel != nil {
 			candidate.Agent.ModelRoles.Verification = *verificationModel
 		}
+		if params.ProjectModels != nil {
+			candidate.Agent.ProjectModels = *params.ProjectModels
+		}
 		if err := candidate.Validate(); err != nil {
 			return s.writeResponse(req.ID, nil, err)
 		}
@@ -1045,6 +1052,7 @@ func (s *Server) handleConfigAdvancedUpdate(req Request) error {
 		ProviderContextWindow:   params.ProviderContextWindow,
 		ModelAliases:            modelAliases,
 		VerificationModel:       verificationModel,
+		ProjectModels:           params.ProjectModels,
 	}); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
@@ -1071,6 +1079,7 @@ func (s *Server) handleConfigAdvancedUpdate(req Request) error {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	s.rt.ModelRoles = roleSelections
+	s.rt.ProjectModels = cfg.Agent.ProjectModels
 	modelBudget := runtime.ResolveModelBudget(s.rt.Model, ruleProviderCfg, cfg.Agent.MaxContextTokens)
 	s.rt.ModelBudget = modelBudget
 	workerBudget := runtime.ResolveModelBudget(roleSelections.Worker.Model, roleSelections.Worker.RuleProviderConfig, cfg.Agent.MaxContextTokens)
@@ -1094,6 +1103,7 @@ func (s *Server) handleConfigAdvancedUpdate(req Request) error {
 	return s.writeResponse(req.ID, ConfigAdvancedUpdateResult{
 		AdvancedSettings: s.currentAdvancedSettingsSummary(),
 		ModelAliases:     modelAliasSummaries(cfg.Agent.ModelAliases),
+		ProjectModels:    cfg.Agent.ProjectModels,
 		ModelRoles:       s.currentModelRoleSummaries(),
 		Providers:        s.providerSummaries(),
 	}, nil)
@@ -1151,6 +1161,9 @@ func (s *Server) handleConfigGeneralUpdate(req Request) error {
 	}
 	// Attribution changes are persisted now and applied to active threads only
 	// when their deferred runtime reset is safe. MCP and PTC changes require idle turns.
+	if params.ExecutionEnvironments != nil && s.hasRunningThread() {
+		return s.writeResponse(req.ID, nil, errors.New("cannot change execution environments while a turn is running"))
+	}
 	if (len(params.MCPEnabledToggles) > 0 || params.PTC != nil) && s.hasRunningThread() {
 		return s.writeResponse(req.ID, nil, errors.New("cannot change MCP or PTC settings while a turn is running"))
 	}
@@ -1159,6 +1172,7 @@ func (s *Server) handleConfigGeneralUpdate(req Request) error {
 	}
 	if err := config.UpdateGeneralSettings(s.rt.ConfigPath, config.GeneralSettingsUpdate{
 		PTC:                   params.PTC,
+		ExecutionEnvironments: params.ExecutionEnvironments,
 		GitAttributionEnabled: params.GitAttributionEnabled,
 		MCPEnabledToggles:     params.MCPEnabledToggles,
 	}); err != nil {
@@ -1366,8 +1380,7 @@ func (s *Server) handleConfigModelUpdate(req Request) error {
 		}
 		providerCfg.BaseURL = baseURL
 	}
-	apiKeyForConfig := params.APIKey
-	authTokenForConfig := params.AuthToken
+	var apiKeyForConfig, authTokenForConfig *string
 	authKeyForStore := ""
 	authTokenForStore := ""
 	if params.APIKey != nil {
@@ -1381,8 +1394,7 @@ func (s *Server) handleConfigModelUpdate(req Request) error {
 			providerCfg.AuthTokenEnv = ""
 			empty := ""
 			apiKeyForConfig = &empty
-		} else {
-			apiKeyForConfig = nil
+			authTokenForConfig = &empty
 		}
 	}
 	if params.AuthToken != nil {
@@ -1397,8 +1409,6 @@ func (s *Server) handleConfigModelUpdate(req Request) error {
 			empty := ""
 			authTokenForConfig = &empty
 			apiKeyForConfig = &empty
-		} else {
-			authTokenForConfig = nil
 		}
 	}
 	variant := s.currentVariant()
@@ -1466,6 +1476,7 @@ func (s *Server) handleConfigModelUpdate(req Request) error {
 			credentials.Type = "api_key"
 			credentials.APIKey = authKeyForStore
 			credentials.AuthToken = ""
+			credentials.Source = authstorage.SourceSaved
 		}); err != nil {
 			return s.writeResponse(req.ID, nil, err)
 		}
@@ -1479,6 +1490,7 @@ func (s *Server) handleConfigModelUpdate(req Request) error {
 			credentials.Type = "auth_token"
 			credentials.AuthToken = authTokenForStore
 			credentials.APIKey = ""
+			credentials.Source = authstorage.SourceSaved
 		}); err != nil {
 			return s.writeResponse(req.ID, nil, err)
 		}
@@ -1631,6 +1643,7 @@ func (s *Server) applyModelSelectionToRuntime(
 		s.rt.ReadinessIssues = nil
 	}
 	s.rt.ModelRoles = roleSelections
+	s.rt.ProjectModels = cfg.Agent.ProjectModels
 	apiModel := modelcatalog.APIModel(ruleProviderCfg, model)
 	if roleSelections.Title.Inherited {
 		if client != nil {
@@ -1923,10 +1936,51 @@ func (s *Server) runningTurnUsingProvider(providerName string) (string, bool) {
 }
 
 func (s *Server) handleSkillList(req Request) error {
-	return s.writeResponse(req.ID, SkillListResult{Skills: skillSummaries(s.rt.Skills)}, nil)
+	var params SkillListParams
+	if err := decodeParams(req.Params, &params); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	catalog, root, err := s.skillCatalog(params.ThreadID)
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	return s.writeResponse(req.ID, SkillListResult{Skills: s.skillSummaries(catalog, root)}, nil)
 }
 
-func skillSummaries(items []skills.Skill) []SkillSummary {
+func (s *Server) skillCatalog(threadID string) ([]skills.Skill, string, error) {
+	if strings.TrimSpace(threadID) == "" {
+		return s.rt.Skills, s.rt.RootDir, nil
+	}
+	th, err := s.ensureThreadLoaded(threadID)
+	if err != nil {
+		return nil, "", err
+	}
+	threadRuntime, err := s.ensureThreadRuntime(th)
+	if err != nil {
+		return nil, "", err
+	}
+	if threadRuntime.Toolkit != nil {
+		root := threadRuntime.Toolkit.RootDir()
+		th.mu.Lock()
+		baseRepo := th.WorktreeBaseRepo
+		th.mu.Unlock()
+		if skillDiscoveryRoot(root) != skillDiscoveryRoot(s.rt.RootDir) &&
+			(baseRepo == "" || sessionWorkspacePath(baseRepo) != sessionWorkspacePath(s.rt.RootDir)) {
+			root = ""
+		}
+		return tools.FilterSkillsForSurface(threadRuntime.Toolkit.Skills(), threadRuntime.Toolkit.ActiveSurface()), root, nil
+	}
+	th.mu.Lock()
+	root := th.CWD
+	th.mu.Unlock()
+	if sessionWorkspacePath(root) == sessionWorkspacePath(s.rt.RootDir) {
+		return s.rt.Skills, s.rt.RootDir, nil
+	}
+	// Engines without a native toolkit cannot resolve a different checkout's catalog.
+	return nil, root, nil
+}
+
+func (s *Server) skillSummaries(items []skills.Skill, root string) []SkillSummary {
 	out := make([]SkillSummary, 0, len(items))
 	for _, item := range items {
 		out = append(out, SkillSummary{
@@ -1936,6 +1990,7 @@ func skillSummaries(items []skills.Skill) []SkillSummary {
 			TriggerCondition:      item.TriggerCondition,
 			Source:                item.Source,
 			Path:                  item.Path,
+			Project:               projectSkillIdentity(item, root, s.rt.RootDir),
 			ArgumentHint:          item.ArgumentHint,
 			Model:                 item.Model,
 			Context:               item.Context,
@@ -2486,12 +2541,6 @@ func (s *Server) providerSummaries() []ProviderSummary {
 	}
 	s.lastProviderSummaries = summaries
 	return summaries
-}
-
-func builtInSubscriptionProvider(summary ProviderSummary) bool {
-	return summary.ReuseCodexCredentials ||
-		config.IsXAISubscriptionProvider(summary.Type) ||
-		config.IsGrokBuildProvider(summary.Type)
 }
 
 // A conversation can select the same discovered connections shown in the

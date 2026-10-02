@@ -20,7 +20,7 @@ export async function activate(api) {
     "automation.isolation": "Run in an isolated git worktree", "automation.isolationHelp": "Each run executes in its own worktree instead of the live project directory.",
     "automation.create": "Create", "automation.cancel": "Cancel", "automation.remove": "Delete",
     "automation.next": "Next", "automation.run.completed": "Completed", "automation.run.failed": "Failed",
-    "automation.run.running": "Running", "automation.run.queued": "Queued", "automation.run.interrupted": "Interrupted", "automation.run.never": "No runs yet",
+    "automation.run.running": "Running", "automation.run.lastFailed": "Last run failed", "automation.run.queued": "Queued", "automation.run.interrupted": "Interrupted", "automation.run.never": "No runs yet",
     "automation.schedule.daily": "Daily", "automation.schedule.weekdays": "Weekdays", "automation.schedule.weekly": "Weekly",
     "automation.advanced": "More settings", "automation.resize": "Resize automation editor", "automation.close": "Close", "automation.group.details": "Execution", "automation.group.schedule": "Schedule",
     "automation.field.target": "Runs in", "automation.field.project": "Project", "automation.field.time": "Time", "automation.field.isolation": "Isolated run",
@@ -45,62 +45,66 @@ export async function activate(api) {
     "automation.isolation": "在独立 git worktree 中运行", "automation.isolationHelp": "每次运行都在自己的 worktree 中执行，不直接改动当前项目目录。",
     "automation.create": "创建", "automation.cancel": "取消", "automation.remove": "删除",
     "automation.next": "下次", "automation.run.completed": "已完成", "automation.run.failed": "失败",
-    "automation.run.running": "运行中", "automation.run.queued": "排队中", "automation.run.interrupted": "已中断", "automation.run.never": "暂无运行",
+    "automation.run.running": "运行中", "automation.run.lastFailed": "上次运行失败", "automation.run.queued": "排队中", "automation.run.interrupted": "已中断", "automation.run.never": "暂无运行",
     "automation.schedule.daily": "每天", "automation.schedule.weekdays": "工作日", "automation.schedule.weekly": "每周",
     "automation.advanced": "更多设置", "automation.resize": "调整自动化编辑区宽度", "automation.close": "关闭", "automation.group.details": "执行设置", "automation.group.schedule": "时间安排",
     "automation.field.target": "运行于", "automation.field.project": "项目", "automation.field.time": "时间", "automation.field.isolation": "隔离运行",
-    "automation.target.new": "每次新会话", "automation.target.thread": "指定会话",
-    "automation.target.search": "搜索会话", "automation.target.chats": "会话", "automation.target.pinned": "已置顶", "automation.target.empty": "没有匹配的会话",
+    "automation.target.new": "每次新对话", "automation.target.thread": "指定对话",
+    "automation.target.search": "搜索对话", "automation.target.chats": "对话", "automation.target.pinned": "已置顶", "automation.target.empty": "没有匹配的对话",
     "automation.placeholder.name": "任务标题", "automation.placeholder.prompt": "描述这次自动化要做什么", "automation.placeholder.schedule": "0 9 * * 1-5",
   }});
   api.registerStyle({ id: "automation-catalog", css: `
+    /* The page shares the host's control family: fields and buttons at the
+     * control height with control radii, list rows with the inner radius,
+     * section titles like settings sections, and the host's keyboard focus
+     * ring. Motion reads the host's panel tokens, which reduced motion
+     * already zeroes. */
     .plugin-automation {
-      --automation-unit: var(--wuu-space-unit, 4px);
-      --automation-gap: calc(var(--automation-unit) * 4);
-      --automation-inset: calc(var(--automation-unit) * 6);
+      --automation-gap: var(--space-4);
+      --automation-inset: var(--space-6);
       height:100%; min-height:0; container-type:inline-size;
       color:var(--wuu-color-text, var(--ink));
-      font-size:var(--wuu-font-size-ui, var(--font-ui));
+      font-size:var(--font-ui);
     }
     .plugin-automation *, .plugin-automation *::before { box-sizing:border-box; }
     .plugin-automation .plugin-ui-page { width:100%; height:100%; max-width:none; padding:0; font-size:inherit; }
-    .plugin-automation-body { position:relative; display:grid; grid-template-columns:minmax(0, 1fr) 0px; height:100%; min-height:0; overflow:hidden; transition:grid-template-columns var(--environment-panel-motion-duration, 260ms) var(--environment-panel-motion-easing, cubic-bezier(0.2, 0, 0, 1)); }
+    .plugin-automation-body { position:relative; display:grid; grid-template-columns:minmax(0, 1fr) 0px; height:100%; min-height:0; overflow:hidden; transition:grid-template-columns var(--environment-panel-motion-duration) var(--environment-panel-motion-easing); }
     .plugin-automation-body[data-panel="true"]:not([data-closing="true"]) { grid-template-columns:minmax(0, 1fr) var(--automation-detail-width); }
-    .plugin-automation-body[data-closing="true"] { transition-duration:var(--environment-panel-exit-duration, 220ms); }
+    .plugin-automation-body[data-closing="true"] { transition-duration:var(--environment-panel-exit-duration); }
     .plugin-automation-body[data-resizing="true"] { transition:none; }
     .plugin-automation-main { min-width:0; overflow:auto; padding:var(--automation-inset); }
     .plugin-automation-main > * { max-width:880px; margin-inline:auto; }
-    .plugin-automation-toolbar { display:flex; align-items:center; gap:8px; margin-bottom:var(--automation-gap); }
-    .plugin-automation-toolbar .plugin-automation-create { display:inline-flex; flex:none; align-items:center; gap:6px; }
+    .plugin-automation-toolbar { display:flex; align-items:center; gap:var(--space-2); margin-bottom:var(--section-gap); }
+    .plugin-automation-toolbar .plugin-automation-create { display:inline-flex; flex:none; align-items:center; gap:var(--space-2); }
     .plugin-automation-create svg { width:var(--icon-size-sm); height:var(--icon-size-sm); }
-    .plugin-automation-search { flex:1; min-width:0; display:flex; align-items:center; gap:8px; height:2.6em; border:1px solid var(--field-border); border-radius:var(--wuu-radius-control, var(--radius-sm)); padding:0 12px; color:var(--ink-tertiary); background:var(--field-bg); }
+    .plugin-automation-search { flex:1; min-width:0; display:flex; align-items:center; gap:var(--space-2); min-height:var(--control-search-height); border:1px solid var(--field-border); border-radius:var(--radius-sm); padding:0 var(--control-padding-inline); color:var(--ink-muted); background:var(--field-bg); transition:background var(--motion-fast) var(--ease-out); }
     .plugin-automation-search:hover { background:var(--field-hover-bg); }
-    .plugin-automation-search svg { width:var(--icon-size-sm); height:var(--icon-size-sm); flex:none; }
-    .plugin-automation-search input { width:100%; min-width:0; border:0; padding:0; outline:0; background:transparent; color:inherit; font:inherit; color:var(--ink); }
+    .plugin-automation-search svg { width:var(--icon-size); height:var(--icon-size); flex:none; }
+    .plugin-automation-search input { width:100%; min-width:0; border:0; padding:0; outline:0; background:transparent; color:var(--ink); font:inherit; }
     .plugin-automation-search input::placeholder { color:var(--ink-tertiary); }
     .plugin-automation-workspace-picker { flex:0 1 auto; min-width:0; max-width:34%; }
     .plugin-automation-workspace-picker .plugin-automation-picker-trigger { width:100%; }
-    .plugin-automation-list { display:flex; flex-direction:column; gap:2px; }
-    .plugin-automation-list + .plugin-automation-group, .plugin-automation-suggestions + .plugin-automation-group { margin-top:calc(var(--automation-gap) * 2); }
-    .plugin-automation-item { display:flex; align-items:center; gap:var(--automation-gap); min-width:0; border-radius:var(--wuu-radius-inner, var(--radius-xs)); }
+    .plugin-automation-list, .plugin-automation-suggestion-list { display:flex; flex-direction:column; gap:2px; }
+    .plugin-automation-list + .plugin-automation-group, .plugin-automation-suggestions + .plugin-automation-group { margin-top:var(--section-gap); }
+    /* Rows start their text on the toolbar's edge; the hover and selection
+     * surfaces reach past it by the row inset. */
+    .plugin-automation-item { display:flex; align-items:center; gap:var(--space-3); min-width:0; margin-inline:calc(var(--compact-padding-inline) * -1); border-radius:var(--radius-xs); }
     .plugin-automation-item:hover { background:var(--surface-1); }
-    .plugin-automation-item[data-selected="true"] { background:var(--surface-2); }
-    .plugin-automation-item-main { flex:1; display:flex; align-items:flex-start; gap:10px; min-width:0; padding:12px 10px; border:0; border-radius:inherit; text-align:left; background:transparent; color:inherit; font:inherit; cursor:pointer; }
+    .plugin-automation-item[data-selected="true"] { background:var(--selection-surface); }
+    .plugin-automation-item-main { flex:1; display:grid; gap:2px; min-width:0; padding:var(--compact-padding-block) var(--compact-padding-inline); border:0; border-radius:inherit; text-align:left; background:transparent; color:inherit; font:inherit; cursor:pointer; }
     .plugin-automation-item[data-paused="true"] .plugin-automation-item-title { color:var(--ink-soft); }
-    .plugin-automation-item-icon { display:flex; align-items:center; justify-content:center; width:var(--icon-size); height:1.5em; flex:none; color:var(--ink-soft); }
-    .plugin-automation-item-icon svg { width:var(--icon-size); height:var(--icon-size); }
-    .plugin-automation-item-icon[data-run="failed"], .plugin-automation-history-status[data-run="failed"] { color:var(--danger); }
-    .plugin-automation .plugin-automation-item-switch { flex:none; gap:0; padding-right:10px; }
-    .plugin-automation-item-copy { min-width:0; display:grid; gap:3px; flex:1; }
-    .plugin-automation-item-title { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:inherit; font-weight:var(--weight-medium); line-height:1.5; }
-    .plugin-automation-item-meta { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--ink-tertiary); font-size:var(--font-sm); line-height:1.5; }
-    .plugin-automation-group-title { margin:0 0 8px; padding-inline:10px; color:var(--ink-muted); font-size:var(--font-sm); font-weight:var(--weight-medium); line-height:1.4; }
+    .plugin-automation .plugin-automation-item-switch { flex:none; gap:0; padding-right:var(--compact-padding-inline); }
+    .plugin-automation-item-title { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--ink); font-size:inherit; line-height:1.4; }
+    .plugin-automation-item-meta { display:flex; align-items:center; gap:var(--space-1); min-width:0; color:var(--ink-soft); font-size:var(--font-sm); line-height:1.5; }
+    .plugin-automation-item-meta > span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .plugin-automation-item-meta svg { flex:none; width:var(--icon-size-sm); height:var(--icon-size-sm); color:var(--danger); }
+    .plugin-automation-group-title { margin:0 0 var(--space-3); color:var(--ink-strong); font-size:var(--font-ui); font-weight:var(--weight-semibold); line-height:1.4; }
     .plugin-automation-empty { min-height:160px; }
     .plugin-automation-error { color:var(--danger); font-size:var(--font-sm); overflow-wrap:anywhere; }
-    .plugin-automation-filtered-empty { padding:24px 0; color:var(--ink-soft); text-align:center; }
-    .plugin-automation-detail-title { flex:1; min-width:0; margin:0; font-size:var(--font-ui); font-weight:var(--weight-medium); line-height:var(--line-ui); }
+    .plugin-automation-filtered-empty { margin:0; color:var(--ink-tertiary); }
+    .plugin-automation-detail-title { flex:1; min-width:0; margin:0; color:var(--ink-strong); font-size:var(--font-ui); font-weight:var(--weight-semibold); line-height:1.4; }
     .plugin-automation-detail-head > .plugin-automation-enable { flex:1; justify-content:start; grid-template-columns:auto auto; gap:var(--space-3); }
-    .plugin-automation-detail { position:relative; display:flex; flex-direction:column; width:var(--automation-detail-width); min-width:var(--automation-detail-width); min-height:0; overflow:hidden; border-left:1px solid var(--hairline); transition:opacity var(--environment-panel-exit-duration, 220ms) var(--ease-in, cubic-bezier(0.4, 0, 1, 1)); }
+    .plugin-automation-detail { position:relative; display:flex; flex-direction:column; width:var(--automation-detail-width); min-width:var(--automation-detail-width); min-height:0; overflow:hidden; border-left:1px solid var(--hairline); transition:opacity var(--environment-panel-exit-duration) var(--ease-in); }
     .plugin-automation-body[data-closing="true"] .plugin-automation-detail { opacity:0; pointer-events:none; }
     .plugin-automation-detail-body { flex:1; min-width:0; min-height:0; overflow:auto; padding:var(--automation-inset); }
     .plugin-automation-resizer { position:absolute; top:0; bottom:0; left:0; transform:translateX(-50%); width:10px; padding:0; border:0; outline:0; background:transparent; z-index:2; cursor:col-resize; touch-action:none; -webkit-app-region:no-drag; }
@@ -109,64 +113,63 @@ export async function activate(api) {
     .plugin-automation-resizer::after { content:""; position:absolute; top:0; bottom:0; left:50%; width:1px; }
     .plugin-automation-resizer:hover::after, .plugin-automation-resizer:focus-visible::after, .plugin-automation-body[data-resizing="true"] .plugin-automation-resizer::after { background:var(--sidebar-resizer-hover-bg, var(--ink-overlay-18)); box-shadow:0 0 0 1px var(--sidebar-resizer-hover-ring, var(--ink-overlay-8)); }
     .plugin-automation-body[data-resizing="true"], .plugin-automation-body[data-resizing="true"] * { cursor:col-resize !important; user-select:none; }
-    .plugin-automation-detail-head { display:flex; align-items:center; gap:8px; min-height:2.6em; margin-bottom:var(--automation-gap); }
+    .plugin-automation-detail-head { display:flex; align-items:center; gap:var(--space-2); min-height:var(--control-field-height); margin-bottom:var(--automation-gap); }
     .plugin-automation-detail-status { flex:1; color:var(--ink-tertiary); font-size:var(--font-sm); }
-    .plugin-automation .plugin-ui-button { min-height:2.6em; border-radius:var(--wuu-radius-control, var(--radius-sm)); font-size:inherit; }
-    .plugin-automation .plugin-automation-detail-close { display:flex; align-items:center; justify-content:center; width:2.2em; min-height:2.2em; padding:0; border-radius:var(--radius-xs); }
-    .plugin-automation-detail-close svg { width:var(--icon-size-sm); height:var(--icon-size-sm); }
-    .plugin-automation-form { display:flex; flex-direction:column; gap:calc(var(--automation-gap) * 1.5); }
-    .plugin-automation-form-identity { display:grid; gap:var(--automation-gap); }
-    .plugin-automation .plugin-ui-input { height:2.6em; }
-    .plugin-automation .plugin-ui-field-label { font-size:inherit; font-weight:var(--weight-medium); }
+    .plugin-automation .plugin-automation-detail-close { display:grid; place-items:center; width:var(--control-field-height); padding:0; }
+    .plugin-automation-detail-close svg { width:var(--icon-size); height:var(--icon-size); }
+    .plugin-automation-form { display:flex; flex-direction:column; gap:var(--space-6); }
+    .plugin-automation-form-identity { display:grid; gap:var(--space-3); }
+    .plugin-automation .plugin-ui-field-label { font-size:inherit; font-weight:var(--weight-regular); }
     .plugin-automation .plugin-ui-textarea { min-height:6.5em; max-height:20em; font-size:inherit; line-height:1.6; }
     .plugin-automation-form-group { min-width:0; }
     .plugin-automation-form-card { min-width:0; }
-    .plugin-automation-advanced { border-top:1px solid var(--hairline-soft); padding-top:12px; }
-    .plugin-automation-advanced > summary { color:var(--ink-tertiary); font-size:var(--font-sm); cursor:pointer; width:fit-content; }
-    .plugin-automation-advanced[open] > summary { margin-bottom:8px; }
-    .plugin-automation-form-row { display:flex; align-items:center; justify-content:space-between; gap:12px; min-height:3em; padding:3px 0; font-size:inherit; }
+    .plugin-automation-advanced { border-top:1px solid var(--hairline-soft); padding-top:var(--space-3); }
+    .plugin-automation-advanced > summary { display:inline-flex; align-items:center; gap:var(--space-1); width:fit-content; color:var(--ink-soft); font-size:var(--font-sm); cursor:pointer; list-style:none; }
+    .plugin-automation-advanced > summary::-webkit-details-marker { display:none; }
+    .plugin-automation-advanced > summary svg { width:var(--icon-size-sm); height:var(--icon-size-sm); transform:rotate(-90deg); transition:transform var(--motion-fast) var(--ease-out); }
+    .plugin-automation-advanced[open] > summary svg { transform:none; }
+    .plugin-automation-advanced[open] > summary { margin-bottom:var(--space-2); }
+    .plugin-automation-form-row { display:flex; align-items:center; justify-content:space-between; gap:var(--space-3); min-height:calc(var(--control-field-height) + var(--space-2)); font-size:inherit; }
     .plugin-automation-form-row > span:first-child { flex:none; }
     .plugin-automation-form-row-control { display:flex; justify-content:flex-end; min-width:0; max-width:70%; }
-    .plugin-automation-form-row .plugin-ui-checkbox { width:100%; gap:12px; }
-    .plugin-automation-form-row .plugin-ui-field-label { font-weight:var(--weight-regular); }
-    .plugin-automation-field { min-width:0; max-width:100%; width:12em; height:2.6em; border:1px solid transparent; border-radius:var(--wuu-radius-control, var(--radius-sm)); padding:0 8px; background:transparent; color:inherit; font:inherit; text-align:right; }
+    .plugin-automation-form-row .plugin-ui-checkbox { width:100%; gap:var(--space-3); }
+    .plugin-automation-field { min-width:0; max-width:100%; width:12em; min-height:var(--control-field-height); border:1px solid transparent; border-radius:var(--radius-sm); padding:0 var(--space-2); background:transparent; color:inherit; font:inherit; text-align:right; }
     .plugin-automation-field:hover { background:var(--field-hover-bg); }
     .plugin-automation-field[type="time"] { width:8em; font-variant-numeric:tabular-nums; }
     .plugin-automation-field::-webkit-calendar-picker-indicator { display:none; }
-    .plugin-automation-form-actions { display:flex; align-items:center; justify-content:flex-end; gap:8px; padding-bottom:4px; }
-    .plugin-automation-history { display:grid; gap:12px; margin-top:24px; font-size:var(--font-sm); }
-    .plugin-automation-history > .plugin-automation-group-title { padding-inline:0; }
-    .plugin-automation-history-row { display:flex; align-items:center; gap:8px; color:var(--ink-soft); font-variant-numeric:tabular-nums; }
+    .plugin-automation-form-actions { display:flex; align-items:center; justify-content:flex-end; gap:var(--space-2); }
+    .plugin-automation-history { display:grid; gap:var(--space-2); margin-top:var(--section-gap); font-size:var(--font-sm); }
+    .plugin-automation-history > .plugin-automation-group-title { margin-bottom:var(--space-1); }
+    .plugin-automation-history-row { display:flex; align-items:center; gap:var(--space-2); color:var(--ink-soft); font-variant-numeric:tabular-nums; }
     .plugin-automation-history-status { display:inline-flex; color:var(--ink-muted); }
     .plugin-automation-history-status svg { width:var(--icon-size-sm); height:var(--icon-size-sm); }
+    .plugin-automation-history-status[data-run="failed"] { color:var(--danger); }
+    /* A failed run's own message is detail under its date; the mark already says it failed. */
+    .plugin-automation-history-detail { margin:0; padding-inline-start:calc(var(--icon-size-sm) + var(--space-2)); color:var(--ink-soft); overflow-wrap:anywhere; user-select:text; }
     .plugin-automation-more { position:relative; }
-    .plugin-automation-more summary { display:grid; place-items:center; list-style:none; cursor:pointer; width:2.2em; height:2.2em; border-radius:var(--radius-xs); color:var(--wuu-color-text-muted, var(--ink-soft)); }
-    .plugin-automation-more summary svg { width:var(--icon-size-sm); height:var(--icon-size-sm); }
-    .plugin-automation-more summary:hover, .plugin-automation-more[open] summary { color:var(--wuu-color-text, var(--ink)); background:var(--wuu-control-secondary-background, var(--surface-3)); }
-    .plugin-automation-more-menu { position:absolute; top:100%; right:0; z-index:5; width:max-content; margin-top:6px; padding:var(--menu-inset); background:var(--menu-bg); border:1px solid var(--menu-border); border-radius:var(--menu-shell-radius); box-shadow:var(--menu-shadow); }
+    .plugin-automation-more summary { display:grid; place-items:center; list-style:none; cursor:pointer; width:var(--control-field-height); height:var(--control-field-height); border-radius:var(--radius-sm); color:var(--wuu-color-text-muted, var(--ink-soft)); }
+    .plugin-automation-more summary::-webkit-details-marker { display:none; }
+    .plugin-automation-more summary svg { width:var(--icon-size); height:var(--icon-size); }
+    .plugin-automation-more summary:hover, .plugin-automation-more[open] summary { color:var(--wuu-color-text, var(--ink)); background:var(--wuu-control-secondary-background, var(--surface-2)); }
+    .plugin-automation-more-menu { position:absolute; top:100%; right:0; z-index:5; width:max-content; margin-top:var(--space-1); padding:var(--menu-inset); background:var(--menu-bg); border:1px solid var(--menu-border); border-radius:var(--menu-shell-radius); box-shadow:var(--menu-shadow); }
     .plugin-automation-sr { position:absolute; width:1px; height:1px; margin:-1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }
-    .plugin-automation :is(button,summary):focus-visible { outline:1px solid var(--ink-soft); outline-offset:2px; box-shadow:none; }
-    .plugin-automation :is(input,textarea):focus-visible { outline:0; border-color:var(--ink-soft); box-shadow:none; }
     .plugin-automation-picker { display:inline-flex; min-width:0; max-width:100%; }
-    .plugin-automation .plugin-automation-picker-trigger { display:flex; align-items:center; justify-content:space-between; gap:8px; min-width:0; max-width:100%; border:1px solid transparent; color:var(--ink); background:transparent; font-weight:var(--weight-normal); padding:0 8px; }
+    .plugin-automation .plugin-automation-picker-trigger { display:flex; align-items:center; justify-content:space-between; gap:var(--space-2); min-width:0; max-width:100%; border:1px solid transparent; color:var(--ink); background:transparent; font-weight:var(--weight-regular); padding:0 var(--space-2); }
     .plugin-automation .plugin-automation-picker-trigger:hover, .plugin-automation .plugin-automation-picker-trigger[aria-expanded="true"] { background:var(--field-hover-bg); }
     .plugin-automation-picker-trigger > span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .plugin-automation-picker-trigger svg { flex:none; width:var(--icon-size-xs); height:var(--icon-size-xs); color:var(--ink-tertiary); }
     .plugin-automation-picker-trigger[aria-expanded="true"] svg { transform:rotate(180deg); }
-    .plugin-automation-picker-menu { position:fixed; inset:auto; margin:0; padding:var(--menu-inset); border:1px solid var(--menu-border); border-radius:var(--menu-shell-radius); background:var(--menu-bg); box-shadow:var(--menu-shadow); color:var(--ink); font-size:var(--font-ui); overflow:hidden; }
+    .plugin-automation-picker-menu { position:fixed; inset:auto; margin:0; padding:var(--menu-inset); border:1px solid var(--menu-border); border-radius:var(--menu-shell-radius); background:var(--menu-bg); box-shadow:var(--menu-shadow); color:var(--ink); font-size:var(--font-menu); overflow:hidden; }
     .plugin-automation-picker-menu:popover-open { display:flex; flex-direction:column; gap:1px; }
-    .plugin-automation-picker-search { display:flex; align-items:center; flex:none; gap:7px; height:2.6em; padding:0 9px; color:var(--ink-tertiary); }
+    .plugin-automation-picker-search { display:flex; align-items:center; flex:none; gap:var(--space-2); min-height:var(--control-row-height); padding:0 var(--space-2); color:var(--ink-tertiary); }
     .plugin-automation-picker-search svg { flex:none; width:var(--icon-size-sm); height:var(--icon-size-sm); }
     .plugin-automation-picker-search input { flex:1; min-width:0; border:0; outline:0; background:transparent; color:var(--ink); font:inherit; }
     .plugin-automation-picker-options { display:flex; flex-direction:column; gap:2px; min-height:0; overflow:auto; }
-    .plugin-automation-picker-option { display:flex; flex:none; line-height:var(--line-ui); align-items:center; justify-content:space-between; gap:10px; width:100%; min-width:0; min-height:2.5em; padding:7px 9px; border:0; border-radius:var(--radius-xs); color:var(--ink); background:transparent; font:inherit; text-align:left; cursor:pointer; }
+    .plugin-automation-picker-option { display:flex; flex:none; align-items:center; justify-content:space-between; gap:var(--space-2); width:100%; min-width:0; min-height:var(--control-row-height); padding:var(--menu-item-padding-block) var(--space-2); border:0; border-radius:var(--radius-xs); color:var(--ink); background:transparent; font:inherit; font-weight:var(--weight-medium); line-height:1.4; text-align:left; cursor:pointer; }
     .plugin-automation-picker-option:hover, .plugin-automation-picker-option:focus-visible, .plugin-automation-picker-option[aria-selected="true"] { background:var(--menu-hover); outline:0; }
     .plugin-automation-picker-option-copy { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-    .plugin-automation-picker-option-copy > span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-    .plugin-automation-picker-option small, .plugin-automation-picker-group { color:var(--ink-tertiary); font-size:var(--font-xs); }
     .plugin-automation-picker-option svg { flex:none; width:var(--icon-size-sm); height:var(--icon-size-sm); }
-    .plugin-automation-picker-group { padding:6px 9px 3px; }
-    .plugin-automation-picker-empty { padding:12px; text-align:center; color:var(--ink-tertiary); }
+    .plugin-automation-picker-empty { padding:var(--space-3); text-align:center; color:var(--ink-tertiary); }
     @container (max-width: 760px) {
       .plugin-automation-body { transition:none; }
       .plugin-automation-body[data-panel="true"] .plugin-automation-main { display:none; }
@@ -175,11 +178,7 @@ export async function activate(api) {
       .plugin-automation-detail { width:100%; min-width:0; max-width:none; border:0; }
     }
     @container (max-width: 420px) {
-      .plugin-automation { --automation-inset:16px; }
-      .plugin-automation-main, .plugin-automation-detail { padding:16px; }
-    }
-    @media (prefers-reduced-motion: reduce) {
-      .plugin-automation *, .plugin-automation-picker-menu { animation:none!important; transition:none!important; }
+      .plugin-automation { --automation-inset: var(--space-4); }
     }
   ` });
 
@@ -193,15 +192,17 @@ export async function activate(api) {
     return parts[parts.length - 1] || root || "—";
   }
 
-  function formatDateTime(iso, timezone) {
+  // Dates follow Wuu's language, not the system's, so a Chinese page never
+  // reads "Friday" or "AM".
+  function formatDateTime(iso, timezone, locale) {
     if (!iso) return null;
     const date = new Date(iso);
     if (Number.isNaN(date.getTime())) return null;
-    const options = { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" };
+    const options = { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23" };
     try {
-      return new Intl.DateTimeFormat(undefined, { ...options, timeZone: timezone || undefined }).format(date);
+      return new Intl.DateTimeFormat(locale, { ...options, timeZone: timezone || undefined }).format(date);
     } catch {
-      return new Intl.DateTimeFormat(undefined, options).format(date);
+      return new Intl.DateTimeFormat(locale, options).format(date);
     }
   }
 
@@ -212,14 +213,14 @@ export async function activate(api) {
 
   const WEEKDAY_REFERENCE = ["2026-01-04", "2026-01-05", "2026-01-06", "2026-01-07", "2026-01-08", "2026-01-09", "2026-01-10"];
 
-  function weekdayName(day) {
-    return new Intl.DateTimeFormat(undefined, { weekday: "long" }).format(new Date(`${WEEKDAY_REFERENCE[day]}T12:00:00`));
+  function weekdayName(day, locale) {
+    return new Intl.DateTimeFormat(locale, { weekday: "long" }).format(new Date(`${WEEKDAY_REFERENCE[day]}T12:00:00`));
   }
 
   // Recognize the schedules people actually write (daily, weekdays, one
   // weekday per week) and present them in words; anything more expressive
   // stays as the raw cron expression.
-  function describeSchedule(cron, timezone, tr) {
+  function describeSchedule(cron, timezone, tr, locale) {
     const fields = String(cron || "").trim().split(/\s+/);
     if (fields.length !== 5) return null;
     const [minute, hour, dom, month, dow] = fields;
@@ -228,7 +229,7 @@ export async function activate(api) {
     const time = formatTime(Number(hour), Number(minute), timezone);
     if (dow === "*") return `${tr("automation.schedule.daily")} ${time}`;
     if (dow === "1-5") return `${tr("automation.schedule.weekdays")} ${time}`;
-    if (/^[0-7]$/.test(dow)) return `${tr("automation.schedule.weekly")} ${weekdayName(Number(dow) % 7)} ${time}`;
+    if (/^[0-7]$/.test(dow)) return `${tr("automation.schedule.weekly")} ${weekdayName(Number(dow) % 7, locale)} ${time}`;
     return null;
   }
 
@@ -368,7 +369,7 @@ export async function activate(api) {
     return { frequency: "custom", time: "09:00", day: "1" };
   }
 
-  function ScheduleFields({ tr, draft, onChange }) {
+  function ScheduleFields({ tr, locale, draft, onChange }) {
     const parts = scheduleParts(draft.schedule);
     const update = (patch) => {
       const value = { ...parts, ...patch };
@@ -385,7 +386,7 @@ export async function activate(api) {
       })),
       custom ? h(FieldRow, { label: tr("automation.schedule") }, h("input", { className: "plugin-automation-field", "aria-label": tr("automation.schedule"), value: draft.schedule, required: true, onChange: (event) => onChange({ ...draft, schedule: event.target.value }) }))
         : h(React.Fragment, null,
-          parts.frequency === "weekly" ? h(FieldRow, { label: tr("automation.day") }, h(Picker, { label: tr("automation.day"), value: parts.day, onChange: (day) => update({ day }), options: [1, 2, 3, 4, 5, 6, 0].map((day) => ({ value: String(day), label: weekdayName(day) })) })) : null,
+          parts.frequency === "weekly" ? h(FieldRow, { label: tr("automation.day") }, h(Picker, { label: tr("automation.day"), value: parts.day, onChange: (day) => update({ day }), options: [1, 2, 3, 4, 5, 6, 0].map((day) => ({ value: String(day), label: weekdayName(day, locale) })) })) : null,
           h(FieldRow, { label: tr("automation.field.time") }, h("input", { className: "plugin-automation-field", type: "time", required: true, "aria-label": tr("automation.field.time"), value: parts.time, onChange: (event) => { if (event.target.value) update({ time: event.target.value }); } }))));
   }
 
@@ -397,8 +398,8 @@ export async function activate(api) {
     return { title: task?.title || "", prompt: task?.prompt || "", schedule: task?.cron || "0 9 * * 1-5", timezone: task?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC", mode: task?.mode || "new_thread", heartbeat_thread_id: task?.heartbeat_thread_id || "", recurring: task ? task.recurring === true : true, workspace: task?.workspace_mode || "shared" };
   }
 
+  // Reduced motion, from the OS or Wuu's own preference, zeroes this token.
   function panelMotionMs(token, fallback) {
-    if (typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return 0;
     const raw = typeof window === "undefined" ? "" : window.getComputedStyle?.(document.documentElement)?.getPropertyValue(token)?.trim() || "";
     if (!raw) return fallback;
     const value = Number.parseFloat(raw);
@@ -422,16 +423,18 @@ export async function activate(api) {
       h("div", { className: "plugin-automation-more-menu" }, h(Button, { variant: "danger", disabled: busy, onClick: onRemove }, tr("automation.remove"))));
   }
 
-  function Editor({ tr, task, initial, workspace, threads, busy, error, onSave, onPause, onRemove, onClose, runs, readOnly, closing, separator }) {
+  function Editor({ tr, locale, task, initial, workspace, threads, busy, error, onSave, onPause, onRemove, onClose, runs, readOnly, closing, separator }) {
     const [draft, setDraft] = React.useState(() => initial || draftFor(task));
     const [saved, setSaved] = React.useState(() => initial || draftFor(task));
     const [localError, setLocalError] = React.useState("");
     const [advanced, setAdvanced] = React.useState(() => draft.workspace === "worktree" || draft.timezone !== Intl.DateTimeFormat().resolvedOptions().timeZone);
     const dirty = JSON.stringify(draft) !== JSON.stringify(saved);
     const panelRef = React.useRef(null);
+    // A new automation starts in its title; an existing one on its first
+    // control, the enable switch, rather than the close button.
     React.useEffect(() => {
       const previous = document.activeElement;
-      panelRef.current?.querySelector("input, button")?.focus();
+      panelRef.current?.querySelector(task ? ".plugin-automation-detail-head :is(input, button)" : "form :is(input, textarea)")?.focus();
       return () => { if (previous instanceof HTMLElement && previous.isConnected) previous.focus(); };
     }, []);
     const save = async (event) => {
@@ -463,10 +466,10 @@ export async function activate(api) {
                 value: { mode: draft.mode, threadId: draft.heartbeat_thread_id, threadTitle: threads.find((thread) => thread.id === draft.heartbeat_thread_id)?.title },
                 onSelect: (target) => setDraft({ ...draft, mode: target.mode, heartbeat_thread_id: target.threadId || "", workspace: target.mode === "thread_heartbeat" ? "shared" : draft.workspace }),
               }))),
-              h(ScheduleFields, { tr, draft, onChange: setDraft }),
+              h(ScheduleFields, { tr, locale, draft, onChange: setDraft }),
               h("div", { className: "plugin-automation-form-row" }, h(Checkbox, { label: tr("automation.once"), checked: !draft.recurring, onChange: (event) => setDraft({ ...draft, recurring: !event.target.checked }) }))),
             h("details", { className: "plugin-automation-advanced", open: advanced, onToggle: (event) => setAdvanced(event.currentTarget.open) },
-              h("summary", null, tr("automation.advanced")),
+              h("summary", null, h(ChevronIcon), tr("automation.advanced")),
               h(FieldRow, { label: tr("automation.timezone") }, h("input", { className: "plugin-automation-field", "aria-label": tr("automation.timezone"), required: true, value: draft.timezone, onChange: (event) => setDraft({ ...draft, timezone: event.target.value }) })),
               draft.mode !== "thread_heartbeat" ? h("div", { className: "plugin-automation-form-row" }, h(Checkbox, { label: tr("automation.field.isolation"), title: tr("automation.isolationHelp"), checked: draft.workspace === "worktree", onChange: (event) => setDraft({ ...draft, workspace: event.target.checked ? "worktree" : "shared" }) })) : null)),
           error || localError ? h("div", { className: "plugin-automation-error", role: "alert" }, error || localError) : null,
@@ -474,7 +477,7 @@ export async function activate(api) {
             task && dirty ? h("span", { className: "plugin-automation-detail-status", role: "status" }, tr("automation.unsaved")) : null,
             h(Button, { variant: "ghost", disabled: busy, onClick: onClose }, tr("automation.cancel")),
             h(Button, { type: "submit", variant: "primary", disabled: busy || !draft.prompt.trim() || (!!task && !dirty) }, tr(task ? "automation.save" : "automation.create"))) : null),
-        runs.length ? h("section", { className: "plugin-automation-history" }, h("h3", { className: "plugin-automation-group-title" }, tr("automation.history")), runs.slice(0, 5).map((run) => h("div", { key: run.id }, h("div", { className: "plugin-automation-history-row" }, h(RunStatus, { tr, run }), h("time", null, formatDateTime(run.triggered_at, draft.timezone))), run.error ? h("p", { className: "plugin-automation-error" }, run.error) : null))) : null));
+        runs.length ? h("section", { className: "plugin-automation-history" }, h("h3", { className: "plugin-automation-group-title" }, tr("automation.history")), runs.slice(0, 5).map((run) => h("div", { key: run.id }, h("div", { className: "plugin-automation-history-row" }, h(RunStatus, { tr, run }), h("time", null, formatDateTime(run.triggered_at, draft.timezone, locale))), run.error ? h("p", { className: "plugin-automation-history-detail" }, run.error) : null))) : null));
   }
 
   function useEditorResize() {
@@ -624,15 +627,18 @@ export async function activate(api) {
       const lastRun = sortedRuns.find((run) => run.task_id === task.id);
       const failed = !done && runStatus(lastRun) === "failed";
       const title = task.title || task.prompt;
-      const schedule = task.recurring === false ? tr("automation.once") : describeSchedule(task.cron, task.timezone, tr) || task.cron;
+      const schedule = task.recurring === false ? tr("automation.once") : describeSchedule(task.cron, task.timezone, tr, props.locale) || task.cron;
       const meta = done
-        ? formatDateTime(lastRun?.completed_at || lastRun?.triggered_at, task.timezone)
-        : [schedule, task.paused ? null : `${tr("automation.next")} ${formatDateTime(task.next_run_at, task.timezone) || "—"}`].filter(Boolean).join(" · ");
+        ? formatDateTime(lastRun?.completed_at || lastRun?.triggered_at, task.timezone, props.locale)
+        : [schedule, task.paused ? null : `${tr("automation.next")} ${formatDateTime(task.next_run_at, task.timezone, props.locale) || "—"}`].filter(Boolean).join(" · ");
+      // A task that runs as planned says nothing about it; only a failed last
+      // run leads its line, in words with the symbol beside them.
       return h("div", { key: task.id, className: "plugin-automation-item", "data-selected": selection?.id === task.id, "data-paused": !done && task.paused },
         h("button", { type: "button", className: "plugin-automation-item-main", "aria-pressed": selection?.id === task.id, disabled: busy, onClick: () => { setError(""); setPanelClosing(false); setSelection({ kind: "task", id: task.id }); } },
-          h("span", { className: "plugin-automation-item-icon", "data-run": failed ? "failed" : undefined, role: failed ? "img" : undefined, "aria-label": failed ? tr("automation.run.failed") : undefined, title: failed ? tr("automation.run.failed") : undefined },
-            done ? h(CheckIcon) : failed ? h(AlertIcon) : h(ClockIcon)),
-          h("span", { className: "plugin-automation-item-copy" }, h("span", { className: "plugin-automation-item-title" }, title), h("span", { className: "plugin-automation-item-meta", title: `${task.cron} · ${task.timezone}` }, meta))),
+          h("span", { className: "plugin-automation-item-title" }, title),
+          h("span", { className: "plugin-automation-item-meta", title: `${task.cron} · ${task.timezone}` },
+            failed ? h(AlertIcon) : null,
+            h("span", null, failed ? `${tr("automation.run.lastFailed")} · ${meta}` : meta))),
         done ? null : h(Checkbox, { className: "plugin-automation-item-switch", label: h("span", { className: "plugin-automation-sr" }, tr("automation.enableNamed", { name: title })), checked: !task.paused, disabled: busy, onChange: () => act("automation.update", { id: task.id, paused: !task.paused }) }));
     };
     const create = (template) => { setError(""); setPanelClosing(false); setSelection({ kind: "new", key: String(Date.now()), draft: { ...draftFor(), ...(template ? { title: tr(`automation.template.${template}`), prompt: tr(`automation.template.${template}.prompt`), schedule: template === "review" ? "0 16 * * 5" : "0 9 * * 1-5" } : {}) } }); };
@@ -654,10 +660,10 @@ export async function activate(api) {
             : h(React.Fragment, null,
               scheduled.length ? h("div", { className: "plugin-automation-list" }, scheduled.map((task) => taskRow(task, false)))
                 // Without scheduled work, templates are the way in.
-                : query.trim() ? null : h("section", { className: "plugin-automation-suggestions" }, h("h2", { className: "plugin-automation-group-title" }, tr("automation.suggestions")), ["brief", "review", "check"].map((key) => h("button", { key, type: "button", className: "plugin-automation-item plugin-automation-item-main", disabled: busy, onClick: () => create(key) }, h("span", { className: "plugin-automation-item-icon" }, h(ClockIcon)), h("span", { className: "plugin-automation-item-copy" }, h("span", { className: "plugin-automation-item-title" }, tr(`automation.template.${key}`)), h("span", { className: "plugin-automation-item-meta" }, tr(`automation.template.${key}.prompt`)))))),
+                : query.trim() ? null : h("section", { className: "plugin-automation-suggestions" }, h("h2", { className: "plugin-automation-group-title" }, tr("automation.suggestions")), h("div", { className: "plugin-automation-suggestion-list" }, ["brief", "review", "check"].map((key) => h("div", { key, className: "plugin-automation-item" }, h("button", { type: "button", className: "plugin-automation-item-main", disabled: busy, onClick: () => create(key) }, h("span", { className: "plugin-automation-item-title" }, tr(`automation.template.${key}`)), h("span", { className: "plugin-automation-item-meta" }, h("span", null, tr(`automation.template.${key}.prompt`)))))))),
               finished.length ? h("section", { className: "plugin-automation-group" }, h("h2", { className: "plugin-automation-group-title" }, tr("automation.run.completed")), h("div", { className: "plugin-automation-list" }, finished.map((task) => taskRow(task, true)))) : null)),
         panelOpen ? h(Editor, {
-          key: `${workspaceID}:${selection.id || selection.key}`, tr, task: selectedTask, initial: selection.draft, workspace, threads, busy, error,
+          key: `${workspaceID}:${selection.id || selection.key}`, tr, locale: props.locale, task: selectedTask, initial: selection.draft, workspace, threads, busy, error,
           readOnly: !!selectedTask && !tasks.some((task) => task.id === selectedTask.id),
           closing: panelClosing, separator: resize.separator,
           runs: sortedRuns.filter((run) => run.task_id === selectedTask?.id), onClose: closePanel,

@@ -1,10 +1,9 @@
 import { ChevronDown, Split } from "./WuuIcons";
 import type { Thread } from "../shared/protocol";
 import { MessageCopyButton } from "./MessageActions";
-import { translateCurrent as translate, useI18n } from "./i18n";
+import { useI18n } from "./i18n";
 
-/** Record of the worktree a conversation runs in, whether it was forked into
- * one or started there. */
+/** Current workspace metadata for the inspector, not a historical creation event. */
 export function WorktreeNotice({
   thread,
 }: {
@@ -15,21 +14,15 @@ export function WorktreeNotice({
   if (!worktree) {
     return null;
   }
-  const forked = Boolean(thread.forked_from_id);
-
-  const log = worktreeCreationLog(thread);
   const head = worktree.base_head?.trim();
 
   return (
-    <section className="fork-worktree-notice" aria-label={t(forked ? "worktree.forkedAria" : "worktree.created")}>
+    <section className="fork-worktree-notice" aria-label={t("worktree.current")}>
       <details className="fork-worktree-card">
         <summary className="fork-worktree-summary">
-          <span className="fork-worktree-glyph">
-            <Split className="icon" aria-hidden="true" />
-          </span>
+          <Split className="fork-worktree-glyph icon" aria-hidden="true" />
           <span className="fork-worktree-summary-text">
-            <strong>{t("worktree.created")}</strong>
-            <span>{t(forked ? "worktree.forkedFromConversation" : "worktree.startedSeparately")}</span>
+            <strong>{t("worktree.current")}</strong>
           </span>
           <ChevronDown className="fork-worktree-chevron icon" aria-hidden="true" />
         </summary>
@@ -50,39 +43,18 @@ export function WorktreeNotice({
               <dd>{worktree.path}</dd>
             </div>
           </dl>
-          <div className="fork-worktree-code-block">
-            <MessageCopyButton
-              getText={() => log}
-              className="fork-worktree-copy"
-              iconSize={13}
-              idleLabel={t("worktree.copyLog")}
-              copiedLabel={t("worktree.logCopied")}
-              failedLabel={t("common.copyFailed")}
-            />
-            <pre className="fork-worktree-code">
-              <code>{log}</code>
-            </pre>
-          </div>
+          <MessageCopyButton
+            getText={() => JSON.stringify(worktree, null, 2)}
+            className="fork-worktree-copy"
+            iconSize={13}
+            idleLabel={t("worktree.copyInfo")}
+            copiedLabel={t("worktree.infoCopied")}
+            failedLabel={t("common.copyFailed")}
+          />
         </div>
       </details>
     </section>
   );
-}
-
-function worktreeCreationLog(thread: Thread): string {
-  const worktree = thread.worktree;
-  if (!worktree) {
-    return "";
-  }
-  const head = worktree.base_head?.trim();
-  const lines = [
-    translate("worktree.logStarting"),
-    head ? translate("worktree.logPreparing", { head: shortSHA(head) }) : "",
-    translate("worktree.logBaseRepository", { path: worktree.base_repo || thread.cwd }),
-    translate("worktree.logCreatedAt", { path: worktree.path }),
-    translate(thread.forked_from_id ? "worktree.logForkSession" : "worktree.logSession", { id: thread.id }),
-  ].filter(Boolean);
-  return lines.join("\n");
 }
 
 function shortSHA(value: string): string {

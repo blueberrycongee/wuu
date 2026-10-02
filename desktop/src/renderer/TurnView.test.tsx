@@ -6,6 +6,8 @@ import { ASSISTANT_TURN_PRESENTATION_STABILIZE_MS } from "./AssistantTurnPresent
 import { PROCESS_NOTIFICATION_NAME } from "./InternalUserNotification";
 import { desktopPluginHost } from "./plugins/DesktopPluginRuntime";
 import { TurnView } from "./TurnView";
+import { OPEN_SETTINGS_EVENT } from "./TurnNotice";
+import { translateCurrent as t } from "./i18n";
 import type { TurnStreamStatus } from "./AppState";
 import { ImagePreviewProvider } from "./ImagePreview";
 import { ConversationRenderActivityProvider } from "./ConversationRenderActivity";
@@ -121,6 +123,35 @@ afterEach(() => {
 });
 
 describe("TurnView", () => {
+  it.each(["interrupted", "failed", "completed"] as const)(
+    "settles streamed text when the turn becomes %s before item completion",
+    (status) => {
+      vi.useFakeTimers();
+      const items: ThreadItem[] = [
+        { ...makeReasoning("Partial reasoning"), status: "in_progress" },
+        { ...makeCommentary("Partial answer"), status: "in_progress" },
+      ];
+      const view = render(makeTurn("in_progress", items), true);
+      const streams = () => Array.from(view.querySelectorAll(".streaming-markdown"));
+      expect(streams()).toHaveLength(2);
+      expect(streams().every((stream) => stream.getAttribute("data-stream-state") === "streaming")).toBe(true);
+
+      rerender(makeTurn(status, items), true);
+      act(() => vi.advanceTimersByTime(500));
+      const toggle = view.querySelector<HTMLButtonElement>(".turn-process-toggle");
+      if (toggle?.getAttribute("aria-expanded") === "false") {
+        act(() => toggle.click());
+      }
+      expect(streams()).toHaveLength(2);
+      expect(view.textContent).toContain("Partial reasoning");
+      expect(view.textContent).toContain("Partial answer");
+      for (const stream of streams()) {
+        expect(stream.getAttribute("data-stream-state")).toBe("settled");
+        expect(stream.getAttribute("data-cursor-state")).toBe("fading");
+      }
+    },
+  );
+
   it("keeps the conversation timeline plugin surface on each real turn", async () => {
     await desktopPluginHost.activateGeneration({
       pluginId: "test:turn-timeline",
@@ -354,7 +385,7 @@ describe("TurnView", () => {
       expect(view.querySelector(".turn-edit-summary-card")).toBeNull();
       const process = view.querySelector(".assistant-turn-shell")!;
       expect(process.compareDocumentPosition(edits) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-      const notice = view.querySelector(".system-event-notice");
+      const notice = view.querySelector(".turn-failure");
       if (status === "failed") {
         expect(notice).not.toBeNull();
         expect(notice!.compareDocumentPosition(edits) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
@@ -396,7 +427,7 @@ describe("TurnView", () => {
 
   it("does not offer retained edits when a failed turn made no changes", () => {
     const view = render(makeTurn("failed", [makeError("network connection lost")], "network connection lost"), true);
-    expect(view.querySelector(".system-event-notice")).not.toBeNull();
+    expect(view.querySelector(".turn-failure")).not.toBeNull();
     expect(view.querySelector(".turn-edit-presentation")).toBeNull();
   });
 
@@ -422,6 +453,43 @@ describe("TurnView", () => {
     expect(agentBlock?.textContent).toContain("done");
     expect(agentBlock?.textContent).toContain("本轮修改 1 个文件");
     expect(agentBlock?.querySelector(".turn-edit-summary-card")).toBeTruthy();
+  });
+
+  it.each([1, 3])("keeps %s image inspection tools in the process fold with previews on demand", async (count) => {
+    const inspect = (index: number): ThreadItem => ({
+      id: `inspect-${index}`, type: "tool_call", name: "read_file", status: "completed",
+      arguments: JSON.stringify({ path: `inspection-${index}.svg` }),
+      result_detail: { content: [
+        { type: "text", text: `Inspection metadata ${index}` },
+        { type: "image", name: `inspection-${index}.svg`, mime_type: "image/svg+xml", data: btoa('<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40"><rect width="40" height="40" fill="blue"/></svg>') },
+      ] },
+    });
+    const tools = Array.from({ length: count }, (_, index) => inspect(index));
+    const turn = makeTurn("completed", [...tools, makeFinalAnswer("Checked.")]);
+    container = document.createElement("div"); document.body.append(container); root = createRoot(container);
+    act(() => root!.render(<ImagePreviewProvider><TurnView turn={turn} isLatestTurn onStreamFrame={() => {}} /></ImagePreviewProvider>));
+    expect(container.querySelectorAll('.turn-answer-body [data-wuu-component="turn-artifacts-inline"]')).toHaveLength(0);
+    expect(container.querySelectorAll('img')).toHaveLength(0);
+    await act(async () => { container!.querySelector<HTMLElement>('.turn-process-toggle')!.click(); });
+    expect(container.querySelectorAll('.turn-process-entry')).toHaveLength(1);
+    const process = container.querySelector<HTMLDetailsElement>('.turn-process-entry .process-surface-fold')!;
+    expect(process).not.toBeNull();
+    await act(async () => { process.open = true; process.dispatchEvent(new Event("toggle")); });
+    expect(process.querySelectorAll('img')).toHaveLength(count);
+    await act(async () => { process.open = false; process.dispatchEvent(new Event("toggle")); });
+    expect(container.querySelectorAll('img')).toHaveLength(0);
+  });
+
+  it("resolves grouped inspection images against their owning conversation directory", async () => {
+    const turn = makeTurn("completed", [{ id: "relative-inspection", type: "tool_call", name: "read_file", status: "completed",
+      result_detail: { content: [{ type: "image", mime_type: "image/png", uri: "images/preview.png", name: "preview.png" }] },
+    }]);
+    container = document.createElement("div"); document.body.append(container); root = createRoot(container);
+    act(() => root!.render(<ImagePreviewProvider><TurnView turn={turn} cwd="/workspace/owning-thread" onStreamFrame={() => {}} /></ImagePreviewProvider>));
+    const process = container.querySelector<HTMLDetailsElement>('.turn-process-entry .process-surface-fold')!;
+    await act(async () => { process.open = true; process.dispatchEvent(new Event("toggle")); });
+    const source = container.querySelector('img')?.getAttribute('src');
+    expect(source).toBe(`wuu-file://local/${btoa('/workspace/owning-thread/images/preview.png').replace(/=+$/, '')}`);
   });
 
   it("keeps explicit artifact previews separate from the unchanged file-diff summary", () => {
@@ -508,12 +576,13 @@ describe("TurnView", () => {
     expect(container.querySelector(".agent-block")).toBe(message);
     expect(container.querySelector("img")).toBe(firstImage);
 
-    update(makeTurn("interrupted", [first, { ...text, text: streamTextStore.get(streamKey) }]));
+    // A terminal turn snapshot carries its streamed items already settled.
+    const settledText = { ...text, text: streamTextStore.get(streamKey), status: "completed" as const };
+    update(makeTurn("interrupted", [first, settledText]));
     expect(container.querySelector(".agent-block")).toBe(message);
     expect(before(firstImage, message)).toBe(true);
 
     // A second output must not gather both images after all the commentary.
-    const settledText = { ...text, text: streamTextStore.get(streamKey), status: "completed" as const };
     const final = { ...makeFinalAnswer("The comparison"), terminal: false, status: "in_progress" as const };
     update(makeTurn("in_progress", [first, settledText, second, final]));
     const secondImage = container.querySelectorAll("img")[1];
@@ -693,10 +762,12 @@ describe("TurnView", () => {
     expect(view.textContent).toContain("partial progress");
     expect(view.querySelectorAll(".turn-notice")).toHaveLength(1);
     const notice = view.querySelector(".turn-notice")!;
-    expect(notice.querySelector("summary")?.textContent).not.toContain("previous_response_not_found");
-    expect(notice.querySelector("details")?.open).toBe(false);
-    expect(notice.querySelector(".system-event-expanded-detail")?.textContent).toContain("previous_response_not_found");
-    expect(view.querySelectorAll(".turn-notice button, .turn-notice a")).toHaveLength(0);
+    expect(notice.textContent).not.toContain("previous_response_not_found");
+    const disclosure = notice.querySelector<HTMLButtonElement>(".turn-failure-details-toggle")!;
+    act(() => disclosure.click());
+    expect(notice.querySelector(".turn-failure-diagnostic")?.textContent).toContain("previous_response_not_found");
+    // A historical turn explains itself but offers no actions.
+    expect(notice.querySelectorAll("button:not(.turn-failure-details-toggle), a")).toHaveLength(0);
   });
 
   it("renders one failure notice when an interrupted turn also records its internal error as an item", () => {
@@ -816,15 +887,11 @@ describe("TurnView", () => {
     });
 
     // Failures remain visible even when the process fold is closed.
-    const notice = container!.querySelector("aside.stream-reconnect-notice");
-    expect(notice?.textContent).toContain("已停止");
-    expect(notice?.textContent).toContain("网络异常");
-    expect(notice?.textContent).not.toContain("次重试");
+    const notice = container!.querySelector("aside.turn-failure");
+    expect(notice?.querySelector(".turn-failure-title")?.textContent).toBe(t("turnFailure.network"));
     expect(notice?.closest(".assistant-turn-shell")).toBeNull();
     // It stands in for the generic turn error notice.
-    expect(
-      container!.querySelectorAll("aside:not(.stream-reconnect-notice)"),
-    ).toHaveLength(0);
+    expect(container!.querySelectorAll("aside")).toHaveLength(1);
   });
 });
 
@@ -835,13 +902,15 @@ it("removes the recovery card immediately on item removal without duplicating st
   document.body.appendChild(container);
   root = createRoot(container);
   act(() => { root!.render(<TurnView turn={turn} isLatestTurn onStreamFrame={() => {}} streamStatus={{ text: "reconnecting", liveProgress: true }} />); });
-  expect(container.querySelectorAll(".stream-reconnect-notice")).toHaveLength(1);
+  expect(container.querySelectorAll(".turn-failure.is-retrying")).toHaveLength(1);
   expect(container.querySelector(".stream-status-notice")).toBeNull();
   act(() => { root!.render(<TurnView turn={{ ...turn, items: [turn.items[0]] }} isLatestTurn onStreamFrame={() => {}} />); });
-  expect(container.querySelector(".stream-reconnect-notice")).toBeNull();
+  expect(container.querySelector(".turn-failure")).toBeNull();
 });
 
-it("routes a failed turn retry through the existing history retry action", async () => {
+// Automatic recovery that gives up settles the turn as interrupted, not
+// failed; its card explains the same failure and needs the same retry.
+it.each(["failed", "interrupted"] as const)("routes the retry of a turn that ended %s through the existing history retry action", async (status) => {
   const user: ThreadItem = {
     id: "user", type: "user_message", status: "completed", text: "Display text", input_text: "Check this",
     images: [{ media_type: "image/png", data: "image-bytes" }],
@@ -854,13 +923,40 @@ it("routes a failed turn retry through the existing history retry action", async
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
-  const turn = makeTurn("failed", [user, item]);
+  const turn = makeTurn(status, [user, item]);
   act(() => { root!.render(<ImagePreviewProvider><TurnView turn={turn} isLatestTurn onEditMessage={onEditMessage} onSubmitEditMessage={onSubmitEditMessage} onStreamFrame={() => {}} /></ImagePreviewProvider>); });
-  await act(async () => { container!.querySelector<HTMLButtonElement>(".stream-reconnect-retry")?.click(); });
+  const retryButton = () => [...container!.querySelectorAll<HTMLButtonElement>(".turn-failure-actions button")]
+    .find((button) => button.textContent === t("appState.retryAction"));
+  await act(async () => { retryButton()?.click(); });
   expect(onSubmitEditMessage).toHaveBeenCalledWith(turn.id, user, user.input_text, user.images, user.files, user.content_parts);
   expect(onEditMessage).not.toHaveBeenCalled();
   act(() => { root!.render(<ImagePreviewProvider><TurnView turn={turn} onEditMessage={onEditMessage} onStreamFrame={() => {}} /></ImagePreviewProvider>); });
-  expect(container.querySelector(".stream-reconnect-retry")).toBeNull();
+  expect(retryButton()).toBeUndefined();
+});
+
+it("sends a rejected credential to Model services from the latest turn only", () => {
+  const error = {
+    message: "stream request failed: HTTP 401: 401 Unauthorized",
+    category: "auth" as const,
+    status_code: 401,
+    recovery: { attempt_count: 1, retry_count: 0, max_attempts: 11, submission_count: 1, stop_reason: "non_retryable", failure_category: "authentication" },
+  };
+  const turn: Turn = { ...makeTurn("failed", [{ id: "user", type: "user_message", status: "completed", text: "Check this" }]), error };
+  const opened = vi.fn();
+  window.addEventListener(OPEN_SETTINGS_EVENT, opened);
+  try {
+    const view = render(turn, true);
+    const settings = [...view.querySelectorAll<HTMLButtonElement>(".turn-failure-actions button")]
+      .find((button) => button.textContent === t("turnFailure.openSettings"));
+    act(() => settings?.click());
+    expect(opened).toHaveBeenCalledOnce();
+    expect((opened.mock.calls[0][0] as CustomEvent).detail).toEqual({ page: "providers" });
+    rerender(turn, false);
+    expect(view.querySelector(".turn-failure")).not.toBeNull();
+    expect(view.querySelectorAll(".turn-failure-actions button:not(.turn-failure-details-toggle)")).toHaveLength(0);
+  } finally {
+    window.removeEventListener(OPEN_SETTINGS_EVENT, opened);
+  }
 });
 
 describe("TurnView optimistic placeholder", () => {

@@ -33,6 +33,75 @@ beforeAll(() => {
   };
 });
 
+describe("workspace tool records", () => {
+  it("keeps the historical destination and exposes failures", () => {
+    const item: ThreadItem = {
+      id: "workspace-1", type: "tool_call", name: "set_session_workspace",
+      status: "in_progress", arguments: JSON.stringify({ root: "/repo/worktree-one" }),
+    };
+    mount({ items: [item] });
+    const details = container!.querySelector("details")!;
+    expect(details.open).toBe(false);
+    expect(details.textContent).toContain("/repo/worktree-one");
+
+    act(() => { details.open = true; });
+    rerender({ items: [{ ...item, status: "completed", result: JSON.stringify({ root: "/repo/worktree-one" }) }] });
+    expect(container!.querySelector("details")!.open).toBe(true);
+    expect(container!.querySelector("details")!.textContent).toContain("/repo/worktree-one");
+
+    mount({ items: [{ ...item, id: "workspace-2", status: "failed", arguments: JSON.stringify({ root: "/repo/missing" }), error: "inspect workspace root: no such directory" }] });
+    expect(container!.querySelector("details")!.textContent).toContain("/repo/missing");
+    expect(container!.querySelector("details")!.textContent).toContain("inspect workspace root: no such directory");
+  });
+});
+
+describe("PTC program records", () => {
+  it("displays the supplied description and discloses literal source", () => {
+    const code = "  const html = \"<img src=x onerror=alert(1)>\";\n\nawait tools.read_file({path: \"notes.ts\"});\nconsole.log(html);\n";
+    const description = "Read notes";
+    const item: ThreadItem = {
+      id: "program-1", type: "tool_call", name: "run_code", status: "in_progress",
+      arguments: JSON.stringify({ code, description }),
+      display: { kind: "command", label: "Run command" },
+    };
+    mount({ items: [item], streaming: true });
+    const details = container!.querySelector("details")!;
+    expect(details).not.toBeNull();
+    expect(details.open).toBe(false);
+    expect(details.querySelector("summary")!.textContent).toBe(description);
+    expect(details.querySelector("img")).toBeNull();
+    expect(details.querySelector("pre")).toBeNull();
+
+    act(() => {
+      details.open = true;
+      details.dispatchEvent(new Event("toggle"));
+    });
+    expect(details.querySelector("pre code")!.textContent).toBe(code);
+    expect(details.querySelector("img")).toBeNull();
+    rerender({ items: [{ ...item, status: "completed", result: "done" }] });
+    expect(container!.querySelector("details")!.open).toBe(true);
+    expect(container!.querySelector("pre code")!.textContent).toBe(code);
+  });
+
+  it("waits for parseable arguments and can disclose a failed program", () => {
+    const item: ThreadItem = {
+      id: "program-2", type: "tool_call", name: "run_code", status: "in_progress",
+      arguments: '{"code":"await tools.',
+    };
+    mount({ items: [item], streaming: true });
+    expect(container!.querySelector("details")).toBeNull();
+    const code = "await tools.read_file({path: \"missing.ts\"});";
+    rerender({ items: [{ ...item, status: "failed", arguments: JSON.stringify({ code }), error: "File not found" }] });
+    const details = container!.querySelector("details")!;
+    act(() => {
+      details.open = true;
+      details.dispatchEvent(new Event("toggle"));
+    });
+    expect(details.querySelector("pre code")!.textContent).toBe(code);
+    expect(details.textContent).toContain("File not found");
+  });
+});
+
 function fakeReadFileTool(): ThreadItem {
   // Single-segment path so formatPathTarget's basename collapse lands
   // on a deterministic string we can match exactly in assertions.

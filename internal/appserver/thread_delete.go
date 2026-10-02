@@ -21,8 +21,8 @@ import (
 // (which only hides the thread), delete is the storage-hygiene path: it
 // removes the session row and chat history, the workspace-scoped session
 // artifact directory (workers/threads/harness), and any fork
-// worktree still bound to the thread. Only archived or otherwise idle (not
-// running) threads are eligible.
+// worktree still bound to the thread. Only idle (not running) threads are
+// eligible; archive-only requests also require durable archived state.
 func (s *Server) handleThreadDelete(req Request) error {
 	var params ThreadDeleteParams
 	if err := decodeParams(req.Params, &params); err != nil {
@@ -57,7 +57,11 @@ func (s *Server) handleThreadDelete(req Request) error {
 	}
 	defer releaseSideThreadExecutionLease(id, sideThreadLease)
 
-	active, err := s.threadHasDurableActiveAgents(id)
+	stateDirs, err := s.threadArtifactStateDirs(id)
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	active, err := s.threadHasDurableActiveAgents(id, stateDirs...)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, fmt.Errorf("inspect durable agents for thread %q: %w", id, err))
 	}
@@ -82,7 +86,7 @@ func (s *Server) handleThreadDelete(req Request) error {
 		releaseThreadLifecycleWriteLease(id, lifecycleLease)
 		return s.writeResponse(req.ID, nil, fmt.Errorf("delete side thread for %q (stage): %w", id, err))
 	}
-	deleted, err := s.deleteThreadSession(id)
+	deleted, err := s.deleteThreadSession(id, params.OnlyIfArchived)
 	if err != nil {
 		rollbackErr := sideDelete.Rollback()
 		releaseThreadLifecycleWriteLease(id, lifecycleLease)
@@ -93,6 +97,11 @@ func (s *Server) handleThreadDelete(req Request) error {
 		// The main row is already durably gone. A staged tombstone is harmless
 		// and remains eligible for a later idempotent cleanup attempt.
 		providers.DebugLogf("commit side thread delete for %q: %v", id, err)
+	}
+	// Code-mode state outlives cached thread runtimes, but never a successful
+	// permanent delete. This also covers owners already evicted from s.threads.
+	if s.rt.CodeMode != nil {
+		s.rt.CodeMode.ForgetOwner(id)
 	}
 
 	// Remove the in-memory owner and stop its subscriptions before deleting
@@ -129,23 +138,19 @@ func (s *Server) handleThreadDelete(req Request) error {
 	// (and its cascaded history) is already gone, so a failing worktree or
 	// artifact removal must not resurrect the thread — it only leaves disk
 	// garbage that a later cleanup pass can reclaim.
-	stateDir, stateDirErr := s.workspaceStateDir()
-	if info, bound := deleted.WorktreeInfo(); bound && stateDirErr == nil {
-		// Only remove worktrees that live under this workspace's managed
-		// worktree root. A stale or foreign path in the session metadata
-		// must never turn into an os.RemoveAll of arbitrary directories.
-		if pathWithinRoot(info.Path, statepath.WorktreeRoot(stateDir)) {
-			if manager, mgrErr := s.worktreeManager(firstNonEmpty(info.BaseRepo, s.rt.RootDir)); mgrErr == nil {
+	for _, stateDir := range stateDirs {
+		worktreeRoot := statepath.WorktreeRoot(stateDir)
+		parentRepo := firstNonEmpty(deleted.WorktreeBaseRepo, deleted.CWD, s.rt.RootDir)
+		manager, managerErr := worktree.NewManager(parentRepo, worktreeRoot)
+		if info, bound := deleted.WorktreeInfo(); bound && managerErr == nil {
+			// Never use a stale or foreign metadata path to remove arbitrary data.
+			if pathWithinRoot(info.Path, worktreeRoot) {
 				_, _ = manager.CleanupIfClean(&worktree.Worktree{Path: info.Path, SessionID: id, HEAD: info.BaseHEAD, BaseRepo: info.BaseRepo})
 			}
 		}
-	}
-	if stateDirErr == nil {
-		// Sub-agent isolation worktrees are grouped under the owning thread ID.
-		// Deleting the thread is the explicit end of their review/follow-up
-		// lifecycle, so reclaim the whole group rather than only a fork worktree
-		// recorded directly on the session row.
-		if manager, mgrErr := s.worktreeManager(s.rt.RootDir); mgrErr == nil {
+		if managerErr == nil {
+			// Worker isolation worktrees share their globally unique owner's ID.
+			// Preserve dirty checkouts for review even after conversation deletion.
 			kept, cleanupErr := manager.CleanupSessionIfClean(id)
 			if cleanupErr != nil {
 				providers.DebugLogf("cleanup deleted thread worktrees %q: %v", id, cleanupErr)
@@ -159,22 +164,113 @@ func (s *Server) handleThreadDelete(req Request) error {
 	return s.writeResponse(req.ID, ThreadDeleteResult{ThreadID: id}, nil)
 }
 
-func (s *Server) deleteThreadSession(threadID string) (session.Session, error) {
+func (s *Server) deleteThreadSession(threadID string, onlyIfArchived bool) (session.Session, error) {
 	if s != nil && s.deleteSessionForTest != nil {
 		return s.deleteSessionForTest(threadID)
 	}
+	if onlyIfArchived {
+		return session.DeleteArchived(s.rt.SessionDir, threadID)
+	}
 	return session.Delete(s.rt.SessionDir, threadID)
+}
+
+// threadArtifactStateDirs finds actual artifact locations rather than inferring
+// them from CWD: a runtime can execute a thread in a different directory or
+// resume it from another workspace while retaining the global session identity.
+// The caller holds the global mutation lease while inspecting and deleting them.
+func (s *Server) threadArtifactStateDirs(threadID string) ([]string, error) {
+	if threadID == "." || threadID == ".." || filepath.Base(threadID) != threadID {
+		return nil, errors.New("invalid thread id for artifact lookup")
+	}
+	own, err := s.workspaceStateDir()
+	if err != nil {
+		return nil, err
+	}
+	stateDirs := []string{own}
+	home := strings.TrimSpace(s.rt.WuuHome)
+	if home == "" {
+		home, err = statepath.Home("")
+		if err != nil {
+			return nil, err
+		}
+	}
+	// Custom stores may reuse IDs from the global store. Their delete request
+	// must never inspect or reclaim another store's workspace artifacts.
+	if filepath.Clean(s.rt.SessionDir) != filepath.Clean(statepath.SessionsDir(home)) {
+		return stateDirs, nil
+	}
+	workspaceRoot := filepath.Join(home, "workspaces")
+	rootInfo, err := os.Lstat(workspaceRoot)
+	if errors.Is(err, os.ErrNotExist) {
+		return stateDirs, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if !rootInfo.IsDir() {
+		return nil, fmt.Errorf("workspace artifact root is not a directory: %s", workspaceRoot)
+	}
+	entries, err := os.ReadDir(workspaceRoot)
+	if err != nil {
+		return nil, err
+	}
+	for _, entry := range entries {
+		if entry.Type()&os.ModeSymlink != 0 {
+			return nil, fmt.Errorf("workspace artifact path is a symbolic link: %s", filepath.Join(workspaceRoot, entry.Name()))
+		}
+		if !entry.IsDir() {
+			continue
+		}
+		stateDir := filepath.Join(workspaceRoot, entry.Name())
+		matched := false
+		for _, name := range []string{"sessions", "worktrees"} {
+			root := filepath.Join(stateDir, name)
+			for _, path := range []string{root, filepath.Join(root, threadID)} {
+				info, err := os.Lstat(path)
+				if errors.Is(err, os.ErrNotExist) {
+					break
+				}
+				if err != nil {
+					return nil, err
+				}
+				// Lstat refuses links at both boundaries before reading contents.
+				if !info.IsDir() {
+					return nil, fmt.Errorf("thread artifact path is not a directory: %s", path)
+				}
+				if path != root {
+					matched = true
+				}
+			}
+		}
+		if matched && filepath.Clean(stateDir) != filepath.Clean(own) {
+			stateDirs = append(stateDirs, stateDir)
+		}
+	}
+	return stateDirs, nil
 }
 
 // threadHasDurableActiveAgents checks the cross-process task state while the
 // caller owns the parent thread's mutation lease. The thread index covers
 // direct and nested workers; the harness task and queue indexes cover queued
 // work even if one of the redundant lifecycle writes was interrupted.
-func (s *Server) threadHasDurableActiveAgents(threadID string) (bool, error) {
-	stateDir, err := s.workspaceStateDir()
-	if err != nil {
-		return false, err
+func (s *Server) threadHasDurableActiveAgents(threadID string, stateDirs ...string) (bool, error) {
+	if len(stateDirs) == 0 {
+		var err error
+		stateDirs, err = s.threadArtifactStateDirs(threadID)
+		if err != nil {
+			return false, err
+		}
 	}
+	for _, stateDir := range stateDirs {
+		active, err := threadHasDurableActiveAgentsInStateDir(threadID, stateDir)
+		if err != nil || active {
+			return active, err
+		}
+	}
+	return false, nil
+}
+
+func threadHasDurableActiveAgentsInStateDir(threadID, stateDir string) (bool, error) {
 	artifactDir := statepath.SessionArtifactDir(stateDir, threadID)
 	workerIDs := make(map[string]struct{})
 

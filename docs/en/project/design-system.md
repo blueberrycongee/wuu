@@ -51,11 +51,12 @@ Brand identity, action emphasis, and status are separate concerns. Primary actio
 | --- | --- | --- |
 | Canvas and surfaces | `--paper`, `--surface-1` through `--surface-4` | Base, secondary, and emphasized surfaces; surface numbers are not shadow levels |
 | Text | `--ink-strong`, `--ink`, `--ink-soft` | Important content, body, secondary descriptions; keep body text readable and normally weighted |
-| Quieter text | `--ink-tertiary`, `--ink-muted`, `--ink-faint` | Select by purpose; low contrast must not conceal crowding or carry essential information |
+| Quieter text | `--ink-tertiary`, `--ink-muted`, `--ink-faint` | `--ink-tertiary` is the quietest ink for words and stays above 4.5:1; `--ink-muted` (about 3:1) is for icons, chevrons, and disabled marks, and `--ink-faint` for marks that carry no information; low contrast must not conceal crowding |
+| Placeholder | `--placeholder-ink` | Example text in fields, set once on `::placeholder` so no field picks its own; distinct from entered text and labels, above 4.5:1 |
 | Three line tiers | `--hairline-soft`, `--hairline`, `--hairline-strong` | Within-surface separators, independent frames, stronger control boundaries; no local gray per line |
 | Functional boundary and focus | `--control-boundary`, `--focus-ring` | Identify controls and keyboard focus, distinct from decorative separators |
 | Selection | `--selection-surface` | A clear selection surface, not a borrowed warning or success color |
-| Status | `--success`, `--warning`, `--danger`, `--info` | Success, caution, danger, information; combine with text or icons, never color alone |
+| Status | `--success`, `--warning`, `--danger`, `--info` | Success, caution, danger, information; combine with text or icons, never color alone. Diff additions and deletions in every surface draw from `--success` and `--danger` |
 
 Success, warning, and danger tints are `--success-soft`, `--warning-soft`, and `--danger-soft`. Status colors are not general-purpose body colors or automatically readable on arbitrary fills. Use appropriate content roles such as `--ink-on-accent` on colored surfaces, then check the actual pair. Dark mode adjusts surfaces, text, and status independently rather than inverting light colors.
 
@@ -118,14 +119,14 @@ Align peer labels, icon columns, and trailing actions. Indentation expresses hie
 
 | Role | Variables | Default |
 | --- | --- | --- |
-| Inner highlights, compact chips, media | `--radius-xs`, `--radius-media` | 8px |
-| Controls and small cards | `--radius-sm` | 12px |
-| Panels and composer surfaces | `--radius-md`, `--radius-lg` | 22px; lg aliases md |
-| Compact menu shell | `--menu-shell-radius` | Inner radius + menu inset; 14px at standard density |
+| Inner highlights, menu rows, compact chips, media | `--radius-xs`, `--radius-media` | 6px |
+| Controls and small cards | `--radius-sm` | 8px |
+| Panels, dialogs and the composer | `--radius-md`, `--radius-lg` | 16px; lg aliases md |
+| Compact menu shell | `--menu-shell-radius` | Inner radius + menu inset; 12px at standard density |
 | Panel overlays and dialogs | `--menu-radius` | Follows panel by default; theme-overridable |
 | Pills and circles | `--radius-pill`, `--radius-circle` | 999px, 50% |
 
-Relate nested corners through their inset instead of assigning the same radius to every layer. Pills suit elongated controls; circles suit square avatars, dots, and knobs.
+Corners stay tight so a control reads as a control: a 32px field or button with an 8px corner is a rectangle, not a pill. Relate nested corners through their inset instead of assigning the same radius to every layer: a 16px panel holds 8px controls at 8px padding, and a menu shell is a 6px row plus its 6px inset. Pills are for switch tracks, badges, and capsules; circles suit avatars, dots, knobs, and icon-only close buttons. Do not round a text field or button into a pill for style.
 
 Choose elevation by purpose: `--shadow-soft` for light controls, `--shadow-card` for cards, `--shadow-composer` for the composer, `--shadow-pop` for popovers, and `--shadow-modal` for dialogs. Attached trays and edge drawers use directional roles. Light mode uses restrained ambient shadows. Dark mode defines surfaces with inset highlights while overlays retain black ambient shadows. Hover, focus, and expansion do not automatically increase elevation; ordinary content does not need shadows everywhere.
 

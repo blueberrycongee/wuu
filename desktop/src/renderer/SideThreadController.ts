@@ -20,6 +20,7 @@ import {
   createInitialSideThreadStore,
   ensureSideThreadEntry,
   reduceSideThreadStore,
+  sideThreadRequestError,
   type SideThreadAction,
   type SideThreadStoreState
 } from "./SideThreadState";
@@ -40,6 +41,7 @@ export type SideThreadController = {
   reset: () => void;
   startResize: (event: ReactPointerEvent<HTMLButtonElement>) => void;
   sendDisabledReason?: string;
+  requestError?: string;
 };
 
 export type SideThreadControllerOptions = {
@@ -565,6 +567,7 @@ export function useSideThreadController(
     sendDisabledReason:
       effectiveDisabled || !activeContext
         ? effectiveReason ?? t("sideThread.selectWorkspace")
-        : undefined
+        : undefined,
+    requestError: entry ? sideThreadRequestError(entry) : undefined
   };
 }

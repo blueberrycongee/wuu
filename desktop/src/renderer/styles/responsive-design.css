@@ -1,10 +1,3 @@
-/* Component color tokens for responsive-design.css. Light-theme values; the dark
-   theme overrides these in base.css theme blocks. */
-:root {
-  --responsive-secondary-button-bg: var(--wuu-control-secondary-background, #f0f0ed);
-  --responsive-secondary-button-text: var(--wuu-color-text, #3c4145);
-}
-
 @container style(--motion-reduced: 1) {
   .project-add-menu,
   .codex-runtime-menu,
@@ -47,12 +40,6 @@
 }
 
 @media (max-width: 1120px) {
-  .composer-bar {
-    gap: 6px;
-    padding-right: 8px;
-    padding-left: calc(var(--composer-text-start) - var(--composer-control-icon-inset));
-  }
-
   .hero-project-pill-anchor {
     /* Width follows content; no fixed minimum at narrow widths. */
     flex: 0 1 auto;
@@ -150,24 +137,6 @@
   }
 }
 
-.primary-button,
-.secondary-button {
-  height: 36px;
-  border-radius: var(--radius-sm);
-  font-weight: var(--weight-semibold);
-  padding: 0 14px;
-}
-
-.primary-button {
-  background: var(--ink);
-  color: var(--paper);
-}
-
-.secondary-button {
-  background: var(--wuu-control-secondary-background, var(--responsive-secondary-button-bg));
-  color: var(--wuu-color-text, var(--responsive-secondary-button-text));
-}
-
 @container style(--motion-reduced: 1) {
   .app-shell,
   .sidebar,
@@ -178,7 +147,6 @@
   .dock-composer-wrap,
   .workspace-right-panel,
   .workspace-right-panel-resizer,
-  .workspace-bottom-panel,
   .nav-item,
   .project-row,
   .project-row-new-thread,
@@ -456,7 +424,7 @@
 }
 
 .design-tokens-hint {
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-size: var(--font-xs);
   font-variant-numeric: tabular-nums;
 }
@@ -465,10 +433,6 @@
    Reserve its measured height so expanding the composer cannot cover it. */
 .app-shell .empty-scroll-region:not(.split-scroll-region) {
   margin-bottom: var(--dock-composer-height);
-}
-
-.app-shell.compact-navigation .conversation-turn-rail {
-  display: none;
 }
 
 @media (pointer: coarse) {

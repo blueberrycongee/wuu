@@ -3,14 +3,99 @@ package appserver
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"path/filepath"
 	"sync"
 	"testing"
 
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/hooks"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/providers/openai"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 )
+
+func TestServerInterruptSettlesPartialStreamItems(t *testing.T) {
+	for _, tc := range []struct {
+		name, wire, chunk, notification string
+		itemType                        ThreadItemType
+		text                            string
+	}{
+		{"text", "chat", `{"choices":[{"delta":{"content":"Partial answer"}}]}`, NotificationAgentMessageDelta, ThreadItemAgentMessage, "Partial answer"},
+		{"reasoning", "chat", `{"choices":[{"delta":{"reasoning_content":"Partial reasoning"}}]}`, NotificationReasoningDelta, ThreadItemReasoning, "Partial reasoning"},
+		{"responses_reasoning", "responses", `{"type":"response.reasoning_summary_text.delta","item_id":"reasoning-1","output_index":0,"summary_index":0,"delta":"Partial reasoning"}`, NotificationReasoningDelta, ThreadItemReasoning, "Partial reasoning"},
+		{"tool_draft", "chat", `{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_draft","type":"function","function":{"name":"echo_tool","arguments":"{\"path\":\"part"}}]}}]}`, NotificationToolCallDelta, ThreadItemToolCall, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "text/event-stream")
+				fmt.Fprintf(w, "data: %s\n\n", tc.chunk)
+				w.(http.Flusher).Flush()
+				<-r.Context().Done()
+			}))
+			defer endpoint.Close()
+			client, err := openai.New(openai.ClientConfig{
+				BaseURL: endpoint.URL, APIKey: "synthetic", WireAPI: tc.wire,
+				ResponsesTransport: providers.StreamTransportSSE,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			repo := t.TempDir()
+			rt := &runtime.Session{
+				ProviderName: "test-provider", Model: "test-model", RootDir: repo,
+				ConfigPath: filepath.Join(repo, ".wuu.json"), ConfigLoadMode: runtime.ConfigLoadFile,
+				SessionDir: filepath.Join(repo, "sessions"), HookDispatcher: hooks.NewDispatcher(nil),
+				StreamRunner: &agent.StreamRunner{
+					Client: client, Model: "test-model", SystemPrompt: "system", Tools: fastToolExecutor{},
+				},
+			}
+			out := &lockedBuffer{}
+			srv := New(rt, out)
+			if err := srv.handleLine(context.Background(), []byte(`{"id":"start","method":"thread/start"}`)); err != nil {
+				t.Fatal(err)
+			}
+			threadID := remarshal[ThreadStartResult](t, responseByID(t, parseOutput(t, out.String()), "start")["result"]).Thread.ID
+			if err := srv.handleLine(context.Background(), []byte(fmt.Sprintf(`{"id":"turn","method":"turn/start","params":{"thread_id":%q,"prompt":"Inspect"}}`, threadID))); err != nil {
+				t.Fatal(err)
+			}
+			waitForMethod(t, out, tc.notification)
+			if err := srv.handleLine(context.Background(), []byte(fmt.Sprintf(`{"id":"stop","method":"turn/interrupt","params":{"thread_id":%q}}`, threadID))); err != nil {
+				t.Fatal(err)
+			}
+			messages := waitForMethod(t, out, NotificationTurnError)
+			for _, message := range messages {
+				if message["method"] != NotificationTurnError {
+					continue
+				}
+				turn := remarshal[Turn](t, message["params"].(map[string]any)["turn"])
+				t.Logf("terminal snapshot: %+v", turn)
+				if turn.Status != TurnStatusInterrupted {
+					t.Fatalf("turn status = %s, want interrupted", turn.Status)
+				}
+				found := false
+				for _, item := range turn.Items {
+					if item.Status == ThreadItemStatusInProgress {
+						t.Errorf("interrupted turn retains a live item: %+v", item)
+					}
+					if item.Type != tc.itemType {
+						continue
+					}
+					found = true
+					if tc.itemType == ThreadItemToolCall {
+						t.Errorf("unexecuted tool draft should be discarded: %+v", item)
+					} else if item.Text != tc.text || item.Status != ThreadItemStatusCompleted {
+						t.Errorf("partial text should be preserved and settled: %+v", item)
+					}
+				}
+				if !found && tc.itemType != ThreadItemToolCall {
+					t.Errorf("interruption lost partial %s text", tc.itemType)
+				}
+			}
+		})
+	}
+}
 
 // multiStepStreamClient returns tool_calls on the first call, then blocks
 // on the second call until ctx is cancelled.

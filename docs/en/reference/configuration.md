@@ -24,7 +24,7 @@ Normal startup removes these fields from every project layer, including `setting
 |---|---|
 | `default_provider`, `providers` | Select model services, endpoints, credentials, and connection options |
 | `instructions`, legacy `memory` | Control instruction discovery, including user paths |
-| `agent.model_roles`, `agent.model_aliases` | Route model work |
+| `agent.model_roles`, `agent.model_aliases`, `agent.project_models` | Route model work |
 | `agent.permission_mode` | Set local execution authority |
 
 Case changes in JSON keys do not bypass the restriction. Other allowed project fields can still affect prompts, tools, hooks, and services, so this filtering does not make an unfamiliar repository safe to execute.
@@ -65,16 +65,38 @@ are not enabled by this rule.
 
 Native loading keeps deferred schemas out of the initial model context and
 loads them through `tool_search`. The embedded browser is deferred when enabled.
-Other paths use `flat`, which exposes available tools up front and keeps the tool
-list stable during a run. Ordinary tool calling or an OpenAI/Anthropic-compatible
-URL alone does not establish support for native loading.
+Other paths use `client`: ordinary `tool_search` results load schemas on demand
+without requiring a provider-specific protocol. The initial catalog preview is
+bounded to 8 KiB; tools beyond it remain searchable. Loaded schemas are appended
+to the direct-tool prefix, so discovery can change provider cache reuse. Ordinary
+tool calling or a compatible URL alone does not establish native support.
 
-Set `agent.tool_loading` to `flat` to disable discovery, or `native` to opt into an
-implemented protocol on a compatible endpoint. Models Wuu identifies as unsupported still fall back
-to flat; this is a configuration-time choice, not a retry after an API rejection. A model's `providers.<name>.models.<model>.options.native_tool_search`
-can explicitly enable a compatible endpoint in auto mode, or disable discovery
-with `false`. Only enable it when the endpoint implements the model's native
+Set `agent.tool_loading` to `client` to always use ordinary discovery, `flat` to
+intentionally declare every tool, or `native` to opt into an implemented protocol
+on a compatible endpoint. Unsupported native paths use client discovery and
+report the change; this is a configuration-time choice, not an API retry. A model's `providers.<name>.models.<model>.options.native_tool_search`
+can explicitly enable a compatible endpoint in auto mode, or disable native
+discovery with `false` while keeping client discovery. Only enable it when the endpoint implements the model's native
 protocol; accepting unknown fields is not sufficient.
+
+## Project Agent model choices
+
+In builds with Project Agent enabled, the lead uses the conversation model. Set
+Side and Worker defaults independently in Settings → Runtime, or in the user
+configuration:
+
+```json
+{ "agent": { "project_models": {
+  "side": { "provider": "anthropic", "model": "your-side-model" },
+  "worker": { "provider": "openai", "model": "your-worker-model" }
+} } }
+```
+
+Use configured provider names and model IDs. Omit a role or leave it empty to
+inherit the lead model. Each selection also accepts `effort` and `variant` when
+the provider supports them. Defaults apply to newly created members; existing
+sessions retain their saved selection. A creation-time `model_alias` overrides
+the role default. See the [app-server protocol](../automation/app-server.md).
 
 ## Instructions and plugin settings
 
@@ -87,10 +109,16 @@ Put shared project rules in `AGENTS.md`. The core `instructions` object controls
 `agent.max_parallel` sets the generic anonymous-worker execution capacity. It defaults to `5`; `0` means use that default, and negative values are invalid.
 
 ```json
-{ "agent": { "max_parallel": 5 } }
+{ "agent": { "max_parallel": 5, "project_max_parallel": 0 } }
 ```
 
 Queued workers and workers waiting for children do not occupy normal execution slots. This is an execution-capacity setting, not a request to delegate every task or a limit on all background processes. [Subagent behavior](../desktop/subagents.md) belongs to the enabled delegation plugin.
+
+`agent.project_max_parallel` separately limits new managed-worker admissions for each Project Agent lead. `0` (the default) inherits the resolved `agent.max_parallel`; negative values are invalid. Lead and persistent side sessions are outside this worker pool. Legacy managed sessions with no explicit role count as workers.
+
+The limit uses shared durable session membership and operating-system execution leases. Prelaunch reservations and short metadata mutations can conservatively occupy capacity. A stopped worker releases capacity only after execution cleanup finishes. Lowering the limit or adopting an already-running conversation does not cancel work; later admissions wait until occupancy falls below the limit.
+
+The effective configuration is read on each new admission. Servers sharing a session store must use the same policy for a common bound; independent stores or machines do not share a global pool. Durable queued project input retries with bounded, coalesced backoff after remote completion or process exit, without model requests while waiting. Worker ordering is best-effort across servers, not global FIFO. Manual turn starts report full capacity before appending user input.
 
 ## Explicit automation configuration
 

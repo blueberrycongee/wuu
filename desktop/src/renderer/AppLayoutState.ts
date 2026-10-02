@@ -61,7 +61,7 @@ export const WORKSPACE_RIGHT_PANEL_MIN_DRAG_RANGE = 120;
 const WORKSPACE_RIGHT_PANEL_STEP = 32;
 
 const WORKSPACE_RIGHT_PANEL_WIDTH_KEY = "wuu.desktop.workspaceRightPanelWidth";
-// The fork/split view (源会话 | 分叉) is proportional rather than a fixed pixel
+// The fork/split view (源对话 | 分叉) is proportional rather than a fixed pixel
 // panel, so its divider is stored as the left pane's share of the container
 // width. Clamped away from the extremes so neither pane collapses to unusable.
 export const CONVERSATION_SPLIT_DEFAULT_PERCENT = 50;
@@ -782,8 +782,8 @@ export function useAppLayoutState({
 
   // Sidebar / right-panel drags resize the conversation viewport every frame.
   // Reuse the window-resize deferred-scroll path so ResizeObserver consumers
-  // (ConversationScrollState, AutoFollowScroll, ConversationTurnRail) stop
-  // forcing layout + scrollTop writes on every pointermove.
+  // (ConversationScrollState, AutoFollowScroll) stop forcing layout +
+  // scrollTop writes on every pointermove.
   useEffect(() => {
     if (!resizingSidebar && !resizingRightPanel && !resizingSplit) {
       return undefined;

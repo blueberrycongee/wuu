@@ -24,7 +24,7 @@ Wuu 把模型连接和执行选择放在用户配置中，项目可以补充行�
 |---|---|
 | `default_provider`、`providers` | 选择模型服务、端点、凭据和连接选项 |
 | `instructions`、旧字段 `memory` | 控制指令发现，包括用户路径 |
-| `agent.model_roles`、`agent.model_aliases` | 路由模型工作 |
+| `agent.model_roles`、`agent.model_aliases`、`agent.project_models` | 路由模型工作 |
 | `agent.permission_mode` | 设置本地执行权限 |
 
 改变 JSON 字段大小写不能绕过限制。其他允许的项目字段仍可能影响提示、工具、Hook 和服务，因此这种过滤不代表陌生仓库可以安全执行。
@@ -63,15 +63,34 @@ OpenAI Responses 上支持该功能的 GPT-5.4 及更新模型（不包括
 Kimi 使用独立的消息级工具声明协议；这条规则不启用其 Responses 或 Anthropic 兼容接口。
 
 原生加载通过 `tool_search` 按需把延迟工具的 schema 加入模型上下文，启用的内置浏览器
-也按需加载。其他接口使用 `flat`，从一开始暴露可用工具，并在单次运行中保持工具列表
-稳定。支持普通工具调用或兼容 OpenAI/Anthropic 的 URL，并不等于支持原生延迟加载。
+也按需加载。其他接口使用 `client`：通过普通 `tool_search` 结果按需加载 schema，
+不依赖专有协议。初始目录预览最多 8 KiB，未显示的工具仍可搜索。加载后的 schema
+追加在直接工具之后，因此发现操作可能影响提供方缓存复用。支持普通工具调用或
+兼容 URL，并不等于支持原生延迟加载。
 
-将 `agent.tool_loading` 设为 `flat` 可关闭发现，设为 `native` 可在兼容端点上显式启用
-已实现的协议；Wuu 识别为不支持的模型仍会回退到 flat。这是在配置阶段选择加载方式，
-并非 API 拒绝请求后的自动重试。模型的
+将 `agent.tool_loading` 设为 `client` 可始终使用普通发现，`flat` 明确声明全部工具，
+`native` 可在兼容端点上显式启用已实现的协议。不支持的原生接口改用客户端发现
+并提示加载方式变化；这是配置阶段的选择，不是 API 拒绝后的重试。模型的
 `providers.<name>.models.<model>.options.native_tool_search` 可以显式允许兼容端点
-在 auto 模式下使用原生加载，或用 `false` 关闭。只有端点确实实现了对应模型的原生协议
+在 auto 模式下使用原生加载，或用 `false` 关闭原生加载而保留客户端发现。只有端点确实实现了对应模型的原生协议
 时才启用；仅接受未知字段并不够。
+
+## Project Agent 模型选择
+
+在启用 Project Agent 的构建中，主 Agent 使用会话模型。可以在设置 → 运行时中
+分别选择 Side 和 Worker 的默认模型，也可以修改用户配置：
+
+```json
+{ "agent": { "project_models": {
+  "side": { "provider": "anthropic", "model": "your-side-model" },
+  "worker": { "provider": "openai", "model": "your-worker-model" }
+} } }
+```
+
+使用已配置的服务名称和模型 ID。省略角色或留空时继承主 Agent 模型。服务支持时，
+每个选择也接受 `effort` 和 `variant`。默认值只影响新建成员，已有会话保留保存的
+选择；创建时明确指定的 `model_alias` 优先于角色默认值。参见
+[app-server 协议](../automation/app-server.md)。
 
 ## 指令与插件设置
 
@@ -84,10 +103,17 @@ Kimi 使用独立的消息级工具声明协议；这条规则不启用其 Respo
 `agent.max_parallel` 设置通用匿名 worker 的执行容量，默认 `5`；`0` 表示采用默认值，负数无效。
 
 ```json
-{ "agent": { "max_parallel": 5 } }
+{ "agent": { "max_parallel": 5, "project_max_parallel": 0 } }
 ```
 
 排队或等待子任务的 worker 不占用通常的执行槽位。这是执行容量设置，不是要求每个任务都委派，也不是所有后台进程的总量上限。[子代理行为](../desktop/subagents.md)由已启用的委派插件负责。
+
+
+`agent.project_max_parallel` 单独限制每个 Project Agent lead 的新受管 worker 准入数量。默认值 `0` 继承解析后的 `agent.max_parallel`，负数无效。Lead 与持久 side 会话不占用此 worker 容量；未明确角色的旧受管会话按 worker 计算。
+
+限制依据共享持久会话成员关系和操作系统执行租约。启动前预留及短暂的元数据修改会保守地占用容量。停止 worker 后，只有执行清理结束才释放容量。降低上限或接管已经运行的会话不会取消当前工作；后续准入等待占用降到上限以下。
+
+每次新准入都读取有效配置。共享会话存储的服务器须使用一致策略才能保证共同上限；独立存储或机器之间不共享全局容量。持久排队的项目输入通过合并且有上限的退避重试，在远端执行结束或进程退出后继续运行；等待时不发模型请求。跨服务器的 worker 顺序为尽力保证，并非全局 FIFO。手动启动在写入用户输入前返回容量已满错误。
 
 ## 显式自动化配置
 

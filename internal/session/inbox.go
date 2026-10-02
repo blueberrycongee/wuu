@@ -29,6 +29,20 @@ type InboxMessage struct {
 
 // EnqueueInbox records a message once; repeating a client ID is a no-op.
 func EnqueueInbox(dir string, message InboxMessage) error {
+	db, err := openStore(dir)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	storeWriteMu.Lock()
+	defer storeWriteMu.Unlock()
+	return insertInbox(db, message)
+}
+
+// Both ordinary enqueue and atomic session creation use the same insert.
+func insertInbox(db interface {
+	Exec(string, ...any) (sql.Result, error)
+}, message InboxMessage) error {
 	if strings.TrimSpace(message.ClientID) == "" || strings.TrimSpace(message.SessionID) == "" {
 		return errors.New("inbox message requires a client ID and target session")
 	}
@@ -39,13 +53,6 @@ func EnqueueInbox(dir string, message InboxMessage) error {
 	if err != nil {
 		return err
 	}
-	db, err := openStore(dir)
-	if err != nil {
-		return err
-	}
-	defer db.Close()
-	storeWriteMu.Lock()
-	defer storeWriteMu.Unlock()
 	_, err = db.Exec(`INSERT OR IGNORE INTO session_inbox(client_id,session_id,related_session_id,cause,content,wake,created_at,controls_json) VALUES(?,?,?,?,?,?,?,?)`,
 		message.ClientID, message.SessionID, message.RelatedSessionID, message.Cause, message.Content, message.Wake, timeText(message.CreatedAt), string(controls))
 	return err
@@ -156,9 +163,17 @@ func ValidateInboxControls(dir, clientID string) error {
 	if err != nil || !ok {
 		return err
 	}
+	defer db.Close()
+	return validateInboxControls(db, clientID)
+}
+
+// Use the history append's transaction when consuming input: a sender can be
+// stopped while a prompt hook runs after the earlier admission check.
+func validateInboxControls(db interface {
+	QueryRow(string, ...any) *sql.Row
+}, clientID string) error {
 	var encoded string
-	err = db.QueryRow(`SELECT controls_json FROM session_inbox WHERE client_id=?`, clientID).Scan(&encoded)
-	db.Close()
+	err := db.QueryRow(`SELECT controls_json FROM session_inbox WHERE client_id=?`, clientID).Scan(&encoded)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
@@ -170,8 +185,17 @@ func ValidateInboxControls(dir, clientID string) error {
 		return err
 	}
 	for _, control := range controls {
-		if err := ValidateControl(dir, control); err != nil {
+		var current Control
+		err := db.QueryRow(`SELECT session_id,manager_id,revision,state FROM session_controls WHERE session_id=?`, control.SessionID).
+			Scan(&current.SessionID, &current.ManagerID, &current.Revision, &current.State)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrControlChanged
+		}
+		if err != nil {
 			return err
+		}
+		if current.ManagerID != control.ManagerID || current.Revision != control.Revision || current.State != ControlActive {
+			return ErrControlChanged
 		}
 	}
 	return nil

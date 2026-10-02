@@ -1,7 +1,7 @@
 import { type CSSProperties, useEffect, useLayoutEffect, useRef, useState } from "react";
 import * as React from "react";
 import { createRoot } from "react-dom/client";
-import { ArrowUp, Folder, Plus, Search } from "../../src/renderer/WuuIcons";
+import { ArrowUp, Plus, Search } from "../../src/renderer/WuuIcons";
 import { SelectMenu } from "../../src/renderer/SelectMenu";
 import { TurnView } from "../../src/renderer/TurnView";
 import { applyMeasuredScrollbarWidth } from "../../src/renderer/ScrollbarMetrics";
@@ -77,7 +77,7 @@ function Fixture() {
         <SettingsRow title="附加说明" block><textarea className="plugin-ui-textarea" aria-label="附加说明" placeholder="输入说明" /></SettingsRow>
       </div></section><section className="settings-section"><div className="review-controls"><button className="plugin-ui-button">取消</button><button className="plugin-ui-button" data-wuu-variant="primary">保存</button><button className="plugin-ui-button" disabled>不可用</button></div></section>
     </main> : <ConversationExample/>}
-    <SidebarNameDialog open={dialog} title={name} onTitleChange={setName} onSubmit={() => setDialog(false)} onClose={() => setDialog(false)} dialogTitle="重命名工作区" dialogTitleId="review-dialog-title" fieldLabel="工作区名称" fieldAriaLabel="弹层工作区名称" placeholder="工作区名称" icon={Folder} submitLabel="保存" cancelLabel="取消"/>
+    <SidebarNameDialog open={dialog} title={name} onTitleChange={setName} onSubmit={() => setDialog(false)} onClose={() => setDialog(false)} dialogTitle="重命名工作区" fieldLabel="工作区名称" placeholder="工作区名称" submitLabel="保存" cancelLabel="取消"/>
 
   </ImagePreviewProvider></WuuUIRoot>;
 }

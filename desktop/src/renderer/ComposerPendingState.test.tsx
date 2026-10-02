@@ -1023,4 +1023,142 @@ describe("useComposerPendingState", () => {
     ).toEqual(["queue-1", "queue-2"]);
     expect(hook.setStatus).toHaveBeenCalledWith("network down");
   });
+
+  describe("after the Core process restarts", () => {
+    const exited = { kind: "server-exit", code: 1, message: "Core exited" } as ServerEvent;
+    const resumed = (turns: unknown[] = [], pending: unknown[] = []): ServerEvent => ({
+      kind: "notification",
+      message: {
+        method: "thread/resumed",
+        params: {
+          thread: { ...thread(), turns },
+          held_user_messages: [],
+          pending_user_messages: pending,
+        },
+      },
+    }) as ServerEvent;
+    const acceptedQueue = (hook: Awaited<ReturnType<typeof renderComposerPendingState>>) => act(() => {
+      hook.get().enqueueComposerMessage("thread-a", message("queue-1", "Follow up"));
+    });
+
+    it("keeps an accepted queued message as paused held input on the new Core", async () => {
+      const queueTurn = vi.fn().mockResolvedValue({ queued: { id: "queue-1", thread_id: "thread-a" } });
+      installWuuStub({ queueTurn });
+      const hook = await renderComposerPendingState();
+      acceptedQueue(hook);
+
+      await act(async () => {
+        hook.get().syncPendingComposerMessagesFromServerEvent(exited);
+        hook.get().syncPendingComposerMessagesFromServerEvent(resumed());
+      });
+
+      expect(queueTurn).toHaveBeenCalledOnce();
+      expect(queueTurn.mock.calls[0].slice(0, 4)).toEqual(["thread-a", "Follow up", [], "queue-1"]);
+      expect(queueTurn.mock.calls[0][9]).toBe(true);
+      expect(hook.get().pendingComposerMessagesByThread["thread-a"]?.queued).toEqual([
+        expect.objectContaining({ id: "queue-1", held: true, operationState: undefined }),
+      ]);
+    });
+
+    it("recovers a queue accepted by the old Core while its RPC response is pending", async () => {
+      type QueueResult = Awaited<ReturnType<WuuDesktopApi["queueTurn"]>>;
+      let resolveOldCoreResponse!: (value: QueueResult) => void;
+      const oldCoreResponse = new Promise<QueueResult>((resolve) => {
+        resolveOldCoreResponse = resolve;
+      });
+      const queueTurn = vi.fn()
+        .mockReturnValueOnce(oldCoreResponse)
+        .mockResolvedValueOnce({ queued: { id: "queue-1", thread_id: "thread-a" } });
+      installWuuStub({ queueTurn });
+      const hook = await renderComposerPendingState();
+      act(() => {
+        hook.get().enqueueComposerMessage("thread-a", {
+          ...message("queue-1", "Follow up"),
+          operationState: "sending",
+        });
+      });
+
+      // The old Core accepted this request, but its RPC response has not reached
+      // the renderer when the process exits.
+      const originalRequest = queueTurn(
+        "thread-a", "Follow up", [], "queue-1", [], undefined, undefined,
+        undefined, undefined, false,
+      );
+      expect(queueTurn).toHaveBeenCalledOnce();
+
+      await act(async () => {
+        hook.get().syncPendingComposerMessagesFromServerEvent(exited);
+        hook.get().syncPendingComposerMessagesFromServerEvent(resumed());
+      });
+
+      expect(queueTurn).toHaveBeenCalledTimes(2);
+      expect(queueTurn.mock.calls[1].slice(0, 4)).toEqual([
+        "thread-a", "Follow up", [], "queue-1",
+      ]);
+      expect(queueTurn.mock.calls[1][9]).toBe(true);
+      expect(hook.get().pendingComposerMessagesByThread["thread-a"]?.queued).toEqual([
+        expect.objectContaining({ id: "queue-1", held: true, operationState: undefined }),
+      ]);
+
+      resolveOldCoreResponse({ queued: { id: "queue-1", thread_id: "thread-a" } });
+      await expect(originalRequest).resolves.toEqual({
+        queued: { id: "queue-1", thread_id: "thread-a" },
+      });
+    });
+
+    it.each([
+      ["the new Core still has it", resumed([], [{ id: "queue-1", thread_id: "thread-a", origin: "queue", prompt: "Follow up" }])],
+      ["it already ran", resumed([{ id: "turn-1", status: "completed", items: [{ id: "item-1", type: "user_message", source_id: "queue-1" }] }])],
+    ])("does not resubmit a message when %s", async (_case, snapshot) => {
+      const queueTurn = vi.fn();
+      installWuuStub({ queueTurn });
+      const hook = await renderComposerPendingState();
+      acceptedQueue(hook);
+
+      await act(async () => {
+        hook.get().syncPendingComposerMessagesFromServerEvent(exited);
+        hook.get().syncPendingComposerMessagesFromServerEvent(snapshot);
+      });
+
+      expect(queueTurn).not.toHaveBeenCalled();
+      const queued = hook.get().pendingComposerMessagesByThread["thread-a"]?.queued ?? [];
+      expect(queued.filter((item) => item.id === "queue-1").length).toBe(_case === "it already ran" ? 0 : 1);
+    });
+
+    it("preserves the input as a failed message when the new Core cannot hold it", async () => {
+      installWuuStub({ queueTurn: vi.fn().mockRejectedValue(new Error("core unavailable")) });
+      const hook = await renderComposerPendingState();
+      acceptedQueue(hook);
+
+      await act(async () => {
+        hook.get().syncPendingComposerMessagesFromServerEvent(exited);
+        hook.get().syncPendingComposerMessagesFromServerEvent(resumed());
+      });
+
+      expect(hook.preserveFailedComposerMessage).toHaveBeenCalledWith("thread-a", expect.objectContaining({ id: "queue-1" }));
+      expect(hook.get().pendingComposerMessagesByThread["thread-a"]).toBeUndefined();
+    });
+  });
+
+  it("shows why queued input was held when its admission failed", async () => {
+    const hook = await renderComposerPendingState();
+    act(() => {
+      hook.get().syncPendingComposerMessagesFromServerEvent({
+        kind: "notification",
+        message: {
+          method: "turn/held",
+          params: {
+            thread_id: "thread-a",
+            error: "prompt rejected by configured hook",
+            messages: [{ id: "queue-1", thread_id: "thread-a", origin: "queue", prompt: "Follow up" }],
+          },
+        },
+      } as ServerEvent);
+    });
+
+    expect(hook.get().pendingComposerMessagesByThread["thread-a"]?.queued).toEqual([
+      expect.objectContaining({ id: "queue-1", held: true }),
+    ]);
+    expect(hook.setStatus).toHaveBeenCalledWith("prompt rejected by configured hook");
+  });
 });

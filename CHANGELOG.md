@@ -12,20 +12,240 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Added selection actions to Markdown, code, and text previews: attach selected text as context, add comments, or request an inline edit.
 - Selected text from a file or completed assistant reply can be sent with a question in side chat. Selection chips in the main and side composers share a compact preview and editable comments.
 
+- Delete all archived conversations from Settings, with an all-workspace count,
+  irreversible-action confirmation, archived-only safety checks, and partial-failure retry.
+
+- Add per-project managed-worker admission capacity with durable lease arbitration and bounded inbox retries; lead and side coordination remain available.
+
+- GPT-6.1 Sol and Fast model entries with Responses tool calling, supported
+  reasoning levels, updated cache pricing, and existing Codex subscription-login
+  reuse and account-discovered aliases.
+
+- Production subscription dashboard with account-scoped quota observations,
+  plan windows, prepaid balances, reset times, freshness, and explicit failure
+  states. Compact service cards group separate accounts with parallel quota
+  windows and account-specific credential menus. Compact attribution, reset
+  countdowns, and exact reset-time tooltips keep the focus on available quota.
+  Successful observations survive
+  restarts without being reused for another account. Quota reads do not submit
+  inference or change model routing.
+
+- Selectable execution environments for workspace tools, with isolated or shared
+  filesystems, retained profiles, remote process controls, artifact transfer,
+  and desktop configuration.
+
 - Desktop app zoom shortcuts (Command/Ctrl + plus, minus, and zero), with a
   centered percentage indicator, saved zoom, and a 50%–200% range.
 
+- Independent Side Agent and Worker model defaults for Project Agent, with
+  desktop selectors, lead-model inheritance, and saved-session model retention.
+- Durable project-session dispatches and bounded result waits, with persistent
+  Side sessions, running-work corrections, restart recovery, and stop fencing.
+
 ### Changed
+
+- Refine Project Agent guidance for settled implementation decisions, coherent
+  work batches and consolidated review feedback, reusing valid verification and
+  useful running processes across follow-ups.
+
+- Show the enabled composer worktree control in theme-aware blue so it is easy
+  to distinguish from the neutral off state.
+
+- Share equivalent quota HTTP reads only while they are pending, preserving
+  credential isolation, independent cancellation, and fresh later refreshes.
+
+- Limit private shell-geometry style updates inside message flow, reducing
+  repeated styling while long conversations reflow during resizing.
+- Reduce repeated schema inspection when opening session history and metadata.
+- Reuse loaded history during conversation restoration instead of rereading it
+  and building a turn projection that is immediately discarded.
+- Release acknowledged remote-control output without copying the pending replay
+  buffer, preserving reconnect ordering and queue limits.
+
+- Conversation search uses a single list with project labels and highlighted
+  matching excerpts. Message matches navigate to and briefly highlight their
+  history position. Keyword searches include archived conversations without
+  restoring them.
+
+- Group model-service discovery into subscriptions, direct providers, gateways,
+  and local endpoints, with searchable catalogs and connection status. Keep
+  saved connections and current model selection separate from discovery, with
+  compact quota cards and account-specific controls.
+
+- Video attachments show larger, unobstructed previews with only a play button;
+  native controls appear on playback.
+
+- Fast mode and its reset action share the model popover header, keeping the
+  model and reasoning controls compact with keyboard access and cost hints.
+  Leading icons, labels, and slider share a content guide; the thumb reaches
+  the trailing control edge at maximum effort.
+
+- Fork destination dialogs show only the two destinations; click outside or
+  press Escape to dismiss and return to the original message.
+
+- Use programmatic tool calling by default for ordinary built-in-engine tools,
+  while preserving explicit global/model-family opt-outs and direct interaction,
+  delivery and lifecycle controls. CLI tools require Node.js 22.19 or later;
+  desktop includes its runtime. Settings are available in regular builds.
+- Add bounded, conversation/actor/workspace-scoped JSON checkpoints to the isolated
+  tool interpreter. Keep exact discovery schemas, structured failures, nested
+  hook context and active-run catalog snapshots. Long work uses managed process
+  and task handles; programs have no default timeout or automatic replay.
+  Remote execution requires worker protocol version 3.
+- Send the latest visible composer text when deferred controls are still updating.
+- Use client-side tool discovery when native discovery is unavailable, keeping
+  initial catalogs bounded. Explicit flat loading remains available.
+
+- Recommend only the Automation plugin during first-run setup; other bundled
+  plugins remain available for manual selection.
 
 - The macOS DMG installer background is wordless and white, so a resized
   Finder window shows no picture edge. A slingshot beside the app fires Wuu
   along a dotted arc that splits into its colourful agents, and they dive into
   a toy-block fort built around the Applications folder.
 
+- Desktop interface refinement across the sidebar, conversation, composer,
+  workspace panel, Settings, Plugins, and first-run setup. Corners follow a
+  6, 8, and 16px scale, with pills kept for switches, dots, and badges. The
+  light theme's selection surface is quieter. Secondary text, placeholders,
+  menu group labels, and diff counts stay above 4.5:1 contrast, and diff
+  additions and deletions use the status colors everywhere. The Chinese
+  interface calls a conversation 对话 throughout.
+
+- The Plugins page lists plugins and skills in bordered groups like Settings
+  instead of card grids, and plugin pages share Settings' controls, title row,
+  and empty states. First-run setup is built from the product's own controls
+  and saves the connection as the workspace default.
+
+- A failed turn shows one card: what happened in plain words, the next step
+  (open model providers, retry), and the technical record under Details.
+  Automatic recovery that gives up offers a retry, and a conversation too long
+  for the model points to /compact instead.
+
+- Composer menus work from the keyboard and their focus rings follow what is
+  visible. The model picker shows its reasoning effort as a labelled capsule
+  with a live level, and reasoning effort and permission modes use one
+  vocabulary in each language. Review fits the width of its panel, and editors
+  and diffs take their colors from the product's roles.
+
+- The empty home greets first: its usage card keeps its frame, but the totals
+  become one line of facts above a full-width year of activity, drawn in a blue
+  ramp whose four levels read apart.
+
+- Dialogs keep keyboard focus inside while open, and menus, dialogs, and the
+  search palette return it to the control that opened them. Native
+  confirmation sheets became an in-app dialog in desktop and connected Web
+  workspaces, the environment card appears only where it describes something,
+  and the bell's first-run bubble became a mark-all-read action.
+
 ### Fixed
+
+- Preserve saved pet scale during startup when a nondefault size preset is stored, without rewriting pet preferences.
+
+- Honor remote stops before the first structured-output correction when an
+  ordinary Run is adopted into a project, including stops during admission.
+
+- Wait for confirmed Git status before automatically opening workspace info,
+  avoiding a brief panel expansion and collapse in non-Git folders.
+
+- Preserve each conversation’s composer draft across related-session split
+  opening, replacement, closing, and navigation; prevent delayed loads from
+  overriding newer navigation or pane choices.
+- Keep image inspections in aggregated tool activity, with previews loaded on
+  expansion while explicitly presented images retain their output order.
+- Preserve Home/End effort selections when an older settings response arrives
+  while the key is held after reopening the runtime picker.
+- Preserve the latest reasoning-effort choice during pending updates, keeping
+  queued runtime changes with their original conversation and workspace.
+- Keep streaming cursor markers out of copied or selected unfinished backtick and tilde code blocks.
+- Preserve conversation drafts and queued messages across delayed forks and
+  failed archive or delete requests; keep the surviving split-pane draft.
+- Keep selected Anthropic credentials isolated from ambient credentials and
+  clear old bearer settings when saving a replacement API key.
+- Allow repeated stateful tool programs while retaining repeated-input guards
+  on their individual tool calls.
+
+- Keep conversation reading positions owned by their thread and pane across
+  interrupted history jumps, split-pane reflow, and browser-panel focus return;
+  preserve paused reading until an explicit return-to-latest gesture.
+
+- Preserve reading positions when reopening tool and reasoning details, start
+  completed history at the beginning, and keep tools and reasoning in event
+  order without a delayed scroll after opening.
+
+- Keep submitted questions anchored while earlier history reflows during or
+  after placement, and resume following when the reply fills the reserved space.
+
+- Edit conversation titles from the desktop title bar with a double click, while
+  preserving keyboard rename and the surrounding window drag area.
+
+- Load explicitly selected skills deterministically through `/skill` drafts, preserving
+  source identity, thread checkout, queued instructions, and built-in command behavior.
+  Resolve project-local selections to the chosen checkout, including the first turn
+  of a new worktree; reject stale or cross-project selections without silent fallback.
+
+- Respect named `@@` context in file patches so edits cannot silently target
+  matching code before that context; reject missing or ambiguous context before
+  writing.
+- Stopping a background command now kills remaining child processes even when
+  its parent has already exited before the stop request, with bounded output
+  cleanup for promoted commands.
+
+- Stop reasoning and partial-answer streaming indicators when a turn ends,
+  retaining received text and discarding unfinished tool drafts.
+
+- Fix multi-line `edit_file` replacements copied from `read_file` on CRLF files,
+  preserving CRLF endings and exact unique-match checks.
+
+- Honor PreCompact and PostCompact hooks when resetting context windows, and
+  preserve the active history when a hook rejects overflow recovery.
+
+- Editing a message after context compaction now retracts the selected message
+  and following messages, preserving the correct conversation on resume and fork.
+- xAI OAuth now reads credentials from the auth store on each request, so existing
+  clients and conversations pick up a new sign-in and stop using the session
+  after sign-out.
+- Keep queued input the Core rejected or lost: a message refused at admission
+  (for example by a `UserPromptSubmit` hook) is held with the reason, and queued
+  messages survive a Core restart as paused input instead of being removed.
+
+- Show every question of a multi-question offer as one form, collecting all answers
+  and free text before submitting, and start each follow-up offer with fresh state
+  instead of the previous card's submitting state. Keep cancellation
+  labeled while an offer counts down and clear its timer when the offer is held.
+- Keep ordinary project conversations rooted in the selected folder after project
+  relocation, while preserving custom directories and linked worktrees.
+
+- Worktree conversations now load project instructions and skills from their actual
+  checkout, including restored conversations and their workers.
+- Keep attachments in their original conversation draft when file preparation
+  finishes after switching conversations or closing a split pane. Pending files
+  remain removable, and sends wait for their bytes before submitting.
+
+- Keep desktop text diffs readable when file contents mention Git binary markers.
+- Show Git patches for oversized text previews and submodule changes instead of
+  comparing incomplete or unavailable file contents.
+- The usage page buckets its days in the desktop's time zone instead of UTC.
+  `settings/usage` accepts an optional IANA `timezone`; an unknown name is
+  rejected.
 
 - Harden MCP transport compatibility, request timeouts, OAuth refresh recovery,
   local server cleanup, bounded reads, catalog refreshes, and oversized results.
+- Keep a trusted project `.mcp.json` server's definition when its settings
+  switch is toggled off and back on; startup preferences layer over the project
+  entry rather than replacing it.
+
+- Bound MCP call cleanup: a cancelled call no longer waits on the server's answer
+  to `notifications/cancelled`, and stdio sends stop when their call ends rather
+  than blocking on a full pipe. The transport closes if a frame may be half-written.
+
+- Provider keys or tokens saved in settings now outrank the provider type's
+  implicit default environment variable during credential resolution. Explicit
+  `api_key_env` and `auth_token_env` settings continue to take priority.
+
+- Recover Responses WebSocket follow-ups when the provider loses the cached
+  previous response, resending full conversation history within existing retry
+  limits and tool replay safeguards.
 
 ## [2026.9.29] - 2026-09-29
 

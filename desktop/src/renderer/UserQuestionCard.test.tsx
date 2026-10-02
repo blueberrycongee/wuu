@@ -2,7 +2,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { UserQuestionRequest, WuuDesktopApi } from "../shared/protocol";
-import { I18nProvider, setActiveLocale } from "./i18n";
+import { I18nProvider, setActiveLocale, translate } from "./i18n";
 import { UserQuestionCard } from "./UserQuestionCard";
 
 let root: Root | undefined;
@@ -34,6 +34,8 @@ function offerRequest(overrides: Partial<UserQuestionRequest> = {}): UserQuestio
     ...overrides,
   };
 }
+
+const skipIn = (seconds: number): string => translate("en-US", "userQuestion.skipCountdown", { seconds });
 
 describe("UserQuestionCard", () => {
   it.each(["answer", "cancel"] as const)("keeps pending %s feedback on its action and recovers after failure", async (action) => {
@@ -109,12 +111,82 @@ describe("UserQuestionCard", () => {
       }
     });
     const submit = Array.from(container.querySelectorAll("button"))
-      .find((button) => button.textContent === "Continue");
+      .find((button) => button.textContent === translate("en-US", "userQuestion.continue"));
     await act(async () => { submit?.click(); });
 
     expect(onAnswer).toHaveBeenCalledWith({
       answers: [{ id: "path", selected: ["Safe"], custom: "Keep the rollback simple" }],
     });
+  });
+
+  it("keeps cancellation identifiable during an offer countdown and clears a held deadline", async () => {
+    vi.useFakeTimers();
+    const now = new Date("2026-09-13T12:00:00.000Z");
+    vi.setSystemTime(now);
+    const onCancel = vi.fn(async () => undefined);
+    let request = offerRequest({ questions: [
+      { id: "language", question: "Which language?", options: [{ label: "Go" }] },
+      { id: "tests", question: "Which tests?", allow_custom: true },
+    ] });
+    const container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    const renderCard = async (): Promise<void> => {
+      await act(async () => {
+        root?.render(<I18nProvider><UserQuestionCard request={request}
+          onAnswer={async () => undefined} onCancel={onCancel} /></I18nProvider>);
+      });
+    };
+    await renderCard();
+    const cancel = container.querySelector<HTMLButtonElement>(".user-question-cancel")!;
+    const actionLabel = cancel.textContent;
+    request = { ...request, expires_at: new Date(now.getTime() + 20_000).toISOString() };
+    await renderCard();
+    expect(cancel.textContent).toBe(actionLabel);
+    expect(container.querySelector('[role="timer"]')).not.toBeNull();
+    request = { ...request, expires_at: undefined };
+    await renderCard();
+    expect(container.querySelector('[role="timer"]')).toBeNull();
+    await act(async () => { vi.advanceTimersByTime(20_000); });
+    expect(onCancel).not.toHaveBeenCalled();
+    await act(async () => cancel.click());
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+
+  it("collects every offer answer before submitting, including free text", async () => {
+    const onAnswer = vi.fn(async () => undefined);
+    const onHold = vi.fn(async () => undefined);
+    const request = offerRequest({ questions: [
+      { id: "language", question: "Which language?", options: [{ label: "Go" }, { label: "Rust" }] },
+      { id: "tests", question: "Which tests?", allow_custom: true },
+    ] });
+    const container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    await act(async () => {
+      root?.render(<I18nProvider><UserQuestionCard request={request} onAnswer={onAnswer}
+        onCancel={async () => undefined} onHold={onHold} /></I18nProvider>);
+    });
+    const option = container.querySelector<HTMLButtonElement>('[role="radio"]')!;
+    await act(async () => option.click());
+    expect(onAnswer).not.toHaveBeenCalled();
+    const input = container.querySelector<HTMLInputElement>("input");
+    expect(input, "Every offered question must have an answer control").not.toBeNull();
+    const submit = container.querySelector<HTMLButtonElement>(".user-question-submit")!;
+    expect(submit.disabled).toBe(true);
+    await act(async () => {
+      input!.focus();
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "Integration tests");
+      input!.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(onHold).toHaveBeenCalled();
+    expect(submit.disabled).toBe(false);
+    expect(onAnswer).not.toHaveBeenCalled();
+    await act(async () => submit.click());
+    expect(onAnswer).toHaveBeenCalledExactlyOnceWith({ answers: [
+      { id: "language", selected: ["Go"] },
+      { id: "tests", selected: [], custom: "Integration tests" },
+    ] });
   });
 
   it("steers an offer option immediately", async () => {
@@ -148,7 +220,7 @@ describe("UserQuestionCard", () => {
         </I18nProvider>,
       );
     });
-    expect(container.textContent).not.toContain("Your input is needed");
+    expect(container.textContent).not.toContain(translate("en-US", "userQuestion.kicker"));
     const option = Array.from(container.querySelectorAll("button"))
       .find((button) => button.textContent?.includes("Safe"));
     await act(async () => { option?.click(); });
@@ -185,13 +257,13 @@ describe("UserQuestionCard", () => {
 
     const skip = Array.from(container.querySelectorAll("button"))
       .find((button) => button.className.includes("user-question-skip"));
-    expect(skip?.textContent).toBe("(20s)");
+    expect(skip?.textContent).toBe(skipIn(20));
     expect(container.querySelector(".user-question-option-index")?.textContent).toBe("1");
 
     await act(async () => {
       vi.advanceTimersByTime(19_000);
     });
-    expect(skip?.textContent).toBe("(1s)");
+    expect(skip?.textContent).toBe(skipIn(1));
     expect(onCancel).not.toHaveBeenCalled();
 
     await act(async () => {
@@ -231,8 +303,8 @@ describe("UserQuestionCard", () => {
       .find((button) => button.className.includes("user-question-skip"));
     const custom = Array.from(container.querySelectorAll("button"))
       .find((button) => button.className.includes("user-question-offer-custom"));
-    expect(skip?.textContent).toBe("(20s)");
-    expect(custom?.textContent).toBe("No, and tell Wuu what to do differently");
+    expect(skip?.textContent).toBe(skipIn(20));
+    expect(custom?.textContent).toBe(translate("en-US", "userQuestion.custom"));
 
     await act(async () => {
       container.querySelector(".user-question-card")?.dispatchEvent(
@@ -240,7 +312,7 @@ describe("UserQuestionCard", () => {
       );
       vi.advanceTimersByTime(5_000);
     });
-    expect(skip?.textContent).toBe("(15s)");
+    expect(skip?.textContent).toBe(skipIn(15));
     expect(onHold).not.toHaveBeenCalled();
 
     await act(async () => { custom?.click(); });
@@ -287,7 +359,7 @@ describe("UserQuestionCard", () => {
     await renderCard();
     const custom = Array.from(container.querySelectorAll("button"))
       .find((button) => button.className.includes("user-question-offer-custom"));
-    expect(custom?.textContent).toContain("No, and tell Wuu what to do differently");
+    expect(custom?.textContent).toContain(translate("en-US", "userQuestion.custom"));
     await act(async () => { custom?.click(); });
     expect(onHold).toHaveBeenCalledTimes(1);
     expect(container.querySelector("input.user-question-offer-input")).toBeTruthy();

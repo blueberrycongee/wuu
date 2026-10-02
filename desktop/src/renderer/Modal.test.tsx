@@ -276,6 +276,52 @@ describe("Modal", () => {
     expect(focused?.getAttribute("data-testid")).toBe("first-input");
   });
 
+  it("returns focus to the control that opened it when it closes", () => {
+    const opener = document.createElement("button");
+    document.body.appendChild(opener);
+    opener.focus();
+    mount(
+      createElement(Modal, {
+        ariaLabel: "focus return",
+        title: "t",
+        onClose: () => undefined,
+        children: createElement("input", { type: "text" }),
+      }),
+    );
+    expect(document.activeElement).not.toBe(opener);
+
+    act(() => {
+      root?.unmount();
+    });
+    root = null;
+    expect(document.activeElement).toBe(opener);
+    opener.remove();
+  });
+
+  it("keeps Tab and Shift+Tab inside the dialog", () => {
+    mount(
+      createElement(Modal, {
+        ariaLabel: "focus trap",
+        title: "t",
+        onClose: () => undefined,
+        showCloseButton: false,
+        children: createElement("input", { type: "text", "data-testid": "first" }),
+        footer: createElement("button", { type: "button", "data-testid": "last" }, "OK"),
+      }),
+    );
+    const first = document.querySelector<HTMLElement>('[data-testid="first"]')!;
+    const last = document.querySelector<HTMLElement>('[data-testid="last"]')!;
+    const tab = (target: HTMLElement, shiftKey = false) => act(() => {
+      target.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", shiftKey, bubbles: true, cancelable: true }));
+    });
+
+    last.focus();
+    tab(last);
+    expect(document.activeElement).toBe(first);
+    tab(first, true);
+    expect(document.activeElement).toBe(last);
+  });
+
   it("does not move focus when initialFocus is 'none'", () => {
     const beforeActive = document.activeElement;
     mount(

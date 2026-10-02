@@ -8,7 +8,6 @@
   --shell-session-tab-status-running-notch: rgba(17, 19, 21, 0.18);
   --shell-session-tab-pending-count-bg: rgba(17, 19, 21, 0.1);
   --shell-session-tab-active-pending-count-bg: rgba(17, 19, 21, 0.14);
-  --shell-session-tab-drag-overlay-ring: rgba(255, 255, 255, 0.72);
   --shell-todo-card-bg: #fff;
   --shell-todo-card-border: var(--hairline);
   --shell-todo-card-ink: #111315;
@@ -31,7 +30,6 @@
   --shell-jump-pill-focus-shadow-1: var(--conversation-floating-surface-focus);
   --shell-jump-progress-step-bg: color-mix(in srgb, var(--wuu-color-text, #111315) 6%, transparent);
   --shell-jump-progress-step-in-progress-bg: color-mix(in srgb, var(--wuu-color-text, #111315) 20%, transparent);
-  --shell-turn-rail-bar-bg: rgba(60, 60, 67, 0.4);
   /* Message-flow body typography. Owned at :root (not on .conversation-pane)
      so a user setting written to <html style="..."> cascades globally
      without being shadowed by a more specific selector. Default 13px
@@ -85,12 +83,15 @@
 }
 
 .conversation-pane {
-  --environment-panel-reserved-width: 372px;
-  --environment-panel-width: 328px;
-  --environment-panel-edge-gap: 18px;
-  --environment-panel-flow-gap: calc(
-    var(--environment-panel-reserved-width) - var(--environment-panel-width)
+  /* The info card is UI text, so it widens with the text size: 328px at the
+   * 14.5px default (App.tsx's room check uses the same ratio), with a 44px
+   * gap between the card and the conversation it reserves room beside. */
+  --environment-panel-width: max(328px, round(up, calc(var(--font-ui) * 328 / 14.5), 4px));
+  --environment-panel-flow-gap: 44px;
+  --environment-panel-reserved-width: calc(
+    var(--environment-panel-width) + var(--environment-panel-flow-gap)
   );
+  --environment-panel-edge-gap: 18px;
   /* Reserve only the space needed to keep a centered composer clear of the
      right panel. As the effective sidebar shrinks and the conversation pane
      grows, this falls smoothly to zero so the message flow returns to the
@@ -108,9 +109,8 @@
   );
   /* Conversation-only tokens. Shared session-level tokens
      (outer width, horizontal padding, composer width/radius) live in
-     session.css at :root — change them there and nothing else. */
-  --conversation-content-width: var(--session-composer-width);
-  /* Use the composer's width directly so message cards and answer prose stay
+     session.css at :root — change them there and nothing else.
+     Use the composer's width directly so message cards and answer prose stay
      flush with the input box without a second value to keep in sync. */
   --conversation-message-max-width: var(--session-composer-width);
   --conversation-message-max-inline: 90%;
@@ -143,7 +143,6 @@
   /* Expanded process folds (tool trail, reasoning) stay compact: bounded
      by an absolute ceiling and a viewport share, whichever is smaller. */
   --conversation-process-fold-max-height: min(320px, 40vh);
-  --conversation-meta-line-height: 1.6;
   --conversation-control-line-height: 1.7;
   --conversation-process-control-color: var(--shell-process-control-color);
   /* Lighten the message-flow process text one tier (was var(--ink-soft)
@@ -164,7 +163,6 @@
    */
   --conversation-user-rule-gap: max(32px, calc(var(--conversation-user-action-size) + 12px));
   --conversation-user-message-trailing-gap: 8px;
-  --conversation-rule-process-gap: 16px;
   --conversation-process-detail-gap: 16px;
   /* Reading groups do not inherit the independently configurable action-bar gap. */
   --conversation-process-answer-gap: max(12px, calc(var(--conversation-message-font-size) * 0.75));
@@ -178,11 +176,6 @@
   --conversation-visible-inset-left: 0px;
   --conversation-visible-inset-right: 0px;
   --dock-composer-height: 0px;
-  /*
-   * Min-height for the composer shell. A 60px textarea plus the compact 40px
-   * toolbar lands on this 100px baseline without reserving hidden space.
-   */
-  --conversation-composer-min-height: 100px;
   grid-column: 2;
   grid-row: 1;
   display: grid;
@@ -305,6 +298,7 @@
 .conversation-title-heading {
   --conversation-title-field-inset: calc(var(--space-1) * 1.5);
   display: flex;
+  flex: 1 1 auto;
   min-width: 0;
   align-items: center;
   gap: 8px;
@@ -313,7 +307,7 @@
 .conversation-title-heading h1 {
   flex: 0 1 auto;
   min-width: 0;
-  max-width: 100%;
+  max-width: 60%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -808,10 +802,11 @@
   height: calc(var(--window-titlebar-height) + env(safe-area-inset-top, 0px));
   column-gap: 6px;
   /* Compact navigation moves this control to the window corner. Share the
-   * collapsed leading slot with settings and the globalized workspace. */
+   * collapsed leading slot with settings and the globalized workspace. The
+   * trailing edge clears the Windows overlay and Linux's drawn caption. */
   padding:
     env(safe-area-inset-top, 0px)
-    max(10px, var(--window-controls-inset-right))
+    max(10px, var(--window-controls-inset-right), var(--linux-caption-width, 0px))
     0;
   padding-left: var(--window-titlebar-leading-inset);
 }
@@ -1086,7 +1081,7 @@
 
 .run-debug-section h3 {
   margin: 0;
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-size: var(--font-xs);
   font-weight: var(--weight-semibold);
   text-transform: uppercase;
@@ -1112,7 +1107,7 @@
 .run-debug-event span,
 .run-debug-event small,
 .run-debug-item span {
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-size: var(--font-xs);
   font-weight: var(--weight-medium);
 }
@@ -1225,16 +1220,12 @@
 .run-debug-empty {
   border: 1px dashed var(--shell-run-debug-empty-border);
   border-radius: var(--radius-sm);
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-size: var(--font-ui);
   font-weight: var(--weight-medium);
   padding: 10px;
 }
 
-                                                                
-                                                                          
-                                                                        
-                                                                       
 .jump-to-latest-cluster {
   --conversation-status-gap: 8px;
   position: absolute;
@@ -1245,10 +1236,14 @@
      so the flow's centerline is the pane's own centerline. The pill shares it
      by centering in the same inset box, with no gutter term. */
   right: var(--conversation-visible-inset-right);
+  /* The width fits between the insets like the composer's does; a wider
+     box would be pinned to the left inset and leave the centreline. */
   --jump-to-latest-max-width: min(
     var(--session-composer-width),
     calc(
-      100% - var(--session-outer-padding-inline) -
+      100% - var(--conversation-visible-inset-left) -
+        var(--conversation-visible-inset-right) -
+        var(--session-outer-padding-inline) -
         var(--session-outer-padding-inline)
     )
   );
@@ -1393,7 +1388,7 @@ button.conversation-status-capsule,
 
 .conversation-status-secondary {
   flex: 0 0 auto;
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-weight: var(--weight-regular);
   font-variant-numeric: tabular-nums;
 }
@@ -1596,7 +1591,7 @@ button.conversation-status-capsule,
   overflow: hidden;
   border-radius: var(--radius-pill);
   background: var(--shell-jump-progress-step-bg);
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   font-size: var(--font-xs);
   font-weight: var(--weight-semibold);
   line-height: 1;
@@ -1611,168 +1606,6 @@ button.conversation-status-capsule,
   /* Keep the in_progress step a solid darker badge inside the outer pill. */
 }
 
-/*
- * Conversation turn rail on the left edge of the message stream.
- *
- * One horizontal bar per turn. Hovering magnifies the bar (and its two
- * neighbours slightly, in classic Dock fashion) and reveals a preview
- * card to the right with that turn's first agent reply.
- *
- * macOS Dock-style motion: smooth spring with slight overshoot
- * (cubic-bezier(0.34, 1.56, 0.64, 1) ≈ easeOutBack) so the magnified bar
- * settles with a natural "spring then rest" feel rather than a linear
- * slide. Reduced motion zeroes the ladder, so the bar snaps instead.
- */
 .conversation-pane {
   position: relative;
-}
-
-.conversation-turn-rail {
-  position: absolute;
-  /* Breathing space from the left panel's right edge */
-  left: 12px;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 40px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 0;
-  z-index: 100;
-  user-select: none;
-  -webkit-user-select: none;
-  /* The container is the hover zone so the gap between bars and the
-     gap between bar and preview card stay continuous. The mouse-move
-     handler in the component picks the bar closest to the cursor Y. */
-  pointer-events: auto;
-}
-
-.conversation-turn-rail-bar {
-  position: relative;
-  width: 12px;
-  height: 3px;
-  border-radius: 1.5px;
-  background: var(--shell-turn-rail-bar-bg);
-  cursor: pointer;
-  pointer-events: auto;
-  user-select: none;
-  -webkit-user-select: none;
-  transition:
-    width var(--motion-slow) var(--ease-bounce),
-    height var(--motion-slow) var(--ease-bounce),
-    background-color var(--motion-base) var(--ease-out);
-}
-
-/* Expand the click / pointer hit area without changing the visual
-   bar or the flex layout. The pseudo-element is absolutely positioned
-   inside the bar (which is position: relative), so the flex item's
-   main-size is still governed by width/height (12×3) and the 6px
-   gap between bars is preserved. The pseudo-element extends 4px above
-   and below, and 14px to either side, so the click target is 40×11
-   and reaches the 14px of empty space on each side of the bar inside
-   the 40px rail. `getBoundingClientRect()` on the bar itself still
-   returns the 12×3 visual rect, so hover / drag / magnet logic are
-   unchanged. The pseudo-element has no background and inherits the
-   bar's pointer-events so clicks on it bubble to the bar's onClick. */
-.conversation-turn-rail-bar::before {
-  content: "";
-  position: absolute;
-  top: -4px;
-  bottom: -4px;
-  left: -14px;
-  right: -14px;
-}
-
-.conversation-turn-rail-bar.adjacent {
-  width: 18px;
-}
-
-.conversation-turn-rail-bar.hovered,
-.conversation-turn-rail-bar:hover {
-  width: 32px;
-  height: 5px;
-  background: var(--ink);
-}
-
-.conversation-turn-rail-bar.active {
-  background: var(--sidebar-accent);
-}
-
-/* Bridge that covers the 12px gap between each bar and its preview
-   card. Non-interactive by default so it doesn't block the chat
-   content; the bar's `.hovered` state flips it on so the cursor can
-   move bar -> bridge -> preview without losing the hover. */
-.conversation-turn-rail-bridge {
-  position: absolute;
-  left: 100%;
-  top: 0;
-  width: 12px;
-  height: 100%;
-  pointer-events: none;
-  z-index: 0;
-}
-
-.conversation-turn-rail-bar.hovered .conversation-turn-rail-bridge {
-  pointer-events: auto;
-}
-
-.conversation-turn-rail-preview {
-  position: absolute;
-  left: calc(100% + 12px);
-  bottom: calc(100% + 8px);
-  top: auto;
-  width: 360px;
-  max-height: calc(100vh - 16px);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  padding: 12px 14px;
-  border-radius: var(--menu-radius);
-  background: var(--menu-bg);
-  border: 1px solid var(--menu-border);
-  box-shadow: var(--menu-shadow);
-  pointer-events: none;
-  user-select: none;
-  -webkit-user-select: none;
-  opacity: 0;
-  transform: translate3d(-6px, 0, 0) scale(0.985);
-  transition:
-    opacity var(--motion-slow) var(--ease-out),
-    transform var(--motion-slow) var(--ease-out);
-}
-
-/* The user's question sits above the agent's answer. Muted color and
-   a thin separator set it apart from the answer block below.
-   flex: 0 0 auto keeps the query pinned at the top so only the body
-   scrolls when the card hits its max-height. */
-.conversation-turn-rail-preview-query {
-  flex: 0 0 auto;
-  font-size: 12px;
-  line-height: 1.4;
-  color: var(--ink-tertiary, rgba(60, 60, 67, 0.65));
-  padding-bottom: 8px;
-  margin-bottom: 8px;
-  border-bottom: 1px solid var(--hairline-soft);
-}
-
-/* Body is the scrollable region. min-height: 0 is required so flex
-   children can shrink below their content height and the inner
-   scrollbar actually engages near the card's max-height. */
-.conversation-turn-rail-preview-body {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow-y: auto;
-}
-
-.conversation-turn-rail-bar.hovered .conversation-turn-rail-preview {
-  opacity: 1;
-  transform: translate3d(0, 0, 0) scale(1);
-  pointer-events: auto;
-}
-
-@container style(--motion-reduced: 1) {
-  .conversation-turn-rail-bar,
-  .conversation-turn-rail-preview {
-    transform: none;
-  }
 }

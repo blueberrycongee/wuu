@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -26,6 +27,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/codexengine"
 	"github.com/blueberrycongee/wuu/internal/config"
 	wuucontext "github.com/blueberrycongee/wuu/internal/context"
+	"github.com/blueberrycongee/wuu/internal/executionenv"
 	"github.com/blueberrycongee/wuu/internal/extensions"
 	"github.com/blueberrycongee/wuu/internal/hooks"
 	"github.com/blueberrycongee/wuu/internal/instructions"
@@ -33,7 +35,6 @@ import (
 	"github.com/blueberrycongee/wuu/internal/mcp"
 	"github.com/blueberrycongee/wuu/internal/modelbudget"
 	"github.com/blueberrycongee/wuu/internal/modelcatalog"
-	"github.com/blueberrycongee/wuu/internal/modelprofile"
 	"github.com/blueberrycongee/wuu/internal/modelroles"
 	"github.com/blueberrycongee/wuu/internal/modelvariant"
 	"github.com/blueberrycongee/wuu/internal/participant"
@@ -136,15 +137,18 @@ type Session struct {
 	PluginSessionRouter *PluginSessionRouter
 	systemPrompts       *agent.SystemPromptAssembler
 	InstructionFiles    []instructions.File
+	instructionConfig   config.InstructionFilesConfig
+	pluginSkills        pluginSkillSnapshot
 	AgentControl        *agentcontrol.AgentControl
 	ProcessManager      *process.Manager
 	Toolkit             *tools.Toolkit
 	ActivityRegistry    *activity.Registry
-	// CodeMode owns the session's optional PTC processes. Each program gets a
-	// fresh Node process and ends with its owning invocation.
+	// CodeMode owns isolated programs and bounded, in-memory conversation state.
+	// Each program ends with its owning invocation.
 	CodeMode                 *codemode.Service
 	WorkerClient             providers.StreamClient
 	ModelRoles               modelroles.Set
+	ProjectModels            config.ProjectModelsConfig
 	ModelBudget              modelbudget.Budget
 	WorkerModelBudget        modelbudget.Budget
 	BaseSystemPrompt         string
@@ -182,12 +186,14 @@ type Session struct {
 	codexHost *codexengine.Host
 	// DefaultEngine is the engine id used for new threads when the caller
 	// does not request one explicitly (settings default; empty = wuu).
-	DefaultEngine      agentengine.EngineID
-	pluginGenerationMu sync.Mutex
-	pluginGeneration   *PluginGeneration
-	workerOrientation  string
-	threadProcessMu    sync.Mutex
-	threadProcesses    *threadProcessManagers
+	DefaultEngine              agentengine.EngineID
+	pluginGenerationMu         sync.Mutex
+	pluginGeneration           *PluginGeneration
+	workerOrientation          string
+	threadProcessMu            sync.Mutex
+	threadProcesses            *threadProcessManagers
+	executionEnvironments      *executionenv.Manager
+	executionEnvironmentConfig executionenv.Config
 }
 
 // MaxParallel returns the worker concurrency configured for this session.
@@ -234,14 +240,19 @@ func (s *Session) cloneForThreadModel() *Session {
 		PluginSessionRouter:         s.PluginSessionRouter,
 		systemPrompts:               s.systemPrompts,
 		InstructionFiles:            s.InstructionFiles,
+		instructionConfig:           s.instructionConfig,
+		pluginSkills:                s.pluginSkills,
 		AgentControl:                s.AgentControl,
 		ProcessManager:              s.ProcessManager,
 		threadProcesses:             s.threadProcessManagerPool(),
+		executionEnvironments:       s.executionEnvironmentManager(),
+		executionEnvironmentConfig:  s.executionEnvironmentConfig,
 		Toolkit:                     s.Toolkit,
 		CodeMode:                    s.CodeMode,
 		ActivityRegistry:            s.ActivityRegistry,
 		WorkerClient:                s.WorkerClient,
 		ModelRoles:                  s.ModelRoles,
+		ProjectModels:               s.ProjectModels,
 		ModelBudget:                 s.ModelBudget,
 		WorkerModelBudget:           s.WorkerModelBudget,
 		BaseSystemPrompt:            s.BaseSystemPrompt,
@@ -448,7 +459,8 @@ func NewSession(opts Options) (*Session, error) {
 		return nil, errors.Join(capabilityErr, closeErr)
 	}
 	hookDispatcher := buildHookDispatcher(cfg, activePlugins, providers.Client(client), toolModeModel, workspaceJournal)
-	discoveredSkills := discoverSkills(rootDir, opts.HomeDir, wuuHome, activePlugins)
+	pluginSkills := discoverPluginSkills(activePlugins)
+	discoveredSkills := discoverSkillsWithPlugins(rootDir, opts.HomeDir, wuuHome, pluginSkills)
 
 	processMgr, err := process.NewManager(rootDir, statepath.RuntimeDir(workspaceStateDir))
 	if err != nil {
@@ -501,8 +513,8 @@ func NewSession(opts Options) (*Session, error) {
 		connectMCPServers(cfg, activePlugins, toolkit)
 	}
 
-	// The optional PTC service is inert until a model with PTC enabled calls it.
-	// Each program owns its process; thread clones share only the lifecycle owner.
+	// Interpreter processes start only when called. Thread clones share lifecycle
+	// ownership while state is isolated by conversation, actor and workspace.
 	var codeModeService *codemode.Service
 	if !opts.NoTools && toolkit != nil {
 		codeModeService = codemode.NewService(codemode.ServiceConfig{NodeExecutable: cfg.PTC.NodeExecutable})
@@ -550,15 +562,10 @@ func NewSession(opts Options) (*Session, error) {
 		workerToolProviderName := roleSelections.Worker.RuleProvider
 		workerToolModeModel := roleSelections.Worker.APIModel
 		_, workerToolSearchEnabled, workerNativeDeferredDiscovery := resolveToolLoadingForProvider(cfg.Agent, roleSelections.Worker.RuleProviderConfig, workerToolModeModel, roleSelections.Worker.ProviderOptions)
-		workerToolSurface := compiledSurfaceForProviderModel(workerToolProviderName, workerToolModeModel)
-		// Fill the worker deferred-tool catalog the same way mainSurface is
-		// filled above (consistency-repair #13: this was left empty while the
-		// worker prompt taught catalog lookups through tool_search).
-		workerDeferredCatalog, catErr := workerDeferredToolCatalogPromptForToolkit(toolkit, workerToolProviderName, workerToolModeModel, workerToolSearchEnabled)
+		workerToolSurface, catErr := workerToolSurfaceForToolkit(toolkit, workerToolProviderName, workerToolModeModel, workerToolSearchEnabled)
 		if catErr != nil {
 			return nil, catErr
 		}
-		workerToolSurface.DeferredToolCatalog = workerDeferredCatalog
 		workerBaseSystemPrompt := buildBaseSystemPromptContent(rootDir, sessionDate, config.WorkerSystemPrompt(), "", workerToolProviderName, workerToolModeModel, workerToolSurface, instructionFiles, "", "", discoveredSkills)
 		var werr error
 		workerClient, werr = providerfactory.BuildStreamClient(roleSelections.Worker.RuleProviderConfig, roleSelections.Worker.Provider)
@@ -591,7 +598,12 @@ func NewSession(opts Options) (*Session, error) {
 			HistoryDir:                     "",
 			WorkerSysPrompt:                workerBaseSystemPrompt,
 			WorkerPrompt: func(workerRoot string, wt agentcontrol.WorkerType, meta agentthread.Metadata, isolation agentcontrol.IsolationMode) (string, error) {
-				return buildWorkerBasePrompt(workerRoot, sessionDate, "", workerToolProviderName, workerToolModeModel, workerToolSurface, instructionFiles, discoveredSkills), nil
+				files, workerSkills := instructionFiles, discoveredSkills
+				if !sameRuntimeRoot(workerRoot, rootDir) {
+					files = discoverInstructions(workerRoot, opts.HomeDir, cfg.Instructions)
+					workerSkills = discoverSkillsWithPlugins(workerRoot, opts.HomeDir, wuuHome, pluginSkills)
+				}
+				return buildWorkerBasePrompt(workerRoot, sessionDate, "", workerToolProviderName, workerToolModeModel, workerToolSurface, files, workerSkills), nil
 			},
 			WorkerFactory: func(workerRoot string, wt agentcontrol.WorkerType, meta agentthread.Metadata) (agent.ToolExecutor, error) {
 				wkit, werr := toolkit.CloneForRoot(workerRoot)
@@ -609,7 +621,11 @@ func NewSession(opts Options) (*Session, error) {
 				}
 				wkit.SetStateDir(workerStateDir)
 				wkit.SetProcessManager(processMgr)
-				wkit.SetSkills(discoveredSkills)
+				workerSkills := discoveredSkills
+				if !sameRuntimeRoot(workerRoot, rootDir) {
+					workerSkills = discoverSkillsWithPlugins(workerRoot, opts.HomeDir, wuuHome, pluginSkills)
+				}
+				wkit.SetSkills(workerSkills)
 				wkit.SetAgentControl(agentControl)
 				wkit.ConfigureSurfaceForProviderModel(workerToolProviderName, workerToolModeModel, false)
 				wkit.SetToolSearchEnabled(workerToolSearchEnabled)
@@ -705,6 +721,8 @@ func NewSession(opts Options) (*Session, error) {
 		WorkspaceID:                 workspaceID,
 		StateDir:                    workspaceStateDir,
 		ConfigPath:                  opts.ConfigPath,
+		executionEnvironments:       executionenv.NewManager(),
+		executionEnvironmentConfig:  opts.Config.ExecutionEnvironments,
 		HomeDir:                     opts.HomeDir,
 		ConfigLoadMode:              configLoadMode,
 		SessionDir:                  sessionDir,
@@ -720,6 +738,8 @@ func NewSession(opts Options) (*Session, error) {
 		PluginSessionRouter:         pluginTurnRouter,
 		systemPrompts:               systemPrompts,
 		InstructionFiles:            instructionFiles,
+		instructionConfig:           cfg.Instructions,
+		pluginSkills:                pluginSkills,
 		AgentControl:                agentControl,
 		ProcessManager:              processMgr,
 		Toolkit:                     toolkit,
@@ -727,6 +747,7 @@ func NewSession(opts Options) (*Session, error) {
 		ActivityRegistry:            activityRegistry,
 		WorkerClient:                workerClient,
 		ModelRoles:                  roleSelections,
+		ProjectModels:               cfg.Agent.ProjectModels,
 		ModelBudget:                 modelBudget,
 		WorkerModelBudget:           workerModelBudget,
 		BaseSystemPrompt:            baseSystemPrompt,
@@ -817,6 +838,7 @@ func NewSession(opts Options) (*Session, error) {
 		host:          pluginHost,
 		hooks:         initialHooks,
 		skills:        append([]skills.Skill(nil), discoveredSkills...),
+		pluginSkills:  pluginSkills,
 		mcpBinding:    mcpActivityBindingsFromPlugins(activePlugins),
 		systemPrompts: systemPrompts,
 		compactions:   compactions,
@@ -919,26 +941,19 @@ func resolveToolLoadingModeForProvider(mode config.ToolLoadingMode, providerCfg 
 	switch mode {
 	case config.ToolLoadingFlat:
 		return mode, false, false
+	case config.ToolLoadingClient:
+		return mode, true, false
 	case config.ToolLoadingNative:
 		if providerfactory.SupportsNativeToolDiscovery(providerCfg, model, providerOptions) {
 			return mode, true, true
 		}
-		// Explicit native on a path that cannot carry the provider's own
-		// deferred-discovery protocol degrades to flat rather than silently
-		// selecting a different loading strategy. Say so: the user asked for
-		// deferred tools and is not getting them.
 		warnUnsupportedNativeToolLoadingOnce(providerCfg, model)
-		return config.ToolLoadingFlat, false, false
 	default:
 		if providerfactory.SupportsNativeToolDiscoveryByDefault(providerCfg, model, providerOptions) {
 			return config.ToolLoadingNative, true, true
 		}
-		// Everything else is flat. Paying the fixed schema cost once keeps the
-		// provider prompt-cache prefix stable, which progressive loading could
-		// not do: appending to the top-level tools array invalidated the cached
-		// prefix past the insertion point on every load.
-		return config.ToolLoadingFlat, false, false
 	}
+	return config.ToolLoadingClient, true, false
 }
 
 // ReconfigureToolLoading reapplies every mutable tool-loading field after the
@@ -1193,6 +1208,8 @@ func (s *Session) NewThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 		threadRoot = ev
 	}
 
+	threadInstructions, threadSkills := s.guidanceForRoot(threadRoot, generation)
+
 	stateDir := strings.TrimSpace(s.StateDir)
 	if stateDir == "" {
 		home, err := statepath.Home("")
@@ -1241,11 +1258,7 @@ func (s *Session) NewThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 		kit.SetStateDir(stateDir)
 		kit.SetArtifactPublisher(newArtifactPublisher(wuuHome))
 		kit.SetProcessManager(threadProcessManager)
-		skills := s.Skills
-		if generation != nil {
-			skills = generation.skills
-		}
-		kit.SetSkills(skills)
+		kit.SetSkills(threadSkills)
 		ConfigureToolkitPermissions(kit, s.Permissions)
 		kit.SetApproveForMe(false)
 		kit.SetSessionID(id)
@@ -1260,6 +1273,13 @@ func (s *Session) NewThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 		// inherited the parent session's roots): thread root + registered
 		// workspaces + temp + artifact extras.
 		kit.SetFileScopeRoots(workspaces.BoundaryRoots(kit.RootDir(), wuuHome, fileScopeExtras...))
+		if err := s.configureExecutionEnvironment(kit, id, artifactDir); err != nil {
+			return nil, err
+		}
+		if remote, ok := kit.ExecutionEnvironment().(*environmentToolExecutor); ok {
+			threadProcessManager = remote.ProcessManager()
+			kit.SetProcessManager(threadProcessManager)
+		}
 	}
 
 	toolLedger, err := toolledger.New(s.SessionDir, id)
@@ -1286,14 +1306,10 @@ func (s *Session) NewThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 			workerToolProviderName := s.ModelRoles.Worker.RuleProvider
 			workerToolModeModel := workerModel
 			_, workerToolSearchEnabled, workerNativeDeferredDiscovery := resolveToolLoadingModeForProvider(s.ToolLoadingPreference, s.ModelRoles.Worker.RuleProviderConfig, workerToolModeModel, s.ModelRoles.Worker.ProviderOptions)
-			workerToolSurface := compiledSurfaceForProviderModel(workerToolProviderName, workerToolModeModel)
-			// Fill the worker deferred-tool catalog like the session build
-			// path does (consistency-repair #13).
-			workerDeferredCatalog, catErr := workerDeferredToolCatalogPromptForToolkit(kit, workerToolProviderName, workerToolModeModel, workerToolSearchEnabled)
+			workerToolSurface, catErr := workerToolSurfaceForToolkit(kit, workerToolProviderName, workerToolModeModel, workerToolSearchEnabled)
 			if catErr != nil {
 				return nil, catErr
 			}
-			workerToolSurface.DeferredToolCatalog = workerDeferredCatalog
 			workerBaseSystemPrompt := buildWorkerBasePrompt(
 				threadRoot,
 				s.SessionDate,
@@ -1301,8 +1317,8 @@ func (s *Session) NewThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 				workerToolProviderName,
 				workerToolModeModel,
 				workerToolSurface,
-				s.InstructionFiles,
-				s.Skills,
+				threadInstructions,
+				threadSkills,
 			)
 			control, controlErr := agentcontrol.New(agentcontrol.Config{
 				Client:                         workerClient,
@@ -1325,11 +1341,14 @@ func (s *Session) NewThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 				HarnessDir:                     filepath.Join(artifactDir, "harness"),
 				WorkerSysPrompt:                workerBaseSystemPrompt,
 				WorkerPrompt: func(workerRoot string, wt agentcontrol.WorkerType, meta agentthread.Metadata, isolation agentcontrol.IsolationMode) (string, error) {
-					skills := s.Skills
-					if generation != nil {
-						skills = generation.skills
+					if environment, ok := kit.ExecutionEnvironment().(*environmentToolExecutor); ok {
+						if isolation == agentcontrol.IsolationWorktree {
+							return "", errors.New("execution environments require inplace subagents; create Git worktrees inside the environment explicitly")
+						}
+						workerRoot = environment.Root()
 					}
-					return buildWorkerBasePrompt(workerRoot, s.SessionDate, s.workerOrientation, workerToolProviderName, workerToolModeModel, workerToolSurface, s.InstructionFiles, skills), nil
+					files, workerSkills := s.guidanceForRoot(workerRoot, generation)
+					return buildWorkerBasePrompt(workerRoot, s.SessionDate, s.workerOrientation, workerToolProviderName, workerToolModeModel, workerToolSurface, files, workerSkills), nil
 				},
 				WorkerFactory: func(workerRoot string, wt agentcontrol.WorkerType, meta agentthread.Metadata) (agent.ToolExecutor, error) {
 					workerKit, err := kit.CloneForRoot(workerRoot)
@@ -1350,11 +1369,8 @@ func (s *Session) NewThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 					}
 					workerKit.SetStateDir(workerStateDir)
 					workerKit.SetProcessManager(threadProcessManager)
-					skills := s.Skills
-					if generation != nil {
-						skills = generation.skills
-					}
-					workerKit.SetSkills(skills)
+					_, workerSkills := s.guidanceForRoot(workerRoot, generation)
+					workerKit.SetSkills(workerSkills)
 					workerKit.SetAgentControl(control)
 					workerKit.SetSessionID(id)
 					workerKit.SetSessionDir(artifactDir)
@@ -1404,8 +1420,30 @@ func (s *Session) NewThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 	}
 
 	runner := cloneStreamRunnerForThread(s.StreamRunner, toolExecutor)
+	if !sameRuntimeRoot(threadRoot, s.RootDir) {
+		model := runner.APIModel
+		if model == "" {
+			model = runner.Model
+		}
+		result := buildBaseSystemPromptResult(threadRoot, s.SessionDate, config.DefaultSystemPrompt(), "", s.ProviderName, model, activeSurfaceWithDeferredToolCatalog(kit, s.DeferredToolCatalogPrompt), threadInstructions, "", "", threadSkills)
+		assembler := s.systemPrompts
+		if generation != nil {
+			assembler = generation.systemPrompts
+		}
+		text, pluginSections := assemblePluginSystemPrompt(result.Content, assembler)
+		runner.UpdateSystemPromptWithSections(text, append(agentPromptSections(result.Sections), pluginSections...))
+	}
 	runner.ToolLedger = toolLedger
 	runner.SystemPrompt, runner.SystemPromptSections = systemPromptForThreadRoot(runner.SystemPrompt, runner.SystemPromptSections, threadRoot, s.SessionDate)
+	if kit != nil {
+		if environment, ok := kit.ExecutionEnvironment().(interface {
+			Root() string
+			Backend() string
+		}); ok {
+			runner.SystemPrompt, runner.SystemPromptSections = systemPromptForThreadRoot(runner.SystemPrompt, runner.SystemPromptSections, environment.Root(), s.SessionDate)
+			runner.SystemPrompt += "\n\nWorkspace tools execute in the selected " + environment.Backend() + " environment. Paths refer to that environment. Read its AGENTS.md before editing. Host integration tools retain their own scope."
+		}
+	}
 	runner.PromptCacheKey = strings.TrimSpace(id)
 	runner.InferenceJournal = s.InferenceJournalForOwner(id)
 	runner.DriverCheckpointStore = sessionDriverCheckpointStore{sessDir: s.SessionDir, sessionID: id}
@@ -1827,6 +1865,15 @@ func (s *Session) SetSessionID(id string) error {
 		s.Toolkit.SetSessionID(id)
 		s.Toolkit.SetAgentIdentity(id, agentthread.RootPath)
 		s.Toolkit.SetSessionDir(artifactDir)
+		if err := s.configureExecutionEnvironment(s.Toolkit, id, artifactDir); err != nil {
+			return err
+		}
+		if environment, ok := s.Toolkit.ExecutionEnvironment().(*environmentToolExecutor); ok {
+			s.Toolkit.SetProcessManager(environment.ProcessManager())
+			if s.StreamRunner != nil {
+				s.StreamRunner.SystemPrompt, s.StreamRunner.SystemPromptSections = systemPromptForThreadRoot(s.StreamRunner.SystemPrompt, s.StreamRunner.SystemPromptSections, environment.Root(), s.SessionDate)
+			}
+		}
 	}
 	if s.AgentControl != nil {
 		if err := s.AgentControl.SetSessionInfo(
@@ -1943,6 +1990,9 @@ func (s *Session) Cleanup() (process.CleanupResult, error) {
 		cleaned, err := manager.CleanupSessionWithResult()
 		result.Cleaned = append(result.Cleaned, cleaned.Cleaned...)
 		cleanupErr = errors.Join(cleanupErr, err)
+	}
+	if s.executionEnvironments != nil {
+		cleanupErr = errors.Join(cleanupErr, s.executionEnvironments.Close())
 	}
 	return result, cleanupErr
 }
@@ -2172,7 +2222,9 @@ func (s *Session) RefreshPluginCatalog() error {
 	return nil
 }
 
-func discoverSkills(rootDir, homeDir, wuuHome string, plugins []pluginpkg.Plugin) []skills.Skill {
+type pluginSkillSnapshot struct{ project, user []skills.Skill }
+
+func discoverPluginSkills(plugins []pluginpkg.Plugin) pluginSkillSnapshot {
 	var projectDirs []skills.SourceDir
 	var userDirs []skills.SourceDir
 	for _, item := range plugins {
@@ -2186,6 +2238,15 @@ func discoverSkills(rootDir, homeDir, wuuHome string, plugins []pluginpkg.Plugin
 			}
 		}
 	}
+	return pluginSkillSnapshot{project: skills.DiscoverSourceDirs(projectDirs, nil), user: skills.DiscoverSourceDirs(nil, userDirs)}
+}
+
+func discoverSkills(rootDir, homeDir, wuuHome string, plugins []pluginpkg.Plugin) []skills.Skill {
+	return discoverSkillsWithPlugins(rootDir, homeDir, wuuHome, discoverPluginSkills(plugins))
+}
+
+func discoverSkillsWithPlugins(rootDir, homeDir, wuuHome string, plugins pluginSkillSnapshot) []skills.Skill {
+	var userDirs []skills.SourceDir
 	if home := skillUserHome(homeDir); home != "" {
 		userDirs = append(userDirs,
 			skills.SourceDir{Path: filepath.Join(home, ".codex", "skills"), Source: "user"},
@@ -2197,8 +2258,18 @@ func discoverSkills(rootDir, homeDir, wuuHome string, plugins []pluginpkg.Plugin
 	if strings.TrimSpace(wuuHome) != "" {
 		userDirs = append(userDirs, skills.SourceDir{Path: filepath.Join(wuuHome, "skills"), Source: "user"})
 	}
-	projectDirs = append(projectDirs, skillProjectDirs(rootDir)...)
-	discovered := skills.DiscoverSourceDirs(projectDirs, userDirs)
+	// Keep plugin contents pinned while resolving ordinary disk skills at this root.
+	byName := make(map[string]skills.Skill)
+	for _, layer := range [][]skills.Skill{plugins.user, skills.DiscoverSourceDirs(nil, userDirs), plugins.project, skills.DiscoverSourceDirs(skillProjectDirs(rootDir), nil)} {
+		for _, skill := range layer {
+			byName[skill.Name] = skill
+		}
+	}
+	discovered := make([]skills.Skill, 0, len(byName))
+	for _, skill := range byName {
+		discovered = append(discovered, skill)
+	}
+	sort.Slice(discovered, func(i, j int) bool { return discovered[i].Name < discovered[j].Name })
 	// Claude Code-style command templates (.claude/commands/*.md) are read as
 	// pure content and adapted into lightweight skill entries. Native skills
 	// take precedence over commands with the same name.
@@ -2216,7 +2287,7 @@ func commandProjectDirs(rootDir string) []skills.SourceDir {
 	if err != nil {
 		return nil
 	}
-	projectRoot := findSkillProjectRoot(absRoot)
+	projectRoot := SkillProjectRoot(absRoot)
 	chain := skillDirChain(projectRoot, absRoot)
 	out := make([]skills.SourceDir, 0, len(chain)*2)
 	for _, dir := range chain {
@@ -2256,7 +2327,7 @@ func skillProjectDirs(rootDir string) []skills.SourceDir {
 	if err != nil {
 		return nil
 	}
-	projectRoot := findSkillProjectRoot(absRoot)
+	projectRoot := SkillProjectRoot(absRoot)
 	chain := skillDirChain(projectRoot, absRoot)
 	out := make([]skills.SourceDir, 0, len(chain)*5)
 	for _, dir := range chain {
@@ -2274,7 +2345,9 @@ func skillProjectDirs(rootDir string) []skills.SourceDir {
 	return out
 }
 
-func findSkillProjectRoot(start string) string {
+// SkillProjectRoot returns the nearest repository boundary used for skill discovery.
+// An empty result means discovery is limited to the starting directory.
+func SkillProjectRoot(start string) string {
 	cur := start
 	for {
 		for _, marker := range []string{".git", ".hg", ".jj", ".svn"} {
@@ -2523,6 +2596,19 @@ func BoundaryForMode(mode string) tools.WorkspaceBoundary {
 	}
 }
 
+// guidanceForRoot preserves the pinned plugin generation and user discovery
+// configuration while replacing project guidance with the actual checkout.
+func (s *Session) guidanceForRoot(root string, generation *PluginGeneration) ([]instructions.File, []skills.Skill) {
+	snapshot, discovered := s.pluginSkills, s.Skills
+	if generation != nil {
+		snapshot, discovered = generation.pluginSkills, generation.skills
+	}
+	if sameRuntimeRoot(root, s.RootDir) {
+		return s.InstructionFiles, discovered
+	}
+	return discoverInstructions(root, s.HomeDir, s.instructionConfig), discoverSkillsWithPlugins(root, s.HomeDir, s.WuuHome, snapshot)
+}
+
 func discoverInstructions(rootDir, homeDir string, cfg config.InstructionFilesConfig) []instructions.File {
 	instructionOptions := instructions.DefaultOptions()
 	if len(cfg.Filenames) > 0 {
@@ -2605,6 +2691,8 @@ func (s *Session) ApplyGeneralConfig(cfg config.Config, homeDir string) string {
 	if strings.TrimSpace(homeDir) == "" {
 		homeDir = os.Getenv("HOME")
 	}
+	s.executionEnvironmentConfig = cfg.ExecutionEnvironments
+	s.instructionConfig = cfg.Instructions
 	s.InstructionFiles = discoverInstructions(s.RootDir, homeDir, cfg.Instructions)
 	if s.Toolkit != nil {
 		s.Toolkit.SetGitAttributionEnabled(cfg.Agent.GitAttributionEnabledValue())
@@ -2710,34 +2798,19 @@ func deferredToolCatalogPromptForToolkit(kit *tools.Toolkit) (string, error) {
 	return kit.DeferredToolCatalogSystemSection()
 }
 
-// workerDeferredToolCatalogPromptForToolkit computes the deferred-tool
-// catalog section for the worker surface (consistency-repair #13: worker
-// prompts taught tool_search catalog lookups while their catalog stayed
-// empty). It reuses the exact generator that fills
-// mainSurface.DeferredToolCatalog, but on a throwaway in-memory clone of the
-// session toolkit configured with the worker-compiled surface, so entries are
-// filtered by the worker's own exposure buckets (no orchestration suite,
-// worker tool-search setting).
-func workerDeferredToolCatalogPromptForToolkit(kit *tools.Toolkit, providerName, model string, toolSearchEnabled bool) (string, error) {
+// workerToolSurfaceForToolkit resolves the same model and PTC projection used
+// by the actual worker executor before constructing its prompt.
+func workerToolSurfaceForToolkit(kit *tools.Toolkit, providerName, model string, toolSearchEnabled bool) (capability.Surface, error) {
 	if kit == nil {
-		return "", nil
+		return capability.Surface{}, nil
 	}
 	wkit, err := kit.CloneForRoot("")
 	if err != nil {
-		return "", err
+		return capability.Surface{}, err
 	}
 	wkit.ConfigureSurfaceForProviderModel(providerName, model, false)
 	wkit.SetToolSearchEnabled(toolSearchEnabled)
-	return wkit.DeferredToolCatalogSystemSection()
-}
-
-// compiledSurfaceForProviderModel is the worker-only entry point in
-// production: every caller in internal/runtime/session.go that uses
-// it is configuring a worker's tool surface, not the main agent's.
-// The main agent's surface is installed through
-// internal/tools/edit_mode.go::ConfigureSurfaceForProviderModel on
-// the toolkit itself. Worker surfaces intentionally omit the
-// main-agent orchestration tools.
-func compiledSurfaceForProviderModel(providerName, model string) capability.Surface {
-	return modelprofile.DefaultCompiler{}.Compile(modelprofile.Resolve(providerName, model), modelprofile.SurfaceWorker)
+	surface := wkit.ActiveSurface()
+	surface.DeferredToolCatalog, err = wkit.DeferredToolCatalogSystemSection()
+	return surface, err
 }

@@ -231,7 +231,7 @@ func deepMergeObject(base, overlay map[string]any) {
 // remain protected until they are deliberately classified as project-safe.
 func stripProjectUserSettings(overlay map[string]any, path string) {
 	var ignored []string
-	for _, field := range []string{"default_provider", "providers", "instructions", "memory", "ptc"} {
+	for _, field := range []string{"default_provider", "providers", "instructions", "memory", "ptc", "execution_environments"} {
 		if deleteKeysEqualFold(overlay, field) {
 			ignored = append(ignored, field)
 		}
@@ -256,6 +256,9 @@ func stripProjectUserSettings(overlay map[string]any, path string) {
 		}
 		if deleteKeysEqualFold(agent, "model_aliases") {
 			ignored = append(ignored, "agent.model_aliases")
+		}
+		if deleteKeysEqualFold(agent, "project_models") {
+			ignored = append(ignored, "agent.project_models")
 		}
 	}
 	if len(ignored) == 0 {
