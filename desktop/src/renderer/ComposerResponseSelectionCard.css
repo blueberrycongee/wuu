@@ -54,7 +54,7 @@
   max-height: calc(var(--font-ui) * var(--line-body) * 5 + var(--space-2) * 2);
   padding: var(--space-2);
   resize: none;
-  border: 1px solid var(--hairline);
+  border: 1px solid transparent;
   border-radius: var(--radius-xs);
   background: transparent;
   color: var(--ink);
@@ -137,3 +137,5 @@
     transition: none;
   }
 }
+
+.composer-response-selection-notice { margin: 0; color: var(--ink-soft); overflow-wrap: anywhere; }

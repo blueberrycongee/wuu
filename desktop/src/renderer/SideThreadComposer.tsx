@@ -1,5 +1,6 @@
 import { useMemo, useRef } from "react";
-import { ComposerSelectionChip, type ComposerSelectionItem } from "./ComposerSelectionChip";
+import { ComposerResponseSelectionCard } from "./ComposerResponseSelectionCard";
+import { ComposerFileSelectionCard } from "./ComposerFileSelectionCard";
 import { buildSideThreadSlashCommands } from "./ComposerSlashCommands";
 import {
   Composer,
@@ -67,20 +68,14 @@ export function SideThreadComposer({
   // focusable. Sending stays disabled until the current side turn settles.
   const visibleDraft = draft;
 
-  const selectionItems: ComposerSelectionItem[] = selection
-    ? [selection.type === "file" ? { type: "side-file", source: selection.file } : { type: "response", selection: selection.response }]
-    : [];
 
   return <Composer
       variant={variant}
       hideRuntimeControls
       textOnly
-      inlineSelection={selectionItems.length > 0 ? <ComposerSelectionChip
-        items={selectionItems}
-        onRemoveResponse={onRemoveSelection ? () => onRemoveSelection() : undefined}
-        onRemoveSideFile={onRemoveSelection}
-        onOpenFile={onOpenFile}
-      /> : undefined}
+      inlineSelection={selection?.type === "file"
+        ? <ComposerFileSelectionCard source={selection.file} onRemove={onRemoveSelection} onOpenFile={onOpenFile} />
+        : selection ? <ComposerResponseSelectionCard selection={selection.response} onRemove={onRemoveSelection} /> : undefined}
       placeholder={placeholder ?? t("composer.sideThreadPlaceholder")}
       prompt={visibleDraft}
       setPrompt={onChangeDraft}

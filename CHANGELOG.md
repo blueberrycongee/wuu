@@ -10,7 +10,7 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 - Added selection actions to Markdown, code, and text previews: attach selected text as context, add comments, or request an inline edit.
-- Selected text from a file or completed assistant reply can be sent with a question in side chat. Selection chips in the main and side composers share a compact preview and editable comments.
+- Selected text from a file or completed assistant reply can be sent with a question in side chat. Quote cards in the main and side composers reuse the existing attachment tray and editable comments.
 
 - Delete all archived conversations from Settings, with an all-workspace count,
   irreversible-action confirmation, archived-only safety checks, and partial-failure retry.
@@ -139,7 +139,7 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   and the bell's first-run bubble became a mark-all-read action.
 
 ### Fixed
-- Keep annotation previews inside their composer column, with readable multiline editors and complete quoted excerpts.
+- Preserve the established annotation input and quote-card appearance while keeping previews inside their composer column, with wrapped comments and complete quoted excerpts.
 
 - Preserve saved pet scale during startup when a nondefault size preset is stored, without rewriting pet preferences.
 

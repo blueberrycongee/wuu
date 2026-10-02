@@ -73,7 +73,6 @@ import {
 import { useFileSelectionActions } from "./FileSelectionContext";
 import { ComposerFeedback } from "./ComposerFeedback";
 import { ComposerAttachmentTray } from "./ComposerAttachmentTray";
-import { ComposerSelectionChip, type ComposerSelectionItem } from "./ComposerSelectionChip";
 import {
   WORKSPACE_FILE_DRAG_MIME,
   appendWorkspacePathToPrompt,
@@ -555,10 +554,7 @@ export function Composer({
   const fileSelectionActions = useFileSelectionActions();
   const fileSelectionParts = activeCollapsedPromptBlocks.flatMap((block) =>
     block.part?.type === "file_selection" ? [block.part] : []);
-  const selectionItems: ComposerSelectionItem[] = [
-    ...selections.map((selection) => ({ type: "response" as const, selection })),
-    ...fileSelectionParts.map((part) => ({ type: "file" as const, part })),
-  ];
+
   const composerPlaceholder = placeholder ?? (readOnly
     ? t("composer.readOnly")
     : hasCollapsedPromptBlocks
@@ -1277,9 +1273,10 @@ export function Composer({
             <ComposerAttachmentTray
               images={textOnly ? [] : images}
               files={textOnly ? [] : files}
-              selections={[]}
+              selections={selections}
               pastedTexts={activeCollapsedPromptBlocks.filter((block) => block.part?.type !== "file_selection")}
-              fileSelections={[]}
+              fileSelections={fileSelectionParts}
+              inlineSelection={inlineSelection}
               onRemoveFileSelection={readOnly ? undefined : removeFileSelection}
               onEditFileSelection={readOnly ? undefined : (part, comment) => updateFileComment(part.id, comment)}
               onOpenSelectedFile={fileSelectionActions ? (path) => fileSelectionActions.openFile(path) : undefined}
@@ -1287,7 +1284,7 @@ export function Composer({
               onRemoveImage={onRemoveImage}
               onRemoveFile={onRemoveFile}
               onChangeSelection={readOnly ? undefined : onChangeSelection}
-              onRemoveSelection={onRemoveSelection}
+              onRemoveSelection={readOnly ? undefined : onRemoveSelection}
               onRevealText={revealCollapsedPromptBlock}
               onRemoveText={removeCollapsedPromptBlock}
             />
@@ -1302,14 +1299,6 @@ export function Composer({
           >
             {topAccessory ? <div className="composer-cover-accessory">{topAccessory}</div> : null}
           <div className="composer" hidden={Boolean(topAccessory)}>
-            {inlineSelection ?? (selectionItems.length > 0 ? <ComposerSelectionChip
-              items={selectionItems}
-              onChangeResponse={readOnly ? undefined : onChangeSelection}
-              onRemoveResponse={readOnly ? undefined : onRemoveSelection}
-              onEditFile={readOnly ? undefined : (part, comment) => updateFileComment(part.id, comment)}
-              onRemoveFile={readOnly ? undefined : removeFileSelection}
-              onOpenFile={fileSelectionActions ? (path) => fileSelectionActions.openFile(path) : undefined}
-            /> : null)}
             {textOnly ? null : (
               <>
                 <input

@@ -445,7 +445,7 @@ describe("workspace file tabs", () => {
     expect(container.querySelector(".conversation-pane")?.hasAttribute("inert")).toBe(false);
     const side = container.querySelector<HTMLElement>(".side-thread-panel")!;
     expect(side.closest("[inert]")).toBeNull();
-    expect(side.querySelector(".composer-selection-chip")).not.toBeNull();
+    expect(side.querySelector(".composer-file-selection-card")).not.toBeNull();
     expect(document.activeElement).toBe(side.querySelector("textarea"));
     expect(container.querySelector<HTMLTextAreaElement>("[data-main-conversation-composer] textarea")!.value).toBe("Keep the main question");
     expect(window.wuu.startTurn).not.toHaveBeenCalled();
@@ -459,7 +459,7 @@ describe("workspace file tabs", () => {
     expect(container.querySelector(".workspace-file-resource.active .workspace-file-preview")?.textContent).toContain("Artifact");
   });
 
-  it("restores file selection chips after first turn failure with untouched draft", async () => {
+  it("restores file selection attachments after first turn failure with untouched draft", async () => {
     await openSelectionDocument();
     await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="在 对话 中新建对话"]')!.click());
     await flushAsync();
@@ -473,7 +473,7 @@ describe("workspace file tabs", () => {
     expect(startTurnMock).toHaveBeenCalledTimes(1);
     expect(selectionActions!.comments).toEqual([original]);
     expect(container.querySelector<HTMLTextAreaElement>("[data-main-conversation-composer] textarea")!.value).toBe("Original question");
-    expect(container.querySelector(".composer-selection-chip")).not.toBeNull();
+    expect(container.querySelector(".composer-file-selection-card")).not.toBeNull();
   });
 
   it.each(["thread", "turn"] as const)("preserves file comments after first %s failure without replacing a newer draft", async (failure) => {
@@ -590,7 +590,7 @@ describe("workspace file tabs", () => {
     ]);
     expect(textarea.value).toBe("Discuss this section");
     expect(selectionActions!.comments).toHaveLength(1);
-    expect(container.querySelector(".composer-selection-chip")).not.toBeNull();
+    expect(container.querySelector(".composer-file-selection-card")).not.toBeNull();
   });
 
   it("submits a selection edit without consuming the main draft or pending comments", async () => {

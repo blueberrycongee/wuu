@@ -646,12 +646,12 @@ describe.each(["main", "split"] as const)("%s composer file selections", (varian
   }
 
   function openComments(): void {
-    act(() => container.querySelector<HTMLButtonElement>(".composer-selection-chip")!.click());
+    act(() => container.querySelector<HTMLButtonElement>(".composer-file-selection-card .composer-document-card-main")!.click());
   }
 
   const render = variant === "main" ? renderStatefulComposer : renderStatefulSplitPaneComposer;
 
-  it("reveals a quote-only draft on hover and sends the hidden original with its source", () => {
+  it("opens a quote-only attachment and sends the hidden original with its source", () => {
     const owner = `quote-only-${variant}`;
     const quoted = buildFileSelectionPart(fileSelection("source").source, "quote");
     rememberCollapsedPromptParts(owner, quoted.text, [quoted]);
@@ -659,15 +659,15 @@ describe.each(["main", "split"] as const)("%s composer file selections", (varian
     render({ initialPrompt: quoted.text, queryHistorySessionID: owner, onSend });
     const input = container.querySelector<HTMLTextAreaElement>("textarea")!;
     expect(input.value).toBe("");
-    expect(document.querySelector(".composer-selection-quote")).toBeNull();
-    act(() => container.querySelector(".composer-selection-chip")!.dispatchEvent(new MouseEvent("pointerover", { bubbles: true })));
-    expect(document.querySelector(".composer-selection-quote")?.textContent).toBe(quoted.source.quote);
+    expect(document.querySelector(".composer-response-selection-quote")).toBeNull();
+    openComments();
+    expect(document.querySelector(".composer-response-selection-quote")?.textContent).toBe(quoted.source.quote);
     expect(document.querySelector(".file-selection-original")).toBeNull();
     act(() => input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })));
     expect(onSend).toHaveBeenCalledWith(quoted.text, [quoted]);
   });
 
-  it("removes grouped quote attachments atomically without removing a comment or the typed draft", () => {
+  it("removes quote attachments without removing a comment or the typed draft", () => {
     const owner = `mixed-quotes-${variant}`;
     const first = buildFileSelectionPart(fileSelection("source").source, "quote");
     const second = buildFileSelectionPart({ ...first.source, quote: "Another passage" }, "quote");
@@ -676,12 +676,12 @@ describe.each(["main", "split"] as const)("%s composer file selections", (varian
     rememberCollapsedPromptParts(owner, prompt, [first, second, comment]);
     const onSend = vi.fn();
     render({ initialPrompt: prompt, queryHistorySessionID: owner, onSend });
-    expect(container.querySelectorAll(".composer-selection-chip")).toHaveLength(1);
+    expect(container.querySelectorAll(".composer-file-selection-card")).toHaveLength(3);
     openComments();
-    expect(document.querySelectorAll(".composer-selection-entry")).toHaveLength(3);
-    act(() => document.querySelector<HTMLButtonElement>(".composer-selection-entry .composer-selection-actions button:last-child")!.click());
-    act(() => document.querySelector<HTMLButtonElement>(".composer-selection-entry .composer-selection-actions button:last-child")!.click());
-    expect(document.querySelectorAll(".composer-selection-entry")).toHaveLength(1);
+    act(() => document.querySelector<HTMLButtonElement>(".composer-response-selection-remove")!.click());
+    openComments();
+    act(() => document.querySelector<HTMLButtonElement>(".composer-response-selection-remove")!.click());
+    expect(container.querySelectorAll(".composer-file-selection-card")).toHaveLength(1);
     const input = container.querySelector<HTMLTextAreaElement>("textarea")!;
     expect(input.value).toBe("Keep this question");
     act(() => input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })));
@@ -695,7 +695,7 @@ describe.each(["main", "split"] as const)("%s composer file selections", (varian
     const onSend = vi.fn();
     render({ initialPrompt: file.text.trim(), queryHistorySessionID: owner, onSend });
     const input = container.querySelector<HTMLTextAreaElement>("textarea")!;
-    expect(container.querySelector(".composer-selection-chip")).not.toBeNull();
+    expect(container.querySelector(".composer-file-selection-card .composer-document-card-main")).not.toBeNull();
     expect(input.value).toBe("");
     if (followUp) act(() => setTextareaValue(input, followUp));
     act(() => input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })));
@@ -709,7 +709,7 @@ describe.each(["main", "split"] as const)("%s composer file selections", (varian
     ]);
   });
 
-  it("groups file selections separately from paste chips and sends their structured metadata", () => {
+  it("keeps file selections separate from paste attachments and sends their structured metadata", () => {
     const owner = `file-selection-send-${variant}`;
     const first = fileSelection("first");
     const second = fileSelection("second");
@@ -719,19 +719,19 @@ describe.each(["main", "split"] as const)("%s composer file selections", (varian
     rememberCollapsedPromptParts(owner, prompt, parts);
     const onSend = vi.fn();
     render({ initialPrompt: prompt, queryHistorySessionID: owner, onSend });
-    expect(container.querySelectorAll(".composer-selection-chip")).toHaveLength(1);
+    expect(container.querySelectorAll(".composer-file-selection-card")).toHaveLength(2);
     expect(container.querySelectorAll(".composer-collapsed-prompt-card")).toHaveLength(1);
     const input = container.querySelector<HTMLTextAreaElement>("textarea")!;
     expect(input.value).toBe("Follow up");
     openComments();
-    expect(document.querySelectorAll(".composer-selection-entry")).toHaveLength(2);
+    expect(document.querySelector(".composer-response-selection-quote")?.textContent).toBe(first.source.quote);
     act(() => {
       input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
     });
     expect(onSend).toHaveBeenCalledWith(prompt, parts);
   });
 
-  it("edits comments inline, then removes the last chip without losing visible text", () => {
+  it("edits comments inline, then removes the last attachment without losing visible text", () => {
     const owner = `file-selection-edit-${variant}`;
     const file = fileSelection("editable");
     const prompt = file.text + "Keep this follow-up";
@@ -739,8 +739,7 @@ describe.each(["main", "split"] as const)("%s composer file selections", (varian
     render({ initialPrompt: prompt, queryHistorySessionID: owner });
     const input = container.querySelector<HTMLTextAreaElement>("textarea")!;
     openComments();
-    act(() => document.querySelector<HTMLButtonElement>(".composer-selection-actions button")!.click());
-    const editor = document.querySelector<HTMLTextAreaElement>(".composer-selection-comment-input")!;
+    const editor = document.querySelector<HTMLTextAreaElement>(".composer-response-selection-comment")!;
     expect(editor.value).toBe(file.comment);
     act(() => setTextareaValue(editor, "Check the fallback too"));
     const edited = buildFileSelectionPart(file.source, file.intent, "Check the fallback too", file.id);
@@ -748,8 +747,8 @@ describe.each(["main", "split"] as const)("%s composer file selections", (varian
       edited, { type: "text", text: "Keep this follow-up" },
     ]);
     expect(input.value).toBe("Keep this follow-up");
-    act(() => document.querySelector<HTMLButtonElement>(".composer-selection-actions button:last-child")!.click());
-    expect(container.querySelector(".composer-selection-chip")).toBeNull();
+    act(() => document.querySelector<HTMLButtonElement>(".composer-response-selection-remove")!.click());
+    expect(container.querySelector(".composer-file-selection-card .composer-document-card-main")).toBeNull();
     expect(readCollapsedPromptParts(owner, edited.text)).toBeUndefined();
     expect(input.value).toBe("Keep this follow-up");
   });
@@ -760,8 +759,7 @@ describe.each(["main", "split"] as const)("%s composer file selections", (varian
     rememberCollapsedPromptParts(owner, file.text, [file]);
     render({ initialPrompt: file.text, queryHistorySessionID: owner });
     openComments();
-    act(() => document.querySelector<HTMLButtonElement>(".composer-selection-actions button")!.click());
-    const editor = document.querySelector<HTMLTextAreaElement>(".composer-selection-comment-input")!;
+    const editor = document.querySelector<HTMLTextAreaElement>(".composer-response-selection-comment")!;
     expect(document.activeElement).toBe(editor);
     await act(async () => {
       setTextareaValue(editor, "Keep typing here");
@@ -779,31 +777,29 @@ describe.each(["main", "split"] as const)("%s composer file selections", (varian
     rememberCollapsedPromptParts(owner, prompt, [file]);
     render({ initialPrompt: prompt, queryHistorySessionID: owner });
     openComments();
-    act(() => document.querySelector<HTMLButtonElement>(".composer-selection-actions button")!.click());
-    const editor = document.querySelector<HTMLTextAreaElement>(".composer-selection-comment-input")!;
+    const editor = document.querySelector<HTMLTextAreaElement>(".composer-response-selection-comment")!;
     expect(document.activeElement).toBe(editor);
     act(() => setTextareaValue(editor, "Keep the edited comment"));
     act(() => editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })));
-    expect(document.querySelector(".composer-selection-panel")).toBeNull();
-    const chip = container.querySelector<HTMLButtonElement>(".composer-selection-chip")!;
+    expect(document.querySelector(".composer-file-selection-card-popover")).toBeNull();
+    const chip = container.querySelector<HTMLButtonElement>(".composer-file-selection-card .composer-document-card-main")!;
     expect(document.activeElement).toBe(chip);
-    expect(chip.getAttribute("aria-expanded")).toBe("false");
     expect(container.querySelector<HTMLTextAreaElement>("textarea")!.value).toBe("Keep this follow-up");
     openComments();
-    expect(document.querySelector(".composer-selection-comment")?.textContent).toContain("Keep the edited comment");
+    expect(document.querySelector<HTMLTextAreaElement>(".composer-response-selection-comment")?.value).toBe("Keep the edited comment");
   });
 
-  it("lets keyboard users enter selection actions from the chip", () => {
+  it("opens a focusable attachment and transfers focus into its comment editor", () => {
     const owner = `file-selection-keyboard-${variant}`;
     const file = fileSelection("keyboard-comment");
     rememberCollapsedPromptParts(owner, file.text, [file]);
     render({ initialPrompt: file.text, queryHistorySessionID: owner });
-    const chip = container.querySelector<HTMLButtonElement>(".composer-selection-chip")!;
-    act(() => chip.focus());
-    const tab = new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true });
-    act(() => chip.dispatchEvent(tab));
-    expect(tab.defaultPrevented).toBe(true);
-    expect(document.activeElement).toBe(document.querySelector(".composer-selection-actions button"));
+    const trigger = container.querySelector<HTMLButtonElement>(".composer-file-selection-card .composer-document-card-main")!;
+    expect(trigger.tagName).toBe("BUTTON");
+    act(() => trigger.focus());
+    expect(document.activeElement).toBe(trigger);
+    act(() => trigger.click());
+    expect(document.activeElement).toBe(document.querySelector(".composer-response-selection-comment"));
   });
 
   it("keeps file metadata visible but immutable in a read-only composer", () => {
@@ -812,8 +808,11 @@ describe.each(["main", "split"] as const)("%s composer file selections", (varian
     rememberCollapsedPromptParts(owner, file.text, [file]);
     render({ initialPrompt: file.text, queryHistorySessionID: owner, readOnly: true });
     openComments();
-    expect(document.querySelector(".composer-selection-comment")?.textContent).toContain(file.comment);
-    expect(document.querySelectorAll(".composer-selection-actions button")).toHaveLength(0);
+    const editor = document.querySelector<HTMLTextAreaElement>(".composer-response-selection-comment")!;
+    expect(editor.value).toBe(file.comment);
+    expect(editor.readOnly).toBe(true);
+    expect(document.querySelector(".composer-response-selection-remove")).toBeNull();
+    expect(container.querySelector(".composer-file-selection-card .composer-attachment-card-remove")).toBeNull();
     expect(container.querySelector<HTMLTextAreaElement>("textarea")!.value).toBe("");
   });
 });

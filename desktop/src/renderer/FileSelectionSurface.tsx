@@ -282,10 +282,9 @@ export function FileSelectionSurface({ workspace, path, text, active = true, chi
         </form>
       </div> : <SelectionActionMenu ref={popup} className="file-selection-action-menu"
         style={{ left: position.left, top: position.top, maxWidth: position.width, maxHeight: position.height, overflow: "auto" }}
-        cancelLabel={labels.close} label={labels.tools} addLabel={labels.quote} commentLabel={labels.comment} commentPlaceholder={labels.commentLabel}
+        label={labels.tools} addLabel={labels.quote} commentLabel={labels.comment} commentPlaceholder={labels.commentLabel}
         commenting={form?.kind === "comment"} comment={form?.kind === "comment" ? form.value : ""}
         allowEmptyComment={!form?.id}
-        quote={current.source.quote}
         onCommentChange={value => setForm(previous => previous?.kind === "comment" ? { ...previous, value } : previous)}
         onAdd={() => { actions!.addQuote(current.source); close(); }} onCommentStart={() => startForm("comment")}
         onCommentCancel={() => { returnToComment.current = true; setForm(null); }}

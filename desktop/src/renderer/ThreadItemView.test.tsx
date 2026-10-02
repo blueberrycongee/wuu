@@ -110,7 +110,7 @@ afterEach(() => {
 });
 
 describe("ThreadItemView", () => {
-  it.each([false, true])("centers selection actions and comments over the same range for reverse=%s", (reverse) => {
+  it.each([false, true])("aligns selection actions and comments to the same source start for reverse=%s", (reverse) => {
     vi.spyOn(HTMLElement.prototype, "getClientRects").mockReturnValue([{}] as unknown as DOMRectList);
     vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
       if (this.classList.contains("response-selection-toolbar")) return new DOMRect(0, 0, this.classList.contains("selection-action-menu-commenting") ? 360 : 280, this.classList.contains("selection-action-menu-commenting") ? 100 : 40);
@@ -126,11 +126,11 @@ describe("ThreadItemView", () => {
       document.dispatchEvent(new Event("selectionchange"));
     });
     const actions = document.querySelector<HTMLElement>(".response-selection-toolbar")!;
-    expect(Number.parseFloat(actions.style.left)).toBe(280);
+    expect(Number.parseFloat(actions.style.left)).toBe(320);
     expect(window.innerHeight - Number.parseFloat(actions.style.bottom)).toBe(212);
     act(() => actions.querySelector<HTMLButtonElement>(".selection-action-comment-toggle")!.click());
     const comment = document.querySelector<HTMLElement>(".response-selection-toolbar")!;
-    expect(Number.parseFloat(comment.style.left)).toBe(240);
+    expect(Number.parseFloat(comment.style.left)).toBe(320);
     expect(window.innerHeight - Number.parseFloat(comment.style.bottom)).toBe(212);
     expect(document.activeElement).toBe(comment.querySelector("textarea"));
   });

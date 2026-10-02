@@ -78,9 +78,9 @@
 .file-selection-quote-remove:hover { background: var(--menu-hover); }
 .file-selection-quote-remove:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 
-.file-selection-quote-entry { display: grid; min-width: 0; gap: var(--space-2); }
+.file-selection-quote-entry { display: flex; align-items: flex-start; gap: 8px; }
 .file-selection-quote-entry + .file-selection-quote-entry { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--hairline); }
-.file-selection-quote-text { padding-inline-start: var(--space-2); border-inline-start: 2px solid var(--hairline-strong); max-height: 9em; overflow: auto; min-width: 0; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.file-selection-quote-text { flex: 1; min-width: 0; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 
 .file-selection-tag,
 .file-selection-action,
@@ -95,7 +95,6 @@ button.file-selection-location {
   align-items: center;
   gap: 8px;
   min-height: 32px;
-  max-width: 100%;
   padding: 5px 10px;
   border: 1px solid var(--hairline);
   border-radius: var(--radius-sm);
@@ -116,8 +115,9 @@ button.file-selection-location {
   box-sizing: border-box;
   padding: 12px;
   border: 1px solid var(--menu-border);
-  border-radius: var(--menu-shell-radius);
-  background: linear-gradient(var(--menu-bg), var(--menu-bg)), var(--paper);
+  border-radius: var(--menu-radius);
+  background: var(--menu-bg);
+  backdrop-filter: blur(12px);
   box-shadow: var(--menu-shadow);
   color: var(--ink);
   font-size: var(--font-ui);
@@ -221,7 +221,7 @@ button.file-selection-location:hover {
   min-height: 6em;
   max-height: 12em;
   padding: 8px;
-  resize: none;
+  resize: vertical;
   border: 1px solid var(--hairline-strong);
   border-radius: var(--radius-xs);
   background: var(--field-bg);

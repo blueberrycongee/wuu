@@ -48,7 +48,7 @@ Use Stop to interrupt a task. Stopping does not undo commands or file edits, and
 
 ## Quote part of a response
 
-Select text in a completed assistant response, then choose **Add to conversation**. Choose **Comment** to add an optional comment beside the selected passage first. Selections appear as a tag in that conversation's input, including in split view. Hover, focus, or click the tag to preview the passages, edit comments, remove a selection, or open its source. You can send a selection without typing another message. Sending, queuing, and steering include both the quoted text and your comment in the model's input.
+Select text in a completed assistant response, then choose **Add to conversation**. Choose **Comment** to add an optional comment beside the selected passage first. Selections appear as quote cards in the attachment tray above that conversation's input, including in split view. Open a card to read the passage, edit its comment, remove the selection, or open its source. You can send a selection without typing another message. Sending, queuing, and steering include both the quoted text and your comment in the model's input.
 
 Selected passages stay with their draft when switching tabs or leaving split view. Failed sends and editing held messages restore the quotes separately from the editable prompt. **View source** highlights the exact selected passage when the original response is loaded and visible. If it is hidden, unloaded, or changed, Wuu reports that the source is unavailable rather than highlighting another occurrence. Open the source conversation and load its response before trying again.
 

@@ -46,7 +46,7 @@ function type(value: string) {
 }
 
 describe("file selection surface", () => {
-  it("centers the measured toolbar and comment above the selected passage without covering it", () => {
+  it("aligns the measured toolbar and comment to the source start without covering it", () => {
     vi.mocked(HTMLElement.prototype.getBoundingClientRect).mockImplementation(function (this: HTMLElement) {
       if (this.classList.contains("file-selection-action-menu")) return new DOMRect(0, 0, this.classList.contains("selection-action-menu-commenting") ? 360 : 200, this.classList.contains("selection-action-menu-commenting") ? 80 : 40);
       return new DOMRect(0, 0, 700, 600);
@@ -54,11 +54,11 @@ describe("file selection surface", () => {
     Object.defineProperty(Range.prototype, "getBoundingClientRect", { configurable: true, value: () => new DOMRect(300, 240, 100, 24) });
     render(); select();
     const toolbar = document.querySelector<HTMLElement>(".file-selection-action-menu")!;
-    expect(Number.parseFloat(toolbar.style.left)).toBe(250);
+    expect(Number.parseFloat(toolbar.style.left)).toBe(300);
     expect(Number.parseFloat(toolbar.style.top)).toBe(192);
     click("Comment");
     const comment = document.querySelector<HTMLElement>(".file-selection-action-menu")!;
-    expect(Number.parseFloat(comment.style.left)).toBe(170);
+    expect(Number.parseFloat(comment.style.left)).toBe(300);
     expect(Number.parseFloat(comment.style.top)).toBe(152);
     expect(document.activeElement).toBe(comment.querySelector("textarea"));
   });

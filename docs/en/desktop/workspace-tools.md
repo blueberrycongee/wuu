@@ -46,15 +46,15 @@ For agents and integrations, the built-in `present_artifact` tool accepts an exi
 The limit is 256 MiB. Normal read permissions and sensitive-path restrictions apply, and the tool does not fetch URLs. Presenting a file does not inspect its appearance or send its image bytes to the model; visual verification is a separate step.
 
 Select text in a Markdown, code, or plain-text preview to use **Add to conversation**,
-**Comment**, or **Edit**. Adding to the conversation attaches a selected-text tag without
-sending it or expanding the excerpt into the input. Hover, focus, or click the tag to
+**Comment**, or **Edit**. Adding to the conversation adds a quote card to the attachment tray without
+sending it or expanding the excerpt into the input. Open the card to
 read the original text; its remove button removes the selection. Sending the message
 includes the original text and source location. Comments appear below the document preview and as a
-comment tag in the composer; hover, focus, or click the tag to inspect the location,
+quote card in the attachment tray; open the card to inspect the location,
 quoted text, and comment. You can edit or remove comments before sending several
 comments together with your message.
 
-Choose **Ask in side chat** from a file selection to attach the passage to a side question. This requires an existing main conversation; the side composer shows the same selected-text tag.
+Choose **Ask in side chat** from a file selection to attach the passage to a side question. This requires an existing main conversation; the side composer shows the same quote card.
 
 **Edit** opens a small instruction box at the selection. Submitting it sends an
 independent request to the current conversation without consuming your existing

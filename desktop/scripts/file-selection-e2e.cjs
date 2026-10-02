@@ -84,8 +84,8 @@ async function run() {
       phase = `${label}: side-chat selection`;
       await selectFile(file, quote);
       await clickButton(".file-selection-action-menu", "Ask in side chat");
-      await waitFor(() => Boolean(document.querySelector(".side-thread-panel .composer-selection-chip")), "side selection chip");
-      await visibleGeometry(".side-thread-panel .composer-selection-chip");
+      await waitFor(() => Boolean(document.querySelector(".side-thread-panel .composer-file-selection-card .composer-document-card-main")), "side selection chip");
+      await visibleGeometry(".side-thread-panel .composer-file-selection-card .composer-document-card-main");
       await screenshot(`${label}-side-chip`);
       const sideLayout = await evaluate(() => {
         const main = document.querySelector(".conversation-pane > .scroll-region");
@@ -99,13 +99,38 @@ async function run() {
       // AppLayoutState's existing 352px minimum protects the main reading area.
       assert.ok(sideLayout.viewportWidth < 760 || sideLayout.main.width >= 352 - 1,
         `Side chat must preserve the established main-column minimum: ${JSON.stringify(sideLayout)}`);
-      await click(".side-thread-panel .composer-selection-chip");
-      await waitFor(expected => document.querySelector(".composer-selection-panel .composer-selection-quote")?.textContent === expected, "side selection details", quote);
-      await visibleGeometry(".composer-selection-panel");
-      await checkAnnotationPanel(`${label}-side-selection-details`, ".side-thread-panel .composer-selection-chip");
+      await click(".side-thread-panel .composer-file-selection-card .composer-document-card-main");
+      await waitFor(expected => document.querySelector(".composer-file-selection-card-popover .composer-response-selection-quote")?.textContent === expected, "side selection details", quote);
+      await visibleGeometry(".composer-file-selection-card-popover");
+      await checkAnnotationPanel(`${label}-side-selection-details`, ".side-thread-panel .composer-file-selection-card .composer-document-card-main");
       await screenshot(`${label}-side-selection-details`);
-      await clickButton(".composer-selection-panel", "Remove");
-      await waitFor(() => !document.querySelector(".side-thread-panel .composer-selection-chip"), "side selection removed");
+      if (label === "light-default-wide-md") {
+        await press("Escape");
+        await evaluate(() => {
+          const input = document.querySelector(".side-thread-panel .composer textarea");
+          input.focus();
+          const clipboardData = new DataTransfer();
+          clipboardData.setData("text/plain", Array.from({ length: 20 }, (_, index) => `Side paste line ${index + 1}`).join("\n"));
+          input.dispatchEvent(new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData }));
+        });
+        await waitFor(() => Boolean(document.querySelector(".side-thread-panel .composer-collapsed-prompt-card")),
+          "side long paste folds beside selection");
+        const attachmentLayout = await evaluate(() => {
+          const trays = [...document.querySelectorAll(".side-thread-panel .composer-attachment-tray")];
+          return { trays: trays.length, cards: trays[0]?.querySelectorAll(".composer-attachment-card").length,
+            followedByComposer: trays[0]?.nextElementSibling?.classList.contains("composer-frame") };
+        });
+        assert.deepEqual(attachmentLayout, { trays: 1, cards: 2, followedByComposer: true },
+          "Side selection and long paste must share the baseline attachment tray above the composer");
+        await screenshot(`${label}-side-selection-and-paste`);
+        await click(".side-thread-panel .composer-collapsed-prompt-card .composer-attachment-card-remove");
+        await waitFor(() => !document.querySelector(".side-thread-panel .composer-collapsed-prompt-card"), "remove only side paste");
+        await click(".side-thread-panel .composer-file-selection-card .composer-document-card-main");
+        await waitFor(expected => document.querySelector(".composer-file-selection-card-popover .composer-response-selection-quote")?.textContent === expected,
+          "side selection survives paste removal", quote);
+      }
+      await click(".composer-file-selection-card-popover .composer-response-selection-remove");
+      await waitFor(() => !document.querySelector(".side-thread-panel .composer-file-selection-card .composer-document-card-main"), "side selection removed");
       await click(".side-thread-panel__close");
       await showWorkspacePanel();
       await openFile(file);
@@ -117,19 +142,19 @@ async function run() {
       await screenshot(`${label}-toolbar`);
       await checkFilePlacement(`${label}-toolbar`);
       await clickButton(".file-selection-action-menu", "Add to conversation");
-      await waitFor(() => Boolean(document.querySelector("[data-main-conversation-composer] .composer-selection-chip")), "selected text tag");
+      await waitFor(() => Boolean(document.querySelector("[data-main-conversation-composer] .composer-file-selection-card .composer-document-card-main")), "selected text tag");
       assert.equal(await evaluate(composerValue), draft, "Selected text must remain folded instead of expanding into the draft");
       assert.equal(await evaluate(() => Boolean(document.querySelector(".file-selection-comments"))), false, "A quote must not create a document comment");
       await frame();
-      await visibleGeometry("[data-main-conversation-composer] .composer-selection-chip");
-      await click("[data-main-conversation-composer] .composer-selection-chip");
-      await waitFor(expected => document.querySelector(".composer-selection-quote")?.textContent === expected, "opened original text", quote);
-      await visibleGeometry(".composer-selection-panel");
+      await visibleGeometry("[data-main-conversation-composer] .composer-file-selection-card .composer-document-card-main");
+      await click("[data-main-conversation-composer] .composer-file-selection-card .composer-document-card-main");
+      await waitFor(expected => document.querySelector(".composer-response-selection-quote")?.textContent === expected, "opened original text", quote);
+      await visibleGeometry(".composer-file-selection-card-popover");
       await screenshot(`${label}-quote-tag`);
       await press("Escape");
-      await click("[data-main-conversation-composer] .composer-selection-chip");
-      await click(".composer-selection-actions button:last-child");
-      await waitFor(() => !document.querySelector("[data-main-conversation-composer] .composer-selection-chip"), "quote removed");
+      await click("[data-main-conversation-composer] .composer-file-selection-card .composer-document-card-main");
+      await click(".composer-response-selection-remove");
+      await waitFor(() => !document.querySelector("[data-main-conversation-composer] .composer-file-selection-card .composer-document-card-main"), "quote removed");
       assert.equal(await evaluate(composerValue), draft, "Removing a quote must preserve typed text");
       await selectFile(file, quote);
       await clickButton(".file-selection-action-menu", "Add to conversation");
@@ -153,7 +178,7 @@ async function run() {
       await screenshot(`${label}-comment-form`);
       await checkFilePlacement(`${label}-comment-form`);
       await clickButton(".file-selection-action-menu", "Comment");
-      await waitFor(() => Boolean(document.querySelector("[data-main-conversation-composer] .composer-selection-chip")), "comment chip");
+      await waitFor(() => Boolean(document.querySelector("[data-main-conversation-composer] .composer-file-selection-card .composer-document-card-main")), "comment chip");
       assert.equal(await evaluate(composerValue), draft, "Comment attachment must not replace the visible draft");
       phase = `${label}: document comment visibility`;
       const commentLayout = await evaluate(() => {
@@ -183,29 +208,27 @@ async function run() {
       assert.equal(await evaluate(() => document.querySelector(".file-selection-comments .file-selection-comment > p")?.textContent), comment, "Escape must preserve the saved comment");
       await screenshot(`${label}-saved-comment-escape-focus`);
       await press("Escape");
-      await click("[data-main-conversation-composer] .composer-selection-chip");
-      await waitFor(expected => document.querySelector(".composer-selection-panel")?.textContent.includes(expected), "comment chip details", comment);
-      assert.equal(await evaluate(() => document.querySelector(".composer-selection-panel .composer-selection-quote")?.textContent), quote);
-      await checkAnnotationPanel(`${label}-comment-chip`, "[data-main-conversation-composer] .composer-selection-chip");
+      await click("[data-main-conversation-composer] .composer-file-selection-card .composer-document-card-main");
+      await waitFor(expected => document.querySelector(".composer-file-selection-card-popover .composer-response-selection-comment")?.value === expected, "comment chip details", comment);
+      assert.equal(await evaluate(() => document.querySelector(".composer-file-selection-card-popover .composer-response-selection-quote")?.textContent), quote);
+      await checkAnnotationPanel(`${label}-comment-chip`, "[data-main-conversation-composer] .composer-file-selection-card .composer-document-card-main");
       await screenshot(`${label}-comment-chip`);
       phase = `${label}: live comment chip editor`;
-      await clickButton(".composer-selection-panel", "Edit");
       comment = `Explain this selection (${label}). Keep the quoted source intact while reviewing a longer comment, including repeated words and punctuation. 第二行 😀\nAlso check how this wraps in a narrow window.\n${"中文注释需要完整保留。".repeat(12)}\n${"unbroken_annotation_".repeat(24)}`;
-      await fill(".composer-selection-comment-input", comment);
-      await checkAnnotationPanel(`${label}-comment-chip-editor`, "[data-main-conversation-composer] .composer-selection-chip");
+      await fill(".composer-response-selection-comment", comment);
+      await checkAnnotationPanel(`${label}-comment-chip-editor`, "[data-main-conversation-composer] .composer-file-selection-card .composer-document-card-main");
       await screenshot(`${label}-comment-chip-editor`);
       await press("Escape");
-      await waitFor(() => !document.querySelector(".composer-selection-panel"), "chip editor dismissed");
-      assert.equal(await evaluate(() => document.activeElement?.classList.contains("composer-selection-chip")), true, "Escape restores chip focus");
+      await waitFor(() => !document.querySelector(".composer-file-selection-card-popover"), "chip editor dismissed");
+      assert.equal(await evaluate(() => document.activeElement?.matches(".composer-file-selection-card .composer-document-card-main")), true, "Escape restores chip focus");
       assert.equal(await evaluate(() => document.querySelector(".file-selection-comments .file-selection-comment > p")?.textContent), comment, "Live comment edits survive Escape");
       await screenshot(`${label}-comment-chip-escape-focus`);
-      await click("[data-main-conversation-composer] .composer-selection-chip");
-      await clickButton(".composer-selection-panel", "Edit");
-      await waitFor(expected => document.querySelector(".composer-selection-comment-input")?.value === expected,
+      await click("[data-main-conversation-composer] .composer-file-selection-card .composer-document-card-main");
+      await waitFor(expected => document.querySelector(".composer-response-selection-comment")?.value === expected,
         "reopened annotation retains complete long comment", comment);
-      await checkAnnotationPanel(`${label}-comment-chip-reopened`, "[data-main-conversation-composer] .composer-selection-chip");
+      await checkAnnotationPanel(`${label}-comment-chip-reopened`, "[data-main-conversation-composer] .composer-file-selection-card .composer-document-card-main");
       await click("[data-main-conversation-composer] textarea");
-      await waitFor(() => !document.querySelector(".composer-selection-panel"), "outside click dismisses annotation editor");
+      await waitFor(() => !document.querySelector(".composer-file-selection-card-popover"), "outside click dismisses annotation editor");
       assert.equal(await evaluate(composerValue), draft, "Dismissing an annotation must retain the independent composer draft");
 
       phase = `${label}: inline edit preserving draft and comment`;
@@ -223,7 +246,7 @@ async function run() {
       assert.equal(edit.activeDocument?.path, file, "Inline edit should target the selected document");
       assert.ok(!edit.prompt.includes(draft), "Inline edit must not consume the unrelated draft");
       assert.equal(await evaluate(composerValue), draft);
-      assert.ok(await evaluate(() => Boolean(document.querySelector("[data-main-conversation-composer] .composer-selection-chip"))), "Pending comment must survive inline edit");
+      assert.ok(await evaluate(() => Boolean(document.querySelector("[data-main-conversation-composer] .composer-file-selection-card .composer-document-card-main"))), "Pending comment must survive inline edit");
 
       phase = `${label}: completion refresh`;
       const updated = text.replace(file.endsWith(".md") ? quote : text.split("\n")[0], "Updated selection after completion.");
@@ -250,7 +273,7 @@ async function run() {
       verifySource(parts[0], file, text, quote, "comment", comment);
       assert.ok(sent.prompt.includes(draft), "Normal send must include the main draft");
       await evaluate(() => window.selectionE2E.complete());
-      await waitFor(() => composerValue() === "" && !document.querySelector("[data-main-conversation-composer] .composer-selection-chip"), "sent composer cleared");
+      await waitFor(() => composerValue() === "" && !document.querySelector("[data-main-conversation-composer] .composer-file-selection-card .composer-document-card-main"), "sent composer cleared");
       report.cases.push({ variant, file, quote, quoted, edit, sent, checks: ["side-selection-chip", "saved-comment-edit-dismissal", "live-comment-edit-and-focus", "toolbar", "quote-payload", "document-comment-hit-tests", "comment-chip", "inline-edit-preserves-draft-and-comment", "completion-refresh", "comment-payload"] });
       writeReport();
       console.log(`PASS ${label}`);
@@ -439,8 +462,8 @@ async function checkAnnotationPanel(name, anchorSelector) {
   await frame();
   const geometry = await evaluate(anchorSelector => {
     const anchor = document.querySelector(anchorSelector);
-    const owner = anchor?.closest(".composer-frame") ?? anchor?.closest(".composer");
-    const panel = document.querySelector(".composer-selection-panel");
+    const owner = anchor?.closest(".composer-frame, .composer-frame-shell, .composer-stack");
+    const panel = document.querySelector(".composer-file-selection-card-popover");
     if (!owner || !panel) throw new Error("Missing annotation panel or owning composer");
     const input = panel.querySelector("textarea");
     return { owner: owner.getBoundingClientRect().toJSON(), panel: panel.getBoundingClientRect().toJSON(),
@@ -490,8 +513,8 @@ async function checkFilePlacement(name) {
   });
   report.layoutObservations.push({ name, placement: geometry });
   const { source, popup, complete, bounds } = geometry;
-  const centered = Math.max(bounds.left, Math.min((source.left + source.right - popup.width) / 2, bounds.right - popup.width));
-  assert.ok(Math.abs(popup.left - centered) <= 4, `${name}: popup must center on the painted source, clamped to the file surface: ${JSON.stringify(geometry)}`);
+  const sourceLeft = Math.max(bounds.left, Math.min(source.left, bounds.right - popup.width));
+  assert.ok(Math.abs(popup.left - sourceLeft) <= 4, `${name}: popup must align to the painted source start, clamped to the file surface: ${JSON.stringify(geometry)}`);
   const fullHeight = complete.bottom - complete.top;
   const aboveFits = source.top - bounds.top >= fullHeight + 8;
   const belowFits = bounds.bottom - source.bottom >= fullHeight + 8;

@@ -11,7 +11,7 @@ export function selectionActionMenuMetrics(menu: HTMLElement | null, fallback: {
 
 export function selectionActionMenuPosition(anchor: Bounds, menu: { width: number; height: number; gap: number }, bounds: Bounds) {
   const width = Math.min(menu.width, bounds.right - bounds.left);
-  const left = Math.max(bounds.left, Math.min((anchor.left + anchor.right - width) / 2, bounds.right - width));
+  const left = Math.max(bounds.left, Math.min(anchor.left, bounds.right - width));
   const above = anchor.top - menu.height - menu.gap >= bounds.top;
   const top = above ? anchor.top - menu.height - menu.gap
     : Math.max(bounds.top, Math.min(anchor.bottom + menu.gap, bounds.bottom - menu.height));
