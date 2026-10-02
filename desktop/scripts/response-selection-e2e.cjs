@@ -165,7 +165,7 @@ async function send(expected, comment, prompt) {
   const before = report.calls.length;
   await input('[data-main-conversation-composer] .composer textarea', prompt);
   await click('[data-main-conversation-composer] .composer-send-button');
-  await until(() => !document.querySelector(card), "submitted quote clears");
+  await until(selector => !document.querySelector(selector), "submitted quote clears", card);
   for (let retry = 0; report.calls.length === before && retry < 100; retry++) await sleep(20);
   if (report.calls.length !== before + 1) throw new Error("Expected exactly one bridge call");
   const call = report.calls.at(-1);

@@ -93,6 +93,8 @@ async function run() {
       await clickButton(".composer-selection-panel", "Remove");
       await waitFor(() => !document.querySelector(".side-thread-panel .composer-selection-chip"), "side selection removed");
       await click(".side-thread-panel__close");
+      await showWorkspacePanel();
+      await openFile(file);
       assert.equal(await evaluate(composerValue), draft, "Side selection must preserve the main draft");
       assert.equal((await snapshot()).submissions.length, initial.submissions.length, "Opening a side selection must not submit a main turn");
 
@@ -247,7 +249,7 @@ function verifySource(part, file, text, quote, intent, comment) {
     "Submitted range must resolve to the exact quoted source");
 }
 
-async function openFiles() {
+async function showWorkspacePanel() {
   await evaluate(() => {
     const panel = document.querySelector(".workspace-right-panel");
     if (panel?.getAttribute("aria-hidden") !== "false") {
@@ -256,6 +258,10 @@ async function openFiles() {
       toggle.click();
     }
   });
+}
+
+async function openFiles() {
+  await showWorkspacePanel();
   await click(".workspace-panel-add");
   await clickButton(".workspace-tool-menu", "Files", ".workspace-tool-menu-item");
   await waitFor(() => Boolean(document.querySelector(".workspace-file-tree-frame file-tree-container")?.shadowRoot?.querySelector("[data-item-path]")), "file tree");
