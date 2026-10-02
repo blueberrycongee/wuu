@@ -360,7 +360,7 @@ async function openTool(win, label) {
     return !!item;
   }, label);
   if (!(await pick())) {
-    await clickLabel(win, '选择工具');
+    await clickLabel(win, '新建页面');
     await delay(500);
     assert.ok(await pick(), `The tool picker offers ${label}`);
   }
@@ -414,7 +414,7 @@ const stops = [
     await clickLabel(win, '打开右侧栏');
     await delay(750);
     if (!(await evaluate(win, () => !!document.querySelector('.workspace-tool-menu-item')))) {
-      await clickLabel(win, '选择工具');
+      await clickLabel(win, '新建页面');
       await delay(450);
     }
   } },
