@@ -262,7 +262,14 @@ async function run() {
     await checkFilePlacement(`${variant.name}-wrapped-comment`);
     await screenshot(`${variant.name}-wrapped-comment`);
     const editorRect = await visibleGeometry(".workspace-file-resource.active .monaco-editor");
-    win.webContents.sendInputEvent({ type: "mouseWheel", x: Math.round(editorRect.x + editorRect.width - 30), y: Math.round(editorRect.y + editorRect.height - 40), deltaY: 60, deltaX: 0 });
+    // Electron's negative delta scrolls down from the fixture's initial top position.
+    const wheelPoint = { x: Math.round(editorRect.x + editorRect.width - 30), y: Math.round(editorRect.y + editorRect.height / 2) };
+    assert.equal(await evaluate(point => Boolean(document.elementFromPoint(point.x, point.y)?.closest(".monaco-editor")), wheelPoint), true, "Native wheel target must hit the editor");
+    win.webContents.sendInputEvent({ type: "mouseWheel", ...wheelPoint, deltaY: -60, deltaX: 0, canScroll: true });
+    await waitFor(top => {
+      const rows = [...document.querySelectorAll(".workspace-file-resource.active .monaco-editor .selected-text")].map(node => node.getBoundingClientRect()).filter(rect => rect.width && rect.height);
+      return rows.length > 0 && Math.abs(Math.min(...rows.map(rect => rect.top)) - top) > 1;
+    }, "native wheel moves the wrapped source", wrapped.source.top);
     await frame();
     const scrolled = await checkFilePlacement(`${variant.name}-wrapped-scroll`);
     assert.ok(Math.abs(scrolled.source.top - wrapped.source.top) > 1, "Wrapped scroll scenario must move the source");
