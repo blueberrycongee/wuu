@@ -43,6 +43,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   work batches and consolidated review feedback, reusing valid verification and
   useful running processes across follow-ups.
 
+- Show the enabled composer worktree control in theme-aware blue so it is easy
+  to distinguish from the neutral off state.
+
 - Share equivalent quota HTTP reads only while they are pending, preserving
   credential isolation, independent cancellation, and fresh later refreshes.
 
