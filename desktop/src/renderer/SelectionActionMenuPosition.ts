@@ -4,8 +4,12 @@ type Bounds = Pick<DOMRect, "left" | "top" | "right" | "bottom">;
 export function selectionActionMenuMetrics(menu: HTMLElement | null, fallback: { width: number; height: number }) {
   const box = menu?.getBoundingClientRect();
   const marker = menu?.querySelector<HTMLElement>(".selection-action-comment-marker")?.getBoundingClientRect();
-  const markerExtent = box && marker ? Math.max(0, marker.bottom - box.bottom, box.top - marker.top) : 0;
-  return { width: box?.width || fallback.width, height: box?.height || fallback.height, gap: 8 + markerExtent };
+  // Entrance transforms must not move the settled popup off its source.
+  const width = menu?.offsetWidth || box?.width || fallback.width;
+  const height = menu?.offsetHeight || box?.height || fallback.height;
+  const scaleY = box?.height ? height / box.height : 1;
+  const markerExtent = box && marker ? Math.max(0, marker.bottom - box.bottom, box.top - marker.top) * scaleY : 0;
+  return { width, height, gap: 8 + markerExtent };
 }
 
 export function selectionActionMenuPosition(anchor: Bounds, menu: { width: number; height: number; gap: number }, bounds: Bounds) {
