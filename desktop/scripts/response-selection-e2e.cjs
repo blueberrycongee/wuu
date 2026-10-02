@@ -51,7 +51,7 @@ async function input(selector, value) {
 // a frame from the middle of a fade.
 async function settle() {
   await evaluate(() => Promise.race([
-    Promise.all(document.getAnimations().map(animation => animation.finished.catch(() => undefined))),
+    Promise.all(document.getAnimations().filter(animation => Number.isFinite(animation.effect?.getComputedTiming().endTime)).map(animation => animation.finished.catch(() => undefined))),
     new Promise(resolve => setTimeout(resolve, 1500)),
   ]).then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))));
 }
@@ -84,18 +84,18 @@ function measureGeometry() {
     parentFrame: frame ? { left: frame.left, top: frame.top, width: frame.width, height: frame.height } : null,
     theme: document.documentElement.dataset.theme, userAgent: navigator.userAgent, regions };
 }
-async function select(text, last = false, physical = false) {
-  await evaluate(selector => {
+async function select(text, last = false, physical = false, backward = false, align = "center") {
+  await evaluate((selector, align) => {
     const root = [...document.querySelectorAll(selector)].find(node => node.getBoundingClientRect().width);
     document.activeElement?.blur();
     root.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 1 }));
-    root.scrollIntoView({ block: "center", behavior: "instant" });
-  }, surface);
+    root.scrollIntoView({ block: align, behavior: "instant" });
+  }, surface, align);
   // Source navigation and centering deliver scroll asynchronously. A user starts
   // the next drag after that movement; don't create a toolbar destined to be
   // dismissed by the previous operation's queued scroll event.
   await evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-  const selected = await evaluate((selector, text, last) => {
+  const selected = await evaluate((selector, text, last, backward) => {
     const root = [...document.querySelectorAll(selector)].find(node => node.getBoundingClientRect().width);
     const source = root.textContent;
     const start = last ? source.lastIndexOf(text) : source.indexOf(text);
@@ -114,18 +114,21 @@ async function select(text, last = false, physical = false) {
     const final = range.cloneRange(); final.collapse(false);
     const a = first.getBoundingClientRect(), b = final.getBoundingClientRect();
     const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range);
+    if (backward) selection.setBaseAndExtent(endNode, endOffset, startNode, startOffset);
     document.dispatchEvent(new Event("selectionchange"));
     root.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 1 }));
     return { text, start, end, source, from: { x: Math.round(a.x), y: Math.round(a.y + a.height / 2) }, to: { x: Math.round(b.x), y: Math.round(b.y + b.height / 2) } };
-  }, surface, text, last);
+  }, surface, text, last, backward);
   if (physical) {
     await evaluate(() => window.getSelection().removeAllRanges());
     win.webContents.focus();
-    win.webContents.sendInputEvent({ type: "mouseDown", ...selected.from, button: "left", clickCount: 1 });
+    const from = backward ? selected.to : selected.from;
+    const to = backward ? selected.from : selected.to;
+    win.webContents.sendInputEvent({ type: "mouseDown", ...from, button: "left", clickCount: 1 });
     for (let step = 1; step <= 10; step++) {
-      win.webContents.sendInputEvent({ type: "mouseMove", x: Math.round(selected.from.x + (selected.to.x - selected.from.x) * step / 10), y: selected.from.y, button: "left" });
+      win.webContents.sendInputEvent({ type: "mouseMove", x: Math.round(from.x + (to.x - from.x) * step / 10), y: Math.round(from.y + (to.y - from.y) * step / 10), button: "left" });
     }
-    win.webContents.sendInputEvent({ type: "mouseUp", ...selected.to, button: "left", clickCount: 1 });
+    win.webContents.sendInputEvent({ type: "mouseUp", ...to, button: "left", clickCount: 1 });
     await until(text => window.getSelection()?.toString() === text, "physical drag selected exact text", text);
   }
   await until(() => !!document.querySelector(".response-selection-toolbar button"), "native selection toolbar");
@@ -180,6 +183,81 @@ function validatePayload(call, expected, comment, prompt) {
   if (source.thread_id !== "selection-main" || source.turn_id !== "selection-main-turn" || source.item_id !== "selection-main-answer" || source.start_offset !== expected.start || source.end_offset !== expected.end || (source.range_text ?? expected.text) !== expected.source.slice(expected.start, expected.end) || !parts[0].selection.id) throw new Error("Rich selection source metadata mismatch");
   if (prompt && (parts.at(-1).type !== "text" || parts.at(-1).text !== prompt)) throw new Error("Prompt part mismatch");
   if (!call.args[1].includes(quote.trimEnd()) || (prompt && !call.args[1].includes(prompt))) throw new Error("Flattened prompt lost quote/comment or prompt");
+}
+async function checkPlacement(name, expected, expectedSide) {
+  await settle();
+  const geometry = await evaluate(({ selector, start, end }) => {
+    const root = [...document.querySelectorAll(selector)].find(node => node.getBoundingClientRect().width);
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    const range = document.createRange();
+    let node, offset = 0, started = false;
+    while ((node = walker.nextNode())) {
+      if (!started && start < offset + node.length) { range.setStart(node, start - offset); started = true; }
+      if (end <= offset + node.length) { range.setEnd(node, end - offset); break; }
+      offset += node.length;
+    }
+    const toolbar = document.querySelector(".response-selection-toolbar");
+    const popup = toolbar.getBoundingClientRect();
+    const marker = toolbar.querySelector(".selection-action-comment-marker")?.getBoundingClientRect();
+    const bounds = range.getBoundingClientRect();
+    return { viewport: { width: innerWidth, height: innerHeight }, source: bounds.toJSON(),
+      sourceRects: [...range.getClientRects()].filter(rect => rect.width && rect.height).map(rect => rect.toJSON()),
+      popup: popup.toJSON(), marker: marker?.toJSON(),
+      complete: { left: Math.min(popup.left, marker?.left ?? popup.left), right: Math.max(popup.right, marker?.right ?? popup.right),
+        top: Math.min(popup.top, marker?.top ?? popup.top), bottom: Math.max(popup.bottom, marker?.bottom ?? popup.bottom) } };
+  }, { selector: surface, start: expected.start, end: expected.end });
+  report.measurements.push({ name: `${name}-source-placement`, ...geometry });
+  const { source, popup, complete, viewport } = geometry;
+  const expectedLeft = Math.max(8, Math.min((source.left + source.right - popup.width) / 2, viewport.width - 8 - popup.width));
+  if (Math.abs(popup.left - expectedLeft) > 2) throw new Error(`${name}: popup is not centered on the complete source range: ${JSON.stringify(geometry)}`);
+  if (complete.left < -1 || complete.top < -1 || complete.right > viewport.width + 1 || complete.bottom > viewport.height + 1) throw new Error(`${name}: popup or marker left the viewport`);
+  const height = complete.bottom - complete.top;
+  const aboveFits = source.top >= height + 16;
+  const belowFits = viewport.height - source.bottom >= height + 16;
+  const above = complete.bottom <= source.top + 1;
+  const below = complete.top >= source.bottom - 1;
+  if (aboveFits && !above) throw new Error(`${name}: popup should be above the source: ${JSON.stringify(geometry)}`);
+  if (!aboveFits && belowFits && !below) throw new Error(`${name}: top-edge fallback overlaps the source: ${JSON.stringify(geometry)}`);
+  if (expectedSide && !(expectedSide === "above" ? above : below)) throw new Error(`${name}: expected ${expectedSide} placement: ${JSON.stringify(geometry)}`);
+  if ((aboveFits || belowFits) && geometry.sourceRects.some(rect => complete.left < rect.right && complete.right > rect.left && complete.top < rect.bottom && complete.bottom > rect.top)) throw new Error(`${name}: comment marker/popup obscures selected text`);
+  await screenshot(name);
+  return geometry;
+}
+async function placementCoverage() {
+  await click(card);
+  await click(".composer-selection-actions button:last-child");
+  win.setContentSize(1200, 900);
+  await evaluate(() => { document.documentElement.dataset.theme = "light"; document.documentElement.style.setProperty("--ui-font-size", "14px"); document.documentElement.style.setProperty("--conversation-message-font-size", "14px"); });
+  const forward = await select("Native drag selection", false, true);
+  const first = await checkPlacement("placement-forward-native", forward, "above");
+  const reverse = await select("Native drag selection", false, true, true);
+  const reversed = await checkPlacement("placement-reverse-native", reverse, "above");
+  if (Math.abs(first.popup.left - reversed.popup.left) > 2 || Math.abs(first.popup.top - reversed.popup.top) > 2) throw new Error("Reversing the same selection changed popup placement");
+  const allText = await evaluate(selector => document.querySelector(selector).textContent, surface);
+  const multiline = await select(allText);
+  await checkPlacement("placement-multiline", multiline, "above");
+  await click(".response-selection-toolbar .selection-action-comment-toggle");
+  await win.webContents.insertText("First line 第二行 😀\nA longer instruction that expands the comment box while keeping the selected passage unobscured.\nOne more line for growth.");
+  await checkPlacement("placement-multiline-comment-growth", multiline);
+  win.setContentSize(390, 820);
+  const edge = await select("Repeated 😀 café 中文 target.", true);
+  await checkPlacement("placement-narrow-edge", edge);
+  await click(".response-selection-toolbar .selection-action-comment-toggle");
+  await win.webContents.insertText("Keep this narrow comment readable. 第二行 😀\nThe source and its marker must stay separate.");
+  await checkPlacement("placement-narrow-comment", edge);
+  win.setContentSize(760, 420);
+  const top = await select("Native drag selection", false, false, false, "start");
+  await click(".response-selection-toolbar .selection-action-comment-toggle");
+  await win.webContents.insertText("Top-edge fallback 第二行 😀");
+  await checkPlacement("placement-top-edge-comment", top, "below");
+  const moved = await evaluate(() => { const scroll = document.querySelector(".conversation-pane > .scroll-region"); const before = scroll.scrollTop; scroll.scrollBy({ top: -20, behavior: "instant" }); return scroll.scrollTop !== before; });
+  if (!moved) throw new Error("Visible-source scroll scenario did not move the source viewport");
+  await checkPlacement("placement-visible-source-scroll", top);
+  const preserved = await evaluate(() => { const input = document.querySelector(".response-selection-commenting textarea, .response-selection-toolbar textarea"); return { value: input?.value, focused: document.activeElement === input }; });
+  if (preserved.value !== "Top-edge fallback 第二行 😀" || !preserved.focused) throw new Error("Moving the source lost the comment or input focus");
+  await evaluate(() => { const scroll = document.querySelector(".conversation-pane > .scroll-region"); scroll.scrollTo({ top: scroll.scrollHeight, behavior: "instant" }); });
+  await until(() => !document.querySelector(".response-selection-toolbar"), "fully offscreen source dismisses the popup");
+  report.cases.push("centered full-range anchors; forward/reverse native drag; multiline comment growth; narrow edge clamp; top fallback; visible-source scroll preserves comment/focus; offscreen dismissal");
 }
 async function run() {
   win = new BrowserWindow({ width: 1200, height: 820, show: process.env.WUU_E2E_VISIBLE === "true", webPreferences: { preload: path.join(__dirname, "response-selection-e2e-preload.cjs"), contextIsolation: true, nodeIntegration: false, sandbox: false, backgroundThrottling: false } });
@@ -241,6 +319,7 @@ async function run() {
     await closeQuotePanel();
   }
   report.cases.push("light/dark, default/large font, wide/narrow quote card and editor geometry");
+  await placementCoverage();
   if (report.errors.length) throw new Error(`Unexpected renderer or network errors: ${JSON.stringify(report.errors)}`);
   report.status = "passed";
 }

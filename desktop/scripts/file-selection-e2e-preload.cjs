@@ -9,6 +9,11 @@ const files = {
   "selection-code.ts": "export const selectionValue = 42;\nexport const secondValue = 7;\n",
   "selection-notes.txt": "Plain text selection for review.\nA second line stays unchanged.\n",
 };
+files["selection-wrapped.ts"] = [
+  ...Array.from({ length: 18 }, (_, index) => `// Context line ${index + 1}`),
+  `export const wrappedValue = "${"A deliberately long wrapped source segment 中文 😀 ".repeat(6)}";`,
+  ...Array.from({ length: 30 }, (_, index) => `// Following line ${index + 1}`),
+].join("\n");
 const thread = {
   id: "file-selection-thread", preview: "File selection verification",
   model_provider: "e2e", model: "mock-selection", cwd, status: "idle",

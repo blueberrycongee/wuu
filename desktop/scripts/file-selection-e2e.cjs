@@ -113,6 +113,7 @@ async function run() {
       phase = `${label}: quote`;
       await selectFile(file, quote);
       await screenshot(`${label}-toolbar`);
+      await checkFilePlacement(`${label}-toolbar`);
       await clickButton(".file-selection-action-menu", "Add to conversation");
       await waitFor(() => Boolean(document.querySelector("[data-main-conversation-composer] .composer-selection-chip")), "selected text tag");
       assert.equal(await evaluate(composerValue), draft, "Selected text must remain folded instead of expanding into the draft");
@@ -148,6 +149,7 @@ async function run() {
       let comment = `Explain this selection (${label}).`;
       await fill(".file-selection-action-menu textarea", comment);
       await screenshot(`${label}-comment-form`);
+      await checkFilePlacement(`${label}-comment-form`);
       await clickButton(".file-selection-action-menu", "Comment");
       await waitFor(() => Boolean(document.querySelector("[data-main-conversation-composer] .composer-selection-chip")), "comment chip");
       assert.equal(await evaluate(composerValue), draft, "Comment attachment must not replace the visible draft");
@@ -200,6 +202,7 @@ async function run() {
       const instruction = `Replace the selected content (${label}).`;
       await fill(".file-selection-popup textarea", instruction);
       await screenshot(`${label}-edit-form`);
+      await checkFilePlacement(`${label}-edit-form`);
       await clickButton(".file-selection-popup", "Send edit request");
       await waitFor(count => window.selectionE2E.snapshot().submissions.length === count, "edit submission", initial.submissions.length + 2);
       const edit = (await snapshot()).submissions.at(-1);
@@ -240,6 +243,33 @@ async function run() {
       writeReport();
       console.log(`PASS ${label}`);
     }
+    phase = `${variant.name}: wrapped middle-of-file selection`;
+    await openFile("selection-wrapped.ts");
+    await click(".workspace-file-resource.active .monaco-editor .view-line");
+    await press("Home", [process.platform === "darwin" ? "meta" : "control"]);
+    for (let line = 0; line < 18; line++) await press("Down");
+    await press("Home");
+    await press("Down", ["shift"]);
+    await press("Down", ["shift"]);
+    await press("End", ["shift"]);
+    await waitFor(() => Boolean(document.querySelector(".file-selection-action-menu")), "wrapped selection toolbar");
+    const wrapped = await checkFilePlacement(`${variant.name}-wrapped-toolbar`);
+    assert.ok(new Set(wrapped.sourceRects.map(rect => Math.round(rect.top))).size >= 2, "Wrapped fixture must select multiple painted rows");
+    await screenshot(`${variant.name}-wrapped-toolbar`);
+    await clickButton(".file-selection-action-menu", "Comment");
+    const wrappedComment = "Review this wrapped code without covering the source. 第二行 😀";
+    await fill(".file-selection-action-menu textarea", wrappedComment);
+    await checkFilePlacement(`${variant.name}-wrapped-comment`);
+    await screenshot(`${variant.name}-wrapped-comment`);
+    const editorRect = await visibleGeometry(".workspace-file-resource.active .monaco-editor");
+    win.webContents.sendInputEvent({ type: "mouseWheel", x: Math.round(editorRect.x + editorRect.width - 30), y: Math.round(editorRect.y + editorRect.height - 40), deltaY: 60, deltaX: 0 });
+    await frame();
+    const scrolled = await checkFilePlacement(`${variant.name}-wrapped-scroll`);
+    assert.ok(Math.abs(scrolled.source.top - wrapped.source.top) > 1, "Wrapped scroll scenario must move the source");
+    assert.equal(await evaluate(() => document.querySelector(".file-selection-action-menu textarea")?.value), wrappedComment, "Scrolling must preserve the comment");
+    await screenshot(`${variant.name}-wrapped-scroll`);
+    report.cases.push({ variant, file: "selection-wrapped.ts", checks: ["mid-file-wrapped-source-placement", "marker-clearance", "scroll-reanchor"] });
+    writeReport();
     win.destroy();
     win = undefined;
   }
@@ -384,9 +414,53 @@ async function visibleGeometry(selector) {
   return rect;
 }
 
+async function checkFilePlacement(name) {
+  await frame();
+  const geometry = await evaluate(() => {
+    const host = document.querySelector(".workspace-file-resource.active .file-selection-surface");
+    const editor = host.querySelector(".monaco-editor");
+    const popup = document.querySelector(".file-selection-popup, .file-selection-action-menu");
+    const hostBox = host.getBoundingClientRect();
+    const clip = (editor ?? host).getBoundingClientRect();
+    let sourceRects;
+    if (editor) {
+      // Observe native painted selection rows independently of the owned anchor decoration.
+      sourceRects = [...editor.querySelectorAll(".selected-text")].map(node => node.getBoundingClientRect());
+    } else {
+      const ranges = [...(CSS.highlights?.entries() ?? [])].filter(([key]) => key.startsWith("file-selection-"))
+        .flatMap(([, highlight]) => [...highlight]).filter(range => host.contains(range.startContainer));
+      sourceRects = ranges.flatMap(range => [...range.getClientRects()]);
+    }
+    sourceRects = sourceRects.map(rect => ({ left: Math.max(clip.left, rect.left), right: Math.min(clip.right, rect.right),
+      top: Math.max(clip.top, rect.top), bottom: Math.min(clip.bottom, rect.bottom) })).filter(rect => rect.right > rect.left && rect.bottom > rect.top);
+    if (!sourceRects.length) throw new Error("No painted source selection to measure");
+    const source = { left: Math.min(...sourceRects.map(rect => rect.left)), right: Math.max(...sourceRects.map(rect => rect.right)),
+      top: Math.min(...sourceRects.map(rect => rect.top)), bottom: Math.max(...sourceRects.map(rect => rect.bottom)) };
+    const box = popup.getBoundingClientRect(), marker = popup.querySelector(".selection-action-comment-marker")?.getBoundingClientRect();
+    const input = popup.querySelector("textarea"), inputBox = input?.getBoundingClientRect();
+    return { source, sourceRects, popup: box.toJSON(), marker: marker?.toJSON(),
+      bounds: { left: Math.max(8, hostBox.left + 8), right: Math.min(innerWidth - 8, hostBox.right - 8), top: Math.max(8, hostBox.top + 8), bottom: Math.min(innerHeight - 8, hostBox.bottom - 8) },
+      complete: { left: Math.min(box.left, marker?.left ?? box.left), right: Math.max(box.right, marker?.right ?? box.right),
+        top: Math.min(box.top, marker?.top ?? box.top), bottom: Math.max(box.bottom, marker?.bottom ?? box.bottom) },
+      input: input ? { width: inputBox.width, clientWidth: input.clientWidth, scrollWidth: input.scrollWidth, value: input.value } : null };
+  });
+  report.layoutObservations.push({ name, placement: geometry });
+  const { source, popup, complete, bounds } = geometry;
+  const centered = Math.max(bounds.left, Math.min((source.left + source.right - popup.width) / 2, bounds.right - popup.width));
+  assert.ok(Math.abs(popup.left - centered) <= 4, `${name}: popup must center on the painted source, clamped to the file surface: ${JSON.stringify(geometry)}`);
+  const fullHeight = complete.bottom - complete.top;
+  const aboveFits = source.top - bounds.top >= fullHeight + 8;
+  const belowFits = bounds.bottom - source.bottom >= fullHeight + 8;
+  if (aboveFits) assert.ok(complete.bottom <= source.top + 1, `${name}: prefer above when it fits`);
+  else if (belowFits) assert.ok(complete.top >= source.bottom - 1, `${name}: below fallback must clear the source`);
+  if (aboveFits || belowFits) assert.ok(!geometry.sourceRects.some(rect => complete.left < rect.right && complete.right > rect.left && complete.top < rect.bottom && complete.bottom > rect.top), `${name}: popup/marker must not obscure selected text`);
+  if (geometry.input) assert.ok(geometry.input.scrollWidth <= geometry.input.clientWidth + 1, `${name}: instruction text must wrap without horizontal clipping: ${JSON.stringify(geometry.input)}`);
+  return geometry;
+}
+
 async function screenshot(name) {
   await evaluate(() => Promise.race([
-    Promise.all(document.getAnimations().map(animation => animation.finished.catch(() => undefined))),
+    Promise.all(document.getAnimations().filter(animation => Number.isFinite(animation.effect?.getComputedTiming().endTime)).map(animation => animation.finished.catch(() => undefined))),
     new Promise(resolve => setTimeout(resolve, 1500)),
   ]));
   await frame();
