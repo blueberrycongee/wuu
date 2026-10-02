@@ -52,6 +52,7 @@ async function run() {
         partition: `selection-${variant.name}-${Date.now()}` },
     });
     win.setContentSize(variant.width, variant.height);
+    win.webContents.debugger.attach("1.3");
     win.webContents.on("render-process-gone", (_event, details) => {
       report.errors.push({ phase, message: `Renderer exited: ${details.reason}` });
     });
@@ -273,10 +274,12 @@ async function run() {
     await checkFilePlacement(`${variant.name}-wrapped-comment`);
     await screenshot(`${variant.name}-wrapped-comment`);
     const editorRect = await visibleGeometry(".workspace-file-resource.active .monaco-editor");
-    // Electron's negative delta scrolls down from the fixture's initial top position.
+    // Use the same native CDP wheel path as the sidebar scrolling fixture.
     const wheelPoint = { x: Math.round(editorRect.x + editorRect.width - 30), y: Math.round(editorRect.y + editorRect.height / 2) };
     assert.equal(await evaluate(point => Boolean(document.elementFromPoint(point.x, point.y)?.closest(".monaco-editor")), wheelPoint), true, "Native wheel target must hit the editor");
-    win.webContents.sendInputEvent({ type: "mouseWheel", ...wheelPoint, deltaY: -60, deltaX: 0, canScroll: true });
+    win.focus();
+    await win.webContents.debugger.sendCommand("Input.dispatchMouseEvent", { type: "mouseMoved", ...wheelPoint });
+    await win.webContents.debugger.sendCommand("Input.dispatchMouseEvent", { type: "mouseWheel", ...wheelPoint, deltaY: 60, deltaX: 0 });
     await waitFor(top => {
       const rows = [...document.querySelectorAll(".workspace-file-resource.active .monaco-editor .selected-text")].map(node => node.getBoundingClientRect()).filter(rect => rect.width && rect.height);
       return rows.length > 0 && Math.abs(Math.min(...rows.map(rect => rect.top)) - top) > 1;
@@ -286,7 +289,7 @@ async function run() {
     assert.ok(Math.abs(scrolled.source.top - wrapped.source.top) > 1, "Wrapped scroll scenario must move the source");
     assert.equal(await evaluate(() => document.querySelector(".file-selection-action-menu textarea")?.value), wrappedComment, "Scrolling must preserve the comment");
     await screenshot(`${variant.name}-wrapped-scroll`);
-    report.cases.push({ variant, file: "selection-wrapped.ts", checks: ["mid-file-wrapped-source-placement", "marker-clearance", "scroll-reanchor"] });
+    report.cases.push({ variant, file: "selection-wrapped.ts", checks: ["mid-file-wrapped-source-placement", "popup-clearance", "scroll-reanchor"] });
     writeReport();
     win.destroy();
     win = undefined;

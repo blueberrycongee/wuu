@@ -117,7 +117,7 @@ async function select(text, last = false, physical = false, backward = false, al
     if (backward) selection.setBaseAndExtent(endNode, endOffset, startNode, startOffset);
     document.dispatchEvent(new Event("selectionchange"));
     root.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 1 }));
-    return { text, start, end, source, from: { x: Math.round(a.x), y: Math.round(a.y + a.height / 2) }, to: { x: Math.round(b.x), y: Math.round(b.y + b.height / 2) } };
+    return { text, renderedText: selection.toString(), start, end, source, from: { x: Math.round(a.x), y: Math.round(a.y + a.height / 2) }, to: { x: Math.round(b.x), y: Math.round(b.y + b.height / 2) } };
   }, surface, text, last, backward);
   if (physical) {
     await evaluate(() => window.getSelection().removeAllRanges());
@@ -328,7 +328,7 @@ async function run() {
   report.cases.push("quote-only submission retains rich metadata and flattened quote");
 
   const multilineQuote = await evaluate(selector => document.querySelector(selector).textContent, surface);
-  await add(multilineQuote);
+  const multilineSelection = await add(multilineQuote);
   const longComment = `Long annotation with English and 中文.\n${"中文需要保持完整并正确换行。".repeat(16)}\n${"unbroken_annotation_".repeat(32)}`;
   for (const [width, height, font, theme] of [[1200, 820, 14, "light"], [1200, 820, 20, "dark"], [390, 820, 14, "dark"], [390, 820, 20, "light"]]) {
     win.setContentSize(width, height);
@@ -347,7 +347,10 @@ async function run() {
     }, "quote editor within viewport");
     await checkAnnotationPanel(`${theme}-${width}-${font}-quote`);
     const shownQuote = await evaluate(() => document.querySelector(".composer-selection-quote")?.textContent);
-    if (shownQuote !== multilineQuote) throw new Error("Annotation quote lost original whitespace or text");
+    // Chromium Selection text inserts rendered paragraph breaks that DOM
+    // textContent intentionally omits. Compare against the native selection,
+    // not concatenated DOM text; the source offsets still refer to textContent.
+    if (shownQuote !== multilineSelection.renderedText) throw new Error(`Annotation quote lost original whitespace or text: ${JSON.stringify({ expected: multilineSelection.renderedText, actual: shownQuote })}`);
     await click(".composer-selection-actions button:first-child");
     await input(".composer-selection-comment-input", longComment);
     await checkAnnotationPanel(`${theme}-${width}-${font}-long-comment`);
