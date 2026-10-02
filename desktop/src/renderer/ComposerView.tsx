@@ -1274,7 +1274,7 @@ export function Composer({
               images={textOnly ? [] : images}
               files={textOnly ? [] : files}
               selections={selections}
-              pastedTexts={activeCollapsedPromptBlocks.filter((block) => block.part?.type !== "file_selection")}
+              pastedTexts={activeCollapsedPromptBlocks}
               fileSelections={fileSelectionParts}
               inlineSelection={inlineSelection}
               onRemoveFileSelection={readOnly ? undefined : removeFileSelection}

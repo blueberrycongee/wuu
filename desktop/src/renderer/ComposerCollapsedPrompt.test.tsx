@@ -23,7 +23,7 @@ let container: HTMLDivElement;
 let root: Root | null = null;
 let storageKeyCounter = 0;
 
-it("keeps each quote as its own tray card and edits or removes one without losing the other", () => {
+it("keeps each quote as its own tray card and edits or removes one without losing the other", async () => {
   const quote: ResponseSelection = {
     id: "quote-1", text: `${longText()}\nFinal quoted line`,
     source: { thread_id: "thread", turn_id: "turn", item_id: "item", start_offset: 0, end_offset: 200 },
@@ -44,7 +44,9 @@ it("keeps each quote as its own tray card and edits or removes one without losin
   act(() => cards()[0].querySelector<HTMLButtonElement>(".composer-document-card-main")!.click());
   expect(document.querySelector("[role=dialog] blockquote")?.textContent).toBe(quote.text);
   const textarea = document.querySelector<HTMLTextAreaElement>("[role=dialog] textarea")!;
-  expect(document.activeElement).toBe(textarea);
+  await act(async () => {
+    await vi.waitFor(() => expect(document.activeElement).toBe(textarea));
+  });
   act(() => {
     Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(textarea, "Explain this part");
     textarea.dispatchEvent(new Event("input", { bubbles: true }));

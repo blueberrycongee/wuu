@@ -709,8 +709,8 @@ describe.each(["main", "split"] as const)("%s composer file selections", (varian
     ]);
   });
 
-  it("keeps file selections separate from paste attachments and sends their structured metadata", () => {
-    const owner = `file-selection-send-${variant}`;
+  it.each(["send", "reveal", "remove"] as const)("keeps file selections and metadata intact when a mixed paste is used to %s", (action) => {
+    const owner = `file-selection-paste-${variant}-${action}`;
     const first = fileSelection("first");
     const second = fileSelection("second");
     const pasted = { type: "pasted_text" as const, text: longPastedPrompt() };
@@ -723,12 +723,21 @@ describe.each(["main", "split"] as const)("%s composer file selections", (varian
     expect(container.querySelectorAll(".composer-collapsed-prompt-card")).toHaveLength(1);
     const input = container.querySelector<HTMLTextAreaElement>("textarea")!;
     expect(input.value).toBe("Follow up");
-    openComments();
-    expect(document.querySelector(".composer-response-selection-quote")?.textContent).toBe(first.source.quote);
+    if (action !== "send") {
+      const selector = action === "reveal" ? ".composer-document-card-main" : ".composer-attachment-card-remove";
+      act(() => container.querySelector<HTMLButtonElement>(`.composer-collapsed-prompt-card ${selector}`)!.click());
+      expect(container.querySelectorAll(".composer-collapsed-prompt-card")).toHaveLength(0);
+      expect(container.querySelectorAll(".composer-file-selection-card")).toHaveLength(2);
+      expect(input.value).toBe(action === "reveal" ? "Follow up" + pasted.text : "Follow up");
+    } else {
+      openComments();
+      expect(document.querySelector(".composer-response-selection-quote")?.textContent).toBe(first.source.quote);
+    }
+    const expectedParts = action === "send" ? parts : [first, second, { type: "text", text: input.value }];
     act(() => {
       input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
     });
-    expect(onSend).toHaveBeenCalledWith(prompt, parts);
+    expect(onSend).toHaveBeenCalledWith(expectedParts.map(part => part.text).join(""), expectedParts);
   });
 
   it("edits comments inline, then removes the last attachment without losing visible text", () => {

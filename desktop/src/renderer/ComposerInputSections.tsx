@@ -323,7 +323,7 @@ export function SplitPaneComposer({
               images={images}
               files={files}
               selections={selections}
-              pastedTexts={collapsedPromptBlocks.filter((block) => block.part?.type !== "file_selection")}
+              pastedTexts={collapsedPromptBlocks}
               fileSelections={fileSelectionParts}
               onRemoveFileSelection={readOnly ? undefined : removeFileSelection}
               onEditFileSelection={readOnly ? undefined : (part, comment) => updateFileComment(part.id, comment)}

@@ -404,6 +404,7 @@ async function selectFile(file, quote) {
 }
 
 async function clickButton(scope, text, selector = "button") {
+  await settle();
   const target = await waitFor(({ scope, text, selector }) => {
     const root = document.querySelector(scope) || document;
     const element = Array.from(root.querySelectorAll(selector)).find(button => button.textContent.trim() === text || button.getAttribute("aria-label") === text);
@@ -420,6 +421,8 @@ async function clickButton(scope, text, selector = "button") {
 }
 
 async function click(selector) {
+  await visibleGeometry(selector);
+  await settle();
   const rect = await visibleGeometry(selector);
   await mouseClick({ x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 });
 }
@@ -525,12 +528,16 @@ async function checkFilePlacement(name) {
   return geometry;
 }
 
-async function screenshot(name) {
+async function settle() {
   await evaluate(() => Promise.race([
     Promise.all(document.getAnimations().filter(animation => Number.isFinite(animation.effect?.getComputedTiming().endTime)).map(animation => animation.finished.catch(() => undefined))),
     new Promise(resolve => setTimeout(resolve, 1500)),
   ]));
   await frame();
+}
+
+async function screenshot(name) {
+  await settle();
   const target = path.join(output, `${name}.png`);
   fs.writeFileSync(target, (await win.webContents.capturePage()).toPNG());
   report.screenshots.push(target);

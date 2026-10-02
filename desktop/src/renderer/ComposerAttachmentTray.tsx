@@ -41,7 +41,8 @@ function trayCards(
     ...images.map((image, index) => ({ key: `image:${image.id}`, kind: "image" as const, image, number: index + 1 })),
     ...files.map((file, index) => ({ key: `file:${file.id}`, kind: "file" as const, file, number: index + 1 })),
     ...selections.map((selection) => ({ key: `quote:${selection.id}`, kind: "quote" as const, selection })),
-    ...pastedTexts.map((block, index) => ({ key: `text:${block.id}`, kind: "text" as const, block, index })),
+    ...pastedTexts.flatMap((block, index) => block.part?.type === "file_selection" ? []
+      : [{ key: `text:${block.id}`, kind: "text" as const, block, index }]),
     ...(inlineSelection ? [{ key: "inline-selection", kind: "inline-selection" as const, content: inlineSelection }] : []),
     ...fileSelections.map(part => ({ key: `file-selection:${part.id}`, kind: "file-selection" as const, part })),
   ];
@@ -90,6 +91,7 @@ export function ComposerAttachmentTray({
   files: ComposerFile[];
   /** Quoted assistant passages; their comments edit in place from the card. */
   selections?: ResponseSelection[];
+  /** All folded blocks, so paste actions retain their original prompt indices. */
   pastedTexts: CollapsedComposerPromptBlock[];
   fileSelections?: FileSelectionPart[];
   inlineSelection?: ReactNode;
