@@ -39,6 +39,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Refine Project Agent guidance for settled implementation decisions, coherent
+  work batches and consolidated review feedback, reusing valid verification and
+  useful running processes across follow-ups.
+
 - Share equivalent quota HTTP reads only while they are pending, preserving
   credential isolation, independent cancellation, and fresh later refreshes.
 
