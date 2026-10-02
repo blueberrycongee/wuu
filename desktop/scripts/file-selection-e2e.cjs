@@ -334,6 +334,7 @@ async function clickButton(scope, text, selector = "button") {
     const root = document.querySelector(scope) || document;
     const element = Array.from(root.querySelectorAll(selector)).find(button => button.textContent.trim() === text || button.getAttribute("aria-label") === text);
     if (!element || element.disabled) return null;
+    element.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "instant" });
     const rect = element.getBoundingClientRect();
     if (!rect.width || !rect.height) return null;
     const x = rect.x + rect.width / 2, y = rect.y + rect.height / 2;
