@@ -4206,6 +4206,7 @@ export function App(): JSX.Element {
         : latestTab?.kind === "draft" && latest.activeSessionTabID === sessionTabID;
       const latestDraft = pane ? composerDraftsRef.current.split[pane] : composerDraftsRef.current.primary();
       if (stillTarget && !composerDraftHasContent(latestDraft)) {
+        rememberCollapsedPromptParts(submittedThread?.id ?? sessionTabID, recoveryDraft.prompt, recoveryDraft.contentParts);
         if (pane) {
           setSplitComposerDrafts((current) => ({ ...current, [pane]: recoveryDraft }));
         } else {

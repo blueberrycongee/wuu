@@ -61,8 +61,9 @@ export function ComposerSelectionChip({ items, onChangeResponse, onRemoveRespons
     const escape = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       event.preventDefault();
+      event.stopPropagation();
+      if (panelRef.current?.contains(document.activeElement)) anchorRef.current?.focus({ preventScroll: true });
       close();
-      anchorRef.current?.focus({ preventScroll: true });
     };
     document.addEventListener("pointerdown", dismiss, true);
     document.addEventListener("keydown", escape, true);
@@ -95,7 +96,13 @@ export function ComposerSelectionChip({ items, onChangeResponse, onRemoveRespons
       onPointerLeave={(event) => { if (event.pointerType !== "touch") scheduleClose(); }}
       onFocus={() => { cancelClose(); setOpen(true); }}
       onBlur={(event) => { if (!contains(event.relatedTarget)) scheduleClose(); }}
-      onClick={() => { cancelClose(); setOpen(true); }}>
+      onClick={() => { cancelClose(); setOpen(true); }}
+      onKeyDown={(event) => {
+        if (event.key === "Tab" && !event.shiftKey && open) {
+          const first = panelRef.current?.querySelector<HTMLButtonElement>("button");
+          if (first) { event.preventDefault(); first.focus(); }
+        }
+      }}>
       <MessageSquare aria-hidden="true" /><span>{label}</span>
     </button>
     {open ? <FloatingMenuPortal anchorRef={anchorRef} owner="composer-attach" placement="above" align="left" width={420} flip

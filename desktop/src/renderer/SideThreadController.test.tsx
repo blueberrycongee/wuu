@@ -7,6 +7,7 @@ import type {
   SideThreadEventEnvelope,
   SideThreadHistoryResult,
   SideThreadSendResult,
+  SideThreadSelection,
   SideThreadSummary
 } from "../shared/protocol";
 import {
@@ -245,6 +246,32 @@ describe("useSideThreadController", () => {
     expect(hook.get().entry?.draft).toBe("retry me");
     expect(hook.get().entry?.streaming).toBe(false);
     expect(hook.get().entry?.lastError).toBe("provider unavailable");
+  });
+
+  it.each(["unchanged", "text", "selection", "both"] as const)("restores a failed selection request only as a pair when the next draft is %s", async (nextDraft) => {
+    const send = deferred<SideThreadSendResult>();
+    const { ipc } = makeIPC({ sendSideThreadMessage: vi.fn(() => send.promise) });
+    const hook = mountController(ipc);
+    const selection: SideThreadSelection = { type: "file", file: {
+      workspace: "/repo", path: "first.ts", start_line: 1, start_column: 1,
+      end_line: 1, end_column: 5, quote: "first", revision: "first-revision",
+    } };
+    const nextSelection: SideThreadSelection = { type: "file", file: {
+      ...selection.file, path: "next.ts", quote: "other", revision: "next-revision",
+    } };
+    act(() => { hook.get().setDraft("First question"); hook.get().setDraftSelection(selection); });
+    act(() => hook.get().sendMessage("First question"));
+    expect(ipc.sendSideThreadMessage).toHaveBeenCalledWith({ main_thread_id: "main-1", prompt: "First question", selection });
+    act(() => {
+      if (nextDraft === "text" || nextDraft === "both") hook.get().setDraft("Next question");
+      if (nextDraft === "selection" || nextDraft === "both") hook.get().setDraftSelection(nextSelection);
+    });
+    send.reject(new Error("offline"));
+    await flush();
+    expect(hook.get().entry?.draft).toBe(nextDraft === "unchanged" ? "First question" : nextDraft === "selection" ? "" : "Next question");
+    expect(hook.get().entry?.draftSelection).toEqual(nextDraft === "unchanged" ? selection : nextDraft === "text" ? undefined : nextSelection);
+    expect(hook.get().entry?.streaming).toBe(false);
+    expect(hook.get().entry?.messages).toEqual([]);
   });
 
   it("keeps open state and drafts isolated across main-thread switches", async () => {

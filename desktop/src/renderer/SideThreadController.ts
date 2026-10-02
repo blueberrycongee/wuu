@@ -453,14 +453,15 @@ export function useSideThreadController(
               mainThreadId: activeThreadId,
               error: errorMessage(error)
             });
-            if (!next.byThread[activeThreadId]?.draft) {
+            const nextDraft = next.byThread[activeThreadId];
+            // Text and its selected source belong to one submission. Restoring
+            // either field alone can attach failed context to a newer question.
+            if (!nextDraft?.draft && !nextDraft?.draftSelection) {
               next = reduceSideThreadStore(next, {
                 type: "setDraft",
                 mainThreadId: activeThreadId,
                 draft: trimmed
               });
-            }
-            if (!next.byThread[activeThreadId]?.draftSelection && selection) {
               next = reduceSideThreadStore(next, { type: "setDraftSelection", mainThreadId: activeThreadId, selection });
             }
             return next;

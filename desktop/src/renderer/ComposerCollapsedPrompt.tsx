@@ -255,7 +255,7 @@ export function useCollapsedComposerPrompt({
     ];
   }
 
-  function applyBlocks(nextBlocks: CollapsedComposerPromptBlock[], nextVisiblePrompt: string): void {
+  function applyBlocks(nextBlocks: CollapsedComposerPromptBlock[], nextVisiblePrompt: string, focusComposer = true): void {
     const nextPrompt = nextBlocks.map((block) => block.text).join("") + nextVisiblePrompt;
     if (storageKey) {
       rememberCollapsedPromptParts(storageKey, nextPrompt, nextBlocks.map((block) =>
@@ -265,7 +265,7 @@ export function useCollapsedComposerPrompt({
       setLocalBlocks(nextBlocks);
     }
     setPrompt(nextPrompt);
-    focusComposerSoon();
+    if (focusComposer) focusComposerSoon();
   }
 
   // Registry entries are changed only by explicit metadata operations. A
@@ -347,7 +347,7 @@ export function useCollapsedComposerPrompt({
     const part = buildFileSelectionPart(block.part.source, block.part.intent, comment, id);
     applyBlocks(activeBlocks.map((current, blockIndex) => blockIndex === index
       ? { ...block, text: part.text, part }
-      : current), visiblePrompt);
+      : current), visiblePrompt, false);
   }
 
   function removeFileSelection(id: string | string[]): void {

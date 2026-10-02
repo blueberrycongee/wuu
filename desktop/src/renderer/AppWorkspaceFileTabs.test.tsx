@@ -422,9 +422,26 @@ describe("workspace file tabs", () => {
     await flushAsync();
   }
 
+  it("restores file selection chips after first turn failure with untouched draft", async () => {
+    await openSelectionDocument();
+    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="在 对话 中新建对话"]')!.click());
+    await flushAsync();
+    vi.mocked(window.wuu.startThread).mockResolvedValueOnce({ thread: { ...completedThread(), id: "thread-review-new", turns: [] } });
+    startTurnMock.mockRejectedValueOnce(new Error("offline"));
+    await typeMainPrompt("Original question");
+    act(() => selectionActions!.addComment(selectionSource, "Original comment"));
+    const original = selectionActions!.comments[0];
+    await submitMainPrompt();
+    await flushAsync();
+    expect(startTurnMock).toHaveBeenCalledTimes(1);
+    expect(selectionActions!.comments).toEqual([original]);
+    expect(container.querySelector<HTMLTextAreaElement>("[data-main-conversation-composer] textarea")!.value).toBe("Original question");
+    expect(container.querySelector(".composer-selection-chip")).not.toBeNull();
+  });
+
   it.each(["thread", "turn"] as const)("preserves file comments after first %s failure without replacing a newer draft", async (failure) => {
     await openSelectionDocument();
-    const newConversation = container.querySelector<HTMLButtonElement>('button[aria-label="在 对话 中新建会话"]');
+    const newConversation = container.querySelector<HTMLButtonElement>('button[aria-label="在 对话 中新建对话"]');
     expect(newConversation).not.toBeNull();
     await act(async () => newConversation!.click());
     await flushAsync();
@@ -545,7 +562,7 @@ describe("workspace file tabs", () => {
 
   it("keeps unrelated comments under their new owner when a first inline edit fails", async () => {
     await openSelectionDocument();
-    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="在 对话 中新建会话"]')!.click());
+    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="在 对话 中新建对话"]')!.click());
     await flushAsync();
     await typeMainPrompt("Keep this draft");
     act(() => selectionActions!.addComment(selectionSource, "Keep this comment"));
@@ -565,10 +582,10 @@ describe("workspace file tabs", () => {
 
   it("restores an attachment once when thread creation throws before draft state clears", async () => {
     await openSelectionDocument();
-    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="在 对话 中新建会话"]')!.click());
+    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="在 对话 中新建对话"]')!.click());
     await flushAsync();
     const attachment = { id: "file-selection-retry-attachment", filename: "context.pdf", media_type: "application/pdf", data: "JVBERg==" };
-    const encode = vi.spyOn(composerMessages, "composerFileFromFile").mockResolvedValue(attachment);
+    const encode = vi.spyOn(composerMessages, "composerFilePlaceholder").mockReturnValue({ ...attachment, encodePromise: Promise.resolve(attachment) });
     try {
       const input = container.querySelector<HTMLInputElement>("[data-main-conversation-composer] input[type=file]")!;
       Object.defineProperty(input, "files", { configurable: true, value: [new File(["%PDF"], attachment.filename, { type: attachment.media_type })] });

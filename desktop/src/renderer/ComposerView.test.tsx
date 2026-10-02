@@ -754,6 +754,58 @@ describe.each(["main", "split"] as const)("%s composer file selections", (varian
     expect(input.value).toBe("Keep this follow-up");
   });
 
+  it("keeps focus in the annotation editor after typing across animation frames", async () => {
+    const owner = `file-selection-focus-${variant}`;
+    const file = fileSelection("focus-comment");
+    rememberCollapsedPromptParts(owner, file.text, [file]);
+    render({ initialPrompt: file.text, queryHistorySessionID: owner });
+    openComments();
+    act(() => document.querySelector<HTMLButtonElement>(".composer-selection-actions button")!.click());
+    const editor = document.querySelector<HTMLTextAreaElement>(".composer-selection-comment-input")!;
+    expect(document.activeElement).toBe(editor);
+    await act(async () => {
+      setTextareaValue(editor, "Keep typing here");
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    });
+    expect(document.activeElement).toBe(editor);
+    expect(editor.value).toBe("Keep typing here");
+    expect(container.querySelector<HTMLTextAreaElement>("textarea")!.value).toBe("");
+  });
+
+  it("dismisses selection editing with Escape without reopening or losing the draft", () => {
+    const owner = `file-selection-escape-${variant}`;
+    const file = fileSelection("escape-comment");
+    const prompt = file.text + "Keep this follow-up";
+    rememberCollapsedPromptParts(owner, prompt, [file]);
+    render({ initialPrompt: prompt, queryHistorySessionID: owner });
+    openComments();
+    act(() => document.querySelector<HTMLButtonElement>(".composer-selection-actions button")!.click());
+    const editor = document.querySelector<HTMLTextAreaElement>(".composer-selection-comment-input")!;
+    expect(document.activeElement).toBe(editor);
+    act(() => setTextareaValue(editor, "Keep the edited comment"));
+    act(() => editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })));
+    expect(document.querySelector(".composer-selection-panel")).toBeNull();
+    const chip = container.querySelector<HTMLButtonElement>(".composer-selection-chip")!;
+    expect(document.activeElement).toBe(chip);
+    expect(chip.getAttribute("aria-expanded")).toBe("false");
+    expect(container.querySelector<HTMLTextAreaElement>("textarea")!.value).toBe("Keep this follow-up");
+    openComments();
+    expect(document.querySelector(".composer-selection-comment")?.textContent).toContain("Keep the edited comment");
+  });
+
+  it("lets keyboard users enter selection actions from the chip", () => {
+    const owner = `file-selection-keyboard-${variant}`;
+    const file = fileSelection("keyboard-comment");
+    rememberCollapsedPromptParts(owner, file.text, [file]);
+    render({ initialPrompt: file.text, queryHistorySessionID: owner });
+    const chip = container.querySelector<HTMLButtonElement>(".composer-selection-chip")!;
+    act(() => chip.focus());
+    const tab = new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true });
+    act(() => chip.dispatchEvent(tab));
+    expect(tab.defaultPrevented).toBe(true);
+    expect(document.activeElement).toBe(document.querySelector(".composer-selection-actions button"));
+  });
+
   it("keeps file metadata visible but immutable in a read-only composer", () => {
     const owner = `file-selection-readonly-${variant}`;
     const file = fileSelection("readonly");
