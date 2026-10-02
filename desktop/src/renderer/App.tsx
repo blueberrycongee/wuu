@@ -4637,7 +4637,7 @@ export function App(): JSX.Element {
       || draftEngine
       || engineInventory?.settings?.default_engine
       || "wuu";
-    if (newThreadEngine === "wuu" && !hasReadyProvider(currentState.initialized?.providers)) {
+    if (!targetThread && newThreadEngine === "wuu" && !hasReadyProvider(currentState.initialized?.providers)) {
       showNoModelConfiguredToast();
       return false;
     }

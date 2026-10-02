@@ -517,9 +517,23 @@ describe("workspace file tabs", () => {
   });
 
   it.each([
+    { name: "empty inventory", providers: [] },
+    { name: "missing readiness flags", providers: [{ name: "fake", type: "openai-compatible", model: "fake-model" }] },
+  ])("submits an existing conversation with $name in the provider readiness snapshot", async ({ providers }) => {
+    vi.mocked(window.wuu.initialize).mockResolvedValue({ ...initialized(), providers });
+    await openSelectionDocument();
+    await typeMainPrompt("Continue the existing conversation");
+    await act(async () => container.querySelector<HTMLButtonElement>("[data-main-conversation-composer] .composer-send-button")!.click());
+    await flushAsync();
+    expect(startTurnMock).toHaveBeenCalledTimes(1);
+    expect(startTurnMock.mock.calls[0][0]).toBe(completedThread().id);
+    expect(startTurnMock.mock.calls[0][1]).toBe("Continue the existing conversation");
+  });
+
+  it.each([
     { engine: "codex", providers: false, phase: "idle", accepted: true, queued: false },
     { engine: "wuu", providers: true, phase: "answer-ready", accepted: true, queued: false },
-    { engine: "wuu", providers: false, phase: "idle", accepted: false, queued: false },
+    { engine: "wuu", providers: false, phase: "idle", accepted: true, queued: false },
     { engine: "wuu", providers: true, phase: "running", accepted: true, queued: true },
   ])("routes $engine selection edits in a $phase split pane (providers=$providers)", async ({ engine, providers, phase, accepted, queued }) => {
     if (!providers) vi.mocked(window.wuu.initialize).mockResolvedValue({ ...initialized(), providers: [] });
