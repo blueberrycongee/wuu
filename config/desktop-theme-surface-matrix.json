@@ -490,7 +490,7 @@
     {
       "name": "unanchored:onboarding.css",
       "synthetic": true,
-      "rows": 24
+      "rows": 22
     },
     {
       "name": "unanchored:plugins-catalog.css",
@@ -1187,10 +1187,8 @@
     {"anchor":"unanchored:onboarding.css","state":"default","file":"onboarding.css","selector":".onboarding-error > span","prop":"color","variable":"--ink-soft","status":"bridged","tokens":["--wuu-color-text-muted"]},
     {"anchor":"unanchored:onboarding.css","state":"default","file":"onboarding.css","selector":".onboarding-heading > h1","prop":"color","variable":"--ink-strong","status":"bridged","tokens":["--wuu-color-text"]},
     {"anchor":"unanchored:onboarding.css","state":"default","file":"onboarding.css","selector":".onboarding-lead","prop":"color","variable":"--ink-soft","status":"bridged","tokens":["--wuu-color-text-muted"]},
-    {"anchor":"unanchored:onboarding.css","state":"default","file":"onboarding.css","selector":".onboarding-note","prop":"color","variable":"--ink-tertiary","status":"bridged","tokens":["--wuu-color-canvas","--wuu-color-text-muted"]},
     {"anchor":"unanchored:onboarding.css","state":"default","file":"onboarding.css","selector":".onboarding-progress-dot","prop":"background","variable":"--hairline-strong","status":"bridged","tokens":["--wuu-color-border-strong"]},
     {"anchor":"unanchored:onboarding.css","state":"default","file":"onboarding.css","selector":".onboarding-progress-dot[data-state]","prop":"background","variable":"--ink-strong","status":"bridged","tokens":["--wuu-color-text"]},
-    {"anchor":"unanchored:onboarding.css","state":"default","file":"onboarding.css","selector":".onboarding-recommended","prop":"color","variable":"--ink-tertiary","status":"bridged","tokens":["--wuu-color-canvas","--wuu-color-text-muted"]},
     {"anchor":"unanchored:onboarding.css","state":"default","file":"onboarding.css","selector":".onboarding-status","prop":"color","variable":"--ink-tertiary","status":"bridged","tokens":["--wuu-color-canvas","--wuu-color-text-muted"]},
     {"anchor":"unanchored:onboarding.css","state":"hover","file":"onboarding.css","selector":".onboarding-plugin:hover, .onboarding-engine:hover","prop":"background","variable":"--surface-1","status":"bridged","tokens":["--wuu-color-surface"]},
     {"anchor":"unanchored:plugins-catalog.css","state":"default","file":"plugins-catalog.css","selector":".catalog-row + .catalog-row","prop":"border-top","variable":"--hairline-soft","status":"bridged","tokens":["--wuu-border-subtle"]},

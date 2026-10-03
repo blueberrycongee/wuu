@@ -10,6 +10,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Keep first-run choices beside the companion, with scrolling content and
+  fixed actions, and remove explanations repeated by the available choices.
+
 - Review changes in a responsive folder-grouped list, with file navigation,
   viewed marks, and an action to open the current file in the editor.
 

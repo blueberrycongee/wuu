@@ -18,13 +18,3 @@ export const PLUGIN_DESCRIPTION_KEYS: Readonly<Record<string, TranslationKey>> =
   dream: "onboarding.plugin.dream",
   peers: "onboarding.plugin.peers",
 };
-
-export const ONBOARDING_ENGINES: readonly {
-  id: string;
-  label: string;
-  readyDescription: TranslationKey;
-}[] = [
-  { id: "wuu", label: "Wuu", readyDescription: "onboarding.engine.wuu" },
-  { id: "codex", label: "Codex", readyDescription: "onboarding.engine.codexReady" },
-  { id: "claude", label: "Claude Code", readyDescription: "onboarding.engine.claudeReady" },
-];

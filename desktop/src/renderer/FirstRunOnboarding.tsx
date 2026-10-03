@@ -14,7 +14,7 @@ import type { TranslationKey } from "./i18n/resources/zh-CN";
 import { engineLabel } from "./EngineDisplay";
 import { EngineIcon } from "./EngineIcons";
 import { ServiceConnector, ServiceMark, serviceIdentity, useCatalogProviders } from "./ModelServicesPage";
-import { ONBOARDING_ENGINES, ONBOARDING_PLUGIN_ORDER, PLUGIN_DESCRIPTION_KEYS, RECOMMENDED_PLUGIN_IDS } from "./onboardingCatalog";
+import { ONBOARDING_PLUGIN_ORDER, PLUGIN_DESCRIPTION_KEYS, RECOMMENDED_PLUGIN_IDS } from "./onboardingCatalog";
 import { OnboardingMascotStage } from "./OnboardingMascotStage";
 import { PREVIEW_PLUGINS } from "./onboardingPreview";
 import { ProviderMark } from "./ProviderMarks";
@@ -142,19 +142,13 @@ export function FirstRunOnboarding({
   // where they can be installed or turned on.
   const selectableEngines = useMemo(
     () => [
-      ONBOARDING_ENGINES[0],
+      { id: RECOMMENDED_ENGINE, label: engineLabel(RECOMMENDED_ENGINE) },
       ...(engines?.engines ?? [])
         .filter((engine: EngineInfo) => engine.id !== RECOMMENDED_ENGINE && engine.enabled && engine.binary_ok)
-        .map((engine: EngineInfo) => ({
-          id: engine.id,
-          label: engineLabel(engine.id, engine),
-          readyDescription: ONBOARDING_ENGINES.find((choice) => choice.id === engine.id)?.readyDescription ?? "settings.engineReady" as const,
-        })),
+        .map((engine: EngineInfo) => ({ id: engine.id, label: engineLabel(engine.id, engine) })),
     ],
     [engines],
   );
-  const unavailableEngines = (engines?.engines ?? [])
-    .some((engine) => engine.id !== RECOMMENDED_ENGINE && !(engine.enabled && engine.binary_ok));
   const externalEngine = selectedEngine === RECOMMENDED_ENGINE
     ? undefined
     : selectableEngines.find((engine) => engine.id === selectedEngine)?.label;
@@ -311,11 +305,10 @@ export function FirstRunOnboarding({
           : step === "provider" ? (providerReady ? { label: t("onboarding.continue"), disabled: false, run: () => setStep("ready") } : undefined)
             : { label: finishing ? t("onboarding.finishing") : t("onboarding.enterWuu"), disabled: finishing, run: () => void finish() };
   const back = step === "plugins" ? "welcome" : step === "runtime" ? "plugins" : step === "provider" ? "runtime" : undefined;
-  const lead = step === "welcome" ? t("onboarding.welcomeLead")
-    : step === "plugins" ? t("onboarding.pluginsLead")
-      : step === "provider" && externalEngine ? t("onboarding.externalEngineConnection", { agent: externalEngine })
-        : step === "ready" && selectedEngine === RECOMMENDED_ENGINE && !providerReady && !connected ? t("onboarding.readyNoModel")
-          : undefined;
+  // Only a consequence the choices do not show earns a line under the title.
+  const lead = step === "provider" && externalEngine ? t("onboarding.externalEngineConnection", { agent: externalEngine })
+    : step === "ready" && selectedEngine === RECOMMENDED_ENGINE && !providerReady && !connected ? t("onboarding.readyNoModel")
+      : undefined;
 
   const connector = (
     <ServiceConnector
@@ -377,139 +370,131 @@ export function FirstRunOnboarding({
         aria-labelledby={titleID}
         onKeyDown={takeDefaultAction}
       >
-        <div className="onboarding-masthead">
+        <OnboardingMascotStage
+          pluginIDs={step === "welcome" ? [] : wornPluginIDs}
+          engineID={step === "welcome" || step === "plugins" ? undefined : selectedEngine}
+        />
+        <div className="onboarding-panel">
           <div className="onboarding-heading" key={step}>
             <h1 id={titleID} ref={titleRef} tabIndex={-1}>
               {t(step === "provider" && providerReady ? "onboarding.providerReadyTitle" : STEP_TITLES[step])}
             </h1>
             {lead ? <p className="onboarding-lead">{lead}</p> : null}
           </div>
-          <OnboardingMascotStage
-            pluginIDs={step === "welcome" ? [] : wornPluginIDs}
-            engineID={step === "welcome" || step === "plugins" ? undefined : selectedEngine}
-          />
-        </div>
 
-        {step === "plugins" ? (
-          <div className="onboarding-body" data-scroll-fade="">
-            <div className="theme-segmented onboarding-presets" role="group" aria-label={t("onboarding.presets")}>
-              {(["minimal", "recommended", "all"] as const).map((item) => (
-                <button
-                  key={item}
-                  type="button"
-                  aria-pressed={preset === item}
-                  disabled={applyingPlugins}
-                  onClick={() => choosePreset(item)}
-                >
-                  {t(`onboarding.preset.${item}`)}
-                </button>
-              ))}
-            </div>
-            {inventory === undefined ? (
-              <p className="onboarding-status" role="status">
-                <LoaderCircle className="icon settings-spin" aria-hidden="true" />
-                {t("onboarding.loadingPlugins")}
-              </p>
-            ) : bundledPlugins.length === 0 ? (
-              <p className="onboarding-status" role="alert">{t("onboarding.pluginsUnavailable")}</p>
-            ) : (
-              <div className="onboarding-plugins">
-                {bundledPlugins.map((plugin) => (
-                  <OnboardingPluginChoice
-                    key={plugin.id}
-                    plugin={plugin}
-                    selected={selectedPluginIDs.has(plugin.id)}
+          {step === "plugins" ? (
+            <div className="onboarding-body" data-scroll-fade="">
+              <div className="theme-segmented onboarding-presets" role="group" aria-label={t("onboarding.presets")}>
+                {(["minimal", "recommended", "all"] as const).map((item) => (
+                  <button
+                    key={item}
+                    type="button"
+                    aria-pressed={preset === item}
                     disabled={applyingPlugins}
-                    onToggle={() => togglePlugin(plugin.id)}
-                  />
+                    onClick={() => choosePreset(item)}
+                  >
+                    {t(`onboarding.preset.${item}`)}
+                  </button>
                 ))}
               </div>
-            )}
-          </div>
-        ) : null}
-
-        {step === "runtime" ? (
-          <div className="onboarding-body" data-scroll-fade="">
-            <div className="onboarding-engines" role="radiogroup" aria-labelledby={titleID}>
-              {selectableEngines.map((engine) => {
-                const nameID = `${titleID}-engine-${engine.id}`;
-                const descriptionID = `${nameID}-description`;
-                return (
-                  <label key={engine.id} className="onboarding-engine">
-                    <input
-                      className="settings-engine-radio"
-                      type="radio"
-                      name={`${titleID}-engine`}
-                      checked={selectedEngine === engine.id}
-                      disabled={savingRuntime}
-                      aria-labelledby={nameID}
-                      aria-describedby={descriptionID}
-                      data-testid={`onboarding-engine-${engine.id}`}
-                      onChange={() => setSelectedEngine(engine.id)}
+              {inventory === undefined ? (
+                <p className="onboarding-status" role="status">
+                  <LoaderCircle className="icon settings-spin" aria-hidden="true" />
+                  {t("onboarding.loadingPlugins")}
+                </p>
+              ) : bundledPlugins.length === 0 ? (
+                <p className="onboarding-status" role="alert">{t("onboarding.pluginsUnavailable")}</p>
+              ) : (
+                <div className="onboarding-plugins">
+                  {bundledPlugins.map((plugin) => (
+                    <OnboardingPluginChoice
+                      key={plugin.id}
+                      plugin={plugin}
+                      selected={selectedPluginIDs.has(plugin.id)}
+                      disabled={applyingPlugins}
+                      onToggle={() => togglePlugin(plugin.id)}
                     />
-                    <span className="catalog-row-mark" aria-hidden="true">
-                      <EngineIcon engine={engine.id} />
-                    </span>
-                    <span className="catalog-row-title" id={nameID}>
-                      {engine.label}
-                      {engine.id === RECOMMENDED_ENGINE ? <span className="onboarding-recommended">{t("onboarding.recommended")}</span> : null}
-                    </span>
-                    <span className="catalog-row-description" id={descriptionID}>{t(engine.readyDescription)}</span>
-                  </label>
-                );
-              })}
+                  ))}
+                </div>
+              )}
             </div>
-            {unavailableEngines ? <p className="onboarding-note">{t("onboarding.moreAgents")}</p> : null}
-          </div>
-        ) : null}
+          ) : null}
 
-        {step === "provider" ? (
-          <div className="onboarding-body" data-scroll-fade="">
-            {providerReady ? (
-              <SettingsGroup>
-                {providers?.filter(isConfiguredOnboardingProvider).map((provider) => {
-                  const identity = serviceIdentity(provider, t);
+          {step === "runtime" ? (
+            <div className="onboarding-body" data-scroll-fade="">
+              <div className="onboarding-engines" role="radiogroup" aria-labelledby={titleID}>
+                {selectableEngines.map((engine) => {
+                  const nameID = `${titleID}-engine-${engine.id}`;
                   return (
-                    <div key={provider.name} className="catalog-row onboarding-connection">
-                      <span className="catalog-row-mark" aria-hidden="true"><ServiceMark identity={identity} /></span>
-                      <span className="catalog-row-title">{identity.label}</span>
-                      <span className="catalog-row-meta">{provider.model}</span>
-                    </div>
+                    <label key={engine.id} className="onboarding-engine">
+                      <input
+                        className="settings-engine-radio"
+                        type="radio"
+                        name={`${titleID}-engine`}
+                        checked={selectedEngine === engine.id}
+                        disabled={savingRuntime}
+                        aria-labelledby={nameID}
+                        data-testid={`onboarding-engine-${engine.id}`}
+                        onChange={() => setSelectedEngine(engine.id)}
+                      />
+                      <span className="catalog-row-mark" aria-hidden="true">
+                        <EngineIcon engine={engine.id} />
+                      </span>
+                      <span className="catalog-row-title" id={nameID}>{engine.label}</span>
+                    </label>
                   );
                 })}
-              </SettingsGroup>
-            ) : discoveredCodex ? (
-              <>
-                <SettingsGroup>
-                  <button
-                    className="catalog-row"
-                    type="button"
-                    data-testid="onboarding-reuse-codex"
-                    disabled={savingProvider}
-                    onClick={() => void reuseCodexLogin()}
-                  >
-                    <span className="catalog-row-mark" aria-hidden="true">
-                      <ProviderMark id="openai" label="ChatGPT" />
-                    </span>
-                    <span className="catalog-row-title">{t("onboarding.reuseCodexTitle")}</span>
-                    <span className="catalog-row-description">{t("onboarding.reuseCodexDescription")}</span>
-                    {savingProvider
-                      ? <LoaderCircle className="icon settings-spin catalog-row-meta" aria-hidden="true" />
-                      : <ChevronRight className="icon settings-disclosure-chevron" aria-hidden="true" />}
-                  </button>
-                </SettingsGroup>
-                <SettingsSection title={t("onboarding.otherConnection")}>{connector}</SettingsSection>
-              </>
-            ) : connector}
-          </div>
-        ) : null}
+              </div>
+            </div>
+          ) : null}
 
-        {error ? (
-          <p className="onboarding-error" role="alert">
-            {error.title}
-            {error.detail ? <span>{error.detail}</span> : null}
-          </p>
-        ) : null}
+          {step === "provider" ? (
+            <div className="onboarding-body" data-scroll-fade="">
+              {providerReady ? (
+                <SettingsGroup>
+                  {providers?.filter(isConfiguredOnboardingProvider).map((provider) => {
+                    const identity = serviceIdentity(provider, t);
+                    return (
+                      <div key={provider.name} className="catalog-row onboarding-connection">
+                        <span className="catalog-row-mark" aria-hidden="true"><ServiceMark identity={identity} /></span>
+                        <span className="catalog-row-title">{identity.label}</span>
+                        <span className="catalog-row-meta">{provider.model}</span>
+                      </div>
+                    );
+                  })}
+                </SettingsGroup>
+              ) : discoveredCodex ? (
+                <>
+                  <SettingsGroup>
+                    <button
+                      className="catalog-row"
+                      type="button"
+                      data-testid="onboarding-reuse-codex"
+                      disabled={savingProvider}
+                      onClick={() => void reuseCodexLogin()}
+                    >
+                      <span className="catalog-row-mark" aria-hidden="true">
+                        <ProviderMark id="openai" label="ChatGPT" />
+                      </span>
+                      <span className="catalog-row-title">{t("onboarding.reuseCodexTitle")}</span>
+                      {savingProvider
+                        ? <LoaderCircle className="icon settings-spin catalog-row-meta" aria-hidden="true" />
+                        : <ChevronRight className="icon settings-disclosure-chevron" aria-hidden="true" />}
+                    </button>
+                  </SettingsGroup>
+                  <SettingsSection title={t("onboarding.otherConnection")}>{connector}</SettingsSection>
+                </>
+              ) : connector}
+            </div>
+          ) : null}
+
+          {error ? (
+            <p className="onboarding-error" role="alert">
+              {error.title}
+              {error.detail ? <span>{error.detail}</span> : null}
+            </p>
+          ) : null}
+        </div>
 
         <div className="onboarding-actions">
           {back ? (

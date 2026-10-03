@@ -1,6 +1,7 @@
 /* First-run setup. The window opens at 920x720 and cannot be resized, so the
- * column narrows only on small displays. Each step is a title, its choices
- * and the actions that move on, built from the product's own controls. */
+ * layout is drawn for that landscape frame and narrows only on small
+ * displays. Each step is a title, its choices and the actions that move on,
+ * built from the product's own controls. */
 
 .first-run-onboarding {
   position: fixed;
@@ -53,31 +54,41 @@
   -webkit-app-region: no-drag;
 }
 
-/* A step keeps its title at the top and its actions at the bottom, so
- * neither moves as the steps change length; the choices take the space
- * between. */
+/* The choice steps put the companion, which wears what is chosen, beside
+ * the title and choices, both centred in the frame's height. The actions
+ * keep the bottom edge, so they stay put as the steps change length. */
 .onboarding-stage {
-  display: flex;
+  display: grid;
   box-sizing: border-box;
   width: min(100%, calc(var(--content-column-width) + var(--page-padding) * 2));
   min-height: 0;
-  flex-direction: column;
-  gap: var(--space-6);
+  grid-template:
+    "mascot panel" minmax(0, 1fr)
+    "actions actions" auto
+    / minmax(0, 2fr) minmax(0, 3fr);
+  gap: var(--space-4) var(--space-8);
   margin-inline: auto;
   padding: var(--space-2) var(--page-padding) var(--page-padding);
 }
 
+.onboarding-stage > .onboarding-plugin-mascot-stage {
+  grid-area: mascot;
+  place-self: center;
+}
 
-.onboarding-masthead {
-  display: grid;
-  flex: none;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: var(--space-6);
+.onboarding-panel {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  grid-area: panel;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--space-4);
 }
 
 .onboarding-heading {
   display: grid;
+  flex: none;
   min-width: 0;
   gap: var(--space-2);
   --enter-y: 8px;
@@ -107,19 +118,26 @@
   line-height: 1.5;
 }
 
-/* Welcome and ready are greetings: the mascot over a title in the home
- * greeting's serif, centred above their one action. */
-.onboarding-stage-welcome,
-.onboarding-stage-ready {
-  justify-content: center;
-  text-align: center;
+/* On a display narrower than the window the choices keep the full width;
+ * the companion is decoration and steps aside. */
+@media (max-width: 640px) {
+  :is(.onboarding-stage-plugins, .onboarding-stage-runtime, .onboarding-stage-provider) {
+    grid-template: "panel" minmax(0, 1fr) "actions" auto / minmax(0, 1fr);
+  }
+
+  :is(.onboarding-stage-plugins, .onboarding-stage-runtime, .onboarding-stage-provider) > .onboarding-plugin-mascot-stage {
+    display: none;
+  }
 }
 
-.onboarding-stage-welcome .onboarding-masthead,
-.onboarding-stage-ready .onboarding-masthead {
-  display: flex;
-  flex-direction: column-reverse;
-  align-items: center;
+/* Welcome and ready are greetings: the companion over a title in the home
+ * greeting's serif and their one action, centred as a single column. */
+.onboarding-stage-welcome,
+.onboarding-stage-ready {
+  grid-template: "mascot" auto "panel" auto "actions" auto / minmax(0, 1fr);
+  align-content: center;
+  row-gap: var(--space-6);
+  text-align: center;
 }
 
 .onboarding-stage-welcome .onboarding-heading > h1,
@@ -133,11 +151,6 @@
 .onboarding-stage-welcome .onboarding-lead,
 .onboarding-stage-ready .onboarding-lead {
   margin-inline: auto;
-}
-
-.onboarding-masthead .onboarding-plugin-mascot-stage {
-  width: 168px;
-  height: 140px;
 }
 
 .onboarding-plugin-mascot-stage {
@@ -154,11 +167,12 @@
   --equipment-paper: #fffaf0;
   --equipment-binding: #b87540;
   --equipment-accent: #f4b34f;
+  /* The frame holds the mascot; split companions spill over its top edge. */
   position: relative;
   display: grid;
   width: 280px;
   max-width: 100%;
-  height: 260px;
+  height: 200px;
   place-items: center;
   overflow: visible;
 }
@@ -168,13 +182,6 @@
   width: 200px;
   height: 200px;
   isolation: isolate;
-}
-
-.onboarding-masthead .onboarding-mascot-pack {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%) scale(0.7);
 }
 
 .onboarding-mascot-clone {
@@ -288,23 +295,13 @@
 .equipment-progress-current { stroke: var(--equipment-accent); }
 .equipment-progress-next { opacity: 0.25; }
 
-/* Inside the steps the mascot is a small companion beside the title. */
-:is(.onboarding-stage-plugins, .onboarding-stage-runtime, .onboarding-stage-provider) .onboarding-plugin-mascot-stage {
-  width: 120px;
-  height: 100px;
-}
-
-:is(.onboarding-stage-plugins, .onboarding-stage-runtime, .onboarding-stage-provider) .onboarding-mascot-pack {
-  transform: translate(-50%, -50%) scale(0.5);
-}
-
-/* The choices scroll between the title and the actions, and the edge fade
- * says when there are more. The inline bleed keeps row hover surfaces and
+/* The choices scroll under the title when they outgrow the frame, and the
+ * edge fade says when there are more. The inline bleed keeps row hover surfaces and
  * focus rings inside the scroller while the text stays on the column edge. */
 .onboarding-body {
   display: flex;
   min-height: 0;
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   flex-direction: column;
   gap: var(--space-4);
   margin-inline: calc(var(--space-2) * -1);
@@ -312,7 +309,9 @@
   padding: var(--space-1) var(--space-2);
 }
 
-.onboarding-body > * {
+/* The choices enter as one block: rows sliding inside the scroller would
+ * leave Chromium with stale scrollable overflow once they settle. */
+.onboarding-body {
   --enter-y: 8px;
   animation: wuu-enter var(--motion-slow) var(--ease-out) both;
 }
@@ -321,10 +320,9 @@
   align-self: flex-start;
 }
 
-.onboarding-plugins {
+.onboarding-plugins,
+.onboarding-engines {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 18em), 1fr));
-  gap: var(--space-1) var(--space-6);
 }
 
 /* A plugin reads like its catalog row, with the switch that turns it on;
@@ -352,11 +350,6 @@
   grid-row: 1 / span 2;
 }
 
-.onboarding-engines {
-  display: grid;
-  gap: var(--space-1);
-}
-
 .onboarding-engine {
   grid-template-columns: auto var(--icon-size-lg) minmax(0, 1fr);
 }
@@ -370,19 +363,13 @@
   grid-column: 2;
 }
 
-.onboarding-engine > :is(.catalog-row-title, .catalog-row-description) {
+.onboarding-engine > .catalog-row-title {
   grid-column: 3;
 }
 
 .onboarding-plugin:hover,
 .onboarding-engine:hover {
   background: var(--surface-1);
-}
-
-.onboarding-recommended {
-  margin-inline-start: var(--space-2);
-  color: var(--ink-tertiary);
-  font-size: var(--font-sm);
 }
 
 /* Service rows carry vendor marks at the size the Model services tiles use,
@@ -401,13 +388,6 @@
 
 .onboarding-body .catalog-row-mark > .provider-mark {
   --provider-mark-size: var(--onboarding-service-mark);
-}
-
-.onboarding-note {
-  margin: 0;
-  color: var(--ink-tertiary);
-  font-size: var(--font-sm);
-  line-height: 1.5;
 }
 
 .onboarding-status {
@@ -441,7 +421,7 @@
  * on end it. */
 .onboarding-actions {
   display: flex;
-  flex: none;
+  grid-area: actions;
   flex-wrap: wrap;
   align-items: center;
   justify-content: flex-end;
