@@ -21,10 +21,12 @@ import { loadRuntime as defaultLoadRuntime } from "./RuntimeLoadState";
 import { confirmAction } from "./ConfirmDialog";
 import { translateCurrent } from "./i18n";
 import { showErrorToast } from "./Toast";
+import type { PendingViewSwitch } from "./ViewSwitchState";
 
 type SetAppState = (update: SetStateAction<AppState>) => void;
 
 export type WorkspaceRuntimeActionsDeps = {
+  getPendingViewSwitch: () => PendingViewSwitch | undefined;
   getAppState: () => AppState;
   setAppState: SetAppState;
   getComposerDraftSnapshot: () => ComposerDraftSnapshot;
@@ -146,7 +148,7 @@ export function createWorkspaceRuntimeActions(
     failureStatus: string;
   }): Promise<boolean> {
     const currentState = deps.getAppState();
-    if (isCurrentContext(currentState)) {
+    if (isCurrentContext(currentState) && !deps.getPendingViewSwitch()?.contextSwitching) {
       deps.closeWorkspaceMenus();
       const context = currentState.activeContext;
       if (context && (currentState.thread || currentState.secondaryThread)) {
@@ -212,13 +214,14 @@ export function createWorkspaceRuntimeActions(
   }
 
   async function startNewThreadInWorkspace(projectId: string): Promise<boolean> {
+    const contextSwitching = deps.getPendingViewSwitch()?.contextSwitching;
     deps.cancelViewSwitch();
     deps.closeWorkspaceMenus();
     
     const currentState = deps.getAppState();
     if (
       projectId === currentState.activeProjectId &&
-      currentState.activeContext?.kind === "project"
+      currentState.activeContext?.kind === "project" && !contextSwitching
     ) {
       activateWorkspaceDraft(currentState.activeContext);
       return true;

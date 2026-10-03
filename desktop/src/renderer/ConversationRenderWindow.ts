@@ -20,7 +20,7 @@ type RenderWindow = { top: number; height: number; marked: HTMLElement[] };
 
 const windows = new WeakMap<HTMLElement, RenderWindow>();
 
-export function syncConversationRenderWindow(viewport: HTMLElement): void {
+export function syncConversationRenderWindow(viewport: HTMLElement, { force = false }: { force?: boolean } = {}): void {
   const list = viewport.querySelector<HTMLElement>(
     '.cached-conversation-pane[data-active="true"] .conversation-width',
   ) ?? viewport.querySelector<HTMLElement>(".conversation-width");
@@ -28,7 +28,7 @@ export function syncConversationRenderWindow(viewport: HTMLElement): void {
   const top = viewport.scrollTop;
   const height = viewport.clientHeight;
   const previous = windows.get(list);
-  if (previous && previous.height === height &&
+  if (!force && previous && previous.height === height &&
     Math.abs(top - previous.top) < height * LARGE_SCROLL_VIEWPORTS) return;
   const turns = list.getElementsByClassName("turn");
   const viewportTop = viewport.getBoundingClientRect().top;

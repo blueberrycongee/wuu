@@ -8,7 +8,8 @@ export type PendingViewSwitch = {
   kind: PendingViewSwitchKind;
   targetID: string;
   visible: boolean;
-  background?: boolean;
+  contextSwitching?: boolean;
+  restoreRequestID?: number;
 };
 
 export type ViewSwitchStateController = {
@@ -21,8 +22,9 @@ export type ViewSwitchStateController = {
   beginViewSwitch: (
     kind: PendingViewSwitchKind,
     targetID: string,
+    contextSwitching?: boolean,
   ) => number;
-  beginInstantThreadSwitch: (targetID?: string) => number;
+  prepareThreadReveal: (requestID: number) => boolean;
   finishViewSwitch: (requestID: number) => boolean;
   cancelViewSwitch: () => void;
   isCurrentViewSwitchRequest: (requestID: number) => boolean;
@@ -55,11 +57,17 @@ export function useViewSwitchState({
   }, [clearViewSwitchDelay]);
 
   const beginViewSwitch = useCallback(
-    (kind: PendingViewSwitchKind, targetID: string): number => {
+    (kind: PendingViewSwitchKind, targetID: string, contextSwitching = false): number => {
       const requestID = viewSwitchRequestRef.current + 1;
       viewSwitchRequestRef.current = requestID;
       clearViewSwitchDelay();
-      setPendingViewSwitch({ kind, targetID, visible: false });
+      setPendingViewSwitch({
+        kind,
+        targetID,
+        visible: kind === "thread",
+        ...(contextSwitching || kind !== "thread" ? { contextSwitching: true } : {}),
+      });
+      if (kind === "thread") return requestID;
       viewSwitchDelayTimerRef.current = window.setTimeout(() => {
         viewSwitchDelayTimerRef.current = undefined;
         if (viewSwitchRequestRef.current !== requestID) {
@@ -76,17 +84,15 @@ export function useViewSwitchState({
     [clearViewSwitchDelay, loadingDelayMs],
   );
 
-  const beginInstantThreadSwitch = useCallback(
-    (targetID = ""): number => {
-      const requestID = viewSwitchRequestRef.current + 1;
-      viewSwitchRequestRef.current = requestID;
-      clearViewSwitchDelay();
-      // Submissions carry their own destination; cached history hydration is
-      // not a prerequisite for accepting the next message.
-      setPendingViewSwitch({ kind: "thread", targetID, visible: false, background: true });
-      return requestID;
+  const prepareThreadReveal = useCallback(
+    (requestID: number): boolean => {
+      if (viewSwitchRequestRef.current !== requestID) return false;
+      setPendingViewSwitch(current => current?.kind === "thread"
+        ? { ...current, restoreRequestID: requestID }
+        : current);
+      return true;
     },
-    [clearViewSwitchDelay],
+    [],
   );
 
   const finishViewSwitch = useCallback(
@@ -116,8 +122,6 @@ export function useViewSwitchState({
     [],
   );
 
-  // Background resume must not mark cached tabs, sidebar rows, or extension
-  // headers busy when no loading UI is needed.
   const visiblePendingThreadID =
     pendingViewSwitch?.kind === "thread" && pendingViewSwitch.visible
       ? pendingViewSwitch.targetID
@@ -136,10 +140,10 @@ export function useViewSwitchState({
     visiblePendingThreadID,
     visiblePendingWorkspaceID,
     viewSwitchPending,
-    submissionTargetPending: viewSwitchPending && !pendingViewSwitch?.background,
+    submissionTargetPending: viewSwitchPending,
     viewContextSwitchPending,
     beginViewSwitch,
-    beginInstantThreadSwitch,
+    prepareThreadReveal,
     finishViewSwitch,
     cancelViewSwitch,
     isCurrentViewSwitchRequest,

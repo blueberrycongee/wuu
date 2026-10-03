@@ -1,6 +1,7 @@
-import { act, createElement } from "react";
+import { act, createElement, useRef } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { useConversationSwitchReady } from "./ConversationSwitchReady";
 import { ViewSwitchLoading } from "./LoadingViews";
 import {
   useViewSwitchState,
@@ -49,222 +50,90 @@ async function renderViewSwitchState(): Promise<{
 }
 
 describe("useViewSwitchState", () => {
-  it("captures the current generation without starting a switch", async () => {
+  it("covers threads and blocks sends through snapshot and layout restoration", async () => {
     const hook = await renderViewSwitchState();
-    const requestID = hook.get().getCurrentViewSwitchRequestID();
-    expect(hook.get().pendingViewSwitch).toBeUndefined();
-    expect(hook.get().isCurrentViewSwitchRequest(requestID)).toBe(true);
-    act(() => { hook.get().beginInstantThreadSwitch("other"); });
-    expect(hook.get().isCurrentViewSwitchRequest(requestID)).toBe(false);
-  });
-
-  it("blocks sends immediately but only marks an uncached thread busy after the loading delay", async () => {
-    vi.useFakeTimers();
-    const hook = await renderViewSwitchState();
-
-    let requestID = 0;
-    act(() => {
-      requestID = hook.get().beginViewSwitch("thread", "thread-1");
-    });
-
-    expect(hook.get().pendingViewSwitch).toEqual({
-      kind: "thread",
-      targetID: "thread-1",
-      visible: false,
-    });
-    expect(hook.get().visiblePendingThreadID).toBeUndefined();
-    expect(hook.get().viewSwitchPending).toBe(true);
-    expect(hook.get().viewContextSwitchPending).toBe(false);
-    act(() => { vi.advanceTimersByTime(49); });
-    expect(hook.get().visiblePendingThreadID).toBeUndefined();
-    act(() => { vi.advanceTimersByTime(1); });
-    expect(hook.get().visiblePendingThreadID).toBe("thread-1");
-    act(() => { hook.get().finishViewSwitch(requestID); });
-    expect(hook.get().visiblePendingThreadID).toBeUndefined();
-    expect(hook.get().viewSwitchPending).toBe(false);
-  });
-
-  it("marks the selected project immediately but delays the animation", async () => {
-    vi.useFakeTimers();
-    const hook = await renderViewSwitchState();
-
-    act(() => {
-      hook.get().beginViewSwitch("workspace", "project-1");
-    });
-    expect(hook.get().pendingViewSwitch).toEqual({
-      kind: "workspace",
-      targetID: "project-1",
-      visible: false,
-    });
-    expect(hook.get().visiblePendingWorkspaceID).toBe("project-1");
-    expect(hook.get().viewContextSwitchPending).toBe(true);
-  });
-
-  it("rejects stale finish requests and keeps the newest pending switch", async () => {
-    const hook = await renderViewSwitchState();
-
-    let staleRequest = 0;
-    let currentRequest = 0;
-    act(() => {
-      staleRequest = hook.get().beginViewSwitch("thread", "thread-old");
-      currentRequest = hook.get().beginViewSwitch("thread", "thread-new");
-    });
-
-    expect(hook.get().finishViewSwitch(staleRequest)).toBe(false);
-    expect(hook.get().pendingViewSwitch?.targetID).toBe("thread-new");
-    let finished = false;
-    act(() => {
-      finished = hook.get().finishViewSwitch(currentRequest);
-    });
-    expect(finished).toBe(true);
-    expect(hook.get().pendingViewSwitch).toBeUndefined();
-  });
-
-  it("allows cached-thread submissions while a slow background resume is pending", async () => {
-    vi.useFakeTimers();
-    const hook = await renderViewSwitchState();
-
-    let requestID = 0;
-    act(() => {
-      requestID = hook.get().beginInstantThreadSwitch("thread-cached");
-    });
-
-    expect(hook.get().visiblePendingThreadID).toBeUndefined();
-    expect(hook.get().viewSwitchPending).toBe(true);
-    act(() => { vi.advanceTimersByTime(5_000); });
+    let id = 0;
+    act(() => { id = hook.get().beginViewSwitch("thread", "target"); });
+    expect(document.querySelector('[role="status"]')).not.toBeNull();
+    expect(hook.get().submissionTargetPending).toBe(true);
+    act(() => { hook.get().prepareThreadReveal(id); });
+    expect(hook.get().pendingViewSwitch?.restoreRequestID).toBe(id);
+    expect(hook.get().submissionTargetPending).toBe(true);
+    act(() => { hook.get().finishViewSwitch(id); });
     expect(document.querySelector('[role="status"]')).toBeNull();
-    expect(hook.get().pendingViewSwitch).toEqual({
-      kind: "thread",
-      targetID: "thread-cached",
-      visible: false,
-      background: true,
-    });
     expect(hook.get().submissionTargetPending).toBe(false);
-    expect(hook.get().viewSwitchPending).toBe(true);
-    expect(hook.get().viewContextSwitchPending).toBe(false);
-    expect(hook.get().visiblePendingThreadID).toBeUndefined();
+  });
 
+  it.each(["replacement", "cancel"])("ignores stale resume and reveal after %s", async action => {
+    const hook = await renderViewSwitchState();
+    let id = 0;
     act(() => {
-      expect(hook.get().finishViewSwitch(requestID)).toBe(true);
+      id = hook.get().beginViewSwitch("thread", "old");
+      hook.get().prepareThreadReveal(id);
+      if (action === "cancel") hook.get().cancelViewSwitch();
+      else hook.get().beginViewSwitch("thread", "new");
     });
-    expect(hook.get().pendingViewSwitch).toBeUndefined();
-    expect(hook.get().visiblePendingThreadID).toBeUndefined();
-    expect(hook.get().viewSwitchPending).toBe(false);
+    expect(hook.get().isCurrentViewSwitchRequest(id)).toBe(false);
+    expect(hook.get().prepareThreadReveal(id)).toBe(false);
+    expect(hook.get().finishViewSwitch(id)).toBe(false);
+    expect(hook.get().pendingViewSwitch?.targetID).toBe(action === "cancel" ? undefined : "new");
   });
 
-  it.each(["thread", "workspace", "runtime"] as const)(
-    "shows the shared animation only while a slow %s switch is pending",
-    async (kind) => {
-      vi.useFakeTimers();
-      const hook = await renderViewSwitchState();
-      let requestID = 0;
-      act(() => {
-        requestID = hook.get().beginViewSwitch(kind, "target");
-      });
-      expect(hook.get().submissionTargetPending).toBe(true);
-      expect(document.querySelector('[role="status"]')).toBeNull();
-      act(() => { vi.advanceTimersByTime(50); });
-      expect(document.querySelector('[role="status"]')).not.toBeNull();
-      act(() => { hook.get().finishViewSwitch(requestID); });
-      expect(document.querySelector('[role="status"]')).toBeNull();
-    },
-  );
-
-  it.each([25, 50])("clears a previous loading switch after %ims when selecting a cached tab", async (elapsedMs) => {
+  it("preserves workspace loading delay and cancels its timer", async () => {
     vi.useFakeTimers();
     const hook = await renderViewSwitchState();
-    let oldRequest = 0;
-    act(() => { oldRequest = hook.get().beginViewSwitch("thread", "uncached"); });
-    act(() => { vi.advanceTimersByTime(elapsedMs); });
-    expect(hook.get().pendingViewSwitch?.visible).toBe(elapsedMs >= 50);
-    expect(hook.get().visiblePendingThreadID).toBe(elapsedMs >= 50 ? "uncached" : undefined);
-
-    let cachedRequest = 0;
-    act(() => { cachedRequest = hook.get().beginInstantThreadSwitch("cached"); });
+    act(() => { hook.get().beginViewSwitch("workspace", "project"); });
+    expect(hook.get().visiblePendingWorkspaceID).toBe("project");
     expect(document.querySelector('[role="status"]')).toBeNull();
-    expect(hook.get().visiblePendingThreadID).toBeUndefined();
-    act(() => { vi.advanceTimersByTime(5_000); });
-    expect(document.querySelector('[role="status"]')).toBeNull();
-    expect(hook.get().finishViewSwitch(oldRequest)).toBe(false);
-    expect(hook.get().isCurrentViewSwitchRequest(oldRequest)).toBe(false);
-    expect(hook.get().isCurrentViewSwitchRequest(cachedRequest)).toBe(true);
-    expect(hook.get().visiblePendingThreadID).toBeUndefined();
-    expect(hook.get().pendingViewSwitch).toEqual({
-      kind: "thread",
-      targetID: "cached",
-      visible: false,
-      background: true,
-    });
-    expect(hook.get().viewSwitchPending).toBe(true);
-    act(() => { hook.get().finishViewSwitch(cachedRequest); });
-    expect(hook.get().pendingViewSwitch).toBeUndefined();
-  });
-
-  it("still shows loading for an uncached switch after a cached switch", async () => {
-    vi.useFakeTimers();
-    const hook = await renderViewSwitchState();
-    let cachedRequest = 0;
-    act(() => { cachedRequest = hook.get().beginInstantThreadSwitch("cached"); });
-    act(() => { hook.get().beginViewSwitch("thread", "uncached"); });
-    expect(hook.get().finishViewSwitch(cachedRequest)).toBe(false);
-    expect(document.querySelector('[role="status"]')).toBeNull();
-    expect(hook.get().visiblePendingThreadID).toBeUndefined();
     act(() => { vi.advanceTimersByTime(50); });
     expect(document.querySelector('[role="status"]')).not.toBeNull();
-    expect(hook.get().visiblePendingThreadID).toBe("uncached");
+    act(() => { hook.get().cancelViewSwitch(); vi.advanceTimersByTime(100); });
+    expect(document.querySelector('[role="status"]')).toBeNull();
   });
 
-  it.each(["thread", "workspace", "runtime"] as const)("never flashes loading for a fast %s switch", async (kind) => {
-    vi.useFakeTimers();
-    const hook = await renderViewSwitchState();
-    let requestID = 0;
-    act(() => { requestID = hook.get().beginViewSwitch(kind, "fast"); });
-    act(() => { vi.advanceTimersByTime(49); });
-    expect(document.querySelector('[role="status"]')).toBeNull();
-    act(() => { hook.get().finishViewSwitch(requestID); });
-    expect(hook.get().viewSwitchPending).toBe(false);
-    act(() => { vi.advanceTimersByTime(100); });
-    expect(document.querySelector('[role="status"]')).toBeNull();
-    expect(hook.get().visiblePendingThreadID).toBeUndefined();
-  });
-
-  it("does not show a cancelled switch after the delay", async () => {
-    vi.useFakeTimers();
-    const hook = await renderViewSwitchState();
-    act(() => {
-      hook.get().beginViewSwitch("thread", "cancelled");
-      hook.get().cancelViewSwitch();
+  it("waits for resumed layout and scroll to settle before revealing", async () => {
+    const frames = new Map<number, FrameRequestCallback>();
+    let nextFrame = 0;
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation(callback => {
+      frames.set(++nextFrame, callback);
+      return nextFrame;
     });
-    act(() => { vi.advanceTimersByTime(100); });
-    expect(document.querySelector('[role="status"]')).toBeNull();
-    expect(hook.get().visiblePendingThreadID).toBeUndefined();
-  });
-
-  it("gives a replacement switch its own delay and ignores late completion", async () => {
-    vi.useFakeTimers();
-    const hook = await renderViewSwitchState();
-    let oldRequest = 0;
-    act(() => { oldRequest = hook.get().beginViewSwitch("thread", "old"); });
-    act(() => { vi.advanceTimersByTime(40); });
-    act(() => { hook.get().beginViewSwitch("thread", "new"); });
-    act(() => { vi.advanceTimersByTime(10); });
-    expect(document.querySelector('[role="status"]')).toBeNull();
-    expect(hook.get().finishViewSwitch(oldRequest)).toBe(false);
-    act(() => { vi.advanceTimersByTime(40); });
-    expect(document.querySelector('[role="status"]')).not.toBeNull();
-    expect(hook.get().pendingViewSwitch?.targetID).toBe("new");
-  });
-
-  it("cancel invalidates in-flight request IDs", async () => {
-    const hook = await renderViewSwitchState();
-
-    let requestID = 0;
-    act(() => {
-      requestID = hook.get().beginInstantThreadSwitch();
-      hook.get().cancelViewSwitch();
+    vi.spyOn(window, "cancelAnimationFrame").mockImplementation(id => { frames.delete(id); });
+    const paint = () => act(() => {
+      const callbacks = [...frames.values()];
+      frames.clear();
+      callbacks.forEach(callback => callback(0));
     });
-
-    expect(hook.get().isCurrentViewSwitchRequest(requestID)).toBe(false);
-    expect(hook.get().pendingViewSwitch).toBeUndefined();
+    let controller!: ViewSwitchStateController;
+    const settleLayout = vi.fn();
+    function Probe() {
+      controller = useViewSwitchState();
+      const viewportRef = useRef<HTMLDivElement>(null);
+      useConversationSwitchReady({ pendingViewSwitch: controller.pendingViewSwitch,
+        activeThreadID: "target", viewportRef, settleLayout, finishViewSwitch: controller.finishViewSwitch });
+      return createElement("div", { ref: viewportRef });
+    }
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    mountedRoots.push(root);
+    await act(async () => { root.render(createElement(Probe)); });
+    let id = 0;
+    act(() => { id = controller.beginViewSwitch("thread", "target"); });
+    paint(); paint();
+    expect(settleLayout).not.toHaveBeenCalled();
+    act(() => { controller.prepareThreadReveal(id); });
+    const viewport = container.firstElementChild as HTMLElement;
+    let height = 400;
+    Object.defineProperty(viewport, "scrollHeight", { get: () => height });
+    paint();
+    height = 600;
+    paint();
+    expect(controller.submissionTargetPending).toBe(true);
+    paint();
+    expect(controller.submissionTargetPending).toBe(true);
+    paint();
+    expect(controller.submissionTargetPending).toBe(false);
+    expect(settleLayout).toHaveBeenCalled();
   });
 });

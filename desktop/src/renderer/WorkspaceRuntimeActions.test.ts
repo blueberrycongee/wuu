@@ -94,6 +94,7 @@ function buildActions({
   );
 
   const actions = createWorkspaceRuntimeActions({
+    getPendingViewSwitch: () => undefined,
     getAppState: () => appState,
     setAppState: (update) => {
       appState = typeof update === "function" ? update(appState) : update;

@@ -1,6 +1,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { mockAnimationFrames } from "./AnimationFrameTestHarness";
 import type {
   InitializeResult,
   ServerEvent,
@@ -229,14 +230,14 @@ function setInnerWidth(width: number): void {
 }
 
 async function flushAsync(): Promise<void> {
-  await act(async () => {
-    await Promise.resolve();
-    await Promise.resolve();
-  });
+  await animationFrames.flush();
 }
+
+let animationFrames: ReturnType<typeof mockAnimationFrames>;
 
 describe("workspace file tabs", () => {
   beforeEach(() => {
+    animationFrames = mockAnimationFrames();
     setInnerWidth(1280);
     installWindowStubs();
     installWuuApi();
@@ -441,7 +442,7 @@ describe("workspace file tabs", () => {
     await typeMainPrompt("Keep the main question");
     act(() => selectionActions!.askSide!(selectionSource));
     await flushAsync();
-    await act(async () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+    await flushAsync();
     expect(container.querySelector(".conversation-pane")?.hasAttribute("inert")).toBe(false);
     const side = container.querySelector<HTMLElement>(".side-thread-panel")!;
     expect(side.closest("[inert]")).toBeNull();
