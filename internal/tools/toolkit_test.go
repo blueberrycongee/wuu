@@ -506,8 +506,6 @@ func TestToolkit_FileToolsRejectProtectedMetadataPaths(t *testing.T) {
 
 	gitConfigContent := "remote = origin\n"
 	mustWriteFile(t, filepath.Join(root, ".git", "config"), gitConfigContent)
-	mustWriteFile(t, filepath.Join(root, ".wuu", "runtime", "trace.jsonl"), "{}\n")
-
 	_, err = kit.Execute(context.Background(), providers.ToolCall{
 		Name:      "read_file",
 		Arguments: `{"path":".git/config"}`,
@@ -518,13 +516,13 @@ func TestToolkit_FileToolsRejectProtectedMetadataPaths(t *testing.T) {
 
 	_, err = kit.Execute(context.Background(), providers.ToolCall{
 		Name:      "write_file",
-		Arguments: `{"path":".wuu/runtime/new.json","content":"{}\n"}`,
+		Arguments: `{"path":".git/new.json","content":"{}\n"}`,
 	})
-	if err == nil || !strings.Contains(err.Error(), "wuu runtime state") {
-		t.Fatalf("expected write_file to reject wuu runtime state, got: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "version-control metadata") {
+		t.Fatalf("expected write_file to reject VCS metadata, got: %v", err)
 	}
-	if _, statErr := os.Stat(filepath.Join(root, ".wuu", "runtime", "new.json")); !os.IsNotExist(statErr) {
-		t.Fatalf("write_file should not create protected runtime state file, stat err=%v", statErr)
+	if _, statErr := os.Stat(filepath.Join(root, ".git", "new.json")); !os.IsNotExist(statErr) {
+		t.Fatalf("write_file should not create protected VCS metadata, stat err=%v", statErr)
 	}
 
 	_, err = kit.Execute(context.Background(), providers.ToolCall{
@@ -540,7 +538,7 @@ func TestToolkit_FileToolsRejectProtectedMetadataPaths(t *testing.T) {
 
 	kit.SetEditToolMode(EditToolModePatch)
 	patchArgs, err := json.Marshal(map[string]any{
-		"patchText": "*** Begin Patch\n*** Add File: .wuu/runtime/new-from-patch.json\n+{}\n*** End Patch",
+		"patchText": "*** Begin Patch\n*** Add File: .git/new-from-patch.json\n+{}\n*** End Patch",
 	})
 	if err != nil {
 		t.Fatalf("marshal patch args: %v", err)
@@ -549,11 +547,11 @@ func TestToolkit_FileToolsRejectProtectedMetadataPaths(t *testing.T) {
 		Name:      "apply_patch",
 		Arguments: string(patchArgs),
 	})
-	if err == nil || !strings.Contains(err.Error(), "wuu runtime state") {
-		t.Fatalf("expected apply_patch to reject wuu runtime state, got: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "version-control metadata") {
+		t.Fatalf("expected apply_patch to reject VCS metadata, got: %v", err)
 	}
-	if _, statErr := os.Stat(filepath.Join(root, ".wuu", "runtime", "new-from-patch.json")); !os.IsNotExist(statErr) {
-		t.Fatalf("apply_patch should not create protected runtime state file, stat err=%v", statErr)
+	if _, statErr := os.Stat(filepath.Join(root, ".git", "new-from-patch.json")); !os.IsNotExist(statErr) {
+		t.Fatalf("apply_patch should not create protected VCS metadata, stat err=%v", statErr)
 	}
 }
 
@@ -1365,14 +1363,14 @@ func TestToolkit_ListFilesRejectsAndFiltersProtectedPaths(t *testing.T) {
 	mustWriteFile(t, filepath.Join(root, "visible.txt"), "hello\n")
 	mustWriteFile(t, filepath.Join(root, ".env"), "API_KEY=secret\n")
 	mustWriteFile(t, filepath.Join(root, ".git", "config"), "remote = origin\n")
-	mustWriteFile(t, filepath.Join(root, ".wuu", "runtime", "trace.jsonl"), "{}\n")
+	mustWriteFile(t, filepath.Join(root, ".hg", "store", "data"), "{}\n")
 
 	_, err = kit.Execute(context.Background(), providers.ToolCall{
 		Name:      "list_files",
-		Arguments: `{"path":".wuu"}`,
+		Arguments: `{"path":".hg"}`,
 	})
-	if err == nil || !strings.Contains(err.Error(), "wuu runtime state") {
-		t.Fatalf("expected direct .wuu list rejection, got: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "version-control metadata") {
+		t.Fatalf("expected direct VCS list rejection, got: %v", err)
 	}
 
 	resp, err := kit.Execute(context.Background(), providers.ToolCall{
@@ -1398,7 +1396,7 @@ func TestToolkit_ListFilesRejectsAndFiltersProtectedPaths(t *testing.T) {
 	if len(parsed.Entries) != 1 || parsed.Entries[0].Name != "visible.txt" || parsed.Entries[0].Path != "visible.txt" {
 		t.Fatalf("list_files should only return visible entries: %+v", parsed.Entries)
 	}
-	if strings.Contains(resp, ".wuu") || strings.Contains(resp, ".git") || strings.Contains(resp, ".env") || strings.Contains(resp, "secret") {
+	if strings.Contains(resp, ".hg") || strings.Contains(resp, ".git") || strings.Contains(resp, ".env") || strings.Contains(resp, "secret") {
 		t.Fatalf("list_files leaked protected entry names or content: %s", resp)
 	}
 }

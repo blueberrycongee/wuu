@@ -8,6 +8,12 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ## [Unreleased]
 
+### Changed
+
+- Built-in agents can edit configuration with ordinary file tools. Standard
+  mode now includes Wuu home in its file and command write scope; Read only
+  and dedicated credential-file guards still apply.
+
 ## [2026.10.2] - 2026-10-02
 
 ### Contributors

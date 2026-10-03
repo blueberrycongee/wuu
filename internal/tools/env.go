@@ -534,7 +534,7 @@ func (e *Env) ResolvePath(input string) (string, error) {
 				return resolved, nil
 			}
 		}
-		return "", fmt.Errorf("path %q is outside the allowed file scope (agent home directory, registered workspaces, and the system temp directory): 该路径不在工作区内，请用户在侧栏添加该目录为工作区后重试", input)
+		return "", fmt.Errorf("path %q is outside the allowed file scope (agent home directory, Wuu home, registered workspaces, and the system temp directory): 该路径不在工作区内，请用户在侧栏添加该目录为工作区后重试", input)
 	}
 
 	evalRoot := e.RootDir
