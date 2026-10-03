@@ -306,6 +306,7 @@ import {
 } from "./ConversationHistoryActions";
 import { localizedText, resolveLocalizedText, translateCurrent, useI18n } from "./i18n";
 import { CachedConversationPanes } from "./CachedConversationPanes";
+import { useConversationSwitchReady } from "./ConversationSwitchReady";
 import { observeAppearance } from "./AppearancePreferences";
 import {
   retainCachedConversationPaneThreads,
@@ -1007,7 +1008,7 @@ export function App(): JSX.Element {
     submissionTargetPending,
     viewContextSwitchPending,
     beginViewSwitch,
-    beginInstantThreadSwitch,
+    prepareThreadReveal,
     finishViewSwitch,
     cancelViewSwitch,
     isCurrentViewSwitchRequest,
@@ -2352,6 +2353,7 @@ export function App(): JSX.Element {
     state.secondaryThread,
   ]);
 
+  const conversationRestoring = pendingViewSwitch?.restoreRequestID !== undefined;
   const {
     conversationScrollRef,
     scrollContentRef,
@@ -2370,6 +2372,7 @@ export function App(): JSX.Element {
     disableConversationAutoFollow,
     captureConversationScrollPosition,
     restoreConversationScrollPosition,
+    settleConversationLayout,
     requestSubmittedQueryScroll,
     acknowledgeSubmittedMessage,
     discardSubmittedMessage,
@@ -2384,6 +2387,13 @@ export function App(): JSX.Element {
     emptyConversation,
     initialized: Boolean(state.initialized),
     running: isStateActiveThreadRunning(state),
+  });
+  useConversationSwitchReady({
+    pendingViewSwitch,
+    activeThreadID,
+    viewportRef: conversationScrollRef,
+    settleLayout: settleConversationLayout,
+    finishViewSwitch,
   });
   const activeManagementTabID = showingManagementCatalog
     ? currentSessionTab?.id
@@ -3182,7 +3192,7 @@ export function App(): JSX.Element {
         statusLiveProgress={
           false
         }
-        readOnly={activeThreadReadOnly}
+        readOnly={activeThreadReadOnly || submissionTargetPending}
         initialized={composerRuntime}
         engines={engineInventory?.engines}
         activeEngine={effectiveEngine !== "wuu" ? effectiveEngine : ""}
@@ -3549,6 +3559,7 @@ export function App(): JSX.Element {
     relocateProject,
     useNoProject,
   } = createWorkspaceRuntimeActions({
+    getPendingViewSwitch: () => pendingViewSwitch,
     getAppState: () => appStateRef.current,
     setAppState: setState,
     getComposerDraftSnapshot: currentComposerDraftSnapshot,
@@ -3568,6 +3579,7 @@ export function App(): JSX.Element {
 
   const {
     selectThread,
+    selectContextThread,
     selectWorkspaceThread,
     activateThread,
     selectChildAgent,
@@ -3586,7 +3598,7 @@ export function App(): JSX.Element {
     getRunningThreadIDs: () => crossWorkdirRunningThreadIDs,
     
     beginViewSwitch,
-    beginInstantThreadSwitch,
+    prepareThreadReveal,
     finishViewSwitch,
     cancelViewSwitch,
     isCurrentViewSwitchRequest,
@@ -3644,6 +3656,7 @@ export function App(): JSX.Element {
     startNewThread,
     selectSessionTab,
   } = createSessionTabActions({
+    getPendingViewSwitch: () => pendingViewSwitch,
     getAppState: () => appStateRef.current,
     setAppState: setState,
     getComposerDraftSnapshot: currentComposerDraftSnapshot,
@@ -3652,13 +3665,12 @@ export function App(): JSX.Element {
       restorePrimaryComposerDraft(emptyComposerDraft()),
     resetSplitComposerDrafts: () =>
       setSplitComposerDrafts(initialSplitComposerDrafts()),
-    getCrossWorkspaceThreads: () => sidebarThreads,
-    getRunningThreadIDs: () => crossWorkdirRunningThreadIDs,
     nextDraftSessionTab,
     isDraftPending: (tabID) => pendingThreadCreationsRef.current.has(tabID),
     selectThread,
+    selectContextThread,
     beginViewSwitch,
-    beginInstantThreadSwitch,
+    prepareThreadReveal,
     finishViewSwitch,
     cancelViewSwitch,
     loadRuntime,
@@ -5397,7 +5409,8 @@ export function App(): JSX.Element {
             className={`scroll-region${emptyConversation ? " empty-scroll-region" : ""}${
               splitConversation ? " split-scroll-region" : ""
             }${showingManagementCatalog ? " skills-scroll-region" : ""}`}
-            inert={showingPrimaryPluginView}
+            inert={showingPrimaryPluginView || viewSwitchPending}
+            style={conversationRestoring ? { visibility: "hidden" } : undefined}
             onScroll={(event) => handleConversationScroll(event.currentTarget)}
             ref={conversationScrollRef}
           >
@@ -5508,6 +5521,7 @@ export function App(): JSX.Element {
                 threadIDs={cachedThreadPaneIDs}
                 threadsByID={cachedConversationThreadsByID}
                 activeThreadID={activeThreadID}
+                restoring={conversationRestoring}
                 activeContextCwd={state.activeContext?.cwd}
                 contextCompositionEntries={contextCompositionEntries}
                 instructionFilesEntries={instructionFilesEntries}

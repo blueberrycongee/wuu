@@ -238,7 +238,7 @@ export function ConversationSplitPane({
           sendDisabled={viewSwitchPending}
           submitting={submitting}
           stopState={stopState}
-          readOnly={false}
+          readOnly={viewSwitchPending}
           status={paneStatus}
           statusLiveProgress={false}
           onPasteAttachmentFiles={onPasteAttachmentFiles}

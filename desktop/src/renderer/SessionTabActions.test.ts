@@ -11,6 +11,7 @@ import {
   type SessionTab,
 } from "./AppState";
 import { writeDraftRuntimeMemory } from "./DraftRuntimeMemory";
+import { createThreadActivationActions } from "./ThreadActivationActions";
 import { createSessionTabActions } from "./SessionTabActions";
 
 function projectContext(id = "project-1"): RuntimeContext {
@@ -55,7 +56,24 @@ function buildActions({
   const loadRuntime = vi.fn();
   const selectRuntimeContext = vi.fn();
 
+  const { selectContextThread } = createThreadActivationActions({
+    getAppState: () => appState,
+    setAppState: update => { appState = typeof update === "function" ? update(appState) : update; },
+    getActiveThreadID: () => appState.thread?.id,
+    getPendingViewSwitch: () => undefined,
+    getComposerDraftSnapshot: () => captureComposerDrafts(appState, currentDraft),
+    restorePrimaryComposerDraft, resetSplitComposerDrafts,
+    getSidebarThreads: () => appState.threads,
+    getSidebarWorkspaceThreadsByWorkspaceID: () => ({}),
+    beginViewSwitch: () => 1, prepareThreadReveal: () => true,
+    finishViewSwitch: () => true, cancelViewSwitch: () => {},
+    isCurrentViewSwitchRequest: () => true,
+    selectRuntimeContext, loadRuntimeConfiguration: loadRuntime,
+    loadRuntimeThreadList: vi.fn().mockResolvedValue([]),
+  });
+
   const actions = createSessionTabActions({
+    getPendingViewSwitch: () => undefined,
     getAppState: () => appState,
     setAppState: (update) => {
       appState = typeof update === "function" ? update(appState) : update;
@@ -67,7 +85,8 @@ function buildActions({
     nextDraftSessionTab,
     selectThread,
     beginViewSwitch: vi.fn(() => 1),
-    beginInstantThreadSwitch: vi.fn(() => 2),
+    selectContextThread,
+    prepareThreadReveal: vi.fn(() => true),
     finishViewSwitch: vi.fn(() => true),
     cancelViewSwitch: vi.fn(),
     loadRuntime,
@@ -366,7 +385,7 @@ describe("createSessionTabActions", () => {
     await closing;
   });
 
-  it("preserves input typed during a cached cross-workspace tab refresh", async () => {
+  it("preserves the source draft while a cached cross-workspace tab restores", async () => {
     const sourceContext = projectContext("source");
     const targetContext = projectContext("target");
     const source = createDraftSessionTab("draft:source", sourceContext);
@@ -386,13 +405,14 @@ describe("createSessionTabActions", () => {
     });
     harness.selectRuntimeContext.mockResolvedValue({ projects: [], active_context: targetContext });
     const switching = harness.actions.selectSessionTab(target.id);
-    expect(harness.getCurrentDraft().prompt).toBe("old target draft");
-    harness.restorePrimaryComposerDraft({ ...emptyComposerDraft(), prompt: "new target draft" });
+    expect(harness.getCurrentDraft().prompt).toBe("");
+    harness.restorePrimaryComposerDraft({ ...emptyComposerDraft(), prompt: "updated source draft" });
     await Promise.resolve();
     resolveResume({ thread });
     await switching;
-    expect(harness.getCurrentDraft().prompt).toBe("new target draft");
-    expect(sessionTabPrompt(harness.getAppState().sessionTabs, target.id)).toBe("new target draft");
+    expect(harness.getCurrentDraft().prompt).toBe("old target draft");
+    expect(sessionTabPrompt(harness.getAppState().sessionTabs, target.id)).toBe("old target draft");
+    expect(sessionTabPrompt(harness.getAppState().sessionTabs, source.id)).toBe("updated source draft");
     expect(harness.resetSplitComposerDrafts).toHaveBeenCalledTimes(1);
   });
 

@@ -128,6 +128,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Keep session switches covered by the existing loading animation until the
+  resumed conversation restores its folds and scroll position; block editing
+  and sending during restoration and ignore superseded switch results.
+
 - Preserve saved pet scale during startup when a nondefault size preset is stored, without rewriting pet preferences.
 
 - Honor remote stops before the first structured-output correction when an

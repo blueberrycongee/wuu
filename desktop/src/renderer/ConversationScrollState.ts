@@ -309,6 +309,7 @@ export function useConversationScrollState({
    */
   captureConversationScrollPosition: () => ConversationScrollSnapshot | undefined;
   restoreConversationScrollPosition: (snapshot: ConversationScrollSnapshot) => void;
+  settleConversationLayout: () => void;
 } {
   const conversationScrollRef = useRef<HTMLDivElement | null>(null);
   const splitPaneRefs = useRef<Record<ConversationPaneID, HTMLElement | null>>({
@@ -1606,6 +1607,21 @@ export function useConversationScrollState({
     rememberActiveThreadScrollSnapshot(node, nextAutoFollow);
   }
 
+  function settleConversationLayout(): void {
+    const node = conversationViewport();
+    if (!node) return;
+    const snapshot = activeThreadID ? threadScrollSnapshotsRef.current.get(activeThreadID) : undefined;
+    syncDockComposerGeometry();
+    syncConversationStatusSpace();
+    // A cached pane can change while hidden without changing the viewport's
+    // scrollTop. Force real layout of its landing turns before restoring.
+    syncConversationRenderWindow(node, { force: true });
+    applyProgrammaticScroll(node, isFollowing()
+      ? latestFollowScrollTop(node)
+      : snapshot ? restoredScrollTop(node, snapshot, 0) : node.scrollTop, isFollowing());
+    syncConversationRenderWindow(node, { force: true });
+  }
+
   useLayoutEffect(() => {
     try {
       const node = conversationViewport();
@@ -1647,6 +1663,7 @@ export function useConversationScrollState({
       // reports a frame late, so placing against the outgoing reservation would
       // move the whole session once the stale gap is released.
       syncConversationStatusSpace();
+      syncConversationRenderWindow(node, { force: true });
       let snapshot = savedSnapshot;
       const restorationOffset = restoredOffset.current;
       restoredOffset.current = 0;
@@ -2102,6 +2119,7 @@ export function useConversationScrollState({
     disableConversationAutoFollow,
     captureConversationScrollPosition,
     restoreConversationScrollPosition,
+    settleConversationLayout,
     requestSubmittedQueryScroll,
     acknowledgeSubmittedMessage,
     discardSubmittedMessage,

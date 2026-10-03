@@ -1,21 +1,18 @@
 import type { SetStateAction } from "react";
 import { arrayMove } from "@dnd-kit/sortable";
-import type { Thread } from "../shared/protocol";
+import type { RuntimeContext } from "../shared/protocol";
 import {
   activeSessionTab,
   cloneSessionTabDraft,
-  conversationPaneThreadsByID,
   createThreadSessionTab,
   draftSessionTabForContext,
   ensureSessionTab,
   isThreadRunning,
   persistComposerDrafts,
   refreshComposerDrafts,
-  reconcileResumedThreadTurns,
   requireThread,
   runtimeContextKey,
   sameRuntimeContext,
-  sessionTabDraftForThread,
   threadNeedsResumeOnReselect,
   threadSessionTabID,
   upsertThread,
@@ -31,31 +28,28 @@ import {
 import { seedDraftRuntimeFromMemory } from "./DraftRuntimeMemory";
 import { translateCurrent } from "./i18n";
 import { showErrorToast } from "./Toast";
-import { beginSessionSwitch, markSessionSwitch } from "./SessionSwitchPerformance";
+import { beginSessionSwitch } from "./SessionSwitchPerformance";
+import type { PendingViewSwitch } from "./ViewSwitchState";
 
 type SetAppState = (update: SetStateAction<AppState>) => void;
 type ViewSwitchKind = "thread" | "workspace" | "runtime";
 
 export type SessionTabActionsDeps = {
   getAppState: () => AppState;
+  getPendingViewSwitch: () => PendingViewSwitch | undefined;
   setAppState: SetAppState;
   getComposerDraftSnapshot: () => ComposerDraftSnapshot;
   restorePrimaryComposerDraft: (draft: ComposerDraftState) => void;
   clearPrimaryComposerDraft: () => void;
   resetSplitComposerDrafts: () => void;
-  // Full conversation snapshots live in the cross-workspace sidebar cache
-  // after a runtime switch removes them from AppState. Reading that cache is
-  // what lets a tab click paint immediately instead of waiting for the target
-  // app-server to resume the thread first.
-  getCrossWorkspaceThreads?: () => readonly Thread[];
-  getRunningThreadIDs?: () => ReadonlySet<string>;
   nextDraftSessionTab: (
     context: NonNullable<AppState["activeContext"]>,
   ) => SessionTab;
   isDraftPending?: (tabID: string) => boolean;
   selectThread: (threadID: string) => Promise<void>;
-  beginViewSwitch: (kind: ViewSwitchKind, targetID: string) => number;
-  beginInstantThreadSwitch: (targetID?: string) => number;
+  beginViewSwitch: (kind: ViewSwitchKind, targetID: string, contextSwitching?: boolean) => number;
+  selectContextThread: (context: RuntimeContext, threadID: string) => Promise<void>;
+  prepareThreadReveal: (requestID: number) => boolean;
   finishViewSwitch: (requestID: number) => boolean;
   cancelViewSwitch: () => void;
   loadRuntime?: typeof defaultLoadRuntime;
@@ -83,20 +77,13 @@ export function createSessionTabActions(
     showErrorToast(status);
   }
 
-  function currentThreadSnapshot(thread: Thread | undefined): Thread | undefined {
-    if (!thread || !deps.getRunningThreadIDs?.().has(thread.id) || isThreadRunning(thread)) {
-      return thread;
-    }
-    return { ...thread, status: "in_progress" };
-  }
-
   async function selectSessionTab(tabID: string): Promise<void> {
     const currentState = deps.getAppState();
     const tab = currentState.sessionTabs.find((item) => item.id === tabID);
     if (!tab) {
       return;
     }
-    if (tabID === currentState.activeSessionTabID) {
+    if (tabID === currentState.activeSessionTabID && !deps.getPendingViewSwitch()) {
       if (
         tab.kind === "thread" &&
         threadNeedsResumeOnReselect(currentState, tab.threadID)
@@ -109,7 +96,7 @@ export function createSessionTabActions(
     const sameContext = sameRuntimeContext(
       tab.context,
       currentState.activeContext,
-    );
+    ) && !deps.getPendingViewSwitch()?.contextSwitching;
     if (tab.kind === "skills") {
       let outgoingDraft = deps.getComposerDraftSnapshot();
       const requestID = sameContext
@@ -210,107 +197,8 @@ export function createSessionTabActions(
       await deps.selectThread(tab.threadID);
       return;
     }
-    let outgoingDraft = deps.getComposerDraftSnapshot();
-    let targetDraft = cloneSessionTabDraft(outgoingDraft.tabs.find(({ tab: owner }) => owner.id === tab.id)?.tab ?? tab);
-    const localThread = currentThreadSnapshot(
-      conversationPaneThreadsByID(
-        currentState.threads,
-        currentState.thread,
-        currentState.secondaryThread,
-      ).get(tab.threadID) ??
-        deps.getCrossWorkspaceThreads?.().find((thread) => thread.id === tab.threadID),
-    );
-    const canSwitchInstantly = localThread !== undefined && localThread.turns.length > 0;
-    const performanceThreadID = tab.threadID;
-    beginSessionSwitch(performanceThreadID, "cross-runtime");
-    const requestID = canSwitchInstantly
-      ? deps.beginInstantThreadSwitch(tab.threadID)
-      : deps.beginViewSwitch("thread", tab.threadID);
-    if (canSwitchInstantly) {
-      deps.restorePrimaryComposerDraft(targetDraft);
-      deps.resetSplitComposerDrafts();
-      deps.setAppState((current) => {
-        const withDraft = persistComposerDrafts(current, outgoingDraft);
-        const optimisticThread =
-          conversationPaneThreadsByID(
-            withDraft.threads,
-            withDraft.thread,
-            withDraft.secondaryThread,
-          ).get(tab.threadID) ?? localThread;
-        return {
-          ...withDraft,
-          activeContext: tab.context,
-          activeProjectId:
-            tab.context.kind === "project" ? tab.context.project_id : undefined,
-          thread: optimisticThread,
-          secondaryThread: undefined,
-          activePane: "primary",
-          allowThreadAutoActivation: true,
-          sessionTabs: ensureSessionTab(
-            withDraft.sessionTabs,
-            createThreadSessionTab(optimisticThread, tab.context, targetDraft),
-          ),
-          activeSessionTabID: threadSessionTabID(optimisticThread.id),
-          threads: upsertThread(withDraft.threads, optimisticThread),
-          running: isThreadRunning(optimisticThread),
-          status: "ready",
-        };
-      });
-      markSessionSwitch(performanceThreadID, "state-update-issued");
-    }
-    try {
-      const workspaceState = await selectRuntimeContext(tab.context);
-      const [loadedState, resumed] = await Promise.all([
-        loadRuntime(workspaceState, { resumeLatestThread: false }),
-        window.wuu.resumeThread(tab.threadID),
-      ]);
-      markSessionSwitch(performanceThreadID, "runtime-loaded");
-      const resumedThread = requireThread(
-        resumed,
-        translateCurrent("thread.resumeMissing"),
-      );
-      if (!deps.finishViewSwitch(requestID)) {
-        return;
-      }
-      if (!canSwitchInstantly) {
-        outgoingDraft = refreshComposerDrafts(outgoingDraft, deps.getComposerDraftSnapshot());
-        targetDraft = sessionTabDraftForThread(persistComposerDrafts(deps.getAppState(), outgoingDraft), tab.threadID);
-        deps.restorePrimaryComposerDraft(targetDraft);
-        deps.resetSplitComposerDrafts();
-      }
-      const currentDraft = canSwitchInstantly ? deps.getComposerDraftSnapshot().activeDraft : targetDraft;
-      deps.setAppState((current) => {
-        const withDraft = canSwitchInstantly ? current : persistComposerDrafts(current, outgoingDraft);
-        const cachedThread =
-          conversationPaneThreadsByID(
-            withDraft.threads,
-            withDraft.thread,
-            withDraft.secondaryThread,
-          ).get(resumedThread.id) ?? localThread;
-        const thread = reconcileResumedThreadTurns(resumedThread, cachedThread);
-        const next = { ...withDraft, ...loadedState };
-        return {
-          ...next,
-          thread,
-          secondaryThread: undefined,
-          activePane: "primary",
-          allowThreadAutoActivation: true,
-          sessionTabs: ensureSessionTab(
-            next.sessionTabs,
-            createThreadSessionTab(thread, tab.context, currentDraft),
-          ),
-          activeSessionTabID: threadSessionTabID(thread.id),
-          threads: upsertThread(next.threads, thread),
-          running: isThreadRunning(thread),
-          status: "ready",
-        };
-      });
-    } catch (error) {
-      if (!deps.finishViewSwitch(requestID)) {
-        return;
-      }
-      setStatus(error instanceof Error ? error.message : translateCurrent("thread.loadFailed"));
-    }
+    beginSessionSwitch(tab.threadID, "cross-runtime");
+    await deps.selectContextThread(tab.context, tab.threadID);
   }
 
   async function closeSessionTab(tabID: string): Promise<void> {
@@ -346,7 +234,7 @@ export function createSessionTabActions(
       const sameContext = sameRuntimeContext(
         fallbackTab.context,
         currentState.activeContext,
-      );
+      ) && !deps.getPendingViewSwitch()?.contextSwitching;
       const requestID = sameContext
         ? undefined
         : deps.beginViewSwitch("runtime", runtimeContextKey(fallbackTab.context));
@@ -388,7 +276,7 @@ export function createSessionTabActions(
       const sameContext = sameRuntimeContext(
         fallbackTab.context,
         currentState.activeContext,
-      );
+      ) && !deps.getPendingViewSwitch()?.contextSwitching;
       const requestID = sameContext
         ? undefined
         : deps.beginViewSwitch("runtime", runtimeContextKey(fallbackTab.context));
@@ -433,8 +321,8 @@ export function createSessionTabActions(
     const sameContext = sameRuntimeContext(
       fallbackTab.context,
       currentState.activeContext,
-    );
-    const requestID = deps.beginViewSwitch("thread", fallbackTab.threadID);
+    ) && !deps.getPendingViewSwitch()?.contextSwitching;
+    const requestID = deps.beginViewSwitch("thread", fallbackTab.threadID, !sameContext);
     try {
       const loadedState = sameContext
         ? undefined
@@ -445,7 +333,7 @@ export function createSessionTabActions(
         await window.wuu.resumeThread(fallbackTab.threadID),
         translateCurrent("thread.resumeMissing"),
       );
-      if (!deps.finishViewSwitch(requestID)) {
+      if (!deps.prepareThreadReveal(requestID)) {
         return;
       }
       deps.restorePrimaryComposerDraft(restoredDraft);

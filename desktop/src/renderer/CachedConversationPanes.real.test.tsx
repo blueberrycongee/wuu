@@ -50,6 +50,40 @@ function longThread(id: string, turnCount: number): Thread {
 }
 
 describe("CachedConversationPanes real message tree", () => {
+  it.each([false, true])("holds catch-up motion until restore readiness, including a cold mount (cold=%s)", cold => {
+    const frames = new Map<number, FrameRequestCallback>();
+    let nextFrame = 0;
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation(callback => {
+      frames.set(++nextFrame, callback);
+      return nextFrame;
+    });
+    vi.spyOn(window, "cancelAnimationFrame").mockImplementation(id => { frames.delete(id); });
+    const paint = () => act(() => {
+      const callbacks = [...frames.values()];
+      frames.clear();
+      callbacks.forEach(callback => callback(0));
+    });
+    let snapping = false;
+    function Probe() {
+      snapping = useConversationRevealSnap();
+      return null;
+    }
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    roots.push(root);
+    if (!cold) act(() => root.render(<ConversationRenderActivityProvider active={false}><Probe /></ConversationRenderActivityProvider>));
+    act(() => root.render(<ConversationRenderActivityProvider active restoring><Probe /></ConversationRenderActivityProvider>));
+    paint();
+    paint();
+    paint();
+    expect(snapping).toBe(true);
+    act(() => root.render(<ConversationRenderActivityProvider active><Probe /></ConversationRenderActivityProvider>));
+    paint();
+    paint();
+    expect(snapping).toBe(false);
+  });
+
   it("keeps reveal motion suppressed through nested layout commits and the first paint", () => {
     const frames = new Map<number, FrameRequestCallback>();
     let nextFrame = 0;
