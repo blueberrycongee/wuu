@@ -30,7 +30,7 @@ body { overflow: auto; }
 .motion-sample-menu { animation: menu-enter var(--menu-enter-duration) var(--menu-enter-easing) both; }
 .motion-sample-swap { animation: content-swap-enter var(--content-swap-duration) var(--content-swap-easing) both; }
 .motion-sample-panel { animation: environment-panel-enter var(--environment-panel-motion-duration) var(--environment-panel-motion-easing) both; }
-.motion-sample-pulse { animation: wuu-pulse 1.4s ease-in-out infinite; }
+.motion-sample-pulse { animation: wuu-pulse 1.8s ease-in-out infinite; }
 .motion-sample-spin { animation: wuu-spin var(--motion-spin) linear infinite; }
 
 @container style(--motion-reduced: 1) {

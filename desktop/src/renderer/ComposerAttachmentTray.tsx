@@ -158,7 +158,7 @@ export function ComposerAttachmentTray({
     }
     const slow = motionDurationMs("--motion-slow", 280);
     const base = motionDurationMs("--motion-base", 180);
-    const easeOut = motionCurve("--ease-out", "cubic-bezier(0.16, 1, 0.3, 1)");
+    const easeOut = motionCurve("--ease-out", "cubic-bezier(0.33, 1, 0.68, 1)");
     const easeIn = motionCurve("--ease-in", "cubic-bezier(0.4, 0, 1, 1)");
     const tray = trayRef.current;
     const list = listRef.current;

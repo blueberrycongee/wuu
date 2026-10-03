@@ -557,6 +557,9 @@
 
 .environment-modal-backdrop {
   z-index: 210;
+  /* The scrim fades in with the panel's own menu-enter instead of popping on
+   * at full strength, the way the search overlay already does. */
+  animation: wuu-fade-in var(--menu-enter-duration) var(--menu-enter-easing) both;
 }
 
 .conversation-search-overlay {

@@ -23,7 +23,7 @@ export function useMessageArrivalMotion() {
     const freshArrivals: MessageArrival[] = [];
     const startTime = messageMotionTime();
     const duration = motionDurationMs("--motion-base", 180);
-    const easing = motionCurve("--ease-out", "cubic-bezier(0.16, 1, 0.3, 1)");
+    const easing = motionCurve("--ease-out", "cubic-bezier(0.33, 1, 0.68, 1)");
     const canAnimate = !reset && !document.hidden && !prefersReducedMotion() && duration > 0;
     for (const { id, element, own, fresh } of messages) {
       const old = reset ? undefined : rows.current.get(id);

@@ -263,8 +263,11 @@
    * Ladder: fast = pointer feedback (hover/press/color) — never slower, this
    * is where responsiveness lives; base = menus, popovers, content swaps;
    * slow = structural moves (sidebar, panels, overlays); slower = large
-   * folds/reveals. The signature --ease-out front-loads its travel, so the
-   * longer tails read as calm rather than sluggish; exits accelerate away
+   * folds/reveals. The signature --ease-out is a cubic ease-out, the shape of
+   * the environment panel and --query-submit-easing: about 80% of the travel
+   * lands in the first 40% of the time and the rest settles, so a rung's
+   * duration is felt rather than spent on a tail the eye cannot see (a steeper
+   * expo curve is visually done in a quarter of it). Exits accelerate away
    * with --ease-in.
    * Durations that stay literal are rhythms rather than transitions:
    * --motion-spin, ambient loops, and choreography paced by a JS clock. Each
@@ -276,9 +279,8 @@
   --motion-slow: 280ms;
   --motion-slower: 440ms;
   --motion-spin: 900ms;
-  --ease-out: var(--wuu-motion-easing-standard, cubic-bezier(0.16, 1, 0.3, 1));
+  --ease-out: var(--wuu-motion-easing-standard, cubic-bezier(0.33, 1, 0.68, 1));
   --ease-in: cubic-bezier(0.4, 0, 1, 1);
-  --ease-bounce: cubic-bezier(0.34, 1.56, 0.64, 1);
 
   /* --- Motion: semantic aliases -------------------------------------------
    * Components reference these (or the primitives directly). Add an alias

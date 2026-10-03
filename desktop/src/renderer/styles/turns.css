@@ -1899,7 +1899,7 @@
   margin-right: 6px;
   vertical-align: middle;
   --pulse-opacity: 0.4;
-  animation: wuu-pulse 1.2s ease-in-out infinite;
+  animation: wuu-pulse 1.8s ease-in-out infinite;
 }
 
 @container style(--motion-reduced: 1) {
@@ -2147,7 +2147,7 @@
 }
 
 .tool-activity-marker.is-running {
-  animation: wuu-pulse 1.5s ease-in-out infinite;
+  animation: wuu-pulse 1.8s ease-in-out infinite;
 }
 
 @container style(--motion-reduced: 1) {

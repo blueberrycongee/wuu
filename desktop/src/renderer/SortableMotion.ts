@@ -3,7 +3,7 @@ import type { UseSortableArguments } from "@dnd-kit/sortable";
 import { useMemo } from "react";
 import { motionCurve, motionDurationMs, useReducedMotion } from "./motion";
 
-const EASE_OUT_FALLBACK = "cubic-bezier(0.16, 1, 0.3, 1)";
+const EASE_OUT_FALLBACK = "cubic-bezier(0.33, 1, 0.68, 1)";
 
 /*
  * dnd-kit writes its motion as inline styles and WAAPI calls with literal

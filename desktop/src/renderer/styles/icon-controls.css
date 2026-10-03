@@ -76,7 +76,8 @@
 .icon-button {
   transition:
     background-color var(--motion-fast) var(--ease-out),
-    color var(--motion-fast) var(--ease-out);
+    color var(--motion-fast) var(--ease-out),
+    transform var(--motion-fast) var(--ease-out);
 }
 
 .icon-button:hover:not(:disabled),
@@ -84,6 +85,14 @@
 .workspace-toggle-button[aria-pressed="true"] {
   background: var(--surface-3);
   color: var(--ink);
+}
+
+/* Press feedback matches the other icon controls (composer tool, sidebar row,
+ * message action). A scale rather than a surface step: --surface-3 and
+ * --surface-4 resolve to the same value once a theme sets
+ * --wuu-color-surface-elevated, so a darker step would vanish there. */
+.icon-button:active:not(:disabled) {
+  transform: scale(0.96);
 }
 
 html[data-focus-modality="keyboard"] :is(

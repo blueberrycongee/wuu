@@ -10,6 +10,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Align motion easing, icon press feedback, notice dismissal, and activity
+  rhythms with the shared motion settings and reduced-motion preference.
+
 - Use consistent conversation labels and full programmatic-tool-calling names,
   with clearer recovery messages in English and Chinese.
 

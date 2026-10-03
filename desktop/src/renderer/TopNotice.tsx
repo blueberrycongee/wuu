@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { motionDurationMs } from "./motion";
 import type { IconComponent } from "./WuuIcons";
 import { X } from "./WuuIcons";
 
@@ -74,7 +75,9 @@ export function TopNotice({
         title={dismissAriaLabel}
         onClick={() => {
           setLeaving(true);
-          window.setTimeout(onDismiss, 200);
+          // The `.leaving` exit runs on --motion-base; unmounting sooner would cut it
+          // short when a theme lengthens that rung.
+          window.setTimeout(onDismiss, motionDurationMs("--motion-base", 180));
         }}
       >
         <X className="icon-sm" />
