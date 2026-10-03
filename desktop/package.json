@@ -32,6 +32,7 @@
     "test:cua-mac": "node scripts/test-cua-mac.cjs",
     "test:watch": "vitest",
     "test:renderer-recovery": "node scripts/renderer-recovery-smoke.cjs",
+    "test:e2e:workspace-preview": "node scripts/workspace-preview-e2e.cjs",
     "test:e2e:fast-mode": "npm run build:core && npm run build && electron scripts/fast-mode-e2e.cjs",
     "test:e2e:composer-worktree": "npm run build:core && npm run build && electron scripts/composer-worktree-e2e.cjs",
     "test:e2e:permission-mode": "npm run build && electron scripts/permission-mode-e2e.cjs",

@@ -1,7 +1,8 @@
-import { act } from "react";
+import { act, lazy, Suspense } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { WorkspaceReviewPanel } from "./WorkspaceReviewPanels";
+import { WorkspacePreviewBoundary } from "./WorkspacePreviewBoundary";
 import type { GitChangeFile, GitChangesResult, GitFileDiffResult, GitStatusResult } from "../shared/protocol";
 
 vi.mock("./WorkspaceMonacoDiffEditor", () => ({
@@ -125,6 +126,56 @@ const FILES: GitChangeFile[] = [
   { path: "go.mod", status: "modified", additions: 1, deletions: 1 },
   { path: "lib/three.ts", status: "deleted", additions: 0, deletions: 2 },
 ];
+
+describe("workspace preview recovery", () => {
+  it("contains a rejected import without unmounting the surrounding UI or automatically reloading", async () => {
+    const load = vi.fn().mockRejectedValue(new TypeError("Failed to fetch dynamically imported module"));
+    const Preview = lazy(load);
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      mount(
+        <>
+          <button data-surrounding-action>Keep working</button>
+          <WorkspacePreviewBoundary resourceKey="app/one.ts">
+            <Suspense fallback={null}><Preview /></Suspense>
+          </WorkspacePreviewBoundary>
+        </>,
+      );
+      const surrounding = container!.querySelector("[data-surrounding-action]");
+      await flushReviewEffects();
+      expect(container!.querySelector("[data-surrounding-action]")).toBe(surrounding);
+      expect(container!.querySelector("[data-wuu-action=reload-preview]")).toBeTruthy();
+      expect(load).toHaveBeenCalledTimes(1);
+    } finally {
+      error.mockRestore();
+    }
+  });
+});
+
+describe("workspace preview resource recovery", () => {
+  it("allows switching away from a failed preview to another resource", async () => {
+    const Broken = lazy(async () => { throw new TypeError("Unavailable module"); });
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const preview = (path: string) => (
+      <WorkspacePreviewBoundary resourceKey={path}>
+        <Suspense fallback={null}>
+          {path === "app/one.ts" ? <Broken /> : <div data-preview-path={path} />}
+        </Suspense>
+      </WorkspacePreviewBoundary>
+    );
+    try {
+      mount(preview("app/one.ts"));
+      await flushReviewEffects();
+      expect(container!.querySelector("[data-wuu-action=reload-preview]")).toBeTruthy();
+      act(() => root!.render(preview("app/two.ts")));
+      await flushReviewEffects();
+      expect(container!.querySelector("[data-preview-path]")?.getAttribute("data-preview-path")).toBe("app/two.ts");
+      expect(container!.querySelector("[data-wuu-action=reload-preview]")).toBeNull();
+    } finally {
+      error.mockRestore();
+    }
+  });
+});
 
 describe("WorkspaceReviewPanel", () => {
   it("opens a narrow panel on the change list and reads one file at a time", async () => {

@@ -1655,6 +1655,8 @@ export const enUS = {
   "workspace.files.openFailedTitle": "Unable to open file",
   "workspace.files.noContent": "No content",
   "workspace.files.cannotPreview": "Unable to preview",
+  "workspace.files.previewLoadFailed": "Preview failed to load",
+  "workspace.files.reloadWindow": "Reload window",
   "workspace.files.binary": "This is a binary file.",
   "workspace.terminal.durationHours": "{hours}h {minutes}m {seconds}s",
   "workspace.terminal.durationMinutes": "{minutes}m {seconds}s",

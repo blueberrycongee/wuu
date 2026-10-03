@@ -1652,6 +1652,8 @@ export const zhCN = {
   "workspace.files.openFailedTitle": "打开失败",
   "workspace.files.noContent": "没有内容",
   "workspace.files.cannotPreview": "无法预览",
+  "workspace.files.previewLoadFailed": "预览加载失败",
+  "workspace.files.reloadWindow": "重新加载窗口",
   "workspace.files.binary": "这是二进制文件。",
   "workspace.terminal.durationHours": "{hours}小时 {minutes}分钟 {seconds}秒",
   "workspace.terminal.durationMinutes": "{minutes}分钟 {seconds}秒",

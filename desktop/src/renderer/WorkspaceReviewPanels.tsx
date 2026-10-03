@@ -23,6 +23,7 @@ import {
 import type { GitChangeFile, GitChangesResult, GitFileDiffResult, GitStatusResult } from "../shared/protocol";
 import { TruncatedText } from "./TruncatedText";
 import { WorkspacePanelEmpty } from "./WorkspacePanelEmpty";
+import { WorkspacePreviewBoundary } from "./WorkspacePreviewBoundary";
 import {
   desktopApiErrorMessage,
   desktopApiSupportsGitReview,
@@ -524,13 +525,15 @@ function WorkspaceDiffBody({ diff }: { diff?: ReviewDiff }): JSX.Element {
   }
   if (typeof fileDiff.original_text === "string" && typeof fileDiff.modified_text === "string") {
     return (
-      <Suspense fallback={<div className="workspace-diff-empty">{t("workspaceReview.readingDiff")}</div>}>
-        <WorkspaceMonacoDiffEditor
-          path={fileDiff.path}
-          originalText={fileDiff.original_text}
-          modifiedText={fileDiff.modified_text}
-        />
-      </Suspense>
+      <WorkspacePreviewBoundary resourceKey={fileDiff.path}>
+        <Suspense fallback={<div className="workspace-diff-empty">{t("workspaceReview.readingDiff")}</div>}>
+          <WorkspaceMonacoDiffEditor
+            path={fileDiff.path}
+            originalText={fileDiff.original_text}
+            modifiedText={fileDiff.modified_text}
+          />
+        </Suspense>
+      </WorkspacePreviewBoundary>
     );
   }
   if (!fileDiff.patch) {

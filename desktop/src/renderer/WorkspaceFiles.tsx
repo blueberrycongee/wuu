@@ -22,6 +22,7 @@ import { FilePreviewPresentation } from "./plugins/FilePreviewPresentation";
 import { UILayerPortal } from "./ui/layers/UILayerHost";
 import { VideoPreview } from "./VideoPreview";
 import { WorkspacePanelEmpty } from "./WorkspacePanelEmpty";
+import { WorkspacePreviewBoundary } from "./WorkspacePreviewBoundary";
 
 // monaco-editor is several MB of JS; a static import here would drag it into
 // the eager startup chunk. Load it only when a code editor actually mounts.
@@ -722,9 +723,11 @@ export function WorkspaceFilePreview({
         </article>
       ) : file.renderable_kind === "pdf" ? (
         <article className="workspace-file-preview readonly">
-          <Suspense fallback={<div className="workspace-file-pdf-preview" />}>
-            <WorkspacePdfPreview url={file.renderable_url} title={file.path} />
-          </Suspense>
+          <WorkspacePreviewBoundary resourceKey={file.path}>
+            <Suspense fallback={<div className="workspace-file-pdf-preview" />}>
+              <WorkspacePdfPreview url={file.renderable_url} title={file.path} />
+            </Suspense>
+          </WorkspacePreviewBoundary>
         </article>
       ) : (
       <article className="workspace-file-preview readonly">
@@ -763,20 +766,22 @@ export function WorkspaceFilePreview({
                   />
                 </div>
               ) : active ? (
-                <Suspense fallback={null}>
-                  <WorkspaceMonacoEditor
-                    {...selectionControls}
-                    initialViewState={editorViewStateRef.current}
-                    path={file.path}
-                    resourceID={editorResourceID ?? `${activeContext.cwd}:${file.path}`}
-                    selection={selection}
-                    text={draftText}
-                    readOnly
-                    onViewStateChange={(viewState) => {
-                      editorViewStateRef.current = viewState;
-                    }}
-                  />
-                </Suspense>
+                <WorkspacePreviewBoundary resourceKey={file.path}>
+                  <Suspense fallback={null}>
+                    <WorkspaceMonacoEditor
+                      {...selectionControls}
+                      initialViewState={editorViewStateRef.current}
+                      path={file.path}
+                      resourceID={editorResourceID ?? `${activeContext.cwd}:${file.path}`}
+                      selection={selection}
+                      text={draftText}
+                      readOnly
+                      onViewStateChange={(viewState) => {
+                        editorViewStateRef.current = viewState;
+                      }}
+                    />
+                  </Suspense>
+                </WorkspacePreviewBoundary>
               ) : null}
             </div>
           )}

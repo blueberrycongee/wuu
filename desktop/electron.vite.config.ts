@@ -45,12 +45,17 @@ export default defineConfig({
   },
   renderer: {
     root: ".",
+    // Fixtures and other Vite servers must not replace a running desktop
+    // renderer's optimized modules, including the lazily loaded editors.
+    cacheDir: resolve(__dirname, "node_modules/.vite/desktop-renderer"),
+    optimizeDeps: { entries: ["index.html"], include: ["monaco-editor"] },
     define: desktopDefine,
     plugins: [react()],
     resolve: {
       dedupe: ["react", "react-dom"],
     },
     server: {
+      watch: { ignored: ["**/out/**", "**/build/**"] },
       fs: {
         // Protocol types are imported from packages/protocol at the repo
         // root, outside the renderer root — allow the dev server to serve it.
