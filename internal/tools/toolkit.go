@@ -1157,25 +1157,26 @@ func surfaceHasCapability(caps []capability.Capability, capName capability.Capab
 
 func cloneSurface(surface capability.Surface) capability.Surface {
 	out := surface
-	if len(surface.Tools) > 0 {
+	// Empty maps must also be copied: filtering and callers can mutate them.
+	if surface.Tools != nil {
 		out.Tools = make(map[string]capability.Capability, len(surface.Tools))
 		for name, cap := range surface.Tools {
 			out.Tools[name] = cap
 		}
 	}
-	if len(surface.DeferredTools) > 0 {
+	if surface.DeferredTools != nil {
 		out.DeferredTools = make(map[string]capability.Capability, len(surface.DeferredTools))
 		for name, cap := range surface.DeferredTools {
 			out.DeferredTools[name] = cap
 		}
 	}
-	if len(surface.HiddenTools) > 0 {
+	if surface.HiddenTools != nil {
 		out.HiddenTools = make(map[string]capability.Capability, len(surface.HiddenTools))
 		for name, cap := range surface.HiddenTools {
 			out.HiddenTools[name] = cap
 		}
 	}
-	if len(surface.NestedTools) > 0 {
+	if surface.NestedTools != nil {
 		out.NestedTools = make(map[string]capability.Capability, len(surface.NestedTools))
 		for name, cap := range surface.NestedTools {
 			out.NestedTools[name] = cap
