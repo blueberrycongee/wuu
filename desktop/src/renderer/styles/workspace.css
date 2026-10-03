@@ -1227,7 +1227,7 @@ html.resizing-workspace-file-split * {
   align-items: center;
   column-gap: var(--space-3);
   border-radius: var(--radius-sm);
-  background: var(--surface-1);
+  background: transparent;
   color: var(--ink);
   padding: var(--space-3) var(--space-4);
   font-size: var(--font-ui);

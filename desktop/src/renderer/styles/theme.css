@@ -63,8 +63,8 @@
   --slider-thumb-bg: var(--wuu-color-text, var(--gray-900));
   --selection-surface: var(--wuu-color-surface-elevated, var(--gray-200));
   --placeholder-ink: var(--gray-600);
-  --field-bg: var(--wuu-control-field-background, var(--surface-2));
-  --field-hover-bg: var(--wuu-control-field-background, var(--surface-3));
+  --field-bg: var(--wuu-control-field-background, var(--surface-1));
+  --field-hover-bg: var(--wuu-control-field-background, var(--surface-2));
 
   /* Ink overlays flip to white-based veils. */
   --ink-overlay-4: rgba(220, 228, 235, 0.05);

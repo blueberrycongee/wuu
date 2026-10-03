@@ -2,7 +2,7 @@
  * distinguish editable controls; selection uses fill, never a border. */
 
 :root {
-  --settings-canvas: var(--wuu-color-canvas, var(--surface-2));
+  --settings-canvas: var(--paper);
   --settings-card: var(--wuu-color-surface, var(--gray-0));
   --subscription-meter: var(--wuu-color-accent, #4f46e5);
   /* Usage charts and the home overview share one ramp: a single blue stepped
@@ -185,8 +185,8 @@
 
 /* --- Content surface ------------------------------------------------------- */
 
-/* Configuration uses a muted canvas with one lifted surface per group.
- * Row separators stay inside that surface rather than framing each field. */
+/* Share the reading canvas with the conversation. Grouping comes from
+ * whitespace and hairlines, without a tonal step behind every group. */
 .settings-main {
   /* Pin to column 2 like the main shell's .conversation-pane: when the
    * collapsed rail turns into the absolutely positioned hover drawer it

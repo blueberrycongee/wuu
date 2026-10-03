@@ -10,6 +10,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Use neutral sidebar selection, unfilled workspace tool-picker rows, and a
+  shared reading canvas for settings groups and fields.
+
 - Unify desktop light and dark surfaces across navigation, settings, model
   services, fields, and menus while preserving font preferences and custom
   theme overrides.

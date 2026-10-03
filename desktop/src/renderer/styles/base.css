@@ -170,8 +170,8 @@
   /* Placeholder text must read as an example, never as a filled value, and still
      clear 4.5:1. Distinct from entered text (--ink) and from --ink-soft labels. */
   --placeholder-ink: var(--gray-650);
-  --field-bg: var(--wuu-control-field-background, var(--surface-2));
-  --field-hover-bg: var(--wuu-control-field-background, var(--surface-3));
+  --field-bg: var(--wuu-control-field-background, var(--paper));
+  --field-hover-bg: var(--wuu-control-field-background, var(--surface-2));
   --field-border: var(--hairline-strong);
   --selection-bg: rgba(64, 133, 216, 0.3);
 
