@@ -43,6 +43,8 @@ These are internal renderer roles, not all public API promises. Extensions use t
 
 Wuu's identity is monochrome-first, with paper, ink, and neutral surfaces rather than a mandatory signature hue. The black-and-white app icon, consistent shapes, typography, and space provide recognition. Neutral does not mean a flat gray interface: use readable tonal contrast and clear hierarchy, with light and dark themes expressing the same roles.
 
+Built-in light mode separates a white reading canvas from a muted navigation rail. Settings use a shared muted canvas with contrasting group surfaces; filled fields distinguish editable values from the surrounding group. Dark mode expresses the same hierarchy on charcoal surfaces. Navigation selection follows the rail's surface role rather than reusing the tab fill. Custom themes retain their public color and control overrides.
+
 Brand identity, action emphasis, and status are separate concerns. Primary actions can use strong foreground/background contrast without a saturated brand fill. Links, keyboard focus, and selection need recognizable interaction cues; success, warning, and danger need distinct meanings. Color supports these purposes rather than decorating every heading or selected item. Never rely on color alone for an essential distinction.
 
 ### Color roles

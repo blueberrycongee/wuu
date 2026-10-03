@@ -8,6 +8,12 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ## [Unreleased]
 
+### Changed
+
+- Unify desktop light and dark surfaces across navigation, settings, model
+  services, fields, and menus while preserving font preferences and custom
+  theme overrides.
+
 ## [2026.10.2] - 2026-10-02
 
 ### Contributors

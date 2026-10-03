@@ -1,12 +1,9 @@
 /* Component color tokens for sidebar.css.
    Light-theme values; the dark theme overrides these in base.css theme blocks. */
 :root {
-  /* The native macOS vibrancy view supplies the material and wallpaper tint.
-   * The web layer lays a bright frost over it: enough white that the rail
-   * reads as a light material against the pure-white content column (raw
-   * under-window vibrancy skews gray there), while still letting a hint of
-   * wallpaper color and under-window motion through. */
-  --sidebar-material-fill: rgba(255, 255, 255, 0.62);
+  /* A muted navigation surface separates the rail from the reading canvas.
+   * Keep a translucent veil so native vibrancy and custom artwork still show. */
+  --sidebar-material-fill: color-mix(in srgb, var(--surface-2) 82%, transparent);
   /* Rail/content boundary: a crisp dark hairline instead of the old white
    * edge + white inset pair, which were invisible against the white content
    * column and left the boundary to be read from the gray brightness step.
@@ -14,14 +11,14 @@
   --sidebar-material-edge: rgba(17, 19, 21, 0.07);
   --sidebar-material-inner-edge: transparent;
   --sidebar-hover-card-rim: rgba(255, 255, 255, 0.72);
-  --sidebar-drawer-bg: var(--wuu-color-surface-muted, #ffffff);
+  --sidebar-drawer-bg: var(--surface-2);
   --sidebar-brand-wordmark-color: var(--ink-strong);
   --sidebar-resizer-hover-bg: var(--ink-overlay-18);
   --sidebar-resizer-hover-ring: rgba(255, 255, 255, 0.4);
   --sidebar-nav-item-hover-ring: var(--wuu-nav-item-hover-ring, rgba(255, 255, 255, 0.42));
   --sidebar-nav-item-focus-shadow: var(--focus-ring);
-  /* Location uses the same neutral surface as tabs and settings navigation. */
-  --sidebar-row-selected-bg: var(--selection-surface);
+  /* A paper row lifts the current location out of the muted navigation rail. */
+  --sidebar-row-selected-bg: var(--wuu-nav-item-active-background, var(--paper));
   --sidebar-project-row-pending-bg: rgba(255, 255, 255, 0.24);
   --sidebar-project-loading-notch: rgba(17, 19, 21, 0.18);
   --sidebar-row-icon-hover-bg-default: var(--ink-overlay-6);
@@ -37,13 +34,10 @@
   --sidebar-edge-shadow: 0 0 0 0 transparent;
 }
 
-/* Windows has no vibrancy view — the themed window fill is all that sits
- * behind the web layer, so the near-clear material fill above would leave
- * the rail indistinguishable from the content column. Give it an opaque
- * surface instead; the dark value lives in theme.css with the other dark
- * overrides. */
+/* Windows has no vibrancy view. Use an opaque navigation surface instead
+ * of relying on the native material behind the translucent web layer. */
 :root[data-platform="win32"] {
-  --sidebar-material-fill: rgba(255, 255, 255, 0.62);
+  --sidebar-material-fill: var(--surface-2);
 }
 
 .app-shell {

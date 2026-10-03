@@ -118,7 +118,7 @@ window.wuu = {
 
 function Preview() {
   const [sources, setSources] = useState(providers);
-  return <main style={{ height: "100vh", overflow: "auto", background: "var(--subscription-canvas)" }}><div className="settings-page">
+  return <main style={{ height: "100vh", overflow: "auto", background: "var(--settings-canvas)" }}><div className="settings-page">
     <SubscriptionDashboard inventory={params.has("detecting") ? undefined : parentInventory} providers={params.has("detecting") ? undefined : sources} onSelectBuiltinModel={async (name, model) => setSources((current) => current.map((source) => source.name === name ? { ...source, model } : source))} />
   </div></main>;
 }

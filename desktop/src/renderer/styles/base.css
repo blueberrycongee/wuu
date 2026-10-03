@@ -44,13 +44,13 @@
    * in both themes.
    * ------------------------------------------------------------------ */
   --gray-0: #ffffff;
-  --gray-50: #fafafa;
-  --gray-100: #f3f3f3;
-  --gray-150: #eeeeee;
-  --gray-200: #e5e5e5;
-  --gray-250: #e2e2e2;
-  --gray-300: #dddddd;
-  --gray-350: #d5d5d5;
+  --gray-50: #f8f8fa;
+  --gray-100: #f1f1f4;
+  --gray-150: #eaeaef;
+  --gray-200: #e4e4e9;
+  --gray-250: #dedfe5;
+  --gray-300: #d8d9e0;
+  --gray-350: #cfd1d8;
   --gray-400: #b0b6bb;
   --gray-450: #9ca1a5;
   --gray-500: #8a8f94;
@@ -73,7 +73,7 @@
   --ink-muted: color-mix(in srgb, var(--ink-soft) 70%, var(--paper));
   --ink-faint: color-mix(in srgb, var(--ink-soft) 45%, var(--paper));
 
-  --paper: var(--wuu-color-canvas, #fbfbfc);
+  --paper: var(--wuu-color-canvas, var(--gray-0));
   --surface-1: var(--wuu-color-surface, var(--gray-50));
   --surface-2: var(--wuu-color-surface-muted, var(--gray-100));
   --surface-3: var(--wuu-color-surface-elevated, var(--gray-150));
@@ -169,9 +169,9 @@
   --slider-thumb-bg: var(--wuu-color-surface-elevated, var(--paper));
   /* Placeholder text must read as an example, never as a filled value, and still
      clear 4.5:1. Distinct from entered text (--ink) and from --ink-soft labels. */
-  --placeholder-ink: var(--gray-600);
-  --field-bg: var(--wuu-control-field-background, var(--paper));
-  --field-hover-bg: var(--wuu-control-field-background, var(--surface-1));
+  --placeholder-ink: var(--gray-650);
+  --field-bg: var(--wuu-control-field-background, var(--surface-2));
+  --field-hover-bg: var(--wuu-control-field-background, var(--surface-3));
   --field-border: var(--hairline-strong);
   --selection-bg: rgba(64, 133, 216, 0.3);
 

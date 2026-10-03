@@ -1,16 +1,8 @@
-/* Model services share the subscription page's quiet canvas. The current
- * choice and saved connections have a surface; discovery uses bare rows. */
+/* The current choice and saved connections use the shared settings surface;
+ * discovery uses bare rows on the settings canvas. */
 
 .model-services {
   display: contents;
-}
-
-.settings-main:has(.model-services) {
-  background: var(--subscription-canvas);
-}
-
-.model-services .settings-group {
-  background: var(--subscription-card);
 }
 
 /* --- Vendor marks ---------------------------------------------------------
@@ -67,7 +59,7 @@
   /* Matches the service cards' border so marks and names share one axis. */
   border: 1px solid var(--hairline-soft);
   border-radius: var(--radius-md);
-  background: var(--subscription-card);
+  background: var(--settings-card);
   padding: var(--space-4);
 }
 
@@ -197,7 +189,7 @@
   gap: var(--space-3);
   border: 1px solid var(--hairline-soft);
   border-radius: var(--radius-sm);
-  background: var(--subscription-card);
+  background: var(--settings-card);
   color: var(--ink);
   padding: var(--space-3) var(--space-4);
   text-align: left;
@@ -208,7 +200,7 @@
 
 .model-service-card:hover {
   border-color: var(--hairline);
-  background: color-mix(in srgb, var(--subscription-card) 94%, var(--ink));
+  background: color-mix(in srgb, var(--settings-card) 94%, var(--ink));
 }
 
 .model-service-card:hover .settings-disclosure-chevron {
@@ -668,7 +660,7 @@
   /* Title, search, independently scrolling catalog, custom endpoint. */
   grid-template-rows: auto auto minmax(0, 1fr) auto;
   overflow: hidden;
-  background: var(--subscription-canvas);
+  background: var(--settings-canvas);
 }
 
 .model-browse-list {
