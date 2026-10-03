@@ -123,7 +123,7 @@ worktree 改动留在成员的 worktree 里。`thread/control/take` 和 `thread/
 | `text` | `text: string` |
 | `pasted_text` | `text: string`，可选 `title: string` |
 | `file_selection` | `text: string`、`source: FileSelectionSource`、`intent: "comment" \| "edit" \| "quote"`、`id: string`，可选 `comment: string` |
-| `response_selection` | `text: string`、`selection: ResponseSelection`，引用已完成的助手回复 |
+| `response_selection` | `text: string`、`selection: ResponseSelection`，引用捕获时已显示的助手回复，支持仍在输出的回复 |
 
 `FileSelectionSource` 包含字符串字段 `workspace`、`path`、`quote`、`revision`，
 以及整数字段 `start_line`、`start_column`、`end_line`、`end_column`。行号和

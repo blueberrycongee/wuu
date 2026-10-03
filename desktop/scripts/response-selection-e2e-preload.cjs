@@ -6,13 +6,14 @@ const cwd = process.env.WUU_SELECTION_E2E_CWD || process.cwd();
 const now = new Date().toISOString();
 const answer = "Native drag selection starts here.\n\nRepeated 😀 café 中文 target. Middle separator. Repeated 😀 café 中文 target.\n\nLast paragraph stays visible.";
 function thread(id) {
+  const live = id === "selection-main" && process.env.WUU_SELECTION_E2E_STREAMING === "true";
   return {
     id, preview: id === "selection-main" ? "Selection main fixture" : "Selection other fixture",
-    cwd, model_provider: "e2e", model: "mock-selection", status: "idle", created_at: now, updated_at: now,
-    turns: [{ id: `${id}-turn`, terminal: true, status: "completed", items_view: "full", started_at: now, completed_at: now,
+    cwd, model_provider: "e2e", model: "mock-selection", status: live ? "in_progress" : "idle", created_at: now, updated_at: now,
+    turns: [{ id: `${id}-turn`, terminal: !live, status: live ? "in_progress" : "completed", items_view: "full", started_at: now, ...(!live ? { completed_at: now } : {}),
       items: [
         { id: `${id}-user`, type: "user_message", status: "completed", text: "Select part of the answer.", ...(id === "selection-main" ? { related_session_id: "selection-other", input_text: "Related selection fixture" } : {}) },
-        { id: `${id}-answer`, type: "agent_message", status: "completed", text: answer },
+        { id: `${id}-answer`, type: "agent_message", status: live ? "in_progress" : "completed", text: answer },
       ] }],
   };
 }

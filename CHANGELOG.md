@@ -16,6 +16,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Allow quoting and commenting on assistant text during streaming, preserving
+  valid selections through appended output and turn completion.
 - Use the full subscription-card width for a single allowance, align card
   spacing and corners with shared panels, and keep model selectors readable
   when service names wrap.
