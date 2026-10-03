@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' ws://127.0.0.1:*" />
+    <title>Wuu promo</title>
+    <style>
+      html, body { margin: 0; height: 100%; background: #111; color: #ddd; font: 13px system-ui, sans-serif; }
+      body { display: grid; grid-template-rows: 1fr auto; }
+      canvas { width: 100%; height: 100%; object-fit: contain; display: block; min-height: 0; }
+      .bar { display: flex; gap: 12px; align-items: center; padding: 8px 12px; }
+      .bar input { flex: 1; }
+      .bar output { font-variant-numeric: tabular-nums; width: 64px; }
+    </style>
+  </head>
+  <body>
+    <canvas width="1920" height="1080"></canvas>
+    <div class="bar"><button type="button">Play</button><input type="range" min="0" step="0.01" /><output></output></div>
+    <script type="module" src="/main.ts"></script>
+  </body>
+</html>
