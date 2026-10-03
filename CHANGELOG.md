@@ -8,6 +8,18 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ## [Unreleased]
 
+### Changed
+
+- Unify desktop light and dark surfaces across navigation, settings, model
+  services, fields, and menus while preserving font preferences and custom
+  theme overrides.
+
+### Fixed
+
+- Use the full subscription-card width for a single allowance, align card
+  spacing and corners with shared panels, and keep model selectors readable
+  when service names wrap.
+
 ## [2026.10.2] - 2026-10-02
 
 ### Contributors
