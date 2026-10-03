@@ -49,7 +49,7 @@ function validatedRange(root: HTMLElement, selection: ResponseSelection): Range 
   let started = false;
   for (const node of textNodes(root)) {
     const next = offset + node.length;
-    if (!started && start <= next) {
+    if (!started && start < next) {
       range.setStart(node, start - offset);
       started = true;
     }
@@ -125,6 +125,7 @@ export function AssistantResponseArticle({ turnID, itemID, children, ...props }:
   const commentToggleRef = useRef<HTMLButtonElement>(null);
   const returnToToggleRef = useRef(false);
   const anchorRef = useRef<DOMRect | undefined>(undefined);
+  const selectionHighlightRef = useRef<Highlight | undefined>(undefined);
   const [captured, setCaptured] = useState<ResponseSelection>();
   const capturedRef = useRef(captured);
   capturedRef.current = captured;
@@ -172,22 +173,38 @@ export function AssistantResponseArticle({ turnID, itemID, children, ...props }:
     // Focus moves into the comment input, so the native selection stops
     // painting; keep the passage marked until the comment is added or dropped.
     const highlights = (globalThis.CSS as typeof CSS & { highlights?: Map<string, unknown> } | undefined)?.highlights;
-    const HighlightClass = (globalThis as typeof globalThis & { Highlight?: new (range: Range) => unknown }).Highlight;
+    const HighlightClass = (globalThis as typeof globalThis & { Highlight?: new (range: Range) => Highlight }).Highlight;
     const root = ref.current?.querySelector<HTMLElement>(".agent-text");
     const range = captured && commenting && root ? validatedRange(root, captured) : undefined;
     if (!range || !highlights || !HighlightClass) return;
-    highlights.set("wuu-response-selection", new HighlightClass(range));
-    return () => { highlights.delete("wuu-response-selection"); };
+    const highlight = new HighlightClass(range);
+    selectionHighlightRef.current = highlight;
+    highlights.set("wuu-response-selection", highlight);
+    return () => { selectionHighlightRef.current = undefined; highlights.delete("wuu-response-selection"); };
   }, [captured, commenting]);
   useEffect(() => {
     if (!captured) return;
     const article = ref.current!;
     const root = article.querySelector<HTMLElement>(".agent-text")!;
     const observer = new MutationObserver(() => {
-      if (!visible(article) || article.closest<HTMLElement>("[data-thread-id]")?.dataset.threadId !== captured.source.thread_id || !validatedRange(root, captured)) {
+      const range = validatedRange(root, captured);
+      if (!visible(article) || article.closest<HTMLElement>("[data-thread-id]")?.dataset.threadId !== captured.source.thread_id || !range) {
         setCaptured(undefined);
         setCommenting(false);
         setComment("");
+        return;
+      }
+      selectionHighlightRef.current?.clear();
+      selectionHighlightRef.current?.add(range);
+      if (toolbarRef.current?.contains(document.activeElement)) return;
+      const native = window.getSelection();
+      const current = native?.rangeCount === 1 ? native.getRangeAt(0) : undefined;
+      // Markdown updates can replace selected nodes without changing the
+      // captured passage. Re-anchor before selectionchange sees a lost range.
+      if (native && (!current || current.compareBoundaryPoints(Range.START_TO_START, range) !== 0
+        || current.compareBoundaryPoints(Range.END_TO_END, range) !== 0)) {
+        native.removeAllRanges();
+        native.addRange(range);
       }
     });
     observer.observe(root, { childList: true, characterData: true, subtree: true });

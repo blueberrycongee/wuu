@@ -309,29 +309,56 @@ async function streamingCoverage() {
   const turn = thread.turns[0];
   const answer = turn.items.find(item => item.id === "selection-main-answer");
   const original = answer.text;
-  const appended = original + "\n\nAppended stream output.";
+  const appended = original + " More tail text.\n\nAppended stream output.";
   const ids = { thread_id: "selection-main", turn_id: "selection-main-turn", item_id: "selection-main-answer" };
   const notify = (method, params) => win.webContents.send("selection:server-event", {
     workdir: path.dirname(desktop), kind: "notification", message: { method, params },
   });
   await until(selector => !!document.querySelector(selector)?.querySelector('[data-stream-state="streaming"]'),
     "live response", surface);
-  const expected = await select("Native drag selection", false, true);
+  const tail = await select("Last paragraph stays visible.", false, true);
+  for (const delta of [" More tail text.", "\n\nAppended stream output."]) {
+    notify("item/agentMessage/delta", { ...ids, delta });
+    await until((selector, text) => document.querySelector(selector)?.textContent.includes(text), "live tail append rendered", surface, delta.trim());
+    await evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    const state = await evaluate((selector, expected) => ({
+      toolbar: !!document.querySelector(".response-selection-toolbar"),
+      native: window.getSelection()?.toString(),
+      exact: document.querySelector(selector)?.textContent.slice(expected.start, expected.end) === expected.text,
+    }), surface, tail);
+    report.cases.push({ name: "live tail selection survives append", delta, state });
+    if (!state.toolbar || state.native !== tail.text || !state.exact) throw new Error("Stream append lost the still-valid native tail selection");
+  }
+  await evaluate(() => window.getSelection().removeAllRanges());
+  await until(() => !document.querySelector(".response-selection-toolbar"), "explicit native deselection closes actions");
+  await select(tail.text);
+  await click(".response-selection-toolbar button");
+  await until(selector => !!document.querySelector(selector), "tail quote card", card);
+  await checkSource(tail);
+  await send(tail, "", "Explain the selected live tail.", "steerTurn");
+  report.cases.push("explicit deselection still closes actions; restored live tail quote keeps exact source and steer payload");
+  notify("item/agentMessage/replace", { ...ids, text: original });
+  await until(selector => !document.querySelector(selector)?.textContent.includes("More tail text."), "live response reset", surface);
+  const expected = await select("Last paragraph stays visible.", false, true);
   await click(".response-selection-toolbar .selection-action-comment-toggle");
   const comment = "Explain the live passage 😀 中文";
   await win.webContents.insertText(comment);
-  notify("item/agentMessage/delta", { ...ids, delta: "\n\nAppended stream output." });
-  await until(selector => document.querySelector(selector)?.textContent.includes("Appended stream output."), "stream append rendered", surface);
-  const preserved = await evaluate(() => {
-    const input = document.querySelector(".response-selection-toolbar .selection-action-comment-input");
-    return { value: input?.value, focused: document.activeElement === input };
-  });
-  if (preserved.value !== comment || !preserved.focused) throw new Error("Stream append lost the comment or its focus");
+  for (const delta of [" More tail text.", "\n\nAppended stream output."]) {
+    notify("item/agentMessage/delta", { ...ids, delta });
+    await until((selector, text) => document.querySelector(selector)?.textContent.includes(text), "annotated tail append rendered", surface, delta.trim());
+    const preserved = await evaluate(() => {
+      const input = document.querySelector(".response-selection-toolbar .selection-action-comment-input");
+      return { value: input?.value, focused: document.activeElement === input,
+        highlight: [...CSS.highlights.get("wuu-response-selection") || []].map(range => range.toString()) };
+    });
+    report.cases.push({ name: "live tail annotation survives append", delta, preserved });
+    if (preserved.value !== comment || !preserved.focused || !preserved.highlight.includes(expected.text)) throw new Error("Stream append lost the comment, its focus or passage highlight");
+  }
   await click(".response-selection-toolbar .selection-action-comment-submit");
   await until(selector => !!document.querySelector(selector), "live quote card", card);
   await checkSource(expected);
   await send(expected, comment, "Explain this while continuing.", "steerTurn");
-  report.cases.push({ name: "live native drag, comment survives append, exact live source and steer payload", preserved });
+  report.cases.push("live native drag, comment survives append, exact live source and steer payload");
 
   await select("Repeated 😀 café 中文 target.", true);
   await click(".response-selection-toolbar .selection-action-comment-toggle");
