@@ -2238,9 +2238,10 @@ app.whenReady().then(async () => {
         force: force === true ? true : undefined,
       }),
   );
-  ipcMain.handle("wuu:thread-delete", (event, threadId: string) =>
+  ipcMain.handle("wuu:thread-delete", (event, threadId: string, options?: { onlyIfArchived?: boolean }) =>
     appServerRequest<{ thread_id: string }>(event, "thread/delete", {
       thread_id: threadId,
+      ...(options?.onlyIfArchived ? { only_if_archived: true } : {}),
     }),
   );
   ipcMain.handle("wuu:thread-compact-start", (event, threadId: string) =>

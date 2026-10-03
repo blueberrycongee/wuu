@@ -23,6 +23,7 @@ import {
   Search,
   Settings,
   Smartphone,
+  Trash2,
   X,
   type IconComponent
 } from "./WuuIcons";
@@ -83,6 +84,7 @@ import { ExecutionEnvironmentSettings } from "./ExecutionEnvironmentSettings";
 import { SettingsInputUnit, SettingsRow } from "./SettingsRow";
 import { SettingsGroup, SettingsPageHeader, SettingsSection, type SettingsStatusTone } from "./SettingsSection";
 import { toastErrorMessage } from "./Toast";
+import type { ArchiveDeletionState } from "./useArchiveDeletion";
 import { EngineSettingsSection } from "./EngineSettingsSection";
 import { ModelServicesPage } from "./ModelServicesPage";
 import { SubscriptionDashboard } from "./SubscriptionDashboard";
@@ -210,6 +212,9 @@ export function SettingsView({
   onSidebarSeparatorKey,
   archivedThreads,
   onUnarchiveThread,
+  archiveDeletion,
+  onDeleteAllArchivedThreads,
+  onRetryArchiveDeletion,
   // The settings rail shares the main sidebar's state and handlers wholesale:
   // same persisted width + collapse flag, same drag-to-collapse resize
   // session, same toggle motion.
@@ -248,9 +253,12 @@ export function SettingsView({
   onCodexPetsUpdate: (settings: CodexPetSettingsUpdate) => Promise<CodexPetsSnapshot>;
   onSidebarResizeStart: (event: ReactPointerEvent<HTMLDivElement>) => void;
   onSidebarSeparatorKey: (event: ReactKeyboardEvent<HTMLDivElement>) => void;
-  // 归档页只读侧边栏归档清单 + 恢复回调。列表为空时渲染空态卡片。
+  // The archive catalog spans all workspaces; filtering only changes the view.
   archivedThreads?: readonly ArchivedSessionView[];
   onUnarchiveThread: (thread: ArchivedSessionView) => void;
+  archiveDeletion?: ArchiveDeletionState;
+  onDeleteAllArchivedThreads?: () => void;
+  onRetryArchiveDeletion?: () => void;
   sidebarCollapsed: boolean;
   sidebarAnimating: boolean;
   onToggleSidebar: () => void;
@@ -871,6 +879,9 @@ export function SettingsView({
               <SettingsArchivePage
                 archivedThreads={archivedThreads ?? []}
                 onUnarchiveThread={onUnarchiveThread}
+                deletion={archiveDeletion}
+                onDeleteAll={onDeleteAllArchivedThreads}
+                onRetry={onRetryArchiveDeletion}
               />
             ) : (
               <SettingsUsagePage
@@ -1666,9 +1677,15 @@ function SettingsMCPPage({
 function SettingsArchivePage({
   archivedThreads,
   onUnarchiveThread,
+  deletion,
+  onDeleteAll,
+  onRetry,
 }: {
   archivedThreads: readonly ArchivedSessionView[];
   onUnarchiveThread: (thread: ArchivedSessionView) => void;
+  deletion?: ArchiveDeletionState;
+  onDeleteAll?: () => void;
+  onRetry?: () => void;
 }): JSX.Element {
   const { t, formatDate } = useI18n();
   const [query, setQuery] = useState("");
@@ -1716,8 +1733,35 @@ function SettingsArchivePage({
 
   return (
     <>
-      <SettingsPageHeader title={t("settings.archive")} />
-      <div className="settings-archive-page">
+      <SettingsPageHeader
+        title={t("settings.archive")}
+        actions={(
+          <button
+            type="button"
+            className="settings-button settings-button-danger settings-archive-delete-all"
+            disabled={!onDeleteAll || deletion?.pending}
+            onClick={onDeleteAll}
+          >
+            {deletion?.pending ? <Loader2 className="icon spin" aria-hidden="true" /> : <Trash2 className="icon" aria-hidden="true" />}
+            {deletion?.progress
+              ? t("settings.deletingArchived", deletion.progress)
+              : t("settings.deleteAllArchived")}
+          </button>
+        )}
+      />
+      <div className="settings-archive-page" aria-busy={deletion?.pending || undefined}>
+        {deletion?.result || deletion?.error ? (
+          <div className="settings-archive-delete-result" role={deletion.error || deletion.result?.failed ? "alert" : "status"}>
+            {deletion.result ? <p>{t("settings.deleteArchivedResult", deletion.result)}</p> : null}
+            {deletion.error ? <p className="settings-error">{deletion.error}</p> : null}
+            {deletion.failedIDs.length > 0 ? (
+              <button type="button" className="settings-button settings-button-ghost settings-archive-delete-retry"
+                disabled={deletion.pending} onClick={onRetry}>
+                {t("settings.retryArchiveDeletion", { count: deletion.failedIDs.length })}
+              </button>
+            ) : null}
+          </div>
+        ) : null}
         {/* Nothing archived means nothing to search or filter. */}
         {sortedThreads.length > 0 ? <div className="settings-archive-toolbar" role="search" aria-label={t("settings.archiveFilter")}>
           <label className="settings-archive-search">
@@ -1781,6 +1825,7 @@ function SettingsArchivePage({
                           className="settings-button settings-button-ghost settings-icon-button settings-archive-restore"
                           aria-label={t("settings.restoreConversation", { title })}
                           title={t("settings.restore")}
+                          disabled={deletion?.pending}
                           onClick={() => onUnarchiveThread(thread)}
                         >
                           <RotateCcw className="icon" aria-hidden="true" />

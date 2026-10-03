@@ -11,7 +11,8 @@ import type {
   SideThreadHistoryResult,
   SideThreadOpenResult,
   SideThreadSendParams,
-  SideThreadSendResult
+  SideThreadSendResult,
+  SideThreadSelection
 } from "../shared/protocol";
 import {
   SIDE_THREAD_DEFAULT_WIDTH,
@@ -34,6 +35,7 @@ export type SideThreadController = {
   close: () => void;
   toggle: () => void;
   setDraft: (draft: string) => void;
+  setDraftSelection: (selection: SideThreadSelection | undefined) => void;
   sendMessage: (prompt: string) => void;
   interrupt: () => void;
   reset: () => void;
@@ -349,6 +351,10 @@ export function useSideThreadController(
     [activeThreadId, dispatch]
   );
 
+  const setDraftSelection = useCallback((selection: SideThreadSelection | undefined) => {
+    if (activeThreadId) dispatch({ type: "setDraftSelection", mainThreadId: activeThreadId, selection });
+  }, [activeThreadId, dispatch]);
+
   const sendMessage = useCallback(
     (prompt: string) => {
       if (!activeThreadId || !activeContext || !ipcImpl || effectiveDisabled) {
@@ -356,6 +362,7 @@ export function useSideThreadController(
       }
       const trimmed = prompt.trim();
       const currentEntry = storeRef.current.byThread[activeThreadId];
+      const selection = currentEntry?.draftSelection;
       if (
         !trimmed ||
         currentEntry?.streaming ||
@@ -370,6 +377,7 @@ export function useSideThreadController(
         side_thread_id: currentEntry?.summary?.side_thread_id ?? "",
         role: "user" as const,
         text: trimmed,
+        ...(selection ? { selection } : {}),
         created_at: new Date().toISOString()
       };
       setStore((previous) => {
@@ -382,6 +390,11 @@ export function useSideThreadController(
           type: "setDraft",
           mainThreadId: activeThreadId,
           draft: ""
+        });
+        next = reduceSideThreadStore(next, {
+          type: "setDraftSelection",
+          mainThreadId: activeThreadId,
+          selection: undefined
         });
         next = reduceSideThreadStore(next, {
           type: "setStreaming",
@@ -399,7 +412,8 @@ export function useSideThreadController(
         try {
           const result = await ipcImpl.sendSideThreadMessage({
             main_thread_id: activeThreadId,
-            prompt: trimmed
+            prompt: trimmed,
+            ...(selection ? { selection } : {})
           });
           setStore((previous) => {
             let next = reduceSideThreadStore(previous, {
@@ -439,12 +453,16 @@ export function useSideThreadController(
               mainThreadId: activeThreadId,
               error: errorMessage(error)
             });
-            if (!next.byThread[activeThreadId]?.draft) {
+            const nextDraft = next.byThread[activeThreadId];
+            // Text and its selected source belong to one submission. Restoring
+            // either field alone can attach failed context to a newer question.
+            if (!nextDraft?.draft && !nextDraft?.draftSelection) {
               next = reduceSideThreadStore(next, {
                 type: "setDraft",
                 mainThreadId: activeThreadId,
                 draft: trimmed
               });
+              next = reduceSideThreadStore(next, { type: "setDraftSelection", mainThreadId: activeThreadId, selection });
             }
             return next;
           });
@@ -542,6 +560,7 @@ export function useSideThreadController(
     close,
     toggle,
     setDraft,
+    setDraftSelection,
     sendMessage,
     interrupt,
     reset,

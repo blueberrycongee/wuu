@@ -35,6 +35,10 @@ const providers: ProviderSummary[] = params.has("empty") ? [] : [
 if (params.has("unattributed") && inventory.engines.length) {
   inventory.engines[0].quota!.account = undefined;
 }
+if (params.has("single") && inventory.engines.length) {
+  inventory.engines[0].quota!.windows = [{ id: "weekly", used_percent: 1, window_minutes: 10080, resets_at: new Date(Date.now() + 579600000).toISOString() }];
+  inventory.engines[1].quota!.windows = [{ id: "weekly", used_percent: 100, window_minutes: 10080, resets_at: new Date(Date.now() + 104400000).toISOString() }];
+}
 if (params.has("long") && inventory.engines.length) {
   inventory.engines[0].quota!.account!.label = "personal-with-a-long-account-name@example.test";
   inventory.engines[0].quota!.plan = "Annual team subscription with extended usage";
@@ -118,7 +122,7 @@ window.wuu = {
 
 function Preview() {
   const [sources, setSources] = useState(providers);
-  return <main style={{ height: "100vh", overflow: "auto", background: "var(--subscription-canvas)" }}><div className="settings-page">
+  return <main style={{ height: "100vh", overflow: "auto", background: "var(--settings-canvas)" }}><div className="settings-page">
     <SubscriptionDashboard inventory={params.has("detecting") ? undefined : parentInventory} providers={params.has("detecting") ? undefined : sources} onSelectBuiltinModel={async (name, model) => setSources((current) => current.map((source) => source.name === name ? { ...source, model } : source))} />
   </div></main>;
 }

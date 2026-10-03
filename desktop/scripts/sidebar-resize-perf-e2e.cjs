@@ -154,6 +154,74 @@ async function run() {
     `Sidebar content width should sync after drag ends. Summary=${JSON.stringify(summary)}`
   );
 
+  const widthEvidence = [];
+  const evidenceDir = path.join(desktopRoot, "out", "e2e", "sidebar-width");
+  fs.mkdirSync(evidenceDir, { recursive: true });
+  const rememberedWidth = finalSample.openWidth;
+  for (const theme of ["light", "dark"]) {
+    for (const fontSize of [14, 20]) {
+      await evaluate(win, ({ theme, fontSize }) => {
+        document.documentElement.dataset.theme = theme;
+        document.documentElement.style.setProperty("--font-ui", fontSize + "px");
+        document.documentElement.style.setProperty("--appearance-scale", String(fontSize / 14));
+      }, { theme, fontSize });
+      for (const width of [1380, 1000, 900, 840, 720]) {
+        win.setContentSize(width, 860);
+        await waitFor(win, (expectedWidth) => {
+          const shell = document.querySelector(".app-shell");
+          const sidebar = document.querySelector(".sidebar");
+          const openWidth = Number.parseFloat(getComputedStyle(shell).getPropertyValue("--sidebar-open-width"));
+          return window.innerWidth === expectedWidth &&
+            shell.classList.contains("sidebar-collapsed") === (expectedWidth < 900) &&
+            !shell.classList.contains("sidebar-animating") &&
+            !shell.classList.contains("right-panel-animating") &&
+            !document.documentElement.classList.contains("window-resizing") &&
+            (expectedWidth < 900 || Math.abs(sidebar.getBoundingClientRect().width - openWidth) < 1);
+        }, 3000, width);
+        const geometry = await evaluate(win, () => {
+          const shell = document.querySelector(".app-shell");
+          return {
+            openWidth: Number.parseFloat(getComputedStyle(shell).getPropertyValue("--sidebar-open-width")),
+            sidebarWidth: document.querySelector(".sidebar").getBoundingClientRect().width,
+            storedWidth: localStorage.getItem("wuu.desktop.sidebarWidth"),
+            collapsed: shell.classList.contains("sidebar-collapsed")
+          };
+        });
+        assert.equal(geometry.openWidth, rememberedWidth, "Window resizing must preserve the selected width");
+        if (!disableStorage) assert.equal(Number(geometry.storedWidth), rememberedWidth);
+        widthEvidence.push({ theme, fontSize, width, ...geometry });
+        fs.writeFileSync(path.join(evidenceDir, theme + "-" + fontSize + "-" + width + ".png"),
+          (await win.webContents.capturePage()).toPNG());
+      }
+    }
+  }
+
+  win.setContentSize(1000, 860);
+  await waitFor(win, () => window.innerWidth === 1000 && !document.querySelector(".app-shell").classList.contains("sidebar-collapsed"), 3000);
+  await evaluate(win, async () => {
+    const resizer = document.querySelector(".sidebar-resizer");
+    const rect = resizer.getBoundingClientRect();
+    const startX = rect.left + rect.width / 2;
+    const openWidth = Number.parseFloat(getComputedStyle(document.querySelector(".app-shell")).getPropertyValue("--sidebar-open-width"));
+    resizer.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, button: 0, clientX: startX, pointerId: 3 }));
+    for (let frame = 0; frame < 20 && !document.querySelector(".app-shell").classList.contains("resizing-sidebar"); frame += 1) {
+      await new Promise(requestAnimationFrame);
+    }
+    if (!document.querySelector(".app-shell").classList.contains("resizing-sidebar")) {
+      throw new Error("Sidebar drag did not start");
+    }
+    window.dispatchEvent(new PointerEvent("pointermove", { clientX: startX + 360 - openWidth, pointerId: 3 }));
+    window.dispatchEvent(new PointerEvent("pointerup", { pointerId: 3 }));
+    await new Promise(requestAnimationFrame);
+  });
+  await waitFor(win, () => Number.parseFloat(getComputedStyle(document.querySelector(".app-shell")).getPropertyValue("--sidebar-open-width")) === 360, 3000);
+  win.setContentSize(1380, 860);
+  await waitFor(win, () => window.innerWidth === 1380, 3000);
+  await loadRenderer(win);
+  await waitFor(win, () => Boolean(document.querySelector(".sidebar-resizer")), 5000);
+  const restoredWidth = await evaluate(win, () => Number.parseFloat(getComputedStyle(document.querySelector(".app-shell")).getPropertyValue("--sidebar-open-width")));
+  assert.equal(restoredWidth, disableStorage ? 296 : 360, "A narrow-window drag must persist its displayed pixel width across reloads");
+
   await waitFor(
     win,
     () => {
@@ -262,6 +330,32 @@ async function run() {
     `Right panel drag should not persist width on every pointer move. Summary=${JSON.stringify(rightPanelSummary)}`
   );
 
+  const edgeWidths = [];
+  if (!disableStorage) {
+    for (const preferredWidth of [240, 520]) {
+      await evaluate(win, (width) => {
+        localStorage.setItem("wuu.desktop.sidebarWidth", String(width));
+        localStorage.setItem("wuu.desktop.sidebarCollapsed", "false");
+      }, preferredWidth);
+      await loadRenderer(win);
+      await waitFor(win, () => Boolean(document.querySelector(".sidebar-resizer")), 5000);
+      for (const width of [840, 1000]) {
+        win.setContentSize(width, 860);
+        await waitFor(win, (expectedWidth) => window.innerWidth === expectedWidth &&
+          document.querySelector(".app-shell").classList.contains("sidebar-collapsed") === (expectedWidth < 900), 3000, width);
+        const geometry = await evaluate(win, () => ({
+          openWidth: Number.parseFloat(getComputedStyle(document.querySelector(".app-shell")).getPropertyValue("--sidebar-open-width")),
+          storedWidth: Number(localStorage.getItem("wuu.desktop.sidebarWidth"))
+        }));
+        assert.equal(geometry.openWidth, preferredWidth, "Auto-collapse must not replace an edge-width preference");
+        assert.equal(geometry.storedWidth, preferredWidth);
+        edgeWidths.push({ preferredWidth, width, ...geometry });
+      }
+    }
+  }
+  fs.writeFileSync(path.join(evidenceDir, "width-evidence.json"),
+    JSON.stringify({ widthEvidence, edgeWidths, restoredWidth, summary, rightPanelSummary }, null, 2));
+  console.log("Sidebar width evidence: " + path.join(evidenceDir, "width-evidence.json"));
   win.close();
   app.quit();
 }
@@ -296,11 +390,11 @@ async function evaluate(win, fn, arg) {
   );
 }
 
-async function waitFor(win, fn, timeoutMs) {
+async function waitFor(win, fn, timeoutMs, arg) {
   const started = Date.now();
   let lastValue;
   while (Date.now() - started < timeoutMs) {
-    lastValue = await evaluate(win, fn);
+    lastValue = await evaluate(win, fn, arg);
     if (lastValue) {
       return lastValue;
     }

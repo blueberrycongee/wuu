@@ -15,20 +15,20 @@
  */
 
 :root[data-theme="dark"] {
-  --subscription-canvas: var(--wuu-color-canvas, #1a1a1e);
-  --subscription-card: var(--wuu-color-surface, #232327);
+  --settings-canvas: var(--paper);
+  --settings-card: var(--surface-1);
   --subscription-meter: var(--wuu-color-accent, #a5b4fc);
   /* --- Neutral gray ramp, dark declaration. Same slots as the light
    *     ramp in base.css: 0-350 surfaces/hairlines (deeper = further
    *     from the reader), 400-650 text grays, 800-900 strong text. --- */
-  --gray-0: #1d2024;
-  --gray-50: #23262a;
-  --gray-100: #272b30;
-  --gray-150: #2c3137;
-  --gray-200: #333940;
-  --gray-250: #353b42;
-  --gray-300: #3b424a;
-  --gray-350: #454d55;
+  --gray-0: #1b1b1f;
+  --gray-50: #242429;
+  --gray-100: #2b2b31;
+  --gray-150: #323239;
+  --gray-200: #393940;
+  --gray-250: #3e3e46;
+  --gray-300: #47474f;
+  --gray-350: #53535c;
   --gray-400: #5d646b;
   --gray-450: #70777e;
   --gray-500: #858c93;
@@ -62,9 +62,9 @@
   --control-boundary: var(--wuu-color-border-strong, var(--gray-450));
   --slider-thumb-bg: var(--wuu-color-text, var(--gray-900));
   --selection-surface: var(--wuu-color-surface-elevated, var(--gray-200));
-  --placeholder-ink: var(--gray-500);
-  --field-bg: var(--wuu-control-field-background, var(--surface-1));
-  --field-hover-bg: var(--wuu-control-field-background, var(--surface-2));
+  --placeholder-ink: var(--gray-600);
+  --field-bg: var(--wuu-control-field-background, var(--surface-2));
+  --field-hover-bg: var(--wuu-control-field-background, var(--surface-3));
 
   /* Ink overlays flip to white-based veils. */
   --ink-overlay-4: rgba(220, 228, 235, 0.05);
@@ -113,8 +113,8 @@
   --danger-border: #562f29;
   --info: var(--wuu-color-info, #58a6ff);
 
-  --menu-bg: var(--wuu-color-surface-elevated, rgb(30, 33, 37));
-  --menu-hover: var(--wuu-color-surface-muted, #2b2f34);
+  --menu-bg: var(--wuu-color-surface-elevated, var(--surface-1));
+  --menu-hover: var(--surface-2);
   --sidebar-row-hover-bg: var(--wuu-nav-item-hover-background, var(--ink-overlay-4));
 
   --scrollbar-thumb: rgba(170, 178, 186, 0.22);
@@ -223,9 +223,9 @@
   --sidebar-drawer-inner-edge: rgba(255, 255, 255, 0.24);
   --sidebar-edge-shadow: 1px 0 16px rgba(20, 24, 28, 0.025);
   --sidebar-hover-card-rim: rgba(255, 255, 255, 0.06);
-  --sidebar-drawer-bg: var(--wuu-color-surface-muted, #1a1d20);
+  --sidebar-drawer-bg: var(--surface-1);
   /* Navigation shares one selection surface across both themes. */
-  --sidebar-row-selected-bg: var(--selection-surface);
+  --sidebar-row-selected-bg: var(--wuu-nav-item-active-background, var(--selection-surface));
   --sidebar-resizer-hover-bg: var(--ink-overlay-18);
   --sidebar-resizer-hover-ring: rgba(0, 0, 0, 0.4);
   --sidebar-nav-item-hover-ring: var(--wuu-nav-item-hover-ring, rgba(255, 255, 255, 0.08));

@@ -1,10 +1,10 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ComponentPropsWithoutRef, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import type { ResponseSelection } from "../shared/protocol";
-import { isComposerTextComposing } from "./ComposerSlashCommands";
+import { SelectionActionMenu } from "./SelectionActionMenu";
+import { selectionActionMenuMetrics, selectionActionMenuPosition } from "./SelectionActionMenuPosition";
 import { showToast } from "./Toast";
 import { translateCurrent, useI18n } from "./i18n";
-import { ArrowUp } from "./WuuIcons";
 import "./ResponseSelection.css";
 
 let sourceHighlight: { root: HTMLElement; clear: () => void } | undefined;
@@ -23,6 +23,21 @@ function textNodes(root: Node): Text[] {
   const nodes: Text[] = [];
   while (walker.nextNode()) nodes.push(walker.currentNode as Text);
   return nodes;
+}
+
+function textOffset(root: Node, container: Node, offset: number): number {
+  const boundary = document.createRange();
+  boundary.setStart(container, offset);
+  boundary.collapse(true);
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  let total = 0;
+  while (walker.nextNode()) {
+    const node = walker.currentNode as Text;
+    if (node === container) return total + offset;
+    if (boundary.comparePoint(node, node.length) > 0) return total;
+    total += node.length;
+  }
+  return total;
 }
 
 function validatedRange(root: HTMLElement, selection: ResponseSelection): Range | undefined {
@@ -111,6 +126,9 @@ export function AssistantResponseArticle({ turnID, itemID, settled, children, ..
   const returnToToggleRef = useRef(false);
   const anchorRef = useRef<DOMRect | undefined>(undefined);
   const [captured, setCaptured] = useState<ResponseSelection>();
+  const capturedRef = useRef(captured);
+  capturedRef.current = captured;
+  const [positionRevision, setPositionRevision] = useState(0);
   const [commenting, setCommenting] = useState(false);
   const [comment, setComment] = useState("");
   const [position, setPosition] = useState<CSSProperties & { "--menu-enter-y"?: string }>({ left: 0, top: 0 });
@@ -119,21 +137,31 @@ export function AssistantResponseArticle({ turnID, itemID, settled, children, ..
     const toolbar = toolbarRef.current;
     const anchor = anchorRef.current;
     if (!captured || !toolbar || !anchor) return;
-    const bounds = toolbar.getBoundingClientRect();
-    const left = Math.max(8, Math.min(anchor.left, window.innerWidth - bounds.width - 8));
-    // Above the passage the panel is pinned by its bottom edge, so a growing
-    // comment extends upward and never covers the quoted text.
-    setPosition(anchor.top - bounds.height - 8 >= 8
-      ? { left, bottom: window.innerHeight - anchor.top + 8, transformOrigin: "bottom left", "--menu-enter-y": "4px" }
-      : { left, top: Math.max(8, Math.min(anchor.bottom + 8, window.innerHeight - bounds.height - 8)), transformOrigin: "top left", "--menu-enter-y": "-4px" });
+    const menu = selectionActionMenuMetrics(toolbar, { width: 360, height: 44 });
+    const placed = selectionActionMenuPosition(anchor, menu, { left: 8, top: 8, right: window.innerWidth - 8, bottom: window.innerHeight - 8 });
+    setPosition(placed.above
+      ? { left: placed.left, bottom: window.innerHeight - placed.top - menu.height, transformOrigin: "bottom center", "--menu-enter-y": "4px" }
+      : { left: placed.left, top: placed.top, transformOrigin: "top center", "--menu-enter-y": "-4px" });
+  }, [captured, commenting, positionRevision]);
+  useEffect(() => {
+    const toolbar = toolbarRef.current;
+    if (!captured || !toolbar || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => setPositionRevision(current => current + 1));
+    observer.observe(toolbar);
+    return () => observer.disconnect();
+  }, [captured, commenting]);
+  useLayoutEffect(() => {
+    if (!captured) return;
     if (commenting) {
-      commentRef.current?.focus({ preventScroll: true });
       const root = ref.current!.querySelector<HTMLElement>(".agent-text")!;
       const range = validatedRange(root, captured);
       if (range) {
         window.getSelection()?.removeAllRanges();
         window.getSelection()?.addRange(range);
       }
+      // Restoring the native selection can move Chromium focus back to the
+      // article. Focus the input last so typing works after one click.
+      commentRef.current?.focus({ preventScroll: true });
     }
     else if (returnToToggleRef.current) {
       commentToggleRef.current?.focus({ preventScroll: true });
@@ -184,16 +212,21 @@ export function AssistantResponseArticle({ turnID, itemID, settled, children, ..
       const range = native.getRangeAt(0);
       if (!root.contains(range.startContainer) || !root.contains(range.endContainer)) return clear();
       const controls = 'button, input, textarea, select, [role="button"], [contenteditable]:not([contenteditable="false"])';
-      if (root.closest(controls) || [...root.querySelectorAll(controls)].some(control => range.intersectsNode(control))) return clear();
+      if (root.closest(controls)) return clear();
+      const selectedContent = range.cloneContents();
+      const rangeText = selectedContent.textContent ?? "";
+      const selectedControls = selectedContent.querySelectorAll(controls);
+      let text = native.toString();
+      if (selectedControls.length > 0) {
+        selectedControls.forEach(control => control.remove());
+        selectedContent.querySelectorAll("p, li, pre, blockquote, h1, h2, h3, h4, h5, h6, br")
+          .forEach(block => block.after(document.createTextNode("\n")));
+        text = (selectedContent.textContent ?? "").replace(/\n{3,}/g, "\n\n").trim();
+      }
+      if (!text.trim()) return clear();
       const threadID = article.closest<HTMLElement>("[data-thread-id]")?.dataset.threadId;
       if (!threadID || !visible(article)) return clear();
-      const prefix = document.createRange();
-      prefix.selectNodeContents(root);
-      prefix.setEnd(range.startContainer, range.startOffset);
-      const start = textNodes(prefix.cloneContents()).reduce((sum, node) => sum + node.length, 0);
-      const rangeText = textNodes(range.cloneContents()).map(node => node.data).join("");
-      const text = native.toString();
-      if (!text.trim()) return clear();
+      const start = textOffset(root, range.startContainer, range.startOffset);
       const selection: ResponseSelection = { id: crypto.randomUUID(), text, source: {
         thread_id: threadID, turn_id: turnID, item_id: itemID, start_offset: start, end_offset: start + rangeText.length,
         ...(text === rangeText ? {} : { range_text: rangeText }),
@@ -202,7 +235,7 @@ export function AssistantResponseArticle({ turnID, itemID, settled, children, ..
       sourceHighlight?.clear();
       setCommenting(false);
       setComment("");
-      setCaptured(validatedRange(root, selection) ? selection : undefined);
+      setCaptured(root.textContent?.slice(start, start + rangeText.length) === rangeText ? selection : undefined);
     };
     const down = (event: PointerEvent) => {
       if ((event.target as Element)?.closest?.(".response-selection-toolbar")) return;
@@ -215,7 +248,17 @@ export function AssistantResponseArticle({ turnID, itemID, settled, children, ..
       capture();
     };
     const key = (event: KeyboardEvent) => { if (event.key === "Escape") clear(); };
-    const scroll = (event: Event) => { if (!toolbarRef.current?.contains(event.target as Node)) clear(); };
+    const scroll = (event: Event) => {
+      if (dragging || !capturedRef.current || toolbarRef.current?.contains(event.target as Node)) return;
+      const root = article.querySelector<HTMLElement>(".agent-text");
+      if (!root || !visible(article)) return clear();
+      const range = validatedRange(root, capturedRef.current);
+      if (!range) return clear();
+      const anchor = range.getBoundingClientRect();
+      if (anchor.bottom < 0 || anchor.top > window.innerHeight) return clear();
+      anchorRef.current = anchor;
+      setPositionRevision(current => current + 1);
+    };
     document.addEventListener("selectionchange", capture);
     document.addEventListener("pointerdown", down);
     document.addEventListener("pointerup", up);
@@ -251,36 +294,25 @@ export function AssistantResponseArticle({ turnID, itemID, settled, children, ..
     setCommenting(false);
     setComment("");
   }
+  function askSide(): void {
+    if (!captured) return;
+    const article = ref.current;
+    const root = article?.querySelector<HTMLElement>(".agent-text");
+    if (root && article && visible(article) && validatedRange(root, captured)) {
+      window.dispatchEvent(new CustomEvent<ResponseSelection>("wuu:ask-side-selection", { detail: captured }));
+    }
+    setCaptured(undefined);
+  }
   return <article {...props} ref={ref} data-response-item-id={itemID} data-response-turn-id={turnID} data-response-settled={settled}>
     {children}
-    {captured && settled ? createPortal(<div key={commenting ? "comment" : "actions"} ref={toolbarRef}
-      className={`response-selection-toolbar${commenting ? " response-selection-commenting" : ""}`} style={position}
-      role="group" aria-label={t("responseSelection.actions")}>
-      {commenting ? <>
-        <textarea ref={commentRef} className="response-selection-comment-input" rows={1}
-          aria-label={t("responseSelection.optionalComment")} placeholder={t("responseSelection.optionalComment")}
-          value={comment} onChange={event => setComment(event.target.value)}
-          onKeyDown={event => {
-            if (event.key === "Escape") {
-              event.preventDefault();
-              event.stopPropagation();
-              returnToToggleRef.current = true;
-              setCommenting(false);
-              setComment("");
-            } else if (event.key === "Enter" && !event.shiftKey && !isComposerTextComposing(event)) {
-              event.preventDefault();
-              addSelection();
-            }
-          }} />
-        <button type="button" className="response-selection-add response-selection-comment-submit" aria-label={t("responseSelection.add")}
-          onPointerDown={event => event.preventDefault()} onClick={addSelection}>
-          <ArrowUp className="icon" aria-hidden="true" />
-        </button>
-      </> : <>
-        <button type="button" className="response-selection-add" onPointerDown={event => event.preventDefault()} onClick={addSelection}>{t("responseSelection.add")}</button>
-        <button ref={commentToggleRef} type="button" className="response-selection-comment-toggle"
-          onPointerDown={event => event.preventDefault()} onClick={() => setCommenting(true)}>{t("responseSelection.comment")}</button>
-      </>}
-    </div>, document.body) : null}
+    {captured && settled ? createPortal(<SelectionActionMenu key={commenting ? "comment" : "actions"} ref={toolbarRef}
+      className="response-selection-toolbar" style={position} label={t("responseSelection.actions")}
+      addLabel={t("responseSelection.add")} commentLabel={t("responseSelection.comment")}
+      commentPlaceholder={t("responseSelection.commentPlaceholder")} commenting={commenting} comment={comment}
+      onCommentChange={setComment} onAdd={addSelection} onCommentStart={() => setCommenting(true)}
+      onCommentCancel={() => { returnToToggleRef.current = true; setCommenting(false); setComment(""); }}
+      onCommentSubmit={addSelection} commentToggleRef={commentToggleRef} commentInputRef={commentRef}
+      extraActions={ref.current?.closest('[data-wuu-component="side-thread"]') ? undefined
+        : <button type="button" onPointerDown={event => event.preventDefault()} onClick={askSide}>{t("responseSelection.askSide")}</button>} />, document.body) : null}
   </article>;
 }

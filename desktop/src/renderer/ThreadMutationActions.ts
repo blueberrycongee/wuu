@@ -62,6 +62,7 @@ export type ThreadMutationActions = {
   ) => Promise<ThreadArchiveOutcome>;
   unarchiveThread: (thread: Pick<ThreadSummary, "id">) => Promise<void>;
   deleteThread: (thread: ThreadSummary) => Promise<void>;
+  deleteArchivedThread: (threadID: string) => Promise<void>;
 };
 
 export type ThreadArchiveOptions = {
@@ -382,16 +383,7 @@ export function createThreadMutationActions(
     }
     try {
       await window.wuu.deleteThread(thread.id);
-      deps.clearThreadPendingComposerMessages(thread.id);
-      const fallbackTab = prepareConfirmedThreadRemoval(thread.id);
-      deps.removeCachedSidebarThread(thread.id);
-      deps.setAppState((current) => {
-        const nextTabs = removeSessionTab(
-          current.sessionTabs,
-          threadSessionTabID(thread.id),
-        );
-        return archiveMarkThreadState(current, thread.id, false, nextTabs, fallbackTab);
-      });
+      removeDeletedThread(thread.id);
     } catch (error) {
       setStatus(
         error instanceof Error
@@ -399,6 +391,23 @@ export function createThreadMutationActions(
           : translateCurrent("thread.deleteFailed"),
       );
     }
+  }
+
+  async function deleteArchivedThread(threadID: string): Promise<void> {
+    // Errors propagate to the batch so partial failures remain visible/retryable.
+    // Never fall back to an unguarded delete against an older backend.
+    await window.wuu.deleteThread(threadID, { onlyIfArchived: true });
+    removeDeletedThread(threadID);
+  }
+
+  function removeDeletedThread(threadID: string): void {
+    deps.clearThreadPendingComposerMessages(threadID);
+    const fallbackTab = prepareConfirmedThreadRemoval(threadID);
+    deps.removeCachedSidebarThread(threadID);
+    deps.setAppState((current) => {
+      const nextTabs = removeSessionTab(current.sessionTabs, threadSessionTabID(threadID));
+      return archiveMarkThreadState(current, threadID, false, nextTabs, fallbackTab);
+    });
   }
 
   function archiveMarkThreadState(
@@ -449,5 +458,6 @@ export function createThreadMutationActions(
     archiveThread,
     unarchiveThread,
     deleteThread,
+    deleteArchivedThread,
   };
 }

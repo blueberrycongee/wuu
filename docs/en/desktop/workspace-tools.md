@@ -45,6 +45,28 @@ For agents and integrations, the built-in `present_artifact` tool accepts an exi
 
 The limit is 256 MiB. Normal read permissions and sensitive-path restrictions apply, and the tool does not fetch URLs. Presenting a file does not inspect its appearance or send its image bytes to the model; visual verification is a separate step.
 
+Select text in a Markdown, code, or plain-text preview to use **Add to conversation**,
+**Comment**, or **Edit**. Adding to the conversation adds a quote card to the attachment tray without
+sending it or expanding the excerpt into the input. Open the card to
+read the original text; its remove button removes the selection. Sending the message
+includes the original text and source location. Comments appear below the document preview and as a
+quote card in the attachment tray; open the card to inspect the location,
+quoted text, and comment. You can edit or remove comments before sending several
+comments together with your message.
+
+Choose **Ask in side chat** from a file selection to attach the passage to a side question. This requires an existing main conversation; the side composer shows the same quote card.
+
+**Edit** opens a small instruction box at the selection. Submitting it sends an
+independent request to the current conversation without consuming your existing
+draft or attachments. A running task queues the request. The request instructs the agent
+to read the latest file before editing, and the preview refreshes when the turn finishes. A failed
+submission keeps your instruction available to retry.
+
+Source locations refer to the file version captured when you selected the text.
+Comments retain their original excerpt if the file changes. Complex rendered blocks
+may be referenced as a whole when a precise source selection is unavailable. These
+selection actions do not yet apply to PDF or image previews.
+
 ## Review
 
 Open **Review** or enter `/diff` to inspect the current Git changes. Check the changed paths, additions, deletions, and any sensitive data before committing. Compare the agent's reported checks with their actual command results.

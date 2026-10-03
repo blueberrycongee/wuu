@@ -1689,7 +1689,19 @@ func normalizeMessageContentParts(parts []providers.MessageContentPart) []provid
 	out := make([]providers.MessageContentPart, 0, len(parts))
 	for _, part := range parts {
 		part.Type = strings.TrimSpace(part.Type)
-		if (part.Type != "text" && part.Type != "pasted_text" && part.Type != "response_selection") || part.Text == "" {
+		if part.Text == "" {
+			continue
+		}
+		switch part.Type {
+		case "text", "pasted_text":
+			part.Source, part.Intent, part.Comment, part.ID = nil, "", "", ""
+		case "file_selection":
+			if !validFileSelectionPart(part) {
+				continue
+			}
+		case "response_selection":
+			part.Source, part.Intent, part.Comment, part.ID = nil, "", "", ""
+		default:
 			continue
 		}
 		selection := part.Selection
@@ -1727,6 +1739,19 @@ func normalizeMessageContentParts(parts []providers.MessageContentPart) []provid
 		out = append(out, part)
 	}
 	return out
+}
+
+func validFileSelectionPart(part providers.MessageContentPart) bool {
+	if strings.TrimSpace(part.ID) == "" || (part.Intent != "comment" && part.Intent != "edit" && part.Intent != "quote") {
+		return false
+	}
+	source := part.Source
+	if source == nil || strings.TrimSpace(source.Workspace) == "" || strings.TrimSpace(source.Path) == "" ||
+		strings.TrimSpace(source.Revision) == "" || source.Quote == "" {
+		return false
+	}
+	return source.StartLine > 0 && source.StartColumn > 0 && source.EndLine > 0 && source.EndColumn > 0 &&
+		(source.EndLine > source.StartLine || (source.EndLine == source.StartLine && source.EndColumn >= source.StartColumn))
 }
 
 // literalUserMessageFromPrompt builds a user-role message without interpreting

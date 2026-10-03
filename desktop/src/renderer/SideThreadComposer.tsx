@@ -1,4 +1,6 @@
 import { useMemo, useRef } from "react";
+import { ComposerResponseSelectionCard } from "./ComposerResponseSelectionCard";
+import { ComposerFileSelectionCard } from "./ComposerFileSelectionCard";
 import { buildSideThreadSlashCommands } from "./ComposerSlashCommands";
 import {
   Composer,
@@ -6,6 +8,7 @@ import {
   type ComposerVariant,
 } from "./ComposerView";
 import { useI18n } from "./i18n";
+import type { SideThreadSelection } from "../shared/protocol";
 import { statusMessageForError } from "./UserFacingErrors";
 
 const EMPTY_MODEL_STATE: CodexModelLoadState = {
@@ -20,6 +23,9 @@ export type SideThreadComposerProps = {
   variant?: ComposerVariant;
   placeholder?: string;
   draft: string;
+  selection?: SideThreadSelection;
+  onRemoveSelection?: () => void;
+  onOpenFile?: (path: string) => void;
   running: boolean;
   disabledReason?: string;
   /** A side request failure that no reply shows; reported above the input. */
@@ -39,6 +45,9 @@ export function SideThreadComposer({
   variant = "dock",
   placeholder,
   draft,
+  selection,
+  onRemoveSelection,
+  onOpenFile,
   running,
   disabledReason,
   error,
@@ -59,11 +68,14 @@ export function SideThreadComposer({
   // focusable. Sending stays disabled until the current side turn settles.
   const visibleDraft = draft;
 
-  return (
-    <Composer
+
+  return <Composer
       variant={variant}
       hideRuntimeControls
       textOnly
+      inlineSelection={selection?.type === "file"
+        ? <ComposerFileSelectionCard source={selection.file} onRemove={onRemoveSelection} onOpenFile={onOpenFile} />
+        : selection ? <ComposerResponseSelectionCard selection={selection.response} onRemove={onRemoveSelection} /> : undefined}
       placeholder={placeholder ?? t("composer.sideThreadPlaceholder")}
       prompt={visibleDraft}
       setPrompt={onChangeDraft}
@@ -126,6 +138,5 @@ export function SideThreadComposer({
       onResetSideThread={onReset}
       queryHistorySessionID={queryHistorySessionID}
       queryHistory={queryHistory}
-    />
-  );
+    />;
 }

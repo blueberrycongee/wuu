@@ -1179,3 +1179,62 @@ func TestSetRuntimeSelectionAllowsEmptyModelForProtocolEngines(t *testing.T) {
 		t.Fatal("wuu sessions still require a model")
 	}
 }
+
+func TestDeleteArchivedChecksDurableArchiveState(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		archived bool
+		restored bool
+	}{
+		{name: "archived", archived: true},
+		{name: "active"},
+		{name: "restored", archived: true, restored: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			dir := t.TempDir()
+			const id = "archive-only-delete"
+			if _, err := CreateWithMetadata(dir, id, "/synthetic/project"); err != nil {
+				t.Fatal(err)
+			}
+			if err := AppendHistoryRecord(dir, id, HistoryRecord{Role: "user", Content: "durable history"}); err != nil {
+				t.Fatal(err)
+			}
+			if test.archived {
+				if _, err := UpdateArchived(dir, id, true); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if test.restored {
+				if _, err := UpdateArchived(dir, id, false); err != nil {
+					t.Fatal(err)
+				}
+			}
+			deleted, err := DeleteArchived(dir, id)
+			if test.archived && !test.restored {
+				if err != nil || deleted.ID != id || deleted.ArchivedAt == nil {
+					t.Fatalf("archived deletion failed: %+v, %v", deleted, err)
+				}
+				if _, found, err := Find(dir, id); err != nil || found {
+					t.Fatalf("deleted session remains: found=%t err=%v", found, err)
+				}
+				if _, err := LoadHistoryRecords(dir, id, true); !errors.Is(err, ErrSessionNotFound) {
+					t.Fatalf("deleted history remains available: %v", err)
+				}
+				if _, err := DeleteArchived(dir, id); !errors.Is(err, ErrSessionNotFound) {
+					t.Fatalf("repeat guarded delete = %v, want ErrSessionNotFound", err)
+				}
+				return
+			}
+			if !errors.Is(err, ErrSessionNotArchived) {
+				t.Fatalf("active deletion error = %v, want ErrSessionNotArchived", err)
+			}
+			history, err := LoadHistoryRecords(dir, id, true)
+			if err != nil || len(history) != 1 || history[0].Content != "durable history" {
+				t.Fatalf("guard rejection changed history: %+v, %v", history, err)
+			}
+			if _, err := Delete(dir, id); err != nil {
+				t.Fatalf("ordinary deletion must remain available for active sessions: %v", err)
+			}
+		})
+	}
+}

@@ -28,7 +28,7 @@ export function ComposerDocumentCard({
   openLabel?: string;
   onOpen?: () => void;
   removeLabel: string;
-  onRemove: () => void;
+  onRemove?: () => void;
 }): JSX.Element {
   const body = (
     <>
@@ -48,9 +48,9 @@ export function ComposerDocumentCard({
       ) : (
         <div className="composer-document-card-main">{body}</div>
       )}
-      <button className="composer-attachment-card-remove" type="button" aria-label={removeLabel} onClick={onRemove}>
+      {onRemove ? <button className="composer-attachment-card-remove" type="button" aria-label={removeLabel} onClick={onRemove}>
         <X aria-hidden="true" />
-      </button>
+      </button> : null}
     </div>
   );
 }

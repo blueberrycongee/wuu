@@ -1542,6 +1542,18 @@ export type ThreadItemType =
   | "error";
 export type ThreadItemStatus = "in_progress" | "completed" | "failed";
 
+export type FileSelectionSource = {
+  workspace: string;
+  path: string;
+  // One-based lines and UTF-16 columns; the end position is exclusive.
+  start_line: number;
+  start_column: number;
+  end_line: number;
+  end_column: number;
+  quote: string;
+  revision: string;
+};
+
 // Ordered user-authored content carried by one message bubble. Binary
 // attachments remain in `images` / `files`; these parts preserve the
 // distinction between instructions and pasted reference text.
@@ -1564,7 +1576,16 @@ export type ResponseSelection = {
 export type MessageContentPart =
   | { type: "text"; text: string }
   | { type: "pasted_text"; text: string; title?: string }
-  | { type: "response_selection"; text: string; selection: ResponseSelection };
+  | { type: "response_selection"; text: string; selection: ResponseSelection }
+  | {
+      type: "file_selection";
+      // Full model-visible serialized block, including source, intent, and comment.
+      text: string;
+      source: FileSelectionSource;
+      intent: "comment" | "edit" | "quote";
+      comment?: string;
+      id: string;
+    };
 
 export type ToolCallDisplay = {
   kind?: string;
@@ -1862,6 +1883,7 @@ export type SideThreadMessage = {
   side_thread_id: string;
   role: "user" | "assistant";
   text: string;
+  selection?: SideThreadSelection;
   // Canonical assistant/process items rendered by the shared TurnView.
   // Absent on legacy text-only side-thread records.
   items?: ThreadItem[];
@@ -1870,6 +1892,10 @@ export type SideThreadMessage = {
   error_message?: string;
   created_at: string;
 };
+
+export type SideThreadSelection =
+  | { type: "response"; response: ResponseSelection }
+  | { type: "file"; file: FileSelectionSource };
 
 // Opening a side thread is lazy: if no side thread exists for this main
 // thread yet, `openSideThread` returns `summary: null` and the side panel
@@ -1888,6 +1914,7 @@ export type SideThreadSendParams = {
   main_thread_id: string;
   // The user's prompt. Empty prompts are rejected by the IPC layer.
   prompt: string;
+  selection?: SideThreadSelection;
 };
 
 export type SideThreadSendResult = {
@@ -2920,7 +2947,8 @@ export type WuuDesktopApi = {
   // Permanently deletes a conversation (history, artifacts, and any fork
   // worktree). Mirrors the `thread/delete` RPC; running threads are rejected
   // server-side.
-  deleteThread: (threadId: string) => Promise<{ thread_id: string }>;
+  // onlyIfArchived is checked atomically with deletion; restored sessions are rejected.
+  deleteThread: (threadId: string, options?: { onlyIfArchived?: boolean }) => Promise<{ thread_id: string }>;
   compactThread: (threadId: string) => Promise<{ turn: Turn }>;
   startTurn: (
     threadId: string,

@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { AttachmentImage } from "./AttachmentImage";
 import { fileNameParts, formatFileSize } from "./AttachmentFormat";
 import {
@@ -8,6 +8,8 @@ import {
 import { ComposerDocumentCard } from "./ComposerDocumentCard";
 import { isComposerImagePending, type ComposerFile, type ComposerImage } from "./ComposerMessages";
 import { ComposerResponseSelectionCard } from "./ComposerResponseSelectionCard";
+import type { FileSelectionPart } from "./FileSelectionCards";
+import { ComposerFileSelectionCard } from "./ComposerFileSelectionCard";
 import { useOptionalImagePreview } from "./ImagePreview";
 import { useI18n } from "./i18n";
 import { motionCurve, motionDurationMs, prefersReducedMotion } from "./motion";
@@ -19,7 +21,9 @@ type TrayCard =
   | { key: string; kind: "image"; image: ComposerImage; number: number }
   | { key: string; kind: "file"; file: ComposerFile; number: number }
   | { key: string; kind: "quote"; selection: ResponseSelection }
-  | { key: string; kind: "text"; block: CollapsedComposerPromptBlock; index: number };
+  | { key: string; kind: "text"; block: CollapsedComposerPromptBlock; index: number }
+  | { key: string; kind: "file-selection"; part: FileSelectionPart }
+  | { key: string; kind: "inline-selection"; content: ReactNode };
 
 type ExitingCard = { card: TrayCard; index: number };
 type Point = { left: number; top: number };
@@ -30,12 +34,17 @@ function trayCards(
   files: ComposerFile[],
   selections: ResponseSelection[],
   pastedTexts: CollapsedComposerPromptBlock[],
+  fileSelections: FileSelectionPart[],
+  inlineSelection?: ReactNode,
 ): TrayCard[] {
   return [
     ...images.map((image, index) => ({ key: `image:${image.id}`, kind: "image" as const, image, number: index + 1 })),
     ...files.map((file, index) => ({ key: `file:${file.id}`, kind: "file" as const, file, number: index + 1 })),
     ...selections.map((selection) => ({ key: `quote:${selection.id}`, kind: "quote" as const, selection })),
-    ...pastedTexts.map((block, index) => ({ key: `text:${block.id}`, kind: "text" as const, block, index })),
+    ...pastedTexts.flatMap((block, index) => block.part?.type === "file_selection" ? []
+      : [{ key: `text:${block.id}`, kind: "text" as const, block, index }]),
+    ...(inlineSelection ? [{ key: "inline-selection", kind: "inline-selection" as const, content: inlineSelection }] : []),
+    ...fileSelections.map(part => ({ key: `file-selection:${part.id}`, kind: "file-selection" as const, part })),
   ];
 }
 
@@ -65,6 +74,11 @@ export function ComposerAttachmentTray({
   files,
   selections = [],
   pastedTexts,
+  fileSelections = [],
+  inlineSelection,
+  onRemoveFileSelection,
+  onEditFileSelection,
+  onOpenSelectedFile,
   resetKey,
   onRemoveImage,
   onRemoveFile,
@@ -77,7 +91,13 @@ export function ComposerAttachmentTray({
   files: ComposerFile[];
   /** Quoted assistant passages; their comments edit in place from the card. */
   selections?: ResponseSelection[];
+  /** All folded blocks, so paste actions retain their original prompt indices. */
   pastedTexts: CollapsedComposerPromptBlock[];
+  fileSelections?: FileSelectionPart[];
+  inlineSelection?: ReactNode;
+  onRemoveFileSelection?: (id: string | string[]) => void;
+  onEditFileSelection?: (part: FileSelectionPart, comment: string) => void;
+  onOpenSelectedFile?: (path: string) => void;
   /** Changing identity (a session or draft swap) skips all motion. */
   resetKey?: string;
   onRemoveImage: (id: string) => void;
@@ -88,7 +108,7 @@ export function ComposerAttachmentTray({
   onRemoveText: (index: number) => void;
 }): JSX.Element | null {
   const { t } = useI18n();
-  const cards = trayCards(images, files, selections, pastedTexts);
+  const cards = trayCards(images, files, selections, pastedTexts, fileSelections, inlineSelection);
   const signature = cards.map((card) => card.key).join("\n");
   const trayRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
@@ -330,8 +350,13 @@ export function ComposerAttachmentTray({
               <ComposerResponseSelectionCard
                 selection={card.selection}
                 onChange={onChangeSelection}
-                onRemove={() => dismiss(card.key, () => onRemoveSelection?.(card.selection.id))}
+                onRemove={onRemoveSelection ? () => dismiss(card.key, () => onRemoveSelection(card.selection.id)) : undefined}
               />
+            ) : card.kind === "inline-selection" ? card.content : card.kind === "file-selection" ? (
+              <ComposerFileSelectionCard source={card.part.source} comment={card.part.comment}
+                onRemove={onRemoveFileSelection ? () => dismiss(card.key, () => onRemoveFileSelection(card.part.id)) : undefined}
+                onChangeComment={onEditFileSelection && card.part.intent !== "quote" ? comment => onEditFileSelection(card.part, comment) : undefined}
+                onOpenFile={onOpenSelectedFile} />
             ) : (
               <CollapsedComposerPromptCard
                 text={card.block.text}

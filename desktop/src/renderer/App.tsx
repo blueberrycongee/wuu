@@ -7,6 +7,8 @@ import { hostSupports } from "./HostCapabilities";
 import { focusComposerTextarea, isTouchWebShell } from "./ComposerFocus";
 import { useSidebarTouchGesture } from "./SidebarTouchGesture";
 import { readThreadReadState, writeThreadReadState } from "./ThreadReadState";
+import { FileSelectionProvider, type FileSelectionPart } from "./FileSelectionContext";
+import { readCollapsedPromptParts, rememberCollapsedPromptParts } from "./ComposerCollapsedPrompt";
 /// <reference path="../shared/jsx-compat.d.ts" />
 
 import {
@@ -35,6 +37,7 @@ import type {
   InputImage,
   MessageContentPart,
   ResponseSelection,
+  SideThreadSelection,
   PopOutInitResult,
   PluginPackageInstallResult,
   PluginPackageRemoveResult,
@@ -155,6 +158,7 @@ import {
   sessionTabForLoadedRuntime,
   setThreadForPane,
   sortThreads,
+  mergeListedThreads,
   summarizeWorkspaceThreadsForSidebar,
   summarizeThreadsForSidebar,
   threadBelongsToWorkspace,
@@ -180,6 +184,7 @@ import {
   SIDEBAR_MAX_WIDTH,
   SIDEBAR_MIN_WIDTH,
   sidebarMotionMs,
+  WORKSPACE_CONVERSATION_SAFE_WIDTH,
   WORKSPACE_RIGHT_PANEL_MAX_WIDTH,
   WORKSPACE_RIGHT_PANEL_MIN_WIDTH,
   useAppLayoutState,
@@ -217,6 +222,7 @@ import { ArchiveTip } from "./ArchiveTip";
 import { TopNotice } from "./TopNotice";
 import { UILayerPortal } from "./ui/layers/UILayerHost";
 import { showErrorToast, showToast } from "./Toast";
+import { useArchiveDeletion } from "./useArchiveDeletion";
 import { setOpenThreadInSplitHandler } from "./ConversationSplitBridge";
 import { CircleAlert, RefreshCw } from "./WuuIcons";
 import type {
@@ -523,6 +529,7 @@ export function App(): JSX.Element {
   }, []);
   const [historyMessageEdit, setHistoryMessageEdit] =
     useState<HistoryMessageEditState | undefined>(undefined);
+  const fileSelectionDraftOwners = useRef(new Map<string, string>());
   const composerDraftsRef = useRef({ primary: currentPrimaryComposerDraft, split: splitComposerDrafts });
   composerDraftsRef.current = { primary: currentPrimaryComposerDraft, split: splitComposerDrafts };
   const [activitySessions, setActivitySessions] = useState(emptyActivitySessions);
@@ -1380,6 +1387,7 @@ export function App(): JSX.Element {
     activeContext: state.activeContext,
   });
   const sideThreadPanelRef = useRef<SideThreadPanelHandle>(null);
+  const pendingSideSelectionRef = useRef<{ threadID: string; selection: SideThreadSelection } | null>(null);
   const activeTurn = activeTurnForThread(activeThread);
   useEffect(() => {
     const syncVisibleCUAThread = () => {
@@ -3009,6 +3017,15 @@ export function App(): JSX.Element {
     if (!activeThreadID) {
       return;
     }
+    if (rightPanelGlobalized) {
+      // The destination remounts the main composer; publish its input-local
+      // draft before leaving the document surface.
+      setPrompt(currentPrimaryComposerDraft().prompt);
+    }
+    revealConversationFromFocusedWorkspace();
+    if (rightPanelOpen && window.innerWidth - effectiveSidebarWidth - clampedWorkspaceRightPanelWidth - sideThread.width < WORKSPACE_CONVERSATION_SAFE_WIDTH) {
+      setRightPanelOpenWithMotion(false);
+    }
     if (!sideThread.entry?.open) {
       setEnvironmentPanelOpen(false);
       setEnvironmentPanelDismissed(true);
@@ -3019,6 +3036,13 @@ export function App(): JSX.Element {
     if (trimmed) {
       sideThread.sendMessage(trimmed);
     }
+  }
+
+  function openSideThreadWithSelection(selection: SideThreadSelection): void {
+    if (!activeThreadID) return;
+    openSideThreadPanel();
+    sideThread.setDraftSelection(selection);
+    requestAnimationFrame(() => sideThreadPanelRef.current?.focusComposer());
   }
 
   // Blocking questions stay in the conversation stream. Offers float above the composer.
@@ -3615,6 +3639,29 @@ export function App(): JSX.Element {
   });
 
   useEffect(() => {
+    const ask = (event: Event) => {
+      const selection = (event as CustomEvent<ResponseSelection>).detail;
+      if (!selection?.source?.thread_id) return;
+      const reference: SideThreadSelection = { type: "response", response: selection };
+      if (selection.source.thread_id === activeThreadID) {
+        openSideThreadWithSelection(reference);
+      } else {
+        pendingSideSelectionRef.current = { threadID: selection.source.thread_id, selection: reference };
+        void activateThread(selection.source.thread_id).catch(() => { pendingSideSelectionRef.current = null; });
+      }
+    };
+    window.addEventListener("wuu:ask-side-selection", ask);
+    return () => window.removeEventListener("wuu:ask-side-selection", ask);
+  }, [activeThreadID, activateThread, sideThread.open, sideThread.setDraftSelection]);
+
+  useEffect(() => {
+    const pending = pendingSideSelectionRef.current;
+    if (!pending || pending.threadID !== activeThreadID) return;
+    pendingSideSelectionRef.current = null;
+    openSideThreadWithSelection(pending.selection);
+  }, [activeThreadID]);
+
+  useEffect(() => {
     const subscribe = window.wuu.onBrowserDock;
     if (typeof subscribe !== "function") return undefined;
     return subscribe((payload) => {
@@ -3938,6 +3985,7 @@ export function App(): JSX.Element {
     archiveThread,
     unarchiveThread,
     deleteThread,
+    deleteArchivedThread,
   } = createThreadMutationActions({
     getAppState: () => appStateRef.current,
     setAppState: setState,
@@ -3952,6 +4000,15 @@ export function App(): JSX.Element {
     updateCachedSidebarThreadPinned,
     removeCachedSidebarThread,
     clearThreadPendingComposerMessages,
+  });
+
+  const archiveDeletion = useArchiveDeletion(deleteArchivedThread, (archived) => {
+    // Other workspaces keep independent live-sidebar caches. Reconcile them
+    // even if the freshly discovered archive is followed by Cancel.
+    for (const thread of archived) removeCachedSidebarThread(thread.id);
+    setState(current => ({ ...current,
+      threads: mergeListedThreads(current.threads, [...current.threads.filter(thread => !thread.archived), ...archived]),
+    }));
   });
 
   function commitConversationTitle(nextTitle: string): void {
@@ -4171,6 +4228,7 @@ export function App(): JSX.Element {
         : latestTab?.kind === "draft" && latest.activeSessionTabID === sessionTabID;
       const latestDraft = pane ? composerDraftsRef.current.split[pane] : composerDraftsRef.current.primary();
       if (stillTarget && !composerDraftHasContent(latestDraft)) {
+        rememberCollapsedPromptParts(submittedThread?.id ?? sessionTabID, recoveryDraft.prompt, recoveryDraft.contentParts);
         if (pane) {
           setSplitComposerDrafts((current) => ({ ...current, [pane]: recoveryDraft }));
         } else {
@@ -4183,6 +4241,7 @@ export function App(): JSX.Element {
         // Thread creation failed before there was a conversation to retain the
         // input. A separate draft must not replace newer work in the source tab.
         const recoveryTab = createDraftSessionTab(`draft:recovery:${message.id}`, currentState.activeContext!, recoveryDraft);
+        rememberCollapsedPromptParts(recoveryTab.id, recoveryDraft.prompt, recoveryDraft.contentParts);
         const preserve = (state: AppState): AppState => ({
           ...state,
           // Keep the newer tab as the workspace's default draft.
@@ -4198,6 +4257,22 @@ export function App(): JSX.Element {
       }
     });
     return true;
+  }
+
+  async function submitFileSelectionEdit(part: FileSelectionPart): Promise<boolean> {
+    const current = appStateRef.current;
+    const splitPane = splitConversation && !rightPanelGlobalized ? current.activePane : undefined;
+    const thread = splitPane ? threadForPane(current, splitPane) : activeThreadForState(current);
+    if (viewSwitchPending || !current.activeContext || !current.initialized || thread?.read_only) return false;
+    const draft = createComposerMessage(part.text, [], [], [part]);
+    if (!draft) return false;
+    const message = { ...draft, activeDocument: { path: part.source.path } };
+    // Inline edits are independent submissions: never consume the main draft
+    // or its attachments. The inline form retains the request on failure.
+    if (isThreadRunning(thread) && !activeTurnIsAnswerReady(thread)) {
+      return queueComposerMessage(message, thread);
+    }
+    return sendComposerMessage(message, thread, splitPane ?? current.activePane);
   }
 
   async function compactActiveThread(): Promise<void> {
@@ -4706,6 +4781,11 @@ export function App(): JSX.Element {
       }
       admission.thread = thread;
       if (!targetThread) {
+        const oldOwner = currentState.activeSessionTabID;
+        if (oldOwner) fileSelectionDraftOwners.current.set(thread.id, oldOwner);
+        const draftPrompt = currentPrimaryComposerDraft().prompt;
+        const draftParts = oldOwner ? readCollapsedPromptParts(oldOwner, draftPrompt) : undefined;
+        rememberCollapsedPromptParts(thread.id, draftPrompt, draftParts);
         turnAdmissionsRef.current.set(thread.id, admission);
         turnAdmissionsRef.current.delete(admissionKey);
         setTurnAdmissions(new Map(turnAdmissionsRef.current));
@@ -5005,6 +5085,9 @@ export function App(): JSX.Element {
               };
             })}
           onUnarchiveThread={(thread) => void unarchiveThread(thread)}
+          archiveDeletion={archiveDeletion}
+          onDeleteAllArchivedThreads={() => void archiveDeletion.removeAll()}
+          onRetryArchiveDeletion={() => void archiveDeletion.retry()}
         />
       </>
     );
@@ -5042,12 +5125,25 @@ export function App(): JSX.Element {
     ((activeThread !== undefined && !activeThread.read_only && !activeThread.ephemeral) ||
       currentSessionTab?.kind === "draft");
 
+  const selectionUsesSplitDraft = splitConversation && !rightPanelGlobalized;
+  const selectionThread = selectionUsesSplitDraft ? threadForPane(state, state.activePane) : activeThread;
+
   return (
     <WuuMascotRuntimeProvider
       provider={mascotRuntimePreview?.provider ?? sessionRuntime?.provider}
       providers={mascotProviderNames}
       model={mascotRuntimePreview?.model ?? sessionRuntime?.model}
     >
+      <FileSelectionProvider
+        ownerKey={selectionThread?.id ?? currentSessionTab?.id}
+        interactionOwnerKey={selectionThread ? fileSelectionDraftOwners.current.get(selectionThread.id) : undefined}
+        getPrompt={() => selectionUsesSplitDraft ? splitComposerDrafts[appStateRef.current.activePane].prompt : currentPrimaryComposerDraft().prompt}
+        setPrompt={(value) => selectionUsesSplitDraft ? setSplitComposerPrompt(appStateRef.current.activePane, value) : setPrompt(value)}
+        onEdit={submitFileSelectionEdit}
+        onAskSide={activeThreadID ? (source) => openSideThreadWithSelection({ type: "file", file: source }) : undefined}
+        onOpenFile={openWorkspaceFile}
+        disabled={Boolean(selectionThread?.read_only) || viewSwitchPending || !state.initialized}
+      >
       {archiveTipNode}
       {modelCatalogTipNode}
       {!archiveTip && !modelCatalogTip && failedDraftNotice}
@@ -5382,6 +5478,9 @@ export function App(): JSX.Element {
             composer={
               <SideThreadComposer
                 draft={sideThread.entry.draft}
+                selection={sideThread.entry.draftSelection}
+                onRemoveSelection={() => sideThread.setDraftSelection(undefined)}
+                onOpenFile={openWorkspaceFile}
                 running={sideThread.entry.streaming}
                 disabledReason={sideThread.sendDisabledReason}
                 error={sideThread.requestError}
@@ -5739,6 +5838,7 @@ export function App(): JSX.Element {
     </WorkspaceBrowserOpenContext.Provider>
     </ProjectActionsProvider>
     </ImagePreviewProvider>
+    </FileSelectionProvider>
     </WuuMascotRuntimeProvider>
   );
 }

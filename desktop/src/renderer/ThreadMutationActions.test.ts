@@ -438,6 +438,23 @@ describe("createThreadMutationActions", () => {
     expect(harness.getAppState().threads).toHaveLength(0);
   });
 
+  it("only removes an archived conversation after a guarded server deletion succeeds", async () => {
+    const archived = { ...thread("archived"), archived: true };
+    const active = thread("active");
+    const api = installWuuApi(archived);
+    const harness = buildActions({ initial: { ...initialState, activeContext: projectContext(),
+      thread: active, threads: [archived, active], status: "ready" } });
+    api.deleteThread.mockRejectedValueOnce(new Error("no longer archived"));
+    await expect(harness.actions.deleteArchivedThread(archived.id)).rejects.toThrow("no longer archived");
+    expect(harness.getAppState().threads).toHaveLength(2);
+    expect(harness.removeCachedSidebarThread).not.toHaveBeenCalled();
+    await harness.actions.deleteArchivedThread(archived.id);
+    expect(api.deleteThread).toHaveBeenLastCalledWith(archived.id, { onlyIfArchived: true });
+    expect(harness.getAppState().threads.map(item => item.id)).toEqual([active.id]);
+    expect(harness.getAppState().thread?.id).toBe(active.id);
+    expect(harness.removeCachedSidebarThread).toHaveBeenCalledWith(archived.id);
+  });
+
   it("optimistically unarchives before the server confirms", async () => {
     const context = projectContext();
     const archived = { ...thread(), archived: true };

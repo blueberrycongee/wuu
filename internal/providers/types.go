@@ -222,6 +222,19 @@ func NormalizeMessagePhase(phase string) MessagePhase {
 	}
 }
 
+// FileSelectionSource identifies the captured file revision and selection range.
+// Lines and UTF-16 columns are one-based; the end position is exclusive.
+type FileSelectionSource struct {
+	Workspace   string `json:"workspace"`
+	Path        string `json:"path"`
+	StartLine   int    `json:"start_line"`
+	StartColumn int    `json:"start_column"`
+	EndLine     int    `json:"end_line"`
+	EndColumn   int    `json:"end_column"`
+	Quote       string `json:"quote"`
+	Revision    string `json:"revision"`
+}
+
 // ResponseSelection identifies a quoted assistant response and its authored comment.
 type ResponseSelection struct {
 	ID      string                  `json:"id"`
@@ -244,16 +257,24 @@ type ResponseSelectionSource struct {
 // MessageContentPart preserves the authored structure of one user message.
 // Providers still consume ChatMessage.Content as flattened text.
 type MessageContentPart struct {
-	Type      string             `json:"type"`
-	Text      string             `json:"text,omitempty"`
-	Title     string             `json:"title,omitempty"`
-	Selection *ResponseSelection `json:"selection,omitempty"`
+	Type      string               `json:"type"`
+	Text      string               `json:"text,omitempty"`
+	Title     string               `json:"title,omitempty"`
+	Source    *FileSelectionSource `json:"source,omitempty"`
+	Intent    string               `json:"intent,omitempty"`
+	Comment   string               `json:"comment,omitempty"`
+	ID        string               `json:"id,omitempty"`
+	Selection *ResponseSelection   `json:"selection,omitempty"`
 }
 
 // CloneMessageContentParts returns independently mutable presentation metadata.
 func CloneMessageContentParts(parts []MessageContentPart) []MessageContentPart {
 	out := append([]MessageContentPart(nil), parts...)
 	for i := range out {
+		if out[i].Source != nil {
+			source := *out[i].Source
+			out[i].Source = &source
+		}
 		if out[i].Selection != nil {
 			selection := *out[i].Selection
 			out[i].Selection = &selection

@@ -54,6 +54,17 @@ remain invalid; this is recovery behavior, not downgrade compatibility.
 | `thread/list`, `thread/listAll`, `thread/listArchived`, `thread/search` | Method-specific filters | Session metadata |
 | `thread/rename`, `thread/pin`, `thread/archive`, `thread/delete` | Target and method-specific changes | Updated state or operation result |
 
+`thread/listArchived` lists archived conversations across the configured session
+store, regardless of the caller's workspace. `thread/delete` takes `thread_id`
+and optional `only_if_archived: true`. Deletion is permanent and rejects running
+threads, active agents, and running side conversations. The archive-only option
+checks the persisted archive state in the deletion transaction: a conversation
+restored since the list was read is rejected without losing its history or side
+conversation. Omitting the option retains ordinary idle-conversation deletion.
+Clients deleting an archive snapshot should send one guarded request per ID and
+report individual failures; the operation is not an atomic batch. Successful
+requests return `{ "thread_id": "..." }`.
+
 `thread/search` accepts `query` and `limit` (at most 100). Its `results` contain
 thread metadata, a `snippet`, and an optional `message_seq` identifying the
 matching persisted message. Multiple rendered items may share that sequence;
@@ -349,6 +360,40 @@ owns any browser interaction and credential persistence. These methods do not
 support Codex, Claude Code, or OpenCode; use their native login flows. See
 [external engines](../getting-started/external-engines.md) for installation,
 protocol versions, model selection, and permission boundaries.
+
+## Input Content Parts
+
+`turn/start`, `turn/queue`, `turn/update-queued`, and `turn/steer` accept optional
+`content_parts`, an ordered array of presentation metadata alongside `prompt`.
+Binary attachments remain in `images` / `files`.
+
+| `type` | Fields |
+| --- | --- |
+| `text` | `text: string` |
+| `pasted_text` | `text: string`, optional `title: string` |
+| `file_selection` | `text: string`, `source: FileSelectionSource`, `intent: "comment" \| "edit" \| "quote"`, `id: string`, optional `comment: string` |
+| `response_selection` | `text: string`, `selection: ResponseSelection` (see above) |
+
+`FileSelectionSource` contains `workspace`, `path`, `quote`, and `revision`
+(strings), plus `start_line`, `start_column`, `end_line`, and `end_column`
+(integers). Lines and UTF-16 columns are one-based; the end position is
+exclusive. `revision` identifies the captured file content, not necessarily a
+Git revision. The server checks required metadata, supported intent, positive
+coordinates, and range ordering; it does not read the file or verify its revision.
+
+Each file-selection `text` must contain the complete model-visible serialized
+block, including source context, intent, and any comment. Clients concatenate
+part texts in order to form `prompt`. The server keeps valid metadata only when
+that concatenation matches the submitted prompt after outer-whitespace trimming;
+it does not reconstruct or parse the client's serialization. Unknown or invalid
+parts are discarded, and a mismatch discards the presentation metadata without
+changing the prompt. Providers and engines consume the canonical message text;
+Codex receives ordinary text input without special `text_elements`.
+
+Accepted metadata survives history and held-queue replay. Clients must tolerate
+unknown fields and part types, falling back to the full message `text` or queued
+`prompt` when they cannot render the metadata. Metadata must never be the only
+copy of context needed by the model.
 
 ## Usage overview
 

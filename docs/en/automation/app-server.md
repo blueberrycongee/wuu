@@ -59,6 +59,17 @@ for future conversations; add `keep_selection: true` to save a provider's
 connection without making it the default. Do not try to override a turn's permission mode through
 `turn/start`.
 
+## Delete archived conversations
+
+`thread/listArchived` returns archived conversations across the configured
+session store, including other workspaces. To delete that snapshot, call
+`thread/delete` for each ID with `only_if_archived: true`. Each request is
+permanent and independent; report any failures. A conversation restored before
+its deletion transaction is rejected and keeps its history and side conversation.
+Running conversations, active agents, and running side conversations also block
+deletion. Omitting `only_if_archived` still allows ordinary idle conversations
+to be deleted.
+
 ## Run a project
 
 `thread/start` with `project: {"name": "..."}` creates a project coordinator in the

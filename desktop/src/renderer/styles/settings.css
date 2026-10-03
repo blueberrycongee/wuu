@@ -2,8 +2,8 @@
  * distinguish editable controls; selection uses fill, never a border. */
 
 :root {
-  --subscription-canvas: var(--wuu-color-surface-muted, #f4f4f6);
-  --subscription-card: var(--wuu-color-surface, #ffffff);
+  --settings-canvas: var(--wuu-color-canvas, var(--surface-2));
+  --settings-card: var(--wuu-color-surface, var(--gray-0));
   --subscription-meter: var(--wuu-color-accent, #4f46e5);
   /* Usage charts and the home overview share one ramp: a single blue stepped
    * in lightness, so the four levels and an empty day each read at a glance
@@ -18,11 +18,11 @@
   /* Theme preview swatches render miniature copies of each theme, so
      their values are content: they must not follow the active theme. */
   --settings-preview-light-canvas: #ffffff;
-  --settings-preview-light-sidebar: #f3f3f4;
-  --settings-preview-light-line: #e3e3e6;
-  --settings-preview-dark-canvas: #1d2024;
-  --settings-preview-dark-sidebar: #23262a;
-  --settings-preview-dark-line: #3a4046;
+  --settings-preview-light-sidebar: #f1f1f4;
+  --settings-preview-light-line: #dedfe5;
+  --settings-preview-dark-canvas: #1b1b1f;
+  --settings-preview-dark-sidebar: #242429;
+  --settings-preview-dark-line: #3e3e46;
   /* The remote-control QR keeps a white quiet zone so phones can scan
      it in dark theme too. */
   --settings-remote-qr-quiet-zone: #ffffff;
@@ -167,7 +167,7 @@
 }
 
 .settings-nav-item.active {
-  background: var(--selection-surface);
+  background: var(--sidebar-row-selected-bg);
   color: var(--ink-strong);
   font-weight: var(--weight-medium);
 }
@@ -185,10 +185,8 @@
 
 /* --- Content surface ------------------------------------------------------- */
 
-/* The settings canvas is the same paper as the conversation surface: one
- * quiet chassis for the whole app. Grouping is carried by structure —
- * a group label, hairlines between rows, and whitespace between groups —
- * never by a tonal step behind boxed cards. */
+/* Configuration uses a muted canvas with one lifted surface per group.
+ * Row separators stay inside that surface rather than framing each field. */
 .settings-main {
   /* Pin to column 2 like the main shell's .conversation-pane: when the
    * collapsed rail turns into the absolutely positioned hover drawer it
@@ -202,7 +200,7 @@
   min-height: 0;
   grid-template-rows: var(--window-titlebar-height) minmax(0, 1fr);
   overflow: hidden;
-  background: var(--paper);
+  background: var(--settings-canvas);
 }
 
 /* Full-width draggable strip mirroring the main conversation titlebar, so
@@ -468,7 +466,8 @@
   min-width: 0;
   flex-direction: column;
   border: 1px solid var(--hairline);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
+  background: var(--settings-card);
   padding-inline: var(--card-padding);
 }
 
@@ -1070,10 +1069,6 @@ button.settings-engine-expand:hover {
   --settings-pad: var(--space-4);
 }
 
-.settings-main:has(.settings-subscriptions) {
-  background: var(--subscription-canvas);
-}
-
 .settings-subscriptions {
   gap: var(--space-4);
 }
@@ -1090,10 +1085,10 @@ button.settings-engine-expand:hover {
   min-width: 0;
   align-content: start;
   gap: var(--space-3);
-  padding: calc(var(--space-2) + 2px) var(--space-3) var(--space-3);
+  padding: var(--card-padding);
   border: 1px solid var(--hairline);
-  border-radius: calc(var(--radius-sm) + 2px);
-  background: var(--subscription-card);
+  border-radius: var(--radius-md);
+  background: var(--settings-card);
   container: subscription-card / inline-size;
 }
 
@@ -1101,7 +1096,7 @@ button.settings-engine-expand:hover {
   display: grid;
   min-width: 0;
   align-content: start;
-  gap: calc(var(--space-1) + 2px);
+  gap: var(--space-2);
 }
 
 .settings-subscription-source + .settings-subscription-source {
@@ -1114,7 +1109,6 @@ button.settings-engine-expand:hover {
   min-width: 0;
   align-items: center;
   gap: var(--space-2);
-  margin-bottom: var(--space-1);
 }
 
 .settings-subscription-main .settings-engine-row-icon,
@@ -1165,6 +1159,7 @@ button.settings-engine-expand:hover {
 
 .settings-subscription-controls {
   display: flex;
+  flex: 0 0 auto;
   min-width: 0;
   max-width: 44%;
   align-items: center;
@@ -1286,7 +1281,7 @@ button.settings-engine-expand:hover {
   gap: var(--space-2) var(--space-4);
 }
 
-.settings-subscription-window:not(:has(meter)):only-child {
+.settings-subscription-window:only-child {
   grid-column: 1 / -1;
 }
 
@@ -2301,6 +2296,18 @@ button.settings-engine-expand:hover {
 
 .settings-archive-groups {
   gap: var(--settings-gap);
+}
+
+.settings-archive-delete-result {
+  display: grid;
+  justify-items: start;
+  gap: var(--space-2);
+  font-size: var(--font-ui);
+  line-height: 1.5;
+}
+
+.settings-archive-delete-result p {
+  margin: 0;
 }
 
 .settings-archive-toolbar {

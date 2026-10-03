@@ -25,6 +25,20 @@ It renders the real first-run component without the product preload, app-server,
 
 The [mascot lab](../../../desktop/dev/mascot/README.md) uses `npm --prefix desktop run lab:mascot`. Use the full `make dev` path when the change depends on native behavior, IPC, or real session state. Keep temporary screenshots in ignored output directories and use synthetic content in committed fixtures.
 
+## Archived conversations
+
+Settings → Archive lists archived conversations across all workspaces. **Delete
+all archived** refreshes that catalog, then confirms its exact count, including
+conversations hidden by search or workspace filters. Deletion permanently removes
+conversation history and owned artifacts; clean managed worktrees are reclaimed
+while dirty worktrees are kept. Unarchived conversations are never selected, and
+a conversation restored before deletion is protected by the server.
+
+Only the confirmed snapshot is processed. Progress disables repeated submissions
+and restore buttons. Partial failures keep their remaining archived conversations
+available for a separate confirmed retry; newly archived conversations are not
+added to that retry. Cancel or dismiss the confirmation to keep the conversations.
+
 ## Workspace new pages
 
 The right panel's plus button creates a closable **New page** tab. Choosing a tool

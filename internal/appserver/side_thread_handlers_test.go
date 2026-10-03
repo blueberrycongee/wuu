@@ -2,6 +2,7 @@ package appserver
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -256,6 +257,154 @@ func TestSendSideThreadMessageRunsReadOnlyModelAndPersistsReply(t *testing.T) {
 		if !strings.Contains(output, want) {
 			t.Fatalf("notification output missing %s:\n%s", want, output)
 		}
+	}
+}
+
+func TestSideThreadSelectionSurvivesSendHistoryAndReload(t *testing.T) {
+	for _, kind := range []string{"file", "response"} {
+		t.Run(kind, func(t *testing.T) {
+			client := &sideThreadTestClient{response: "Selected source explained."}
+			s, rt, out := newSideThreadServer(t, client)
+			const mainID = "main_selected_source"
+			createSideThreadMain(t, s, mainID)
+			selection := &sidethread.SelectionReference{Type: kind}
+			if kind == "file" {
+				selection.File = &providers.FileSelectionSource{
+					Workspace: rt.RootDir, Path: "notes/示例.md", Revision: "text-v1:captured",
+					StartLine: 1, StartColumn: 1, EndLine: 2, EndColumn: 5,
+					Quote: "原文 \"🌊\"\nline",
+				}
+			} else {
+				selection.Response = &providers.ResponseSelection{
+					ID: "response-selection", Text: "Alpha 🌊",
+					Source: providers.ResponseSelectionSource{
+						ThreadID: mainID, TurnID: "main-turn", ItemID: "main-answer",
+						StartOffset: 0, EndOffset: 8,
+					},
+				}
+			}
+			rpc := func(id, method string, params any) map[string]any {
+				t.Helper()
+				wire, err := json.Marshal(map[string]any{"id": id, "method": method, "params": params})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := s.handleLine(context.Background(), wire); err != nil {
+					t.Fatal(err)
+				}
+				response := responseByID(t, parseOutput(t, out.String()), id)
+				if response["error"] != nil {
+					t.Fatalf("%s: %+v", method, response["error"])
+				}
+				return response
+			}
+			assertSelectedSource := func(content string) {
+				t.Helper()
+				start := strings.IndexByte(content, '{')
+				if start < 0 {
+					t.Fatalf("model input lost the selected source: %q", content)
+				}
+				var got sidethread.SelectionReference
+				if err := json.NewDecoder(strings.NewReader(content[start:])).Decode(&got); err != nil {
+					t.Fatalf("model input source cannot be decoded: %v", err)
+				}
+				if !reflect.DeepEqual(&got, selection) {
+					t.Fatalf("model input source = %+v, want %+v", got, selection)
+				}
+			}
+			const question = "Explain this selected passage, including its exact punctuation."
+			response := rpc("selected-send", MethodSideThreadSend, SideThreadSendParams{
+				MainThreadID: mainID, Prompt: question, Selection: selection,
+			})
+			sent := remarshal[SideThreadSendResult](t, response["result"])
+			s.backgroundWG.Wait()
+			request := client.lastRequest(t)
+			active := request.Messages[len(request.Messages)-1]
+			assertSelectedSource(active.Content)
+			if !strings.Contains(active.Content, question) {
+				t.Fatalf("model input lost the authored question: %q", active.Content)
+			}
+			reloaded, err := sidethread.NewStore(s.sideThreadStore.Dir()).Load(mainID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(reloaded.Messages) != 2 || reloaded.Messages[0].ID != sent.UserMessageID ||
+				reloaded.Messages[0].Text != question || !reflect.DeepEqual(reloaded.Messages[0].Selection, selection) {
+				t.Fatalf("durable selected message mismatch: %+v", reloaded.Messages)
+			}
+			s.sideThreadStore = sidethread.NewStore(s.sideThreadStore.Dir())
+			historyResponse := rpc("selected-history", MethodSideThreadGetHistory, SideThreadGetHistoryParams{MainThreadID: mainID})
+			history := remarshal[SideThreadGetHistoryResult](t, historyResponse["result"])
+			if len(history.Messages) != 2 || history.Messages[0].Text != question ||
+				!reflect.DeepEqual(history.Messages[0].Selection, selection) {
+				t.Fatalf("history response lost selected source after reload: %+v", history.Messages)
+			}
+			const followup = "Expand the previous answer."
+			rpc("selected-followup", MethodSideThreadSend, SideThreadSendParams{MainThreadID: mainID, Prompt: followup})
+			s.backgroundWG.Wait()
+			request = client.lastRequest(t)
+			if request.Messages[len(request.Messages)-1].Content != followup {
+				t.Fatalf("the follow-up acquired an unintended active selection: %+v", request.Messages)
+			}
+			assertSelectedSource(request.Messages[len(request.Messages)-2].Content)
+		})
+	}
+}
+
+func TestSideThreadInvalidSelectionRejectedBeforePersistence(t *testing.T) {
+	for _, scenario := range []string{"unknown_type", "missing_file", "missing_revision", "other_thread", "mixed_sources"} {
+		t.Run(scenario, func(t *testing.T) {
+			client := &sideThreadTestClient{response: "must not run"}
+			s, rt, out := newSideThreadServer(t, client)
+			const mainID = "main_invalid_selection"
+			createSideThreadMain(t, s, mainID)
+			selection := &sidethread.SelectionReference{Type: "file", File: &providers.FileSelectionSource{
+				Workspace: rt.RootDir, Path: "notes.md", Revision: "captured",
+				StartLine: 1, StartColumn: 1, EndLine: 1, EndColumn: 5, Quote: "text",
+			}}
+			switch scenario {
+			case "unknown_type":
+				selection.Type = "unsupported"
+			case "missing_file":
+				selection.File = nil
+			case "missing_revision":
+				selection.File.Revision = ""
+			case "other_thread", "mixed_sources":
+				selection.Type = "response"
+				selection.Response = &providers.ResponseSelection{
+					ID: "response-selection", Text: "text",
+					Source: providers.ResponseSelectionSource{ThreadID: mainID, TurnID: "turn", ItemID: "answer", StartOffset: 0, EndOffset: 4},
+				}
+				if scenario == "other_thread" {
+					selection.File = nil
+					selection.Response.Source.ThreadID = "different-main-thread"
+				}
+			}
+			wire, err := json.Marshal(map[string]any{
+				"id": "invalid-selection", "method": MethodSideThreadSend,
+				"params": SideThreadSendParams{MainThreadID: mainID, Prompt: "Explain it.", Selection: selection},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := s.handleLine(context.Background(), wire); err != nil {
+				t.Fatal(err)
+			}
+			response := responseByID(t, parseOutput(t, out.String()), "invalid-selection")
+			if response["error"] == nil {
+				t.Fatalf("invalid selection accepted: %+v", response)
+			}
+			s.backgroundWG.Wait()
+			if _, err := s.sideThreadStore.Load(mainID); !errors.Is(err, sidethread.ErrNotFound) {
+				t.Fatalf("rejected selection persisted a side thread: %v", err)
+			}
+			client.mu.Lock()
+			requestCount := len(client.requests)
+			client.mu.Unlock()
+			if requestCount != 0 {
+				t.Fatalf("rejected selection launched %d model requests", requestCount)
+			}
+		})
 	}
 }
 

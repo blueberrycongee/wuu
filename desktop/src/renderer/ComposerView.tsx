@@ -64,8 +64,14 @@ import {
 } from "./HandoffDraft";
 import { translateCurrent as translate, useI18n } from "./i18n";
 import { Tooltip } from "./Tooltip";
+import { TruncatedText } from "./TruncatedText";
+import {
+  CollapsedComposerPromptCard,
+  rememberCollapsedPromptParts,
+  useCollapsedComposerPrompt
+} from "./ComposerCollapsedPrompt";
+import { useFileSelectionActions } from "./FileSelectionContext";
 import { ComposerFeedback } from "./ComposerFeedback";
-import { useCollapsedComposerPrompt } from "./ComposerCollapsedPrompt";
 import { ComposerAttachmentTray } from "./ComposerAttachmentTray";
 import {
   WORKSPACE_FILE_DRAG_MIME,
@@ -136,6 +142,7 @@ export function Composer({
   canSelectWorkspace = variant === "hero",
   mainConversation = false,
   topAccessory,
+  inlineSelection,
   permissionLocked = false,
   containerRef,
   prompt: committedPrompt,
@@ -242,6 +249,7 @@ export function Composer({
   canSelectWorkspace?: boolean;
   mainConversation?: boolean;
   topAccessory?: ReactNode;
+  inlineSelection?: ReactNode;
   // The conversation's permission mode cannot change, as for a project coordinator.
   permissionLocked?: boolean;
   containerRef?: Ref<HTMLElement>;
@@ -534,6 +542,8 @@ export function Composer({
     handlePaste: handleCollapsedComposerPaste,
     revealBlock: revealCollapsedPromptBlock,
     removeBlock: removeCollapsedPromptBlock,
+    updateFileComment,
+    removeFileSelection,
     contentPartsForPrompt: collapsedContentPartsForPrompt,
   } = useCollapsedComposerPrompt({
     prompt,
@@ -541,6 +551,10 @@ export function Composer({
     focusComposerSoon,
     storageKey: queryHistorySessionID
   });
+  const fileSelectionActions = useFileSelectionActions();
+  const fileSelectionParts = activeCollapsedPromptBlocks.flatMap((block) =>
+    block.part?.type === "file_selection" ? [block.part] : []);
+
   const composerPlaceholder = placeholder ?? (readOnly
     ? t("composer.readOnly")
     : hasCollapsedPromptBlocks
@@ -768,8 +782,10 @@ export function Composer({
       return;
     }
     const contentParts = collapsedContentPartsForPrompt(promptOverride);
+    const canonicalPrompt = contentParts ? contentParts.map((part) => part.text).join("") : promptOverride;
+    if (contentParts && queryHistorySessionID) rememberCollapsedPromptParts(queryHistorySessionID, canonicalPrompt, contentParts);
     const accepted = contentParts
-      ? onSubmit(promptOverride, contentParts)
+      ? onSubmit(canonicalPrompt, contentParts)
       : onSubmit(promptOverride);
     if (accepted === false) return;
     submittedDraftSignatureRef.current = draftSignature;
@@ -1257,13 +1273,18 @@ export function Composer({
             <ComposerAttachmentTray
               images={textOnly ? [] : images}
               files={textOnly ? [] : files}
-              selections={textOnly ? [] : selections}
+              selections={selections}
               pastedTexts={activeCollapsedPromptBlocks}
+              fileSelections={fileSelectionParts}
+              inlineSelection={inlineSelection}
+              onRemoveFileSelection={readOnly ? undefined : removeFileSelection}
+              onEditFileSelection={readOnly ? undefined : (part, comment) => updateFileComment(part.id, comment)}
+              onOpenSelectedFile={fileSelectionActions ? (path) => fileSelectionActions.openFile(path) : undefined}
               resetKey={queryHistorySessionID}
               onRemoveImage={onRemoveImage}
               onRemoveFile={onRemoveFile}
               onChangeSelection={readOnly ? undefined : onChangeSelection}
-              onRemoveSelection={onRemoveSelection}
+              onRemoveSelection={readOnly ? undefined : onRemoveSelection}
               onRevealText={revealCollapsedPromptBlock}
               onRemoveText={removeCollapsedPromptBlock}
             />

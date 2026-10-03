@@ -9,7 +9,7 @@
 .composer-response-selection-popover {
   display: grid;
   box-sizing: border-box;
-  width: min(360px, calc(100vw - 16px));
+  width: min(360px, var(--floating-menu-available-width, calc(100vw - 16px)));
   max-height: min(420px, var(--floating-menu-available-height, 60dvh));
   gap: var(--space-2);
   overflow: auto;
@@ -49,6 +49,7 @@
 .composer-response-selection-comment {
   box-sizing: border-box;
   width: 100%;
+  min-width: 0;
   min-height: calc(var(--font-ui) * var(--line-body) + var(--space-2) * 2);
   max-height: calc(var(--font-ui) * var(--line-body) * 5 + var(--space-2) * 2);
   padding: var(--space-2);
@@ -60,6 +61,10 @@
   font: inherit;
   line-height: inherit;
   field-sizing: content;
+  overflow-x: hidden;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
   transition:
     background-color var(--motion-fast) var(--ease-out),
     border-color var(--motion-fast) var(--ease-out);
@@ -83,6 +88,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: var(--space-2);
 }
 
@@ -131,3 +137,5 @@
     transition: none;
   }
 }
+
+.composer-response-selection-notice { margin: 0; color: var(--ink-soft); overflow-wrap: anywhere; }

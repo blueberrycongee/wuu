@@ -1,7 +1,7 @@
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { ServerEvent, Thread, ThreadResumeResult, WuuDesktopApi } from "../shared/protocol";
+import type { MessageContentPart, ServerEvent, Thread, ThreadResumeResult, WuuDesktopApi } from "../shared/protocol";
 import {
   emptyComposerDraft,
   initialState,
@@ -15,6 +15,7 @@ import {
   type ComposerPendingStateController,
 } from "./ComposerPendingState";
 import { resolveLocalizedText } from "./i18n";
+import { readCollapsedPromptParts } from "./ComposerCollapsedPrompt";
 
 let mountedRoots: Root[] = [];
 
@@ -133,6 +134,52 @@ async function renderComposerPendingState({
 }
 
 describe("useComposerPendingState", () => {
+  const fileSelection: Extract<MessageContentPart, { type: "file_selection" }> = {
+    type: "file_selection", id: "selection-1", text: "Canonical file context\n", intent: "comment", comment: "Check recovery",
+    source: { workspace: "/repo", path: "src/main.ts", start_line: 2, start_column: 3,
+      end_line: 4, end_column: 1, quote: "the captured source\n", revision: "sha256:captured" },
+  };
+
+  it("restores file selections from both held and live snapshots without rewriting model text", () => {
+    const contentParts: MessageContentPart[] = [fileSelection, { type: "pasted_text", text: "Notes\n" }, { type: "text", text: "Review" }];
+    const queued = { id: "queue-1", thread_id: "thread-a", origin: "queue" as const,
+      prompt: contentParts.map((part) => part.text).join(""), content_parts: contentParts };
+    const restored = heldComposerMessagesFromResumeResult({
+      thread: thread(), held_user_messages: [queued], pending_user_messages: [{ ...queued, id: "queue-2" }],
+    });
+    expect(restored.map((message) => message.contentParts)).toEqual([contentParts, contentParts]);
+    expect(restored.map((message) => message.text)).toEqual([queued.prompt, queued.prompt]);
+  });
+
+  it.each([
+    { id: " " }, { text: "" }, { intent: "unknown" }, { comment: 123 }, { source: null },
+    ...[{ workspace: "" }, { path: " " }, { revision: "" }, { quote: "" },
+      { start_line: 0 }, { start_column: 1.5 }, { end_line: "4" }, { end_column: Infinity },
+      { end_line: 1 }, { end_line: 2, end_column: 2 }].map((source) => ({ source: { ...fileSelection.source, ...source } })),
+  ])("discards malformed restored file selections while retaining valid siblings: %j", (invalid) => {
+    const restored = heldComposerMessagesFromResumeResult({
+      thread: thread(), held_user_messages: [{ id: "held", origin: "queue", prompt: "Canonical file context\nReview",
+        content_parts: [{ ...fileSelection, ...invalid }, fileSelection, { type: "text", text: "Review" }] }],
+    } as unknown as ThreadResumeResult);
+    expect(restored[0].contentParts).toEqual([fileSelection, { type: "text", text: "Review" }]);
+  });
+
+  it("restores file selections from an event into the editable composer registry", async () => {
+    installWuuStub({ dequeueTurn: vi.fn().mockResolvedValue({ ok: true }) });
+    const hook = await renderComposerPendingState();
+    const contentParts: MessageContentPart[] = [fileSelection, { type: "text", text: "Review" }];
+    const prompt = contentParts.map((part) => part.text).join("");
+    act(() => hook.get().syncPendingComposerMessagesFromServerEvent({
+      kind: "notification", workdir: "/repo", message: { method: "thread/resumed", params: {
+        thread_id: "thread-a", held_user_messages: [{ id: "queue-file", origin: "queue", prompt, content_parts: contentParts }],
+      } },
+    }));
+    expect(hook.get().pendingComposerMessagesByThread["thread-a"].queued[0].contentParts).toEqual(contentParts);
+    await act(async () => hook.get().editQueuedMessage("queue-file"));
+    expect(hook.restoreComposerDraftForThread).toHaveBeenCalledWith("thread-a", { prompt, images: [], files: [] });
+    expect(readCollapsedPromptParts("thread-a", prompt)).toEqual(contentParts);
+  });
+
   it("retains unknown held content as text rather than losing the raw input", () => {
     const resumed = heldComposerMessagesFromResumeResult({ thread: thread(), held_user_messages: [{ id: "unknown", origin: "queue", prompt: "Keep this", content_parts: [{ type: "future_part", text: "Keep this" }] }] } as unknown as ThreadResumeResult);
     expect(resumed[0].contentParts).toEqual([{ type: "text", text: "Keep this" }]);

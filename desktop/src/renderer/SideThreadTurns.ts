@@ -1,4 +1,5 @@
 import type {
+  MessageContentPart,
   SideThreadMessage,
   ThreadItem,
   Turn,
@@ -83,12 +84,19 @@ function assistantItems(message: SideThreadMessage): ThreadItem[] {
 }
 
 function userItem(message: SideThreadMessage): ThreadItem {
+  const selection = message.selection;
+  const selectionPart: MessageContentPart | undefined = selection?.type === "response"
+    ? { type: "response_selection", text: "", selection: selection.response }
+    : selection?.type === "file"
+      ? { type: "file_selection", id: message.id, text: "", source: selection.file, intent: "quote" }
+      : undefined;
   return {
     id: message.id,
     type: "user_message",
     status: "completed",
     role: "user",
     text: message.text,
+    ...(selectionPart ? { content_parts: [selectionPart, { type: "text", text: message.text }] } : {}),
   };
 }
 

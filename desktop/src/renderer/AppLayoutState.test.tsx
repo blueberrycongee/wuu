@@ -6,11 +6,9 @@ import {
   rightPanelMotionMs,
   SIDEBAR_AUTO_COLLAPSE_WINDOW_WIDTH,
   SIDEBAR_DEFAULT_WIDTH,
-  SIDEBAR_MAX_WIDTH,
   SIDEBAR_MIN_WIDTH,
   sidebarMotionMs,
   WORKSPACE_RIGHT_PANEL_DEFAULT_WIDTH,
-  clampSidebarWidthForWindow,
   useAppLayoutState
 } from "./AppLayoutState";
 import {
@@ -358,12 +356,6 @@ describe("useAppLayoutState responsive workspace presentation", () => {
 });
 
 describe("useAppLayoutState initial widths", () => {
-  it("scales both ends of the sidebar resize range below the 1280px baseline", () => {
-    expect(clampSidebarWidthForWindow(SIDEBAR_MIN_WIDTH, 1000)).toBe(SIDEBAR_MIN_WIDTH);
-    expect(clampSidebarWidthForWindow(SIDEBAR_MAX_WIDTH, 1000)).toBe(406);
-    expect(clampSidebarWidthForWindow(SIDEBAR_DEFAULT_WIDTH, 640)).toBe(SIDEBAR_MIN_WIDTH);
-  });
-
   // localStorage.getItem returns null for a missing key, and Number(null) is
   // 0 — a naive Number() conversion clamps a fresh profile to the minimum
   // width, parking the sidebar exactly on the collapse threshold.
@@ -386,12 +378,12 @@ describe("useAppLayoutState initial widths", () => {
     expect(latest!.sidebarWidth).toBe(420);
   });
 
-  it("scales the remembered sidebar width with a narrow window without losing the baseline width", () => {
+  it("keeps the user-selected sidebar width when the window is resized", () => {
     setInnerWidth(1000);
     window.localStorage.setItem("wuu.desktop.sidebarWidth", "500");
     renderHookHarness();
 
-    expect(latest!.sidebarWidth).toBe(390);
+    expect(latest!.sidebarWidth).toBe(500);
     expect(window.localStorage.getItem("wuu.desktop.sidebarWidth")).toBe("500");
 
     act(() => {
@@ -403,7 +395,7 @@ describe("useAppLayoutState initial widths", () => {
     expect(window.localStorage.getItem("wuu.desktop.sidebarWidth")).toBe("500");
   });
 
-  it("does not replace a wider remembered width when the scaled resizer is clicked without moving", () => {
+  it("does not replace the remembered width when the resizer is clicked without moving", () => {
     setInnerWidth(1000);
     window.localStorage.setItem("wuu.desktop.sidebarWidth", "500");
     renderHookHarness();
@@ -415,17 +407,17 @@ describe("useAppLayoutState initial widths", () => {
       window.dispatchEvent(new Event("pointerup", { bubbles: true }));
     });
 
-    expect(latest!.sidebarWidth).toBe(390);
+    expect(latest!.sidebarWidth).toBe(500);
     expect(window.localStorage.getItem("wuu.desktop.sidebarWidth")).toBe("500");
   });
 
-  it("stores a narrow-window drag in baseline coordinates", () => {
+  it("persists the displayed drag width and keeps it when the window grows", () => {
     setInnerWidth(1000);
     window.localStorage.setItem("wuu.desktop.sidebarWidth", "500");
     renderHookHarness();
 
     act(() => {
-      latest!.startSidebarResize(makePointerDownEvent(390));
+      latest!.startSidebarResize(makePointerDownEvent(500));
     });
     act(() => {
       window.dispatchEvent(
@@ -439,14 +431,14 @@ describe("useAppLayoutState initial widths", () => {
     });
 
     expect(latest!.sidebarWidth).toBe(300);
-    expect(window.localStorage.getItem("wuu.desktop.sidebarWidth")).toBe("384");
+    expect(window.localStorage.getItem("wuu.desktop.sidebarWidth")).toBe("300");
 
     act(() => {
       setInnerWidth(1400);
       window.dispatchEvent(new Event("resize"));
     });
 
-    expect(latest!.sidebarWidth).toBe(384);
+    expect(latest!.sidebarWidth).toBe(300);
   });
 
   it("starts with the sidebar collapsed when the window is too narrow", () => {
@@ -455,7 +447,7 @@ describe("useAppLayoutState initial widths", () => {
     renderHookHarness();
 
     expect(latest!.sidebarCollapsed).toBe(true);
-    expect(latest!.sidebarWidth).toBe(SIDEBAR_MIN_WIDTH);
+    expect(latest!.sidebarWidth).toBe(SIDEBAR_DEFAULT_WIDTH);
 
     act(() => {
       setInnerWidth(roomyWindowWidth);
@@ -476,7 +468,7 @@ describe("useAppLayoutState initial widths", () => {
     });
 
     expect(latest!.sidebarCollapsed).toBe(true);
-    expect(latest!.sidebarWidth).toBe(SIDEBAR_MIN_WIDTH);
+    expect(latest!.sidebarWidth).toBe(SIDEBAR_DEFAULT_WIDTH);
 
     act(() => {
       setInnerWidth(roomyWindowWidth);

@@ -50,6 +50,15 @@ Schema 修正回合，因此单个 `turn/completed` 不代表整次运行结束�
 等待后重试。不带 `thread_id` 的请求修改未来
 对话的默认设置；加上 `keep_selection: true` 则只保存服务的连接，不把它设为默认。不要通过 `turn/start` 临时覆盖单个回合的权限模式。
 
+## 删除已归档对话
+
+`thread/listArchived` 返回当前会话存储中的全部已归档对话，包括其他工作区的对话。
+删除这份列表快照时，为每个 ID 单独调用 `thread/delete`，并设置
+`only_if_archived: true`。每次请求独立执行永久删除，客户端应报告各项失败。
+如果对话在删除事务开始前已恢复，服务会拒绝删除，保留聊天记录和侧聊内容。
+正在运行的对话、活跃子 Agent 或正在运行的侧聊也会阻止删除。
+省略 `only_if_archived` 时，仍可删除普通空闲对话。
+
 ## 运行项目
 
 `thread/start` 带 `project: {"name": "..."}` 时，在工作区创建项目主 Agent。返回的会话带
@@ -102,6 +111,36 @@ worktree 改动留在成员的 worktree 里。`thread/control/take` 和 `thread/
 
 `project/session` 修改项目成员：`adopt` 传入 `project_id` 和 `session_id`，把项目所在工作区
 的普通对话交给项目管理；`release` 让托管会话重新成为普通对话。两者都返回更新后的 `thread`。
+
+## 输入内容分段
+
+`turn/start`、`turn/queue`、`turn/update-queued` 和 `turn/steer` 接受可选的
+`content_parts`，用于在 `prompt` 之外保存有序的展示元数据。二进制附件仍使用
+`images` / `files`。
+
+| `type` | 字段 |
+| --- | --- |
+| `text` | `text: string` |
+| `pasted_text` | `text: string`，可选 `title: string` |
+| `file_selection` | `text: string`、`source: FileSelectionSource`、`intent: "comment" \| "edit" \| "quote"`、`id: string`，可选 `comment: string` |
+| `response_selection` | `text: string`、`selection: ResponseSelection`，引用已完成的助手回复 |
+
+`FileSelectionSource` 包含字符串字段 `workspace`、`path`、`quote`、`revision`，
+以及整数字段 `start_line`、`start_column`、`end_line`、`end_column`。行号和
+UTF-16 列号均从 1 开始，结束位置不包含在选区内。`revision` 标识捕获时的文件
+内容，不一定是 Git 版本号。服务端检查必需元数据、意图值、正数坐标及范围顺序，
+不读取文件或核实其版本。
+
+文件选区的 `text` 必须包含模型可见的完整序列化文本块，包括来源上下文、意图和
+可选评论。客户端按顺序拼接各段文本形成 `prompt`。只有拼接结果与提交的提示词
+在去除首尾空白后相同，服务端才保留有效元数据；服务端不重建或解析客户端的
+序列化格式。未知或无效分段会被丢弃，文本不匹配时丢弃展示元数据，但不修改
+提示词。Provider 和引擎使用规范消息文本；Codex 接收普通文本输入，无需特殊的
+`text_elements`。
+
+已接受的元数据会随历史和暂存队列回放保留。客户端必须容忍未知字段和分段类型；
+无法展示元数据时，回退到完整的消息 `text` 或队列 `prompt`。模型所需的上下文
+不能只保存在元数据中。
 
 ## 查询订阅状态
 

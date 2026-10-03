@@ -13,7 +13,7 @@ const report = { scene: "response-selection-v2", boundary: "Real Electron render
 if (ipcMain) ipcMain.on("selection:bridge-call", (_event, call) => report.calls.push(call));
 let win;
 const surface = '[data-thread-id="selection-main"] article[data-response-item-id="selection-main-answer"][data-response-settled="true"] .agent-text';
-const card = '.composer-response-selection-card .composer-document-card-main';
+const card = '[data-main-conversation-composer] .composer-response-selection-card .composer-document-card-main';
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function evaluate(fn, ...args) {
   const result = await win.webContents.executeJavaScript(`(async()=>{try{return {value:await (${fn})(${args.map(arg => JSON.stringify(arg)).join(",")})}}catch(e){return {error:String(e.stack||e)}}})()`, true);
@@ -51,7 +51,7 @@ async function input(selector, value) {
 // a frame from the middle of a fade.
 async function settle() {
   await evaluate(() => Promise.race([
-    Promise.all(document.getAnimations().map(animation => animation.finished.catch(() => undefined))),
+    Promise.all(document.getAnimations().filter(animation => Number.isFinite(animation.effect?.getComputedTiming().endTime)).map(animation => animation.finished.catch(() => undefined))),
     new Promise(resolve => setTimeout(resolve, 1500)),
   ]).then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))));
 }
@@ -64,9 +64,9 @@ async function screenshot(name) {
 }
 function measureGeometry() {
   const selectors = {
-    toolbar: ".response-selection-toolbar", card: ".composer-response-selection-card",
+    toolbar: ".response-selection-toolbar", card: "[data-main-conversation-composer] .composer-response-selection-card .composer-document-card-main",
     frame: "[data-main-conversation-composer] .composer-frame",
-    popover: ".composer-response-selection-popover", sourceComment: ".response-selection-comment-input",
+    popover: ".composer-response-selection-popover", sourceComment: ".response-selection-toolbar .selection-action-comment-input",
   };
   const regions = {};
   for (const [name, selector] of Object.entries(selectors)) {
@@ -75,7 +75,7 @@ function measureGeometry() {
       return { selector, left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom, width: rect.width, height: rect.height,
         fontSize: css.fontSize, fontFamily: css.fontFamily, lineHeight: css.lineHeight,
         scrollWidth: node.scrollWidth, clientWidth: node.clientWidth, scrollHeight: node.scrollHeight, clientHeight: node.clientHeight,
-        insideTray: name === "card" ? !!node.closest(".composer-attachment-tray") : null,
+        insideComposer: name === "card" ? !!node.closest(".composer-frame-shell, .composer-stack") : null,
         contained: rect.left >= 0 && rect.top >= 0 && rect.right <= innerWidth + 1 && rect.bottom <= innerHeight + 1 };
     });
   }
@@ -84,18 +84,18 @@ function measureGeometry() {
     parentFrame: frame ? { left: frame.left, top: frame.top, width: frame.width, height: frame.height } : null,
     theme: document.documentElement.dataset.theme, userAgent: navigator.userAgent, regions };
 }
-async function select(text, last = false, physical = false) {
-  await evaluate(selector => {
+async function select(text, last = false, physical = false, backward = false, align = "center") {
+  await evaluate((selector, align) => {
     const root = [...document.querySelectorAll(selector)].find(node => node.getBoundingClientRect().width);
     document.activeElement?.blur();
     root.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 1 }));
-    root.scrollIntoView({ block: "center", behavior: "instant" });
-  }, surface);
+    root.scrollIntoView({ block: align, behavior: "instant" });
+  }, surface, align);
   // Source navigation and centering deliver scroll asynchronously. A user starts
   // the next drag after that movement; don't create a toolbar destined to be
   // dismissed by the previous operation's queued scroll event.
   await evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-  const selected = await evaluate((selector, text, last) => {
+  const selected = await evaluate((selector, text, last, backward) => {
     const root = [...document.querySelectorAll(selector)].find(node => node.getBoundingClientRect().width);
     const source = root.textContent;
     const start = last ? source.lastIndexOf(text) : source.indexOf(text);
@@ -114,18 +114,35 @@ async function select(text, last = false, physical = false) {
     const final = range.cloneRange(); final.collapse(false);
     const a = first.getBoundingClientRect(), b = final.getBoundingClientRect();
     const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range);
+    if (backward) selection.setBaseAndExtent(endNode, endOffset, startNode, startOffset);
     document.dispatchEvent(new Event("selectionchange"));
     root.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 1 }));
-    return { text, start, end, source, from: { x: Math.round(a.x), y: Math.round(a.y + a.height / 2) }, to: { x: Math.round(b.x), y: Math.round(b.y + b.height / 2) } };
-  }, surface, text, last);
+    return { text, renderedText: selection.toString(), start, end, source, from: { x: Math.round(a.x), y: Math.round(a.y + a.height / 2) }, to: { x: Math.round(b.x), y: Math.round(b.y + b.height / 2) } };
+  }, surface, text, last, backward);
   if (physical) {
     await evaluate(() => window.getSelection().removeAllRanges());
-    win.webContents.sendInputEvent({ type: "mouseDown", ...selected.from, button: "left", clickCount: 1 });
+    win.focus();
+    win.webContents.focus();
+    const from = backward ? selected.to : selected.from;
+    const to = backward ? selected.from : selected.to;
+    const hit = await evaluate((selector, point) => {
+      const root = document.querySelector(selector);
+      const target = document.elementFromPoint(point.x, point.y);
+      return { inSource: root?.contains(target), target: target?.className };
+    }, surface, from);
+    if (!hit.inSource) throw new Error(`Native drag start missed its source: ${JSON.stringify({ from, to, hit })}`);
+    await win.webContents.debugger.sendCommand("Input.dispatchMouseEvent", { type: "mouseMoved", ...from });
+    await win.webContents.debugger.sendCommand("Input.dispatchMouseEvent", { type: "mousePressed", ...from, button: "left", buttons: 1, clickCount: 1 });
     for (let step = 1; step <= 10; step++) {
-      win.webContents.sendInputEvent({ type: "mouseMove", x: Math.round(selected.from.x + (selected.to.x - selected.from.x) * step / 10), y: selected.from.y, button: "left" });
+      await win.webContents.debugger.sendCommand("Input.dispatchMouseEvent", { type: "mouseMoved", x: Math.round(from.x + (to.x - from.x) * step / 10), y: Math.round(from.y + (to.y - from.y) * step / 10), button: "left", buttons: 1 });
     }
-    win.webContents.sendInputEvent({ type: "mouseUp", ...selected.to, button: "left", clickCount: 1 });
-    await until(text => window.getSelection()?.toString() === text, "physical drag selected exact text", text);
+    await win.webContents.debugger.sendCommand("Input.dispatchMouseEvent", { type: "mouseReleased", ...to, button: "left", buttons: 0, clickCount: 1 });
+    try {
+      await until(text => window.getSelection()?.toString() === text, "physical drag selected exact text", text);
+    } catch (error) {
+      const actual = await evaluate(() => ({ text: window.getSelection()?.toString(), focused: document.hasFocus(), active: document.activeElement?.className }));
+      throw new Error(`${error.message}: ${JSON.stringify({ expected: text, actual, from, to })}`);
+    }
   }
   await until(() => !!document.querySelector(".response-selection-toolbar button"), "native selection toolbar");
   return selected;
@@ -133,10 +150,10 @@ async function select(text, last = false, physical = false) {
 async function add(text, last = false, physical = false, comment = "") {
   const result = await select(text, last, physical);
   if (comment) {
-    await click(".response-selection-comment-toggle");
-    await input(".response-selection-comment-input", comment);
+    await click(".response-selection-toolbar .selection-action-comment-toggle");
+    await input(".response-selection-toolbar .selection-action-comment-input", comment);
   }
-  await click(".response-selection-add");
+  await click(comment ? ".response-selection-toolbar .selection-action-comment-submit" : ".response-selection-toolbar .selection-action-menu-controls > button:first-child");
   await until(selector => !!document.querySelector(selector), "quote card", card);
   return result;
 }
@@ -162,9 +179,9 @@ async function checkSource(expected) {
 }
 async function send(expected, comment, prompt) {
   const before = report.calls.length;
-  await input('[data-main-conversation-composer] .composer textarea:not(.composer-response-selection-comment)', prompt);
+  await input('[data-main-conversation-composer] .composer textarea', prompt);
   await click('[data-main-conversation-composer] .composer-send-button');
-  await until(() => !document.querySelector('.composer-response-selection-card'), "submitted quote clears");
+  await until(selector => !document.querySelector(selector), "submitted quote clears", card);
   for (let retry = 0; report.calls.length === before && retry < 100; retry++) await sleep(20);
   if (report.calls.length !== before + 1) throw new Error("Expected exactly one bridge call");
   const call = report.calls.at(-1);
@@ -180,15 +197,127 @@ function validatePayload(call, expected, comment, prompt) {
   if (prompt && (parts.at(-1).type !== "text" || parts.at(-1).text !== prompt)) throw new Error("Prompt part mismatch");
   if (!call.args[1].includes(quote.trimEnd()) || (prompt && !call.args[1].includes(prompt))) throw new Error("Flattened prompt lost quote/comment or prompt");
 }
+async function checkAnnotationPanel(name) {
+  await settle();
+  const geometry = await evaluate(selector => {
+    const anchor = document.querySelector(selector);
+    const owner = anchor?.closest(".composer-frame, .composer-frame-shell, .composer-stack");
+    const panel = document.querySelector(".composer-response-selection-popover");
+    if (!owner || !panel) throw new Error("Missing annotation panel or owning composer");
+    const input = panel.querySelector("textarea");
+    return { owner: owner.getBoundingClientRect().toJSON(), panel: panel.getBoundingClientRect().toJSON(),
+      viewport: { width: innerWidth, height: innerHeight }, scrollWidth: panel.scrollWidth, clientWidth: panel.clientWidth,
+      input: input ? { scrollWidth: input.scrollWidth, clientWidth: input.clientWidth, value: input.value } : null };
+  }, card);
+  report.measurements.push({ name, annotation: geometry });
+  if (geometry.panel.left < Math.max(0, geometry.owner.left) - 1 ||
+    geometry.panel.right > Math.min(geometry.viewport.width, geometry.owner.right) + 1)
+    throw new Error(`${name}: annotation escaped its owning composer column: ${JSON.stringify(geometry)}`);
+  if (geometry.panel.top < -1 || geometry.panel.bottom > geometry.viewport.height + 1 ||
+    geometry.scrollWidth > geometry.clientWidth + 1 ||
+    (geometry.input && geometry.input.scrollWidth > geometry.input.clientWidth + 1))
+    throw new Error(`${name}: annotation or editor overflow: ${JSON.stringify(geometry)}`);
+}
+
+async function checkPlacement(name, expected, expectedSide) {
+  await settle();
+  const geometry = await evaluate(({ selector, start, end }) => {
+    const root = [...document.querySelectorAll(selector)].find(node => node.getBoundingClientRect().width);
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    const range = document.createRange();
+    let node, offset = 0, started = false;
+    while ((node = walker.nextNode())) {
+      if (!started && start < offset + node.length) { range.setStart(node, start - offset); started = true; }
+      if (end <= offset + node.length) { range.setEnd(node, end - offset); break; }
+      offset += node.length;
+    }
+    const toolbar = document.querySelector(".response-selection-toolbar");
+    const popup = toolbar.getBoundingClientRect();
+    const bounds = range.getBoundingClientRect();
+    return { viewport: { width: innerWidth, height: innerHeight }, source: bounds.toJSON(),
+      sourceRects: [...range.getClientRects()].filter(rect => rect.width && rect.height).map(rect => rect.toJSON()),
+      popup: popup.toJSON(),
+      complete: { left: popup.left, right: popup.right, top: popup.top, bottom: popup.bottom } };
+  }, { selector: surface, start: expected.start, end: expected.end });
+  report.measurements.push({ name: `${name}-source-placement`, ...geometry });
+  const { source, popup, complete, viewport } = geometry;
+  const expectedLeft = Math.max(8, Math.min(source.left, viewport.width - 8 - popup.width));
+  if (Math.abs(popup.left - expectedLeft) > 2) throw new Error(`${name}: popup does not align to the source start with viewport clamping: ${JSON.stringify(geometry)}`);
+  if (complete.left < -1 || complete.top < -1 || complete.right > viewport.width + 1 || complete.bottom > viewport.height + 1) throw new Error(`${name}: popup left the viewport`);
+  const height = complete.bottom - complete.top;
+  const aboveFits = source.top >= height + 16;
+  const belowFits = viewport.height - source.bottom >= height + 16;
+  const above = complete.bottom <= source.top + 1;
+  const below = complete.top >= source.bottom - 1;
+  if (aboveFits && !above) throw new Error(`${name}: popup should be above the source: ${JSON.stringify(geometry)}`);
+  if (!aboveFits && belowFits && !below) throw new Error(`${name}: top-edge fallback overlaps the source: ${JSON.stringify(geometry)}`);
+  if (expectedSide && !(expectedSide === "above" ? above : below)) throw new Error(`${name}: expected ${expectedSide} placement: ${JSON.stringify(geometry)}`);
+  if ((aboveFits || belowFits) && geometry.sourceRects.some(rect => complete.left < rect.right && complete.right > rect.left && complete.top < rect.bottom && complete.bottom > rect.top)) throw new Error(`${name}: comment popup obscures selected text`);
+  await screenshot(name);
+  return geometry;
+}
+async function placementCoverage() {
+  await click(card);
+  await click(".composer-response-selection-remove");
+  win.setContentSize(1200, 900);
+  await evaluate(() => { document.documentElement.dataset.theme = "light"; document.documentElement.style.setProperty("--ui-font-size", "14px"); document.documentElement.style.setProperty("--conversation-message-font-size", "14px"); });
+  const forward = await select("Native drag selection", false, true);
+  const first = await checkPlacement("placement-forward-native", forward, "above");
+  const reverse = await select("Native drag selection", false, true, true);
+  const reversed = await checkPlacement("placement-reverse-native", reverse, "above");
+  if (Math.abs(first.popup.left - reversed.popup.left) > 2 || Math.abs(first.popup.top - reversed.popup.top) > 2) throw new Error("Reversing the same selection changed popup placement");
+  const allText = await evaluate(selector => document.querySelector(selector).textContent, surface);
+  const multiline = await select(allText);
+  await checkPlacement("placement-multiline", multiline, "above");
+  await click(".response-selection-toolbar .selection-action-comment-toggle");
+  await win.webContents.insertText("First line 第二行 😀\nA longer instruction that expands the comment box while keeping the selected passage unobscured.\nOne more line for growth.");
+  await checkPlacement("placement-multiline-comment-growth", multiline);
+  win.setContentSize(390, 820);
+  const edge = await select("Repeated 😀 café 中文 target.", true);
+  await checkPlacement("placement-narrow-edge", edge);
+  await click(".response-selection-toolbar .selection-action-comment-toggle");
+  await win.webContents.insertText("Keep this narrow comment readable. 第二行 😀\nThe source and its annotation must stay separate.");
+  await checkPlacement("placement-narrow-comment", edge);
+  await evaluate(() => document.querySelector(".response-selection-toolbar textarea")
+    .dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })));
+  await until(() => !document.querySelector(".response-selection-toolbar textarea"), "cancel annotation input");
+  const cancelFocus = await evaluate(() => document.activeElement?.classList.contains("selection-action-comment-toggle"));
+  if (!cancelFocus) throw new Error("Escape from annotation did not return focus to its comment action");
+  await click(".response-selection-toolbar .selection-action-comment-toggle");
+  await until(() => document.querySelector(".response-selection-toolbar textarea")?.value === "",
+    "cancelled source comment reopens without discarded draft");
+  report.cases.push("source annotation Escape restores action focus and clears its unsaved draft on reopen");
+  win.setContentSize(760, 420);
+  const top = await select("Native drag selection", false, false, false, "start");
+  await click(".response-selection-toolbar .selection-action-comment-toggle");
+  await win.webContents.insertText("Top-edge fallback 第二行 😀");
+  await checkPlacement("placement-top-edge-comment", top, "below");
+  const moved = await evaluate(() => { const scroll = document.querySelector(".conversation-pane > .scroll-region"); const before = scroll.scrollTop; scroll.scrollBy({ top: -20, behavior: "instant" }); return scroll.scrollTop !== before; });
+  if (!moved) throw new Error("Visible-source scroll scenario did not move the source viewport");
+  await checkPlacement("placement-visible-source-scroll", top);
+  const preserved = await evaluate(() => { const input = document.querySelector(".response-selection-commenting textarea, .response-selection-toolbar textarea"); return { value: input?.value, focused: document.activeElement === input }; });
+  if (preserved.value !== "Top-edge fallback 第二行 😀" || !preserved.focused) throw new Error("Moving the source lost the comment or input focus");
+  await evaluate(() => { const scroll = document.querySelector(".conversation-pane > .scroll-region"); scroll.scrollTo({ top: scroll.scrollHeight, behavior: "instant" }); });
+  await until(() => !document.querySelector(".response-selection-toolbar"), "fully offscreen source dismisses the popup");
+  report.cases.push("source-left full-range anchors; forward/reverse native drag; multiline comment growth; narrow edge clamp; top fallback; visible-source scroll preserves comment/focus; offscreen dismissal");
+}
 async function run() {
   win = new BrowserWindow({ width: 1200, height: 820, show: process.env.WUU_E2E_VISIBLE === "true", webPreferences: { preload: path.join(__dirname, "response-selection-e2e-preload.cjs"), contextIsolation: true, nodeIntegration: false, sandbox: false, backgroundThrottling: false } });
+  win.setContentSize(1200, 820);
+  win.webContents.debugger.attach("1.3");
   win.webContents.on("console-message", ({ level, message }) => { if (level >= 3) report.errors.push(message); });
+  // The synthetic bridge never needs remote resources or a live provider.
+  win.webContents.session.webRequest.onBeforeRequest({ urls: ["http://*/*", "https://*/*", "ws://*/*", "wss://*/*"] }, (details, callback) => {
+    report.errors.push(`Unexpected network request: ${details.url}`);
+    callback({ cancel: true });
+  });
   await win.loadFile(process.env.WUU_E2E_RENDERER || path.join(desktop, "out/renderer/index.html"));
   await until(selector => !!document.querySelector(selector), "settled response", surface);
   await evaluate(() => {
     for (const toggle of document.querySelectorAll('.environment-toggle-button[aria-pressed="true"], .title-actions .side-panel-toggle-button[aria-pressed="true"]')) toggle.click();
     if (!document.querySelector(".app-shell").classList.contains("sidebar-collapsed")) document.querySelector(".sidebar-toggle-button").click();
   });
+  await settle();
   const drag = await add("Native drag selection", false, true);
   await checkSource(drag);
   await screenshot("physical-drag-source");
@@ -199,13 +328,17 @@ async function run() {
   const comment = 'Explain "this" 😀\n第二行';
   const repeated = await select("Repeated 😀 café 中文 target.", true);
   await screenshot("toolbar-actions");
-  await click(".response-selection-comment-toggle");
+  await click(".response-selection-toolbar .selection-action-comment-toggle");
+  await screenshot("comment-empty-single-line");
   // Real Chromium input insertion, not a React setter, protects the restored-Range
   // focus contract: typing must enter the comment rather than replace the quote.
-  await win.webContents.insertText(comment);
-  await until(value => document.querySelector('.response-selection-comment-input')?.value === value, "native source comment typing", comment);
+  const firstLine = comment.split("\n")[0];
+  await win.webContents.insertText(firstLine);
+  await screenshot("comment-single-line");
+  await win.webContents.insertText(comment.slice(firstLine.length));
+  await until(value => document.querySelector('.response-selection-toolbar .selection-action-comment-input')?.value === value, "native source comment typing", comment);
   await screenshot("comment-expanded");
-  await click(".response-selection-add");
+  await click(".response-selection-toolbar .selection-action-comment-submit");
   await until(selector => !!document.querySelector(selector), "source comment added", card);
   await checkSource(repeated);
   await send(repeated, comment, "Please explain the selected passage.");
@@ -215,7 +348,31 @@ async function run() {
   await send(quote, "", "");
   report.cases.push("quote-only submission retains rich metadata and flattened quote");
 
-  await add("Repeated 😀 café 中文 target.", true);
+  const multilineQuote = await evaluate(selector => document.querySelector(selector).textContent, surface);
+  const multilineSelection = await add(multilineQuote);
+  const longComment = `Long annotation with English and 中文.\n${"中文需要保持完整并正确换行。".repeat(16)}\n${"unbroken_annotation_".repeat(32)}`;
+  await add("Repeated 😀 café 中文 target.", true, false, "Second annotation 第二条批注");
+  win.setContentSize(390, 820);
+  await evaluate(() => {
+    document.documentElement.dataset.theme = "light";
+    document.documentElement.style.setProperty("--conversation-message-font-size", "20px");
+    document.documentElement.style.setProperty("--ui-font-size", "20px");
+  });
+  await settle();
+  await screenshot("multiple-quotes-collapsed-light-390-20");
+  await until(selector => document.querySelectorAll(selector).length === 2, "two quote attachment cards", card);
+  await evaluate(selector => document.querySelectorAll(selector)[1].click(), card);
+  await until(() => document.querySelector(".composer-response-selection-comment")?.value === "Second annotation 第二条批注",
+    "second quote details");
+  await checkAnnotationPanel("multiple-quotes-light-390-20");
+  await screenshot("multiple-quotes-expanded-light-390-20");
+  await click(".composer-response-selection-remove");
+  await until(selector => document.querySelectorAll(selector).length === 1, "remove only second quote", card);
+  await click(card);
+  const retained = await evaluate(() => document.querySelector(".composer-response-selection-quote")?.textContent);
+  if (retained !== multilineSelection.renderedText) throw new Error("Removing the second quote changed the first quote");
+  await closeQuotePanel();
+  report.cases.push("two quotes collapsed and expanded at 390px/20px, removing second retains complete first selection");
   for (const [width, height, font, theme] of [[1200, 820, 14, "light"], [1200, 820, 20, "dark"], [390, 820, 14, "dark"], [390, 820, 20, "light"]]) {
     win.setContentSize(width, height);
     await evaluate((font, theme) => {
@@ -231,10 +388,25 @@ async function run() {
       const rect = node.getBoundingClientRect();
       return rect.width > 0 && rect.left >= 0 && rect.right <= innerWidth + 1 && rect.top >= 0 && rect.bottom <= innerHeight + 1;
     }, "quote editor within viewport");
+    await checkAnnotationPanel(`${theme}-${width}-${font}-quote`);
+    const shownQuote = await evaluate(() => document.querySelector(".composer-response-selection-quote")?.textContent);
+    // Chromium Selection text inserts rendered paragraph breaks that DOM
+    // textContent intentionally omits. Compare against the native selection,
+    // not concatenated DOM text; the source offsets still refer to textContent.
+    if (shownQuote !== multilineSelection.renderedText) throw new Error(`Annotation quote lost original whitespace or text: ${JSON.stringify({ expected: multilineSelection.renderedText, actual: shownQuote })}`);
+    await input(".composer-response-selection-comment", longComment);
+    await checkAnnotationPanel(`${theme}-${width}-${font}-long-comment`);
     await screenshot(`${theme}-${width}-${font}`);
     await closeQuotePanel();
+    await click(card);
+    await until(expected => document.querySelector(".composer-response-selection-comment")?.value === expected,
+      "long comment survives dismissal and reopening", longComment);
+    await checkAnnotationPanel(`${theme}-${width}-${font}-reopened`);
+    await closeQuotePanel();
   }
-  report.cases.push("light/dark, default/large font, wide/narrow quote card and editor geometry");
+  report.cases.push("light/dark, default/20px font, wide/narrow owning-column bounds, exact multiline quote, long Chinese/English/unbroken comment wrapping and dismiss/reopen retention");
+  await placementCoverage();
+  if (report.errors.length) throw new Error(`Unexpected renderer or network errors: ${JSON.stringify(report.errors)}`);
   report.status = "passed";
 }
 if (browserPreview) servePreview();
@@ -268,7 +440,7 @@ function servePreview() {
     function trace(event){const node=event.target;report.eventTrace.push({time:performance.now(),type:event.type,target:node?.className||node?.nodeName||'window',active:document.activeElement?.className,toolbar:!!document.querySelector('.response-selection-toolbar'),commenting:!!document.querySelector('.response-selection-commenting'),selection:window.getSelection()?.toString(),scrollTop:node?.scrollTop,visibility:document.visibilityState,viewport:{width:innerWidth,height:innerHeight,dpr:devicePixelRatio},detail:event.detail&&typeof event.detail==='object'?event.detail:undefined});if(report.eventTrace.length>500)report.eventTrace.shift()}
     for(const type of ['scroll','blur','focusin','focusout','pointerdown','pointerup','input','selectionchange','visibilitychange'])document.addEventListener(type,trace,true);
     for(const type of ['blur','resize','selection-fixture-step'])window.addEventListener(type,trace);
-    document.addEventListener('input',event=>{if(event.target.matches('.response-selection-comment-input'))report.nativeInput.push({type:event.type,isTrusted:event.isTrusted,value:event.target.value,active:document.activeElement?.className,selection:window.getSelection()?.toString()})});
+    document.addEventListener('input',event=>{if(event.target.matches('.response-selection-toolbar .selection-action-comment-input'))report.nativeInput.push({type:event.type,isTrusted:event.isTrusted,value:event.target.value,active:document.activeElement?.className,selection:window.getSelection()?.toString()})});
     document.addEventListener('keyup',event=>{if(event.key==='Escape')requestAnimationFrame(()=>{report.escapeFocus=document.activeElement?.className})});
     const style=document.createElement('style'); style.textContent='#selection-fixture-controls{position:fixed;top:36px;right:8px;max-width:calc(100% - 16px);z-index:2147483647;display:flex;flex-wrap:wrap;gap:4px;font:11px sans-serif;background:#eee;color:#111;padding:4px}';document.head.append(style);
     const controls=document.createElement('div');controls.id='selection-fixture-controls';document.body.append(controls);
@@ -310,7 +482,7 @@ function servePreview() {
         const quote=await add(text,true);await send(quote,'','');report.cases.push('quote-only wire payload');
       }else if(scene==='toolbar'||scene==='comment'||scene==='typing'){
         await select(text,true);
-        if(scene==='comment'||scene==='typing'){await click('.response-selection-comment-toggle');if(scene==='comment')await input('.response-selection-comment-input','Explain "this" 😀\\n第二行')}
+        if(scene==='comment'||scene==='typing'){await click('.response-selection-toolbar .selection-action-comment-toggle');if(scene==='comment')await input('.response-selection-toolbar .selection-action-comment-input','Explain "this" 😀\\n第二行')}
       }else{
         const expected=await add(text,true,false,'Explain "this" 😀\\n第二行');
         if(params.get('long')!=='1'){await checkSource(expected);report.cases.push({name:'repeated Unicode exact source highlight',expected})}
@@ -318,13 +490,14 @@ function servePreview() {
         for(let index=1;index<count;index++)await add('Native drag selection',false,false,'Comment '+(index+1));
         if(scene==='manager'||scene==='aggregate')await click(card);
         if(scene==='aggregate'){
-          const cards=()=>[...document.querySelectorAll('.composer-response-selection-card')].filter(node=>!node.closest('[data-exiting]'));
-          await until(()=>cards().length===2,'two quote cards in the tray');
-          if(cards().some(node=>!node.closest('.composer-attachment-tray')))throw new Error('Quote card rendered outside the attachment tray');
-          cards()[1].querySelector('.composer-attachment-card-remove').click();
-          await until(()=>cards().length===1,'remove only the second quote card');
+          const entries=()=>[...document.querySelectorAll(card)];
+          await until(()=>entries().length===2,'two selection attachment cards');
           await closeQuotePanel();
-          await checkSource(expected);await click(card);report.cases.push('two tray cards; removing the second preserves the first exact source');
+          entries()[1].click();
+          await until(()=>!!document.querySelector('.composer-response-selection-remove'),'second quote details');
+          document.querySelector('.composer-response-selection-remove').click();
+          await until(()=>entries().length===1,'remove only the second selection');
+          await checkSource(expected);await click(card);report.cases.push('two selection cards; removing the second preserves the first exact source');
         }
       }
       report.measurements.push({name:scene,...measureGeometry()});

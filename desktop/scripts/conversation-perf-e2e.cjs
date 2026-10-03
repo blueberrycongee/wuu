@@ -4,6 +4,8 @@
 // WUU_PERF_VARIANT=large-narrow exercises dark mode and 20px UI text at 820px.
 // WUU_PERF_VARIANT=reduced exercises the system reduced-motion preference.
 // WUU_PERF_PENDING=steer exercises Enter during a running turn instead of Tab.
+// WUU_PERF_STREAM_ONLY=1 profiles streaming and settlement without queued input.
+// WUU_PERF_STREAM_KIND=code streams one long fenced block instead of paragraphs.
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
@@ -150,14 +152,34 @@ app.whenReady().then(async () => {
   assert.ok(await evaluate(win, () => document.querySelector('[data-user-message-id="user-thread-immediate-title-e2e"]')), "History send must render the acknowledged message");
   const stream = { thread_id: thread.id, turn_id: `turn-${thread.id}`, item_id: "perf-answer" };
   emit(win, "item/started", { ...stream, item: { id: stream.item_id, type: "agent_message", status: "in_progress", text: "" } });
+  const codeStream = process.env.WUU_PERF_STREAM_KIND === "code";
+  const chunks = Array.from({ length: 60 }, (_, i) => codeStream
+    ? `${i === 0 ? "```ts\n" : ""}${Array.from({ length: 8 }, (_, line) =>
+      `const value${i * 8 + line} = { message: "Streaming line ${i * 8 + line}", ready: true };\n`).join("")}${i === 59 ? "```\n" : ""}`
+    : `Streaming paragraph ${i} with **formatted text** and a little more content.\n\n`);
   await measure(win, "history-stream", async () => {
-    for (let i = 0; i < 60; i++) {
-      emit(win, "item/agentMessage/delta", { ...stream, delta: `Streaming paragraph ${i} with **formatted text** and a little more content.\n\n` });
+    for (const delta of chunks) {
+      emit(win, "item/agentMessage/delta", { ...stream, delta });
       await delay(16);
     }
   });
-  await waitFor(win, () => [...document.querySelectorAll(".streaming-markdown")].some(node => node.textContent.includes("Streaming paragraph 59")));
-  const completedAnswer = { id: stream.item_id, type: "agent_message", status: "completed", text: Array.from({ length: 60 }, (_, i) => `Streaming paragraph ${i} with **formatted text** and a little more content.\n\n`).join("") };
+  const lastText = codeStream ? "Streaming line 479" : "Streaming paragraph 59";
+  await win.webContents.executeJavaScript(`window.__perfLastText = ${JSON.stringify(lastText)}`);
+  await waitFor(win, () => [...document.querySelectorAll(".streaming-markdown")].some(node => node.textContent.includes(window.__perfLastText)));
+  const completedAnswer = { id: stream.item_id, type: "agent_message", status: "completed", text: chunks.join("") };
+  if (process.env.WUU_PERF_STREAM_ONLY === "1") {
+    emit(win, "turn/completed", { thread_id: thread.id, turn: { id: stream.turn_id, status: "completed", items_view: "full", items: [
+      { id: `user-${thread.id}`, type: "user_message", status: "completed", text: "Measure submitted message motion." }, completedAnswer,
+    ], completed_at: now } });
+    await waitFor(win, () => [...document.querySelectorAll('.streaming-markdown[data-stream-state=settled]')]
+      .some(node => node.textContent.includes(window.__perfLastText)));
+    await waitFor(win, () => ![...CSS.highlights.keys()].some(name => name.startsWith("wuu-stream-")));
+    assert.equal(await evaluate(win, () => document.querySelectorAll("[data-stream-veil]").length), 0,
+      "Settled output must release its temporary paint state");
+    console.log(JSON.stringify({ name: "stream-settled", kind: codeStream ? "code" : "paragraphs", paintReleased: true }));
+    app.quit();
+    return;
+  }
   const steer = process.env.WUU_PERF_PENDING === "steer";
   // Pause in history before enqueueing. Receiving the queued turn must not
   // create a submission reservation or move the reader to the new bubble.

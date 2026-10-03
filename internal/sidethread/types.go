@@ -43,10 +43,18 @@ type Message struct {
 	SideThreadID string                 `json:"side_thread_id"`
 	Role         MessageRole            `json:"role"`
 	Text         string                 `json:"text"`
+	Selection    *SelectionReference    `json:"selection,omitempty"`
 	Items        []Item                 `json:"items,omitempty"`
 	Status       AssistantMessageStatus `json:"status,omitempty"`
 	ErrorText    string                 `json:"error_message,omitempty"`
 	CreatedAt    time.Time              `json:"created_at"`
+}
+
+// SelectionReference keeps the source attached to a side question across reloads.
+type SelectionReference struct {
+	Type     string                         `json:"type"`
+	Response *providers.ResponseSelection   `json:"response,omitempty"`
+	File     *providers.FileSelectionSource `json:"file,omitempty"`
 }
 
 // Item is a canonical agent-process item attached to an assistant message.

@@ -719,7 +719,8 @@ export class RemoteDesktopBridge {
         this.call("thread/rename", { thread_id: threadId, title }),
       archiveThread: (threadId: string, archived: boolean, force?: boolean) =>
         this.call("thread/archive", { thread_id: threadId, archived, force }),
-      deleteThread: (threadId: string) => this.call("thread/delete", { thread_id: threadId }),
+      deleteThread: (threadId: string, options?: { onlyIfArchived?: boolean }) =>
+        this.call("thread/delete", { thread_id: threadId, ...(options?.onlyIfArchived ? { only_if_archived: true } : {}) }),
       compactThread: (threadId: string) => this.call("thread/compact/start", { thread_id: threadId }),
 
       returnManagedSession: (params) => this.call("thread/control/return", params),
