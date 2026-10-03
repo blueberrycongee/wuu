@@ -913,8 +913,8 @@ startFixtureProvider().then(() => { startupProbe?.mark('product-main-import'); r
     releaseArchive();
     archiveGate = undefined;
   }
-  // Cached UI can be interactive before its background resume returns. Drain
-  // that work before subscribing for the separate snapshot protocol check.
+  // Drain catalog work before subscribing for the separate snapshot protocol
+  // check; conversation switches already wait for resume and layout readiness.
   await evaluate(main, () => window.wuu.initialize());
   // An IPC barrier ensures all core notifications preceding initialize have
   // arrived before checking that resume still publishes exactly one snapshot.

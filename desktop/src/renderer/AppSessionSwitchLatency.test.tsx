@@ -1,8 +1,6 @@
 /**
- * Session tab switching should feel local when the target thread is already
- * loaded. The app still resumes the thread in the background so the server
- * snapshot can refresh status/turns, but the click must not wait for that IPC
- * round trip before the active tab and conversation pane change.
+ * Session switching keeps the outgoing conversation covered until the resumed
+ * target has restored its presentation and scroll position.
  */
 import { act, Fragment, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -65,10 +63,12 @@ vi.mock("./WorkspaceMonacoEditor", () => ({
 import { App } from "./App";
 import { requestOpenThreadInSplit } from "./ConversationSplitBridge";
 import * as ComposerMessages from "./ComposerMessages";
+import { mockAnimationFrames } from "./AnimationFrameTestHarness";
 
 let container: HTMLDivElement;
 let root: Root | null = null;
 let serverEventHandlers: Array<(event: ServerEvent) => void> = [];
+let animationFrames: ReturnType<typeof mockAnimationFrames>;
 
 const workspace = "/tmp/wuu-session-switch-latency-test";
 const threadAID = "thread-switch-a";
@@ -203,6 +203,7 @@ function threadB(): Thread {
 }
 
 function installWindowStubs(): void {
+  animationFrames = mockAnimationFrames();
   class MockResizeObserver {
     observe(): void {}
     unobserve(): void {}
@@ -290,10 +291,7 @@ function installWuuApi(): {
 }
 
 async function flushAsync(): Promise<void> {
-  await act(async () => {
-    await Promise.resolve();
-    await Promise.resolve();
-  });
+  await animationFrames.flush();
 }
 
 function threadRowButton(previewText: string): HTMLButtonElement | undefined {
@@ -553,8 +551,8 @@ describe("session tab switch latency", () => {
     turnListFixture.renderTurns = true;
     await act(async () => { root = createRoot(container); root.render(<App />); });
     await flushAsync();
-    // Cache B before requesting the child, so switching to B is immediate even
-    // when its next background resume is behind the child in the IPC stream.
+    // Cache B before requesting the child, then navigate again while its
+    // next resume is behind the child in the IPC stream.
     await act(async () => { threadRowButton("session switch B")!.click(); });
     await flushAsync();
     await act(async () => { threadRowButton("session switch A")!.click(); });
@@ -569,7 +567,7 @@ describe("session tab switch latency", () => {
     await act(async () => { sourceButton!.click(); });
     expect(resumeThread).toHaveBeenLastCalledWith(child.id);
     await act(async () => { threadRowButton("session switch B")!.click(); });
-    expect(activeThreadProbe()?.dataset.threadId).toBe(threadBID);
+    expect(activeThreadProbe()?.dataset.threadId).toBe(threadAID);
     expect(container.querySelector(".conversation-split-pane")).toBeNull();
     if (navigation === "away-and-back") {
       await act(async () => { threadRowButton("session switch A")!.click(); });
@@ -758,6 +756,7 @@ describe("session tab switch latency", () => {
     resumeThread.mockImplementationOnce(() => pending.promise);
     await act(async () => { threadRowButton("cold third")!.click(); });
     expect(resumeThread).toHaveBeenLastCalledWith(third.id);
+    expect(owner.querySelector<HTMLTextAreaElement>("textarea")!.disabled).toBe(true);
     if (failure) await attachment.fail(); else await attachment.finish();
     await act(async () => { emitNotification("thread/resumed", { thread: third }); pending.resolve({ thread: third }); });
     await flushAsync();
@@ -776,6 +775,7 @@ describe("session tab switch latency", () => {
     await attachment.finish();
     expect(container.querySelector(`${mainComposerSelector} ${attachmentCardSelector}`)).toBeNull();
     await act(async () => { threadRowButton("session switch A")!.click(); });
+    await flushAsync();
     expect(container.querySelectorAll(`${mainComposerSelector} ${attachmentCardSelector}`)).toHaveLength(1);
     if (extension === "png") {
       expect(container.querySelector(`${mainComposerSelector} img`)?.getAttribute("src")).toBe(`data:image/png;base64,${attachment.data}`);
@@ -965,8 +965,10 @@ describe("session tab switch latency", () => {
     act(() => { emitNotification("thread/updated", { thread: oldBeta }, oldBeta.cwd); });
     expect(threadRowButton(oldBeta.title)).toBeDefined();
     await act(async () => { threadRowButton(oldBeta.title)!.click(); });
-    expect(activeThreadProbe()?.dataset.threadId).toBe(beta.id);
+    expect(container.querySelector('.view-switch-loading-conversation')).not.toBeNull();
     await act(async () => { betaResume.resolve({ thread: beta }); });
+    await flushAsync();
+    expect(activeThreadProbe()?.dataset.threadId).toBe(beta.id);
     expect(threadRowButton(beta.title)).toBeDefined();
     await act(async () => {
       const alphaSection = Array.from(container.querySelectorAll(".project-row-name"))
@@ -983,7 +985,82 @@ describe("session tab switch latency", () => {
     expect(activeSessionTabLabel()).toContain(beta.title);
   });
 
-  it("switches to an already loaded same-runtime thread before resume resolves", async () => {
+  it.each(["thread", "new-draft", "resume-error", "source-unavailable"])("restores the source runtime when abandoning a cross-workspace resume via %s", async navigation => {
+    installWuuApi();
+    const projects = ["alpha", "beta"].map(id => ({
+      id, name: id, path: "/tmp/" + id, created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z",
+    }));
+    let context: RuntimeContext = { kind: "project", project_id: "alpha", cwd: projects[0].path };
+    const alpha = { ...threadA(), cwd: projects[0].path, workspace_id: "alpha" };
+    const beta = { ...threadB(), cwd: projects[1].path, workspace_id: "beta" };
+    const pending = deferred<{ thread: Thread }>();
+    let sourceUnavailable = false;
+    window.wuu.listProjects = vi.fn(async () => ({ projects, active_context: context }));
+    window.wuu.selectProject = vi.fn<WuuDesktopApi["selectProject"]>(async id => {
+      context = { kind: "project", project_id: id, cwd: projects.find(project => project.id === id)!.path };
+      return {
+        projects: projects.map(project => ({ ...project, missing: sourceUnavailable && project.id === "alpha" })),
+        active_context: context,
+        runtime_issue: sourceUnavailable && id === "alpha"
+          ? { code: "active_project_unavailable", message: "Source workspace is unavailable", project_id: "alpha", cwd: projects[0].path }
+          : undefined,
+      };
+    });
+    window.wuu.initialize = vi.fn(async () => ({ ...initialized(), workspace_root: context.cwd }));
+    window.wuu.listThreads = vi.fn(async cwd => ({ threads: [cwd === beta.cwd ? beta : alpha] }));
+    window.wuu.resumeThread = vi.fn(async id => id === beta.id ? pending.promise : { thread: alpha });
+    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await flushAsync();
+    act(() => { setMainComposerPrompt("Retained source draft"); });
+    const projectRow = (id: string) => Array.from(container.querySelectorAll(".project-row-name"))
+      .find(label => label.textContent === id)!.closest(".project-group")!;
+    await act(async () => { (projectRow("beta").querySelector(".project-row-name")!.closest("button") as HTMLButtonElement).click(); });
+    await flushAsync();
+    await act(async () => { threadRowButton("session switch B")!.click(); });
+    expect(context.project_id).toBe("beta");
+    expect(activeThreadProbe()?.dataset.threadId).toBe(alpha.id);
+    if (navigation === "resume-error" || navigation === "source-unavailable") {
+      sourceUnavailable = navigation === "source-unavailable";
+      await act(async () => { pending.reject(new Error("Target resume failed")); });
+      await flushAsync();
+      expect(context.project_id).toBe("alpha");
+      expect(activeSessionTabLabel()).toContain(alpha.preview);
+      if (sourceUnavailable) {
+        expect(container.querySelector(".composer-send-button")).toBeNull();
+        expect(container.querySelector(".session-switch-loading")).toBeNull();
+        sourceUnavailable = false;
+        window.wuu.resumeThread = vi.fn(async id => ({ thread: id === beta.id ? beta : alpha }));
+        await act(async () => { threadRowButton(beta.preview)!.click(); });
+        await flushAsync();
+        if (!threadRowButton(alpha.preview)) {
+          await act(async () => { (projectRow("alpha").querySelector(".project-row-name")!.closest("button") as HTMLButtonElement).click(); });
+          await flushAsync();
+        }
+        await act(async () => { threadRowButton(alpha.preview)!.click(); });
+        await flushAsync();
+      }
+      expect(mainComposerTextarea().value).toBe("Retained source draft");
+      expect(activeThreadProbe()?.dataset.threadId).toBe(alpha.id);
+      expect(mainComposerTextarea().disabled).toBe(false);
+      return;
+    }
+    if (navigation === "thread" && !threadRowButton("session switch A")) {
+      await act(async () => { (projectRow("alpha").querySelector(".project-row-name")!.closest("button") as HTMLButtonElement).click(); });
+      await flushAsync();
+    }
+    await act(async () => {
+      if (navigation === "thread") threadRowButton("session switch A")!.click();
+      else projectRow("alpha").querySelector<HTMLButtonElement>(".project-row-new-thread")!.click();
+    });
+    await flushAsync();
+    expect(context.project_id).toBe("alpha");
+    await act(async () => { pending.resolve({ thread: beta }); });
+    await flushAsync();
+    expect(activeThreadProbe()?.dataset.threadId).toBe(navigation === "thread" ? alpha.id : undefined);
+    expect(mainComposerTextarea().disabled).toBe(false);
+  });
+
+  it("keeps the outgoing cached conversation until the target resume resolves", async () => {
     const { resumeThread, threadsByID } = installWuuApi();
 
     await act(async () => {
@@ -1025,10 +1102,10 @@ describe("session tab switch latency", () => {
     });
 
     expect(resumeThread).toHaveBeenCalledWith(threadAID);
-    expect(activeSessionTabLabel()).toContain("session switch A");
-    expect(activeThreadProbe()?.dataset.threadId).toBe(threadAID);
-    expect(activeThreadProbe()?.dataset.turnCount).toBe("1");
-    expect(visibleRuntimeModel()).toContain("model-a");
+    expect(activeSessionTabLabel()).toContain("session switch B");
+    expect(activeThreadProbe()?.dataset.threadId).toBe(threadBID);
+    expect(container.querySelector(".view-switch-loading-conversation")).not.toBeNull();
+    expect(mainComposerTextarea().disabled).toBe(true);
 
     delayedResumeA.resolve({ thread: threadA(2) });
     await flushAsync();
@@ -1038,7 +1115,7 @@ describe("session tab switch latency", () => {
     expect(activeThreadProbe()?.dataset.turnCount).toBe("2");
   });
 
-  it.each(["Enter", "click"])("accepts %s during a cached switch before background resume finishes", async (action) => {
+  it.each(["Enter", "click"])("blocks %s while a cached switch is restoring", async (action) => {
     const { resumeThread, startTurn } = installWuuApi();
 
     await act(async () => {
@@ -1065,11 +1142,8 @@ describe("session tab switch latency", () => {
       rowB?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
       await Promise.resolve();
     });
-    expect(activeThreadProbe()?.dataset.threadId).toBe(threadBID);
-
-    await act(async () => {
-      setMainComposerPrompt("send after switching");
-    });
+    expect(activeThreadProbe()?.dataset.threadId).toBe(threadAID);
+    expect(mainComposerTextarea().disabled).toBe(true);
     await act(async () => {
       if (action === "Enter") {
         mainComposerTextarea().dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
@@ -1077,22 +1151,11 @@ describe("session tab switch latency", () => {
         mainComposerSendButton().click();
       }
     });
-    expect(mainComposerTextarea().value).toBe("");
-    expect(startTurn).toHaveBeenCalledWith(
-      threadBID,
-      "send after switching",
-      expect.any(Array),
-      expect.any(Array),
-      undefined,
-      undefined,
-      undefined,
-      { kind: "no_project", cwd: workspace },
-      expect.any(String),
-    );
-    await act(async () => { setMainComposerPrompt("a newer draft"); });
+    expect(startTurn).not.toHaveBeenCalled();
     delayedResumeB.resolve({ thread: threadB() });
     await flushAsync();
-    expect(mainComposerTextarea().value).toBe("a newer draft");
+    await act(async () => { setMainComposerPrompt("send after switching"); });
+    await act(async () => { mainComposerSendButton().click(); });
     expect(startTurn).toHaveBeenCalledTimes(1);
   });
 
@@ -1396,7 +1459,7 @@ describe("session tab switch latency", () => {
     expect(update.mock.calls.map(call => call[4])).toEqual([pending]);
     await act(async () => { toggle(); });
     await act(async () => { toggle(); });
-    await act(async () => { await new Promise<void>(resolve => requestAnimationFrame(() => resolve())); });
+    await flushAsync();
     slider = document.querySelector<HTMLInputElement>('.codex-effort-slider input[type="range"]')!;
     expect(slider.value).toBe(endpoint());
     // Home/End at the displayed endpoint produces no native input/change event.

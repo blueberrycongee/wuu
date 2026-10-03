@@ -16,8 +16,15 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Keep session switches covered by the existing loading animation until the
+  resumed conversation restores its folds and scroll position; block editing
+  and sending during restoration and ignore superseded switch results. Disable
+  sending if a failed cross-workspace switch returns to an unavailable source
+  workspace, while preserving the source conversation and draft.
+
 - Allow quoting and commenting on assistant text during streaming, preserving
   valid selections through appended output and turn completion.
+
 - Use the full subscription-card width for a single allowance, align card
   spacing and corners with shared panels, and keep model selectors readable
   when service names wrap.

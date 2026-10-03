@@ -117,7 +117,7 @@ function buildActions({
   let currentDraft = draft;
   let requestID = 0;
   const beginViewSwitch = vi.fn(() => ++requestID);
-  const beginInstantThreadSwitch = vi.fn(() => ++requestID);
+  const prepareThreadReveal = vi.fn((id: number) => id === requestID);
   const finishViewSwitch = vi.fn((id: number) => id === requestID);
   const cancelViewSwitch = vi.fn(() => { requestID++; });
   const restorePrimaryComposerDraft = vi.fn((nextDraft: ComposerDraftState) => {
@@ -149,7 +149,7 @@ function buildActions({
     getSidebarWorkspaceThreadsByWorkspaceID: () => sidebarWorkspaceThreadsByWorkspaceID,
     
     beginViewSwitch,
-    beginInstantThreadSwitch,
+    prepareThreadReveal,
     finishViewSwitch,
     cancelViewSwitch,
     isCurrentViewSwitchRequest: (id) => id === requestID,
@@ -165,7 +165,7 @@ function buildActions({
     getDraft: () => currentDraft,
     setDraft: (next: ComposerDraftState) => { currentDraft = next; },
     beginViewSwitch,
-    beginInstantThreadSwitch,
+    prepareThreadReveal,
     finishViewSwitch,
     cancelViewSwitch,
     restorePrimaryComposerDraft,
@@ -202,9 +202,9 @@ describe("createThreadActivationActions", () => {
 
       const activation = harness.actions.activateThread(cached.id);
 
-      expect(harness.getAppState().thread?.turns).toEqual(cached.turns);
-      expect(harness.getAppState().activeContext).toEqual(projectContext("project-2"));
-      expect(harness.beginViewSwitch).not.toHaveBeenCalled();
+      expect(harness.getAppState().thread).toBeUndefined();
+      expect(harness.getAppState().activeContext).toEqual(projectContext(crossWorkspace ? "project-1" : "project-2"));
+      expect(harness.beginViewSwitch).toHaveBeenCalledWith("thread", cached.id, ...(crossWorkspace ? [true] : []));
       expect(harness.finishViewSwitch).not.toHaveBeenCalled();
       resume.resolve({ thread: cached });
       await activation;
@@ -230,10 +230,10 @@ describe("createThreadActivationActions", () => {
       sidebarThreads: [cached],
     });
 
-    await harness.actions.selectThread(live.id);
-
-    expect(harness.getAppState().thread?.turns).toEqual(live.turns);
+    const activation = harness.actions.selectThread(live.id);
     resume.resolve({ thread: live });
+    await activation;
+    expect(harness.getAppState().thread?.turns).toEqual(live.turns);
   });
 
   it("resumes a thread into the active context", async () => {
@@ -254,7 +254,7 @@ describe("createThreadActivationActions", () => {
 
     expect(api.resumeThread).toHaveBeenCalledWith("thread-1");
     expect(harness.beginViewSwitch).toHaveBeenCalledWith("thread", "thread-1");
-    expect(harness.finishViewSwitch).toHaveBeenCalledWith(1);
+    expect(harness.prepareThreadReveal).toHaveBeenCalledWith(1);
     expect(harness.restorePrimaryComposerDraft).toHaveBeenCalled();
     expect(harness.resetSplitComposerDrafts).toHaveBeenCalled();
     expect(harness.getAppState().thread?.id).toBe("thread-1");
@@ -295,7 +295,7 @@ describe("createThreadActivationActions", () => {
     expect(harness.getAppState().thread?.id).toBe("thread-2");
   });
 
-  it("shows a loaded thread from another project before runtime selection resolves", async () => {
+  it("keeps the source context until a loaded cross-project target has resumed", async () => {
     const workspaceTwo = project("project-2");
     const targetContext = projectContext("project-2");
     const targetThread = {
@@ -325,9 +325,9 @@ describe("createThreadActivationActions", () => {
 
     const activation = harness.actions.activateThread(targetThread.id);
 
-    expect(harness.beginInstantThreadSwitch).toHaveBeenCalledWith(targetThread.id);
-    expect(harness.getAppState().activeContext).toEqual(targetContext);
-    expect(harness.getAppState().thread?.id).toBe(targetThread.id);
+    expect(harness.beginViewSwitch).toHaveBeenCalledWith("thread", targetThread.id, true);
+    expect(harness.getAppState().activeContext).toEqual(projectContext("project-1"));
+    expect(harness.getAppState().thread).toBeUndefined();
     runtimeSelection.resolve({});
     await activation;
   });
@@ -391,7 +391,7 @@ describe("createThreadActivationActions", () => {
 
     expect(harness.getAppState().thread?.id).toBe(target.id);
     expect(harness.getAppState().initialized?.workspace_root).toBe(target.cwd);
-    expect(harness.finishViewSwitch).toHaveReturnedWith(true);
+    expect(harness.prepareThreadReveal).toHaveReturnedWith(true);
     expect(listThreads).toHaveBeenCalledWith(target.cwd);
     const live = {
       ...target,
@@ -500,17 +500,17 @@ describe("createThreadActivationActions", () => {
       sidebarThreads: [target],
     });
     const activation = harness.actions.selectWorkspaceThread("project-2", target.id);
-    expect(harness.getDraft()).toEqual(targetDraft);
-    const editedDraft = { ...targetDraft, prompt: "edited while waiting" };
+    expect(harness.getDraft()).toEqual(outgoingDraft);
+    const editedDraft = { ...outgoingDraft, prompt: "source attachment finished while waiting" };
     harness.setDraft(editedDraft);
     resume.resolve({ thread: target });
     await activation;
 
-    expect(harness.getDraft()).toEqual(editedDraft);
+    expect(harness.getDraft()).toEqual(targetDraft);
     expect(harness.getAppState().sessionTabs.find((tab) => tab.id === threadSessionTabID(source.id)))
-      .toMatchObject({ prompt: outgoingDraft.prompt });
-    expect(harness.getAppState().sessionTabs.find((tab) => tab.id === threadSessionTabID(target.id)))
       .toMatchObject({ prompt: editedDraft.prompt });
+    expect(harness.getAppState().sessionTabs.find((tab) => tab.id === threadSessionTabID(target.id)))
+      .toMatchObject({ prompt: targetDraft.prompt });
   });
 
   it.each(["selection", "resume", "catalog"] as const)(

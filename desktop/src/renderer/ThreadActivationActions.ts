@@ -49,8 +49,9 @@ export type ThreadActivationActionsDeps = {
   beginViewSwitch: (
     kind: "thread" | "workspace" | "runtime",
     targetID: string,
+    contextSwitching?: boolean,
   ) => number;
-  beginInstantThreadSwitch: (targetID?: string) => number;
+  prepareThreadReveal: (requestID: number) => boolean;
   finishViewSwitch: (requestID: number) => boolean;
   cancelViewSwitch: () => void;
   isCurrentViewSwitchRequest: (requestID: number) => boolean;
@@ -61,6 +62,7 @@ export type ThreadActivationActionsDeps = {
 
 export type ThreadActivationActions = {
   selectThread: (threadID: string) => Promise<void>;
+  selectContextThread: (context: RuntimeContext, threadID: string) => Promise<void>;
   selectWorkspaceThread: (workspaceID: string, threadID: string) => Promise<void>;
   activateThread: (threadID: string) => Promise<void>;
   selectChildAgent: (agent: Agent) => Promise<void>;
@@ -92,6 +94,13 @@ export function createThreadActivationActions(
       return;
     }
     const activeContext = currentState.activeContext;
+    const pendingContextSwitch = deps.getPendingViewSwitch();
+    // The visible source is retained while the main process selects another
+    // runtime. Returning to it must restore that runtime, not just dismiss UI.
+    if (pendingContextSwitch?.contextSwitching && pendingContextSwitch.targetID !== threadID) {
+      await selectContextThread(activeContext, threadID);
+      return;
+    }
     if (
       threadID === deps.getActiveThreadID() &&
       !threadNeedsResumeOnReselect(currentState, threadID)
@@ -119,112 +128,6 @@ export function createThreadActivationActions(
     let outgoingDraft = deps.getComposerDraftSnapshot();
     let targetDraft = sessionTabDraftForThread(persistComposerDrafts(currentState, outgoingDraft), threadID);
     const sourceContext = currentState.activeContext;
-    const localThread = findKnownThread(threadID);
-    const localThreadContext = localThread
-      ? resolveThreadRuntimeContext(localThread, deps.getAppState().projects)
-      : undefined;
-    if (
-      localThread &&
-      localThread.turns.length > 0 &&
-      localThreadContext &&
-      sameRuntimeContext(localThreadContext, sourceContext)
-    ) {
-      const requestID = deps.beginInstantThreadSwitch(threadID);
-      deps.restorePrimaryComposerDraft(targetDraft);
-      deps.resetSplitComposerDrafts();
-      deps.setAppState((current) => {
-        const withDraft = persistComposerDrafts(current, outgoingDraft);
-        const optimisticThread =
-          findKnownThread(threadID, withDraft) ?? localThread;
-        return {
-          ...withDraft,
-          thread: optimisticThread,
-          secondaryThread: undefined,
-          activePane: "primary",
-          allowThreadAutoActivation: true,
-          sessionTabs: ensureSessionTab(
-            withDraft.sessionTabs,
-            createThreadSessionTab(
-              optimisticThread,
-              sourceContext,
-              targetDraft,
-            ),
-          ),
-          activeSessionTabID: threadSessionTabID(optimisticThread.id),
-          threads: upsertThread(withDraft.threads, optimisticThread),
-          running: isThreadRunning(optimisticThread),
-          status: "ready",
-        };
-      });
-      void (async () => {
-        try {
-          const resumedThread = requireThread(
-            await window.wuu.resumeThread(threadID),
-            translateCurrent("thread.resumeMissing"),
-          );
-          const latestState = deps.getAppState();
-          if (
-            !deps.isCurrentViewSwitchRequest(requestID) ||
-            latestState.thread?.id !== threadID ||
-            !sameRuntimeContext(latestState.activeContext, sourceContext)
-          ) {
-            return;
-          }
-          deps.finishViewSwitch(requestID);
-          deps.setAppState((current) => {
-            if (current.thread?.id !== threadID) {
-              return current;
-            }
-            const localThreadForReconcile =
-              current.thread?.id === resumedThread.id
-                ? current.thread
-                : current.threads.find((item) => item.id === resumedThread.id);
-            const reconciled = reconcileResumedThreadTurns(
-              resumedThread,
-              localThreadForReconcile,
-            );
-            return {
-              ...current,
-              thread: reconciled,
-              sessionTabs: ensureSessionTab(
-                current.sessionTabs,
-                createThreadSessionTab(
-                  reconciled,
-                  sourceContext,
-                  sessionTabDraftForThread(current, reconciled.id),
-                ),
-              ),
-              activeSessionTabID: threadSessionTabID(reconciled.id),
-              threads: upsertThread(current.threads, reconciled),
-              running: isThreadRunning(reconciled),
-              status: "ready",
-            };
-          });
-        } catch (error) {
-          const latestState = deps.getAppState();
-          if (
-            !deps.isCurrentViewSwitchRequest(requestID) ||
-            latestState.thread?.id !== threadID ||
-            !sameRuntimeContext(latestState.activeContext, sourceContext)
-          ) {
-            return;
-          }
-          deps.finishViewSwitch(requestID);
-          deps.setAppState((current) =>
-            current.thread?.id === threadID
-              ? {
-                  ...current,
-                  status:
-                    error instanceof Error
-                      ? error.message
-                      : translateCurrent("thread.loadFailed"),
-                }
-              : current,
-          );
-        }
-      })();
-      return;
-    }
     const requestID = deps.beginViewSwitch("thread", threadID);
     try {
       const thread = requireThread(
@@ -232,7 +135,7 @@ export function createThreadActivationActions(
         translateCurrent("thread.resumeMissing"),
       );
       if (
-        !deps.finishViewSwitch(requestID) ||
+        !deps.prepareThreadReveal(requestID) ||
         !sameRuntimeContext(deps.getAppState().activeContext, sourceContext)
       ) {
         return;
@@ -245,7 +148,7 @@ export function createThreadActivationActions(
         const withDraft = persistComposerDrafts(current, outgoingDraft);
         const reconciled = reconcileResumedThreadTurns(
           thread,
-          current.threads.find((item) => item.id === thread.id),
+          findKnownThread(thread.id, current),
         );
         return {
           ...withDraft,
@@ -274,50 +177,14 @@ export function createThreadActivationActions(
     }
   }
 
-  async function switchContextAndResumeThread(
+  async function selectContextThread(
     targetContext: RuntimeContext,
     threadID: string,
   ): Promise<void> {
     const currentState = deps.getAppState();
     let outgoingDraft = deps.getComposerDraftSnapshot();
     let targetDraft = sessionTabDraftForThread(persistComposerDrafts(currentState, outgoingDraft), threadID);
-    const localThread = findKnownThread(threadID, currentState);
-    const canSwitchInstantly =
-      localThread !== undefined &&
-      localThread.turns.length > 0 &&
-      sameRuntimeContext(
-        resolveThreadRuntimeContext(localThread, currentState.projects),
-        targetContext,
-      );
-    const requestID = canSwitchInstantly
-      ? deps.beginInstantThreadSwitch(threadID)
-      : deps.beginViewSwitch("thread", threadID);
-    if (canSwitchInstantly) {
-      deps.restorePrimaryComposerDraft(targetDraft);
-      deps.resetSplitComposerDrafts();
-      deps.setAppState((current) => {
-        const withDraft = persistComposerDrafts(current, outgoingDraft);
-        const optimisticThread = findKnownThread(threadID, withDraft) ?? localThread;
-        return {
-          ...withDraft,
-          activeContext: targetContext,
-          activeProjectId:
-            targetContext.kind === "project" ? targetContext.project_id : undefined,
-          thread: optimisticThread,
-          secondaryThread: undefined,
-          activePane: "primary",
-          allowThreadAutoActivation: true,
-          sessionTabs: ensureSessionTab(
-            withDraft.sessionTabs,
-            createThreadSessionTab(optimisticThread, targetContext, targetDraft),
-          ),
-          activeSessionTabID: threadSessionTabID(optimisticThread.id),
-          threads: upsertThread(withDraft.threads, optimisticThread),
-          running: isThreadRunning(optimisticThread),
-          status: "ready",
-        };
-      });
-    }
+    const requestID = deps.beginViewSwitch("thread", threadID, true);
     try {
       const workspaceState = await selectRuntimeContext(targetContext);
       if (!deps.isCurrentViewSwitchRequest(requestID)) {
@@ -331,27 +198,20 @@ export function createThreadActivationActions(
         resumed,
         translateCurrent("thread.resumeMissing"),
       );
-      if (!deps.finishViewSwitch(requestID)) {
+      if (!deps.prepareThreadReveal(requestID)) {
         return;
       }
-      // An instant switch already restored the target draft. The user may have
-      // edited it while initialization was pending, so do not restore it twice.
-      if (!canSwitchInstantly) {
-        outgoingDraft = refreshComposerDrafts(outgoingDraft, deps.getComposerDraftSnapshot());
-        targetDraft = sessionTabDraftForThread(persistComposerDrafts(deps.getAppState(), outgoingDraft), thread.id);
-        deps.restorePrimaryComposerDraft(targetDraft);
-        deps.resetSplitComposerDrafts();
-      }
-      const resumedDraft = canSwitchInstantly ? deps.getComposerDraftSnapshot().activeDraft : targetDraft;
+      outgoingDraft = refreshComposerDrafts(outgoingDraft, deps.getComposerDraftSnapshot());
+      targetDraft = sessionTabDraftForThread(persistComposerDrafts(deps.getAppState(), outgoingDraft), thread.id);
+      deps.restorePrimaryComposerDraft(targetDraft);
+      deps.resetSplitComposerDrafts();
       deps.setAppState((current) => {
-        const withDraft = canSwitchInstantly
-          ? current
-          : persistComposerDrafts(current, outgoingDraft);
+        const withDraft = persistComposerDrafts(current, outgoingDraft);
         const localThread = conversationPaneThreadsByID(
           current.threads,
           current.thread,
           current.secondaryThread,
-        ).get(thread.id);
+        ).get(thread.id) ?? findKnownThread(thread.id, current);
         const reconciled = reconcileResumedThreadTurns(thread, localThread);
         const next = {
           ...withDraft,
@@ -370,7 +230,7 @@ export function createThreadActivationActions(
           allowThreadAutoActivation: true,
           sessionTabs: ensureSessionTab(
             next.sessionTabs,
-            createThreadSessionTab(reconciled, targetContext, resumedDraft),
+            createThreadSessionTab(reconciled, targetContext, targetDraft),
           ),
           activeSessionTabID: threadSessionTabID(reconciled.id),
           threads: upsertThread(next.threads, reconciled),
@@ -384,10 +244,46 @@ export function createThreadActivationActions(
         void refreshThreadCatalog(loadedState.activeContext);
       }
     } catch (error) {
+      if (!deps.isCurrentViewSwitchRequest(requestID)) return;
+      let failure = error;
+      if (currentState.activeContext) {
+        try {
+          const workspaceState = await selectRuntimeContext(currentState.activeContext);
+          const runtimeIssue = workspaceState.runtime_issue;
+          if (runtimeIssue) {
+            const configuration = await loadRuntimeConfiguration(workspaceState);
+            if (!deps.isCurrentViewSwitchRequest(requestID)) return;
+            // Selection can succeed with an unavailable workspace. Refresh
+            // runtime fields without discarding the retained history or drafts.
+            deps.setAppState(current => ({
+              ...current,
+              initialized: configuration.initialized,
+              projects: workspaceState.projects,
+              activeContext: configuration.activeContext,
+              activeProjectId: configuration.activeProjectId,
+              gitStatus: configuration.gitStatus,
+              status: runtimeIssue.message,
+            }));
+            failure = new Error(runtimeIssue.message);
+          }
+        } catch (restoreError) {
+          if (!deps.isCurrentViewSwitchRequest(requestID)) return;
+          // The source workspace may have disappeared too. Keep its history,
+          // but do not leave a composer attached to another selected runtime.
+          deps.setAppState(current => ({
+            ...current,
+            initialized: undefined,
+            activeContext: undefined,
+            activeProjectId: undefined,
+            gitStatus: undefined,
+          }));
+          failure = restoreError;
+        }
+      }
       if (!deps.finishViewSwitch(requestID)) {
         return;
       }
-      setStatus(error instanceof Error ? error.message : translateCurrent("thread.loadFailed"));
+      setStatus(failure instanceof Error ? failure.message : translateCurrent("thread.loadFailed"));
     }
   }
 
@@ -473,7 +369,7 @@ export function createThreadActivationActions(
         await selectThread(threadID);
         return;
       }
-      await switchContextAndResumeThread(targetContext, threadID);
+      await selectContextThread(targetContext, threadID);
       return;
     }
     const project = currentState.projects.find(
@@ -487,7 +383,7 @@ export function createThreadActivationActions(
       project_id: project.id,
       cwd: project.path,
     };
-    await switchContextAndResumeThread(targetContext, threadID);
+    await selectContextThread(targetContext, threadID);
   }
 
   async function activateThread(threadID: string): Promise<void> {
@@ -514,7 +410,7 @@ export function createThreadActivationActions(
         targetContext &&
         !sameRuntimeContext(targetContext, currentState.activeContext)
       ) {
-        await switchContextAndResumeThread(targetContext, threadID);
+        await selectContextThread(targetContext, threadID);
         return;
       }
     }
@@ -524,6 +420,10 @@ export function createThreadActivationActions(
   async function selectChildAgent(agent: Agent): Promise<void> {
     const currentState = deps.getAppState();
     if (!currentState.activeContext) {
+      return;
+    }
+    if (deps.getPendingViewSwitch()?.contextSwitching) {
+      await selectContextThread(currentState.activeContext, agent.id);
       return;
     }
     if (agent.id === deps.getActiveThreadID()) {
@@ -550,7 +450,7 @@ export function createThreadActivationActions(
         translateCurrent("thread.childResumeMissing"),
       );
       if (
-        !deps.finishViewSwitch(requestID) ||
+        !deps.prepareThreadReveal(requestID) ||
         !sameRuntimeContext(deps.getAppState().activeContext, sourceContext)
       ) {
         return;
@@ -563,7 +463,7 @@ export function createThreadActivationActions(
         const withDraft = persistComposerDrafts(current, outgoingDraft);
         const reconciled = reconcileResumedThreadTurns(
           thread,
-          current.threads.find((item) => item.id === thread.id),
+          findKnownThread(thread.id, current),
         );
         return {
           ...withDraft,
@@ -598,6 +498,7 @@ export function createThreadActivationActions(
 
   return {
     selectThread,
+    selectContextThread,
     selectWorkspaceThread,
     activateThread,
     selectChildAgent,

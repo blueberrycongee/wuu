@@ -20,18 +20,20 @@ const ConversationRevealSnapContext = createContext(false);
 
 export function ConversationRenderActivityProvider({
   active,
+  restoring = false,
   children,
 }: {
   active: boolean;
+  restoring?: boolean;
   children: ReactNode;
 }): JSX.Element {
-  const [reveal, setReveal] = useState({ active, snapping: false });
+  const [reveal, setReveal] = useState({ active, snapping: restoring });
   if (reveal.active !== active) {
     setReveal({ active, snapping: active });
   }
-  const snapping = active && (reveal.snapping || !reveal.active);
+  const snapping = active && (restoring || reveal.snapping || !reveal.active);
   useEffect(() => {
-    if (!snapping) return;
+    if (!snapping || restoring) return;
     let frame = window.requestAnimationFrame(() => {
       // The first callback runs before paint. Release on the next frame so
       // caught-up folds have committed without a height transition.
@@ -40,7 +42,7 @@ export function ConversationRenderActivityProvider({
       });
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [snapping]);
+  }, [snapping, restoring]);
   return (
     <ConversationRenderActivityContext.Provider value={active}>
       <ConversationRevealSnapContext.Provider value={snapping}>

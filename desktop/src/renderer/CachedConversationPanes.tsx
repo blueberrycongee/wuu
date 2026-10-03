@@ -45,6 +45,7 @@ export type CachedConversationPanesProps = {
   threadIDs: string[];
   threadsByID: ReadonlyMap<string, Thread>;
   activeThreadID?: string;
+  restoring?: boolean;
   activeContextCwd?: string;
   contextCompositionEntries: ContextCompositionEntry[];
   instructionFilesEntries: InstructionFilesEntry[];
@@ -80,6 +81,7 @@ export const CachedConversationPanes = memo(function CachedConversationPanes({
   threadIDs,
   threadsByID,
   activeThreadID,
+  restoring,
   activeContextCwd,
   contextCompositionEntries,
   instructionFilesEntries,
@@ -113,6 +115,7 @@ export const CachedConversationPanes = memo(function CachedConversationPanes({
             key={threadID}
             thread={thread}
             isActive={isActive}
+            restoring={isActive && restoring}
             activeContextCwd={activeContextCwd}
             contextCompositionEntries={contextCompositionEntries}
             instructionFilesEntries={instructionFilesEntries}
@@ -156,6 +159,7 @@ type CachedConversationPaneProps = Omit<
 const CachedConversationPane = memo(function CachedConversationPane({
   thread,
   isActive,
+  restoring,
   activeContextCwd,
   contextCompositionEntries,
   instructionFilesEntries,
@@ -325,7 +329,7 @@ const CachedConversationPane = memo(function CachedConversationPane({
     ? turnStreamStatus[latestTurn.id]
     : undefined;
   return (
-    <ConversationRenderActivityProvider active={isActive}>
+    <ConversationRenderActivityProvider active={isActive} restoring={restoring}>
       <SessionSwitchProfiler threadID={thread.id}>
         <div
           aria-hidden={isActive ? undefined : true}
