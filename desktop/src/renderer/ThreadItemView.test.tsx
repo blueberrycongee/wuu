@@ -147,8 +147,8 @@ describe("ThreadItemView", () => {
     expect(Number.parseFloat(actions.style.top)).toBe(44);
   });
 
-  it("captures rendered UTF-16 selection in its owning thread and rejects changed or hidden sources", async () => {
-    render({ item: { ...makeFinalAnswer("completed"), text: "A😀 **bold** tail" }, turnStatus: "completed", streaming: false });
+  it.each(["completed", "in_progress"] as const)("captures rendered UTF-16 selection and rejects changed or hidden sources while %s", async (status) => {
+    render({ item: { ...makeFinalAnswer(status), text: "A😀 **bold** tail" }, turnStatus: status, streaming: status === "in_progress" });
     container!.dataset.threadId = "owner";
     vi.spyOn(HTMLElement.prototype, "getClientRects").mockReturnValue([{}] as unknown as DOMRectList);
     Object.defineProperty(Range.prototype, "getBoundingClientRect", { configurable: true, value: () => new DOMRect(20, 80, 160, 20) });
@@ -195,21 +195,35 @@ describe("ThreadItemView", () => {
     });
   });
 
-  it.each(["in_progress", "completed"] as const)("rejects native capture while streaming (item %s)", (status) => {
-    render({ item: makeFinalAnswer(status), turnStatus: "in_progress", streaming: true });
+  it.each([
+    ["in_progress", true],
+    ["completed", true],
+    ["completed", false],
+  ] as const)("quotes a visible answer before turn completion (item %s, streaming %s)", (status, streaming) => {
+    render({ item: makeFinalAnswer(status), turnStatus: "in_progress", streaming });
     container!.dataset.threadId = "owner";
+    vi.spyOn(HTMLElement.prototype, "getClientRects").mockReturnValue([{}] as unknown as DOMRectList);
+    Object.defineProperty(Range.prototype, "getBoundingClientRect", { configurable: true, value: () => new DOMRect(20, 80, 160, 20) });
     const range = document.createRange();
-    range.selectNodeContents(container!.querySelector(".agent-text")!);
+    range.selectNodeContents(container!.querySelector(".agent-text p")!);
+    const received: ResponseSelection[] = [];
+    const listener = (event: Event) => received.push((event as CustomEvent<ResponseSelection>).detail);
+    window.addEventListener("wuu:add-response-selection", listener);
     act(() => {
       window.getSelection()!.removeAllRanges();
       window.getSelection()!.addRange(range);
       document.dispatchEvent(new Event("selectionchange"));
     });
+    expect(document.querySelector(".response-selection-toolbar")).not.toBeNull();
+    act(() => document.querySelector<HTMLButtonElement>(".response-selection-toolbar button")!.click());
+    window.removeEventListener("wuu:add-response-selection", listener);
+    expect(received).toHaveLength(1);
+    expect(received[0]).toMatchObject({ text: "Final answer text.", source: { thread_id: "owner", turn_id: "turn-1", item_id: "final-1", start_offset: 0, end_offset: 18 } });
     expect(document.querySelector(".response-selection-toolbar")).toBeNull();
   });
 
-  it("adds an optional comment beside a selected passage and cancels back to the quote actions", () => {
-    render({ item: makeFinalAnswer("completed"), turnStatus: "completed", streaming: false });
+  it.each(["completed", "in_progress"] as const)("adds an optional comment while %s and keeps it through turn completion", async (status) => {
+    render({ item: makeFinalAnswer(status), turnStatus: status, streaming: status === "in_progress" });
     vi.spyOn(HTMLElement.prototype, "getClientRects").mockReturnValue([{}] as unknown as DOMRectList);
     Object.defineProperty(Range.prototype, "getBoundingClientRect", { configurable: true, value: () => new DOMRect(20, 80, 160, 20) });
     const range = document.createRange();
@@ -238,6 +252,11 @@ describe("ThreadItemView", () => {
       document.dispatchEvent(new Event("selectionchange"));
     });
     expect(document.querySelector(".response-selection-toolbar .selection-action-comment-input")).toBe(input);
+    await act(async () => {
+      render({ item: { ...makeFinalAnswer("completed"), text: "Final answer text. More output." }, turnStatus: "completed", streaming: false });
+    });
+    expect(document.querySelector(".response-selection-toolbar .selection-action-comment-input")).toBe(input);
+    expect(input.value).toBe("  Explain this choice  ");
     act(() => document.querySelector<HTMLButtonElement>(".response-selection-toolbar .selection-action-comment-submit")!.click());
     expect(received).toHaveLength(1);
     expect(received[0]).toMatchObject({ text: "Final answer text.", comment: "Explain this choice", source: { thread_id: "owner", start_offset: 0, end_offset: 18 } });
