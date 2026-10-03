@@ -230,8 +230,15 @@ describe("SettingsView shell", () => {
     renderSettings({ initialized: baseInitialized(), initialPage: "general" });
     await act(async () => { await Promise.resolve(); });
     expect(window.wuu.getBuildInfo).not.toHaveBeenCalled();
-    expect(container.querySelector('[data-testid="settings-codex-pet-enabled"]')).toBeNull();
     expect(container.querySelector('[data-testid="settings-general"]')).not.toBeNull();
+    const appearanceButton = Array.from(
+      container.querySelectorAll<HTMLButtonElement>(".settings-nav-item"),
+    ).find((button) => button.textContent?.includes("外观"));
+    act(() => {
+      appearanceButton?.click();
+    });
+    expect(container.querySelector('[data-testid="settings-appearance"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="settings-pet"]')).toBeNull();
   });
 
   it("exposes phone access on a native host", async () => {
@@ -363,7 +370,7 @@ describe("SettingsView shell", () => {
     scroll.scrollTop = 420;
     const runtimeButton = Array.from(
       container.querySelectorAll<HTMLButtonElement>(".settings-nav-item"),
-    ).find((button) => button.textContent?.includes("运行"));
+    ).find((button) => button.textContent?.includes("内置 Agent"));
 
     act(() => {
       runtimeButton?.click();
@@ -371,7 +378,7 @@ describe("SettingsView shell", () => {
 
     expect(scroll.scrollTop).toBe(0);
     expect(container.querySelector(".settings-page")).not.toBe(providersPage);
-    expect(container.querySelector(".settings-page-title")?.textContent).toBe("运行");
+    expect(container.querySelector(".settings-page-title")?.textContent).toBe("内置 Agent");
   });
 });
 
@@ -941,7 +948,7 @@ describe("SettingsView general settings", () => {
       }),
     );
     const { rootText } = renderSettings({
-      initialPage: "general",
+      initialPage: "appearance",
       initialized: baseInitialized(),
       codexPets: emptyCodexPetsSnapshot({
         enabled: true,

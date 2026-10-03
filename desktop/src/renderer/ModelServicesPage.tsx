@@ -379,6 +379,7 @@ export function ServiceConnector({
         <CatalogServiceGroups
           catalogProviders={[...featured, ...local.filter((provider) => !featuredIDs.includes(provider.id))]}
           providers={providers}
+          grouped={false}
           disabled={running}
           onConnect={startConnect}
         />
@@ -1228,16 +1229,20 @@ function ModelChoices({
 /*  Connecting                                                                  */
 /* -------------------------------------------------------------------------- */
 
+// The full catalog is long enough to need its kinds named; the page's short
+// featured list reads as one run in the same order.
 function CatalogServiceGroups({
   catalogProviders,
   providers,
   query = "",
+  grouped,
   disabled,
   onConnect,
 }: {
   catalogProviders: readonly CatalogProviderSummary[];
   providers: readonly ProviderSummary[];
   query?: string;
+  grouped: boolean;
   disabled: boolean;
   onConnect: (target: ConnectTarget) => void;
 }): JSX.Element {
@@ -1274,51 +1279,63 @@ function CatalogServiceGroups({
     </span>;
   }
 
+  const subscriptionTiles = subscriptions.map((entry) => (
+    <button
+      key={entry.type}
+      type="button"
+      className="model-service-tile"
+      data-subscription={entry.type}
+      disabled={disabled}
+      onClick={() => onConnect({ kind: "subscription", type: entry.type })}
+    >
+      <span className="provider-mark" aria-hidden="true"><EngineIcon engine="grok" className="provider-mark-engine" /></span>
+      <span className="model-catalog-name-line"><span className="model-service-tile-name">{entry.name}</span>{connectionState(entry.connected)}</span>
+    </button>
+  ));
+  const catalogTiles = (group: (typeof groups)[number]) => group.entries.map((entry) => (
+    <button
+      key={entry.provider.id}
+      type="button"
+      className="model-service-tile"
+      data-catalog={entry.provider.id}
+      disabled={disabled}
+      onClick={() => onConnect({ kind: "catalog", provider: entry.provider })}
+    >
+      <ProviderMark id={entry.provider.id} label={entry.name} />
+      <span className="model-browse-copy">
+        <span className="model-catalog-name-line"><span className="model-service-tile-name">{entry.name}</span>{connectionState(entry.connected)}</span>
+        {entry.ambiguous ? <small>{entry.host}</small> : null}
+      </span>
+    </button>
+  ));
+  const empty = entries.length === 0 && subscriptions.length === 0
+    ? <p className="settings-group-empty">{t("provider.noServiceMatches")}</p>
+    : null;
+
+  if (!grouped) {
+    return <>
+      <div className="model-service-tiles">
+        {subscriptionTiles}
+        {groups.flatMap(catalogTiles)}
+      </div>
+      {empty}
+    </>;
+  }
+
   return <>
     {subscriptions.length ? (
       <section className="model-catalog-group" aria-label={t("provider.catalogSubscription")}>
         <div className="model-catalog-heading"><h3>{t("provider.catalogSubscription")}</h3><span>{t("provider.catalogSubscriptionHint")}</span></div>
-        <div className="model-service-tiles">
-          {subscriptions.map((entry) => (
-            <button
-              key={entry.type}
-              type="button"
-              className="model-service-tile"
-              data-subscription={entry.type}
-              disabled={disabled}
-              onClick={() => onConnect({ kind: "subscription", type: entry.type })}
-            >
-              <span className="provider-mark" aria-hidden="true"><EngineIcon engine="grok" className="provider-mark-engine" /></span>
-              <span className="model-catalog-name-line"><span className="model-service-tile-name">{entry.name}</span>{connectionState(entry.connected)}</span>
-            </button>
-          ))}
-        </div>
+        <div className="model-service-tiles">{subscriptionTiles}</div>
       </section>
     ) : null}
     {groups.filter((group) => group.entries.length > 0).map((group) => (
       <section key={group.id} className="model-catalog-group" data-catalog-group={group.id} aria-label={group.title}>
         <div className="model-catalog-heading"><h3>{group.title}</h3>{group.hint ? <span>{group.hint}</span> : null}</div>
-        <div className="model-service-tiles">
-          {group.entries.map((entry) => (
-            <button
-              key={entry.provider.id}
-              type="button"
-              className="model-service-tile"
-              data-catalog={entry.provider.id}
-              disabled={disabled}
-              onClick={() => onConnect({ kind: "catalog", provider: entry.provider })}
-            >
-              <ProviderMark id={entry.provider.id} label={entry.name} />
-              <span className="model-browse-copy">
-                <span className="model-catalog-name-line"><span className="model-service-tile-name">{entry.name}</span>{connectionState(entry.connected)}</span>
-                {entry.ambiguous ? <small>{entry.host}</small> : null}
-              </span>
-            </button>
-          ))}
-        </div>
+        <div className="model-service-tiles">{catalogTiles(group)}</div>
       </section>
     ))}
-    {entries.length === 0 && subscriptions.length === 0 ? <p className="settings-group-empty">{t("provider.noServiceMatches")}</p> : null}
+    {empty}
   </>;
 }
 
@@ -1351,7 +1368,7 @@ function BrowseServicesDialog({
     >
       <CatalogSearchField value={query} placeholder={t("provider.searchServices")} onValueChange={setQuery} />
       <div className="model-browse-list" data-scroll-fade="">
-        <CatalogServiceGroups catalogProviders={catalog.providers ?? []} providers={providers} query={query} disabled={disabled} onConnect={onConnect} />
+        <CatalogServiceGroups catalogProviders={catalog.providers ?? []} providers={providers} query={query} grouped disabled={disabled} onConnect={onConnect} />
       </div>
     </Modal>
   );

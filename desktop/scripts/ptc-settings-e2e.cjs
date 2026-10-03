@@ -25,7 +25,7 @@ async function settle(win) {
     await Promise.all(document.getAnimations().filter(a => a.playState === "running" && Number.isFinite(a.effect.getComputedTiming().endTime)).map(a => a.finished.catch(() => {})));
   });
 }
-// PTC lives on the Runtime page; the language switch stays on General.
+// PTC lives on the built-in agent page; the language switch stays on General.
 async function openSettingsPage(win, label, ready) {
   await win.webContents.executeJavaScript(`[...document.querySelectorAll('.settings-nav-item')].find(button => ${label}.test(button.textContent.trim())).click()`);
   const end = Date.now() + 15000;
@@ -40,7 +40,7 @@ async function openRuntime(win) {
   await waitFor(win, () => Boolean(document.querySelector('[data-settings-page="providers"]')));
   await evaluate(win, () => document.querySelector('[data-settings-page="providers"]').click());
   await waitFor(win, () => Boolean(document.querySelector('.settings-nav-item')));
-  await openSettingsPage(win, "/^(Runtime|运行)$/", '[data-testid="settings-ptc-enabled"]');
+  await openSettingsPage(win, "/^(Built-in agent|内置 Agent)$/", '[data-testid="settings-ptc-enabled"]');
 }
 async function choose(win, selector, value) {
   await win.webContents.executeJavaScript(`document.querySelector(${JSON.stringify(selector)}).click()`);
@@ -98,7 +98,7 @@ app.whenReady().then(async () => {
   await openSettingsPage(win, "/^(General|常规)$/", '[data-testid="settings-general"]');
   await evaluate(win, () => [...document.querySelectorAll('[data-testid="settings-general"] button')].find(button => button.textContent.trim() === "English").click());
   await waitFor(win, () => document.documentElement.lang === "en-US");
-  await openSettingsPage(win, "/^(Runtime|运行)$/", '[data-testid="settings-ptc"]');
+  await openSettingsPage(win, "/^(Built-in agent|内置 Agent)$/", '[data-testid="settings-ptc"]');
   for (const font of [14, 20]) {
     await win.webContents.executeJavaScript(`document.documentElement.style.setProperty('--font-ui', '${font}px')`);
     await evaluate(win, () => document.querySelector('[data-testid="settings-ptc"]').scrollIntoView({block:"center"}));

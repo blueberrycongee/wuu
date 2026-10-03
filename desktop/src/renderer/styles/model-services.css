@@ -1,5 +1,5 @@
-/* The current choice and saved connections use the shared settings surface;
- * discovery uses bare rows on the settings canvas. */
+/* The current choice, saved connections, and services to add each sit on the
+ * shared settings surface, with vendor marks on one inset. */
 
 .model-services {
   display: contents;
@@ -252,9 +252,15 @@
   container-name: service-catalog;
 }
 
+/* Same border and inline inset as the cards above; the tiles' negative
+ * margin keeps their hover fill wider than the mark column. */
 .model-service-catalog {
   display: grid;
-  gap: var(--space-5);
+  gap: var(--space-3);
+  border: 1px solid var(--hairline-soft);
+  border-radius: var(--radius-md);
+  background: var(--settings-card);
+  padding: var(--space-3) var(--space-4);
 }
 
 .model-catalog-group {
@@ -370,6 +376,11 @@
 
 .model-service-custom-action {
   color: var(--wuu-accent);
+}
+
+/* Start the footer action's icon on the mark column. */
+.model-service-catalog-actions > .model-service-custom-action {
+  margin-inline-start: calc(var(--control-padding-inline) * -1);
 }
 
 @container service-catalog (max-width: 36em) {

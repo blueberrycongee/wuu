@@ -421,7 +421,7 @@ const stops = [
   { id: 'panel-files', run: async win => { await openTool(win, '文件'); await delay(1400); } },
   { id: 'panel-review', run: async win => { await openTool(win, '审查'); await delay(2000); } },
   { id: 'plugins', run: async win => { await clickLabel(win, '插件'); await delay(1400); } },
-  ...[['settings-models', '模型服务'], ['settings-agents', 'Agent'], ['settings-runtime', '运行'], ['settings-general', '常规'], ['settings-appearance', '外观'], ['settings-mcp', 'MCP 服务器'], ['settings-usage', '用量'], ['settings-archive', '归档']]
+  ...[['settings-models', '模型服务'], ['settings-agents', 'Agent'], ['settings-runtime', '内置 Agent'], ['settings-mcp', 'MCP 服务器'], ['settings-appearance', '外观'], ['settings-general', '常规'], ['settings-usage', '用量'], ['settings-archive', '归档']]
     .map(([id, label]) => ({ id, run: settingsPage(label) })),
 ];
 

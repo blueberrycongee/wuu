@@ -16,6 +16,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Use neutral sidebar selection, unfilled workspace tool-picker rows, and a
   shared reading canvas for settings groups and fields.
 
+- List settings pages in one unlabeled column with plugin pages after a gap,
+  rename the runtime page to Built-in agent, and move the Codex pet to
+  Appearance. Model providers lists services to add as one run on the shared
+  settings surface, aligned with the cards above.
+
 - Unify desktop light and dark surfaces across navigation, settings, model
   services, fields, and menus while preserving font preferences and custom
   theme overrides.

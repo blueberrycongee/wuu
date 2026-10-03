@@ -485,7 +485,7 @@
     {
       "name": "unanchored:model-services.css",
       "synthetic": true,
-      "rows": 50
+      "rows": 52
     },
     {
       "name": "unanchored:onboarding.css",
@@ -525,7 +525,7 @@
     {
       "name": "unanchored:settings.css",
       "synthetic": true,
-      "rows": 161
+      "rows": 159
     },
     {
       "name": "unanchored:side-thread.css",
@@ -1149,6 +1149,8 @@
     {"anchor":"unanchored:model-services.css","state":"default","file":"model-services.css","selector":".model-service-card","prop":"color","variable":"--ink","status":"bridged","tokens":["--wuu-color-text"]},
     {"anchor":"unanchored:model-services.css","state":"default","file":"model-services.css","selector":".model-service-card-meta","prop":"color","variable":"--ink-soft","status":"bridged","tokens":["--wuu-color-text-muted"]},
     {"anchor":"unanchored:model-services.css","state":"default","file":"model-services.css","selector":".model-service-card-title","prop":"color","variable":"--ink-strong","status":"bridged","tokens":["--wuu-color-text"]},
+    {"anchor":"unanchored:model-services.css","state":"default","file":"model-services.css","selector":".model-service-catalog","prop":"background","variable":"--settings-card","status":"bridged","tokens":["--wuu-color-surface"]},
+    {"anchor":"unanchored:model-services.css","state":"default","file":"model-services.css","selector":".model-service-catalog","prop":"border","variable":"--hairline-soft","status":"bridged","tokens":["--wuu-border-subtle"]},
     {"anchor":"unanchored:model-services.css","state":"default","file":"model-services.css","selector":".model-service-catalog-actions","prop":"border-top","variable":"--hairline-soft","status":"bridged","tokens":["--wuu-border-subtle"]},
     {"anchor":"unanchored:model-services.css","state":"default","file":"model-services.css","selector":".model-service-custom-action","prop":"color","variable":"--wuu-accent","status":"bridged","tokens":["--wuu-accent","--wuu-color-accent","--wuu-color-text"]},
     {"anchor":"unanchored:model-services.css","state":"default","file":"model-services.css","selector":".model-service-hero h1","prop":"color","variable":"--ink-strong","status":"bridged","tokens":["--wuu-color-text"]},
@@ -1343,7 +1345,6 @@
     {"anchor":"unanchored:settings.css","state":"default","file":"settings.css","selector":".settings-engine-row-name","prop":"color","variable":"--ink","status":"bridged","tokens":["--wuu-color-text"]},
     {"anchor":"unanchored:settings.css","state":"default","file":"settings.css","selector":".settings-engine-skeleton-line","prop":"background","variable":"--surface-2","status":"bridged","tokens":["--wuu-color-surface-muted"]},
     {"anchor":"unanchored:settings.css","state":"default","file":"settings.css","selector":".settings-error","prop":"color","variable":"--danger","status":"bridged","tokens":["--wuu-color-danger"]},
-    {"anchor":"unanchored:settings.css","state":"default","file":"settings.css","selector":".settings-group","prop":"background","variable":"--settings-card","status":"bridged","tokens":["--wuu-color-surface"]},
     {"anchor":"unanchored:settings.css","state":"default","file":"settings.css","selector":".settings-group","prop":"border","variable":"--hairline","status":"bridged","tokens":["--wuu-color-border-subtle"]},
     {"anchor":"unanchored:settings.css","state":"default","file":"settings.css","selector":".settings-group-empty","prop":"color","variable":"--ink-tertiary","status":"bridged","tokens":["--wuu-color-canvas","--wuu-color-text-muted"]},
     {"anchor":"unanchored:settings.css","state":"default","file":"settings.css","selector":".settings-group-empty[data-error]","prop":"color","variable":"--danger","status":"bridged","tokens":["--wuu-color-danger"]},
@@ -1356,7 +1357,6 @@
     {"anchor":"unanchored:settings.css","state":"default","file":"settings.css","selector":".settings-input-unit::after","prop":"color","variable":"--ink-tertiary","status":"bridged","tokens":["--wuu-color-canvas","--wuu-color-text-muted"]},
     {"anchor":"unanchored:settings.css","state":"default","file":"settings.css","selector":".settings-main","prop":"background","variable":"--settings-canvas","status":"bridged","tokens":["--wuu-color-canvas"]},
     {"anchor":"unanchored:settings.css","state":"default","file":"settings.css","selector":".settings-muted-line","prop":"color","variable":"--ink-tertiary","status":"bridged","tokens":["--wuu-color-canvas","--wuu-color-text-muted"]},
-    {"anchor":"unanchored:settings.css","state":"default","file":"settings.css","selector":".settings-nav-group-label","prop":"color","variable":"--ink-tertiary","status":"bridged","tokens":["--wuu-color-canvas","--wuu-color-text-muted"]},
     {"anchor":"unanchored:settings.css","state":"default","file":"settings.css","selector":".settings-nav-item","prop":"color","variable":"--ink-soft","status":"bridged","tokens":["--wuu-color-text-muted"]},
     {"anchor":"unanchored:settings.css","state":"default","file":"settings.css","selector":".settings-nav-item.active","prop":"background","variable":"--sidebar-row-selected-bg","status":"bridged","tokens":["--wuu-color-surface-elevated"]},
     {"anchor":"unanchored:settings.css","state":"default","file":"settings.css","selector":".settings-nav-item.active","prop":"color","variable":"--ink-strong","status":"bridged","tokens":["--wuu-color-text"]},

@@ -109,8 +109,8 @@
   white-space: nowrap;
 }
 
-/* Groups follow the main sidebar's rhythm: the same group gap and the
- * same section heading type as its functional groups. */
+/* Native pages form one unlabeled group; plugin pages follow after the
+ * main sidebar's functional group gap. */
 .settings-nav {
   display: flex;
   min-height: 0;
@@ -128,21 +128,6 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: 2px;
-}
-
-/* Plugin pages keep their public anchor inside the Extensions group without
- * adding a layout box between the group and its rows. */
-.settings-nav-plugins {
-  display: contents;
-}
-
-.settings-nav-group-label {
-  padding: 0 var(--sidebar-row-pad-x) 6px;
-  color: var(--ink-tertiary);
-  font-size: var(--sidebar-heading-size, var(--font-sm));
-  font-weight: var(--weight-medium);
-  line-height: var(--line-ui);
-  user-select: none;
 }
 
 .settings-nav-item {
@@ -466,8 +451,7 @@
   min-width: 0;
   flex-direction: column;
   border: 1px solid var(--hairline);
-  border-radius: var(--radius-md);
-  background: var(--settings-card);
+  border-radius: var(--radius-sm);
   padding-inline: var(--card-padding);
 }
 

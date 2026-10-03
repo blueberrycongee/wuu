@@ -92,7 +92,6 @@ import { SettingsRemotePage } from "./SettingsRemotePage";
 import { ThemePreferenceControl } from "./ThemePreferenceSection";
 import { LanguagePreferenceControl } from "./LanguagePreferenceSection";
 import { formatCurrentNumber, useI18n } from "./i18n";
-import type { TranslationKey } from "./i18n/resources/zh-CN";
 import { Tooltip } from "./Tooltip";
 import { TruncatedText } from "./TruncatedText";
 import {
@@ -150,18 +149,20 @@ function remoteControlAvailable(): boolean {
   return ENABLE_REMOTE_CONTROL && hostSupports("getRemoteControlSnapshot");
 }
 
-function nativeSettingsGroups(): { label: TranslationKey; pages: NativeSettingsPage[] }[] {
+// One flat list: with this few pages, group headings cost more reading
+// than they save. Plugin pages follow after a gap.
+function nativeSettingsPages(): NativeSettingsPage[] {
   return [
-    {
-      label: "settings.groupAgent",
-      pages: ["providers", "agents", ...(ENABLE_SUBSCRIPTIONS ? ["subscriptions" as const] : []), "advanced"],
-    },
-    {
-      label: "settings.groupApp",
-      pages: ["general", "appearance", ...(remoteControlAvailable() ? ["remote" as const] : [])],
-    },
-    { label: "settings.groupExtensions", pages: ["mcp"] },
-    { label: "settings.groupData", pages: ["usage", "archive"] },
+    "providers",
+    "agents",
+    "advanced",
+    "mcp",
+    "appearance",
+    "general",
+    ...(remoteControlAvailable() ? ["remote" as const] : []),
+    "usage",
+    ...(ENABLE_SUBSCRIPTIONS ? ["subscriptions" as const] : []),
+    "archive",
   ];
 }
 
@@ -630,12 +631,12 @@ export function SettingsView({
   }${sidebarAnimating ? " sidebar-animating" : ""}`;
 
   const pluginPageTitle = activePluginSettingsRecord?.name ?? activeCustomPluginPage?.title;
-  const navigationGroups = nativeSettingsGroups();
+  const nativePages = nativeSettingsPages();
   const availablePages = useMemo<readonly SettingsPageSummaryV1[]>(() => Object.freeze([
-    ...navigationGroups.flatMap((group) => group.pages.map((page) => Object.freeze({
+    ...nativePages.map((page) => Object.freeze({
       id: page,
       label: settingsPageTitle(page, t),
-    }))),
+    })),
     ...pluginSettingsRecords.map((plugin) => Object.freeze({
       id: pluginSettingsPageId(plugin.id),
       label: plugin.name,
@@ -644,7 +645,7 @@ export function SettingsView({
       id: pluginViewSettingsPageId(entry.pluginId, entry.id),
       label: entry.title,
     })),
-    // navigationGroups is derived from build flags and host capabilities,
+    // nativePages is derived from build flags and host capabilities,
     // which do not change while the page is mounted.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   ]), [customPluginSettingsPages, pluginSettingsRecords, t]);
@@ -699,49 +700,46 @@ export function SettingsView({
             data-wuu-component="settings-navigation"
             aria-label={t("settings.navigation")}
           >
-            {navigationGroups.map((group) => (
-              <div className="settings-nav-group" key={group.label}>
-                <div className="settings-nav-group-label">{t(group.label)}</div>
-                {group.pages.map((page) => {
-                  const Icon = NATIVE_PAGE_ICONS[page];
+            <div className="settings-nav-group">
+              {nativePages.map((page) => {
+                const Icon = NATIVE_PAGE_ICONS[page];
+                return (
+                  <SettingsNavItem key={page} icon={<Icon className="icon-lg" />} active={activePage === page} onClick={() => setActivePage(page)}>
+                    {settingsPageTitle(page, t)}
+                  </SettingsNavItem>
+                );
+              })}
+            </div>
+            {pluginSettingsRecords.length > 0 || customPluginSettingsPages.length > 0 ? (
+              <div className="settings-nav-group" data-wuu-component="plugin-settings-navigation">
+                {pluginSettingsRecords.map((plugin) => {
+                  const pageId = pluginSettingsPageId(plugin.id);
                   return (
-                    <SettingsNavItem key={page} icon={<Icon className="icon-lg" />} active={activePage === page} onClick={() => setActivePage(page)}>
-                      {settingsPageTitle(page, t)}
+                    <SettingsNavItem
+                      key={pageId}
+                      icon={<PluginBlocksIcon className="icon-lg" />}
+                      active={activePage === pageId}
+                      onClick={() => setActivePage(pageId)}
+                    >
+                      {plugin.name}
                     </SettingsNavItem>
                   );
                 })}
-                {group.label === "settings.groupExtensions" && (pluginSettingsRecords.length > 0 || customPluginSettingsPages.length > 0) ? (
-                  <div className="settings-nav-plugins" data-wuu-component="plugin-settings-navigation">
-                    {pluginSettingsRecords.map((plugin) => {
-                      const pageId = pluginSettingsPageId(plugin.id);
-                      return (
-                        <SettingsNavItem
-                          key={pageId}
-                          icon={<PluginBlocksIcon className="icon-lg" />}
-                          active={activePage === pageId}
-                          onClick={() => setActivePage(pageId)}
-                        >
-                          {plugin.name}
-                        </SettingsNavItem>
-                      );
-                    })}
-                    {customPluginSettingsPages.map((entry) => {
-                      const pageId = pluginViewSettingsPageId(entry.pluginId, entry.id);
-                      return (
-                        <SettingsNavItem
-                          key={pageId}
-                          icon={<PluginIcon icon={entry.icon} pluginId={entry.pluginId} fingerprint={entry.generation} className="icon-lg" />}
-                          active={activePage === pageId}
-                          onClick={() => setActivePage(pageId)}
-                        >
-                          {entry.title}
-                        </SettingsNavItem>
-                      );
-                    })}
-                  </div>
-                ) : null}
+                {customPluginSettingsPages.map((entry) => {
+                  const pageId = pluginViewSettingsPageId(entry.pluginId, entry.id);
+                  return (
+                    <SettingsNavItem
+                      key={pageId}
+                      icon={<PluginIcon icon={entry.icon} pluginId={entry.pluginId} fingerprint={entry.generation} className="icon-lg" />}
+                      active={activePage === pageId}
+                      onClick={() => setActivePage(pageId)}
+                    >
+                      {entry.title}
+                    </SettingsNavItem>
+                  );
+                })}
               </div>
-            ))}
+            ) : null}
           </nav>
         </div>
       </aside>
@@ -846,16 +844,17 @@ export function SettingsView({
             ) : activePage === "general" ? (
               <SettingsGeneralPage
                 desktopBuild={desktopBuild}
+                copyState={copyState}
+                onCopyVersion={copyVersionInfo}
+              />
+            ) : activePage === "appearance" ? (
+              <SettingsAppearancePage
                 codexPets={codexPets}
                 codexPetsLoading={codexPetsLoading}
                 codexPetsError={codexPetsError}
                 onCodexPetsRefresh={onCodexPetsRefresh}
                 onCodexPetsUpdate={onCodexPetsUpdate}
-                copyState={copyState}
-                onCopyVersion={copyVersionInfo}
               />
-            ) : activePage === "appearance" ? (
-              <SettingsAppearancePage />
             ) : activePage === "mcp" ? (
               <SettingsMCPPage
                 initialized={initialized}
@@ -1282,23 +1281,88 @@ function SettingsRuntimePage({
 
 function SettingsGeneralPage({
   desktopBuild,
-  codexPets,
-  codexPetsLoading,
-  codexPetsError,
-  onCodexPetsRefresh,
-  onCodexPetsUpdate,
   copyState,
   onCopyVersion
 }: {
   desktopBuild: DesktopBuildInfo | undefined;
+  copyState: CopyState;
+  onCopyVersion: () => Promise<void>;
+}): JSX.Element {
+  const { t } = useI18n();
+  return (
+    <>
+      <SettingsPageHeader title={t("settings.general")} />
+      <SettingsSection testID="settings-general">
+        <SettingsGroup>
+          <SettingsRow title={t("settings.language")}>
+            <LanguagePreferenceControl />
+          </SettingsRow>
+        </SettingsGroup>
+      </SettingsSection>
+
+      <SettingsSection title={t("settings.about")} testID="settings-about">
+        <SettingsGroup>
+          <SettingsRow title={t("settings.version")}>
+            <span className="settings-row-control-value">
+              {desktopBuild ? versionLabel(desktopBuild.version) : t("settings.loading")}
+            </span>
+            <button
+              className="settings-button settings-button-ghost settings-icon-button"
+              type="button"
+              aria-label={t("settings.copyVersion")}
+              title={t(copyState === "copied" ? "settings.copied" : "settings.copyVersion")}
+              onClick={() => void onCopyVersion()}
+              disabled={!desktopBuild || copyState === "copying"}
+            >
+              {copyState === "copied" ? <Check className="icon" aria-hidden="true" /> : <Copy className="icon" aria-hidden="true" />}
+            </button>
+          </SettingsRow>
+        </SettingsGroup>
+      </SettingsSection>
+    </>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Appearance page                                                            */
+/* -------------------------------------------------------------------------- */
+
+type CodexPetSettingsProps = {
   codexPets: CodexPetsSnapshot | undefined;
   codexPetsLoading: boolean;
   codexPetsError: string;
   onCodexPetsRefresh: () => Promise<CodexPetsSnapshot>;
   onCodexPetsUpdate: (settings: CodexPetSettingsUpdate) => Promise<CodexPetsSnapshot>;
-  copyState: CopyState;
-  onCopyVersion: () => Promise<void>;
-}): JSX.Element {
+};
+
+function SettingsAppearancePage(petProps: CodexPetSettingsProps): JSX.Element {
+  const { t } = useI18n();
+  return (
+    <>
+      <SettingsPageHeader title={t("settings.appearance")} />
+      {/* The background image is part of the look the theme sets. */}
+      <SettingsSection title={t("settings.sectionTheme")} testID="settings-appearance">
+        <ThemePreferenceControl />
+        {isTouchWebShell() ? null : (
+          <div className="settings-theme-background" data-testid="settings-background">
+            <SettingsGroup><BackgroundSettings /></SettingsGroup>
+          </div>
+        )}
+      </SettingsSection>
+      <AppearanceTypography section="text" />
+      <AppearanceTypography section="motion" />
+      {hostSupports("listCodexPets") ? <CodexPetSection {...petProps} /> : null}
+    </>
+  );
+}
+
+function CodexPetSection({
+  codexPets,
+  codexPetsLoading,
+  codexPetsError,
+  onCodexPetsRefresh,
+  onCodexPetsUpdate,
+}: CodexPetSettingsProps): JSX.Element {
   const { t } = useI18n();
   const [codexPetBusy, setCodexPetBusy] = useState(false);
   const [codexPetLocalError, setCodexPetLocalError] = useState("");
@@ -1332,108 +1396,56 @@ function SettingsGeneralPage({
     }
   }
 
+  // The row names what it has found and where to add more; the refresh
+  // action rereads that folder.
   return (
-    <>
-      <SettingsPageHeader title={t("settings.general")} />
-      <SettingsSection testID="settings-general">
-        <SettingsGroup>
-          <SettingsRow title={t("settings.language")}>
-            <LanguagePreferenceControl />
-          </SettingsRow>
-          {hostSupports("listCodexPets") ? (
-            // The row names what it has found and where to add more; the
-            // refresh action rereads that folder.
-            <SettingsRow
-              title={t("settings.codexPet")}
-              description={!codexPetsLoading && codexPetOptions.length === 0 ? t("settings.petsNotFound", { path: codexPetsHome }) : undefined}
-              error={codexPetStatus || codexPets?.errors[0]}
-            >
-              {codexPetOptions.length > 0 ? (
-                <SelectMenu
-                  className="settings-codex-pet-select"
-                  triggerClassName="settings-select-trigger"
-                  ariaLabel={t("settings.selectPet")}
-                  dataTestid="settings-codex-pet-select"
-                  value={codexPetSelectedID}
-                  disabled={codexPetsLoading || codexPetBusy || !codexPetEnabled}
-                  onChange={(next) => void updateCodexPets({ selected_id: next })}
-                  options={codexPetOptions.map((pet) => ({
-                    value: pet.id,
-                    label: pet.display_name
-                  }))}
-                />
-              ) : null}
-              <button
-                className="settings-button settings-button-ghost settings-icon-button"
-                type="button"
-                title={isTouchWebShell() ? t("settings.refreshPets") : t("settings.petSource", { path: codexPetsHome })}
-                aria-label={t("settings.refreshPets")}
-                disabled={codexPetsLoading || codexPetBusy}
-                onClick={() => void refreshCodexPets()}
-              >
-                <RefreshCw className="icon" aria-hidden="true" />
-              </button>
-              <button
-                className="settings-switch"
-                type="button"
-                role="switch"
-                aria-checked={codexPetEnabled}
-                data-testid="settings-codex-pet-enabled"
-                disabled={codexPetsLoading || codexPetBusy || codexPetOptions.length === 0}
-                onClick={() => void updateCodexPets({ enabled: !codexPetEnabled })}
-              >
-                <span className="settings-switch-thumb" aria-hidden="true" />
-                <span className="sr-only">{codexPetEnabled ? t("settings.disablePet") : t("settings.enablePet")}</span>
-              </button>
-            </SettingsRow>
+    <SettingsSection title={t("settings.sectionPet")} testID="settings-pet">
+      <SettingsGroup>
+        <SettingsRow
+          title={t("settings.codexPet")}
+          description={!codexPetsLoading && codexPetOptions.length === 0 ? t("settings.petsNotFound", { path: codexPetsHome }) : undefined}
+          error={codexPetStatus || codexPets?.errors[0]}
+        >
+          {codexPetOptions.length > 0 ? (
+            <SelectMenu
+              className="settings-codex-pet-select"
+              triggerClassName="settings-select-trigger"
+              ariaLabel={t("settings.selectPet")}
+              dataTestid="settings-codex-pet-select"
+              value={codexPetSelectedID}
+              disabled={codexPetsLoading || codexPetBusy || !codexPetEnabled}
+              onChange={(next) => void updateCodexPets({ selected_id: next })}
+              options={codexPetOptions.map((pet) => ({
+                value: pet.id,
+                label: pet.display_name
+              }))}
+            />
           ) : null}
-        </SettingsGroup>
-      </SettingsSection>
-
-      <SettingsSection title={t("settings.about")} testID="settings-about">
-        <SettingsGroup>
-          <SettingsRow title={t("settings.version")}>
-            <span className="settings-row-control-value">
-              {desktopBuild ? versionLabel(desktopBuild.version) : t("settings.loading")}
-            </span>
-            <button
-              className="settings-button settings-button-ghost settings-icon-button"
-              type="button"
-              aria-label={t("settings.copyVersion")}
-              title={t(copyState === "copied" ? "settings.copied" : "settings.copyVersion")}
-              onClick={() => void onCopyVersion()}
-              disabled={!desktopBuild || copyState === "copying"}
-            >
-              {copyState === "copied" ? <Check className="icon" aria-hidden="true" /> : <Copy className="icon" aria-hidden="true" />}
-            </button>
-          </SettingsRow>
-        </SettingsGroup>
-      </SettingsSection>
-    </>
-  );
-}
-
-/* -------------------------------------------------------------------------- */
-/*  Appearance page                                                            */
-/* -------------------------------------------------------------------------- */
-
-function SettingsAppearancePage(): JSX.Element {
-  const { t } = useI18n();
-  return (
-    <>
-      <SettingsPageHeader title={t("settings.appearance")} />
-      {/* The background image is part of the look the theme sets. */}
-      <SettingsSection title={t("settings.sectionTheme")} testID="settings-appearance">
-        <ThemePreferenceControl />
-        {isTouchWebShell() ? null : (
-          <div className="settings-theme-background" data-testid="settings-background">
-            <SettingsGroup><BackgroundSettings /></SettingsGroup>
-          </div>
-        )}
-      </SettingsSection>
-      <AppearanceTypography section="text" />
-      <AppearanceTypography section="motion" />
-    </>
+          <button
+            className="settings-button settings-button-ghost settings-icon-button"
+            type="button"
+            title={isTouchWebShell() ? t("settings.refreshPets") : t("settings.petSource", { path: codexPetsHome })}
+            aria-label={t("settings.refreshPets")}
+            disabled={codexPetsLoading || codexPetBusy}
+            onClick={() => void refreshCodexPets()}
+          >
+            <RefreshCw className="icon" aria-hidden="true" />
+          </button>
+          <button
+            className="settings-switch"
+            type="button"
+            role="switch"
+            aria-checked={codexPetEnabled}
+            data-testid="settings-codex-pet-enabled"
+            disabled={codexPetsLoading || codexPetBusy || codexPetOptions.length === 0}
+            onClick={() => void updateCodexPets({ enabled: !codexPetEnabled })}
+          >
+            <span className="settings-switch-thumb" aria-hidden="true" />
+            <span className="sr-only">{codexPetEnabled ? t("settings.disablePet") : t("settings.enablePet")}</span>
+          </button>
+        </SettingsRow>
+      </SettingsGroup>
+    </SettingsSection>
   );
 }
 

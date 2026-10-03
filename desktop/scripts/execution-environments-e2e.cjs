@@ -40,7 +40,7 @@ async function openRuntime(win) {
   await waitFor(win, () => Boolean(document.querySelector('[data-settings-page="providers"]')));
   await evaluate(win, () => document.querySelector('[data-settings-page="providers"]').click());
   await waitFor(win, () => Boolean(document.querySelector('.settings-nav-item')));
-  await openSettingsPage(win, "/^(Runtime|运行)$/", '[data-testid="settings-execution-environments"]');
+  await openSettingsPage(win, "/^(Built-in agent|内置 Agent)$/", '[data-testid="settings-execution-environments"]');
 }
 app.whenReady().then(async () => {
  const win = new BrowserWindow({width:1180,height:860,show:false,webPreferences:{contextIsolation:true,nodeIntegration:false,sandbox:false,backgroundThrottling:false,preload:path.join(__dirname,"resize-e2e-preload.cjs")}});
@@ -49,7 +49,7 @@ app.whenReady().then(async () => {
  await openSettingsPage(win,"/^(General|常规)$/",'[data-testid="settings-general"]');
  await evaluate(win,()=>[...document.querySelectorAll('[data-testid="settings-general"] button')].find(b=>b.textContent.trim()==="English").click());
  await waitFor(win,()=>document.documentElement.lang==="en-US");
- await openSettingsPage(win,"/^(Runtime|运行)$/",'[data-testid="settings-execution-environments"]');
+ await openSettingsPage(win,"/^(Built-in agent|内置 Agent)$/",'[data-testid="settings-execution-environments"]');
  await evaluate(win,()=>[...document.querySelectorAll('[data-testid="settings-execution-environments"] button')].find(b=>b.textContent.trim()==="Add environment").click());
  await waitFor(win,()=>Boolean(document.querySelector('[aria-label="Name"]')));
  async function fill(label,value) {
