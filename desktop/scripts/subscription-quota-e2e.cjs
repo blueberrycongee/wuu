@@ -121,6 +121,25 @@ const snapshot = win => evaluate(win, () => window.wuu.listEngines({ include_quo
 const findQuota = (result, name) => result.subscription_providers.find(provider => provider.name === name).quota;
 const card = name => `[data-testid="subscription-builtin-${name}"]`;
 const shots = [];
+const captures = [];
+async function verifyQuotaWindowLayout(win) {
+  const layouts = await evaluate(win, async () => {
+    await document.fonts.ready;
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    return [...document.querySelectorAll(".settings-subscription-windows")].map(grid => ({
+      source: grid.closest(".settings-subscription-source").getAttribute("data-testid"),
+      width: grid.getBoundingClientRect().width,
+      windows: [...grid.children].map(window => ({ width: window.getBoundingClientRect().width, metered: Boolean(window.querySelector("meter")) })),
+    }));
+  });
+  for (const layout of layouts) {
+    if (layout.windows.length === 1) {
+      assert.ok(Math.abs(layout.windows[0].width - layout.width) <= 1,
+        `A single allowance must fill its available width, with or without a meter: ${JSON.stringify(layout)}`);
+    }
+  }
+  return layouts;
+}
 async function capture(win, name) {
   await evaluate(win, async () => {
     await document.fonts.ready;
@@ -136,9 +155,15 @@ async function capture(win, name) {
   const x = Math.floor(bounds.x * zoom), y = Math.floor(bounds.y * zoom);
   const crop = { x, y, width: Math.min(width - x, Math.ceil(bounds.width * zoom)), height: Math.min(height - y, Math.ceil(bounds.height * zoom)) };
   const captured = await win.webContents.capturePage(crop);
-  assert.deepEqual(captured.getSize(), { width: crop.width, height: crop.height }, 'Captured evidence must match its requested dimensions.');
+  // capturePage takes window coordinates; the native image retains device
+  // pixels. Page zoom is already included in both the crop and pixel ratio.
+  const pixelRatio = await evaluate(win, () => devicePixelRatio);
+  const scale = pixelRatio / zoom;
+  const pixelSize = captured.getSize();
+  assert.deepEqual(pixelSize, { width: Math.round(crop.width * scale), height: Math.round(crop.height * scale) }, 'Captured evidence must match its requested rectangle at the live device scale.');
   fs.writeFileSync(path.join(output, name), captured.toPNG());
   shots.push(name);
+  captures.push({ name, crop, zoom, pixelRatio, pixelSize });
 }
 async function refresh(win) {
   await click(win, '[data-testid="settings-subscriptions"] header button');
@@ -243,7 +268,7 @@ async function run() {
         .map(node => node.textContent);
     });
     assert.deepEqual(problems, [], `${theme}, ${size}px, ${width}px`);
-    layouts.push({ theme, size, width });
+    layouts.push({ theme, size, width, allowances: await verifyQuotaWindowLayout(main) });
     await capture(main, `02-${theme}-${size}-${width}.png`);
   }
   main.setSize(1280, 1000);
@@ -288,6 +313,7 @@ async function run() {
     { name: 'empty', empty: '1' },
     { name: 'unattributed', unattributed: '1' },
     { name: 'loading', detecting: '1', delay: '30000' },
+    { name: 'single', single: '1' },
     { name: 'long', long: '1' },
     { name: 'states', states: '1' },
     { name: 'failures', failures: '1', codex: '1' },
@@ -301,6 +327,7 @@ async function run() {
     if (state.name === 'unattributed') assert.equal(await evaluate(preview, () => Boolean(document.querySelector('[data-testid="subscription-engine-codex"] .settings-subscription-age'))), true, 'An observation without credential attribution keeps its visible age.');
     assert.deepEqual(await evaluate(preview, () => ({ width: innerWidth, height: innerHeight })), viewport, 'Preview must render at the requested viewport.');
     await capture(preview, `05-${state.name}-${theme}.png`);
+    await verifyQuotaWindowLayout(preview);
     assert.deepEqual(await evaluate(preview, () => [...document.querySelectorAll('.settings-subscription-name, .settings-subscription-plan, .settings-subscription-account-name, .settings-subscription-metadata, .settings-subscription-balance')]
       .filter(node => { const r = node.getBoundingClientRect(); return r.right > innerWidth + 1 || r.left < -1 || node.scrollWidth > node.clientWidth + 1; })
       .map(node => node.textContent)), [], `${state.name} must fit the viewport`);
@@ -308,7 +335,7 @@ async function run() {
   preview.destroy();
   fs.writeFileSync(path.join(output, 'evidence.json'), JSON.stringify({
     fresh: fresh.subscription_providers.map(provider => ({ name: provider.name, quota: provider.quota })),
-    stale, layouts, visualCases: visualCases.map(state => state.name), requests, shots, configUnchanged: true, inferenceRequests: 0,
+    stale, layouts, visualCases: visualCases.map(state => state.name), requests, shots, captures, configUnchanged: true, inferenceRequests: 0,
   }, null, 2));
   console.log("Subscription quota E2E passed; synthetic UI evidence saved.");
 }
