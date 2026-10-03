@@ -31,10 +31,17 @@ function send(value) {
 }
 send({ secret: boot.secret });
 let finished = false;
+function formatError(name, message, stack) {
+  const heading = (name ? name + ": " : "") + (message || "Program failed");
+  // The async wrapper adds one line; only user-source frames belong in diagnostics.
+  const frames = stack.split("\n").filter(line => /^(?:\s*at .*\bprogram\.ts:\d+(?::\d+)?\)?|program\.ts:\d+(?::\d+)?)$/.test(line));
+  const locations = frames.map(line => line.replace(/program\.ts:(\d+)/g, (_, number) => "program.ts:" + Math.max(1, Number(number) - 1)));
+  return [heading, ...locations].join("\n").slice(0, 8192);
+}
 function fail(error) {
   if (finished) return;
   finished = true;
-  send({ type: "done", error: String(error?.message ?? error).slice(0, 8192) });
+  send({ type: "done", error: formatError(String(error?.name ?? ""), String(error?.message ?? error), String(error?.stack ?? "")) });
 }
 // This function is serialized into the guest. Its closures never contain a host object.
 function guestSetup(bridge, namesJSON, stateJSON, stateEnabled, maxStateBytes, maxStateKeys) {
@@ -167,10 +174,12 @@ function guestSetup(bridge, namesJSON, stateJSON, stateEnabled, maxStateBytes, m
     hasPendingCalls() { return mapSize(pending) > 0; },
     run(program) {
       const failed = error => {
-        let message;
+        let message, name = "", stack = "";
         try { message = slice(string(error?.message ?? error), 0, 8192); }
         catch { message = "Program failed with an unprintable error"; }
-        bridge(json({ type: "done", error: message }));
+        try { name = slice(string(error?.name ?? ""), 0, 256); } catch {}
+        try { stack = slice(string(error?.stack ?? ""), 0, 8192); } catch {}
+        bridge(json({ type: "done", error: message, errorName: name, errorStack: stack }));
       };
       promiseThen(program(tools, console, ToolCallError, searchTools, describeTool, store, load, remove), value => {
         try {
@@ -192,6 +201,11 @@ let printedBytes = 0;
 const bridge = vm.newFunction("bridge", encoded => {
   if (finished) return vm.undefined;
   const frame = JSON.parse(encoded.toString());
+  if (frame.type === "done" && Object.hasOwn(frame, "error")) {
+    frame.error = formatError(frame.errorName, frame.error, frame.errorStack);
+    delete frame.errorName;
+    delete frame.errorStack;
+  }
   if (frame.type === "log") {
     printedBytes += Buffer.byteLength(JSON.stringify(frame.text)) + 1;
     if (printedBytes > boot.maxOutputBytes) { fail(new Error("PTC output exceeded the byte limit")); return vm.undefined; }
@@ -227,7 +241,7 @@ channel.on("data", chunk => {
 });
 channel.on("error", () => process.exit(1));
 try {
-  const source = nodeModule.stripTypeScriptTypes("(async function(tools, console, ToolCallError, searchTools, describeTool, store, load, remove) {\n" + boot.code + "\n})");
+  const source = nodeModule.stripTypeScriptTypes("(async function(tools, console, ToolCallError, searchTools, describeTool, store, load, remove) {\n" + boot.code + "\n})", { sourceUrl: "program.ts" });
   vm.withScope(() => vm.callFunction(run, api, vm.evalCode(source, "program.ts")));
   drain();
 } catch (error) { fail(error); }

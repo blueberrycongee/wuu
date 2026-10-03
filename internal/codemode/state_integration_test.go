@@ -313,7 +313,7 @@ func TestNodeStateToolEffectsAreNotRolledBack(t *testing.T) {
 		return toolresult.FromText("completed"), nil
 	})}
 	result, err := s.Run(context.Background(), RunRequest{Code: `store("saved",1); await tools.effect({}); throw new Error("stop");`, Tools: []ToolDefinition{{Name: "effect"}}}, opts)
-	if err != nil || result.Error != "stop" || effects != 1 {
+	if err != nil || !strings.Contains(result.Error, "Error: stop") || effects != 1 {
 		t.Fatalf("effect=%d result=%+v %v", effects, result, err)
 	}
 	result, err = s.Run(context.Background(), RunRequest{Code: `return typeof load("saved");`}, opts)

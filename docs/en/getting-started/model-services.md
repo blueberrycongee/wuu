@@ -198,6 +198,8 @@ time, including tool and approval waits; an earlier calling-context deadline
 still applies. Cancellation stops the interpreter and its active nested calls.
 If the program is waiting on a promise with no pending host calls or queued
 microtasks that can settle it, execution fails immediately and releases its scope.
+Script failures include the error type and available `program.ts` stack frames;
+line numbers refer to the submitted function body. Internal runtime frames are omitted.
 There is no JavaScript `yield`/`wait` continuation or saved execution stack.
 For long commands, use `bash` with `run_in_background`, keep returned process
 IDs in `store`, and read, write or stop them through `process` in later programs.

@@ -16,6 +16,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Preserve PTC exception types and user-source stack frames with accurate script
+  line numbers, including syntax errors, while omitting internal runtime frames.
+
 - Fail PTC programs that wait on promises with no remaining host calls or
   microtasks, releasing their scope while preserving committed checkpoints.
 

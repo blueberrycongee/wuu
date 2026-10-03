@@ -151,6 +151,8 @@ await tools.read_file({path: "screenshots/settings.png"});
 调用上下文中更早的期限仍然有效。取消会停止解释器及正在进行的嵌套调用。
 若程序等待的 Promise 已没有待完成的宿主调用或排队微任务可以推进，执行会立即
 失败并释放作用域。
+脚本失败会返回异常类型和可用的 `program.ts` 调用栈，行号对应提交的函数体，
+不包含运行时内部栈帧。
 不提供 JavaScript `yield`／`wait` 续跑或保存执行栈。
 长命令应使用 `bash` 的 `run_in_background`，用 `store` 保存进程 ID，在后续
 程序中通过 `process` 读取、写入或停止。`process` 支持有界等待新输出，受管

@@ -137,6 +137,45 @@ return 7;`, Tools: []ToolDefinition{{Name: "echo"}}}, RunOptions{CWD: t.TempDir(
 	}
 }
 
+func TestNodeErrorDiagnosticsIdentifyUserSource(t *testing.T) {
+	s := nodeService(t)
+	for _, tc := range []struct {
+		name, code string
+		want       []string
+	}{
+		{"first line", `throw new TypeError("bad value");`, []string{"TypeError: bad value", "program.ts:1:"}},
+		{"nested TypeScript", "function inner(value: string) {\n  throw new RangeError(value);\n}\ninner('out of range');", []string{"RangeError: out of range", "inner (program.ts:2:", "program.ts:4:"}},
+		{"after await", "await Promise.resolve();\nthrow new TypeError('after await');", []string{"TypeError: after await", "program.ts:2:"}},
+		{"syntax", "const ok = 1;\nconst = ;", []string{"SyntaxError:", "program.ts:2"}},
+		{"unsupported TypeScript", `enum Color { Red }`, []string{"SyntaxError:", "program.ts:1"}},
+		{"thrown string", `throw "plain failure";`, []string{"plain failure"}},
+		{"empty throw", `throw "";`, []string{"Program failed"}},
+		{"unprintable", `throw { get message() { throw 1; }, get name() { throw 2; }, get stack() { throw 3; } };`, []string{"unprintable error"}},
+		{"mutated intrinsics", `String.prototype.slice = () => "lost"; JSON.stringify = () => "lost"; throw new TypeError("preserved");`, []string{"TypeError: preserved", "program.ts:1:"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			result, err := s.Run(context.Background(), RunRequest{Code: tc.code}, RunOptions{CWD: t.TempDir()})
+			if err != nil || result.Error == "" {
+				t.Fatalf("missing diagnostic: %+v %v", result, err)
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(result.Error, want) {
+					t.Errorf("diagnostic %q does not contain %q", result.Error, want)
+				}
+			}
+			for _, internal := range []string{"<eval>", "node:internal", "data:text/javascript", "file://", "guestSetup"} {
+				if strings.Contains(result.Error, internal) {
+					t.Errorf("internal frame leaked: %q", result.Error)
+				}
+			}
+		})
+	}
+	result, err := s.Run(context.Background(), RunRequest{Code: `throw new Error("x".repeat(20000));`}, RunOptions{CWD: t.TempDir()})
+	if err != nil || result.Error == "" || len(result.Error) > 8192 {
+		t.Fatalf("unbounded diagnostic: %d bytes, %v", len(result.Error), err)
+	}
+}
+
 func TestNodeToolOnlyBoundary(t *testing.T) {
 	s := nodeService(t)
 	root := t.TempDir()
