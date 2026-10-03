@@ -195,6 +195,16 @@ func TestPeerReceiptsJoinActiveWorkOrOneLateFollowup(t *testing.T) {
 					t.Fatal("receipt turn did not settle")
 				}
 			}
+			for _, requestID := range []string{"receipt-one", "receipt-two"} {
+				inspected, err := srv.inspectPluginSession(context.Background(), owner.id, pluginhost.SessionInspectParams{
+					SessionID: threadID, RequestID: requestID,
+					Wait: pluginhost.SessionInspectWaitTerminal, TimeoutMS: 20,
+				})
+				if err != nil || inspected.TimedOut || inspected.Turn == nil || inspected.Turn.State != pluginhost.TurnLifecycleCompleted || !completedTurns[inspected.Turn.TurnID] {
+					t.Fatalf("completed receipt inspect (%q) = %+v, %v; turn = %+v", requestID, inspected, err, inspected.Turn)
+				}
+			}
+
 			thread := srv.thread(threadID)
 			thread.mu.Lock()
 			turnCount := len(thread.Turns)
