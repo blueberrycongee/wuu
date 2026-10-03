@@ -16,6 +16,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Remove the source-mapping fallback notice from file selection menus and edit
+  popovers while preserving selection behavior and actionable error messages.
 - Use the full subscription-card width for a single allowance, align card
   spacing and corners with shared panels, and keep model selectors readable
   when service names wrap.

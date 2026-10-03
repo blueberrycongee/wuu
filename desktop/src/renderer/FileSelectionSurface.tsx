@@ -17,7 +17,6 @@ export type FileSelectionControls = {
 type Capture = {
   ownerKey: string;
   source: FileSelectionSource;
-  blockFallback: boolean;
   getRect?: () => DOMRect | null;
   domRange?: Range;
 };
@@ -28,7 +27,7 @@ const copy = {
     tools: "Selection actions", quote: "Add to conversation", comment: "Comment", edit: "Edit",
     submit: "Send edit request", cancel: "Cancel", remove: "Remove",
     editComment: "Edit comment", comments: "Comments", instruction: "Describe the change",
-    commentLabel: "Add an optional comment…", block: "Source block selected; rendered text cannot be mapped exactly.",
+    commentLabel: "Add an optional comment…",
     stale: "The file has changed. Select the text again before sending an edit request.",
     close: "Close selection actions",
     sending: "Sending…", failed: "The edit request was not sent. Your instruction is kept; try again.",
@@ -39,7 +38,7 @@ const copy = {
     tools: "选区操作", quote: "添加到对话", comment: "评论", edit: "编辑",
     submit: "发送修改请求", cancel: "取消", remove: "删除",
     editComment: "编辑评论", comments: "评论", instruction: "描述需要的修改",
-    commentLabel: "添加可选评论…", block: "已选取源码块；渲染内容无法精确映射。",
+    commentLabel: "添加可选评论…",
     stale: "文件已更新。发送修改请求前，请重新选择文本。", close: "关闭选区操作",
     sending: "发送中…", failed: "修改请求未发送。指令已保留，可以重试。",
     locate: "定位原文",
@@ -96,7 +95,7 @@ export function FileSelectionSurface({ workspace, path, text, active = true, chi
   const onSelectionChange = useCallback((range: FileEditorSelection | null) => {
     if (!enabled || !ownerKey || formRef.current) return;
     const source = range && fileSelectionSource(workspace, path, text, range, revision, lineIndex);
-    setCapture(source && range ? { ownerKey, source, blockFallback: false, getRect: range.getRect } : null);
+    setCapture(source && range ? { ownerKey, source, getRect: range.getRect } : null);
   }, [enabled, ownerKey, workspace, path, text, revision, lineIndex]);
 
   useEffect(() => {
@@ -119,7 +118,7 @@ export function FileSelectionSurface({ workspace, path, text, active = true, chi
       const saved = range.cloneRange();
       setCapture(previous => previous?.ownerKey === ownerKey && previous?.source.revision === source.revision && previous.source.start_line === source.start_line
         && previous.source.start_column === source.start_column && previous.source.end_line === source.end_line && previous.source.end_column === source.end_column
-        ? previous : { ownerKey, source, blockFallback: mapped.blockFallback, domRange: saved, getRect: () => saved.getBoundingClientRect() });
+        ? previous : { ownerKey, source, domRange: saved, getRect: () => saved.getBoundingClientRect() });
     };
     const down = (event: PointerEvent) => { if (event.button === 0 && content.current?.contains(event.target as Node)) dragging = true; };
     const up = (event: PointerEvent) => { if (!dragging) return; dragging = false; readSelection(event); };
@@ -223,7 +222,7 @@ export function FileSelectionSurface({ workspace, path, text, active = true, chi
       anchor?.element.scrollIntoView({ block: "nearest" });
       setRevealSelection({ source, request: Date.now() });
     }
-    return { ownerKey: ownerKey!, source, blockFallback: Boolean(anchor && !anchor.range), domRange: anchor?.range,
+    return { ownerKey: ownerKey!, source, domRange: anchor?.range,
       getRect: anchor ? () => anchor.range?.getBoundingClientRect() ?? anchor.element.getBoundingClientRect() : undefined };
   };
   return <div className="file-selection-surface" ref={host}>
@@ -275,7 +274,6 @@ export function FileSelectionSurface({ workspace, path, text, active = true, chi
               <ArrowUp className="icon" aria-hidden="true" />
             </button>
           </div>
-          {current.blockFallback && <p role="status">{labels.block}</p>}
           {stale && <p role="status">{labels.stale}</p>}
           {sendFailed && <p role="alert">{labels.failed}</p>}
           {sending && <p role="status">{labels.sending}</p>}
@@ -296,10 +294,7 @@ export function FileSelectionSurface({ workspace, path, text, active = true, chi
           <button type="button" disabled={stale} onPointerDown={event => event.preventDefault()} onClick={() => startForm("edit")}>{labels.edit}</button>
           <button type="button" aria-label={labels.close} onPointerDown={event => event.preventDefault()} onClick={close}>×</button>
         </>}
-        status={<>
-          {current.blockFallback && <p className="selection-action-menu-status" role="status">{labels.block}</p>}
-          {stale && <p className="selection-action-menu-status" role="status">{labels.stale}</p>}
-        </>} />}
+        status={stale && <p className="selection-action-menu-status" role="status">{labels.stale}</p>} />}
     </UILayerPortal>}
   </div>;
 }
