@@ -89,11 +89,13 @@ func TestWorkerProgramUsesToolOnlyAuthority(t *testing.T) {
 		return toolresult.FromText(call.Name), nil
 	}})
 	for _, test := range []struct {
-		code   string
-		failed bool
+		code    string
+		failed  bool
+		summary bool
 	}{
-		{`return (await tools.read_file({path:'file.txt'})).content[0].text`, false},
-		{`await import('node:fs/promises')`, true},
+		{`return (await tools.read_file({path:'file.txt'})).content[0].text`, false, false},
+		{`await import('node:fs/promises')`, true, false},
+		{`await tools.read_file({path:'file.txt'}); throw new Error('stop');`, true, true},
 	} {
 		data, _ := json.Marshal(executionenv.CodeRequest{Actor: "a", PermissionMode: "unconfined", Program: codemode.RunRequest{Code: test.code, Tools: []codemode.ToolDefinition{{Name: "read_file"}}}})
 		raw, err := s.Handle(ctx, "run_code", data)
@@ -107,8 +109,11 @@ func TestWorkerProgramUsesToolOnlyAuthority(t *testing.T) {
 		if (result.Error != "") != test.failed {
 			t.Fatalf("program result=%+v", result)
 		}
+		if (result.CallSummary != "") != test.summary {
+			t.Fatalf("worker lost failure recovery diagnostic: %+v", result)
+		}
 	}
-	if invoked != 1 {
+	if invoked != 2 {
 		t.Fatalf("unexpected nested calls: %d", invoked)
 	}
 }
@@ -218,6 +223,9 @@ func TestWorkerTransportProgramCancellation(t *testing.T) {
 					if test.timeoutMS > 0 {
 						if program.Error != context.DeadlineExceeded.Error() {
 							t.Fatalf("explicit timeout: %+v", program)
+						}
+						if !strings.Contains(program.CallSummary, `"wait": interrupted`) {
+							t.Fatalf("worker timeout lost call outcome: %+v", program)
 						}
 					} else if program.Error != "" || string(program.Value) != "7" {
 						t.Fatalf("normal completion: %+v", program)

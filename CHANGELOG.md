@@ -16,6 +16,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Include bounded nested-tool outcome summaries in failed PTC results so recovery
+  can account for completed effects and interrupted calls without replaying blindly.
+
 - Preserve PTC exception types and user-source stack frames with accurate script
   line numbers, including syntax errors, while omitting internal runtime frames.
 

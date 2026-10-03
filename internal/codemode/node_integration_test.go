@@ -176,6 +176,63 @@ func TestNodeErrorDiagnosticsIdentifyUserSource(t *testing.T) {
 	}
 }
 
+func TestNodeFailureSummaryPreservesCallOutcomes(t *testing.T) {
+	s := nodeService(t)
+	entered := make(chan struct{})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	resultCh := make(chan RunResult, 1)
+	go func() {
+		result, err := s.Run(ctx, RunRequest{Code: `await tools.effect({}); await tools.wait({});`, Tools: []ToolDefinition{{Name: "effect"}, {Name: "wait"}}}, RunOptions{CWD: t.TempDir(), Executor: nodeExecutor(func(ctx context.Context, call providers.ToolCall) (toolresult.Result, error) {
+			if call.Name == "wait" {
+				close(entered)
+				<-ctx.Done()
+				return toolresult.Result{}, ctx.Err()
+			}
+			return toolresult.FromText("private result"), nil
+		})})
+		if err != nil {
+			t.Errorf("run: %v", err)
+		}
+		resultCh <- result
+	}()
+	select {
+	case <-entered:
+		cancel()
+	case <-ctx.Done():
+		t.Fatal("nested wait was not reached")
+	}
+	select {
+	case result := <-resultCh:
+		if result.Error != context.Canceled.Error() || !strings.Contains(result.CallSummary, `"effect": succeeded`) || !strings.Contains(result.CallSummary, `"wait": interrupted`) || !strings.Contains(result.CallSummary, "effects unknown") {
+			t.Fatalf("lost cancellation outcomes: %+v", result)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("cancellation did not finish")
+	}
+}
+
+func TestNodeFailureSummaryIsBoundedAndSurvivesOutputLimit(t *testing.T) {
+	s := nodeService(t)
+	// Long, escapable names exercise the encoded diagnostic budget as well as the call count.
+	name := strings.Repeat("\x00", 256)
+	opts := RunOptions{CWD: t.TempDir(), MaxOutputBytes: 4096, Executor: nodeExecutor(func(context.Context, providers.ToolCall) (toolresult.Result, error) {
+		return toolresult.FromText("private result"), nil
+	})}
+	result, err := s.Run(context.Background(), RunRequest{Code: `const {tools: catalog} = await searchTools(""); for(let i=0;i<40;i++) await tools[catalog[0].name]({}); console.log("x".repeat(20000));`, Tools: []ToolDefinition{{Name: name}}}, opts)
+	encoded, _ := json.Marshal(result.CallSummary)
+	if err != nil || !strings.Contains(result.Error, "output") || !strings.Contains(result.CallSummary, "40 succeeded") || !strings.Contains(result.CallSummary, "earlier calls omitted") || len(encoded) > 8192 {
+		t.Fatalf("missing or unbounded summary (%d bytes): %+v %v", len(encoded), result, err)
+	}
+	if strings.Contains(result.CallSummary, "private result") {
+		t.Fatal("intermediate result leaked")
+	}
+	result, err = s.Run(context.Background(), RunRequest{Code: `await tools.echo({}); return 7;`, Tools: []ToolDefinition{{Name: "echo"}}}, opts)
+	if err != nil || result.Error != "" || result.CallSummary != "" {
+		t.Fatalf("successful run included a recovery diagnostic: %+v %v", result, err)
+	}
+}
+
 func TestNodeToolOnlyBoundary(t *testing.T) {
 	s := nodeService(t)
 	root := t.TempDir()

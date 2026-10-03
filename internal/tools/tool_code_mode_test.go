@@ -99,6 +99,44 @@ func runPTCProgram(t *testing.T, kit *Toolkit, code string) toolresult.Result {
 	return *messages[0].ToolResult
 }
 
+func TestPTCFailureReportsNestedEffects(t *testing.T) {
+	kit := newCodeModeTestToolkit(t)
+	kit.ConfigureSurfaceForProviderModel("anthropic", "claude-sonnet-4", true)
+	kit.SetSessionID("failure-recovery")
+	result := runPTCProgram(t, kit, `store("checkpoint", "before");`)
+	if result.IsError {
+		t.Fatal(result.TextProjection())
+	}
+	result = runPTCProgram(t, kit, `store("checkpoint", "after");
+await tools.write_file({path:"effect.txt", content:"PRIVATE_EFFECT_MARKER"});
+try { await tools.read_file({path:"missing.txt"}); } catch {}
+throw new TypeError("bad value");`)
+	text := result.TextProjection()
+	t.Log(text)
+	if !result.IsError {
+		t.Fatalf("failed script reported success: %s", text)
+	}
+	for _, want := range []string{"TypeError: bad value", "1 succeeded", "1 failed", `"write_file": succeeded`, `"read_file": failed`, "not rolled back"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("missing recovery diagnostic %q in %s", want, text)
+		}
+	}
+	if strings.Contains(text, "PRIVATE_EFFECT_MARKER") {
+		t.Fatal("unselected tool content leaked into failure observation")
+	}
+	data, err := os.ReadFile(filepath.Join(kit.RootDir(), "effect.txt"))
+	if err != nil || string(data) != "PRIVATE_EFFECT_MARKER" {
+		t.Fatalf("completed write was lost: %q %v", data, err)
+	}
+	if err := result.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	result = runPTCProgram(t, kit, `return load("checkpoint");`)
+	if result.IsError || result.TextProjection() != `"before"` {
+		t.Fatalf("failed state committed or recovery diagnostic leaked into success: %+v", result)
+	}
+}
+
 func TestPTCStateOwnerFollowsConversationLifetime(t *testing.T) {
 	parent := newCodeModeTestToolkit(t)
 	parent.SetSessionID("parent")

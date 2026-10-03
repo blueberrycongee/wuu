@@ -133,6 +133,8 @@ type RunResult struct {
 	Value json.RawMessage
 	Error string
 	Media []toolresult.ContentPart
+	// CallSummary is a bounded recovery diagnostic, populated only on failure.
+	CallSummary string `json:",omitempty"`
 }
 
 // Service owns running programs and bounded JSON state, not a persistent
@@ -224,6 +226,13 @@ func (s *Service) ForgetOwner(owner string) {
 // Calls use the caller's policy, scheduler and durable ledger. The interpreter
 // has no native capabilities. An explicit deadline includes tool/approval waits.
 func (s *Service) Run(parent context.Context, request RunRequest, opts RunOptions) (result RunResult, err error) {
+	var history callHistory
+	defer func() {
+		// State commit can still fail after execution cleanup has finished.
+		if result.Error != "" {
+			result.CallSummary = history.summary()
+		}
+	}()
 	if strings.TrimSpace(request.Code) == "" {
 		return result, errors.New("PTC requires code")
 	}
@@ -473,6 +482,10 @@ func (s *Service) Run(parent context.Context, request RunRequest, opts RunOption
 		_ = handle.Stop(250 * time.Millisecond)
 		result.Logs = output.snapshot()
 		result.Media = media
+		// Once tools may have run, preserve recovery diagnostics on transport failures too.
+		if err != nil {
+			result.Error, err = err.Error(), nil
+		}
 		if output.overflowed() {
 			result.Error = "PTC output exceeded the byte limit"
 		}
@@ -550,11 +563,14 @@ func (s *Service) Run(parent context.Context, request RunRequest, opts RunOption
 			default:
 				return result, errors.New("PTC pending tool call limit exceeded")
 			}
+			outcome := history.begin(frame.ID, frame.Name)
 			calls.Add(1)
 			go func(id int, name string, args json.RawMessage) {
 				defer calls.Done()
 				defer func() { <-slots }()
 				value, callErr := opts.Executor.Invoke(ctx, providers.ToolCall{ID: strconv.Itoa(id), Name: name, Arguments: string(args), Kind: providers.ToolCallKindFunction})
+				failed := callErr != nil || value.IsError
+				history.finish(outcome, failed, failed && (ctx.Err() != nil || errors.Is(callErr, context.Canceled) || errors.Is(callErr, context.DeadlineExceeded)))
 				message := ""
 				if callErr != nil {
 					message = callErr.Error()
@@ -624,7 +640,7 @@ func (o *runOutput) Write(p []byte) (int, error) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	encoded, _ := json.Marshal(string(p))
-	if o.bytes+len(encoded)+1 > o.limit || o.bytes+len(encoded)+1+o.mediaBytes+8192 > toolresult.MaxResultBytes {
+	if o.bytes+len(encoded)+1 > o.limit || o.bytes+len(encoded)+1+o.mediaBytes+8192+maxCallSummaryBytes > toolresult.MaxResultBytes {
 		o.over = true
 		o.cancel()
 		return len(p), nil
@@ -638,7 +654,7 @@ func (o *runOutput) admitValue(p []byte, message string) bool {
 	defer o.mu.Unlock()
 	encodedError, _ := json.Marshal(message)
 	size := len(p) + len(encodedError) + 128
-	if o.bytes+size > o.limit || o.bytes+size+o.mediaBytes+8192 > toolresult.MaxResultBytes {
+	if o.bytes+size > o.limit || o.bytes+size+o.mediaBytes+8192+maxCallSummaryBytes > toolresult.MaxResultBytes {
 		o.over = true
 		return false
 	}
@@ -651,7 +667,7 @@ func (o *runOutput) admitMedia(part toolresult.ContentPart) bool {
 	encoded, _ := json.Marshal(part)
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	if o.mediaParts >= toolresult.MaxContentParts-1 || o.bytes+o.mediaBytes+len(encoded)+8192 > toolresult.MaxResultBytes {
+	if o.mediaParts >= toolresult.MaxContentParts-1 || o.bytes+o.mediaBytes+len(encoded)+8192+maxCallSummaryBytes > toolresult.MaxResultBytes {
 		return false
 	}
 	o.mediaParts++
