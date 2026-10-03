@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -23,24 +24,6 @@ func runtimeHome(t *testing.T) string {
 	return filepath.ToSlash(filepath.Clean(home))
 }
 
-func TestRejectSensitiveToolPath_BlocksUserMemory(t *testing.T) {
-	target := runtimeHome(t) + "/memory/test.md"
-
-	kit, err := New(t.TempDir())
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	kit.env.AllowMutations = true
-
-	err = rejectSensitiveToolPath(kit.env, "write_file", "write", target)
-	if err == nil {
-		t.Fatal("ordinary core file tools must not bypass the Memory plugin")
-	}
-	if !strings.Contains(err.Error(), "sensitive path") {
-		t.Fatalf("expected sensitive-path error, got: %v", err)
-	}
-}
-
 func TestRejectSensitiveToolPath_NonAgentSensitivePathStillBlocked(t *testing.T) {
 	kit, err := New(t.TempDir())
 	if err != nil {
@@ -48,9 +31,7 @@ func TestRejectSensitiveToolPath_NonAgentSensitivePathStillBlocked(t *testing.T)
 	}
 	kit.env.AllowMutations = true
 
-	// A filename containing both "private" and "key" hits the credential
-	// gate. The agent-metadata exemption must not let unrelated sensitive
-	// paths through just because AllowMutations is on.
+	// Mutation permission does not lift credential-file protections.
 	target := filepath.Join(t.TempDir(), "private_key.pem")
 	err = rejectSensitiveToolPath(kit.env, "write_file", "write", target)
 	if err == nil {
@@ -91,35 +72,6 @@ func TestResolvePath_BlocksWuuHomeOutsideExplicitFileScope(t *testing.T) {
 
 	if _, err := kit.env.ResolvePath(target); err == nil {
 		t.Fatal("standard boundary must not expose WUU_HOME outside explicit file scope")
-	}
-}
-
-func TestReadFile_BlocksUserMemoryInStandardMode(t *testing.T) {
-	wuuHome := filepath.Join(t.TempDir(), ".wuu")
-	t.Setenv("WUU_HOME", wuuHome)
-	target := filepath.Join(wuuHome, "memory", "MEMORY.md")
-	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-		t.Fatalf("mkdir memory: %v", err)
-	}
-	if err := os.WriteFile(target, []byte("- [Preference](preference.md) — durable preference\n"), 0o600); err != nil {
-		t.Fatalf("write memory index: %v", err)
-	}
-
-	kit, err := New(t.TempDir())
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	kit.SetBoundary(StandardBoundary())
-
-	result, err := kit.Execute(context.Background(), providers.ToolCall{
-		Name:      "read_file",
-		Arguments: fmt.Sprintf(`{"path":%q}`, target),
-	})
-	if err == nil {
-		t.Fatal("read_file must not bypass the Memory plugin")
-	}
-	if strings.Contains(result, "durable preference") || strings.Contains(err.Error(), "durable preference") {
-		t.Fatalf("read_file leaked user memory: result=%q err=%v", result, err)
 	}
 }
 
@@ -170,17 +122,28 @@ func TestResolvePath_BlocksAgentRuntimeInReadOnly(t *testing.T) {
 }
 
 // TestWuuCredentialFilesFloorAcrossModes pins the credential floor: the
-// app's own credential files are never readable or writable through agent
-// tools in any permission mode, including unconfined.
+// app's own credential files are never readable or writable through dedicated
+// file tools in any permission mode, including unconfined.
 func TestWuuCredentialFilesFloorAcrossModes(t *testing.T) {
-	wuuHome := filepath.Join(t.TempDir(), ".wuu")
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	wuuHome := filepath.Join(root, ".wuu")
 	t.Setenv("WUU_HOME", wuuHome)
 	target := filepath.Join(wuuHome, "auth.json")
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 		t.Fatalf("mkdir runtime home: %v", err)
 	}
-	if err := os.WriteFile(target, []byte(`{"token":"secret-value"}`), 0o600); err != nil {
+	if err := os.WriteFile(target, []byte(`{"token":"secret-value","note":"not-for-agent"}`), 0o600); err != nil {
 		t.Fatalf("write auth file: %v", err)
+	}
+	alias := filepath.Join(wuuHome, "login-link.json")
+	paths := []string{target}
+	if err := os.Symlink(target, alias); err != nil {
+		t.Logf("symlink alias case unavailable: %v", err)
+	} else {
+		paths = append(paths, alias)
 	}
 
 	boundaries := []struct {
@@ -192,47 +155,68 @@ func TestWuuCredentialFilesFloorAcrossModes(t *testing.T) {
 		{"unconfined", UnconfinedBoundary()},
 	}
 	for _, tc := range boundaries {
-		t.Run(tc.name+"/read", func(t *testing.T) {
-			kit, err := New(t.TempDir())
-			if err != nil {
-				t.Fatalf("New: %v", err)
-			}
-			kit.SetBoundary(tc.boundary)
-			result, err := kit.Execute(context.Background(), providers.ToolCall{
-				Name:      "read_file",
-				Arguments: fmt.Sprintf(`{"path":%q}`, target),
+		for _, path := range paths {
+			t.Run(tc.name+"/"+filepath.Base(path)+"/read", func(t *testing.T) {
+				kit, err := New(wuuHome)
+				if err != nil {
+					t.Fatalf("New: %v", err)
+				}
+				kit.SetBoundary(tc.boundary)
+				kit.SetFileScopeRoots([]string{wuuHome})
+				result, err := kit.Execute(context.Background(), providers.ToolCall{
+					Name:      "read_file",
+					Arguments: fmt.Sprintf(`{"path":%q}`, path),
+				})
+				if err == nil {
+					t.Fatalf("read_file should reject wuu credential file in %s mode", tc.name)
+				}
+				if strings.Contains(result, "secret-value") || strings.Contains(err.Error(), "secret-value") {
+					t.Fatalf("read_file leaked credential content in %s mode: result=%q err=%v", tc.name, result, err)
+				}
+				result, err = kit.Execute(context.Background(), providers.ToolCall{
+					Name:      "grep",
+					Arguments: fmt.Sprintf(`{"path":%q,"pattern":"not-for-agent"}`, path),
+				})
+				if err != nil {
+					t.Fatalf("grep credential file in %s mode: %v", tc.name, err)
+				}
+				var search struct {
+					Matches []grepMatch `json:"matches"`
+				}
+				if err := json.Unmarshal([]byte(result), &search); err != nil {
+					t.Fatal(err)
+				}
+				for _, match := range search.Matches {
+					if strings.Contains(match.Content, "not-for-agent") {
+						t.Fatalf("grep exposed credential file contents in %s mode: %s", tc.name, result)
+					}
+				}
 			})
-			if err == nil {
-				t.Fatalf("read_file should reject wuu credential file in %s mode", tc.name)
-			}
-			if strings.Contains(result, "secret-value") || strings.Contains(err.Error(), "secret-value") {
-				t.Fatalf("read_file leaked credential content in %s mode: result=%q err=%v", tc.name, result, err)
-			}
-		})
-		t.Run(tc.name+"/write", func(t *testing.T) {
-			kit, err := New(t.TempDir())
-			if err != nil {
-				t.Fatalf("New: %v", err)
-			}
-			kit.SetBoundary(tc.boundary)
-			_, err = kit.Execute(context.Background(), providers.ToolCall{
-				Name:      "write_file",
-				Arguments: fmt.Sprintf(`{"path":%q,"content":"overwrite"}`, target),
+			t.Run(tc.name+"/"+filepath.Base(path)+"/write", func(t *testing.T) {
+				kit, err := New(wuuHome)
+				if err != nil {
+					t.Fatalf("New: %v", err)
+				}
+				kit.SetBoundary(tc.boundary)
+				kit.SetFileScopeRoots([]string{wuuHome})
+				_, err = kit.Execute(context.Background(), providers.ToolCall{
+					Name:      "write_file",
+					Arguments: fmt.Sprintf(`{"path":%q,"content":"overwrite"}`, path),
+				})
+				if err == nil {
+					t.Fatalf("write_file should reject wuu credential file in %s mode", tc.name)
+				}
+				// Read-only refuses at the mutation gate; writable modes must
+				// reach the credential floor even with Wuu home in scope.
+				if tc.name != "read_only" && !strings.Contains(err.Error(), "wuu credential file") {
+					t.Fatalf("expected credential-floor rejection in %s mode, got: %v", tc.name, err)
+				}
+				data, readErr := os.ReadFile(target)
+				if readErr != nil || !strings.Contains(string(data), "secret-value") {
+					t.Fatalf("credential file should be untouched in %s mode: data=%q err=%v", tc.name, data, readErr)
+				}
 			})
-			if err == nil {
-				t.Fatalf("write_file should reject wuu credential file in %s mode", tc.name)
-			}
-			// Standard mode refuses the out-of-workspace path first and
-			// read-only mode refuses at the mutation gate. Unconfined mode
-			// reaches the host credential floor directly.
-			if tc.name == "unconfined" && !strings.Contains(err.Error(), "wuu credential file") {
-				t.Fatalf("expected credential-floor rejection in %s mode, got: %v", tc.name, err)
-			}
-			data, readErr := os.ReadFile(target)
-			if readErr != nil || !strings.Contains(string(data), "secret-value") {
-				t.Fatalf("credential file should be untouched in %s mode: data=%q err=%v", tc.name, data, readErr)
-			}
-		})
+		}
 	}
 }
 

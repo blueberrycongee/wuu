@@ -2,6 +2,10 @@
 
 Wuu keeps model connections and execution choices in user configuration, while projects can supply additional behavior. Start with `wuu init` for CLI use or desktop onboarding, then edit only the settings you need. Wuu rejects unknown configuration fields rather than silently ignoring typos.
 
+The built-in agent can use ordinary file tools to edit configuration in Standard or Unconfined mode; Read only permits inspection but refuses edits. Wuu home is part of the normal file scope, so no separate configuration tool is needed. To add a provider or change the default model, edit the user file described below; project-layer restrictions still apply. The desktop uses its existing refresh path for valid model changes, while other settings retain their documented restart requirements.
+
+Prefer environment-variable references for provider credentials. Tool output may redact secret values: use focused edits rather than replacing the whole configuration with a copy of redacted output. Direct file access to Wuu login credential stores remains blocked; see [permissions](permissions.md).
+
 If an external edit makes configuration invalid while the desktop is running, Wuu reports the error and retains the last valid model inventory for display. That inventory does not bypass configuration validation for changes or execution. Correct the file to resume automatic refresh; restoring its previous contents also clears the error. Unchanged invalid files do not produce repeated refresh errors.
 
 ## User configuration and project layers
