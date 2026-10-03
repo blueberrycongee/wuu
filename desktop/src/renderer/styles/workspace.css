@@ -56,7 +56,6 @@
   --hljs-tag: var(--wuu-syntax-tag, #9a4f55);
   --hljs-literal: var(--wuu-syntax-literal, #6f5ca7);
   --hljs-meta: var(--wuu-syntax-meta, #5f6870);
-  --review-overlay-bg: rgba(251, 251, 250, 0.92);
   --codex-runtime-trigger-icon: var(--wuu-color-text-muted, #707579);
 }
 
@@ -2177,8 +2176,8 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
 }
 
 /* Review: the diff beside its change list. Below the split width
- * (WorkspaceReviewPanels.tsx) the list folds into a switcher above a
- * full-width diff. */
+ * (WorkspaceReviewPanels.tsx) the list and the diff take turns at full
+ * width. */
 .workspace-review-panel {
   display: grid;
   height: 100%;
@@ -2190,11 +2189,11 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   overflow: hidden;
 }
 
-.workspace-review-panel.has-diff:not(.single-file, .compact) {
+.workspace-review-panel[data-wuu-layout="split"] {
   grid-template-columns:
     minmax(0, 1fr)
     8px
-    minmax(220px, min(var(--workspace-review-tree-width, 280px), calc(100% - 428px)));
+    minmax(220px, min(var(--workspace-review-list-width, 280px), calc(100% - 428px)));
 }
 
 .workspace-review-resizer {
@@ -2227,29 +2226,6 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   box-shadow: 0 0 0 1px var(--sidebar-resizer-hover-ring);
 }
 
-.workspace-review-tree-pane {
-  position: relative;
-  min-width: 0;
-  min-height: 0;
-  overflow: hidden;
-}
-
-.workspace-review-overlay {
-  position: absolute;
-  inset: 70px 12px 12px;
-  display: grid;
-  place-content: center;
-  border-radius: var(--radius-sm);
-  background: var(--review-overlay-bg);
-  color: var(--ink-soft);
-  font-size: var(--font-ui);
-  text-align: center;
-}
-
-.workspace-review-overlay.error {
-  color: var(--danger);
-}
-
 .workspace-review-diff-panel {
   display: grid;
   height: 100%;
@@ -2261,9 +2237,9 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
 }
 
 /* The file row is a chrome row: its first glyph sits on the pane inset and
- * the stepper's last glyph on the toolbar inset. */
+ * the last action's glyph on the toolbar inset. A back button takes the
+ * leading inset itself. */
 .workspace-diff-detail-header {
-  position: relative;
   display: flex;
   min-width: 0;
   min-height: calc(var(--control-size-toolbar) + var(--space-2) * 2);
@@ -2274,40 +2250,16 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   container: review-file-header / inline-size;
 }
 
-.workspace-review-file-row,
-.workspace-review-switcher {
+.workspace-diff-detail-header:has(.workspace-review-back) {
+  padding-inline-start: var(--control-toolbar-inset);
+}
+
+.workspace-review-file-row {
   display: flex;
   min-width: 0;
   flex: 1 1 auto;
   align-items: baseline;
   gap: var(--space-3);
-}
-
-.workspace-review-switcher {
-  min-height: var(--control-size-toolbar);
-  margin-inline-start: calc(var(--control-padding-inline) * -1);
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: inherit;
-  padding: var(--space-1) var(--space-2) var(--space-1) var(--control-padding-inline);
-  text-align: start;
-  transition: background-color var(--motion-fast) var(--ease-out);
-}
-
-.workspace-review-switcher:hover,
-.workspace-review-switcher[aria-expanded="true"] {
-  background: var(--ink-overlay-4);
-}
-
-.workspace-review-switcher-chevron {
-  align-self: center;
-  flex: 0 0 auto;
-  color: var(--ink-tertiary);
-  transition: transform var(--motion-base) var(--ease-out);
-}
-
-.workspace-review-switcher[aria-expanded="true"] .workspace-review-switcher-chevron {
-  transform: rotate(180deg);
 }
 
 .workspace-review-file {
@@ -2341,7 +2293,8 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
 }
 
 /* A folder path loses its start first, keeping the folder nearest the file. */
-.workspace-review-file-context.is-folder {
+.workspace-review-file-context.is-folder,
+.workspace-review-group-label {
   direction: rtl;
   text-align: left;
 }
@@ -2366,14 +2319,15 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
 /* A narrow row (a small panel or large text) gives the name its own line and
  * moves the folder, status and counts under it. The threshold follows the
  * row's width in text, never the file, so stepping files keeps the height. */
-@container review-file-header (max-width: 26em) {
-  .workspace-review-file-row,
-  .workspace-review-switcher {
+@container review-file-header (max-width: 34em) {
+  .workspace-review-file-row {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto auto;
+    /* The folder truncates first and the status follows it directly, so the
+     * second line reads from the start like the first. */
+    grid-template-columns: minmax(0, max-content) auto minmax(0, 1fr);
     grid-template-areas:
-      "name name chevron"
-      "context meta chevron";
+      "name name name"
+      "context meta .";
     align-items: baseline;
     gap: 0 var(--space-3);
   }
@@ -2394,54 +2348,39 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
     grid-area: meta;
   }
 
-  .workspace-review-switcher-chevron {
-    grid-area: chevron;
+  .workspace-review-file-row:not(:has(.workspace-review-file-context)) .workspace-review-file-meta {
+    grid-column: 1 / -1;
   }
 }
 
 /* Narrower still, a folder could show only a letter or two: leave it to the
  * change list. */
-@container review-file-header (max-width: 17em) {
+@container review-file-header (max-width: 24em) {
   .workspace-review-file-context {
     display: none;
   }
 
   .workspace-review-file-meta {
-    grid-column: 1 / 3;
+    grid-column: 1 / -1;
   }
 }
 
-.workspace-review-stepper {
+.workspace-review-actions {
   display: flex;
   flex: 0 0 auto;
 }
 
-.workspace-review-stepper .icon-button {
+.workspace-review-actions .icon-button,
+.workspace-review-back {
   width: var(--control-size-toolbar);
   height: var(--control-size-toolbar);
+  flex: 0 0 auto;
 }
 
-/* The folded change list opens as a menu card under the file row. */
-.workspace-review-sheet {
-  position: absolute;
-  z-index: 5;
-  top: calc(100% + var(--space-1));
-  right: var(--space-2);
-  left: var(--space-2);
-  display: flex;
-  max-height: min(60vh, 520px);
-  flex-direction: column;
-  overflow: hidden;
-  border: 1px solid var(--menu-border);
-  border-radius: var(--menu-shell-radius);
-  background: var(--menu-bg);
-  box-shadow: var(--menu-shadow);
-  --enter-y: -4px;
-  animation: wuu-enter var(--motion-base) var(--ease-out) both;
-}
-
-.workspace-review-sheet .workspace-diff-tree {
-  flex: 1 1 auto;
+.workspace-review-viewed.active,
+.workspace-review-viewed.active:hover:not(:disabled) {
+  background: transparent;
+  color: var(--success);
 }
 
 .workspace-diff-error,
@@ -2558,10 +2497,10 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   word-break: break-word;
 }
 
-/* Change list. Rows share the file tree's height and type size so the two
- * trees read as one family; the text axis starts one step in from the list
- * edge and the trailing counts end on the pane inset. */
-.workspace-diff-tree {
+/* Change list: files under their folder, one level deep. Rows share the file
+ * tree's height and type size; the name column starts after a fixed mark
+ * column, so viewed and unviewed names line up. */
+.workspace-review-list {
   display: grid;
   height: 100%;
   min-width: 0;
@@ -2571,29 +2510,44 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   container: workspace-review-list / inline-size;
 }
 
-.workspace-diff-tree-header {
+.workspace-review-list-header {
   display: grid;
   min-width: 0;
-  gap: 2px;
-  padding: var(--space-3) var(--pane-inset) var(--space-2) var(--space-4);
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px var(--space-3);
+  /* Header text, search text, folder labels and status letters share the
+   * list's inset: the scroll padding plus a row's own padding. */
+  padding: var(--space-3) var(--space-4) var(--space-2);
 }
 
-.workspace-diff-tree-summary {
+.workspace-review-list-summary {
   display: flex;
   min-width: 0;
+  flex-wrap: wrap;
   align-items: baseline;
-  gap: var(--space-2);
+  gap: 0 var(--space-2);
+  grid-column: 1 / -1;
+  color: var(--ink-soft);
   font-size: var(--font-sm);
-}
-
-.workspace-diff-tree-summary strong {
-  color: var(--ink);
-  font-size: var(--font-ui);
-  font-weight: var(--weight-medium);
   white-space: nowrap;
 }
 
-.workspace-diff-tree-branch {
+.workspace-review-list-summary strong {
+  color: var(--ink);
+  font-size: var(--font-ui);
+  font-weight: var(--weight-medium);
+}
+
+/* Progress shares the branch's line; the branch truncates, progress stays. */
+.workspace-review-progress {
+  grid-column: 2;
+  color: var(--ink-soft);
+  font-size: var(--font-sm);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.workspace-review-branch {
   min-width: 0;
   overflow: hidden;
   color: var(--ink-soft);
@@ -2602,7 +2556,7 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   white-space: nowrap;
 }
 
-.workspace-diff-search {
+.workspace-review-search {
   min-width: 0;
   min-height: var(--control-field-height);
   margin: 0 var(--space-2) var(--space-2);
@@ -2616,123 +2570,119 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   transition: background-color var(--motion-fast) var(--ease-out);
 }
 
-.workspace-diff-search:hover {
+.workspace-review-search:hover {
   background: var(--field-hover-bg);
 }
 
-.workspace-diff-tree-scroll {
-  min-width: 0;
-  min-height: 0;
-  overflow: auto;
-}
-
-.workspace-diff-tree-list {
+.workspace-review-list-scroll {
   display: grid;
   min-width: 0;
+  min-height: 0;
+  align-content: start;
+  gap: var(--space-2);
+  overflow: auto;
   padding: 0 var(--space-2) var(--space-3);
 }
 
-.workspace-diff-tree-node,
-.workspace-diff-tree-children {
+.workspace-review-group {
   display: grid;
   min-width: 0;
 }
 
-.workspace-diff-tree-row {
+.workspace-review-group-label {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink-tertiary);
+  font-size: var(--font-sm);
+  line-height: var(--line-body);
+  padding: var(--space-1) var(--space-2) 2px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-review-row {
   display: grid;
   width: 100%;
   min-width: 0;
   min-height: var(--control-row-height);
-  grid-template-columns: var(--icon-size-sm) var(--icon-size-sm) minmax(0, 1fr) auto;
+  grid-template-columns: var(--icon-size-sm) minmax(0, 1fr) auto;
   align-items: center;
   gap: var(--space-2);
   border-radius: var(--radius-xs);
   background: transparent;
   color: var(--ink);
   font-size: var(--font-ui);
-  padding-block: 0;
-  padding-inline:
-    calc(var(--space-2) + var(--workspace-diff-tree-depth, 0) * var(--space-3))
-    var(--space-3);
+  padding: 0 var(--space-2);
   text-align: left;
   transition: background-color var(--motion-fast) var(--ease-out);
 }
 
-.workspace-diff-tree-row:hover {
+.workspace-review-row:hover {
   background: var(--ink-overlay-4);
 }
 
-.workspace-diff-tree-row.active {
+.workspace-review-row.active {
   background: var(--selection-surface);
 }
 
-html[data-focus-modality="keyboard"] .workspace-diff-tree-row:focus-visible {
+html[data-focus-modality="keyboard"] .workspace-review-row:focus-visible {
   outline-offset: -2px;
 }
 
-.workspace-diff-tree-row svg {
-  color: var(--ink-tertiary);
+.workspace-review-row-mark {
+  display: grid;
+  place-items: center;
+  color: var(--success);
 }
 
-.workspace-diff-tree-chevron {
-  transition: transform var(--motion-fast) var(--ease-out);
+/* Viewed files step back so the unread ones lead. */
+.workspace-review-row.viewed .workspace-review-row-name {
+  color: var(--ink-soft);
 }
 
-.workspace-diff-tree-row[aria-expanded="true"] .workspace-diff-tree-chevron {
-  transform: rotate(90deg);
-}
-
-.workspace-diff-tree-name {
+.workspace-review-row-name {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.workspace-diff-tree-count,
-.workspace-diff-tree-stats {
+/* Counts first, the status letter last in a fixed column, so letters line
+ * up down the list whatever the counts' width. */
+.workspace-review-row-stats {
+  display: inline-flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: var(--space-2);
   color: var(--ink-tertiary);
   font-size: var(--font-sm);
   font-variant-numeric: tabular-nums;
 }
 
-/* Counts first, the status letter last in a fixed column, so letters line
- * up down the list whatever the counts' width. */
-.workspace-diff-tree-stats {
-  display: inline-flex;
-  min-width: 0;
-  align-items: baseline;
-  gap: var(--space-2);
-}
-
-.workspace-diff-file-status {
+.workspace-review-status {
   width: 1.2em;
   color: var(--ink-soft);
   font-weight: var(--weight-medium);
   text-align: center;
 }
 
-.workspace-diff-file-status:is(.added, .untracked) {
+.workspace-review-status:is(.added, .untracked) {
   color: var(--success);
 }
 
-.workspace-diff-file-status.deleted {
+.workspace-review-status.deleted {
   color: var(--danger);
-}
-
-.workspace-diff-tree-spacer {
-  width: var(--icon-size-sm);
 }
 
 /* A narrow list keeps the names and the status letter; per-file counts
  * return once there is room, and the open file's header always has them. */
-@container workspace-review-list (max-width: 319px) {
-  .workspace-diff-tree-stats > :not(.workspace-diff-file-status) {
+@container workspace-review-list (max-width: 19em) {
+  .workspace-review-row-stats > :not(.workspace-review-status) {
     display: none;
   }
 }
 
-.workspace-diff-tree-empty {
+.workspace-review-list-empty {
   display: grid;
   min-height: 120px;
   place-content: center;

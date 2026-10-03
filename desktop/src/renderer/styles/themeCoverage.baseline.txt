@@ -43,7 +43,6 @@ conversation-shell.css .session-tab:hover, .session-tab:focus-within background 
 conversation-shell.css .session-tab.active .session-tab-pending-count background --shell-session-tab-active-pending-count-bg
 conversation-shell.css .session-tab.running .session-tab-status border-top-color --shell-session-tab-status-running-notch
 environment.css .conversation-search-error background --env-search-error-bg
-environment.css .conversation-search-preview-error background --env-search-error-bg
 environment.css .environment-dialog-error background --danger-soft
 environment.css .plugin-inspector-section-error background --danger-soft
 fields.css .settings-switch-thumb, .plugin-ui-checkbox input::after, .plugin-setting-switch::after box-shadow --switch-thumb-shadow
@@ -56,6 +55,7 @@ image-preview.css .image-preview-toolbar-button:active:not(:disabled) background
 image-preview.css .image-preview-toolbar-button:focus-visible outline --image-preview-toolbar-text
 image-preview.css .image-preview-toolbar-button:hover:not(:disabled) background --image-preview-toolbar-button-hover
 image-preview.css .image-preview-zoom-readout color --image-preview-zoom-text
+model-services.css .model-service-tile:hover:not(:disabled) background --ink-overlay-4
 onboarding.css .equipment-binding fill --equipment-binding
 onboarding.css .equipment-bookmark fill --equipment-accent
 onboarding.css .equipment-edge fill --equipment-edge
@@ -173,6 +173,9 @@ turns.css .turn-reasoning-summary:hover, .turn-reasoning-summary:focus-visible t
 turns.css .turn-source-avatar background --ink-overlay-6
 turns.css .turn-sources-pill background --ink-overlay-6
 turns.css button.turn-sources-pill:hover, button.turn-sources-pill:focus-visible background --ink-overlay-8
+video-attachment.css .video-attachment-play color --video-attachment-play-color
+video-attachment.css .video-attachment-play-icon background --video-attachment-play-background
+video-attachment.css .video-attachment-play:hover .video-attachment-play-icon background --video-attachment-play-hover-background
 video-preview.css .video-preview video background --video-preview-canvas-bg
 workbench.css .plugin-ui-button[data-wuu-variant="primary"] background --gray-900
 workbench.css .plugin-ui-button[data-wuu-variant="primary"]:not(:disabled):hover background --gray-900
@@ -188,16 +191,14 @@ workspace.css .workspace-browser-nav:hover:not(:disabled) background --ink-overl
 workspace.css .workspace-browser-retry:hover background --browser-retry-hover-bg
 workspace.css .workspace-browser-status background --browser-status-overlay-bg
 workspace.css .workspace-browser-url-form:has(.workspace-browser-url-input.has-error) box-shadow --danger-border
-workspace.css .workspace-diff-tree-row:hover background --ink-overlay-4
 workspace.css .workspace-file-tree-drag-handle:hover, .workspace-file-tree-drag-handle:focus-visible background --ink-overlay-4
 workspace.css .workspace-files-resizer:hover::before, .workspace-files-resizer:focus-visible::before, .workspace-files-split.resizing .workspace-files-resizer::before background --sidebar-resizer-hover-bg
 workspace.css .workspace-files-resizer:hover::before, .workspace-files-resizer:focus-visible::before, .workspace-files-split.resizing .workspace-files-resizer::before box-shadow --sidebar-resizer-hover-ring
-workspace.css .workspace-review-overlay background --review-overlay-bg
 workspace.css .workspace-review-resizer:hover::before, .workspace-review-resizer:focus-visible::before, .workspace-review-panel.resizing-split .workspace-review-resizer::before background --sidebar-resizer-hover-bg
 workspace.css .workspace-review-resizer:hover::before, .workspace-review-resizer:focus-visible::before, .workspace-review-panel.resizing-split .workspace-review-resizer::before box-shadow --sidebar-resizer-hover-ring
-workspace.css .workspace-review-switcher:hover, .workspace-review-switcher[aria-expanded="true"] background --ink-overlay-4
-workspace.css .workspace-tool-menu-item:active background --ink-overlay-8
-workspace.css .workspace-tool-menu-item:hover background --ink-overlay-4
+workspace.css .workspace-review-row:hover background --ink-overlay-4
+workspace.css .workspace-tool-menu-item:active, .workspace-tool-menu-more > summary:active background --ink-overlay-8
+workspace.css .workspace-tool-menu-item:hover, .workspace-tool-menu-more > summary:hover background --ink-overlay-4
 workspace.css .workspace-tool-tab-close:hover background --ink-overlay-8
 workspace.css .workspace-tool-tab:hover, .workspace-tool-tab:focus-within background --ink-overlay-4
 wuu-mascot.css .wuu-accessory-trim fill --wuu-mascot-mix-white

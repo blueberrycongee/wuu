@@ -1,22 +1,20 @@
 import {
   ArrowDown,
+  ArrowLeft,
   ArrowUp,
-  ChevronDown,
-  ChevronRight,
-  FileText,
-  Folder,
-  FolderOpen,
+  Check,
+  Circle,
+  CircleCheck,
+  SquarePen,
 } from "./WuuIcons";
 import {
   type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
-  type ReactNode,
   type RefObject,
   Suspense,
   lazy,
   useEffect,
-  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -26,18 +24,17 @@ import type { GitChangeFile, GitChangesResult, GitFileDiffResult, GitStatusResul
 import { TruncatedText } from "./TruncatedText";
 import { WorkspacePanelEmpty } from "./WorkspacePanelEmpty";
 import {
-  buildGitChangeTree,
   desktopApiErrorMessage,
   desktopApiSupportsGitReview,
-  expandedGitChangeTreePathsForSelection,
   filterGitChangeFiles,
   gitChangeStatusLabel,
   gitChangeStatusText,
   gitDiffDisplayLines,
-  gitPathAncestors,
-  selectGitChangePath,
+  gitPathName,
+  groupGitChangeFiles,
   summarizeGitChangeFiles,
-  type GitChangeTreeNode
+  workspaceRelativeGitPath,
+  type GitChangeGroup
 } from "./WorkspaceReviewHelpers";
 import { useI18n } from "./i18n";
 
@@ -45,187 +42,184 @@ const WorkspaceMonacoDiffEditor = lazy(async () => ({
   default: (await import("./WorkspaceMonacoDiffEditor")).WorkspaceMonacoDiffEditor,
 }));
 
-const WORKSPACE_REVIEW_TREE_DEFAULT_WIDTH = 280;
-const WORKSPACE_REVIEW_TREE_MIN_WIDTH = 220;
-const WORKSPACE_REVIEW_TREE_MAX_WIDTH = 360;
+const WORKSPACE_REVIEW_LIST_DEFAULT_WIDTH = 280;
+const WORKSPACE_REVIEW_LIST_MIN_WIDTH = 220;
+const WORKSPACE_REVIEW_LIST_MAX_WIDTH = 360;
 const WORKSPACE_REVIEW_DIFF_MIN_WIDTH = 420;
 const WORKSPACE_REVIEW_RESIZER_WIDTH = 8;
 // Narrower than this, the diff and the change list cannot both stay readable
-// side by side: the list folds into a switcher above a full-width diff.
+// side by side: the list and the diff take turns at full width.
 const WORKSPACE_REVIEW_SPLIT_MIN_WIDTH =
-  WORKSPACE_REVIEW_TREE_MIN_WIDTH + WORKSPACE_REVIEW_RESIZER_WIDTH + WORKSPACE_REVIEW_DIFF_MIN_WIDTH;
-const WORKSPACE_REVIEW_TREE_STEP = 24;
-const WORKSPACE_REVIEW_TREE_WIDTH_KEY = "wuu.desktop.reviewTreeWidth";
+  WORKSPACE_REVIEW_LIST_MIN_WIDTH + WORKSPACE_REVIEW_RESIZER_WIDTH + WORKSPACE_REVIEW_DIFF_MIN_WIDTH;
+const WORKSPACE_REVIEW_LIST_STEP = 24;
+const WORKSPACE_REVIEW_LIST_WIDTH_KEY = "wuu.desktop.reviewTreeWidth";
+
+// Viewed marks last for the app session, per workspace. Git list metadata
+// invalidates them when status or line counts change; it is not a content hash.
+const viewedMarksByWorkspace = new Map<string, Map<string, string>>();
+
+function viewedMarks(workspaceRoot: string | undefined): Map<string, string> {
+  const key = workspaceRoot ?? "";
+  let marks = viewedMarksByWorkspace.get(key);
+  if (!marks) {
+    marks = new Map();
+    viewedMarksByWorkspace.set(key, marks);
+  }
+  return marks;
+}
+
+function gitChangeSignature(file: GitChangeFile): string {
+  return [file.status, file.additions, file.deletions, file.old_path ?? ""].join(":");
+}
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
 }
 
-function initialWorkspaceReviewTreeWidth(): number {
-  const stored = Number(window.localStorage.getItem(WORKSPACE_REVIEW_TREE_WIDTH_KEY));
-  if (!Number.isFinite(stored)) {
-    return WORKSPACE_REVIEW_TREE_DEFAULT_WIDTH;
+function initialWorkspaceReviewListWidth(): number {
+  const stored = Number(window.localStorage.getItem(WORKSPACE_REVIEW_LIST_WIDTH_KEY));
+  if (!stored || !Number.isFinite(stored)) {
+    return WORKSPACE_REVIEW_LIST_DEFAULT_WIDTH;
   }
-  return clamp(stored, WORKSPACE_REVIEW_TREE_MIN_WIDTH, WORKSPACE_REVIEW_TREE_MAX_WIDTH);
+  return clamp(stored, WORKSPACE_REVIEW_LIST_MIN_WIDTH, WORKSPACE_REVIEW_LIST_MAX_WIDTH);
 }
 
-function clampWorkspaceReviewTreeWidth(width: number, panelWidth = Number.POSITIVE_INFINITY): number {
-  if (!Number.isFinite(panelWidth)) {
-    return clamp(width, WORKSPACE_REVIEW_TREE_MIN_WIDTH, WORKSPACE_REVIEW_TREE_MAX_WIDTH);
-  }
+function clampWorkspaceReviewListWidth(width: number, panelWidth = Number.POSITIVE_INFINITY): number {
   const maxForPanel = Math.max(
-    WORKSPACE_REVIEW_TREE_MIN_WIDTH,
-    Math.min(WORKSPACE_REVIEW_TREE_MAX_WIDTH, panelWidth - WORKSPACE_REVIEW_DIFF_MIN_WIDTH)
+    WORKSPACE_REVIEW_LIST_MIN_WIDTH,
+    Math.min(WORKSPACE_REVIEW_LIST_MAX_WIDTH, panelWidth - WORKSPACE_REVIEW_DIFF_MIN_WIDTH)
   );
-  return clamp(width, WORKSPACE_REVIEW_TREE_MIN_WIDTH, maxForPanel);
+  return clamp(width, WORKSPACE_REVIEW_LIST_MIN_WIDTH, maxForPanel);
 }
 
-// Files in the order the change list shows them, for stepping.
-function gitChangeTreeFilePaths(nodes: GitChangeTreeNode[]): string[] {
-  return nodes.flatMap((node) => (node.kind === "file" ? [node.path] : gitChangeTreeFilePaths(node.children)));
-}
+type ReviewDiff = { path: string; result?: GitFileDiffResult; error?: string };
 
-type ReviewSwitcher = {
-  open: boolean;
-  listID: string;
-  triggerRef: RefObject<HTMLButtonElement | null>;
-  onToggle: () => void;
-  onClose: (restoreFocus: boolean) => void;
-  onPrevious?: () => void;
-  onNext?: () => void;
-  list: ReactNode;
-};
-
+/**
+ * Review of the uncommitted changes. A wide panel keeps the change list
+ * beside the diff; a narrow one opens on the list and shows one file's diff at
+ * a time. The list follows the workspace's Git status, so it stays current
+ * while an agent keeps editing, without losing the open file.
+ */
 export function WorkspaceReviewPanel({
   gitStatus,
   workspaceRoot,
+  onOpenFile,
 }: {
   gitStatus?: GitStatusResult;
   workspaceRoot?: string;
+  onOpenFile?: (path: string) => void;
 }): JSX.Element {
-  const { locale, t } = useI18n();
+  const { t } = useI18n();
   const panelRef = useRef<HTMLDivElement | null>(null);
-  const switcherRef = useRef<HTMLButtonElement>(null);
-  const splitResizeRef = useRef<{ startX: number; startTreeWidth: number } | null>(null);
-  const listID = useId();
+  const listRef = useRef<HTMLDivElement>(null);
+  const resizeRef = useRef<{ startX: number; startWidth: number } | null>(null);
   const [panelNode, setPanelNode] = useState<HTMLDivElement | null>(null);
   const [changes, setChanges] = useState<GitChangesResult | undefined>(undefined);
+  const [listError, setListError] = useState<string | undefined>(undefined);
   const [selectedPath, setSelectedPath] = useState<string | undefined>(undefined);
-  const [fileDiff, setFileDiff] = useState<GitFileDiffResult | undefined>(undefined);
-  const [loadingChanges, setLoadingChanges] = useState(false);
-  const [loadingDiff, setLoadingDiff] = useState(false);
-  const [error, setError] = useState<string | undefined>(undefined);
-  const [treeQuery, setTreeQuery] = useState("");
-  const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => new Set());
-  const [treePaneWidth, setTreePaneWidth] = useState(initialWorkspaceReviewTreeWidth);
-  const [resizingSplit, setResizingSplit] = useState(false);
-  const [compact, setCompact] = useState(false);
-  const [listOpen, setListOpen] = useState(false);
+  const [detailOpen, setDetailOpen] = useState(false);
+  const [diff, setDiff] = useState<ReviewDiff | undefined>(undefined);
+  const [query, setQuery] = useState("");
+  const [listWidth, setListWidth] = useState(initialWorkspaceReviewListWidth);
+  const [resizing, setResizing] = useState(false);
+  // Unknown until the panel is measured, so a narrow panel never starts
+  // loading a diff it will not show.
+  const [split, setSplit] = useState<boolean | undefined>(undefined);
+  const [, setViewedVersion] = useState(0);
+  // Focus that must land after a layout switch replaces the focused control.
+  const pendingFocusRef = useRef<string | undefined>(undefined);
+  const marks = viewedMarks(workspaceRoot);
+
   const files = changes?.files ?? [];
-  const filteredFiles = useMemo(() => filterGitChangeFiles(files, treeQuery), [files, treeQuery]);
-  const treeNodes = useMemo(() => buildGitChangeTree(filteredFiles), [filteredFiles]);
-  const orderedPaths = useMemo(() => gitChangeTreeFilePaths(buildGitChangeTree(files)), [files]);
+  const groups = useMemo(() => groupGitChangeFiles(files), [files]);
+  const visibleGroups = useMemo(() => groupGitChangeFiles(filterGitChangeFiles(files, query)), [files, query]);
+  const order = useMemo(() => groups.flatMap((group) => group.files), [groups]);
+  const visibleOrder = useMemo(() => visibleGroups.flatMap((group) => group.files), [visibleGroups]);
+  const single = files.length === 1;
   const selectedFile = files.find((file) => file.path === selectedPath);
-  const singleFileReview = Boolean(selectedFile && files.length === 1);
-  const switcherLayout = compact && Boolean(selectedFile) && !singleFileReview;
-  const sheetOpen = switcherLayout && listOpen;
-  const panelStyle = {
-    "--workspace-review-tree-width": `${treePaneWidth}px`
-  } as CSSProperties;
+  // A wide panel always shows a diff; a narrow one only once a file is opened.
+  const shownFile = selectedFile ?? (split || single ? order[0] : undefined);
+  const showDetail = Boolean(shownFile) && (split || single || detailOpen);
+  const shownPath = showDetail ? shownFile?.path : undefined;
+  const showList = !single && split !== undefined && (split || !showDetail);
+  const layout = single ? "single" : split === undefined ? undefined : split ? "split" : "stack";
+  const isViewed = (file: GitChangeFile): boolean => marks.get(file.path) === gitChangeSignature(file);
 
   useEffect(() => {
-    let cancelled = false;
     setChanges(undefined);
+    setListError(undefined);
     setSelectedPath(undefined);
-    setFileDiff(undefined);
+    setDetailOpen(false);
+    setDiff(undefined);
+    setQuery("");
+  }, [workspaceRoot]);
+
+  // Every new Git status, including the ones an agent's edits cause, reloads
+  // the list in place: the open file and the scroll position stay.
+  useEffect(() => {
     if (!desktopApiSupportsGitReview()) {
-      setError(t("workspaceReview.apiUnavailable"));
-      setLoadingChanges(false);
-      return;
+      setListError(t("workspaceReview.apiUnavailable"));
+      return undefined;
     }
-    setLoadingChanges(true);
-    setError(undefined);
+    let cancelled = false;
     void window.wuu
       .listGitChanges(workspaceRoot)
       .then((result) => {
-        if (cancelled) {
-          return;
-        }
-        const nextSelectedPath = selectGitChangePath(result.files, selectedPath);
-        setChanges(result);
-        setSelectedPath(nextSelectedPath);
-        setExpandedPaths(expandedGitChangeTreePathsForSelection(nextSelectedPath));
-      })
-      .catch((nextError) => {
         if (!cancelled) {
-          setError(desktopApiErrorMessage(nextError, t("workspaceReview.readChangesFailed")));
+          setChanges(result);
+          setListError(undefined);
         }
       })
-      .finally(() => {
+      .catch((error) => {
         if (!cancelled) {
-          setLoadingChanges(false);
+          setListError(desktopApiErrorMessage(error, t("workspaceReview.readChangesFailed")));
         }
       });
-
     return () => {
       cancelled = true;
     };
-  }, [locale, workspaceRoot]);
+  }, [workspaceRoot, gitStatus]);
 
+  // The open file's diff reloads with the list. Until the reload lands the
+  // previous diff stays, so a refresh never flashes a loading state.
   useEffect(() => {
-    if (!selectedPath) {
-      setFileDiff(undefined);
-      setLoadingDiff(false);
-      return;
+    if (!shownPath) {
+      return undefined;
     }
-    setExpandedPaths((current) => {
-      const next = new Set(current);
-      for (const ancestor of gitPathAncestors(selectedPath)) {
-        next.add(ancestor);
-      }
-      return next;
-    });
-  }, [selectedPath]);
-
-  useEffect(() => {
-    if (!selectedPath) {
-      return;
+    setDiff((current) => (current?.path === shownPath ? current : { path: shownPath }));
+    if (!desktopApiSupportsGitReview()) {
+      setDiff({ path: shownPath, error: t("workspaceReview.apiUnavailable") });
+      return undefined;
     }
     let cancelled = false;
-    setFileDiff(undefined);
-    if (!desktopApiSupportsGitReview()) {
-      setError(t("workspaceReview.apiUnavailable"));
-      setLoadingDiff(false);
-      return;
-    }
-    setLoadingDiff(true);
-    setError(undefined);
     void window.wuu
-      .readGitFileDiff(selectedPath, workspaceRoot)
+      .readGitFileDiff(shownPath, workspaceRoot)
       .then((result) => {
         if (!cancelled) {
-          setFileDiff(result);
+          setDiff({ path: shownPath, result });
         }
       })
-      .catch((nextError) => {
+      .catch((error) => {
         if (!cancelled) {
-          setError(desktopApiErrorMessage(nextError, t("workspaceReview.readDiffFailed")));
-        }
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setLoadingDiff(false);
+          setDiff({ path: shownPath, error: desktopApiErrorMessage(error, t("workspaceReview.readDiffFailed")) });
         }
       });
-
     return () => {
       cancelled = true;
     };
-  }, [selectedPath, locale, workspaceRoot]);
+  }, [shownPath, workspaceRoot, changes]);
+
+  useLayoutEffect(() => {
+    const selector = pendingFocusRef.current;
+    if (selector) {
+      pendingFocusRef.current = undefined;
+      panelRef.current?.querySelector<HTMLElement>(selector)?.focus();
+    }
+  });
 
   useEffect(() => {
-    window.localStorage.setItem(WORKSPACE_REVIEW_TREE_WIDTH_KEY, String(treePaneWidth));
-  }, [treePaneWidth]);
+    window.localStorage.setItem(WORKSPACE_REVIEW_LIST_WIDTH_KEY, String(listWidth));
+  }, [listWidth]);
 
   // The layout follows the panel's own width, so a docked, resized or
   // full-window panel each gets the arrangement that fits it.
@@ -234,11 +228,7 @@ export function WorkspaceReviewPanel({
       return undefined;
     }
     const measure = (): void => {
-      const narrow = panelNode.getBoundingClientRect().width < WORKSPACE_REVIEW_SPLIT_MIN_WIDTH;
-      setCompact(narrow);
-      if (!narrow) {
-        setListOpen(false);
-      }
+      setSplit(panelNode.getBoundingClientRect().width >= WORKSPACE_REVIEW_SPLIT_MIN_WIDTH);
     };
     measure();
     if (typeof ResizeObserver === "undefined") {
@@ -251,25 +241,23 @@ export function WorkspaceReviewPanel({
 
   useEffect(() => {
     const root = document.documentElement;
-    root.classList.toggle("resizing-review-split", resizingSplit);
-    if (!resizingSplit) {
+    root.classList.toggle("resizing-review-split", resizing);
+    if (!resizing) {
       return () => root.classList.remove("resizing-review-split");
     }
 
     function handlePointerMove(event: PointerEvent): void {
-      const session = splitResizeRef.current;
+      const session = resizeRef.current;
       if (!session) {
         return;
       }
       const panelWidth = panelRef.current?.getBoundingClientRect().width;
-      setTreePaneWidth(
-        clampWorkspaceReviewTreeWidth(session.startTreeWidth - (event.clientX - session.startX), panelWidth)
-      );
+      setListWidth(clampWorkspaceReviewListWidth(session.startWidth - (event.clientX - session.startX), panelWidth));
     }
 
     function handlePointerUp(): void {
-      splitResizeRef.current = null;
-      setResizingSplit(false);
+      resizeRef.current = null;
+      setResizing(false);
     }
 
     window.addEventListener("pointermove", handlePointerMove);
@@ -281,265 +269,208 @@ export function WorkspaceReviewPanel({
       window.removeEventListener("pointerup", handlePointerUp);
       window.removeEventListener("pointercancel", handlePointerUp);
     };
-  }, [resizingSplit]);
+  }, [resizing]);
 
-  function toggleTreePath(path: string): void {
-    setExpandedPaths((current) => {
-      const next = new Set(current);
-      if (next.has(path)) {
-        next.delete(path);
-      } else {
-        next.add(path);
-      }
-      return next;
-    });
-  }
-
-  function resizeTreePaneBy(delta: number): void {
+  function resizeListBy(delta: number): void {
     const panelWidth = panelRef.current?.getBoundingClientRect().width;
-    setTreePaneWidth((current) => clampWorkspaceReviewTreeWidth(current + delta, panelWidth));
+    setListWidth((current) => clampWorkspaceReviewListWidth(current + delta, panelWidth));
   }
 
-  function startReviewSplitResize(event: ReactPointerEvent<HTMLDivElement>): void {
+  function startResize(event: ReactPointerEvent<HTMLDivElement>): void {
     if (event.button !== 0) {
       return;
     }
     event.preventDefault();
-    splitResizeRef.current = {
-      startX: event.clientX,
-      startTreeWidth: treePaneWidth
-    };
-    setResizingSplit(true);
+    resizeRef.current = { startX: event.clientX, startWidth: listWidth };
+    setResizing(true);
   }
 
-  function handleReviewSplitKeyDown(event: ReactKeyboardEvent<HTMLDivElement>): void {
-    if (event.key === "ArrowLeft") {
+  function handleResizerKeyDown(event: ReactKeyboardEvent<HTMLDivElement>): void {
+    const delta =
+      event.key === "ArrowLeft" ? WORKSPACE_REVIEW_LIST_STEP
+        : event.key === "ArrowRight" ? -WORKSPACE_REVIEW_LIST_STEP
+          : event.key === "Home" ? WORKSPACE_REVIEW_LIST_MAX_WIDTH
+            : event.key === "End" ? -WORKSPACE_REVIEW_LIST_MAX_WIDTH
+              : 0;
+    if (delta) {
       event.preventDefault();
-      resizeTreePaneBy(WORKSPACE_REVIEW_TREE_STEP);
-    } else if (event.key === "ArrowRight") {
-      event.preventDefault();
-      resizeTreePaneBy(-WORKSPACE_REVIEW_TREE_STEP);
-    } else if (event.key === "Home") {
-      event.preventDefault();
-      resizeTreePaneBy(WORKSPACE_REVIEW_TREE_MAX_WIDTH);
-    } else if (event.key === "End") {
-      event.preventDefault();
-      resizeTreePaneBy(-WORKSPACE_REVIEW_TREE_MAX_WIDTH);
+      resizeListBy(delta);
     }
   }
 
-  function closeList(restoreFocus: boolean): void {
-    setListOpen(false);
-    setTreeQuery("");
-    if (restoreFocus) {
-      switcherRef.current?.focus();
-    }
-  }
-
-  function selectFile(path: string): void {
+  function openFile(path: string): void {
     setSelectedPath(path);
-    if (sheetOpen) {
-      closeList(true);
+    setDetailOpen(true);
+    if (layout === "stack" && !showDetail) {
+      // The pressed row leaves with the list; focus follows to the diff.
+      pendingFocusRef.current = ".workspace-review-back";
     }
   }
 
-  if (loadingChanges && !changes) {
-    return <WorkspacePanelEmpty title={t("workspaceReview.readingChanges")} />;
+  // Back to the list, with focus on the file just read.
+  function closeDetail(): void {
+    setDetailOpen(false);
+    pendingFocusRef.current = `.workspace-review-row[data-wuu-path="${CSS.escape(shownFile?.path ?? "")}"]`;
   }
 
-  if (error && !changes) {
-    return <WorkspacePanelEmpty title={t("workspaceReview.readFailed")} description={error} />;
+  function toggleViewed(file: GitChangeFile): void {
+    if (isViewed(file)) {
+      marks.delete(file.path);
+    } else {
+      marks.set(file.path, gitChangeSignature(file));
+    }
+    setViewedVersion((version) => version + 1);
   }
 
-  if (changes && !changes.is_repo) {
+  if (!changes) {
+    return listError
+      ? <WorkspacePanelEmpty title={t("workspaceReview.readFailed")} description={listError} />
+      : <WorkspacePanelEmpty title={t("workspaceReview.readingChanges")} />;
+  }
+
+  if (!changes.is_repo) {
     return <WorkspacePanelEmpty title={t("workspaceReview.notGitRepository")} />;
   }
 
-  if (changes && files.length === 0) {
+  if (files.length === 0) {
     return <WorkspacePanelEmpty title={t("workspaceReview.clean")} />;
   }
 
-  const selectedIndex = selectedPath ? orderedPaths.indexOf(selectedPath) : -1;
-  const changeList = (
-    <GitChangeTreePanel
-      branch={gitStatus?.is_repo ? gitStatus.branch : undefined}
-      files={filteredFiles}
-      nodes={treeNodes}
-      selectedPath={selectedPath}
-      expandedPaths={expandedPaths}
-      query={treeQuery}
-      autoFocusFilter={sheetOpen}
-      onQueryChange={setTreeQuery}
-      onSelectFile={selectFile}
-      onTogglePath={toggleTreePath}
-    />
-  );
+  // Stepping follows the list the reader sees, filtered when a filter is set.
+  const sequence = shownFile && visibleOrder.includes(shownFile) ? visibleOrder : order;
+  const shownIndex = shownFile ? sequence.indexOf(shownFile) : -1;
+  const previousFile = shownIndex > 0 ? sequence[shownIndex - 1] : undefined;
+  const nextFile = shownIndex >= 0 ? sequence[shownIndex + 1] : undefined;
+  const editablePath = shownFile && shownFile.status !== "deleted" && onOpenFile
+    ? workspaceRelativeGitPath(shownFile.path, changes.root, workspaceRoot)
+    : undefined;
 
   return (
     <div
-      className={`workspace-review-panel${selectedFile ? " has-diff" : ""}${
-        singleFileReview ? " single-file" : ""
-      }${switcherLayout ? " compact" : ""}${
-        resizingSplit ? " resizing-split" : ""
-      }`}
+      className={`workspace-review-panel${resizing ? " resizing-split" : ""}`}
       aria-label={t("workspaceReview.reviewChanges")}
       data-wuu-component="workspace-review"
-      data-wuu-state={selectedFile ? "detail" : "navigation"}
+      data-wuu-layout={layout}
+      data-wuu-state={showDetail ? "detail" : "navigation"}
       ref={(node) => {
         panelRef.current = node;
         setPanelNode(node);
       }}
-      style={panelStyle}
+      style={{ "--workspace-review-list-width": `${listWidth}px` } as CSSProperties}
     >
-      {selectedFile ? (
-        <WorkspaceReviewDiffPeekPanel
-          file={selectedFile}
-          fileDiff={fileDiff}
-          loading={loadingDiff}
-          error={error}
-          switcher={switcherLayout ? {
-            open: sheetOpen,
-            listID,
-            triggerRef: switcherRef,
-            onToggle: () => (sheetOpen ? closeList(false) : setListOpen(true)),
-            onClose: closeList,
-            onPrevious: selectedIndex > 0 ? () => setSelectedPath(orderedPaths[selectedIndex - 1]) : undefined,
-            onNext: selectedIndex >= 0 && selectedIndex < orderedPaths.length - 1
-              ? () => setSelectedPath(orderedPaths[selectedIndex + 1])
-              : undefined,
-            list: changeList,
-          } : undefined}
-        />
+      {showDetail && shownFile ? (
+        <section
+          className="workspace-review-diff-panel"
+          data-wuu-component="workspace-review-content"
+          aria-label={t("workspaceReview.codeDiffFor", { path: shownFile.path })}
+        >
+          <div className="workspace-diff-detail-header" data-wuu-component="workspace-review-content-header">
+            {layout === "stack" ? (
+              <button
+                className="icon-button workspace-review-back"
+                data-wuu-action="back"
+                type="button"
+                aria-label={t("workspaceReview.backToList")}
+                title={t("workspaceReview.backToList")}
+                onClick={closeDetail}
+              >
+                <ArrowLeft className="icon" />
+              </button>
+            ) : null}
+            <div className="workspace-review-file-row">
+              <WorkspaceReviewFileTitle file={shownFile} />
+            </div>
+            <div className="workspace-review-actions">
+              {single ? null : (
+                <button
+                  className={`icon-button workspace-review-viewed${isViewed(shownFile) ? " active" : ""}`}
+                  data-wuu-action="viewed"
+                  type="button"
+                  aria-pressed={isViewed(shownFile)}
+                  aria-label={t("workspaceReview.viewed")}
+                  title={t(isViewed(shownFile) ? "workspaceReview.viewed" : "workspaceReview.markViewed")}
+                  onClick={() => toggleViewed(shownFile)}
+                >
+                  {isViewed(shownFile) ? <CircleCheck className="icon" /> : <Circle className="icon" />}
+                </button>
+              )}
+              {editablePath ? (
+                <button
+                  className="icon-button"
+                  type="button"
+                  data-wuu-action="open"
+                  aria-label={t("workspaceReview.openInEditor")}
+                  title={t("workspaceReview.openInEditor")}
+                  onClick={() => onOpenFile?.(editablePath)}
+                >
+                  <SquarePen className="icon" />
+                </button>
+              ) : null}
+              {single ? null : (
+                <>
+                  <button
+                    className="icon-button"
+                    type="button"
+                    data-wuu-action="previous"
+                    aria-label={t("workspaceReview.previousFile")}
+                    title={t("workspaceReview.previousFile")}
+                    disabled={!previousFile}
+                    onClick={() => previousFile && openFile(previousFile.path)}
+                  >
+                    <ArrowUp className="icon" />
+                  </button>
+                  <button
+                    className="icon-button"
+                    type="button"
+                    data-wuu-action="next"
+                    aria-label={t("workspaceReview.nextFile")}
+                    title={t("workspaceReview.nextFile")}
+                    disabled={!nextFile}
+                    onClick={() => nextFile && openFile(nextFile.path)}
+                  >
+                    <ArrowDown className="icon" />
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+          <WorkspaceDiffBody diff={diff?.path === shownFile.path ? diff : undefined} />
+          {diff?.path === shownFile.path && diff.result?.truncated ? (
+            <div className="workspace-diff-truncated">
+              {t("workspaceReview.diffTruncated")}
+            </div>
+          ) : null}
+        </section>
       ) : null}
-      {selectedFile && !singleFileReview && !switcherLayout ? (
+      {showDetail && showList ? (
         <div
           className="workspace-review-resizer"
           role="separator"
           aria-label={t("workspaceReview.resizeDiffTree")}
           aria-orientation="vertical"
-          aria-valuemin={WORKSPACE_REVIEW_TREE_MIN_WIDTH}
-          aria-valuemax={WORKSPACE_REVIEW_TREE_MAX_WIDTH}
-          aria-valuenow={Math.round(treePaneWidth)}
+          aria-valuemin={WORKSPACE_REVIEW_LIST_MIN_WIDTH}
+          aria-valuemax={WORKSPACE_REVIEW_LIST_MAX_WIDTH}
+          aria-valuenow={Math.round(listWidth)}
           tabIndex={0}
-          onPointerDown={startReviewSplitResize}
-          onKeyDown={handleReviewSplitKeyDown}
+          onPointerDown={startResize}
+          onKeyDown={handleResizerKeyDown}
         />
       ) : null}
-      {!singleFileReview && !switcherLayout ? (
-        <div className="workspace-review-tree-pane">
-          {changeList}
-          {error && !selectedFile ? <div className="workspace-review-overlay error">{error}</div> : null}
-        </div>
+      {showList ? (
+        <GitChangeList
+          listRef={listRef}
+          branch={gitStatus?.is_repo ? gitStatus.branch : undefined}
+          files={files}
+          groups={visibleGroups}
+          query={query}
+          activePath={showDetail ? shownFile?.path : selectedFile?.path}
+          viewedCount={files.filter(isViewed).length}
+          isViewed={isViewed}
+          onQueryChange={setQuery}
+          onOpenFile={openFile}
+        />
       ) : null}
     </div>
-  );
-}
-
-function WorkspaceReviewDiffPeekPanel({
-  file,
-  fileDiff,
-  loading,
-  error,
-  switcher,
-}: {
-  file: GitChangeFile;
-  fileDiff?: GitFileDiffResult;
-  loading: boolean;
-  error?: string;
-  switcher?: ReviewSwitcher;
-}): JSX.Element {
-  const { t } = useI18n();
-  const headerRef = useRef<HTMLDivElement>(null);
-  const open = switcher?.open ?? false;
-  const onClose = switcher?.onClose;
-
-  // The list sheet closes like a menu: a press outside it or the switcher.
-  useEffect(() => {
-    if (!open || !onClose) {
-      return undefined;
-    }
-    function handlePointerDown(event: PointerEvent): void {
-      if (event.target instanceof Node && headerRef.current?.contains(event.target)) {
-        return;
-      }
-      onClose?.(false);
-    }
-    document.addEventListener("pointerdown", handlePointerDown);
-    return () => document.removeEventListener("pointerdown", handlePointerDown);
-  }, [open, onClose]);
-
-  return (
-    <section
-      className="workspace-review-diff-panel workspace-diff-detail"
-      data-wuu-component="workspace-review-content"
-      aria-label={t("workspaceReview.codeDiffFor", { path: file.path })}
-    >
-      <div
-        className="workspace-diff-detail-header"
-        data-wuu-component="workspace-review-content-header"
-        ref={headerRef}
-        onKeyDown={(event) => {
-          if (event.key === "Escape" && open) {
-            event.preventDefault();
-            event.stopPropagation();
-            switcher?.onClose(true);
-          }
-        }}
-      >
-        {switcher ? (
-          <>
-            <button
-              ref={switcher.triggerRef}
-              className="workspace-review-switcher"
-              type="button"
-              aria-expanded={switcher.open}
-              aria-controls={switcher.listID}
-              onClick={switcher.onToggle}
-            >
-              <WorkspaceReviewFileTitle file={file} />
-              <ChevronDown className="icon-sm workspace-review-switcher-chevron" aria-hidden="true" />
-            </button>
-            <div className="workspace-review-stepper">
-              <button
-                className="icon-button"
-                type="button"
-                aria-label={t("workspaceReview.previousFile")}
-                title={t("workspaceReview.previousFile")}
-                disabled={!switcher.onPrevious}
-                onClick={switcher.onPrevious}
-              >
-                <ArrowUp className="icon" />
-              </button>
-              <button
-                className="icon-button"
-                type="button"
-                aria-label={t("workspaceReview.nextFile")}
-                title={t("workspaceReview.nextFile")}
-                disabled={!switcher.onNext}
-                onClick={switcher.onNext}
-              >
-                <ArrowDown className="icon" />
-              </button>
-            </div>
-            {switcher.open ? (
-              <div className="workspace-review-sheet" id={switcher.listID} data-wuu-layer="menu">
-                {switcher.list}
-              </div>
-            ) : null}
-          </>
-        ) : (
-          <div className="workspace-review-file-row">
-            <WorkspaceReviewFileTitle file={file} />
-          </div>
-        )}
-      </div>
-      <WorkspaceDiffBody fileDiff={fileDiff} loading={loading} error={error} />
-      {fileDiff?.truncated ? (
-        <div className="workspace-diff-truncated">
-          {t("workspaceReview.diffTruncated")}
-        </div>
-      ) : null}
-    </section>
   );
 }
 
@@ -550,7 +481,6 @@ function WorkspaceReviewDiffPeekPanel({
 function WorkspaceReviewFileTitle({ file }: { file: GitChangeFile }): JSX.Element {
   const { t } = useI18n();
   const separator = file.path.lastIndexOf("/");
-  const name = file.path.slice(separator + 1);
   const renamed = Boolean(file.old_path && file.old_path !== file.path);
   const context = renamed
     ? t("workspaceReview.renamedFrom", { path: file.old_path ?? "" })
@@ -558,7 +488,7 @@ function WorkspaceReviewFileTitle({ file }: { file: GitChangeFile }): JSX.Elemen
   return (
     <>
       <span className="workspace-review-file">
-        <TruncatedText as="strong" className="workspace-review-file-name" text={name} />
+        <TruncatedText as="strong" className="workspace-review-file-name" text={gitPathName(file.path)} />
         {context ? (
           <TruncatedText
             className={`workspace-review-file-context${renamed ? "" : " is-folder"}`}
@@ -584,22 +514,15 @@ function GitChangeCounts({ additions, deletions }: { additions: number; deletion
   );
 }
 
-function WorkspaceDiffBody({
-  fileDiff,
-  loading,
-  error,
-}: {
-  fileDiff?: GitFileDiffResult;
-  loading: boolean;
-  error?: string;
-}): JSX.Element {
+function WorkspaceDiffBody({ diff }: { diff?: ReviewDiff }): JSX.Element {
   const { t } = useI18n();
-  if (error) return <div className="workspace-diff-error">{error}</div>;
-  if (loading) return <div className="workspace-diff-empty">{t("workspaceReview.readingDiff")}</div>;
-  if (fileDiff?.binary) {
+  const fileDiff = diff?.result;
+  if (diff?.error) return <div className="workspace-diff-error">{diff.error}</div>;
+  if (!fileDiff) return <div className="workspace-diff-empty">{t("workspaceReview.readingDiff")}</div>;
+  if (fileDiff.binary) {
     return <div className="workspace-diff-empty">{t("workspaceReview.binaryNoTextDiff")}</div>;
   }
-  if (fileDiff && typeof fileDiff.original_text === "string" && typeof fileDiff.modified_text === "string") {
+  if (typeof fileDiff.original_text === "string" && typeof fileDiff.modified_text === "string") {
     return (
       <Suspense fallback={<div className="workspace-diff-empty">{t("workspaceReview.readingDiff")}</div>}>
         <WorkspaceMonacoDiffEditor
@@ -610,7 +533,7 @@ function WorkspaceDiffBody({
       </Suspense>
     );
   }
-  if (!fileDiff?.patch) {
+  if (!fileDiff.patch) {
     return <div className="workspace-diff-empty">{t("workspaceReview.noTextDiff")}</div>;
   }
   return (
@@ -621,7 +544,7 @@ function WorkspaceDiffBody({
 }
 
 /** A unified Git patch with old and new line numbers. */
-export function GitPatchLines({ patch, label }: { patch: string; label: string }): JSX.Element {
+function GitPatchLines({ patch, label }: { patch: string; label: string }): JSX.Element {
   const diffLines = useMemo(() => gitDiffDisplayLines(patch), [patch]);
   return (
     <pre className="workspace-diff-code" aria-label={label}>
@@ -636,47 +559,36 @@ export function GitPatchLines({ patch, label }: { patch: string; label: string }
   );
 }
 
-function GitChangeTreePanel({
+function GitChangeList({
+  listRef,
   branch,
   files,
-  nodes,
-  selectedPath,
-  expandedPaths,
+  groups,
   query,
-  autoFocusFilter,
+  activePath,
+  viewedCount,
+  isViewed,
   onQueryChange,
-  onSelectFile,
-  onTogglePath
+  onOpenFile,
 }: {
+  listRef: RefObject<HTMLDivElement | null>;
   branch?: string;
   files: GitChangeFile[];
-  nodes: GitChangeTreeNode[];
-  selectedPath?: string;
-  expandedPaths: Set<string>;
+  groups: GitChangeGroup[];
   query: string;
-  autoFocusFilter: boolean;
+  activePath?: string;
+  viewedCount: number;
+  isViewed: (file: GitChangeFile) => boolean;
   onQueryChange: (value: string) => void;
-  onSelectFile: (path: string) => void;
-  onTogglePath: (path: string) => void;
+  onOpenFile: (path: string) => void;
 }): JSX.Element {
   const { t, formatNumber } = useI18n();
-  const listRef = useRef<HTMLDivElement>(null);
-  const filterRef = useRef<HTMLInputElement>(null);
-  const forceExpanded = query.trim().length > 0;
   const totals = summarizeGitChangeFiles(files);
 
-  useEffect(() => {
-    if (autoFocusFilter) {
-      filterRef.current?.focus();
-    }
-  }, [autoFocusFilter]);
-
-  // Rows move like a tree: arrows walk the visible rows, Right and Left open
-  // and close folders.
+  // Arrows walk the rows; the filter hands focus to the first row.
   function handleListKeyDown(event: ReactKeyboardEvent<HTMLDivElement>): void {
-    const rows = Array.from(listRef.current?.querySelectorAll<HTMLButtonElement>(".workspace-diff-tree-row") ?? []);
+    const rows = Array.from(listRef.current?.querySelectorAll<HTMLButtonElement>(".workspace-review-row") ?? []);
     const index = rows.indexOf(document.activeElement as HTMLButtonElement);
-    const row = rows[index];
     const target =
       event.key === "ArrowDown" ? rows[index + 1]
         : event.key === "ArrowUp" ? rows[index - 1]
@@ -686,42 +598,34 @@ function GitChangeTreePanel({
     if (target) {
       event.preventDefault();
       target.focus();
-      return;
-    }
-    const expanded = row?.getAttribute("aria-expanded");
-    if ((event.key === "ArrowRight" && expanded === "false") || (event.key === "ArrowLeft" && expanded === "true")) {
-      event.preventDefault();
-      row.click();
     }
   }
 
   return (
     <aside
-      className="workspace-diff-tree"
+      className="workspace-review-list"
       data-wuu-component="workspace-review-navigation"
       aria-label={t("workspaceReview.changeFileTree")}
     >
-      <div className="workspace-diff-tree-header">
-        <span className="workspace-diff-tree-summary">
+      <div className="workspace-review-list-header">
+        <span className="workspace-review-list-summary">
           <strong>
-            {t(
-              forceExpanded
-                ? files.length === 1
-                  ? "workspaceReview.matchCountOne"
-                  : "workspaceReview.matchCount"
-                : files.length === 1
-                  ? "environment.fileCountOne"
-                  : "environment.fileCount",
-              { count: formatNumber(files.length) },
-            )}
+            {t(files.length === 1 ? "environment.fileCountOne" : "environment.fileCount", {
+              count: formatNumber(files.length),
+            })}
           </strong>
-          {files.length > 0 ? <GitChangeCounts additions={totals.additions} deletions={totals.deletions} /> : null}
+          <GitChangeCounts additions={totals.additions} deletions={totals.deletions} />
         </span>
-        {branch ? <TruncatedText className="workspace-diff-tree-branch" text={branch} /> : null}
+        {branch ? <TruncatedText className="workspace-review-branch" text={branch} /> : null}
+        <span className="workspace-review-progress">
+          {t("workspaceReview.viewedProgress", {
+            viewed: formatNumber(viewedCount),
+            total: formatNumber(files.length),
+          })}
+        </span>
       </div>
       <input
-        ref={filterRef}
-        className="workspace-diff-search"
+        className="workspace-review-search"
         data-wuu-component="workspace-review-search"
         type="search"
         value={query}
@@ -731,131 +635,77 @@ function GitChangeTreePanel({
         onKeyDown={(event) => {
           if (event.key === "ArrowDown") {
             event.preventDefault();
-            listRef.current?.querySelector<HTMLButtonElement>(".workspace-diff-tree-row")?.focus();
+            listRef.current?.querySelector<HTMLButtonElement>(".workspace-review-row")?.focus();
           }
         }}
       />
-      <div className="workspace-diff-tree-scroll">
-        {nodes.length === 0 ? (
-          <div className="workspace-diff-tree-empty">
-            {t("workspaceReview.noMatchingFiles")}
-          </div>
+      <div className="workspace-review-list-scroll" ref={listRef} onKeyDown={handleListKeyDown}>
+        {groups.length === 0 ? (
+          <div className="workspace-review-list-empty">{t("workspaceReview.noMatchingFiles")}</div>
         ) : (
-          <div className="workspace-diff-tree-list" ref={listRef} onKeyDown={handleListKeyDown}>
-            {nodes.map((node) => (
-              <GitChangeTreeNodeView
-                key={node.id}
-                node={node}
-                depth={0}
-                forceExpanded={forceExpanded}
-                selectedPath={selectedPath}
-                expandedPaths={expandedPaths}
-                onSelectFile={onSelectFile}
-                onTogglePath={onTogglePath}
-              />
-            ))}
-          </div>
+          groups.map((group) => (
+            <div className="workspace-review-group" key={group.directory} role="group" aria-label={group.directory || undefined}>
+              {group.directory ? (
+                <TruncatedText className="workspace-review-group-label" text={group.directory} />
+              ) : null}
+              {group.files.map((file) => (
+                <GitChangeRow
+                  key={file.path}
+                  file={file}
+                  active={file.path === activePath}
+                  viewed={isViewed(file)}
+                  onOpen={() => onOpenFile(file.path)}
+                />
+              ))}
+            </div>
+          ))
         )}
       </div>
     </aside>
   );
 }
 
-function GitChangeTreeNodeView({
-  node,
-  depth,
-  forceExpanded,
-  selectedPath,
-  expandedPaths,
-  onSelectFile,
-  onTogglePath
+function GitChangeRow({
+  file,
+  active,
+  viewed,
+  onOpen,
 }: {
-  node: GitChangeTreeNode;
-  depth: number;
-  forceExpanded: boolean;
-  selectedPath?: string;
-  expandedPaths: Set<string>;
-  onSelectFile: (path: string) => void;
-  onTogglePath: (path: string) => void;
+  file: GitChangeFile;
+  active: boolean;
+  viewed: boolean;
+  onOpen: () => void;
 }): JSX.Element {
-  const { formatNumber } = useI18n();
-  // One indent step per level; the row's own inset lives in the stylesheet.
-  const indentation = { "--workspace-diff-tree-depth": depth } as CSSProperties;
-  if (node.kind === "directory") {
-    const expanded = forceExpanded || expandedPaths.has(node.path);
-    return (
-      <div className="workspace-diff-tree-node">
-        <button
-          className="workspace-diff-tree-row directory"
-          data-wuu-component="workspace-review-item"
-          data-wuu-kind="directory"
-          type="button"
-          style={indentation}
-          aria-expanded={expanded}
-          onClick={() => onTogglePath(node.path)}
-        >
-          <ChevronRight className="workspace-diff-tree-chevron icon-sm" />
-          {expanded ? <FolderOpen className="icon-sm" /> : <Folder className="icon-sm" />}
-          <TruncatedText className="workspace-diff-tree-name" text={node.name} />
-          <span className="workspace-diff-tree-count">{formatNumber(node.fileCount)}</span>
-        </button>
-        {expanded ? (
-          <div className="workspace-diff-tree-children">
-            {node.children.map((child) => (
-              <GitChangeTreeNodeView
-                key={child.id}
-                node={child}
-                depth={depth + 1}
-                forceExpanded={forceExpanded}
-                selectedPath={selectedPath}
-                expandedPaths={expandedPaths}
-                onSelectFile={onSelectFile}
-                onTogglePath={onTogglePath}
-              />
-            ))}
-          </div>
-        ) : null}
-      </div>
-    );
-  }
-
-  const file = node.file;
-  const selected = file?.path === selectedPath;
-  return (
-    <button
-      className={`workspace-diff-tree-row file${selected ? " active" : ""}`}
-      data-wuu-component="workspace-review-item"
-      data-wuu-kind="file"
-      data-wuu-active={selected}
-      type="button"
-      style={indentation}
-      aria-pressed={selected}
-      onClick={() => {
-        if (file) {
-          onSelectFile(file.path);
-        }
-      }}
-    >
-      <span className="workspace-diff-tree-spacer" />
-      <FileText className="icon-sm" />
-      <TruncatedText className="workspace-diff-tree-name" text={node.name} />
-      {file ? <GitChangeFileStats file={file} /> : null}
-    </button>
-  );
-}
-
-function GitChangeFileStats({ file }: { file: GitChangeFile }): JSX.Element {
   const { t } = useI18n();
   return (
-    <span className="workspace-diff-tree-stats">
-      {file.binary ? (
-        <span>{t("workspace.review.binary")}</span>
-      ) : (
-        <GitChangeCounts additions={file.additions} deletions={file.deletions} />
-      )}
-      <span className={`workspace-diff-file-status ${file.status}`} title={gitChangeStatusText(file.status)}>
-        {gitChangeStatusLabel(file.status)}
+    <button
+      className={`workspace-review-row${active ? " active" : ""}${viewed ? " viewed" : ""}`}
+      data-wuu-component="workspace-review-item"
+      data-wuu-active={active}
+      data-wuu-path={file.path}
+      type="button"
+      aria-current={active ? "true" : undefined}
+      onClick={onOpen}
+    >
+      <span className="workspace-review-row-mark">
+        {viewed ? (
+          <>
+            <Check className="icon-sm" aria-hidden="true" />
+            <span className="sr-only">{t("workspaceReview.viewed")}</span>
+          </>
+        ) : null}
       </span>
-    </span>
+      <TruncatedText className="workspace-review-row-name" text={gitPathName(file.path)} />
+      <span className="workspace-review-row-stats">
+        {file.binary ? (
+          <span>{t("workspace.review.binary")}</span>
+        ) : (
+          <GitChangeCounts additions={file.additions} deletions={file.deletions} />
+        )}
+        <span className={`workspace-review-status ${file.status}`} title={gitChangeStatusText(file.status)}>
+          {gitChangeStatusLabel(file.status)}
+        </span>
+      </span>
+    </button>
   );
 }

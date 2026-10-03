@@ -1,17 +1,10 @@
 import type { GitChangeFile } from "../shared/protocol";
 import { formatCurrentNumber, translateCurrent as t } from "./i18n";
 
-export type GitChangeTreeNode = {
-  kind: "directory" | "file";
-  id: string;
-  name: string;
-  path: string;
-  children: GitChangeTreeNode[];
-  file?: GitChangeFile;
-  additions: number;
-  deletions: number;
-  fileCount: number;
-  binary: boolean;
+export type GitChangeGroup = {
+  // Folder relative to the repository root; empty for files at the root.
+  directory: string;
+  files: GitChangeFile[];
 };
 
 export type GitDiffDisplayLine = {
@@ -53,110 +46,51 @@ export function filterGitChangeFiles(files: GitChangeFile[], query: string): Git
   });
 }
 
-export function buildGitChangeTree(files: GitChangeFile[]): GitChangeTreeNode[] {
-  const root = createGitChangeDirectoryNode("", "");
+/**
+ * Files under their folder, one level deep: root files first, then folders
+ * in path order, names sorted within each. The list order is also the order
+ * the review steps through.
+ */
+export function groupGitChangeFiles(files: GitChangeFile[]): GitChangeGroup[] {
+  const groups = new Map<string, GitChangeFile[]>();
   for (const file of files) {
-    insertGitChangeTreeFile(root, file);
+    const directory = file.path.slice(0, Math.max(file.path.lastIndexOf("/"), 0));
+    groups.set(directory, [...(groups.get(directory) ?? []), file]);
   }
-  summarizeGitChangeTreeNode(root);
-  sortGitChangeTreeNodes(root.children);
-  return root.children;
+  return [...groups.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([directory, grouped]) => ({
+      directory,
+      files: grouped.sort((left, right) =>
+        gitPathName(left.path).localeCompare(gitPathName(right.path), undefined, { sensitivity: "base" })
+      ),
+    }));
 }
 
-function createGitChangeDirectoryNode(name: string, path: string): GitChangeTreeNode {
-  return {
-    kind: "directory",
-    id: `dir:${path || "root"}`,
-    name,
-    path,
-    children: [],
-    additions: 0,
-    deletions: 0,
-    fileCount: 0,
-    binary: false
-  };
+export function gitPathName(path: string): string {
+  return path.slice(path.lastIndexOf("/") + 1);
 }
 
-function insertGitChangeTreeFile(root: GitChangeTreeNode, file: GitChangeFile): void {
-  const parts = file.path.split("/").filter(Boolean);
-  if (parts.length === 0) {
-    return;
+/**
+ * Git reports paths from the repository root; the workspace opens files
+ * relative to its own folder, which may sit inside the repository. Returns
+ * undefined for a file outside the workspace folder.
+ */
+export function workspaceRelativeGitPath(path: string, gitRoot?: string, workspaceRoot?: string): string | undefined {
+  if (!gitRoot || !workspaceRoot) {
+    return undefined;
   }
-  let parent = root;
-  for (let index = 0; index < parts.length - 1; index++) {
-    const path = parts.slice(0, index + 1).join("/");
-    let child = parent.children.find((node) => node.kind === "directory" && node.path === path);
-    if (!child) {
-      child = createGitChangeDirectoryNode(parts[index], path);
-      parent.children.push(child);
-    }
-    parent = child;
+  const normalize = (value: string): string => value.replace(/\\/g, "/").replace(/\/+$/, "");
+  const repository = normalize(gitRoot);
+  const workspace = normalize(workspaceRoot);
+  if (workspace === repository) {
+    return path;
   }
-  parent.children.push({
-    kind: "file",
-    id: `file:${file.path}`,
-    name: parts[parts.length - 1],
-    path: file.path,
-    children: [],
-    file,
-    additions: file.additions,
-    deletions: file.deletions,
-    fileCount: 1,
-    binary: file.binary === true
-  });
-}
-
-function summarizeGitChangeTreeNode(node: GitChangeTreeNode): void {
-  if (node.kind === "file") {
-    return;
+  if (!workspace.startsWith(`${repository}/`)) {
+    return undefined;
   }
-  let additions = 0;
-  let deletions = 0;
-  let fileCount = 0;
-  let binary = false;
-  for (const child of node.children) {
-    summarizeGitChangeTreeNode(child);
-    additions += child.additions;
-    deletions += child.deletions;
-    fileCount += child.fileCount;
-    binary = binary || child.binary;
-  }
-  node.additions = additions;
-  node.deletions = deletions;
-  node.fileCount = fileCount;
-  node.binary = binary;
-}
-
-function sortGitChangeTreeNodes(nodes: GitChangeTreeNode[]): void {
-  nodes.sort((left, right) => {
-    if (left.kind !== right.kind) {
-      return left.kind === "directory" ? -1 : 1;
-    }
-    return left.name.localeCompare(right.name, undefined, { sensitivity: "base" });
-  });
-  for (const node of nodes) {
-    sortGitChangeTreeNodes(node.children);
-  }
-}
-
-export function selectGitChangePath(files: GitChangeFile[], preferredPath?: string): string | undefined {
-  if (preferredPath && files.some((file) => file.path === preferredPath)) {
-    return preferredPath;
-  }
-  return files[0]?.path;
-}
-
-export function expandedGitChangeTreePathsForSelection(path?: string): Set<string> {
-  return new Set(path ? gitPathAncestors(path) : []);
-}
-
-export function gitPathAncestors(path: string): string[] {
-  const parts = path.split("/").filter(Boolean);
-  const ancestors: string[] = [];
-  for (let index = 0; index < parts.length - 1; index++) {
-    ancestors.push(parts.slice(0, index + 1).join("/"));
-  }
-  return ancestors;
+  const prefix = `${workspace.slice(repository.length + 1)}/`;
+  return path.startsWith(prefix) ? path.slice(prefix.length) : undefined;
 }
 
 export function gitChangeStatusLabel(status: GitChangeFile["status"]): string {

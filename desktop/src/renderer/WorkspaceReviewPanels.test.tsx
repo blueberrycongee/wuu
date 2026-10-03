@@ -2,7 +2,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { WorkspaceReviewPanel } from "./WorkspaceReviewPanels";
-import type { GitChangeFile, GitChangesResult, GitFileDiffResult } from "../shared/protocol";
+import type { GitChangeFile, GitChangesResult, GitFileDiffResult, GitStatusResult } from "../shared/protocol";
 
 vi.mock("./WorkspaceMonacoDiffEditor", () => ({
   WorkspaceMonacoDiffEditor: ({ path }: { path: string }) => (
@@ -30,43 +30,32 @@ async function flushReviewEffects(): Promise<void> {
   });
 }
 
-function installGitReviewStub(files: GitChangeFile[]): {
+function installGitReviewStub(initial: GitChangeFile[], gitRoot = "/repo"): {
   listGitChanges: ReturnType<typeof vi.fn>;
   readGitFileDiff: ReturnType<typeof vi.fn>;
+  setFiles: (files: GitChangeFile[]) => void;
 } {
-  const first = files[0];
-  const changes: GitChangesResult = {
-    is_repo: true,
-    root: "/repo",
-    files,
-  };
-  const diff: GitFileDiffResult = {
-    is_repo: true,
-    path: first?.path ?? "",
-    status: first?.status ?? "modified",
-    additions: first?.additions ?? 0,
-    deletions: first?.deletions ?? 0,
-    binary: first?.binary,
-    patch: [
-      `diff --git a/${first?.path ?? "file.ts"} b/${first?.path ?? "file.ts"}`,
-      "@@ -1 +1 @@",
-      "-old value",
-      "+new value that is deliberately long enough to exercise wrapping in the review pane",
-    ].join("\n"),
-    original_text: "old value\n",
-    modified_text: "new value\n",
-    truncated: false,
-  };
-  const listGitChanges = vi.fn().mockResolvedValue(changes);
-  const readGitFileDiff = vi.fn().mockResolvedValue(diff);
+  let files = initial;
+  const listGitChanges = vi.fn(async (): Promise<GitChangesResult> => ({ is_repo: true, root: gitRoot, files }));
+  const readGitFileDiff = vi.fn(async (path: string): Promise<GitFileDiffResult> => {
+    const file = files.find((candidate) => candidate.path === path);
+    return {
+      is_repo: true,
+      path,
+      status: file?.status ?? "modified",
+      additions: file?.additions ?? 0,
+      deletions: file?.deletions ?? 0,
+      patch: "",
+      original_text: `old ${path}\n`,
+      modified_text: `new ${path} ${file?.additions ?? 0}\n`,
+      truncated: false,
+    };
+  });
   Object.defineProperty(window, "wuu", {
     configurable: true,
-    value: {
-      listGitChanges,
-      readGitFileDiff,
-    },
+    value: { listGitChanges, readGitFileDiff },
   });
-  return { listGitChanges, readGitFileDiff };
+  return { listGitChanges, readGitFileDiff, setFiles: (next) => (files = next) };
 }
 
 function restoreWuu(): void {
@@ -91,107 +80,203 @@ afterEach(() => {
 });
 
 function click(element: Element | null | undefined): void {
+  expect(element).toBeTruthy();
   act(() => {
     (element as HTMLElement).click();
   });
 }
 
-function reviewRow(name: string): HTMLButtonElement | undefined {
-  return Array.from(container?.querySelectorAll<HTMLButtonElement>(".workspace-diff-tree-row.file") ?? [])
-    .find((row) => row.querySelector(".workspace-diff-tree-name")?.textContent === name);
+function panel(): HTMLElement {
+  return container!.querySelector<HTMLElement>("[data-wuu-component=\"workspace-review\"]")!;
 }
 
-const THREE_FILES: GitChangeFile[] = [
+function row(path: string): HTMLButtonElement | null {
+  return container!.querySelector<HTMLButtonElement>(`.workspace-review-row[data-wuu-path="${path}"]`);
+}
+
+function action(name: string): HTMLButtonElement | null {
+  return container!.querySelector<HTMLButtonElement>(`[data-wuu-action="${name}"]`);
+}
+
+function rowOrder(): string[] {
+  return Array.from(container!.querySelectorAll<HTMLElement>(".workspace-review-row")).map(
+    (element) => element.dataset.wuuPath ?? "",
+  );
+}
+
+function shownDiffPath(): string | undefined {
+  return container!.querySelector<HTMLElement>(".workspace-monaco-diff-editor")?.dataset.path;
+}
+
+function mockPanelWidth(width: number): () => void {
+  const rect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+    const measured = this.classList.contains("workspace-review-panel") ? width : 0;
+    return { width: measured, height: 0, x: 0, y: 0, top: 0, left: 0, right: measured, bottom: 0, toJSON: () => ({}) } as DOMRect;
+  });
+  return () => rect.mockRestore();
+}
+
+const status = (dirty: number): GitStatusResult => ({ is_repo: true, branch: "main", dirty_count: dirty });
+
+// Path order differs from list order: root files lead, then folders.
+const FILES: GitChangeFile[] = [
   { path: "app/one.ts", status: "modified", additions: 1, deletions: 1 },
   { path: "app/two.ts", status: "added", additions: 3, deletions: 0 },
+  { path: "go.mod", status: "modified", additions: 1, deletions: 1 },
   { path: "lib/three.ts", status: "deleted", additions: 0, deletions: 2 },
 ];
 
 describe("WorkspaceReviewPanel", () => {
-  it("folds the change list into a switcher when the panel is too narrow for both", async () => {
-    const api = installGitReviewStub(THREE_FILES);
-    mount(<WorkspaceReviewPanel gitStatus={{ is_repo: true, branch: "main", dirty_count: 3 }} workspaceRoot="/repo" />);
+  it("opens a narrow panel on the change list and reads one file at a time", async () => {
+    const api = installGitReviewStub(FILES);
+    mount(<WorkspaceReviewPanel gitStatus={status(4)} workspaceRoot="/repo" />);
     await flushReviewEffects();
 
-    expect(container?.querySelector(".workspace-review-tree-pane")).toBeNull();
-    expect(container?.querySelector(".workspace-review-resizer")).toBeNull();
-    const switcher = container?.querySelector<HTMLButtonElement>(".workspace-review-switcher");
-    expect(switcher?.getAttribute("aria-expanded")).toBe("false");
+    expect(panel().dataset.wuuLayout).toBe("stack");
+    expect(panel().dataset.wuuState).toBe("navigation");
+    expect(rowOrder()).toEqual(["go.mod", "app/one.ts", "app/two.ts", "lib/three.ts"]);
+    expect(api.readGitFileDiff).not.toHaveBeenCalled();
 
-    click(switcher);
-    expect(switcher?.getAttribute("aria-expanded")).toBe("true");
-    expect(document.activeElement).toBe(container?.querySelector(".workspace-diff-search"));
-
-    click(reviewRow("two.ts"));
+    click(row("app/two.ts"));
     await flushReviewEffects();
-    expect(api.readGitFileDiff).toHaveBeenLastCalledWith("app/two.ts", "/repo");
-    expect(switcher?.getAttribute("aria-expanded")).toBe("false");
-    expect(document.activeElement).toBe(switcher);
+    expect(panel().dataset.wuuState).toBe("detail");
+    expect(container!.querySelector(".workspace-review-list")).toBeNull();
+    expect(shownDiffPath()).toBe("app/two.ts");
+    expect(document.activeElement).toBe(action("back"));
 
-    const [previous, next] = Array.from(
-      container?.querySelectorAll<HTMLButtonElement>(".workspace-review-stepper button") ?? [],
-    );
-    click(next);
+    click(action("next"));
     await flushReviewEffects();
-    expect(api.readGitFileDiff).toHaveBeenLastCalledWith("lib/three.ts", "/repo");
-    expect(next.disabled).toBe(true);
-    expect(previous.disabled).toBe(false);
+    expect(shownDiffPath()).toBe("lib/three.ts");
+    expect(action("next")?.disabled).toBe(true);
+    expect(action("previous")?.disabled).toBe(false);
 
-    click(switcher);
-    act(() => {
-      document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-    });
-    expect(switcher?.getAttribute("aria-expanded")).toBe("false");
-    expect(document.activeElement).toBe(switcher);
+    click(action("back"));
+    expect(panel().dataset.wuuState).toBe("navigation");
+    expect(document.activeElement).toBe(row("lib/three.ts"));
+    expect(row("lib/three.ts")?.getAttribute("aria-current")).toBe("true");
   });
 
   it("keeps the change list beside the diff when the panel has room", async () => {
-    const rect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
-      const width = this.classList.contains("workspace-review-panel") ? 900 : 0;
-      return { width, height: 0, x: 0, y: 0, top: 0, left: 0, right: width, bottom: 0, toJSON: () => ({}) } as DOMRect;
-    });
+    const restore = mockPanelWidth(900);
     try {
-      installGitReviewStub(THREE_FILES);
-      mount(<WorkspaceReviewPanel gitStatus={{ is_repo: true, branch: "main", dirty_count: 3 }} workspaceRoot="/repo" />);
+      installGitReviewStub(FILES);
+      mount(<WorkspaceReviewPanel gitStatus={status(4)} workspaceRoot="/repo" />);
       await flushReviewEffects();
 
-      expect(container?.querySelector(".workspace-review-switcher")).toBeNull();
-      expect(container?.querySelector(".workspace-review-resizer")).toBeTruthy();
-      expect(container?.querySelector(".workspace-review-tree-pane .workspace-diff-tree-row")).toBeTruthy();
+      expect(panel().dataset.wuuLayout).toBe("split");
+      expect(container!.querySelector(".workspace-review-resizer")).toBeTruthy();
+      expect(action("back")).toBeNull();
+      // The first file in list order, not in Git's path order.
+      expect(shownDiffPath()).toBe("go.mod");
+      expect(row("go.mod")?.getAttribute("aria-current")).toBe("true");
     } finally {
-      rect.mockRestore();
+      restore();
     }
+  });
+
+  it("follows new Git status in place while a file is open", async () => {
+    const api = installGitReviewStub(FILES);
+    const view = (gitStatus: GitStatusResult): JSX.Element => (
+      <WorkspaceReviewPanel gitStatus={gitStatus} workspaceRoot="/repo-refresh" />
+    );
+    mount(view(status(4)));
+    await flushReviewEffects();
+    click(row("app/one.ts"));
+    await flushReviewEffects();
+    click(action("viewed"));
+    expect(action("viewed")?.getAttribute("aria-pressed")).toBe("true");
+
+    // An agent edits the open file and adds another.
+    api.setFiles([
+      { path: "app/one.ts", status: "modified", additions: 5, deletions: 1 },
+      ...FILES.slice(1),
+      { path: "app/zero.ts", status: "untracked", additions: 2, deletions: 0 },
+    ]);
+    act(() => root!.render(view(status(5))));
+    await flushReviewEffects();
+
+    expect(api.listGitChanges).toHaveBeenCalledTimes(2);
+    expect(panel().dataset.wuuState).toBe("detail");
+    expect(shownDiffPath()).toBe("app/one.ts");
+    expect(api.readGitFileDiff).toHaveBeenLastCalledWith("app/one.ts", "/repo-refresh");
+    // The mark was for the earlier change; the new one is unread.
+    expect(action("viewed")?.getAttribute("aria-pressed")).toBe("false");
+    click(action("next"));
+    await flushReviewEffects();
+    expect(shownDiffPath()).toBe("app/two.ts");
+
+    // The open file is reverted: the review returns to the list.
+    api.setFiles(FILES.filter((file) => file.path !== "app/two.ts"));
+    act(() => root!.render(view(status(3))));
+    await flushReviewEffects();
+    expect(panel().dataset.wuuState).toBe("navigation");
+    expect(row("app/two.ts")).toBeNull();
+  });
+
+  it("keeps viewed marks for an unchanged file across remounts", async () => {
+    installGitReviewStub(FILES);
+    const view = <WorkspaceReviewPanel gitStatus={status(4)} workspaceRoot="/repo-viewed" />;
+    mount(view);
+    await flushReviewEffects();
+    click(row("go.mod"));
+    await flushReviewEffects();
+    click(action("viewed"));
+    act(() => root!.unmount());
+
+    root = createRoot(container!);
+    act(() => root!.render(view));
+    await flushReviewEffects();
+    click(row("go.mod"));
+    await flushReviewEffects();
+    expect(action("viewed")?.getAttribute("aria-pressed")).toBe("true");
+    click(action("back"));
+    click(row("app/one.ts"));
+    await flushReviewEffects();
+    expect(action("viewed")?.getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("opens files relative to a workspace folder inside the repository", async () => {
+    installGitReviewStub(
+      [
+        { path: "desktop/src/app.ts", status: "modified", additions: 1, deletions: 0 },
+        { path: "desktop/src/gone.ts", status: "deleted", additions: 0, deletions: 4 },
+        { path: "go.mod", status: "modified", additions: 1, deletions: 1 },
+      ],
+      "/repo",
+    );
+    const onOpenFile = vi.fn();
+    mount(<WorkspaceReviewPanel gitStatus={status(3)} workspaceRoot="/repo/desktop" onOpenFile={onOpenFile} />);
+    await flushReviewEffects();
+
+    click(row("desktop/src/app.ts"));
+    await flushReviewEffects();
+    click(action("open"));
+    expect(onOpenFile).toHaveBeenCalledWith("src/app.ts");
+
+    click(action("next"));
+    await flushReviewEffects();
+    expect(shownDiffPath()).toBe("desktop/src/gone.ts");
+    expect(action("open")).toBeNull();
+
+    // Outside the workspace folder: nothing the editor can open.
+    click(action("back"));
+    click(row("go.mod"));
+    await flushReviewEffects();
+    expect(action("open")).toBeNull();
   });
 
   it("uses the full review width for a single changed file", async () => {
     const api = installGitReviewStub([
-      {
-        path: "desktop/src/renderer/styles/sidebar.css",
-        status: "modified",
-        additions: 4,
-        deletions: 5,
-      },
+      { path: "desktop/src/renderer/styles/sidebar.css", status: "modified", additions: 4, deletions: 5 },
     ]);
-
-    mount(
-      <WorkspaceReviewPanel
-        gitStatus={{ is_repo: true, branch: "main", dirty_count: 1 }}
-        workspaceRoot="/repo/worktree"
-      />,
-    );
+    mount(<WorkspaceReviewPanel gitStatus={status(1)} workspaceRoot="/repo/worktree" />);
     await flushReviewEffects();
 
     expect(api.listGitChanges).toHaveBeenCalledWith("/repo/worktree");
-    expect(api.readGitFileDiff).toHaveBeenCalledWith(
-      "desktop/src/renderer/styles/sidebar.css",
-      "/repo/worktree",
-    );
-
-    const panel = container?.querySelector<HTMLElement>(".workspace-review-panel");
-    expect(panel?.classList.contains("single-file")).toBe(true);
-    expect(container?.querySelector(".workspace-review-diff-panel")).toBeTruthy();
-    expect(container?.querySelector(".workspace-monaco-diff-editor")).toBeTruthy();
-    expect(container?.querySelector(".workspace-review-tree-pane")).toBeNull();
-    expect(container?.querySelector(".workspace-review-resizer")).toBeNull();
+    expect(panel().dataset.wuuLayout).toBe("single");
+    expect(shownDiffPath()).toBe("desktop/src/renderer/styles/sidebar.css");
+    expect(container!.querySelector(".workspace-review-list")).toBeNull();
+    expect(action("back")).toBeNull();
+    expect(action("next")).toBeNull();
   });
 });

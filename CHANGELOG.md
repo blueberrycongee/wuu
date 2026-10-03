@@ -10,6 +10,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Review changes in a responsive folder-grouped list, with file navigation,
+  viewed marks, and an action to open the current file in the editor.
+
 - Use neutral sidebar selection, unfilled workspace tool-picker rows, and a
   shared reading canvas for settings groups and fields.
 

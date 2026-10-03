@@ -71,6 +71,8 @@ selection actions do not yet apply to PDF or image previews.
 
 Open **Review** or enter `/diff` to inspect the current Git changes. Check the changed paths, additions, deletions, and any sensitive data before committing. Compare the agent's reported checks with their actual command results.
 
+Changed files are grouped by folder and the list refreshes as the workspace changes. A wide panel shows the diff beside the list; in a narrow one, choose a file to open its diff and use the back button to return. In the diff header, the arrows step to the previous or next file, the circle marks the file as viewed, and the pencil opens it in the editor. Viewed marks clear when a file’s status or added/deleted line counts change and are not kept after Wuu restarts. Edits with the same status and line counts do not clear a mark; review the current diff before committing.
+
 The diff shown for one turn can differ from the current workspace diff because later work may have changed the same files. Base your final review on the current repository state.
 
 ## Terminal

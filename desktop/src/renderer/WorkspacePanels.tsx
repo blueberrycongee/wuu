@@ -1066,6 +1066,7 @@ export function WorkspaceRightPanel({
                   <WorkspaceReviewPanel
                     gitStatus={gitStatus}
                     workspaceRoot={workspaceContext?.cwd}
+                    onOpenFile={onOpenFile}
                   />
                 ) : activeTab.kind === "project" ? (
                   <ProjectPanel projectID={activeTab.projectID} />
