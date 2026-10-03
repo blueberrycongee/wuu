@@ -19,6 +19,32 @@ menus and windows use the smaller catalog in `src/main/i18n.ts`.
 Use the i18n number/date helpers for display. Do not call `toLocaleString` with
 the system default because the user may select a different Wuu language.
 
+## Voice
+
+Wuu's copy is plain, calm and specific: say what happened and what to do next,
+without blame, filler or internal vocabulary.
+
+- **Failures.** Say what could not be done, then the next step when a retry is
+  safe: `Couldn’t save. Try again.` Do not open with `Failed to` or `Unable to`,
+  and do not add `Please`. Keep an `{error}` or `{reason}` placeholder when the
+  cause helps the user. zh-CN keeps its established forms (`保存失败，请重试。`,
+  `无法…，请稍后重试。`, `未能…`).
+- **Empty states.** Say what is empty and, only when the same screen has the
+  control, how to fill it.
+- **One noun per object.** A user's own chat is a conversation (对话). Session
+  (会话) is reserved for the Project Agent, peer messaging, engine approvals and
+  tool history. Do not use both words for one object on one surface.
+- **Names, not acronyms.** Write `Programmatic tool calling`, not `PTC`, wherever
+  a user reads it or assistive technology announces it.
+- **Typography.** Use `’` and `“ ”` rather than `'` and `"`, and the single
+  character `…` rather than three dots. zh-CN keeps full-width punctuation.
+- **English terms in zh-CN.** Chinese has no plural marker, so a term stays
+  singular (`Agent`, not `Agents`) unless it is a product name.
+
+Fix existing strings when you touch them instead of sweeping the catalog: most
+`Failed to …` strings are fallbacks that show only when an error carries no
+message of its own, so rewording them changes little of what users see.
+
 ## Add a locale
 
 1. Add it once to `APP_LOCALES` in `packages/protocol/src/index.ts`.

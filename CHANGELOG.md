@@ -10,6 +10,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Use consistent conversation labels and full programmatic-tool-calling names,
+  with clearer recovery messages in English and Chinese.
+
 - Keep first-run choices beside the companion, with scrolling content and
   fixed actions, and remove explanations repeated by the available choices.
 
