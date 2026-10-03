@@ -985,7 +985,7 @@ describe("session tab switch latency", () => {
     expect(activeSessionTabLabel()).toContain(beta.title);
   });
 
-  it.each(["thread", "new-draft", "resume-error"])("restores the source runtime when abandoning a cross-workspace resume via %s", async navigation => {
+  it.each(["thread", "new-draft", "resume-error", "source-unavailable"])("restores the source runtime when abandoning a cross-workspace resume via %s", async navigation => {
     installWuuApi();
     const projects = ["alpha", "beta"].map(id => ({
       id, name: id, path: "/tmp/" + id, created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z",
@@ -994,16 +994,24 @@ describe("session tab switch latency", () => {
     const alpha = { ...threadA(), cwd: projects[0].path, workspace_id: "alpha" };
     const beta = { ...threadB(), cwd: projects[1].path, workspace_id: "beta" };
     const pending = deferred<{ thread: Thread }>();
+    let sourceUnavailable = false;
     window.wuu.listProjects = vi.fn(async () => ({ projects, active_context: context }));
-    window.wuu.selectProject = vi.fn(async id => {
+    window.wuu.selectProject = vi.fn<WuuDesktopApi["selectProject"]>(async id => {
       context = { kind: "project", project_id: id, cwd: projects.find(project => project.id === id)!.path };
-      return { projects, active_context: context };
+      return {
+        projects: projects.map(project => ({ ...project, missing: sourceUnavailable && project.id === "alpha" })),
+        active_context: context,
+        runtime_issue: sourceUnavailable && id === "alpha"
+          ? { code: "active_project_unavailable", message: "Source workspace is unavailable", project_id: "alpha", cwd: projects[0].path }
+          : undefined,
+      };
     });
     window.wuu.initialize = vi.fn(async () => ({ ...initialized(), workspace_root: context.cwd }));
     window.wuu.listThreads = vi.fn(async cwd => ({ threads: [cwd === beta.cwd ? beta : alpha] }));
     window.wuu.resumeThread = vi.fn(async id => id === beta.id ? pending.promise : { thread: alpha });
     await act(async () => { root = createRoot(container); root.render(<App />); });
     await flushAsync();
+    act(() => { setMainComposerPrompt("Retained source draft"); });
     const projectRow = (id: string) => Array.from(container.querySelectorAll(".project-row-name"))
       .find(label => label.textContent === id)!.closest(".project-group")!;
     await act(async () => { (projectRow("beta").querySelector(".project-row-name")!.closest("button") as HTMLButtonElement).click(); });
@@ -1011,10 +1019,27 @@ describe("session tab switch latency", () => {
     await act(async () => { threadRowButton("session switch B")!.click(); });
     expect(context.project_id).toBe("beta");
     expect(activeThreadProbe()?.dataset.threadId).toBe(alpha.id);
-    if (navigation === "resume-error") {
+    if (navigation === "resume-error" || navigation === "source-unavailable") {
+      sourceUnavailable = navigation === "source-unavailable";
       await act(async () => { pending.reject(new Error("Target resume failed")); });
       await flushAsync();
       expect(context.project_id).toBe("alpha");
+      expect(activeSessionTabLabel()).toContain(alpha.preview);
+      if (sourceUnavailable) {
+        expect(container.querySelector(".composer-send-button")).toBeNull();
+        expect(container.querySelector(".session-switch-loading")).toBeNull();
+        sourceUnavailable = false;
+        window.wuu.resumeThread = vi.fn(async id => ({ thread: id === beta.id ? beta : alpha }));
+        await act(async () => { threadRowButton(beta.preview)!.click(); });
+        await flushAsync();
+        if (!threadRowButton(alpha.preview)) {
+          await act(async () => { (projectRow("alpha").querySelector(".project-row-name")!.closest("button") as HTMLButtonElement).click(); });
+          await flushAsync();
+        }
+        await act(async () => { threadRowButton(alpha.preview)!.click(); });
+        await flushAsync();
+      }
+      expect(mainComposerTextarea().value).toBe("Retained source draft");
       expect(activeThreadProbe()?.dataset.threadId).toBe(alpha.id);
       expect(mainComposerTextarea().disabled).toBe(false);
       return;

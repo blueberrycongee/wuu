@@ -18,7 +18,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Keep session switches covered by the existing loading animation until the
   resumed conversation restores its folds and scroll position; block editing
-  and sending during restoration and ignore superseded switch results.
+  and sending during restoration and ignore superseded switch results. Disable
+  sending if a failed cross-workspace switch returns to an unavailable source
+  workspace, while preserving the source conversation and draft.
 
 - Use the full subscription-card width for a single allowance, align card
   spacing and corners with shared panels, and keep model selectors readable

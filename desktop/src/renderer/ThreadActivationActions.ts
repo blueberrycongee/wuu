@@ -248,7 +248,24 @@ export function createThreadActivationActions(
       let failure = error;
       if (currentState.activeContext) {
         try {
-          await selectRuntimeContext(currentState.activeContext);
+          const workspaceState = await selectRuntimeContext(currentState.activeContext);
+          const runtimeIssue = workspaceState.runtime_issue;
+          if (runtimeIssue) {
+            const configuration = await loadRuntimeConfiguration(workspaceState);
+            if (!deps.isCurrentViewSwitchRequest(requestID)) return;
+            // Selection can succeed with an unavailable workspace. Refresh
+            // runtime fields without discarding the retained history or drafts.
+            deps.setAppState(current => ({
+              ...current,
+              initialized: configuration.initialized,
+              projects: workspaceState.projects,
+              activeContext: configuration.activeContext,
+              activeProjectId: configuration.activeProjectId,
+              gitStatus: configuration.gitStatus,
+              status: runtimeIssue.message,
+            }));
+            failure = new Error(runtimeIssue.message);
+          }
         } catch (restoreError) {
           if (!deps.isCurrentViewSwitchRequest(requestID)) return;
           // The source workspace may have disappeared too. Keep its history,
