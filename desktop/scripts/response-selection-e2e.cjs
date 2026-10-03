@@ -1,6 +1,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const browserPreview = process.argv.includes("--browser-preview");
+const streamingOnly = process.argv.includes("--streaming-only");
 const { app, BrowserWindow, ipcMain } = browserPreview ? {} : require("electron");
 
 // npx electron-vite build && npx electron scripts/response-selection-e2e.cjs
@@ -8,11 +9,12 @@ const desktop = path.resolve(__dirname, "..");
 const output = process.env.WUU_SELECTION_E2E_OUTPUT || path.join(desktop, "out/response-selection-e2e");
 fs.mkdirSync(output, { recursive: true });
 if (app) app.setPath("userData", fs.mkdtempSync(path.join(output, "profile-")));
+if (app) process.env.WUU_SELECTION_E2E_STREAMING = "true";
 process.env.WUU_SELECTION_E2E_CWD = path.dirname(desktop);
 const report = { scene: "response-selection-v2", boundary: "Real Electron renderer; synthetic preload transport. No Go/provider execution.", cases: [], calls: [], screenshots: [], measurements: [], errors: [] };
 if (ipcMain) ipcMain.on("selection:bridge-call", (_event, call) => report.calls.push(call));
 let win;
-const surface = '[data-thread-id="selection-main"] article[data-response-item-id="selection-main-answer"][data-response-settled="true"] .agent-text';
+const surface = '[data-thread-id="selection-main"] article[data-response-item-id="selection-main-answer"] .agent-text';
 const card = '[data-main-conversation-composer] .composer-response-selection-card .composer-document-card-main';
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function evaluate(fn, ...args) {
@@ -177,7 +179,7 @@ async function checkSource(expected) {
     throw new Error(`Source highlight mismatch: ${JSON.stringify({ actual, expected })}`);
   }
 }
-async function send(expected, comment, prompt) {
+async function send(expected, comment, prompt, method = "startTurn") {
   const before = report.calls.length;
   await input('[data-main-conversation-composer] .composer textarea', prompt);
   await click('[data-main-conversation-composer] .composer-send-button');
@@ -185,17 +187,18 @@ async function send(expected, comment, prompt) {
   for (let retry = 0; report.calls.length === before && retry < 100; retry++) await sleep(20);
   if (report.calls.length !== before + 1) throw new Error("Expected exactly one bridge call");
   const call = report.calls.at(-1);
-  validatePayload(call, expected, comment, prompt);
+  validatePayload(call, expected, comment, prompt, method);
 }
-function validatePayload(call, expected, comment, prompt) {
-  if (call.method !== "startTurn" || call.args[0] !== "selection-main") throw new Error("Wrong send route");
-  const parts = call.args[6];
+function validatePayload(call, expected, comment, prompt, method = "startTurn") {
+  if (call.method !== method || call.args[0] !== "selection-main") throw new Error("Wrong send route: " + call.method);
+  const parts = call.args[method === "steerTurn" ? 7 : 6];
   const quote = `Quoted assistant response (JSON):\n${JSON.stringify({ text: expected.text, comment })}\n`;
   if (parts[0].type !== "response_selection" || parts[0].text !== quote || parts[0].selection.text !== expected.text || (parts[0].selection.comment || "") !== comment) throw new Error("Quote/comment content parts mismatch");
   const source = parts[0].selection.source;
   if (source.thread_id !== "selection-main" || source.turn_id !== "selection-main-turn" || source.item_id !== "selection-main-answer" || source.start_offset !== expected.start || source.end_offset !== expected.end || (source.range_text ?? expected.text) !== expected.source.slice(expected.start, expected.end) || !parts[0].selection.id) throw new Error("Rich selection source metadata mismatch");
   if (prompt && (parts.at(-1).type !== "text" || parts.at(-1).text !== prompt)) throw new Error("Prompt part mismatch");
-  if (!call.args[1].includes(quote.trimEnd()) || (prompt && !call.args[1].includes(prompt))) throw new Error("Flattened prompt lost quote/comment or prompt");
+  const flattened = call.args[method === "steerTurn" ? 2 : 1];
+  if (!flattened.includes(quote.trimEnd()) || (prompt && !flattened.includes(prompt))) throw new Error("Flattened prompt lost quote/comment or prompt");
 }
 async function checkAnnotationPanel(name) {
   await settle();
@@ -301,6 +304,68 @@ async function placementCoverage() {
   await until(() => !document.querySelector(".response-selection-toolbar"), "fully offscreen source dismisses the popup");
   report.cases.push("source-left full-range anchors; forward/reverse native drag; multiline comment growth; narrow edge clamp; top fallback; visible-source scroll preserves comment/focus; offscreen dismissal");
 }
+async function streamingCoverage() {
+  const { thread } = await evaluate(() => window.wuu.resumeThread("selection-main"));
+  const turn = thread.turns[0];
+  const answer = turn.items.find(item => item.id === "selection-main-answer");
+  const original = answer.text;
+  const appended = original + "\n\nAppended stream output.";
+  const ids = { thread_id: "selection-main", turn_id: "selection-main-turn", item_id: "selection-main-answer" };
+  const notify = (method, params) => win.webContents.send("selection:server-event", {
+    workdir: path.dirname(desktop), kind: "notification", message: { method, params },
+  });
+  await until(selector => !!document.querySelector(selector)?.querySelector('[data-stream-state="streaming"]'),
+    "live response", surface);
+  const expected = await select("Native drag selection", false, true);
+  await click(".response-selection-toolbar .selection-action-comment-toggle");
+  const comment = "Explain the live passage 😀 中文";
+  await win.webContents.insertText(comment);
+  notify("item/agentMessage/delta", { ...ids, delta: "\n\nAppended stream output." });
+  await until(selector => document.querySelector(selector)?.textContent.includes("Appended stream output."), "stream append rendered", surface);
+  const preserved = await evaluate(() => {
+    const input = document.querySelector(".response-selection-toolbar .selection-action-comment-input");
+    return { value: input?.value, focused: document.activeElement === input };
+  });
+  if (preserved.value !== comment || !preserved.focused) throw new Error("Stream append lost the comment or its focus");
+  await click(".response-selection-toolbar .selection-action-comment-submit");
+  await until(selector => !!document.querySelector(selector), "live quote card", card);
+  await checkSource(expected);
+  await send(expected, comment, "Explain this while continuing.", "steerTurn");
+  report.cases.push({ name: "live native drag, comment survives append, exact live source and steer payload", preserved });
+
+  await select("Repeated 😀 café 中文 target.", true);
+  await click(".response-selection-toolbar .selection-action-comment-toggle");
+  await win.webContents.insertText("Discard this if the passage changes");
+  notify("item/agentMessage/replace", { ...ids, text: appended.replaceAll("Repeated", "Rewritten") });
+  await until(selector => document.querySelector(selector)?.textContent.includes("Rewritten"), "replacement rendered", surface);
+  await until(() => !document.querySelector(".response-selection-toolbar"), "changed source dismisses annotation");
+  if (await evaluate(selector => !!document.querySelector(selector), card)) throw new Error("Invalidated passage was added to the composer");
+  validatePayload(report.calls.at(-1), expected, comment, "Explain this while continuing.", "steerTurn");
+  report.cases.push("live replacement dismisses a stale annotation; already submitted quote remains an immutable snapshot");
+
+  notify("item/agentMessage/replace", { ...ids, text: appended });
+  await until(selector => document.querySelector(selector)?.textContent.includes("Repeated"), "original source restored", surface);
+  const finalSelection = await select("Repeated 😀 café 中文 target.", true);
+  await click(".response-selection-toolbar .selection-action-comment-toggle");
+  const finalComment = "Keep this through turn completion";
+  await win.webContents.insertText(finalComment);
+  const item = { ...answer, status: "completed", text: appended };
+  notify("item/completed", { ...ids, item });
+  notify("turn/completed", { thread_id: ids.thread_id, turn: {
+    ...turn, status: "completed", terminal: true, completed_at: new Date().toISOString(),
+    items: turn.items.map(current => current.id === item.id ? item : current),
+  } });
+  await until(selector => !!document.querySelector(selector)?.querySelector('[data-stream-state="settled"]'), "turn settled", surface);
+  const retained = await evaluate(() => document.querySelector(".response-selection-toolbar .selection-action-comment-input")?.value);
+  if (retained !== finalComment) throw new Error("Turn completion discarded the live comment");
+  await click(".response-selection-toolbar .selection-action-comment-submit");
+  await until(selector => !!document.querySelector(selector), "completed annotation card", card);
+  await checkSource(finalSelection);
+  await click(card);
+  await click(".composer-response-selection-remove");
+  report.cases.push("turn completion preserves the active Unicode selection and comment with exact source offsets");
+}
+
 async function run() {
   win = new BrowserWindow({ width: 1200, height: 820, show: process.env.WUU_E2E_VISIBLE === "true", webPreferences: { preload: path.join(__dirname, "response-selection-e2e-preload.cjs"), contextIsolation: true, nodeIntegration: false, sandbox: false, backgroundThrottling: false } });
   win.setContentSize(1200, 820);
@@ -312,12 +377,18 @@ async function run() {
     callback({ cancel: true });
   });
   await win.loadFile(process.env.WUU_E2E_RENDERER || path.join(desktop, "out/renderer/index.html"));
-  await until(selector => !!document.querySelector(selector), "settled response", surface);
+  await until(selector => !!document.querySelector(selector), "rendered response", surface);
   await evaluate(() => {
     for (const toggle of document.querySelectorAll('.environment-toggle-button[aria-pressed="true"], .title-actions .side-panel-toggle-button[aria-pressed="true"]')) toggle.click();
     if (!document.querySelector(".app-shell").classList.contains("sidebar-collapsed")) document.querySelector(".sidebar-toggle-button").click();
   });
   await settle();
+  await streamingCoverage();
+  if (streamingOnly) {
+    if (report.errors.length) throw new Error(JSON.stringify(report.errors));
+    report.status = "passed";
+    return;
+  }
   const drag = await add("Native drag selection", false, true);
   await checkSource(drag);
   await screenshot("physical-drag-source");
@@ -413,7 +484,7 @@ if (browserPreview) servePreview();
 else app.whenReady().then(run).catch(async error => {
   report.status = "failed"; report.failure = String(error.stack || error);
   console.error(error);
-  if (win && !win.isDestroyed()) await screenshot("failure").catch(() => {});
+  if (!streamingOnly && win && !win.isDestroyed()) await screenshot("failure").catch(() => {});
 }).finally(() => {
   fs.writeFileSync(path.join(output, "report.json"), JSON.stringify(report, null, 2));
   console.log(JSON.stringify(report, null, 2));

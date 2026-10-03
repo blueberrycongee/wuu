@@ -414,7 +414,6 @@ function BuiltInThreadItemView({
           id={messageAnchorID(turnID, item.id)}
           turnID={turnID}
           itemID={item.id}
-          settled={item.status === "completed" && turnStatus === "completed" && !streaming}
           data-wuu-component="message"
           data-wuu-variant="agent"
           className={`agent-block${

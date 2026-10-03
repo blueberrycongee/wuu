@@ -68,7 +68,7 @@ export function navigateToResponseSelection(selection: ResponseSelection): boole
     if (article.dataset.responseItemId !== selection.source.item_id
       || article.dataset.responseTurnId !== selection.source.turn_id
       || article.closest<HTMLElement>("[data-thread-id]")?.dataset.threadId !== selection.source.thread_id
-      || article.dataset.responseSettled !== "true" || !visible(article)) continue;
+      || !visible(article)) continue;
     const root = article.querySelector<HTMLElement>(".agent-text");
     const range = root && validatedRange(root, selection);
     if (!root || !range) continue;
@@ -116,8 +116,8 @@ export function ResponseSelectionReference({ selection }: { selection: ResponseS
   </section>;
 }
 
-export function AssistantResponseArticle({ turnID, itemID, settled, children, ...props }: ComponentPropsWithoutRef<"article"> & {
-  turnID: string; itemID: string; settled: boolean;
+export function AssistantResponseArticle({ turnID, itemID, children, ...props }: ComponentPropsWithoutRef<"article"> & {
+  turnID: string; itemID: string;
 }): JSX.Element {
   const ref = useRef<HTMLElement>(null);
   const toolbarRef = useRef<HTMLDivElement>(null);
@@ -208,7 +208,7 @@ export function AssistantResponseArticle({ turnID, itemID, settled, children, ..
       if (dragging || toolbarRef.current?.contains(document.activeElement)) return;
       const root = article.querySelector<HTMLElement>(".agent-text");
       const native = window.getSelection();
-      if (!settled || !root || !native || native.rangeCount !== 1 || native.isCollapsed) return clear();
+      if (!root || !native || native.rangeCount !== 1 || native.isCollapsed) return clear();
       const range = native.getRangeAt(0);
       if (!root.contains(range.startContainer) || !root.contains(range.endContainer)) return clear();
       const controls = 'button, input, textarea, select, [role="button"], [contenteditable]:not([contenteditable="false"])';
@@ -279,7 +279,7 @@ export function AssistantResponseArticle({ turnID, itemID, settled, children, ..
       window.removeEventListener("resize", clear);
       document.removeEventListener("scroll", scroll, true);
     };
-  }, [turnID, itemID, settled]);
+  }, [turnID, itemID]);
   function addSelection(): void {
     if (!captured) return;
     const article = ref.current!;
@@ -303,9 +303,9 @@ export function AssistantResponseArticle({ turnID, itemID, settled, children, ..
     }
     setCaptured(undefined);
   }
-  return <article {...props} ref={ref} data-response-item-id={itemID} data-response-turn-id={turnID} data-response-settled={settled}>
+  return <article {...props} ref={ref} data-response-item-id={itemID} data-response-turn-id={turnID}>
     {children}
-    {captured && settled ? createPortal(<SelectionActionMenu key={commenting ? "comment" : "actions"} ref={toolbarRef}
+    {captured ? createPortal(<SelectionActionMenu key={commenting ? "comment" : "actions"} ref={toolbarRef}
       className="response-selection-toolbar" style={position} label={t("responseSelection.actions")}
       addLabel={t("responseSelection.add")} commentLabel={t("responseSelection.comment")}
       commentPlaceholder={t("responseSelection.commentPlaceholder")} commenting={commenting} comment={comment}

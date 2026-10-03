@@ -191,7 +191,8 @@ Client waiting-time displays are separate from server execution timestamps.
 `content_parts` supports `text`, `pasted_text`, and `response_selection`. A response
 selection carries `selection: {id, text, comment?, source: {thread_id, turn_id,
 item_id, start_offset, end_offset, range_text?}}`. Offsets are UTF-16 code units in
-the settled rendered response's DOM text, not Markdown source. When native
+the rendered response's DOM text at capture time, not Markdown source. Streaming
+responses can be quoted before completion. When native
 selection adds readable paragraph or table separators, `text` retains that
 readable form and `source.range_text` holds the exact DOM slice. Source navigation
 must validate both identity and `range_text` (or `text` when absent) at those offsets.
