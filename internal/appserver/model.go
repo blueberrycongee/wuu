@@ -1771,6 +1771,7 @@ func chatMessageItem(id string, msg providers.ChatMessage) ThreadItem {
 	switch msg.Role {
 	case "user":
 		return ThreadItem{
+			steered:          msg.Steered,
 			ID:               id,
 			Seq:              msg.Seq,
 			SourceID:         msg.ClientID,

@@ -137,13 +137,6 @@ func (s *Server) findSessionInput(th *threadState, clientID string) (sessionInpu
 			return result, true
 		}
 	}
-	steered := false
-	for _, message := range th.History {
-		if message.ClientID == clientID && message.Steered {
-			steered = true
-			break
-		}
-	}
 	for _, turn := range th.Turns {
 		for _, item := range turn.Items {
 			if item.Type != ThreadItemUserMessage || item.SourceID != clientID {
@@ -153,7 +146,7 @@ func (s *Server) findSessionInput(th *threadState, clientID string) (sessionInpu
 			if turn.Status == TurnStatusInProgress {
 				state = "running"
 			}
-			result := sessionInputResult{State: state, SessionID: th.ID, TurnID: turn.ID, Steered: steered}
+			result := sessionInputResult{State: state, SessionID: th.ID, TurnID: turn.ID, Steered: item.steered}
 			th.mu.Unlock()
 			return result, true
 		}

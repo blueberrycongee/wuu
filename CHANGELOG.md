@@ -17,7 +17,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 ### Fixed
 
 - Keep plugin terminal waits pending until the durable result is available,
-  preventing premature completion without final output or timestamps.
+  preventing premature completion without final output or timestamps. Consumed
+  steering inputs still settle with their turn after context compaction and reload.
 
 - Use the full subscription-card width for a single allowance, align card
   spacing and corners with shared panels, and keep model selectors readable
