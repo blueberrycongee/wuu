@@ -16,6 +16,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Keep plugin terminal waits pending until the durable result is available,
+  preventing premature completion without final output or timestamps. Consumed
+  steering inputs still settle with their turn after context compaction and reload.
+
 - Keep session switches covered by the existing loading animation until the
   resumed conversation restores its folds and scroll position; block editing
   and sending during restoration and ignore superseded switch results. Disable

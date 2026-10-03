@@ -225,11 +225,11 @@ func (s *Server) inspectPluginSession(ctx context.Context, pluginID string, para
 	if params.TimeoutMS < 0 || params.TimeoutMS > maxTimeoutMS {
 		return pluginhost.SessionInspectResult{}, fmt.Errorf("timeout_ms must be between 0 and %d", maxTimeoutMS)
 	}
-	inspect := func() (pluginhost.SessionInspectResult, error) {
+	inspect := func() (pluginhost.SessionInspectResult, bool, error) {
 		return s.inspectPluginSessionOnce(pluginID, params)
 	}
-	result, err := inspect()
-	if err != nil || params.Wait == pluginhost.SessionInspectWaitNone || result.Turn == nil || terminalPluginTurnState(result.Turn.State) {
+	result, terminal, err := inspect()
+	if err != nil || params.Wait == pluginhost.SessionInspectWaitNone || result.Turn == nil || terminal {
 		return result, err
 	}
 	timeout := time.Duration(params.TimeoutMS) * time.Millisecond
@@ -244,57 +244,66 @@ func (s *Server) inspectPluginSession(ctx context.Context, pluginID string, para
 		return pluginhost.SessionInspectResult{}, errors.New("terminal wait requires a resolvable request_id")
 	}
 	params.RequestID = requestID
-	ready, unsubscribe := s.pluginTurnWaiters.subscribe(pluginID, requestID)
-	defer unsubscribe()
-
-	// Re-inspect after registering to close the race where terminal state is
-	// persisted between the initial read and waiter registration.
-	result, err = inspect()
-	if err != nil || result.Turn == nil || terminalPluginTurnState(result.Turn.State) {
-		return result, err
-	}
-
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return pluginhost.SessionInspectResult{}, ctx.Err()
-	case <-ready:
-		return inspect()
-	case <-timer.C:
-		// Prefer a terminal result that landed on the timeout boundary. Otherwise
-		// return the freshest non-terminal snapshot with TimedOut set.
-		result, err = inspect()
-		if err != nil || result.Turn == nil || terminalPluginTurnState(result.Turn.State) {
+	for {
+		ready, unsubscribe := s.pluginTurnWaiters.subscribe(pluginID, requestID)
+
+		// Re-inspect after registering to close the race where terminal state is
+		// persisted between the initial read and waiter registration.
+		result, terminal, err = inspect()
+		if err != nil || result.Turn == nil || terminal {
+			unsubscribe()
 			return result, err
 		}
-		result.TimedOut = true
-		return result, nil
+
+		select {
+		case <-ctx.Done():
+			unsubscribe()
+			return pluginhost.SessionInspectResult{}, ctx.Err()
+		case <-ready:
+			unsubscribe()
+			// A retained shutdown discard may be replayed while its retry is
+			// still running. Only the retry's durable terminal result settles it.
+		case <-timer.C:
+			unsubscribe()
+			// Prefer a durable terminal result that landed on the timeout boundary.
+			// Otherwise return the freshest snapshot with TimedOut set.
+			result, terminal, err = inspect()
+			if err != nil || result.Turn == nil || terminal {
+				return result, err
+			}
+			result.TimedOut = true
+			return result, nil
+		}
 	}
 }
 
-func (s *Server) inspectPluginSessionOnce(pluginID string, params pluginhost.SessionInspectParams) (pluginhost.SessionInspectResult, error) {
+// inspectPluginSessionOnce reports whether a terminal wait is satisfied. Owned
+// turns require a durable lifecycle, since live completion can precede it.
+// Consumed steers have no separate lifecycle and settle with their enclosing turn.
+func (s *Server) inspectPluginSessionOnce(pluginID string, params pluginhost.SessionInspectParams) (pluginhost.SessionInspectResult, bool, error) {
 	metadata, ok, err := session.Find(s.rt.SessionDir, params.SessionID)
 	if err != nil {
-		return pluginhost.SessionInspectResult{}, err
+		return pluginhost.SessionInspectResult{}, false, err
 	}
 	if !ok {
-		return pluginhost.SessionInspectResult{}, session.ErrSessionNotFound
+		return pluginhost.SessionInspectResult{}, false, session.ErrSessionNotFound
 	}
 	if metadata.Owner != "plugin:"+strings.TrimSpace(pluginID) {
 		// Shared-session senders may inspect their own correlated request. Goal
 		// continuations and automation heartbeats both need recovery here.
 		control, managed, controlErr := session.ReadControl(s.rt.SessionDir, params.SessionID)
 		if controlErr != nil {
-			return pluginhost.SessionInspectResult{}, controlErr
+			return pluginhost.SessionInspectResult{}, false, controlErr
 		}
 		if metadata.Visibility == pluginhost.SessionVisibilityPlugin || params.RequestID == "" && !(managed && control.ManagerID == "plugin:"+pluginID && control.State != session.ControlReleased) {
-			return pluginhost.SessionInspectResult{}, errors.New("shared session inspection requires a plugin request_id")
+			return pluginhost.SessionInspectResult{}, false, errors.New("shared session inspection requires a plugin request_id")
 		}
 	}
 	th, err := s.ensureThreadLoaded(params.SessionID)
 	if err != nil {
-		return pluginhost.SessionInspectResult{}, err
+		return pluginhost.SessionInspectResult{}, false, err
 	}
 	requestID := params.RequestID
 	if requestID == "" {
@@ -332,12 +341,12 @@ func (s *Server) inspectPluginSessionOnce(pluginID string, params pluginhost.Ses
 	}
 	entry, found, err := session.FindPluginTurnLifecycle(s.rt.SessionDir, pluginID, requestID, params.SessionID, params.TurnID)
 	if err != nil {
-		return pluginhost.SessionInspectResult{}, err
+		return pluginhost.SessionInspectResult{}, false, err
 	}
 	if found {
 		var lifecycle pluginhost.AgentTurnLifecycleInput
 		if err := json.Unmarshal(entry.Payload, &lifecycle); err != nil {
-			return pluginhost.SessionInspectResult{}, fmt.Errorf("decode plugin lifecycle state: %w", err)
+			return pluginhost.SessionInspectResult{}, false, fmt.Errorf("decode plugin lifecycle state: %w", err)
 		}
 		// A retry can be queued/running while its older shutdown discard is
 		// still retained. Do not report that stale discard over the live retry.
@@ -346,7 +355,7 @@ func (s *Server) inspectPluginSessionOnce(pluginID string, params pluginhost.Ses
 				if params.TurnID == "" || live.TurnID == params.TurnID {
 					result.Turn = &pluginhost.SessionTurnInspection{RequestID: requestID, State: live.State, TurnID: live.TurnID, QueueID: live.QueueID}
 					result.Session.State = live.State
-					return result, nil
+					return result, live.Steered && terminalPluginTurnState(live.State), nil
 				}
 			}
 		}
@@ -357,17 +366,18 @@ func (s *Server) inspectPluginSessionOnce(pluginID string, params pluginhost.Ses
 			InputTokens: lifecycle.InputTokens, OutputTokens: lifecycle.OutputTokens, FinalOutput: lifecycle.FinalOutput,
 		}
 		result.Session.State = lifecycle.State
-		return result, nil
+		return result, terminalPluginTurnState(lifecycle.State), nil
 	}
 	if requestID != "" {
 		if live, ok := s.findSessionInput(th, pluginSessionRequestClientID(pluginID, requestID)); ok {
 			if params.TurnID == "" || live.TurnID == params.TurnID {
 				result.Turn = &pluginhost.SessionTurnInspection{RequestID: requestID, State: live.State, TurnID: live.TurnID, QueueID: live.QueueID}
 				result.Session.State = live.State
+				return result, live.Steered && terminalPluginTurnState(live.State), nil
 			}
 		}
 	}
-	return result, nil
+	return result, false, nil
 }
 
 func latestPluginRequestID(th *threadState, pluginID, turnID string) string {

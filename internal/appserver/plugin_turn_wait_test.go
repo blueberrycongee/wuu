@@ -2,6 +2,7 @@ package appserver
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"sync"
@@ -11,6 +12,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
+	"github.com/blueberrycongee/wuu/internal/session"
 )
 
 func TestPluginTurnWaitHubNotifiesAllAndCleansUp(t *testing.T) {
@@ -48,108 +50,154 @@ func TestPluginTurnWaitHubNotifiesAllAndCleansUp(t *testing.T) {
 }
 
 func TestPluginSessionInspectWaitsForPersistedTerminalLifecycle(t *testing.T) {
-	started := make(chan struct{})
-	release := make(chan struct{})
-	observerRelease := make(chan struct{})
-	var startOnce sync.Once
-	var releaseOnce sync.Once
-	var observerReleaseOnce sync.Once
-	client := &fakeClient{
-		response: providersResponse("done"),
-		onChat: func(_ int, _ providers.ChatRequest) {
-			startOnce.Do(func() { close(started) })
-			<-release
-		},
-	}
-	rt := newTestRuntime(t, client)
-	rt.PluginSessionRouter = runtime.NewPluginSessionRouter()
-	observer := &blockingPluginTurnLifecycleClient{started: make(chan struct{}), release: observerRelease}
-	rt.PluginHost = pluginhost.New(observer)
-	out := &lockedBuffer{}
-	srv := New(rt, out)
-	t.Cleanup(func() {
-		releaseOnce.Do(func() { close(release) })
-		observerReleaseOnce.Do(func() { close(observerRelease) })
-		srv.Close()
-	})
-
-	created, err := rt.PluginSessionRouter.Create(context.Background(), observer.ID(), pluginhost.SessionCreateParams{
-		RequestID: "create", Visibility: pluginhost.SessionVisibilityPlugin, ContextSource: pluginhost.SessionContextFresh,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	sent, err := rt.PluginSessionRouter.Send(context.Background(), observer.ID(), pluginhost.SessionSendParams{
-		RequestID: "run", SessionID: created.SessionID, Input: pluginhost.SessionInput{Prompt: "work"},
-	})
-	if err != nil || sent.State != pluginhost.TurnLifecycleRunning {
-		t.Fatalf("send = %+v, %v", sent, err)
-	}
-	select {
-	case <-started:
-	case <-time.After(3 * time.Second):
-		t.Fatal("turn did not reach provider")
-	}
-
-	timedOut, err := rt.PluginSessionRouter.Inspect(context.Background(), observer.ID(), pluginhost.SessionInspectParams{
-		SessionID: created.SessionID, RequestID: "run", Wait: pluginhost.SessionInspectWaitTerminal, TimeoutMS: 20,
-	})
-	if err != nil || !timedOut.TimedOut || timedOut.Turn == nil || timedOut.Turn.State != pluginhost.TurnLifecycleRunning {
-		t.Fatalf("timed out inspect = %+v, %v", timedOut, err)
-	}
-	if got := pluginTurnWaiterCount(&srv.pluginTurnWaiters, observer.ID(), "run"); got != 0 {
-		t.Fatalf("waiters after timeout = %d, want 0", got)
-	}
-
-	cancelCtx, cancel := context.WithCancel(context.Background())
-	cancelled := make(chan error, 1)
-	go func() {
-		_, err := rt.PluginSessionRouter.Inspect(cancelCtx, observer.ID(), pluginhost.SessionInspectParams{
-			SessionID: created.SessionID, RequestID: "run", Wait: pluginhost.SessionInspectWaitTerminal, TimeoutMS: 2000,
-		})
-		cancelled <- err
-	}()
-	waitForPluginTurnWaiters(t, srv, observer.ID(), "run", 1)
-	cancel()
-	select {
-	case err := <-cancelled:
-		if !errors.Is(err, context.Canceled) {
-			t.Fatalf("cancelled inspect error = %v", err)
+	for _, retry := range []bool{false, true} {
+		name := "new"
+		if retry {
+			name = "retry"
 		}
-	case <-time.After(time.Second):
-		t.Fatal("cancelled inspect did not return")
-	}
-	waitForPluginTurnWaiters(t, srv, observer.ID(), "run", 0)
+		t.Run(name, func(t *testing.T) {
+			started := make(chan struct{})
+			release := make(chan struct{})
+			observerRelease := make(chan struct{})
+			var startOnce sync.Once
+			var releaseOnce sync.Once
+			var observerReleaseOnce sync.Once
+			client := &fakeClient{
+				response: providersResponse("done"),
+				onChat: func(_ int, _ providers.ChatRequest) {
+					startOnce.Do(func() { close(started) })
+					<-release
+				},
+			}
+			rt := newTestRuntime(t, client)
+			rt.PluginSessionRouter = runtime.NewPluginSessionRouter()
+			observer := &blockingPluginTurnLifecycleClient{started: make(chan struct{}), release: observerRelease}
+			rt.PluginHost = pluginhost.New(observer)
+			out := newTerminalBlockingWriter()
+			srv := New(rt, out)
+			t.Cleanup(func() {
+				releaseOnce.Do(func() { close(release) })
+				observerReleaseOnce.Do(func() { close(observerRelease) })
+				out.unblock()
+				srv.Close()
+			})
 
-	type inspectResponse struct {
-		result pluginhost.SessionInspectResult
-		err    error
-	}
-	completed := make(chan inspectResponse, 1)
-	go func() {
-		result, err := rt.PluginSessionRouter.Inspect(context.Background(), observer.ID(), pluginhost.SessionInspectParams{
-			SessionID: created.SessionID, RequestID: "run", Wait: pluginhost.SessionInspectWaitTerminal, TimeoutMS: 2000,
+			created, err := rt.PluginSessionRouter.Create(context.Background(), observer.ID(), pluginhost.SessionCreateParams{
+				RequestID: "create", Visibility: pluginhost.SessionVisibilityPlugin, ContextSource: pluginhost.SessionContextFresh,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			// A shutdown discard can remain retained while the same request retries.
+			var discarded pluginhost.AgentTurnLifecycleInput
+			if retry {
+				discarded = pluginhost.AgentTurnLifecycleInput{
+					RequestID: "run", ThreadID: created.SessionID,
+					State: pluginhost.TurnLifecycleDiscarded, Retryable: true,
+				}
+				payload, err := json.Marshal(discarded)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := session.PutPluginTurnLifecycleOutbox(rt.SessionDir, observer.ID(), discarded.RequestID, payload); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			sent, err := rt.PluginSessionRouter.Send(context.Background(), observer.ID(), pluginhost.SessionSendParams{
+				RequestID: "run", SessionID: created.SessionID, Input: pluginhost.SessionInput{Prompt: "work"},
+			})
+			if err != nil || sent.State != pluginhost.TurnLifecycleRunning {
+				t.Fatalf("send = %+v, %v", sent, err)
+			}
+			select {
+			case <-started:
+			case <-time.After(3 * time.Second):
+				t.Fatal("turn did not reach provider")
+			}
+
+			// Hold the real terminal notification after execution settles but before the
+			// plugin lifecycle is persisted. Inspect must not mistake this live snapshot
+			// for the durable result that terminal callers are waiting for.
+			releaseOnce.Do(func() { close(release) })
+			select {
+			case <-out.started:
+			case <-time.After(3 * time.Second):
+				t.Fatal("turn did not reach its terminal notification")
+			}
+			snapshot, err := rt.PluginSessionRouter.Inspect(context.Background(), observer.ID(), pluginhost.SessionInspectParams{
+				SessionID: created.SessionID, RequestID: "run",
+			})
+			if err != nil || snapshot.TimedOut || snapshot.Turn == nil || snapshot.Turn.State != pluginhost.TurnLifecycleCompleted {
+				t.Fatalf("nonblocking inspect = %+v, %v", snapshot, err)
+			}
+
+			timedOut, err := rt.PluginSessionRouter.Inspect(context.Background(), observer.ID(), pluginhost.SessionInspectParams{
+				SessionID: created.SessionID, RequestID: "run", Wait: pluginhost.SessionInspectWaitTerminal, TimeoutMS: 20,
+			})
+			if err != nil || !timedOut.TimedOut || timedOut.Turn == nil || timedOut.Turn.CompletedAt != nil {
+				t.Fatalf("timed out inspect = %+v, %v; turn = %+v", timedOut, err, timedOut.Turn)
+			}
+			if got := pluginTurnWaiterCount(&srv.pluginTurnWaiters, observer.ID(), "run"); got != 0 {
+				t.Fatalf("waiters after timeout = %d, want 0", got)
+			}
+
+			cancelCtx, cancel := context.WithCancel(context.Background())
+			cancelled := make(chan error, 1)
+			go func() {
+				_, err := rt.PluginSessionRouter.Inspect(cancelCtx, observer.ID(), pluginhost.SessionInspectParams{
+					SessionID: created.SessionID, RequestID: "run", Wait: pluginhost.SessionInspectWaitTerminal, TimeoutMS: 2000,
+				})
+				cancelled <- err
+			}()
+			waitForPluginTurnWaiters(t, srv, observer.ID(), "run", 1)
+			cancel()
+			select {
+			case err := <-cancelled:
+				if !errors.Is(err, context.Canceled) {
+					t.Fatalf("cancelled inspect error = %v", err)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("cancelled inspect did not return")
+			}
+			waitForPluginTurnWaiters(t, srv, observer.ID(), "run", 0)
+
+			type inspectResponse struct {
+				result pluginhost.SessionInspectResult
+				err    error
+			}
+			completed := make(chan inspectResponse, 1)
+			go func() {
+				result, err := rt.PluginSessionRouter.Inspect(context.Background(), observer.ID(), pluginhost.SessionInspectParams{
+					SessionID: created.SessionID, RequestID: "run", Wait: pluginhost.SessionInspectWaitTerminal, TimeoutMS: 2000,
+				})
+				completed <- inspectResponse{result: result, err: err}
+			}()
+			waitForPluginTurnWaiters(t, srv, observer.ID(), "run", 1)
+			if retry {
+				// Replaying the old shutdown receipt must not settle the live retry.
+				srv.notifyPluginTurnLifecycleAsync(observer.ID(), discarded)
+				waitForPluginTurnWaiters(t, srv, observer.ID(), "run", 1)
+			}
+			out.unblock()
+
+			select {
+			case response := <-completed:
+				if response.err != nil || response.result.TimedOut || response.result.Turn == nil || response.result.Turn.State != pluginhost.TurnLifecycleCompleted || response.result.Turn.FinalOutput != "done" || response.result.Turn.StartedAt == nil || response.result.Turn.CompletedAt == nil {
+					t.Fatalf("completed inspect = %+v, %v", response.result, response.err)
+				}
+			case <-time.After(3 * time.Second):
+				t.Fatal("terminal lifecycle did not wake inspect")
+			}
+			select {
+			case <-observer.started:
+			case <-time.After(time.Second):
+				t.Fatal("terminal lifecycle was not delivered to observer")
+			}
+			observerReleaseOnce.Do(func() { close(observerRelease) })
+			waitForPluginTurnWaiters(t, srv, observer.ID(), "run", 0)
 		})
-		completed <- inspectResponse{result: result, err: err}
-	}()
-	waitForPluginTurnWaiters(t, srv, observer.ID(), "run", 1)
-	releaseOnce.Do(func() { close(release) })
-
-	select {
-	case response := <-completed:
-		if response.err != nil || response.result.TimedOut || response.result.Turn == nil || response.result.Turn.State != pluginhost.TurnLifecycleCompleted || response.result.Turn.FinalOutput != "done" {
-			t.Fatalf("completed inspect = %+v, %v", response.result, response.err)
-		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("terminal lifecycle did not wake inspect")
 	}
-	select {
-	case <-observer.started:
-	case <-time.After(time.Second):
-		t.Fatal("terminal lifecycle was not delivered to observer")
-	}
-	observerReleaseOnce.Do(func() { close(observerRelease) })
-	waitForPluginTurnWaiters(t, srv, observer.ID(), "run", 0)
 }
 
 func TestPluginSessionInspectTimeoutCapAdmitsForegroundBudget(t *testing.T) {

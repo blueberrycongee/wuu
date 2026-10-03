@@ -2400,6 +2400,9 @@ const (
 )
 
 type ThreadItem struct {
+	// steered preserves input identity from live messages and the durable display
+	// transcript, independently of compactable provider history. It is host-only.
+	steered          bool
 	MarkdownImages   []ThreadItemImage `json:"markdown_images,omitempty"`
 	RemoteContentRef string            `json:"remote_content_ref,omitempty"`
 	ID               string            `json:"id"`

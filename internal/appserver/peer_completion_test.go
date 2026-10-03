@@ -2,6 +2,7 @@ package appserver
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/tools"
 )
 
@@ -195,6 +197,16 @@ func TestPeerReceiptsJoinActiveWorkOrOneLateFollowup(t *testing.T) {
 					t.Fatal("receipt turn did not settle")
 				}
 			}
+			for _, requestID := range []string{"receipt-one", "receipt-two"} {
+				inspected, err := srv.inspectPluginSession(context.Background(), owner.id, pluginhost.SessionInspectParams{
+					SessionID: threadID, RequestID: requestID,
+					Wait: pluginhost.SessionInspectWaitTerminal, TimeoutMS: 20,
+				})
+				if err != nil || inspected.TimedOut || inspected.Turn == nil || inspected.Turn.State != pluginhost.TurnLifecycleCompleted || !completedTurns[inspected.Turn.TurnID] {
+					t.Fatalf("completed receipt inspect (%q) = %+v, %v; turn = %+v", requestID, inspected, err, inspected.Turn)
+				}
+			}
+
 			thread := srv.thread(threadID)
 			thread.mu.Lock()
 			turnCount := len(thread.Turns)
@@ -206,6 +218,78 @@ func TestPeerReceiptsJoinActiveWorkOrOneLateFollowup(t *testing.T) {
 			case <-provider.calls:
 				t.Fatal("receipts triggered another model call")
 			default:
+			}
+
+			// A later provider checkpoint can remove the receipt turn from model
+			// context while retaining it in the durable display transcript.
+			later, err := srv.sendPluginSession(context.Background(), owner.id, pluginhost.SessionSendParams{
+				RequestID: "later", SessionID: threadID, Input: pluginhost.SessionInput{Prompt: "Later work"},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			provider.next(t).response <- providers.ChatResponse{Content: "Later work done", StopReason: "completed"}
+			deadline = time.After(10 * time.Second)
+			for completed := false; !completed; {
+				select {
+				case lifecycle := <-owner.calls:
+					if lifecycle.State == pluginhost.TurnLifecycleRunning {
+						continue
+					}
+					if lifecycle.RequestID != "later" || lifecycle.TurnID != later.TurnID || lifecycle.State != pluginhost.TurnLifecycleCompleted {
+						t.Fatalf("later turn did not complete: %+v", lifecycle)
+					}
+					completed = true
+				case <-deadline:
+					t.Fatal("later turn did not settle")
+				}
+			}
+			records, head, err := loadProviderPersistedMessages(srv.rt.SessionDir, threadID, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var retained []session.HistoryRecord
+			for _, record := range records {
+				if record.ClientID == pluginSessionRequestClientID(owner.id, "later") || len(retained) > 0 {
+					retained = append(retained, historyRecordFromPersistedMessage(record))
+				}
+			}
+			if len(retained) == 0 {
+				t.Fatal("later turn missing from provider history")
+			}
+			if _, err := session.StoreHistoryCheckpointAtBaseline(srv.rt.SessionDir, threadID,
+				session.HistoryCheckpointKindProviderRewrite, retained, head); err != nil {
+				t.Fatal(err)
+			}
+			fresh := New(srv.rt, &lockedBuffer{})
+			t.Cleanup(fresh.Close)
+			for _, retryDiscard := range []bool{false, true} {
+				if retryDiscard {
+					// A shutdown receipt retained from an earlier attempt must not
+					// supersede a consumed receipt, including a coalesced followup.
+					payload, err := json.Marshal(pluginhost.AgentTurnLifecycleInput{
+						RequestID: "receipt-two", ThreadID: threadID,
+						State: pluginhost.TurnLifecycleDiscarded, Retryable: true,
+					})
+					if err != nil {
+						t.Fatal(err)
+					}
+					if err := session.PutPluginTurnLifecycleOutbox(srv.rt.SessionDir, owner.id, "receipt-two", payload); err != nil {
+						t.Fatal(err)
+					}
+				}
+				for _, requestID := range []string{"receipt-one", "receipt-two"} {
+					inspected, err := fresh.inspectPluginSession(context.Background(), owner.id, pluginhost.SessionInspectParams{
+						SessionID: threadID, RequestID: requestID,
+						Wait: pluginhost.SessionInspectWaitTerminal, TimeoutMS: 20,
+					})
+					if err != nil || inspected.TimedOut || inspected.Turn == nil || inspected.Turn.State != pluginhost.TurnLifecycleCompleted || !completedTurns[inspected.Turn.TurnID] {
+						t.Fatalf("reloaded receipt inspect (%q, retry discard %t) = %+v, %v; turn = %+v", requestID, retryDiscard, inspected, err, inspected.Turn)
+					}
+					if got := pluginTurnWaiterCount(&fresh.pluginTurnWaiters, owner.id, requestID); got != 0 {
+						t.Fatalf("reloaded receipt left %d terminal waiters", got)
+					}
+				}
 			}
 		})
 	}
