@@ -164,6 +164,7 @@ function guestSetup(bridge, namesJSON, stateJSON, stateEnabled, maxStateBytes, m
   const searchTools = (query, options = {}) => request("search", "searchTools", { query, ...options });
   const describeTool = name => request("describe", name, {});
   return {
+    hasPendingCalls() { return mapSize(pending) > 0; },
     run(program) {
       const failed = error => {
         let message;
@@ -200,7 +201,14 @@ const bridge = vm.newFunction("bridge", encoded => {
   return vm.undefined;
 });
 const api = vm.withScope(scope => scope.escape(vm.callFunction(vm.evalCode("(" + guestSetup.toString() + ")"), vm.undefined, bridge, vm.newString(JSON.stringify(boot.tools ?? [])), vm.newString(JSON.stringify(boot.state ?? {})), boot.stateEnabled ? vm.true : vm.false, vm.newNumber(boot.maxStateBytes), vm.newNumber(boot.maxStateKeys))));
-const settle = api.getProp("settle"), run = api.getProp("run");
+const settle = api.getProp("settle"), run = api.getProp("run"), hasPendingCalls = api.getProp("hasPendingCalls");
+function drain() {
+  vm.executePendingJobs();
+  // Without timers or I/O, only a pending host call can resume an idle guest.
+  if (!finished && !vm.withScope(() => vm.callFunction(hasPendingCalls, api).toBoolean())) {
+    fail(new Error("The program is waiting on a promise that can never settle: no host call is pending and timers are unavailable."));
+  }
+}
 let buffer = Buffer.alloc(0);
 channel.on("data", chunk => {
   if (finished) return;
@@ -213,7 +221,7 @@ channel.on("data", chunk => {
       const encoded = buffer.subarray(4, size + 4).toString();
       buffer = buffer.subarray(size + 4);
       vm.withScope(() => vm.callFunction(settle, api, vm.newString(encoded)));
-      vm.executePendingJobs();
+      drain();
     }
   } catch (error) { fail(error); }
 });
@@ -221,7 +229,7 @@ channel.on("error", () => process.exit(1));
 try {
   const source = nodeModule.stripTypeScriptTypes("(async function(tools, console, ToolCallError, searchTools, describeTool, store, load, remove) {\n" + boot.code + "\n})");
   vm.withScope(() => vm.callFunction(run, api, vm.evalCode(source, "program.ts")));
-  vm.executePendingJobs();
+  drain();
 } catch (error) { fail(error); }
 // The Go owner stops this process, including a busy interpreter, on every exit path.
 await new Promise(() => {});

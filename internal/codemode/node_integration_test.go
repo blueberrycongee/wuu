@@ -72,8 +72,11 @@ func TestNodeProgramLifecycle(t *testing.T) {
 
 func TestNodeDeadlineAndOutputLimit(t *testing.T) {
 	s := nodeService(t)
-	for _, code := range []string{`console.log("started"); for (;;) {}`, `await new Promise(() => {})`} {
-		result, err := s.Run(context.Background(), RunRequest{Code: code, TimeoutMS: 500}, RunOptions{CWD: t.TempDir()})
+	for _, code := range []string{`console.log("started"); for (;;) {}`, `await tools.wait({})`} {
+		result, err := s.Run(context.Background(), RunRequest{Code: code, TimeoutMS: 500, Tools: []ToolDefinition{{Name: "wait"}}}, RunOptions{CWD: t.TempDir(), Executor: nodeExecutor(func(ctx context.Context, _ providers.ToolCall) (toolresult.Result, error) {
+			<-ctx.Done()
+			return toolresult.Result{}, ctx.Err()
+		})})
 		if err != nil || !strings.Contains(result.Error, "deadline") {
 			t.Fatalf("deadline=%+v %v", result, err)
 		}
@@ -81,6 +84,56 @@ func TestNodeDeadlineAndOutputLimit(t *testing.T) {
 	result, err := s.Run(context.Background(), RunRequest{Code: `console.log("x".repeat(20000))`}, RunOptions{CWD: t.TempDir(), MaxOutputBytes: 4096})
 	if err != nil || !strings.Contains(result.Error, "output") {
 		t.Fatalf("output limit=%+v %v", result, err)
+	}
+}
+
+func TestNodeUnsettleablePromisesReleaseScopeWithoutCommitting(t *testing.T) {
+	s := nodeService(t)
+	opts := RunOptions{CWD: t.TempDir(), StateScope: "stalled", Executor: nodeExecutor(func(context.Context, providers.ToolCall) (toolresult.Result, error) {
+		return toolresult.FromText("ready"), nil
+	})}
+	seed, err := s.Run(context.Background(), RunRequest{Code: `store("checkpoint", "before");`}, opts)
+	if err != nil || seed.Error != "" {
+		t.Fatalf("seed=%+v %v", seed, err)
+	}
+	for _, code := range []string{
+		`await new Promise(() => {});`,
+		`await Promise.race([]);`,
+		`await tools.echo({}); await Promise.race([]);`,
+		`await searchTools(""); await describeTool("echo"); await Promise.race([]);`,
+	} {
+		t.Run(code, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			result, err := s.Run(ctx, RunRequest{Code: `store("checkpoint", "after"); console.log("started"); ` + code, Tools: []ToolDefinition{{Name: "echo"}}}, opts)
+			if err != nil || !strings.Contains(result.Error, "never settle") || ctx.Err() != nil {
+				t.Fatalf("stalled program did not fail without a deadline: %+v %v", result, err)
+			}
+			if strings.Join(result.Logs, "") != "started" {
+				t.Fatalf("partial output lost: %+v", result)
+			}
+			next, err := s.Run(ctx, RunRequest{Code: `return load("checkpoint");`}, opts)
+			if err != nil || next.Error != "" || string(next.Value) != `"before"` {
+				t.Fatalf("scope remained occupied or committed failed state: %+v %v", next, err)
+			}
+		})
+	}
+}
+
+func TestNodeMicrotasksAndHostCallsCanSettle(t *testing.T) {
+	s := nodeService(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	result, err := s.Run(ctx, RunRequest{Code: `
+const catalog = await searchTools("");
+await Promise.all(catalog.tools.map(tool => describeTool(tool.name)));
+await new Promise(resolve => Promise.resolve().then(resolve));
+await Promise.all([tools.echo({}), tools.echo({})]);
+return 7;`, Tools: []ToolDefinition{{Name: "echo"}}}, RunOptions{CWD: t.TempDir(), Executor: nodeExecutor(func(context.Context, providers.ToolCall) (toolresult.Result, error) {
+		return toolresult.FromText("ready"), nil
+	})})
+	if err != nil || result.Error != "" || string(result.Value) != "7" {
+		t.Fatalf("resolvable program was rejected: %+v %v", result, err)
 	}
 }
 

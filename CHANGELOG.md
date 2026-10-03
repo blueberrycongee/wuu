@@ -16,6 +16,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Fail PTC programs that wait on promises with no remaining host calls or
+  microtasks, releasing their scope while preserving committed checkpoints.
+
 - Keep plugin terminal waits pending until the durable result is available,
   preventing premature completion without final output or timestamps. Consumed
   steering inputs still settle with their turn after context compaction and reload.
