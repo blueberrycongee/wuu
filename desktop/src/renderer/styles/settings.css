@@ -416,6 +416,22 @@
   flex-wrap: wrap;
 }
 
+.project-role-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(7em, 0.5fr);
+  gap: var(--space-2);
+  width: 100%;
+  min-width: 0;
+}
+
+.settings-row .project-role-controls .settings-select-trigger {
+  min-width: 0;
+}
+
+@container settings-page (max-width: 32em) {
+  .project-role-controls { grid-template-columns: minmax(0, 1fr); }
+}
+
 /* An inline form: its rows, then the actions that commit or discard them,
  * ending on the group's edge like a dialog footer. */
 .settings-form {

@@ -84,8 +84,8 @@ import {
   type ComposerVariant,
   type PermissionMode,
 } from "./ComposerView";
-import { SelectMenu } from "./SelectMenu";
-import { DEFAULT_PROJECT_PRESET, PROJECT_PRESET_MODES } from "./ProjectPresetModes";
+import { DEFAULT_PROJECT_PRESET } from "./ProjectPresetModes";
+import { ProjectPresetPicker } from "./ProjectPresetPicker";
 import { UserQuestionCard } from "./UserQuestionCard";
 import { ConversationSearchOverlay } from "./ConversationSearchOverlay";
 import {
@@ -3213,15 +3213,16 @@ export function App(): JSX.Element {
         readOnly={activeThreadReadOnly || submissionTargetPending}
         initialized={composerRuntime}
         runtimeSelection={activeProjectDraft ? (
-          <SelectMenu value={currentSessionTab?.kind === "draft" ? currentSessionTab.projectPreset ?? DEFAULT_PROJECT_PRESET : DEFAULT_PROJECT_PRESET}
-            onChange={(mode) => setDraftProjectPreset(mode as ProjectPresetMode)}
-            options={PROJECT_PRESET_MODES.map((mode) => ({ value: mode, label: mode }))}
-            ariaLabel={t("projects.mode")} dataTestid="project-preset-picker"
-            triggerClassName="codex-runtime-trigger" placement="above" align="right"
+          <ProjectPresetPicker key={currentSessionTab?.id}
+            mode={currentSessionTab?.kind === "draft" ? currentSessionTab.projectPreset ?? DEFAULT_PROJECT_PRESET : DEFAULT_PROJECT_PRESET}
+            presets={state.initialized?.project_presets} providers={state.initialized?.providers}
+            onChange={setDraftProjectPreset} onConfigure={() => openSettingsPage("advanced")}
             disabled={Boolean(activePendingThreadCreation) || viewContextSwitchPending} />
         ) : projectAgentEnabled && activeThread?.project_preset ? (
-          <span className="codex-runtime-label" aria-label={isProjectCoordinator(activeThread) ? t("projects.mode") : undefined}>
-            {isProjectCoordinator(activeThread) ? activeThread.project_preset.mode : (
+          isProjectCoordinator(activeThread) ? <ProjectPresetPicker key={activeThread.id}
+            mode={activeThread.project_preset.mode} snapshot={activeThread.project_preset}
+            providers={state.initialized?.providers} onConfigure={() => openSettingsPage("advanced")} /> : <span className="codex-runtime-label">
+            {(
               state.initialized?.providers?.find((provider) => provider.name === activeThread.model_provider)
                 ?.models?.find((model) => model.id === activeThread.model)?.display_name || activeThread.model
             )}

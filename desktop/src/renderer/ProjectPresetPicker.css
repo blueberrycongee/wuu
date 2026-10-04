@@ -1,0 +1,39 @@
+.project-preset-picker { position: relative; }
+
+.composer-context-menu.project-preset-panel {
+  width: var(--floating-menu-available-width);
+  max-height: var(--floating-menu-available-height, calc(100dvh - 32px));
+  font-size: var(--font-ui);
+  font-weight: var(--weight-regular);
+  overscroll-behavior: contain;
+}
+
+.project-preset-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 12px;
+}
+
+.project-preset-heading > span, .project-preset-detail, .project-preset-team dt {
+  color: var(--ink-soft);
+}
+
+.project-preset-team { margin: 0; padding: 4px 12px 12px; }
+.project-preset-team > div {
+  display: grid;
+  grid-template-columns: 4.5em minmax(0, 1fr);
+  gap: 12px;
+  padding-block: 6px;
+  line-height: 1.45;
+}
+.project-preset-team dd { margin: 0; min-width: 0; }
+.project-preset-team dd > span { display: block; overflow-wrap: anywhere; }
+.project-preset-note { margin: 0; padding: 0 12px 12px; color: var(--ink-soft); line-height: 1.45; }
+.project-preset-options { border-top: 1px solid var(--menu-border); padding-block: 4px; }
+.project-preset-panel .project-preset-options button { width: 100%; font-weight: var(--weight-regular); }
+.project-preset-panel button .project-preset-check { flex: 0 0 var(--icon-size-sm); display: flex; }
+.project-preset-panel button .project-preset-option-copy { display: grid; gap: 2px; }
+.project-preset-panel button .project-preset-option-copy > span { white-space: normal; overflow-wrap: anywhere; }
+.project-preset-panel .project-preset-configure { border-top: 1px solid var(--menu-border); border-radius: 0; font-weight: var(--weight-regular); }

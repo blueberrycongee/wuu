@@ -14,8 +14,10 @@ Project coordination is built into Wuu. Creating and managing sessions, deliveri
 Projects have their own group at the top of the sidebar. Choose **+** in **Projects** to start one in the current workspace, or **New project** in a workspace's menu to start one there. A project draft opens; **New conversation** turns it back into a conversation draft.
 
 Choose `low`, `medium`, `high`, or `ultra` in the draft's mode picker; new drafts
-start at `low`. Configure that mode's Lead, Side, and Worker provider/model choices
-in **Settings → Runtime → Project Agent modes** before sending. You can save partial
+start at `low`. The panel previews each role's model, provider, and reasoning level.
+Use **Configure modes** to edit Lead, Side, and Worker models and reasoning levels
+in **Settings → Built-in agent → Project Agent modes** before sending. The reasoning
+menu includes custom model variants when available. You can save partial
 settings, but all three roles must be complete to create a project. Each mode
 names a configurable preset, not a reasoning level. See
 [configuration](../reference/configuration.md#project-agent-model-choices).
@@ -41,7 +43,8 @@ Team members can message each other and the lead directly. Information joins a r
 
 For a project created with a mode, the Lead, Side, and Worker model choices are
 resolved and saved at creation. They remain fixed after settings changes and
-restarts, including for members added later. The lead shows its mode; members show
+restarts, including for members added later. Open the lead's mode panel to inspect
+its saved team configuration; editing presets affects only new projects. Members show
 their model without model or effort controls. Supported speed controls remain
 available after creation, and permission behavior is unchanged. To use a different
 mode, start another project.

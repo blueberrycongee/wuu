@@ -86,9 +86,10 @@ protocol; accepting unknown fields is not sufficient.
 ## Project Agent model choices
 
 Project Agent remains behind its [development build gate](../project/development.md).
-In enabled builds, Settings → Runtime → Project Agent modes configures four
+In enabled builds, Settings → Built-in agent → Project Agent modes configures four
 optional presets: `low`, `medium`, `high`, and `ultra`. Each has independent Lead,
-Side, and Worker provider/model choices. These names identify presets, not
+Side, and Worker provider/model and reasoning choices, including custom model
+variants. Changing a role's model clears its previous reasoning selection. These names identify presets, not
 reasoning levels. The equivalent user-configuration fragment is:
 
 ```json

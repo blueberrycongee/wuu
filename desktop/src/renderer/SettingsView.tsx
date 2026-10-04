@@ -53,6 +53,7 @@ import { SidePanelToggleIcon } from "./SidePanelToggleIcon";
 import { useSidebarDrawerState } from "./SidebarDrawerState";
 import { sidebarDrawerExitMs, sidebarMotionMs } from "./AppLayoutState";
 import { SelectMenu, type SelectMenuOption } from "./SelectMenu";
+import { providerModelVariantOptions, variantLabel } from "./RuntimeHelpers";
 import type {
   CodexPetsSnapshot,
   DesktopBuildInfo,
@@ -1032,11 +1033,8 @@ function SettingsRuntimePage({
       projectModelOptions.push({ value, label: `${selection.provider} / ${selection.model}` });
     }
   }
-  async function saveProjectModel(role: "lead" | "side" | "worker", value: string): Promise<void> {
-    const [provider, model] = JSON.parse(value) as [string, string];
-    const current = projectPreset[role];
-    if (current?.provider === provider && current.model === model) return;
-    const next: ProjectPresetsConfig = { ...projectPresets, [projectMode]: { ...projectPreset, [role]: { provider, model } } };
+  async function saveProjectRole(role: "lead" | "side" | "worker", selection: NonNullable<typeof projectPreset.lead>): Promise<void> {
+    const next: ProjectPresetsConfig = { ...projectPresets, [projectMode]: { ...projectPreset, [role]: selection } };
     setProjectModelsBusy(true);
     setProjectModelsError(undefined);
     try { await onAdvancedSave({ project_presets: next }); }
@@ -1122,10 +1120,29 @@ function SettingsRuntimePage({
               const selection = projectPreset[role];
               const value = selection?.provider && selection.model ? JSON.stringify([selection.provider, selection.model]) : "";
               const label = t(role === "lead" ? "settings.projectLeadModel" : role === "side" ? "settings.projectSideModel" : "settings.projectWorkerModel");
-              return <SettingsRow key={role} title={label} error={projectModelsError?.mode === projectMode && projectModelsError.role === role ? projectModelsError.message : undefined}>
+              const provider = initialized.providers?.find((item) => item.name === selection?.provider);
+              const effort = selection?.variant || selection?.effort || "";
+              const efforts = providerModelVariantOptions(provider, selection?.model ?? "", effort);
+              if (!efforts.includes(effort)) efforts.push(effort);
+              return <SettingsRow key={role} title={label} block error={projectModelsError?.mode === projectMode && projectModelsError.role === role ? projectModelsError.message : undefined}>
+                <div className="project-role-controls">
                 <SelectMenu triggerClassName="settings-select-trigger" ariaLabel={label} dataTestid={`project-${role}-model`}
                   value={value} options={projectModelOptions} searchable flip disabled={running || projectModelsBusy}
-                  onChange={(next) => void saveProjectModel(role, next)} />
+                  onChange={(next) => {
+                    if (next === value) return;
+                    const [provider, model] = JSON.parse(next) as [string, string];
+                    void saveProjectRole(role, { provider, model });
+                  }} />
+                <SelectMenu triggerClassName="settings-select-trigger" ariaLabel={label + " · " + t("projects.reasoning")}
+                  dataTestid={"project-" + role + "-effort"} value={effort}
+                  options={efforts.map((value) => ({ value, label: variantLabel(value) }))} flip
+                  disabled={running || projectModelsBusy || !value}
+                  onChange={(next) => {
+                    if (next === effort) return;
+                    // Set both fields so clearing a variant cannot revive a legacy effort.
+                    void saveProjectRole(role, { ...selection, effort: next, variant: next });
+                  }} />
+                </div>
               </SettingsRow>;
             })}
           </SettingsGroup></div>

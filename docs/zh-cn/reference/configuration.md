@@ -82,8 +82,9 @@ Kimi 使用独立的消息级工具声明协议；这条规则不启用其 Respo
 ## Project Agent 模型选择
 
 Project Agent 仍受[开发构建开关](../project/development.md)控制。在启用的构建中，
-设置 → 运行时 → Project Agent 模式可配置四个可选预设：`low`、`medium`、`high`
-和 `ultra`。每个预设分别指定 Lead、Side 和 Worker 的服务与模型。这些名称表示
+设置 → 内置 Agent → Project Agent 模式可配置四个可选预设：`low`、`medium`、`high`
+和 `ultra`。每个预设分别指定 Lead、Side 和 Worker 的服务、模型和推理强度，
+也支持模型的自定义变体。切换角色模型会清除之前的推理选择。这些名称表示
 预设，不是推理强度。对应的用户配置片段如下：
 
 ```json
