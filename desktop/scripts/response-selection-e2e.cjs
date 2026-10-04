@@ -57,6 +57,13 @@ async function settle() {
     new Promise(resolve => setTimeout(resolve, 1500)),
   ]).then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))));
 }
+async function resize(width, height) {
+  win.setContentSize(width, height);
+  // Native window resizing reaches the renderer asynchronously. Select text
+  // only after the viewport and its resize-driven layout have caught up.
+  await until(size => innerWidth === size.width && innerHeight === size.height, "resized renderer viewport", { width, height });
+  await settle();
+}
 async function screenshot(name) {
   await settle();
   const file = path.join(output, `${name}.png`);
@@ -213,7 +220,7 @@ async function checkSentReference(expected, name) {
   await win.webContents.debugger.sendCommand("Input.dispatchKeyEvent", { type: "keyUp", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 });
   await checkHighlight(expected);
   for (const [theme, font, width] of [["light", 14, 1200], ["dark", 14, 1200], ["light", 20, 390], ["dark", 20, 390]]) {
-    win.setContentSize(width, 820);
+    await resize(width, 820);
     await evaluate((selector, theme, font) => {
       document.documentElement.dataset.theme = theme;
       document.documentElement.style.setProperty("--ui-font-size", `${font}px`);
@@ -224,7 +231,7 @@ async function checkSentReference(expected, name) {
     }, selector, theme, font);
     await screenshot(`${name}-${theme}-${font}-${width}`);
   }
-  win.setContentSize(1200, 820);
+  await resize(1200, 820);
   await evaluate(() => {
     document.documentElement.dataset.theme = "light";
     document.documentElement.style.setProperty("--ui-font-size", "14px");
@@ -315,7 +322,7 @@ async function checkPlacement(name, expected, expectedSide) {
 async function placementCoverage() {
   await click(card);
   await click(".composer-response-selection-remove");
-  win.setContentSize(1200, 900);
+  await resize(1200, 900);
   await evaluate(() => { document.documentElement.dataset.theme = "light"; document.documentElement.style.setProperty("--ui-font-size", "14px"); document.documentElement.style.setProperty("--conversation-message-font-size", "14px"); });
   const forward = await select("Native drag selection", false, true);
   const first = await checkPlacement("placement-forward-native", forward, "above");
@@ -328,7 +335,7 @@ async function placementCoverage() {
   await click(".response-selection-toolbar .selection-action-comment-toggle");
   await win.webContents.insertText("First line 第二行 😀\nA longer instruction that expands the comment box while keeping the selected passage unobscured.\nOne more line for growth.");
   await checkPlacement("placement-multiline-comment-growth", multiline);
-  win.setContentSize(390, 820);
+  await resize(390, 820);
   const edge = await select("Repeated 😀 café 中文 target.", true);
   await checkPlacement("placement-narrow-edge", edge);
   await click(".response-selection-toolbar .selection-action-comment-toggle");
@@ -343,7 +350,7 @@ async function placementCoverage() {
   await until(() => document.querySelector(".response-selection-toolbar textarea")?.value === "",
     "cancelled source comment reopens without discarded draft");
   report.cases.push("source annotation Escape restores action focus and clears its unsaved draft on reopen");
-  win.setContentSize(760, 420);
+  await resize(760, 420);
   const top = await select("Native drag selection", false, false, false, "start");
   await click(".response-selection-toolbar .selection-action-comment-toggle");
   await win.webContents.insertText("Top-edge fallback 第二行 😀");
@@ -506,7 +513,7 @@ async function run() {
   const multilineSelection = await add(multilineQuote);
   const longComment = `Long annotation with English and 中文.\n${"中文需要保持完整并正确换行。".repeat(16)}\n${"unbroken_annotation_".repeat(32)}`;
   await add("Repeated 😀 café 中文 target.", true, false, "Second annotation 第二条批注");
-  win.setContentSize(390, 820);
+  await resize(390, 820);
   await evaluate(() => {
     document.documentElement.dataset.theme = "light";
     document.documentElement.style.setProperty("--conversation-message-font-size", "20px");
@@ -528,7 +535,7 @@ async function run() {
   await closeQuotePanel();
   report.cases.push("two quotes collapsed and expanded at 390px/20px, removing second retains complete first selection");
   for (const [width, height, font, theme] of [[1200, 820, 14, "light"], [1200, 820, 20, "dark"], [390, 820, 14, "dark"], [390, 820, 20, "light"]]) {
-    win.setContentSize(width, height);
+    await resize(width, height);
     await evaluate((font, theme) => {
       document.documentElement.dataset.theme = theme;
       document.documentElement.style.setProperty("--conversation-message-font-size", `${font}px`);
