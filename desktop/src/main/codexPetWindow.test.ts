@@ -39,7 +39,7 @@ const codexPetElectronMocks = vi.hoisted(() => {
   const setVisibleOnAllWorkspaces = vi.fn();
   const focus = vi.fn();
   const cursor = { x: 0, y: 0 };
-  const initialBounds = { x: 0, y: 0, width: 120, height: 128 };
+  const initialBounds = { x: 0, y: 0, width: 120, height: 168 };
   const boundsStack: Array<{ x: number; y: number; width: number; height: number }> = [initialBounds];
   const setBounds = vi.fn((next: { x: number; y: number; width: number; height: number }) => {
     boundsStack[boundsStack.length - 1] = next;
@@ -155,31 +155,23 @@ describe("codexPetRenderedSpriteForSize", () => {
     expect(rendered.width).toBe(96);
     expect(rendered.height).toBe(104);
     expect(rendered.scale).toBe(0.5);
-    expect(rendered.windowWidth).toBe(120);
-    expect(rendered.windowHeight).toBe(128);
   });
 
-  it("scales the sprite + window footprint for non-default sizes", () => {
+  it("scales the sprite footprint for non-default sizes", () => {
     const small = codexPetRenderedSpriteForSize("small");
     expect(small.width).toBe(72);
     expect(small.height).toBe(78);
     expect(small.scale).toBeCloseTo(0.375);
-    expect(small.windowWidth).toBe(96);
-    expect(small.windowHeight).toBe(102);
 
     const large = codexPetRenderedSpriteForSize("large");
     expect(large.width).toBe(144);
     expect(large.height).toBe(156);
     expect(large.scale).toBeCloseTo(0.75);
-    expect(large.windowWidth).toBe(168);
-    expect(large.windowHeight).toBe(180);
 
     const xl = codexPetRenderedSpriteForSize("extra-large");
     expect(xl.width).toBe(192);
     expect(xl.height).toBe(208);
     expect(xl.scale).toBe(1.0);
-    expect(xl.windowWidth).toBe(216);
-    expect(xl.windowHeight).toBe(232);
   });
 });
 
@@ -260,6 +252,15 @@ describe("codexPetActionFromURL", () => {
     expect(codexPetActionFromURL("wuu-pet://action/jump")).toBeUndefined();
   });
 
+  it("parses dismiss only with a thread_id, and show", () => {
+    expect(codexPetActionFromURL("wuu-pet://action/dismiss?thread_id=abc")).toEqual({
+      action: "dismiss",
+      thread_id: "abc",
+    });
+    expect(codexPetActionFromURL("wuu-pet://action/dismiss")).toBeUndefined();
+    expect(codexPetActionFromURL("wuu-pet://action/show")).toEqual({ action: "show" });
+  });
+
   it("parses panel, submit, and look actions", () => {
     expect(codexPetActionFromURL("wuu-pet://action/panel?open=1")).toEqual({ action: "panel", open: true });
     expect(codexPetActionFromURL("wuu-pet://action/panel?open=0")).toEqual({ action: "panel", open: false });
@@ -300,20 +301,36 @@ describe("codexPetActionFromURL", () => {
 describe("codexPetBoundsForLayout", () => {
   const anchor = { x: 1000, y: 900 };
 
-  it("places bubble above and centers it horizontally over the sprite", () => {
+  // Default sprite 96×104 over a 4px gap and a 36px dock: a 96×144 column
+  // whose sprite bottom sits 48px above the window bottom (dock + padding).
+  it("places cards above and centers them horizontally over the sprite", () => {
     const bounds = codexPetBoundsForLayout({ layout: "above", anchor, bubble: { width: 280, height: 80 } });
-    expect(bounds.width).toBe(280);
-    expect(bounds.height).toBe(208);
-    expect(bounds.x).toBe(860); // anchor.x - width/2
-    expect(bounds.y).toBe(700); // anchor.y - (height - 8)
+    expect(bounds.width).toBe(296); // card width + 2 × 8 padding
+    expect(bounds.height).toBe(248); // 8 + 80 + 8 + 144 + 8
+    expect(bounds.x).toBe(852); // anchor.x - width/2
+    expect(bounds.y).toBe(700); // anchor.y - (height - 48)
   });
 
-  it("places the bubble to the right of the sprite with sprite anchor preserved", () => {
+  it("places the cards to the right of the sprite with sprite anchor preserved", () => {
     const bounds = codexPetBoundsForLayout({ layout: "right", anchor, bubble: { width: 280, height: 80 } });
-    expect(bounds.width).toBe(400);
-    expect(bounds.height).toBe(120);
+    expect(bounds.width).toBe(400); // 8 + 96 + 8 + 280 + 8
+    expect(bounds.height).toBe(160); // column 144 + 2 × 8
     expect(bounds.x).toBe(944); // anchor.x - 8 - 48
-    expect(bounds.y).toBe(788); // anchor.y - (height - 8)
+    expect(bounds.y).toBe(788); // anchor.y - (height - 48)
+  });
+
+  it("puts the sprite at the top of a 'below' window", () => {
+    const bounds = codexPetBoundsForLayout({ layout: "below", anchor, bubble: { width: 280, height: 80 } });
+    expect(bounds.height).toBe(248);
+    expect(bounds.y).toBe(788); // anchor.y - 104 - 8
+  });
+
+  it("widens the pet column to the composer while the panel is open", () => {
+    const bounds = codexPetBoundsForLayout({ layout: "hidden", anchor, expanded: true });
+    expect(bounds.width).toBe(304); // composer 280 + 24
+    expect(bounds.height).toBe(168); // 16 + 104 + 48
+    expect(bounds.x).toBe(848);
+    expect(bounds.y).toBe(780);
   });
 
   it("uses the size's sprite footprint when one is supplied", () => {
@@ -323,9 +340,9 @@ describe("codexPetBoundsForLayout", () => {
       bubble: { width: 280, height: 80 },
       size: "large",
     });
-    // large: spriteW = 144, spriteH = 156 → height = 8 + 80 + 8 + 156 + 8 = 260
-    expect(bounds.width).toBe(280); // bubble still drives width
-    expect(bounds.height).toBe(260);
+    // large: sprite 144×156 → column 196 → height = 8 + 80 + 8 + 196 + 8 = 300
+    expect(bounds.width).toBe(296); // cards still drive width
+    expect(bounds.height).toBe(300);
   });
 });
 
@@ -341,8 +358,8 @@ describe("selectCodexPetBubbleLayout", () => {
 
   it("falls back to 'right' when the sprite sits too close to the top edge", () => {
     const workArea = { x: 0, y: 0, width: 1920, height: 1080 };
-    // anchor.y is small enough that 'above' (height 208) overflows the top
-    // edge, but 'right' (height 120) still fits centered around the sprite.
+    // anchor.y is small enough that 'above' (height 248) overflows the top
+    // edge, but 'right' (height 160) still fits beside the sprite.
     const anchor = { x: 960, y: 150 };
     const decision = selectCodexPetBubbleLayout({ workArea, anchor, bubble });
     expect(decision.layout).toBe("right");
@@ -354,7 +371,27 @@ describe("selectCodexPetBubbleLayout", () => {
     const decision = selectCodexPetBubbleLayout({ workArea, anchor, bubble });
     expect(decision.layout).toBe("hidden");
     expect(decision.bounds.width).toBe(120);
-    expect(decision.bounds.height).toBe(128);
+    expect(decision.bounds.height).toBe(168);
+  });
+
+  // An open composer at a side edge would otherwise have no layout that fits
+  // and fall back to unclamped bounds partly off screen.
+  it("slides a centered window along a side edge and reports the sprite's offset", () => {
+    const workArea = { x: 0, y: 0, width: 1920, height: 1080 };
+    const decision = selectCodexPetBubbleLayout({ workArea, anchor: { x: 60, y: 900 }, expanded: true });
+    expect(decision).toEqual({
+      layout: "hidden",
+      bounds: { x: 0, y: 780, width: 304, height: 168 },
+      spriteShift: -92, // unclamped x was 60 - 152
+    });
+  });
+
+  it("does not slide so far that the sprite leaves the window", () => {
+    const workArea = { x: 0, y: 0, width: 1920, height: 1080 };
+    const decision = selectCodexPetBubbleLayout({ workArea, anchor: { x: 30, y: 900 }, expanded: true });
+    // Sliding by 122 would exceed the (304 - 96) / 2 = 104 the sprite allows.
+    expect(decision.spriteShift).toBeUndefined();
+    expect(decision.bounds.x).toBe(-122);
   });
 
   it("scales the hidden fallback bounds when a non-default size is requested", () => {
@@ -367,9 +404,9 @@ describe("selectCodexPetBubbleLayout", () => {
       size: "large",
     });
     expect(decision.layout).toBe("hidden");
-    // large: windowWidth = 168, windowHeight = 180
+    // large: 144 + 24 wide, 16 + 156 + 48 tall
     expect(decision.bounds.width).toBe(168);
-    expect(decision.bounds.height).toBe(180);
+    expect(decision.bounds.height).toBe(220);
   });
 });
 
@@ -429,7 +466,7 @@ describe("CodexPetWindowManager", () => {
       x: 100,
       y: 200,
       width: 120,
-      height: 128,
+      height: 168,
     }));
     codexPetElectronMocks.setBounds.mockImplementation(() => undefined);
     for (const key of Object.keys(codexPetElectronMocks.capturedListeners)) {
@@ -485,13 +522,11 @@ describe("CodexPetWindowManager", () => {
 
     manager.setHints([sampleHint]);
 
-    // With one single-line row the bubble card is 280×44 (BUBBLE_HEIGHT_BASE
-    // — 12px inner padding plus one 19px row, with 1px slack), so the
-    // window height comes out to 8 (BUBBLE_PADDING) + 44 + 8 (BUBBLE_GAP) +
-    // 104 (spriteH) + 8 (BUBBLE_PADDING) = 172. The width is
-    // `max(spriteW, bubble.width) = max(96, 280) = 280`.
+    // One card is 280×53 (52 plus 1px slack), so the window is
+    // 8 + 53 + 8 (gap) + 144 (sprite and dock) + 8 = 221 tall and
+    // 280 + 2 × 8 = 296 wide.
     expect(codexPetElectronMocks.setBounds).toHaveBeenCalledWith(
-      expect.objectContaining({ width: 280, height: 172 }),
+      expect.objectContaining({ width: 296, height: 221 }),
     );
     // wuuPetView is invoked with the new view carrying the hint.
     const lastCall = codexPetElectronMocks.executeJavaScript.mock.calls.at(-1)?.[0] as string;
@@ -508,7 +543,7 @@ describe("CodexPetWindowManager", () => {
     expect(jumpRequested).toHaveBeenCalledTimes(1);
   });
 
-  it("grows the bubble by one row step per extra hint, capped at three", () => {
+  it("grows the card stack by one card per extra hint, capped at three", () => {
     const manager = petManager();
     manager.sync(enabledSnapshot());
     const didFinishLoad =
@@ -520,13 +555,13 @@ describe("CodexPetWindowManager", () => {
     const third: CodexPetHint = { ...sampleHint, thread_id: "thread-44", title: "C" };
     const fourth: CodexPetHint = { ...sampleHint, thread_id: "thread-45", title: "D" };
 
-    // Three rows: bubble 44 + 2*25 = 94 → window 8+94+8+104+8 = 222.
+    // Three cards: 3 × 52 + 2 × 6 + 1 = 169 → window 8+169+8+144+8 = 337.
     manager.setHints([sampleHint, second, third]);
     expect(codexPetElectronMocks.setBounds).toHaveBeenCalledWith(
-      expect.objectContaining({ width: 280, height: 222 }),
+      expect.objectContaining({ width: 296, height: 337 }),
     );
 
-    // A fourth hint is dropped at the trust boundary: same 3-row bounds
+    // A fourth hint is dropped at the trust boundary: same 3-card bounds
     // and the pushed view carries only the first three thread ids.
     codexPetElectronMocks.setBounds.mockClear();
     codexPetElectronMocks.executeJavaScript.mockClear();
@@ -536,7 +571,7 @@ describe("CodexPetWindowManager", () => {
       expect(lastCall).not.toContain("thread-45");
     }
     for (const call of codexPetElectronMocks.setBounds.mock.calls) {
-      expect((call[0] as { height: number }).height).toBe(222);
+      expect((call[0] as { height: number }).height).toBe(337);
     }
   });
 
@@ -550,10 +585,46 @@ describe("CodexPetWindowManager", () => {
 
     const empty: CodexPetHint = { ...sampleHint, thread_id: "thread-46", preview: "  " };
     manager.setHints([sampleHint, empty]);
-    // Only one usable row → single-row bubble height (window 172).
+    // Only one usable hint → a single card (window 221).
     expect(codexPetElectronMocks.setBounds).toHaveBeenCalledWith(
-      expect.objectContaining({ width: 280, height: 172 }),
+      expect.objectContaining({ width: 296, height: 221 }),
     );
+  });
+
+  // The glance is for conversations with something to report. Idle ones
+  // stay reachable as reply targets in the open panel, and a hidden card
+  // stays hidden only until its conversation reports something new.
+  it("keeps idle and dismissed conversations out of the glance", () => {
+    const manager = loadedPetManager();
+    const idle: CodexPetHint = { ...sampleHint, thread_id: "thread-idle", status: "idle" };
+    const viewHints = () => {
+      const view = scripts().filter((script) => script.includes("wuuPetView")).at(-1) ?? "";
+      return [...view.matchAll(/"thread_id":"([^"]+)"/g)].map((match) => match[1]);
+    };
+
+    manager.setHints([sampleHint, idle]);
+    expect(viewHints()).toEqual(["thread-42"]);
+
+    navigate("wuu-pet://action/dismiss?thread_id=thread-42");
+    expect(viewHints()).toEqual([]);
+    expect(scripts().at(-1)).toContain('"layout":"hidden"');
+    manager.setHints([sampleHint, idle]);
+    expect(viewHints()).toEqual([]);
+
+    navigate("wuu-pet://action/panel?open=1");
+    expect(viewHints()).toEqual(["thread-42", "thread-idle"]);
+    navigate("wuu-pet://action/panel?open=0");
+    expect(viewHints()).toEqual([]);
+
+    manager.setHints([{ ...sampleHint, status: "done" }, idle]);
+    expect(viewHints()).toEqual(["thread-42"]);
+  });
+
+  it("opens the main window from the toolbar", () => {
+    const onShowApp = vi.fn();
+    loadedPetManager({ onShowApp });
+    navigate("wuu-pet://action/show");
+    expect(onShowApp).toHaveBeenCalledTimes(1);
   });
 
   it("resizes the pet window and notifies the host when setSize() picks a non-default size", () => {
@@ -568,9 +639,9 @@ describe("CodexPetWindowManager", () => {
 
     manager.setSize("large");
 
-    // The window grew to the "large" footprint: 168 × 180.
+    // The window grew to the "large" footprint: 168 × 220.
     expect(codexPetElectronMocks.setBounds).toHaveBeenCalledWith(
-      expect.objectContaining({ width: 168, height: 180 }),
+      expect.objectContaining({ width: 168, height: 220 }),
     );
     // The in-page sprite geometry also changed (spriteWidth/spriteHeight/scale
     // travel inside the wuuPetView payload; the in-page closure applies them
@@ -610,7 +681,7 @@ describe("CodexPetWindowManager", () => {
       manager.sync(enabledSnapshot());
     }
     expect(codexPetElectronMocks.BrowserWindow).toHaveBeenCalledExactlyOnceWith(
-      expect.objectContaining({ width: 145, height: 155 }),
+      expect.objectContaining({ width: 145, height: 195 }),
     );
 
     // Restoring geometry must not disable subsequent user persistence.
@@ -633,9 +704,9 @@ describe("CodexPetWindowManager", () => {
 
     // Mid-drag frame: geometry updates live, no persistence traffic.
     manager.setScale(0.75);
-    // scale 0.75 → multiplier 1.5 → sprite 144×156 → window 168×180.
+    // scale 0.75 → multiplier 1.5 → sprite 144×156 → window 168×220.
     expect(codexPetElectronMocks.setBounds).toHaveBeenCalledWith(
-      expect.objectContaining({ width: 168, height: 180 }),
+      expect.objectContaining({ width: 168, height: 220 }),
     );
     const midDragCall = codexPetElectronMocks.executeJavaScript.mock.calls.at(
       -1,
@@ -662,9 +733,9 @@ describe("CodexPetWindowManager", () => {
       width: number;
       height: number;
     };
-    // scale 1.5 → multiplier 3 → sprite 288×312 → window 312×336.
+    // scale 1.5 → multiplier 3 → sprite 288×312 → window 312×376.
     expect(options.width).toBe(312);
-    expect(options.height).toBe(336);
+    expect(options.height).toBe(376);
   });
 
   it("routes a scale navigation from the pet page through setScale", () => {
@@ -680,7 +751,7 @@ describe("CodexPetWindowManager", () => {
       codexPetElectronMocks.capturedListeners["wc:will-navigate"]?.[0];
     willNavigate!({ preventDefault: vi.fn() }, "wuu-pet://action/scale?value=0.75");
     expect(codexPetElectronMocks.setBounds).toHaveBeenCalledWith(
-      expect.objectContaining({ width: 168, height: 180 }),
+      expect.objectContaining({ width: 168, height: 220 }),
     );
     expect(onScaleChange).not.toHaveBeenCalled();
 
@@ -770,9 +841,10 @@ describe("CodexPetWindowManager", () => {
 
     navigate("wuu-pet://action/panel?open=1");
     expect(codexPetElectronMocks.focus).toHaveBeenCalledTimes(1);
-    // 8 + 103 (target line + composer) + 8 + 104 + 8.
+    // The dock widens to the composer in place: same height, so the sprite
+    // does not move.
     expect(codexPetElectronMocks.setBounds).toHaveBeenLastCalledWith(
-      expect.objectContaining({ width: 280, height: 231 }),
+      expect.objectContaining({ width: 304, height: 168 }),
     );
     expect(scripts().at(-1)).toContain('"expanded":true');
 
