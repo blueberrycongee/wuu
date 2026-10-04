@@ -196,7 +196,25 @@ app.whenReady().then(async () => {
       console.log(`${name}: largest reading-marker movement ${shifted}px`);
       if (count === 3 && width === 1180) {
         for (const theme of ["light", "dark"]) for (const font of [14, 20]) for (const width of [1180, 420]) {
+          // Native resize delivery and responsive panel motion can outlast a
+          // fixed frame count. Measure only after resize handlers and transitions finish.
+          await evaluate(width => {
+            window.imageLayoutResizeReady = window.innerWidth === width && window.innerHeight === 820;
+            if (!window.imageLayoutResizeReady) {
+              const resized = () => {
+                if (window.innerWidth !== width || window.innerHeight !== 820) return;
+                window.removeEventListener("resize", resized);
+                requestAnimationFrame(() => requestAnimationFrame(() => {
+                  window.imageLayoutResizeReady = true;
+                }));
+              };
+              window.addEventListener("resize", resized);
+            }
+          }, width);
           win.setContentSize(width, 820);
+          await until(() => window.imageLayoutResizeReady
+            && !document.querySelector(".window-resizing, .layout-motion-active, .sidebar-animating, .environment-panel.closing")
+            && !document.getAnimations().some(animation => animation instanceof CSSTransition && animation.playState === "running"));
           await evaluate((theme, font) => {
             document.documentElement.dataset.theme = theme;
             document.documentElement.style.setProperty("--font-ui", `${font}px`);
