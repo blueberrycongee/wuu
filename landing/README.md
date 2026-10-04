@@ -19,3 +19,16 @@ The homepage uses an explicitly labelled workflow illustration, not a captured r
 The site includes bilingual product and blog pages. Marketing HTML files are automatically exposed as matching directory routes by the documentation build. The blog page lists the published articles. Keep unpublished articles and illustrations outside this repository and its preview server root. A Git ignore or omission from navigation is not a confidentiality boundary. When an article is ready for public review, add both languages to the landing root, put reviewed images under `assets/blog/`, and link it from the blog page and site navigation. Product, blog, documentation, and download navigation expand on hover, click, or keyboard activation.
 
 The contributor changing a product claim updates both languages and checks it against the current app or source. Preserve image provenance and licenses; use synthetic illustrations instead of real sessions, and review metadata before adding attachments. Temporary generation output and presentation decks do not belong here. See [documentation maintenance](../docs/README.md).
+
+## README media
+
+`assets/readme/` holds the screenshots and demo GIFs used by the repository READMEs. They are captured from the real desktop app and Go core, driven by a scripted local model provider through synthetic example projects, so no account, credential, or personal session appears in them. The macOS window frame and traffic lights are drawn by the generator. The documentation site does not publish these files.
+
+Regenerate them after a release changes what they show. Build the app being described, usually a checkout of the release tag, then run the generator from this checkout. It needs a display (use `xvfb-run` on Linux) and `ffmpeg`:
+
+```sh
+(cd <app>/desktop && npm run build:core && npm run build)
+node desktop/scripts/generate-readme-media.cjs <app>/desktop
+```
+
+Review both languages and both hero themes before committing new images.
