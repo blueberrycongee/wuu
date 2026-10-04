@@ -428,6 +428,7 @@ export function AppSidebar({
   onCreateWorkspace,
   onOpenWorkspaceFolder,
   onToggleSidebarSectionCollapsed,
+  onLoadWorkspaceThreads,
   onFocusWorkspace,
   onStartNewThreadInWorkspace,
   onSelectWorkspaceThread: selectNativeWorkspaceThread,
@@ -493,6 +494,7 @@ export function AppSidebar({
   onCreateWorkspace: () => void;
   onOpenWorkspaceFolder: () => void;
   onToggleSidebarSectionCollapsed: (id: string) => void;
+  onLoadWorkspaceThreads: (project: DesktopProject) => Promise<void>;
   onFocusWorkspace?: (id: string) => void;
   onStartNewThreadInWorkspace: (id: string) => void;
   onSelectWorkspaceThread: (workspaceID: string, threadID: string) => void;
@@ -2330,9 +2332,8 @@ export function AppSidebar({
         pendingThreadID={pendingThreadID}
         workspaceThreadsByWorkspaceID={workspaceThreadsByWorkspaceID}
         loadingWorkspaceThreadIDs={loadingWorkspaceThreadIDs}
-        expandedSidebarSectionIDs={expandedSidebarSectionIDs}
-        onToggleSidebarSectionCollapsed={onToggleSidebarSectionCollapsed}
         onStartNewThreadInWorkspace={onStartNewThreadInWorkspace}
+        onLoadWorkspaceThreads={onLoadWorkspaceThreads}
         onSelectWorkspaceThread={onSelectWorkspaceThread}
         onTogglePinned={toggleThreadPinned}
         onArchiveThread={onArchiveThread}

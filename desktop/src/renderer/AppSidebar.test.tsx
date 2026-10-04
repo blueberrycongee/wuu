@@ -153,6 +153,7 @@ function SidebarHarness({ options }: { options: RenderOptions }): JSX.Element {
       onCreateWorkspace={() => {}}
       onOpenWorkspaceFolder={() => {}}
       onToggleSidebarSectionCollapsed={() => {}}
+      onLoadWorkspaceThreads={async () => {}}
       onStartNewThreadInWorkspace={() => {}}
       onSelectWorkspaceThread={onSelectWorkspaceThread}
       onRemoveWorkspace={() => {}}

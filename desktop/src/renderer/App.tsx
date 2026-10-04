@@ -685,6 +685,7 @@ export function App(): JSX.Element {
     removeCachedSidebarThread,
     syncSidebarServerEvent,
     toggleSidebarSectionCollapsed,
+    loadWorkspaceThreads,
   } = useSidebarWorkspaceState({
     // Let the visible workspace finish booting before background catalogs
     // compete for the same remote connection.
@@ -700,6 +701,7 @@ export function App(): JSX.Element {
       })),
   });
   const syncSidebarServerEventStable = useStableCallback(syncSidebarServerEvent);
+  const loadWorkspaceThreadsStable = useStableCallback(loadWorkspaceThreads);
   // Settings and account pages unmount the sidebar; keep manual folds here.
   const [collapsedFolderIDs, setCollapsedFolderIDs] = useState<Set<string>>(() => new Set());
   const [runtimeMenuOpen, setRuntimeMenuOpen] = useState(false);
@@ -5273,6 +5275,7 @@ export function App(): JSX.Element {
             onCreateWorkspace={() => void createBlankProject()}
             onOpenWorkspaceFolder={() => void chooseProjectFolder()}
             onToggleSidebarSectionCollapsed={toggleSidebarSectionCollapsed}
+            onLoadWorkspaceThreads={loadWorkspaceThreadsStable}
             onFocusWorkspace={
               workspaceSelectionEnabled
                 ? (id) => {

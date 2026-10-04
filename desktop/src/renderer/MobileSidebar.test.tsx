@@ -5,6 +5,7 @@ import { PhoneNavigationContext } from './PhoneNavigationContext';
 import { MobileSidebar } from "./MobileSidebar";
 import { initialState, SCRATCH_PSEUDO_PROJECT_ID, type ThreadSummary } from "./AppState";
 import { translateCurrent } from "./i18n";
+import { useSidebarWorkspaceState, type SidebarWorkspaceStateController } from "./SidebarWorkspaceState";
 
 let container: HTMLDivElement;
 let root: Root;
@@ -16,6 +17,7 @@ function thread(id: string): ThreadSummary {
 }
 
 beforeEach(() => {
+  window.localStorage.clear();
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -25,8 +27,7 @@ beforeEach(() => {
     sidebarWorkspaces: [SCRATCH_PSEUDO_PROJECT_ID, "one", "two"].map((id) => ({ id, name: id, path: id === SCRATCH_PSEUDO_PROJECT_ID ? "" : `/repo/${id}`, created_at: date, updated_at: date })),
     activeThreadID: "first",
     workspaceThreadsByWorkspaceID: { one: [thread("first")], two: [thread("second")], [SCRATCH_PSEUDO_PROJECT_ID]: [] },
-    expandedSidebarSectionIDs: new Set(["one"]),
-    onToggleSidebarSectionCollapsed: vi.fn(),
+    onLoadWorkspaceThreads: vi.fn().mockResolvedValue(undefined),
     onStartNewThreadInWorkspace: vi.fn(), onSelectWorkspaceThread: vi.fn(),
     onTogglePinned: vi.fn(), onArchiveThread: vi.fn(), onRenameThread: vi.fn(), onDeleteThread: vi.fn(),
     onRemoveWorkspace: vi.fn(), onRelocateWorkspace: vi.fn(), onCreateWorkspace: vi.fn(), onOpenWorkspaceFolder: vi.fn(),
@@ -36,6 +37,7 @@ beforeEach(() => {
 afterEach(() => {
   act(() => root.unmount());
   container.remove();
+  window.localStorage.clear();
   vi.restoreAllMocks();
   vi.useRealTimers();
 });
@@ -56,11 +58,58 @@ it("browses projects without navigating away, then creates and selects in that p
   render();
   chooseWorkspace("two");
   expect(props.onSelectWorkspaceThread).not.toHaveBeenCalled();
-  expect(props.onToggleSidebarSectionCollapsed).toHaveBeenCalledWith("two");
   click(translateCurrent("sidebar.newConversation"));
   expect(props.onStartNewThreadInWorkspace).toHaveBeenCalledWith("two");
   click("second");
   expect(props.onSelectWorkspaceThread).toHaveBeenCalledWith("two", "second");
+});
+
+it("preserves shared and persisted folds when browsing and removing the selected workspace", () => {
+  window.localStorage.setItem("wuu.desktop.collapsedSidebarSectionIDs", JSON.stringify([SCRATCH_PSEUDO_PROJECT_ID, "two"]));
+  window.localStorage.setItem("wuu.desktop.expandedSidebarSectionIDs", JSON.stringify(["one"]));
+  let sidebar: SidebarWorkspaceStateController;
+  function Harness() {
+    sidebar = useSidebarWorkspaceState({
+      projects: props.sidebarWorkspaces.filter(project => project.id !== SCRATCH_PSEUDO_PROJECT_ID),
+      threads: [],
+      activeContext: props.state.activeContext,
+      activeWorkspaceID: props.state.activeProjectId,
+      backgroundLoadingEnabled: false,
+      setStatus: vi.fn(),
+    });
+    const sharedState = {
+      expandedSidebarSectionIDs: sidebar.expandedSidebarSectionIDs,
+      onToggleSidebarSectionCollapsed: sidebar.toggleSidebarSectionCollapsed,
+    };
+    return <MobileSidebar {...props} {...sharedState} />;
+  }
+  const checkFolds = (collapsed = [SCRATCH_PSEUDO_PROJECT_ID, "two"]) => {
+    expect([...sidebar.collapsedSidebarSectionIDs]).toEqual(collapsed);
+    expect([...sidebar.expandedSidebarSectionIDs]).toEqual(["one"]);
+    expect(JSON.parse(window.localStorage.getItem("wuu.desktop.collapsedSidebarSectionIDs")!)).toEqual(collapsed);
+    expect(JSON.parse(window.localStorage.getItem("wuu.desktop.expandedSidebarSectionIDs")!)).toEqual(["one"]);
+  };
+  act(() => root.render(<Harness />));
+  chooseWorkspace("two");
+  checkFolds();
+  props = {
+    ...props,
+    sidebarWorkspaces: props.sidebarWorkspaces.filter(project => project.id !== "two"),
+  };
+  act(() => root.render(<Harness />));
+  checkFolds([SCRATCH_PSEUDO_PROJECT_ID]);
+  expect(props.onLoadWorkspaceThreads).not.toHaveBeenCalled();
+});
+
+it("loads an uncached workspace without using its fold state and waits while hidden", () => {
+  props = { ...props, visible: false, workspaceThreadsByWorkspaceID: {} };
+  render();
+  expect(props.onLoadWorkspaceThreads).not.toHaveBeenCalled();
+  props = { ...props, visible: true };
+  render();
+  expect(props.onLoadWorkspaceThreads).toHaveBeenCalledWith(props.sidebarWorkspaces.find(project => project.id === "one"));
+  chooseWorkspace("two");
+  expect(props.onLoadWorkspaceThreads).toHaveBeenCalledWith(props.sidebarWorkspaces.find(project => project.id === "two"));
 });
 
 it("reopens at the active conversation rather than the last browsed project", () => {

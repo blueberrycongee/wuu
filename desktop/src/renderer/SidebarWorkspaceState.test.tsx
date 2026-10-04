@@ -411,6 +411,26 @@ describe("useSidebarWorkspaceState", () => {
     expect(hook.get().workspaceThreadsByWorkspaceID.alpha).toBe(cached);
   });
 
+  it("loads a folded workspace independently, reports loading, and deduplicates requests", async () => {
+    const alpha = project("alpha");
+    let resolveThreads!: (value: { threads: Thread[] }) => void;
+    const listThreads = vi.fn(() => new Promise<{ threads: Thread[] }>(resolve => { resolveThreads = resolve; }));
+    Object.defineProperty(window, "wuu", { configurable: true, value: { listThreads } });
+    const hook = await renderSidebarWorkspaceState({ projects: [alpha], backgroundLoadingEnabled: false });
+    let request!: Promise<void>;
+    act(() => { request = hook.get().loadWorkspaceThreads(alpha); });
+    expect(hook.get().loadingWorkspaceThreadIDs.has(alpha.id)).toBe(true);
+    await act(async () => { await hook.get().loadWorkspaceThreads(alpha); });
+    expect(listThreads).toHaveBeenCalledOnce();
+    await act(async () => {
+      resolveThreads({ threads: [thread("thread-alpha", alpha.path)] });
+      await request;
+    });
+    expect(hook.get().loadingWorkspaceThreadIDs.has(alpha.id)).toBe(false);
+    expect(hook.get().expandedSidebarSectionIDs.has(alpha.id)).toBe(false);
+    expect(hook.get().workspaceThreadsByWorkspaceID.alpha.map(item => item.id)).toEqual(["thread-alpha"]);
+  });
+
   it("marks expanded project sessions as loading until their snapshot arrives", async () => {
     const alpha = project("alpha", "/tmp/alpha");
     window.localStorage.setItem(

@@ -60,6 +60,7 @@ function Fixture() {
       onTogglePinned={noop} onArchiveThread={noop} onDeleteThread={noop} onRenameThread={noop}
       onToggleWorkspaceMenu={noop} onCreateWorkspace={noop} onOpenWorkspaceFolder={noop}
       onToggleSidebarSectionCollapsed={id => setExpanded(current => current.has(id) ? new Set() : new Set([id]))}
+      onLoadWorkspaceThreads={async () => {}}
       onStartNewThreadInWorkspace={noop} onSelectWorkspaceThread={(_project, id) => setActive(id)}
       onRemoveWorkspace={noop} onRelocateWorkspace={noop} onOpenSettings={noop} onMarkThreadsViewed={noop}
       unreadViewOpen={unreadViewOpen} onToggleUnreadView={() => setUnreadViewOpen(open => !open)}

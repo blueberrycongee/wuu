@@ -214,6 +214,7 @@ function Fixture() {
         onTogglePinned={noop} onArchiveThread={noop} onDeleteThread={noop} onRenameThread={noop}
         onToggleWorkspaceMenu={noop} onCreateWorkspace={noop} onOpenWorkspaceFolder={noop}
         onToggleSidebarSectionCollapsed={id => setExpanded(currentIDs => currentIDs.has(id) ? new Set() : new Set([id]))}
+        onLoadWorkspaceThreads={async () => {}}
         onStartNewThreadInWorkspace={noop} onSelectWorkspaceThread={(_workspace, id) => setActive(id)}
         onRemoveWorkspace={noop} onRelocateWorkspace={noop} onCreateProject={noop} onAdoptIntoProject={noop}
         onOpenSettings={noop} onMarkThreadsViewed={noop}

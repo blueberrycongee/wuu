@@ -277,6 +277,7 @@ export function useSidebarWorkspaceState({
       ),
   );
   const loadingWorkspaceThreadIDsRef = useRef(new Set<string>());
+  const [requestedWorkspaceThreadIDs, setRequestedWorkspaceThreadIDs] = useState<ReadonlySet<string>>(new Set());
   const workspaceIDs = projects.map((project) => project.id);
   const workspaceIdentityRevision = JSON.stringify(workspaceIDs);
   const projectsByID = useMemo(
@@ -326,7 +327,7 @@ export function useSidebarWorkspaceState({
     workspaceThreadsByWorkspaceID,
   ]);
   const loadingWorkspaceThreadIDs = useMemo(() => {
-    const loading = new Set(loadingWorkspaceThreadIDsRef.current);
+    const loading = new Set(requestedWorkspaceThreadIDs);
     for (const project of projects) {
       if (
         project.id !== activeWorkspaceID &&
@@ -337,7 +338,7 @@ export function useSidebarWorkspaceState({
       }
     }
     return loading;
-  }, [activeWorkspaceID, expandedSidebarSectionIDs, workspaceThreadsByWorkspaceID, projects]);
+  }, [activeWorkspaceID, expandedSidebarSectionIDs, workspaceThreadsByWorkspaceID, projects, requestedWorkspaceThreadIDs]);
 
   useEffect(() => {
     window.localStorage.setItem(
@@ -506,6 +507,7 @@ export function useSidebarWorkspaceState({
       return;
     }
     loadingWorkspaceThreadIDsRef.current.add(project.id);
+    setRequestedWorkspaceThreadIDs(new Set(loadingWorkspaceThreadIDsRef.current));
     const requested = workspaceThreadsByWorkspaceID[project.id];
     try {
       const listed = await window.wuu.listThreads(project.path);
@@ -520,6 +522,7 @@ export function useSidebarWorkspaceState({
       setStatus(desktopApiErrorMessage(error, translateCurrent("workspace.threadsLoadFailed")));
     } finally {
       loadingWorkspaceThreadIDsRef.current.delete(project.id);
+      setRequestedWorkspaceThreadIDs(new Set(loadingWorkspaceThreadIDsRef.current));
     }
   }
 

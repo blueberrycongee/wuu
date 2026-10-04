@@ -45,6 +45,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   editor or PDF preview failures without clearing the surrounding workspace.
   A failed preview offers a window reload to recover rejected module loads.
 
+- Preserve shared sidebar folds when browsing or removing workspaces in the
+  mobile sidebar; load conversation lists without expanding their desktop sections.
+
 - Copy empty tool capability maps before filtering them, preventing data races
   when PTC runs nested tools concurrently.
 

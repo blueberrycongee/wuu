@@ -90,6 +90,7 @@ function renderShell({ inventory: available }: { inventory?: ExtensionInventoryR
       onCreateWorkspace={() => {}}
       onOpenWorkspaceFolder={() => {}}
       onToggleSidebarSectionCollapsed={() => {}}
+      onLoadWorkspaceThreads={async () => {}}
       onStartNewThreadInWorkspace={() => {}}
       onSelectWorkspaceThread={() => {}}
       onRemoveWorkspace={() => {}}

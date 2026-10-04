@@ -12,8 +12,8 @@ import "./styles/mobile-sidebar.css";
 
 type Props = Pick<ComponentProps<typeof AppSidebar>,
   "state" | "sidebarWorkspaces" | "activeThreadID" | "pendingThreadID" |
-  "workspaceThreadsByWorkspaceID" | "loadingWorkspaceThreadIDs" | "expandedSidebarSectionIDs" |
-  "onToggleSidebarSectionCollapsed" | "onStartNewThreadInWorkspace" | "onSelectWorkspaceThread" |
+  "workspaceThreadsByWorkspaceID" | "loadingWorkspaceThreadIDs" | "onLoadWorkspaceThreads" |
+  "onStartNewThreadInWorkspace" | "onSelectWorkspaceThread" |
   "onTogglePinned" | "onArchiveThread" | "onRenameThread" | "onDeleteThread" |
   "onRemoveWorkspace" | "onRelocateWorkspace" | "onFocusWorkspace" |
   "onCreateWorkspace" | "onOpenWorkspaceFolder" | "onNavigateAway"
@@ -81,10 +81,10 @@ export function MobileSidebar(props: Props): JSX.Element {
   }, [props.visible, activeWorkspace]);
 
   useEffect(() => {
-    if (props.visible && !props.expandedSidebarSectionIDs.has(selectedID)) {
-      props.onToggleSidebarSectionCollapsed(selectedID);
+    if (props.visible && project && !Object.prototype.hasOwnProperty.call(props.workspaceThreadsByWorkspaceID, selectedID)) {
+      void props.onLoadWorkspaceThreads(project);
     }
-  }, [props.visible, selectedID, props.expandedSidebarSectionIDs, props.onToggleSidebarSectionCollapsed]);
+  }, [props.visible, project, selectedID, props.workspaceThreadsByWorkspaceID, props.onLoadWorkspaceThreads]);
 
   useEffect(() => {
     if (!props.visible) return;
