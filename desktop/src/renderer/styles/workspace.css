@@ -2868,12 +2868,12 @@ html[data-focus-modality="keyboard"] .workspace-review-row:focus-visible {
  * model offers, and a knob that reaches the capsule endpoints. The knob stands
  * proud of the track so it reads as the handle, not a hole in the fill. */
 .codex-effort-slider {
-  --effort-knob: 20px;
-  --effort-track: 8px;
+  --effort-knob: 28px;
+  --effort-track: 24px;
   --effort-edge: 0px;
   --effort-at: calc(var(--effort-edge) + var(--effort-knob) / 2 + (100% - var(--effort-knob) - var(--effort-edge) * 2) * var(--effort-ratio, 0));
   position: relative;
-  height: 28px;
+  height: var(--runtime-effort-block);
   touch-action: none;
 }
 
@@ -2913,6 +2913,7 @@ html[data-focus-modality="keyboard"] .workspace-review-row:focus-visible {
   height: 4px;
   border-radius: var(--radius-circle);
   background: var(--ink-muted);
+  opacity: 0.5;
   transform: translateX(-50%);
   transition: background-color var(--motion-fast) var(--ease-out);
 }
@@ -3016,20 +3017,21 @@ html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visibl
    Row metrics are drawn for the default 14.5px UI size and grow with larger
    UI text, the same proportion the panel width follows in
    ComposerRuntimeMenus.tsx. --runtime-rows is the row count of a list page;
-   the summary reports its context line, effort block and full rows, which
-   stack 2px apart inside the menu inset and the 1px border. */
+   the summary reports its context, selection and slider groups. Model and
+   effort share one selection row without sharing a click target. */
 .codex-model-menu.runtime-panel {
   --runtime-row: max(36px, calc(var(--font-ui) * 36 / 14.5));
   --runtime-context-row: max(22px, calc(var(--font-ui) * 22 / 14.5));
   --runtime-header: max(40px, calc(var(--font-ui) * 40 / 14.5));
-  --runtime-effort-block: 28px;
+  --runtime-effort-block: 36px;
+  --runtime-summary-gap: var(--space-1);
   --runtime-list: calc(var(--runtime-rows, 1) * (var(--runtime-row) + 1px) - 1px);
   --runtime-summary: calc(
     2px + var(--menu-inset) * 2
     + var(--runtime-summary-context, 1) * var(--runtime-context-row)
     + var(--runtime-row)
     + var(--runtime-summary-effort, 0) * var(--runtime-effort-block)
-    + (var(--runtime-summary-context, 1) + var(--runtime-summary-effort, 0)) * 2px
+    + (var(--runtime-summary-context, 1) + var(--runtime-summary-effort, 0)) * var(--runtime-summary-gap)
   );
   position: relative;
   display: block;
@@ -3096,7 +3098,7 @@ html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visibl
   min-height: 0;
   flex-direction: column;
   justify-content: flex-start;
-  gap: 2px;
+  gap: var(--runtime-summary-gap);
   padding: var(--menu-inset);
 }
 
@@ -3131,8 +3133,8 @@ html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visibl
   padding: 0 var(--runtime-content-inset);
   border-radius: var(--radius-xs);
   color: var(--ink-tertiary);
-  font-size: var(--font-xs);
-  font-weight: var(--weight-medium);
+  font-size: var(--font-ui);
+  font-weight: var(--weight-regular);
   transition: color var(--motion-fast) var(--ease-out), background-color var(--motion-fast) var(--ease-out);
 }
 
@@ -3166,26 +3168,40 @@ html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visibl
   color: var(--ink-muted);
 }
 
-.codex-runtime-menu .runtime-panel-model {
+.runtime-panel-selection {
+  display: flex;
+  align-items: center;
   height: var(--runtime-row);
+  min-width: 0;
   flex: 0 0 auto;
-  gap: 8px;
-  padding: 0 var(--runtime-content-inset);
-  border-radius: var(--radius-xs);
-  font-size: var(--font-menu);
-  font-weight: var(--weight-medium);
+  gap: var(--space-2);
 }
 
-.runtime-panel-model-name {
-  flex: 1 1 auto !important;
+.codex-runtime-menu .runtime-panel-model {
+  width: auto;
+  height: 100%;
+  flex: 1 1 auto;
+  justify-content: flex-start;
+  gap: var(--space-1);
+  padding: 0 var(--runtime-content-inset);
+  border-radius: var(--radius-xs);
+  font-size: var(--font-ui);
+  font-weight: var(--weight-regular);
+}
+
+.runtime-panel-summary:has(.runtime-panel-effort) .runtime-panel-model {
+  color: var(--ink-secondary);
+}
+
+.runtime-panel-model .runtime-panel-model-name {
+  flex: 0 1 auto;
 }
 
 .runtime-panel-model > svg:last-child {
   color: var(--ink-tertiary);
 }
 
-/* Lead with the same content guide as text and icons. The thumb's outer
- * edges reach this guide and the trailing button edge, without a second inset. */
+/* The thumb stays inside the track at both ends, including its focus ring. */
 .runtime-panel-effort {
   height: var(--runtime-effort-block);
   flex: 0 0 auto;
@@ -3202,12 +3218,16 @@ html[data-focus-modality="keyboard"] .runtime-panel-summary :is(
 }
 
 .codex-runtime-menu .runtime-panel-effort-value {
+  min-width: 0;
+  max-width: 40%;
   flex: 0 0 auto;
-  color: var(--ink);
-  font-size: var(--font-sm);
-  --enter-opacity: 0.4;
-  --enter-y: 3px;
-  animation: wuu-enter var(--motion-base) var(--ease-out);
+  padding-inline: var(--runtime-content-inset);
+  color: var(--interaction-accent);
+  font-size: var(--font-ui);
+  font-weight: var(--weight-medium);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .runtime-panel-header {
@@ -3296,7 +3316,6 @@ html[data-focus-modality="keyboard"] .runtime-panel-summary :is(
 
   .runtime-panel-page.is-forward,
   .runtime-panel-page.is-back,
-  .runtime-panel-effort-value,
   .codex-runtime-label.is-changed {
     animation: none;
   }

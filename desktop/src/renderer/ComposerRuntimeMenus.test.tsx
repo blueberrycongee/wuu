@@ -402,6 +402,37 @@ describe("RuntimePicker", () => {
     expect(onSelectEngine).toHaveBeenCalledWith("wuu");
   });
 
+  it.each(["wuu", "codex"])("opens the selected %s engine without resetting its runtime", (activeEngine) => {
+    const onSelectEngine = vi.fn();
+    const onSelectModel = vi.fn();
+    const onSelectEffort = vi.fn();
+    renderPicker("model", runtimeWithEffort(), vi.fn(), onSelectEffort, onSelectModel, createRef(), {
+      activeEngine,
+      engineModel: "gpt-6-astra",
+      engineEffort: "high",
+      engines: [{
+        id: "codex", enabled: true, binary_ok: true,
+        models: [{ id: "gpt-6-astra", supported_efforts: ["low", "high"] }],
+      }],
+      onSelectEngine,
+      onSelectEngineModel: onSelectModel,
+      onSelectEngineEffort: onSelectEffort,
+    });
+    const model = document.querySelector(".runtime-panel-model-name")?.textContent;
+    const effort = document.querySelector(".runtime-panel-effort-value")?.textContent;
+    act(() => document.querySelector<HTMLButtonElement>(".runtime-panel-context button:has(.engine-icon)")!.click());
+    act(() => document.querySelector<HTMLButtonElement>('.runtime-engine-option[aria-checked="true"]')!.click());
+
+    expect(document.querySelector(".runtime-panel.is-summary")).not.toBeNull();
+    expect(document.querySelector(".runtime-panel-model-name")?.textContent).toBe(model);
+    expect(document.querySelector(".runtime-panel-effort-value")?.textContent).toBe(effort);
+    expect(onSelectEngine).not.toHaveBeenCalled();
+    expect(onSelectModel).not.toHaveBeenCalled();
+    expect(onSelectEffort).not.toHaveBeenCalled();
+    act(() => document.querySelector<HTMLButtonElement>(".runtime-panel-model")!.click());
+    expect(document.querySelector(".runtime-panel.is-models")).not.toBeNull();
+  });
+
   it("offers installed protocol engines and retains an unavailable active binding without leaking Wuu models", () => {
     const onSelectEngine = vi.fn();
     renderPicker("model", runtimeWithEffort(), vi.fn(), vi.fn(), vi.fn(), createRef(), {
@@ -738,7 +769,7 @@ describe("RuntimePicker", () => {
     expect(slider.max).toBe("4");
     expect(slider.value).toBe("4");
     expect(slider.getAttribute("aria-valuetext")).toBe(variantLabel("xhigh"));
-    expect(document.querySelector(".runtime-panel-model .runtime-panel-effort-value")?.textContent).toBe(variantLabel("xhigh"));
+    expect(document.querySelector(".runtime-panel-effort-value")?.textContent).toBe(variantLabel("xhigh"));
   });
 
   it("selects a discrete effort by dragging the unlabeled slider", () => {
@@ -751,8 +782,7 @@ describe("RuntimePicker", () => {
       slider.dispatchEvent(new Event("input", { bubbles: true }));
     });
 
-    expect(document.querySelector(".runtime-panel-model .runtime-panel-effort-value")?.textContent).toBe(variantLabel("high"));
-    expect(document.querySelector(".codex-effort-slider + .runtime-panel-effort-value")).toBeNull();
+    expect(document.querySelector(".runtime-panel-effort-value")?.textContent).toBe(variantLabel("high"));
     expect(onSelectEffort).not.toHaveBeenCalled();
 
     act(() => slider.dispatchEvent(new Event("pointerup", { bubbles: true })));
