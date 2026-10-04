@@ -10,6 +10,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Open quoted assistant responses by clicking the entire reference card, without
+  a separate source-link label, while preserving keyboard navigation.
 - Remove viewed marks and viewed-file progress from the workspace change review panel.
 - Built-in agents can edit configuration with ordinary file tools. Standard
   mode now includes Wuu home in its file and command write scope; Read only

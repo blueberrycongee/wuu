@@ -109,11 +109,12 @@ export function navigateToResponseSelection(selection: ResponseSelection): boole
 
 export function ResponseSelectionReference({ selection }: { selection: ResponseSelection }): JSX.Element {
   const { t } = useI18n();
-  return <section className="response-selection-reference">
-    <blockquote>{selection.text}</blockquote>
-    {selection.comment ? <p>{selection.comment}</p> : null}
-    <button type="button" className="response-selection-source" onClick={() => navigateToResponseSelection(selection)}>{t("responseSelection.source")}</button>
-  </section>;
+  return <button type="button" className="response-selection-reference response-selection-source"
+    aria-label={[t("responseSelection.source"), selection.text, selection.comment].filter(Boolean).join("\n")}
+    onClick={() => navigateToResponseSelection(selection)}>
+    <span className="response-selection-reference-quote">{selection.text}</span>
+    {selection.comment ? <span className="response-selection-reference-comment">{selection.comment}</span> : null}
+  </button>;
 }
 
 export function AssistantResponseArticle({ turnID, itemID, children, ...props }: ComponentPropsWithoutRef<"article"> & {

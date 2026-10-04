@@ -69,6 +69,7 @@ function measureGeometry() {
     toolbar: ".response-selection-toolbar", card: "[data-main-conversation-composer] .composer-response-selection-card .composer-document-card-main",
     frame: "[data-main-conversation-composer] .composer-frame",
     popover: ".composer-response-selection-popover", sourceComment: ".response-selection-toolbar .selection-action-comment-input",
+    sentReference: '[data-thread-id="selection-main"] .response-selection-reference',
   };
   const regions = {};
   for (const [name, selector] of Object.entries(selectors)) {
@@ -167,6 +168,9 @@ async function checkSource(expected) {
   await settle();
   await click(card);
   await click(".composer-response-selection-source");
+  await checkHighlight(expected);
+}
+async function checkHighlight(expected) {
   const actual = await until(() => {
     const highlight = CSS.highlights.get("wuu-response-source");
     const range = highlight && [...highlight][0];
@@ -178,6 +182,55 @@ async function checkSource(expected) {
   if (actual.text !== expected.text || actual.start !== expected.start) {
     throw new Error(`Source highlight mismatch: ${JSON.stringify({ actual, expected })}`);
   }
+}
+async function checkSentReference(expected, name) {
+  const selector = '[data-thread-id="selection-main"] .response-selection-reference';
+  await until(selector => !!document.querySelector(selector), "sent reference", selector);
+  await evaluate(selector => [...document.querySelectorAll(selector)].at(-1).scrollIntoView({ block: "center", behavior: "instant" }), selector);
+  await settle();
+  await evaluate(selector => {
+    const node = [...document.querySelectorAll(selector)].at(-1);
+    if (node.tagName !== "BUTTON") throw new Error("The sent reference must be a native keyboard-accessible button");
+    CSS.highlights.delete("wuu-response-source");
+    node.click();
+  }, selector);
+  await checkHighlight(expected);
+  await evaluate(selector => {
+    CSS.highlights.delete("wuu-response-source");
+    const node = [...document.querySelectorAll(selector)].at(-1);
+    node.scrollIntoView({ block: "center", behavior: "instant" });
+    node.focus();
+  }, selector);
+  for (const modifiers of [0, 8]) {
+    await win.webContents.debugger.sendCommand("Input.dispatchKeyEvent", { type: "keyDown", key: "Tab", code: "Tab", windowsVirtualKeyCode: 9, modifiers });
+    await win.webContents.debugger.sendCommand("Input.dispatchKeyEvent", { type: "keyUp", key: "Tab", code: "Tab", windowsVirtualKeyCode: 9, modifiers });
+  }
+  await until(selector => {
+    const node = [...document.querySelectorAll(selector)].at(-1);
+    return document.activeElement === node && node.matches(":focus-visible");
+  }, "keyboard focus returns to the sent reference", selector);
+  await win.webContents.debugger.sendCommand("Input.dispatchKeyEvent", { type: "keyDown", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, text: "\r" });
+  await win.webContents.debugger.sendCommand("Input.dispatchKeyEvent", { type: "keyUp", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 });
+  await checkHighlight(expected);
+  for (const [theme, font, width] of [["light", 14, 1200], ["dark", 14, 1200], ["light", 20, 390], ["dark", 20, 390]]) {
+    win.setContentSize(width, 820);
+    await evaluate((selector, theme, font) => {
+      document.documentElement.dataset.theme = theme;
+      document.documentElement.style.setProperty("--ui-font-size", `${font}px`);
+      document.documentElement.style.setProperty("--conversation-message-font-size", `${font}px`);
+      const node = [...document.querySelectorAll(selector)].at(-1);
+      node.scrollIntoView({ block: "center", behavior: "instant" });
+      node.focus();
+    }, selector, theme, font);
+    await screenshot(`${name}-${theme}-${font}-${width}`);
+  }
+  win.setContentSize(1200, 820);
+  await evaluate(() => {
+    document.documentElement.dataset.theme = "light";
+    document.documentElement.style.setProperty("--ui-font-size", "14px");
+    document.documentElement.style.setProperty("--conversation-message-font-size", "14px");
+  });
+  report.cases.push(`${name}: whole-card DOM click and native Tab/Enter navigate to the exact source`);
 }
 async function send(expected, comment, prompt, method = "startTurn") {
   const before = report.calls.length;
@@ -404,6 +457,7 @@ async function run() {
     callback({ cancel: true });
   });
   await win.loadFile(process.env.WUU_E2E_RENDERER || path.join(desktop, "out/renderer/index.html"));
+  await win.webContents.debugger.sendCommand("Emulation.setFocusEmulationEnabled", { enabled: true });
   await until(selector => !!document.querySelector(selector), "rendered response", surface);
   await evaluate(() => {
     for (const toggle of document.querySelectorAll('.environment-toggle-button[aria-pressed="true"], .title-actions .side-panel-toggle-button[aria-pressed="true"]')) toggle.click();
@@ -440,10 +494,12 @@ async function run() {
   await until(selector => !!document.querySelector(selector), "source comment added", card);
   await checkSource(repeated);
   await send(repeated, comment, "Please explain the selected passage.");
+  await checkSentReference(repeated, "sent-comment-reference");
   report.cases.push("repeated Unicode last occurrence, UTF16 offsets, exact highlight, escaped comment + prompt payload");
 
   const quote = await add("Repeated 😀 café 中文 target.");
   await send(quote, "", "");
+  await checkSentReference(quote, "sent-quote-reference");
   report.cases.push("quote-only submission retains rich metadata and flattened quote");
 
   const multilineQuote = await evaluate(selector => document.querySelector(selector).textContent, surface);
@@ -531,7 +587,7 @@ function servePreview() {
   const harness = `const report={scene:'response-selection-v2',calls:window.selectionCalls,cases:[],measurements:[],boundary:"Built React renderer in embedded browser; mock transport; NOT Electron E2E"};
     const surface=${JSON.stringify(surface)},card=${JSON.stringify(card)};
     const evaluate=async(fn,...args)=>fn(...args);
-    ${[sleep, until, click, input, select, add, settle, closeQuotePanel, checkSource, send, validatePayload, measureGeometry].map(fn => `const ${fn.name || "sleep"}=${fn.toString()};`).join("\n")}
+    ${[sleep, until, click, input, select, add, settle, closeQuotePanel, checkSource, checkHighlight, send, validatePayload, measureGeometry].map(fn => `const ${fn.name || "sleep"}=${fn.toString()};`).join("\n")}
     const params=new URLSearchParams(location.search);
     report.nativeInput=[];
     report.eventTrace=[];
