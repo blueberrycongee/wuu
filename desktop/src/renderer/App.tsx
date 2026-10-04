@@ -41,6 +41,7 @@ import type {
   PopOutInitResult,
   PluginPackageInstallResult,
   PluginPackageRemoveResult,
+  ProjectPresetMode,
   RuntimeContext,
   RunningThreadSnapshot,
   ServerEvent,
@@ -83,6 +84,8 @@ import {
   type ComposerVariant,
   type PermissionMode,
 } from "./ComposerView";
+import { DEFAULT_PROJECT_PRESET } from "./ProjectPresetModes";
+import { ProjectPresetPicker } from "./ProjectPresetPicker";
 import { UserQuestionCard } from "./UserQuestionCard";
 import { ConversationSearchOverlay } from "./ConversationSearchOverlay";
 import {
@@ -3236,13 +3239,29 @@ export function App(): JSX.Element {
         }
         readOnly={activeThreadReadOnly || submissionTargetPending}
         initialized={composerRuntime}
+        runtimeSelection={activeProjectDraft ? (
+          <ProjectPresetPicker key={currentSessionTab?.id}
+            mode={currentSessionTab?.kind === "draft" ? currentSessionTab.projectPreset ?? DEFAULT_PROJECT_PRESET : DEFAULT_PROJECT_PRESET}
+            presets={state.initialized?.project_presets} providers={state.initialized?.providers}
+            onChange={setDraftProjectPreset} onConfigure={() => openSettingsPage("advanced")}
+            disabled={Boolean(activePendingThreadCreation) || viewContextSwitchPending} />
+        ) : projectAgentEnabled && activeThread?.project_preset ? (
+          isProjectCoordinator(activeThread) ? <ProjectPresetPicker key={activeThread.id}
+            mode={activeThread.project_preset.mode} snapshot={activeThread.project_preset}
+            providers={state.initialized?.providers} onConfigure={() => openSettingsPage("advanced")} /> : <span className="codex-runtime-label">
+            {(
+              state.initialized?.providers?.find((provider) => provider.name === activeThread.model_provider)
+                ?.models?.find((model) => model.id === activeThread.model)?.display_name || activeThread.model
+            )}
+          </span>
+        ) : undefined}
         engines={engineInventory?.engines}
         activeEngine={effectiveEngine !== "wuu" ? effectiveEngine : ""}
         engineLocked={Boolean(activeThread) || activeProjectDraft}
         engineModel={effectiveEngineRuntime.model}
         engineEffort={effectiveEngineRuntime.effort}
         engineSpeed={effectiveEngineRuntime.speed}
-        onSelectSpeed={async (speed) => {
+        onSelectSpeed={activeProjectDraft ? undefined : async (speed) => {
           if (effectiveEngine === "wuu" || activeThread) return selectRuntimeSpeed(speed);
           const runtime = { ...effectiveEngineRuntime, speed };
           setDraftEngineRuntime(runtime);
@@ -3763,11 +3782,20 @@ export function App(): JSX.Element {
       ...current,
       sessionTabs: current.sessionTabs.map((tab) => {
         if (tab.id !== current.activeSessionTabID || tab.kind !== "draft" || Boolean(tab.project) === project) return tab;
-        const { project: _wasProject, ...conversation } = tab;
+        const { project: _wasProject, projectPreset: _wasPreset, ...conversation } = tab;
         return project
-          ? { ...tab, project: true, title: t("projects.newProject") }
+          ? { ...tab, project: true, projectPreset: DEFAULT_PROJECT_PRESET, title: t("projects.newProject") }
           : { ...conversation, title: tab.title === t("projects.newProject") ? t("tabs.newConversation") : tab.title };
       }),
+    }));
+  }
+
+  function setDraftProjectPreset(projectPreset: ProjectPresetMode): void {
+    setState((current) => ({
+      ...current,
+      sessionTabs: current.sessionTabs.map((tab) => tab.id === current.activeSessionTabID && tab.kind === "draft" && tab.project
+        ? { ...tab, projectPreset }
+        : tab),
     }));
   }
 
@@ -4789,14 +4817,13 @@ export function App(): JSX.Element {
         requireThread(
           await Promise.race([window.wuu.startThread(projectDraft && activeContext.kind === "project" ? {
             // A renamed draft names the project; otherwise its goal does.
-            project: { name: customDraftConversationTitle(projectDraft.title, t("projects.newProject")) || projectNameFromGoal(text) },
+            project: {
+              name: customDraftConversationTitle(projectDraft.title, t("projects.newProject")) || projectNameFromGoal(text),
+              preset: projectDraft.projectPreset ?? DEFAULT_PROJECT_PRESET,
+            },
             workspace_id: activeContext.project_id,
             cwd: activeContext.cwd,
             engine: "wuu",
-            provider: currentState.initialized?.provider,
-            model: currentState.initialized?.model,
-            effort: currentState.initialized?.variant || currentState.initialized?.effort,
-            speed: currentState.initialized?.speed,
           } satisfies ThreadStartParams : {
             ...(draftEngine ? { engine: draftEngine } : {}),
             ...(newThreadWorktree

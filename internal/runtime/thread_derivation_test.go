@@ -66,3 +66,31 @@ func TestDeriveThreadModelUnknownProviderErrors(t *testing.T) {
 		t.Fatal("expected an error deriving an unknown provider")
 	}
 }
+
+// An already resolved empty effort/variant must not pick up a new configured
+// default during recovery; ordinary conversations retain their default behavior.
+func TestDeriveThreadModelPreservesResolvedDefaults(t *testing.T) {
+	cfg := config.Config{DefaultProvider: "p", Providers: map[string]config.ProviderConfig{"p": {
+		Type: "openai-compatible", BaseURL: "http://127.0.0.1:1", APIKey: "test-key", Model: "custom", Models: map[string]config.ProviderModelConfig{"custom": {
+			DefaultVariant: "high", Variants: map[string]map[string]any{"high": {"reasoningEffort": "high"}},
+		}},
+	}}}
+	s := &Session{ProviderName: "p", Model: "custom"}
+	ordinary, err := s.DeriveThreadModel(cfg, ThreadModelSelection{Provider: "p", Model: "custom"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ordinary.WorkerOptions["reasoningEffort"] != "high" {
+		t.Fatalf("ordinary default lost: %+v", ordinary.WorkerOptions)
+	}
+	pinned, err := s.DeriveThreadModel(cfg, ThreadModelSelection{Provider: "p", Model: "custom", DefaultsResolved: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := pinned.WorkerOptions["reasoningEffort"]; exists {
+		t.Fatalf("new default changed resolved empty effort: %+v", pinned.WorkerOptions)
+	}
+	if cfg.Providers["p"].Models["custom"].DefaultVariant != "high" {
+		t.Fatal("derivation mutated shared defaults")
+	}
+}

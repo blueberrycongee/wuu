@@ -47,7 +47,7 @@ remain invalid; this is recovery behavior, not downgrade compatibility.
 
 | Method | Input | Result |
 | --- | --- | --- |
-| `thread/start` | Optional `cwd`, `workspace_id`, `engine`, `provider`, `model`, `effort`, `permission_mode`, `approve_for_me`, `ephemeral`, `workspace`, `base_revision` | `{ "thread": ... }` |
+| `thread/start` | Optional `cwd`, `workspace_id`, `engine`, `provider`, `model`, `effort`, `permission_mode`, `approve_for_me`, `ephemeral`, `workspace`, `base_revision`, `project` | `{ "thread": ... }` |
 | `thread/resume` | Optional `session_id`, `response_only`, `history_page` | Thread snapshot and available held/pending user messages |
 | `thread/edit-message` | `thread_id`, `turn_id`, `item_id` | Rewound thread and draft restored from the selected user message |
 | `thread/fork` | `thread_id`; optional `turn_id`, `item_id`, `target`, `mode` | New thread and optional worktree information |
@@ -79,6 +79,10 @@ that cannot be restored after the server exits. Engine binding is fixed at
 creation. New external-engine sessions default to `unconfined` when permission
 mode is omitted; explicitly choose the intended mode. The built-in engine's
 `approve_for_me` review applies only in Standard mode.
+
+In Project Agent-enabled development builds, `project: {name, preset?}` creates a
+coordinator. See [project creation and preset snapshots](../automation/app-server.md#run-a-project)
+for the required configuration and model-lock contract.
 
 `workspace` is `shared` (the default) or `worktree`. A `worktree` session runs in
 a new detached Git worktree of the project, created from `base_revision` (a

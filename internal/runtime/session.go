@@ -149,6 +149,7 @@ type Session struct {
 	WorkerClient             providers.StreamClient
 	ModelRoles               modelroles.Set
 	ProjectModels            config.ProjectModelsConfig
+	ProjectPresets           config.ProjectPresetsConfig
 	ModelBudget              modelbudget.Budget
 	WorkerModelBudget        modelbudget.Budget
 	BaseSystemPrompt         string
@@ -253,6 +254,7 @@ func (s *Session) cloneForThreadModel() *Session {
 		WorkerClient:                s.WorkerClient,
 		ModelRoles:                  s.ModelRoles,
 		ProjectModels:               s.ProjectModels,
+		ProjectPresets:              s.ProjectPresets,
 		ModelBudget:                 s.ModelBudget,
 		WorkerModelBudget:           s.WorkerModelBudget,
 		BaseSystemPrompt:            s.BaseSystemPrompt,
@@ -316,12 +318,14 @@ type ThreadRuntime struct {
 // ThreadModelSelection is the model choice persisted with one conversation.
 // Empty fields mean the workspace runtime defaults should be used.
 type ThreadModelSelection struct {
-	Speed          string
-	Provider       string
-	Model          string
-	Variant        string
-	Effort         string
-	PermissionMode string
+	// DefaultsResolved marks a preset snapshot; empty effort/variant stays empty.
+	DefaultsResolved bool
+	Speed            string
+	Provider         string
+	Model            string
+	Variant          string
+	Effort           string
+	PermissionMode   string
 }
 
 // resolveWorkspaceStateDir returns the workspace state directory, keyed by the
@@ -748,6 +752,7 @@ func NewSession(opts Options) (*Session, error) {
 		WorkerClient:                workerClient,
 		ModelRoles:                  roleSelections,
 		ProjectModels:               cfg.Agent.ProjectModels,
+		ProjectPresets:              cfg.Agent.ProjectPresets,
 		ModelBudget:                 modelBudget,
 		WorkerModelBudget:           workerModelBudget,
 		BaseSystemPrompt:            baseSystemPrompt,
@@ -1008,7 +1013,7 @@ func (s *Session) PrewarmThreadProvider(ctx context.Context, sessionID string, e
 			strings.TrimSpace(selected.Variant) == strings.TrimSpace(s.StreamRunner.Variant) &&
 			strings.TrimSpace(selected.Effort) == strings.TrimSpace(s.StreamRunner.Effort) &&
 			config.NormalizePermissionMode(permissionMode) == config.NormalizePermissionMode(s.Permissions.Mode))
-	if !usesSharedClient {
+	if !usesSharedClient || selected.DefaultsResolved {
 		return nil
 	}
 	prewarmer, ok := s.StreamRunner.Client.(providers.SessionPrewarmer)
@@ -1041,12 +1046,13 @@ func (s *Session) NewThreadRuntimeForRootModel(sessionID, rootDir string, select
 	providerName := strings.TrimSpace(selected.Provider)
 	model := strings.TrimSpace(selected.Model)
 	requested := ThreadModelSelection{
-		Provider:       providerName,
-		Model:          model,
-		Variant:        strings.TrimSpace(selected.Variant),
-		Effort:         strings.TrimSpace(selected.Effort),
-		Speed:          selected.Speed,
-		PermissionMode: strings.TrimSpace(selected.PermissionMode),
+		DefaultsResolved: selected.DefaultsResolved,
+		Provider:         providerName,
+		Model:            model,
+		Variant:          strings.TrimSpace(selected.Variant),
+		Effort:           strings.TrimSpace(selected.Effort),
+		Speed:            selected.Speed,
+		PermissionMode:   strings.TrimSpace(selected.PermissionMode),
 	}
 	permissionMode := requested.PermissionMode
 	// An explicit process-scoped override (exec --permission-mode) wins over
@@ -1063,7 +1069,7 @@ func (s *Session) NewThreadRuntimeForRootModel(sessionID, rootDir string, select
 		currentVariant = strings.TrimSpace(s.StreamRunner.Variant)
 		currentEffort = strings.TrimSpace(s.StreamRunner.Effort)
 	}
-	if selected.Speed == "" && (providerName == "" || model == "" || (providerName == s.ProviderName && model == s.Model && requested.Variant == currentVariant && requested.Effort == currentEffort)) {
+	if !selected.DefaultsResolved && selected.Speed == "" && (providerName == "" || model == "" || (providerName == s.ProviderName && model == s.Model && requested.Variant == currentVariant && requested.Effort == currentEffort)) {
 		// Permission changes do not require rebuilding an unchanged model client.
 		shadow := s.cloneForThreadModel()
 		defer s.releasePluginGeneration(shadow.pluginGeneration)
@@ -1087,6 +1093,9 @@ func (s *Session) NewThreadRuntimeForRootModel(sessionID, rootDir string, select
 	variant := strings.TrimSpace(selected.Variant)
 	effort := strings.TrimSpace(selected.Effort)
 	selection := modelvariant.ResolveForProvider(ruleProviderName, ruleProviderCfg, model, variant, effort)
+	if selected.DefaultsResolved {
+		selection = modelvariant.ResolveExplicitForProvider(ruleProviderName, ruleProviderCfg, model, variant, effort)
+	}
 	if err := modelvariant.ApplySpeed(ruleProviderCfg, model, selected.Speed, &selection); err != nil {
 		return nil, err
 	}
@@ -1095,7 +1104,7 @@ func (s *Session) NewThreadRuntimeForRootModel(sessionID, rootDir string, select
 		return nil, fmt.Errorf("build thread model client: %w", err)
 	}
 	roles, err := modelroles.Resolve(cfg, modelroles.ResolveOptions{
-		ProviderName: resolvedName, ProviderConfig: providerCfg, Model: model,
+		ProviderName: resolvedName, ProviderConfig: providerCfg, Model: model, DefaultsResolved: selected.DefaultsResolved,
 		Effort: selection.LegacyEffort, Variant: selection.Variant,
 	})
 	if err != nil {

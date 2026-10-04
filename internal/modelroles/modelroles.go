@@ -35,11 +35,12 @@ var orderedRoles = []Role{
 }
 
 type ResolveOptions struct {
-	ProviderName   string
-	ProviderConfig config.ProviderConfig
-	Model          string
-	Effort         string
-	Variant        string
+	DefaultsResolved bool
+	ProviderName     string
+	ProviderConfig   config.ProviderConfig
+	Model            string
+	Effort           string
+	Variant          string
 }
 
 type Set struct {
@@ -182,7 +183,7 @@ func Resolve(cfg config.Config, opts ResolveOptions) (Set, error) {
 	}
 	mainProviderCfg.Model = mainModel
 
-	main := buildSelection(RoleMain, mainProvider, mainProviderCfg, mainModel, opts.Variant, opts.Effort, false)
+	main := buildSelection(RoleMain, mainProvider, mainProviderCfg, mainModel, opts.Variant, opts.Effort, false, opts.DefaultsResolved)
 	set := Set{Main: main}
 	var resolveErr error
 	set.Review, resolveErr = resolveConfiguredRole(cfg, RoleReview, cfg.Agent.ModelRoles.Review, main)
@@ -251,7 +252,7 @@ func ResolveAlias(cfg config.Config, aliasName string) (Selection, error) {
 		return Selection{}, fmt.Errorf("model alias %q: %w", aliasName, err)
 	}
 	providerCfg.Model = model
-	return buildSelection(RoleWorker, providerName, providerCfg, model, alias.Variant, alias.Effort, false), nil
+	return buildSelection(RoleWorker, providerName, providerCfg, model, alias.Variant, alias.Effort, false, false), nil
 }
 
 func validateAliasEffortVariant(providerName string, provider config.ProviderConfig, model, effort, variant string) error {
@@ -322,7 +323,7 @@ func resolveConfiguredRole(cfg config.Config, role Role, roleCfg config.ModelRol
 		return Selection{}, fmt.Errorf("agent.model_roles.%s.model is required", role)
 	}
 	providerCfg.Model = model
-	return buildSelection(role, providerName, providerCfg, model, roleCfg.Variant, roleCfg.Effort, false), nil
+	return buildSelection(role, providerName, providerCfg, model, roleCfg.Variant, roleCfg.Effort, false, false), nil
 }
 
 func roleConfigEmpty(roleCfg config.ModelRoleConfig) bool {
@@ -340,12 +341,15 @@ func inheritSelection(role Role, main Selection) Selection {
 	return out
 }
 
-func buildSelection(role Role, providerName string, provider config.ProviderConfig, model, variant, effort string, inherited bool) Selection {
+func buildSelection(role Role, providerName string, provider config.ProviderConfig, model, variant, effort string, inherited, defaultsResolved bool) Selection {
 	model = strings.TrimSpace(model)
 	provider.Model = model
 	ruleProviderName, ruleProvider := modelcatalog.EnrichProvider(providerName, provider, model)
 	apiModel := modelcatalog.APIModel(ruleProvider, model)
 	selection := modelvariant.ResolveForProvider(ruleProviderName, ruleProvider, model, variant, effort)
+	if defaultsResolved {
+		selection = modelvariant.ResolveExplicitForProvider(ruleProviderName, ruleProvider, model, variant, effort)
+	}
 	capabilities, behavior := BuildFacts(providerName, provider, model)
 	return Selection{
 		Role:               role,

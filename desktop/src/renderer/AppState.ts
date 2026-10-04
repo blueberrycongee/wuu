@@ -8,6 +8,7 @@ import type {
   InitializeResult,
   TodoUpdate,
   PluginInventoryChangedNotification,
+  ProjectPresetMode,
   RuntimeContext,
   ResponseSelection,
   ServerEvent,
@@ -109,6 +110,7 @@ type SessionTab =
       // The draft starts a project: its first message names the project and
       // becomes the coordinator's first instruction.
       project?: true;
+      projectPreset?: ProjectPresetMode;
     }
   | {
       id: string;
@@ -681,6 +683,7 @@ function reduceNotification(
           model_roles: params.model_roles,
           model_aliases: params.model_aliases,
           project_models: params.project_models,
+          project_presets: params.project_presets,
           providers: params.providers,
         },
       };
@@ -1573,6 +1576,7 @@ function summarizeThreadForSidebar(
     project_id: thread.project_id,
     project_exists: thread.project_exists,
     project_role: thread.project_role,
+    project_preset: thread.project_preset,
     model_provider: thread.model_provider,
     model: thread.model,
     engine_id: thread.engine_id,

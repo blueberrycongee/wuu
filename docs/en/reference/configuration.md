@@ -28,7 +28,7 @@ Normal startup removes these fields from every project layer, including `setting
 |---|---|
 | `default_provider`, `providers` | Select model services, endpoints, credentials, and connection options |
 | `instructions`, legacy `memory` | Control instruction discovery, including user paths |
-| `agent.model_roles`, `agent.model_aliases`, `agent.project_models` | Route model work |
+| `agent.model_roles`, `agent.model_aliases`, `agent.project_models`, `agent.project_presets` | Route model work |
 | `agent.permission_mode` | Set local execution authority |
 
 Case changes in JSON keys do not bypass the restriction. Other allowed project fields can still affect prompts, tools, hooks, and services, so this filtering does not make an unfamiliar repository safe to execute.
@@ -85,22 +85,42 @@ protocol; accepting unknown fields is not sufficient.
 
 ## Project Agent model choices
 
-In builds with Project Agent enabled, the lead uses the conversation model. Set
-Side and Worker defaults independently in Settings → Runtime, or in the user
-configuration:
+Project Agent remains behind its [development build gate](../project/development.md).
+In enabled builds, Settings → Built-in agent → Project Agent modes configures four
+optional presets: `low`, `medium`, `high`, and `ultra`. Each has independent Lead,
+Side, and Worker provider/model and reasoning choices, including custom model
+variants. Changing a role's model clears its previous reasoning selection. These names identify presets, not
+reasoning levels. The equivalent user-configuration fragment is:
 
 ```json
-{ "agent": { "project_models": {
-  "side": { "provider": "anthropic", "model": "your-side-model" },
-  "worker": { "provider": "openai", "model": "your-worker-model" }
+{ "agent": { "project_presets": {
+  "low": {
+    "lead": { "provider": "your-provider", "model": "your-lead-model" },
+    "side": { "provider": "your-provider", "model": "your-side-model" },
+    "worker": { "provider": "your-provider", "model": "your-worker-model" }
+  }
 } } }
 ```
 
-Use configured provider names and model IDs. Omit a role or leave it empty to
-inherit the lead model. Each selection also accepts `effort` and `variant` when
-the provider supports them. Defaults apply to newly created members; existing
-sessions retain their saved selection. A creation-time `model_alias` overrides
-the role default. See the [app-server protocol](../automation/app-server.md).
+Replace the placeholders with configured provider names and supported model IDs.
+Each role also accepts `effort` and `variant` using ordinary model-selection rules;
+a model-scoped variant takes precedence over effort. Incomplete presets can be
+saved while editing, but creating a project requires all three provider/model
+choices. Missing roles do not inherit the lead or workspace model.
+
+Creation resolves the selected preset once and saves its mode and all three role
+choices with the project and its members. Later preset or default changes do not
+change that project's choices, including for members created later or after a
+restart. Provider, model, effort, and variant are locked; supported speed and
+permission changes remain separate. Removing a required provider or disabling a
+pinned model causes an error rather than switching to a default.
+
+Projects created without a preset retain the legacy behavior: the lead uses its
+conversation model, while `agent.project_models.side` and `.worker` supply optional
+role defaults with the same provider/model/effort/variant shape. Empty roles inherit
+the lead; a creation-time `model_alias` overrides the role default. Existing legacy
+sessions keep their saved choices and remain editable. See the
+[app-server guide](../automation/app-server.md#run-a-project) for the API contract.
 
 ## Instructions and plugin settings
 

@@ -58,6 +58,9 @@ func (s *Server) projectSessionHandler(actorID string) tools.ProjectSessionHandl
 		if err != nil {
 			return nil, err
 		}
+		if project.ProjectPreset != nil && strings.TrimSpace(request.ModelAlias) != "" {
+			return nil, errors.New("project preset role models are locked; model_alias is not allowed")
+		}
 		lead := actor.ID == project.ID
 		switch request.Action {
 		case "list":
@@ -220,6 +223,9 @@ func (s *Server) createProjectSession(ctx context.Context, project, actor sessio
 	if role != "side" && role != "worker" {
 		return nil, errors.New("role must be side or worker")
 	}
+	if project.ProjectPreset != nil && strings.TrimSpace(request.ModelAlias) != "" {
+		return nil, errors.New("project preset role models are locked; model_alias is not allowed")
+	}
 	// Serialize same-host creation through launch; the store's unique side index
 	// also prevents another host from creating a second live side.
 	s.projectCreateMu.Lock()
@@ -270,6 +276,12 @@ func (s *Server) createProjectSession(ctx context.Context, project, actor sessio
 	if role == "side" {
 		selection = s.rt.ProjectModels.Side
 	}
+	if project.ProjectPreset != nil {
+		selection = project.ProjectPreset.Worker
+		if role == "side" {
+			selection = project.ProjectPreset.Side
+		}
+	}
 	if selection.Provider != "" {
 		provider, model, variant, effort = selection.Provider, selection.Model, selection.Variant, selection.Effort
 	}
@@ -289,7 +301,7 @@ func (s *Server) createProjectSession(ctx context.Context, project, actor sessio
 		RequestID: requestID, Name: title, Visibility: sessionVisibilityUser, ContextSource: sessionContextFresh,
 		ParentSessionID: project.ID, Workspace: workspace, WorkspaceID: project.WorkspaceID,
 		Provider: provider, Model: model, Variant: variant, Effort: effort,
-		PermissionMode: project.PermissionMode, ModelAlias: request.ModelAlias, ProjectRole: role,
+		PermissionMode: project.PermissionMode, ModelAlias: request.ModelAlias, ProjectRole: role, ProjectPreset: project.ProjectPreset,
 		InitialInput: &input,
 	})
 	if err != nil {

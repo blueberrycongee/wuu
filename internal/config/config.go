@@ -325,6 +325,8 @@ type AgentConfig struct {
 	// ProjectModels selects defaults for newly created project members. Empty
 	// selections inherit the lead; existing sessions retain their saved model.
 	ProjectModels ProjectModelsConfig `json:"project_models,omitempty"`
+	// ProjectPresets are editable role choices, resolved and locked when a project starts.
+	ProjectPresets ProjectPresetsConfig `json:"project_presets,omitempty"`
 	// DisableAutoCompact turns off the proactive auto-compact pass
 	// that fires when the conversation reaches the model's usable input
 	// window after reserving output headroom. The reactive overflow
@@ -398,6 +400,25 @@ type ProjectModelsConfig struct {
 	Worker ModelRoleConfig `json:"worker,omitempty"`
 }
 
+// ProjectPresetConfig reuses the established model selection semantics for each role.
+// Empty roles are allowed while editing; project creation requires all three.
+type ProjectPresetConfig struct {
+	Lead   ModelRoleConfig `json:"lead,omitempty"`
+	Side   ModelRoleConfig `json:"side,omitempty"`
+	Worker ModelRoleConfig `json:"worker,omitempty"`
+}
+
+type ProjectPresetsConfig map[string]ProjectPresetConfig
+
+func ValidProjectPresetMode(mode string) bool {
+	switch mode {
+	case "low", "medium", "high", "ultra":
+		return true
+	default:
+		return false
+	}
+}
+
 type AdvancedRuntimeUpdate struct {
 	MaxSteps                *int
 	MaxContextTokens        *int
@@ -412,6 +433,7 @@ type AdvancedRuntimeUpdate struct {
 	ModelAliases      map[string]*ModelRoleConfig
 	VerificationModel *ModelRoleConfig
 	ProjectModels     *ProjectModelsConfig
+	ProjectPresets    *ProjectPresetsConfig
 }
 
 type GeneralSettingsUpdate struct {
@@ -834,6 +856,26 @@ func (c Config) Validate() error {
 		if selection != (ModelRoleConfig{}) {
 			if err := validateConfiguredModelSelection(c, "agent.project_models."+role, selection); err != nil {
 				return err
+			}
+		}
+	}
+
+	for mode, preset := range c.Agent.ProjectPresets {
+		if !ValidProjectPresetMode(mode) {
+			return fmt.Errorf("agent.project_presets mode %q must be low, medium, high or ultra", mode)
+		}
+		for role, selection := range map[string]ModelRoleConfig{"lead": preset.Lead, "side": preset.Side, "worker": preset.Worker} {
+			provider := strings.TrimSpace(selection.Provider)
+			if provider == "" {
+				continue
+			}
+			if _, ok := c.Providers[provider]; !ok {
+				return fmt.Errorf("agent.project_presets.%s.%s.provider %q not found in providers", mode, role, provider)
+			}
+			if strings.TrimSpace(selection.Model) != "" {
+				if err := validateConfiguredModelSelection(c, "agent.project_presets."+mode+"."+role, selection); err != nil {
+					return err
+				}
 			}
 		}
 	}
@@ -1438,6 +1480,19 @@ func RemoveProvider(configPath, providerName, fallbackName, fallbackModel string
 				_ = roleKey
 			}
 		}
+		// Removed connections leave presets editable but incomplete. Existing
+		// projects retain their independent snapshots and fail visibly on use.
+		if presets, ok := agent["project_presets"].(map[string]any); ok {
+			for _, rawPreset := range presets {
+				preset, _ := rawPreset.(map[string]any)
+				for role, rawSelection := range preset {
+					selection, _ := rawSelection.(map[string]any)
+					if name, _ := selection["provider"].(string); name == providerName {
+						delete(preset, role)
+					}
+				}
+			}
+		}
 		// Aliases require an explicit provider and model, so an alias that
 		// pointed at the removed provider is no longer valid. Delete the
 		// whole entry to keep the config valid.
@@ -1487,6 +1542,13 @@ func UpdateAdvancedRuntime(configPath, providerName string, update AdvancedRunti
 	setOptionalFloat(agent, "compact_threshold_pct", update.CompactThresholdPct, 0)
 	setOptionalInt(agent, "compact_keep_recent_tokens", update.CompactKeepRecentTokens)
 	setOptionalBool(agent, "disable_auto_compact", update.DisableAutoCompact)
+	if update.ProjectPresets != nil {
+		if len(*update.ProjectPresets) == 0 {
+			delete(agent, "project_presets")
+		} else {
+			agent["project_presets"] = *update.ProjectPresets
+		}
+	}
 	if update.ProjectModels != nil {
 		if *update.ProjectModels == (ProjectModelsConfig{}) {
 			delete(agent, "project_models")

@@ -48,11 +48,12 @@ type threadState struct {
 	// refreshed runtime system prompt.
 	Instructions string
 	// ProjectID is the coordinator of a project's managed session.
-	ProjectID   string
-	ProjectRole string
-	ParentID    string
-	AgentPath   string
-	History     []providers.ChatMessage
+	ProjectID     string
+	ProjectRole   string
+	ProjectPreset *session.ProjectPresetSnapshot
+	ParentID      string
+	AgentPath     string
+	History       []providers.ChatMessage
 	// historyHeadSeq is the physical append-only session_messages head that
 	// History was reconstructed through. It must not be derived from the
 	// logical messages: a checkpoint may retain no records or only old seqs.

@@ -345,12 +345,13 @@ func (s *Server) startThreadPrewarm(th *threadState) {
 		defer cancel()
 		th.mu.Lock()
 		selection := runtime.ThreadModelSelection{
-			Provider:       th.ModelProvider,
-			Model:          th.Model,
-			Variant:        th.ModelVariant,
-			Effort:         th.ModelEffort,
-			Speed:          th.Speed,
-			PermissionMode: th.PermissionMode,
+			DefaultsResolved: th.ProjectPreset != nil,
+			Provider:         th.ModelProvider,
+			Model:            th.Model,
+			Variant:          th.ModelVariant,
+			Effort:           th.ModelEffort,
+			Speed:            th.Speed,
+			PermissionMode:   th.PermissionMode,
 		}
 		engineID := agentengine.NormalizeEngineID(th.EngineID)
 		threadID := th.ID
@@ -378,6 +379,9 @@ func (s *Server) handleThreadResume(req Request) error {
 		}
 	}
 	if th := s.thread(id); th != nil {
+		if err := s.refreshThreadSessionMetadata(th); err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
 		th.mu.Lock()
 		s.restorePluginToolLabels(th.Turns)
 		thread := th.resumeSnapshotLocked(params.HistoryPage)
@@ -1459,6 +1463,29 @@ type threadListEntry struct {
 	pinnedAt *time.Time
 }
 
+// refreshThreadSessionMetadata keeps cached responses and mutation decisions
+// aligned with cross-host membership changes without replacing live history.
+func (s *Server) refreshThreadSessionMetadata(th *threadState) error {
+	th.mu.Lock()
+	persist := th.PersistHistory
+	th.mu.Unlock()
+	if !persist {
+		return nil
+	}
+	metadata, found, err := session.Find(s.rt.SessionDir, th.ID)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return session.ErrSessionNotFound
+	}
+	metadata = relocatedSessionMetadata(metadata, s.registeredWorkspaces())
+	th.mu.Lock()
+	applySessionMetadata(th, metadata)
+	th.mu.Unlock()
+	return nil
+}
+
 func applySessionMetadata(th *threadState, metadata session.Session) {
 	if !metadata.CreatedAt.IsZero() {
 		th.CreatedAt = metadata.CreatedAt
@@ -1478,6 +1505,7 @@ func applySessionMetadata(th *threadState, metadata session.Session) {
 	th.Instructions = effectiveSessionInstructions(metadata)
 	th.ProjectID = projectIDForSession(metadata)
 	th.ProjectRole = projectRoleForSession(metadata)
+	th.ProjectPreset = metadata.ProjectPreset
 	if selection := runtimeSelectionFromSession(metadata); selection.Provider != "" && selection.Model != "" {
 		applyThreadRuntimeSelection(th, selection)
 	}
@@ -1564,6 +1592,7 @@ func threadEntryFromSession(sess session.Session, provider, model string) thread
 			ReadOnly:              projectExecutionDisabled(sess.Source),
 			ProjectID:             projectIDForSession(sess),
 			ProjectRole:           projectRoleForSession(sess),
+			ProjectPreset:         sess.ProjectPreset,
 			Preview:               firstNonEmpty(sess.Title, sess.Summary),
 			Title:                 sess.Title,
 			ModelProvider:         firstNonEmpty(selection.Provider, provider),
@@ -2199,6 +2228,15 @@ func (s *Server) refreshListedSessionMetadata(sessions []session.Session) {
 			th.ArchivedAt = metadata.ArchivedAt
 			th.ArchiveReason = metadata.ArchiveReason
 			th.PinnedAt = metadata.PinnedAt
+			th.Source = metadata.Source
+			th.ProjectID = projectIDForSession(metadata)
+			th.ProjectRole = projectRoleForSession(metadata)
+			th.ProjectPreset = metadata.ProjectPreset
+			if metadata.ProjectPreset != nil {
+				// Adoption can canonicalize effort; refresh the locked selection
+				// together with the snapshot before cached runtime reads use it.
+				applyThreadRuntimeSelection(th, runtimeSelectionFromSession(metadata))
+			}
 			th.mu.Unlock()
 		}
 	}

@@ -730,6 +730,19 @@ describe("createRuntimeSettingsActions", () => {
     expect(api.updateRuntimeSettings).not.toHaveBeenCalled();
   });
 
+  it("uses the server preset readback after an advanced settings save", async () => {
+    const api = installWuuApi();
+    const harness = buildActions();
+    const project_presets = { high: { lead: { provider: "codex", model: "gpt-5", variant: "high" } } };
+    api.updateAdvancedSettings.mockResolvedValue({ advanced_settings: {}, project_presets });
+    await harness.actions.updateAdvancedSettings({ project_presets: { high: { lead: { provider: "codex", model: "gpt-5" } } } });
+    expect(harness.getAppState().initialized?.project_presets).toEqual(project_presets);
+    expect(harness.getAppState().initialized?.model).toBe("gpt-5");
+    api.updateAdvancedSettings.mockResolvedValue({ advanced_settings: {} });
+    await harness.actions.updateAdvancedSettings({ project_presets: {} });
+    expect(harness.getAppState().initialized?.project_presets).toEqual({});
+  });
+
   it("updates advanced and general settings unless a view switch is pending", async () => {
     const api = installWuuApi();
     const harness = buildActions();

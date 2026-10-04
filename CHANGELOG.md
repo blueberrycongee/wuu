@@ -8,6 +8,13 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ## [Unreleased]
 
+### Added
+
+- Add configurable `low`, `medium`, `high`, and `ultra` Project Agent modes with
+  Lead, Side, and Worker model choices locked when a project is created.
+  Existing projects keep their saved choices; the feature remains behind the
+  development-only `project_agent` build gate.
+
 ### Changed
 
 - Show reply completion times beside copy and fork actions, with the same

@@ -287,6 +287,7 @@ func (s *Server) ensureThreadRuntimeAfterAdmission(th *threadState) (*runtime.Th
 		th.Source = metadata.Source
 		th.ProjectID = projectIDForSession(metadata)
 		th.ProjectRole = projectRoleForSession(metadata)
+		th.ProjectPreset = metadata.ProjectPreset
 		th.Instructions = effectiveSessionInstructions(metadata)
 		th.mu.Unlock()
 		isProject := metadata.Source == projectSource || metadata.Source == projectSessionSource
@@ -1144,9 +1145,30 @@ func (s *Server) ensureThreadRuntime(th *threadState) (*runtime.ThreadRuntime, e
 	modelEffort := th.ModelEffort
 	speed := th.Speed
 	permissionMode := th.PermissionMode
+	preset := th.ProjectPreset
 	th.mu.Unlock()
 	if detached.runtime != nil || detached.subscription != nil {
 		s.releaseDetachedThreadRuntime(detached)
+	}
+	if preset != nil {
+		// Check even cached runtimes: removing a connection must not silently
+		// reuse its old client or repin this conversation to workspace defaults.
+		cfg, _, err := s.rt.LoadEffectiveConfig()
+		if err != nil {
+			return nil, err
+		}
+		providerCfg, providerName, err := cfg.ResolveProvider(modelProvider)
+		if err != nil {
+			return nil, fmt.Errorf("project preset provider unavailable: %w", err)
+		}
+		if providerCfg.Models[model].Disabled {
+			return nil, fmt.Errorf("project preset model %q is disabled", model)
+		}
+		ruleName, ruleCfg := modelcatalog.EnrichProvider(providerName, providerCfg, model)
+		resolved := modelvariant.ResolveExplicitForProvider(ruleName, ruleCfg, model, modelVariant, modelEffort)
+		if resolved.Variant != modelVariant || resolved.LegacyEffort != modelEffort {
+			return nil, errors.New("project preset effort or variant is no longer available")
+		}
 	}
 	if existing != nil {
 		return existing, nil
@@ -1156,15 +1178,16 @@ func (s *Server) ensureThreadRuntime(th *threadState) (*runtime.ThreadRuntime, e
 	}
 	browserWorkdir := firstNonEmpty(rootDir, s.rt.RootDir)
 	selection := runtime.ThreadModelSelection{
-		Provider:       modelProvider,
-		Model:          model,
-		Variant:        modelVariant,
-		Effort:         modelEffort,
-		Speed:          speed,
-		PermissionMode: permissionMode,
+		DefaultsResolved: preset != nil,
+		Provider:         modelProvider,
+		Model:            model,
+		Variant:          modelVariant,
+		Effort:           modelEffort,
+		Speed:            speed,
+		PermissionMode:   permissionMode,
 	}
 	threadRuntime, err := s.rt.NewThreadRuntimeForRootModel(th.ID, browserWorkdir, selection)
-	if errors.Is(err, runtime.ErrThreadProviderUnavailable) {
+	if errors.Is(err, runtime.ErrThreadProviderUnavailable) && preset == nil {
 		// Draft selections arrive through thread/start, not config/model/update.
 		// Register a discovered connection before treating the pin as removed.
 		cfg, _, loadErr := s.rt.LoadEffectiveConfig()
@@ -1180,7 +1203,7 @@ func (s *Server) ensureThreadRuntime(th *threadState) (*runtime.ThreadRuntime, e
 			threadRuntime, err = s.rt.NewThreadRuntimeForRootModel(th.ID, browserWorkdir, selection)
 		}
 	}
-	if errors.Is(err, runtime.ErrThreadProviderUnavailable) {
+	if errors.Is(err, runtime.ErrThreadProviderUnavailable) && preset == nil {
 		// The pinned provider was removed from config after this session
 		// selected it. Self-heal the dead provider/model pair to the
 		// workspace defaults so the turn proceeds instead of every send
@@ -1346,11 +1369,12 @@ func (s *Server) threadRuntimeMatchesSelectionLocked(th *threadState, existing *
 	}
 	got.PermissionMode = ""
 	want := runtime.ThreadModelSelection{
-		Provider: strings.TrimSpace(th.ModelProvider),
-		Model:    strings.TrimSpace(th.Model),
-		Variant:  strings.TrimSpace(th.ModelVariant),
-		Effort:   strings.TrimSpace(th.ModelEffort),
-		Speed:    th.Speed,
+		DefaultsResolved: th.ProjectPreset != nil,
+		Provider:         strings.TrimSpace(th.ModelProvider),
+		Model:            strings.TrimSpace(th.Model),
+		Variant:          strings.TrimSpace(th.ModelVariant),
+		Effort:           strings.TrimSpace(th.ModelEffort),
+		Speed:            th.Speed,
 	}
 	return got == want
 }

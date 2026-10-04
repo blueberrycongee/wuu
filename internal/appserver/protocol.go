@@ -203,14 +203,15 @@ type ConfigErrorNotification struct {
 }
 
 type ConfigChangedNotification struct {
-	Provider      string                       `json:"provider"`
-	Model         string                       `json:"model"`
-	Effort        string                       `json:"effort,omitempty"`
-	Variant       string                       `json:"variant,omitempty"`
-	ModelRoles    []ModelRoleSummary           `json:"model_roles,omitempty"`
-	ModelAliases  map[string]ModelAliasSummary `json:"model_aliases,omitempty"`
-	ProjectModels config.ProjectModelsConfig   `json:"project_models,omitempty"`
-	Providers     []ProviderSummary            `json:"providers,omitempty"`
+	Provider       string                       `json:"provider"`
+	Model          string                       `json:"model"`
+	Effort         string                       `json:"effort,omitempty"`
+	Variant        string                       `json:"variant,omitempty"`
+	ModelRoles     []ModelRoleSummary           `json:"model_roles,omitempty"`
+	ModelAliases   map[string]ModelAliasSummary `json:"model_aliases,omitempty"`
+	ProjectModels  config.ProjectModelsConfig   `json:"project_models,omitempty"`
+	ProjectPresets config.ProjectPresetsConfig  `json:"project_presets,omitempty"`
+	Providers      []ProviderSummary            `json:"providers,omitempty"`
 }
 
 type Request struct {
@@ -296,6 +297,7 @@ type InitializeResult struct {
 	ModelRoles         []ModelRoleSummary           `json:"model_roles,omitempty"`
 	ModelAliases       map[string]ModelAliasSummary `json:"model_aliases,omitempty"`
 	ProjectModels      config.ProjectModelsConfig   `json:"project_models,omitempty"`
+	ProjectPresets     config.ProjectPresetsConfig  `json:"project_presets,omitempty"`
 	Providers          []ProviderSummary            `json:"providers,omitempty"`
 	AdvancedSettings   AdvancedSettingsSummary      `json:"advanced_settings"`
 	GeneralSettings    GeneralSettingsSummary       `json:"general_settings"`
@@ -426,6 +428,7 @@ type ConfigReadResult struct {
 	ModelRoles         []ModelRoleSummary           `json:"model_roles,omitempty"`
 	ModelAliases       map[string]ModelAliasSummary `json:"model_aliases,omitempty"`
 	ProjectModels      config.ProjectModelsConfig   `json:"project_models,omitempty"`
+	ProjectPresets     config.ProjectPresetsConfig  `json:"project_presets,omitempty"`
 	Providers          []ProviderSummary            `json:"providers,omitempty"`
 	AdvancedSettings   AdvancedSettingsSummary      `json:"advanced_settings"`
 	GeneralSettings    GeneralSettingsSummary       `json:"general_settings"`
@@ -1086,6 +1089,7 @@ type ConfigAdvancedUpdateParams struct {
 	ProviderContextWindow   *int                          `json:"provider_context_window,omitempty"`
 	ModelAliases            *map[string]ModelAliasSummary `json:"model_aliases,omitempty"`
 	ProjectModels           *config.ProjectModelsConfig   `json:"project_models,omitempty"`
+	ProjectPresets          *config.ProjectPresetsConfig  `json:"project_presets,omitempty"`
 	VerificationModel       *ModelAliasSummary            `json:"verification_model,omitempty"`
 }
 
@@ -1093,6 +1097,7 @@ type ConfigAdvancedUpdateResult struct {
 	AdvancedSettings AdvancedSettingsSummary      `json:"advanced_settings"`
 	ModelAliases     map[string]ModelAliasSummary `json:"model_aliases,omitempty"`
 	ProjectModels    config.ProjectModelsConfig   `json:"project_models,omitempty"`
+	ProjectPresets   config.ProjectPresetsConfig  `json:"project_presets,omitempty"`
 	ModelRoles       []ModelRoleSummary           `json:"model_roles,omitempty"`
 	Providers        []ProviderSummary            `json:"providers,omitempty"`
 }
@@ -1460,7 +1465,8 @@ type ThreadStartResult struct {
 }
 
 type ThreadProjectParams struct {
-	Name string `json:"name"`
+	Name   string `json:"name"`
+	Preset string `json:"preset,omitempty"`
 }
 
 // ProjectSessionParams adds an ordinary conversation of the project's
@@ -2272,8 +2278,9 @@ type Thread struct {
 	ID             string                `json:"id"`
 	Source         string                `json:"source,omitempty"`
 	// ProjectID is the coordinator conversation that manages this session.
-	ProjectID   string `json:"project_id,omitempty"`
-	ProjectRole string `json:"project_role,omitempty"`
+	ProjectID     string                         `json:"project_id,omitempty"`
+	ProjectRole   string                         `json:"project_role,omitempty"`
+	ProjectPreset *session.ProjectPresetSnapshot `json:"project_preset,omitempty"`
 	// ProjectExists resolves grouping independently of coordinator visibility.
 	// Lists, resumes and metadata responses include it; incremental events may omit it.
 	ProjectExists  *bool  `json:"project_exists,omitempty"`

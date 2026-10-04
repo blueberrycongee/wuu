@@ -3537,9 +3537,12 @@ html[data-focus-modality="keyboard"] .runtime-panel-summary :is(
 }
 
 /* Only the glyph moves; the speed toggle keeps a stable hit target. */
+.runtime-panel-fast,
 .codex-runtime-menu .runtime-panel-context .runtime-panel-fast {
-  width: var(--runtime-context-row);
-  height: var(--runtime-context-row);
+  display: flex;
+  align-items: center;
+  width: var(--runtime-context-row, var(--control-size-inline));
+  height: var(--runtime-context-row, var(--control-size-inline));
   flex: 0 0 auto;
   justify-content: center;
   padding: 0;
@@ -3548,7 +3551,7 @@ html[data-focus-modality="keyboard"] .runtime-panel-summary :is(
   color: var(--ink-tertiary);
 }
 
-.codex-runtime-menu .runtime-panel-speed-icon {
+.runtime-panel-speed-icon {
   position: relative;
   display: block;
   flex: 0 0 auto;
@@ -3557,7 +3560,7 @@ html[data-focus-modality="keyboard"] .runtime-panel-summary :is(
   height: var(--icon-size);
 }
 
-.codex-runtime-menu .runtime-panel-speed-icon > svg {
+.runtime-panel-speed-icon > svg {
   position: absolute;
   inset: 0;
   width: 100%;
@@ -3574,6 +3577,7 @@ html[data-focus-modality="keyboard"] .runtime-panel-summary :is(
   transition: clip-path var(--motion-slow) var(--ease-out);
 }
 
+.runtime-panel-fast[aria-pressed="true"],
 .codex-runtime-menu .runtime-panel-context .runtime-panel-fast[aria-pressed="true"] {
   color: var(--interaction-accent);
 }

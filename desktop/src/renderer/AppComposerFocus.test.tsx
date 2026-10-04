@@ -40,6 +40,7 @@ vi.mock("./ComposerView", async (importOriginal) => {
             props.mainConversation ? variant : undefined
           }
         >
+          {props.runtimeSelection}
           <button aria-label="stop-probe" onClick={props.onInterrupt}>stop</button>
           {props.queuedMessages.map((message) => (
             <span key={message.id}>
@@ -583,7 +584,7 @@ describe("main composer focus continuity", () => {
 
   // A project starts from the Projects group in one step: the draft takes the
   // goal, and the first send starts the coordinator named after that goal.
-  it("starts a project coordinator from the Projects group on the first send", async () => {
+  it("starts a project coordinator with the selected preset and no ambient runtime overrides", async () => {
     await renderApp(false, { projectAgentEnabled: true });
     const button = container.querySelector<HTMLButtonElement>(
       '.sidebar-functional-group[data-functional-group-id="projects"] button[aria-label="新建项目"]',
@@ -594,18 +595,20 @@ describe("main composer focus continuity", () => {
     await act(async () => button.click());
     await flushAsync();
     await waitForMainComposerFocus("dock");
+    const presetPicker = container.querySelector<HTMLButtonElement>('[data-testid="project-preset-picker"]');
+    expect(presetPicker).not.toBeNull();
+    await act(async () => { presetPicker?.click(); });
+    const modes = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]'));
+    expect(modes.map((item) => item.textContent)).toEqual(["low", "medium", "high", "ultra"]);
+    await act(async () => { modes.find((item) => item.textContent === "high")?.click(); });
     await enterCommand(mainComposer("dock"), "Page catalog search results\nKeep the public API unchanged.");
 
     const workspace: RuntimeContext = { kind: "project", project_id: project.id, cwd: workspaceCwd };
     expect(window.wuu.startThread).toHaveBeenCalledWith({
-      project: { name: "Page catalog search results" },
+      project: { name: "Page catalog search results", preset: "high" },
       workspace_id: project.id,
       cwd: workspaceCwd,
       engine: "wuu",
-      provider: "fake",
-      model: "fake-model",
-      effort: "high",
-      speed: undefined,
     }, workspace);
     expect(window.wuu.startTurn).toHaveBeenCalled();
   });

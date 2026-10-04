@@ -72,6 +72,9 @@ to be deleted.
 
 ## Run a project
 
+These methods require `features.project_agent: true`, enabled only by the
+[development build gate](../project/development.md). Release builds do not enable it.
+
 `thread/start` with `project: {"name": "..."}` creates a project coordinator in the
 workspace. The returned thread has `source: "project"` and follows ordinary
 session permission and model settings. The lead can work directly and manages
@@ -104,12 +107,37 @@ members, and the side can wait for workers. Results include `turn_id`, `turn_sta
 and terminal `final_output`. `timeout_ms` defaults to 60000 and is capped at 300000;
 expiry returns `timed_out: true`. Timeout or caller cancellation never stops the child.
 
-The lead uses its conversation model. `agent.project_models.side` and `.worker`
-select provider/model defaults for new members; empty selections inherit the lead.
-A creation-time `model_alias` overrides the role default. Existing sessions retain
-their saved model. `config/advanced/update` accepts `project_models` with the same
-shape; initialize, config reads, updates and config-change events return the current
-defaults. Desktop runtime settings expose both choices when `features.project_agent` is true.
+To select a configured mode, send `thread/start` with
+`project: {"name": "Example project", "preset": "low"}`. The only preset names are
+`low`, `medium`, `high`, and `ultra`. Omit top-level `provider`, `model`, `effort`,
+and `speed` when selecting a preset; combining them is rejected. The preset must
+exist in `agent.project_presets` with explicit provider/model choices for `lead`,
+`side`, and `worker`. Creation resolves their existing effort/variant defaults
+once; incomplete or unavailable choices fail instead of inheriting a workspace
+default. See the [configuration example](../reference/configuration.md#project-agent-model-choices).
+
+The coordinator and each managed member expose a persisted `project_preset`:
+`{mode, lead, side, worker}`, where every role has `provider`, `model`, and optional
+`effort` and `variant`. New members copy the coordinator's snapshot. Editing global
+presets or defaults does not alter it, including after restart. There is no mode
+change operation. Project session creation rejects `model_alias`, and
+`config/model/update` rejects changes to the saved provider, model, effort, or
+variant. Supported `speed` and permission fields can still be updated under the
+ordinary validation rules. A removed provider or disabled pinned model produces
+an error, never a replacement selection.
+
+`config/advanced/update` accepts `project_presets` with the configuration shape.
+It replaces the preset map; `{}` clears it for future project creation. Incomplete
+roles can be saved during editing. Initialize, config reads, updates, and
+`config/changed` expose the current `project_presets` independently of saved
+thread snapshots.
+
+Omitting `project.preset` preserves legacy behavior: the lead uses its conversation
+model, and `agent.project_models.side` and `.worker` supply defaults for new
+members. Empty roles inherit the lead; a creation-time `model_alias` overrides the
+role default. Existing sessions keep their saved model and remain editable.
+`config/advanced/update` still accepts `project_models`; config responses and
+events still return those defaults.
 
 The coordinator receives host events as user items with `origin: "host"`,
 `related_session_id` naming the session, and a `cause`:
@@ -136,6 +164,11 @@ plugin-managed sessions, not project members.
 brings an ordinary conversation of the project's workspace under the project, and
 `release` makes a managed session an ordinary conversation again. Both return the
 updated `thread`.
+
+For preset projects, `adopt` requires the conversation's provider, model, effort,
+and variant to match the saved Worker choice; it then applies the snapshot and
+lock. `release` clears the snapshot and lock. An ordinary `thread/fork` copies the
+source selection without inheriting project membership or its preset lock.
 
 ## Probe the protocol
 
