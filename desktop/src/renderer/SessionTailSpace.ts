@@ -35,8 +35,7 @@ export function useSessionTailSpace({
   const naturalHeight = useCallback(() => {
     // scrollHeight is floored at clientHeight, so it cannot measure short
     // first turns. The content wrapper includes the tail but not that floor.
-    const lead = Math.max(0, Number.parseFloat(contentRef.current?.style.paddingTop || "0") || 0);
-    return Math.max(0, (contentRef.current?.getBoundingClientRect().height ?? 0) - space.current - lead);
+    return Math.max(0, (contentRef.current?.getBoundingClientRect().height ?? 0) - space.current);
   }, [contentRef]);
   const syncLayout = useCallback(() => {
     // Child layout effects may report stream frames before our thread restore.
@@ -115,10 +114,6 @@ export function useSessionTailSpace({
     restoredOffset.current = 0;
     if (!preserveOnThreadChange) {
       const saved = threadID ? savedExtents.current.get(threadID) : undefined;
-      // First-query lead is in-flight motion on the outgoing thread, not a
-      // saved reservation. Drop it before measuring so the incoming pane does
-      // not inherit a composer-sized padding-top for one layout.
-      contentRef.current?.style.removeProperty("padding-top");
       // Rebase before measuring growth: a different history window moves the
       // submission without producing output or creating new trailing space.
       const offset = getRestorationOffset();
