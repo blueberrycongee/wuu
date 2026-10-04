@@ -132,7 +132,6 @@ import {
   isCoalescedBackgroundThreadEvent,
   initialSplitComposerDrafts,
   initialState,
-  isAnyThreadRunning,
   isStateActiveThreadRunning,
   isThreadExecuting,
   isThreadRunning,
@@ -225,8 +224,7 @@ import { showErrorToast, showToast } from "./Toast";
 import { useArchiveDeletion } from "./useArchiveDeletion";
 import { setOpenThreadInSplitHandler } from "./ConversationSplitBridge";
 import { CircleAlert, RefreshCw } from "./WuuIcons";
-import type {
-} from "../shared/protocol";
+import type { CodexPetCommand } from "../shared/protocol";
 import { useSettingsRuntimeState } from "./SettingsRuntimeState";
 import { SidePanelToggleIcon } from "./SidePanelToggleIcon";
 import { JumpToLatestPill } from "./JumpToLatestPill";
@@ -2786,7 +2784,6 @@ export function App(): JSX.Element {
   const activeThreadStreamStatus = activeThreadAnswerReady
     ? undefined
     : turnStreamStatusForThread(state, activeThread);
-  const anyThreadIsRunning = isAnyThreadRunning(state) || viewContextSwitchPending;
   const runningThreadKey = useMemo(() => {
     const running = new Set<string>();
     for (const thread of [state.thread, state.secondaryThread, ...state.threads]) {
@@ -2815,21 +2812,6 @@ export function App(): JSX.Element {
   // not on any thread anywhere running. A worktree-fork thread running in its
   // own cwd, or a thread in another project, no longer blocks them.
   const environmentGitBusy = activeWorkingTreeBusy || viewContextSwitchPending;
-  // The desktop pet lives in its own always-on-top window owned by the main
-  // process; the renderer only feeds it the session runtime so its sprite
-  // state tracks what the app is doing.
-  useEffect(() => {
-    const api = window.wuu as Partial<typeof window.wuu>;
-    if (typeof api.updateCodexPetRuntime !== "function" || !hostSupports("updateCodexPetRuntime")) {
-      return;
-    }
-    void api
-      .updateCodexPetRuntime({
-        running: anyThreadIsRunning,
-        status: resolveLocalizedText(state.status),
-      })
-      .catch(() => undefined);
-  }, [anyThreadIsRunning, locale, state.status]);
   // The pet bubble is a lightweight hint of the most relevant session.
   // Re-derive whenever the thread state changes and push the result to
   // the main process, which keeps the always-on-top pet window in sync.
@@ -2857,6 +2839,11 @@ export function App(): JSX.Element {
     state.threads,
     state.lastViewedTurnByThreadID,
   ]);
+  // Blocking questions and approvals; non-blocking offers need no answer.
+  const waitingThreadIDs = useMemo(
+    () => new Set(userQuestions.filter((request) => request.mode !== "offer").map((request) => request.thread_id)),
+    [userQuestions],
+  );
   useEffect(() => {
     const api = window.wuu as Partial<typeof window.wuu>;
     if (typeof api.updateCodexPetHints !== "function" || !hostSupports("updateCodexPetHints")) return;
@@ -2865,6 +2852,7 @@ export function App(): JSX.Element {
       secondaryThread: state.secondaryThread ?? undefined,
       threads: state.threads,
       unreadThreadIDs,
+      waitingThreadIDs,
     });
     void api.updateCodexPetHints(hints).catch(() => undefined);
   }, [
@@ -2872,6 +2860,7 @@ export function App(): JSX.Element {
     state.secondaryThread,
     state.threads,
     unreadThreadIDs,
+    waitingThreadIDs,
   ]);
   const runningProviderNames = useMemo(() => {
     const names = new Set<string>();
@@ -3689,17 +3678,27 @@ export function App(): JSX.Element {
     openWorkspaceBrowserRef.current("browser");
   }, [pendingBrowserDock, activeThreadID, state.activeContext?.cwd]);
 
-  // The pet bubble click sends a `wuu:codex-pet-jump` event from main;
-  // bring the conversation forward and switch to the target thread.
-  // Placed here (after `activateThread` is destructured) to avoid TDZ.
+  // Commands from the desktop pet: open a conversation, or send text the
+  // user typed into the pet. The handler is refreshed every render so it
+  // always sees the current send functions; the subscription waits for an
+  // initialized workspace because subscribing releases queued commands.
+  const codexPetCommandHandlerRef = useRef<(command: CodexPetCommand) => void>(() => undefined);
+  codexPetCommandHandlerRef.current = (command) => {
+    if (command.kind === "jump") {
+      revealConversationFromFocusedWorkspace();
+      void activateThread(command.thread_id);
+      return;
+    }
+    void submitCodexPetText(command.text, command.thread_id)
+      .catch(() => false)
+      .then((ok) => window.wuu.resolveCodexPetCommand(command.id, { ok }));
+  };
+  const codexPetCommandsReady = Boolean(state.initialized && state.activeContext);
   useEffect(() => {
     const api = window.wuu as Partial<typeof window.wuu>;
-    if (typeof api.onCodexPetJumpRequest !== "function") return;
-    return api.onCodexPetJumpRequest((event) => {
-      revealConversationFromFocusedWorkspace();
-      void activateThread(event.thread_id);
-    });
-  }, [activateThread, revealConversationFromFocusedWorkspace]);
+    if (!codexPetCommandsReady || typeof api.onCodexPetCommand !== "function") return;
+    return api.onCodexPetCommand((command) => codexPetCommandHandlerRef.current(command));
+  }, [codexPetCommandsReady]);
 
   const {
     startNewThread,
@@ -4259,6 +4258,25 @@ export function App(): JSX.Element {
       }
     });
     return true;
+  }
+
+  // Sends pet input without touching the composer draft. A named thread
+  // that is no longer loaded fails rather than redirecting the text; without
+  // one the text goes to the active conversation, or starts one.
+  async function submitCodexPetText(text: string, threadID?: string): Promise<boolean> {
+    const current = appStateRef.current;
+    const thread = threadID
+      ? [current.thread, current.secondaryThread, ...current.threads].find((entry) => entry?.id === threadID)
+      : activeThreadForState(current);
+    const message = createComposerMessage(text, [], []);
+    if ((threadID && !thread) || !message || thread?.read_only) return false;
+    const key = thread?.id ?? current.activeSessionTabID;
+    const admission = turnAdmissionsRef.current.get(key);
+    const busy = thread && isThreadRunning(thread) && !activeTurnIsAnswerReady(thread);
+    if (admission || busy || queueLanesRef.current.has(key)) {
+      return queueComposerMessage(message, thread ?? undefined, admission);
+    }
+    return sendComposerMessage(message, thread ?? undefined, current.activePane);
   }
 
   async function submitFileSelectionEdit(part: FileSelectionPart): Promise<boolean> {

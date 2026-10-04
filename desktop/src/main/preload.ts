@@ -304,8 +304,6 @@ const api: WuuDesktopApi = {
   listCodexPets: () => ipcRenderer.invoke("wuu:codex-pets-list"),
   updateCodexPetSettings: (settings) =>
     ipcRenderer.invoke("wuu:codex-pets-update", settings),
-  updateCodexPetRuntime: (runtime) =>
-    ipcRenderer.invoke("wuu:codex-pet-runtime", runtime),
   updateCodexPetHints: (hints) =>
     ipcRenderer.invoke("wuu:codex-pet-hints", hints),
   startThread: (params?: ThreadStartParams, targetContext?: RuntimeContext) =>
@@ -489,19 +487,20 @@ const api: WuuDesktopApi = {
   },
   getRunningThreadsSnapshot: () =>
     ipcRenderer.invoke("wuu:running-threads-snapshot"),
-  // 桌宠气泡点击跳转：主进程把当前 thread_id 广播到所有窗口，渲染进程
-  // 据此把主窗口前置并切换 thread。
-  onCodexPetJumpRequest: (
-    handler: (event: { thread_id: string }) => void,
-  ) => {
+  // Subscribing tells the main process this renderer can take pet commands;
+  // queued commands are delivered right after.
+  onCodexPetCommand: (handler) => {
     const listener = (
       _event: Electron.IpcRendererEvent,
-      payload: { thread_id: string },
+      payload: Parameters<typeof handler>[0],
     ) => handler(payload);
-    ipcRenderer.on("wuu:codex-pet-jump", listener);
+    ipcRenderer.on("wuu:codex-pet-command", listener);
+    ipcRenderer.send("wuu:codex-pet-ready");
     return () =>
-      ipcRenderer.removeListener("wuu:codex-pet-jump", listener);
+      ipcRenderer.removeListener("wuu:codex-pet-command", listener);
   },
+  resolveCodexPetCommand: (id, result) =>
+    ipcRenderer.send("wuu:codex-pet-resolve", id, result),
   onTerminalEvent: (handler) => {
     const listener = (
       _event: Electron.IpcRendererEvent,

@@ -16,11 +16,13 @@ import {
   nativeImage,
   nativeTheme,
   Notification,
+  powerMonitor,
   screen,
   session as electronSession,
   systemPreferences,
   type OpenDialogOptions,
   shell,
+  type WebContents,
   WebContentsView,
 } from "electron";
 import { readFile, readdir, rm, stat } from "node:fs/promises";
@@ -128,6 +130,7 @@ import type {
   PluginClientRequestResult,
   WorkspaceFileSaveParams,
   CodexPetHint,
+  CodexPetSubmitResult,
   SideThreadOpenResult,
   SideThreadHistoryResult,
   SideThreadSendParams,
@@ -145,7 +148,9 @@ import {
   legacyCodexPetsDir,
   loadCodexPetsSnapshot,
 } from "./codexPets";
-import { CodexPetWindowManager, type CodexPetRuntime } from "./codexPetWindow";
+import { CodexPetWindowManager } from "./codexPetWindow";
+import { CodexPetActivity } from "./codexPetActivity";
+import { CodexPetCommandRelay, type CodexPetCommandTarget } from "./codexPetCommands";
 import { RemoteHostManager } from "./remoteControl";
 import {
   getCodexPetSettings,
@@ -281,9 +286,10 @@ const appServerClientPool = new AppServerClientPool(
 // lifecycle tracking and broadcast to the renderer on change. The renderer's
 // sidebar uses it to show spinners for non-active workspaces without depending
 // on event routing that is filtered to the active context.
-appServerClientPool.setRunningThreadsChangedHandler((snapshot) =>
-  broadcastToAll("wuu:running-threads-changed", snapshot),
-);
+appServerClientPool.setRunningThreadsChangedHandler((snapshot) => {
+  broadcastToAll("wuu:running-threads-changed", snapshot);
+  codexPetActivity.setRunningThreads(snapshot);
+});
 // Owns every agent-driven embedded browser tab (hidden WebContentsView + CDP
 // bridge). Reverse-RPC browser/* requests are intercepted in emitServerEvent
 // (below) and answered here via the pool's single-shot reply channel. The view
@@ -380,37 +386,50 @@ observationCoordinator.setBrowserExpandHandler((activity) => {
   });
 });
 // The pet is a standalone always-on-top window owned by the main process, so
-// it stays on the desktop when the main window is hidden or minimized. Its
-// right-click menu disables the setting, which also tears the window down.
-// The jump callback fires when the user clicks the pet's session bubble:
-// the main window is brought forward and the renderer is told to switch
-// to that thread via the `wuu:codex-pet-jump` broadcast.
-const codexPetWindowManager = new CodexPetWindowManager(
-  () => {
+// it stays on the desktop when the main window is hidden, minimized, or
+// closed. Its right-click menu disables the setting, which also tears the
+// window down. Jumps and submits are relayed to the main window's renderer,
+// which owns conversation navigation and sending; the relay opens the main
+// window when none is attached.
+const codexPetWindowManager = new CodexPetWindowManager({
+  onClose: () => {
     updateCodexPetSettings({ enabled: false });
   },
-  (hint) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      if (mainWindow.isMinimized()) mainWindow.restore();
-      mainWindow.show();
-      mainWindow.focus();
-    }
-    broadcastToAll("wuu:codex-pet-jump", { thread_id: hint.thread_id });
+  onJump: (threadID) => {
+    revealMainWindow();
+    codexPetCommandRelay.jump(threadID);
   },
-  (size) => {
+  onSubmit: (text, threadID) => codexPetCommandRelay.submit(text, threadID),
+  onShowApp: () => revealMainWindow(),
+  onSizeChange: (size) => {
     // Context-menu size change — push the choice into desktop-settings.json
     // and refresh the snapshot so the next sync re-stages the window with
     // the new size (CodexPetWindowManager already called applyView).
     updateCodexPetSettings({ size });
   },
-  (scale) => {
+  onScaleChange: (scale) => {
     // Continuous-resize drag ended (commit=1) — persist the raw scale so
     // the pet reopens at exactly the size the user left it. Intermediate
     // per-frame scale updates never reach this callback.
     updateCodexPetSettings({ scale });
   },
-  app.isPackaged,
-);
+  isPackaged: app.isPackaged,
+});
+const codexPetCommandRelay = new CodexPetCommandRelay({
+  timeoutMs: 30_000,
+  // A submit sent while the main window is closed opens it without taking
+  // focus from the app the user is typing next to.
+  onMissingTarget: () => {
+    if (!mainWindow || mainWindow.isDestroyed()) createWindow({ inactive: true });
+  },
+});
+// Main-window renderers attached to the relay, keyed by webContents id.
+const codexPetCommandTargets = new Map<number, CodexPetCommandTarget>();
+const codexPetActivity = new CodexPetActivity({
+  onMood: (mood) => codexPetWindowManager.setMood(mood),
+  onReaction: (reaction) => codexPetWindowManager.react(reaction),
+  onHints: (hints) => codexPetWindowManager.setHints(hints),
+});
 const terminalSessionManager = new TerminalSessionManager(
   (windowID, event) => emitTerminalEvent(windowID, event),
 );
@@ -546,6 +565,7 @@ const rendererServerEventBatcher = new RendererServerEventBatcher((event) => {
 
 function emitServerEvent(event: ServerEvent): void {
   remoteAppServerBridge.publish(event);
+  codexPetActivity.handleServerEvent(event);
   // Intercept core→desktop browser/* requests BEFORE broadcastToAll: the
   // renderer auto-rejects every server-request ("unsupported server request"),
   // and server-request routes are single-shot, so letting the renderer race
@@ -1085,7 +1105,50 @@ function createAccountWindow(context: RuntimeContext): void {
   loadRenderer(win);
 }
 
-function createWindow(): void {
+// Brings the main window forward, creating it if the user closed it.
+function revealMainWindow(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    createWindow();
+    return;
+  }
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+}
+
+// Attaches the main window's renderer to the pet command relay once it
+// subscribes, and detaches it when that page navigates away or dies.
+function attachCodexPetCommandTarget(contents: WebContents): void {
+  const existing = codexPetCommandTargets.get(contents.id);
+  if (existing) {
+    codexPetCommandRelay.attach(existing);
+    return;
+  }
+  const target: CodexPetCommandTarget = {
+    send: (channel, command) => {
+      if (!contents.isDestroyed()) contents.send(channel, command);
+    },
+  };
+  const detach = () => {
+    if (codexPetCommandTargets.get(contents.id) !== target) return;
+    codexPetCommandTargets.delete(contents.id);
+    contents.off("did-start-navigation", navigation);
+    contents.off("render-process-gone", detach);
+    codexPetCommandRelay.detach(target);
+    if (!codexPetCommandRelay.attached) codexPetActivity.setRendererAttached(false);
+  };
+  const navigation = (details: Electron.Event<Electron.WebContentsDidStartNavigationEventParams>) => {
+    if (details.isMainFrame && !details.isSameDocument) detach();
+  };
+  codexPetCommandTargets.set(contents.id, target);
+  contents.on("did-start-navigation", navigation);
+  contents.on("render-process-gone", detach);
+  contents.once("destroyed", detach);
+  codexPetCommandRelay.attach(target);
+  codexPetActivity.setRendererAttached(true);
+}
+
+function createWindow(options: { inactive?: boolean } = {}): void {
   const primaryDisplay = screen.getPrimaryDisplay();
   const onboardingComplete = isOnboardingComplete();
   const restoredBounds = onboardingComplete
@@ -1100,6 +1163,7 @@ function createWindow(): void {
   const windowOptions: BrowserWindowConstructorOptions = {
     width,
     height,
+    show: !options.inactive,
     resizable: onboardingComplete,
     ...windowFrameOptions(),
     ...mainWindowMaterialOptions(),
@@ -1131,6 +1195,7 @@ function createWindow(): void {
   windowRegistry.attachResizeHandlers(win, (phase) => {
     handleNativeWindowResizePhase(phase, win);
   });
+  if (options.inactive) win.once("ready-to-show", () => win.showInactive());
   win.on("close", () => {
     // Last-write-wins: cancel any pending debounce and persist synchronously
     // before the window is destroyed.
@@ -1886,17 +1951,24 @@ app.whenReady().then(async () => {
       updateCodexPetSettings(settings ?? {}),
   );
   ipcMain.handle(
-    "wuu:codex-pet-runtime",
-    (_event, runtime: CodexPetRuntime) =>
-      codexPetWindowManager.setRuntime(
-        runtime ?? { running: false, status: "" },
-      ),
-  );
-  ipcMain.handle(
     "wuu:codex-pet-hints",
     (_event, hints: CodexPetHint[] | null) =>
-      codexPetWindowManager.setHints(hints ?? []),
+      codexPetActivity.setRendererHints(Array.isArray(hints) ? hints : []),
   );
+  // Only the main window's renderer navigates and sends on the pet's behalf;
+  // pop-out conversation windows share the preload but must not attach.
+  ipcMain.on("wuu:codex-pet-ready", (event) => {
+    if (mainWindow && !mainWindow.isDestroyed() && event.sender === mainWindow.webContents) {
+      attachCodexPetCommandTarget(event.sender);
+    }
+  });
+  ipcMain.on("wuu:codex-pet-resolve", (event, id: unknown, result: CodexPetSubmitResult) => {
+    if (typeof id !== "string" || !codexPetCommandTargets.has(event.sender.id)) return;
+    codexPetCommandRelay.resolve(id, result);
+  });
+  // Greet the user when they come back to the machine.
+  powerMonitor.on("unlock-screen", () => codexPetWindowManager.react("waving"));
+  powerMonitor.on("resume", () => codexPetWindowManager.react("waving"));
   ipcMain.handle("wuu:settings-usage", (event) =>
     appServerRequest<SettingsUsageResponse>(event, "settings/usage", {
       timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
@@ -2539,7 +2611,9 @@ app.whenReady().then(async () => {
   void phoneAccess.run(() => phoneAccess.restore(projectManager.ensureRuntimeContext().cwd));
 
   app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
+    // The pet window counts among all windows, so check the main window
+    // itself; otherwise a Dock click with only the pet open does nothing.
+    if (!mainWindow || mainWindow.isDestroyed()) {
       createWindow();
     }
   });

@@ -119,8 +119,8 @@ const unavailableWebMethods = [
   "removeRemoteDevice",
   "listCodexPets",
   "updateCodexPetSettings",
-  "updateCodexPetRuntime",
   "updateCodexPetHints",
+  "resolveCodexPetCommand",
   "revealSession",
   "revealWorkspaceItem",
   "showWorkspaceItemMenu",
@@ -893,7 +893,7 @@ export class RemoteDesktopBridge {
       // Native event sources do not exist in a browser. These subscriptions
       // are inert; their actions are explicitly unavailable below.
       onRemoteControlEvent: () => () => {},
-      onCodexPetJumpRequest: () => () => {},
+      onCodexPetCommand: () => () => {},
       startTerminalSession: async (params) => {const result=await this.call<import("@wuu/protocol").TerminalSessionStartResult>("desktop/terminal/start",{params,root:params?.cwd});this.terminalIDs.add(result.id);return result;},
       writeTerminalSession: (id,data) => this.call("desktop/terminal/write",{id,data}),
       resizeTerminalSession: (id,cols,rows) => this.call("desktop/terminal/resize",{id,cols,rows}),

@@ -165,70 +165,89 @@ describe("deriveActiveSessionHints", () => {
     expect(deriveActiveSessionHints({ threads: [withStaticOnly] })).toEqual([]);
   });
 
-  it("ranks failed > needs_review > running > unread > idle", () => {
-    const failed = thread({
-      id: "failed",
-      status: "idle",
-      title: "失败",
-      updated_at: "2026-05-05T00:00:00Z",
-      turns: [turn([agentMessage({ text: "出错了" })])],
-    });
+  it("ranks needs_review > failed > unread > running > idle", () => {
     const review = thread({
       id: "review",
-      status: "idle",
-      updated_at: "2026-05-04T00:00:00Z",
-      turns: [turn([agentMessage({ text: "需要批准权限" })])],
+      status: "in_progress",
+      updated_at: "2026-05-01T00:00:00Z",
+      turns: [turn([agentMessage({ text: "要不要继续？" })], { status: "in_progress" })],
+    });
+    const failed = thread({
+      id: "failed",
+      updated_at: "2026-05-02T00:00:00Z",
+      turns: [turn([agentMessage({ text: "读取中" })], { status: "failed" })],
+    });
+    const unread = thread({
+      id: "unread",
+      updated_at: "2026-05-03T00:00:00Z",
+      turns: [turn([agentMessage({ text: "做完了" })])],
     });
     const running = thread({
       id: "running",
       status: "in_progress",
-      updated_at: "2026-05-03T00:00:00Z",
-      turns: [turn([agentMessage({ text: "正在执行" })])],
-    });
-    const unread = thread({
-      id: "unread",
-      status: "idle",
-      updated_at: "2026-05-02T00:00:00Z",
-      turns: [turn([agentMessage({ text: "未读消息" })])],
+      updated_at: "2026-05-04T00:00:00Z",
+      turns: [turn([agentMessage({ text: "正在执行" })], { status: "in_progress" })],
     });
     const idle = thread({
       id: "idle",
-      status: "idle",
-      updated_at: "2026-05-01T00:00:00Z",
+      updated_at: "2026-05-05T00:00:00Z",
       turns: [turn([agentMessage({ text: "空闲" })])],
     });
-    const all = [idle, unread, running, review, failed];
-    expect(deriveActiveSessionHints({ threads: all })[0]?.thread_id).toBe("failed");
-
-    const withoutFailures = all.filter((t) => t.id !== "failed");
-    expect(deriveActiveSessionHints({ threads: withoutFailures })[0]?.thread_id).toBe(
-      "review",
-    );
-    const withoutReview = withoutFailures.filter((t) => t.id !== "review");
-    expect(deriveActiveSessionHints({ threads: withoutReview })[0]?.thread_id).toBe(
-      "running",
-    );
-    const withoutRunning = withoutReview.filter((t) => t.id !== "running");
-    // Plain idle threads outrank each other only by updated_at, so without an
-    // unread set the first non-running leftover wins on recency.
-    expect(
-      deriveActiveSessionHints({ threads: withoutRunning })[0]?.thread_id,
-    ).toBe("unread");
-
-    // Same candidates but flagged as unread → the unread idle outranks the
-    // plain idle.
-    expect(
-      deriveActiveSessionHints({
-        threads: withoutRunning,
+    const hints = deriveActiveSessionHints(
+      {
+        threads: [idle, running, unread, failed, review],
         unreadThreadIDs: new Set(["unread"]),
-      })[0]?.thread_id,
-    ).toBe("unread");
-    expect(
-      deriveActiveSessionHints({
-        threads: [unread, idle],
-        unreadThreadIDs: new Set(["idle"]),
-      })[0]?.thread_id,
-    ).toBe("idle");
+        waitingThreadIDs: new Set(["review"]),
+      },
+      5,
+    );
+    expect(hints.map((hint) => [hint.thread_id, hint.status, hint.attention])).toEqual([
+      ["review", "needs_review", true],
+      ["failed", "failed", true],
+      ["unread", "done", true],
+      ["running", "running", false],
+      ["idle", "idle", false],
+    ]);
+  });
+
+  it("does not infer status from the wording of an answer", () => {
+    const t = thread({
+      id: "talks-about-errors",
+      turns: [turn([agentMessage({ text: "Fixed the error; 需要你批准权限 review" })])],
+    });
+    expect(deriveActiveSessionHints({ threads: [t] })[0]?.status).toBe("idle");
+  });
+
+  it("explains a failed turn and clears it once a later turn succeeds", () => {
+    const failedTurn = turn([agentMessage({ text: "开始读取" })], {
+      id: "t1",
+      status: "failed",
+      error: { message: "Rate limit\nexceeded" },
+    });
+    const failed = thread({ id: "f", turns: [failedTurn] });
+    expect(deriveActiveSessionHints({ threads: [failed] })[0]).toMatchObject({
+      status: "failed",
+      preview: "Rate limit exceeded",
+    });
+
+    // A failed internal turn (title generation, compaction) is not the user's.
+    const internalFailure = thread({
+      id: "i",
+      turns: [
+        turn([agentMessage({ text: "结论" })], { id: "t1" }),
+        turn([], { id: "t2", kind: "internal", status: "failed", error: { message: "x" } }),
+      ],
+    });
+    expect(deriveActiveSessionHints({ threads: [internalFailure] })[0]?.status).toBe("idle");
+
+    const retried = thread({
+      id: "r",
+      turns: [failedTurn, turn([agentMessage({ text: "重试成功" })], { id: "t2" })],
+    });
+    expect(deriveActiveSessionHints({ threads: [retried] })[0]).toMatchObject({
+      status: "idle",
+      preview: "重试成功",
+    });
   });
 
   it("breaks priority ties with updated_at desc", () => {
@@ -268,17 +287,6 @@ describe("deriveActiveSessionHints", () => {
     expect(
       deriveActiveSessionHints({ threads: [focused, background] })[0]?.thread_id,
     ).toBe("background");
-  });
-
-  it("only flags needs_review once the thread has settled", () => {
-    const running = thread({
-      id: "running-with-permission-text",
-      status: "in_progress",
-      turns: [turn([agentMessage({ text: "正在请求权限批准" })])],
-    });
-    const hints = deriveActiveSessionHints({ threads: [running] });
-    expect(hints[0]?.status).toBe("running");
-    expect(hints[0]?.attention).toBe(false);
   });
 
   it("returns the ranked top threads capped at three", () => {

@@ -12,16 +12,23 @@ import { renderableFileURL } from "./renderableFileURLs";
 export const CODEX_PET_CELL_WIDTH = 192;
 export const CODEX_PET_CELL_HEIGHT = 208;
 
+// Frame timings follow the Codex Pets atlas convention: every frame of a
+// row holds for the same time except the last, which lingers so a loop
+// reads as a gesture rather than a strobe. Idle breathes unevenly.
+function frameDurations(count: number, frameMs: number, lastMs: number): number[] {
+  return Array.from({ length: count }, (_, index) => (index === count - 1 ? lastMs : frameMs));
+}
+
 export const CODEX_PET_STATES: CodexPetState[] = [
-  { id: "idle", label: "Idle", row: 0, frames: 6 },
-  { id: "running-right", label: "Run right", row: 1, frames: 8 },
-  { id: "running-left", label: "Run left", row: 2, frames: 8 },
-  { id: "waving", label: "Waving", row: 3, frames: 4 },
-  { id: "jumping", label: "Jumping", row: 4, frames: 5 },
-  { id: "failed", label: "Failed", row: 5, frames: 8 },
-  { id: "waiting", label: "Waiting", row: 6, frames: 6 },
-  { id: "running", label: "Running", row: 7, frames: 6 },
-  { id: "review", label: "Review", row: 8, frames: 6 },
+  { id: "idle", label: "Idle", row: 0, durations: [280, 110, 110, 140, 140, 320] },
+  { id: "running-right", label: "Run right", row: 1, durations: frameDurations(8, 120, 220) },
+  { id: "running-left", label: "Run left", row: 2, durations: frameDurations(8, 120, 220) },
+  { id: "waving", label: "Waving", row: 3, durations: frameDurations(4, 140, 280) },
+  { id: "jumping", label: "Jumping", row: 4, durations: frameDurations(5, 140, 280) },
+  { id: "failed", label: "Failed", row: 5, durations: frameDurations(8, 140, 240) },
+  { id: "waiting", label: "Waiting", row: 6, durations: frameDurations(6, 150, 260) },
+  { id: "running", label: "Running", row: 7, durations: frameDurations(6, 120, 220) },
+  { id: "review", label: "Review", row: 8, durations: frameDurations(6, 150, 280) },
 ];
 
 type CodexPetManifest = {

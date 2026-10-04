@@ -3001,15 +3001,6 @@ function isStateActiveThreadRunning(state: AppState): boolean {
   return Boolean(state.running || isThreadRunning(activeThreadForState(state)));
 }
 
-function isAnyThreadRunning(state: AppState): boolean {
-  return Boolean(
-    state.running ||
-    isThreadExecuting(state.thread) ||
-    isThreadExecuting(state.secondaryThread) ||
-    state.threads.some(isThreadExecuting),
-  );
-}
-
 function upsertTurn(thread: Thread, turn: Turn): Thread {
   const reconciled = reconcileOptimisticTurns(thread.turns, [turn]);
   if (reconciled !== thread.turns) thread = { ...thread, turns: reconciled };
@@ -3687,7 +3678,6 @@ export {
   hasText,
   initialSplitComposerDrafts,
   initialState,
-  isAnyThreadRunning,
   isStateActiveThreadRunning,
   isThreadExecuting,
   isThreadPresentationRunning,

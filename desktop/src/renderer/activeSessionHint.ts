@@ -3,20 +3,16 @@ import {
   type CodexPetHint,
   type Thread,
   type ThreadItem,
+  type Turn,
 } from "../shared/protocol";
 import { translateCurrent } from "./i18n";
 
 // The bubble's preview text is the latest stable agent_message. Thread.preview
 // is not a fallback: it typically holds the first turn's user query, and
 // showing that reads as stale commentary. Threads with no agent_message are
-// omitted from the feed.
-// REVIEW_RE matches both Chinese affordance words and English ones, but only
-// the English alternatives get \b word boundaries — \b requires a word/non-word
-// transition, and Chinese characters are word characters, so \b between two
-// CJK runes never matches and would silently suppress the chip on
-// Chinese-language turns.
-const FAILED_RE = /\b(failed|error)\b|失败|错误/i;
-const REVIEW_RE = /权限|批准|确认|\b(permission|approve|review)\b/i;
+// omitted from the feed. Row status comes from structured state only — the
+// latest user turn's status and pending blocking questions — never from
+// wording, so an answer that mentions "error" or "权限" is not mislabeled.
 
 // Walk a thread's turns from newest to oldest, and within each turn walk its
 // items from newest to oldest, to find the latest visible assistant text.
@@ -55,6 +51,8 @@ export type ActiveSessionHintInput = {
   // An idle thread in this set outranks a plain idle one so a finished-but-
   // unread conversation still surfaces in the bubble.
   unreadThreadIDs?: ReadonlySet<string> | null;
+  // Threads with a pending blocking question or approval.
+  waitingThreadIDs?: ReadonlySet<string> | null;
 };
 
 type ScoredThread = {
@@ -82,46 +80,43 @@ function scoreThreads(input: ActiveSessionHintInput): ScoredThread[] {
   if (candidates.length === 0) return [];
 
   const unreadIDs = input.unreadThreadIDs ?? null;
+  const waitingIDs = input.waitingThreadIDs ?? null;
 
   const scored = candidates.map((thread) => {
     const title = (thread.title ?? "").trim();
-    // Preview is the latest stable agent_message (see latestAgentMessageText
-    // for the walk). Empty string when no commentary exists anywhere — the
-    // Thread.preview denormalized field is intentionally NOT used as a
-    // fallback, because it typically holds the first turn's user query and
-    // showing that here reads as "very early text" instead of "latest
-    // commentary". When preview is empty the pet window hides its bubble
-    // card entirely rather than render a stale summary.
-    const preview = (latestAgentMessageText(thread) ?? "").trim();
-    const failed = FAILED_RE.test(preview) || FAILED_RE.test(title);
     const running = thread.status === "in_progress";
-    // A running thread can briefly match REVIEW_RE through its in-progress
-    // commentary, but the "needs review" chip is a user-action affordance —
-    // only flag it once the thread has actually settled.
-    const needsReview = !failed && !running && REVIEW_RE.test(preview);
-    const unread =
-      !failed && !needsReview && !running && unreadIDs?.has(thread.id) === true;
+    const waiting = waitingIDs?.has(thread.id) === true;
+    const failedTurn = running ? undefined : latestUserTurn(thread);
+    const failed = !waiting && failedTurn?.status === "failed";
+    // A failed row explains the failure; otherwise the row shows the latest
+    // commentary (see latestAgentMessageText for the walk).
+    const preview = (
+      (failed && failedTurn?.error?.message) ||
+      latestAgentMessageText(thread) ||
+      ""
+    ).replace(/\s+/g, " ").trim();
+    const unread = !running && !waiting && !failed && unreadIDs?.has(thread.id) === true;
 
     let priority: number;
     let hintStatus: CodexPetHint["status"];
-    let attention = false;
-    if (failed) {
+    let attention = true;
+    if (waiting) {
       priority = 5;
-      hintStatus = "failed";
-      attention = true;
-    } else if (needsReview) {
-      priority = 4;
       hintStatus = "needs_review";
-      attention = true;
-    } else if (running) {
-      priority = 3;
-      hintStatus = "running";
+    } else if (failed) {
+      priority = 4;
+      hintStatus = "failed";
     } else if (unread) {
-      priority = 2;
+      priority = 3;
       hintStatus = "done";
+    } else if (running) {
+      priority = 2;
+      hintStatus = "running";
+      attention = false;
     } else {
       priority = 1;
       hintStatus = "idle";
+      attention = false;
     }
 
     // The currently focused thread wins ties on equal priority so the bubble
@@ -146,6 +141,17 @@ function scoreThreads(input: ActiveSessionHintInput): ScoredThread[] {
   });
 
   return scored;
+}
+
+// The newest turn the user started; internal and compaction turns are not
+// the user's work.
+function latestUserTurn(thread: Thread): Turn | undefined {
+  const turns = thread.turns ?? [];
+  for (let index = turns.length - 1; index >= 0; index -= 1) {
+    const turn = turns[index];
+    if (turn && (turn.kind ?? "user") === "user") return turn;
+  }
+  return undefined;
 }
 
 function hintFromScored(entry: ScoredThread): CodexPetHint {
