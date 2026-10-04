@@ -764,13 +764,11 @@
 
 .sidebar-brand-wordmark {
   grid-column: 1;
-  font-family: var(--empty-home-title-font);
+  display: block;
+  width: auto;
+  height: 0.675em;
+  max-width: 100%;
   font-size: 20px;
-  font-weight: 650;
-  letter-spacing: 0.4px;
-  line-height: 1;
-  /* Lift the serif x-height toward the adjacent bell's visible center. */
-  transform: translateY(-0.107em);
 }
 
 .sidebar-notifications-button {
