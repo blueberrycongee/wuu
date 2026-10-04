@@ -372,12 +372,10 @@ export function ServiceConnector({
 
   return (
     <>
-      {catalog.providers === undefined && !catalog.failed ? (
-        <p className="settings-section-note" role="status">{t("settings.loading")}</p>
-      ) : null}
       <div className="model-service-catalog" data-testid="settings-provider-tiles">
         <CatalogServiceGroups
           catalogProviders={[...featured, ...local.filter((provider) => !featuredIDs.includes(provider.id))]}
+          pendingCatalogTiles={catalog.providers === undefined && !catalog.failed ? featuredIDs.length : 0}
           providers={providers}
           grouped={false}
           disabled={running}
@@ -1233,6 +1231,7 @@ function ModelChoices({
 // featured list reads as one run in the same order.
 function CatalogServiceGroups({
   catalogProviders,
+  pendingCatalogTiles = 0,
   providers,
   query = "",
   grouped,
@@ -1240,6 +1239,7 @@ function CatalogServiceGroups({
   onConnect,
 }: {
   catalogProviders: readonly CatalogProviderSummary[];
+  pendingCatalogTiles?: number;
   providers: readonly ProviderSummary[];
   query?: string;
   grouped: boolean;
@@ -1308,7 +1308,7 @@ function CatalogServiceGroups({
       </span>
     </button>
   ));
-  const empty = entries.length === 0 && subscriptions.length === 0
+  const empty = entries.length === 0 && subscriptions.length === 0 && !pendingCatalogTiles
     ? <p className="settings-group-empty">{t("provider.noServiceMatches")}</p>
     : null;
 
@@ -1317,7 +1317,14 @@ function CatalogServiceGroups({
       <div className="model-service-tiles">
         {subscriptionTiles}
         {groups.flatMap(catalogTiles)}
+        {Array.from({ length: pendingCatalogTiles }, (_, index) => (
+          <div key={`pending-${index}`} className="model-service-tile model-service-skeleton" aria-hidden="true">
+            <span className="model-service-skeleton-mark" />
+            <span className="model-service-skeleton-name" />
+          </div>
+        ))}
       </div>
+      {pendingCatalogTiles ? <span className="sr-only" role="status">{t("settings.loading")}</span> : null}
       {empty}
     </>;
   }

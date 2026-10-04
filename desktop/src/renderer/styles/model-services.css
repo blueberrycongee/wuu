@@ -315,6 +315,34 @@
   --provider-mark-size: round(up, calc(var(--font-ui) * 1.72), 2px);
 }
 
+.model-service-skeleton {
+  --pulse-opacity: 0.55;
+  animation: wuu-pulse 2.4s ease-in-out infinite;
+  pointer-events: none;
+}
+
+.model-service-skeleton-mark,
+.model-service-skeleton-name {
+  background: var(--surface-2);
+  border-radius: var(--radius-xs);
+}
+
+.model-service-skeleton-mark {
+  flex: 0 0 round(up, calc(var(--font-ui) * 1.72), 2px);
+  height: round(up, calc(var(--font-ui) * 1.72), 2px);
+}
+
+.model-service-skeleton-name {
+  width: 60%;
+  height: 1em;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .model-service-skeleton {
+    animation: none;
+  }
+}
+
 .model-service-tile .provider-mark svg,
 .model-service-tile .provider-mark .provider-mark-engine {
   width: 78%;

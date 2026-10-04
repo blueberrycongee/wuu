@@ -179,14 +179,19 @@ window.wuu = {
   disconnectMCPServer: async (name: string) => ({ status: { ...mcpServers.find((server) => server.name === name)!, state: "configured", connected: false } }),
   refreshMCPServer: async (name: string) => ({ status: mcpServers.find((server) => server.name === name)! }),
   listEngines: async () => structuredClone(engines),
-  listCatalogProviders: async (provider?: string) => ({
-    providers: provider
-      ? catalogProviders.filter((item) => item.id === provider).map((item) => ({
-        ...item,
-        models: [item.default_model, `${item.default_model}-fast`, `${item.default_model}-mini`].map((id, index) => ({ id, tool_call: true, context_window: 1_000_000 / (index + 1) })),
-      }))
-      : catalogProviders,
-  }),
+  listCatalogProviders: async (provider?: string) => {
+    // Keep the initial catalog request pending for repeatable skeleton review.
+    if (params.get("catalog") === "pending") return new Promise<{ providers: CatalogProviderSummary[] }>(() => {});
+    if (params.get("catalog") === "failed") throw new Error("Catalog fixture unavailable");
+    return {
+      providers: provider
+        ? catalogProviders.filter((item) => item.id === provider).map((item) => ({
+          ...item,
+          models: [item.default_model, `${item.default_model}-fast`, `${item.default_model}-mini`].map((id, index) => ({ id, tool_call: true, context_window: 1_000_000 / (index + 1) })),
+        }))
+        : catalogProviders,
+    };
+  },
   listEngineAuthMethods: async () => ({ methods: [], authenticated: true }),
   openExternal: async () => undefined,
   getRemoteControlSnapshot: async () => ({ status: { fingerprint: "AB12-CD34", store: "", devices: [] }, host_running: false }),
