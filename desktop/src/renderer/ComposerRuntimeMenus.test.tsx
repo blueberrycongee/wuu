@@ -131,14 +131,14 @@ describe("RuntimePicker", () => {
     await act(async () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
     const button = document.querySelector<HTMLButtonElement>('button[aria-label="Fast mode"]');
     expect(button?.getAttribute("aria-pressed")).toBe(String(enabled));
-    expect(document.querySelector<HTMLButtonElement>(".runtime-panel-speed-reset")?.disabled).toBe(!speed);
     await act(async () => button?.click());
     expect(onSelectSpeed).toHaveBeenCalledWith(next);
-    await act(async () => document.querySelector<HTMLButtonElement>(".runtime-panel-speed-reset")?.click());
-    expect(onSelectSpeed).toHaveBeenLastCalledWith("");
+    expect(button?.getAttribute("aria-pressed")).toBe(String(!enabled));
+    act(() => button?.focus());
+    await act(async () => button?.click());
+    expect(onSelectSpeed).toHaveBeenLastCalledWith(enabled ? "fast" : "standard");
     expect(document.activeElement).toBe(button);
-    expect(button?.getAttribute("aria-pressed")).toBe(String(defaultSpeed === "fast"));
-    expect(document.querySelector<HTMLButtonElement>(".runtime-panel-speed-reset")?.disabled).toBe(true);
+    expect(button?.getAttribute("aria-pressed")).toBe(String(enabled));
   });
 
   it("keeps a speed save focused while preventing duplicate requests", async () => {
@@ -166,7 +166,6 @@ describe("RuntimePicker", () => {
     const initialized = runtimeWithEffort();
     renderPicker("model", initialized, vi.fn(), vi.fn(), vi.fn(), createRef(), { onSelectSpeed: vi.fn() });
     expect(document.querySelector('button[aria-label="Fast mode"]')).toBeNull();
-    expect(document.querySelector(".runtime-panel-speed-reset")).toBeNull();
   });
 
   it("restores the speed toggle after a rejected update", async () => {

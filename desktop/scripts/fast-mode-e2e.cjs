@@ -82,7 +82,6 @@ async function capturePanel(win, name, fastSupported = true) {
     const context = panel.querySelector('.runtime-panel-context');
     const source = panel.querySelector('.runtime-panel-context-source');
     const fast = panel.querySelector('.runtime-panel-fast');
-    const reset = panel.querySelector('.runtime-panel-speed-reset');
     const model = panel.querySelector('.runtime-panel-model');
     const slider = panel.querySelector('.runtime-panel-effort');
     const track = panel.querySelector('.codex-effort-track');
@@ -102,10 +101,10 @@ async function capturePanel(win, name, fastSupported = true) {
     const rect = node => { const r = node.getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height, left: r.left, right: r.right, top: r.top, bottom: r.bottom }; };
     const p = rect(panel);
     return {
-      panel: p, context: rect(context), source: rect(source), fast: fast ? rect(fast) : null, reset: reset ? rect(reset) : null, model: rect(model), slider: slider ? rect(slider) : null,
+      panel: p, context: rect(context), source: rect(source), fast: fast ? rect(fast) : null, model: rect(model), slider: slider ? rect(slider) : null,
       track: rect(track), knob: rect(knob), endpoint: range.value === range.min ? 'min' : range.value === range.max ? 'max' : 'middle',
       modelInkLeft, leadingInkLeft, modelOutlineOffset: getComputedStyle(model).outlineOffset, knobOutlineOffset: getComputedStyle(knob).outlineOffset,
-      pressed: fast?.getAttribute('aria-pressed') ?? null, resetDisabled: reset?.disabled ?? null,
+      pressed: fast?.getAttribute('aria-pressed') ?? null,
       bottomInset: parseFloat(getComputedStyle(panel.querySelector('.runtime-panel-summary')).paddingBottom) + parseFloat(getComputedStyle(panel).borderBottomWidth),
       fastColor: fast ? getComputedStyle(fast).color : null, fastBackground: fast ? getComputedStyle(fast).backgroundColor : null,
       font: getComputedStyle(panel).getPropertyValue('--font-ui').trim(), theme: document.documentElement.dataset.theme,
@@ -120,15 +119,14 @@ async function capturePanel(win, name, fastSupported = true) {
   layoutEvidence.push({ name, ...state });
   fs.writeFileSync(path.join(output, 'layout-evidence.json'), JSON.stringify(layoutEvidence, null, 2));
   assert.equal(Boolean(state.fast), fastSupported, 'Only supported models show speed controls.');
-  assert.equal(Boolean(state.reset), fastSupported, 'Reset belongs to the available speed control.');
   assert(!state.nestedButton, 'Speed must be independent of the model navigation button.');
   if (state.fast) {
     // Browser geometry can differ by a fractional CSS pixel at non-integer zoom.
     assert(state.fast.width >= 27.5 && state.fast.height >= 27.5, `The compact speed toggle retains a usable hit target: ${JSON.stringify(state.fast)}`);
     assert(state.fast.top >= state.context.top - 1 && state.fast.bottom <= state.context.bottom + 1, 'Fast mode shares the existing context header.');
-    assert(state.source.right <= state.fast.left + 0.5 && state.fast.right <= state.reset.left + 0.5, 'Header labels, speed and reset must not overlap.');
+    assert(state.source.right <= state.fast.left + 0.5, 'Header labels and speed must not overlap.');
     assert(state.fast.bottom <= state.model.top + 1, 'Speed controls must not cover the model row.');
-    assert(Math.abs(state.reset.right - state.model.right) <= 0.5, 'Header controls and the model button share their trailing painted edge.');
+    assert(Math.abs(state.fast.right - state.model.right) <= 0.5, 'Header controls and the model button share their trailing painted edge.');
   }
   assert(Math.abs(state.modelInkLeft - state.track.left) <= 2 && Math.abs(state.leadingInkLeft - state.track.left) <= 2,
     'Leading glyphs, model text and the slider share a guide, allowing natural glyph bearings.');
@@ -184,6 +182,25 @@ async function run() {
   assert(await evaluate(main, () => document.activeElement === document.querySelector('.runtime-panel-fast')), 'Keyboard navigation reaches the speed control.');
   const beforeToggle = await capturePanel(main, 'provider-standard');
   await key(main, 'Space');
+  // Freeze the live browser animations to keep fill and shake evidence repeatable.
+  const chargeDuration = await evaluate(main, () => {
+    window.__speedAnimations = document.querySelector('.runtime-panel-speed-icon').getAnimations({ subtree: true });
+    for (const animation of window.__speedAnimations) animation.pause();
+    return Math.max(0, ...window.__speedAnimations.map(animation => animation.effect.getComputedTiming().endTime));
+  });
+  for (const progress of [0, 0.35, 0.65, 1]) {
+    await evaluate(main, time => {
+      for (const animation of window.__speedAnimations) animation.currentTime = time;
+      return new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    }, chargeDuration * progress);
+    const crop = { ...beforeToggle.crop };
+    for (const field of ['x', 'y', 'width', 'height']) crop[field] = Math.round(crop[field] * main.webContents.getZoomFactor());
+    fs.writeFileSync(path.join(output, `speed-charge-${progress}.png`), (await main.webContents.capturePage(crop)).toPNG());
+  }
+  await evaluate(main, () => {
+    for (const animation of window.__speedAnimations) animation.play();
+    delete window.__speedAnimations;
+  });
   await waitFor(main, async id => (await window.wuu.resumeThread(id)).thread.speed === 'fast', threadID);
   const afterToggle = await capturePanel(main, 'provider-fast-keyboard');
   assert.equal(afterToggle.pressed, 'true');
@@ -222,10 +239,6 @@ async function run() {
   await waitFor(main, async id => (await window.wuu.resumeThread(id)).thread.speed === 'standard', threadID);
   await turn('fast-mode-standard', 'default');
   await openPanel();
-  await evaluate(main, () => document.querySelector('.runtime-panel-speed-reset').click());
-  await waitFor(main, async id => !(await window.wuu.resumeThread(id)).thread.speed, threadID);
-  await turn('fast-mode-inherit', undefined);
-  await openPanel();
   await evaluate(main, () => document.querySelector('.codex-runtime-trigger').click());
   main.setSize(820, 860);
   await evaluate(main, () => {
@@ -236,10 +249,10 @@ async function run() {
   await openPanel();
   await evaluate(main, () => Promise.all(document.querySelector('.runtime-panel').getAnimations({ subtree: true }).map(animation => animation.finished.catch(() => {}))));
   await evaluate(main, () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-  await capturePanel(main, 'dark-narrow-default');
+  await capturePanel(main, 'dark-narrow-standard');
   const persisted = await evaluate(main, async id => (await window.wuu.resumeThread(id)).thread, threadID);
   assert.equal(persisted.model_variant, 'high');
-  assert.ok(!persisted.speed);
+  assert.equal(persisted.speed, 'standard');
   await evaluate(main, () => document.querySelector('.codex-runtime-trigger').click());
   main.setSize(1380, 860);
   await evaluate(main, () => {
@@ -296,7 +309,7 @@ async function run() {
   assert.equal(await evaluate(main, () => document.querySelector('button[aria-label="Fast mode"]').getAttribute('aria-pressed')), 'true');
   await evaluate(main, () => Promise.all(document.querySelector('.runtime-panel').getAnimations({ subtree: true }).map(animation => animation.finished.catch(() => {}))));
   await capturePanel(main, 'codex-inherited-fast');
-  for (const [speed, tier, slash] of [['standard', 'default'], ['', 'fast'], ['standard', 'default', true], ['fast', 'fast']]) {
+  for (const [speed, tier, slash] of [['standard', 'default'], ['fast', 'fast'], ['standard', 'default', true], ['fast', 'fast']]) {
     await openPanel();
     if (slash) {
       await evaluate(main, () => {
@@ -308,7 +321,7 @@ async function run() {
       await waitFor(main, () => Boolean(document.querySelector('.slash-command-item[data-command-name="fast"]')));
       await evaluate(main, () => document.querySelector('.composer textarea').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })));
     } else {
-      await evaluate(main, speed => document.querySelector(speed ? 'button[aria-label="Fast mode"]' : '.runtime-panel-speed-reset').click(), speed);
+      await evaluate(main, () => document.querySelector('button[aria-label="Fast mode"]').click());
     }
     await waitFor(main, async ({ id, speed }) => ((await window.wuu.resumeThread(id)).thread.speed || '') === speed, { id: native, speed });
     await evaluate(main, async id => {
@@ -343,7 +356,7 @@ async function run() {
     await capturePanel(main, `codex-${theme}-${font}-${width}`);
   }
   fs.writeFileSync(path.join(output, 'results.json'), JSON.stringify({ threadID, nativeThreadID: native, requests, persisted, layoutEvidence }, null, 2));
-  console.log('PASS: fast / standard / inherited speed reached the provider and native Codex; model and effort preserved. Artifacts:', output);
+  console.log('PASS: fast / standard speed reached the provider and native Codex; inherited native speed displayed; model and effort preserved. Artifacts:', output);
   clearTimeout(timeout); server.close(); app.quit();
 }
 run().catch(async error => {

@@ -3559,16 +3559,8 @@ html[data-focus-modality="keyboard"] .runtime-panel-summary :is(
   scrollbar-gutter: stable both-edges;
 }
 
-/* Keep speed separate from model navigation without taking a full row. The
- * reset keeps its slot when inherited, so toggling never moves either target. */
-.runtime-panel-speed-controls {
-  display: flex;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 2px;
-}
-
-.codex-runtime-menu .runtime-panel-speed-controls button {
+/* Only the glyph moves; the speed toggle keeps a stable hit target. */
+.codex-runtime-menu .runtime-panel-context .runtime-panel-fast {
   width: var(--runtime-context-row);
   height: var(--runtime-context-row);
   flex: 0 0 auto;
@@ -3578,12 +3570,48 @@ html[data-focus-modality="keyboard"] .runtime-panel-summary :is(
   color: var(--ink-tertiary);
 }
 
-.codex-runtime-menu .runtime-panel-speed-controls button > svg {
+.codex-runtime-menu .runtime-panel-speed-icon {
+  position: relative;
+  display: block;
+  flex: 0 0 auto;
+  overflow: visible;
   width: var(--icon-size);
   height: var(--icon-size);
 }
 
-.codex-runtime-menu .runtime-panel-fast[aria-pressed="true"] {
+.codex-runtime-menu .runtime-panel-speed-icon > svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.runtime-panel-speed-outline > path {
+  fill: none;
+  stroke: currentColor;
+}
+
+.runtime-panel-speed-fill {
+  clip-path: inset(100% 0 0);
+  transition: clip-path var(--motion-slow) var(--ease-out);
+}
+
+.codex-runtime-menu .runtime-panel-context .runtime-panel-fast[aria-pressed="true"] {
   color: var(--interaction-accent);
   background: var(--selection-surface);
+}
+
+.runtime-panel-fast[aria-pressed="true"] .runtime-panel-speed-fill {
+  clip-path: inset(0);
+}
+
+.runtime-panel-speed-icon[data-charging="true"] {
+  animation: runtime-speed-charge var(--motion-slower) var(--ease-out);
+}
+
+@keyframes runtime-speed-charge {
+  0%, 45%, 100% { transform: translateX(0) rotate(0); }
+  60% { transform: translateX(-1px) rotate(-10deg); }
+  75% { transform: translateX(1px) rotate(8deg); }
+  88% { transform: translateX(-0.5px) rotate(-4deg); }
 }

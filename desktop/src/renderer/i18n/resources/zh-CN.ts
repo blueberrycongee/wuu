@@ -218,7 +218,6 @@ export const zhCN = {
   "runtime.fastModeOff": "Fast mode 已关闭 · 普通速度",
   "runtime.fastModeHint": "更快响应，可能增加费用或额度消耗",
   "runtime.fastModeDefault": "跟随引擎默认速度",
-  "runtime.resetSpeed": "恢复配置中的默认速度",
   "runtime.engineDefaultModel": "Agent 默认模型",
   "runtime.engineDefaultModelHint": "在 {engine} 中切换模型",
   "settings.engineBinaryPath": "二进制路径",

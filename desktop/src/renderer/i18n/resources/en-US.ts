@@ -221,7 +221,6 @@ export const enUS = {
   "runtime.fastModeOff": "Fast mode off · Standard speed",
   "runtime.fastModeHint": "Faster responses may cost more or use more credits",
   "runtime.fastModeDefault": "Follow the engine default",
-  "runtime.resetSpeed": "Reset speed to the configured default",
   "runtime.engineDefaultModel": "Agent default",
   "runtime.engineDefaultModelHint": "Switch models in {engine}",
   "settings.engineBinaryPath": "Binary path",
