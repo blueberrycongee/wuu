@@ -1634,3 +1634,58 @@ func TestUseCodexCredentialsPreservesSelectionAndOtherSettings(t *testing.T) {
 		t.Fatal("credential source was not switched")
 	}
 }
+
+// Partial presets must remain editable, while invalid modes or explicit
+// invalid role selections must be rejected before any configuration is saved.
+func TestProjectPresetsConfigurationRoundTrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, []byte(`{"default_provider":"main","providers":{"main":{"type":"openai-compatible","base_url":"http://127.0.0.1:1","api_key":"test-key","model":"main-model"}},"agent":{}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	presets := ProjectPresetsConfig{"low": {Lead: ModelRoleConfig{Provider: "main", Model: "lead", Effort: "high"}}}
+	if err := UpdateAdvancedRuntime(path, "main", AdvancedRuntimeUpdate{ProjectPresets: &presets}); err != nil {
+		t.Fatal(err)
+	}
+	loaded, _, err := LoadPath(path)
+	if err != nil || loaded.Agent.ProjectPresets["low"] != presets["low"] {
+		t.Fatalf("partial preset round trip: %+v %v", loaded.Agent.ProjectPresets, err)
+	}
+	for _, value := range []ProjectPresetsConfig{
+		{"invalid": {}}, {"low": {Lead: ModelRoleConfig{Provider: "missing", Model: "lead"}}},
+	} {
+		loaded.Agent.ProjectPresets = value
+		if err := loaded.Validate(); err == nil {
+			t.Fatalf("accepted invalid presets: %+v", value)
+		}
+	}
+	// Saving a half-edited role is safe; only creation needs completeness.
+	presets["medium"] = ProjectPresetConfig{Side: ModelRoleConfig{Provider: "main"}}
+	if err := UpdateAdvancedRuntime(path, "main", AdvancedRuntimeUpdate{ProjectPresets: &presets}); err != nil {
+		t.Fatal(err)
+	}
+	empty := ProjectPresetsConfig{}
+	if err := UpdateAdvancedRuntime(path, "main", AdvancedRuntimeUpdate{ProjectPresets: &empty}); err != nil {
+		t.Fatal(err)
+	}
+	loaded, _, err = LoadPath(path)
+	if err != nil || len(loaded.Agent.ProjectPresets) != 0 {
+		t.Fatalf("clear presets: %+v %v", loaded.Agent.ProjectPresets, err)
+	}
+}
+
+func TestRemoveProviderKeepsProjectPresetConfigurationReadable(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, []byte(`{"default_provider":"main","providers":{"main":{"type":"openai-compatible","base_url":"http://127.0.0.1:1","api_key":"test-key","model":"main-model"},"removed":{"type":"openai-compatible","base_url":"http://127.0.0.1:1","api_key":"test-key","model":"other-model"}},"agent":{"project_presets":{"low":{"lead":{"provider":"main","model":"main-model"},"worker":{"provider":"removed","model":"other-model"}}}}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := RemoveProvider(path, "removed", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, err := LoadPath(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Agent.ProjectPresets["low"].Lead.Model != "main-model" || cfg.Agent.ProjectPresets["low"].Worker.Provider != "" {
+		t.Fatalf("provider removal did not preserve editable preset: %+v", cfg.Agent.ProjectPresets)
+	}
+}

@@ -28,7 +28,7 @@ Provider 凭据优先使用环境变量引用。工具输出可能遮蔽密钥�
 |---|---|
 | `default_provider`、`providers` | 选择模型服务、端点、凭据和连接选项 |
 | `instructions`、旧字段 `memory` | 控制指令发现，包括用户路径 |
-| `agent.model_roles`、`agent.model_aliases`、`agent.project_models` | 路由模型工作 |
+| `agent.model_roles`、`agent.model_aliases`、`agent.project_models`、`agent.project_presets` | 路由模型工作 |
 | `agent.permission_mode` | 设置本地执行权限 |
 
 改变 JSON 字段大小写不能绕过限制。其他允许的项目字段仍可能影响提示、工具、Hook 和服务，因此这种过滤不代表陌生仓库可以安全执行。
@@ -81,20 +81,36 @@ Kimi 使用独立的消息级工具声明协议；这条规则不启用其 Respo
 
 ## Project Agent 模型选择
 
-在启用 Project Agent 的构建中，主 Agent 使用会话模型。可以在设置 → 运行时中
-分别选择 Side 和 Worker 的默认模型，也可以修改用户配置：
+Project Agent 仍受[开发构建开关](../project/development.md)控制。在启用的构建中，
+设置 → 运行时 → Project Agent 模式可配置四个可选预设：`low`、`medium`、`high`
+和 `ultra`。每个预设分别指定 Lead、Side 和 Worker 的服务与模型。这些名称表示
+预设，不是推理强度。对应的用户配置片段如下：
 
 ```json
-{ "agent": { "project_models": {
-  "side": { "provider": "anthropic", "model": "your-side-model" },
-  "worker": { "provider": "openai", "model": "your-worker-model" }
+{ "agent": { "project_presets": {
+  "low": {
+    "lead": { "provider": "your-provider", "model": "your-lead-model" },
+    "side": { "provider": "your-provider", "model": "your-side-model" },
+    "worker": { "provider": "your-provider", "model": "your-worker-model" }
+  }
 } } }
 ```
 
-使用已配置的服务名称和模型 ID。省略角色或留空时继承主 Agent 模型。服务支持时，
-每个选择也接受 `effort` 和 `variant`。默认值只影响新建成员，已有会话保留保存的
-选择；创建时明确指定的 `model_alias` 优先于角色默认值。参见
-[app-server 协议](../automation/app-server.md)。
+将占位符替换为已配置的服务名称和支持的模型 ID。每个角色也接受 `effort` 和
+`variant`，沿用普通模型选择规则；模型专属的 variant 优先于 effort。编辑时可以
+保存未填完整的预设，但创建项目要求三个角色都明确指定服务和模型；缺失角色不会
+继承主 Agent 或工作区的模型。
+
+创建时一次性解析所选预设，将模式和三个角色的选择保存在项目及其成员中。之后
+修改预设或默认值不会改变该项目的选择，包括之后新建或重启后创建的成员。服务、
+模型、effort 和 variant 锁定；支持的速度和权限修改仍独立生效。移除必需的服务
+或禁用已固定的模型会报错，不会切换到默认模型。
+
+未选择预设创建的项目保留原有行为：主 Agent 使用会话模型，
+`agent.project_models.side` 和 `.worker` 可提供角色默认值，结构同样包含
+provider、model、effort 和 variant。空角色继承主 Agent，创建时的 `model_alias`
+优先于角色默认值。已有旧会话保留保存的选择，仍可修改。API 约定见
+[app-server 指南](../automation/app-server.md#运行项目)。
 
 ## 指令与插件设置
 

@@ -844,10 +844,13 @@ describe("summarizeThreadsForSidebar", () => {
     expect(summaries.map((thread) => thread.id)).toEqual(["root-thread"]);
   });
 
-  it("keeps sidebar thread data free of turn item payloads", () => {
+  it("keeps sidebar thread data free of turn item payloads while retaining its project snapshot", () => {
+    const selection = { provider: "fake", model: "frozen-model" };
+    const project_preset = { mode: "high" as const, lead: selection, side: selection, worker: selection };
     const [summary] = summarizeThreadsForSidebar([
-      threadWithUserTexts(["secret message body"]),
+      { ...threadWithUserTexts(["secret message body"]), project_preset },
     ]);
+    expect(summary.project_preset).toEqual(project_preset);
 
     expect(summary.turn_count).toBe(1);
     expect(summary.turns[0]).toEqual({
@@ -3882,15 +3885,17 @@ describe("configuration refresh recovery", () => {
     });
     expect(failed.initialized?.providers).toBe(providers);
     expect(failed.status).toBe("invalid configuration");
+    const project_presets = { low: { lead: { provider: "example", model: "model-a" } } };
     const recovery = {
       kind: "notification" as const,
       workdir: "/repo",
-      message: { method: "config/changed", params: { provider: "example", model: "model-a", model_roles: [], providers } },
+      message: { method: "config/changed", params: { provider: "example", model: "model-a", model_roles: [], providers, project_presets } },
     };
     const repaired = reduceServerEvent(failed, recovery);
     expect(repaired.configError).toBeUndefined();
     expect(repaired.status).toBe("ready");
     expect(repaired.initialized?.providers).toEqual(providers);
+    expect(repaired.initialized?.project_presets).toEqual(project_presets);
     expect(reduceServerEvent({ ...failed, status: "another error" }, recovery).status).toBe("another error");
   });
 });

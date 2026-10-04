@@ -1328,3 +1328,206 @@ func TestProjectSideWaitsForAdoptedWorker(t *testing.T) {
 		t.Fatalf("expected in-flight wait timeout: %+v", result)
 	}
 }
+
+func newProjectPresetFixture(t *testing.T) (*Server, *rpcClient, *projectCalls, *runtime.Session) {
+	t.Helper()
+	srv, client, calls, rt := newProjectFixture(t)
+	if err := os.WriteFile(rt.ConfigPath, []byte(`{"default_provider":"fake-provider","providers":{"fake-provider":{"type":"openai-compatible","base_url":"http://127.0.0.1:1","api_key":"test-key","model":"fake-model"}},"agent":{}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	return srv, client, calls, rt
+}
+
+// Presets are a create-time public contract: incomplete or ambiguous requests
+// cannot create a project; saved choices must survive settings edits and restart;
+// aliases and runtime updates cannot bypass the saved roles.
+func TestProjectPresetSnapshotSurvivesSettingsAndRestart(t *testing.T) {
+	srv, client, _, rt := newProjectPresetFixture(t)
+	presets := config.ProjectPresetsConfig{"low": {
+		Lead:   config.ModelRoleConfig{Provider: "fake-provider", Model: "lead-model", Effort: "high"},
+		Side:   config.ModelRoleConfig{Provider: "fake-provider", Model: "side-model", Variant: "high"},
+		Worker: config.ModelRoleConfig{Provider: "fake-provider", Model: "worker-model", Effort: "medium"},
+	}}
+	client.rpc(t, MethodConfigAdvancedUpdate, ConfigAdvancedUpdateParams{ProjectPresets: &presets}, nil)
+	var started ThreadStartResult
+	client.rpc(t, MethodThreadStart, ThreadStartParams{Project: &ThreadProjectParams{Name: "Pinned preset", Preset: "low"}}, &started)
+	if started.Thread.ProjectPreset == nil || started.Thread.ProjectPreset.Mode != "low" || started.Thread.Model != "lead-model" {
+		t.Fatalf("project snapshot missing from create response: %+v", started.Thread)
+	}
+	want := *started.Thread.ProjectPreset
+	presets["low"] = config.ProjectPresetConfig{Lead: config.ModelRoleConfig{Provider: "fake-provider", Model: "changed"}}
+	client.rpc(t, MethodConfigAdvancedUpdate, ConfigAdvancedUpdateParams{ProjectPresets: &presets}, nil)
+	srv.Close()
+	out := &lockedBuffer{}
+	reopened := New(rt, out)
+	t.Cleanup(reopened.Close)
+	loaded, err := reopened.ensureThreadLoaded(started.Thread.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.ProjectPreset == nil || *loaded.ProjectPreset != want {
+		t.Fatalf("restart changed snapshot: %+v", loaded.ProjectPreset)
+	}
+	project, found, err := session.Find(rt.SessionDir, started.Thread.ID)
+	if err != nil || !found {
+		t.Fatalf("project: %+v %v", project, err)
+	}
+	for _, role := range []string{"side", "worker"} {
+		result, err := reopened.createProjectSession(context.Background(), project, project, "preset-"+role, tools.ProjectSessionRequest{Action: "create", Role: role, Prompt: "test brief", Workspace: "shared"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		child, found, err := session.Find(rt.SessionDir, result.(projectSessionView).SessionID)
+		if err != nil || !found || child.ProjectPreset == nil || *child.ProjectPreset != want {
+			t.Fatalf("child snapshot: %+v %v", child, err)
+		}
+		selection := want.Worker
+		if role == "side" {
+			selection = want.Side
+		}
+		if child.Provider != selection.Provider || child.Model != selection.Model || child.Variant != selection.Variant || child.Effort != selection.Effort {
+			t.Fatalf("child escaped role: %+v want %+v", child, selection)
+		}
+	}
+	for _, action := range []string{"create", "side", "send"} {
+		_, err := reopened.projectSessionHandler(project.ID)(context.Background(), "override-"+action, tools.ProjectSessionRequest{Action: action, ModelAlias: "override", Prompt: "override", Workspace: "shared"})
+		if err == nil || !strings.Contains(err.Error(), "preset") {
+			t.Fatalf("%s alias bypass: %v", action, err)
+		}
+	}
+	client = &rpcClient{server: reopened, out: out}
+	if err := client.call(t, MethodConfigModelUpdate, ConfigModelUpdateParams{ThreadID: project.ID, Model: "different"}, nil); err == nil {
+		t.Fatal("project model was editable")
+	}
+	permission := config.PermissionModeReadOnly
+	client.rpc(t, MethodConfigModelUpdate, ConfigModelUpdateParams{ThreadID: project.ID, PermissionMode: &permission}, nil)
+	project, _, err = session.Find(rt.SessionDir, project.ID)
+	if err != nil || project.PermissionMode != permission || project.Model != want.Lead.Model {
+		t.Fatalf("permission update changed preset: %+v %v", project, err)
+	}
+}
+
+func TestProjectPresetCreationRejectsIncompleteAndOverrides(t *testing.T) {
+	_, client, _, rt := newProjectPresetFixture(t)
+	presets := config.ProjectPresetsConfig{"low": {Lead: config.ModelRoleConfig{Provider: "fake-provider", Model: "fake-model"}}}
+	client.rpc(t, MethodConfigAdvancedUpdate, ConfigAdvancedUpdateParams{ProjectPresets: &presets}, nil)
+	for _, mode := range []string{"low", "medium", "invalid"} {
+		if err := client.call(t, MethodThreadStart, ThreadStartParams{Project: &ThreadProjectParams{Name: "Invalid", Preset: mode}}, nil); err == nil {
+			t.Fatalf("created incomplete preset %s", mode)
+		}
+	}
+	role := config.ModelRoleConfig{Provider: "fake-provider", Model: "fake-model"}
+	presets["low"] = config.ProjectPresetConfig{Lead: role, Side: role, Worker: role}
+	client.rpc(t, MethodConfigAdvancedUpdate, ConfigAdvancedUpdateParams{ProjectPresets: &presets}, nil)
+	for _, params := range []ThreadStartParams{
+		{Model: "different"}, {Provider: "fake-provider"}, {Effort: "high"}, {Speed: "fast"},
+	} {
+		params.Project = &ThreadProjectParams{Name: "Ambiguous", Preset: "low"}
+		if err := client.call(t, MethodThreadStart, params, nil); err == nil {
+			t.Fatalf("accepted preset override: %+v", params)
+		}
+	}
+	stored, err := session.List(rt.SessionDir, 0)
+	if err != nil || len(stored) != 0 {
+		t.Fatalf("failed creation left sessions: %+v %v", stored, err)
+	}
+}
+
+func TestProjectPresetUnavailableProviderNeverHeals(t *testing.T) {
+	srv, client, _, rt := newProjectPresetFixture(t)
+	role := config.ModelRoleConfig{Provider: "fake-provider", Model: "fake-model"}
+	presets := config.ProjectPresetsConfig{"low": {Lead: role, Side: role, Worker: role}}
+	client.rpc(t, MethodConfigAdvancedUpdate, ConfigAdvancedUpdateParams{ProjectPresets: &presets}, nil)
+	var started ThreadStartResult
+	client.rpc(t, MethodThreadStart, ThreadStartParams{Project: &ThreadProjectParams{Name: "Unavailable", Preset: "low"}}, &started)
+	th := srv.thread(started.Thread.ID)
+	if _, err := srv.ensureThreadRuntime(th); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(rt.ConfigPath, []byte(`{"default_provider":"replacement","providers":{"replacement":{"type":"openai-compatible","base_url":"http://127.0.0.1:1","model":"replacement-model"}},"agent":{}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := srv.ensureThreadRuntime(th); err == nil || !strings.Contains(err.Error(), "preset") {
+		t.Fatalf("cached runtime silently used unavailable selection: %v", err)
+	}
+	stored, _, err := session.Find(rt.SessionDir, th.ID)
+	if err != nil || stored.Provider != role.Provider || stored.Model != role.Model || th.ModelProvider != role.Provider {
+		t.Fatalf("preset healed: %+v %v", stored, err)
+	}
+}
+
+// Another host can adopt/release a loaded ordinary conversation. Cached resume
+// and model mutation responses must use the durable lock, not their stale copy.
+func TestProjectPresetCrossHostMembershipRefresh(t *testing.T) {
+	srv, client, _, rt := newProjectPresetFixture(t)
+	role := config.ModelRoleConfig{Provider: "fake-provider", Model: "fake-model"}
+	presets := config.ProjectPresetsConfig{"low": {Lead: role, Side: role, Worker: role}}
+	client.rpc(t, MethodConfigAdvancedUpdate, ConfigAdvancedUpdateParams{ProjectPresets: &presets}, nil)
+	var lead, ordinary ThreadStartResult
+	client.rpc(t, MethodThreadStart, ThreadStartParams{Project: &ThreadProjectParams{Name: "Shared preset", Preset: "low"}}, &lead)
+	client.rpc(t, MethodThreadStart, ThreadStartParams{}, &ordinary)
+	id := ordinary.Thread.ID
+	if _, err := session.SetProjectMembership(rt.SessionDir, id, projectSessionSource, lead.Thread.ID, ""); err != nil {
+		t.Fatal(err)
+	}
+	permission := config.PermissionModeReadOnly
+	client.rpc(t, MethodConfigModelUpdate, ConfigModelUpdateParams{ThreadID: id, PermissionMode: &permission}, nil)
+	th := srv.thread(id)
+	th.mu.Lock()
+	updated := th.snapshotLocked()
+	th.mu.Unlock()
+	if updated.ProjectPreset == nil {
+		t.Fatal("permission update erased cross-host adoption lock")
+	}
+	if _, err := session.SetProjectMembership(rt.SessionDir, id, "", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	client.rpc(t, MethodConfigModelUpdate, ConfigModelUpdateParams{ThreadID: id, Model: "other-model"}, nil)
+	client.rpc(t, MethodConfigModelUpdate, ConfigModelUpdateParams{ThreadID: id, Model: role.Model}, nil)
+	for _, source := range []string{projectSessionSource, ""} {
+		parent := lead.Thread.ID
+		if source == "" {
+			parent = ""
+		}
+		if _, err := session.SetProjectMembership(rt.SessionDir, id, source, parent, ""); err != nil {
+			t.Fatal(err)
+		}
+		var resumed ThreadResumeResult
+		client.rpc(t, MethodThreadResume, ThreadResumeParams{SessionID: id, ResponseOnly: true}, &resumed)
+		if (resumed.Thread.ProjectPreset != nil) != (source != "") {
+			t.Fatalf("resume returned stale membership: %+v", resumed.Thread)
+		}
+	}
+}
+
+// Cross-host adoption can canonicalize a mirrored effort into the preset's
+// variant. Listing must refresh the lock and its selection together, before a
+// runtime-backed read such as skill/list uses the cached conversation.
+func TestProjectPresetListRefreshKeepsRuntimeSelectionConsistent(t *testing.T) {
+	_, client, _, rt := newProjectPresetFixture(t)
+	if err := os.WriteFile(rt.ConfigPath, []byte(`{"default_provider":"fake-provider","providers":{"fake-provider":{"type":"openai-compatible","base_url":"http://127.0.0.1:1","api_key":"test-key","model":"fake-model","models":{"fake-model":{"variants":{"high":{"reasoningEffort":"high"}}}}}},"agent":{}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	role := config.ModelRoleConfig{Provider: "fake-provider", Model: "fake-model", Variant: "high"}
+	presets := config.ProjectPresetsConfig{"low": {Lead: role, Side: role, Worker: role}}
+	client.rpc(t, MethodConfigAdvancedUpdate, ConfigAdvancedUpdateParams{ProjectPresets: &presets}, nil)
+	var lead, ordinary ThreadStartResult
+	client.rpc(t, MethodThreadStart, ThreadStartParams{Project: &ThreadProjectParams{Name: "Shared preset", Preset: "low"}}, &lead)
+	client.rpc(t, MethodThreadStart, ThreadStartParams{Effort: "high"}, &ordinary)
+	id := ordinary.Thread.ID
+	if _, err := session.SetProjectMembership(rt.SessionDir, id, projectSessionSource, lead.Thread.ID, ""); err != nil {
+		t.Fatal(err)
+	}
+	var listed ThreadListResult
+	client.rpc(t, MethodThreadList, ThreadListParams{}, &listed)
+	client.rpc(t, MethodSkillList, SkillListParams{ThreadID: id}, nil)
+	for _, thread := range listed.Threads {
+		if thread.ID == id {
+			if thread.ProjectPreset == nil || thread.ModelVariant != role.Variant || thread.ModelEffort != role.Effort {
+				t.Fatalf("list returned an inconsistent preset selection: %+v", thread)
+			}
+			return
+		}
+	}
+	t.Fatal("adopted conversation missing from thread list")
+}

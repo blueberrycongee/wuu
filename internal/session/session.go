@@ -63,6 +63,10 @@ type Session struct {
 	ProjectRole           string    `json:"project_role,omitempty"`
 	Instructions          string    `json:"instructions,omitempty"`
 	ToolPolicyJSON        string    `json:"tool_policy_json,omitempty"`
+
+	// ProjectPreset freezes role selections independently of live configuration.
+	ProjectPreset *ProjectPresetSnapshot `json:"project_preset,omitempty"`
+
 	// EngineID is the agent engine the thread is bound to. Empty reads as
 	// the built-in wuu engine, which is the legacy default for sessions
 	// persisted before engine binding existed.
@@ -391,7 +395,7 @@ SELECT id, created_at, updated_at, title, summary, entries, cwd,
        pinned_at, folder_id, archived_at, archive_reason,
        worktree_path, worktree_base_head, worktree_base_repo,
        workspace_id, source, owner, visibility, parent_id, context_source, creation_request_id,
-	       provider, model, variant, effort, speed, permission_mode, approve_for_me, engine_id, engine_ref, instructions, project_role, tool_policy_json,
+	       provider, model, variant, effort, speed, permission_mode, approve_for_me, engine_id, engine_ref, instructions, project_role, tool_policy_json, project_preset_json,
 	       COALESCE((SELECT m.client_id FROM session_messages m
 	                 WHERE m.session_id = sessions.id AND m.role = 'meta'
 	                   AND m.content = 'turn_terminal' AND m.client_id <> ''
@@ -562,7 +566,7 @@ SELECT id, created_at, updated_at, title, summary, entries, cwd,
        pinned_at, folder_id, archived_at, archive_reason,
        worktree_path, worktree_base_head, worktree_base_repo,
        workspace_id, source, owner, visibility, parent_id, context_source, creation_request_id,
-       provider, model, variant, effort, speed, permission_mode, approve_for_me, engine_id, engine_ref, instructions, project_role, tool_policy_json,
+       provider, model, variant, effort, speed, permission_mode, approve_for_me, engine_id, engine_ref, instructions, project_role, tool_policy_json, project_preset_json,
        COALESCE((SELECT m.client_id FROM session_messages m
                  WHERE m.session_id = sessions.id AND m.role = 'meta'
                    AND m.content = 'turn_terminal' AND m.client_id <> ''
@@ -656,9 +660,24 @@ func SetWorkspaceID(sessDir, id, workspaceID string) (Session, error) {
 // managed session back out: source and parentID carry the relation, and
 // instructions replace the session's create-time instructions.
 func SetProjectMembership(sessDir, id, source, parentID, instructions string) (Session, error) {
+	var preset *ProjectPresetSnapshot
+	if source == "project-session" && strings.TrimSpace(parentID) != "" {
+		parent, _, err := Find(sessDir, parentID)
+		if err != nil {
+			return Session{}, err
+		}
+		preset = parent.ProjectPreset
+	}
 	return updateMetadata(sessDir, id, false, func(s *Session) {
 		s.Source = strings.TrimSpace(source)
 		s.ParentID = strings.TrimSpace(parentID)
+		s.ProjectPreset = preset
+		// Ordinary composer selections mirror effort into variant. A resolved
+		// snapshot stores the equivalent variant alone, so canonicalize only
+		// that redundant mirror inside the same membership transaction.
+		if preset != nil && s.Variant == preset.Worker.Variant && s.Effort == s.Variant && preset.Worker.Effort == "" {
+			s.Effort = ""
+		}
 		s.Instructions = instructions
 		if source == "" {
 			s.ProjectRole = ""
@@ -1967,6 +1986,9 @@ WHERE workflow_id = ''`); err != nil {
 	if err := migration.addColumnIfMissing("session_inbox", "wake", "INTEGER NOT NULL DEFAULT 1"); err != nil {
 		return err
 	}
+	if err := migration.addColumnIfMissing("sessions", "project_preset_json", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
 	if err := migration.addColumnIfMissing("sessions", "project_role", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
@@ -2068,6 +2090,9 @@ func dropColumnIfPresent(db *sql.DB, table, column string) error {
 }
 
 func insertSessionTx(tx *sql.Tx, sess Session) error {
+	if err := sess.validateProjectPreset(); err != nil {
+		return err
+	}
 	_, err := tx.Exec(insertSessionSQL(), sessionArgs(sess)...)
 	if err != nil {
 		return fmt.Errorf("insert session: %w", err)
@@ -2081,18 +2106,21 @@ func insertSessionSQL() string {
 		forked_from_id, forked_from_turn_id, forked_from_item_id,
 		pinned_at, folder_id, archived_at, archive_reason, worktree_path, worktree_base_head, worktree_base_repo,
 		workspace_id, source, owner, visibility, parent_id, context_source, creation_request_id,
-		provider, model, variant, effort, speed, permission_mode, approve_for_me, engine_id, engine_ref, instructions, project_role, tool_policy_json
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		provider, model, variant, effort, speed, permission_mode, approve_for_me, engine_id, engine_ref, instructions, project_role, tool_policy_json, project_preset_json
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 }
 
 func updateSessionTx(tx *sql.Tx, sess Session) error {
+	if err := sess.validateProjectPreset(); err != nil {
+		return err
+	}
 	_, err := tx.Exec(`
 UPDATE sessions
 SET created_at = ?, updated_at = ?, title = ?, summary = ?, entries = ?, cwd = ?,
     forked_from_id = ?, forked_from_turn_id = ?, forked_from_item_id = ?,
     pinned_at = ?, folder_id = ?, archived_at = ?, archive_reason = ?, worktree_path = ?, worktree_base_head = ?, worktree_base_repo = ?,
     workspace_id = ?, source = ?, owner = ?, visibility = ?, parent_id = ?, context_source = ?, creation_request_id = ?,
-	provider = ?, model = ?, variant = ?, effort = ?, speed = ?, permission_mode = ?, approve_for_me = ?, engine_id = ?, engine_ref = ?, instructions = ?, project_role = ?, tool_policy_json = ?
+	provider = ?, model = ?, variant = ?, effort = ?, speed = ?, permission_mode = ?, approve_for_me = ?, engine_id = ?, engine_ref = ?, instructions = ?, project_role = ?, tool_policy_json = ?, project_preset_json = ?
 WHERE id = ?`,
 		timeText(sess.CreatedAt), timeText(sess.UpdatedAt), sess.Title, sess.Summary, sess.Entries, normalizeCWD(sess.CWD),
 		sess.ForkedFromID, sess.ForkedFromTurnID, sess.ForkedFromItemID,
@@ -2108,6 +2136,7 @@ WHERE id = ?`,
 		sess.Instructions,
 		sess.ProjectRole,
 		strings.TrimSpace(sess.ToolPolicyJSON),
+		projectPresetJSON(sess.ProjectPreset),
 		sess.ID,
 	)
 	if err != nil {
@@ -2153,6 +2182,7 @@ func sessionArgs(sess Session) []any {
 		sess.Instructions,
 		sess.ProjectRole,
 		strings.TrimSpace(sess.ToolPolicyJSON),
+		projectPresetJSON(sess.ProjectPreset),
 	}
 }
 
@@ -2163,7 +2193,7 @@ SELECT id, created_at, updated_at, title, summary, entries, cwd,
        pinned_at, folder_id, archived_at, archive_reason,
        worktree_path, worktree_base_head, worktree_base_repo,
        workspace_id, source, owner, visibility, parent_id, context_source, creation_request_id,
-	       provider, model, variant, effort, speed, permission_mode, approve_for_me, engine_id, engine_ref, instructions, project_role, tool_policy_json,
+	       provider, model, variant, effort, speed, permission_mode, approve_for_me, engine_id, engine_ref, instructions, project_role, tool_policy_json, project_preset_json,
 	       COALESCE((SELECT m.client_id FROM session_messages m
 	                 WHERE m.session_id = sessions.id AND m.role = 'meta'
 	                   AND m.content = 'turn_terminal' AND m.client_id <> ''
@@ -2180,7 +2210,7 @@ SELECT id, created_at, updated_at, title, summary, entries, cwd,
        pinned_at, folder_id, archived_at, archive_reason,
        worktree_path, worktree_base_head, worktree_base_repo,
        workspace_id, source, owner, visibility, parent_id, context_source, creation_request_id,
-	       provider, model, variant, effort, speed, permission_mode, approve_for_me, engine_id, engine_ref, instructions, project_role, tool_policy_json,
+	       provider, model, variant, effort, speed, permission_mode, approve_for_me, engine_id, engine_ref, instructions, project_role, tool_policy_json, project_preset_json,
 	       COALESCE((SELECT m.client_id FROM session_messages m
 	                 WHERE m.session_id = sessions.id AND m.role = 'meta'
 	                   AND m.content = 'turn_terminal' AND m.client_id <> ''
@@ -2208,6 +2238,7 @@ func scanSession(scanner interface {
 }) (Session, error) {
 	var s Session
 	var createdAt, updatedAt string
+	var presetJSON string
 	var pinnedAt, archivedAt sql.NullString
 	if err := scanner.Scan(
 		&s.ID, &createdAt, &updatedAt, &s.Title, &s.Summary, &s.Entries, &s.CWD,
@@ -2215,10 +2246,21 @@ func scanSession(scanner interface {
 		&pinnedAt, &s.FolderID, &archivedAt, &s.ArchiveReason,
 		&s.WorktreePath, &s.WorktreeBaseHEAD, &s.WorktreeBaseRepo,
 		&s.WorkspaceID, &s.Source, &s.Owner, &s.Visibility, &s.ParentID, &s.ContextSource, &s.CreationRequestID,
-		&s.Provider, &s.Model, &s.Variant, &s.Effort, &s.Speed, &s.PermissionMode, &s.ApproveForMe, &s.EngineID, &s.EngineRef, &s.Instructions, &s.ProjectRole, &s.ToolPolicyJSON,
+		&s.Provider, &s.Model, &s.Variant, &s.Effort, &s.Speed, &s.PermissionMode, &s.ApproveForMe, &s.EngineID, &s.EngineRef, &s.Instructions, &s.ProjectRole, &s.ToolPolicyJSON, &presetJSON,
 		&s.LatestCompletedTurnID,
 	); err != nil {
 		return Session{}, err
+	}
+	if presetJSON != "" {
+		if err := json.Unmarshal([]byte(presetJSON), &s.ProjectPreset); err != nil {
+			return Session{}, fmt.Errorf("decode project preset: %w", err)
+		}
+		if s.ProjectPreset == nil {
+			return Session{}, errors.New("invalid project preset snapshot")
+		}
+		if err := s.validateProjectPreset(); err != nil {
+			return Session{}, err
+		}
 	}
 	s.CreatedAt = parseTime(createdAt)
 	s.UpdatedAt = parseTime(updatedAt)

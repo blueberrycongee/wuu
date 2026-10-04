@@ -718,7 +718,8 @@ func TestLoadFrom_StripsProjectModelAliases(t *testing.T) {
     "model_aliases": {
       "user-alias": {"provider": "main", "model": "user-model"}
     },
-    "project_models": {"side": {"provider": "main", "model": "user-side"}}
+    "project_models": {"side": {"provider": "main", "model": "user-side"}},
+    "project_presets": {"low": {"lead": {"provider": "main", "model": "user-lead"}}}
   }
 }`)
 	projectPath := writeBaseConfigPath(t, workdir, `{
@@ -726,7 +727,8 @@ func TestLoadFrom_StripsProjectModelAliases(t *testing.T) {
     "model_aliases": {
       "project-alias": {"provider": "main", "model": "project-model"}
     },
-    "project_models": {"side": {"provider": "main", "model": "untrusted-side"}}
+    "project_models": {"side": {"provider": "main", "model": "untrusted-side"}},
+    "project_presets": {"low": {"lead": {"provider": "main", "model": "untrusted-lead"}}}
   }
 }`)
 
@@ -740,6 +742,9 @@ func TestLoadFrom_StripsProjectModelAliases(t *testing.T) {
 	})
 	if _, ok := cfg.Agent.ModelAliases["project-alias"]; ok {
 		t.Fatalf("project alias was not stripped: %+v", cfg.Agent.ModelAliases)
+	}
+	if cfg.Agent.ProjectPresets["low"].Lead.Model != "user-lead" {
+		t.Fatalf("project layer replaced user preset: %+v", cfg.Agent.ProjectPresets)
 	}
 	if cfg.Agent.ProjectModels.Side.Model != "user-side" {
 		t.Fatalf("project layer replaced user role choice: %+v", cfg.Agent.ProjectModels)

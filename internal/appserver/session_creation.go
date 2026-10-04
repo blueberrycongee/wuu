@@ -37,6 +37,7 @@ type hostSessionCreateParams struct {
 	WorkspaceRoot   string
 	ModelAlias      string
 	ProjectRole     string
+	ProjectPreset   *session.ProjectPresetSnapshot
 	Provider        string
 	Model           string
 	Variant         string
@@ -184,7 +185,7 @@ func (s *Server) createHostSessionThread(owner, source, id string, params hostSe
 		WorktreePath: worktree.Path, WorktreeBaseHEAD: worktree.BaseHEAD, WorktreeBaseRepo: worktree.BaseRepo,
 		Provider: selection.Provider, Model: selection.Model, Variant: selection.Variant,
 		Effort: selection.Effort, Speed: selection.Speed, PermissionMode: selection.PermissionMode, ApproveForMe: selection.ApproveForMe,
-		ProjectRole: params.ProjectRole, Instructions: params.Instructions, ToolPolicyJSON: toolPolicyJSON,
+		ProjectRole: params.ProjectRole, ProjectPreset: params.ProjectPreset, Instructions: params.Instructions, ToolPolicyJSON: toolPolicyJSON,
 	}
 	var records []session.HistoryRecord
 	artifactStateDir := ""
@@ -252,6 +253,7 @@ func (s *Server) createHostSessionThread(owner, source, id string, params hostSe
 	th := newThreadState(id, history, s.rt.ProviderName, s.rt.Model, threadCWD, true, time.Now().UTC())
 	applyThreadRuntimeSelection(th, selection)
 	th.Source = source
+	th.ProjectPreset = params.ProjectPreset
 	th.Title = params.Name
 	th.Owner = owner
 	th.Visibility = params.Visibility

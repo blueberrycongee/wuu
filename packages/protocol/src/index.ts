@@ -165,6 +165,7 @@ export type InitializeResult = {
   model_roles?: ModelRoleSummary[];
   model_aliases?: Record<string, ModelAliasSummary>;
   project_models?: ProjectModelsConfig;
+  project_presets?: ProjectPresetsConfig;
   providers?: ProviderSummary[];
   advanced_settings?: AdvancedSettingsSummary;
   general_settings?: GeneralSettingsSummary;
@@ -555,6 +556,7 @@ export type ConfigChangedNotification = {
   model_roles?: ModelRoleSummary[];
   model_aliases?: Record<string, ModelAliasSummary>;
   project_models?: ProjectModelsConfig;
+  project_presets?: ProjectPresetsConfig;
   providers?: ProviderSummary[];
 };
 
@@ -686,6 +688,8 @@ export type ConfigModelUpdateResult = {
   extension_trust?: ExtensionTrustSummary;
   model_roles?: ModelRoleSummary[];
   model_aliases?: Record<string, ModelAliasSummary>;
+  project_models?: ProjectModelsConfig;
+  project_presets?: ProjectPresetsConfig;
   providers?: ProviderSummary[];
   advanced_settings?: AdvancedSettingsSummary;
 };
@@ -745,6 +749,25 @@ export type ModelAliasSummary = {
   model: string;
   effort?: string;
   variant?: string;
+};
+
+export type ProjectPresetMode = "low" | "medium" | "high" | "ultra";
+
+// Settings can be saved role by role. Creation requires all three selections.
+export type ProjectPresetConfig = {
+  lead?: Partial<ModelAliasSummary>;
+  side?: Partial<ModelAliasSummary>;
+  worker?: Partial<ModelAliasSummary>;
+};
+
+export type ProjectPresetsConfig = Partial<Record<ProjectPresetMode, ProjectPresetConfig>>;
+
+// The resolved selection is immutable for the coordinator and its members.
+export type ProjectPresetSnapshot = {
+  mode: ProjectPresetMode;
+  lead: ModelAliasSummary;
+  side: ModelAliasSummary;
+  worker: ModelAliasSummary;
 };
 
 export type ProjectModelsConfig = {
@@ -1049,6 +1072,7 @@ export type RuntimeAdvancedSettingsUpdate = {
   provider_context_window?: number;
   model_aliases?: Record<string, ModelAliasSummary>;
   project_models?: ProjectModelsConfig;
+  project_presets?: ProjectPresetsConfig;
   verification_model?: ModelAliasSummary;
 };
 
@@ -1056,6 +1080,7 @@ export type ConfigAdvancedUpdateResult = {
   advanced_settings: AdvancedSettingsSummary;
   model_aliases?: Record<string, ModelAliasSummary>;
   project_models?: ProjectModelsConfig;
+  project_presets?: ProjectPresetsConfig;
   model_roles?: ModelRoleSummary[];
   providers?: ProviderSummary[];
 };
@@ -1732,6 +1757,7 @@ export type Thread = {
   project_exists?: boolean;
   // Managed sessions share the ordinary thread lifecycle. Older members are workers.
   project_role?: "side" | "worker";
+  project_preset?: ProjectPresetSnapshot;
   model_provider: string;
   model: string;
   model_variant?: string;
@@ -1784,7 +1810,7 @@ export type ThreadStartParams = {
   base_revision?: string;
   handoff?: ThreadHandoffParams;
   // Start a project coordinator in the workspace instead of a conversation.
-  project?: { name: string };
+  project?: { name: string; preset?: ProjectPresetMode };
 };
 
 // The user's changes to a project's membership: adopt brings an ordinary

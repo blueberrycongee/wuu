@@ -410,6 +410,12 @@
   margin-block: calc((var(--font-ui) * 1.4 - var(--control-field-height)) / 2);
 }
 
+.project-preset-tabs {
+  align-self: flex-start;
+  max-width: 100%;
+  flex-wrap: wrap;
+}
+
 /* An inline form: its rows, then the actions that commit or discard them,
  * ending on the group's edge like a dialog footer. */
 .settings-form {

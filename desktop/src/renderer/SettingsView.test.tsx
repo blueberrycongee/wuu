@@ -102,19 +102,27 @@ function emptyCodexPetsSnapshot(overrides: Partial<CodexPetsSnapshot> = {}): Cod
   };
 }
 
-// Protect the user-facing save boundary: changing one role preserves the other
-// and cannot change the lead conversation selection.
-it("saves project side selection without changing the worker or lead", async () => {
+// Preset edits cross the configuration boundary without changing other modes,
+// other roles, or the ordinary conversation's runtime selection.
+it("saves one project preset role without changing other roles or modes", async () => {
   installBuildInfoStub({ core: {}, desktop: {} } as BuildInfoResult);
   const onAdvancedSave = vi.fn().mockResolvedValue(undefined);
+  const low = { lead: { provider: "fake", model: "fake-model" } };
+  const high = {
+    lead: { provider: "fake", model: "lead-model", effort: "high" },
+    side: { provider: "fake", model: "side-model", effort: "high" },
+    worker: { provider: "fake", model: "worker-model" },
+  };
   renderSettings({
     initialized: baseInitialized({
       features: { project_agent: true },
-      project_models: { side: { provider: "fake", model: "side-model", effort: "high" }, worker: { provider: "fake", model: "worker-model" } },
-      providers: [{ name: "fake", type: "openai-compatible", model: "fake-model", models: [{ id: "side-model" }, { id: "next-side" }, { id: "worker-model" }] }],
+      project_presets: { low, high },
+      providers: [{ name: "fake", type: "openai-compatible", model: "fake-model", models: [{ id: "lead-model" }, { id: "side-model" }, { id: "next-side" }, { id: "worker-model" }] }],
     }),
     initialPage: "advanced", onAdvancedSave, locale: "en-US",
   });
+  await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="project-preset-high"]')?.click(); });
+  expect(container.querySelector('[data-testid="project-lead-model"]')?.textContent).toContain("lead-model");
   await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="project-side-model"]')?.click(); });
   const option = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')).find((item) => item.textContent?.includes("side-model"));
   expect(option).toBeDefined();
@@ -124,7 +132,32 @@ it("saves project side selection without changing the worker or lead", async () 
   const replacement = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')).find((item) => item.textContent?.includes("next-side"));
   expect(replacement).toBeDefined();
   await act(async () => { replacement?.click(); });
-  expect(onAdvancedSave).toHaveBeenCalledWith({ project_models: { side: { provider: "fake", model: "next-side" }, worker: { provider: "fake", model: "worker-model" } } });
+  expect(onAdvancedSave).toHaveBeenCalledWith({ project_presets: { low, high: { ...high, side: { provider: "fake", model: "next-side" } } } });
+});
+
+it("saves the first role of an empty preset and keeps failed edits out of the selection", async () => {
+  installBuildInfoStub({ core: {}, desktop: {} } as BuildInfoResult);
+  const onAdvancedSave = vi.fn().mockRejectedValue(new Error("Provider is unavailable"));
+  const low = { lead: { provider: "fake", model: "fake-model" } };
+  renderSettings({
+    initialized: baseInitialized({
+      features: { project_agent: true }, project_presets: { low },
+      providers: [{ name: "fake", type: "openai-compatible", model: "fake-model" }],
+    }),
+    initialPage: "advanced", onAdvancedSave, locale: "en-US",
+  });
+  await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="project-preset-ultra"]')?.click(); });
+  const leadPicker = container.querySelector<HTMLButtonElement>('[data-testid="project-lead-model"]');
+  expect(leadPicker).not.toBeNull();
+  const initialLabel = leadPicker?.textContent;
+  await act(async () => { leadPicker?.click(); });
+  const replacement = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')).find((item) => item.textContent?.includes("fake-model"));
+  expect(replacement).toBeDefined();
+  await act(async () => { replacement?.click(); });
+  expect(onAdvancedSave).toHaveBeenCalledWith({ project_presets: { low, ultra: { lead: { provider: "fake", model: "fake-model" } } } });
+  expect(leadPicker?.textContent).toBe(initialLabel);
+  expect(container.querySelector('[role="alert"]')?.textContent).toContain("Provider is unavailable");
+  expect(leadPicker?.disabled).toBe(false);
 });
 
 function readyEngineInventory(): EngineListResult {
