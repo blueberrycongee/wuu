@@ -2,6 +2,7 @@ package appserver
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -9,8 +10,110 @@ import (
 	"testing"
 	"time"
 
+	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
+	"github.com/blueberrycongee/wuu/internal/tools"
+	"github.com/blueberrycongee/wuu/internal/workspaces"
 )
+
+func TestAgentFileEditsPersistAndRefreshUserConfig(t *testing.T) {
+	for _, mode := range []string{"standard", "read_only", "unconfined"} {
+		t.Run(mode, func(t *testing.T) {
+			rt := newTestRuntime(t, &fakeClient{})
+			rt.WuuHome = filepath.Join(t.TempDir(), ".wuu")
+			t.Setenv("WUU_HOME", rt.WuuHome)
+			rt.ConfigPath = filepath.Join(rt.WuuHome, "config.json")
+			if err := os.MkdirAll(rt.WuuHome, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			initial := `{"default_provider":"fake-provider","providers":{"fake-provider":{"type":"openai-compatible","base_url":"https://example.test/v1","api_key_env":"WUU_CONFIG_TEST_KEY","model":"fake-model"}},"agent":{"max_steps":10}}`
+			t.Setenv("WUU_CONFIG_TEST_KEY", "test-key")
+			if err := os.WriteFile(rt.ConfigPath, []byte(initial), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			kit, err := tools.New(rt.RootDir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			kit.SetBoundary(runtime.BoundaryForMode(mode))
+			kit.SetPermissionMode(mode)
+			// Exclude shared temp so this fixture exercises the runtime scope
+			// instead of granting Wuu-home access through its temporary parent.
+			roots := workspaces.BoundaryRoots(rt.RootDir, rt.WuuHome)
+			var scoped []string
+			for _, root := range roots {
+				if filepath.Clean(root) != filepath.Clean(os.TempDir()) {
+					scoped = append(scoped, root)
+				}
+			}
+			kit.SetFileScopeRoots(scoped)
+			call := func(name string, args map[string]any) (string, error) {
+				t.Helper()
+				data, err := json.Marshal(args)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return kit.Execute(context.Background(), providers.ToolCall{Name: name, Arguments: string(data)})
+			}
+			if result, err := call("read_file", map[string]any{"path": rt.ConfigPath}); err != nil || !strings.Contains(result, "fake-model") {
+				t.Fatalf("read user config: result=%q err=%v", result, err)
+			}
+			out := &lockedBuffer{}
+			srv := New(rt, out)
+			t.Cleanup(srv.Close)
+			if err := srv.refreshConfigIfChanged(); err != nil {
+				t.Fatal(err)
+			}
+			added := `"added":{"type":"openai-compatible","base_url":"https://example.test/v1","api_key_env":"WUU_CONFIG_TEST_KEY","model":"added-model"},`
+			_, err = call("edit_file", map[string]any{"path": rt.ConfigPath, "old_text": `"providers":{`, "new_text": `"providers":{` + added})
+			if mode == "read_only" {
+				if err == nil {
+					t.Fatal("read-only agent changed user config")
+				}
+				data, readErr := os.ReadFile(rt.ConfigPath)
+				if readErr != nil || string(data) != initial {
+					t.Fatalf("read-only refusal changed the file: %s, %v", data, readErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("add provider: %v", err)
+			}
+			if _, err := call("edit_file", map[string]any{"path": rt.ConfigPath, "old_text": `"default_provider":"fake-provider"`, "new_text": `"default_provider":"added"`}); err != nil {
+				t.Fatalf("select added provider: %v", err)
+			}
+			if _, err := call("edit_file", map[string]any{"path": rt.ConfigPath, "old_text": `"max_steps":10`, "new_text": `"max_steps":20`}); err != nil {
+				t.Fatalf("edit settings: %v", err)
+			}
+			cfg, _, err := rt.LoadEffectiveConfig()
+			if err != nil || cfg.DefaultProvider != "added" || cfg.Providers["added"].Model != "added-model" || cfg.Agent.MaxSteps != 20 {
+				t.Fatalf("edits did not survive a config reload: %+v, %v", cfg, err)
+			}
+			if err := srv.refreshConfigIfChanged(); err != nil {
+				t.Fatal(err)
+			}
+			if rt.ProviderName != "added" || rt.Model != "added-model" || len(srv.providerSummaries()) != 2 {
+				t.Fatalf("model refresh did not apply file edits: provider=%s model=%s inventory=%+v", rt.ProviderName, rt.Model, srv.providerSummaries())
+			}
+			notifications := notificationsByMethod(parseOutput(t, out.String()), NotificationConfigChanged)
+			if len(notifications) == 0 {
+				t.Fatalf("file edit did not publish config/changed: %s", out.String())
+			}
+			// The watcher may publish intermediate edits before the explicit refresh.
+			// The last notification must describe the final saved selection.
+			changed := remarshal[ConfigChangedNotification](t, notifications[len(notifications)-1]["params"])
+			if changed.Provider != "added" || changed.Model != "added-model" {
+				t.Fatalf("config/changed did not publish the final selection: %+v", changed)
+			}
+			if mode == "standard" {
+				outside := filepath.Join(t.TempDir(), "outside.json")
+				if _, err := call("write_file", map[string]any{"path": outside, "content": "{}"}); err == nil {
+					t.Fatal("config access also allowed writes outside the file scope")
+				}
+			}
+		})
+	}
+}
 
 func TestConfigWatchUsesEventsInsteadOfContinuousReloads(t *testing.T) {
 	root := t.TempDir()

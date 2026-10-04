@@ -78,12 +78,15 @@ func Roots(list []Workspace) []string {
 
 // FileScopeRoots assembles the file-tool whitelist for ordinary turns and
 // Scoped participant runs:
-// the agent home (the runtime root), every registered workspace root, and
-// the system temp directory. A missing or unreadable projects store simply
-// contributes no workspace roots.
+// the agent home (the runtime root), Wuu home, every registered workspace
+// root, and the system temp directory. A missing or unreadable projects store
+// simply contributes no workspace roots.
 func FileScopeRoots(homeRoot, wuuHome string) []string {
 	roots := make([]string, 0, 4)
 	if home := strings.TrimSpace(homeRoot); home != "" {
+		roots = append(roots, home)
+	}
+	if home := strings.TrimSpace(wuuHome); home != "" {
 		roots = append(roots, home)
 	}
 	if list, err := List(wuuHome); err == nil {
@@ -96,7 +99,7 @@ func FileScopeRoots(homeRoot, wuuHome string) []string {
 }
 
 // BoundaryRoots returns the complete reachable file scope for a runtime: its
-// own root, every registered workspace, the system temp directory, and
+// own root, Wuu home, every registered workspace, the system temp directory, and
 // caller-owned extras such as memory notebooks or session artifact dirs.
 func BoundaryRoots(runtimeRoot, wuuHome string, extra ...string) []string {
 	roots := FileScopeRoots(runtimeRoot, wuuHome)

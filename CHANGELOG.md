@@ -10,6 +10,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Built-in agents can edit configuration with ordinary file tools. Standard
+  mode now includes Wuu home in its file and command write scope; Read only
+  and dedicated credential-file guards still apply.
+
 - Remove the redundant heading from the conversation fork chooser.
 - Align motion easing, icon press feedback, notice dismissal, and activity
   rhythms with the shared motion settings and reduced-motion preference.

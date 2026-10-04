@@ -41,6 +41,8 @@ For hostile repositories or dependencies, use a disposable environment or a sepa
 
 Normal startup treats the user configuration as the base. Project layers cannot replace provider connections, model selection through protected fields, instruction discovery, or the permission mode. This restriction also applies to `.wuu/settings.local.json` during normal startup. Explicit `wuu exec --config` and `--ignore-user-config` paths deliberately trust project configuration; use them only with reviewed inputs. See [configuration](configuration.md).
 
+Standard mode includes Wuu home in the agent's file scope and the command sandbox's writable roots. The agent can therefore edit the trusted user configuration and runtime records. Project-layer filtering does not prevent those direct edits. Dedicated file tools still block Wuu login credential files, but those guards do not isolate credentials from subprocesses. Use Read only when the task must not modify configuration or state.
+
 Repository instructions, skills, tool output, and retrieved content can influence a model without being trustworthy instructions. Review a new project's `AGENTS.md`, Wuu settings, hooks, skills, and MCP configuration before relying on them.
 
 Project `.mcp.json` entries require a local trust decision before loading. Trusting an MCP server means trusting its executable or remote service with the data and credentials you give it; its responses remain external input.

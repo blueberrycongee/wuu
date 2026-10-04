@@ -43,8 +43,6 @@ func sensitivePathReason(path string) (string, bool) {
 		switch {
 		case part == ".git" || part == ".hg" || part == ".svn":
 			return "version-control metadata", true
-		case part == ".wuu" || part == ".wuu-state" || part == ".wuu-home":
-			return "wuu runtime state", true
 		case part == ".env" || strings.HasPrefix(part, ".env.") || strings.Contains(part, ".env"):
 			return ".env file", true
 		case part == ".netrc":
@@ -69,10 +67,8 @@ func isSensitivePath(path string) bool {
 
 // wuuCredentialFileNames are the app's own credential files at the root of
 // the wuu home directory. They are floor-protected in every permission
-// mode, including unconfined: no agent tool may read or write them. The
-// agent never needs their contents to do its job, and the runtime-metadata
-// exemption below exists for the memory notebook and session artifacts —
-// not for these files.
+// mode, including unconfined: dedicated file tools may not read or write
+// them. Other files in Wuu home use the ordinary file-scope boundary.
 var wuuCredentialFileNames = map[string]struct{}{
 	"auth.json":        {},
 	"credentials.json": {},
@@ -80,20 +76,35 @@ var wuuCredentialFileNames = map[string]struct{}{
 	"phone.json":       {},
 }
 
-// isWuuCredentialPath reports whether absPath is one of the app's own
-// credential files directly under the wuu home directory.
+// isWuuCredentialPath recognizes both the app's named credential files and
+// symlink aliases to them, including when Wuu home itself is a symlink.
 func isWuuCredentialPath(absPath string) bool {
 	if strings.TrimSpace(absPath) == "" {
-		return false
-	}
-	if _, ok := wuuCredentialFileNames[filepath.Base(filepath.Clean(absPath))]; !ok {
 		return false
 	}
 	home, err := statepath.Home("")
 	if err != nil {
 		return false
 	}
-	return filepath.Dir(filepath.Clean(absPath)) == filepath.Clean(home)
+	matches := func(path string) bool {
+		_, credential := wuuCredentialFileNames[filepath.Base(filepath.Clean(path))]
+		return credential && filepath.Dir(filepath.Clean(path)) == filepath.Clean(home)
+	}
+	// Preserve the named-file guard even if the store is missing or points
+	// outside Wuu home, then check actual targets to prevent alias bypasses.
+	if matches(absPath) {
+		return true
+	}
+	if resolved, err := filepath.EvalSymlinks(home); err == nil {
+		home = resolved
+	}
+	if matches(absPath) {
+		return true
+	}
+	if resolved, err := filepath.EvalSymlinks(absPath); err == nil {
+		return matches(resolved)
+	}
+	return false
 }
 
 func wuuCredentialRefusal(toolName, action, absPath string) error {
