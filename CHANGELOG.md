@@ -10,6 +10,7 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Remove viewed marks and viewed-file progress from the workspace change review panel.
 - Built-in agents can edit configuration with ordinary file tools. Standard
   mode now includes Wuu home in its file and command write scope; Read only
   and dedicated credential-file guards still apply.

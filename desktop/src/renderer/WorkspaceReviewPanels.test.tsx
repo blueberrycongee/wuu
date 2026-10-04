@@ -234,8 +234,6 @@ describe("WorkspaceReviewPanel", () => {
     await flushReviewEffects();
     click(row("app/one.ts"));
     await flushReviewEffects();
-    click(action("viewed"));
-    expect(action("viewed")?.getAttribute("aria-pressed")).toBe("true");
 
     // An agent edits the open file and adds another.
     api.setFiles([
@@ -250,8 +248,6 @@ describe("WorkspaceReviewPanel", () => {
     expect(panel().dataset.wuuState).toBe("detail");
     expect(shownDiffPath()).toBe("app/one.ts");
     expect(api.readGitFileDiff).toHaveBeenLastCalledWith("app/one.ts", "/repo-refresh");
-    // The mark was for the earlier change; the new one is unread.
-    expect(action("viewed")?.getAttribute("aria-pressed")).toBe("false");
     click(action("next"));
     await flushReviewEffects();
     expect(shownDiffPath()).toBe("app/two.ts");
@@ -262,28 +258,6 @@ describe("WorkspaceReviewPanel", () => {
     await flushReviewEffects();
     expect(panel().dataset.wuuState).toBe("navigation");
     expect(row("app/two.ts")).toBeNull();
-  });
-
-  it("keeps viewed marks for an unchanged file across remounts", async () => {
-    installGitReviewStub(FILES);
-    const view = <WorkspaceReviewPanel gitStatus={status(4)} workspaceRoot="/repo-viewed" />;
-    mount(view);
-    await flushReviewEffects();
-    click(row("go.mod"));
-    await flushReviewEffects();
-    click(action("viewed"));
-    act(() => root!.unmount());
-
-    root = createRoot(container!);
-    act(() => root!.render(view));
-    await flushReviewEffects();
-    click(row("go.mod"));
-    await flushReviewEffects();
-    expect(action("viewed")?.getAttribute("aria-pressed")).toBe("true");
-    click(action("back"));
-    click(row("app/one.ts"));
-    await flushReviewEffects();
-    expect(action("viewed")?.getAttribute("aria-pressed")).toBe("false");
   });
 
   it("opens files relative to a workspace folder inside the repository", async () => {

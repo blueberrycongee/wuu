@@ -2,9 +2,6 @@ import {
   ArrowDown,
   ArrowLeft,
   ArrowUp,
-  Check,
-  Circle,
-  CircleCheck,
   SquarePen,
 } from "./WuuIcons";
 import {
@@ -54,24 +51,6 @@ const WORKSPACE_REVIEW_SPLIT_MIN_WIDTH =
   WORKSPACE_REVIEW_LIST_MIN_WIDTH + WORKSPACE_REVIEW_RESIZER_WIDTH + WORKSPACE_REVIEW_DIFF_MIN_WIDTH;
 const WORKSPACE_REVIEW_LIST_STEP = 24;
 const WORKSPACE_REVIEW_LIST_WIDTH_KEY = "wuu.desktop.reviewTreeWidth";
-
-// Viewed marks last for the app session, per workspace. Git list metadata
-// invalidates them when status or line counts change; it is not a content hash.
-const viewedMarksByWorkspace = new Map<string, Map<string, string>>();
-
-function viewedMarks(workspaceRoot: string | undefined): Map<string, string> {
-  const key = workspaceRoot ?? "";
-  let marks = viewedMarksByWorkspace.get(key);
-  if (!marks) {
-    marks = new Map();
-    viewedMarksByWorkspace.set(key, marks);
-  }
-  return marks;
-}
-
-function gitChangeSignature(file: GitChangeFile): string {
-  return [file.status, file.additions, file.deletions, file.old_path ?? ""].join(":");
-}
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
@@ -126,10 +105,8 @@ export function WorkspaceReviewPanel({
   // Unknown until the panel is measured, so a narrow panel never starts
   // loading a diff it will not show.
   const [split, setSplit] = useState<boolean | undefined>(undefined);
-  const [, setViewedVersion] = useState(0);
   // Focus that must land after a layout switch replaces the focused control.
   const pendingFocusRef = useRef<string | undefined>(undefined);
-  const marks = viewedMarks(workspaceRoot);
 
   const files = changes?.files ?? [];
   const groups = useMemo(() => groupGitChangeFiles(files), [files]);
@@ -144,7 +121,6 @@ export function WorkspaceReviewPanel({
   const shownPath = showDetail ? shownFile?.path : undefined;
   const showList = !single && split !== undefined && (split || !showDetail);
   const layout = single ? "single" : split === undefined ? undefined : split ? "split" : "stack";
-  const isViewed = (file: GitChangeFile): boolean => marks.get(file.path) === gitChangeSignature(file);
 
   useEffect(() => {
     setChanges(undefined);
@@ -314,15 +290,6 @@ export function WorkspaceReviewPanel({
     pendingFocusRef.current = `.workspace-review-row[data-wuu-path="${CSS.escape(shownFile?.path ?? "")}"]`;
   }
 
-  function toggleViewed(file: GitChangeFile): void {
-    if (isViewed(file)) {
-      marks.delete(file.path);
-    } else {
-      marks.set(file.path, gitChangeSignature(file));
-    }
-    setViewedVersion((version) => version + 1);
-  }
-
   if (!changes) {
     return listError
       ? <WorkspacePanelEmpty title={t("workspaceReview.readFailed")} description={listError} />
@@ -382,19 +349,6 @@ export function WorkspaceReviewPanel({
               <WorkspaceReviewFileTitle file={shownFile} />
             </div>
             <div className="workspace-review-actions">
-              {single ? null : (
-                <button
-                  className={`icon-button workspace-review-viewed${isViewed(shownFile) ? " active" : ""}`}
-                  data-wuu-action="viewed"
-                  type="button"
-                  aria-pressed={isViewed(shownFile)}
-                  aria-label={t("workspaceReview.viewed")}
-                  title={t(isViewed(shownFile) ? "workspaceReview.viewed" : "workspaceReview.markViewed")}
-                  onClick={() => toggleViewed(shownFile)}
-                >
-                  {isViewed(shownFile) ? <CircleCheck className="icon" /> : <Circle className="icon" />}
-                </button>
-              )}
               {editablePath ? (
                 <button
                   className="icon-button"
@@ -465,8 +419,6 @@ export function WorkspaceReviewPanel({
           groups={visibleGroups}
           query={query}
           activePath={showDetail ? shownFile?.path : selectedFile?.path}
-          viewedCount={files.filter(isViewed).length}
-          isViewed={isViewed}
           onQueryChange={setQuery}
           onOpenFile={openFile}
         />
@@ -569,8 +521,6 @@ function GitChangeList({
   groups,
   query,
   activePath,
-  viewedCount,
-  isViewed,
   onQueryChange,
   onOpenFile,
 }: {
@@ -580,8 +530,6 @@ function GitChangeList({
   groups: GitChangeGroup[];
   query: string;
   activePath?: string;
-  viewedCount: number;
-  isViewed: (file: GitChangeFile) => boolean;
   onQueryChange: (value: string) => void;
   onOpenFile: (path: string) => void;
 }): JSX.Element {
@@ -620,12 +568,6 @@ function GitChangeList({
           <GitChangeCounts additions={totals.additions} deletions={totals.deletions} />
         </span>
         {branch ? <TruncatedText className="workspace-review-branch" text={branch} /> : null}
-        <span className="workspace-review-progress">
-          {t("workspaceReview.viewedProgress", {
-            viewed: formatNumber(viewedCount),
-            total: formatNumber(files.length),
-          })}
-        </span>
       </div>
       <input
         className="workspace-review-search"
@@ -656,7 +598,6 @@ function GitChangeList({
                   key={file.path}
                   file={file}
                   active={file.path === activePath}
-                  viewed={isViewed(file)}
                   onOpen={() => onOpenFile(file.path)}
                 />
               ))}
@@ -671,18 +612,16 @@ function GitChangeList({
 function GitChangeRow({
   file,
   active,
-  viewed,
   onOpen,
 }: {
   file: GitChangeFile;
   active: boolean;
-  viewed: boolean;
   onOpen: () => void;
 }): JSX.Element {
   const { t } = useI18n();
   return (
     <button
-      className={`workspace-review-row${active ? " active" : ""}${viewed ? " viewed" : ""}`}
+      className={`workspace-review-row${active ? " active" : ""}`}
       data-wuu-component="workspace-review-item"
       data-wuu-active={active}
       data-wuu-path={file.path}
@@ -690,14 +629,6 @@ function GitChangeRow({
       aria-current={active ? "true" : undefined}
       onClick={onOpen}
     >
-      <span className="workspace-review-row-mark">
-        {viewed ? (
-          <>
-            <Check className="icon-sm" aria-hidden="true" />
-            <span className="sr-only">{t("workspaceReview.viewed")}</span>
-          </>
-        ) : null}
-      </span>
       <TruncatedText className="workspace-review-row-name" text={gitPathName(file.path)} />
       <span className="workspace-review-row-stats">
         {file.binary ? (

@@ -2377,12 +2377,6 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   flex: 0 0 auto;
 }
 
-.workspace-review-viewed.active,
-.workspace-review-viewed.active:hover:not(:disabled) {
-  background: transparent;
-  color: var(--success);
-}
-
 .workspace-diff-error,
 .workspace-diff-empty {
   display: grid;
@@ -2498,8 +2492,7 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
 }
 
 /* Change list: files under their folder, one level deep. Rows share the file
- * tree's height and type size; the name column starts after a fixed mark
- * column, so viewed and unviewed names line up. */
+ * tree's height and type size. */
 .workspace-review-list {
   display: grid;
   height: 100%;
@@ -2513,7 +2506,7 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
 .workspace-review-list-header {
   display: grid;
   min-width: 0;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr);
   gap: 2px var(--space-3);
   /* Header text, search text, folder labels and status letters share the
    * list's inset: the scroll padding plus a row's own padding. */
@@ -2536,15 +2529,6 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   color: var(--ink);
   font-size: var(--font-ui);
   font-weight: var(--weight-medium);
-}
-
-/* Progress shares the branch's line; the branch truncates, progress stays. */
-.workspace-review-progress {
-  grid-column: 2;
-  color: var(--ink-soft);
-  font-size: var(--font-sm);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
 }
 
 .workspace-review-branch {
@@ -2605,7 +2589,7 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   width: 100%;
   min-width: 0;
   min-height: var(--control-row-height);
-  grid-template-columns: var(--icon-size-sm) minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: var(--space-2);
   border-radius: var(--radius-xs);
@@ -2629,15 +2613,8 @@ html[data-focus-modality="keyboard"] .workspace-review-row:focus-visible {
   outline-offset: -2px;
 }
 
-.workspace-review-row-mark {
-  display: grid;
-  place-items: center;
-  color: var(--success);
-}
-
-/* Viewed files step back so the unread ones lead. */
-.workspace-review-row.viewed .workspace-review-row-name {
-  color: var(--ink-soft);
+.workspace-review-group:has(.workspace-review-group-label) .workspace-review-row {
+  padding-left: calc(var(--space-2) + var(--space-3));
 }
 
 .workspace-review-row-name {
