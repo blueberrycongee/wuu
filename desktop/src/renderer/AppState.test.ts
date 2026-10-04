@@ -2815,6 +2815,100 @@ describe("reconcileListedThreadState", () => {
   });
 });
 
+describe("completion across delayed snapshots", () => {
+  const paths = ["list", "thread/updated", "thread/resumed", "resume RPC", "turn/started"] as const;
+
+  function applySnapshot(state: AppState, thread: Thread, path: typeof paths[number]): AppState {
+    if (path === "list") return reconcileListedThreadState(state, [thread]);
+    if (path === "resume RPC") {
+      const resumed = reconcileResumedThreadTurns(thread, state.thread);
+      return { ...state, thread: resumed, threads: [resumed], running: isThreadRunning(resumed) };
+    }
+    return reduceServerEvent(state, {
+      kind: "notification",
+      workdir: thread.cwd,
+      message: {
+        method: path,
+        params: path === "turn/started"
+          ? { thread_id: thread.id, turn: thread.turns.at(-1) }
+          : { thread },
+      },
+    });
+  }
+
+  function runningState(): AppState & { thread: Thread } {
+    const thread: Thread = {
+      ...threadWithUserTexts(["hello"]),
+      status: "in_progress",
+      turns: [{
+        id: "turn-1",
+        status: "in_progress",
+        items_view: "full",
+        items: [{ id: "answer", type: "agent_message", status: "in_progress", text: "partial" }],
+      }],
+    };
+    return {
+      ...initialState,
+      activeContext: { kind: "no_project", cwd: thread.cwd },
+      thread, threads: [thread], running: true,
+    };
+  }
+
+  function expectSettledPresentation(state: AppState): void {
+    expect(isStateActiveThreadRunning(state) && !activeTurnIsAnswerReady(state.thread)).toBe(false);
+    expect(isThreadExecuting(summarizeThreadsForSidebar(state.threads)[0])).toBe(false);
+    expect(state.thread?.turns[0].items.find((item) => item.id === "answer")?.text).toBe("done");
+  }
+
+  describe.each(["answer-ready", "completed"] as const)("after %s", (boundary) => {
+    it.each(paths)("does not revive activity via %s, but accepts a new turn", (path) => {
+      const initial = runningState();
+      let state = reduceServerEvent(initial, {
+        kind: "notification", workdir: initial.thread.cwd,
+        message: { method: "item/completed", params: {
+          thread_id: initial.thread.id, turn_id: "turn-1", completed_at_ms: 1_785_560_400_000,
+          item: { id: "answer", type: "agent_message", status: "completed", terminal: true, text: "done" },
+        } },
+      });
+      if (boundary === "completed") {
+        state = reduceServerEvent(state, {
+          kind: "notification", workdir: initial.thread.cwd,
+          message: { method: "turn/completed", params: {
+            thread_id: initial.thread.id, turn: { ...state.thread!.turns[0], status: "completed" },
+          } },
+        });
+      }
+      const settled = state.thread!;
+      expectSettledPresentation(state);
+      // Both a late response and subsequent fresh/stale refreshes must converge.
+      for (const snapshot of [initial.thread, settled, initial.thread]) {
+        state = applySnapshot(state, snapshot, path);
+        expectSettledPresentation(state);
+      }
+      const followUp: Thread = {
+        ...settled, status: "in_progress",
+        turns: [...settled.turns, { id: "turn-2", status: "in_progress", items_view: "full", items: [] }],
+      };
+      state = applySnapshot(state, followUp, path);
+      expect(isStateActiveThreadRunning(state)).toBe(true);
+      expect(activeTurnIsAnswerReady(state.thread)).toBe(false);
+      expect(isThreadExecuting(summarizeThreadsForSidebar(state.threads)[0])).toBe(true);
+    });
+  });
+
+  it.each(["thread/updated", "thread/resumed"] as const)("repairs a missed turn/completed via %s", (path) => {
+    const initial = runningState();
+    const completed: Thread = {
+      ...initial.thread, status: "idle",
+      turns: [{
+        ...initial.thread.turns[0], status: "completed",
+        items: [{ id: "answer", type: "agent_message", status: "completed", terminal: true, text: "done" }],
+      }],
+    };
+    expectSettledPresentation(applySnapshot(initial, completed, path));
+  });
+});
+
 describe("latestContextUsageForThread", () => {
   function makeThread(args: {
     id?: string;

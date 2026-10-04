@@ -53,6 +53,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Keep completed replies settled across delayed session snapshots, preventing
+  sidebar spinners and composer stop buttons from reappearing or flickering.
+
 - Reject oversized encoded desktop messages without disconnecting the core or
   losing drafts, and retain explicit video transport settings through request preparation.
 
