@@ -2524,11 +2524,11 @@ function threadNeedsResumeOnReselect(state: AppState, threadID: string): boolean
 // the shared no-project workspace. A project context whose project has been
 // removed/relocated (so it is no longer in state.projects) falls back to the
 // cwd basename so the tab still reads as *something* rather than blank.
-function workspaceNameForContext(context: RuntimeContext, state: AppState): string {
+export function workspaceNameForContext(context: RuntimeContext, projects: DesktopProject[]): string {
   if (context.kind === "no_project") {
     return t("sidebar.conversations");
   }
-  const project = state.projects.find(
+  const project = projects.find(
     (candidate) => candidate.id === context.project_id,
   );
   return project?.name || fileNameFromPath(context.cwd) || t("sidebar.workspace");
@@ -2540,7 +2540,7 @@ function sessionTabLabel(tab: SessionTab, state: AppState): string {
     // "对话" — not the typed prompt. Each workspace has at most one draft tab,
     // so the name is unambiguous; once the draft is sent it becomes a thread
     // tab and switches to the conversation title (below).
-    return workspaceNameForContext(tab.context, state);
+    return workspaceNameForContext(tab.context, state.projects);
   }
   if (tab.kind === "skills") {
     return t("skills.title");

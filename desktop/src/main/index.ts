@@ -129,7 +129,7 @@ import type {
   PluginClientRequestParams,
   PluginClientRequestResult,
   WorkspaceFileSaveParams,
-  CodexPetHint,
+  CodexPetFeed,
   CodexPetSubmitResult,
   SideThreadOpenResult,
   SideThreadHistoryResult,
@@ -399,7 +399,7 @@ const codexPetWindowManager = new CodexPetWindowManager({
     revealMainWindow();
     codexPetCommandRelay.jump(threadID);
   },
-  onSubmit: (text, threadID) => codexPetCommandRelay.submit(text, threadID),
+  onSubmit: (text, target) => codexPetCommandRelay.submit(text, target),
   onShowApp: () => revealMainWindow(),
   onSizeChange: (size) => {
     // Context-menu size change — push the choice into desktop-settings.json
@@ -1951,9 +1951,11 @@ app.whenReady().then(async () => {
       updateCodexPetSettings(settings ?? {}),
   );
   ipcMain.handle(
-    "wuu:codex-pet-hints",
-    (_event, hints: CodexPetHint[] | null) =>
-      codexPetActivity.setRendererHints(Array.isArray(hints) ? hints : []),
+    "wuu:codex-pet-feed",
+    (_event, feed: Partial<CodexPetFeed> | null) => {
+      codexPetActivity.setRendererHints(Array.isArray(feed?.hints) ? feed.hints : []);
+      codexPetWindowManager.setWorkspace(feed?.workspace);
+    },
   );
   // Only the main window's renderer navigates and sends on the pet's behalf;
   // pop-out conversation windows share the preload but must not attach.

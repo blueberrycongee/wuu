@@ -119,7 +119,7 @@ const unavailableWebMethods = [
   "removeRemoteDevice",
   "listCodexPets",
   "updateCodexPetSettings",
-  "updateCodexPetHints",
+  "updateCodexPetFeed",
   "resolveCodexPetCommand",
   "revealSession",
   "revealWorkspaceItem",

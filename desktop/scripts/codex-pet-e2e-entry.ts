@@ -1,13 +1,13 @@
 // Runs the production pet window against synthetic spritesheets: moods,
-// reactions, bubble rows, the quick panel (send, failure, blocked target,
-// keyboard), cursor following, sizes, themes, and edge layouts. Writes
+// reactions, bubble rows, the quick panel (new conversation, reply, failure,
+// blocked reply, keyboard), cursor following, sizes, themes, and edge layouts. Writes
 // screenshots, a contact sheet, and results.json for review.
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { app, BrowserWindow, nativeTheme, screen } from "electron";
-import type { CodexPet, CodexPetHint, CodexPetSubmitResult, CodexPetsSnapshot } from "../src/shared/protocol";
+import type { CodexPet, CodexPetHint, CodexPetSubmitResult, CodexPetSubmitTarget, CodexPetsSnapshot } from "../src/shared/protocol";
 import { CODEX_PET_STATES } from "../src/main/codexPets";
 import { CodexPetWindowManager, codexPetRenderedSpriteForSize } from "../src/main/codexPetWindow";
 import { setMainLocale } from "../src/main/i18n";
@@ -160,12 +160,12 @@ async function main(): Promise<void> {
     cursorOverridden = false;
   }
 
-  const submits: Array<{ text: string; threadID?: string; settle: (result: CodexPetSubmitResult) => void }> = [];
+  const submits: Array<{ text: string; target: CodexPetSubmitTarget; settle: (result: CodexPetSubmitResult) => void }> = [];
   const jumps: string[] = [];
   const manager = new CodexPetWindowManager({
     onClose: () => undefined,
     onJump: (threadID) => jumps.push(threadID),
-    onSubmit: (text, threadID) => new Promise((settle) => submits.push({ text, threadID, settle })),
+    onSubmit: (text, target) => new Promise((settle) => submits.push({ text, target, settle })),
     onShowApp: () => undefined,
   });
 
@@ -210,8 +210,9 @@ async function main(): Promise<void> {
     page<{
       expanded: boolean;
       bubbleHidden: boolean;
-      rows: Array<{ id: string; status: string; title: string; target: boolean }>;
+      rows: Array<{ id: string; status: string; title: string; target: boolean; action: string }>;
       target: string;
+      canClear: boolean;
       targetError: boolean;
       targetBlocked: boolean;
       bubbleFocused: boolean;
@@ -231,8 +232,10 @@ async function main(): Promise<void> {
           status: row.dataset.status,
           title: row.querySelector('.row-title').textContent,
           target: row.classList.contains('is-target'),
+          action: row.querySelector('.row-action').dataset.action,
         })),
-        target: document.querySelector('.composer-target').textContent,
+        target: document.querySelector('.target-label').textContent,
+        canClear: !document.querySelector('.target-clear').hidden,
         targetError: document.querySelector('.composer-target').classList.contains('is-error'),
         targetBlocked: document.querySelector('.composer-target').classList.contains('is-blocked'),
         bubbleFocused: document.querySelector('.bubble').contains(document.activeElement),
@@ -396,7 +399,11 @@ async function main(): Promise<void> {
   await until(() => jumps.length === 1, "row jump");
   check("clicking a collapsed row opens its conversation", jumps[0] === "thread-running", jumps);
 
-  // Quick panel: send to the current conversation.
+  // Quick panel: the pet starts a new conversation in the workspace that
+  // was active when the panel opened, even if Wuu switches while typing.
+  const appWorkspace = { context: { kind: "project", project_id: "project-app", cwd: "/work/app" }, name: "wuu" } as const;
+  const docsWorkspace = { context: { kind: "project", project_id: "project-docs", cwd: "/work/docs" }, name: "docs" } as const;
+  manager.setWorkspace(appWorkspace);
   foot = await spriteFoot();
   await click(".sprite");
   await until(async () => (await panel()).expanded, "panel opens");
@@ -404,15 +411,29 @@ async function main(): Promise<void> {
   await until(async () => (await panel()).focused, "composer focused");
   check("clicking the pet opens the panel with a focused composer that fits", await fits(".bubble"), win.getBounds());
   state = await panel();
-  await shot("panel-empty", `Panel open, target: ${state.target}`);
+  check(
+    "names the new conversation and its workspace, with no row picked",
+    state.target === "新对话 · wuu" && !state.canClear && state.rows.every((row) => !row.target),
+    state,
+  );
+  check(
+    "offers Answer on the row that waits for the user and reply on the others",
+    state.rows.map((row) => row.action).join() === "answer,reply,reply",
+    state.rows,
+  );
+  await shot("panel-new", `Panel open: ${state.target}`);
   win.webContents.insertText("帮我总结一下今天的改动");
+  manager.setWorkspace(docsWorkspace);
   await delay(50);
-  await shot("panel-typed", "Panel with a draft");
+  state = await panel();
+  check("keeps the workspace captured at open when Wuu switches workspace", state.target === "新对话 · wuu", state);
+  await shot("panel-typed", "New conversation with a draft (focused composer)");
   key("Enter");
   await until(() => submits.length === 1, "first submit");
   check(
-    "Enter sends the draft to the current conversation",
-    submits[0].text === "帮我总结一下今天的改动" && submits[0].threadID === undefined,
+    "Enter starts the conversation in the captured workspace",
+    submits[0].text === "帮我总结一下今天的改动" &&
+      JSON.stringify(submits[0].target) === JSON.stringify({ workspace: appWorkspace.context }),
     submits[0],
   );
   state = await panel();
@@ -424,16 +445,25 @@ async function main(): Promise<void> {
   check("a successful send clears the draft and closes the panel", state.value === "", state);
   await waitRow(4, "celebrates a successful send with the jumping row", 1500);
 
-  // Send to a picked conversation; the host rejects it.
+  // Reply to a row; the host rejects it.
   await click(".sprite");
   await until(async () => (await panel()).expanded, "panel reopens");
-  await click('.hint-row[data-thread-id="thread-failed"] .row-preview');
-  await until(async () => (await panel()).rows[1].target, "row picked as target");
+  state = await panel();
+  check("a reopened panel captures the workspace active now", state.target === "新对话 · docs", state);
+  await click('.hint-row[data-thread-id="thread-failed"] .row-action');
+  await until(async () => (await panel()).rows[1].target, "reply target picked");
+  state = await panel();
+  check(
+    "the reply action names the conversation and focuses the composer",
+    state.target === `回复 · ${hints[1].title}` && state.canClear && state.focused && jumps.length === 1,
+    { state, jumps },
+  );
+  await shot("panel-reply", "Replying to a conversation");
   win.webContents.insertText("重试一次");
   await delay(50);
   key("Enter");
   await until(() => submits.length === 2, "second submit");
-  check("sends to the picked conversation", submits[1].threadID === "thread-failed", submits[1]);
+  check("sends the reply to that conversation", JSON.stringify(submits[1].target) === JSON.stringify({ thread_id: "thread-failed" }), submits[1]);
   submits[1].settle({ ok: false });
   await until(async () => (await panel()).targetError, "send failure shown");
   state = await panel();
@@ -441,12 +471,27 @@ async function main(): Promise<void> {
   await waitRow(5, "a failed send plays the failed row", 1500);
   await shot("panel-failed", "Send failed; draft kept");
 
-  // A conversation waiting on a question cannot take a new message.
-  await click('.hint-row[data-thread-id="thread-review"] .row-preview');
-  await until(async () => (await panel()).rows[0].target, "review row picked");
+  // × returns to a new conversation; the row stays clickable to open it.
+  await click(".target-clear");
+  await until(async () => (await panel()).canClear === false, "reply cleared");
   state = await panel();
-  check("blocks sending to a conversation that needs an answer and says why", state.disabled && state.targetBlocked, state);
-  await shot("panel-blocked", "Target needs an answer first");
+  check("× switches back to a new conversation", state.target === "新对话 · docs" && state.rows.every((row) => !row.target), state);
+  await click('.hint-row[data-thread-id="thread-running"] .row-title');
+  await until(() => jumps.length === 2, "expanded row jump");
+  check("clicking a row in the open panel still opens its conversation", jumps[1] === "thread-running", jumps);
+  await click('.hint-row[data-thread-id="thread-review"] .row-action');
+  await until(() => jumps.length === 3, "answer jump");
+  check("Answer opens the conversation that waits for the user", jumps[2] === "thread-review", jumps);
+
+  // A reply target that starts waiting on a question cannot take a message.
+  await click('.hint-row[data-thread-id="thread-running"] .row-action');
+  await until(async () => (await panel()).rows[2].target, "running row picked");
+  manager.setHints(hints.map((hint) => (hint.thread_id === "thread-running" ? { ...hint, status: "needs_review" } : hint)));
+  await until(async () => (await panel()).targetBlocked, "reply blocked");
+  state = await panel();
+  check("blocks a reply to a conversation that now needs an answer and says why", state.disabled && state.targetBlocked, state);
+  await shot("panel-blocked", "Reply target needs an answer first");
+  manager.setHints([...hints]);
   win.focus();
   await delay(50);
   key("Escape");

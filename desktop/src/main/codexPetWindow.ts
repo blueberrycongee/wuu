@@ -8,7 +8,9 @@ import {
   type CodexPetHint,
   type CodexPetSize,
   type CodexPetSubmitResult,
+  type CodexPetSubmitTarget,
   type CodexPetsSnapshot,
+  type CodexPetWorkspace,
 } from "../shared/protocol";
 import type { CodexPetMood, CodexPetReaction } from "./codexPetActivity";
 import { CODEX_PET_CELL_HEIGHT, CODEX_PET_CELL_WIDTH, CODEX_PET_STATES } from "./codexPets";
@@ -23,6 +25,9 @@ export type CodexPetView = {
   layout: CodexPetBubbleLayout;
   // Whether the bubble is expanded into the quick panel.
   expanded: boolean;
+  // Name of the workspace a new conversation from the open panel starts
+  // in; empty while collapsed or when the main window has named none.
+  workspaceName: string;
   // Render-time sprite geometry — pre-computed at view-build time so the
   // HTML template and the JS bridge don't have to know about CodexPetSize.
   size: CodexPetSize;
@@ -60,8 +65,8 @@ const CODEX_PET_SCREEN_INSET = 24;
 // the collapsed bubble entirely.
 //
 // Clicking the pet expands the bubble into a quick panel: the same rows
-// (now selectable as the send target) above a divider, a one-line target
-// label, and a three-line composer.
+// (each with a reply action) above a divider, a one-line target label, and
+// a three-line composer.
 const CODEX_PET_BUBBLE_WIDTH = 280;
 const CODEX_PET_BUBBLE_INSET = 12;
 const CODEX_PET_BUBBLE_ROW_LINE = 19;
@@ -72,8 +77,8 @@ const CODEX_PET_BUBBLE_GAP = 8;
 const CODEX_PET_PANEL_DIVIDER = 20;
 const CODEX_PET_PANEL_TARGET_LINE = 18;
 const CODEX_PET_PANEL_TARGET_GAP = 6;
-// Three 18px lines + 6px vertical padding + 1px border on each side.
-const CODEX_PET_PANEL_INPUT_HEIGHT = 68;
+// Three 18px lines; the input has no border or padding of its own.
+const CODEX_PET_PANEL_INPUT_HEIGHT = 54;
 // Bounds the text one submit carries; the composer enforces it as maxlength.
 export const CODEX_PET_SUBMIT_MAX = 4000;
 
@@ -210,6 +215,7 @@ export function codexPetView(
     hints,
     layout,
     expanded = false,
+    workspaceName = "",
     size = CODEX_PET_SIZE_DEFAULT,
     customScale,
     spriteShift = 0,
@@ -218,6 +224,7 @@ export function codexPetView(
     hints: CodexPetHint[];
     layout: CodexPetBubbleLayout;
     expanded?: boolean;
+    workspaceName?: string;
     size?: CodexPetSize;
     customScale?: number;
     spriteShift?: number;
@@ -240,6 +247,7 @@ export function codexPetView(
     hints,
     layout,
     expanded,
+    workspaceName,
     size,
     spriteWidth: rendered.width,
     spriteHeight: rendered.height,
@@ -518,12 +526,16 @@ export function codexPetWindowHTML(
   locale: AppLocale = getMainLocale(),
 ): string {
   const resizeLabel = mainTranslate("resize", {}, locale);
-  // `{title}` placeholders survive translation and are filled in the page.
+  // `{title}` and `{workspace}` placeholders survive translation and are
+  // filled in the page.
   const text = {
     conversation: mainTranslate("conversation", {}, locale),
     openConversation: mainTranslate("openConversation", {}, locale),
-    sendTo: mainTranslate("petSendTo", {}, locale),
-    current: mainTranslate("petCurrentConversation", {}, locale),
+    newConversation: mainTranslate("petNewConversation", {}, locale),
+    noWorkspace: mainTranslate("petNoWorkspace", {}, locale),
+    replyTo: mainTranslate("petReplyTo", {}, locale),
+    answer: mainTranslate("petAnswer", {}, locale),
+    cancelReply: mainTranslate("petCancelReply", {}, locale),
     placeholder: mainTranslate("petInputPlaceholder", {}, locale),
     needsAnswer: mainTranslate("petNeedsAnswer", {}, locale),
     sending: mainTranslate("petSending", {}, locale),
@@ -561,8 +573,8 @@ export function codexPetWindowHTML(
 <style>
 *{box-sizing:border-box}
 html,body{width:100%;height:100%;margin:0;background:transparent;overflow:hidden;font:13px/${CODEX_PET_BUBBLE_ROW_LINE}px -apple-system,BlinkMacSystemFont,system-ui,sans-serif}
-.stage{--bubble-bg:rgba(255,255,255,.96);--bubble-fg:#1a1a1a;--bubble-muted:#555;--bubble-rule:rgba(0,0,0,.1);--field-bg:rgba(0,0,0,.035);--accent:#2f6fec;--target-bg:rgba(47,111,236,.1);--dot-idle:#a1a1aa;--dot-running:#3b82f6;--dot-done:#22a06b;--dot-failed:#e5484d;--dot-review:#e8833a}
-@media (prefers-color-scheme:dark){.stage{--bubble-bg:rgba(38,38,42,.96);--bubble-fg:#f2f2f2;--bubble-muted:#b4b4b4;--bubble-rule:rgba(255,255,255,.14);--field-bg:rgba(255,255,255,.06);--accent:#7aa5ff;--target-bg:rgba(122,165,255,.16)}}
+.stage{--bubble-bg:rgba(255,255,255,.96);--bubble-fg:#1a1a1a;--bubble-muted:#555;--bubble-rule:rgba(0,0,0,.1);--bubble-shadow:0 0 0 .5px rgba(0,0,0,.12),0 2px 6px rgba(0,0,0,.12);--hover-bg:rgba(0,0,0,.05);--accent:#2f6fec;--target-bg:rgba(47,111,236,.1);--dot-idle:#a1a1aa;--dot-running:#3b82f6;--dot-done:#22a06b;--dot-failed:#e5484d;--dot-review:#e8833a}
+@media (prefers-color-scheme:dark){.stage{--bubble-bg:rgba(38,38,42,.96);--bubble-fg:#f2f2f2;--bubble-muted:#b4b4b4;--bubble-rule:rgba(255,255,255,.14);--bubble-shadow:0 0 0 .5px rgba(255,255,255,.14),0 2px 6px rgba(0,0,0,.36);--hover-bg:rgba(255,255,255,.07);--accent:#7aa5ff;--target-bg:rgba(122,165,255,.16)}}
 .stage{position:relative;width:100%;height:100%;padding-bottom:${CODEX_PET_SPRITE_BOTTOM_OFFSET}px;display:flex;align-items:center;justify-content:center;flex-direction:column;cursor:grab;-webkit-user-select:none;user-select:none}
 .stage.is-dragging{cursor:grabbing}
 .stage[data-layout=above],.stage[data-layout=hidden]{flex-direction:column;justify-content:flex-end}
@@ -575,13 +587,14 @@ html,body{width:100%;height:100%;margin:0;background:transparent;overflow:hidden
 .badge{position:absolute;top:0;right:0;min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:var(--dot-done);color:#fff;font-size:11px;font-weight:600;line-height:18px;text-align:center;pointer-events:none}
 .badge.is-urgent{background:var(--dot-review)}
 .badge[hidden]{display:none}
-.bubble{display:flex;flex-direction:column;width:${CODEX_PET_BUBBLE_WIDTH}px;padding:${CODEX_PET_BUBBLE_INSET}px;margin:${CODEX_PET_BUBBLE_PADDING}px;border-radius:12px;background:var(--bubble-bg);color:var(--bubble-fg);box-shadow:0 6px 24px rgba(0,0,0,.18);flex-shrink:0;text-align:left}
+.bubble{display:flex;flex-direction:column;width:${CODEX_PET_BUBBLE_WIDTH}px;padding:${CODEX_PET_BUBBLE_INSET}px;margin:${CODEX_PET_BUBBLE_PADDING}px;border-radius:12px;background:var(--bubble-bg);color:var(--bubble-fg);box-shadow:var(--bubble-shadow);flex-shrink:0;text-align:left}
 .bubble[hidden],.stage[data-layout=hidden] .bubble{display:none}
 .rows{display:flex;flex-direction:column;gap:${CODEX_PET_BUBBLE_ROW_GAP}px}
 .rows:empty{display:none}
 .hint-row{display:flex;align-items:center;gap:6px;height:${CODEX_PET_BUBBLE_ROW_LINE}px;margin:0 -4px;padding:0 4px;border-radius:5px;cursor:pointer;opacity:1;transition:opacity ${CODEX_PET_BUBBLE_SWAP_IN_MS}ms ease}
 .rows.is-swapping .hint-row{opacity:0;transition:opacity ${CODEX_PET_BUBBLE_SWAP_OUT_MS}ms ease}
-.hint-row:focus-visible,.row-open:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.hint-row:focus-visible,.row-action:focus-visible,.target-clear:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.stage.is-expanded .hint-row:hover{background:var(--hover-bg)}
 .stage.is-expanded .hint-row.is-target{background:var(--target-bg)}
 .dot{width:6px;height:6px;border-radius:50%;flex-shrink:0;background:var(--dot-idle)}
 .hint-row[data-status=running] .dot{background:var(--dot-running)}
@@ -590,17 +603,22 @@ html,body{width:100%;height:100%;margin:0;background:transparent;overflow:hidden
 .hint-row[data-status=needs_review] .dot{background:var(--dot-review)}
 .row-title{flex-shrink:0;max-width:96px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .row-preview{flex:1;min-width:0;color:var(--bubble-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.row-open{display:none;flex-shrink:0;width:${CODEX_PET_BUBBLE_ROW_LINE}px;height:${CODEX_PET_BUBBLE_ROW_LINE}px;padding:0;border:0;border-radius:5px;background:transparent;color:var(--bubble-muted);font:inherit;cursor:pointer}
-.row-open:hover{color:var(--bubble-fg);background:var(--target-bg)}
-.stage.is-expanded .row-open{display:block}
+.row-action{display:none;flex-shrink:0;min-width:${CODEX_PET_BUBBLE_ROW_LINE}px;height:${CODEX_PET_BUBBLE_ROW_LINE}px;margin-right:-2px;padding:0 4px;border:0;border-radius:5px;background:transparent;color:var(--bubble-muted);font:inherit;font-size:12px;cursor:pointer}
+.row-action:hover{color:var(--bubble-fg);background:var(--target-bg)}
+.row-action[data-action=answer]{color:var(--dot-review)}
+.stage.is-expanded .row-action{display:block;visibility:hidden}
+.stage.is-expanded .hint-row:hover .row-action,.stage.is-expanded .hint-row:focus-within .row-action,.stage.is-expanded .row-action[data-action=answer]{visibility:visible}
 .composer{display:none;flex-direction:column;gap:${CODEX_PET_PANEL_TARGET_GAP}px}
 .stage.is-expanded .composer{display:flex}
 .rows:not(:empty)+.composer{margin-top:9px;padding-top:10px;border-top:1px solid var(--bubble-rule)}
-.composer-target{height:${CODEX_PET_PANEL_TARGET_LINE}px;font-size:12px;line-height:${CODEX_PET_PANEL_TARGET_LINE}px;color:var(--bubble-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.composer-target{display:flex;align-items:center;gap:4px;height:${CODEX_PET_PANEL_TARGET_LINE}px;font-size:12px;line-height:${CODEX_PET_PANEL_TARGET_LINE}px;color:var(--bubble-muted)}
 .composer-target.is-error{color:var(--dot-failed)}
 .composer-target.is-blocked{color:var(--dot-review)}
-.composer textarea{display:block;width:100%;height:${CODEX_PET_PANEL_INPUT_HEIGHT}px;margin:0;padding:6px 8px;border:1px solid var(--bubble-rule);border-radius:8px;background:var(--field-bg);color:inherit;font:inherit;line-height:18px;resize:none;outline:none;cursor:text;-webkit-user-select:text;user-select:text}
-.composer textarea:focus{border-color:var(--accent)}
+.target-label{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.target-clear{flex-shrink:0;width:${CODEX_PET_PANEL_TARGET_LINE}px;height:${CODEX_PET_PANEL_TARGET_LINE}px;margin-right:-2px;padding:0;border:0;border-radius:5px;background:transparent;color:var(--bubble-muted);font:inherit;font-size:14px;cursor:pointer}
+.target-clear:hover{color:var(--bubble-fg);background:var(--target-bg)}
+.target-clear[hidden]{display:none}
+.composer textarea{display:block;width:100%;height:${CODEX_PET_PANEL_INPUT_HEIGHT}px;margin:0;padding:0;border:0;border-radius:0;background:transparent;color:inherit;font:inherit;line-height:18px;resize:none;outline:none;cursor:text;-webkit-user-select:text;user-select:text}
 .composer textarea::placeholder{color:var(--bubble-muted)}
 .composer textarea:disabled{cursor:default;opacity:.7}
 .resize-handle{position:absolute;z-index:2}
@@ -615,7 +633,7 @@ html,body{width:100%;height:100%;margin:0;background:transparent;overflow:hidden
 .resize-handle.corner-se{bottom:0;right:0;width:16px;height:16px;cursor:nwse-resize}
 @media (prefers-reduced-motion:reduce){.hint-row,.rows.is-swapping .hint-row{transition:none}}
 </style></head><body><div class="stage" data-layout="${escapeHTML(view.layout)}" style="${escapeHTML(styleVars)}">
-<div class="bubble" hidden><div class="rows"></div><div class="composer"><div class="composer-target"></div><textarea rows="3" maxlength="${CODEX_PET_SUBMIT_MAX}" spellcheck="false"></textarea></div></div>
+<div class="bubble" hidden><div class="rows"></div><div class="composer"><div class="composer-target"><span class="target-label"></span><button type="button" class="target-clear" hidden>×</button></div><textarea rows="3" maxlength="${CODEX_PET_SUBMIT_MAX}" spellcheck="false"></textarea></div></div>
 <div class="sprite-frame"><div class="sprite" role="img" aria-label="${escapeHTML(view.label)}"></div><div class="badge" hidden></div></div>
 ${resizeHandles}
 </div>
@@ -625,6 +643,8 @@ ${resizeHandles}
   const bubble = document.querySelector('.bubble');
   const rowsEl = bubble.querySelector('.rows');
   const targetEl = bubble.querySelector('.composer-target');
+  const targetLabel = targetEl.querySelector('.target-label');
+  const targetClear = targetEl.querySelector('.target-clear');
   const input = bubble.querySelector('textarea');
   const spriteFrame = document.querySelector('.sprite-frame');
   const sprite = document.querySelector('.sprite');
@@ -632,12 +652,14 @@ ${resizeHandles}
   const STATES = ${scriptJSON(states)};
   const TEXT = ${scriptJSON(text)};
   input.placeholder = TEXT.placeholder;
+  targetClear.title = TEXT.cancelReply;
+  targetClear.setAttribute('aria-label', TEXT.cancelReply);
   const MOOD_STATES = { idle: 'idle', running: 'running', waiting: 'waiting' };
   const CELL_WIDTH = ${CODEX_PET_CELL_WIDTH};
   const CELL_HEIGHT = ${CODEX_PET_CELL_HEIGHT};
   const LOOK_FIRST_ROW = ${CODEX_PET_LOOK_FIRST_ROW};
   const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
-  const fill = (template, title) => template.replace('{title}', () => title);
+  const fill = (template, value) => template.replace(/[{][a-z]+[}]/i, () => value);
   const send = (path) => { location.href = 'wuu-pet://action/' + path; };
   let view = ${scriptJSON(view)};
 
@@ -740,6 +762,7 @@ ${resizeHandles}
       row.dataset.threadId = hint.thread_id;
       row.dataset.status = hint.status;
       row.setAttribute('role', 'button');
+      row.title = fill(TEXT.openConversation, title);
       const dot = document.createElement('span');
       dot.className = 'dot';
       const titleEl = document.createElement('span');
@@ -748,13 +771,17 @@ ${resizeHandles}
       const preview = document.createElement('span');
       preview.className = 'row-preview';
       preview.textContent = hint.preview;
-      const open = document.createElement('button');
-      open.type = 'button';
-      open.className = 'row-open';
-      open.textContent = '↗';
-      open.title = fill(TEXT.openConversation, title);
-      open.setAttribute('aria-label', open.title);
-      row.append(dot, titleEl, preview, open);
+      // A conversation waiting on the user is answered in Wuu, not from
+      // here, so its row offers the way there instead of a reply.
+      const action = document.createElement('button');
+      action.type = 'button';
+      action.className = 'row-action';
+      const answer = hint.status === 'needs_review';
+      action.dataset.action = answer ? 'answer' : 'reply';
+      action.textContent = answer ? TEXT.answer : '↩';
+      action.title = answer ? fill(TEXT.openConversation, title) : fill(TEXT.replyTo, title);
+      action.setAttribute('aria-label', action.title);
+      row.append(dot, titleEl, preview, action);
       rowsEl.append(row);
     }
     syncComposer();
@@ -801,37 +828,42 @@ ${resizeHandles}
     );
   };
 
-  // Quick panel. The target is the conversation a submit goes to: a row
-  // the user picked, or the conversation open in the main window. A picked
-  // target keeps its title after its row leaves the bubble so a send is
-  // never silently redirected.
+  // Quick panel. A submit starts a new conversation in the workspace the
+  // host captured when the panel opened (view.workspaceName), or replies to
+  // the row whose reply action the user pressed. Both are fixed before the
+  // user types. A reply target keeps its title after its row leaves the
+  // bubble so a send is never silently redirected.
   let expanded = false;
-  let target = null;
+  let reply = null;
   let sending = false;
   let failed = false;
   const syncComposer = () => {
-    const targetHint = target && currentHints.find((h) => h.thread_id === target.id);
-    const blocked = Boolean(targetHint && targetHint.status === 'needs_review');
+    const replyHint = reply && currentHints.find((h) => h.thread_id === reply.id);
+    const blocked = Boolean(replyHint && replyHint.status === 'needs_review');
+    const unplaced = !reply && !view.workspaceName;
     for (const row of rowsEl.children) {
-      row.classList.toggle('is-target', Boolean(target) && row.dataset.threadId === target.id);
+      row.classList.toggle('is-target', Boolean(reply) && row.dataset.threadId === reply.id);
       row.tabIndex = expanded ? 0 : -1;
-      row.querySelector('.row-open').tabIndex = expanded ? 0 : -1;
+      row.querySelector('.row-action').tabIndex = expanded ? 0 : -1;
     }
     targetEl.classList.toggle('is-error', failed);
     targetEl.classList.toggle('is-blocked', blocked && !failed && !sending);
-    // A blocked target keeps any draft in the disabled input, so the reason
+    // A blocked reply keeps any draft in the disabled input, so the reason
     // goes on the target line rather than in the placeholder.
-    targetEl.textContent = failed
+    targetLabel.textContent = failed
       ? TEXT.sendFailed
       : sending
         ? TEXT.sending
         : blocked
           ? TEXT.needsAnswer
-          : target
-            ? fill(TEXT.sendTo, target.title)
-            : TEXT.current;
-    targetEl.title = targetEl.textContent;
-    input.disabled = blocked;
+          : reply
+            ? fill(TEXT.replyTo, reply.title)
+            : unplaced
+              ? TEXT.noWorkspace
+              : fill(TEXT.newConversation, view.workspaceName);
+    targetLabel.title = targetLabel.textContent;
+    targetClear.hidden = !reply || sending;
+    input.disabled = blocked || unplaced;
     input.readOnly = sending;
   };
   const setExpanded = (next) => {
@@ -845,28 +877,28 @@ ${resizeHandles}
       // row does not keep its focus ring in the glance bubble.
       if (bubble.contains(document.activeElement)) document.activeElement.blur();
       if (!sending) {
-        target = null;
+        reply = null;
         failed = false;
       }
     }
     syncComposer();
     syncBubble();
   };
-  const toggleTarget = (row) => {
-    const id = row.dataset.threadId;
-    const hint = currentHints.find((h) => h.thread_id === id);
-    target = target && target.id === id ? null : { id, title: (hint && hint.title) || TEXT.conversation };
+  const setReply = (next) => {
+    if (sending) return;
+    reply = next;
     failed = false;
     syncComposer();
     if (!input.disabled) input.focus();
   };
+  const jump = (row) => send('jump?thread_id=' + encodeURIComponent(row.dataset.threadId));
   const submit = () => {
     const text = input.value.trim();
     if (!text || sending || input.disabled) return;
     sending = true;
     failed = false;
     syncComposer();
-    send('submit?text=' + encodeURIComponent(text) + (target ? '&thread_id=' + encodeURIComponent(target.id) : ''));
+    send('submit?text=' + encodeURIComponent(text) + (reply ? '&thread_id=' + encodeURIComponent(reply.id) : ''));
   };
   window.wuuPetSubmitResult = (result) => {
     if (!sending) return;
@@ -901,7 +933,7 @@ ${resizeHandles}
     const row = event.target instanceof Element && event.target.classList.contains('hint-row') ? event.target : null;
     if (row && (event.key === 'Enter' || event.key === ' ')) {
       event.preventDefault();
-      toggleTarget(row);
+      jump(row);
     }
   });
   window.addEventListener('blur', () => {
@@ -925,6 +957,7 @@ ${resizeHandles}
     }
     applyHints(next.hints, true);
     setExpanded(next.expanded);
+    syncComposer();
     syncBadge();
     if (sheetChanged) probeSheet(next.spritesheetURL);
   };
@@ -1025,7 +1058,8 @@ ${resizeHandles}
   }
   // Pointer handling. A press that moves less than DRAG_THRESHOLD is a
   // click: on the pet it toggles the quick panel; on a row it opens that
-  // conversation (collapsed) or picks it as the send target (expanded).
+  // conversation, collapsed or expanded; the row's action button replies or
+  // opens a conversation waiting for an answer.
   // A longer move drags the window, and the pet runs in the drag
   // direction until the pointer rests.
   const DRAG_THRESHOLD = 4;
@@ -1098,10 +1132,19 @@ ${resizeHandles}
     }
     const element = event.target instanceof Element ? event.target : null;
     if (!element || element.closest('.resize-handle')) return;
+    if (element.closest('.target-clear')) {
+      setReply(null);
+      return;
+    }
     const row = element.closest('.hint-row');
     if (row) {
-      if (expanded && !element.closest('.row-open')) toggleTarget(row);
-      else send('jump?thread_id=' + encodeURIComponent(row.dataset.threadId));
+      const action = element.closest('.row-action');
+      if (action && action.dataset.action === 'reply') {
+        const hint = currentHints.find((h) => h.thread_id === row.dataset.threadId);
+        setReply({ id: row.dataset.threadId, title: (hint && hint.title) || TEXT.conversation });
+      } else {
+        jump(row);
+      }
       return;
     }
     if (element.closest('.bubble')) return;
@@ -1129,9 +1172,8 @@ export type CodexPetWindowOptions = {
   onClose: () => void;
   // Opens a bubble row's conversation in the main window.
   onJump: (threadID: string) => void;
-  // Sends text to Wuu; without a thread id it targets the conversation open
-  // in the main window.
-  onSubmit: (text: string, threadID?: string) => Promise<CodexPetSubmitResult>;
+  // Sends text to Wuu as a reply or as a new conversation.
+  onSubmit: (text: string, target: CodexPetSubmitTarget) => Promise<CodexPetSubmitResult>;
   onShowApp: () => void;
   onSizeChange?: (size: CodexPetSize) => void;
   onScaleChange?: (scale: number) => void;
@@ -1147,6 +1189,11 @@ export class CodexPetWindowManager {
   private expanded = false;
   private snapshot: CodexPetsSnapshot | undefined;
   private hints: CodexPetHint[] = [];
+  // The workspace open in the main window, and the one captured when the
+  // panel opened. A new conversation goes to the captured one, so switching
+  // workspaces while typing does not move the text.
+  private workspace: CodexPetWorkspace | undefined;
+  private panelWorkspace: CodexPetWorkspace | undefined;
   private currentLayout: CodexPetBubbleLayout = "hidden";
   private spriteShift = 0;
   // User-facing sprite size; defaults to the 100% preset. Mutated only
@@ -1255,6 +1302,19 @@ export class CodexPetWindowManager {
     this.refresh();
   }
 
+  setWorkspace(workspace: CodexPetWorkspace | null | undefined): void {
+    this.workspace =
+      workspace && typeof workspace.name === "string" && typeof workspace.context?.cwd === "string"
+        ? workspace
+        : undefined;
+    // A panel opened before any workspace was known adopts the first one;
+    // there was no earlier target for it to replace.
+    if (this.expanded && !this.panelWorkspace && this.workspace) {
+      this.panelWorkspace = this.workspace;
+      this.refresh();
+    }
+  }
+
   destroy(): void {
     const win = this.win;
     this.forgetWindow();
@@ -1270,6 +1330,7 @@ export class CodexPetWindowManager {
     this.spriteShift = 0;
     this.appliedScale = undefined;
     this.expanded = false;
+    this.panelWorkspace = undefined;
     this.lookCapable = false;
     this.updateLook();
   }
@@ -1282,6 +1343,7 @@ export class CodexPetWindowManager {
   private setExpanded(expanded: boolean): void {
     if (expanded === this.expanded) return;
     this.expanded = expanded;
+    this.panelWorkspace = expanded ? this.workspace : undefined;
     this.refresh();
     // The composer needs keyboard focus; the pet window is otherwise
     // shown inactive and never takes focus from the user's work.
@@ -1291,9 +1353,12 @@ export class CodexPetWindowManager {
 
   private submit(text: string, threadID: string | undefined): void {
     const trimmed = text.trim();
+    const target: CodexPetSubmitTarget | undefined = threadID
+      ? { thread_id: threadID }
+      : this.panelWorkspace && { workspace: this.panelWorkspace.context };
     const result =
-      trimmed && trimmed.length <= CODEX_PET_SUBMIT_MAX
-        ? this.options.onSubmit(trimmed, threadID)
+      target && trimmed && trimmed.length <= CODEX_PET_SUBMIT_MAX
+        ? this.options.onSubmit(trimmed, target)
         : Promise.resolve({ ok: false });
     void result
       .catch(() => ({ ok: false }))
@@ -1442,6 +1507,7 @@ export class CodexPetWindowManager {
       hints: this.hints,
       layout,
       expanded: this.expanded,
+      workspaceName: this.panelWorkspace?.name ?? "",
       size: this.size,
       customScale: this.currentScale,
       spriteShift: this.spriteShift,

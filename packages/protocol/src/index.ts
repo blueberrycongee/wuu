@@ -2618,11 +2618,24 @@ export type CodexPetHint = {
   updated_at: number;
 };
 
-// Commands the pet window sends to the main window's renderer. `submit`
-// without a thread_id targets the conversation currently open there.
+// The workspace a conversation started from the pet runs in, with the name
+// the main window shows for it.
+export type CodexPetWorkspace = { context: RuntimeContext; name: string };
+
+// What the main window's renderer pushes to the pet: bubble rows and the
+// workspace a new conversation from the pet would start in.
+export type CodexPetFeed = { hints: CodexPetHint[]; workspace?: CodexPetWorkspace };
+
+// Where a pet submit goes: a reply to one conversation, or a new conversation
+// in the workspace captured when the user opened the pet's panel. The target
+// is fixed before the user types, so switching conversations in the main
+// window never redirects the text.
+export type CodexPetSubmitTarget = { thread_id: string } | { workspace: RuntimeContext };
+
+// Commands the pet window sends to the main window's renderer.
 export type CodexPetCommand =
   | { kind: "jump"; thread_id: string }
-  | { kind: "submit"; id: string; thread_id?: string; text: string };
+  | { kind: "submit"; id: string; text: string; target: CodexPetSubmitTarget };
 
 export type CodexPetSubmitResult = { ok: boolean };
 
@@ -2911,7 +2924,7 @@ export type WuuDesktopApi = {
   updateCodexPetSettings: (
     settings: CodexPetSettingsUpdate,
   ) => Promise<CodexPetsSnapshot>;
-  updateCodexPetHints: (hints: CodexPetHint[]) => Promise<void>;
+  updateCodexPetFeed: (feed: CodexPetFeed) => Promise<void>;
   // Subscribing marks this renderer ready to receive pet commands; the main
   // process queues commands until then. Returns a dispose function.
   onCodexPetCommand: (handler: (command: CodexPetCommand) => void) => () => void;

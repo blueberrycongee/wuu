@@ -708,18 +708,24 @@ describe("CodexPetWindowManager", () => {
     expect(codexPetElectronMocks.executeJavaScript).not.toHaveBeenCalled();
   });
 
-  // Failure cases for the pet's input path: an empty, oversized, or rejected
-  // submit must reach the page as a failure (so the text stays in the
-  // composer), and never reach the host as a message.
+  // Failure cases for the pet's input path: an empty, oversized, rejected,
+  // or unplaced submit must reach the page as a failure (so the text stays
+  // in the composer), and never reach the host as a message. A new
+  // conversation must go to the workspace captured when the panel opened,
+  // not one the main window switched to while the user typed.
   it("reports invalid or rejected submits as failures without sending them", async () => {
     const onSubmit = vi.fn<CodexPetWindowOptions["onSubmit"]>().mockRejectedValue(new Error("gone"));
     loadedPetManager({ onSubmit });
+    navigate("wuu-pet://action/panel?open=1");
+    codexPetElectronMocks.executeJavaScript.mockClear();
 
-    navigate("wuu-pet://action/submit?text=%20%20");
-    navigate(`wuu-pet://action/submit?text=${"x".repeat(CODEX_PET_SUBMIT_MAX + 1)}`);
+    navigate("wuu-pet://action/submit?text=%20%20&thread_id=thread-1");
+    navigate(`wuu-pet://action/submit?text=${"x".repeat(CODEX_PET_SUBMIT_MAX + 1)}&thread_id=thread-1`);
+    // No workspace was known when the panel opened.
     navigate("wuu-pet://action/submit?text=hello");
+    navigate("wuu-pet://action/submit?text=hello&thread_id=thread-1");
     await vi.waitFor(() => {
-      expect(scripts().filter((script) => script.includes("wuuPetSubmitResult"))).toHaveLength(3);
+      expect(scripts().filter((script) => script.includes("wuuPetSubmitResult"))).toHaveLength(4);
     });
 
     expect(onSubmit).toHaveBeenCalledTimes(1);
@@ -728,7 +734,7 @@ describe("CodexPetWindowManager", () => {
     }
   });
 
-  it("forwards a trimmed submit with its target thread and reports success", async () => {
+  it("forwards a trimmed reply with its target thread and reports success", async () => {
     const onSubmit = vi.fn<CodexPetWindowOptions["onSubmit"]>().mockResolvedValue({ ok: true });
     loadedPetManager({ onSubmit });
 
@@ -736,7 +742,27 @@ describe("CodexPetWindowManager", () => {
     await vi.waitFor(() => {
       expect(scripts()).toContain('window.wuuPetSubmitResult?.({"ok":true})');
     });
-    expect(onSubmit).toHaveBeenCalledWith("跑一下测试", "thread-42");
+    expect(onSubmit).toHaveBeenCalledWith("跑一下测试", { thread_id: "thread-42" });
+  });
+
+  it("starts a new conversation in the workspace captured when the panel opened", async () => {
+    const onSubmit = vi.fn<CodexPetWindowOptions["onSubmit"]>().mockResolvedValue({ ok: true });
+    const manager = loadedPetManager({ onSubmit });
+    const app = { kind: "project", project_id: "p-app", cwd: "/work/app" } as const;
+    const docs = { kind: "project", project_id: "p-docs", cwd: "/work/docs" } as const;
+    manager.setWorkspace({ context: app, name: "app" });
+
+    navigate("wuu-pet://action/panel?open=1");
+    expect(scripts().at(-1)).toContain('"workspaceName":"app"');
+    manager.setWorkspace({ context: docs, name: "docs" });
+    expect(scripts().at(-1)).toContain('"workspaceName":"app"');
+
+    navigate("wuu-pet://action/submit?text=hello");
+    await vi.waitFor(() => expect(onSubmit).toHaveBeenCalledWith("hello", { workspace: app }));
+
+    navigate("wuu-pet://action/panel?open=0");
+    navigate("wuu-pet://action/panel?open=1");
+    expect(scripts().at(-1)).toContain('"workspaceName":"docs"');
   });
 
   it("opens the panel with room for the composer and gives it keyboard focus", () => {
@@ -744,9 +770,9 @@ describe("CodexPetWindowManager", () => {
 
     navigate("wuu-pet://action/panel?open=1");
     expect(codexPetElectronMocks.focus).toHaveBeenCalledTimes(1);
-    // 8 + 117 (target line + composer) + 8 + 104 + 8.
+    // 8 + 103 (target line + composer) + 8 + 104 + 8.
     expect(codexPetElectronMocks.setBounds).toHaveBeenLastCalledWith(
-      expect.objectContaining({ width: 280, height: 245 }),
+      expect.objectContaining({ width: 280, height: 231 }),
     );
     expect(scripts().at(-1)).toContain('"expanded":true');
 

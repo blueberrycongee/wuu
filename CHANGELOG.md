@@ -10,6 +10,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Start new conversations from the Codex pet in the workspace captured when
+  its panel opens, with explicit actions to reply to existing conversations.
 - Open quoted assistant responses by clicking the entire reference card, without
   a separate source-link label, while preserving keyboard navigation.
 - Remove viewed marks and viewed-file progress from the workspace change review panel.

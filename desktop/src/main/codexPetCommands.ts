@@ -1,5 +1,9 @@
 import { randomUUID } from "node:crypto";
-import type { CodexPetCommand, CodexPetSubmitResult } from "../shared/protocol";
+import type {
+  CodexPetCommand,
+  CodexPetSubmitResult,
+  CodexPetSubmitTarget,
+} from "../shared/protocol";
 
 export const CODEX_PET_COMMAND_CHANNEL = "wuu:codex-pet-command";
 
@@ -41,12 +45,9 @@ export class CodexPetCommandRelay {
     this.enqueue(randomUUID(), { kind: "jump", thread_id: threadID });
   }
 
-  submit(text: string, threadID?: string): Promise<CodexPetSubmitResult> {
+  submit(text: string, target: CodexPetSubmitTarget): Promise<CodexPetSubmitResult> {
     const id = randomUUID();
-    const command: CodexPetCommand = threadID
-      ? { kind: "submit", id, thread_id: threadID, text }
-      : { kind: "submit", id, text };
-    return new Promise((resolve) => this.enqueue(id, command, resolve));
+    return new Promise((resolve) => this.enqueue(id, { kind: "submit", id, text, target }, resolve));
   }
 
   attach(target: CodexPetCommandTarget): void {

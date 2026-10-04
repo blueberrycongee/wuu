@@ -21,6 +21,9 @@ function target() {
   };
 }
 
+const reply = { thread_id: "thread-a" };
+const workspace = { kind: "project", project_id: "project-1", cwd: "/work/app" } as const;
+
 describe("CodexPetCommandRelay", () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
@@ -29,14 +32,16 @@ describe("CodexPetCommandRelay", () => {
     const onMissingTarget = vi.fn();
     const relay = new CodexPetCommandRelay({ timeoutMs: 30_000, onMissingTarget });
     relay.jump("thread-a");
-    const submit = relay.submit("hello", "thread-b");
+    const submit = relay.submit("hello", { thread_id: "thread-b" });
+    void relay.submit("start", { workspace });
     expect(onMissingTarget).toHaveBeenCalled();
 
     const renderer = target();
     relay.attach(renderer);
     expect(renderer.sent).toEqual([
       { kind: "jump", thread_id: "thread-a" },
-      expect.objectContaining({ kind: "submit", thread_id: "thread-b", text: "hello" }),
+      expect.objectContaining({ kind: "submit", target: { thread_id: "thread-b" }, text: "hello" }),
+      expect.objectContaining({ kind: "submit", target: { workspace }, text: "start" }),
     ]);
 
     const submitted = renderer.sent[1] as Extract<CodexPetCommand, { kind: "submit" }>;
@@ -56,7 +61,7 @@ describe("CodexPetCommandRelay", () => {
   it("fails a submit the renderer never settles", async () => {
     const relay = new CodexPetCommandRelay({ timeoutMs: 30_000, onMissingTarget: () => {} });
     relay.attach(target());
-    const submit = relay.submit("hello");
+    const submit = relay.submit("hello", reply);
     vi.advanceTimersByTime(30_000);
     await expect(submit).resolves.toEqual({ ok: false });
   });
@@ -65,11 +70,11 @@ describe("CodexPetCommandRelay", () => {
     const relay = new CodexPetCommandRelay({ timeoutMs: 30_000, onMissingTarget: () => {} });
     const first = target();
     relay.attach(first);
-    const delivered = relay.submit("first");
+    const delivered = relay.submit("first", reply);
     relay.detach(first);
     await expect(delivered).resolves.toEqual({ ok: false });
 
-    const queued = relay.submit("second");
+    const queued = relay.submit("second", reply);
     const second = target();
     relay.attach(second);
     expect(second.sent).toEqual([expect.objectContaining({ text: "second" })]);
@@ -83,7 +88,7 @@ describe("CodexPetCommandRelay", () => {
     const current = target();
     relay.attach(stale);
     relay.attach(current);
-    const submit = relay.submit("hello");
+    const submit = relay.submit("hello", reply);
     relay.detach(stale);
     relay.resolve((current.sent[0] as { id: string }).id, { ok: true });
     await expect(submit).resolves.toEqual({ ok: true });
@@ -93,7 +98,7 @@ describe("CodexPetCommandRelay", () => {
     const relay = new CodexPetCommandRelay({ timeoutMs: 30_000, onMissingTarget: () => {} });
     const renderer = target();
     relay.attach(renderer);
-    const submit = relay.submit("hello");
+    const submit = relay.submit("hello", reply);
     vi.advanceTimersByTime(30_000);
     relay.resolve((renderer.sent[0] as { id: string }).id, { ok: true });
     await expect(submit).resolves.toEqual({ ok: false });

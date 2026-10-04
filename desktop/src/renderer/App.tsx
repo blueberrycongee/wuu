@@ -170,6 +170,7 @@ import {
   upsertTurn,
   withExtensionInventoryForContext,
   withLoadedRuntimeSessionTab,
+  workspaceNameForContext,
   workspacePanelContext,
   type AppState,
   type ComposerDraftState,
@@ -224,7 +225,7 @@ import { showErrorToast, showToast } from "./Toast";
 import { useArchiveDeletion } from "./useArchiveDeletion";
 import { setOpenThreadInSplitHandler } from "./ConversationSplitBridge";
 import { CircleAlert, RefreshCw } from "./WuuIcons";
-import type { CodexPetCommand } from "../shared/protocol";
+import type { CodexPetCommand, CodexPetSubmitTarget } from "../shared/protocol";
 import { useSettingsRuntimeState } from "./SettingsRuntimeState";
 import { SidePanelToggleIcon } from "./SidePanelToggleIcon";
 import { JumpToLatestPill } from "./JumpToLatestPill";
@@ -388,6 +389,27 @@ function defaultEngineRuntimeSelection(engine?: EngineInfo): EngineRuntimeSelect
       ? "medium"
       : efforts[0] ?? "";
   return { model: model?.id ?? "", effort };
+}
+
+// Runtime settings for a new conversation: an external engine runs with its
+// runtime selection, Wuu with the configured provider and permissions.
+function newThreadRuntimeParams(
+  engine: string,
+  initialized: AppState["initialized"],
+  externalRuntime: EngineRuntimeSelection,
+  externalPermissionMode: PermissionMode,
+): ThreadStartParams {
+  if (engine !== "wuu") {
+    return { ...externalRuntime, permission_mode: externalPermissionMode };
+  }
+  return {
+    provider: initialized?.provider,
+    model: initialized?.model,
+    effort: initialized?.variant || initialized?.effort,
+    speed: initialized?.speed,
+    permission_mode: initialized?.permissions?.mode,
+    approve_for_me: initialized?.permissions?.approve_for_me,
+  };
 }
 
 function useStableCallback<T extends (...args: any[]) => any>(callback: T): T {
@@ -2846,7 +2868,7 @@ export function App(): JSX.Element {
   );
   useEffect(() => {
     const api = window.wuu as Partial<typeof window.wuu>;
-    if (typeof api.updateCodexPetHints !== "function" || !hostSupports("updateCodexPetHints")) return;
+    if (typeof api.updateCodexPetFeed !== "function" || !hostSupports("updateCodexPetFeed")) return;
     const hints = deriveActiveSessionHints({
       thread: state.thread ?? undefined,
       secondaryThread: state.secondaryThread ?? undefined,
@@ -2854,11 +2876,16 @@ export function App(): JSX.Element {
       unreadThreadIDs,
       waitingThreadIDs,
     });
-    void api.updateCodexPetHints(hints).catch(() => undefined);
+    const workspace = state.activeContext
+      ? { context: state.activeContext, name: workspaceNameForContext(state.activeContext, state.projects) }
+      : undefined;
+    void api.updateCodexPetFeed({ hints, workspace }).catch(() => undefined);
   }, [
     state.thread,
     state.secondaryThread,
     state.threads,
+    state.activeContext,
+    state.projects,
     unreadThreadIDs,
     waitingThreadIDs,
   ]);
@@ -3689,7 +3716,7 @@ export function App(): JSX.Element {
       void activateThread(command.thread_id);
       return;
     }
-    void submitCodexPetText(command.text, command.thread_id)
+    void submitCodexPetText(command.text, command.target)
       .catch(() => false)
       .then((ok) => window.wuu.resolveCodexPetCommand(command.id, { ok }));
   };
@@ -4260,23 +4287,57 @@ export function App(): JSX.Element {
     return true;
   }
 
-  // Sends pet input without touching the composer draft. A named thread
-  // that is no longer loaded fails rather than redirecting the text; without
-  // one the text goes to the active conversation, or starts one.
-  async function submitCodexPetText(text: string, threadID?: string): Promise<boolean> {
+  // Sends pet input without touching the composer draft or what the main
+  // window shows. A reply to a conversation that is no longer loaded fails
+  // rather than redirecting the text.
+  async function submitCodexPetText(text: string, target: CodexPetSubmitTarget): Promise<boolean> {
     const current = appStateRef.current;
-    const thread = threadID
-      ? [current.thread, current.secondaryThread, ...current.threads].find((entry) => entry?.id === threadID)
-      : activeThreadForState(current);
     const message = createComposerMessage(text, [], []);
-    if ((threadID && !thread) || !message || thread?.read_only) return false;
-    const key = thread?.id ?? current.activeSessionTabID;
-    const admission = turnAdmissionsRef.current.get(key);
-    const busy = thread && isThreadRunning(thread) && !activeTurnIsAnswerReady(thread);
-    if (admission || busy || queueLanesRef.current.has(key)) {
-      return queueComposerMessage(message, thread ?? undefined, admission);
+    if (!message) return false;
+    if ("workspace" in target) return startCodexPetConversation(message, target.workspace);
+    const thread = [current.thread, current.secondaryThread, ...current.threads]
+      .find((entry) => entry?.id === target.thread_id);
+    if (!thread || thread.read_only) return false;
+    const admission = turnAdmissionsRef.current.get(thread.id);
+    const busy = isThreadRunning(thread) && !activeTurnIsAnswerReady(thread);
+    if (admission || busy || queueLanesRef.current.has(thread.id)) {
+      return queueComposerMessage(message, thread, admission);
     }
-    return sendComposerMessage(message, thread ?? undefined, current.activePane);
+    return sendComposerMessage(message, thread, current.activePane);
+  }
+
+  // Starts a conversation in the workspace the pet captured. It is created
+  // up front rather than through the active draft tab, so the main window's
+  // draft and current conversation stay as they are. A workspace removed or
+  // missing since then fails rather than falling back to another one.
+  async function startCodexPetConversation(message: QueuedComposerMessage, workspace: RuntimeContext): Promise<boolean> {
+    const current = appStateRef.current;
+    if (!current.initialized || submissionTargetPending) return false;
+    const project = workspace.kind === "project"
+      ? current.projects.find((candidate) => candidate.id === workspace.project_id)
+      : undefined;
+    if (workspace.kind === "project" && (!project || project.missing)) return false;
+    const context: RuntimeContext = project
+      ? { kind: "project", project_id: project.id, cwd: project.path }
+      : workspace;
+    const engine = engineInventory?.settings?.default_engine || "wuu";
+    if (engine === "wuu" && !hasReadyProvider(current.initialized.providers)) {
+      showNoModelConfiguredToast();
+      return false;
+    }
+    const thread = requireThread(
+      await window.wuu.startThread(newThreadRuntimeParams(
+        engine,
+        current.initialized,
+        defaultEngineRuntimeSelection(engineInventory?.engines.find((entry) => entry.id === engine)),
+        "unconfined",
+      ), context),
+      "thread/start did not return a thread",
+    );
+    const adopt = (state: AppState): AppState => ({ ...state, threads: upsertThread(state.threads, thread) });
+    appStateRef.current = adopt(appStateRef.current);
+    setState(adopt);
+    return sendComposerMessage(message, thread, appStateRef.current.activePane);
   }
 
   async function submitFileSelectionEdit(part: FileSelectionPart): Promise<boolean> {
@@ -4744,19 +4805,12 @@ export function App(): JSX.Element {
                   ...(newThreadWorktree.startBranch ? { base_revision: newThreadWorktree.startBranch } : {}),
                 } satisfies ThreadStartParams
               : {}),
-            ...(newThreadEngine !== "wuu"
-              ? {
-                  ...newThreadEngineRuntime,
-                  permission_mode: draftPermissionMode || "unconfined",
-                } satisfies ThreadStartParams
-              : {
-                  provider: currentState.initialized?.provider,
-                  model: currentState.initialized?.model,
-                  effort: currentState.initialized?.variant || currentState.initialized?.effort,
-                  speed: currentState.initialized?.speed,
-                  permission_mode: currentState.initialized?.permissions?.mode,
-                  approve_for_me: currentState.initialized?.permissions?.approve_for_me,
-                } satisfies ThreadStartParams),
+            ...newThreadRuntimeParams(
+              newThreadEngine,
+              currentState.initialized,
+              newThreadEngineRuntime,
+              draftPermissionMode || "unconfined",
+            ),
           }, activeContext).then(async (result) => {
             if (creationCancelled && result.thread) {
               // No turn was submitted to this newly created session. A late
