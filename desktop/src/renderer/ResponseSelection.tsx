@@ -80,7 +80,14 @@ export function navigateToResponseSelection(selection: ResponseSelection): boole
       window.getSelection()?.removeAllRanges();
       window.getSelection()?.addRange(range);
     }
-    const observer = new MutationObserver(() => sourceHighlight?.clear());
+    const observer = new MutationObserver(records => {
+      // Navigation itself updates scrollbar classes and viewport padding. Those
+      // layout changes do not invalidate a still-visible source range.
+      if (records.some(record => record.type !== "attributes") || !visible(article)
+        || article.closest<HTMLElement>("[data-thread-id]")?.dataset.threadId !== selection.source.thread_id) {
+        sourceHighlight?.clear();
+      }
+    });
     observer.observe(root, { childList: true, characterData: true, subtree: true });
     for (let node: HTMLElement | null = article; node; node = node.parentElement) {
       observer.observe(node, { attributes: true, attributeFilter: ["hidden", "inert", "aria-hidden", "style", "class", "data-thread-id"] });
