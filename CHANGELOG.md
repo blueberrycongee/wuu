@@ -12,6 +12,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Refresh the desktop pet with conversation cards, dismiss controls, a hover
   toolbar, and a compact composer with coordinated light and dark styling.
+  Remove instructional captions and placeholder copy; show a retry control on
+  send failure while retaining accessible status announcements.
 - Show reply completion times beside copy and fork actions, with the same
   visibility rules and full local date and time on hover.
 - Send long pasted text as UTF-8 file attachments with seven-day working

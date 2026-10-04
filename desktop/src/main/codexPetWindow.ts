@@ -452,6 +452,7 @@ const CODEX_PET_ICON_PATHS = {
   reply: '<path d="M6.5 4 3 7.5 6.5 11"/><path d="M3 7.5h6.5A3.5 3.5 0 0 1 13 11v1"/>',
   plus: '<path d="M8 3.5v9M3.5 8h9"/>',
   send: '<path d="M8 13V3.5"/><path d="M4 7.5 8 3.5l4 4"/>',
+  retry: '<path d="M3 7a5 5 0 1 1 1 4"/><path d="M3 3v4h4"/>',
   close: '<path d="M5 5l6 6M11 5l-6 6"/>',
 } as const;
 
@@ -474,9 +475,10 @@ export function codexPetWindowHTML(
     replyTo: mainTranslate("petReplyTo", {}, locale),
     answer: mainTranslate("petAnswer", {}, locale),
     cancelReply: mainTranslate("petCancelReply", {}, locale),
-    placeholder: mainTranslate("petInputPlaceholder", {}, locale),
+    message: mainTranslate("petMessage", {}, locale),
     needsAnswer: mainTranslate("petNeedsAnswer", {}, locale),
     send: mainTranslate("petSend", {}, locale),
+    retry: mainTranslate("petRetry", {}, locale),
     sending: mainTranslate("petSending", {}, locale),
     sendFailed: mainTranslate("petSendFailed", {}, locale),
     dismiss: mainTranslate("petDismiss", {}, locale),
@@ -487,6 +489,8 @@ export function codexPetWindowHTML(
     reply: codexPetIcon("reply", 14),
     plus: codexPetIcon("plus", 12),
     close: codexPetIcon("close", 10),
+    send: codexPetIcon("send", 16),
+    retry: codexPetIcon("retry", 16),
   };
   const states = Object.fromEntries(
     CODEX_PET_STATES.map((state) => [state.id, { row: state.row, durations: state.durations }]),
@@ -589,18 +593,15 @@ button:focus-visible,.card:focus-visible{outline:2px solid var(--accent);outline
 .composer-target[hidden]{display:none}
 .target-label{min-width:0;overflow:hidden;text-overflow:ellipsis}
 .composer input{flex:1;min-width:0;height:100%;margin:0;padding:0 2px;border:0;background:transparent;color:inherit;font:inherit;outline:none;cursor:text;-webkit-user-select:text;user-select:text}
-.composer input::placeholder{color:var(--muted)}
 .composer input:disabled{cursor:default}
 .composer-send{display:flex;align-items:center;justify-content:center;flex-shrink:0;width:28px;height:28px;padding:0;border:0;border-radius:50%;background:var(--accent);color:var(--accent-fg);cursor:pointer}
 .composer-send:disabled{opacity:.35;cursor:default}
+.composer-send.is-error{background:var(--dot-failed)}
 .composer-send.is-sending{opacity:1}
 .composer-send.is-sending svg{display:none}
 .composer-send.is-sending::after{content:"";width:12px;height:12px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:spin .8s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
-.composer-status{position:absolute;left:50%;bottom:calc(100% + 6px);max-width:100%;padding:3px 10px;border-radius:11px;background:var(--surface);box-shadow:var(--shadow);font-size:12px;line-height:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transform:translateX(-50%);pointer-events:none}
-.composer-status.is-error{color:var(--dot-failed)}
-.composer-status.is-blocked{color:var(--dot-review)}
-.composer-status[hidden]{display:none}
+.composer-status{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap;pointer-events:none}
 .resize-handle{position:absolute;z-index:2}
 .stage.is-expanded .resize-handle{display:none}
 .resize-handle.edge-top{top:-6px;left:10px;right:10px;height:12px;cursor:ns-resize}
@@ -621,7 +622,7 @@ ${resizeHandles}
 <div class="dock">
 <div class="toolbar"><button type="button" class="tool" data-action="new" title="${newChatLabel}" aria-label="${newChatLabel}">${codexPetIcon("compose", 16)}</button><button type="button" class="tool" data-action="show" title="${showAppLabel}" aria-label="${showAppLabel}">${codexPetIcon("open", 16)}</button></div>
 <div class="dock-handle"></div>
-<div class="composer"><div class="composer-status" role="status" hidden></div><button type="button" class="composer-target"><span class="target-icon"></span><span class="target-label"></span></button><input type="text" maxlength="${CODEX_PET_SUBMIT_MAX}" spellcheck="false" autocomplete="off" /><button type="button" class="composer-send">${codexPetIcon("send", 16)}</button></div>
+<div class="composer"><div class="composer-status" role="status" aria-atomic="true"></div><button type="button" class="composer-target"><span class="target-icon"></span><span class="target-label"></span></button><input type="text" maxlength="${CODEX_PET_SUBMIT_MAX}" spellcheck="false" autocomplete="off" /><button type="button" class="composer-send">${codexPetIcon("send", 16)}</button></div>
 </div>
 </div>
 </div>
@@ -643,7 +644,7 @@ ${resizeHandles}
   const STATES = ${scriptJSON(states)};
   const TEXT = ${scriptJSON(text)};
   const ICONS = ${scriptJSON(icons)};
-  input.placeholder = TEXT.placeholder;
+  input.setAttribute('aria-label', TEXT.message);
   const MOOD_STATES = { idle: 'idle', running: 'running', waiting: 'waiting' };
   const CELL_WIDTH = ${CODEX_PET_CELL_WIDTH};
   const CELL_HEIGHT = ${CODEX_PET_CELL_HEIGHT};
@@ -853,13 +854,9 @@ ${resizeHandles}
       card.tabIndex = expanded ? 0 : -1;
       for (const button of card.querySelectorAll('button')) button.tabIndex = expanded ? 0 : -1;
     }
-    // A blocked reply keeps any draft in the disabled input, so the reason
-    // floats above the composer rather than in the placeholder.
+    // Announce exceptional states without adding a visible caption over the pet.
     const status = failed ? TEXT.sendFailed : sending ? '' : blocked ? TEXT.needsAnswer : unplaced ? TEXT.noWorkspace : '';
     statusEl.textContent = status;
-    statusEl.hidden = !status;
-    statusEl.classList.toggle('is-error', failed);
-    statusEl.classList.toggle('is-blocked', !failed && blocked);
     targetEl.hidden = unplaced;
     targetEl.classList.toggle('is-reply', Boolean(reply));
     targetIcon.innerHTML = reply ? ICONS.reply : ICONS.plus;
@@ -868,10 +865,13 @@ ${resizeHandles}
     targetEl.title = reply ? targetText + ' · ' + TEXT.cancelReply : targetText;
     targetEl.setAttribute('aria-label', targetEl.title);
     input.disabled = blocked || unplaced;
+    input.title = blocked ? TEXT.needsAnswer : unplaced ? TEXT.noWorkspace : '';
     input.readOnly = sending;
     sendButton.classList.toggle('is-sending', sending);
+    sendButton.classList.toggle('is-error', failed && !sending);
+    sendButton.innerHTML = failed && !sending ? ICONS.retry : ICONS.send;
     sendButton.disabled = sending || input.disabled || !input.value.trim();
-    sendButton.title = sending ? TEXT.sending : TEXT.send;
+    sendButton.title = sending ? TEXT.sending : failed ? TEXT.retry : TEXT.send;
     sendButton.setAttribute('aria-label', sendButton.title);
   };
   const setExpanded = (next) => {

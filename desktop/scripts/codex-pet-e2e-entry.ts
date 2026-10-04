@@ -234,8 +234,6 @@ async function main(): Promise<void> {
       targetHidden: boolean;
       isReply: boolean;
       status: string;
-      statusError: boolean;
-      statusBlocked: boolean;
       bubbleFocused: boolean;
       value: string;
       disabled: boolean;
@@ -262,9 +260,7 @@ async function main(): Promise<void> {
         target: document.querySelector('.target-label').textContent,
         targetHidden: document.querySelector('.composer-target').hidden,
         isReply: document.querySelector('.composer-target').classList.contains('is-reply'),
-        status: status.hidden ? '' : status.textContent,
-        statusError: status.classList.contains('is-error'),
-        statusBlocked: status.classList.contains('is-blocked'),
+        status: status.textContent,
         bubbleFocused: document.querySelector('.bubble').contains(document.activeElement),
         value: input.value,
         disabled: input.disabled,
@@ -561,15 +557,30 @@ async function main(): Promise<void> {
   await until(() => submits.length === 2, "second submit");
   check("sends the reply to that conversation", JSON.stringify(submits[1].target) === JSON.stringify({ thread_id: "thread-failed" }), submits[1]);
   submits[1].settle({ ok: false });
-  await until(async () => (await panel()).statusError, "send failure shown");
+  await until(async () => {
+    const state = await panel();
+    return !state.readOnly && Boolean(state.status);
+  }, "send failure announced");
   state = await panel();
   check(
-    "a failed send keeps the draft and the composer and says so",
-    state.expanded && state.value === "重试一次" && state.status === "没发出去，打开 Wuu 再试一次",
+    "a failed send keeps the draft and offers retry with accessible feedback",
+    state.expanded && state.value === "重试一次" && !state.sendDisabled && Boolean(state.status),
     state,
   );
   await waitRow(5, "a failed send plays the failed row", 1500);
   await shot("composer-failed", "Send failed; draft kept");
+  nativeTheme.themeSource = "dark";
+  await shot("composer-failed-dark", "Send failed in dark mode; retry control");
+  nativeTheme.themeSource = "light";
+  await click(".composer-send");
+  await until(() => submits.length === 3, "retry submitted");
+  check(
+    "retry preserves the draft and reply target",
+    submits[2].text === submits[1].text && JSON.stringify(submits[2].target) === JSON.stringify(submits[1].target),
+    submits[2],
+  );
+  submits[2].settle({ ok: false });
+  await until(async () => !(await panel()).readOnly, "retry settled");
 
   // The reply chip returns to a new conversation; cards stay clickable.
   await click(".composer-target");
@@ -587,9 +598,9 @@ async function main(): Promise<void> {
   await click(`${cardSelector(idleHint.thread_id)} .card-action`, cardSelector(idleHint.thread_id));
   await until(async () => (await panel()).cards[2].target, "idle card picked");
   manager.setHints([hints[0], hints[1], { ...idleHint, status: "needs_review" }]);
-  await until(async () => (await panel()).statusBlocked, "reply blocked");
+  await until(async () => (await panel()).disabled, "reply blocked");
   state = await panel();
-  check("blocks a reply to a conversation that now needs an answer and says why", state.disabled && state.sendDisabled, state);
+  check("blocks a reply to a conversation that now needs an answer", state.disabled && state.sendDisabled && state.cards[2].action === "answer", state);
   await shot("composer-blocked", "Reply target needs an answer first");
   manager.setHints([hints[0], hints[1], idleHint]);
   win.focus();
