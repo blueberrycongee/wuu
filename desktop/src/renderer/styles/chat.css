@@ -1,6 +1,6 @@
 :root {
   /* Outgoing message previews share the session user-message surface. */
-  --chat-user-message-bg: var(--wuu-message-user-background, var(--user-message-bg-color, #EAF1FA));
+  --chat-user-message-bg: var(--wuu-message-user-background, var(--user-message-bg-color));
 }
 
 /*

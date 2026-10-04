@@ -150,6 +150,13 @@ process trail; expand a record to see that invocation's destination or failure.
 Later switches do not rewrite earlier records. The same E2E checks a switch back
 to the project and captures both the tool record and the current-worktree panel.
 
+In that panel the change summary and branch are status rows; commit and pull
+request follow them as a line of quiet text actions on the label axis. Users
+usually ask the agent to commit and push, so these actions do not form a group
+of their own. `desktop/dev/environment-panel/` renders the panel, and its
+`capture.cjs` checks the close button, row geometry and TODO alignment in both
+themes at default and large text.
+
 ## Settings pages
 
 Settings lists its pages in one unlabeled column: model providers, agents, built-in agent, MCP servers, appearance, general, phone access, usage, subscriptions, and archive. With this few pages, group headings cost more reading than they save. Plugin pages follow after a group gap, because their number and content come from installed plugins. Page IDs are part of the plugin settings snapshot, so they stay stable when a label or position changes; the built-in agent page keeps the `advanced` ID.

@@ -1507,7 +1507,6 @@ export const zhCN = {
   "environment.commitChanges": "提交当前更改",
   "environment.viewPR": "查看拉取请求",
   "environment.createPR": "创建拉取请求",
-  "environment.existingPR": "已有 PR",
   "environment.pushAndCreatePR": "推送并创建 PR",
   "environment.createBranchFailed": "无法创建分支",
   "environment.searchBranches": "搜索分支",

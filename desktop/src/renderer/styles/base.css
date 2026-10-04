@@ -34,9 +34,11 @@
    *
    * Component CSS must reach for these steps (or the semantic aliases
    * below) instead of inventing local hex values. The ramp is anchored
-   * to the message-flow neutrals, which are the reference appearance:
-   * surfaces use neutral grays so fields, navigation and prose share
-   * one temperature; contrast comes from their semantic roles.
+   * to the message-flow neutrals, which are the reference appearance.
+   * Every step shares one OKLCH hue (255) at near-zero chroma, keeping
+   * the lightness of the step it replaced: fields, navigation and prose
+   * share one cool temperature, and contrast comes from lightness alone.
+   * Regenerate a step from its lightness instead of hand-picking hex.
    *
    * Slots 400-650 are text grays, 0-350 surfaces/hairlines, 800-900 the
    * strong text pair. Dark theme re-declares the same slots in
@@ -44,21 +46,21 @@
    * in both themes.
    * ------------------------------------------------------------------ */
   --gray-0: #ffffff;
-  --gray-50: #f8f8fa;
-  --gray-100: #f1f1f4;
-  --gray-150: #eaeaef;
-  --gray-200: #e4e4e9;
-  --gray-250: #dedfe5;
-  --gray-300: #d8d9e0;
-  --gray-350: #cfd1d8;
-  --gray-400: #b0b6bb;
-  --gray-450: #9ca1a5;
-  --gray-500: #8a8f94;
-  --gray-550: #777b80;
-  --gray-600: #6f7478;
-  --gray-650: #5b6066;
-  --gray-700: #383d42;
-  --gray-800: #1f2328;
+  --gray-50: #f7f8fb;
+  --gray-100: #f0f2f4;
+  --gray-150: #e9ebed;
+  --gray-200: #e3e5e8;
+  --gray-250: #dde0e3;
+  --gray-300: #d7dadd;
+  --gray-350: #cfd1d5;
+  --gray-400: #b3b5b9;
+  --gray-450: #9da1a4;
+  --gray-500: #8c8f93;
+  --gray-550: #787b7f;
+  --gray-600: #707478;
+  --gray-650: #5d6064;
+  --gray-700: #3a3d40;
+  --gray-800: #212326;
   --gray-900: #111315;
 
   --ink-strong: var(--wuu-color-text, var(--gray-900));
@@ -99,11 +101,11 @@
   --hairline-soft: var(--wuu-border-subtle, var(--ink-overlay-6));
   /* Ink-overlay alpha steps. Pre-tokenised so future opacity tweaks
      happen here, not scattered across CSS files. */
-  --ink-overlay-4: rgba(31, 35, 40, 0.04);
-  --ink-overlay-6: rgba(31, 35, 40, 0.06);
-  --ink-overlay-8: rgba(31, 35, 40, 0.08);
-  --ink-overlay-12: rgba(31, 35, 40, 0.12);
-  --ink-overlay-18: rgba(31, 35, 40, 0.18);
+  --ink-overlay-4: rgba(33, 35, 38, 0.04);
+  --ink-overlay-6: rgba(33, 35, 38, 0.06);
+  --ink-overlay-8: rgba(33, 35, 38, 0.08);
+  --ink-overlay-12: rgba(33, 35, 38, 0.12);
+  --ink-overlay-18: rgba(33, 35, 38, 0.18);
 
   /* Light elevation recipes: controls < cards < popovers < modal dialogs.
      Dark inset recipes live in theme.css.
@@ -151,7 +153,8 @@
   --danger: var(--wuu-color-danger, #b42318);
   --danger-soft: #fff0ef;
   --danger-border: #f1c2bf;
-  --info: var(--wuu-color-info, #0969da);
+  /* macOS link blue: the platform's own text-safe blue (5.3:1 on white). */
+  --info: var(--wuu-color-info, #0068da);
   /* Filled chromatic surfaces need theme-aware content colors. A theme can
      provide the explicit public on-accent pair; otherwise its canvas color is
      the safest adaptive opposite for the host's dark-on-bright / light-on-dark
@@ -255,7 +258,7 @@
   --line-meta: 1.6;
   --menu-bg: var(--wuu-color-surface-elevated, #fff);
   --menu-border: var(--hairline);
-  --menu-hover: var(--wuu-color-surface-muted, #f2f3f0);
+  --menu-hover: var(--wuu-color-surface-muted, var(--surface-2));
   --menu-shadow: var(--shadow-pop);
   /* --- Motion: primitives ------------------------------------------------
    * Transitions, entrances, and exits read a rung of this ladder or an alias

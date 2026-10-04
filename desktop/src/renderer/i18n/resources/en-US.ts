@@ -1510,7 +1510,6 @@ export const enUS = {
   "environment.commitChanges": "Commit current changes",
   "environment.viewPR": "View pull request",
   "environment.createPR": "Create pull request",
-  "environment.existingPR": "PR exists",
   "environment.pushAndCreatePR": "Push and create a PR",
   "environment.createBranchFailed": "Could not create branch",
   "environment.searchBranches": "Search branches",

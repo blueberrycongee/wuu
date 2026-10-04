@@ -7,8 +7,6 @@ import {
   FileText,
   FileX,
   GitBranch,
-  GitCommit,
-  GitPullRequest,
   Plus,
   Search,
   X
@@ -161,27 +159,26 @@ export function EnvironmentPanel({
             trailing={gitStatus?.is_repo ? <ChevronRight className="icon-sm" aria-hidden="true" /> : null}
           />
         </div>
-        <div className="environment-row-group">
-          <EnvironmentActionRow
+        {/* Commit and PR are usually asked of the agent, so they follow the
+            status rows as quiet text actions instead of a group of their own. */}
+        <div className="environment-git-actions">
+          <button
+            className="environment-text-action"
+            type="button"
             disabled={!hasChanges || running || !hostSupports("commitGitChanges")}
             onClick={onOpenCommit}
-            icon={<GitCommit className="icon-lg" aria-hidden="true" />}
-            label={t("environment.commit")}
-          />
+          >
+            {t("environment.commit")}
+          </button>
           <Tooltip content={prDisabled ? pullRequestDisabledReason : undefined}>
-            <EnvironmentActionRow
+            <button
+              className="environment-text-action"
+              type="button"
               disabled={prDisabled || running || (!gitStatus?.pr_url && !hostSupports("createPullRequest"))}
               onClick={onOpenPullRequest}
-              icon={<GitPullRequest className="icon-lg" aria-hidden="true" />}
-              label={t(gitStatus?.pr_url ? "environment.viewPR" : "environment.createPR")}
-              meta={
-                gitStatus?.pr_url
-                  ? t("environment.existingPR")
-                  : prDisabled
-                    ? pullRequestDisabledReason
-                    : undefined
-              }
-            />
+            >
+              {t(gitStatus?.pr_url ? "environment.viewPR" : "environment.createPR")}
+            </button>
           </Tooltip>
         </div>
         </>}

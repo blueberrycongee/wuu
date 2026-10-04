@@ -2,14 +2,15 @@
    theme overrides these in base.css theme blocks. */
 :root {
   --turn-collapsed-focus-ring: var(--focus-ring);
-  --user-message-bg-color: var(--wuu-message-user-background, #EAF1FA);
+  /* The reader already knows what they wrote: the outgoing bubble is a
+   * quiet neutral step so the answer, not the prompt, carries the colour. */
+  --user-message-bg-color: var(--wuu-message-user-background, var(--surface-2));
   --user-message-radius: var(--wuu-message-user-radius, 16px);
   --user-message-max-width: min(516px, 80%);
   --user-message-fg-color: var(--ink);
   --user-message-jump-flash-bg: var(--surface-3);
-  /* Link colors follow the bubble surface in each theme. */
-  --user-message-link-color: var(--wuu-color-link, #0969da);
-  --user-message-link-hover-color: var(--wuu-color-link-hover, #0550ae);
+  --user-message-link-color: var(--rich-link-color);
+  --user-message-link-hover-color: var(--rich-link-hover-color);
   /* Inline editing derives its chrome from the outgoing bubble palette. */
   --user-message-edit-border: color-mix(
     in srgb,
@@ -39,7 +40,7 @@
   --message-image-overflow-bg-hover: rgba(20, 24, 28, 0.72);
   --message-image-overflow-fg: #fff;
   --instruction-files-error-fallback: var(--wuu-color-danger, #d3524f);
-  --stream-cursor-default-color: #2f4a5f;
+  --stream-cursor-default-color: var(--ink);
   --reasoning-stream-cursor-color: var(--gray-500);
   --turn-process-entry-color: var(--ink-tertiary);
   --process-control-color-fallback: var(--ink-tertiary);
@@ -50,11 +51,15 @@
    * the canvas, where the brighter diff greens did not. */
   --diff-insert-color: var(--success);
   --diff-delete-color: var(--danger);
-  --rich-link-color: var(--wuu-color-link, #0969da);
-  --rich-link-hover-color: var(--wuu-color-link-hover, #0550ae);
+  /* Links reuse the one interface blue; hover moves toward the theme ink,
+   * which darkens it on light and lightens it on dark. */
+  --rich-link-color: var(--wuu-color-link, var(--info));
+  --rich-link-hover-color: var(--wuu-color-link-hover, color-mix(in oklab, var(--info) 75%, var(--ink-strong)));
   /* Prose surfaces share the neutral ramp: blocks recede, inline code
    * gets a small contrast step without resembling a selected control. */
   --message-flow-card-bg: var(--surface-1);
+  /* Answer code is an inset in the reading flow: one tonal step, no frame. */
+  --rich-code-block-bg: var(--surface-2);
   --message-flow-card-border: var(--hairline);
   --message-flow-card-header-bg: var(--message-flow-card-bg);
   --message-flow-card-hover-bg: var(--wuu-color-surface, var(--surface-1));
@@ -5007,6 +5012,7 @@ pre {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+  background: var(--paper);
 }
 
 .artifact-preview-toolbar {
@@ -5017,7 +5023,6 @@ pre {
   gap: 16px;
   padding: 10px 12px;
   border-bottom: 1px solid var(--hairline-soft);
-  background: var(--surface-1);
 }
 
 .artifact-preview-toolbar > div:first-child {
@@ -5081,7 +5086,6 @@ pre {
   min-height: 0;
   place-items: stretch;
   overflow: auto;
-  background: var(--surface-1);
 }
 
 .artifact-preview-frame,
@@ -5114,7 +5118,6 @@ pre {
   padding: 18px;
   overflow: auto;
   color: var(--ink);
-  background: var(--paper);
   font: var(--appearance-code-size, 11px)/1.55 var(--font-mono);
   white-space: pre-wrap;
   word-break: break-word;

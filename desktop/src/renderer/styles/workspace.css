@@ -92,11 +92,6 @@
   pointer-events: auto;
 }
 
-.workspace-right-panel.review .workspace-panel-body,
-.workspace-right-panel.diff .workspace-panel-body {
-  padding: 0;
-}
-
 .workspace-panel-tabbar {
   display: flex;
   min-width: 0;
@@ -666,12 +661,7 @@
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  padding: 12px;
   background: var(--paper);
-}
-
-.workspace-panel-body.picker {
-  padding: 0;
 }
 
 .workspace-panel-content-swap,
@@ -713,12 +703,6 @@
   position: absolute;
   inset: 0;
   z-index: 1;
-}
-
-.workspace-right-panel.files .workspace-panel-body,
-.workspace-right-panel.terminal .workspace-panel-body,
-.workspace-right-panel.browser .workspace-panel-body {
-  padding: 0;
 }
 
 .workspace-files-split {
@@ -924,7 +908,6 @@ html.resizing-workspace-file-split * {
 
 .workspace-files-tree .workspace-file-panel {
   flex: 1 1 auto;
-  margin-right: 0;
 }
 
 /* Beside a document the tree can move to the other side: the button ends the
@@ -1202,18 +1185,21 @@ html.resizing-workspace-file-split * {
   max-width: 32em;
 }
 
+/* The launcher shares the sidebar's rhythm: a quiet group label over dense
+ * rows, so the empty panel reads as navigation rather than a list of cards. */
 .workspace-tool-menu-section h2 {
-  margin: 0 0 var(--section-heading-gap);
-  color: var(--ink);
+  margin: 0 0 var(--space-1);
+  padding: 0 var(--space-3);
+  color: var(--ink-tertiary);
   font-size: var(--font-ui);
-  font-weight: var(--weight-medium);
+  font-weight: var(--weight-regular);
   line-height: 1.5;
 }
 
 .workspace-tool-menu-list {
   display: grid;
   width: 100%;
-  gap: var(--space-2);
+  gap: 2px;
 }
 
 .workspace-tool-menu-item,
@@ -1222,19 +1208,24 @@ html.resizing-workspace-file-split * {
   grid-template-columns: var(--icon-size) minmax(0, 1fr);
   width: 100%;
   min-width: 0;
-  min-height: max(var(--control-row-height), calc(var(--font-ui) * 1.5 + var(--space-3) * 2));
+  min-height: var(--control-row-height);
   align-items: center;
-  column-gap: var(--space-3);
+  column-gap: var(--space-2);
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--ink);
-  padding: var(--space-3) var(--space-4);
+  padding: 0 var(--space-3);
   font-size: var(--font-ui);
   line-height: 1.5;
   text-align: start;
   transition:
     background-color var(--motion-fast) var(--ease-out),
     color var(--motion-fast) var(--ease-out);
+}
+
+/* Plugin descriptions and resumable paths add a second line. */
+.workspace-tool-menu-item:has(.workspace-tool-menu-copy > span) {
+  padding-block: var(--space-2);
 }
 
 .workspace-tool-menu-item:hover,
@@ -1293,7 +1284,7 @@ html[data-focus-modality="keyboard"] .workspace-tool-menu :is(button, summary):f
 }
 
 .workspace-tool-menu-more {
-  margin-top: var(--space-2);
+  margin-top: 2px;
 }
 
 .workspace-tool-menu-more > summary {
@@ -1307,7 +1298,7 @@ html[data-focus-modality="keyboard"] .workspace-tool-menu :is(button, summary):f
 }
 
 .workspace-tool-menu-more > .workspace-tool-menu-list {
-  margin-top: var(--space-2);
+  margin-top: 2px;
 }
 
 .workspace-tool-menu-chevron {
@@ -1325,9 +1316,6 @@ html[data-focus-modality="keyboard"] .workspace-tool-menu :is(button, summary):f
   min-width: 0;
   min-height: 0;
   height: 100%;
-  /* Pull the file panel out of .workspace-panel-body's 12px right padding so
-     the scrollbar sits flush against the right edge of the side panel. */
-  margin-right: -12px;
 }
 
 .workspace-file-tree-limit {
@@ -2877,10 +2865,11 @@ html[data-focus-modality="keyboard"] .workspace-review-row:focus-visible {
 
 /* The one control in the panel that is dragged, so it is the one with weight:
  * a capsule that fills with ink as the level rises, a dot for every level the
- * model offers, and a knob that reaches the capsule endpoints. */
+ * model offers, and a knob that reaches the capsule endpoints. The knob stands
+ * proud of the track so it reads as the handle, not a hole in the fill. */
 .codex-effort-slider {
   --effort-knob: 20px;
-  --effort-track: 24px;
+  --effort-track: 8px;
   --effort-edge: 0px;
   --effort-at: calc(var(--effort-edge) + var(--effort-knob) / 2 + (100% - var(--effort-knob) - var(--effort-edge) * 2) * var(--effort-ratio, 0));
   position: relative;

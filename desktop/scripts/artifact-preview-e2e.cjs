@@ -153,6 +153,62 @@ app.whenReady().then(async () => {
   await waitFor(win, () => document.querySelector(".artifact-preview-text")?.textContent.startsWith("Delivered text snapshot"));
   await evaluate(win, () => [...document.querySelectorAll(".artifact-preview-actions button")].at(-1).click());
   await waitFor(win, () => !document.querySelector(".artifact-preview-panel"));
+
+  // The docked preview is the panel's content, not a card inside it: it must
+  // reach the panel edges and paint the same surface as the tab strip.
+  const surfaceIndex = fixtures.length;
+  fixtures.push({ name: "results.json", mime: "application/json", bytes: JSON.stringify({ passed: 61 }) });
+  await complete(win, surfaceIndex);
+  await waitFor(win, () => [...document.querySelectorAll('[data-wuu-component="turn-artifacts"] button')].some(button => button.textContent.includes("results.json")));
+  await evaluate(win, () => [...document.querySelectorAll('[data-wuu-component="turn-artifacts"] button')].find(button => button.textContent.includes("results.json")).click());
+  await waitFor(win, () => Boolean(document.querySelector(".artifact-preview-panel .artifact-preview-body > *")));
+  for (const theme of ["light", "dark"]) {
+    await win.webContents.executeJavaScript(`document.documentElement.dataset.theme=${JSON.stringify(theme)}`);
+    for (const width of [1440, 760]) {
+      win.setContentSize(width, 900);
+      await settle(win);
+      // Panel, tab and theme changes animate geometry and colour; sample the
+      // resting state.
+      await evaluate(win, () => document.getAnimations()
+        .filter((animation) => animation.effect?.getComputedTiming().endTime !== Infinity)
+        .forEach((animation) => animation.finish()));
+      await settle(win);
+      const layout = await evaluate(win, () => {
+        const box = (selector) => document.querySelector(selector).getBoundingClientRect();
+        const panel = box(".workspace-right-panel");
+        const host = box(".workspace-panel-body");
+        const preview = box(".artifact-preview-panel");
+        const toolbar = box(".artifact-preview-toolbar");
+        const body = box(".artifact-preview-body");
+        const tabbar = box(".workspace-panel-tabbar");
+        return {
+          flush: ["left", "right", "top", "bottom"].every((side) => Math.abs(preview[side] - host[side]) < 1),
+          points: {
+            tabbar: { x: panel.left + 4, y: tabbar.top + tabbar.height / 2 },
+            toolbar: { x: toolbar.left + toolbar.width * 0.6, y: toolbar.top + 3 },
+            body: { x: body.left + 4, y: body.top + 4 },
+          },
+          viewportWidth: innerWidth,
+        };
+      });
+      assert.equal(layout.flush, true, "The docked preview must fill the panel without an inset");
+      const image = await win.webContents.capturePage();
+      const scale = image.getSize().width / layout.viewportWidth;
+      const bitmap = image.toBitmap();
+      const pixel = ({ x, y }) => {
+        const offset = (Math.round(y * scale) * image.getSize().width + Math.round(x * scale)) * 4;
+        return [...bitmap.subarray(offset, offset + 3)].join(",");
+      };
+      const colors = Object.fromEntries(Object.entries(layout.points).map(([name, point]) => [name, pixel(point)]));
+      assert.equal(colors.toolbar, colors.tabbar, `Preview header must match the panel surface (${theme} ${width})`);
+      assert.equal(colors.body, colors.tabbar, `Preview body must match the panel surface (${theme} ${width})`);
+      fs.writeFileSync(path.join(output, `surface-${theme}-${width}.png`), image.toPNG());
+    }
+  }
+  win.setContentSize(1440, 900);
+  await win.webContents.executeJavaScript(`document.documentElement.dataset.theme="light"`);
+  await evaluate(win, () => [...document.querySelectorAll(".artifact-preview-actions button")].at(-1).click());
+  await waitFor(win, () => !document.querySelector(".artifact-preview-panel"));
   for (const index of [2, 3]) {
     await complete(win, index);
     await waitForValue(async () => await evaluate(win, () => document.querySelectorAll('.turn-artifact-inline-image img').length) === index - 1, "delivered image appears");

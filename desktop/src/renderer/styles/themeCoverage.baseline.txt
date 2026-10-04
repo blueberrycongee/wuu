@@ -166,7 +166,6 @@ turns.css .project-empty-actions button:hover background --project-empty-actions
 turns.css .rich-file-link text-decoration-color --gray-550
 turns.css .rich-mermaid-error border-color --danger-border
 turns.css .rich-mermaid-error background --danger-soft
-turns.css .stream-cursor::after background --stream-cursor-color
 turns.css .turn-collapsed-marker background --ink-overlay-18
 turns.css .turn-process-toggle[role="button"]:hover :is(.turn-process-title, .turn-process-meta, .turn-process-chevron) color --activity-toggle-hover-color
 turns.css .turn-reasoning-summary:hover, .turn-reasoning-summary:focus-visible text-decoration-color --ink-overlay-18

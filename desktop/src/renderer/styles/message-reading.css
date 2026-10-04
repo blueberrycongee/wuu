@@ -137,6 +137,14 @@
   background: transparent;
 }
 
+/* Answer code is separated by one tonal step; a frame on top of the fill
+ * would draw the same boundary twice. The transparent border keeps the 1px
+ * the code inset is measured from. User bubbles tint their own code. */
+:is(.agent-block, .reasoning-block) .rich-code-block {
+  border-color: transparent;
+  background: var(--rich-code-block-bg);
+}
+
 :is(.agent-block, .reasoning-block, .user-message, .chat-bubble)
   .rich-code-block:not(.rich-code-block--no-header) > .rich-code {
   padding-block-start: 2px;
