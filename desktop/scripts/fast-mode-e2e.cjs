@@ -205,7 +205,7 @@ async function run() {
   const afterToggle = await capturePanel(main, 'provider-fast-keyboard');
   assert.equal(afterToggle.pressed, 'true');
   assert.deepEqual(afterToggle.fast, beforeToggle.fast, 'Toggling speed must not move its target.');
-  assert.notEqual(afterToggle.fastBackground, beforeToggle.fastBackground, 'Fast mode has a distinct enabled surface.');
+  assert.notEqual(afterToggle.fastColor, beforeToggle.fastColor, 'Fast mode has a distinct enabled icon.');
   assert(await evaluate(main, () => document.activeElement === document.querySelector('.runtime-panel-fast') && getComputedStyle(document.activeElement).outlineStyle !== 'none'), 'Keyboard activation retains a visible focus ring.');
   async function turn(marker, expectedTier) {
     await evaluate(main, async ({ id, marker }) => {
@@ -234,9 +234,14 @@ async function run() {
   await openPanel();
   await evaluate(main, () => document.querySelector('button[aria-label="Fast mode"]').focus());
   await evaluate(main, () => Promise.all(document.querySelector('.runtime-panel').getAnimations({ subtree: true }).map(animation => animation.finished.catch(() => {}))));
-  await capturePanel(main, 'light-wide-fast');
+  const lightFast = await capturePanel(main, 'light-wide-fast');
+  await evaluate(main, () => document.activeElement.blur());
+  main.webContents.sendInputEvent({ type: 'mouseMove', x: Math.round((lightFast.fast.x + lightFast.fast.width / 2) * lightFast.zoomFactor), y: Math.round((lightFast.fast.y + lightFast.fast.height / 2) * lightFast.zoomFactor) });
+  await waitFor(main, () => document.querySelector('.runtime-panel-fast').matches(':hover'));
+  await capturePanel(main, 'light-wide-fast-hover');
   await evaluate(main, () => document.querySelector('button[aria-label="Fast mode"]').click());
   await waitFor(main, async id => (await window.wuu.resumeThread(id)).thread.speed === 'standard', threadID);
+  await capturePanel(main, 'light-wide-standard-hover');
   await turn('fast-mode-standard', 'default');
   await openPanel();
   await evaluate(main, () => document.querySelector('.codex-runtime-trigger').click());
