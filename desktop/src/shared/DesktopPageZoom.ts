@@ -5,7 +5,7 @@ type PageZoomFrame = {
 };
 
 const storageKey = "wuu.desktop.pageZoomLevel";
-const defaultLevel = -0.5;
+const defaultLevel = 0;
 const minimumLevel = Math.log(0.5) / Math.log(1.2);
 const maximumLevel = Math.log(2) / Math.log(1.2);
 

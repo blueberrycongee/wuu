@@ -26,7 +26,7 @@ import {
 
 import { initializeDesktopPageZoom, type DesktopZoomAction } from "../shared/DesktopPageZoom";
 
-// Preserve the existing first-run scale; subsequent loads honor the user's choice.
+// Restore shell zoom independently of font preferences.
 // Browser/PiP contents do not use this preload.
 initializeDesktopPageZoom(webFrame, window, listener => {
   const handler = (_event: Electron.IpcRendererEvent, action: DesktopZoomAction) => listener(action);

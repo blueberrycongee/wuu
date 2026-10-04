@@ -59,6 +59,9 @@ const results = [];
 import(pathToFileURL(path.join(desktop, 'out/main/index.js')).href).then(async () => {
   while (!main) await delay(20);
   await waitFor(main, () => document.querySelector('.composer textarea'));
+  assert.equal(main.webContents.getZoomFactor(), 1, 'First launch defaults to 100%');
+  fs.writeFileSync(path.join(output, 'default-100.png'), (await main.webContents.capturePage()).toPNG());
+  results.push('first launch defaults to 100%');
   main.show(); main.focus();
   await evaluate(main, () => document.querySelector('.composer textarea').focus());
   await zoom(main, '0', 100);

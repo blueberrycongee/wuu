@@ -21,6 +21,10 @@ function mountFrame() {
 }
 
 describe("desktop page zoom preference", () => {
+  it("starts at 100% without a saved preference", () => {
+    expect(mountFrame().getZoomFactor()).toBe(1);
+  });
+
   it("bounds repeated shortcuts, resets to 100%, and persists without waiting for resize", () => {
     const frame = mountFrame();
     zoom("reset");
@@ -79,7 +83,7 @@ describe("desktop page zoom preference", () => {
 
   it.each(["not json", "null", '"0"', "999"])("recovers from malformed saved zoom %s", value => {
     localStorage.setItem("wuu.desktop.pageZoomLevel", value);
-    expect(mountFrame().getZoomFactor()).toBeLessThan(1);
+    expect(mountFrame().getZoomFactor()).toBe(1);
   });
 
   it("keeps zoom usable when preference storage is unavailable", () => {
