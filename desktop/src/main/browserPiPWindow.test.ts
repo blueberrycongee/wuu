@@ -547,25 +547,43 @@ describe("BrowserPiPSurface", () => {
     surface.stop();
   });
 
-  it("keeps the page aspect in a narrow column and recaptures the viewport after panel use", () => {
+  it.each([true, false])("keeps the card size after panel use (layout before mount: %s)", (layoutBeforeMount) => {
     const { surface, win, host } = makeSurface();
     surface.start();
-    surface.setHostLayout({
+    const layout = {
       host: { x: 0, y: 0, width: 300, height: 600 },
       obstacles: [],
       visibleFrame: { x: 0, y: 0, width: 1200, height: 800 },
-    });
+    };
+    if (layoutBeforeMount) surface.setHostLayout(layout);
     surface.setVisible(true);
+    if (!layoutBeforeMount) surface.setHostLayout(layout);
+    const placed = { ...win.bounds };
     expect(win.bounds.width / win.bounds.height).toBeCloseTo(2);
-    expect(host.mounts.at(-1)?.rect.width).toBe(win.bounds.width);
-    expect(host.mounts.at(-1)?.rect.height).toBe(win.bounds.height);
 
-    surface.setVisible(false);
-    host.bounds = { x: 0, y: 0, width: 600, height: 800 };
-    surface.setVisible(true);
-    expect(win.bounds.width / win.bounds.height).toBeCloseTo(0.75);
-    expect(host.mounts.at(-1)?.zoom).toBeCloseTo(win.bounds.height / 800);
-    surface.stop();
+    try {
+      for (const viewport of [{ width: 600, height: 800 }, { width: 400, height: 1000 }]) {
+        // The panel takes ownership before the coordinator hides the card.
+        host.emitReparented({});
+        surface.setVisible(false);
+        host.bounds = { x: 0, y: 0, ...viewport };
+        surface.setVisible(true);
+        surface.setHostLayout(layout);
+        expect(win.bounds).toEqual(placed);
+        const mounted = host.mounts.at(-1)!;
+        expect(mounted.zoom).toBeCloseTo(placed.height / viewport.height);
+        expect(mounted.rect.width / mounted.zoom).toBeCloseTo(viewport.width);
+        expect(mounted.rect.height / mounted.zoom).toBeCloseTo(viewport.height);
+        expect(mounted.rect.x).toBeCloseTo((placed.width - mounted.rect.width) / 2);
+      }
+      // A temporary narrow column must not become the preferred card size.
+      surface.setHostLayout({ ...layout, host: { ...layout.host, width: 800 } });
+      expect(win.bounds).toMatchObject({ width: 320, height: 160 });
+      surface.setHostLayout(layout);
+      expect(win.bounds).toEqual(placed);
+    } finally {
+      surface.stop();
+    }
   });
 
   it("keeps the visible window, chosen corner and size while switching to a different page aspect", () => {

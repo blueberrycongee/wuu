@@ -169,6 +169,9 @@ export class BrowserPiPSurface implements ObservationPiPHandle {
   private resizing = false;
   private grab: PipPoint = { x: 0, y: 0 };
   private userSize: { width: number; height: number } | undefined;
+  // Choose the default card shape once. A panel visit changes the page
+  // viewport, but must not reshape the card when it returns.
+  private initialAspect: number | undefined;
   // The page's layout viewport, captured before the card zooms it down.
   // Later view bounds are the zoomed size, so they must not replace this.
   private layoutViewport: { width: number; height: number } | undefined;
@@ -470,6 +473,7 @@ export class BrowserPiPSurface implements ObservationPiPHandle {
       return;
     }
     if (bounds.width > 0 && bounds.height > 0) {
+      this.initialAspect ??= bounds.width / bounds.height;
       this.layoutViewport = { width: bounds.width, height: bounds.height };
       if (!this.userSize && this.screenLayout && !this.dragging && !this.resizing) {
         this.placeCommitted();
@@ -549,12 +553,9 @@ export class BrowserPiPSurface implements ObservationPiPHandle {
     const win = this.win;
     if (!layout || !win || win.isDestroyed()) return;
     this.cancelSnap();
-    const aspect = this.layoutViewport && this.layoutViewport.height > 0
-      ? this.layoutViewport.width / this.layoutViewport.height
-      : 4 / 3;
     const card = this.userSize
       ? browserPiPFitCard(layout.host, this.userSize)
-      : browserPiPCardSize(layout.host, browserPiPSizeForAspect(aspect));
+      : browserPiPCardSize(layout.host, browserPiPSizeForAspect(this.initialAspect ?? 4 / 3));
     const anchor = browserPiPAnchors(layout.host, layout.obstacles, card)
       .find((item) => item.alignment === this.alignment);
     if (!anchor) return;
