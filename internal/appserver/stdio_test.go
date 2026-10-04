@@ -25,3 +25,17 @@ func TestRunStdioScannerAcceptsAttachmentSizedRequests(t *testing.T) {
 		t.Fatalf("response did not preserve request id: %s", out.String())
 	}
 }
+
+func TestRunStdioScannerAcceptsFullFrameBudget(t *testing.T) {
+	var out bytes.Buffer
+	server := &Server{out: &out}
+	const prefix = `{"id":"boundary","method":"test/unknown","params":{"data":"`
+	const suffix = "\"}}\n"
+	input := prefix + strings.Repeat("a", appServerMaxStdioRequestBytes-len(prefix)-len(suffix)) + suffix
+	if err := runStdioScanner(context.Background(), server, strings.NewReader(input)); err != nil {
+		t.Fatalf("full-budget frame was rejected: %v", err)
+	}
+	if !strings.Contains(out.String(), `"id":"boundary"`) {
+		t.Fatalf("response did not preserve request id: %s", out.String())
+	}
+}

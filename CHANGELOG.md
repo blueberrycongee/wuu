@@ -53,6 +53,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Reject oversized encoded desktop messages without disconnecting the core or
+  losing drafts, and retain explicit video transport settings through request preparation.
+
 - Isolate the desktop renderer’s development dependency cache and contain lazy
   editor or PDF preview failures without clearing the surrounding workspace.
   A failed preview offers a window reload to recover rejected module loads.

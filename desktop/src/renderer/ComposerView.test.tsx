@@ -314,17 +314,21 @@ describe("mobile composer attachments", () => {
     const textarea = container.querySelector("textarea")!;
     const photo = new File(["photo"], "image.jpg", { type: "image/jpeg" });
     const pdf = new File(["pdf"], "document.pdf", { type: "application/pdf" });
-    const inputs = Array.from(container.querySelectorAll<HTMLInputElement>('input[type="file"]'));
-    const photoInput = inputs.find((input) => input.accept === "image/*")!;
-    const fileInput = inputs.find((input) => input.accept.includes("application/pdf"))!;
-    const photoClick = vi.spyOn(photoInput, "click").mockImplementation(() => {});
-    const fileClick = vi.spyOn(fileInput, "click").mockImplementation(() => {});
+    const clickedPickers: HTMLInputElement[] = [];
+    const pickerClick = vi.spyOn(HTMLInputElement.prototype, "click").mockImplementation(function (this: HTMLInputElement) {
+      clickedPickers.push(this);
+    });
     chooseSource("composer.choosePhotos");
-    expect(photoClick).toHaveBeenCalledOnce();
+    expect(pickerClick).toHaveBeenCalledOnce();
+    const photoInput = clickedPickers[0];
+    expect(photoInput.type).toBe("file");
     Object.defineProperty(photoInput, "files", { configurable: true, value: [photo] });
     act(() => { photoInput.dispatchEvent(new Event("change", { bubbles: true })); });
     chooseSource("composer.chooseFiles");
-    expect(fileClick).toHaveBeenCalledOnce();
+    expect(pickerClick).toHaveBeenCalledTimes(2);
+    const fileInput = clickedPickers[1];
+    expect(fileInput.type).toBe("file");
+    expect(fileInput).not.toBe(photoInput);
     Object.defineProperty(fileInput, "files", { configurable: true, value: [pdf] });
     act(() => { fileInput.dispatchEvent(new Event("change", { bubbles: true })); });
     act(() => { textarea.focus(); });

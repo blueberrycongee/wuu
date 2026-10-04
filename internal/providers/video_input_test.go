@@ -34,14 +34,15 @@ func TestVideoAdmissionUsesModelAndTransport(t *testing.T) {
 		{"known text model rejects override", MediaInputPolicy{VideoKnown: true}, true, map[string]any{"video_input": "video_url"}, false},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
+			videoOption := tt.options["video_input"]
 			req := ChatRequest{Model: "user-defined-name", MediaInput: tt.policy, ProviderOptions: tt.options, Messages: []ChatMessage{{Role: "user", Files: []InputFile{{MediaType: "video/mp4", Data: "AAAA"}}}}}
 			out, err := PrepareVideoInput(req, tt.wire)
 			if (err == nil) != tt.want {
 				t.Fatalf("admission error=%v, want supported=%v", err, tt.want)
 			}
 			if err == nil {
-				if _, ok := out.ProviderOptions["video_input"]; ok {
-					t.Fatal("routing option leaked to provider")
+				if out.ProviderOptions["video_input"] != videoOption {
+					t.Fatal("video routing option was lost before transport serialization")
 				}
 				if !out.MediaInput.Video {
 					t.Fatal("video not admitted")

@@ -121,7 +121,10 @@ Cleanup only removes managed working copies, not files saved into the workspace.
 History retains attachment references but does not recreate copies that have
 expired, moved, or been deleted; upload again if the referenced file is missing.
 Desktop uploads are limited to 20 MiB per file; non-image files in one
-submission also share a 20 MiB total limit.
+submission also share a 20 MiB total limit. The complete encoded desktop request,
+including all images, files, text, and metadata, must fit within 64 MiB. Base64
+encoding increases file sizes by about one third. If the request is too large,
+Wuu keeps the draft so you can remove attachments or shorten the message and retry.
 
 Path-only delivery counts the reference text toward context, not the file's
 disk or Base64 size. Native images use image estimates; other admitted native

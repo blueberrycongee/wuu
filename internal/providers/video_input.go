@@ -34,6 +34,8 @@ func VideoURLTransport(baseURL string, options map[string]any) bool {
 // Old videos are omitted on incompatible follow-ups so switching models remains
 // possible. New unsupported videos need a tool-accessible working copy, unless
 // the caller requires native evidence; a path cannot satisfy that contract.
+// Keep video_input available for downstream admission checks; provider
+// serializers filter this local routing option from the wire payload.
 func PrepareVideoInput(req ChatRequest, transport bool) (ChatRequest, error) {
 	policy := ResolveVideoInputPolicy(req.MediaInput, req.ProviderOptions, transport)
 	supported := policy.Video
@@ -53,15 +55,6 @@ func PrepareVideoInput(req ChatRequest, transport bool) (ChatRequest, error) {
 				break
 			}
 		}
-	}
-	if _, exists := req.ProviderOptions["video_input"]; exists {
-		options := make(map[string]any, len(req.ProviderOptions))
-		for key, value := range req.ProviderOptions {
-			if key != "video_input" {
-				options[key] = value
-			}
-		}
-		req.ProviderOptions = options
 	}
 	req.MediaInput = policy
 	return req, nil
