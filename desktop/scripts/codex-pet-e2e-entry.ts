@@ -1,7 +1,8 @@
 // Runs the production pet window against synthetic spritesheets: moods,
-// reactions, bubble rows, the quick panel (new conversation, reply, failure,
-// blocked reply, keyboard), cursor following, sizes, themes, and edge layouts. Writes
-// screenshots, a contact sheet, and results.json for review.
+// reactions, conversation cards (glance filtering, dismiss), the dock
+// (hover toolbar, composer: new conversation, reply, failure, blocked
+// reply, keyboard), cursor following, sizes, themes, and edge layouts.
+// Writes screenshots, a contact sheet, and results.json for review.
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -9,7 +10,7 @@ import { join, relative } from "node:path";
 import { app, BrowserWindow, nativeTheme, screen } from "electron";
 import type { CodexPet, CodexPetHint, CodexPetSubmitResult, CodexPetSubmitTarget, CodexPetsSnapshot } from "../src/shared/protocol";
 import { CODEX_PET_STATES } from "../src/main/codexPets";
-import { CodexPetWindowManager, codexPetRenderedSpriteForSize } from "../src/main/codexPetWindow";
+import { CodexPetWindowManager, codexPetBoundsForLayout, codexPetRenderedSpriteForSize } from "../src/main/codexPetWindow";
 import { setMainLocale } from "../src/main/i18n";
 import { registerRenderableFileProtocol, registerRenderableFileScheme } from "../src/main/renderableFileProtocol";
 import { renderableFileURL } from "../src/main/renderableFileURLs";
@@ -131,6 +132,16 @@ const hints: CodexPetHint[] = [
     updated_at: now - 2000,
   },
 ];
+const idleHint: CodexPetHint = {
+  thread_id: "thread-idle",
+  title: "整理文档",
+  status: "idle",
+  preview: "已更新 README 的安装说明",
+  attention: false,
+  updated_at: now - 3000,
+};
+// The sprite's bottom sits above the dock slot (4 + 36) and the window padding (8).
+const SPRITE_BOTTOM_INSET = 48;
 
 async function main(): Promise<void> {
   await app.whenReady();
@@ -162,11 +173,14 @@ async function main(): Promise<void> {
 
   const submits: Array<{ text: string; target: CodexPetSubmitTarget; settle: (result: CodexPetSubmitResult) => void }> = [];
   const jumps: string[] = [];
+  let shownApp = 0;
   const manager = new CodexPetWindowManager({
     onClose: () => undefined,
     onJump: (threadID) => jumps.push(threadID),
     onSubmit: (text, target) => new Promise((settle) => submits.push({ text, target, settle })),
-    onShowApp: () => undefined,
+    onShowApp: () => {
+      shownApp += 1;
+    },
   });
 
   const before = new Set(BrowserWindow.getAllWindows());
@@ -210,39 +224,49 @@ async function main(): Promise<void> {
     page<{
       expanded: boolean;
       bubbleHidden: boolean;
-      rows: Array<{ id: string; status: string; title: string; target: boolean; action: string }>;
+      cards: Array<{ id: string; status: string; title: string; target: boolean; action: string }>;
       target: string;
-      canClear: boolean;
-      targetError: boolean;
-      targetBlocked: boolean;
+      targetHidden: boolean;
+      isReply: boolean;
+      status: string;
+      statusError: boolean;
+      statusBlocked: boolean;
       bubbleFocused: boolean;
       value: string;
       disabled: boolean;
       readOnly: boolean;
       focused: boolean;
+      sendDisabled: boolean;
+      toolbarShown: boolean;
       injected: number;
       layout: string;
     }>(`(() => {
-      const input = document.querySelector('textarea');
+      const input = document.querySelector('.composer input');
+      const status = document.querySelector('.composer-status');
+      const toolbar = getComputedStyle(document.querySelector('.toolbar'));
       return {
         expanded: document.querySelector('.stage').classList.contains('is-expanded'),
         bubbleHidden: document.querySelector('.bubble').hidden,
-        rows: [...document.querySelectorAll('.hint-row')].map((row) => ({
-          id: row.dataset.threadId,
-          status: row.dataset.status,
-          title: row.querySelector('.row-title').textContent,
-          target: row.classList.contains('is-target'),
-          action: row.querySelector('.row-action').dataset.action,
+        cards: [...document.querySelectorAll('.card')].map((card) => ({
+          id: card.dataset.threadId,
+          status: card.dataset.status,
+          title: card.querySelector('.card-title').textContent,
+          target: card.classList.contains('is-target'),
+          action: card.querySelector('.card-action').dataset.action,
         })),
         target: document.querySelector('.target-label').textContent,
-        canClear: !document.querySelector('.target-clear').hidden,
-        targetError: document.querySelector('.composer-target').classList.contains('is-error'),
-        targetBlocked: document.querySelector('.composer-target').classList.contains('is-blocked'),
+        targetHidden: document.querySelector('.composer-target').hidden,
+        isReply: document.querySelector('.composer-target').classList.contains('is-reply'),
+        status: status.hidden ? '' : status.textContent,
+        statusError: status.classList.contains('is-error'),
+        statusBlocked: status.classList.contains('is-blocked'),
         bubbleFocused: document.querySelector('.bubble').contains(document.activeElement),
         value: input.value,
         disabled: input.disabled,
         readOnly: input.readOnly,
         focused: document.activeElement === input,
+        sendDisabled: document.querySelector('.composer-send').disabled,
+        toolbarShown: toolbar.visibility === 'visible' && Number(toolbar.opacity) === 1,
         injected: document.querySelectorAll('img').length,
         layout: document.querySelector('.stage').dataset.layout,
       };
@@ -266,15 +290,38 @@ async function main(): Promise<void> {
     return inside && bounds.x >= area.x && bounds.y >= area.y &&
       bounds.x + bounds.width <= area.x + area.width && bounds.y + bounds.height <= area.y + area.height;
   };
-  const click = async (selector: string) => {
-    const point = await page<{ x: number; y: number }>(`(() => {
+  const centerOf = (selector: string) =>
+    page<{ x: number; y: number }>(`(() => {
       const box = document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();
       return { x: Math.round(box.left + box.width / 2), y: Math.round(box.top + box.height / 2) };
     })()`);
+  const hover = async (selector: string) => {
+    const point = await centerOf(selector);
+    win.webContents.sendInputEvent({ type: "mouseMove", x: point.x, y: point.y });
+    await delay(160);
+  };
+  // Parks the pointer in the transparent padding so hover-only controls hide.
+  const leave = async () => {
+    win.webContents.sendInputEvent({ type: "mouseMove", x: 1, y: 1 });
+    await delay(160);
+  };
+  // Card actions and the toolbar only lay out while hovered, so a click on
+  // them first hovers their container.
+  const click = async (selector: string, hoverFirst?: string) => {
+    if (hoverFirst) {
+      // Synthetic moves right after a window resize can miss :hover, so
+      // hover until the hover-only target is laid out.
+      await until(async () => {
+        await hover(hoverFirst);
+        return page<boolean>(`document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect().width > 0`);
+      }, `${selector} revealed by hover`);
+    }
+    const point = await centerOf(selector);
     win.webContents.sendInputEvent({ type: "mouseMove", x: point.x, y: point.y });
     win.webContents.sendInputEvent({ type: "mouseDown", x: point.x, y: point.y, button: "left", clickCount: 1 });
     win.webContents.sendInputEvent({ type: "mouseUp", x: point.x, y: point.y, button: "left", clickCount: 1 });
   };
+  const cardSelector = (threadID: string) => `.card[data-thread-id="${threadID}"]`;
   const key = (keyCode: string) => {
     win.webContents.sendInputEvent({ type: "keyDown", keyCode });
     win.webContents.sendInputEvent({ type: "char", keyCode });
@@ -289,7 +336,8 @@ async function main(): Promise<void> {
     const bounds = win.getBounds();
     return { x: bounds.x + foot.x, y: bounds.y + foot.y };
   };
-  // The sprite must not move when the bubble appears, grows, or changes side.
+  // The sprite must not move when cards appear, grow, change side, or the
+  // composer opens.
   const holdsStill = async (label: string, before: { x: number; y: number }) => {
     const near = (a: { x: number; y: number }) => Math.abs(a.x - before.x) <= 1 && Math.abs(a.y - before.y) <= 1;
     await until(async () => near(await spriteFoot()), label).then(
@@ -300,23 +348,29 @@ async function main(): Promise<void> {
   const spriteCenter = () => {
     const bounds = win.getBounds();
     const sprite = codexPetRenderedSpriteForSize("default");
-    // Collapsed with no bubble the sprite is centered, 8px above the bottom.
-    return { x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height - 8 - sprite.height / 2 };
+    // Collapsed with no cards the sprite is centered above the dock.
+    return { x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height - SPRITE_BOTTOM_INSET - sprite.height / 2 };
   };
 
   // Greeting, then idle.
   await waitRow(3, "greets with the waving row after loading", 1500);
   await waitRow(0, "settles into the idle row after the greeting");
-  await shot("idle", "Idle, no bubble");
+  await shot("idle", "Idle: sprite and dock handle");
   {
     const bounds = win.getBounds();
     const foot = await spriteFoot();
     check(
       "renders the sprite where the window geometry expects it",
-      Math.abs(foot.x - (bounds.x + bounds.width / 2)) <= 1 && Math.abs(foot.y - (bounds.y + bounds.height - 8)) <= 1,
+      Math.abs(foot.x - (bounds.x + bounds.width / 2)) <= 1 &&
+        Math.abs(foot.y - (bounds.y + bounds.height - SPRITE_BOTTOM_INSET)) <= 1,
       { foot, bounds },
     );
   }
+  await hover(".sprite-frame");
+  check("hovering the pet reveals the toolbar", (await panel()).toolbarShown, await panel());
+  await shot("hover-toolbar", "Hover: new conversation and open Wuu");
+  await leave();
+  check("the toolbar hides again when the pointer leaves", !(await panel()).toolbarShown);
 
   // Cursor following on a sheet with look rows.
   if (cursorOverridden) {
@@ -363,23 +417,23 @@ async function main(): Promise<void> {
   manager.setMood("idle");
   await waitRow(0, "returns to idle after the failed reaction", 6000);
 
-  // Bubble rows.
+  // Cards.
   let foot = await spriteFoot();
   manager.setHints(hints);
-  await until(async () => (await panel()).rows.length === 3, "three bubble rows");
-  await holdsStill("keeps the sprite in place when the bubble opens to its left", foot);
+  await until(async () => (await panel()).cards.length === 3, "three cards");
+  await holdsStill("keeps the sprite in place when the cards open to its left", foot);
   let state = await panel();
-  check("shows the three rows beside the pet in the bottom-right corner", !state.bubbleHidden && state.layout === "left", state);
-  check("fits the collapsed bubble inside the window and the window on screen", await fits(".bubble"), win.getBounds());
+  check("shows the three cards beside the pet in the bottom-right corner", !state.bubbleHidden && state.layout === "left", state);
+  check("fits the cards inside the window and the window on screen", await fits(".bubble"), win.getBounds());
   check(
     "renders hostile titles as text",
-    state.injected === 0 && state.rows[1].title === hints[1].title,
-    state.rows[1],
+    state.injected === 0 && state.cards[1].title === hints[1].title,
+    state.cards[1],
   );
-  await shot("rows-light", "Collapsed bubble: needs review, failed, running");
+  await shot("cards-light", "Cards: needs review, failed, running");
   nativeTheme.themeSource = "dark";
   await delay(200);
-  await shot("rows-dark", "Collapsed bubble in dark mode");
+  await shot("cards-dark", "Cards in dark mode");
   nativeTheme.themeSource = "light";
 
   const area = screen.getDisplayMatching(win.getBounds()).workArea;
@@ -387,47 +441,84 @@ async function main(): Promise<void> {
   await delay(100);
   foot = await spriteFoot();
   manager.setHints([...hints]);
-  await holdsStill("keeps the sprite in place when the bubble moves above it", foot);
-  await until(async () => (await panel()).layout === "above", "bubble above the pet mid-screen").then(
-    async () => check("puts the bubble above the pet when there is room", await fits(".bubble")),
-    async () => check("puts the bubble above the pet when there is room", false, await panel()),
+  await holdsStill("keeps the sprite in place when the cards move above it", foot);
+  await until(async () => (await panel()).layout === "above", "cards above the pet mid-screen").then(
+    async () => check("puts the cards above the pet when there is room", await fits(".bubble")),
+    async () => check("puts the cards above the pet when there is room", false, await panel()),
   );
-  await shot("rows-above", "Bubble above the pet");
+  await shot("cards-above", "Cards above the pet");
+  await hover(cardSelector("thread-running"));
+  await shot("card-hover", "Hovered card: reply and hide");
 
-  // A collapsed row opens its conversation.
-  await click('.hint-row[data-thread-id="thread-running"] .row-title');
-  await until(() => jumps.length === 1, "row jump");
-  check("clicking a collapsed row opens its conversation", jumps[0] === "thread-running", jumps);
+  // A collapsed card opens its conversation.
+  await click(`${cardSelector("thread-running")} .card-title`);
+  await until(() => jumps.length === 1, "card jump");
+  check("clicking a collapsed card opens its conversation", jumps[0] === "thread-running", jumps);
 
-  // Quick panel: the pet starts a new conversation in the workspace that
-  // was active when the panel opened, even if Wuu switches while typing.
+  // The glance hides a dismissed card until its conversation changes status,
+  // and never shows idle conversations.
+  await click(`${cardSelector("thread-running")} .card-dismiss`, cardSelector("thread-running"));
+  await until(async () => (await panel()).cards.length === 2, "dismissed card hidden").then(
+    () => check("hiding a card removes it from the glance", true),
+    async () => check("hiding a card removes it from the glance", false, await panel()),
+  );
+  await holdsStill("keeps the sprite in place when a card is hidden", foot);
+  manager.setHints([...hints]);
+  await delay(100);
+  check("a hidden card stays hidden while its conversation is unchanged", (await panel()).cards.length === 2);
+  manager.setHints(hints.map((hint) => (hint.thread_id === "thread-running" ? { ...hint, status: "done" } : hint)));
+  await until(async () => (await panel()).cards.length === 3, "hidden card returns").then(
+    () => check("a hidden card returns when its conversation finishes", true),
+    async () => check("a hidden card returns when its conversation finishes", false, await panel()),
+  );
+  manager.setHints([hints[0], hints[1], idleHint]);
+  await until(async () => (await panel()).cards.length === 2, "idle card hidden");
+  check(
+    "keeps idle conversations out of the glance",
+    (await panel()).cards.every((card) => card.id !== idleHint.thread_id),
+    (await panel()).cards,
+  );
+  await leave();
+
+  // Composer: the pet starts a new conversation in the workspace that was
+  // active when the composer opened, even if Wuu switches while typing.
   const appWorkspace = { context: { kind: "project", project_id: "project-app", cwd: "/work/app" }, name: "wuu" } as const;
   const docsWorkspace = { context: { kind: "project", project_id: "project-docs", cwd: "/work/docs" }, name: "docs" } as const;
   manager.setWorkspace(appWorkspace);
   foot = await spriteFoot();
-  await click(".sprite");
-  await until(async () => (await panel()).expanded, "panel opens");
-  await holdsStill("keeps the sprite in place when the panel opens above it", foot);
+  await click('.tool[data-action="new"]', ".sprite-frame");
+  await until(async () => (await panel()).expanded, "composer opens");
+  await holdsStill("keeps the sprite in place when the composer opens", foot);
   await until(async () => (await panel()).focused, "composer focused");
-  check("clicking the pet opens the panel with a focused composer that fits", await fits(".bubble"), win.getBounds());
+  check("the new-conversation tool opens a focused composer that fits", await fits(".composer"), win.getBounds());
   state = await panel();
   check(
-    "names the new conversation and its workspace, with no row picked",
-    state.target === "新对话 · wuu" && !state.canClear && state.rows.every((row) => !row.target),
+    "targets the workspace with no card picked",
+    state.target === "wuu" && !state.isReply && !state.targetHidden && state.cards.every((card) => !card.target),
     state,
   );
   check(
-    "offers Answer on the row that waits for the user and reply on the others",
-    state.rows.map((row) => row.action).join() === "answer,reply,reply",
-    state.rows,
+    "lists idle conversations as reply targets while the composer is open",
+    state.cards.map((card) => card.id).join() === `${hints[0].thread_id},${hints[1].thread_id},${idleHint.thread_id}`,
+    state.cards,
   );
-  await shot("panel-new", `Panel open: ${state.target}`);
+  check(
+    "offers Answer on the card that waits for the user and reply on the others",
+    state.cards.map((card) => card.action).join() === "answer,reply,reply",
+    state.cards,
+  );
+  check("disables send while the draft is empty", state.sendDisabled, state);
+  await shot("composer-new", `Composer open: new conversation in ${state.target}`);
   win.webContents.insertText("帮我总结一下今天的改动");
   manager.setWorkspace(docsWorkspace);
   await delay(50);
   state = await panel();
-  check("keeps the workspace captured at open when Wuu switches workspace", state.target === "新对话 · wuu", state);
-  await shot("panel-typed", "New conversation with a draft (focused composer)");
+  check(
+    "keeps the workspace captured at open when Wuu switches workspace",
+    state.target === "wuu" && !state.sendDisabled,
+    state,
+  );
+  await shot("composer-typed", "New conversation with a draft");
   key("Enter");
   await until(() => submits.length === 1, "first submit");
   check(
@@ -437,108 +528,136 @@ async function main(): Promise<void> {
     submits[0],
   );
   state = await panel();
-  check("locks the draft while sending", state.readOnly && state.value.length > 0, state);
-  await shot("panel-sending", "Sending");
+  check("locks the draft while sending", state.readOnly && state.value.length > 0 && state.sendDisabled, state);
+  await shot("composer-sending", "Sending");
   submits[0].settle({ ok: true });
-  await until(async () => !(await panel()).expanded, "panel closes after a send");
+  await until(async () => !(await panel()).expanded, "composer closes after a send");
   state = await panel();
-  check("a successful send clears the draft and closes the panel", state.value === "", state);
+  check("a successful send clears the draft and closes the composer", state.value === "", state);
   await waitRow(4, "celebrates a successful send with the jumping row", 1500);
 
-  // Reply to a row; the host rejects it.
-  await click(".sprite");
-  await until(async () => (await panel()).expanded, "panel reopens");
+  // Reply to a card; the host rejects it.
+  await click(".sprite-frame");
+  await until(async () => (await panel()).expanded, "composer reopens");
   state = await panel();
-  check("a reopened panel captures the workspace active now", state.target === "新对话 · docs", state);
-  await click('.hint-row[data-thread-id="thread-failed"] .row-action');
-  await until(async () => (await panel()).rows[1].target, "reply target picked");
+  check("clicking the pet opens the composer in the workspace active now", state.target === "docs", state);
+  await click(`${cardSelector("thread-failed")} .card-action`, cardSelector("thread-failed"));
+  await until(async () => (await panel()).cards[1].target, "reply target picked");
   state = await panel();
   check(
     "the reply action names the conversation and focuses the composer",
-    state.target === `回复 · ${hints[1].title}` && state.canClear && state.focused && jumps.length === 1,
+    state.target === hints[1].title && state.isReply && state.focused && jumps.length === 1,
     { state, jumps },
   );
-  await shot("panel-reply", "Replying to a conversation");
+  await shot("composer-reply", "Replying to a conversation");
   win.webContents.insertText("重试一次");
   await delay(50);
   key("Enter");
   await until(() => submits.length === 2, "second submit");
   check("sends the reply to that conversation", JSON.stringify(submits[1].target) === JSON.stringify({ thread_id: "thread-failed" }), submits[1]);
   submits[1].settle({ ok: false });
-  await until(async () => (await panel()).targetError, "send failure shown");
+  await until(async () => (await panel()).statusError, "send failure shown");
   state = await panel();
-  check("a failed send keeps the draft and the panel", state.expanded && state.value === "重试一次", state);
+  check(
+    "a failed send keeps the draft and the composer and says so",
+    state.expanded && state.value === "重试一次" && state.status === "没发出去，打开 Wuu 再试一次",
+    state,
+  );
   await waitRow(5, "a failed send plays the failed row", 1500);
-  await shot("panel-failed", "Send failed; draft kept");
+  await shot("composer-failed", "Send failed; draft kept");
 
-  // × returns to a new conversation; the row stays clickable to open it.
-  await click(".target-clear");
-  await until(async () => (await panel()).canClear === false, "reply cleared");
+  // The reply chip returns to a new conversation; cards stay clickable.
+  await click(".composer-target");
+  await until(async () => !(await panel()).isReply, "reply cleared");
   state = await panel();
-  check("× switches back to a new conversation", state.target === "新对话 · docs" && state.rows.every((row) => !row.target), state);
-  await click('.hint-row[data-thread-id="thread-running"] .row-title');
-  await until(() => jumps.length === 2, "expanded row jump");
-  check("clicking a row in the open panel still opens its conversation", jumps[1] === "thread-running", jumps);
-  await click('.hint-row[data-thread-id="thread-review"] .row-action');
+  check("the reply chip switches back to a new conversation", state.target === "docs" && state.cards.every((card) => !card.target), state);
+  await click(`${cardSelector("thread-failed")} .card-title`);
+  await until(() => jumps.length === 2, "expanded card jump");
+  check("clicking a card with the composer open still opens its conversation", jumps[1] === "thread-failed", jumps);
+  await click(`${cardSelector("thread-review")} .card-action`);
   await until(() => jumps.length === 3, "answer jump");
   check("Answer opens the conversation that waits for the user", jumps[2] === "thread-review", jumps);
 
   // A reply target that starts waiting on a question cannot take a message.
-  await click('.hint-row[data-thread-id="thread-running"] .row-action');
-  await until(async () => (await panel()).rows[2].target, "running row picked");
-  manager.setHints(hints.map((hint) => (hint.thread_id === "thread-running" ? { ...hint, status: "needs_review" } : hint)));
-  await until(async () => (await panel()).targetBlocked, "reply blocked");
+  await click(`${cardSelector(idleHint.thread_id)} .card-action`, cardSelector(idleHint.thread_id));
+  await until(async () => (await panel()).cards[2].target, "idle card picked");
+  manager.setHints([hints[0], hints[1], { ...idleHint, status: "needs_review" }]);
+  await until(async () => (await panel()).statusBlocked, "reply blocked");
   state = await panel();
-  check("blocks a reply to a conversation that now needs an answer and says why", state.disabled && state.targetBlocked, state);
-  await shot("panel-blocked", "Reply target needs an answer first");
-  manager.setHints([...hints]);
+  check("blocks a reply to a conversation that now needs an answer and says why", state.disabled && state.sendDisabled, state);
+  await shot("composer-blocked", "Reply target needs an answer first");
+  manager.setHints([hints[0], hints[1], idleHint]);
   win.focus();
   await delay(50);
   key("Escape");
-  await until(async () => !(await panel()).expanded, "Escape closes the panel");
-  check("Escape closes the panel and leaves no focus ring in the bubble", !(await panel()).bubbleFocused, await panel());
+  await until(async () => !(await panel()).expanded, "Escape closes the composer");
+  check("Escape closes the composer and leaves no focus ring on the cards", !(await panel()).bubbleFocused, await panel());
+
+  // Reply straight from the glance.
+  await click(`${cardSelector("thread-failed")} .card-action`, cardSelector("thread-failed"));
+  await until(async () => (await panel()).expanded, "reply from the glance opens the composer");
+  await until(async () => (await panel()).focused, "reply composer focused");
+  state = await panel();
+  check("replying from a collapsed card opens the composer aimed at it", state.isReply && state.target === hints[1].title, state);
+  key("Escape");
+  await until(async () => !(await panel()).expanded, "reply composer closes");
+
+  await click('.tool[data-action="show"]', ".sprite-frame");
+  await until(() => shownApp === 1, "show app").then(
+    () => check("the toolbar opens Wuu", true),
+    () => check("the toolbar opens Wuu", false, { shownApp }),
+  );
+  await leave();
 
   // Sizes and edge layouts.
+  manager.setHints([...hints]);
   manager.setSize("large");
   await delay(250);
-  await shot("rows-large", "Large size with rows");
+  await shot("cards-large", "Large size with cards");
+  await click(".sprite-frame");
+  await until(async () => (await panel()).expanded, "large composer opens");
+  check("the composer fits at the large size", await fits(".composer"), win.getBounds());
+  await shot("composer-large", "Large size, composer open");
+  key("Escape");
+  await until(async () => !(await panel()).expanded, "large composer closes");
   manager.setSize("default");
   const workArea = screen.getDisplayMatching(win.getBounds()).workArea;
-  // The sprite's own footprint at the top-left corner, as after a drag there.
-  const spriteOnly = codexPetRenderedSpriteForSize("default");
-  win.setBounds({ x: workArea.x + 4, y: workArea.y, width: spriteOnly.windowWidth, height: spriteOnly.windowHeight });
-  // Where the manager reads the sprite from these sprite-only bounds.
-  foot = { x: workArea.x + 4 + spriteOnly.windowWidth / 2, y: workArea.y + spriteOnly.windowHeight - 8 };
+  // The pet column alone at the top-left corner, as after a drag there.
+  const petOnly = codexPetBoundsForLayout({ layout: "hidden", anchor: { x: 0, y: 0 } });
+  win.setBounds({ x: workArea.x + 4, y: workArea.y, width: petOnly.width, height: petOnly.height });
+  // Where the manager reads the sprite from these bounds.
+  foot = { x: workArea.x + 4 + petOnly.width / 2, y: workArea.y + petOnly.height - SPRITE_BOTTOM_INSET };
   manager.setHints([...hints]);
   await delay(250);
-  await holdsStill("keeps the sprite in place when the bubble opens beside it at the top edge", foot);
+  await holdsStill("keeps the sprite in place when the cards open beside it at the top edge", foot);
   state = await panel();
   const edgeBounds = win.getBounds();
   check(
-    "moves the bubble off the top edge and stays on screen",
+    "moves the cards off the top edge and stays on screen",
     state.layout !== "above" &&
       edgeBounds.y >= workArea.y &&
       edgeBounds.x >= workArea.x &&
       edgeBounds.y + edgeBounds.height <= workArea.y + workArea.height,
     { layout: state.layout, bounds: edgeBounds, workArea },
   );
-  await shot("rows-edge", `Near the top-left edge: ${state.layout}`);
-  await click(".sprite");
-  await until(async () => (await panel()).expanded, "edge panel opens");
+  await shot("cards-edge", `Near the top-left edge: ${state.layout}`);
+  await click(".sprite-frame");
+  await until(async () => (await panel()).expanded, "edge composer opens");
   state = await panel();
-  check("opens the panel below the pet when there is no room above", state.layout === "below" && (await fits(".bubble")), {
-    layout: state.layout,
-    bounds: win.getBounds(),
-  });
-  await holdsStill("keeps the sprite in place when the panel opens below it", foot);
+  check(
+    "opens below the pet, slid along the side edge, when there is no room above",
+    state.layout === "below" && (await fits(".bubble")) && (await fits(".composer")),
+    { layout: state.layout, bounds: win.getBounds() },
+  );
+  await holdsStill("keeps the sprite in place when the composer opens at the edge", foot);
   nativeTheme.themeSource = "dark";
   await delay(200);
-  await shot("panel-below-dark", `Panel at the top edge (${state.layout}), dark mode`);
+  await shot("composer-below-dark", `Composer at the top-left edge (${state.layout}), dark mode`);
   nativeTheme.themeSource = "light";
   win.focus();
   key("Escape");
-  await until(async () => !(await panel()).expanded, "edge panel closes");
-  await holdsStill("returns the sprite to the same place when the panel closes", foot);
+  await until(async () => !(await panel()).expanded, "edge composer closes");
+  await holdsStill("returns the sprite to the same place when the composer closes", foot);
 
   // English locale and a sheet without look rows.
   setMainLocale("en-US");
@@ -548,10 +667,12 @@ async function main(): Promise<void> {
   win = petWindow();
   instrument(win);
   await ready();
-  manager.setHints(hints.slice(2));
-  await click(".sprite");
-  await until(async () => (await panel()).expanded, "English panel opens");
-  await shot("panel-en", "English locale, panel open");
+  manager.setHints([hints[0], hints[2]]);
+  await until(async () => (await panel()).cards.length === 2, "English cards");
+  await shot("cards-en", "English locale, cards");
+  await click(".sprite-frame");
+  await until(async () => (await panel()).expanded, "English composer opens");
+  await shot("composer-en", "English locale, composer open");
   key("Escape");
   if (cursorOverridden) {
     await waitRow(0, "classic sheet idles");
@@ -571,7 +692,7 @@ async function main(): Promise<void> {
     "Native context menu contents (Menu.popup is not capturable).",
     "prefers-reduced-motion rendering.",
     "IME composition while pressing Enter.",
-    "Hidden layout attention badge (needs a work area too small for every bubble layout).",
+    "Hidden layout attention badge (needs a work area too small for every card layout).",
     "Pointer drag animation and continuous resize handles.",
   );
   manager.destroy();
