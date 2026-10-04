@@ -257,11 +257,21 @@ service.
 {"id":"21","method":"config/model/update","params":{"provider":"deepseek","base_url":"https://api.deepseek.com","api_key":"sk-...","keep_selection":true}}
 ```
 
-`config/model-catalog/providers` lists catalog services that can be connected
-with an endpoint and a key, ordered by name, each with its `type`, `base_url`,
-`model_count`, and a suggested `default_model`. Services that need an account
-template or an unsupported SDK are left out. With `provider`, the result holds
-that service alone, including its `models`. The update response includes workspace model summaries; consume the
+`config/model-catalog/providers` lists services ordered by name. Each includes
+`connections` describing the supported authentication and transport choices:
+`id`, `name`, `auth` (`api_key`, `oauth`, or `local`), `type`, `base_url`,
+and `default_model`. Browser login uses `login`; local Codex reuse is explicit
+through `reuse_codex_credentials`. `desktop_only` marks native connection methods.
+The top-level `type`, `base_url`, `default_model`, and `model_count` still describe
+the API-key connection. With `provider`, the result holds that service alone,
+including its API catalog `models`; these are not subscription entitlement claims.
+Services that need an account template or an unsupported SDK are left out.
+Subscription connections use ordinary `config/model/update` creation without
+an API key; Codex rejects endpoint overrides. Removing a subscription connection
+preserves shared Wuu credentials until its last connection is removed, and never
+deletes CLI-owned credentials.
+
+The update response includes workspace model summaries; consume the
 `thread/updated` snapshot for the target conversation's effective selection rather
 than treating the top-level response model as its new model.
 

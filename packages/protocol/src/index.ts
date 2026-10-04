@@ -1212,7 +1212,7 @@ export type ConfigCodexModelsResult = {
   models: CodexModelSummary[];
 };
 
-/** A catalog service Wuu can connect with a key. */
+/** A service and its supported authentication/transport choices. */
 export type CatalogProviderSummary = {
   id: string;
   name: string;
@@ -1221,8 +1221,22 @@ export type CatalogProviderSummary = {
   api_key_env?: string;
   model_count: number;
   default_model: string;
+  connections: CatalogConnectionSummary[];
   /** Present only when a single provider was requested. */
   models?: CatalogModelSummary[];
+};
+
+/** Catalog model choices apply to the API-key connection only. */
+export type CatalogConnectionSummary = {
+  id: string;
+  name: string;
+  type: string;
+  auth: "api_key" | "oauth" | "local";
+  base_url: string;
+  default_model: string;
+  login?: "xai";
+  reuse_codex_credentials?: boolean;
+  desktop_only?: boolean;
 };
 
 export type CatalogModelSummary = {

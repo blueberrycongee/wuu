@@ -6,13 +6,15 @@
 
 ## 在桌面应用中添加服务
 
-1. 打开**设置 → 模型服务 → 新增服务**。
-2. 按服务支持的 API 选择类型，例如 **OpenAI 兼容**或 **Anthropic 兼容**。
-3. 填写服务标识、账号可用的模型 ID、API 端点和凭据。服务要求 `/v1` 等前缀时，应一并填入端点。
-4. 保存后回到输入框，选择本次对话使用的服务和模型。
+1. 打开**设置 → 模型服务**，在**添加服务**中选择服务商；**更多服务**可打开完整目录。
+2. 服务提供多种认证时，选择连接方式。OpenAI 包含 API Key 和 ChatGPT / Codex CLI；xAI 包含 API Key、Grok / X 浏览器登录和 Grok Build CLI。
+3. 填入 API Key，或按所选方式登录。API 连接的端点和推荐模型由目录提供；未收录的端点可通过**自定义端点**选择 OpenAI 兼容或 Anthropic 兼容协议。
+4. 连接服务。只有希望新对话使用它时才开启**设为默认模型**，否则稍后在输入框中选择。
 5. 发送一个包含工具调用的小请求，例如读取项目文件，确认它不只是能回复文字。
 
-首次设置提供了较简单的连接表单。自定义端点和更多模型选项请在设置中调整。配置里列出的模型不代表你的账号一定有访问权限。
+首次设置使用相同的连接方式。配置里列出的模型不代表你的账号一定有访问权限。
+
+删除已保存的订阅连接不会修改 CLI 管理的凭据。还有其他连接使用同一订阅时，Wuu 会保留共享登录；删除最后一个连接时，才清除 Wuu 保存的订阅登录。
 
 输入框中的选择属于当前对话；第一条消息发出前，它属于当前草稿。设置中还可以保存工作区默认值，切换一次对话的模型不会自动替换这些默认值。
 
@@ -37,9 +39,9 @@ Claude Opus 5.5 和 Fable 5.1 始终使用自适应思考。Wuu 将已保存的 
 
 | 连接方式 | 设置方法 |
 |---|---|
-| Codex 订阅 | 先在 Codex CLI 登录，再在首次设置中选择复用检测到的登录。手动配置时，使用 `openai-codex` 服务并启用 `reuse_codex_credentials`。Wuu 桌面端不会自行发起 OpenAI OAuth 登录。在“设置 → 订阅”中打开对应账号的 **…** 菜单，点击“使用本机 Codex 登录”即可优先使用本机登录，不改变模型选择；“重新检查登录”通过拉取模型列表验证认证。Wuu 每次请求都会读取本机登录，凭据刷新后无需重启。 |
-| xAI SuperGrok | 添加 **xAI SuperGrok** 服务，按提示在浏览器登录。CLI 使用 `wuu login xai`，运行时选择 `--provider xai-subscription`。 |
-| Grok Build | 先运行 `grok login`，再在 Wuu 中选择检测到的服务，或传入 `--provider grok-build`。登录过期后重新在 Grok CLI 登录；Wuu 不刷新或修改这类凭据。 |
+| Codex 订阅 | 先在 Codex CLI 登录，再在模型服务或首次设置中选择 **OpenAI → ChatGPT / Codex CLI**。手动配置时，使用 `openai-codex` 服务并启用 `reuse_codex_credentials`。Wuu 桌面端不会自行发起 OpenAI OAuth 登录。在“设置 → 订阅”中打开对应账号的 **…** 菜单，点击“使用本机 Codex 登录”即可优先使用本机登录，不改变模型选择；“重新检查登录”通过拉取模型列表验证认证。Wuu 每次请求都会读取本机登录，凭据刷新后无需重启。 |
+| xAI SuperGrok | 选择 **xAI → Grok / X**，按提示在浏览器登录。CLI 使用 `wuu login xai`，运行时选择 `--provider xai-subscription`。 |
+| Grok Build | 先运行 `grok login`，再选择 **xAI → Grok Build CLI**、使用 Wuu 检测到的服务，或传入 `--provider grok-build`。登录过期后重新在 Grok CLI 登录；Wuu 不刷新或修改这类凭据。 |
 
 SuperGrok 订阅登录、Grok CLI 登录和 `XAI_API_KEY` 是不同的凭据来源，请选择与你的账号对应的连接。文件编辑和命令执行还要求服务及模型支持工具调用。
 

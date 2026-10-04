@@ -418,6 +418,7 @@ describe("FirstRunOnboarding", () => {
         base_url: "https://api.deepseek.com",
         model_count: 2,
         default_model: "deepseek-chat",
+        connections: [{ id: "api-key", name: "API key", auth: "api_key" as const, type: "openai-compatible", base_url: "https://api.deepseek.com", default_model: "deepseek-chat" }],
         ...(provider ? { models: [{ id: "deepseek-chat", tool_call: true }, { id: "deepseek-reasoner", tool_call: true }] } : {}),
       }],
     }));
@@ -464,6 +465,13 @@ describe("FirstRunOnboarding", () => {
 
   it("connects Grok Build without asking for an API key", async () => {
     const save = vi.fn(async () => undefined);
+    window.wuu.listCatalogProviders = vi.fn(async () => ({ providers: [{
+      id: "xai", name: "xAI", type: "openai-compatible", base_url: "https://api.x.ai/v1", model_count: 1, default_model: "grok-api",
+      connections: [
+        { id: "api-key", name: "API key", auth: "api_key" as const, type: "openai-compatible", base_url: "https://api.x.ai/v1", default_model: "grok-api" },
+        { id: "grok-cli", name: "Grok Build CLI", auth: "local" as const, type: "grok-build", base_url: "https://cli-chat-proxy.grok.com/v1", default_model: "grok-4.5" },
+      ],
+    }] }));
     await act(async () => {
       root.render(
         <I18nProvider>
@@ -483,7 +491,10 @@ describe("FirstRunOnboarding", () => {
     await clickButton("继续");
 
     await act(async () => {
-      container.querySelector<HTMLButtonElement>(".model-service-tile[data-subscription=grok-build]")!.click();
+      container.querySelector<HTMLButtonElement>('.model-service-tile[data-catalog="xai"]')!.click();
+    });
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>('[data-connection-method="grok-cli"]')!.click();
     });
     expect(document.querySelector("[data-testid=settings-provider-connect-key]")).toBeNull();
     await act(async () => {

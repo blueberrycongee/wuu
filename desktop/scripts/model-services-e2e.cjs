@@ -9,7 +9,7 @@ const os = require('node:os');
 const path = require('node:path');
 const http = require('node:http');
 const { pathToFileURL } = require('node:url');
-const { app } = require('electron');
+const { app, ipcMain } = require('electron');
 
 const desktop = path.resolve(__dirname, '..');
 const output = path.resolve(desktop, '../artifacts/model-services-e2e');
@@ -31,6 +31,13 @@ process.env.WUU_SAFE_MODE = '1';
 process.env.WUU_DESKTOP_DISABLE_DEV_CACHE_CLEANUP = '1';
 
 const requests = [];
+// Gate the real RPC at the main/preload boundary, without timing-based delays.
+let releaseCatalog;
+const catalogGate = new Promise(resolve => { releaseCatalog = resolve; });
+const handle = ipcMain.handle.bind(ipcMain);
+ipcMain.handle = (channel, listener) => handle(channel, channel === 'wuu:config-model-catalog-providers'
+  ? async (...args) => { await catalogGate; return listener(...args); }
+  : listener);
 const server = http.createServer((req, res) => {
   let body = '';
   req.on('data', chunk => { body += chunk; });
@@ -136,9 +143,55 @@ async function run() {
   await click(main, '.sidebar-account-trigger');
   await waitFor(main, () => document.querySelector('[data-settings-page="providers"]'));
   await click(main, '[data-settings-page="providers"]');
+  await waitFor(main, () => document.querySelector('[data-testid="settings-provider-tiles"] [role="status"]'));
+  assert.equal(await evaluate(main, () => document.querySelectorAll('[data-testid="settings-provider-tiles"] button.model-service-tile').length), 0, 'A pending directory never exposes a partial set of services.');
+  await capture(main, '00-directory-loading.png');
+  releaseCatalog();
   await waitFor(main, () => document.querySelector('[data-testid="settings-default-model"]') && document.querySelector('[data-catalog="deepseek"]'));
   assert.match(await evaluate(main, () => document.querySelector('[data-testid="settings-default-model"]').textContent), /fixture/);
   await capture(main, '01-overview.png');
+
+  // Changing authentication methods resets model/endpoint/key fields so a
+  // saved connection cannot accidentally mix two credential sources.
+  for (const [service, method] of [['openai', 'codex-cli'], ['xai', 'xai-oauth'], ['xai', 'grok-cli']]) {
+    await click(main, '[data-catalog="' + service + '"]');
+    await waitFor(main, () => document.querySelector('[data-testid="settings-provider-connect-key"]'));
+    await type(main, '[data-testid="settings-provider-connect-key"]', 'unused-api-key');
+    await click(main, '[data-connection-method="' + method + '"]');
+    await waitFor(main, () => !document.querySelector('[data-testid="settings-provider-connect-key"]'));
+    assert.equal(await evaluate(main, () => document.querySelector('[data-testid="settings-provider-connect"]').disabled), false);
+    await capture(main, '01-' + method + '.png');
+    for (const theme of ['light', 'dark']) {
+      await setAppearance(main, { theme, size: 20, width: 760 });
+      await capture(main, '01-' + method + '-' + theme + '-large-narrow.png');
+    }
+    await setAppearance(main, { theme: 'light', size: 14, width: 1280 });
+    await click(main, '[data-connection-method="api-key"]');
+    await waitFor(main, () => document.querySelector('[data-testid="settings-provider-connect-key"]'));
+    assert.equal(await evaluate(main, () => document.querySelector('[data-testid="settings-provider-connect-key"]').value), '');
+    if (method === 'xai-oauth') {
+      // Never open a real browser sign-in from this isolated fixture.
+      await click(main, '.model-connect-dialog .environment-dialog-header .icon-button');
+      continue;
+    }
+    await click(main, '[data-connection-method="' + method + '"]');
+    await click(main, '[data-testid="settings-provider-connect"]');
+    await waitFor(main, () => document.querySelector('.model-service-hero'));
+    const providerType = method === 'codex-cli' ? 'openai-codex' : 'grok-build';
+    const saved = readConfig();
+    assert.equal(saved.default_provider, 'fixture');
+    assert.equal(saved.providers[providerType].type, providerType);
+    assert.equal(saved.providers[providerType].api_key, undefined);
+    if (method === 'codex-cli') assert.equal(saved.providers[providerType].reuse_codex_credentials, true);
+    await capture(main, '01-' + method + '-needs-login.png');
+    await click(main, '.model-service-hero-actions [aria-haspopup="menu"]');
+    await waitFor(main, () => [...document.querySelectorAll('[role="menuitem"]')].some(item => item.textContent.includes('删除服务')));
+    await evaluate(main, () => [...document.querySelectorAll('[role="menuitem"]')].find(item => item.textContent.includes('删除服务')).click());
+    await waitFor(main, () => document.querySelector('[data-testid="settings-provider-remove-confirm"]'));
+    await click(main, '[data-testid="settings-provider-remove-confirm"]');
+    await waitFor(main, () => document.querySelector('[data-testid="settings-default-model"]'));
+    assert.equal(readConfig().providers[providerType], undefined);
+  }
 
   // The grouped catalog searches the complete directory, preserves the
   // custom endpoint action on no results, and survives close/reopen without
@@ -153,8 +206,9 @@ async function run() {
   await waitFor(main, () => document.querySelectorAll('.model-browse-dialog [data-catalog]').length === 1);
   assert.equal(await evaluate(main, () => document.querySelector('.model-browse-dialog [data-catalog]').dataset.catalog), 'deepseek');
   await type(main, '.model-browse-dialog input[type="search"]', 'no-such-service-e2e');
-  await waitFor(main, () => document.querySelectorAll('.model-browse-dialog [data-catalog], .model-browse-dialog [data-subscription]').length === 0);
+  await waitFor(main, () => document.querySelectorAll('.model-browse-dialog [data-catalog]').length === 0);
   assert.ok(await evaluate(main, () => Boolean(document.querySelector('.model-browse-dialog .environment-dialog-footer button'))));
+  await capture(main, '01c-empty-catalog-search.png');
   main.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' });
   main.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Escape' });
   await waitFor(main, () => !document.querySelector('[role="dialog"]'));

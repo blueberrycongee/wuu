@@ -10,6 +10,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Group API keys, subscription sign-in, and local CLI credentials under each
+  model service, with a consistently loaded directory cached across settings visits.
+
 - Deliver uploaded videos, PDFs, and ordinary files as seven-day original-byte
   working copies independently of native model support, and budget only the
   projected input so attachments survive context recovery without Base64 inflation.
@@ -52,6 +55,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   theme overrides.
 
 ### Fixed
+
+- Preserve a shared subscription login when deleting one of several saved
+  connections, and allow saved Codex connections to be removed.
 
 - Reject oversized encoded desktop messages without disconnecting the core or
   losing drafts, and retain explicit video transport settings through request preparation.

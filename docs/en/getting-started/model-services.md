@@ -6,13 +6,15 @@ These settings apply to the **Wuu** engine. Selecting an [external engine](exter
 
 ## Add a provider in the desktop app
 
-1. Open **Settings → Model providers → Add provider**.
-2. Choose the service type. Use **OpenAI-compatible** or **Anthropic-compatible** for a service that implements that API.
-3. Enter an identifier, an available model ID, the API endpoint, and credentials. Include an API prefix such as `/v1` when your service requires it.
-4. Save the provider, return to the composer, and select the provider and model for the conversation.
+1. Open **Settings → Model services** and choose a service under **Add service**. **More services** opens the full directory.
+2. Choose a connection method when the service offers more than one. OpenAI groups API keys and ChatGPT / Codex CLI; xAI groups API keys, Grok / X browser sign-in, and Grok Build CLI.
+3. Enter the API key or follow the selected login method. The directory supplies an endpoint and suggested model for API connections. For an unlisted endpoint, choose **Custom endpoint** and its OpenAI-compatible or Anthropic-compatible protocol.
+4. Connect the service. Enable **Use as default** only if new conversations should use it; otherwise choose it later in the composer.
 5. Send a small request that includes a tool call, such as reading a project file, to check more than text-only replies.
 
-The first-run form offers a simpler connection setup. Use Settings for a custom endpoint and additional model options. A model listed in a configuration is not a guarantee that your account can access it.
+First-run setup uses the same connection choices. A model listed in a configuration is not a guarantee that your account can access it.
+
+Deleting a saved subscription connection leaves CLI-owned credentials untouched. Wuu retains its shared subscription login while another connection uses it, and removes its saved login when the last connection is deleted.
 
 The composer's selection belongs to the conversation, or to the draft before its first message. Settings also lets you set workspace defaults; changing a conversation's model does not silently replace those defaults.
 
@@ -39,9 +41,9 @@ Claude Opus 5.5 and Fable 5.1 always use adaptive thinking. Wuu maps a saved `no
 
 | Connection | Setup |
 |---|---|
-| Codex subscription | Sign in with Codex CLI, then choose to reuse the detected login during first-run setup. In configuration, use the `openai-codex` provider with `reuse_codex_credentials`. Wuu's desktop does not start OpenAI OAuth login itself. In Settings → Subscriptions, open the account’s **…** menu. “Use local Codex login” selects the local login over Wuu’s saved credentials without changing the model. “Check login again” verifies authentication by fetching the model list. Wuu reads the local login on each request, so refreshed credentials take effect without a restart. |
-| xAI SuperGrok | Add an **xAI SuperGrok** provider and follow the browser login. For the CLI, run `wuu login xai` and select `--provider xai-subscription`. |
-| Grok Build | Run `grok login`, then select the detected provider in Wuu or pass `--provider grok-build`. If the login expires, sign in again with Grok CLI; Wuu does not refresh or modify those credentials. |
+| Codex subscription | Sign in with Codex CLI, then choose **OpenAI → ChatGPT / Codex CLI** in Model services or first-run setup. In configuration, use the `openai-codex` provider with `reuse_codex_credentials`. Wuu's desktop does not start OpenAI OAuth login itself. In Settings → Subscriptions, open the account’s **…** menu. “Use local Codex login” selects the local login over Wuu’s saved credentials without changing the model. “Check login again” verifies authentication by fetching the model list. Wuu reads the local login on each request, so refreshed credentials take effect without a restart. |
+| xAI SuperGrok | Choose **xAI → Grok / X** and follow the browser login. For the CLI, run `wuu login xai` and select `--provider xai-subscription`. |
+| Grok Build | Run `grok login`, then choose **xAI → Grok Build CLI**, select the detected provider in Wuu, or pass `--provider grok-build`. If the login expires, sign in again with Grok CLI; Wuu does not refresh or modify those credentials. |
 
 SuperGrok subscription login, Grok CLI login, and an `XAI_API_KEY` are separate credential sources. Use the connection that matches your account. File editing and command execution also require the selected service and model to support tool calling.
 

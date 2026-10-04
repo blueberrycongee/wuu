@@ -437,16 +437,31 @@ type ConfigModelCatalogProvidersParams struct {
 	Provider string `json:"provider,omitempty"`
 }
 
-// CatalogProviderSummary is a catalog service Wuu can connect with a key.
+// CatalogProviderSummary describes a service and its supported connections.
 type CatalogProviderSummary struct {
-	ID           string                `json:"id"`
-	Name         string                `json:"name"`
-	Type         string                `json:"type"`
-	BaseURL      string                `json:"base_url"`
-	APIKeyEnv    string                `json:"api_key_env,omitempty"`
-	ModelCount   int                   `json:"model_count"`
-	DefaultModel string                `json:"default_model"`
-	Models       []CatalogModelSummary `json:"models,omitempty"`
+	ID           string                     `json:"id"`
+	Name         string                     `json:"name"`
+	Type         string                     `json:"type"`
+	BaseURL      string                     `json:"base_url"`
+	APIKeyEnv    string                     `json:"api_key_env,omitempty"`
+	ModelCount   int                        `json:"model_count"`
+	DefaultModel string                     `json:"default_model"`
+	Models       []CatalogModelSummary      `json:"models,omitempty"`
+	Connections  []CatalogConnectionSummary `json:"connections"`
+}
+
+// CatalogConnectionSummary keeps authentication and transport choices together.
+// Top-level catalog model choices apply only to the API-key connection.
+type CatalogConnectionSummary struct {
+	ID                    string `json:"id"`
+	Name                  string `json:"name"`
+	Type                  string `json:"type"`
+	Auth                  string `json:"auth"` // api_key, oauth, or local
+	BaseURL               string `json:"base_url"`
+	DefaultModel          string `json:"default_model"`
+	Login                 string `json:"login,omitempty"`
+	ReuseCodexCredentials bool   `json:"reuse_codex_credentials,omitempty"`
+	DesktopOnly           bool   `json:"desktop_only,omitempty"`
 }
 
 type CatalogModelSummary struct {
@@ -975,8 +990,8 @@ type ConfigModelUpdateParams struct {
 	AuthToken      *string `json:"auth_token,omitempty"`
 	// Type is the provider protocol type used when CreateProvider is true.
 	// Accepted values: "openai", "openai-compatible", "anthropic", "claude",
-	// "anthropic-official", "xai-subscription", "grok-build". Codex OAuth types remain
-	// excluded because they require a separate connection flow.
+	// "anthropic-official", "xai-subscription", "grok-build", "openai-codex"
+	// and their supported aliases. Subscription credentials remain host-managed.
 	Type        *string `json:"type,omitempty"`
 	RemoveModel string  `json:"remove_model,omitempty"`
 	// AddModel re-enables a removed choice or adds a model ID the catalog

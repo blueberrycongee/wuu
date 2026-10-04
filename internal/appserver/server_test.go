@@ -3640,46 +3640,54 @@ func TestServerConfigProviderRemoveAllowsUnusedProviderWithRunningThread(t *test
 	}
 }
 
-func TestServerConfigProviderRemoveRejectsOAuth(t *testing.T) {
-	rt := newTestRuntime(t, &fakeClient{})
-	if err := os.WriteFile(rt.ConfigPath, []byte(`{
-  "default_provider": "real",
-  "providers": {
-    "real": {
-      "type": "openai-compatible",
-      "base_url": "https://real.example.test/v1",
-      "model": "real-model"
-    },
-    "codex": {
-      "type": "openai-codex",
-      "base_url": "https://chatgpt.example.test/backend-api/codex",
-      "model": "codex-model"
-    }
-  }
-}`), 0644); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-	out := &lockedBuffer{}
-	srv := New(rt, out)
-
-	req := `{"id":"1","method":"config/provider/remove","params":{"provider":"codex"}}`
-	if err := srv.handleLine(context.Background(), []byte(req)); err != nil {
-		t.Fatalf("config/provider/remove: %v", err)
-	}
-
-	response := responseByID(t, parseOutput(t, out.String()), "1")
-	if response["error"] == nil {
-		t.Fatal("expected OAuth removal to fail, got success")
-	}
-	if !strings.Contains(fmt.Sprint(response["error"]), "OAuth") {
-		t.Fatalf("expected OAuth error, got %+v", response["error"])
-	}
-	data, err := os.ReadFile(rt.ConfigPath)
-	if err != nil {
-		t.Fatalf("read config: %v", err)
-	}
-	if !strings.Contains(string(data), `"codex"`) {
-		t.Fatalf("OAuth provider was removed despite rejection: %s", data)
+// Removing one saved connection must not sign out its siblings. The last
+// connection removes Wuu's saved login, never a CLI-owned credential file.
+func TestServerConfigProviderRemoveSharedOAuth(t *testing.T) {
+	for _, kind := range []string{"openai-codex", "xai-subscription"} {
+		t.Run(kind, func(t *testing.T) {
+			rt := newTestRuntime(t, &fakeClient{})
+			baseURL := config.Default().Providers[kind].BaseURL
+			writeProviderSettingsConfig(t, rt, fmt.Sprintf(`{"default_provider":"fake-provider","providers":{
+				"fake-provider":{"type":"openai-compatible","base_url":"https://example.test/v1","model":"fake-model"},
+				%q:{"type":%q,"base_url":%q,"model":"subscription-model"},"second":{"type":%q,"base_url":%q,"model":"subscription-model"}}}`, kind, kind, baseURL, kind, baseURL))
+			store, err := authstorage.ForHome(os.Getenv("HOME"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := store.Set(kind, authstorage.Credentials{Type: "oauth", AccessToken: "fixture-only"}); err != nil {
+				t.Fatal(err)
+			}
+			out := &lockedBuffer{}
+			srv := New(rt, out)
+			for i, name := range []string{kind, "second"} {
+				id := fmt.Sprint(i)
+				req := fmt.Sprintf(`{"id":%q,"method":"config/provider/remove","params":{"provider":%q}}`, id, name)
+				if err := srv.handleLine(context.Background(), []byte(req)); err != nil {
+					t.Fatal(err)
+				}
+				if response := responseByID(t, parseOutput(t, out.String()), id); response["error"] != nil {
+					t.Fatalf("remove: %v", response["error"])
+				}
+				cfg := readProviderSettingsConfig(t, rt)
+				if _, exists := cfg.Providers[name]; exists {
+					t.Fatalf("%s was not removed", name)
+				}
+				if cfg.DefaultProvider != "fake-provider" {
+					t.Fatalf("removal changed default: %s", cfg.DefaultProvider)
+				}
+				credentials, err := store.Load()
+				if err != nil {
+					t.Fatal(err)
+				}
+				_, saved := credentials.Providers[kind]
+				if i == 0 && !saved {
+					t.Fatal("removing one connection lost shared login")
+				}
+				if i == 1 && saved {
+					t.Fatal("last connection left saved login")
+				}
+			}
+		})
 	}
 }
 

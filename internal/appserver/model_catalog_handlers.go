@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/modelcatalog"
 )
 
@@ -81,6 +82,29 @@ func catalogProviderSummary(provider modelcatalog.Connectable) CatalogProviderSu
 	}
 	if len(provider.Env) > 0 {
 		summary.APIKeyEnv = provider.Env[0]
+	}
+	summary.Connections = []CatalogConnectionSummary{{
+		ID: "api-key", Name: "API key", Auth: "api_key",
+		Type: provider.Type, BaseURL: provider.BaseURL, DefaultModel: provider.DefaultModel,
+	}}
+	// Subscription adapters keep their own transport, model defaults and
+	// credential ownership. The directory only advertises how to connect them.
+	var subscriptions []CatalogConnectionSummary
+	switch provider.ID {
+	case "openai":
+		subscriptions = []CatalogConnectionSummary{{ID: "codex-cli", Name: "ChatGPT / Codex CLI", Type: "openai-codex", Auth: "local", ReuseCodexCredentials: true}}
+	case "xai":
+		subscriptions = []CatalogConnectionSummary{
+			{ID: "xai-oauth", Name: "Grok / X", Type: "xai-subscription", Auth: "oauth", Login: "xai"},
+			{ID: "grok-cli", Name: "Grok Build CLI", Type: "grok-build", Auth: "local"},
+		}
+	}
+	for _, connection := range subscriptions {
+		providerDefaults := config.Default().Providers[connection.Type]
+		connection.BaseURL = providerDefaults.BaseURL
+		connection.DefaultModel = providerDefaults.Model
+		connection.DesktopOnly = true
+		summary.Connections = append(summary.Connections, connection)
 	}
 	return summary
 }

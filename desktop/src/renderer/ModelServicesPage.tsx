@@ -8,6 +8,7 @@ import {
   useState,
 } from "react";
 import type {
+  CatalogConnectionSummary,
   CatalogModelSummary,
   CatalogProviderSummary,
   InitializeResult,
@@ -73,8 +74,7 @@ export type ModelServicesPageProps = {
 
 type ConnectTarget =
   | { kind: "catalog"; provider: CatalogProviderSummary }
-  | { kind: "custom" }
-  | { kind: "subscription"; type: "xai-subscription" | "grok-build" };
+  | { kind: "custom" };
 
 // Catalog names are English and regional ("Moonshot AI (China)"); these are
 // the names people use for the services, localized where they differ.
@@ -100,7 +100,7 @@ const SERVICE_NAMES: Readonly<Record<string, string>> = {
 // Frequently used services come first for each language. The complete
 // catalog remains one click away, with existing connections marked in place.
 const FEATURED_SERVICES: Readonly<Record<"zh" | "en", readonly string[]>> = {
-  zh: ["deepseek", "moonshotai-cn", "zhipuai", "alibaba-cn", "volcengine", "siliconflow-cn", "minimax-cn", "openrouter", "openai", "anthropic"],
+  zh: ["deepseek", "moonshotai-cn", "zhipuai", "alibaba-cn", "volcengine", "siliconflow-cn", "minimax-cn", "openrouter", "openai", "anthropic", "xai"],
   en: ["openai", "anthropic", "openrouter", "deepseek", "xai", "moonshotai", "zai", "minimax", "alibaba", "siliconflow"],
 };
 // Keep gateway discovery separate from direct vendor APIs. Unrecognized
@@ -244,20 +244,38 @@ function errorMessage(error: unknown, t: Translate): string {
 
 type CatalogState = { providers?: CatalogProviderSummary[]; failed: boolean };
 
+// Cache per host bridge: returning to settings reuses the same complete
+// directory, while a different host and an explicit refresh fetch anew.
+const catalogCache = new WeakMap<typeof window.wuu.listCatalogProviders, {
+  providers?: CatalogProviderSummary[];
+  request: Promise<{ providers: CatalogProviderSummary[] }>;
+}>();
+
 export function useCatalogProviders(version: number): CatalogState {
-  const [state, setState] = useState<CatalogState>({ failed: false });
+  const loadCatalog = window.wuu?.listCatalogProviders;
+  const [state, setState] = useState<CatalogState>(() => ({ providers: catalogCache.get(loadCatalog)?.providers, failed: false }));
   useEffect(() => {
     if (!hostSupports("listCatalogProviders") || typeof window.wuu?.listCatalogProviders !== "function") {
       setState({ failed: true });
       return;
     }
     let active = true;
-    void window.wuu.listCatalogProviders().then(
+    let cached = catalogCache.get(loadCatalog);
+    if (!cached) {
+      cached = { request: loadCatalog() };
+      catalogCache.set(loadCatalog, cached);
+      const entry = cached;
+      void entry.request.then(
+        (result) => { entry.providers = result.providers; },
+        () => { if (catalogCache.get(loadCatalog) === entry) catalogCache.delete(loadCatalog); },
+      );
+    }
+    void cached.request.then(
       (result) => { if (active) setState({ providers: result.providers, failed: false }); },
-      () => { if (active) setState({ failed: true }); },
+      () => { if (active) setState((previous) => ({ ...previous, failed: true })); },
     );
     return () => { active = false; };
-  }, [version]);
+  }, [version, loadCatalog]);
   return state;
 }
 
@@ -296,6 +314,7 @@ export function ModelServicesPage({
     setCatalogRefreshing(true);
     try {
       await onRefreshModelCatalog();
+      catalogCache.delete(window.wuu.listCatalogProviders);
       setCatalogVersion((value) => value + 1);
     } finally {
       setCatalogRefreshing(false);
@@ -687,7 +706,7 @@ function ServiceDetail({
   const [busy, setBusy] = useState(false);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const [confirmingRemove, setConfirmingRemove] = useState(false);
-  const removable = !provider.auto_discovered && !isCodexType(provider.type);
+  const removable = !provider.auto_discovered;
   const disabled = running || busy;
 
   async function run(action: () => Promise<void>): Promise<boolean> {
@@ -1255,14 +1274,7 @@ function CatalogServiceGroups({
     host: hostFromBaseURL(provider.base_url),
     ambiguous: names.indexOf(names[index]) !== names.lastIndexOf(names[index]),
     connected: providers.filter((item) => item.catalog_id === provider.id),
-  })).filter((entry) => !normalized || `${entry.name} ${entry.provider.name} ${entry.provider.id} ${entry.host}`.toLocaleLowerCase().includes(normalized));
-  const subscriptions = isTouchWebShell() ? [] : (["xai-subscription", "grok-build"] as const)
-    .map((type) => ({
-      type,
-      name: type === "grok-build" ? t("provider.grokBuild") : t("provider.xaiSubscription"),
-      connected: providers.filter((provider) => type === "grok-build" ? isGrokBuildType(provider.type) : isXAISubscriptionType(provider.type)),
-    }))
-    .filter((entry) => !normalized || `${entry.name} ${entry.type}`.toLocaleLowerCase().includes(normalized));
+  })).filter((entry) => !normalized || `${entry.name} ${entry.provider.name} ${entry.provider.id} ${entry.host} ${entry.provider.connections.map((connection) => connection.name).join(" ")}`.toLocaleLowerCase().includes(normalized));
   const groups = [
     { id: "api", title: t("provider.catalogAPI"), hint: t("provider.catalogAPIHint"), entries: entries.filter((entry) => !isLocalCatalogService(entry.provider) && !GATEWAY_SERVICES.has(entry.provider.id)) },
     { id: "relay", title: t("provider.catalogRelay"), hint: t("provider.catalogRelayHint"), entries: entries.filter((entry) => !isLocalCatalogService(entry.provider) && GATEWAY_SERVICES.has(entry.provider.id)) },
@@ -1279,19 +1291,6 @@ function CatalogServiceGroups({
     </span>;
   }
 
-  const subscriptionTiles = subscriptions.map((entry) => (
-    <button
-      key={entry.type}
-      type="button"
-      className="model-service-tile"
-      data-subscription={entry.type}
-      disabled={disabled}
-      onClick={() => onConnect({ kind: "subscription", type: entry.type })}
-    >
-      <span className="provider-mark" aria-hidden="true"><EngineIcon engine="grok" className="provider-mark-engine" /></span>
-      <span className="model-catalog-name-line"><span className="model-service-tile-name">{entry.name}</span>{connectionState(entry.connected)}</span>
-    </button>
-  ));
   const catalogTiles = (group: (typeof groups)[number]) => group.entries.map((entry) => (
     <button
       key={entry.provider.id}
@@ -1308,14 +1307,13 @@ function CatalogServiceGroups({
       </span>
     </button>
   ));
-  const empty = entries.length === 0 && subscriptions.length === 0 && !pendingCatalogTiles
+  const empty = entries.length === 0 && !pendingCatalogTiles
     ? <p className="settings-group-empty">{t("provider.noServiceMatches")}</p>
     : null;
 
   if (!grouped) {
     return <>
       <div className="model-service-tiles">
-        {subscriptionTiles}
         {groups.flatMap(catalogTiles)}
         {Array.from({ length: pendingCatalogTiles }, (_, index) => (
           <div key={`pending-${index}`} className="model-service-tile model-service-skeleton" aria-hidden="true">
@@ -1330,12 +1328,6 @@ function CatalogServiceGroups({
   }
 
   return <>
-    {subscriptions.length ? (
-      <section className="model-catalog-group" aria-label={t("provider.catalogSubscription")}>
-        <div className="model-catalog-heading"><h3>{t("provider.catalogSubscription")}</h3><span>{t("provider.catalogSubscriptionHint")}</span></div>
-        <div className="model-service-tiles">{subscriptionTiles}</div>
-      </section>
-    ) : null}
     {groups.filter((group) => group.entries.length > 0).map((group) => (
       <section key={group.id} className="model-catalog-group" data-catalog-group={group.id} aria-label={group.title}>
         <div className="model-catalog-heading"><h3>{group.title}</h3>{group.hint ? <span>{group.hint}</span> : null}</div>
@@ -1401,25 +1393,33 @@ function ConnectServiceDialog({
   const { t } = useI18n();
   const fieldID = useId();
   const catalogProvider = target.kind === "catalog" ? target.provider : undefined;
-  const subscriptionType = target.kind === "subscription" ? target.type : undefined;
+  const methods = catalogProvider?.connections.filter((connection) => !connection.desktop_only || !isTouchWebShell()) ?? [];
+  const [methodID, setMethodID] = useState(methods[0]?.id);
+  const method = methods.find((connection) => connection.id === methodID);
   const title = catalogProvider
     ? catalogServiceName(catalogProvider.id, catalogProvider.name, t)
-    : subscriptionType === "grok-build"
-      ? t("provider.grokBuild")
-      : subscriptionType
-        ? t("provider.xaiSubscription")
-        : t("provider.customEndpoint");
+    : t("provider.customEndpoint");
   const heading = target.kind === "custom" ? t("provider.connectCustomTitle") : t("provider.connectTitle", { name: title });
   const [models, setModels] = useState<CatalogModelSummary[] | undefined>(undefined);
   const [apiKey, setAPIKey] = useState("");
-  const [model, setModel] = useState(catalogProvider?.default_model ?? (subscriptionType === "grok-build" ? "grok-4.5" : subscriptionType ? "grok-4.7" : ""));
-  const [baseURL, setBaseURL] = useState(catalogProvider?.base_url ?? "");
-  const [protocol, setProtocol] = useState(catalogProvider?.type ?? "openai-compatible");
-  const [name, setName] = useState(() => uniqueProviderName(catalogProvider?.id ?? subscriptionType ?? "custom", providers));
+  const [model, setModel] = useState(method?.default_model ?? "");
+  const [baseURL, setBaseURL] = useState(method?.base_url ?? "");
+  const [protocol, setProtocol] = useState(method?.type ?? "openai-compatible");
+  const [name, setName] = useState(() => uniqueProviderName(catalogProvider?.id ?? "custom", providers));
   const [makeDefault, setMakeDefault] = useState(defaultOn);
   const [pending, setPending] = useState(false);
   const [loginCode, setLoginCode] = useState("");
   const [error, setError] = useState("");
+
+  function changeMethod(next: CatalogConnectionSummary): void {
+    setMethodID(next.id);
+    setAPIKey("");
+    setModel(next.default_model);
+    setBaseURL(next.base_url);
+    setProtocol(next.type);
+    setName(uniqueProviderName(next.auth === "api_key" ? catalogProvider!.id : next.type, providers));
+    setError("");
+  }
 
   useEffect(() => {
     if (!catalogProvider) return;
@@ -1432,9 +1432,9 @@ function ConnectServiceDialog({
   }, [catalogProvider]);
 
   const nameTaken = providers.some((provider) => provider.name === name.trim());
-  const needsKey = !subscriptionType;
+  const needsKey = !method || method.auth === "api_key";
   const canSubmit = !pending && !running && !nameTaken && Boolean(name.trim()) && Boolean(model.trim()) &&
-    (!needsKey || Boolean(apiKey.trim())) && (Boolean(subscriptionType) || Boolean(baseURL.trim()));
+    (!needsKey || Boolean(apiKey.trim())) && Boolean(baseURL.trim());
   const modelOptions = (models ?? (catalogProvider ? [{ id: catalogProvider.default_model }] : []))
     .filter((item) => item.tool_call !== false || item.id === model)
     .map((item) => ({
@@ -1448,13 +1448,14 @@ function ConnectServiceDialog({
     setError("");
     setPending(true);
     try {
-      if (subscriptionType === "xai-subscription") await runXAILogin(setLoginCode, t);
+      if (method?.login === "xai") await runXAILogin(setLoginCode, t);
       const connection: RuntimeConnectionUpdate = {
-        type: subscriptionType ?? protocol,
+        type: protocol,
         create_provider: true,
         keep_selection: !makeDefault,
-        ...(subscriptionType ? {} : { base_url: baseURL.trim() }),
+        ...(needsKey ? { base_url: baseURL.trim() } : {}),
         ...(needsKey ? { api_key: apiKey.trim() } : {}),
+        ...(method?.reuse_codex_credentials ? { reuse_codex_credentials: true } : {}),
       };
       await onSave(name.trim(), model.trim(), undefined, connection);
       onConnected(name.trim());
@@ -1470,8 +1471,7 @@ function ConnectServiceDialog({
     <Modal
       ariaLabel={heading}
       icon={catalogProvider ? <ProviderMark id={catalogProvider.id} label={title} />
-        : subscriptionType ? <span className="provider-mark" aria-hidden="true"><EngineIcon engine="grok" className="provider-mark-engine" /></span>
-          : <span className="provider-mark is-quiet" aria-hidden="true"><Code2 className="icon" /></span>}
+        : <span className="provider-mark is-quiet" aria-hidden="true"><Code2 className="icon" /></span>}
       title={heading}
       subtitle={loginCode ? t("provider.xaiLoginCode", { code: loginCode }) : undefined}
       panelClassName="model-dialog model-connect-dialog"
@@ -1489,6 +1489,23 @@ function ConnectServiceDialog({
       </>}
     >
       <div className="model-connect-body">
+        {methods.length > 1 ? (
+          <div className="model-connect-field">
+            <span>{t("provider.connectionMethod")}</span>
+            <div className="theme-segmented model-connection-methods" role="group" aria-label={t("provider.connectionMethod")}>
+              {methods.map((connection) => (
+                <button key={connection.id} type="button" data-connection-method={connection.id}
+                  aria-pressed={methodID === connection.id} disabled={pending || running}
+                  onClick={() => changeMethod(connection)}>
+                  {connection.auth === "api_key" ? t("provider.apiKey") : connection.name}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
+        {method && !needsKey ? <p className="settings-section-note">{method.auth === "local"
+          ? t("provider.localConnectionHint", { name: method.name })
+          : t("provider.browserConnectionHint")}</p> : null}
         {target.kind === "custom" ? (
           <div className="model-connect-field">
             <span>{t("provider.protocol")}</span>
@@ -1531,7 +1548,7 @@ function ConnectServiceDialog({
         ) : null}
         <div className="model-connect-field">
           <span id={`${fieldID}-model`}>{target.kind === "custom" ? t("provider.modelId") : t("provider.modelLabel")}</span>
-          {catalogProvider ? (
+          {catalogProvider && needsKey ? (
             <SelectMenu
               triggerClassName="settings-select-trigger"
               ariaLabel={t("provider.modelLabel")}
@@ -1572,7 +1589,7 @@ function ConnectServiceDialog({
         <details className="model-connect-advanced">
           <summary><ChevronRight className="icon-sm settings-disclosure-chevron" aria-hidden="true" />{t("provider.advanced")}</summary>
           <div className="model-connect-advanced-body">
-          {catalogProvider ? (
+          {catalogProvider && needsKey ? (
             <label className="model-connect-field">
               <span>{t("settings.baseURL")}</span>
               <input

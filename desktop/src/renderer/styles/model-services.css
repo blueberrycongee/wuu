@@ -677,6 +677,15 @@
   justify-self: start;
 }
 
+.model-connect-field > .model-connection-methods {
+  justify-self: stretch;
+  flex-wrap: wrap;
+}
+
+.model-connection-methods button {
+  flex: 1 1 auto;
+}
+
 .model-connect-toggle {
   display: flex;
   align-items: center;

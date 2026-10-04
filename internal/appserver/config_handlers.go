@@ -1272,6 +1272,8 @@ func (s *Server) handleConfigModelUpdate(req Request) error {
 				providerTypeValue = requested
 			case "grok-build", "xai-grok-build", "grok-cli":
 				providerTypeValue = requested
+			case "openai-codex", "codex-subscription", "chatgpt-codex":
+				providerTypeValue = requested
 			default:
 				return s.writeResponse(req.ID, nil, fmt.Errorf("unsupported provider type %q", requested))
 			}
@@ -1282,10 +1284,13 @@ func (s *Server) handleConfigModelUpdate(req Request) error {
 		if baseURL == "" && config.IsGrokBuildProvider(providerTypeValue) {
 			baseURL = grokbuildspec.DefaultBaseURL
 		}
+		if baseURL == "" && isCodexProviderType(providerTypeValue) {
+			baseURL = config.Default().Providers["openai-codex"].BaseURL
+		}
 		if baseURL == "" {
 			return s.writeResponse(req.ID, nil, errors.New("base_url is required"))
 		}
-		if apiKey == "" && authToken == "" && !config.IsXAISubscriptionProvider(providerTypeValue) && !config.IsGrokBuildProvider(providerTypeValue) {
+		if apiKey == "" && authToken == "" && !config.IsXAISubscriptionProvider(providerTypeValue) && !config.IsGrokBuildProvider(providerTypeValue) && !isCodexProviderType(providerTypeValue) {
 			return s.writeResponse(req.ID, nil, errors.New("api_key or auth_token is required"))
 		}
 		providerCfg = config.ProviderConfig{
@@ -1824,6 +1829,17 @@ func (s *Server) handleConfigCodexModels(ctx context.Context, req Request) error
 	}, nil)
 }
 
+// Subscription credentials belong to the account, not a named connection.
+func subscriptionAuthProviderID(providerType string) string {
+	if isCodexProviderType(providerType) {
+		return "openai-codex"
+	}
+	if config.IsXAISubscriptionProvider(providerType) {
+		return xaisub.AuthProviderID
+	}
+	return ""
+}
+
 func (s *Server) handleConfigProviderRemove(req Request) error {
 	var params ConfigProviderRemoveParams
 	if err := decodeParams(req.Params, &params); err != nil {
@@ -1841,9 +1857,6 @@ func (s *Server) handleConfigProviderRemove(req Request) error {
 	if lookupErr != nil {
 		return s.writeResponse(req.ID, nil, lookupErr)
 	}
-	if isCodexProviderType(existing.Type) {
-		return s.writeResponse(req.ID, nil, fmt.Errorf("provider %q is managed by OpenAI OAuth and cannot be removed", providerName))
-	}
 	if threadID, inUse := s.runningTurnUsingProvider(resolvedName); inUse {
 		return s.writeResponse(req.ID, nil, fmt.Errorf("cannot remove provider %q while it is used by a running turn in thread %q", resolvedName, threadID))
 	}
@@ -1858,12 +1871,24 @@ func (s *Server) handleConfigProviderRemove(req Request) error {
 	if authErr != nil {
 		return s.writeResponse(req.ID, nil, fmt.Errorf("prepare credential cleanup: %w", authErr))
 	}
-	if authErr := authStore.DeleteProvider(resolvedName); authErr != nil {
-		return s.writeResponse(req.ID, nil, fmt.Errorf("remove provider credential: %w", authErr))
+	sharedID := subscriptionAuthProviderID(existing.Type)
+	sharedInUse := false
+	if sharedID != "" {
+		for name, provider := range cfg.Providers {
+			if name != resolvedName && subscriptionAuthProviderID(provider.Type) == sharedID {
+				sharedInUse = true
+				break
+			}
+		}
 	}
-	if config.IsXAISubscriptionProvider(existing.Type) {
-		if err := xaisub.DeleteTokens(os.Getenv("HOME")); err != nil {
-			return s.writeResponse(req.ID, nil, fmt.Errorf("remove SuperGrok credential: %w", err))
+	if resolvedName != sharedID {
+		if err := authStore.DeleteProvider(resolvedName); err != nil {
+			return s.writeResponse(req.ID, nil, fmt.Errorf("remove provider credential: %w", err))
+		}
+	}
+	if sharedID != "" && !sharedInUse {
+		if err := authStore.DeleteProvider(sharedID); err != nil {
+			return s.writeResponse(req.ID, nil, fmt.Errorf("remove subscription credential: %w", err))
 		}
 	}
 	newDefault, removeErr := config.RemoveProvider(s.rt.ConfigPath, providerName, params.FallbackProvider, params.FallbackModel)
@@ -2597,6 +2622,18 @@ func providerSummariesFromConfig(cfg config.Config, home string) []ProviderSumma
 		}
 		if matched, ok := modelcatalog.MatchProvider(name, provider); ok {
 			summary.CatalogID, summary.CatalogName = matched.ID, matched.Name
+		} else {
+			// Subscription endpoints differ from the API endpoint, but belong
+			// to the same service. This changes identity, not model discovery.
+			serviceID := ""
+			if isCodexProviderType(provider.Type) {
+				serviceID = "openai"
+			} else if config.IsXAISubscriptionProvider(provider.Type) || config.IsGrokBuildProvider(provider.Type) {
+				serviceID = "xai"
+			}
+			if matched, ok := modelcatalog.ProviderByID(serviceID); ok {
+				summary.CatalogID, summary.CatalogName = matched.ID, matched.Name
+			}
 		}
 		for id, model := range provider.Models {
 			if model.Disabled && strings.TrimSpace(id) != "" {

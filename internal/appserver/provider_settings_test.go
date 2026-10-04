@@ -149,6 +149,28 @@ func TestServerKeepSelectionCreatesProviderUnselected(t *testing.T) {
 	}
 }
 
+// Local subscriptions use ordinary creation, without accepting endpoint
+// overrides or accidentally selecting the new connection.
+func TestServerCreateLocalCodexConnection(t *testing.T) {
+	rt := newTestRuntime(t, &fakeClient{})
+	writeProviderSettingsConfig(t, rt, twoProviderSettingsConfig)
+	out := &lockedBuffer{}
+	srv := New(rt, out)
+	response := requestProviderSettings(t, srv, out, "override", `{"provider":"chatgpt","model":"gpt-6-astra","type":"openai-codex","base_url":"https://example.test","reuse_codex_credentials":true,"create_provider":true,"keep_selection":true}`)
+	if response["error"] == nil {
+		t.Fatal("a local OAuth connection accepted an endpoint override")
+	}
+	response = requestProviderSettings(t, srv, out, "create-local", `{"provider":"chatgpt","model":"gpt-6-astra","type":"openai-codex","reuse_codex_credentials":true,"create_provider":true,"keep_selection":true}`)
+	if response["error"] != nil {
+		t.Fatalf("create local subscription: %v", response["error"])
+	}
+	cfg := readProviderSettingsConfig(t, rt)
+	created := cfg.Providers["chatgpt"]
+	if cfg.DefaultProvider != "fake-provider" || rt.ProviderName != "fake-provider" || !created.ReuseCodexCredentials || created.Type != "openai-codex" || created.BaseURL != config.Default().Providers["openai-codex"].BaseURL {
+		t.Fatalf("local subscription create = default:%q provider:%+v", cfg.DefaultProvider, created)
+	}
+}
+
 func TestServerKeepSelectionOnTheDefaultProviderRebuildsItsConnection(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	writeProviderSettingsConfig(t, rt, twoProviderSettingsConfig)

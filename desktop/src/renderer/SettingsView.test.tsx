@@ -409,7 +409,10 @@ function servicesInitialized(): InitializeResult {
 const catalogProviders = [
   { id: "moonshotai-cn", name: "Moonshot AI (China)", type: "openai-compatible", base_url: "https://api.moonshot.cn/v1", model_count: 2, default_model: "kimi-k3" },
   { id: "deepseek", name: "DeepSeek", type: "openai-compatible", base_url: "https://api.deepseek.com", model_count: 4, default_model: "deepseek-v4-pro" },
-];
+].map((provider) => ({ ...provider, connections: [{
+  id: "api-key", name: "API key", auth: "api_key" as const,
+  type: provider.type, base_url: provider.base_url, default_model: provider.default_model,
+}] }));
 
 function installServicesStub(): WuuDesktopApi {
   installBuildInfoStub({ core: undefined, desktop: { version: "test", date: "today" } });
@@ -445,12 +448,26 @@ describe("SettingsView model services", () => {
     await flush();
 
     expect(container.querySelector('[role="status"]')).not.toBeNull();
+    expect(container.querySelectorAll('[data-testid="settings-provider-tiles"] button.model-service-tile')).toHaveLength(0);
     click(container.querySelector('[data-testid="settings-provider-custom"]'));
     expect(document.querySelector('[data-testid="settings-provider-connect-base-url"]')).not.toBeNull();
 
     await act(async () => { rejectCatalog(new Error("catalog unavailable")); });
     expect(container.querySelector('[role="status"]')).toBeNull();
     expect(container.querySelector('[data-testid="settings-provider-custom"]')).not.toBeNull();
+  });
+
+  it("reuses a loaded directory when returning to model services", async () => {
+    const api = installServicesStub();
+    renderSettings({ initialized: servicesInitialized(), initialPage: "providers" });
+    await flush();
+    act(() => root?.unmount());
+    root = null;
+    renderSettings({ initialized: servicesInitialized(), initialPage: "providers" });
+    expect(container.querySelector('[data-catalog="deepseek"]')).not.toBeNull();
+    expect(container.querySelector('[role="status"]')).toBeNull();
+    await flush();
+    expect(api.listCatalogProviders).toHaveBeenCalledTimes(1);
   });
 
   it("leads with the default model and names connected services by vendor", async () => {
