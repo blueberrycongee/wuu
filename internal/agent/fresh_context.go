@@ -9,6 +9,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/compact"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/workingnotes"
 )
 
 const (
@@ -67,9 +68,26 @@ func buildFreshContext(messages []providers.ChatMessage, historyHeadSeq, fixedTo
 	if task != nil && task.Seq > 0 {
 		recovery += fmt.Sprintf(" The latest user instruction is at Seq %d.", task.Seq)
 	}
+	request := acceptedNewContextRequest(messages)
+	if request != nil && request.Checkpoint != nil {
+		recovery += " A saved checkpoint read is supplied in wuu_context_checkpoint. Call notes with those arguments directly (through tools in run_code when PTC is enabled); discovery is unnecessary. If the collection revision changed, reread the same path without the stale revision and reconcile the current note before continuing."
+	}
 	replacement := append(freshContextSystemPrefix(messages), providers.ChatMessage{
 		Role: "system", Content: recovery, Hidden: true, Origin: "internal", Cause: "fresh_context",
 	})
+	if request != nil && request.Checkpoint != nil {
+		// Keep model-authored note addresses as data, not system instructions.
+		read, _ := json.Marshal(map[string]any{
+			"tool": "notes",
+			"arguments": map[string]any{
+				"action": "read", "path": request.Checkpoint.Path, "revision": request.Checkpoint.Revision,
+			},
+		})
+		replacement = append(replacement, providers.ChatMessage{
+			Role: "user", Name: "wuu_context_checkpoint", Content: string(read),
+			Hidden: true, Origin: "internal", Cause: "fresh_context",
+		})
+	}
 	budget := targetTokens - fixedTokens - min(freshContextTransformReserveTokens, targetTokens/10)
 	if estimateFreshContextMessages(replacement, policies...) > budget {
 		return nil, ErrFreshContextTooLarge
@@ -120,20 +138,26 @@ func estimateFreshContextMessages(messages []providers.ChatMessage, policies ...
 	return estimateOutboundRequestTokens(providers.ChatRequest{Messages: messages, MediaInput: policy})
 }
 
-func acceptedNewContextRequest(results []providers.ChatMessage) bool {
-	// Failed or truncated tool calls have no control effect.
-	for _, message := range results {
+type newContextRequest struct {
+	Requested  bool                     `json:"requested"`
+	Checkpoint *workingnotes.Checkpoint `json:"checkpoint,omitempty"`
+}
+
+func acceptedNewContextRequest(results []providers.ChatMessage) *newContextRequest {
+	// Only the latest tool batch can request a transition, even if steering
+	// arrived after it. Do not reuse a reference from an earlier assistant step.
+	// Failed or truncated calls have no control effect.
+	for index := len(results) - 1; index >= 0 && results[index].Role != "assistant"; index-- {
+		message := results[index]
 		if message.Role != "tool" || message.Name != newContextToolName || message.ToolResult == nil || message.ToolResult.IsError {
 			continue
 		}
-		var signal struct {
-			Requested bool `json:"requested"`
-		}
+		var signal newContextRequest
 		if json.Unmarshal([]byte(message.ToolResult.TextProjection()), &signal) == nil && signal.Requested {
-			return true
+			return &signal
 		}
 	}
-	return false
+	return nil
 }
 
 func deferRepeatedContextTransition(messages []providers.ChatMessage, currentTokens, targetTokens int) bool {
@@ -158,7 +182,7 @@ func withContextWindowGuidance(base func() []ContextSegment) func() []ContextSeg
 			segments = append(segments, base()...)
 		}
 		segments = append(segments, RequestOnlyContextMessages([]providers.ChatMessage{
-			contextWindowReminder(`For work spanning context windows or a requested handoff, keep a concise notes checkpoint: goal, constraints, key decisions, verified progress, remaining work and file or History Seq references. Update it for meaningful changes and before new_context; routine activity or a final reply alone does not require an update. After a reset, read the checkpoint and recover missing evidence before acting. Use history_read for known Seq addresses, otherwise history_search.`),
+			contextWindowReminder(`For work spanning context windows or a requested handoff, keep a concise notes checkpoint: goal, constraints, key decisions, verified progress, remaining work and file or History Seq references. Update it for meaningful changes and before new_context, then pass its path and the latest notes collection revision as checkpoint; routine activity or a final reply alone does not require an update. After a reset, read the supplied checkpoint directly and recover missing evidence before acting. Use history_read for known Seq addresses, otherwise history_search.`),
 		})...)
 		return segments
 	}
