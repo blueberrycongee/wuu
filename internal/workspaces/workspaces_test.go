@@ -44,7 +44,7 @@ func TestListEmptyHome(t *testing.T) {
 	}
 }
 
-func TestBoundaryRootsIncludesRuntimeWorkspacesTempAndExtras(t *testing.T) {
+func TestBoundaryRootsIncludesRuntimeWuuHomeWorkspacesTempAndExtras(t *testing.T) {
 	home := t.TempDir()
 	store := `{"projects":[{"name":"wuu","path":"/repos/wuu"},{"name":"other","path":"/repos/other"}]}`
 	if err := os.WriteFile(filepath.Join(home, "projects.json"), []byte(store), 0o644); err != nil {
@@ -52,7 +52,7 @@ func TestBoundaryRootsIncludesRuntimeWorkspacesTempAndExtras(t *testing.T) {
 	}
 
 	roots := BoundaryRoots("/runtime/root", home, "  ", "/session/artifacts", "/memory")
-	want := []string{"/runtime/root", "/repos/wuu", "/repos/other", os.TempDir(), "/session/artifacts", "/memory"}
+	want := []string{"/runtime/root", home, "/repos/wuu", "/repos/other", os.TempDir(), "/session/artifacts", "/memory"}
 	if len(roots) != len(want) {
 		t.Fatalf("BoundaryRoots length = %d, want %d: %+v", len(roots), len(want), roots)
 	}

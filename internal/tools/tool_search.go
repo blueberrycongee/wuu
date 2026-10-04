@@ -724,7 +724,7 @@ func grepWithRipgrep(ctx context.Context, env *Env, rootDir, pattern, searchRoot
 		matches = append(matches, grepMatch{
 			File:    rel,
 			Line:    event.Data.LineNumber,
-			Content: grepMatchContentForPath(env, rel, strings.TrimRight(event.Data.Lines.Text, "\r\n")),
+			Content: grepMatchContentForPath(env, rootDir, rel, strings.TrimRight(event.Data.Lines.Text, "\r\n")),
 		})
 		if limit > 0 && len(matches) >= limit {
 			earlyStop = true
@@ -824,7 +824,7 @@ func grepWithFallback(ctx context.Context, env *Env, rootDir, pattern, searchRoo
 				matches = append(matches, grepMatch{
 					File:    rel,
 					Line:    lineNum,
-					Content: grepMatchContentForPath(env, rel, string(line)),
+					Content: grepMatchContentForPath(env, rootDir, rel, string(line)),
 				})
 				if limit > 0 && len(matches) >= limit {
 					return false
@@ -845,7 +845,10 @@ func grepWithFallback(ctx context.Context, env *Env, rootDir, pattern, searchRoo
 	return matches, nil
 }
 
-func grepMatchContentForPath(env *Env, path, content string) string {
+func grepMatchContentForPath(env *Env, rootDir, path, content string) string {
+	if isWuuCredentialPath(filepath.Join(rootDir, filepath.FromSlash(path))) {
+		return "[REDACTED: Wuu credential file content]"
+	}
 	if !isSensitivePath(path) {
 		return content
 	}

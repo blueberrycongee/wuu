@@ -12,7 +12,7 @@ For the Wuu engine:
 | Read only `read_only` | Same read scope; mutating calls are refused | Allowed commands run with filesystem writes restricted |
 | Unconfined `unconfined` | Removes the normal path boundary; dedicated sensitive-path guards remain | Removes Wuu's filesystem process sandbox |
 
-Registered file roots can include the agent's scoped home, user workspaces, and the system temporary directory. Commands do not receive the whole shared temporary directory as a writable root: they get a private temporary directory instead.
+The normal file scope includes the agent's scoped home, Wuu home (`~/.wuu` or `$WUU_HOME`), registered user workspaces, and the system temporary directory. Non-credential files under Wuu home, including configuration and runtime records, follow the ordinary file boundary rather than a directory-wide sensitive-path ban. Standard commands also receive Wuu home as a writable root. Commands do not receive the whole shared temporary directory as a writable root: they get a private temporary directory instead.
 
 On macOS, both confined modes also permit writes to the current user’s Module Directory Services (`mds`) cache, which Keychain reads require. This exception does not grant direct filesystem writes to keychain stores or other user caches.
 
