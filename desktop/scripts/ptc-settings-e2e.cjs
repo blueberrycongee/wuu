@@ -42,12 +42,6 @@ async function openRuntime(win) {
   await waitFor(win, () => Boolean(document.querySelector('.settings-nav-item')));
   await openSettingsPage(win, "/^(Built-in agent|内置 Agent)$/", '[data-testid="settings-ptc-enabled"]');
 }
-async function choose(win, selector, value) {
-  await win.webContents.executeJavaScript(`document.querySelector(${JSON.stringify(selector)}).click()`);
-  await waitFor(win, () => Boolean(document.querySelector('[role="menu"]')));
-  await win.webContents.executeJavaScript(`document.querySelector('[role="menuitemradio"][data-value="${value}"]').click()`);
-  await waitFor(win, () => !document.querySelector('[data-testid="settings-ptc-family-mode"]').disabled);
-}
 app.whenReady().then(async () => {
   const win = new BrowserWindow({ width: 1180, height: 860, show: false, webPreferences: {
     contextIsolation: true, nodeIntegration: false, sandbox: false, backgroundThrottling: false,
@@ -56,17 +50,11 @@ app.whenReady().then(async () => {
   await win.loadFile(path.join(desktopRoot, "out", "renderer", "index.html"));
   await openRuntime(win);
   assert.equal(await evaluate(win, () => document.querySelector('[data-testid="settings-ptc-enabled"]').getAttribute("aria-checked")), "true");
-  await choose(win, '[data-testid="settings-ptc-family-mode"]', "off");
-  let settings = await evaluate(win, async () => (await window.wuu.initialize()).general_settings.ptc);
-  assert.deepEqual(settings, { enabled: true, families: { gpt: false } });
-  await choose(win, '[data-testid="settings-ptc-family-mode"]', "inherit");
-  settings = await evaluate(win, async () => (await window.wuu.initialize()).general_settings.ptc);
-  assert.deepEqual(settings, { enabled: true, families: {} });
+  let settings;
   await evaluate(win, () => document.querySelector('[data-testid="settings-ptc-enabled"]').click());
   await waitFor(win, () => document.querySelector('[data-testid="settings-ptc-enabled"]').getAttribute("aria-checked") === "false");
-  await choose(win, '[data-testid="settings-ptc-family-mode"]', "on");
   settings = await evaluate(win, async () => (await window.wuu.initialize()).general_settings.ptc);
-  assert.deepEqual(settings, { enabled: false, families: { gpt: true } });
+  assert.deepEqual(settings, { enabled: false });
   const samples = [];
   for (const theme of ["light", "dark"]) for (const font of [14, 20]) for (const width of [1180, 640]) {
     win.setContentSize(width, 860);
@@ -87,14 +75,6 @@ app.whenReady().then(async () => {
     assert.ok(geometry.every(g => g.visible && g.hit), JSON.stringify({theme,font,width,geometry}));
     samples.push({ theme, font, width, geometry });
   }
-  await evaluate(win, () => document.querySelector('[data-testid="settings-ptc-family-mode"]').focus());
-  win.webContents.sendInputEvent({type:"keyDown",keyCode:"Space"});
-  win.webContents.sendInputEvent({type:"keyUp",keyCode:"Space"});
-  await waitFor(win, () => Boolean(document.querySelector('[role="menu"]')));
-  await settle(win);
-  fs.writeFileSync(path.join(evidence, "keyboard-menu.png"), (await win.webContents.capturePage()).toPNG());
-  await evaluate(win, () => document.querySelector('[role="menuitemradio"][data-value="inherit"]').click());
-  await waitFor(win, () => !document.querySelector('[data-testid="settings-ptc-family-mode"]').disabled);
   await openSettingsPage(win, "/^(General|常规)$/", '[data-testid="settings-general"]');
   await evaluate(win, () => [...document.querySelectorAll('[data-testid="settings-general"] button')].find(button => button.textContent.trim() === "English").click());
   await waitFor(win, () => document.documentElement.lang === "en-US");
@@ -106,7 +86,7 @@ app.whenReady().then(async () => {
     fs.writeFileSync(path.join(evidence, `english-${font}-640.png`), (await win.webContents.capturePage()).toPNG());
   }
   settings = await evaluate(win, async () => (await window.wuu.initialize()).general_settings.ptc);
-  assert.deepEqual(settings, { enabled: false, families: {} });
+  assert.deepEqual(settings, { enabled: false });
   fs.writeFileSync(path.join(evidence, "results.json"), JSON.stringify({settings, samples}, null, 2));
   console.log(JSON.stringify({ok:true, samples:samples.length, settings, evidence}));
   win.destroy(); app.quit();

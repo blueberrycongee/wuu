@@ -9,12 +9,12 @@ import (
 	"github.com/blueberrycongee/wuu/internal/tools"
 )
 
-func TestSessionPTCDefaultAndFamilyOptIn(t *testing.T) {
+func TestSessionPTCGlobalSwitch(t *testing.T) {
 	for _, enabled := range []bool{false, true} {
 		root, home := t.TempDir(), t.TempDir()
 		t.Setenv("WUU_HOME", filepath.Join(home, "state"))
 		t.Setenv("TEST_WUU_KEY", "fixture")
-		s, err := NewSession(Options{RootDir: root, HomeDir: home, Config: config.Config{DefaultProvider: "test", Providers: map[string]config.ProviderConfig{"test": {Type: "openai-compatible", BaseURL: "https://example.test/v1", APIKeyEnv: "TEST_WUU_KEY", Model: "gpt-5"}}, PTC: config.PTCConfig{Families: map[string]bool{"gpt": enabled}}}})
+		s, err := NewSession(Options{RootDir: root, HomeDir: home, Config: config.Config{DefaultProvider: "test", Providers: map[string]config.ProviderConfig{"test": {Type: "openai-compatible", BaseURL: "https://example.test/v1", APIKeyEnv: "TEST_WUU_KEY", Model: "gpt-5"}}, PTC: config.PTCConfig{Enabled: enabled}}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -36,7 +36,7 @@ func TestSessionPTCDefaultAndFamilyOptIn(t *testing.T) {
 	}
 }
 
-func TestWorkerPTCSurfaceUsesItsFamilySetting(t *testing.T) {
+func TestWorkerPTCSurfaceUsesGlobalSetting(t *testing.T) {
 	kit, err := tools.New(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -44,7 +44,7 @@ func TestWorkerPTCSurfaceUsesItsFamilySetting(t *testing.T) {
 	service := codemode.NewService(codemode.ServiceConfig{})
 	defer service.Close()
 	for _, enabled := range []bool{false, true} {
-		kit.ConfigurePTC(service, config.PTCConfig{Enabled: !enabled, Families: map[string]bool{"claude": enabled}})
+		kit.ConfigurePTC(service, config.PTCConfig{Enabled: enabled})
 		kit.ConfigureSurfaceForProviderModel("openai", "gpt-5", true)
 		surface, err := workerToolSurfaceForToolkit(kit, "anthropic", "claude-sonnet-4", true)
 		if err != nil {

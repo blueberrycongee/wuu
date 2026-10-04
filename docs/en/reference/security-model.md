@@ -24,8 +24,8 @@ scheduling, and audit pipeline. With **Approve for me** enabled in Standard
 mode, programs retain pre-launch review and each nested call retains its own
 checks. The host process keeps the session command sandbox as defense in depth.
 Cancellation stops the program and active calls without undoing completed effects.
-PTC is on by default for the built-in engine, with explicit global and model-family
-opt-outs. Project configuration cannot change it or replace its executable.
+PTC is on by default for the built-in engine, with an explicit global
+opt-out. Project configuration cannot change it or replace its executable.
 Only explicit JSON checkpoints are retained in bounded, memory-only state,
 isolated by conversation, actor and workspace. Failed programs discard staged
 state changes; this does not undo tool effects. Direct interaction and lifecycle

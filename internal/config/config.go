@@ -128,19 +128,10 @@ type Config struct {
 	LegacyCodeMode json.RawMessage `json:"code_mode,omitempty"`
 }
 
-// PTCConfig controls the isolated tool runtime. A family override takes
-// precedence over Enabled; omitted families inherit the global switch.
+// PTCConfig controls the isolated tool runtime for all model families.
 type PTCConfig struct {
-	Enabled        bool            `json:"enabled"`
-	Families       map[string]bool `json:"families,omitempty"`
-	NodeExecutable string          `json:"node_executable,omitempty"`
-}
-
-func (c PTCConfig) EnabledFor(family string) bool {
-	if enabled, ok := c.Families[family]; ok {
-		return enabled
-	}
-	return c.Enabled
+	Enabled        bool   `json:"enabled"`
+	NodeExecutable string `json:"node_executable,omitempty"`
 }
 
 // InstructionFilesConfig overrides project and user instruction discovery.
@@ -567,7 +558,7 @@ func readConfig(path string) (Config, error) {
 // strictness.
 func decodeConfig(data []byte, sourcePath string) (Config, error) {
 	cfg := Config{PTC: PTCConfig{Enabled: true}}
-	sanitized := stripLegacyPermissionKeys(data)
+	sanitized := stripLegacyConfigKeys(data)
 	dec := json.NewDecoder(bytes.NewReader(sanitized))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&cfg); err != nil {
@@ -582,10 +573,23 @@ func decodeConfig(data []byte, sourcePath string) (Config, error) {
 	return cfg, nil
 }
 
-func stripLegacyPermissionKeys(data []byte) []byte {
+func stripLegacyConfigKeys(data []byte) []byte {
 	var raw map[string]any
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return data
+	}
+	// Remove this load-time cleanup once saved configurations no longer contain ptc.families.
+	for key, value := range raw {
+		if !strings.EqualFold(key, "ptc") {
+			continue
+		}
+		if ptc, ok := value.(map[string]any); ok {
+			for field := range ptc {
+				if strings.EqualFold(field, "families") {
+					delete(ptc, field)
+				}
+			}
+		}
 	}
 	if agent, _ := raw["agent"].(map[string]any); agent != nil {
 		for _, key := range []string{
@@ -1619,7 +1623,7 @@ func UpdateGeneralSettings(configPath string, update GeneralSettingsUpdate) erro
 			raw["ptc"] = ptc
 		}
 		ptc["enabled"] = update.PTC.Enabled
-		ptc["families"] = update.PTC.Families
+		delete(ptc, "families")
 	}
 
 	if update.GitAttributionEnabled != nil {

@@ -2180,7 +2180,7 @@ func TestServerConfigGeneralUpdatePersistsAndRefreshesRuntime(t *testing.T) {
 	srv := New(rt, out)
 	srv.threads[th.ID] = th
 
-	req := `{"id":"1","method":"config/general/update","params":{"git_attribution_enabled":false,"mcp_enabled_toggles":{"docs":false,"search":true},"ptc":{"enabled":true,"families":{"claude":false}}}}`
+	req := `{"id":"1","method":"config/general/update","params":{"git_attribution_enabled":false,"mcp_enabled_toggles":{"docs":false,"search":true},"ptc":{"enabled":true}}}`
 	if err := srv.handleLine(context.Background(), []byte(req)); err != nil {
 		t.Fatalf("config/general/update: %v", err)
 	}
@@ -2192,7 +2192,7 @@ func TestServerConfigGeneralUpdatePersistsAndRefreshesRuntime(t *testing.T) {
 		!result.GeneralSettings.MCPServerEnabled["search"] {
 		t.Fatalf("unexpected general settings result: %+v", result.GeneralSettings)
 	}
-	if !result.GeneralSettings.PTC.Enabled || result.GeneralSettings.PTC.EnabledFor("claude") {
+	if !result.GeneralSettings.PTC.Enabled {
 		t.Fatal("PTC configuration was not returned")
 	}
 	cfg, _, err := config.LoadPath(rt.ConfigPath)

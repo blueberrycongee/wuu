@@ -44,26 +44,27 @@ func codeModeDefsToProviderDefs(defs []codemode.ToolDefinition) []providers.Tool
 	}
 	return out
 }
-func TestPTCFamilySwitchAndExecutionBoundary(t *testing.T) {
+func TestPTCGlobalSwitchAndExecutionBoundary(t *testing.T) {
 	kit := newCodeModeTestToolkit(t)
-	kit.ConfigurePTC(kit.CodeModeService(), config.PTCConfig{Enabled: true, Families: map[string]bool{"claude": false}})
+	kit.ConfigurePTC(kit.CodeModeService(), config.PTCConfig{Enabled: true})
 	if !contains("run_code", kit.Definitions()) || contains("read_file", kit.Definitions()) {
 		t.Fatal("PTC surface is not collapsed")
 	}
 	if _, err := kit.ExecuteResult(context.Background(), providers.ToolCall{Name: "read_file", Arguments: `{"path":"README.md"}`}); err == nil {
 		t.Fatal("model-direct leaf call bypassed PTC")
 	}
+	kit.ConfigurePTC(kit.CodeModeService(), config.PTCConfig{Enabled: false})
 	kit.ConfigureSurfaceForProviderModel("anthropic", "claude-sonnet-4", true)
 	if contains("run_code", kit.Definitions()) || !contains("read_file", kit.Definitions()) {
-		t.Fatal("family disabled override ignored")
+		t.Fatal("global opt-out ignored")
 	}
 	clone, err := kit.CloneForRoot(kit.RootDir())
 	if err != nil {
 		t.Fatal(err)
 	}
 	clone.ConfigureSurfaceForProviderModel("deepseek", "deepseek-v4", true)
-	if !contains("run_code", clone.Definitions()) || contains("run_code", kit.Definitions()) {
-		t.Fatal("thread family selection leaked")
+	if contains("run_code", clone.Definitions()) || contains("run_code", kit.Definitions()) {
+		t.Fatal("provider selection changed the global switch")
 	}
 }
 func TestPTCNestedReadThroughRealNode(t *testing.T) {
@@ -360,11 +361,13 @@ func TestPTCStateFollowsConversationActorAndWorkspace(t *testing.T) {
 	kit.SetRootDir(t.TempDir())
 	check(kit, `return typeof load("checkpoint");`, `"undefined"`)
 	kit.SetRootDir(root)
-	kit.ConfigurePTC(kit.CodeModeService(), config.PTCConfig{Enabled: true, Families: map[string]bool{"claude": false}})
+	kit.ConfigurePTC(kit.CodeModeService(), config.PTCConfig{Enabled: true})
+	kit.ConfigurePTC(kit.CodeModeService(), config.PTCConfig{Enabled: false})
 	kit.ConfigureSurfaceForProviderModel("anthropic", "claude-sonnet-4", true)
 	if contains("run_code", kit.Definitions()) {
-		t.Fatal("family opt-out ignored")
+		t.Fatal("global opt-out ignored")
 	}
+	kit.ConfigurePTC(kit.CodeModeService(), config.PTCConfig{Enabled: true})
 	kit.ConfigureSurfaceForProviderModel("deepseek", "deepseek-v4", true)
 	check(kit, `return load("checkpoint");`, `{"done":2}`)
 	if err := kit.CodeModeService().Close(); err != nil {

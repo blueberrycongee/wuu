@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -72,7 +71,6 @@ type Toolkit struct {
 	codeModeMu              sync.RWMutex
 	codeMode                *codemode.Service
 	ptcConfig               config.PTCConfig
-	ptcFamily               string
 	codeModeAdditionalTools func() []providers.ToolDefinition
 	// mcpManager, when set, exposes MCP server tools alongside built-in
 	// tools. MCP tools are appended after built-ins to preserve prompt
@@ -317,13 +315,10 @@ func (t *Toolkit) CloneForRoot(rootDir string) (*Toolkit, error) {
 	clone.toolSearchEnabled = t.toolSearchEnabled
 	clone.nativeDeferredDiscovery = t.nativeDeferredDiscovery
 	t.exposureMu.RUnlock()
-	// Thread clones share the PTC lifecycle owner; programs and model-family
-	// selections remain independent.
+	// Thread clones share the PTC lifecycle owner; programs remain independent.
 	t.codeModeMu.RLock()
 	clone.codeMode = t.codeMode
 	clone.ptcConfig = t.ptcConfig
-	clone.ptcConfig.Families = maps.Clone(t.ptcConfig.Families)
-	clone.ptcFamily = t.ptcFamily
 	t.codeModeMu.RUnlock()
 	t.activeProfileMu.RLock()
 	clone.activeProfile = t.activeProfile
@@ -429,7 +424,6 @@ func (t *Toolkit) CodeModeService() *codemode.Service {
 func (t *Toolkit) ConfigurePTC(service *codemode.Service, cfg config.PTCConfig) {
 	t.codeModeMu.Lock()
 	t.ptcConfig = cfg
-	t.ptcConfig.Families = maps.Clone(cfg.Families)
 	t.codeModeMu.Unlock()
 	t.SetCodeModeService(service)
 }
@@ -438,7 +432,7 @@ func (t *Toolkit) ConfigurePTC(service *codemode.Service, cfg config.PTCConfig) 
 func (t *Toolkit) CodeModeOnly() bool {
 	t.codeModeMu.RLock()
 	defer t.codeModeMu.RUnlock()
-	return t.codeMode != nil && t.ptcConfig.EnabledFor(t.ptcFamily)
+	return t.codeMode != nil && t.ptcConfig.Enabled
 }
 
 // ── Dependency setters ─────────────────────────────────────────────
@@ -1008,9 +1002,6 @@ func (t *Toolkit) setActiveProfileForSurface(p modelprofile.Profile, kind modelp
 	t.activeProfileMu.Lock()
 	defer t.activeProfileMu.Unlock()
 	t.activeProfile = p
-	t.codeModeMu.Lock()
-	t.ptcFamily = string(p.Family)
-	t.codeModeMu.Unlock()
 	// A project surface includes its session tool even without a model profile.
 	if (p == modelprofile.Profile{}) && kind != modelprofile.SurfaceProjectSession {
 		t.activeSurface = capability.Surface{}

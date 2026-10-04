@@ -140,8 +140,8 @@ image for the model. External agent engines use their own file and image tools.
 
 The built-in engine uses programmatic tool calling (PTC) by default. Ordinary
 file, command, search, browser, API and extension tools run through `run_code`.
-**Settings → Runtime → Programmatic tool calling** provides a global switch
-and model-family overrides. Explicit saved choices are preserved; configurations
+**Settings → Built-in agent → Programmatic tool calling** provides one switch
+for all models. Explicit saved choices are preserved; configurations
 that omit the switch use the default. Changes require idle turns and apply on
 the next turn. External engines keep their own tools.
 
@@ -230,14 +230,12 @@ requires protocol version 3; upgrade older workers before using them.
 Desktop includes its runtime. CLI ordinary tools require Node.js 22.19 or later
 on `PATH`, or `ptc.node_executable` in user configuration. Missing or unsupported
 runtimes fail visibly; there is no silent switch to another execution model.
-To choose direct tool calls instead, explicitly disable PTC globally or for a
-family, for example:
+To choose direct tool calls instead, explicitly disable PTC globally, for example:
 
 ```json
 {
   "ptc": {
-    "enabled": true,
-    "families": { "local": false }
+    "enabled": false
   }
 }
 ```
@@ -245,6 +243,7 @@ family, for example:
 Normal project configuration cannot change these settings or the executable.
 The retired `code_mode` field is ignored and removed when PTC settings are
 saved; it cannot reactivate a broader runtime or restore old execution cells.
+Retired `ptc.families` overrides are ignored and removed when PTC settings are saved.
 
 ## Large tool results
 

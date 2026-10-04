@@ -272,7 +272,6 @@ export type AdvancedSettingsSummary = {
 
 export type PTCSettings = {
   enabled: boolean;
-  families?: Record<string, boolean>;
 };
 
 export type ExecutionEnvironmentProfile = {

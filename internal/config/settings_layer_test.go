@@ -604,7 +604,7 @@ func TestLoadFrom_ProjectSecurityKeysAreCaseInsensitive(t *testing.T) {
 	if got := cfg.Agent.ModelRoles.Title; got.Provider != "local" || got.Model != "local-model" {
 		t.Fatalf("case variant changed title routing: %+v", got)
 	}
-	if cfg.PTC.EnabledFor("gpt") || cfg.PTC.NodeExecutable != "" {
+	if cfg.PTC.Enabled || cfg.PTC.NodeExecutable != "" {
 		t.Fatalf("project changed PTC authority: %+v", cfg.PTC)
 	}
 	if cfg.Agent.Effort != "high" {

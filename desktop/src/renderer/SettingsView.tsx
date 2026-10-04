@@ -1006,8 +1006,6 @@ function SettingsRuntimePage({
   const ptc = initialized?.general_settings?.ptc ?? { enabled: true };
   const [ptcBusy, setPTCBusy] = useState(false);
   const [ptcError, setPTCError] = useState("");
-  const [ptcFamily, setPTCFamily] = useState("gpt");
-  const ptcFamilyValue = ptc.families?.[ptcFamily];
   const [projectModelsBusy, setProjectModelsBusy] = useState(false);
   const [projectModelsError, setProjectModelsError] = useState<{ role: "side" | "worker"; message: string }>();
   const projectModels = initialized?.project_models ?? {};
@@ -1219,30 +1217,6 @@ function SettingsRuntimePage({
               onClick={() => void savePTC({ ...ptc, enabled: !ptc.enabled })}>
               <span className="settings-switch-thumb" aria-hidden="true" />
             </button>
-          </SettingsRow>
-          <SettingsRow title={t("settings.ptcFamily")} description={t("settings.ptcFamilyHint")}>
-            <SelectMenu triggerClassName="settings-select-trigger" ariaLabel={t("settings.ptcFamily")}
-              value={ptcFamily} onChange={setPTCFamily}
-              options={[
-                ["gpt", "GPT"], ["codex", "Codex"], ["claude", "Claude"], ["gemini", "Gemini"],
-                ["deepseek", "DeepSeek"], ["kimi", "Kimi"], ["qwen", "Qwen"],
-                ["local", t("settings.ptcLocal")], ["portable", t("settings.ptcOther")],
-              ].map(([value, label]) => ({ value, label }))} />
-            <SelectMenu triggerClassName="settings-select-trigger" ariaLabel={t("settings.ptcFamilyMode")}
-              dataTestid="settings-ptc-family-mode"
-              value={ptcFamilyValue === undefined ? "inherit" : ptcFamilyValue ? "on" : "off"}
-              disabled={!initialized || running || ptcBusy}
-              onChange={(value) => {
-                const families = { ...ptc.families };
-                if (value === "inherit") delete families[ptcFamily];
-                else families[ptcFamily] = value === "on";
-                void savePTC({ ...ptc, families });
-              }}
-              options={[
-                { value: "inherit", label: t("settings.ptcInherit") },
-                { value: "on", label: t("settings.ptcOn") },
-                { value: "off", label: t("settings.ptcOff") },
-              ]} />
           </SettingsRow>
           {ptcError ? <p className="settings-error" role="alert">{ptcError}</p> : null}
         </SettingsGroup>
