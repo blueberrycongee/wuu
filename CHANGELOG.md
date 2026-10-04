@@ -10,6 +10,7 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Remove the redundant heading from the conversation fork chooser.
 - Align motion easing, icon press feedback, notice dismissal, and activity
   rhythms with the shared motion settings and reduced-motion preference.
 

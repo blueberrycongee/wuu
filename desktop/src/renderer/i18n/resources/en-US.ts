@@ -1403,7 +1403,7 @@ export const enUS = {
   "app.todoInProgress": "In progress: {content}",
   "app.todoNext": "Next: {content}",
   "app.resizeRightSidebar": "Resize right sidebar",
-  "fork.title": "Fork from this message",
+  "fork.dialogLabel": "Fork conversation",
   "fork.localTitle": "This folder",
   "fork.localDescription": "Shares files with the original conversation",
   "fork.worktreeTitle": "New worktree",

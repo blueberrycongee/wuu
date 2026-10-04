@@ -1400,7 +1400,7 @@ export const zhCN = {
   "app.todoInProgress": "进行中：{content}",
   "app.todoNext": "下一项：{content}",
   "app.resizeRightSidebar": "调整右侧栏宽度",
-  "fork.title": "从这条消息分叉",
+  "fork.dialogLabel": "分叉对话",
   "fork.localTitle": "当前目录",
   "fork.localDescription": "与原对话共用同一份文件",
   "fork.worktreeTitle": "新的工作树",

@@ -1006,18 +1006,12 @@
 }
 
 /* Fork-from-earlier picker. Reuses the .environment-dialog shell while
-   keeping the dialog body on the two fork choices, which are its actions:
-   Cancel is the only footer control. */
+   keeping the dialog body on the two fork choices, which are its actions. */
 .fork-dialog {
   --environment-dialog-max-width: 440px;
 }
 
-.fork-dialog h2 {
-  font-size: var(--font-title);
-  line-height: var(--line-ui);
-}
-
-/* Rows reach into the panel padding so their glyphs start on the title's
+/* Rows reach into the panel padding so their glyphs start on the content's
    edge; the row corner is the panel corner minus that remaining inset. */
 .fork-dialog-options {
   display: grid;

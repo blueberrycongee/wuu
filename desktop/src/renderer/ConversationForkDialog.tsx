@@ -54,7 +54,6 @@ export function ConversationForkDialog({
   const [busyMode, setBusyMode] = useState<ForkMode | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | undefined>(undefined);
   const disabled = busyMode !== null;
-  const title = t("fork.title");
 
   async function handleChoose(mode: ForkMode): Promise<void> {
     if (busyMode !== null) {
@@ -93,8 +92,7 @@ export function ConversationForkDialog({
 
   return (
     <Modal
-      ariaLabel={title}
-      title={title}
+      ariaLabel={t("fork.dialogLabel")}
       onClose={onCancel}
       closeDisabled={disabled}
       showCloseButton={false}

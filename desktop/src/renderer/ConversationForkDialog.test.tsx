@@ -52,13 +52,11 @@ afterEach(() => {
 });
 
 describe("ConversationForkDialog", () => {
-  it("names itself with a visible title", () => {
+  it("names itself for assistive technology", () => {
     mount(createElement(ConversationForkDialog, { onCancel: vi.fn(), onChoose: vi.fn() }));
 
     const dialog = document.querySelector('[role="dialog"]');
-    const title = dialog?.querySelector("h2")?.textContent?.trim();
-    expect(title).toBeTruthy();
-    expect(dialog?.getAttribute("aria-label")).toBe(title);
+    expect(dialog?.getAttribute("aria-label")?.trim()).toBeTruthy();
     expect(options()).toHaveLength(2);
   });
 
@@ -79,7 +77,7 @@ describe("ConversationForkDialog", () => {
       // Only the two destinations are actions; dismissal does not compete with them.
       expect([...dialog.querySelectorAll("button")]).toEqual(options());
       expect(document.activeElement).toBe(localOption());
-      act(() => dialog.querySelector<HTMLElement>("h2")!.click());
+      act(() => dialog.click());
       expect(document.querySelector('[role="dialog"]')).toBe(dialog);
       act(() => worktreeOption().focus());
       pressKey(worktreeOption(), "Tab");
