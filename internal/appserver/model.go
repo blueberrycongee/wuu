@@ -1972,6 +1972,17 @@ func chatMessageInputText(msg providers.ChatMessage) string {
 	// Keep the expanded slash-command prompt, but exclude working-copy paths
 	// from public input that callers may submit again when retrying a turn.
 	content := strings.TrimSuffix(msg.Content, inputImagePathReference(msg.Images))
+	for _, part := range msg.ContentParts {
+		if part.Type == "pasted_text" && part.LocalPath != "" {
+			// Resubmission uses the authored snapshot, never generated file paths.
+			var authored strings.Builder
+			for _, snapshot := range msg.ContentParts {
+				authored.WriteString(snapshot.Text)
+			}
+			content = authored.String()
+			break
+		}
+	}
 	if strings.TrimSpace(content) == "" || strings.TrimSpace(content) == strings.TrimSpace(chatMessageDisplayContent(msg)) {
 		return ""
 	}

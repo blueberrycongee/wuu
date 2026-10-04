@@ -1040,7 +1040,7 @@ export const zhCN = {
   "composer.camera.useNativeCamera": "使用系统相机",
   "composer.permissionMode": "权限模式：{mode}",
   "composer.showCollapsedTextNamed": "在文本框中显示折叠长文本：{title}",
-  "composer.removeCollapsedText": "移除折叠长文本",
+  "composer.removeCollapsedText": "移除文本附件",
   "composer.currentWorkspace": "当前工作区",
   "composer.conversation": "对话",
   "composer.selectWorkspace": "选择工作区",

@@ -10,6 +10,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Send long pasted text as UTF-8 file attachments with seven-day working
+  copies, while preserving exact snapshots for history and resubmission.
 - Start new conversations from the Codex pet in the workspace captured when
   its panel opens, with explicit actions to reply to existing conversations.
 - Open quoted assistant responses by clicking the entire reference card, without

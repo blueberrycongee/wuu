@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -537,6 +538,23 @@ func TestServerContentPartsSurviveResumeAndFork(t *testing.T) {
 				return response["result"]
 			}
 			prompt := strings.TrimSpace(tc.prompt)
+			checkParts := func(stage string, parts []providers.MessageContentPart) {
+				t.Helper()
+				snapshots := providers.CloneMessageContentParts(parts)
+				for index := range snapshots {
+					part := &snapshots[index]
+					if part.Type == "pasted_text" {
+						data, err := os.ReadFile(part.LocalPath)
+						if err != nil || string(data) != part.Text {
+							t.Errorf("%s working file lost its exact snapshot: %v", stage, err)
+						}
+					}
+					part.LocalPath = ""
+				}
+				if !reflect.DeepEqual(snapshots, tc.want) {
+					t.Errorf("%s content snapshots = %#v, want %#v", stage, snapshots, tc.want)
+				}
+			}
 			checkItem := func(stage string, turns []Turn) {
 				t.Helper()
 				for _, turn := range turns {
@@ -578,9 +596,7 @@ func TestServerContentPartsSurviveResumeAndFork(t *testing.T) {
 						if item.Text != prompt {
 							t.Errorf("%s text = %q, want %q", stage, item.Text, prompt)
 						}
-						if !reflect.DeepEqual(item.ContentParts, tc.want) {
-							t.Errorf("%s content parts = %#v, want %#v", stage, item.ContentParts, tc.want)
-						}
+						checkParts(stage, item.ContentParts)
 						t.Logf("%s: body intact=%v, parts=%d", stage, item.Text == prompt, len(item.ContentParts))
 						return
 					}
@@ -603,13 +619,15 @@ func TestServerContentPartsSurviveResumeAndFork(t *testing.T) {
 							t.Fatal(err)
 						}
 					}
-					if record.Content != prompt {
-						t.Errorf("%s stored text = %q, want %q", stage, record.Content, prompt)
+					display := record.DisplayContent
+					if display == "" {
+						display = record.Content
 					}
-					if !reflect.DeepEqual(stored, tc.want) {
-						t.Errorf("%s stored content parts = %#v, want %#v", stage, stored, tc.want)
+					if display != prompt {
+						t.Errorf("%s stored authored text = %q, want %q", stage, display, prompt)
 					}
-					t.Logf("%s: body intact=%v, parts=%d", stage, record.Content == prompt, len(stored))
+					checkParts(stage, stored)
+					t.Logf("%s: body intact=%v, parts=%d", stage, display == prompt, len(stored))
 					return
 				}
 				t.Fatalf("%s: no stored user message", stage)
@@ -633,12 +651,18 @@ func TestServerContentPartsSurviveResumeAndFork(t *testing.T) {
 					if msg.Role == "user" && msg.Content == prompt {
 						found = true
 					}
+					if msg.Role == "user" && len(tc.want) > 0 && tc.want[0].Type == "pasted_text" {
+						found = len(msg.ContentParts) == len(tc.want) &&
+							!strings.Contains(msg.Content, strings.TrimSpace(pasted)) &&
+							strings.Contains(msg.Content, msg.ContentParts[0].LocalPath) &&
+							strings.Contains(msg.Content, strings.TrimSpace(tc.want[1].Text))
+					}
 				}
 			}
 			if !found {
-				t.Fatal("provider did not receive the complete canonical prompt")
+				t.Fatal("provider did not receive instructions and the expected attachment representation")
 			}
-			t.Log("provider: complete canonical prompt received")
+			t.Log("provider: instructions and attachment representation received")
 			checkStored("SQLite", threadID)
 			srv.Close()
 			out = &lockedBuffer{}

@@ -278,6 +278,7 @@ async function run() {
       writeReport();
       console.log(`PASS ${label}`);
     }
+    await verifyTextAttachments(variant);
     phase = `${variant.name}: wrapped middle-of-file selection`;
     await openFile("selection-wrapped.ts");
     await click(".workspace-file-resource.active .monaco-editor .view-line");
@@ -320,6 +321,65 @@ async function run() {
   assert.deepEqual(report.errors, [], "Unexpected runtime or network errors");
   writeReport();
   console.log(`PASS ${report.cases.length} file selection cases. Report and screenshots: ${output}`);
+}
+
+async function verifyTextAttachments(variant) {
+  phase = variant.name + ": text attachments";
+  const question = "Explain these logs and keep the original text intact.";
+  const text = "  长日志 😀\r\n" + Array.from({ length: 48 }, (_, index) => "Log " + (index + 1) + ": " + "unbroken_payload_".repeat(12)).join("\r\n") + "\r\n\t\n";
+  const second = Array.from({ length: 24 }, (_, index) => "Second log " + (index + 1)).join("\n");
+  const pastePayload = payload => evaluate(payload => {
+    const input = document.querySelector("[data-main-conversation-composer] textarea");
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
+    const clipboardData = new DataTransfer();
+    clipboardData.setData("text/plain", payload);
+    input.dispatchEvent(new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData }));
+  }, payload);
+  await fill("[data-main-conversation-composer] textarea", question);
+  for (const payload of [text, second]) await pastePayload(payload);
+  await waitFor(() => document.querySelectorAll("[data-main-conversation-composer] .composer-collapsed-prompt-card").length === 2, "two text attachments");
+  assert.equal(await evaluate(composerValue), question, "Pasted files must not replace the existing instruction");
+  await settle();
+  // The tray scrolls to the newest attachment; reach the first before clicking.
+  await evaluate(() => document.querySelector("[data-main-conversation-composer] .composer-collapsed-prompt-card").scrollIntoView({ inline: "start", block: "nearest", behavior: "instant" }));
+  await screenshot(variant.name + "-text-attachments");
+  await click("[data-main-conversation-composer] .composer-collapsed-prompt-card .composer-document-card-main");
+  // Native textarea values normalize line endings once a snapshot is editable.
+  const expanded = question + text.replace(/\r\n/g, "\n");
+  await waitFor(expanded => composerValue() === expanded, "direct text expansion", expanded);
+  assert.equal(await evaluate(() => document.querySelectorAll("[data-main-conversation-composer] .composer-collapsed-prompt-card").length), 1, "Expanding one attachment preserves the other");
+  await waitFor(() => document.activeElement === document.querySelector("[data-main-conversation-composer] textarea"), "expanded text receives editing focus");
+  await screenshot(variant.name + "-text-expanded");
+  const scrolling = await evaluate(() => {
+    const input = document.querySelector("[data-main-conversation-composer] textarea");
+    input.scrollTop = input.scrollHeight;
+    return { top: input.scrollTop, height: input.clientHeight, total: input.scrollHeight };
+  });
+  assert.ok(scrolling.top > 0 && scrolling.total > scrolling.height, "Expanded text must remain scrollable");
+  await screenshot(variant.name + "-text-expanded-scrolled");
+  await fill("[data-main-conversation-composer] textarea", question);
+  await pastePayload(text);
+  await waitFor(() => document.querySelectorAll("[data-main-conversation-composer] .composer-collapsed-prompt-card").length === 2, "pasted text reattached after editing");
+  await evaluate(() => document.querySelector("[data-main-conversation-composer] .composer-collapsed-prompt-card .composer-attachment-card-remove").click());
+  await waitFor(() => document.querySelectorAll("[data-main-conversation-composer] .composer-collapsed-prompt-card").length === 1, "remove only second attachment");
+  assert.equal(await evaluate(composerValue), question);
+  const count = (await snapshot()).submissions.length;
+  await click("[data-main-conversation-composer] .composer-send-button");
+  await waitFor(count => window.selectionE2E.snapshot().submissions.length === count + 1, "text attachment submission", count);
+  const sent = (await snapshot()).submissions.at(-1);
+  assert.deepEqual(sent.contentParts.map(({ type, text }) => ({ type, text })), [{ type: "pasted_text", text }, { type: "text", text: question }]);
+  await evaluate(() => window.selectionE2E.complete());
+  await waitFor(() => composerValue() === "" && !document.querySelector("[data-main-conversation-composer] .composer-collapsed-prompt-card"), "sent text attachment cleared");
+  await click(".workspace-panel-close");
+  await waitFor(() => document.querySelector(".workspace-right-panel")?.getAttribute("aria-hidden") !== "false", "conversation visible for history preview");
+  await click(".user-message-pasted-text-toggle");
+  await waitFor(text => document.querySelector(".user-message-pasted-text-content")?.textContent === text, "sent attachment preview", text);
+  await screenshot(variant.name + "-text-history");
+  await click(".user-message-pasted-text-toggle");
+  report.cases.push({ variant, kind: "text-attachment", sent, scrolling, checks: ["preserved-instruction", "multiple-attachments", "direct-expansion", "editing-focus", "expanded-scroll", "independent-removal", "snapshot-submission", "history-preview"] });
+  writeReport();
+  await showWorkspacePanel();
 }
 
 function verifySource(part, file, text, quote, intent, comment) {

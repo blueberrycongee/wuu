@@ -276,6 +276,28 @@ describe("useCollapsedComposerPrompt persistence", () => {
   });
 });
 
+it("attaches long pasted text without replacing the surrounding instruction or other attachments", () => {
+  let controller: FoldHarnessController | undefined;
+  mountHarness({ storageKey: nextStorageKey(), initialPrompt: "Review this log please.", expose: api => { controller = api; } });
+  act(() => {
+    textarea().setSelectionRange(7, 11);
+    pasteText(textarea(), longText());
+  });
+  expect(textarea().value).toBe("Review  log please.");
+  expect(controller?.fold.contentPartsForPrompt(controller.prompt)).toEqual([
+    expect.objectContaining({ type: "pasted_text", text: longText() }),
+    { type: "text", text: "Review  log please." },
+  ]);
+  act(() => {
+    textarea().setSelectionRange(textarea().value.length, textarea().value.length);
+    pasteText(textarea(), longText() + "\nsecond payload");
+  });
+  expect(controller?.fold.blocks).toHaveLength(2);
+  act(() => { controller?.fold.removeBlock(0); });
+  expect(controller?.fold.blocks[0].text).toBe(longText() + "\nsecond payload");
+  expect(textarea().value).toBe("Review  log please.");
+});
+
 function selection(id = "selection-1", comment = "Explain this branch") {
   return buildFileSelectionPart({
     workspace: "/workspace",

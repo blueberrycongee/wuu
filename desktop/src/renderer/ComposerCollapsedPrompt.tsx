@@ -128,7 +128,8 @@ export function collapsedComposerPromptTitle(text: string): string {
     .split(/\r\n|\r|\n/)
     .map((line) => line.trim())
     .find(Boolean);
-  return firstLine || translate("composer.longText");
+  const name = (firstLine || translate("composer.longText")).replace(/[\\/:*?"<>|]/g, "_").slice(0, 80);
+  return name.endsWith(".txt") ? name : `${name}.txt`;
 }
 
 function lineCount(text: string): number {
@@ -142,9 +143,7 @@ function lineCount(text: string): number {
 }
 
 /**
- * One folded long paste as a document card. The body reveals the text back
- * into the textarea; the meta line gives its size so a fold can be told apart
- * from another paste that starts with the same line.
+ * A pasted text attachment can be revealed directly into the input for editing.
  */
 export function CollapsedComposerPromptCard({
   text,
@@ -185,8 +184,8 @@ export type CollapsedComposerPromptPasteOptions = {
 /**
  * Shared state machine for the long-paste fold used by every composer:
  * - long pastes are kept out of the textarea and shown as folded chips,
- * - the full text stays in the canonical `prompt` (chips are only a visual
- *   prefix), so sending always ships the original text plus the follow-up,
+ * - the full snapshot stays in the canonical draft and structured parts;
+ *   the server materializes it as a file reference at submission,
  * - chips can be revealed back into the textarea or removed individually.
  *
  * `prompt`/`setPrompt` are the composer's canonical draft value and setter.
@@ -304,11 +303,6 @@ export function useCollapsedComposerPrompt({
     const selectionStart = event.currentTarget.selectionStart ?? 0;
     const selectionEnd = event.currentTarget.selectionEnd ?? 0;
     const visibleValue = event.currentTarget.value;
-    const replacingVisiblePrompt = selectionStart === 0 && selectionEnd === visibleValue.length;
-    if (visibleValue.length > 0 && !replacingVisiblePrompt) {
-      return;
-    }
-
     event.preventDefault();
     options.onFold?.();
     const nextBlock = {
@@ -316,7 +310,7 @@ export function useCollapsedComposerPrompt({
       text: pastedText
     };
     const nextBlocks = hasBlocks ? [...blocks, nextBlock] : [nextBlock];
-    applyBlocks(nextBlocks, "");
+    applyBlocks(nextBlocks, visibleValue.slice(0, selectionStart) + visibleValue.slice(selectionEnd));
   }
 
   function revealBlock(index: number): void {

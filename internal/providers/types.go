@@ -257,6 +257,8 @@ type ResponseSelectionSource struct {
 // MessageContentPart preserves the authored structure of one user message.
 // Providers still consume ChatMessage.Content as flattened text.
 type MessageContentPart struct {
+	// LocalPath is a server-owned working copy for pasted text, not its snapshot.
+	LocalPath string               `json:"local_path,omitempty"`
 	Type      string               `json:"type"`
 	Text      string               `json:"text,omitempty"`
 	Title     string               `json:"title,omitempty"`

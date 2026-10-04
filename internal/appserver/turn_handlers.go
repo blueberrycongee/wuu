@@ -1689,6 +1689,8 @@ func normalizeMessageContentParts(parts []providers.MessageContentPart) []provid
 	out := make([]providers.MessageContentPart, 0, len(parts))
 	for _, part := range parts {
 		part.Type = strings.TrimSpace(part.Type)
+		// Only the host can assign a working-copy path to an attachment.
+		part.LocalPath = ""
 		if part.Text == "" {
 			continue
 		}

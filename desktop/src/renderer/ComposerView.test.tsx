@@ -725,7 +725,9 @@ describe.each(["main", "split"] as const)("%s composer file selections", (varian
     expect(input.value).toBe("Follow up");
     if (action !== "send") {
       const selector = action === "reveal" ? ".composer-document-card-main" : ".composer-attachment-card-remove";
-      act(() => container.querySelector<HTMLButtonElement>(`.composer-collapsed-prompt-card ${selector}`)!.click());
+      const button = container.querySelector<HTMLButtonElement>(`.composer-collapsed-prompt-card ${selector}`)!;
+      if (action === "reveal") editPastedAttachment(button);
+      else act(() => button.click());
       expect(container.querySelectorAll(".composer-collapsed-prompt-card")).toHaveLength(0);
       expect(container.querySelectorAll(".composer-file-selection-card")).toHaveLength(2);
       expect(input.value).toBe(action === "reveal" ? "Follow up" + pasted.text : "Follow up");
@@ -2538,7 +2540,7 @@ describe("Composer long text folding", () => {
     });
 
     expect(container.querySelector(".composer-collapsed-prompt-card")).not.toBeNull();
-    expect(container.querySelector(".composer-collapsed-prompt-card .composer-document-card-title")?.textContent).toBe("# 交接提示词(直接粘贴)");
+    expect(container.querySelector(".composer-collapsed-prompt-card .composer-document-card-title")?.textContent?.endsWith(".txt")).toBe(true);
     expect((textarea as HTMLTextAreaElement).value).toBe("");
     expect((textarea as HTMLTextAreaElement).placeholder).toBe("要求后续变更");
 
@@ -2568,12 +2570,7 @@ describe("Composer long text folding", () => {
       pastePlainText(textarea as HTMLTextAreaElement, longText);
     });
 
-    const revealButton = container.querySelector<HTMLButtonElement>(".composer-collapsed-prompt-card .composer-document-card-main");
-    expect(revealButton).not.toBeNull();
-
-    act(() => {
-      revealButton?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
-    });
+    editPastedAttachment(container.querySelector<HTMLButtonElement>(".composer-collapsed-prompt-card .composer-document-card-main"));
 
     expect(container.querySelector(".composer-collapsed-prompt-card")).toBeNull();
     expect(container.querySelector<HTMLTextAreaElement>("textarea")?.value).toBe(longText);
@@ -2601,23 +2598,17 @@ describe("Composer long text folding", () => {
 
     expect(container.querySelectorAll(".composer-collapsed-prompt-card")).toHaveLength(3);
 
-    act(() => {
-      foldedPromptButton("# B 交接提示词")?.click();
-    });
+    editPastedAttachment(foldedPromptButton("# B 交接提示词"));
 
     expect(container.querySelectorAll(".composer-collapsed-prompt-card")).toHaveLength(2);
     expect(container.querySelector<HTMLTextAreaElement>("textarea")?.value).toBe(secondLongText);
 
-    act(() => {
-      foldedPromptButton("# A 交接提示词")?.click();
-    });
+    editPastedAttachment(foldedPromptButton("# A 交接提示词"));
 
     expect(container.querySelectorAll(".composer-collapsed-prompt-card")).toHaveLength(1);
     expect(container.querySelector<HTMLTextAreaElement>("textarea")?.value).toBe(`${secondLongText}${firstLongText}`);
 
-    act(() => {
-      foldedPromptButton("# C 交接提示词")?.click();
-    });
+    editPastedAttachment(foldedPromptButton("# C 交接提示词"));
 
     expect(container.querySelector(".composer-collapsed-prompt-card")).toBeNull();
     expect(container.querySelector<HTMLTextAreaElement>("textarea")?.value).toBe(
@@ -2733,11 +2724,7 @@ describe("Composer long text folding", () => {
     act(() => {
       pastePlainText(textarea as HTMLTextAreaElement, longText);
     });
-    act(() => {
-      container
-        .querySelector<HTMLButtonElement>(".composer-collapsed-prompt-card .composer-document-card-main")
-        ?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
-    });
+    editPastedAttachment(container.querySelector<HTMLButtonElement>(".composer-collapsed-prompt-card .composer-document-card-main"));
     expect(container.querySelector(".composer-collapsed-prompt-card")).toBeNull();
 
     harness.replacePrompt("另一个 tab 的草稿");
@@ -2747,6 +2734,11 @@ describe("Composer long text folding", () => {
     expect(container.querySelector<HTMLTextAreaElement>("textarea")?.value).toBe(longText);
   });
 });
+
+function editPastedAttachment(button: HTMLButtonElement | null | undefined): void {
+  expect(button).toBeTruthy();
+  act(() => button!.click());
+}
 
 function foldedPromptButton(title: string): HTMLButtonElement | undefined {
   return Array.from(container.querySelectorAll<HTMLButtonElement>(".composer-collapsed-prompt-card .composer-document-card-main")).find((button) =>
@@ -3821,7 +3813,7 @@ describe("composer drag and drop", () => {
     });
 
     expect(container.querySelector(".composer-collapsed-prompt-card")).not.toBeNull();
-    expect(container.querySelector(".composer-collapsed-prompt-card .composer-document-card-title")?.textContent).toBe("# 交接提示词(直接粘贴)");
+    expect(container.querySelector(".composer-collapsed-prompt-card .composer-document-card-title")?.textContent?.endsWith(".txt")).toBe(true);
     expect((textarea as HTMLTextAreaElement).value).toBe("");
     expect((textarea as HTMLTextAreaElement).placeholder).toBe("要求后续变更");
 
@@ -3848,12 +3840,7 @@ describe("composer drag and drop", () => {
       pastePlainText(textarea as HTMLTextAreaElement, longText);
     });
 
-    const revealButton = container.querySelector<HTMLButtonElement>(".composer-collapsed-prompt-card .composer-document-card-main");
-    expect(revealButton).not.toBeNull();
-
-    act(() => {
-      revealButton?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
-    });
+    editPastedAttachment(container.querySelector<HTMLButtonElement>(".composer-collapsed-prompt-card .composer-document-card-main"));
 
     expect(container.querySelector(".composer-collapsed-prompt-card")).toBeNull();
     expect(container.querySelector<HTMLTextAreaElement>("textarea")?.value).toBe(longText);

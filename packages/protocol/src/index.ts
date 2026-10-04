@@ -1574,7 +1574,7 @@ export type ResponseSelection = {
 
 export type MessageContentPart =
   | { type: "text"; text: string }
-  | { type: "pasted_text"; text: string; title?: string }
+  | { type: "pasted_text"; text: string; title?: string; local_path?: string }
   | { type: "response_selection"; text: string; selection: ResponseSelection }
   | {
       type: "file_selection";

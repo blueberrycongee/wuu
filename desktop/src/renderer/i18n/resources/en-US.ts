@@ -1043,7 +1043,7 @@ export const enUS = {
   "composer.camera.useNativeCamera": "Use system camera",
   "composer.permissionMode": "Permission mode: {mode}",
   "composer.showCollapsedTextNamed": "Show collapsed long text in the text box: {title}",
-  "composer.removeCollapsedText": "Remove collapsed long text",
+  "composer.removeCollapsedText": "Remove text attachment",
   "composer.currentWorkspace": "Current workspace",
   "composer.conversation": "Conversation",
   "composer.selectWorkspace": "Select workspace",

@@ -14,6 +14,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/statepath"
+	"github.com/blueberrycongee/wuu/internal/tools"
 )
 
 // Failure cases: resizing must not replace source bytes; invalid batches must
@@ -97,6 +98,130 @@ func TestInputImageCacheRejectsEscapeAndPartialBatch(t *testing.T) {
 	entries, err := os.ReadDir(outside)
 	if err != nil || len(entries) != 0 {
 		t.Fatalf("wrote outside cache: %v %v", entries, err)
+	}
+}
+
+// Failure cases: raw text must stay out of model context; expiry must retain
+// snapshots; forks must own their paths; resubmission must restore missing files.
+func TestPastedTextAttachmentSubmissionRecoveryAndExpiry(t *testing.T) {
+	client := &fakeClient{response: providers.ChatResponse{Content: "done"}}
+	rt := newTestRuntime(t, client)
+	kit, err := tools.New(rt.RootDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt.Toolkit = kit
+	out := &lockedBuffer{}
+	srv := New(rt, out)
+	t.Cleanup(srv.Close)
+	if err := srv.handleLine(context.Background(), []byte(`{"id":"1","method":"thread/start"}`)); err != nil {
+		t.Fatal(err)
+	}
+	threadID := remarshal[ThreadStartResult](t, responseByID(t, parseOutput(t, out.String()), "1")["result"]).Thread.ID
+	stateDir, err := srv.workspaceStateDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := "  日志 😀\r\n" + strings.Repeat("reference-only payload\r\n", 80) + "\t\n"
+	question := "Explain the attached log."
+	parts := []providers.MessageContentPart{{Type: "pasted_text", Text: text, Title: "log.txt"}, {Type: "text", Text: question}}
+	payload, err := json.Marshal(map[string]any{
+		"id": "2", "method": MethodTurnStart,
+		"params": TurnStartParams{ThreadID: threadID, Prompt: text + question, ContentParts: parts},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.handleLine(context.Background(), payload); err != nil {
+		t.Fatal(err)
+	}
+	_ = waitForMethod(t, out, NotificationTurnCompleted)
+	client.mu.Lock()
+	sent := client.requests[0].Messages[1]
+	client.mu.Unlock()
+	paths, _ := filepath.Glob(filepath.Join(statepath.SessionArtifactDir(stateDir, threadID), "input-attachments", "*.txt"))
+	if len(paths) != 1 || !strings.Contains(sent.Content, paths[0]) || !strings.Contains(sent.Content, question) || strings.Contains(sent.Content, "reference-only payload") {
+		t.Fatalf("text was not delivered as a file reference: content=%q paths=%v", sent.Content, paths)
+	}
+	if data, err := os.ReadFile(paths[0]); err != nil || string(data) != text {
+		t.Fatalf("attachment bytes changed: %v", err)
+	}
+	readArgs, err := json.Marshal(map[string]string{"path": paths[0]})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := srv.thread(threadID).execRuntime.Toolkit.Execute(context.Background(), providers.ToolCall{Name: "read_file", Arguments: string(readArgs)})
+	if err != nil || !strings.Contains(result, "reference-only payload") {
+		t.Fatalf("model file tools cannot read the submitted attachment: %v (%s)", err, result)
+	}
+	item := remarshal[TurnStartResult](t, responseByID(t, parseOutput(t, out.String()), "2")["result"]).Turn.Items[0]
+	if item.InputText != "" || item.ContentParts[0].Text != text || strings.Contains(item.Text, paths[0]) {
+		t.Fatalf("public input lost its snapshot or exposed a working path: %+v", item)
+	}
+	loaded, err := loadChatMessages(rt.SessionDir, threadID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	history := visibleMessagesForTest(loaded)
+	if history[0].ContentParts[0].Text != text || chatMessageItem("reloaded", history[0]).InputText != "" {
+		t.Fatal("history lost the snapshot")
+	}
+	if err := preserveForkArtifacts(stateDir, threadID, "text-fork", history); err != nil {
+		t.Fatal(err)
+	}
+	forkPaths, _ := filepath.Glob(filepath.Join(statepath.SessionArtifactDir(stateDir, "text-fork"), "input-attachments", "*.txt"))
+	if len(forkPaths) != 1 || !strings.Contains(history[0].Content, forkPaths[0]) || strings.Contains(history[0].Content, paths[0]) {
+		t.Fatalf("fork lost ownership: %v", forkPaths)
+	}
+	if err := maintainInputImageStorage(stateDir, time.Now().Add(6*24*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(paths[0]); err != nil {
+		t.Fatalf("working copy expired early: %v", err)
+	}
+	if err := maintainInputImageStorage(stateDir, time.Now().Add(8*24*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{paths[0], forkPaths[0]} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("expired working copy remains: %v", err)
+		}
+	}
+	if history[0].ContentParts[0].Text != text {
+		t.Fatal("expiry changed the snapshot")
+	}
+	retry, err := srv.userMessageWithInputImages(threadID, strings.TrimSpace(text+question), nil, nil, nil, history[0].ContentParts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	paths, _ = filepath.Glob(filepath.Join(statepath.SessionArtifactDir(stateDir, threadID), "input-attachments", "*.txt"))
+	if len(paths) != 1 || !strings.Contains(retry.Content, paths[0]) || strings.Contains(retry.Content, "reference-only payload") {
+		t.Fatalf("resubmission lost its file reference: %v", paths)
+	}
+}
+
+func TestTextAttachmentCacheRejectsSymlinksAndMismatchedParts(t *testing.T) {
+	stateDir := t.TempDir()
+	srv := &Server{rt: &runtime.Session{StateDir: stateDir}}
+	parts := []providers.MessageContentPart{{Type: "pasted_text", Text: "payload"}}
+	msg, err := srv.userMessageWithInputImages("mismatch", "unrelated instruction", nil, nil, nil, parts)
+	if err != nil || len(msg.ContentParts) != 0 {
+		t.Fatalf("accepted mismatched metadata: %v", err)
+	}
+	dir := statepath.SessionArtifactDir(stateDir, "escape-text")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(dir, "input-attachments")); err != nil {
+		t.Skip(err)
+	}
+	if _, err := srv.userMessageWithInputImages("escape-text", "payload", nil, nil, nil, parts); err == nil {
+		t.Fatal("accepted symlinked attachment storage")
+	}
+	entries, err := os.ReadDir(outside)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("attachment escaped storage: %v", err)
 	}
 }
 

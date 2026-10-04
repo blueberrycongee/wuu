@@ -54,6 +54,14 @@ Selected passages stay with their draft when switching tabs or leaving split vie
 
 Older hosts can discard quote metadata while retaining the transmitted text; older desktop clients may not display structured quotes. Use matching current host and desktop versions to retain structured quotes through editing and history recovery. Native clients show the flattened quote and comment as text.
 
+## Attach pasted text
+
+Long pasted text appears as a `.txt` attachment above the input, alongside images, documents, and quotes. Your existing instruction stays in the input; if you paste over selected text, only that selection is removed. Click the card to put the full text back into the input for editing; it then sends as ordinary message text. Leave it attached to send it as a file. Removing one attachment leaves the others and your instruction intact. Short text pastes normally.
+
+Sending creates a UTF-8 working file in `sessions/<thread-id>/input-attachments/` under the workspace's Wuu state directory. The model receives a file reference and reads the content with its file tools when needed, rather than receiving the whole paste as inline context. Conversation history retains the exact text snapshot, including whitespace, for preview, editing, and resubmission.
+
+Text working files use the same seven-day expiry as image working files. Cleanup does not delete the history snapshot or copies saved outside the cache. Opening history does not recreate an expired file; resending the attachment creates a new working copy. Save files in the workspace when you need them beyond seven days.
+
 ## Work with pasted images
 
 Paste an image or select an image file, then send the message. Wuu saves a local working file and gives the model its absolute path alongside the image for vision. You can ask the model to copy, move, or process that file using its normal file and command tools. The working file preserves the bytes received by the backend; desktop image compression still applies before sending.

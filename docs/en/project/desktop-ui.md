@@ -100,7 +100,7 @@ previews in Electron with synthetic content, separate from your app data.
 
 ## Composer attachments
 
-Images, videos, PDFs, and folded long pastes wait in one tray that slides out
+Images, videos, PDFs, and pasted text attachments wait in one tray that slides out
 from behind the input's top edge; adding or removing one never resizes the
 input. The tray changes layout once, and everything above it rises or settles
 through counter-translated compositor animations while the input holds still.
