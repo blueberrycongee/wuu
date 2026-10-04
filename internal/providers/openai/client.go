@@ -180,6 +180,10 @@ func openAIOrganization(headers map[string]string) string {
 	return ""
 }
 
+func (c *Client) ResolveMediaInput(policy providers.MediaInputPolicy, options map[string]any) providers.MediaInputPolicy {
+	return providers.ResolveVideoInputPolicy(policy, options, c.wireAPI != wireAPIResponses && !c.disableVideoInput && providers.VideoURLTransport(c.baseURL, options))
+}
+
 // Chat performs one chat-completions round.
 func (c *Client) Chat(ctx context.Context, req providers.ChatRequest) (providers.ChatResponse, error) {
 	if strings.TrimSpace(req.Model) == "" {

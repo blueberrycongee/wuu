@@ -143,7 +143,7 @@ function Fixture(): JSX.Element {
         <button onClick={() => void run(async () => pasteFiles([await videoFile()]))}>粘贴视频</button>
         <button onClick={() => void run(() => pasteText(longText()))}>粘贴长文本</button>
         <button onClick={() => void run(() => { draft.setPrompt(""); draft.setComposerImages([]); draft.setComposerFiles([]); })}>模拟发送</button>
-        <button onClick={() => pasteFiles([new File(["unsupported"], "archive.zip", { type: "application/zip" })])}>粘贴不支持的附件</button>
+        <button onClick={() => pasteFiles([new File(["fixture"], "archive.zip", { type: "application/zip" })])}>粘贴 ZIP</button>
       </div>
       <main className={`fixture-pane${hero ? " fixture-pane-hero" : ""}`}>
         {hero ? null : (

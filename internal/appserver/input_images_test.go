@@ -3,8 +3,10 @@ package appserver
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,6 +18,121 @@ import (
 	"github.com/blueberrycongee/wuu/internal/statepath"
 	"github.com/blueberrycongee/wuu/internal/tools"
 )
+
+// Non-native files must reach tools byte-for-byte, survive recovery and forks,
+// and never be recreated from history after moving or expiry.
+func TestInputFilesSubmissionRecoveryAndExpiry(t *testing.T) {
+	for _, kind := range []string{"video/mp4", "application/pdf", "application/zip"} {
+		t.Run(kind, func(t *testing.T) {
+			client := &fakeClient{response: providers.ChatResponse{Content: "done"}}
+			rt := newTestRuntime(t, client)
+			toolkit, err := tools.New(rt.RootDir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			rt.Toolkit = toolkit
+			rt.StreamRunner.MediaInput = providers.MediaInputPolicy{FileKnown: true, VideoKnown: true}
+			out := &lockedBuffer{}
+			srv := New(rt, out)
+			t.Cleanup(srv.Close)
+			if err := srv.handleLine(context.Background(), []byte(`{"id":"1","method":"thread/start"}`)); err != nil {
+				t.Fatal(err)
+			}
+			id := remarshal[ThreadStartResult](t, responseByID(t, parseOutput(t, out.String()), "1")["result"]).Thread.ID
+			raw := bytes.Repeat([]byte{0, 1, 2, 3}, 500_000)
+			payload, err := json.Marshal(map[string]any{"id": "2", "method": MethodTurnStart, "params": TurnStartParams{ThreadID: id, Prompt: "Save the attachment", Files: []TurnStartFile{{MediaType: kind, Filename: "../../source.bin", Data: base64.StdEncoding.EncodeToString(raw)}}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := srv.handleLine(context.Background(), payload); err != nil {
+				t.Fatal(err)
+			}
+			_ = waitForMethod(t, out, NotificationTurnCompleted)
+			loaded, err := loadChatMessages(rt.SessionDir, id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			history := visibleMessagesForTest(loaded)
+			if len(history) == 0 || len(history[0].Files) != 1 {
+				t.Fatal("attachment not persisted")
+			}
+			path := history[0].Files[0].LocalPath
+			data, err := os.ReadFile(path)
+			if err != nil || !bytes.Equal(data, raw) {
+				t.Fatalf("working copy lost bytes: %v", err)
+			}
+			client.mu.Lock()
+			sent := providers.CloneChatMessages(client.requests[0].Messages)
+			client.mu.Unlock()
+			found := false
+			for _, msg := range sent {
+				if strings.Contains(msg.Content, path) {
+					found = true
+					if len(msg.Files) != 0 {
+						t.Fatal("non-native bytes entered model request")
+					}
+				}
+			}
+			if !found {
+				t.Fatal("model did not receive attachment path")
+			}
+			kit := srv.thread(id).execRuntime.Toolkit
+			recovered, err := kit.Execute(context.Background(), providers.ToolCall{Name: "history_read", Arguments: `{"start_seq":1,"limit":10,"max_chars":12000}`})
+			if err != nil || !strings.Contains(recovered, path) {
+				t.Fatalf("history tools cannot recover the file path: %v (%s)", err, recovered)
+			}
+			item := chatMessageItem("reloaded", history[0])
+			if strings.Contains(item.Text+item.InputText, path) {
+				t.Fatal("working path leaked into resubmittable prompt")
+			}
+			stateDir, err := srv.workspaceStateDir()
+			if err != nil {
+				t.Fatal(err)
+			}
+			fork := providers.CloneChatMessages(history)
+			if err := preserveForkArtifacts(stateDir, id, "file-fork", fork); err != nil {
+				t.Fatal(err)
+			}
+			forkPath := fork[0].Files[0].LocalPath
+			if forkPath == path || !strings.Contains(fork[0].Content, forkPath) {
+				t.Fatal("fork retained source ownership")
+			}
+			kept := filepath.Join(rt.RootDir, "kept.bin")
+			args, _ := json.Marshal(map[string]any{"command": fmt.Sprintf("cp %q %q && cmp %q %q && rm %q", path, kept, path, kept, path)})
+			if result, err := kit.Execute(context.Background(), providers.ToolCall{Name: "bash", Arguments: string(args)}); err != nil {
+				t.Fatalf("agent cannot save the attachment with file tools: %v (%s)", err, result)
+			}
+			if _, err := loadChatMessages(rt.SessionDir, id); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := os.Stat(path); !os.IsNotExist(err) {
+				t.Fatal("history recreated moved attachment")
+			}
+			if err := maintainInputImageStorage(stateDir, time.Now().Add(6*24*time.Hour)); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := os.Stat(forkPath); err != nil {
+				t.Fatal("attachment expired early")
+			}
+			if err := maintainInputImageStorage(stateDir, time.Now().Add(8*24*time.Hour)); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := os.Stat(forkPath); !os.IsNotExist(err) {
+				t.Fatal("expired attachment remains")
+			}
+			if data, err := os.ReadFile(kept); err != nil || !bytes.Equal(data, raw) {
+				t.Fatal("cleanup changed saved file")
+			}
+			if _, err := loadChatMessages(rt.SessionDir, id); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := os.Stat(path); !os.IsNotExist(err) {
+				t.Fatal("history recreated expired attachment")
+			}
+			t.Logf("verified upload → path-only request → history_read → sandboxed copy/move → fork → expiry: %s, bytes=%d, sha256=%x", kind, len(raw), sha256.Sum256(raw))
+		})
+	}
+}
 
 // Failure cases: resizing must not replace source bytes; invalid batches must
 // not leave partial files; expiry must not touch history, moved destinations,

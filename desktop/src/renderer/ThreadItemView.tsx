@@ -21,7 +21,7 @@ import {
   createComposerMessage,
   composerFileFromFile,
   composerImageFromFile,
-  isSupportedComposerAttachment
+  isComposerImageFile
 } from "./ComposerMessages";
 import { isComposerTextComposing } from "./ComposerSlashCommands";
 import {
@@ -722,14 +722,10 @@ function UserMessageInlineEditor({
   }
 
   async function addAttachmentFiles(filesToAdd: File[]): Promise<void> {
-    const supported = filesToAdd.filter(isSupportedComposerAttachment);
-    if (supported.length === 0) {
-      return;
-    }
     const imageAdditions: InputImage[] = [];
     const fileAdditions: InputFile[] = [];
-    for (const file of supported) {
-      if (file.type.toLowerCase().startsWith("image/")) {
+    for (const file of filesToAdd) {
+      if (isComposerImageFile(file)) {
         try {
           const composed = await composerImageFromFile(file);
           imageAdditions.push({ media_type: composed.media_type, data: composed.data });
@@ -745,7 +741,7 @@ function UserMessageInlineEditor({
             filename: composed.filename
           });
         } catch {
-          // Same per-file resilience — bad PDFs shouldn't kill the batch.
+          // Same per-file resilience — unreadable files should not kill the batch.
         }
       }
     }

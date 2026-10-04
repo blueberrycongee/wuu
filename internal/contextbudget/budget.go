@@ -155,15 +155,13 @@ func EstimateImageTokens(image providers.InputImage) int {
 	return patches
 }
 
-// EstimateFileTokens estimates non-image attachments from their encoded size.
+// EstimateFileTokens budgets admitted native media, never base64 transport size.
+// Without provider-specific page/frame accounting, use the bounded media
+// fallback; provider usage remains authoritative after the first response.
+// Path-only files must first be removed by the request media projection.
 func EstimateFileTokens(file providers.InputFile) int {
-	dataLen := len(strings.TrimSpace(file.Data))
-	if dataLen == 0 {
+	if strings.TrimSpace(file.Data) == "" {
 		return 0
-	}
-	payloadEstimate := dataLen / 4
-	if payloadEstimate > attachmentFallbackTokenEstimate {
-		return payloadEstimate
 	}
 	return attachmentFallbackTokenEstimate
 }

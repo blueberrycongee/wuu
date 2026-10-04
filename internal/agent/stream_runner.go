@@ -368,6 +368,14 @@ func (r *StreamRunner) runModelToolLoop(ctx context.Context, history []providers
 		return LoopResult{}, fmt.Errorf("recover pending tool results: %w", err)
 	}
 	history = append(history, recoveredToolMessages...)
+	mediaInput := providers.ResolveMediaInput(client, r.MediaInput, r.ProviderOptions)
+	admission := providers.ChatRequest{Messages: history, MediaInput: mediaInput, ProviderOptions: r.ProviderOptions}
+	if _, err := providers.PrepareVideoInput(admission, mediaInput.Video); err != nil {
+		return LoopResult{}, err
+	}
+	if err := providers.ValidateRequiredMedia(providers.ApplyToolResultProjections(history), mediaInput); err != nil {
+		return LoopResult{}, err
+	}
 	runUsage, baseHistoryLen := r.prepareUsageTrackerForContract(history, runUsageContract)
 
 	effectiveOnEvent := onEvent
@@ -435,7 +443,7 @@ func (r *StreamRunner) runModelToolLoop(ctx context.Context, history []providers
 		DriverVersion:            descriptor.Version,
 		ModelInputReceiptStore:   r.ModelInputReceiptStore,
 		Temperature:              r.Temperature,
-		MediaInput:               r.MediaInput,
+		MediaInput:               mediaInput,
 		MaxSteps:                 maxSteps,
 		MaxContextTokens:         maxCtx,
 		MaxInputTokens:           r.MaxInputTokens,
@@ -480,6 +488,7 @@ func (r *StreamRunner) runModelToolLoop(ctx context.Context, history []providers
 		},
 		Compact: func(ctx context.Context, messages []providers.ChatMessage) ([]providers.ChatMessage, error) {
 			budget, budgetErr := applyAdaptiveCompactBudget(ctx, messages, compact.Budget{
+				MediaInput:          mediaInput,
 				ContextTokens:       compactContextTokens,
 				InputTokens:         r.MaxInputTokens,
 				OutputReserveTokens: r.OutputReserveTokens,
@@ -494,7 +503,7 @@ func (r *StreamRunner) runModelToolLoop(ctx context.Context, history []providers
 				Tools:                       definitions,
 				Temperature:                 r.Temperature,
 				ProviderOptions:             r.ProviderOptions,
-				MediaInput:                  r.MediaInput,
+				MediaInput:                  mediaInput,
 				NativeDeferredToolDiscovery: providers.NativeToolDiscoveryEnabled(r.NativeDeferredToolDiscovery, definitions),
 			})
 		},
@@ -598,7 +607,7 @@ func (r *StreamRunner) runModelToolLoop(ctx context.Context, history []providers
 			if err := ctx.Err(); err != nil {
 				return nil, err
 			}
-			return buildFreshContext(messages, head, fixed, target)
+			return buildFreshContext(messages, head, fixed, target, mediaInput)
 		}
 		cfg.AcceptFreshContext = func(acceptCtx context.Context, messages []providers.ChatMessage, head int) ([]providers.ChatMessage, int, error) {
 			if r.CommitFreshContext != nil {
@@ -765,6 +774,7 @@ func (r *StreamRunner) prepareUsageTrackerForContract(history []providers.ChatMe
 	}
 
 	tracker := r.conversationUsage.Clone()
+	tracker.setMediaInputPolicy(providers.ResolveMediaInput(r.Client, r.MediaInput, r.ProviderOptions))
 	trackedLen := r.trackedHistoryLen
 	trackedHash := r.trackedHistoryHash
 	trackedTailHash := r.trackedHistoryTailHash
@@ -886,7 +896,7 @@ func (r *StreamRunner) compactionNoteFork(retained *RetainedRequestContextState)
 	effort := r.Effort
 	providerOptions := provideroptions.Clone(r.ProviderOptions)
 	nativeDeferredToolDiscovery := providers.NativeToolDiscoveryEnabled(r.NativeDeferredToolDiscovery, tools)
-	mediaInput := r.MediaInput
+	mediaInput := providers.ResolveMediaInput(client, r.MediaInput, providerOptions)
 	beforeRequest := r.BeforeRequest
 	promptCacheKey := r.PromptCacheKey
 	inferenceJournal := r.InferenceJournal
@@ -1104,6 +1114,7 @@ func (r *StreamRunner) ResetConversationUsage(history []providers.ChatMessage) {
 		r.conversationUsage = NewUsageTracker()
 	}
 	r.conversationUsage.Reset()
+	r.conversationUsage.setMediaInputPolicy(providers.ResolveMediaInput(r.Client, r.MediaInput, r.ProviderOptions))
 	r.conversationUsage.SetAdjustment(UsageAdjustmentCompactionRewriteEstimate)
 	r.conversationUsage.RecordPendingMessages(history)
 	r.trackedHistoryLen = len(history)
@@ -1158,6 +1169,7 @@ func (r *StreamRunner) SynchronizeConversationUsage(history []providers.ChatMess
 		r.conversationUsage.SeedGroundTruth(persistedTotal)
 		r.conversationUsage.SetAdjustment(UsageAdjustmentExternalRewriteSeed)
 	} else {
+		r.conversationUsage.setMediaInputPolicy(providers.ResolveMediaInput(r.Client, r.MediaInput, r.ProviderOptions))
 		r.conversationUsage.SetAdjustment(UsageAdjustmentExternalRewriteEstimate)
 		r.conversationUsage.RecordPendingMessages(history)
 	}

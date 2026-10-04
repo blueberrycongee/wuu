@@ -15,31 +15,11 @@ import {
   transferPausedTurnElapsed,
 } from "./TurnProgress";
 
-// Renderer-side image compression runs on the Electron canvas before the
-// bytes cross the IPC boundary. It is a fast-path optimization, not the
-// authoritative copy. The single source of truth lives in the Go core at
-// internal/imageproc (imageproc.Encode). Three entry points call imageproc:
-// `wuu exec --image` (internal/exec/attachments.go), `wuu app-server`'s
-// `turn/start` (internal/appserver/turn_handlers.go), and any future shell
-// that goes through the app-server. The renderer pre-compresses here to
-// avoid shipping the original file across IPC.
-//
-// IMPORTANT: when changing the constants below, mirror the change in
-// internal/imageproc (and vice versa). The byte-target ladder here is
-// intentionally more aggressive than the core's pixel-and-patch budget
-// because the renderer can afford the extra encode passes; the core path
-// targets a fixed JPEG quality of 85 and a 32×32 patch budget instead.
-const IMAGE_MAX_DIMENSION = 2000;
-const IMAGE_TARGET_BYTES = (5 * 1024 * 1024 * 3) / 4;
-
-// PDFs are inlined whole: read fully into renderer memory and base64'd
-// (+33%), so an unbounded pick can OOM the renderer or blow past provider
-// limits. Cap at 20MB raw (~27MB encoded), inside Anthropic's 32MB
-// single-file ceiling with headroom; stricter providers should lower this.
-export const COMPOSER_PDF_MAX_BYTES = 20 * 1024 * 1024;
-export const COMPOSER_PDF_MAX_MB = 20;
-export const COMPOSER_VIDEO_MAX_BYTES = 20 * 1024 * 1024;
-export const COMPOSER_ATTACHMENT_ACCEPT = "image/*,application/pdf,video/mp4,video/webm,video/quicktime,.mp4,.webm,.mov";
+// Preserve received bytes for working copies. Provider image resizing belongs
+// to the Go core, after the original has been retained. Files cross IPC as
+// base64, so bound allocation before reading them into renderer memory.
+export const COMPOSER_ATTACHMENT_MAX_BYTES = 20 * 1024 * 1024;
+export const COMPOSER_ATTACHMENT_ACCEPT = "";
 
 export function composerVideoMediaType(file: Pick<File, "type" | "name">): string | undefined {
   const type = file.type.toLowerCase();
@@ -50,9 +30,7 @@ export function composerVideoMediaType(file: Pick<File, "type" | "name">): strin
   return extension === "mp4" ? "video/mp4" : extension === "webm" ? "video/webm" : extension === "mov" ? "video/quicktime" : undefined;
 }
 
-export function isComposerVideoFile(file: File): boolean { return Boolean(composerVideoMediaType(file)); }
-export function isComposerDocumentFile(file: File): boolean { return isPDFFile(file) || isComposerVideoFile(file); }
-
+export function isComposerDocumentFile(file: File): boolean { return !isComposerImageFile(file); }
 
 // Custom drag MIME carrying a workspace-relative path from the file tree.
 // Path drops insert plain text into the composer — a reference the model
@@ -74,7 +52,7 @@ export type ComposerImage = InputImage & {
   /**
    * Optimistic placeholder preview source. Set the moment the user pastes or
    * selects a file so the attachment strip can render the raw file via
-   * URL.createObjectURL while the JPEG/PNG encode + base64 conversion runs in
+   * URL.createObjectURL while the original-byte base64 conversion runs in
    * the background. Stripped from the entry (and the blob URL revoked) once
    * the encode resolves; consumer code should fall through to the data:
    * URL built from `media_type` + `data` in that case.
@@ -117,7 +95,7 @@ export function clipboardAttachmentFiles(event: ReactClipboardEvent<HTMLTextArea
       continue;
     }
     const file = item.getAsFile();
-    if (file && isSupportedComposerAttachment(file)) {
+    if (file) {
       files.push(file);
     }
   }
@@ -136,10 +114,7 @@ export function clipboardAttachmentFiles(event: ReactClipboardEvent<HTMLTextArea
  *     resolved `ComposerImage` has no `previewSrc` / `encodePromise`, so
  *     callers can overwrite the placeholder by id without leaking the URL.
  *
- * The encoding pass itself is unchanged: `normalizeImageFileForPrompt`
- * still produces a compressed + base64 result, the Go core still re-encodes
- * on receive, and the byte/pixel budget constants at the top of this file
- * are the single source of truth.
+ * Encoding preserves the original bytes; the core owns provider resizing.
  */
 export function composerImagePlaceholder(file: File): ComposerImage {
   const mediaType = normalizeImageMediaType(file.type);
@@ -179,25 +154,14 @@ export async function composerFileFromFile(file: File): Promise<ComposerFile> {
 
 export function composerFilePlaceholder(file: File): ComposerFile {
   const videoType = composerVideoMediaType(file);
-  if (!isPDFFile(file) && !videoType) {
-    throw new Error(translateCurrent("composer.attachment.documentsOnly"));
-  }
-  if (videoType && file.size > COMPOSER_VIDEO_MAX_BYTES) {
-    throw new Error(translateCurrent("composer.attachment.videoTooLarge", { name: file.name, limit: 20 }));
-  }
-  if (!videoType && file.size > COMPOSER_PDF_MAX_BYTES) {
-    throw new Error(
-      translateCurrent("composer.attachment.pdfTooLarge", {
-        name: file.name.trim() || "attachment.pdf",
-        limit: COMPOSER_PDF_MAX_MB
-      })
-    );
+  if (file.size > COMPOSER_ATTACHMENT_MAX_BYTES) {
+    throw new Error(translateCurrent("composer.attachment.fileTooLarge", { name: file.name || "attachment", limit: 20 }));
   }
   const placeholder = {
     id: nextComposerAttachmentID(),
-    media_type: videoType ?? "application/pdf",
+    media_type: videoType ?? (isPDFFile(file) ? "application/pdf" : file.type || "application/octet-stream"),
     data: "",
-    filename: file.name.trim() || "attachment.pdf"
+    filename: file.name.trim() || "attachment"
   };
   return {
     ...placeholder,
@@ -208,12 +172,8 @@ export function composerFilePlaceholder(file: File): ComposerFile {
   };
 }
 
-export function isSupportedComposerAttachment(file: File): boolean {
-  return file.type.toLowerCase().startsWith("image/") || isComposerDocumentFile(file);
-}
-
 export function isComposerImageFile(file: File): boolean {
-  return file.type.toLowerCase().startsWith("image/");
+  return ["image/png", "image/jpeg", "image/jpg", "image/gif", "image/webp"].includes(file.type.toLowerCase());
 }
 
 export function isPDFFile(file: File): boolean {
@@ -221,56 +181,10 @@ export function isPDFFile(file: File): boolean {
 }
 
 async function normalizeImageFileForPrompt(file: File): Promise<InputImage> {
-  const mediaType = normalizeImageMediaType(file.type);
-  const original = await file.arrayBuffer();
-  const passthrough = async (): Promise<InputImage> => ({
-    media_type: mediaType,
-    data: await bufferToBase64(original)
-  });
-
-  try {
-    const bitmap = await createImageBitmap(new Blob([original], { type: mediaType }));
-    try {
-      if (original.byteLength <= IMAGE_TARGET_BYTES && bitmap.width <= IMAGE_MAX_DIMENSION && bitmap.height <= IMAGE_MAX_DIMENSION) {
-        return passthrough();
-      }
-
-      const [width, height] = clampImageDimensions(bitmap.width, bitmap.height, IMAGE_MAX_DIMENSION);
-      const canvas = document.createElement("canvas");
-      canvas.width = width;
-      canvas.height = height;
-      const context = canvas.getContext("2d");
-      if (!context) {
-        return passthrough();
-      }
-      context.drawImage(bitmap, 0, 0, width, height);
-
-      const strategies: Array<{ mediaType: string; quality?: number }> = [
-        { mediaType: "image/png" },
-        { mediaType: "image/jpeg", quality: 0.82 },
-        { mediaType: "image/jpeg", quality: 0.68 },
-        { mediaType: "image/jpeg", quality: 0.52 },
-        { mediaType: "image/jpeg", quality: 0.38 }
-      ];
-      let fallback: InputImage | undefined;
-      for (const strategy of strategies) {
-        const blob = await canvasToBlob(canvas, strategy.mediaType, strategy.quality);
-        const encoded = {
-          media_type: strategy.mediaType,
-          data: await bufferToBase64(await blob.arrayBuffer())
-        };
-        fallback = encoded;
-        if (blob.size <= IMAGE_TARGET_BYTES) {
-          return encoded;
-        }
-      }
-      return fallback ?? passthrough();
-    } finally {
-      bitmap.close();
-    }
-  } catch {
-    return passthrough();
+  if (file.size > COMPOSER_ATTACHMENT_MAX_BYTES) {
+    throw new Error(translateCurrent("composer.attachment.fileTooLarge", { name: file.name || "image", limit: 20 }));
   }
+  return { media_type: normalizeImageMediaType(file.type), data: await bufferToBase64(await file.arrayBuffer()) };
 }
 
 function normalizeImageMediaType(value: string): string {
@@ -281,38 +195,12 @@ function normalizeImageMediaType(value: string): string {
   return mediaType.startsWith("image/") ? mediaType : "image/png";
 }
 
-function clampImageDimensions(width: number, height: number, maxDimension: number): [number, number] {
-  if (width <= maxDimension && height <= maxDimension) {
-    return [width, height];
-  }
-  if (width >= height) {
-    return [maxDimension, Math.max(1, Math.round((height * maxDimension) / width))];
-  }
-  return [Math.max(1, Math.round((width * maxDimension) / height)), maxDimension];
-}
-
-function canvasToBlob(canvas: HTMLCanvasElement, mediaType: string, quality?: number): Promise<Blob> {
-  return new Promise((resolve, reject) => {
-    canvas.toBlob(
-      (blob) => {
-        if (!blob) {
-          reject(new Error(translateCurrent("composer.attachment.imageProcessFailed")));
-          return;
-        }
-        resolve(blob);
-      },
-      mediaType,
-      quality
-    );
-  });
-}
-
 // Encode ArrayBuffer to base64 via FileReader.readAsDataURL. The native
 // implementation runs off the JS main thread and is significantly faster
 // than a hand-rolled `btoa(String.fromCharCode(...))` loop, especially for
 // the multi-MB buffers we expect from clipboard image pastes. Returning a
 // Promise keeps the call sites uniform with the rest of the pipeline
-// (createImageBitmap, canvas.toBlob, etc.).
+// (file.arrayBuffer, etc.).
 function bufferToBase64(buffer: ArrayBuffer): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();

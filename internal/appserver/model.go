@@ -1882,6 +1882,9 @@ func chatMessageFromPersistedMessage(rec persistedMessage) providers.ChatMessage
 			continue
 		}
 		msg.Files = append(msg.Files, providers.InputFile{
+			LocalPath: file.LocalPath,
+			SizeBytes: file.SizeBytes,
+			Required:  file.Required,
 			MediaType: file.MediaType,
 			Data:      file.Data,
 			Filename:  file.Filename,
@@ -1951,6 +1954,11 @@ func isThreadTitleUserMessage(msg providers.ChatMessage) bool {
 }
 
 func chatMessageDisplayContent(msg providers.ChatMessage) string {
+	for _, file := range msg.Files {
+		if file.LocalPath != "" {
+			return msg.DisplayContent
+		}
+	}
 	for _, image := range msg.Images {
 		if image.LocalPath != "" {
 			// Image-only messages have a genuinely empty display prompt even
@@ -1971,7 +1979,8 @@ func chatMessageDisplayContent(msg providers.ChatMessage) string {
 func chatMessageInputText(msg providers.ChatMessage) string {
 	// Keep the expanded slash-command prompt, but exclude working-copy paths
 	// from public input that callers may submit again when retrying a turn.
-	content := strings.TrimSuffix(msg.Content, inputImagePathReference(msg.Images))
+	content := strings.TrimSuffix(msg.Content, inputFilePathReference(msg.Files))
+	content = strings.TrimSuffix(content, inputImagePathReference(msg.Images))
 	for _, part := range msg.ContentParts {
 		if part.Type == "pasted_text" && part.LocalPath != "" {
 			// Resubmission uses the authored snapshot, never generated file paths.

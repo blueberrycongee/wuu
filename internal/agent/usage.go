@@ -22,7 +22,8 @@ import (
 //
 // UsageTracker is safe for concurrent reads/writes.
 type UsageTracker struct {
-	mu sync.Mutex
+	mu         sync.Mutex
+	mediaInput providers.MediaInputPolicy
 	// lastResponseTotal is the most recent (input+output) token count
 	// reported by the provider. Zero means no successful round yet.
 	lastResponseTotal int
@@ -125,10 +126,16 @@ func (t *UsageTracker) RecordPendingMessages(msgs []providers.ChatMessage) {
 	if t == nil || len(msgs) == 0 {
 		return
 	}
-	add := estimateMessages(msgs)
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	add := estimateMessages(providers.ProjectMediaForPolicy(providers.ApplyToolResultProjections(msgs), t.mediaInput))
 	t.pendingDelta += add
+}
+
+func (t *UsageTracker) setMediaInputPolicy(policy providers.MediaInputPolicy) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.mediaInput = policy
 }
 
 // EstimateCurrent returns the best-effort current token usage of the
@@ -277,6 +284,7 @@ func (t *UsageTracker) Clone() *UsageTracker {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return &UsageTracker{
+		mediaInput:                  t.mediaInput,
 		lastResponseTotal:           t.lastResponseTotal,
 		lastSuccessfulRequestTokens: t.lastSuccessfulRequestTokens,
 		lastResponseContract:        t.lastResponseContract,
