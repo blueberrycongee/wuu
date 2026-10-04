@@ -7115,11 +7115,21 @@ func TestServerTurnStartAcceptsPDFOnlyPrompt(t *testing.T) {
 	if requestCount != 1 {
 		t.Fatalf("expected one provider request, got %d", requestCount)
 	}
-	if len(messages) < 2 || messages[1].Role != "user" || messages[1].Content != "" || len(messages[1].Files) != 1 {
+	if len(messages) < 2 || messages[1].Role != "user" || len(messages[1].Files) != 1 {
 		t.Fatalf("unexpected provider messages: %+v", messages)
 	}
 	if messages[1].Files[0].MediaType != "application/pdf" || messages[1].Files[0].Data != "JVBERi0xLjQ=" || messages[1].Files[0].Filename != "brief.pdf" {
 		t.Fatalf("unexpected provider file: %+v", messages[1].Files[0])
+	}
+	path := messages[1].Files[0].LocalPath
+	if path == "" || !strings.Contains(messages[1].Content, path) {
+		t.Fatal("native PDF input must also deliver a working-copy reference")
+	}
+	if data, err := os.ReadFile(path); err != nil || string(data) != "%PDF-1.4" {
+		t.Fatalf("native PDF working copy changed bytes: %v", err)
+	}
+	if started.Turn.Items[0].Text != "" || started.Turn.Items[0].InputText != "" {
+		t.Fatal("PDF-only input must not expose its generated path as authored text")
 	}
 
 	persisted, err := loadChatMessages(rt.SessionDir, threadID)

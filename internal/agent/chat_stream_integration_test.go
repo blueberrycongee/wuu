@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -16,6 +17,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/providerfactory"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/providers/openai"
 	"github.com/blueberrycongee/wuu/internal/toolledger"
 )
 
@@ -25,6 +27,112 @@ const chatDraft = "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,
 	"data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{\\\"amount\\\":1}\"}}]}}]}\n\n"
 const chatToolFinish = "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n"
 const chatComplete = "data: {\"choices\":[{\"delta\":{\"content\":\"Complete answer\"},\"finish_reason\":\"stop\"}]}\n\n"
+
+func TestChatStreamRunner_CustomVideoTransport(t *testing.T) {
+	for _, tc := range []struct {
+		name            string
+		optIn, required bool
+	}{
+		{"opted_in_working_copy", true, false},
+		{"opted_in_required", true, true},
+		{"unsupported_working_copy", false, false},
+		{"unsupported_required", false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			bodies := make(chan map[string]json.RawMessage, 1)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var body map[string]json.RawMessage
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+					t.Error(err)
+					http.Error(w, "invalid request", http.StatusBadRequest)
+					return
+				}
+				if r.Method != http.MethodPost || r.URL.Path != "/chat/completions" || string(body["stream"]) != "true" {
+					t.Errorf("unexpected streaming request: %s %s stream=%s", r.Method, r.URL.Path, body["stream"])
+				}
+				select {
+				case bodies <- body:
+				default:
+					t.Error("unexpected extra provider request")
+				}
+				w.Header().Set("Content-Type", "text/event-stream")
+				fmt.Fprint(w, chatComplete+"data: [DONE]\n\n")
+			}))
+			defer server.Close()
+			client, err := openai.New(openai.ClientConfig{BaseURL: server.URL, APIKey: "synthetic-key", HTTPClient: server.Client()})
+			if err != nil {
+				t.Fatal(err)
+			}
+			runner := &agent.StreamRunner{Client: client, Model: "custom-video"}
+			if tc.optIn {
+				runner.ProviderOptions = map[string]any{"video_input": "video_url"}
+			}
+			history := []providers.ChatMessage{{
+				Role: "user", Content: "Review attached video /tmp/clip.mp4",
+				Files: []providers.InputFile{{MediaType: "video/mp4", Data: "AAAA", LocalPath: "/tmp/clip.mp4", Required: tc.required}},
+			}}
+			before := providers.CloneChatMessages(history)
+			result, err := runner.RunWithCallback(ctx, history, nil)
+			if !reflect.DeepEqual(history, before) {
+				t.Fatal("runner mutated stored video evidence")
+			}
+			if !tc.optIn && tc.required {
+				if err == nil || !strings.Contains(err.Error(), "video input is not supported") || len(bodies) != 0 {
+					t.Fatalf("unsupported required video must fail before HTTP: err=%v requests=%d", err, len(bodies))
+				}
+				t.Logf("required video rejected before HTTP: %v", err)
+				return
+			}
+			if err != nil || result.Content != "Complete answer" {
+				t.Fatalf("video request did not complete: result=%+v err=%v", result, err)
+			}
+			var body map[string]json.RawMessage
+			select {
+			case body = <-bodies:
+			default:
+				t.Fatal("provider did not receive the request")
+			}
+			if _, exists := body["video_input"]; exists {
+				t.Fatal("local video routing option leaked onto the wire")
+			}
+			var messages []struct {
+				Content json.RawMessage `json:"content"`
+			}
+			if err := json.Unmarshal(body["messages"], &messages); err != nil {
+				t.Fatal(err)
+			}
+			videos := 0
+			for _, message := range messages {
+				var parts []struct {
+					Type     string `json:"type"`
+					VideoURL *struct {
+						URL string `json:"url"`
+					} `json:"video_url"`
+				}
+				if json.Unmarshal(message.Content, &parts) != nil {
+					continue // Text-only working-copy fallback uses string content.
+				}
+				for _, part := range parts {
+					if part.Type == "video_url" {
+						videos++
+						if part.VideoURL == nil || part.VideoURL.URL != "data:video/mp4;base64,AAAA" {
+							t.Fatalf("video evidence changed on the wire: %+v", part)
+						}
+					}
+				}
+			}
+			if tc.optIn && videos != 1 {
+				t.Fatalf("opted-in video disappeared from provider request: %s", body["messages"])
+			}
+			if !tc.optIn && (videos != 0 || !strings.Contains(string(body["messages"]), "/tmp/clip.mp4")) {
+				t.Fatalf("unsupported video lost its working-copy fallback: %s", body["messages"])
+			}
+			t.Logf("requests=1 native_videos=%d required=%v opt_in=%v", videos, tc.required, tc.optIn)
+		})
+	}
+}
 
 func TestChatStreamFactory_RecoveryAndToolSafety(t *testing.T) {
 	for _, tc := range []struct {

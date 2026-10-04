@@ -36,6 +36,44 @@ func TestFreshContextShrinksFittingToolProgress(t *testing.T) {
 	}
 }
 
+// Pending usage and pre-send budget must measure the same path-only projection.
+func TestAttachmentBudgetMatchesNativeInputPolicy(t *testing.T) {
+	history := []providers.ChatMessage{{Role: "user", Content: "Read /tmp/clip.mp4", Files: []providers.InputFile{{MediaType: "video/mp4", Data: strings.Repeat("AAAA", 650_000), LocalPath: "/tmp/clip.mp4"}}}}
+	policy := providers.MediaInputPolicy{VideoKnown: true}
+	runner := &StreamRunner{MediaInput: policy}
+	usage, _ := runner.prepareUsageTracker(history)
+	request := providers.ChatRequest{Messages: history, MediaInput: policy}
+	expected := estimateMessages(providers.ProjectMediaForPolicy(history, policy))
+	if expected > 1000 || usage.EstimateCurrent() != expected || estimateOutboundRequestTokens(request) != expected {
+		t.Fatalf("budgets do not match path-only projection: pending=%d request=%d projected=%d", usage.EstimateCurrent(), estimateOutboundRequestTokens(request), expected)
+	}
+}
+
+// Regression: a 2 MB upload must not become 650k tokens or disappear at rollover.
+func TestFreshContextRetainsUploadedFile(t *testing.T) {
+	messages := []providers.ChatMessage{{Role: "system", Content: "instructions"}, {Role: "user", Content: strings.Repeat("old history ", 10_000)}, {Role: "assistant", Content: "done"}, {Role: "user", Seq: 4, Content: "Save the attachment at /tmp/clip.mp4", Files: []providers.InputFile{{MediaType: "video/mp4", Data: strings.Repeat("AAAA", 650_000), LocalPath: "/tmp/clip.mp4"}}}}
+	replacement, err := buildFreshContext(messages, 4, 0, 8000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, msg := range replacement {
+		if msg.Seq == 4 && strings.Contains(msg.Content, "/tmp/clip.mp4") {
+			return
+		}
+	}
+	t.Fatal("context rollover lost latest attachment")
+}
+
+func TestFreshContextCannotDiscardRequiredAttachment(t *testing.T) {
+	messages := []providers.ChatMessage{
+		{Role: "user", Content: strings.Repeat("old history ", 10_000)},
+		{Role: "user", Content: "Analyze the required evidence", Files: []providers.InputFile{{MediaType: "application/pdf", Data: "AAAA", Required: true}}},
+	}
+	if _, err := buildFreshContext(messages, 2, 0, 1000); err != ErrFreshContextTooLarge {
+		t.Fatalf("must fail instead of dropping required evidence: %v", err)
+	}
+}
+
 func TestFreshContextFitsSmallerModel(t *testing.T) {
 	messages := []providers.ChatMessage{{Role: "system", Content: "instructions"}}
 	for range 50 {

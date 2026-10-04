@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"mime"
 	"reflect"
 	"sort"
 	"strings"
@@ -1621,12 +1622,14 @@ func normalizeTurnStartImages(images []TurnStartImage) ([]providers.InputImage, 
 	return out, nil
 }
 
+const maxInputFileBytes = 20 * 1024 * 1024
+
 func normalizeTurnStartFiles(files []TurnStartFile) ([]providers.InputFile, error) {
 	if len(files) == 0 {
 		return nil, nil
 	}
 	out := make([]providers.InputFile, 0, len(files))
-	videoBytes := 0
+	totalBytes := 0
 	for index, file := range files {
 		mediaType := strings.TrimSpace(file.MediaType)
 		data := strings.TrimSpace(file.Data)
@@ -1638,16 +1641,14 @@ func normalizeTurnStartFiles(files []TurnStartFile) ([]providers.InputFile, erro
 		if err != nil {
 			return nil, fmt.Errorf("file %d: %w", index+1, err)
 		}
-		if providers.IsVideoMediaType(mediaType) {
-			videoBytes += base64.StdEncoding.DecodedLen(len(data))
-			if strings.HasSuffix(data, "==") {
-				videoBytes -= 2
-			} else if strings.HasSuffix(data, "=") {
-				videoBytes--
-			}
-			if videoBytes > providers.MaxVideoBytes {
-				return nil, errors.New("video attachments exceed the 20MB total size limit")
-			}
+		totalBytes += base64.StdEncoding.DecodedLen(len(data))
+		if strings.HasSuffix(data, "==") {
+			totalBytes -= 2
+		} else if strings.HasSuffix(data, "=") {
+			totalBytes--
+		}
+		if totalBytes > maxInputFileBytes {
+			return nil, errors.New("file attachments exceed the 20MB total size limit")
 		}
 		out = append(out, providers.InputFile{
 			MediaType: mediaType,
@@ -1788,9 +1789,6 @@ func normalizeImagePayload(mediaType, data string) (string, string, error) {
 	if !strings.HasPrefix(strings.ToLower(mediaType), "image/") {
 		return "", "", fmt.Errorf("unsupported media type %q", mediaType)
 	}
-	if providers.IsVideoMediaType(mediaType) && base64.StdEncoding.DecodedLen(len(data)) > providers.MaxVideoBytes+2 {
-		return "", "", fmt.Errorf("video exceeds the 20MB size limit")
-	}
 	if _, err := base64.StdEncoding.DecodeString(data); err != nil {
 		return "", "", fmt.Errorf("invalid base64 data: %w", err)
 	}
@@ -1815,11 +1813,13 @@ func normalizeFilePayload(mediaType, data string) (string, string, error) {
 	if mediaType == "" {
 		mediaType = "application/octet-stream"
 	}
-	if mediaType != "application/pdf" && !providers.IsVideoMediaType(mediaType) {
-		return "", "", fmt.Errorf("unsupported file media type %q", mediaType)
+	parsedType, _, err := mime.ParseMediaType(mediaType)
+	if err != nil || !strings.Contains(parsedType, "/") {
+		return "", "", fmt.Errorf("invalid file media type %q", mediaType)
 	}
-	if providers.IsVideoMediaType(mediaType) && base64.StdEncoding.DecodedLen(len(data)) > providers.MaxVideoBytes+2 {
-		return "", "", fmt.Errorf("video exceeds the 20MB size limit")
+	mediaType = parsedType
+	if base64.StdEncoding.DecodedLen(len(data)) > maxInputFileBytes+2 {
+		return "", "", fmt.Errorf("file exceeds the 20MB size limit")
 	}
 	if _, err := base64.StdEncoding.DecodeString(data); err != nil {
 		return "", "", fmt.Errorf("invalid base64 data: %w", err)

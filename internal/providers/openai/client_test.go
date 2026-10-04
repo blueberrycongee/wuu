@@ -2842,7 +2842,7 @@ func TestResponsesChat_FiltersUnsupportedProviderOptions(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatalf("decode request body: %v", err)
 		}
-		for _, key := range []string{"toolStreaming", "thinkingConfig", "reasoningConfig", "modelParams", "gateway", "usage", "chat_template_args", "enable_thinking", "thinking", "temperatureSupported", "temperature_supported", "promptCacheKeySupported"} {
+		for _, key := range []string{"toolStreaming", "thinkingConfig", "reasoningConfig", "modelParams", "gateway", "usage", "chat_template_args", "enable_thinking", "thinking", "temperatureSupported", "temperature_supported", "promptCacheKeySupported", "video_input"} {
 			if _, exists := body[key]; exists {
 				t.Fatalf("responses payload should filter %s: %#v", key, body)
 			}
@@ -2882,6 +2882,7 @@ func TestResponsesChat_FiltersUnsupportedProviderOptions(t *testing.T) {
 			"temperatureSupported":    false,
 			"temperature_supported":   false,
 			"metadata":                map[string]any{"eval": "provider-options"},
+			"video_input":             "video_url",
 		},
 	})
 	if err != nil {

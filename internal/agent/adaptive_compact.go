@@ -119,7 +119,7 @@ func reactiveCompactTarget(threshold, lastSuccessful int) int {
 // reported usage. It counts durable messages and the tool schema surface the
 // provider will see with them.
 func localRequestEstimate(messages []providers.ChatMessage, cfg LoopConfig) int {
-	req := providers.ChatRequest{Messages: messages}
+	req := providers.ChatRequest{Messages: messages, MediaInput: cfg.MediaInput}
 	if cfg.Tools != nil {
 		req.Tools = cfg.Tools.Definitions()
 	}
@@ -127,7 +127,7 @@ func localRequestEstimate(messages []providers.ChatMessage, cfg LoopConfig) int 
 }
 
 func estimateOutboundRequestTokens(req providers.ChatRequest) int {
-	tokens := estimateMessages(req.Messages)
+	tokens := estimateMessages(providers.ProjectMediaForPolicy(providers.ApplyToolResultProjections(req.Messages), req.MediaInput))
 	for _, message := range req.Messages {
 		if len(message.DiscoveredTools) == 0 {
 			continue
@@ -149,6 +149,7 @@ func applyAdaptiveCompactBudget(ctx context.Context, messages []providers.ChatMe
 	if !ok || (hint.Reason != CompactReasonOverflow && hint.Reason != CompactReasonNewContext) {
 		return budget, nil
 	}
+	messages = providers.ProjectMediaForPolicy(providers.ApplyToolResultProjections(messages), budget.MediaInput)
 
 	// An unknown model should not start at the legacy 4k summary-input floor.
 	// Use half of the same-contract successful lower bound when available, or

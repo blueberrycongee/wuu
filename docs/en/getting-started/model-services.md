@@ -106,6 +106,32 @@ Anthropic Messages can explicitly request continuation with `pause_turn`. Respon
 
 Each continuation is another model request and may incur charges. Wuu allows up to eight consecutive automatic tool-free continuations, then reports an error if the service still requests another. Client tool execution resets this count; configured step limits and cancellation still apply. An unfinished response cannot replace conversation history as a compact summary.
 
+## Upload files independently of native media support
+
+The desktop composer accepts images, PDFs, videos, and ordinary files. Each
+upload keeps its original bytes in a local working copy for seven days. The
+agent receives a file reference even when the selected model cannot consume
+that format natively, and can use permitted file tools or commands to copy,
+unpack, convert, or analyze it. Native media input is additional: a file path
+does not mean the model has seen the file's contents. Analysis still depends
+on the available tools and permissions.
+
+Ask the agent to copy or move an attachment into the workspace to keep it.
+Cleanup only removes managed working copies, not files saved into the workspace.
+History retains attachment references but does not recreate copies that have
+expired, moved, or been deleted; upload again if the referenced file is missing.
+Desktop uploads are limited to 20 MiB per file; non-image files in one
+submission also share a 20 MiB total limit. The complete encoded desktop request,
+including all images, files, text, and metadata, must fit within 64 MiB. Base64
+encoding increases file sizes by about one third. If the request is too large,
+Wuu keeps the draft so you can remove attachments or shorten the message and retry.
+
+Path-only delivery counts the reference text toward context, not the file's
+disk or Base64 size. Native images use image estimates; other admitted native
+media currently use a bounded fallback without page/frame accounting. Provider
+usage remains authoritative. A call requiring native media evidence fails when
+that evidence is unsupported or cannot be retained within the context budget.
+
 ## Let the agent inspect local images
 
 Ask the agent to inspect a local image by its path, for example: “Read

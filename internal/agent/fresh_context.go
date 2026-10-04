@@ -51,7 +51,7 @@ type FreshContextBuilder func(context.Context, []providers.ChatMessage, int, int
 // buildFreshContext releases the archived transcript without summarizing it.
 // BYOK models get an explicit recovery address and, when it fits, the latest user
 // instruction. Working notes remain in persistent storage and are read on demand.
-func buildFreshContext(messages []providers.ChatMessage, historyHeadSeq, fixedTokens, targetTokens int) ([]providers.ChatMessage, error) {
+func buildFreshContext(messages []providers.ChatMessage, historyHeadSeq, fixedTokens, targetTokens int, policies ...providers.MediaInputPolicy) ([]providers.ChatMessage, error) {
 	if targetTokens <= 0 {
 		targetTokens = FreshContextTargetTokens
 	}
@@ -71,16 +71,28 @@ func buildFreshContext(messages []providers.ChatMessage, historyHeadSeq, fixedTo
 		Role: "system", Content: recovery, Hidden: true, Origin: "internal", Cause: "fresh_context",
 	})
 	budget := targetTokens - fixedTokens - min(freshContextTransformReserveTokens, targetTokens/10)
-	if estimateFreshContextMessages(replacement) > budget {
+	if estimateFreshContextMessages(replacement, policies...) > budget {
 		return nil, ErrFreshContextTooLarge
 	}
 	if task != nil {
 		candidate := append(providers.CloneChatMessages(replacement), providers.CloneChatMessage(*task))
-		if estimateFreshContextMessages(candidate) <= budget && estimateFreshContextMessages(candidate) < estimateFreshContextMessages(messages) {
+		if estimateFreshContextMessages(candidate, policies...) <= budget && estimateFreshContextMessages(candidate, policies...) < estimateFreshContextMessages(messages, policies...) {
 			replacement = candidate
+		} else {
+			// A recovery address cannot substitute for required native evidence.
+			for _, image := range task.Images {
+				if image.Required {
+					return nil, ErrFreshContextTooLarge
+				}
+			}
+			for _, file := range task.Files {
+				if file.Required {
+					return nil, ErrFreshContextTooLarge
+				}
+			}
 		}
 	}
-	if estimateFreshContextMessages(replacement) >= estimateFreshContextMessages(messages) {
+	if estimateFreshContextMessages(replacement, policies...) >= estimateFreshContextMessages(messages, policies...) {
 		return nil, ErrFreshContextNotSmaller
 	}
 	if err := providers.ValidateToolCallHistory(replacement); err != nil {
@@ -100,8 +112,12 @@ func freshContextSystemPrefix(messages []providers.ChatMessage) []providers.Chat
 	return providers.CloneChatMessages(messages[:end])
 }
 
-func estimateFreshContextMessages(messages []providers.ChatMessage) int {
-	return estimateOutboundRequestTokens(providers.ChatRequest{Messages: messages})
+func estimateFreshContextMessages(messages []providers.ChatMessage, policies ...providers.MediaInputPolicy) int {
+	var policy providers.MediaInputPolicy
+	if len(policies) > 0 {
+		policy = policies[0]
+	}
+	return estimateOutboundRequestTokens(providers.ChatRequest{Messages: messages, MediaInput: policy})
 }
 
 func acceptedNewContextRequest(results []providers.ChatMessage) bool {

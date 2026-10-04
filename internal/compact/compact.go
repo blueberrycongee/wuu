@@ -156,6 +156,9 @@ func CompactWithContextWindow(ctx context.Context, messages []providers.ChatMess
 }
 
 type Budget struct {
+	// MediaInput is the resolved request policy, used only for budget projection.
+	// Retained history keeps its original attachments for recovery/model changes.
+	MediaInput          providers.MediaInputPolicy
 	ContextTokens       int
 	InputTokens         int
 	OutputReserveTokens int
@@ -370,13 +373,14 @@ func planCompaction(messages []providers.ChatMessage, model string, budget Budge
 	}
 
 	conversationForCompact := stripHistoricalImages(conversation)
+	budgetMessages := providers.ProjectMediaForPolicy(conversationForCompact, budget.MediaInput)
 	tailBudget := compactTailBudgetForBudget(model, budget)
 	if budget.TargetTokens > 0 {
 		tailBudget = compactTargetTailBudget(systemPrefix, budget)
 	}
 	keepStart := len(conversationForCompact)
 	if tailBudget > 0 {
-		keepStart = compactKeepStart(conversationForCompact, tailBudget)
+		keepStart = compactKeepStart(budgetMessages, tailBudget)
 	}
 	if keepStart <= 0 || keepStart > len(conversationForCompact) {
 		return compactionPlan{}, false
@@ -387,8 +391,8 @@ func planCompaction(messages []providers.ChatMessage, model string, budget Budge
 		// single-turn tool run forces us to summarize some later messages from
 		// that same turn. Reinsert the raw query ahead of the retained tail.
 		if currentTurnStart := lastUserMessageIndex(conversationForCompact); currentTurnStart >= 0 && keepStart > currentTurnStart {
-			queryTokens := EstimateMessagesTokens(conversationForCompact[currentTurnStart : currentTurnStart+1])
-			keepStart = compactKeepStart(conversationForCompact, max(1, tailBudget-queryTokens))
+			queryTokens := EstimateMessagesTokens(budgetMessages[currentTurnStart : currentTurnStart+1])
+			keepStart = compactKeepStart(budgetMessages, max(1, tailBudget-queryTokens))
 			cloned := providers.CloneChatMessage(conversationForCompact[currentTurnStart])
 			protectedCurrentUser = &cloned
 		}
@@ -847,7 +851,7 @@ func compactTargetTailBudget(systemPrefix []providers.ChatMessage, budget Budget
 	if target <= 0 {
 		return 0
 	}
-	target -= EstimateMessagesTokens(systemPrefix)
+	target -= EstimateMessagesTokens(providers.ProjectMediaForPolicy(systemPrefix, budget.MediaInput))
 	// The replacement summary becomes part of durable history. Reserve its
 	// maximum requested output plus the stable handoff wrapper before assigning
 	// the remainder to recent raw turns.

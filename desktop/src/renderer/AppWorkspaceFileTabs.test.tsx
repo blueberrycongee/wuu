@@ -171,6 +171,7 @@ function installWuuApi(): void {
     startThread: vi.fn().mockResolvedValue({ thread: { ...thread, id: "thread-selection-new", turns: [] } }),
     startTurn: startTurnMock,
     queueTurn: vi.fn().mockResolvedValue({ queued: { id: "queued-selection" } }),
+    steerTurn: vi.fn().mockResolvedValue({}),
     getActiveGoalSummary: vi.fn().mockResolvedValue(null),
     gitStatus: vi.fn().mockResolvedValue({
       is_repo: false,
@@ -657,6 +658,99 @@ describe("workspace file tabs", () => {
     expect(startTurnMock.mock.calls[0][3]).toEqual([{
       filename: attachment.filename, media_type: attachment.media_type, data: attachment.data,
     }]);
+  });
+
+  it.each([
+    { pane: "main", action: "start" },
+    { pane: "main", action: "queue" },
+    { pane: "main", action: "steer" },
+    { pane: "split", action: "start" },
+    { pane: "split", action: "queue" },
+  ] as const)("restores the exact $pane draft and attachments after an oversized $action rejection for retry", async ({ pane, action }) => {
+    await openSelectionDocument();
+    const target: Thread = {
+      ...completedThread(),
+      id: pane === "split" ? "thread-attachment-secondary" : completedThread().id,
+    };
+    if (action !== "start") {
+      target.status = "in_progress";
+      target.turns = [...target.turns, {
+        id: "turn-attachment-running", status: "in_progress", items_view: "full", items: [],
+      }];
+    }
+    let composer: HTMLElement;
+    let otherComposer: HTMLElement | undefined;
+    if (pane === "split") {
+      vi.mocked(window.wuu.resumeThread).mockResolvedValueOnce({ thread: target });
+      await act(async () => requestOpenThreadInSplit(target.id));
+      await flushAsync();
+      const panes = container.querySelectorAll<HTMLElement>(".conversation-split-pane");
+      expect(panes).toHaveLength(2);
+      otherComposer = panes[0];
+      await typePrompt(otherComposer.querySelector("textarea")!, "Keep the primary draft");
+      composer = panes[1];
+      await act(async () => composer.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true })));
+    } else {
+      await act(async () => {
+        for (const handler of serverEventHandlers) handler({
+          kind: "notification", workdir: workspace,
+          message: { method: "thread/updated", params: { thread: target } },
+        } as ServerEvent);
+      });
+      composer = container.querySelector<HTMLElement>("[data-main-conversation-composer]")!;
+    }
+    const image = { id: "retry-image", media_type: "image/png", data: "aW1hZ2U=" };
+    const files = [
+      { id: "retry-file-1", filename: "context.pdf", media_type: "application/pdf", data: "JVBERg==" },
+      { id: "retry-file-2", filename: "资料.txt", media_type: "text/plain", data: "Y29udGV4dA==" },
+    ];
+    const imageEncode = vi.spyOn(composerMessages, "composerImagePlaceholder")
+      .mockReturnValue({ ...image, encodePromise: Promise.resolve(image) });
+    const fileEncode = vi.spyOn(composerMessages, "composerFilePlaceholder")
+      .mockImplementation((file) => {
+        const attachment = files.find((entry) => entry.filename === file.name)!;
+        return { ...attachment, encodePromise: Promise.resolve(attachment) };
+      });
+    try {
+      const input = composer.querySelector<HTMLInputElement>("input[type=file]")!;
+      Object.defineProperty(input, "files", { configurable: true, value: [
+        new File(["image"], "reference.png", { type: image.media_type }),
+        ...files.map((file) => new File(["context"], file.filename, { type: file.media_type })),
+      ] });
+      await act(async () => input.dispatchEvent(new Event("change", { bubbles: true })));
+      await flushAsync();
+    } finally {
+      imageEncode.mockRestore();
+      fileEncode.mockRestore();
+    }
+    const prompt = "  Compare these attachments.\n保留原文和空格。  ";
+    await typePrompt(composer.querySelector("textarea")!, prompt);
+    const submit = action === "start" ? startTurnMock
+      : action === "queue" ? vi.mocked(window.wuu.queueTurn) : vi.mocked(window.wuu.steerTurn);
+    submit.mockRejectedValueOnce(new Error("Message is too large. Remove an attachment and try again."));
+    const send = async () => {
+      await act(async () => composer.querySelector<HTMLTextAreaElement>("textarea")!
+        .dispatchEvent(new KeyboardEvent("keydown", {
+          key: "Enter", ctrlKey: pane === "main" && action === "queue", bubbles: true,
+        })));
+      await flushAsync();
+    };
+    await send();
+    expect(submit).toHaveBeenCalledTimes(1);
+    expect(composer.querySelector("textarea")!.value).toBe(prompt);
+    expect(composer.querySelectorAll(".composer-attachment-card")).toHaveLength(3);
+    if (otherComposer) expect(otherComposer.querySelector("textarea")!.value).toBe("Keep the primary draft");
+
+    await send();
+    expect(submit).toHaveBeenCalledTimes(2);
+    for (const call of submit.mock.calls) {
+      expect(call[0]).toBe(target.id);
+      expect(call[action === "steer" ? 2 : 1]).toBe(prompt.trim());
+      expect(call[action === "steer" ? 3 : 2]).toEqual([{ media_type: image.media_type, data: image.data }]);
+      expect(call[action === "start" ? 3 : action === "queue" ? 4 : 5]).toEqual(files.map(({ filename, media_type, data }) => ({ filename, media_type, data })));
+    }
+    expect(composer.querySelector("textarea")!.value).toBe("");
+    if (otherComposer) expect(otherComposer.querySelector("textarea")!.value).toBe("Keep the primary draft");
   });
 
   it("keeps new file comments when a queued selection send fails", async () => {

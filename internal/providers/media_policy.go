@@ -22,6 +22,25 @@ type MediaInputPolicy struct {
 	FileKnown  bool
 }
 
+// MediaInputResolver exposes transport admission without credentials or I/O so
+// the agent can budget the same media projection that the adapter sends.
+type MediaInputResolver interface {
+	ResolveMediaInput(MediaInputPolicy, map[string]any) MediaInputPolicy
+}
+
+func ResolveMediaInput(client Client, policy MediaInputPolicy, options map[string]any) MediaInputPolicy {
+	if resolver, ok := client.(MediaInputResolver); ok {
+		return resolver.ResolveMediaInput(policy, options)
+	}
+	return ResolveVideoInputPolicy(policy, options, false)
+}
+
+func ResolveVideoInputPolicy(policy MediaInputPolicy, options map[string]any, transport bool) MediaInputPolicy {
+	policy.Video = transport && ((policy.VideoKnown && policy.Video) || (!policy.VideoKnown && options["video_input"] == "video_url"))
+	policy.VideoKnown = true
+	return policy
+}
+
 // ValidateRequiredMedia prevents a task from continuing after selected evidence
 // is dropped. Unknown catalog capabilities retain the existing provider-validated
 // pass-through behavior; an explicit unsupported capability fails closed.
@@ -40,7 +59,7 @@ func ValidateRequiredMedia(msgs []ChatMessage, policy MediaInputPolicy) error {
 				if policy.VideoKnown && !policy.Video {
 					return fmt.Errorf("required video input is not supported by the selected model and connection")
 				}
-			} else if policy.FileKnown && !policy.File {
+			} else if (file.LocalPath != "" && file.MediaType != "application/pdf") || (policy.FileKnown && !policy.File) {
 				return fmt.Errorf("required file input is not supported by the selected model; choose a file-capable model")
 			}
 		}
@@ -75,9 +94,6 @@ func appendMediaMarker(content string, count int, singular, plural string) strin
 func ProjectMediaForPolicy(msgs []ChatMessage, policy MediaInputPolicy) []ChatMessage {
 	rejectImage := policy.ImageKnown && !policy.Image
 	rejectFile := policy.FileKnown && !policy.File
-	if !rejectImage && !rejectFile && !(policy.VideoKnown && !policy.Video) {
-		return msgs
-	}
 	out := make([]ChatMessage, len(msgs))
 	copy(out, msgs)
 	for i := range out {
@@ -95,7 +111,7 @@ func ProjectMediaForPolicy(msgs []ChatMessage, policy MediaInputPolicy) []ChatMe
 						omittedVideos++
 						continue
 					}
-				} else if rejectFile {
+				} else if rejectFile || (file.LocalPath != "" && file.MediaType != "application/pdf") {
 					omittedFiles++
 					continue
 				}

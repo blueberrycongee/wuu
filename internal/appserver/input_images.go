@@ -68,6 +68,18 @@ func (s *Server) userMessageWithInputImages(threadID, prompt string, images []pr
 			extensions = append(extensions, ".txt")
 		}
 	}
+	for index, file := range msg.Files {
+		data, decodeErr := base64.StdEncoding.DecodeString(file.Data)
+		if decodeErr != nil {
+			return msg, fmt.Errorf("decode input file %d: %w", index+1, decodeErr)
+		}
+		extension := strings.ToLower(filepath.Ext(file.Filename))
+		if len(extension) < 2 || len(extension) > 16 || strings.Trim(extension[1:], "abcdefghijklmnopqrstuvwxyz0123456789") != "" {
+			extension = ".bin"
+		}
+		payloads = append(payloads, data)
+		extensions = append(extensions, extension)
+	}
 	if len(payloads) == 0 {
 		return msg, nil
 	}
@@ -99,6 +111,9 @@ func (s *Server) userMessageWithInputImages(threadID, prompt string, images []pr
 		if index >= len(received) {
 			directory, prefix = "input-attachments", "text"
 		}
+		if index >= len(received)+len(textPartIndexes) {
+			prefix = "file"
+		}
 		dir := filepath.Join("sessions", threadID, directory)
 		if err := root.MkdirAll(dir, 0o700); err != nil {
 			return msg, err
@@ -123,6 +138,10 @@ func (s *Server) userMessageWithInputImages(threadID, prompt string, images []pr
 		}
 		if index < len(received) {
 			msg.Images[index].LocalPath = filepath.Join(stateDir, path)
+		} else if index >= len(received)+len(textPartIndexes) {
+			attachment := &msg.Files[index-len(received)-len(textPartIndexes)]
+			attachment.LocalPath = filepath.Join(stateDir, path)
+			attachment.SizeBytes = int64(len(data))
 		} else {
 			msg.ContentParts[textPartIndexes[index-len(received)]].LocalPath = filepath.Join(stateDir, path)
 		}
@@ -151,7 +170,22 @@ func (s *Server) userMessageWithInputImages(threadID, prompt string, images []pr
 		}
 	}
 	msg.Content += inputImagePathReference(msg.Images)
+	msg.Content += inputFilePathReference(msg.Files)
 	return msg, nil
+}
+
+func inputFilePathReference(files []providers.InputFile) string {
+	var references strings.Builder
+	for _, file := range files {
+		if file.LocalPath == "" {
+			continue
+		}
+		if references.Len() == 0 {
+			fmt.Fprintf(&references, "\n\nAttached files (working copies expire after %g days; copy or move into the workspace to keep; missing copies may have expired, moved, or been deleted):", inputAttachmentRetention.Hours()/24)
+		}
+		fmt.Fprintf(&references, "\n%q (%s, %d bytes): %s", file.Filename, file.MediaType, file.SizeBytes, file.LocalPath)
+	}
+	return references.String()
 }
 
 func inputTextAttachmentReference(part providers.MessageContentPart) string {
@@ -186,7 +220,7 @@ func inputAttachmentCreatedAt(name string) (time.Time, bool) {
 	if len(parts) != 3 || len(parts[2]) != 26 {
 		return time.Time{}, false
 	}
-	if !((parts[0] == "text" && ext == ".txt") || (parts[0] == "image" && (ext == ".png" || ext == ".jpg" || ext == ".gif" || ext == ".webp"))) {
+	if !((parts[0] == "file" && len(ext) >= 2 && len(ext) <= 16 && strings.Trim(ext[1:], "abcdefghijklmnopqrstuvwxyz0123456789") == "") || (parts[0] == "text" && ext == ".txt") || (parts[0] == "image" && (ext == ".png" || ext == ".jpg" || ext == ".gif" || ext == ".webp"))) {
 		return time.Time{}, false
 	}
 	for _, c := range parts[2] {
@@ -273,8 +307,12 @@ func preserveForkInputImages(stateDir, sourceThreadID, forkThreadID string, hist
 	for index := range history {
 		msg := &history[index]
 		msg.Images = slices.Clone(msg.Images)
+		msg.Files = slices.Clone(msg.Files)
 		msg.ContentParts = providers.CloneMessageContentParts(msg.ContentParts)
 		var paths []*string
+		for fileIndex := range msg.Files {
+			paths = append(paths, &msg.Files[fileIndex].LocalPath)
+		}
 		for imageIndex := range msg.Images {
 			paths = append(paths, &msg.Images[imageIndex].LocalPath)
 		}

@@ -21,6 +21,10 @@ type adaptedStreamClient struct {
 	client Client
 }
 
+func (a adaptedStreamClient) ResolveMediaInput(policy MediaInputPolicy, options map[string]any) MediaInputPolicy {
+	return ResolveMediaInput(a.client, policy, options)
+}
+
 func (a adaptedStreamClient) PrepareInferenceRequest(ctx context.Context, req ChatRequest) (ChatRequest, error) {
 	return prepareInferenceRequest(ctx, a.client, req)
 }

@@ -6,8 +6,6 @@ import (
 	"strings"
 )
 
-const MaxVideoBytes = 20 * 1024 * 1024
-
 func IsVideoMediaType(mediaType string) bool {
 	switch strings.ToLower(strings.TrimSpace(mediaType)) {
 	case "video/mp4", "video/webm", "video/quicktime", "video/mov":
@@ -34,17 +32,20 @@ func VideoURLTransport(baseURL string, options map[string]any) bool {
 
 // PrepareVideoInput checks the selected model as well as the actual transport.
 // Old videos are omitted on incompatible follow-ups so switching models remains
-// possible; a newly supplied video must never be silently dropped.
+// possible. New unsupported videos need a tool-accessible working copy, unless
+// the caller requires native evidence; a path cannot satisfy that contract.
+// Keep video_input available for downstream admission checks; provider
+// serializers filter this local routing option from the wire payload.
 func PrepareVideoInput(req ChatRequest, transport bool) (ChatRequest, error) {
-	explicit := req.ProviderOptions["video_input"] == "video_url"
-	supported := transport && ((req.MediaInput.VideoKnown && req.MediaInput.Video) || (!req.MediaInput.VideoKnown && explicit))
+	policy := ResolveVideoInputPolicy(req.MediaInput, req.ProviderOptions, transport)
+	supported := policy.Video
 	if !supported {
 		for i := len(req.Messages) - 1; i >= 0; i-- {
 			if req.Messages[i].Role != "user" {
 				continue
 			}
 			for _, file := range req.Messages[i].Files {
-				if IsVideoMediaType(file.MediaType) {
+				if IsVideoMediaType(file.MediaType) && (file.LocalPath == "" || file.Required) {
 					return req, fmt.Errorf("video input is not supported by the selected model and connection (%s / %s); choose a video-capable model with a supported video connection", req.Provider, req.Model)
 				}
 			}
@@ -55,16 +56,7 @@ func PrepareVideoInput(req ChatRequest, transport bool) (ChatRequest, error) {
 			}
 		}
 	}
-	if _, exists := req.ProviderOptions["video_input"]; exists {
-		options := make(map[string]any, len(req.ProviderOptions))
-		for key, value := range req.ProviderOptions {
-			if key != "video_input" {
-				options[key] = value
-			}
-		}
-		req.ProviderOptions = options
-	}
-	req.MediaInput.Video, req.MediaInput.VideoKnown = supported, true
+	req.MediaInput = policy
 	return req, nil
 }
 

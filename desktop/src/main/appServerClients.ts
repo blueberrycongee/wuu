@@ -24,6 +24,12 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 // idle-evict beyond that. 4 keeps the active workdir + the three most recently
 // used ones resident without letting the pool grow unbounded.
 const MAX_APP_SERVER_CLIENTS = 4;
+// JSONL frame budget in internal/appserver/stdio.go, including the newline.
+// Check the serialized UTF-8 envelope, not raw file sizes: base64, metadata,
+// content parts, and prompt text all consume the same transport budget.
+const MAX_APP_SERVER_FRAME_BYTES = 64 * 1024 * 1024;
+
+class AppServerMessageTooLargeError extends Error {}
 
 type AppServerSpawnOptions = {
   cwd: string;
@@ -477,26 +483,48 @@ export class AppServerClient {
         resolve: (value) => resolveRequest(value as T),
         reject: rejectRequest,
       });
-      this.write(payload);
+      try {
+        this.write(payload);
+      } catch (error) {
+        this.pending.delete(JSON.stringify(id));
+        rejectRequest(error);
+      }
     });
   }
 
   respond(id: string, result: unknown): void {
     this.touch();
     this.ensureStarted();
-    this.write({ id, result });
+    this.writeResponse({ id, result });
   }
 
   reject(id: string, message: string): void {
     this.touch();
     this.ensureStarted();
-    this.write({
+    this.writeResponse({
       id,
       error: {
         code: "error",
         message,
       },
     });
+  }
+
+  private writeResponse(response: AppServerResponse): void {
+    try {
+      this.write(response);
+    } catch (error) {
+      if (!(error instanceof AppServerMessageTooLargeError)) throw error;
+      // Reverse-RPC callers still need a terminal response after their route
+      // is consumed, including when a page supplies an oversized error string.
+      this.write({
+        id: response.id,
+        error: {
+          code: "error",
+          message: "App-server response exceeds the 64 MiB transport limit. Request a smaller result.",
+        },
+      });
+    }
   }
 
   private shutdownPromise: Promise<void> | undefined;
@@ -703,7 +731,11 @@ export class AppServerClient {
       throw new Error("app-server is not running");
     }
     try {
-      child.stdin.write(`${JSON.stringify(payload)}\n`, (error) => {
+      const wire = `${JSON.stringify(payload)}\n`;
+      if (Buffer.byteLength(wire, "utf8") > MAX_APP_SERVER_FRAME_BYTES) {
+        throw new AppServerMessageTooLargeError("Message exceeds the 64 MiB transport limit after encoding. Remove an attachment or shorten the message and try again.");
+      }
+      child.stdin.write(wire, (error) => {
         if (error) {
           this.finalizeChild(
             child,
@@ -714,6 +746,8 @@ export class AppServerClient {
         }
       });
     } catch (error) {
+      // An admission refusal must not finalize the core or reject other work.
+      if (error instanceof AppServerMessageTooLargeError) throw error;
       this.finalizeChild(
         child,
         null,

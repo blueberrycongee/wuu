@@ -216,12 +216,14 @@ func RunToolLoop(
 	)
 	if usage == nil {
 		usage = NewUsageTracker()
+		usage.setMediaInputPolicy(cfg.MediaInput)
 		// Without caller-owned cross-turn state, seed this run from a
 		// local estimate so resumed long sessions can compact before
 		// the first provider request.
 		usage.SetAdjustment(UsageAdjustmentInitialHistoryEstimate)
 		usage.RecordPendingMessages(messages)
 	}
+	usage.setMediaInputPolicy(cfg.MediaInput)
 	// Cross-run continuity: splice the previous run's retained request-only
 	// context back into the transcript when the durable history still matches
 	// its fingerprint, so this run's first request byte-extends the previous
@@ -458,12 +460,12 @@ func RunToolLoop(
 			}
 			fixedSegments := append(append([]ContextSegment(nil), currentSegments...), postToolContextSegments...)
 			fixedMessages := assembleModelRequest(nil, fixedSegments).Messages
-			fixedRequest := providers.ChatRequest{Messages: fixedMessages}
+			fixedRequest := providers.ChatRequest{Messages: fixedMessages, MediaInput: cfg.MediaInput}
 			if cfg.Tools != nil {
 				fixedRequest.Tools = cfg.Tools.Definitions()
 			}
 			fixedTokens := estimateOutboundRequestTokens(fixedRequest)
-			beforeTokens := fixedTokens + estimateFreshContextMessages(messages)
+			beforeTokens := fixedTokens + estimateFreshContextMessages(messages, cfg.MediaInput)
 			beforeMessages := compactNoticeMessageCount(messages)
 			if cfg.OnCompactStart != nil {
 				cfg.OnCompactStart(CompactReasonNewContext)
@@ -663,6 +665,17 @@ func RunToolLoop(
 				return loopResultSnapshot(messages, startLen, historyRewritten, totalIn, totalOut, totalCacheCreation, totalCacheRead), err
 			}
 		}
+		if req.MediaInput.VideoKnown {
+			var err error
+			req, err = providers.PrepareVideoInput(req, req.MediaInput.Video)
+			if err != nil {
+				return loopResultSnapshot(messages, startLen, historyRewritten, totalIn, totalOut, totalCacheCreation, totalCacheRead), err
+			}
+		}
+		if err := providers.ValidateRequiredMedia(providers.ApplyToolResultProjections(req.Messages), req.MediaInput); err != nil {
+			return loopResultSnapshot(messages, startLen, historyRewritten, totalIn, totalOut, totalCacheCreation, totalCacheRead), err
+		}
+		req.Messages = providers.ProjectMediaForPolicy(req.Messages, req.MediaInput)
 		req.NativeDeferredToolDiscovery = providers.NativeToolDiscoveryEnabled(req.NativeDeferredToolDiscovery, req.Tools)
 		if freshContextApplied {
 			targetTokens := cfg.FreshContextTokens
@@ -1267,6 +1280,7 @@ func compactMaxOutputTokens(cfg LoopConfig) int {
 
 func canProactivelyCompact(messages []providers.ChatMessage, cfg LoopConfig) bool {
 	return compact.CanCompactWithBudget(messages, cfg.Model, compact.Budget{
+		MediaInput:          cfg.MediaInput,
 		ContextTokens:       cfg.MaxContextTokens,
 		InputTokens:         cfg.MaxInputTokens,
 		OutputReserveTokens: cfg.OutputReserveTokens,

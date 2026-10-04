@@ -186,7 +186,9 @@ func (r *Runner) RunWithUsage(ctx context.Context, prompt string, onUsage func(i
 	history = append(history, providers.ChatMessage{Role: "user", Content: prompt})
 
 	maxCtx := r.ContextWindowOverride
+	mediaInput := providers.ResolveMediaInput(r.Client, providers.MediaInputPolicy{}, r.ProviderOptions)
 	cfg := LoopConfig{
+		MediaInput:                  mediaInput,
 		Tools:                       r.Tools,
 		Model:                       r.Model,
 		ProviderName:                r.ProviderName,
@@ -207,6 +209,7 @@ func (r *Runner) RunWithUsage(ctx context.Context, prompt string, onUsage func(i
 		OnUsage:                     onUsage,
 		Compact: func(ctx context.Context, messages []providers.ChatMessage) ([]providers.ChatMessage, error) {
 			budget, budgetErr := applyAdaptiveCompactBudget(ctx, messages, compact.Budget{
+				MediaInput:          mediaInput,
 				ContextTokens:       maxCtx,
 				InputTokens:         r.MaxInputTokens,
 				OutputReserveTokens: r.OutputReserveTokens,
@@ -217,6 +220,7 @@ func (r *Runner) RunWithUsage(ctx context.Context, prompt string, onUsage func(i
 			}
 			definitions := toolDefinitions(r.Tools)
 			return compact.CompactWithNativeOrSummary(ctx, messages, r.Client, r.Model, budget, compact.NativeOptions{
+				MediaInput:                  mediaInput,
 				Provider:                    r.ProviderName,
 				Tools:                       definitions,
 				Temperature:                 r.Temperature,

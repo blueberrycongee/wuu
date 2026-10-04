@@ -36,6 +36,8 @@ type persistedImage struct {
 }
 
 type persistedFile struct {
+	LocalPath string `json:"local_path,omitempty"`
+	SizeBytes int64  `json:"size_bytes,omitempty"`
 	Required  bool   `json:"required,omitempty"`
 	MediaType string `json:"media_type"`
 	Data      string `json:"data"`
@@ -181,6 +183,8 @@ func chatMessagesFromPersistedMessages(records []persistedMessage) []providers.C
 				continue
 			}
 			msg.Files = append(msg.Files, providers.InputFile{
+				LocalPath: file.LocalPath,
+				SizeBytes: file.SizeBytes,
 				Required:  file.Required,
 				MediaType: file.MediaType,
 				Data:      file.Data,
@@ -395,6 +399,8 @@ func persistedMessageFromChatMessage(msg providers.ChatMessage) persistedMessage
 			continue
 		}
 		out.Files = append(out.Files, persistedFile{
+			LocalPath: file.LocalPath,
+			SizeBytes: file.SizeBytes,
 			Required:  file.Required,
 			MediaType: file.MediaType,
 			Data:      data,

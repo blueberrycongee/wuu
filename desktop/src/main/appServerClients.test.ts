@@ -459,6 +459,99 @@ describe("AppServerClientPool session routing", () => {
   });
 });
 
+describe("AppServerClient request admission", () => {
+  // The Go JSONL scanner includes its newline in this 64 MiB frame budget.
+  const maxFrameBytes = 64 * 1024 * 1024;
+
+  it.each(["images", "mixed", "unicode metadata"])("rejects oversized %s without losing the live connection", async (kind) => {
+    const child = new FakeAppServerChild();
+    const spawnAppServer = vi.fn(() => child.asChildProcess());
+    const { client, events } = makeClient(spawnAppServer);
+    const written: string[] = [];
+    child.stdin.on("data", (chunk: Buffer) => {
+      const request = JSON.parse(chunk.toString());
+      written.push(request.id);
+      if (request.method !== "thread/list") {
+        child.stdout.write(`${JSON.stringify({ id: request.id, result: { ok: true } })}\n`);
+      }
+    });
+    const pending = client.request("thread/list");
+    const data = "A".repeat(4 * Math.ceil(17 * 1024 * 1024 / 3));
+    const image = { media_type: "image/png", data };
+    const params = kind === "images"
+      ? { prompt: "Compare", images: [image, image, image] }
+      : kind === "mixed"
+        ? { prompt: "Compare", images: [image, image], files: [
+            { media_type: "application/pdf", filename: "report.pdf", data },
+          ] }
+        : { prompt: "中".repeat(1024), files: [{
+            media_type: "application/octet-stream", filename: "測定.txt",
+            data: "A".repeat(maxFrameBytes - 2048),
+          }] };
+    await expect(client.request("turn/start", params)).rejects.toBeInstanceOf(Error);
+    expect(written).toEqual(["client-1"]);
+    expect(child.killed).toBe(false);
+    expect(serverExitEvents(events)).toEqual([]);
+    expect(client.isBusy()).toBe(true);
+    child.stdout.write(`${JSON.stringify({ id: "client-1", result: { threads: [] } })}\n`);
+    await expect(pending).resolves.toEqual({ threads: [] });
+    expect(client.isBusy()).toBe(false);
+    await expect(client.request("initialize")).resolves.toEqual({ ok: true });
+    expect(spawnAppServer).toHaveBeenCalledTimes(1);
+    expect(written).toEqual(["client-1", "client-3"]);
+  });
+
+  it.each(["result", "error"])("settles oversized reverse-RPC %s replies instead of stranding the caller", async (kind) => {
+    const child = new FakeAppServerChild();
+    const { client, events } = makeClient(() => child.asChildProcess());
+    const replies: Array<{ id: string; result?: unknown; error?: { code: string } }> = [];
+    child.stdin.on("data", (chunk: Buffer) => {
+      expect(chunk.byteLength).toBeLessThan(maxFrameBytes);
+      const message = JSON.parse(chunk.toString());
+      if (message.method) {
+        child.stdout.write(`${JSON.stringify({ id: message.id, result: { ok: true } })}\n`);
+      } else {
+        replies.push(message);
+      }
+    });
+    client.start();
+    child.stdout.write(`${JSON.stringify({ id: "browser-1", method: "browser/cdp", params: {} })}\n`);
+    expect(events.some(event => event.kind === "server-request" && event.message.id === "browser-1")).toBe(true);
+    expect(() => {
+      if (kind === "result") client.respond("browser-1", { data: "A".repeat(maxFrameBytes) });
+      else client.reject("browser-1", "A".repeat(maxFrameBytes));
+    }).not.toThrow();
+    expect(replies).toEqual([{ id: "browser-1", error: { code: "error", message: expect.any(String) } }]);
+    expect(child.killed).toBe(false);
+    expect(serverExitEvents(events)).toEqual([]);
+    await expect(client.request("initialize")).resolves.toEqual({ ok: true });
+  });
+
+  it.each([0, 1])("counts the complete JSON envelope and newline at the limit (extra=%s)", async (extra) => {
+    const child = new FakeAppServerChild();
+    const { client, events } = makeClient(() => child.asChildProcess());
+    let writtenBytes = 0;
+    child.stdin.on("data", (chunk: Buffer) => {
+      writtenBytes += chunk.byteLength;
+      child.stdout.write(`${JSON.stringify({ id: "client-1", result: { ok: true } })}\n`);
+    });
+    const params = { thread_id: "thread-1", prompt: "quoted \" text\n", images: [{ media_type: "image/png", data: "" }] };
+    const overhead = Buffer.byteLength(JSON.stringify({ id: "client-1", method: "turn/start", params })) + 1;
+    params.images[0].data = "A".repeat(maxFrameBytes - overhead + extra);
+    const request = client.request("turn/start", params);
+    if (extra === 0) {
+      await expect(request).resolves.toEqual({ ok: true });
+      expect(writtenBytes).toBe(maxFrameBytes);
+    } else {
+      await expect(request).rejects.toBeInstanceOf(Error);
+      expect(writtenBytes).toBe(0);
+    }
+    expect(client.isBusy()).toBe(false);
+    expect(child.killed).toBe(false);
+    expect(serverExitEvents(events)).toEqual([]);
+  });
+});
+
 describe("AppServerClient child lifecycle", () => {
   it("can start a client before its first request and reuses that process", () => {
     const child = new FakeAppServerChild();
@@ -560,6 +653,17 @@ describe("AppServerClient child lifecycle", () => {
     expect(serverExitEvents(events)[0]?.message).toMatch(/ENOENT/);
     expect(stateChanges()).toBe(1);
     expect(client.isBusy()).toBe(false);
+  });
+
+  it("finalizes serialization failures without leaving a pending request", async () => {
+    const child = new FakeAppServerChild();
+    const { client, events } = makeClient(() => child.asChildProcess());
+    const params: Record<string, unknown> = {};
+    params.cycle = params;
+    await expect(client.request("initialize", params)).rejects.toThrow(/stdin write failed/);
+    expect(client.isBusy()).toBe(false);
+    expect(child.killed).toBe(true);
+    expect(serverExitEvents(events)).toHaveLength(1);
   });
 
   it("routes a synchronous stdin write failure through finalization", async () => {

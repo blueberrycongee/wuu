@@ -171,6 +171,9 @@ type InputImage struct {
 // Images are still represented by InputImage for backward compatibility;
 // non-image media such as PDFs use InputFile.
 type InputFile struct {
+	// LocalPath is a server-owned, expiring working copy, never provider wire data.
+	LocalPath string `json:"local_path,omitempty"`
+	SizeBytes int64  `json:"size_bytes,omitempty"`
 	// Required has the same admission semantics as InputImage.Required.
 	Required  bool
 	MediaType string
