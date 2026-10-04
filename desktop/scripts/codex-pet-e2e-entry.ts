@@ -204,6 +204,11 @@ async function main(): Promise<void> {
   const ready = async () => {
     await until(() => !win.webContents.isLoading() && win.isVisible(), "pet window shown");
     await until(() => page<boolean>("typeof window.wuuPetView === 'function'"), "pet page ready");
+    // Synthetic clicks do not activate the app like a native click. Without
+    // activation, macOS can take focus back and close the composer on blur.
+    app.focus({ steal: true });
+    win.focus();
+    await until(() => win.isFocused(), "pet window focused for synthetic input");
   };
   await ready();
 
