@@ -88,6 +88,7 @@ applyTheme(theme);
 const conversationTurns: Turn[] = [
   {
     id: "sample-first", status: "completed", items_view: "full", duration_ms: 42000,
+    started_at: "2026-09-17T05:58:00Z", answer_ready_at: "2026-09-17T05:58:42Z", completed_at: "2026-09-17T05:58:45Z",
     items: [
       { id: "sample-request", type: "user_message", status: "completed", text: "请帮我梳理这个项目的消息流。保留浅灰色用户气泡，让长回答更容易阅读，输入框与消息流保持同宽。代码、执行过程与最终结果也需要有清楚的层次。" },
       { id: "sample-commentary", type: "agent_message", status: "completed", terminal: false, text: "我先检查消息的渲染结构，再比较代码块、过程信息和最终回答的呈现方式。" },
@@ -95,7 +96,7 @@ const conversationTurns: Turn[] = [
       { id: "sample-answer", type: "agent_message", status: "completed", terminal: true, text: "消息流可以围绕三个角色组织：请求提供上下文，过程说明正在发生什么，最终回答承载结果。\n\n## 阅读与操作的边界\n\n- 用户请求靠右，回复正文沿左侧展开。\n- 过程收起后保留入口，需要时能展开检查。\n- 代码和产物采用同一种内嵌容器，输入区保持完整的操作空间。\n\n```ts\nconst view = { column: 768, message: 'readable', composer: 'aligned' };\n```\n\n这段示例只用于视觉验收，不代表真实执行结果。" },
     ],
   },
-  { id: "sample-second", status: "completed", items_view: "full", duration_ms: 6000, started_at: "2026-09-17T06:00:00Z", items: [
+  { id: "sample-second", status: "completed", items_view: "full", duration_ms: 6000, started_at: "2026-09-17T06:00:00Z", completed_at: "2026-09-17T06:00:06Z", items: [
     { id: "sample-followup", type: "user_message", status: "completed", text: "短回答也要自然一点。" },
     { id: "sample-queued", type: "user_message", status: "completed", text: "还有连续补充的消息。" },
     { id: "sample-short", type: "agent_message", status: "completed", terminal: true, text: "可以。短回答直接呈现内容，保持与上一个回答相同的文字起点和行距。" },
@@ -168,7 +169,7 @@ function Fixture(): JSX.Element {
           <div className="message user-message">请用一组包含段落、分点和嵌套列表的内容，检查消息流的阅读节奏。</div>
           <div className="fixture-process turn-process-entry">已完成 3 项操作 · 排版验收示例</div>
           {surface === "lifecycle" ? <WuuUIRoot><TurnView
-            turn={{ id: "fixture-lifecycle", status: live ? "in_progress" : "completed", items_view: "full", items: [
+            turn={{ id: "fixture-lifecycle", status: live ? "in_progress" : "completed", started_at: "2026-09-17T06:00:00Z", answer_ready_at: live ? undefined : "2026-09-17T06:00:06Z", items_view: "full", items: [
               { id: "fixture-request", type: "user_message", status: "completed", text: "检查回复完成后的空白。" },
               { id: "fixture-answer", type: "agent_message", terminal: live && params.has("lateTerminal") ? undefined : true, status: live ? "in_progress" : "completed", text: params.has("lateTerminal") ? Array(4).fill("在技术演进与协作模式持续变迁的当下，软件工程的重心正逐渐从单纯的代码编写转向更高维度的系统设计、上下文维护与心智模型对齐。现代开发工作流不再是由孤立的函数或离散的代码提交拼凑而成，而是一个需要持续演进、自我校准并包容复杂性的动态生态系统。").join("\n\n") : "这段回答结束后，操作出现，但下一条消息的位置不应变化。" },
             ] }}

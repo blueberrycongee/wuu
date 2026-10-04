@@ -860,14 +860,17 @@
   height: var(--conversation-user-action-size);
 }
 
-.user-message-time {
+.message-time {
   color: var(--ink-tertiary);
   font-size: var(--font-sm);
-  font-weight: var(--weight-medium);
   font-variant-numeric: tabular-nums;
-  line-height: var(--conversation-user-action-size);
-  pointer-events: none;
+  line-height: var(--conversation-message-action-size);
   white-space: nowrap;
+}
+
+.user-message-time {
+  font-weight: var(--weight-medium);
+  line-height: var(--conversation-user-action-size);
 }
 
 /* Reserve the scaled action row and hover bridge between queued queries. */

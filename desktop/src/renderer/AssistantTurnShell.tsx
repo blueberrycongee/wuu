@@ -651,6 +651,7 @@ function EntryRenderer({
       <ThreadItemView
         turnID={turn.id}
         turnStatus={turn.status}
+        turnAnswerReadyAt={turn.answer_ready_at ?? turn.completed_at}
         item={item}
         cwd={cwd}
         onOpenFile={onOpenFile}

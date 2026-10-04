@@ -10,6 +10,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Show reply completion times beside copy and fork actions, with the same
+  visibility rules and full local date and time on hover.
 - Send long pasted text as UTF-8 file attachments with seven-day working
   copies, while preserving exact snapshots for history and resubmission.
 - Start new conversations from the Codex pet in the workspace captured when

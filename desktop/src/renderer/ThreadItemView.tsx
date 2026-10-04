@@ -40,6 +40,7 @@ import {
   MessageEditButton,
   MessageFileList,
   MessageImageGrid,
+  MessageTime,
 } from "./MessageActions";
 import { StreamingMarkdown } from "./StreamingMarkdown";
 import { streamTextKey, streamTextStore } from "./StreamText";
@@ -71,6 +72,7 @@ interface ThreadItemViewProps {
   turnID: string;
   turnStatus: Turn["status"];
   turnStartedAt?: string | null;
+  turnAnswerReadyAt?: string | null;
   item: ThreadItem;
   cwd?: string;
   onOpenFile?: (path: string) => void;
@@ -206,6 +208,7 @@ function BuiltInThreadItemView({
   turnID,
   turnStatus,
   turnStartedAt,
+  turnAnswerReadyAt,
   item,
   cwd,
   onOpenFile,
@@ -224,7 +227,7 @@ function BuiltInThreadItemView({
   onOpenAgent,
   editSummaryCard,
 }: ThreadItemViewProps): JSX.Element | null {
-  const { t, formatDate } = useI18n();
+  const { t } = useI18n();
   const streamLive = item.status === "in_progress" && turnStatus === "in_progress";
   // Only a live item/turn completion handoff should animate. Historical
   // completed messages mount without this marker, so virtualized content does
@@ -339,15 +342,7 @@ function BuiltInThreadItemView({
               data-wuu-placement="overlay"
               aria-label={t("message.userActions")}
             >
-              {turnStartedAt ? (
-                <time className="user-message-time" dateTime={turnStartedAt}>
-                  {formatDate(turnStartedAt, {
-                    hour: "2-digit",
-                    minute: "2-digit",
-                    hourCycle: "h23",
-                  })}
-                </time>
-              ) : null}
+              <MessageTime timestamp={turnStartedAt} className="user-message-time" />
               {copyable ? (
                 <MessageCopyButton
                   getText={() => displayText}
@@ -439,6 +434,7 @@ function BuiltInThreadItemView({
             <AgentMessageActions
               getText={() => streamFieldValue(turnID, item, "text")}
               placement={actionsPersistent ? "persistent" : "overlay"}
+              timestamp={turnAnswerReadyAt}
               showFork
               onFork={
                 forkVisible && onForkMessage

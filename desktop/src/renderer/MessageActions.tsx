@@ -21,11 +21,13 @@ export function AgentMessageActions({
   getText,
   onFork,
   placement,
+  timestamp,
   showFork = true,
 }: {
   getText: () => string;
   onFork?: () => void;
   placement: "overlay" | "persistent";
+  timestamp?: string | null;
   showFork?: boolean;
 }): JSX.Element {
   const { t } = useI18n();
@@ -39,7 +41,23 @@ export function AgentMessageActions({
     >
       <MessageCopyButton getText={getText} className="message-action-button" iconSize={15} />
       {showFork ? <MessageForkButton onFork={onFork} /> : null}
+      <MessageTime timestamp={timestamp} />
     </div>
+  );
+}
+
+export function MessageTime({ timestamp, className = "" }: { timestamp?: string | null; className?: string }): JSX.Element | null {
+  const { formatDate } = useI18n();
+  if (!timestamp) return null;
+
+  return (
+    <time
+      className={`message-time ${className}`}
+      dateTime={timestamp}
+      title={formatDate(timestamp, { dateStyle: "full", timeStyle: "long" })}
+    >
+      {formatDate(timestamp, { hour: "2-digit", minute: "2-digit", hourCycle: "h23" })}
+    </time>
   );
 }
 

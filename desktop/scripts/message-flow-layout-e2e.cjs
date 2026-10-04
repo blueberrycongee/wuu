@@ -61,6 +61,7 @@ async function run() {
         assert.equal(focused.users[0].opacity, "1", "Keyboard focus must reveal its action row");
         await evaluate(win, () => { document.activeElement.blur(); window.scrollTo(0, 0); });
         console.log("Action geometry verified");
+        fs.writeFileSync(path.join(output, `conversation-${width}-${size}-${theme}.png`), (await win.webContents.capturePage()).toPNG());
 
         for (const notice of [false, true]) {
           await win.loadURL(`${origin}/dev/message-flow-reading/?surface=lifecycle&${query}${notice ? "&notice=1" : ""}`);
@@ -71,6 +72,9 @@ async function run() {
           await evaluate(win, () => document.querySelector('[aria-label="流式状态"]').click());
           await waitFor(win, () => !!document.querySelector(".agent-message-actions button"));
           const settled = await lifecycleGeometry(win);
+          assert.ok(await evaluate(win, () => document.querySelector(".agent-message-actions time")?.dateTime),
+            "Completed replies must expose their completion time with the actions");
+          if (!notice) fs.writeFileSync(path.join(output, `settled-${width}-${size}-${theme}.png`), (await win.webContents.capturePage()).toPNG());
           for (const key of ["answerHeight", "actionsHeight", "turnHeight", "nextTop"]) {
             assert.ok(Math.abs(live[key] - settled[key]) <= 1,
               `Completion moved ${key}: ${JSON.stringify({ live, settled, width, size })}`);
