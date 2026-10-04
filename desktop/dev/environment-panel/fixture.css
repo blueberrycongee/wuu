@@ -25,7 +25,7 @@ body,
 
 .environment-panel-preview-host {
   position: relative;
-  width: 328px;
+  width: var(--environment-panel-width);
   height: 420px;
 }
 
@@ -33,7 +33,7 @@ body,
   position: absolute;
   top: 0;
   right: 0;
-  width: 328px;
+  width: 100%;
   max-height: none;
   animation: none;
 }

@@ -338,7 +338,7 @@ const ENGINE_INVENTORY_STALE_MS = 6 * 60 * 60 * 1000;
 // docking (teleported back into the grid for one frame, no transition) →
 // docked. Transitions retarget mid-flight, so rapid toggles stay continuous.
 type WorkspaceSheetPhase = "docked" | "arming" | "open" | "exiting" | "docking";
-const ENVIRONMENT_PANEL_WIDTH_PX = 328;
+const ENVIRONMENT_PANEL_WIDTH_PX = 296;
 // The panel's width grows with the UI text size, like
 // --environment-panel-width in conversation-shell.css; the reserved column
 // adds the gap to the conversation.

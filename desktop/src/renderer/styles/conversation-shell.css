@@ -83,10 +83,10 @@
 }
 
 .conversation-pane {
-  /* The info card is UI text, so it widens with the text size: 328px at the
+  /* The info card is UI text, so it widens with the text size: 296px at the
    * 14.5px default (App.tsx's room check uses the same ratio), with a 44px
    * gap between the card and the conversation it reserves room beside. */
-  --environment-panel-width: max(328px, round(up, calc(var(--font-ui) * 328 / 14.5), 4px));
+  --environment-panel-width: max(296px, round(up, calc(var(--font-ui) * 296 / 14.5), 4px));
   --environment-panel-flow-gap: 44px;
   --environment-panel-reserved-width: calc(
     var(--environment-panel-width) + var(--environment-panel-flow-gap)
