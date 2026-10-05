@@ -8,7 +8,7 @@ You need an Apple silicon Mac for the desktop preview and a model connection. Ch
 2. Choose your optional plugins in the first-run setup. The recommended selection is TODO and Automation; you can change it later in the plugin settings.
 3. Select an agent engine. Wuu is built in; Codex and Claude Code depend on a working local CLI installation.
 4. For the Wuu engine, [configure a model service](model-services.md) or reuse a supported local subscription login.
-5. Add your project folder as a workspace and start a conversation there.
+5. Select recent projects discovered from local Codex and Claude Code history, or choose a folder. Import the selected workspaces to start there, or skip and add them later. Only workspace directories are added; conversation histories and project files stay in place.
 
 You can also change model connections later in **Settings → Model providers**. Check the model shown in the composer before sending: the conversation's selection can differ from the saved defaults.
 

@@ -130,26 +130,23 @@
   }
 }
 
-/* Welcome and ready are greetings: the companion over a title in the home
+/* The welcome step is a greeting: the companion over a title in the home
  * greeting's serif and their one action, centred as a single column. */
-.onboarding-stage-welcome,
-.onboarding-stage-ready {
+.onboarding-stage-welcome {
   grid-template: "mascot" auto "panel" auto "actions" auto / minmax(0, 1fr);
   align-content: center;
   row-gap: var(--space-6);
   text-align: center;
 }
 
-.onboarding-stage-welcome .onboarding-heading > h1,
-.onboarding-stage-ready .onboarding-heading > h1 {
+.onboarding-stage-welcome .onboarding-heading > h1 {
   font-family: var(--empty-home-title-font);
   font-size: var(--font-hero);
   font-weight: var(--weight-medium);
   line-height: 1.2;
 }
 
-.onboarding-stage-welcome .onboarding-lead,
-.onboarding-stage-ready .onboarding-lead {
+.onboarding-stage-welcome .onboarding-lead {
   margin-inline: auto;
 }
 
@@ -432,8 +429,7 @@
   margin-inline: calc(var(--control-padding-inline) * -1) auto;
 }
 
-.onboarding-stage-welcome .onboarding-actions,
-.onboarding-stage-ready .onboarding-actions {
+.onboarding-stage-welcome .onboarding-actions {
   justify-content: center;
 }
 
@@ -447,3 +443,30 @@
     transition: none !important;
   }
 }
+
+.onboarding-stage-ready {
+  grid-template: "panel" minmax(0, 1fr) "actions" auto / minmax(0, 1fr);
+}
+.onboarding-stage-ready > .onboarding-plugin-mascot-stage { display: none; }
+.onboarding-stage-ready .onboarding-panel { justify-content: flex-start; padding-top: var(--space-6); }
+.onboarding-workspaces { display: flex; flex-direction: column; gap: var(--space-4); }
+.onboarding-workspace-toolbar { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.onboarding-workspace-list { display: grid; }
+.onboarding-workspace-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-2);
+  border-bottom: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.onboarding-workspace-row:hover { background: var(--surface-1); }
+.onboarding-workspace-row:focus-within { outline: 2px solid var(--ink); outline-offset: -2px; }
+.onboarding-workspace-row input { width: 16px; height: 16px; margin: 0; accent-color: var(--ink); }
+.onboarding-workspace-details { display: grid; min-width: 0; gap: var(--space-1); }
+.onboarding-workspace-name { overflow-wrap: anywhere; }
+.onboarding-workspace-path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.onboarding-workspace-path, .onboarding-workspace-source, .onboarding-workspace-row time { color: var(--ink-soft); }
+.onboarding-workspace-row time { white-space: nowrap; align-self: start; }

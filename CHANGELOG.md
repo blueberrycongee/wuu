@@ -10,6 +10,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Discover recent local workspaces during first-run setup, with batch import,
+  manual folder selection, and direct entry into the selected workspace.
+
 - Keep experimental Project Agent conversations responsive through background
   technical leads and persistent executors, with versioned work contracts,
   evidence-bound review, explicit delivery, durable stop/recovery and work status.
