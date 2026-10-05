@@ -13,6 +13,7 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Display one compact tool-result view from PTC `text`, console output and return
   values while preserving complete data for computation and checkpoints. Stop
   runaway JSON formatting whitespace before admitting the affected tool call.
+  Keep the optional program description out of the execution prerequisites.
 
 - Refine model popover typography with clearer text hierarchy, balanced insets,
   and equal spacing between the source, model, and effort controls.

@@ -37,9 +37,9 @@ func (*CodeModeExecTool) Definition() providers.ToolDefinition {
 	return providers.ToolDefinition{
 		Name:        codeModeExecToolName,
 		Description: "Execute an async JavaScript or erasable TypeScript function body in a fresh tool-only interpreter. No filesystem, network, process, module imports, or timers are available. Discover bindings with await searchTools(query, {limit:8, offset:0}); it returns {tools:[{name,description}],total,next_offset?}. An empty query pages through the catalog. Read exact arguments with await describeTool(name), returning {name,description,input_schema}. Invoke await tools[name](args). Names are exact; bracket access handles punctuation. Calls return canonical tool-result objects with content, optional structured_content, and optional model_text display view, which may omit data. Failures reject with ToolCallError (toolName, message, and result for completed tool failures). Use text(result), console.log(result), or return result to emit one compact display view of a tool result, also when nested in arrays or objects. Raw content and structured_content remain available for computation and store; explicitly selected fields and copied or loaded objects are ordinary JSON data. Strings print as text; other values print as JSON. Emit only what is needed; intermediate values stay out of the conversation. Successful image/audio results are attached automatically. Await writes and dependent calls sequentially; use bounded Promise.all for independent reads. store(key,value), load(key), and remove(key) manage lossless JSON checkpoints scoped to this conversation, actor and workspace. Values are cloned; load returns undefined for a missing key. Only successful programs commit state; tool effects are not transactional. State is memory-only, limited to 1 MiB and 256 keys per scope; use remove to reclaim it. Do not store credentials. There is no JS continuation: await all calls before returning. For long work use bash run_in_background and process read/write/stop in later programs; keep their handles with store. Separately advertised interaction, artifact delivery and lifecycle controls must be called directly. There is no default elapsed deadline; an explicit timeout includes approval/tool waits. Cancellation stops active calls but cannot undo completed effects. Failures include bounded call outcome summaries without arguments or results; interrupted calls have unknown effects. Never blindly replay a failed program.",
-		InputSchema: map[string]any{"type": "object", "additionalProperties": false, "required": []string{"code", "description"}, "properties": map[string]any{
+		InputSchema: map[string]any{"type": "object", "additionalProperties": false, "required": []string{"code"}, "properties": map[string]any{
 			"code":        map[string]any{"type": "string", "description": "Async function body. Type annotations are erased; enum and namespaces are unsupported."},
-			"description": map[string]any{"type": "string", "description": "Short description of this program."},
+			"description": map[string]any{"type": "string", "description": "Optional short description of this program."},
 			"timeout_ms":  map[string]any{"type": "integer", "minimum": 1, "maximum": codemode.MaxTimeoutMS, "description": "Optional total elapsed timeout in milliseconds, including approval and tool waits. Omit for no program deadline."},
 		}},
 	}
@@ -60,8 +60,8 @@ func (e *CodeModeExecTool) ExecuteResultCall(ctx context.Context, call providers
 	if err := decodeArgs(call.Arguments, &args); err != nil {
 		return toolresult.Result{}, err
 	}
-	if strings.TrimSpace(args.Code) == "" || strings.TrimSpace(args.Description) == "" {
-		return toolresult.Result{}, errors.New("run_code requires non-empty code and description")
+	if strings.TrimSpace(args.Code) == "" {
+		return toolresult.Result{}, errors.New("run_code requires non-empty code")
 	}
 	timeout := 0
 	if args.TimeoutMS != nil {

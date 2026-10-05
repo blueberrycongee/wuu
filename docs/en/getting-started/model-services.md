@@ -179,7 +179,8 @@ bindings retain their exact names, permissions and model-family edit primitives.
 
 ### Discover, execute and inspect results
 
-Call `run_code` with `code`, a short `description`, and optional `timeout_ms`.
+Call `run_code` with `code` and optional `description` and `timeout_ms`.
+The description is display metadata; omitting it does not prevent execution.
 Its description contains a bounded catalog preview. `await searchTools(query,
 {limit: 8, offset: 0})` returns `tools`, `total` and optional `next_offset`; an
 empty query pages through all bindings. `await describeTool(name)` returns the

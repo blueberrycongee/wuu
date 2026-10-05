@@ -124,7 +124,8 @@ await tools.read_file({path: "screenshots/settings.png"});
 
 ### 发现、执行与结果
 
-调用 `run_code` 时提供 `code`、简短的 `description` 和可选的 `timeout_ms`。
+调用 `run_code` 时提供 `code`，可选提供 `description` 和 `timeout_ms`。
+`description` 是展示元数据，省略它不会阻止执行。
 入口说明只包含有界目录预览。`await searchTools(query, {limit: 8, offset: 0})`
 返回 `tools`、`total` 和可选的 `next_offset`；空查询可分页查看全部绑定。
 `await describeTool(name)` 返回完整说明与精确的 `input_schema`。
