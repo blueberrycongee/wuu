@@ -68,7 +68,7 @@ func TestResolveHonorsExplicitReviewProvider(t *testing.T) {
 	if roles.Review.Inherited || roles.Review.Provider != "anthropic" || roles.Review.Model != "claude-sonnet-4-5" {
 		t.Fatalf("unexpected review role: %+v", roles.Review)
 	}
-	if roles.Review.Behavior.Family != "claude" || roles.Review.Behavior.ExactEditReliability <= roles.Review.Behavior.PatchReliability {
+	if roles.Review.Behavior.Family != "claude" || roles.Review.Behavior.DefaultWriteMode != "exact_edit" {
 		t.Fatalf("review should carry Claude behavior facts: %+v", roles.Review.Behavior)
 	}
 	if !roles.Worker.Inherited || roles.Worker.Provider != "openai" {

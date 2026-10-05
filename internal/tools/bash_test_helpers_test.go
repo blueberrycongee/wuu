@@ -9,6 +9,7 @@ import (
 
 	proc "github.com/blueberrycongee/wuu/internal/process"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
 
 // executeEnvelope runs a tool and returns its producer payload (the JSON
@@ -71,4 +72,15 @@ func waitProcessOutputForTest(t *testing.T, kit *Toolkit, id, want string) strin
 			t.Fatalf("process %s output never contained %q: %q", id, want, read.Output)
 		}
 	}
+}
+
+// producerText returns the tool's own text payload, ignoring any settled model
+// view, for callers that need the structured envelope.
+func producerText(result toolresult.Result) string {
+	for _, part := range result.Content {
+		if part.Type == toolresult.ContentTypeText {
+			return part.Text
+		}
+	}
+	return ""
 }

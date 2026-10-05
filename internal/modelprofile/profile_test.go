@@ -24,12 +24,3 @@ func TestResolveClassifiesModelFamilies(t *testing.T) {
 		}
 	}
 }
-
-func TestResolveOpenAIGPTProfilesUsePatchMode(t *testing.T) {
-	for _, model := range []string{"gpt-5.5", "gpt-4.1-mini", "openai/gpt-oss-120b"} {
-		profile := Resolve("openai", model)
-		if profile.Execution.DefaultWriteMode != WriteModePatch {
-			t.Fatalf("%s DefaultWriteMode = %s, want %s", model, profile.Execution.DefaultWriteMode, WriteModePatch)
-		}
-	}
-}

@@ -65,8 +65,7 @@ type Surface struct {
 
 	// SystemFragment is the profile-specific addition to the
 	// system prompt. It tells the model which tool set it has and
-	// which mental model to follow (bash-first, apply_patch
-	// preferred, exact-edit preferred, etc.).
+	// how to use shared editing tools and whether commands are available.
 	SystemFragment string
 
 	// DeferredToolCatalog is a session-level static prompt section

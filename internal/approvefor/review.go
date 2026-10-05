@@ -92,7 +92,7 @@ func HardDenyReason(req Request) string {
 	if looksLikePermissionEscalation(req.Arguments) {
 		return "approve for me cannot raise the session permission mode"
 	}
-	if req.Tool.Name == "write_file" || req.Tool.Name == "edit_file" || req.Tool.Name == "apply_patch" {
+	if req.Tool.Name == "write_file" || req.Tool.Name == "edit_file" {
 		if reason, ok := sensitivePathReasonFromArgs(req.Arguments); ok {
 			return "sensitive path " + reason + " cannot be modified through Approve for me"
 		}
@@ -159,20 +159,6 @@ func argumentPaths(arguments string) []string {
 		value, _ := payload[key].(string)
 		if strings.TrimSpace(value) != "" {
 			paths = append(paths, value)
-		}
-	}
-	// Only patch headers name files. Added/deleted/context lines are content,
-	// even when they contain credential paths or permission-mode examples.
-	for _, key := range []string{"patchText", "patch_text", "patch"} {
-		patch, _ := payload[key].(string)
-		for _, line := range strings.Split(patch, "\n") {
-			for _, prefix := range []string{"*** Add File: ", "*** Update File: ", "*** Delete File: ", "*** Move to: "} {
-				if strings.HasPrefix(line, prefix) {
-					if path := strings.TrimSpace(strings.TrimPrefix(line, prefix)); path != "" {
-						paths = append(paths, path)
-					}
-				}
-			}
 		}
 	}
 	return paths

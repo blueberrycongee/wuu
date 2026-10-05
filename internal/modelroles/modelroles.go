@@ -101,8 +101,6 @@ type Behavior struct {
 	Family                    string      `json:"family,omitempty"`
 	DefaultWriteMode          string      `json:"default_write_mode,omitempty"`
 	PreferredEditPrimitive    string      `json:"preferred_edit_primitive,omitempty"`
-	PreferredPatchGrammar     string      `json:"preferred_patch_grammar,omitempty"`
-	PatchReliability          int         `json:"patch_reliability,omitempty"`
 	ExactEditReliability      int         `json:"exact_edit_reliability,omitempty"`
 	WholeFileReliability      int         `json:"whole_file_reliability,omitempty"`
 	JSONReliability           int         `json:"json_reliability,omitempty"`
@@ -470,8 +468,6 @@ func behaviorFromProfile(profile modelprofile.Profile) Behavior {
 		Family:                    string(profile.Family),
 		DefaultWriteMode:          string(profile.Execution.DefaultWriteMode),
 		PreferredEditPrimitive:    string(profile.Code.PreferredEditPrimitive),
-		PreferredPatchGrammar:     profile.Code.PreferredPatchGrammar,
-		PatchReliability:          profile.Code.PatchReliability,
 		ExactEditReliability:      profile.Code.ExactEditReliability,
 		WholeFileReliability:      profile.Code.WholeFileReliability,
 		JSONReliability:           jsonReliability,

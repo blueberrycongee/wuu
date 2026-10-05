@@ -257,7 +257,6 @@ func (t *Toolkit) recordToolExecution(
 		NewlyLoadedDeferredTools:   newlyLoadedDeferredTools,
 		AlreadyLoadedDeferredTools: alreadyLoadedDeferredTools,
 		ToolSurfaceChanged:         toolSurfaceChanged,
-		PatchRiskSummary:           extractToolPatchRisk(call.Name, result),
 		Projection:                 projection,
 	}
 	if err != nil {
@@ -403,27 +402,6 @@ func extractToolArtifactRefs(result, resultRef string) []string {
 	}
 	collectToolArtifactRefs(payload, add)
 	return out
-}
-
-func extractToolPatchRisk(toolName, result string) *ToolPatchRisk {
-	if toolName != "apply_patch" || strings.TrimSpace(result) == "" {
-		return nil
-	}
-	var payload struct {
-		RiskSummary ToolPatchRisk `json:"risk_summary"`
-	}
-	if err := json.Unmarshal([]byte(result), &payload); err != nil {
-		return nil
-	}
-	if strings.TrimSpace(payload.RiskSummary.RiskLevel) == "" &&
-		payload.RiskSummary.FileCount == 0 &&
-		payload.RiskSummary.HunkCount == 0 {
-		return nil
-	}
-	if payload.RiskSummary.Actions == nil {
-		payload.RiskSummary.Actions = map[string]int{}
-	}
-	return &payload.RiskSummary
 }
 
 func collectToolArtifactRefs(value any, add func(string)) {

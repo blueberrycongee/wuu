@@ -51,9 +51,7 @@ const (
 type WriteMode string
 
 const (
-	WriteModePatch            WriteMode = "patch"
-	WriteModeExactEdit        WriteMode = "exact_edit"
-	WriteModeWholeFileNewOnly WriteMode = "whole_file_new_only"
+	WriteModeExactEdit WriteMode = "exact_edit"
 )
 
 type LatencyClass string
@@ -105,12 +103,10 @@ type Reasoning struct {
 }
 
 type Code struct {
-	PatchReliability       int
 	ExactEditReliability   int
 	WholeFileReliability   int
 	PathHallucinationRisk  int
 	TestDebugScore         int
-	PreferredPatchGrammar  string
 	PreferredEditPrimitive WriteMode
 }
 
@@ -202,7 +198,6 @@ func baseProfile(providerName, model string, family Family) Profile {
 			CompactActionLoop:   true,
 		},
 		Code: Code{
-			PatchReliability:       2,
 			ExactEditReliability:   3,
 			WholeFileReliability:   2,
 			PathHallucinationRisk:  3,
@@ -232,11 +227,8 @@ func applyClaude(profile *Profile) {
 	profile.Reasoning.PrefersExplicitPlan = true
 	profile.Reasoning.LongHorizonScore = 4
 	profile.Reasoning.VerboseToolRationale = true
-	profile.Code.PatchReliability = 3
 	profile.Code.ExactEditReliability = 5
 	profile.Code.TestDebugScore = 4
-	profile.Code.PreferredEditPrimitive = WriteModeExactEdit
-	profile.Execution.DefaultWriteMode = WriteModeExactEdit
 	profile.Execution.DefaultMaxAutonomousSteps = 18
 	profile.Execution.DefaultSearchBudget = 10
 	profile.Execution.AllowParallelReadOnly = true
@@ -252,13 +244,9 @@ func applyCodex(profile *Profile) {
 	profile.Reasoning.HiddenReasoning = true
 	profile.Reasoning.Budget = ReasoningBudgetHigh
 	profile.Reasoning.LongHorizonScore = 5
-	profile.Code.PatchReliability = 5
 	profile.Code.ExactEditReliability = 4
 	profile.Code.PathHallucinationRisk = 2
 	profile.Code.TestDebugScore = 5
-	profile.Code.PreferredPatchGrammar = "codex_apply_patch"
-	profile.Code.PreferredEditPrimitive = WriteModePatch
-	profile.Execution.DefaultWriteMode = WriteModePatch
 	profile.Execution.DefaultMaxAutonomousSteps = 30
 	profile.Execution.DefaultSearchBudget = 8
 	profile.Execution.AllowParallelReadOnly = true
@@ -269,7 +257,6 @@ func applyGPT(profile *Profile) {
 	profile.Family = FamilyGPT
 	profile.Reasoning.Budget = ReasoningBudgetMedium
 	profile.Reasoning.LongHorizonScore = 4
-	profile.Code.PatchReliability = 4
 	profile.Execution.DefaultMaxAutonomousSteps = 24
 }
 
@@ -279,21 +266,17 @@ func applyGemini(profile *Profile) {
 	profile.Reasoning.HiddenReasoning = true
 	profile.Reasoning.PrefersExplicitPlan = true
 	profile.Reasoning.LongHorizonScore = 3
-	profile.Code.PatchReliability = 2
 	profile.Code.ExactEditReliability = 4
 	profile.Code.PathHallucinationRisk = 3
-	profile.Execution.DefaultWriteMode = WriteModeExactEdit
 	profile.Execution.DefaultSearchBudget = 6
 }
 
 func applyStrictPortableCoder(profile *Profile) {
 	profile.APIShape.ToolCalling = ToolCallingStrictJSON
 	profile.Reasoning.PrefersExplicitPlan = true
-	profile.Code.PatchReliability = 2
 	profile.Code.ExactEditReliability = 4
 	profile.Code.PathHallucinationRisk = 4
 	profile.Code.TestDebugScore = 3
-	profile.Execution.DefaultWriteMode = WriteModeExactEdit
 	profile.Execution.DefaultMaxAutonomousSteps = 12
 	profile.Execution.DefaultSearchBudget = 5
 }
@@ -305,13 +288,10 @@ func applyLocal(profile *Profile) {
 	profile.Reasoning.Budget = ReasoningBudgetLow
 	profile.Reasoning.PrefersExplicitPlan = true
 	profile.Reasoning.LongHorizonScore = 1
-	profile.Code.PatchReliability = 1
 	profile.Code.ExactEditReliability = 2
 	profile.Code.WholeFileReliability = 1
 	profile.Code.PathHallucinationRisk = 5
 	profile.Code.TestDebugScore = 2
-	profile.Code.PreferredEditPrimitive = WriteModeExactEdit
-	profile.Execution.DefaultWriteMode = WriteModeExactEdit
 	profile.Execution.DefaultMaxAutonomousSteps = 5
 	profile.Execution.DefaultSearchBudget = 3
 	profile.Execution.AllowDirectShell = false

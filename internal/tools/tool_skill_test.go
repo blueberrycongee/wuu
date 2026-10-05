@@ -146,10 +146,10 @@ func TestPTCSkillsRetainReachableTools(t *testing.T) {
 		disabled              []string
 		want                  []string
 	}{
-		{"gpt", "openai", "gpt-5", nil, []string{"inspect", "patch", "shell"}},
+		{"gpt", "openai", "gpt-5", nil, []string{"inspect", "edit", "shell"}},
 		{"claude", "anthropic", "claude-sonnet-4", nil, []string{"inspect", "edit", "shell"}},
 		{"local", "ollama", "llama-coder", nil, []string{"inspect", "edit"}},
-		{"disabled read", "openai", "gpt-5", []string{"read_file"}, []string{"patch", "shell"}},
+		{"disabled read", "openai", "gpt-5", []string{"read_file"}, []string{"edit", "shell"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			kit := newCodeModeTestToolkit(t)

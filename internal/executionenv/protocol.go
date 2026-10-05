@@ -33,7 +33,7 @@ type Executor interface {
 
 func WorkspaceTool(name string) bool {
 	switch name {
-	case "read_file", "write_file", "edit_file", "apply_patch", "list_files", "grep", "glob", "bash", "process", "git", "present_artifact":
+	case "read_file", "write_file", "edit_file", "list_files", "grep", "glob", "bash", "process", "git", "present_artifact":
 		return true
 	default:
 		return false

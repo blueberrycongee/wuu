@@ -157,27 +157,34 @@ When importing a CSV, unknown columns are ignored. Rows without a date or amount
   sh(site, 'git init -q -b main && git add -A && git commit -q -m "chore: initial page"');
 
   // ---- scripted provider ------------------------------------------------------
-  const fixComment = zh ? '  // ISO 日期按 UTC 零点解析，所以按 UTC 读取。' : '  // ISO dates parse as UTC midnight; read them in UTC.';
-  const fixPatch = [
-    '*** Begin Patch',
-    '*** Update File: src/totals.js',
-    '@@ export function monthKey(isoDate) {',
-    `+${fixComment}`,
-    '   const date = new Date(isoDate);',
-    '-  const month = date.getMonth() + 1;',
-    "-  return `${date.getFullYear()}-${String(month).padStart(2, '0')}`;",
-    '+  const month = date.getUTCMonth() + 1;',
-    "+  return `${date.getUTCFullYear()}-${String(month).padStart(2, '0')}`;",
-    '*** Update File: test/totals.test.js',
-    '@@',
-    "   assert.deepEqual(monthlyTotals(entries), { '2026-09': 42, '2026-10': 18 });",
-    ' });',
-    '+',
-    "+test('keeps New Year entries in January', () => {",
-    "+  assert.deepEqual(monthlyTotals([{ date: '2027-01-01', amount: 5 }]), { '2027-01': 5 });",
-    '+});',
-    '*** End Patch',
-  ].join('\n');
+  const fixEdits = [
+    {
+      path: 'src/totals.js',
+      old_text: [
+        '  const date = new Date(isoDate);',
+        '  const month = date.getMonth() + 1;',
+        "  return `${date.getFullYear()}-${String(month).padStart(2, '0')}`;",
+      ].join('\n'),
+      new_text: [
+        '  // ISO dates parse as UTC midnight; read them in UTC.',
+        '  const date = new Date(isoDate);',
+        '  const month = date.getUTCMonth() + 1;',
+        "  return `${date.getUTCFullYear()}-${String(month).padStart(2, '0')}`;",
+      ].join('\n'),
+    },
+    {
+      path: 'test/totals.test.js',
+      old_text: '});\n',
+      new_text: [
+        '});',
+        '',
+        "test('keeps New Year entries in January', () => {",
+        "  assert.deepEqual(monthlyTotals([{ date: '2027-01-01', amount: 5 }]), { '2027-01': 5 });",
+        '});',
+        '',
+      ].join('\n'),
+    },
+  ];
   // Programmatic tool calling: every tool runs inside run_code.
   const program = (description, lines) => ({ name: 'run_code', args: { description, code: lines.join('\n') } });
   const show = "const text = result => result.model_text ?? result.content.map(part => part.text).join('');";
@@ -195,8 +202,7 @@ When importing a CSV, unknown columns are ignored. Rows without a date or amount
     { text: say2, calls: [runTests(test)] },
     { text: say3, calls: [program(edit, [
       show,
-      `const patch = ${JSON.stringify(fixPatch)};`,
-      'console.log(text(await tools.apply_patch({ patch })));',
+      ...fixEdits.map(edit => `console.log(text(await tools.edit_file(${JSON.stringify(edit)})));`),
     ])] },
     { calls: [runTests(retest)] },
     { text: done },

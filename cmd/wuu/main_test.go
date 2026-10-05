@@ -637,46 +637,38 @@ func TestResolveEvalTasksSelectsCommaSeparatedIDs(t *testing.T) {
 }
 
 func TestResolveEvalTasksAllFiltersByActiveSurface(t *testing.T) {
-	openaiSurface := modelprofile.DefaultCompiler{}.Compile(modelprofile.Resolve("openai", "gpt-5.5"), modelprofile.SurfaceMain)
-	openaiTasks, err := resolveEvalTasks("all", evalVisibleToolSet(openaiSurface.ToolNames()))
+	for _, model := range []string{"gpt-5.5", "claude-sonnet-4-5", "portable-coder"} {
+		surface := modelprofile.DefaultCompiler{}.Compile(modelprofile.Resolve("custom", model), modelprofile.SurfaceMain)
+		tasks, err := resolveEvalTasks("all", evalVisibleToolSet(surface.ToolNames()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids := evalTaskIDSet(tasks)
+		for _, want := range []string{"test_failure_fix", "git_multi_file_edit", "stale_read_guard", "mcp_live_discovery", "mcp_readonly_concurrency"} {
+			if !ids[want] {
+				t.Fatalf("%s eval tasks missing %s: %v", model, want, sortedEvalTaskIDs(tasks))
+			}
+		}
+	}
+	surface := modelprofile.DefaultCompiler{}.Compile(modelprofile.Resolve("ollama", "llama-coder"), modelprofile.SurfaceMain)
+	tasks, err := resolveEvalTasks("all", evalVisibleToolSet(surface.ToolNames()))
 	if err != nil {
-		t.Fatalf("resolveEvalTasks openai: %v", err)
+		t.Fatal(err)
 	}
-	openaiIDs := evalTaskIDSet(openaiTasks)
-	for _, want := range []string{"test_failure_fix", "patch_review_risk"} {
-		if !openaiIDs[want] {
-			t.Fatalf("OpenAI default eval tasks missing %s: %v", want, sortedEvalTaskIDs(openaiTasks))
-		}
-	}
-	for _, excluded := range []string{"stale_read_guard", "mcp_live_discovery", "mcp_readonly_concurrency"} {
-		if openaiIDs[excluded] {
-			t.Fatalf("OpenAI default eval tasks must not include %s: %v", excluded, sortedEvalTaskIDs(openaiTasks))
-		}
-	}
-
-	claudeSurface := modelprofile.DefaultCompiler{}.Compile(modelprofile.Resolve("anthropic", "claude-sonnet-4-5"), modelprofile.SurfaceMain)
-	claudeTasks, err := resolveEvalTasks("all", evalVisibleToolSet(claudeSurface.ToolNames()))
-	if err != nil {
-		t.Fatalf("resolveEvalTasks claude: %v", err)
-	}
-	claudeIDs := evalTaskIDSet(claudeTasks)
-	for _, want := range []string{"test_failure_fix", "stale_read_guard", "mcp_live_discovery"} {
-		if !claudeIDs[want] {
-			t.Fatalf("Claude default eval tasks missing %s: %v", want, sortedEvalTaskIDs(claudeTasks))
-		}
-	}
-	for _, excluded := range []string{"patch_review_risk"} {
-		if claudeIDs[excluded] {
-			t.Fatalf("Claude default eval tasks must not include %s: %v", excluded, sortedEvalTaskIDs(claudeTasks))
+	for _, task := range tasks {
+		for _, tool := range task.RequiredTools {
+			if tool == "bash" {
+				t.Fatalf("local/no-shell profile included command task %s", task.ID)
+			}
 		}
 	}
 }
 
 func TestResolveEvalTasksExplicitIDBypassesSurfaceFilter(t *testing.T) {
-	openaiSurface := modelprofile.DefaultCompiler{}.Compile(modelprofile.Resolve("openai", "gpt-5.5"), modelprofile.SurfaceMain)
-	tasks, err := resolveEvalTasks("stale_read_guard", evalVisibleToolSet(openaiSurface.ToolNames()))
+	surface := modelprofile.DefaultCompiler{}.Compile(modelprofile.Resolve("ollama", "llama-coder"), modelprofile.SurfaceMain)
+	tasks, err := resolveEvalTasks("stale_read_guard", evalVisibleToolSet(surface.ToolNames()))
 	if err != nil {
-		t.Fatalf("resolveEvalTasks explicit: %v", err)
+		t.Fatal(err)
 	}
 	if len(tasks) != 1 || tasks[0].ID != "stale_read_guard" {
 		t.Fatalf("explicit task selection should bypass default surface filter, got %v", sortedEvalTaskIDs(tasks))

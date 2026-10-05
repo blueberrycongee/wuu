@@ -235,7 +235,6 @@ func New(rootDir string) (*Toolkit, error) {
 		boundary:          StandardBoundary(),
 	}
 	t.rebuildRegistry()
-	t.SetEditToolMode(EditToolModeText)
 	return t, nil
 }
 
@@ -351,7 +350,6 @@ func (t *Toolkit) rebuildRegistry() {
 		NewWriteFileTool(e),
 		NewListFilesTool(e),
 		NewEditFileTool(e),
-		NewApplyPatchTool(e),
 		// Search
 		NewGrepTool(e),
 		NewGlobTool(e),
@@ -951,6 +949,15 @@ func (t *Toolkit) SurfaceToolNames() []string {
 	return out
 }
 
+// ConfigureSurfaceForProviderModel compiles the surface for the given
+// provider/model and installs it as the toolkit's active profile. The
+// forMainAgent flag selects whether the compiled surface includes or hides
+// main-agent-only recovery tools consistently. Runtime defense-in-depth is
+// enforced by worker tool filtering and the tools' own main-agent path checks.
+func (t *Toolkit) ConfigureSurfaceForProviderModel(providerName, model string, forMainAgent bool) {
+	t.SetActiveProfile(modelprofile.Resolve(providerName, model), forMainAgent)
+}
+
 // SetActiveProfile installs the model profile that drives
 // Definitions(). The toolkit compiles the profile into a Surface and
 // uses it as the whitelist for visible tool names.
@@ -993,12 +1000,6 @@ func (t *Toolkit) setActiveProfileForSurface(p modelprofile.Profile, kind modelp
 	if t == nil {
 		return
 	}
-	if (p == modelprofile.Profile{}) {
-		t.SetEditToolMode(EditToolModeText)
-	} else {
-		t.SetEditToolMode(EditToolModeForProfile(p))
-	}
-
 	t.activeProfileMu.Lock()
 	defer t.activeProfileMu.Unlock()
 	t.activeProfile = p

@@ -80,7 +80,7 @@ func surfaceAllowsSkillTool(surface capability.Surface, name string) bool {
 
 func isKnownSurfaceSkillTool(name string) bool {
 	switch strings.TrimSpace(name) {
-	case "read_file", "list_files", "write_file", "edit_file", "apply_patch",
+	case "read_file", "list_files", "write_file", "edit_file",
 		"grep", "glob",
 		"bash", "process", "git",
 		"tool_search", "load_skill",

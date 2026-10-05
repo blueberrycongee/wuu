@@ -185,6 +185,7 @@ func TestCodeModeOnlyIncludesPluginToolsInNestedSurface(t *testing.T) {
 	}
 	kit.SetBoundary(tools.UnconfinedBoundary())
 	kit.ConfigureSurfaceForProviderModel("openai", "gpt-5", true)
+	kit.DisableTools("write_file")
 	service := codemode.NewService(codemode.ServiceConfig{})
 	defer service.Close()
 	kit.ConfigurePTC(service, config.PTCConfig{Enabled: true})
@@ -207,7 +208,7 @@ func TestCodeModeOnlyIncludesPluginToolsInNestedSurface(t *testing.T) {
 			found = true
 		}
 		if def.Name == "write_file" {
-			t.Fatal("catalog advertised a tool unavailable in the active model profile")
+			t.Fatal("catalog advertised a tool disabled in the session")
 		}
 	}
 	if !found {

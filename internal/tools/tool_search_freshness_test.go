@@ -47,7 +47,6 @@ func searchFixtureKit(t *testing.T, root, session string) *Toolkit {
 	}
 	kit.SetSessionDir(session)
 	kit.SetToolSearchEnabled(false)
-	kit.SetEditToolMode(EditToolModePatch)
 	return kit
 }
 
@@ -99,7 +98,6 @@ func TestSearchFreshFirstPage(t *testing.T) {
 		name, writer                     string
 		untracked, large, rename, nonGit bool
 	}{
-		{name: "tracked-patch", writer: "apply_patch"},
 		{name: "tracked-edit", writer: "edit_file"},
 		{name: "untracked-write", writer: "write_file", untracked: true},
 		{name: "external-unequal", writer: "external"},
@@ -160,12 +158,7 @@ func TestSearchFreshFirstPage(t *testing.T) {
 			check(writer, 1, 0)
 			check(other, 1, 0)
 			switch tc.writer {
-			case "apply_patch":
-				writer.ConfigureSurfaceForProviderModel("openai", "gpt-5-codex", true)
-				searchFixtureCall(t, writer, "read_file", map[string]any{"path": path})
-				searchFixtureCall(t, writer, "apply_patch", map[string]any{"patchText": "*** Begin Patch\n*** Update File: " + path + "\n@@\n-violet seed\n+silver leaf\n*** End Patch"})
 			case "edit_file", "write_file":
-				writer.SetEditToolMode(EditToolModeText)
 				searchFixtureCall(t, writer, "read_file", map[string]any{"path": path})
 				args := map[string]any{"path": path, "content": next}
 				if tc.writer == "edit_file" {

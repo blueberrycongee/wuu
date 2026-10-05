@@ -324,7 +324,7 @@ func TestPTCSurfaceSummaryKeepsNestedCapabilitiesReachable(t *testing.T) {
 		}
 	}
 	summary := surface.Summarize()
-	if summary.NestedCapabilityMap["bash"] != string(capability.CapabilityCommandBash) || summary.EditPrimitive != "apply_patch" {
+	if summary.NestedCapabilityMap["bash"] != string(capability.CapabilityCommandBash) || summary.EditPrimitive != "edit_file" {
 		t.Fatalf("snapshot lost nested mapping: %+v", summary)
 	}
 	if _, ok := summary.ToolCapabilityMap["read_file"]; ok {
@@ -633,6 +633,35 @@ func TestPTCRepeatedPollingObservesExternalState(t *testing.T) {
 		result := runPTCProgram(t, kit, `const result = await tools.mcp_test_job_status({}); return result.content[0].text;`)
 		if result.IsError || result.TextProjection() != fmt.Sprintf("%q", status) {
 			t.Fatalf("poll must observe external state %q: %+v", status, result)
+		}
+	}
+}
+
+func TestPTCEditingSurvivesModelSwitchAndClone(t *testing.T) {
+	kit := newCodeModeTestToolkit(t)
+	for _, model := range []string{"gpt-5-codex", "claude-sonnet-4-5", "portable-coder", "gpt-5.5"} {
+		kit.ConfigureSurfaceForProviderModel("custom", model, true)
+		clone, err := kit.CloneForRoot(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, target := range []*Toolkit{kit, clone} {
+			result := runPTCProgram(t, target, `
+const created = await tools.write_file({path:"ptc.txt", content:"before"});
+if (created.is_error) throw new Error(JSON.stringify(created));
+const read = await tools.read_file({path:"ptc.txt"});
+if (!read.content[0].text.includes("before")) throw new Error("read failed");
+const edited = await tools.edit_file({path:"ptc.txt", old_text:"before", new_text:"after"});
+if (edited.is_error) throw new Error(JSON.stringify(edited));
+const checked = await tools.bash({command:"test $(cat ptc.txt) = after && printf PTC_EDIT_OK"});
+console.log(checked.model_text ?? checked.content[0].text);
+`)
+			if result.IsError || !strings.Contains(result.TextProjection(), "PTC_EDIT_OK") {
+				t.Fatalf("%s: %s", model, result.TextProjection())
+			}
+			if got := mustReadFile(t, filepath.Join(target.RootDir(), "ptc.txt")); got != "after" {
+				t.Fatalf("%s edited content=%q", model, got)
+			}
 		}
 	}
 }

@@ -23,10 +23,7 @@ const (
 	// Explicit delivery of a file snapshot to the user, not model observation.
 	CapabilityArtifactPresent Capability = "artifact.present"
 
-	// Filesystem editing. The actual model-visible tool differs per
-	// profile: Codex / OpenAI get apply_patch, Claude / generic get
-	// edit_file and write_file. Both projections live behind this
-	// single capability.
+	// Filesystem editing through edit_file and write_file for every model.
 	CapabilityFileEdit Capability = "file.edit"
 
 	// Search surface.

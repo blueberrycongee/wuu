@@ -15,31 +15,11 @@ import (
 type ProfileKey string
 
 const (
-	// ProfileOpenAICodex is the OpenAI / Codex harness. It exposes
-	// apply_patch as the preferred editing primitive and treats
-	// bash as the single terminal entry point. Reasoning budgets
-	// are higher (harness iterates more before replying).
-	ProfileOpenAICodex ProfileKey = "openai_codex"
-
-	// ProfileOpenAIGPT covers OpenAI GPT reasoning models that ship
-	// with the OpenAI Responses API. It uses the same patch-first
-	// editing surface as Codex: apply_patch for file edits and bash
-	// as the single terminal entry point.
-	ProfileOpenAIGPT ProfileKey = "openai_gpt"
-
-	// ProfileAnthropicClaude is the Anthropic Claude harness. It
-	// uses exact-edit primitives (edit_file + write_file) as the
-	// preferred file-change path and exposes bash for terminal
-	// work. Prompt caching and long-horizon planning are first-class.
+	// Profile keys remain stable for provider diagnostics and persisted settings.
+	ProfileOpenAICodex     ProfileKey = "openai_codex"
+	ProfileOpenAIGPT       ProfileKey = "openai_gpt"
 	ProfileAnthropicClaude ProfileKey = "anthropic_claude"
-
-	// ProfileGeneric is the catch-all for BYOK providers (Gemini,
-	// Kimi, DeepSeek, Qwen, local models, anything we have not
-	// explicitly classified). It uses exact-edit primitives and a
-	// conservative surface; local models in particular drop the
-	// command.bash capability because the underlying profile
-	// disables direct shell.
-	ProfileGeneric ProfileKey = "generic"
+	ProfileGeneric         ProfileKey = "generic"
 )
 
 // SurfaceKind identifies which runtime role a built-in tool surface is
@@ -72,16 +52,17 @@ func (DefaultCompiler) Compile(p Profile, kind SurfaceKind) capability.Surface {
 	key := ResolveProfileKey(p)
 	b := newBuilder(p, key)
 
-	switch key {
-	case ProfileOpenAICodex:
-		compileOpenAICodex(b, p)
-	case ProfileOpenAIGPT:
-		compileOpenAIGPT(b, p)
-	case ProfileAnthropicClaude:
-		compileAnthropicClaude(b, p)
-	default:
-		compileGeneric(b, p)
-	}
+	addFileReadTools(b)
+	addSearchTools(b)
+	addBashFirstTools(b, p)
+	addWebTools(b)
+	addBrowserTools(b)
+	addSessionTools(b)
+	addSkillTools(b)
+	addExtensionTools(b)
+	b.addVisible("edit_file", capability.CapabilityFileEdit)
+	b.addVisible("write_file", capability.CapabilityFileEdit)
+	addPrompt(b, p)
 	if kind != SurfaceWorker {
 		addSessionWorkspaceTool(b)
 	}
@@ -98,9 +79,8 @@ func (DefaultCompiler) Compile(p Profile, kind SurfaceKind) capability.Surface {
 }
 
 // ResolveProfileKey returns the stable ProfileKey for a model
-// profile. The key is the primary input to the surface compiler; the
-// underlying Family and WriteMode fields refine its output but do
-// not change which compiler variant runs.
+// profile. Tool availability is shared across families; execution
+// capabilities such as direct shell access still constrain the surface.
 func ResolveProfileKey(p Profile) ProfileKey {
 	switch p.Family {
 	case FamilyCodex:
@@ -182,62 +162,6 @@ func (b *surfaceBuilder) sortCaps() {
 	})
 }
 
-// ── Per-profile compilation ───────────────────────────────────────
-
-const openaiPatchEditTool = "apply_patch"
-
-func compileOpenAICodex(b *surfaceBuilder, p Profile) {
-	addFileReadTools(b)
-	addSearchTools(b)
-	addBashFirstTools(b, p)
-	addWebTools(b)
-	addBrowserTools(b)
-	addSessionTools(b)
-	addSkillTools(b)
-	addExtensionTools(b)
-	addOpenAICodexEditTools(b)
-	addOpenAICodexPrompt(b)
-}
-
-func compileOpenAIGPT(b *surfaceBuilder, p Profile) {
-	addFileReadTools(b)
-	addSearchTools(b)
-	addBashFirstTools(b, p)
-	addWebTools(b)
-	addBrowserTools(b)
-	addSessionTools(b)
-	addSkillTools(b)
-	addExtensionTools(b)
-	addOpenAIGPTEditTools(b)
-	addOpenAIGPTPrompt(b)
-}
-
-func compileAnthropicClaude(b *surfaceBuilder, p Profile) {
-	addFileReadTools(b)
-	addSearchTools(b)
-	addBashFirstTools(b, p)
-	addWebTools(b)
-	addBrowserTools(b)
-	addSessionTools(b)
-	addSkillTools(b)
-	addExtensionTools(b)
-	addClaudeEditTools(b)
-	addClaudePrompt(b)
-}
-
-func compileGeneric(b *surfaceBuilder, p Profile) {
-	addFileReadTools(b)
-	addSearchTools(b)
-	addBashFirstTools(b, p)
-	addWebTools(b)
-	addBrowserTools(b)
-	addSessionTools(b)
-	addSkillTools(b)
-	addExtensionTools(b)
-	addGenericEditTools(b)
-	addGenericPrompt(b, p)
-}
-
 // ── Shared capability assembly helpers ─────────────────────────────
 
 func addFileReadTools(b *surfaceBuilder) {
@@ -303,29 +227,11 @@ func addExtensionTools(b *surfaceBuilder) {
 	b.addDeferredCapability(capability.CapabilityMCP)
 }
 
-func addOpenAICodexEditTools(b *surfaceBuilder) {
-	b.addVisible(openaiPatchEditTool, capability.CapabilityFileEdit)
-}
-
-func addOpenAIGPTEditTools(b *surfaceBuilder) {
-	b.addVisible(openaiPatchEditTool, capability.CapabilityFileEdit)
-}
-
-func addClaudeEditTools(b *surfaceBuilder) {
-	b.addVisible("edit_file", capability.CapabilityFileEdit)
-	b.addVisible("write_file", capability.CapabilityFileEdit)
-}
-
-func addGenericEditTools(b *surfaceBuilder) {
-	b.addVisible("edit_file", capability.CapabilityFileEdit)
-	b.addVisible("write_file", capability.CapabilityFileEdit)
-}
-
 // ── Prompt fragments ──────────────────────────────────────────────
 
 // Profile fragments only route the model to the primitives exposed by that
-// surface and carry policy that tool schemas cannot express. Patch grammar,
-// exact-edit recovery, background-process rules, and boundary-error recovery
+// surface and carry policy that tool schemas cannot express.
+// Exact-edit recovery, background-process rules, and boundary-error recovery
 // belong to the relevant tool descriptions and results, not here.
 const sharedPromptPolicy = `
 
@@ -335,37 +241,13 @@ const shellPromptPolicy = `
 
 Do not access sensitive credential paths or use broad staging, destructive Git operations, force push, Git configuration changes, hook skipping, commit amendments, or interactive Git flows unless explicitly requested.`
 
-func addOpenAICodexPrompt(b *surfaceBuilder) {
-	b.surface.SystemFragment = strings.TrimSpace(`
-[Tool surface: openai_codex]
-Use apply_patch for file changes and bash for command execution.
-` + shellPromptPolicy + sharedPromptPolicy)
-}
-
-func addOpenAIGPTPrompt(b *surfaceBuilder) {
-	b.surface.SystemFragment = strings.TrimSpace(`
-[Tool surface: openai_gpt]
-Use apply_patch for file changes and bash for command execution.
-` + shellPromptPolicy + sharedPromptPolicy)
-}
-
-func addClaudePrompt(b *surfaceBuilder) {
-	b.surface.SystemFragment = strings.TrimSpace(`
-[Tool surface: anthropic_claude]
-Use edit_file for targeted changes, write_file for new files or complete rewrites, and bash for command execution.
-` + shellPromptPolicy + sharedPromptPolicy)
-}
-
-func addGenericPrompt(b *surfaceBuilder, p Profile) {
-	if p.Family == FamilyLocal || !p.Execution.AllowDirectShell {
-		b.surface.SystemFragment = strings.TrimSpace(`
-[Tool surface: generic (no command execution)]
-Use edit_file for targeted changes and write_file for new files or complete rewrites.
-` + sharedPromptPolicy)
-		return
+func addPrompt(b *surfaceBuilder, p Profile) {
+	label := b.surface.ProfileName
+	guidance := "Use edit_file for targeted changes and write_file for new files or complete rewrites."
+	if p.Execution.AllowDirectShell {
+		guidance += " Use bash for command execution." + shellPromptPolicy
+	} else {
+		label += " (no command execution)"
 	}
-	b.surface.SystemFragment = strings.TrimSpace(`
-[Tool surface: generic]
-Use edit_file for targeted changes, write_file for new files or complete rewrites, and bash for command execution.
-` + shellPromptPolicy + sharedPromptPolicy)
+	b.surface.SystemFragment = strings.TrimSpace("[Tool surface: " + label + "]\n" + guidance + sharedPromptPolicy)
 }

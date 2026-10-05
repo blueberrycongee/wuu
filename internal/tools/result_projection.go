@@ -120,7 +120,7 @@ func resolveProjectionMode(configured string) projectionMode {
 // Matched by EXACT name only. MCP tools always carry an "mcp_<server>_" prefix
 // (see internal/mcp.mcpToolName) and the registry resolves built-ins before MCP
 // on a bare name, so a bare name can never resolve to an MCP tool. An exact
-// allowlist therefore reliably excludes MCP, mutation (apply_patch/edit_file),
+// allowlist therefore reliably excludes MCP, mutation (write_file/edit_file),
 // and coordination (load_skill/...) results. Never switch this to a
 // prefix/substring match: "mcp_x_bash" must not match "bash".
 var builtInProjectionAllowlist = map[string]bool{
