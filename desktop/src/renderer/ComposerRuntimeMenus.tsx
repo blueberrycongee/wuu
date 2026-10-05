@@ -162,7 +162,7 @@ function EngineOptionsMenu({
 export type RuntimePanelView = "summary" | "engines" | "providers" | "models";
 type RuntimePanelDirection = "forward" | "back";
 
-const RUNTIME_PANEL_WIDTH = 224;
+const RUNTIME_PANEL_WIDTH = 256;
 export const PERMISSION_MENU_WIDTH = 264;
 
 export function runtimePanelWidth(): number {
@@ -176,7 +176,7 @@ export function runtimePanelWidth(): number {
 function runtimePanelStyle(rows: number, width?: number): CSSProperties {
   return {
     "--runtime-rows": String(Math.max(rows, 1)),
-    ...(width ? { "--runtime-panel-width": `${width}px` } : {}),
+    "--runtime-panel-width": `${width ?? runtimePanelWidth()}px`,
   } as CSSProperties;
 }
 

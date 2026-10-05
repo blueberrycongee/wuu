@@ -10,6 +10,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Refine model popover typography with clearer text hierarchy, balanced insets,
+  and equal spacing between the source, model, and effort controls.
+
 - Show Codex engine commands in tool activity rows, with expandable original
   commands, working directories, and captured output.
 
