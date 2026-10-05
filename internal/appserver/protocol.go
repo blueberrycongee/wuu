@@ -64,6 +64,7 @@ const (
 	MethodConfigProviderRemove            = "config/provider/remove"
 	MethodSkillList                       = "skill/list"
 	MethodThreadStart                     = "thread/start"
+	MethodProjectWork                     = "project/work"
 	MethodProjectSession                  = "project/session"
 	MethodThreadResume                    = "thread/resume"
 	MethodThreadFork                      = "thread/fork"

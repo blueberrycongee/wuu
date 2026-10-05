@@ -73,6 +73,8 @@ func TestProjectExecutionCapacityMembershipAndMutation(t *testing.T) {
 	createProjectCapacityMember(t, dir, "held", "p", "worker")
 	createProjectCapacityMember(t, dir, "target", "p", "")
 	createProjectCapacityMember(t, dir, "side", "p", "side")
+	createProjectCapacityMember(t, dir, "technical", "p", "technical_lead")
+	createProjectCapacityMember(t, dir, "executor", "p", "executor")
 	createProjectCapacityMember(t, dir, "other", "q", "worker")
 	_, err := CreateInitialized(dir, Session{ID: "lead", Source: "project"}, nil)
 	if err != nil {
@@ -90,6 +92,16 @@ func TestProjectExecutionCapacityMembershipAndMutation(t *testing.T) {
 	if ok || !errors.Is(err, ErrProjectWorkerCapacity) {
 		t.Fatalf("legacy worker bypassed mutation occupancy: %v %v", ok, err)
 	}
+	for _, id := range []string{"technical", "executor"} {
+		l, ok, err := TryAcquireThreadExecutionLeaseWithProjectLimit(dir, id, 1)
+		if l != nil {
+			l.Release()
+		}
+		if ok || !errors.Is(err, ErrProjectWorkerCapacity) {
+			t.Fatalf("background role %s bypassed quota: %v %v", id, ok, err)
+		}
+	}
+
 	for _, id := range []string{"side", "other", "lead"} {
 		l, ok, err := TryAcquireThreadExecutionLeaseWithProjectLimit(dir, id, 1)
 		if l != nil {

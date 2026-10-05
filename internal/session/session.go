@@ -1327,6 +1327,16 @@ func migrateSchema(db *sql.DB) error {
 			revision INTEGER NOT NULL,
 			state TEXT NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS project_work (
+            id TEXT PRIMARY KEY, project_id TEXT NOT NULL, version INTEGER NOT NULL,
+            revision INTEGER NOT NULL, phase TEXT NOT NULL, created_at TEXT NOT NULL, payload TEXT NOT NULL,
+            FOREIGN KEY(project_id) REFERENCES sessions(id) ON DELETE CASCADE
+        )`,
+		`CREATE INDEX IF NOT EXISTS idx_project_work_project ON project_work(project_id)`,
+		`CREATE TABLE IF NOT EXISTS project_work_operations (
+            id TEXT PRIMARY KEY, work_id TEXT NOT NULL, payload TEXT NOT NULL,
+            FOREIGN KEY(work_id) REFERENCES project_work(id) ON DELETE CASCADE
+        )`,
 		`CREATE TABLE IF NOT EXISTS session_inbox (
 			client_id TEXT PRIMARY KEY,
 			session_id TEXT NOT NULL,
@@ -1973,6 +1983,21 @@ WHERE workflow_id = ''`); err != nil {
 	if _, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_project_side ON sessions(parent_id) WHERE source='project-session' AND project_role='side' AND archived_at IS NULL`); err != nil {
 		return err
 	}
+	if err := migration.addColumnIfMissing("project_work", "reconciled_version", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+
+	if err := migration.addColumnIfMissing("session_inbox", "work_id", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := migration.addColumnIfMissing("session_inbox", "work_version", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+
+	if err := migration.addColumnIfMissing("session_inbox", "work_revision", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+
 	if err := migration.addColumnIfMissing("session_inbox", "controls_json", "TEXT NOT NULL DEFAULT '[]'"); err != nil {
 		return err
 	}

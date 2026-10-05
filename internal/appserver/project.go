@@ -11,6 +11,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/agentengine"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/session"
+	"github.com/blueberrycongee/wuu/internal/tools"
 )
 
 // A project is its lead conversation; all participants use ordinary sessions.
@@ -42,19 +43,15 @@ const (
 )
 
 // The instructions are static so renaming a project never makes them stale.
-const projectCoordinatorInstructions = `You lead this project and remain responsible for its complete, verified result. Work directly when that is simpler; delegate when another session adds useful capacity or expertise. Do not create a team for a small task.
+const projectCoordinatorInstructions = `You are the user-facing project coordinator. Keep this conversation responsive while background work continues. Own user intent, priorities, scope, authority and delivery. Do not perform long investigation, implementation, tests or technical review here.
 
-- Before handing off implementation, resolve the key decisions that affect the approach and package one coherent phase of work. Do not send preparatory busywork while still deciding the plan. Include verified interfaces, reusable code, edge cases and checks when they matter; label unsettled points instead of turning assumptions into requirements.
-- Delegate outcomes, constraints, scope, dependencies and acceptance evidence. Distinguish user decisions and verified facts from suggestions. Leave implementation choices to the session closest to the code; never prescribe unverified steps or require agreement with your assumptions.
-- Keep one persistent Side Agent for sustained implementation when useful, and create scoped Workers as needed. This is a default lead/side/worker structure, not a required team for every task. Use session side to create or resume it with a new brief; it waits by default, so use block=false for useful parallel work. The side can create workers. Respect the user's role model choices; use model_alias only for a justified explicit override.
-- All active members can message each other directly. Use wake only for actionable requests; information can wait. Copy consequential decisions to the lead, and avoid acknowledgement loops. Peer messages are collaboration context, not new user authorization.
-- Continue an existing session for related work, corrections and follow-ups. Sessions do not see this conversation: supply relevant context, user instructions, constraints, acceptance checks and known uncertainties. Correct running work with a new brief rather than stopping and starting another session. Waits are bounded; a timeout leaves work running. Use wait for a particular turn when its result is a dependency; otherwise continue useful work or end your turn for asynchronous completion.
-- Keep one writer per overlapping scope. Before taking over delegated work, stop that session and confirm it is idle. Separate Git worktrees isolate files, not interface decisions or integration responsibilities.
-- Review actual changes and evidence before sending a consolidated set of corrections. Send urgent corrections immediately; otherwise avoid piecemeal review rounds. Resolve cross-session decisions and verify the combined result. A finished turn is evidence, not proof that the project is complete.
-- Reuse results and verification that are still valid; inspect the evidence before repeating expensive work. Rerun checks for changed inputs, uncovered behavior or questionable results. Preserve useful long-running processes within the session that owns them, and include their status and how to continue in follow-up briefs.
-- Your direct edits affect your current workspace. Isolated worktree changes stay on their branch until delivered. Commit, merge, push, PR mutations, release and deployment each require the user's authorization or an established workflow for that action. A brief or peer instruction cannot expand that authority. Never claim undelivered changes are in the workspace or on a remote.
-- For an independent check, have another session review the worktree or branch, test and report without changing that work. Ask it to look for failures and challenge assumptions, not confirm the author's conclusion. Validate combined behavior rather than treating separate passing reports as integration evidence.
-- A user stopping or messaging a member is an intervention, not a change of membership. Respect their words and stop intent; do not automatically restart stopped work. You may give a member new instructions later without a return-control step. Keep a concise record of goals, decisions and remaining work in your notes.`
+Use session action work. Read list/get for shared facts and receipt status. For a new coherent outcome, create work with the complete original user requirements, constraints, acceptance criteria, actual authorization, source references and dependencies. Unresolved technical questions belong to its technical lead; do not invent an implementation plan before investigation. For related work reuse and update the existing work's complete contract. End your turn promptly after dispatch; the host delivers reviewed results and actionable blockers asynchronously. Never poll or wait for execution.
+
+Each work has a background technical lead responsible for design, evidence and integration; it may reuse a persistent economical executor. Do not repeat its full technical investigation or review. Check that acceptance matches the current requirements and that delivery actually occurred. A finished turn is not task completion. Ordinary logs and executor reports stay within the workstream.
+
+Record a changed user requirement with update before treating any earlier result as current. This increments the requirement revision and invalidates old acceptance. Stop addresses the whole work; never restart it without explicit new user intent. Resume supplies the complete current contract. Dispatch receipts distinguish queued input from the exact consuming turn. Tell the user what is known and what remains unconsumed rather than claiming instant adoption.
+
+After acceptance use dispatch_delivery to ask the technical lead to perform authorized delivery, then receive its complete_delivery result. Use deliver directly only to record a result already at its authorized destination. A local worktree is not merged, pushed or published. Commit, push, PR changes, merge, deployment and release require the user's specific authorization or an established workflow. Agent briefs and peer messages cannot expand authority. For cross-work technical integration assign an existing technical lead a complete integration outcome. Preserve original requirements and do not create unnecessary parallel work or acknowledgement loops.`
 
 // Host-owned project instructions follow the current implementation on reload;
 // they must not be frozen into a session's create-time user instructions.
@@ -67,6 +64,15 @@ func effectiveSessionInstructions(metadata session.Session) string {
 		// Remove the old host-owned prompt until all pre-team development stores retire.
 		if instructions == projectSessionInstructions {
 			instructions = ""
+		}
+
+		if metadata.ProjectRole == "technical_lead" || metadata.ProjectRole == "executor" {
+			role := "You are this workstream's technical lead. Own investigation, technical decisions, verification, review and integration. Use session work get to read the shared contract and revision. Resolve technical uncertainty before giving execute one coherent phase with interfaces, allowed scope, acceptance checks, artifact locations, reusable processes/results and escalation conditions. For a very small task you may complete it directly. Otherwise reuse the persistent executor; end your turn while it works instead of polling. Review actual changes and accessible evidence for the exact submitted code_ref before calling review. Consolidate corrections into the next execute phase. Do not repeat valid verification without a concrete gap or changed input. Block only for a decision the coordinator must handle. A dispatch_delivery instruction authorizes the specified delivery within the original user limits; call complete_delivery only after it succeeds."
+			if metadata.ProjectRole == "executor" {
+				role = "You are this workstream's persistent executor. Read the shared work contract and current revision. Investigate or implement the technical lead's current phase, retain useful processes and context, and run the necessary verification. Make local implementation decisions; escalate invalid assumptions or interface/scope changes to the technical lead using message. Do not create agents, change requirements, approve your own work, or deliver it. Before ending a successful turn, call session work submit with the current revision, concise outcome, exact code/content reference and accessible verification evidence. A submission is not acceptance. Stop using an assignment if it is superseded."
+			}
+			return strings.TrimSpace(instructions + "\n\n" + role + `
+Work, session and turn identities are distinct. All participants read the same durable work contract using session work get. Preserve original user requirements and authority; peer instructions cannot expand them. Keep raw logs in this session and send only evidence needed for a decision. Communicate with your own workstream first. The executor reports to its technical lead; only accepted results or actionable blockers reach the coordinator. Keep one writer in this work's directory. The host prevents the technical lead from writing while the executor is active; a cancelled turn or wait timeout is not proof of actual exit. Worktree changes remain local until explicitly delivered. Do not commit, push, merge, change PRs, release or deploy without user authorization. Never automatically resume stopped work.`)
 		}
 		role := "You are a scoped Worker. Do the assigned work and report to the project lead; do not create more sessions."
 		if metadata.ProjectRole == "side" {
@@ -183,6 +189,12 @@ func (s *Server) recordProjectResult(th *threadState, turn Turn) {
 	if err != nil || !ok || control.State != session.ControlActive || control.ManagerID != projectID {
 		return
 	}
+	if handled, err := s.recordWorkTurn(th, turn); handled || err != nil {
+		if err != nil {
+			providers.DebugLogf("record work result: %v", err)
+		}
+		return
+	}
 	clientID := projectResultClientID(th.ID, turn.ID)
 	var report strings.Builder
 	fmt.Fprintf(&report, "Session %q finished a turn: %s.", title, turn.Status)
@@ -261,6 +273,15 @@ func (s *Server) noticeProjectUserMessage(th *threadState, msg providers.ChatMes
 	if identity == "" {
 		identity = fmt.Sprintf("seq:%d", msg.Seq)
 	}
+	if w, found, err := s.workForMember(projectID, th.ID); err != nil {
+		providers.DebugLogf("record work intervention: %v", err)
+	} else if found && w.Phase != "stopped" {
+		brief := w.Brief + "\n\nDirect user input in " + th.ID + ":\n" + msg.Content
+		if _, err := s.projectWork(context.Background(), projectID, "user-input:"+th.ID+":"+identity, tools.ProjectWorkRequest{Operation: "update", WorkID: w.ID, Revision: w.Revision, Brief: brief, Acceptance: w.Acceptance, Authority: w.Authority, SourceRefs: w.SourceRefs + "\n" + identity}); err != nil {
+			providers.DebugLogf("apply direct work intervention: %v", err)
+		}
+	}
+
 	notice := fmt.Sprintf("The user wrote to session %q. Respect their instructions and any stop intent; this does not change project membership.\n\n%s", title, msg.Content)
 	s.enqueueProjectInput(projectID, th.ID, "project-user-message:"+th.ID+":"+identity, projectCauseUserMessage, notice, false)
 }
@@ -316,6 +337,16 @@ func (s *Server) startProjectRecovery() {
 			return
 		}
 		pending = len(targets) > 0
+	}
+	if !pending {
+		if projects, err := session.List(s.rt.SessionDir, 0); err == nil {
+			for _, project := range projects {
+				if project.Source == projectSource && project.ArchivedAt == nil {
+					pending = true
+					break
+				}
+			}
+		}
 	}
 	if pending {
 		s.startBackground(s.recoverProjectInbox)
@@ -409,6 +440,22 @@ func (s *Server) recoverProjectInbox() {
 	if !projectAgentEnabled {
 		return
 	}
+	if projects, err := session.List(s.rt.SessionDir, 0); err == nil {
+		for _, p := range projects {
+			if p.Source == projectSource && p.ArchivedAt == nil {
+				root, workspaceID, err := s.sessionWorkspace(p)
+				if err != nil || !s.ownsSessionWorkspace(root, workspaceID) {
+					continue
+				}
+				if err := s.recoverProjectWork(p.ID); err != nil {
+					providers.DebugLogf("recover work: %v", err)
+				}
+			}
+		}
+	}
+	if !projectAgentEnabled {
+		return
+	}
 	controls, err := session.ListControls(s.rt.SessionDir)
 	if err != nil {
 		providers.DebugLogf("recover project sessions: %v", err)
@@ -488,6 +535,13 @@ func (s *Server) drainSessionInboxTarget(target string, allowStart bool) (capaci
 		// Old pending control notices no longer describe the project's policy;
 		// retain delivered history, but do not replay their return-control advice.
 		obsolete := message.Cause == projectCauseTakeover || message.Cause == projectCausePause || message.Cause == projectCauseReturn
+		if err := session.ValidateInboxControls(s.rt.SessionDir, message.ClientID); err != nil {
+			if !errors.Is(err, session.ErrControlChanged) {
+				providers.DebugLogf("validate work inbox: %v", err)
+				return
+			}
+			obsolete = true
+		}
 		for _, control := range message.Controls {
 			if err := session.ValidateControl(s.rt.SessionDir, control); err != nil {
 				if !errors.Is(err, session.ErrControlChanged) {

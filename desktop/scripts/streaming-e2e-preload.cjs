@@ -49,7 +49,24 @@ if (process.env.WUU_PROJECT_PANEL_E2E) {
   }
 }
 
+const projectWorks = new Map(["a", "b"].map((suffix) => ["project-" + suffix, {
+  id: "work-" + suffix, project_id: "project-" + suffix, version: 1, revision: 1,
+  title: suffix === "a" ? "Compatible pagination with existing callers" : "Review migration behavior",
+  brief: "Preserve the public API and leave database indexes unchanged.",
+  acceptance: "Existing callers pass the compatibility suite.", authority: "Local edits and tests only.",
+  phase: "planning", lead_id: "worker-" + suffix, workspace: "worktree", usage: [],
+  lead_dispatch: { session_id: "worker-" + suffix, state: "running", delivery_state: "consumed", turn_id: "brief-turn" },
+}]));
+
 contextBridge.exposeInMainWorld("wuu", {
+  projectWork: async (params) => {
+    const work = projectWorks.get(params.project_id);
+    if (params.operation === "list") return { project_id: params.project_id, works: work ? [work] : [], usage: [] };
+    if (!work || params.revision !== work.revision) throw new Error("stale work revision");
+    if (params.operation === "stop") { work.phase = "stopped"; work.revision++; }
+    if (params.operation === "resume") { work.phase = "planning"; work.revision++; }
+    return { ...work };
+  },
   listProjects: async () => projectList(),
   createBlankProject: async () => projectList(),
   chooseProjectFolder: async () => projectList(),

@@ -2,69 +2,121 @@
 
 Project Agent is experimental and disabled in release builds. There is no setting
 to enable it. Existing project conversations remain readable but do not run or
-resume queued work. The following guide applies only to builds that explicitly
-enable the feature; see [development](../project/development.md).
+resume queued work. This guide applies to builds that explicitly enable the
+feature; see [development](../project/development.md).
 
-The Project Agent is your lead: it keeps your goals and decisions in view, works directly when useful, and delegates independent work to sessions it manages. The team reviews its own work and delivers it: agents commit, merge, push, and open pull requests without waiting for your approval.
+A project gives you one conversation for goals, priorities, corrections and
+results. Its coordinator delegates technical work and finishes its own turn so
+you can continue talking while investigation, implementation and review run in
+background sessions. The coordinator's tool surface is limited to coordination
+and notes; it cannot run implementation tools or block waiting for a member.
+Provider latency and rate limits can still delay replies.
 
-Project coordination is built into Wuu. Creating and managing sessions, delivering results, taking control, and recovering after a restart do not require an installed or enabled plugin. Extensions can add optional tools, but do not own the project or its sessions.
+Coordination, durable work records, dispatch, results, controls and recovery are
+core Wuu behavior. No plugin is required.
 
-Project coordination is built into Wuu. Creating and managing sessions, delivering results, taking control, and recovering after a restart do not require an installed or enabled plugin. Extensions can add optional tools or delivery actions, but do not own the project or its sessions.
+## Start and organize work
 
-## Start a project
-
-Projects have their own group at the top of the sidebar. Choose **+** in **Projects** to start one in the current workspace, or **New project** in a workspace's menu to start one there. A project draft opens; **New conversation** turns it back into a conversation draft.
-
-Tell the coordinator the result you want and the constraints:
+Use **+** in the sidebar's **Projects** group, or **New project** in a workspace
+menu. Describe the outcome, constraints and authorized delivery:
 
 ```text
-Switch catalog search to server-side pagination with 50 results per page.
-Keep the public API unchanged.
+Switch catalog search to server-side pagination.
+Preserve the public API and leave database indexes alone.
+Implement and test locally; do not commit or push.
 ```
 
-Sending the first message creates the project and names it after that message's first line. Rename it like any conversation. A workspace can hold several projects.
+The coordinator records a work item with a stable identity, a versioned user
+brief, acceptance criteria, authorization and source references. Follow-ups to
+the same outcome reuse the work and its sessions. Independent outcomes can have
+separate workstreams. Cross-work technical integration belongs to an assigned
+technical lead; the coordinator resolves user priorities and scope.
 
-The lead uses the same tools and permission settings as an ordinary conversation, including workspace instructions such as `AGENTS.md` ([configuration](../reference/configuration.md)) and skills. It can make changes directly when its permission mode allows them; those edits affect its current workspace immediately. Small tasks do not need a team.
+Each workstream has a **technical lead** responsible for investigation, design,
+evidence and technical acceptance. It can complete a short task directly, or
+create a **persistent executor** for sustained exploration, edits and checks.
+The executor retains its context and useful processes across phases. It submits
+an exact code/content reference and accessible verification evidence. The lead
+reviews that result before accepting it. The host records who accepted what;
+it does not independently prove that a model's evidence is correct.
 
-## A lead, an optional Side Agent, and Workers
+In Git projects, a workstream gets an isolated worktree by default. Its technical
+lead and executor share that directory. The host prevents the lead from writing
+while its executor runs and serializes mutating tools across participants.
+Non-Git workstreams share the workspace and a project write lock. File isolation
+does not resolve interface dependencies or authorize integration.
 
-For sustained implementation, the lead can keep one persistent **Side Agent** and add scoped **Workers** for investigation, changes, or verification. The side can create workers too; their completion reports go to both the side that dispatched them and the lead. Workers can communicate but cannot create more project sessions. These are roles on ordinary conversations: they share the same history, model settings, tools, worktrees, and user controls. Reusing a side preserves its context, including after a restart.
+## Models, usage and responsiveness
 
-The lead delegates goals, constraints, ownership boundaries, dependencies, and acceptance evidence. It should leave implementation decisions to the agent inspecting the code, which can challenge mistaken assumptions. Sessions do not see the lead's conversation: each needs a self-contained brief and relevant user instructions. The lead remains responsible for reviewing and verifying the combined result.
+The coordinator uses its conversation model. **Settings → Runtime → Project
+Agent models** selects defaults for the technical lead and persistent executor.
+An unset role inherits the coordinator model; an unset executor also honors an
+existing worker default. Existing sessions retain their model selections.
+Choose sufficient technical judgment for the lead and an economical model that
+can execute the work reliably. A model alias can override a newly created
+session's default.
 
-Team members can message each other and the lead directly. Information joins a running turn or waits until the recipient's next turn; a question or request can explicitly wake it. Messages preserve their sender and survive restarts. Important decisions should reach the lead, and a peer message does not grant additional user authorization. Stopping or writing to a member does not remove it from the team or invalidate queued team messages.
+Executor reports go to their technical lead. Only acceptance and actionable
+workstream blockers wake the coordinator. Tool logs and ordinary status changes
+update the UI without generating a coordinating model turn. Background sessions
+share the project concurrency limit; the coordinator is outside that pool.
+An execution timeout does not cancel the background work.
 
-A new member inherits the lead's model unless a configured model alias is selected. Its model can then be changed using the ordinary conversation controls. No extra model or session runtime is introduced.
+The project panel shows persisted input, output and cached input tokens by role,
+provider and model, including legacy members. Cached tokens are not additional
+output tokens. These are usage observations, not a cost or savings estimate.
+Evaluate all roles, failed attempts and retries at the same acceptance standard
+before concluding that a model mix saves money.
 
-To bring existing work into a project, drag a conversation from its workspace onto the project in the sidebar. The coordinator manages it from then on and reads its latest answer. Only a conversation of the project's workspace can join.
+## Follow progress and deliver
 
-A project occupies one row in the sidebar; its sessions do not crowd the workspace list. The row shows when any of its sessions is running. In the project conversation:
+The project status control above the composer opens its right panel. Work items
+show investigation, implementation, verification, technical review, acceptance,
+delivery, blockers or stopped state. Expand an item to inspect its requirements,
+authorization, code reference, evidence and member conversations. Dispatch
+receipts distinguish recorded input, pending steering and a specific consuming
+turn. A finished conversation turn never marks the work delivered.
 
-- Above the composer, the project's running work opens the project in the right panel, which lists its Side Agent and Workers. Running indicators describe execution, not project membership.
-- Each event, such as a session finishing a turn, reads as one centered line between messages. Its session name opens the session, and **Details** shows the text the coordinator received. Consecutive events in a turn fold into one line that counts them; expand it to see each event.
+Acceptance and delivery are separate. After technical acceptance, the
+coordinator records delivery only when the result actually reaches its
+user-authorized destination. A local worktree can be the requested destination;
+it is not evidence of a commit, merge, push, PR or deployment. Those actions each
+require user authorization or an established workflow for that action.
 
-In a Git workspace, a session that changes files works in its own Git worktree by default, so their files are isolated. Worktrees do not resolve interface conflicts: assign one writer to each overlapping scope and verify changes together. A session that works in the workspace directly edits its files in place.
+## Correct, stop and resume
 
-When a session's turn ends, the coordinator decides the next step: a correction, a follow-up session, delivery, or a report to you. A result is evidence, not proof that the goal is met. For an independent check, the coordinator can have another session review a session's worktree or branch and run tests without changing it.
+Change requirements in the main conversation. The coordinator updates the whole
+contract, increments its requirement revision and invalidates earlier acceptance.
+Old queued input is fenced at consumption, stale execution is interrupted, and
+the technical lead receives the new brief. Write ownership remains with a live
+tool until it really exits. A receipt that says “recorded” does not mean the
+executor has adopted the change yet.
 
-## Deliver changes
+You can also write directly to a work member. Wuu retains that input in the work
+contract, invalidates prior acceptance and routes it to the technical lead.
+Use the main conversation for status questions that should not revise the work.
 
-A worktree session's changes stay on its own branch until the team delivers them. Nothing waits for your approval: the lead decides how the work lands, such as committing and merging it into the workspace, pushing a branch, or opening a pull request, and a session does it with ordinary Git and `gh` commands. Those commands follow the project's permission mode like in any conversation. To get a different delivery, such as a draft pull request instead of a merge, tell the lead in the project conversation.
+**Stop** in the work panel revokes pending work and interrupts both members.
+Stopping a work member also stops its workstream. Stopping the coordinator's
+current turn leaves independent background work running. **Resume** explicitly
+reissues the current contract in the same sessions; stopped work is never
+restarted by a late completion report.
 
-## Write to or stop a session
+On restart Wuu retries persisted dispatches with the same client identity and
+recovers known terminal results without duplicating them. An execution without
+terminal evidence becomes a blocker requiring inspection and explicit resume;
+it is not assumed successful. Wuu's process must remain running for background
+execution. Closing the computer is not remote execution.
 
-You can write to a member at any time. Your message steers the running turn or starts one. The member stays in the project, and the coordinator receives a notice without being woken if idle. The turn's result also includes what you wrote.
+## Existing projects and limits
 
-Stopping interrupts the current turn; it does not transfer control or require a return step. The interrupted result reaches the coordinator without waking it from idle. Normal completion still wakes the coordinator, and a stopped worktree turn keeps its changes in the worktree. The coordinator can assign later work to the same member.
+Existing Side Agent and Worker conversations remain accessible as legacy
+sessions. Their ordinary messaging and adoption/removal controls continue to
+work; they are not silently relabeled as reviewed work items. New work uses the
+versioned workflow. Removing a work-bound member stops its work before removing
+membership; its local files remain available.
 
-To make a session an ordinary conversation again, choose **Remove from project** in the project view. Its worktree and undelivered changes stay with the conversation.
-
-## Limits
-
-- Wuu must be running for sessions to work. Results from turns that ended while Wuu was closed arrive when it starts again.
-- Projects do not have timers or external triggers yet.
-- Each session makes its own model requests, so delegating work uses more tokens than one conversation.
-- Archiving a project keeps its managed sessions out of the desktop sidebar's ordinary conversation list, including after a reload. It does not archive or stop those sessions; restore the project to access them in its project view. If the project is deleted or missing, surviving sessions appear in the ordinary list so they remain accessible.
-- The phone apps open a project's conversations directly; they do not group them.
-
-For a quick task delegated inside one conversation, use [subagents](subagents.md).
+Project Agent does not provide timers, external triggers or cloud execution.
+Archiving a project does not stop its sessions. Mobile clients can open member
+conversations but do not yet expose this work panel. See [subagents](subagents.md)
+for a bounded task inside an ordinary conversation.

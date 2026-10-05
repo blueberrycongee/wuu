@@ -348,3 +348,29 @@ html[data-focus-modality="keyboard"] .project-panel-row-main:focus-visible {
   color: var(--ink-tertiary);
   font-size: var(--font-sm);
 }
+
+.project-work {
+  min-width: 0;
+  padding-block: var(--space-3);
+  border-bottom: 1px solid var(--hairline);
+  overflow-wrap: anywhere;
+}
+.project-work-heading {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+}
+.project-work-heading > .project-panel-row-main { white-space: normal; }
+.project-work-heading > .settings-button { flex-shrink: 0; }
+.project-work p { margin: var(--space-2) 0; white-space: pre-wrap; }
+.project-work-state, .project-work dt { color: var(--ink-secondary); }
+.project-work-receipt { color: var(--ink-secondary); font-size: var(--font-sm); }
+.project-work details { margin-top: var(--space-3); }
+.project-work summary, .project-work-usage summary { cursor: pointer; color: var(--ink-secondary); }
+.project-work dl { margin: var(--space-3) 0; }
+.project-work dl > div + div { margin-top: var(--space-3); }
+.project-work dd { margin: var(--space-1) 0 0; white-space: pre-wrap; }
+.project-work-members { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.project-work-members > button { white-space: normal; text-align: start; }
+.project-work-usage p { overflow-wrap: anywhere; }
+.project-work-error, .project-work-blocker { color: var(--ink); }

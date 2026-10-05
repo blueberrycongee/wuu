@@ -1,3 +1,4 @@
+import { useProjectWork } from "./ProjectWork";
 import { useId, useState } from "react";
 import type { Thread, ThreadItem } from "../shared/protocol";
 import { isThreadExecuting } from "./AppState";
@@ -19,9 +20,12 @@ import type { TranslationKey } from "./i18n/resources/zh-CN";
 export function ProjectStatusCapsule({ project, sessions }: { project: Thread; sessions: readonly ProjectThread[] }): JSX.Element | null {
   const { t, formatNumber } = useI18n();
   const actions = useProjectActions();
+  const work = useProjectWork(project.id);
   if (!actions) return null;
+  const works = work.snapshot?.works ?? [];
+  const outstanding = works.filter(item => item.phase !== "delivered");
   const running = sessions.filter(isThreadExecuting).length;
-  const parts = [
+  const parts = works.length ? [t("projects.work.outstanding", { count: formatNumber(outstanding.length) })] : [
     running ? t("projects.status.running", { count: formatNumber(running) }) : "",
     t(sessions.length === 1 ? "projects.status.sessionsOne" : "projects.status.sessions", { count: formatNumber(sessions.length) }),
   ].filter(Boolean);
@@ -34,7 +38,7 @@ export function ProjectStatusCapsule({ project, sessions }: { project: Thread; s
       onClick={() => actions.openProjectPanel(project)}
     >
       {running ? <span className="project-status-count" aria-hidden="true"><LoaderCircle className="project-status-spinner" />{formatNumber(running)}</span> : null}
-      <span className="project-status-count" aria-hidden="true"><MessagesSquare />{formatNumber(sessions.length)}</span>
+      <span className="project-status-count"><MessagesSquare aria-hidden="true" />{works.length ? parts[0] : formatNumber(sessions.length)}</span>
     </button>
   );
 }

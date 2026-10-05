@@ -394,8 +394,10 @@ type ModelRoleConfig struct {
 }
 
 type ProjectModelsConfig struct {
-	Side   ModelRoleConfig `json:"side,omitempty"`
-	Worker ModelRoleConfig `json:"worker,omitempty"`
+	TechnicalLead ModelRoleConfig `json:"technical_lead,omitempty"`
+	Executor      ModelRoleConfig `json:"executor,omitempty"`
+	Side          ModelRoleConfig `json:"side,omitempty"`
+	Worker        ModelRoleConfig `json:"worker,omitempty"`
 }
 
 type AdvancedRuntimeUpdate struct {
@@ -830,7 +832,7 @@ func (c Config) Validate() error {
 	if err := validateModelAliasesConfig(c); err != nil {
 		return err
 	}
-	for role, selection := range map[string]ModelRoleConfig{"side": c.Agent.ProjectModels.Side, "worker": c.Agent.ProjectModels.Worker} {
+	for role, selection := range map[string]ModelRoleConfig{"technical_lead": c.Agent.ProjectModels.TechnicalLead, "executor": c.Agent.ProjectModels.Executor, "side": c.Agent.ProjectModels.Side, "worker": c.Agent.ProjectModels.Worker} {
 		if selection != (ModelRoleConfig{}) {
 			if err := validateConfiguredModelSelection(c, "agent.project_models."+role, selection); err != nil {
 				return err

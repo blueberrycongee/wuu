@@ -10,6 +10,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Keep experimental Project Agent conversations responsive through background
+  technical leads and persistent executors, with versioned work contracts,
+  evidence-bound review, explicit delivery, durable stop/recovery and work status.
+
 - Deliver uploaded videos, PDFs, and ordinary files as seven-day original-byte
   working copies independently of native model support, and budget only the
   projected input so attachments survive context recovery without Base64 inflation.

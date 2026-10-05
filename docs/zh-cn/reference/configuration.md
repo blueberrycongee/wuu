@@ -81,17 +81,18 @@ Kimi 使用独立的消息级工具声明协议；这条规则不启用其 Respo
 
 ## Project Agent 模型选择
 
-在启用 Project Agent 的构建中，主 Agent 使用会话模型。可以在设置 → 运行时中
-分别选择 Side 和 Worker 的默认模型，也可以修改用户配置：
+在启用 Project Agent 的构建中，协调者使用主对话模型。可以在设置 → 运行时中
+分别选择技术负责人和持久执行者的默认模型，也可以修改用户配置：
 
 ```json
 { "agent": { "project_models": {
-  "side": { "provider": "anthropic", "model": "your-side-model" },
-  "worker": { "provider": "openai", "model": "your-worker-model" }
+  "technical_lead": { "provider": "anthropic", "model": "your-lead-model" },
+  "executor": { "provider": "openai", "model": "your-execution-model" }
 } } }
 ```
 
-使用已配置的服务名称和模型 ID。省略角色或留空时继承主 Agent 模型。服务支持时，
+使用已配置的服务名称和模型 ID。省略角色或留空时继承协调者模型。执行者未配置时还会沿用旧 Worker 默认值；
+旧 Side/Worker 配置继续用于原有团队流程。服务支持时，
 每个选择也接受 `effort` 和 `variant`。默认值只影响新建成员，已有会话保留保存的
 选择；创建时明确指定的 `model_alias` 优先于角色默认值。参见
 [app-server 协议](../automation/app-server.md)。

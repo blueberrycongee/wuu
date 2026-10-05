@@ -85,19 +85,20 @@ protocol; accepting unknown fields is not sufficient.
 
 ## Project Agent model choices
 
-In builds with Project Agent enabled, the lead uses the conversation model. Set
-Side and Worker defaults independently in Settings → Runtime, or in the user
+In builds with Project Agent enabled, the coordinator uses the conversation model. Set
+technical lead and persistent executor defaults independently in Settings → Runtime, or in the user
 configuration:
 
 ```json
 { "agent": { "project_models": {
-  "side": { "provider": "anthropic", "model": "your-side-model" },
-  "worker": { "provider": "openai", "model": "your-worker-model" }
+  "technical_lead": { "provider": "anthropic", "model": "your-lead-model" },
+  "executor": { "provider": "openai", "model": "your-execution-model" }
 } } }
 ```
 
 Use configured provider names and model IDs. Omit a role or leave it empty to
-inherit the lead model. Each selection also accepts `effort` and `variant` when
+inherit the coordinator model. An unset executor also honors the legacy worker default.
+Legacy side/worker selections remain available for existing team workflows. Each selection also accepts `effort` and `variant` when
 the provider supports them. Defaults apply to newly created members; existing
 sessions retain their saved selection. A creation-time `model_alias` overrides
 the role default. See the [app-server protocol](../automation/app-server.md).
