@@ -124,7 +124,8 @@ await tools.read_file({path: "screenshots/settings.png"});
 
 ### 发现、执行与结果
 
-调用 `run_code` 时提供 `code`、简短的 `description` 和可选的 `timeout_ms`。
+调用 `run_code` 时提供 `code`，可选提供 `description` 和 `timeout_ms`。
+`description` 是展示元数据，省略它不会阻止执行。
 入口说明只包含有界目录预览。`await searchTools(query, {limit: 8, offset: 0})`
 返回 `tools`、`total` 和可选的 `next_offset`；空查询可分页查看全部绑定。
 `await describeTool(name)` 返回完整说明与精确的 `input_schema`。
@@ -140,8 +141,18 @@ await tools.read_file({path: "screenshots/settings.png"});
 
 筛选和计算应使用 `content` 或 `structured_content`，并检查工具自身的分页。
 `model_text` 是可能省略字段或记录的展示视图，不是完整数据集。打印选出的证据
-或计算结果，而非整个结果对象或媒体编码；可读视图已足够时，直接转发该视图。
-在判断某项不存在之前，先检查并续读相关分页。
+或计算结果，不要打印媒体编码。`text(result)`、`console.log(result)` 和
+`return result` 会为返回的工具结果输出一份模型展示视图，数组或对象中包含的
+结果也适用，不会同时序列化原始内容和展示副本。字符串返回值直接展示为文本，
+不再额外添加 JSON 字符串引号。例如，
+`text(await tools.read_file({path: "README.md"}))` 可以读取并展示文件。
+计算和 `store` 仍能获取完整结果。显式选出的字段、复制的对象及 `load` 恢复的值
+属于普通 JSON 数据；打印时应自行选择展示视图。在判断某项不存在之前，
+先检查并续读工具返回的后续页。
+
+生成工具参数时，如果 JSON 字符串之外连续出现超过 16 KiB 的格式空白，Wuu
+会中止生成，不接受该次工具调用，也不自动重放请求。文件内容或其他字符串参数
+内部的空白会完整保留。多个调用交错且增量未标明所属调用时，会在完整参数到达后检查。
 
 ### 状态与长时间工作
 

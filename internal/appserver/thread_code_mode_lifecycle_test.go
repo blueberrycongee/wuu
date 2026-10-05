@@ -79,7 +79,7 @@ func TestThreadDeleteReleasesCodeModeStateCapacity(t *testing.T) {
 		}
 		ids = append(ids, id)
 		result, err := run(id, `store("marker", "retained"); return load("marker");`)
-		if err != nil || result.IsError || result.TextProjection() != `"retained"` {
+		if err != nil || result.IsError || result.TextProjection() != "retained" {
 			t.Fatalf("seed thread %d: %+v, %v", i, result, err)
 		}
 	}
@@ -91,7 +91,7 @@ func TestThreadDeleteReleasesCodeModeStateCapacity(t *testing.T) {
 	rpc(MethodThreadArchive, ThreadArchiveParams{ThreadID: retained, Archived: false})
 	srv.releaseThreadRuntime(srv.thread(retained))
 	result, err := run(retained, `return load("marker");`)
-	if err != nil || result.IsError || result.TextProjection() != `"retained"` {
+	if err != nil || result.IsError || result.TextProjection() != "retained" {
 		t.Fatalf("archive or runtime rebuild discarded state: %+v, %v", result, err)
 	}
 
@@ -111,13 +111,13 @@ func TestThreadDeleteReleasesCodeModeStateCapacity(t *testing.T) {
 		t.Fatalf("permanent delete did not remove the session: exists=%v, err=%v", exists, err)
 	}
 	result, err = run(fresh, `store("marker", "new"); return load("marker");`)
-	if err != nil || result.IsError || result.TextProjection() != `"new"` {
+	if err != nil || result.IsError || result.TextProjection() != "new" {
 		t.Fatalf("permanently deleted conversation retained code-mode capacity: %+v, %v", result, err)
 	}
 	// A fork is a separate conversation even though its parent was deleted.
 	rpc(MethodThreadResume, ThreadResumeParams{SessionID: ids[1], ResponseOnly: true})
 	result, err = run(ids[1], `return load("marker");`)
-	if err != nil || result.IsError || result.TextProjection() != `"retained"` {
+	if err != nil || result.IsError || result.TextProjection() != "retained" {
 		t.Fatalf("parent deletion discarded independent fork state: %+v, %v", result, err)
 	}
 
@@ -129,7 +129,7 @@ func TestThreadDeleteReleasesCodeModeStateCapacity(t *testing.T) {
 		t.Fatal("delete failure was not returned")
 	}
 	result, err = run(fresh, `return load("marker");`)
-	if err != nil || result.IsError || result.TextProjection() != `"new"` {
+	if err != nil || result.IsError || result.TextProjection() != "new" {
 		t.Fatalf("failed deletion discarded live state: %+v, %v", result, err)
 	}
 }

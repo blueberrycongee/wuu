@@ -190,7 +190,8 @@ func normalizeFailure(err error) NormalizedFailure {
 		return failure
 	}
 	var eventTooLarge *StreamEventTooLargeError
-	if errors.As(err, &eventTooLarge) {
+	var argumentWhitespace *ToolArgumentWhitespaceError
+	if errors.As(err, &eventTooLarge) || errors.As(err, &argumentWhitespace) {
 		failure.Origin = FailureOriginLocal
 		failure.Category = FailureResponseTooLarge
 		failure.ClassificationConfidence = ConfidenceHigh

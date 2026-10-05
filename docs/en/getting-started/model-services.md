@@ -179,7 +179,8 @@ bindings retain their exact names, permissions and model-family edit primitives.
 
 ### Discover, execute and inspect results
 
-Call `run_code` with `code`, a short `description`, and optional `timeout_ms`.
+Call `run_code` with `code` and optional `description` and `timeout_ms`.
+The description is display metadata; omitting it does not prevent execution.
 Its description contains a bounded catalog preview. `await searchTools(query,
 {limit: 8, offset: 0})` returns `tools`, `total` and optional `next_offset`; an
 empty query pages through all bindings. `await describeTool(name)` returns the
@@ -200,9 +201,21 @@ independent reads.
 Use `content` or `structured_content` for filtering and computation, and check
 the producer's pagination. `model_text` is a display view that may omit fields
 or records; it is not a complete dataset. Print selected evidence or a computed
-answer rather than the whole result object or media encodings. When a readable
-view is sufficient, forward that view. Follow continuation metadata before
+answer without printing media encodings. `text(result)`, `console.log(result)`
+and `return result` emit one model-facing view of a returned tool result, including
+results inside arrays or objects. They do not serialize both the raw content and
+its display copy. A string return is displayed as text without JSON string quoting.
+For example, `text(await tools.read_file({path: "README.md"}))` reads and displays a
+file. Computation and `store` still receive the complete result. Explicitly selected
+fields, copied objects and values restored with `load` are ordinary JSON data;
+select their display view when printing them. Follow continuation metadata before
 concluding that something is absent.
+
+During generation, Wuu stops tool arguments containing more than 16 KiB of
+consecutive JSON formatting whitespace outside string values. The affected call
+is not admitted and the request is not automatically replayed. Whitespace inside
+file contents or other string arguments is preserved. Interleaved calls whose
+increments do not identify their owner are checked when their arguments finish.
 
 ### State and long-running work
 

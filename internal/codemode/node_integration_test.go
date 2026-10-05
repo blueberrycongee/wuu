@@ -511,7 +511,7 @@ func TestNodeToolCallErrorRetainsCanonicalResult(t *testing.T) {
 			Meta:              json.RawMessage(`{"request_id":"request-1"}`),
 		}, nil
 	})}
-	result, err := s.Run(context.Background(), RunRequest{Code: `try {await tools.fail({})} catch(e) {return {name:e.name,tool:e.toolName,result:e.result};}`, Tools: []ToolDefinition{{Name: "fail"}}}, opts)
+	result, err := s.Run(context.Background(), RunRequest{Code: `try {await tools.fail({})} catch(e) {return {name:e.name,tool:e.toolName,result:{...e.result}};}`, Tools: []ToolDefinition{{Name: "fail"}}}, opts)
 	want := `{"name":"ToolCallError","tool":"fail","result":{"content":[{"type":"text","text":"conflict"},{"type":"resource_link","uri":"https://example.com/conflict","name":"details"}],"structured_content":{"code":"conflict","retryable":true},"meta":{"request_id":"request-1"},"is_error":true}}`
 	if err != nil || result.Error != "" || string(result.Value) != want {
 		t.Fatalf("canonical error result lost=%+v %v", result, err)
@@ -519,6 +519,56 @@ func TestNodeToolCallErrorRetainsCanonicalResult(t *testing.T) {
 	result, err = s.Run(context.Background(), RunRequest{Code: `const results=[]; try {await tools.transport({})} catch(e) {results.push(typeof e.result)} try {await describeTool("missing")} catch(e) {results.push(typeof e.result)} return results;`, Tools: []ToolDefinition{{Name: "transport"}}}, opts)
 	if err != nil || result.Error != "" || string(result.Value) != `["undefined","undefined"]` {
 		t.Fatalf("synthetic errors acquired fake results=%+v %v", result, err)
+	}
+}
+
+// Exercise the real interpreter and wire: duplicate result views must not leak
+// into output, while computation, checkpoints, and error recovery stay lossless.
+func TestNodeToolResultOutputUsesOneProjection(t *testing.T) {
+	s := nodeService(t)
+	view := "visible evidence"
+	opts := RunOptions{CWD: t.TempDir(), StateScope: "result-output", Executor: nodeExecutor(func(context.Context, providers.ToolCall) (toolresult.Result, error) {
+		return toolresult.Result{
+			Content:           []toolresult.ContentPart{{Type: toolresult.ContentTypeText, Text: "raw evidence"}},
+			StructuredContent: json.RawMessage(`{"count":42}`),
+			ModelText:         &view,
+		}, nil
+	})}
+	result, err := s.Run(context.Background(), RunRequest{Code: `
+const result = await tools.read({});
+if (result.content[0].text !== "raw evidence" || result.structured_content.count !== 42) throw new Error("lost program data");
+store("result", result);
+text(result);
+console.log({results: [result]});
+return result;`, Tools: []ToolDefinition{{Name: "read"}}}, opts)
+	if err != nil || result.Error != "" || string(result.Value) != `"visible evidence"` || strings.Join(result.Logs, "\n") != "visible evidence\n{\"results\":[\"visible evidence\"]}" {
+		t.Fatalf("result output repeated raw data: %+v %v", result, err)
+	}
+	result, err = s.Run(context.Background(), RunRequest{Code: `const saved = load("result"); return [saved.content[0].text, saved.structured_content.count];`}, opts)
+	if err != nil || result.Error != "" || string(result.Value) != `["raw evidence",42]` {
+		t.Fatalf("output projection changed checkpoints: %+v %v", result, err)
+	}
+	// Matching property names in ordinary user data do not make a tool result.
+	result, err = s.Run(context.Background(), RunRequest{Code: `return {content: "user data", model_text: "keep both"};`}, opts)
+	if err != nil || result.Error != "" || string(result.Value) != `{"content":"user data","model_text":"keep both"}` {
+		t.Fatalf("ordinary data was projected: %+v %v", result, err)
+	}
+}
+
+func TestNodeToolResultOutputPreservesEmptyAndFallbackViews(t *testing.T) {
+	s := nodeService(t)
+	for _, view := range []*string{nil, new(string)} {
+		opts := RunOptions{CWD: t.TempDir(), Executor: nodeExecutor(func(context.Context, providers.ToolCall) (toolresult.Result, error) {
+			return toolresult.Result{Content: []toolresult.ContentPart{{Type: toolresult.ContentTypeText, Text: "raw evidence"}}, ModelText: view}, nil
+		})}
+		result, err := s.Run(context.Background(), RunRequest{Code: `console.log(await tools.read({}));`, Tools: []ToolDefinition{{Name: "read"}}}, opts)
+		want := "raw evidence"
+		if view != nil {
+			want = ""
+		}
+		if err != nil || result.Error != "" || len(result.Logs) != 1 || result.Logs[0] != want {
+			t.Fatalf("empty/fallback output: %+v %v", result, err)
+		}
 	}
 }
 
