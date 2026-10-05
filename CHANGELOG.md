@@ -10,6 +10,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Keep the conversation surface undimmed when opening the sidebar in narrow
+  desktop windows, matching the wide-window drawer.
+
 - Discover recent local workspaces during first-run setup, with batch import,
   manual folder selection, and direct entry into the selected workspace.
 

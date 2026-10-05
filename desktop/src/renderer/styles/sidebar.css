@@ -587,7 +587,7 @@
   inset: 0;
   border: 0;
   padding: 0;
-  background: var(--modal-backdrop-bg);
+  background: transparent;
 }
 
 .sidebar-resizer {
