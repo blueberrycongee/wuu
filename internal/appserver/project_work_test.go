@@ -4,6 +4,7 @@ package appserver
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	wuucontext "github.com/blueberrycongee/wuu/internal/context"
@@ -397,4 +398,58 @@ func TestProjectWorkOutboxStaysWithOwningWorkspace(t *testing.T) {
 		t.Fatalf("another workspace created the member: %v %v", found, err)
 	}
 	_ = srv
+}
+
+// A submitted artifact cannot be accepted if its owning turn failed, including
+// after replay. A subsequent successful execution can still be reviewed.
+func TestProjectWorkRejectsFailedSubmissionAfterRecovery(t *testing.T) {
+	srv, client, calls, rt := newProjectFixture(t)
+	root := startProject(t, client, "Failed submission")
+	act := func(actor, id string, request tools.ProjectWorkRequest) projectWorkView {
+		t.Helper()
+		value, err := srv.projectWork(context.Background(), actor, id, request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return value.(projectWorkView)
+	}
+	w := act(root.ID, "create", tools.ProjectWorkRequest{Operation: "create", Brief: "Verify the change", Acceptance: "Checks pass", Authority: "Local only"})
+	lead := calls.next(t, "Verify the change")
+	w = act(w.LeadID, "execute", tools.ProjectWorkRequest{Operation: "execute", WorkID: w.ID, Revision: w.Revision, Brief: "Implement the change"})
+	executor := calls.next(t, "Implement the change")
+	lead.response <- providersResponse("Dispatched")
+	waitForThread(t, srv, w.LeadID, func(th Thread) bool { return th.Status == ThreadStatusIdle })
+	w = act(w.ExecutorID, "submit", tools.ProjectWorkRequest{Operation: "submit", WorkID: w.ID, Revision: w.Revision, Summary: "Change implemented", Evidence: "test.log", CodeRef: "artifact:v1"})
+	executor.failure <- errors.New("terminal provider failure after submission")
+	review := calls.next(t, "requires technical review")
+	turns, err := srv.loadDurableProjectTurns(w.ExecutorID)
+	if err != nil || turns[len(turns)-1].Status != TurnStatusFailed {
+		t.Fatalf("missing failed terminal evidence: %+v %v", turns, err)
+	}
+	for _, recover := range []bool{false, true} {
+		if recover {
+			srv.recoverProjectInbox()
+		}
+		_, err = srv.projectWork(context.Background(), w.LeadID, "reject-review", tools.ProjectWorkRequest{Operation: "review", WorkID: w.ID, Revision: w.Revision, Summary: "Ready", Evidence: "Inspected test.log", CodeRef: w.CodeRef})
+		if err == nil {
+			t.Fatalf("failed submission accepted (recovery=%v)", recover)
+		}
+		current, err := session.ReadProjectWork(rt.SessionDir, w.ID)
+		if err != nil || current.Phase != "reviewing" || current.Review != "" {
+			t.Fatalf("failed review changed acceptance: %+v %v", current, err)
+		}
+	}
+	w = act(w.LeadID, "retry", tools.ProjectWorkRequest{Operation: "execute", WorkID: w.ID, Revision: w.Revision, Brief: "Retry verification"})
+	executor = calls.next(t, "Retry verification")
+	review.response <- providersResponse("Retry dispatched")
+	waitForThread(t, srv, w.LeadID, func(th Thread) bool { return th.Status == ThreadStatusIdle })
+	w = act(w.ExecutorID, "submit-retry", tools.ProjectWorkRequest{Operation: "submit", WorkID: w.ID, Revision: w.Revision, Summary: "Retry passed", Evidence: "retry.log", CodeRef: "artifact:v2"})
+	executor.response <- providersResponse("Verified retry complete")
+	review = calls.next(t, "Verified retry complete")
+	w = act(w.LeadID, "accept-retry", tools.ProjectWorkRequest{Operation: "review", WorkID: w.ID, Revision: w.Revision, Summary: "Retry accepted", Evidence: "Reviewed retry.log", CodeRef: "artifact:v2"})
+	if w.Phase != "accepted" {
+		t.Fatalf("successful retry not accepted: %+v", w)
+	}
+	review.response <- providersResponse("Accepted")
+	calls.next(t, "Retry accepted").response <- providersResponse("Ready for delivery")
 }

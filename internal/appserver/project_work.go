@@ -214,6 +214,22 @@ func (s *Server) projectWork(ctx context.Context, actorID, callID string, r tool
 				if w.Phase != "reviewing" || w.CodeRef != r.CodeRef || w.SubmissionTurnID == "" {
 					return nil, errors.New("review must match a successfully completed submission and its exact code_ref")
 				}
+				// Submission precedes terminal settlement. Failed turns also reach
+				// reviewing for diagnosis, so phase alone cannot authorize acceptance.
+				turns, err := s.loadDurableProjectTurns(w.ExecutorID)
+				if err != nil {
+					return nil, err
+				}
+				completed := false
+				for _, turn := range turns {
+					if turn.ID == w.SubmissionTurnID {
+						completed = turn.Status == TurnStatusCompleted
+						break
+					}
+				}
+				if !completed {
+					return nil, errors.New("the submitted executor turn did not complete successfully; execute and verify again before acceptance")
+				}
 			} else if w.Phase != "planning" {
 				return nil, errors.New("work is not ready for direct technical review")
 			}
