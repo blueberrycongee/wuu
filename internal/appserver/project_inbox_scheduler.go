@@ -132,6 +132,23 @@ func (s *Server) runProjectInboxDrain(projectID string, state *projectInboxDrain
 }
 
 func (s *Server) drainProjectInboxPass(projectID string) bool {
+	workOwned := false
+	if project, live := s.projectCoordinator(projectID); live {
+		root, id, err := s.sessionWorkspace(project)
+		workOwned = err == nil && s.ownsSessionWorkspace(root, id)
+	}
+	if workOwned {
+		if work, err := session.PendingProjectWork(s.rt.SessionDir, projectID); err != nil {
+			providers.DebugLogf("read work outbox: %v", err)
+			return true
+		} else {
+			for _, w := range work {
+				if err := s.reconcileProjectWork(w); err != nil {
+					providers.DebugLogf("reconcile work outbox: %v", err)
+				}
+			}
+		}
+	}
 	targets, err := session.InboxTargets(s.rt.SessionDir)
 	if err != nil {
 		providers.DebugLogf("list project inbox: %v", err)
@@ -162,7 +179,7 @@ func (s *Server) drainProjectInboxPass(projectID string) bool {
 		if len(messages) == 0 {
 			continue
 		}
-		ready = append(ready, target{id: id, worker: m.Source == projectSessionSource && (m.ProjectRole == "" || m.ProjectRole == "worker"), oldest: messages[0].CreatedAt})
+		ready = append(ready, target{id: id, worker: m.Source == projectSessionSource && (m.ProjectRole == "" || m.ProjectRole == "worker" || m.ProjectRole == "executor"), oldest: messages[0].CreatedAt})
 	}
 	// Coordination/steering is never withheld by worker capacity. Worker starts
 	// use stable oldest-pending order within this Server's pass, not global FIFO.
@@ -225,6 +242,11 @@ func (s *Server) drainProjectInboxPass(projectID string) bool {
 		delete(s.projectCapacityRetries, projectID)
 	}
 	s.projectInboxMu.Unlock()
+	if workOwned {
+		if work, err := session.PendingProjectWork(s.rt.SessionDir, projectID); err != nil || len(work) > 0 {
+			pending = true
+		}
+	}
 	return pending
 }
 

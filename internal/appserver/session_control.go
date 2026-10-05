@@ -8,6 +8,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/session"
+	"github.com/blueberrycongee/wuu/internal/tools"
 )
 
 func (s *Server) controlPluginSession(_ context.Context, pluginID string, p pluginhost.SessionControlParams) (pluginhost.SessionControlResult, error) {
@@ -130,6 +131,16 @@ func (s *Server) takeSessionControl(id, state string) error {
 	}
 	s.revokeSessionInputs(id)
 	s.publishSessionControl(id)
+	if live {
+		if w, found, err := s.workForMember(project.ID, id); err != nil {
+			return err
+		} else if found && w.Phase != "stopped" {
+			if _, err := s.projectWork(context.Background(), project.ID, fmt.Sprintf("member-stop:%s:%d", id, c.Revision), tools.ProjectWorkRequest{Operation: "stop", WorkID: w.ID, Revision: w.Revision}); err != nil {
+				return err
+			}
+		}
+	}
+
 	if live {
 		s.enqueueProjectInput(project.ID, id, fmt.Sprintf("project-control:%s:%d", id, c.Revision), projectCauseStopped,
 			"The user stopped this session. Respect their stop intent; do not automatically restart the stopped work. The session remains a project member and may receive new instructions later.", false)

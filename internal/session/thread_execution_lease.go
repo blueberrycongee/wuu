@@ -40,7 +40,7 @@ var ErrProjectWorkerCapacity = errors.New("project worker admission capacity is 
 
 // TryAcquireThreadExecutionLeaseWithProjectLimit atomically admits execution
 // within a project's worker capacity. Zero disables the project limit. Membership
-// is read from durable storage; lead and side sessions do not consume capacity.
+// is read from durable storage; coordinator and legacy side sessions do not consume capacity.
 // Existing leases (including mutations) conservatively occupy worker capacity.
 func TryAcquireThreadExecutionLeaseWithProjectLimit(sessDir, threadID string, limit int) (*ThreadExecutionLease, bool, error) {
 	sessDir = strings.TrimSpace(sessDir)
@@ -110,7 +110,7 @@ func TryAcquireThreadExecutionLeaseWithProjectLimit(sessDir, threadID string, li
 func checkProjectExecutionCapacity(tx *sql.Tx, sessDir, threadID string, limit int) error {
 	var projectID string
 	err := tx.QueryRow(`SELECT parent_id FROM sessions WHERE id=? AND source='project-session'
-  AND project_role IN ('','worker') AND parent_id<>'' AND archived_at IS NULL`, threadID).Scan(&projectID)
+  AND project_role IN ('','worker','executor','technical_lead') AND parent_id<>'' AND archived_at IS NULL`, threadID).Scan(&projectID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
@@ -118,7 +118,7 @@ func checkProjectExecutionCapacity(tx *sql.Tx, sessDir, threadID string, limit i
 		return fmt.Errorf("read project admission membership: %w", err)
 	}
 	rows, err := tx.Query(`SELECT id FROM sessions WHERE parent_id=? AND source='project-session'
-  AND project_role IN ('','worker') AND archived_at IS NULL AND id<>?`, projectID, threadID)
+  AND project_role IN ('','worker','executor','technical_lead') AND archived_at IS NULL AND id<>?`, projectID, threadID)
 	if err != nil {
 		return fmt.Errorf("list project admission members: %w", err)
 	}

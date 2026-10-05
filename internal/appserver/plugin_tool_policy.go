@@ -24,17 +24,32 @@ func (s *Server) configureSessionToolPolicy(sessionID string, threadRuntime *run
 		return err
 	}
 	encoded := strings.TrimSpace(metadata.ToolPolicyJSON)
-	if encoded == "" {
+	if encoded == "" && metadata.Source != projectSource && metadata.Source != projectSessionSource {
 		return nil
 	}
 	var policy pluginhost.SessionToolPolicy
-	if err := json.Unmarshal([]byte(encoded), &policy); err != nil {
-		return fmt.Errorf("decode session tool policy: %w", err)
+	if encoded != "" {
+		if err := json.Unmarshal([]byte(encoded), &policy); err != nil {
+			return fmt.Errorf("decode session tool policy: %w", err)
+		}
 	}
 	if threadRuntime.StreamRunner == nil {
 		return errors.New("the selected agent engine cannot enforce session tool_policy")
 	}
 	guarded := newSessionToolPolicyExecutor(threadRuntime.StreamRunner.Tools, policy)
+	if metadata.Source == projectSource {
+		guarded = newSessionToolPolicyExecutor(guarded, pluginhost.SessionToolPolicy{Allow: []string{"session", "notes"}})
+	}
+	if metadata.Source == projectSessionSource {
+		guard, ok := guarded.(*sessionToolPolicyExecutor)
+		if !ok {
+			guard = &sessionToolPolicyExecutor{base: guarded}
+			guarded = guard
+		}
+		guard.acquire = func(call providers.ToolCall) (func(), error) {
+			return s.acquireProjectWorkTool(metadata, call, guard.base)
+		}
+	}
 	threadRuntime.StreamRunner.Tools = guarded
 	if guard, ok := guarded.(*sessionToolPolicyExecutor); ok && threadRuntime.Toolkit != nil {
 		for _, definition := range threadRuntime.Toolkit.Definitions() {
@@ -54,6 +69,7 @@ type sessionToolPolicyExecutor struct {
 	allow   map[string]struct{}
 	deny    map[string]struct{}
 	denyAll bool
+	acquire func(providers.ToolCall) (func(), error)
 }
 
 func newSessionToolPolicyExecutor(base agent.ToolExecutor, policy pluginhost.SessionToolPolicy) agent.ToolExecutor {
@@ -108,12 +124,26 @@ func (e *sessionToolPolicyExecutor) Execute(ctx context.Context, call providers.
 	if !e.allowed(call.Name) {
 		return "", fmt.Errorf("tool %q is disabled by the session tool policy", call.Name)
 	}
+	if e.acquire != nil {
+		release, err := e.acquire(call)
+		if err != nil {
+			return "", err
+		}
+		defer release()
+	}
 	return e.base.Execute(ctx, call)
 }
 
 func (e *sessionToolPolicyExecutor) ExecuteResult(ctx context.Context, call providers.ToolCall) (toolresult.Result, error) {
 	if !e.allowed(call.Name) {
 		return toolresult.Result{}, fmt.Errorf("tool %q is disabled by the session tool policy", call.Name)
+	}
+	if e.acquire != nil {
+		release, err := e.acquire(call)
+		if err != nil {
+			return toolresult.Result{}, err
+		}
+		defer release()
 	}
 	if rich, ok := e.base.(agent.RichToolExecutor); ok {
 		return rich.ExecuteResult(ctx, call)

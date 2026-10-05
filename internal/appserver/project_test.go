@@ -20,7 +20,7 @@ import (
 )
 
 // The failure cases these tests guard:
-//   - the project lead cannot execute ordinary work, or bypasses the user-selected permission mode;
+//   - the coordinator bypasses its tool boundary or the user-selected permission mode;
 //   - a managed session's result is lost, delivered twice, or re-delivered
 //     after a restart;
 //   - a worktree session's changes reach the workspace before anyone delivers
@@ -278,42 +278,36 @@ func TestProjectDispatchRecoversOrIsFencedByStop(t *testing.T) {
 	}
 }
 
-func TestProjectBlockingCorrectionWaitsForItsOwnOutput(t *testing.T) {
+func TestProjectCorrectionReturnsBeforeExecutionAndRetainsExactReceipt(t *testing.T) {
 	srv, client, calls, _ := newProjectFixture(t)
-	lead := startProject(t, client, "Blocking correction")
+	lead := startProject(t, client, "Nonblocking correction")
 	handler := srv.projectSessionHandler(lead.ID)
-	no := false
-	_, err := handler(context.Background(), "start-side", tools.ProjectSessionRequest{Action: "side", Prompt: "Initial blocking work", Block: &no})
+	_, err := handler(context.Background(), "start-side", tools.ProjectSessionRequest{Action: "side", Prompt: "Initial blocking work"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	initial := calls.next(t, "Initial blocking work")
-	type response struct {
-		value any
-		err   error
+	yes := true
+	value, err := handler(context.Background(), "correct-side", tools.ProjectSessionRequest{Action: "side", Prompt: "Requested correction output", Block: &yes})
+	if err != nil || value.(projectSessionView).TurnID != "" {
+		t.Fatalf("async correction: %+v %v", value, err)
 	}
-	done := make(chan response, 1)
-	go func() {
-		value, err := handler(context.Background(), "correct-side", tools.ProjectSessionRequest{Action: "side", Prompt: "Requested correction output"})
-		done <- response{value, err}
-	}()
-	// Observe enqueue rather than sleeping to race the original completion.
 	side := projectManagedSessions(t, client, lead.ID)[0]
-	th := srv.thread(side.ID)
-	waitForThread(t, srv, side.ID, func(_ Thread) bool {
-		_, admitted := srv.findSessionInput(th, "project:"+lead.ID+":correct-side")
-		return admitted
-	})
 	initial.response <- providersResponse("Prior output is not the correction")
-	correction := calls.next(t, "Requested correction output")
-	correction.response <- providersResponse("Requested correction completed")
-	select {
-	case result := <-done:
-		if result.err != nil || result.value.(projectSessionView).FinalOutput != "Requested correction completed" {
-			t.Fatalf("blocking correction = %+v, %v", result.value, result.err)
-		}
-	case <-time.After(10 * time.Second):
-		t.Fatal("blocking correction did not finish")
+	calls.next(t, "Requested correction output").response <- providersResponse("Requested correction completed")
+	project, _ := srv.projectCoordinator(lead.ID)
+	value, err = srv.waitProjectSession(context.Background(), project, project, tools.ProjectSessionRequest{SessionID: side.ID}, "project:"+lead.ID+":correct-side")
+	if err != nil || value.(projectSessionView).FinalOutput != "Requested correction completed" {
+		t.Fatalf("host receipt: %+v %v", value, err)
+	}
+}
+
+// Exercise the host's exact-turn observation independently of the coordinator
+// tool surface, which deliberately rejects waits.
+func hostProjectWait(srv *Server, projectID string) tools.ProjectSessionHandler {
+	return func(ctx context.Context, _ string, r tools.ProjectSessionRequest) (any, error) {
+		project, _ := srv.projectCoordinator(projectID)
+		return srv.waitProjectSession(ctx, project, project, r, "")
 	}
 }
 
@@ -329,7 +323,7 @@ func TestProjectWaitTimeoutAndCompletedTurn(t *testing.T) {
 	side := created.(projectSessionView)
 	call := calls.next(t, "Implementation to wait for")
 	request := tools.ProjectSessionRequest{Action: "wait", SessionID: side.SessionID, TurnID: side.TurnID, TimeoutMS: 1}
-	waited, err := handler(context.Background(), "timeout", request)
+	waited, err := hostProjectWait(srv, lead.ID)(context.Background(), "timeout", request)
 	if err != nil || !waited.(projectSessionView).TimedOut {
 		t.Fatalf("timeout = %+v, %v", waited, err)
 	}
@@ -342,13 +336,13 @@ func TestProjectWaitTimeoutAndCompletedTurn(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := handler(ctx, "cancelled-wait", request); err != context.Canceled {
+	if _, err := hostProjectWait(srv, lead.ID)(ctx, "cancelled-wait", request); err != context.Canceled {
 		t.Fatalf("cancelled wait = %v", err)
 	}
 	call.response <- providersResponse("Verified implementation output")
 	waitForThread(t, srv, side.SessionID, func(th Thread) bool { return th.Status == ThreadStatusIdle && th.LatestCompletedTurnID != "" })
 	request.TimeoutMS = 1000
-	waited, err = handler(context.Background(), "completed-wait", request)
+	waited, err = hostProjectWait(srv, lead.ID)(context.Background(), "completed-wait", request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -357,7 +351,7 @@ func TestProjectWaitTimeoutAndCompletedTurn(t *testing.T) {
 		t.Fatalf("completed wait = %+v", result)
 	}
 	request.TurnID = "unknown-turn"
-	if _, err := handler(context.Background(), "unknown-wait", request); err == nil {
+	if _, err := hostProjectWait(srv, lead.ID)(context.Background(), "unknown-wait", request); err == nil {
 		t.Fatal("unknown turn accepted")
 	}
 }
@@ -380,7 +374,7 @@ func TestProjectWaitObservesRemoteTurnCompletion(t *testing.T) {
 	}
 	observer := New(rt, &lockedBuffer{})
 	t.Cleanup(observer.Close)
-	handler := observer.projectSessionHandler(lead.ID)
+	handler := hostProjectWait(observer, lead.ID)
 	request := tools.ProjectSessionRequest{Action: "wait", SessionID: side.SessionID, TimeoutMS: 1}
 	for _, turnID := range []string{"", side.TurnID} {
 		request.TurnID = turnID
@@ -489,7 +483,7 @@ func TestProjectWaitRequiresTerminalEvidenceWithoutExecutor(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	value, err := srv.projectSessionHandler(lead.ID)(context.Background(), "unsettled-wait", tools.ProjectSessionRequest{
+	value, err := hostProjectWait(srv, lead.ID)(context.Background(), "unsettled-wait", tools.ProjectSessionRequest{
 		Action: "wait", SessionID: member.ID, TimeoutMS: 1,
 	})
 	if err != nil {
@@ -508,7 +502,7 @@ func TestProjectWaitRequiresTerminalEvidenceWithoutExecutor(t *testing.T) {
 	}
 	next := calls.next(t, "Next local task")
 	defer func() { next.response <- providersResponse("Next local result") }()
-	value, err = srv.projectSessionHandler(lead.ID)(context.Background(), "unsettled-local-wait", tools.ProjectSessionRequest{
+	value, err = hostProjectWait(srv, lead.ID)(context.Background(), "unsettled-local-wait", tools.ProjectSessionRequest{
 		Action: "wait", SessionID: member.ID, TurnID: oldTurnID, TimeoutMS: 1,
 	})
 	if err != nil {
@@ -612,7 +606,7 @@ func TestProjectDelegatesAndReportsResultOnce(t *testing.T) {
 	plan.response <- toolCallResponse("create-pagination", "session", `{"action":"create","title":"Pagination","prompt":"Implement page-size 50 in search.go"}`)
 
 	brief := calls.next(t, "Implement page-size 50")
-	if message := lastUserRequestMessage(brief.request); message.Origin != "host" || nativeReviewHumanUser(message) {
+	if message := lastUserRequestMessage(brief.request); message.Origin != "host" || isHumanUserMessage(message) {
 		t.Fatalf("delegation must be attributed to the host, not user authorization: %+v", message)
 	}
 	brief.response <- toolCallResponse("write-search", "write_file", `{"path":"search.go","content":"package search\n\nconst PageSize = 50\n"}`)
@@ -920,7 +914,7 @@ func TestProjectAdoptsAndReleasesConversations(t *testing.T) {
 	calls.assertIdle(t)
 }
 
-func TestProjectLeadUsesOrdinarySessionPermissions(t *testing.T) {
+func TestProjectCoordinatorCannotExecuteImplementationTools(t *testing.T) {
 	srv, client, calls, rt := newProjectFixture(t)
 	lead := startProject(t, client, "Direct work")
 	var turn TurnStartResult
@@ -928,8 +922,8 @@ func TestProjectLeadUsesOrdinarySessionPermissions(t *testing.T) {
 	calls.next(t, "Write a small change").response <- toolCallResponse("write-direct", "write_file", `{"path":"direct.txt","content":"done"}`)
 	calls.next(t, "Write a small change").response <- providersResponse("Done.")
 	waitForThread(t, srv, lead.ID, func(thread Thread) bool { return thread.LatestCompletedTurnID == turn.Turn.ID })
-	if data, err := os.ReadFile(filepath.Join(rt.RootDir, "direct.txt")); err != nil || string(data) != "done" {
-		t.Fatalf("lead's ordinary file edit = %q, %v", data, err)
+	if _, err := os.Stat(filepath.Join(rt.RootDir, "direct.txt")); !os.IsNotExist(err) {
+		t.Fatalf("coordinator wrote directly: %v", err)
 	}
 	var restricted ThreadStartResult
 	client.rpc(t, MethodThreadStart, ThreadStartParams{Project: &ThreadProjectParams{Name: "Read-only project"}, PermissionMode: config.PermissionModeReadOnly}, &restricted)

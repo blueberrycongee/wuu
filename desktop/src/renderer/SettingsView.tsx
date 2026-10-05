@@ -1007,7 +1007,7 @@ function SettingsRuntimePage({
   const [ptcBusy, setPTCBusy] = useState(false);
   const [ptcError, setPTCError] = useState("");
   const [projectModelsBusy, setProjectModelsBusy] = useState(false);
-  const [projectModelsError, setProjectModelsError] = useState<{ role: "side" | "worker"; message: string }>();
+  const [projectModelsError, setProjectModelsError] = useState<{ role: "technical_lead" | "executor"; message: string }>();
   const projectModels = initialized?.project_models ?? {};
   const projectModelOptions: SelectMenuOption[] = [{ value: "", label: t("settings.projectModelInherit") }];
   for (const provider of initialized?.providers ?? []) {
@@ -1021,14 +1021,14 @@ function SettingsRuntimePage({
       });
     }
   }
-  for (const selection of [projectModels.side, projectModels.worker]) {
+  for (const selection of [projectModels.technical_lead, projectModels.executor]) {
     if (!selection?.provider || !selection.model) continue;
     const value = JSON.stringify([selection.provider, selection.model]);
     if (!projectModelOptions.some((option) => option.value === value)) {
       projectModelOptions.push({ value, label: `${selection.provider} / ${selection.model}` });
     }
   }
-  async function saveProjectModel(role: "side" | "worker", value: string): Promise<void> {
+  async function saveProjectModel(role: "technical_lead" | "executor", value: string): Promise<void> {
     const [provider, model] = value ? JSON.parse(value) as [string, string] : ["", ""];
     const current = projectModels[role];
     if ((current?.provider ?? "") === provider && (current?.model ?? "") === model) return;
@@ -1109,10 +1109,10 @@ function SettingsRuntimePage({
       {initialized?.features?.project_agent && (
         <SettingsSection title={t("settings.projectModels")} description={t("settings.projectModelsDescription")}>
           <div className="settings-form"><SettingsGroup>
-            {(["side", "worker"] as const).map((role) => {
+            {(["technical_lead", "executor"] as const).map((role) => {
               const selection = projectModels[role];
               const value = selection?.provider && selection.model ? JSON.stringify([selection.provider, selection.model]) : "";
-              const label = t(role === "side" ? "settings.projectSideModel" : "settings.projectWorkerModel");
+              const label = t(role === "technical_lead" ? "settings.projectTechnicalLeadModel" : "settings.projectExecutorModel");
               return <SettingsRow key={role} title={label} error={projectModelsError?.role === role ? projectModelsError.message : undefined}>
                 <SelectMenu triggerClassName="settings-select-trigger" ariaLabel={label} dataTestid={`project-${role}-model`}
                   value={value} options={projectModelOptions} searchable flip disabled={running || projectModelsBusy}

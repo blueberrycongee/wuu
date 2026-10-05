@@ -100,6 +100,9 @@ import type {
   ThreadForkTarget,
   ThreadResumeResult,
   ThreadStartParams,
+  ProjectWorkParams,
+  ProjectWorkList,
+  ProjectWork,
   ProjectSessionParams,
   ProjectSessionResult,
   Turn,
@@ -1929,6 +1932,12 @@ app.whenReady().then(async () => {
   ipcMain.handle("wuu:session-control-take", (event, params: { thread_id: string; revision: number }) => appServerRequest(event, "thread/control/take", params));
   // A project and its managed sessions live in one workspace; route to the
   // app-server that owns the named project or session.
+  ipcMain.handle("wuu:project-work", (event, params: ProjectWorkParams) => {
+    const context = windowRegistry.runtimeContextForWindow(event.sender.id);
+    return context
+      ? appServerClientPool.requestForSession<ProjectWorkList | ProjectWork>(context, params.project_id, "project/work", params)
+      : appServerRequest<ProjectWorkList | ProjectWork>(event, "project/work", params);
+  });
   ipcMain.handle("wuu:project-session", (event, params: ProjectSessionParams) => {
     const context = windowRegistry.runtimeContextForWindow(event.sender.id);
     return context

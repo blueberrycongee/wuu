@@ -26,27 +26,28 @@ const (
 // hostSessionCreateParams is the host's creation contract. Callers validate
 // their entry-point requirements before creating an ordinary persisted session.
 type hostSessionCreateParams struct {
-	Speed           string
-	RequestID       string
-	Name            string
-	Visibility      string
-	ParentSessionID string
-	ContextSource   string
-	Workspace       string
-	WorkspaceID     string
-	WorkspaceRoot   string
-	ModelAlias      string
-	ProjectRole     string
-	Provider        string
-	Model           string
-	Variant         string
-	Effort          string
-	PermissionMode  string
-	Instructions    string
-	ToolPolicy      *hostSessionToolPolicy
-	Seed            *session.ContextSeed
-	Launch          *hostSessionLaunchParams
-	InitialInput    *session.InboxMessage
+	SharedWorkspaceSessionID string
+	Speed                    string
+	RequestID                string
+	Name                     string
+	Visibility               string
+	ParentSessionID          string
+	ContextSource            string
+	Workspace                string
+	WorkspaceID              string
+	WorkspaceRoot            string
+	ModelAlias               string
+	ProjectRole              string
+	Provider                 string
+	Model                    string
+	Variant                  string
+	Effort                   string
+	PermissionMode           string
+	Instructions             string
+	ToolPolicy               *hostSessionToolPolicy
+	Seed                     *session.ContextSeed
+	Launch                   *hostSessionLaunchParams
+	InitialInput             *session.InboxMessage
 }
 
 type hostSessionToolPolicy struct {
@@ -137,6 +138,17 @@ func (s *Server) createHostSessionThread(owner, source, id string, params hostSe
 		}
 		threadCWD, workspaceID = root, resolvedID
 	}
+	if params.SharedWorkspaceSessionID != "" {
+		shared, found, err := session.Find(s.rt.SessionDir, params.SharedWorkspaceSessionID)
+		if err != nil {
+			return nil, err
+		}
+		if !found || shared.ParentID != params.ParentSessionID || shared.Source != projectSessionSource || shared.ArchivedAt != nil {
+			return nil, errors.New("shared work session is not a live member of this project")
+		}
+		threadCWD = shared.CWD
+	}
+
 	if len(history) == 0 {
 		history = make([]providers.ChatMessage, 0, 1)
 	}

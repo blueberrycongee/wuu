@@ -11,7 +11,6 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/approvefor"
-	wuucontext "github.com/blueberrycongee/wuu/internal/context"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/tools"
 )
@@ -177,7 +176,7 @@ func nativeReviewHistory(history []providers.ChatMessage) ([]nativeReviewMessage
 		msg := history[i]
 		entry := nativeReviewMessage{
 			Role: msg.Role, Origin: msg.Origin, Hidden: msg.Hidden, Name: msg.Name, ClientID: msg.ClientID,
-			HumanUser: nativeReviewHumanUser(msg),
+			HumanUser: isHumanUserMessage(msg),
 			Content:   msg.Content, ToolCalls: msg.ToolCalls, ToolCallID: msg.ToolCallID,
 			AttachmentsOmitted: len(msg.Images) > 0 || len(msg.Files) > 0,
 		}
@@ -190,27 +189,6 @@ func nativeReviewHistory(history []providers.ChatMessage) ([]nativeReviewMessage
 		start = i
 	}
 	return messages[start:], start > 0
-}
-
-func nativeReviewHumanUser(msg providers.ChatMessage) bool {
-	if msg.Role != "user" || msg.Hidden || msg.ReadOnly || (msg.Origin != "" && msg.Origin != "user") {
-		return false
-	}
-	// Older synthetic messages may have neither Origin nor ReadOnly. Their
-	// reserved metadata and context envelopes still cannot authorize actions.
-	if wuucontext.IsSystemReminder(msg.Name, msg.Content) ||
-		wuucontext.IsAgentNotification(msg.Name, msg.Content) ||
-		wuucontext.IsProcessNotification(msg.Name, msg.Content) ||
-		strings.TrimSpace(msg.Name) == "main-task-snapshot" {
-		return false
-	}
-	for _, prefix := range []string{agentCompletionClientIDPrefix, processCompletionClientIDPrefix, processRecheckClientIDPrefix} {
-		if strings.HasPrefix(strings.TrimSpace(msg.ClientID), prefix) {
-			return false
-		}
-	}
-	content := strings.TrimSpace(msg.Content)
-	return !(strings.HasPrefix(content, "<process_recheck>") && strings.HasSuffix(content, "</process_recheck>"))
 }
 
 func nativeReviewFailure(ctx context.Context, err error) approvefor.Decision {

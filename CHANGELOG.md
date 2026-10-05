@@ -10,6 +10,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Keep experimental Project Agent conversations responsive through background
+  technical leads and persistent executors, with versioned work contracts,
+  evidence-bound review, explicit delivery, durable stop/recovery and work status.
 - Preserve ordinary file and recovery views through PTC, explain bounded result
   coverage to the model, and include evidence after short headers in archived pages.
 - Carry validated working-note checkpoint references into fresh context windows

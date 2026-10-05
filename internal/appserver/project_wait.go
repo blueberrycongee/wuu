@@ -18,11 +18,11 @@ func (s *Server) finishProjectDispatch(ctx context.Context, project, actor sessi
 	if err != nil {
 		return nil, err
 	}
-	block := request.Action == "side"
+	block := false
 	if request.Block != nil {
 		block = *request.Block
 	}
-	if !block {
+	if actor.ID == project.ID || !block {
 		return result, nil
 	}
 	view := result.(projectSessionView)

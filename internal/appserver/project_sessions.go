@@ -23,6 +23,8 @@ type projectSessionView struct {
 	TurnID                string     `json:"turn_id,omitempty"`
 	TurnStatus            TurnStatus `json:"turn_status,omitempty"`
 	FinalOutput           string     `json:"final_output,omitempty"`
+	ClientID              string     `json:"client_id,omitempty"`
+	DeliveryState         string     `json:"delivery_state,omitempty"`
 	TimedOut              bool       `json:"timed_out,omitempty"`
 }
 
@@ -60,6 +62,11 @@ func (s *Server) projectSessionHandler(actorID string) tools.ProjectSessionHandl
 		}
 		lead := actor.ID == project.ID
 		switch request.Action {
+		case "work":
+			if request.Work == nil {
+				return nil, errors.New("work operation is required")
+			}
+			return s.projectWork(ctx, actorID, callID, *request.Work)
 		case "list":
 			listed, err := s.listProjectSessions(project.ID)
 			if err != nil {
@@ -83,12 +90,23 @@ func (s *Server) projectSessionHandler(actorID string) tools.ProjectSessionHandl
 			result, err := s.createProjectSession(ctx, project, actor, callID, request)
 			return s.finishProjectDispatch(ctx, project, actor, "project:"+project.ID+":"+callID, request, result, err)
 		case "wait":
+			if lead {
+				return nil, errors.New("the coordinator cannot wait; end this turn and receive reviewed work asynchronously")
+			}
 			return s.waitProjectSession(ctx, project, actor, request, "")
 		case "message":
 			return s.messageProjectSession(actorID, callID, request)
 		case "send", "stop":
 			if !lead {
 				return nil, errors.New("only the project lead controls other sessions; use message for peer communication")
+			}
+			if w, found, err := s.workForMember(project.ID, request.SessionID); err != nil {
+				return nil, err
+			} else if found {
+				if request.Action == "stop" {
+					return s.projectWork(ctx, actorID, callID, tools.ProjectWorkRequest{Operation: "stop", WorkID: w.ID, Revision: w.Revision})
+				}
+				return nil, errors.New("change this work's requirements using work update; technical corrections go to its lead")
 			}
 			if request.Action == "send" {
 				clientID := "project:" + project.ID + ":" + callID
@@ -150,7 +168,36 @@ func (s *Server) messageProjectSession(actorID, callID string, request tools.Pro
 		s.controlMu.Unlock()
 		return nil, err
 	}
+	sourceWork, sourceFound, workErr := s.workForMember(project.ID, actor.ID)
+	if workErr != nil {
+		s.controlMu.Unlock()
+		return nil, workErr
+	}
+	if sourceFound && request.SessionID == project.ID {
+		s.controlMu.Unlock()
+		return nil, errors.New("work reports go through submit/review/block; direct workstream chatter must stay with its technical lead")
+	}
+	targetWork, targetFound, workErr := s.workForMember(project.ID, request.SessionID)
+	if workErr != nil {
+		s.controlMu.Unlock()
+		return nil, workErr
+	}
+	if targetFound && (targetWork.Phase == "stopped" || targetWork.Phase == "delivered") {
+		s.controlMu.Unlock()
+		return nil, errors.New("work is stopped or delivered; update/resume its contract first")
+	}
+	if targetFound && actor.ID == project.ID {
+		s.controlMu.Unlock()
+		return nil, errors.New("use work update for coordinator corrections so requirements and acceptance stay consistent")
+	}
+
 	message := session.InboxMessage{ClientID: "project-message:" + actor.ID + ":" + callID, SessionID: request.SessionID, RelatedSessionID: actor.ID, Cause: "project_message", Content: prompt, Wake: request.Wake}
+	if targetFound {
+		message.WorkID, message.WorkRevision = targetWork.ID, targetWork.Revision
+	} else if sourceFound {
+		message.WorkID, message.WorkRevision = sourceWork.ID, sourceWork.Revision
+	}
+
 	if senderControl != nil {
 		message.Controls = append(message.Controls, *senderControl)
 	}
@@ -349,10 +396,16 @@ func (s *Server) sendProjectSession(ctx context.Context, project, actor session.
 
 func (s *Server) projectDispatchView(metadata session.Session, clientID string) (projectSessionView, error) {
 	s.drainSessionInbox(metadata.ID)
+	return s.projectDispatchReceipt(metadata, clientID)
+}
+
+func (s *Server) projectDispatchReceipt(metadata session.Session, clientID string) (projectSessionView, error) {
 	view, err := s.projectSessionView(metadata)
 	if err != nil {
 		return view, err
 	}
+	view.ClientID = clientID
+	view.DeliveryState = "queued"
 	th, err := s.ensureThreadLoaded(metadata.ID)
 	if err != nil {
 		return view, err
@@ -367,8 +420,27 @@ func (s *Server) projectDispatchView(metadata session.Session, clientID string) 
 			}
 		}
 	}
+	for _, input := range th.pendingSteers {
+		if input.ClientID == clientID {
+			view.DeliveryState = "steering"
+		}
+	}
 	th.mu.Unlock()
+	if view.TurnID == "" {
+		if turns, err := s.loadDurableProjectTurns(metadata.ID); err != nil {
+			return view, err
+		} else {
+			for _, turn := range turns {
+				for _, item := range turn.Items {
+					if item.SourceID == clientID {
+						view.TurnID = turn.ID
+					}
+				}
+			}
+		}
+	}
 	if view.TurnID != "" {
+		view.DeliveryState = "consumed"
 		return view, nil
 	}
 	if pending, err := session.PendingInbox(s.rt.SessionDir, metadata.ID); err != nil {
@@ -475,6 +547,13 @@ func (s *Server) adoptProjectSession(projectID, sessionID string) (session.Sessi
 // releaseProjectSession ends the project's management of a session, which
 // becomes an ordinary conversation.
 func (s *Server) releaseProjectSession(projectID, sessionID string) (session.Session, error) {
+	if w, found, err := s.workForMember(projectID, sessionID); err != nil {
+		return session.Session{}, err
+	} else if found && w.Phase != "stopped" {
+		if _, err := s.projectWork(context.Background(), projectID, "release-work:"+sessionID, tools.ProjectWorkRequest{Operation: "stop", WorkID: w.ID, Revision: w.Revision}); err != nil {
+			return session.Session{}, err
+		}
+	}
 	metadata, err := s.projectManagedSession(projectID, sessionID)
 	if err != nil {
 		return session.Session{}, err

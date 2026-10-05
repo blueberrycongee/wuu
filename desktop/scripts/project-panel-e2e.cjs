@@ -9,11 +9,13 @@ fs.mkdirSync(output, { recursive: true });
 app.setPath("userData", fs.mkdtempSync(path.join(output, "profile-")));
 process.env.WUU_PROJECT_PANEL_E2E = "1";
 
+app.disableHardwareAcceleration();
 app.whenReady().then(async () => {
   const timeout = setTimeout(() => app.exit(1), 60000);
   const results = [];
+  let win;
   try {
-    const win = new BrowserWindow({ width: 1440, height: 900, show: false, webPreferences: {
+    win = new BrowserWindow({ width: 1440, height: 900, show: false, webPreferences: {
       preload: path.join(__dirname, "streaming-e2e-preload.cjs"), sandbox: false,
       backgroundThrottling: false,
     } });
@@ -62,7 +64,28 @@ app.whenReady().then(async () => {
         document.getAnimations().filter(a => a.effect.getComputedTiming().iterations !== Infinity).forEach(a => a.finish());
         await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
       });
+      await evaluate(() => document.querySelector(".project-work details").open = true);
+      await wait(".project-work", "Preserve the public API");
+      await evaluate(() => document.querySelector('[data-work-action="stop"]').click());
+      await wait('[data-work-phase="stopped"]', "");
+      await evaluate(() => document.querySelector('[data-work-action="resume"]').click());
+      await wait('[data-work-phase="planning"]', "");
+      await evaluate(async () => {
+        document.querySelector(".project-work details").open = true;
+        document.querySelector('[data-work-action="stop"]').focus();
+        document.documentElement.dataset.focusModality = "keyboard";
+        await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      });
+      const geometry = await evaluate(() => {
+        const panel = document.querySelector(".project-panel");
+        const bounds = panel.getBoundingClientRect();
+        return [...panel.querySelectorAll("button, summary, p, dd")].filter(node => node.getClientRects().length).map(node => ({
+          text: node.textContent, left: node.getBoundingClientRect().left, right: node.getBoundingClientRect().right,
+        })).filter(node => node.left < bounds.left - 1 || node.right > bounds.right + 1);
+      });
+      assert.deepEqual(geometry, [], "work controls/details overflow the panel");
       const screenshot = `${theme}-${size}-${width}.png`;
+      fs.writeFileSync(path.join(output, `${theme}-${size}-${width}.txt`), await evaluate(() => document.querySelector(".project-panel").innerText));
       fs.writeFileSync(path.join(output, screenshot), (await win.webContents.capturePage()).toPNG());
       await select("Ordinary conversation");
       await wait(".conversation-title-heading", "Ordinary conversation");
@@ -75,6 +98,12 @@ app.whenReady().then(async () => {
     app.exit(0);
   } catch (error) {
     console.error(error);
+    if (win && !win.isDestroyed()) {
+      try {
+        fs.writeFileSync(path.join(output, "failure.txt"), await win.webContents.executeJavaScript("document.body.innerText"));
+        fs.writeFileSync(path.join(output, "failure.png"), (await win.webContents.capturePage()).toPNG());
+      } catch (captureError) { console.error("Failure capture:", captureError); }
+    }
     app.exit(1);
   }
 });

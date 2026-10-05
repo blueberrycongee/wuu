@@ -24,7 +24,10 @@ type InboxMessage struct {
 	Wake      bool
 	CreatedAt time.Time
 	// Controls fence queued input across human takeover and return.
-	Controls []Control
+	Controls     []Control
+	WorkID       string
+	WorkRevision int
+	WorkVersion  int
 }
 
 // EnqueueInbox records a message once; repeating a client ID is a no-op.
@@ -53,8 +56,8 @@ func insertInbox(db interface {
 	if err != nil {
 		return err
 	}
-	_, err = db.Exec(`INSERT OR IGNORE INTO session_inbox(client_id,session_id,related_session_id,cause,content,wake,created_at,controls_json) VALUES(?,?,?,?,?,?,?,?)`,
-		message.ClientID, message.SessionID, message.RelatedSessionID, message.Cause, message.Content, message.Wake, timeText(message.CreatedAt), string(controls))
+	_, err = db.Exec(`INSERT OR IGNORE INTO session_inbox(client_id,session_id,related_session_id,cause,content,wake,created_at,controls_json,work_id,work_revision,work_version) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+		message.ClientID, message.SessionID, message.RelatedSessionID, message.Cause, message.Content, message.Wake, timeText(message.CreatedAt), string(controls), message.WorkID, message.WorkRevision, message.WorkVersion)
 	return err
 }
 
@@ -93,7 +96,7 @@ func PendingInbox(dir, sessionID string) ([]InboxMessage, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := db.Query(`SELECT client_id,session_id,related_session_id,cause,content,wake,created_at,controls_json FROM session_inbox
+	rows, err := db.Query(`SELECT client_id,session_id,related_session_id,cause,content,wake,created_at,controls_json,work_id,work_revision,work_version FROM session_inbox
 		WHERE session_id=? AND delivered_at IS NULL ORDER BY created_at, rowid`, sessionID)
 	if err != nil {
 		return nil, err
@@ -103,7 +106,7 @@ func PendingInbox(dir, sessionID string) ([]InboxMessage, error) {
 	for rows.Next() {
 		var message InboxMessage
 		var created, controls string
-		if err := rows.Scan(&message.ClientID, &message.SessionID, &message.RelatedSessionID, &message.Cause, &message.Content, &message.Wake, &created, &controls); err != nil {
+		if err := rows.Scan(&message.ClientID, &message.SessionID, &message.RelatedSessionID, &message.Cause, &message.Content, &message.Wake, &created, &controls, &message.WorkID, &message.WorkRevision, &message.WorkVersion); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal([]byte(controls), &message.Controls); err != nil {
@@ -172,14 +175,44 @@ func ValidateInboxControls(dir, clientID string) error {
 func validateInboxControls(db interface {
 	QueryRow(string, ...any) *sql.Row
 }, clientID string) error {
-	var encoded string
-	err := db.QueryRow(`SELECT controls_json FROM session_inbox WHERE client_id=?`, clientID).Scan(&encoded)
+	var encoded, workID, cause, target string
+	var workRevision, workVersion int
+	err := db.QueryRow(`SELECT controls_json,work_id,work_revision,work_version,cause,session_id FROM session_inbox WHERE client_id=?`, clientID).Scan(&encoded, &workID, &workRevision, &workVersion, &cause, &target)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
 	if err != nil {
 		return err
 	}
+	if workID != "" {
+		var revision, version int
+		var phase, payload string
+		err := db.QueryRow(`SELECT revision,version,phase,payload FROM project_work WHERE id=?`, workID).Scan(&revision, &version, &phase, &payload)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrControlChanged
+		}
+		if err != nil {
+			return err
+		}
+		if revision != workRevision || phase == "stopped" || workVersion > 0 && version != workVersion {
+			return ErrControlChanged
+		}
+		if cause == "project" {
+			var work ProjectWork
+			if err := json.Unmarshal([]byte(payload), &work); err != nil {
+				return err
+			}
+			current := work.LeadInput
+			if target == work.ExecutorID {
+				current = work.ExecutorInput
+			}
+			if current == nil || current.ClientID != clientID {
+				return ErrControlChanged
+			}
+		}
+
+	}
+
 	var controls []Control
 	if err := json.Unmarshal([]byte(encoded), &controls); err != nil {
 		return err
