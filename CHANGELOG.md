@@ -76,6 +76,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Avoid black rectangular artifacts around browser preview controls by removing
+  backdrop blur from the transparent overlay buttons.
+
 - Keep completed replies settled across delayed session snapshots, preventing
   sidebar spinners and composer stop buttons from reappearing or flickering.
 

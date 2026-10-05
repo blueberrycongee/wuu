@@ -903,9 +903,11 @@ html,body{width:100%;height:100%;overflow:hidden;scrollbar-width:none;
 #actions{position:absolute;top:8px;left:8px;z-index:6;display:flex;gap:6px;opacity:0;
   transition:opacity .16s ease}
 #root:is(:focus-within,.hovered,.dragging,.resizing) :is(#actions,#hover-shade){opacity:1}
+/* Backdrop filters on this transparent sibling view can paint rectangular artifacts.
+   Keep action backgrounds self-contained instead of sampling the page below. */
 #expand,#close{width:30px;height:30px;border:none;border-radius:50%;padding:0;
   display:grid;place-items:center;cursor:pointer;color:#fff;
-  background:rgba(28,28,30,.48);backdrop-filter:blur(10px);transition:background .12s ease}
+  background:rgba(28,28,30,.48);transition:background .12s ease}
 #expand:is(:hover,.hovered),#close:is(:hover,.hovered){background:rgba(28,28,30,.78)}
 #expand:active,#close:active{background:rgba(28,28,30,.92)}
 #expand:focus-visible,#close:focus-visible{outline:2px solid #fff;outline-offset:2px}
