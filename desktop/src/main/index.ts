@@ -181,6 +181,7 @@ import { requestRemoteFiles } from "./remoteFiles";
 import { requestRemoteGit } from "./remoteGit";
 import { openExternalURL, wireExternalNavigationGuards } from "./externalNavigation";
 import { ProjectManager, wuuHomePath } from "./projects";
+import { discoverRecentWorkspaces } from "./recentWorkspaces";
 import { mainTranslate, resolveMainLocale, setMainLocale } from "./i18n";
 import { sideThreadEventFromServerEvent } from "./sideThreadEvents";
 import {
@@ -2189,6 +2190,24 @@ app.whenReady().then(async () => {
   ipcMain.handle("wuu:theme-preference-get", () => getThemePreference());
   ipcMain.on("wuu:onboarding-complete-get-sync", (event) => {
     event.returnValue = isOnboardingComplete();
+  });
+  ipcMain.handle("wuu:onboarding-discover-workspaces", () => discoverRecentWorkspaces({
+    codexHome: process.env.CODEX_HOME || undefined,
+    claudeHome: process.env.CLAUDE_CONFIG_DIR || undefined,
+    existingPaths: projectManager.list().projects.map((project) => project.path),
+  }));
+  ipcMain.handle("wuu:onboarding-choose-directory", async () =>
+    (await showProjectDirectoryDialog({
+      title: mainTranslate("chooseExistingFolder"),
+      buttonLabel: mainTranslate("useFolder"),
+      properties: ["openDirectory"],
+    })) ?? null,
+  );
+  ipcMain.handle("wuu:onboarding-import-workspaces", (_event, paths: unknown) => {
+    if (!Array.isArray(paths) || paths.length > 3000 || paths.some((path) => typeof path !== "string" || !path.trim())) {
+      throw new Error("Invalid workspace selection");
+    }
+    return projectManager.addMany(paths);
   });
   ipcMain.handle("wuu:onboarding-complete", () => {
     completeOnboarding();

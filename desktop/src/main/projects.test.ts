@@ -353,3 +353,20 @@ describe("ProjectManager runtime context availability", () => {
   const saved = JSON.parse(await readFile(canonicalStorePath(), "utf8"));
   expect(saved.projects[0]).toMatchObject({id, path: third, previous_paths: [first, second]});
 });
+
+describe("workspace batch import", () => {
+  it("validates the entire selection before persisting and preserves identities on retries", async () => {
+    const first = await createProjectDir("first");
+    const second = await createProjectDir("second");
+    const manager = new ProjectManager();
+    const before = manager.add(first);
+    const originalID = before.projects[0].id;
+    const saved = await readFile(canonicalStorePath(), "utf8");
+    expect(() => manager.addMany([second, join(home, "missing")])).toThrow();
+    expect(await readFile(canonicalStorePath(), "utf8")).toBe(saved);
+    const imported = manager.addMany([first, second, second]);
+    expect(imported.projects).toHaveLength(2);
+    expect(imported.projects.find((item) => item.path === first)?.id).toBe(originalID);
+    expect(manager.addMany([first, second]).projects.map((item) => item.id).sort()).toEqual(imported.projects.map((item) => item.id).sort());
+  });
+});

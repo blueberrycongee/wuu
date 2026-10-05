@@ -126,33 +126,30 @@ export class ProjectManager {
   }
 
   add(projectPath: string): ProjectListResult {
+    return this.addMany([projectPath]);
+  }
+
+  addMany(projectPaths: readonly string[]): ProjectListResult {
     this.load();
-    const resolvedPath = resolve(projectPath);
-    if (!isDirectory(resolvedPath)) {
-      throw new Error("selected workspace folder is not a directory");
+    const paths = [...new Set(projectPaths.map((path) => resolve(path)))];
+    for (const path of paths) {
+      if (!isDirectory(path)) throw new Error(`Workspace folder is unavailable: ${path}`);
     }
     const now = new Date().toISOString();
-    // Dedup by path — a project is one folder — but the id is a stable, opaque
-    // UUID minted once and never derived from the path, so relocating the
-    // folder (via relocate, not re-add) keeps the same identity and its
-    // workspace state + conversation history stay connected.
-    const existingIndex = this.store.projects.findIndex(
-      (project) => resolve(project.path) === resolvedPath,
-    );
-    const existing =
-      existingIndex >= 0 ? this.store.projects[existingIndex] : undefined;
-    const project: StoredProject = {
-      ...existing,
-      id: existing ? existing.id : newProjectID(),
-      name: projectName(resolvedPath),
-      path: resolvedPath,
-      created_at: existing ? existing.created_at : now,
-      updated_at: now,
-    };
-    if (existingIndex >= 0) {
-      this.store.projects[existingIndex] = project;
-    } else {
-      this.store.projects = [project, ...this.store.projects];
+    // Validate every directory before changing the store so a failed import can be retried.
+    for (const path of paths) {
+      const index = this.store.projects.findIndex((project) => resolve(project.path) === path);
+      const existing = this.store.projects[index];
+      const project: StoredProject = {
+        ...existing,
+        id: existing?.id ?? newProjectID(),
+        name: projectName(path),
+        path,
+        created_at: existing?.created_at ?? now,
+        updated_at: now,
+      };
+      if (index >= 0) this.store.projects[index] = project;
+      else this.store.projects.unshift(project);
     }
     this.save();
     return this.list();

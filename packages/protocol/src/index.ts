@@ -1257,6 +1257,20 @@ export type DesktopProject = {
   missing?: boolean;
 };
 
+export type RecentWorkspace = {
+  path: string;
+  name: string;
+  sources: Array<"codex" | "claude">;
+  lastUsedAt: string;
+  sessionCount: number;
+  isRepository: boolean;
+};
+
+export type RecentWorkspacesResult = {
+  candidates: RecentWorkspace[];
+  incomplete: boolean;
+};
+
 export type RuntimeContext =
   | {
       kind: "project";
@@ -2721,6 +2735,9 @@ export type WuuDesktopApi = {
   // onboarding.
   initialOnboardingComplete?: boolean;
   completeOnboarding?: () => Promise<{ ok: true }>;
+  discoverRecentWorkspaces?: () => Promise<RecentWorkspacesResult>;
+  chooseWorkspaceDirectory?: () => Promise<string | null>;
+  importWorkspaces?: (paths: string[]) => Promise<ProjectListResult>;
   listProjects: () => Promise<ProjectListResult>;
   createBlankProject: () => Promise<ProjectListResult>;
   chooseProjectFolder: () => Promise<ProjectListResult>;
