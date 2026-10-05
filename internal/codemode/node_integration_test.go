@@ -557,17 +557,19 @@ return result;`, Tools: []ToolDefinition{{Name: "read"}}}, opts)
 
 func TestNodeToolResultOutputPreservesEmptyAndFallbackViews(t *testing.T) {
 	s := nodeService(t)
-	for _, view := range []*string{nil, new(string)} {
-		opts := RunOptions{CWD: t.TempDir(), Executor: nodeExecutor(func(context.Context, providers.ToolCall) (toolresult.Result, error) {
-			return toolresult.Result{Content: []toolresult.ContentPart{{Type: toolresult.ContentTypeText, Text: "raw evidence"}}, ModelText: view}, nil
-		})}
-		result, err := s.Run(context.Background(), RunRequest{Code: `console.log(await tools.read({}));`, Tools: []ToolDefinition{{Name: "read"}}}, opts)
-		want := "raw evidence"
-		if view != nil {
-			want = ""
-		}
-		if err != nil || result.Error != "" || len(result.Logs) != 1 || result.Logs[0] != want {
-			t.Fatalf("empty/fallback output: %+v %v", result, err)
+	for _, mode := range []ResultView{ResultViewCompact, ResultViewData} {
+		for _, view := range []*string{nil, new(string)} {
+			opts := RunOptions{CWD: t.TempDir(), Executor: nodeExecutor(func(context.Context, providers.ToolCall) (toolresult.Result, error) {
+				return toolresult.Result{Content: []toolresult.ContentPart{{Type: toolresult.ContentTypeText, Text: "raw evidence"}}, ModelText: view}, nil
+			})}
+			result, err := s.Run(context.Background(), RunRequest{ResultView: mode, Code: `console.log(await tools.read({}));`, Tools: []ToolDefinition{{Name: "read"}}}, opts)
+			want := "raw evidence"
+			if view != nil && mode == ResultViewCompact {
+				want = ""
+			}
+			if err != nil || result.Error != "" || len(result.Logs) != 1 || result.Logs[0] != want {
+				t.Fatalf("empty/fallback output (%s): %+v %v", mode, result, err)
+			}
 		}
 	}
 }

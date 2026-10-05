@@ -93,7 +93,7 @@ Desktop acceptance uses `npm --prefix desktop run test:e2e:execution-environment
 
 ## Worker compatibility
 
-The host and worker must use execution protocol version 3. Upgrade the worker
+The host and worker must use execution protocol version 4. Upgrade the worker
 binary or rebuild its image when upgrading the host. Older workers are rejected
 before execution: programs require the current isolated interpreter and
-actor-scoped JSON state contract. They cannot fall back to native program access. No existing permission is expanded.
+actor-scoped JSON state and per-program result-view contracts. They cannot fall back to native program access. No existing permission is expanded.

@@ -14,9 +14,9 @@ import (
 	"time"
 )
 
-// Version 3 requires isolated program state and the current interpreter contract.
+// Version 4 requires per-program result views in the isolated interpreter.
 // Older workers fail closed rather than silently executing a different API.
-const ProtocolVersion = 3
+const ProtocolVersion = 4
 const MaxFrameBytes = 16 * 1024 * 1024
 
 type Request struct {

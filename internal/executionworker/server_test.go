@@ -131,6 +131,46 @@ func TestWorkerTransportProcess(t *testing.T) {
 	os.Exit(0)
 }
 
+func TestWorkerTransportResultViews(t *testing.T) {
+	t.Setenv("WUU_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("WUU_EXECUTION_TEST_WORKER", "1")
+	client := executionenv.NewClient([]string{os.Args[0], "-test.run=^TestWorkerTransportProcess$"}, os.Environ())
+	t.Cleanup(func() { _ = client.Close() })
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if _, err := client.Call(ctx, "initialize", executionenv.Init{Version: executionenv.ProtocolVersion, Root: t.TempDir(), Session: "result-views"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, view := range []codemode.ResultView{"", codemode.ResultViewCompact, codemode.ResultViewData} {
+		request := executionenv.CodeRequest{Actor: "a", PermissionMode: "unconfined", Program: codemode.RunRequest{
+			ResultView: view, Tools: []codemode.ToolDefinition{{Name: "read"}},
+			Code: `const r = await tools.read({}); store("r", r);
+if (r.model_text !== "compact" || load("r").structured_content.text !== "full evidence") throw Error("canonical data changed");
+text(r); console.log({results:[r]}); return r;`,
+		}}
+		raw, err := client.CallWithHandler(ctx, "run_code", request, func(context.Context, json.RawMessage) (json.RawMessage, error) {
+			compact := "compact"
+			return json.Marshal(toolresult.Result{Content: []toolresult.ContentPart{{Type: toolresult.ContentTypeText, Text: "content view"}}, StructuredContent: json.RawMessage(`{"text":"full evidence"}`), ModelText: &compact})
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var result codemode.RunResult
+		if err := json.Unmarshal(raw, &result); err != nil {
+			t.Fatal(err)
+		}
+		want := "compact"
+		if view == codemode.ResultViewData {
+			want = `{"text":"full evidence"}`
+		}
+		encoded, _ := json.Marshal(want)
+		if result.Error != "" || string(result.Value) != string(encoded) || len(result.Logs) != 2 || result.Logs[0] != want || result.Logs[1] != `{"results":[`+string(encoded)+`]}` {
+			t.Fatalf("worker view %q: %+v", view, result)
+		}
+	}
+}
+
 func TestWorkerTransportProgramCancellation(t *testing.T) {
 	t.Setenv("WUU_HOME", t.TempDir())
 	t.Setenv("HOME", t.TempDir())

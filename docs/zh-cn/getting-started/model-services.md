@@ -124,7 +124,7 @@ await tools.read_file({path: "screenshots/settings.png"});
 
 ### 发现、执行与结果
 
-调用 `run_code` 时提供 `code`，可选提供 `description`、`timeout_ms` 和 `max_output_tokens`。
+调用 `run_code` 时提供 `code`，可选提供 `description`、`timeout_ms`、`result_view` 和 `max_output_tokens`。
 `description` 是展示元数据，省略它不会阻止执行。
 入口说明只包含有界目录预览。`await searchTools(query, {limit: 8, offset: 0})`
 返回 `tools`、`total` 和可选的 `next_offset`；空查询可分页查看全部绑定。
@@ -142,13 +142,32 @@ await tools.read_file({path: "screenshots/settings.png"});
 筛选和计算应使用 `content` 或 `structured_content`，并检查工具自身的分页。
 `model_text` 是可能省略字段或记录的展示视图，不是完整数据集。打印选出的证据
 或计算结果，不要打印媒体编码。`text(result)`、`console.log(result)` 和
-`return result` 会为返回的工具结果输出一份模型展示视图，数组或对象中包含的
+`return result` 会按 `result_view` 为返回的工具结果输出一份视图，数组或对象中包含的
 结果也适用，不会同时序列化原始内容和展示副本。字符串返回值直接展示为文本，
 不再额外添加 JSON 字符串引号。例如，
 `text(await tools.read_file({path: "README.md"}))` 可以读取并展示文件。
 计算和 `store` 仍能获取完整结果。显式选出的字段、复制的对象及 `load` 恢复的值
 属于普通 JSON 数据；打印时应自行选择展示视图。在判断某项不存在之前，
 先检查并续读工具返回的后续页。
+
+`result_view: "compact"`（默认）输出现有的精简展示。
+`result_view: "data"` 将 `structured_content` 输出为 JSON；没有结构化数据时，
+输出未经模型投影裁剪的内容视图。嵌套结果和捕获的 `ToolCallError.result` 同样适用，
+不会改变原始结果、`model_text` 或检查点；图片与音频仍走原有附件路径。
+两种视图都受本次 `max_output_tokens` 预算约束；只调大预算不会展开精简摘要。
+数据视图仍保留工具自身的分页、传输上限和恢复元数据，不会自动读取后续页或日志。
+需要查看精简摘要会省略的证据时，可以这样调用：
+
+```json
+{
+  "code": "console.log(await tools.bash({command:'cat src/example.cc'}));",
+  "result_view": "data",
+  "max_output_tokens": 14000
+}
+```
+
+只需要部分数据时，仍应优先在 JS 中选择字段。显式打印 `result.model_text`
+始终选择精简展示；选出的字段、复制对象及 `load` 恢复的值不受 `result_view` 影响。
 
 读取文本文件时，`structured_content.text` 保留选中源码的换行格式，不带展示行号；
 重复读取未变化的文件时也能获取。前台 bash 结果通过 `structured_content` 提供
@@ -217,7 +236,7 @@ text({name: pkg.name, scripts: pkg.scripts});
 打印和返回文本最多 1 MiB；媒体遵循共享富结果限制。每页最多返回 20 个工具
 摘要，精确工具详情最多 256 KiB，超限会明确失败而非返回残缺 schema。
 目录最多支持 10,000 个工具与 32 MiB 元数据，并在每次模型运行期间固定；执行
-时仍检查实时权限和可用性。远端执行要求协议版本 3，旧 worker 须先升级。
+时仍检查实时权限和可用性。远端执行要求协议版本 4，旧 worker 须先升级。
 
 桌面应用自带运行时。CLI 的普通工具默认要求 `PATH` 中有 Node.js 22.19 或更高
 版本，也可在用户配置中设置 `ptc.node_executable`。缺少或不支持的运行时会

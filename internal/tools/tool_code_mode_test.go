@@ -148,6 +148,71 @@ text({selected: d.stdout.split("\n").find(x => x === "SELECTED_EVIDENCE"), stder
 	}
 }
 
+// Exercise the public run_code contract through the real interpreter and final
+// observation budget, including evidence hidden by the shell's compact view.
+func TestPTCResultViewUsesProgramBudget(t *testing.T) {
+	kit := newCodeModeTestToolkit(t)
+	kit.env.SessionDir = t.TempDir()
+	output := strings.Repeat("before evidence\n", 400) + "MIDDLE_EVIDENCE\n" + strings.Repeat("after evidence\n", 700)
+	if err := os.WriteFile(filepath.Join(kit.RootDir(), "output.txt"), []byte(output), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		view             string
+		budget           int
+		middle, archived bool
+	}{
+		{"compact", 14000, false, false},
+		{"data", 14000, true, false},
+		{"data", 1024, false, true},
+	} {
+		t.Run(fmt.Sprintf("%s-%d", tc.view, tc.budget), func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer cancel()
+			runtime := agent.NewTurnToolRuntime(agent.ToolRuntimeConfig{Executor: kit, RunContext: ctx, Gate: agent.NewToolExecutionGate(1)})
+			defer runtime.Cancel()
+			args, _ := json.Marshal(map[string]any{"code": `console.log(await tools.bash({command:"cat output.txt; printf diagnostic >&2; exit 7"}));`, "result_view": tc.view, "max_output_tokens": tc.budget})
+			messages, err := runtime.ExecuteFinalCalls(ctx, []providers.ToolCall{{ID: "view", Name: "run_code", Arguments: string(args)}}, nil)
+			if err != nil || len(messages) != 1 || messages[0].ToolResult == nil {
+				t.Fatalf("execution: %+v %v", messages, err)
+			}
+			result := *messages[0].ToolResult
+			view := result.TextProjection()
+			if result.IsError || strings.Contains(view, "MIDDLE_EVIDENCE") != tc.middle || strings.Contains(view, "archived_tool_result") != tc.archived {
+				t.Fatalf("unexpected view: %.800s", view)
+			}
+			if estimateResultTokens(view) > tc.budget {
+				t.Fatal("program budget exceeded")
+			}
+			if tc.view == "data" && !tc.archived {
+				var data struct {
+					Stdout   string `json:"stdout"`
+					Stderr   string `json:"stderr"`
+					ExitCode int    `json:"exit_code"`
+				}
+				if err := json.Unmarshal([]byte(view), &data); err != nil || data.Stdout != output || data.Stderr != "diagnostic" || data.ExitCode != 7 {
+					t.Fatalf("stream or status lost: %v %+v", err, data)
+				}
+			}
+		})
+	}
+}
+
+func TestPTCInvalidResultViewRejectsBeforeEffects(t *testing.T) {
+	kit := newCodeModeTestToolkit(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	runtime := agent.NewTurnToolRuntime(agent.ToolRuntimeConfig{Executor: kit, RunContext: ctx, Gate: agent.NewToolExecutionGate(1)})
+	defer runtime.Cancel()
+	messages, err := runtime.ExecuteFinalCalls(ctx, []providers.ToolCall{{ID: "invalid-view", Name: "run_code", Arguments: `{"result_view":"unknown","code":"await tools.write_file({path:'must-not-exist',content:'bad'});"}`}}, nil)
+	if err != nil || len(messages) != 1 || messages[0].ToolResult == nil || !messages[0].ToolResult.IsError || !strings.Contains(messages[0].Content, "result_view") {
+		t.Fatalf("invalid view accepted: %+v %v", messages, err)
+	}
+	if _, err := os.Stat(filepath.Join(kit.RootDir(), "must-not-exist")); !os.IsNotExist(err) {
+		t.Fatalf("invalid view executed a write: %v", err)
+	}
+}
+
 func TestPTCOutputBudgetSettlesOnceAndRejectsInvalidBeforeEffects(t *testing.T) {
 	kit := newCodeModeTestToolkit(t)
 	kit.env.SessionDir = t.TempDir()

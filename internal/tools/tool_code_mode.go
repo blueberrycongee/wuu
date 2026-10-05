@@ -41,11 +41,12 @@ func (*CodeModeExecTool) Execute(context.Context, string) (string, error) {
 func (*CodeModeExecTool) Definition() providers.ToolDefinition {
 	return providers.ToolDefinition{
 		Name:        codeModeExecToolName,
-		Description: "Execute an async JavaScript or erasable TypeScript function body in a fresh tool-only interpreter. No filesystem, network, process, module imports, or timers are available. Discover bindings with await searchTools(query, {limit:8, offset:0}); it returns {tools:[{name,description}],total,next_offset?}. An empty query pages through the catalog. Read exact arguments with await describeTool(name), returning {name,description,input_schema}. Invoke await tools[name](args). Names are exact; bracket access handles punctuation. Calls return canonical tool-result objects with content, optional structured_content, and optional model_text display view, which may omit data. Failures reject with ToolCallError (toolName, message, and result for completed tool failures). Use text(result), console.log(result), or return result to emit one compact display view of a tool result, also when nested in arrays or objects. Raw content and structured_content remain available for computation and store; explicitly selected fields and copied or loaded objects are ordinary JSON data. Strings print as text; other values print as JSON. Emit only what is needed; intermediate values stay out of the conversation. Successful image/audio results are attached automatically. Await writes and dependent calls sequentially; use bounded Promise.all for independent reads. store(key,value), load(key), and remove(key) manage lossless JSON checkpoints scoped to this conversation, actor and workspace. Values are cloned; load returns undefined for a missing key. Only successful programs commit state; tool effects are not transactional. State is memory-only, limited to 1 MiB and 256 keys per scope; use remove to reclaim it. Do not store credentials. There is no JS continuation: await all calls before returning. For long work use bash run_in_background and process read/write/stop in later programs; keep their handles with store. Separately advertised interaction, artifact delivery and lifecycle controls must be called directly. There is no default elapsed deadline; an explicit timeout includes approval/tool waits. Cancellation stops active calls but cannot undo completed effects. Failures include bounded call outcome summaries without arguments or results; interrupted calls have unknown effects. Never blindly replay a failed program.",
+		Description: "Execute an async JavaScript or erasable TypeScript function body in a fresh tool-only interpreter. No filesystem, network, process, module imports, or timers are available. Discover bindings with await searchTools(query, {limit:8, offset:0}); it returns {tools:[{name,description}],total,next_offset?}. An empty query pages through the catalog. Read exact arguments with await describeTool(name), returning {name,description,input_schema}. Invoke await tools[name](args). Names are exact; bracket access handles punctuation. Calls return canonical tool-result objects with content, optional structured_content, and optional model_text display view, which may omit data. Failures reject with ToolCallError (toolName, message, and result for completed tool failures). Use text(result), console.log(result), or return result to emit one view of a tool result, also when nested in arrays or objects. result_view defaults to compact; choose data to emit structured_content (or unprojected content when absent) under this program's max_output_tokens budget. Increasing the budget alone does not expand compact excerpts. Producer pagination and data transport limits still apply. Raw content and structured_content remain available for computation and store; explicitly selected fields and copied or loaded objects are ordinary JSON data. Strings print as text; other values print as JSON. Emit only what is needed; intermediate values stay out of the conversation. Successful image/audio results are attached automatically. Await writes and dependent calls sequentially; use bounded Promise.all for independent reads. store(key,value), load(key), and remove(key) manage lossless JSON checkpoints scoped to this conversation, actor and workspace. Values are cloned; load returns undefined for a missing key. Only successful programs commit state; tool effects are not transactional. State is memory-only, limited to 1 MiB and 256 keys per scope; use remove to reclaim it. Do not store credentials. There is no JS continuation: await all calls before returning. For long work use bash run_in_background and process read/write/stop in later programs; keep their handles with store. Separately advertised interaction, artifact delivery and lifecycle controls must be called directly. There is no default elapsed deadline; an explicit timeout includes approval/tool waits. Cancellation stops active calls but cannot undo completed effects. Failures include bounded call outcome summaries without arguments or results; interrupted calls have unknown effects. Never blindly replay a failed program.",
 		InputSchema: map[string]any{"type": "object", "additionalProperties": false, "required": []string{"code"}, "properties": map[string]any{
 			"code":              map[string]any{"type": "string", "description": "Async function body. Type annotations are erased; enum and namespaces are unsupported."},
 			"description":       map[string]any{"type": "string", "description": "Optional short description of this program."},
 			"timeout_ms":        map[string]any{"type": "integer", "minimum": 1, "maximum": codemode.MaxTimeoutMS, "description": "Optional total elapsed timeout in milliseconds, including approval and tool waits. Omit for no program deadline."},
+			"result_view":       map[string]any{"type": "string", "enum": []string{string(codemode.ResultViewCompact), string(codemode.ResultViewData)}, "description": "Tool-result output view: compact (default) uses the short display; data uses structured_content or unprojected content. Use data with a larger max_output_tokens to inspect evidence omitted by compact views. Does not change selected fields, stored data or previous observations."},
 			"max_output_tokens": map[string]any{"type": "integer", "minimum": minCodeModeOutputTokens, "maximum": maxCodeModeOutputTokens, "description": "Estimated token budget for this program's emitted text (default 8192). Select data in JS before emitting; this does not limit intermediate tool data. Excess text is archived with a recovery cursor. Earlier results are never resized."},
 		}},
 	}
@@ -59,12 +60,16 @@ func (e *CodeModeExecTool) ExecuteResultCall(ctx context.Context, call providers
 		return toolresult.Result{}, errors.New("run_code requires an orchestrator execution scope")
 	}
 	var args struct {
-		Code            string `json:"code"`
-		Description     string `json:"description"`
-		TimeoutMS       *int   `json:"timeout_ms"`
-		MaxOutputTokens *int   `json:"max_output_tokens"`
+		Code            string              `json:"code"`
+		Description     string              `json:"description"`
+		TimeoutMS       *int                `json:"timeout_ms"`
+		MaxOutputTokens *int                `json:"max_output_tokens"`
+		ResultView      codemode.ResultView `json:"result_view"`
 	}
 	if err := decodeArgs(call.Arguments, &args); err != nil {
+		return toolresult.Result{}, err
+	}
+	if err := args.ResultView.Validate(); err != nil {
 		return toolresult.Result{}, err
 	}
 	if strings.TrimSpace(args.Code) == "" {
@@ -87,7 +92,7 @@ func (e *CodeModeExecTool) ExecuteResultCall(ctx context.Context, call providers
 	if remote, ok := e.toolkit.env.ExecutionEnvironment.(interface {
 		RunCode(context.Context, executionenv.CodeRequest, toolctx.NestedExecutor) (codemode.RunResult, error)
 	}); ok {
-		result, err := remote.RunCode(ctx, executionenv.CodeRequest{GitAttributionEnabled: !e.toolkit.env.GitAttributionDisabled, Program: codemode.RunRequest{Code: args.Code, Tools: definitions}, TimeoutMS: timeout, Actor: e.toolkit.env.AgentID, PermissionMode: e.toolkit.env.PermissionMode}, executor)
+		result, err := remote.RunCode(ctx, executionenv.CodeRequest{GitAttributionEnabled: !e.toolkit.env.GitAttributionDisabled, Program: codemode.RunRequest{ResultView: args.ResultView, Code: args.Code, Tools: definitions}, TimeoutMS: timeout, Actor: e.toolkit.env.AgentID, PermissionMode: e.toolkit.env.PermissionMode}, executor)
 		if err != nil {
 			return toolresult.Result{}, err
 		}
@@ -101,7 +106,7 @@ func (e *CodeModeExecTool) ExecuteResultCall(ctx context.Context, call providers
 	if err != nil {
 		return toolresult.Result{}, err
 	}
-	result, err := e.toolkit.CodeModeService().Run(ctx, codemode.RunRequest{Code: args.Code, TimeoutMS: timeout, Tools: definitions},
+	result, err := e.toolkit.CodeModeService().Run(ctx, codemode.RunRequest{ResultView: args.ResultView, Code: args.Code, TimeoutMS: timeout, Tools: definitions},
 		codemode.RunOptions{StateScope: e.toolkit.codeModeStateScope(cwd), StateOwner: e.toolkit.env.CodeModeStateOwner, CWD: cwd, Executor: executor, Sandbox: policy, SandboxProvider: e.toolkit.env.ProcessSandboxProvider})
 	if err != nil {
 		return toolresult.Result{}, err

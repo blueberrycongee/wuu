@@ -109,10 +109,29 @@ type ToolDefinition struct {
 
 type ServiceConfig struct{ NodeExecutable string }
 
+// ResultView selects the representation of directly emitted tool results.
+// Field selection, computation, and checkpoints always use canonical data.
+type ResultView string
+
+const (
+	ResultViewCompact ResultView = "compact"
+	ResultViewData    ResultView = "data"
+)
+
+func (v ResultView) Validate() error {
+	switch v {
+	case "", ResultViewCompact, ResultViewData:
+		return nil
+	default:
+		return errors.New("result_view must be compact or data")
+	}
+}
+
 type RunRequest struct {
-	Code      string           `json:"code"`
-	Tools     []ToolDefinition `json:"tools"`
-	TimeoutMS int              `json:"-"` // Zero adds no deadline; the parent context still applies.
+	ResultView ResultView       `json:"result_view,omitempty"`
+	Code       string           `json:"code"`
+	Tools      []ToolDefinition `json:"tools"`
+	TimeoutMS  int              `json:"-"` // Zero adds no deadline; the parent context still applies.
 }
 type RunOptions struct {
 	CWD             string
@@ -235,6 +254,9 @@ func (s *Service) Run(parent context.Context, request RunRequest, opts RunOption
 	}()
 	if strings.TrimSpace(request.Code) == "" {
 		return result, errors.New("PTC requires code")
+	}
+	if err := request.ResultView.Validate(); err != nil {
+		return result, err
 	}
 	catalog, catalogErr := newToolCatalog(request.Tools)
 	if catalogErr != nil {
@@ -596,7 +618,16 @@ func (s *Service) Run(parent context.Context, request RunRequest, opts RunOption
 				reply := map[string]any{"id": id, "error": message}
 				if callErr == nil {
 					reply["value"] = value
-					reply["display"] = value.TextProjection()
+					// Select one representation before the program's output budget.
+					// Keep the canonical value (including its compact view) intact.
+					display := value
+					if request.ResultView == ResultViewData {
+						display.ModelText = nil
+						if len(display.StructuredContent) > 0 {
+							display.Content = nil
+						}
+					}
+					reply["display"] = display.TextProjection()
 				}
 				send(reply)
 			}(frame.ID, frame.Name, frame.Args)

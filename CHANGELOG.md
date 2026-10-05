@@ -10,6 +10,12 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Let Code Mode programs select `result_view: "data"` to print structured tool
+  data under their output budget instead of a pre-shortened display excerpt.
+  Keep the default compact view, checkpoints, and recoverable output limits.
+  Require execution-worker protocol 4 so older workers cannot silently ignore
+  the selected view; rebuild or upgrade remote workers with the host.
+
 - Preserve the caller's file-creation permissions for workspace tools and child
   commands instead of forcing every output to owner-only access. Keep private
   state, conversation logs, and databases protected at their storage writers.

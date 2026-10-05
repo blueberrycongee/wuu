@@ -30,7 +30,7 @@ Only explicit JSON checkpoints are retained in bounded, memory-only state,
 isolated by conversation, actor and workspace. Failed programs discard staged
 state changes; this does not undo tool effects. Direct interaction and lifecycle
 controls cannot be nested. The control channel is authenticated and listens
-only on loopback for that invocation. Execution-worker protocol version 3
+only on loopback for that invocation. Execution-worker protocol version 4
 rejects older workers, preventing a downgrade to native program authority.
 
 **Approve for me** adds model review in Standard mode. It does not expand permissions or replace isolation. External Codex and Claude Code sessions use their own execution controls. See [permission modes](permissions.md) for the exact scope and adapter settings.

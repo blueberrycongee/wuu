@@ -179,7 +179,7 @@ bindings retain their exact names, permissions and model-family edit primitives.
 
 ### Discover, execute and inspect results
 
-Call `run_code` with `code` and optional `description`, `timeout_ms`, and `max_output_tokens`.
+Call `run_code` with `code` and optional `description`, `timeout_ms`, `result_view`, and `max_output_tokens`.
 The description is display metadata; omitting it does not prevent execution.
 Its description contains a bounded catalog preview. `await searchTools(query,
 {limit: 8, offset: 0})` returns `tools`, `total` and optional `next_offset`; an
@@ -202,7 +202,7 @@ Use `content` or `structured_content` for filtering and computation, and check
 the producer's pagination. `model_text` is a display view that may omit fields
 or records; it is not a complete dataset. Print selected evidence or a computed
 answer without printing media encodings. `text(result)`, `console.log(result)`
-and `return result` emit one model-facing view of a returned tool result, including
+and `return result` emit one view selected by `result_view` for a returned tool result, including
 results inside arrays or objects. They do not serialize both the raw content and
 its display copy. A string return is displayed as text without JSON string quoting.
 For example, `text(await tools.read_file({path: "README.md"}))` reads and displays a
@@ -210,6 +210,28 @@ file. Computation and `store` still receive the complete result. Explicitly sele
 fields, copied objects and values restored with `load` are ordinary JSON data;
 select their display view when printing them. Follow continuation metadata before
 concluding that something is absent.
+
+`result_view: "compact"` (the default) emits the existing short display.
+`result_view: "data"` emits `structured_content` as JSON, or the unprojected
+content view when structured data is absent. This also applies to nested results
+and caught `ToolCallError.result`, without changing the canonical result,
+`model_text`, or checkpoints. Images/audio retain their normal attachment path.
+The program's `max_output_tokens` budget bounds either view; raising this budget
+alone does not expand a compact excerpt. Data views retain producer pagination,
+transport limits and recovery metadata. They do not fetch missing pages or logs.
+Use a data view when the compact excerpt would omit evidence, for example:
+
+```json
+{
+  "code": "console.log(await tools.bash({command:'cat src/example.cc'}));",
+  "result_view": "data",
+  "max_output_tokens": 14000
+}
+```
+
+Prefer selecting fields in JS when only part of a result is needed. Printing
+`result.model_text` explicitly always chooses the compact display; selected
+fields, copies and loaded objects are unaffected by `result_view`.
 
 For text-file reads, `structured_content.text` preserves the selected source's
 line endings without display line markers, including on unchanged rereads.
@@ -295,7 +317,7 @@ Discovery returns at most 20 summaries per page. Exact tool details are limited
 to 256 KiB and fail visibly rather than returning partial schemas. A catalog
 supports 10,000 tools and 32 MiB of metadata. Catalogs are pinned for each model
 run; dispatch still checks live permissions and availability. Remote execution
-requires protocol version 3; upgrade older workers before using them.
+requires protocol version 4; upgrade older workers before using them.
 
 Desktop includes its runtime. CLI ordinary tools require Node.js 22.19 or later
 on `PATH`, or `ptc.node_executable` in user configuration. Missing or unsupported
