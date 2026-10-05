@@ -10,6 +10,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Refine first-run workspace selection with source engine icons, compact project
+  rows, persistent list controls, and keyboard focus across each selectable row.
+
 - Keep the conversation surface undimmed when opening the sidebar in narrow
   desktop windows, matching the wide-window drawer.
 

@@ -11,6 +11,7 @@ const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'wuu-workspaces-e2e-'));
 const home = path.join(fixture, 'wuu-home');
 const output = path.resolve(process.env.WUU_ONBOARDING_OUTPUT || path.join(desktop, 'out/e2e/onboarding-workspaces'));
 const empty = process.env.WUU_ONBOARDING_EMPTY === '1';
+const partial = process.env.WUU_ONBOARDING_PARTIAL === '1';
 function write(file, data) { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, data); }
 function project(name, git = true) {
   const directory = path.join(fixture, 'projects', name);
@@ -38,6 +39,7 @@ history('codex', 'old', old, 60);
 history('codex', 'missing', path.join(fixture, 'missing'));
 history('codex', 'linked', linked);
 for (let i = 0; i < 18; i++) history('codex', `extra-${i}`, project(`project-${i}-with-a-long-but-readable-directory-name`), 60);
+if (partial) write(path.join(codex, 'sessions', 'unreadable.jsonl'), 'x'.repeat(150_000));
 write(path.join(home, 'desktop-settings.json'), JSON.stringify({ language: empty ? 'zh-CN' : 'en-US', theme: 'dark' }));
 write(path.join(home, 'config.json'), JSON.stringify({
   default_provider: 'fixture', providers: { fixture: { type: 'openai-compatible', model: 'fixture', base_url: 'http://127.0.0.1:1', api_key: 'synthetic-test-key' } },
@@ -74,9 +76,9 @@ async function waitFor(fn, arg) {
   })`);
 }
 async function click(label) {
-  await waitFor((text) => [...document.querySelectorAll('button')].some(button => button.textContent.trim() === text && !button.disabled), label);
+  await waitFor((text) => [...document.querySelectorAll('button')].some(button => (button.textContent.trim() === text || button.getAttribute('aria-label') === text) && !button.disabled), label);
   const position = await evaluate((text) => {
-    const element = [...document.querySelectorAll('button')].find((button) => button.textContent.trim() === text && !button.disabled);
+    const element = [...document.querySelectorAll('button')].find((button) => (button.textContent.trim() === text || button.getAttribute('aria-label') === text) && !button.disabled);
     if (!element) throw new Error(`Missing enabled button: ${text}`);
     const box = element.getBoundingClientRect();
     return { x: Math.round(box.x + box.width / 2), y: Math.round(box.y + box.height / 2) };
@@ -92,6 +94,31 @@ async function screenshot(name) {
     await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
   });
   fs.writeFileSync(path.join(output, `${name}.png`), (await main.webContents.capturePage()).toPNG());
+  const layout = await evaluate(() => ({
+    viewport: { width: innerWidth, height: innerHeight, scale: devicePixelRatio },
+    theme: document.documentElement.dataset.theme,
+    scrollbarWidth: getComputedStyle(document.documentElement).getPropertyValue('--scrollbar-width'),
+    regions: Object.fromEntries([
+      '.onboarding-heading', '.onboarding-lead', '.onboarding-workspace-toolbar',
+      '.onboarding-workspace-section-title', '.onboarding-workspace-select',
+      '.onboarding-workspace-tools .settings-icon-button', '.onboarding-workspace-tools .settings-icon-button .icon',
+      '.onboarding-workspace-notice', '.onboarding-workspaces', '.onboarding-workspace-row',
+      '.onboarding-workspace-check', '.onboarding-workspace-details', '.onboarding-workspace-row time',
+      '.onboarding-workspace-sources', '.onboarding-actions',
+      '.onboarding-actions > button:first-child', '.onboarding-actions > button:last-child',
+    ].map(selector => {
+      const element = document.querySelector(selector);
+      if (!element) return [selector, null];
+      const text = [...element.childNodes].find(node => node.nodeType === Node.TEXT_NODE && node.textContent.trim());
+      const range = document.createRange();
+      if (text) range.selectNodeContents(text);
+      return [selector, {
+        bounds: element.getBoundingClientRect().toJSON(), fontSize: getComputedStyle(element).fontSize,
+        textBounds: text ? range.getBoundingClientRect().toJSON() : null,
+      }];
+    })),
+  }));
+  fs.writeFileSync(path.join(output, `${name}.json`), JSON.stringify(layout, null, 2));
 }
 async function run() {
   await import(pathToFileURL(path.join(desktop, 'out/main/index.js')).href);
@@ -108,7 +135,7 @@ async function run() {
   await waitFor(() => document.querySelector('.onboarding-stage-provider'));
   await click(empty ? '继续' : 'Continue');
   if (empty) {
-    await waitFor(() => document.querySelector('.onboarding-stage-ready') && [...document.querySelectorAll('button')].some(button => button.textContent.trim() === '重新查找' && !button.disabled));
+    await waitFor(() => document.querySelector('.onboarding-stage-ready') && [...document.querySelectorAll('button')].some(button => (button.textContent.trim() === '重新查找' || button.getAttribute('aria-label') === '重新查找') && !button.disabled));
     assert.equal(await evaluate(() => document.querySelectorAll('.onboarding-workspace-row').length), 0);
     await screenshot('empty-zh');
     await click('开始使用 Wuu');
@@ -124,9 +151,25 @@ async function run() {
   assert.deepEqual(scan.filter(row => row.selected).map(row => row.name).sort(), ['api-server', 'website']);
   observed.push({ scenario: 'real history discovery', candidates: scan.length, selected: scan.filter(row => row.selected).length });
   await screenshot('wide');
+  await evaluate(() => { document.documentElement.dataset.theme = 'dark'; });
+  await screenshot('wide-dark');
+  await evaluate(() => { document.documentElement.dataset.theme = 'light'; });
   main.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Tab' });
   main.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Tab' });
   await screenshot('keyboard-focus');
+  for (let i = 0; i < 3; i++) {
+    main.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Tab' });
+    main.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Tab' });
+  }
+  await waitFor(() => document.activeElement?.matches('.onboarding-workspace-row input[type="checkbox"]'));
+  main.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Space' });
+  main.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Space' });
+  await waitFor(() => document.querySelectorAll('.onboarding-workspace-row input:checked').length === 1);
+  main.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Space' });
+  main.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Space' });
+  await waitFor(() => document.querySelectorAll('.onboarding-workspace-row input:checked').length === 2);
+  observed.push({ scenario: 'keyboard selection', passed: true });
+  await screenshot('row-focus');
   main.setResizable(true); main.setSize(620, 600);
   await main.webContents.executeJavaScript("document.documentElement.style.setProperty('--conversation-message-font-size', '20px')");
   await screenshot('narrow-large-font');
@@ -135,6 +178,8 @@ async function run() {
   assert.ok(geometry.page <= geometry.width);
   assert.ok(geometry.body.bottom <= geometry.actions.top);
   observed.push({ scenario: 'narrow large font', geometry });
+  main.setSize(520, 600);
+  await screenshot('compact-large-font');
   main.setSize(920, 720);
   await main.webContents.executeJavaScript("document.documentElement.style.setProperty('--conversation-message-font-size', '14px')");
   const originalDialog = dialog.showOpenDialog;
@@ -142,6 +187,7 @@ async function run() {
   await click('Choose a folder');
   await waitFor(() => document.querySelectorAll('.onboarding-workspace-row input:checked').length === 3);
   dialog.showOpenDialog = originalDialog;
+  await evaluate(() => document.querySelector('.onboarding-workspace-row:last-child').scrollIntoView({ block: 'end' }));
   await screenshot('manual-folder');
   fs.rmSync(manual, { recursive: true });
   await click('Import and start (3)');
@@ -154,10 +200,11 @@ async function run() {
   await waitFor(() => !document.querySelector('.first-run-onboarding') && document.querySelector('.app-shell'));
   const persisted = JSON.parse(fs.readFileSync(path.join(home, 'projects.json')));
   assert.equal(persisted.projects.length, 3);
-  assert.equal(persisted.active_context.cwd, first);
+  // Reselecting website moves it behind api-server in the selection order.
+  assert.equal(persisted.active_context.cwd, second);
   const listed = await main.webContents.executeJavaScript('window.wuu.listProjects()');
-  assert.equal(listed.active_context.cwd, first);
-  observed.push({ scenario: 'atomic retry and landing', workspaceCount: persisted.projects.length, selectedWorkspace: 'website' });
+  assert.equal(listed.active_context.cwd, second);
+  observed.push({ scenario: 'atomic retry and landing', workspaceCount: persisted.projects.length, selectedWorkspace: 'api-server' });
   await screenshot('landed');
   main.webContents.reload();
   await new Promise(resolve => main.webContents.once('did-finish-load', resolve));

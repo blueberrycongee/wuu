@@ -1,4 +1,4 @@
-import { ChevronRight, LoaderCircle } from "./WuuIcons";
+import { ArrowRight, Check, ChevronRight, FolderOpen, Info, LoaderCircle, RefreshCw } from "./WuuIcons";
 import { type KeyboardEvent, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type {
   EngineInfo,
@@ -443,6 +443,7 @@ export function FirstRunOnboarding({
             <h1 id={titleID} ref={titleRef} tabIndex={-1}>
               {t(step === "provider" && providerReady ? "onboarding.providerReadyTitle" : STEP_TITLES[step])}
             </h1>
+            {step === "ready" ? <p className="onboarding-lead">{t("onboarding.workspacesLead")}</p> : null}
             {lead ? <p className="onboarding-lead">{lead}</p> : null}
           </div>
 
@@ -553,32 +554,43 @@ export function FirstRunOnboarding({
           ) : null}
 
           {step === "ready" ? (
-            <div className="onboarding-body onboarding-workspaces" data-scroll-fade="">
-              <p className="onboarding-lead">{t("onboarding.workspacesLead")}</p>
+            <div className="onboarding-workspace-browser">
               <div className="onboarding-workspace-toolbar">
-                <button className="settings-button" type="button" disabled={busy || scanningWorkspaces || (!preview && !window.wuu?.chooseWorkspaceDirectory)} onClick={() => void chooseWorkspace()}>
-                  {t("onboarding.chooseWorkspace")}
-                </button>
-                {(workspaceScan?.candidates.length ?? 0) > 0 ? <button className="settings-button settings-button-ghost" type="button" disabled={busy} onClick={() => setSelectedPaths(selectedPaths.size === workspaceScan!.candidates.length ? new Set() : new Set(workspaceScan!.candidates.map((item) => item.path)))}>
+                <span className="onboarding-workspace-section-title">{t("onboarding.recentWorkspaces")}</span>
+                {(workspaceScan?.candidates.length ?? 0) > 0 ? <button className="settings-button settings-button-ghost onboarding-workspace-select" type="button" disabled={busy} onClick={() => setSelectedPaths(selectedPaths.size === workspaceScan!.candidates.length ? new Set() : new Set(workspaceScan!.candidates.map((item) => item.path)))}>
                   {t(selectedPaths.size === workspaceScan!.candidates.length ? "onboarding.selectNone" : "onboarding.selectAll")}
                 </button> : null}
-                <button className="settings-button settings-button-ghost" type="button" disabled={busy || scanningWorkspaces} onClick={() => setScanAttempt((attempt) => attempt + 1)}>{t("onboarding.scanAgain")}</button>
+                <div className="onboarding-workspace-tools">
+                  <button className="settings-button settings-button-ghost" type="button" disabled={busy || scanningWorkspaces || (!preview && !window.wuu?.chooseWorkspaceDirectory)} onClick={() => void chooseWorkspace()}>
+                    <FolderOpen className="icon" aria-hidden="true" />{t("onboarding.chooseWorkspace")}
+                  </button>
+                  <button className="settings-button settings-button-ghost settings-icon-button" type="button" aria-label={t("onboarding.scanAgain")} title={t("onboarding.scanAgain")} disabled={busy || scanningWorkspaces} onClick={() => setScanAttempt((attempt) => attempt + 1)}>
+                    <RefreshCw className={`icon${scanningWorkspaces ? " settings-spin" : ""}`} aria-hidden="true" />
+                  </button>
+                </div>
               </div>
-              {scanningWorkspaces ? <p className="onboarding-status" role="status"><LoaderCircle className="icon settings-spin" aria-hidden="true" />{t("onboarding.scanningWorkspaces")}</p> : null}
-              {!scanningWorkspaces && workspaceScan?.candidates.length === 0 ? <p className="onboarding-status">{t("onboarding.noRecentWorkspaces")}</p> : null}
-              {workspaceScan?.incomplete ? <p className="onboarding-status" role="status">{t("onboarding.workspaceScanIncomplete")}</p> : null}
-              <div className="onboarding-workspace-list">
-                {workspaceScan?.candidates.map((item) => (
-                  <label key={item.path} className="onboarding-workspace-row">
-                    <input type="checkbox" checked={selectedPaths.has(item.path)} disabled={busy} onChange={() => toggleWorkspace(item.path)} aria-label={item.name} />
-                    <span className="onboarding-workspace-details">
-                      <span className="onboarding-workspace-name">{item.name}</span>
-                      <span className="onboarding-workspace-path" title={item.path}>{item.path}</span>
-                      {item.sources.length > 0 ? <span className="onboarding-workspace-source">{item.sources.map((source) => source === "codex" ? "Codex" : "Claude Code").join(" · ")}</span> : null}
-                    </span>
-                    {item.lastUsedAt ? <time dateTime={item.lastUsedAt} title={new Date(item.lastUsedAt).toLocaleString(locale)}>{new Intl.DateTimeFormat(locale, { month: "short", day: "numeric" }).format(new Date(item.lastUsedAt))}</time> : null}
-                  </label>
-                ))}
+              {workspaceScan?.incomplete ? <p className="onboarding-status onboarding-workspace-notice" role="status"><Info className="icon" aria-hidden="true" />{t("onboarding.workspaceScanIncomplete")}</p> : null}
+              <div className="onboarding-body onboarding-workspaces" data-scroll-fade="compact">
+                {scanningWorkspaces ? <p className="onboarding-status" role="status"><LoaderCircle className="icon settings-spin" aria-hidden="true" />{t("onboarding.scanningWorkspaces")}</p> : null}
+                {!scanningWorkspaces && workspaceScan?.candidates.length === 0 ? <div className="onboarding-workspace-empty"><FolderOpen aria-hidden="true" /><p className="onboarding-lead">{t("onboarding.noRecentWorkspaces")}</p></div> : null}
+                <div className="onboarding-workspace-list">
+                  {workspaceScan?.candidates.map((item, index) => (
+                    <label key={item.path} className="onboarding-workspace-row">
+                      <span className="onboarding-workspace-check">
+                        <input type="checkbox" checked={selectedPaths.has(item.path)} disabled={busy} onChange={() => toggleWorkspace(item.path)} aria-label={item.name} aria-describedby={`${titleID}-workspace-${index}`} />
+                        <Check className="icon" aria-hidden="true" />
+                      </span>
+                      <span className="onboarding-workspace-details">
+                        <span className="onboarding-workspace-name">{item.name}</span>
+                        <span className="onboarding-workspace-path" id={`${titleID}-workspace-${index}`} title={item.path}>{item.path}</span>
+                      </span>
+                      <span className="onboarding-workspace-sources">
+                        {item.sources.map((source) => <span key={source} role="img" aria-label={engineLabel(source)} title={engineLabel(source)}><EngineIcon engine={source} className="onboarding-workspace-source-icon" /></span>)}
+                      </span>
+                      {item.lastUsedAt ? <time dateTime={item.lastUsedAt} title={new Date(item.lastUsedAt).toLocaleString(locale)}>{new Intl.DateTimeFormat(locale, { month: "short", day: "numeric" }).format(new Date(item.lastUsedAt))}</time> : null}
+                    </label>
+                  ))}
+                </div>
               </div>
             </div>
           ) : null}
@@ -608,6 +620,7 @@ export function FirstRunOnboarding({
           {primary ? (
             <button className="settings-button settings-button-primary" type="button" disabled={primary.disabled} onClick={primary.run}>
               {primary.label}
+              {step === "ready" && !finishing ? <ArrowRight className="icon" aria-hidden="true" /> : null}
             </button>
           ) : null}
         </div>
