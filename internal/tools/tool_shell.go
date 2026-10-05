@@ -18,6 +18,7 @@ import (
 
 	proc "github.com/blueberrycongee/wuu/internal/process"
 	"github.com/blueberrycongee/wuu/internal/processsandbox"
+	"github.com/blueberrycongee/wuu/internal/securefs"
 	"github.com/blueberrycongee/wuu/internal/shellpath"
 	"github.com/blueberrycongee/wuu/internal/stringutil"
 )
@@ -112,14 +113,14 @@ func persistShellLog(sessionDir string, shellResult shellExecutionResult) (path 
 		return "", 0, shellLogSections{}, "", ""
 	}
 	dir := filepath.Join(sessionDir, "tool-results", "shell-logs")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, securefs.DirMode); err != nil {
 		return "", 0, shellLogSections{}, "", redactToolOutput(err.Error())
 	}
 	commandHash := sha256Hex([]byte(shellResult.Command))
 	name := fmt.Sprintf("%s-%s.log", time.Now().UTC().Format("20060102T150405.000000000Z"), commandHashPrefix(commandHash))
 	path = filepath.Join(dir, name)
 	content, sections := buildShellLog(shellResult)
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(content), securefs.FileMode); err != nil {
 		return "", 0, shellLogSections{}, "", redactToolOutput(err.Error())
 	}
 	return path, len(content), sections, sha256Hex([]byte(content)), ""

@@ -289,7 +289,7 @@ func TestTightenHomeOnce_MarksSuccessfulMigrationAndSkipsLaterWalks(t *testing.T
 	}
 
 	// A path created outside securefs after the migration is deliberately not
-	// rescanned. Production writes use securefs helpers plus umask 0o077; this
+	// rescanned. Private-state writers request owner-only modes; this
 	// assertion proves later startup cost does not grow with session history.
 	later := filepath.Join(root, "later.json")
 	if err := os.WriteFile(later, []byte("later"), 0o600); err != nil {

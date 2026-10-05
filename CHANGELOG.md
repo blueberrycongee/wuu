@@ -8,6 +8,12 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ## [Unreleased]
 
+### Fixed
+
+- Preserve the caller's file-creation permissions for workspace tools and child
+  commands instead of forcing every output to owner-only access. Keep private
+  state, conversation logs, and databases protected at their storage writers.
+
 ### Changed
 
 - Display one compact tool-result view from PTC `text`, console output and return

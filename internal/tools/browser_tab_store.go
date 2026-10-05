@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/blueberrycongee/wuu/internal/securefs"
 )
 
 // browserTabsSchemaVersion tags the on-disk file so a future format change can be
@@ -189,7 +191,7 @@ func (s *BrowserTabFileStore) loadLocked() (browserTabsFile, error) {
 
 func (s *BrowserTabFileStore) saveLocked(file browserTabsFile) error {
 	file.SchemaVersion = browserTabsSchemaVersion
-	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(s.path), securefs.DirMode); err != nil {
 		return err
 	}
 	data, err := json.MarshalIndent(file, "", "  ")

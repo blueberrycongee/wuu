@@ -29,6 +29,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/exec"
 	"github.com/blueberrycongee/wuu/internal/remote/secure"
 	"github.com/blueberrycongee/wuu/internal/remote/wire"
+	"github.com/blueberrycongee/wuu/internal/securefs"
 )
 
 const maxFrameBytes = 16 << 20
@@ -63,7 +64,7 @@ func (c *Credentials) Save(path string) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), securefs.DirMode); err != nil {
 		return err
 	}
 	tmp := path + ".tmp"

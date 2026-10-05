@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/blueberrycongee/wuu/internal/securefs"
 	"github.com/blueberrycongee/wuu/internal/statepath"
 )
 
@@ -99,7 +100,7 @@ func cleanupWorkspaceStateDir(stateDir string) (WorkspaceStateCleanupResult, err
 }
 
 func archiveWorkspaceDataDir(archiveRoot, path, name string) error {
-	if err := os.MkdirAll(archiveRoot, 0o755); err != nil {
+	if err := os.MkdirAll(archiveRoot, securefs.DirMode); err != nil {
 		return fmt.Errorf("create archive dir: %w", err)
 	}
 	target := filepath.Join(archiveRoot, name)

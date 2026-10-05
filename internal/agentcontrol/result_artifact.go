@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/harness"
+	"github.com/blueberrycongee/wuu/internal/securefs"
 	"github.com/blueberrycongee/wuu/internal/stringutil"
 	"github.com/blueberrycongee/wuu/internal/subagent"
 )
@@ -63,10 +64,10 @@ func (c *AgentControl) recordAgentResultArtifact(snap subagent.SubAgentSnapshot)
 	if c.artifactAlreadyRecorded(id, path) {
 		return path
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), securefs.DirMode); err != nil {
 		return ""
 	}
-	if err := os.WriteFile(path, []byte(snap.Result), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(snap.Result), securefs.FileMode); err != nil {
 		return ""
 	}
 	createdAt := snap.CompletedAt

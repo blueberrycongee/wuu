@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/blueberrycongee/wuu/internal/securefs"
 	"github.com/blueberrycongee/wuu/internal/statepath"
 )
 
@@ -23,7 +24,7 @@ var SharedSubdirs = []string{
 
 // EnsureSharedDir creates shared/{findings,plans,status,reports}
 // under the given workspace state directory if any of them are missing. The
-// directories are created with mode 0o755. Existing files are not
+// directories are owner-only; agents share the same OS identity. Existing files are not
 // touched. Returns nil on success.
 //
 // This is a one-shot called at session bootstrap. Workers running
@@ -32,7 +33,7 @@ var SharedSubdirs = []string{
 func EnsureSharedDir(workspaceStateDir string) error {
 	base := statepath.SharedDir(workspaceStateDir)
 	for _, sub := range SharedSubdirs {
-		if err := os.MkdirAll(filepath.Join(base, sub), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Join(base, sub), securefs.DirMode); err != nil {
 			return err
 		}
 	}

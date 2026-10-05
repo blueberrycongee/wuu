@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/blueberrycongee/wuu/internal/securefs"
 )
 
 type TraceEvent struct {
@@ -236,10 +238,10 @@ func TraceEvents(result Result, createdAt time.Time) []TraceEvent {
 }
 
 func WriteTrace(path string, result Result) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), securefs.DirMode); err != nil {
 		return err
 	}
-	file, err := os.Create(path)
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, securefs.FileMode)
 	if err != nil {
 		return err
 	}

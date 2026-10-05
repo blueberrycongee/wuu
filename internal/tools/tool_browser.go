@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/securefs"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
 
@@ -890,7 +891,7 @@ func (t *BrowserTool) previewPath(bctx browserActionContext) string {
 		return ""
 	}
 	full := filepath.Join(dir, "activities", activityID, "preview.png")
-	_ = os.MkdirAll(filepath.Dir(full), 0o755)
+	_ = os.MkdirAll(filepath.Dir(full), securefs.DirMode)
 	return full
 }
 

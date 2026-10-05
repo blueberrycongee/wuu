@@ -24,6 +24,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/blueberrycongee/wuu/internal/securefs"
 )
 
 // Worktree represents one isolated git worktree for a subagent.
@@ -486,14 +488,14 @@ func (m *Manager) WriteManifest(lease *Lease) error {
 		lease.ChangedFiles = status.ChangedFiles
 	}
 	lease.UpdatedAt = time.Now().UTC()
-	if err := os.MkdirAll(filepath.Dir(lease.ManifestPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(lease.ManifestPath), securefs.DirMode); err != nil {
 		return err
 	}
 	data, err := json.MarshalIndent(lease, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(lease.ManifestPath, append(data, '\n'), 0o644)
+	return os.WriteFile(lease.ManifestPath, append(data, '\n'), securefs.FileMode)
 }
 
 // CleanupIfClean removes the worktree only when it has no changes or commits

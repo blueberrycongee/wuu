@@ -105,10 +105,9 @@ func OpenAppend(path string) (*os.File, error) {
 //
 // The wrapper does NOT force a particular mode on the file — that is
 // the caller's responsibility. Pair it with FileMode for any
-// credential-bearing file. The daemon also calls syscall.Umask(0o077)
-// at startup (see cmd/wuu/main.go), which means even accidentally-
-// passed 0o644 perms land as 0o600 after the umask is applied; the
-// wrapper just makes the intent explicit. Existing files are not
+// credential-bearing file. Wuu preserves the caller's process umask so
+// workspace files and child processes retain ordinary creation permissions.
+// Private state must therefore request owner-only modes. Existing files are not
 // chmod'd — that mirrors os.OpenFile semantics and avoids silently
 // re-tightening a file the caller deliberately set wider.
 func OpenFile(path string, flag int, perm os.FileMode) (*os.File, error) {
@@ -223,8 +222,8 @@ const permissionMigrationMarker = ".permissions-v1"
 // home. A successful walk writes an owner-only marker; later processes perform
 // one stat instead of walking every session artifact on every CLI invocation.
 //
-// New sensitive paths remain safe after migration because securefs creation
-// helpers and the process umask enforce owner-only modes at write time. If the
+// New sensitive paths remain safe after migration because private-state
+// writers request owner-only modes at creation time. If the
 // walk or marker write fails, no completion marker is left and the next launch
 // retries the migration.
 func TightenHomeOnce(root string) error {

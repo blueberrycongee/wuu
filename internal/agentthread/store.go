@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/blueberrycongee/wuu/internal/securefs"
 	"github.com/blueberrycongee/wuu/internal/storelock"
 )
 
@@ -40,7 +41,7 @@ func (s *Store) UpsertThread(meta Metadata) error {
 		return err
 	}
 	defer release()
-	if err := os.MkdirAll(s.dir, 0o755); err != nil {
+	if err := os.MkdirAll(s.dir, securefs.DirMode); err != nil {
 		return fmt.Errorf("create thread store: %w", err)
 	}
 	threads, err := s.loadThreads()
@@ -83,7 +84,7 @@ func (s *Store) RecordStatus(meta Metadata) error {
 		return err
 	}
 	defer release()
-	if err := os.MkdirAll(s.dir, 0o755); err != nil {
+	if err := os.MkdirAll(s.dir, securefs.DirMode); err != nil {
 		return fmt.Errorf("create thread store: %w", err)
 	}
 	threads, err := s.loadThreads()
@@ -117,7 +118,7 @@ func (s *Store) RecordEdgeStatus(meta Metadata) error {
 		return err
 	}
 	defer release()
-	if err := os.MkdirAll(s.dir, 0o755); err != nil {
+	if err := os.MkdirAll(s.dir, securefs.DirMode); err != nil {
 		return fmt.Errorf("create thread store: %w", err)
 	}
 	threads, err := s.loadThreads()
@@ -151,7 +152,7 @@ func (s *Store) RecordCommunication(threadID string, communication InterAgentCom
 		return err
 	}
 	defer release()
-	if err := os.MkdirAll(s.dir, 0o755); err != nil {
+	if err := os.MkdirAll(s.dir, securefs.DirMode); err != nil {
 		return fmt.Errorf("create thread store: %w", err)
 	}
 	return s.appendEventLocked(Event{
@@ -183,7 +184,7 @@ func (s *Store) RecordResultCommunication(threadID, resultID string, communicati
 		return false, err
 	}
 	defer release()
-	if err := os.MkdirAll(s.dir, 0o755); err != nil {
+	if err := os.MkdirAll(s.dir, securefs.DirMode); err != nil {
 		return false, fmt.Errorf("create thread store: %w", err)
 	}
 	events, err := s.loadEvents()
@@ -217,7 +218,7 @@ func (s *Store) AppendEvent(event Event) error {
 		return err
 	}
 	defer release()
-	if err := os.MkdirAll(s.dir, 0o755); err != nil {
+	if err := os.MkdirAll(s.dir, securefs.DirMode); err != nil {
 		return fmt.Errorf("create thread store: %w", err)
 	}
 	return s.appendEventLocked(event)
@@ -529,7 +530,7 @@ func (s *Store) appendEventLocked(event Event) error {
 		event.CreatedAt = time.Now().UTC()
 	}
 	path := filepath.Join(s.dir, "events.jsonl")
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, securefs.FileMode)
 	if err != nil {
 		return fmt.Errorf("open thread events: %w", err)
 	}

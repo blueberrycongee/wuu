@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/blueberrycongee/wuu/internal/securefs"
 	"github.com/blueberrycongee/wuu/internal/storelock"
 )
 
@@ -310,10 +311,10 @@ func (s *Store) SubmitReport(report Report) (Report, error) {
 	// The markdown render happens only after the kind rules above decided
 	// this submission actually lands, so a rejected stand-in can never
 	// clobber a structured report's file at the shared default path.
-	if err := os.MkdirAll(filepath.Dir(report.ReportPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(report.ReportPath), securefs.DirMode); err != nil {
 		return Report{}, fmt.Errorf("create report dir: %w", err)
 	}
-	if err := os.WriteFile(report.ReportPath, []byte(renderReportMarkdown(report)), 0o644); err != nil {
+	if err := os.WriteFile(report.ReportPath, []byte(renderReportMarkdown(report)), securefs.FileMode); err != nil {
 		return Report{}, fmt.Errorf("write report: %w", err)
 	}
 	replaced := false
@@ -682,7 +683,7 @@ func (s *Store) lockStore() (func(), error) {
 }
 
 func (s *Store) ensureDirLocked() error {
-	if err := os.MkdirAll(s.dir, 0o755); err != nil {
+	if err := os.MkdirAll(s.dir, securefs.DirMode); err != nil {
 		return fmt.Errorf("create harness store: %w", err)
 	}
 	return nil
@@ -745,7 +746,7 @@ func (s *Store) appendEventLocked(event Event) error {
 		event.CreatedAt = time.Now().UTC()
 	}
 	path := filepath.Join(s.dir, "events.jsonl")
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, securefs.FileMode)
 	if err != nil {
 		return fmt.Errorf("open harness events: %w", err)
 	}
@@ -774,7 +775,7 @@ func readJSONFile(path string, out any) error {
 }
 
 func writeJSONFile(path string, value any) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), securefs.DirMode); err != nil {
 		return fmt.Errorf("create %s dir: %w", filepath.Base(path), err)
 	}
 	data, err := json.MarshalIndent(value, "", "  ")

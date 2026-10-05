@@ -8,6 +8,8 @@ import (
 	"sort"
 	"sync"
 	"time"
+
+	"github.com/blueberrycongee/wuu/internal/securefs"
 )
 
 // DeviceInfo describes one enrolled phone under an account.
@@ -165,7 +167,7 @@ func (r *Registry) saveLocked() error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(r.path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(r.path), securefs.DirMode); err != nil {
 		return err
 	}
 	tmp := r.path + ".tmp"

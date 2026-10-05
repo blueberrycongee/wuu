@@ -36,7 +36,8 @@ func main() {
 	if handled, exitCode := gitattribution.Dispatch(os.Args[1:]); handled {
 		os.Exit(exitCode)
 	}
-	lockProcessUmask()
+	// Keep the caller's umask for workspace tools and child processes.
+	// Private state writers request owner-only modes explicitly.
 	if err := run(os.Args[1:]); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(wuuexec.ExitCode(err))
@@ -66,8 +67,8 @@ func run(args []string) error {
 	}
 
 	// Pre-launch installs left credential-bearing files at 0o644 / 0o755.
-	// Normalize them once, then rely on securefs writers and the process umask
-	// for new paths. Rewalking a large session home on every command makes even
+	// Normalize them once, then rely on private-state writers for new paths.
+	// Rewalking a large session home on every command makes even
 	// `wuu version` take seconds. Best-effort: a failed migration never blocks
 	// startup and remains unmarked so a later launch retries it.
 	if home, err := statepath.Home(""); err == nil {
@@ -885,7 +886,7 @@ func runSessionExport(args []string) error {
 		output = os.Stdout
 	} else {
 		outFile := *outFile
-		f, err := os.Create(outFile)
+		f, err := os.OpenFile(outFile, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, securefs.FileMode)
 		if err != nil {
 			return fmt.Errorf("create output file %q: %w", outFile, err)
 		}

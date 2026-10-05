@@ -23,6 +23,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/providers/codex"
 	"github.com/blueberrycongee/wuu/internal/runtime"
+	"github.com/blueberrycongee/wuu/internal/securefs"
 	sessionid "github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/sessiontrace"
 	"github.com/blueberrycongee/wuu/internal/statepath"
@@ -1275,7 +1276,7 @@ func writeEvalReport(path string, report evalReport) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(resolved, append(data, '\n'), 0o644)
+	return os.WriteFile(resolved, append(data, '\n'), securefs.FileMode)
 }
 
 func writeEvalReplaySummary(path string, summary evalharness.TraceReplaySummary) error {
@@ -1287,7 +1288,7 @@ func writeEvalReplaySummary(path string, summary evalharness.TraceReplaySummary)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(resolved, append(data, '\n'), 0o644)
+	return os.WriteFile(resolved, append(data, '\n'), securefs.FileMode)
 }
 
 func writeSessionTraceReplaySummary(path string, summary sessiontrace.ReplaySummary) error {
@@ -1299,7 +1300,7 @@ func writeSessionTraceReplaySummary(path string, summary sessiontrace.ReplaySumm
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(resolved, append(data, '\n'), 0o644)
+	return os.WriteFile(resolved, append(data, '\n'), securefs.FileMode)
 }
 
 func printEvalReport(report evalReport) {

@@ -19,6 +19,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/activity"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/securefs"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
 
@@ -415,7 +416,7 @@ func (t *Toolkit) persistActivityPreview(activityID string, result toolresult.Re
 			extension = ".webp"
 		}
 		dir := filepath.Join(t.env.SessionDir, "activities", strings.TrimSpace(activityID))
-		if err := os.MkdirAll(dir, 0o755); err != nil {
+		if err := os.MkdirAll(dir, securefs.DirMode); err != nil {
 			return "", fmt.Errorf("create activity preview directory: %w", err)
 		}
 		path := filepath.Join(dir, "preview"+extension)

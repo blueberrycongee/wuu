@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/blueberrycongee/wuu/internal/securefs"
 	"github.com/blueberrycongee/wuu/internal/statepath"
 )
 
@@ -88,7 +89,7 @@ func Ensure(opts EnsureOptions) (Summary, bool, error) {
 	if err != nil {
 		return Summary{}, false, err
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, securefs.DirMode); err != nil {
 		return Summary{}, false, err
 	}
 
@@ -142,7 +143,7 @@ func writeProfileMetadata(path string, metadata profileMetadata) error {
 		return err
 	}
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, append(data, '\n'), 0o644); err != nil {
+	if err := os.WriteFile(tmp, append(data, '\n'), securefs.FileMode); err != nil {
 		return err
 	}
 	return os.Rename(tmp, path)

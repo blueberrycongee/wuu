@@ -9,6 +9,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/provideroptions"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/securefs"
 )
 
 // ResumeSnapshotVersion is the schema version of the persisted run record.
@@ -212,7 +213,7 @@ func MarkPersistedRunInterrupted(path, reason string, now time.Time) (bool, erro
 	if err != nil {
 		return false, err
 	}
-	if err := os.WriteFile(path, out, 0o644); err != nil {
+	if err := os.WriteFile(path, out, securefs.FileMode); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -225,7 +226,7 @@ func persistHistory(sa *SubAgent) error {
 	if sa.historyPath == "" {
 		return nil
 	}
-	if err := os.MkdirAll(filepath.Dir(sa.historyPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(sa.historyPath), securefs.DirMode); err != nil {
 		return err
 	}
 
@@ -262,5 +263,5 @@ func persistHistory(sa *SubAgent) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(sa.historyPath, data, 0o644)
+	return os.WriteFile(sa.historyPath, data, securefs.FileMode)
 }

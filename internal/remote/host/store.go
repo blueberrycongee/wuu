@@ -12,6 +12,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/remote/account"
 	"github.com/blueberrycongee/wuu/internal/remote/secure"
+	"github.com/blueberrycongee/wuu/internal/securefs"
 )
 
 // StoredDevice is one paired phone as remembered by the host.
@@ -219,7 +220,7 @@ func (s *Store) saveLocked() error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(s.path), securefs.DirMode); err != nil {
 		return err
 	}
 	tmp := s.path + ".tmp"

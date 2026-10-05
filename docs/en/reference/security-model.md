@@ -59,6 +59,12 @@ Provider configuration can refer to environment variables. Managed desktop OAuth
 
 Conversation history, tool results, logs, artifacts, and plugin data can contain source code and private text. Treat Wuu's state directory, session exports, and diagnostic bundles as sensitive even when obvious tokens have been redacted. Review them before sharing or backing them up to another service.
 
+On Unix, private state writers create files with mode `0600` and directories with
+mode `0700`. SQLite sidecars inherit the protected database mode. Workspace file
+tools and child commands preserve the caller's `umask`; editing an existing file
+does not change its permission bits. A caller that sets `umask 077` will still
+create owner-only workspace files.
+
 ## Desktop and remote control
 
 `wuu app-server` communicates over the subprocess's standard input and output. The control protocol does not require a network listener; PTC programs use a temporary authenticated loopback channel. The desktop shell exposes selected operations through its preload and IPC bridge.

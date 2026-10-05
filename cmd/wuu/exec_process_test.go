@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -21,6 +22,7 @@ import (
 
 	wuuexec "github.com/blueberrycongee/wuu/internal/exec"
 	"github.com/blueberrycongee/wuu/internal/execution"
+	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/statepath"
 )
 
@@ -30,14 +32,140 @@ func TestExecProcessHelper(t *testing.T) {
 	}
 	for i, arg := range os.Args {
 		if arg == "--" {
-			err := run(os.Args[i+1:])
-			if err != nil {
-				fmt.Fprintln(os.Stderr, err)
+			if value := os.Getenv("WUU_EXEC_TEST_UMASK"); value != "" {
+				mask, err := strconv.ParseInt(value, 8, 32)
+				if err != nil {
+					t.Fatal(err)
+				}
+				syscall.Umask(int(mask))
 			}
-			os.Exit(wuuexec.ExitCode(err))
+			os.Args = append([]string{os.Args[0]}, os.Args[i+1:]...)
+			main()
+			os.Exit(0)
 		}
 	}
 	t.Fatal("missing subprocess arguments")
+}
+
+func TestExecProcessPreservesWorkspacePermissionsAndPrivateState(t *testing.T) {
+	// Exercise startup, Code Mode file tools and a real child shell. Private
+	// state must stay private even when the caller's umask permits sharing.
+	for _, mask := range []int{0o000, 0o022, 0o077} {
+		t.Run(fmt.Sprintf("umask-%03o", mask), func(t *testing.T) {
+			root := t.TempDir()
+			for path, mode := range map[string]os.FileMode{"private.txt": 0o600, "executable.sh": 0o755} {
+				path = filepath.Join(root, path)
+				if err := os.WriteFile(path, []byte("before\n"), mode); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Chmod(path, mode); err != nil {
+					t.Fatal(err)
+				}
+			}
+			code := `await tools.write_file({path:"tool/new.txt",content:"created\n"});
+for (const path of ["private.txt","executable.sh"]) {
+  await tools.read_file({path});
+  await tools.edit_file({path,old_text:"before",new_text:"after"});
+}
+text(await tools.bash({command:"mkdir shell; printf created > shell/new.txt"}));`
+			arguments, _ := json.Marshal(map[string]string{"code": code})
+			ready, release := make(chan struct{}), make(chan struct{})
+			var once sync.Once
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				body, _ := io.ReadAll(r.Body)
+				w.Header().Set("Content-Type", "text/event-stream")
+				var delta map[string]any
+				finish := "tool_calls"
+				if !bytes.Contains(body, []byte(`"tool_call_id"`)) {
+					delta = map[string]any{"role": "assistant", "tool_calls": []any{map[string]any{
+						"index": 0, "id": "permission-call", "type": "function",
+						"function": map[string]any{"name": "run_code", "arguments": string(arguments)},
+					}}}
+				} else {
+					once.Do(func() { close(ready) })
+					select {
+					case <-release:
+					case <-r.Context().Done():
+						return
+					}
+					delta, finish = map[string]any{"role": "assistant", "content": "done"}, "stop"
+				}
+				payload, _ := json.Marshal(map[string]any{"choices": []any{map[string]any{"index": 0, "delta": delta, "finish_reason": finish}}})
+				fmt.Fprintf(w, "data: %s\n\ndata: [DONE]\n\n", payload)
+			}))
+			t.Cleanup(server.Close)
+			var releaseOnce sync.Once
+			unblock := func() { releaseOnce.Do(func() { close(release) }) }
+			t.Cleanup(unblock)
+			configPath := filepath.Join(root, "config.json")
+			config := fmt.Sprintf(`{"default_provider":"test","providers":{"test":{"type":"openai-compatible","base_url":%q,"api_key":"synthetic","model":"gpt-test"}},"agent":{"permission_mode":"unconfined"},"skills":{"enabled":false}}`, server.URL)
+			if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			cmd, stdout, stderr := execProcess(t, root, "--config", configPath, "--json", "create the fixtures")
+			cmd.Env = append(cmd.Env, fmt.Sprintf("WUU_EXEC_TEST_UMASK=%03o", mask))
+			if err := cmd.Start(); err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case <-ready:
+			case <-time.After(20 * time.Second):
+				t.Fatal("tools did not reach the following model request")
+			}
+			want := map[string]os.FileMode{
+				"tool/new.txt": 0o644 &^ os.FileMode(mask), "tool": 0o755 &^ os.FileMode(mask),
+				"shell/new.txt": 0o666 &^ os.FileMode(mask), "shell": 0o777 &^ os.FileMode(mask),
+				"private.txt": 0o600, "executable.sh": 0o755,
+			}
+			for path, mode := range want {
+				info, err := os.Stat(filepath.Join(root, path))
+				if err != nil {
+					t.Errorf("workspace file %s: %v", path, err)
+				} else if info.Mode().Perm() != mode {
+					t.Errorf("workspace %s mode = %o, want %o", path, info.Mode().Perm(), mode)
+				}
+			}
+			for _, path := range []string{"private.txt", "executable.sh"} {
+				content, err := os.ReadFile(filepath.Join(root, path))
+				if err != nil || string(content) != "after\n" {
+					t.Errorf("edit %s: content = %q, error = %v", path, content, err)
+				}
+			}
+			// Hold the provider response so the database sidecars are still live.
+			state := filepath.Join(root, "state")
+			for _, suffix := range []string{"", "-wal", "-shm"} {
+				path := session.DBPath(statepath.SessionsDir(state)) + suffix
+				info, err := os.Stat(path)
+				if err != nil || info.Mode().Perm() != 0o600 {
+					t.Errorf("private database %s: %v, %v", path, info, err)
+				}
+			}
+			unblock()
+			waitExecProcess(t, cmd, stderr, 0)
+			if bytes.Contains(stdout.Bytes(), []byte("PTC failed:")) {
+				t.Errorf("program failed: %s", stdout)
+			}
+			if err := filepath.WalkDir(state, func(path string, entry os.DirEntry, err error) error {
+				if err != nil {
+					return err
+				}
+				// Bundled plugin source is public package content, not session state.
+				if path == filepath.Join(state, "cache", "plugins", ".bundled-generations") {
+					return filepath.SkipDir
+				}
+				info, err := entry.Info()
+				if err != nil {
+					return err
+				}
+				if info.Mode().Perm()&0o077 != 0 {
+					t.Errorf("private state %s mode = %o", path, info.Mode().Perm())
+				}
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
 }
 
 func execProcess(t *testing.T, root string, args ...string) (*exec.Cmd, *bytes.Buffer, *bytes.Buffer) {

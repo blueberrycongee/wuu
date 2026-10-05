@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/blueberrycongee/wuu/internal/securefs"
 	"github.com/blueberrycongee/wuu/internal/statepath"
 )
 
@@ -19,7 +20,7 @@ func migrateLegacyGlobalStore(home string) {
 		return
 	}
 	if newPath, err := statepath.ConfigPath(home); err == nil {
-		migrateGlobalFile(newPath, statepath.LegacyConfigPath(home), 0o644, "config.json")
+		migrateGlobalFile(newPath, statepath.LegacyConfigPath(home), securefs.FileMode, "config.json")
 	}
 }
 
@@ -40,7 +41,7 @@ func migrateGlobalFile(newPath, legacyPath string, perm os.FileMode, label strin
 	if err != nil {
 		return // no legacy file to migrate
 	}
-	if err := os.MkdirAll(filepath.Dir(newPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(newPath), securefs.DirMode); err != nil {
 		return
 	}
 	if err := os.WriteFile(newPath, data, perm); err != nil {

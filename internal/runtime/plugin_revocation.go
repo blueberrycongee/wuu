@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/blueberrycongee/wuu/internal/securefs"
 	"github.com/blueberrycongee/wuu/internal/session"
 )
 
@@ -114,10 +115,10 @@ func appendGenerationRevocation(wuuHome string, report *GenerationRevocationRepo
 	if wuuHome == "" || report == nil {
 		return nil
 	}
-	if err := os.MkdirAll(wuuHome, 0o755); err != nil {
+	if err := os.MkdirAll(wuuHome, securefs.DirMode); err != nil {
 		return fmt.Errorf("create Wuu home: %w", err)
 	}
-	file, err := os.OpenFile(filepath.Join(wuuHome, pluginGenerationRevocationFile), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	file, err := os.OpenFile(filepath.Join(wuuHome, pluginGenerationRevocationFile), os.O_CREATE|os.O_APPEND|os.O_WRONLY, securefs.FileMode)
 	if err != nil {
 		return fmt.Errorf("open plugin generation revocations: %w", err)
 	}

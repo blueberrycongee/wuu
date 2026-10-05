@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/securefs"
 	"github.com/blueberrycongee/wuu/internal/storagecodec"
 	"github.com/blueberrycongee/wuu/internal/stringutil"
 	"github.com/blueberrycongee/wuu/internal/toolctx"
@@ -598,7 +599,7 @@ func saveSearchCursor(path string, records any) error {
 	if path == "" {
 		return nil
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), securefs.DirMode); err != nil {
 		return err
 	}
 	data, err := json.Marshal(records)
@@ -609,7 +610,7 @@ func saveSearchCursor(path string, records any) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, stored, 0o644)
+	return os.WriteFile(path, stored, securefs.FileMode)
 }
 
 // Only continuation can reuse a materialized result. Workspace revisions are

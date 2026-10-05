@@ -33,6 +33,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/harness"
 	"github.com/blueberrycongee/wuu/internal/participant"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/securefs"
 	"github.com/blueberrycongee/wuu/internal/subagent"
 	"github.com/blueberrycongee/wuu/internal/toolledger"
 	"github.com/blueberrycongee/wuu/internal/worktree"
@@ -3621,11 +3622,11 @@ func (c *AgentControl) recordWorktreeArtifacts(snap subagent.SubAgentSnapshot) {
 		return
 	}
 	artifactDir := filepath.Join(c.harnessDir, "artifacts", snap.ID)
-	if err := os.MkdirAll(artifactDir, 0o755); err != nil {
+	if err := os.MkdirAll(artifactDir, securefs.DirMode); err != nil {
 		return
 	}
 	statusPath := filepath.Join(artifactDir, "worktree-status.txt")
-	if err := os.WriteFile(statusPath, []byte(statusOut), 0o644); err == nil {
+	if err := os.WriteFile(statusPath, []byte(statusOut), securefs.FileMode); err == nil {
 		_ = c.harnessStore.AddArtifact(harness.Artifact{
 			ID:        snap.ID + "-worktree-status",
 			TaskID:    snap.ID,
@@ -3639,7 +3640,7 @@ func (c *AgentControl) recordWorktreeArtifacts(snap subagent.SubAgentSnapshot) {
 	patchOut, err := gitOutput(root, "diff", "--binary", "HEAD", "--")
 	if err == nil && strings.TrimSpace(patchOut) != "" {
 		patchPath := filepath.Join(artifactDir, "changes.patch")
-		if err := os.WriteFile(patchPath, []byte(patchOut), 0o644); err == nil {
+		if err := os.WriteFile(patchPath, []byte(patchOut), securefs.FileMode); err == nil {
 			_ = c.harnessStore.AddArtifact(harness.Artifact{
 				ID:        snap.ID + "-patch",
 				TaskID:    snap.ID,
@@ -3656,7 +3657,7 @@ func (c *AgentControl) recordWorktreeArtifacts(snap subagent.SubAgentSnapshot) {
 		return
 	}
 	manifestPath := filepath.Join(artifactDir, "untracked-files.txt")
-	if err := os.WriteFile(manifestPath, []byte(strings.Join(untracked, "\n")+"\n"), 0o644); err == nil {
+	if err := os.WriteFile(manifestPath, []byte(strings.Join(untracked, "\n")+"\n"), securefs.FileMode); err == nil {
 		_ = c.harnessStore.AddArtifact(harness.Artifact{
 			ID:        snap.ID + "-untracked-manifest",
 			TaskID:    snap.ID,
@@ -3730,10 +3731,10 @@ func gitUntrackedFiles(dir string) ([]string, error) {
 }
 
 func writeUntrackedArchive(root, archivePath string, files []string) error {
-	if err := os.MkdirAll(filepath.Dir(archivePath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(archivePath), securefs.DirMode); err != nil {
 		return err
 	}
-	out, err := os.Create(archivePath)
+	out, err := os.OpenFile(archivePath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, securefs.FileMode)
 	if err != nil {
 		return err
 	}

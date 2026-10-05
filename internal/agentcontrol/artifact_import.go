@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/harness"
+	"github.com/blueberrycongee/wuu/internal/securefs"
 )
 
 func (c *AgentControl) importReportedArtifacts(taskID string, rawPaths []string) ([]string, error) {
@@ -119,7 +120,7 @@ func (c *AgentControl) resolveSessionArtifactRef(input string) (string, bool, er
 
 func (c *AgentControl) copyReportedArtifact(taskID, rawPath, source string) (string, error) {
 	dir := filepath.Join(c.harnessDir, "artifacts", taskID, "reported")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, securefs.DirMode); err != nil {
 		return "", fmt.Errorf("agent_report artifact %q: create import dir: %w", rawPath, err)
 	}
 	dest := filepath.Join(dir, reportedArtifactFilename(rawPath, source))

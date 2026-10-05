@@ -1138,7 +1138,8 @@ func openStore(sessDir string) (*sql.DB, error) {
 	// creating the DB file, so we pre-create the file at the right mode
 	// before handing it to the driver. The driver re-uses an existing
 	// file instead of recreating it, so the mode set here is what the
-	// file ends up with on disk.
+	// file ends up with on disk. SQLite uses the database mode for its WAL,
+	// journal and shared-memory files, without changing the process umask.
 	if err := securefs.Mkdir(sessDir); err != nil {
 		return nil, fmt.Errorf("create sessions dir: %w", err)
 	}

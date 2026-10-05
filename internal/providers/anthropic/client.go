@@ -17,6 +17,7 @@ import (
 	wuucontext "github.com/blueberrycongee/wuu/internal/context"
 	"github.com/blueberrycongee/wuu/internal/modelvariant"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/securefs"
 	"github.com/blueberrycongee/wuu/internal/version"
 )
 
@@ -345,7 +346,7 @@ func (c *Client) StreamChat(ctx context.Context, req providers.ChatRequest) (<-c
 		len(body), c.baseURL, maxTok, req.Model, len(req.Messages))
 	// Dump request body for debugging 503 issues.
 	if dumpPath := os.Getenv("WUU_DUMP_REQUEST"); dumpPath != "" {
-		_ = os.WriteFile(dumpPath, body, 0o644)
+		_ = os.WriteFile(dumpPath, body, securefs.FileMode)
 		providers.DebugLogf("StreamChat: dumped request body to %s", dumpPath)
 	}
 	resp, lease, err := c.doSingleMessagesRequest(ctx, sseClient, body, payload.UseDefaultBetas, payload.Betas, req.Attempt, "stream")
