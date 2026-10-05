@@ -837,6 +837,8 @@ export const enUS = {
   "toolActivity.searchSessionHistory": "Search session history",
   "toolActivity.tool": "Tool",
   "toolActivity.runCommand": "Run command",
+  "toolActivity.workingDirectory": "Working directory",
+  "toolActivity.commandOutput": "Output",
   "toolActivity.runCommands": "Run",
   "toolActivity.commands": "commands",
   "toolActivity.inspectPage": "Inspect page",

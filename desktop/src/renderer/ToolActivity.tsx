@@ -1,4 +1,4 @@
-import { memo, useEffect, useState } from "react";
+import { memo, useEffect, useState, type ReactNode } from "react";
 import type { ThreadItem } from "../shared/protocol";
 import { LightweightStreamingText } from "./LightweightStreamingText";
 import {
@@ -116,25 +116,32 @@ const ToolActivityTimelineItem = memo(function ToolActivityTimelineItem({
   );
 });
 
-function ProgramToolRecord({ item, code }: { item: ThreadItem; code: string }): JSX.Element {
+function ToolSourceRecord({ item, code, label, language, children }: {
+  item: ThreadItem;
+  code: string;
+  label: string;
+  language: string;
+  children?: ReactNode;
+}): JSX.Element {
   const [open, setOpen] = useState(false);
-  const description = stringValue(parseJSONRecord(item.arguments), "description");
   return (
     <details
       className="program-tool-record activity-group"
       data-status={item.status}
+      data-tool={item.name}
       onToggle={(event) => setOpen(event.currentTarget.open)}
     >
       <summary className="activity-row activity-summary">
         <ToolActivityMarker kind="command" running={item.status === "in_progress"} />
         <span className="activity-copy program-tool-label">
-          <span className="activity-summary-text">{description || readableToolActivityName(item)}</span>
+          <span className="activity-summary-text">{label}</span>
         </span>
         <ChevronDown className="program-tool-chevron icon-sm" aria-hidden="true" />
       </summary>
       {open ? (
         <div className="program-tool-details">
-          <RichCodeBlock code={code} displayedCode={code} language="typescript" />
+          <RichCodeBlock code={code} displayedCode={code} language={language} />
+          {children}
           {item.error ? <p>{item.error}</p> : null}
         </div>
       ) : null}
@@ -151,7 +158,7 @@ function ProgramToolRecord({ item, code }: { item: ThreadItem; code: string }): 
 // into the conversation: users care about the agent's eventual outcome, not
 // whether every intermediate attempt completed. Workspace switches expose their
 // destination and failure inside a disclosure because they change later tool roots.
-// PTC programs show their supplied description and disclose source on demand.
+// PTC programs and Codex commands disclose their source on demand.
 export function ToolActivityRow({
   items,
   streaming = false,
@@ -194,11 +201,34 @@ export function ToolActivityRow({
     );
   }
 
-  if (items.length === 1 && items[0].name === "run_code") {
-    const code = parseJSONRecord(items[0].arguments)?.code;
+  if (items.length === 1 && (items[0].name === "run_code" || items[0].name === "exec")) {
+    const item = items[0];
+    const args = parseJSONRecord(item.arguments);
+    const isCommand = item.name === "exec";
+    const code = args?.[isCommand ? "command" : "code"];
     // Keep source verbatim; stringValue trims meaningful indentation and newlines.
     if (typeof code === "string" && code.trim()) {
-      return <ProgramToolRecord key={items[0].id} item={items[0]} code={code} />;
+      const cwd = isCommand ? stringValue(args, "cwd") : undefined;
+      return (
+        <ToolSourceRecord
+          key={item.id}
+          item={item}
+          code={code}
+          label={isCommand ? code.replace(/\s+/g, " ").trim() : stringValue(args, "description") || readableToolActivityName(item)}
+          language={isCommand ? "bash" : "typescript"}
+        >
+          {cwd ? <p>{t("toolActivity.workingDirectory")}: <code>{cwd}</code></p> : null}
+          {isCommand && item.result ? (
+            <div className="command-tool-output">
+              <p>{t("toolActivity.commandOutput")}</p>
+              <RichCodeBlock code={item.result} displayedCode={item.result} language="text" />
+            </div>
+          ) : null}
+          {isCommand && item.remote_content_ref ? (
+            <RemoteItemContent item={item} render={(content, complete) => <RemoteToolResult item={content} complete={complete} />} />
+          ) : null}
+        </ToolSourceRecord>
+      );
     }
   }
 

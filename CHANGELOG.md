@@ -10,6 +10,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Show Codex engine commands in tool activity rows, with expandable original
+  commands, working directories, and captured output.
+
 - Refine first-run workspace selection with source engine icons, compact project
   rows, persistent list controls, and keyboard focus across each selectable row.
 

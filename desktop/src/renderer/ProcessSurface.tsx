@@ -395,7 +395,9 @@ export function ProcessSurface({
     </span>
   );
 
-  const nativeFallback = toolItems.length === 1 && !hasReasoning && toolItems[0].name === "set_session_workspace" ? (
+  const hasStandaloneDisclosure = toolItems.length === 1 && !hasReasoning
+    && ["set_session_workspace", "run_code", "exec"].includes(toolItems[0].name ?? "");
+  const nativeFallback = hasStandaloneDisclosure ? (
     <div className={className}>
       <ToolActivityRow items={toolItems} streaming={streaming} />
     </div>

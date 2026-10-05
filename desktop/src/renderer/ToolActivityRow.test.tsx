@@ -102,6 +102,50 @@ describe("PTC program records", () => {
   });
 });
 
+describe("Codex command records", () => {
+  it("shows the command and preserves literal input and output through completion", () => {
+    const command = "  printf '%s\\n' '<img src=x onerror=alert(1)>'\nrg ToolActivity desktop/src\n";
+    const item: ThreadItem = {
+      id: "codex-command", type: "tool_call", name: "exec", status: "in_progress",
+      arguments: JSON.stringify({ command, cwd: "/repo/a workspace", commandActions: [] }),
+    };
+    mount({ items: [item], streaming: true });
+    const details = container!.querySelector("details")!;
+    expect(details).not.toBeNull();
+    expect(details.open).toBe(false);
+    expect(details.querySelector("summary")!.textContent).toContain("rg ToolActivity desktop/src");
+    expect(details.querySelector("pre")).toBeNull();
+    act(() => {
+      details.open = true;
+      details.dispatchEvent(new Event("toggle"));
+    });
+    expect(details.querySelector("pre code")!.textContent).toBe(command);
+    expect(details.textContent).toContain("/repo/a workspace");
+    const result = "<img src=x onerror=alert(1)>\n  ToolActivity.tsx\n";
+    rerender({ items: [{ ...item, status: "completed", result }] });
+    expect(details.open).toBe(true);
+    expect([...details.querySelectorAll("pre code")].map(node => node.textContent)).toEqual([command, result]);
+    expect(details.querySelector("img")).toBeNull();
+  });
+
+  it("waits for command arguments and exposes failure output", () => {
+    const item: ThreadItem = {
+      id: "codex-command-failed", type: "tool_call", name: "exec", status: "in_progress",
+      arguments: '{"command":"rg',
+    };
+    mount({ items: [item] });
+    expect(container!.querySelector("details")).toBeNull();
+    rerender({ items: [{ ...item, status: "failed", arguments: JSON.stringify({ command: "rg missing" }), result: "Exit 2", error: "Command failed" }] });
+    const details = container!.querySelector("details")!;
+    act(() => {
+      details.open = true;
+      details.dispatchEvent(new Event("toggle"));
+    });
+    expect([...details.querySelectorAll("pre code")].map(node => node.textContent)).toEqual(["rg missing", "Exit 2"]);
+    expect(details.textContent).toContain("Command failed");
+  });
+});
+
 function fakeReadFileTool(): ThreadItem {
   // Single-segment path so formatPathTarget's basename collapse lands
   // on a deterministic string we can match exactly in assertions.

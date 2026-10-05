@@ -54,6 +54,21 @@ function makeBrowserNavigate(
   };
 }
 
+it.each([
+  { name: "exec", arguments: { command: "git status --short" }, source: "git status --short" },
+  { name: "run_code", arguments: { code: "await tools.read_file({path: 'notes.md'});" }, source: "await tools.read_file({path: 'notes.md'});" },
+])("keeps a single $name source disclosure reachable", ({ name, arguments: args, source }) => {
+  const item: ThreadItem = { id: "source", type: "tool_call", name, status: "completed", arguments: JSON.stringify(args) };
+  const { container } = render({ processItems: [item], streaming: false });
+  const details = container.querySelector<HTMLDetailsElement>(".program-tool-record");
+  expect(details).not.toBeNull();
+  act(() => {
+    details!.open = true;
+    details!.dispatchEvent(new Event("toggle"));
+  });
+  expect(details!.querySelector("pre code")?.textContent).toBe(source);
+});
+
 function makeReadFile(
   id: string,
   path: string,

@@ -3660,6 +3660,20 @@
   overflow-wrap: anywhere;
 }
 
+.program-tool-record[data-tool="exec"] .rich-code {
+  max-height: 320px;
+  overflow: auto;
+}
+
+.program-tool-record[data-tool="exec"] .program-tool-details > p code {
+  font-family: var(--font-mono);
+  font-size: var(--appearance-code-size);
+}
+
+.command-tool-output > p {
+  margin-bottom: var(--space-2);
+}
+
 /* A plain icon button in the open card, not the floating copy pill used on
  * message hover. */
 .fork-worktree-copy,

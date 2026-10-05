@@ -834,6 +834,8 @@ export const zhCN = {
   "toolActivity.searchSessionHistory": "搜索会话历史",
   "toolActivity.tool": "工具",
   "toolActivity.runCommand": "运行命令",
+  "toolActivity.workingDirectory": "工作目录",
+  "toolActivity.commandOutput": "输出",
   "toolActivity.runCommands": "运行",
   "toolActivity.commands": "条命令",
   "toolActivity.inspectPage": "检查页面",

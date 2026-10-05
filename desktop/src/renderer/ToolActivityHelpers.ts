@@ -1183,12 +1183,13 @@ export function toolDisplayLabel(
 }
 
 /**
- * Claude Code uses PascalCase names for tools whose Wuu equivalents use
- * snake_case. Normalize only this known built-in surface so extension and MCP
- * tool identities remain untouched.
+ * External engines use names such as Codex's exec and Claude Code's PascalCase
+ * tools. Normalize only this known built-in surface so extension and MCP tool
+ * identities remain untouched.
  */
 function canonicalToolName(name: string): string {
   switch (name.toLowerCase()) {
+    case "exec": return "bash";
     case "bash": return "bash";
     case "read": return "read_file";
     case "glob": return "glob";
