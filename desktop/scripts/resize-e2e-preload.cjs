@@ -16,8 +16,10 @@ const heavyAnswer = Array.from({ length: 12 }, (_value, index) => {
   const item = index + 1;
   return [
     `### Section ${item}`,
-    "This resize fixture intentionally keeps a dense message flow visible while the BrowserWindow width changes.",
-    "The line contains enough words to force browser line wrapping and markdown layout work on every horizontal resize step.",
+    // Live probes need enough text to cross a line boundary even when the
+    // reading-width cap limits panel motion to a small width range.
+    ("This resize fixture intentionally keeps a dense message flow visible while the BrowserWindow width changes. " +
+      "The line contains enough words to force browser line wrapping and markdown layout work on every horizontal resize step. ").repeat(liveLayout ? 3 : 1),
     "",
     "| path | status | notes |",
     "| --- | --- | --- |",
