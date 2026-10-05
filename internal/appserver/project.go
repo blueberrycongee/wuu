@@ -257,7 +257,7 @@ func projectResultClientID(sessionID, turnID string) string {
 // noticeProjectUserMessage persists the intervention independently of turn
 // completion, so a running lead can see it at its next steering boundary.
 func (s *Server) noticeProjectUserMessage(th *threadState, msg providers.ChatMessage) {
-	if msg.Role != "user" || isGeneratedSessionInput(msg.Origin) {
+	if !isHumanUserMessage(msg) {
 		return
 	}
 	th.mu.Lock()

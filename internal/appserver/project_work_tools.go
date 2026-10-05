@@ -26,9 +26,8 @@ func (s *Server) acquireProjectWorkTool(member session.Session, call providers.T
 		if w.ExecutorInput == nil || w.ExecutorInput.Revision != w.Revision || (w.Phase != "executing" && w.Phase != "verifying") {
 			return noop, errors.New("executor assignment is no longer current")
 		}
-		consumed, err := s.consumedWorkTurn(member.ID, w.ExecutorInput.ClientID)
-		current, currentErr := s.currentProjectWorkTurn(member.ID)
-		if err != nil || currentErr != nil || consumed != current {
+		_, err := s.currentWorkAssignmentTurn(member.ID, w.ExecutorInput.ClientID)
+		if err != nil {
 			return noop, errors.New("current turn has not consumed this assignment")
 		}
 	}
@@ -45,9 +44,8 @@ func (s *Server) acquireProjectWorkTool(member session.Session, call providers.T
 		if w.LeadInput == nil {
 			return noop, errors.New("technical lead has no current assignment")
 		}
-		consumed, err := s.consumedWorkTurn(member.ID, w.LeadInput.ClientID)
-		current, currentErr := s.currentProjectWorkTurn(member.ID)
-		if err != nil || currentErr != nil || consumed != current {
+		_, err := s.currentWorkAssignmentTurn(member.ID, w.LeadInput.ClientID)
+		if err != nil {
 			return noop, errors.New("consume the current work brief before writing")
 		}
 

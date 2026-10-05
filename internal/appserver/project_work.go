@@ -193,7 +193,7 @@ func (s *Server) projectWork(ctx context.Context, actorID, callID string, r tool
 			if w.ExecutorInput == nil {
 				return nil, errors.New("executor has no assignment")
 			}
-			turnID, err := s.consumedWorkTurn(w.ExecutorID, w.ExecutorInput.ClientID)
+			turnID, err := s.currentWorkAssignmentTurn(w.ExecutorID, w.ExecutorInput.ClientID)
 			if err != nil {
 				return nil, err
 			}
@@ -220,14 +220,7 @@ func (s *Server) projectWork(ctx context.Context, actorID, callID string, r tool
 			if w.LeadInput == nil {
 				return nil, errors.New("technical lead has no current brief")
 			}
-			consumed, err := s.consumedWorkTurn(w.LeadID, w.LeadInput.ClientID)
-			if err != nil {
-				return nil, err
-			}
-			turnID, err := s.currentProjectWorkTurn(w.LeadID)
-			if consumed != turnID {
-				return nil, errors.New("technical lead has not consumed the current review brief")
-			}
+			turnID, err := s.currentWorkAssignmentTurn(w.LeadID, w.LeadInput.ClientID)
 			if err != nil {
 				return nil, err
 			}
@@ -245,16 +238,8 @@ func (s *Server) projectWork(ctx context.Context, actorID, callID string, r tool
 			if actor.ID != w.LeadID || w.Phase != "delivering" || r.CodeRef != w.CodeRef || strings.TrimSpace(r.Delivery) == "" {
 				return nil, errors.New("the technical lead must report the actual delivery of the accepted code_ref")
 			}
-			consumed, err := s.consumedWorkTurn(w.LeadID, w.LeadInput.ClientID)
-			if err != nil {
+			if _, err := s.currentWorkAssignmentTurn(w.LeadID, w.LeadInput.ClientID); err != nil {
 				return nil, err
-			}
-			current, err := s.currentProjectWorkTurn(w.LeadID)
-			if err != nil {
-				return nil, err
-			}
-			if consumed != current {
-				return nil, errors.New("delivery instruction has not been consumed by this turn")
 			}
 			w.Phase, w.Delivery, w.DeliveryBy = "delivered", r.Delivery, actor.ID
 
@@ -374,19 +359,40 @@ func (s *Server) currentProjectWorkTurn(id string) (string, error) {
 	}
 	return th.Turns[len(th.Turns)-1].ID, nil
 }
-func (s *Server) consumedWorkTurn(id, clientID string) (string, error) {
-	turns, err := s.loadDurableProjectTurns(id)
+func (s *Server) currentWorkAssignmentTurn(id, clientID string) (string, error) {
+	turnID, err := s.currentProjectWorkTurn(id)
 	if err != nil {
 		return "", err
 	}
+	return turnID, s.requireWorkAssignmentTurn(id, clientID, turnID)
+}
+
+// An unchanged assignment covers its automatic continuation turns. A newer
+// assignment must be consumed first; a late result before it cannot satisfy it.
+func (s *Server) requireWorkAssignmentTurn(id, clientID, turnID string) error {
+	turns, err := s.loadDurableProjectTurns(id)
+	if err != nil {
+		return err
+	}
+	consumed := false
 	for _, turn := range turns {
 		for _, item := range turn.Items {
 			if item.SourceID == clientID {
-				return turn.ID, nil
+				consumed = true
+			} else if item.Type == ThreadItemUserMessage && isHumanUserMessage(providers.ChatMessage{
+				Role: "user", Origin: item.Origin, ReadOnly: item.ReadOnly, Name: item.Name, ClientID: item.SourceID, Content: item.Text,
+			}) {
+				consumed = false
 			}
 		}
+		if turn.ID == turnID {
+			if consumed {
+				return nil
+			}
+			return errWorkInputNotConsumed
+		}
 	}
-	return "", errWorkInputNotConsumed
+	return errWorkInputNotConsumed
 }
 
 func (s *Server) projectWorkModel(project session.Session, selection config.ModelRoleConfig, alias string) (session.RuntimeSelection, error) {
@@ -605,26 +611,32 @@ func (s *Server) recordWorkTurn(th *threadState, turn Turn) (bool, error) {
 	if w.Phase == "stopped" {
 		return true, nil
 	}
-	if th.ID == w.LeadID {
-		if w.LeadInput == nil {
-			return true, nil
-		}
-		assigned, err := s.consumedWorkTurn(th.ID, w.LeadInput.ClientID)
+	input := w.LeadInput
+	if th.ID == w.ExecutorID {
+		input = w.ExecutorInput
+	}
+	if input == nil {
+		return true, nil
+	}
+	if err := s.requireWorkAssignmentTurn(th.ID, input.ClientID, turn.ID); err != nil {
 		if errors.Is(err, errWorkInputNotConsumed) {
 			return true, nil
 		}
-		if err != nil || assigned != turn.ID {
-			return true, err
-		}
+		return true, err
+	}
+	th.mu.Lock()
+	rt := th.execRuntime
+	latest := len(th.Turns) > 0 && th.Turns[len(th.Turns)-1].ID == turn.ID
+	th.mu.Unlock()
+	// Completion callbacks can lag behind an already-admitted continuation.
+	if !latest {
+		return true, nil
+	}
+	if turn.Status == TurnStatusCompleted && w.Phase != "verifying" &&
+		(threadRuntimeAwaitsAutoContinuation(th.ID, rt) || threadHasOutstandingProcessCompletion(th.ID, nil, s.processManagerForThread(th.ID))) {
+		return true, nil
 	}
 	if th.ID == w.ExecutorID {
-		if w.ExecutorInput == nil {
-			return true, nil
-		}
-		assigned, err := s.consumedWorkTurn(th.ID, w.ExecutorInput.ClientID)
-		if err != nil || assigned != turn.ID {
-			return true, err
-		}
 		if w.ExecutorInput.Revision != w.Revision {
 			return true, nil
 		}

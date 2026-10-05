@@ -6,6 +6,8 @@ import (
 	"context"
 	"testing"
 
+	wuucontext "github.com/blueberrycongee/wuu/internal/context"
+	"github.com/blueberrycongee/wuu/internal/process"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/tools"
@@ -162,6 +164,20 @@ func TestProjectWorkDirectUserCorrectionInvalidatesAcceptanceOnce(t *testing.T) 
 	}
 	w := value.(projectWorkView)
 	calls.next(t, "Preserve API")
+	// Generated evidence, including older messages without Origin, cannot
+	// change requirements or revoke the assignment that produced it.
+	for _, message := range []providers.ChatMessage{
+		{Role: "user", Name: wuucontext.ProcessNotificationMessageName, ClientID: "process-done", Content: "Process finished"},
+		{Role: "user", ClientID: processRecheckClientID("process-running"), Content: "Process is running"},
+		{Role: "user", Name: wuucontext.AgentNotificationMessageName, Content: "Agent finished"},
+		{Role: "user", ReadOnly: true, Content: "Merged completion evidence"},
+	} {
+		srv.noticeProjectUserMessage(srv.thread(w.LeadID), message)
+	}
+	unchanged, err := session.ReadProjectWork(rt.SessionDir, w.ID)
+	if err != nil || unchanged.Version != w.Version || unchanged.Brief != w.Brief {
+		t.Fatalf("generated evidence changed the user contract: %+v %v", unchanged, err)
+	}
 	message := providers.ChatMessage{Role: "user", Origin: "user", ClientID: "direct-correction", Content: "Leave the database index alone"}
 	srv.noticeProjectUserMessage(srv.thread(w.LeadID), message)
 	srv.noticeProjectUserMessage(srv.thread(w.LeadID), message)
@@ -185,6 +201,92 @@ func TestProjectWorkDirectUserCorrectionInvalidatesAcceptanceOnce(t *testing.T) 
 		if err != nil || after.Version != current.Version || after.Phase != "planning" {
 			t.Fatalf("late %s changed the new assignment: %+v %v", status, after, err)
 		}
+	}
+}
+
+// A process wait must retain its assignment, and its automatic continuation
+// must be able to write and submit/review without inventing a user correction.
+func TestProjectWorkContinuesAfterBackgroundProcess(t *testing.T) {
+	for _, role := range []string{"technical_lead", "executor"} {
+		t.Run(role, func(t *testing.T) {
+			srv, client, calls, rt := newProjectFixture(t)
+			attachTestProcessManager(t, rt)
+			root := startProject(t, client, "Background verification")
+			act := func(actor, id string, request tools.ProjectWorkRequest) projectWorkView {
+				t.Helper()
+				value, err := srv.projectWork(context.Background(), actor, id, request)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return value.(projectWorkView)
+			}
+			w := act(root.ID, "create", tools.ProjectWorkRequest{Operation: "create", Brief: "Verify the artifact", Acceptance: "Background check passes", Authority: "Local only"})
+			memberID, phase := w.LeadID, "planning"
+			call := calls.next(t, "Verify the artifact")
+			if role == "executor" {
+				w = act(w.LeadID, "execute", tools.ProjectWorkRequest{Operation: "execute", WorkID: w.ID, Revision: w.Revision, Brief: "Run the background check"})
+				call.response <- providersResponse("Dispatched")
+				waitForThread(t, srv, w.LeadID, func(th Thread) bool { return th.Status == ThreadStatusIdle })
+				memberID, phase = w.ExecutorID, "executing"
+				call = calls.next(t, "Run the background check")
+			}
+			th := srv.thread(memberID)
+			th.mu.Lock()
+			manager := th.execRuntime.ProcessManager
+			th.mu.Unlock()
+			job, err := manager.Start(context.Background(), process.StartOptions{
+				Command: "read signal; printf 'verification-complete\\n'", OwnerKind: process.OwnerMainAgent,
+				OwnerID: memberID, RootThreadID: memberID, Lifecycle: process.LifecycleManaged,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _, _ = manager.Stop(job.ID) })
+			call.response <- providersResponse("Waiting for the background check")
+			idle := waitForThread(t, srv, memberID, func(th Thread) bool { return th.Status == ThreadStatusIdle })
+			if _, err := srv.recordWorkTurn(th, idle.Turns[len(idle.Turns)-1]); err != nil {
+				t.Fatal(err)
+			}
+			waiting, err := session.ReadProjectWork(rt.SessionDir, w.ID)
+			if err != nil || waiting.Phase != phase || waiting.Revision != w.Revision {
+				t.Fatalf("waiting process lost its assignment: %+v %v", waiting, err)
+			}
+			if _, err := manager.WriteStdin(job.ID, "finish\n"); err != nil {
+				t.Fatal(err)
+			}
+			continued := calls.next(t, "verification-complete")
+			current, err := session.ReadProjectWork(rt.SessionDir, w.ID)
+			if err != nil || current.Version != waiting.Version || current.Brief != w.Brief {
+				t.Fatalf("completion rewrote the contract: %+v %v", current, err)
+			}
+			member, _, err := session.Find(rt.SessionDir, memberID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			release, err := srv.acquireProjectWorkTool(member, providers.ToolCall{Name: "write_file"}, rt.Toolkit)
+			if err != nil {
+				t.Fatalf("continuation lost write authority: %v", err)
+			}
+			release()
+			continuedTurn, err := srv.currentProjectWorkTurn(memberID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if role == "executor" {
+				w = act(memberID, "submit", tools.ProjectWorkRequest{Operation: "submit", WorkID: w.ID, Revision: w.Revision, Summary: "Verified artifact", Evidence: "Process exited successfully", CodeRef: "artifact:v1"})
+				if w.SubmissionTurnID != continuedTurn {
+					t.Fatalf("submission attributed to %s, want %s", w.SubmissionTurnID, continuedTurn)
+				}
+				continued.response <- providersResponse("Background verification submitted")
+				continued = calls.next(t, "Background verification submitted")
+			}
+			w = act(w.LeadID, "review", tools.ProjectWorkRequest{Operation: "review", WorkID: w.ID, Revision: w.Revision, Summary: "Artifact accepted", Evidence: "Checked the process result", CodeRef: "artifact:v1"})
+			if role == "technical_lead" && w.ReviewTurnID != continuedTurn {
+				t.Fatalf("review attributed to %s, want %s", w.ReviewTurnID, continuedTurn)
+			}
+			continued.response <- providersResponse("Accepted")
+			calls.next(t, "Artifact accepted").response <- providersResponse("Ready for delivery")
+		})
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 
+	wuucontext "github.com/blueberrycongee/wuu/internal/context"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/session"
@@ -31,6 +32,27 @@ type sessionInputResult struct {
 // input, never human authorization, and share admission and control fences.
 func isGeneratedSessionInput(origin string) bool {
 	return origin == sessionInputHost || origin == sessionInputPlugin
+}
+
+func isHumanUserMessage(msg providers.ChatMessage) bool {
+	if msg.Role != "user" || msg.Hidden || msg.ReadOnly || (msg.Origin != "" && msg.Origin != "user") {
+		return false
+	}
+	// Older synthetic messages may have neither Origin nor ReadOnly. Their
+	// reserved metadata and context envelopes still cannot authorize actions.
+	if wuucontext.IsSystemReminder(msg.Name, msg.Content) ||
+		wuucontext.IsAgentNotification(msg.Name, msg.Content) ||
+		wuucontext.IsProcessNotification(msg.Name, msg.Content) ||
+		strings.TrimSpace(msg.Name) == "main-task-snapshot" {
+		return false
+	}
+	for _, prefix := range []string{agentCompletionClientIDPrefix, processCompletionClientIDPrefix, processRecheckClientIDPrefix} {
+		if strings.HasPrefix(strings.TrimSpace(msg.ClientID), prefix) {
+			return false
+		}
+	}
+	content := strings.TrimSpace(msg.Content)
+	return !(strings.HasPrefix(content, "<process_recheck>") && strings.HasSuffix(content, "</process_recheck>"))
 }
 
 func (s *Server) validateInboxInput(msg providers.ChatMessage) error {
