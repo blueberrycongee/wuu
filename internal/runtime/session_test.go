@@ -1408,86 +1408,118 @@ func TestNewThreadRuntimeToolLedgerFailureDoesNotTouchRestoredQueue(t *testing.T
 }
 
 func TestNewThreadRuntimeWorkerUsesWorkerProfileToolSurface(t *testing.T) {
-	root := t.TempDir()
-	home := t.TempDir()
-	t.Setenv("WUU_HOME", filepath.Join(home, "state"))
-	t.Setenv("TEST_WUU_KEY", "abc")
-	t.Setenv("TEST_ANTHROPIC_KEY", "abc")
+	for _, tc := range []struct{ model, api string }{
+		{"claude-sonnet-4-5", "anthropic"},
+		{"gpt-5.5", "openai-compatible"},
+		{"portable-coder", "openai-compatible"},
+	} {
+		t.Run(tc.model, func(t *testing.T) {
+			root := t.TempDir()
+			home := t.TempDir()
+			t.Setenv("WUU_HOME", filepath.Join(home, "state"))
+			t.Setenv("TEST_WUU_KEY", "abc")
+			t.Setenv("TEST_ANTHROPIC_KEY", "abc")
 
-	rt, err := NewSession(Options{
-		RootDir:    root,
-		HomeDir:    home,
-		ConfigPath: filepath.Join(root, ".wuu.json"),
-		Config: config.Config{
-			DefaultProvider: "openai",
-			Providers: map[string]config.ProviderConfig{
-				"openai": {
-					Type:      "openai-compatible",
-					BaseURL:   "https://example.test/v1",
-					APIKeyEnv: "TEST_WUU_KEY",
-					Model:     "gpt-5-codex",
+			rt, err := NewSession(Options{
+				RootDir:    root,
+				HomeDir:    home,
+				ConfigPath: filepath.Join(root, ".wuu.json"),
+				Config: config.Config{
+					DefaultProvider: "openai",
+					Providers: map[string]config.ProviderConfig{
+						"openai": {
+							Type:      "openai-compatible",
+							BaseURL:   "https://example.test/v1",
+							APIKeyEnv: "TEST_WUU_KEY",
+							Model:     "gpt-5-codex",
+						},
+						"worker": {
+							Type:      tc.api,
+							BaseURL:   "https://example.test/v1",
+							APIKeyEnv: "TEST_ANTHROPIC_KEY",
+							Model:     tc.model,
+						},
+					},
+					Agent: config.AgentConfig{
+						ModelRoles: config.ModelRolesConfig{
+							Worker: config.ModelRoleConfig{Provider: "worker", Model: tc.model},
+						},
+					},
 				},
-				"anthropic": {
-					Type:      "anthropic",
-					BaseURL:   "https://api.anthropic.com",
-					APIKeyEnv: "TEST_ANTHROPIC_KEY",
-					Model:     "claude-sonnet-4-5",
-				},
-			},
-			Agent: config.AgentConfig{
-				ModelRoles: config.ModelRolesConfig{
-					Worker: config.ModelRoleConfig{Provider: "anthropic", Model: "claude-sonnet-4-5"},
-				},
-			},
-		},
-	})
-	if err != nil {
-		t.Fatalf("NewSession: %v", err)
-	}
-	if !strings.Contains(rt.BaseSystemPrompt, "[Tool surface: openai_codex]") {
-		t.Fatalf("main prompt should use main Codex surface:\n%s", rt.BaseSystemPrompt)
-	}
+			})
+			if err != nil {
+				t.Fatalf("NewSession: %v", err)
+			}
+			t.Cleanup(func() { _, _ = rt.Cleanup() })
+			ConfigureToolkitPermissions(rt.Toolkit, config.ResolvedPermissions{Mode: config.PermissionModeUnconfined})
+			if err := os.WriteFile(filepath.Join(root, "value.txt"), []byte("before\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
 
-	client := &sessionRecordingClient{}
-	rt.WorkerClient = client
-	threadRT, err := rt.NewThreadRuntime("thread-worker-surface")
-	if err != nil {
-		t.Fatalf("NewThreadRuntime: %v", err)
-	}
-	defer func() {
-		threadRT.AgentControl.StopAll()
-		time.Sleep(100 * time.Millisecond)
-	}()
-	if _, err := threadRT.AgentControl.Spawn(context.Background(), agentcontrol.SpawnRequest{
-		Type:        agentcontrol.DefaultSubagentType,
-		TaskName:    "inspect_repo",
-		Prompt:      "inspect the repo",
-		Synchronous: true,
-	}); err != nil {
-		t.Fatalf("Spawn: %v", err)
-	}
+			client := &sessionRecordingClient{}
+			for i, call := range []providers.ToolCall{
+				{Name: "read_file", Arguments: `{"path":"value.txt"}`},
+				{Name: "edit_file", Arguments: `{"path":"value.txt","old_text":"before","new_text":"after"}`},
+				{Name: "write_file", Arguments: `{"path":"ready.txt","content":"ready\n"}`},
+				{Name: "bash", Arguments: `{"command":"test $(cat value.txt) = after && test $(cat ready.txt) = ready && printf WORKER_EDIT_OK"}`},
+			} {
+				call.ID = fmt.Sprintf("worker-edit-%d", i)
+				client.streamBatches = append(client.streamBatches, []providers.StreamEvent{
+					{Type: providers.EventToolUseStart, ToolCall: &call},
+					{Type: providers.EventToolUseDelta, Content: call.Arguments},
+					{Type: providers.EventToolUseEnd, ToolCall: &call},
+					{Type: providers.EventDone},
+				})
+			}
+			rt.WorkerClient = client
+			threadRT, err := rt.NewThreadRuntime("thread-worker-surface")
+			if err != nil {
+				t.Fatalf("NewThreadRuntime: %v", err)
+			}
+			defer threadRT.AgentControl.Close()
+			if _, err := threadRT.AgentControl.Spawn(context.Background(), agentcontrol.SpawnRequest{
+				Type:        agentcontrol.DefaultSubagentType,
+				TaskName:    "inspect_repo",
+				Prompt:      "inspect the repo",
+				Synchronous: true,
+			}); err != nil {
+				t.Fatalf("Spawn: %v", err)
+			}
 
-	req := client.LastRequest()
-	toolNames := map[string]bool{}
-	for _, def := range req.Tools {
-		toolNames[def.Name] = true
-	}
-	for _, want := range []string{"bash", "edit_file", "write_file"} {
-		if !toolNames[want] {
-			t.Fatalf("worker should receive %s from worker profile surface; tools=%v", want, toolNames)
-		}
-	}
-	if toolNames["apply_patch"] {
-		t.Fatalf("worker should not inherit Codex apply_patch surface; tools=%v", toolNames)
-	}
-	if len(req.Messages) == 0 {
-		t.Fatal("worker sent no messages")
-	}
-	systemPrompt := req.Messages[0].Content
-	for _, want := range []string{"[Tool surface: anthropic_claude]"} {
-		if !strings.Contains(systemPrompt, want) {
-			t.Fatalf("worker system prompt should use worker profile fragment %q:\n%s", want, systemPrompt)
-		}
+			req := client.LastRequest()
+			toolNames := map[string]bool{}
+			for _, def := range req.Tools {
+				toolNames[def.Name] = true
+			}
+			for _, want := range []string{"bash", "edit_file", "write_file"} {
+				if !toolNames[want] {
+					t.Fatalf("worker should receive %s from worker profile surface; tools=%v", want, toolNames)
+				}
+			}
+			if toolNames["apply_patch"] {
+				t.Fatalf("worker should not advertise the removed patch tool; tools=%v", toolNames)
+			}
+			if len(req.Messages) == 0 {
+				t.Fatal("worker sent no messages")
+			}
+			if req.Model != tc.model {
+				t.Fatalf("worker model=%s, want %s", req.Model, tc.model)
+			}
+			verified := false
+			for _, message := range req.Messages {
+				if message.Role == "tool" && message.Name == "bash" && strings.Contains(message.Content, "WORKER_EDIT_OK") {
+					verified = true
+				}
+			}
+			if !verified {
+				t.Fatalf("worker failed read/edit/write/bash workflow: %+v", req.Messages)
+			}
+			data, err := os.ReadFile(filepath.Join(root, "value.txt"))
+			if err != nil || string(data) != "after\n" {
+				t.Fatalf("worker edit=%q err=%v", data, err)
+			}
+			t.Logf("%s worker read -> edit -> write -> bash: WORKER_EDIT_OK", tc.model)
+		})
 	}
 }
 
@@ -2334,9 +2366,9 @@ func TestNewThreadRuntimeWorkerInheritsCurrentPermissionBoundary(t *testing.T) {
 	client := &sessionRecordingClient{
 		streamBatches: [][]providers.StreamEvent{
 			{
-				{Type: providers.EventToolUseStart, ToolCall: &providers.ToolCall{ID: "call-patch", Name: "apply_patch"}},
-				{Type: providers.EventToolUseDelta, Content: `{"patchText":"*** Begin Patch\n*** Add File: blocked.txt\n+nope\n*** End Patch\n"}`},
-				{Type: providers.EventToolUseEnd, ToolCall: &providers.ToolCall{ID: "call-patch", Name: "apply_patch"}},
+				{Type: providers.EventToolUseStart, ToolCall: &providers.ToolCall{ID: "call-patch", Name: "write_file"}},
+				{Type: providers.EventToolUseDelta, Content: `{"path":"blocked.txt","content":"nope\n"}`},
+				{Type: providers.EventToolUseEnd, ToolCall: &providers.ToolCall{ID: "call-patch", Name: "write_file"}},
 				{Type: providers.EventDone},
 			},
 			{
@@ -2411,11 +2443,11 @@ func TestThreadWorkerWakeAppliesCurrentPermissionBoundary(t *testing.T) {
 	}
 
 	writeCall := func(id, path string) []providers.StreamEvent {
-		patch := `{"patchText":"*** Begin Patch\n*** Add File: ` + path + `\n+payload\n*** End Patch\n"}`
+		args := `{"path":"` + path + `","content":"payload\n"}`
 		return []providers.StreamEvent{
-			{Type: providers.EventToolUseStart, ToolCall: &providers.ToolCall{ID: id, Name: "apply_patch"}},
-			{Type: providers.EventToolUseDelta, Content: patch},
-			{Type: providers.EventToolUseEnd, ToolCall: &providers.ToolCall{ID: id, Name: "apply_patch"}},
+			{Type: providers.EventToolUseStart, ToolCall: &providers.ToolCall{ID: id, Name: "write_file"}},
+			{Type: providers.EventToolUseDelta, Content: args},
+			{Type: providers.EventToolUseEnd, ToolCall: &providers.ToolCall{ID: id, Name: "write_file"}},
 			{Type: providers.EventDone},
 		}
 	}
@@ -2821,7 +2853,7 @@ func TestApplyWorkerToolFilter_HidesRecursiveAgentControls(t *testing.T) {
 	for _, def := range kit.Definitions() {
 		defs[def.Name] = true
 	}
-	for _, allowed := range []string{"read_file", "apply_patch", "bash"} {
+	for _, allowed := range []string{"read_file", "edit_file", "write_file", "bash"} {
 		if !defs[allowed] {
 			t.Fatalf("subagent toolkit should keep %s", allowed)
 		}

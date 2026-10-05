@@ -124,10 +124,10 @@ func Add(a, b int) int {
 	}
 }
 
-func TestPatchReviewRiskVerification(t *testing.T) {
-	task, ok := ByID("patch_review_risk")
+func TestGitMultiFileEditVerification(t *testing.T) {
+	task, ok := ByID("git_multi_file_edit")
 	if !ok {
-		t.Fatal("missing patch_review_risk task")
+		t.Fatal("missing git_multi_file_edit task")
 	}
 	root := t.TempDir()
 	if err := SetupTask(task, root); err != nil {
@@ -139,7 +139,7 @@ func TestPatchReviewRiskVerification(t *testing.T) {
 		t.Fatalf("VerifyTask failed module: %v", err)
 	}
 	if failed.Passed {
-		t.Fatal("buggy patch review risk fixture should fail verification")
+		t.Fatal("buggy multi-file edit fixture should fail verification")
 	}
 
 	subtotal := `package pricing
@@ -170,7 +170,7 @@ func TotalWithTax(cents []int, taxBasisPoints int) int {
 		t.Fatalf("VerifyTask fixed module: %v", err)
 	}
 	if !passed.Passed {
-		t.Fatalf("fixed patch review risk fixture should pass verification: %s", passed.Reason)
+		t.Fatalf("fixed multi-file edit fixture should pass verification: %s", passed.Reason)
 	}
 	if len(passed.Evidence) < 2 || passed.Evidence[1].Check != "git diff files" || !passed.Evidence[1].Passed {
 		t.Fatalf("fixed fixture should include passing git diff evidence: %+v", passed.Evidence)

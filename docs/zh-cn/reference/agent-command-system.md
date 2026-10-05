@@ -60,24 +60,35 @@ Wuu 通过 shell 启动器解析 Bash，Windows 使用 Git Bash。前台和后�
 
 写入被拒绝后，不应换一条 shell 命令绕过限制。任务确实需要访问边界外的路径时，应添加已授权的工作区根目录，或显式切换会话模式。Wuu 没有逐条命令弹窗审批。
 
-## 应用补丁后验证
+## 编辑文件并验证修改
 
-已经确定后续命令时，可以让 `apply_patch` 在完整补丁应用成功后执行它：
+所有内置模型配置统一使用 `read_file` 读取文件、`edit_file` 局部修改、`write_file` 新建或完整重写。切换模型或启动派生会话时，编辑工具保持一致。本地模型原有的命令执行限制继续保留。
+
+读取文件后，向 `edit_file` 提供从当前内容复制的文本：
 
 ```json
 {
-  "patchText": "*** Begin Patch\n*** Add File: example.txt\n+hello\n*** End Patch",
-  "then_run": {
-    "command": "test -f example.txt",
-    "timeout_seconds": 30,
-    "purpose": "Check the new file exists"
-  }
+  "path": "example.txt",
+  "old_text": "hello",
+  "new_text": "hello world"
 }
 ```
 
-`then_run` 接受 `command`、`cwd`、`timeout_seconds`、`purpose` 和 `scope`，沿用正常命令的权限检查和记录。它不能与 `dry_run` 同时使用。补丁失败会跳过命令；命令失败则保留已经成功的补丁。合并结果会先给模型补丁结果，再给命令的纯文本视图。验证转入后台后，必须等到实际终态结果才能判断是否通过，不要为了重跑验证而重新应用补丁。
+匹配不到或匹配不唯一时，文件保持不变，工具会返回候选位置供恢复。读取相关范围后，补足精确上下文再重试；只有确定要修改所有匹配项时才使用 `replace_all=true`。新建文件时，向 `write_file` 提供 `path`、`content`，可用 `create_only=true` 拒绝覆盖已有文件。超过 32 KiB 的已有文件仍需指定覆盖策略。两种编辑工具都保留路径和权限检查，并发布文件变更及结构化差异。
 
-每个解析后的路径只能属于一个文件段，移动的源路径和目标路径也计入检查。`a.txt` 与 `./a.txt` 等别名视为同一路径。同一文件的多处修改应合并到一个 `Update File` 段的多个 `@@` 块中。路径冲突会在任何写入或 `then_run` 前验证失败，`dry_run` 也遵循这个规则。
+命令执行可用时，单独调用 `bash` 验证修改：
+
+```json
+{
+  "command": "test -f example.txt",
+  "timeout_seconds": 30,
+  "purpose": "Check the new file exists"
+}
+```
+
+命令失败会保留已完成的修改。验证转入后台后，必须等到终态结果才能判断是否通过。重跑验证时，不要重复已经成功的编辑。
+
+Wuu 不再执行内置 `apply_patch` 及其 `dry_run`、`then_run` 选项。恢复会话时，历史补丁记录仍可读取和展示，后续编辑使用上述工具。外部 Codex 引擎管理的工具保持不变。
 
 ## 日志与存续时间
 

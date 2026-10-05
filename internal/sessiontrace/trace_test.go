@@ -131,7 +131,7 @@ func TestAppendTurnWritesAgentFriendlyEvents(t *testing.T) {
 	}
 	if !strings.Contains(string(raw), `"model_profile"`) ||
 		!strings.Contains(string(raw), `"family":"codex"`) ||
-		!strings.Contains(string(raw), `"default_write_mode":"patch"`) {
+		!strings.Contains(string(raw), `"default_write_mode":"exact_edit"`) {
 		t.Fatalf("trace should include model profile metadata:\n%s", raw)
 	}
 	if strings.Contains(string(raw), "secret-value") || !strings.Contains(string(raw), "[REDACTED]") {
@@ -320,7 +320,7 @@ func TestReplayTraceSummarizesSessionEvents(t *testing.T) {
 	}
 	if summary.LatestTurn.ModelProfile == nil ||
 		summary.LatestTurn.ModelProfile.Family != "codex" ||
-		summary.LatestTurn.ModelProfile.DefaultWriteMode != "patch" {
+		summary.LatestTurn.ModelProfile.DefaultWriteMode != "exact_edit" {
 		t.Fatalf("model profile missing from replay: %+v", summary.LatestTurn.ModelProfile)
 	}
 	if len(summary.ToolInventory) != 1 || summary.ToolInventory[0].Name != "grep" {

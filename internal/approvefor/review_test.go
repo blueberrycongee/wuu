@@ -48,12 +48,7 @@ func TestHardDenyUsesTargetsNotContent(t *testing.T) {
 		{"relative credential", "read_file", map[string]any{"path": "auth.json"}, true},
 		{"normalized credential", "edit_file", map[string]any{"path": "child/../credentials.json"}, true},
 		{"fixture basename", "read_file", map[string]any{"path": "testdata/auth.json"}, false},
-		{"credential patch", "apply_patch", map[string]any{"patchText": "*** Begin Patch\n*** Update File: " + credential + "\n@@\n-old\n+new\n*** End Patch"}, true},
-		{"credential move", "apply_patch", map[string]any{"patch_text": "*** Begin Patch\n*** Update File: source.json\n*** Move to: phone.json\n@@\n-old\n+new\n*** End Patch"}, true},
-		{"credential delete", "apply_patch", map[string]any{"patch": "*** Begin Patch\n*** Delete File: remote.json\n*** End Patch"}, true},
-		{"sensitive patch", "apply_patch", map[string]any{"patchText": "*** Begin Patch\n*** Add File: .env\n+SECRET=value\n*** End Patch"}, true},
 		{"sensitive edit", "edit_file", map[string]any{"path": ".ssh/id_ed25519"}, true},
-		{"patch examples", "apply_patch", map[string]any{"patchText": "*** Begin Patch\n*** Update File: review_test.go\n@@\n+permission_mode unconfined auth.json credentials.json\n+*** Delete File: " + credential + "\n*** End Patch"}, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

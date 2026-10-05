@@ -784,8 +784,6 @@ export type ModelBehaviorSummary = {
   family?: string;
   default_write_mode?: string;
   preferred_edit_primitive?: string;
-  preferred_patch_grammar?: string;
-  patch_reliability?: number;
   exact_edit_reliability?: number;
   whole_file_reliability?: number;
   json_reliability?: number;

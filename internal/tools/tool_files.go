@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"unicode/utf8"
 
@@ -1399,11 +1400,18 @@ func (t *EditFileTool) executeResolvedEdit(ctx context.Context, resolved, displa
 	return mustJSON(result)
 }
 
+type editTextCandidate struct {
+	StartLine int
+	EndLine   int
+	Score     int
+	Snippet   []string
+}
+
 type editTextMatchError struct {
 	Kind       string
 	Expected   string
 	MatchCount int
-	Candidates []patchChunkCandidate
+	Candidates []editTextCandidate
 }
 
 func (e editTextMatchError) Error() string {
@@ -1417,7 +1425,7 @@ func (e editTextMatchError) Error() string {
 	expected := splitEditCandidateLines(e.Expected)
 	if len(expected) > 0 {
 		b.WriteString("\nexpected:\n")
-		b.WriteString(formatPatchErrorLines(expected, 0, 8))
+		b.WriteString(formatEditErrorLines(expected, 0, 8))
 	}
 	if len(e.Candidates) > 0 {
 		b.WriteString("\ncandidates:\n")
@@ -1427,7 +1435,7 @@ func (e editTextMatchError) Error() string {
 				fmt.Fprintf(&b, " score=%d", candidate.Score)
 			}
 			b.WriteString(":\n")
-			b.WriteString(formatPatchErrorLines(candidate.Snippet, candidate.StartLine, 6))
+			b.WriteString(formatEditErrorLines(candidate.Snippet, candidate.StartLine, 6))
 			if e.Kind == "old_text_not_found" {
 				b.WriteString(editIndentationHint(expected, candidate))
 			}
@@ -1439,7 +1447,7 @@ func (e editTextMatchError) Error() string {
 
 // Diagnose only candidates whose line bodies agree. This is evidence for a
 // retry, never permission to perform an indentation-insensitive replacement.
-func editIndentationHint(expected []string, candidate patchChunkCandidate) string {
+func editIndentationHint(expected []string, candidate editTextCandidate) string {
 	if len(expected) != len(candidate.Snippet) {
 		return ""
 	}
@@ -1462,19 +1470,55 @@ func editIndentationHint(expected []string, candidate patchChunkCandidate) strin
 	return fmt.Sprintf("  indentation_mismatch: old_text line %d starts with %q; candidate file line %d starts with %q. Re-read and copy the file indentation exactly.\n", first+1, oldPrefix, candidate.StartLine+first, filePrefix)
 }
 
-func closestEditTextCandidates(content, oldText string, limit int) []patchChunkCandidate {
+func closestEditTextCandidates(content, oldText string, limit int) []editTextCandidate {
 	lines := splitEditCandidateLines(content)
 	needle := splitEditCandidateLines(oldText)
-	return closestPatchChunkCandidates(lines, needle, limit)
+	if len(lines) == 0 || len(needle) == 0 || limit <= 0 {
+		return nil
+	}
+	windowLen := len(needle)
+	if windowLen > len(lines) {
+		windowLen = len(lines)
+	}
+	candidates := make([]editTextCandidate, 0, len(lines)-windowLen+1)
+	for start := 0; start <= len(lines)-windowLen; start++ {
+		window := lines[start : start+windowLen]
+		score := 0
+		for i, line := range window {
+			actual, expected := strings.TrimSpace(line), strings.TrimSpace(needle[i])
+			switch {
+			case actual == expected:
+				score += 2
+			case actual != "" && expected != "" && (strings.Contains(actual, expected) || strings.Contains(expected, actual)):
+				score++
+			}
+		}
+		candidates = append(candidates, editTextCandidate{
+			StartLine: start + 1,
+			EndLine:   start + windowLen,
+			Score:     score,
+			Snippet:   append([]string(nil), window...),
+		})
+	}
+	sort.SliceStable(candidates, func(i, j int) bool {
+		if candidates[i].Score != candidates[j].Score {
+			return candidates[i].Score > candidates[j].Score
+		}
+		return candidates[i].StartLine < candidates[j].StartLine
+	})
+	if len(candidates) > limit {
+		candidates = candidates[:limit]
+	}
+	return candidates
 }
 
-func exactEditTextCandidates(content, oldText string, limit int) []patchChunkCandidate {
+func exactEditTextCandidates(content, oldText string, limit int) []editTextCandidate {
 	if limit <= 0 || oldText == "" {
 		return nil
 	}
 	lines := splitEditCandidateLines(content)
 	startOffsets := lineStartOffsets(content)
-	var candidates []patchChunkCandidate
+	var candidates []editTextCandidate
 	for offset := 0; ; {
 		idx := strings.Index(content[offset:], oldText)
 		if idx < 0 {
@@ -1500,7 +1544,7 @@ func exactEditTextCandidates(content, oldText string, limit int) []patchChunkCan
 		if startLine > 0 && endLine >= startLine && startLine <= len(lines) {
 			snippet = append(snippet, lines[startLine-1:endLine]...)
 		}
-		candidates = append(candidates, patchChunkCandidate{
+		candidates = append(candidates, editTextCandidate{
 			StartLine: startLine,
 			EndLine:   endLine,
 			Snippet:   snippet,
@@ -1553,4 +1597,24 @@ func readEntryMatchesInfo(entry ReadFileEntry, info os.FileInfo) bool {
 func sha256Hex(content []byte) string {
 	sum := sha256.Sum256(content)
 	return hex.EncodeToString(sum[:])
+}
+
+func formatEditErrorLines(lines []string, startLine, limit int) string {
+	var b strings.Builder
+	omitted := 0
+	if len(lines) > limit {
+		omitted = len(lines) - limit
+		lines = lines[:limit]
+	}
+	for i, line := range lines {
+		if startLine > 0 {
+			fmt.Fprintf(&b, "  %d|%s\n", startLine+i, line)
+			continue
+		}
+		fmt.Fprintf(&b, "  |%s\n", line)
+	}
+	if omitted > 0 {
+		fmt.Fprintf(&b, "  ... %d more lines omitted\n", omitted)
+	}
+	return b.String()
 }

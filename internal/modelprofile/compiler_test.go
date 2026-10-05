@@ -37,17 +37,6 @@ func TestResolveProfileKey(t *testing.T) {
 func TestOpenAICodexSurface(t *testing.T) {
 	s := DefaultCompiler{}.Compile(Resolve("openai", "gpt-5-codex"), SurfaceMain)
 
-	// Editing primitive is apply_patch. edit_file and write_file
-	// must not be visible on this surface.
-	if tool, ok := s.ToolForCapability(capability.CapabilityFileEdit); !ok || tool != "apply_patch" {
-		t.Fatalf("Codex file.edit must map to apply_patch, got tool=%q ok=%v", tool, ok)
-	}
-	for _, hidden := range []string{"edit_file", "write_file"} {
-		if _, visible := s.Tools[hidden]; visible {
-			t.Fatalf("Codex surface must not advertise %s", hidden)
-		}
-	}
-
 	// Bash-first: bash is visible.
 	if _, ok := s.Tools["bash"]; !ok {
 		t.Fatalf("Codex surface must include bash as a visible tool")
@@ -65,7 +54,7 @@ func TestOpenAICodexSurface(t *testing.T) {
 		"read_file", "list_files",
 		"grep", "glob",
 		"web_search", "web_fetch",
-		"bash", "apply_patch",
+		"bash", "edit_file", "write_file",
 		"load_skill", "tool_search",
 	}
 	for _, name := range mustVisible {
@@ -86,39 +75,16 @@ func TestOpenAICodexSurface(t *testing.T) {
 	}
 }
 
-func TestOpenAIGPTSurfaceUsesApplyPatchForAllOpenAIModels(t *testing.T) {
-	for _, model := range []string{"gpt-5.5", "gpt-4.1-mini", "openai/gpt-oss-120b"} {
-		s := DefaultCompiler{}.Compile(Resolve("openai", model), SurfaceMain)
-		tool, ok := s.ToolForCapability(capability.CapabilityFileEdit)
-		if !ok {
-			t.Fatalf("%s: expected file.edit capability to be visible", model)
-		}
-		if tool != "apply_patch" {
-			t.Fatalf("%s: OpenAI GPT surface must use apply_patch, got %q", model, tool)
-		}
-		if _, hasEdit := s.Tools["edit_file"]; hasEdit {
-			t.Fatalf("%s: OpenAI GPT surface must not advertise edit_file", model)
-		}
-		if _, hasWrite := s.Tools["write_file"]; hasWrite {
-			t.Fatalf("%s: OpenAI GPT surface must not advertise write_file", model)
-		}
-	}
-}
-
 func TestAnthropicClaudeSurface(t *testing.T) {
 	s := DefaultCompiler{}.Compile(Resolve("anthropic", "claude-sonnet-4-5"), SurfaceMain)
 
 	// Editing primitive is edit_file (+ write_file as whole-file fallback).
-	// apply_patch is hidden, never visible.
 	tool, ok := s.ToolForCapability(capability.CapabilityFileEdit)
 	if !ok || tool != "edit_file" {
 		t.Fatalf("Claude file.edit must map to edit_file, got tool=%q ok=%v", tool, ok)
 	}
 	if _, has := s.Tools["write_file"]; !has {
 		t.Fatalf("Claude surface must include write_file")
-	}
-	if _, has := s.Tools["apply_patch"]; has {
-		t.Fatalf("Claude surface must not advertise apply_patch")
 	}
 
 	// Bash-first: bash is visible.
@@ -131,7 +97,7 @@ func TestAnthropicClaudeSurface(t *testing.T) {
 	if !hasCapability(s.DeferredCapabilities, capability.CapabilityMCP) {
 		t.Fatalf("Claude surface must defer mcp capability for tool_search-gated extensions, got caps=%v", s.DeferredCapabilities)
 	}
-	// The same direct core capabilities as Codex, minus apply_patch.
+	// The same direct core capabilities as Codex.
 	for _, name := range []string{
 		"read_file", "list_files", "grep", "glob",
 		"web_search", "web_fetch",

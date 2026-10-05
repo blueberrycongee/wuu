@@ -2429,11 +2429,24 @@ func TestServerConfigModelUpdateReconfiguresEditTools(t *testing.T) {
 		strings.Contains(thread.History[0].Content, "old fake-model system prompt") {
 		t.Fatalf("idle thread system prompt not replaced: %+v", thread.History)
 	}
-	if defs := toolDefinitionNames(thread.execRuntime.Toolkit.Definitions()); !defs["apply_patch"] || defs["edit_file"] || defs["write_file"] {
-		t.Fatalf("idle thread toolkit should switch to patch edit mode: %+v", defs)
+	if defs := toolDefinitionNames(thread.execRuntime.Toolkit.Definitions()); !defs["edit_file"] || !defs["write_file"] {
+		t.Fatalf("idle thread toolkit should retain shared editing tools: %+v", defs)
 	}
 	if thread.execRuntime.Toolkit.ActiveSurface().ProfileName == "" {
 		t.Fatal("idle thread toolkit should install active model surface")
+	}
+	if _, err := thread.execRuntime.Toolkit.Execute(context.Background(), providers.ToolCall{
+		Name: "write_file", Arguments: `{"path":"switched.txt","content":"before"}`,
+	}); err != nil {
+		t.Fatalf("write after model switch: %v", err)
+	}
+	if _, err := thread.execRuntime.Toolkit.Execute(context.Background(), providers.ToolCall{
+		Name: "edit_file", Arguments: `{"path":"switched.txt","old_text":"before","new_text":"after"}`,
+	}); err != nil {
+		t.Fatalf("edit after model switch: %v", err)
+	}
+	if data, err := os.ReadFile(filepath.Join(rt.RootDir, "switched.txt")); err != nil || string(data) != "after" {
+		t.Fatalf("model switch edit=%q err=%v", data, err)
 	}
 	persisted, err := loadChatMessages(rt.SessionDir, thread.ID)
 	if err != nil {

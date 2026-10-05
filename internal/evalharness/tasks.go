@@ -306,18 +306,19 @@ func Catalog() []Task {
 			Verify:        verifyGoTests,
 		},
 		{
-			ID:          "patch_review_risk",
-			Name:        "Record patch review risk for a multi-file fix",
-			Description: "Git-backed Go package where the agent must use one multi-file apply_patch and verify the resulting diff.",
+			ID:          "git_multi_file_edit",
+			Name:        "Edit multiple files and verify the diff",
+			Description: "Git-backed Go package where the agent must use targeted edits and verify the resulting diff.",
 			Prompt: "This workspace is a git repo. Use bash to run go test ./... and reproduce the failing pricing tests, then read the relevant pricing source files. " +
-				"Fix the behavior with a single apply_patch call that updates both pricing/subtotal.go and pricing/tax.go. Do not change tests. " +
+				"Use edit_file to fix pricing/subtotal.go and pricing/tax.go. Do not change tests. " +
 				"Use bash to verify go test ./... passes, then inspect the final git diff with bash before answering.",
-			RequiredTools: []string{"bash", "read_file", "apply_patch"},
+			RequiredTools: []string{"bash", "read_file", "edit_file"},
 			RequiredToolCalls: []ToolCallRequirement{
-				{ToolName: "apply_patch", ArgsContains: []string{"pricing/subtotal.go", "pricing/tax.go"}},
+				{ToolName: "edit_file", ArgsContains: []string{"pricing/subtotal.go"}},
+				{ToolName: "edit_file", ArgsContains: []string{"pricing/tax.go"}},
 			},
-			Setup:  setupPatchReviewRisk,
-			Verify: verifyPatchReviewRisk,
+			Setup:  setupGitMultiFileEdit,
+			Verify: verifyGitMultiFileEdit,
 		},
 		{
 			ID:            "long_process_output",
@@ -339,13 +340,13 @@ func Catalog() []Task {
 		},
 		{
 			ID:          "stale_read_guard",
-			Name:        "Recover from a stale file read",
-			Description: "Simulates an external file change after read_file; eval requires edit_file to reject the stale read before recovery.",
+			Name:        "Recover from a stale edit anchor",
+			Description: "Simulates an external file change after read_file; eval requires edit_file to reject the missing anchor before recovery.",
 			Prompt: "Read target.txt, then run ./mutate_after_read.sh to simulate an external edit. Next, try to use edit_file to change " +
-				"\"version: external\" to \"version: final\". If edit_file reports that the file changed since last read, read target.txt " +
-				"again and retry the edit. Finally write stale_read_result.txt containing STALE_READ_GUARD_DONE.",
+				"\"version: original\" to \"version: final\". If edit_file reports old_text_not_found, read target.txt " +
+				"again and retry with the current text. Finally write stale_read_result.txt containing STALE_READ_GUARD_DONE.",
 			RequiredTools:  []string{"read_file", "bash", "edit_file", "write_file"},
-			RequiredErrors: []ToolErrorRequirement{{ToolName: "edit_file", ErrorContains: "changed since last read"}},
+			RequiredErrors: []ToolErrorRequirement{{ToolName: "edit_file", ErrorContains: "old_text_not_found"}},
 			Setup:          setupStaleReadGuard,
 			Verify:         verifyStaleReadGuard,
 		},
@@ -493,7 +494,7 @@ func TestTotalWithTax(t *testing.T) {
 	return writeFiles(root, files)
 }
 
-func setupPatchReviewRisk(root string) error {
+func setupGitMultiFileEdit(root string) error {
 	if err := setupMultiFilePricing(root); err != nil {
 		return err
 	}
@@ -635,7 +636,7 @@ func verifyGitTestFailureFix(ctx context.Context, root, answer string) (Verifica
 	return passVerification("go tests passed and git diff only changes calc.go", evidence...), nil
 }
 
-func verifyPatchReviewRisk(ctx context.Context, root, answer string) (Verification, error) {
+func verifyGitMultiFileEdit(ctx context.Context, root, answer string) (Verification, error) {
 	testVerification, err := verifyGoTests(ctx, root, answer)
 	if err != nil {
 		return Verification{}, err

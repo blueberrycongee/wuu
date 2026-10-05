@@ -17,6 +17,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   coverage to the model, and include evidence after short headers in archived pages.
 - Carry validated working-note checkpoint references into fresh context windows
   so agents can resume without rediscovering their recovery notes.
+- Use `edit_file` and `write_file` across all built-in model profiles. Remove the
+  built-in `apply_patch` executor and its patch-and-command path; preserve
+  historical patch records and external Codex engine tools.
 
 - Deliver uploaded videos, PDFs, and ordinary files as seven-day original-byte
   working copies independently of native model support, and budget only the

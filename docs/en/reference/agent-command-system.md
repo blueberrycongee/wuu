@@ -60,24 +60,35 @@ Command classification helps with permission checks and scheduling, but is not t
 
 A denied write is not an invitation to retry through another shell command. Add an authorized workspace root or explicitly change the session mode when the task requires access outside its boundary. Wuu does not offer per-command approval prompts.
 
-## Apply a patch and validate it
+## Edit files and validate changes
 
-When the follow-up command is already known, `apply_patch` can run it after applying the complete patch:
+All built-in model profiles use `read_file` for file evidence, `edit_file` for targeted changes, and `write_file` for new files or complete rewrites. Switching models or starting a worker keeps these editing tools. Local models retain their existing restriction on command execution.
+
+After reading a file, call `edit_file` with text copied from the current contents:
 
 ```json
 {
-  "patchText": "*** Begin Patch\n*** Add File: example.txt\n+hello\n*** End Patch",
-  "then_run": {
-    "command": "test -f example.txt",
-    "timeout_seconds": 30,
-    "purpose": "Check the new file exists"
-  }
+  "path": "example.txt",
+  "old_text": "hello",
+  "new_text": "hello world"
 }
 ```
 
-`then_run` accepts `command`, `cwd`, `timeout_seconds`, `purpose`, and `scope`, with normal command permission checks and records. It cannot be combined with `dry_run`. A failed patch skips the command; a failed command leaves the successful patch in place. The combined result shows the model the patch outcome followed by the command's plain-text view. If validation moves to the background, wait for its actual terminal result before treating it as passed. Do not reapply the patch just to rerun validation.
+A missing or ambiguous match leaves the file unchanged and returns candidate locations for recovery. Read the relevant range and retry with enough exact context; use `replace_all=true` only when every occurrence should change. For a new file, call `write_file` with `path`, `content`, and optionally `create_only=true` to reject an existing target. Existing files larger than 32 KiB retain the overwrite policy requirement. Both editing tools retain path and permission checks and publish file changes with structured diffs.
 
-Each resolved path may belong to only one file section, including move sources and destinations. Aliases such as `a.txt` and `./a.txt` count as the same path. Combine multiple edits to one file in a single `Update File` section with several `@@` chunks. Conflicting paths fail validation before any writes or `then_run`, including in `dry_run` mode.
+Run validation separately with `bash` when command execution is available:
+
+```json
+{
+  "command": "test -f example.txt",
+  "timeout_seconds": 30,
+  "purpose": "Check the new file exists"
+}
+```
+
+A failed command leaves completed edits in place. If validation moves to the background, wait for its terminal result before treating it as passed. Retry validation without repeating successful edits.
+
+Wuu no longer executes the built-in `apply_patch` tool or its `dry_run` and `then_run` options. Historical patch records remain readable and visible when a conversation resumes; new edits use the tools above. Tools managed by the external Codex engine are unchanged.
 
 ## Logs and lifetime
 
