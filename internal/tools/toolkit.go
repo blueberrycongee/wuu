@@ -372,7 +372,7 @@ func (t *Toolkit) rebuildRegistry() {
 		// back to the full conversation via this tool).
 		NewThreadGetTool(e),
 		NewSetSessionWorkspaceTool(e),
-		NewNewContextTool(),
+		NewNewContextTool(e),
 		NewNotesTool(e),
 		NewHistoryReadTool(e),
 		NewHistorySearchTool(e),
@@ -1040,6 +1040,7 @@ func (t *Toolkit) ActiveSurface() capability.Surface {
 // activeProfileMu (read or write).
 func (t *Toolkit) exposedSurfaceLocked() capability.Surface {
 	surface := t.withDisabledToolsRemoved(t.withCodeModeSurface(cloneSurface(t.surfaceForToolLoadingMode(t.activeSurface))))
+	surface.SystemFragment += "\nTool results may be bounded views. Check ranges, omitted fields and continuation metadata before treating a result as complete; follow the returned cursor or artifact reference when the missing evidence matters. An omitted item is not evidence of absence."
 	if t.CodeModeOnly() {
 		// Keep lifecycle controls visible while moving ordinary capabilities into
 		// the nested surface. Both dispatch and discovery use the same metadata.
@@ -1065,6 +1066,7 @@ func (t *Toolkit) exposedSurfaceLocked() capability.Surface {
 			}
 		}
 		surface.SystemFragment += "\nPTC is the ordinary tool interface. Invoke the capabilities above through tools bindings inside run_code. Separately advertised interaction and lifecycle controls must be called directly. Use background process/task handles for long work; each program must await its own calls and cannot resume after it returns."
+		surface.SystemFragment += "\nInside PTC, use content or structured_content for filtering and computation, checking the producer's pagination; model_text is a display view, not the full data contract. Print the selected evidence or computed answer rather than entire result objects or media encodings. Forward a readable view when it is sufficient. Combined output is still bounded, so narrow or split unrelated large reads."
 
 	}
 	return surface

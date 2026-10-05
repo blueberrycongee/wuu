@@ -16,6 +16,13 @@ import (
 
 type Store struct{ Home string }
 
+// Checkpoint locates a note in the current session at a collection revision.
+// The revision covers all notes, so any intervening write requires a reread.
+type Checkpoint struct {
+	Path     string `json:"path"`
+	Revision string `json:"revision"`
+}
+
 func (s Store) path(sessionID string) (string, error) {
 	if strings.TrimSpace(s.Home) == "" || strings.TrimSpace(sessionID) == "" {
 		return "", errors.New("working notes require a Wuu home and session")

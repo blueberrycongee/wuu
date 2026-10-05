@@ -10,6 +10,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Preserve ordinary file and recovery views through PTC, explain bounded result
+  coverage to the model, and include evidence after short headers in archived pages.
+- Carry validated working-note checkpoint references into fresh context windows
+  so agents can resume without rediscovering their recovery notes.
+
 - Deliver uploaded videos, PDFs, and ordinary files as seven-day original-byte
   working copies independently of native model support, and budget only the
   projected input so attachments survive context recovery without Base64 inflation.

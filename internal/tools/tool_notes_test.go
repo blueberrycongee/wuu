@@ -84,6 +84,48 @@ func TestNotesSearchAndReadBoundedPages(t *testing.T) {
 	}
 }
 
+func TestNewContextValidatesCheckpointBeforeRequestingTransition(t *testing.T) {
+	t.Setenv("WUU_HOME", t.TempDir())
+	written, err := callNotes(t, "owner", map[string]any{"action": "write", "path": "work/checkpoint.md", "content": "Keep verified evidence at History Seq 41", "revision": ""})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, session, path, revision string
+		wantError                     bool
+	}{
+		{"current", "owner", "work/checkpoint.md", written["revision"].(string), false},
+		{"missing", "owner", "missing.md", written["revision"].(string), true},
+		{"stale", "owner", "work/checkpoint.md", "old-revision", true},
+		{"unversioned", "owner", "work/checkpoint.md", "", true},
+		{"other-session", "other", "work/checkpoint.md", written["revision"].(string), true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			kit, err := New(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			kit.SetSessionID(tc.session)
+			checkpoint := map[string]string{"path": tc.path, "revision": tc.revision}
+			args, _ := json.Marshal(map[string]any{"checkpoint": checkpoint})
+			result, err := kit.registry.Lookup("new_context").Execute(context.Background(), string(args))
+			if (err != nil) != tc.wantError {
+				t.Fatalf("result=%s err=%v", result, err)
+			}
+			if tc.wantError {
+				return
+			}
+			var signal struct {
+				Requested  bool              `json:"requested"`
+				Checkpoint map[string]string `json:"checkpoint"`
+			}
+			if err := json.Unmarshal([]byte(result), &signal); err != nil || !signal.Requested || signal.Checkpoint["path"] != tc.path || signal.Checkpoint["revision"] != tc.revision {
+				t.Fatalf("validated checkpoint not returned: %s %v", result, err)
+			}
+		})
+	}
+}
+
 func TestNotesRejectInvalidAndOversizedWrites(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("WUU_HOME", home)

@@ -101,7 +101,9 @@ func buildResultPage(envelope map[string]any, path string, data []byte, offset, 
 		return estimateResultTokens(build(keep))
 	})
 	if text && keep < len(data) {
-		if newline := strings.LastIndexByte(string(data[:keep]), '\n'); newline >= 0 {
+		// A short header before a long line must not consume the whole page.
+		// Keep line boundaries only when they use at least half the byte budget.
+		if newline := strings.LastIndexByte(string(data[:keep]), '\n'); newline >= 0 && newline+1 >= keep/2 {
 			keep = newline + 1
 		}
 	}

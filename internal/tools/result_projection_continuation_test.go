@@ -208,6 +208,24 @@ func TestGenericProjectionKeepsWholeLines(t *testing.T) {
 	}
 }
 
+func TestGenericProjectionDoesNotSpendFirstPageOnShortHeader(t *testing.T) {
+	text := "runtime diagnostic\n" + strings.Repeat("有效 evidence ", 5000)
+	out, ok := buildBoundedResultReference("/s/evidence.txt", text, false, defaultProjectionTokenBudget)
+	if !ok {
+		t.Fatal("first page did not fit")
+	}
+	page := parseOut(t, out)
+	head := page["content"].(string)
+	if !strings.Contains(head, "有效 evidence") || !strings.HasPrefix(text, head) {
+		t.Fatalf("diagnostic displaced all evidence: %q", head)
+	}
+	next := page["continuation"].(map[string]any)["next"].(map[string]any)
+	cursor, err := decodeReadFileContinuation(next["continuation"].(string))
+	if err != nil || cursor.ByteOffset == nil || *cursor.ByteOffset != len(head) {
+		t.Fatalf("page cut lost the exact recovery boundary: %+v %v", cursor, err)
+	}
+}
+
 func TestStructuredGenericProjectionHasSnapshotBoundByteContinuation(t *testing.T) {
 	raw := toolresult.Result{StructuredContent: json.RawMessage(`{"records":"` + strings.Repeat("one two three", 2000) + `"}`)}
 	contextual := raw.TextProjection()

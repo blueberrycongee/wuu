@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -67,12 +68,15 @@ func (s *contextSwitchStep) Execute(_ context.Context, req providers.ChatRequest
 	return StepResult{Content: "continued in fresh context", StopReason: "stop"}, nil
 }
 
-type contextSwitchTools struct{}
+type contextSwitchTools struct{ result string }
 
 func (contextSwitchTools) Definitions() []providers.ToolDefinition {
 	return []providers.ToolDefinition{{Name: newContextToolName, InputSchema: map[string]any{"type": "object"}}}
 }
-func (contextSwitchTools) Execute(_ context.Context, _ providers.ToolCall) (string, error) {
+func (t contextSwitchTools) Execute(_ context.Context, _ providers.ToolCall) (string, error) {
+	if t.result != "" {
+		return t.result, nil
+	}
 	return `{"requested":true}`, nil
 }
 
@@ -110,6 +114,47 @@ func TestRunToolLoopSwitchesOnlyAfterNewContextToolBatch(t *testing.T) {
 	}
 	if len(res.DurableNewMessages) != 1 || res.DurableNewMessages[0].Content != "continued in fresh context" {
 		t.Fatalf("pending durable messages = %+v", res.DurableNewMessages)
+	}
+}
+
+func TestRunToolLoopCarriesCheckpointReadArgumentsIntoFreshWindow(t *testing.T) {
+	for name, steering := range map[string]bool{"without_steering": false, "with_steering": true} {
+		t.Run(name, func(t *testing.T) {
+			history := fallbackHistory()
+			step := &contextSwitchStep{}
+			cfg := recoveryWindowConfig()
+			cfg.Tools = contextSwitchTools{result: `{"requested":true,"checkpoint":{"path":"work/current.md","revision":"saved-revision"}}`}
+			cfg.FreshContext = func(_ context.Context, messages []providers.ChatMessage, head, fixed, target int) ([]providers.ChatMessage, error) {
+				return buildFreshContext(messages, head, fixed, target)
+			}
+			cfg.BeforeStep = func() []providers.ChatMessage {
+				if steering && len(step.requests) == 1 {
+					return []providers.ChatMessage{{Role: "user", Content: "preserve the new constraint"}}
+				}
+				return nil
+			}
+			result, err := RunToolLoop(context.Background(), history, cfg, step)
+			if err != nil || !result.HistoryRewritten || len(step.requests) != 2 {
+				t.Fatalf("checkpoint transition: rewritten=%v requests=%d err=%v", result.HistoryRewritten, len(step.requests), err)
+			}
+			for _, message := range step.requests[1].Messages {
+				if message.Name != "wuu_context_checkpoint" {
+					continue
+				}
+				var recovery struct {
+					Tool      string            `json:"tool"`
+					Arguments map[string]string `json:"arguments"`
+				}
+				if err := json.Unmarshal([]byte(message.Content), &recovery); err != nil {
+					t.Fatal(err)
+				}
+				if recovery.Tool != "notes" || recovery.Arguments["action"] != "read" || recovery.Arguments["path"] != "work/current.md" || recovery.Arguments["revision"] != "saved-revision" {
+					t.Fatalf("checkpoint read lost its validated identity: %+v", recovery)
+				}
+				return
+			}
+			t.Fatal("fresh model request cannot directly locate its saved checkpoint")
+		})
 	}
 }
 

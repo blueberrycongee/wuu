@@ -197,6 +197,13 @@ print it. Every effect keeps its normal permission, hook, scheduling and audit
 path. Await writes and dependencies in order; use bounded parallel batches for
 independent reads.
 
+Use `content` or `structured_content` for filtering and computation, and check
+the producer's pagination. `model_text` is a display view that may omit fields
+or records; it is not a complete dataset. Print selected evidence or a computed
+answer rather than the whole result object or media encodings. When a readable
+view is sufficient, forward that view. Follow continuation metadata before
+concluding that something is absent.
+
 ### State and long-running work
 
 Every program starts a fresh isolated interpreter. `store(key, value)` stages a
@@ -280,6 +287,11 @@ For files using CRLF throughout, `edit_file` accepts LF excerpts copied from the
 Wuu keeps the original tool result and gives the model a stable, bounded view. Large ordinary text results show a continuous first page with a `read_file` continuation; following it reads the saved result without running the original tool again. Pages prefer complete lines and can split a long line without breaking Unicode characters. Continuations reject changed content rather than silently mixing versions. Images and other supported media retain their separate provider representation.
 
 Built-in views preserve useful structure: search pages keep whole records and snapshot cursors, and shell output prioritizes recent error evidence. Results are settled before the tool ledger records them, including extension results and execution errors, so later requests and replay keep the same view. Wuu does not cut these pages again to fit a batch-wide text limit; conversation capacity remains the responsibility of context management. Paging can require extra model requests, and Wuu retains the full result if it cannot safely save or page it. Smaller pages are not a guarantee of lower total cost.
+
+PTC output uses a budget at least as large as one file, recovery-read or command
+view, instead of the smaller list-result budget. Combined output can still be
+archived. If a short header precedes a long line, the first page includes part
+of that line rather than spending the page on the header alone.
 
 ## Check a failed connection
 

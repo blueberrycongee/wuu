@@ -75,6 +75,52 @@ func TestCodeModeReadFileProjectedContinuation(t *testing.T) {
 
 }
 
+func TestCodeModeForwardsOneReadView(t *testing.T) {
+	t.Setenv("WUU_TOOL_RESULT_PROJECTION", "active")
+	root := t.TempDir()
+	content := strings.Repeat("evidence to retain for the current task\n", 350) + "FINAL_EVIDENCE\n"
+	require.NoError(t, os.WriteFile(filepath.Join(root, "evidence.txt"), []byte(content), 0600))
+	kit, err := tools.New(root)
+	require.NoError(t, err)
+	kit.SetSessionID("read-view")
+	kit.SetWorkingNotesHome(t.TempDir())
+	kit.SetSessionDir(t.TempDir())
+	kit.SetBoundary(tools.UnconfinedBoundary())
+	kit.ConfigureSurfaceForProviderModel("openai", "gpt-5", true)
+	service := codemode.NewService(codemode.ServiceConfig{})
+	defer service.Close()
+	kit.ConfigurePTC(service, config.PTCConfig{Enabled: true})
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	runtime := agent.NewTurnToolRuntime(agent.ToolRuntimeConfig{Executor: kit, RunContext: ctx, Gate: agent.NewToolExecutionGate(1)})
+	defer runtime.Cancel()
+	for _, name := range []string{"file", "checkpoint"} {
+		t.Run(name, func(t *testing.T) {
+			source := `const r = await tools.read_file({path: "evidence.txt"}); console.log(r.model_text);`
+			if name == "checkpoint" {
+				encoded, err := json.Marshal(content)
+				require.NoError(t, err)
+				source = `await tools.notes({action: "write", path: "checkpoint", revision: "", content: ` + string(encoded) + `});
+const r = await tools.notes({action: "read", path: "checkpoint", limit: 16000}); console.log(r.model_text);`
+			}
+			args, err := json.Marshal(map[string]any{"code": source, "description": "Forward one read view"})
+			require.NoError(t, err)
+			messages, err := runtime.ExecuteFinalCalls(ctx, []providers.ToolCall{{ID: name, Name: "run_code", Arguments: string(args)}}, nil)
+			require.NoError(t, err)
+			require.Len(t, messages, 1)
+			require.False(t, messages[0].ToolResult.IsError, messages[0].Content)
+			view := providers.ProjectToolMessage(messages[0]).ToolText
+			var page struct {
+				Content string `json:"content"`
+				Kind    string `json:"kind"`
+			}
+			require.NoError(t, json.Unmarshal([]byte(view), &page))
+			require.Empty(t, page.Kind, "a single read view was archived again")
+			require.Contains(t, page.Content, "FINAL_EVIDENCE")
+		})
+	}
+}
+
 func TestCodeModeReadFileImage(t *testing.T) {
 	root := t.TempDir()
 	var pngBytes bytes.Buffer
