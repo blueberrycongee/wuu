@@ -66,6 +66,77 @@ func collectReliableEvents(t *testing.T, ch <-chan StreamEvent) []StreamEvent {
 	return events
 }
 
+// Detect runaway JSON formatting across chunks, without treating whitespace in
+// file contents or escaped quotes as formatting and without replaying the call.
+func TestReliableStreamStopsRunawayToolArgumentWhitespace(t *testing.T) {
+	for _, terminalOnly := range []bool{false, true} {
+		prefix := `{"code":"return 1;"`
+		events := []StreamEvent{{Type: EventToolUseStart, ToolCall: &ToolCall{ID: "call-1", Name: "run_code"}}}
+		if !terminalOnly {
+			events = append(events, StreamEvent{Type: EventToolUseDelta, Content: prefix})
+			for i := 0; i < 32; i++ {
+				events = append(events, StreamEvent{Type: EventToolUseDelta, Content: strings.Repeat(" \n\t ", 256)})
+			}
+		}
+		events = append(events, StreamEvent{Type: EventToolUseEnd, ToolCall: &ToolCall{ID: "call-1", Name: "run_code", Arguments: prefix + strings.Repeat(" \n\t ", 8192)}}, StreamEvent{Type: EventDone})
+		inner := &reliableStreamMockClient{attempts: []reliableStreamAttempt{{events: events}}}
+		admittedEnd := false
+		client := newReliableTestClient(inner, nil, WithStreamEventObserver(func(_ context.Context, event StreamEvent) error {
+			admittedEnd = admittedEnd || event.Type == EventToolUseEnd
+			return nil
+		}))
+		ch, err := client.StreamChat(context.Background(), reliableTestRequest())
+		if err != nil {
+			t.Fatal(err)
+		}
+		observed := collectReliableEvents(t, ch)
+		var failure error
+		for _, ev := range observed {
+			if ev.Type == EventError {
+				failure = ev.Error
+			}
+		}
+		if failure == nil || NormalizeFailure(failure).Category != FailureResponseTooLarge || inner.callCount != 1 || admittedEnd {
+			t.Fatalf("runaway arguments accepted or replayed: err=%v calls=%d admitted=%v", failure, inner.callCount, admittedEnd)
+		}
+	}
+}
+
+func TestReliableStreamAllowsToolDataAndResetsFormattingBudget(t *testing.T) {
+	cases := [][]StreamEvent{
+		{{Type: EventToolUseStart, ToolCall: &ToolCall{ID: "one", Name: "write_file"}},
+			{Type: EventToolUseDelta, Content: `{"content":"escaped quote: \`},
+			{Type: EventToolUseDelta, Content: `"` + strings.Repeat(" ", 32768) + `"}`}},
+		{{Type: EventToolUseStart, ToolCall: &ToolCall{ID: "one", Name: "read_file"}},
+			{Type: EventToolUseDelta, Content: "{\n" + strings.Repeat(" ", 12000)},
+			{Type: EventToolUseEnd, ToolCall: &ToolCall{ID: "one", Name: "read_file", Arguments: `{"path":"a"}`}},
+			{Type: EventToolUseStart, ToolCall: &ToolCall{ID: "two", Name: "read_file"}},
+			{Type: EventToolUseDelta, Content: "{\n" + strings.Repeat(" ", 12000)},
+			{Type: EventToolUseEnd, ToolCall: &ToolCall{ID: "two", Name: "read_file", Arguments: `{"path":"b"}`}}},
+		{{Type: EventContentDelta, Content: strings.Repeat(" ", 32768)}},
+		// Providers may interleave calls without identifying delta owners. Only
+		// completed arguments can be checked safely in that case.
+		{{Type: EventToolUseStart, ToolCall: &ToolCall{ID: "one", Name: "write_file"}},
+			{Type: EventToolUseDelta, Content: `{"content":"`},
+			{Type: EventToolUseStart, ToolCall: &ToolCall{ID: "two", Name: "read_file"}},
+			{Type: EventToolUseDelta, Content: strings.Repeat(" ", 32768)},
+			{Type: EventToolUseEnd, ToolCall: &ToolCall{ID: "one", Name: "write_file", Arguments: `{"content":"` + strings.Repeat(" ", 32768) + `"}`}},
+			{Type: EventToolUseEnd, ToolCall: &ToolCall{ID: "two", Name: "read_file", Arguments: `{"path":"b"}`}}},
+	}
+	for _, events := range cases {
+		events = append(events, StreamEvent{Type: EventDone})
+		inner := &reliableStreamMockClient{attempts: []reliableStreamAttempt{{events: events}}}
+		ch, err := newReliableTestClient(inner, nil).StreamChat(context.Background(), reliableTestRequest())
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := nonLifecycleEvents(collectReliableEvents(t, ch))
+		if len(got) != len(events) || got[len(got)-1].Type != EventDone {
+			t.Fatalf("valid data was blocked: %+v", got)
+		}
+	}
+}
+
 func eventTypes(events []StreamEvent) []StreamEventType {
 	out := make([]StreamEventType, 0, len(events))
 	for _, ev := range events {

@@ -210,6 +210,12 @@ fields, copied objects and values restored with `load` are ordinary JSON data;
 select their display view when printing them. Follow continuation metadata before
 concluding that something is absent.
 
+During generation, Wuu stops tool arguments containing more than 16 KiB of
+consecutive JSON formatting whitespace outside string values. The affected call
+is not admitted and the request is not automatically replayed. Whitespace inside
+file contents or other string arguments is preserved. Interleaved calls whose
+increments do not identify their owner are checked when their arguments finish.
+
 ### State and long-running work
 
 Every program starts a fresh isolated interpreter. `store(key, value)` stages a

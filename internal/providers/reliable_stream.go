@@ -310,6 +310,7 @@ func (r *ReliableStreamClient) forwardAttempt(
 	var forwardedEvents int
 	var finalizedToolCalls []ToolCall
 	connected := false
+	var argumentWhitespace toolArgumentWhitespace
 	for {
 		var ev StreamEvent
 		var ok bool
@@ -323,6 +324,9 @@ func (r *ReliableStreamClient) forwardAttempt(
 		}
 		if !ok {
 			return streamErr, sawDone, forwardedEvents, finalizedToolCalls
+		}
+		if err := argumentWhitespace.observe(ev); err != nil {
+			return err, sawDone, forwardedEvents, finalizedToolCalls
 		}
 		if err := attempt.ObserveStreamEvent(ev); err != nil {
 			return err, sawDone, forwardedEvents, finalizedToolCalls
