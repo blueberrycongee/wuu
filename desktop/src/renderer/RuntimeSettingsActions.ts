@@ -195,7 +195,10 @@ export function createRuntimeSettingsActions(
     const currentProvider = state.initialized.providers?.find(
       (item) => item.name === nextProvider,
     );
+    // A settings connection save also refreshes credentials and models changed
+    // by a preceding sign-in request, even when the selection stays the same.
     const connectionChanged =
+      (scope === "workspace" && connection !== undefined) ||
       Boolean(nextConnection?.remove_model) ||
       Boolean(nextConnection?.add_model) ||
       Boolean(nextConnection?.create_provider) ||

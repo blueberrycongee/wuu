@@ -217,6 +217,18 @@ function buildActions({
 }
 
 describe("createRuntimeSettingsActions", () => {
+
+  it("refreshes an explicit connection save after sign-in without changing the selected model", async () => {
+    const api = installWuuApi();
+    const harness = buildActions();
+    const providers = [{ name: "codex", type: "chatgpt-codex", model: "gpt-5", api_key_configured: true,
+      models: [{ id: "gpt-5" }, { id: "subscription-model" }] }];
+    api.updateRuntimeSettings.mockResolvedValue({ provider: "codex", model: "gpt-5", providers });
+    await harness.actions.updateProviderSettings("codex", "gpt-5", undefined, { keep_selection: true });
+    expect(api.updateRuntimeSettings).toHaveBeenCalled();
+    expect(harness.getAppState().initialized?.providers).toEqual(providers);
+    expect(harness.getAppState().initialized?.model).toBe("gpt-5");
+  });
   const settingsOperations = [
     {
       name: "provider defaults",
