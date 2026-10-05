@@ -830,6 +830,36 @@ func TestApplyGeneralConfigRefreshesPromptAndGitAttribution(t *testing.T) {
 	}
 }
 
+func TestSessionDisabledSkillsStayDisabledAcrossRoots(t *testing.T) {
+	root, home := t.TempDir(), t.TempDir()
+	t.Setenv("WUU_HOME", filepath.Join(home, "state"))
+	t.Setenv("TEST_WUU_KEY", "abc")
+	writeSessionTestFile(t, filepath.Join(root, ".agents", "skills", "fixture", "SKILL.md"), "---\nname: fixture\ndescription: Fixture skill\n---\nPRIVATE_SKILL_CONTENT")
+	writeSessionTestFile(t, filepath.Join(home, ".codex", "skills", "user-fixture", "SKILL.md"), "---\nname: user-fixture\ndescription: User fixture\n---\nPRIVATE_USER_SKILL")
+	var cfg config.Config
+	if err := json.Unmarshal([]byte(`{"default_provider":"test","providers":{"test":{"type":"openai-compatible","base_url":"https://example.test/v1","api_key_env":"TEST_WUU_KEY","model":"gpt-test"}},"skills":{"enabled":false}}`), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	rt, err := NewSession(Options{RootDir: root, HomeDir: home, Config: cfg, SafeMode: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rt.Cleanup()
+	if len(rt.Skills) != 0 {
+		t.Fatalf("disabled skills discovered: %d", len(rt.Skills))
+	}
+	for _, checkout := range []string{root, t.TempDir()} {
+		_, discovered := rt.guidanceForRoot(checkout, nil)
+		if len(discovered) != 0 {
+			t.Fatalf("disabled skills reappeared at %s: %d", checkout, len(discovered))
+		}
+	}
+	_, err = rt.Toolkit.Execute(context.Background(), providers.ToolCall{Name: "load_skill", Arguments: `{"name":"fixture"}`})
+	if err == nil {
+		t.Fatal("disabled skill remained callable")
+	}
+}
+
 func TestNewSessionDiscoversPluginSkills(t *testing.T) {
 	root := t.TempDir()
 	home := t.TempDir()

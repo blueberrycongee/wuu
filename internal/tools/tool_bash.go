@@ -10,6 +10,7 @@ import (
 
 	proc "github.com/blueberrycongee/wuu/internal/process"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
 
 // BashTool is the only model-facing way to start a command on the Codex /
@@ -71,6 +72,7 @@ func (t *BashTool) Definition() providers.ToolDefinition {
 		Name: "bash",
 		Description: "Run a bash command in the workspace: tests, builds, lint, git, package managers, scripts. " +
 			"Returns stdout and stderr (head and tail of long output, with the full log path), plus the exit code when it is not 0. " +
+			"For Code Mode, structured_content exposes stdout, stderr (up to 64 KiB per stream), exit_code, timed_out, stdout_truncated, stderr_truncated and full_log_ref for recovery. Select fields in JS before emitting. " +
 			"Each call starts a fresh shell; state does not persist between calls. " +
 			"Commands must not wait for input. A command that exceeds its timeout keeps running in the background and its completion starts a new turn; do not rerun it. " +
 			"Set run_in_background for servers, watchers, and other long-lived commands instead of appending '&'; " +
@@ -111,15 +113,21 @@ func (t *BashTool) Definition() providers.ToolDefinition {
 }
 
 func (t *BashTool) Execute(ctx context.Context, argsJSON string) (string, error) {
+	result, err := t.ExecuteResult(ctx, argsJSON)
+	return result.TextProjection(), err
+}
+
+func (t *BashTool) ExecuteResult(ctx context.Context, argsJSON string) (toolresult.Result, error) {
 	var args bashArgs
 	if err := decodeArgs(argsJSON, &args); err != nil {
-		return "", err
+		return toolresult.Result{}, err
 	}
 	if err := args.validate(); err != nil {
-		return "", err
+		return toolresult.Result{}, err
 	}
 	if args.RunInBackground {
-		return t.executeStartBackground(ctx, args)
+		text, err := t.executeStartBackground(ctx, args)
+		return toolresult.FromText(text), err
 	}
 	return t.executeRun(ctx, args)
 }
@@ -223,21 +231,21 @@ type bashVerificationResult struct {
 	NextSuggestions   []string           `json:"next_suggestions,omitempty"`
 }
 
-func (t *BashTool) executeRun(ctx context.Context, args bashArgs) (string, error) {
+func (t *BashTool) executeRun(ctx context.Context, args bashArgs) (toolresult.Result, error) {
 	if len(args.Command) == 0 || len(bytes.TrimSpace([]byte(args.Command))) == 0 {
-		return "", errors.New("bash requires command")
+		return toolresult.Result{}, errors.New("bash requires command")
 	}
 	command := strings.TrimSpace(args.Command)
 	runCWD, err := resolveShellWorkingDir(ctx, t.env, args.CWD)
 	if err != nil {
-		return "", err
+		return toolresult.Result{}, err
 	}
 	verification := bashCommandLooksLikeVerification(command)
 	resolved := resolvedRunTestCommand{Requested: command, Command: command}
 	if verification {
 		resolved, err = resolveRunTestCommand(runCWD, command)
 		if err != nil {
-			return "", err
+			return toolresult.Result{}, err
 		}
 		command = resolved.Command
 	}
@@ -254,7 +262,7 @@ func (t *BashTool) executeRun(ctx context.Context, args bashArgs) (string, error
 	commandHash := sha256Hex([]byte(command))
 	result, err := executeShellCommandInDir(ctx, t.env, command, timeout, runCWD)
 	if err != nil {
-		return "", err
+		return toolresult.Result{}, err
 	}
 	result.Purpose = t.env.RedactToolOutput(args.Purpose)
 	fullLogRef, fullLogBytes, fullLogSections, fullLogSHA256, fullLogErr := persistShellLog(t.env.SessionDir, result)
@@ -274,7 +282,20 @@ func (t *BashTool) executeRun(ctx context.Context, args bashArgs) (string, error
 			result.ResolvedCommand = result.Command
 		}
 	}
-	return mustJSON(result)
+	// These are transport bounds, independent of the much smaller display
+	// excerpts. Two maximally JSON-escaped streams still fit the 1 MiB data
+	// contract; larger output remains recoverable from the redacted full log.
+	const streamDataBytes = 64 * 1024
+	stdout, stdoutTruncated := truncate(result.redactedStdout, streamDataBytes)
+	stderr, stderrTruncated := truncate(result.redactedStderr, streamDataBytes)
+	return toolResultWithData(result, map[string]any{
+		"exit_code": result.ExitCode, "timed_out": result.TimedOut,
+		"stdout": stdout, "stderr": stderr,
+		"stdout_truncated": stdoutTruncated, "stderr_truncated": stderrTruncated,
+		"full_log_ref": result.FullLogRef, "full_log_sha256": result.FullLogSHA256,
+		"full_log_sections":   result.FullLogSections,
+		"promoted_process_id": result.PromotedProcessID,
+	})
 }
 
 func bashCommandLooksLikeVerification(command string) bool {

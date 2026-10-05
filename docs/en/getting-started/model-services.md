@@ -179,7 +179,7 @@ bindings retain their exact names, permissions and model-family edit primitives.
 
 ### Discover, execute and inspect results
 
-Call `run_code` with `code` and optional `description` and `timeout_ms`.
+Call `run_code` with `code` and optional `description`, `timeout_ms`, and `max_output_tokens`.
 The description is display metadata; omitting it does not prevent execution.
 Its description contains a bounded catalog preview. `await searchTools(query,
 {limit: 8, offset: 0})` returns `tools`, `total` and optional `next_offset`; an
@@ -210,6 +210,30 @@ file. Computation and `store` still receive the complete result. Explicitly sele
 fields, copied objects and values restored with `load` are ordinary JSON data;
 select their display view when printing them. Follow continuation metadata before
 concluding that something is absent.
+
+For text-file reads, `structured_content.text` preserves the selected source's
+line endings without display line markers, including on unchanged rereads.
+Foreground bash results expose `structured_content.stdout`, `stderr`, `exit_code`
+and `timed_out`. Each stream holds up to 64 KiB, independently of its smaller
+display excerpt; check `stdout_truncated` / `stderr_truncated` and use
+`full_log_ref` to recover larger redacted output. These are transport bounds,
+not a requirement to print everything. For example:
+
+```javascript
+const r = await tools.read_file({path: "package.json"});
+const pkg = JSON.parse(r.structured_content.text);
+text({name: pkg.name, scripts: pkg.scripts});
+```
+
+`max_output_tokens` chooses an estimated budget for this program's emitted text,
+from 1024 to 32768 tokens (default 8192). It does not change intermediate data or
+rewrite earlier observations. Prefer selecting fields, ranges or aggregates in
+JS; excess emitted text is saved with a recovery cursor. State checkpoints can
+keep data for later computation without appending it to the model conversation.
+
+For sessions that must run without skills, set `"skills": {"enabled": false}`
+in the runtime configuration before starting the session. This disables bundled,
+user, project and plugin skill discovery, including in other execution roots.
 
 During generation, Wuu stops tool arguments containing more than 16 KiB of
 consecutive JSON formatting whitespace outside string values. The affected call
@@ -301,8 +325,8 @@ Wuu keeps the original tool result and gives the model a stable, bounded view. L
 
 Built-in views preserve useful structure: search pages keep whole records and snapshot cursors, and shell output prioritizes recent error evidence. Results are settled before the tool ledger records them, including extension results and execution errors, so later requests and replay keep the same view. Wuu does not cut these pages again to fit a batch-wide text limit; conversation capacity remains the responsibility of context management. Paging can require extra model requests, and Wuu retains the full result if it cannot safely save or page it. Smaller pages are not a guarantee of lower total cost.
 
-PTC output uses a budget at least as large as one file, recovery-read or command
-view, instead of the smaller list-result budget. Combined output can still be
+The default PTC output budget fits one file, recovery-read or command view.
+An explicit `max_output_tokens` changes only the current program. Combined output can still be
 archived. If a short header precedes a long line, the first page includes part
 of that line rather than spending the page on the header alone.
 

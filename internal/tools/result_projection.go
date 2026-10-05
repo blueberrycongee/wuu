@@ -3,6 +3,7 @@ package tools
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"os"
 	"strings"
 
@@ -48,7 +49,7 @@ const (
 	// projectorVersion is recorded in diagnostics so telemetry can attribute a
 	// projected result to the exact projector revision that produced it. Bump
 	// on any change that alters projected bytes for the same input.
-	projectorVersion = "9"
+	projectorVersion = "10"
 )
 
 // commandViewRenderers render the plain-text model view of command tools.
@@ -238,7 +239,15 @@ func (t *Toolkit) finalizeToolResult(call providers.ToolCall, result toolresult.
 	var diagnostic *ProjectionDiagnostics
 	mode := t.env.toolResultProjectionMode()
 	budget := projectionTokenBudget(call.Name)
-	if result.IsTextOnly() && mode != projectionModeOff && builtInProjectionAllowlist[call.Name] {
+	if call.Name == codeModeExecToolName {
+		var args struct {
+			MaxOutputTokens int `json:"max_output_tokens"`
+		}
+		if json.Unmarshal([]byte(call.Arguments), &args) == nil && args.MaxOutputTokens >= minCodeModeOutputTokens && args.MaxOutputTokens <= maxCodeModeOutputTokens {
+			budget = args.MaxOutputTokens
+		}
+	}
+	if builtInProjectionText(result) && mode != projectionModeOff && builtInProjectionAllowlist[call.Name] {
 		stable, diag := finalizeBuiltInToolResult(t.env.SessionDir, call.Name, call.ID, result, budget)
 		diagnostic = &diag
 		if mode == projectionModeActive && diag.Applied {
@@ -248,8 +257,22 @@ func (t *Toolkit) finalizeToolResult(call providers.ToolCall, result toolresult.
 			return stable, diag.ArtifactRef, budgeted, diagnostic
 		}
 	}
-	settled, ref, paged := finalizeGenericToolResult(t.env.SessionDir, call.ID, result, budget)
+	input := result
+	if builtInProjectionText(result) && builtInProjectionAllowlist[call.Name] {
+		// The built-in text envelope is the complete display contract. A generic
+		// structured index would duplicate source excerpts (including on small
+		// results and in shadow/off mode).
+		input.StructuredContent = nil
+	}
+	settled, ref, paged := finalizeGenericToolResult(t.env.SessionDir, call.ID, input, budget)
+	settled.StructuredContent = result.StructuredContent
 	return settled, ref, paged, diagnostic
+}
+
+// Structured tool data is private to programmatic callers; rendering the text
+// view must not discard it or make it part of the conversation budget.
+func builtInProjectionText(result toolresult.Result) bool {
+	return len(result.Content) == 1 && result.Content[0].Type == toolresult.ContentTypeText && len(result.Meta) == 0 && result.Activity == nil
 }
 
 // projectionHash returns a stable content hash of projected text so telemetry
@@ -307,7 +330,7 @@ func finalizeBuiltInToolResult(sessionDir, toolName, callID string, raw toolresu
 	diag.ProjectedTokens = diag.OriginalTokens
 	diag.ProjectionHash = diag.OriginalHash
 
-	if raw.ModelText != nil || !builtInProjectionAllowlist[toolName] || !raw.IsTextOnly() {
+	if raw.ModelText != nil || !builtInProjectionAllowlist[toolName] || !builtInProjectionText(raw) {
 		diag.Reason = reasonNotEligible
 		return raw, diag
 	}

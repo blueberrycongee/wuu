@@ -124,7 +124,7 @@ await tools.read_file({path: "screenshots/settings.png"});
 
 ### 发现、执行与结果
 
-调用 `run_code` 时提供 `code`，可选提供 `description` 和 `timeout_ms`。
+调用 `run_code` 时提供 `code`，可选提供 `description`、`timeout_ms` 和 `max_output_tokens`。
 `description` 是展示元数据，省略它不会阻止执行。
 入口说明只包含有界目录预览。`await searchTools(query, {limit: 8, offset: 0})`
 返回 `tools`、`total` 和可选的 `next_offset`；空查询可分页查看全部绑定。
@@ -149,6 +149,27 @@ await tools.read_file({path: "screenshots/settings.png"});
 计算和 `store` 仍能获取完整结果。显式选出的字段、复制的对象及 `load` 恢复的值
 属于普通 JSON 数据；打印时应自行选择展示视图。在判断某项不存在之前，
 先检查并续读工具返回的后续页。
+
+读取文本文件时，`structured_content.text` 保留选中源码的换行格式，不带展示行号；
+重复读取未变化的文件时也能获取。前台 bash 结果通过 `structured_content` 提供
+`stdout`、`stderr`、`exit_code` 和 `timed_out`。每个输出流最多携带 64 KiB，
+独立于更小的展示摘录；检查 `stdout_truncated` / `stderr_truncated`，通过
+`full_log_ref` 恢复更大的已脱敏输出。这是传输边界，不意味着需要全部打印。例如：
+
+```javascript
+const r = await tools.read_file({path: "package.json"});
+const pkg = JSON.parse(r.structured_content.text);
+text({name: pkg.name, scripts: pkg.scripts});
+```
+
+`max_output_tokens` 选择本次程序输出文本的估算预算，范围为 1024–32768 token，
+默认 8192。它不改变中间数据，也不改写旧观察结果。优先在 JS 中选择字段、范围
+或聚合结果；超出的输出保存为可用游标恢复的归档。检查点可以保留后续计算所需的
+数据，而不把它追加进模型上下文。
+
+需要禁用技能时，在启动会话前设置运行配置 `"skills": {"enabled": false}`。
+这会关闭内置、用户、项目和插件技能发现，也适用于其他执行目录。
+
 
 生成工具参数时，如果 JSON 字符串之外连续出现超过 16 KiB 的格式空白，Wuu
 会中止生成，不接受该次工具调用，也不自动重放请求。文件内容或其他字符串参数
@@ -224,7 +245,8 @@ Wuu 保留原始工具结果，并向模型提供稳定、有限的视图。普�
 
 内置工具的视图保留有用的结构：搜索分页保留完整记录和快照游标，命令输出优先展示最近的错误证据。工具账本记录结果前就会固定视图，扩展结果和执行错误也走这条路径，因此后续请求和重放看到的视图保持一致。Wuu 不再为了整批文本限额二次切断这些页面；对话容量仍由上下文管理处理。分页可能增加模型请求次数；无法安全保存或分页时，Wuu 保留完整结果。页面更小并不保证总费用更低。
 
-PTC 输出预算至少与一次文件、恢复读取或命令视图的预算相同，不再套用较小的
+PTC 默认输出预算能够容纳一次文件、恢复读取或命令视图。显式的
+`max_output_tokens` 只改变本次程序的预算，不再固定使用较小的
 列表结果预算；合并输出仍可能归档。短标题后接超长单行时，首页会包含长行的
 一部分，不再让短标题独占整页。
 

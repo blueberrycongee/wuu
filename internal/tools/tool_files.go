@@ -35,7 +35,7 @@ func (t *ReadFileTool) IsConcurrencySafe() bool { return true }
 func (t *ReadFileTool) Definition() providers.ToolDefinition {
 	return providers.ToolDefinition{
 		Name:        "read_file",
-		Description: "Read a local text file or inspect a PNG, JPEG, static GIF, or WebP image. Images are returned as visual content for image-capable models, with large dimensions resized. SVG is read as text. Text files return a continuous range: the first displayed line and every absolute line divisible by 10 use NUMBER|CONTENT; other lines use |CONTENT. The optional number and first | are display metadata; copy only CONTENT when editing, preserving its indentation. Use offset and limit for focused reads. If projected, pass continuation.next as the next call arguments to read the rest of the requested range. Results include displayed range, omitted ranges, and workspace_revision. Use list_files for directories.",
+		Description: "Read a local text file or inspect a PNG, JPEG, static GIF, or WebP image. Images are returned as visual content for image-capable models, with large dimensions resized. SVG is read as text. Text files return a continuous range: the first displayed line and every absolute line divisible by 10 use NUMBER|CONTENT; other lines use |CONTENT. The optional number and first | are display metadata; copy only CONTENT when editing, preserving its indentation. For Code Mode, structured_content.text contains the selected source without line markers, preserving line endings; it remains available on unchanged rereads. Use offset and limit for focused reads. If projected, pass continuation.next as the next call arguments to read the rest of the requested range. Results include displayed range, omitted ranges, and workspace_revision. Use list_files for directories.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -228,6 +228,14 @@ func (t *ReadFileTool) ExecuteResult(ctx context.Context, argsJSON string) (tool
 	if expected := strings.TrimSpace(args.ExpectedSHA256); expected != "" && expected != contentHash {
 		return toolresult.Result{}, fmt.Errorf("read_file continuation is stale: file content changed from %q to %q; restart without expected_sha256", expected, contentHash)
 	}
+	data := map[string]any{
+		"text":           redactSensitiveReadContent(t.env, resolved, readResult.Text),
+		"path":           displayPath,
+		"content_sha256": contentHash,
+		"start_line":     args.Offset,
+		"num_lines":      len(readResult.Lines),
+		"total_lines":    readResult.TotalLines,
+	}
 
 	// Dedup check: same file, same range, same content → return stub.
 	if entry, ok := t.env.GetReadEntry(resolved); ok {
@@ -247,8 +255,7 @@ func (t *ReadFileTool) ExecuteResult(ctx context.Context, argsJSON string) (tool
 					"message":            "File unchanged since last read. Refer to the earlier read result.",
 					"next_suggestions":   []string{"use the earlier read result as evidence, or request a different offset/limit if more context is needed"},
 				}
-				text, err := mustJSON(result)
-				return toolresult.FromText(text), err
+				return toolResultWithData(result, data)
 			}
 		}
 	}
@@ -288,8 +295,7 @@ func (t *ReadFileTool) ExecuteResult(ctx context.Context, argsJSON string) (tool
 		"truncated":          args.Offset <= readResult.TotalLines && args.Offset-1+len(readResult.Lines) < readResult.TotalLines,
 		"next_suggestions":   readFileNextSuggestions(readResult.TotalLines, args.Offset, len(readResult.Lines)),
 	}
-	text, err := mustJSON(result)
-	return toolresult.FromText(text), err
+	return toolResultWithData(result, data)
 }
 
 const (
@@ -653,6 +659,7 @@ func readFileNextSuggestions(totalLines, offset, lineCount int) []string {
 
 type readFileLineRangeResult struct {
 	Lines         []string
+	Text          string
 	TotalLines    int
 	ContentSHA256 string
 }
@@ -673,6 +680,7 @@ func readFileLineRange(path string, offset, limit, maxSelectedBytes int) (readFi
 	currentLine := 1
 	selected := make([]string, 0, min(limit, 128))
 	var line strings.Builder
+	var raw strings.Builder
 	selectedBytes := 0
 
 	appendSelected := func(fragment []byte) error {
@@ -716,6 +724,7 @@ func readFileLineRange(path string, offset, limit, maxSelectedBytes int) (readFi
 			if err := appendSelected(lineFragment); err != nil {
 				return readFileLineRangeResult{}, err
 			}
+			raw.Write(fragment)
 		}
 
 		if completeLine {
@@ -741,6 +750,7 @@ func readFileLineRange(path string, offset, limit, maxSelectedBytes int) (readFi
 	}
 	return readFileLineRangeResult{
 		Lines:         selected,
+		Text:          raw.String(),
 		TotalLines:    currentLine - 1,
 		ContentSHA256: contentSHA,
 	}, nil

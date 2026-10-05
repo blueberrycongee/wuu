@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"os"
@@ -195,6 +196,8 @@ func TestBashViewModesAndEligibility(t *testing.T) {
 	raw := toolresult.FromText(`{"action":"run","exit_code":0,"duration_ms":5,"output":"ok\nwarning\n","stdout_tail":"ok\n","stderr_tail":"warning\n","stdout_tail_truncated":false,"stderr_tail_truncated":false}`)
 	for _, mode := range []string{"off", "shadow", "active"} {
 		t.Run(mode, func(t *testing.T) {
+			raw := raw.Clone()
+			raw.StructuredContent = json.RawMessage(`{"stdout":"private program data"}`)
 			kit := &Toolkit{env: &Env{ToolResultProjectionMode: mode}}
 			got, _, budgeted, diag := kit.finalizeToolResult(providers.ToolCall{Name: "bash"}, raw)
 			if mode == "off" {
@@ -211,6 +214,9 @@ func TestBashViewModesAndEligibility(t *testing.T) {
 			if budgeted {
 				t.Fatal("a complete view must not advertise omitted evidence")
 			}
+			if !bytes.Equal(got.StructuredContent, raw.StructuredContent) || strings.Contains(got.TextProjection(), "private program data") {
+				t.Fatal("structured data was lost or leaked into the display")
+			}
 			// A later mode change must not rewrite an already settled history.
 			kit.env.ToolResultProjectionMode = "active"
 			if again := kit.FinalizeToolResult(providers.ToolCall{Name: "bash"}, got); !reflect.DeepEqual(again, got) {
@@ -225,7 +231,7 @@ func TestBashViewModesAndEligibility(t *testing.T) {
 			}
 			input := raw.Clone()
 			if rich {
-				input.StructuredContent = json.RawMessage(`{"private":"metadata"}`)
+				input.Content = append(input.Content, toolresult.ContentPart{Type: toolresult.ContentTypeResource, Resource: json.RawMessage(`{"private":"metadata"}`)})
 			}
 			got, d := finalizeBuiltInToolResult("", name, "ineligible", input, 0)
 			if d.Applied || !reflect.DeepEqual(got, input) {

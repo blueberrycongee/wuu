@@ -138,6 +138,7 @@ type Session struct {
 	systemPrompts       *agent.SystemPromptAssembler
 	InstructionFiles    []instructions.File
 	instructionConfig   config.InstructionFilesConfig
+	skillsConfig        config.SkillsConfig
 	pluginSkills        pluginSkillSnapshot
 	AgentControl        *agentcontrol.AgentControl
 	ProcessManager      *process.Manager
@@ -241,6 +242,7 @@ func (s *Session) cloneForThreadModel() *Session {
 		systemPrompts:               s.systemPrompts,
 		InstructionFiles:            s.InstructionFiles,
 		instructionConfig:           s.instructionConfig,
+		skillsConfig:                s.skillsConfig,
 		pluginSkills:                s.pluginSkills,
 		AgentControl:                s.AgentControl,
 		ProcessManager:              s.ProcessManager,
@@ -460,7 +462,7 @@ func NewSession(opts Options) (*Session, error) {
 	}
 	hookDispatcher := buildHookDispatcher(cfg, activePlugins, providers.Client(client), toolModeModel, workspaceJournal)
 	pluginSkills := discoverPluginSkills(activePlugins)
-	discoveredSkills := discoverSkillsWithPlugins(rootDir, opts.HomeDir, wuuHome, pluginSkills)
+	discoveredSkills := discoverSkillsWithPlugins(rootDir, opts.HomeDir, wuuHome, pluginSkills, cfg.Skills)
 
 	processMgr, err := process.NewManager(rootDir, statepath.RuntimeDir(workspaceStateDir))
 	if err != nil {
@@ -601,7 +603,7 @@ func NewSession(opts Options) (*Session, error) {
 				files, workerSkills := instructionFiles, discoveredSkills
 				if !sameRuntimeRoot(workerRoot, rootDir) {
 					files = discoverInstructions(workerRoot, opts.HomeDir, cfg.Instructions)
-					workerSkills = discoverSkillsWithPlugins(workerRoot, opts.HomeDir, wuuHome, pluginSkills)
+					workerSkills = discoverSkillsWithPlugins(workerRoot, opts.HomeDir, wuuHome, pluginSkills, cfg.Skills)
 				}
 				return buildWorkerBasePrompt(workerRoot, sessionDate, "", workerToolProviderName, workerToolModeModel, workerToolSurface, files, workerSkills), nil
 			},
@@ -623,7 +625,7 @@ func NewSession(opts Options) (*Session, error) {
 				wkit.SetProcessManager(processMgr)
 				workerSkills := discoveredSkills
 				if !sameRuntimeRoot(workerRoot, rootDir) {
-					workerSkills = discoverSkillsWithPlugins(workerRoot, opts.HomeDir, wuuHome, pluginSkills)
+					workerSkills = discoverSkillsWithPlugins(workerRoot, opts.HomeDir, wuuHome, pluginSkills, cfg.Skills)
 				}
 				wkit.SetSkills(workerSkills)
 				wkit.SetAgentControl(agentControl)
@@ -739,6 +741,7 @@ func NewSession(opts Options) (*Session, error) {
 		systemPrompts:               systemPrompts,
 		InstructionFiles:            instructionFiles,
 		instructionConfig:           cfg.Instructions,
+		skillsConfig:                cfg.Skills,
 		pluginSkills:                pluginSkills,
 		AgentControl:                agentControl,
 		ProcessManager:              processMgr,
@@ -2242,10 +2245,13 @@ func discoverPluginSkills(plugins []pluginpkg.Plugin) pluginSkillSnapshot {
 }
 
 func discoverSkills(rootDir, homeDir, wuuHome string, plugins []pluginpkg.Plugin) []skills.Skill {
-	return discoverSkillsWithPlugins(rootDir, homeDir, wuuHome, discoverPluginSkills(plugins))
+	return discoverSkillsWithPlugins(rootDir, homeDir, wuuHome, discoverPluginSkills(plugins), config.SkillsConfig{})
 }
 
-func discoverSkillsWithPlugins(rootDir, homeDir, wuuHome string, plugins pluginSkillSnapshot) []skills.Skill {
+func discoverSkillsWithPlugins(rootDir, homeDir, wuuHome string, plugins pluginSkillSnapshot, cfg config.SkillsConfig) []skills.Skill {
+	if !cfg.IsEnabled() {
+		return nil
+	}
 	var userDirs []skills.SourceDir
 	if home := skillUserHome(homeDir); home != "" {
 		userDirs = append(userDirs,
@@ -2600,13 +2606,15 @@ func BoundaryForMode(mode string) tools.WorkspaceBoundary {
 // configuration while replacing project guidance with the actual checkout.
 func (s *Session) guidanceForRoot(root string, generation *PluginGeneration) ([]instructions.File, []skills.Skill) {
 	snapshot, discovered := s.pluginSkills, s.Skills
+	skillConfig := s.skillsConfig
 	if generation != nil {
 		snapshot, discovered = generation.pluginSkills, generation.skills
+		skillConfig = generation.settings.Skills
 	}
 	if sameRuntimeRoot(root, s.RootDir) {
 		return s.InstructionFiles, discovered
 	}
-	return discoverInstructions(root, s.HomeDir, s.instructionConfig), discoverSkillsWithPlugins(root, s.HomeDir, s.WuuHome, snapshot)
+	return discoverInstructions(root, s.HomeDir, s.instructionConfig), discoverSkillsWithPlugins(root, s.HomeDir, s.WuuHome, snapshot, skillConfig)
 }
 
 func discoverInstructions(rootDir, homeDir string, cfg config.InstructionFilesConfig) []instructions.File {

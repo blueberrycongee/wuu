@@ -91,13 +91,17 @@ func TestPTCNestedReadThroughRealNode(t *testing.T) {
 	}
 }
 
-func runPTCProgram(t *testing.T, kit *Toolkit, code string) toolresult.Result {
+func runPTCProgram(t *testing.T, kit *Toolkit, code string, outputBudget ...int) toolresult.Result {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	runtime := agent.NewTurnToolRuntime(agent.ToolRuntimeConfig{Executor: kit, RunContext: ctx, Gate: agent.NewToolExecutionGate(1)})
 	defer runtime.Cancel()
-	args, err := json.Marshal(map[string]any{"code": code, "description": "Exercise PTC execution"})
+	input := map[string]any{"code": code, "description": "Exercise PTC execution"}
+	if len(outputBudget) > 0 {
+		input["max_output_tokens"] = outputBudget[0]
+	}
+	args, err := json.Marshal(input)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,6 +110,69 @@ func runPTCProgram(t *testing.T, kit *Toolkit, code string) toolresult.Result {
 		t.Fatalf("program execution: %+v %v", messages, err)
 	}
 	return *messages[0].ToolResult
+}
+
+func TestPTCSelectsFileDataWithoutDisplayingIt(t *testing.T) {
+	kit := newCodeModeTestToolkit(t)
+	kit.SetSessionID("file-selection")
+	source := "first\r\n\tselected | line\r\nlast without newline"
+	if err := os.WriteFile(filepath.Join(kit.RootDir(), "source.txt"), []byte(source), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		result := runPTCProgram(t, kit, `const r = await tools.read_file({path:"source.txt"}); store("source", r.structured_content.text); text(r.structured_content.text.split("\r\n")[1]);`)
+		if result.IsError || strings.TrimSpace(result.TextProjection()) != "selected | line" {
+			t.Fatalf("selected source unavailable: %s", result.TextProjection())
+		}
+	}
+	want, _ := json.Marshal(source)
+	result := runPTCProgram(t, kit, `return load("source") === `+string(want)+`;`)
+	if result.IsError || strings.TrimSpace(result.TextProjection()) != "true" {
+		t.Fatalf("source bytes changed across reads/checkpoints: %s", result.TextProjection())
+	}
+}
+
+func TestPTCSelectsShellDataOutsideDisplayExcerpt(t *testing.T) {
+	kit := newCodeModeTestToolkit(t)
+	kit.env.SessionDir = t.TempDir()
+	output := strings.Repeat("discarded data\n", 3000) + "SELECTED_EVIDENCE\n" + strings.Repeat("discarded data\n", 3000)
+	if err := os.WriteFile(filepath.Join(kit.RootDir(), "output.txt"), []byte(output), 0600); err != nil {
+		t.Fatal(err)
+	}
+	result := runPTCProgram(t, kit, `const r = await tools.bash({command:"cat output.txt; printf diagnostic >&2; exit 7"});
+const d = r.structured_content;
+if (!d.stdout_truncated || !d.full_log_ref) throw Error("missing recovery metadata");
+text({selected: d.stdout.split("\n").find(x => x === "SELECTED_EVIDENCE"), stderr: d.stderr, exit_code: d.exit_code});`)
+	if result.IsError || !strings.Contains(result.TextProjection(), "SELECTED_EVIDENCE") || !strings.Contains(result.TextProjection(), `"exit_code":7`) || strings.Contains(result.TextProjection(), "discarded data") {
+		t.Fatalf("selection or isolation failed: %s", result.TextProjection())
+	}
+}
+
+func TestPTCOutputBudgetSettlesOnceAndRejectsInvalidBeforeEffects(t *testing.T) {
+	kit := newCodeModeTestToolkit(t)
+	kit.env.SessionDir = t.TempDir()
+	code := `text("evidence line\n".repeat(1200));`
+	small := runPTCProgram(t, kit, code, 1024)
+	if small.IsError || estimateResultTokens(small.TextProjection()) > 1024 || !strings.Contains(small.TextProjection(), "continuation") {
+		t.Fatalf("small view is not bounded and recoverable: %.500s", small.TextProjection())
+	}
+	large := runPTCProgram(t, kit, code, 16384)
+	if large.IsError || strings.Count(large.TextProjection(), "evidence line") != 1200 {
+		t.Fatalf("explicit larger budget lost output: %s", large.TextProjection())
+	}
+	replayed := kit.FinalizeToolResult(providers.ToolCall{Name: "run_code", Arguments: `{"max_output_tokens":16384}`}, small)
+	if replayed.TextProjection() != small.TextProjection() {
+		t.Fatal("settled history was rewritten under a different output budget")
+	}
+	for _, budget := range []int{0, 1023, 32769} {
+		result := runPTCProgram(t, kit, `await tools.write_file({path:"must-not-exist",content:"side effect"});`, budget)
+		if !result.IsError || !strings.Contains(result.TextProjection(), "max_output_tokens") {
+			t.Fatalf("invalid budget %d was accepted: %s", budget, result.TextProjection())
+		}
+		if _, err := os.Stat(filepath.Join(kit.RootDir(), "must-not-exist")); !os.IsNotExist(err) {
+			t.Fatalf("invalid budget executed a write: %v", err)
+		}
+	}
 }
 
 func TestPTCFailureReportsNestedEffects(t *testing.T) {

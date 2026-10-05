@@ -223,7 +223,7 @@ func (s *Session) buildPluginGeneration(cfg config.Config, discovered []pluginpk
 		active:            append([]pluginpkg.Plugin(nil), active...),
 		host:              host,
 		hooks:             buildHookDispatcher(cfg, active, s.TitleClient, s.Model, nil),
-		skills:            discoverSkillsWithPlugins(s.RootDir, s.HomeDir, s.WuuHome, pluginSkills),
+		skills:            discoverSkillsWithPlugins(s.RootDir, s.HomeDir, s.WuuHome, pluginSkills, cfg.Skills),
 		pluginSkills:      pluginSkills,
 		mcpBinding:        mcpActivityBindingsFromPlugins(active),
 		requestTransforms: buildPluginRequestTransforms(host, s.ProviderName, "", s.RootDir),

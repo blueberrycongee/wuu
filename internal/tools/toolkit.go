@@ -1519,6 +1519,21 @@ func mustJSON(v any) (string, error) {
 	return string(data), nil
 }
 
+// Keep a compact human view separate from structured data used by programs.
+func toolResultWithData(view, data any) (toolresult.Result, error) {
+	text, err := mustJSON(view)
+	if err != nil {
+		return toolresult.Result{}, err
+	}
+	structured, err := json.Marshal(data)
+	if err != nil {
+		return toolresult.Result{}, err
+	}
+	result := toolresult.FromText(text)
+	result.StructuredContent = structured
+	return result, nil
+}
+
 func truncate(value string, maxBytes int) (string, bool) {
 	if len(value) <= maxBytes {
 		return value, false

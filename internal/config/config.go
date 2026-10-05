@@ -106,6 +106,7 @@ type Config struct {
 	Agent                 AgentConfig               `json:"agent"`
 	Hooks                 map[string][]HookEntry    `json:"hooks,omitempty"`
 	Instructions          InstructionFilesConfig    `json:"instructions,omitempty"`
+	Skills                SkillsConfig              `json:"skills,omitempty"`
 	// MCPServers maps server name to connection config. When present, wuu
 	// connects to each server at startup (in the background) and exposes
 	// its tools to the agent.
@@ -133,6 +134,13 @@ type PTCConfig struct {
 	Enabled        bool   `json:"enabled"`
 	NodeExecutable string `json:"node_executable,omitempty"`
 }
+
+// SkillsConfig controls discovery from bundled, user, project and plugin sources.
+type SkillsConfig struct {
+	Enabled *bool `json:"enabled,omitempty"`
+}
+
+func (c SkillsConfig) IsEnabled() bool { return c.Enabled == nil || *c.Enabled }
 
 // InstructionFilesConfig overrides project and user instruction discovery.
 // All fields are optional; empty values use the instruction defaults.
