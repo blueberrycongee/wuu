@@ -10,6 +10,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Allow cancelling browser subscription sign-in from setup and Model services;
+  discard late authorization responses after cancellation.
+
 - Separate external-engine sign-in from Wuu subscription setup. Connect and
   verify local Codex credentials directly in Model services, and preserve
   drafts with a settings shortcut when the selected Wuu service is disconnected.

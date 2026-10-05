@@ -103,10 +103,16 @@ func (h *LoginHub) Poll(ctx context.Context, loginID, home, baseURL string) (Log
 	}
 	tokens, err := ExchangeDeviceCode(ctx, nil, pending.device)
 	if err == nil {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		// Cancellation must win over a token response that arrives afterward.
+		if h.pending[loginID] != pending {
+			return LoginPollStatus{Status: LoginFailed, Error: "xAI SuperGrok login is no longer pending"}, nil
+		}
 		if persistErr := PersistTokens(home, tokens, baseURL); persistErr != nil {
 			return LoginPollStatus{}, persistErr
 		}
-		h.Cancel(loginID)
+		delete(h.pending, loginID)
 		return LoginPollStatus{Status: LoginSuccess, Interval: pending.interval}, nil
 	}
 	if errors.Is(err, errAuthorizationPending) {

@@ -34,6 +34,7 @@ import { EngineIcon } from "./EngineIcons";
 import { hostSupports } from "./HostCapabilities";
 import { isTouchWebShell } from "./ComposerFocus";
 import { Modal } from "./Modal";
+import { showErrorToast } from "./Toast";
 import { ProviderMark } from "./ProviderMarks";
 import {
   normalizedVariantForProviderModel,
@@ -1029,50 +1030,119 @@ function XAILoginRow({
   onSignedIn: () => Promise<boolean>;
 }): JSX.Element {
   const { t } = useI18n();
-  const [code, setCode] = useState("");
+  const login = useXAILogin();
   return (
     <SettingsRow
       title={t("provider.xaiSubscription")}
-      description={code ? t("provider.xaiLoginCode", { code }) : undefined}
+      description={login.code ? t("provider.xaiLoginCode", { code: login.code }) : undefined}
     >
       <StatusValue ok={signedIn} okLabel={t("provider.xaiLoggedIn")} missingLabel={t("provider.loginRequired")} />
       <button
         type="button"
         className="settings-button"
-        disabled={disabled || Boolean(code)}
+        data-testid="xai-login-start"
+        disabled={disabled || login.pending}
         onClick={() => void onRun(async () => {
-          try {
-            await runXAILogin(setCode, t);
-          } finally {
-            setCode("");
-          }
-          await onSignedIn();
+          if (await login.start()) await onSignedIn();
         })}
       >
-        {code ? t("provider.xaiLoggingIn") : t("provider.xaiLogin")}
+        {login.pending ? t("provider.xaiLoggingIn") : t("provider.xaiLogin")}
       </button>
+      {login.pending ? <button type="button" className="settings-button settings-button-ghost"
+        data-testid="xai-login-cancel" onClick={login.cancel}>{t("common.cancel")}</button> : null}
     </SettingsRow>
   );
 }
 
-async function runXAILogin(onCode: (code: string) => void, t: Translate): Promise<void> {
-  const start = await window.wuu.startXAILogin();
-  onCode(start.user_code);
-  const url = start.verification_uri_complete || start.verification_uri;
-  if (url) await window.wuu.openExternal(url);
-  const deadline = Date.now() + Math.max(30, start.expires_in || 300) * 1000;
-  let interval = Math.max(1000, start.interval_ms || 5000);
-  while (Date.now() < deadline) {
-    await new Promise((resolve) => setTimeout(resolve, interval));
-    const poll = await window.wuu.pollXAILogin(start.login_id);
-    if (poll.status === "pending") {
-      interval = Math.max(1000, poll.interval_ms || interval);
-      continue;
+function useXAILogin() {
+  const { t } = useI18n();
+  const attempt = useRef<AbortController | undefined>(undefined);
+  const [code, setCode] = useState("");
+  const [pending, setPending] = useState(false);
+  useEffect(() => () => {
+    attempt.current?.abort();
+    attempt.current = undefined;
+  }, []);
+
+  async function start(): Promise<boolean> {
+    if (attempt.current) return false;
+    const controller = new AbortController();
+    attempt.current = controller;
+    setPending(true);
+    try {
+      await runXAILogin(setCode, t, controller.signal);
+      return !controller.signal.aborted;
+    } catch (error) {
+      if (controller.signal.aborted) return false;
+      throw error;
+    } finally {
+      if (attempt.current === controller) {
+        attempt.current = undefined;
+        setPending(false);
+        setCode("");
+      }
     }
-    if (poll.status !== "success") throw new Error(poll.error || t("error.oauthFailed"));
-    return;
   }
-  throw new Error(t("error.oauthFailed"));
+  return { code, pending, start, cancel: () => attempt.current?.abort() };
+}
+
+async function runXAILogin(onCode: (code: string) => void, t: Translate, signal: AbortSignal): Promise<void> {
+  let loginID: string | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let finishWait: (() => void) | undefined;
+  function cancelRemote(): void {
+    if (!loginID) return;
+    const id = loginID;
+    loginID = undefined;
+    void window.wuu.cancelXAILogin(id).catch((error) => showErrorToast(error, t("error.oauthFailed")));
+  }
+  let abort!: () => void;
+  const cancelled = new Promise<never>((_resolve, reject) => {
+    abort = () => {
+      clearTimeout(timer);
+      finishWait?.();
+      cancelRemote();
+      reject(signal.reason);
+    };
+    signal.addEventListener("abort", abort, { once: true });
+  });
+  try {
+    await Promise.race([cancelled, (async () => {
+      const start = await window.wuu.startXAILogin();
+      loginID = start.login_id;
+      // Closing before the start response still cancels the newly issued code.
+      if (signal.aborted) cancelRemote();
+      signal.throwIfAborted();
+      onCode(start.user_code);
+      const url = start.verification_uri_complete || start.verification_uri;
+      if (url) await window.wuu.openExternal(url);
+      signal.throwIfAborted();
+      const deadline = Date.now() + Math.max(30, start.expires_in || 300) * 1000;
+      let interval = Math.max(1000, start.interval_ms || 5000);
+      while (Date.now() < deadline) {
+        await new Promise<void>((resolve) => {
+          finishWait = resolve;
+          timer = setTimeout(resolve, Math.min(interval, deadline - Date.now()));
+        });
+        signal.throwIfAborted();
+        if (Date.now() >= deadline) break;
+        const poll = await window.wuu.pollXAILogin(start.login_id);
+        signal.throwIfAborted();
+        if (poll.status === "pending") {
+          interval = Math.max(1000, poll.interval_ms || interval);
+          continue;
+        }
+        if (poll.status !== "success") throw new Error(poll.error || t("error.oauthFailed"));
+        loginID = undefined;
+        return;
+      }
+      throw new Error(t("error.oauthFailed"));
+    })()]);
+  } finally {
+    clearTimeout(timer);
+    signal.removeEventListener("abort", abort);
+    cancelRemote();
+  }
 }
 
 function ModelChoices({
@@ -1419,7 +1489,7 @@ function ConnectServiceDialog({
   const [name, setName] = useState(() => uniqueProviderName(catalogProvider?.id ?? subscriptionType ?? "custom", providers));
   const [makeDefault, setMakeDefault] = useState(defaultOn);
   const [pending, setPending] = useState(false);
-  const [loginCode, setLoginCode] = useState("");
+  const login = useXAILogin();
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -1449,7 +1519,7 @@ function ConnectServiceDialog({
     setError("");
     setPending(true);
     try {
-      if (subscriptionType === "xai-subscription") await runXAILogin(setLoginCode, t);
+      if (subscriptionType === "xai-subscription" && !await login.start()) return;
       const connection: RuntimeConnectionUpdate = {
         type: subscriptionType ?? protocol,
         create_provider: true,
@@ -1462,7 +1532,6 @@ function ConnectServiceDialog({
     } catch (saveError) {
       setError(errorMessage(saveError, t));
     } finally {
-      setLoginCode("");
       setPending(false);
     }
   }
@@ -1474,14 +1543,14 @@ function ConnectServiceDialog({
         : subscriptionType ? <span className="provider-mark" aria-hidden="true"><EngineIcon engine="grok" className="provider-mark-engine" /></span>
           : <span className="provider-mark is-quiet" aria-hidden="true"><Code2 className="icon" /></span>}
       title={heading}
-      subtitle={loginCode ? t("provider.xaiLoginCode", { code: loginCode }) : undefined}
+      subtitle={login.code ? t("provider.xaiLoginCode", { code: login.code }) : undefined}
       panelClassName="model-dialog model-connect-dialog"
-      closeDisabled={pending}
-      onClose={onClose}
+      closeDisabled={pending && !login.pending}
+      onClose={() => { login.cancel(); onClose(); }}
       asForm
       onSubmit={() => void submit()}
       footer={<>
-        <button type="button" className="settings-button settings-button-ghost" disabled={pending} onClick={onClose}>
+        <button type="button" className="settings-button settings-button-ghost" disabled={pending && !login.pending} onClick={() => { login.cancel(); onClose(); }}>
           {t("common.cancel")}
         </button>
         <button type="submit" className="settings-button settings-button-primary" data-testid="settings-provider-connect" disabled={!canSubmit}>

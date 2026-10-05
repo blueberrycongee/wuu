@@ -215,6 +215,59 @@ func TestRejectsNonHTTPSVerificationURI(t *testing.T) {
 	}
 }
 
+func TestLoginCancellationDiscardsInFlightTokens(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("WUU_HOME", "")
+	if err := PersistTokens(home, TokenResponse{AccessToken: "existing-access", RefreshToken: "existing-refresh", ExpiresIn: time.Hour}, DefaultBaseURL); err != nil {
+		t.Fatal(err)
+	}
+	started := make(chan struct{})
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/device" {
+			_ = json.NewEncoder(w).Encode(map[string]any{"device_code": "fixture-device", "user_code": "TEST-CODE", "verification_uri": "https://auth.x.ai/device", "expires_in": 300})
+			return
+		}
+		close(started)
+		<-release
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "cancelled-access", "refresh_token": "cancelled-refresh", "expires_in": 1200})
+	}))
+	defer server.Close()
+	defer func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+	}()
+	t.Setenv("WUU_XAI_DEVICE_CODE_URL", server.URL+"/device")
+	t.Setenv("WUU_XAI_TOKEN_URL", server.URL+"/token")
+	hub := NewLoginHub()
+	start, err := hub.Start(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := make(chan LoginPollStatus, 1)
+	go func() {
+		status, pollErr := hub.Poll(context.Background(), start.LoginID, home, DefaultBaseURL)
+		if pollErr != nil {
+			t.Error(pollErr)
+		}
+		result <- status
+	}()
+	<-started
+	hub.Cancel(start.LoginID)
+	close(release)
+	if status := <-result; status.Status == LoginSuccess {
+		t.Fatal("cancelled login reported success")
+	}
+	source := NewOAuthSource(OAuthConfig{Home: home})
+	credentials, err := source.Credentials(context.Background(), false)
+	if err != nil || credentials.accessToken != "existing-access" {
+		t.Fatalf("cancelled login replaced existing credentials: %v", err)
+	}
+}
+
 // A sign-in writes the auth store, not the sources already built from it, so a
 // long-lived source (a shared client, an existing conversation) must follow the
 // store instead of going on with the token it cached before.

@@ -437,6 +437,84 @@ function click(element: Element | null | undefined): void {
 }
 
 describe("SettingsView model services", () => {
+  it.each(["cancel", "close", "escape"])("cancels a pending subscription login through %s and allows another attempt", async (exit) => {
+    vi.useFakeTimers();
+    const api = installServicesStub();
+    vi.mocked(api.startXAILogin).mockResolvedValue({ login_id: "login-1", user_code: "TEST-CODE", verification_uri: "https://auth.x.ai/device", expires_in: 300, interval_ms: 1000 });
+    vi.mocked(api.openExternal).mockResolvedValue(undefined);
+    vi.mocked(api.cancelXAILogin).mockResolvedValue({ ok: true });
+    const onSave = vi.fn();
+    renderSettings({ initialized: servicesInitialized(), initialPage: "providers", onSave });
+    await flush();
+    click(container.querySelector('[data-testid="settings-provider-browse"]'));
+    click(document.querySelector('[data-subscription="xai-subscription"]'));
+    click(document.querySelector('[data-testid="settings-provider-connect"]'));
+    await flush();
+    expect(api.openExternal).toHaveBeenCalled();
+    if (exit === "escape") {
+      act(() => window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })));
+    } else {
+      click(document.querySelector(exit === "close" ? '.model-connect-dialog .environment-dialog-header .icon-button' : '.model-connect-dialog .environment-dialog-footer button'));
+    }
+    await flush();
+    expect(document.querySelector('.model-connect-dialog')).toBeNull();
+    expect(api.cancelXAILogin).toHaveBeenCalledWith("login-1");
+    await act(async () => vi.advanceTimersByTimeAsync(5000));
+    expect(api.pollXAILogin).not.toHaveBeenCalled();
+    expect(onSave).not.toHaveBeenCalled();
+    click(container.querySelector('[data-testid="settings-provider-browse"]'));
+    click(document.querySelector('[data-subscription="xai-subscription"]'));
+    click(document.querySelector('[data-testid="settings-provider-connect"]'));
+    await flush();
+    expect(api.startXAILogin).toHaveBeenCalledTimes(2);
+  });
+
+  it("cancels a login that finishes starting after its dialog is closed", async () => {
+    const api = installServicesStub();
+    let finishStart!: (value: Awaited<ReturnType<WuuDesktopApi["startXAILogin"]>>) => void;
+    vi.mocked(api.startXAILogin).mockReturnValue(new Promise((resolve) => { finishStart = resolve; }));
+    vi.mocked(api.cancelXAILogin).mockResolvedValue({ ok: true });
+    const onSave = vi.fn();
+    renderSettings({ initialized: servicesInitialized(), initialPage: "providers", onSave });
+    await flush();
+    click(container.querySelector('[data-testid="settings-provider-browse"]'));
+    click(document.querySelector('[data-subscription="xai-subscription"]'));
+    click(document.querySelector('[data-testid="settings-provider-connect"]'));
+    click(document.querySelector('.model-connect-dialog .environment-dialog-header .icon-button'));
+    await act(async () => finishStart({ login_id: "late-login", user_code: "LATE-CODE", verification_uri: "https://auth.x.ai/device", expires_in: 300, interval_ms: 1000 }));
+    expect(document.querySelector('.model-connect-dialog')).toBeNull();
+    expect(api.cancelXAILogin).toHaveBeenCalledWith("late-login");
+    expect(api.openExternal).not.toHaveBeenCalled();
+    expect(onSave).not.toHaveBeenCalled();
+  });
+
+  it("ignores an in-flight login result after cancellation and can sign in again from service details", async () => {
+    vi.useFakeTimers();
+    const api = installServicesStub();
+    const initialized = servicesInitialized();
+    initialized.providers!.push({ name: "supergrok", type: "xai-subscription", model: "grok-4.7", api_key_configured: false });
+    vi.mocked(api.startXAILogin).mockResolvedValue({ login_id: "login-1", user_code: "TEST-CODE", verification_uri: "https://auth.x.ai/device", expires_in: 300, interval_ms: 1000 });
+    vi.mocked(api.openExternal).mockResolvedValue(undefined);
+    vi.mocked(api.cancelXAILogin).mockResolvedValue({ ok: true });
+    let finishPoll!: (value: Awaited<ReturnType<WuuDesktopApi["pollXAILogin"]>>) => void;
+    vi.mocked(api.pollXAILogin).mockReturnValueOnce(new Promise((resolve) => { finishPoll = resolve; })).mockResolvedValue({ status: "success" });
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    renderSettings({ initialized, initialPage: "providers", onSave });
+    await flush();
+    click(container.querySelector('[data-provider="supergrok"]'));
+    click(container.querySelector('[data-testid="xai-login-start"]'));
+    await act(async () => vi.advanceTimersByTimeAsync(1000));
+    expect(api.pollXAILogin).toHaveBeenCalledTimes(1);
+    click(container.querySelector('[data-testid="xai-login-cancel"]'));
+    await flush();
+    expect(container.querySelector<HTMLButtonElement>('[data-testid="xai-login-start"]')!.disabled).toBe(false);
+    await act(async () => finishPoll({ status: "success" }));
+    expect(onSave).not.toHaveBeenCalled();
+    click(container.querySelector('[data-testid="xai-login-start"]'));
+    await act(async () => vi.advanceTimersByTimeAsync(1000));
+    expect(onSave).toHaveBeenCalledTimes(1);
+  });
+
   it("connects Wuu to the local subscription, verifies it, and preserves the default", async () => {
     const api = installServicesStub();
     const initialized = servicesInitialized();

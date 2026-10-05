@@ -9,7 +9,7 @@ const os = require('node:os');
 const path = require('node:path');
 const http = require('node:http');
 const { pathToFileURL } = require('node:url');
-const { app } = require('electron');
+const { app, ipcMain, shell } = require('electron');
 
 const desktop = path.resolve(__dirname, '..');
 const output = path.resolve(desktop, '../artifacts/model-services-e2e');
@@ -39,10 +39,38 @@ process.env.WUU_DESKTOP_DISABLE_DEV_CACHE_CLEANUP = '1';
 const requests = [];
 let rejectSubscription = true;
 let subscriptionChecks = 0;
+const xaiLogins = [];
+const cancelledXAILogins = [];
+let xaiCodes = 0;
+let confirmCancellation;
+const handleIPC = ipcMain.handle.bind(ipcMain);
+ipcMain.handle = (channel, listener) => handleIPC(channel, async (...args) => {
+  const result = await listener(...args);
+  if (channel === 'wuu:auth-xai-login-start') xaiLogins.push(result.login_id);
+  if (channel === 'wuu:auth-xai-login-cancel') {
+    cancelledXAILogins.push(args[1]);
+    confirmCancellation?.();
+  }
+  return result;
+});
+shell.openExternal = async url => {
+  assert.equal(url, 'https://auth.x.ai/device', 'Only the synthetic authorization page may be opened.');
+};
 const server = http.createServer((req, res) => {
   let body = '';
   req.on('data', chunk => { body += chunk; });
   req.on('end', () => {
+    if (req.url === '/oauth/device') {
+      xaiCodes++;
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ device_code: `fixture-${xaiCodes}`, user_code: `TEST-${xaiCodes}`, verification_uri: 'https://auth.x.ai/device', expires_in: 300, interval: 1 }));
+      return;
+    }
+    if (req.url === '/oauth/token') {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'authorization_pending' }));
+      return;
+    }
     if (req.url.startsWith('/v1/models')) {
       subscriptionChecks++;
       assert.equal(req.headers.authorization, 'Bearer synthetic-codex-token');
@@ -134,6 +162,8 @@ const timeout = setTimeout(() => { console.error('E2E timeout', fixture); app.ex
 async function run() {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const endpoint = `http://127.0.0.1:${server.address().port}/v1`;
+  process.env.WUU_XAI_DEVICE_CODE_URL = `http://127.0.0.1:${server.address().port}/oauth/device`;
+  process.env.WUU_XAI_TOKEN_URL = `http://127.0.0.1:${server.address().port}/oauth/token`;
   const engines = Object.fromEntries(['codex', 'claude', 'cursor', 'devin', 'grok', 'hermes', 'pi', 'opencode', 'antigravity'].map(id => [id, { enabled: false }]));
   fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({
     default_provider: 'subscription', engines,
@@ -253,6 +283,33 @@ async function run() {
   await waitFor(main, () => !document.querySelector('[role="dialog"]'));
   assert.deepEqual(readConfig(), configBeforeBrowsing, 'Browsing and dismissing leave saved services and the default unchanged.');
 
+  // Leaving browser authorization unfinished must not trap the settings page.
+  for (const exit of ['cancel', 'close', 'escape']) {
+    await click(main, '[data-testid="settings-provider-browse"]');
+    await click(main, '.model-browse-dialog [data-subscription="xai-subscription"]');
+    await click(main, '[data-testid="settings-provider-connect"]');
+    await waitFor(main, () => document.querySelector('.model-connect-dialog')?.textContent.includes('TEST-'));
+    assert.equal(await evaluate(main, () => document.querySelector('.model-connect-dialog .environment-dialog-header .icon-button').disabled), false);
+    assert.equal(await evaluate(main, () => document.querySelector('.model-connect-dialog .environment-dialog-footer button').disabled), false);
+    if (exit === 'cancel') await capture(main, '01g-xai-cancellable.png');
+    const cancellation = new Promise(resolve => { confirmCancellation = resolve; });
+    if (exit === 'escape') {
+      main.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' });
+      main.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Escape' });
+    } else {
+      await click(main, exit === 'cancel' ? '.model-connect-dialog .environment-dialog-footer button' : '.model-connect-dialog .environment-dialog-header .icon-button');
+    }
+    await waitFor(main, () => !document.querySelector('.model-connect-dialog'));
+    await cancellation;
+    const id = xaiLogins.at(-1);
+    assert.equal(cancelledXAILogins.at(-1), id);
+    const status = await evaluate(main, id => window.wuu.pollXAILogin(id), id);
+    assert.equal(status.status, 'failed', 'The core has removed the cancelled login.');
+    assert.deepEqual(readConfig(), configBeforeBrowsing, 'Cancelling cannot create a service or change the default.');
+  }
+  assert.equal(new Set(xaiLogins).size, 3, 'Reopening starts a new login.');
+  await capture(main, '01h-xai-cancelled.png');
+
   // A catalog provider: its endpoint and a suggested model come from the
   // catalog, so the key is the only thing to type. The working default stays.
   await click(main, '[data-catalog="deepseek"]');
@@ -357,6 +414,7 @@ async function run() {
     fixture,
     disconnectedDraftPreserved: true,
     subscription: { checks: subscriptionChecks, reuse: readConfig().providers.subscription.reuse_codex_credentials, engineSettingsUnchanged: true },
+    cancelledSubscriptionLogins: { exits: ['cancel', 'close', 'escape'], started: xaiLogins.length, cancelled: cancelledXAILogins.length },
     finalConfig: { default_provider: readConfig().default_provider, providers: Object.keys(readConfig().providers) },
     deepseek: { models: catalogModels, chosen: nextModel, hidden },
     cards,
