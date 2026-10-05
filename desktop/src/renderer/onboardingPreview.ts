@@ -22,3 +22,9 @@ export const PREVIEW_PLUGINS: ExtensionInventoryRecord[] = ONBOARDING_PLUGIN_ORD
     provenance: { kind: "plugin", source: "bundled", scope: "bundled", official: true, plugin_id: id },
   }];
 });
+
+export const PREVIEW_WORKSPACES: import("../shared/protocol").RecentWorkspace[] = [
+  { name: "website", path: "/Users/example/Projects/website", sources: ["codex", "claude"], sessionCount: 8, isRepository: true, lastUsedAt: new Date(Date.now() - 3600000).toISOString() },
+  { name: "api-server", path: "/Users/example/Projects/api-server", sources: ["claude"], sessionCount: 5, isRepository: true, lastUsedAt: new Date(Date.now() - 86400000).toISOString() },
+  { name: "notes", path: "/Users/example/Documents/notes", sources: ["codex"], sessionCount: 1, isRepository: false, lastUsedAt: new Date(Date.now() - 3 * 86400000).toISOString() },
+];

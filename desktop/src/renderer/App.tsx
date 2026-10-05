@@ -5181,7 +5181,16 @@ export function App(): JSX.Element {
             await updateProviderSettings(provider, model, undefined, connection);
           }}
           onUpdateEngines={updateEngineInventory}
-          onComplete={async () => {
+          onComplete={async (paths = []) => {
+            if (paths.length > 0) {
+              if (!window.wuu.importWorkspaces) throw new Error(t("onboarding.importFailed"));
+              const imported = await window.wuu.importWorkspaces(paths);
+              const first = imported.projects.find((project) => project.path === paths[0]);
+              if (!first) throw new Error(t("onboarding.importFailed"));
+              const selected = await window.wuu.selectProject(first.id);
+              const loaded = await loadRuntime(selected, { resumeLatestThread: false });
+              setState((current) => withLoadedRuntimeSessionTab(current, loaded));
+            }
             if (!window.wuu?.completeOnboarding) {
               throw new Error(t("onboarding.finishFailed"));
             }

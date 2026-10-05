@@ -459,7 +459,6 @@ describe("FirstRunOnboarding", () => {
       api_key: "sk-test",
     });
     expect(container.querySelector(".onboarding-stage-ready")).not.toBeNull();
-    expect(container.querySelector(".onboarding-stage-ready .onboarding-lead")).toBeNull();
   });
 
   it("connects Grok Build without asking for an API key", async () => {
@@ -683,13 +682,56 @@ describe("FirstRunOnboarding", () => {
       });
     }
     expect(container.querySelector(".onboarding-stage-ready")).not.toBeNull();
-    await clickButton("开始使用 Wuu");
+    await clickButton("导入并开始（2）");
 
     expect(updateExtension).not.toHaveBeenCalled();
     expect(save).not.toHaveBeenCalled();
     expect(updateEngines).not.toHaveBeenCalled();
     expect(onComplete).not.toHaveBeenCalled();
     expect(onDismissPreview).toHaveBeenCalledTimes(1);
+  });
+
+  it("imports only the selected workspaces and keeps the selection when completion fails", async () => {
+    window.wuu.discoverRecentWorkspaces = vi.fn(async () => ({ candidates: [
+      { path: "/work/one", name: "one", sources: ["codex" as const], sessionCount: 4, isRepository: true, lastUsedAt: new Date().toISOString() },
+      { path: "/work/two", name: "two", sources: ["claude" as const], sessionCount: 1, isRepository: false, lastUsedAt: new Date().toISOString() },
+    ], incomplete: false }));
+    const complete = vi.fn().mockRejectedValueOnce(new Error("folder unavailable")).mockResolvedValue(undefined);
+    await act(async () => root.render(<I18nProvider><FirstRunOnboarding
+      inventory={[plugin("todo", true)]} providers={[]}
+      onUpdateExtensionPackage={vi.fn(async () => undefined)} onSaveProvider={vi.fn(async () => undefined)}
+      onComplete={complete}
+    /></I18nProvider>));
+    await clickButton("开始设置");
+    await clickButton("继续");
+    await clickButton("继续");
+    await clickButton("稍后连接");
+    const boxes = container.querySelectorAll<HTMLInputElement>('input[type="checkbox"]');
+    expect([...boxes].map((box) => box.checked)).toEqual([true, false]);
+    await clickButton("导入并开始（1）");
+    expect(complete).toHaveBeenLastCalledWith(["/work/one"]);
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain("folder unavailable");
+    expect(boxes[0].checked).toBe(true);
+    await act(async () => boxes[1].click());
+    await clickButton("导入并开始（2）");
+    expect(complete).toHaveBeenLastCalledWith(["/work/one", "/work/two"]);
+  });
+
+  it("can finish without importing when discovery fails", async () => {
+    window.wuu.discoverRecentWorkspaces = vi.fn(async () => { throw new Error("history unavailable"); });
+    const complete = vi.fn(async () => undefined);
+    await act(async () => root.render(<I18nProvider><FirstRunOnboarding
+      inventory={[plugin("todo", true)]} providers={[]}
+      onUpdateExtensionPackage={vi.fn(async () => undefined)} onSaveProvider={vi.fn(async () => undefined)}
+      onComplete={complete}
+    /></I18nProvider>));
+    await clickButton("开始设置");
+    await clickButton("继续");
+    await clickButton("继续");
+    await clickButton("稍后连接");
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain("history unavailable");
+    await clickButton("开始使用 Wuu");
+    expect(complete).toHaveBeenCalledWith([]);
   });
 
   async function clickButton(label: string): Promise<void> {

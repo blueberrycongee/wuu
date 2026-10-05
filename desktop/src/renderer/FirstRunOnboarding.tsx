@@ -7,6 +7,8 @@ import type {
   ExtensionInventoryRecord,
   ExtensionPackageUpdateParams,
   ProviderSummary,
+  RecentWorkspace,
+  RecentWorkspacesResult,
   RuntimeConnectionUpdate,
 } from "../shared/protocol";
 import { useI18n } from "./i18n";
@@ -16,11 +18,12 @@ import { EngineIcon } from "./EngineIcons";
 import { ServiceConnector, ServiceMark, serviceIdentity, useCatalogProviders } from "./ModelServicesPage";
 import { ONBOARDING_PLUGIN_ORDER, PLUGIN_DESCRIPTION_KEYS, RECOMMENDED_PLUGIN_IDS } from "./onboardingCatalog";
 import { OnboardingMascotStage } from "./OnboardingMascotStage";
-import { PREVIEW_PLUGINS } from "./onboardingPreview";
+import { PREVIEW_PLUGINS, PREVIEW_WORKSPACES } from "./onboardingPreview";
 import { ProviderMark } from "./ProviderMarks";
 import { PluginIcon } from "./PublicIcon";
 import { SettingsGroup, SettingsSection } from "./SettingsSection";
 import { applyThemePreference } from "./Theme";
+import { toastErrorMessage } from "./Toast";
 
 type OnboardingStep = "welcome" | "plugins" | "runtime" | "provider" | "ready";
 type PluginPreset = "minimal" | "recommended" | "all" | "custom";
@@ -106,9 +109,9 @@ export function FirstRunOnboarding({
     connection: RuntimeConnectionUpdate,
   ) => Promise<void>;
   onUpdateEngines?: (params: EngineUpdateParams) => Promise<unknown>;
-  onComplete: () => Promise<void>;
+  onComplete: (paths?: string[]) => Promise<void>;
 }): JSX.Element {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const titleID = useId();
   const titleRef = useRef<HTMLHeadingElement>(null);
   // Preview keeps connections isolated but uses real CLI discovery.
@@ -126,6 +129,12 @@ export function FirstRunOnboarding({
   const [connected, setConnected] = useState(false);
   const [savingRuntime, setSavingRuntime] = useState(false);
   const [finishing, setFinishing] = useState(false);
+  const [workspaceScan, setWorkspaceScan] = useState<RecentWorkspacesResult>();
+  const [scanningWorkspaces, setScanningWorkspaces] = useState(false);
+  const [choosingWorkspace, setChoosingWorkspace] = useState(false);
+  const [selectedPaths, setSelectedPaths] = useState<Set<string>>(() => new Set());
+  const [scanAttempt, setScanAttempt] = useState(0);
+  const scannedRevision = useRef(-1);
   const [error, setError] = useState<{ title: string; detail?: string } | null>(null);
   const [selectedEngine, setSelectedEngine] = useState(RECOMMENDED_ENGINE);
   const catalog = useCatalogProviders(0);
@@ -133,7 +142,7 @@ export function FirstRunOnboarding({
   const providerReady = hasOnboardingProvider(providers);
   const preset = selectedPreset(selectedPluginIDs, bundledPlugins);
   const currentStepIndex = STEP_ORDER.indexOf(step);
-  const busy = applyingPlugins || savingRuntime || savingProvider || finishing;
+  const busy = applyingPlugins || savingRuntime || savingProvider || finishing || choosingWorkspace;
   const wornPluginIDs = useMemo(() => bundledPlugins
     .filter((plugin) => selectedPluginIDs.has(plugin.id))
     .map((plugin) => plugin.provenance.plugin_id ?? "")
@@ -181,8 +190,63 @@ export function FirstRunOnboarding({
     titleRef.current?.focus({ preventScroll: true });
   }, [step]);
 
+  useEffect(() => {
+    if (step !== "ready" || scannedRevision.current === scanAttempt) return;
+    let current = true;
+    setScanningWorkspaces(true);
+    setError(null);
+    const scan = preview
+      ? Promise.resolve({ candidates: PREVIEW_WORKSPACES, incomplete: false })
+      : window.wuu?.discoverRecentWorkspaces?.() ?? Promise.resolve({ candidates: [], incomplete: false });
+    void scan.then((result) => {
+      if (!current) return;
+      const firstScan = scannedRevision.current < 0;
+      scannedRevision.current = scanAttempt;
+      const manual = (workspaceScan?.candidates ?? []).filter((item) => item.sources.length === 0 && !result.candidates.some((found) => found.path === item.path));
+      const candidates = [...result.candidates, ...manual];
+      setWorkspaceScan({ ...result, candidates });
+      const now = Date.now();
+      setSelectedPaths((current) => firstScan ? new Set(candidates.filter((item) => {
+        const age = now - Date.parse(item.lastUsedAt);
+        return item.isRepository && item.sessionCount >= 3 && age >= 0 && age <= 30 * 24 * 60 * 60 * 1000;
+      }).map((item) => item.path)) : new Set(candidates.filter((item) => current.has(item.path)).map((item) => item.path)));
+    }).catch((reason: unknown) => {
+      if (current) failure(reason, "onboarding.discoveryFailed");
+    }).finally(() => { if (current) setScanningWorkspaces(false); });
+    return () => { current = false; };
+  }, [step, preview, scanAttempt]);
+
+  function toggleWorkspace(path: string): void {
+    setSelectedPaths((current) => {
+      const next = new Set(current);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+  }
+
+  async function chooseWorkspace(): Promise<void> {
+    setChoosingWorkspace(true);
+    setError(null);
+    try {
+      const path = preview ? "/Users/example/Projects/new-workspace" : await window.wuu.chooseWorkspaceDirectory?.();
+      if (!path) return;
+      const candidate: RecentWorkspace = {
+        path, name: path.split(/[\\/]/).filter(Boolean).pop() ?? path,
+        sources: [], sessionCount: 0, lastUsedAt: "", isRepository: false,
+      };
+      setWorkspaceScan((current) => ({
+        candidates: current?.candidates.some((item) => item.path === path)
+          ? current.candidates : [...(current?.candidates ?? []), candidate],
+        incomplete: current?.incomplete ?? false,
+      }));
+      setSelectedPaths((current) => new Set([...current, path]));
+    } catch (reason) { failure(reason, "onboarding.discoveryFailed"); }
+    finally { setChoosingWorkspace(false); }
+  }
+
   function failure(reason: unknown, fallback: TranslationKey): void {
-    const detail = reason instanceof Error && reason.message ? reason.message : undefined;
+    const detail = toastErrorMessage(reason) || undefined;
     setError({ title: t(fallback), detail });
   }
 
@@ -273,7 +337,7 @@ export function FirstRunOnboarding({
     }
   }
 
-  async function finish(): Promise<void> {
+  async function finish(paths = [...selectedPaths]): Promise<void> {
     if (finishing) return;
     if (preview) {
       onDismissPreview?.();
@@ -282,7 +346,7 @@ export function FirstRunOnboarding({
     setFinishing(true);
     setError(null);
     try {
-      await onComplete();
+      await onComplete(paths);
     } catch (reason) {
       failure(reason, "onboarding.finishFailed");
       setFinishing(false);
@@ -303,8 +367,8 @@ export function FirstRunOnboarding({
         }
           // Without a connection the service tiles are the step's actions.
           : step === "provider" ? (providerReady ? { label: t("onboarding.continue"), disabled: false, run: () => setStep("ready") } : undefined)
-            : { label: finishing ? t("onboarding.finishing") : t("onboarding.enterWuu"), disabled: finishing, run: () => void finish() };
-  const back = step === "plugins" ? "welcome" : step === "runtime" ? "plugins" : step === "provider" ? "runtime" : undefined;
+            : { label: finishing ? t("onboarding.finishing") : selectedPaths.size > 0 ? t("onboarding.importAndStart", { count: selectedPaths.size }) : t("onboarding.enterWuu"), disabled: busy, run: () => void finish() };
+  const back = step === "plugins" ? "welcome" : step === "runtime" ? "plugins" : step === "provider" ? "runtime" : step === "ready" ? "provider" : undefined;
   // Only a consequence the choices do not show earns a line under the title.
   const lead = step === "provider" && externalEngine ? t("onboarding.externalEngineConnection", { agent: externalEngine })
     : step === "ready" && selectedEngine === RECOMMENDED_ENGINE && !providerReady && !connected ? t("onboarding.readyNoModel")
@@ -488,6 +552,37 @@ export function FirstRunOnboarding({
             </div>
           ) : null}
 
+          {step === "ready" ? (
+            <div className="onboarding-body onboarding-workspaces" data-scroll-fade="">
+              <p className="onboarding-lead">{t("onboarding.workspacesLead")}</p>
+              <div className="onboarding-workspace-toolbar">
+                <button className="settings-button" type="button" disabled={busy || scanningWorkspaces || (!preview && !window.wuu?.chooseWorkspaceDirectory)} onClick={() => void chooseWorkspace()}>
+                  {t("onboarding.chooseWorkspace")}
+                </button>
+                {(workspaceScan?.candidates.length ?? 0) > 0 ? <button className="settings-button settings-button-ghost" type="button" disabled={busy} onClick={() => setSelectedPaths(selectedPaths.size === workspaceScan!.candidates.length ? new Set() : new Set(workspaceScan!.candidates.map((item) => item.path)))}>
+                  {t(selectedPaths.size === workspaceScan!.candidates.length ? "onboarding.selectNone" : "onboarding.selectAll")}
+                </button> : null}
+                <button className="settings-button settings-button-ghost" type="button" disabled={busy || scanningWorkspaces} onClick={() => setScanAttempt((attempt) => attempt + 1)}>{t("onboarding.scanAgain")}</button>
+              </div>
+              {scanningWorkspaces ? <p className="onboarding-status" role="status"><LoaderCircle className="icon settings-spin" aria-hidden="true" />{t("onboarding.scanningWorkspaces")}</p> : null}
+              {!scanningWorkspaces && workspaceScan?.candidates.length === 0 ? <p className="onboarding-status">{t("onboarding.noRecentWorkspaces")}</p> : null}
+              {workspaceScan?.incomplete ? <p className="onboarding-status" role="status">{t("onboarding.workspaceScanIncomplete")}</p> : null}
+              <div className="onboarding-workspace-list">
+                {workspaceScan?.candidates.map((item) => (
+                  <label key={item.path} className="onboarding-workspace-row">
+                    <input type="checkbox" checked={selectedPaths.has(item.path)} disabled={busy} onChange={() => toggleWorkspace(item.path)} aria-label={item.name} />
+                    <span className="onboarding-workspace-details">
+                      <span className="onboarding-workspace-name">{item.name}</span>
+                      <span className="onboarding-workspace-path" title={item.path}>{item.path}</span>
+                      {item.sources.length > 0 ? <span className="onboarding-workspace-source">{item.sources.map((source) => source === "codex" ? "Codex" : "Claude Code").join(" · ")}</span> : null}
+                    </span>
+                    {item.lastUsedAt ? <time dateTime={item.lastUsedAt} title={new Date(item.lastUsedAt).toLocaleString(locale)}>{new Intl.DateTimeFormat(locale, { month: "short", day: "numeric" }).format(new Date(item.lastUsedAt))}</time> : null}
+                  </label>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
           {error ? (
             <p className="onboarding-error" role="alert">
               {error.title}
@@ -506,6 +601,9 @@ export function FirstRunOnboarding({
             <button className="settings-button" type="button" disabled={busy} onClick={() => setStep("ready")}>
               {t("onboarding.configureLater")}
             </button>
+          ) : null}
+          {step === "ready" && selectedPaths.size > 0 ? (
+            <button className="settings-button settings-button-ghost" type="button" disabled={busy} onClick={() => void finish([])}>{t("onboarding.skipWorkspaces")}</button>
           ) : null}
           {primary ? (
             <button className="settings-button settings-button-primary" type="button" disabled={primary.disabled} onClick={primary.run}>

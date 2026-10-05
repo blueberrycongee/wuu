@@ -144,6 +144,9 @@ try {
 const api: WuuDesktopApi = {
   initialOnboardingComplete,
   completeOnboarding: () => ipcRenderer.invoke("wuu:onboarding-complete"),
+  discoverRecentWorkspaces: () => ipcRenderer.invoke("wuu:onboarding-discover-workspaces"),
+  chooseWorkspaceDirectory: () => ipcRenderer.invoke("wuu:onboarding-choose-directory"),
+  importWorkspaces: (paths) => ipcRenderer.invoke("wuu:onboarding-import-workspaces", paths),
   platform: desktopPlatform,
   listProjects: () => ipcRenderer.invoke("wuu:project-list"),
   createBlankProject: () => ipcRenderer.invoke("wuu:project-create-blank"),
