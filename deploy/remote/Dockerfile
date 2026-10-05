@@ -4,6 +4,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY cmd/wuu-server ./cmd/wuu-server
 COPY internal/remote ./internal/remote
+COPY internal/securefs ./internal/securefs
 COPY internal/statepath ./internal/statepath
 RUN CGO_ENABLED=0 go build -trimpath -o /wuu-server ./cmd/wuu-server
 
