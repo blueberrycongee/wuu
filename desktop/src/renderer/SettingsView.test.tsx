@@ -437,6 +437,33 @@ function click(element: Element | null | undefined): void {
 }
 
 describe("SettingsView model services", () => {
+  it("connects Wuu to the local subscription, verifies it, and preserves the default", async () => {
+    const api = installServicesStub();
+    const initialized = servicesInitialized();
+    const provider = initialized.providers![0];
+    provider.api_key_configured = false;
+    provider.reuse_codex_credentials = false;
+    provider.codex_credential_source = "codex-cli";
+    api.useCodexCredentials = vi.fn().mockResolvedValue({ providers: [] });
+    api.loadCodexModels = vi.fn().mockRejectedValueOnce(new Error("Subscription unavailable"))
+      .mockResolvedValue({ provider: provider.name, models: [{ slug: provider.model }], providers: [] });
+    api.authenticateEngine = vi.fn();
+    const onSave = vi.fn(async () => {});
+    renderSettings({ initialized, initialPage: "providers", onSave });
+    await flush();
+    click(container.querySelector(`[data-provider="${provider.name}"]`));
+    expect(api.useCodexCredentials).not.toHaveBeenCalled();
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="codex-subscription-connect"]')!.click());
+    expect(onSave).not.toHaveBeenCalled();
+    expect(container.querySelector('[role="alert"]')).not.toBeNull();
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="codex-subscription-connect"]')!.click());
+    expect(api.useCodexCredentials).toHaveBeenCalledWith(provider.name);
+    expect(api.loadCodexModels).toHaveBeenCalledWith(provider.name);
+    expect(onSave).toHaveBeenCalledWith(provider.name, provider.model, undefined, { keep_selection: true });
+    expect(api.authenticateEngine).not.toHaveBeenCalled();
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+  });
+
   it("keeps connection actions available while the catalog loads and reports failure", async () => {
     const api = installServicesStub();
     let rejectCatalog!: (reason: Error) => void;

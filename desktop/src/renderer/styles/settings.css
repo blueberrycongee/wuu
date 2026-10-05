@@ -2547,3 +2547,12 @@ button.settings-engine-expand:hover {
     animation: none;
   }
 }
+
+.settings-engine-login-command {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  font-family: var(--font-mono);
+  font-size: var(--appearance-code-size);
+}

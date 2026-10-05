@@ -48,6 +48,8 @@ describe("FirstRunOnboarding", () => {
       initialLanguagePreference: "zh-CN",
       initialSystemLocale: "zh-CN",
       initialThemePreference: "dark",
+      useCodexCredentials: vi.fn().mockResolvedValue({ providers: [] }),
+      loadCodexModels: vi.fn().mockResolvedValue({ provider: "openai-codex", models: [], providers: [] }),
     } as unknown as WuuDesktopApi;
     document.documentElement.dataset.theme = "dark";
   });
@@ -90,10 +92,10 @@ describe("FirstRunOnboarding", () => {
     expect(update).toHaveBeenCalledWith({ id: `plugin:bundled:${id}`, action: "enable" });
   });
 
-  it("recognizes configured and locked model providers", () => {
+  it("requires resolved credentials rather than a locked connection editor", () => {
     expect(hasOnboardingProvider([{ name: "a", type: "x", model: "m" }])).toBe(false);
     expect(hasOnboardingProvider([{ name: "a", type: "x", model: "m", api_key_configured: true }])).toBe(true);
-    expect(hasOnboardingProvider([{ name: "a", type: "x", model: "m", connection_locked: true }])).toBe(true);
+    expect(hasOnboardingProvider([{ name: "a", type: "x", model: "m", connection_locked: true }])).toBe(false);
     expect(hasOnboardingProvider([{ name: "openai-codex", type: "openai-codex", model: "gpt-6-astra", connection_locked: true }])).toBe(false);
     expect(hasOnboardingProvider([{
       name: "openai-codex",
@@ -102,7 +104,45 @@ describe("FirstRunOnboarding", () => {
       connection_locked: true,
       reuse_codex_credentials: true,
       codex_credential_source: "codex-cli",
-    }])).toBe(true);
+    }])).toBe(false);
+  });
+
+  it("checks the selected Wuu service instead of another connected service", () => {
+    const providers = [
+      { name: "subscription", type: "openai-codex", model: "m", reuse_codex_credentials: true, api_key_configured: false },
+      { name: "api", type: "openai-compatible", model: "m", api_key_configured: true },
+    ];
+    expect(hasOnboardingProvider(providers, "subscription")).toBe(false);
+    expect(hasOnboardingProvider(providers, "api")).toBe(true);
+  });
+
+  it.each([["codex", "codex"], ["cursor", "acp"]])("keeps %s authentication separate from Wuu subscription setup", async (engineID, protocol) => {
+    const save = vi.fn(async () => undefined);
+    window.wuu.listEngineAuthMethods = vi.fn().mockResolvedValue({ authenticated: true, methods: [] });
+    await act(async () => root.render(<I18nProvider><FirstRunOnboarding
+      inventory={[plugin("todo", true)]}
+      providers={[{ name: "openai-codex", type: "openai-codex", model: "m", codex_credential_source: "codex-cli" }]}
+      engines={{ engines: [{ id: engineID, protocol, enabled: true, binary_ok: true }], settings: { default_engine: "wuu" } }}
+      onUpdateExtensionPackage={vi.fn(async () => undefined)} onSaveProvider={save}
+      onUpdateEngines={vi.fn(async () => undefined)} onComplete={vi.fn(async () => undefined)}
+    /></I18nProvider>));
+    await clickButton("开始设置");
+    await clickButton("继续");
+    await act(async () => container.querySelector<HTMLInputElement>(`[data-testid="onboarding-engine-${engineID}"]`)!.click());
+    await clickButton("继续");
+    expect(container.querySelector('[data-testid="settings-provider-tiles"]')).toBeNull();
+    expect(container.querySelector('[data-testid="codex-subscription-connect"]')).toBeNull();
+    if (protocol === "acp") {
+      await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="engine-auth-discover"]')!.click());
+      expect(window.wuu.listEngineAuthMethods).toHaveBeenCalledWith(engineID);
+    } else {
+      expect(container.querySelector('[data-testid="engine-login-command-copy"]')).not.toBeNull();
+      expect(window.wuu.listEngineAuthMethods).not.toHaveBeenCalled();
+    }
+    await clickButton("继续");
+    expect(container.querySelector(".onboarding-stage-ready")).not.toBeNull();
+    expect(save).not.toHaveBeenCalled();
+    expect(window.wuu.useCodexCredentials).not.toHaveBeenCalled();
   });
 
   it("decorates the runtime mascot with the selected engine mark", async () => {
@@ -560,22 +600,23 @@ describe("FirstRunOnboarding", () => {
     });
     await clickButton("开始设置");
     await clickButton("继续");
-    expect(container.querySelector('[data-testid="onboarding-reuse-codex"]')).toBeNull();
+    expect(container.querySelector('[data-testid="codex-subscription-connect"]')).toBeNull();
     await clickButton("继续");
     expect(updateEngines).toHaveBeenCalledWith({ default_engine: "wuu" });
     expect(save).not.toHaveBeenCalled();
-    const reuse = container.querySelector<HTMLButtonElement>('[data-testid="onboarding-reuse-codex"]');
+    const reuse = container.querySelector<HTMLButtonElement>('[data-testid="codex-subscription-connect"]');
     expect(reuse).not.toBeNull();
     await act(async () => reuse!.click());
     expect(save).toHaveBeenCalledWith("openai-codex", "gpt-6-astra", {
-      reuse_codex_credentials: true,
+      keep_selection: false,
     });
+    expect(window.wuu.loadCodexModels).toHaveBeenCalledWith("openai-codex");
     expect(container.querySelector(".onboarding-stage-ready")).not.toBeNull();
   });
 
   it.each(["skip", "retry"])("handles Codex reuse through %s without implicit credential changes", async (mode) => {
     const save = vi.fn(async () => undefined);
-    if (mode === "retry") save.mockRejectedValueOnce(new Error("Connection unavailable"));
+    if (mode === "retry") vi.mocked(window.wuu.loadCodexModels).mockRejectedValueOnce(new Error("Connection unavailable"));
     await act(async () => {
       root.render(
         <I18nProvider>
@@ -596,14 +637,15 @@ describe("FirstRunOnboarding", () => {
     if (mode === "skip") {
       await clickButton("稍后连接");
     } else {
-      const reuse = container.querySelector<HTMLButtonElement>('[data-testid="onboarding-reuse-codex"]')!;
+      const reuse = container.querySelector<HTMLButtonElement>('[data-testid="codex-subscription-connect"]')!;
       await act(async () => reuse.click());
       if (mode === "retry") {
         expect(container.querySelector('[role="alert"]')?.textContent).toContain("Connection unavailable");
         expect(container.querySelector(".onboarding-stage-provider")).not.toBeNull();
         expect(reuse.disabled).toBe(false);
         await act(async () => reuse.click());
-        expect(save).toHaveBeenCalledTimes(2);
+        expect(window.wuu.loadCodexModels).toHaveBeenCalledTimes(2);
+        expect(save).toHaveBeenCalledTimes(1);
       }
     }
     expect(container.querySelector(".onboarding-stage-ready")).not.toBeNull();
@@ -659,28 +701,9 @@ describe("FirstRunOnboarding", () => {
     await act(async () => installedChoice.click());
     expect(installedChoice.checked).toBe(true);
     await clickButton("继续");
-    expect(container.querySelector('[data-testid="onboarding-reuse-codex"]')).toBeNull();
-    if (mode === "skip") {
-      await clickButton("稍后连接");
-    } else {
-      await act(async () => {
-        container.querySelector<HTMLButtonElement>("[data-testid=settings-provider-custom]")!.click();
-      });
-      for (const [testID, value] of [
-        ["settings-provider-connect-base-url", "https://preview.invalid/v1"],
-        ["settings-provider-connect-key", "not-a-real-key"],
-        ["settings-provider-connect-model", "preview-model"],
-      ]) {
-        const input = document.querySelector<HTMLInputElement>(`[data-testid=${testID}]`)!;
-        await act(async () => {
-          Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value);
-          input.dispatchEvent(new Event("input", { bubbles: true }));
-        });
-      }
-      await act(async () => {
-        document.querySelector<HTMLButtonElement>("[data-testid=settings-provider-connect]")!.click();
-      });
-    }
+    expect(container.querySelector('[data-testid="codex-subscription-connect"]')).toBeNull();
+    expect(container.querySelector('[data-testid="settings-provider-tiles"]')).toBeNull();
+    await clickButton("继续");
     expect(container.querySelector(".onboarding-stage-ready")).not.toBeNull();
     await clickButton("导入并开始（2）");
 

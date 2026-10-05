@@ -70,3 +70,14 @@ it("cancels an admitted discovery when the panel closes and ignores its late res
   await act(async () => resolveDiscovery(methods));
   expect(authenticate).not.toHaveBeenCalled();
 });
+
+it("offers the native login command without sending an unsupported ACP request", async () => {
+  const writeText = vi.fn().mockResolvedValue(undefined);
+  Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+  await act(async () => root!.render(<EngineAuthentication engineID="codex" protocol="codex" />));
+  expect(container.querySelector('[data-testid="engine-auth-discover"]')).toBeNull();
+  await click("engine-login-command-copy");
+  expect(writeText).toHaveBeenCalledWith("codex login");
+  expect(discover).not.toHaveBeenCalled();
+  expect(authenticate).not.toHaveBeenCalled();
+});

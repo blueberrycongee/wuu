@@ -4,6 +4,8 @@ A provider tells Wuu where to send model requests and which credentials to use. 
 
 These settings apply to the **Wuu** engine. Selecting an [external engine](external-engines.md), such as Codex, Claude Code, or Devin, runs that program with its own authentication and configuration. Reusing a subscription credential in a Wuu provider is a different choice from running the corresponding external engine.
 
+Choosing an external engine during setup only exposes that engine’s sign-in path; it does not enable subscription reuse for Wuu. If the selected Wuu model service is disconnected, sending preserves the draft and offers a link to model service settings.
+
 ## Add a provider in the desktop app
 
 1. Open **Settings → Model providers → Add provider**.
@@ -39,7 +41,7 @@ Claude Opus 5.5 and Fable 5.1 always use adaptive thinking. Wuu maps a saved `no
 
 | Connection | Setup |
 |---|---|
-| Codex subscription | Sign in with Codex CLI, then choose to reuse the detected login during first-run setup. In configuration, use the `openai-codex` provider with `reuse_codex_credentials`. Wuu's desktop does not start OpenAI OAuth login itself. In Settings → Subscriptions, open the account’s **…** menu. “Use local Codex login” selects the local login over Wuu’s saved credentials without changing the model. “Check login again” verifies authentication by fetching the model list. Wuu reads the local login on each request, so refreshed credentials take effect without a restart. |
+| Codex subscription | Sign in with Codex CLI, then open **Settings → Model services → ChatGPT → Use local Codex login**. Wuu reads the local login and fetches the model list to verify the connection, preserving the default model and engine selection. The refresh icon checks again. First-run setup offers the same connection when you choose Wuu. Manual configuration uses `openai-codex` with `reuse_codex_credentials`. Wuu does not start OpenAI OAuth itself; updated local credentials take effect without a restart. |
 | xAI SuperGrok | Add an **xAI SuperGrok** provider and follow the browser login. For the CLI, run `wuu login xai` and select `--provider xai-subscription`. |
 | Grok Build | Run `grok login`, then select the detected provider in Wuu or pass `--provider grok-build`. If the login expires, sign in again with Grok CLI; Wuu does not refresh or modify those credentials. |
 

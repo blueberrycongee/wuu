@@ -24,6 +24,12 @@ app.setPath('userData', path.join(fixture, 'profile'));
 process.env.WUU_HOME = home;
 // Subscription logins are discovered from HOME; keep the user's out of view.
 process.env.HOME = userHome;
+process.env.CODEX_HOME = path.join(userHome, '.codex');
+process.env.CLAUDE_CONFIG_DIR = path.join(userHome, '.claude');
+fs.mkdirSync(process.env.CODEX_HOME);
+fs.writeFileSync(path.join(process.env.CODEX_HOME, 'auth.json'), JSON.stringify({
+  auth_mode: 'chatgpt', tokens: { access_token: 'synthetic-codex-token', refresh_token: 'synthetic-refresh', account_id: 'synthetic-account' },
+}));
 process.env.WUU_DESKTOP_CORE = process.env.WUU_MODEL_SERVICES_CORE || path.join(desktop, 'build/bin/wuu-core');
 delete process.env.ELECTRON_RENDERER_URL;
 process.env.WUU_ENABLE_BROWSER = '0';
@@ -31,10 +37,21 @@ process.env.WUU_SAFE_MODE = '1';
 process.env.WUU_DESKTOP_DISABLE_DEV_CACHE_CLEANUP = '1';
 
 const requests = [];
+let rejectSubscription = true;
+let subscriptionChecks = 0;
 const server = http.createServer((req, res) => {
   let body = '';
   req.on('data', chunk => { body += chunk; });
   req.on('end', () => {
+    if (req.url.startsWith('/v1/models')) {
+      subscriptionChecks++;
+      assert.equal(req.headers.authorization, 'Bearer synthetic-codex-token');
+      res.writeHead(rejectSubscription ? 503 : 200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(rejectSubscription ? { error: 'Synthetic subscription unavailable' } : {
+        models: [{ slug: 'subscription-model', display_name: 'Subscription model', supported_in_api: true }],
+      }));
+      return;
+    }
     requests.push({ path: req.url, authorization: req.headers.authorization, body: JSON.parse(body) });
     res.writeHead(200, { 'Content-Type': 'text/event-stream' });
     const chunk = delta => `data: ${JSON.stringify({ id: 'fixture', model: 'fixture', choices: [{ index: 0, delta, finish_reason: null }] })}\n\n`;
@@ -119,8 +136,11 @@ async function run() {
   const endpoint = `http://127.0.0.1:${server.address().port}/v1`;
   const engines = Object.fromEntries(['codex', 'claude', 'cursor', 'devin', 'grok', 'hermes', 'pi', 'opencode', 'antigravity'].map(id => [id, { enabled: false }]));
   fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({
-    default_provider: 'fixture', engines,
-    providers: { fixture: { type: 'openai-compatible', base_url: endpoint, api_key: 'fixture-only', model: 'fixture' } },
+    default_provider: 'subscription', engines,
+    providers: {
+      fixture: { type: 'openai-compatible', base_url: endpoint, api_key: 'fixture-only', model: 'fixture' },
+      subscription: { type: 'openai-codex', base_url: endpoint, model: 'subscription-model', reuse_codex_credentials: false },
+    },
   }));
   const stamp = '2026-01-01T00:00:00Z';
   fs.writeFileSync(path.join(home, 'projects.json'), JSON.stringify({
@@ -133,12 +153,78 @@ async function run() {
   main.setSize(1280, 900);
   await waitFor(main, () => document.querySelector('.composer textarea'));
 
+  // Another connected service cannot authorize the selected Wuu subscription.
+  const draft = 'Keep this draft while connecting my subscription';
+  await type(main, '.composer textarea', draft);
+  await click(main, '.composer-send-button');
+  await waitFor(main, () => document.querySelector('.archive-tip-action'));
+  assert.equal(requests.length, 0);
+  assert.equal(await evaluate(main, () => document.querySelector('.composer textarea').value), draft);
+  await capture(main, '00-disconnected-draft.png');
+  await click(main, '.archive-tip-action');
+  await waitFor(main, () => document.querySelector('[data-provider="fixture"]') && !document.querySelector('.archive-tip-action'));
+  await click(main, '[data-provider="fixture"]');
+  await click(main, '[data-testid="settings-provider-make-default"]');
+  await waitFor(main, () => document.querySelector('.model-service-hero .model-service-badge'));
+  await click(main, '.settings-back-button');
+  await waitFor(main, () => document.querySelector('.composer textarea'));
+  assert.equal(await evaluate(main, () => document.querySelector('.composer textarea').value), draft);
+  await type(main, '.composer textarea', '');
+
   await click(main, '.sidebar-account-trigger');
   await waitFor(main, () => document.querySelector('[data-settings-page="providers"]'));
   await click(main, '[data-settings-page="providers"]');
   await waitFor(main, () => document.querySelector('[data-testid="settings-default-model"]') && document.querySelector('[data-catalog="deepseek"]'));
   assert.match(await evaluate(main, () => document.querySelector('[data-testid="settings-default-model"]').textContent), /fixture/);
   await capture(main, '01-overview.png');
+
+  // A discovered external login becomes a Wuu connection only on explicit use.
+  assert.equal(readConfig().providers.subscription.reuse_codex_credentials, false);
+  await click(main, '[data-provider="subscription"]');
+  await waitFor(main, () => document.querySelector('[data-testid="codex-subscription-connect"]'));
+  await capture(main, '01c-subscription-disconnected.png');
+  await click(main, '[data-testid="codex-subscription-connect"]');
+  await waitFor(main, () => document.querySelector('.model-subscription-error') && !document.querySelector('[data-testid="codex-subscription-connect"]').disabled);
+  assert.equal(readConfig().default_provider, 'fixture');
+  await capture(main, '01d-subscription-retry.png');
+  rejectSubscription = false;
+  await click(main, '[data-testid="codex-subscription-connect"]');
+  await waitFor(main, () => document.querySelector('.model-subscription-status') && !document.querySelector('[data-testid="codex-subscription-connect"]').disabled && !document.querySelector('.model-subscription-error'));
+  assert.equal(readConfig().providers.subscription.reuse_codex_credentials, true);
+  assert.equal(readConfig().providers.subscription.model, 'subscription-model');
+  assert.equal(readConfig().default_provider, 'fixture');
+  assert.deepEqual(readConfig().engines, engines, 'Subscription setup does not change external engines.');
+  assert.ok(subscriptionChecks >= 2);
+  await capture(main, '01e-subscription-connected.png');
+  await click(main, '[data-testid="settings-provider-make-default"]');
+  await waitFor(main, () => document.querySelector('.model-service-hero .model-service-badge'));
+  await click(main, '[data-testid="codex-subscription-connect"]');
+  await waitFor(main, () => !document.querySelector('[data-testid="codex-subscription-connect"]').disabled && document.querySelector('[data-model="subscription-model"]'));
+  assert.equal(readConfig().default_provider, 'subscription');
+  for (const theme of ['light', 'dark']) for (const size of [14, 20]) for (const width of [1280, 760]) {
+    main.setSize(width, 900);
+    await evaluate(main, ({ theme, size }) => {
+      document.documentElement.setAttribute('data-theme', theme);
+      document.documentElement.style.setProperty('--appearance-scale', String(size / 14));
+      document.documentElement.style.setProperty('--conversation-message-font-size', `${size}px`);
+    }, { theme, size });
+    await settle(main);
+    assert.deepEqual(await layoutProblems(main), [], `subscription ${theme} ${size}px ${width}px`);
+    if (width === 760 && size === 20) await capture(main, `01f-subscription-${theme}-large.png`);
+  }
+  main.setSize(1280, 900);
+  await evaluate(main, () => {
+    document.documentElement.setAttribute('data-theme', 'light');
+    document.documentElement.style.setProperty('--appearance-scale', '1');
+    document.documentElement.style.setProperty('--conversation-message-font-size', '14px');
+  });
+  await click(main, '[data-testid="settings-provider-back"]');
+  await waitFor(main, () => document.querySelector('[data-testid="settings-default-model"]'));
+  await click(main, '[data-provider="fixture"]');
+  await click(main, '[data-testid="settings-provider-make-default"]');
+  await waitFor(main, () => document.querySelector('.model-service-hero .model-service-badge'));
+  await click(main, '[data-testid="settings-provider-back"]');
+  await waitFor(main, () => document.querySelector('[data-testid="settings-default-model"]'));
 
   // The grouped catalog searches the complete directory, preserves the
   // custom endpoint action on no results, and survives close/reopen without
@@ -269,6 +355,8 @@ async function run() {
 
   fs.writeFileSync(path.join(output, 'evidence.json'), `${JSON.stringify({
     fixture,
+    disconnectedDraftPreserved: true,
+    subscription: { checks: subscriptionChecks, reuse: readConfig().providers.subscription.reuse_codex_credentials, engineSettingsUnchanged: true },
     finalConfig: { default_provider: readConfig().default_provider, providers: Object.keys(readConfig().providers) },
     deepseek: { models: catalogModels, chosen: nextModel, hidden },
     cards,

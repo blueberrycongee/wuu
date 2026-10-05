@@ -1,4 +1,4 @@
-import { ChevronRight, LoaderCircle } from "./WuuIcons";
+import { LoaderCircle } from "./WuuIcons";
 import { type KeyboardEvent, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type {
   EngineInfo,
@@ -19,7 +19,8 @@ import { ServiceConnector, ServiceMark, serviceIdentity, useCatalogProviders } f
 import { ONBOARDING_PLUGIN_ORDER, PLUGIN_DESCRIPTION_KEYS, RECOMMENDED_PLUGIN_IDS } from "./onboardingCatalog";
 import { OnboardingMascotStage } from "./OnboardingMascotStage";
 import { PREVIEW_PLUGINS, PREVIEW_WORKSPACES } from "./onboardingPreview";
-import { ProviderMark } from "./ProviderMarks";
+import { CodexSubscriptionConnection } from "./CodexSubscriptionConnection";
+import { EngineAuthentication } from "./EngineAuthentication";
 import { PluginIcon } from "./PublicIcon";
 import { SettingsGroup, SettingsSection } from "./SettingsSection";
 import { applyThemePreference } from "./Theme";
@@ -55,8 +56,9 @@ export function bundledOnboardingPlugins(
 
 export function hasOnboardingProvider(
   providers: readonly ProviderSummary[] | undefined,
+  providerName?: string,
 ): boolean {
-  return providers?.some((provider) => isConfiguredOnboardingProvider(provider)) ?? false;
+  return providers?.some((provider) => (providerName === undefined || provider.name === providerName) && isConfiguredOnboardingProvider(provider)) ?? false;
 }
 
 export function discoveredCodexCredential(
@@ -66,11 +68,9 @@ export function discoveredCodexCredential(
 }
 
 function isConfiguredOnboardingProvider(provider: ProviderSummary): boolean {
-  if (provider.api_key_configured === true) return true;
-  if (isCodexSubscriptionProvider(provider)) {
-    return provider.codex_credential_source === "wuu-auth-store" || provider.reuse_codex_credentials === true;
-  }
-  return provider.connection_locked === true;
+  // The core resolves each provider's credentials. A saved opt-in or a locked
+  // connection editor does not mean those credentials are present or usable.
+  return provider.api_key_configured === true;
 }
 
 function isCodexSubscriptionProvider(provider: ProviderSummary): boolean {
@@ -89,6 +89,7 @@ const STEP_TITLES: Readonly<Record<OnboardingStep, TranslationKey>> = {
 export function FirstRunOnboarding({
   inventory: liveInventory,
   providers: liveProviders,
+  providerName,
   engines,
   preview = false,
   onDismissPreview,
@@ -99,6 +100,7 @@ export function FirstRunOnboarding({
 }: {
   inventory?: readonly ExtensionInventoryRecord[];
   providers?: readonly ProviderSummary[];
+  providerName?: string;
   engines?: EngineListResult;
   preview?: boolean;
   onDismissPreview?: () => void;
@@ -127,6 +129,9 @@ export function FirstRunOnboarding({
   const [savingProvider, setSavingProvider] = useState(false);
   // A preview connection is not saved, so the ready step learns of it here.
   const [connected, setConnected] = useState(false);
+  // Credential notifications can arrive before model verification finishes.
+  // Keep the connection action mounted until that attempt succeeds or is skipped.
+  const [connectingCodex, setConnectingCodex] = useState(false);
   const [savingRuntime, setSavingRuntime] = useState(false);
   const [finishing, setFinishing] = useState(false);
   const [workspaceScan, setWorkspaceScan] = useState<RecentWorkspacesResult>();
@@ -138,8 +143,9 @@ export function FirstRunOnboarding({
   const [error, setError] = useState<{ title: string; detail?: string } | null>(null);
   const [selectedEngine, setSelectedEngine] = useState(RECOMMENDED_ENGINE);
   const catalog = useCatalogProviders(0);
-  const discoveredCodex = discoveredCodexCredential(providers);
-  const providerReady = hasOnboardingProvider(providers);
+  const codexProvider = providers?.find((provider) => provider.name === providerName && isCodexSubscriptionProvider(provider))
+    ?? discoveredCodexCredential(providers) ?? providers?.find(isCodexSubscriptionProvider);
+  const providerReady = hasOnboardingProvider(providers, preview ? undefined : providerName) && (!connectingCodex || connected);
   const preset = selectedPreset(selectedPluginIDs, bundledPlugins);
   const currentStepIndex = STEP_ORDER.indexOf(step);
   const busy = applyingPlugins || savingRuntime || savingProvider || finishing || choosingWorkspace;
@@ -318,25 +324,6 @@ export function FirstRunOnboarding({
     }
   }
 
-  async function reuseCodexLogin(): Promise<void> {
-    if (!discoveredCodex || savingProvider) return;
-    setSavingProvider(true);
-    setError(null);
-    try {
-      if (!preview) {
-        await onSaveProvider(discoveredCodex.name, discoveredCodex.model, {
-          reuse_codex_credentials: true,
-        });
-      }
-      setConnected(true);
-      setStep("ready");
-    } catch (reason) {
-      failure(reason, "provider.saveFailed");
-    } finally {
-      setSavingProvider(false);
-    }
-  }
-
   async function finish(paths = [...selectedPaths]): Promise<void> {
     if (finishing) return;
     if (preview) {
@@ -366,12 +353,11 @@ export function FirstRunOnboarding({
           run: () => void applyRuntimeChoices(),
         }
           // Without a connection the service tiles are the step's actions.
-          : step === "provider" ? (providerReady ? { label: t("onboarding.continue"), disabled: false, run: () => setStep("ready") } : undefined)
+          : step === "provider" ? (externalEngine || providerReady ? { label: t("onboarding.continue"), disabled: busy, run: () => setStep("ready") } : undefined)
             : { label: finishing ? t("onboarding.finishing") : selectedPaths.size > 0 ? t("onboarding.importAndStart", { count: selectedPaths.size }) : t("onboarding.enterWuu"), disabled: busy, run: () => void finish() };
   const back = step === "plugins" ? "welcome" : step === "runtime" ? "plugins" : step === "provider" ? "runtime" : step === "ready" ? "provider" : undefined;
   // Only a consequence the choices do not show earns a line under the title.
-  const lead = step === "provider" && externalEngine ? t("onboarding.externalEngineConnection", { agent: externalEngine })
-    : step === "ready" && selectedEngine === RECOMMENDED_ENGINE && !providerReady && !connected ? t("onboarding.readyNoModel")
+  const lead = step === "ready" && selectedEngine === RECOMMENDED_ENGINE && !providerReady && !connected ? t("onboarding.readyNoModel")
       : undefined;
 
   const connector = (
@@ -441,7 +427,8 @@ export function FirstRunOnboarding({
         <div className="onboarding-panel">
           <div className="onboarding-heading" key={step}>
             <h1 id={titleID} ref={titleRef} tabIndex={-1}>
-              {t(step === "provider" && providerReady ? "onboarding.providerReadyTitle" : STEP_TITLES[step])}
+              {step === "provider" && externalEngine ? t("onboarding.engineLoginTitle", { agent: externalEngine })
+                : t(step === "provider" && providerReady ? "onboarding.providerReadyTitle" : STEP_TITLES[step])}
             </h1>
             {lead ? <p className="onboarding-lead">{lead}</p> : null}
           </div>
@@ -514,7 +501,14 @@ export function FirstRunOnboarding({
 
           {step === "provider" ? (
             <div className="onboarding-body" data-scroll-fade="">
-              {providerReady ? (
+              {externalEngine ? (
+                <SettingsGroup>
+                  {preview ? <p className="settings-group-empty">{externalEngine}</p>
+                    : <EngineAuthentication key={selectedEngine} engineID={selectedEngine}
+                      protocol={engines?.engines.find((engine) => engine.id === selectedEngine)?.protocol ?? selectedEngine}
+                      binaryPath={engines?.engines.find((engine) => engine.id === selectedEngine)?.binary_path} compact />}
+                </SettingsGroup>
+              ) : providerReady ? (
                 <SettingsGroup>
                   {providers?.filter(isConfiguredOnboardingProvider).map((provider) => {
                     const identity = serviceIdentity(provider, t);
@@ -527,24 +521,22 @@ export function FirstRunOnboarding({
                     );
                   })}
                 </SettingsGroup>
-              ) : discoveredCodex ? (
+              ) : codexProvider ? (
                 <>
                   <SettingsGroup>
-                    <button
-                      className="catalog-row"
-                      type="button"
-                      data-testid="onboarding-reuse-codex"
-                      disabled={savingProvider}
-                      onClick={() => void reuseCodexLogin()}
-                    >
-                      <span className="catalog-row-mark" aria-hidden="true">
-                        <ProviderMark id="openai" label="ChatGPT" />
-                      </span>
-                      <span className="catalog-row-title">{t("onboarding.reuseCodexTitle")}</span>
-                      {savingProvider
-                        ? <LoaderCircle className="icon settings-spin catalog-row-meta" aria-hidden="true" />
-                        : <ChevronRight className="icon settings-disclosure-chevron" aria-hidden="true" />}
-                    </button>
+                    <CodexSubscriptionConnection
+                      provider={codexProvider}
+                      preview={preview}
+                      onPendingChange={(pending) => {
+                        setSavingProvider(pending);
+                        if (pending) setConnectingCodex(true);
+                      }}
+                      onConnected={async () => {
+                        if (!preview) await onSaveProvider(codexProvider.name, codexProvider.model, { keep_selection: false });
+                        setConnected(true);
+                        setStep("ready");
+                      }}
+                    />
                   </SettingsGroup>
                   <SettingsSection title={t("onboarding.otherConnection")}>{connector}</SettingsSection>
                 </>
@@ -597,7 +589,7 @@ export function FirstRunOnboarding({
               {t("onboarding.back")}
             </button>
           ) : null}
-          {step === "provider" && !providerReady ? (
+          {step === "provider" && !externalEngine && !providerReady ? (
             <button className="settings-button" type="button" disabled={busy} onClick={() => setStep("ready")}>
               {t("onboarding.configureLater")}
             </button>

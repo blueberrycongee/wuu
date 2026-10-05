@@ -4,6 +4,8 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const http = require('node:http');
+const { spawnSync } = require('node:child_process');
 const { pathToFileURL } = require('node:url');
 const { app, dialog } = require('electron');
 const desktop = path.resolve(__dirname, '..');
@@ -11,6 +13,9 @@ const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'wuu-workspaces-e2e-'));
 const home = path.join(fixture, 'wuu-home');
 const output = path.resolve(process.env.WUU_ONBOARDING_OUTPUT || path.join(desktop, 'out/e2e/onboarding-workspaces'));
 const empty = process.env.WUU_ONBOARDING_EMPTY === '1';
+const connections = process.env.WUU_ONBOARDING_CONNECTIONS === '1';
+let modelServer;
+let rejectSubscription = true;
 function write(file, data) { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, data); }
 function project(name, git = true) {
   const directory = path.join(fixture, 'projects', name);
@@ -57,6 +62,7 @@ let main;
 const observed = [];
 const deadline = setTimeout(() => {
   fs.writeFileSync(path.join(output, 'failure.txt'), 'Onboarding E2E exceeded 60 seconds');
+  modelServer?.close();
   app.exit(1);
 }, 60000);
 app.on('browser-window-created', (_event, win) => { if (!main) main = win; });
@@ -94,6 +100,29 @@ async function screenshot(name) {
   fs.writeFileSync(path.join(output, `${name}.png`), (await main.webContents.capturePage()).toPNG());
 }
 async function run() {
+  if (connections) {
+    const binary = path.join(fixture, 'fake-codex');
+    const build = spawnSync('go', ['build', '-o', binary, './internal/codexengine/testdata/fakecodex'], { cwd: path.dirname(desktop), encoding: 'utf8' });
+    assert.equal(build.status, 0, build.stderr);
+    modelServer = http.createServer((req, res) => {
+      assert.ok(req.url.startsWith('/models'));
+      assert.equal(req.headers.authorization, 'Bearer onboarding-synthetic-token');
+      if (rejectSubscription) {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Synthetic model discovery failure' }));
+        return;
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ models: [{ slug: 'subscription-fixture', display_name: 'Subscription fixture', supported_in_api: true }] }));
+    });
+    await new Promise(resolve => modelServer.listen(0, '127.0.0.1', resolve));
+    const config = JSON.parse(fs.readFileSync(path.join(home, 'config.json')));
+    config.engines.codex = { enabled: true, binary_path: binary };
+    config.default_provider = 'subscription';
+    config.providers = { subscription: { type: 'openai-codex', model: 'subscription-fixture', base_url: `http://127.0.0.1:${modelServer.address().port}`, reuse_codex_credentials: false } };
+    write(path.join(home, 'config.json'), JSON.stringify(config));
+    write(path.join(codex, 'auth.json'), JSON.stringify({ auth_mode: 'chatgpt', tokens: { access_token: 'onboarding-synthetic-token', account_id: 'synthetic-account' } }));
+  }
   await import(pathToFileURL(path.join(desktop, 'out/main/index.js')).href);
   await app.whenReady();
   if (!main) await new Promise(resolve => app.once('browser-window-created', resolve));
@@ -104,9 +133,52 @@ async function run() {
   await click(empty ? '极简' : 'Minimal');
   await click(empty ? '继续' : 'Continue');
   await waitFor(() => document.querySelector('.onboarding-stage-runtime'));
-  await click(empty ? '继续' : 'Continue');
-  await waitFor(() => document.querySelector('.onboarding-stage-provider'));
-  await click(empty ? '继续' : 'Continue');
+  if (connections) {
+    await waitFor(() => document.querySelector('[data-testid="onboarding-engine-codex"]'));
+    await evaluate(() => document.querySelector('[data-testid="onboarding-engine-codex"]').click());
+    await click('Continue');
+    await waitFor(() => document.querySelector('[data-testid="engine-login-command-copy"]'));
+    assert.equal(await evaluate(() => Boolean(document.querySelector('[data-testid="settings-provider-tiles"]'))), false);
+    assert.equal(await evaluate(() => Boolean(document.querySelector('[data-testid="engine-auth-discover"]'))), false);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(home, 'config.json'))).providers.subscription.reuse_codex_credentials, false);
+    await screenshot('external-engine-sign-in');
+    main.setResizable(true); main.setSize(620, 600);
+    await evaluate(() => document.documentElement.style.setProperty('--conversation-message-font-size', '20px'));
+    await screenshot('external-engine-narrow-large');
+    assert.equal(await evaluate(() => {
+      const command = document.querySelector('.settings-engine-login-command').getBoundingClientRect();
+      const label = document.querySelector('.settings-row-label').getBoundingClientRect();
+      return label.bottom <= command.top && document.documentElement.scrollWidth <= innerWidth;
+    }), true);
+    main.setSize(920, 720);
+    await evaluate(() => document.documentElement.style.setProperty('--conversation-message-font-size', '14px'));
+
+    await click('Back');
+    await evaluate(() => document.querySelector('[data-testid="onboarding-engine-wuu"]').click());
+    await click('Continue');
+    await waitFor(() => document.querySelector('[data-testid="codex-subscription-connect"]'));
+    await screenshot('wuu-subscription-sign-in');
+    main.setResizable(true); main.setSize(620, 600);
+    await evaluate(() => document.documentElement.style.setProperty('--conversation-message-font-size', '20px'));
+    await screenshot('wuu-subscription-narrow-large');
+    assert.equal(await evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+    main.setSize(920, 720);
+    await evaluate(() => document.documentElement.style.setProperty('--conversation-message-font-size', '14px'));
+    await evaluate(() => document.querySelector('[data-testid="codex-subscription-connect"]').click());
+    await waitFor(() => document.querySelector('.model-subscription-error') && !document.querySelector('[data-testid="codex-subscription-connect"]').disabled);
+    assert.ok(await evaluate(() => document.querySelector('.onboarding-stage-provider') !== null));
+    await screenshot('wuu-subscription-retry');
+    rejectSubscription = false;
+    await evaluate(() => document.querySelector('[data-testid="codex-subscription-connect"]').click());
+    await waitFor(() => document.querySelector('.onboarding-stage-ready'));
+    assert.equal(JSON.parse(fs.readFileSync(path.join(home, 'config.json'))).providers.subscription.reuse_codex_credentials, true);
+    observed.push({ scenario: 'external engine and Wuu subscription remain separate', passed: true });
+  } else {
+    await click(empty ? '继续' : 'Continue');
+    await waitFor(() => document.querySelector('.onboarding-stage-provider'));
+    await click(empty ? '继续' : 'Continue');
+  }
+
   if (empty) {
     await waitFor(() => document.querySelector('.onboarding-stage-ready') && [...document.querySelectorAll('button')].some(button => button.textContent.trim() === '重新查找' && !button.disabled));
     assert.equal(await evaluate(() => document.querySelectorAll('.onboarding-workspace-row').length), 0);
@@ -116,6 +188,7 @@ async function run() {
     assert.equal(JSON.parse(fs.readFileSync(path.join(home, 'projects.json'))).projects.length, 0);
     fs.writeFileSync(path.join(output, 'results.json'), JSON.stringify({ passed: true, synthetic: true, scenario: 'empty history and skip', fixture }, null, 2));
     clearTimeout(deadline);
+    modelServer?.close();
     app.quit();
     return;
   }
@@ -167,6 +240,7 @@ async function run() {
   fs.writeFileSync(path.join(output, 'results.json'), JSON.stringify({ passed: true, synthetic: true, fixture, observed }, null, 2));
   console.log(JSON.stringify({ passed: true, output, fixture }));
   clearTimeout(deadline);
+  modelServer?.close();
   app.quit();
 }
 run().catch(async (error) => {
@@ -176,5 +250,6 @@ run().catch(async (error) => {
     const state = await evaluate(() => document.body.innerText).catch(() => 'unavailable');
     fs.writeFileSync(path.join(output, 'failure.txt'), String(error.stack) + '\n' + state);
   }
+  modelServer?.close();
   app.exit(1);
 });

@@ -221,7 +221,7 @@ import {
 import { ArchiveTip } from "./ArchiveTip";
 import { TopNotice } from "./TopNotice";
 import { UILayerPortal } from "./ui/layers/UILayerHost";
-import { showErrorToast, showToast } from "./Toast";
+import { dismissToast, showErrorToast, showToast } from "./Toast";
 import { useArchiveDeletion } from "./useArchiveDeletion";
 import { setOpenThreadInSplitHandler } from "./ConversationSplitBridge";
 import { CircleAlert, RefreshCw } from "./WuuIcons";
@@ -3430,13 +3430,16 @@ export function App(): JSX.Element {
   }
 
   function showNoModelConfiguredToast(): void {
-    showToast({
+    const noticeID: number | undefined = showToast({
       message: t("composer.noModelConfigured"),
       tone: "error",
       dedupeKey: "composer:no-model-configured",
       action: {
         label: t("common.goConfigure"),
-        onClick: () => openSettingsPage("providers"),
+        onClick: () => {
+          if (noticeID !== undefined) dismissToast(noticeID);
+          openSettingsPage("providers");
+        },
       },
     });
   }
@@ -4207,8 +4210,8 @@ export function App(): JSX.Element {
     ) {
       return false;
     }
-    if (!targetThread && (draftEngine || engineInventory?.settings?.default_engine || "wuu") === "wuu"
-      && !hasReadyProvider(currentState.initialized.providers)) {
+    if ((targetThread?.engine_id || draftEngine || engineInventory?.settings?.default_engine || "wuu") === "wuu"
+      && !hasReadyProvider(currentState.initialized.providers, targetThread?.model_provider || currentState.initialized.provider)) {
       showNoModelConfiguredToast();
       return false;
     }
@@ -4321,7 +4324,7 @@ export function App(): JSX.Element {
       ? { kind: "project", project_id: project.id, cwd: project.path }
       : workspace;
     const engine = engineInventory?.settings?.default_engine || "wuu";
-    if (engine === "wuu" && !hasReadyProvider(current.initialized.providers)) {
+    if (engine === "wuu" && !hasReadyProvider(current.initialized.providers, current.initialized.provider)) {
       showNoModelConfiguredToast();
       return false;
     }
@@ -4730,7 +4733,7 @@ export function App(): JSX.Element {
       || draftEngine
       || engineInventory?.settings?.default_engine
       || "wuu";
-    if (!targetThread && newThreadEngine === "wuu" && !hasReadyProvider(currentState.initialized?.providers)) {
+    if (newThreadEngine === "wuu" && !hasReadyProvider(currentState.initialized.providers, targetThread?.model_provider || currentState.initialized.provider)) {
       showNoModelConfiguredToast();
       return false;
     }
@@ -5173,6 +5176,7 @@ export function App(): JSX.Element {
         <FirstRunOnboarding
           inventory={state.initialized?.extension_inventory}
           providers={state.initialized?.providers}
+          providerName={state.initialized?.provider}
           engines={engineInventory}
           onUpdateExtensionPackage={updateExtensionPackage}
           onSaveProvider={async (provider, model, connection) => {

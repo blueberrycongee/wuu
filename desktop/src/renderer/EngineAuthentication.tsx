@@ -1,14 +1,20 @@
 import { useEffect, useRef, useState } from "react";
 import type { EngineAuthResult } from "../shared/protocol";
+import { Check, Copy } from "./WuuIcons";
+import { SettingsRow } from "./SettingsRow";
+import { showErrorToast } from "./Toast";
 import { useI18n } from "./i18n";
 
 /** Discovery never starts login. Only an explicit method selection does. */
-export function EngineAuthentication({ engineID, compact = false, onAuthenticated }: {
+export function EngineAuthentication({ engineID, protocol = "acp", binaryPath, compact = false, onAuthenticated }: {
   engineID: string;
+  protocol?: string;
+  binaryPath?: string;
   compact?: boolean;
   onAuthenticated?: () => void;
 }): JSX.Element {
   const { t } = useI18n();
+  const [copied, setCopied] = useState(false);
   const [result, setResult] = useState<EngineAuthResult>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -48,6 +54,23 @@ export function EngineAuthentication({ engineID, compact = false, onAuthenticate
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
+  }
+
+  if (protocol !== "acp") {
+    const argumentsByEngine: Record<string, string> = { codex: "login", claude: "auth login", opencode: "auth login" };
+    const args = argumentsByEngine[engineID];
+    if (!args) return <p className="settings-muted-line">{t("settings.engineCLILogin")}</p>;
+    const binary = binaryPath ? "'" + binaryPath.replaceAll("'", "'\"'\"'") + "'" : engineID;
+    const command = `${binary} ${args}`;
+    return <SettingsRow title={t("settings.engineTerminalLogin")} block>
+      <code className="settings-engine-login-command">{command}</code>
+      <button type="button" className="settings-button settings-button-ghost settings-icon-button"
+        data-testid="engine-login-command-copy"
+        aria-label={t("settings.engineCopyLoginCommand")} title={t("settings.engineCopyLoginCommand")}
+        onClick={() => void navigator.clipboard.writeText(command).then(() => setCopied(true)).catch((reason) => showErrorToast(reason, t("common.copyFailed")))}>
+        {copied ? <Check className="icon" aria-hidden="true" /> : <Copy className="icon" aria-hidden="true" />}
+      </button>
+    </SettingsRow>;
   }
 
   return (

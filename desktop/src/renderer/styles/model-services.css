@@ -798,3 +798,19 @@
 .model-dialog > .environment-dialog-footer {
   margin-top: var(--space-2);
 }
+
+.model-subscription-status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--ink-soft);
+}
+
+.model-subscription-error {
+  padding: var(--space-3) var(--space-4);
+  overflow-wrap: anywhere;
+}
+
+.model-subscription-error summary {
+  cursor: pointer;
+}

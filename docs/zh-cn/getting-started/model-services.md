@@ -4,6 +4,8 @@
 
 本页设置适用于 **Wuu** 引擎。选择 Codex、Claude Code、Devin 等[外部引擎](external-engines.md)时，运行的是对应程序，使用它自身的认证和配置。在 Wuu 服务中复用订阅凭据，与运行对应的外部引擎，是两种不同的用法。
 
+首次设置选择外部 Engine 时，只处理该 Engine 的登录，不会启用 Wuu 的订阅复用。Wuu 当前选中的模型服务未连接时，发送操作会保留草稿，并提供前往模型服务设置的入口。
+
 ## 在桌面应用中添加服务
 
 1. 打开**设置 → 模型服务 → 新增服务**。
@@ -37,7 +39,7 @@ Claude Opus 5.5 和 Fable 5.1 始终使用自适应思考。Wuu 将已保存的 
 
 | 连接方式 | 设置方法 |
 |---|---|
-| Codex 订阅 | 先在 Codex CLI 登录，再在首次设置中选择复用检测到的登录。手动配置时，使用 `openai-codex` 服务并启用 `reuse_codex_credentials`。Wuu 桌面端不会自行发起 OpenAI OAuth 登录。在“设置 → 订阅”中打开对应账号的 **…** 菜单，点击“使用本机 Codex 登录”即可优先使用本机登录，不改变模型选择；“重新检查登录”通过拉取模型列表验证认证。Wuu 每次请求都会读取本机登录，凭据刷新后无需重启。 |
+| Codex 订阅 | 在 Codex CLI 登录后，打开**设置 → 模型服务 → ChatGPT → 使用本机 Codex 登录**。Wuu 会读取本机登录并拉取模型列表验证连接，保留默认模型和 Engine 选择；刷新图标可重新验证。首次设置选择 Wuu 时提供同一入口。手动配置使用 `openai-codex` 和 `reuse_codex_credentials`。Wuu 桌面端不会自行发起 OpenAI OAuth；本机凭据更新后无需重启。 |
 | xAI SuperGrok | 添加 **xAI SuperGrok** 服务，按提示在浏览器登录。CLI 使用 `wuu login xai`，运行时选择 `--provider xai-subscription`。 |
 | Grok Build | 先运行 `grok login`，再在 Wuu 中选择检测到的服务，或传入 `--provider grok-build`。登录过期后重新在 Grok CLI 登录；Wuu 不刷新或修改这类凭据。 |
 

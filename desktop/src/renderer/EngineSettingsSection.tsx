@@ -211,8 +211,8 @@ export function EngineSettingsSection({
       </button>,
       <>
         {pathInput(engine, engine.binary_path || t("settings.engineAutoBinary"))}
-        {engine.protocol === "acp" && enabled ? (
-          <EngineAuthentication key={`${id}-${binarySettings[id]?.binary_path ?? ""}`} engineID={id} />
+        {enabled ? (
+          <EngineAuthentication key={`${id}-${binarySettings[id]?.binary_path ?? ""}`} engineID={id} protocol={engine.protocol ?? id} binaryPath={engine.binary_path} />
         ) : null}
       </>,
     );

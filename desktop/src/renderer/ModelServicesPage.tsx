@@ -28,6 +28,7 @@ import {
   RotateCcw,
   Search,
 } from "./WuuIcons";
+import { CodexSubscriptionConnection } from "./CodexSubscriptionConnection";
 import { CatalogSearchField } from "./CatalogSearchField";
 import { EngineIcon } from "./EngineIcons";
 import { hostSupports } from "./HostCapabilities";
@@ -497,8 +498,8 @@ function ServicesOverview({
       )}
 
       {providers.length > 0 ? (
-        <SettingsSection title={t("provider.connectedSection")}>
-          <div className="model-service-grid" role="list" aria-label={t("provider.connectedSection")}>
+        <SettingsSection title={t("provider.servicesSection")}>
+          <div className="model-service-grid" role="list" aria-label={t("provider.servicesSection")}>
             {providers.map((provider) => {
               const identity = serviceIdentity(provider, t);
               const label = labels.get(provider.name) ?? identity.label;
@@ -770,7 +771,10 @@ function ServiceDetail({
 
       <SettingsSection title={t("provider.connectionSection")}>
         <SettingsGroup>
-          <ConnectionRows provider={provider} identity={identity} disabled={disabled} onSave={saveConnection} onRun={run} />
+          <ConnectionRows provider={provider} identity={identity} disabled={disabled} onSave={saveConnection} onRun={run}
+            onPendingChange={setBusy}
+            onCodexConnected={() => onSave(provider.name, serviceModel, undefined, { keep_selection: true })}
+          />
         </SettingsGroup>
       </SettingsSection>
 
@@ -836,12 +840,16 @@ function ConnectionRows({
   disabled,
   onSave,
   onRun,
+  onCodexConnected,
+  onPendingChange,
 }: {
   provider: ProviderSummary;
   identity: ServiceIdentity;
   disabled: boolean;
   onSave: (connection: RuntimeConnectionUpdate) => Promise<boolean>;
   onRun: (action: () => Promise<void>) => Promise<boolean>;
+  onCodexConnected: () => Promise<void>;
+  onPendingChange: (pending: boolean) => void;
 }): JSX.Element {
   const { t } = useI18n();
   if (isXAISubscriptionType(provider.type)) {
@@ -861,21 +869,14 @@ function ConnectionRows({
       </SettingsRow>
     );
   }
-  if (identity.subscription) {
-    return (
-      <>
-        <SettingsRow title={t("provider.chatgptLogin")}>
-          <StatusValue
-            ok={Boolean(provider.api_key_configured)}
-            okLabel={t(provider.codex_credential_source === "explicit" ? "settings.codexSourceExplicit" : provider.reuse_codex_credentials ? "settings.codexSourceLocal" : "settings.codexSourceSaved")}
-            missingLabel={identity.attention ?? ""}
-          />
-        </SettingsRow>
-        <SettingsRow title={t("settings.baseURL")}>
-          <span className="settings-row-control-value model-service-value">{provider.base_url || t("provider.oauthManaged")}</span>
-        </SettingsRow>
-      </>
-    );
+  if (isCodexType(provider.type)) {
+    return <CodexSubscriptionConnection
+      key={provider.name}
+      provider={provider}
+      disabled={disabled}
+      onConnected={onCodexConnected}
+      onPendingChange={onPendingChange}
+    />;
   }
   const keyLabel = isAnthropicType(provider.type) ? t("provider.authToken") : t("provider.apiKey");
   return (

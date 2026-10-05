@@ -10,6 +10,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Separate external-engine sign-in from Wuu subscription setup. Connect and
+  verify local Codex credentials directly in Model services, and preserve
+  drafts with a settings shortcut when the selected Wuu service is disconnected.
+
 - Keep the conversation surface undimmed when opening the sidebar in narrow
   desktop windows, matching the wide-window drawer.
 
