@@ -176,9 +176,8 @@ func TestPTCSkillsRetainReachableTools(t *testing.T) {
 					continue
 				}
 				if allowed {
-					var loaded string
-					if err := json.Unmarshal([]byte(result.TextProjection()), &loaded); err != nil || loaded != skill.Name {
-						t.Errorf("loaded %s: %s %v", skill.Name, result.TextProjection(), err)
+					if result.TextProjection() != skill.Name {
+						t.Errorf("loaded %s: %s", skill.Name, result.TextProjection())
 					}
 				}
 			}

@@ -50,6 +50,7 @@ function guestSetup(bridge, namesJSON, stateJSON, stateEnabled, maxStateBytes, m
   const setHas = uncurry(Set.prototype.has), setAdd = uncurry(Set.prototype.add), setDelete = uncurry(Set.prototype.delete);
   const mapGet = uncurry(Map.prototype.get), mapSet = uncurry(Map.prototype.set), mapDelete = uncurry(Map.prototype.delete);
   const mapForEach = uncurry(Map.prototype.forEach);
+  const weakGet = uncurry(WeakMap.prototype.get), weakSet = uncurry(WeakMap.prototype.set);
   const mapSize = uncurry(Object.getOwnPropertyDescriptor(Map.prototype, "size").get);
   const hasOwn = uncurry(Object.prototype.hasOwnProperty), slice = uncurry(String.prototype.slice);
   const charCodeAt = uncurry(String.prototype.charCodeAt);
@@ -59,6 +60,9 @@ function guestSetup(bridge, namesJSON, stateJSON, stateEnabled, maxStateBytes, m
   const getPrototype = Object.getPrototypeOf, plainPrototype = Object.prototype;
   const isArray = Array.isArray, finite = Number.isFinite, is = Object.is;
   const pending = new Map();
+  // Only host-returned objects have a display view. Ordinary objects with the
+  // same field names must remain ordinary data, including explicit raw copies.
+  const outputViews = new WeakMap();
   const state = new Map();
   let stateBytes = 0;
   let nextID = 1;
@@ -79,7 +83,11 @@ function guestSetup(bridge, namesJSON, stateJSON, stateEnabled, maxStateBytes, m
     mapSet(state, key, value);
     stateBytes += utf8Bytes(key) + utf8Bytes(value);
   }
-  function json(value, seen = new NativeSet()) {
+  function json(value, seen = new NativeSet(), projectOutput = false) {
+    if (projectOutput && value !== null && typeof value === "object") {
+      const view = weakGet(outputViews, value);
+      if (view !== undefined) return stringify(view);
+    }
     if (value === null || typeof value === "string" || typeof value === "boolean") return stringify(value);
     if (typeof value === "number" && finite(value) && !is(value, -0)) return stringify(value);
     if (typeof value !== "object" || setHas(seen, value)) throw new NativeError("Expected lossless JSON");
@@ -96,7 +104,7 @@ function guestSetup(bridge, namesJSON, stateJSON, stateEnabled, maxStateBytes, m
       if (typeof key !== "string" || !property.enumerable || !hasOwn(property, "value")) throw new NativeError("Expected JSON data properties");
       if (array && (string(count) !== key)) throw new NativeError("Expected dense JSON array");
       if (count++) encoded += ",";
-      encoded += (array ? "" : stringify(key) + ":") + json(property.value, seen);
+      encoded += (array ? "" : stringify(key) + ":") + json(property.value, seen, projectOutput);
     }
     setDelete(seen, value);
     return encoded + (array ? "]" : "}");
@@ -158,16 +166,22 @@ function guestSetup(bridge, namesJSON, stateJSON, stateEnabled, maxStateBytes, m
   function log(...values) {
     let text = "";
     for (let index = 0; index < values.length; index++) {
-      const value = values[index];
+      let value = values[index];
+      if (value !== null && typeof value === "object") {
+        const view = weakGet(outputViews, value);
+        if (view !== undefined) value = view;
+      }
       if (index) text += " ";
       if (typeof value === "string") text += value;
       else {
-        try { text += json(value); } catch { text += string(value); }
+        try { text += json(value, new NativeSet(), true); } catch { text += string(value); }
       }
     }
     bridge(json({ type: "log", text }));
   }
   for (const name of ["log", "info", "warn", "error", "debug"]) console[name] = log;
+  const text = value => log(value);
+  Object.defineProperty(globalThis, "text", { value: text });
   const searchTools = (query, options = {}) => request("search", "searchTools", { query, ...options });
   const describeTool = name => request("describe", name, {});
   return {
@@ -183,7 +197,7 @@ function guestSetup(bridge, namesJSON, stateJSON, stateEnabled, maxStateBytes, m
       };
       promiseThen(program(tools, console, ToolCallError, searchTools, describeTool, store, load, remove), value => {
         try {
-          const encoded = value === undefined ? undefined : json(value);
+          const encoded = value === undefined ? undefined : json(value, new NativeSet(), true);
           bridge('{"type":"done"' + (encoded === undefined ? "" : ',"value":' + encoded) + (stateEnabled ? ',"state":' + stateSnapshot() : "") + '}');
         } catch (error) { failed(error); }
       }, failed);
@@ -192,6 +206,7 @@ function guestSetup(bridge, namesJSON, stateJSON, stateEnabled, maxStateBytes, m
       const reply = parse(encoded), call = mapGet(pending, reply.id);
       if (!call) throw new NativeError("Unknown PTC reply");
       mapDelete(pending, reply.id);
+      if (call.type === "call" && hasOwn(reply, "value")) weakSet(outputViews, reply.value, reply.display);
       if (reply.error) call.reject(new ToolCallError(call.name, reply.error, call.type === "call" && hasOwn(reply, "value") ? reply.value : undefined));
       else call.resolve(reply.value);
     }

@@ -140,8 +140,14 @@ await tools.read_file({path: "screenshots/settings.png"});
 
 筛选和计算应使用 `content` 或 `structured_content`，并检查工具自身的分页。
 `model_text` 是可能省略字段或记录的展示视图，不是完整数据集。打印选出的证据
-或计算结果，而非整个结果对象或媒体编码；可读视图已足够时，直接转发该视图。
-在判断某项不存在之前，先检查并续读相关分页。
+或计算结果，不要打印媒体编码。`text(result)`、`console.log(result)` 和
+`return result` 会为返回的工具结果输出一份模型展示视图，数组或对象中包含的
+结果也适用，不会同时序列化原始内容和展示副本。字符串返回值直接展示为文本，
+不再额外添加 JSON 字符串引号。例如，
+`text(await tools.read_file({path: "README.md"}))` 可以读取并展示文件。
+计算和 `store` 仍能获取完整结果。显式选出的字段、复制的对象及 `load` 恢复的值
+属于普通 JSON 数据；打印时应自行选择展示视图。在判断某项不存在之前，
+先检查并续读工具返回的后续页。
 
 ### 状态与长时间工作
 

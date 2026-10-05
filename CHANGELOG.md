@@ -10,6 +10,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Display one compact tool-result view from PTC `text`, console output and return
+  values while preserving complete data for computation and checkpoints.
+
 - Refine model popover typography with clearer text hierarchy, balanced insets,
   and equal spacing between the source, model, and effort controls.
 

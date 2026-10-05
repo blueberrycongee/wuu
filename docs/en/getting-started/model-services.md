@@ -200,8 +200,14 @@ independent reads.
 Use `content` or `structured_content` for filtering and computation, and check
 the producer's pagination. `model_text` is a display view that may omit fields
 or records; it is not a complete dataset. Print selected evidence or a computed
-answer rather than the whole result object or media encodings. When a readable
-view is sufficient, forward that view. Follow continuation metadata before
+answer without printing media encodings. `text(result)`, `console.log(result)`
+and `return result` emit one model-facing view of a returned tool result, including
+results inside arrays or objects. They do not serialize both the raw content and
+its display copy. A string return is displayed as text without JSON string quoting.
+For example, `text(await tools.read_file({path: "README.md"}))` reads and displays a
+file. Computation and `store` still receive the complete result. Explicitly selected
+fields, copied objects and values restored with `load` are ordinary JSON data;
+select their display view when printing them. Follow continuation metadata before
 concluding that something is absent.
 
 ### State and long-running work

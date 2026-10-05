@@ -133,7 +133,7 @@ throw new TypeError("bad value");`)
 		t.Fatal(err)
 	}
 	result = runPTCProgram(t, kit, `return load("checkpoint");`)
-	if result.IsError || result.TextProjection() != `"before"` {
+	if result.IsError || result.TextProjection() != `before` {
 		t.Fatalf("failed state committed or recovery diagnostic leaked into success: %+v", result)
 	}
 }
@@ -174,7 +174,7 @@ func TestPTCStateOwnerFollowsConversationLifetime(t *testing.T) {
 	parent.CodeModeService().ForgetOwner("parent")
 	for _, kit := range []*Toolkit{parent, worker, oldSide, newSide} {
 		result := runPTCProgram(t, kit, `return typeof load("saved");`)
-		if result.IsError || result.TextProjection() != `"undefined"` {
+		if result.IsError || result.TextProjection() != `undefined` {
 			t.Fatalf("deleted owner retained actor/root state: %+v", result)
 		}
 	}
@@ -235,6 +235,28 @@ func TestPTCProgramReviewBeforeNestedEffects(t *testing.T) {
 				t.Fatalf("approved program did not complete: %q %v", data, err)
 			}
 		})
+	}
+}
+
+func TestPTCResultOutputDoesNotRepeatOrQuoteToolViews(t *testing.T) {
+	for _, code := range []string{
+		`text(await tools.read_file({path:"evidence.txt"}));`,
+		`console.log(await tools.read_file({path:"evidence.txt"}));`,
+		`return await tools.read_file({path:"evidence.txt"});`,
+	} {
+		kit := newCodeModeTestToolkit(t)
+		if err := os.WriteFile(filepath.Join(kit.RootDir(), "evidence.txt"), []byte("UNIQUE_PTC_EVIDENCE"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		result := runPTCProgram(t, kit, code)
+		view := result.TextProjection()
+		if result.IsError || strings.Count(view, "UNIQUE_PTC_EVIDENCE") != 1 {
+			t.Fatalf("lost or repeated evidence: %+v", result)
+		}
+		var observation map[string]any
+		if err := json.Unmarshal([]byte(view), &observation); err != nil {
+			t.Fatalf("tool view acquired JSON string quoting: %q: %v", view, err)
+		}
 	}
 }
 
@@ -354,12 +376,12 @@ func TestPTCStateFollowsConversationActorAndWorkspace(t *testing.T) {
 	}
 	check(clone, `return load("checkpoint");`, `{"done":2}`)
 	clone.SetSessionID("conversation-b")
-	check(clone, `return typeof load("checkpoint");`, `"undefined"`)
+	check(clone, `return typeof load("checkpoint");`, `undefined`)
 	clone.SetSessionID("conversation-a")
 	clone.SetAgentIdentity("child", "/root/child")
-	check(clone, `return typeof load("checkpoint");`, `"undefined"`)
+	check(clone, `return typeof load("checkpoint");`, `undefined`)
 	kit.SetRootDir(t.TempDir())
-	check(kit, `return typeof load("checkpoint");`, `"undefined"`)
+	check(kit, `return typeof load("checkpoint");`, `undefined`)
 	kit.SetRootDir(root)
 	kit.ConfigurePTC(kit.CodeModeService(), config.PTCConfig{Enabled: true})
 	kit.ConfigurePTC(kit.CodeModeService(), config.PTCConfig{Enabled: false})
@@ -376,7 +398,7 @@ func TestPTCStateFollowsConversationActorAndWorkspace(t *testing.T) {
 	fresh := codemode.NewService(codemode.ServiceConfig{})
 	defer fresh.Close()
 	kit.ConfigurePTC(fresh, config.PTCConfig{Enabled: true})
-	check(kit, `return typeof load("checkpoint");`, `"undefined"`)
+	check(kit, `return typeof load("checkpoint");`, `undefined`)
 }
 
 func TestPTCBackgroundProcessesSurviveProgramsAndReturnThroughTools(t *testing.T) {
@@ -486,7 +508,7 @@ func TestPTCStateUsesBoundExecutionWorkspace(t *testing.T) {
 		}
 	}
 	run(first, `store("checkpoint",1); return load("checkpoint");`, `1`)
-	run(second, `return typeof load("checkpoint");`, `"undefined"`)
+	run(second, `return typeof load("checkpoint");`, `undefined`)
 	run(first, `return load("checkpoint");`, `1`)
 }
 
@@ -631,7 +653,7 @@ func TestPTCRepeatedPollingObservesExternalState(t *testing.T) {
 	for _, status := range []string{"queued", "running", "completed"} {
 		probe.status = status
 		result := runPTCProgram(t, kit, `const result = await tools.mcp_test_job_status({}); return result.content[0].text;`)
-		if result.IsError || result.TextProjection() != fmt.Sprintf("%q", status) {
+		if result.IsError || result.TextProjection() != status {
 			t.Fatalf("poll must observe external state %q: %+v", status, result)
 		}
 	}

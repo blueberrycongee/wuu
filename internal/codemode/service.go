@@ -596,6 +596,7 @@ func (s *Service) Run(parent context.Context, request RunRequest, opts RunOption
 				reply := map[string]any{"id": id, "error": message}
 				if callErr == nil {
 					reply["value"] = value
+					reply["display"] = value.TextProjection()
 				}
 				send(reply)
 			}(frame.ID, frame.Name, frame.Args)
