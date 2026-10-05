@@ -14,14 +14,14 @@
  */
 
 :root {
-  /* Match the standard settings page's content column and page insets.
-   * Messages and the composer share both edges, including narrow panes. */
+  /* Keep the shared page insets, but use a shorter reading measure than
+   * settings pages. Messages and the composer share both edges. */
   --session-outer-padding-inline: max(
     var(--page-padding),
     env(safe-area-inset-left, 0px),
     env(safe-area-inset-right, 0px)
   );
-  --session-composer-width: var(--content-column-width);
+  --session-composer-width: 760px;
   --session-outer-width: calc(
     var(--session-composer-width) + var(--session-outer-padding-inline) +
       var(--session-outer-padding-inline)

@@ -4072,7 +4072,7 @@ pre {
   min-width: 0;
   border: 1px solid var(--hairline-soft);
   border-radius: var(--message-flow-card-radius);
-  background: var(--surface-1);
+  background: var(--composer-surface-bg);
   padding: var(--panel-padding);
   --enter-y: 6px;
   animation: wuu-enter var(--motion-slow) var(--ease-out) both;

@@ -13,6 +13,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Keep experimental Project Agent conversations responsive through background
   technical leads and persistent executors, with versioned work contracts,
   evidence-bound review, explicit delivery, durable stop/recovery and work status.
+- Preserve ordinary file and recovery views through PTC, explain bounded result
+  coverage to the model, and include evidence after short headers in archived pages.
+- Carry validated working-note checkpoint references into fresh context windows
+  so agents can resume without rediscovering their recovery notes.
 
 - Deliver uploaded videos, PDFs, and ordinary files as seven-day original-byte
   working copies independently of native model support, and budget only the
@@ -56,6 +60,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   theme overrides.
 
 ### Fixed
+
+- Keep completed replies settled across delayed session snapshots, preventing
+  sidebar spinners and composer stop buttons from reappearing or flickering.
 
 - Reject oversized encoded desktop messages without disconnecting the core or
   losing drafts, and retain explicit video transport settings through request preparation.

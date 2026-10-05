@@ -31,7 +31,7 @@ const (
 	// result. Those envelopes already paginate, so a small page costs little.
 	defaultProjectionTokenBudget = 2048
 
-	// readFileProjectionTokenBudget is the read_file page size. Paging a file
+	// readFileProjectionTokenBudget bounds file and recovery reads. Paging data
 	// the model needs anyway multiplies model round trips: every extra page
 	// re-reads the whole history and adds a decision. The budget therefore sits
 	// where accidental reads begin (roughly a 32 KiB source file), not at the
@@ -48,7 +48,7 @@ const (
 	// projectorVersion is recorded in diagnostics so telemetry can attribute a
 	// projected result to the exact projector revision that produced it. Bump
 	// on any change that alters projected bytes for the same input.
-	projectorVersion = "8"
+	projectorVersion = "9"
 )
 
 // commandViewRenderers render the plain-text model view of command tools.
@@ -61,10 +61,14 @@ var commandViewRenderers = map[string]func(rawText string, budgetTokens int) (st
 // a dedicated budget share the default.
 func projectionTokenBudget(toolName string) int {
 	switch toolName {
-	case "read_file":
+	case "read_file", "notes", "history_read":
 		return readFileProjectionTokenBudget
 	case "bash", "process":
 		return commandProjectionTokenBudget
+	case codeModeExecToolName:
+		// PTC must be able to forward one ordinary read or command view without
+		// archiving it again. Aggregated output remains bounded by this budget.
+		return max(readFileProjectionTokenBudget, commandProjectionTokenBudget)
 	default:
 		return defaultProjectionTokenBudget
 	}

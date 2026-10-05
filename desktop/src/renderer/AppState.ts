@@ -735,7 +735,7 @@ function reduceNotification(
         !thread.read_only;
       const activateThread =
         state.thread?.id === thread.id || autoActivateNewThread;
-      return {
+      return reconcileSnapshotCompletion(state, {
         ...state,
         thread: activateThread ? mergedThread : state.thread,
         secondaryThread:
@@ -751,7 +751,7 @@ function reduceNotification(
         running: autoActivateNewThread
           ? isThreadRunning(mergedThread)
           : state.running,
-      };
+      });
     }
     case "thread/historyLoaded": {
       const threadID = threadIDFromParams(params);
@@ -775,11 +775,18 @@ function reduceNotification(
       if (!thread || !threadMatchesActiveContext(thread, state.activeContext)) {
         return state;
       }
-      return updateThreadByID(state, thread.id, (current) => ({
-        ...thread,
-        turns: mergeThreadUpdatedTurns(thread.turns, current.turns),
-        child_agents: thread.child_agents ?? current.child_agents,
-      }));
+      return reconcileSnapshotCompletion(
+        state,
+        updateThreadByID(state, thread.id, (current) => {
+          const turns = mergeThreadUpdatedTurns(thread.turns, current.turns);
+          return {
+            ...thread,
+            status: reconciledThreadStatus(thread, current, turns),
+            turns,
+            child_agents: thread.child_agents ?? current.child_agents,
+          };
+        }),
+      );
     }
     case "agent/updated": {
       const threadID = threadIDFromParams(params);
@@ -1349,8 +1356,9 @@ function updateThread(
  * other divergence (an edit/fork that truncated history, or a server snapshot
  * that is genuinely ahead of the client) breaks the prefix match, and we defer
  * to the resumed snapshot as authoritative. The overlapping prefix always uses
- * the server's (fresher) turn/item objects; only the client's extra tail
- * carries over. Full terminal turns are authoritative even when their items
+ * the server's turn/item objects unless they regress a known completion
+ * boundary; the client's extra tail carries over. Full terminal turns are
+ * authoritative even when their items
  * are a prefix: missing items there are obsolete, not newer local work.
  */
 export function reconcileResumedThreadTurns(
@@ -1359,8 +1367,9 @@ export function reconcileResumedThreadTurns(
 ): Thread {
   const localTurns = local ? reconcileOptimisticTurns(local.turns, resumed.turns) : undefined;
   if (localTurns) {
-    const turns = preserveTerminalTurns(resumed.turns, localTurns);
-    if (turns.some((turn, index) => turn !== resumed.turns[index])) resumed = { ...resumed, turns };
+    const turns = preserveTurnCompletions(resumed.turns, localTurns);
+    const status = reconciledThreadStatus(resumed, local, turns);
+    if (turns !== resumed.turns || status !== resumed.status) resumed = { ...resumed, turns, status };
   }
   if (!localTurns || localTurns.length < resumed.turns.length) {
     return resumed;
@@ -1401,7 +1410,7 @@ export function reconcileResumedThreadTurns(
 // in-progress tail when a stale snapshot still omits it.
 function mergeThreadUpdatedTurns(incoming: Turn[], current: Turn[]): Turn[] {
   current = reconcileOptimisticTurns(current, incoming);
-  incoming = preserveTerminalTurns(incoming, current);
+  incoming = preserveTurnCompletions(incoming, current);
   if (incoming.length === 0) {
     return current;
   }
@@ -1423,12 +1432,39 @@ function mergeThreadUpdatedTurns(incoming: Turn[], current: Turn[]): Turn[] {
     : incoming;
 }
 
-function preserveTerminalTurns(incoming: Turn[], current: Turn[]): Turn[] {
+function preserveTurnCompletion(incoming: Turn, previous: Turn | undefined): Turn {
+  // Both completion boundaries are monotonic for the same turn, including
+  // the final answer before provider cleanup releases the execution lease.
+  if (
+    previous && incoming.status === "in_progress" && (
+      previous.status !== "in_progress" ||
+      (turnIsAnswerReady(previous) && !turnIsAnswerReady(incoming))
+    )
+  ) {
+    return previous;
+  }
+  return incoming;
+}
+
+function preserveTurnCompletions(incoming: Turn[], current: Turn[]): Turn[] {
   const currentByID = new Map(current.map((turn) => [turn.id, turn]));
-  return incoming.map((turn) => {
-    const previous = currentByID.get(turn.id);
-    return previous && previous.status !== "in_progress" && turn.status === "in_progress" ? previous : turn;
-  });
+  const turns = incoming.map((turn) =>
+    preserveTurnCompletion(turn, currentByID.get(turn.id)),
+  );
+  return turns.every((turn, index) => turn === incoming[index]) ? incoming : turns;
+}
+
+function reconciledThreadStatus(
+  incoming: Thread,
+  previous: Thread | undefined,
+  turns: Turn[],
+): Thread["status"] {
+  // Preserving settled turns alone is insufficient: status is also consulted
+  // by the sidebar and composer, so a stale thread flag must not revive them.
+  return incoming.status === "in_progress" && previous?.status === "idle" &&
+    !turns.some((turn) => turn.status === "in_progress")
+    ? "idle"
+    : incoming.status;
 }
 
 function turnItemsArePrefix(resumed: Turn, local: Turn): boolean {
@@ -1740,10 +1776,6 @@ function mergeListedThreads(current: Thread[], listed: Thread[]): Thread[] {
 
 function mergeListedThread(existing: Thread, listed: Thread): Thread {
   const turns = mergeListedThreadTurns(existing.turns, listed.turns);
-  const listedStatusRegresses =
-    listed.status === "in_progress" &&
-    existing.status !== "in_progress" &&
-    !turns.some((turn) => turn.status === "in_progress");
   return {
     ...listed,
     project_exists: listed.project_exists ?? (
@@ -1752,7 +1784,7 @@ function mergeListedThread(existing: Thread, listed: Thread): Thread {
     ),
     title: listed.title?.trim() ? listed.title : existing.title,
     preview: listed.preview?.trim() ? listed.preview : existing.preview,
-    status: listedStatusRegresses ? existing.status : listed.status,
+    status: reconciledThreadStatus(listed, existing, turns),
     turns,
     child_agents:
       listed.child_agents !== undefined
@@ -1806,20 +1838,7 @@ function mergeListedThreadTurns(existing: Turn[], listed: Turn[]): Turn[] {
     }
   }
 
-  const existingByID = new Map(existing.map((turn) => [turn.id, turn]));
-  let result = merged;
-  merged.forEach((turn, index) => {
-    const local = existingByID.get(turn.id);
-    // Terminal state is monotonic for a turn. A thread/list request can start
-    // before turn/completed and resolve after it; that stale in-progress
-    // snapshot must not resurrect a turn the renderer already settled.
-    if (local && local.status !== "in_progress" && turn.status === "in_progress") {
-      if (result === merged) {
-        result = [...merged];
-      }
-      result[index] = local;
-    }
-  });
+  const result = preserveTurnCompletions(merged, existing);
   // A shorter listed snapshot can preserve the cached tail while reusing the
   // same listed prefix on every reconciliation. Keep the original array once
   // every resulting element is already present at the same position; callers
@@ -1875,6 +1894,18 @@ function releaseNewlySettledTurnStreams(
       releaseSettledTurnStreams(turn);
     }
   }
+}
+
+function reconcileSnapshotCompletion(previous: AppState, next: AppState): AppState {
+  releaseNewlySettledTurnStreams(previous.thread, next.thread);
+  releaseNewlySettledTurnStreams(previous.secondaryThread, next.secondaryThread);
+  const before = activeThreadForState(previous);
+  const after = activeThreadForState(next);
+  // A snapshot can repair a missed terminal event. Only clear a running turn's
+  // flag, not independent submission/compaction state or another pane's work.
+  return before?.id === after?.id && isThreadRunning(before) && !isThreadRunning(after)
+    ? { ...next, running: false, status: "ready" }
+    : next;
 }
 
 export function mergeSidebarThread(existing: Thread, incoming: Thread): Thread {
@@ -3005,7 +3036,7 @@ function upsertTurn(thread: Thread, turn: Turn): Thread {
   const reconciled = reconcileOptimisticTurns(thread.turns, [turn]);
   if (reconciled !== thread.turns) thread = { ...thread, turns: reconciled };
   const index = thread.turns.findIndex((item) => item.id === turn.id);
-  if (index >= 0 && thread.turns[index].status !== "in_progress" && turn.status === "in_progress") return thread;
+  if (index >= 0 && preserveTurnCompletion(turn, thread.turns[index]) !== turn) return thread;
   const turns = thread.turns.slice();
   if (index < 0) turns.push({ ...turn, items: orderedTurnItems(turn.items) });
   else turns[index] = { ...turn, items: mergeTurnItemsInOrder(turns[index], turn) };

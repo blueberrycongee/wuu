@@ -1096,7 +1096,7 @@ func RunToolLoop(
 			}, fmt.Errorf("execute tool batch: %w", toolErr)
 		}
 		postToolContextSegments = append(postToolContextSegments, toolRuntime.TakeRequestContextSegments()...)
-		acceptedContextRequest := freshContextEnabled && acceptedNewContextRequest(orderedToolMessages)
+		acceptedContextRequest := freshContextEnabled && acceptedNewContextRequest(orderedToolMessages) != nil
 		// Each result was settled before the invocation ledger. Keep those
 		// pages intact; total context pressure belongs to compaction, never
 		// to a second text cut that can erase status or recovery cursors.

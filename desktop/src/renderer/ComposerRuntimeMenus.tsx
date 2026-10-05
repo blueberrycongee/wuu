@@ -147,9 +147,7 @@ function EngineOptionsMenu({
             type="button"
             disabled={locked || running}
             aria-checked={isSelected}
-            onClick={() => {
-              if (!isSelected) onSelect(option.id);
-            }}
+            onClick={() => onSelect(option.id)}
           >
             <EngineIcon engine={option.id} />
             <span className="runtime-engine-option-name">{option.label}</span>
@@ -211,8 +209,8 @@ function RuntimePanelHeader({ title, onBack }: { title: string; onBack: () => vo
   );
 }
 
-// The summary reads top down: where the model comes from (engine and model
-// service, when there is a choice to show), the model, then how hard it thinks.
+// Keep the current effort separate from model navigation: it previews the
+// slider, while engine and service remain available as secondary controls.
 // Speed is an independent accessory in the context header, not another choice row.
 function RuntimePanelSummary({
   engine,
@@ -345,13 +343,15 @@ function RuntimePanelSummary({
           ) : null}
         </div>
       ) : null}
-      <button type="button" className="runtime-panel-model" data-menu-autofocus onClick={onOpenModels}>
-        <span className="runtime-panel-model-name">{model}</span>
+      <div className="runtime-panel-selection">
+        <button type="button" className="runtime-panel-model" data-menu-autofocus onClick={onOpenModels}>
+          <span className="runtime-panel-model-name">{model}</span>
+          <ChevronRight aria-hidden="true" />
+        </button>
         {effortOptions.length > 1 ? (
-          <span key={previewEffort} className="runtime-panel-effort-value">{variantLabel(previewEffort)}</span>
+          <div className="runtime-panel-effort-value" title={variantLabel(previewEffort)}>{variantLabel(previewEffort)}</div>
         ) : null}
-        <ChevronRight aria-hidden="true" />
-      </button>
+      </div>
       {effortOptions.length > 1 ? (
         <div className="runtime-panel-effort">
           <EffortSelector
@@ -855,7 +855,7 @@ function EngineRuntimeMenu({
                 running={running}
                 lockedDescription={lockedDescription}
                 onSelect={(id) => {
-                  onSelectEngine(id);
+                  if (id !== selectedEngine) onSelectEngine(id);
                   showSummary();
                 }}
               />
@@ -1145,7 +1145,7 @@ export function RuntimeModelMenu({
                 running={running}
                 lockedDescription={lockedDescription}
                 onSelect={(id) => {
-                  onSelectEngine(id);
+                  if (id !== selectedEngine) onSelectEngine(id);
                   showSummary();
                 }}
               />

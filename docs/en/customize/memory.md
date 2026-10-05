@@ -22,6 +22,15 @@ Memory also exposes `summary`, `checkpoint`, and `notes` targets through `sessio
 
 The core `notes` tool is different. It maintains persistent virtual working notes for the active session, including goals, constraints, progress, and checks. Those notes survive context resets, restarts, and model changes without writing project files or requiring the Memory plugin. Neither kind of session note is a cross-project user memory.
 
+Before requesting a fresh context with `new_context`, the built-in agent saves
+a recovery note and can pass `checkpoint: {path, revision}` using the latest
+`notes` result. Wuu validates the note in the current session and carries ready
+`notes` read arguments into the next window. The revision covers the entire
+notes collection, not just that file; a later write requires rereading the same
+path at the current revision. Existing calls without a checkpoint still use
+note discovery and archived history. The host carries a reference, not a new
+summary, and the model reads the saved evidence before continuing.
+
 ## Keep memory useful
 
 Save confirmed, lasting information. Do not use memory as a transcript archive, secret store, or log of temporary task progress. When a memory conflicts with current evidence, correct it rather than following it blindly.
