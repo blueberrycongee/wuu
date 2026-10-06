@@ -10,6 +10,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Keep the collapsed sidebar open while entering or editing a session hover card,
+  including pauses in the gap. Dismiss its cards and pending reveals when the
+  sidebar is explicitly closed.
+
 - Display consecutive image artifacts in a single-row carousel with fading scroll
   edges and a three-column tiled view toggle, preserving full previews and conversation order.
   Float the toggle over the images on hover or keyboard focus instead of reserving

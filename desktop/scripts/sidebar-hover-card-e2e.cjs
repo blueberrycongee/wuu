@@ -352,6 +352,87 @@ app.whenReady().then(async () => {
       assert.equal(await evaluate(async () => (await window.wuu.listThreads()).threads.find((t) => t.id === "hover-running").title), "Renamed from hover panel");
       results.push({ label, case: "keyboard-rename-outside-dismiss" });
       await evaluate(() => window.wuu.renameThread("hover-running", "Review the changes in PR 499"));
+
+      // A portaled session card belongs to the hover drawer, not just the row.
+      // Exercise the actual collapsed rail, including its animated geometry.
+      await rest();
+      await click('.sidebar [data-wuu-component="sidebar-toggle"]');
+      move(width - 40, 410);
+      await waitFor(() => {
+        const shell = document.querySelector(".app-shell");
+        return shell.classList.contains("sidebar-collapsed") &&
+          !shell.classList.contains("sidebar-drawer-open") &&
+          !shell.classList.contains("sidebar-drawer-closing");
+      });
+      console.log(`${label}: collapsed drawer checks`);
+      const drawerOpen = () => document.querySelector(".app-shell").classList.contains("sidebar-drawer-open");
+      const openDrawerCard = async () => {
+        const zone = await anchorPoint(".sidebar-hover-zone");
+        move(zone.x, zone.y);
+        await waitFor(drawerOpen);
+        await waitFor(() => [document.querySelector(".sidebar"), document.querySelector(".sidebar-content")]
+          .every((node) => node.getAnimations().every((animation) => animation.playState !== "running")));
+        const row = await anchorPoint(threadRow("hover-running"));
+        move(row.x, row.y);
+        await waitFor(cardShown);
+        return row;
+      };
+      const drawerRow = await openDrawerCard();
+      const drawerCard = await measure(threadRow("hover-running"));
+      assertPlacement(`${label} drawer`, drawerCard);
+      // Traverse the row inset and the outer gap separately, with pauses
+      // longer than the leave grace period. Reaching the card must not race a timer.
+      for (const x of [(drawerCard.row.right + drawerCard.sidebarRight) / 2, drawerCard.card.left - 4]) {
+        move(x, drawerRow.y);
+        await new Promise((resolve) => setTimeout(resolve, 450));
+        assert.ok(await evaluate(drawerOpen), label + ": pausing on the path to the card retains the drawer");
+        assert.ok(await evaluate(cardShown), label + ": pausing on the path retains the card");
+      }
+      const drawerTitle = await anchorPoint(".sidebar-hover-card-title-editable");
+      move(drawerTitle.x, drawerTitle.y);
+      await new Promise((resolve) => setTimeout(resolve, 300)); // beyond the card's leave grace period
+      assert.ok(await evaluate(drawerOpen), label + ": hovering the card retains the drawer");
+      assert.ok(await evaluate(cardShown), label + ": the drawer's card remains reachable");
+      await capture(label + "-drawer-card-hover");
+      await click(".sidebar-hover-card-title-editable");
+      await waitFor(() => document.activeElement?.matches(".sidebar-hover-card-title-input"));
+      await win.webContents.insertText("Unsaved drawer draft");
+      move(width - 40, 410);
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      assert.ok(await evaluate(drawerOpen), label + ": editing retains the parent after pointer exit");
+      assert.ok(await evaluate(cardShown), label + ": focused drawer draft survives pointer exit");
+      await capture(label + "-drawer-card-editing");
+      for (const type of ["mouseDown", "mouseUp"]) {
+        win.webContents.sendInputEvent({ type, x: width - 40, y: 410, button: "left", clickCount: 1 });
+      }
+      await waitFor(() => !document.querySelector(".sidebar-hover-card") &&
+        !document.querySelector(".app-shell").classList.contains("sidebar-drawer-open"));
+      assert.equal(await evaluate(async () => (await window.wuu.listThreads()).threads.find((t) => t.id === "hover-running").title),
+        "Review the changes in PR 499", label + ": outside dismissal discards the draft");
+      results.push({ label, case: "drawer-gap-hover-editor-outside-dismiss", ...drawerCard });
+
+      await openDrawerCard();
+      await evaluate(() => window.dispatchEvent(new Event("wuu:workbench-back")));
+      await waitFor(() => !document.querySelector(".sidebar-hover-card") &&
+        !document.querySelector(".app-shell").classList.contains("sidebar-drawer-open"));
+      await capture(label + "-drawer-forced-close");
+      results.push({ label, case: "drawer-forced-close-retires-card" });
+
+      move(width - 40, 410);
+      const exitRow = await openDrawerCard();
+      const exitCard = await measure(threadRow("hover-running"));
+      move(exitCard.card.left - 4, exitRow.y);
+      await new Promise((resolve) => setTimeout(resolve, 450));
+      assert.ok(await evaluate(cardShown), label + ": the gap itself keeps the card reachable");
+      // Abandoning the bridge does not produce a pointerleave on the row or
+      // card: both points hit the conversation. It must still retire the group.
+      move(width - 40, 410);
+      await waitFor(() => !document.querySelector(".sidebar-hover-card") &&
+        !document.querySelector(".app-shell").classList.contains("sidebar-drawer-open"));
+      results.push({ label, case: "drawer-gap-exit-retires-both" });
+      // Restore the docked preference for the next theme/size case.
+      await click('.conversation-pane [data-wuu-component="sidebar-toggle"]');
+      await waitFor(() => !document.querySelector(".app-shell").classList.contains("sidebar-collapsed"));
     }
     console.log(`PASS: ${results.length} sidebar hover card cases; evidence: ${output}`);
   } catch (error) {

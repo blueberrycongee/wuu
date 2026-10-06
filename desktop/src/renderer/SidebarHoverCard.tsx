@@ -19,7 +19,7 @@ import {
 } from "./AppState";
 import { engineLabel } from "./EngineDisplay";
 import { EngineIcon } from "./EngineIcons";
-import type { HoverRevealLayerProps } from "./HoverReveal";
+import { type HoverRevealLayerProps, useRetainHoverOwner } from "./HoverReveal";
 import { useI18n } from "./i18n";
 import { isProjectCoordinator } from "./ProjectSessions";
 import { LiveDuration } from "./TurnProgress";
@@ -59,6 +59,7 @@ export function SidebarHoverCardLayer({
   interaction?: HoverRevealLayerProps;
   label?: string;
 }): JSX.Element {
+  useRetainHoverOwner(true);
   const localRef = useRef<HTMLDivElement>(null);
   const layerRef = interaction?.ref ?? localRef;
 

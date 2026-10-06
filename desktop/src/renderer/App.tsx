@@ -270,6 +270,7 @@ import { releaseWindowResizeClass, WINDOW_RESIZING_CLASS } from "./WindowResizeS
 import { useComposerDraftState } from "./ComposerDraftState";
 import { useComposerPendingState } from "./ComposerPendingState";
 import { useSidebarDrawerState } from "./SidebarDrawerState";
+import { HoverRevealScopeContext } from "./HoverReveal";
 import { useSidebarWorkspaceState } from "./SidebarWorkspaceState";
 import { useViewSwitchState } from "./ViewSwitchState";
 import { turnTelemetryStore } from "./TurnTelemetryStore";
@@ -654,6 +655,7 @@ export function App(): JSX.Element {
   const sidebarDrawerMode = compactNavigation || sidebarCollapsed;
   const {
     sidebarDrawerPhase,
+    sidebarHoverScope,
     sidebarHoverZoneRef,
     cancelSidebarDrawerOpen,
     openSidebarDrawer,
@@ -5273,141 +5275,143 @@ export function App(): JSX.Element {
               </button>
             </div>
           ) : null}
-          <AppSidebar
-            onToggleSidebar={sidebarDrawerMode ? undefined : toggleSessionSwitcher}
-            sidebarCollapsed={sidebarCollapsed}
-            sidebarVisible={!sidebarDrawerMode || sidebarDrawerVisible}
-            mobileNavigation={compactNavigation && isTouchWebShell()}
-            drawerVisible={sidebarDrawerVisible}
-            onNavigateAway={closeCompactSessionSwitcher}
-            state={state}
-            sidebarWorkspaces={sidebarWorkspaces}
-            pendingConversations={pendingThreadCreations.map((pending) => ({
-              id: pending.sessionTabID,
-              context: pending.context,
-              title: pending.turn.items[0].text || t("tabs.newConversation"),
-            }))}
-            onSelectPendingConversation={(tabID) => {
-              closePrimaryPluginView();
-              closeCompactSessionSwitcher();
-              void selectSessionTab(tabID);
-            }}
-            activeWorkspaceID={
-              workspaceSelectionEnabled && workspaceContext?.kind === "project"
-                ? workspaceContext.project_id
-                : undefined
-            }
-            pinnedThreads={sidebarPinnedThreads}
-            activeThreadID={activeThreadID}
-            pendingThreadID={visiblePendingThreadID}
-            pendingWorkspaceID={visiblePendingWorkspaceID}
-            collapsedSidebarSectionIDs={collapsedSidebarSectionIDs}
-            collapsedFolderIDs={collapsedFolderIDs}
-            setCollapsedFolderIDs={setCollapsedFolderIDs}
-            expandedSidebarSectionIDs={expandedSidebarSectionIDs}
-            loadingWorkspaceThreadIDs={loadingWorkspaceThreadIDs}
-            workspaceThreadsByWorkspaceID={sidebarThreadsByWorkspaceID}
-            workspaceMenuOpen={workspaceMenuOpen}
-            workspaceMenuRef={workspaceMenuRef}
-            searchOpen={conversationSearch.open}
-            sectionOrder={sidebarSectionOrder}
-            onStartNewThread={() => {
-              closePrimaryPluginView();
-              revealConversationFromFocusedWorkspace();
-              closeCompactSessionSwitcher();
-              startNewThreadWithComposerFocus();
-            }}
-            onOpenSkillsTab={() => {
-              closePrimaryPluginView();
-              closeCompactSessionSwitcher();
-              openSkillsTab();
-            }}
-            onMarkThreadsViewed={(threads) => {
-              setState((current) => markThreadSummariesViewed(current, threads));
-            }}
-            unreadViewOpen={unreadViewOpen}
-            onToggleUnreadView={() => setUnreadViewOpen((open) => !open)}
-            attentionStickyIDs={attentionStickyIDs}
-            onAttentionStickyIDsChange={setAttentionStickyIDs}
-            onToggleConversationSearch={toggleConversationSearch}
-            onSelectThread={(id) => {
-              closePrimaryPluginView();
-              revealConversationFromFocusedWorkspace();
-              closeCompactSessionSwitcher();
-              void activateThread(id);
-            }}
-            onTogglePinned={(thread) => void toggleThreadPinned(thread)}
-            onArchiveThread={(thread) => {
-              const archivedTitle =
-                thread.title?.trim() || t("app.thisConversation");
-              void archiveThread(thread).then((outcome) => {
-                setArchiveTip({
-                  threadID: thread.id,
-                  threadTitle: archivedTitle,
-                  errorMessage: outcome.ok ? undefined : outcome.error,
-                  forceRetryThread:
-                    !outcome.ok && outcome.forceRetryable ? thread : undefined,
+          <HoverRevealScopeContext.Provider value={sidebarHoverScope}>
+            <AppSidebar
+              onToggleSidebar={sidebarDrawerMode ? undefined : toggleSessionSwitcher}
+              sidebarCollapsed={sidebarCollapsed}
+              sidebarVisible={!sidebarDrawerMode || sidebarDrawerVisible}
+              mobileNavigation={compactNavigation && isTouchWebShell()}
+              drawerVisible={sidebarDrawerVisible}
+              onNavigateAway={closeCompactSessionSwitcher}
+              state={state}
+              sidebarWorkspaces={sidebarWorkspaces}
+              pendingConversations={pendingThreadCreations.map((pending) => ({
+                id: pending.sessionTabID,
+                context: pending.context,
+                title: pending.turn.items[0].text || t("tabs.newConversation"),
+              }))}
+              onSelectPendingConversation={(tabID) => {
+                closePrimaryPluginView();
+                closeCompactSessionSwitcher();
+                void selectSessionTab(tabID);
+              }}
+              activeWorkspaceID={
+                workspaceSelectionEnabled && workspaceContext?.kind === "project"
+                  ? workspaceContext.project_id
+                  : undefined
+              }
+              pinnedThreads={sidebarPinnedThreads}
+              activeThreadID={activeThreadID}
+              pendingThreadID={visiblePendingThreadID}
+              pendingWorkspaceID={visiblePendingWorkspaceID}
+              collapsedSidebarSectionIDs={collapsedSidebarSectionIDs}
+              collapsedFolderIDs={collapsedFolderIDs}
+              setCollapsedFolderIDs={setCollapsedFolderIDs}
+              expandedSidebarSectionIDs={expandedSidebarSectionIDs}
+              loadingWorkspaceThreadIDs={loadingWorkspaceThreadIDs}
+              workspaceThreadsByWorkspaceID={sidebarThreadsByWorkspaceID}
+              workspaceMenuOpen={workspaceMenuOpen}
+              workspaceMenuRef={workspaceMenuRef}
+              searchOpen={conversationSearch.open}
+              sectionOrder={sidebarSectionOrder}
+              onStartNewThread={() => {
+                closePrimaryPluginView();
+                revealConversationFromFocusedWorkspace();
+                closeCompactSessionSwitcher();
+                startNewThreadWithComposerFocus();
+              }}
+              onOpenSkillsTab={() => {
+                closePrimaryPluginView();
+                closeCompactSessionSwitcher();
+                openSkillsTab();
+              }}
+              onMarkThreadsViewed={(threads) => {
+                setState((current) => markThreadSummariesViewed(current, threads));
+              }}
+              unreadViewOpen={unreadViewOpen}
+              onToggleUnreadView={() => setUnreadViewOpen((open) => !open)}
+              attentionStickyIDs={attentionStickyIDs}
+              onAttentionStickyIDsChange={setAttentionStickyIDs}
+              onToggleConversationSearch={toggleConversationSearch}
+              onSelectThread={(id) => {
+                closePrimaryPluginView();
+                revealConversationFromFocusedWorkspace();
+                closeCompactSessionSwitcher();
+                void activateThread(id);
+              }}
+              onTogglePinned={(thread) => void toggleThreadPinned(thread)}
+              onArchiveThread={(thread) => {
+                const archivedTitle =
+                  thread.title?.trim() || t("app.thisConversation");
+                void archiveThread(thread).then((outcome) => {
+                  setArchiveTip({
+                    threadID: thread.id,
+                    threadTitle: archivedTitle,
+                    errorMessage: outcome.ok ? undefined : outcome.error,
+                    forceRetryThread:
+                      !outcome.ok && outcome.forceRetryable ? thread : undefined,
+                  });
                 });
-              });
-            }}
-            onDeleteThread={(thread) => void deleteThread(thread)}
-            onRenameThread={(thread, title) => void renameThread(thread, title)}
-            onToggleWorkspaceMenu={() => setWorkspaceMenuOpen((open) => !open)}
-            onCreateWorkspace={() => void createBlankProject()}
-            onOpenWorkspaceFolder={() => void chooseProjectFolder()}
-            onToggleSidebarSectionCollapsed={toggleSidebarSectionCollapsed}
-            onLoadWorkspaceThreads={loadWorkspaceThreadsStable}
-            onFocusWorkspace={
-              workspaceSelectionEnabled
-                ? (id) => {
-                    const project = state.projects.find((item) => item.id === id);
-                    if (!project || project.missing) {
-                      return;
+              }}
+              onDeleteThread={(thread) => void deleteThread(thread)}
+              onRenameThread={(thread, title) => void renameThread(thread, title)}
+              onToggleWorkspaceMenu={() => setWorkspaceMenuOpen((open) => !open)}
+              onCreateWorkspace={() => void createBlankProject()}
+              onOpenWorkspaceFolder={() => void chooseProjectFolder()}
+              onToggleSidebarSectionCollapsed={toggleSidebarSectionCollapsed}
+              onLoadWorkspaceThreads={loadWorkspaceThreadsStable}
+              onFocusWorkspace={
+                workspaceSelectionEnabled
+                  ? (id) => {
+                      const project = state.projects.find((item) => item.id === id);
+                      if (!project || project.missing) {
+                        return;
+                      }
+                      closePrimaryPluginView();
+                      setFocusedWorkspaceContext({
+                        kind: "project",
+                        project_id: project.id,
+                        cwd: project.path,
+                      });
+                      closeCompactSessionSwitcher();
+                      openWorkspaceTool("files");
                     }
-                    closePrimaryPluginView();
-                    setFocusedWorkspaceContext({
-                      kind: "project",
-                      project_id: project.id,
-                      cwd: project.path,
-                    });
-                    closeCompactSessionSwitcher();
-                    openWorkspaceTool("files");
-                  }
-                : undefined
-            }
-            onStartNewThreadInWorkspace={(id) => {
-              closePrimaryPluginView();
-              revealConversationFromFocusedWorkspace();
-              closeCompactSessionSwitcher();
-              startNewThreadInWorkspaceWithComposerFocus(id);
-            }}
-            onSelectWorkspaceThread={(workspaceID, threadID) => {
-              closePrimaryPluginView();
-              revealConversationFromFocusedWorkspace();
-              closeCompactSessionSwitcher();
-              void selectWorkspaceThread(workspaceID, threadID);
-            }}
-            onRemoveWorkspace={(id) => void removeProject(id)}
-            onRelocateWorkspace={(id) => void relocateProject(id)}
-            onCreateProject={projectAgentEnabled ? startNewProject : undefined}
-            onAdoptIntoProject={projectAgentEnabled ? (projectID, threadID) => void adoptIntoProject(projectID, threadID) : undefined}
-            onReorderSections={setSidebarSectionOrder}
-            onPointerEnter={openSidebarDrawer}
-            onPointerLeave={(event) =>
-              scheduleSidebarDrawerCloseFromPointerLeave(event.nativeEvent)
-            }
-            onOpenAccount={ENABLE_ACCOUNT ? () => {
-                if (window.wuu.openAccountWindow) void window.wuu.openAccountWindow().catch(error => showErrorToast(error));
-                else setAccountOpen(true);
-              } : undefined}
-            onOpenSettings={(page = "providers") => {
-              setWorkspaceMenuOpen(false);
-              setRuntimeMenuOpen(false);
-              setCodexRuntimeMenu(null);
-              setSettingsInitialPage(page);
-              setSettingsOpen(true);
-            }}
-          />
+                  : undefined
+              }
+              onStartNewThreadInWorkspace={(id) => {
+                closePrimaryPluginView();
+                revealConversationFromFocusedWorkspace();
+                closeCompactSessionSwitcher();
+                startNewThreadInWorkspaceWithComposerFocus(id);
+              }}
+              onSelectWorkspaceThread={(workspaceID, threadID) => {
+                closePrimaryPluginView();
+                revealConversationFromFocusedWorkspace();
+                closeCompactSessionSwitcher();
+                void selectWorkspaceThread(workspaceID, threadID);
+              }}
+              onRemoveWorkspace={(id) => void removeProject(id)}
+              onRelocateWorkspace={(id) => void relocateProject(id)}
+              onCreateProject={projectAgentEnabled ? startNewProject : undefined}
+              onAdoptIntoProject={projectAgentEnabled ? (projectID, threadID) => void adoptIntoProject(projectID, threadID) : undefined}
+              onReorderSections={setSidebarSectionOrder}
+              onPointerEnter={openSidebarDrawer}
+              onPointerLeave={(event) =>
+                scheduleSidebarDrawerCloseFromPointerLeave(event.nativeEvent)
+              }
+              onOpenAccount={ENABLE_ACCOUNT ? () => {
+                  if (window.wuu.openAccountWindow) void window.wuu.openAccountWindow().catch(error => showErrorToast(error));
+                  else setAccountOpen(true);
+                } : undefined}
+              onOpenSettings={(page = "providers") => {
+                setWorkspaceMenuOpen(false);
+                setRuntimeMenuOpen(false);
+                setCodexRuntimeMenu(null);
+                setSettingsInitialPage(page);
+                setSettingsOpen(true);
+              }}
+            />
+          </HoverRevealScopeContext.Provider>
 
           {compactNavigation ? (
             <button

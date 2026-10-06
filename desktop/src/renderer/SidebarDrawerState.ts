@@ -1,8 +1,10 @@
 import { isTouchWebShell } from "./ComposerFocus";
+import type { HoverRevealScope } from "./HoverReveal";
 import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type MutableRefObject,
@@ -15,6 +17,7 @@ export type SidebarDrawerPhase = "closed" | "open" | "closing" | "docking";
 
 export type SidebarDrawerStateController = {
   sidebarDrawerPhase: SidebarDrawerPhase;
+  sidebarHoverScope: HoverRevealScope;
   sidebarHoverZoneRef: MutableRefObject<HTMLDivElement | null>;
   cancelSidebarDrawerOpen: () => void;
   openSidebarDrawer: () => void;
@@ -63,6 +66,16 @@ export function useSidebarDrawerState({
   const sidebarDrawerSuppressedRef = useRef(false);
   const sidebarDrawerPointerLeaveTimerRef = useRef<number | undefined>(undefined);
   const sidebarWasCollapsedRef = useRef(sidebarCollapsed);
+  const [hoverLayerCount, setHoverLayerCount] = useState(0);
+  const previousHoverLayerCountRef = useRef(0);
+  const retainHoverLayer = useCallback(() => {
+    setHoverLayerCount((count) => count + 1);
+    return () => setHoverLayerCount((count) => count - 1);
+  }, []);
+  const sidebarHoverScope = useMemo<HoverRevealScope>(() => ({
+    disabled: sidebarCollapsed && sidebarDrawerPhase !== "open",
+    retain: sidebarCollapsed ? retainHoverLayer : undefined,
+  }), [sidebarCollapsed, sidebarDrawerPhase, retainHoverLayer]);
 
   const clearSidebarDrawerCloseTimer = useCallback((): void => {
     if (sidebarDrawerCloseTimerRef.current !== undefined) {
@@ -101,6 +114,8 @@ export function useSidebarDrawerState({
   }, []);
 
   const sidebarDrawerPointerHovered = useCallback((): boolean | undefined => {
+    // A card owns its gap grace period and focus retention even outside the rail.
+    if (hoverLayerCount > 0) return true;
     const point = sidebarPointerPositionRef.current;
     if (!point) {
       return undefined;
@@ -134,7 +149,7 @@ export function useSidebarDrawerState({
       (sidebar && sidebar.contains(target)) ||
         [...(hoverTriggers ?? [])].some((trigger) => trigger.contains(target)),
     );
-  }, [appShellRef]);
+  }, [appShellRef, hoverLayerCount]);
 
   const blurSidebarFocus = useCallback((): void => {
     const sidebar = appShellRef.current?.querySelector(SIDEBAR_RAIL_SELECTOR);
@@ -307,6 +322,15 @@ export function useSidebarDrawerState({
     sidebarDrawerPhase,
     sidebarDrawerPointerHovered,
   ]);
+
+  useLayoutEffect(() => {
+    // A dismissed/unmounted child can be the last thing retaining the drawer.
+    // Recheck without waiting for another pointer movement, but do not change
+    // explicit open behavior when no child has ever been shown.
+    const previousCount = previousHoverLayerCountRef.current;
+    previousHoverLayerCountRef.current = hoverLayerCount;
+    if (previousCount > 0 && hoverLayerCount === 0) syncSidebarDrawerHover();
+  }, [hoverLayerCount, syncSidebarDrawerHover]);
 
   useEffect(() => {
     function handlePointerEvent(event: Event): void {
@@ -491,6 +515,7 @@ export function useSidebarDrawerState({
 
   return {
     sidebarDrawerPhase,
+    sidebarHoverScope,
     sidebarHoverZoneRef,
     cancelSidebarDrawerOpen,
     openSidebarDrawer,
