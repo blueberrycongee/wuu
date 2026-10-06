@@ -326,6 +326,78 @@ func TestQueuedProcessCompletionAlreadyAnsweredSkipsProvider(t *testing.T) {
 	}
 }
 
+func TestProcessCompletionDrainContinuesPastDeliveredResult(t *testing.T) {
+	mainClient := &fakeClient{response: providers.ChatResponse{Content: "continued after pending process"}}
+	rt := newTestRuntime(t, mainClient)
+	manager, err := process.NewManager(rt.RootDir, filepath.Join(rt.RootDir, "process-runtime"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	threadID := "thread-completion-stale-head"
+	events := make(chan process.Event, 16)
+	manager.Subscribe(events)
+	var pending []agentCompletionTurn
+	for range 2 {
+		started, err := manager.Start(context.Background(), process.StartOptions{
+			Command: "printf 'done\\n'", OwnerKind: process.OwnerMainAgent,
+			OwnerID: threadID, Lifecycle: process.LifecycleManaged,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		deadline := time.After(5 * time.Second)
+		completed := false
+		for !completed {
+			select {
+			case event := <-events:
+				if event.Process.ID == started.ID && event.Cause == process.EventCauseNaturalExit {
+					pending = append(pending, agentCompletionTurn{processID: started.ID, msg: processCompletionChatMessage(manager, event)})
+					completed = true
+				}
+			case <-deadline:
+				t.Fatal("timed out waiting for natural process exit")
+			}
+		}
+	}
+	// A process read can acknowledge a result after its wakeup was queued.
+	if _, err := manager.MarkCompletionDelivered(pending[0].processID, "process_result"); err != nil {
+		t.Fatal(err)
+	}
+	out := &lockedBuffer{}
+	server := New(rt, out)
+	t.Cleanup(server.Close)
+	rootThread := newThreadState(threadID, []providers.ChatMessage{{Role: "user", Content: "continue after the jobs finish"}}, rt.ProviderName, rt.Model, rt.RootDir, false, time.Now().UTC())
+	rootThread.execRuntime = &runtime.ThreadRuntime{StreamRunner: rt.StreamRunner, ProcessManager: manager}
+	server.mu.Lock()
+	server.threads[threadID] = rootThread
+	server.mu.Unlock()
+	server.prependPendingAgentCompletionTurns(threadID, pending)
+	server.kickAgentCompletionDrain(threadID)
+	waitForTurnCompletedForThread(t, out, threadID)
+
+	mainClient.mu.Lock()
+	requests := append([]providers.ChatRequest(nil), mainClient.requests...)
+	mainClient.mu.Unlock()
+	if len(requests) != 1 {
+		t.Fatalf("only the undelivered result should trigger a model turn, got %d", len(requests))
+	}
+	found := false
+	for _, msg := range requests[0].Messages {
+		if msg.Name == wuucontext.ProcessNotificationMessageName {
+			if strings.Contains(msg.Content, pending[0].processID) {
+				t.Fatal("already delivered result was sent to the model again")
+			}
+			found = found || strings.Contains(msg.Content, pending[1].processID)
+		}
+	}
+	if !found {
+		t.Fatal("pending result was stranded behind the delivered result")
+	}
+	if outstanding := threadHasOutstandingProcessCompletion(threadID, nil, manager); outstanding {
+		t.Fatal("completed turn left a process completion outstanding")
+	}
+}
+
 func TestProcessCompletionDrainYieldsToQueuedUserWork(t *testing.T) {
 	threadID := "thread-user-priority"
 	server := &Server{

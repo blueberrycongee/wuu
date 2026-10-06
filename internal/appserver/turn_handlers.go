@@ -4280,14 +4280,16 @@ func (s *Server) drainAgentCompletionTurns(threadID string) (capacityFull bool) 
 		requeued = true
 	}
 	s.clearAgentCompletionDrain(threadID)
-	if requeued {
-		if executionBusy || retryableAdmission {
-			if capacityFull && s.deferProjectCapacityRetry(threadID, "completion", func() bool { return s.tryDrainAgentCompletionTurns(threadID, true) }) {
-				return
-			}
-			s.scheduleThreadExecutionLeaseRetry(func() { s.kickAgentCompletionDrain(threadID) })
+	if requeued && (executionBusy || retryableAdmission) {
+		if capacityFull && s.deferProjectCapacityRetry(threadID, "completion", func() bool { return s.tryDrainAgentCompletionTurns(threadID, true) }) {
 			return
 		}
+		s.scheduleThreadExecutionLeaseRetry(func() { s.kickAgentCompletionDrain(threadID) })
+		return
+	}
+	// Admission can consume an already delivered result without starting a turn.
+	// In that case no runTurn will wake the remaining completion queue.
+	if requeued || s.hasQueuedAgentCompletionWork(threadID) {
 		s.kickAgentCompletionDrain(threadID)
 	}
 	return
