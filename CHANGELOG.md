@@ -28,7 +28,7 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
-- Allow renaming sessions directly in sidebar hover cards, with keyboard editing and focus retention. Keep hovered titles free of link-style underlines.
+- Allow renaming sessions directly in sidebar hover cards, with keyboard editing and focus retention. Use a subtle background highlight on hovered titles instead of link-style underlines.
 
 - Reduce the default desktop sidebar width from 296px to 264px and the right panel from 480px to 400px while preserving saved widths and manual resizing.
 

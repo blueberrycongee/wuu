@@ -2673,6 +2673,10 @@ html[data-focus-modality="keyboard"] .thread-row-context-menu:focus-visible {
   cursor: text;
 }
 
+.sidebar-hover-card-title-editable:hover {
+  background: var(--menu-hover);
+}
+
 .sidebar-hover-card-title-editable:focus-visible,
 .sidebar-hover-card-title-input:focus {
   outline: 2px solid var(--focus-ring);
