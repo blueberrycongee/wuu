@@ -110,7 +110,6 @@
 
 /* Same role and ink as the conversation title beside it. */
 .side-thread-panel__title {
-  -webkit-app-region: no-drag;
   min-width: 0;
   margin: 0;
   overflow: hidden;

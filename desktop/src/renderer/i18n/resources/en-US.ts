@@ -1571,7 +1571,6 @@ export const enUS = {
   "tabs.closeNotRunning": "Close not running",
   "tabs.closeAll": "Close all",
   "sideThread.title": "Side chat",
-  "sideThread.description": "Messages stay out of the main conversation.",
   "sideThread.resize": "Resize side chat",
   "sideThread.collapse": "Collapse side chat",
   "workspace.browser.newTab": "New tab",

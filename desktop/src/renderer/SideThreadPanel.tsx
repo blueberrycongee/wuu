@@ -134,9 +134,7 @@ export const SideThreadPanel = forwardRef<SideThreadPanelHandle, SideThreadPanel
           onPointerDown={onResizeStart}
         />
         <header className="side-thread-panel__header">
-          <Tooltip content={t("sideThread.description")} side="bottom">
-            <h2 id={titleID} className="side-thread-panel__title" tabIndex={0} aria-description={t("sideThread.description")}>{t("sideThread.title")}</h2>
-          </Tooltip>
+          <h2 id={titleID} className="side-thread-panel__title">{t("sideThread.title")}</h2>
           <Tooltip content={t("sideThread.collapse")}>
             <button
               type="button"

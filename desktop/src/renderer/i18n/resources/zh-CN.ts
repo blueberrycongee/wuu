@@ -1568,7 +1568,6 @@ export const zhCN = {
   "tabs.closeNotRunning": "关闭未运行的",
   "tabs.closeAll": "关闭全部",
   "sideThread.title": "侧聊",
-  "sideThread.description": "不会加入主对话。",
   "sideThread.resize": "调整侧聊宽度",
   "sideThread.collapse": "收起侧聊",
   "workspace.browser.newTab": "新标签页",

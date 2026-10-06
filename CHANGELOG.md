@@ -28,7 +28,7 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
-- Remove the side chat empty-state explanation and shorten its input prompt; keep isolation guidance in the accessible header tooltip.
+- Remove redundant side chat explanations and shorten its input prompt. Keep the header as a plain title without an explanatory tooltip or extra keyboard focus stop.
 
 - Simplify background image, model service, execution environment, temperature, and terminal helper text. Shorten agent login and archive guidance while preserving error feedback and important behavior notices.
 
