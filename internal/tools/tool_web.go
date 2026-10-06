@@ -91,7 +91,7 @@ func (t *WebFetchTool) Definition() providers.ToolDefinition {
 			"- Prefer official documentation, changelogs, or primary sources for implementation decisions\n" +
 			"- HTML is automatically converted to readable text (scripts, nav, footer stripped)\n" +
 			"- JSON responses are pretty-printed\n" +
-			"- Content is truncated at 1MB\n" +
+			"- Reads up to 1 MiB; returned text also fits the 1 MiB serialized result limit. truncated=true reports either limit\n" +
 			"- Local/private network targets are blocked unless full access is active\n" +
 			"- 30 second timeout",
 		InputSchema: map[string]any{

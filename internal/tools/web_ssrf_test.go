@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -10,9 +11,11 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	wuucontext "github.com/blueberrycongee/wuu/internal/context"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
 
 func TestIsBlockedIP(t *testing.T) {
@@ -257,5 +260,40 @@ func TestWebFetchUnconfinedAllowsInternal(t *testing.T) {
 	}
 	if strings.Contains(out, "blocked") || !strings.Contains(out, "full-access-local") {
 		t.Fatalf("unconfined should fetch local URL, got: %s", out)
+	}
+}
+
+// Download limits must include the serialized envelope and JSON escaping.
+func TestWebFetchLargeResponseFitsTransport(t *testing.T) {
+	for _, body := range []string{strings.Repeat("x", webFetchMaxBytes), strings.Repeat("\"\\中文\n", 100000), `{"values":[` + strings.Repeat(`"quoted\\value",`, 50000) + `"end"]}`} {
+		t.Run(fmt.Sprint(len(body)), func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if strings.HasPrefix(body, "{") {
+					w.Header().Set("Content-Type", "application/json")
+				} else {
+					w.Header().Set("Content-Type", "text/plain")
+				}
+				w.Write([]byte(body))
+			}))
+			defer srv.Close()
+			args, _ := json.Marshal(map[string]string{"url": srv.URL})
+			output, err := webFetchExecute(context.Background(), string(args), true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := toolresult.FromText(output).Validate(); err != nil {
+				t.Fatalf("fetch cannot cross tool transport: %v", err)
+			}
+			var got struct {
+				Content   string `json:"content"`
+				Truncated bool   `json:"truncated"`
+			}
+			if err := json.Unmarshal([]byte(output), &got); err != nil {
+				t.Fatal(err)
+			}
+			if !got.Truncated || got.Content == "" || !utf8.ValidString(got.Content) {
+				t.Fatalf("missing valid bounded content or truncation notice")
+			}
+		})
 	}
 }

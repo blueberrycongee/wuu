@@ -16,6 +16,9 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
+
+	"github.com/blueberrycongee/wuu/internal/toolresult"
 
 	"golang.org/x/net/html"
 )
@@ -504,15 +507,37 @@ func webFetchExecute(ctx context.Context, argsJSON string, allowInternal bool) (
 		content = prettyJSON(content)
 	}
 
-	return mustJSON(map[string]any{
-		"action":       "web_fetch",
-		"url":          args.URL,
-		"evidence":     evidence,
-		"content_type": contentType,
-		"content":      content,
-		"size":         len(body),
-		"truncated":    truncated,
-	})
+	envelope := map[string]any{
+		"action": "web_fetch", "url": args.URL, "evidence": evidence,
+		"content_type": contentType, "content": content, "size": len(body), "truncated": truncated,
+	}
+	encoded, err := mustJSON(envelope)
+	if err != nil || len(encoded) <= toolresult.MaxStructuredJSONSize {
+		return encoded, err
+	}
+	// The transport bounds serialized text, not the downloaded body. Metadata,
+	// JSON escaping and pretty-printing must fit without turning a fetch into an error.
+	envelope["truncated"] = true
+	low, high := 0, len(content)
+	for low < high {
+		middle := (low + high + 1) / 2
+		keep := middle
+		for keep > 0 && keep < len(content) && !utf8.RuneStart(content[keep]) {
+			keep--
+		}
+		envelope["content"] = content[:keep]
+		candidate, _ := mustJSON(envelope)
+		if len(candidate) <= toolresult.MaxStructuredJSONSize {
+			low = middle
+		} else {
+			high = middle - 1
+		}
+	}
+	for low > 0 && low < len(content) && !utf8.RuneStart(content[low]) {
+		low--
+	}
+	envelope["content"] = content[:low]
+	return mustJSON(envelope)
 }
 
 // htmlToText strips noisy elements and extracts readable text from HTML.

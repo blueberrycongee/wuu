@@ -10,6 +10,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Web fetch results account for JSON escaping and metadata when applying the transport size limit.
+
 - Execute Code Mode programs with small output budgets instead of rejecting
   their work. Preserve a minimal recovery reference when output cannot fit,
   and omit repeated diff hunks from compact overwrite receipts.
