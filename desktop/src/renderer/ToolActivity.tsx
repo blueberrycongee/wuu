@@ -210,7 +210,7 @@ export function ToolActivityRow({
     if (typeof code === "string" && code.trim()) {
       const cwd = isCommand ? stringValue(args, "cwd") : undefined;
       const firstLine = code.split("\n", 1)[0].trim();
-      const pragma = !isCommand && firstLine.startsWith("// @run_code:") ? parseJSONRecord(firstLine.slice("// @run_code:".length)) : null;
+      const pragma = !isCommand && firstLine.startsWith("// @run_code:") ? parseJSONRecord(firstLine.slice("// @run_code:".length)) : undefined;
       return (
         <ToolSourceRecord
           key={item.id}
