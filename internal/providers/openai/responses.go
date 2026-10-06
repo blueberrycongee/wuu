@@ -191,6 +191,18 @@ func (c *Client) buildResponsesRequest(req providers.ChatRequest, stream bool) (
 	if videoErr != nil {
 		return responsesRequest{}, videoErr
 	}
+	for _, msg := range req.Messages {
+		for _, call := range msg.ToolCalls {
+			if call.Kind == providers.ToolCallKindCustom {
+				var args struct {
+					Input *string `json:"input"`
+				}
+				if err := json.Unmarshal([]byte(call.Arguments), &args); err != nil || args.Input == nil {
+					return responsesRequest{}, fmt.Errorf("custom tool %q has invalid literal input", call.Name)
+				}
+			}
+		}
+	}
 	resolved := providers.ResolveProviderHistory(req.Messages, req.Provider, req.ProviderStateScope)
 	prepared, err := providers.PrepareMessagesForProviderRequestWithPolicy(req.Provider, req.Model, resolved, req.MediaInput)
 	if err != nil {
@@ -253,8 +265,15 @@ func (c *Client) buildResponsesRequest(req providers.ChatRequest, stream bool) (
 				// Forced tool choice for mechanical closing turns. The
 				// Responses wire form pins a function by name and is flatter
 				// than Chat Completions (no nested "function" object).
+				choiceType := "function"
+				for _, tool := range req.Tools {
+					if tool.Name == req.ForceToolName && tool.Freeform {
+						choiceType = "custom"
+						break
+					}
+				}
 				payload.ToolChoice = map[string]any{
-					"type": "function",
+					"type": choiceType,
 					"name": req.ForceToolName,
 				}
 			}
@@ -396,8 +415,12 @@ func appendResponsesInputItem(input []responsesInputItem, msg providers.ChatMess
 				Tools:     responsesToolSearchOutputTools(model, msg.Content),
 			})
 		}
+		outputType := "function_call_output"
+		if msg.ToolResultKind == providers.ToolCallKindCustom {
+			outputType = "custom_tool_call_output"
+		}
 		input = append(input, responsesInputItem{
-			Type:   "function_call_output",
+			Type:   outputType,
 			CallID: msg.ToolCallID,
 			Output: &msg.Content,
 		})
@@ -436,6 +459,14 @@ func appendResponsesInputItem(input []responsesInputItem, msg providers.ChatMess
 			})
 		}
 		for _, call := range msg.ToolCalls {
+			if call.Kind == providers.ToolCallKindCustom {
+				var args struct {
+					Input string `json:"input"`
+				}
+				_ = json.Unmarshal([]byte(call.Arguments), &args)
+				input = append(input, responsesInputItem{Type: "custom_tool_call", ID: responsesProviderItemIDForModel(call.ProviderItemID, call.ProviderItemModel, model), CallID: call.ID, Name: call.Name, Input: &args.Input})
+				continue
+			}
 			if nativeDeferred && isResponsesToolSearchCall(call) {
 				input = append(input, responsesInputItem{
 					Type:      "tool_search_call",
@@ -650,6 +681,10 @@ func responsesToolParameters(schema map[string]any) map[string]any {
 }
 
 func responsesToolDefinitionFromProvider(model string, tool providers.ToolDefinition, nativeDeferred bool) responsesToolDefinition {
+	if tool.Freeform {
+		return responsesToolDefinition{Type: "custom", Name: tool.Name, Description: "Accept raw source text, not JSON, quoted strings or Markdown fences.\n" + tool.Description, Format: map[string]any{"type": "text"}}
+	}
+
 	if nativeDeferred && strings.EqualFold(tool.Name, "tool_search") {
 		return responsesToolDefinition{
 			Type:        "tool_search",
@@ -926,18 +961,18 @@ func (c *Client) readResponsesSSE(ctx context.Context, resp *http.Response, leas
 			switch event.Item.Type {
 			case "reasoning":
 				pendingReasoning.start(event.Item, event.outputIndex())
-			case "function_call", "tool_search_call":
+			case "function_call", "tool_search_call", "custom_tool_call":
 				sawToolCall = true
 				disarmFinalAnswerTail()
 				pending.start(event.Item, event.outputIndex(), emit)
 			}
 
-		case "response.function_call_arguments.delta", "response.tool_search_call.arguments.delta":
+		case "response.function_call_arguments.delta", "response.tool_search_call.arguments.delta", "response.custom_tool_call_input.delta":
 			if event.Delta != "" {
 				pending.appendDelta(event, emit)
 			}
 
-		case "response.function_call_arguments.done", "response.tool_search_call.arguments.done":
+		case "response.function_call_arguments.done", "response.tool_search_call.arguments.done", "response.custom_tool_call_input.done":
 			pending.setArguments(event)
 
 		case "response.output_item.done":
@@ -948,7 +983,7 @@ func (c *Client) readResponsesSSE(ctx context.Context, resp *http.Response, leas
 				if responsesFinalAnswerItemDone(event, sawToolCall) {
 					armFinalAnswerTail()
 				}
-			case "function_call", "tool_search_call":
+			case "function_call", "tool_search_call", "custom_tool_call":
 				sawToolCall = true
 				disarmFinalAnswerTail()
 				pt := pending.start(event.Item, event.outputIndex(), emit)
@@ -1232,10 +1267,18 @@ func (p *responsesPendingTools) start(item responsesOutputItem, outputIndex int,
 
 func (p *responsesPendingTools) appendDelta(event responsesStreamEvent, emit *providers.StreamEmitter) {
 	pt := p.find(event)
+	delta := event.Delta
 	if pt != nil {
+		if pt.kind == providers.ToolCallKindCustom {
+			encoded, _ := json.Marshal(delta)
+			delta = string(encoded[1 : len(encoded)-1])
+			if pt.args.Len() == 0 {
+				delta = `{"input":"` + delta
+			}
+		}
 		pt.args.WriteString(event.Delta)
 	}
-	emit.Send(providers.StreamEvent{Type: providers.EventToolUseDelta, Content: event.Delta})
+	emit.Send(providers.StreamEvent{Type: providers.EventToolUseDelta, Content: delta})
 }
 
 func (p *responsesPendingTools) setArguments(event responsesStreamEvent) {
@@ -1264,7 +1307,7 @@ func (p *responsesPendingTools) emitEnd(pt *responsesPendingTool, arguments stri
 			ProviderItemID: pt.itemID,
 			Name:           pt.name,
 			Kind:           pt.kind,
-			Arguments:      pt.args.String(),
+			Arguments:      normalizedResponsesToolArguments(pt.kind, pt.args.String()),
 		},
 	})
 }
@@ -1347,6 +1390,7 @@ type responsesReasoning struct {
 }
 
 type responsesInputItem struct {
+	Input     *string         `json:"input,omitempty"`
 	Result    string          `json:"result,omitempty"`
 	Raw       json.RawMessage `json:"-"`
 	Type      string          `json:"type,omitempty"`
@@ -1399,7 +1443,8 @@ type responsesToolDefinition struct {
 	Strict       *bool          `json:"strict,omitempty"`
 	Execution    string         `json:"execution,omitempty"`
 	DeferLoading bool           `json:"defer_loading,omitempty"`
-	Parameters   map[string]any `json:"parameters"`
+	Parameters   map[string]any `json:"parameters,omitempty"`
+	Format       map[string]any `json:"format,omitempty"`
 }
 
 type responsesResponse struct {
@@ -1447,13 +1492,14 @@ func (r responsesResponse) asChatResponse(model string) (providers.ChatResponse,
 			if content != "" {
 				contentParts = append(contentParts, content)
 			}
-		case "function_call":
+		case "function_call", "custom_tool_call":
 			calls = append(calls, providers.ToolCall{
 				ID:                item.CallID,
 				ProviderItemID:    item.ID,
 				ProviderItemModel: model,
 				Name:              item.Name,
-				Arguments:         item.argumentsString(),
+				Arguments:         normalizedResponsesToolArguments(item.toolCallKind(), item.argumentsString()),
+				Kind:              item.toolCallKind(),
 			})
 		case "tool_search_call":
 			calls = append(calls, providers.ToolCall{
@@ -1485,6 +1531,7 @@ func (r responsesResponse) asChatResponse(model string) (providers.ChatResponse,
 }
 
 type responsesOutputItem struct {
+	Input        string          `json:"input,omitempty"`
 	Result       string          `json:"result,omitempty"`
 	OutputFormat string          `json:"output_format,omitempty"`
 	Raw          json.RawMessage `json:"-"`
@@ -1564,6 +1611,9 @@ func (i responsesOutputItem) toolCallName() string {
 }
 
 func (i responsesOutputItem) toolCallKind() providers.ToolCallKind {
+	if i.Type == "custom_tool_call" {
+		return providers.ToolCallKindCustom
+	}
 	if i.Type == "tool_search_call" {
 		return providers.ToolCallKindToolSearch
 	}
@@ -1571,10 +1621,16 @@ func (i responsesOutputItem) toolCallKind() providers.ToolCallKind {
 }
 
 func (i responsesOutputItem) argumentsString() string {
+	if i.Type == "custom_tool_call" {
+		return i.Input
+	}
 	return rawResponseArgumentsString(i.Arguments)
 }
 
 func (e responsesStreamEvent) argumentsString() string {
+	if e.Type == "response.custom_tool_call_input.done" {
+		return e.Input
+	}
 	return rawResponseArgumentsString(e.Arguments)
 }
 
@@ -1692,6 +1748,7 @@ func (e *responsesError) asError() error {
 }
 
 type responsesStreamEvent struct {
+	Input       string              `json:"input,omitempty"`
 	Type        string              `json:"type"`
 	Code        string              `json:"code,omitempty"`
 	Message     string              `json:"message,omitempty"`
@@ -1742,4 +1799,14 @@ func (e responsesStreamEvent) outputIndex() int {
 		return -1
 	}
 	return *e.OutputIndex
+}
+
+// Keep canonical tool arguments JSON so authorization, journals and alternate
+// providers retain their existing contract; only Responses uses literal wire input.
+func normalizedResponsesToolArguments(kind providers.ToolCallKind, input string) string {
+	if kind != providers.ToolCallKindCustom {
+		return input
+	}
+	args, _ := json.Marshal(map[string]string{"input": input})
+	return string(args)
 }

@@ -179,7 +179,7 @@ bindings retain their exact names, permissions and model-family edit primitives.
 
 ### Discover, execute and inspect results
 
-Call `run_code` with `code` and optional `description`, `timeout_ms`, `result_view`, and `max_output_tokens`.
+On OpenAI Responses (including the Codex provider), `run_code` accepts raw JavaScript source through a custom text tool. Do not wrap it in JSON or Markdown fences. Other provider APIs accept the same source as `{"input":"..."}`. An optional first-line `// @run_code: {...}` comment sets `description`, `timeout_ms`, `result_view`, and `max_output_tokens`; unknown options fail before execution. Previously recorded `code` calls remain executable when resuming a session.
 The description is display metadata; omitting it does not prevent execution.
 Its description includes core file, search and command definitions within a
 fixed catalog budget, with previews for other bindings. Use included schemas
@@ -226,12 +226,9 @@ alone does not expand a compact excerpt. Data views retain producer pagination,
 transport limits and recovery metadata. They do not fetch missing pages or logs.
 Use a data view when the compact excerpt would omit evidence, for example:
 
-```json
-{
-  "code": "console.log(await tools.bash({command:'cat src/example.cc'}));",
-  "result_view": "data",
-  "max_output_tokens": 14000
-}
+```javascript
+// @run_code: {"result_view":"data","max_output_tokens":14000}
+text(await tools.bash({command:'cat src/example.cc'}));
 ```
 
 Prefer selecting fields in JS when only part of a result is needed. Printing

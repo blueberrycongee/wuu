@@ -850,3 +850,33 @@ console.log(checked.model_text ?? checked.content[0].text);
 		}
 	}
 }
+
+// Exercise source delivery and pragma admission through the actual tool runtime.
+func TestPTCSourceInputAndPragma(t *testing.T) {
+	kit := newCodeModeTestToolkit(t)
+	runtime := agent.NewTurnToolRuntime(agent.ToolRuntimeConfig{Executor: kit, RunContext: context.Background(), Gate: agent.NewToolExecutionGate(1)})
+	defer runtime.Cancel()
+	source := "// @run_code: {\"result_view\":\"data\",\"max_output_tokens\":14000}\ntext(await tools.write_file({path:'literal.txt',content:'中文 \\u0024{literal} `quoted` \\\\d'}));"
+	args, _ := json.Marshal(map[string]any{"input": source})
+	messages, err := runtime.ExecuteFinalCalls(context.Background(), []providers.ToolCall{{ID: "source", Name: "run_code", Arguments: string(args)}}, nil)
+	if err != nil || len(messages) != 1 || strings.Contains(messages[0].Content, "PTC failed") {
+		t.Fatalf("source execution: %v %+v", err, messages)
+	}
+	got, err := os.ReadFile(filepath.Join(kit.RootDir(), "literal.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "中文 ${literal} `quoted` \\d" {
+		t.Fatalf("literal changed: %q", got)
+	}
+	for _, pragma := range []string{`{"unknown":true}`, `{"max_output_tokens":-1}`, `{"timeout_ms":0}`, `{"result_view":"invalid"}`} {
+		args, _ := json.Marshal(map[string]any{"input": "// @run_code: " + pragma + "\nawait tools.write_file({path:'forbidden.txt',content:'bad'});"})
+		messages, err := runtime.ExecuteFinalCalls(context.Background(), []providers.ToolCall{{ID: "invalid", Name: "run_code", Arguments: string(args)}}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Stat(filepath.Join(kit.RootDir(), "forbidden.txt")); !os.IsNotExist(err) {
+			t.Fatalf("invalid pragma executed: %+v %v", messages, err)
+		}
+	}
+}

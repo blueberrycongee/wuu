@@ -124,7 +124,7 @@ await tools.read_file({path: "screenshots/settings.png"});
 
 ### 发现、执行与结果
 
-调用 `run_code` 时提供 `code`，可选提供 `description`、`timeout_ms`、`result_view` 和 `max_output_tokens`。
+使用 OpenAI Responses（包括 Codex provider）时，`run_code` 通过自定义文本工具直接接收 JavaScript 源码，不要加 JSON 包装或 Markdown 围栏。其他 provider API 使用 `{"input":"..."}` 传入同一份源码。可选的首行 `// @run_code: {...}` 注释设置 `description`、`timeout_ms`、`result_view` 和 `max_output_tokens`；未知选项会在执行前报错。恢复历史会话时，原有 `code` 调用仍可执行。
 `description` 是展示元数据，省略它不会阻止执行。
 入口说明在固定目录预算内提供常用文件、搜索和命令工具的完整定义，其他绑定提供预览。
 可直接使用已列出的参数定义；只有预览的绑定再查询精确参数。`await searchTools(query, {limit: 8, offset: 0})`
@@ -161,12 +161,9 @@ await tools.read_file({path: "screenshots/settings.png"});
 数据视图仍保留工具自身的分页、传输上限和恢复元数据，不会自动读取后续页或日志。
 需要查看精简摘要会省略的证据时，可以这样调用：
 
-```json
-{
-  "code": "console.log(await tools.bash({command:'cat src/example.cc'}));",
-  "result_view": "data",
-  "max_output_tokens": 14000
-}
+```javascript
+// @run_code: {"result_view":"data","max_output_tokens":14000}
+text(await tools.bash({command:'cat src/example.cc'}));
 ```
 
 只需要部分数据时，仍应优先在 JS 中选择字段。显式打印 `result.model_text`

@@ -205,16 +205,18 @@ export function ToolActivityRow({
     const item = items[0];
     const args = parseJSONRecord(item.arguments);
     const isCommand = item.name === "exec";
-    const code = args?.[isCommand ? "command" : "code"];
+    const code = isCommand ? args?.command : args?.input ?? args?.code;
     // Keep source verbatim; stringValue trims meaningful indentation and newlines.
     if (typeof code === "string" && code.trim()) {
       const cwd = isCommand ? stringValue(args, "cwd") : undefined;
+      const firstLine = code.split("\n", 1)[0].trim();
+      const pragma = !isCommand && firstLine.startsWith("// @run_code:") ? parseJSONRecord(firstLine.slice("// @run_code:".length)) : null;
       return (
         <ToolSourceRecord
           key={item.id}
           item={item}
           code={code}
-          label={isCommand ? code.replace(/\s+/g, " ").trim() : stringValue(args, "description") || readableToolActivityName(item)}
+          label={isCommand ? code.replace(/\s+/g, " ").trim() : stringValue(pragma, "description") || stringValue(args, "description") || readableToolActivityName(item)}
           language={isCommand ? "bash" : "typescript"}
         >
           {cwd ? <p>{t("toolActivity.workingDirectory")}: <code>{cwd}</code></p> : null}

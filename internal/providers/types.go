@@ -15,6 +15,8 @@ type ToolDefinition struct {
 	Name        string
 	Description string
 	InputSchema map[string]any
+	// Freeform tools accept literal text. JSON-only providers use {"input": text}.
+	Freeform bool
 	// DirectOnly keeps interaction and lifecycle controls outside nested programs.
 	// This is a host routing contract, never a provider wire-format field.
 	DirectOnly bool
@@ -76,11 +78,14 @@ type ToolCallKind string
 
 const (
 	ToolCallKindFunction   ToolCallKind = "function"
+	ToolCallKindCustom     ToolCallKind = "custom"
 	ToolCallKindToolSearch ToolCallKind = "tool_search"
 )
 
 func NormalizeToolCallKind(kind string) ToolCallKind {
 	switch strings.ToLower(strings.TrimSpace(kind)) {
+	case string(ToolCallKindCustom):
+		return ToolCallKindCustom
 	case string(ToolCallKindToolSearch):
 		return ToolCallKindToolSearch
 	case string(ToolCallKindFunction):

@@ -3,7 +3,6 @@ package tools
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"os"
 	"strings"
 
@@ -244,10 +243,8 @@ func (t *Toolkit) finalizeToolResult(call providers.ToolCall, result toolresult.
 	mode := t.env.toolResultProjectionMode()
 	budget := projectionTokenBudget(call.Name)
 	if call.Name == codeModeExecToolName {
-		var args struct {
-			MaxOutputTokens *int `json:"max_output_tokens"`
-		}
-		if json.Unmarshal([]byte(call.Arguments), &args) == nil && args.MaxOutputTokens != nil && *args.MaxOutputTokens >= minCodeModeOutputTokens && *args.MaxOutputTokens <= maxCodeModeOutputTokens {
+		args, err := decodeCodeModeArguments(call.Arguments)
+		if err == nil && args.MaxOutputTokens != nil && *args.MaxOutputTokens >= minCodeModeOutputTokens && *args.MaxOutputTokens <= maxCodeModeOutputTokens {
 			// Zero requests a recovery-only view, not the generic default budget.
 			budget = max(1, *args.MaxOutputTokens)
 		}

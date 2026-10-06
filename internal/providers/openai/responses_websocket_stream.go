@@ -740,18 +740,18 @@ func (c *Client) readResponsesWebSocket(ctx context.Context, session, fallbackSe
 			switch event.Item.Type {
 			case "reasoning":
 				pendingReasoning.start(event.Item, event.outputIndex())
-			case "function_call", "tool_search_call":
+			case "function_call", "tool_search_call", "custom_tool_call":
 				sawToolCall = true
 				disarmFinalAnswerTail()
 				pending.start(event.Item, event.outputIndex(), emit)
 			}
 
-		case "response.function_call_arguments.delta", "response.tool_search_call.arguments.delta":
+		case "response.function_call_arguments.delta", "response.tool_search_call.arguments.delta", "response.custom_tool_call_input.delta":
 			if event.Delta != "" {
 				pending.appendDelta(event, emit)
 			}
 
-		case "response.function_call_arguments.done", "response.tool_search_call.arguments.done":
+		case "response.function_call_arguments.done", "response.tool_search_call.arguments.done", "response.custom_tool_call_input.done":
 			pending.setArguments(event)
 
 		case "response.output_item.done":
@@ -765,7 +765,7 @@ func (c *Client) readResponsesWebSocket(ctx context.Context, session, fallbackSe
 				if responsesFinalAnswerItemDone(event, sawToolCall) {
 					armFinalAnswerTail()
 				}
-			case "function_call", "tool_search_call":
+			case "function_call", "tool_search_call", "custom_tool_call":
 				sawToolCall = true
 				disarmFinalAnswerTail()
 				pt := pending.start(event.Item, event.outputIndex(), emit)
@@ -1404,6 +1404,8 @@ func responsesOutputItemReplayInput(item responsesOutputItem) (responsesInputIte
 			Phase:   string(providers.NormalizeMessagePhase(item.Phase)),
 			Content: []responsesInputContentPart{{Type: "output_text", Text: content}},
 		}, true
+	case "custom_tool_call":
+		return responsesInputItem{Type: "custom_tool_call", ID: clampResponsesItemID(item.ID), CallID: item.CallID, Name: item.Name, Input: &item.Input}, true
 	case "function_call":
 		return responsesInputItem{
 			Type:      "function_call",

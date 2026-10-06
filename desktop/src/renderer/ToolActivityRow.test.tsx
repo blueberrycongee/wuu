@@ -56,12 +56,13 @@ describe("workspace tool records", () => {
 });
 
 describe("PTC program records", () => {
-  it("displays the supplied description and discloses literal source", () => {
-    const code = "  const html = \"<img src=x onerror=alert(1)>\";\n\nawait tools.read_file({path: \"notes.ts\"});\nconsole.log(html);\n";
+  it.each(["code", "input"])("displays literal %s source and its description", (field) => {
+    let code = "  const html = \"<img src=x onerror=alert(1)>\";\n\nawait tools.read_file({path: \"notes.ts\"});\nconsole.log(html);\n";
     const description = "Read notes";
+    if (field === "input") code = `// @run_code: ${JSON.stringify({ description })}\n${code}`;
     const item: ThreadItem = {
       id: "program-1", type: "tool_call", name: "run_code", status: "in_progress",
-      arguments: JSON.stringify({ code, description }),
+      arguments: JSON.stringify(field === "input" ? { input: code } : { code, description }),
       display: { kind: "command", label: "Run command" },
     };
     mount({ items: [item], streaming: true });
