@@ -2598,10 +2598,8 @@ html[data-focus-modality="keyboard"] .thread-row-context-menu:focus-visible {
   box-shadow: inset 0 0 0 1px var(--sidebar-hover-card-rim), var(--shadow-pop);
 }
 
-/* Sidebar hover card: a visual-only description of a sidebar row, placed
- * beside the sidebar. It is a richer tooltip, not a menu: one type step
- * below reading text throughout, with the title set apart by weight and
- * ink. It never takes the pointer. */
+/* Sidebar descriptions share placement and chrome; only session cards
+ * accept interaction for inline renaming. */
 .sidebar-hover-card {
   position: fixed;
   /* Below context menus, which dismiss it anyway. */
@@ -2633,6 +2631,10 @@ html[data-focus-modality="keyboard"] .thread-row-context-menu:focus-visible {
   animation: wuu-enter var(--motion-fast) var(--ease-out) both;
 }
 
+.sidebar-hover-card[data-interactive="true"] {
+  pointer-events: auto;
+}
+
 .sidebar-hover-card-heading {
   display: flex;
   flex-direction: column;
@@ -2654,6 +2656,34 @@ html[data-focus-modality="keyboard"] .thread-row-context-menu:focus-visible {
   font-weight: var(--weight-medium);
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 3;
+}
+
+.sidebar-hover-card-title-editable,
+.sidebar-hover-card-title-input {
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  font: inherit;
+  font-weight: var(--weight-medium);
+  text-align: left;
+}
+
+.sidebar-hover-card-title-editable {
+  cursor: text;
+}
+
+.sidebar-hover-card-title-editable:focus-visible,
+.sidebar-hover-card-title-input:focus {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.sidebar-hover-card-title-input {
+  display: block;
+  max-height: calc(3em * var(--line-ui));
+  overflow: auto;
+  resize: none;
 }
 
 .sidebar-hover-card-time {

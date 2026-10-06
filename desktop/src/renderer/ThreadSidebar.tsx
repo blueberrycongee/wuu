@@ -782,6 +782,7 @@ function ThreadRows({
   }>();
   const hoverCard = useHoverReveal<string>({
     focus: "keyboard",
+    interactive: Boolean(onRename),
     disabled: draggingThreadID !== undefined,
   });
 
@@ -1051,12 +1052,18 @@ function ThreadRows({
         );
       })}
       {revealedThread && revealedRowState && hoverCard.revealed ? (
-        <SidebarHoverCardLayer anchor={hoverCard.revealed.anchor}>
+        <SidebarHoverCardLayer
+          anchor={hoverCard.revealed.anchor}
+          interaction={onRename ? hoverCard.layerProps : undefined}
+          label={onRename ? revealedRowState.title : undefined}
+        >
           <ThreadHoverCardContent
+            key={revealedThread.id}
             thread={revealedThread}
             title={revealedRowState.title}
             running={revealedRowState.running}
             unread={revealedRowState.unread}
+            onRename={onRename}
           />
         </SidebarHoverCardLayer>
       ) : null}

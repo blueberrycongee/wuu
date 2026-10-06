@@ -81,6 +81,12 @@ contextBridge.exposeInMainWorld("wuu", {
     providers: [{ name: "e2e", type: "mock", model: "mock-model", connection_locked: true }],
   }),
   resumeThread: async (id) => ({ thread: threads.find((item) => item.id === id) ?? null }),
+  renameThread: async (id, title) => {
+    const item = threads.find((item) => item.id === id);
+    if (!item) throw new Error("Unknown thread: " + id);
+    item.title = title;
+    return { thread: item };
+  },
   listThreads: async (path) => ({ threads: threadsIn(path ?? repo) }),
   listAllThreads: async () => ({ threads }),
   listArchivedThreads: async () => ({ threads: [] }),

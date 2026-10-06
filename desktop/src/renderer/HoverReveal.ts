@@ -1,13 +1,15 @@
 /*
- * Hover intent for transient, visual-only layers (tooltips, sidebar hover
- * cards). One implementation owns the timing and every dismissal rule so
+ * Hover intent for transient layers (tooltips and sidebar hover cards).
+ * Interactive cards retain pointer and focus across the anchor/layer gap.
+ * One implementation owns the timing and every dismissal rule so
  * the two kinds of layer cannot drift apart:
  *
  * - Opening waits HOVER_REVEAL_OPEN_DELAY_MS. A layer hovered within
  *   SKIP_DELAY_MS of any other layer closing opens immediately, so sweeping
  *   across a row of controls or a list doesn't pay the delay per anchor.
- * - Pointer-down, Escape, scroll, and blur all dismiss. After a dismiss on
- *   press or Escape the layer stays suppressed until the pointer leaves the
+ * - Anchor presses, Escape, external scroll, and blur dismiss. Interactive
+ *   cards also dismiss on outside presses. After a dismiss on press or
+ *   Escape the layer stays suppressed until the pointer leaves the
  *   anchor, so a clicked control doesn't immediately re-arm its layer.
  * - No layer opens while a context menu is open, and opening one dismisses
  *   the current layer.
@@ -17,7 +19,10 @@
  */
 import {
   type FocusEvent as ReactFocusEvent,
+  type HTMLAttributes,
+  type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
+  type RefObject,
   useEffect,
   useRef,
   useState,
@@ -27,16 +32,23 @@ import { FOCUS_MODALITY_ATTRIBUTE } from "./FocusModality";
 
 export const HOVER_REVEAL_OPEN_DELAY_MS = 400;
 const SKIP_DELAY_MS = 300;
+const INTERACTIVE_CLOSE_DELAY_MS = 200;
 
 // Timestamp of the most recent close, shared across all instances.
 let lastRevealClosedAt = -Infinity;
+let focusedHoverLayer: RefObject<HTMLDivElement | null> | null = null;
 
 export type HoverRevealAnchorHandlers = {
   onPointerOver: (event: ReactPointerEvent<HTMLElement>) => void;
   onPointerOut: (event: ReactPointerEvent<HTMLElement>) => void;
   onPointerDownCapture: () => void;
   onFocus: (event: ReactFocusEvent<HTMLElement>) => void;
-  onBlur: () => void;
+  onBlur: (event: ReactFocusEvent<HTMLElement>) => void;
+  onKeyDown: (event: ReactKeyboardEvent<HTMLElement>) => void;
+};
+
+export type HoverRevealLayerProps = HTMLAttributes<HTMLDivElement> & {
+  ref: RefObject<HTMLDivElement | null>;
 };
 
 export type HoverRevealTarget<K> = { key: K; anchor: HTMLElement };
@@ -44,14 +56,17 @@ export type HoverRevealTarget<K> = { key: K; anchor: HTMLElement };
 export function useHoverReveal<K>({
   disabled = false,
   focus = "any",
+  interactive = false,
 }: {
   disabled?: boolean;
   // "keyboard" opens on focus only when the keyboard moved it. Large layers
   // use it so a click, or the window regaining focus, doesn't pop one up.
   focus?: "any" | "keyboard";
+  interactive?: boolean;
 } = {}): {
   revealed: HoverRevealTarget<K> | null;
   anchorHandlers: (key: K) => HoverRevealAnchorHandlers;
+  layerProps: HoverRevealLayerProps;
 } {
   const [revealed, setRevealed] = useState<HoverRevealTarget<K> | null>(null);
   // Mirrors for event handlers and effects, so dismissing never depends on
@@ -60,6 +75,21 @@ export function useHoverReveal<K>({
   const pendingKeyRef = useRef<{ key: K } | null>(null);
   const openTimerRef = useRef<number | null>(null);
   const suppressUntilLeaveRef = useRef(false);
+  const layerRef = useRef<HTMLDivElement>(null);
+  const closeTimerRef = useRef<number | null>(null);
+
+  function clearCloseTimer(): void {
+    if (closeTimerRef.current !== null) {
+      window.clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = null;
+    }
+  }
+
+  function containsTarget(target: EventTarget | null): boolean {
+    return target instanceof Node && Boolean(
+      revealedRef.current?.anchor.contains(target) || layerRef.current?.contains(target),
+    );
+  }
 
   function clearOpenTimer(): void {
     if (openTimerRef.current !== null) {
@@ -82,13 +112,29 @@ export function useHoverReveal<K>({
 
   function close(): void {
     clearOpenTimer();
+    clearCloseTimer();
+    if (focusedHoverLayer === layerRef) focusedHoverLayer = null;
     reveal(null);
   }
 
+  function leave(): void {
+    clearOpenTimer();
+    if (!interactive) {
+      close();
+    } else if (!layerRef.current?.contains(document.activeElement)) {
+      clearCloseTimer();
+      closeTimerRef.current = window.setTimeout(close, INTERACTIVE_CLOSE_DELAY_MS);
+    }
+  }
+
   function scheduleOpen(key: K, anchor: HTMLElement): void {
+    clearCloseTimer();
     if (disabled || suppressUntilLeaveRef.current) {
       return;
     }
+    // A draft belongs to the currently focused card, not the next row the
+    // pointer happens to cross while typing.
+    if (focusedHoverLayer?.current?.contains(document.activeElement)) return;
     const current = revealedRef.current;
     if (current && Object.is(current.key, key)) {
       return;
@@ -125,7 +171,8 @@ export function useHoverReveal<K>({
           return;
         }
         suppressUntilLeaveRef.current = false;
-        close();
+        if (interactive && containsTarget(related)) return;
+        leave();
       },
       onPointerDownCapture: () => {
         // The press is about to mutate the surface (run the action, open a
@@ -142,13 +189,24 @@ export function useHoverReveal<K>({
         }
         scheduleOpen(key, event.currentTarget);
       },
-      onBlur: close,
+      onBlur: (event) => {
+        if (interactive && containsTarget(event.relatedTarget)) return;
+        leave();
+      },
+      onKeyDown: (event) => {
+        if (interactive && event.key === "Tab" && !event.shiftKey && revealedRef.current?.key === key) {
+          const control = layerRef.current?.querySelector<HTMLElement>("button:not(:disabled), input");
+          if (control) {
+            event.preventDefault();
+            control.focus();
+          }
+        }
+      },
     };
   }
 
-  // While open: Escape dismisses (capture, so the layer doesn't race a
-  // surface-level handler), any scroll closes — the anchor geometry the
-  // position was computed against is gone — and so does a context menu.
+  // A scroll outside the card invalidates its anchor geometry; a context
+  // menu retires the card too. Scrolls within an editor do neither.
   const open = revealed !== null;
   useEffect(() => {
     if (!open) {
@@ -158,20 +216,38 @@ export function useHoverReveal<K>({
       if (event.key === "Escape") {
         event.stopPropagation();
         suppressUntilLeaveRef.current = true;
+        const anchorHovered = revealedRef.current?.anchor.matches(":hover");
+        if (interactive && layerRef.current?.contains(document.activeElement)) {
+          revealedRef.current?.anchor.querySelector<HTMLElement>("button")?.focus();
+        }
         close();
+        if (interactive && !anchorHovered) suppressUntilLeaveRef.current = false;
       }
     };
-    const handleScroll = (): void => close();
-    window.addEventListener("keydown", handleKeyDown, true);
+    const handleScroll = (event: Event): void => {
+      if (interactive && event.target instanceof Node && layerRef.current?.contains(event.target)) return;
+      close();
+    };
+    const handlePointerDown = (event: PointerEvent): void => {
+      if (!containsTarget(event.target)) close();
+    };
+    const handleWindowBlur = (): void => close();
+    // Editors handle Escape before the layer does; tooltips retain capture
+    // dismissal so they do not race a surface-level handler.
+    window.addEventListener("keydown", handleKeyDown, !interactive);
     window.addEventListener("scroll", handleScroll, true);
+    if (interactive) window.addEventListener("pointerdown", handlePointerDown, true);
+    window.addEventListener("blur", handleWindowBlur);
     const stopContextMenuWatch = onContextMenuOpen(close);
     return () => {
-      window.removeEventListener("keydown", handleKeyDown, true);
+      window.removeEventListener("keydown", handleKeyDown, !interactive);
       window.removeEventListener("scroll", handleScroll, true);
+      window.removeEventListener("pointerdown", handlePointerDown, true);
+      window.removeEventListener("blur", handleWindowBlur);
       stopContextMenuWatch();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
+  }, [open, interactive]);
 
   // External state can retire a layer mid-hover (content cleared, or the
   // anchor became disabled).
@@ -182,7 +258,26 @@ export function useHoverReveal<K>({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [disabled]);
 
-  useEffect(() => clearOpenTimer, []);
+  useEffect(() => () => {
+    clearOpenTimer();
+    clearCloseTimer();
+    if (focusedHoverLayer === layerRef) focusedHoverLayer = null;
+  }, []);
 
-  return { revealed, anchorHandlers };
+  return {
+    revealed,
+    anchorHandlers,
+    layerProps: {
+      ref: layerRef,
+      onPointerEnter: clearCloseTimer,
+      onPointerLeave: leave,
+      onFocus: () => {
+        clearCloseTimer();
+        focusedHoverLayer = layerRef;
+      },
+      onBlur: (event) => {
+        if (!containsTarget(event.relatedTarget)) close();
+      },
+    },
+  };
 }
