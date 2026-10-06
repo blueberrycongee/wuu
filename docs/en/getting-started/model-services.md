@@ -164,8 +164,8 @@ image for the model. External agent engines use their own file and image tools.
 
 ## Programmatic tool calling
 
-The built-in engine uses programmatic tool calling (PTC) by default. Ordinary
-file, command, search, browser, API and extension tools run through `run_code`.
+The built-in engine uses programmatic tool calling (PTC) by default. Command,
+read, search, browser, API and extension tools run through `run_code`.
 **Settings → Built-in agent → Programmatic tool calling** provides one switch
 for all models. Explicit saved choices are preserved; configurations
 that omit the switch use the default. Changes require idle turns and apply on
@@ -174,8 +174,12 @@ the next turn. External engines keep their own tools.
 Interaction, explicit artifact delivery, context replacement, workspace changes,
 and agent/session lifecycle controls remain separate direct tools. Extensions
 can declare `direct_only` for those controls. A direct-only tool cannot be called
-from a program; ordinary tools cannot bypass PTC while it is enabled. Available
-bindings retain their exact names, permissions and model-family edit primitives.
+from a program. `write_file` and `edit_file` also accept direct calls: prefer these
+for literal file content to avoid JavaScript string escaping and interpolation.
+They remain available inside `run_code` when arguments depend on computation or
+earlier tool results. Both paths use the same execution, permission and workspace
+checks. Other ordinary tools cannot bypass PTC while it is enabled. Available
+bindings retain their exact names and permissions.
 
 ### Discover, execute and inspect results
 

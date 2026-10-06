@@ -1043,8 +1043,8 @@ func (t *Toolkit) exposedSurfaceLocked() capability.Surface {
 	surface := t.withDisabledToolsRemoved(t.withCodeModeSurface(cloneSurface(t.surfaceForToolLoadingMode(t.activeSurface))))
 	surface.SystemFragment += "\nTool results may be bounded views. Check ranges, omitted fields and continuation metadata before treating a result as complete; follow the returned cursor or artifact reference when the missing evidence matters. An omitted item is not evidence of absence."
 	if t.CodeModeOnly() {
-		// Keep lifecycle controls visible while moving ordinary capabilities into
-		// the nested surface. Both dispatch and discovery use the same metadata.
+		// Literal file tools remain directly callable and composable; lifecycle
+		// controls stay direct-only. Dispatch and discovery share this policy.
 		surface.NestedTools = surface.Tools
 		for name, capName := range surface.DeferredTools {
 			surface.NestedTools[name] = capName
@@ -1053,7 +1053,9 @@ func (t *Toolkit) exposedSurfaceLocked() capability.Surface {
 		for name, capName := range surface.NestedTools {
 			if t.CodeModeDirectCallAllowed(name) {
 				surface.Tools[name] = capName
-				delete(surface.NestedTools, name)
+				if t.codeModeDirectOnly(name) {
+					delete(surface.NestedTools, name)
+				}
 			}
 		}
 		delete(surface.NestedTools, "tool_search")
@@ -1066,7 +1068,7 @@ func (t *Toolkit) exposedSurfaceLocked() capability.Surface {
 				surface.Capabilities = append(surface.Capabilities, capName)
 			}
 		}
-		surface.SystemFragment += "\nPTC is the ordinary tool interface. Invoke the capabilities above through tools bindings inside run_code. Separately advertised interaction and lifecycle controls must be called directly. Use background process/task handles for long work; each program must await its own calls and cannot resume after it returns."
+		surface.SystemFragment += "\nUse run_code to compose tool calls and select evidence. Directly advertised file tools accept literal content without JavaScript evaluation and also remain available as tools bindings. Separately advertised interaction and lifecycle controls must be called directly. Use background process/task handles for long work; each program must await its own calls and cannot resume after it returns."
 		surface.SystemFragment += "\nInside PTC, use content or structured_content for filtering and computation, checking the producer's pagination; model_text is a display view, not the full data contract. Print the selected evidence or computed answer rather than entire result objects or media encodings. Forward a readable view when it is sufficient. Combined output is still bounded, so narrow or split unrelated large reads."
 
 	}
@@ -1197,7 +1199,7 @@ func (t *Toolkit) Execute(ctx context.Context, call providers.ToolCall) (string,
 // content, metadata, or Activity references. Legacy tools are wrapped as one
 // text content part until they migrate to RichTool.
 func (t *Toolkit) ExecuteResult(ctx context.Context, call providers.ToolCall) (toolresult.Result, error) {
-	if toolctx.IsNestedCall(ctx) && (t.CodeModeDirectCallAllowed(call.Name)) {
+	if toolctx.IsNestedCall(ctx) && t.codeModeDirectOnly(call.Name) {
 		return toolresult.Result{}, fmt.Errorf("tool %q must be called directly", call.Name)
 	}
 	if t.CodeModeOnly() && !t.CodeModeDirectCallAllowed(call.Name) && !toolctx.IsNestedCall(ctx) {

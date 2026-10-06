@@ -147,7 +147,7 @@ func (t *Toolkit) withCodeModeSurface(surface capability.Surface) capability.Sur
 func (t *Toolkit) codeModeEntryDefinitions() []providers.ToolDefinition {
 	var out []providers.ToolDefinition
 	for _, d := range t.registry.Definitions() {
-		if (d.Name == codeModeExecToolName || d.DirectOnly) && t.SupportsTool(d.Name) {
+		if t.CodeModeDirectCallAllowed(d.Name) && t.SupportsTool(d.Name) {
 			if d.Name == codeModeExecToolName {
 				d.Description += t.codeModeToolCatalog()
 			}
@@ -165,6 +165,11 @@ func (t *Toolkit) codeModeToolCatalog() string {
 	coreBytes := 0
 	shown := 0
 	for _, tool := range nested {
+		if t.CodeModeDirectCallAllowed(tool.Name) {
+			fmt.Fprintf(&b, "\n- tools.%s uses the same arguments as the directly advertised %s tool.\n", tool.Name, tool.Name)
+			shown++
+			continue
+		}
 		// File, search and command tools are used throughout ordinary coding
 		// tasks. Publish their executable schemas once in the stable prefix
 		// instead of making every session rediscover them in its history.
@@ -260,6 +265,15 @@ func codeModeToolDefinition(d providers.ToolDefinition) (codemode.ToolDefinition
 // CodeModeDirectCallAllowed is the shared top-level routing policy. Availability
 // and authorization are checked separately at dispatch time.
 func (t *Toolkit) CodeModeDirectCallAllowed(name string) bool {
+	// Literal file content need not cross a JavaScript string boundary. Keep
+	// these tools composable for edits whose arguments are computed in a program.
+	if name == "write_file" || name == "edit_file" {
+		return true
+	}
+	return t.codeModeDirectOnly(name)
+}
+
+func (t *Toolkit) codeModeDirectOnly(name string) bool {
 	if name == codeModeExecToolName {
 		return true
 	}
@@ -280,6 +294,7 @@ const codeModeDescription = `Run JavaScript or erasable TypeScript to compose to
 
 Execution:
 - Call await tools.name(args). No direct filesystem, network, process, imports or timers; use tools for effects.
+- Prefer the directly advertised write_file and edit_file tools for literal file content, so it is not evaluated as JavaScript. Their tools bindings remain available when arguments depend on computation or preceding results in this program.
 - Use the core binding declarations below directly. Find other tools with await searchTools(query, {limit:8, offset:0}); inspect exact arguments with await describeTool(name). Tool names are exact; bracket access handles punctuation.
 - Await dependent calls and writes in order. Use bounded Promise.all for independent reads. Await every call before returning: programs have no continuation and tool effects are not transactional.
 - For long work use bash run_in_background and process handles. Directly advertised interaction and lifecycle tools stay outside programs.

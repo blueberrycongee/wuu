@@ -880,3 +880,89 @@ func TestPTCSourceInputAndPragma(t *testing.T) {
 		}
 	}
 }
+
+// Literal edits must avoid JS evaluation without losing composability or authority.
+func TestPTCLiteralFileCallsAndComputedEdits(t *testing.T) {
+	kit := newCodeModeTestToolkit(t)
+	kit.SetToolSearchEnabled(true)
+	for _, name := range []string{"write_file", "edit_file"} {
+		if !contains(name, kit.Definitions()) {
+			t.Fatalf("literal file tool unavailable: %s", name)
+		}
+		surface := kit.ActiveSurface()
+		if _, ok := surface.Tools[name]; !ok {
+			t.Fatalf("direct surface omits %s", name)
+		}
+		if _, ok := surface.NestedTools[name]; !ok {
+			t.Fatalf("nested surface omits %s", name)
+		}
+	}
+	runtime := agent.NewTurnToolRuntime(agent.ToolRuntimeConfig{Executor: kit, RunContext: context.Background(), Gate: agent.NewToolExecutionGate(1)})
+	defer runtime.Cancel()
+	invoke := func(name string, args map[string]any) {
+		t.Helper()
+		encoded, err := json.Marshal(args)
+		if err != nil {
+			t.Fatal(err)
+		}
+		messages, err := runtime.ExecuteFinalCalls(context.Background(), []providers.ToolCall{{ID: name, Name: name, Arguments: string(encoded)}}, nil)
+		if err != nil || len(messages) != 1 || messages[0].ToolResult == nil || messages[0].ToolResult.IsError {
+			t.Fatalf("%s: %v %+v", name, err, messages)
+		}
+	}
+	content := "literal ${undefinedName} \\d \\n `backticks` $(command) 中文\n"
+	invoke("write_file", map[string]any{"path": "literal.txt", "content": content})
+	if got, err := os.ReadFile(filepath.Join(kit.RootDir(), "literal.txt")); err != nil || string(got) != content {
+		t.Fatalf("literal source changed: %q %v", got, err)
+	}
+	invoke("edit_file", map[string]any{"path": "literal.txt", "old_text": "${undefinedName}", "new_text": "${otherName}"})
+	invoke("run_code", map[string]any{"input": `const r = await tools.read_file({path:"literal.txt"}); await tools.write_file({path:"copy.txt", content:r.structured_content.text}); await tools.edit_file({path:"literal.txt",old_text:"literal",new_text:["computed", "value"].join(" ")});`})
+	if got, err := os.ReadFile(filepath.Join(kit.RootDir(), "literal.txt")); err != nil || string(got) != strings.Replace(strings.Replace(content, "${undefinedName}", "${otherName}", 1), "literal", "computed value", 1) {
+		t.Fatalf("computed edit changed unexpected bytes: %q %v", got, err)
+	}
+	if got, err := os.ReadFile(filepath.Join(kit.RootDir(), "copy.txt")); err != nil || string(got) != strings.Replace(content, "${undefinedName}", "${otherName}", 1) {
+		t.Fatalf("nested write lost source: %q %v", got, err)
+	}
+}
+
+func TestPTCLiteralFileCallsPreserveRestrictions(t *testing.T) {
+	for _, restriction := range []string{"read_only", "disabled", "outside_workspace"} {
+		t.Run(restriction, func(t *testing.T) {
+			kit := newCodeModeTestToolkit(t)
+			path := filepath.Join(kit.RootDir(), "protected.txt")
+			switch restriction {
+			case "read_only":
+				kit.SetBoundary(ReadOnlyBoundary())
+				kit.SetPermissionMode("read_only")
+			case "disabled":
+				kit.DisableTools("write_file", "edit_file")
+				for _, name := range []string{"write_file", "edit_file"} {
+					if contains(name, kit.Definitions()) {
+						t.Fatalf("disabled tool advertised: %s", name)
+					}
+				}
+			case "outside_workspace":
+				kit.SetBoundary(StandardBoundary())
+				kit.SetFileScopeRoots([]string{kit.RootDir()})
+				path = filepath.Join(t.TempDir(), "protected.txt")
+			}
+			if err := os.WriteFile(path, []byte("original"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			for _, name := range []string{"write_file", "edit_file"} {
+				args, _ := json.Marshal(map[string]string{"path": path, "content": "changed", "old_text": "original", "new_text": "changed"})
+				result, err := kit.ExecuteResult(context.Background(), providers.ToolCall{Name: name, Arguments: string(args)})
+				if err == nil && !result.IsError {
+					t.Fatalf("%s bypassed %s", name, restriction)
+				}
+				result = runPTCProgram(t, kit, "await tools."+name+"("+string(args)+");")
+				if !result.IsError {
+					t.Fatalf("nested %s bypassed %s", name, restriction)
+				}
+			}
+			if got, err := os.ReadFile(path); err != nil || string(got) != "original" {
+				t.Fatalf("rejected edit changed file: %q %v", got, err)
+			}
+		})
+	}
+}

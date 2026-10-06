@@ -90,14 +90,14 @@ func TestCodeModeLargeCatalogCanStreamAcrossProviders(t *testing.T) {
 						tool.Name, tool.Description = tool.Function.Name, tool.Function.Description
 					}
 					direct[tool.Name] = true
-					if tool.Name != "run_code" && tool.Name != "new_context" && tool.Name != "set_session_workspace" {
+					if tool.Name != "run_code" && tool.Name != "new_context" && tool.Name != "set_session_workspace" && tool.Name != "write_file" && tool.Name != "edit_file" {
 						t.Errorf("ordinary tool leaked at top level: %s", tool.Name)
 					}
 					if tool.Name == "run_code" {
 						execDescription = tool.Description
 					}
 				}
-				if !direct["run_code"] || !direct["new_context"] || !direct["set_session_workspace"] {
+				if !direct["run_code"] || !direct["new_context"] || !direct["set_session_workspace"] || !direct["write_file"] || !direct["edit_file"] {
 					t.Errorf("direct control missing: %v", direct)
 				}
 				t.Logf("catalog metadata=%d bytes; initial entry=%d bytes", len(catalog), len(execDescription))
