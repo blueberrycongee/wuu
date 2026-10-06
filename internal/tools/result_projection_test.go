@@ -24,13 +24,13 @@ func TestFinalize_EligibilityExactNameOnly(t *testing.T) {
 		{"bash", true},
 		{"grep", true},
 		{"glob", true},
-		// Exact-match discipline: MCP, mutation, coordination, and case/space
+		// Exact-match discipline: MCP, coordination, and case/space
 		// variants must never be eligible.
 		{"mcp_server_bash", false},
 		{"mcp_x_grep", false},
 		{"apply_patch", false},
-		{"edit_file", false},
-		{"write_file", false},
+		{"edit_file", true},
+		{"write_file", true},
 		{"", false},
 		{"load_skill", false},
 		{"BASH", false},

@@ -22,6 +22,34 @@ func init() {
 	toolProjectors["grep"] = projectGrepResult
 	toolProjectors["read_file"] = projectReadFileResult
 	toolProjectors["thread_get"] = projectThreadGetResult
+	toolProjectors["edit_file"] = projectFileMutationResult
+	toolProjectors["write_file"] = projectFileMutationResult
+}
+
+// Successful edits already carry the replacement text in their call. Keep the
+// outcome and warnings visible without replaying that code as a JSON diff.
+func projectFileMutationResult(rawText string, pc projectorContext) (string, projectionOmission, bool) {
+	m, ok := parseToolEnvelope(rawText)
+	if !ok || (m["action"] != "edit" && m["action"] != "overwrite") {
+		return "", projectionOmission{}, false
+	}
+	diff, ok := m["diff"].(map[string]any)
+	if !ok {
+		return "", projectionOmission{}, false
+	}
+	hunks, ok := diff["hunks"].([]any)
+	if !ok || len(hunks) == 0 {
+		return "", projectionOmission{}, false
+	}
+	delete(diff, "hunks")
+	setProjectionMeta(m, pc.BudgetTokens, pc.ArtifactRef,
+		"The edit succeeded. Read the full result artifact if the exact applied diff is needed.",
+		map[string]any{"omitted_diff_hunks": len(hunks)})
+	out, ok := marshalEnvelope(m)
+	if !ok || len(out) >= len(rawText) || estimateResultTokens(out) > pc.BudgetTokens {
+		return "", projectionOmission{}, false
+	}
+	return out, projectionOmission{Records: len(hunks)}, true
 }
 
 // parseToolEnvelope decodes a tool's JSON envelope while preserving numbers

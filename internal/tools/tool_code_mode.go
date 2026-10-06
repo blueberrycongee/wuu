@@ -17,9 +17,8 @@ import (
 )
 
 const (
-	codeModeExecToolName = "run_code"
-	// Reserve room for an immutable artifact reference and recovery cursor.
-	minCodeModeOutputTokens = 1024
+	codeModeExecToolName    = "run_code"
+	minCodeModeOutputTokens = 0
 	maxCodeModeOutputTokens = 32768
 )
 
@@ -41,13 +40,13 @@ func (*CodeModeExecTool) Execute(context.Context, string) (string, error) {
 func (*CodeModeExecTool) Definition() providers.ToolDefinition {
 	return providers.ToolDefinition{
 		Name:        codeModeExecToolName,
-		Description: "Execute an async JavaScript or erasable TypeScript function body in a fresh tool-only interpreter. No filesystem, network, process, module imports, or timers are available. Discover bindings with await searchTools(query, {limit:8, offset:0}); it returns {tools:[{name,description}],total,next_offset?}. An empty query pages through the catalog. Read exact arguments with await describeTool(name), returning {name,description,input_schema}. Invoke await tools[name](args). Names are exact; bracket access handles punctuation. Calls return canonical tool-result objects with content, optional structured_content, and optional model_text display view, which may omit data. Failures reject with ToolCallError (toolName, message, and result for completed tool failures). Use text(result), console.log(result), or return result to emit one view of a tool result, also when nested in arrays or objects. result_view defaults to compact; choose data to emit structured_content (or unprojected content when absent) under this program's max_output_tokens budget. Increasing the budget alone does not expand compact excerpts. Producer pagination and data transport limits still apply. Raw content and structured_content remain available for computation and store; explicitly selected fields and copied or loaded objects are ordinary JSON data. Strings print as text; other values print as JSON. Emit only what is needed; intermediate values stay out of the conversation. Successful image/audio results are attached automatically. Await writes and dependent calls sequentially; use bounded Promise.all for independent reads. store(key,value), load(key), and remove(key) manage lossless JSON checkpoints scoped to this conversation, actor and workspace. Values are cloned; load returns undefined for a missing key. Only successful programs commit state; tool effects are not transactional. State is memory-only, limited to 1 MiB and 256 keys per scope; use remove to reclaim it. Do not store credentials. There is no JS continuation: await all calls before returning. For long work use bash run_in_background and process read/write/stop in later programs; keep their handles with store. Separately advertised interaction, artifact delivery and lifecycle controls must be called directly. There is no default elapsed deadline; an explicit timeout includes approval/tool waits. Cancellation stops active calls but cannot undo completed effects. Failures include bounded call outcome summaries without arguments or results; interrupted calls have unknown effects. Never blindly replay a failed program.",
+		Description: "Execute an async JavaScript or erasable TypeScript function body in a fresh tool-only interpreter. No filesystem, network, process, module imports, or timers are available. Use the core binding definitions below directly. Discover other bindings with await searchTools(query, {limit:8, offset:0}); it returns {tools:[{name,description}],total,next_offset?}. An empty query pages through the catalog. Read exact arguments with await describeTool(name), returning {name,description,input_schema}. Invoke await tools[name](args). Names are exact; bracket access handles punctuation. Calls return canonical tool-result objects with content, optional structured_content, and optional model_text display view, which may omit data. Failures reject with ToolCallError (toolName, message, and result for completed tool failures). Use text(result), console.log(result), or return result to emit one view of a tool result, also when nested in arrays or objects. result_view defaults to compact; choose data to emit structured_content (or unprojected content when absent) under this program's max_output_tokens budget. Increasing the budget alone does not expand compact excerpts. Producer pagination and data transport limits still apply. Raw content and structured_content remain available for computation and store; explicitly selected fields and copied or loaded objects are ordinary JSON data. Strings print as text; other values print as JSON. Emit only what is needed; intermediate values stay out of the conversation. Successful image/audio results are attached automatically. Await writes and dependent calls sequentially; use bounded Promise.all for independent reads. store(key,value), load(key), and remove(key) manage lossless JSON checkpoints scoped to this conversation, actor and workspace. Values are cloned; load returns undefined for a missing key. Only successful programs commit state; tool effects are not transactional. State is memory-only, limited to 1 MiB and 256 keys per scope; use remove to reclaim it. Do not store credentials. There is no JS continuation: await all calls before returning. For long work use bash run_in_background and process read/write/stop in later programs; keep their handles with store. Separately advertised interaction, artifact delivery and lifecycle controls must be called directly. There is no default elapsed deadline; an explicit timeout includes approval/tool waits. Cancellation stops active calls but cannot undo completed effects. Failures include bounded call outcome summaries without arguments or results; interrupted calls have unknown effects. Never blindly replay a failed program.",
 		InputSchema: map[string]any{"type": "object", "additionalProperties": false, "required": []string{"code"}, "properties": map[string]any{
 			"code":              map[string]any{"type": "string", "description": "Async function body. Type annotations are erased; enum and namespaces are unsupported."},
 			"description":       map[string]any{"type": "string", "description": "Optional short description of this program."},
 			"timeout_ms":        map[string]any{"type": "integer", "minimum": 1, "maximum": codemode.MaxTimeoutMS, "description": "Optional total elapsed timeout in milliseconds, including approval and tool waits. Omit for no program deadline."},
 			"result_view":       map[string]any{"type": "string", "enum": []string{string(codemode.ResultViewCompact), string(codemode.ResultViewData)}, "description": "Tool-result output view: compact (default) uses the short display; data uses structured_content or unprojected content. Use data with a larger max_output_tokens to inspect evidence omitted by compact views. Does not change selected fields, stored data or previous observations."},
-			"max_output_tokens": map[string]any{"type": "integer", "minimum": minCodeModeOutputTokens, "maximum": maxCodeModeOutputTokens, "description": "Estimated token budget for this program's emitted text (default 8192). Select data in JS before emitting; this does not limit intermediate tool data. Excess text is archived with a recovery cursor. Earlier results are never resized."},
+			"max_output_tokens": map[string]any{"type": "integer", "minimum": minCodeModeOutputTokens, "maximum": maxCodeModeOutputTokens, "description": "Estimated token budget for this program's emitted text (default 8192). Select data in JS before emitting; this does not limit intermediate tool data. Excess text is archived for recovery. Small budgets do not prevent execution; essential recovery metadata may exceed the requested budget. Earlier results are never resized."},
 		}},
 	}
 }
@@ -168,19 +167,41 @@ func (t *Toolkit) codeModeToolCatalog() string {
 	nested := t.codeModeNestedDefinitions()
 	sort.Slice(nested, func(i, j int) bool { return nested[i].Name < nested[j].Name })
 	var b strings.Builder
-	fmt.Fprintf(&b, "\n\nAvailable bindings: %d. Preview only; use searchTools and describeTool for complete discovery and schemas.\n", len(nested))
+	fmt.Fprintf(&b, "\n\nAvailable bindings: %d. Core bindings below include their complete arguments; invoke them directly without a discovery call. Other bindings have previews; use describeTool for their exact arguments and searchTools for further discovery.\n", len(nested))
+	var previews strings.Builder
+	coreBytes := 0
 	shown := 0
 	for _, tool := range nested {
+		// File, search and command tools are used throughout ordinary coding
+		// tasks. Publish their executable schemas once in the stable prefix
+		// instead of making every session rediscover them in its history.
+		switch classifyToolKind(tool.Name) {
+		case ToolKindFile, ToolKindSearch, ToolKindShell:
+			schema, err := json.Marshal(tool.InputSchema)
+			if err == nil {
+				entry := fmt.Sprintf("\n### %s\n%s\nInput JSON schema: %s\n", tool.Name, tool.Description, schema)
+				if coreBytes+len(entry) <= 12*1024 {
+					b.WriteString(entry)
+					coreBytes += len(entry)
+					shown++
+					continue
+				}
+			}
+		}
 		summary := []rune(strings.Join(strings.Fields(tool.Description), " "))
 		if len(summary) > 120 {
 			summary = append(summary[:119], '…')
 		}
 		line := fmt.Sprintf("- %s: %s\n", tool.Name, string(summary))
-		if b.Len()+len(line) > 6*1024 {
+		if previews.Len()+len(line) > 6*1024 {
 			continue
 		}
-		b.WriteString(line)
+		previews.WriteString(line)
 		shown++
+	}
+	if previews.Len() > 0 {
+		b.WriteString("\nOther binding previews:\n")
+		b.WriteString(previews.String())
 	}
 	if shown < len(nested) {
 		fmt.Fprintf(&b, "%d more bindings available through searchTools.\n", len(nested)-shown)

@@ -10,6 +10,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Execute Code Mode programs with small output budgets instead of rejecting
+  their work. Preserve a minimal recovery reference when output cannot fit,
+  and omit repeated diff hunks from compact overwrite receipts.
+
 - Let Code Mode programs select `result_view: "data"` to print structured tool
   data under their output budget instead of a pre-shortened display excerpt.
   Keep the default compact view, checkpoints, and recoverable output limits.

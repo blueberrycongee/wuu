@@ -19,6 +19,64 @@ func ptrToolResult(text string) *toolresult.Result {
 	return &r
 }
 
+func TestFileMutationProjectionPreservesRecoveryAndWarnings(t *testing.T) {
+	for _, tool := range []string{"edit_file", "write_file"} {
+		t.Run(tool, func(t *testing.T) {
+			kit, err := New(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			kit.env.SessionDir = t.TempDir()
+			kit.env.ToolResultProjectionMode = "active"
+			t.Setenv(projectionModeEnvVar, "")
+			action := "edit"
+			if tool == "write_file" {
+				action = "overwrite"
+			}
+			payload, err := json.Marshal(map[string]any{
+				"action": action, "path": "worker.go", "new_file_sha": "sha256:new",
+				"workspace_revision": "fs:updated", "contract_warning": "Retain the existing contract check.",
+				"next_suggestions": []string{"Inspect the warning before proceeding."},
+				"diff": map[string]any{"hunks": []any{map[string]any{"old_start": 1, "new_start": 1,
+					"lines": []any{map[string]any{"op": "insert", "content": strings.Repeat("already sent source ", 80)}}}}},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			raw := toolresult.FromText(string(payload))
+			call := providers.ToolCall{ID: "mutation", Name: tool, Arguments: `{}`}
+			got := kit.FinalizeToolResult(call, raw)
+			var view map[string]any
+			if err := json.Unmarshal([]byte(got.TextProjection()), &view); err != nil {
+				t.Fatal(err)
+			}
+			if view["path"] != "worker.go" || view["contract_warning"] != "Retain the existing contract check." || view["new_file_sha"] != "sha256:new" {
+				t.Fatalf("mutation evidence or warning lost: %v", view)
+			}
+			if strings.Contains(got.TextProjection(), "already sent source") || got.Content[0].Text != string(payload) {
+				t.Fatal("diff was duplicated in the view or removed from canonical content")
+			}
+			projection, ok := view["projection"].(map[string]any)
+			if !ok {
+				t.Fatal("missing recovery metadata")
+			}
+			ref, _ := projection["artifact_ref"].(string)
+			recovered, err := os.ReadFile(ref)
+			if err != nil || !bytes.Equal(recovered, payload) {
+				t.Fatalf("full diff is not recoverable: %v", err)
+			}
+			if again := kit.FinalizeToolResult(call, got); !reflect.DeepEqual(again, got) {
+				t.Fatal("settled mutation observation changed on replay")
+			}
+			failure := toolresult.FromErrorText("old_text_not_found: read the current file before retrying")
+			failed := kit.FinalizeToolResult(call, failure)
+			if !failed.IsError || failed.TextProjection() != failure.TextProjection() {
+				t.Fatal("mutation failure diagnosis was hidden")
+			}
+		})
+	}
+}
+
 type fakeListTool struct{ text string }
 
 func (f fakeListTool) Name() string { return "list_files" }

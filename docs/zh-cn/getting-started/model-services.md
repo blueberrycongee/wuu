@@ -126,7 +126,8 @@ await tools.read_file({path: "screenshots/settings.png"});
 
 调用 `run_code` 时提供 `code`，可选提供 `description`、`timeout_ms`、`result_view` 和 `max_output_tokens`。
 `description` 是展示元数据，省略它不会阻止执行。
-入口说明只包含有界目录预览。`await searchTools(query, {limit: 8, offset: 0})`
+入口说明在固定目录预算内提供常用文件、搜索和命令工具的完整定义，其他绑定提供预览。
+可直接使用已列出的参数定义；只有预览的绑定再查询精确参数。`await searchTools(query, {limit: 8, offset: 0})`
 返回 `tools`、`total` 和可选的 `next_offset`；空查询可分页查看全部绑定。
 `await describeTool(name)` 返回完整说明与精确的 `input_schema`。
 使用 `await tools[name](args)` 调用；方括号保留带标点的原名，不创建别名或碰撞。
@@ -151,6 +152,8 @@ await tools.read_file({path: "screenshots/settings.png"});
 先检查并续读工具返回的后续页。
 
 `result_view: "compact"`（默认）输出现有的精简展示。
+文件编辑成功后，精简展示可以省略 diff 片段，同时保留操作结果、文件哈希、版本和警告。
+完整 diff 仍保留在原始结果和引用的结果文件中。
 `result_view: "data"` 将 `structured_content` 输出为 JSON；没有结构化数据时，
 输出未经模型投影裁剪的内容视图。嵌套结果和捕获的 `ToolCallError.result` 同样适用，
 不会改变原始结果、`model_text` 或检查点；图片与音频仍走原有附件路径。
@@ -181,8 +184,8 @@ const pkg = JSON.parse(r.structured_content.text);
 text({name: pkg.name, scripts: pkg.scripts});
 ```
 
-`max_output_tokens` 选择本次程序输出文本的估算预算，范围为 1024–32768 token，
-默认 8192。它不改变中间数据，也不改写旧观察结果。优先在 JS 中选择字段、范围
+`max_output_tokens` 选择本次程序输出文本的估算预算，范围为 0–32768 token，
+默认 8192。小预算不会阻止执行；必要的恢复元数据可以超过所请求的预算。它不改变中间数据，也不改写旧观察结果。优先在 JS 中选择字段、范围
 或聚合结果；超出的输出保存为可用游标恢复的归档。检查点可以保留后续计算所需的
 数据，而不把它追加进模型上下文。
 

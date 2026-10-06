@@ -34,7 +34,7 @@ func TestCodeModeLargeCatalogCanStreamAcrossProviders(t *testing.T) {
 				for i := 0; i < 3; i++ {
 					defs = append(defs, providers.ToolDefinition{
 						Name: fmt.Sprintf("extension_%d", i), Description: strings.Repeat("Search indexed documents. ", 300),
-						InputSchema: map[string]any{"type": "object", "properties": map[string]any{"query": map[string]any{"type": "string"}}},
+						InputSchema: map[string]any{"type": "object", "properties": map[string]any{"extension_query": map[string]any{"type": "string"}}},
 					})
 				}
 				return defs
@@ -101,11 +101,11 @@ func TestCodeModeLargeCatalogCanStreamAcrossProviders(t *testing.T) {
 					t.Errorf("direct control missing: %v", direct)
 				}
 				t.Logf("catalog metadata=%d bytes; initial entry=%d bytes", len(catalog), len(execDescription))
-				if len(execDescription) == 0 || len(execDescription) > 10*1024 {
+				if len(execDescription) == 0 || len(execDescription) > 24*1024 {
 					t.Errorf("unbounded entry description: %d bytes", len(execDescription))
 				}
-				if strings.Contains(execDescription, `"properties"`) || strings.Contains(execDescription, strings.Repeat("Search indexed documents. ", 10)) {
-					t.Error("full tool metadata leaked into the initial request")
+				if strings.Contains(execDescription, `"extension_query"`) || strings.Contains(execDescription, strings.Repeat("Search indexed documents. ", 10)) {
+					t.Error("deferred extension metadata leaked into the initial request")
 				}
 
 				w.Header().Set("Content-Type", "text/event-stream")

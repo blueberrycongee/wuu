@@ -181,7 +181,9 @@ bindings retain their exact names, permissions and model-family edit primitives.
 
 Call `run_code` with `code` and optional `description`, `timeout_ms`, `result_view`, and `max_output_tokens`.
 The description is display metadata; omitting it does not prevent execution.
-Its description contains a bounded catalog preview. `await searchTools(query,
+Its description includes core file, search and command definitions within a
+fixed catalog budget, with previews for other bindings. Use included schemas
+directly; discover arguments for bindings shown only as previews. `await searchTools(query,
 {limit: 8, offset: 0})` returns `tools`, `total` and optional `next_offset`; an
 empty query pages through all bindings. `await describeTool(name)` returns the
 exact description and `input_schema`. Call `await tools[name](args)`; bracket
@@ -212,6 +214,9 @@ select their display view when printing them. Follow continuation metadata befor
 concluding that something is absent.
 
 `result_view: "compact"` (the default) emits the existing short display.
+Successful file edits can omit diff hunks from this display while retaining
+the outcome, file hashes, revision and warnings. The complete diff remains in
+the canonical result and the referenced artifact.
 `result_view: "data"` emits `structured_content` as JSON, or the unprojected
 content view when structured data is absent. This also applies to nested results
 and caught `ToolCallError.result`, without changing the canonical result,
@@ -248,7 +253,8 @@ text({name: pkg.name, scripts: pkg.scripts});
 ```
 
 `max_output_tokens` chooses an estimated budget for this program's emitted text,
-from 1024 to 32768 tokens (default 8192). It does not change intermediate data or
+from 0 to 32768 tokens (default 8192). Small budgets do not prevent execution;
+essential recovery metadata may exceed the requested budget. It does not change intermediate data or
 rewrite earlier observations. Prefer selecting fields, ranges or aggregates in
 JS; excess emitted text is saved with a recovery cursor. State checkpoints can
 keep data for later computation without appending it to the model conversation.

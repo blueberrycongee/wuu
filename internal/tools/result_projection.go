@@ -49,7 +49,7 @@ const (
 	// projectorVersion is recorded in diagnostics so telemetry can attribute a
 	// projected result to the exact projector revision that produced it. Bump
 	// on any change that alters projected bytes for the same input.
-	projectorVersion = "10"
+	projectorVersion = "12"
 )
 
 // commandViewRenderers render the plain-text model view of command tools.
@@ -121,8 +121,8 @@ func resolveProjectionMode(configured string) projectionMode {
 // Matched by EXACT name only. MCP tools always carry an "mcp_<server>_" prefix
 // (see internal/mcp.mcpToolName) and the registry resolves built-ins before MCP
 // on a bare name, so a bare name can never resolve to an MCP tool. An exact
-// allowlist therefore reliably excludes MCP, mutation (write_file/edit_file),
-// and coordination (load_skill/...) results. Never switch this to a
+// allowlist therefore reliably excludes MCP and coordination (load_skill/...)
+// results. Never switch this to a
 // prefix/substring match: "mcp_x_bash" must not match "bash".
 var builtInProjectionAllowlist = map[string]bool{
 	"glob":       true,
@@ -132,6 +132,8 @@ var builtInProjectionAllowlist = map[string]bool{
 	"bash":       true,
 	"process":    true,
 	"thread_get": true,
+	"edit_file":  true,
+	"write_file": true,
 }
 
 // Some tools use projection as their semantic read contract, not only as an
@@ -139,6 +141,8 @@ var builtInProjectionAllowlist = map[string]bool{
 // when the raw envelope happens to fit the shared budget.
 var builtInAlwaysProject = map[string]bool{
 	"thread_get": true,
+	"edit_file":  true,
+	"write_file": true,
 }
 
 // projectionReason is a stable, low-cardinality label for why a result took a
@@ -241,10 +245,11 @@ func (t *Toolkit) finalizeToolResult(call providers.ToolCall, result toolresult.
 	budget := projectionTokenBudget(call.Name)
 	if call.Name == codeModeExecToolName {
 		var args struct {
-			MaxOutputTokens int `json:"max_output_tokens"`
+			MaxOutputTokens *int `json:"max_output_tokens"`
 		}
-		if json.Unmarshal([]byte(call.Arguments), &args) == nil && args.MaxOutputTokens >= minCodeModeOutputTokens && args.MaxOutputTokens <= maxCodeModeOutputTokens {
-			budget = args.MaxOutputTokens
+		if json.Unmarshal([]byte(call.Arguments), &args) == nil && args.MaxOutputTokens != nil && *args.MaxOutputTokens >= minCodeModeOutputTokens && *args.MaxOutputTokens <= maxCodeModeOutputTokens {
+			// Zero requests a recovery-only view, not the generic default budget.
+			budget = max(1, *args.MaxOutputTokens)
 		}
 	}
 	if builtInProjectionText(result) && mode != projectionModeOff && builtInProjectionAllowlist[call.Name] {

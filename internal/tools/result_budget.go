@@ -62,7 +62,15 @@ func buildBoundedResultReference(path, contextual string, isError bool, budgetTo
 		"total_bytes":    len(contextual),
 		"is_error":       isError,
 	}
-	return buildResultPage(envelope, path, []byte(contextual), 0, len(contextual), projectionPreviewBytes, contentSHA, budgetTokens)
+	if page, ok := buildResultPage(envelope, path, []byte(contextual), 0, len(contextual), projectionPreviewBytes, contentSHA, budgetTokens); ok {
+		return page, true
+	}
+	// A tiny requested budget must not expose the full output or prevent an
+	// otherwise valid program from running. Keep only enough to recover it.
+	return marshalEnvelope(map[string]any{
+		"kind": "archived_tool_result", "artifact_ref": path,
+		"total_bytes": len(contextual), "is_error": isError,
+	})
 }
 
 // buildResultPage is shared by the first archived page and read_file recovery.

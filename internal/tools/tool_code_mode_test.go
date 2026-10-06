@@ -229,7 +229,30 @@ func TestPTCOutputBudgetSettlesOnceAndRejectsInvalidBeforeEffects(t *testing.T) 
 	if replayed.TextProjection() != small.TextProjection() {
 		t.Fatal("settled history was rewritten under a different output budget")
 	}
-	for _, budget := range []int{0, 1023, 32769} {
+	for _, budget := range []int{0, 1, 1000} {
+		result := runPTCProgram(t, kit, `await tools.write_file({path:"small-budget.txt",content:"completed"}); text("evidence line\n".repeat(1200));`, budget)
+		if result.IsError {
+			t.Fatalf("small budget %d rejected valid work: %s", budget, result.TextProjection())
+		}
+		content, err := os.ReadFile(filepath.Join(kit.RootDir(), "small-budget.txt"))
+		if err != nil || string(content) != "completed" {
+			t.Fatalf("small budget %d prevented the write: %v", budget, err)
+		}
+		var view struct {
+			ArtifactRef string `json:"artifact_ref"`
+		}
+		if err := json.Unmarshal([]byte(result.TextProjection()), &view); err != nil || view.ArtifactRef == "" {
+			t.Fatalf("small budget %d lost recovery: %s", budget, result.TextProjection())
+		}
+		recovered, err := os.ReadFile(view.ArtifactRef)
+		if err != nil || strings.Count(string(recovered), "evidence line") != 1200 {
+			t.Fatalf("small budget %d lost archived evidence: %v", budget, err)
+		}
+		if strings.Contains(result.TextProjection(), "evidence line") && budget < 1000 {
+			t.Fatalf("tiny budget returned the full output: %s", result.TextProjection())
+		}
+	}
+	for _, budget := range []int{-1, 32769} {
 		result := runPTCProgram(t, kit, `await tools.write_file({path:"must-not-exist",content:"side effect"});`, budget)
 		if !result.IsError || !strings.Contains(result.TextProjection(), "max_output_tokens") {
 			t.Fatalf("invalid budget %d was accepted: %s", budget, result.TextProjection())
