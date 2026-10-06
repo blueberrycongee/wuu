@@ -11,7 +11,6 @@ import {
   browserPiPResizeRect,
   browserPiPScreenRect,
   browserPiPSizeForAspect,
-  browserPiPSnapPoint,
   PIP_CARD_SIZE,
 } from "./browserPiPPlacement";
 
@@ -52,11 +51,9 @@ describe("browser preview placement", () => {
     expect(browserPiPNearestAnchor(anchors, mid, card, { x: 2000, y: 0 })?.alignment).toBe("bottom-right");
   });
 
-  it("keeps a drag inside the screen work area and lands the snap on its target", () => {
+  it("keeps a drag inside the screen work area", () => {
     expect(browserPiPClampOrigin({ x: -40, y: 900 }, card, { x: 0, y: 0, width: 500, height: 400 }))
       .toEqual({ x: 0, y: 300 });
-    expect(browserPiPSnapPoint({ x: 10, y: 20 }, { x: 80, y: 90 }, { x: 400, y: 0 }, 0)).toEqual({ x: 10, y: 20 });
-    expect(browserPiPSnapPoint({ x: 10, y: 20 }, { x: 80, y: 90 }, { x: 400, y: 0 }, 1)).toEqual({ x: 80, y: 90 });
   });
 
   it("sizes a first card to the page aspect and keeps a dragged size inside the column", () => {

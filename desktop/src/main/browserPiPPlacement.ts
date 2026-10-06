@@ -13,8 +13,6 @@ export const PIP_OBSTACLE_PAD = 12;
 export const PIP_CARD_SIZE = { width: 250, height: 250 };
 export const PIP_MAX_EDGE = 320;
 export const PIP_MIN_SIZE = { width: 160, height: 120 };
-export const PIP_SNAP_LOOKAHEAD_S = 0.12;
-export const PIP_SNAP_MS = 280;
 export const PIP_RESIZE_EDGES = ["n", "s", "e", "w", "ne", "nw", "se", "sw"] as const;
 export type PipResizeEdge = (typeof PIP_RESIZE_EDGES)[number];
 
@@ -124,18 +122,24 @@ export function browserPiPNearestAnchor(
   velocity: PipPoint,
 ): PipAnchor | undefined {
   if (anchors.length === 0) return undefined;
+  const speed = Math.hypot(velocity.x, velocity.y);
+  const projection = clamp(0.18 + speed * 0.55 / 5000, 0.18, 0.45);
   const sample = {
-    x: origin.x + velocity.x * PIP_SNAP_LOOKAHEAD_S,
-    y: origin.y + velocity.y * PIP_SNAP_LOOKAHEAD_S,
+    x: origin.x + velocity.x * 0.55 * projection,
+    y: origin.y + velocity.y * 0.55 * projection,
   };
   let best = anchors[0]!;
   let bestDistance = Number.POSITIVE_INFINITY;
   for (const anchor of anchors) {
     const target = browserPiPOrigin(anchor, card);
-    const distance = (target.x - sample.x) ** 2 + (target.y - sample.y) ** 2;
-    if (distance < bestDistance) {
+    const dx = target.x - origin.x, dy = target.y - origin.y;
+    const distance = Math.hypot(dx, dy);
+    const direction = distance > 0 && speed > 0
+      ? Math.max(0, (dx * velocity.x + dy * velocity.y) / (distance * speed)) : 0;
+    const score = Math.hypot(target.x - sample.x, target.y - sample.y) - 0.12 * speed * 0.55 * direction;
+    if (score < bestDistance) {
       best = anchor;
-      bestDistance = distance;
+      bestDistance = score;
     }
   }
   return best;
@@ -187,26 +191,6 @@ export function browserPiPClampOrigin(origin: PipPoint, size: PipSize, frame: Pi
     x: clamp(origin.x, frame.x, Math.max(frame.x, frame.x + frame.width - size.width)),
     y: clamp(origin.y, frame.y, Math.max(frame.y, frame.y + frame.height - size.height)),
   };
-}
-
-// Quadratic from `start` toward `end`. Velocity bows the path, and t = 1
-// still lands on `end`.
-export function browserPiPSnapPoint(start: PipPoint, end: PipPoint, velocity: PipPoint, t: number): PipPoint {
-  const clamped = clamp(t, 0, 1);
-  const control = {
-    x: start.x + clamp(velocity.x * 0.08, -120, 120),
-    y: start.y + clamp(velocity.y * 0.08, -120, 120),
-  };
-  const remain = 1 - clamped;
-  return {
-    x: remain * remain * start.x + 2 * remain * clamped * control.x + clamped * clamped * end.x,
-    y: remain * remain * start.y + 2 * remain * clamped * control.y + clamped * clamped * end.y,
-  };
-}
-
-export function browserPiPSnapEase(t: number): number {
-  const clamped = clamp(t, 0, 1);
-  return 1 - (1 - clamped) ** 3;
 }
 
 export function browserPiPScreenRect(rect: PipRect, contentOrigin: PipPoint, zoom: number): PipRect {

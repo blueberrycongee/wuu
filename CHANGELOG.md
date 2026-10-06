@@ -28,6 +28,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Refine Browser Use picture-in-picture with lightweight hover controls, velocity-aware spring snapping, and staged completion feedback, respecting reduced motion.
+
 - Allow renaming sessions directly in sidebar hover cards, with keyboard editing and focus retention. Use a subtle background highlight on hovered titles instead of link-style underlines.
 
 - Reduce the default desktop sidebar width from 296px to 264px and the right panel from 480px to 400px while preserving saved widths and manual resizing.

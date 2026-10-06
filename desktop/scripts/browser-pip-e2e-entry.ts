@@ -42,8 +42,13 @@ async function waitFor(label: string, check: () => Promise<boolean> | boolean): 
   }
 }
 
-function capture(win: BrowserWindow, name: string): void {
+async function capture(win: BrowserWindow, name: string): Promise<void> {
   if (process.platform !== "darwin") return;
+  // Flush each Chromium surface before asking the native compositor for pixels.
+  // DOM/animation readiness alone can precede the first submitted page frame.
+  for (const view of win.contentView.children) {
+    if (view instanceof WebContentsView) await view.webContents.capturePage();
+  }
   // BrowserWindow.capturePage excludes sibling WebContentsViews. Capture the
   // native composition so the page and the pointer are verified together.
   const nativeID = win.getMediaSourceId().split(":")[1];
@@ -134,8 +139,20 @@ app.whenReady().then(async () => {
     method: "turn/completed", params: { thread_id: activity.thread_id, turn: { status: "completed" } },
   } });
   await waitFor("completion shown", () => overlay.executeJavaScript(`document.getElementById('completion').getAttribute('aria-hidden') === 'false'`));
-  await overlay.executeJavaScript(`Promise.all(document.getElementById('completion').getAnimations({subtree:true}).map(a=>a.finished))`);
-  capture(pip, "pip-completed.png");
+  // Seek the real animations, rather than racing screenshots against timers.
+  for (const [time, name] of [[600, "icon"], [1800, "check"], [3200, "badge"]] as const) {
+    await overlay.executeJavaScript(`(() => {
+      document.getElementById('completion').getAnimations({subtree:true}).forEach(a => { a.pause(); a.currentTime = ${time}; });
+      return new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    })()`);
+    await capture(pip, `pip-completion-${name}.png`);
+  }
+  await capture(pip, "pip-completed.png");
+  await overlay.executeJavaScript(`document.getElementById('expand').focus();
+    Promise.all(document.getAnimations().filter(a=>a.playState==='running').map(a=>a.finished))`);
+  await capture(pip, "pip-controls-focused.png");
+  assert.equal(await overlay.executeJavaScript(`document.activeElement.id`), "expand");
+  await overlay.executeJavaScript(`document.activeElement.blur()`);
 
   await click();
   await waitFor("new work clears completion", () => overlay.executeJavaScript(`document.getElementById('completion').getAttribute('aria-hidden') === 'true'`));
@@ -145,13 +162,25 @@ app.whenReady().then(async () => {
   assert.ok(Math.abs(first.x - (240 * .3 - 3)) < .1);
   assert.ok(Math.abs(first.y - (200 * .3 - 2.5)) < .1);
   assert.equal(await pointer(contents), null, "PiP paints only one pointer");
-  capture(pip, "pip-light.png");
+  await capture(pip, "pip-light.png");
 
   pip.setBounds({ x: 120, y: 120, width: 512, height: 320 });
   await waitFor("resize projection", async () => Math.abs((await pointer(overlay)).x - (240 * .4 - 3)) < .1);
   assert.equal((await pointer(overlay)).width, first.width, "Pointer size is independent of page zoom");
   await contents.executeJavaScript("document.body.classList.add('dark')");
-  capture(pip, "pip-dark.png");
+  await capture(pip, "pip-dark.png");
+  await overlay.executeJavaScript(`window.wuuPipAppearance({dark:true});document.getElementById('close').focus();
+    Promise.all(document.getAnimations().filter(a=>a.playState==='running').map(a=>a.finished))`);
+  await capture(pip, "pip-dark-controls.png");
+  await overlay.executeJavaScript("document.activeElement.blur()");
+  pip.setSize(160, 120);
+  await overlay.debugger.attach("1.3");
+  await overlay.debugger.sendCommand("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: "reduce" }] });
+  await overlay.executeJavaScript("document.documentElement.style.fontSize='20px';window.wuuPipCompleted(true)");
+  assert.equal(await overlay.executeJavaScript("document.getElementById('completion').getAnimations({subtree:true}).length"), 0, "Reduced motion shows completion without animation");
+  await capture(pip, "pip-small-reduced-motion.png");
+  overlay.debugger.detach();
+  await overlay.executeJavaScript("window.wuuPipCompleted(false)");
 
   host.reportBounds(workdir, tabID, main as unknown as BrowserHostWindowHandle, { x: 0, y: 42, width: 950, height: 620 }, 1, true);
   assert.equal(pip.isVisible(), false, "Docking the page replaces its preview");
@@ -161,7 +190,7 @@ app.whenReady().then(async () => {
   assert.equal(panel.svg, first.svg, "Both surfaces use the same pointer artwork");
   assert.ok(Math.abs(panel.x - 237) < .1);
   await waitFor("PiP pointer removed", async () => (await pointer(overlay)) === null);
-  capture(main, "panel-dark.png");
+  await capture(main, "panel-dark.png");
 
   // Navigation clears the old point; reduced motion arrives without travel.
   await request("browser/cdp", { method: "navigate", params: { url: `data:text/html,${encodeURIComponent(page)}` } });
@@ -171,7 +200,7 @@ app.whenReady().then(async () => {
   await contents.executeJavaScript("document.body.style.fontSize='20px'");
   await click();
   assert.equal(await contents.executeJavaScript("window.clicks"), 1);
-  capture(main, "panel-light-large-text.png");
+  await capture(main, "panel-light-large-text.png");
   host.updateActivity({ ...activity, controller: "user", state: "foreground_controlled" });
   await waitFor("takeover clears pointer", async () => (await pointer(contents)) === null);
 

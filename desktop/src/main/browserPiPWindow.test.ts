@@ -266,6 +266,7 @@ function makeSurface(opts?: { host?: FakeHost; bounds?: Rectangle; cursorPositio
     isPackaged: false,
     createWindow: () => win.asHandle(),
     createOverlay: () => overlay.asHandle(),
+    reducedMotion: () => false,
     cursorPosition: opts?.cursorPosition ?? (() => ({ x: -1000, y: -1000 })),
   });
   return { surface, win, overlay, host, sink };
@@ -660,8 +661,11 @@ describe("BrowserPiPSurface", () => {
       expect(win.bounds).toMatchObject({ x: 456, y: 336, width: 320, height: 240 });
 
       overlay.navigate("wuu-pip://drag?phase=start&x=476&y=356&vx=0&vy=0");
-      overlay.navigate("wuu-pip://drag?phase=end&x=44&y=44&vx=0&vy=0");
-      vi.advanceTimersByTime(300);
+      overlay.navigate("wuu-pip://drag?phase=end&x=140&y=120&vx=-600&vy=-200");
+      vi.advanceTimersByTime(32);
+      expect(win.bounds.x).toBeLessThan(120);
+      expect(win.bounds.x).toBeGreaterThan(24);
+      vi.advanceTimersByTime(1500);
       expect(win.bounds).toMatchObject({ x: 24, y: 24, width: 320, height: 240 });
       surface.stop();
     } finally {

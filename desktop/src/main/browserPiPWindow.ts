@@ -1,4 +1,4 @@
-import { BrowserWindow, WebContentsView, screen, type Rectangle } from "electron";
+import { BrowserWindow, WebContentsView, screen, systemPreferences, type Rectangle } from "electron";
 import appIcon from "../../../assets/app-icon-source.svg?raw";
 import { iconSVG } from "../shared/iconArtwork";
 import type { ActivitySession } from "../shared/protocol";
@@ -15,11 +15,8 @@ import {
   browserPiPResizeCommand,
   browserPiPResizeRect,
   browserPiPSizeForAspect,
-  browserPiPSnapEase,
-  browserPiPSnapPoint,
   PIP_ANCHOR_MARGIN,
   PIP_MIN_SIZE,
-  PIP_SNAP_MS,
   type BrowserPiPScreenLayout,
   type PipAlignment,
   type PipPoint,
@@ -139,6 +136,7 @@ type BrowserPiPSurfaceDeps = {
   createWindow?: (bounds: Rectangle) => BrowserPiPWindowHandle;
   createOverlay?: () => BrowserPiPOverlayHandle;
   cursorPosition?: () => PipPoint;
+  reducedMotion?: () => boolean;
   parent?: () => BrowserPiPHostWindow | null | undefined;
 };
 
@@ -666,19 +664,37 @@ export class BrowserPiPSurface implements ObservationPiPHandle {
     const win = this.win;
     if (!win || win.isDestroyed()) return;
     this.cancelSnap();
+    if ((this.deps.reducedMotion ?? (() => systemPreferences.getAnimationSettings().prefersReducedMotion))()) {
+      this.applyBounds({ ...origin, ...card });
+      return;
+    }
     const start = win.getBounds();
-    const from = { x: start.x, y: start.y };
-    const startedAt = Date.now();
+    const point = { x: start.x, y: start.y };
+    // Match the reference PiP's damped release, without carrying full flick
+    // speed into the spring. Keep fractional positions across native rounding.
+    const release = Math.hypot(velocity.x, velocity.y) >= 120 ? 0.25 : 0;
+    const speed = { x: velocity.x * release, y: velocity.y * release };
+    let previous = Date.now();
     const frame = (): void => {
       this.snapTimer = undefined;
       const current = this.win;
       if (!current || current.isDestroyed() || this.dragging || this.resizing) return;
-      const t = browserPiPSnapEase((Date.now() - startedAt) / PIP_SNAP_MS);
-      const point = browserPiPSnapPoint(from, origin, velocity, t);
-      this.applyBounds({ x: point.x, y: point.y, width: card.width, height: card.height });
-      if (t < 1) this.scheduleSnap(frame);
+      const now = Date.now();
+      const dt = Math.min(1 / 30, Math.max(1 / 120, (now - previous) / 1000));
+      previous = now;
+      speed.x += (260 * (origin.x - point.x) - 32 * speed.x) * dt;
+      speed.y += (260 * (origin.y - point.y) - 32 * speed.y) * dt;
+      point.x += speed.x * dt;
+      point.y += speed.y * dt;
+      const settled = Math.hypot(origin.x - point.x, origin.y - point.y) <= 0.5
+        && Math.hypot(speed.x, speed.y) <= 2;
+      const next = settled ? origin : point;
+      const confined = this.screenLayout
+        ? browserPiPClampOrigin(next, card, this.screenLayout.visibleFrame) : next;
+      this.applyBounds({ ...confined, width: card.width, height: card.height });
+      if (!settled) this.scheduleSnap(frame);
     };
-    frame();
+    this.scheduleSnap(frame);
   }
 
   private scheduleSnap(frame: () => void): void {
@@ -852,15 +868,26 @@ export function createObservationPiPFactory(deps: {
 // shows the frosted placeholder, matching the CUA PiP's "never paint
 // failure" rule.
 // ---------------------------------------------------------------------------
+// Motion and hover reference: blueberrycongee/reference-animations,
+// examples/chatgpt-pip at 4703805eb68b3f4b7b47cd428b5723686bc4e889.
+// Keep Wuu artwork and its live, watch-only browser surface.
 export function browserPiPOverlayHTML(initialLabel: string): string {
   const label = JSON.stringify(initialLabel).replace(/</g, "\\u003c");
   const icon = `data:image/svg+xml,${encodeURIComponent(appIcon)}`;
+  // Sample the reference's mass=1, stiffness=170, damping=18 completion
+  // spring for the compositor; no renderer timer survives completion or hiding.
+  const completionSpring = `linear(${Array.from({ length: 61 }, (_, i) => {
+    const t = i / 100;
+    const frequency = Math.sqrt(170 - 9 * 9);
+    return i === 60 ? 1 : 1 - Math.exp(-9 * t)
+      * (Math.cos(frequency * t) + 9 / frequency * Math.sin(frequency * t));
+  }).join(",")})`;
   return `<!doctype html>
 <html><head><meta charset="utf-8" />
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-:root{color-scheme:light;--surface:#f4f4f5;--muted:rgba(28,28,30,.45);--completion-scrim:rgba(255,255,255,.30)}
-:root.dark{color-scheme:dark;--surface:#242426;--muted:rgba(255,255,255,.55);--completion-scrim:rgba(0,0,0,.24)}
+:root{color-scheme:light;--surface:#f4f4f5;--muted:rgba(28,28,30,.45)}
+:root.dark{color-scheme:dark;--surface:#242426;--muted:rgba(255,255,255,.55)}
 ::-webkit-scrollbar{width:0;height:0;display:none}
 html,body{width:100%;height:100%;overflow:hidden;scrollbar-width:none;
   background:rgba(0,0,0,0.004);
@@ -873,45 +900,55 @@ html,body{width:100%;height:100%;overflow:hidden;scrollbar-width:none;
   background:var(--surface);color:var(--muted);transition:opacity .2s ease}
 #ph.gone{opacity:0;pointer-events:none}
 #completion{position:absolute;inset:0;display:grid;place-items:center;pointer-events:none;
-  background:var(--completion-scrim);opacity:0;transition:opacity .2s ease}
+  background:rgba(0,0,0,.17);opacity:0;transition:opacity .35s ease}
 #completion[data-completed="true"]{opacity:1}
-#completion-mark{position:relative;width:64px;height:64px}
-#completion-icon{display:block;width:100%;height:100%;border-radius:15px;
-  box-shadow:0 3px 12px rgba(0,0,0,.20)}
-#completion-check{position:absolute;inset:0;display:grid;place-items:center;border-radius:50%;
-  background:#4cc38a;color:#082a1b;box-shadow:0 3px 10px rgba(0,0,0,.22);
-  opacity:0;transform:translate(27px,27px) scale(.46)}
-#completion-check svg{width:34px;height:34px}
-#completion[data-completed="true"] #completion-icon{animation:completion-icon .28s ease-out both}
-#completion[data-completed="true"] #completion-check{animation:completion-check 1.5s ease both}
-@keyframes completion-icon{from{opacity:0;transform:scale(.88)}to{opacity:1;transform:scale(1)}}
-@keyframes completion-check{
-  0%,18%{opacity:0;transform:scale(.5)}
-  36%{opacity:1;transform:scale(1.08)}
-  46%,66%{opacity:1;transform:scale(1)}
-  90%{opacity:1;transform:translate(29px,29px) scale(.43)}
-  100%{opacity:1;transform:translate(27px,27px) scale(.46)}}
-@media (prefers-reduced-motion:reduce){
-  #completion{transition:none}
-  #completion[data-completed="true"] #completion-icon{animation:none}
-  #completion[data-completed="true"] #completion-check{animation:none;opacity:1}
-}
-@media (max-height:140px){#completion-mark{width:48px;height:48px;transform:translateY(8px)}}
+#completion-mark{position:relative;width:50px;height:50px}
+#completion-icon{display:block;width:100%;height:100%;border-radius:12px;
+  box-shadow:0 3px 12px rgba(0,0,0,.16)}
+#completion-check{position:absolute;inset:0;display:grid;place-items:center;
+  color:white;opacity:0;transform:translate(18px,18px)}
+#completion-check::before{content:"";position:absolute;width:17.5px;height:17.5px;border-radius:50%;
+  background:#00e62d;box-shadow:0 0 4px rgba(0,0,0,.8);opacity:0}
+#completion-check svg{position:relative;width:18px;height:18px;transform:scale(.5)}
+#completion[data-completed="true"] #completion-icon{animation:completion-icon 2.75s linear both}
+#completion[data-completed="true"] #completion-check{
+  animation:completion-fade .2s 1s linear both,completion-move .6s 2.5s ${completionSpring} both}
+#completion[data-completed="true"] #completion-check svg{
+  animation:completion-grow .6s 1s ${completionSpring} both,completion-mini .6s 2.5s ${completionSpring} forwards}
+#completion[data-completed="true"] #completion-check::before{
+  animation:completion-fade .2s 2.5s linear both,completion-grow .6s 2.5s ${completionSpring} both}
+@keyframes completion-icon{
+  0%{opacity:0;filter:brightness(1)}
+  12.727%,36.364%{opacity:1;filter:brightness(1)}
+  45.455%,90.909%{opacity:1;filter:brightness(.35)}
+  100%{opacity:1;filter:brightness(1)}}
+@keyframes completion-fade{from{opacity:0}to{opacity:1}}
+@keyframes completion-grow{from{transform:scale(.01)}to{transform:scale(1)}}
+@keyframes completion-mini{from{transform:scale(1)}to{transform:scale(.5)}}
+@keyframes completion-move{from{transform:translate(0,0)}to{transform:translate(18px,18px)}}
 #hover-shade{position:absolute;inset:0;pointer-events:none;opacity:0;
-  background:linear-gradient(rgba(0,0,0,.26),rgba(0,0,0,.04) 60%,transparent);
-  transition:opacity .16s ease}
-#actions{position:absolute;top:8px;left:8px;z-index:6;display:flex;gap:6px;opacity:0;
-  transition:opacity .16s ease}
+  background:rgba(0,0,0,.06);transition:opacity .12s ease-in-out}
+#actions{position:absolute;top:6px;left:6px;z-index:6;display:flex;gap:1px;opacity:0;
+  pointer-events:none;transition:opacity .12s ease-in-out}
 #root:is(:focus-within,.hovered,.dragging,.resizing) :is(#actions,#hover-shade){opacity:1}
-/* Backdrop filters on this transparent sibling view can paint rectangular artifacts.
-   Keep action backgrounds self-contained instead of sampling the page below. */
-#expand,#close{width:30px;height:30px;border:none;border-radius:50%;padding:0;
-  display:grid;place-items:center;cursor:pointer;color:#fff;
-  background:rgba(28,28,30,.48);transition:background .12s ease}
-#expand:is(:hover,.hovered),#close:is(:hover,.hovered){background:rgba(28,28,30,.78)}
-#expand:active,#close:active{background:rgba(28,28,30,.92)}
-#expand:focus-visible,#close:focus-visible{outline:2px solid #fff;outline-offset:2px}
-@media(prefers-reduced-motion:reduce){#actions,#hover-shade,#expand,#close{transition:none}}
+#root:is(:focus-within,.hovered,.dragging,.resizing) #actions{pointer-events:auto}
+/* A sibling WebContentsView cannot sample the page with backdrop-filter.
+   A local soft scrim keeps controls legible without a full-width toolbar. */
+#actions::before{content:"";position:absolute;inset:-6px -10px;z-index:-1;
+  border-radius:21px;background:rgba(0,0,0,.48);filter:blur(6px);pointer-events:none}
+#expand,#close{width:22px;height:22px;border:none;border-radius:5px;padding:0;
+  display:grid;place-items:center;cursor:pointer;color:#fff;opacity:.7;
+  background:transparent;transition:opacity .12s ease-in-out,background .12s ease-in-out}
+#expand:is(:hover,.hovered),#close:is(:hover,.hovered){opacity:1}
+#expand:active,#close:active{background:rgba(255,255,255,.16);opacity:1}
+#expand:focus-visible,#close:focus-visible{outline:2px solid #fff;outline-offset:2px;opacity:1}
+@media(prefers-reduced-motion:reduce){
+  #completion,#actions,#hover-shade,#expand,#close{transition:none}
+  #completion[data-completed="true"] #completion-icon,
+  #completion[data-completed="true"] #completion-check svg{animation:none}
+  #completion[data-completed="true"] #completion-check,
+  #completion[data-completed="true"] #completion-check::before{animation:none;opacity:1}
+}
 [data-resize]{position:absolute;z-index:4;touch-action:none;background:rgba(0,0,0,0.004)}
 [data-resize="n"],[data-resize="s"]{left:18px;right:18px;height:12px;cursor:ns-resize}
 [data-resize="n"]{top:0}[data-resize="s"]{bottom:0}
@@ -1006,8 +1043,8 @@ html,body{width:100%;height:100%;overflow:hidden;scrollbar-width:none;
   root.addEventListener("pointermove",function(e){
     if(resizing){postResize("move",resizeEdge,e.screenX,e.screenY);return;}
     if(!grabbing||!last)return;
-    var now=performance.now(),dt=Math.max(1,now-last.t);
-    velocity={x:(e.screenX-last.x)/dt*1000,y:(e.screenY-last.y)/dt*1000};
+    var now=performance.now(),dt=Math.max(1000/240,now-last.t);
+    velocity={x:velocity.x*.72+(e.screenX-last.x)/dt*1000*.28,y:velocity.y*.72+(e.screenY-last.y)/dt*1000*.28};
     last={x:e.screenX,y:e.screenY,t:now};
     postDrag("move",e.screenX,e.screenY,velocity.x,velocity.y);
   });
@@ -1021,7 +1058,8 @@ html,body{width:100%;height:100%;overflow:hidden;scrollbar-width:none;
     if(!grabbing)return;
     grabbing=false;
     root.classList.remove("dragging");
-    postDrag("end",e.screenX,e.screenY,velocity.x,velocity.y);
+    var decay=last?Math.pow(.72,Math.max(0,performance.now()-last.t)/(1000/60)):0;
+    postDrag("end",e.screenX,e.screenY,velocity.x*decay,velocity.y*decay);
   }
   root.addEventListener("pointerup",endDrag);
   root.addEventListener("pointercancel",endDrag);
