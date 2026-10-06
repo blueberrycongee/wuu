@@ -1097,6 +1097,7 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
 }
 
 .composer textarea {
+  --placeholder-ink: var(--ink-muted);
   display: block;
   width: 100%;
   height: 60px;

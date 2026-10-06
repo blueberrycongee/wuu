@@ -37,6 +37,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Match composer placeholder text to the muted process-summary color in light
+  and dark themes, without changing entered text or other field placeholders.
+
 - Reveal copy, fork, and timestamp from left to right after a live reply, with
   overlapping one-second fades spaced 300ms apart. Show them immediately for
   reduced motion or keyboard focus, without replaying on historical messages.

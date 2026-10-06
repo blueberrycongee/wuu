@@ -540,7 +540,7 @@
   color: inherit;
 }
 
-/* One placeholder colour for every field; components do not set their own. */
+/* Shared placeholder rendering; semantic overrides use --placeholder-ink. */
 ::placeholder {
   color: var(--placeholder-ink);
 }
