@@ -19,8 +19,8 @@ it("splits grouped activity at image results without hiding later work or changi
   // All of these items normally coalesce into one process group. Publishing
   // images must separate that group, or "jump to latest" lands after live work.
   expect(processItems).toEqual(items.slice(0, 2));
-  const visibleOrder = layout.output.flatMap((output) => output.artifact
-    ? [`image:${output.artifact.itemId}`]
+  const visibleOrder = layout.output.flatMap((output) => output.artifacts
+    ? output.artifacts.map(artifact => `image:${artifact.itemId}`)
     : (output.entry.items ?? [output.entry.item]).map((item) => item.id));
   expect(visibleOrder).toEqual(["image:first-image", "check", "second-image", "image:second-image", "reasoning"]);
   const activity = layout.output.flatMap((output) => output.entry ? [output.entry] : []);
@@ -32,6 +32,49 @@ it("splits grouped activity at image results without hiding later work or changi
   expect([...processItems, ...activity.flatMap((entry) => entry.items ?? [entry.item])]).toEqual(items);
 });
 
+
+// Gallery boundaries must follow the conversation, not individual tool calls.
+it.each(["in_progress", "completed"] as const)("groups consecutive published images without crossing text or other work (%s)", (status) => {
+  const image = (id: string, mime = "image/png"): ThreadItem => ({
+    id, type: "tool_call", name: "present_artifact", status: "completed",
+    result_detail: { content: [{ type: "image", mime_type: mime, data: id, artifact: { placement: "inline" } }] },
+  });
+  const first = image("first");
+  const second = image("second", "image/gif");
+  const items: ThreadItem[] = [first, second,
+    { id: "explanation", type: "agent_message", text: "Compare these images", status: "completed" },
+    image("third"),
+    { id: "check", type: "tool_call", name: "run_shell", status: "completed" },
+    image("fourth"),
+  ];
+  const layout = (items: ThreadItem[]) => {
+    const turn: Turn = { id: "turn", items, status, items_view: "full" };
+    return layoutAssistantTurn(turn, buildAssistantTurnDisplay(turn, undefined)!, collectTurnArtifacts(turn));
+  };
+  const result = layout(items);
+  const galleries = result.output.filter(output => output.artifacts);
+  expect(galleries.map(output => output.artifacts?.map(artifact => artifact.itemId))).toEqual([
+    ["first", "second"], ["third"], ["fourth"],
+  ]);
+  expect(result.output.findIndex(output => output.entry?.item.id === "explanation")).toBe(1);
+  expect(galleries[0].key).toBe(layout([first]).output[0].key);
+  const activities = [...result.processEntries, ...result.output.flatMap(output => output.entry ? [output.entry] : [])];
+  expect(activities.flatMap(entry => entry.items ?? [entry.item])).toEqual(items);
+});
+
+it("keeps inline documents out of image groups", () => {
+  const turn: Turn = { id: "turn", status: "completed", items_view: "full", items: [
+    { id: "mixed", type: "tool_call", name: "render", status: "completed", result_detail: { content:
+      ["image/png", "text/html", "image/gif"].map(mime_type => ({
+        type: "resource", mime_type, text: "fixture", artifact: { placement: "inline" },
+      })),
+    } },
+  ] };
+  const result = layoutAssistantTurn(turn, buildAssistantTurnDisplay(turn, undefined)!, collectTurnArtifacts(turn));
+  expect(result.output.map(output => output.artifacts?.map(artifact => artifact.mimeType))).toEqual([
+    ["image/png"], ["text/html"], ["image/gif"],
+  ]);
+});
 
 it.each(["in_progress", "completed"] as const)("keeps ordinary image inspection in one process group (%s)", (status) => {
   const items: ThreadItem[] = [

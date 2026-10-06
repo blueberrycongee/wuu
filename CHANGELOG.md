@@ -10,6 +10,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Display consecutive image artifacts in a single-row carousel with fading scroll
+  edges and a three-column tiled view toggle, preserving full previews and conversation order.
+  Float the toggle over the images on hover or keyboard focus instead of reserving
+  a toolbar row; keep it visible on touch devices.
+
 - Web fetch results account for JSON escaping and metadata when applying the transport size limit.
 
 - Execute Code Mode programs with small output budgets instead of rejecting

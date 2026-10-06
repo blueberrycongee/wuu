@@ -4898,10 +4898,96 @@ pre {
  * outputs collect at the turn end, matching the existing file-change summary.
  */
 .turn-artifact-inline-list {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 10px;
   min-width: 0;
+}
+
+.turn-artifact-gallery-toolbar {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 1;
+  display: flex;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--motion-fast) var(--ease-out);
+  isolation: isolate;
+}
+
+/* A soft white glow provides contrast without adding a solid button surface. */
+.turn-artifact-gallery-toolbar::before {
+  content: "";
+  position: absolute;
+  inset: -4px;
+  z-index: -1;
+  border-radius: var(--radius-media);
+  background: rgb(255 255 255 / 85%);
+  filter: blur(6px);
+  pointer-events: none;
+}
+
+.turn-artifact-inline-list:is(:hover, :focus-within) > .turn-artifact-gallery-toolbar {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.turn-artifact-gallery-toolbar .icon-button {
+  color: rgb(17 19 21 / 75%);
+  background: transparent;
+  border: 0;
+}
+
+.turn-artifact-gallery-toolbar .icon-button:is(:hover, :active):not(:disabled) {
+  color: rgb(17 19 21);
+  background: transparent;
+}
+
+@media (hover: none), (pointer: coarse) {
+  .turn-artifact-gallery-toolbar {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
+.turn-artifact-gallery-items {
+  display: flex;
+  gap: 10px;
+  min-width: 0;
+  overflow-x: auto;
+  padding: 4px;
+  scroll-padding-inline: 32px;
+}
+
+.turn-artifact-gallery-items:not(.is-tiled) > * {
+  flex: 0 0 auto;
+  width: min(240px, 85%);
+  min-width: 0;
+}
+
+.turn-artifact-gallery-items > :only-child {
+  width: min(240px, 100%);
+}
+
+.turn-artifact-gallery-items.is-tiled {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  overflow: visible;
+}
+
+.turn-artifact-gallery-items.is-tiled > * {
+  width: 100%;
+}
+
+.turn-artifact-gallery-items .turn-artifact-image-preview {
+  width: 100%;
+}
+
+html[data-focus-modality="keyboard"] .turn-artifact-gallery-items:focus-visible {
+  outline-offset: -2px;
+  border-radius: var(--radius-media);
 }
 
 .turn-artifact-text-part {

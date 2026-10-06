@@ -220,8 +220,8 @@ export function AssistantTurnShell({
       ) : null}
       {output.length > 0 ? (
         <div className="turn-answer-body">
-          {output.map((item) => item.artifact ? (
-            <TurnInlineArtifactOutputs key={item.key} artifacts={[item.artifact]} cwd={cwd} onOpenFile={onOpenFile} />
+          {output.map((item) => item.artifacts ? (
+            <TurnInlineArtifactOutputs key={item.key} artifacts={item.artifacts} cwd={cwd} onOpenFile={onOpenFile} />
           ) : (
             <EntryRenderer key={item.key} entry={item.entry} activeGray={item.key === activeGrayEntryKey} {...entryProps} />
           ))}

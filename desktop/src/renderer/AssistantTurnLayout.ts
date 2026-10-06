@@ -3,8 +3,8 @@ import type { TurnArtifact } from "./ArtifactOutputs";
 import type { AssistantTurnDisplay, TurnEntry } from "./AssistantTurnDisplay";
 
 type Output = { key: string } & (
-  | { entry: TurnEntry; artifact?: never }
-  | { artifact: TurnArtifact; entry?: never }
+  | { entry: TurnEntry; artifacts?: never }
+  | { artifacts: TurnArtifact[]; entry?: never }
 );
 
 /** Keep published output and everything after it in chronological reading order.
@@ -24,11 +24,26 @@ export function layoutAssistantTurn(
       output: display.entries.filter((entry) => entry.position === "answer").map((entry) => ({ key: entry.key, entry })),
     };
   }
-  const boundaries = new Set(inline.map((artifact) => artifact.itemId));
-  const ordered: (Output & { order: number })[] = inline.map((artifact) => ({
-    key: artifact.id,
-    artifact,
-    order: (positions.get(artifact.itemId) ?? 0) + 1,
+  const groups: TurnArtifact[][] = [];
+  for (const artifact of inline) {
+    const group = groups.at(-1);
+    const previous = group?.at(-1);
+    const adjacent = previous && (previous.itemId === artifact.itemId
+      ? artifact.index === previous.index + 1
+      : positions.get(artifact.itemId) === (positions.get(previous.itemId) ?? 0) + 2);
+    if (group && previous?.mimeType.startsWith("image/") && artifact.mimeType.startsWith("image/") && adjacent) {
+      group.push(artifact);
+    } else {
+      groups.push([artifact]);
+    }
+  }
+  // Keep the group's producing activity together before its images. Splitting
+  // at every publication would insert a process row between adjacent previews.
+  const boundaries = new Set(groups.map((group) => group[group.length - 1].itemId));
+  const ordered: (Output & { order: number })[] = groups.map((group) => ({
+    key: group[0].id,
+    artifacts: group,
+    order: (positions.get(group[group.length - 1].itemId) ?? 0) + 1,
   }));
   for (const entry of display.entries) {
     const items = entry.items ?? [entry.item];
@@ -55,7 +70,7 @@ export function layoutAssistantTurn(
   const output: Output[] = [];
   let published = false;
   for (const item of ordered) {
-    if (item.artifact) published = true;
+    if (item.artifacts) published = true;
     if (!published && item.entry?.position === "process") {
       processEntries.push(item.entry);
     } else {
