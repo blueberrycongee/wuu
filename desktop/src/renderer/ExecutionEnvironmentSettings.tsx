@@ -70,7 +70,7 @@ export function ExecutionEnvironmentSettings({ value, disabled, onSave }: {
     } catch (cause) { setError(cause instanceof Error ? cause.message : t("settings.saveFailed")); }
   }
   const errorLine = error ? <p className="settings-error" role="alert">{error}</p> : null;
-  return <SettingsSection title={t("execution.title")} description={t("execution.description")} testID="settings-execution-environments"
+  return <SettingsSection title={t("execution.title")} testID="settings-execution-environments"
     actions={<button className="settings-button settings-button-ghost" type="button" disabled={locked || editing !== null} onClick={() => edit("")}>
       <Plus className="icon" aria-hidden="true" />{t("execution.add")}</button>}>
     <SettingsGroup>

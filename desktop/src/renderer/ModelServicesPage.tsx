@@ -1332,7 +1332,7 @@ function CatalogServiceGroups({
   return <>
     {subscriptions.length ? (
       <section className="model-catalog-group" aria-label={t("provider.catalogSubscription")}>
-        <div className="model-catalog-heading"><h3>{t("provider.catalogSubscription")}</h3><span>{t("provider.catalogSubscriptionHint")}</span></div>
+        <div className="model-catalog-heading"><h3>{t("provider.catalogSubscription")}</h3></div>
         <div className="model-service-tiles">{subscriptionTiles}</div>
       </section>
     ) : null}

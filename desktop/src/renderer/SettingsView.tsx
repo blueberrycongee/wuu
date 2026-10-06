@@ -1198,7 +1198,7 @@ function SettingsRuntimePage({
           >
             {numericInput("maxSteps", maxSteps, onMaxStepsChange, { label: t("settings.maxSteps"), placeholder: t("settings.unlimited") })}
           </SettingsRow>
-          <SettingsRow title={t("settings.temperature")} hint={t("settings.temperatureRange")} error={fieldError("temperature")}>
+          <SettingsRow title={t("settings.temperature")} error={fieldError("temperature")}>
             {numericInput("temperature", temperature, onTemperatureChange, {
               label: t("settings.temperature"),
               placeholder: t("settings.automatic"),

@@ -429,7 +429,6 @@ export function WorkspaceTerminalPanel({
         ) : (
           <WorkspacePanelEmpty
             title={t("workspace.terminal.noRuns")}
-            description={t("workspace.terminal.noRunsDescription")}
           />
         )}
       </div>
