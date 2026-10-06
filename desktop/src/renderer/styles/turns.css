@@ -87,6 +87,10 @@
   --artifact-preview-overlay-bg: rgba(8, 10, 12, 0.78);
   --artifact-preview-shell-border: rgba(255, 255, 255, 0.14);
   --artifact-preview-frame-bg: #fff;
+  /* Image-overlay controls keep the same contrast treatment in both themes. */
+  --artifact-gallery-control-glow: rgb(255 255 255 / 85%);
+  --artifact-gallery-control-fg: rgb(17 19 21 / 75%);
+  --artifact-gallery-control-fg-hover: rgb(17 19 21);
 }
 
 .turn {
@@ -4932,7 +4936,7 @@ pre {
   inset: -4px;
   z-index: -1;
   border-radius: var(--radius-media);
-  background: rgb(255 255 255 / 85%);
+  background: var(--artifact-gallery-control-glow);
   filter: blur(6px);
   pointer-events: none;
 }
@@ -4943,13 +4947,13 @@ pre {
 }
 
 .turn-artifact-gallery-toolbar .icon-button {
-  color: rgb(17 19 21 / 75%);
+  color: var(--artifact-gallery-control-fg);
   background: transparent;
   border: 0;
 }
 
 .turn-artifact-gallery-toolbar .icon-button:is(:hover, :active):not(:disabled) {
-  color: rgb(17 19 21);
+  color: var(--artifact-gallery-control-fg-hover);
   background: transparent;
 }
 
