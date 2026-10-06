@@ -8,177 +8,28 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ## [Unreleased]
 
-### Fixed
+## [2026.10.6] - 2026-10-06
 
-- Keep the collapsed sidebar open while entering or editing a session hover card,
-  including pauses in the gap. Dismiss its cards and pending reveals when the
-  sidebar is explicitly closed.
+### Contributors
 
-- Display consecutive image artifacts in a single-row carousel with fading scroll
-  edges and a three-column tiled view toggle, preserving full previews and conversation order.
-  Float the toggle over the images on hover or keyboard focus instead of reserving
-  a toolbar row; keep it visible on touch devices.
+@blueberrycongee
 
-- Web fetch results account for JSON escaping and metadata when applying the transport size limit.
+### Highlights
 
-- Execute Code Mode programs with small output budgets instead of rejecting
-  their work. Preserve a minimal recovery reference when output cannot fit,
-  and omit repeated diff hunks from compact overwrite receipts.
-
-- Let Code Mode programs select `result_view: "data"` to print structured tool
-  data under their output budget instead of a pre-shortened display excerpt.
-  Keep the default compact view, checkpoints, and recoverable output limits.
-  Require execution-worker protocol 4 so older workers cannot silently ignore
-  the selected view; rebuild or upgrade remote workers with the host.
-
-- Preserve the caller's file-creation permissions for workspace tools and child
-  commands instead of forcing every output to owner-only access. Keep private
-  state, conversation logs, and databases protected at their storage writers.
-
-### Changed
-
-- Match composer placeholder text to the muted process-summary color in light
-  and dark themes, without changing entered text or other field placeholders.
-
-- Reveal copy, fork, and timestamp from left to right after a live reply, with
-  overlapping one-second fades spaced 300ms apart. Show them immediately for
-  reduced motion or keyboard focus, without replaying on historical messages.
-
-- Remove redundant side chat explanations and shorten its input prompt. Keep the header as a plain title without an explanatory tooltip or extra keyboard focus stop.
-
-- Simplify background image, model service, execution environment, temperature, and terminal helper text. Shorten agent login and archive guidance while preserving error feedback and important behavior notices.
-
-- Refine Browser Use picture-in-picture with lightweight hover controls, velocity-aware spring snapping, and staged completion feedback, respecting reduced motion.
-
-- Allow renaming sessions directly in sidebar hover cards, with keyboard editing and focus retention. Use a subtle background highlight on hovered titles instead of link-style underlines.
-
-- Reduce the default desktop sidebar width from 296px to 264px and the right panel from 480px to 400px while preserving saved widths and manual resizing.
-
-- File creation and editing remain directly callable with PTC enabled, so literal source need not be embedded in JavaScript. Computed edits can still run inside Code Mode with the same permission checks.
-
-- Code Mode accepts raw JavaScript on OpenAI Responses, with per-program options in a first-line comment and JSON transport on other providers. Literal source and custom tool results remain intact through streaming and history replay.
-
-- Display one compact tool-result view from PTC `text`, console output and return
-  values while preserving complete data for computation and checkpoints. Stop
-  runaway JSON formatting whitespace before admitting the affected tool call.
-  Keep the optional program description out of the execution prerequisites.
-  Separate file source and shell stream data from display excerpts, and let
-  each program choose its emitted-text budget without rewriting history.
-  Allow sessions to disable skill discovery with `skills.enabled=false`.
-
-- Refine model popover typography with clearer text hierarchy, balanced insets,
-  and equal spacing between the source, model, and effort controls.
-
-- Show Codex engine commands in tool activity rows, with expandable original
-  commands, working directories, and captured output.
-
-- Refine first-run workspace selection with source engine icons, compact project
-  rows, persistent list controls, and keyboard focus across each selectable row.
-
-- Keep the conversation surface undimmed when opening the sidebar in narrow
-  desktop windows, matching the wide-window drawer.
-
-- Discover recent local workspaces during first-run setup, with batch import,
+- Import recent local workspaces during first-run setup, with batch selection,
   manual folder selection, and direct entry into the selected workspace.
-
-- Keep experimental Project Agent conversations responsive through background
-  technical leads and persistent executors, with versioned work contracts,
-  evidence-bound review, explicit delivery, durable stop/recovery and work status.
-- Preserve ordinary file and recovery views through PTC, explain bounded result
-  coverage to the model, and include evidence after short headers in archived pages.
-- Carry validated working-note checkpoint references into fresh context windows
-  so agents can resume without rediscovering their recovery notes.
-- Use `edit_file` and `write_file` across all built-in model profiles. Remove the
-  built-in `apply_patch` executor and its patch-and-command path; preserve
-  historical patch records and external Codex engine tools.
-
-- Deliver uploaded videos, PDFs, and ordinary files as seven-day original-byte
-  working copies independently of native model support, and budget only the
-  projected input so attachments survive context recovery without Base64 inflation.
-- Show reply completion times beside copy and fork actions, with the same
-  visibility rules and full local date and time on hover.
-- Send long pasted text as UTF-8 file attachments with seven-day working
-  copies, while preserving exact snapshots for history and resubmission.
-- Start new conversations from the Codex pet in the workspace captured when
-  its panel opens, with explicit actions to reply to existing conversations.
-- Open quoted assistant responses by clicking the entire reference card, without
-  a separate source-link label, while preserving keyboard navigation.
-- Remove viewed marks and viewed-file progress from the workspace change review panel.
-- Built-in agents can edit configuration with ordinary file tools. Standard
-  mode now includes Wuu home in its file and command write scope; Read only
-  and dedicated credential-file guards still apply.
-
-- Remove the redundant heading from the conversation fork chooser.
-- Align motion easing, icon press feedback, notice dismissal, and activity
-  rhythms with the shared motion settings and reduced-motion preference.
-
-- Use consistent conversation labels and full programmatic-tool-calling names,
-  with clearer recovery messages in English and Chinese.
-
-- Keep first-run choices beside the companion, with scrolling content and
-  fixed actions, and remove explanations repeated by the available choices.
-
-- Review changes in a responsive folder-grouped list, with file navigation,
-  viewed marks, and an action to open the current file in the editor.
-
-- Use neutral sidebar selection, unfilled workspace tool-picker rows, and a
-  shared reading canvas for settings groups and fields.
-
-- List settings pages in one unlabeled column with plugin pages after a gap,
-  rename the runtime page to Built-in agent, and move the Codex pet to
-  Appearance. Model providers lists services to add as one run on the shared
-  settings surface, aligned with the cards above.
-
-- Unify desktop light and dark surfaces across navigation, settings, model
-  services, fields, and menus while preserving font preferences and custom
-  theme overrides.
-
-### Fixed
-
-- Avoid black rectangular artifacts around browser preview controls by removing
-  backdrop blur from the transparent overlay buttons.
-
-- Keep completed replies settled across delayed session snapshots, preventing
-  sidebar spinners and composer stop buttons from reappearing or flickering.
-
-- Reject oversized encoded desktop messages without disconnecting the core or
-  losing drafts, and retain explicit video transport settings through request preparation.
-
-- Isolate the desktop renderer’s development dependency cache and contain lazy
-  editor or PDF preview failures without clearing the surrounding workspace.
-  A failed preview offers a window reload to recover rejected module loads.
-
-- Preserve shared sidebar folds when browsing or removing workspaces in the
-  mobile sidebar; load conversation lists without expanding their desktop sections.
-
-- Copy empty tool capability maps before filtering them, preventing data races
-  when PTC runs nested tools concurrently.
-
-- Include bounded nested-tool outcome summaries in failed PTC results so recovery
-  can account for completed effects and interrupted calls without replaying blindly.
-
-- Preserve PTC exception types and user-source stack frames with accurate script
-  line numbers, including syntax errors, while omitting internal runtime frames.
-
-- Fail PTC programs that wait on promises with no remaining host calls or
-  microtasks, releasing their scope while preserving committed checkpoints.
-
-- Keep plugin terminal waits pending until the durable result is available,
-  preventing premature completion without final output or timestamps. Consumed
-  steering inputs still settle with their turn after context compaction and reload.
-
-- Keep session switches covered by the existing loading animation until the
-  resumed conversation restores its folds and scroll position; block editing
-  and sending during restoration and ignore superseded switch results. Disable
-  sending if a failed cross-workspace switch returns to an unavailable source
-  workspace, while preserving the source conversation and draft.
-
-- Allow quoting and commenting on assistant text during streaming, preserving
-  valid selections through appended output and turn completion.
-
-- Use the full subscription-card width for a single allowance, align card
-  spacing and corners with shared panels, and keep model selectors readable
-  when service names wrap.
+- Refined desktop themes, settings, model controls, and conversation layout,
+  with sidebar hover-card renaming, reply timestamps, and quoting while streaming.
+- Browse image artifacts in a horizontal carousel or tiled view, with floating
+  controls and full previews. Browser picture-in-picture has lighter controls
+  and smoother motion.
+- Send long pasted text as file attachments. Uploaded videos, PDFs, and other
+  files retain seven-day working copies across context recovery.
+- Code Mode supports literal JavaScript on OpenAI Responses, directly callable
+  file edits, selectable result views, and per-program output budgets. Remote
+  execution workers must be upgraded to protocol version 4 alongside the host.
+- More reliable context checkpoints, tool-failure recovery, session switching,
+  and reply completion, with safer concurrent tools and bounded web-fetch results.
 
 ## [2026.10.2] - 2026-10-02
 
