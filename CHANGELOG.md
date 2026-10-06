@@ -28,6 +28,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Remove the side chat empty-state explanation and shorten its input prompt; keep isolation guidance in the accessible header tooltip.
+
 - Simplify background image, model service, execution environment, temperature, and terminal helper text. Shorten agent login and archive guidance while preserving error feedback and important behavior notices.
 
 - Refine Browser Use picture-in-picture with lightweight hover controls, velocity-aware spring snapping, and staged completion feedback, respecting reduced motion.

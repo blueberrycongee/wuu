@@ -110,6 +110,7 @@
 
 /* Same role and ink as the conversation title beside it. */
 .side-thread-panel__title {
+  -webkit-app-region: no-drag;
   min-width: 0;
   margin: 0;
   overflow: hidden;
@@ -140,32 +141,6 @@
      horizontal inset used by the main conversation. */
   max-width: none;
   padding-block: 4px 0;
-}
-
-.side-thread-panel__empty {
-  position: absolute;
-  inset: 0 0 var(--side-thread-footer-height, 0px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-direction: column;
-  gap: var(--space-2);
-  padding: 24px;
-  text-align: center;
-  color: var(--ink-soft);
-  font-size: var(--font-ui);
-}
-
-.side-thread-panel__empty svg {
-  width: 30px;
-  height: 30px;
-  margin-bottom: var(--space-2);
-}
-
-.side-thread-panel__empty strong {
-  color: var(--ink);
-  font-size: calc(var(--font-ui) + 2px);
-  font-weight: var(--weight-medium);
 }
 
 .side-thread-panel__footer {
