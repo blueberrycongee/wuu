@@ -24,7 +24,7 @@ export const sidebarDrawerExitMs = (): number =>
   motionDurationMs("--sidebar-drawer-exit-duration", 220);
 export const rightPanelMotionMs = (): number =>
   motionDurationMs("--workspace-panel-motion-duration", 280);
-export const SIDEBAR_DEFAULT_WIDTH = 296;
+export const SIDEBAR_DEFAULT_WIDTH = 264;
 // Keep enough horizontal room for one-line navigation labels and useful
 // conversation titles. The rail becomes an overlay drawer below the compact
 // breakpoint, so shrinking it further saves no canvas space and only makes
@@ -43,7 +43,7 @@ const SIDEBAR_COLLAPSE_WIDTH = SIDEBAR_MIN_WIDTH - SIDEBAR_COLLAPSE_INTENT_PX;
 const SIDEBAR_STEP = 24;
 const SIDEBAR_WIDTH_KEY = "wuu.desktop.sidebarWidth";
 const SIDEBAR_COLLAPSED_KEY = "wuu.desktop.sidebarCollapsed";
-export const WORKSPACE_RIGHT_PANEL_DEFAULT_WIDTH = 480;
+export const WORKSPACE_RIGHT_PANEL_DEFAULT_WIDTH = 400;
 export const WORKSPACE_RIGHT_PANEL_MIN_WIDTH = 300;
 export const WORKSPACE_RIGHT_PANEL_MAX_WIDTH = 860;
 export const WORKSPACE_RIGHT_PANEL_MAIN_MIN_WIDTH = 352;

@@ -28,6 +28,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Reduce the default desktop sidebar width from 296px to 264px and the right panel from 480px to 400px while preserving saved widths and manual resizing.
+
 - File creation and editing remain directly callable with PTC enabled, so literal source need not be embedded in JavaScript. Computed edits can still run inside Code Mode with the same permission checks.
 
 - Code Mode accepts raw JavaScript on OpenAI Responses, with per-program options in a first-line comment and JSON transport on other providers. Literal source and custom tool results remain intact through streaming and history replay.
