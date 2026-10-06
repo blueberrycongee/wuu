@@ -41,9 +41,27 @@ async function mount(options: { tasks?: typeof task[]; runs?: unknown[]; mutate?
       input.dispatchEvent(new Event(input instanceof HTMLSelectElement ? "change" : "input", { bubbles: true }));
     });
   };
-  const open = async () => { await act(async () => container.querySelector<HTMLButtonElement>(".plugin-automation-list button")!.click()); };
+  const open = async (editing = true) => {
+    await act(async () => container.querySelector<HTMLButtonElement>(".plugin-automation-list button")!.click());
+    if (editing) await click("编辑自动化");
+  };
   return { container, invoke, click, edit, open };
 }
+it("browses run details without mutation and discards a cancelled edit", async () => {
+  const ui = await mount({ runs: [{ id: "run", task_id: task.id, status: "failed", triggered_at: "2026-09-15T01:00:00Z", error: "Provider unavailable" }] });
+  await ui.open(false);
+  expect(ui.container.querySelector("form")).toBeNull();
+  expect(ui.container.querySelector("aside")!.textContent).toContain("Provider unavailable");
+  await ui.click("编辑自动化");
+  await ui.edit("textarea", "Do not persist this draft");
+  await ui.click("取消");
+  expect(ui.container.querySelector("aside")).not.toBeNull();
+  expect(ui.container.querySelector("form")).toBeNull();
+  expect(ui.container.querySelector("aside")!.textContent).toContain(task.prompt);
+  await ui.click("编辑自动化");
+  expect(ui.container.querySelector("textarea")!.value).toBe(task.prompt);
+  expect(ui.invoke.mock.calls.every(([request]) => request.method.endsWith(".list"))).toBe(true);
+});
 it("edits wall-clock schedules and moves a worktree task to an existing chat", async () => {
   const ui = await mount(); await ui.open();
   expect(ui.container.querySelector<HTMLInputElement>('input[type="time"]')!.value).toBe("09:00");
@@ -71,8 +89,10 @@ it("opens a suggestion as a draft and creates only on submit", async () => {
 });
 it("shows completed one-shot snapshots without treating recurring runs as finished tasks", async () => {
   const ui = await mount({ tasks: [], runs: [{ id: "run", task_id: "one", status: "completed", triggered_at: "2026-09-15T01:00:00Z", task: { ...task, recurring: false } }, { id: "recurring", task_id: "two", status: "completed", triggered_at: "2026-09-15T02:00:00Z", task: { ...task, id: "two", title: "Recurring" } }] });
-  await ui.open();
-  expect(ui.container.querySelector("fieldset")!.disabled).toBe(true);
+  await ui.open(false);
+  expect(ui.container.querySelector("form")).toBeNull();
+  expect(ui.container.querySelector('button[aria-label="编辑自动化"]')).toBeNull();
+  expect(ui.container.querySelector("aside")!.textContent).toContain(task.prompt);
   expect(ui.container.querySelector(".plugin-automation-list")!.textContent).not.toContain("Recurring");
 });
 it("pauses and resumes from the row switch without opening the editor", async () => {

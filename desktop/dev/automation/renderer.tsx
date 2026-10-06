@@ -29,6 +29,10 @@ let tasks = params.has("empty") ? [] : [
 // A failed run on a recurring task and a finished one-shot task, so the list
 // shows both a run problem and the completed section.
 const runs = params.has("empty") ? [] : [
+  ...(params.has("states") ? [
+    { id: "run-long", task_id: "long", status: "running", triggered_at: "2026-09-15T00:30:00Z" },
+    { id: "run-review", task_id: "review", status: "interrupted", triggered_at: "2026-09-14T08:00:00Z", error: "Execution interrupted; the schedule is paused." },
+  ] : []),
   { id: "run-brief", task_id: "brief", status: "failed", triggered_at: "2026-09-15T00:00:00Z", error: "Provider rate limit reached" },
   { id: "run-once", task_id: "release", status: "completed", triggered_at: "2026-09-14T09:00:00Z", completed_at: "2026-09-14T09:03:00Z", task: { id: "release", title: "发布前检查", prompt: "检查发布分支的构建、测试和发布说明。", cron: "0 17 14 9 *", timezone: "Asia/Shanghai", mode: "new_thread", recurring: false, paused: false, workspace_mode: "shared" } },
 ];
