@@ -2381,7 +2381,7 @@
   border: 0;
   overflow: visible;
   background: transparent;
-  color: var(--conversation-process-control-color, var(--process-control-color-fallback));
+  color: var(--ink-muted);
   cursor: default;
   font-size: var(--conversation-process-font-size);
   font-weight: var(--conversation-process-font-weight);
