@@ -87,6 +87,10 @@
   --artifact-preview-overlay-bg: rgba(8, 10, 12, 0.78);
   --artifact-preview-shell-border: rgba(255, 255, 255, 0.14);
   --artifact-preview-frame-bg: #fff;
+  /* Image-overlay controls keep the same contrast treatment in both themes. */
+  --artifact-gallery-control-glow: rgb(255 255 255 / 85%);
+  --artifact-gallery-control-fg: rgb(17 19 21 / 75%);
+  --artifact-gallery-control-fg-hover: rgb(17 19 21);
 }
 
 .turn {
@@ -1609,17 +1613,25 @@
   padding-top: var(--conversation-answer-hover-action-gap);
 }
 
-/* CSS transitions do not run on initial mount. The live completion marker
- * supplies one paint-only rise and fade for the pair; historical turns never
- * receive it. A short delay lets the stream cursor begin settling first, so
- * even a very fast answer reads as "text finished, actions available" rather
- * than one abrupt burst. */
-.agent-actions-enter .agent-message-actions {
-  animation: agent-actions-reveal var(--motion-base) var(--ease-out) 80ms both;
+/* Continue the live answer's reading order through copy, fork, and time.
+ * Animate the children without moving their slots; historical turns never
+ * receive the entrance marker. The short initial pause lets the stream
+ * cursor begin settling before the staggered rise and fade. */
+.agent-actions-enter .agent-message-actions > * {
+  animation: agent-actions-reveal 1000ms var(--ease-out)
+    calc(80ms + var(--agent-action-index, 0) * 300ms) both;
+}
+
+.agent-actions-enter .agent-message-actions > :nth-child(2) {
+  --agent-action-index: 1;
+}
+
+.agent-actions-enter .agent-message-actions > :nth-child(3) {
+  --agent-action-index: 2;
 }
 
 /* Keyboard focus must never land on a visually delayed control. */
-.agent-actions-enter .agent-message-actions:focus-within {
+.agent-actions-enter .agent-message-actions:focus-within > * {
   animation: none;
 }
 
@@ -1632,8 +1644,8 @@
 }
 
 @container style(--motion-reduced: 1) {
-  .agent-actions-enter .agent-message-actions {
-    animation-delay: 0ms;
+  .agent-actions-enter .agent-message-actions > * {
+    animation: none;
   }
 }
 
@@ -4941,10 +4953,96 @@ pre {
  * outputs collect at the turn end, matching the existing file-change summary.
  */
 .turn-artifact-inline-list {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 10px;
   min-width: 0;
+}
+
+.turn-artifact-gallery-toolbar {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 1;
+  display: flex;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--motion-fast) var(--ease-out);
+  isolation: isolate;
+}
+
+/* A soft white glow provides contrast without adding a solid button surface. */
+.turn-artifact-gallery-toolbar::before {
+  content: "";
+  position: absolute;
+  inset: -4px;
+  z-index: -1;
+  border-radius: var(--radius-media);
+  background: var(--artifact-gallery-control-glow);
+  filter: blur(6px);
+  pointer-events: none;
+}
+
+.turn-artifact-inline-list:is(:hover, :focus-within) > .turn-artifact-gallery-toolbar {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.turn-artifact-gallery-toolbar .icon-button {
+  color: var(--artifact-gallery-control-fg);
+  background: transparent;
+  border: 0;
+}
+
+.turn-artifact-gallery-toolbar .icon-button:is(:hover, :active):not(:disabled) {
+  color: var(--artifact-gallery-control-fg-hover);
+  background: transparent;
+}
+
+@media (hover: none), (pointer: coarse) {
+  .turn-artifact-gallery-toolbar {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
+.turn-artifact-gallery-items {
+  display: flex;
+  gap: 10px;
+  min-width: 0;
+  overflow-x: auto;
+  padding: 4px;
+  scroll-padding-inline: 32px;
+}
+
+.turn-artifact-gallery-items:not(.is-tiled) > * {
+  flex: 0 0 auto;
+  width: min(240px, 85%);
+  min-width: 0;
+}
+
+.turn-artifact-gallery-items > :only-child {
+  width: min(240px, 100%);
+}
+
+.turn-artifact-gallery-items.is-tiled {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  overflow: visible;
+}
+
+.turn-artifact-gallery-items.is-tiled > * {
+  width: 100%;
+}
+
+.turn-artifact-gallery-items .turn-artifact-image-preview {
+  width: 100%;
+}
+
+html[data-focus-modality="keyboard"] .turn-artifact-gallery-items:focus-visible {
+  outline-offset: -2px;
+  border-radius: var(--radius-media);
 }
 
 .turn-artifact-text-part {

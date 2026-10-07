@@ -23,7 +23,10 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
   type RefObject,
+  createContext,
+  useContext,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
 } from "react";
@@ -53,8 +56,26 @@ export type HoverRevealLayerProps = HTMLAttributes<HTMLDivElement> & {
 
 export type HoverRevealTarget<K> = { key: K; anchor: HTMLElement };
 
+// Portaled cards and tooltips still belong to the surface that revealed them.
+// Retention lasts through the card's gap grace period and any focused editing;
+// disabling the owner dismisses its layers and cancels pending reveals.
+export type HoverRevealScope = {
+  disabled: boolean;
+  retain?: () => () => void;
+};
+export const HoverRevealScopeContext = createContext<HoverRevealScope | null>(null);
+
+// Retain only a rendered layer: a list can keep its reveal key after the
+// corresponding row disappears, without rendering a card for that key.
+export function useRetainHoverOwner(open: boolean): void {
+  const retain = useContext(HoverRevealScopeContext)?.retain;
+  useLayoutEffect(() => {
+    if (open) return retain?.();
+  }, [open, retain]);
+}
+
 export function useHoverReveal<K>({
-  disabled = false,
+  disabled: locallyDisabled = false,
   focus = "any",
   interactive = false,
 }: {
@@ -68,6 +89,8 @@ export function useHoverReveal<K>({
   anchorHandlers: (key: K) => HoverRevealAnchorHandlers;
   layerProps: HoverRevealLayerProps;
 } {
+  const scope = useContext(HoverRevealScopeContext);
+  const disabled = locallyDisabled || Boolean(scope?.disabled);
   const [revealed, setRevealed] = useState<HoverRevealTarget<K> | null>(null);
   // Mirrors for event handlers and effects, so dismissing never depends on
   // a stale closure capture.
@@ -207,7 +230,7 @@ export function useHoverReveal<K>({
 
   // A scroll outside the card invalidates its anchor geometry; a context
   // menu retires the card too. Scrolls within an editor do neither.
-  const open = revealed !== null;
+  const open = revealed !== null && !disabled;
   useEffect(() => {
     if (!open) {
       return;
@@ -232,17 +255,44 @@ export function useHoverReveal<K>({
       if (!containsTarget(event.target)) close();
     };
     const handleWindowBlur = (): void => close();
+    let pointerInGap = false;
+    const handlePointerMove = (event: PointerEvent): void => {
+      if (event.pointerType === "touch") return;
+      const anchor = revealedRef.current?.anchor;
+      const layer = layerRef.current;
+      if (!anchor || !layer) return;
+      const row = anchor.getBoundingClientRect();
+      const card = layer.getBoundingClientRect();
+      const gap = card.left - row.right;
+      const progress = gap > 0 ? (event.clientX - row.right) / gap : -1;
+      const wasInGap = pointerInGap;
+      // Bridge the row inset as well as the visible gap. Interpolating the
+      // vertical edges preserves diagonal travel without holding unrelated
+      // space above/below the row. Pausing here must not race the leave timer.
+      pointerInGap = progress >= 0 && progress <= 1 &&
+        event.clientY >= row.top + (card.top - row.top) * progress &&
+        event.clientY <= row.bottom + (card.bottom - row.bottom) * progress;
+      if (pointerInGap) {
+        clearCloseTimer();
+      } else if (wasInGap && !containsTarget(event.target)) {
+        leave();
+      }
+    };
     // Editors handle Escape before the layer does; tooltips retain capture
     // dismissal so they do not race a surface-level handler.
     window.addEventListener("keydown", handleKeyDown, !interactive);
     window.addEventListener("scroll", handleScroll, true);
-    if (interactive) window.addEventListener("pointerdown", handlePointerDown, true);
+    if (interactive) {
+      window.addEventListener("pointerdown", handlePointerDown, true);
+      window.addEventListener("pointermove", handlePointerMove, true);
+    }
     window.addEventListener("blur", handleWindowBlur);
     const stopContextMenuWatch = onContextMenuOpen(close);
     return () => {
       window.removeEventListener("keydown", handleKeyDown, !interactive);
       window.removeEventListener("scroll", handleScroll, true);
       window.removeEventListener("pointerdown", handlePointerDown, true);
+      window.removeEventListener("pointermove", handlePointerMove, true);
       window.removeEventListener("blur", handleWindowBlur);
       stopContextMenuWatch();
     };
@@ -250,8 +300,8 @@ export function useHoverReveal<K>({
   }, [open, interactive]);
 
   // External state can retire a layer mid-hover (content cleared, or the
-  // anchor became disabled).
-  useEffect(() => {
+  // anchor became disabled). Clear timers before the owner finishes closing.
+  useLayoutEffect(() => {
     if (disabled) {
       close();
     }
@@ -265,7 +315,7 @@ export function useHoverReveal<K>({
   }, []);
 
   return {
-    revealed,
+    revealed: open ? revealed : null,
     anchorHandlers,
     layerProps: {
       ref: layerRef,

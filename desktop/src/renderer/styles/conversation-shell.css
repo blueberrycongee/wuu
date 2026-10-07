@@ -291,8 +291,22 @@
 }
 
 .title-block {
+  --title-leading-gap: 10px;
+  /* PanelLeft and SquarePen share a frame inset of 3.5 on a 24-unit grid.
+   * Include its stroke edge, not just the empty space around the SVG box. */
+  --title-icon-ink-inset: calc(var(--control-toolbar-glyph-offset) + var(--icon-size) * (3.5 - var(--icon-stroke) / 2) / 24);
+  --title-visible-gap: calc(var(--title-leading-gap) + 2 * var(--title-icon-ink-inset));
   min-width: 0;
+  gap: max(0px, calc(var(--title-visible-gap) - 2 * var(--title-icon-ink-inset)));
   overflow: hidden;
+}
+
+/* With the macOS sidebar collapsed, the green light's trailing edge is
+ * 78 native DIP (see MAC_TRAFFIC_LIGHT_POSITION). Use its visible distance
+ * to the sidebar glyph as the reference for both following gaps. */
+:root:not([data-platform="win32"]):not([data-platform="linux"]):not([data-host-kind="web"])
+  .app-shell.sidebar-collapsed:not(.compact-navigation) .title-block {
+  --title-visible-gap: calc(var(--window-titlebar-leading-inset) - 78px / var(--desktop-page-zoom, 1) + var(--title-icon-ink-inset));
 }
 
 .conversation-title-heading {
@@ -301,7 +315,8 @@
   flex: 1 1 auto;
   min-width: 0;
   align-items: center;
-  gap: 8px;
+  /* Text has no button inset; subtract only the leading icon's ink inset. */
+  gap: max(0px, calc(var(--title-visible-gap) - var(--title-icon-ink-inset)));
 }
 
 .conversation-title-heading h1 {
@@ -812,7 +827,7 @@
 }
 
 .app-shell.compact-navigation .title-block {
-  column-gap: 6px;
+  --title-leading-gap: 6px;
 }
 
 .app-shell.compact-navigation .title-actions {

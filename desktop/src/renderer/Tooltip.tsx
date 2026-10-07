@@ -31,7 +31,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { HOVER_REVEAL_OPEN_DELAY_MS, useHoverReveal } from "./HoverReveal";
+import { HOVER_REVEAL_OPEN_DELAY_MS, useHoverReveal, useRetainHoverOwner } from "./HoverReveal";
 import { UILayerPortal } from "./ui/layers/UILayerHost";
 
 export const TOOLTIP_MAX_CONTENT_LENGTH = 120;
@@ -70,6 +70,7 @@ export function Tooltip({
   const inactive = disabled || !content || content.trim() === "";
   const { revealed, anchorHandlers } = useHoverReveal<true>({ disabled: inactive });
   const open = revealed !== null;
+  useRetainHoverOwner(open);
 
   // Measure and place the layer against the trigger. The layer mounts
   // hidden, this effect measures both boxes, and the resulting state

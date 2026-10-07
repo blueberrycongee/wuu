@@ -47,6 +47,7 @@ import {
   WINDOW_RESIZING_CLASS,
 } from "./WindowResizeState";
 import { PhoneNavigationContext } from "./PhoneNavigationContext";
+import { HOVER_REVEAL_OPEN_DELAY_MS } from "./HoverReveal";
 
 let container: HTMLDivElement;
 let root: Root | null = null;
@@ -289,6 +290,33 @@ async function openDrawerViaSidebarToggle(): Promise<void> {
     vi.advanceTimersByTime(SIDEBAR_DRAWER_HOVER_OPEN_DELAY_MS);
   });
   expect(appShell()?.classList.contains("sidebar-drawer-open")).toBe(true);
+}
+
+async function moveBetweenSidebarTargets(from: Element, to: Element): Promise<void> {
+  elementFromPointTarget = to;
+  await act(async () => {
+    from.dispatchEvent(new MouseEvent("pointerout", {
+      bubbles: true, relatedTarget: to, clientX: 320, clientY: 80,
+    }));
+    to.dispatchEvent(new MouseEvent("pointerover", {
+      bubbles: true, relatedTarget: from, clientX: 320, clientY: 80,
+    }));
+    vi.advanceTimersByTime(0);
+  });
+}
+
+async function hoverDrawerSession(reveal = true): Promise<HTMLElement> {
+  installWuuApi([threadFixture("hover-thread", "Hover session", "2026-01-01T00:00:00Z")]);
+  await renderCollapsedApp();
+  await openDrawerViaHoverZone();
+  const row = container.querySelector<HTMLElement>(".thread-row")!;
+  expect(row).not.toBeNull();
+  await moveBetweenSidebarTargets(document.body, row);
+  if (reveal) {
+    await act(async () => { vi.advanceTimersByTime(HOVER_REVEAL_OPEN_DELAY_MS); });
+    expect(document.querySelector(".sidebar-hover-card")).not.toBeNull();
+  }
+  return row;
 }
 
 function sidebarContainsFocus(): boolean {
@@ -758,6 +786,66 @@ describe("collapsed sidebar hover drawer", () => {
     expect(appShell()?.classList.contains("sidebar-drawer-closing")).toBe(
       true,
     );
+  });
+
+  it("retains the drawer across the session card gap and retires both after leaving", async () => {
+    const row = await hoverDrawerSession();
+    const card = document.querySelector<HTMLElement>(".sidebar-hover-card")!;
+    await moveBetweenSidebarTargets(row, document.body);
+    expect(appShell()?.classList.contains("sidebar-drawer-open")).toBe(true);
+    await moveBetweenSidebarTargets(document.body, card);
+    await act(async () => { vi.advanceTimersByTime(500); });
+    expect(appShell()?.classList.contains("sidebar-drawer-open")).toBe(true);
+    expect(document.querySelector(".sidebar-hover-card")).toBe(card);
+
+    await moveBetweenSidebarTargets(card, document.body);
+    await act(async () => { vi.advanceTimersByTime(500); });
+    expect(document.querySelector(".sidebar-hover-card")).toBeNull();
+    await act(async () => { vi.advanceTimersByTime(0); });
+    expect(appShell()?.classList.contains("sidebar-drawer-open")).toBe(false);
+  });
+
+  it("keeps the drawer when returning from a card to another area of the sidebar", async () => {
+    const row = await hoverDrawerSession();
+    const card = document.querySelector<HTMLElement>(".sidebar-hover-card")!;
+    await moveBetweenSidebarTargets(row, card);
+    const sidebar = container.querySelector<HTMLElement>(".sidebar")!;
+    await moveBetweenSidebarTargets(card, sidebar);
+    await act(async () => { vi.advanceTimersByTime(500); });
+    expect(document.querySelector(".sidebar-hover-card")).toBeNull();
+    await act(async () => { vi.advanceTimersByTime(0); });
+    expect(appShell()?.classList.contains("sidebar-drawer-open")).toBe(true);
+  });
+
+  it("retains a focused card editor with its drawer until an outside press", async () => {
+    const row = await hoverDrawerSession();
+    const card = document.querySelector<HTMLElement>(".sidebar-hover-card")!;
+    await moveBetweenSidebarTargets(row, card);
+    await act(async () => {
+      card.querySelector<HTMLButtonElement>(".sidebar-hover-card-title-editable")!.click();
+    });
+    const editor = card.querySelector("textarea");
+    expect(editor).not.toBeNull();
+    expect(document.activeElement).toBe(editor);
+    await moveBetweenSidebarTargets(card, document.body);
+    await act(async () => { vi.advanceTimersByTime(500); });
+    expect(appShell()?.classList.contains("sidebar-drawer-open")).toBe(true);
+    expect(document.activeElement).toBe(editor);
+    await act(async () => {
+      document.body.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, clientX: 320, clientY: 80 }));
+    });
+    await act(async () => { vi.advanceTimersByTime(0); });
+    expect(document.querySelector(".sidebar-hover-card")).toBeNull();
+    expect(appShell()?.classList.contains("sidebar-drawer-open")).toBe(false);
+  });
+
+  it.each([false, true])("dismisses pending or open cards when the drawer is explicitly closed (revealed=%s)", async (revealed) => {
+    await hoverDrawerSession(revealed);
+    await act(async () => { window.dispatchEvent(new Event("wuu:workbench-back")); });
+    expect(document.querySelector(".sidebar-hover-card")).toBeNull();
+    await act(async () => { vi.advanceTimersByTime(1000); });
+    expect(document.querySelector(".sidebar-hover-card")).toBeNull();
+    expect(appShell()?.classList.contains("sidebar-drawer-open")).toBe(false);
   });
 
   it("keeps the drawer open after selecting a sidebar session while still hovering it", async () => {

@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ChevronRight, Download, ExternalLink, FileDiff, X } from "./WuuIcons";
+import { ChevronRight, Download, ExternalLink, FileDiff, Images, LayoutGrid, X } from "./WuuIcons";
 
 import type { ThreadItem, ToolResultContentPart, Turn } from "../shared/protocol";
 import { useImagePreview } from "./ImagePreview";
@@ -124,25 +124,66 @@ export function TurnInlineArtifactOutputs({
   onOpenFile?: (path: string) => void;
   inspectionExpanded?: boolean;
 }): JSX.Element | null {
+  const { t } = useI18n();
   const [preview, setPreview] = useState<TurnArtifact>();
+  const [tiled, setTiled] = useState(false);
+  const galleryRef = useRef<HTMLDivElement>(null);
   // The image stream is visual output, not another tool-result inspector.
   const openPreview = useArtifactPreview(setPreview, cwd);
   const inline = artifacts.filter((artifact) => artifact.placement === "inline" && artifact.type !== "text");
+  const isGallery = inline.length > 0 && inline.every(artifact => artifact.mimeType.startsWith("image/") && !artifact.foldPreview);
+  useEffect(() => {
+    const gallery = galleryRef.current;
+    if (!isGallery || tiled || !gallery) return;
+    // Support mouse wheels without trapping page scrolling at either end.
+    // Trackpad horizontal gestures and browser zoom retain native behavior.
+    const onWheel = (event: WheelEvent) => {
+      if (event.ctrlKey || event.metaKey || event.shiftKey || event.deltaX !== 0) return;
+      const delta = event.deltaY * (event.deltaMode === 1 ? parseFloat(getComputedStyle(gallery).fontSize)
+        : event.deltaMode === 2 ? gallery.clientWidth : 1);
+      const next = Math.max(0, Math.min(gallery.scrollWidth - gallery.clientWidth, gallery.scrollLeft + delta));
+      if (next === gallery.scrollLeft) return;
+      event.preventDefault();
+      gallery.scrollLeft = next;
+    };
+    gallery.addEventListener("wheel", onWheel, { passive: false });
+    return () => gallery.removeEventListener("wheel", onWheel);
+  }, [isGallery, tiled]);
   if (inline.length === 0) return null;
+  const content = inline.map((artifact) => (
+    <ArtifactRenderer
+      artifact={artifact}
+      cwd={cwd}
+      key={artifact.id}
+      onOpenFile={onOpenFile}
+      onPreview={openPreview}
+      variant="inline"
+      inspectionExpanded={inspectionExpanded}
+    />
+  ));
+  const toggleLabel = t(tiled ? "artifacts.carouselView" : "artifacts.gridView");
   return (
     <>
       <div className="turn-artifact-inline-list" data-wuu-component="turn-artifacts-inline">
-        {inline.map((artifact) => (
-          <ArtifactRenderer
-            artifact={artifact}
-            cwd={cwd}
-            key={artifact.id}
-            onOpenFile={onOpenFile}
-            onPreview={openPreview}
-            variant="inline"
-            inspectionExpanded={inspectionExpanded}
-          />
-        ))}
+        {isGallery ? <>
+          {inline.length > 1 ? (
+            <div className="turn-artifact-gallery-toolbar">
+              <Tooltip content={toggleLabel}>
+                <button type="button" className="icon-button" data-gallery-toggle=""
+                  aria-label={toggleLabel} onClick={() => setTiled(value => !value)}>
+                  {tiled ? <Images className="icon" /> : <LayoutGrid className="icon" />}
+                </button>
+              </Tooltip>
+            </div>
+          ) : null}
+          <div ref={galleryRef}
+            className={`turn-artifact-gallery-items scrollbar-hidden${tiled ? " is-tiled" : ""}`}
+            data-scroll-fade={!tiled ? "inline" : undefined}
+            tabIndex={!tiled && inline.length > 1 ? 0 : undefined}
+            role="group" aria-label={t("artifacts.imageGallery")}>
+            {content}
+          </div>
+        </> : content}
       </div>
       {preview ? (
         <ArtifactPreview artifact={preview} cwd={cwd} onClose={() => setPreview(undefined)} />
