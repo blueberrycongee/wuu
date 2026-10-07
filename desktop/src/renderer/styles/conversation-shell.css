@@ -1409,10 +1409,13 @@ button.conversation-status-capsule,
 }
 
 .conversation-status-todo {
-  position: relative;
+  /* Anchor the card to the centered status row, so sibling capsules cannot
+   * push a wide plan outside a narrow window. */
   flex: 0 1 auto;
   min-width: 0;
-  max-width: min(240px, 36vw);
+  /* The fixed marker and count need their full footprint at large UI sizes;
+   * the surrounding flex row still shares space with other status capsules. */
+  max-width: min(240px, 100%);
 }
 
 .conversation-status-todo::after {
@@ -1424,9 +1427,33 @@ button.conversation-status-capsule,
   content: "";
 }
 
+.conversation-status-todo:is(:hover, :focus-within)::after {
+  pointer-events: auto;
+}
+
 .conversation-status-todo-trigger {
   width: 100%;
   max-width: 100%;
+}
+
+/* The arc represents completed items, never elapsed time. Its fixed footprint
+ * keeps the capsule still while real plan updates advance or reverse it. */
+.conversation-status-todo-progress {
+  flex: 0 0 auto;
+  width: var(--icon-size-sm);
+  height: var(--icon-size-sm);
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  transform: rotate(-90deg);
+}
+
+.todo-progress-track {
+  opacity: 0.18;
+}
+
+.todo-progress-value {
+  transition: stroke-dashoffset var(--motion-slow) var(--ease-out);
 }
 
 /* A read-only list using the UI text baseline and the info panel's status marks. */
@@ -1506,8 +1533,54 @@ button.conversation-status-capsule,
   color: var(--shell-todo-card-ink);
 }
 
-.conversation-status-todo-card li.is-in_progress .conversation-status-todo-marker > svg {
-  fill: currentColor;
+/* Persistent SVG paths let the running ring yield to a drawn check in place.
+ * CSS transitions also reverse cleanly if the agent revises a completed step. */
+.todo-step-ring {
+  stroke-dasharray: 100 100;
+  transform-origin: 10px 10px;
+  transition:
+    opacity var(--motion-fast) var(--ease-out),
+    stroke-dasharray var(--motion-slow) var(--ease-out);
+}
+
+.todo-step-check {
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  opacity: 0;
+  transition:
+    stroke-dashoffset var(--motion-slow) var(--ease-out),
+    opacity var(--motion-fast) var(--ease-out);
+}
+
+.conversation-status-todo-card li.is-in_progress .todo-step-ring {
+  stroke-dasharray: 72 100;
+  animation: wuu-spin var(--motion-spin) linear infinite paused;
+}
+
+/* An unopened plan does no continuous animation work. */
+.conversation-status-todo:is(:hover, :focus-within) li.is-in_progress .todo-step-ring {
+  animation-play-state: running;
+}
+
+.conversation-status-todo-card li.is-completed .todo-step-ring {
+  opacity: 0;
+}
+
+.conversation-status-todo-card li.is-completed .todo-step-check {
+  stroke-dashoffset: 0;
+  opacity: 1;
+}
+
+:root[data-appearance-motion="reduce"] .conversation-status-todo .todo-step-ring {
+  animation: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root .conversation-status-todo-card li.is-in_progress .todo-step-ring {
+    animation: none;
+  }
 }
 
 .conversation-status-todo-card li.is-completed {

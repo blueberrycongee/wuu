@@ -8,6 +8,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ## [Unreleased]
 
+### Added
+
+- Add count-driven progress rings and in-place running-to-completed transitions
+  to conversation TODO plans, respecting reduced-motion preferences.
+
 ## [2026.10.6] - 2026-10-06
 
 ### Contributors
