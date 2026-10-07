@@ -1,0 +1,86 @@
+.turn-web-research {
+  min-width: 0;
+  margin-block: 2px 4px;
+  margin-inline-start: calc(var(--process-summary-icon-size) + var(--process-summary-icon-gap) - 4px);
+}
+
+.web-research-sources {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+}
+
+.web-source-circle,
+.web-research-more {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  min-width: 32px;
+  height: 32px;
+  padding: 4px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--ink-soft);
+  font: inherit;
+  cursor: pointer;
+}
+
+.web-source-circle { width: 32px; }
+.web-research-more { border-radius: var(--radius-pill); padding-inline: 6px; }
+.web-research-count {
+  margin-inline-start: 6px;
+  color: var(--ink-soft);
+  font-size: var(--font-ui);
+  white-space: nowrap;
+}
+
+.web-source-avatar {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 1px solid var(--hairline);
+  background: var(--paper);
+  color: var(--ink-soft);
+  font-size: var(--font-ui);
+  transition: transform var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out);
+}
+
+.web-source-avatar img {
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  opacity: 0;
+  transition: opacity var(--motion-fast) var(--ease-out);
+}
+.web-source-avatar img[data-loaded="true"] { opacity: 1; }
+
+.web-source-circle:hover .web-source-avatar {
+  transform: translateY(-2px);
+  border-color: var(--hairline-strong);
+}
+.web-research-more:hover { background: var(--ink-overlay-6); color: var(--ink); }
+.web-source-circle:focus-visible,
+.web-research-more:focus-visible { outline: 2px solid var(--ink-soft); outline-offset: 1px; }
+
+.web-source-circle.is-arriving {
+  animation: web-source-arrive var(--motion-slow) var(--ease-out) backwards;
+  animation-delay: calc(var(--source-order) * 45ms);
+}
+.web-research-overflow > .web-research-sources { padding-top: 2px; }
+
+@keyframes web-source-arrive {
+  from { opacity: 0; transform: translateY(4px) scale(0.86); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@container style(--motion-reduced: 1) {
+  .web-source-circle.is-arriving { animation: none; }
+  .web-source-circle:hover .web-source-avatar { transform: none; }
+}

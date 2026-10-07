@@ -1437,111 +1437,75 @@ function makeWebSearch(
   };
 }
 
-describe("AssistantTurnShell — turn sources pill end-to-end", () => {
-  it("renders the sources pill beside the process header for a turn that ran a single web_fetch", () => {
+describe("AssistantTurnShell — web research", () => {
+  it("keeps sources inside the tool call and opens them through the turn URL handler", () => {
+    const onOpenURL = vi.fn();
     const turn = makeTurn("completed", [
-      makeFinalAnswer("this turn read the docs page"),
       makeWebFetch("https://docs.anthropic.com/api"),
+      makeFinalAnswer("this turn read the docs page"),
     ]);
-    const { container } = renderShell(turn);
-
-    const pill = container.querySelector(".turn-sources-pill");
-    expect(pill).not.toBeNull();
-    // Single source → the entire pill is a <button>; the accessible
-    // name carries the full URL (not just "来源" or the host) so users
-    // and screen readers know which page on the host was consulted.
-    expect(pill?.getAttribute("aria-label")).toBe(
-      "打开 https://docs.anthropic.com/api",
-    );
-    // No nested icon button — the single-source pill is the click
-    // target on its own. Nesting <button> in <button> would be invalid
-    // HTML and would double-fire the click handler.
-    expect(container.querySelectorAll("button.turn-source-icon").length).toBe(0);
-    // Pill sits in the process header line, before the answer body — not
-    // down in the answer footer.
-    const topline = container.querySelector(".turn-process-topline");
-    expect(topline?.contains(pill)).toBe(true);
-    const answerBody = container.querySelector(".turn-answer-body");
-    expect(answerBody).not.toBeNull();
-    expect(
-      pill?.compareDocumentPosition(answerBody as Node) ?? 0,
-    ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    const { container } = renderShell(turn, { onOpenURL });
+    act(() => container.querySelector<HTMLElement>(".turn-process-toggle")!.click());
+    const sources = container.querySelector(".turn-web-research")!;
+    expect(sources).not.toBeNull();
+    expect(container.querySelector(".process-surface")?.contains(sources)).toBe(true);
+    const answer = container.querySelector(".turn-answer-body")!;
+    expect(sources.compareDocumentPosition(answer)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    const link = sources.querySelector<HTMLButtonElement>("button[aria-label^='打开 ']")!;
+    act(() => link.click());
+    expect(onOpenURL).toHaveBeenCalledExactlyOnceWith("https://docs.anthropic.com/api");
   });
 
-  it("collapses multiple hits on the same host across web_search and web_fetch into one slot", () => {
+  it("deduplicates search and fetch hits by host in first-seen order", () => {
     const turn = makeTurn("completed", [
-      makeFinalAnswer(""),
       makeWebSearch([
         { url: "https://docs.anthropic.com/a", title: "Doc A" },
         { url: "https://docs.anthropic.com/b", title: "Doc B" },
+        { url: "https://openai.com/docs", title: "OpenAI" },
       ]),
       makeWebFetch("https://docs.anthropic.com/c"),
-    ]);
-    const { container } = renderShell(turn);
-
-    expect(container.querySelector(".turn-sources-pill")).not.toBeNull();
-    // Three URLs all dedupe to a single source, so the pill itself
-    // becomes the click target — no nested icon button. The favicon
-    // renders inside the pill button as the visual.
-    expect(container.querySelectorAll("button.turn-source-icon").length).toBe(0);
-    expect(
-      container.querySelectorAll("button.turn-sources-pill").length,
-    ).toBe(1);
-  });
-
-  it("stacks one icon per unique host and labels the pill with the host count", () => {
-    const turn = makeTurn("completed", [
       makeFinalAnswer(""),
-      makeWebSearch([
-        { url: "https://www.anthropic.com/news/a", title: "Anthropic news" },
-        { url: "https://platform.openai.com/docs", title: "OpenAI docs" },
-        { url: "https://huggingface.co/models", title: "HF models" },
-      ]),
     ]);
     const { container } = renderShell(turn);
-
-    expect(container.querySelector(".turn-sources-label")?.textContent).toBe(
-      "来源 3",
-    );
-    const icons = container.querySelectorAll("button.turn-source-icon");
-    expect(icons.length).toBe(3);
-    // First-seen order — Anthropic, then OpenAI, then HF. Pull the
-    // host out of the accessible label rather than introducing a
-    // data-host attribute on the component, so this assertion
-    // survives any future i18n of the visible pill label without
-    // forcing a dataset hook that screen readers would otherwise
-    // ignore.
-    expect(icons[0].getAttribute("aria-label")).toContain("anthropic.com");
-    expect(icons[1].getAttribute("aria-label")).toContain(
-      "platform.openai.com",
-    );
-    expect(icons[2].getAttribute("aria-label")).toContain("huggingface.co");
+    act(() => container.querySelector<HTMLElement>(".turn-process-toggle")!.click());
+    const links = container.querySelectorAll(".turn-web-research button[aria-label^='打开 ']");
+    expect(links).toHaveLength(2);
+    expect(links[0].getAttribute("aria-label")).toContain("https://docs.anthropic.com/a");
+    expect(links[1].getAttribute("aria-label")).toContain("https://openai.com/docs");
   });
 
-  it("does not render the pill when no web tool ran this turn", () => {
-    const turn = makeTurn("completed", [
-      makeFinalAnswer("plain answer with no web lookup"),
-      makeReadFileTool("local.ts"),
+  it("shows an ongoing search before results arrive, and excludes failed fetches from sources", () => {
+    const search = { ...makeWebSearch([]), status: "in_progress" as const,
+      arguments: JSON.stringify({ query: "Wuu motion" }) };
+    const failed = { ...makeWebFetch("https://failed.example.com"), status: "failed" as const };
+    const turn = makeTurn("in_progress", [failed, search]);
+    const { container } = renderShell(turn);
+    const process = container.querySelector(".process-surface")!;
+    expect(process.textContent).toContain("Wuu motion");
+    expect(process.querySelector("button[aria-label^='打开 ']")).toBeNull();
+  });
+
+  it("keeps each tool group's sources local and excludes unsuccessful pages", () => {
+    const turn = makeTurn("in_progress", [
+      makeWebSearch([{ url: "https://first.example.com/page", title: "First" }]),
+      makeCommentary("Now checking the second source"),
+      makeWebFetch("https://second.example.com/page"),
+      { ...makeWebFetch("https://failed.example.com/page"), status: "failed" },
+      { ...makeWebFetch("https://pending.example.com/page"), status: "in_progress" },
     ]);
     const { container } = renderShell(turn);
-
-    expect(container.querySelector(".turn-sources-pill")).toBeNull();
+    const groups = container.querySelectorAll(".process-surface");
+    expect(groups).toHaveLength(2);
+    expect(groups[0].querySelector("button[aria-label^='打开 ']")?.getAttribute("aria-label")).toContain("https://first.example.com/page");
+    const secondLinks = groups[1].querySelectorAll("button[aria-label^='打开 ']");
+    expect(secondLinks).toHaveLength(1);
+    expect(secondLinks[0].getAttribute("aria-label")).toContain("https://second.example.com/page");
   });
 
-  it("clicking the sources pill hands the URL to onOpenURL", () => {
-    const onOpenURL = vi.fn();
-    const turn = makeTurn("completed", [
-      makeFinalAnswer(""),
-      makeWebFetch("https://docs.anthropic.com/api"),
-    ]);
-    const { container } = renderShell(turn, { onOpenURL });
-
-    const button = container.querySelector<HTMLButtonElement>(
-      "button.turn-sources-pill",
-    );
-    act(() => {
-      button?.click();
-    });
-    expect(onOpenURL).toHaveBeenCalledWith("https://docs.anthropic.com/api");
+  it("does not show web research for local file tools", () => {
+    const { container } = renderShell(makeTurn("completed", [
+      makeReadFileTool("local.ts"), makeFinalAnswer("plain answer"),
+    ]));
+    expect(container.querySelector(".turn-web-research")).toBeNull();
   });
 });

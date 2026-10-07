@@ -11,6 +11,7 @@ import type { ThreadItem } from "../shared/protocol";
 import {
   browserActivityOpenURL,
   buildToolActivityProcessSegments,
+  collectTurnSources,
   type ToolActivityProcessSegment,
 } from "./ToolActivityHelpers";
 import { ToolActivityRow, ToolActivityTimeline } from "./ToolActivity";
@@ -22,6 +23,7 @@ import {
 } from "./AutoFollowScroll";
 import { AnimatedProcessText } from "./ProcessTextMotion";
 import { ProcessSurfaceFold } from "./ProcessSurfaceFold";
+import { TurnSourcesRow } from "./TurnSourcesRow";
 import { collectTurnArtifacts } from "./ArtifactOutputs";
 import { translateCurrent as translate, useI18n } from "./i18n";
 import {
@@ -252,6 +254,8 @@ export function ProcessSurface({
   const { t } = useI18n();
   const openWorkspaceURL = useWorkspaceBrowserOpen(onOpenURL);
   const toolItems = processItems.filter(isToolActivityItem);
+  const sources = collectTurnSources(toolItems.filter(item =>
+    item.status === "completed" && !item.error && !item.result_detail?.is_error));
   const reasoningItems = processItems.filter(
     (item) => item.type === "reasoning",
   );
@@ -435,6 +439,7 @@ export function ProcessSurface({
           </div>
         ) : null)}
       </ProcessSurfaceFold>
+      <TurnSourcesRow sources={sources} running={processEntryActive} onOpen={onOpenURL} />
     </div>
   );
   // Nesting is deterministic: conversation.process is the complete outer
