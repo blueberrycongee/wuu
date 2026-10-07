@@ -1,0 +1,38 @@
+.artifact-preview-flight {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.artifact-preview-flight > * {
+  position: absolute;
+  top: 0;
+  left: 0;
+  box-sizing: border-box;
+  will-change: transform;
+}
+
+.artifact-preview-flight-surface {
+  background: var(--paper);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-pop);
+}
+
+.artifact-preview-flight-title {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--ink);
+  font-size: var(--font-sm);
+  font-weight: 600;
+}
+
+.artifact-preview-flight img {
+  object-fit: contain;
+}
+
+.artifact-preview-motion-hidden {
+  visibility: hidden !important;
+}

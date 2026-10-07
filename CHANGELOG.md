@@ -10,6 +10,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Add a small side-panel action to delivered images while keeping direct clicks
+  in the full image viewer. Connect artifact previews to the right panel with
+  reversible transitions that respect reduced motion and fit portrait images.
+
 - Add count-driven progress rings and in-place running-to-completed transitions
   to conversation TODO plans, respecting reduced-motion preferences.
 

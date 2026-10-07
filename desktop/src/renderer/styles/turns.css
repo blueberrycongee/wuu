@@ -4917,7 +4917,8 @@ pre {
   min-width: 0;
 }
 
-.turn-artifact-gallery-toolbar {
+.turn-artifact-gallery-toolbar,
+.turn-artifact-image-toolbar {
   position: absolute;
   top: 8px;
   right: 8px;
@@ -4929,8 +4930,9 @@ pre {
   isolation: isolate;
 }
 
-/* A soft white glow provides contrast without adding a solid button surface. */
-.turn-artifact-gallery-toolbar::before {
+/* White light supports the icon over media without a dark halo or button box. */
+.turn-artifact-gallery-toolbar::before,
+.turn-artifact-image-toolbar::before {
   content: "";
   position: absolute;
   inset: -4px;
@@ -4941,27 +4943,36 @@ pre {
   pointer-events: none;
 }
 
-.turn-artifact-inline-list:is(:hover, :focus-within) > .turn-artifact-gallery-toolbar {
+.turn-artifact-inline-list:is(:hover, :focus-within) > .turn-artifact-gallery-toolbar,
+.turn-artifact-inline-image:is(:hover, :focus-within) .turn-artifact-image-toolbar {
   opacity: 1;
   pointer-events: auto;
 }
 
-.turn-artifact-gallery-toolbar .icon-button {
+.turn-artifact-gallery-toolbar .icon-button,
+.turn-artifact-image-toolbar .icon-button {
   color: var(--artifact-gallery-control-fg);
   background: transparent;
   border: 0;
 }
 
-.turn-artifact-gallery-toolbar .icon-button:is(:hover, :active):not(:disabled) {
+.turn-artifact-gallery-toolbar .icon-button:is(:hover, :active):not(:disabled),
+.turn-artifact-image-toolbar .icon-button:is(:hover, :active):not(:disabled) {
   color: var(--artifact-gallery-control-fg-hover);
   background: transparent;
 }
 
 @media (hover: none), (pointer: coarse) {
-  .turn-artifact-gallery-toolbar {
+  .turn-artifact-gallery-toolbar,
+  .turn-artifact-image-toolbar {
     opacity: 1;
     pointer-events: auto;
   }
+}
+
+.turn-artifact-image-toolbar {
+  top: auto;
+  bottom: 8px;
 }
 
 .turn-artifact-gallery-items {
@@ -5049,7 +5060,7 @@ html[data-focus-modality="keyboard"] .turn-artifact-gallery-items:focus-visible 
   object-fit: scale-down;
 }
 
-.turn-artifact-inline-image button {
+.turn-artifact-image-preview > button {
   display: grid;
   place-items: center;
   width: 100%;
@@ -5066,12 +5077,12 @@ html[data-focus-modality="keyboard"] .turn-artifact-gallery-items:focus-visible 
   overflow-wrap: anywhere;
 }
 
-.turn-artifact-inline-image button:not(:disabled),
+.turn-artifact-image-preview > button:not(:disabled),
 .turn-artifact-inline-image img[role="button"] {
   cursor: zoom-in;
 }
 
-.turn-artifact-inline-image button:focus-visible,
+.turn-artifact-image-preview > button:focus-visible,
 .turn-artifact-inline-image img[role="button"]:focus-visible {
   outline: 2px solid var(--image-preview-outline-focus);
   outline-offset: 2px;
@@ -5210,10 +5221,11 @@ html[data-focus-modality="keyboard"] .turn-artifact-gallery-items:focus-visible 
 }
 
 .artifact-preview-image {
+  position: absolute;
+  inset: 0;
   display: block;
-  max-width: 100%;
-  max-height: 100%;
-  margin: auto;
+  width: 100%;
+  height: 100%;
   object-fit: contain;
 }
 

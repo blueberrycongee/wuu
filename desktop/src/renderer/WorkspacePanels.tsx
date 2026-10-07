@@ -1058,6 +1058,7 @@ export function WorkspaceRightPanel({
                   <ArtifactPreview
                     active={open}
                     artifact={activeTab.artifact}
+                    motion={activeTab.motion}
                     cwd={activeTab.cwd}
                     mode="panel"
                     onClose={() => onCloseTab(activeTab.id)}

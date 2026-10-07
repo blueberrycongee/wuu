@@ -120,6 +120,8 @@ export function useWorkspaceToolState({
   // dismisses their last diff / file / tool tab, which conflicts with the
   // intent of "I'm just peeking — close it when I'm done".
   function closeWorkspaceViewTab(id: string): void {
+    const tab = workspaceViewTabs.find((candidate) => candidate.id === id);
+    if (rightPanelOpen && workspaceActiveViewTabID === id && tab?.kind === "artifact") tab.motion?.close();
     const willEmpty =
       workspaceViewTabs.length === 1 && workspaceViewTabs[0]?.id === id;
     closeTab(id);

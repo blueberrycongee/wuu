@@ -1,4 +1,4 @@
-import { Fragment, type ReactNode } from "react";
+import { Fragment, type MouseEvent, type ReactNode } from "react";
 import { ChevronRight } from "./WuuIcons";
 
 import type { Turn } from "../shared/protocol";
@@ -15,7 +15,7 @@ export type TurnOutputSummaryRow = {
   name: string;
   tooltip?: string;
   trailing?: ReactNode;
-  onOpen?: () => void;
+  onOpen?: (event: MouseEvent<HTMLButtonElement>) => void;
   openLabel?: string;
   wrap?: (row: ReactNode) => ReactNode;
 };
@@ -36,7 +36,7 @@ export function TurnOutputSummaryCard({
   title: string;
   subtitle?: ReactNode;
   trailing?: ReactNode;
-  onOpen?: () => void;
+  onOpen?: (event: MouseEvent<HTMLButtonElement>) => void;
   openLabel?: string;
   wrapOverview?: (overview: ReactNode) => ReactNode;
   rows?: readonly TurnOutputSummaryRow[];
