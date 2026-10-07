@@ -173,7 +173,11 @@ func TestForkRawHistoryResolvesLiveItemIDAfterDisplayPruning(t *testing.T) {
 		}
 	}
 
-	display := displayHistoryAcrossProviderCheckpoint(raw, raw[4:])
+	// Older clients could retain a pruned display snapshot after compaction.
+	// Keep that legacy fixture to exercise the raw-history fork fallback.
+	display := []persistedMessage{raw[0], raw[1], raw[3], raw[4], raw[5]}
+	display[1].ToolCalls = nil
+	display[1].ReasoningContent = ""
 	displayMessages := chatMessagesFromPersistedMessages(display)
 	if _, err := forkHistoryAtTargetWithIdentity(displayMessages, threadID, liveTurns, targetTurn.ID, targetItem.ID, targetItem); !errors.Is(err, errForkTargetNotFound) {
 		t.Fatalf("pruned display history unexpectedly resolved stale live ID: %v", err)

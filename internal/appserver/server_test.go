@@ -8787,15 +8787,19 @@ func TestServerCompactedTurnPersistsAndResumes(t *testing.T) {
 		t.Fatalf("expected compacted transcript to retain the older user request: %+v", result.Thread.Turns[0])
 	}
 	foundCompaction := false
+	foundToolResult := false
 	for _, turn := range result.Thread.Turns {
 		for _, item := range turn.Items {
 			if item.Type == ThreadItemContextCompaction {
 				foundCompaction = true
 			}
-			if item.Type == ThreadItemToolCall {
-				t.Fatalf("compacted transcript restored an obsolete tool payload: %+v", turn)
+			if item.Type == ThreadItemToolCall && item.SourceID == "call_1" && item.Result == largeToolOutput {
+				foundToolResult = true
 			}
 		}
+	}
+	if !foundToolResult {
+		t.Fatal("resumed transcript lost the tool result released from model context")
 	}
 	if !foundCompaction {
 		t.Fatalf("expected resumed transcript to include a context compaction item: %+v", result.Thread.Turns)

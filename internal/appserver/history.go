@@ -486,42 +486,6 @@ func persistedMessagesFromProviderSnapshot(snapshot sessionstore.ProviderHistory
 	return out, nil
 }
 
-// displayHistoryAcrossProviderCheckpoint restores the user-visible transcript
-// that predates the current provider checkpoint without putting compacted tool
-// payloads and reasoning back on the wire. The provider snapshot remains the
-// source of truth from its earliest retained record onward. raw must already
-// exclude edited suffixes; an empty checkpoint still preserves that older past.
-func displayHistoryAcrossProviderCheckpoint(raw, provider []persistedMessage) []persistedMessage {
-	firstRetainedSeq := 0
-	for _, rec := range provider {
-		if rec.Seq > 0 && (firstRetainedSeq == 0 || rec.Seq < firstRetainedSeq) {
-			firstRetainedSeq = rec.Seq
-		}
-	}
-	if firstRetainedSeq == 1 {
-		return provider
-	}
-	display := make([]persistedMessage, 0, len(raw)+len(provider))
-	for _, rec := range raw {
-		if rec.Seq <= 0 || (firstRetainedSeq > 0 && rec.Seq >= firstRetainedSeq) {
-			continue
-		}
-		switch strings.ToLower(strings.TrimSpace(rec.Role)) {
-		case "tool":
-			continue
-		case "assistant":
-			rec.ToolCalls = nil
-			rec.ReasoningContent = ""
-			rec.ReasoningBlocks = nil
-			if strings.TrimSpace(rec.Content) == "" && strings.TrimSpace(rec.DisplayContent) == "" {
-				continue
-			}
-		}
-		display = append(display, rec)
-	}
-	return append(display, provider...)
-}
-
 func historyRecordFromPersistedMessage(rec persistedMessage) sessionstore.HistoryRecord {
 	return sessionstore.HistoryRecord{
 		Seq:                 rec.Seq,

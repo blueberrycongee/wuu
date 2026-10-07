@@ -17,6 +17,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Add count-driven progress rings and in-place running-to-completed transitions
   to conversation TODO plans, respecting reduced-motion preferences.
 
+### Fixed
+
+- Restore complete conversation history after reload, including intermediate
+  reasoning, tool results, and image artifacts released from model context.
+
 ## [2026.10.6] - 2026-10-06
 
 ### Contributors
