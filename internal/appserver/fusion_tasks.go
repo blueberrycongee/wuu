@@ -132,17 +132,15 @@ func (s *Server) fusionTaskView(task session.FusionTask) (FusionTaskView, error)
 		if turn != nil && turn.Status != TurnStatusInProgress {
 			if current.State == session.FusionTaskQueued || current.State == session.FusionTaskRunning {
 				state := session.FusionTaskAwaitingReview
-				if turn.Status == TurnStatusFailed {
+				if turn.Status == TurnStatusFailed || turn.Status == TurnStatusInterrupted {
 					state = session.FusionTaskFailed
 				}
-				if turn.Status != TurnStatusInterrupted {
-					if _, err := session.RecordFusionReport(s.rt.SessionDir, current.ID, latest.ClientID, current.Revision, turn.ID, state); err != nil {
-						return view, err
-					}
-					view.FusionTask, _, err = session.ReadFusionTask(s.rt.SessionDir, current.ID)
-					if err != nil {
-						return view, err
-					}
+				if _, err := session.RecordFusionReport(s.rt.SessionDir, current.ID, latest.ClientID, current.Revision, turn.ID, state); err != nil {
+					return view, err
+				}
+				view.FusionTask, _, err = session.ReadFusionTask(s.rt.SessionDir, current.ID)
+				if err != nil {
+					return view, err
 				}
 			}
 			if view.ReportID == turn.ID || view.State == session.FusionTaskCancelled {

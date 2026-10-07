@@ -20,6 +20,10 @@ Each delegated task records its requirements revision and actual Sidekick report
 
 The model menu lists the conversation's actual Lead and Sidekick models. The turn header shows which role is working and retains Sidekick failures after the Lead finishes. Click **Message from Sidekick** to open its actual conversation in split view, even during execution or after failure or cancellation. The Sidekick pane is read-only; send requirements in the Lead conversation. Expand process details for public progress, failure diagnostics, cancellation reasons, task elapsed time, review correction count, and recorded usage for both conversations. Fusion coordinates writes to the shared workspace, while the Lead can read and review during execution. Normal usage statistics include both conversations. Wuu does not estimate savings from a hypothetical single-model run.
 
+If the app server exits during a task, recovery marks consumed work with no live executor as failed and reports the interruption to the Lead. It preserves history and file changes without replaying that work. The Lead can inspect the result and explicitly request a correction or delegate a new task. Inputs that had not started remain queued.
+
+Write coordination lasts for each tool call. A background command can keep writing after that call returns, so the participants must finish or stop commands that modify task files before handing them over. Development servers and watchers may remain when their output paths do not conflict with the other participant's edits; the brief or report must identify those processes and paths. Fusion does not enforce exclusive file access for background processes.
+
 Moving the Lead to a linked worktree moves both conversations together. The Sidekick must be idle before this move and cannot change its workspace independently.
 
 ## Find a conversation

@@ -2764,10 +2764,14 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 		})
 		if ev.Type == providers.EventToolUseStart || ev.Type == providers.EventToolUseEnd || ev.Type == providers.EventMessage {
 			th.mu.Lock()
-			source, parent := th.Source, th.ParentID
+			source := th.Source
 			th.mu.Unlock()
 			if source == fusionSideSource {
-				s.publishFusionState(parent)
+				// Ordinary managed sessions keep their parent in durable metadata;
+				// threadState.ParentID is reserved for agent workers.
+				if metadata, found, err := session.Find(s.rt.SessionDir, th.ID); err == nil && found {
+					s.publishFusionState(metadata.ParentID)
+				}
 			}
 		}
 	})

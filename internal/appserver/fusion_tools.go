@@ -8,8 +8,10 @@ import (
 	"github.com/blueberrycongee/wuu/internal/session"
 )
 
-// Read-only and orchestration calls remain available during delegation. Actual
-// mutations share a cross-process lease until the tool, including cleanup, exits.
+// Read-only and orchestration calls remain available during delegation.
+// Mutating tool calls share a cross-process lease until the call returns.
+// Background processes outlive that lease; participants coordinate their output
+// paths and finish conflicting writers before handing over task files.
 func (s *Server) acquireFusionTool(member session.Session, call providers.ToolCall, base agent.ToolExecutor) (func(), error) {
 	noop := func() {}
 	if call.Name == "fusion_delegate" {

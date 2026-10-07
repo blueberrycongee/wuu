@@ -17,6 +17,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Settle interrupted Fusion tasks after app-server shutdown or a crash, report
+  the interruption once, and allow subsequent delegation without replaying work.
+- Publish Sidekick progress to the Lead while both conversations are running.
 - Identify Fusion message sources as Lead or Sidekick even before conversation
   titles exist, including historical messages with empty source names.
 
