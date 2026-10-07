@@ -100,6 +100,7 @@ func (s *Server) handleThreadStart(req Request) error {
 		return s.writeResponse(req.ID, nil, agentengine.CheckEngine(engineID))
 	}
 	selection := s.currentSessionRuntimeSelection()
+	var fusionPair *config.FusionSelection
 	selection.Speed = strings.TrimSpace(params.Speed)
 	if err := validateSpeed(selection.Speed); err != nil {
 		return s.writeResponse(req.ID, nil, err)
@@ -148,6 +149,21 @@ func (s *Server) handleThreadStart(req Request) error {
 	}
 	// Review is owned by the built-in engine and never expands permission mode.
 	selection.ApproveForMe = selection.ApproveForMe && engineID == agentengine.EngineWuu && approvefor.EnabledForMode(selection.PermissionMode)
+	if params.Fusion {
+		if params.Ephemeral || params.Project != nil || params.Handoff != nil || engineID != agentengine.EngineWuu {
+			return s.writeResponse(req.ID, nil, errors.New("Fusion requires a persistent ordinary Wuu conversation"))
+		}
+		cfg, _, err := s.rt.LoadEffectiveConfig()
+		if err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+		pair, err := cfg.FusionPair()
+		if err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+		fusionPair = &pair
+		selection.Provider, selection.Model, selection.Variant, selection.Effort, selection.Speed = pair.Lead.Provider, pair.Lead.Model, pair.Lead.Variant, pair.Lead.Effort, ""
+	}
 	if params.Project != nil {
 		th, err := s.startProjectThread(selection, engineID, params)
 		if err != nil {
@@ -228,6 +244,11 @@ func (s *Server) handleThreadStart(req Request) error {
 		if _, err := session.SetRuntimeSelection(s.rt.SessionDir, id, selection); err != nil {
 			return s.writeResponse(req.ID, nil, err)
 		}
+		if fusionPair != nil {
+			if _, err := session.SetFusion(s.rt.SessionDir, id, *fusionPair, true); err != nil {
+				return s.writeResponse(req.ID, nil, err)
+			}
+		}
 		// Bind project threads to the active workspace's stable id so their
 		// state and listing survive the project moving. Scratch threads carry
 		// no project id.
@@ -247,6 +268,7 @@ func (s *Server) handleThreadStart(req Request) error {
 		history = append(history, providers.ChatMessage{Role: "system", Content: prompt})
 	}
 	th := newThreadState(id, history, s.rt.ProviderName, s.rt.Model, threadCWD, persistHistory, time.Now().UTC())
+	th.Fusion = fusionPair
 	th.EngineID = string(engineID)
 	th.Source = threadSource
 	applyThreadRuntimeSelection(th, selection)
@@ -509,6 +531,15 @@ func (s *Server) loadPersistedThreadState(id string, now time.Time) (*threadStat
 	th.Turns = applyTokenUsageMetasToTurns(th.Turns, loaded.tokenMetas)
 	th.WorkspaceKind = workspaceKindForCWD(s.rt.WuuHome, threadCWD)
 	applySessionMetadata(th, loaded.metadata)
+	states, err := s.fusionTurnStates(id, loaded.metadata.Fusion)
+	if err != nil {
+		return nil, err
+	}
+	for index := range th.Turns {
+		if state := states[th.Turns[index].ID]; state != nil {
+			th.Turns[index].Fusion = state
+		}
+	}
 	th.SessionControl, err = s.readThreadSessionControl(id)
 	if err != nil {
 		return nil, err
@@ -1330,8 +1361,14 @@ func (s *Server) handleThreadArchive(req Request) error {
 	}
 	if params.Archived && params.Force {
 		s.settleThreadExecutionForForcedArchive(id)
+		if err := s.stopFusionSides(id); err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
 	}
 	if params.Archived {
+		if err := s.requireFusionSidesIdle(id); err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
 		if th := s.thread(id); th != nil {
 			th.mu.Lock()
 			running := th.running
@@ -1476,6 +1513,10 @@ func applySessionMetadata(th *threadState, metadata session.Session) {
 	th.Owner = metadata.Owner
 	th.Visibility = metadata.Visibility
 	th.Instructions = effectiveSessionInstructions(metadata)
+	th.Fusion = nil
+	if metadata.FusionEnabled {
+		th.Fusion = metadata.Fusion
+	}
 	th.ProjectID = projectIDForSession(metadata)
 	th.ProjectRole = projectRoleForSession(metadata)
 	if selection := runtimeSelectionFromSession(metadata); selection.Provider != "" && selection.Model != "" {
@@ -1564,6 +1605,7 @@ func threadEntryFromSession(sess session.Session, provider, model string) thread
 			ReadOnly:              projectExecutionDisabled(sess.Source),
 			ProjectID:             projectIDForSession(sess),
 			ProjectRole:           projectRoleForSession(sess),
+			Fusion:                activeFusionPair(sess),
 			Preview:               firstNonEmpty(sess.Title, sess.Summary),
 			Title:                 sess.Title,
 			ModelProvider:         firstNonEmpty(selection.Provider, provider),

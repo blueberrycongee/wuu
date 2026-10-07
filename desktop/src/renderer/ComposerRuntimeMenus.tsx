@@ -46,6 +46,7 @@ import type {
   EngineInfo,
   EngineModelInfo,
   EnginePermissionModeInfo,
+  FusionSelection,
   InitializeResult,
   PermissionSummary,
   ProviderModelSummary,
@@ -220,6 +221,7 @@ function RuntimePanelSummary({
   engineLocked,
   lockedDescription,
   model,
+  fusion,
   effortOptions,
   selectedEffort,
   effortDisabled,
@@ -239,6 +241,7 @@ function RuntimePanelSummary({
   engineLocked: boolean;
   lockedDescription?: string;
   model: string;
+  fusion?: FusionSelection;
   effortOptions: string[];
   selectedEffort: string;
   effortDisabled: boolean;
@@ -343,15 +346,26 @@ function RuntimePanelSummary({
           ) : null}
         </div>
       ) : null}
-      <div className="runtime-panel-selection">
-        <button type="button" className="runtime-panel-model" data-menu-autofocus onClick={onOpenModels}>
-          <span className="runtime-panel-model-name">{model}</span>
-          <ChevronRight aria-hidden="true" />
-        </button>
-        {effortOptions.length > 1 ? (
-          <div className="runtime-panel-effort-value" title={variantLabel(previewEffort)}>{variantLabel(previewEffort)}</div>
-        ) : null}
-      </div>
+      {fusion ? (
+        <dl className="runtime-panel-model runtime-panel-fusion-models">
+          {(["lead", "sidekick"] as const).map(role => (
+            <div className="runtime-panel-fusion-model" key={role} title={`${fusion[role].model} · ${fusion[role].provider}${fusion[role].variant || fusion[role].effort ? ` · ${variantLabel(fusion[role].variant || fusion[role].effort || "")}` : ""}`}>
+              <dt className="runtime-panel-fusion-role">{role === "lead" ? "Lead" : "Sidekick"}</dt>
+              <dd className="runtime-panel-model-name">{fusion[role].model}</dd>
+            </div>
+          ))}
+        </dl>
+      ) : (
+        <div className="runtime-panel-selection">
+          <button type="button" className="runtime-panel-model" data-menu-autofocus onClick={onOpenModels}>
+            <span className="runtime-panel-model-name">{model}</span>
+            <ChevronRight aria-hidden="true" />
+          </button>
+          {effortOptions.length > 1 ? (
+            <div className="runtime-panel-effort-value" title={variantLabel(previewEffort)}>{variantLabel(previewEffort)}</div>
+          ) : null}
+        </div>
+      )}
       {effortOptions.length > 1 ? (
         <div className="runtime-panel-effort">
           <EffortSelector
@@ -369,10 +383,11 @@ function RuntimePanelSummary({
 
 // The shell morphs between pages, so the summary's height comes from the rows
 // it shows rather than from its content.
-function runtimeSummaryStyle({ context, effort, speed }: { context: boolean; effort: boolean; speed: boolean }): CSSProperties {
+function runtimeSummaryStyle({ context, effort, speed, fusion = false }: { context: boolean; effort: boolean; speed: boolean; fusion?: boolean }): CSSProperties {
   return {
     "--runtime-summary-context": context ? "1" : "0",
     "--runtime-summary-effort": effort ? "1" : "0",
+    "--runtime-summary-model-rows": fusion ? "2" : "1",
     ...(speed ? { "--runtime-context-row": "var(--control-size-inline)" } : {}),
   } as CSSProperties;
 }
@@ -553,7 +568,7 @@ export function RuntimePicker({
 }): JSX.Element {
   const { t } = useI18n();
   const targetProvider = handoff?.provider ?? initialized.provider;
-  const targetModel = handoff?.model ?? initialized.model;
+  const targetModel = handoff?.model ?? (initialized.fusion ? "wuu/fusion" : initialized.model);
   const targetVariant = handoff?.variant ?? (initialized.variant || initialized.effort || "");
   const currentProvider = initialized.providers?.find((provider) => provider.name === targetProvider);
   const codexProvider = providerIsCodex(initialized, targetProvider);
@@ -589,7 +604,7 @@ export function RuntimePicker({
       : runtimeTriggerLabel(targetModel, codexProvider, currentProviderModel, currentCodexModel);
   // A level is only worth naming when the model offers a choice; a lone
   // "Default" next to a model without levels reads as a setting it lacks.
-  const effortLevels = externalEngine
+  const effortLevels = !externalEngine && targetModel === "wuu/fusion" ? [] : externalEngine
     ? orderedEffortOptions(externalModelInfo?.supported_efforts ?? [])
     : providerModelVariantOptions(currentProvider, targetModel, currentVariant);
   const effortLabelText = effortLevels.length > 1 && (!handoff || handoff.model)
@@ -1041,12 +1056,16 @@ export function RuntimeModelMenu({
   }
 
   const effectiveProviderName = optimistic?.provider ?? selectedProvider;
-  const effectiveModelID = optimistic?.model ?? selectedModel;
+  const effectiveModelID = optimistic?.model ?? (initialized.fusion ? "wuu/fusion" : selectedModel);
+  const fusion = initialized.advanced_settings?.fusion;
+  const fusionSelected = effectiveModelID === "wuu/fusion";
+  const selectedFusion = fusionSelected ? initialized.fusion ?? fusion : undefined;
   const effectiveVariant = optimistic?.variant ?? selectedVariant;
   const effectiveProvider = providers.find((provider) => provider.name === effectiveProviderName);
   const scopedGroups = groups.filter((group) => group.provider.name === effectiveProviderName);
 
   const activeFilter = (query || filterQuery).trim().toLocaleLowerCase();
+  const showFusion = Boolean((fusion?.enabled || fusionSelected) && (!activeFilter || "fusion".includes(activeFilter)));
   const visibleProviderGroups = activeFilter
     ? groups.filter((group) =>
         group.provider.name.toLocaleLowerCase().includes(activeFilter)
@@ -1071,13 +1090,13 @@ export function RuntimeModelMenu({
   // The engine is worth naming only when there is another one to pick.
   const showEngine = engineOptions.length > 1 || selectedEngine !== "wuu";
   const effectiveCodex = providerIsCodex(initialized, effectiveProviderName);
-  const effortOptions = providerModelVariantOptions(effectiveProvider, effectiveModelID, effectiveVariant);
+  const effortOptions = fusionSelected ? [] : providerModelVariantOptions(effectiveProvider, effectiveModelID, effectiveVariant);
   const effectiveModel = scopedGroups
     .flatMap((group) => group.models)
     .find((model) => model.id === effectiveModelID);
   const visibleModels = filteredGroups.flatMap((group) => group.models.map((model) => ({ provider: group.provider, model })));
   const pageRows = view === "providers"
-    ? visibleProviderGroups.length
+    ? visibleProviderGroups.length + (showFusion ? 1 : 0)
     : view === "models"
       ? visibleModels.length
       : engineOptions.length;
@@ -1100,6 +1119,7 @@ export function RuntimeModelMenu({
           context: showEngine || Boolean(effectiveProviderName) || Boolean(effectiveModel?.fast_mode && onSelectSpeed),
           effort: effortOptions.length > 1,
           speed: Boolean(effectiveModel?.fast_mode && onSelectSpeed),
+          fusion: Boolean(selectedFusion),
         }),
       }}
       onKeyDown={(event) => handleRuntimePanelKeyDown(event, view, showSummary)}
@@ -1109,11 +1129,12 @@ export function RuntimeModelMenu({
           <RuntimePanelSummary
             engine={selectedEngine}
             engineId={selectedEngine}
-            provider={effectiveProviderName}
+            provider={fusionSelected ? "Fusion" : effectiveProviderName}
             showEngine={showEngine}
             engineLocked={engineLocked}
             lockedDescription={lockedDescription}
-            model={effectiveModel ? providerModelDisplayName(effectiveModel) : effectiveModelID || t("runtime.selectModel")}
+            model={fusionSelected ? "Lead + Sidekick" : effectiveModel ? providerModelDisplayName(effectiveModel) : effectiveModelID || t("runtime.selectModel")}
+            fusion={selectedFusion}
             effortOptions={effortOptions}
             selectedEffort={effectiveVariant}
             effortDisabled={false}
@@ -1154,8 +1175,12 @@ export function RuntimeModelMenu({
         ) : null}
         {view === "providers" ? (
           <div className="runtime-panel-list runtime-provider-options" role="group" aria-label={t("runtime.provider")}>
+            {showFusion ? <button type="button" className="runtime-provider-option" role="menuitemradio" aria-checked={fusionSelected} onClick={() => {
+              if (!fusionSelected && fusion?.enabled) selectModel(fusion.lead.provider, "wuu/fusion", "");
+              showSummary();
+            }}><span>Fusion</span>{fusionSelected ? <Check aria-hidden="true" /> : null}</button> : null}
             {visibleProviderGroups.map((group) => {
-              const selected = group.provider.name === effectiveProviderName;
+              const selected = !fusionSelected && group.provider.name === effectiveProviderName;
               return (
                 <button
                   type="button"
@@ -1431,6 +1456,7 @@ function runtimeTriggerLabel(
   providerModel?: ProviderModelSummary,
   codexModel?: CodexModelSummary,
 ): string {
+  if (modelId === "wuu/fusion") return "Fusion";
   if (codexModel) {
     return shortCodexModelLabel(codexModel.slug);
   }

@@ -200,7 +200,7 @@ func classifyToolKind(name string) ToolKind {
 		return ToolKindGit
 	case "web_search", "web_fetch":
 		return ToolKindWeb
-	case "thread_get", "notes", projectSessionToolName:
+	case "thread_get", "notes", projectSessionToolName, "fusion_delegate":
 		return ToolKindSession
 	case "load_skill":
 		return ToolKindSkill

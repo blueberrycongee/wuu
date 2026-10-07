@@ -78,6 +78,7 @@ export type RuntimeSettingsActions = {
 };
 
 type RuntimeSelectionUpdate = {
+  fusion?: boolean;
   speed?: string;
   provider?: string;
   model?: string;
@@ -134,6 +135,7 @@ export function createRuntimeSettingsActions(
         ...current,
         initialized: current.initialized ? {
           ...current.initialized,
+          ...(update.fusion === undefined ? {} : { fusion: update.fusion && current.initialized.advanced_settings?.fusion ? { lead: current.initialized.advanced_settings.fusion.lead, sidekick: current.initialized.advanced_settings.fusion.sidekick } : undefined }),
           provider: nextProvider,
           model: nextModel,
           speed: nextSpeed,
@@ -242,7 +244,7 @@ export function createRuntimeSettingsActions(
       !variantChanged &&
       !connectionChanged &&
       !permissionModeChanged &&
-      !approveForMeChanged && update.speed === undefined
+      !approveForMeChanged && update.speed === undefined && update.fusion === undefined
     ) {
       return;
     }
@@ -271,7 +273,8 @@ export function createRuntimeSettingsActions(
         targetThread?.id,
         update.speed,
       ];
-      if (targetContext) requestArgs.push(targetContext);
+      if (update.fusion !== undefined) requestArgs.push(targetContext, update.fusion);
+      else if (targetContext) requestArgs.push(targetContext);
       const updated = await window.wuu.updateRuntimeSettings(...requestArgs);
       // Saving another service leaves the default, and the draft memory that
       // mirrors it, where they were.
@@ -317,6 +320,7 @@ export function createRuntimeSettingsActions(
         // Only the requested values may be used for a local thread patch;
         // thread/updated carries the server's resolved selection.
         const threadPatch: Partial<Thread> = {
+          ...(update.fusion === false ? { fusion: undefined } : {}),
           ...(update.speed === undefined ? {} : { speed: update.speed }),
           ...(nextProvider === undefined
             ? {}
@@ -405,6 +409,7 @@ export function createRuntimeSettingsActions(
         ? {
             ...current.initialized,
             advanced_settings: updated.advanced_settings,
+            ...(settings.fusion && !activeThreadForState(current) ? { fusion: settings.fusion.enabled && settings.fusion.default ? { lead: settings.fusion.lead, sidekick: settings.fusion.sidekick } : undefined } : {}),
             model_aliases:
               updated.model_aliases ??
               settings.model_aliases ??
@@ -539,6 +544,12 @@ export function createRuntimeSettingsActions(
     variant?: string,
   ): Promise<boolean> {
     const state = deps.getAppState();
+    if (model === "wuu/fusion") {
+      if (state.running || !state.initialized?.advanced_settings?.fusion?.enabled) return false;
+      try { await sendRuntimeSelection({ fusion: true }); return true; }
+      catch (error) { showErrorToast(error instanceof Error ? error.message : translateCurrent("settings.saveFailed")); return false; }
+    }
+
     if (!state.initialized || deps.getViewContextSwitchPending()) {
       return false;
     }
@@ -573,7 +584,8 @@ export function createRuntimeSettingsActions(
     // still running on the thread) surfaces as a toast — the status line
     // alone was too easy to miss against the optimistic highlight.
     try {
-      await sendRuntimeSelection({ provider, model, variant: nextVariant });
+      await sendRuntimeSelection({
+          ...((targetThread ? targetThread.fusion : state.initialized.fusion) ? { fusion: false } : {}), provider, model, variant: nextVariant });
       if (selectionViewIsCurrent(state)) rememberDraftRuntime(provider, model, nextVariant);
       return true;
     } catch {

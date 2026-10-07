@@ -151,15 +151,20 @@ export function ConversationSplitPane({
       onPointerDown={onActivate}
     >
       {pane === "secondary" && (
-        <button
-          className="icon-button conversation-split-close"
-          type="button"
-          aria-label={t("split.closeRight")}
-          title={t("split.closeRight")}
-          onClick={onClose}
-        >
-          <X className="icon" />
-        </button>
+        <header className="conversation-split-header">
+          <h2 className="conversation-split-title">
+            {thread.title || thread.preview || t("split.forkConversation")}
+          </h2>
+          <button
+            className="icon-button conversation-split-close"
+            type="button"
+            aria-label={t("split.closeRight")}
+            title={t("split.closeRight")}
+            onClick={onClose}
+          >
+            <X className="icon" />
+          </button>
+        </header>
       )}
       <div
         ref={onBodyRef}

@@ -234,6 +234,7 @@ const api: WuuDesktopApi = {
     threadId?: string,
     speed?: string,
     targetContext?: RuntimeContext,
+    fusion?: boolean,
   ) =>
     ipcRenderer.invoke(
       "wuu:config-model-update",
@@ -246,6 +247,7 @@ const api: WuuDesktopApi = {
       threadId,
       speed,
       targetContext,
+      fusion,
     ),
   removeProvider: (
     provider: string,

@@ -3032,7 +3032,7 @@ html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visibl
   --runtime-summary: calc(
     2px + var(--runtime-summary-padding-top) + var(--runtime-summary-padding-bottom)
     + var(--runtime-summary-context, 1) * var(--runtime-context-row)
-    + var(--runtime-selection-row)
+    + var(--runtime-selection-row) * var(--runtime-summary-model-rows, 1)
     + var(--runtime-summary-effort, 0) * var(--runtime-effort-block)
     + (var(--runtime-summary-context, 1) + var(--runtime-summary-effort, 0)) * var(--runtime-summary-gap)
   );
@@ -3195,6 +3195,35 @@ html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visibl
 
 .runtime-panel-model .runtime-panel-model-name {
   flex: 0 1 auto;
+}
+
+.codex-runtime-menu .runtime-panel-fusion-models {
+  height: calc(var(--runtime-selection-row) * 2);
+  display: grid;
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+}
+
+.codex-runtime-menu .runtime-panel-fusion-model {
+  display: grid;
+  grid-template-columns: 5em minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-2);
+  height: var(--runtime-selection-row);
+  font-weight: var(--weight-regular);
+}
+
+.runtime-panel-fusion-model :is(dt, dd) {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.runtime-panel-fusion-role {
+  color: var(--ink-muted);
 }
 
 .runtime-panel-model > svg:last-child {
@@ -3408,7 +3437,7 @@ html[data-focus-modality="keyboard"] .runtime-panel-summary :is(
 
 .scroll-region:not(.empty-scroll-region):not(.workspace-scroll-region) .conversation-split-width {
   --conversation-flow-bottom-space: 34px;
-  padding: 28px var(--session-outer-padding-inline) 34px;
+  padding: var(--split-history-padding-top, 28px) var(--session-outer-padding-inline) 34px;
 }
 
 .split-scroll-region {
@@ -3486,14 +3515,32 @@ html[data-focus-modality="keyboard"] .runtime-panel-summary :is(
   --composer-frame-shadow: var(--shadow-composer);
 }
 
-.conversation-split-close {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  z-index: 5;
+.conversation-split-pane:has(> .conversation-split-header) {
+  --split-history-padding-top: var(--space-2);
+}
+
+.conversation-split-header {
+  display: flex;
   flex: 0 0 auto;
-  background: color-mix(in srgb, var(--paper) 78%, transparent);
-  border-radius: var(--radius-sm);
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--control-toolbar-gap);
+  /* Mirror the history gutter and align the close glyph with its text edge. */
+  padding: var(--space-2) calc(var(--scrollbar-width) + var(--session-outer-padding-inline) - var(--control-toolbar-glyph-offset))
+    0 calc(var(--scrollbar-width) + var(--session-outer-padding-inline));
+}
+
+.conversation-split-title {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--ink-strong);
+  font-size: var(--font-ui);
+  font-weight: var(--weight-medium);
+  line-height: var(--conversation-control-line-height);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .conversation-split-body {
@@ -3514,7 +3561,10 @@ html[data-focus-modality="keyboard"] .runtime-panel-summary :is(
 .conversation-split-width {
   max-width: none;
   margin: 0;
-  padding: 28px var(--session-outer-padding-inline) 34px;
+  padding: var(--split-history-padding-top, 28px) var(--session-outer-padding-inline) 34px;
+  /* Turns span the whole grid; internal column gutters must not impose a
+     minimum width that clips content in a narrow split pane. */
+  column-gap: 0;
 }
 
 .conversation-split-width .message {

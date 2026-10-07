@@ -1,7 +1,7 @@
 import type { RefObject } from "react";
 import type { TodoUpdate } from "../shared/protocol";
 import type { InspectorSnapshotV1 } from "../shared/workbench";
-import type { AppState } from "./AppState";
+import { activeThreadForState, type AppState } from "./AppState";
 import {
   EnvironmentPanel,
   type EnvironmentPanelMenu,
@@ -72,7 +72,8 @@ export function EnvironmentSideStack({
         panelRef={panelRef}
         motionState={closing ? "closing" : motionState}
         initialized={state.initialized}
-        thread={state.thread}
+        thread={activeThreadForState(state)}
+        fusion={activeThreadForState(state)?.fusion}
         gitStatus={state.gitStatus}
         activeMenu={activeMenu}
         running={running}

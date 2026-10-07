@@ -56,7 +56,7 @@ func isHumanUserMessage(msg providers.ChatMessage) bool {
 }
 
 func (s *Server) validateInboxInput(msg providers.ChatMessage) error {
-	if isGeneratedSessionInput(msg.Origin) && (msg.Cause == "project_message" || msg.Cause == "project" || msg.Cause == projectCauseResult) {
+	if isGeneratedSessionInput(msg.Origin) && (msg.Cause == "project_message" || msg.Cause == "project" || msg.Cause == projectCauseResult || msg.Cause == "fusion" || msg.Cause == "fusion_result") {
 		return session.ValidateInboxControls(s.rt.SessionDir, msg.ClientID)
 	}
 	return nil

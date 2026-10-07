@@ -12,6 +12,7 @@ import { buildAssistantTurnDisplay } from "./AssistantTurnDisplay";
 import { useAssistantTurnPresentation } from "./AssistantTurnPresentation";
 import { AssistantTurnShell } from "./AssistantTurnShell";
 import { ThreadItemView } from "./ThreadItemView";
+import { groupUserMessages, isSessionMessage, SessionMessageRow, sessionMessageOnlyTurn } from "./SessionMessagePresentation";
 import { TurnArtifactSummaryPresentation } from "./ArtifactOutputs";
 import { ArtifactThreadContext } from "./ArtifactPreviewContext";
 import { TurnEditSummaryPresentation } from "./TurnEditSummaryPresentation";
@@ -28,7 +29,7 @@ import {
 import { turnEventForTurn } from "./TurnEvents";
 import { userFacingErrorForMessage } from "./UserFacingErrors";
 import { isInternalUserNotificationItem } from "./InternalUserNotification";
-import { groupProjectEvents, ProjectEventGroup } from "./ProjectViews";
+import { ProjectEventGroup } from "./ProjectViews";
 import { turnIsAnswerReady, type TurnStreamStatus } from "./AppState";
 import {
   latestAgentMessageItemID,
@@ -295,7 +296,7 @@ function TurnContent({
 
   return (
     <section
-      className="turn"
+      className={`turn${sessionMessageOnlyTurn(turn) ? " session-message-turn" : ""}`}
       ref={turnElementRef}
       data-wuu-component="turn"
       id={turnAnchorID(turn.id)}
@@ -303,8 +304,11 @@ function TurnContent({
       data-turn-status={turn.status}
       data-latest-turn={isLatestTurn || undefined}
     >
-      {groupProjectEvents(userItems).map((entry) => Array.isArray(entry)
-        ? <ProjectEventGroup key={entry[0].id} items={entry} />
+      {groupUserMessages(turn.items).map((entry) => Array.isArray(entry)
+        ? isSessionMessage(entry[0])
+          ? <SessionMessageRow key={entry[0].id} item={entry[0]} turnID={turn.id} count={entry.length}
+              aliases={entry.slice(1).map(item => ({ turnID: turn.id, itemID: item.id }))} />
+          : <ProjectEventGroup key={entry[0].id} items={entry} />
         : renderThreadItem(entry, false))}
       {assistantDisplay ? (
         <AssistantTurnShell

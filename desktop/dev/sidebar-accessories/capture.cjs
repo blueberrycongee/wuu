@@ -85,6 +85,9 @@ app.whenReady().then(async () => {
   await win.loadURL("http://127.0.0.1:5208/dev/sidebar-accessories/?empty&size=20");
   await new Promise(resolve => setTimeout(resolve, 500));
   fs.writeFileSync(path.join(output, "empty.png"), (await win.webContents.capturePage()).toPNG());
+  await win.loadURL("http://127.0.0.1:5208/dev/sidebar-accessories/?attention&theme=light&size=14");
+  await new Promise(resolve => setTimeout(resolve, 500));
+  fs.writeFileSync(path.join(output, "sidekick-attention-hidden.png"), (await win.webContents.capturePage()).toPNG());
   fs.writeFileSync(path.join(output, "geometry.json"), JSON.stringify({ report, errors }, null, 2));
   for (const [name, states] of Object.entries(report)) {
     const idle = states.idle;

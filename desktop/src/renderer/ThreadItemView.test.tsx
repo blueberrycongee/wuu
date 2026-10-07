@@ -13,6 +13,7 @@ import { WuuUIRoot } from "./ui/layers/UILayerHost";
 import { navigateToResponseSelection } from "./ResponseSelection";
 import { createComposerMessage } from "./ComposerMessages";
 import type { ResponseSelection } from "../shared/protocol";
+import { CONVERSATION_TURN_REVEAL_EVENT } from "./TurnViewHelpers";
 
 let container: HTMLDivElement | undefined;
 let root: Root | undefined;
@@ -837,38 +838,71 @@ describe("ThreadItemView", () => {
     expect(onEditMessage).not.toHaveBeenCalled();
   });
 
-  it.each(["host", "plugin"])("expands and copies a %s session message body and opens its source without exposing internal input", async (origin) => {
+  it.each(["host", "plugin"])("opens a %s session message source without exposing the notification body", (origin) => {
     const openInSplit = vi.fn();
     setOpenThreadInSplitHandler(openInSplit);
-    const copy = vi.fn().mockResolvedValue(undefined);
-    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: copy } });
-    const body = "Coordination update.\n".repeat(100) + "End of update.";
     const onEditMessage = vi.fn();
     render({
       item: {
-        id: "peer-message", type: "user_message", text: body,
+        id: "peer-message", type: "user_message", text: "Private dispatch result.",
         input_text: "Private delivery instructions", related_session_id: "source-session",
-        name: "Source task", origin, origin_id: "alternative-messenger",
-        presentation_kind: "session_message", read_only: true,
+        name: "Source task", origin, presentation_kind: "session_message", read_only: true,
       },
       turnStatus: "completed", streaming: false, onEditMessage,
     });
     expect(container?.textContent).toContain("Source task");
+    expect(container?.textContent).not.toContain("Private dispatch result.");
     expect(container?.textContent).not.toContain("Private delivery instructions");
-    expect(container?.textContent).not.toContain("End of update.");
-    const toggle = container!.querySelector<HTMLButtonElement>("button[aria-expanded]")!;
-    act(() => toggle.click());
-    expect(toggle.getAttribute("aria-expanded")).toBe("true");
-    expect(container?.textContent).toContain("End of update.");
-    const actions = container!.querySelectorAll<HTMLButtonElement>(".user-message-actions button");
-    expect(actions).toHaveLength(1);
-    await act(async () => actions[0].click());
-    expect(copy).toHaveBeenCalledWith(body);
-    act(() => container!.querySelector<HTMLButtonElement>(".session-message-source")!.click());
-    expect(openInSplit).toHaveBeenCalledWith("source-session");
+    const source = container!.querySelector<HTMLButtonElement>(".session-message-source")!;
+    act(() => source.click());
+    act(() => source.click());
+    expect(openInSplit.mock.calls).toEqual([["source-session"], ["source-session"]]);
+    expect(container?.textContent).not.toContain("Private dispatch result.");
     expect(onEditMessage).not.toHaveBeenCalled();
-    act(() => toggle.click());
-    expect(container?.textContent).not.toContain("End of update.");
+    setOpenThreadInSplitHandler(undefined);
+  });
+
+  it.each([
+    { cause: "fusion", role: "Lead", sourceID: "lead-session" },
+    { cause: "fusion_result", role: "Sidekick", sourceID: "side-session" },
+  ])("identifies the $role source in Fusion history independently of conversation titles", ({ cause, role, sourceID }) => {
+    const openInSplit = vi.fn();
+    setOpenThreadInSplitHandler(openInSplit);
+    const item: ThreadItem = {
+      id: "fusion-message", type: "user_message", text: "Private collaboration context.",
+      origin: "host", cause, presentation_kind: "session_message", read_only: true,
+      related_session_id: sourceID,
+    };
+    for (const name of [undefined, "", "Renamed conversation"]) {
+      render({ item: { ...item, name }, turnStatus: "completed", streaming: false });
+      expect(container?.querySelector(".session-message-name")?.textContent).toBe(role);
+      expect(container?.textContent).not.toContain(item.text);
+      act(() => container!.querySelector<HTMLButtonElement>(".session-message-source")!.click());
+    }
+    expect(openInSplit.mock.calls).toEqual([[sourceID], [sourceID], [sourceID]]);
+    setOpenThreadInSplitHandler(undefined);
+  });
+
+  it("keeps a source without a session ID non-interactive and opens a known source for navigation", () => {
+    const openInSplit = vi.fn();
+    setOpenThreadInSplitHandler(openInSplit);
+    const item: ThreadItem = {
+      id: "peer-message", type: "user_message", text: "Private update.",
+      origin: "host", name: "Sidekick", presentation_kind: "session_message", read_only: true,
+    };
+    render({ item, turnStatus: "completed", streaming: false });
+    act(() => container!.querySelector<HTMLButtonElement>(".session-message-source")!.click());
+    expect(openInSplit).not.toHaveBeenCalled();
+    render({ item: { ...item, related_session_id: "source-session" }, turnStatus: "completed", streaming: false });
+    act(() => window.dispatchEvent(new CustomEvent(CONVERSATION_TURN_REVEAL_EVENT, {
+      detail: { turnID: "turn-1", itemID: "other-message" },
+    })));
+    expect(openInSplit).not.toHaveBeenCalled();
+    act(() => window.dispatchEvent(new CustomEvent(CONVERSATION_TURN_REVEAL_EVENT, {
+      detail: { turnID: "turn-1", itemID: item.id },
+    })));
+    expect(openInSplit).toHaveBeenCalledWith("source-session");
+    expect(container?.textContent).not.toContain("Private update.");
     setOpenThreadInSplitHandler(undefined);
   });
 

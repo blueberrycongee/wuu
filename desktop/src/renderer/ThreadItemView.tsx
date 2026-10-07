@@ -10,7 +10,7 @@ import {
   useRef,
   useState
 } from "react";
-import { ArrowUp, ChevronDown, ChevronUp, FileText, Info, LoaderCircle, MessagesSquare, Plus } from "./WuuIcons";
+import { ArrowUp, ChevronDown, ChevronUp, FileText, Info, LoaderCircle, Plus } from "./WuuIcons";
 import type { InputFile, InputImage, MessageContentPart, ThreadItem, Turn } from "../shared/protocol";
 import { CollapsedComposerPromptCard, collapsedComposerPromptTitle } from "./ComposerCollapsedPrompt";
 import { FileSelectionCards } from "./FileSelectionCards";
@@ -54,6 +54,7 @@ import {
 } from "./TurnNotice";
 import { CONVERSATION_TURN_REVEAL_EVENT, type ConversationTurnRevealDetail, messageAnchorID, userMessageAnchorID } from "./TurnViewHelpers";
 import { requestOpenThreadInSplit } from "./ConversationSplitBridge";
+import { isSessionMessage, SessionMessageRow } from "./SessionMessagePresentation";
 import { isProjectEvent, ProjectEventRow } from "./ProjectViews";
 import {
   userFacingErrorForMessage,
@@ -108,7 +109,7 @@ interface ThreadItemViewProps {
 export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemViewProps): JSX.Element | null {
   const { item, onEditMessage, turnID, editing } = props;
   const { t } = useI18n();
-  if (item.remote_content_ref && item.type !== "tool_call") {
+  if (item.remote_content_ref && item.type !== "tool_call" && !isSessionMessage(item)) {
     return <RemoteItemContent key={item.remote_content_ref} item={item} render={complete => <ThreadItemView {...props} item={complete} />} />;
   }
   if (item.type === "user_message" && isInternalUserNotificationItem(item)) {
@@ -255,6 +256,8 @@ function BuiltInThreadItemView({
   }, [item.status, turnStatus]);
   switch (item.type) {
     case "user_message": {
+      if (isSessionMessage(item)) return <SessionMessageRow item={item} turnID={turnID} />;
+      const messageAnchor = userMessageAnchorID(turnID, item.id);
       const text = item.text ?? "";
       if (isProcessNotificationItem(item)) {
         return null;
@@ -278,62 +281,49 @@ function BuiltInThreadItemView({
       // separate inspector plugin.
       const deliveryText = item.input_text?.trim() ?? "";
       const relatedSessionID = item.related_session_id?.trim() || undefined;
-      const sessionMessage = (item.origin === "host" || item.origin === "plugin") && item.presentation_kind === "session_message";
-      const sourceLabel = t("message.fromSession", { name: item.name?.trim() || relatedSessionID || t("message.anotherSession") });
       // input_text equals the bubble for ordinary messages (or would, if a
       // stale server projection ever leaks it); only hidden messages with a
       // related session get a navigation action.
       const relatedSessionAvailable = relatedSessionID !== undefined
-        && (sessionMessage || (deliveryText !== "" && deliveryText !== displayText.trim()));
+        && deliveryText !== "" && deliveryText !== displayText.trim();
       const openRelatedSession = (): void => {
         if (relatedSessionID !== undefined && relatedSessionAvailable) {
           requestOpenThreadInSplit(relatedSessionID);
         }
       };
+      const messageContent = editing ? (
+        <UserMessageInlineEditor
+          item={item}
+          initialText={text}
+          submitting={Boolean(editSubmitting)}
+          onCancel={onCancelEditMessage}
+          onOpenFile={onOpenFile}
+          onSubmit={(nextText, nextImages, nextFiles, contentParts) =>
+            onSubmitEditMessage?.(turnID, item, nextText, nextImages, nextFiles, contentParts)
+          }
+        />
+      ) : (
+        <UserMessageContent
+          anchorID={messageAnchor}
+          text={displayText}
+          contentParts={item.content_parts}
+          images={item.images ?? []}
+          files={item.files ?? []}
+          cwd={cwd}
+          onOpenFile={onOpenFile}
+        />
+      );
       return (
         <div
           className={`user-message-block${copyable || editActionVisible || relatedSessionAvailable ? " user-message-block-with-actions" : ""}`}
           data-wuu-component="message"
           data-wuu-variant="user"
-          id={userMessageAnchorID(turnID, item.id)}
+          id={messageAnchor}
           data-user-message-id={item.id}
           data-turn-id={turnID}
         >
           <div className="user-message-motion" data-message-arrival>
-          {sessionMessage ? (
-            <button
-              type="button"
-              className="session-message-source"
-              onClick={openRelatedSession}
-              disabled={!relatedSessionAvailable}
-              title={sourceLabel}
-            >
-              <MessagesSquare size={15} aria-hidden="true" />
-              <span>{sourceLabel}</span>
-            </button>
-          ) : null}
-          {editing ? (
-            <UserMessageInlineEditor
-              item={item}
-              initialText={text}
-              submitting={Boolean(editSubmitting)}
-              onOpenFile={onOpenFile}
-              onCancel={onCancelEditMessage}
-              onSubmit={(nextText, nextImages, nextFiles, contentParts) =>
-                onSubmitEditMessage?.(turnID, item, nextText, nextImages, nextFiles, contentParts)
-              }
-            />
-          ) : (
-            <UserMessageContent
-              anchorID={userMessageAnchorID(turnID, item.id)}
-              text={displayText}
-              contentParts={item.content_parts}
-              images={item.images ?? []}
-              files={item.files ?? []}
-              cwd={cwd}
-              onOpenFile={onOpenFile}
-            />
-          )}
+          {messageContent}
           </div>
           {!editing && (copyable || editActionVisible || relatedSessionAvailable) ? (
             <div
@@ -350,7 +340,7 @@ function BuiltInThreadItemView({
                   iconSize={15}
                 />
               ) : null}
-              {relatedSessionAvailable && !sessionMessage ? (
+              {relatedSessionAvailable ? (
                 <button
                   type="button"
                   className="message-action-button"

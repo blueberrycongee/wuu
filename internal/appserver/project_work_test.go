@@ -352,7 +352,7 @@ func TestProjectWorkConcurrentRecoveryKeepsOneDispatch(t *testing.T) {
 	if err := lease.Release(); err != nil {
 		t.Fatal(err)
 	}
-	srv.kickProjectInboxDrain(root.ID)
+	srv.kickSessionInboxDrain(root.ID)
 
 	calls.next(t, "Replay-safe work")
 	members, err := srv.projectSessions(root.ID)
@@ -387,7 +387,7 @@ func TestProjectWorkOutboxStaysWithOwningWorkspace(t *testing.T) {
 	otherRuntime.WorkspaceID = "other-workspace"
 	other := New(&otherRuntime, &lockedBuffer{})
 	t.Cleanup(other.Close)
-	if other.drainProjectInboxPass(root.ID) {
+	if other.drainSessionInboxPass(root.ID) {
 		t.Fatal("another workspace scheduled retries for this work")
 	}
 	pending, err := session.PendingProjectWork(rt.SessionDir, root.ID)
@@ -422,7 +422,7 @@ func TestProjectWorkRejectsFailedSubmissionAfterRecovery(t *testing.T) {
 	w = act(w.ExecutorID, "submit", tools.ProjectWorkRequest{Operation: "submit", WorkID: w.ID, Revision: w.Revision, Summary: "Change implemented", Evidence: "test.log", CodeRef: "artifact:v1"})
 	executor.failure <- errors.New("terminal provider failure after submission")
 	review := calls.next(t, "requires technical review")
-	turns, err := srv.loadDurableProjectTurns(w.ExecutorID)
+	turns, err := srv.loadDurableSessionTurns(w.ExecutorID)
 	if err != nil || turns[len(turns)-1].Status != TurnStatusFailed {
 		t.Fatalf("missing failed terminal evidence: %+v %v", turns, err)
 	}

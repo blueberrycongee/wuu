@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/securefs"
 	"github.com/blueberrycongee/wuu/internal/statepath"
 )
@@ -38,31 +39,33 @@ var (
 
 // Session represents one conversation session.
 type Session struct {
-	ID                    string    `json:"id"`
-	CreatedAt             time.Time `json:"created_at"`
-	UpdatedAt             time.Time `json:"updated_at,omitempty"`
-	Title                 string    `json:"title,omitempty"`
-	Summary               string    `json:"summary,omitempty"`
-	Entries               int       `json:"entries"`
-	LatestCompletedTurnID string    `json:"latest_completed_turn_id,omitempty"`
-	CWD                   string    `json:"cwd,omitempty"`
-	Source                string    `json:"source,omitempty"`
-	Owner                 string    `json:"owner,omitempty"`
-	Visibility            string    `json:"visibility,omitempty"`
-	ParentID              string    `json:"parent_id,omitempty"`
-	ContextSource         string    `json:"context_source,omitempty"`
-	CreationRequestID     string    `json:"creation_request_id,omitempty"`
-	SeedID                string    `json:"seed_id,omitempty"`
-	Provider              string    `json:"provider,omitempty"`
-	Model                 string    `json:"model,omitempty"`
-	Variant               string    `json:"variant,omitempty"`
-	Effort                string    `json:"effort,omitempty"`
-	Speed                 string    `json:"speed,omitempty"`
-	PermissionMode        string    `json:"permission_mode,omitempty"`
-	ApproveForMe          bool      `json:"approve_for_me,omitempty"`
-	ProjectRole           string    `json:"project_role,omitempty"`
-	Instructions          string    `json:"instructions,omitempty"`
-	ToolPolicyJSON        string    `json:"tool_policy_json,omitempty"`
+	Fusion                *config.FusionSelection `json:"fusion,omitempty"`
+	FusionEnabled         bool                    `json:"fusion_enabled,omitempty"`
+	ID                    string                  `json:"id"`
+	CreatedAt             time.Time               `json:"created_at"`
+	UpdatedAt             time.Time               `json:"updated_at,omitempty"`
+	Title                 string                  `json:"title,omitempty"`
+	Summary               string                  `json:"summary,omitempty"`
+	Entries               int                     `json:"entries"`
+	LatestCompletedTurnID string                  `json:"latest_completed_turn_id,omitempty"`
+	CWD                   string                  `json:"cwd,omitempty"`
+	Source                string                  `json:"source,omitempty"`
+	Owner                 string                  `json:"owner,omitempty"`
+	Visibility            string                  `json:"visibility,omitempty"`
+	ParentID              string                  `json:"parent_id,omitempty"`
+	ContextSource         string                  `json:"context_source,omitempty"`
+	CreationRequestID     string                  `json:"creation_request_id,omitempty"`
+	SeedID                string                  `json:"seed_id,omitempty"`
+	Provider              string                  `json:"provider,omitempty"`
+	Model                 string                  `json:"model,omitempty"`
+	Variant               string                  `json:"variant,omitempty"`
+	Effort                string                  `json:"effort,omitempty"`
+	Speed                 string                  `json:"speed,omitempty"`
+	PermissionMode        string                  `json:"permission_mode,omitempty"`
+	ApproveForMe          bool                    `json:"approve_for_me,omitempty"`
+	ProjectRole           string                  `json:"project_role,omitempty"`
+	Instructions          string                  `json:"instructions,omitempty"`
+	ToolPolicyJSON        string                  `json:"tool_policy_json,omitempty"`
 	// EngineID is the agent engine the thread is bound to. Empty reads as
 	// the built-in wuu engine, which is the legacy default for sessions
 	// persisted before engine binding existed.
@@ -391,7 +394,7 @@ SELECT id, created_at, updated_at, title, summary, entries, cwd,
        pinned_at, folder_id, archived_at, archive_reason,
        worktree_path, worktree_base_head, worktree_base_repo,
        workspace_id, source, owner, visibility, parent_id, context_source, creation_request_id,
-	       provider, model, variant, effort, speed, permission_mode, approve_for_me, engine_id, engine_ref, instructions, project_role, tool_policy_json,
+	       provider, model, variant, effort, speed, permission_mode, approve_for_me, engine_id, engine_ref, instructions, project_role, tool_policy_json, fusion_json, fusion_enabled,
 	       COALESCE((SELECT m.client_id FROM session_messages m
 	                 WHERE m.session_id = sessions.id AND m.role = 'meta'
 	                   AND m.content = 'turn_terminal' AND m.client_id <> ''
@@ -562,7 +565,7 @@ SELECT id, created_at, updated_at, title, summary, entries, cwd,
        pinned_at, folder_id, archived_at, archive_reason,
        worktree_path, worktree_base_head, worktree_base_repo,
        workspace_id, source, owner, visibility, parent_id, context_source, creation_request_id,
-       provider, model, variant, effort, speed, permission_mode, approve_for_me, engine_id, engine_ref, instructions, project_role, tool_policy_json,
+       provider, model, variant, effort, speed, permission_mode, approve_for_me, engine_id, engine_ref, instructions, project_role, tool_policy_json, fusion_json, fusion_enabled,
        COALESCE((SELECT m.client_id FROM session_messages m
                  WHERE m.session_id = sessions.id AND m.role = 'meta'
                    AND m.content = 'turn_terminal' AND m.client_id <> ''
@@ -624,16 +627,48 @@ func UpdateTitle(sessDir, id string, title string) (Session, error) {
 func UpdateWorkspaceBinding(
 	sessDir, id, cwd, worktreePath, worktreeBaseHEAD, worktreeBaseRepo string,
 ) (Session, error) {
+	id = strings.TrimSpace(id)
 	cwd = strings.TrimSpace(cwd)
 	if cwd == "" {
 		return Session{}, errors.New("workspace cwd is required")
 	}
-	return updateMetadata(sessDir, id, false, func(s *Session) {
-		s.CWD = cwd
-		s.WorktreePath = strings.TrimSpace(worktreePath)
-		s.WorktreeBaseHEAD = strings.TrimSpace(worktreeBaseHEAD)
-		s.WorktreeBaseRepo = strings.TrimSpace(worktreeBaseRepo)
-	})
+	db, err := openStore(sessDir)
+	if err != nil {
+		return Session{}, err
+	}
+	defer db.Close()
+	storeWriteMu.Lock()
+	defer storeWriteMu.Unlock()
+	tx, err := db.Begin()
+	if err != nil {
+		return Session{}, err
+	}
+	defer tx.Rollback()
+	metadata, found, err := findSessionTx(tx, id)
+	if err != nil {
+		return Session{}, err
+	}
+	if !found {
+		return Session{}, fmt.Errorf("%w: %q", ErrSessionNotFound, id)
+	}
+	metadata.CWD = cwd
+	metadata.WorktreePath = strings.TrimSpace(worktreePath)
+	metadata.WorktreeBaseHEAD = strings.TrimSpace(worktreeBaseHEAD)
+	metadata.WorktreeBaseRepo = strings.TrimSpace(worktreeBaseRepo)
+	if err := updateSessionTx(tx, metadata); err != nil {
+		return Session{}, err
+	}
+	if metadata.Fusion != nil {
+		// A persistent pair shares one workspace, including while disabled.
+		// One transaction prevents a crash from splitting its bindings.
+		if _, err := tx.Exec(`UPDATE sessions SET cwd=?,worktree_path=?,worktree_base_head=?,worktree_base_repo=? WHERE source='fusion-side' AND parent_id=? AND archived_at IS NULL`, metadata.CWD, metadata.WorktreePath, metadata.WorktreeBaseHEAD, metadata.WorktreeBaseRepo, id); err != nil {
+			return Session{}, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return Session{}, err
+	}
+	return metadata, nil
 }
 
 // UpdatePinned marks a session as pinned or unpinned.
@@ -1322,6 +1357,17 @@ func migrateSchema(db *sql.DB) error {
 			FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_session_messages_role ON session_messages(session_id, role, seq)`,
+		`CREATE TABLE IF NOT EXISTS fusion_dispatches (
+ client_id TEXT PRIMARY KEY, lead_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE, lead_turn_id TEXT NOT NULL, side_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE, delivery TEXT NOT NULL, created_at TEXT NOT NULL
+)`,
+		`CREATE TABLE IF NOT EXISTS fusion_tasks (
+ id TEXT PRIMARY KEY, lead_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+ side_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE, lead_turn_id TEXT NOT NULL,
+ revision INTEGER NOT NULL, state TEXT NOT NULL, read_only INTEGER NOT NULL,
+ latest_client_id TEXT NOT NULL, report_id TEXT NOT NULL DEFAULT '', report_revision INTEGER NOT NULL DEFAULT 0,
+ feedback TEXT NOT NULL DEFAULT '', stop_reason TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL, review_rounds INTEGER NOT NULL DEFAULT 0
+)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_fusion_active_task ON fusion_tasks(lead_id) WHERE state IN ('queued','running','awaiting_review')`,
 		`CREATE TABLE IF NOT EXISTS session_controls (
 			session_id TEXT PRIMARY KEY,
 			manager_id TEXT NOT NULL,
@@ -1978,6 +2024,25 @@ WHERE workflow_id = ''`); err != nil {
 	if err := migration.addColumnIfMissing("session_inbox", "wake", "INTEGER NOT NULL DEFAULT 1"); err != nil {
 		return err
 	}
+	if err := migration.addColumnIfMissing("sessions", "fusion_json", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := migration.addColumnIfMissing("sessions", "fusion_enabled", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	for _, column := range []struct{ name, definition string }{
+		{"task_id", "TEXT NOT NULL DEFAULT ''"}, {"revision", "INTEGER NOT NULL DEFAULT 0"}, {"kind", "TEXT NOT NULL DEFAULT ''"},
+	} {
+		if err := migration.addColumnIfMissing("fusion_dispatches", column.name, column.definition); err != nil {
+			return err
+		}
+	}
+	if err := migration.addColumnIfMissing("fusion_tasks", "review_rounds", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	if _, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_fusion_side ON sessions(parent_id) WHERE source='fusion-side' AND archived_at IS NULL`); err != nil {
+		return err
+	}
 	if err := migration.addColumnIfMissing("sessions", "project_role", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
@@ -2107,8 +2172,8 @@ func insertSessionSQL() string {
 		forked_from_id, forked_from_turn_id, forked_from_item_id,
 		pinned_at, folder_id, archived_at, archive_reason, worktree_path, worktree_base_head, worktree_base_repo,
 		workspace_id, source, owner, visibility, parent_id, context_source, creation_request_id,
-		provider, model, variant, effort, speed, permission_mode, approve_for_me, engine_id, engine_ref, instructions, project_role, tool_policy_json
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		provider, model, variant, effort, speed, permission_mode, approve_for_me, engine_id, engine_ref, instructions, project_role, tool_policy_json, fusion_json, fusion_enabled
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 }
 
 func updateSessionTx(tx *sql.Tx, sess Session) error {
@@ -2118,7 +2183,7 @@ SET created_at = ?, updated_at = ?, title = ?, summary = ?, entries = ?, cwd = ?
     forked_from_id = ?, forked_from_turn_id = ?, forked_from_item_id = ?,
     pinned_at = ?, folder_id = ?, archived_at = ?, archive_reason = ?, worktree_path = ?, worktree_base_head = ?, worktree_base_repo = ?,
     workspace_id = ?, source = ?, owner = ?, visibility = ?, parent_id = ?, context_source = ?, creation_request_id = ?,
-	provider = ?, model = ?, variant = ?, effort = ?, speed = ?, permission_mode = ?, approve_for_me = ?, engine_id = ?, engine_ref = ?, instructions = ?, project_role = ?, tool_policy_json = ?
+	provider = ?, model = ?, variant = ?, effort = ?, speed = ?, permission_mode = ?, approve_for_me = ?, engine_id = ?, engine_ref = ?, instructions = ?, project_role = ?, tool_policy_json = ?, fusion_json = ?, fusion_enabled = ?
 WHERE id = ?`,
 		timeText(sess.CreatedAt), timeText(sess.UpdatedAt), sess.Title, sess.Summary, sess.Entries, normalizeCWD(sess.CWD),
 		sess.ForkedFromID, sess.ForkedFromTurnID, sess.ForkedFromItemID,
@@ -2134,6 +2199,7 @@ WHERE id = ?`,
 		sess.Instructions,
 		sess.ProjectRole,
 		strings.TrimSpace(sess.ToolPolicyJSON),
+		fusionPairJSON(sess.Fusion), boolToInt(sess.FusionEnabled),
 		sess.ID,
 	)
 	if err != nil {
@@ -2179,6 +2245,7 @@ func sessionArgs(sess Session) []any {
 		sess.Instructions,
 		sess.ProjectRole,
 		strings.TrimSpace(sess.ToolPolicyJSON),
+		fusionPairJSON(sess.Fusion), boolToInt(sess.FusionEnabled),
 	}
 }
 
@@ -2189,7 +2256,7 @@ SELECT id, created_at, updated_at, title, summary, entries, cwd,
        pinned_at, folder_id, archived_at, archive_reason,
        worktree_path, worktree_base_head, worktree_base_repo,
        workspace_id, source, owner, visibility, parent_id, context_source, creation_request_id,
-	       provider, model, variant, effort, speed, permission_mode, approve_for_me, engine_id, engine_ref, instructions, project_role, tool_policy_json,
+	       provider, model, variant, effort, speed, permission_mode, approve_for_me, engine_id, engine_ref, instructions, project_role, tool_policy_json, fusion_json, fusion_enabled,
 	       COALESCE((SELECT m.client_id FROM session_messages m
 	                 WHERE m.session_id = sessions.id AND m.role = 'meta'
 	                   AND m.content = 'turn_terminal' AND m.client_id <> ''
@@ -2206,7 +2273,7 @@ SELECT id, created_at, updated_at, title, summary, entries, cwd,
        pinned_at, folder_id, archived_at, archive_reason,
        worktree_path, worktree_base_head, worktree_base_repo,
        workspace_id, source, owner, visibility, parent_id, context_source, creation_request_id,
-	       provider, model, variant, effort, speed, permission_mode, approve_for_me, engine_id, engine_ref, instructions, project_role, tool_policy_json,
+	       provider, model, variant, effort, speed, permission_mode, approve_for_me, engine_id, engine_ref, instructions, project_role, tool_policy_json, fusion_json, fusion_enabled,
 	       COALESCE((SELECT m.client_id FROM session_messages m
 	                 WHERE m.session_id = sessions.id AND m.role = 'meta'
 	                   AND m.content = 'turn_terminal' AND m.client_id <> ''
@@ -2234,6 +2301,7 @@ func scanSession(scanner interface {
 }) (Session, error) {
 	var s Session
 	var createdAt, updatedAt string
+	var fusionJSON string
 	var pinnedAt, archivedAt sql.NullString
 	if err := scanner.Scan(
 		&s.ID, &createdAt, &updatedAt, &s.Title, &s.Summary, &s.Entries, &s.CWD,
@@ -2241,10 +2309,15 @@ func scanSession(scanner interface {
 		&pinnedAt, &s.FolderID, &archivedAt, &s.ArchiveReason,
 		&s.WorktreePath, &s.WorktreeBaseHEAD, &s.WorktreeBaseRepo,
 		&s.WorkspaceID, &s.Source, &s.Owner, &s.Visibility, &s.ParentID, &s.ContextSource, &s.CreationRequestID,
-		&s.Provider, &s.Model, &s.Variant, &s.Effort, &s.Speed, &s.PermissionMode, &s.ApproveForMe, &s.EngineID, &s.EngineRef, &s.Instructions, &s.ProjectRole, &s.ToolPolicyJSON,
+		&s.Provider, &s.Model, &s.Variant, &s.Effort, &s.Speed, &s.PermissionMode, &s.ApproveForMe, &s.EngineID, &s.EngineRef, &s.Instructions, &s.ProjectRole, &s.ToolPolicyJSON, &fusionJSON, &s.FusionEnabled,
 		&s.LatestCompletedTurnID,
 	); err != nil {
 		return Session{}, err
+	}
+	if fusionJSON != "" {
+		if err := json.Unmarshal([]byte(fusionJSON), &s.Fusion); err != nil {
+			return Session{}, fmt.Errorf("decode Fusion pair: %w", err)
+		}
 	}
 	s.CreatedAt = parseTime(createdAt)
 	s.UpdatedAt = parseTime(updatedAt)

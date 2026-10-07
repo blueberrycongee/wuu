@@ -8,7 +8,17 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ## [Unreleased]
 
+### Added
+
+- Native Fusion conversations with pinned Lead/Sidekick models, a persistent
+  Sidekick session, versioned requirements and exact-report review, durable
+  result recovery, shared-workspace write coordination, read-only delegation,
+  coordinated Stop, and compact links to the live Sidekick conversation.
+
 ### Fixed
+
+- Identify Fusion message sources as Lead or Sidekick even before conversation
+  titles exist, including historical messages with empty source names.
 
 - Web fetch results account for JSON escaping and metadata when applying the transport size limit.
 
@@ -27,6 +37,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   state, conversation logs, and databases protected at their storage writers.
 
 ### Changed
+
+- Give split conversations a compact fixed header, keeping the close action
+  separate from message sources and accessible while scrolling.
 
 - Remove redundant side chat explanations and shorten its input prompt. Keep the header as a plain title without an explanatory tooltip or extra keyboard focus stop.
 

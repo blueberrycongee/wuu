@@ -338,27 +338,70 @@
   min-width: 0;
 }
 
+/* Coordination entries use the UI reading size and do not reserve bubble actions. */
+.session-message-row {
+  position: relative;
+  align-self: flex-end;
+  min-width: 0;
+  max-width: 100%;
+  margin-block: 4px;
+}
+
+.turn.session-message-turn {
+  contain-intrinsic-size: auto 32px;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.session-message-anchor {
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline-end: 0;
+  width: 1px;
+  height: 1px;
+  pointer-events: none;
+}
+
 .session-message-source {
   display: flex;
   align-items: center;
-  justify-self: end;
   gap: 6px;
-  min-width: 0;
   max-width: 100%;
+  min-height: 28px;
   padding: 2px 0;
   border: 0;
   background: none;
-  color: var(--ink-tertiary);
+  color: var(--ink-muted);
   font: inherit;
-  text-align: right;
+  font-size: var(--font-ui);
+  font-weight: 400;
+  line-height: var(--conversation-control-line-height);
   cursor: pointer;
 }
 
-.session-message-source svg { flex: none; }
-.session-message-source span { overflow-wrap: anywhere; }
+.session-message-prefix,
+.session-message-count { flex: none; }
+.session-message-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.session-message-source .agent-avatar-mark {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  overflow: hidden;
+}
 .session-message-source:hover:not(:disabled) { color: var(--ink); }
-.session-message-source:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
+.session-message-source:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; border-radius: var(--radius-sm); }
 .session-message-source:disabled { cursor: default; }
+
+.turn-process-topline.has-fusion-source { flex-wrap: wrap; row-gap: 4px; }
+.turn-process-topline.has-fusion-source > .turn-process-toggle { flex-basis: 180px; }
+.turn-process-topline.has-fusion-source > .session-message-source { flex: 0 1 auto; }
+.fusion-progress-detail { color: var(--ink-muted); overflow-wrap: anywhere; }
 
 /*
  * Edit state stretches the message block to the full row width — a "draft
@@ -5716,4 +5759,27 @@ button.turn-sources-pill:focus-visible {
     animation: none;
     transform: none;
   }
+}
+
+.turn-process-header.has-fusion {
+  flex: 0 1 auto;
+  max-width: 100%;
+}
+
+.fusion-status-summary {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink-muted);
+  font-size: var(--conversation-process-font-size);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fusion-usage {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  color: var(--ink-muted);
+  font-size: var(--conversation-process-font-size);
 }

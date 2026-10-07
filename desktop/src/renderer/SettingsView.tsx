@@ -1,3 +1,4 @@
+import { FusionSettings } from "./FusionSettings";
 import { hostSupports } from "./HostCapabilities";
 import { isTouchWebShell } from "./ComposerFocus";
 import {
@@ -1106,6 +1107,7 @@ function SettingsRuntimePage({
   return (
     <>
       <SettingsPageHeader title={t("settings.runtime")} description={t("settings.runtimeDescription")} />
+      <FusionSettings value={initialized?.advanced_settings?.fusion} providers={initialized?.providers ?? []} disabled={running} onSave={onAdvancedSave} />
       {initialized?.features?.project_agent && (
         <SettingsSection title={t("settings.projectModels")} description={t("settings.projectModelsDescription")}>
           <div className="settings-form"><SettingsGroup>

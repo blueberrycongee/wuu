@@ -8,9 +8,9 @@ import (
 	"github.com/blueberrycongee/wuu/internal/session"
 )
 
-const projectInboxMaxRetryDelay = 2 * time.Second
+const sessionInboxMaxRetryDelay = 2 * time.Second
 
-type projectInboxDrain struct {
+type sessionInboxDrain struct {
 	running   bool
 	done      chan struct{}
 	dirty     bool
@@ -22,7 +22,7 @@ type projectInboxDrain struct {
 // still necessary: another process or a short metadata mutation can release a
 // worker lease without sending this Server a completion event.
 func (s *Server) drainSessionInbox(target string) {
-	if s == nil || !projectAgentEnabled || s.closed.Load() {
+	if s == nil || s.closed.Load() {
 		return
 	}
 	metadata, found, err := session.Find(s.rt.SessionDir, target)
@@ -30,108 +30,111 @@ func (s *Server) drainSessionInbox(target string) {
 		return
 	}
 	projectID := metadata.ID
-	if metadata.Source == projectSessionSource {
+	if projectExecutionDisabled(metadata.Source) {
+		return
+	}
+	if metadata.Source == projectSessionSource || metadata.Source == fusionSideSource {
 		projectID = metadata.ParentID
 	}
-	s.kickProjectInboxDrain(projectID)
+	s.kickSessionInboxDrain(projectID)
 	// Preserve synchronous delivery callers: join an in-flight pass, then settle
 	// revoked input and steer running recipients even while starts are backed off.
-	s.projectInboxMu.Lock()
-	state := s.projectInboxDrains[projectID]
+	s.sessionInboxMu.Lock()
+	state := s.sessionInboxDrains[projectID]
 	var done <-chan struct{}
 	if state != nil && state.running {
 		done = state.done
 	}
-	s.projectInboxMu.Unlock()
+	s.sessionInboxMu.Unlock()
 	if done != nil {
 		<-done
 	}
 	s.drainSessionInboxTarget(target, false)
 }
 
-func (s *Server) kickProjectInboxDrain(projectID string) {
-	if s == nil || !projectAgentEnabled || s.closed.Load() || projectID == "" {
+func (s *Server) kickSessionInboxDrain(projectID string) {
+	if s == nil || s.closed.Load() || projectID == "" {
 		return
 	}
-	s.projectInboxMu.Lock()
+	s.sessionInboxMu.Lock()
 	if s.closed.Load() {
-		s.projectInboxMu.Unlock()
+		s.sessionInboxMu.Unlock()
 		return
 	}
-	if s.projectInboxDrains == nil {
-		s.projectInboxDrains = make(map[string]*projectInboxDrain)
+	if s.sessionInboxDrains == nil {
+		s.sessionInboxDrains = make(map[string]*sessionInboxDrain)
 	}
-	state := s.projectInboxDrains[projectID]
+	state := s.sessionInboxDrains[projectID]
 	if state != nil {
 		// Repeated kicks never reset the backoff or allocate another timer.
 		state.dirty = true
-		s.projectInboxMu.Unlock()
+		s.sessionInboxMu.Unlock()
 		return
 	}
-	state = &projectInboxDrain{running: true, done: make(chan struct{})}
-	s.projectInboxDrains[projectID] = state
-	s.projectInboxMu.Unlock()
-	s.runProjectInboxDrain(projectID, state)
+	state = &sessionInboxDrain{running: true, done: make(chan struct{})}
+	s.sessionInboxDrains[projectID] = state
+	s.sessionInboxMu.Unlock()
+	s.runSessionInboxDrain(projectID, state)
 }
 
-func (s *Server) runProjectInboxDrain(projectID string, state *projectInboxDrain) {
+func (s *Server) runSessionInboxDrain(projectID string, state *sessionInboxDrain) {
 	for {
-		pending := s.drainProjectInboxPass(projectID)
-		s.projectInboxMu.Lock()
-		if s.closed.Load() || s.projectInboxDrains[projectID] != state {
+		pending := s.drainSessionInboxPass(projectID)
+		s.sessionInboxMu.Lock()
+		if s.closed.Load() || s.sessionInboxDrains[projectID] != state {
 			close(state.done)
-			s.projectInboxMu.Unlock()
+			s.sessionInboxMu.Unlock()
 			return
 		}
 		if !pending && state.dirty {
 			// A kick racing the final scan cannot disappear with drain teardown.
 			state.dirty = false
-			s.projectInboxMu.Unlock()
+			s.sessionInboxMu.Unlock()
 			continue
 		}
 		state.running = false
 		close(state.done)
 		state.dirty = false
 		if !pending {
-			delete(s.projectInboxDrains, projectID)
-			s.projectInboxMu.Unlock()
+			delete(s.sessionInboxDrains, projectID)
+			s.sessionInboxMu.Unlock()
 			return
 		}
 		if state.delay == 0 {
 			state.delay = threadExecutionLeaseRetryDelay
 		} else {
-			state.delay = min(state.delay*2, projectInboxMaxRetryDelay)
+			state.delay = min(state.delay*2, sessionInboxMaxRetryDelay)
 		}
 		retry := func() {
-			s.projectInboxMu.Lock()
-			if s.closed.Load() || s.projectInboxDrains[projectID] != state {
-				s.projectInboxMu.Unlock()
+			s.sessionInboxMu.Lock()
+			if s.closed.Load() || s.sessionInboxDrains[projectID] != state {
+				s.sessionInboxMu.Unlock()
 				return
 			}
 			state.stopTimer = nil
 			state.running = true
 			state.done = make(chan struct{})
 			done := state.done
-			s.projectInboxMu.Unlock()
-			if !s.startBackground(func() { s.runProjectInboxDrain(projectID, state) }) {
-				s.projectInboxMu.Lock()
+			s.sessionInboxMu.Unlock()
+			if !s.startBackground(func() { s.runSessionInboxDrain(projectID, state) }) {
+				s.sessionInboxMu.Lock()
 				state.running = false
 				close(done)
-				s.projectInboxMu.Unlock()
+				s.sessionInboxMu.Unlock()
 			}
 		}
-		if s.projectInboxAfterFunc != nil {
-			state.stopTimer = s.projectInboxAfterFunc(state.delay, retry)
+		if s.sessionInboxAfterFunc != nil {
+			state.stopTimer = s.sessionInboxAfterFunc(state.delay, retry)
 		} else {
 			timer := time.AfterFunc(state.delay, retry)
 			state.stopTimer = func() { timer.Stop() }
 		}
-		s.projectInboxMu.Unlock()
+		s.sessionInboxMu.Unlock()
 		return
 	}
 }
 
-func (s *Server) drainProjectInboxPass(projectID string) bool {
+func (s *Server) drainSessionInboxPass(projectID string) bool {
 	workOwned := false
 	if project, live := s.projectCoordinator(projectID); live {
 		root, id, err := s.sessionWorkspace(project)
@@ -165,7 +168,7 @@ func (s *Server) drainProjectInboxPass(projectID string) bool {
 		if err != nil {
 			return true
 		}
-		if !found || m.ArchivedAt != nil || (m.ID != projectID && (m.Source != projectSessionSource || m.ParentID != projectID)) {
+		if !found || projectExecutionDisabled(m.Source) || m.ArchivedAt != nil || (m.ID != projectID && ((m.Source != projectSessionSource && m.Source != fusionSideSource) || m.ParentID != projectID)) {
 			continue
 		}
 		root, workspaceID, err := s.sessionWorkspace(m)
@@ -214,12 +217,12 @@ func (s *Server) drainProjectInboxPass(projectID string) bool {
 	}
 	// Existing user/completion queues keep their own ordering and cancellation
 	// rules; only capacity-blocked admissions join this coalesced retry loop.
-	s.projectInboxMu.Lock()
+	s.sessionInboxMu.Lock()
 	callbacks := make(map[string]func() bool, len(s.projectCapacityRetries[projectID]))
 	for key, retry := range s.projectCapacityRetries[projectID] {
 		callbacks[key] = retry
 	}
-	s.projectInboxMu.Unlock()
+	s.sessionInboxMu.Unlock()
 	keys := make([]string, 0, len(callbacks))
 	for key := range callbacks {
 		keys = append(keys, key)
@@ -229,19 +232,19 @@ func (s *Server) drainProjectInboxPass(projectID string) bool {
 		if full || s.closed.Load() {
 			break
 		}
-		s.projectInboxMu.Lock()
+		s.sessionInboxMu.Lock()
 		delete(s.projectCapacityRetries[projectID], key)
-		s.projectInboxMu.Unlock()
+		s.sessionInboxMu.Unlock()
 		full = callbacks[key]()
 	}
 	schemaPending, _ := s.drainExecutionSchemaRetries(projectID, !full)
 	pending = pending || schemaPending
-	s.projectInboxMu.Lock()
+	s.sessionInboxMu.Lock()
 	pending = pending || len(s.projectCapacityRetries[projectID]) > 0
 	if len(s.projectCapacityRetries[projectID]) == 0 {
 		delete(s.projectCapacityRetries, projectID)
 	}
-	s.projectInboxMu.Unlock()
+	s.sessionInboxMu.Unlock()
 	if workOwned {
 		if work, err := session.PendingProjectWork(s.rt.SessionDir, projectID); err != nil || len(work) > 0 {
 			pending = true
@@ -250,15 +253,15 @@ func (s *Server) drainProjectInboxPass(projectID string) bool {
 	return pending
 }
 
-func (s *Server) closeProjectInboxDrains() {
-	s.projectInboxMu.Lock()
-	defer s.projectInboxMu.Unlock()
-	for _, state := range s.projectInboxDrains {
+func (s *Server) closeSessionInboxDrains() {
+	s.sessionInboxMu.Lock()
+	defer s.sessionInboxMu.Unlock()
+	for _, state := range s.sessionInboxDrains {
 		if state.stopTimer != nil {
 			state.stopTimer()
 		}
 	}
-	s.projectInboxDrains = nil
+	s.sessionInboxDrains = nil
 	s.projectCapacityRetries = nil
 }
 
@@ -271,9 +274,9 @@ func (s *Server) deferProjectCapacityRetry(threadID, kind string, retry func() b
 		return false
 	}
 	projectID := metadata.ParentID
-	s.projectInboxMu.Lock()
+	s.sessionInboxMu.Lock()
 	if s.closed.Load() {
-		s.projectInboxMu.Unlock()
+		s.sessionInboxMu.Unlock()
 		return true
 	}
 	if s.projectCapacityRetries == nil {
@@ -283,7 +286,7 @@ func (s *Server) deferProjectCapacityRetry(threadID, kind string, retry func() b
 		s.projectCapacityRetries[projectID] = make(map[string]func() bool)
 	}
 	s.projectCapacityRetries[projectID][threadID+":"+kind] = retry
-	s.projectInboxMu.Unlock()
-	s.startBackground(func() { s.kickProjectInboxDrain(projectID) })
+	s.sessionInboxMu.Unlock()
+	s.startBackground(func() { s.kickSessionInboxDrain(projectID) })
 	return true
 }

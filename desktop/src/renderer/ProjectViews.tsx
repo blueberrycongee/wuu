@@ -64,11 +64,12 @@ export function isProjectEvent(item: Pick<ThreadItem, "origin" | "cause">): bool
  * A turn's user messages with each run of two or more project events folded
  * into one group, so a burst of events reads as one marker.
  */
-export function groupProjectEvents(items: ThreadItem[]): Array<ThreadItem | ThreadItem[]> {
-  const entries: Array<ThreadItem | ThreadItem[]> = [];
+export function groupProjectEvents(items: ThreadItem[]): Array<ThreadItem | [ThreadItem, ...ThreadItem[]]> {
+  const entries: Array<ThreadItem | [ThreadItem, ...ThreadItem[]]> = [];
   let run: ThreadItem[] = [];
   const flush = () => {
-    if (run.length > 1) entries.push(run);
+    const [first, ...rest] = run;
+    if (first && rest.length > 0) entries.push([first, ...rest]);
     else entries.push(...run);
     run = [];
   };

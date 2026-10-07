@@ -12,22 +12,6 @@ import (
 	"github.com/blueberrycongee/wuu/internal/worktree"
 )
 
-type projectSessionView struct {
-	Role                  string     `json:"role"`
-	SessionID             string     `json:"session_id"`
-	Title                 string     `json:"title"`
-	State                 string     `json:"state"`
-	Control               string     `json:"control,omitempty"`
-	Workspace             string     `json:"workspace"`
-	LatestCompletedTurnID string     `json:"latest_completed_turn_id,omitempty"`
-	TurnID                string     `json:"turn_id,omitempty"`
-	TurnStatus            TurnStatus `json:"turn_status,omitempty"`
-	FinalOutput           string     `json:"final_output,omitempty"`
-	ClientID              string     `json:"client_id,omitempty"`
-	DeliveryState         string     `json:"delivery_state,omitempty"`
-	TimedOut              bool       `json:"timed_out,omitempty"`
-}
-
 // projectActor resolves the live team and rejects actions after human takeover.
 func (s *Server) projectActor(id string) (session.Session, session.Session, *session.Control, error) {
 	if !projectAgentEnabled {
@@ -233,33 +217,15 @@ func (s *Server) listProjectSessions(projectID string) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	views := make([]projectSessionView, 0, len(managed))
+	views := make([]managedSessionView, 0, len(managed))
 	for _, metadata := range managed {
-		view, err := s.projectSessionView(metadata)
+		view, err := s.managedSessionView(metadata)
 		if err != nil {
 			return nil, err
 		}
 		views = append(views, view)
 	}
 	return map[string]any{"sessions": views}, nil
-}
-
-func (s *Server) projectSessionView(metadata session.Session) (projectSessionView, error) {
-	view := projectSessionView{Role: firstNonEmpty(metadata.ProjectRole, "worker"), SessionID: metadata.ID, Title: metadata.Title, State: "idle", Workspace: "shared", LatestCompletedTurnID: metadata.LatestCompletedTurnID}
-	if metadata.WorktreePath != "" {
-		view.Workspace = "worktree"
-	}
-	if active, err := session.ThreadExecutionActive(s.rt.SessionDir, metadata.ID); err != nil {
-		return view, err
-	} else if active {
-		view.State = "running"
-	}
-	if control, ok, err := session.ReadControl(s.rt.SessionDir, metadata.ID); err != nil {
-		return view, err
-	} else if ok {
-		view.Control = control.State
-	}
-	return view, nil
 }
 
 func (s *Server) createProjectSession(ctx context.Context, project, actor session.Session, callID string, request tools.ProjectSessionRequest) (any, error) {
@@ -269,8 +235,8 @@ func (s *Server) createProjectSession(ctx context.Context, project, actor sessio
 	}
 	// Serialize same-host creation through launch; the store's unique side index
 	// also prevents another host from creating a second live side.
-	s.projectCreateMu.Lock()
-	defer s.projectCreateMu.Unlock()
+	s.sessionCreateMu.Lock()
+	defer s.sessionCreateMu.Unlock()
 	if role == "side" {
 		members, err := s.projectSessions(project.ID)
 		if err != nil {
@@ -282,7 +248,7 @@ func (s *Server) createProjectSession(ctx context.Context, project, actor sessio
 					request.SessionID = member.ID
 					return s.sendProjectSession(ctx, project, actor, "project:"+project.ID+":"+callID, request)
 				}
-				return s.projectSessionView(member)
+				return s.managedSessionView(member)
 			}
 		}
 	}
@@ -294,7 +260,7 @@ func (s *Server) createProjectSession(ctx context.Context, project, actor sessio
 	if existing, found, err := session.FindManagedByRequest(s.rt.SessionDir, projectSessionOwner, requestID); err != nil {
 		return nil, err
 	} else if found {
-		return s.projectDispatchView(existing, requestID)
+		return s.dispatchSessionInput(existing, requestID)
 	}
 	workspace := strings.TrimSpace(request.Workspace)
 	if workspace == "" {
@@ -347,7 +313,7 @@ func (s *Server) createProjectSession(ctx context.Context, project, actor sessio
 	if err != nil {
 		return nil, err
 	}
-	return s.projectDispatchView(metadata, requestID)
+	return s.dispatchSessionInput(metadata, requestID)
 }
 
 // sendProjectSession stores the dispatch before attempting admission.
@@ -391,69 +357,7 @@ func (s *Server) sendProjectSession(ctx context.Context, project, actor session.
 	if err := session.EnqueueInbox(s.rt.SessionDir, message); err != nil {
 		return nil, err
 	}
-	return s.projectDispatchView(metadata, clientID)
-}
-
-func (s *Server) projectDispatchView(metadata session.Session, clientID string) (projectSessionView, error) {
-	s.drainSessionInbox(metadata.ID)
-	return s.projectDispatchReceipt(metadata, clientID)
-}
-
-func (s *Server) projectDispatchReceipt(metadata session.Session, clientID string) (projectSessionView, error) {
-	view, err := s.projectSessionView(metadata)
-	if err != nil {
-		return view, err
-	}
-	view.ClientID = clientID
-	view.DeliveryState = "queued"
-	th, err := s.ensureThreadLoaded(metadata.ID)
-	if err != nil {
-		return view, err
-	}
-	// A pending steer may still move to the next turn. Publish an exact turn
-	// only once the dispatch is consumed into that turn's user items.
-	th.mu.Lock()
-	for _, turn := range th.Turns {
-		for _, item := range turn.Items {
-			if item.Type == ThreadItemUserMessage && item.SourceID == clientID {
-				view.TurnID = turn.ID
-			}
-		}
-	}
-	for _, input := range th.pendingSteers {
-		if input.ClientID == clientID {
-			view.DeliveryState = "steering"
-		}
-	}
-	th.mu.Unlock()
-	if view.TurnID == "" {
-		if turns, err := s.loadDurableProjectTurns(metadata.ID); err != nil {
-			return view, err
-		} else {
-			for _, turn := range turns {
-				for _, item := range turn.Items {
-					if item.SourceID == clientID {
-						view.TurnID = turn.ID
-					}
-				}
-			}
-		}
-	}
-	if view.TurnID != "" {
-		view.DeliveryState = "consumed"
-		return view, nil
-	}
-	if pending, err := session.PendingInbox(s.rt.SessionDir, metadata.ID); err != nil {
-		return view, err
-	} else {
-		for _, input := range pending {
-			if input.ClientID == clientID {
-				view.State = "queued"
-				break
-			}
-		}
-	}
-	return view, nil
+	return s.dispatchSessionInput(metadata, clientID)
 }
 
 func (s *Server) handleProjectSession(req Request) error {

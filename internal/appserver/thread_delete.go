@@ -32,6 +32,9 @@ func (s *Server) handleThreadDelete(req Request) error {
 	if id == "" {
 		return s.writeResponse(req.ID, nil, errors.New("thread_id is required"))
 	}
+	if err := s.requireFusionSidesIdle(id); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
 	if th := s.thread(id); th != nil {
 		th.mu.Lock()
 		running := th.running

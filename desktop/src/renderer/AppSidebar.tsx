@@ -533,6 +533,19 @@ export function AppSidebar({
   onToggleSidebar?: () => void;
 }): JSX.Element {
   const { t } = useI18n();
+  const sidebarPinnedThreads = useMemo(
+    () => pinnedThreads.filter((thread) => thread.source !== "fusion-side"),
+    [pinnedThreads],
+  );
+  const sidebarWorkspaceThreadsByWorkspaceID = useMemo(
+    () => Object.fromEntries(Object.entries(workspaceThreadsByWorkspaceID).map(
+      ([workspaceID, threads]) => [
+        workspaceID,
+        threads.filter((thread) => thread.source !== "fusion-side"),
+      ],
+    )),
+    [workspaceThreadsByWorkspaceID],
+  );
   const [attentionStickyIDsState, setAttentionStickyIDsState] = useState<Set<string>>(() => new Set());
   const attentionStickyIDs = attentionStickyIDsProp ?? attentionStickyIDsState;
   const attentionStickyIDsRef = useRef(attentionStickyIDs);
@@ -548,12 +561,12 @@ export function AppSidebar({
   }
   const organizationSourceThreads = useMemo(() => {
     const byID = new Map<string, ThreadSummary>();
-    for (const threads of Object.values(workspaceThreadsByWorkspaceID)) {
+    for (const threads of Object.values(sidebarWorkspaceThreadsByWorkspaceID)) {
       for (const thread of threads) byID.set(thread.id, thread);
     }
-    for (const thread of pinnedThreads) byID.set(thread.id, thread);
+    for (const thread of sidebarPinnedThreads) byID.set(thread.id, thread);
     return [...byID.values()];
-  }, [pinnedThreads, workspaceThreadsByWorkspaceID]);
+  }, [sidebarPinnedThreads, sidebarWorkspaceThreadsByWorkspaceID]);
   const organization = useSessionOrganization(organizationSourceThreads);
   const [pinnedItems, setPinnedItems] = useState<SidebarPinnedItem[]>(
     loadSidebarPinnedItems,
@@ -682,7 +695,7 @@ export function AppSidebar({
   const folderSortableIDs = organization.folders.map((folder) => `${FOLDER_SORTABLE_PREFIX}${folder.id}`);
   const availableFolderIDs = new Set(organization.folders.map((folder) => folder.id));
   const availableWorkspaceIDs = new Set(sidebarWorkspaces.map((project) => project.id));
-  const availablePinnedThreadIDs = new Set(pinnedThreads.map((thread) => thread.id));
+  const availablePinnedThreadIDs = new Set(sidebarPinnedThreads.map((thread) => thread.id));
   const validPinnedItems = pinnedItems.filter((entry) => {
     if (entry.kind === "thread") return availablePinnedThreadIDs.has(entry.id);
     if (entry.kind === "folder") return availableFolderIDs.has(entry.id);
@@ -691,7 +704,7 @@ export function AppSidebar({
   const knownPinnedThreadIDs = new Set(
     validPinnedItems.filter((entry) => entry.kind === "thread").map((entry) => entry.id),
   );
-  for (const thread of pinnedThreads) {
+  for (const thread of sidebarPinnedThreads) {
     if (!knownPinnedThreadIDs.has(thread.id)) {
       validPinnedItems.push({ kind: "thread", id: thread.id });
     }
@@ -942,7 +955,7 @@ export function AppSidebar({
           ? "workspace"
           : undefined;
       if (entry?.kind === "thread" && (overGroup === "folders" || overGroup === "workspace")) {
-        const thread = pinnedThreads.find((candidate) => candidate.id === entry.id);
+        const thread = sidebarPinnedThreads.find((candidate) => candidate.id === entry.id);
         if (thread) toggleThreadPinned(thread);
       } else if (entry && overGroup === returnGroup) {
         if (entry.kind === "folder" && overID && visibleFolderSortableIDs.includes(overID)) {
@@ -1028,7 +1041,7 @@ export function AppSidebar({
       return next;
     });
   }
-  const pinnedRows = pinnedThreads;
+  const pinnedRows = sidebarPinnedThreads;
   const hasPinnedRows = validPinnedItems.length > 0;
   // An empty Pinned group has nothing to say until something that can be
   // pinned is picked up; then it appears as the drop target.
@@ -1045,12 +1058,12 @@ export function AppSidebar({
   );
   const allSidebarThreads = useMemo(() => {
     const byID = new Map<string, ThreadSummary>();
-    for (const threads of Object.values(workspaceThreadsByWorkspaceID)) {
+    for (const threads of Object.values(sidebarWorkspaceThreadsByWorkspaceID)) {
       for (const thread of threads) byID.set(thread.id, thread);
     }
     for (const thread of pinnedRows) byID.set(thread.id, thread);
     return [...byID.values()];
-  }, [pinnedRows, workspaceThreadsByWorkspaceID]);
+  }, [pinnedRows, sidebarWorkspaceThreadsByWorkspaceID]);
   useEffect(() => {
     if (!unreadViewOpen) {
       commitAttentionStickyIDs(new Set());
@@ -1105,7 +1118,7 @@ export function AppSidebar({
     const byID = new Map(allSidebarThreads.map((thread) => [thread.id, thread]));
     const projectIDs = new Set(projectIndex.projects.map((thread) => thread.id));
     const projects = sidebarWorkspaces.filter((project) => project.id !== SCRATCH_PSEUDO_PROJECT_ID);
-    for (const [workspaceID, threads] of Object.entries(workspaceThreadsByWorkspaceID)) {
+    for (const [workspaceID, threads] of Object.entries(sidebarWorkspaceThreadsByWorkspaceID)) {
       const project = projects.find((candidate) => candidate.id === workspaceID);
       // Cached buckets can overlap while a fork's workspace metadata refreshes.
       // Classify the same session snapshot in every bucket before publishing nodes.
@@ -1119,11 +1132,11 @@ export function AppSidebar({
       );
     }
     return next;
-  }, [allSidebarThreads, organization.folderByThreadID, projectIndex, workspaceThreadsByWorkspaceID, sidebarWorkspaces]);
+  }, [allSidebarThreads, organization.folderByThreadID, projectIndex, sidebarWorkspaceThreadsByWorkspaceID, sidebarWorkspaces]);
   const hoverFacts = useMemo<SidebarHoverFacts>(() => {
     const byID = new Map(allSidebarThreads.map((thread) => [thread.id, thread]));
     const threadsByWorkspaceID: Record<string, ThreadSummary[]> = {};
-    for (const [workspaceID, threads] of Object.entries(workspaceThreadsByWorkspaceID)) {
+    for (const [workspaceID, threads] of Object.entries(sidebarWorkspaceThreadsByWorkspaceID)) {
       threadsByWorkspaceID[workspaceID] = threads.map((thread) => byID.get(thread.id) ?? thread);
     }
     return {
@@ -1139,7 +1152,7 @@ export function AppSidebar({
     projectIndex,
     sidebarWorkspaces,
     state.lastViewedTurnByThreadID,
-    workspaceThreadsByWorkspaceID,
+    sidebarWorkspaceThreadsByWorkspaceID,
   ]);
   const folderThreadsByID = useMemo(() => {
     const next: Record<string, ThreadSummary[]> = {};
@@ -2330,7 +2343,7 @@ export function AppSidebar({
         sidebarWorkspaces={sidebarWorkspaces}
         activeThreadID={activeThreadID}
         pendingThreadID={pendingThreadID}
-        workspaceThreadsByWorkspaceID={workspaceThreadsByWorkspaceID}
+        workspaceThreadsByWorkspaceID={sidebarWorkspaceThreadsByWorkspaceID}
         loadingWorkspaceThreadIDs={loadingWorkspaceThreadIDs}
         onStartNewThreadInWorkspace={onStartNewThreadInWorkspace}
         onLoadWorkspaceThreads={onLoadWorkspaceThreads}

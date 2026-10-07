@@ -34,6 +34,7 @@ const (
 	SurfaceMain
 	// SurfaceProjectSession adds project communication to an ordinary session.
 	SurfaceProjectSession
+	SurfaceFusionLead
 )
 
 // Compiler compiles a model profile into a built-in tool surface. Plugin-owned
@@ -70,6 +71,9 @@ func (DefaultCompiler) Compile(p Profile, kind SurfaceKind) capability.Surface {
 	b.addVisible("present_artifact", capability.CapabilityArtifactPresent)
 	if kind != SurfaceWorker {
 		addContextWindowTools(b)
+	}
+	if kind == SurfaceFusionLead {
+		b.addVisible("fusion_delegate", capability.CapabilityFusionDelegate)
 	}
 	if kind == SurfaceProjectSession {
 		b.addVisible("session", capability.CapabilityProjectSessions)

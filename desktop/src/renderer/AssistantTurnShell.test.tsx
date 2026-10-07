@@ -27,6 +27,7 @@ import type { ThreadItem, Turn } from "../shared/protocol";
 import { buildAssistantTurnDisplay } from "./AssistantTurnDisplay";
 import { ConversationRenderActivityProvider } from "./ConversationRenderActivity";
 import { turnTelemetryStore } from "./TurnTelemetryStore";
+import { setOpenThreadInSplitHandler } from "./ConversationSplitBridge";
 import {
   AssistantTurnShell,
   resetRecoveredTurnStarts,
@@ -456,6 +457,43 @@ afterEach(() => {
 });
 
 describe("AssistantTurnShell — process fold default state (rule 2 + rule 8)", () => {
+  it("opens the actual Side conversation without requiring a returned message", () => {
+    const turn: Turn = {
+      ...makeTurn("completed", [makeFinalAnswer("I will report when verification finishes")]),
+      fusion: { lead: { provider: "fixture", model: "lead" }, sidekick: { provider: "fixture", model: "side" }, state: "sidekick", tasks: [{
+        task_id: "task", lead_id: "lead", lead_turn_id: "turn-1", side_id: "side", revision: 1,
+        state: "running", read_only: false, latest_client_id: "brief", created_at: "2026-10-06T00:00:00Z", updated_at: "2026-10-06T00:00:00Z", review_rounds: 0, elapsed_ms: 0, execution_state: "running",
+        usage: { lead_input_tokens: 0, lead_output_tokens: 0, side_input_tokens: 0, side_output_tokens: 0 },
+        progress: { turn_id: "side-turn", summary: "Checking the changed call sites" },
+      }] },
+    };
+    const open = vi.fn();
+    setOpenThreadInSplitHandler(open);
+    try {
+      const { container } = renderShell(turn);
+      act(() => container.querySelector<HTMLButtonElement>(".session-message-source")?.click());
+      expect(open).toHaveBeenCalledWith("side");
+      expect(container.textContent).toContain("Checking the changed call sites");
+    } finally { setOpenThreadInSplitHandler(undefined); }
+  });
+  it("retains Sidekick failure diagnostics after the Lead finishes", () => {
+    const turn: Turn = {
+      ...makeTurn("completed", [makeFinalAnswer("Lead explained the provider failure")]),
+      fusion: {
+        lead: { provider: "fixture", model: "lead" },
+        sidekick: { provider: "fixture", model: "side" },
+        state: "failed",
+        delegations: [{
+          dispatch_id: "dispatch-1", session_id: "side-1", state: "failed",
+          error: { message: "HTTP 403: spending limit reached", status_code: 403, category: "auth" },
+        }],
+      },
+    };
+    const { container } = renderShell(turn);
+    act(() => container.querySelector<HTMLElement>(".turn-process-toggle")?.click());
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain("403");
+    expect(container.textContent).toContain("Lead explained the provider failure");
+  });
   it("opens the process fold while a turn is in flight with only commentary", () => {
     const turn = makeTurn("in_progress", [makeCommentary("thinking through it")]);
     const { container } = renderShell(turn);

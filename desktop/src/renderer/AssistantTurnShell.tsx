@@ -1,3 +1,5 @@
+import { fusionTurnStatus } from "./FusionStatus";
+import { SessionMessageSource } from "./SessionMessagePresentation";
 import { localTurnTiming } from "./LocalTurnTiming";
 import { ChevronRight } from "./WuuIcons";
 import {
@@ -24,7 +26,8 @@ import { layoutAssistantTurn } from "./AssistantTurnLayout";
 import { LightweightStreamingText } from "./LightweightStreamingText";
 import { useLiveTextWave } from "./LiveTextWave";
 import { streamFieldValue } from "./ThreadItemText";
-import { TurnEventNotice } from "./TurnNotice";
+import { SystemEventNotice, TurnEventNotice } from "./TurnNotice";
+import { userFacingErrorForMessage } from "./UserFacingErrors";
 import { turnEventForItem } from "./TurnEvents";
 import {
   clearPausedTurnElapsed,
@@ -174,6 +177,7 @@ export function AssistantTurnShell({
     turn.status === "in_progress" ||
     turn.status === "interrupted" ||
     turn.status === "failed" ||
+    Boolean(turn.fusion) ||
     hasAnswer;
   const answerHandoffRequested = answerEntries.some(
     (entry) =>
@@ -275,6 +279,12 @@ function TurnProcessFold({
   onCollapseComplete?: () => void;
   editSummaryCard?: JSX.Element;
 }): JSX.Element {
+  const { locale } = useI18n();
+  const fusion = fusionTurnStatus(turn, locale === "zh-CN");
+  const fusionTask = turn.fusion?.tasks?.at(-1);
+  const fusionElapsedMs = fusionTask && (fusionTask.state === "queued" || fusionTask.state === "running" || fusionTask.state === "awaiting_review")
+    ? Math.max(fusionTask.elapsed_ms, Date.now() - Date.parse(fusionTask.created_at)) : fusionTask?.elapsed_ms ?? 0;
+  const sideFailure = fusion?.failure?.error ? userFacingErrorForMessage(fusion.failure.error, "turn") : undefined;
   const renderActive = useConversationRenderActive();
   const revealSnap = useConversationRevealSnap();
   const [expanded, setExpanded] = useState(!collapseRequested);
@@ -352,7 +362,8 @@ function TurnProcessFold({
   if (Number.isFinite(parsedStartedAt) || !liveDuration) {
     recoveredTurnStartedAt.delete(turn.id);
   }
-  const liveNow = useLiveNow(liveDuration && renderActive);
+  const fusionDurationLive = expanded && fusionTask && (fusionTask.state === "queued" || fusionTask.state === "running" || fusionTask.state === "awaiting_review");
+  const liveNow = useLiveNow(Boolean((liveDuration || fusionDurationLive) && renderActive));
   const liveElapsedMs = liveDuration
     ? localTiming?.elapsed ?? Math.max(0, liveNow - startedAt)
     : undefined;
@@ -440,16 +451,18 @@ function TurnProcessFold({
     setExpanded((prev) => !prev);
   }, []);
 
-  const hasDetails = entries.length > 0;
-  const visiblePreview = expanded ? undefined : latestPreview;
+  const hasDetails = entries.length > 0 || Boolean(fusion?.tokens) || Boolean(sideFailure) || Boolean(fusionTask);
+  const sideProgress = fusionTask?.progress?.summary || fusionTask?.progress?.tool;
+  const visiblePreview: TurnProcessPreview | undefined = expanded ? undefined
+    : sideProgress ? { kind: "commentary", text: sideProgress } : latestPreview;
   const hasPreview = Boolean(visiblePreview);
   const previewWaveRef = useLiveTextWave<HTMLSpanElement>(
     turn.status === "in_progress" && hasPreview,
   );
   const toggleContent = (
     <>
-      <span className="turn-process-header">
-        <span className="turn-process-title">{processLabel}</span>
+      <span className={`turn-process-header${fusion ? " has-fusion" : ""}`}>
+        {fusion ? <span className="fusion-status-summary">{fusion.summary}</span> : <span className="turn-process-title">{processLabel}</span>}
         {metaParts.map((part) => (
           <span className="turn-process-meta" key={part}>
             {part}
@@ -498,7 +511,7 @@ return (
       }${hasPreview ? " has-preview" : ""}`}
       id={detailsID}
     >
-      <div className="turn-process-topline">
+      <div className={`turn-process-topline${fusionTask ? " has-fusion-source" : ""}`}>
         {/* A direct answer has nothing to fold, so its duration is a plain
             label rather than a control that toggles nothing. */}
         <div
@@ -519,6 +532,7 @@ return (
         >
           {toggleContent}
         </div>
+        {fusionTask ? <SessionMessageSource source={fusionTask.side_id} name="Sidekick" /> : null}
         <TurnSourcesRow sources={sources} onOpen={onOpenSource} />
       </div>
       {hasDetails || hasPreview ? (
@@ -529,6 +543,11 @@ return (
         >
           {hasDetails ? (
             <div className="turn-process-fold-body-inner">
+              {sideFailure ? <SystemEventNotice className="fusion-failure" event={{
+                label: `Sidekick · ${sideFailure.title}`,
+                tone: sideFailure.tone,
+                expandedDetail: [sideFailure.detail, sideFailure.diagnostic].filter(Boolean).join("\n\n"),
+              }} /> : null}
               {entries.map((entry) => (
                 <div
                   className={`turn-process-entry turn-process-entry-${entry.kind}`}
@@ -550,6 +569,13 @@ return (
                   />
                 </div>
               ))}
+              {fusionTask ? <div className="fusion-usage">
+                {fusionTask.usage.lead_input_tokens + fusionTask.usage.lead_output_tokens + fusionTask.usage.side_input_tokens + fusionTask.usage.side_output_tokens > 0 ? <span>{locale === "zh-CN" ? "会话用量" : "Conversation usage"} · Lead {(fusionTask.usage.lead_input_tokens + fusionTask.usage.lead_output_tokens).toLocaleString()} · Sidekick {(fusionTask.usage.side_input_tokens + fusionTask.usage.side_output_tokens).toLocaleString()} tokens</span> : null}
+                <span>{locale === "zh-CN" ? "任务用时" : "Task elapsed"} · {locale === "zh-CN" ? formatChineseDuration(fusionElapsedMs) : formatDuration(fusionElapsedMs)}</span>
+                {fusionTask.review_rounds > 0 ? <span>{locale === "zh-CN" ? "返工轮数" : "Review corrections"} · {fusionTask.review_rounds}</span> : null}
+                {fusionTask.stop_reason ? <span>{fusionTask.stop_reason}</span> : null}
+              </div> : fusion?.tokens ? <span className="fusion-usage">{locale === "zh-CN" ? "Sidekick 用量" : "Sidekick usage"} · {fusion.tokens.toLocaleString()} tokens</span> : null}
+              {sideProgress ? <span className="fusion-progress-detail">{sideProgress}</span> : null}
             </div>
           ) : null}
         </CollapsibleDetails>

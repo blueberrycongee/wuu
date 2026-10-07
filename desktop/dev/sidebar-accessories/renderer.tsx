@@ -22,12 +22,16 @@ const threads: ThreadSummary[] = [
   ["fork", "分支会话：消息气泡长内容折叠显示"],
   ["fork-running", "正在运行的分支会话"],
   ["fork-unread", "有未读结果的分支会话"],
+  ["side-running", "不应出现：运行中的 Sidekick"],
+  ["side-unread", "不应出现：未读 Sidekick"],
+  ["side-recent", "不应出现：最近 Sidekick"],
 ].map(([id, preview]) => ({
   id, preview, pinned: id === "idle", cwd: "/preview", model_provider: "preview", model: "preview",
   status: id.includes("running") ? "in_progress" : "idle",
   created_at: date, updated_at: date, turn_count: 1, turns: [],
   latest_completed_turn_id: "done",
   ...(id.startsWith("fork") ? { forked_from_id: "idle" } : {}),
+  ...(id.startsWith("side-") ? { source: "fusion-side" } : {}),
 }));
 
 function Fixture() {
@@ -39,7 +43,10 @@ function Fixture() {
     document.documentElement.dataset.theme = params.get("theme") || "light";
   }, []);
   const empty = params.has("empty");
-  const [unreadViewOpen, setUnreadViewOpen] = useState(false);
+  const [unreadViewOpen, setUnreadViewOpen] = useState(params.has("attention"));
+  const [attentionStickyIDs, setAttentionStickyIDs] = useState(
+    () => new Set(["fork", "side-recent"]),
+  );
   const visible = empty ? [] : threads;
   return <WuuUIRoot><div className="app-shell" style={{ height: "100dvh", gridTemplateColumns: "var(--sidebar-open-width) 1fr", "--sidebar-open-width": `${Number(params.get("width")) || 296}px` } as React.CSSProperties}>
     <AppSidebar
@@ -64,6 +71,7 @@ function Fixture() {
       onStartNewThreadInWorkspace={noop} onSelectWorkspaceThread={(_project, id) => setActive(id)}
       onRemoveWorkspace={noop} onRelocateWorkspace={noop} onOpenSettings={noop} onMarkThreadsViewed={noop}
       unreadViewOpen={unreadViewOpen} onToggleUnreadView={() => setUnreadViewOpen(open => !open)}
+      attentionStickyIDs={attentionStickyIDs} onAttentionStickyIDsChange={setAttentionStickyIDs}
       sidebarCollapsed={false} onToggleSidebar={noop}
     />
     <main style={{ padding: 24 }}>Sidebar accessory preview · {params.get("theme") || "light"} · {params.get("size") || 14}px</main>

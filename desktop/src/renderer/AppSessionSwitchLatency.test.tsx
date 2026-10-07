@@ -614,6 +614,29 @@ describe("session tab switch latency", () => {
     expect({ whileSplit, afterClose }).toEqual({ whileSplit: expected, afterClose: expected });
   });
 
+  it("keeps an existing pane when its source is clicked while another source resume is pending", async () => {
+    const { threadsByID, resumeThread } = installWuuApi();
+    const first = { ...threadB(), id: "first-child", preview: "first child" };
+    const second = { ...threadB(), id: "second-child", preview: "second child" };
+    threadsByID.set(first.id, first); threadsByID.set(second.id, second);
+    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await flushAsync();
+    await act(async () => { requestOpenThreadInSplit(first.id); });
+    await flushAsync();
+    await act(async () => { requestOpenThreadInSplit(first.id); });
+    const pending = deferred<{ thread: Thread }>();
+    resumeThread.mockImplementationOnce(() => pending.promise);
+    await act(async () => { requestOpenThreadInSplit(second.id); });
+    await act(async () => { requestOpenThreadInSplit(first.id); });
+    await act(async () => { emitNotification("thread/resumed", { thread: second }); pending.resolve({ thread: second }); });
+    await flushAsync();
+    expect(container.querySelector(`.conversation-split-pane[data-thread-id="${first.id}"]`)).not.toBeNull();
+    expect(container.querySelector(`.conversation-split-pane[data-thread-id="${second.id}"]`)).toBeNull();
+    await act(async () => { requestOpenThreadInSplit(threadAID); });
+    await flushAsync();
+    expect(container.querySelectorAll(`.conversation-split-pane[data-thread-id="${threadAID}"]`)).toHaveLength(1);
+  });
+
   it("keeps only the latest related-session request and restores replaced pane drafts", async () => {
     const { threadsByID, resumeThread } = installWuuApi();
     const first = { ...threadB(), id: "first-child", preview: "first child" };
@@ -856,6 +879,34 @@ describe("session tab switch latency", () => {
     expect(args[0]).toBe(threadAID);
     expect(args[action === "queue" ? 4 : 5]).toEqual([{ media_type: "application/pdf", filename: "A-only.pdf", data: attachment.data }]);
     expect(container.querySelector(`${mainComposerSelector} ${attachmentCardSelector}`)).toBeNull();
+  });
+
+  it("starts the configured Fusion pair when sending a new draft", async () => {
+    const { threadsByID, startTurn } = installWuuApi();
+    threadsByID.clear();
+    window.wuu.initialize = vi.fn().mockResolvedValue({
+      ...initialized(),
+      advanced_settings: {
+        ...initialized().advanced_settings!,
+        fusion: {
+          enabled: true,
+          default: true,
+          lead: { provider: "provider-b", model: "model-b" },
+          sidekick: { provider: "provider-a", model: "model-a" },
+        },
+      },
+      fusion: {
+        lead: { provider: "provider-b", model: "model-b" },
+        sidekick: { provider: "provider-a", model: "model-a" },
+      },
+    });
+    window.wuu.startThread = vi.fn().mockResolvedValue({ thread: { ...threadA(), turns: [] } });
+    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await flushAsync();
+    await act(async () => { setMainComposerPrompt("review this with Fusion"); });
+    await act(async () => { mainComposerSendButton().click(); });
+    expect(window.wuu.startThread).toHaveBeenCalledWith(expect.objectContaining({ fusion: true }), expect.anything());
+    expect(startTurn).toHaveBeenCalledOnce();
   });
 
   it("keeps pending creation visible and stoppable after a background list refresh", async () => {

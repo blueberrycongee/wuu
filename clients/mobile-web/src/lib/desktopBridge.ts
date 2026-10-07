@@ -862,11 +862,12 @@ export class RemoteDesktopBridge {
       takeoverActivity: (thread_id, activity_id) => this.call("activity/takeover", { thread_id, activity_id }),
       releaseActivity: (thread_id, activity_id) => this.call("activity/release", { thread_id, activity_id }),
       stopActivity: (thread_id, activity_id) => this.call("activity/stop", { thread_id, activity_id }),
-      updateRuntimeSettings: (provider, model, effort, connection, variant, permissionMode, threadId, speed, targetContext) =>
+      updateRuntimeSettings: (provider, model, effort, connection, variant, permissionMode, threadId, speed, targetContext, fusion) =>
         this.call("config/model/update", {
           ...(provider ? { provider } : {}),
           ...(model ? { model } : {}),
           ...(threadId ? { thread_id: threadId } : {}),
+          ...(fusion === undefined ? {} : { fusion }),
           ...connection,
           ...(effort === undefined ? {} : { effort }),
           ...(variant === undefined ? {} : { variant }),

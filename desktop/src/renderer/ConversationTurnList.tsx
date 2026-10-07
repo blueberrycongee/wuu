@@ -1,5 +1,6 @@
 import {
   Component,
+  Fragment,
   memo,
   useCallback,
   useEffect,
@@ -10,6 +11,7 @@ import {
   type RefObject,
 } from "react";
 import type { Turn } from "../shared/protocol";
+import { groupSessionMessageTurns, SessionMessageRow } from "./SessionMessagePresentation";
 import { queryTextForUserItem } from "./AppState";
 import {
   TURN_LIST_COLLAPSE_THRESHOLD,
@@ -42,6 +44,7 @@ type ConversationTurnListProps = {
   renderAfterTurn?: (turn: Turn) => ReactNode;
   renderAfterMissingTurn?: ReactNode;
   forcedFullTurnIDs?: Iterable<string>;
+  sessionMessageGroupBoundaryTurnIDs?: Iterable<string>;
   autoLoadEarlier?: boolean;
 };
 
@@ -131,6 +134,7 @@ export function ConversationTurnList({
   renderAfterTurn,
   renderAfterMissingTurn,
   forcedFullTurnIDs,
+  sessionMessageGroupBoundaryTurnIDs,
   autoLoadEarlier = true,
 }: ConversationTurnListProps): JSX.Element {
   const { t, formatNumber } = useI18n();
@@ -332,6 +336,7 @@ export function ConversationTurnList({
     };
   }, [autoLoadEarlier, hasEarlierTurns, loadEarlierTurns, remoteBusy]);
 
+  let renderedTurnIndex = visibleStartIndex;
   return (
     <ImagePreviewGallery key={threadID}>
     <HistoryAnchor turns={visibleTurns} active={renderActive} loaderRef={historyLoaderRef}>
@@ -353,8 +358,20 @@ export function ConversationTurnList({
         renderBeforeTurns
       )}
       {remoteError ? <div role="alert">{remoteError}</div> : null}
-      {visibleTurns.map((turn, visibleIndex) => {
-        const index = visibleStartIndex + visibleIndex;
+      {groupSessionMessageTurns(visibleTurns, new Set([...forcedFull, ...(sessionMessageGroupBoundaryTurnIDs ?? [])])).map(entry => {
+        const index = renderedTurnIndex;
+        renderedTurnIndex += "first" in entry ? entry.turns.length : 1;
+        if ("first" in entry) {
+          const { turn: first, item } = entry.first;
+          const messages = entry.turns.flatMap(turn => turn.items.map(item => ({ turnID: turn.id, itemID: item.id })));
+          return <Fragment key={first.id}>
+            <section className="turn session-message-turn" id={turnAnchorID(first.id)} data-turn-id={first.id}>
+              <SessionMessageRow item={item} turnID={first.id} count={messages.length} aliases={messages.slice(1)} />
+            </section>
+            {entry.turns.map(turn => <Fragment key={turn.id}>{renderAfterTurn?.(turn)}</Fragment>)}
+          </Fragment>;
+        }
+        const turn = entry;
         const full =
           !collapseOlderTurns ||
           index >= firstRecentFullIndex ||

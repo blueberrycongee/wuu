@@ -44,7 +44,7 @@ func TestProjectCapacityRemoteReleaseResumesInbox(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	worker := value.(projectSessionView)
+	worker := value.(managedSessionView)
 	if worker.State != "queued" {
 		t.Fatalf("full pool dispatch = %+v", worker)
 	}
@@ -187,9 +187,9 @@ func TestProjectInboxForeignWorkspaceDoesNotPoll(t *testing.T) {
 	}
 	srv.drainSessionInbox(foreign)
 	calls.assertIdle(t)
-	srv.projectInboxMu.Lock()
-	n := len(srv.projectInboxDrains)
-	srv.projectInboxMu.Unlock()
+	srv.sessionInboxMu.Lock()
+	n := len(srv.sessionInboxDrains)
+	srv.sessionInboxMu.Unlock()
 	if n != 0 {
 		t.Fatalf("ineligible foreign workspace retained %d project retry loops", n)
 	}
@@ -261,7 +261,7 @@ func TestProjectInboxCloseDuringTimerLaunch(t *testing.T) {
 	}
 	defer lease.Release()
 	var fire func()
-	srv.projectInboxAfterFunc = func(_ time.Duration, callback func()) func() { fire = callback; return func() {} }
+	srv.sessionInboxAfterFunc = func(_ time.Duration, callback func()) func() { fire = callback; return func() {} }
 	queueCapacityInput(t, srv, pending.ID, "close-race-input")
 	if fire == nil {
 		t.Fatal("missing capacity timer")
@@ -295,9 +295,9 @@ func TestProjectInboxCloseDuringTimerLaunch(t *testing.T) {
 	}
 	var passDone <-chan struct{}
 	waitFor(func() bool {
-		srv.projectInboxMu.Lock()
-		defer srv.projectInboxMu.Unlock()
-		state := srv.projectInboxDrains[lead.ID]
+		srv.sessionInboxMu.Lock()
+		defer srv.sessionInboxMu.Unlock()
+		state := srv.sessionInboxDrains[lead.ID]
 		if state != nil && state.running {
 			passDone = state.done
 			return true

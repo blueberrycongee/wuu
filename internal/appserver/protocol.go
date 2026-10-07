@@ -963,6 +963,7 @@ type PluginStorageResult struct {
 }
 
 type ConfigModelUpdateParams struct {
+	Fusion         *bool   `json:"fusion,omitempty"`
 	Speed          *string `json:"speed,omitempty"`
 	ThreadID       string  `json:"thread_id,omitempty"`
 	Provider       string  `json:"provider,omitempty"`
@@ -1078,6 +1079,7 @@ type ConfigProviderRemoveResult struct {
 }
 
 type ConfigAdvancedUpdateParams struct {
+	Fusion                  *config.FusionConfig          `json:"fusion,omitempty"`
 	MaxSteps                *int                          `json:"max_steps,omitempty"`
 	MaxContextTokens        *int                          `json:"max_context_tokens,omitempty"`
 	Temperature             *float64                      `json:"temperature,omitempty"`
@@ -1117,18 +1119,19 @@ type GeneralSettingsSummary struct {
 }
 
 type AdvancedSettingsSummary struct {
-	MaxSteps                int     `json:"max_steps"`
-	MaxContextTokens        int     `json:"max_context_tokens"`
-	Temperature             float64 `json:"temperature"`
-	CompactThresholdPct     float64 `json:"compact_threshold_pct,omitempty"`
-	CompactKeepRecentTokens int     `json:"compact_keep_recent_tokens,omitempty"`
-	DisableAutoCompact      bool    `json:"disable_auto_compact"`
-	ProviderContextWindow   int     `json:"provider_context_window,omitempty"`
-	ContextWindowTokens     int     `json:"context_window_tokens,omitempty"`
-	ContextWindowSource     string  `json:"context_window_source,omitempty"`
-	InputLimitTokens        int     `json:"input_limit_tokens,omitempty"`
-	OutputReserveTokens     int     `json:"output_reserve_tokens,omitempty"`
-	CompactThresholdTokens  int     `json:"compact_threshold_tokens,omitempty"`
+	Fusion                  *config.FusionConfig `json:"fusion,omitempty"`
+	MaxSteps                int                  `json:"max_steps"`
+	MaxContextTokens        int                  `json:"max_context_tokens"`
+	Temperature             float64              `json:"temperature"`
+	CompactThresholdPct     float64              `json:"compact_threshold_pct,omitempty"`
+	CompactKeepRecentTokens int                  `json:"compact_keep_recent_tokens,omitempty"`
+	DisableAutoCompact      bool                 `json:"disable_auto_compact"`
+	ProviderContextWindow   int                  `json:"provider_context_window,omitempty"`
+	ContextWindowTokens     int                  `json:"context_window_tokens,omitempty"`
+	ContextWindowSource     string               `json:"context_window_source,omitempty"`
+	InputLimitTokens        int                  `json:"input_limit_tokens,omitempty"`
+	OutputReserveTokens     int                  `json:"output_reserve_tokens,omitempty"`
+	CompactThresholdTokens  int                  `json:"compact_threshold_tokens,omitempty"`
 }
 
 type ConfigCodexModelsParams struct {
@@ -1334,6 +1337,7 @@ type ProviderModelVariantSummary struct {
 }
 
 type ThreadStartParams struct {
+	Fusion bool `json:"fusion,omitempty"`
 	// Project starts a project coordinator in the workspace instead of an
 	// ordinary conversation.
 	Project     *ThreadProjectParams `json:"project,omitempty"`
@@ -2268,10 +2272,11 @@ type ThreadSessionControl struct {
 }
 
 type Thread struct {
-	Speed          string                `json:"speed,omitempty"`
-	SessionControl *ThreadSessionControl `json:"session_control,omitempty"`
-	ID             string                `json:"id"`
-	Source         string                `json:"source,omitempty"`
+	Fusion         *config.FusionSelection `json:"fusion"`
+	Speed          string                  `json:"speed,omitempty"`
+	SessionControl *ThreadSessionControl   `json:"session_control,omitempty"`
+	ID             string                  `json:"id"`
+	Source         string                  `json:"source,omitempty"`
 	// ProjectID is the coordinator conversation that manages this session.
 	ProjectID   string `json:"project_id,omitempty"`
 	ProjectRole string `json:"project_role,omitempty"`
@@ -2325,8 +2330,9 @@ type WorktreeInfo struct {
 }
 
 type Turn struct {
-	ID   string   `json:"id"`
-	Kind TurnKind `json:"kind,omitempty"`
+	Fusion *FusionTurn `json:"fusion,omitempty"`
+	ID     string      `json:"id"`
+	Kind   TurnKind    `json:"kind,omitempty"`
 	// ModelProvider and Model are captured when the turn begins. They stay
 	// stable while a config update prepares the thread for its next turn.
 	ModelProvider string        `json:"model_provider,omitempty"`
