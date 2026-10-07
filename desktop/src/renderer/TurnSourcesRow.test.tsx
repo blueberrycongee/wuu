@@ -68,6 +68,9 @@ describe("TurnSourcesRow", () => {
     expect(more.getAttribute("aria-expanded")).toBe("true");
     const buttons = sourceButtons(container);
     expect(buttons).toHaveLength(sources.length);
+    // Opening the disclosure turns unknown icons into readable destinations.
+    expect(buttons.at(-1)!.textContent).toContain(sources.at(-1)!.title);
+    expect(buttons.at(-1)!.textContent).toContain(sources.at(-1)!.host);
     act(() => buttons.at(-1)!.click());
     expect(onOpen).toHaveBeenCalledExactlyOnceWith(sources.at(-1)!.url);
     act(() => {

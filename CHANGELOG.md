@@ -20,8 +20,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 ### Changed
 
 - Move web sources into their tool-call groups as compact circular website icons,
-  with staggered arrival, title and URL tooltips, keyboard-accessible overflow,
-  and reduced-motion support.
+  with continuous arrival, title and URL tooltips, readable keyboard-accessible
+  overflow, and reduced-motion support that does not replay received sources.
 
 ### Fixed
 

@@ -26,7 +26,17 @@ app.whenReady().then(async () => {
   const run = code => win.webContents.executeJavaScript(code);
   const frames = (n = 2) => run(`new Promise(resolve => { let n = ${n}; function tick() { if (--n <= 0) resolve(); else requestAnimationFrame(tick); } requestAnimationFrame(tick); })`);
   const until = condition => run(`new Promise((resolve, reject) => { const end = performance.now() + 10000; function tick() { if (${condition}) resolve(); else if (performance.now() > end) reject(new Error('Condition not reached: ' + ${JSON.stringify(condition)})); else requestAnimationFrame(tick); } tick(); })`);
-  const ready = () => until("document.querySelector('.process-surface')");
+  const ready = async () => {
+    await until("document.querySelector('.process-surface')");
+    await run(`window.sourceArrivals = 0; document.addEventListener('animationstart', event => {
+      if (event.animationName === 'web-source-arrive') window.sourceArrivals++;
+    })`);
+  };
+  const resetArrivals = () => run("window.sourceArrivals = 0");
+  const noArrivalReplay = async label => {
+    await settle();
+    assert.equal(await run("window.sourceArrivals"), 0, label);
+  };
   const settle = async () => { await frames(); await run(`Promise.race([
     Promise.allSettled(document.getAnimations().filter(a => a.playState === 'running' && a.effect.getTiming().iterations !== Infinity).map(a => a.finished)),
     new Promise((_, reject) => setTimeout(() => reject(new Error('Motion failed to settle')), 3000))
@@ -43,7 +53,7 @@ app.whenReady().then(async () => {
   };
   const measure = () => run(`(() => {
     const region = document.querySelector('.turn-web-research');
-    const circles = [...document.querySelectorAll('.web-source-circle')].filter(node => !node.closest('[inert]'));
+    const circles = [...document.querySelectorAll('.web-source-link')].filter(node => !node.closest('[inert]'));
     const bounds = el => { const r = el.getBoundingClientRect(); return { x:r.x,y:r.y,width:r.width,height:r.height }; };
     return { running:region?.getAnimations({subtree:true}).filter(a => a.animationName === 'web-source-arrive' && a.playState === 'running').length ?? 0,
       pageWidth:document.documentElement.scrollWidth, width:innerWidth, circles:circles.map(bounds),
@@ -63,6 +73,22 @@ app.whenReady().then(async () => {
     await win.webContents.debugger.sendCommand("Emulation.setFocusEmulationEnabled", { enabled: true });
     assert.equal((await measure()).count, 0);
     await click("#results");
+    const entranceCount = await run(`(() => {
+      window.sourceEntranceClocks = document.querySelector('.turn-web-research').getAnimations({subtree:true})
+        .filter(animation => animation.animationName === 'web-source-arrive')
+        .map(animation => ({ animation, delay: animation.effect.getTiming().delay }));
+      return window.sourceEntranceClocks.length;
+    })()`);
+    assert.equal(entranceCount, 3, "the live result batch starts three avatar entrances");
+    // Opening a source updates the fixture's opened URL and rerenders its
+    // real turn shell while the entrance is still active. Receipt tracking
+    // must not change the clocks of avatars already in flight.
+    await click(".web-source-link");
+    assert.ok(await run(`window.sourceEntranceClocks.every(({ animation, delay }) =>
+      animation.effect.getTiming().delay === delay)`), "streaming rerenders preserve entrance delays");
+    // A click intentionally suppresses this source's tooltip until leave.
+    win.webContents.sendInputEvent({ type: "mouseMove", x: 5, y: 5 });
+    await frames();
     await settle();
     const arrival = await measure();
     assert.equal(arrival.count, 3);
@@ -74,7 +100,7 @@ app.whenReady().then(async () => {
     await frames();
     await shot(`${name}-results`);
     // Full titles/URLs are available without adding text to the message flow.
-    win.webContents.sendInputEvent({ type: "mouseMove", ...(await point(".web-source-circle")) });
+    win.webContents.sendInputEvent({ type: "mouseMove", ...(await point(".web-source-link")) });
     await until("document.querySelector('[role=tooltip]')?.textContent.includes('developer.mozilla.org')");
     await shot(`${name}-tooltip`);
     win.webContents.sendInputEvent({ type: "mouseMove", x: 5, y: 5 });
@@ -84,7 +110,20 @@ app.whenReady().then(async () => {
     await click(".web-research-more");
     await settle();
     assert.equal((await measure()).count, 8);
-    await run("document.querySelectorAll('.web-source-circle')[7].focus()");
+    // The disclosure may be revisited while the search is still running.
+    // Already received sources must not masquerade as new results again.
+    await click(".web-research-more");
+    await settle();
+    await resetArrivals();
+    await click(".web-research-more");
+    await noArrivalReplay("reopening does not replay source arrivals");
+    const stableHeader = await run("[...document.querySelectorAll('.web-research-sources > button, .web-research-sources .web-source-circle')].map(el => ({x:el.getBoundingClientRect().x,y:el.getBoundingClientRect().y}))");
+    await click(".web-research-more");
+    await click(".web-research-more");
+    await noArrivalReplay("rapid reversal does not replay arrivals");
+    assert.equal((await measure()).count, 8);
+    assert.deepEqual(await run("[...document.querySelectorAll('.web-research-sources > button, .web-research-sources .web-source-circle')].map(el => ({x:el.getBoundingClientRect().x,y:el.getBoundingClientRect().y}))"), stableHeader);
+    await run("document.querySelectorAll('.web-source-link')[7].focus()");
     await key("Enter", 13);
     await frames();
     assert.equal(await run("document.querySelector('#opened').textContent"), "https://caniuse.com/css-animation");
@@ -100,8 +139,9 @@ app.whenReady().then(async () => {
     await shot(`${name}-handoff`);
     await until("document.querySelector('.turn-answer-body')");
     await until("!document.querySelector('.turn-web-research')");
+    await resetArrivals();
     await click(".turn-process-toggle");
-    await settle();
+    await noArrivalReplay("history does not replay source arrivals");
     const done = await measure();
     assert.equal(done.count, 6);
     assert.equal(done.running, 0);
@@ -114,7 +154,7 @@ app.whenReady().then(async () => {
     const many = await measure();
     assert.equal(many.count, 20);
     assert.ok(many.pageWidth <= width);
-    await run("document.querySelectorAll('.web-source-circle')[19].focus()");
+    await run("document.querySelectorAll('.web-source-link')[19].focus()");
     await frames();
     assert.ok(await run("document.activeElement.getBoundingClientRect().bottom <= innerHeight"));
     await shot(`${name}-many`);
@@ -147,7 +187,9 @@ app.whenReady().then(async () => {
   await win.webContents.debugger.sendCommand("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: "reduce" }] });
   await click("#results");
   assert.equal((await measure()).running, 0);
+  await resetArrivals();
   await win.webContents.debugger.sendCommand("Emulation.setEmulatedMedia", { features: [] });
+  await noArrivalReplay("restoring motion does not replay received sources");
   win.webContents.debugger.detach();
   // Real renderer frames with elapsed timestamps preserve the live timing.
   await win.loadURL("http://127.0.0.1:5218/dev/web-research/");
@@ -169,7 +211,7 @@ app.whenReady().then(async () => {
       action++;
     }
     if (now >= 7500 && !hovered) {
-      win.webContents.sendInputEvent({ type: "mouseMove", ...(await point(".web-source-circle")) });
+      win.webContents.sendInputEvent({ type: "mouseMove", ...(await point(".web-source-link")) });
       hovered = true;
     }
     if (now >= 8800 && !unhovered) {

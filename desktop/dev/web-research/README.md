@@ -13,25 +13,39 @@ Up to six 24 px round website avatars have separate 32 px hit targets, followed
 by a source count. Titles and full URLs appear on hover or keyboard focus.
 Only successful calls contribute sources, deduplicated by host within the group.
 
-New circles reveal over `--motion-slow` (280 ms by default), staggered by 45 ms
-up to 225 ms. A hover lifts the avatar by 2 px while its hit target stays fixed.
-More sources expand in place with Wuu's shared disclosure; Escape collapses the
-extra icons and returns focus to the count button. Closing makes them inert
-immediately. Source buttons preserve modifier clicks and workspace-browser routing.
+The first live results open space beneath their owning search summary. Avatars
+then settle into that space over `--motion-slow` (280 ms by default), with a
+50 ms lead-in and 35 ms spacing within the new batch, capped at three intervals.
+The avatar moves; its hit target and focus outline stay still. A later batch
+does not replay earlier sources or inherit a delay from its absolute position.
+
+More sources expand into title-and-host rows beneath the same header, with a
+bounded scrolling area for long lists. The first six targets and disclosure
+control keep their positions during expansion. The shared height transition
+continues from its current pose on reversal; reading rows appear after space
+starts opening and fade promptly when closing. Escape makes them inert and
+returns focus to the disclosure control. Source buttons preserve modifier clicks
+and workspace-browser routing.
 
 The whole process folds on answer handoff according to the existing turn policy.
 Reopening it restores source links without replaying arrival motion. An inactive
-conversation does not animate newly received sources. Both application and OS
-reduced-motion preferences suppress arrivals and hover movement. Favicons use
-letter fallbacks if their requests fail.
+conversation does not animate newly received sources, including sources not yet
+shown in overflow. The first reveal of a cached conversation stays still. Both
+application and OS reduced-motion preferences suppress arrivals and hover
+movement; restoring motion does not replay old arrivals. Favicons crossfade from
+letter fallbacks, which remain available if requests fail.
 
 ## Reference
 
 The initial study borrowed staged disclosure from Motionbook's
 [Flight pill](https://github.com/blueberrycongee/motionbook/tree/main/examples/flight-pill),
 a study of R / [@wheresryan22's pill buttons](https://www.inspora.design/posts/pill-buttons).
-This revision applies that sequence to small source circles inside existing tool
-activity, with no standalone card surface. Timings above are authored for Wuu,
+This revision borrows the relationship between the enclosing geometry and its
+later content, rather than only giving each icon a stagger. Wuu keeps the compact
+source header as the visual anchor and reveals readable destinations beneath it.
+It omits the reference's large card, rolling counters, blur and demonstration
+timers: source receipts and user disclosure actions drive the actual state.
+Timings above are authored for Wuu,
 not measured from the reference. No reference code, assets, fonts or traces are
 copied. The reference's previews are offline renders; see its `PROVENANCE.md`
 and `VALIDATION.md` for separate evidence limits.
@@ -49,9 +63,12 @@ Open `http://127.0.0.1:5218/dev/web-research/` for manual review. Query paramete
 `theme=dark`, `size=20`, `motion=reduce`, and `long`.
 
 The capture script covers light/dark, 14/20 px, 390/900 px windows, source arrival,
-hover tooltips, overflow, keyboard activation, Escape/focus return, answer handoff,
+hover tooltips, overflow reopening and rapid reversal, keyboard activation,
+Escape/focus return, answer handoff,
 reopening history, long source lists, no sources after failure/interruption/empty
-results, inactive panes and both reduced-motion sources. Screenshots, measured
+results, inactive panes and both reduced-motion sources. Arrival-start events
+remain recorded across no-replay checks so a completed transient animation cannot
+hide behind an endpoint assertion. Screenshots, measured
 geometry, runtime versions and frame timestamps go to
 `artifacts/web-research-compact/`. Real favicon requests are allowed; synthetic
 `example.com` domains deliberately exercise the letter fallback.
