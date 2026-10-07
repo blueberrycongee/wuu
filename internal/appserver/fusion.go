@@ -134,27 +134,6 @@ func (s *Server) fusionSides(leadID string) ([]session.Session, error) {
 	return sides, nil
 }
 
-func (s *Server) requireFusionSidesIdle(leadID string) error {
-	lead, found, err := session.Find(s.rt.SessionDir, leadID)
-	if err != nil || !found || lead.Fusion == nil {
-		return err
-	}
-	sides, err := s.fusionSides(leadID)
-	if err != nil {
-		return err
-	}
-	for _, side := range sides {
-		view, err := s.managedSessionView(side)
-		if err != nil {
-			return err
-		}
-		if view.State == "running" {
-			return errors.New("Sidekick is running; stop Fusion first")
-		}
-	}
-	return nil
-}
-
 func (s *Server) fusionActor(leadID, sideID string) (session.Session, session.Control, error) {
 	lead, found, err := session.Find(s.rt.SessionDir, leadID)
 	if err != nil {

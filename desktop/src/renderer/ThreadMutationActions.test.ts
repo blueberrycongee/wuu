@@ -632,6 +632,47 @@ describe("archive draft ownership", () => {
 
 
 describe("confirmed thread removal", () => {
+  it.each(["archive", "delete", "deleteArchived"] as const)(
+    "%s closes every member of a Fusion split without promoting the deleted Sidekick", async (operation) => {
+      const lead = thread("lead");
+      const side: Thread = { ...thread("side"), source: "fusion-side", fusion_lead_id: lead.id, session_control: { manager_id: lead.id, manager_name: "Lead", state: "active", revision: 1 } };
+      const context = projectContext();
+      const api = installWuuApi(lead);
+      api.archiveThread.mockResolvedValue({ thread: { ...lead, archived: true }, threads: [lead, side].map(item => ({ ...item, archived: true })) });
+      api.deleteThread.mockResolvedValue({ thread_id: lead.id, thread_ids: [lead.id, side.id] });
+      const harness = buildActions({ initial: {
+        ...initialState, activeContext: context, thread: lead, secondaryThread: side,
+        activePane: "secondary", threads: [lead, side],
+        activeSessionTabID: threadSessionTabID(side.id),
+        sessionTabs: [createThreadSessionTab(lead, context), createThreadSessionTab(side, context)],
+      } });
+      if (operation === "archive") await harness.actions.archiveThread(summary(lead));
+      else if (operation === "delete") await harness.actions.deleteThread(summary(lead));
+      else await harness.actions.deleteArchivedThread(lead.id);
+      const state = harness.getAppState();
+      expect(state.thread).toBeUndefined();
+      expect(state.secondaryThread).toBeUndefined();
+      expect(state.activeSessionTabID).toBe("draft:fallback");
+      expect(state.sessionTabs.map(tab => tab.id)).toEqual(["draft:fallback"]);
+      for (const member of [lead, side]) {
+        expect(harness.clearThreadPendingComposerMessages).toHaveBeenCalledWith(member.id);
+        expect(harness.removeCachedSidebarThread).toHaveBeenCalledWith(member.id);
+      }
+      expect(state.threads).toEqual(operation === "archive" ? [lead, side].map(item => ({ ...item, archived: true })) : []);
+    },
+  );
+
+  it("restores both persisted members of an archived Fusion pair", async () => {
+    const lead = thread("lead");
+    const side = thread("side");
+    const api = installWuuApi(lead);
+    api.archiveThread.mockResolvedValue({ thread: lead, threads: [lead, side] });
+    const harness = buildActions({ initial: { ...initialState, threads: [lead, side].map(item => ({ ...item, archived: true })) } });
+    await harness.actions.unarchiveThread(lead);
+    expect(harness.getAppState().threads.every(item => !item.archived)).toBe(true);
+    expect(harness.updateCachedSidebarThread).toHaveBeenCalledWith(side);
+  });
+
   it("preserves drafts and pending messages when deletion fails", async () => {
     const base = thread();
     const api = installWuuApi(base);

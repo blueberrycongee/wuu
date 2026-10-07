@@ -17,6 +17,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Archive, restore, and permanently delete Fusion Lead/Sidekick conversations
+  together, including their open panes, histories, and session resources.
 - Settle interrupted Fusion tasks after app-server shutdown or a crash, report
   the interruption once, and allow subsequent delegation without replaying work.
 - Publish Sidekick progress to the Lead while both conversations are running.

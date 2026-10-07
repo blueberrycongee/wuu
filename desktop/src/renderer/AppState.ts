@@ -1601,6 +1601,7 @@ function summarizeThreadForSidebar(
     answerReady && thread.status === "in_progress" ? "idle" : thread.status;
   return {
     id: thread.id,
+    fusion_lead_id: thread.fusion_lead_id,
     parent_id: thread.parent_id,
     agent_path: thread.agent_path,
     preview: thread.preview,

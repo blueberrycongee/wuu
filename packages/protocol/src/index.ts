@@ -1755,6 +1755,8 @@ export type SessionOrganization = {
 
 export type Thread = {
   fusion?: FusionSelection | null;
+  /** Persistent Sidekick owner, including archived or disabled Fusion pairs. */
+  fusion_lead_id?: string;
   speed?: string;
   session_control?: { manager_id: string; manager_name: string; state: "active" | "paused" | "taken_over"; revision: number };
   id: string;
@@ -3027,12 +3029,12 @@ export type WuuDesktopApi = {
     // Escape hatch for conversations stuck in a running state: the server
     // interrupts and settles the stuck turn, then archives.
     force?: boolean
-  ) => Promise<{ thread: Thread }>;
+  ) => Promise<{ thread: Thread; threads?: Thread[] }>;
   // Permanently deletes a conversation (history, artifacts, and any fork
   // worktree). Mirrors the `thread/delete` RPC; running threads are rejected
   // server-side.
   // onlyIfArchived is checked atomically with deletion; restored sessions are rejected.
-  deleteThread: (threadId: string, options?: { onlyIfArchived?: boolean }) => Promise<{ thread_id: string }>;
+  deleteThread: (threadId: string, options?: { onlyIfArchived?: boolean }) => Promise<{ thread_id: string; thread_ids?: string[] }>;
   compactThread: (threadId: string) => Promise<{ turn: Turn }>;
   startTurn: (
     threadId: string,

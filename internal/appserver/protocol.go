@@ -1804,6 +1804,8 @@ type ThreadArchiveParams struct {
 
 type ThreadArchiveResult struct {
 	Thread Thread `json:"thread"`
+	// Threads includes every affected member, including owned Fusion Sidekicks.
+	Threads []Thread `json:"threads"`
 }
 
 type ThreadRenameParams struct {
@@ -1826,7 +1828,8 @@ type ThreadDeleteParams struct {
 }
 
 type ThreadDeleteResult struct {
-	ThreadID string `json:"thread_id"`
+	ThreadID  string   `json:"thread_id"`
+	ThreadIDs []string `json:"thread_ids"`
 }
 
 // WorkspaceStateCleanupParams is the input for the `workspace/state/cleanup`
@@ -2272,11 +2275,13 @@ type ThreadSessionControl struct {
 }
 
 type Thread struct {
-	Fusion         *config.FusionSelection `json:"fusion"`
-	Speed          string                  `json:"speed,omitempty"`
-	SessionControl *ThreadSessionControl   `json:"session_control,omitempty"`
-	ID             string                  `json:"id"`
-	Source         string                  `json:"source,omitempty"`
+	Fusion *config.FusionSelection `json:"fusion"`
+	// FusionLeadID retains Sidekick ownership when archived or Fusion is disabled.
+	FusionLeadID   string                `json:"fusion_lead_id,omitempty"`
+	Speed          string                `json:"speed,omitempty"`
+	SessionControl *ThreadSessionControl `json:"session_control,omitempty"`
+	ID             string                `json:"id"`
+	Source         string                `json:"source,omitempty"`
 	// ProjectID is the coordinator conversation that manages this session.
 	ProjectID   string `json:"project_id,omitempty"`
 	ProjectRole string `json:"project_role,omitempty"`

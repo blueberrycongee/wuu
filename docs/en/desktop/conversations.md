@@ -24,6 +24,8 @@ If the app server exits during a task, recovery marks consumed work with no live
 
 Write coordination lasts for each tool call. A background command can keep writing after that call returns, so the participants must finish or stop commands that modify task files before handing them over. Development servers and watchers may remain when their output paths do not conflict with the other participant's edits; the brief or report must identify those processes and paths. Fusion does not enforce exclusive file access for background processes.
 
+Archive, restore, and permanently delete the pair through the Lead, including after leaving Fusion mode. Archiving preserves both histories and shows one entry in Settings → Archive. Restoring reuses the same Sidekick. Permanent deletion removes both histories and their session resources; worktrees with uncommitted changes are preserved. Both conversations must be idle before archiving or deleting.
+
 Moving the Lead to a linked worktree moves both conversations together. The Sidekick must be idle before this move and cannot change its workspace independently.
 
 ## Find a conversation

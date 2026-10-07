@@ -264,6 +264,7 @@ func (s *Server) createHostSessionThread(owner, source, id string, params hostSe
 	th := newThreadState(id, history, s.rt.ProviderName, s.rt.Model, threadCWD, true, time.Now().UTC())
 	applyThreadRuntimeSelection(th, selection)
 	th.Source = source
+	th.FusionLeadID = fusionLeadIDForSession(initial)
 	th.Title = params.Name
 	th.Owner = owner
 	th.Visibility = params.Visibility

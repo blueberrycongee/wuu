@@ -1238,7 +1238,17 @@ func (s *Server) handleThreadListArchived(req Request) error {
 		sessions[i] = relocatedSessionMetadata(sessions[i], registered)
 	}
 	s.refreshListedSessionMetadata(sessions)
+	present := make(map[string]bool, len(sessions))
 	for _, sess := range sessions {
+		present[sess.ID] = true
+	}
+	hiddenSides := make(map[string]bool)
+	for _, sess := range sessions {
+		// The pair has one archive entry. Legacy orphans remain manageable.
+		if sess.Source == fusionSideSource && present[sess.ParentID] {
+			hiddenSides[sess.ID] = true
+			continue
+		}
 		if sess.Visibility == pluginhost.SessionVisibilityPlugin {
 			continue
 		}
@@ -1265,7 +1275,7 @@ func (s *Server) handleThreadListArchived(req Request) error {
 		if thread.ReadOnly && !projectExecutionDisabled(thread.Source) {
 			continue
 		}
-		if !thread.Archived {
+		if !thread.Archived || hiddenSides[thread.ID] {
 			continue
 		}
 		entries[thread.ID] = entry
@@ -1360,44 +1370,44 @@ func (s *Server) handleThreadArchive(req Request) error {
 		return s.writeResponse(req.ID, nil, errors.New("thread_id is required"))
 	}
 	if params.Archived && params.Force {
+		// Validate the owner before force can interrupt a managed Sidekick.
+		if _, err := session.FusionLifecycleSessions(s.rt.SessionDir, id); err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
 		s.settleThreadExecutionForForcedArchive(id)
 		if err := s.stopFusionSides(id); err != nil {
 			return s.writeResponse(req.ID, nil, err)
 		}
 	}
-	if params.Archived {
-		if err := s.requireFusionSidesIdle(id); err != nil {
-			return s.writeResponse(req.ID, nil, err)
-		}
-		if th := s.thread(id); th != nil {
-			th.mu.Lock()
-			running := th.running
-			th.mu.Unlock()
-			if running {
-				return s.writeResponse(req.ID, nil, errors.New("cannot archive a running thread"))
-			}
-		}
+	members, release, err := s.beginThreadLifecycleMutation(id)
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
 	}
-	var mutationLease *session.ThreadExecutionLease
-	if params.Archived {
-		var leaseErr error
-		mutationLease, leaseErr = s.tryAcquireThreadMutationLease(id)
-		if leaseErr != nil {
-			return s.writeResponse(req.ID, nil, leaseErr)
-		}
-	}
+	defer release()
 	metadata, err := session.UpdateArchived(s.rt.SessionDir, id, params.Archived)
 	if err != nil {
-		releaseThreadMutationLease(id, mutationLease)
 		return s.writeResponse(req.ID, nil, err)
 	}
 	thread, err := s.threadAfterMetadataUpdate(metadata)
 	if err != nil {
-		releaseThreadMutationLease(id, mutationLease)
 		return s.writeResponse(req.ID, nil, err)
 	}
-	releaseThreadMutationLease(id, mutationLease)
-	return s.writeResponse(req.ID, ThreadArchiveResult{Thread: thread}, nil)
+	threads := []Thread{thread}
+	for _, member := range members[1:] {
+		updated, _, err := session.Find(s.rt.SessionDir, member.ID)
+		if err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+		view, err := s.threadAfterMetadataUpdate(updated)
+		if err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+		threads = append(threads, view)
+		if err := s.notifyThreadUpdated(view); err != nil {
+			return err
+		}
+	}
+	return s.writeResponse(req.ID, ThreadArchiveResult{Thread: thread, Threads: threads}, nil)
 }
 
 var errArchivedWhileRunning = errors.New("archived while the conversation was still running")
@@ -1510,6 +1520,7 @@ func applySessionMetadata(th *threadState, metadata session.Session) {
 	}
 	th.Title = metadata.Title
 	th.Source = metadata.Source
+	th.FusionLeadID = fusionLeadIDForSession(metadata)
 	th.Owner = metadata.Owner
 	th.Visibility = metadata.Visibility
 	th.Instructions = effectiveSessionInstructions(metadata)
@@ -1606,6 +1617,7 @@ func threadEntryFromSession(sess session.Session, provider, model string) thread
 			ProjectID:             projectIDForSession(sess),
 			ProjectRole:           projectRoleForSession(sess),
 			Fusion:                activeFusionPair(sess),
+			FusionLeadID:          fusionLeadIDForSession(sess),
 			Preview:               firstNonEmpty(sess.Title, sess.Summary),
 			Title:                 sess.Title,
 			ModelProvider:         firstNonEmpty(selection.Provider, provider),

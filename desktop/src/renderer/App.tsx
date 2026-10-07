@@ -5160,7 +5160,8 @@ export function App(): JSX.Element {
           onSidebarResizeStart={startSidebarResize}
           onSidebarSeparatorKey={handleSidebarSeparatorKey}
           archivedThreads={state.threads
-            .filter((thread) => thread.archived)
+            .filter((thread) => thread.archived && !(thread.source === "fusion-side"
+              && state.threads.some(parent => parent.id === thread.fusion_lead_id)))
             .map((thread) => {
               const project = state.projects.find((candidate) =>
                 threadBelongsToWorkspace(thread, candidate),

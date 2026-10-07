@@ -13,6 +13,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/harness"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/session"
+	"github.com/blueberrycongee/wuu/internal/sidethread"
 	"github.com/blueberrycongee/wuu/internal/statepath"
 	"github.com/blueberrycongee/wuu/internal/worktree"
 )
@@ -32,75 +33,91 @@ func (s *Server) handleThreadDelete(req Request) error {
 	if id == "" {
 		return s.writeResponse(req.ID, nil, errors.New("thread_id is required"))
 	}
-	if err := s.requireFusionSidesIdle(id); err != nil {
-		return s.writeResponse(req.ID, nil, err)
-	}
-	if th := s.thread(id); th != nil {
-		th.mu.Lock()
-		running := th.running
-		th.mu.Unlock()
-		if running {
-			return s.writeResponse(req.ID, nil, errors.New("cannot delete a running thread"))
-		}
-		if threadHasActiveAgents(th) {
-			return s.writeResponse(req.ID, nil, errors.New("cannot delete a thread with active agents"))
-		}
-	}
-	mutationLease, err := s.tryAcquireThreadMutationLease(id)
+	ids, err := s.deleteThreadGroup(id, params.OnlyIfArchived)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	defer releaseThreadMutationLease(id, mutationLease)
-	sideThreadLease, err := s.acquireSideThreadExecutionLease(id)
-	if errors.Is(err, errSideThreadExecutionBusy) {
-		return s.writeResponse(req.ID, nil, errors.New("cannot delete a thread while its side thread is running"))
-	}
-	if err != nil {
-		return s.writeResponse(req.ID, nil, err)
-	}
-	defer releaseSideThreadExecutionLease(id, sideThreadLease)
+	return s.writeResponse(req.ID, ThreadDeleteResult{ThreadID: id, ThreadIDs: ids}, nil)
+}
 
-	stateDirs, err := s.threadArtifactStateDirs(id)
+func (s *Server) deleteThreadGroup(id string, onlyIfArchived bool) (ids []string, err error) {
+	members, release, err := s.beginThreadLifecycleMutation(id)
 	if err != nil {
-		return s.writeResponse(req.ID, nil, err)
+		return nil, err
 	}
-	active, err := s.threadHasDurableActiveAgents(id, stateDirs...)
+	defer release()
+	type deletion struct {
+		member    session.Session
+		stateDirs []string
+		sideChat  *sidethread.DeleteStage
+	}
+	var staged []deletion
+	var releaseFiles []func()
+	defer func() {
+		for i := len(releaseFiles) - 1; i >= 0; i-- {
+			releaseFiles[i]()
+		}
+	}()
+	committed := false
+	defer func() {
+		if !committed {
+			for _, entry := range staged {
+				err = errors.Join(err, entry.sideChat.Rollback())
+			}
+		}
+	}()
+	for _, member := range members {
+		sideThreadLease, err := s.acquireSideThreadExecutionLease(member.ID)
+		if errors.Is(err, errSideThreadExecutionBusy) {
+			return nil, errors.New("cannot delete a thread while its side thread is running")
+		}
+		if err != nil {
+			return nil, err
+		}
+		releaseFiles = append(releaseFiles, func() { releaseSideThreadExecutionLease(member.ID, sideThreadLease) })
+		stateDirs, err := s.threadArtifactStateDirs(member.ID)
+		if err != nil {
+			return nil, err
+		}
+		active, err := s.threadHasDurableActiveAgents(member.ID, stateDirs...)
+		if err != nil {
+			return nil, fmt.Errorf("inspect durable agents for thread %q: %w", member.ID, err)
+		}
+		if active {
+			return nil, errors.New("cannot delete a thread with active agents")
+		}
+		// Protect every member's appends and stage every side chat before the
+		// transaction removes the pair. A failure restores all staged files.
+		lifecycleLease, err := s.acquireThreadLifecycleWriteLease(member.ID)
+		if err != nil {
+			return nil, err
+		}
+		releaseFiles = append(releaseFiles, func() { releaseThreadLifecycleWriteLease(member.ID, lifecycleLease) })
+		sideDelete, err := s.sideThreadStore.BeginDelete(member.ID)
+		if err != nil {
+			return nil, fmt.Errorf("delete side thread for %q (stage): %w", member.ID, err)
+		}
+		staged = append(staged, deletion{member, stateDirs, sideDelete})
+		ids = append(ids, member.ID)
+	}
+	deleted, err := s.deleteThreadSession(id, onlyIfArchived)
 	if err != nil {
-		return s.writeResponse(req.ID, nil, fmt.Errorf("inspect durable agents for thread %q: %w", id, err))
+		return nil, err
 	}
-	if active {
-		return s.writeResponse(req.ID, nil, errors.New("cannot delete a thread with active agents"))
+	committed = true
+	staged[0].member = deleted
+	for _, entry := range staged {
+		if err := entry.sideChat.Commit(); err != nil {
+			// The durable rows are gone; startup cleanup can remove tombstones.
+			providers.DebugLogf("commit side thread delete for %q: %v", entry.member.ID, err)
+		}
+		s.cleanupDeletedThread(entry.member, entry.stateDirs)
 	}
+	return ids, nil
+}
 
-	// Execution ownership excludes model rewrites and child spawns. The
-	// independent short lifecycle lease then waits for any in-flight group or
-	// participant append-and-route write. Session deletion atomically removes
-	// pending envelopes sourced from this thread before this lease is released.
-	lifecycleLease, err := s.acquireThreadLifecycleWriteLease(id)
-	if err != nil {
-		return s.writeResponse(req.ID, nil, err)
-	}
-	// Stage the independent side-chat file before deleting the main SQLite row.
-	// The staged record remains readable and can be atomically restored if the
-	// main transaction fails, avoiding either partial data loss or an orphaned
-	// side conversation across process crashes.
-	sideDelete, err := s.sideThreadStore.BeginDelete(id)
-	if err != nil {
-		releaseThreadLifecycleWriteLease(id, lifecycleLease)
-		return s.writeResponse(req.ID, nil, fmt.Errorf("delete side thread for %q (stage): %w", id, err))
-	}
-	deleted, err := s.deleteThreadSession(id, params.OnlyIfArchived)
-	if err != nil {
-		rollbackErr := sideDelete.Rollback()
-		releaseThreadLifecycleWriteLease(id, lifecycleLease)
-		return s.writeResponse(req.ID, nil, errors.Join(err, rollbackErr))
-	}
-	releaseThreadLifecycleWriteLease(id, lifecycleLease)
-	if err := sideDelete.Commit(); err != nil {
-		// The main row is already durably gone. A staged tombstone is harmless
-		// and remains eligible for a later idempotent cleanup attempt.
-		providers.DebugLogf("commit side thread delete for %q: %v", id, err)
-	}
+func (s *Server) cleanupDeletedThread(deleted session.Session, stateDirs []string) {
+	id := deleted.ID
 	// Code-mode state outlives cached thread runtimes, but never a successful
 	// permanent delete. This also covers owners already evicted from s.threads.
 	if s.rt.CodeMode != nil {
@@ -164,7 +181,6 @@ func (s *Server) handleThreadDelete(req Request) error {
 		_ = os.RemoveAll(statepath.SessionArtifactDir(stateDir, id))
 	}
 
-	return s.writeResponse(req.ID, ThreadDeleteResult{ThreadID: id}, nil)
 }
 
 func (s *Server) deleteThreadSession(threadID string, onlyIfArchived bool) (session.Session, error) {

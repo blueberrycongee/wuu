@@ -789,18 +789,51 @@ func SetModelSelection(sessDir, id, provider, model, variant string) (Session, e
 	})
 }
 
-// UpdateArchived marks a session as archived or active.
+// UpdateArchived atomically archives or restores a conversation and its Fusion
+// Sidekick. Their identity, history and pending review evidence are preserved.
 func UpdateArchived(sessDir, id string, archived bool) (Session, error) {
+	db, err := openStore(sessDir)
+	if err != nil {
+		return Session{}, err
+	}
+	defer db.Close()
+	storeWriteMu.Lock()
+	defer storeWriteMu.Unlock()
+	tx, err := db.Begin()
+	if err != nil {
+		return Session{}, err
+	}
+	defer tx.Rollback()
+	lead, found, err := findSessionTx(tx, strings.TrimSpace(id))
+	if err != nil {
+		return Session{}, err
+	}
+	if !found {
+		return Session{}, ErrSessionNotFound
+	}
+	ids, err := fusionLifecycleIDs(tx, lead)
+	if err != nil {
+		return Session{}, err
+	}
 	now := time.Now().UTC()
-	return updateMetadata(sessDir, id, false, func(s *Session) {
-		if archived {
-			s.ArchivedAt = &now
-			s.PinnedAt = nil
-		} else {
-			s.ArchivedAt = nil
-			s.ArchiveReason = ""
+	for _, memberID := range ids {
+		member, _, err := findSessionTx(tx, memberID)
+		if err != nil {
+			return Session{}, err
 		}
-	})
+		if archived {
+			member.ArchivedAt, member.PinnedAt = &now, nil
+		} else {
+			member.ArchivedAt, member.ArchiveReason = nil, ""
+		}
+		if err := updateSessionTx(tx, member); err != nil {
+			return Session{}, err
+		}
+		if memberID == lead.ID {
+			lead = member
+		}
+	}
+	return lead, tx.Commit()
 }
 
 func BindWorktree(sessDir, id string, worktree WorktreeInfo) (Session, error) {
@@ -878,20 +911,29 @@ func deleteSession(sessDir, id string, onlyIfArchived bool) (Session, error) {
 	if onlyIfArchived && deleted.ArchivedAt == nil {
 		return Session{}, fmt.Errorf("%w: %q", ErrSessionNotArchived, id)
 	}
-	if _, err := tx.Exec(`DELETE FROM plugin_turn_lifecycle_outbox
-		WHERE EXISTS (
-			SELECT 1 FROM plugin_turn_lifecycle retained
-			WHERE retained.plugin_id = plugin_turn_lifecycle_outbox.plugin_id
-				AND retained.request_id = plugin_turn_lifecycle_outbox.request_id
-				AND retained.session_id = ?
-		)`, id); err != nil {
-		return Session{}, fmt.Errorf("delete session lifecycle outbox: %w", err)
+	ids, err := fusionLifecycleIDs(tx, deleted)
+	if err != nil {
+		return Session{}, err
 	}
-	if _, err := tx.Exec(`DELETE FROM plugin_turn_lifecycle WHERE session_id = ?`, id); err != nil {
-		return Session{}, fmt.Errorf("delete retained session lifecycle: %w", err)
-	}
-	if _, err := tx.Exec(`DELETE FROM sessions WHERE id = ?`, id); err != nil {
-		return Session{}, fmt.Errorf("delete session: %w", err)
+	for _, memberID := range ids {
+		if _, err := tx.Exec(`DELETE FROM plugin_turn_lifecycle_outbox
+			WHERE EXISTS (
+				SELECT 1 FROM plugin_turn_lifecycle retained
+				WHERE retained.plugin_id = plugin_turn_lifecycle_outbox.plugin_id
+					AND retained.request_id = plugin_turn_lifecycle_outbox.request_id
+					AND retained.session_id = ?
+			)`, memberID); err != nil {
+			return Session{}, fmt.Errorf("delete session lifecycle outbox: %w", err)
+		}
+		if _, err := tx.Exec(`DELETE FROM plugin_turn_lifecycle WHERE session_id = ?`, memberID); err != nil {
+			return Session{}, fmt.Errorf("delete retained session lifecycle: %w", err)
+		}
+		if _, err := tx.Exec(`DELETE FROM session_controls WHERE session_id = ?`, memberID); err != nil {
+			return Session{}, fmt.Errorf("delete session control: %w", err)
+		}
+		if _, err := tx.Exec(`DELETE FROM sessions WHERE id = ?`, memberID); err != nil {
+			return Session{}, fmt.Errorf("delete session: %w", err)
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return Session{}, fmt.Errorf("commit session delete: %w", err)
