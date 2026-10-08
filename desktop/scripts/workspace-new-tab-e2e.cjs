@@ -175,16 +175,12 @@ app.whenReady().then(async () => {
   const threadID = "thread-immediate-title-e2e";
   win.webContents.send("test:server-event", { workdir: workspaceRoot, kind: "notification", message: {
     method: "turn/completed", params: { thread_id: threadID, turn: {
-      id: "turn-" + threadID, status: "completed", items_view: "full", items: [
+      id: "turn-" + threadID, status: "completed", items_view: "full",
+      context_tokens: 32000, input_tokens: 24000, output_tokens: 1200, usage_model: "mock-stream", items: [
         { id: "file-link", type: "agent_message", status: "completed",
           text: "[Workspace notes](src/a-long-workspace-file-name-for-checking-new-page-truncation.md)" },
       ],
     } },
-  } });
-  win.webContents.send("test:server-event", { workdir: workspaceRoot, kind: "notification", message: {
-    method: "turn/usage", params: { thread_id: threadID, turn_id: "turn-" + threadID,
-      input_tokens: 24000, output_tokens: 1200, context_tokens: 32000, context_window_tokens: 128000,
-      model: "mock-stream" },
   } });
   await click(".conversation-width .rich-file-link");
   await waitFor(() => Boolean(document.querySelector('[data-wuu-view="file"]')));
@@ -302,11 +298,21 @@ app.whenReady().then(async () => {
       const empty = await documentGeometry(name + '-empty');
       assert.ok(Math.abs(empty.fontSize - size) <= 1, name + ': requested font preference is actually rendered');
       assertCompact(empty, name);
-      await setDocumentDraft('Edit');
-      await evaluate(() => {
+      const inputTarget = await evaluate(() => {
         const input = document.querySelector('.document-composer-wrap textarea');
-        input.focus(); input.setSelectionRange(1, 3);
+        const rect = input.getBoundingClientRect();
+        const x = rect.left + rect.width / 2, y = rect.top + rect.height / 2;
+        return { x, y, hit: document.elementFromPoint(x, y) === input };
       });
+      assert.ok(inputTarget.hit, name + ': textarea center receives pointer input without an overlay');
+      win.webContents.sendInputEvent({ type: 'mouseDown', button: 'left', clickCount: 1,
+        x: Math.round(inputTarget.x), y: Math.round(inputTarget.y) });
+      win.webContents.sendInputEvent({ type: 'mouseUp', button: 'left', clickCount: 1,
+        x: Math.round(inputTarget.x), y: Math.round(inputTarget.y) });
+      await waitFor(() => document.activeElement === document.querySelector('.document-composer-wrap textarea'));
+      await win.webContents.insertText('Edit');
+      await waitFor(() => document.querySelector('.document-composer-wrap textarea').value === 'Edit');
+      await evaluate(() => document.querySelector('.document-composer-wrap textarea').setSelectionRange(1, 3));
       const focused = await documentGeometry(name + '-focused');
       assertCompact(focused, name);
       assert.ok(focused.focused && focused.selectionStart === 1 && focused.selectionEnd === 3,

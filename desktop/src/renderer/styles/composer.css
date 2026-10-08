@@ -1216,7 +1216,8 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
   }
 
   .composer-expand-button {
-    position: static;
+    position: relative;
+    inset: auto;
     grid-column: 3;
     grid-row: 1;
     opacity: 1;

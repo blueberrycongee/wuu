@@ -150,7 +150,7 @@ contextBridge.exposeInMainWorld("wuu", {
     ...(process.env.WUU_WORKSPACE_NEW_TAB_E2E ? { variant: "medium" } : {}),
     providers: [{ name: "e2e", type: "mock", model: "mock-stream", connection_locked: true,
       ...(process.env.WUU_WORKSPACE_NEW_TAB_E2E ? { models: [{ id: "mock-stream", display_name: "Workspace preview model",
-        supported_efforts: ["low", "medium", "high"] }] } : {}),
+        supported_efforts: ["low", "medium", "high"], capabilities: { context_window: 128000 } }] } : {}),
     }]
   }),
   updateRuntimeSettings: async (provider, model) => ({
