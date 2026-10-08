@@ -344,7 +344,7 @@ async function inspectProcess(win, results, turnID) {
     await evaluate(win, appearance => {
       document.querySelector(".environment-panel-close-row button")?.click();
       const shell = document.querySelector(".app-shell");
-      if (shell.classList.contains("right-panel-open")) document.querySelector(".workspace-panel-close")?.click();
+      if (shell.classList.contains("right-panel-open")) document.querySelector('button[aria-label="Close right sidebar"]')?.click();
       if (!shell.classList.contains("sidebar-collapsed") || shell.classList.contains("sidebar-drawer-open")) {
         document.querySelector('[data-wuu-component="sidebar-toggle"], .sidebar-collapse-toggle')?.click();
       }

@@ -400,7 +400,7 @@ app.whenReady().then(async () => {
   assert.equal(await evaluate(win, () => Boolean(document.querySelector('.artifact-preview-flight'))), false, 'Enlarging during entry must settle the flight');
   await evaluate(win, () => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
   await waitFor(win, () => !document.querySelector('.image-preview-overlay'));
-  await evaluate(win, () => document.querySelector('.workspace-panel-close').click());
+  await evaluate(win, () => document.querySelector('button[aria-label="Close right sidebar"]').click());
   await waitFor(win, () => document.querySelector('.workspace-right-panel')?.getAttribute('aria-hidden') === 'true' && !document.querySelector('.artifact-preview-flight'));
   assert.equal(await evaluate(win, () => getComputedStyle(document.querySelectorAll('.turn-artifact-inline-image img')[1]).visibility), 'visible');
   await evaluate(win, () => document.querySelectorAll('[data-artifact-panel]')[1].click());

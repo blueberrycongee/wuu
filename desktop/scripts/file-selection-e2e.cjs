@@ -371,7 +371,7 @@ async function verifyTextAttachments(variant) {
   assert.deepEqual(sent.contentParts.map(({ type, text }) => ({ type, text })), [{ type: "pasted_text", text }, { type: "text", text: question }]);
   await evaluate(() => window.selectionE2E.complete());
   await waitFor(() => composerValue() === "" && !document.querySelector("[data-main-conversation-composer] .composer-collapsed-prompt-card"), "sent text attachment cleared");
-  await click(".workspace-panel-close");
+  await click('button[aria-label="Close right sidebar"]');
   await waitFor(() => document.querySelector(".workspace-right-panel")?.getAttribute("aria-hidden") !== "false", "conversation visible for history preview");
   await click(".user-message-pasted-text-toggle");
   await waitFor(text => document.querySelector(".user-message-pasted-text-content")?.textContent === text, "sent attachment preview", text);
