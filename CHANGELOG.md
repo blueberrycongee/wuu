@@ -17,6 +17,12 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Add count-driven progress rings and in-place running-to-completed transitions
   to conversation TODO plans, respecting reduced-motion preferences.
 
+### Changed
+
+- Move web sources into their tool-call groups as compact circular website icons,
+  with continuous arrival, title and URL tooltips, readable keyboard-accessible
+  overflow, and reduced-motion support that does not replay received sources.
+
 ### Fixed
 
 - Restore complete conversation history after reload, including intermediate

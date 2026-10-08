@@ -606,6 +606,20 @@ describe("buildToolActivityProcessSegments", () => {
 
 
 describe("collectTurnSources", () => {
+  it("preserves distinct URLs on the same host when source links are requested", () => {
+    const sources = collectTurnSources([{
+      id: "url-sources", type: "tool_call", name: "web_search", status: "completed",
+      result: JSON.stringify({ results: [
+        { url: "https://example.com/a" },
+        { url: "https://example.com/b", title: "Page B" },
+        { url: "https://example.com/a", title: "Page A" },
+      ] }),
+    }], "url");
+    expect(sources.map(source => [source.url, source.title])).toEqual([
+      ["https://example.com/a", "Page A"], ["https://example.com/b", "Page B"],
+    ]);
+  });
+
   it("returns an empty list when the turn has no web_search or web_fetch items", () => {
     expect(
       collectTurnSources([
