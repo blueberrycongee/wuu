@@ -427,6 +427,9 @@ app.whenReady().then(async () => {
     }
   }, false);
   await motion("left live reflow", () => drag(".sidebar-resizer", 190));
+  // Leave enough room below the reading-width cap for collapse to cross line
+  // boundaries with both Linux and macOS font metrics.
+  win.setContentSize(880, 860);
   await motion("left collapse and expand", async () => { await click(".sidebar-toggle-button"); await settle(); await click(".sidebar-toggle-button"); }, false);
   win.setContentSize(1380, 860);
   await settle();
