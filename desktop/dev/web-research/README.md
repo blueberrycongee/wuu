@@ -7,37 +7,26 @@ start the app-server, or load user data.
 
 ## Interaction
 
-Sources share the aggregated tool-call header in one line. The tool summary
-opens call details; separate source buttons open links and compact domain chips.
-Up to six 24 px avatars have independent 32 px hit targets. Narrow headers
-show fewer icons and move the remainder into +N without adding a second row. Titles and full URLs appear on hover or keyboard focus.
-Only successful calls contribute sources. Exact duplicate URLs collapse within
-the group; different pages on the same host remain individually reachable.
-The tool summary counts calls, while +N counts remaining source links.
+Search activity and source controls share one header. The tool summary and the
+source-count control open the same process disclosure beneath the row, aligned
+to its left edge. Direct favicon links remain separate hit targets.
 
-The first live results appear beside their owning search summary. Avatars
-settle into that space over `--motion-slow` (280 ms by default), with a
-50 ms lead-in and 35 ms spacing within the new batch, capped at three intervals.
-The avatar moves; its hit target and focus outline stay still. A later batch
-does not replay earlier sources or inherit a delay from its absolute position.
+The disclosure includes ALL sources, including the icons shown in the header,
+and the existing tool timeline with the original query, status and call details.
+Sources appear as tightly wrapping favicon/domain chips. Initially eight are
+shown; the remaining-count control makes every additional link reachable. The
+whole inspection area uses the existing bounded process scroll region.
 
-More sources open tightly wrapping favicon-and-domain chips near +N. The
-initial panel shows up to eight additional links and an exact remaining-count
-control reveals the rest. Full titles and URLs stay available on hover/focus.
-Long collections scroll within the bounded panel. Opening it
-does not add height to the message flow, and the first six targets stay still.
-The panel follows the existing floating-menu positioning and keyboard behavior:
-arrows navigate the chips, Escape returns focus to +N, Tab continues from the trigger, and
-an outside press closes it. Source buttons preserve modifier clicks and
-workspace-browser routing.
+Distinct URLs on the same site remain separate links; exact duplicate URLs are
+collapsed within the group. The source count counts links, while the tool summary
+counts calls. Titles and full URLs are available on hover/focus. Source clicks
+preserve original URLs, modifiers and workspace-browser routing.
 
-The whole process folds on answer handoff according to the existing turn policy.
-Reopening it restores source links without replaying arrival motion. An inactive
-conversation does not animate newly received sources, including sources not yet
-shown in overflow. The first reveal of a cached conversation stays still. Both
-application and OS reduced-motion preferences suppress arrivals and hover
-movement; restoring motion does not replay old arrivals. Favicons crossfade from
-letter fallbacks, which remain available if requests fail.
+Narrow headers show fewer icons without adding another collapsed row. The first
+live visible sources use the existing avatar entrance; revisiting a disclosure
+or history does not replay receipts. Reduced motion is respected. Escape closes
+the whole group and returns focus to the control that opened it. Failed or
+interrupted calls do not contribute sources.
 
 ## Reference
 
@@ -45,7 +34,7 @@ The initial study borrowed staged disclosure from Motionbook's
 [Flight pill](https://github.com/blueberrycongee/motionbook/tree/main/examples/flight-pill),
 a study of R / [@wheresryan22's pill buttons](https://www.inspora.design/posts/pill-buttons).
 Wuu keeps staged source arrivals and the compact source header as its visual
-anchor. Additional destinations now use compact chips near the trigger.
+anchor. The complete source set now uses compact chips within the owning process disclosure.
 It omits the reference's large card, rolling counters, blur and demonstration
 timers: source receipts and user disclosure actions drive the actual state.
 Timings above are authored for Wuu,
@@ -66,9 +55,9 @@ Open `http://127.0.0.1:5218/dev/web-research/` for manual review. Query paramete
 `theme=dark`, `size=20`, `motion=reduce`, and `long`.
 
 The capture script covers light/dark, 14/20 px, 390/900 px windows, source arrival,
-hover tooltips, same-line header geometry and non-overlapping targets, bounded chip geometry
-without flow expansion, outside presses,
-overflow reopening and rapid reversal, keyboard activation, Escape/focus return, answer handoff,
+hover tooltips, same-line header geometry and non-overlapping targets, left-aligned complete
+source disclosure with bounded height, unified tool/source controls,
+group reopening and rapid reversal, keyboard activation, Escape/focus return, answer handoff,
 reopening history, long source lists, no sources after failure/interruption/empty
 results, inactive panes and both reduced-motion sources. Arrival-start events
 remain recorded across no-replay checks so a completed transient animation cannot

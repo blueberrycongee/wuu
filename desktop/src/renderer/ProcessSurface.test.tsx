@@ -68,8 +68,22 @@ it("keeps source actions beside the aggregated disclosure without nesting button
   expect(onOpenURL).toHaveBeenCalledExactlyOnceWith(results[0].url);
   expect(header.querySelector("details")?.open).toBe(false);
   act(() => header.querySelector<HTMLButtonElement>(".web-research-more")!.click());
+  expect(header.querySelector("details")?.open).toBe(true);
+  expect(header.querySelectorAll(".web-research-expanded .web-source-link")).toHaveLength(8);
+  expect(header.querySelector(".process-surface-tool-list")).not.toBeNull();
+  const chips = header.querySelectorAll<HTMLButtonElement>(".web-research-expanded .web-source-link");
+  act(() => { chips[0].focus(); chips[0].dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); });
   expect(header.querySelector("details")?.open).toBe(false);
-  expect(document.querySelector(".web-research-popover")).not.toBeNull();
+  expect(document.activeElement).toBe(header.querySelector(".web-research-more"));
+  const summary = header.querySelector<HTMLElement>("summary")!;
+  act(() => summary.click());
+  act(() => header.querySelector("details")!.dispatchEvent(new Event("toggle")));
+  expect(header.querySelector(".web-research-more")?.getAttribute("aria-expanded")).toBe("true");
+  expect(header.querySelectorAll(".web-research-expanded .web-source-link")).toHaveLength(8);
+  expect(header.querySelectorAll(".process-surface-tool-list")).toHaveLength(1);
+  const first = header.querySelector<HTMLButtonElement>(".web-research-expanded .web-source-link")!;
+  act(() => { first.focus(); first.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); });
+  expect(document.activeElement).toBe(summary);
 });
 
 it("keeps its disclosure node and source receipt ledger when live search results arrive", () => {

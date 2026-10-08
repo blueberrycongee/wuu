@@ -94,8 +94,8 @@ export function ProcessSurfaceFold({
   const handleSummaryClick = (event: SyntheticEvent<HTMLElement>): void => {
     if (!hasDetails) {
       event.preventDefault();
-      onSummaryClick?.(event);
     }
+    onSummaryClick?.(event);
   };
   const fold = (
     <details

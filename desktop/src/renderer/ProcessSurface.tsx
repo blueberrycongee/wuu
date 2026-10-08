@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -23,7 +24,7 @@ import {
 } from "./AutoFollowScroll";
 import { AnimatedProcessText } from "./ProcessTextMotion";
 import { ProcessSurfaceFold } from "./ProcessSurfaceFold";
-import { TurnSourcesRow } from "./TurnSourcesRow";
+import { TurnSourcesRow, TurnSourceChips } from "./TurnSourcesRow";
 import { collectTurnArtifacts } from "./ArtifactOutputs";
 import { translateCurrent as translate, useI18n } from "./i18n";
 import {
@@ -264,7 +265,8 @@ export function ProcessSurface({
   const hasMultipleTools = toolItems.length > 1;
   const hasInspection = !hasReasoning && !hasMultipleTools
     && collectTurnArtifacts({ items: toolItems }).some(artifact => artifact.foldPreview);
-  const hasDetails = hasReasoning || hasMultipleTools || hasInspection;
+  const hasWebActivity = sources.length > 0 || toolItems.some(item => ["websearch", "webfetch"].includes((item.name ?? "").toLowerCase().replaceAll("_", "")));
+  const hasDetails = hasReasoning || hasMultipleTools || hasInspection || hasWebActivity;
   const detailRuns: ThreadItem[][] = [];
   for (const item of processItems) {
     if (!isToolActivityItem(item) && item.type !== "reasoning") continue;
@@ -304,6 +306,8 @@ export function ProcessSurface({
   // Details are opt-in. The running row itself should stay compact by
   // default; expanding it is a user request to inspect the process trail.
   const [expanded, setExpanded] = useState(false);
+  const sourceDetailsID = useId();
+  const disclosureTrigger = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     if (!hasDetails) {
@@ -316,7 +320,7 @@ export function ProcessSurface({
   const processScroll = useAutoFollowScrollContainer({
     observeKey: processItems.map((item) => item.id).join("|"),
     open: expanded,
-    initialAutoFollow: streaming,
+    initialAutoFollow: streaming && !hasWebActivity,
   });
 
   const handleToggle = (
@@ -327,6 +331,7 @@ export function ProcessSurface({
 
   const browserURL = browserActivityOpenURL(toolItems);
   const handleSummaryClick = (event: SyntheticEvent<HTMLElement>): void => {
+    disclosureTrigger.current = event.currentTarget;
     if (hasDetails || !browserURL) {
       return;
     }
@@ -409,7 +414,11 @@ export function ProcessSurface({
     <div className={className}>
       <ProcessSurfaceFold
         summary={summaryLine}
-        summaryAccessory={<TurnSourcesRow sources={sources} running={processEntryActive} onOpen={onOpenURL} inline />}
+        summaryAccessory={<TurnSourcesRow sources={sources} running={processEntryActive} onOpen={onOpenURL} inline
+          expanded={expanded} detailsID={sourceDetailsID} onExpandedChange={(open, trigger) => {
+            disclosureTrigger.current = trigger;
+            setExpanded(open);
+          }} />}
         disabled={!hasDetails}
         open={expanded}
         onToggle={handleToggle}
@@ -418,8 +427,17 @@ export function ProcessSurface({
           streaming ? " is-streaming" : ""
         }`}
         bodyRef={processScroll.scrollRef}
-        bodyProps={{ [AUTO_FOLLOW_NESTED_SCROLL_ATTR]: "true" }}
+        bodyProps={{ [AUTO_FOLLOW_NESTED_SCROLL_ATTR]: "true", id: sourceDetailsID, inert: !expanded,
+          onKeyDownCapture: event => {
+            if (event.key !== "Escape") return;
+            event.preventDefault();
+            event.stopPropagation();
+            setExpanded(false);
+            (disclosureTrigger.current ?? event.currentTarget.closest("details")?.querySelector("summary"))?.focus();
+          },
+        }}
       >
+        {expanded ? <TurnSourceChips sources={sources} onOpen={onOpenURL} /> : null}
         {detailRuns.map(items => items[0].type === "tool_call" ? (
           <div className="process-surface-tool-list" key={items[0].id}>
             <ToolActivityTimeline items={items} cwd={cwd} showInspectionPreviews={expanded} />

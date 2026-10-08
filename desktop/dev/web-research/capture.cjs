@@ -60,14 +60,15 @@ app.whenReady().then(async () => {
   };
   const measure = () => run(`(() => {
     const region = document.querySelector('.turn-web-research');
-    const popover = document.querySelector('.web-research-popover');
+    const sourceDetails = document.querySelector('.web-research-expanded');
+    const body = document.querySelector('.process-surface-fold > .process-surface-body');
     const summary = document.querySelector('.process-surface-row');
     const circles = [...document.querySelectorAll('.web-source-link')].filter(node => !node.closest('[inert]'));
     const bounds = el => { const r = el.getBoundingClientRect(); return { x:r.x,y:r.y,width:r.width,height:r.height }; };
     return { running:region?.getAnimations({subtree:true}).filter(a => a.animationName === 'web-source-arrive' && a.playState === 'running').length ?? 0,
       pageWidth:document.documentElement.scrollWidth, width:innerWidth, circles:circles.map(bounds),
       region:region && bounds(region), count:circles.length, focus:document.activeElement?.className,
-      popover:popover && bounds(popover), summary:summary && bounds(summary),
+      sourceDetails:sourceDetails && bounds(sourceDetails), detailCount:sourceDetails?.querySelectorAll(".web-source-link").length ?? 0, body:body && bounds(body), summary:summary && bounds(summary),
       toolOwned:region ? !!region.closest('.process-surface') : null,
       expanded:document.querySelector('.turn-process-toggle')?.getAttribute('aria-expanded'),
       more:document.querySelector('.web-research-more')?.getAttribute('aria-expanded'),
@@ -89,7 +90,8 @@ app.whenReady().then(async () => {
         .map(animation => ({ animation, delay: animation.effect.getTiming().delay }));
       return window.sourceEntranceClocks.length;
     })()`);
-    assert.equal(entranceCount, 3, "the live result batch starts three avatar entrances");
+    const initialHeaderCount = await run("document.querySelectorAll('.web-research-sources .web-source-link').length");
+    assert.equal(entranceCount, initialHeaderCount, "each visible live result starts its avatar entrance");
     // Opening a source updates the fixture's opened URL and rerenders its
     // real turn shell while the entrance is still active. Receipt tracking
     // must not change the clocks of avatars already in flight.
@@ -101,10 +103,10 @@ app.whenReady().then(async () => {
     await frames();
     await settle();
     const arrival = await measure();
-    assert.equal(arrival.count, 3);
+    assert.equal(arrival.count, initialHeaderCount);
     assert.equal(arrival.toolOwned, true);
     assert.ok(arrival.pageWidth <= width, name);
-    assert.ok(arrival.region.height <= 36, "three sources stay on one compact row");
+    assert.ok(arrival.region.height <= 36, "source controls stay on one compact row");
     assert.ok(arrival.circles.every(r => r.x >= 0 && r.x+r.width <= width && r.height >= 28 && r.height <= 36), name);
     await run("window.scrollTo({top:0,behavior:'instant'})");
     await frames();
@@ -126,20 +128,13 @@ app.whenReady().then(async () => {
     await click(".web-research-more");
     await settle();
     const overflow = await measure();
-    assert.equal(overflow.count, 8);
-    assert.equal(overflow.region.height, flowHeight, "overflow does not expand the message flow");
-    assert.ok(overflow.popover && overflow.popover.width <= 360 && overflow.popover.width <= width - 16, "overflow remains a compact floating surface");
-    assert.ok(overflow.popover.x >= 0 && overflow.popover.x + overflow.popover.width <= width);
-    assert.ok(overflow.popover.y >= 0 && overflow.popover.y + overflow.popover.height <= 800);
-    await shot(`${name}-overflow`);
-    // A pointer/touch-style outside press closes the floating layer.
-    win.webContents.sendInputEvent({ type: "mouseDown", button: "left", clickCount: 1, x: 10, y: 10 });
-    win.webContents.sendInputEvent({ type: "mouseUp", button: "left", clickCount: 1, x: 10, y: 10 });
-    await frames();
-    await settle();
-    assert.equal((await measure()).more, "false");
-    await click(".web-research-more");
-    await settle();
+    assert.equal(overflow.detailCount, 8, "the group reveals ALL eight sources, including the visible header icons");
+    assert.equal(overflow.region.height, flowHeight, "the source header keeps its geometry");
+    assert.ok(Math.abs(overflow.sourceDetails.x - overflow.summary.x) <= 1, "expanded sources align with the search row left edge");
+    assert.ok(overflow.sourceDetails.x + overflow.sourceDetails.width <= width);
+    assert.ok(overflow.body.height <= 330, "search inspection stays bounded");
+    assert.ok(await run("document.querySelector('.process-surface-fold').open && !!document.querySelector('.process-surface-tool-list')"), "source control opens the actual tool details too");
+    await shot(`${name}-expanded`);
     // The disclosure may be revisited while the search is still running.
     // Already received sources must not masquerade as new results again.
     await click(".web-research-more");
@@ -151,9 +146,9 @@ app.whenReady().then(async () => {
     await click(".web-research-more");
     await click(".web-research-more");
     await noArrivalReplay("rapid reversal does not replay arrivals");
-    assert.equal((await measure()).count, 8);
+    assert.equal((await measure()).detailCount, 8);
     assert.deepEqual(await run("[...document.querySelectorAll('.web-research-sources > button, .web-research-sources .web-source-circle')].map(el => ({x:el.getBoundingClientRect().x,y:el.getBoundingClientRect().y}))"), stableHeader);
-    await run("document.querySelectorAll('.web-source-link')[7].focus()");
+    await run("document.querySelectorAll('.web-research-expanded .web-source-link')[7].focus()");
     await key("Enter", 13);
     await frames();
     assert.equal(await run("document.querySelector('#opened').textContent"), "https://caniuse.com/css-animation");
@@ -165,7 +160,7 @@ app.whenReady().then(async () => {
     assert.equal(collapsed.focus, "web-research-more");
     await click(".process-surface-row");
     await settle();
-    assert.equal((await measure()).count, visibleSources, "tool detail expansion preserves the source header");
+    assert.equal((await measure()).detailCount, 8, "the tool label opens the same complete source disclosure");
     await click(".process-surface-row");
     await settle();
     // The owning process folds when the answer arrives; reopening restores
@@ -184,23 +179,22 @@ app.whenReady().then(async () => {
     await frames();
     await shot(`${name}-done`);
     await click("#many");
-    await run("document.querySelector('.web-research-more').focus()");
-    await key("ArrowUp", 38);
+    await click(".web-research-more");
     await settle();
-    assert.equal((await measure()).count, visibleSources + 8, "long overflow initially shows eight source chips");
-    assert.ok(await run("document.activeElement.classList.contains('web-research-reveal')"));
+    assert.equal((await measure()).detailCount, 8, "long groups initially show the first eight source chips");
+    await run("document.querySelector('.web-research-reveal').focus()");
     await key("Enter", 13);
     await settle();
     await key("ArrowUp", 38);
     await frames();
     const many = await measure();
-    assert.equal(many.count, 20);
+    assert.equal(many.detailCount, 20);
     assert.ok(many.pageWidth <= width);
-    assert.ok(many.popover && many.popover.height <= 360 && many.popover.width <= 360);
+    assert.ok(many.body && many.body.height <= 330);
     assert.ok(await run(`(() => {
       const focused = document.activeElement;
-      const last = document.querySelectorAll('.web-source-link')[19];
-      const panel = document.querySelector('.web-research-popover').getBoundingClientRect();
+      const last = document.querySelectorAll('.web-research-expanded .web-source-link')[19];
+      const panel = document.querySelector('.process-surface-fold > .process-surface-body').getBoundingClientRect();
       const item = focused.getBoundingClientRect();
       return focused === last && item.top >= panel.top && item.bottom <= panel.bottom && item.bottom <= innerHeight;
     })()`), "revealing the remaining chips keeps the last source keyboard-accessible and visible");

@@ -22,7 +22,6 @@ export type ComposerVariant = "dock" | "document" | "hero";
 export type FloatingMenuOwner =
   | "sidebar-account"
   | "conversation-actions"
-  | "turn-sources"
   | "composer-handoff"
   | "composer-runtime"
   | "composer-access"
