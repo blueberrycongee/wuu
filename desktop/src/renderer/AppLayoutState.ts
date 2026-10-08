@@ -19,11 +19,11 @@ import { isTouchWebShell } from "./ComposerFocus";
 // Shell motion windows, read when each motion starts so the timers follow
 // the stylesheet, theme overrides, and reduced motion as they change.
 export const sidebarMotionMs = (): number =>
-  motionDurationMs("--sidebar-motion-duration", 280);
+  motionDurationMs("--sidebar-motion-duration", 180);
 export const sidebarDrawerExitMs = (): number =>
   motionDurationMs("--sidebar-drawer-exit-duration", 220);
 export const rightPanelMotionMs = (): number =>
-  motionDurationMs("--workspace-panel-motion-duration", 280);
+  motionDurationMs("--workspace-panel-motion-duration", 180);
 export const SIDEBAR_DEFAULT_WIDTH = 264;
 // Keep enough horizontal room for one-line navigation labels and useful
 // conversation titles. The rail becomes an overlay drawer below the compact
@@ -54,6 +54,7 @@ export const WORKSPACE_DOCKED_PANEL_SAFE_WIDTH = 320;
 export const WORKSPACE_RIGHT_PANEL_MIN_DRAG_RANGE = 120;
 const WORKSPACE_RIGHT_PANEL_STEP = 32;
 
+const WORKSPACE_RIGHT_PANEL_OPEN_KEY = "wuu.desktop.workspaceRightPanelOpen";
 const WORKSPACE_RIGHT_PANEL_WIDTH_KEY = "wuu.desktop.workspaceRightPanelWidth";
 // The fork/split view (源对话 | 分叉) is proportional rather than a fixed pixel
 // panel, so its divider is stored as the left pane's share of the container
@@ -162,11 +163,13 @@ function initialConversationSplitPercent(): number {
 // Exported for unit testing: this pure helper is the single gate every
 // right-panel width change (live drag, commit, keyboard, window-resize) passes
 // through, so its clamp range determines whether the panel is draggable at all.
-export function clampWorkspaceRightPanelWidth(width: number, sidebarWidth: number): number {
+export function clampWorkspaceRightPanelWidth(
+  width: number,
+  sidebarWidth: number,
+  viewportWidth = typeof window === "undefined" ? Infinity : window.innerWidth,
+): number {
   const maxForWindow =
-    typeof window === "undefined"
-      ? WORKSPACE_RIGHT_PANEL_MAX_WIDTH
-      : window.innerWidth - sidebarWidth - WORKSPACE_RIGHT_PANEL_MAIN_MIN_WIDTH;
+    viewportWidth - sidebarWidth - WORKSPACE_RIGHT_PANEL_MAIN_MIN_WIDTH;
   // Always keep the ceiling at least MIN_DRAG_RANGE above the floor. The old
   // formula was `max(MIN, min(MAX, maxForWindow))`, which on a tight window
   // (small maxForWindow) collapsed to exactly MIN — min === max — so the
@@ -284,6 +287,7 @@ export function useAppLayoutState({
   layoutRootRef,
   settingsLayoutRootRef,
   viewportWidth,
+  leadingInset = 0,
   onCloseWorkspaceMenu
 }: {
   layoutRootRef?: RefObject<HTMLElement | null>;
@@ -294,6 +298,7 @@ export function useAppLayoutState({
   // Callers with a virtual or embedded viewport can provide the width that
   // owns layout decisions instead of the outer browser window.
   viewportWidth?: number;
+  leadingInset?: number;
   onCloseWorkspaceMenu: () => void;
 }): {
   compactNavigation: boolean;
@@ -333,7 +338,9 @@ export function useAppLayoutState({
   const [sidebarAnimating, setSidebarAnimating] = useState(false);
   const [workspaceRightPanelWidth, setWorkspaceRightPanelWidth] = useState(initialWorkspaceRightPanelWidth);
   const [resizingRightPanel, setResizingRightPanel] = useState(false);
-  const [rightPanelOpen, setRightPanelOpen] = useState(false);
+  const [rightPanelOpen, setRightPanelOpen] = useState(
+    () => window.localStorage.getItem(WORKSPACE_RIGHT_PANEL_OPEN_KEY) === "true",
+  );
   const [rightPanelAnimating, setRightPanelAnimating] = useState(false);
   const [splitLeftPercent, setSplitLeftPercent] = useState(initialConversationSplitPercent);
   const [resizingSplit, setResizingSplit] = useState(false);
@@ -370,7 +377,7 @@ export function useAppLayoutState({
   // (Previously this passed effectiveSidebarWidth, so opening the sidebar could
   // tip the layout over the threshold and auto-globalize the panel.)
   const workspaceRightPanelAutoGlobalized = phoneNavigation || workspacePanelNeedsFocus(
-    windowWidth,
+    windowWidth - leadingInset,
     0,
   );
   // Complement of the above by construction: if the panel can't dock without
@@ -379,7 +386,8 @@ export function useAppLayoutState({
     !workspaceRightPanelAutoGlobalized;
   const clampedWorkspaceRightPanelWidth = clampWorkspaceRightPanelWidth(
     workspaceRightPanelWidth,
-    effectiveSidebarWidth
+    effectiveSidebarWidth + leadingInset,
+    windowWidth,
   );
   const startSidebarMotion = useCallback((): void => {
     if (sidebarMotionTimerRef.current !== undefined) {
@@ -422,9 +430,10 @@ export function useAppLayoutState({
       for (const root of sidebarLayoutRoots()) {
         root.style.setProperty("--sidebar-width", `${clampedWidth}px`);
         root.style.setProperty("--sidebar-open-width", `${clampedWidth}px`);
+        root.style.setProperty("--workspace-sheet-left", `${leadingInset + clampedWidth}px`);
       }
     },
-    [sidebarLayoutRoots]
+    [leadingInset, sidebarLayoutRoots]
   );
 
   // A drag that ends collapsed leaves the live writer's clamped-to-minimum
@@ -451,11 +460,12 @@ export function useAppLayoutState({
       }
       const clampedWidth = clampWorkspaceRightPanelWidth(
         nextWidth,
-        effectiveSidebarWidth
+        effectiveSidebarWidth + leadingInset,
+        windowWidth,
       );
       root.style.setProperty("--workspace-right-panel-width", `${clampedWidth}px`);
     },
-    [effectiveSidebarWidth, layoutRootRef]
+    [effectiveSidebarWidth, layoutRootRef, leadingInset, windowWidth]
   );
 
   const writeLiveSplitPercent = useCallback(
@@ -505,9 +515,9 @@ export function useAppLayoutState({
 
   const applyWorkspaceRightPanelWidth = useCallback(
     (nextWidth: number): void => {
-      setWorkspaceRightPanelWidth(clampWorkspaceRightPanelWidth(nextWidth, effectiveSidebarWidth));
+      setWorkspaceRightPanelWidth(clampWorkspaceRightPanelWidth(nextWidth, effectiveSidebarWidth + leadingInset, windowWidth));
     },
-    [effectiveSidebarWidth]
+    [effectiveSidebarWidth, leadingInset, windowWidth]
   );
 
   const applySplitPercent = useCallback((nextPercent: number): void => {
@@ -532,6 +542,10 @@ export function useAppLayoutState({
       window.localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(sidebarCollapsed));
     }
   }, [sidebarPreferredWidth, sidebarCollapsed]);
+
+  useEffect(() => {
+    window.localStorage.setItem(WORKSPACE_RIGHT_PANEL_OPEN_KEY, String(rightPanelOpen));
+  }, [rightPanelOpen]);
 
   useEffect(() => {
     window.localStorage.setItem(WORKSPACE_RIGHT_PANEL_WIDTH_KEY, String(workspaceRightPanelWidth));
@@ -633,7 +647,7 @@ export function useAppLayoutState({
   );
 
   const handleRightPanelResizeEnd = useCallback((session: RightPanelResizeSession | null): void => {
-    if (session) {
+    if (session && session.currentWidth !== session.startWidth) {
       rightPanelLive.flush();
       applyWorkspaceRightPanelWidth(session.currentWidth);
     } else {
@@ -749,11 +763,23 @@ export function useAppLayoutState({
     };
   }, [rightPanelAnimating, sidebarAnimating]);
 
+  function finishPanelMotion(): void {
+    // A direct manipulation takes over the shared grid immediately, even if
+    // the other rail was still completing its open/close transition.
+    window.clearTimeout(sidebarMotionTimerRef.current);
+    window.clearTimeout(rightPanelMotionTimerRef.current);
+    sidebarMotionTimerRef.current = undefined;
+    rightPanelMotionTimerRef.current = undefined;
+    setSidebarAnimating(false);
+    setRightPanelAnimating(false);
+  }
+
   function startSidebarResize(event: ReactPointerEvent<HTMLDivElement>): void {
     if (event.button !== 0) {
       return;
     }
     event.preventDefault();
+    finishPanelMotion();
     resizeSessionRef.current = {
       startX: event.clientX,
       startWidth: sidebarCollapsed ? 0 : sidebarWidth,
@@ -769,6 +795,7 @@ export function useAppLayoutState({
       return;
     }
     event.preventDefault();
+    finishPanelMotion();
     rightPanelResizeSessionRef.current = {
       startX: event.clientX,
       startWidth: clampedWorkspaceRightPanelWidth,

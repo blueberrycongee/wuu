@@ -261,6 +261,95 @@ describe("workspace file tabs", () => {
     vi.useRealTimers();
   });
 
+  it.each(["ribbon", "back"])("preserves contextual navigation and the conversation utility tab when leaving Files via %s", async (exit) => {
+    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await flushAsync();
+    const sessions = container.querySelector<HTMLElement>(".sidebar-main")!;
+    sessions.scrollTop = 240;
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-wuu-component="right-sidebar-toggle"]')!.click());
+    await flushAsync();
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-wuu-tool="browser"]')!.click());
+    await flushAsync();
+    expect(container.querySelector('.workspace-browser-panel')).not.toBeNull();
+    const activeLabel = container.querySelector('.workspace-tool-tab.active')?.textContent;
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-wuu-destination="files"]')!.click());
+    await flushAsync();
+    const tree = container.querySelector('.files-navigation-sidebar file-tree-container');
+    expect(tree).not.toBeNull();
+    await act(async () => container.querySelector<HTMLButtonElement>('.files-navigation-sidebar [data-wuu-component="sidebar-toggle"]')!.click());
+    await flushAsync();
+    expect(container.querySelector('.files-navigation-sidebar file-tree-container')).toBe(tree);
+    await act(async () => {
+      if (exit === "back") window.dispatchEvent(new Event("wuu:workbench-back", { cancelable: true }));
+      else container.querySelector<HTMLButtonElement>('[data-wuu-destination="conversations"]')!.click();
+    });
+    await flushAsync();
+    expect(container.querySelector('.workspace-tool-tab.active')?.textContent).toBe(activeLabel);
+    expect(container.querySelector('.sidebar-main')).toBe(sessions);
+    expect(sessions.scrollTop).toBe(240);
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-wuu-destination="files"]')!.click());
+    await flushAsync();
+    expect(container.querySelector('.files-navigation-sidebar file-tree-container')).toBe(tree);
+  });
+
+  it("registers a picked folder for Files without activating its runtime, and leaves cancellation unchanged", async () => {
+    const added = { id: "reading-root", name: "Reading", path: "/reading", created_at: "2026-01-01", updated_at: "2026-01-01" };
+    window.wuu.chooseWorkspaceDirectory = vi.fn().mockResolvedValueOnce(null).mockResolvedValueOnce("/reading");
+    window.wuu.importWorkspaces = vi.fn().mockResolvedValue({ projects: [added], active_context: { kind: "project", project_id: added.id, cwd: added.path } });
+    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await flushAsync();
+    const title = container.querySelector(".conversation-title-heading h1")?.textContent;
+    const resumeCount = vi.mocked(window.wuu.resumeThread).mock.calls.length;
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-wuu-destination="files"]')!.click());
+    await flushAsync();
+    const add = container.querySelector<HTMLButtonElement>(".files-navigation-heading .icon-button");
+    expect(add).not.toBeNull();
+    await act(async () => add!.click());
+    await flushAsync();
+    expect(window.wuu.importWorkspaces).not.toHaveBeenCalled();
+    expect(container.querySelector<HTMLSelectElement>(".files-navigation-heading select")?.value).toBe("/repo/wuu");
+    await act(async () => add!.click());
+    await flushAsync();
+    expect(window.wuu.importWorkspaces).toHaveBeenCalledWith(["/reading"]);
+    expect(container.querySelector<HTMLSelectElement>(".files-navigation-heading select")?.value).toBe("/reading");
+    expect(window.wuu.startThread).not.toHaveBeenCalled();
+    expect(window.wuu.resumeThread).toHaveBeenCalledTimes(resumeCount);
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-wuu-destination="conversations"]')!.click());
+    await flushAsync();
+    expect(container.querySelector(".conversation-title-heading h1")?.textContent).toBe(title);
+  });
+
+  it("opens a registered file root from the ribbon without switching or creating a conversation", async () => {
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<App />);
+    });
+    await flushAsync();
+    const resumeCount = vi.mocked(window.wuu.resumeThread).mock.calls.length;
+    const title = container.querySelector(".conversation-title-heading h1")?.textContent;
+    const files = container.querySelector<HTMLButtonElement>('[data-wuu-destination="files"]');
+    expect(files).not.toBeNull();
+    await act(async () => files!.click());
+    await flushAsync();
+    expect(container.querySelector('[data-wuu-component="files-navigation-sidebar"]')).not.toBeNull();
+    expect(window.wuu.listWorkspaceDirectory).toHaveBeenCalledWith("", "/repo/wuu");
+    const file = container.querySelector('.files-navigation-sidebar file-tree-container')?.shadowRoot
+      ?.querySelector<HTMLButtonElement>('[data-item-path="README.md"]');
+    expect(file).toBeTruthy();
+    await act(async () => file!.click());
+    await flushAsync();
+    expect(window.wuu.readWorkspaceFile).toHaveBeenCalledWith("README.md", "/repo/wuu");
+    expect(window.wuu.startThread).not.toHaveBeenCalled();
+    expect(window.wuu.resumeThread).toHaveBeenCalledTimes(resumeCount);
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-wuu-destination="conversations"]')!.click());
+    await flushAsync();
+    expect(container.querySelector(".conversation-title-heading h1")?.textContent).toBe(title);
+    expect(container.querySelector(".conversation-pane")?.hasAttribute("inert")).toBe(false);
+    await act(async () => files!.click());
+    await flushAsync();
+    expect(container.querySelector('.workspace-tool-tab.active')?.textContent).toContain("README.md");
+  });
+
   it("keeps the project overview on the selected coordinator or managed session", async () => {
     vi.mocked(window.wuu.initialize).mockResolvedValue({
       ...initialized(),
@@ -337,7 +426,7 @@ describe("workspace file tabs", () => {
       viewport.dispatchEvent(new Event("scroll", { bubbles: true }));
     });
     const restoreFocus = vi.spyOn(link, "focus");
-    const close = container.querySelector<HTMLButtonElement>(".workspace-panel-close")!;
+    const close = container.querySelector<HTMLButtonElement>('[data-wuu-component="right-sidebar-toggle"]')!;
     await act(async () => {
       close.focus();
       close.click();
@@ -366,7 +455,7 @@ describe("workspace file tabs", () => {
       container.querySelector<HTMLButtonElement>(".rich-file-link")!.click();
     });
     await flushAsync();
-    const close = container.querySelector<HTMLButtonElement>(".workspace-panel-close")!;
+    const close = container.querySelector<HTMLButtonElement>('[data-wuu-component="right-sidebar-toggle"]')!;
     await act(async () => close.focus());
     const select = Array.from(container.querySelectorAll<HTMLButtonElement>(".sidebar button"))
       .find((entry) => entry.textContent === "Other conversation")!;
@@ -392,6 +481,35 @@ describe("workspace file tabs", () => {
     await flushAsync();
     expect(selectionActions).toBeTruthy();
   }
+
+  it("disables conversation file actions for an independent root without changing the hidden draft", async () => {
+    await openSelectionDocument();
+    await typeMainPrompt("Keep conversation A");
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-wuu-destination="files"]')!.click());
+    await flushAsync();
+    const file = container.querySelector('.files-navigation-sidebar file-tree-container')?.shadowRoot
+      ?.querySelector<HTMLButtonElement>('[data-item-path="README.md"]');
+    await act(async () => file!.click());
+    await flushAsync();
+    expect(selectionActions).toBeNull();
+    expect(container.querySelector('.workspace-document-turn-dock')).toBeNull();
+    expect(window.wuu.startThread).not.toHaveBeenCalled();
+    expect(startTurnMock).not.toHaveBeenCalled();
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-wuu-destination="conversations"]')!.click());
+    await flushAsync();
+    expect(container.querySelector<HTMLTextAreaElement>("[data-main-conversation-composer] textarea")!.value).toBe("Keep conversation A");
+  });
+
+  it("does not offer implicit conversation creation from Files when the current conversation is a draft", async () => {
+    await openSelectionDocument();
+    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="在 对话 中新建对话"]')!.click());
+    await flushAsync();
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-wuu-destination="files"]')!.click());
+    await flushAsync();
+    expect(selectionActions).toBeNull();
+    expect(window.wuu.startThread).not.toHaveBeenCalled();
+    expect(startTurnMock).not.toHaveBeenCalled();
+  });
 
   const selectionSource: FileSelectionSource = {
     workspace, path: "README.md", start_line: 1, start_column: 1,

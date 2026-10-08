@@ -12,6 +12,7 @@ import type {
 } from "../shared/protocol";
 import { WORKSPACE_FILE_DRAG_MIME } from "./ComposerMessages";
 import { WorkspaceFilePreview, WorkspaceFileTree } from "./WorkspaceFiles";
+import { FilesNavigationSidebar } from "./FilesNavigationSidebar";
 import { workspaceFileViewTab, type WorkspaceFileViewTab } from "./WorkspaceViewTabs";
 
 vi.mock("./WorkspaceMonacoEditor", () => ({
@@ -226,6 +227,24 @@ async function clickMenuItem(text: string): Promise<void> {
   });
 }
 
+describe("FilesNavigationSidebar", () => {
+  it("only browses registered roots and selects files without changing the runtime", async () => {
+    const projects = [{ id: "one", name: "One", path: "/repo", created_at: "", updated_at: "" }];
+    const onSelectRoot = vi.fn();
+    const onOpenFile = vi.fn();
+    await render(<FilesNavigationSidebar projects={projects} selectedRoot="/unregistered" open onSelectRoot={onSelectRoot} onOpenFile={onOpenFile} />);
+    expect(listWorkspaceDirectory).not.toHaveBeenCalled();
+    const selector = container.querySelector<HTMLSelectElement>("select")!;
+    await act(async () => { selector.value = "/repo"; selector.dispatchEvent(new Event("change", { bubbles: true })); });
+    expect(onSelectRoot).toHaveBeenCalledWith("/repo");
+    expect(listWorkspaceDirectory).not.toHaveBeenCalled();
+    await render(<FilesNavigationSidebar projects={projects} selectedRoot="/repo" open onSelectRoot={onSelectRoot} onOpenFile={onOpenFile} />);
+    await settleDirectoryLoads();
+    await act(async () => rowButtonByTitle("README.md").click());
+    expect(onOpenFile).toHaveBeenCalledWith("README.md", "/repo");
+  });
+});
+
 describe("WorkspaceFileTree", () => {
   it.skipIf(process.platform === "win32").each([
     [" note.txt", "note.txt"],
@@ -276,6 +295,35 @@ describe("WorkspaceFileTree", () => {
     await settleDirectoryLoads();
     expect(readWorkspaceFile).toHaveBeenCalledWith("src/ note.txt", cwd);
     expect(container.textContent).toContain("button code");
+  });
+
+  it.each(["resolve", "reject"])("ignores a stale child directory %s after switching roots", async (outcome) => {
+    let completeOld: (result: WorkspaceDirectoryListResult) => void = () => {};
+    let rejectOld: (error: Error) => void = () => {};
+    listWorkspaceDirectory.mockImplementation((path = "", cwd = "/repo") => {
+      if (path === "src" && cwd === "/repo") {
+        return new Promise((resolve, reject) => { completeOld = resolve; rejectOld = reject; });
+      }
+      return Promise.resolve({ ...directoryResults[path], root: cwd });
+    });
+    await render(<WorkspaceFileTree activeContext={activeContext} open onOpenFile={() => {}} />);
+    await settleDirectoryLoads();
+    await act(async () => rowButtonByTitle("src/").click());
+    const nextContext: RuntimeContext = { kind: "no_project", cwd: "/other" };
+    await render(<WorkspaceFileTree activeContext={nextContext} open onOpenFile={() => {}} />);
+    await settleDirectoryLoads();
+    await act(async () => rowButtonByTitle("src/").click());
+    await settleDirectoryLoads();
+    expect(listWorkspaceDirectory).toHaveBeenCalledWith("src", "/other");
+    await act(async () => {
+      if (outcome === "reject") rejectOld(new Error("Old root disappeared"));
+      else completeOld({ root: "/repo", path: "src", entries: [{ kind: "file", name: "stale.ts", path: "src/stale.ts" }], truncated: false });
+      await Promise.resolve();
+    });
+    await settleDirectoryLoads();
+    expect(treeShadowRoot().querySelector('[data-item-path="src/stale.ts"]')).toBeNull();
+    expect(rowButtonByTitle("src/index.ts")).toBeTruthy();
+    expect(container.textContent).not.toContain("Old root disappeared");
   });
 
   it("expands and scrolls to the selected workspace file path", async () => {

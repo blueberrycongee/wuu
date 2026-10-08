@@ -470,6 +470,23 @@ describe("WorkspaceRightPanel", () => {
     expect(content!.compareDocumentPosition(tree!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
+  it("keeps the same file resource when entering Files navigation without a duplicate tree", async () => {
+    const context: RuntimeContext = { kind: "project", project_id: "project-1", cwd: "/repo/project" };
+    const tab = workspaceFileViewTab({ context, path: "src/App.tsx" });
+    const props = { ...baseProps(), tabs: [tab], activeTabID: tab.id, activeFileTabID: tab.id, workspaceContext: context };
+    mount(<WorkspaceRightPanel {...props} />);
+    await act(async () => Promise.resolve());
+    const resource = fileResource(tab.id);
+    vi.mocked(window.wuu.listWorkspaceDirectory).mockClear();
+    act(() => root!.render(<WorkspaceRightPanel {...props} navigationMode="files" />));
+    await act(async () => Promise.resolve());
+    expect(fileResource(tab.id)).toBe(resource);
+    expect(resource?.hidden).toBe(false);
+    expect(container!.querySelector<HTMLElement>(".workspace-files-tree")?.hidden).toBe(true);
+    expect(container!.querySelector(".workspace-panel-globalize")).toBeNull();
+    expect(window.wuu.listWorkspaceDirectory).not.toHaveBeenCalled();
+  });
+
   it("resolves links in Markdown previews relative to the document", async () => {
     const context: RuntimeContext = {
       kind: "project",
@@ -496,7 +513,8 @@ describe("WorkspaceRightPanel", () => {
         tabs={[fileTab]}
         activeTabID={fileTab.id}
         activeFileTabID={fileTab.id}
-        workspaceContext={context}
+        workspaceContext={{ kind: "no_project", cwd: "/other-root" }}
+        navigationMode="files"
         onOpenFile={onOpenFile}
       />,
     );
@@ -506,7 +524,7 @@ describe("WorkspaceRightPanel", () => {
     act(() => {
       container?.querySelector<HTMLButtonElement>(".rich-file-link")?.click();
     });
-    expect(onOpenFile).toHaveBeenCalledWith("src/App.tsx#L12");
+    expect(onOpenFile).toHaveBeenCalledWith("src/App.tsx#L12", context);
   });
 
   it("resizes and persists the right-side file tree", async () => {
@@ -671,6 +689,34 @@ describe("WorkspaceRightPanel", () => {
     await act(async () => Promise.resolve());
     expect(split.classList.contains("tree-hidden")).toBe(false);
     expect(window.localStorage.getItem("wuu.desktop.fileTreeVisible")).toBe("true");
+  });
+
+  it("updates document clearance from the floating composer and releases it when reading ends", async () => {
+    const observations = new Map<Element, ResizeObserverCallback>();
+    vi.stubGlobal("ResizeObserver", class {
+      private targets: Element[] = [];
+      constructor(private callback: ResizeObserverCallback) {}
+      observe(target: Element): void {
+        this.targets.push(target);
+        observations.set(target, this.callback);
+      }
+      disconnect(): void {
+        this.targets.forEach((target) => observations.delete(target));
+      }
+    });
+    const context: RuntimeContext = { kind: "project", project_id: "project-1", cwd: "/repo/project" };
+    const tab = workspaceFileViewTab({ context, path: "README.md" });
+    const props = { ...baseProps(), tabs: [tab], activeTabID: tab.id, activeFileTabID: tab.id, workspaceContext: context };
+    mount(<WorkspaceRightPanel {...props} focusedComposer={<div>Compose</div>} />);
+    await act(async () => Promise.resolve());
+    const content = container!.querySelector<HTMLElement>(".workspace-files-content")!;
+    const composer = container!.querySelector<HTMLElement>(".workspace-document-composer")!;
+    Object.defineProperty(composer, "getBoundingClientRect", { value: () => ({ height: 320 }) });
+    act(() => observations.get(composer)!([], {} as ResizeObserver));
+    expect(content.style.getPropertyValue("--workspace-document-composer-inset")).toBe("336px");
+    act(() => root!.render(<WorkspaceRightPanel {...props} />));
+    expect(content.style.getPropertyValue("--workspace-document-composer-inset")).toBe("");
+    expect(observations.has(composer)).toBe(false);
   });
 
   it("clamps the tree width so the file content keeps usable space", () => {
@@ -1232,6 +1278,39 @@ describe("WorkspaceRightPanel context routing (Bug 3: worktree-fork panel root)"
     const terminalPanel = container?.querySelector<HTMLElement>('[data-testid="terminal-panel"]');
     expect(terminalPanel?.getAttribute("data-cwd")).toBe(worktreeContext.cwd);
     expect(document.querySelector(".view-switch-loading")).toBeNull();
+  });
+
+  it("isolates Files navigation while retaining the conversation terminal", async () => {
+    const terminal = workspaceToolViewTab("terminal");
+    const review = workspaceToolViewTab("review");
+    const file = workspaceFileViewTab({ context: { kind: "project", project_id: "reading", cwd: "/reading" }, path: "README.md" });
+    const tabs = [terminal, review, file];
+    const props = { ...baseProps(), tabs, workspaceContext: projectContext };
+    mount(<WorkspaceRightPanel {...props} activeTabID={terminal.id} />);
+    await act(async () => {});
+    const original = container!.querySelector('[data-testid="terminal-panel"]');
+    expect(original).not.toBeNull();
+    await act(async () => {
+      root!.render(<WorkspaceRightPanel {...props} navigationMode="files" activeTabID={file.id} activeFileTabID={file.id} />);
+    });
+    expect(container!.querySelector('[data-testid="terminal-panel"]')).toBe(original);
+    expect(original!.getAttribute("data-cwd")).toBe(projectContext.cwd);
+    expect(original!.getAttribute("data-active")).toBe("false");
+    expect(container!.querySelector('.workspace-panel-add')).toBeNull();
+    expect(Array.from(container!.querySelectorAll('[role="tab"]')).map(tab => tab.textContent)).toEqual([expect.stringContaining("README.md")]);
+    await act(async () => {
+      root!.render(<WorkspaceRightPanel {...props} navigationMode="files" activeTabID={review.id} />);
+    });
+    expect(container!.querySelector('.workspace-right-panel')?.getAttribute("data-wuu-view")).toBe("picker");
+    expect(container!.querySelector('.workspace-review-panel')).toBeNull();
+    const onClose = vi.fn();
+    const onShowTools = vi.fn();
+    await act(async () => {
+      root!.render(<WorkspaceRightPanel {...props} navigationMode="files" compactNavigation activeTabID={file.id} activeFileTabID={file.id} onClose={onClose} onShowTools={onShowTools} />);
+    });
+    act(() => container!.querySelector<HTMLButtonElement>('.workspace-panel-back')!.click());
+    expect(onClose).toHaveBeenCalledOnce();
+    expect(onShowTools).not.toHaveBeenCalled();
   });
 
   it("keeps the terminal inside the panel when another workspace tab is selected", async () => {

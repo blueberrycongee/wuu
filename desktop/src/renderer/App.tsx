@@ -101,6 +101,7 @@ import { ConversationForkDialog } from "./ConversationForkDialog";
 import { firstUserMessageText } from "./TurnViewHelpers";
 import type { TurnFileDiffSelection } from "./TurnFileDiffTypes";
 import { AppSidebar } from "./AppSidebar";
+import { FilesNavigationSidebar } from "./FilesNavigationSidebar";
 import {
   type EnvironmentPanelMenu,
   type EnvironmentPanelMotionState,
@@ -224,7 +225,7 @@ import { UILayerPortal } from "./ui/layers/UILayerHost";
 import { showErrorToast, showToast } from "./Toast";
 import { useArchiveDeletion } from "./useArchiveDeletion";
 import { setOpenThreadInSplitHandler } from "./ConversationSplitBridge";
-import { CircleAlert, RefreshCw } from "./WuuIcons";
+import { CircleAlert, RefreshCw, FolderOpen, MessagesSquare } from "./WuuIcons";
 import type { CodexPetCommand, CodexPetSubmitTarget } from "../shared/protocol";
 import { useSettingsRuntimeState } from "./SettingsRuntimeState";
 import { SidePanelToggleIcon } from "./SidePanelToggleIcon";
@@ -561,6 +562,14 @@ export function App(): JSX.Element {
   const [mainComposerFocusRequest, setMainComposerFocusRequest] =
     useState<MainComposerFocusRequest | null>(null);
   const userInteractionVersionRef = useRef(0);
+  const [fileNavigationMode, setFileNavigationMode] = useState(false);
+  const [selectedFileRoot, setSelectedFileRoot] = useState<string | undefined>(() =>
+    window.localStorage.getItem("wuu.desktop.selectedFileRoot") ?? undefined,
+  );
+  const [addingFileRoot, setAddingFileRoot] = useState(false);
+  const lastNavigationFileTabRef = useRef<string | undefined>(undefined);
+  const lastConversationViewTabRef = useRef<string | undefined>(undefined);
+  const navigationRibbonWidth = poppedOutMode ? 0 : 48;
   const {
     compactNavigation,
     sidebarWidth,
@@ -569,7 +578,7 @@ export function App(): JSX.Element {
     sidebarAnimating,
     clampedWorkspaceRightPanelWidth,
     resizingRightPanel,
-    rightPanelOpen,
+    rightPanelOpen: utilityPanelOpen,
     rightPanelAnimating,
     effectiveSidebarWidth,
     workspaceRightPanelAutoGlobalized,
@@ -591,15 +600,17 @@ export function App(): JSX.Element {
   } = useAppLayoutState({
     layoutRootRef: appShellRef,
     settingsLayoutRootRef: settingsShellRef,
+    leadingInset: navigationRibbonWidth,
     onCloseWorkspaceMenu: closeWorkspaceMenu,
   });
+  const rightPanelOpen = fileNavigationMode || utilityPanelOpen;
   const [rightPanelManualGlobalized, setRightPanelManualGlobalized] =
     useState(false);
   const rightPanelAutoGlobalized =
     rightPanelOpen && workspaceRightPanelAutoGlobalized;
   const rightPanelGlobalized =
     rightPanelOpen &&
-    (rightPanelManualGlobalized || rightPanelAutoGlobalized);
+    (fileNavigationMode || rightPanelManualGlobalized || rightPanelAutoGlobalized);
   const [workspaceSheetPhase, setWorkspaceSheetPhase] =
     useState<WorkspaceSheetPhase>(rightPanelGlobalized ? "open" : "docked");
   useLayoutEffect(() => {
@@ -768,6 +779,7 @@ export function App(): JSX.Element {
     workspaceActiveViewTabID,
     workspaceActiveFileTabID,
     ensureWorkspaceToolTab,
+    activateWorkspaceTool,
     openWorkspaceTool,
     openWorkspacePluginTool,
     openWorkspaceDiffTab,
@@ -784,8 +796,54 @@ export function App(): JSX.Element {
     toggleRightPanel,
   } = useWorkspaceToolState({
     rightPanelOpen,
-    setRightPanelOpenWithMotion,
+    setRightPanelOpenWithMotion: (open) => {
+      if (!fileNavigationMode) setRightPanelOpenWithMotion(open);
+    },
   });
+  const leaveFileNavigation = useCallback((): void => {
+    setPrompt(currentPrimaryComposerDraft().prompt);
+    lastNavigationFileTabRef.current = workspaceActiveViewTabID;
+    const remembered = lastConversationViewTabRef.current;
+    focusWorkspaceViewTab(workspaceViewTabs.some(tab => tab.id === remembered) ? remembered : undefined);
+    setFileNavigationMode(false);
+  }, [workspaceActiveViewTabID, workspaceViewTabs, focusWorkspaceViewTab, setPrompt, currentPrimaryComposerDraft]);
+  const selectNavigationDestination = (destination: "files" | "conversations"): void => {
+    closeSidebarDrawer();
+    if (destination === "files") {
+      if (fileNavigationMode) return;
+      setPrompt(currentPrimaryComposerDraft().prompt);
+      lastConversationViewTabRef.current = workspaceActiveViewTabID;
+      const remembered = workspaceViewTabs.find(tab => tab.id === lastNavigationFileTabRef.current);
+      if (remembered?.kind === "file") {
+        focusWorkspaceViewTab(remembered.id);
+      } else if (!workspaceViewTabs.some(tab => tab.id === workspaceActiveViewTabID && tab.kind === "file")) {
+        activateWorkspaceTool("files");
+      }
+      setFileNavigationMode(true);
+    } else {
+      if (fileNavigationMode) leaveFileNavigation();
+    }
+  };
+  const addFileNavigationRoot = async (): Promise<void> => {
+    if (addingFileRoot || !window.wuu.chooseWorkspaceDirectory || !window.wuu.importWorkspaces) return;
+    setAddingFileRoot(true);
+    try {
+      const path = await window.wuu.chooseWorkspaceDirectory();
+      if (!path) return;
+      const result = await window.wuu.importWorkspaces([path]);
+      // Registration is deliberately separate from runtime activation. Do not
+      // apply the returned active_context to the conversation or its draft.
+      setState(current => ({ ...current, projects: result.projects }));
+      if (result.projects.some(project => project.path === path)) {
+        setSelectedFileRoot(path);
+        window.localStorage.setItem("wuu.desktop.selectedFileRoot", path);
+      }
+    } catch (error) {
+      showErrorToast(error);
+    } finally {
+      setAddingFileRoot(false);
+    }
+  };
   const [environmentPanelOpen, setEnvironmentPanelOpen] = useState(false);
   const [environmentPanelDismissed, setEnvironmentPanelDismissed] =
     useState(false);
@@ -850,6 +908,10 @@ export function App(): JSX.Element {
   ]);
   const revealConversationFromFocusedWorkspace = useCallback((): void => {
     desktopWorkbenchController.deactivateRegion("primary");
+    if (fileNavigationMode) {
+      leaveFileNavigation();
+      return;
+    }
     if (!rightPanelGlobalized) {
       return;
     }
@@ -865,6 +927,8 @@ export function App(): JSX.Element {
       toggleSidebar();
     }
   }, [
+    fileNavigationMode,
+    leaveFileNavigation,
     rightPanelAutoGlobalized,
     rightPanelGlobalized,
     setRightPanelOpenWithMotion,
@@ -1170,13 +1234,19 @@ export function App(): JSX.Element {
     const handleFocusIn = (event: FocusEvent): void => {
       const target = event.target;
       const workspacePanel = appShellRef.current?.querySelector(".workspace-right-panel");
-      if (target instanceof HTMLElement && !workspacePanel?.contains(target)) {
+      if (
+        target instanceof HTMLElement &&
+        !workspacePanel?.contains(target) &&
+        // Closing via window chrome must not replace the reading position's
+        // focus target. When it opens the panel, the toggle is a valid owner.
+        !(rightPanelOpen && target.closest('[data-wuu-component="right-sidebar-toggle"]'))
+      ) {
         lastFocusOutsideWorkspaceRef.current = { element: target, owner: workspaceFocusOwner };
       }
     };
     document.addEventListener("focusin", handleFocusIn);
     return () => document.removeEventListener("focusin", handleFocusIn);
-  }, [workspaceFocusOwner]);
+  }, [rightPanelOpen, workspaceFocusOwner]);
 
   useLayoutEffect(() => {
     const fullPanel = rightPanelOpen && rightPanelGlobalized;
@@ -1184,7 +1254,7 @@ export function App(): JSX.Element {
     previousWorkspaceFocusModeRef.current = { fullPanel, open: rightPanelOpen };
 
     appShellRef.current
-      ?.querySelector<HTMLElement>(".sidebar")
+      ?.querySelector<HTMLElement>(".sidebar:not([hidden])")
       ?.toggleAttribute(
         "inert",
         fullPanel && sidebarDrawerMode && !sidebarDrawerVisible,
@@ -1217,7 +1287,7 @@ export function App(): JSX.Element {
         )
         ?.focus({ preventScroll: true });
     }
-  }, [rightPanelGlobalized, rightPanelOpen, sidebarDrawerMode, sidebarDrawerVisible, viewSwitchPending, workspaceFocusOwner]);
+  }, [rightPanelGlobalized, rightPanelOpen, sidebarDrawerMode, sidebarDrawerVisible, viewSwitchPending, workspaceFocusOwner, fileNavigationMode]);
 
   // Workspace panel (file tree / file preview / terminal / review) root: follows the
   // active thread's own cwd when it differs from state.activeContext — the
@@ -1228,6 +1298,9 @@ export function App(): JSX.Element {
     () => workspacePanelContext(state.activeContext, state.thread),
     [state.activeContext, state.thread],
   );
+  const selectedFileProject = state.projects.find(project => project.path === selectedFileRoot) ?? state.projects[0];
+  // Independent file readers own their tab context. Keep mounted conversation
+  // tools on their original workspace while Files is visible (especially PTYs).
   const workspaceContext = focusedWorkspaceContext ?? conversationWorkspaceContext;
   const activeWorkspaceViewTab = workspaceActiveViewTabID
     ? workspaceViewTabs.find((tab) => tab.id === workspaceActiveViewTabID)
@@ -1241,7 +1314,7 @@ export function App(): JSX.Element {
     : undefined;
   const activeWorkspaceFileTabID =
     activeWorkspaceFileTab?.kind === "file" &&
-    sameRuntimeContext(activeWorkspaceFileTab.context, workspaceContext)
+    (fileNavigationMode || sameRuntimeContext(activeWorkspaceFileTab.context, workspaceContext))
       ? activeWorkspaceFileTab.id
       : undefined;
   const activeWorkspaceFile =
@@ -2698,13 +2771,16 @@ export function App(): JSX.Element {
   ): void => {
     openWorkspaceBrowserOrExternal(url, modifiers, openWorkspaceBrowser);
   });
-  const openWorkspaceFile = useStableCallback((path: string): void => {
+  const openWorkspaceFile = useStableCallback((path: string, sourceContext?: RuntimeContext): void => {
+    // A different reading root can remove the document composer. Publish its
+    // input-local draft before that surface unmounts.
+    if (fileNavigationMode) setPrompt(currentPrimaryComposerDraft().prompt);
     // Stamp the same derived context the workspace panel's file tree/preview
     // are rooted at (workspacePanelContext), not the raw activeContext — for
     // a worktree-fork thread these differ, and activeWorkspaceFile's match
     // above must be comparing against the same context or the tab silently
     // stops highlighting/previewing once opened.
-    const context = workspacePanelContext(
+    const context = sourceContext ?? workspacePanelContext(
       appStateRef.current.activeContext,
       appStateRef.current.thread,
     );
@@ -2949,7 +3025,7 @@ export function App(): JSX.Element {
     }
   }, [environmentPanelOpen, sideThread.close, sideThread.entry?.open]);
 
-  const shellClassName = `app-shell${poppedOutMode ? " popped-out-shell" : ""}${compactNavigation ? " compact-navigation" : ""}${sidebarDrawerMode ? " sidebar-collapsed" : ""}${
+  const shellClassName = `app-shell${!poppedOutMode ? " has-navigation-ribbon" : ""}${fileNavigationMode ? " file-navigation-mode" : ""}${poppedOutMode ? " popped-out-shell" : ""}${compactNavigation ? " compact-navigation" : ""}${sidebarDrawerMode ? " sidebar-collapsed" : ""}${
     sidebarDrawerMode && sidebarDrawerVisible ? " sidebar-drawer-open" : ""
   }${
     sidebarDrawerMode &&
@@ -2967,9 +3043,10 @@ export function App(): JSX.Element {
     resizingRightPanel ? " resizing-right-panel" : ""
   }${rightPanelOpen ? " right-panel-open" : ""}${rightPanelGlobalized && rightPanelOpen ? " right-panel-globalized" : ""}${resizingSplit ? " resizing-split" : ""}`;
   const shellStyle = {
+    "--navigation-ribbon-width": `${navigationRibbonWidth}px`,
     "--sidebar-width": `${effectiveSidebarWidth}px`,
     "--sidebar-open-width": `${sidebarWidth}px`,
-    "--workspace-sheet-left": `${sidebarDrawerMode ? 0 : effectiveSidebarWidth}px`,
+    "--workspace-sheet-left": `${navigationRibbonWidth + (sidebarDrawerMode ? 0 : effectiveSidebarWidth)}px`,
     "--workspace-right-panel-width": `${clampedWorkspaceRightPanelWidth}px`,
     "--side-thread-width": `${sideThread.width}px`,
     "--conversation-split-left": `${splitLeftPercent}%`,
@@ -5093,11 +5170,11 @@ export function App(): JSX.Element {
       if (accountOpen) { event.preventDefault(); setAccountOpen(false); }
       else if (settingsOpen) { event.preventDefault(); setSettingsOpen(false); }
       else if (sidebarDrawerVisible) { event.preventDefault(); closeSidebarDrawer(); }
-      else if (rightPanelOpen) { event.preventDefault(); setRightPanelOpenWithMotion(false); }
+      else if (rightPanelOpen) { event.preventDefault(); if (fileNavigationMode) leaveFileNavigation(); else setRightPanelOpenWithMotion(false); }
     };
     window.addEventListener("wuu:workbench-back", back);
     return () => window.removeEventListener("wuu:workbench-back", back);
-  }, [accountOpen, settingsOpen, sidebarDrawerVisible, closeSidebarDrawer, rightPanelOpen, setRightPanelOpenWithMotion]);
+  }, [accountOpen, settingsOpen, sidebarDrawerVisible, closeSidebarDrawer, rightPanelOpen, fileNavigationMode, leaveFileNavigation, setRightPanelOpenWithMotion]);
 
   if (ENABLE_ACCOUNT && accountOpen && window.wuu?.remoteAccount) {
     return <AccountScreen driver={window.wuu.remoteAccount} onBack={() => setAccountOpen(false)} />;
@@ -5212,6 +5289,11 @@ export function App(): JSX.Element {
 
   const selectionUsesSplitDraft = splitConversation && !rightPanelGlobalized;
   const selectionThread = selectionUsesSplitDraft ? threadForPane(state, state.activePane) : activeThread;
+  const fileNavigationConversationCompatible = Boolean(
+    activeThread && !activeThread.read_only && !activeThread.ephemeral &&
+    activeWorkspaceViewTab?.kind === "file" &&
+    activeThread.cwd === activeWorkspaceViewTab.context.cwd,
+  );
 
   return (
     <WuuMascotRuntimeProvider
@@ -5227,7 +5309,7 @@ export function App(): JSX.Element {
         onEdit={submitFileSelectionEdit}
         onAskSide={activeThreadID ? (source) => openSideThreadWithSelection({ type: "file", file: source }) : undefined}
         onOpenFile={openWorkspaceFile}
-        disabled={Boolean(selectionThread?.read_only) || viewSwitchPending || !state.initialized}
+        disabled={Boolean(selectionThread?.read_only) || viewSwitchPending || !state.initialized || (fileNavigationMode && !fileNavigationConversationCompatible)}
       >
       {archiveTipNode}
       {modelCatalogTipNode}
@@ -5244,6 +5326,33 @@ export function App(): JSX.Element {
           data-wuu-sidebar-mode={sidebarDrawerVisible ? "drawer" : sidebarDrawerMode ? "collapsed" : "docked"}
         >
           <BrowserPiPHostReporter />
+          {!poppedOutMode ? (
+            <nav className="navigation-ribbon" aria-label={t("shell.navigation")} data-wuu-component="navigation-ribbon">
+              <button type="button" className="icon-button" data-wuu-destination="conversations"
+                aria-label={t("sidebar.conversations")} title={t("sidebar.conversations")} aria-pressed={!fileNavigationMode} aria-current={!fileNavigationMode ? "page" : undefined}
+                onClick={() => selectNavigationDestination("conversations")}>
+                <MessagesSquare aria-hidden="true" />
+              </button>
+              <button type="button" className="icon-button" data-wuu-destination="files"
+                aria-label={t("shell.files")} title={t("shell.files")} aria-pressed={fileNavigationMode} aria-current={fileNavigationMode ? "page" : undefined}
+                onClick={() => selectNavigationDestination("files")}>
+                <FolderOpen aria-hidden="true" />
+              </button>
+            </nav>
+          ) : null}
+          {!poppedOutMode && !compactNavigation && !fileNavigationMode ? (
+            <button
+              className="icon-button side-panel-toggle-button shell-right-sidebar-toggle"
+              data-wuu-component="right-sidebar-toggle"
+              type="button"
+              aria-label={t(rightPanelOpen ? "shell.closeRightSidebar" : "shell.openRightSidebar")}
+              aria-expanded={rightPanelOpen}
+              aria-pressed={rightPanelOpen}
+              onClick={toggleRightPanel}
+            >
+              <SidePanelToggleIcon side="right" open={rightPanelOpen} />
+            </button>
+          ) : null}
           {!poppedOutMode ? (
             <>
           <div
@@ -5277,9 +5386,10 @@ export function App(): JSX.Element {
           ) : null}
           <HoverRevealScopeContext.Provider value={sidebarHoverScope}>
             <AppSidebar
+              hidden={fileNavigationMode}
               onToggleSidebar={sidebarDrawerMode ? undefined : toggleSessionSwitcher}
               sidebarCollapsed={sidebarCollapsed}
-              sidebarVisible={!sidebarDrawerMode || sidebarDrawerVisible}
+              sidebarVisible={!fileNavigationMode && (!sidebarDrawerMode || sidebarDrawerVisible)}
               mobileNavigation={compactNavigation && isTouchWebShell()}
               drawerVisible={sidebarDrawerVisible}
               onNavigateAway={closeCompactSessionSwitcher}
@@ -5411,6 +5521,29 @@ export function App(): JSX.Element {
                 setSettingsOpen(true);
               }}
             />
+              <FilesNavigationSidebar
+                hidden={!fileNavigationMode}
+                projects={state.projects}
+                selectedRoot={selectedFileProject?.path}
+                onAddRoot={window.wuu.chooseWorkspaceDirectory && window.wuu.importWorkspaces ? () => void addFileNavigationRoot() : undefined}
+                addingRoot={addingFileRoot}
+                onSelectRoot={(path) => {
+                  setSelectedFileRoot(path);
+                  window.localStorage.setItem("wuu.desktop.selectedFileRoot", path);
+                }}
+                onOpenFile={(path, cwd) => {
+                  const project = state.projects.find(project => project.path === cwd);
+                  if (!project) return;
+                  openWorkspaceFile(path, { kind: "project", project_id: project.id, cwd });
+                  closeCompactSessionSwitcher();
+                }}
+                selectedFilePath={activeWorkspaceFileTab?.kind === "file" && activeWorkspaceFileTab.context.cwd === selectedFileProject?.path ? activeWorkspaceFile : undefined}
+                open={fileNavigationMode && (!sidebarDrawerMode || sidebarDrawerVisible)}
+                sidebarCollapsed={sidebarCollapsed}
+                onToggleSidebar={sidebarDrawerMode ? undefined : toggleSessionSwitcher}
+                onPointerEnter={openSidebarDrawer}
+                onPointerLeave={(event) => scheduleSidebarDrawerCloseFromPointerLeave(event.nativeEvent)}
+              />
           </HoverRevealScopeContext.Provider>
 
           {compactNavigation ? (
@@ -5428,7 +5561,7 @@ export function App(): JSX.Element {
           <div
             className="sidebar-resizer"
             hidden={sidebarDrawerMode}
-            inert={rightPanelOpen && rightPanelGlobalized}
+            inert={!fileNavigationMode && rightPanelOpen && rightPanelGlobalized}
             role="separator"
             aria-label={t("app.resizeSidebar")}
             aria-orientation="vertical"
@@ -5517,6 +5650,7 @@ export function App(): JSX.Element {
             onToggleEnvironmentPanel={toggleEnvironmentPanel}
             rightPanelOpen={rightPanelOpen}
             onToggleRightPanel={toggleRightPanel}
+            showRightPanelToggle={false}
           />
         </header>
 
@@ -5799,6 +5933,7 @@ export function App(): JSX.Element {
       ) : null}
       {poppedOutMode ? null : (
         <WorkspaceRightPanel
+          navigationMode={fileNavigationMode ? "files" : undefined}
           compactNavigation={compactNavigation}
           open={rightPanelOpen}
           present={rightPanelOpen || rightPanelAnimating}
@@ -5811,16 +5946,22 @@ export function App(): JSX.Element {
           terminalThread={activeThread}
           gitStatus={state.gitStatus}
           selectedFilePath={activeWorkspaceFile}
-          onSelectTab={focusWorkspaceViewTab}
+          onSelectTab={(id) => {
+            if (fileNavigationMode) setPrompt(currentPrimaryComposerDraft().prompt);
+            focusWorkspaceViewTab(id);
+          }}
           onOpenTool={openWorkspaceTool}
           onOpenPluginTool={openWorkspacePluginTool}
           onShowTools={showWorkspaceToolPicker}
           onResumeTab={resumeWorkspaceViewTab}
-          onCloseTab={closeWorkspaceViewTab}
+          onCloseTab={(id) => {
+            if (fileNavigationMode) setPrompt(currentPrimaryComposerDraft().prompt);
+            closeWorkspaceViewTab(id);
+          }}
           onDirtyFileTabsChange={rememberWorkspaceDirtyFiles}
           onReorderTabs={reorderWorkspaceViewTabs}
           onOpenFile={openWorkspaceFile}
-          onClose={() => setRightPanelOpenWithMotion(false)}
+          onClose={() => fileNavigationMode ? selectNavigationDestination("conversations") : setRightPanelOpenWithMotion(false)}
           globalized={rightPanelGlobalized}
           sheetPhase={workspaceSheetPhase}
           onToggleGlobalize={toggleWorkspacePanelGlobalized}
@@ -5833,10 +5974,12 @@ export function App(): JSX.Element {
           browserOverlaySuppressed={browserOverlaySuppressed}
           onBrowserUserInteraction={pauseBrowserTask}
           focusedComposer={
-            rightPanelGlobalized && activeWorkspaceFileTabID
+            rightPanelGlobalized && activeWorkspaceFileTabID && (!fileNavigationMode || fileNavigationConversationCompatible)
               ? (
                   <WorkspaceDocumentTurnDock
                     key={activeThreadID ?? state.activeSessionTabID}
+                    title={activeTitle}
+                    onOpenConversation={revealConversationFromFocusedWorkspace}
                     cwd={activeThread?.cwd ?? state.activeContext?.cwd}
                     onOpenFile={openWorkspaceFile}
                     waitingQuery={

@@ -10,6 +10,13 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Add a persistent left navigation rail for Conversations and Files, with an
+  adjacent collapsible sidebar and independent local-folder browsing. Read
+  documents without switching or starting a conversation, and return to the
+  selected file tab after changing destinations.
+- Add a compact document conversation dock with minimize, restore, and
+  full-conversation actions while preserving the current draft.
+
 - Add a small side-panel action to delivered images while keeping direct clicks
   in the full image viewer. Connect artifact previews to the right panel with
   reversible transitions that respect reduced motion and fit portrait images.

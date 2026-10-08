@@ -282,6 +282,12 @@
   padding-right: var(--control-toolbar-inset);
 }
 
+/* Reserve the stable shell toggle only while this titlebar reaches the
+ * right window edge. A docked workspace reserves its own matching slot. */
+.app-shell:not(.compact-navigation):not(.popped-out-shell):not(.right-panel-open) .titlebar {
+  padding-right: calc(max(var(--control-toolbar-inset), var(--window-controls-inset-right)) + var(--control-size-toolbar) + var(--control-toolbar-gap));
+}
+
 .title-block,
 .title-actions {
   display: flex;

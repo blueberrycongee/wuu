@@ -2,6 +2,12 @@
 
 A workspace connects conversations to a local folder. The agent reads and changes the files in that folder, so choose the workspace before sending a task.
 
+## Navigate conversations and files
+
+The narrow rail on the far left switches between **Conversations** and **Files**. The adjacent sidebar shows the selected destination's sessions or file tree. Collapsing or resizing that sidebar leaves the rail available.
+
+In **Files**, choose a registered folder from the folder selector, or use **Add workspace** to register another local folder. Browsing and reading files do not start a conversation or change the workspace of your current conversation. Return to **Conversations** to continue it; returning to **Files** restores the selected document tab.
+
 ## Add a workspace
 
 Choose **Add workspace** in the sidebar. **Use existing folder** selects a folder already on disk; **Create blank workspace** opens a folder dialog where you can create a directory. Neither option copies existing files into Wuu.

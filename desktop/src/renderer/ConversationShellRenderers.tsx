@@ -532,6 +532,7 @@ export type ConversationTitleActionsProps = {
   onToggleEnvironmentPanel: () => void;
   rightPanelOpen: boolean;
   onToggleRightPanel: () => void;
+  showRightPanelToggle?: boolean;
 };
 
 export function ConversationTitleActions({
@@ -544,6 +545,7 @@ export function ConversationTitleActions({
   onToggleEnvironmentPanel,
   rightPanelOpen,
   onToggleRightPanel,
+  showRightPanelToggle = true,
 }: ConversationTitleActionsProps): JSX.Element {
   const { t } = useI18n();
   const projectActions = useProjectActions();
@@ -594,7 +596,7 @@ export function ConversationTitleActions({
           </button>
         </Tooltip>
       )}
-      <Tooltip content={rightPanelLabel} side="bottom">
+      {showRightPanelToggle ? <Tooltip content={rightPanelLabel} side="bottom">
         <button
           className="icon-button side-panel-toggle-button"
           type="button"
@@ -604,7 +606,7 @@ export function ConversationTitleActions({
         >
           <SidePanelToggleIcon side="right" open={rightPanelOpen} />
         </button>
-      </Tooltip>
+      </Tooltip> : null}
     </div>
   );
 }

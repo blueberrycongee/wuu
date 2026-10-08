@@ -132,6 +132,7 @@ export function WorkspaceFileTree({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>();
   const loadingDirectoriesRef = useRef(new Set<string>());
+  const directoryGenerationRef = useRef(0);
   const workspaceRoot = activeContext?.cwd;
   const selectedWorkspaceFilePath = useMemo(
     () => normalizeSelectedWorkspaceFilePath(selectedFilePath, workspaceRoot),
@@ -139,6 +140,8 @@ export function WorkspaceFileTree({
   );
 
   useEffect(() => {
+    directoryGenerationRef.current += 1;
+    loadingDirectoriesRef.current = new Set();
     if (!open || !workspaceRoot) {
       setDirectories({});
       setLoading(false);
@@ -156,7 +159,10 @@ export function WorkspaceFileTree({
     }).finally(() => {
       if (!cancelled) setLoading(false);
     });
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+      directoryGenerationRef.current += 1;
+    };
   }, [open, workspaceRoot, locale]);
 
   if (!workspaceRoot) {
@@ -180,18 +186,25 @@ export function WorkspaceFileTree({
     <div className="workspace-file-panel">
       {rootDirectory.truncated ? <div className="workspace-file-tree-limit">{t("workspace.files.truncated")}</div> : null}
       <WorkspaceFileTreeView
+        key={workspaceRoot}
         directories={directories}
         workspaceRoot={rootDirectory.root}
         selectedFilePath={selectedWorkspaceFilePath}
         onOpenFile={onOpenFile}
         onLoadDirectory={(path) => {
           if (directories[path] || loadingDirectoriesRef.current.has(path)) return;
-          loadingDirectoriesRef.current.add(path);
+          const generation = directoryGenerationRef.current;
+          const pending = loadingDirectoriesRef.current;
+          pending.add(path);
           void window.wuu.listWorkspaceDirectory(path, workspaceRoot).then((result) => {
-            setDirectories((current) => ({ ...current, [path]: result }));
+            if (directoryGenerationRef.current === generation) {
+              setDirectories((current) => ({ ...current, [path]: result }));
+            }
           }).catch((nextError) => {
-            setError(desktopApiErrorMessage(nextError, translateCurrent("workspace.files.readDirectoryFailed")));
-          }).finally(() => loadingDirectoriesRef.current.delete(path));
+            if (directoryGenerationRef.current === generation) {
+              setError(desktopApiErrorMessage(nextError, translateCurrent("workspace.files.readDirectoryFailed")));
+            }
+          }).finally(() => pending.delete(path));
         }}
       />
     </div>

@@ -451,6 +451,7 @@ export function AppSidebar({
   mobileNavigation = false,
   drawerVisible = false,
   sidebarVisible = true,
+  hidden = false,
   sidebarCollapsed = false,
   onNavigateAway,
   onToggleSidebar,
@@ -528,6 +529,7 @@ export function AppSidebar({
   mobileNavigation?: boolean;
   drawerVisible?: boolean;
   sidebarVisible?: boolean;
+  hidden?: boolean;
   sidebarCollapsed?: boolean;
   onNavigateAway?: () => void;
   onToggleSidebar?: () => void;
@@ -1762,6 +1764,8 @@ export function AppSidebar({
 
   const nativeSidebar = (
     <aside
+      hidden={hidden}
+      style={hidden ? { display: "none" } : undefined}
       className="sidebar"
       data-wuu-component="sidebar"
       onPointerEnter={onPointerEnter}
@@ -2324,8 +2328,9 @@ export function AppSidebar({
   const organizedSidebar = (
     <SessionOrganizationProvider value={organizationActions}>
       {mobileNavigation ? <MobileSidebar
+        hidden={hidden}
         onNavigateAway={onNavigateAway}
-        visible={drawerVisible}
+        visible={drawerVisible && !hidden}
         state={state}
         sidebarWorkspaces={sidebarWorkspaces}
         activeThreadID={activeThreadID}

@@ -71,6 +71,7 @@ import { WorkspaceReviewPanel } from "./WorkspaceReviewPanels";
 import { ProjectPanel } from "./ProjectPanels";
 import { confirmAction } from "./ConfirmDialog";
 import { WorkspacePanelLoading } from "./LoadingViews";
+import { WorkspacePanelEmpty } from "./WorkspacePanelEmpty";
 import type { WorkspaceFileViewTab, WorkspaceViewTab } from "./WorkspaceViewTabs";
 import { handleTabListKeyDown, useTabCloseFocusRestoration } from "./TabKeyboardNavigation";
 import { useStripEnterReady, useTabExitRetention } from "./TabMotion";
@@ -190,6 +191,7 @@ function initialWorkspaceFileTreeVisible(): boolean {
 
 export function WorkspaceRightPanel({
   compactNavigation = false,
+  navigationMode,
   open,
   present,
   prewarm = false,
@@ -225,6 +227,7 @@ export function WorkspaceRightPanel({
   workbenchController,
 }: {
   compactNavigation?: boolean;
+  navigationMode?: "files";
   open: boolean;
   present: boolean;
   prewarm?: boolean;
@@ -249,7 +252,7 @@ export function WorkspaceRightPanel({
   onCloseTab: (id: string) => void;
   onDirtyFileTabsChange?: (dirty: boolean) => void;
   onReorderTabs: (activeID: string, overID: string) => void;
-  onOpenFile: (path: string) => void;
+  onOpenFile: (path: string, sourceContext?: RuntimeContext) => void;
   onClose: () => void;
   globalized: boolean;
   // Globalize-sheet phase from App's phase machine; drives the data-sheet
@@ -274,7 +277,11 @@ export function WorkspaceRightPanel({
     () => effectivePluginHost.getWorkspaceTools(),
     () => effectivePluginHost.getWorkspaceTools(),
   );
-  const activeTab = activeTabID ? tabs.find((tab) => tab.id === activeTabID) : undefined;
+  // Keep every resource mounted, but only expose document navigation in Files.
+  const visibleTabs = navigationMode === "files"
+    ? tabs.filter((tab) => tab.kind === "file" || tab.kind === "files")
+    : tabs;
+  const activeTab = activeTabID ? visibleTabs.find((tab) => tab.id === activeTabID) : undefined;
   const terminalTabOpen = tabs.some((tab) => tab.kind === "terminal");
   // Latch after the terminal has been shown so a later tool tab does not
   // tear the pty down. Closing the terminal tab releases it.
@@ -285,7 +292,6 @@ export function WorkspaceRightPanel({
     setTerminalMounted(false);
   }
   const fileTabs = tabs.filter((tab): tab is WorkspaceFileViewTab => tab.kind === "file");
-  const visibleTabs = tabs;
   const showingPicker = !activeTab || activeTab.kind === "new";
   const [dirtyFileTabIDs, setDirtyFileTabIDs] = useState<Set<string>>(() => new Set());
   const enterReady = useStripEnterReady();
@@ -300,10 +306,10 @@ export function WorkspaceRightPanel({
   const [fileSplitStacked, setFileSplitStacked] = useState(false);
   const stackedFileView = !compactNavigation && fileSplitStacked && activeTab?.kind === "file";
   // The saved visibility is untouched; a stacked document only sets it aside.
-  const fileTreeDocked = fileTreeVisible && !stackedFileView;
+  const fileTreeDocked = navigationMode !== "files" && fileTreeVisible && !stackedFileView;
   // The Files tab is the tree itself; beside a document the tree follows the
   // saved choice.
-  const fileTreeShown = compactNavigation || activeTab?.kind === "files" || fileTreeDocked;
+  const fileTreeShown = navigationMode !== "files" && (compactNavigation || activeTab?.kind === "files" || fileTreeDocked);
   const fileTreeBesideDocument = activeTab?.kind === "file" && fileTreeDocked && !compactNavigation;
   const moveFileTreeLabel = t(fileTreeSide === "right" ? "workspace.moveFileTreeLeft" : "workspace.moveFileTreeRight");
   const [draggingFileTree, setDraggingFileTree] = useState(false);
@@ -656,7 +662,7 @@ export function WorkspaceRightPanel({
     onCloseTab(tab.id);
   }
 
-  const headerTabs = tabs.map((tab) => {
+  const headerTabs = visibleTabs.map((tab) => {
     const busy = (tab.kind === "terminal" && terminalThread?.status === "in_progress") ||
       (tab.kind === "browser" && browserActivity?.state === "active");
     return {
@@ -669,7 +675,7 @@ export function WorkspaceRightPanel({
     };
   });
   const navigateBack = compactNavigation && open ? () => {
-    if (showingPicker) onClose();
+    if (navigationMode === "files" || showingPicker) onClose();
     else if (activeTab.kind === "file") onOpenTool("files");
     else onShowTools();
   } : undefined;
@@ -689,6 +695,7 @@ export function WorkspaceRightPanel({
       className={`workspace-right-panel${compactNavigation ? " compact-navigation" : ""}${showingPicker ? " tools" : " detail"}${activeTab?.kind === "review" ? " review" : ""}${activeTab?.kind === "diff" ? " diff" : ""}${activeTab?.kind === "files" || activeTab?.kind === "file" ? " files" : ""}${activeTab?.kind === "terminal" ? " terminal" : ""}${activeTab?.kind === "browser" ? " browser" : ""}${focusedComposer && activeTab?.kind === "file" ? " document-focus" : ""}`}
       data-wuu-component="workspace-panel"
       data-wuu-view={activeTab?.kind ?? "picker"}
+      data-navigation-mode={navigationMode}
       data-sheet={
         sheetPhase === "exiting"
           ? "parked"
@@ -824,7 +831,7 @@ export function WorkspaceRightPanel({
           )}
         </DndContext>
         <span className="workspace-panel-tabbar-spacer" />
-        <button
+        {navigationMode !== "files" ? <button
           ref={addButtonRef}
           className="icon-button workspace-panel-add"
           type="button"
@@ -833,8 +840,8 @@ export function WorkspaceRightPanel({
           onClick={onShowTools}
         >
           <Plus />
-        </button>
-        <button
+        </button> : null}
+        {navigationMode !== "files" ? <button
           className={`icon-button workspace-panel-globalize${globalized ? " active" : ""}`}
           type="button"
           aria-label={
@@ -856,16 +863,7 @@ export function WorkspaceRightPanel({
           onClick={onToggleGlobalize}
         >
           {globalized ? <Minimize2 className="icon" /> : <Maximize2 className="icon" />}
-        </button>
-        <button
-          className="icon-button workspace-panel-close"
-          type="button"
-          aria-label={t("workspace.closeRightPanel")}
-          disabled={!open}
-          onClick={onClose}
-        >
-          <X className="icon" />
-        </button>
+        </button> : null}
             </>
           )}
         />
@@ -904,6 +902,9 @@ export function WorkspaceRightPanel({
                 aria-label={t("workspace.fileContent")}
               >
                 <div className="workspace-files-content-body">
+                  {navigationMode === "files" && activeTab?.kind === "files" ? (
+                    <WorkspacePanelEmpty title={t("workspace.selectFile")} />
+                  ) : null}
                   {fileTabs.map((tab) => (
                     <WorkspaceFileResource
                       active={open && activeTab?.kind === "file" && tab.id === activeFileTabID}
@@ -975,7 +976,7 @@ export function WorkspaceRightPanel({
                   onOpenFile={onOpenFile}
                 />
               </section>
-              {activeTab?.kind === "file" && !fileTreeDocked ? (
+              {navigationMode !== "files" && activeTab?.kind === "file" && !fileTreeDocked ? (
                 <button
                   className={`icon-button workspace-file-tree-reveal ${fileTreeSide}`}
                   type="button"
@@ -1041,7 +1042,9 @@ export function WorkspaceRightPanel({
                 className="workspace-panel-content-swap"
                 key={activeTab?.id ?? "picker"}
               >
-                {showingPicker ? (
+                {showingPicker && navigationMode === "files" ? (
+                  <WorkspacePanelEmpty title={t("workspace.selectFile")} />
+                ) : showingPicker ? (
                   <WorkspaceToolPicker
                     pluginTools={pluginTools}
                     tabs={tabs}
@@ -1132,7 +1135,7 @@ function WorkspaceFileResource({
 }: {
   active: boolean;
   onDirtyChange: (tabID: string, dirty: boolean) => void;
-  onOpenFile: (path: string) => void;
+  onOpenFile: (path: string, sourceContext?: RuntimeContext) => void;
   tab: WorkspaceFileViewTab;
   refreshKey?: string;
 }): JSX.Element {
@@ -1146,8 +1149,9 @@ function WorkspaceFileResource({
       target
         ? formatWorkspaceFileTarget(resolveWorkspaceFileTarget(tab.path, target))
         : reference,
+      tab.context,
     );
-  }, [onOpenFile, tab.path]);
+  }, [onOpenFile, tab.path, tab.context]);
 
   return (
     <div

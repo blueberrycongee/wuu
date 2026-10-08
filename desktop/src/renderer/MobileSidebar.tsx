@@ -16,7 +16,7 @@ type Props = Pick<ComponentProps<typeof AppSidebar>,
   "onStartNewThreadInWorkspace" | "onSelectWorkspaceThread" |
   "onTogglePinned" | "onArchiveThread" | "onRenameThread" | "onDeleteThread" |
   "onRemoveWorkspace" | "onRelocateWorkspace" | "onFocusWorkspace" |
-  "onCreateWorkspace" | "onOpenWorkspaceFolder" | "onNavigateAway"
+  "onCreateWorkspace" | "onOpenWorkspaceFolder" | "onNavigateAway" | "hidden"
 > & { visible: boolean; commands: readonly NavigationSourceNode[] };
 
 export function MobileSidebar(props: Props): JSX.Element {
@@ -101,7 +101,7 @@ export function MobileSidebar(props: Props): JSX.Element {
     return () => window.removeEventListener("wuu:workbench-back", back, true);
   }, [props.visible, page, actionsID, actionPage]);
 
-  return <aside className="sidebar mobile-sidebar" data-wuu-component="sidebar">
+  return <aside hidden={props.hidden} style={props.hidden ? { display: "none" } : undefined} className="sidebar mobile-sidebar" data-wuu-component="sidebar">
     <div className="sidebar-content">
       <header className="mobile-sidebar-header">
         <button ref={heading} type="button" className="mobile-sidebar-project"

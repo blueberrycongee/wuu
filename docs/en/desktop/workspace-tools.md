@@ -13,7 +13,9 @@ These shortcuts apply to Wuu windows, not embedded browser pages.
 
 ## Files
 
-Open **Files** or enter `/files` to browse the workspace. Select a file to view supported text, code, images, or documents. This view follows the current file, not its content at the time of an earlier message.
+Choose **Files** in the far-left navigation rail to browse a local folder independently of conversations. The adjacent sidebar owns the folder selector and file tree; the main area displays the selected document. A document keeps its original folder context when you select another folder or follow a relative file link.
+
+The conversation workspace panel and `/files` command remain available for task-related files. Select a file to view supported text, code, images, or documents. These views show the current file, not its content at the time of an earlier message.
 
 ### Agent file search
 
