@@ -80,6 +80,9 @@ app.whenReady().then(async () => {
           close: box(tab.querySelector(".workspace-tool-tab-close")),
         })) };
     });
+    fs.writeFileSync(path.join(output, scenario + ".json"), JSON.stringify(geometry, null, 2));
+    assert.ok(geometry.active.width <= geometry.strip.width + 1,
+      "One tab fits the available strip even with large text and docked toolbar controls");
     assert.ok(Math.abs(geometry.active.bottom - geometry.header.bottom) <= 1,
       "The active tab meets its content edge");
     assert.ok(geometry.active.left >= geometry.strip.left - 1 && geometry.active.right <= geometry.strip.right + 1,

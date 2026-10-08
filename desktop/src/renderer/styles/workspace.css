@@ -413,6 +413,7 @@
 /* One strip for the dock and the full-width reading canvas. The selected
  * tab meets the content edge; only the unused space above it drags the window. */
 .workspace-panel-tabs {
+  container-type: inline-size;
   display: flex;
   flex: 1 1 auto;
   min-width: 0;
@@ -432,9 +433,10 @@
 .workspace-tool-tab {
   display: flex;
   position: relative;
-  /* Reserve a readable title and its close target before scrolling. All tabs
-   * use equal widths so horizontal drag sorting never shifts between sizes. */
-  min-width: calc(4em + var(--icon-size) + var(--control-size-inline) + 24px);
+  /* Reserve title and close lanes before scrolling, but never make one tab
+   * wider than the strip left by the dock's toolbar/native controls. Equal
+   * widths keep horizontal drag sorting stable in both pane sizes. */
+  min-width: min(100cqw, calc(4em + var(--icon-size) + var(--control-size-inline) + 24px));
   max-width: 220px;
   height: 100%;
   flex: 1 1 0%;
@@ -513,6 +515,9 @@
 }
 
 .workspace-tool-tab-drag-overlay {
+  /* The portal is outside the strip's query container; use its measured width. */
+  min-width: 0;
+  max-width: none;
   cursor: grabbing;
   opacity: 0.98;
   pointer-events: none;
