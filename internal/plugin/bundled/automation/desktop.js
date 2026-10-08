@@ -592,15 +592,18 @@ export async function activate(api) {
     };
     const sortedRuns = [...runs].sort((a, b) => new Date(b.triggered_at) - new Date(a.triggered_at));
     // One-shot tasks leave the schedule on dispatch. Their retained snapshots
-    // keep completed work reachable without changing scheduler persistence.
-    const completed = sortedRuns.filter((run) => !run.task?.recurring && run.status === "completed" && !tasks.some((task) => task.id === run.task_id));
-    const completedTasks = [...new Map(completed.map((run) => [run.task_id, run.task])).values()].filter(Boolean);
+    // stay listed in every state, so a still-running or failed run keeps an
+    // entry that shows its error instead of vanishing until it happens to
+    // succeed. Snapshots are never restored as scheduled tasks, and the
+    // retention limit on runs still applies.
     const matchesQuery = (task) => `${task.title}\n${task.prompt}`.toLowerCase().includes(query.trim().toLowerCase());
     // Scheduled work lists what runs next first. Pausing keeps a task's next
     // run, so its switch never moves the row.
     const scheduled = [...tasks].sort((a, b) => String(a.next_run_at || "").localeCompare(String(b.next_run_at || ""))).filter(matchesQuery);
-    const finished = completedTasks.filter(matchesQuery);
-    const selectedTask = selection?.id ? tasks.find((task) => task.id === selection.id) || completedTasks.find((task) => task.id === selection.id) : null;
+    const dispatched = sortedRuns.filter((run) => !run.task?.recurring && !tasks.some((task) => task.id === run.task_id));
+    const dispatchedTasks = [...new Map(dispatched.map((run) => [run.task_id, run.task])).values()].filter(Boolean);
+    const finished = dispatchedTasks.filter(matchesQuery);
+    const selectedTask = selection?.id ? tasks.find((task) => task.id === selection.id) || dispatchedTasks.find((task) => task.id === selection.id) : null;
     const panelOpen = !!workspace && !!selection && (selection.kind === "new" || !!selectedTask);
     const closePanel = () => {
       setError("");
@@ -625,11 +628,12 @@ export async function activate(api) {
     // completed one-shot has nothing left to switch.
     const taskRow = (task, done) => {
       const lastRun = sortedRuns.find((run) => run.task_id === task.id);
-      const failed = !done && runStatus(lastRun) === "failed";
+      const state = runStatus(lastRun);
+      const failed = state === "failed";
       const title = task.title || task.prompt;
       const schedule = task.recurring === false ? tr("automation.once") : describeSchedule(task.cron, task.timezone, tr, props.locale) || task.cron;
       const meta = done
-        ? formatDateTime(lastRun?.completed_at || lastRun?.triggered_at, task.timezone, props.locale)
+        ? [tr(`automation.run.${state || "completed"}`), formatDateTime(lastRun?.completed_at || lastRun?.triggered_at, task.timezone, props.locale)].filter(Boolean).join(" · ")
         : [schedule, task.paused ? null : `${tr("automation.next")} ${formatDateTime(task.next_run_at, task.timezone, props.locale) || "—"}`].filter(Boolean).join(" · ");
       // A task that runs as planned says nothing about it; only a failed last
       // run leads its line, in words with the symbol beside them.
@@ -661,7 +665,7 @@ export async function activate(api) {
               scheduled.length ? h("div", { className: "plugin-automation-list" }, scheduled.map((task) => taskRow(task, false)))
                 // Without scheduled work, templates are the way in.
                 : query.trim() ? null : h("section", { className: "plugin-automation-suggestions" }, h("h2", { className: "plugin-automation-group-title" }, tr("automation.suggestions")), h("div", { className: "plugin-automation-suggestion-list" }, ["brief", "review", "check"].map((key) => h("div", { key, className: "plugin-automation-item" }, h("button", { type: "button", className: "plugin-automation-item-main", disabled: busy, onClick: () => create(key) }, h("span", { className: "plugin-automation-item-title" }, tr(`automation.template.${key}`)), h("span", { className: "plugin-automation-item-meta" }, h("span", null, tr(`automation.template.${key}.prompt`)))))))),
-              finished.length ? h("section", { className: "plugin-automation-group" }, h("h2", { className: "plugin-automation-group-title" }, tr("automation.run.completed")), h("div", { className: "plugin-automation-list" }, finished.map((task) => taskRow(task, true)))) : null)),
+              finished.length ? h("section", { className: "plugin-automation-group" }, h("h2", { className: "plugin-automation-group-title" }, tr("automation.history")), h("div", { className: "plugin-automation-list" }, finished.map((task) => taskRow(task, true)))) : null)),
         panelOpen ? h(Editor, {
           key: `${workspaceID}:${selection.id || selection.key}`, tr, locale: props.locale, task: selectedTask, initial: selection.draft, workspace, threads, busy, error,
           readOnly: !!selectedTask && !tasks.some((task) => task.id === selectedTask.id),
