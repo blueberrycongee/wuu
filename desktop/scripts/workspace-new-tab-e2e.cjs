@@ -233,9 +233,19 @@ app.whenReady().then(async () => {
       const input = root.querySelector('textarea');
       const frame = root.querySelector('.composer-frame');
       const send = root.querySelector('.composer-action-button');
-      const toolbar = root.querySelector('.composer');
-      const toolbarStyle = getComputedStyle(toolbar);
+      const toolbar = [...root.querySelectorAll('.composer, .composer-bar')].find((node) => {
+        const style = getComputedStyle(node);
+        return style.display !== 'contents' && style.containerName.split(' ').includes('composer-toolbar');
+      });
+      if (!toolbar) throw new Error('Missing the active composer-toolbar query container');
+      if (!getComputedStyle(root).containerName.split(' ').includes('document-composer'))
+        throw new Error('Missing the document-composer query container');
       const box = (node) => node.getBoundingClientRect().toJSON();
+      const contentWidth = (node) => {
+        const style = getComputedStyle(node);
+        return box(node).width - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight)
+          - parseFloat(style.borderLeftWidth) - parseFloat(style.borderRightWidth);
+      };
       return { frame: box(frame), input: box(input), send: box(send),
         fontSize: parseFloat(getComputedStyle(input).fontSize), lineHeight: parseFloat(getComputedStyle(input).lineHeight),
         clientHeight: input.clientHeight, scrollHeight: input.scrollHeight,
@@ -245,11 +255,13 @@ app.whenReady().then(async () => {
         context: box(root.querySelector('.composer-context-meter')),
         contextLabel: box(root.querySelector('.composer-context-meter-label')),
         effort: box(root.querySelector('.codex-runtime-effort')),
-        toolbarWidth: box(toolbar).width - parseFloat(toolbarStyle.paddingLeft) - parseFloat(toolbarStyle.paddingRight)
-          - parseFloat(toolbarStyle.borderLeftWidth) - parseFloat(toolbarStyle.borderRightWidth),
+        composerWidth: contentWidth(root), toolbarWidth: contentWidth(toolbar),
         tray: root.querySelector('.composer-attachment-tray') ? box(root.querySelector('.composer-attachment-tray')) : null,
         attachment: root.querySelector('.composer-file-card') ? box(root.querySelector('.composer-file-card')) : null };
     });
+    assert.ok(Number.isFinite(geometry.composerWidth) && geometry.composerWidth > 0
+      && Number.isFinite(geometry.toolbarWidth) && geometry.toolbarWidth > 0,
+      name + ': both responsive containers have measurable content widths');
     assert.ok(geometry.frame.left >= -1 && geometry.frame.right <= geometry.viewportWidth + 1,
       name + ': editor remains within the viewport');
     assert.ok(geometry.frame.top >= 0 && geometry.frame.bottom <= geometry.viewportHeight + 1,
@@ -260,30 +272,38 @@ app.whenReady().then(async () => {
     results.push({ scenario: name, geometry });
     return geometry;
   };
-  const assertCompact = (geometry, name) => {
-    assert.ok(Math.abs(geometry.input.y + geometry.input.height / 2 - geometry.send.y - geometry.send.height / 2) <= 2,
-      name + ': short text and send share the same row');
-    assert.ok(geometry.frame.height <= Math.max(44, geometry.lineHeight + 12) + 4,
-      name + ': short editor stays compact at the selected font size');
-    assert.ok(geometry.input.right <= geometry.send.left + 1, name + ': text and send do not overlap');
-    assert.ok(geometry.runtime.width > 0, name + ': model controls remain present');
-    assert.ok(geometry.runtime.left >= geometry.input.right - 1 && geometry.runtime.right <= geometry.send.left + 1,
-      name + ': runtime controls do not squeeze across the editor or send');
+  const assertReadableEditor = (geometry, name) => {
+    const sameRow = Math.abs(geometry.input.y + geometry.input.height / 2 - geometry.send.y - geometry.send.height / 2) <= 2;
+    assert.ok(geometry.input.width >= geometry.fontSize * 8,
+      name + ': input retains room to read and edit a short phrase');
+    if (geometry.composerWidth >= 680) assert.ok(sameRow, name + ': wide short drafts retain the compact single row');
+    if (sameRow) {
+      assert.ok(geometry.frame.height <= Math.max(44, geometry.lineHeight + 12) + 4,
+        name + ': wide short editor stays compact at the selected font size');
+      assert.ok(geometry.input.right <= geometry.runtime.left + 1,
+        name + ': inline runtime controls do not overlap the text');
+    } else {
+      assert.ok(geometry.input.bottom <= geometry.send.top + 1,
+        name + ': narrow input has its own row above the send controls');
+      assert.ok(geometry.input.width >= geometry.frame.width * 0.8,
+        name + ': stacked input uses the available reading width');
+    }
+    assert.ok(geometry.runtime.width > 0 && geometry.runtime.right <= geometry.send.left + 1,
+      name + ': model menu and send remain available without overlap');
     if (geometry.toolbarWidth <= 560) {
       assert.equal(geometry.context.width, 0, name + ': narrow toolbar folds the context meter');
     } else {
-      assert.ok(geometry.context.width > 0, name + ': wider toolbar retains the real context ring');
-      assert.ok(geometry.context.left >= geometry.input.right - 1 && geometry.runtime.left >= geometry.context.right - 1,
-        name + ': visible context meter stays between the editor and runtime controls');
+      assert.ok(geometry.context.width > 0 && geometry.runtime.left >= geometry.context.right - 1,
+        name + ': wider toolbar retains the context ring beside runtime controls');
       if (geometry.toolbarWidth <= 680) assert.equal(geometry.contextLabel.width, 0,
         name + ': medium toolbar keeps the context ring without its verbose label');
     }
-    if (geometry.toolbarWidth <= 420) assert.equal(geometry.effort.width, 0,
-      name + ': narrow toolbar folds effort without stealing the input lane');
-    assert.ok(geometry.scrollHeight <= geometry.clientHeight + 1, name + ': a short draft is not clipped');
+    if (geometry.toolbarWidth <= 420 || (sameRow && geometry.composerWidth <= 680)) assert.equal(geometry.effort.width, 0,
+      name + ': constrained toolbar folds effort without stealing the input lane');
+    assert.ok(geometry.scrollHeight <= geometry.clientHeight + 1, name + ': short draft and placeholder are not clipped');
   };
   for (const size of [14, 20]) {
-    for (const width of [1440, 560]) {
+    for (const width of [1440, 760, 560]) {
       win.setContentSize(width, 900);
       await waitFor((width) => innerWidth === width, width);
       await evaluate((size) => {
@@ -297,7 +317,7 @@ app.whenReady().then(async () => {
       await evaluate(() => document.querySelector('.document-composer-wrap textarea').blur());
       const empty = await documentGeometry(name + '-empty');
       assert.ok(Math.abs(empty.fontSize - size) <= 1, name + ': requested font preference is actually rendered');
-      assertCompact(empty, name);
+      assertReadableEditor(empty, name);
       const inputTarget = await evaluate(() => {
         const input = document.querySelector('.document-composer-wrap textarea');
         const rect = input.getBoundingClientRect();
@@ -314,7 +334,7 @@ app.whenReady().then(async () => {
       await waitFor(() => document.querySelector('.document-composer-wrap textarea').value === 'Edit');
       await evaluate(() => document.querySelector('.document-composer-wrap textarea').setSelectionRange(1, 3));
       const focused = await documentGeometry(name + '-focused');
-      assertCompact(focused, name);
+      assertReadableEditor(focused, name);
       assert.ok(focused.focused && focused.selectionStart === 1 && focused.selectionEnd === 3,
         name + ': focusing preserves the live editor selection');
       assert.ok(Math.abs(focused.frame.height - empty.frame.height) <= 2, name + ': focus does not expand the editor');
@@ -332,9 +352,9 @@ app.whenReady().then(async () => {
       assert.ok(Math.abs(blurred.input.height - wrapped.input.height) <= 2,
         name + ': blur preserves wrapped draft space');
       await setDocumentDraft('Edit');
-      assertCompact(await documentGeometry(name + '-shortened'), name);
+      assertReadableEditor(await documentGeometry(name + '-shortened'), name);
       await setDocumentDraft('');
-      assertCompact(await documentGeometry(name + '-cleared'), name);
+      assertReadableEditor(await documentGeometry(name + '-cleared'), name);
       await evaluate(() => {
         const transfer = new DataTransfer();
         transfer.items.add(new File(['%PDF-1.4 layout fixture'], 'layout-fixture.pdf', { type: 'application/pdf' }));
@@ -344,13 +364,13 @@ app.whenReady().then(async () => {
       });
       await waitFor(() => Boolean(document.querySelector('.document-composer-wrap .composer-file-card')));
       const attached = await documentGeometry(name + '-attached');
-      assert.ok(attached.frame.height > empty.frame.height && attached.tray?.height > 0,
+      assert.ok(attached.frame.height >= empty.frame.height && attached.tray?.height > 0,
         name + ': attachment restores the full editor and a visible tray');
       assert.ok(attached.attachment?.top >= 0 && attached.attachment.bottom <= attached.frame.top + 2,
         name + ': attachment remains reachable above the editor');
       await click('.document-composer-wrap .composer-attachment-card-remove');
       await waitFor(() => !document.querySelector('.document-composer-wrap .composer-file-card'));
-      assertCompact(await documentGeometry(name + '-attachment-removed'), name);
+      assertReadableEditor(await documentGeometry(name + '-attachment-removed'), name);
     }
   }
   win.setContentSize(1440, 900);
