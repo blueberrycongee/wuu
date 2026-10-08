@@ -470,7 +470,13 @@ app.whenReady().then(async () => {
   save();
   await click(".conversation-split-close");
   await until(() => !document.querySelector(".conversation-split-pane"), "close split");
-  await click("[data-wuu-component=right-sidebar-toggle]");
+  // Closing the side-chat tab can leave the browser panel open. Restore its
+  // explicit open state instead of toggling it closed and finding a stale resizer.
+  await evaluate(() => {
+    const toggle = document.querySelector("[data-wuu-component=right-sidebar-toggle]");
+    if (toggle.getAttribute("aria-expanded") !== "true") toggle.click();
+  });
+  await settle();
   await until(() => document.querySelector(".workspace-right-panel-resizer"), "restore browser panel");
   await until(() => document.querySelector(".workspace-browser-host") || document.querySelector('[data-wuu-tool="browser"]'), "restored browser or tool picker");
   if (!await evaluate(() => Boolean(document.querySelector(".workspace-browser-host")))) {
