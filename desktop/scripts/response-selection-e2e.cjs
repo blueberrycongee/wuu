@@ -460,7 +460,7 @@ async function run() {
   await win.webContents.debugger.sendCommand("Emulation.setFocusEmulationEnabled", { enabled: true });
   await until(selector => !!document.querySelector(selector), "rendered response", surface);
   await evaluate(() => {
-    for (const toggle of document.querySelectorAll('.environment-toggle-button[aria-pressed="true"], .title-actions .side-panel-toggle-button[aria-pressed="true"]')) toggle.click();
+    for (const toggle of document.querySelectorAll('.environment-toggle-button[aria-pressed="true"], [data-wuu-component=right-sidebar-toggle][aria-pressed="true"]')) toggle.click();
     if (!document.querySelector(".app-shell").classList.contains("sidebar-collapsed")) document.querySelector(".sidebar-toggle-button").click();
   });
   await settle();
@@ -614,7 +614,7 @@ function servePreview() {
       observer.observe(sourceRoot,{subtree:true,childList:true,characterData:true});
       for(let node=sourceRoot.closest('article');node;node=node.parentElement)observer.observe(node,{attributes:true,attributeOldValue:true,attributeFilter:['hidden','inert','aria-hidden','style','class','data-thread-id','data-response-settled']});
       new MutationObserver(records=>{for(const record of records)for(const node of [...record.addedNodes,...record.removedNodes])if(node.nodeType===1&&node.matches('.response-selection-toolbar'))trace({type:'toolbar-lifecycle',target:node,detail:{connected:node.isConnected}})}).observe(document.body,{childList:true});
-      for(const toggle of document.querySelectorAll('.environment-toggle-button[aria-pressed="true"], .title-actions .side-panel-toggle-button[aria-pressed="true"]'))toggle.click();
+      for(const toggle of document.querySelectorAll('.environment-toggle-button[aria-pressed="true"], [data-wuu-component=right-sidebar-toggle][aria-pressed="true"]'))toggle.click();
       if(!document.querySelector('.app-shell').classList.contains('sidebar-collapsed'))document.querySelector('.sidebar-toggle-button').click();
       if(params.has('theme'))document.documentElement.dataset.theme=params.get('theme');
       if(params.has('font')){document.documentElement.style.setProperty('--conversation-message-font-size',params.get('font')+'px');document.documentElement.style.setProperty('--ui-font-size',params.get('font')+'px')}

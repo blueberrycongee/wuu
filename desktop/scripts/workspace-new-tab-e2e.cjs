@@ -58,7 +58,7 @@ app.whenReady().then(async () => {
   win.webContents.debugger.attach("1.3");
   await win.webContents.debugger.sendCommand("Emulation.setFocusEmulationEnabled", { enabled: true });
   await waitFor(() => Boolean(document.querySelector(".composer textarea")));
-  await click(".title-actions .side-panel-toggle-button");
+  await click("[data-wuu-component=right-sidebar-toggle]");
   await click(".workspace-panel-add");
   await waitFor(() => Boolean(document.querySelector('[data-wuu-view="new"] .workspace-tool-menu')));
   assert.equal((await tabs()).filter((tab) => tab.selected).length, 1);
