@@ -356,6 +356,12 @@ app.whenReady().then(async () => {
         }
       }
       if (kind === "artifact" && count > 1 && width === 1180) {
+        // The theme/font matrix ends at 420px. Restore this scenario's width
+        // before pointer interactions, where thumbnail toolbars have a different footprint.
+        win.setContentSize(width, 820);
+        await until(width => window.innerWidth === width && window.innerHeight === 820, width);
+        await frames();
+        await until(layoutMotionSettled);
         await evaluate(selector => {
           const list = document.querySelector(`${selector} .turn-artifact-gallery-items`);
           list.scrollLeft = 0;
@@ -407,8 +413,11 @@ app.whenReady().then(async () => {
         await frames();
         await capture("gallery-entry");
         const imageTarget = await evaluate(() => {
-          const rect = document.activeElement.getBoundingClientRect();
-          return { x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) };
+          const button = document.activeElement;
+          const rect = button.getBoundingClientRect();
+          const x = Math.round(rect.left + rect.width / 2), y = Math.round(rect.top + rect.height / 2);
+          if (!button.contains(document.elementFromPoint(x, y))) throw new Error("Image preview click target is obscured");
+          return { x, y };
         });
         // Use a real pointer click so hover and focus follow the image target.
         win.webContents.sendInputEvent({ type: "mouseMove", ...imageTarget });
