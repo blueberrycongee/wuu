@@ -163,10 +163,11 @@
 /* Source actions share the process header without nesting buttons in summary. */
 .process-surface-inline-controls { position: relative; min-width: 0; }
 .process-surface-inline-controls:has(.turn-web-research) > .process-surface-fold > .process-surface-row {
-  width: calc(100% - var(--process-accessory-width, 0px) - 8px);
+  width: max-content;
+  max-width: calc(100% - var(--process-accessory-width, 0px) - 8px);
   min-height: 32px;
 }
-.process-surface-summary-accessory { position: absolute; inset-block-start: 0; inset-inline-end: 0; }
+.process-surface-summary-accessory { position: absolute; inset-block-start: 0; inset-inline-start: calc(var(--process-summary-width, 0px) + 8px); }
 .turn-web-research.is-inline { margin: 0; overflow: visible; height: auto; transition: none; }
 .turn-web-research.is-inline .web-research-sources { flex-wrap: nowrap; }
 .turn-web-research.is-inline .web-research-count { display: none; }

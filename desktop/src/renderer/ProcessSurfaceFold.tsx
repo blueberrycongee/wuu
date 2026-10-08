@@ -71,13 +71,17 @@ export function ProcessSurfaceFold({
   const hasAccessory = Boolean(summaryAccessory);
   useLayoutEffect(() => {
     if (!hasAccessory) return;
+    const summaryRow = layoutRef.current?.querySelector<HTMLElement>(".process-surface-row");
     const measure = () => {
       const width = accessoryRef.current?.getBoundingClientRect().width ?? 0;
       layoutRef.current?.style.setProperty("--process-accessory-width", `${width}px`);
+      const summaryWidth = summaryRow?.getBoundingClientRect().width ?? 0;
+      layoutRef.current?.style.setProperty("--process-summary-width", `${summaryWidth}px`);
     };
     measure();
     const observer = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(measure);
     if (accessoryRef.current) observer?.observe(accessoryRef.current);
+    if (summaryRow) observer?.observe(summaryRow);
     return () => observer?.disconnect();
   }, [hasAccessory]);
   const handleToggle = (event: SyntheticEvent<HTMLDetailsElement>): void => {
