@@ -2,11 +2,9 @@ import { createArtifactComposerFile } from "./ArtifactComposerFile";
 import { composerSkillPrompt } from "./ComposerSlashCommands";
 import { forgetLocalTurnTiming } from "./LocalTurnTiming";
 import { subscribeServerEvents } from "./ServerEvents";
-import { PhoneNavigationContext } from "./PhoneNavigationContext";
 import { AccountScreen } from "./AccountScreen";
 import { hostSupports } from "./HostCapabilities";
 import { focusComposerTextarea, isTouchWebShell } from "./ComposerFocus";
-import { useSidebarTouchGesture } from "./SidebarTouchGesture";
 import { readThreadReadState, writeThreadReadState } from "./ThreadReadState";
 import { FileSelectionProvider, type FileSelectionPart } from "./FileSelectionContext";
 import { readCollapsedPromptParts, rememberCollapsedPromptParts } from "./ComposerCollapsedPrompt";
@@ -16,7 +14,6 @@ import {
   type CSSProperties,
   type RefObject,
   useCallback,
-  useContext,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -90,7 +87,6 @@ import {
   useConversationScrollState,
   type ConversationScrollSnapshot,
 } from "./ConversationScrollState";
-import { PullToNewSession } from "./PullToNewSession";
 import { useConversationSearch } from "./ConversationSearchState";
 import { useConversationSearchNavigation } from "./ConversationSearchNavigation";
 import {
@@ -463,7 +459,6 @@ function projectNameFromGoal(goal: string): string {
 }
 
 export function App(): JSX.Element {
-  const phoneNavigation = useContext(PhoneNavigationContext);
   const { locale, t } = useI18n();
   const [popOutInit] = useState<PopOutInitResult | null>(() => readPopOutInit());
   const poppedOutMode = Boolean(popOutInit?.kind && popOutInit.context);
@@ -565,7 +560,6 @@ export function App(): JSX.Element {
     useState<MainComposerFocusRequest | null>(null);
   const userInteractionVersionRef = useRef(0);
   const {
-    compactNavigation,
     sidebarWidth,
     sidebarCollapsed,
     resizingSidebar,
@@ -653,9 +647,9 @@ export function App(): JSX.Element {
   const [unreadViewOpen, setUnreadViewOpen] = useState(false);
   const [attentionStickyIDs, setAttentionStickyIDs] = useState<Set<string>>(() => new Set());
   // A manually expanded workspace owns the main stage, not the navigation
-  // rail. Keep a docked sidebar docked; only an already-collapsed or compact
-  // sidebar remains a drawer while the workspace is expanded.
-  const sidebarDrawerMode = compactNavigation || sidebarCollapsed;
+  // rail. Keep a docked sidebar docked; only an already-collapsed sidebar
+  // remains a drawer while the workspace is expanded.
+  const sidebarDrawerMode = sidebarCollapsed;
   const {
     sidebarDrawerPhase,
     sidebarHoverScope,
@@ -674,28 +668,6 @@ export function App(): JSX.Element {
     dockingMotionMs: sidebarMotionMs,
   });
   const sidebarDrawerVisible = sidebarDrawerPhase === "open";
-  const toggleSessionSwitcher = useCallback((): void => {
-    if (!compactNavigation) {
-      toggleSidebar();
-      return;
-    }
-    if (sidebarDrawerVisible) {
-      closeSidebarDrawer();
-      return;
-    }
-    openSidebarDrawerNow();
-  }, [
-    closeSidebarDrawer,
-    compactNavigation,
-    openSidebarDrawerNow,
-    sidebarDrawerVisible,
-    toggleSidebar,
-  ]);
-  const closeCompactSessionSwitcher = useCallback((): void => {
-    if (compactNavigation) {
-      closeSidebarDrawer();
-    }
-  }, [closeSidebarDrawer, compactNavigation]);
   const {
     collapsedSidebarSectionIDs,
     expandedSidebarSectionIDs,
@@ -741,13 +713,6 @@ export function App(): JSX.Element {
   const [branchMenuOpen, setBranchMenuOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
-  useSidebarTouchGesture(
-    appShellRef,
-    Boolean(state.initialized) && compactNavigation && !poppedOutMode && !settingsOpen && !accountOpen,
-    sidebarDrawerPhase,
-    openSidebarDrawerNow,
-    closeSidebarDrawer,
-  );
   const [onboardingComplete, setOnboardingComplete] = useState(
     () => window.wuu?.initialOnboardingComplete ?? true,
   );
@@ -2386,10 +2351,6 @@ export function App(): JSX.Element {
     !rightPanelGlobalized &&
     !showingPrimaryPluginView;
 
-  // The account-based phone app keeps visible session navigation alongside swipes.
-  const composerNavigation = !phoneNavigation && compactNavigation && isTouchWebShell() &&
-    mainConversationDockVisible && !poppedOutMode;
-
   useEffect(() => {
     // Delivered snapshots may belong to either visible conversation pane.
     // Closing them on navigation also releases viewer resources.
@@ -2987,7 +2948,7 @@ export function App(): JSX.Element {
     }
   }, [environmentPanelOpen, sideThread.close, sideThread.entry?.open]);
 
-  const shellClassName = `app-shell${poppedOutMode ? " popped-out-shell" : ""}${compactNavigation ? " compact-navigation" : ""}${sidebarDrawerMode ? " sidebar-collapsed" : ""}${
+  const shellClassName = `app-shell${poppedOutMode ? " popped-out-shell" : ""}${sidebarDrawerMode ? " sidebar-collapsed" : ""}${
     sidebarDrawerMode && sidebarDrawerVisible ? " sidebar-drawer-open" : ""
   }${
     sidebarDrawerMode &&
@@ -3210,8 +3171,7 @@ export function App(): JSX.Element {
     return (
       <>
       <Composer
-        canSelectWorkspace={!composerNavigation && !activeThread && !activePendingNewThreadTurn}
-        hideExpandButton={composerNavigation}
+        canSelectWorkspace={!activeThread && !activePendingNewThreadTurn}
         topAccessory={pendingUserQuestionOffer ? (
           <UserQuestionCard
             key={pendingUserQuestionOffer.request_id}
@@ -3826,7 +3786,6 @@ export function App(): JSX.Element {
     }
     closePrimaryPluginView();
     revealConversationFromFocusedWorkspace();
-    closeCompactSessionSwitcher();
     const origin = document.activeElement;
     focusHeroAfter(
       startNewThreadInWorkspace(workspace.id).then((started) => {
@@ -5293,7 +5252,7 @@ export function App(): JSX.Element {
           data-wuu-sidebar-mode={sidebarDrawerVisible ? "drawer" : sidebarDrawerMode ? "collapsed" : "docked"}
         >
           <BrowserPiPHostReporter />
-          {!poppedOutMode && !compactNavigation ? (
+          {!poppedOutMode ? (
             <button
               className="icon-button side-panel-toggle-button shell-right-sidebar-toggle"
               data-wuu-component="right-sidebar-toggle"
@@ -5339,12 +5298,9 @@ export function App(): JSX.Element {
           ) : null}
           <HoverRevealScopeContext.Provider value={sidebarHoverScope}>
             <AppSidebar
-              onToggleSidebar={sidebarDrawerMode ? undefined : toggleSessionSwitcher}
+              onToggleSidebar={sidebarDrawerMode ? undefined : toggleSidebar}
               sidebarCollapsed={sidebarCollapsed}
               sidebarVisible={!sidebarDrawerMode || sidebarDrawerVisible}
-              mobileNavigation={compactNavigation && isTouchWebShell()}
-              drawerVisible={sidebarDrawerVisible}
-              onNavigateAway={closeCompactSessionSwitcher}
               state={state}
               sidebarWorkspaces={sidebarWorkspaces}
               pendingConversations={pendingThreadCreations.map((pending) => ({
@@ -5354,7 +5310,6 @@ export function App(): JSX.Element {
               }))}
               onSelectPendingConversation={(tabID) => {
                 closePrimaryPluginView();
-                closeCompactSessionSwitcher();
                 void selectSessionTab(tabID);
               }}
               activeWorkspaceID={
@@ -5379,12 +5334,10 @@ export function App(): JSX.Element {
               onStartNewThread={() => {
                 closePrimaryPluginView();
                 revealConversationFromFocusedWorkspace();
-                closeCompactSessionSwitcher();
                 startNewThreadWithComposerFocus();
               }}
               onOpenSkillsTab={() => {
                 closePrimaryPluginView();
-                closeCompactSessionSwitcher();
                 openSkillsTab();
               }}
               onMarkThreadsViewed={(threads) => {
@@ -5398,7 +5351,6 @@ export function App(): JSX.Element {
               onSelectThread={(id) => {
                 closePrimaryPluginView();
                 revealConversationFromFocusedWorkspace();
-                closeCompactSessionSwitcher();
                 void activateThread(id);
               }}
               onTogglePinned={(thread) => void toggleThreadPinned(thread)}
@@ -5435,7 +5387,6 @@ export function App(): JSX.Element {
                         project_id: project.id,
                         cwd: project.path,
                       });
-                      closeCompactSessionSwitcher();
                       openWorkspaceTool("files");
                     }
                   : undefined
@@ -5443,13 +5394,11 @@ export function App(): JSX.Element {
               onStartNewThreadInWorkspace={(id) => {
                 closePrimaryPluginView();
                 revealConversationFromFocusedWorkspace();
-                closeCompactSessionSwitcher();
                 startNewThreadInWorkspaceWithComposerFocus(id);
               }}
               onSelectWorkspaceThread={(workspaceID, threadID) => {
                 closePrimaryPluginView();
                 revealConversationFromFocusedWorkspace();
-                closeCompactSessionSwitcher();
                 void selectWorkspaceThread(workspaceID, threadID);
               }}
               onRemoveWorkspace={(id) => void removeProject(id)}
@@ -5474,15 +5423,6 @@ export function App(): JSX.Element {
               }}
             />
           </HoverRevealScopeContext.Provider>
-
-          {compactNavigation ? (
-            <button
-              className="compact-session-switcher-backdrop"
-              type="button"
-              aria-label={t("app.collapseLeftSidebar")}
-              onClick={closeSidebarDrawer}
-            />
-          ) : null}
 
           {/* Hidden rather than unmounted: inserting or removing a shell child
               ahead of the conversation makes sibling selectors restyle every
@@ -5528,7 +5468,6 @@ export function App(): JSX.Element {
         inert={rightPanelOpen && rightPanelGlobalized}
         data-wuu-component="conversation-pane"
         data-primary-plugin-view={showingPrimaryPluginView ? "" : undefined}
-        data-composer-navigation={composerNavigation || undefined}
         className={`conversation-pane${environmentPanelVisible ? " environment-panel-visible" : ""}${
           environmentPanelReserved ? " environment-panel-reserved" : ""
         }${
@@ -5536,7 +5475,6 @@ export function App(): JSX.Element {
         }`}
         ref={conversationPaneRef}
       >
-        {composerNavigation ? <div aria-hidden="true" /> : (
         <header className="titlebar" data-wuu-component="conversation-titlebar">
           <div className="title-block">
             {sidebarToggleVisible && sidebarDrawerMode && !rightPanelGlobalized ? (
@@ -5550,7 +5488,7 @@ export function App(): JSX.Element {
                     : "app.expandLeftSidebar",
                 )}
                 aria-pressed={sidebarDrawerVisible}
-                onClick={toggleSessionSwitcher}
+                onClick={toggleSidebar}
                 onPointerEnter={scheduleSidebarDrawerOpen}
                 onPointerLeave={(event) =>
                   scheduleSidebarDrawerCloseFromPointerLeave(event.nativeEvent)
@@ -5571,9 +5509,7 @@ export function App(): JSX.Element {
           </div>
           <ConversationTitleActions
             state={state}
-            compactNavigation={compactNavigation}
             pluginPageVisible={showingPrimaryPluginView || showingManagementCatalog}
-            onStartNewThread={startNewThreadWithComposerFocus}
             environmentToggleRef={environmentToggleRef}
             environmentPanelVisible={environmentPanelVisible}
             onToggleEnvironmentPanel={toggleEnvironmentPanel}
@@ -5582,8 +5518,6 @@ export function App(): JSX.Element {
             showRightPanelToggle={false}
           />
         </header>
-
-        )}
         <ConversationSidePanels
           state={state}
           environmentPanelVisible={environmentPanelVisible}
@@ -5807,17 +5741,6 @@ export function App(): JSX.Element {
           />
         )}
 
-        {compactNavigation && isTouchWebShell() && mainConversationDockVisible &&
-        !emptyConversation && !splitConversation && !showingManagementCatalog &&
-        activeThreadID && state.activeContext ? (
-          <PullToNewSession
-            key={activeThreadID}
-            containerRef={conversationScrollRef}
-            contentRef={scrollContentRef}
-            bottomAnchor={dockComposerNode}
-            onNewSession={startNewThreadWithComposerFocus}
-          />
-        ) : null}
         {mainConversationDockVisible ? renderComposer("dock") : null}
 
 
@@ -5862,7 +5785,6 @@ export function App(): JSX.Element {
       ) : null}
       {poppedOutMode ? null : (
         <WorkspaceRightPanel
-          compactNavigation={compactNavigation}
           open={rightPanelOpen}
           present={rightPanelOpen || rightPanelAnimating}
           prewarm={Boolean(state.initialized)}
@@ -5883,7 +5805,6 @@ export function App(): JSX.Element {
           onDirtyFileTabsChange={rememberWorkspaceDirtyFiles}
           onReorderTabs={reorderWorkspaceViewTabs}
           onOpenFile={openWorkspaceFile}
-          onClose={() => setRightPanelOpenWithMotion(false)}
           globalized={rightPanelGlobalized}
           sheetPhase={workspaceSheetPhase}
           onToggleGlobalize={toggleWorkspacePanelGlobalized}

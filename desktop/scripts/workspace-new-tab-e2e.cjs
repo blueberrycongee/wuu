@@ -455,7 +455,6 @@ app.whenReady().then(async () => {
     document.querySelector(".workspace-tool-menu").scrollTop = 0;
     document.querySelector(".workspace-tool-menu-more").open = false;
   });
-  await waitFor(() => !document.querySelector(".workspace-right-panel.compact-navigation"));
   await capture("light-14-default");
   await evaluate(() => document.querySelector(".workspace-tool-menu-more > summary").focus());
   await waitFor(() => document.activeElement === document.querySelector(".workspace-tool-menu-more > summary"));

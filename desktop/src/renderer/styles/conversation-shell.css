@@ -284,7 +284,7 @@
 
 /* Reserve the stable shell toggle only while this titlebar reaches the
  * right window edge. A docked workspace reserves its own matching slot. */
-.app-shell:not(.compact-navigation):not(.popped-out-shell):not(.right-panel-open) .titlebar {
+.app-shell:not(.popped-out-shell):not(.right-panel-open) .titlebar {
   padding-right: calc(max(var(--control-toolbar-inset), var(--window-controls-inset-right)) + var(--control-size-toolbar) + var(--control-toolbar-gap));
 }
 
@@ -311,7 +311,7 @@
  * 78 native DIP (see MAC_TRAFFIC_LIGHT_POSITION). Use its visible distance
  * to the sidebar glyph as the reference for both following gaps. */
 :root:not([data-platform="win32"]):not([data-platform="linux"]):not([data-host-kind="web"])
-  .app-shell.sidebar-collapsed:not(.compact-navigation) .title-block {
+  .app-shell.sidebar-collapsed .title-block {
   --title-visible-gap: calc(var(--window-titlebar-leading-inset) - 78px / var(--desktop-page-zoom, 1) + var(--title-icon-ink-inset));
 }
 
@@ -804,112 +804,6 @@
 
 .titlebar button * {
   -webkit-app-region: no-drag;
-}
-
-/* A compact viewport presents one active conversation instead of a tab rail.
- * The session model remains intact; only the titlebar projection changes. */
-.app-shell.compact-navigation .conversation-pane {
-  grid-template-rows:
-    calc(var(--window-titlebar-height) + env(safe-area-inset-top, 0px))
-    minmax(0, 1fr);
-  padding-bottom: env(safe-area-inset-bottom, 0px);
-}
-
-.app-shell.compact-navigation .conversation-pane[data-composer-navigation="true"] {
-  grid-template-rows: env(safe-area-inset-top, 0px) minmax(0, 1fr);
-}
-
-.app-shell.compact-navigation .titlebar {
-  height: calc(var(--window-titlebar-height) + env(safe-area-inset-top, 0px));
-  column-gap: 6px;
-  /* Compact navigation moves this control to the window corner. Share the
-   * collapsed leading slot with settings and the globalized workspace. The
-   * trailing edge clears the Windows overlay and Linux's drawn caption. */
-  padding:
-    env(safe-area-inset-top, 0px)
-    max(10px, var(--window-controls-inset-right), var(--linux-caption-width, 0px))
-    0;
-  padding-left: var(--window-titlebar-leading-inset);
-}
-
-.app-shell.compact-navigation .title-block {
-  --title-leading-gap: 6px;
-}
-
-.app-shell.compact-navigation .title-actions {
-  gap: 4px;
-}
-
-.app-shell.compact-navigation .title-block h1 {
-  font-size: 14px;
-  font-weight: 500;
-  color: var(--ink-secondary);
-}
-
-/* Compact chrome already exposes new-conversation in title-actions. */
-.app-shell.compact-navigation .conversation-title-heading .session-tab-new {
-  display: none;
-}
-
-/* The compact titlebar is still a native Electron drag region. Keep the
- * sidebar control explicitly above that region: at narrow desktop widths the
- * titlebar's grid can otherwise leave the button looking clickable while the
- * native window drag handler consumes the press. */
-.app-shell.compact-navigation .titlebar .sidebar-toggle-button {
-  /* Honor the shared control width in flex and grid titlebars alike. */
-  flex-basis: auto;
-  position: relative;
-  z-index: 150;
-  -webkit-app-region: no-drag;
-}
-
-.app-shell.compact-navigation.sidebar-collapsed:is(.sidebar-drawer-open, .sidebar-drawer-closing)
-  .titlebar .sidebar-toggle-button,
-.app-shell.compact-navigation.sidebar-drawer-docking .titlebar .sidebar-toggle-button {
-  position: fixed;
-  top: calc(env(safe-area-inset-top, 0px) + (var(--window-titlebar-height) - var(--control-size-toolbar)) / 2);
-  left: var(--window-titlebar-leading-inset);
-}
-
-.compact-conversation-actions > .icon-button:disabled {
-  color: var(--ink-tertiary);
-  cursor: default;
-}
-
-.conversation-actions-menu {
-  width: min(224px, calc(100vw - 16px));
-  max-height: var(--floating-menu-available-height, 320px);
-  overflow-y: auto;
-  padding: 4px;
-  border: 1px solid var(--menu-border);
-  border-radius: calc(var(--radius-xs) + 4px);
-  background: var(--menu-bg);
-  box-shadow: var(--menu-shadow);
-}
-
-.conversation-actions-menu > button {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  min-height: 44px;
-  padding: 8px 10px;
-  border: 0;
-  border-radius: var(--radius-xs);
-  background: transparent;
-  color: var(--ink);
-  font: inherit;
-  font-size: 13px;
-  text-align: left;
-  cursor: pointer;
-}
-
-.conversation-actions-menu > button:is(:hover, :focus-visible) {
-  background: var(--menu-hover);
-}
-
-.conversation-actions-menu svg {
-  flex-shrink: 0;
 }
 
 .side-panel-toggle-button[aria-pressed="true"] {

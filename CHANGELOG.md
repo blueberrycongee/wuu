@@ -24,6 +24,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Remove the legacy compact navigation layout. Resizing desktop windows keeps
+  the sidebar's chosen visibility and width, with the same navigation and tools.
+
 - Temporarily hide the conversation information/environment panel and its titlebar
   button, including automatic expansion in wide windows.
 

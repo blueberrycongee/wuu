@@ -14,7 +14,6 @@ import {
   WINDOW_RESIZING_CLASS,
 } from "./WindowResizeState";
 import { motionDurationMs } from "./motion";
-import { isTouchWebShell } from "./ComposerFocus";
 
 // Shell motion windows, read when each motion starts so the timers follow
 // the stylesheet, theme overrides, and reduced motion as they change.
@@ -31,10 +30,6 @@ export const SIDEBAR_DEFAULT_WIDTH = 264;
 // its contents harder to scan.
 export const SIDEBAR_MIN_WIDTH = 240;
 export const SIDEBAR_MAX_WIDTH = 520;
-// Below this width the renderer switches from multi-column/tab rails to
-// single-surface navigation. Touch phones retain it in landscape; tablets and
-// desktop windows use the available viewport width.
-export const COMPACT_NAVIGATION_WINDOW_WIDTH = 760;
 // Keep a small pull-past-minimum dead zone so resizing to the minimum width
 // does not collapse the sidebar by accident.
 const SIDEBAR_COLLAPSE_INTENT_PX = 32;
@@ -130,9 +125,8 @@ function initialSidebarWidth(): number {
   return storedWidth(SIDEBAR_WIDTH_KEY, SIDEBAR_DEFAULT_WIDTH, SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH);
 }
 
-// Only the user opens or closes the sidebar. A narrow window squeezes the
-// conversation instead; below the compact breakpoint the sidebar becomes a
-// drawer without changing this preference.
+// Only the user opens or closes the sidebar. Window resizing preserves
+// both the docking preference and the user-selected width.
 function initialSidebarCollapsed(): boolean {
   return window.localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "true";
 }
@@ -294,7 +288,6 @@ export function useAppLayoutState({
   viewportWidth?: number;
   onCloseWorkspaceMenu: () => void;
 }): {
-  compactNavigation: boolean;
   sidebarWidth: number;
   sidebarCollapsed: boolean;
   setSidebarCollapsed: (collapsed: boolean) => void;
@@ -344,12 +337,7 @@ export function useAppLayoutState({
   const rightPanelMotionTimerRef = useRef<number | undefined>(undefined);
   // Window resizing changes the canvas, not the user-selected sidebar width.
   const sidebarWidth = sidebarPreferredWidth;
-  const screenShortSide = Math.min(window.screen.width, window.screen.height);
-  const phoneNavigation = isTouchWebShell() && screenShortSide > 0 && screenShortSide < COMPACT_NAVIGATION_WINDOW_WIDTH;
-  const compactNavigation = phoneNavigation || windowWidth < COMPACT_NAVIGATION_WINDOW_WIDTH;
-  // Compact sidebars overlay the conversation even when Settings changes the
-  // desktop docking preference. Never reserve a hidden desktop column.
-  const effectiveSidebarWidth = compactNavigation || sidebarCollapsed ? 0 : sidebarWidth;
+  const effectiveSidebarWidth = sidebarCollapsed ? 0 : sidebarWidth;
   // Auto-globalize the open right panel only when the window is too narrow to
   // dock conversation + panel even with the sidebar fully collapsed — i.e. we
   // measure the space WITHOUT the sidebar's width. Opening the sidebar no
@@ -361,7 +349,7 @@ export function useAppLayoutState({
   // since conversation + panel cannot both fit there regardless of the sidebar.
   // (Previously this passed effectiveSidebarWidth, so opening the sidebar could
   // tip the layout over the threshold and auto-globalize the panel.)
-  const workspaceRightPanelAutoGlobalized = phoneNavigation || workspacePanelNeedsFocus(
+  const workspaceRightPanelAutoGlobalized = workspacePanelNeedsFocus(
     windowWidth,
     0,
   );
@@ -857,7 +845,6 @@ export function useAppLayoutState({
   }
 
   return {
-    compactNavigation,
     sidebarWidth,
     sidebarCollapsed,
     setSidebarCollapsed,

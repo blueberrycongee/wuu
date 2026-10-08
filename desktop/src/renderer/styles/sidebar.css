@@ -563,55 +563,6 @@
     transform var(--sidebar-drawer-exit-duration) var(--sidebar-drawer-exit-easing);
 }
 
-/* Compact navigation turns the familiar left rail into the phone's session
- * screen. Keep the same sidebar data and actions, but let the drawer own the
- * whole viewport instead of exposing a narrow desktop column. */
-.app-shell.compact-navigation .sidebar-hover-zone {
-  display: none;
-}
-
-.app-shell.compact-navigation {
-  /* Crossing into compact navigation must not resize an already-open drawer.
-   * Keep the responsive desktop width and only cap it when the phone viewport
-   * genuinely cannot leave enough backdrop visible to dismiss the sheet. */
-  --compact-session-switcher-width: min(var(--sidebar-open-width, 296px), 80vw);
-}
-
-.app-shell.compact-navigation.sidebar-collapsed:is(.sidebar-drawer-open, .sidebar-drawer-closing)
-  .sidebar {
-  width: var(--compact-session-switcher-width);
-  min-width: var(--compact-session-switcher-width);
-  padding-top: env(safe-area-inset-top, 0px);
-  padding-bottom: env(safe-area-inset-bottom, 0px);
-  border-right: 1px solid var(--sidebar-drawer-edge);
-  box-shadow: var(--shadow-drawer-right);
-}
-
-/* The desktop drawer keeps its content at --sidebar-open-width so the rail is
- * clipped rather than squeezed during dock/collapse animation. On phones that
- * stored width can exceed 80vw, making the content layer bleed past the modal
- * drawer's visible edge. Compact navigation has no width animation, so bind
- * the inner layer to the drawer instead. */
-.app-shell.compact-navigation.sidebar-collapsed:is(.sidebar-drawer-open, .sidebar-drawer-closing)
-  .sidebar-content {
-  width: 100%;
-  min-width: 0;
-}
-
-.compact-session-switcher-backdrop {
-  display: none;
-}
-
-.app-shell.compact-navigation.sidebar-drawer-open .compact-session-switcher-backdrop {
-  display: block;
-  position: absolute;
-  z-index: 139;
-  inset: 0;
-  border: 0;
-  padding: 0;
-  background: transparent;
-}
-
 .sidebar-resizer {
   position: absolute;
   top: 0;

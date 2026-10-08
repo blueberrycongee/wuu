@@ -63,7 +63,7 @@ function Titlebar() {
   const state = { ...initialState, activeContext: { kind: "project" as const, project_id: "wuu", cwd: workspace.root } };
   return <header className="titlebar">
     <div className="title-block"><ConversationTitleContent state={state} activeTitle="检查自动化插件的执行与恢复流程" onStartNewThread={noop} pluginHost={host} workbenchController={controller} /></div>
-    <ConversationTitleActions state={state} compactNavigation={params.has("compact")} pluginPageVisible={pluginPageVisible} onStartNewThread={noop}
+    <ConversationTitleActions state={state} pluginPageVisible={pluginPageVisible}
       environmentToggleRef={React.createRef()} environmentPanelVisible={false} onToggleEnvironmentPanel={noop}
       rightPanelOpen={rightPanelOpen} onToggleRightPanel={() => setRightPanelOpen(!rightPanelOpen)} />
   </header>;

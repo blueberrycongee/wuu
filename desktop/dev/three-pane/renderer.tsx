@@ -100,7 +100,7 @@ function Fixture() {
       </div></aside>
       <main className="conversation-pane" style={{ "--dock-composer-height": `${dockHeight}px` } as CSSProperties}>
         <header className="titlebar"><div className="title-block"><PanelLeft className="icon"/><ConversationTitleContent state={initialState} activeTitle={title} onStartNewThread={noop} onRenameTitle={setTitle} titleEditKey="sample-0"/></div>
-          <ConversationTitleActions state={initialState} compactNavigation={params.has("compact")} onStartNewThread={noop}
+          <ConversationTitleActions state={initialState}
             environmentToggleRef={environmentToggleRef} environmentPanelVisible={environmentOpen}
             onToggleEnvironmentPanel={() => setEnvironmentOpen(value => !value)}
             rightPanelOpen={rightOpen} onToggleRightPanel={() => setRightOpen(value => !value)} />
@@ -111,7 +111,7 @@ function Fixture() {
         </div>
         <footer ref={dock} className="composer-wrap dock-composer-wrap"><div className="composer-stack"><div className="composer-shell"><div className="composer-frame-shell"><div className="composer-frame"><div className="composer"><textarea aria-label="示例输入" placeholder="即刻开始"/><div className="composer-bar"><div className="composer-bar-left"><button className="composer-tool-button" aria-label="附件"><Plus className="icon"/></button></div><div className="composer-bar-right"><button className="codex-runtime-trigger">Wuu · 示例模型</button><button className="composer-action-button composer-send-button" disabled aria-label="发送"><ArrowUp className="icon"/></button></div></div></div></div></div></div></div></footer>
       </main>
-      <WorkspaceRightPanel open={rightOpen} present={rightOpen} tabs={tabs} activeTabID={activeTab} activeContext={{ kind: "no_project", cwd: "/preview" }} workspaceContext={{ kind: "no_project", cwd: "/preview" }} onSelectTab={setActiveTab} onOpenTool={openTool} onShowTools={() => setActiveTab(undefined)} onCloseTab={id => { setTabs(current => current.filter(tab => tab.id !== id)); setActiveTab(undefined); }} onReorderTabs={noop} onOpenFile={noop} onClose={() => setRightOpen(false)} globalized={globalized} onToggleGlobalize={() => setGlobalized(value => !value)}/>
+      <WorkspaceRightPanel open={rightOpen} present={rightOpen} tabs={tabs} activeTabID={activeTab} activeContext={{ kind: "no_project", cwd: "/preview" }} workspaceContext={{ kind: "no_project", cwd: "/preview" }} onSelectTab={setActiveTab} onOpenTool={openTool} onShowTools={() => setActiveTab(undefined)} onCloseTab={id => { setTabs(current => current.filter(tab => tab.id !== id)); setActiveTab(undefined); }} onReorderTabs={noop} onOpenFile={noop} globalized={globalized} onToggleGlobalize={() => setGlobalized(value => !value)}/>
     </div>
   </ImagePreviewProvider></WuuUIRoot>;
 }

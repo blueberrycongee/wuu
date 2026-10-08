@@ -40,7 +40,7 @@ vi.mock("./JumpToLatestPill", () => ({
   ),
 }));
 
-import { App, SIDEBAR_DRAWER_HOVER_OPEN_DELAY_MS } from "./App";
+import { App } from "./App";
 import { requestOpenThreadInSplit } from "./ConversationSplitBridge";
 import * as composerMessages from "./ComposerMessages";
 import * as artifactComposer from "./ArtifactComposerFile";
@@ -1124,7 +1124,7 @@ describe("workspace file tabs", () => {
     expect(container.querySelectorAll("[data-main-conversation-composer]")).toHaveLength(1);
   });
 
-  it("focuses the workspace automatically when a compact window cannot keep conversation usable", async () => {
+  it("focuses the workspace automatically when a narrow window cannot keep conversation usable", async () => {
     setInnerWidth(674);
     await act(async () => {
       root = createRoot(container);
@@ -1139,64 +1139,10 @@ describe("workspace file tabs", () => {
 
     const shell = container.querySelector<HTMLElement>(".app-shell");
     expect(shell?.classList.contains("right-panel-globalized")).toBe(true);
-    expect(shell?.classList.contains("sidebar-collapsed")).toBe(true);
+    expect(shell?.classList.contains("sidebar-collapsed")).toBe(false);
     expect(container.querySelector(".conversation-pane")?.hasAttribute("inert")).toBe(true);
 
-    await act(async () => {
-      container
-        .querySelector<HTMLButtonElement>(
-          '.globalized-sidebar-toggle[aria-label="展开左侧栏"]',
-        )
-        ?.click();
-    });
-    expect(shell?.classList.contains("sidebar-drawer-open")).toBe(true);
     expect(container.querySelector(".sidebar")?.hasAttribute("inert")).toBe(false);
-
-    await act(async () => {
-      container
-        .querySelector<HTMLButtonElement>(
-          '.globalized-sidebar-toggle[aria-label="收起左侧栏"]',
-        )
-        ?.click();
-    });
-    expect(shell?.classList.contains("sidebar-drawer-open")).toBe(false);
-    expect(container.querySelector(".sidebar")?.hasAttribute("inert")).toBe(true);
-
-    const sidebarToggle = container.querySelector<HTMLButtonElement>(
-      '.globalized-sidebar-toggle[aria-label="展开左侧栏"]',
-    );
-    vi.useFakeTimers();
-    await act(async () => {
-      sidebarToggle?.dispatchEvent(
-        new MouseEvent("pointerover", { bubbles: true, relatedTarget: null }),
-      );
-      vi.advanceTimersByTime(SIDEBAR_DRAWER_HOVER_OPEN_DELAY_MS);
-    });
-    expect(shell?.classList.contains("sidebar-drawer-open")).toBe(true);
-    expect(sidebarToggle?.getAttribute("aria-pressed")).toBe("true");
-
-    await act(async () => {
-      container
-        .querySelector<HTMLButtonElement>('[aria-label="打开工作区 wuu"]')
-        ?.click();
-    });
-    await flushAsync();
-    expect(shell?.classList.contains("right-panel-globalized")).toBe(true);
-    expect(shell?.classList.contains("sidebar-drawer-open")).toBe(false);
-    expect(
-      container
-        .querySelector('[data-section-id="project-wuu"] .project-row')
-        ?.getAttribute("aria-current"),
-    ).toBe("page");
-    expect(window.wuu.listWorkspaceDirectory).toHaveBeenCalledWith("", "/repo/wuu");
-
-    await act(async () => {
-      setInnerWidth(1000);
-      window.dispatchEvent(new Event("resize"));
-    });
-    await flushAsync();
-    expect(shell?.classList.contains("right-panel-globalized")).toBe(false);
-    expect(container.querySelector(".conversation-pane")?.hasAttribute("inert")).toBe(false);
   });
 
   it("keeps all three columns docked when an open sidebar is the only space pressure", async () => {

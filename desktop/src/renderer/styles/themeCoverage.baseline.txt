@@ -100,8 +100,6 @@ settings.css .settings-usage-trend-day:hover i background --settings-heatmap-lev
 settings.css button.settings-engine-expand:hover background --ink-overlay-6
 side-thread.css .side-thread-panel__resizer:hover::before, .side-thread-panel__resizer:focus-visible::before, .resizing-side-thread .side-thread-panel__resizer::before background --sidebar-resizer-hover-bg
 side-thread.css .side-thread-panel__resizer:hover::before, .side-thread-panel__resizer:focus-visible::before, .resizing-side-thread .side-thread-panel__resizer::before box-shadow --sidebar-resizer-hover-ring
-sidebar-touch.css @media (pointer: coarse) background --ink-overlay-8
-sidebar.css .app-shell.compact-navigation.sidebar-collapsed:is(.sidebar-drawer-open, .sidebar-drawer-closing) .sidebar border-right --sidebar-drawer-edge
 sidebar.css .project-row .project-row-loading border-top-color --sidebar-project-loading-notch
 sidebar.css .project-row.pending-switch background --sidebar-project-row-pending-bg
 sidebar.css .sidebar-collapsed.sidebar-drawer-open :is(.sidebar, .settings-sidebar), .sidebar-collapsed.sidebar-drawer-closing :is(.sidebar, .settings-sidebar), .sidebar-drawer-docking :is(.sidebar, .settings-sidebar), .sidebar-collapsed:not(.resizing-sidebar) :is(.sidebar, .settings-sidebar):focus-within border-right-color --sidebar-drawer-edge

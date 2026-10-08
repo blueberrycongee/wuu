@@ -47,7 +47,7 @@ html[data-app-background] :is(.sidebar, .settings-sidebar) {
 }
 
 /* Drawers overlap readable content, rather than merely sitting beside it. */
-html[data-app-background] :is(.sidebar-collapsed, .compact-navigation) :is(.sidebar, .settings-sidebar) {
+html[data-app-background] .sidebar-collapsed :is(.sidebar, .settings-sidebar) {
   background: var(--sidebar-drawer-bg);
 }
 

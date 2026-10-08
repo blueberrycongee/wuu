@@ -48,7 +48,6 @@ import {
 } from "./AppLayoutState";
 import { EnvironmentSideStack } from "./EnvironmentSideStack";
 import { ENABLE_ENVIRONMENT_PANEL } from "./FeatureFlags";
-import { CompactConversationActions } from "./CompactConversationActions"
 import {
   Composer,
 } from "./ComposerView";
@@ -524,10 +523,8 @@ export function ConversationTitleContent({
 
 export type ConversationTitleActionsProps = {
   state: AppState;
-  compactNavigation?: boolean;
   /** A primary plugin page covers the conversation and its environment panel. */
   pluginPageVisible?: boolean;
-  onStartNewThread: () => void;
   environmentToggleRef: RefObject<HTMLButtonElement | null>;
   environmentPanelVisible: boolean;
   onToggleEnvironmentPanel: () => void;
@@ -538,9 +535,7 @@ export type ConversationTitleActionsProps = {
 
 export function ConversationTitleActions({
   state,
-  compactNavigation,
   pluginPageVisible,
-  onStartNewThread,
   environmentToggleRef,
   environmentPanelVisible,
   onToggleEnvironmentPanel,
@@ -567,15 +562,6 @@ export function ConversationTitleActions({
   </> : control ? <span className="session-control-label" title={control.state === "active" ? t("sessionControl.takeoverHint") : `${control.manager_name} · ${controlLabel}`}>
     {control.manager_name} · {controlLabel}
   </span> : null;
-  if (compactNavigation) {
-    return <div className="title-actions">{management}<CompactConversationActions
-      canStartNewThread={Boolean(state.activeContext)} onStartNewThread={onStartNewThread}
-      environmentAvailable={ENABLE_ENVIRONMENT_PANEL && !pluginPageVisible}
-      environmentToggleRef={environmentToggleRef} environmentPanelVisible={environmentPanelVisible}
-      onToggleEnvironmentPanel={onToggleEnvironmentPanel} rightPanelOpen={rightPanelOpen}
-      onToggleRightPanel={onToggleRightPanel}
-    /></div>;
-  }
   const environmentLabel = environmentPanelVisible
     ? t("shell.hideEnvironmentInfo")
     : t("shell.showEnvironmentInfo");

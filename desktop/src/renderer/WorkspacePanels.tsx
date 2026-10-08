@@ -33,7 +33,6 @@ import {
   isWindowResizing,
 } from "./WindowResizeState";
 import {
-  ArrowLeft,
   ChevronDown,
   FileDiff,
   FileText,
@@ -190,7 +189,6 @@ function initialWorkspaceFileTreeVisible(): boolean {
 }
 
 export function WorkspaceRightPanel({
-  compactNavigation = false,
   open,
   present,
   prewarm = false,
@@ -211,7 +209,6 @@ export function WorkspaceRightPanel({
   onDirtyFileTabsChange,
   onReorderTabs,
   onOpenFile,
-  onClose,
   globalized,
   sheetPhase = "docked",
   onToggleGlobalize,
@@ -225,7 +222,6 @@ export function WorkspaceRightPanel({
   pluginHost,
   workbenchController,
 }: {
-  compactNavigation?: boolean;
   open: boolean;
   present: boolean;
   prewarm?: boolean;
@@ -251,7 +247,6 @@ export function WorkspaceRightPanel({
   onDirtyFileTabsChange?: (dirty: boolean) => void;
   onReorderTabs: (activeID: string, overID: string) => void;
   onOpenFile: (path: string, sourceContext?: RuntimeContext) => void;
-  onClose: () => void;
   globalized: boolean;
   // Globalize-sheet phase from App's phase machine; drives the data-sheet
   // attribute that promotes the panel to a full-window sheet in CSS.
@@ -297,15 +292,15 @@ export function WorkspaceRightPanel({
   const [fileTreeSide, setFileTreeSide] = useState<WorkspaceFileTreeSide>(initialWorkspaceFileTreeSide);
   const [fileTreeVisible, setFileTreeVisible] = useState(initialWorkspaceFileTreeVisible);
   // Too narrow for the tree beside a document: the document takes the panel
-  // and the tree stays one step away, as in compact navigation.
+  // and the tree stays available through the Files tab.
   const [fileSplitStacked, setFileSplitStacked] = useState(false);
-  const stackedFileView = !compactNavigation && fileSplitStacked && activeTab?.kind === "file";
+  const stackedFileView = fileSplitStacked && activeTab?.kind === "file";
   // The saved visibility is untouched; a stacked document only sets it aside.
   const fileTreeDocked = fileTreeVisible && !stackedFileView;
   // The Files tab is the tree itself; beside a document the tree follows the
   // saved choice.
-  const fileTreeShown = compactNavigation || activeTab?.kind === "files" || fileTreeDocked;
-  const fileTreeBesideDocument = activeTab?.kind === "file" && fileTreeDocked && !compactNavigation;
+  const fileTreeShown = activeTab?.kind === "files" || fileTreeDocked;
+  const fileTreeBesideDocument = activeTab?.kind === "file" && fileTreeDocked;
   const moveFileTreeLabel = t(fileTreeSide === "right" ? "workspace.moveFileTreeLeft" : "workspace.moveFileTreeRight");
   const [draggingFileTree, setDraggingFileTree] = useState(false);
   const [fileTreeDropSide, setFileTreeDropSide] = useState<WorkspaceFileTreeSide | undefined>(undefined);
@@ -682,25 +677,19 @@ export function WorkspaceRightPanel({
       dirty: (tab.kind === "file" && dirtyFileTabIDs.has(tab.id)) || undefined,
     };
   });
-  const navigateBack = compactNavigation && open ? () => {
-    if (showingPicker) onClose();
-    else if (activeTab.kind === "file") onOpenTool("files");
-    else onShowTools();
-  } : undefined;
   const headerSnapshot = immutableHeaderSnapshot({
     scope: "workspace",
     title: activeTab ? workspaceViewTabLabel(activeTab) : t("workspace.artifactsAndTools"),
     subtitle: activeTab?.kind === "file" || activeTab?.kind === "diff" ? activeTab.path : undefined,
-    tabs: compactNavigation ? undefined : headerTabs,
-    activeTabId: compactNavigation ? undefined : activeTabID,
-    canNavigateBack: navigateBack ? true : undefined,
+    tabs: headerTabs,
+    activeTabId: activeTabID,
     busy: headerTabs.some((tab) => tab.busy) || undefined,
     dirty: headerTabs.some((tab) => tab.dirty) || undefined,
   });
 
   return (
     <aside
-      className={`workspace-right-panel${compactNavigation ? " compact-navigation" : ""}${showingPicker ? " tools" : " detail"}${activeTab?.kind === "review" ? " review" : ""}${activeTab?.kind === "diff" ? " diff" : ""}${activeTab?.kind === "files" || activeTab?.kind === "file" ? " files" : ""}${activeTab?.kind === "terminal" ? " terminal" : ""}${activeTab?.kind === "browser" ? " browser" : ""}${focusedComposer ? " document-focus" : ""}`}
+      className={`workspace-right-panel${showingPicker ? " tools" : " detail"}${activeTab?.kind === "review" ? " review" : ""}${activeTab?.kind === "diff" ? " diff" : ""}${activeTab?.kind === "files" || activeTab?.kind === "file" ? " files" : ""}${activeTab?.kind === "terminal" ? " terminal" : ""}${activeTab?.kind === "browser" ? " browser" : ""}${focusedComposer ? " document-focus" : ""}`}
       data-wuu-component="workspace-panel"
       data-wuu-view={activeTab?.kind ?? "picker"}
       data-sheet={
@@ -728,34 +717,12 @@ export function WorkspaceRightPanel({
           snapshot={headerSnapshot}
           host={pluginHost}
           controller={workbenchController}
-          onNavigateBack={navigateBack}
-          onSelectTab={compactNavigation ? undefined : onSelectTab}
-          onCloseTab={compactNavigation ? undefined : (tabId) => {
+          onSelectTab={onSelectTab}
+          onCloseTab={(tabId) => {
             const tab = tabs.find((candidate) => candidate.id === tabId);
             if (tab) void requestCloseTab(tab);
           }}
-          fallback={compactNavigation ? (
-            <>
-              {globalized ? <span className="workspace-panel-sidebar-hit-hole" aria-hidden="true" /> : null}
-              <button
-                className="icon-button workspace-panel-back"
-                type="button"
-                aria-label={t("common.back")}
-                disabled={!open}
-                onClick={navigateBack}
-              >
-                <ArrowLeft className="icon" />
-              </button>
-              <div className="workspace-panel-compact-heading">
-                <strong>
-                  {activeTab ? workspaceViewTabLabel(activeTab) : t("workspace.artifactsAndTools")}
-                </strong>
-                {activeTab?.kind === "file" || activeTab?.kind === "diff" ? (
-                  <span>{activeTab.path}</span>
-                ) : null}
-              </div>
-            </>
-          ) : (
+          fallback={(
             <>
         {globalized ? (
           <span className="workspace-panel-sidebar-hit-hole" aria-hidden="true" />
@@ -874,19 +841,6 @@ export function WorkspaceRightPanel({
             </>
           )}
         />
-        {compactNavigation ? activeTab ? (
-          <button
-            className="icon-button workspace-panel-close-tab"
-            type="button"
-            aria-label={t("workspace.closeTab", { label: workspaceViewTabLabel(activeTab) })}
-            disabled={!open}
-            onClick={() => void requestCloseTab(activeTab)}
-          >
-            <X className="icon" />
-          </button>
-        ) : (
-          <span className="workspace-panel-compact-action-slot" aria-hidden="true" />
-        ) : null}
       </div>
       {bodyMounted ? (
         <>

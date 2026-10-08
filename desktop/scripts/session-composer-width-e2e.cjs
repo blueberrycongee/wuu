@@ -204,7 +204,6 @@ async function settledGeometry(win, width, paneSelector = ".conversation-pane") 
       const contentRight = scrollRect.right - scrollbarWidth / 2 - parseFloat(scrollStyle.paddingRight);
       return {
         windowWidth: innerWidth,
-        compact: document.querySelector(".app-shell").classList.contains("compact-navigation"),
         composerWidth: rect.width,
         composerLeft: rect.left,
         composerRight: rect.right,

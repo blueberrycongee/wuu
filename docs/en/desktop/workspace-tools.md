@@ -2,6 +2,8 @@
 
 Use the workspace panels to inspect what actually happened during a task. A conversation records the agent's activity; the files and Git diff show what is on disk now.
 
+The left sidebar keeps the visibility and width you choose when you resize the window or zoom the interface. Use its toggle or drag its divider to collapse it.
+
 ## App zoom
 
 Press **Command + + / −** on macOS (**Ctrl + + / −** on other platforms) to
