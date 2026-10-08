@@ -73,6 +73,20 @@
   grid-template-columns: var(--sidebar-width, 296px) minmax(0, 1fr) var(--workspace-right-panel-width, 360px);
 }
 
+/* This control belongs to the window chrome, not either moving track. It
+ * remains reachable when the workspace owns focus and the conversation is inert. */
+.shell-right-sidebar-toggle {
+  position: absolute;
+  top: calc((var(--window-titlebar-height) - var(--control-size-toolbar)) / 2);
+  right: max(var(--control-toolbar-inset), var(--window-controls-inset-right));
+  z-index: 151;
+  -webkit-app-region: no-drag;
+}
+
+.shell-right-sidebar-toggle * {
+  -webkit-app-region: no-drag;
+}
+
 .app-shell.popped-out-shell,
 .app-shell.popped-out-shell.right-panel-open {
   grid-template-columns: minmax(0, 1fr);
@@ -346,6 +360,14 @@
 .sidebar-collapsed .sidebar-content {
   opacity: 0;
   transform: translate3d(-18px, 0, 0) scale(0.988);
+}
+
+/* Dock/undock clips a stable content width. Drawer motion still belongs to
+ * its outer rail; navigation labels never scale or rewrap during a toggle. */
+.sidebar-animating:not(.sidebar-drawer-closing) .sidebar-content {
+  opacity: 1;
+  transform: none;
+  transition: none;
 }
 
 .sidebar-hover-zone {
@@ -651,7 +673,7 @@
   box-shadow: none;
 }
 
-.app-shell.resizing-sidebar.right-panel-open .workspace-right-panel {
+.app-shell.resizing-sidebar.right-panel-open:not(.right-panel-globalized) .workspace-right-panel {
   position: absolute;
   top: 0;
   right: 0;

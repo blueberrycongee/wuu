@@ -71,6 +71,7 @@ import { WorkspaceReviewPanel } from "./WorkspaceReviewPanels";
 import { ProjectPanel } from "./ProjectPanels";
 import { confirmAction } from "./ConfirmDialog";
 import { WorkspacePanelLoading } from "./LoadingViews";
+import { WorkspacePanelEmpty } from "./WorkspacePanelEmpty";
 import type { WorkspaceFileViewTab, WorkspaceViewTab } from "./WorkspaceViewTabs";
 import { handleTabListKeyDown, useTabCloseFocusRestoration } from "./TabKeyboardNavigation";
 import { useStripEnterReady, useTabExitRetention } from "./TabMotion";
@@ -249,7 +250,7 @@ export function WorkspaceRightPanel({
   onCloseTab: (id: string) => void;
   onDirtyFileTabsChange?: (dirty: boolean) => void;
   onReorderTabs: (activeID: string, overID: string) => void;
-  onOpenFile: (path: string) => void;
+  onOpenFile: (path: string, sourceContext?: RuntimeContext) => void;
   onClose: () => void;
   globalized: boolean;
   // Globalize-sheet phase from App's phase machine; drives the data-sheet
@@ -274,7 +275,8 @@ export function WorkspaceRightPanel({
     () => effectivePluginHost.getWorkspaceTools(),
     () => effectivePluginHost.getWorkspaceTools(),
   );
-  const activeTab = activeTabID ? tabs.find((tab) => tab.id === activeTabID) : undefined;
+  const visibleTabs = tabs;
+  const activeTab = activeTabID ? visibleTabs.find((tab) => tab.id === activeTabID) : undefined;
   const terminalTabOpen = tabs.some((tab) => tab.kind === "terminal");
   // Latch after the terminal has been shown so a later tool tab does not
   // tear the pty down. Closing the terminal tab releases it.
@@ -285,7 +287,6 @@ export function WorkspaceRightPanel({
     setTerminalMounted(false);
   }
   const fileTabs = tabs.filter((tab): tab is WorkspaceFileViewTab => tab.kind === "file");
-  const visibleTabs = tabs;
   const showingPicker = !activeTab || activeTab.kind === "new";
   const [dirtyFileTabIDs, setDirtyFileTabIDs] = useState<Set<string>>(() => new Set());
   const enterReady = useStripEnterReady();
@@ -316,6 +317,7 @@ export function WorkspaceRightPanel({
   const fileSplitRef = useRef<HTMLDivElement>(null);
   const fileContentRef = useRef<HTMLElement>(null);
   const documentComposerRef = useRef<HTMLDivElement>(null);
+  const artifactContentRef = useRef<HTMLDivElement>(null);
   const fileTreeRef = useRef<HTMLElement>(null);
   const fileTreeDragPreviewRef = useRef<HTMLDivElement>(null);
   const fileSplitResizeRef = useRef<{ startX: number; startTreeWidth: number } | null>(null);
@@ -330,7 +332,7 @@ export function WorkspaceRightPanel({
   );
 
   useLayoutEffect(() => {
-    const content = fileContentRef.current;
+    const content = activeTab?.kind === "artifact" ? artifactContentRef.current : fileContentRef.current;
     const composer = documentComposerRef.current;
     if (!content || !composer) return;
     // Document annotations must remain above the floating composer's actual
@@ -345,9 +347,9 @@ export function WorkspaceRightPanel({
       observer?.disconnect();
       content.style.removeProperty("--workspace-document-composer-inset");
     };
-  }, [Boolean(focusedComposer), activeTab?.kind, open, present]);
-  // Tabs shrink before the strip scrolls; once it does, the active tab is
-  // brought into view, again after a newcomer has grown to its width.
+  }, [Boolean(focusedComposer), activeTab?.kind, activeTab?.id, open, present]);
+  // Keep the active tab visible after selection, opening and pane resizing.
+  // Tabs retain their label/close lanes instead of collapsing to icons.
   useLayoutEffect(() => {
     const strip = tabListRef.current;
     if (!strip || !activeTabID) {
@@ -368,7 +370,19 @@ export function WorkspaceRightPanel({
     };
     reveal();
     const timer = window.setTimeout(reveal, motionDurationMs("--motion-base", 180));
-    return () => window.clearTimeout(timer);
+    const settle = createWindowResizeSettleScheduler(reveal);
+    const observer = new ResizeObserver(() => {
+      if (isWindowResizing()) settle.schedule();
+      else reveal();
+    });
+    observer.observe(strip);
+    const activeElement = strip.querySelector<HTMLElement>(".workspace-tool-tab.active");
+    if (activeElement) observer.observe(activeElement);
+    return () => {
+      settle.cancel();
+      window.clearTimeout(timer);
+      observer.disconnect();
+    };
   }, [activeTabID, tabListRef, visibleTabs.length]);
 
   useEffect(() => {
@@ -656,7 +670,7 @@ export function WorkspaceRightPanel({
     onCloseTab(tab.id);
   }
 
-  const headerTabs = tabs.map((tab) => {
+  const headerTabs = visibleTabs.map((tab) => {
     const busy = (tab.kind === "terminal" && terminalThread?.status === "in_progress") ||
       (tab.kind === "browser" && browserActivity?.state === "active");
     return {
@@ -686,7 +700,7 @@ export function WorkspaceRightPanel({
 
   return (
     <aside
-      className={`workspace-right-panel${compactNavigation ? " compact-navigation" : ""}${showingPicker ? " tools" : " detail"}${activeTab?.kind === "review" ? " review" : ""}${activeTab?.kind === "diff" ? " diff" : ""}${activeTab?.kind === "files" || activeTab?.kind === "file" ? " files" : ""}${activeTab?.kind === "terminal" ? " terminal" : ""}${activeTab?.kind === "browser" ? " browser" : ""}${focusedComposer && activeTab?.kind === "file" ? " document-focus" : ""}`}
+      className={`workspace-right-panel${compactNavigation ? " compact-navigation" : ""}${showingPicker ? " tools" : " detail"}${activeTab?.kind === "review" ? " review" : ""}${activeTab?.kind === "diff" ? " diff" : ""}${activeTab?.kind === "files" || activeTab?.kind === "file" ? " files" : ""}${activeTab?.kind === "terminal" ? " terminal" : ""}${activeTab?.kind === "browser" ? " browser" : ""}${focusedComposer ? " document-focus" : ""}`}
       data-wuu-component="workspace-panel"
       data-wuu-view={activeTab?.kind ?? "picker"}
       data-sheet={
@@ -856,15 +870,6 @@ export function WorkspaceRightPanel({
           onClick={onToggleGlobalize}
         >
           {globalized ? <Minimize2 className="icon" /> : <Maximize2 className="icon" />}
-        </button>
-        <button
-          className="icon-button workspace-panel-close"
-          type="button"
-          aria-label={t("workspace.closeRightPanel")}
-          disabled={!open}
-          onClick={onClose}
-        >
-          <X className="icon" />
         </button>
             </>
           )}
@@ -1055,6 +1060,7 @@ export function WorkspaceRightPanel({
                     onClose={() => onCloseTab(activeTab.id)}
                   />
                 ) : activeTab.kind === "artifact" ? (
+                  <div className="workspace-artifact-document" ref={artifactContentRef}>
                   <ArtifactPreview
                     active={open}
                     artifact={activeTab.artifact}
@@ -1063,6 +1069,12 @@ export function WorkspaceRightPanel({
                     mode="panel"
                     onClose={() => onCloseTab(activeTab.id)}
                   />
+                  {focusedComposer ? (
+                    <div ref={documentComposerRef} className="workspace-document-composer" data-testid="workspace-document-composer">
+                      {focusedComposer}
+                    </div>
+                  ) : null}
+                  </div>
                 ) : activeTab.kind === "review" ? (
                   <WorkspaceReviewPanel
                     gitStatus={gitStatus}
@@ -1132,7 +1144,7 @@ function WorkspaceFileResource({
 }: {
   active: boolean;
   onDirtyChange: (tabID: string, dirty: boolean) => void;
-  onOpenFile: (path: string) => void;
+  onOpenFile: (path: string, sourceContext?: RuntimeContext) => void;
   tab: WorkspaceFileViewTab;
   refreshKey?: string;
 }): JSX.Element {
@@ -1146,8 +1158,9 @@ function WorkspaceFileResource({
       target
         ? formatWorkspaceFileTarget(resolveWorkspaceFileTarget(tab.path, target))
         : reference,
+      tab.context,
     );
-  }, [onOpenFile, tab.path]);
+  }, [onOpenFile, tab.path, tab.context]);
 
   return (
     <div
@@ -1216,7 +1229,7 @@ function SortableWorkspaceViewTab({
       data-wuu-active={active ? "true" : "false"}
       data-wuu-state={isDragging ? "dragging" : undefined}
     >
-      {/* A narrow tab may show only its icon, so the name is always a hover away. */}
+      {/* Keep the full resource path available when its title is truncated. */}
       <Tooltip content={tooltip}>
         <button
           ref={setActivatorNodeRef}

@@ -33,7 +33,7 @@ async function run() {
   // gutter discontinuity from an intentional sidebar layout change.
   await evaluate(win, () => {
     for (const toggle of document.querySelectorAll(
-      '.environment-toggle-button[aria-pressed="true"], .title-actions .side-panel-toggle-button[aria-pressed="true"]'
+      '.environment-toggle-button[aria-pressed="true"], [data-wuu-component=right-sidebar-toggle][aria-pressed="true"]'
     )) toggle.click();
     if (!document.querySelector(".app-shell").classList.contains("sidebar-collapsed")) {
       document.querySelector(".sidebar-toggle-button").click();

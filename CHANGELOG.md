@@ -10,6 +10,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Add a compact conversation input inside the right file preview, keeping the
+  conversation visible and the selected file attached as request context. Preserve
+  the current draft when closing, minimizing, or restoring the preview input.
+  Keep short inputs compact and adapt to narrow panels, wrapped text, or attachments.
+
 - Add a small side-panel action to delivered images while keeping direct clicks
   in the full image viewer. Connect artifact previews to the right panel with
   reversible transitions that respect reduced motion and fit portrait images.
@@ -24,6 +29,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   overflow, and reduced-motion support that does not replay received sources.
 
 ### Fixed
+
+- Retry failed file previews in place without closing or replacing the selected tab.
 
 - Restore complete conversation history after reload, including intermediate
   reasoning, tool results, and image artifacts released from model context.

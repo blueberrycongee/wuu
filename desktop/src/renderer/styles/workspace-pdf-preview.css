@@ -109,7 +109,7 @@ button:focus-visible {
 }
 
 .pdfViewer {
-  padding: 22px 0 40px;
+  padding: 22px 0 max(40px, var(--workspace-document-composer-inset, 0px));
 }
 
 .pdfViewer .page {

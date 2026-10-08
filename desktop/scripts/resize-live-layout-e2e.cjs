@@ -140,7 +140,7 @@ async function panelDiagnostic() {
     save();
   }
   await measure("left-empty", ".sidebar-resizer", 190, "--sidebar-width");
-  await click(".title-actions .side-panel-toggle-button");
+  await click("[data-wuu-component=right-sidebar-toggle]");
   await until(() => document.querySelector(".workspace-right-panel-resizer"), "right panel");
   await measure("right-empty", ".workspace-right-panel-resizer", -140, "--workspace-right-panel-width");
   assert.deepEqual(result.errors, [], "no renderer errors");
@@ -425,7 +425,7 @@ app.whenReady().then(async () => {
   }, false);
   await motion("left live reflow", () => drag(".sidebar-resizer", 190));
   await motion("left collapse and expand", async () => { await click(".sidebar-toggle-button"); await settle(); await click(".sidebar-toggle-button"); }, false);
-  await click(".title-actions .side-panel-toggle-button");
+  await click("[data-wuu-component=right-sidebar-toggle]");
   await until(() => document.querySelector(".workspace-right-panel-resizer"), "right panel");
   await settle();
   await motion("right live reflow", () => drag(".workspace-right-panel-resizer", -140));
@@ -433,8 +433,8 @@ app.whenReady().then(async () => {
   await until(() => document.querySelector(".workspace-browser-host"), "browser host");
   await motion("browser live reflow", () => drag(".workspace-right-panel-resizer", -140));
   await snapshot("browser panel");
-  await motion("right collapse and expand", async () => { await click(".title-actions .side-panel-toggle-button"); await settle(); await click(".title-actions .side-panel-toggle-button"); }, false);
-  await click(".title-actions .side-panel-toggle-button");
+  await motion("right collapse and expand", async () => { await click("[data-wuu-component=right-sidebar-toggle]"); await settle(); await click("[data-wuu-component=right-sidebar-toggle]"); }, false);
+  await click("[data-wuu-component=right-sidebar-toggle]");
   await settle();
   await evaluate(() => {
     const input = document.querySelector("[data-main-conversation-composer] textarea");
@@ -465,7 +465,7 @@ app.whenReady().then(async () => {
   save();
   await click(".conversation-split-close");
   await until(() => !document.querySelector(".conversation-split-pane"), "close split");
-  await click(".title-actions .side-panel-toggle-button");
+  await click("[data-wuu-component=right-sidebar-toggle]");
   await until(() => document.querySelector(".workspace-right-panel-resizer"), "restore browser panel");
   await until(() => document.querySelector(".workspace-browser-host") || document.querySelector('[data-wuu-tool="browser"]'), "restored browser or tool picker");
   if (!await evaluate(() => Boolean(document.querySelector(".workspace-browser-host")))) {

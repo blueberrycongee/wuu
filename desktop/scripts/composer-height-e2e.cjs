@@ -24,7 +24,7 @@ async function run() {
   await win.loadFile(process.env.WUU_E2E_RENDERER || path.join(desktopRoot, "out", "renderer", "index.html"));
   await waitFor(win, () => !!document.querySelector(".turn"));
   await evaluate(win, () => {
-    for (const toggle of document.querySelectorAll('.environment-toggle-button[aria-pressed="true"], .title-actions .side-panel-toggle-button[aria-pressed="true"]')) toggle.click();
+    for (const toggle of document.querySelectorAll('.environment-toggle-button[aria-pressed="true"], [data-wuu-component=right-sidebar-toggle][aria-pressed="true"]')) toggle.click();
     if (!document.querySelector(".app-shell").classList.contains("sidebar-collapsed")) document.querySelector(".sidebar-toggle-button").click();
   });
 

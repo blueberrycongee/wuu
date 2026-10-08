@@ -1,3 +1,4 @@
+import { createArtifactComposerFile } from "./ArtifactComposerFile";
 import { composerSkillPrompt } from "./ComposerSlashCommands";
 import { forgetLocalTurnTiming } from "./LocalTurnTiming";
 import { subscribeServerEvents } from "./ServerEvents";
@@ -185,6 +186,7 @@ import {
   SIDEBAR_MIN_WIDTH,
   sidebarMotionMs,
   WORKSPACE_CONVERSATION_SAFE_WIDTH,
+  WORKSPACE_RIGHT_PANEL_MAIN_MIN_WIDTH,
   WORKSPACE_RIGHT_PANEL_MAX_WIDTH,
   WORKSPACE_RIGHT_PANEL_MIN_WIDTH,
   useAppLayoutState,
@@ -1170,13 +1172,19 @@ export function App(): JSX.Element {
     const handleFocusIn = (event: FocusEvent): void => {
       const target = event.target;
       const workspacePanel = appShellRef.current?.querySelector(".workspace-right-panel");
-      if (target instanceof HTMLElement && !workspacePanel?.contains(target)) {
+      if (
+        target instanceof HTMLElement &&
+        !workspacePanel?.contains(target) &&
+        // Closing via window chrome must not replace the reading position's
+        // focus target. When it opens the panel, the toggle is a valid owner.
+        !(rightPanelOpen && target.closest('[data-wuu-component="right-sidebar-toggle"]'))
+      ) {
         lastFocusOutsideWorkspaceRef.current = { element: target, owner: workspaceFocusOwner };
       }
     };
     document.addEventListener("focusin", handleFocusIn);
     return () => document.removeEventListener("focusin", handleFocusIn);
-  }, [workspaceFocusOwner]);
+  }, [rightPanelOpen, workspaceFocusOwner]);
 
   useLayoutEffect(() => {
     const fullPanel = rightPanelOpen && rightPanelGlobalized;
@@ -1185,10 +1193,7 @@ export function App(): JSX.Element {
 
     appShellRef.current
       ?.querySelector<HTMLElement>(".sidebar")
-      ?.toggleAttribute(
-        "inert",
-        fullPanel && sidebarDrawerMode && !sidebarDrawerVisible,
-      );
+      ?.toggleAttribute("inert", fullPanel && sidebarDrawerMode && !sidebarDrawerVisible);
 
     if (fullPanel && !previous.fullPanel) {
       appShellRef.current
@@ -1200,6 +1205,8 @@ export function App(): JSX.Element {
     }
     if ((previous.fullPanel && !fullPanel) || (previous.open && !rightPanelOpen)) {
       if (viewSwitchPending) return;
+      // An explicit return-to-conversation request owns focus over passive restoration.
+      if (mainComposerFocusRequest?.interactionVersion === userInteractionVersionRef.current) return;
       const previousFocus = lastFocusOutsideWorkspaceRef.current;
       // Focus return must not reveal old history or follow a reused control into
       // a different conversation. Reading position remains owned by scrolling.
@@ -1217,7 +1224,7 @@ export function App(): JSX.Element {
         )
         ?.focus({ preventScroll: true });
     }
-  }, [rightPanelGlobalized, rightPanelOpen, sidebarDrawerMode, sidebarDrawerVisible, viewSwitchPending, workspaceFocusOwner]);
+  }, [rightPanelGlobalized, rightPanelOpen, sidebarDrawerMode, sidebarDrawerVisible, viewSwitchPending, workspaceFocusOwner, mainComposerFocusRequest]);
 
   // Workspace panel (file tree / file preview / terminal / review) root: follows the
   // active thread's own cwd when it differs from state.activeContext — the
@@ -1409,6 +1416,7 @@ export function App(): JSX.Element {
   const sideThread = useSideThreadController({
     activeThreadId: activeThreadID,
     activeContext: state.activeContext,
+    maxWidth: window.innerWidth - environmentPanelPaneOffset - WORKSPACE_RIGHT_PANEL_MAIN_MIN_WIDTH,
   });
   const sideThreadPanelRef = useRef<SideThreadPanelHandle>(null);
   const pendingSideSelectionRef = useRef<{ threadID: string; selection: SideThreadSelection } | null>(null);
@@ -2342,11 +2350,38 @@ export function App(): JSX.Element {
     return queries;
   }, [turns]);
   const showingPrimaryPluginView = usePrimaryPluginViewCover();
+  const previewTargetThread = threadForPane(state, state.activePane);
+  const previewTargetContext = workspacePanelContext(state.activeContext, previewTargetThread);
+  const activePreviewFile = activeWorkspaceViewTab?.kind === "file" &&
+    activeWorkspaceViewTab.id === activeWorkspaceFileTabID &&
+    sameRuntimeContext(activeWorkspaceViewTab.context, previewTargetContext) &&
+    activeWorkspaceViewTab.context.cwd === previewTargetContext?.cwd
+      ? activeWorkspaceViewTab : undefined;
+  const activePreviewArtifact = activeWorkspaceViewTab?.kind === "artifact" &&
+    activeWorkspaceViewTab.artifact.mimeType === "application/pdf" &&
+    activeWorkspaceViewTab.artifact.uri?.startsWith("wuu-artifact:") &&
+    activeWorkspaceViewTab.threadID === previewTargetThread?.id &&
+    activeWorkspaceViewTab.cwd === previewTargetThread.cwd
+      ? activeWorkspaceViewTab : undefined;
+  const documentComposerOwnsPrimary = Boolean(
+    state.initialized && rightPanelOpen &&
+    !splitConversation &&
+    !showingManagementCatalog && !showingPrimaryPluginView &&
+    (activePreviewFile || activePreviewArtifact),
+  );
+  const previousDocumentComposerOwner = useRef(documentComposerOwnsPrimary);
+  useLayoutEffect(() => {
+    if (previousDocumentComposerOwner.current === documentComposerOwnsPrimary) return;
+    previousDocumentComposerOwner.current = documentComposerOwnsPrimary;
+    // Text is input-local until idle. Publish it before the new surface paints.
+    setPrompt(currentPrimaryComposerDraft().prompt);
+  }, [documentComposerOwnsPrimary, setPrompt, currentPrimaryComposerDraft]);
   const mainConversationDockVisible =
     Boolean(state.initialized) &&
     !splitConversation &&
     !showingManagementCatalog &&
     !rightPanelGlobalized &&
+    !documentComposerOwnsPrimary &&
     !showingPrimaryPluginView;
 
   // The account-based phone app keeps visible session navigation alongside swipes.
@@ -2698,13 +2733,13 @@ export function App(): JSX.Element {
   ): void => {
     openWorkspaceBrowserOrExternal(url, modifiers, openWorkspaceBrowser);
   });
-  const openWorkspaceFile = useStableCallback((path: string): void => {
+  const openWorkspaceFile = useStableCallback((path: string, sourceContext?: RuntimeContext): void => {
     // Stamp the same derived context the workspace panel's file tree/preview
     // are rooted at (workspacePanelContext), not the raw activeContext — for
     // a worktree-fork thread these differ, and activeWorkspaceFile's match
     // above must be comparing against the same context or the tab silently
     // stops highlighting/previewing once opened.
-    const context = workspacePanelContext(
+    const context = sourceContext ?? workspacePanelContext(
       appStateRef.current.activeContext,
       appStateRef.current.thread,
     );
@@ -3199,7 +3234,7 @@ export function App(): JSX.Element {
         permissionLocked={projectComposer}
         placeholder={activeProjectDraft ? t("projects.draftPlaceholder") : undefined}
         containerRef={variant === "dock" ? dockComposerRef : undefined}
-        prompt={prompt}
+        prompt={currentPrimaryComposerDraft().prompt}
         promptRevision={promptRevision}
         setPrompt={setPromptFromInput}
         files={composerFiles}
@@ -4188,8 +4223,8 @@ export function App(): JSX.Element {
       contentParts,
       draft.selections,
     );
-    const activeDocumentPath = pane ? undefined : activeWorkspaceFile;
-    const message =
+    const activeDocumentPath = !pane && documentComposerOwnsPrimary ? activePreviewFile?.path : undefined;
+    let message =
       draftMessage && activeDocumentPath
         ? { ...draftMessage, activeDocument: { path: activeDocumentPath } }
         : draftMessage;
@@ -4213,6 +4248,17 @@ export function App(): JSX.Element {
       && !hasReadyProvider(currentState.initialized.providers)) {
       showNoModelConfiguredToast();
       return false;
+    }
+    let implicitArtifactFileID: string | undefined;
+    if (!pane && documentComposerOwnsPrimary && activePreviewArtifact && targetThread) {
+      try {
+        const file = createArtifactComposerFile(activePreviewArtifact, targetThread.id);
+        implicitArtifactFileID = file.id;
+        message = { ...message, files: [...message.files.filter(existing => existing.id !== file.id), file] };
+      } catch (error) {
+        showErrorToast(error);
+        return false;
+      }
     }
     if (consumedOfferID && pendingUserQuestionOffer?.request_id === consumedOfferID) {
       void cancelUserQuestion(consumedOfferID).catch(() => undefined);
@@ -4249,7 +4295,7 @@ export function App(): JSX.Element {
       if (sent) return;
       submittedThread ??= admission?.thread;
       const latest = appStateRef.current;
-      const recoveryDraft = { ...composerContextFromMessage(message.text, message.contentParts), images: message.images, files: message.files };
+      const recoveryDraft = { ...composerContextFromMessage(message.text, message.contentParts), images: message.images, files: message.files.filter(file => file.id !== implicitArtifactFileID) };
       const latestTab = activeSessionTab(latest);
       const stillTarget = submittedThread
         ? latestTab?.kind === "thread" &&
@@ -5244,6 +5290,19 @@ export function App(): JSX.Element {
           data-wuu-sidebar-mode={sidebarDrawerVisible ? "drawer" : sidebarDrawerMode ? "collapsed" : "docked"}
         >
           <BrowserPiPHostReporter />
+          {!poppedOutMode && !compactNavigation ? (
+            <button
+              className="icon-button side-panel-toggle-button shell-right-sidebar-toggle"
+              data-wuu-component="right-sidebar-toggle"
+              type="button"
+              aria-label={t(rightPanelOpen ? "shell.closeRightSidebar" : "shell.openRightSidebar")}
+              aria-expanded={rightPanelOpen}
+              aria-pressed={rightPanelOpen}
+              onClick={toggleRightPanel}
+            >
+              <SidePanelToggleIcon side="right" open={rightPanelOpen} />
+            </button>
+          ) : null}
           {!poppedOutMode ? (
             <>
           <div
@@ -5517,6 +5576,7 @@ export function App(): JSX.Element {
             onToggleEnvironmentPanel={toggleEnvironmentPanel}
             rightPanelOpen={rightPanelOpen}
             onToggleRightPanel={toggleRightPanel}
+            showRightPanelToggle={false}
           />
         </header>
 
@@ -5833,10 +5893,16 @@ export function App(): JSX.Element {
           browserOverlaySuppressed={browserOverlaySuppressed}
           onBrowserUserInteraction={pauseBrowserTask}
           focusedComposer={
-            rightPanelGlobalized && activeWorkspaceFileTabID
+            documentComposerOwnsPrimary
               ? (
                   <WorkspaceDocumentTurnDock
                     key={activeThreadID ?? state.activeSessionTabID}
+                    title={activeTitle}
+                    onOpenConversation={() => {
+                      setPrompt(currentPrimaryComposerDraft().prompt);
+                      setRightPanelOpenWithMotion(false);
+                      requestMainComposerFocus("dock");
+                    }}
                     cwd={activeThread?.cwd ?? state.activeContext?.cwd}
                     onOpenFile={openWorkspaceFile}
                     waitingQuery={

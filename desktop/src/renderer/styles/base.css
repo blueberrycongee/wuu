@@ -316,9 +316,9 @@
   --sidebar-drawer-enter-easing: var(--ease-out);
   --sidebar-drawer-exit-duration: 220ms;
   --sidebar-drawer-exit-easing: var(--ease-in);
-  --sidebar-motion-duration: var(--motion-slow);
+  --sidebar-motion-duration: var(--motion-base);
   --sidebar-motion-ease: var(--ease-out);
-  --workspace-panel-motion-duration: var(--motion-slow);
+  --workspace-panel-motion-duration: var(--motion-base);
   --workspace-panel-motion-ease: var(--ease-out);
   /* Reference animation (do not retune casually): the environment panel's
    * paired enter/exit is the quality bar for panel motion — enter decelerates

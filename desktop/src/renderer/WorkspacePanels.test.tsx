@@ -194,6 +194,8 @@ function baseProps(): Parameters<typeof WorkspaceRightPanel>[0] {
   };
 }
 
+vi.mock("./WorkspacePdfPreview", () => ({ WorkspacePdfPreview: () => <div>PDF preview</div> }));
+
 describe("WorkspaceRightPanel", () => {
   it("replaces its owned tabbar boundary with a live workspace header presenter", async () => {
     const pluginHost = new PluginHost({ react: React });
@@ -496,7 +498,7 @@ describe("WorkspaceRightPanel", () => {
         tabs={[fileTab]}
         activeTabID={fileTab.id}
         activeFileTabID={fileTab.id}
-        workspaceContext={context}
+        workspaceContext={{ kind: "no_project", cwd: "/other-root" }}
         onOpenFile={onOpenFile}
       />,
     );
@@ -506,7 +508,7 @@ describe("WorkspaceRightPanel", () => {
     act(() => {
       container?.querySelector<HTMLButtonElement>(".rich-file-link")?.click();
     });
-    expect(onOpenFile).toHaveBeenCalledWith("src/App.tsx#L12");
+    expect(onOpenFile).toHaveBeenCalledWith("src/App.tsx#L12", context);
   });
 
   it("resizes and persists the right-side file tree", async () => {
@@ -671,6 +673,51 @@ describe("WorkspaceRightPanel", () => {
     await act(async () => Promise.resolve());
     expect(split.classList.contains("tree-hidden")).toBe(false);
     expect(window.localStorage.getItem("wuu.desktop.fileTreeVisible")).toBe("true");
+  });
+
+  it.each(["file", "artifact"] as const)("updates document clearance and releases observers when changing resources (%s)", async (kind) => {
+    const observations = new Map<Element, ResizeObserverCallback>();
+    vi.stubGlobal("ResizeObserver", class {
+      private targets: Element[] = [];
+      constructor(private callback: ResizeObserverCallback) {}
+      observe(target: Element): void {
+        this.targets.push(target);
+        observations.set(target, this.callback);
+      }
+      disconnect(): void {
+        this.targets.forEach((target) => observations.delete(target));
+      }
+    });
+    const context: RuntimeContext = { kind: "project", project_id: "project-1", cwd: "/repo/project" };
+    const makeTab = (name: string) => kind === "file" ? workspaceFileViewTab({ context, path: name }) : workspaceArtifactViewTab({
+      threadID: "thread-1", cwd: context.cwd,
+      artifact: { id: name, itemId: name, index: 0, type: "file", name, mimeType: "application/pdf",
+        placement: "turn_end", uri: `wuu-artifact://workspace/thread-1/digest/${name}` },
+    });
+    const tab = makeTab("first.pdf");
+    const props = { ...baseProps(), tabs: [tab], activeTabID: tab.id, activeFileTabID: tab.id, workspaceContext: context };
+    mount(<WorkspaceRightPanel {...props} focusedComposer={<div>Compose</div>} />);
+    await act(async () => Promise.resolve());
+    const contentSelector = kind === "file" ? ".workspace-files-content" : ".workspace-artifact-document";
+    const content = container!.querySelector<HTMLElement>(contentSelector)!;
+    const composer = container!.querySelector<HTMLElement>(".workspace-document-composer")!;
+    Object.defineProperty(composer, "getBoundingClientRect", { value: () => ({ height: 320 }) });
+    act(() => observations.get(composer)!([], {} as ResizeObserver));
+    expect(content.style.getPropertyValue("--workspace-document-composer-inset")).toBe("336px");
+    const nextTab = makeTab("second.pdf");
+    const nextProps = { ...props, tabs: [tab, nextTab], activeTabID: nextTab.id, activeFileTabID: nextTab.id };
+    await act(async () => root!.render(<WorkspaceRightPanel {...nextProps} focusedComposer={<div>Compose</div>} />));
+    const nextComposer = container!.querySelector<HTMLElement>(".workspace-document-composer")!;
+    const nextContent = container!.querySelector<HTMLElement>(contentSelector)!;
+    expect(observations.has(nextComposer)).toBe(true);
+    if (kind === "artifact") {
+      expect(nextComposer).not.toBe(composer);
+      expect(observations.has(composer)).toBe(false);
+      expect(nextContent.style.getPropertyValue("--workspace-document-composer-inset")).toBe("16px");
+    }
+    act(() => root!.render(<WorkspaceRightPanel {...nextProps} />));
+    expect(nextContent.style.getPropertyValue("--workspace-document-composer-inset")).toBe("");
+    expect(observations.has(nextComposer)).toBe(false);
   });
 
   it("clamps the tree width so the file content keeps usable space", () => {

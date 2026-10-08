@@ -1,0 +1,155 @@
+/* The bottom-anchored input never moves on focus. Native transitions reverse
+   from current geometry when chrome or result expansion is interrupted. */
+.workspace-document-turn-dock {
+  --document-dock-duration: 300ms;
+  --document-dock-ease: cubic-bezier(.23, 1, .32, 1);
+  position: relative;
+  width: min(100%, var(--session-composer-width));
+  min-width: 0;
+  margin-inline: auto;
+  pointer-events: auto;
+  interpolate-size: allow-keywords;
+  transition: height var(--document-dock-duration) var(--document-dock-ease);
+  color: var(--ink);
+}
+.workspace-document-turn-content {
+  position: relative;
+  min-width: 0;
+  border-radius: var(--session-composer-radius, var(--radius-md));
+  transform-origin: center bottom;
+  transition: opacity var(--document-dock-duration) var(--document-dock-ease),
+    transform var(--document-dock-duration) var(--document-dock-ease),
+    visibility 0s;
+}
+.workspace-document-turn-content::before {
+  position: absolute;
+  z-index: 0;
+  inset: 0 6px 6px;
+  border: 1px solid var(--hairline-soft);
+  border-radius: var(--session-composer-radius, var(--radius-md));
+  background: var(--conversation-floating-surface-bg);
+  box-shadow: var(--shadow-tray);
+  content: "";
+  pointer-events: none;
+}
+.workspace-document-turn-header {
+  position: relative;
+  height: 0;
+  overflow: hidden;
+  opacity: 0;
+  transition: height var(--document-dock-duration) var(--document-dock-ease),
+    opacity var(--document-dock-duration) var(--document-dock-ease);
+}
+.workspace-document-turn-header[data-visible="true"] { height: 46px; opacity: 1; }
+.workspace-document-turn-header-row {
+  display: flex;
+  height: 46px;
+  align-items: center;
+  gap: 8px;
+  margin-inline: 6px;
+  padding-inline: 8px;
+  border-bottom: 1px solid var(--hairline-soft);
+}
+.workspace-document-turn-icon, .workspace-document-turn-restore {
+  display: grid;
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border-radius: var(--radius-sm);
+  color: var(--ink-soft);
+  background: transparent;
+}
+.workspace-document-turn-icon:hover,
+.workspace-document-turn-icon[aria-expanded="true"],
+.workspace-document-turn-menu button:hover,
+.workspace-document-turn-menu button:focus-visible {
+  background: var(--menu-hover);
+  color: var(--ink);
+}
+.workspace-document-turn-summary {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  height: 100%;
+  align-items: center;
+  padding: 0;
+  text-align: left;
+  color: var(--ink-soft);
+  background: transparent;
+}
+.workspace-document-turn-summary:disabled { opacity: 1; cursor: default; }
+.workspace-document-turn-title, .workspace-document-turn-waiting-query {
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--font-ui);
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.workspace-document-turn-title { font-weight: var(--weight-medium); }
+.workspace-document-turn-drawer {
+  position: relative;
+  height: 0;
+  margin-inline: 6px;
+  overflow: hidden;
+  transition: height var(--document-dock-duration) var(--document-dock-ease);
+}
+.workspace-document-turn-drawer[data-wuu-state="expanded"] { height: min(34vh, 280px); }
+.workspace-document-turn-details { height: 100%; overflow-y: auto; padding: 18px 20px 22px; overscroll-behavior: contain; }
+.workspace-document-turn-result { min-width: 0; }
+.workspace-document-turn-result > .rich-content + .rich-content { margin-top: 14px; }
+.workspace-document-turn-composer { position: relative; z-index: 10; pointer-events: none; }
+.workspace-document-turn-menu {
+  position: absolute;
+  z-index: 20;
+  top: 42px;
+  right: 14px;
+  display: grid;
+  min-width: 180px;
+  max-width: calc(100% - 28px);
+  padding: 5px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
+  box-shadow: var(--shadow-pop);
+}
+.workspace-document-turn-menu button {
+  min-height: 34px;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  font-size: var(--font-ui);
+}
+/* Preserve real draft, selection and send ownership; only restore is tabbable. */
+.workspace-document-turn-dock[data-minimized="true"] { height: 36px; pointer-events: none; }
+.workspace-document-turn-dock[data-minimized="true"] .workspace-document-turn-content {
+  position: absolute;
+  width: 100%;
+  bottom: 0;
+  visibility: hidden;
+  opacity: 0;
+  transform: scale(.08);
+  transition-delay: 0s, 0s, var(--document-dock-duration);
+  pointer-events: none;
+}
+.workspace-document-turn-restore {
+  position: relative;
+  width: 36px;
+  height: 36px;
+  margin-inline: auto;
+  pointer-events: auto;
+  border: 1px solid var(--hairline-soft);
+  border-radius: 50%;
+  background: var(--conversation-floating-surface-bg);
+  box-shadow: var(--shadow-tray);
+}
+@media (prefers-reduced-motion: reduce) {
+  .workspace-document-turn-dock { --document-dock-duration: 0ms; }
+}
+
+/* This whole surface is already bottom anchored. Let real input/accessory
+   heights participate in its footprint instead of translating over the result. */
+.workspace-document-turn-composer .composer-stack { --composer-expanded-offset: 0px; }

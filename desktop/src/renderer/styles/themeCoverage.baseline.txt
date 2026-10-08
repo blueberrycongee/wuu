@@ -8,7 +8,6 @@ agent-avatar-feedback.css .agent-avatar-ribbon-tail stroke --agent-ribbon-tail
 agent-avatar-feedback.css .agent-avatar-ribbon-third stroke --agent-ribbon-third
 archive-tip.css .archive-tip-action:hover background --ink-overlay-8
 archive-tip.css .archive-tip-dismiss:hover background --ink-overlay-8
-base.css ::placeholder color --placeholder-ink
 base.css ::selection background --selection-bg
 chat.css .chat-bubble background --ink-overlay-4
 composer-context-meter.css .composer-context-meter-track stroke --context-meter-track
@@ -166,12 +165,12 @@ turns.css .project-empty-actions button:hover background --project-empty-actions
 turns.css .rich-file-link text-decoration-color --gray-550
 turns.css .rich-mermaid-error border-color --danger-border
 turns.css .rich-mermaid-error background --danger-soft
+turns.css .turn-artifact-gallery-toolbar .icon-button, .turn-artifact-image-toolbar .icon-button color --artifact-gallery-control-fg
+turns.css .turn-artifact-gallery-toolbar .icon-button:is(:hover, :active):not(:disabled), .turn-artifact-image-toolbar .icon-button:is(:hover, :active):not(:disabled) color --artifact-gallery-control-fg-hover
+turns.css .turn-artifact-gallery-toolbar::before, .turn-artifact-image-toolbar::before background --artifact-gallery-control-glow
 turns.css .turn-collapsed-marker background --ink-overlay-18
 turns.css .turn-process-toggle[role="button"]:hover :is(.turn-process-title, .turn-process-meta, .turn-process-chevron) color --activity-toggle-hover-color
 turns.css .turn-reasoning-summary:hover, .turn-reasoning-summary:focus-visible text-decoration-color --ink-overlay-18
-turns.css .turn-source-avatar background --ink-overlay-6
-turns.css .turn-sources-pill background --ink-overlay-6
-turns.css button.turn-sources-pill:hover, button.turn-sources-pill:focus-visible background --ink-overlay-8
 video-attachment.css .video-attachment-play color --video-attachment-play-color
 video-attachment.css .video-attachment-play-icon background --video-attachment-play-background
 video-attachment.css .video-attachment-play:hover .video-attachment-play-icon background --video-attachment-play-hover-background

@@ -1,3 +1,4 @@
+import { ArtifactPreviewContext } from "./ArtifactPreviewContext";
 import {
   forwardRef,
   useCallback,
@@ -158,7 +159,9 @@ export const SideThreadPanel = forwardRef<SideThreadPanelHandle, SideThreadPanel
               threadID={entry.summary?.side_thread_id ?? `side:${mainThreadId}`}
               turns={turns}
               renderTurn={(turn) => (
+                <ArtifactPreviewContext.Provider value={undefined}>
                 <TurnView
+                  threadID={entry.summary?.side_thread_id ?? `side:${mainThreadId}`}
                   turn={turn}
                   cwd={cwd}
                   onOpenFile={onOpenFile}
@@ -166,6 +169,7 @@ export const SideThreadPanel = forwardRef<SideThreadPanelHandle, SideThreadPanel
                   onStreamFrame={handleStreamFrame}
                   isLatestTurn={turn.id === latestTurn?.id}
                 />
+                </ArtifactPreviewContext.Provider>
               )}
             />
           </div>

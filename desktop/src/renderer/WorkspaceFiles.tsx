@@ -131,7 +131,9 @@ export function WorkspaceFileTree({
   const [directories, setDirectories] = useState<Record<string, WorkspaceDirectoryListResult>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>();
+  const [reloadGeneration, setReloadGeneration] = useState(0);
   const loadingDirectoriesRef = useRef(new Set<string>());
+  const directoryGenerationRef = useRef(0);
   const workspaceRoot = activeContext?.cwd;
   const selectedWorkspaceFilePath = useMemo(
     () => normalizeSelectedWorkspaceFilePath(selectedFilePath, workspaceRoot),
@@ -139,6 +141,8 @@ export function WorkspaceFileTree({
   );
 
   useEffect(() => {
+    directoryGenerationRef.current += 1;
+    loadingDirectoriesRef.current = new Set();
     if (!open || !workspaceRoot) {
       setDirectories({});
       setLoading(false);
@@ -156,8 +160,11 @@ export function WorkspaceFileTree({
     }).finally(() => {
       if (!cancelled) setLoading(false);
     });
-    return () => { cancelled = true; };
-  }, [open, workspaceRoot, locale]);
+    return () => {
+      cancelled = true;
+      directoryGenerationRef.current += 1;
+    };
+  }, [open, workspaceRoot, locale, reloadGeneration]);
 
   if (!workspaceRoot) {
     return <WorkspacePanelEmpty title={t("workspace.files.noWorkspace")} />;
@@ -168,7 +175,13 @@ export function WorkspaceFileTree({
   }
 
   if (error) {
-    return <WorkspacePanelEmpty title={t("workspace.files.readFailedTitle")} description={error} />;
+    return <WorkspacePanelEmpty
+      title={t("workspace.files.readFailedTitle")}
+      description={error}
+      action={<button type="button" className="secondary-button" onClick={() => setReloadGeneration(value => value + 1)}>
+        {t("appState.retryAction")}
+      </button>}
+    />;
   }
 
   const rootDirectory = directories[""];
@@ -180,18 +193,25 @@ export function WorkspaceFileTree({
     <div className="workspace-file-panel">
       {rootDirectory.truncated ? <div className="workspace-file-tree-limit">{t("workspace.files.truncated")}</div> : null}
       <WorkspaceFileTreeView
+        key={workspaceRoot}
         directories={directories}
         workspaceRoot={rootDirectory.root}
         selectedFilePath={selectedWorkspaceFilePath}
         onOpenFile={onOpenFile}
         onLoadDirectory={(path) => {
           if (directories[path] || loadingDirectoriesRef.current.has(path)) return;
-          loadingDirectoriesRef.current.add(path);
+          const generation = directoryGenerationRef.current;
+          const pending = loadingDirectoriesRef.current;
+          pending.add(path);
           void window.wuu.listWorkspaceDirectory(path, workspaceRoot).then((result) => {
-            setDirectories((current) => ({ ...current, [path]: result }));
+            if (directoryGenerationRef.current === generation) {
+              setDirectories((current) => ({ ...current, [path]: result }));
+            }
           }).catch((nextError) => {
-            setError(desktopApiErrorMessage(nextError, translateCurrent("workspace.files.readDirectoryFailed")));
-          }).finally(() => loadingDirectoriesRef.current.delete(path));
+            if (directoryGenerationRef.current === generation) {
+              setError(desktopApiErrorMessage(nextError, translateCurrent("workspace.files.readDirectoryFailed")));
+            }
+          }).finally(() => pending.delete(path));
         }}
       />
     </div>
@@ -713,7 +733,13 @@ export function WorkspaceFilePreview({
   const fallback = loading ? (
       <WorkspacePanelEmpty title={t("workspace.files.opening")} />
     ) : error ? (
-      <WorkspacePanelEmpty title={t("workspace.files.openFailedTitle")} description={error} />
+      <WorkspacePanelEmpty
+        title={t("workspace.files.openFailedTitle")}
+        description={error}
+        action={<button type="button" className="secondary-button" onClick={() => setPresenterReloadKey(value => value + 1)}>
+          {t("appState.retryAction")}
+        </button>}
+      />
     ) : !file ? (
       <WorkspacePanelEmpty title={t("workspace.files.noContent")} />
     ) : file.renderable_url ? (

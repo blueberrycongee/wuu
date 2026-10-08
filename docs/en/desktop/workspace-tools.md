@@ -15,6 +15,10 @@ These shortcuts apply to Wuu windows, not embedded browser pages.
 
 Open **Files** or enter `/files` to browse the workspace. Select a file to view supported text, code, images, or documents. This view follows the current file, not its content at the time of an earlier message.
 
+In a single conversation, opening a workspace file keeps the conversation visible and places its input at the bottom of the right preview. Requests from this input include the selected file as context. The draft belongs to the conversation: closing the preview returns it to the conversation input. Use the preview’s conversation menu to return to the full conversation, or minimize and restore the floating input while reading. The optional full-panel button gives the document more space.
+
+For a PDF delivered in the current conversation, the preview input sends that exact snapshot as a PDF attachment. Workspace-file previews instead identify the selected file by its workspace path. Switching to another tool removes the preview’s implicit file context from subsequent requests.
+
 ### Agent file search
 
 The agent's `grep` and `glob` tools search current files when `offset` is omitted or `0`. This also applies after external edits or reopening a conversation; a previous search cache does not establish that files are unchanged.

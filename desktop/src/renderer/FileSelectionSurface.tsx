@@ -191,10 +191,25 @@ export function FileSelectionSurface({ workspace, path, text, active = true, chi
     window.addEventListener("resize", place);
     document.addEventListener("scroll", place, true);
     document.addEventListener("file-selection-layout", place);
+    // A sheet transform moves the source without resizing it. Its final
+    // position must replace any anchor sampled while the sheet was in flight.
+    const finishMovement = (event: TransitionEvent) => {
+      if (event.propertyName === "transform" && event.target instanceof Element &&
+        host.current && event.target.contains(host.current)) place();
+    };
+    document.addEventListener("transitionend", finishMovement, true);
+    document.addEventListener("transitioncancel", finishMovement, true);
     const observer = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(place);
     observer?.observe(host.current);
     if (popup.current) observer?.observe(popup.current);
-    return () => { window.removeEventListener("resize", place); document.removeEventListener("scroll", place, true); document.removeEventListener("file-selection-layout", place); observer?.disconnect(); };
+    return () => {
+      window.removeEventListener("resize", place);
+      document.removeEventListener("scroll", place, true);
+      document.removeEventListener("file-selection-layout", place);
+      document.removeEventListener("transitionend", finishMovement, true);
+      document.removeEventListener("transitioncancel", finishMovement, true);
+      observer?.disconnect();
+    };
   }, [enabled, current, form?.kind, Boolean(position), stale]);
 
   useEffect(() => { if (form) textarea.current?.focus({ preventScroll: true }); }, [form?.kind, form?.id, Boolean(position)]);

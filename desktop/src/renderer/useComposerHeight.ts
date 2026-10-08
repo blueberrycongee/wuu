@@ -14,7 +14,18 @@ export function useComposerHeight(ref: RefObject<HTMLTextAreaElement | null>, ex
     }
 
     const scrollTop = input.scrollTop;
+    if (stack.dataset.documentComposer) {
+      delete stack.dataset.multiline;
+    }
     input.style.height = "0px";
+    // Measure each document draft at its compact width before deciding whether
+    // it wraps. Using the wider stacked editor would alternate layouts; this
+    // also lets deleting back to one line collapse without clearing the draft.
+    // Placeholder text must fit too, even before the user enters a draft.
+    if (stack.dataset.documentComposer
+      && input.scrollHeight > input.offsetHeight + 1) {
+      stack.dataset.multiline = "true";
+    }
     const baseInputHeight = input.offsetHeight;
     const baseComposerHeight = composer.offsetHeight;
     const chromeHeight = baseComposerHeight - baseInputHeight;
@@ -22,7 +33,8 @@ export function useComposerHeight(ref: RefObject<HTMLTextAreaElement | null>, ex
     const style = getComputedStyle(input);
     const borderHeight = parseFloat(style.borderTopWidth) + parseFloat(style.borderBottomWidth);
     const maximum = Math.max(baseInputHeight, parseFloat(style.maxHeight));
-    const desired = expanded ? maximum : input.value ? input.scrollHeight + borderHeight : baseInputHeight;
+    const desired = expanded ? maximum
+      : input.value || stack.dataset.documentComposer ? input.scrollHeight + borderHeight : baseInputHeight;
     input.style.height = `${Math.max(baseInputHeight, Math.min(maximum, desired))}px`;
     input.scrollTop = scrollTop;
 

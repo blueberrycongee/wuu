@@ -74,22 +74,21 @@
   overflow: hidden;
   border-left: 1px solid transparent;
   background: var(--paper);
-  opacity: 0;
-  transform: translate3d(18px, 0, 0) scale(0.988);
-  transform-origin: right center;
-  will-change: opacity, transform;
-  transition:
-    border-color var(--workspace-panel-motion-duration) var(--workspace-panel-motion-ease),
-    opacity var(--workspace-panel-motion-duration) var(--workspace-panel-motion-ease),
-    transform var(--workspace-panel-motion-duration) var(--workspace-panel-motion-ease);
+  /* Docked content keeps its final width while the shell clips its column.
+     Sheet transitions retain their own transforms in sidebar.css. */
+  transition: border-color var(--workspace-panel-motion-duration) var(--workspace-panel-motion-ease);
   pointer-events: none;
 }
 
 .right-panel-open .workspace-right-panel {
   border-left-color: var(--hairline-soft);
-  opacity: 1;
-  transform: translate3d(0, 0, 0) scale(1);
   pointer-events: auto;
+}
+
+.workspace-right-panel:not(.compact-navigation):not([data-sheet]),
+.workspace-right-panel:not(.compact-navigation)[data-sheet="docking"] {
+  width: var(--workspace-right-panel-width, 360px);
+  justify-self: start;
 }
 
 .workspace-panel-tabbar {
@@ -98,10 +97,11 @@
   height: var(--window-titlebar-height);
   align-items: center;
   gap: 4px;
+  background: var(--surface-1);
   box-shadow: inset 0 -1px 0 var(--hairline-soft);
-  /* The docked panel sits at the window's right edge, so the tabbar is
-   * what clears the Windows controls overlay; a no-op elsewhere. */
-  padding: 0 max(var(--control-toolbar-inset), var(--window-controls-inset-right)) 0 8px;
+  /* Clear native window controls and reserve the shell-owned sidebar toggle,
+     including while the reading canvas is a full-width sheet. */
+  padding: 0 calc(max(var(--control-toolbar-inset), var(--window-controls-inset-right)) + var(--control-size-toolbar) + 4px) 0 8px;
   -webkit-app-region: drag;
   position: relative;
   z-index: 1;
@@ -403,7 +403,6 @@
   margin-left: -4px;
 }
 
-.workspace-panel-close,
 .workspace-panel-add,
 .workspace-panel-globalize {
   width: var(--control-size-toolbar);
@@ -411,55 +410,47 @@
   flex: 0 0 auto;
 }
 
+/* One strip for the dock and the full-width reading canvas. The selected
+ * tab meets the content edge; only the unused space above it drags the window. */
 .workspace-panel-tabs {
+  container-type: inline-size;
   display: flex;
   flex: 1 1 auto;
   min-width: 0;
-  align-items: center;
-  gap: 3px;
+  align-self: stretch;
+  align-items: stretch;
+  gap: 0;
+  padding-top: 7px;
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: none;
-  /* Inherits -webkit-app-region: drag from .workspace-panel-tabbar so the
-   * gap between tabs stays part of the window drag strip. The inner
-   * `.workspace-panel-tabbar button` / `button *` rules below opt individual
-   * tab controls out so clicks on a tab label or the close button still
-   * reach React. */
 }
 
 .workspace-panel-tabs::-webkit-scrollbar {
   display: none;
 }
 
-/* Tabs share the strip and shrink to their icon before it scrolls: a narrow
- * inactive tab gives up its close button, then its label (queries below).
- * The active tab keeps room for its name and close button. */
 .workspace-tool-tab {
-  container: workspace-tab / inline-size;
   display: flex;
   position: relative;
-  min-width: calc(var(--icon-size) + var(--space-3) * 2);
-  max-width: 200px;
-  height: var(--control-size-toolbar);
-  /* Uniform widths, matching the session strip. Also load-bearing for drag
-   * reorder: horizontalListSortingStrategy assumes equal-size items, and the
-   * old content-width tabs (flex: 0 1 auto) made mid-drag sibling offsets
-   * wrong — overlap/jitter while dragging, then a jump on drop. */
+  /* Reserve title and close lanes before scrolling, but never make one tab
+   * wider than the strip left by the dock's toolbar/native controls. Equal
+   * widths keep horizontal drag sorting stable in both pane sizes. */
+  min-width: min(100cqw, calc(4em + var(--icon-size) + var(--control-size-inline) + 24px));
+  max-width: 220px;
+  height: 100%;
   flex: 1 1 0%;
   align-items: center;
-  border: 0;
-  border-radius: var(--radius-xs);
+  box-sizing: border-box;
+  border: 1px solid transparent;
+  border-bottom: 0;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
   background: transparent;
   color: var(--ink-soft);
   overflow: hidden;
-  /* Inherits -webkit-app-region: drag from .workspace-panel-tabbar so the
-   * 8px strip above/below the tab (and the 2px gap between tabs) stays
-   * draggable when tabs are open. The tab's inner button keeps the
-   * `.workspace-panel-tabbar button` no-drag override so click to select /
-   * close still works. */
+  -webkit-app-region: no-drag;
   transition:
     background-color var(--motion-fast) var(--ease-out),
-    box-shadow var(--motion-fast) var(--ease-out),
     color var(--motion-fast) var(--ease-out),
     transform var(--motion-fast) var(--ease-out),
     max-width var(--motion-base) var(--ease-out),
@@ -524,10 +515,13 @@
 }
 
 .workspace-tool-tab-drag-overlay {
+  /* The portal is outside the strip's query container; use its measured width. */
+  min-width: 0;
+  max-width: none;
   cursor: grabbing;
   opacity: 0.98;
   pointer-events: none;
-  transform: scale(1.025);
+  height: calc(var(--window-titlebar-height) - 7px);
   box-shadow: var(--shadow-pop);
 }
 
@@ -538,10 +532,8 @@
 .workspace-tool-tab.active,
 .workspace-tool-tab.active:hover,
 .workspace-tool-tab.active:focus-within {
-  /* Share the session strip selection treatment. Room for the icon, a short
-   * name (about four characters) and the close button. */
-  min-width: calc(var(--space-3) + var(--icon-size) + 4em + var(--control-size-inline) + var(--space-3));
-  background: var(--surface-3);
+  border-color: var(--hairline-soft);
+  background: var(--paper);
   color: var(--ink-strong);
 }
 
@@ -556,8 +548,7 @@
   background: transparent;
   color: inherit;
   cursor: inherit;
-  /* With the strip's own inset, the first icon sits on the pane inset. */
-  padding: 0 var(--space-1) 0 var(--space-3);
+  padding: 0 var(--space-1) 0 10px;
   text-align: left;
 }
 
@@ -565,12 +556,13 @@
   flex: 0 0 auto;
 }
 
-.workspace-tool-tab-main span {
+.workspace-tool-tab-main > span:not(.workspace-tab-dirty-indicator) {
+  flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   color: inherit;
   font-size: var(--font-ui);
-  font-weight: var(--weight-medium);
+  font-weight: var(--weight-regular);
   line-height: 1;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -588,11 +580,11 @@
   display: grid;
   flex: 0 0 auto;
   place-items: center;
-  border-radius: var(--radius-pill);
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--ink-tertiary);
   cursor: pointer;
-  margin-right: 2px;
+  margin-right: 4px;
   opacity: 0;
   transition:
     background-color var(--motion-fast) var(--ease-out),
@@ -610,23 +602,6 @@
 .workspace-tool-tab-close:focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: -2px;
-}
-
-@container workspace-tab (max-width: 84px) {
-  .workspace-tool-tab:not(.active) .workspace-tool-tab-close {
-    display: none;
-  }
-}
-
-@container workspace-tab (max-width: 56px) {
-  .workspace-tool-tab-main {
-    justify-content: center;
-    padding: 0;
-  }
-
-  .workspace-tool-tab-main > span:not(.workspace-tab-dirty-indicator) {
-    display: none;
-  }
 }
 
 .workspace-tool-tab:hover .workspace-tool-tab-close,
@@ -651,9 +626,9 @@
   min-width: 2px;
 }
 
-@container (min-width: 720px) {
-  .workspace-tool-tab {
-    max-width: 248px;
+@media (hover: none) {
+  .workspace-tool-tab-close {
+    opacity: 1;
   }
 }
 
@@ -814,6 +789,8 @@
 }
 
 .workspace-files-content {
+  --workspace-reading-gutter: clamp(var(--pane-inset), 4cqi, 44px);
+  container-type: inline-size;
   position: relative;
   grid-row: 1;
 }
@@ -894,6 +871,7 @@ html.resizing-workspace-file-split * {
   position: relative;
   grid-row: 1;
   flex-direction: column;
+  background: var(--surface-1);
 }
 
 .workspace-files-split[data-tree-side="right"] .workspace-files-tree {
@@ -1004,6 +982,10 @@ html.resizing-workspace-file-split * {
   min-height: 0;
 }
 
+.workspace-artifact-document {
+  position: relative;
+}
+
 .workspace-document-composer,
 .skills-assistant-composer {
   position: absolute;
@@ -1011,7 +993,7 @@ html.resizing-workspace-file-split * {
   right: 0;
   bottom: 0;
   left: 0;
-  padding: 0 clamp(20px, 4vw, 72px) 24px;
+  padding: 0 var(--workspace-reading-gutter, clamp(20px, 4vw, 72px)) var(--space-6);
   pointer-events: none;
 }
 
@@ -1029,115 +1011,6 @@ html.resizing-workspace-file-split * {
 
 .conversation-pane.skills-assistant-visible .skills-scroll-region {
   padding-bottom: 132px;
-}
-
-.workspace-document-turn-dock {
-  display: grid;
-  width: min(100%, var(--session-composer-width));
-  margin: 0 auto;
-  pointer-events: none;
-}
-
-.workspace-document-turn-drawer {
-  position: relative;
-  z-index: 0;
-  width: calc(100% - 48px);
-  max-height: 32px;
-  margin: 0 auto -6px;
-  overflow: hidden;
-  color: var(--ink);
-  background: var(--conversation-floating-surface-bg);
-  /* Match the composer and its pending-message drawer in every open state. */
-  border: 1px solid var(--hairline-soft);
-  border-bottom: 0;
-  border-radius: var(--radius-md) var(--radius-md) 0 0;
-  box-shadow: var(--shadow-tray);
-  pointer-events: auto;
-  transition:
-    max-height var(--motion-base) var(--ease-out),
-    transform var(--motion-fast) var(--ease-out),
-    translate var(--motion-fast) var(--ease-out),
-    border-color var(--motion-fast) var(--ease-out),
-    box-shadow var(--motion-fast) var(--ease-out);
-}
-
-.workspace-document-turn-drawer.expanded {
-  max-height: min(34vh, 280px);
-  z-index: 4;
-  translate: 0 -6px;
-  border-radius: var(--radius-md) var(--radius-md) 0 0;
-  box-shadow: var(--shadow-tray);
-}
-
-.workspace-document-turn-drawer:not(.expanded):hover,
-.workspace-document-turn-drawer:not(.expanded):focus-within {
-  z-index: 3;
-  translate: 0 -2px;
-  box-shadow: var(--shadow-tray);
-}
-
-.workspace-document-turn-summary {
-  position: relative;
-  z-index: 1;
-  display: grid;
-  width: 100%;
-  height: 32px;
-  grid-template-columns: minmax(0, 1fr) 28px;
-  column-gap: 12px;
-  align-items: center;
-  margin-left: auto;
-  justify-items: end;
-  padding: 0 12px 0 0;
-  color: inherit;
-  background: transparent;
-}
-
-/* The question being answered carries the product's one live-text wave,
- * which also owns its reduced-motion behaviour. */
-.workspace-document-turn-waiting-query {
-  grid-column: 1;
-  max-width: calc(100% - 18px);
-  min-width: 0;
-  margin-left: 18px;
-  overflow: hidden;
-  justify-self: start;
-  color: var(--ink-soft);
-  font-size: var(--font-ui);
-  line-height: 1.4;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.workspace-document-turn-summary svg {
-  grid-column: 2;
-  justify-self: center;
-  color: var(--ink-tertiary);
-}
-
-.workspace-document-turn-details {
-  display: grid;
-  max-height: min(34vh, 280px);
-  margin-top: -32px;
-  padding: 18px 52px 28px 18px;
-  overflow-y: auto;
-  background: transparent;
-  overscroll-behavior: contain;
-}
-
-.workspace-document-turn-result {
-  min-width: 0;
-  padding: 2px 2px 0;
-  color: var(--ink);
-}
-
-.workspace-document-turn-result > .rich-content + .rich-content {
-  margin-top: 14px;
-}
-
-.workspace-document-turn-composer {
-  position: relative;
-  z-index: 10;
-  pointer-events: none;
 }
 
 .workspace-document-composer .dock-composer-wrap {
@@ -1161,11 +1034,11 @@ html.resizing-workspace-file-split * {
 
 .workspace-right-panel.document-focus .workspace-file-code-scroll,
 .workspace-right-panel.document-focus .workspace-file-editor-scroll.markdown-reading {
-  scroll-padding-bottom: 180px;
+  scroll-padding-bottom: var(--workspace-document-composer-inset, 180px);
 }
 
 .workspace-right-panel.document-focus .workspace-markdown-reading {
-  padding-bottom: 180px;
+  padding-bottom: var(--workspace-document-composer-inset, 180px);
 }
 
 .workspace-tool-menu {
@@ -1926,11 +1799,11 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
 
 /* The side inset follows the panel, not the window. */
 .workspace-markdown-reading {
-  width: min(100%, 820px);
+  width: min(100%, calc(var(--session-composer-width) + 2 * var(--workspace-reading-gutter, 44px)));
   min-height: 100%;
   color: var(--ink);
   margin: 0 auto;
-  padding: var(--space-6) clamp(var(--pane-inset), 6cqi, 44px) 56px;
+  padding: var(--space-6) var(--workspace-reading-gutter, clamp(var(--pane-inset), 6cqi, 44px)) 56px;
 }
 
 .workspace-markdown-reading .rich-content {
