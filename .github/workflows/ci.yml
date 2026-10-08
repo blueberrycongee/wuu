@@ -8,6 +8,7 @@ on:
   push:
     branches:
       - main
+      - feat/v2-workbench
     paths-ignore:
       - "docs/**"
       - "docs-site/**"
