@@ -38,7 +38,7 @@ async function run() {
 
   await loadFile(win, rendererHtml);
   await waitFor(win, () => Boolean(document.querySelector(".conversation-pane")), 5000);
-  await waitFor(win, () => Boolean(document.querySelector(".session-tab.active")), 5000);
+  await waitFor(win, () => Boolean(document.querySelector(".turn")), 5000);
   await openFilesTool(win);
 
   await waitFor(

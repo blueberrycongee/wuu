@@ -14,6 +14,12 @@ import type {
   WuuDesktopApi,
 } from "../shared/protocol";
 
+// Exercise the retained panel interactions while the product entry point is hidden.
+vi.mock("./FeatureFlags", async (importOriginal) => ({
+  ...await importOriginal<typeof import("./FeatureFlags")>(),
+  ENABLE_ENVIRONMENT_PANEL: true,
+}));
+
 const turnListFixture = vi.hoisted(() => ({ renderTurns: false }));
 
 vi.mock("./ConversationTurnList", () => ({

@@ -235,60 +235,6 @@ async function run() {
     'Current workspace metadata must not be inserted ahead of historical messages.');
   await capture(main, '04-conversation-without-worktree-banner.png');
   await waitFor(main, () => document.querySelector('.composer-send-button[data-wuu-state="send"]'));
-  await evaluate(main, () => {
-    const toggle = document.querySelector('.environment-toggle-button');
-    if (!toggle.classList.contains('active')) toggle.click();
-  });
-  await waitFor(main, () => document.querySelector('.environment-panel.open .fork-worktree-card'));
-  await click(main, '.environment-panel .fork-worktree-summary');
-  assert(await evaluate(main, root => document.querySelector('.environment-panel .fork-worktree-meta')?.textContent.includes(root), thread.cwd));
-  await capture(main, '04a-current-worktree-info.png');
-  const inspectorGeometry = [];
-  for (const theme of ['light', 'dark']) for (const fontSize of [14, 20]) for (const width of [1280, 760]) {
-    // Close before resizing; the shell applies deferred panel-fit changes at
-    // resize settlement, so reopening earlier can race its dismissal.
-    await click(main, '.environment-panel-close-row button');
-    await waitFor(main, () => !document.querySelector('.environment-panel'));
-    await setAppearance(main, { theme, fontSize, width });
-    await click(main, '.environment-toggle-button');
-    await waitFor(main, () => document.querySelector('.environment-panel.open .fork-worktree-card'));
-    for (const expanded of [false, true]) {
-      await evaluate(main, expanded => {
-        const card = document.querySelector('.fork-worktree-card');
-        if (card.open !== expanded) card.querySelector('summary').click();
-      }, expanded);
-      await settle(main);
-      await evaluate(main, () => Promise.all([...document.querySelectorAll('.environment-panel, .fork-worktree-chevron')]
-        .flatMap(node => node.getAnimations()).map(animation => animation.finished.catch(() => {}))));
-      const geometry = await evaluate(main, () => {
-        const panel = document.querySelector('.environment-panel');
-        const summary = panel.querySelector('.fork-worktree-summary').getBoundingClientRect();
-        const close = panel.querySelector('.environment-panel-close-row button').getBoundingClientRect();
-        const rect = panel.getBoundingClientRect();
-        return {
-          summaryRight: summary.right, closeLeft: close.left, closeWidth: close.width, closeHeight: close.height,
-          closeCount: panel.querySelectorAll('.environment-panel-close-row button').length,
-          inside: rect.left >= 0 && rect.right <= innerWidth && rect.top >= 0 && rect.bottom <= innerHeight,
-          crop: { x: Math.floor(rect.x), y: Math.floor(rect.y), width: Math.ceil(rect.width), height: Math.ceil(rect.height) },
-        };
-      });
-      assert.equal(geometry.closeCount, 1, 'The inspector has one dismissal control.');
-      assert(geometry.summaryRight <= geometry.closeLeft, 'The worktree disclosure must not overlap the close button.');
-      assert(geometry.closeWidth >= 28 && geometry.closeHeight >= 28 && geometry.inside, 'The close target stays usable and inside the panel.');
-      inspectorGeometry.push({ theme, fontSize, width, expanded, ...geometry });
-      // Closed metadata keeps temporary fixture paths out of the shareable crop.
-      if (!expanded) fs.writeFileSync(path.join(output, `worktree-panel-${theme}-${fontSize}-${width}.png`),
-        await captureCrop(main, geometry.crop));
-    }
-  }
-  await click(main, '.environment-panel-close-row button');
-  main.setSize(1280, 820);
-  await evaluate(main, () => {
-    document.documentElement.dataset.theme = 'light';
-    document.documentElement.style.removeProperty('--conversation-message-font-size');
-    document.documentElement.style.removeProperty('--appearance-scale');
-  });
-
   // Explicit selection must beat the built-in control command and use this checkout.
   await waitFor(main, () => document.querySelector('.composer-send-button[data-wuu-state="send"]'));
   main.focus();
@@ -521,7 +467,6 @@ async function run() {
     thread: { id: thread.id, cwd: thread.cwd, worktree: thread.worktree },
     narrow,
     forkDismissals,
-    inspectorGeometry,
     providerRequests: requests.length,
     workspaceRebind: { cwd: rebound.cwd, chronologyVerified: true },
     crossProject,
