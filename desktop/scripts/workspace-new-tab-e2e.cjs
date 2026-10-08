@@ -185,7 +185,7 @@ app.whenReady().then(async () => {
   await click('[data-wuu-destination="files"]');
   await waitFor(() => document.querySelector('.workspace-right-panel').dataset.navigationMode === "files");
   await waitFor(() => document.querySelector('.files-navigation-sidebar select')?.selectedOptions[0]?.textContent === "Tabbar demo");
-  await waitFor(() => document.querySelector('.files-navigation-tree')?.textContent.includes("README.md"));
+  await waitFor(() => Boolean(document.querySelector('.files-navigation-tree file-tree-container')?.shadowRoot?.querySelector('[data-item-path="README.md"]')));
   await waitFor(() => document.querySelector('.workspace-markdown-reading')?.textContent.includes("Workspace navigation notes"));
   for (const theme of ["light", "dark"]) {
     for (const size of [14, 20]) {
