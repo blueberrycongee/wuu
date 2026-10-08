@@ -159,6 +159,91 @@ func TestEngineEndToEndFakeClaude(t *testing.T) {
 
 }
 
+func TestEngineResumeSkipsTaskNotificationResults(t *testing.T) {
+	binary := buildFakeClaude(t)
+	for _, tc := range []struct {
+		name, wantContent, wantError string
+	}{
+		{name: "success", wantContent: "Hello from claude."},
+		{name: "text", wantContent: "Hello from claude."},
+		{name: "error", wantContent: "Hello from claude."},
+		{name: "turn_error", wantError: "fake failure"},
+		{name: "exit", wantError: "claude exited"},
+		{name: "empty_turn"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			engine := NewEngine(binary, t.TempDir())
+			sess, err := engine.Resume(context.Background(), agentengine.ResumeRequest{
+				ExternalSessionRef: "notification-session",
+			})
+			if err != nil {
+				t.Fatalf("Resume: %v", err)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			var events []providers.StreamEvent
+			result, err := sess.RunTurn(ctx, agentengine.TurnInput{
+				History: []providers.ChatMessage{{Role: "user", Content: "task_notification_" + tc.name}},
+			}, func(event providers.StreamEvent) {
+				if event.Usage != nil {
+					usage := *event.Usage
+					event.Usage = &usage
+				}
+				events = append(events, event)
+			})
+			if tc.wantError != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantError) || result.Result.FinishReason != providers.FinishReasonError {
+					t.Fatalf("RunTurn = %+v, %v, want error %q", result, err, tc.wantError)
+				}
+			} else if err != nil || result.Result.FinishReason != providers.FinishReasonStop {
+				t.Fatalf("RunTurn = %+v, %v, want successful user turn", result, err)
+			}
+			if result.Result.Content != tc.wantContent {
+				t.Fatalf("content = %q, want user reply %q", result.Result.Content, tc.wantContent)
+			}
+			if tc.wantContent != "" {
+				messages := result.Result.NewMessages
+				if len(messages) != 1 || messages[0].Role != "assistant" || messages[0].Content != tc.wantContent {
+					t.Fatalf("assistant reply missing from history: %+v", messages)
+				}
+			}
+			var visible strings.Builder
+			doneEvents, errorEvents, usageEvents := 0, 0, 0
+			for _, event := range events {
+				switch event.Type {
+				case providers.EventContentDelta:
+					visible.WriteString(event.Content)
+				case providers.EventContentReplace:
+					visible.Reset()
+					visible.WriteString(event.Content)
+				case providers.EventDone:
+					doneEvents++
+				case providers.EventError:
+					errorEvents++
+				case providers.EventUsage:
+					usageEvents++
+					if event.Usage == nil || event.Usage.InputTokens != 80 || event.Usage.OutputTokens != 12 {
+						t.Fatalf("notification usage leaked into user turn: %+v", event.Usage)
+					}
+				}
+			}
+			if visible.String() != tc.wantContent {
+				t.Fatalf("visible content = %q, want %q", visible.String(), tc.wantContent)
+			}
+			wantDone, wantErrors := 1, 0
+			if tc.wantError != "" {
+				wantDone, wantErrors = 0, 1
+			}
+			if doneEvents != wantDone || errorEvents != wantErrors {
+				t.Fatalf("terminal events = %d done, %d errors, want %d/%d", doneEvents, errorEvents, wantDone, wantErrors)
+			}
+			if tc.name != "exit" && (usageEvents == 0 || result.Result.InputTokens != 80 || result.Result.OutputTokens != 12) {
+				t.Fatalf("user turn usage lost: %+v", result.Result)
+			}
+		})
+	}
+}
+
 func TestEngineMissingBinaryFailsClearly(t *testing.T) {
 	engine := NewEngine(filepath.Join(t.TempDir(), "no-such-claude"), t.TempDir())
 	// Open is lazy (the child spawns on the first turn), so the missing

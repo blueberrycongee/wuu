@@ -107,7 +107,7 @@ type tokenUsage struct {
 	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
 }
 
-// resultMessage is the per-turn terminal result line.
+// resultMessage is a result for user input or a background task notification.
 type resultMessage struct {
 	Type       string      `json:"type"`
 	Subtype    string      `json:"subtype,omitempty"`
@@ -116,7 +116,10 @@ type resultMessage struct {
 	Result     string      `json:"result,omitempty"`
 	Errors     []string    `json:"errors,omitempty"`
 	Usage      *tokenUsage `json:"usage,omitempty"`
-	Error      *struct {
+	Origin     *struct {
+		Kind string `json:"kind"`
+	} `json:"origin,omitempty"`
+	Error *struct {
 		Message string `json:"message,omitempty"`
 	} `json:"error,omitempty"`
 }

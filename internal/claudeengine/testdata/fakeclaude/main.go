@@ -81,6 +81,41 @@ func main() {
 			sendResult(false, "Input captured")
 			continue
 		}
+		if prompt, ok := envelope.Message.Content.(string); ok && strings.HasPrefix(prompt, "task_notification_") {
+			if resumeID != "notification-session" {
+				panic("task notification scenario requires --resume notification-session")
+			}
+			send(map[string]any{
+				"type": "system", "subtype": "task_notification", "status": "stopped",
+				"task_id": "previous-agent", "session_id": resumeID,
+			})
+			result := map[string]any{
+				"type": "result", "subtype": "success", "is_error": false,
+				"num_turns": 0, "result": "", "origin": map[string]any{"kind": "task-notification"},
+				"usage": map[string]any{"input_tokens": 0, "output_tokens": 0},
+			}
+			switch prompt {
+			case "task_notification_text":
+				result["result"] = "Previous agent completed."
+			case "task_notification_error":
+				result["subtype"] = "error_during_execution"
+				result["is_error"] = true
+				result["errors"] = []string{"Previous agent stopped."}
+			}
+			send(result)
+			if prompt == "task_notification_exit" {
+				return
+			}
+			send(map[string]any{"type": "system", "subtype": "init", "session_id": resumeID})
+			switch prompt {
+			case "task_notification_turn_error":
+				sendResult(true, "")
+				continue
+			case "task_notification_empty_turn":
+				sendResult(false, "")
+				continue
+			}
+		}
 		if strings.Contains(line, "wait_forever") {
 			send(map[string]any{
 				"type": "stream_event",

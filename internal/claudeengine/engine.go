@@ -158,7 +158,7 @@ type Session struct {
 }
 
 // RunTurn sends one user prompt and translates the claude stream into Wuu
-// events. It blocks until the result line or the context is canceled.
+// events. It blocks until the user input's result or the context is canceled.
 func (s *Session) RunTurn(ctx context.Context, input agentengine.TurnInput, sink agentengine.EventSink) (agentengine.TurnResult, error) {
 	if s == nil || s.engine == nil {
 		return agentengine.TurnResult{}, errors.New("claude session is not configured")
@@ -925,6 +925,11 @@ func (sub *turnSubscription) handleResult(envelope claudeLine) {
 		protocolErr := fmt.Errorf("invalid terminal result: %w", err)
 		sub.emit(providers.StreamEvent{Type: providers.EventError, Error: protocolErr})
 		sub.finish(sub.loopResult(sub.text.String(), ""), protocolErr)
+		return
+	}
+	// Resuming a session can produce results for pending task notifications
+	// before Claude processes the user input. They do not complete this turn.
+	if res.Origin != nil && res.Origin.Kind == "task-notification" {
 		return
 	}
 	stopReason := firstNonEmpty(res.StopReason, envelope.StopReason)

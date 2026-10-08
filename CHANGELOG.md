@@ -30,6 +30,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Keep resumed Claude engine turns running when a background task notification
+  produces a result before the user's reply, preventing silent empty completion.
+
 - Retry failed file previews in place without closing or replacing the selected tab.
 
 - Restore complete conversation history after reload, including intermediate
