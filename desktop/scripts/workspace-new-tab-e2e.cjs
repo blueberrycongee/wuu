@@ -10,7 +10,8 @@ const desktop = path.resolve(__dirname, "..");
 const output = path.join(desktop, "out/workspace-new-tab-e2e");
 fs.mkdirSync(output, { recursive: true });
 app.setPath("userData", fs.mkdtempSync(path.join(output, "profile-")));
-process.env.WUU_STREAM_E2E_CWD = output;
+const workspaceRoot = "/workspace/tabbar-demo";
+process.env.WUU_STREAM_E2E_CWD = workspaceRoot;
 process.env.WUU_WORKSPACE_NEW_TAB_E2E = "1";
 protocol.registerSchemesAsPrivileged([{ scheme: "wuu-plugin", privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } }]);
 
@@ -21,7 +22,7 @@ app.whenReady().then(async () => {
     + "api.registerViewType({ id: 'notes', title: 'Workspace notes',"
     + "render: () => api.react.createElement('div', { 'data-workspace-e2e-notes': true }, 'Extension notes') });"
     + "}", { headers: { "Content-Type": "text/javascript", "Access-Control-Allow-Origin": "*" } }));
-  const win = new BrowserWindow({ width: 1440, height: 900, show: false, titleBarStyle: "hiddenInset",
+  const win = new BrowserWindow({ width: 1440, height: 900, useContentSize: true, show: false, titleBarStyle: "hiddenInset",
     webPreferences: { preload: path.join(__dirname, "streaming-e2e-preload.cjs"),
       contextIsolation: true, sandbox: false, backgroundThrottling: false } });
   win.webContents.on("console-message", ({ level, message }) => {
@@ -171,7 +172,7 @@ app.whenReady().then(async () => {
   });
   await waitFor(() => document.querySelector(".conversation-width")?.textContent.includes("Open workspace notes"));
   const threadID = "thread-immediate-title-e2e";
-  win.webContents.send("test:server-event", { workdir: output, kind: "notification", message: {
+  win.webContents.send("test:server-event", { workdir: workspaceRoot, kind: "notification", message: {
     method: "turn/completed", params: { thread_id: threadID, turn: {
       id: "turn-" + threadID, status: "completed", items_view: "full", items: [
         { id: "file-link", type: "agent_message", status: "completed",
@@ -183,6 +184,9 @@ app.whenReady().then(async () => {
   await waitFor(() => Boolean(document.querySelector('[data-wuu-view="file"]')));
   await click('[data-wuu-destination="files"]');
   await waitFor(() => document.querySelector('.workspace-right-panel').dataset.navigationMode === "files");
+  await waitFor(() => document.querySelector('.files-navigation-sidebar select')?.selectedOptions[0]?.textContent === "Tabbar demo");
+  await waitFor(() => document.querySelector('.files-navigation-tree')?.textContent.includes("README.md"));
+  await waitFor(() => document.querySelector('.workspace-markdown-reading')?.textContent.includes("Workspace navigation notes"));
   for (const theme of ["light", "dark"]) {
     for (const size of [14, 20]) {
       await evaluate(({ theme, size }) => {
@@ -216,8 +220,8 @@ app.whenReady().then(async () => {
         document.documentElement.style.setProperty("--font-ui", size + "px");
       }, { theme, size });
       for (const width of [1440, 1000, 560]) {
-        win.setSize(width, 900);
-        await waitFor((width) => window.innerWidth === width, width);
+        win.setContentSize(width, 900);
+        await waitFor((width) => window.innerWidth === width && window.innerHeight === 900, width);
         const geometry = await evaluate(() => {
           const menu = document.querySelector(".workspace-tool-menu");
           return { width: menu.getBoundingClientRect().width, clientWidth: menu.clientWidth, scrollWidth: menu.scrollWidth,
@@ -234,7 +238,7 @@ app.whenReady().then(async () => {
       }
     }
   }
-  win.setSize(560, 420);
+  win.setContentSize(560, 420);
   await waitFor(() => window.innerWidth === 560 && window.innerHeight === 420);
   const scroll = await evaluate(() => {
     const menu = document.querySelector(".workspace-tool-menu");
@@ -247,7 +251,7 @@ app.whenReady().then(async () => {
   assert.equal(await evaluate(() => document.querySelector(".workspace-panel-tabbar").getBoundingClientRect().y), scroll.headerY);
   results.push({ scenario: "short window scrolling with fixed header", geometry: scroll });
 
-  win.setSize(1440, 900);
+  win.setContentSize(1440, 900);
   await waitFor(() => window.innerWidth === 1440 && window.innerHeight === 900);
   await evaluate(() => {
     document.documentElement.dataset.theme = "light";
