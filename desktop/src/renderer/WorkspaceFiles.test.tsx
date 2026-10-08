@@ -545,6 +545,43 @@ describe("WorkspaceFileTree", () => {
     expect(container.textContent).toContain("button code");
   });
 
+  it.each([false, true])("retries a failed file read in place after a previous successful read: %s", async (previouslyLoaded) => {
+    const preview = (refreshKey: string, active = true) => (
+      <WorkspaceFilePreview
+        activeContext={activeContext}
+        selectedFilePath="/repo/src/components/Button.tsx"
+        refreshKey={refreshKey}
+        active={active}
+      />
+    );
+    if (previouslyLoaded) {
+      await render(preview("initial"));
+      await settleDirectoryLoads();
+    }
+    readWorkspaceFile.mockRejectedValueOnce(new Error("File temporarily unavailable"));
+    await render(preview("failed"));
+    await settleDirectoryLoads();
+    expect(container.textContent).toContain("File temporarily unavailable");
+
+    const readsBeforeRetry = readWorkspaceFile.mock.calls.length;
+    await render(preview("failed", false));
+    await render(preview("failed"));
+    expect(readWorkspaceFile).toHaveBeenCalledTimes(readsBeforeRetry);
+
+    readWorkspaceFile.mockResolvedValueOnce(workspaceFile({
+      path: "src/components/Button.tsx", text: "Recovered file content",
+    }));
+    const retry = container.querySelector<HTMLButtonElement>(".workspace-panel-empty button");
+    expect(retry).not.toBeNull();
+    await act(async () => retry!.click());
+    await settleDirectoryLoads();
+
+    expect(readWorkspaceFile).toHaveBeenCalledTimes(readsBeforeRetry + 1);
+    expect(readWorkspaceFile).toHaveBeenLastCalledWith("src/components/Button.tsx", "/repo");
+    expect(container.textContent).toContain("Recovered file content");
+    expect(container.textContent).not.toContain("File temporarily unavailable");
+  });
+
   it("exports the complete selected file and reports native save failures", async () => {
     const exporter = vi.fn().mockRejectedValue(new Error("Share destination unavailable"));
     window.wuu.exportWorkspaceFile = exporter;

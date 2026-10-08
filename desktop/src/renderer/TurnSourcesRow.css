@@ -1,0 +1,163 @@
+.turn-web-research {
+  interpolate-size: allow-keywords;
+  height: auto;
+  min-width: 0;
+  overflow: clip;
+  overflow-clip-margin: 4px;
+  margin-block: 2px 4px;
+  margin-inline-start: calc(var(--process-summary-icon-size) + var(--process-summary-icon-gap) - 4px);
+  transition: height var(--motion-slow) var(--ease-out), margin-block var(--motion-slow) var(--ease-out);
+}
+
+/* Give the result row room before its avatars settle into that room. History
+ * mounts at rest; only a live group's first receipt gets this starting pose. */
+@starting-style {
+  .turn-web-research.is-revealing { height: 0; margin-block: 0; }
+}
+
+.web-research-sources {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+}
+
+.web-source-link,
+.web-research-more {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  min-width: 32px;
+  height: 32px;
+  padding: 4px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--ink-soft);
+  font: inherit;
+  cursor: pointer;
+}
+
+.web-source-circle { width: 32px; }
+.web-research-more { gap: 3px; border-radius: var(--radius-pill); padding-inline: 7px; }
+.web-research-more svg {
+  width: 12px;
+  height: 12px;
+  transition: rotate var(--motion-slow) var(--ease-out);
+}
+.web-research-more[aria-expanded="true"] svg { rotate: 180deg; }
+.web-research-count {
+  margin-inline-start: 6px;
+  color: var(--ink-soft);
+  font-size: var(--font-ui);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.web-source-avatar {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+  border-radius: 50%;
+  border: 1px solid var(--hairline);
+  background: var(--paper);
+  color: var(--ink-soft);
+  font-size: var(--font-ui);
+  transition: transform var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out);
+}
+
+.web-source-avatar img {
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  opacity: 0;
+  transition: opacity var(--motion-fast) var(--ease-out);
+}
+.web-source-avatar img[data-loaded="true"] { opacity: 1; }
+.web-source-fallback { transition: opacity var(--motion-fast) var(--ease-out); }
+.web-source-fallback[data-loaded="true"] { opacity: 0; }
+
+.web-source-circle:hover .web-source-avatar {
+  transform: translateY(-2px);
+  border-color: var(--hairline-strong);
+}
+.web-research-more:hover { background: var(--ink-overlay-6); color: var(--ink); }
+.web-source-link:focus-visible,
+.web-research-more:focus-visible { outline: 2px solid var(--ink-soft); outline-offset: 1px; }
+
+.web-source-avatar.is-arriving {
+  animation: web-source-arrive var(--motion-slow) var(--ease-out) backwards;
+  animation-delay: calc(50ms + var(--source-order) * 35ms);
+}
+
+.web-research-expanded { margin: 0 0 10px; max-width: 100%; }
+.web-research-source-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.web-source-detail,
+.web-research-reveal {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  width: auto;
+  max-width: 100%;
+  min-width: 0;
+  min-height: 32px;
+  height: auto;
+  gap: 5px;
+  padding: 4px 9px 4px 5px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--ink-overlay-4);
+  color: var(--ink-soft);
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+.web-source-detail:hover,
+.web-research-reveal:hover { background: var(--menu-hover); color: var(--ink); }
+.web-source-detail .web-source-avatar { width: 20px; height: 20px; flex-basis: 20px; }
+.web-source-host { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--font-ui); }
+.web-research-reveal { padding-inline: 10px; font-size: var(--font-ui); }
+.web-research-reveal:focus-visible { outline: 2px solid var(--ink-soft); outline-offset: 1px; }
+@media (pointer: coarse) {
+  .web-source-detail, .web-research-reveal { min-height: 44px; }
+}
+
+@keyframes web-source-arrive {
+  from { opacity: 0; transform: translate(-6px, 3px) scale(0.78); }
+  70% { opacity: 1; transform: translate(0, 0) scale(1.045); }
+  to { opacity: 1; transform: none; }
+}
+
+.conversation-render-activity.is-reveal-snap .turn-web-research { transition: none; }
+
+@container style(--motion-reduced: 1) {
+  .web-source-avatar.is-arriving { animation: none; }
+  .web-source-circle:hover .web-source-avatar { transform: none; }
+  .web-research-more svg { transition: none; }
+}
+
+/* Source actions share the process header without nesting buttons in summary. */
+.process-surface-inline-controls { position: relative; min-width: 0; }
+.process-surface-inline-controls:has(.turn-web-research) > .process-surface-fold > .process-surface-row {
+  width: max-content;
+  max-width: calc(100% - var(--process-accessory-width, 0px) - 8px);
+  min-height: 32px;
+}
+.process-surface-summary-accessory { width: max-content; position: absolute; inset-block-start: 0; inset-inline-start: calc(var(--process-summary-width, 0px) + 8px); }
+.turn-web-research.is-inline { margin: 0; overflow: visible; height: auto; transition: none; }
+.turn-web-research.is-inline .web-research-sources { flex-wrap: nowrap; }
+.turn-web-research.is-inline .web-research-count { display: none; }
+@starting-style {
+  .turn-web-research.is-inline.is-revealing { height: auto; margin: 0; }
+}
+
+/* A search header may resize while focus moves between its independent
+ * controls. Its outer height-animation wrappers clip paint, not scrollable
+ * content; keep native focus from horizontally scrolling those wrappers. */
+.collapsible-details:has(.turn-web-research),
+.collapsible-details-inner:has(.turn-web-research) { overflow: clip; }

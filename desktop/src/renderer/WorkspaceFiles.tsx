@@ -733,7 +733,13 @@ export function WorkspaceFilePreview({
   const fallback = loading ? (
       <WorkspacePanelEmpty title={t("workspace.files.opening")} />
     ) : error ? (
-      <WorkspacePanelEmpty title={t("workspace.files.openFailedTitle")} description={error} />
+      <WorkspacePanelEmpty
+        title={t("workspace.files.openFailedTitle")}
+        description={error}
+        action={<button type="button" className="secondary-button" onClick={() => setPresenterReloadKey(value => value + 1)}>
+          {t("appState.retryAction")}
+        </button>}
+      />
     ) : !file ? (
       <WorkspacePanelEmpty title={t("workspace.files.noContent")} />
     ) : file.renderable_url ? (

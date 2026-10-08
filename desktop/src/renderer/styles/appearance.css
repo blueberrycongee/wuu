@@ -42,8 +42,7 @@
 .thread-row-context-menu,
 .workspace-tree-context-menu,
 .select-menu-panel,
-.codex-runtime-menu,
-.turn-source-overflow-list {
+.codex-runtime-menu {
   font-size: var(--font-menu);
   font-weight: var(--weight-medium);
 }

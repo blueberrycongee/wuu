@@ -1237,6 +1237,7 @@ export const enUS = {
   "turn.expandConversationTurn": "Expand this conversation turn",
   "turn.loadEarlierHistory": "Load earlier history",
   "turn.loadEarlier": "Load {count} earlier turns",
+  "sources.showLess": "Show less",
   "sources.label": "Source",
   "sources.labelCount": "Sources {count}",
   "sources.openNamed": "Open {name}",

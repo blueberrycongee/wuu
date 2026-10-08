@@ -1400,7 +1400,8 @@ export function browserActivityOpenURL(items: ThreadItem[]): string | undefined 
   return undefined;
 }
 
-export function collectTurnSources(items: ThreadItem[]): TurnSource[] {
+// Use URL identity for actionable source lists; host identity remains the legacy default.
+export function collectTurnSources(items: ThreadItem[], dedupeBy: "host" | "url" = "host"): TurnSource[] {
   const byHost = new Map<string, TurnSource>();
   for (const item of items) {
     if (item.type !== "tool_call") {
@@ -1413,7 +1414,7 @@ export function collectTurnSources(items: ThreadItem[]): TurnSource[] {
         if (!isRecord(hit)) continue;
         const url = stringValue(hit, "url");
         if (!url) continue;
-        addSource(byHost, { url, title: stringValue(hit, "title"), origin: "web_search" });
+        addSource(byHost, { url, title: stringValue(hit, "title"), origin: "web_search" }, dedupeBy);
       }
       continue;
     }
@@ -1422,7 +1423,7 @@ export function collectTurnSources(items: ThreadItem[]): TurnSource[] {
       const result = parseJSONRecord(item.result);
       const url = stringValue(args, "url") ?? stringValue(result, "url");
       if (!url) continue;
-      addSource(byHost, { url, origin: "web_fetch" });
+      addSource(byHost, { url, origin: "web_fetch" }, dedupeBy);
       continue;
     }
   }
@@ -1432,12 +1433,14 @@ export function collectTurnSources(items: ThreadItem[]): TurnSource[] {
 function addSource(
   byHost: Map<string, TurnSource>,
   candidate: Omit<TurnSource, "host">,
+  dedupeBy: "host" | "url",
 ): void {
   const host = normalizeHost(candidate.url);
   if (!host) return;
-  const existing = byHost.get(host);
+  const key = dedupeBy === "url" ? candidate.url : host;
+  const existing = byHost.get(key);
   if (!existing) {
-    byHost.set(host, { ...candidate, host });
+    byHost.set(key, { ...candidate, host });
     return;
   }
   // First-seen wins for the canonical URL, but upgrade title when the
@@ -1445,7 +1448,7 @@ function addSource(
   // when the first hit was a fetch with no title and a later search hit
   // surfaces a titled result for the same domain.
   if (!existing.title && candidate.title) {
-    byHost.set(host, { ...existing, title: candidate.title });
+    byHost.set(key, { ...existing, title: candidate.title });
   }
 }
 

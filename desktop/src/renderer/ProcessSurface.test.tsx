@@ -54,6 +54,49 @@ function makeBrowserNavigate(
   };
 }
 
+it("keeps source actions beside the aggregated disclosure without nesting buttons", () => {
+  const results = Array.from({ length: 8 }, (_, i) => ({ title: `Source ${i}`, url: `https://site-${i}.example.com/article` }));
+  const item: ThreadItem = { id: "web-sources", type: "tool_call", name: "web_search", status: "completed", arguments: '{"query":"motion"}', result: JSON.stringify({ results }) };
+  const onOpenURL = vi.fn();
+  const { container } = render({ processItems: [item], streaming: false, onOpenURL });
+  const header = container.querySelector(".process-surface-inline-controls")!;
+  expect(header).not.toBeNull();
+  const source = header.querySelector<HTMLButtonElement>(".web-source-link")!;
+  expect(source.closest("summary")).toBeNull();
+  expect(header.querySelector("summary .web-source-link")).toBeNull();
+  act(() => source.click());
+  expect(onOpenURL).toHaveBeenCalledExactlyOnceWith(results[0].url);
+  expect(header.querySelector("details")?.open).toBe(false);
+  act(() => header.querySelector<HTMLButtonElement>(".web-research-more")!.click());
+  expect(header.querySelector("details")?.open).toBe(true);
+  expect(header.querySelectorAll(".web-research-expanded .web-source-link")).toHaveLength(8);
+  expect(header.querySelector(".process-surface-tool-list")).not.toBeNull();
+  const chips = header.querySelectorAll<HTMLButtonElement>(".web-research-expanded .web-source-link");
+  act(() => { chips[0].focus(); chips[0].dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); });
+  expect(header.querySelector("details")?.open).toBe(false);
+  expect(document.activeElement).toBe(header.querySelector(".web-research-more"));
+  const summary = header.querySelector<HTMLElement>("summary")!;
+  act(() => summary.click());
+  act(() => header.querySelector("details")!.dispatchEvent(new Event("toggle")));
+  expect(header.querySelector(".web-research-more")?.getAttribute("aria-expanded")).toBe("true");
+  expect(header.querySelectorAll(".web-research-expanded .web-source-link")).toHaveLength(8);
+  expect(header.querySelectorAll(".process-surface-tool-list")).toHaveLength(1);
+  const first = header.querySelector<HTMLButtonElement>(".web-research-expanded .web-source-link")!;
+  act(() => { first.focus(); first.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); });
+  expect(document.activeElement).toBe(summary);
+});
+
+it("keeps its disclosure node and source receipt ledger when live search results arrive", () => {
+  const searching: ThreadItem = { id: "live-web", type: "tool_call", name: "web_search", status: "in_progress", arguments: '{"query":"motion"}' };
+  const { container } = render({ processItems: [searching], streaming: true, active: true });
+  const fold = container.querySelector(".process-surface-fold");
+  const summary = container.querySelector(".process-surface-row");
+  rerender({ processItems: [{ ...searching, status: "completed", result: JSON.stringify({ results: [{ title: "Motion", url: "https://example.com/motion" }] }) }], streaming: true, active: true });
+  expect(container.querySelector(".process-surface-fold")).toBe(fold);
+  expect(container.querySelector(".process-surface-row")).toBe(summary);
+  expect(container.querySelector(".web-source-avatar.is-arriving")).not.toBeNull();
+});
+
 it.each([
   { name: "exec", arguments: { command: "git status --short" }, source: "git status --short" },
   { name: "run_code", arguments: { code: "await tools.read_file({path: 'notes.md'});" }, source: "await tools.read_file({path: 'notes.md'});" },

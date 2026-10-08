@@ -13,6 +13,7 @@ app.setPath("userData", fs.mkdtempSync(path.join(output, "profile-")));
 const workspaceRoot = "/workspace/tabbar-demo";
 process.env.WUU_STREAM_E2E_CWD = workspaceRoot;
 process.env.WUU_WORKSPACE_NEW_TAB_E2E = "1";
+process.env.WUU_WORKSPACE_FILE_RETRY_E2E = "src/a-long-workspace-file-name-for-checking-new-page-truncation.md";
 protocol.registerSchemesAsPrivileged([{ scheme: "wuu-plugin", privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } }]);
 
 const results = [];
@@ -182,6 +183,17 @@ app.whenReady().then(async () => {
   } });
   await click(".conversation-width .rich-file-link");
   await waitFor(() => Boolean(document.querySelector('[data-wuu-view="file"]')));
+  await waitFor(() => document.querySelector(".workspace-file-resource.active .workspace-panel-empty")?.textContent.includes("File temporarily unavailable"));
+  const failedFileTabs = await tabs();
+  const failedResourceID = await evaluate(() => document.querySelector(".workspace-file-resource.active").dataset.workspaceTabId);
+  await capture("file-preview-read-failed");
+  await click(".workspace-file-resource.active .workspace-panel-empty button");
+  await waitFor(() => document.querySelector(".workspace-markdown-reading")?.textContent.includes("Workspace navigation notes"));
+  assert.deepEqual(await tabs(), failedFileTabs, "Retry keeps the same file tab and selection");
+  assert.equal(await evaluate(() => document.querySelector(".workspace-file-resource.active").dataset.workspaceTabId), failedResourceID);
+  assert.equal(await evaluate(() => document.querySelector(".workspace-file-resource.active").textContent.includes("File temporarily unavailable")), false);
+  await capture("file-preview-read-recovered");
+  results.push({ scenario: "failed file read retries in place", passed: true });
   await click('[data-wuu-destination="files"]');
   await waitFor(() => document.querySelector('.workspace-right-panel').dataset.navigationMode === "files");
   await waitFor(() => document.querySelector('.files-navigation-sidebar select')?.selectedOptions[0]?.textContent === "Tabbar demo");

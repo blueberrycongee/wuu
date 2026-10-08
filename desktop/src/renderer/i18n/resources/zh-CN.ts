@@ -1234,6 +1234,7 @@ export const zhCN = {
   "turn.expandConversationTurn": "展开这一轮对话",
   "turn.loadEarlierHistory": "加载更早的历史",
   "turn.loadEarlier": "加载更早的 {count} 轮对话",
+  "sources.showLess": "收起",
   "sources.label": "来源",
   "sources.labelCount": "来源 {count}",
   "sources.openNamed": "打开 {name}",

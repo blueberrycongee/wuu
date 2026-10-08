@@ -3,6 +3,7 @@ const { contextBridge, ipcRenderer } = require("electron");
 const cwd = process.env.WUU_STREAM_E2E_CWD || process.cwd();
 const runtimeContext = { kind: "no_project", cwd };
 let startedThreadCount = 0;
+let workspacePreviewReadFailed = false;
 const threads = new Map();
 
 function projectList() {
@@ -169,6 +170,10 @@ contextBridge.exposeInMainWorld("wuu", {
     },
     readWorkspaceFile: async (path) => {
       const relative = workspaceDemoPath(path);
+      if (relative === process.env.WUU_WORKSPACE_FILE_RETRY_E2E && !workspacePreviewReadFailed) {
+        workspacePreviewReadFailed = true;
+        throw new Error("File temporarily unavailable");
+      }
       const text = workspaceDemoFiles[relative];
       if (text === undefined) throw new Error("Unknown demo file: " + relative);
       return { root: cwd, path: relative, absolute_path: cwd + "/" + relative,

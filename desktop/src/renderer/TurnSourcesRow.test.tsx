@@ -1,508 +1,88 @@
-/**
- * Tests for `TurnSourcesRow`. Mirrors the AssistantTurnShell /
- * ToolActivityRow test setup: real React via react-dom/client + act,
- * no @testing-library/react dependency. The component is a pure
- * function of (sources, onOpen), so we exercise:
- *   - empty list returns null
- *   - one button per host, favicon URL scoped per host
- *   - "来源" vs "来源 N" label
- *   - single source → entire pill is a button; click anywhere opens the URL
- *   - multi source → each icon is its own button with the host URL
- *   - more than VISIBLE_SOURCE_LIMIT hosts → "+N" overflow badge
- *     with the rest of the URLs behind it
- *   - explicit `onOpen` prop is the default click handler
- *   - falling back to `window.wuu.openExternal` when no prop is set
- *   - onError swaps the favicon for a first-letter avatar
- *   - accessible name + tooltip carry the full URL (not just host)
- */
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { TurnSource } from "./ToolActivityHelpers";
-import { TurnSourcesRow } from "./TurnSourcesRow";
+import { TurnSourcesRow, TurnSourceChips } from "./TurnSourcesRow";
 import { hoverTooltipText, unhoverTooltip } from "./tooltipTestUtils";
-
-let mountedRoots: Root[] = [];
-
-beforeEach(() => {
-  vi.useFakeTimers();
-});
-
+const roots: Root[] = [];
 afterEach(() => {
   unhoverTooltip();
-  for (const root of mountedRoots) {
-    act(() => root.unmount());
-  }
-  mountedRoots = [];
-  vi.restoreAllMocks();
   vi.useRealTimers();
-  // Don't leak the stubbed `window.wuu` across cases — the test that
-  // needs it re-creates it explicitly so we know when it's set.
+  for (const root of roots.splice(0)) act(() => root.unmount());
+  document.body.replaceChildren();
+  vi.restoreAllMocks();
   delete (window as { wuu?: unknown }).wuu;
 });
-
-// jsdom doesn't implement layout. Stub getBoundingClientRect so React
-// doesn't crash on layout queries during render.
-beforeAll(() => {
-  Element.prototype.getBoundingClientRect = function (): DOMRect {
-    return {
-      x: 0,
-      y: 0,
-      top: 0,
-      left: 0,
-      right: 0,
-      bottom: 0,
-      width: 0,
-      height: 0,
-      toJSON() {
-        return this;
-      },
-    } as DOMRect;
-  };
-});
-
-import { beforeAll } from "vitest";
-
-function mountInto(element: JSX.Element): HTMLElement {
-  const container = document.createElement("div");
-  document.body.appendChild(container);
-  const root = createRoot(container);
-  act(() => {
-    root.render(element);
-  });
-  mountedRoots.push(root);
-  return container;
+function mount(element: JSX.Element) {
+  const container = document.createElement("div"); document.body.append(container);
+  const root = createRoot(container); roots.push(root); act(() => root.render(element));
+  return { container, rerender: (next: JSX.Element) => act(() => root.render(next)) };
 }
-
-const sampleSources: TurnSource[] = [
-  {
-    url: "https://www.anthropic.com/news/claude-opus-4-7",
-    host: "anthropic.com",
-    title: "Claude Opus 4.7",
-    origin: "web_search",
-  },
-  {
-    url: "https://platform.openai.com/docs/models",
-    host: "openai.com",
-    origin: "web_fetch",
-  },
-];
-
+const sources: TurnSource[] = Array.from({ length: 20 }, (_, i) => ({ host: `site${i}.example.com`, url: `https://site${i}.example.com/article`, title: `Article ${i}`, origin: "web_search" }));
+function links(container: ParentNode) { return [...container.querySelectorAll<HTMLButtonElement>(".web-source-link")]; }
 describe("TurnSourcesRow", () => {
-  it("renders nothing when there are no sources", () => {
-    const container = mountInto(<TurnSourcesRow sources={[]} />);
-    expect(container.firstChild).toBeNull();
+  it("stays absent without web sources", () => { expect(mount(<TurnSourcesRow sources={[]} />).container.firstChild).toBeNull(); });
+  it("keeps direct link routing and modifiers separate from the group disclosure", () => {
+    const onOpen = vi.fn(), onExpandedChange = vi.fn();
+    const { container } = mount(<TurnSourcesRow sources={sources} onOpen={onOpen} onExpandedChange={onExpandedChange} />);
+    act(() => links(container)[0].click());
+    expect(onOpen).toHaveBeenCalledExactlyOnceWith(sources[0].url);
+    act(() => links(container)[1].dispatchEvent(new MouseEvent("click", { bubbles: true, metaKey: true })));
+    expect(onOpen.mock.calls[1]).toEqual([sources[1].url, expect.objectContaining({ metaKey: true })]);
+    expect(onExpandedChange).not.toHaveBeenCalled();
   });
-
-  it("renders one icon button per source with a per-host favicon URL", () => {
-    const container = mountInto(<TurnSourcesRow sources={sampleSources} />);
-    const buttons = container.querySelectorAll("button.turn-source-icon");
-    expect(buttons.length).toBe(2);
-    const imgs = Array.from(container.querySelectorAll("img"));
-    expect(imgs).toHaveLength(2);
-    expect(imgs[0].src).toContain("google.com/s2/favicons");
-    expect(imgs[0].src).toContain("domain=anthropic.com");
-    expect(imgs[1].src).toContain("domain=openai.com");
+  it("announces the total source count and controls the owning disclosure", () => {
+    const onExpandedChange = vi.fn();
+    const { container, rerender } = mount(<TurnSourcesRow sources={sources.slice(0, 8)} detailsID="group-details" onExpandedChange={onExpandedChange} />);
+    expect(links(container)).toHaveLength(6);
+    const toggle = container.querySelector<HTMLButtonElement>(".web-research-more")!;
+    expect(toggle.textContent).toContain("8"); expect(toggle.textContent).not.toContain("+2");
+    expect(toggle.getAttribute("aria-controls")).toBe("group-details");
+    act(() => toggle.click()); expect(onExpandedChange).toHaveBeenCalledWith(true, toggle);
+    rerender(<TurnSourcesRow sources={sources.slice(0, 8)} detailsID="group-details" expanded onExpandedChange={onExpandedChange} />);
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    act(() => toggle.click()); expect(onExpandedChange).toHaveBeenLastCalledWith(false, toggle);
   });
-
-  it("shows a loading skeleton until the favicon has loaded", () => {
-    const container = mountInto(<TurnSourcesRow sources={sampleSources} />);
-    const avatar = container.querySelector<HTMLElement>(".turn-source-avatar");
-    const img = avatar?.querySelector("img");
-
-    expect(avatar?.dataset.loadState).toBe("loading");
-    act(() => {
-      img?.dispatchEvent(new Event("load"));
-    });
-    expect(avatar?.dataset.loadState).toBe("loaded");
+  it("reduces inline icons without losing the total count on narrow headers", () => {
+    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(function (this: HTMLElement) { return this.classList.contains("process-surface-inline-controls") ? 320 : 0; });
+    const view = (items: TurnSource[]) => <div className="process-surface-inline-controls"><TurnSourcesRow sources={items} inline /></div>;
+    const { container, rerender } = mount(view([])); rerender(view(sources));
+    expect(links(container)).toHaveLength(1); expect(container.querySelector(".web-research-more")?.textContent).toContain("20");
   });
-
-  it("labels the pill with the source count when there is more than one", () => {
-    const container = mountInto(<TurnSourcesRow sources={sampleSources} />);
-    expect(container.querySelector(".turn-sources-label")?.textContent).toBe(
-      "来源 2",
-    );
+  it("keeps full titles and URLs in hints and accessible names", async () => {
+    vi.useFakeTimers(); const { container } = mount(<TurnSourcesRow sources={sources.slice(0, 1)} />);
+    expect(links(container)[0].getAttribute("aria-label")).toContain(sources[0].title);
+    expect(await hoverTooltipText(links(container)[0])).toContain(sources[0].url);
   });
-
-  it("collapses to a singular '来源' label for a single source", () => {
-    const container = mountInto(
-      <TurnSourcesRow
-        sources={[
-          { url: "https://example.com/x", host: "example.com", origin: "web_search" },
-        ]}
-      />,
-    );
-    expect(container.querySelector(".turn-sources-label")?.textContent).toBe(
-      "来源",
-    );
+  it("retains a fallback when favicons fail", () => {
+    const { container } = mount(<TurnSourcesRow sources={sources.slice(0, 1)} />);
+    act(() => container.querySelector("img")!.dispatchEvent(new Event("error")));
+    expect(container.querySelector("img")).toBeNull(); expect(links(container)[0].textContent).toBe("S");
   });
-
-  it("renders the whole single-source pill as a button so clicking anywhere opens the URL", async () => {
-    // Single source case: the icon and the label both belong to the
-    // same <button>, so a hover-anywhere / click-anywhere affordance
-    // is what makes "来源" actually behave like a source link rather
-    // than just a passive count.
-    const onOpen = vi.fn();
-    const container = mountInto(
-      <TurnSourcesRow
-        sources={[
-          {
-            url: "https://example.com/article",
-            host: "example.com",
-            title: "Example article",
-            origin: "web_search",
-          },
-        ]}
-        onOpen={onOpen}
-      />,
-    );
-    const pillButton = container.querySelector<HTMLButtonElement>(
-      "button.turn-sources-pill.turn-sources-pill-single",
-    );
-    expect(pillButton).not.toBeNull();
-    const iconFrame = pillButton?.querySelector(".turn-source-icon-frame");
-    expect(iconFrame).not.toBeNull();
-    expect(iconFrame?.querySelector(".turn-source-avatar img")).not.toBeNull();
-    // The inert frame gives the favicon the same chrome as the multi-source
-    // stack without nesting an invalid button inside the pill button.
-    expect(container.querySelector("button.turn-source-icon")).toBeNull();
-    expect(pillButton?.getAttribute("aria-label")).toBe(
-      "打开 Example article — https://example.com/article",
-    );
-    expect(pillButton?.getAttribute("title")).toBeNull();
-    expect(await hoverTooltipText(pillButton)).toBe(
-      "Example article — https://example.com/article",
-    );
-    act(() => {
-      pillButton?.click();
-    });
-    expect(onOpen).toHaveBeenCalledWith("https://example.com/article");
+});
+describe("TurnSourceChips", () => {
+  it("includes the first six sources and reveals all remaining links with an exact count", () => {
+    const { container } = mount(<TurnSourceChips sources={sources} />);
+    expect(links(container)).toHaveLength(8);
+    expect(links(container)[0].getAttribute("aria-label")).toContain(sources[0].url);
+    const reveal = container.querySelector<HTMLButtonElement>(".web-research-reveal")!;
+    expect(reveal.textContent).toContain("12");
+    act(() => reveal.click()); expect(links(container)).toHaveLength(20);
+    act(() => reveal.click()); expect(links(container)).toHaveLength(8);
   });
-
-  it("routes the click through the caller-supplied onOpen when provided", () => {
-    const onOpen = vi.fn();
-    const container = mountInto(
-      <TurnSourcesRow sources={sampleSources} onOpen={onOpen} />,
-    );
-    const buttons = Array.from(
-      container.querySelectorAll<HTMLButtonElement>("button.turn-source-icon"),
-    );
-    act(() => {
-      buttons[1].click();
-    });
-    expect(onOpen).toHaveBeenCalledTimes(1);
-    expect(onOpen).toHaveBeenCalledWith("https://platform.openai.com/docs/models");
+  it("keeps every same-site page separately reachable and never replays arrival motion", () => {
+    const same = sources.slice(0, 8).map((source, i) => ({ ...source, host: "site.example.com", url: `https://site.example.com/${i}` }));
+    const onOpen = vi.fn(); const { container } = mount(<TurnSourceChips sources={same} onOpen={onOpen} />);
+    act(() => links(container).forEach(link => link.click()));
+    expect(onOpen.mock.calls.map(call => call[0])).toEqual(same.map(source => source.url));
+    expect(container.querySelector(".is-arriving")).toBeNull();
   });
-
-  it("falls back to window.wuu.openExternal from a single-source pill click", () => {
-    const openExternal = vi.fn().mockResolvedValue(undefined);
-    (window as unknown as { wuu: { openExternal: typeof openExternal } }).wuu = {
-      openExternal,
-    };
-    const container = mountInto(
-      <TurnSourcesRow
-        sources={[
-          { url: "https://example.com/x", host: "example.com", origin: "web_search" },
-        ]}
-      />,
-    );
-    const pillButton = container.querySelector<HTMLButtonElement>(
-      "button.turn-sources-pill",
-    );
-    act(() => {
-      pillButton?.click();
-    });
-    expect(openExternal).toHaveBeenCalledWith("https://example.com/x");
-  });
-
-  it("falls back to window.wuu.openExternal from an icon click when no onOpen prop is set", () => {
-    const openExternal = vi.fn().mockResolvedValue(undefined);
-    (window as unknown as { wuu: { openExternal: typeof openExternal } }).wuu = {
-      openExternal,
-    };
-    const container = mountInto(<TurnSourcesRow sources={sampleSources} />);
-    const button = container.querySelector<HTMLButtonElement>(
-      "button.turn-source-icon",
-    );
-    act(() => {
-      button?.click();
-    });
-    expect(openExternal).toHaveBeenCalledWith(
-      "https://www.anthropic.com/news/claude-opus-4-7",
-    );
-  });
-
-  it("falls back to a first-letter avatar when the favicon fails to load", () => {
-    const container = mountInto(
-      <TurnSourcesRow
-        sources={[
-          {
-            url: "https://www.anthropic.com/news",
-            host: "anthropic.com",
-            origin: "web_search",
-          },
-        ]}
-      />,
-    );
-    const img = container.querySelector("img");
-    expect(img).not.toBeNull();
-    act(() => {
-      img?.dispatchEvent(new Event("error"));
-    });
-    expect(
-      container.querySelector<HTMLElement>(".turn-source-avatar")?.dataset
-        .loadState,
-    ).toBe("failed");
-    const fallback = container.querySelector(".turn-source-fallback");
-    expect(fallback?.textContent).toBe("A");
-    // Once failed, the original <img> is gone.
-    expect(container.querySelector("img")).toBeNull();
-  });
-
-  it("exposes the full URL plus title in aria-label and tooltip when title is present", async () => {
-    const container = mountInto(
-      <TurnSourcesRow
-        sources={[
-          {
-            url: "https://www.anthropic.com/news",
-            host: "anthropic.com",
-            title: "Claude Opus 4.7",
-            origin: "web_search",
-          },
-        ]}
-      />,
-    );
-    // Single source → the pill itself carries the accessible name.
-    const pill = container.querySelector("button.turn-sources-pill");
-    expect(pill?.getAttribute("aria-label")).toBe(
-      "打开 Claude Opus 4.7 — https://www.anthropic.com/news",
-    );
-    expect(await hoverTooltipText(pill)).toBe(
-      "Claude Opus 4.7 — https://www.anthropic.com/news",
-    );
-  });
-
-  it("exposes only the URL in aria-label when no title is available", async () => {
-    const container = mountInto(
-      <TurnSourcesRow
-        sources={[
-          {
-            url: "https://openai.com/c",
-            host: "openai.com",
-            origin: "web_fetch",
-          },
-        ]}
-      />,
-    );
-    const pill = container.querySelector("button.turn-sources-pill");
-    expect(pill?.getAttribute("aria-label")).toBe("打开 https://openai.com/c");
-    expect(await hoverTooltipText(pill)).toBe("https://openai.com/c");
-  });
-
-  it("does not leak the origin field as user-facing text", () => {
-    // origin is implementation metadata for collectTurnSources —
-    // never expose "web_search" / "web_fetch" strings to the user.
-    const container = mountInto(<TurnSourcesRow sources={sampleSources} />);
-    expect(container.textContent).not.toMatch(/web_search/);
-    expect(container.textContent).not.toMatch(/web_fetch/);
-  });
-
-  describe("overflow badge", () => {
-    function makeManySources(n: number): TurnSource[] {
-      // Distinct hosts across the public web so each becomes its own
-      // dedup slot. The host list doesn't need to resolve — the test
-      // only cares about how many icons are visible vs hidden.
-      const tlds = ["com", "io", "dev", "co", "ai", "app"];
-      return Array.from({ length: n }, (_, index) => {
-        const tld = tlds[index % tlds.length];
-        const slug = `site-${index}`;
-        return {
-          url: `https://${slug}.example.${tld}/page-${index}`,
-          host: `${slug}.example.${tld}`,
-          title: `Page ${index}`,
-          origin: "web_search",
-        } as TurnSource;
-      });
-    }
-
-    it("renders an overflow badge when there are more than the visible limit", () => {
-      const sources = makeManySources(10);
-      const container = mountInto(<TurnSourcesRow sources={sources} />);
-      // Six host icons are visible; the rest hide behind a "+4" badge.
-      const icons = container.querySelectorAll("button.turn-source-icon");
-      const realIcons = container.querySelectorAll(
-        "button.turn-source-icon:not(.turn-source-overflow-badge)",
-      );
-      expect(realIcons.length).toBe(6);
-      const badge = container.querySelector(
-        "button.turn-source-overflow-badge",
-      );
-      expect(badge).not.toBeNull();
-      expect(badge?.textContent).toBe("+4");
-      expect(badge?.getAttribute("aria-label")).toBe("查看另外 4 个来源");
-      expect(badge?.getAttribute("aria-expanded")).toBe("false");
-      expect(badge?.getAttribute("aria-haspopup")).toBe("menu");
-      // The pill label still reflects the total so the user knows the
-      // full count even when the icon stack is capped.
-      expect(container.querySelector(".turn-sources-label")?.textContent).toBe(
-        "来源 10",
-      );
-      // Sanity: 6 real icons + 1 badge = 7 turn-source-icon buttons.
-      expect(icons.length).toBe(7);
-    });
-
-    it("does not render an overflow badge when sources fit in the visible limit", () => {
-      const sources = makeManySources(6);
-      const container = mountInto(<TurnSourcesRow sources={sources} />);
-      expect(
-        container.querySelector("button.turn-source-overflow-badge"),
-      ).toBeNull();
-      // Label still says "来源 6" — the cap is a layout concern, not a
-      // truncation of the displayed total.
-      expect(container.querySelector(".turn-sources-label")?.textContent).toBe(
-        "来源 6",
-      );
-    });
-
-    it("opens a popover listing the overflow sources when the badge is clicked", async () => {
-      const sources = makeManySources(8);
-      const container = mountInto(<TurnSourcesRow sources={sources} />);
-      const badge = container.querySelector<HTMLButtonElement>(
-        "button.turn-source-overflow-badge",
-      );
-      expect(badge?.getAttribute("aria-expanded")).toBe("false");
-      act(() => {
-        badge?.click();
-      });
-      expect(badge?.getAttribute("aria-expanded")).toBe("true");
-      const menu = container.querySelector(
-        "ul.turn-source-overflow-list[role=\"menu\"]",
-      );
-      expect(menu).not.toBeNull();
-      // Only the 2 overflow sources land in the menu — the visible 6
-      // icons are already in the pill itself, no need to repeat them.
-      const items = menu?.querySelectorAll(
-        "button.turn-source-overflow-item",
-      );
-      expect(items?.length).toBe(2);
-      // TLD cycle in makeManySources: index 6 picks tlds[6 % 6] = "com",
-      // index 7 picks tlds[7 % 6] = "io". The test only needs to prove
-      // the menu shows the right URLs and titles in first-seen order;
-      // the TLD itself is incidental.
-      expect(items?.[0].getAttribute("aria-label")).toBe(
-        "打开 Page 6 — https://site-6.example.com/page-6",
-      );
-      expect(await hoverTooltipText(items?.[0] ?? null)).toBe(
-        "Page 6 — https://site-6.example.com/page-6",
-      );
-      expect(items?.[1].getAttribute("aria-label")).toBe(
-        "打开 Page 7 — https://site-7.example.io/page-7",
-      );
-      // Host appears as a secondary line so users see which domain
-      // the entry belongs to without parsing the URL.
-      expect(items?.[0].textContent).toContain("site-6.example.com");
-    });
-
-    it("routes an overflow item click through the caller-supplied onOpen and closes the popover", () => {
-      const onOpen = vi.fn();
-      const sources = makeManySources(7);
-      const container = mountInto(
-        <TurnSourcesRow sources={sources} onOpen={onOpen} />,
-      );
-      const badge = container.querySelector<HTMLButtonElement>(
-        "button.turn-source-overflow-badge",
-      );
-      act(() => {
-        badge?.click();
-      });
-      const overflowItem = container.querySelector<HTMLButtonElement>(
-        "button.turn-source-overflow-item",
-      );
-      act(() => {
-        overflowItem?.click();
-      });
-      expect(onOpen).toHaveBeenCalledTimes(1);
-      expect(onOpen).toHaveBeenCalledWith(
-        "https://site-6.example.com/page-6",
-      );
-      // Popover closed itself after the click — leaving it open would
-      // hide the user's view of the conversation they came from.
-      expect(
-        container.querySelector("ul.turn-source-overflow-list"),
-      ).toBeNull();
-      expect(badge?.getAttribute("aria-expanded")).toBe("false");
-    });
-
-    it("falls back to window.wuu.openExternal for an overflow item when no onOpen is set", () => {
-      const openExternal = vi.fn().mockResolvedValue(undefined);
-      (
-        window as unknown as { wuu: { openExternal: typeof openExternal } }
-      ).wuu = { openExternal };
-      const sources = makeManySources(7);
-      const container = mountInto(<TurnSourcesRow sources={sources} />);
-      act(() => {
-        container
-          .querySelector<HTMLButtonElement>(
-            "button.turn-source-overflow-badge",
-          )
-          ?.click();
-      });
-      act(() => {
-        container
-          .querySelector<HTMLButtonElement>(
-            "button.turn-source-overflow-item",
-          )
-          ?.click();
-      });
-      expect(openExternal).toHaveBeenCalledWith(
-        "https://site-6.example.com/page-6",
-      );
-    });
-
-    it("closes the popover when the user clicks outside", () => {
-      const sources = makeManySources(7);
-      const container = mountInto(<TurnSourcesRow sources={sources} />);
-      act(() => {
-        container
-          .querySelector<HTMLButtonElement>(
-            "button.turn-source-overflow-badge",
-          )
-          ?.click();
-      });
-      expect(
-        container.querySelector("ul.turn-source-overflow-list"),
-      ).not.toBeNull();
-      // mousedown on something outside the overflow wrapper — document
-      // body is the natural "outside" target in jsdom.
-      act(() => {
-        document.body.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
-      });
-      expect(
-        container.querySelector("ul.turn-source-overflow-list"),
-      ).toBeNull();
-    });
-
-    it("closes the popover when the user presses Escape", () => {
-      const sources = makeManySources(7);
-      const container = mountInto(<TurnSourcesRow sources={sources} />);
-      act(() => {
-        container
-          .querySelector<HTMLButtonElement>(
-            "button.turn-source-overflow-badge",
-          )
-          ?.click();
-      });
-      expect(
-        container.querySelector("ul.turn-source-overflow-list"),
-      ).not.toBeNull();
-      act(() => {
-        document.dispatchEvent(
-          new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
-        );
-      });
-      expect(
-        container.querySelector("ul.turn-source-overflow-list"),
-      ).toBeNull();
-    });
+  it("supports keyboard navigation while retaining ordinary tab targets", () => {
+    const { container } = mount(<TurnSourceChips sources={sources.slice(0, 8)} />); const chips = links(container);
+    act(() => chips[0].focus());
+    act(() => chips[0].dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true })));
+    expect(document.activeElement).toBe(chips[1]); expect(chips[1].tabIndex).toBe(0);
+    act(() => chips[1].dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true })));
+    expect(document.activeElement).toBe(chips.at(-1));
   });
 });
