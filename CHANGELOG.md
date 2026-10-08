@@ -24,6 +24,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Temporarily hide the conversation information/environment panel and its titlebar
+  button, including automatic expansion in wide windows.
+
 - Move web sources into their tool-call groups as compact circular website icons,
   with continuous arrival, title and URL tooltips, readable keyboard-accessible
   overflow, and reduced-motion support that does not replay received sources.

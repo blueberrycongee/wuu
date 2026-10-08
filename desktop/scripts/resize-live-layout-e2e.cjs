@@ -416,15 +416,20 @@ app.whenReady().then(async () => {
   }
   await evaluate(() => { if (document.querySelector(".app-shell").classList.contains("sidebar-collapsed")) document.querySelector(".sidebar-toggle-button").click(); });
   await settle();
+  // Keep the reading column below its maximum width without an information panel.
+  win.setContentSize(1080, 860);
+  await settle();
   await motion("window live reflow", async () => {
     for (let index = 0; index <= 40; index++) {
       const fraction = index <= 20 ? index / 20 : (40 - index) / 20;
-      win.setContentSize(Math.round(1380 - fraction * 260), 860);
+      win.setContentSize(Math.round(1080 - fraction * 200), 860);
       await delay(16);
     }
   }, false);
   await motion("left live reflow", () => drag(".sidebar-resizer", 190));
   await motion("left collapse and expand", async () => { await click(".sidebar-toggle-button"); await settle(); await click(".sidebar-toggle-button"); }, false);
+  win.setContentSize(1380, 860);
+  await settle();
   await click("[data-wuu-component=right-sidebar-toggle]");
   await until(() => document.querySelector(".workspace-right-panel-resizer"), "right panel");
   await settle();

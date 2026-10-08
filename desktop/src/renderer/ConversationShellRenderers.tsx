@@ -47,6 +47,7 @@ import {
   SIDEBAR_MIN_WIDTH,
 } from "./AppLayoutState";
 import { EnvironmentSideStack } from "./EnvironmentSideStack";
+import { ENABLE_ENVIRONMENT_PANEL } from "./FeatureFlags";
 import { CompactConversationActions } from "./CompactConversationActions"
 import {
   Composer,
@@ -569,7 +570,7 @@ export function ConversationTitleActions({
   if (compactNavigation) {
     return <div className="title-actions">{management}<CompactConversationActions
       canStartNewThread={Boolean(state.activeContext)} onStartNewThread={onStartNewThread}
-      environmentAvailable={!pluginPageVisible}
+      environmentAvailable={ENABLE_ENVIRONMENT_PANEL && !pluginPageVisible}
       environmentToggleRef={environmentToggleRef} environmentPanelVisible={environmentPanelVisible}
       onToggleEnvironmentPanel={onToggleEnvironmentPanel} rightPanelOpen={rightPanelOpen}
       onToggleRightPanel={onToggleRightPanel}
@@ -582,7 +583,7 @@ export function ConversationTitleActions({
   return (
     <div className="title-actions">
       {management}
-      {pluginPageVisible ? null : (
+      {!ENABLE_ENVIRONMENT_PANEL || pluginPageVisible ? null : (
         <Tooltip content={environmentLabel} side="bottom">
           <button
             ref={environmentToggleRef}

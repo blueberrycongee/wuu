@@ -7,6 +7,9 @@ export const ENABLE_REMOTE_CONTROL =
 /** Temporarily hidden to keep the conversation focused; retain the edit data and components. */
 export const ENABLE_TURN_EDIT_SUMMARY = false;
 
+/** Keep the information panel hidden until its contents warrant a permanent entry point. */
+export const ENABLE_ENVIRONMENT_PANEL = false;
+
 /** Explicit file deliveries remain accessible beside their conversation. */
 export const ENABLE_TURN_ARTIFACT_SUMMARY = true;
 

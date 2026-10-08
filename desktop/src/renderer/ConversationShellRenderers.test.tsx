@@ -11,6 +11,12 @@ import {
   threadSessionTabID,
 } from "./AppState";
 
+// Exercise the retained panel interactions while the product entry point is hidden.
+vi.mock("./FeatureFlags", async (importOriginal) => ({
+  ...await importOriginal<typeof import("./FeatureFlags")>(),
+  ENABLE_ENVIRONMENT_PANEL: true,
+}));
+
 vi.mock("./ConversationSplitPane", () => ({
   ConversationSplitPane: ({
     onOpenFile,

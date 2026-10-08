@@ -218,6 +218,7 @@ import {
 import type { SettingsPage } from "./SettingsView";
 import {
   ENABLE_EMBEDDED_BROWSER,
+  ENABLE_ENVIRONMENT_PANEL,
   ENABLE_ACCOUNT,
 } from "./FeatureFlags";
 import { ArchiveTip } from "./ArchiveTip";
@@ -2952,6 +2953,7 @@ export function App(): JSX.Element {
   // (full-window sheet) right panel blocks it, because that mode makes the
   // entire conversation pane inert.
   const environmentPanelCanShow = Boolean(
+    ENABLE_ENVIRONMENT_PANEL &&
     state.initialized &&
     !poppedOutMode &&
     !rightPanelGlobalized &&
