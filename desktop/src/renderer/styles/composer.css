@@ -1196,6 +1196,13 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
       padding: 6px;
     }
 
+    /* One row reads as a capsule while reading beside it: the plus and send
+       circles at its ends sit concentric with the round caps. Wrapping,
+       attachments or explicit expansion return to the panel radius. */
+    .composer-frame {
+      border-radius: var(--radius-pill);
+    }
+
     .composer textarea {
       grid-column: 2;
       grid-row: 1;
@@ -1241,6 +1248,12 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
 
     .codex-runtime-label {
       max-width: 8em;
+    }
+
+    /* On one row the draft sits beside the usage readout; the readout is
+       status, not a control, so it recedes to secondary ink. */
+    .composer-context-meter {
+      color: var(--ink-soft);
     }
 
     @container document-composer (max-width: 680px) {

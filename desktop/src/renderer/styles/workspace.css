@@ -91,25 +91,28 @@
   justify-self: start;
 }
 
+/* The panel's chrome sits on the same paper as the conversation titlebar
+ * beside it; tabs and tree rows use the session strip's chip vocabulary. */
+.workspace-right-panel {
+  --workspace-tab-chip-active-bg: var(--shell-session-tab-active-bg);
+  --workspace-tab-chip-hover-bg: var(--ink-overlay-4);
+  --workspace-tab-chip-height: var(--control-size-toolbar);
+  --workspace-tab-chip-inset: calc((var(--window-titlebar-height) - var(--workspace-tab-chip-height)) / 2);
+}
+
 .workspace-panel-tabbar {
   display: flex;
   min-width: 0;
   height: var(--window-titlebar-height);
   align-items: center;
   gap: 4px;
-  background: var(--surface-1);
-  box-shadow: inset 0 -1px 0 var(--hairline-soft);
+  background: var(--paper);
   /* Clear native window controls and reserve the shell-owned sidebar toggle,
      including while the reading canvas is a full-width sheet. */
   padding: 0 calc(max(var(--control-toolbar-inset), var(--window-controls-inset-right)) + var(--control-size-toolbar) + 4px) 0 8px;
   -webkit-app-region: drag;
   position: relative;
   z-index: 1;
-}
-
-/* With no tab open there is no strip to separate from its content. */
-.workspace-right-panel:not(:has(.workspace-tool-tab)):has(> .workspace-panel-body.picker) > .workspace-panel-tabbar {
-  box-shadow: none;
 }
 
 .workspace-panel-tabbar button {
@@ -410,8 +413,8 @@
   flex: 0 0 auto;
 }
 
-/* One strip for the dock and the full-width reading canvas. The selected
- * tab meets the content edge; only the unused space above it drags the window. */
+/* One strip for the dock and the full-width reading canvas. Tab boxes run
+ * down to the content edge; the band above them still drags the window. */
 .workspace-panel-tabs {
   container-type: inline-size;
   display: flex;
@@ -419,8 +422,8 @@
   min-width: 0;
   align-self: stretch;
   align-items: stretch;
-  gap: 0;
-  padding-top: 7px;
+  gap: 2px;
+  padding-top: var(--workspace-tab-chip-inset);
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: none;
@@ -442,11 +445,12 @@
   flex: 1 1 0%;
   align-items: center;
   box-sizing: border-box;
-  border: 1px solid transparent;
-  border-bottom: 0;
-  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  padding-bottom: var(--workspace-tab-chip-inset);
   background: transparent;
   color: var(--ink-soft);
+  /* The tab box spans the strip so selection meets the content edge; its
+   * visible chip is drawn inset by ::before. */
+  isolation: isolate;
   overflow: hidden;
   -webkit-app-region: no-drag;
   transition:
@@ -521,7 +525,14 @@
   cursor: grabbing;
   opacity: 0.98;
   pointer-events: none;
-  height: calc(var(--window-titlebar-height) - 7px);
+  /* Portaled outside the panel: restate the chip tokens it reads. */
+  --workspace-tab-chip-active-bg: var(--shell-session-tab-active-bg);
+  --workspace-tab-chip-height: var(--control-size-toolbar);
+  --workspace-tab-chip-inset: 0px;
+  height: var(--workspace-tab-chip-height);
+  border-radius: var(--radius-sm);
+  background: var(--paper);
+  color: var(--ink-strong);
   box-shadow: var(--shadow-pop);
 }
 
@@ -529,12 +540,36 @@
   opacity: 1;
 }
 
+.workspace-tool-tab::before {
+  position: absolute;
+  z-index: -1;
+  inset: 0 0 var(--workspace-tab-chip-inset);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  content: "";
+  pointer-events: none;
+  transition: background-color var(--motion-fast) var(--ease-out);
+}
+
+.workspace-tool-tab:hover::before,
+.workspace-tool-tab:focus-within::before {
+  background: var(--workspace-tab-chip-hover-bg);
+}
+
+/* A filled chip and stronger title distinguish selection from hover. */
+.workspace-tool-tab.active::before,
+.workspace-tool-tab-drag-overlay::before {
+  background: var(--workspace-tab-chip-active-bg);
+}
+
 .workspace-tool-tab.active,
 .workspace-tool-tab.active:hover,
 .workspace-tool-tab.active:focus-within {
-  border-color: var(--hairline-soft);
-  background: var(--paper);
   color: var(--ink-strong);
+}
+
+.workspace-tool-tab.active .workspace-tool-tab-main > span:not(.workspace-tab-dirty-indicator) {
+  font-weight: var(--weight-medium);
 }
 
 .workspace-tool-tab-main {
@@ -594,12 +629,20 @@
 
 .workspace-tool-tab:hover,
 .workspace-tool-tab:focus-within {
-  background: var(--ink-overlay-4);
   color: var(--ink);
 }
 
-.workspace-tool-tab-main:focus-visible,
-.workspace-tool-tab-close:focus-visible {
+/* The tab clips its label, so a ring outside the title button would show
+ * only as a sliver beside the close button. The tab draws the ring instead. */
+html[data-focus-modality="keyboard"] .workspace-tool-tab-main:focus-visible {
+  outline: none;
+}
+
+html[data-focus-modality="keyboard"] .workspace-tool-tab:has(.workspace-tool-tab-main:focus-visible)::before {
+  box-shadow: inset 0 0 0 2px var(--focus-ring);
+}
+
+html[data-focus-modality="keyboard"] .workspace-tool-tab-close:focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: -2px;
 }
@@ -871,7 +914,9 @@ html.resizing-workspace-file-split * {
   position: relative;
   grid-row: 1;
   flex-direction: column;
-  background: var(--surface-1);
+  /* Same paper as the document and tab strip; the resizer hairline is the
+   * only division, so the tree reads as part of the panel, not a gray well. */
+  background: var(--paper);
 }
 
 .workspace-files-split[data-tree-side="right"] .workspace-files-tree {

@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as ComposerFocus from "./ComposerFocus";
 import {
   rightPanelMotionMs,
-  SIDEBAR_AUTO_COLLAPSE_WINDOW_WIDTH,
+  COMPACT_NAVIGATION_WINDOW_WIDTH,
   SIDEBAR_DEFAULT_WIDTH,
   SIDEBAR_MIN_WIDTH,
   sidebarMotionMs,
@@ -17,6 +17,7 @@ import {
 } from "./WindowResizeState";
 
 interface Harness {
+  compactNavigation: ReturnType<typeof useAppLayoutState>["compactNavigation"];
   effectiveSidebarWidth: ReturnType<typeof useAppLayoutState>["effectiveSidebarWidth"];
   sidebarWidth: ReturnType<typeof useAppLayoutState>["sidebarWidth"];
   sidebarCollapsed: ReturnType<typeof useAppLayoutState>["sidebarCollapsed"];
@@ -48,8 +49,8 @@ let container: HTMLDivElement;
 let root: Root | null = null;
 let latest: Harness | null = null;
 const originalInnerWidth = window.innerWidth;
-const narrowWindowWidth = SIDEBAR_AUTO_COLLAPSE_WINDOW_WIDTH - 1;
-const roomyWindowWidth = SIDEBAR_AUTO_COLLAPSE_WINDOW_WIDTH + 120;
+const narrowWindowWidth = 820;
+const roomyWindowWidth = 1020;
 
 function makePointerDownEvent(clientX: number): React.PointerEvent<HTMLDivElement> {
   // The hook only reads `button`, `clientX`, and `preventDefault`, so a plain
@@ -71,6 +72,7 @@ function renderHookHarness(): void {
       workspaceRightPanelDockableWithoutSidebar?: boolean;
     };
     latest = {
+      compactNavigation: hook.compactNavigation,
       effectiveSidebarWidth: hook.effectiveSidebarWidth,
       sidebarWidth: hook.sidebarWidth,
       sidebarCollapsed: hook.sidebarCollapsed,
@@ -154,11 +156,12 @@ it("keeps the full content width when opening navigation on a phone", () => {
   vi.spyOn(window.screen, "height", "get").mockReturnValue(932);
   setInnerWidth(430);
   renderHookHarness();
-  expect(latest!.effectiveSidebarWidth).toBe(0);
-  act(() => latest!.toggleSidebar());
   expect(latest!.sidebarCollapsed).toBe(false);
   expect(latest!.effectiveSidebarWidth).toBe(0);
   act(() => latest!.toggleSidebar());
+  expect(latest!.effectiveSidebarWidth).toBe(0);
+  act(() => latest!.toggleSidebar());
+  expect(latest!.sidebarCollapsed).toBe(false);
   expect(latest!.effectiveSidebarWidth).toBe(0);
 });
 
@@ -339,7 +342,8 @@ describe("useAppLayoutState responsive workspace presentation", () => {
       setInnerWidth(674);
       window.dispatchEvent(new Event("resize"));
     });
-    expect(latest!.sidebarCollapsed).toBe(true);
+    expect(latest!.sidebarCollapsed).toBe(false);
+    expect(latest!.effectiveSidebarWidth).toBe(0);
     expect(latest!.workspaceRightPanelAutoGlobalized).toBe(true);
     expect(latest!.workspaceRightPanelDockableWithoutSidebar).toBe(false);
 
@@ -497,41 +501,25 @@ describe("useAppLayoutState initial widths", () => {
     expect(latest!.sidebarWidth).toBe(300);
   });
 
-  it("starts with the sidebar collapsed when the window is too narrow", () => {
+  it("keeps an open sidebar open in a narrow window", () => {
     setInnerWidth(narrowWindowWidth);
-
     renderHookHarness();
+    expect(latest!.sidebarCollapsed).toBe(false);
 
-    expect(latest!.sidebarCollapsed).toBe(true);
-    expect(latest!.sidebarWidth).toBe(SIDEBAR_DEFAULT_WIDTH);
+    act(() => {
+      setInnerWidth(COMPACT_NAVIGATION_WINDOW_WIDTH - 1);
+      window.dispatchEvent(new Event("resize"));
+    });
+    expect(latest!.compactNavigation).toBe(true);
+    expect(latest!.sidebarCollapsed).toBe(false);
 
     act(() => {
       setInnerWidth(roomyWindowWidth);
       window.dispatchEvent(new Event("resize"));
     });
-
+    expect(latest!.compactNavigation).toBe(false);
     expect(latest!.sidebarCollapsed).toBe(false);
-  });
-
-  it("auto-collapses an open sidebar when the window becomes too narrow", () => {
-    setInnerWidth(roomyWindowWidth);
-    renderHookHarness();
-    expect(latest!.sidebarCollapsed).toBe(false);
-
-    act(() => {
-      setInnerWidth(narrowWindowWidth);
-      window.dispatchEvent(new Event("resize"));
-    });
-
-    expect(latest!.sidebarCollapsed).toBe(true);
-    expect(latest!.sidebarWidth).toBe(SIDEBAR_DEFAULT_WIDTH);
-
-    act(() => {
-      setInnerWidth(roomyWindowWidth);
-      window.dispatchEvent(new Event("resize"));
-    });
-
-    expect(latest!.sidebarCollapsed).toBe(false);
+    expect(latest!.effectiveSidebarWidth).toBe(SIDEBAR_DEFAULT_WIDTH);
     expect(window.localStorage.getItem("wuu.desktop.sidebarCollapsed")).toBe("false");
   });
 

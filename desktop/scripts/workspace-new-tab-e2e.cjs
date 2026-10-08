@@ -244,6 +244,7 @@ app.whenReady().then(async () => {
           - parseFloat(style.borderLeftWidth) - parseFloat(style.borderRightWidth);
       };
       return { frame: box(frame), input: box(input), send: box(send),
+        frameRadius: parseFloat(getComputedStyle(frame).borderTopLeftRadius),
         fontSize: parseFloat(getComputedStyle(input).fontSize), lineHeight: parseFloat(getComputedStyle(input).lineHeight),
         clientHeight: input.clientHeight, scrollHeight: input.scrollHeight,
         viewportWidth: innerWidth, viewportHeight: innerHeight, focused: document.activeElement === input,
@@ -271,6 +272,8 @@ app.whenReady().then(async () => {
   };
   const assertReadableEditor = (geometry, name) => {
     const sameRow = Math.abs(geometry.input.y + geometry.input.height / 2 - geometry.send.y - geometry.send.height / 2) <= 2;
+    if (sameRow) assert.ok(geometry.frameRadius >= geometry.frame.height / 2 - 1,
+      name + ': a one-row document input reads as a capsule');
     assert.ok(geometry.input.width >= geometry.fontSize * 8,
       name + ': input retains room to read and edit a short phrase');
     if (geometry.composerWidth >= 680) assert.ok(sameRow, name + ': wide short drafts retain the compact single row');
@@ -299,25 +302,27 @@ app.whenReady().then(async () => {
       name + ': constrained toolbar folds effort without stealing the input lane');
     assert.ok(geometry.scrollHeight <= geometry.clientHeight + 1, name + ': short draft and placeholder are not clipped');
   };
-  // The ordinary right preview owns the same input without covering the conversation.
+  // A docked preview leaves only the conversation input; the draft follows
+  // it there and back once the preview takes the window again.
+  await setDocumentDraft('Edit this file');
   await click(".workspace-panel-globalize");
   await waitFor(() => !document.querySelector('.app-shell').classList.contains('right-panel-globalized'));
-  assert.equal(await evaluate(() => document.querySelectorAll('[data-main-conversation-composer]').length), 1);
+  await waitFor(() => !document.querySelector('.document-composer-wrap'));
+  assert.deepEqual(await evaluate(() => [...document.querySelectorAll('[data-main-conversation-composer]')]
+    .map((node) => node.dataset.mainConversationComposer)), ['dock']);
   assert.equal(await evaluate(() => document.querySelector('.conversation-pane').hasAttribute('inert')), false);
-  for (const size of [14, 20]) {
-    await evaluate((size) => {
-      document.documentElement.style.setProperty('--font-ui', size + 'px');
-      document.documentElement.style.setProperty('--conversation-message-font-size', size + 'px');
-      window.dispatchEvent(new Event('wuu-content-size-change'));
-    }, size);
-    await setDocumentDraft('Edit this file');
-    assertReadableEditor(await documentGeometry(`document-composer-docked-${size}`), `docked-${size}`);
-  }
+  await waitFor(() => document.querySelector('[data-main-conversation-composer="dock"] textarea')?.value === 'Edit this file');
+  await capture('document-composer-docked-hidden');
   await click(".workspace-panel-globalize");
+  await waitFor(() => document.querySelector('.document-composer-wrap textarea')?.value === 'Edit this file');
   for (const size of [14, 20]) {
     for (const width of [1440, 760, 560]) {
       win.setContentSize(width, 900);
       await waitFor((width) => innerWidth === width, width);
+      // The file split refits after the resize settles; measure that layout.
+      await waitFor(() => !document.documentElement.matches('.window-resizing, .layout-motion-active'));
+      if (width === 760) assert.equal(await evaluate(() => document.querySelector('.app-shell').classList.contains('sidebar-collapsed')),
+        false, 'a narrower window keeps the sidebar the user left open');
       await evaluate((size) => {
         document.documentElement.style.setProperty('--font-ui', size + 'px');
         document.documentElement.style.setProperty('--conversation-message-font-size', size + 'px');

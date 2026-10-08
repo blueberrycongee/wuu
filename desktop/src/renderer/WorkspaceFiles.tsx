@@ -73,10 +73,21 @@ const WORKSPACE_TREE_CSS = `
   [data-file-tree-search-input] {
     min-width: 0;
     padding-inline: calc(var(--trees-item-padding-x) - 1px);
-    border: var(--wuu-workspace-file-tree-search-border, 1px solid var(--field-border));
+    border: var(--wuu-workspace-file-tree-search-border, 1px solid transparent);
     border-radius: var(--wuu-workspace-file-tree-search-radius, var(--radius-sm));
-    background: var(--wuu-workspace-file-tree-search-background, var(--field-bg));
+    background: var(--wuu-workspace-file-tree-search-background, var(--ink-overlay-4));
     color: var(--wuu-workspace-file-tree-color, var(--ink));
+    transition:
+      background-color var(--motion-fast) var(--ease-out),
+      border-color var(--motion-fast) var(--ease-out);
+  }
+
+  /* A quiet filled field at rest, like the tree rows below it; editing lifts
+     it onto the field surface with the shared field edge. */
+  [data-file-tree-search-input]:focus,
+  [data-file-tree-search-input][data-file-tree-search-input-fake-focus="true"] {
+    border-color: var(--field-border);
+    background: var(--wuu-workspace-file-tree-search-background, var(--field-bg));
   }
 
   [data-file-tree-search-input]::placeholder {
