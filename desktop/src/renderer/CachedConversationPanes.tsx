@@ -375,6 +375,7 @@ const CachedConversationPane = memo(function CachedConversationPane({
               autoLoadEarlier={isActive}
               renderTurn={(turn) => (
                 <PaneTurnView
+                  threadID={thread.id}
                   turn={turn}
                   cwd={thread.cwd ?? activeContextCwd}
                   onOpenFile={onOpenFile ? handleOpenFile : undefined}
@@ -459,6 +460,7 @@ function reuseCachedConversationPane(
 }
 
 type PaneTurnViewProps = {
+  threadID: string;
   turn: Turn;
   cwd?: string;
   latestAgentMessageID?: string;
@@ -493,6 +495,7 @@ type PaneTurnViewProps = {
 // must be value-compared or identity-stable — every callback the pane passes
 // is a useCallback reading through threadRef for exactly that reason.
 const PaneTurnView = memo(function PaneTurnView({
+  threadID,
   turn,
   cwd,
   latestAgentMessageID,
@@ -513,6 +516,7 @@ const PaneTurnView = memo(function PaneTurnView({
 }: PaneTurnViewProps): JSX.Element {
   return (
     <TurnView
+      threadID={threadID}
       turn={turn}
       cwd={cwd}
       onOpenFile={onOpenFile}

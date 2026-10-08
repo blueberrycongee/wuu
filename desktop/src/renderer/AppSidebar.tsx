@@ -88,6 +88,8 @@ import {
 } from "./SortableSidebarSection";
 export { reorderSidebarSections } from "./SortableSidebarSection";
 import { SidebarPointerSensor } from "./SidebarPointerSensor";
+import { PluginBlocksIcon } from "./PluginBlocksIcon";
+import { PluginIcon } from "./PublicIcon";
 import { SidebarBrand } from "./SidebarBrand";
 import { moveMenuFocus } from "./MenuKeyboardNavigation";
 import { useI18n } from "./i18n";
@@ -449,7 +451,6 @@ export function AppSidebar({
   mobileNavigation = false,
   drawerVisible = false,
   sidebarVisible = true,
-  hidden = false,
   sidebarCollapsed = false,
   onNavigateAway,
   onToggleSidebar,
@@ -527,7 +528,6 @@ export function AppSidebar({
   mobileNavigation?: boolean;
   drawerVisible?: boolean;
   sidebarVisible?: boolean;
-  hidden?: boolean;
   sidebarCollapsed?: boolean;
   onNavigateAway?: () => void;
   onToggleSidebar?: () => void;
@@ -608,6 +608,9 @@ export function AppSidebar({
     (view) => view.id === workbenchSnapshot.activeViewByRegion.primary,
   );
   const activeThreadID = activePluginMainView ? undefined : nativeActiveThreadID;
+  const pluginCatalogActive = !activePluginMainView && state.sessionTabs.some(
+    (tab) => tab.id === state.activeSessionTabID && tab.kind === "skills",
+  );
   const pluginNavigationEntries = useMemo(
     () => primaryViewNavigation(declaredPluginNavigationEntries, workbenchSnapshot),
     [declaredPluginNavigationEntries, workbenchSnapshot],
@@ -623,7 +626,6 @@ export function AppSidebar({
     activateNative(() => selectNativeWorkspaceThread(workspaceID, threadID));
   }, [activateNative, selectNativeWorkspaceThread]);
   const openPluginNavigation = useCallback((pluginId: string, viewTypeId: string, instanceId?: string): void => {
-    onNavigateAway?.();
     if (instanceId) {
       workbenchController.activateView(instanceId);
       return;
@@ -633,7 +635,7 @@ export function AppSidebar({
       persistence: "durable",
       reveal: true,
     }).catch(() => workbenchController.deactivateRegion("primary"));
-  }, [onNavigateAway, workbenchController]);
+  }, [workbenchController]);
 
   // Drag-and-drop reorder wiring for the reorderable sections. The 6px
   // activation distance lets plain clicks on the header (collapse toggle)
@@ -1760,8 +1762,6 @@ export function AppSidebar({
 
   const nativeSidebar = (
     <aside
-      hidden={hidden}
-      style={hidden ? { display: "none" } : undefined}
       className="sidebar"
       data-wuu-component="sidebar"
       onPointerEnter={onPointerEnter}
@@ -1882,6 +1882,36 @@ export function AppSidebar({
             <Search className="icon-lg" />
             <span>{t("sidebar.searchConversations")}</span>
           </button>
+          <button
+            className="nav-item"
+            aria-current={pluginCatalogActive ? "page" : undefined}
+            onClick={() => activateNative(onOpenSkillsTab)}
+            disabled={!hasRuntimeContext}
+          >
+            <PluginBlocksIcon className="icon-lg" />
+            <span>{t("skills.sectionSkills")}</span>
+          </button>
+          {/* Plugin pages are destinations beside the catalog that lists
+              their plugins, so they continue this list instead of opening a
+              second group headed with the catalog's own name. */}
+          {pluginNavigationEntries.map((entry) => {
+            const active = activePluginMainView !== undefined && activePluginMainView.id === entry.instanceId;
+            return (
+              <button
+                key={`${entry.pluginId}:${entry.id}`}
+                type="button"
+                className={`nav-item plugin-navigation-item${active ? " active" : ""}`}
+                data-wuu-component="plugin-navigation-item"
+                data-wuu-plugin={entry.pluginId}
+                aria-current={active ? "page" : undefined}
+                title={entry.description || entry.title}
+                onClick={() => openPluginNavigation(entry.pluginId, entry.view, entry.instanceId)}
+              >
+                <PluginIcon icon={entry.icon} pluginId={entry.pluginId} fingerprint={entry.generation} className="icon-lg" />
+                <span>{entry.title}</span>
+              </button>
+            );
+          })}
         </nav>
 
         <div className="sidebar-main scrollbar-hidden" data-scroll-fade="">
@@ -2294,9 +2324,8 @@ export function AppSidebar({
   const organizedSidebar = (
     <SessionOrganizationProvider value={organizationActions}>
       {mobileNavigation ? <MobileSidebar
-        hidden={hidden}
         onNavigateAway={onNavigateAway}
-        visible={drawerVisible && !hidden}
+        visible={drawerVisible}
         state={state}
         sidebarWorkspaces={sidebarWorkspaces}
         activeThreadID={activeThreadID}
@@ -2315,14 +2344,13 @@ export function AppSidebar({
         onFocusWorkspace={onFocusWorkspace}
         onCreateWorkspace={onCreateWorkspace}
         onOpenWorkspaceFolder={onOpenWorkspaceFolder}
-        commands={[...primaryNavigationNodes.filter(node => node.id !== "command:skills"), ...navigationNodes]}
+        commands={[...primaryNavigationNodes, ...pluginNavigationNodes, ...navigationNodes]}
       /> : (
         <SidebarHoverFactsContext.Provider value={hoverFacts}>{nativeSidebar}</SidebarHoverFactsContext.Provider>
       )}
     </SessionOrganizationProvider>
   );
   return (
-    <div data-wuu-navigation-owner="conversations" hidden={hidden} style={{ display: hidden ? "none" : "contents" }}>
     <NavigationPresentation
       nodes={[
         ...primaryNavigationNodes,
@@ -2331,7 +2359,6 @@ export function AppSidebar({
       ]}
       fallback={organizedSidebar}
     />
-    </div>
   );
 }
 

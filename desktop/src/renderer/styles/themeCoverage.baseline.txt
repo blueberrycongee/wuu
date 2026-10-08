@@ -171,9 +171,6 @@ turns.css .turn-artifact-gallery-toolbar::before, .turn-artifact-image-toolbar::
 turns.css .turn-collapsed-marker background --ink-overlay-18
 turns.css .turn-process-toggle[role="button"]:hover :is(.turn-process-title, .turn-process-meta, .turn-process-chevron) color --activity-toggle-hover-color
 turns.css .turn-reasoning-summary:hover, .turn-reasoning-summary:focus-visible text-decoration-color --ink-overlay-18
-turns.css .turn-source-avatar background --ink-overlay-6
-turns.css .turn-sources-pill background --ink-overlay-6
-turns.css button.turn-sources-pill:hover, button.turn-sources-pill:focus-visible background --ink-overlay-8
 video-attachment.css .video-attachment-play color --video-attachment-play-color
 video-attachment.css .video-attachment-play-icon background --video-attachment-play-background
 video-attachment.css .video-attachment-play:hover .video-attachment-play-icon background --video-attachment-play-hover-background

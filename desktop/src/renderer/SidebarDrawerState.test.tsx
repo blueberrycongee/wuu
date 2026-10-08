@@ -99,40 +99,6 @@ async function renderSidebarDrawerState({
 }
 
 describe("useSidebarDrawerState", () => {
-  it.each(["hidden rail", "hidden ancestor", "replacement presenter"])(
-    "keeps pointer and focus ownership on the visible destination with a %s",
-    async (variant) => {
-      const hook = await renderSidebarDrawerState();
-      const shell = hook.sidebar.parentElement!;
-      if (variant === "hidden rail") hook.sidebar.hidden = true;
-      else {
-        const hiddenOwner = document.createElement("div");
-        hiddenOwner.hidden = true;
-        shell.insertBefore(hiddenOwner, hook.sidebar);
-        hiddenOwner.appendChild(hook.sidebar);
-      }
-      const visibleOwner = document.createElement("div");
-      if (variant === "replacement presenter") visibleOwner.dataset.wuuNavigationOwner = "plugins";
-      else visibleOwner.className = "sidebar";
-      const input = document.createElement("input");
-      visibleOwner.appendChild(input);
-      shell.appendChild(visibleOwner);
-      await act(async () => hook.get().openSidebarDrawerNow());
-      elementFromPointTarget = input;
-      await act(async () => {
-        hook.get().scheduleSidebarDrawerCloseFromPointerLeave(
-          new MouseEvent("pointerout", { clientX: 80, clientY: 80, relatedTarget: input }),
-        );
-        vi.advanceTimersByTime(1);
-      });
-      expect(hook.get().sidebarDrawerPhase).toBe("open");
-      input.focus();
-      expect(document.activeElement).toBe(input);
-      await act(async () => hook.get().closeSidebarDrawer());
-      expect(document.activeElement).not.toBe(input);
-    },
-  );
-
   it("finishes docking when the pointer enters the newly pinned rail", async () => {
     const hook = await renderSidebarDrawerState();
     await act(async () => hook.get().openSidebarDrawerNow());

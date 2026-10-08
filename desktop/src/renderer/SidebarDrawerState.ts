@@ -32,15 +32,7 @@ export type SidebarDrawerStateController = {
 // and the settings page (`aside.settings-sidebar`). Pointer-hover checks must
 // match either rail, otherwise moving the pointer from the hover zone into
 // the revealed drawer counts as "left the drawer" and closes it.
-const SIDEBAR_RAIL_SELECTOR = ".sidebar, .settings-sidebar, [data-wuu-navigation-owner]";
-
-// Inactive destinations stay mounted, including replacement presenters whose
-// native aside is absent. Hidden ancestors must never retain drawer ownership.
-function visibleSidebarElements(root: HTMLElement | null, selector: string): Element[] {
-  return [...(root?.querySelectorAll(selector) ?? [])].filter(
-    element => !element.closest('[hidden], [aria-hidden="true"]'),
-  );
-}
+const SIDEBAR_RAIL_SELECTOR = ".sidebar, .settings-sidebar";
 const SIDEBAR_DRAWER_HOVER_TRIGGER_SELECTOR =
   ".sidebar-hover-zone, .sidebar-toggle-button";
 
@@ -128,9 +120,12 @@ export function useSidebarDrawerState({
     if (!point) {
       return undefined;
     }
-    const sidebars = visibleSidebarElements(appShellRef.current, SIDEBAR_RAIL_SELECTOR);
-    const hoverTriggers = visibleSidebarElements(appShellRef.current, SIDEBAR_DRAWER_HOVER_TRIGGER_SELECTOR);
-    for (const element of [...sidebars, ...hoverTriggers]) {
+    const sidebar = appShellRef.current?.querySelector(SIDEBAR_RAIL_SELECTOR);
+    const hoverTriggers = appShellRef.current?.querySelectorAll(
+      SIDEBAR_DRAWER_HOVER_TRIGGER_SELECTOR,
+    );
+    for (const element of [sidebar, ...(hoverTriggers ?? [])]) {
+      if (!element) continue;
       const rect = element.getBoundingClientRect();
       if (
         rect.width > 0 &&
@@ -151,15 +146,15 @@ export function useSidebarDrawerState({
       return undefined;
     }
     return Boolean(
-      sidebars.some(sidebar => sidebar.contains(target)) ||
-        hoverTriggers.some((trigger) => trigger.contains(target)),
+      (sidebar && sidebar.contains(target)) ||
+        [...(hoverTriggers ?? [])].some((trigger) => trigger.contains(target)),
     );
   }, [appShellRef, hoverLayerCount]);
 
   const blurSidebarFocus = useCallback((): void => {
-    const sidebars = visibleSidebarElements(appShellRef.current, SIDEBAR_RAIL_SELECTOR);
+    const sidebar = appShellRef.current?.querySelector(SIDEBAR_RAIL_SELECTOR);
     const active = document.activeElement;
-    if (active instanceof HTMLElement && sidebars.some(sidebar => sidebar.contains(active))) {
+    if (sidebar && active instanceof HTMLElement && sidebar.contains(active)) {
       active.blur();
     }
   }, [appShellRef]);
@@ -283,11 +278,14 @@ export function useSidebarDrawerState({
 
       const relatedTarget = event instanceof MouseEvent ? event.relatedTarget : null;
       if (relatedTarget && relatedTarget instanceof Element) {
-        const sidebars = visibleSidebarElements(appShellRef.current, SIDEBAR_RAIL_SELECTOR);
-        const hoverTriggers = visibleSidebarElements(appShellRef.current, SIDEBAR_DRAWER_HOVER_TRIGGER_SELECTOR);
+        const sidebar = appShellRef.current?.querySelector(SIDEBAR_RAIL_SELECTOR);
+        const hoverTriggers = appShellRef.current?.querySelectorAll(
+          SIDEBAR_DRAWER_HOVER_TRIGGER_SELECTOR,
+        );
         const isMovingToHoverTarget = Boolean(
-          sidebars.some(sidebar => sidebar.contains(relatedTarget)) ||
-            hoverTriggers.some(
+          (sidebar &&
+            (relatedTarget === sidebar || sidebar.contains(relatedTarget))) ||
+            [...(hoverTriggers ?? [])].some(
               (trigger) =>
                 relatedTarget === trigger || trigger.contains(relatedTarget),
             ),
@@ -495,9 +493,9 @@ export function useSidebarDrawerState({
     if (!resizingSidebar || !sidebarCollapsed) {
       return;
     }
-    const sidebars = visibleSidebarElements(appShellRef.current, SIDEBAR_RAIL_SELECTOR);
+    const sidebar = appShellRef.current?.querySelector(SIDEBAR_RAIL_SELECTOR);
     const active = document.activeElement;
-    if (active instanceof HTMLElement && sidebars.some(sidebar => sidebar.contains(active))) {
+    if (sidebar && active instanceof HTMLElement && sidebar.contains(active)) {
       active.blur();
     }
   }, [appShellRef, resizingSidebar, sidebarCollapsed]);

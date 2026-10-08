@@ -195,10 +195,7 @@ app.whenReady().then(async () => {
   assert.equal(await evaluate(() => document.querySelector(".workspace-file-resource.active").textContent.includes("File temporarily unavailable")), false);
   await capture("file-preview-read-recovered");
   results.push({ scenario: "failed file read retries in place", passed: true });
-  await click('[data-wuu-destination="files"]');
-  await waitFor(() => document.querySelector('.workspace-right-panel').dataset.navigationMode === "files");
-  await waitFor(() => document.querySelector('.files-navigation-sidebar select')?.selectedOptions[0]?.textContent === "Tabbar demo");
-  await waitFor(() => Boolean(document.querySelector('.files-navigation-tree file-tree-container')?.shadowRoot?.querySelector('[data-item-path="README.md"]')));
+  await click(".workspace-panel-globalize");
   await waitFor(() => document.querySelector('.workspace-markdown-reading')?.textContent.includes("Workspace navigation notes"));
   for (const theme of ["light", "dark"]) {
     for (const size of [14, 20]) {
@@ -302,6 +299,21 @@ app.whenReady().then(async () => {
       name + ': constrained toolbar folds effort without stealing the input lane');
     assert.ok(geometry.scrollHeight <= geometry.clientHeight + 1, name + ': short draft and placeholder are not clipped');
   };
+  // The ordinary right preview owns the same input without covering the conversation.
+  await click(".workspace-panel-globalize");
+  await waitFor(() => !document.querySelector('.app-shell').classList.contains('right-panel-globalized'));
+  assert.equal(await evaluate(() => document.querySelectorAll('[data-main-conversation-composer]').length), 1);
+  assert.equal(await evaluate(() => document.querySelector('.conversation-pane').hasAttribute('inert')), false);
+  for (const size of [14, 20]) {
+    await evaluate((size) => {
+      document.documentElement.style.setProperty('--font-ui', size + 'px');
+      document.documentElement.style.setProperty('--conversation-message-font-size', size + 'px');
+      window.dispatchEvent(new Event('wuu-content-size-change'));
+    }, size);
+    await setDocumentDraft('Edit this file');
+    assertReadableEditor(await documentGeometry(`document-composer-docked-${size}`), `docked-${size}`);
+  }
+  await click(".workspace-panel-globalize");
   for (const size of [14, 20]) {
     for (const width of [1440, 760, 560]) {
       win.setContentSize(width, 900);
@@ -380,8 +392,7 @@ app.whenReady().then(async () => {
     document.documentElement.style.setProperty('--font-ui', '14px');
     document.documentElement.dataset.theme = 'light';
   });
-  await click('[data-wuu-destination="conversations"]');
-  await waitFor(() => !document.querySelector('.workspace-right-panel').dataset.navigationMode);
+  await click(".workspace-panel-globalize");
   const fileTabs = await tabs();
   const editorID = await evaluate(() => document.querySelector(".workspace-file-resource.active").dataset.workspaceTabId);
   await click(".workspace-panel-add");

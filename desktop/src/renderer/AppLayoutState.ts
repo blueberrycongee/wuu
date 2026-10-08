@@ -287,7 +287,6 @@ export function useAppLayoutState({
   layoutRootRef,
   settingsLayoutRootRef,
   viewportWidth,
-  leadingInset = 0,
   onCloseWorkspaceMenu
 }: {
   layoutRootRef?: RefObject<HTMLElement | null>;
@@ -298,7 +297,6 @@ export function useAppLayoutState({
   // Callers with a virtual or embedded viewport can provide the width that
   // owns layout decisions instead of the outer browser window.
   viewportWidth?: number;
-  leadingInset?: number;
   onCloseWorkspaceMenu: () => void;
 }): {
   compactNavigation: boolean;
@@ -377,7 +375,7 @@ export function useAppLayoutState({
   // (Previously this passed effectiveSidebarWidth, so opening the sidebar could
   // tip the layout over the threshold and auto-globalize the panel.)
   const workspaceRightPanelAutoGlobalized = phoneNavigation || workspacePanelNeedsFocus(
-    windowWidth - leadingInset,
+    windowWidth,
     0,
   );
   // Complement of the above by construction: if the panel can't dock without
@@ -386,7 +384,7 @@ export function useAppLayoutState({
     !workspaceRightPanelAutoGlobalized;
   const clampedWorkspaceRightPanelWidth = clampWorkspaceRightPanelWidth(
     workspaceRightPanelWidth,
-    effectiveSidebarWidth + leadingInset,
+    effectiveSidebarWidth,
     windowWidth,
   );
   const startSidebarMotion = useCallback((): void => {
@@ -430,10 +428,10 @@ export function useAppLayoutState({
       for (const root of sidebarLayoutRoots()) {
         root.style.setProperty("--sidebar-width", `${clampedWidth}px`);
         root.style.setProperty("--sidebar-open-width", `${clampedWidth}px`);
-        root.style.setProperty("--workspace-sheet-left", `${leadingInset + clampedWidth}px`);
+        root.style.setProperty("--workspace-sheet-left", `${clampedWidth}px`);
       }
     },
-    [leadingInset, sidebarLayoutRoots]
+    [sidebarLayoutRoots]
   );
 
   // A drag that ends collapsed leaves the live writer's clamped-to-minimum
@@ -460,12 +458,12 @@ export function useAppLayoutState({
       }
       const clampedWidth = clampWorkspaceRightPanelWidth(
         nextWidth,
-        effectiveSidebarWidth + leadingInset,
+        effectiveSidebarWidth,
         windowWidth,
       );
       root.style.setProperty("--workspace-right-panel-width", `${clampedWidth}px`);
     },
-    [effectiveSidebarWidth, layoutRootRef, leadingInset, windowWidth]
+    [effectiveSidebarWidth, layoutRootRef, windowWidth]
   );
 
   const writeLiveSplitPercent = useCallback(
@@ -515,9 +513,9 @@ export function useAppLayoutState({
 
   const applyWorkspaceRightPanelWidth = useCallback(
     (nextWidth: number): void => {
-      setWorkspaceRightPanelWidth(clampWorkspaceRightPanelWidth(nextWidth, effectiveSidebarWidth + leadingInset, windowWidth));
+      setWorkspaceRightPanelWidth(clampWorkspaceRightPanelWidth(nextWidth, effectiveSidebarWidth, windowWidth));
     },
-    [effectiveSidebarWidth, leadingInset, windowWidth]
+    [effectiveSidebarWidth, windowWidth]
   );
 
   const applySplitPercent = useCallback((nextPercent: number): void => {

@@ -30,6 +30,10 @@ vi.mock("./WorkspaceMonacoEditor", () => ({
   ),
 }));
 
+vi.mock("./WorkspacePdfPreview", () => ({
+  WorkspacePdfPreview: ({ title }: { title: string }) => <div data-testid="pdf-preview">{title}</div>,
+}));
+
 vi.mock("./JumpToLatestPill", () => ({
   JumpToLatestPill: (): JSX.Element => (
     <div data-testid="jump-to-latest-probe" />
@@ -39,6 +43,7 @@ vi.mock("./JumpToLatestPill", () => ({
 import { App, SIDEBAR_DRAWER_HOVER_OPEN_DELAY_MS } from "./App";
 import { requestOpenThreadInSplit } from "./ConversationSplitBridge";
 import * as composerMessages from "./ComposerMessages";
+import * as artifactComposer from "./ArtifactComposerFile";
 import { useFileSelectionActions, type FileSelectionSource } from "./FileSelectionContext";
 import type { FileSelectionControls } from "./FileSelectionSurface";
 import type { ReactNode } from "react";
@@ -51,7 +56,6 @@ vi.mock("./FileSelectionSurface", () => ({
   },
 }));
 import { rightPanelMotionMs } from "./AppLayoutState";
-import { desktopPluginHost, desktopWorkbenchController } from "./plugins/DesktopPluginRuntime";
 
 let container: HTMLDivElement;
 let root: Root | null = null;
@@ -253,7 +257,6 @@ describe("workspace file tabs", () => {
   afterEach(() => {
     setInnerWidth(originalInnerWidth);
     act(() => {
-      desktopPluginHost.unload("test:ribbon-plugins");
       root?.unmount();
     });
     root = null;
@@ -261,230 +264,6 @@ describe("workspace file tabs", () => {
     Reflect.deleteProperty(globalThis, "ResizeObserver");
     delete (globalThis as { wuu?: WuuDesktopApi }).wuu;
     vi.useRealTimers();
-  });
-
-  it("keeps the conversation utility selection when an API plugin page covers a full panel", async () => {
-    setInnerWidth(2000);
-    await act(async () => { root = createRoot(container); root.render(<App />); });
-    await flushAsync();
-    await act(async () => container.querySelector<HTMLButtonElement>('[data-wuu-component="right-sidebar-toggle"]')!.click());
-    await flushAsync();
-    await act(async () => container.querySelector<HTMLButtonElement>('[data-wuu-tool="browser"]')!.click());
-    await flushAsync();
-    const utilityLabel = container.querySelector('.workspace-tool-tab.active')?.textContent;
-    await act(async () => container.querySelector<HTMLButtonElement>('.workspace-panel-globalize')!.click());
-    await flushAsync();
-    await act(async () => {
-      await desktopPluginHost.activateGeneration({ pluginId: "test:ribbon-plugins", generation: "one", register(api) {
-        api.registerViewType({ id: "page", title: "Plugin page", render: () => <p>Page content</p> });
-      } });
-      await desktopWorkbenchController.openPluginView("test:ribbon-plugins", "page");
-    });
-    await act(async () => container.querySelector<HTMLButtonElement>('[data-wuu-destination="conversations"]')!.click());
-    await flushAsync();
-    expect(container.querySelector('.workspace-tool-tab.active')?.textContent).toBe(utilityLabel);
-    expect(container.querySelector('.app-shell')?.classList.contains('right-panel-open')).toBe(true);
-    expect(container.querySelector('.app-shell')?.classList.contains('right-panel-globalized')).toBe(false);
-  });
-
-  it("keeps compact Plugins navigation open until a page is selected and preserves its page across Files", async () => {
-    setInnerWidth(600);
-    await act(async () => {
-      root = createRoot(container); root.render(<App />);
-    });
-    await flushAsync();
-    await act(async () => {
-      await desktopPluginHost.activateGeneration({
-        pluginId: "test:ribbon-plugins", generation: "one",
-        contributions: { navigation: [{ id: "page", title: "Ribbon page", view: "page" }] },
-        register(api) {
-          api.registerViewType({ id: "page", title: "Ribbon page", render: () => <input aria-label="Plugin draft" defaultValue="Plugin draft stays" /> });
-          api.registerViewType({ id: "detail", title: "API detail", render: () => <p>API-only page</p> });
-        },
-      });
-    });
-    const select = async (destination: string) => {
-      await act(async () => container.querySelector<HTMLButtonElement>(`[data-wuu-destination="${destination}"]`)!.click());
-      await flushAsync();
-    };
-    await select("plugins");
-    expect(container.querySelector('.app-shell')?.getAttribute('data-wuu-sidebar-mode')).toBe('drawer');
-    await act(async () => container.querySelector<HTMLButtonElement>('.plugin-navigation-sidebar [data-wuu-component="plugin-navigation-item"]')!.click());
-    await flushAsync();
-    expect(container.querySelector('.app-shell')?.getAttribute('data-wuu-sidebar-mode')).toBe('collapsed');
-    const pageID = desktopWorkbenchController.getSnapshot().activeViewByRegion.primary;
-    const input = container.querySelector<HTMLInputElement>('[aria-label="Plugin draft"]')!;
-    input.value = "Unsent plugin state";
-    await select("files");
-    await select("plugins");
-    expect(desktopWorkbenchController.getSnapshot().activeViewByRegion.primary).toBe(pageID);
-    expect(container.querySelector<HTMLInputElement>('[aria-label="Plugin draft"]')?.value).toBe("Unsent plugin state");
-    await act(async () => { await desktopWorkbenchController.openPluginView("test:ribbon-plugins", "detail"); });
-    expect(container.querySelector('[data-wuu-destination="plugins"]')?.getAttribute('aria-current')).toBe('page');
-    expect(container.querySelector('.plugin-navigation-sidebar')?.textContent).toContain('API detail');
-    await act(async () => container.querySelector<HTMLButtonElement>('[data-wuu-component="primary-view-back"]')!.click());
-    await flushAsync();
-    expect(container.querySelector('[data-wuu-destination="conversations"]')?.getAttribute('aria-current')).toBe('page');
-    expect(container.querySelector('.conversation-title-heading h1')?.textContent).not.toContain('插件');
-  });
-
-  it("does not let a delayed catalog return replace newer Files navigation", async () => {
-    await act(async () => { root = createRoot(container); root.render(<App />); });
-    await flushAsync();
-    await act(async () => container.querySelector<HTMLButtonElement>('[data-wuu-destination="plugins"]')!.click());
-    await flushAsync();
-    let resolveResume!: (value: { thread: Thread }) => void;
-    const resume = new Promise<{ thread: Thread }>(resolve => { resolveResume = resolve; });
-    const resumeCount = vi.mocked(window.wuu.resumeThread).mock.calls.length;
-    vi.mocked(window.wuu.resumeThread).mockReturnValueOnce(resume);
-    await act(async () => container.querySelector<HTMLButtonElement>('[data-wuu-destination="conversations"]')!.click());
-    expect(window.wuu.resumeThread).toHaveBeenCalledTimes(resumeCount + 1);
-    await act(async () => container.querySelector<HTMLButtonElement>('[data-wuu-destination="files"]')!.click());
-    await flushAsync();
-    const focused = document.activeElement;
-    await act(async () => resolveResume({ thread: completedThread() }));
-    await flushAsync();
-    expect(container.querySelector('[data-wuu-destination="files"]')?.getAttribute('aria-current')).toBe('page');
-    expect(container.querySelector('.files-navigation-sidebar')?.hasAttribute('hidden')).toBe(false);
-    expect(document.activeElement).toBe(focused);
-    expect(startTurnMock).not.toHaveBeenCalled();
-  });
-
-  it("restores the conversation draft after visiting the plugin catalog and Files", async () => {
-    await act(async () => { root = createRoot(container); root.render(<App />); });
-    await flushAsync();
-    const title = container.querySelector(".conversation-title-heading h1")?.textContent;
-    const input = container.querySelector<HTMLTextAreaElement>(".dock-composer-wrap textarea")!;
-    await act(async () => {
-      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
-      setter.call(input, "Keep this conversation draft");
-      input.dispatchEvent(new Event("input", { bubbles: true }));
-    });
-    const select = async (destination: string) => {
-      const button = container.querySelector<HTMLButtonElement>(`[data-wuu-destination="${destination}"]`)!;
-      expect(button).not.toBeNull();
-      await act(async () => button.click());
-      await flushAsync();
-    };
-    await select("plugins");
-    expect(container.querySelector('[data-wuu-component="plugin-navigation-sidebar"]:not([hidden])')).not.toBeNull();
-    expect(container.querySelector('.sidebar:not(.plugin-navigation-sidebar) .plugin-navigation-item')).toBeNull();
-    await select("files");
-    await select("plugins");
-    await select("conversations");
-    expect(container.querySelector(".conversation-title-heading h1")?.textContent).toBe(title);
-    expect(container.querySelector<HTMLTextAreaElement>(".dock-composer-wrap textarea")?.value).toBe("Keep this conversation draft");
-    expect(container.querySelector('[data-wuu-destination="conversations"]')?.getAttribute("aria-current")).toBe("page");
-    expect(startTurnMock).not.toHaveBeenCalled();
-  });
-
-  it.each(["files", "plugins"])("reveals a collapsed %s context without resetting its content on repeated destination clicks", async (destination) => {
-    await act(async () => { root = createRoot(container); root.render(<App />); });
-    await flushAsync();
-    const button = container.querySelector<HTMLButtonElement>(`[data-wuu-destination="${destination}"]`)!;
-    expect(button).not.toBeNull();
-    await act(async () => button.click());
-    await flushAsync();
-    const sidebar = container.querySelector<HTMLElement>(`[data-wuu-component="${destination === "plugins" ? "plugin" : "files"}-navigation-sidebar"]`)!;
-    await act(async () => sidebar.querySelector<HTMLButtonElement>('[data-wuu-component="sidebar-toggle"]')!.click());
-    await flushAsync();
-    expect(container.querySelector('.app-shell')?.getAttribute('data-wuu-sidebar-mode')).toBe('collapsed');
-    await act(async () => button.click());
-    await flushAsync();
-    expect(container.querySelector('.app-shell')?.getAttribute('data-wuu-sidebar-mode')).toBe('docked');
-    expect(sidebar.hidden).toBe(false);
-    await act(async () => button.click());
-    await flushAsync();
-    expect(container.querySelector('.app-shell')?.getAttribute('data-wuu-sidebar-mode')).toBe('docked');
-  });
-
-  it.each(["ribbon", "back"])("preserves contextual navigation and the conversation utility tab when leaving Files via %s", async (exit) => {
-    await act(async () => { root = createRoot(container); root.render(<App />); });
-    await flushAsync();
-    const sessions = container.querySelector<HTMLElement>(".sidebar-main")!;
-    sessions.scrollTop = 240;
-    await act(async () => container.querySelector<HTMLButtonElement>('[data-wuu-component="right-sidebar-toggle"]')!.click());
-    await flushAsync();
-    await act(async () => container.querySelector<HTMLButtonElement>('[data-wuu-tool="browser"]')!.click());
-    await flushAsync();
-    expect(container.querySelector('.workspace-browser-panel')).not.toBeNull();
-    const activeLabel = container.querySelector('.workspace-tool-tab.active')?.textContent;
-    await act(async () => container.querySelector<HTMLButtonElement>('[data-wuu-destination="files"]')!.click());
-    await flushAsync();
-    const tree = container.querySelector('.files-navigation-sidebar file-tree-container');
-    expect(tree).not.toBeNull();
-    await act(async () => container.querySelector<HTMLButtonElement>('.files-navigation-sidebar [data-wuu-component="sidebar-toggle"]')!.click());
-    await flushAsync();
-    expect(container.querySelector('.files-navigation-sidebar file-tree-container')).toBe(tree);
-    await act(async () => {
-      if (exit === "back") window.dispatchEvent(new Event("wuu:workbench-back", { cancelable: true }));
-      else container.querySelector<HTMLButtonElement>('[data-wuu-destination="conversations"]')!.click();
-    });
-    await flushAsync();
-    expect(container.querySelector('.workspace-tool-tab.active')?.textContent).toBe(activeLabel);
-    expect(container.querySelector('.sidebar-main')).toBe(sessions);
-    expect(sessions.scrollTop).toBe(240);
-    await act(async () => container.querySelector<HTMLButtonElement>('[data-wuu-destination="files"]')!.click());
-    await flushAsync();
-    expect(container.querySelector('.files-navigation-sidebar file-tree-container')).toBe(tree);
-  });
-
-  it("registers a picked folder for Files without activating its runtime, and leaves cancellation unchanged", async () => {
-    const added = { id: "reading-root", name: "Reading", path: "/reading", created_at: "2026-01-01", updated_at: "2026-01-01" };
-    window.wuu.chooseWorkspaceDirectory = vi.fn().mockResolvedValueOnce(null).mockResolvedValueOnce("/reading");
-    window.wuu.importWorkspaces = vi.fn().mockResolvedValue({ projects: [added], active_context: { kind: "project", project_id: added.id, cwd: added.path } });
-    await act(async () => { root = createRoot(container); root.render(<App />); });
-    await flushAsync();
-    const title = container.querySelector(".conversation-title-heading h1")?.textContent;
-    const resumeCount = vi.mocked(window.wuu.resumeThread).mock.calls.length;
-    await act(async () => container.querySelector<HTMLButtonElement>('[data-wuu-destination="files"]')!.click());
-    await flushAsync();
-    const add = container.querySelector<HTMLButtonElement>(".files-navigation-heading .icon-button");
-    expect(add).not.toBeNull();
-    await act(async () => add!.click());
-    await flushAsync();
-    expect(window.wuu.importWorkspaces).not.toHaveBeenCalled();
-    expect(container.querySelector<HTMLSelectElement>(".files-navigation-heading select")?.value).toBe("/repo/wuu");
-    await act(async () => add!.click());
-    await flushAsync();
-    expect(window.wuu.importWorkspaces).toHaveBeenCalledWith(["/reading"]);
-    expect(container.querySelector<HTMLSelectElement>(".files-navigation-heading select")?.value).toBe("/reading");
-    expect(window.wuu.startThread).not.toHaveBeenCalled();
-    expect(window.wuu.resumeThread).toHaveBeenCalledTimes(resumeCount);
-    await act(async () => container.querySelector<HTMLButtonElement>('[data-wuu-destination="conversations"]')!.click());
-    await flushAsync();
-    expect(container.querySelector(".conversation-title-heading h1")?.textContent).toBe(title);
-  });
-
-  it("opens a registered file root from the ribbon without switching or creating a conversation", async () => {
-    await act(async () => {
-      root = createRoot(container);
-      root.render(<App />);
-    });
-    await flushAsync();
-    const resumeCount = vi.mocked(window.wuu.resumeThread).mock.calls.length;
-    const title = container.querySelector(".conversation-title-heading h1")?.textContent;
-    const files = container.querySelector<HTMLButtonElement>('[data-wuu-destination="files"]');
-    expect(files).not.toBeNull();
-    await act(async () => files!.click());
-    await flushAsync();
-    expect(container.querySelector('[data-wuu-component="files-navigation-sidebar"]')).not.toBeNull();
-    expect(window.wuu.listWorkspaceDirectory).toHaveBeenCalledWith("", "/repo/wuu");
-    const file = container.querySelector('.files-navigation-sidebar file-tree-container')?.shadowRoot
-      ?.querySelector<HTMLButtonElement>('[data-item-path="README.md"]');
-    expect(file).toBeTruthy();
-    await act(async () => file!.click());
-    await flushAsync();
-    expect(window.wuu.readWorkspaceFile).toHaveBeenCalledWith("README.md", "/repo/wuu");
-    expect(window.wuu.startThread).not.toHaveBeenCalled();
-    expect(window.wuu.resumeThread).toHaveBeenCalledTimes(resumeCount);
-    await act(async () => container.querySelector<HTMLButtonElement>('[data-wuu-destination="conversations"]')!.click());
-    await flushAsync();
-    expect(container.querySelector(".conversation-title-heading h1")?.textContent).toBe(title);
-    expect(container.querySelector(".conversation-pane")?.hasAttribute("inert")).toBe(false);
-    await act(async () => files!.click());
-    await flushAsync();
-    expect(container.querySelector('.workspace-tool-tab.active')?.textContent).toContain("README.md");
   });
 
   it("keeps the project overview on the selected coordinator or managed session", async () => {
@@ -576,6 +355,7 @@ describe("workspace file tabs", () => {
 
   it("does not restore a reused conversation control after its owning thread changes", async () => {
     const first = completedThread();
+    first.turns[0].items[1].text = "Open [reference](https://example.com/history).";
     const second = { ...completedThread(), id: "other-thread", preview: "Other conversation" };
     const threads = [first, second];
     vi.mocked(window.wuu.listThreads).mockResolvedValue({ threads });
@@ -589,7 +369,7 @@ describe("workspace file tabs", () => {
     expect(composer).not.toBeNull();
     await act(async () => {
       composer.focus();
-      container.querySelector<HTMLButtonElement>(".rich-file-link")!.click();
+      container.querySelector<HTMLAnchorElement>('a[href="https://example.com/history"]')!.click();
     });
     await flushAsync();
     const close = container.querySelector<HTMLButtonElement>('[data-wuu-component="right-sidebar-toggle"]')!;
@@ -618,35 +398,6 @@ describe("workspace file tabs", () => {
     await flushAsync();
     expect(selectionActions).toBeTruthy();
   }
-
-  it("disables conversation file actions for an independent root without changing the hidden draft", async () => {
-    await openSelectionDocument();
-    await typeMainPrompt("Keep conversation A");
-    await act(async () => container.querySelector<HTMLButtonElement>('[data-wuu-destination="files"]')!.click());
-    await flushAsync();
-    const file = container.querySelector('.files-navigation-sidebar file-tree-container')?.shadowRoot
-      ?.querySelector<HTMLButtonElement>('[data-item-path="README.md"]');
-    await act(async () => file!.click());
-    await flushAsync();
-    expect(selectionActions).toBeNull();
-    expect(container.querySelector('.workspace-document-turn-dock')).toBeNull();
-    expect(window.wuu.startThread).not.toHaveBeenCalled();
-    expect(startTurnMock).not.toHaveBeenCalled();
-    await act(async () => container.querySelector<HTMLButtonElement>('[data-wuu-destination="conversations"]')!.click());
-    await flushAsync();
-    expect(container.querySelector<HTMLTextAreaElement>("[data-main-conversation-composer] textarea")!.value).toBe("Keep conversation A");
-  });
-
-  it("does not offer implicit conversation creation from Files when the current conversation is a draft", async () => {
-    await openSelectionDocument();
-    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="在 对话 中新建对话"]')!.click());
-    await flushAsync();
-    await act(async () => container.querySelector<HTMLButtonElement>('[data-wuu-destination="files"]')!.click());
-    await flushAsync();
-    expect(selectionActions).toBeNull();
-    expect(window.wuu.startThread).not.toHaveBeenCalled();
-    expect(startTurnMock).not.toHaveBeenCalled();
-  });
 
   const selectionSource: FileSelectionSource = {
     workspace, path: "README.md", start_line: 1, start_column: 1,
@@ -1039,6 +790,141 @@ describe("workspace file tabs", () => {
       .toBe("New question");
   });
 
+  it.each(["/repo/wuu", "/repo/wuu-other"])("keeps split document previews read-only instead of sending another draft (%s)", async (cwd) => {
+    const first = { ...completedThread(), cwd: "/repo/wuu" };
+    const second = { ...first, id: "thread-other-worktree", cwd };
+    vi.mocked(window.wuu.listThreads).mockResolvedValue({ threads: [first] });
+    vi.mocked(window.wuu.resumeThread).mockImplementation(async id => ({ thread: id === second.id ? second : first }));
+    const projects = await window.wuu.listProjects();
+    vi.mocked(window.wuu.listProjects).mockResolvedValue({ ...projects,
+      active_context: { kind: "project", project_id: "project-wuu", cwd: first.cwd },
+    });
+    await openSelectionDocument();
+    await act(async () => requestOpenThreadInSplit(second.id));
+    await flushAsync();
+    const secondary = container.querySelectorAll<HTMLElement>('.conversation-split-pane')[1];
+    expect(secondary).toBeDefined();
+    await act(async () => secondary.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true })));
+    await act(async () => container.querySelector<HTMLButtonElement>('.workspace-panel-globalize')!.click());
+    await flushAsync();
+    expect(container.querySelector('[data-main-conversation-composer="document"]')).toBeNull();
+    expect(startTurnMock).not.toHaveBeenCalled();
+  });
+
+  it("opens a PDF from the right file tree and submits its path in the current conversation", async () => {
+    vi.mocked(window.wuu.listWorkspaceDirectory).mockResolvedValue({
+      root: workspace, path: "", truncated: false,
+      entries: [{ kind: "file", name: "report.pdf", path: "report.pdf" }],
+    });
+    await openSelectionDocument();
+    vi.mocked(window.wuu.readWorkspaceFile).mockResolvedValue({
+      root: workspace, path: "report.pdf", absolute_path: `${workspace}/report.pdf`,
+      size_bytes: 100, mtime_ms: 1000, sha256: "a".repeat(64), binary: true, truncated: false,
+      renderable_kind: "pdf", renderable_url: "data:application/pdf;base64,JVBERg==",
+    });
+    const file = container.querySelector('file-tree-container')?.shadowRoot
+      ?.querySelector<HTMLButtonElement>('[data-item-path="report.pdf"]');
+    expect(file).toBeDefined();
+    await act(async () => file!.click());
+    await flushAsync();
+    expect(container.querySelector('[data-testid="pdf-preview"]')?.textContent).toBe("report.pdf");
+    expect(container.querySelector('.app-shell')!.classList.contains('right-panel-globalized')).toBe(false);
+    await typeMainPrompt("Rewrite the conclusion");
+    await submitMainPrompt();
+    expect(startTurnMock.mock.calls[0][0]).toBe("thread-artifact-tabs");
+    expect(startTurnMock.mock.calls[0][5]).toEqual({ path: "report.pdf" });
+    expect(startTurnMock.mock.calls[0][7]).toEqual({ kind: "no_project", cwd: workspace });
+  });
+
+  it.each(["success", "send", "read", "validation"])("submits a delivered PDF snapshot without inventing a path and recovers failures (%s)", async (failure) => {
+    const thread = completedThread();
+    thread.turns[0].items.push({
+      id: "present-pdf", type: "tool_call", name: "present_artifact", status: "completed",
+      result_detail: { content: [{ type: "file", mime_type: "application/pdf", name: "report.pdf",
+        uri: "wuu-artifact://workspace/thread-artifact-tabs/digest/report.pdf",
+        artifact: { placement: "turn_end", sha256: "digest" } }] },
+    });
+    vi.mocked(window.wuu.listThreads).mockResolvedValue({ threads: [thread] });
+    vi.mocked(window.wuu.resumeThread).mockResolvedValue({ thread });
+    const snapshotFile = { id: "pdf-context", filename: "report.pdf", media_type: "application/pdf", data: "JVBERg==" };
+    const attach = vi.spyOn(artifactComposer, "createArtifactComposerFile").mockReturnValue(snapshotFile);
+    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await flushAsync();
+    const card = Array.from(container.querySelectorAll<HTMLButtonElement>(".turn-edit-summary-overview"))
+      .find(button => button.textContent?.includes("report.pdf"));
+    expect(card).toBeDefined();
+    await act(async () => card!.click());
+    await flushAsync();
+    expect(container.querySelector('[data-testid="pdf-preview"]')).not.toBeNull();
+    expect(container.querySelector('[data-main-conversation-composer="document"]')).not.toBeNull();
+    expect(container.querySelectorAll('[data-main-conversation-composer]')).toHaveLength(1);
+    await typeMainPrompt("Revise this report");
+    if (failure === "send") startTurnMock.mockRejectedValueOnce(new Error("offline"));
+    if (failure === "validation") attach.mockImplementationOnce(() => { throw new Error("Invalid preview source"); });
+    if (failure === "read") attach.mockImplementationOnce(() => ({
+      ...snapshotFile, data: "", encodePromise: Promise.reject(new Error("Preview unavailable")),
+    }));
+    await submitMainPrompt();
+    expect(attach).toHaveBeenCalledWith(expect.objectContaining({ threadID: thread.id }), thread.id);
+    if (failure === "success" || failure === "send") {
+      expect(startTurnMock.mock.calls[0][3]).toEqual([{ filename: "report.pdf", media_type: "application/pdf", data: "JVBERg==" }]);
+      expect(startTurnMock.mock.calls[0][5]).toBeUndefined();
+    } else expect(startTurnMock).not.toHaveBeenCalled();
+    if (failure !== "success") {
+      expect(container.querySelector<HTMLTextAreaElement>('[data-main-conversation-composer="document"] textarea')!.value)
+        .toBe("Revise this report");
+      expect(container.querySelectorAll('.composer-file-card')).toHaveLength(0);
+      await act(async () => container.querySelector<HTMLButtonElement>('.workspace-panel-add')!.click());
+      await flushAsync();
+      expect(container.querySelector('[data-main-conversation-composer="document"]')).toBeNull();
+      await submitMainPrompt();
+      expect(attach).toHaveBeenCalledTimes(1);
+      expect(startTurnMock.mock.calls.at(-1)![3]).toEqual([]);
+      expect(startTurnMock.mock.calls.at(-1)![5]).toBeUndefined();
+    }
+  });
+
+  it("returns the preview draft and keyboard focus through Open conversation", async () => {
+    await openSelectionDocument();
+    const input = await typeMainPrompt("Continue editing");
+    await act(async () => input.focus());
+    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="对话选项"]')!.click());
+    const open = Array.from(container.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'))
+      .find(button => button.textContent === "打开对话")!;
+    await act(async () => { open.focus(); open.click(); });
+    await flushAsync();
+    const main = container.querySelector<HTMLTextAreaElement>('[data-main-conversation-composer="dock"] textarea')!;
+    expect(main.value).toBe("Continue editing");
+    expect(document.activeElement).toBe(main);
+  });
+
+  it("hands the live draft to the right preview and back without tagging a hidden file", async () => {
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<App />);
+    });
+    await flushAsync();
+    await typeMainPrompt("Keep this unfinished request");
+    await act(async () => container.querySelector<HTMLButtonElement>(".rich-file-link")!.click());
+    await flushAsync();
+    expect(container.querySelector(".app-shell")!.classList.contains("right-panel-globalized")).toBe(false);
+    expect(container.querySelector(".conversation-pane")!.hasAttribute("inert")).toBe(false);
+    expect(container.querySelectorAll("[data-main-conversation-composer]")).toHaveLength(1);
+    expect(container.querySelector<HTMLTextAreaElement>('[data-main-conversation-composer="document"] textarea')!.value)
+      .toBe("Keep this unfinished request");
+    await typeMainPrompt("Updated in the preview");
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-wuu-component="right-sidebar-toggle"]')!.click());
+    await flushAsync();
+    expect(container.querySelectorAll("[data-main-conversation-composer]")).toHaveLength(1);
+    expect(container.querySelector('[data-main-conversation-composer="document"]')).toBeNull();
+    expect(container.querySelector<HTMLTextAreaElement>("[data-main-conversation-composer] textarea")!.value)
+      .toBe("Updated in the preview");
+    await submitMainPrompt();
+    expect(startTurnMock).toHaveBeenCalledTimes(1);
+    expect(startTurnMock.mock.calls[0][1]).toBe("Updated in the preview");
+    expect(startTurnMock.mock.calls[0][5]).toBeUndefined();
+  });
+
   it("opens a document beside the active conversation instead of replacing it", async () => {
     await act(async () => {
       root = createRoot(container);
@@ -1077,6 +963,8 @@ describe("workspace file tabs", () => {
     );
     expect(rightFilePreview).not.toBeNull();
     expect(rightFilePreview?.textContent).toContain("Artifact");
+    expect(container.querySelector('[data-main-conversation-composer="document"]')).not.toBeNull();
+    expect(container.querySelectorAll("[data-main-conversation-composer]")).toHaveLength(1);
 
     act(() => {
       vi.advanceTimersByTime(rightPanelMotionMs());
@@ -1170,7 +1058,7 @@ describe("workspace file tabs", () => {
     expect(shell?.classList.contains("right-panel-animating")).toBe(true);
     expect(container.querySelector(".conversation-pane")?.hasAttribute("inert")).toBe(false);
     expect(container.querySelector(".sidebar")?.hasAttribute("inert")).toBe(false);
-    expect(container.querySelector('[data-testid="workspace-document-composer"]')).toBeNull();
+    expect(container.querySelector('[data-testid="workspace-document-composer"]')).not.toBeNull();
     expect(document.activeElement).toBe(fileLink);
   });
 

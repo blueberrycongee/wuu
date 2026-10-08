@@ -12,7 +12,6 @@ import {
   workspacePluginViewTab,
   workspaceProjectViewTab,
   type WorkspaceViewTab,
-  type WorkspaceViewTabCloseOptions,
 } from "./WorkspaceViewTabs";
 
 export function useWorkspaceToolState({
@@ -39,7 +38,7 @@ export function useWorkspaceToolState({
   showWorkspaceToolPicker: () => void;
   resumeWorkspaceViewTab: (id: string) => void;
   focusWorkspaceViewTab: (id: string | undefined) => void;
-  closeWorkspaceViewTab: (id: string, options?: WorkspaceViewTabCloseOptions) => void;
+  closeWorkspaceViewTab: (id: string) => void;
   closeWorkspaceViewTabsWhere: (predicate: (tab: WorkspaceViewTab) => boolean) => void;
   reorderWorkspaceViewTabs: (activeID: string, overID: string) => void;
   toggleRightPanel: () => void;
@@ -120,12 +119,12 @@ export function useWorkspaceToolState({
   // Otherwise the panel would fall back to the tool picker whenever the user
   // dismisses their last diff / file / tool tab, which conflicts with the
   // intent of "I'm just peeking — close it when I'm done".
-  function closeWorkspaceViewTab(id: string, options?: WorkspaceViewTabCloseOptions): void {
+  function closeWorkspaceViewTab(id: string): void {
     const tab = workspaceViewTabs.find((candidate) => candidate.id === id);
     if (rightPanelOpen && workspaceActiveViewTabID === id && tab?.kind === "artifact") tab.motion?.close();
     const willEmpty =
       workspaceViewTabs.length === 1 && workspaceViewTabs[0]?.id === id;
-    closeTab(id, options);
+    closeTab(id);
     if (willEmpty) {
       setRightPanelOpenWithMotion(false);
     }

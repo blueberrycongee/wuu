@@ -269,20 +269,13 @@ export function focusViewTab(state: WorkspaceViewTabsState, id: string | undefin
   };
 }
 
-export type WorkspaceViewTabCloseOptions = { navigationMode?: "files" };
-
 /**
  * Closes the tab with the given id. If it was the active tab, focuses
  * whichever tab was active immediately before it (walking back through the
  * activation history for one that still exists after the close), falling
  * back to the tool picker (`activeTabID: undefined`) if there is none.
- * Files navigation restores only documents and retains utility history.
  */
-export function closeViewTab(
-  state: WorkspaceViewTabsState,
-  id: string,
-  options: WorkspaceViewTabCloseOptions = {},
-): WorkspaceViewTabsState {
+export function closeViewTab(state: WorkspaceViewTabsState, id: string): WorkspaceViewTabsState {
   const closingTab = state.tabs.find((tab) => tab.id === id);
   let tabs = state.tabs.filter((tab) => tab.id !== id);
   if (
@@ -306,19 +299,6 @@ export function closeViewTab(
   let activationHistory = state.activationHistory.filter((entry) => entry !== id);
   if (state.activeTabID !== id) {
     return { ...state, tabs, activeFileTabID, activationHistory };
-  }
-  if (options.navigationMode === "files" && closingTab?.kind === "file") {
-    // Files hides utility tabs. Keep their history intact for Conversations,
-    // but restore only a document the user can still see in this destination.
-    const activeTabID = activationHistory.findLast((candidate) =>
-      tabs.some((tab) => tab.id === candidate && tab.kind === "file"),
-    ) ?? tabs.findLast((tab) => tab.kind === "file")?.id;
-    return {
-      tabs,
-      activeTabID,
-      activeFileTabID: activeTabID,
-      activationHistory: activationHistory.filter((entry) => entry !== activeTabID),
-    };
   }
   let activeTabID: string | undefined;
   while (activationHistory.length > 0) {
@@ -371,7 +351,7 @@ export function useWorkspaceViewTabs(): {
   activeFileTabID: string | undefined;
   openTab: (tab: WorkspaceViewTab, options?: WorkspaceViewTabOpenOptions) => void;
   focusTab: (id: string | undefined) => void;
-  closeTab: (id: string, options?: WorkspaceViewTabCloseOptions) => void;
+  closeTab: (id: string) => void;
   closeTabsWhere: (predicate: (tab: WorkspaceViewTab) => boolean) => void;
   reorderTabs: (activeID: string, overID: string) => void;
   syncProjectTab: (project: { id: string; title: string } | undefined) => void;
@@ -384,8 +364,8 @@ export function useWorkspaceViewTabs(): {
   const focusTab = useCallback((id: string | undefined) => {
     setState((current) => focusViewTab(current, id));
   }, []);
-  const closeTab = useCallback((id: string, options?: WorkspaceViewTabCloseOptions) => {
-    setState((current) => closeViewTab(current, id, options));
+  const closeTab = useCallback((id: string) => {
+    setState((current) => closeViewTab(current, id));
   }, []);
   const closeTabsWhere = useCallback((predicate: (tab: WorkspaceViewTab) => boolean) => {
     setState((current) => closeViewTabsWhere(current, predicate));

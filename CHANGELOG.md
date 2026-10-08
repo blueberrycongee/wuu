@@ -10,14 +10,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
-- Add a persistent left navigation rail for Conversations, Files, and Plugins, with an
-  adjacent collapsible sidebar and independent local-folder browsing. Read
-  documents without switching or starting a conversation, and return to the
-  selected file tab after changing destinations. Plugin pages share one contextual
-  navigation list, and returning to Conversations restores its current draft.
-- Add a compact document conversation dock with minimize, restore, and
-  full-conversation actions while preserving the current draft. Keep short
-  document inputs on one row and expand naturally for wrapped text or attachments.
+- Add a compact conversation input inside the right file preview, keeping the
+  conversation visible and the selected file attached as request context. Preserve
+  the current draft when closing, minimizing, or restoring the preview input.
+  Keep short inputs compact and adapt to narrow panels, wrapped text, or attachments.
 
 - Add a small side-panel action to delivered images while keeping direct clicks
   in the full image viewer. Connect artifact previews to the right panel with

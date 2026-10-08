@@ -12,7 +12,6 @@ import type {
 } from "../shared/protocol";
 import { WORKSPACE_FILE_DRAG_MIME } from "./ComposerMessages";
 import { WorkspaceFilePreview, WorkspaceFileTree } from "./WorkspaceFiles";
-import { FilesNavigationSidebar } from "./FilesNavigationSidebar";
 import { workspaceFileViewTab, type WorkspaceFileViewTab } from "./WorkspaceViewTabs";
 
 vi.mock("./WorkspaceMonacoEditor", () => ({
@@ -226,24 +225,6 @@ async function clickMenuItem(text: string): Promise<void> {
     await Promise.resolve();
   });
 }
-
-describe("FilesNavigationSidebar", () => {
-  it("only browses registered roots and selects files without changing the runtime", async () => {
-    const projects = [{ id: "one", name: "One", path: "/repo", created_at: "", updated_at: "" }];
-    const onSelectRoot = vi.fn();
-    const onOpenFile = vi.fn();
-    await render(<FilesNavigationSidebar projects={projects} selectedRoot="/unregistered" open onSelectRoot={onSelectRoot} onOpenFile={onOpenFile} />);
-    expect(listWorkspaceDirectory).not.toHaveBeenCalled();
-    const selector = container.querySelector<HTMLSelectElement>("select")!;
-    await act(async () => { selector.value = "/repo"; selector.dispatchEvent(new Event("change", { bubbles: true })); });
-    expect(onSelectRoot).toHaveBeenCalledWith("/repo");
-    expect(listWorkspaceDirectory).not.toHaveBeenCalled();
-    await render(<FilesNavigationSidebar projects={projects} selectedRoot="/repo" open onSelectRoot={onSelectRoot} onOpenFile={onOpenFile} />);
-    await settleDirectoryLoads();
-    await act(async () => rowButtonByTitle("README.md").click());
-    expect(onOpenFile).toHaveBeenCalledWith("README.md", "/repo");
-  });
-});
 
 describe("WorkspaceFileTree", () => {
   it.each(["", "src"])("recovers a directory failure at %j by retrying the current root", async (failedPath) => {

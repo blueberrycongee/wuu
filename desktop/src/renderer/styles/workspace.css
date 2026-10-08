@@ -982,6 +982,10 @@ html.resizing-workspace-file-split * {
   min-height: 0;
 }
 
+.workspace-artifact-document {
+  position: relative;
+}
+
 .workspace-document-composer,
 .skills-assistant-composer {
   position: absolute;
@@ -3468,9 +3472,4 @@ html[data-focus-modality="keyboard"] .runtime-panel-summary :is(
   60% { transform: translateX(-1px) rotate(-10deg); }
   75% { transform: translateX(1px) rotate(8deg); }
   88% { transform: translateX(-0.5px) rotate(-4deg); }
-}
-
-/* The Files ribbon supplies navigation beside the reading canvas. */
-.workspace-right-panel[data-navigation-mode="files"] .workspace-panel-tabbar {
-  padding-right: max(var(--control-toolbar-inset), var(--window-controls-inset-right));
 }

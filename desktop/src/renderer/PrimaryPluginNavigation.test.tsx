@@ -5,7 +5,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ExtensionInventoryRecord, Thread } from "../shared/protocol";
 import type { HeaderSnapshotV1, PresentationHost } from "../shared/workbench";
 import { AppSidebar } from "./AppSidebar";
-import { PluginNavigationSidebar } from "./PluginNavigationSidebar";
 import { createThreadSessionTab, initialState } from "./AppState";
 import { ConversationTitleContent } from "./ConversationShellRenderers";
 import { translateCurrent as t } from "./i18n";
@@ -103,15 +102,6 @@ function renderShell({ inventory: available }: { inventory?: ExtensionInventoryR
       pluginHost={host}
       workbenchController={controller}
     />
-    <PluginNavigationSidebar
-      hidden={false} catalogActive={false} hasRuntimeContext sidebarCollapsed={false}
-      onOpenCatalog={() => controller.deactivateRegion("primary")}
-      onOpenPlugin={(plugin, view, instance) => {
-        if (instance) controller.activateView(instance);
-        else void controller.openPluginView(plugin, view, { region: "primary", persistence: "durable", reveal: true });
-      }}
-      footer={null} pluginHost={host} workbenchController={controller}
-    />
     <main className="conversation-pane">
       <header>
         <ConversationTitleContent state={state} activeTitle="Original conversation"
@@ -141,47 +131,12 @@ function expectPage(title: string, content?: string) {
   expect(container.querySelector("main header h1")?.textContent).toBe(title);
   expect(container.querySelector("main header [role=tablist]")).toBeNull();
   expect(container.querySelector("main header [role=tab]")).toBeNull();
-  const view = [...container.querySelectorAll(".plugin-workbench-view-primary")].find(element => !element.closest("[hidden]"));
+  const view = container.querySelector(".plugin-workbench-view-primary");
   if (content) expect(view?.textContent).toContain(content);
-  else expect(view).toBeUndefined();
+  else expect(view).toBeNull();
 }
 
 describe("primary plugin navigation without a tab strip", () => {
-  it("parks primary page state, stops hidden effects, and disposes closed or unloaded pages", async () => {
-    let activeEffects = 0;
-    function Editor(): React.JSX.Element {
-      React.useEffect(() => { activeEffects++; return () => { activeEffects--; }; }, []);
-      return <input aria-label="Page draft" defaultValue="Initial draft" />;
-    }
-    await act(async () => host.activateGeneration({
-      pluginId, generation: "one",
-      contributions: { navigation: [{ id: "editor", title: "Editor", view: "editor" }] },
-      register(api) { api.registerViewType({ id: "editor", title: "Editor", render: Editor }); },
-    }));
-    renderShell();
-    await click("Editor");
-    const first = controller.getSnapshot().activeViewByRegion.primary!;
-    const input = container.querySelector<HTMLInputElement>('[aria-label="Page draft"]')!;
-    input.value = "Unsaved edit";
-    expect(activeEffects).toBe(1);
-    await click("Original conversation");
-    expect(input.isConnected).toBe(true);
-    expect(input.closest("[hidden]")).not.toBeNull();
-    expect(activeEffects).toBe(0);
-    await click("Editor");
-    expect(container.querySelector('[aria-label="Page draft"]')).toBe(input);
-    expect(input.value).toBe("Unsaved edit");
-    expect(activeEffects).toBe(1);
-    await act(async () => controller.closeView(first));
-    expect(input.isConnected).toBe(false);
-    expect(activeEffects).toBe(0);
-    await click("Editor");
-    expect(container.querySelector<HTMLInputElement>('[aria-label="Page draft"]')?.value).toBe("Initial draft");
-    act(() => host.unload(pluginId));
-    expect(container.querySelector('[aria-label="Page draft"]')).toBeNull();
-    expect(activeEffects).toBe(0);
-  });
-
   it("opens, returns, switches API-opened instances, reloads and closes through visible controls", async () => {
     await register();
     renderShell();

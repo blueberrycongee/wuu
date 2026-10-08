@@ -191,7 +191,6 @@ function initialWorkspaceFileTreeVisible(): boolean {
 
 export function WorkspaceRightPanel({
   compactNavigation = false,
-  navigationMode,
   open,
   present,
   prewarm = false,
@@ -227,7 +226,6 @@ export function WorkspaceRightPanel({
   workbenchController,
 }: {
   compactNavigation?: boolean;
-  navigationMode?: "files";
   open: boolean;
   present: boolean;
   prewarm?: boolean;
@@ -277,10 +275,7 @@ export function WorkspaceRightPanel({
     () => effectivePluginHost.getWorkspaceTools(),
     () => effectivePluginHost.getWorkspaceTools(),
   );
-  // Keep every resource mounted, but only expose document navigation in Files.
-  const visibleTabs = navigationMode === "files"
-    ? tabs.filter((tab) => tab.kind === "file")
-    : tabs;
+  const visibleTabs = tabs;
   const activeTab = activeTabID ? visibleTabs.find((tab) => tab.id === activeTabID) : undefined;
   const terminalTabOpen = tabs.some((tab) => tab.kind === "terminal");
   // Latch after the terminal has been shown so a later tool tab does not
@@ -306,10 +301,10 @@ export function WorkspaceRightPanel({
   const [fileSplitStacked, setFileSplitStacked] = useState(false);
   const stackedFileView = !compactNavigation && fileSplitStacked && activeTab?.kind === "file";
   // The saved visibility is untouched; a stacked document only sets it aside.
-  const fileTreeDocked = navigationMode !== "files" && fileTreeVisible && !stackedFileView;
+  const fileTreeDocked = fileTreeVisible && !stackedFileView;
   // The Files tab is the tree itself; beside a document the tree follows the
   // saved choice.
-  const fileTreeShown = navigationMode !== "files" && (compactNavigation || activeTab?.kind === "files" || fileTreeDocked);
+  const fileTreeShown = compactNavigation || activeTab?.kind === "files" || fileTreeDocked;
   const fileTreeBesideDocument = activeTab?.kind === "file" && fileTreeDocked && !compactNavigation;
   const moveFileTreeLabel = t(fileTreeSide === "right" ? "workspace.moveFileTreeLeft" : "workspace.moveFileTreeRight");
   const [draggingFileTree, setDraggingFileTree] = useState(false);
@@ -322,6 +317,7 @@ export function WorkspaceRightPanel({
   const fileSplitRef = useRef<HTMLDivElement>(null);
   const fileContentRef = useRef<HTMLElement>(null);
   const documentComposerRef = useRef<HTMLDivElement>(null);
+  const artifactContentRef = useRef<HTMLDivElement>(null);
   const fileTreeRef = useRef<HTMLElement>(null);
   const fileTreeDragPreviewRef = useRef<HTMLDivElement>(null);
   const fileSplitResizeRef = useRef<{ startX: number; startTreeWidth: number } | null>(null);
@@ -336,7 +332,7 @@ export function WorkspaceRightPanel({
   );
 
   useLayoutEffect(() => {
-    const content = fileContentRef.current;
+    const content = activeTab?.kind === "artifact" ? artifactContentRef.current : fileContentRef.current;
     const composer = documentComposerRef.current;
     if (!content || !composer) return;
     // Document annotations must remain above the floating composer's actual
@@ -351,7 +347,7 @@ export function WorkspaceRightPanel({
       observer?.disconnect();
       content.style.removeProperty("--workspace-document-composer-inset");
     };
-  }, [Boolean(focusedComposer), activeTab?.kind, open, present]);
+  }, [Boolean(focusedComposer), activeTab?.kind, activeTab?.id, open, present]);
   // Keep the active tab visible after selection, opening and pane resizing.
   // Tabs retain their label/close lanes instead of collapsing to icons.
   useLayoutEffect(() => {
@@ -687,7 +683,7 @@ export function WorkspaceRightPanel({
     };
   });
   const navigateBack = compactNavigation && open ? () => {
-    if (navigationMode === "files" || showingPicker) onClose();
+    if (showingPicker) onClose();
     else if (activeTab.kind === "file") onOpenTool("files");
     else onShowTools();
   } : undefined;
@@ -704,10 +700,9 @@ export function WorkspaceRightPanel({
 
   return (
     <aside
-      className={`workspace-right-panel${compactNavigation ? " compact-navigation" : ""}${showingPicker ? " tools" : " detail"}${activeTab?.kind === "review" ? " review" : ""}${activeTab?.kind === "diff" ? " diff" : ""}${activeTab?.kind === "files" || activeTab?.kind === "file" ? " files" : ""}${activeTab?.kind === "terminal" ? " terminal" : ""}${activeTab?.kind === "browser" ? " browser" : ""}${focusedComposer && activeTab?.kind === "file" ? " document-focus" : ""}`}
+      className={`workspace-right-panel${compactNavigation ? " compact-navigation" : ""}${showingPicker ? " tools" : " detail"}${activeTab?.kind === "review" ? " review" : ""}${activeTab?.kind === "diff" ? " diff" : ""}${activeTab?.kind === "files" || activeTab?.kind === "file" ? " files" : ""}${activeTab?.kind === "terminal" ? " terminal" : ""}${activeTab?.kind === "browser" ? " browser" : ""}${focusedComposer ? " document-focus" : ""}`}
       data-wuu-component="workspace-panel"
       data-wuu-view={activeTab?.kind ?? "picker"}
-      data-navigation-mode={navigationMode}
       data-sheet={
         sheetPhase === "exiting"
           ? "parked"
@@ -843,7 +838,7 @@ export function WorkspaceRightPanel({
           )}
         </DndContext>
         <span className="workspace-panel-tabbar-spacer" />
-        {navigationMode !== "files" ? <button
+        <button
           ref={addButtonRef}
           className="icon-button workspace-panel-add"
           type="button"
@@ -852,8 +847,8 @@ export function WorkspaceRightPanel({
           onClick={onShowTools}
         >
           <Plus />
-        </button> : null}
-        {navigationMode !== "files" ? <button
+        </button>
+        <button
           className={`icon-button workspace-panel-globalize${globalized ? " active" : ""}`}
           type="button"
           aria-label={
@@ -875,7 +870,7 @@ export function WorkspaceRightPanel({
           onClick={onToggleGlobalize}
         >
           {globalized ? <Minimize2 className="icon" /> : <Maximize2 className="icon" />}
-        </button> : null}
+        </button>
             </>
           )}
         />
@@ -985,7 +980,7 @@ export function WorkspaceRightPanel({
                   onOpenFile={onOpenFile}
                 />
               </section>
-              {navigationMode !== "files" && activeTab?.kind === "file" && !fileTreeDocked ? (
+              {activeTab?.kind === "file" && !fileTreeDocked ? (
                 <button
                   className={`icon-button workspace-file-tree-reveal ${fileTreeSide}`}
                   type="button"
@@ -1051,9 +1046,7 @@ export function WorkspaceRightPanel({
                 className="workspace-panel-content-swap"
                 key={activeTab?.id ?? "picker"}
               >
-                {showingPicker && navigationMode === "files" ? (
-                  <WorkspacePanelEmpty title={t("workspace.selectFile")} />
-                ) : showingPicker ? (
+                {showingPicker ? (
                   <WorkspaceToolPicker
                     pluginTools={pluginTools}
                     tabs={tabs}
@@ -1067,6 +1060,7 @@ export function WorkspaceRightPanel({
                     onClose={() => onCloseTab(activeTab.id)}
                   />
                 ) : activeTab.kind === "artifact" ? (
+                  <div className="workspace-artifact-document" ref={artifactContentRef}>
                   <ArtifactPreview
                     active={open}
                     artifact={activeTab.artifact}
@@ -1075,6 +1069,12 @@ export function WorkspaceRightPanel({
                     mode="panel"
                     onClose={() => onCloseTab(activeTab.id)}
                   />
+                  {focusedComposer ? (
+                    <div ref={documentComposerRef} className="workspace-document-composer" data-testid="workspace-document-composer">
+                      {focusedComposer}
+                    </div>
+                  ) : null}
+                  </div>
                 ) : activeTab.kind === "review" ? (
                   <WorkspaceReviewPanel
                     gitStatus={gitStatus}

@@ -107,6 +107,7 @@ function handoffInitialized(): InitializeResult {
 }
 
 function renderComposer(props: {
+  queryHistorySessionID?: string;
   accessMenuOpen?: boolean;
   activeEngine?: string;
   engineModel?: string;
@@ -164,12 +165,13 @@ function renderComposer(props: {
   };
   const onSelectPermissionMode = props.onSelectPermissionMode ?? vi.fn();
   act(() => {
-    root = createRoot(container);
+    root ??= createRoot(container);
     root.render(
       <ImagePreviewProvider>
         <Suspense fallback={<div data-testid="composer-suspended" />}>
           <WorkbenchConnectionContext.Provider value={props.connectionAvailable ?? true}>
           <Composer
+            queryHistorySessionID={props.queryHistorySessionID}
             variant={props.variant}
             canSelectWorkspace={props.canSelectWorkspace}
             mainConversation={props.mainConversation}
@@ -250,6 +252,114 @@ function renderComposer(props: {
   });
   return { onSelectPermissionMode };
 }
+
+describe("attachment picker focus recovery", () => {
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  function openPicker(): { textarea: HTMLTextAreaElement; input: HTMLInputElement } {
+    const textarea = container.querySelector<HTMLTextAreaElement>("textarea")!;
+    textarea.focus();
+    textarea.setSelectionRange(3, 7);
+    const plusButton = container.querySelector<HTMLButtonElement>(".composer-plus-button");
+    if (plusButton) act(() => { plusButton.click(); });
+    const attachment = plusButton
+      ? Array.from(document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'))
+        .find((button) => button.textContent?.includes(translateCurrent("composer.addAttachment")))!
+      : container.querySelector<HTMLButtonElement>(".composer-attach-button")!;
+    act(() => { attachment.focus(); attachment.click(); });
+    expect(document.querySelector('[data-floating-menu-owner="composer-plus"]')).toBeNull();
+    return { textarea, input: container.querySelector<HTMLInputElement>('input[type="file"]')! };
+  }
+
+  async function settlePicker(input: HTMLInputElement, result: "change" | "cancel"): Promise<void> {
+    if (result === "change") Object.defineProperty(input, "files", {
+      configurable: true, value: [new File(["pdf"], "sample.pdf", { type: "application/pdf" })],
+    });
+    await act(async () => {
+      input.dispatchEvent(new Event(result, { bubbles: true }));
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    });
+  }
+
+  it.each([
+    ["main", "change"], ["main", "cancel"], ["split", "change"], ["split", "cancel"],
+  ] as const)("returns to the unchanged %s draft after picker %s", async (variant, result) => {
+    const onPasteAttachmentFiles = vi.fn();
+    if (variant === "main") renderComposer({ prompt: "Two lines\nstill here", onPasteAttachmentFiles });
+    else renderStatefulSplitPaneComposer({ initialPrompt: "Two lines\nstill here", onPasteAttachmentFiles });
+    const { textarea, input } = openPicker();
+    await settlePicker(input, result);
+    expect(document.activeElement).toBe(textarea);
+    expect(textarea.value).toBe("Two lines\nstill here");
+    expect([textarea.selectionStart, textarea.selectionEnd]).toEqual([3, 7]);
+    expect(onPasteAttachmentFiles).toHaveBeenCalledTimes(result === "change" ? 1 : 0);
+  });
+
+  it("does not take focus back after the user moves elsewhere, even if that control blurs", async () => {
+    renderComposer({ prompt: "Keep this draft" });
+    const { textarea, input } = openPicker();
+    const other = document.createElement("button");
+    container.appendChild(other);
+    other.focus();
+    other.blur();
+    await settlePicker(input, "change");
+    expect(document.activeElement).not.toBe(textarea);
+    expect(textarea.value).toBe("Keep this draft");
+  });
+
+  it("restores focus even when the attachment pipeline reports an upload failure", async () => {
+    let failUpload!: () => void;
+    const upload = new Promise<void>((_, reject) => { failUpload = () => reject(new Error("Upload failed")); });
+    const onPasteAttachmentFiles = vi.fn(() => { void upload.catch(() => {}); });
+    renderComposer({ prompt: "Keep this draft", onPasteAttachmentFiles });
+    const { textarea, input } = openPicker();
+    await settlePicker(input, "change");
+    await act(async () => { failUpload(); await upload.catch(() => {}); });
+    expect(document.activeElement).toBe(textarea);
+    expect(textarea.value).toBe("Keep this draft");
+  });
+
+  it.each(["session", "read-only"])("does not restore focus after a %s change", async (change) => {
+    renderComposer({ prompt: "First draft", queryHistorySessionID: "first" });
+    const { input } = openPicker();
+    renderComposer({ prompt: "Second draft", queryHistorySessionID: change === "session" ? "second" : "first", readOnly: change === "read-only" });
+    await settlePicker(input, "cancel");
+    expect(document.activeElement?.tagName).not.toBe("TEXTAREA");
+  });
+
+  it("does not steal focus when another document is clicked before the return frame", async () => {
+    renderComposer({ prompt: "Keep this draft" });
+    const { textarea, input } = openPicker();
+    const otherDocument = document.createElement("button");
+    container.appendChild(otherDocument);
+    await act(async () => {
+      input.dispatchEvent(new Event("cancel", { bubbles: true }));
+      // macOS pointer activation need not focus buttons.
+      otherDocument.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    });
+    expect(document.activeElement).not.toBe(textarea);
+  });
+
+  it("supports choosing an attachment again after cancellation", async () => {
+    const onPasteAttachmentFiles = vi.fn();
+    renderComposer({ prompt: "Keep this draft", onPasteAttachmentFiles });
+    await settlePicker(openPicker().input, "cancel");
+    const { textarea, input } = openPicker();
+    await settlePicker(input, "change");
+    expect(document.activeElement).toBe(textarea);
+    expect(onPasteAttachmentFiles).toHaveBeenCalledOnce();
+  });
+
+  it("does not restore an unmounted editor", async () => {
+    renderComposer({ prompt: "Keep this draft" });
+    const { textarea, input } = openPicker();
+    const focus = vi.spyOn(textarea, "focus");
+    act(() => { root!.unmount(); root = null; });
+    await settlePicker(input, "cancel");
+    expect(focus).not.toHaveBeenCalled();
+  });
+});
 
 describe("mobile composer attachments", () => {
   let hostKind: string | undefined;

@@ -2,14 +2,6 @@
 
 A workspace connects conversations to a local folder. The agent reads and changes the files in that folder, so choose the workspace before sending a task.
 
-## Navigate conversations, files, and plugins
-
-The narrow rail on the far left switches between **Conversations**, **Files**, and **Plugins**. The adjacent sidebar shows the selected destination's sessions, file tree, or plugin pages. Collapsing or resizing that sidebar leaves the rail available.
-
-In **Files**, choose a registered folder from the folder selector, or use **Add workspace** to register another local folder. Browsing and reading files do not start a conversation or change the workspace of your current conversation. Return to **Conversations** to continue it; returning to **Files** restores the selected document tab.
-
-In **Plugins**, use **Manage plugins & skills** to open the existing catalog, or select a plugin page. Open plugin pages remain available when you change destinations. Return to **Conversations** to restore your previous conversation or unsent draft. Clicking a destination again reveals its sidebar without resetting the selected page. Settings and account actions remain available at the bottom of each sidebar.
-
 ## Add a workspace
 
 Choose **Add workspace** in the sidebar. **Use existing folder** selects a folder already on disk; **Create blank workspace** opens a folder dialog where you can create a directory. Neither option copies existing files into Wuu.
