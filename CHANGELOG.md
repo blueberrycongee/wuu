@@ -39,6 +39,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Keep conversation messages and image tables within narrow panes when the sidebar
+  remains open, and let page scrolling resume at fractional image-gallery edges.
+
 - Align document-preview workspace controls inside the inset conversation tray.
 
 - Keep resumed Claude engine turns running when a background task notification

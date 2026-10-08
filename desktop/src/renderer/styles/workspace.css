@@ -3201,6 +3201,9 @@ html[data-focus-modality="keyboard"] .runtime-panel-summary :is(
   --conversation-flow-bottom-space: 32px;
   padding-block: var(--conversation-flow-top-gap) 32px;
   row-gap: 0;
+  /* Every message spans the grid. Internal gutters would still impose their
+     combined width when its tracks shrink to zero in a narrow pane. */
+  column-gap: 0;
 }
 
 .conversation-width > *,

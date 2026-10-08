@@ -287,13 +287,16 @@ app.whenReady().then(async () => {
                 table.scrollLeft = table.scrollWidth;
                 const right = image.getBoundingClientRect().right;
                 table.scrollLeft = initialScroll;
-                return rect.width >= 100 && rect.height > 0 && tableBounds.left >= bounds.left && tableBounds.right <= bounds.right
+                // Table previews keep a readable intrinsic width; carousel
+                // thumbnails scale with the available conversation column.
+                const readable = table.classList.contains("rich-table-wrap") ? rect.width >= 100 : rect.width > 0;
+                return readable && rect.height > 0 && tableBounds.left >= bounds.left && tableBounds.right <= bounds.right
                   && left >= tableBounds.left - 1 && right <= tableBounds.right + 1;
               }
               return rect.width > 0 && rect.height > 0 && rect.left >= bounds.left && rect.right <= bounds.right;
             });
           }, activeSelector);
-          assert.ok(contained, "Portrait and panorama previews must fit the conversation at every width/font size");
+          assert.ok(contained, `${kind}-${theme}-${font}-${width}: portrait and panorama previews must fit the conversation`);
           await capture(`${kind}-${theme}-${font}-${width}`);
           if (kind === "artifact") {
             win.webContents.sendInputEvent({ type: "mouseMove", x: 1, y: 1 });

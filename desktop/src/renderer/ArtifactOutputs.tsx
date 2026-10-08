@@ -142,10 +142,11 @@ export function TurnInlineArtifactOutputs({
       if (event.ctrlKey || event.metaKey || event.shiftKey || event.deltaX !== 0) return;
       const delta = event.deltaY * (event.deltaMode === 1 ? parseFloat(getComputedStyle(gallery).fontSize)
         : event.deltaMode === 2 ? gallery.clientWidth : 1);
-      const next = Math.max(0, Math.min(gallery.scrollWidth - gallery.clientWidth, gallery.scrollLeft + delta));
-      if (next === gallery.scrollLeft) return;
-      event.preventDefault();
-      gallery.scrollLeft = next;
+      const previous = gallery.scrollLeft;
+      gallery.scrollLeft = previous + delta;
+      // Let the browser clamp fractional scroll limits before deciding whether
+      // this wheel moved the gallery or should continue scrolling the page.
+      if (gallery.scrollLeft !== previous) event.preventDefault();
     };
     gallery.addEventListener("wheel", onWheel, { passive: false });
     return () => gallery.removeEventListener("wheel", onWheel);
