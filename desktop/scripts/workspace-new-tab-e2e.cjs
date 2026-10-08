@@ -144,7 +144,12 @@ app.whenReady().then(async () => {
   win.webContents.sendInputEvent({ type: "char", keyCode: "\r" });
   win.webContents.sendInputEvent({ type: "keyUp", keyCode: "Return" });
   await waitFor(() => document.querySelector(".workspace-tool-menu-more").open);
-  await click('[data-wuu-plugin="user:workspace-e2e"]');
+  await evaluate(() => {
+    const notes = [...document.querySelectorAll('[data-wuu-plugin="user:workspace-e2e"]')]
+      .find((button) => button.querySelector("strong")?.textContent === "Workspace notes");
+    if (!notes) throw new Error("Workspace notes tool is missing");
+    notes.click();
+  });
   await waitFor(() => Boolean(document.querySelector("[data-workspace-e2e-notes]")));
   assert.equal((await tabs()).length, 2);
   for (const theme of ["light", "dark"]) {
