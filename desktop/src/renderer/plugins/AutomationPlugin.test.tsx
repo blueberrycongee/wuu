@@ -181,12 +181,11 @@ it("closes the editor immediately when motion is reduced", async () => {
   expect(ui.container.querySelector("aside")).toBeNull();
 });
 
-it("reveals saved execution overrides and preserves them when the settings are collapsed", async () => {
+it("shows execution overrides in place and preserves them on save", async () => {
   const ui = await mount({ tasks: [{ ...task, recurring: false, timezone: "Pacific/Honolulu" }] });
   await ui.open();
-  const settings = ui.container.querySelector<HTMLDetailsElement>(".plugin-automation-advanced")!;
-  expect(settings.open).toBe(true);
-  await act(async () => { settings.open = false; settings.dispatchEvent(new Event("toggle")); });
+  expect(ui.container.querySelector(".plugin-automation-detail-body")?.textContent).toContain("仅执行一次");
+  expect(ui.container.querySelector<HTMLInputElement>("input[value='Pacific/Honolulu']")).not.toBeNull();
   await ui.edit("textarea", "Updated instructions"); await ui.click("保存修改");
   expect(ui.invoke).toHaveBeenCalledWith(expect.objectContaining({ method: "automation.update", input: expect.objectContaining({ recurring: false, timezone: "Pacific/Honolulu", workspace: "worktree" }) }));
 });
