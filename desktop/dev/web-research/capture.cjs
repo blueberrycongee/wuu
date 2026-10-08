@@ -58,11 +58,14 @@ app.whenReady().then(async () => {
   };
   const measure = () => run(`(() => {
     const region = document.querySelector('.turn-web-research');
+    const popover = document.querySelector('.web-research-popover');
+    const summary = document.querySelector('.process-surface-row');
     const circles = [...document.querySelectorAll('.web-source-link')].filter(node => !node.closest('[inert]'));
     const bounds = el => { const r = el.getBoundingClientRect(); return { x:r.x,y:r.y,width:r.width,height:r.height }; };
     return { running:region?.getAnimations({subtree:true}).filter(a => a.animationName === 'web-source-arrive' && a.playState === 'running').length ?? 0,
       pageWidth:document.documentElement.scrollWidth, width:innerWidth, circles:circles.map(bounds),
       region:region && bounds(region), count:circles.length, focus:document.activeElement?.className,
+      popover:popover && bounds(popover), summary:summary && bounds(summary),
       toolOwned:region ? !!region.closest('.process-surface') : null,
       expanded:document.querySelector('.turn-process-toggle')?.getAttribute('aria-expanded'),
       more:document.querySelector('.web-research-more')?.getAttribute('aria-expanded'),
@@ -111,10 +114,30 @@ app.whenReady().then(async () => {
     win.webContents.sendInputEvent({ type: "mouseMove", x: 5, y: 5 });
     await click("#more-results");
     await settle();
-    assert.equal((await measure()).count, 6);
+    const visibleSources = (await measure()).count;
+    assert.ok(visibleSources >= 1 && visibleSources <= 6);
+    const header = await measure();
+    assert.ok(header.region.y < header.summary.y + header.summary.height && header.region.y + header.region.height > header.summary.y,
+      "tool aggregation and sources share the same line");
+    assert.ok(header.summary.x + header.summary.width <= header.region.x + 1, "tool and source hit targets do not overlap");
+    const flowHeight = (await measure()).region.height;
     await click(".web-research-more");
     await settle();
-    assert.equal((await measure()).count, 8);
+    const overflow = await measure();
+    assert.equal(overflow.count, 8);
+    assert.equal(overflow.region.height, flowHeight, "overflow does not expand the message flow");
+    assert.ok(overflow.popover && overflow.popover.width <= 360 && overflow.popover.width <= width - 16, "overflow remains a compact floating surface");
+    assert.ok(overflow.popover.x >= 0 && overflow.popover.x + overflow.popover.width <= width);
+    assert.ok(overflow.popover.y >= 0 && overflow.popover.y + overflow.popover.height <= 800);
+    await shot(`${name}-overflow`);
+    // A pointer/touch-style outside press closes the floating layer.
+    win.webContents.sendInputEvent({ type: "mouseDown", button: "left", clickCount: 1, x: 10, y: 10 });
+    win.webContents.sendInputEvent({ type: "mouseUp", button: "left", clickCount: 1, x: 10, y: 10 });
+    await frames();
+    await settle();
+    assert.equal((await measure()).more, "false");
+    await click(".web-research-more");
+    await settle();
     // The disclosure may be revisited while the search is still running.
     // Already received sources must not masquerade as new results again.
     await click(".web-research-more");
@@ -136,8 +159,13 @@ app.whenReady().then(async () => {
     await settle();
     const collapsed = await measure();
     assert.equal(collapsed.more, "false");
-    assert.equal(collapsed.count, 6);
+    assert.equal(collapsed.count, visibleSources);
     assert.equal(collapsed.focus, "web-research-more");
+    await click(".process-surface-row");
+    await settle();
+    assert.equal((await measure()).count, visibleSources, "tool detail expansion preserves the source header");
+    await click(".process-surface-row");
+    await settle();
     // The owning process folds when the answer arrives; reopening restores
     // the same links without replaying a historical source arrival.
     await click("#finish");
@@ -148,20 +176,32 @@ app.whenReady().then(async () => {
     await click(".turn-process-toggle");
     await noArrivalReplay("history does not replay source arrivals");
     const done = await measure();
-    assert.equal(done.count, 6);
+    assert.equal(done.count, visibleSources);
     assert.equal(done.running, 0);
     await run("window.scrollTo({top:0,behavior:'instant'})");
     await frames();
     await shot(`${name}-done`);
     await click("#many");
-    await click(".web-research-more");
+    await run("document.querySelector('.web-research-more').focus()");
+    await key("ArrowUp", 38);
     await settle();
+    assert.equal((await measure()).count, visibleSources + 8, "long overflow initially shows eight source chips");
+    assert.ok(await run("document.activeElement.classList.contains('web-research-reveal')"));
+    await key("Enter", 13);
+    await settle();
+    await key("ArrowUp", 38);
+    await frames();
     const many = await measure();
     assert.equal(many.count, 20);
     assert.ok(many.pageWidth <= width);
-    await run("document.querySelectorAll('.web-source-link')[19].focus()");
-    await frames();
-    assert.ok(await run("document.activeElement.getBoundingClientRect().bottom <= innerHeight"));
+    assert.ok(many.popover && many.popover.height <= 360 && many.popover.width <= 360);
+    assert.ok(await run(`(() => {
+      const focused = document.activeElement;
+      const last = document.querySelectorAll('.web-source-link')[19];
+      const panel = document.querySelector('.web-research-popover').getBoundingClientRect();
+      const item = focused.getBoundingClientRect();
+      return focused === last && item.top >= panel.top && item.bottom <= panel.bottom && item.bottom <= innerHeight;
+    })()`), "revealing the remaining chips keeps the last source keyboard-accessible and visible");
     await shot(`${name}-many`);
     await click("#reset");
     await click("#stop");
@@ -184,7 +224,7 @@ app.whenReady().then(async () => {
     await click("#results");
     assert.equal((await measure()).running, 0);
     await shot(`${name}-reduced`);
-    results.push({ name, arrival, collapsed, done, many });
+    results.push({ name, arrival, overflow, collapsed, done, many });
   }
   win.setContentSize(900, 760);
   await win.loadURL("http://127.0.0.1:5218/dev/web-research/");

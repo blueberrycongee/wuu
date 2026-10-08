@@ -1456,7 +1456,7 @@ describe("AssistantTurnShell — web research", () => {
     expect(onOpenURL).toHaveBeenCalledExactlyOnceWith("https://docs.anthropic.com/api");
   });
 
-  it("deduplicates search and fetch hits by host in first-seen order", () => {
+  it("preserves distinct search and fetch pages on the same host in first-seen order", () => {
     const turn = makeTurn("completed", [
       makeWebSearch([
         { url: "https://docs.anthropic.com/a", title: "Doc A" },
@@ -1469,9 +1469,13 @@ describe("AssistantTurnShell — web research", () => {
     const { container } = renderShell(turn);
     act(() => container.querySelector<HTMLElement>(".turn-process-toggle")!.click());
     const links = container.querySelectorAll(".turn-web-research button[aria-label^='打开 ']");
-    expect(links).toHaveLength(2);
-    expect(links[0].getAttribute("aria-label")).toContain("https://docs.anthropic.com/a");
-    expect(links[1].getAttribute("aria-label")).toContain("https://openai.com/docs");
+    expect(links).toHaveLength(4);
+    expect([...links].map(link => link.getAttribute("aria-label"))).toEqual([
+      expect.stringContaining("https://docs.anthropic.com/a"),
+      expect.stringContaining("https://docs.anthropic.com/b"),
+      expect.stringContaining("https://openai.com/docs"),
+      expect.stringContaining("https://docs.anthropic.com/c"),
+    ]);
   });
 
   it("shows an ongoing search before results arrive, and excludes failed fetches from sources", () => {

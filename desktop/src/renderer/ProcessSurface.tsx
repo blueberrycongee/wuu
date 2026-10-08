@@ -255,7 +255,7 @@ export function ProcessSurface({
   const openWorkspaceURL = useWorkspaceBrowserOpen(onOpenURL);
   const toolItems = processItems.filter(isToolActivityItem);
   const sources = collectTurnSources(toolItems.filter(item =>
-    item.status === "completed" && !item.error && !item.result_detail?.is_error));
+    item.status === "completed" && !item.error && !item.result_detail?.is_error), "url");
   const reasoningItems = processItems.filter(
     (item) => item.type === "reasoning",
   );
@@ -409,6 +409,7 @@ export function ProcessSurface({
     <div className={className}>
       <ProcessSurfaceFold
         summary={summaryLine}
+        summaryAccessory={<TurnSourcesRow sources={sources} running={processEntryActive} onOpen={onOpenURL} inline />}
         disabled={!hasDetails}
         open={expanded}
         onToggle={handleToggle}
@@ -439,7 +440,6 @@ export function ProcessSurface({
           </div>
         ) : null)}
       </ProcessSurfaceFold>
-      <TurnSourcesRow sources={sources} running={processEntryActive} onOpen={onOpenURL} />
     </div>
   );
   // Nesting is deterministic: conversation.process is the complete outer

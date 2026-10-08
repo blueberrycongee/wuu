@@ -1,3 +1,4 @@
+import { useLayoutEffect, useRef } from "react";
 import type {
   HTMLAttributes,
   ReactNode,
@@ -28,6 +29,8 @@ import { ChevronRight } from "./WuuIcons";
 export type ProcessSurfaceFoldProps = {
   /** Row content rendered inside the clickable `<summary>`. */
   summary: ReactNode;
+  /** Independent controls beside the disclosure, never inside its summary. */
+  summaryAccessory?: ReactNode;
   /** Content rendered inside the bounded body once the fold is open. */
   children?: ReactNode;
   /**
@@ -50,6 +53,7 @@ export type ProcessSurfaceFoldProps = {
 
 export function ProcessSurfaceFold({
   summary,
+  summaryAccessory,
   children,
   header,
   disabled = false,
@@ -62,6 +66,20 @@ export function ProcessSurfaceFold({
   bodyProps,
 }: ProcessSurfaceFoldProps): JSX.Element {
   const hasDetails = !disabled;
+  const layoutRef = useRef<HTMLDivElement>(null);
+  const accessoryRef = useRef<HTMLDivElement>(null);
+  const hasAccessory = Boolean(summaryAccessory);
+  useLayoutEffect(() => {
+    if (!hasAccessory) return;
+    const measure = () => {
+      const width = accessoryRef.current?.getBoundingClientRect().width ?? 0;
+      layoutRef.current?.style.setProperty("--process-accessory-width", `${width}px`);
+    };
+    measure();
+    const observer = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(measure);
+    if (accessoryRef.current) observer?.observe(accessoryRef.current);
+    return () => observer?.disconnect();
+  }, [hasAccessory]);
   const handleToggle = (event: SyntheticEvent<HTMLDetailsElement>): void => {
     if (!hasDetails) {
       event.currentTarget.open = false;
@@ -75,7 +93,7 @@ export function ProcessSurfaceFold({
       onSummaryClick?.(event);
     }
   };
-  return (
+  const fold = (
     <details
       className={`process-surface-fold${hasDetails ? " has-details" : " no-details"}${
         open ? " expanded" : " collapsed"
@@ -108,4 +126,10 @@ export function ProcessSurfaceFold({
       ) : null}
     </details>
   );
+  return hasAccessory ? (
+    <div ref={layoutRef} className="process-surface-inline-controls">
+      {fold}
+      <div ref={accessoryRef} className="process-surface-summary-accessory">{summaryAccessory}</div>
+    </div>
+  ) : fold;
 }
