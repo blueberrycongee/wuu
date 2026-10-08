@@ -165,16 +165,18 @@ type FailureKind = "auth" | "quota" | "model" | "rateLimit" | "unavailable" | "t
 
 // Human words for the failures people actually meet. Anything else keeps the
 // classifier's title and a generic next step.
-const FAILURE_COPY: Record<FailureKind, { title: TranslationKey; body: TranslationKey }> = {
-  auth: { title: "turnFailure.auth", body: "turnFailure.authBody" },
-  quota: { title: "turnFailure.quota", body: "turnFailure.quotaBody" },
+// A body only carries a step the title and the actions leave out; the
+// reader already knows what a rate limit or a dropped connection means.
+const FAILURE_COPY: Record<FailureKind, { title: TranslationKey; body?: TranslationKey }> = {
+  auth: { title: "turnFailure.auth" },
+  quota: { title: "turnFailure.quota" },
   model: { title: "turnFailure.model", body: "turnFailure.modelBody" },
-  rateLimit: { title: "turnFailure.rateLimit", body: "turnFailure.rateLimitBody" },
-  unavailable: { title: "turnFailure.unavailable", body: "turnFailure.unavailableBody" },
-  timeout: { title: "turnFailure.timeout", body: "turnFailure.timeoutBody" },
+  rateLimit: { title: "turnFailure.rateLimit" },
+  unavailable: { title: "turnFailure.unavailable" },
+  timeout: { title: "turnFailure.timeout" },
   network: { title: "turnFailure.network", body: "turnFailure.networkBody" },
-  dropped: { title: "turnFailure.dropped", body: "turnFailure.droppedBody" },
-  offline: { title: "turnFailure.offline", body: "turnFailure.offlineBody" },
+  dropped: { title: "turnFailure.dropped" },
+  offline: { title: "turnFailure.offline" },
   context: { title: "turnFailure.context", body: "turnFailure.contextBody" },
 };
 
@@ -293,7 +295,8 @@ export function TurnFailureNotice({
       ? reconnectFallbackTitle(reconnect)
       : titleWithoutStatus(display?.title, status) || t("error.requestFailedTitle");
   const retries = error?.recovery?.retry_count ?? reconnect?.retry_count ?? 0;
-  const body = t(kind ? FAILURE_COPY[kind].body : "turnFailure.genericBody");
+  const bodyKey = kind ? FAILURE_COPY[kind].body : undefined;
+  const body = !retrying && bodyKey ? t(bodyKey) : "";
   const settingsFirst = kind === "auth" || kind === "quota" || kind === "model";
   const openSettings = settingsFirst ? onOpenSettings : undefined;
   // Replaying an oversized conversation fails the same way; the body names
@@ -306,7 +309,7 @@ export function TurnFailureNotice({
   const diagnostic = retrying ? "" : message?.trim() ?? "";
   const facts = retrying
     ? []
-    : [status ? `HTTP ${status}` : "", retries > 0 ? t("turnFailure.retried", { count: formatCurrentNumber(retries) }) : ""].filter(Boolean);
+    : [status && !diagnostic.includes(String(status)) ? `HTTP ${status}` : "", retries > 0 ? t("turnFailure.retried", { count: formatCurrentNumber(retries) }) : ""].filter(Boolean);
   const hasDetails = Boolean(diagnostic) || facts.length > 0;
 
   async function runRecover(): Promise<void> {
@@ -333,8 +336,8 @@ export function TurnFailureNotice({
         <div className="turn-failure-line">
           <p className="turn-failure-message">
             <span className="turn-failure-title">{title}</span>
-            {retrying ? null : <span className="turn-failure-body">{body}</span>}
-            {hasDetails ? " " : null}
+            {body ? <span className="turn-failure-body">{body}</span> : null}
+            {body && hasDetails ? " " : null}
             {hasDetails ? (
               <button
                 type="button"
@@ -369,7 +372,7 @@ export function TurnFailureNotice({
                 <button
                   type="button"
                   className="turn-failure-pill turn-failure-action"
-                  title={t(continues ? "turnFailure.continueHint" : "turnFailure.retryHint")}
+                  title={continues ? t("turnFailure.continueHint") : undefined}
                   disabled={recoverPending}
                   onClick={() => void runRecover()}
                 >

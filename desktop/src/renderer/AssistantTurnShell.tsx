@@ -757,10 +757,10 @@ function turnProcessTitle(
       ? taskFinishedLabel(elapsedMs)
       : translate("task.status.completed");
   }
-  // The failure card below says what went wrong; the fold header keeps the
-  // duration a finished turn shows.
+  // The failure card below says what went wrong; the fold header only names
+  // the record, so the two never state the failure twice.
   if (turnEndedInFailure(turn)) {
-    return hasKnownDuration ? taskFinishedLabel(elapsedMs) : translate("messageFlow.activityFailed");
+    return hasKnownDuration ? taskFinishedLabel(elapsedMs) : translate("messageFlow.activityLog");
   }
   if (turn.status === "interrupted") return translate("turn.orchestrationPaused");
   if (turn.status === "completed") {

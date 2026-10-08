@@ -135,7 +135,7 @@ const failureCases: Record<string, Turn> = {
       recovery: { attempt_count: 4, retry_count: 3, max_attempts: 6, submission_count: 4, stop_reason: "non_retryable", failure_category: "rate_limit" } } },
   offline: { id: "failure-offline", status: "failed", items_view: "full", items: [{ ...failureRequest, id: "failure-offline-q" }],
     error: { message: "stream request failed: dial tcp: lookup api.example.com: no such host", category: "network" } },
-  dropped: { id: "failure-dropped", status: "failed", items_view: "full", items: [
+  dropped: { id: "failure-dropped", status: "failed", items_view: "full", duration_ms: 48000, started_at: "2026-09-17T06:00:00Z", completed_at: "2026-09-17T06:00:48Z", items: [
     { ...failureRequest, id: "failure-dropped-q" },
     { id: "failure-dropped-a", type: "agent_message", status: "completed", terminal: false, text: "最近一周主要有三类改动。\n\n**桌面端消息流**：用户消息的悬停动作移到气泡下方，失败卡片改为原地展开，长回复的段落间距统一到阅读节奏。\n\n**自动化页面**：列表与详情重新分栏，运行记录按日期分组，并补上了进入和切换时的动效。\n\n**工作区标签**：展开的工作区标签现在与对话共享，新建标签会" },
   ], error: { message: "stream error: unexpected EOF before response.completed", category: "network", recovery: { attempt_count: 1, retry_count: 0, max_attempts: 6, submission_count: 1, stop_reason: "replay_unsafe", failure_category: "incomplete_stream" } } },
@@ -144,6 +144,9 @@ const failureCases: Record<string, Turn> = {
       recovery: { attempt_count: 1, retry_count: 0, max_attempts: 6, submission_count: 1, stop_reason: "non_retryable", failure_category: "authentication" } } },
   unknown: { id: "failure-unknown", status: "failed", items_view: "full", items: [{ ...failureRequest, id: "failure-unknown-q" }],
     error: { message: "HTTP 400: invalid_request_error: messages.1.content.0.tool_use_id: unexpected tool_use_id found in tool_result blocks: toolu_01ABC", category: "invalid_request", status_code: 400, code: "invalid_request_error" } },
+  context: { id: "failure-context", status: "failed", items_view: "full", items: [{ ...failureRequest, id: "failure-context-q" }],
+    error: { message: "HTTP 400: prompt is too long: 214312 tokens > 200000 maximum", category: "provider", status_code: 400,
+      recovery: { attempt_count: 1, retry_count: 0, max_attempts: 6, submission_count: 1, stop_reason: "non_retryable", failure_category: "context_overflow" } } },
   retrying: { id: "failure-retrying", status: "in_progress", items_view: "full", items: [
     { ...failureRequest, id: "failure-retrying-q" },
     { id: "failure-retrying-r", type: "stream_reconnect", status: "in_progress", reason: "overloaded", retry_count: 2, retry_at_ms: Date.now() + 600_000, text: "Upstream overloaded" },

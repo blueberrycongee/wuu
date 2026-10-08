@@ -2663,7 +2663,8 @@
  * the action follows the words instead of waiting across the column. It
  * turns to the error tint only when the turn has failed. */
 .turn-failure {
-  --turn-failure-pill-height: 28px;
+  /* The pill tracks the reading line so it stays concentric at any type size. */
+  --turn-failure-pill-height: calc(var(--conversation-process-line-height) + 6px);
   --turn-failure-inset: 6px;
   display: flex;
   align-items: flex-start;
@@ -2671,8 +2672,9 @@
   min-width: 0;
   max-width: 100%;
   box-sizing: border-box;
-  padding: var(--turn-failure-inset) var(--turn-failure-inset) var(--turn-failure-inset) var(--space-3);
-  /* Concentric with the pill it holds. */
+  /* Text keeps a full gutter on both sides; only the trailing pill steps out
+   * to the inset, so its ends stay concentric with the surface. */
+  padding: var(--turn-failure-inset) var(--space-3);
   border-radius: calc(var(--turn-failure-pill-height) / 2 + var(--turn-failure-inset));
   background: var(--danger-soft);
   color: var(--ink);
@@ -2726,8 +2728,11 @@
 }
 
 .turn-failure-title {
-  margin-inline-end: var(--space-2);
   font-weight: var(--weight-medium);
+}
+
+.turn-failure-title:not(:last-child) {
+  margin-inline-end: var(--space-2);
 }
 
 .turn-failure-body {
@@ -2776,6 +2781,7 @@
   flex: none;
   align-items: center;
   gap: var(--space-1);
+  margin-inline-end: calc(var(--turn-failure-inset) - var(--space-3));
 }
 
 /* Countdown and action share one geometry so the slot never resizes its
@@ -2857,9 +2863,9 @@
 .turn-failure-details > .collapsible-details-inner {
   display: grid;
   row-gap: var(--space-1);
-  /* Inline-start padding belongs to the shared fold's mascot-room offset. */
-  padding-block: var(--space-1) var(--space-2);
-  padding-inline-end: var(--space-2);
+  /* Inline-start padding belongs to the shared fold's mascot-room offset. The
+   * bottom completes the surface's gutter below the record. */
+  padding-block: var(--space-1) calc(var(--space-3) - var(--turn-failure-inset));
 }
 
 .turn-failure-facts {
