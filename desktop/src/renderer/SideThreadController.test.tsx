@@ -89,10 +89,12 @@ function mountController(
   let current: SideThreadController | undefined;
   let threadId = initialThreadId;
   let runtimeContext = initialContext;
+  let maxWidth: number | undefined;
   function Probe() {
     current = useSideThreadController({
       activeThreadId: threadId,
       activeContext: runtimeContext,
+      maxWidth,
       ipc
     });
     return null;
@@ -104,6 +106,10 @@ function mountController(
   act(() => root.render(createElement(Probe)));
   return {
     get: () => current!,
+    resizeAvailableWidth(nextMaxWidth: number) {
+      maxWidth = nextMaxWidth;
+      act(() => root.render(createElement(Probe)));
+    },
     rerender(nextThreadId: string, nextContext = runtimeContext) {
       threadId = nextThreadId;
       runtimeContext = nextContext;
@@ -386,6 +392,32 @@ describe("useSideThreadController", () => {
 
     expect(hook.get().entry?.summary?.status).toBe("completed");
     expect(hook.get().entry?.streaming).toBe(false);
+  });
+
+  it("fits a narrow reading canvas without replacing the preferred side width", () => {
+    const hook = mountController(makeIPC().ipc);
+    expect(hook.get().width).toBe(400);
+    hook.resizeAvailableWidth(760 - 48 - 352);
+    expect(hook.get().width).toBe(360);
+    // Preserve the existing side-panel minimum when both columns cannot fit.
+    hook.resizeAvailableWidth(200);
+    expect(hook.get().width).toBe(320);
+    hook.resizeAvailableWidth(1200 - 48 - 264 - 352);
+    expect(hook.get().width).toBe(400);
+  });
+
+  it("starts a resize at the visible constrained width", () => {
+    const hook = mountController(makeIPC().ipc);
+    hook.resizeAvailableWidth(360);
+    act(() => hook.get().startResize({
+      button: 0, clientX: 100, pointerId: 1,
+      currentTarget: document.createElement("button"), preventDefault: vi.fn(),
+    } as unknown as React.PointerEvent<HTMLButtonElement>));
+    act(() => window.dispatchEvent(new MouseEvent("pointermove", { clientX: 120 })));
+    expect(hook.get().width).toBe(340);
+    act(() => window.dispatchEvent(new Event("pointerup")));
+    hook.resizeAvailableWidth(600);
+    expect(hook.get().width).toBe(340);
   });
 
   it("updates the shared grid width and clears resize state on pointer up", () => {

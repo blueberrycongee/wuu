@@ -16,6 +16,7 @@ import type {
 } from "../shared/protocol";
 import {
   SIDE_THREAD_DEFAULT_WIDTH,
+  SIDE_THREAD_MAX_WIDTH,
   clampSideThreadWidth,
   createInitialSideThreadStore,
   ensureSideThreadEntry,
@@ -50,6 +51,7 @@ export type SideThreadControllerOptions = {
   ipc?: SideThreadIPC;
   disabled?: boolean;
   disabledReason?: string;
+  maxWidth?: number;
 };
 
 export type SideThreadIPC = {
@@ -118,6 +120,8 @@ export function useSideThreadController(
   activeRuntimeKeyRef.current = activeRuntimeKey;
   storeRef.current = store;
   const entry = activeThreadId ? store.byThread[activeThreadId] : undefined;
+  // Layout constrains the visible width without replacing the user's preference.
+  const width = Math.min(store.width, clampSideThreadWidth(options.maxWidth ?? SIDE_THREAD_MAX_WIDTH));
 
   const dispatch = useCallback((action: SideThreadAction) => {
     setStore((previous) => reduceSideThreadStore(previous, action));
@@ -520,7 +524,7 @@ export function useSideThreadController(
       resizeCleanupRef.current?.();
 
       const startX = event.clientX;
-      const startWidth = storeRef.current.width;
+      const startWidth = width;
       const pointerId = event.pointerId;
       const target = event.currentTarget;
       const root = document.documentElement;
@@ -550,12 +554,12 @@ export function useSideThreadController(
       window.addEventListener("pointerup", cleanup);
       window.addEventListener("pointercancel", cleanup);
     },
-    [dispatch]
+    [dispatch, width]
   );
 
   return {
     entry,
-    width: store.width,
+    width,
     open,
     close,
     toggle,

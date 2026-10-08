@@ -187,6 +187,7 @@ import {
   SIDEBAR_MIN_WIDTH,
   sidebarMotionMs,
   WORKSPACE_CONVERSATION_SAFE_WIDTH,
+  WORKSPACE_RIGHT_PANEL_MAIN_MIN_WIDTH,
   WORKSPACE_RIGHT_PANEL_MAX_WIDTH,
   WORKSPACE_RIGHT_PANEL_MIN_WIDTH,
   useAppLayoutState,
@@ -894,6 +895,7 @@ export function App(): JSX.Element {
     useState(false);
   // Everything the window gives to other columns before the conversation.
   const environmentPanelPaneOffset =
+    navigationRibbonWidth +
     effectiveSidebarWidth +
     (rightPanelOpen && !rightPanelGlobalized ? clampedWorkspaceRightPanelWidth : 0);
   const [environmentPanelHasRoom, setEnvironmentPanelHasRoom] = useState(() =>
@@ -1528,6 +1530,7 @@ export function App(): JSX.Element {
   const sideThread = useSideThreadController({
     activeThreadId: activeThreadID,
     activeContext: state.activeContext,
+    maxWidth: window.innerWidth - environmentPanelPaneOffset - WORKSPACE_RIGHT_PANEL_MAIN_MIN_WIDTH,
   });
   const sideThreadPanelRef = useRef<SideThreadPanelHandle>(null);
   const pendingSideSelectionRef = useRef<{ threadID: string; selection: SideThreadSelection } | null>(null);
@@ -3166,7 +3169,7 @@ export function App(): JSX.Element {
       setPrompt(currentPrimaryComposerDraft().prompt);
     }
     revealConversationFromFocusedWorkspace();
-    if (rightPanelOpen && window.innerWidth - effectiveSidebarWidth - clampedWorkspaceRightPanelWidth - sideThread.width < WORKSPACE_CONVERSATION_SAFE_WIDTH) {
+    if (rightPanelOpen && window.innerWidth - navigationRibbonWidth - effectiveSidebarWidth - clampedWorkspaceRightPanelWidth - sideThread.width < WORKSPACE_CONVERSATION_SAFE_WIDTH) {
       setRightPanelOpenWithMotion(false);
     }
     if (!sideThread.entry?.open) {
