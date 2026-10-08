@@ -110,7 +110,7 @@ function SourceLink({ source, onOpen, arrive, motionAllowed, index, detail = fal
   const [failed, setFailed] = useState(false);
   const tooltip = source.title ? `${source.title} — ${source.url}` : source.url;
   return (
-    <Tooltip content={tooltip}>
+    <Tooltip content={tooltip} propagateEscape>
       <button type="button"
         className={`web-source-link ${detail ? "web-source-detail" : "web-source-circle"}`}
         style={{ "--source-order": Math.max(0, Math.min(arrivalOrder, 3)) } as CSSProperties}

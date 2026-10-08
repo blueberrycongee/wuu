@@ -82,6 +82,25 @@ describe("TurnSourcesRow", () => {
     expect(sourceButtons(container).length).toBeLessThan(sources.length);
   });
 
+  it("closes overflow with one Escape even when the focused source tooltip is visible", async () => {
+    vi.useFakeTimers();
+    const onOpen = vi.fn();
+    const { container } = mount(<TurnSourcesRow sources={sources} onOpen={onOpen} />);
+    const more = container.querySelector<HTMLButtonElement>("button[aria-expanded]")!;
+    act(() => more.click());
+    const last = sourceButtons(container).at(-1)!;
+    act(() => last.focus());
+    await act(async () => vi.advanceTimersByTime(500));
+    expect(document.querySelector("[role=tooltip]")).not.toBeNull();
+    act(() => last.click());
+    expect(onOpen).toHaveBeenCalledExactlyOnceWith(sources.at(-1)!.url);
+    act(() => last.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+    expect(more.getAttribute("aria-expanded")).toBe("false");
+    expect(document.activeElement).toBe(more);
+    expect(document.querySelector("[role=tooltip]")).toBeNull();
+    expect(sourceButtons(container)).toHaveLength(6);
+  });
+
   it("keeps full URLs available in tooltips and accessible names with or without titles", async () => {
     vi.useFakeTimers();
     const { container } = mount(<TurnSourcesRow sources={[sources[0], { ...sources[1], title: undefined }]} />);
