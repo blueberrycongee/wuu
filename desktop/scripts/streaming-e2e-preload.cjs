@@ -23,6 +23,7 @@ function mockThread(id, source) {
     preview: "",
     model_provider: "e2e",
     model: "mock-stream",
+    ...(process.env.WUU_WORKSPACE_NEW_TAB_E2E ? { model_variant: "medium" } : {}),
     cwd,
     status: "idle",
     ...(source ? { source } : {}),
@@ -146,7 +147,11 @@ contextBridge.exposeInMainWorld("wuu", {
     provider: "e2e",
     model: "mock-stream",
     workspace_root: cwd,
-    providers: [{ name: "e2e", type: "mock", model: "mock-stream", connection_locked: true }]
+    ...(process.env.WUU_WORKSPACE_NEW_TAB_E2E ? { variant: "medium" } : {}),
+    providers: [{ name: "e2e", type: "mock", model: "mock-stream", connection_locked: true,
+      ...(process.env.WUU_WORKSPACE_NEW_TAB_E2E ? { models: [{ id: "mock-stream", display_name: "Workspace preview model",
+        supported_efforts: ["low", "medium", "high"] }] } : {}),
+    }]
   }),
   updateRuntimeSettings: async (provider, model) => ({
     provider,

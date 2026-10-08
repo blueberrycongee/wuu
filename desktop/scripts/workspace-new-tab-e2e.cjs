@@ -181,6 +181,11 @@ app.whenReady().then(async () => {
       ],
     } },
   } });
+  win.webContents.send("test:server-event", { workdir: workspaceRoot, kind: "notification", message: {
+    method: "turn/usage", params: { thread_id: threadID, turn_id: "turn-" + threadID,
+      input_tokens: 24000, output_tokens: 1200, context_tokens: 32000, context_window_tokens: 128000,
+      model: "mock-stream" },
+  } });
   await click(".conversation-width .rich-file-link");
   await waitFor(() => Boolean(document.querySelector('[data-wuu-view="file"]')));
   await waitFor(() => document.querySelector(".workspace-file-resource.active .workspace-panel-empty")?.textContent.includes("File temporarily unavailable"));
@@ -211,6 +216,143 @@ app.whenReady().then(async () => {
   await evaluate(() => {
     document.documentElement.dataset.theme = "light";
     document.documentElement.style.setProperty("--font-ui", "14px");
+  });
+  // Measure the real document editor rather than its stylesheet: short drafts
+  // share a row with send; wrapped drafts and attachments restore editing space.
+  await waitFor(() => Boolean(document.querySelector('.document-composer-wrap textarea')));
+  await waitFor(() => Boolean(document.querySelector('.document-composer-wrap .composer-context-meter'))
+    && Boolean(document.querySelector('.document-composer-wrap .codex-runtime-effort')));
+  const setDocumentDraft = async (value) => {
+    await evaluate((value) => {
+      const input = document.querySelector('.document-composer-wrap textarea');
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(input, value);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    }, value);
+    await waitFor((value) => document.querySelector('.document-composer-wrap textarea')?.value === value, value);
+  };
+  const documentGeometry = async (name) => {
+    await capture(name);
+    const geometry = await evaluate(() => {
+      const root = document.querySelector('.document-composer-wrap');
+      const input = root.querySelector('textarea');
+      const frame = root.querySelector('.composer-frame');
+      const send = root.querySelector('.composer-action-button');
+      const toolbar = root.querySelector('.composer');
+      const toolbarStyle = getComputedStyle(toolbar);
+      const box = (node) => node.getBoundingClientRect().toJSON();
+      return { frame: box(frame), input: box(input), send: box(send),
+        fontSize: parseFloat(getComputedStyle(input).fontSize), lineHeight: parseFloat(getComputedStyle(input).lineHeight),
+        clientHeight: input.clientHeight, scrollHeight: input.scrollHeight,
+        viewportWidth: innerWidth, viewportHeight: innerHeight, focused: document.activeElement === input,
+        value: input.value, selectionStart: input.selectionStart, selectionEnd: input.selectionEnd,
+        runtime: box(root.querySelector('.codex-runtime-trigger')),
+        context: box(root.querySelector('.composer-context-meter')),
+        contextLabel: box(root.querySelector('.composer-context-meter-label')),
+        effort: box(root.querySelector('.codex-runtime-effort')),
+        toolbarWidth: box(toolbar).width - parseFloat(toolbarStyle.paddingLeft) - parseFloat(toolbarStyle.paddingRight)
+          - parseFloat(toolbarStyle.borderLeftWidth) - parseFloat(toolbarStyle.borderRightWidth),
+        tray: root.querySelector('.composer-attachment-tray') ? box(root.querySelector('.composer-attachment-tray')) : null,
+        attachment: root.querySelector('.composer-file-card') ? box(root.querySelector('.composer-file-card')) : null };
+    });
+    assert.ok(geometry.frame.left >= -1 && geometry.frame.right <= geometry.viewportWidth + 1,
+      name + ': editor remains within the viewport');
+    assert.ok(geometry.frame.top >= 0 && geometry.frame.bottom <= geometry.viewportHeight + 1,
+      name + ': editor remains vertically reachable');
+    assert.ok(geometry.input.width >= 32 && geometry.send.width >= 24 && geometry.send.height >= 24,
+      name + ': text and send retain usable hit targets');
+    fs.writeFileSync(path.join(output, name + '.json'), JSON.stringify(geometry, null, 2));
+    results.push({ scenario: name, geometry });
+    return geometry;
+  };
+  const assertCompact = (geometry, name) => {
+    assert.ok(Math.abs(geometry.input.y + geometry.input.height / 2 - geometry.send.y - geometry.send.height / 2) <= 2,
+      name + ': short text and send share the same row');
+    assert.ok(geometry.frame.height <= Math.max(44, geometry.lineHeight + 12) + 4,
+      name + ': short editor stays compact at the selected font size');
+    assert.ok(geometry.input.right <= geometry.send.left + 1, name + ': text and send do not overlap');
+    assert.ok(geometry.runtime.width > 0, name + ': model controls remain present');
+    assert.ok(geometry.runtime.left >= geometry.input.right - 1 && geometry.runtime.right <= geometry.send.left + 1,
+      name + ': runtime controls do not squeeze across the editor or send');
+    if (geometry.toolbarWidth <= 560) {
+      assert.equal(geometry.context.width, 0, name + ': narrow toolbar folds the context meter');
+    } else {
+      assert.ok(geometry.context.width > 0, name + ': wider toolbar retains the real context ring');
+      assert.ok(geometry.context.left >= geometry.input.right - 1 && geometry.runtime.left >= geometry.context.right - 1,
+        name + ': visible context meter stays between the editor and runtime controls');
+      if (geometry.toolbarWidth <= 680) assert.equal(geometry.contextLabel.width, 0,
+        name + ': medium toolbar keeps the context ring without its verbose label');
+    }
+    if (geometry.toolbarWidth <= 420) assert.equal(geometry.effort.width, 0,
+      name + ': narrow toolbar folds effort without stealing the input lane');
+    assert.ok(geometry.scrollHeight <= geometry.clientHeight + 1, name + ': a short draft is not clipped');
+  };
+  for (const size of [14, 20]) {
+    for (const width of [1440, 560]) {
+      win.setContentSize(width, 900);
+      await waitFor((width) => innerWidth === width, width);
+      await evaluate((size) => {
+        document.documentElement.style.setProperty('--font-ui', size + 'px');
+        document.documentElement.style.setProperty('--conversation-message-font-size', size + 'px');
+        document.documentElement.dataset.theme = size === 14 ? 'light' : 'dark';
+        window.dispatchEvent(new Event('wuu-content-size-change'));
+      }, size);
+      const name = `document-composer-${size}-${width}`;
+      await setDocumentDraft('');
+      await evaluate(() => document.querySelector('.document-composer-wrap textarea').blur());
+      const empty = await documentGeometry(name + '-empty');
+      assert.ok(Math.abs(empty.fontSize - size) <= 1, name + ': requested font preference is actually rendered');
+      assertCompact(empty, name);
+      await setDocumentDraft('Edit');
+      await evaluate(() => {
+        const input = document.querySelector('.document-composer-wrap textarea');
+        input.focus(); input.setSelectionRange(1, 3);
+      });
+      const focused = await documentGeometry(name + '-focused');
+      assertCompact(focused, name);
+      assert.ok(focused.focused && focused.selectionStart === 1 && focused.selectionEnd === 3,
+        name + ': focusing preserves the live editor selection');
+      assert.ok(Math.abs(focused.frame.height - empty.frame.height) <= 2, name + ': focus does not expand the editor');
+      await setDocumentDraft('Continuous words wrap naturally while editing the selected document. '.repeat(12));
+      await waitFor(() => {
+        const root = document.querySelector('.document-composer-wrap');
+        return root.querySelector('textarea').getBoundingClientRect().height > 40
+          && root.querySelector('.composer-action-button').getBoundingClientRect().top > root.querySelector('textarea').getBoundingClientRect().top;
+      });
+      const wrapped = await documentGeometry(name + '-wrapped');
+      assert.ok(wrapped.input.height > empty.input.height, name + ': soft wrapping grows the editor');
+      assert.ok(!wrapped.value.includes('\n'), name + ': growth is exercised without explicit line breaks');
+      await evaluate(() => document.querySelector('.document-composer-wrap textarea').blur());
+      const blurred = await documentGeometry(name + '-wrapped-blurred');
+      assert.ok(Math.abs(blurred.input.height - wrapped.input.height) <= 2,
+        name + ': blur preserves wrapped draft space');
+      await setDocumentDraft('Edit');
+      assertCompact(await documentGeometry(name + '-shortened'), name);
+      await setDocumentDraft('');
+      assertCompact(await documentGeometry(name + '-cleared'), name);
+      await evaluate(() => {
+        const transfer = new DataTransfer();
+        transfer.items.add(new File(['%PDF-1.4 layout fixture'], 'layout-fixture.pdf', { type: 'application/pdf' }));
+        const input = document.querySelector('.document-composer-wrap input[type="file"]');
+        input.files = transfer.files;
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+      await waitFor(() => Boolean(document.querySelector('.document-composer-wrap .composer-file-card')));
+      const attached = await documentGeometry(name + '-attached');
+      assert.ok(attached.frame.height > empty.frame.height && attached.tray?.height > 0,
+        name + ': attachment restores the full editor and a visible tray');
+      assert.ok(attached.attachment?.top >= 0 && attached.attachment.bottom <= attached.frame.top + 2,
+        name + ': attachment remains reachable above the editor');
+      await click('.document-composer-wrap .composer-attachment-card-remove');
+      await waitFor(() => !document.querySelector('.document-composer-wrap .composer-file-card'));
+      assertCompact(await documentGeometry(name + '-attachment-removed'), name);
+    }
+  }
+  win.setContentSize(1440, 900);
+  await waitFor(() => innerWidth === 1440);
+  await evaluate(() => {
+    document.documentElement.style.setProperty('--conversation-message-font-size', '14px');
+    document.documentElement.style.setProperty('--font-ui', '14px');
+    document.documentElement.dataset.theme = 'light';
   });
   await click('[data-wuu-destination="conversations"]');
   await waitFor(() => !document.querySelector('.workspace-right-panel').dataset.navigationMode);

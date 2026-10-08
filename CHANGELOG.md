@@ -16,7 +16,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   selected file tab after changing destinations. Plugin pages share one contextual
   navigation list, and returning to Conversations restores its current draft.
 - Add a compact document conversation dock with minimize, restore, and
-  full-conversation actions while preserving the current draft.
+  full-conversation actions while preserving the current draft. Keep short
+  document inputs on one row and expand naturally for wrapped text or attachments.
 
 - Add a small side-panel action to delivered images while keeping direct clicks
   in the full image viewer. Connect artifact previews to the right panel with
@@ -32,6 +33,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   overflow, and reduced-motion support that does not replay received sources.
 
 ### Fixed
+
+- Retry failed file previews in place without closing or replacing the selected tab.
 
 - Restore complete conversation history after reload, including intermediate
   reasoning, tool results, and image artifacts released from model context.

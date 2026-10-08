@@ -1098,7 +1098,12 @@ export function Composer({
   }
 
   const content = (
-    <div className={`composer-stack${isComposerExpanded ? " is-expanded" : ""}`} data-wuu-component="composer">
+    <div
+      className={`composer-stack${isComposerExpanded ? " is-expanded" : ""}`}
+      data-wuu-component="composer"
+      data-document-composer={variant === "document" || undefined}
+      data-has-attachments={hasAttachments || hasCollapsedPromptBlocks || Boolean(inlineSelection) || undefined}
+    >
       <div className="composer-above-input">
         <MemoizedComposerPluginSlot host={pluginHost} id="composer.above" context={pluginSlotContext} />
       </div>

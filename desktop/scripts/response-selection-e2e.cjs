@@ -303,6 +303,8 @@ async function checkPlacement(name, expected, expectedSide) {
   const height = complete.bottom - complete.top;
   const aboveFits = source.top >= height + 16;
   const belowFits = viewport.height - source.bottom >= height + 16;
+  if (expectedSide === "below" && (aboveFits || !belowFits))
+    throw new Error(`${name}: fixture must leave insufficient space above and enough below the complete comment popup: ${JSON.stringify(geometry)}`);
   const above = complete.bottom <= source.top + 1;
   const below = complete.top >= source.bottom - 1;
   if (aboveFits && !above) throw new Error(`${name}: popup should be above the source: ${JSON.stringify(geometry)}`);
@@ -346,13 +348,20 @@ async function placementCoverage() {
   win.setContentSize(760, 420);
   const top = await select("Native drag selection", false, false, false, "start");
   await click(".response-selection-toolbar .selection-action-comment-toggle");
-  await win.webContents.insertText("Top-edge fallback 第二行 😀");
+  await until(() => document.activeElement === document.querySelector(".response-selection-toolbar textarea"),
+    "top-edge annotation input receives native focus");
+  // A single-line comment fits above the source after shell/header changes.
+  // Exercise the fallback with a full-height real editor, not a forced position.
+  const topComment = "Top-edge fallback 第二行 😀\nKeep this instruction.\nPreserve the selected passage.\nUse the available space below.\nKeep native focus while scrolling.";
+  await win.webContents.insertText(topComment);
+  await until(value => document.querySelector(".response-selection-toolbar textarea")?.value === value,
+    "top-edge annotation receives the complete multiline draft", topComment);
   await checkPlacement("placement-top-edge-comment", top, "below");
   const moved = await evaluate(() => { const scroll = document.querySelector(".conversation-pane > .scroll-region"); const before = scroll.scrollTop; scroll.scrollBy({ top: -20, behavior: "instant" }); return scroll.scrollTop !== before; });
   if (!moved) throw new Error("Visible-source scroll scenario did not move the source viewport");
   await checkPlacement("placement-visible-source-scroll", top);
   const preserved = await evaluate(() => { const input = document.querySelector(".response-selection-commenting textarea, .response-selection-toolbar textarea"); return { value: input?.value, focused: document.activeElement === input }; });
-  if (preserved.value !== "Top-edge fallback 第二行 😀" || !preserved.focused) throw new Error("Moving the source lost the comment or input focus");
+  if (preserved.value !== topComment || !preserved.focused) throw new Error("Moving the source lost the comment or input focus");
   await evaluate(() => { const scroll = document.querySelector(".conversation-pane > .scroll-region"); scroll.scrollTo({ top: scroll.scrollHeight, behavior: "instant" }); });
   await until(() => !document.querySelector(".response-selection-toolbar"), "fully offscreen source dismisses the popup");
   report.cases.push("source-left full-range anchors; forward/reverse native drag; multiline comment growth; narrow edge clamp; top fallback; visible-source scroll preserves comment/focus; offscreen dismissal");
