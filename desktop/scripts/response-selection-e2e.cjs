@@ -347,6 +347,14 @@ async function placementCoverage() {
   report.cases.push("source annotation Escape restores action focus and clears its unsaved draft on reopen");
   win.setContentSize(760, 420);
   const top = await select("Native drag selection", false, false, false, "start");
+  // Align the selected text with the scroll viewport, not its containing answer:
+  // the answer's leading blocks and shell spacing can leave room above the popup.
+  await evaluate(() => {
+    const scroll = document.querySelector(".conversation-pane > .scroll-region");
+    const source = window.getSelection().getRangeAt(0).getBoundingClientRect();
+    scroll.scrollBy({ top: source.top - scroll.getBoundingClientRect().top - 20, behavior: "instant" });
+  });
+  await settle();
   await click(".response-selection-toolbar .selection-action-comment-toggle");
   await until(() => document.activeElement === document.querySelector(".response-selection-toolbar textarea"),
     "top-edge annotation input receives native focus");
