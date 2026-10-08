@@ -53,7 +53,7 @@ export function useWorkspaceToolState({
     closeTabsWhere,
     reorderTabs,
     syncProjectTab,
-  } = useWorkspaceViewTabs();
+  } = useWorkspaceViewTabs(rightPanelOpen);
 
   function ensureWorkspaceToolTab(view: WorkspacePanelView): void {
     if (!workspaceViewTabs.some((tab) => tab.id === view)) {

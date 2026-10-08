@@ -61,8 +61,8 @@ app.whenReady().then(async () => {
   await win.webContents.debugger.sendCommand("Emulation.setFocusEmulationEnabled", { enabled: true });
   await waitFor(() => Boolean(document.querySelector(".composer textarea")));
   await click("[data-wuu-component=right-sidebar-toggle]");
-  await click(".workspace-panel-add");
   await waitFor(() => Boolean(document.querySelector('[data-wuu-view="new"] .workspace-tool-menu')));
+  assert.equal((await tabs()).length, 1, "Opening an empty panel creates one new-page tab");
   assert.equal((await tabs()).filter((tab) => tab.selected).length, 1);
   assert.equal(await evaluate(() => document.querySelectorAll('[data-wuu-component="workspace-resume-tab"]').length), 0);
   await capture("empty-light");
@@ -480,6 +480,12 @@ app.whenReady().then(async () => {
   });
   fs.writeFileSync(path.join(output, "preview-light.png"), (await win.webContents.capturePage(panelBounds)).toPNG());
   results.push({ scenario: "new page with reduced motion", passed: true });
+  await win.loadFile(path.join(desktop, "out/renderer/index.html"));
+  await waitFor(() => Boolean(document.querySelector('.workspace-right-panel[data-wuu-view="new"] .workspace-tool-menu')));
+  assert.equal((await tabs()).length, 1, "Restoring an open panel creates one new-page tab");
+  assert.equal((await tabs()).filter((tab) => tab.selected).length, 1);
+  await capture("restored-empty-light");
+  results.push({ scenario: "restored open panel has one selected new page", passed: true });
   fs.writeFileSync(path.join(output, "results.json"), JSON.stringify(results, null, 2));
   console.log("Workspace new page E2E passed. Evidence: " + output);
   clearTimeout(timeout);
