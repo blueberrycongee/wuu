@@ -128,6 +128,11 @@
       "rows": 0
     },
     {
+      "name": "plugin-catalog-navigation",
+      "synthetic": false,
+      "rows": 0
+    },
+    {
       "name": "plugin-contribution",
       "synthetic": false,
       "rows": 0
@@ -144,6 +149,11 @@
     },
     {
       "name": "plugin-navigation-item",
+      "synthetic": false,
+      "rows": 0
+    },
+    {
+      "name": "plugin-navigation-sidebar",
       "synthetic": false,
       "rows": 0
     },

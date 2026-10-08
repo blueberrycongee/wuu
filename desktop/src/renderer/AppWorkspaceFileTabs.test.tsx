@@ -51,6 +51,7 @@ vi.mock("./FileSelectionSurface", () => ({
   },
 }));
 import { rightPanelMotionMs } from "./AppLayoutState";
+import { desktopPluginHost, desktopWorkbenchController } from "./plugins/DesktopPluginRuntime";
 
 let container: HTMLDivElement;
 let root: Root | null = null;
@@ -252,6 +253,7 @@ describe("workspace file tabs", () => {
   afterEach(() => {
     setInnerWidth(originalInnerWidth);
     act(() => {
+      desktopPluginHost.unload("test:ribbon-plugins");
       root?.unmount();
     });
     root = null;
@@ -259,6 +261,141 @@ describe("workspace file tabs", () => {
     Reflect.deleteProperty(globalThis, "ResizeObserver");
     delete (globalThis as { wuu?: WuuDesktopApi }).wuu;
     vi.useRealTimers();
+  });
+
+  it("keeps the conversation utility selection when an API plugin page covers a full panel", async () => {
+    setInnerWidth(2000);
+    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await flushAsync();
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-wuu-component="right-sidebar-toggle"]')!.click());
+    await flushAsync();
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-wuu-tool="browser"]')!.click());
+    await flushAsync();
+    const utilityLabel = container.querySelector('.workspace-tool-tab.active')?.textContent;
+    await act(async () => container.querySelector<HTMLButtonElement>('.workspace-panel-globalize')!.click());
+    await flushAsync();
+    await act(async () => {
+      await desktopPluginHost.activateGeneration({ pluginId: "test:ribbon-plugins", generation: "one", register(api) {
+        api.registerViewType({ id: "page", title: "Plugin page", render: () => <p>Page content</p> });
+      } });
+      await desktopWorkbenchController.openPluginView("test:ribbon-plugins", "page");
+    });
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-wuu-destination="conversations"]')!.click());
+    await flushAsync();
+    expect(container.querySelector('.workspace-tool-tab.active')?.textContent).toBe(utilityLabel);
+    expect(container.querySelector('.app-shell')?.classList.contains('right-panel-open')).toBe(true);
+    expect(container.querySelector('.app-shell')?.classList.contains('right-panel-globalized')).toBe(false);
+  });
+
+  it("keeps compact Plugins navigation open until a page is selected and preserves its page across Files", async () => {
+    setInnerWidth(600);
+    await act(async () => {
+      root = createRoot(container); root.render(<App />);
+    });
+    await flushAsync();
+    await act(async () => {
+      await desktopPluginHost.activateGeneration({
+        pluginId: "test:ribbon-plugins", generation: "one",
+        contributions: { navigation: [{ id: "page", title: "Ribbon page", view: "page" }] },
+        register(api) {
+          api.registerViewType({ id: "page", title: "Ribbon page", render: () => <input aria-label="Plugin draft" defaultValue="Plugin draft stays" /> });
+          api.registerViewType({ id: "detail", title: "API detail", render: () => <p>API-only page</p> });
+        },
+      });
+    });
+    const select = async (destination: string) => {
+      await act(async () => container.querySelector<HTMLButtonElement>(`[data-wuu-destination="${destination}"]`)!.click());
+      await flushAsync();
+    };
+    await select("plugins");
+    expect(container.querySelector('.app-shell')?.getAttribute('data-wuu-sidebar-mode')).toBe('drawer');
+    await act(async () => container.querySelector<HTMLButtonElement>('.plugin-navigation-sidebar [data-wuu-component="plugin-navigation-item"]')!.click());
+    await flushAsync();
+    expect(container.querySelector('.app-shell')?.getAttribute('data-wuu-sidebar-mode')).toBe('collapsed');
+    const pageID = desktopWorkbenchController.getSnapshot().activeViewByRegion.primary;
+    const input = container.querySelector<HTMLInputElement>('[aria-label="Plugin draft"]')!;
+    input.value = "Unsent plugin state";
+    await select("files");
+    await select("plugins");
+    expect(desktopWorkbenchController.getSnapshot().activeViewByRegion.primary).toBe(pageID);
+    expect(container.querySelector<HTMLInputElement>('[aria-label="Plugin draft"]')?.value).toBe("Unsent plugin state");
+    await act(async () => { await desktopWorkbenchController.openPluginView("test:ribbon-plugins", "detail"); });
+    expect(container.querySelector('[data-wuu-destination="plugins"]')?.getAttribute('aria-current')).toBe('page');
+    expect(container.querySelector('.plugin-navigation-sidebar')?.textContent).toContain('API detail');
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-wuu-component="primary-view-back"]')!.click());
+    await flushAsync();
+    expect(container.querySelector('[data-wuu-destination="conversations"]')?.getAttribute('aria-current')).toBe('page');
+    expect(container.querySelector('.conversation-title-heading h1')?.textContent).not.toContain('插件');
+  });
+
+  it("does not let a delayed catalog return replace newer Files navigation", async () => {
+    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await flushAsync();
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-wuu-destination="plugins"]')!.click());
+    await flushAsync();
+    let resolveResume!: (value: { thread: Thread }) => void;
+    const resume = new Promise<{ thread: Thread }>(resolve => { resolveResume = resolve; });
+    const resumeCount = vi.mocked(window.wuu.resumeThread).mock.calls.length;
+    vi.mocked(window.wuu.resumeThread).mockReturnValueOnce(resume);
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-wuu-destination="conversations"]')!.click());
+    expect(window.wuu.resumeThread).toHaveBeenCalledTimes(resumeCount + 1);
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-wuu-destination="files"]')!.click());
+    await flushAsync();
+    const focused = document.activeElement;
+    await act(async () => resolveResume({ thread: completedThread() }));
+    await flushAsync();
+    expect(container.querySelector('[data-wuu-destination="files"]')?.getAttribute('aria-current')).toBe('page');
+    expect(container.querySelector('.files-navigation-sidebar')?.hasAttribute('hidden')).toBe(false);
+    expect(document.activeElement).toBe(focused);
+    expect(startTurnMock).not.toHaveBeenCalled();
+  });
+
+  it("restores the conversation draft after visiting the plugin catalog and Files", async () => {
+    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await flushAsync();
+    const title = container.querySelector(".conversation-title-heading h1")?.textContent;
+    const input = container.querySelector<HTMLTextAreaElement>(".dock-composer-wrap textarea")!;
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
+      setter.call(input, "Keep this conversation draft");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    const select = async (destination: string) => {
+      const button = container.querySelector<HTMLButtonElement>(`[data-wuu-destination="${destination}"]`)!;
+      expect(button).not.toBeNull();
+      await act(async () => button.click());
+      await flushAsync();
+    };
+    await select("plugins");
+    expect(container.querySelector('[data-wuu-component="plugin-navigation-sidebar"]:not([hidden])')).not.toBeNull();
+    expect(container.querySelector('.sidebar:not(.plugin-navigation-sidebar) .plugin-navigation-item')).toBeNull();
+    await select("files");
+    await select("plugins");
+    await select("conversations");
+    expect(container.querySelector(".conversation-title-heading h1")?.textContent).toBe(title);
+    expect(container.querySelector<HTMLTextAreaElement>(".dock-composer-wrap textarea")?.value).toBe("Keep this conversation draft");
+    expect(container.querySelector('[data-wuu-destination="conversations"]')?.getAttribute("aria-current")).toBe("page");
+    expect(startTurnMock).not.toHaveBeenCalled();
+  });
+
+  it.each(["files", "plugins"])("reveals a collapsed %s context without resetting its content on repeated destination clicks", async (destination) => {
+    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await flushAsync();
+    const button = container.querySelector<HTMLButtonElement>(`[data-wuu-destination="${destination}"]`)!;
+    expect(button).not.toBeNull();
+    await act(async () => button.click());
+    await flushAsync();
+    const sidebar = container.querySelector<HTMLElement>(`[data-wuu-component="${destination === "plugins" ? "plugin" : "files"}-navigation-sidebar"]`)!;
+    await act(async () => sidebar.querySelector<HTMLButtonElement>('[data-wuu-component="sidebar-toggle"]')!.click());
+    await flushAsync();
+    expect(container.querySelector('.app-shell')?.getAttribute('data-wuu-sidebar-mode')).toBe('collapsed');
+    await act(async () => button.click());
+    await flushAsync();
+    expect(container.querySelector('.app-shell')?.getAttribute('data-wuu-sidebar-mode')).toBe('docked');
+    expect(sidebar.hidden).toBe(false);
+    await act(async () => button.click());
+    await flushAsync();
+    expect(container.querySelector('.app-shell')?.getAttribute('data-wuu-sidebar-mode')).toBe('docked');
   });
 
   it.each(["ribbon", "back"])("preserves contextual navigation and the conversation utility tab when leaving Files via %s", async (exit) => {

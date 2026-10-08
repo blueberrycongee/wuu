@@ -486,6 +486,24 @@ export function DesktopWorkbench({
 
   const portals = viewRegions.flatMap((region) => {
     const visible = visibleWorkbenchView(snapshot, region);
+    if (region === "primary") {
+      // Destination changes park primary pages without discarding local form
+      // state. Activity stops hidden Effects; closing or unloading removes the body.
+      const views = snapshot.views.filter(view => view.region === region);
+      return views.flatMap(view => {
+        const definition = snapshot.viewTypes.find(item => item.pluginId === view.pluginId
+          && item.id === view.viewTypeId && item.generation === view.generation);
+        if (!definition) return [];
+        const hidden = visible?.view.id !== view.id;
+        return <WorkbenchRegionPortal key={`${region}:${view.id}:${view.generation}`} region={region}>
+          <div hidden={hidden} inert={hidden} style={{ display: hidden ? "none" : "contents" }}>
+            <React.Activity mode={hidden ? "hidden" : "visible"}>
+              <WorkbenchView controller={controller} definition={definition} view={view} siblingViews={views} />
+            </React.Activity>
+          </div>
+        </WorkbenchRegionPortal>;
+      });
+    }
     if (!visible) return [];
     const views = snapshot.views.filter((view) => view.region === region);
     return [

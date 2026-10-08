@@ -462,6 +462,7 @@ export const zhCN = {
   "common.showMore": "显示更多",
   "common.unknown": "未知",
   "common.close": "关闭",
+  "plugins.manage": "管理插件与技能",
   "plugins.viewTabs": "插件视图",
   "plugins.viewUnavailable": "插件视图不可用。",
   "common.loading": "加载中",

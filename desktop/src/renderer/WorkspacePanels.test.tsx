@@ -1313,6 +1313,16 @@ describe("WorkspaceRightPanel context routing (Bug 3: worktree-fork panel root)"
     expect(onShowTools).not.toHaveBeenCalled();
   });
 
+  it("shows an empty document area without a duplicate Files utility tab", async () => {
+    mount(<WorkspaceRightPanel {...baseProps()} navigationMode="files"
+      tabs={[workspaceToolViewTab("files"), workspaceToolViewTab("browser")]}
+      activeTabID="files" workspaceContext={projectContext} />);
+    await act(async () => {});
+    expect(container!.querySelector('[role="tab"]')).toBeNull();
+    expect(container!.querySelector('.workspace-panel-add')).toBeNull();
+    expect(container!.querySelector('.workspace-right-panel')?.getAttribute("data-wuu-view")).toBe("picker");
+  });
+
   it("keeps the terminal inside the panel when another workspace tab is selected", async () => {
     const terminalTab = workspaceToolViewTab("terminal");
     const filesTab = workspaceToolViewTab("files");

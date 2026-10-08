@@ -279,7 +279,7 @@ export function WorkspaceRightPanel({
   );
   // Keep every resource mounted, but only expose document navigation in Files.
   const visibleTabs = navigationMode === "files"
-    ? tabs.filter((tab) => tab.kind === "file" || tab.kind === "files")
+    ? tabs.filter((tab) => tab.kind === "file")
     : tabs;
   const activeTab = activeTabID ? visibleTabs.find((tab) => tab.id === activeTabID) : undefined;
   const terminalTabOpen = tabs.some((tab) => tab.kind === "terminal");
@@ -902,9 +902,6 @@ export function WorkspaceRightPanel({
                 aria-label={t("workspace.fileContent")}
               >
                 <div className="workspace-files-content-body">
-                  {navigationMode === "files" && activeTab?.kind === "files" ? (
-                    <WorkspacePanelEmpty title={t("workspace.selectFile")} />
-                  ) : null}
                   {fileTabs.map((tab) => (
                     <WorkspaceFileResource
                       active={open && activeTab?.kind === "file" && tab.id === activeFileTabID}

@@ -131,6 +131,7 @@ export function WorkspaceFileTree({
   const [directories, setDirectories] = useState<Record<string, WorkspaceDirectoryListResult>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>();
+  const [reloadGeneration, setReloadGeneration] = useState(0);
   const loadingDirectoriesRef = useRef(new Set<string>());
   const directoryGenerationRef = useRef(0);
   const workspaceRoot = activeContext?.cwd;
@@ -163,7 +164,7 @@ export function WorkspaceFileTree({
       cancelled = true;
       directoryGenerationRef.current += 1;
     };
-  }, [open, workspaceRoot, locale]);
+  }, [open, workspaceRoot, locale, reloadGeneration]);
 
   if (!workspaceRoot) {
     return <WorkspacePanelEmpty title={t("workspace.files.noWorkspace")} />;
@@ -174,7 +175,13 @@ export function WorkspaceFileTree({
   }
 
   if (error) {
-    return <WorkspacePanelEmpty title={t("workspace.files.readFailedTitle")} description={error} />;
+    return <WorkspacePanelEmpty
+      title={t("workspace.files.readFailedTitle")}
+      description={error}
+      action={<button type="button" className="secondary-button" onClick={() => setReloadGeneration(value => value + 1)}>
+        {t("appState.retryAction")}
+      </button>}
+    />;
   }
 
   const rootDirectory = directories[""];

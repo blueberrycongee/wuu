@@ -465,6 +465,7 @@ export const enUS = {
   "common.showMore": "Show more",
   "common.unknown": "Unknown",
   "common.close": "Close",
+  "plugins.manage": "Manage plugins & skills",
   "plugins.viewTabs": "Plugin views",
   "plugins.viewUnavailable": "This plugin view is unavailable.",
   "common.loading": "Loading",

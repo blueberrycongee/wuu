@@ -1,4 +1,4 @@
-import { useState, type PointerEventHandler } from "react";
+import { useState, type ReactNode, type PointerEventHandler } from "react";
 import type { DesktopProject } from "../shared/protocol";
 import { FolderPlus } from "./WuuIcons";
 import { SidePanelToggleIcon } from "./SidePanelToggleIcon";
@@ -9,9 +9,10 @@ import "./styles/files-navigation.css";
 /** Browses registered roots without selecting an agent runtime or starting a conversation. */
 export function FilesNavigationSidebar({
   projects, selectedRoot, onSelectRoot, onOpenFile, selectedFilePath, open, hidden = false,
-  sidebarCollapsed = false, onToggleSidebar, onPointerEnter, onPointerLeave, onAddRoot, addingRoot = false,
+  sidebarCollapsed = false, onToggleSidebar, onPointerEnter, onPointerLeave, onAddRoot, addingRoot = false, footer,
 }: {
   hidden?: boolean;
+  footer?: ReactNode;
   projects: DesktopProject[];
   selectedRoot?: string;
   onSelectRoot: (path: string) => void;
@@ -56,6 +57,7 @@ export function FilesNavigationSidebar({
         <div className="files-navigation-tree">
           <WorkspaceFileTree activeContext={context} open={opened || open} selectedFilePath={selectedFilePath} onOpenFile={(path) => { if (project) onOpenFile(path, project.path); }} />
         </div>
+        {footer ? <div className="sidebar-settings">{footer}</div> : null}
       </div>
     </aside>
   );

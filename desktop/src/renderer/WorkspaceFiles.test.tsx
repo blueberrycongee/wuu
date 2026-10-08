@@ -246,6 +246,47 @@ describe("FilesNavigationSidebar", () => {
 });
 
 describe("WorkspaceFileTree", () => {
+  it.each(["", "src"])("recovers a directory failure at %j by retrying the current root", async (failedPath) => {
+    let shouldFail = true;
+    listWorkspaceDirectory.mockImplementation(async (path = "", cwd = "/repo") => {
+      if (path === failedPath && shouldFail) throw new Error("Directory unavailable");
+      return { ...directoryResults[path], root: cwd };
+    });
+    await render(<WorkspaceFileTree activeContext={activeContext} open onOpenFile={() => {}} />);
+    await settleDirectoryLoads();
+    if (failedPath) {
+      await act(async () => rowButtonByTitle("src/").click());
+      await settleDirectoryLoads();
+    }
+    expect(container.textContent).toContain("Directory unavailable");
+    const retry = container.querySelector<HTMLButtonElement>('.workspace-panel-empty button');
+    expect(retry).not.toBeNull();
+    shouldFail = false;
+    await act(async () => retry!.click());
+    await settleDirectoryLoads();
+    expect(listWorkspaceDirectory).toHaveBeenLastCalledWith("", "/repo");
+    expect(rowButtonByTitle("README.md")).toBeTruthy();
+    expect(container.textContent).not.toContain("Directory unavailable");
+  });
+
+  it("ignores a retried root response after navigating to another root", async () => {
+    listWorkspaceDirectory.mockRejectedValueOnce(new Error("Root unavailable"));
+    await render(<WorkspaceFileTree activeContext={activeContext} open onOpenFile={() => {}} />);
+    await settleDirectoryLoads();
+    let completeRetry!: (result: WorkspaceDirectoryListResult) => void;
+    listWorkspaceDirectory.mockImplementationOnce(() => new Promise(resolve => { completeRetry = resolve; }));
+    const retry = container.querySelector<HTMLButtonElement>('.workspace-panel-empty button');
+    expect(retry).not.toBeNull();
+    await act(async () => retry!.click());
+    await render(<WorkspaceFileTree activeContext={{ kind: "no_project", cwd: "/other" }} open onOpenFile={() => {}} />);
+    await settleDirectoryLoads();
+    await act(async () => completeRetry({ root: "/repo", path: "", entries: [{ kind: "file", name: "stale.ts", path: "stale.ts" }], truncated: false }));
+    await settleDirectoryLoads();
+    expect(listWorkspaceDirectory).toHaveBeenLastCalledWith("", "/other");
+    expect(rowButtonByTitle("README.md")).toBeTruthy();
+    expect(treeShadowRoot().querySelector('[data-item-path="stale.ts"]')).toBeNull();
+  });
+
   it.skipIf(process.platform === "win32").each([
     [" note.txt", "note.txt"],
     ["note.txt ", "note.txt"],

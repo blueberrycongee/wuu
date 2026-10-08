@@ -1,6 +1,6 @@
 .files-navigation-sidebar .sidebar-content {
   display: grid;
-  grid-template-rows: var(--window-titlebar-height) auto minmax(0, 1fr);
+  grid-template-rows: var(--window-titlebar-height) auto minmax(0, 1fr) auto;
   min-height: 0;
 }
 

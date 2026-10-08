@@ -2856,3 +2856,15 @@ html[data-focus-modality="keyboard"] .thread-row-context-menu:focus-visible {
 .app-shell.has-navigation-ribbon.sidebar-drawer-docking .titlebar .sidebar-toggle-button {
   left: max(calc(var(--navigation-ribbon-width) + var(--control-toolbar-inset)), var(--window-titlebar-leading-inset));
 }
+
+.plugin-navigation-sidebar .primary-nav {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.plugin-navigation-sidebar .nav-item {
+  flex-shrink: 0;
+}

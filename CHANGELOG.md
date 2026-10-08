@@ -10,10 +10,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
-- Add a persistent left navigation rail for Conversations and Files, with an
+- Add a persistent left navigation rail for Conversations, Files, and Plugins, with an
   adjacent collapsible sidebar and independent local-folder browsing. Read
   documents without switching or starting a conversation, and return to the
-  selected file tab after changing destinations.
+  selected file tab after changing destinations. Plugin pages share one contextual
+  navigation list, and returning to Conversations restores its current draft.
 - Add a compact document conversation dock with minimize, restore, and
   full-conversation actions while preserving the current draft.
 

@@ -919,13 +919,12 @@ describe("main composer focus continuity", () => {
     window.wuu.listSkills = vi.fn().mockResolvedValue({ skills: [] });
     await enterCommand(mainComposer("dock"), "Retain the failed Skills send");
     expect(window.wuu.startTurn).toHaveBeenCalled();
-    const skills = Array.from(container.querySelectorAll<HTMLButtonElement>("button.nav-item"))
-      .find(button => button.textContent?.trim() === translateCurrent("skills.sectionSkills"));
-    expect(skills).toBeDefined();
-    await act(async () => { skills!.click(); });
+    await act(async () => { container.querySelector<HTMLButtonElement>('[data-wuu-destination="plugins"]')!.click(); });
     await flushAsync();
     expect(container.querySelector('textarea[aria-label="main composer dock"]')).toBeNull();
     await act(async () => { rejectSend(new Error("deferred send failed")); });
+    await flushAsync();
+    await act(async () => { container.querySelector<HTMLButtonElement>('[data-wuu-destination="conversations"]')!.click(); });
     await flushAsync();
     const source = Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
       .find(button => button.textContent?.trim() === "focus continuity");
@@ -950,12 +949,12 @@ describe("main composer focus continuity", () => {
     });
     await act(async () => { container.querySelector<HTMLButtonElement>('[aria-label="edit Recover queue after Skills"]')!.click(); });
     expect(window.wuu.dequeueTurn).toHaveBeenCalledWith("thread-focus", "held-skills");
-    const skills = Array.from(container.querySelectorAll<HTMLButtonElement>("button.nav-item"))
-      .find(button => button.textContent?.trim() === translateCurrent("skills.sectionSkills"))!;
-    await act(async () => { skills.click(); });
+    await act(async () => { container.querySelector<HTMLButtonElement>('[data-wuu-destination="plugins"]')!.click(); });
     await flushAsync();
     expect(container.querySelector('textarea[aria-label="main composer dock"]')).toBeNull();
     await act(async () => { acknowledge({ ok: true }); });
+    await flushAsync();
+    await act(async () => { container.querySelector<HTMLButtonElement>('[data-wuu-destination="conversations"]')!.click(); });
     await flushAsync();
     const source = Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
       .find(button => button.textContent?.trim() === "focus continuity")!;

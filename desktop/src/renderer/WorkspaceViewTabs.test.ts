@@ -325,6 +325,45 @@ describe("openViewTab", () => {
 });
 
 describe("closeViewTab", () => {
+  it("closes Files documents using visible MRU without consuming utility history", () => {
+    const a = workspaceFileViewTab({ context: projectContext, path: "a.ts" });
+    const b = workspaceFileViewTab({ context: projectContext, path: "b.ts" });
+    const c = workspaceFileViewTab({ context: projectContext, path: "c.ts" });
+    let state = openViewTab(initialWorkspaceViewTabsState, a);
+    state = openViewTab(state, b);
+    state = openViewTab(state, c);
+    state = focusViewTab(state, a.id);
+    state = openViewTab(state, workspaceToolViewTab("terminal"));
+    state = openViewTab(state, workspaceToolViewTab("browser"));
+    state = focusViewTab(state, b.id);
+    const before = state;
+    state = closeViewTab(state, b.id, { navigationMode: "files" });
+    expect(state.activeTabID).toBe(a.id);
+    expect(state.activeFileTabID).toBe(a.id);
+    expect(state.activationHistory).toContain("browser");
+    expect(state.activationHistory).toContain("terminal");
+    expect(closeViewTab(before, b.id).activeTabID).toBe("browser");
+    state = closeViewTab(state, c.id, { navigationMode: "files" });
+    expect(state.activeTabID).toBe(a.id);
+    state = closeViewTab(state, a.id, { navigationMode: "files" });
+    expect(state.activeTabID).toBe("files");
+    expect(state.activeFileTabID).toBeUndefined();
+    expect(state.tabs.map(tab => tab.id)).toEqual(["terminal", "browser", "files"]);
+    state = focusViewTab(state, "browser");
+    expect(closeViewTab(state, "files").activeTabID).toBe("browser");
+    expect(closeViewTab(closeViewTab(state, "files"), "browser").activeTabID).toBe("terminal");
+  });
+
+  it("falls back to an unvisited remaining document in Files", () => {
+    const a = workspaceFileViewTab({ context: projectContext, path: "a.ts" });
+    const b = workspaceFileViewTab({ context: projectContext, path: "b.ts" });
+    let state = openViewTab(initialWorkspaceViewTabsState, a);
+    state = openViewTab(state, b, { activate: false });
+    state = closeViewTab(state, a.id, { navigationMode: "files" });
+    expect(state.activeTabID).toBe(b.id);
+    expect(state.activeFileTabID).toBe(b.id);
+  });
+
   it("restores the Files browser after closing the final file tab", () => {
     const file = workspaceFileViewTab({ context: projectContext, path: "src/App.tsx" });
     let state = openViewTab(initialWorkspaceViewTabsState, workspaceToolViewTab("files"));
