@@ -2363,25 +2363,26 @@ export function App(): JSX.Element {
     activeWorkspaceViewTab.threadID === previewTargetThread?.id &&
     activeWorkspaceViewTab.cwd === previewTargetThread.cwd
       ? activeWorkspaceViewTab : undefined;
-  const documentComposerOwnsPrimary = Boolean(
-    state.initialized && rightPanelOpen &&
+  // A docked preview sits beside the conversation, whose own input is in
+  // reach; the document input appears once the preview takes the window.
+  const documentComposerVisible = Boolean(
+    state.initialized && rightPanelGlobalized &&
     !splitConversation &&
     !showingManagementCatalog && !showingPrimaryPluginView &&
     (activePreviewFile || activePreviewArtifact),
   );
-  const previousDocumentComposerOwner = useRef(documentComposerOwnsPrimary);
+  const previousDocumentComposerOwner = useRef(documentComposerVisible);
   useLayoutEffect(() => {
-    if (previousDocumentComposerOwner.current === documentComposerOwnsPrimary) return;
-    previousDocumentComposerOwner.current = documentComposerOwnsPrimary;
+    if (previousDocumentComposerOwner.current === documentComposerVisible) return;
+    previousDocumentComposerOwner.current = documentComposerVisible;
     // Text is input-local until idle. Publish it before the new surface paints.
     setPrompt(currentPrimaryComposerDraft().prompt);
-  }, [documentComposerOwnsPrimary, setPrompt, currentPrimaryComposerDraft]);
+  }, [documentComposerVisible, setPrompt, currentPrimaryComposerDraft]);
   const mainConversationDockVisible =
     Boolean(state.initialized) &&
     !splitConversation &&
     !showingManagementCatalog &&
     !rightPanelGlobalized &&
-    !documentComposerOwnsPrimary &&
     !showingPrimaryPluginView;
 
   // The account-based phone app keeps visible session navigation alongside swipes.
@@ -4223,7 +4224,7 @@ export function App(): JSX.Element {
       contentParts,
       draft.selections,
     );
-    const activeDocumentPath = !pane && documentComposerOwnsPrimary ? activePreviewFile?.path : undefined;
+    const activeDocumentPath = !pane && documentComposerVisible ? activePreviewFile?.path : undefined;
     let message =
       draftMessage && activeDocumentPath
         ? { ...draftMessage, activeDocument: { path: activeDocumentPath } }
@@ -4250,7 +4251,7 @@ export function App(): JSX.Element {
       return false;
     }
     let implicitArtifactFileID: string | undefined;
-    if (!pane && documentComposerOwnsPrimary && activePreviewArtifact && targetThread) {
+    if (!pane && documentComposerVisible && activePreviewArtifact && targetThread) {
       try {
         const file = createArtifactComposerFile(activePreviewArtifact, targetThread.id);
         implicitArtifactFileID = file.id;
@@ -5893,7 +5894,7 @@ export function App(): JSX.Element {
           browserOverlaySuppressed={browserOverlaySuppressed}
           onBrowserUserInteraction={pauseBrowserTask}
           focusedComposer={
-            documentComposerOwnsPrimary
+            documentComposerVisible
               ? (
                   <WorkspaceDocumentTurnDock
                     key={activeThreadID ?? state.activeSessionTabID}

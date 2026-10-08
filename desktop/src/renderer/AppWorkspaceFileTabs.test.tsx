@@ -829,6 +829,10 @@ describe("workspace file tabs", () => {
     await flushAsync();
     expect(container.querySelector('[data-testid="pdf-preview"]')?.textContent).toBe("report.pdf");
     expect(container.querySelector('.app-shell')!.classList.contains('right-panel-globalized')).toBe(false);
+    expect(container.querySelector('[data-main-conversation-composer="document"]')).toBeNull();
+    await act(async () => container.querySelector<HTMLButtonElement>('.workspace-panel-globalize')!.click());
+    await flushAsync();
+    expect(container.querySelector('[data-main-conversation-composer="document"]')).not.toBeNull();
     await typeMainPrompt("Rewrite the conclusion");
     await submitMainPrompt();
     expect(startTurnMock.mock.calls[0][0]).toBe("thread-artifact-tabs");
@@ -856,6 +860,11 @@ describe("workspace file tabs", () => {
     await act(async () => card!.click());
     await flushAsync();
     expect(container.querySelector('[data-testid="pdf-preview"]')).not.toBeNull();
+    if (!container.querySelector('.app-shell')!.classList.contains('right-panel-globalized')) {
+      expect(container.querySelector('[data-main-conversation-composer="document"]')).toBeNull();
+      await act(async () => container.querySelector<HTMLButtonElement>('.workspace-panel-globalize')!.click());
+      await flushAsync();
+    }
     expect(container.querySelector('[data-main-conversation-composer="document"]')).not.toBeNull();
     expect(container.querySelectorAll('[data-main-conversation-composer]')).toHaveLength(1);
     await typeMainPrompt("Revise this report");
@@ -877,6 +886,9 @@ describe("workspace file tabs", () => {
       await act(async () => container.querySelector<HTMLButtonElement>('.workspace-panel-add')!.click());
       await flushAsync();
       expect(container.querySelector('[data-main-conversation-composer="document"]')).toBeNull();
+      await act(async () => container.querySelector<HTMLButtonElement>('.workspace-panel-globalize')!.click());
+      await flushAsync();
+      expect(container.querySelector('[data-main-conversation-composer="dock"]')).not.toBeNull();
       await submitMainPrompt();
       expect(attach).toHaveBeenCalledTimes(1);
       expect(startTurnMock.mock.calls.at(-1)![3]).toEqual([]);
@@ -886,6 +898,8 @@ describe("workspace file tabs", () => {
 
   it("returns the preview draft and keyboard focus through Open conversation", async () => {
     await openSelectionDocument();
+    await act(async () => container.querySelector<HTMLButtonElement>('.workspace-panel-globalize')!.click());
+    await flushAsync();
     const input = await typeMainPrompt("Continue editing");
     await act(async () => input.focus());
     await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="对话选项"]')!.click());
@@ -910,9 +924,16 @@ describe("workspace file tabs", () => {
     expect(container.querySelector(".app-shell")!.classList.contains("right-panel-globalized")).toBe(false);
     expect(container.querySelector(".conversation-pane")!.hasAttribute("inert")).toBe(false);
     expect(container.querySelectorAll("[data-main-conversation-composer]")).toHaveLength(1);
+    expect(container.querySelector('[data-main-conversation-composer="document"]')).toBeNull();
+    expect(container.querySelector<HTMLTextAreaElement>('[data-main-conversation-composer="dock"] textarea')!.value)
+      .toBe("Keep this unfinished request");
+    await act(async () => container.querySelector<HTMLButtonElement>('.workspace-panel-globalize')!.click());
+    await flushAsync();
     expect(container.querySelector<HTMLTextAreaElement>('[data-main-conversation-composer="document"] textarea')!.value)
       .toBe("Keep this unfinished request");
     await typeMainPrompt("Updated in the preview");
+    await act(async () => container.querySelector<HTMLButtonElement>('.workspace-panel-globalize')!.click());
+    await flushAsync();
     await act(async () => container.querySelector<HTMLButtonElement>('[data-wuu-component="right-sidebar-toggle"]')!.click());
     await flushAsync();
     expect(container.querySelectorAll("[data-main-conversation-composer]")).toHaveLength(1);
@@ -963,8 +984,8 @@ describe("workspace file tabs", () => {
     );
     expect(rightFilePreview).not.toBeNull();
     expect(rightFilePreview?.textContent).toContain("Artifact");
-    expect(container.querySelector('[data-main-conversation-composer="document"]')).not.toBeNull();
-    expect(container.querySelectorAll("[data-main-conversation-composer]")).toHaveLength(1);
+    expect(container.querySelector('[data-main-conversation-composer="document"]')).toBeNull();
+    expect(container.querySelector('[data-main-conversation-composer="dock"]')).not.toBeNull();
 
     act(() => {
       vi.advanceTimersByTime(rightPanelMotionMs());
@@ -1058,7 +1079,8 @@ describe("workspace file tabs", () => {
     expect(shell?.classList.contains("right-panel-animating")).toBe(true);
     expect(container.querySelector(".conversation-pane")?.hasAttribute("inert")).toBe(false);
     expect(container.querySelector(".sidebar")?.hasAttribute("inert")).toBe(false);
-    expect(container.querySelector('[data-testid="workspace-document-composer"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="workspace-document-composer"]')).toBeNull();
+    expect(container.querySelector('[data-main-conversation-composer="dock"]')).not.toBeNull();
     expect(document.activeElement).toBe(fileLink);
   });
 

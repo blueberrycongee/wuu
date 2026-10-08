@@ -2,6 +2,9 @@
    from current geometry when chrome or result expansion is interrupted. */
 .workspace-document-turn-dock {
   --document-dock-duration: 300ms;
+  /* The transcript tray tucks behind the input. Inset past the capsule's
+     round caps so its sides disappear under the input, not beside it. */
+  --document-dock-tray-inset: 20px;
   --document-dock-ease: cubic-bezier(.23, 1, .32, 1);
   position: relative;
   width: min(100%, var(--session-composer-width));
@@ -24,7 +27,7 @@
 .workspace-document-turn-content::before {
   position: absolute;
   z-index: 0;
-  inset: 0 6px 6px;
+  inset: 0 var(--document-dock-tray-inset) 6px;
   border: 1px solid var(--hairline-soft);
   border-radius: var(--session-composer-radius, var(--radius-md));
   background: var(--conversation-floating-surface-bg);
@@ -46,7 +49,7 @@
   height: 46px;
   align-items: center;
   gap: 8px;
-  margin-inline: 6px;
+  margin-inline: var(--document-dock-tray-inset);
   padding-inline: 8px;
   border-bottom: 1px solid var(--hairline-soft);
 }
@@ -91,7 +94,7 @@
 .workspace-document-turn-drawer {
   position: relative;
   height: 0;
-  margin-inline: 6px;
+  margin-inline: var(--document-dock-tray-inset);
   overflow: hidden;
   transition: height var(--document-dock-duration) var(--document-dock-ease);
 }
