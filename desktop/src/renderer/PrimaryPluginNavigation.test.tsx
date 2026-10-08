@@ -55,8 +55,8 @@ afterEach(() => {
 async function register(generation = "one", title = "Automation") {
   await act(async () => host.activateGeneration({
     pluginId, generation,
-    contributions: { navigation: [{ id: "catalog-entry", title, view: "catalog" }] },
     register(api) {
+      api.registerDestination({ id: "catalog-entry", title, icon: "plug", primaryViewType: "catalog" });
       api.registerViewType({ id: "catalog", title, persistence: "durable", render: () => <article>Catalog content</article> });
       api.registerViewType({ id: "detail", title: "Detail", persistence: "durable", render: () => <article>Detail content</article> });
     },
@@ -106,10 +106,7 @@ function renderShell({ inventory: available }: { inventory?: ExtensionInventoryR
     <PluginNavigationSidebar
       hidden={false} catalogActive={false} hasRuntimeContext sidebarCollapsed={false}
       onOpenCatalog={() => controller.deactivateRegion("primary")}
-      onOpenPlugin={(plugin, view, instance) => {
-        if (instance) controller.activateView(instance);
-        else void controller.openPluginView(plugin, view, { region: "primary", persistence: "durable", reveal: true });
-      }}
+      onOpenPlugin={(plugin, destination) => controller.activateDestination(plugin, destination)}
       footer={null} pluginHost={host} workbenchController={controller}
     />
     <main className="conversation-pane">
@@ -155,8 +152,7 @@ describe("primary plugin navigation without a tab strip", () => {
     }
     await act(async () => host.activateGeneration({
       pluginId, generation: "one",
-      contributions: { navigation: [{ id: "editor", title: "Editor", view: "editor" }] },
-      register(api) { api.registerViewType({ id: "editor", title: "Editor", render: Editor }); },
+      register(api) { api.registerViewType({ id: "editor", title: "Editor", render: Editor }); api.registerDestination({ id: "editor", title: "Editor", icon: "plug", primaryViewType: "editor" }); },
     }));
     renderShell();
     await click("Editor");
@@ -202,9 +198,6 @@ describe("primary plugin navigation without a tab strip", () => {
     await act(async () => { await controller.openPluginView(pluginId, "detail"); });
     expectPage("Detail", "Detail content");
     await act(async () => { await controller.openPluginView(pluginId, "detail", { reveal: false }); });
-    await click("Detail · 1");
-    expect(button("Detail · 1").getAttribute("aria-current")).toBe("page");
-    expect(button("Detail · 2").hasAttribute("aria-current")).toBe(false);
     await click(t("workspace.closeTab", { label: "Detail" }));
     expectPage("Detail", "Detail content");
     await click(t("workspace.closeTab", { label: "Detail" }));
@@ -242,7 +235,6 @@ describe("primary plugin navigation without a tab strip", () => {
     renderShell();
     await register("two");
     expectPage("Detail", "Detail content");
-    expect(button("Detail").getAttribute("aria-current")).toBe("page");
     await click(t("common.back"));
     expectPage("Original conversation");
 
@@ -254,7 +246,7 @@ describe("primary plugin navigation without a tab strip", () => {
     renderShell();
     await register("three");
     expectPage("Original conversation");
-    await click("Detail");
+    await act(async () => { await controller.openPluginView(pluginId, "detail"); });
     expectPage("Detail", "Detail content");
     renderShell({ inventory: [] });
     expectPage("Original conversation");
@@ -266,17 +258,18 @@ describe("primary plugin navigation without a tab strip", () => {
     const other = "test:other-views";
     await host.activateGeneration({ pluginId: other, generation: "one", register(api) {
       api.registerViewType({ id: "catalog", title: "Other catalog", render: () => <article>Other content</article> });
+      api.registerDestination({ id: "other", title: "Other catalog", icon: "plug", primaryViewType: "catalog" });
     } });
     renderShell({ inventory: [...inventory, { ...inventory[0], id: other }] });
     await click("Automation");
-    await act(async () => { await controller.openPluginView(other, "catalog"); });
+    await click("Other catalog");
     expectPage("Other catalog", "Other content");
     expect(button("Other catalog").getAttribute("aria-current")).toBe("page");
     expect(button("Automation").hasAttribute("aria-current")).toBe(false);
     await click("Automation");
     expectPage("Automation", "Catalog content");
     await click("Other catalog");
-    await click(t("workspace.closeTab", { label: "Other catalog" }));
+    await click("Automation");
     expectPage("Automation", "Catalog content");
     expect(button("Automation").getAttribute("aria-current")).toBe("page");
   });

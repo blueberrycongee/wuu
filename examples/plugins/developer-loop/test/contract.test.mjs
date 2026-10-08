@@ -33,6 +33,8 @@ const api = {
     ErrorState: "section",
   },
   registerViewType: register("views"),
+  registerDestination: register("destinations"),
+  registerRibbonItem: register("ribbonItems"),
   registerViewPlacement: register("viewPlacements"),
   registerThemeTokens: register("themes"),
   registerCommand: register("commands"),
@@ -44,6 +46,14 @@ const api = {
 };
 
 renderer.activate(api);
+const destination = registrations.get("destinations")[0];
+assert.equal(destination.primaryViewType, "acceptance-counter");
+assert.equal(destination.sidebarViewType, "acceptance-navigation");
+assert.equal(registrations.get("views").some((view) => view.id === destination.sidebarViewType), true);
+assert.deepEqual(registrations.get("ribbonItems").map((item) => item.target), [
+  { kind: "destination", destinationId: "acceptance" },
+  { kind: "command", commandId: "open-acceptance-counter" },
+]);
 const presenter = registrations.get("toolActivityPresenters")[0];
 const presented = presenter.render({
   activity: {

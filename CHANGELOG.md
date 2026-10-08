@@ -15,6 +15,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   documents without switching or starting a conversation, and return to the
   selected file tab after changing destinations. Plugin pages share one contextual
   navigation list, and returning to Conversations restores its current draft.
+- Let plugins register navigation destinations with their own main view and
+  optional sidebar, plus destination and command buttons in the navigation rail.
+  Keep each destination's view state separate, hide unused sidebar columns, and
+  place settings and account controls at the bottom of the rail.
 - Add a compact document conversation dock with minimize, restore, and
   full-conversation actions while preserving the current draft.
 

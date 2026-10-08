@@ -678,5 +678,7 @@ export async function activate(api) {
         }) : null)));
   }
 
+  api.registerDestination({ id: "automation", title: "Automations", icon: "clock", order: 40, primaryViewType: "automation.catalog" });
+  api.registerRibbonItem({ id: "automation", title: "Automations", icon: "clock", order: 40, target: { kind: "destination", destinationId: "automation" } });
   api.registerViewType({ id: "automation.catalog", title: "Automations", icon: "clock", defaultRegion: "primary", persistence: "durable", render: (props) => h(Catalog, props) });
 }

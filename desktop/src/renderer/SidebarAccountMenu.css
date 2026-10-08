@@ -113,3 +113,25 @@
 .sidebar-account-profile span:not(.sidebar-account-avatar) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sidebar-account-divider { height: 1px; flex-shrink: 0; margin: 4px 9px; background: var(--menu-border); }
 .sidebar-account-message { margin: 8px 9px; font-size: var(--font-sm); overflow-wrap: anywhere; }
+
+.sidebar-account[data-compact] .sidebar-account-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  -webkit-app-region: no-drag;
+}
+.sidebar-account[data-compact] .sidebar-account-trigger .sidebar-account-avatar {
+  width: 24px;
+  height: 24px;
+  flex-basis: 24px;
+  font-size: var(--font-sm);
+}
+.sidebar-account[data-compact] .sidebar-account-name,
+.sidebar-account[data-compact] .sidebar-account-trigger > svg { display: none; }
+.sidebar-account[data-compact] .sidebar-account-menu {
+  inset-inline: 0 auto;
+  width: min(280px, calc(100vw - 16px));
+}

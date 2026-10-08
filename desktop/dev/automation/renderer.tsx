@@ -11,7 +11,6 @@ import { initialState } from "../../src/renderer/AppState";
 import { ConversationTitleActions, ConversationTitleContent } from "../../src/renderer/ConversationShellRenderers";
 import { usePrimaryPluginViewCover } from "../../src/renderer/PrimaryPluginViewCover";
 import source from "../../../internal/plugin/bundled/automation/desktop.js?raw";
-import manifest from "../../../internal/plugin/bundled/automation/plugin.json";
 const activate = Function(source.replace("export async function activate(api)", "return async function activate(api)"))() as (api: PluginGenerationApi) => Promise<void>;
 import "../../src/renderer/styles.css";
 
@@ -45,8 +44,8 @@ const host = new PluginHost({ react: React,
     return task;
   },
 });
-// The manifest's navigation entry is what makes Automations a sidebar destination.
-await host.activateGeneration({ pluginId: "automation", generation: "preview", contributions: { navigation: manifest.contributes.navigation.map(({ id, title, view, order }) => ({ id, title, view, order })) }, register: activate });
+// The module registers its destination and ribbon entry during activation.
+await host.activateGeneration({ pluginId: "automation", generation: "preview", register: activate });
 const controller = new WorkbenchController(host, {}, { getItem: () => null, setItem: () => {}, removeItem: () => {} });
 const region = params.get("region") || "workspace";
 const portalRegion = region === "primary" || region === "overlay" || region === "auxiliary";

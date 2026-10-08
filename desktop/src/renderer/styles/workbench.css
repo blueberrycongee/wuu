@@ -32,7 +32,7 @@
   border-left: 1px solid var(--hairline);
 }
 
-.conversation-pane > .plugin-workbench-view-primary {
+.conversation-pane .plugin-workbench-view-primary {
   position: relative;
   inset: auto;
   grid-row: 2;
@@ -520,3 +520,10 @@
   background: var(--paper);
   box-shadow: var(--shadow-card);
 }
+
+.destination-navigation-sidebar [data-workbench-region="navigation"] {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+.destination-navigation-sidebar[hidden] { display: none; }

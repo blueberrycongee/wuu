@@ -2,7 +2,7 @@
 
 This independently buildable plugin uses only the published `@wuu/plugin-sdk` package. It keeps the
 SDK v3 request transform and tool while contributing a durable workbench View placement, complete
-theme token sample, command, status item, locales, and the conversation-header slot. The View is
+theme token sample, a two-view destination, a separate command ribbon item, status item, locales, and the conversation-header slot. The View is
 built from the host-owned `api.ui` primitives, so another appearance plugin can theme it without
 knowing this plugin exists. It uses the React instance owned by the host; React is neither a
 dependency nor part of the bundle. It reads all four setting kinds and restores its counter from
@@ -49,3 +49,12 @@ and it must not assume access to host classes, global storage keys, or private D
 executable runtime is a separate Node process speaking JSONL over standard input/output; only its
 declared request transform, static prompt section, and tool cross that boundary. It intentionally
 does not register the experimental compaction capability as a pass-through consumer.
+
+## Destination acceptance
+
+The Developer Loop ribbon item selects `acceptance-counter` in the main area and
+`acceptance-navigation` in the destination sidebar together. Switch to Conversations and back
+to verify the host restores the destination instances. The separate Open Counter Panel ribbon
+item executes the plugin command without changing the selected destination. Workspace-tool and
+Settings entries still open the counter in their own surfaces. Disable or reload the plugin to
+verify that both ribbon items follow the same generation lifecycle as its views.

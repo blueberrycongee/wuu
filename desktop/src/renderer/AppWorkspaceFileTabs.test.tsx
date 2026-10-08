@@ -248,6 +248,7 @@ describe("workspace file tabs", () => {
     container = document.createElement("div");
     document.body.appendChild(container);
     window.localStorage.clear();
+    desktopWorkbenchController.activateDestination("wuu.core", "conversations");
   });
 
   afterEach(() => {
@@ -296,8 +297,9 @@ describe("workspace file tabs", () => {
     await act(async () => {
       await desktopPluginHost.activateGeneration({
         pluginId: "test:ribbon-plugins", generation: "one",
-        contributions: { navigation: [{ id: "page", title: "Ribbon page", view: "page" }] },
         register(api) {
+          api.registerDestination({ id: "page", title: "Ribbon page", icon: "plug", primaryViewType: "page" });
+          api.registerRibbonItem({ id: "page", title: "Ribbon page", icon: "plug", target: { kind: "destination", destinationId: "page" } });
           api.registerViewType({ id: "page", title: "Ribbon page", render: () => <input aria-label="Plugin draft" defaultValue="Plugin draft stays" /> });
           api.registerViewType({ id: "detail", title: "API detail", render: () => <p>API-only page</p> });
         },
@@ -311,17 +313,21 @@ describe("workspace file tabs", () => {
     expect(container.querySelector('.app-shell')?.getAttribute('data-wuu-sidebar-mode')).toBe('drawer');
     await act(async () => container.querySelector<HTMLButtonElement>('.plugin-navigation-sidebar [data-wuu-component="plugin-navigation-item"]')!.click());
     await flushAsync();
-    expect(container.querySelector('.app-shell')?.getAttribute('data-wuu-sidebar-mode')).toBe('collapsed');
+    expect(container.querySelector('.app-shell')?.getAttribute('data-wuu-sidebar-mode')).toBe('none');
+    expect(container.querySelector<HTMLElement>(".app-shell")?.style.getPropertyValue("--sidebar-width")).toBe("0px");
+    expect(container.querySelector<HTMLElement>(".destination-navigation-sidebar")?.hidden).toBe(true);
+    expect(container.querySelectorAll(".sidebar .sidebar-account-trigger")).toHaveLength(0);
+    expect(container.querySelectorAll(".navigation-ribbon-utilities .sidebar-account-trigger")).toHaveLength(1);
     const pageID = desktopWorkbenchController.getSnapshot().activeViewByRegion.primary;
     const input = container.querySelector<HTMLInputElement>('[aria-label="Plugin draft"]')!;
     input.value = "Unsent plugin state";
     await select("files");
-    await select("plugins");
+    await select("test:ribbon-plugins:page");
     expect(desktopWorkbenchController.getSnapshot().activeViewByRegion.primary).toBe(pageID);
     expect(container.querySelector<HTMLInputElement>('[aria-label="Plugin draft"]')?.value).toBe("Unsent plugin state");
     await act(async () => { await desktopWorkbenchController.openPluginView("test:ribbon-plugins", "detail"); });
-    expect(container.querySelector('[data-wuu-destination="plugins"]')?.getAttribute('aria-current')).toBe('page');
-    expect(container.querySelector('.plugin-navigation-sidebar')?.textContent).toContain('API detail');
+    expect(container.querySelector('[data-wuu-destination="test:ribbon-plugins:page"]')?.getAttribute('aria-current')).toBe('page');
+    expect(container.querySelector('.conversation-title-heading h1')?.textContent).toContain('API detail');
     await act(async () => container.querySelector<HTMLButtonElement>('[data-wuu-component="primary-view-back"]')!.click());
     await flushAsync();
     expect(container.querySelector('[data-wuu-destination="conversations"]')?.getAttribute('aria-current')).toBe('page');

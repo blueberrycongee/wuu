@@ -47,11 +47,30 @@ Presenter 接收 `contractVersion`、目标、可选匹配键、公开快照、�
 
 ## View、卡片和状态
 
-View 是注册的组件，可以放在 `navigation`、`primary`、`auxiliary`、`inspector`、`settings` 或 `overlay`。`registerViewPlacement` 请求初始位置；manifest 的 `contributes.navigation`、`workspaceTools`、`settingsPages` 为用户提供宿主管理的打开入口，每个入口都必须引用该插件注册的视图。
+View 是注册的组件，可以放在 `navigation`、`primary`、`auxiliary`、`inspector`、`settings` 或 `overlay`。`registerViewPlacement` 请求初始位置；manifest 的 `contributes.workspaceTools`、`settingsPages` 为用户提供宿主管理的打开入口，每个入口都必须引用该插件注册的视图。
+
+## Ribbon 目的地
+
+通过 `registerDestination({ id, title, icon, order?, primaryViewType, sidebarViewType? })` 注册目的地，指定主视图以及可选的导航侧栏视图。再通过 `registerRibbonItem({ id, title, icon, order?, target })` 注册 Ribbon 入口。`target` 为 `{ kind: "destination", destinationId }` 或 `{ kind: "command", commandId }`；命令入口执行动作，不改变当前目的地。
+
+所有 ID 都属于当前插件；引用的视图、目的地、命令必须在同一次激活中由同一插件注册。注册顺序不限，宿主在发布前验证完整引用关系。新版本无效时保留上一代；释放视图会同时撤下依赖它的目的地与入口；卸载会清除整代贡献。图标使用 `PublicIconName` 语义图标。
+
+```ts
+api.registerDestination({
+  id: "dashboard", title: "Dashboard", icon: "layout-grid",
+  primaryViewType: "dashboard.main", sidebarViewType: "dashboard.sidebar",
+});
+api.registerRibbonItem({
+  id: "dashboard", title: "Dashboard", icon: "layout-grid",
+  target: { kind: "destination", destinationId: "dashboard" },
+});
+```
+
+在同一 `activate` 中注册这两个视图。宿主同时切换主区域与侧栏，为每个目的地分别记住视图实例，并单独保留会话目的地。developer-loop 示例展示了双视图目的地和独立命令入口。manifest 的 `contributes.navigation` 已移除；`workspaceTools` 和 `settingsPages` 继续用于各自的独立界面。
 
 `persistence=durable` 用于恢复视图布局状态，不会持久化任意组件状态。卸载后仍需保留的数据应放入命名空间存储。View props 包含访问存储、设置、命令和视图导航的 host API。
 
-会话和插件主视图使用侧栏导航，包括通过 API 打开、没有声明导航入口的视图。它们的标题栏不提供 `tabs`、`activeTabId` 或 tab 操作。插件主视图提供 `canNavigateBack` 和 `header.navigate-back`。只有关闭会把页面从侧栏移除时，宿主才另外提供关闭控件，即通过 API 打开的视图和额外实例；已声明导航入口的页面通过返回或侧栏离开。紧凑工作区标题栏同样提供返回，并为当前标签提供关闭控件。这些仍是 contract version 1 的可选字段和动作，应检查快照和 `host.actions`，不要从已保存视图重建顶部标签栏。辅助面板和插件内容内部仍可使用各自的标签页。
+Ribbon 用于选择已注册的目的地。每个目的地拥有主视图和可选的侧栏视图；通过 `openView` 打开独立视图，不会自动注册目的地或 ribbon 入口。主视图标题栏不提供 `tabs`、`activeTabId` 或 tab 操作，而是提供 `canNavigateBack` 和 `header.navigate-back`。宿主为独立页面和额外实例提供关闭控件；目的地根页面通过返回或选择其他 ribbon 目的地离开。再次进入目的地时会恢复其记住的实例。隐藏目的地保留视图本地状态并暂停其副作用，关闭或卸载才释放视图。紧凑工作区标题栏同样提供返回和当前标签的关闭控件。应检查快照和 `host.actions`，不要从已保存视图重建顶部标签栏。辅助面板和插件内容内部仍可使用各自的标签页。
 
 会话卡片用于临时交互，不是保存的历史或持久页面；卡片句柄可以更新状态或关闭卡片。输入框状态源通过 `getSnapshot(context)` 返回结构化条目，通过 `subscribe` 通知变化，数据未变时应保持快照引用稳定。状态行、溢出和可选的 `open-session` 动作由 Wuu 渲染处理，不接收每个条目的任意 React 内容。
 

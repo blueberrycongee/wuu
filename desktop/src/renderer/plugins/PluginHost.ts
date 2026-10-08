@@ -3,6 +3,8 @@ import type { ExtensionIconDescriptor } from "../../shared/protocol";
 
 import type {
   CSSSnippet,
+  DestinationDefinition,
+  RibbonItemDefinition,
   InspectorSectionDefinition,
   PluginUIKit,
   PresentationMode,
@@ -68,7 +70,6 @@ export interface PluginContributionDeclarations {
   readonly slots?: readonly Readonly<{ id: string; target: PluginSlotId; order?: number; title?: string }>[];
   readonly surfaces?: readonly Readonly<{ id: string; target: PluginSurfaceId; mode: PluginSurfaceMode; order?: number; title?: string }>[];
   readonly presenters?: readonly Readonly<{ id: string; target: PresentationTarget; mode: PresentationMode; priority?: number; title?: string }>[];
-  readonly navigation?: readonly PluginViewEntryDeclaration[];
   readonly workspace_tools?: readonly PluginViewEntryDeclaration[];
   readonly settings_pages?: readonly PluginViewEntryDeclaration[];
 }
@@ -188,6 +189,10 @@ export interface PluginGenerationApi {
 
   /** Register a view type that the host can open in a semantic region. */
   registerViewType(definition: ViewTypeDefinition): Disposable;
+  /** Register a same-generation primary view and optional sidebar as one destination. */
+  registerDestination(definition: DestinationDefinition): Disposable;
+  /** Register a destination selector or a command action; references are validated at activation. */
+  registerRibbonItem(definition: RibbonItemDefinition): Disposable;
   /** Request a default View placement in a stable host-owned region. */
   registerViewPlacement(contribution: ViewPlacementContribution): Disposable;
   /** Register a short, context-driven summary in the host-owned Inspector. */
@@ -266,6 +271,24 @@ export interface RegisteredConversationCard {
   readonly order: number;
   readonly render: ConversationCardRegistration["render"];
   readonly dismiss: () => void;
+}
+
+export interface RegisteredDestination extends DestinationDefinition {
+  readonly pluginId: string;
+  readonly generation: string;
+  readonly order: number;
+}
+
+export interface RegisteredRibbonItem extends RibbonItemDefinition {
+  readonly pluginId: string;
+  readonly generation: string;
+  readonly order: number;
+}
+
+export interface CoreNavigationRegistration {
+  destinations: readonly DestinationDefinition[];
+  ribbonItems: readonly RibbonItemDefinition[];
+  commands?: readonly PluginCommandRegistration[];
 }
 
 export interface RegisteredViewType extends ViewTypeDefinition {
@@ -458,6 +481,14 @@ interface PresenterRecord extends OrderedRecord {
   readonly compatibilityRender?: ToolActivityPresenterDefinition["render"];
 }
 
+interface DestinationRecord extends OrderedRecord {
+  readonly definition: DestinationDefinition;
+}
+
+interface RibbonItemRecord extends OrderedRecord {
+  readonly definition: RibbonItemDefinition;
+}
+
 interface GenerationState {
   readonly pluginId: string;
   readonly generation: string;
@@ -470,6 +501,8 @@ interface GenerationState {
   readonly locales: LocaleRecord[];
   // Phase C — Workbench
   readonly views: ViewTypeRecord[];
+  readonly destinations: DestinationRecord[];
+  readonly ribbonItems: RibbonItemRecord[];
   readonly viewPlacements: ViewPlacementRecord[];
   readonly inspectorSections: InspectorSectionRecord[];
   readonly renderers: RendererRecord[];
@@ -544,10 +577,16 @@ export class PluginHost {
   private readonly conversationCardListeners = new Set<() => void>();
   private activeConversationThreadId?: string;
   private nextConversationCardSequence = 1;
+  private coreNavigation?: Readonly<{
+    destinations: readonly RegisteredDestination[];
+    ribbonItems: readonly RegisteredRibbonItem[];
+    commands: readonly PluginCommandRegistration[];
+  }>;
+  private destinationSnapshot: readonly RegisteredDestination[] = Object.freeze([]);
+  private ribbonSnapshot: readonly RegisteredRibbonItem[] = Object.freeze([]);
   private viewSnapshot: readonly RegisteredViewType[] = EMPTY_VIEW_SNAPSHOT;
   private viewPlacementSnapshot: readonly RegisteredViewPlacement[] = EMPTY_VIEW_PLACEMENT_SNAPSHOT;
   private inspectorSectionSnapshot: readonly RegisteredInspectorSection[] = EMPTY_INSPECTOR_SECTION_SNAPSHOT;
-  private navigationSnapshot: readonly RegisteredPluginViewEntry[] = EMPTY_VIEW_ENTRY_SNAPSHOT;
   private workspaceToolSnapshot: readonly RegisteredPluginViewEntry[] = EMPTY_VIEW_ENTRY_SNAPSHOT;
   private settingsPageSnapshot: readonly RegisteredPluginViewEntry[] = EMPTY_VIEW_ENTRY_SNAPSHOT;
   private rendererSnapshot: readonly RegisteredRenderer[] = EMPTY_RENDERER_SNAPSHOT;
@@ -569,6 +608,7 @@ export class PluginHost {
 
   async activateGeneration(options: ActivatePluginGenerationOptions): Promise<Disposable> {
     const pluginId = requireNonEmpty(options.pluginId, "plugin id");
+    if (pluginId === "wuu.core") throw new Error("Plugin id wuu.core is reserved for the host");
     const generation = requireNonEmpty(options.generation, "plugin generation");
     const state = createGenerationState(pluginId, generation, options.contributions);
     const pending: PendingActivation = { state, cancelled: false };
@@ -584,6 +624,7 @@ export class PluginHost {
       state.acceptingRegistrations = false;
       this.assertDeclaredContributionsRegistered(state);
       this.assertViewPlacementTargets(state);
+      this.assertNavigationTargets(state);
       this.assertDeclaredViewEntryTargets(state);
       this.assertToolActivityPresenterOwnership(state);
     } catch (error: unknown) {
@@ -714,8 +755,60 @@ export class PluginHost {
     return this.inspectorSectionSnapshot;
   }
 
-  getNavigationEntries(): readonly RegisteredPluginViewEntry[] {
-    return this.navigationSnapshot;
+  getDestinationContributions(): readonly RegisteredDestination[] {
+    return this.destinationSnapshot;
+  }
+
+  getRibbonContributions(): readonly RegisteredRibbonItem[] {
+    return this.ribbonSnapshot;
+  }
+
+  resolveRibbonItem(pluginId: string, generation: string, id: string): RegisteredRibbonItem | undefined {
+    return this.ribbonSnapshot.find((item) => item.pluginId === pluginId
+      && item.generation === generation && item.id === id);
+  }
+
+  async executeRibbonCommand(pluginId: string, generation: string, id: string, input?: unknown): Promise<unknown> {
+    const item = this.resolveRibbonItem(pluginId, generation, id);
+    if (!item || item.target.kind !== "command") throw new Error("Ribbon command is no longer active");
+    const commandId = item.target.commandId;
+    const command = pluginId === "wuu.core"
+      ? this.coreNavigation?.commands.find((candidate) => candidate.id === commandId)
+      : this.activeGenerations.get(pluginId)?.commands.find((candidate) =>
+        !candidate.removed && candidate.generation === generation && candidate.id === commandId);
+    if (!command) throw new Error("Ribbon command is no longer active");
+    return command.execute(input);
+  }
+
+  /** Host-owned destinations dispatch virtual core views without creating a plugin runtime. */
+  registerCoreNavigation(registration: CoreNavigationRegistration): Disposable {
+    if (this.coreNavigation) throw new Error("Core navigation is already registered");
+    const destinations = registration.destinations.map((definition) => Object.freeze({
+      ...normalizeDestination(definition), pluginId: "wuu.core", generation: "core", order: normalizeOrder(definition.order),
+    }));
+    const ribbonItems = registration.ribbonItems.map((definition) => Object.freeze({
+      ...normalizeRibbonItem(definition), pluginId: "wuu.core", generation: "core", order: normalizeOrder(definition.order),
+    }));
+    const commands = (registration.commands ?? []).map((command) => Object.freeze({ ...command }));
+    for (const [kind, values] of [["destination", destinations], ["ribbon", ribbonItems], ["command", commands]] as const) {
+      if (new Set(values.map((item) => item.id)).size !== values.length) throw new Error(`Duplicate core ${kind} registration`);
+    }
+    for (const item of ribbonItems) {
+      const target = item.target;
+      const found = target.kind === "destination"
+        ? destinations.some((entry) => entry.id === target.destinationId)
+        : commands.some((entry) => entry.id === target.commandId);
+      if (!found) throw new Error(`Core ribbon ${item.id} references an unregistered ${target.kind}`);
+    }
+    const core = Object.freeze({ destinations: Object.freeze(destinations), ribbonItems: Object.freeze(ribbonItems), commands: Object.freeze(commands) });
+    this.coreNavigation = core;
+    this.refreshPublicState();
+    return createDisposable(() => {
+      if (this.coreNavigation === core) {
+        this.coreNavigation = undefined;
+        this.refreshPublicState();
+      }
+    });
   }
 
   getWorkspaceTools(): readonly RegisteredPluginViewEntry[] {
@@ -1120,6 +1213,30 @@ export class PluginHost {
         return disposable;
       },
 
+      registerDestination: (definition: DestinationDefinition) => {
+        this.assertAccepting(state);
+        const normalized = normalizeDestination(definition);
+        const id = this.claimRegistrationId(state, "destination", normalized.id);
+        const record: DestinationRecord = {
+          pluginId: state.pluginId, generation: state.generation, id,
+          order: normalizeOrder(normalized.order), removed: false, definition: normalized,
+        };
+        state.destinations.push(record);
+        return this.ownRecord(state, record);
+      },
+
+      registerRibbonItem: (definition: RibbonItemDefinition) => {
+        this.assertAccepting(state);
+        const normalized = normalizeRibbonItem(definition);
+        const id = this.claimRegistrationId(state, "ribbon", normalized.id);
+        const record: RibbonItemRecord = {
+          pluginId: state.pluginId, generation: state.generation, id,
+          order: normalizeOrder(normalized.order), removed: false, definition: normalized,
+        };
+        state.ribbonItems.push(record);
+        return this.ownRecord(state, record);
+      },
+
       registerViewType: (definition: ViewTypeDefinition) => {
         this.assertAccepting(state);
         const id = this.claimRegistrationId(state, "view", definition.id);
@@ -1378,11 +1495,30 @@ export class PluginHost {
     }
   }
 
+  private assertNavigationTargets(state: GenerationState): void {
+    for (const destination of state.destinations) {
+      if (destination.removed) continue;
+      const { primaryViewType, sidebarViewType } = destination.definition;
+      for (const id of [primaryViewType, sidebarViewType]) {
+        if (id !== undefined && !state.views.some((view) => !view.removed && view.id === id)) {
+          throw new Error(`Destination ${destination.id} references an unregistered View: ${id}`);
+        }
+      }
+    }
+    for (const item of state.ribbonItems) {
+      if (item.removed) continue;
+      const target = item.definition.target;
+      const found = target.kind === "destination"
+        ? state.destinations.some((entry) => !entry.removed && entry.id === target.destinationId)
+        : state.commands.some((entry) => !entry.removed && entry.id === target.commandId);
+      if (!found) throw new Error(`Ribbon ${item.id} references an unregistered ${target.kind}`);
+    }
+  }
+
   private assertDeclaredViewEntryTargets(state: GenerationState): void {
     const declarations = state.declaredContributions;
     if (!declarations) return;
     for (const entry of [
-      ...(declarations.navigation ?? []),
       ...(declarations.workspace_tools ?? []),
       ...(declarations.settings_pages ?? []),
     ]) {
@@ -1420,7 +1556,8 @@ export class PluginHost {
     const statusItems: StatusItemRecord[] = [];
     const composerStatusSources: ComposerStatusSourceRecord[] = [];
     const toolActivityPresenters: PresenterRecord[] = [];
-    const navigationEntries: RegisteredPluginViewEntry[] = [];
+    const destinations: RegisteredDestination[] = [...(this.coreNavigation?.destinations ?? [])];
+    const ribbonItems: RegisteredRibbonItem[] = [...(this.coreNavigation?.ribbonItems ?? [])];
     const workspaceTools: RegisteredPluginViewEntry[] = [];
     const settingsPages: RegisteredPluginViewEntry[] = [];
 
@@ -1439,6 +1576,22 @@ export class PluginHost {
           surfaceRecords.set(record.surfaceId, records);
         }
       }
+      // Disposing a referenced contribution immediately withdraws its dependents.
+      const liveDestinations = state.destinations.filter((record) => !record.removed
+        && [record.definition.primaryViewType, record.definition.sidebarViewType].every((id) =>
+          id === undefined || state.views.some((view) => !view.removed && view.id === id)));
+      destinations.push(...liveDestinations.map((record) => Object.freeze({
+        ...record.definition, pluginId: record.pluginId, generation: record.generation, order: record.order,
+      })));
+      ribbonItems.push(...state.ribbonItems.filter((record) => {
+        if (record.removed) return false;
+        const target = record.definition.target;
+        return target.kind === "destination"
+          ? liveDestinations.some((entry) => entry.id === target.destinationId)
+          : state.commands.some((entry) => !entry.removed && entry.id === target.commandId);
+      }).map((record) => Object.freeze({
+        ...record.definition, pluginId: record.pluginId, generation: record.generation, order: record.order,
+      })));
       commands.push(...state.commands.filter((record) => !record.removed));
       locales.push(...state.locales.filter((record) => !record.removed));
       styles.push(...state.styles.filter((record) => !record.removed));
@@ -1456,7 +1609,6 @@ export class PluginHost {
         pluginId: state.pluginId,
         generation: state.generation,
       });
-      navigationEntries.push(...(state.declaredContributions?.navigation ?? []).map(declaredEntry));
       workspaceTools.push(...(state.declaredContributions?.workspace_tools ?? []).map(declaredEntry));
       settingsPages.push(...(state.declaredContributions?.settings_pages ?? []).map(declaredEntry));
     }
@@ -1523,13 +1675,18 @@ export class PluginHost {
       changed = true;
     }
 
-    const compareViewEntry = (left: RegisteredPluginViewEntry, right: RegisteredPluginViewEntry): number =>
+    const compareViewEntry = (left: { pluginId: string; id: string; order?: number }, right: { pluginId: string; id: string; order?: number }): number =>
       normalizeOrder(left.order) - normalizeOrder(right.order)
       || compareText(left.pluginId, right.pluginId)
       || compareText(left.id, right.id);
-    const nextNavigation = Object.freeze(navigationEntries.sort(compareViewEntry));
-    if (!sameContributions(this.navigationSnapshot, nextNavigation)) {
-      this.navigationSnapshot = nextNavigation;
+    const nextDestinations = Object.freeze(destinations.sort(compareViewEntry));
+    if (!sameContributions(this.destinationSnapshot, nextDestinations)) {
+      this.destinationSnapshot = nextDestinations;
+      changed = true;
+    }
+    const nextRibbon = Object.freeze(ribbonItems.sort(compareViewEntry));
+    if (!sameContributions(this.ribbonSnapshot, nextRibbon)) {
+      this.ribbonSnapshot = nextRibbon;
       changed = true;
     }
     const nextWorkspaceTools = Object.freeze(workspaceTools.sort(compareViewEntry));
@@ -1749,6 +1906,8 @@ function createGenerationState(
     styles: [],
     locales: [],
     views: [],
+    destinations: [],
+    ribbonItems: [],
     viewPlacements: [],
     inspectorSections: [],
     renderers: [],
@@ -2119,5 +2278,37 @@ function createDisposable(dispose: () => void): Disposable {
       disposed = true;
       dispose();
     },
+  });
+}
+
+function normalizeDestination(definition: DestinationDefinition): DestinationDefinition {
+  validatePublicIcon(definition.icon, "Destination");
+  if (!definition.icon) throw new Error("Destination icon is required");
+  return Object.freeze({
+    id: requireNonEmpty(definition.id, "destination id"),
+    title: requireNonEmpty(definition.title, "destination title"),
+    icon: definition.icon,
+    order: normalizeOrder(definition.order),
+    primaryViewType: requireNonEmpty(definition.primaryViewType, "destination primary View"),
+    sidebarViewType: definition.sidebarViewType === undefined ? undefined
+      : requireNonEmpty(definition.sidebarViewType, "destination sidebar View"),
+  });
+}
+
+function normalizeRibbonItem(definition: RibbonItemDefinition): RibbonItemDefinition {
+  validatePublicIcon(definition.icon, "Ribbon item");
+  if (!definition.icon) throw new Error("Ribbon item icon is required");
+  const target = definition.target;
+  if (!target || (target.kind !== "destination" && target.kind !== "command")) {
+    throw new Error("Ribbon target must be a destination or command");
+  }
+  return Object.freeze({
+    id: requireNonEmpty(definition.id, "ribbon id"),
+    title: requireNonEmpty(definition.title, "ribbon title"),
+    icon: definition.icon,
+    order: normalizeOrder(definition.order),
+    target: Object.freeze(target.kind === "destination"
+      ? { kind: "destination", destinationId: requireNonEmpty(target.destinationId, "ribbon destination id") }
+      : { kind: "command", commandId: requireNonEmpty(target.commandId, "ribbon command id") }),
   });
 }

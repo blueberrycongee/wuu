@@ -8,7 +8,9 @@ The narrow rail on the far left switches between **Conversations**, **Files**, a
 
 In **Files**, choose a registered folder from the folder selector, or use **Add workspace** to register another local folder. Browsing and reading files do not start a conversation or change the workspace of your current conversation. Return to **Conversations** to continue it; returning to **Files** restores the selected document tab.
 
-In **Plugins**, use **Manage plugins & skills** to open the existing catalog, or select a plugin page. Open plugin pages remain available when you change destinations. Return to **Conversations** to restore your previous conversation or unsent draft. Clicking a destination again reveals its sidebar without resetting the selected page. Settings and account actions remain available at the bottom of each sidebar.
+In **Plugins**, use **Manage plugins & skills** to open the existing catalog, or select a plugin destination. Plugins can register their own rail entries, main views, and optional sidebars. Command entries perform an action without changing the selected destination. A destination without a sidebar uses the available main area without reserving an empty column.
+
+Switching destinations retains their open views and local input. Return to **Conversations** to restore your previous conversation or unsent draft. Clicking a destination again reveals its sidebar, when present, without resetting its main view. Settings and account actions remain available at the bottom of the navigation rail.
 
 ## Add a workspace
 

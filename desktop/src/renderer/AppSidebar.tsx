@@ -1,5 +1,4 @@
 import { hostSupports } from "./HostCapabilities";
-import { SidebarAccountMenu } from "./SidebarAccountMenu";
 import { MobileSidebar } from "./MobileSidebar";
 import {
   ChevronRight,
@@ -28,7 +27,6 @@ import {
   useMemo,
   useRef,
   useState,
-  useSyncExternalStore,
 } from "react";
 import {
   closestCenter,
@@ -101,7 +99,6 @@ import {
 } from "./plugins/DesktopPluginRuntime";
 import type { PluginHost } from "./plugins/PluginHost";
 import type { WorkbenchController } from "./plugins/Workbench";
-import { primaryViewNavigation } from "./plugins/PrimaryViewNavigation";
 import { PluginSlot } from "./plugins/PluginSlot";
 import { SidePanelToggleIcon } from "./SidePanelToggleIcon";
 
@@ -594,24 +591,7 @@ export function AppSidebar({
   // Active state is passed into WorkspaceList so the row highlights even though
   // it has no DesktopProject entry in state.projects.
   const sidebarScratchPseudoActive = state.activeContext?.kind === "no_project";
-  const declaredPluginNavigationEntries = useSyncExternalStore(
-    (listener) => pluginHost.subscribe(listener),
-    () => pluginHost.getNavigationEntries(),
-    () => pluginHost.getNavigationEntries(),
-  );
-  const workbenchSnapshot = useSyncExternalStore(
-    workbenchController.subscribe,
-    workbenchController.getSnapshot,
-    workbenchController.getSnapshot,
-  );
-  const activePluginMainView = workbenchSnapshot.views.find(
-    (view) => view.id === workbenchSnapshot.activeViewByRegion.primary,
-  );
-  const activeThreadID = activePluginMainView ? undefined : nativeActiveThreadID;
-  const pluginNavigationEntries = useMemo(
-    () => primaryViewNavigation(declaredPluginNavigationEntries, workbenchSnapshot),
-    [declaredPluginNavigationEntries, workbenchSnapshot],
-  );
+  const activeThreadID = nativeActiveThreadID;
   const activateNative = useCallback((action: () => void): void => {
     workbenchController.deactivateRegion("primary");
     action();
@@ -622,18 +602,6 @@ export function AppSidebar({
   const onSelectWorkspaceThread = useCallback((workspaceID: string, threadID: string) => {
     activateNative(() => selectNativeWorkspaceThread(workspaceID, threadID));
   }, [activateNative, selectNativeWorkspaceThread]);
-  const openPluginNavigation = useCallback((pluginId: string, viewTypeId: string, instanceId?: string): void => {
-    onNavigateAway?.();
-    if (instanceId) {
-      workbenchController.activateView(instanceId);
-      return;
-    }
-    void workbenchController.openPluginView(pluginId, viewTypeId, {
-      region: "primary",
-      persistence: "durable",
-      reveal: true,
-    }).catch(() => workbenchController.deactivateRegion("primary"));
-  }, [onNavigateAway, workbenchController]);
 
   // Drag-and-drop reorder wiring for the reorderable sections. The 6px
   // activation distance lets plain clicks on the header (collapse toggle)
@@ -1521,33 +1489,6 @@ export function AppSidebar({
     onToggleConversationSearch, searchOpen, t,
   ]);
 
-  // Plugin navigation belongs to the primary navigation: it renders directly
-  // below the top-level actions, so its entries never hide below the
-  // functional groups.
-  const pluginNavigationNodes = useMemo<readonly NavigationSourceNode[]>(() => {
-    if (pluginNavigationEntries.length === 0) return [];
-    const nodes: NavigationSourceNode[] = [{
-      id: "section:plugins",
-      kind: "section",
-      label: t("skills.sectionPlugins"),
-      icon: "plugin-blocks",
-      depth: 0,
-    }];
-    for (const entry of pluginNavigationEntries) {
-      nodes.push({
-        id: `plugin:${entry.pluginId}:${entry.id}`,
-        kind: "command",
-        parentId: "section:plugins",
-        depth: 1,
-        label: entry.title,
-        icon: entry.icon && "name" in entry.icon ? entry.icon.name : "plugin-blocks",
-        active: activePluginMainView !== undefined && activePluginMainView.id === entry.instanceId,
-        onActivate: () => openPluginNavigation(entry.pluginId, entry.view, entry.instanceId),
-      });
-    }
-    return Object.freeze(nodes);
-  }, [activePluginMainView, openPluginNavigation, pluginNavigationEntries, t]);
-
   const navigationNodes = useMemo<readonly NavigationSourceNode[]>(() => {
     const nodes: NavigationSourceNode[] = [];
     const functionalGroupNodes: Record<SidebarFunctionalGroupID, NavigationSourceNode[]> = {
@@ -1735,14 +1676,6 @@ export function AppSidebar({
     for (const groupID of visibleFunctionalGroupOrder) {
       nodes.push(...functionalGroupNodes[groupID]);
     }
-    nodes.push({
-      id: "command:settings",
-      kind: "command",
-      label: t("sidebar.settings"),
-      icon: "settings",
-      disabled: !state.initialized,
-      onActivate: () => activateNative(onOpenSettings),
-    });
     return Object.freeze(nodes);
   }, [
     pendingConversations, onSelectPendingConversation, state.activeSessionTabID,
@@ -2226,11 +2159,7 @@ export function AppSidebar({
             id="sidebar.footer"
             context={Object.freeze({ initialized: Boolean(state.initialized) })}
           />
-          {sidebarVisible && <SidebarAccountMenu
-            disabled={!state.initialized}
-            onOpenAccount={onOpenAccount ? () => activateNative(onOpenAccount) : undefined}
-            onOpenSettings={(page) => activateNative(() => onOpenSettings(page))}
-          />}
+
         </div>
         {groupContextMenu ? (
           <ThreadContextMenu
@@ -2326,7 +2255,6 @@ export function AppSidebar({
     <NavigationPresentation
       nodes={[
         ...primaryNavigationNodes,
-        ...pluginNavigationNodes,
         ...navigationNodes,
       ]}
       fallback={organizedSidebar}

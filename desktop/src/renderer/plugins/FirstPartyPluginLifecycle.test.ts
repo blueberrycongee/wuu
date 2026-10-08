@@ -20,7 +20,6 @@ interface FirstPartyManifest {
     slots?: PluginContributionDeclarations["slots"];
     surfaces?: PluginContributionDeclarations["surfaces"];
     presenters?: PluginContributionDeclarations["presenters"];
-    navigation?: PluginContributionDeclarations["navigation"];
     workspaceTools?: PluginContributionDeclarations["workspace_tools"];
     settingsPages?: PluginContributionDeclarations["settings_pages"];
   };
@@ -66,7 +65,7 @@ describe("first-party desktop plugin lifecycle", () => {
       "memory:memory.settings",
       "subagent:subagent.settings",
     ]);
-    expect(host.getNavigationEntries().map((item) => `${item.pluginId}:${item.view}`)).toEqual([
+    expect(host.getDestinationContributions().map((item) => `${item.pluginId}:${item.primaryViewType}`)).toEqual([
       "automation:automation.catalog",
     ]);
     expect(host.getSettingsPages().map((item) => `${item.pluginId}:${item.view}`)).toEqual([
@@ -88,7 +87,8 @@ describe("first-party desktop plugin lifecycle", () => {
     expect(host.getSlotSnapshot("composer.toolbar")).toEqual([]);
     expect(host.getComposerStatusSources()).toEqual([]);
     expect(host.getViewTypes()).toEqual([]);
-    expect(host.getNavigationEntries()).toEqual([]);
+    expect(host.getDestinationContributions()).toEqual([]);
+    expect(host.getRibbonContributions()).toEqual([]);
     expect(host.getSettingsPages()).toEqual([]);
     expect(host.getInspectorSections()).toEqual([]);
     expect(host.getPresenters("conversation.tool-activity", "todo")).toEqual([]);
@@ -311,7 +311,6 @@ function contributionDeclarations(manifest: FirstPartyManifest): PluginContribut
     slots: contributions.slots ?? [],
     surfaces: contributions.surfaces ?? [],
     presenters: contributions.presenters ?? [],
-    navigation: contributions.navigation ?? [],
     workspace_tools: contributions.workspaceTools ?? [],
     settings_pages: contributions.settingsPages ?? [],
   };

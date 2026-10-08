@@ -125,7 +125,7 @@ func (m Manifest) HasCapabilitySurfaces() bool {
 	if len(m.Slots) > 0 || len(m.Surfaces) > 0 || len(m.Presenters) > 0 {
 		return true
 	}
-	return len(m.Navigation) > 0 || len(m.WorkspaceTools) > 0 || len(m.SettingsPages) > 0
+	return len(m.WorkspaceTools) > 0 || len(m.SettingsPages) > 0
 }
 
 // agentPathMatches reports whether rel is owned by a declared agent-link

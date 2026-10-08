@@ -14,8 +14,10 @@ import {
   Sparkles,
   Terminal,
 } from "./WuuIcons";
+import { desktopPluginHost } from "./plugins/DesktopPluginRuntime";
+import type { PluginHost, RegisteredDestination } from "./plugins/PluginHost";
 import { PluginBlocksIcon } from "./PluginBlocksIcon";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import type {
   AppLocale,
   ExtensionInventoryRecord,
@@ -75,6 +77,7 @@ function showExtensionMutationError(error: unknown, fallback: string): void {
 }
 
 export function SkillsCatalog({
+  pluginHost = desktopPluginHost,
   activeContext,
   extensionInventory = [],
   onTrySkill,
@@ -83,6 +86,7 @@ export function SkillsCatalog({
   onInstallPluginPackage,
   onRemovePluginPackage,
 }: {
+  pluginHost?: PluginHost;
   activeContext?: RuntimeContext;
   extensionInventory?: ExtensionInventoryRecord[];
   onTrySkill?: (skill: SkillSummary) => void;
@@ -379,6 +383,7 @@ export function SkillsCatalog({
     return (
       <section className="settings-page skills-catalog plugin-page" aria-label={selectedPlugin.name} data-wuu-component="plugin-detail">
         <PluginDetailPage
+          pluginHost={pluginHost}
           record={selectedPlugin}
           skills={pluginSkills(selectedPlugin)}
           pluginName={pluginName}
@@ -715,6 +720,7 @@ type PluginContribution = { key: string; icon: ReactNode; title: string; kind: s
 // What a plugin adds that people meet in Wuu: pages, commands, skills, and
 // themes. Agent tools and host wiring are the plugin's own business.
 function pluginContributions(
+  destinations: readonly RegisteredDestination[],
   record: ExtensionInventoryRecord,
   skills: readonly SkillSummary[],
   t: ReturnType<typeof useI18n>["t"],
@@ -724,7 +730,7 @@ function pluginContributions(
   const views = (entries: readonly { id: string; title: string }[] | undefined, kind: string, icon: ReactNode) =>
     (entries ?? []).map((entry) => ({ key: `${kind}:${entry.id}`, icon, title: entry.title, kind }));
   return [
-    ...views(contributions?.navigation, t("skills.addsSidebarPage"), <PanelLeft className="icon" aria-hidden="true" />),
+    ...views(destinations.filter((entry) => entry.pluginId === (record.provenance.plugin_id ?? record.id)), t("skills.addsSidebarPage"), <PanelLeft className="icon" aria-hidden="true" />),
     ...views(contributions?.workspace_tools, t("skills.addsWorkspaceTool"), <PanelRight className="icon" aria-hidden="true" />),
     ...views(contributions?.settings_pages, t("skills.addsSettingsPage"), <Settings className="icon" aria-hidden="true" />),
     ...(contributions?.commands ?? []).map((command) => ({
@@ -753,6 +759,7 @@ function pluginContributions(
 // Permissions appear only while someone is deciding whether to trust it,
 // right under the notice that asks for that decision.
 function PluginDetailPage({
+  pluginHost,
   record,
   skills,
   pluginName,
@@ -767,6 +774,7 @@ function PluginDetailPage({
   onPreviewSkill,
   onMoreActions,
 }: {
+  pluginHost: PluginHost;
   record: ExtensionInventoryRecord;
   skills: readonly SkillSummary[];
   pluginName: (id: string) => string;
@@ -790,7 +798,12 @@ function PluginDetailPage({
   const toggle = pluginToggle(record);
   const grantUnavailable = deciding && !(primaryAction === "promote_update" ? record.pending_update?.fingerprint : record.fingerprint);
   const hasMoreActions = (canUpdate && Boolean(secondaryAction)) || (canRemove && isRemovableUserPlugin(record));
-  const contributions = pluginContributions(record, skills, t, onPreviewSkill);
+  const destinations = useSyncExternalStore(
+    (listener) => pluginHost.subscribe(listener),
+    () => pluginHost.getDestinationContributions(),
+    () => pluginHost.getDestinationContributions(),
+  );
+  const contributions = pluginContributions(destinations, record, skills, t, onPreviewSkill);
   const requestedPermissions = (primaryAction === "promote_update"
     ? record.pending_update?.requested_permissions
     : record.requested_permissions) ?? [];

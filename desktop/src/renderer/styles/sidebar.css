@@ -2807,7 +2807,7 @@ html[data-focus-modality="keyboard"] .thread-row-context-menu:focus-visible {
   -webkit-app-region: no-drag;
 }
 
-.navigation-ribbon .icon-button[aria-pressed="true"] {
+.navigation-ribbon .icon-button[aria-current="page"] {
   color: var(--ink-strong);
   background: var(--sidebar-row-selected-bg);
 }
@@ -2867,4 +2867,23 @@ html[data-focus-modality="keyboard"] .thread-row-context-menu:focus-visible {
 
 .plugin-navigation-sidebar .nav-item {
   flex-shrink: 0;
+}
+
+.navigation-ribbon-destinations {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+.navigation-ribbon-utilities {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  flex: none;
+  width: 38px;
+  -webkit-app-region: no-drag;
 }

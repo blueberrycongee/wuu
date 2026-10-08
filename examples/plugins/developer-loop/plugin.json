@@ -77,16 +77,7 @@
       { "id": "application-status", "target": "app.status", "mode": "wrap" },
       { "id": "conversation-header", "target": "header.conversation", "mode": "wrap" }
     ],
-    "navigation": [
-      {
-        "id": "acceptance-navigation",
-        "view": "acceptance-counter",
-        "title": "Developer Loop",
-        "description": "Open the developer-loop acceptance view.",
-        "icon": "check-circle",
-        "order": 100
-      }
-    ],
+
     "workspaceTools": [
       {
         "id": "acceptance-workspace-tool",

@@ -62,7 +62,6 @@ const initialPlugins: ExtensionInventoryRecord[] = empty ? [] : [
   record("automation", "Automation", "clock", "Schedule prompts and recurring Agent work.", {
     developer: "Wuu",
     long_description: "Runs saved prompts on a schedule, either as new conversations or by waking an existing one, so recurring checks and reports happen without you.",
-    contributions: { navigation: [{ id: "automations", view: "automations", title: "Automations" }] },
   }),
   record("ask-user", "Ask User", "message-square", "Offer focused questions without pausing a task.", { developer: "Wuu", enabled: false, runtime_state: "stopped" }),
   record("memory", "Memory", "brain", "Remember durable preferences, feedback, references, and lessons.", {
@@ -73,7 +72,7 @@ const initialPlugins: ExtensionInventoryRecord[] = empty ? [] : [
         { id: "recall", type: "enum", title: "召回方式", enum: ["相关时", "每轮"], default: "相关时", scope: "workspace", apply: "live" },
         { id: "limit", type: "number", title: "最多保留条目", default: 200, scope: "user", apply: "restart" },
       ],
-      navigation: [{ id: "memory", view: "memory", title: "Memory" }],
+      settings_pages: [{ id: "memory", view: "memory.settings", title: "Memory" }],
     },
   }),
   record("dream", "Dream", "moon", "Consolidate durable workspace knowledge in the background.", { developer: "Wuu", enabled: false, runtime_state: "stopped" }),

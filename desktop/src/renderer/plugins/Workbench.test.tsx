@@ -127,7 +127,7 @@ describe("WorkbenchController", () => {
 
     controller.deactivateRegion("primary");
     expect(controller.getSnapshot().views).toHaveLength(1);
-    expect(controller.getSnapshot().activeViewByRegion.primary).not.toBe(first);
+    expect(controller.getSnapshot().activeViewByRegion.primary).toBe(first);
     expect(visibleWorkbenchView(controller.getSnapshot(), "primary")).toBeUndefined();
 
     expect(await controller.openPluginView("product", "dashboard", { region: "primary" })).toBe(first);
@@ -700,3 +700,107 @@ function inventoryPlugin(id: string): ExtensionInventoryRecord {
     enabled: true,
   };
 }
+
+describe("destination routing", () => {
+  it("activates sidebar and primary atomically, remembers instances, and falls back on unload", async () => {
+    const host = new PluginHost({ react: React });
+    host.registerCoreNavigation({ destinations: [{ id: "conversations", title: "Conversations", icon: "message-square", primaryViewType: "core.conversations" }], ribbonItems: [] });
+    const activated = vi.fn();
+    const controller = new WorkbenchController(host, { onDestinationActivated: activated });
+    const register = async (generation: string, primaryViewType = "page") => host.activateGeneration({ pluginId: "user:destination", generation, register(api) {
+      api.registerViewType({ id: "page", title: "Page", render: () => <input defaultValue="draft" /> });
+      api.registerViewType({ id: "other-page", title: "Other page", render: () => <p>Other</p> });
+      api.registerViewType({ id: "tree", title: "Tree", render: () => <div>Tree</div> });
+      api.registerDestination({ id: "work", title: "Work", icon: "plug", primaryViewType, sidebarViewType: "tree" });
+      api.registerRibbonItem({ id: "work", title: "Work", icon: "plug", target: { kind: "destination", destinationId: "work" } });
+      api.registerCommand({ id: "refresh", title: "Refresh", execute: () => "done" });
+      api.registerRibbonItem({ id: "refresh", title: "Refresh", icon: "plug", target: { kind: "command", commandId: "refresh" } });
+    } });
+    await register("one");
+    const snapshots: Array<ReturnType<typeof controller.getSnapshot>> = [];
+    const unsubscribe = controller.subscribe(() => snapshots.push(controller.getSnapshot()));
+    controller.activateDestination("user:destination", "work");
+    expect(snapshots).toHaveLength(1);
+    const first = controller.getSnapshot();
+    expect(first.activeDestination?.id).toBe("work");
+    expect(visibleWorkbenchView(first, "primary")?.view.viewTypeId).toBe("page");
+    expect(visibleWorkbenchView(first, "navigation")?.view.viewTypeId).toBe("tree");
+    controller.activateDestination("wuu.core", "conversations");
+    expect(visibleWorkbenchView(controller.getSnapshot(), "primary")).toBeUndefined();
+    expect(visibleWorkbenchView(controller.getSnapshot(), "navigation")).toBeUndefined();
+    controller.activateDestination("user:destination", "work");
+    expect(controller.getSnapshot().activeViewByRegion).toEqual(first.activeViewByRegion);
+    await controller.activateRibbonItem("user:destination", "one", "refresh");
+    expect(controller.getSnapshot().activeDestination?.id).toBe("work");
+    controller.deactivateRegion("navigation");
+    await host.activateGeneration({ pluginId: "unrelated", generation: "one", register() {} });
+    expect(visibleWorkbenchView(controller.getSnapshot(), "navigation")).toBeUndefined();
+    await register("two", "other-page");
+    expect(visibleWorkbenchView(controller.getSnapshot(), "primary")?.view.viewTypeId).toBe("other-page");
+    expect(visibleWorkbenchView(controller.getSnapshot(), "navigation")).toBeUndefined();
+    expect(controller.getSnapshot().activeDestination?.generation).toBe("two");
+    await expect(controller.activateRibbonItem("user:destination", "one", "work")).rejects.toThrow();
+    host.unload("user:destination");
+    expect(controller.getSnapshot().activeDestination?.pluginId).toBe("wuu.core");
+    expect(activated).toHaveBeenLastCalledWith(expect.objectContaining({ pluginId: "wuu.core", id: "conversations" }));
+    expect(visibleWorkbenchView(controller.getSnapshot(), "primary")).toBeUndefined();
+    unsubscribe();
+    controller.dispose();
+  });
+  it("restores destination-owned durable instances without merging destinations that share a view", async () => {
+    window.localStorage.clear();
+    const host = new PluginHost({ react: React });
+    await host.activateGeneration({ pluginId: "durable", generation: "one", register(api) {
+      api.registerViewType({ id: "page", title: "Page", persistence: "durable", render: () => null });
+      for (const id of ["first", "second"]) api.registerDestination({ id, title: id, icon: "plug", primaryViewType: "page" });
+    } });
+    let controller = new WorkbenchController(host);
+    controller.activateDestination("durable", "first");
+    const first = controller.getSnapshot().activeViewByRegion.primary;
+    controller.activateDestination("durable", "second");
+    const second = controller.getSnapshot().activeViewByRegion.primary;
+    expect(second).not.toBe(first);
+    controller.dispose();
+    controller = new WorkbenchController(host);
+    controller.activateDestination("durable", "first");
+    expect(controller.getSnapshot().activeViewByRegion.primary).toBe(first);
+    controller.activateDestination("durable", "second");
+    expect(controller.getSnapshot().activeViewByRegion.primary).toBe(second);
+    expect(controller.getSnapshot().views).toHaveLength(2);
+    await controller.closeView(second!);
+    expect(visibleWorkbenchView(controller.getSnapshot(), "primary")).toBeUndefined();
+    expect(controller.getSnapshot().activeDestination?.id).toBe("second");
+    expect(controller.getSnapshot().views.some(view => view.id === first)).toBe(true);
+    controller.dispose();
+    window.localStorage.clear();
+  });
+
+  it("never reveals another destination when a primary view closes or disappears", async () => {
+    window.localStorage.clear();
+    const host = new PluginHost({ react: React });
+    host.registerCoreNavigation({ destinations: [{ id: "conversations", title: "Conversations", icon: "message-square", primaryViewType: "core.conversations" }], ribbonItems: [] });
+    let removeDetail!: () => void;
+    await host.activateGeneration({ pluginId: "owner", generation: "one", register(api) {
+      api.registerViewType({ id: "page", title: "Page", render: () => null });
+      const detail = api.registerViewType({ id: "detail", title: "Detail", render: () => null });
+      removeDetail = () => detail.dispose();
+      for (const id of ["a", "b"]) api.registerDestination({ id, title: id, icon: "plug", primaryViewType: "page" });
+    } });
+    const controller = new WorkbenchController(host);
+    controller.activateDestination("owner", "a");
+    const a = controller.getSnapshot().activeViewByRegion.primary;
+    controller.activateDestination("owner", "b");
+    controller.activateDestination("owner", "a");
+    await controller.openPluginView("owner", "detail");
+    removeDetail();
+    expect(visibleWorkbenchView(controller.getSnapshot(), "primary")?.view.id).toBe(a);
+    controller.activateDestination("wuu.core", "conversations");
+    const independent = await controller.openPluginView("owner", "page");
+    await controller.closeView(independent);
+    expect(visibleWorkbenchView(controller.getSnapshot(), "primary")).toBeUndefined();
+    expect(controller.getSnapshot().activeDestination?.pluginId).toBe("wuu.core");
+    controller.dispose();
+    window.localStorage.clear();
+  });
+
+});

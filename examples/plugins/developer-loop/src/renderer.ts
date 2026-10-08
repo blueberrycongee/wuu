@@ -247,6 +247,37 @@ export function activate(api: PluginGenerationApi): void {
     persistence: "durable",
     render: (props: Readonly<Record<string, unknown>>) => acceptanceView(api, props),
   });
+  api.registerViewType({
+    id: "acceptance-navigation",
+    title: "Developer Loop Navigation",
+    icon: "check-circle",
+    persistence: "durable",
+    render: () => api.react.createElement(api.ui.Page, null,
+      api.react.createElement(api.ui.Section, { title: "Developer Loop" },
+        "The counter stays in the main area. Switch destinations to check that both views restore together.")),
+  });
+  api.registerDestination({
+    id: "acceptance",
+    title: "Developer Loop",
+    icon: "check-circle",
+    order: 100,
+    primaryViewType: VIEW_ID,
+    sidebarViewType: "acceptance-navigation",
+  });
+  api.registerRibbonItem({
+    id: "acceptance",
+    title: "Developer Loop",
+    icon: "check-circle",
+    order: 100,
+    target: { kind: "destination", destinationId: "acceptance" },
+  });
+  api.registerRibbonItem({
+    id: "open-counter-panel",
+    title: "Open Counter Panel",
+    icon: "layout-grid",
+    order: 110,
+    target: { kind: "command", commandId: COMMAND_ID },
+  });
   api.registerViewPlacement({
     id: "acceptance-tools",
     region: "auxiliary",

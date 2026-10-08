@@ -55,6 +55,32 @@ export type ViewPlacementRegion = (typeof VIEW_PLACEMENT_REGIONS)[number];
 /** Persistence policy for a view instance. */
 export type ViewPersistence = "session" | "durable";
 
+/** A workspace destination owns an atomic primary view and optional sidebar view.
+ * All view references resolve within the registering owner and generation.
+ */
+export interface DestinationDefinition {
+  id: string;
+  title: string;
+  icon: PublicIconName;
+  order?: number;
+  primaryViewType: ViewTypeId;
+  sidebarViewType?: ViewTypeId;
+}
+
+/** A command item performs an action without changing the selected destination. */
+export type RibbonItemTarget =
+  | Readonly<{ kind: "destination"; destinationId: string }>
+  | Readonly<{ kind: "command"; commandId: string }>;
+
+/** References are same-owner and checked together at activation, in any registration order. */
+export interface RibbonItemDefinition {
+  id: string;
+  title: string;
+  icon: PublicIconName;
+  order?: number;
+  target: RibbonItemTarget;
+}
+
 /**
  * A plugin-registered view type. Each view type defines a React component
  * plus metadata. The host opens instances of this type in a pane.
@@ -949,6 +975,8 @@ export interface WorkbenchViewState {
   id: string;
   pluginId: string;
   generation: string;
+  /** Host-owned destination within pluginId; omitted for independent views. */
+  destinationId?: string;
   viewTypeId: ViewTypeId;
   region: ViewPlacementRegion;
   persistence: ViewPersistence;
@@ -962,6 +990,8 @@ export interface WorkbenchLayoutState {
   views: readonly WorkbenchViewState[];
   activeViewByRegion: Readonly<Partial<Record<ViewPlacementRegion, string>>>;
   dismissedPlacementIds: readonly string[];
+  /** Explicit region visibility, independent of remembered active views. */
+  closedRegions?: readonly ViewPlacementRegion[];
 }
 
 // ---------------------------------------------------------------------------

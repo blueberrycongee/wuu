@@ -132,7 +132,7 @@ func (s *Server) handlePluginIconRead(req Request) error {
 		}
 	}
 	check(fresh.Icon)
-	for _, entries := range [][]pluginpkg.ViewEntryContributionSpec{fresh.Navigation, fresh.WorkspaceTools, fresh.SettingsPages} {
+	for _, entries := range [][]pluginpkg.ViewEntryContributionSpec{fresh.WorkspaceTools, fresh.SettingsPages} {
 		for _, entry := range entries {
 			check(entry.Icon)
 		}

@@ -196,29 +196,25 @@ describe("sidebar collapse-state independence", () => {
     delete (globalThis as { wuu?: WuuDesktopApi }).wuu;
   });
 
-  it("keeps the account menu inside the sidebar and dismisses it on collapse", async () => {
+  it("keeps the global account menu reachable below the ribbon when the context sidebar collapses", async () => {
     installWuuApi();
-    await act(async () => {
-      root = createRoot(container);
-      root.render(<App />);
-    });
+    await act(async () => { root = createRoot(container); root.render(<App />); });
     await flushAsync();
-    const accountTrigger = () => container.querySelector<HTMLButtonElement>(".sidebar-account-trigger");
-    expect(accountTrigger()).not.toBeNull();
-    await act(async () => accountTrigger()?.click());
-    expect(container.querySelector(".sidebar .sidebar-account-menu")).not.toBeNull();
-
-    const toggle = container.querySelector<HTMLButtonElement>(".sidebar-toggle-button");
-    expect(toggle).not.toBeNull();
-    await act(async () => toggle?.click());
-    expect(document.querySelector(".sidebar-account-menu")).toBeNull();
-    expect(accountTrigger()).toBeNull();
-
-    const expandedToggle = container.querySelector<HTMLButtonElement>(".sidebar-toggle-button");
-    expect(expandedToggle).not.toBeNull();
-    await act(async () => expandedToggle?.click());
-    expect(accountTrigger()?.getAttribute("aria-expanded")).toBe("false");
-    expect(document.querySelector(".sidebar-account-menu")).toBeNull();
+    const trigger = container.querySelector<HTMLButtonElement>(".navigation-ribbon-utilities .sidebar-account-trigger")!;
+    expect(trigger).not.toBeNull();
+    expect(container.querySelector(".sidebar .sidebar-account-trigger")).toBeNull();
+    await act(async () => trigger.click());
+    expect(container.querySelector(".navigation-ribbon-utilities .sidebar-account-menu")).not.toBeNull();
+    const toggle = container.querySelector<HTMLButtonElement>(".sidebar-toggle-button")!;
+    await act(async () => { toggle.dispatchEvent(new Event("pointerdown", { bubbles: true })); toggle.click(); });
+    expect(container.querySelector(".navigation-ribbon-utilities .sidebar-account-trigger")).toBe(trigger);
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
+    await act(async () => trigger.click());
+    const menu = container.querySelector<HTMLElement>(".sidebar-account-menu")!;
+    expect(menu).not.toBeNull();
+    await act(async () => menu.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+    expect(container.querySelector(".sidebar-account-menu")).toBeNull();
+    expect(document.activeElement).toBe(trigger);
   });
 
   it.each([

@@ -8,6 +8,8 @@ type Equal<Left, Right> = Extends<Left, Right> extends true
 type Expect<T extends true> = T;
 
 type SnapshotParity = [
+  Expect<Equal<SDK.DestinationDefinition, Desktop.DestinationDefinition>>,
+  Expect<Equal<SDK.RibbonItemDefinition, Desktop.RibbonItemDefinition>>,
   Expect<Equal<SDK.ConversationItemSnapshotV1, Desktop.ConversationItemSnapshotV1>>,
   Expect<Equal<SDK.ComposerSnapshotV1, Desktop.ComposerSnapshotV1>>,
   Expect<Equal<SDK.HeaderSnapshotV1, Desktop.HeaderSnapshotV1>>,

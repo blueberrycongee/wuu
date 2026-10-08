@@ -106,7 +106,6 @@ type Manifest struct {
 	Slots                []SlotContributionSpec            `json:"slots,omitempty"`
 	Surfaces             []SurfaceContributionSpec         `json:"surfaces,omitempty"`
 	Presenters           []PresenterContributionSpec       `json:"presenters,omitempty"`
-	Navigation           []ViewEntryContributionSpec       `json:"navigation,omitempty"`
 	WorkspaceTools       []ViewEntryContributionSpec       `json:"workspace_tools,omitempty"`
 	SettingsPages        []ViewEntryContributionSpec       `json:"settings_pages,omitempty"`
 	Interface            json.RawMessage                   `json:"interface,omitempty"`
@@ -465,7 +464,6 @@ type rawContributes struct {
 	Slots          json.RawMessage `json:"slots"`
 	Surfaces       json.RawMessage `json:"surfaces"`
 	Presenters     json.RawMessage `json:"presenters"`
-	Navigation     json.RawMessage `json:"navigation"`
 	WorkspaceTools json.RawMessage `json:"workspaceTools"`
 	SettingsPages  json.RawMessage `json:"settingsPages"`
 }
@@ -529,7 +527,7 @@ func normalizeManifest(data []byte, root string, official bool) (Manifest, error
 		return Manifest{}, err
 	}
 	if contributes, ok := fields["contributes"]; ok {
-		if err := validateObjectFields("contributes", contributes, "commands", "themes", "settings", "slots", "surfaces", "presenters", "navigation", "workspaceTools", "settingsPages"); err != nil {
+		if err := validateObjectFields("contributes", contributes, "commands", "themes", "settings", "slots", "surfaces", "presenters", "workspaceTools", "settingsPages"); err != nil {
 			return Manifest{}, err
 		}
 	}
@@ -640,7 +638,6 @@ func normalizeManifest(data []byte, root string, official bool) (Manifest, error
 		Slots:                ui.slots,
 		Surfaces:             ui.surfaces,
 		Presenters:           ui.presenters,
-		Navigation:           ui.navigation,
 		WorkspaceTools:       ui.workspaceTools,
 		SettingsPages:        ui.settingsPages,
 		Interface:            cloneRaw(raw.Interface),
@@ -804,7 +801,6 @@ type normalizedUIContributions struct {
 	slots          []SlotContributionSpec
 	surfaces       []SurfaceContributionSpec
 	presenters     []PresenterContributionSpec
-	navigation     []ViewEntryContributionSpec
 	workspaceTools []ViewEntryContributionSpec
 	settingsPages  []ViewEntryContributionSpec
 }
@@ -823,10 +819,6 @@ func normalizeUIContributions(root string, raw rawContributes) (normalizedUICont
 	if err != nil {
 		return normalizedUIContributions{}, err
 	}
-	navigation, err := normalizeViewEntries(root, "contributes.navigation", raw.Navigation, seen)
-	if err != nil {
-		return normalizedUIContributions{}, err
-	}
 	workspaceTools, err := normalizeViewEntries(root, "contributes.workspaceTools", raw.WorkspaceTools, seen)
 	if err != nil {
 		return normalizedUIContributions{}, err
@@ -837,7 +829,7 @@ func normalizeUIContributions(root string, raw rawContributes) (normalizedUICont
 	}
 	return normalizedUIContributions{
 		slots: slots, surfaces: surfaces, presenters: presenters,
-		navigation: navigation, workspaceTools: workspaceTools, settingsPages: settingsPages,
+		workspaceTools: workspaceTools, settingsPages: settingsPages,
 	}, nil
 }
 

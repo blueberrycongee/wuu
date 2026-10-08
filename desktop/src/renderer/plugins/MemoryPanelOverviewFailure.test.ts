@@ -25,7 +25,6 @@ interface FirstPartyManifest {
     slots?: PluginContributionDeclarations["slots"];
     surfaces?: PluginContributionDeclarations["surfaces"];
     presenters?: PluginContributionDeclarations["presenters"];
-    navigation?: PluginContributionDeclarations["navigation"];
     workspaceTools?: PluginContributionDeclarations["workspace_tools"];
     settingsPages?: PluginContributionDeclarations["settings_pages"];
   };
@@ -37,7 +36,6 @@ function contributionDeclarations(manifest: FirstPartyManifest): PluginContribut
     slots: contributions.slots ?? [],
     surfaces: contributions.surfaces ?? [],
     presenters: contributions.presenters ?? [],
-    navigation: contributions.navigation ?? [],
     workspace_tools: contributions.workspaceTools ?? [],
     settings_pages: contributions.settingsPages ?? [],
   };

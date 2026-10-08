@@ -75,7 +75,7 @@ Merge this contribution into the package's `plugin.json`:
 }
 ```
 
-`view` must match the registered ID in the same plugin. Use `settingsPages` for a settings page or `navigation` for a navigation entry. Add `registerViewPlacement` only when an initial open placement is useful, rather than forcing every optional tool onto the workbench.
+`view` must match the registered ID in the same plugin. Use `settingsPages` for a settings page. For a ribbon destination, register a destination and ribbon item as described in [desktop UI plugins](desktop-plugins.md). Add `registerViewPlacement` only when an initial open placement is useful, rather than forcing every optional tool onto the workbench.
 
 ## Connect a page to its runtime
 

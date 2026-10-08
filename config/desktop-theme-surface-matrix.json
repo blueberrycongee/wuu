@@ -53,6 +53,11 @@
       "rows": 0
     },
     {
+      "name": "destination-navigation-sidebar",
+      "synthetic": false,
+      "rows": 0
+    },
+    {
       "name": "dialog",
       "synthetic": false,
       "rows": 0
@@ -1561,8 +1566,8 @@
     {"anchor":"unanchored:sidebar.css","state":"default","file":"sidebar.css","selector":".nav-item[aria-current=\"page\"]","prop":"color","variable":"--ink","status":"bridged","tokens":["--wuu-color-text"]},
     {"anchor":"unanchored:sidebar.css","state":"default","file":"sidebar.css","selector":".navigation-ribbon","prop":"background","variable":"--surface-2","status":"bridged","tokens":["--wuu-color-surface-muted"]},
     {"anchor":"unanchored:sidebar.css","state":"default","file":"sidebar.css","selector":".navigation-ribbon","prop":"border-right","variable":"--hairline-soft","status":"bridged","tokens":["--wuu-border-subtle"]},
-    {"anchor":"unanchored:sidebar.css","state":"default","file":"sidebar.css","selector":".navigation-ribbon .icon-button[aria-pressed=\"true\"]","prop":"background","variable":"--sidebar-row-selected-bg","status":"bridged","tokens":["--wuu-color-surface-elevated"]},
-    {"anchor":"unanchored:sidebar.css","state":"default","file":"sidebar.css","selector":".navigation-ribbon .icon-button[aria-pressed=\"true\"]","prop":"color","variable":"--ink-strong","status":"bridged","tokens":["--wuu-color-text"]},
+    {"anchor":"unanchored:sidebar.css","state":"default","file":"sidebar.css","selector":".navigation-ribbon .icon-button[aria-current=\"page\"]","prop":"background","variable":"--sidebar-row-selected-bg","status":"bridged","tokens":["--wuu-color-surface-elevated"]},
+    {"anchor":"unanchored:sidebar.css","state":"default","file":"sidebar.css","selector":".navigation-ribbon .icon-button[aria-current=\"page\"]","prop":"color","variable":"--ink-strong","status":"bridged","tokens":["--wuu-color-text"]},
     {"anchor":"unanchored:sidebar.css","state":"default","file":"sidebar.css","selector":".pinned-append-drop-zone[data-drop-over=\"true\"]::after","prop":"background","variable":"--sidebar-accent","status":"bridged","tokens":["--wuu-accent","--wuu-color-accent","--wuu-color-text"]},
     {"anchor":"unanchored:sidebar.css","state":"default","file":"sidebar.css","selector":".pinned-sortable-thread[data-sort-indicator]::after, .sidebar-functional-group .project-section[data-sort-indicator]::after","prop":"background","variable":"--sidebar-accent","status":"bridged","tokens":["--wuu-accent","--wuu-color-accent","--wuu-color-text"]},
     {"anchor":"unanchored:sidebar.css","state":"default","file":"sidebar.css","selector":".pinned-sortable-thread[data-sort-indicator]::after, .sidebar-functional-group .project-section[data-sort-indicator]::after","prop":"box-shadow","variable":"--sidebar-accent","status":"bridged","tokens":["--wuu-accent","--wuu-color-accent","--wuu-color-text"]},

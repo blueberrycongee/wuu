@@ -445,7 +445,6 @@ describe("PluginHost", () => {
       pluginId: "workbench-product",
       generation: "one",
       contributions: {
-        navigation: [{ id: "nav", view: "dashboard", title: "Dashboard", order: 20 }],
         workspace_tools: [{ id: "tool", view: "dashboard", title: "Inspector", order: 10 }],
         settings_pages: [{ id: "settings", view: "dashboard", title: "Advanced", order: 30 }],
       },
@@ -460,9 +459,6 @@ describe("PluginHost", () => {
       },
     });
 
-    expect(host.getNavigationEntries()).toEqual([
-      expect.objectContaining({ pluginId: "workbench-product", id: "nav", view: "dashboard" }),
-    ]);
     expect(host.getWorkspaceTools()[0]).toMatchObject({ id: "tool", title: "Inspector" });
     expect(host.getSettingsPages()[0]).toMatchObject({ id: "settings", title: "Advanced" });
 
@@ -470,7 +466,7 @@ describe("PluginHost", () => {
       pluginId: "missing-entry-view",
       generation: "one",
       contributions: {
-        navigation: [{ id: "missing", view: "not-registered", title: "Missing" }],
+        workspace_tools: [{ id: "missing", view: "not-registered", title: "Missing" }],
       },
       register() {},
     })).rejects.toThrow(
@@ -771,3 +767,83 @@ function registerCompleteGeneration(api: PluginGenerationApi, label: string): vo
   api.registerStyle({ id: `${label}-style`, css: `.${label} {}` });
   api.registerLocale({ id: `${label}-copy`, locale: "en", entries: { label } });
 }
+
+describe("destination and ribbon ownership", () => {
+  const destination = { id: "home", title: "Home", icon: "folder" as const, primaryViewType: "main", sidebarViewType: "tree" };
+  const ribbon = { id: "home", title: "Home", icon: "folder" as const, target: { kind: "destination" as const, destinationId: "home" } };
+  const register = (api: PluginGenerationApi) => {
+    api.registerRibbonItem(ribbon);
+    api.registerDestination(destination);
+    api.registerViewType({ id: "tree", title: "Tree", render: () => null });
+    api.registerViewType({ id: "main", title: "Main", render: () => null });
+  };
+
+  it("resolves same-owner references after registration and rejects missing or cross-owner references atomically", async () => {
+    const host = new PluginHost({ react: React });
+    await host.activateGeneration({ pluginId: "alpha", generation: "one", register });
+    const previous = host.getDestinationContributions();
+    for (const pluginId of ["alpha", "beta"]) {
+      await expect(host.activateGeneration({ pluginId, generation: "bad", register(api) {
+        api.registerDestination(destination);
+        api.registerRibbonItem(ribbon);
+      } })).rejects.toThrow(/unregistered View/);
+      expect(host.getDestinationContributions()).toBe(previous);
+    }
+    await expect(host.activateGeneration({ pluginId: "alpha", generation: "bad-ribbon", register(api) {
+      api.registerRibbonItem(ribbon);
+    } })).rejects.toThrow(/unregistered destination/);
+    expect(host.resolveRibbonItem("alpha", "one", "home")?.target).toEqual(ribbon.target);
+    expect(host.resolveRibbonItem("alpha", "bad", "home")).toBeUndefined();
+  });
+
+  it("removes dependent entries when views or destinations are disposed and unloads all entries", async () => {
+    const host = new PluginHost({ react: React });
+    let view!: Disposable;
+    let destinationHandle!: Disposable;
+    await host.activateGeneration({ pluginId: "alpha", generation: "one", register(api) {
+      destinationHandle = api.registerDestination(destination);
+      api.registerRibbonItem(ribbon);
+      view = api.registerViewType({ id: "tree", title: "Tree", render: () => null });
+      api.registerViewType({ id: "main", title: "Main", render: () => null });
+    } });
+    view.dispose();
+    expect(host.getDestinationContributions()).toEqual([]);
+    expect(host.getRibbonContributions()).toEqual([]);
+    destinationHandle.dispose();
+    await host.activateGeneration({ pluginId: "alpha", generation: "two", register });
+    host.unload("alpha");
+    expect(host.getDestinationContributions()).toEqual([]);
+    expect(host.getRibbonContributions()).toEqual([]);
+  });
+
+  it("executes only a live same-owner command and never turns command items into destinations", async () => {
+    const host = new PluginHost({ react: React });
+    let calls = 0;
+    let commandHandle!: Disposable;
+    const registerCommand = (api: PluginGenerationApi) => {
+      api.registerRibbonItem({ id: "run", title: "Run", icon: "folder", target: { kind: "command", commandId: "run" } });
+      commandHandle = api.registerCommand({ id: "run", title: "Run", execute: () => ++calls });
+    };
+    await host.activateGeneration({ pluginId: "alpha", generation: "one", register: registerCommand });
+    expect(await host.executeRibbonCommand("alpha", "one", "run")).toBe(1);
+    expect(host.getDestinationContributions()).toEqual([]);
+    await expect(host.activateGeneration({ pluginId: "beta", generation: "one", register(api) {
+      api.registerRibbonItem({ id: "run", title: "Run", icon: "folder", target: { kind: "command", commandId: "run" } });
+    } })).rejects.toThrow(/unregistered command/);
+    await host.activateGeneration({ pluginId: "alpha", generation: "two", register: registerCommand });
+    await expect(host.executeRibbonCommand("alpha", "one", "run")).rejects.toThrow(/no longer active/);
+    commandHandle.dispose();
+    await expect(host.executeRibbonCommand("alpha", "two", "run")).rejects.toThrow(/no longer active/);
+    expect(calls).toBe(1);
+  });
+
+  it("shares core and plugin snapshots without a core plugin generation", async () => {
+    const host = new PluginHost({ react: React });
+    const core = host.registerCoreNavigation({ destinations: [destination], ribbonItems: [ribbon] });
+    expect(host.getDestinationContributions()[0]?.pluginId).toBe("wuu.core");
+    expect(host.isGenerationActive("wuu.core", "core")).toBe(false);
+    await expect(host.activateGeneration({ pluginId: "wuu.core", generation: "attack", register })).rejects.toThrow(/reserved/);
+    core.dispose();
+    expect(host.getRibbonContributions()).toEqual([]);
+  });
+});

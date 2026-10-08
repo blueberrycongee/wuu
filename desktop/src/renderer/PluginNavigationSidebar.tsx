@@ -1,13 +1,12 @@
 import { useSyncExternalStore, type PointerEventHandler, type ReactNode } from "react";
 import { PluginBlocksIcon } from "./PluginBlocksIcon";
-import { PluginIcon } from "./PublicIcon";
+import { PublicIcon } from "./PublicIcon";
 import { SidePanelToggleIcon } from "./SidePanelToggleIcon";
 import { useI18n } from "./i18n";
 import { desktopPluginHost, desktopWorkbenchController } from "./plugins/DesktopPluginRuntime";
 import { NavigationPresentation, type NavigationSourceNode } from "./plugins/NavigationPresentation";
 import type { PluginHost } from "./plugins/PluginHost";
 import type { WorkbenchController } from "./plugins/Workbench";
-import { primaryViewNavigation } from "./plugins/PrimaryViewNavigation";
 
 export function PluginNavigationSidebar({
   hidden, catalogActive, hasRuntimeContext, sidebarCollapsed, onToggleSidebar,
@@ -22,7 +21,7 @@ export function PluginNavigationSidebar({
   sidebarCollapsed: boolean;
   onToggleSidebar?: () => void;
   onOpenCatalog: () => void;
-  onOpenPlugin: (pluginId: string, viewTypeId: string, instanceId?: string) => void;
+  onOpenPlugin: (pluginId: string, destinationId: string, generation?: string) => void;
   onPointerEnter?: PointerEventHandler<HTMLElement>;
   onPointerLeave?: PointerEventHandler<HTMLElement>;
   footer: ReactNode;
@@ -30,22 +29,22 @@ export function PluginNavigationSidebar({
   const { t } = useI18n();
   const declaredEntries = useSyncExternalStore(
     (listener) => pluginHost.subscribe(listener),
-    () => pluginHost.getNavigationEntries(),
-    () => pluginHost.getNavigationEntries(),
+    () => pluginHost.getDestinationContributions(),
+    () => pluginHost.getDestinationContributions(),
   );
   const snapshot = useSyncExternalStore(
     workbenchController.subscribe,
     workbenchController.getSnapshot,
     workbenchController.getSnapshot,
   );
-  const entries = primaryViewNavigation(declaredEntries, snapshot);
+  const entries = declaredEntries.filter(entry => entry.pluginId !== "wuu.core");
   const nodes: NavigationSourceNode[] = [
     { id: "command:skills", kind: "command", label: t("plugins.manage"), icon: "plugin-blocks", active: catalogActive, disabled: !hasRuntimeContext, onActivate: onOpenCatalog },
     ...entries.map((entry): NavigationSourceNode => ({
       id: `plugin:${entry.pluginId}:${entry.id}`, kind: "command", label: entry.title,
-      icon: entry.icon && "name" in entry.icon ? entry.icon.name : "plugin-blocks",
-      active: entry.instanceId !== undefined && snapshot.activeViewByRegion.primary === entry.instanceId,
-      onActivate: () => onOpenPlugin(entry.pluginId, entry.view, entry.instanceId),
+      icon: entry.icon,
+      active: !snapshot.closedRegions.includes("primary") && snapshot.activeDestination?.pluginId === entry.pluginId && snapshot.activeDestination.id === entry.id,
+      onActivate: () => onOpenPlugin(entry.pluginId, entry.id, entry.generation),
     })),
   ];
   return (
@@ -61,9 +60,9 @@ export function PluginNavigationSidebar({
                 <PluginBlocksIcon className="icon-lg" /><span>{t("plugins.manage")}</span>
               </button>
               {entries.map((entry) => {
-                const active = entry.instanceId !== undefined && snapshot.activeViewByRegion.primary === entry.instanceId;
-                return <button key={`${entry.pluginId}:${entry.id}`} type="button" className={`nav-item plugin-navigation-item${active ? " active" : ""}`} data-wuu-component="plugin-navigation-item" data-wuu-plugin={entry.pluginId} aria-current={active ? "page" : undefined} title={entry.description || entry.title} onClick={() => onOpenPlugin(entry.pluginId, entry.view, entry.instanceId)}>
-                  <PluginIcon icon={entry.icon} pluginId={entry.pluginId} fingerprint={entry.generation} className="icon-lg" /><span>{entry.title}</span>
+                const active = !snapshot.closedRegions.includes("primary") && snapshot.activeDestination?.pluginId === entry.pluginId && snapshot.activeDestination.id === entry.id;
+                return <button key={`${entry.pluginId}:${entry.id}`} type="button" className={`nav-item plugin-navigation-item${active ? " active" : ""}`} data-wuu-component="plugin-navigation-item" data-wuu-plugin={entry.pluginId} aria-current={active ? "page" : undefined} title={entry.title} onClick={() => onOpenPlugin(entry.pluginId, entry.id, entry.generation)}>
+                  <PublicIcon name={entry.icon} className="icon-lg" /><span>{entry.title}</span>
                 </button>;
               })}
             </nav>

@@ -18,10 +18,31 @@ protocol.registerSchemesAsPrivileged([{ scheme: "wuu-plugin", privileges: { stan
 const results = [];
 app.whenReady().then(async () => {
   const timeout = setTimeout(() => { console.error("Workspace new page E2E timed out"); app.exit(1); }, 120_000);
-  protocol.handle("wuu-plugin", () => new Response("export function activate(api) {"
-    + "api.registerViewType({ id: 'notes', title: 'Workspace notes',"
-    + "render: () => api.react.createElement('div', { 'data-workspace-e2e-notes': true }, 'Extension notes') });"
-    + "}", { headers: { "Content-Type": "text/javascript", "Access-Control-Allow-Origin": "*" } }));
+  protocol.handle("wuu-plugin", () => new Response(`export function activate(api) {
+    const h = api.react.createElement;
+    api.registerViewType({ id: 'notes', title: 'Workspace notes',
+      render: () => h('div', { 'data-workspace-e2e-notes': true }, 'Extension notes') });
+    api.registerViewType({ id: 'destination-main', title: 'Demo workspace', persistence: 'durable',
+      render: () => h('section', { 'data-e2e-destination-main': true },
+        h('h1', null, 'Plugin workspace'), h('p', null, 'This main view belongs to the registered destination.'),
+        h('input', { 'aria-label': 'Retained plugin draft', defaultValue: '' })) });
+    api.registerViewType({ id: 'destination-tree', title: 'Demo navigation', persistence: 'durable',
+      render: () => h('section', { 'data-e2e-destination-sidebar': true },
+        h('h2', null, 'Plugin navigation'), h('p', null, 'Overview · Notes · Tasks')) });
+    api.registerViewType({ id: 'focus-main', title: 'Focused page', persistence: 'durable',
+      render: () => h('section', { 'data-e2e-focus-main': true }, h('h1', null, 'Focused plugin page')) });
+    api.registerDestination({ id: 'demo', title: 'Demo workspace', icon: 'plug',
+      primaryViewType: 'destination-main', sidebarViewType: 'destination-tree' });
+    api.registerDestination({ id: 'focus', title: 'Focused page', icon: 'file-text', primaryViewType: 'focus-main' });
+    api.registerRibbonItem({ id: 'demo', title: 'Demo workspace', icon: 'plug',
+      target: { kind: 'destination', destinationId: 'demo' } });
+    api.registerRibbonItem({ id: 'focus', title: 'Focused page', icon: 'file-text',
+      target: { kind: 'destination', destinationId: 'focus' } });
+    api.registerCommand({ id: 'record-action', title: 'Record fixture action',
+      execute: () => { window.dispatchEvent(new CustomEvent('workspace-e2e-ribbon-action')); } });
+    api.registerRibbonItem({ id: 'action', title: 'Record fixture action', icon: 'workflow',
+      target: { kind: 'command', commandId: 'record-action' } });
+  }`, { headers: { "Content-Type": "text/javascript", "Access-Control-Allow-Origin": "*" } }));
   const win = new BrowserWindow({ width: 1440, height: 900, useContentSize: true, show: false, titleBarStyle: "hiddenInset",
     webPreferences: { preload: path.join(__dirname, "streaming-e2e-preload.cjs"),
       contextIsolation: true, sandbox: false, backgroundThrottling: false } });
@@ -285,6 +306,86 @@ app.whenReady().then(async () => {
   });
   fs.writeFileSync(path.join(output, "preview-light.png"), (await win.webContents.capturePage(panelBounds)).toPNG());
   results.push({ scenario: "new page with reduced motion", passed: true });
+  // Exercise the public destination/ribbon contract in the production shell.
+  // Fixtures are in memory and never load external code or user files.
+  await evaluate(() => {
+    window.__workspaceRibbonActions = 0;
+    window.addEventListener('workspace-e2e-ribbon-action', () => window.__workspaceRibbonActions++);
+  });
+  const demoRibbon = '[data-wuu-destination="user:workspace-e2e:demo"]';
+  const focusRibbon = '[data-wuu-destination="user:workspace-e2e:focus"]';
+  const actionRibbon = '[data-wuu-destination="user:workspace-e2e:action"]';
+  await click(demoRibbon);
+  await waitFor(() => {
+    const node = document.querySelector('[data-workbench-region="primary"] [data-e2e-destination-main]');
+    return node && !node.closest('[hidden]') && node.getBoundingClientRect().width > 0;
+  });
+  await waitFor(() => {
+    const node = document.querySelector('[data-workbench-region="navigation"] [data-e2e-destination-sidebar]');
+    return node && !node.closest('[hidden]') && node.getBoundingClientRect().width > 0;
+  });
+  await evaluate(() => {
+    const input = document.querySelector('[data-e2e-destination-main] input');
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, 'Keep this plugin draft');
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    window.__workspaceDestinationInput = input;
+  });
+  await capture('destination-plugin-wide');
+  await click(actionRibbon);
+  await waitFor(() => window.__workspaceRibbonActions === 1);
+  assert.equal(await evaluate(selector => document.querySelector(selector).getAttribute('aria-current'), demoRibbon), 'page');
+  assert.equal(await evaluate(selector => document.querySelector(selector).hasAttribute('aria-current'), actionRibbon), false);
+  await click(focusRibbon);
+  await waitFor(() => {
+    const node = document.querySelector('[data-workbench-region="primary"] [data-e2e-focus-main]');
+    return node && !node.closest('[hidden]') && node.getBoundingClientRect().width > 0;
+  });
+  assert.equal(await evaluate(() => [...document.querySelectorAll('[data-workbench-region="navigation"] .plugin-workbench-view-navigation')]
+    .filter(node => !node.closest('[hidden]') && node.getBoundingClientRect().width > 0).length), 0);
+  assert.equal(await evaluate(() => document.querySelector('.destination-navigation-sidebar').hidden), true);
+  assert.equal(await evaluate(() => getComputedStyle(document.querySelector('.app-shell')).getPropertyValue('--sidebar-width').trim()), '0px',
+    'A main-only destination does not reserve an empty sidebar column');
+  await capture('destination-no-sidebar-wide');
+  await click('[data-wuu-destination="files"]');
+  await waitFor(() => document.querySelector('.workspace-right-panel').dataset.navigationMode === 'files');
+  await waitFor(() => Boolean(document.querySelector('.files-navigation-tree file-tree-container')?.shadowRoot?.querySelector('[data-item-path="README.md"]')));
+  await evaluate(() => document.querySelector('.files-navigation-tree file-tree-container').shadowRoot.querySelector('[data-item-path="README.md"]').click());
+  await waitFor(() => document.querySelector('.workspace-markdown-reading')?.textContent.includes('A small workspace for navigation and reading checks.'));
+  assert.equal(await evaluate(() => document.querySelector('.app-shell').classList.contains('right-panel-open')), false,
+    'Files owns the main canvas without opening the utility panel');
+  await capture('destination-files-main-wide');
+  await click(demoRibbon);
+  await waitFor(() => document.querySelector('[data-e2e-destination-main] input') === window.__workspaceDestinationInput &&
+    !window.__workspaceDestinationInput.closest('[hidden]'));
+  assert.equal(await evaluate(() => document.querySelector('[data-e2e-destination-main] input').value), 'Keep this plugin draft');
+  for (const width of [1440, 560]) {
+    win.setContentSize(width, 900);
+    await waitFor(width => window.innerWidth === width, width);
+    await click(demoRibbon);
+    await capture('destination-plugin-' + width);
+    if (await evaluate(() => document.querySelector('.app-shell').classList.contains('sidebar-drawer-open'))) {
+      await click('.compact-session-switcher-backdrop');
+    }
+    await click('.navigation-ribbon-utilities .sidebar-account-trigger');
+    await waitFor(() => Boolean(document.querySelector('.sidebar-account-menu [role="menuitem"]')));
+    const accountGeometry = await evaluate(() => {
+      const ribbon = document.querySelector('.navigation-ribbon').getBoundingClientRect();
+      const avatar = document.querySelector('.navigation-ribbon-utilities .sidebar-account-trigger').getBoundingClientRect();
+      const menu = document.querySelector('.sidebar-account-menu').getBoundingClientRect();
+      return { ribbon: ribbon.toJSON(), avatar: avatar.toJSON(), menu: menu.toJSON(), height: innerHeight, width: innerWidth };
+    });
+    results.push({ scenario: 'ribbon account ' + width, geometry: accountGeometry });
+    assert.ok(accountGeometry.avatar.bottom <= accountGeometry.height && accountGeometry.avatar.top >= accountGeometry.height - 100,
+      'Account trigger stays at the ribbon bottom');
+    assert.ok(accountGeometry.menu.left >= 0 && accountGeometry.menu.right <= width + 1 && accountGeometry.menu.bottom <= accountGeometry.height + 1,
+      'Account menu remains reachable inside the viewport');
+    await capture('ribbon-account-' + width);
+    await evaluate(() => document.querySelector('.sidebar-account-menu').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
+    await waitFor(() => !document.querySelector('.sidebar-account-menu'));
+  }
+  await click('[data-wuu-destination="conversations"]');
+  await waitFor(() => document.querySelector('[data-wuu-destination="conversations"]').getAttribute('aria-current') === 'page');
+  results.push({ scenario: 'core and plugin destination restoration, command identity, compact navigation and account reachability', passed: true });
   fs.writeFileSync(path.join(output, "results.json"), JSON.stringify(results, null, 2));
   console.log("Workspace new page E2E passed. Evidence: " + output);
   clearTimeout(timeout);

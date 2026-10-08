@@ -63,6 +63,18 @@ export const desktopPluginHost = new PluginHost({
       }));
   },
 });
+desktopPluginHost.registerCoreNavigation({
+  destinations: [
+    { id: "conversations", title: "Conversations", icon: "message-square", order: 0, primaryViewType: "core.conversations", sidebarViewType: "core.conversations.navigation" },
+    { id: "files", title: "Files", icon: "folder", order: 1, primaryViewType: "core.files", sidebarViewType: "core.files.navigation" },
+    { id: "plugins", title: "Plugins", icon: "plug", order: 2, primaryViewType: "core.plugins", sidebarViewType: "core.plugins.navigation" },
+  ],
+  ribbonItems: [
+    { id: "conversations", title: "Conversations", icon: "message-square", order: 0, target: { kind: "destination", destinationId: "conversations" } },
+    { id: "files", title: "Files", icon: "folder", order: 1, target: { kind: "destination", destinationId: "files" } },
+    { id: "plugins", title: "Plugins", icon: "plug", order: 2, target: { kind: "destination", destinationId: "plugins" } },
+  ],
+});
 export const desktopCompositionRoot = createDesktopCompositionRoot();
 void desktopCompositionRoot.plugin(PluginHostService, desktopPluginHost);
 export const desktopWorkbenchController = new WorkbenchController(desktopPluginHost);

@@ -54,6 +54,32 @@ export type PluginManifestIcon =
   | Readonly<{ path: string }>
   | Readonly<{ light: string; dark: string }>;
 
+/** A workspace destination owns an atomic primary view and optional sidebar view.
+ * All view references resolve within the registering owner and generation.
+ */
+export interface DestinationDefinition {
+  id: string;
+  title: string;
+  icon: PublicIconName;
+  order?: number;
+  primaryViewType: ViewTypeId;
+  sidebarViewType?: ViewTypeId;
+}
+
+/** A command item performs an action without changing the selected destination. */
+export type RibbonItemTarget =
+  | Readonly<{ kind: "destination"; destinationId: string }>
+  | Readonly<{ kind: "command"; commandId: string }>;
+
+/** References are same-owner and checked together at activation, in any registration order. */
+export interface RibbonItemDefinition {
+  id: string;
+  title: string;
+  icon: PublicIconName;
+  order?: number;
+  target: RibbonItemTarget;
+}
+
 export interface ViewTypeDefinition {
   id: ViewTypeId;
   title: string;
@@ -454,6 +480,10 @@ export interface PluginGenerationApi {
   registerComposerStatusSource(source: ComposerStatusSourceRegistration): Disposable;
   registerCleanup(cleanup: () => void): Disposable;
   registerViewType(definition: ViewTypeDefinition): Disposable;
+  /** Register a same-generation primary view and optional sidebar as one destination. */
+  registerDestination(definition: DestinationDefinition): Disposable;
+  /** Register a destination selector or a command action; references are validated at activation. */
+  registerRibbonItem(definition: RibbonItemDefinition): Disposable;
   registerViewPlacement(contribution: ViewPlacementContribution): Disposable;
   registerInspectorSection(definition: InspectorSectionDefinition): Disposable;
   registerRenderer(definition: RendererDefinition): Disposable;

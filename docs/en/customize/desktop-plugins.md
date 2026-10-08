@@ -47,11 +47,30 @@ Tool activity presenters customize execution summaries and controls. Rich result
 
 ## Views, cards, and status
 
-A view is a registered component placed in `navigation`, `primary`, `auxiliary`, `inspector`, `settings`, or `overlay`. `registerViewPlacement` requests an initial placement. Manifest entries in `contributes.navigation`, `workspaceTools`, or `settingsPages` give users a host-owned way to open the view; each must refer to a view registered by that plugin.
+A view is a registered component placed in `navigation`, `primary`, `auxiliary`, `inspector`, `settings`, or `overlay`. `registerViewPlacement` requests an initial placement. Manifest entries in `contributes.workspaceTools` or `settingsPages` give users a host-owned way to open the view; each must refer to a view registered by that plugin.
+
+## Ribbon destinations
+
+Register a destination with `registerDestination({ id, title, icon, order?, primaryViewType, sidebarViewType? })`. It owns the main view and, optionally, a navigation sidebar view. Register its ribbon entry separately with `registerRibbonItem({ id, title, icon, order?, target })`. A target is either `{ kind: "destination", destinationId }` or `{ kind: "command", commandId }`. Command items run an action without selecting a destination.
+
+All IDs are local to the registering plugin. Referenced views, destinations, and commands must belong to the same activation generation. Registration order does not matter: the host validates the complete graph before publishing it. Invalid replacements keep the previous generation active. Disposing a view withdraws dependent destinations and ribbon items; unload removes the generation together. Use semantic icons from `PublicIconName`.
+
+```ts
+api.registerDestination({
+  id: "dashboard", title: "Dashboard", icon: "layout-grid",
+  primaryViewType: "dashboard.main", sidebarViewType: "dashboard.sidebar",
+});
+api.registerRibbonItem({
+  id: "dashboard", title: "Dashboard", icon: "layout-grid",
+  target: { kind: "destination", destinationId: "dashboard" },
+});
+```
+
+Register both referenced view types in the same `activate` call. The host switches the main area and sidebar together, remembers their instances per destination, and retains the conversation destination separately. The developer-loop example demonstrates a two-view destination and an independent command item. Manifest `contributes.navigation` is no longer supported; `workspaceTools` and `settingsPages` remain available for their distinct surfaces.
 
 `persistence=durable` preserves view layout state across restoration; it does not persist arbitrary component state. Use namespaced storage for data that must survive unmounting. View props include a host API for storage, settings, commands, and view navigation.
 
-Conversations and primary plugin views use sidebar navigation, including API-opened views without a declared navigation entry. Their headers omit `tabs`, `activeTabId`, and tab actions. Primary plugin headers provide `canNavigateBack` and `header.navigate-back`. The host adds its own close control only when closing removes the page from the sidebar: API-opened views and additional instances. A declared navigation entry's page is left through Back or the sidebar. Compact workspace headers also provide back navigation, beside a close control for the open tab. These remain optional fields and actions in contract version 1: inspect the snapshot and `host.actions` instead of rebuilding a top tab strip from saved views. Auxiliary panels and plugin content can still have their own tabs.
+The ribbon selects registered destinations. Each destination owns its primary view and optional sidebar view; opening an independent view through `openView` does not register a destination or ribbon item. Primary headers omit `tabs`, `activeTabId`, and tab actions, and provide `canNavigateBack` and `header.navigate-back`. The host offers Close for independent pages and additional instances; a destination's root page is left through Back or another ribbon destination. Returning to a destination reveals its remembered instances. Hidden destination views retain local state while their effects are suspended; closing or unloading releases the view. Compact workspace headers also provide back navigation and a close control for the open tab. Inspect the snapshot and `host.actions` instead of rebuilding a top tab strip from saved views. Auxiliary panels and plugin content can still have their own tabs.
 
 Conversation cards are transient interaction, not saved history or durable pages. A card handle can update its state or dismiss it. For composer status, return structured items from `getSnapshot(context)` and notify through `subscribe`; keep snapshots stable until data changes. Wuu renders the row and handles overflow and the optional `open-session` action, rather than accepting arbitrary React content for each status item.
 

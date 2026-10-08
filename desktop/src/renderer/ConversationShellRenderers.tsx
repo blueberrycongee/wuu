@@ -409,18 +409,18 @@ export function ConversationTitleContent({
   );
   const navigationEntries = useSyncExternalStore(
     (listener) => host.subscribe(listener),
-    () => host.getNavigationEntries(),
-    () => host.getNavigationEntries(),
+    () => host.getDestinationContributions(),
+    () => host.getDestinationContributions(),
   );
   const activePrimaryView = workbenchSnapshot.views.find(
-    (view) => view.region === "primary" && view.id === workbenchSnapshot.activeViewByRegion.primary,
+    (view) => !workbenchSnapshot.closedRegions.includes("primary") && view.region === "primary" && view.id === workbenchSnapshot.activeViewByRegion.primary,
   );
   // A declared destination keeps its sidebar row after it closes, so closing
   // its only page would just repeat Back. Close is offered only where it
   // removes a row: API-opened pages and extra instances.
   const closable = activePrimaryView !== undefined && (
     !navigationEntries.some((entry) =>
-      entry.pluginId === activePrimaryView.pluginId && entry.view === activePrimaryView.viewTypeId)
+      entry.pluginId === activePrimaryView.pluginId && entry.primaryViewType === activePrimaryView.viewTypeId)
     || workbenchSnapshot.views.filter((view) =>
       view.region === "primary"
       && view.pluginId === activePrimaryView.pluginId
@@ -440,7 +440,8 @@ export function ConversationTitleContent({
     : activeTitle;
   const navigateBack = activePrimaryView ? () => {
     restoreFocus.current = true;
-    controller.deactivateRegion("primary");
+    if (controller.getSnapshot().destinations.some(item => item.pluginId === "wuu.core" && item.id === "conversations")) controller.activateDestination("wuu.core", "conversations");
+    else controller.deactivateRegion("primary");
   } : undefined;
   const fallback = (
     <div className="conversation-title-heading">

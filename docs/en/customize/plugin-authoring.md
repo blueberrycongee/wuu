@@ -71,7 +71,7 @@ Theme tokens come from the [generated theme contract](theme-surface-matrix.md), 
 
 Commands under `contributes.commands` have a local ID and a kind. `prompt_template` references a bounded UTF-8 file inside the package and supplies a host-owned composer action. `runtime_action` points to a command registered by the desktop generation; declaring it alone does not execute code.
 
-UI declarations belong under `contributes.slots`, `surfaces`, `presenters`, `navigation`, `workspaceTools`, or `settingsPages`. They describe placement and discovery, while the desktop module registers rendering. See [desktop UI plugins](desktop-plugins.md) for matching and composition rules.
+UI declarations belong under `contributes.slots`, `surfaces`, `presenters`, `workspaceTools`, or `settingsPages`. They describe placement and discovery, while the desktop module registers rendering. See [desktop UI plugins](desktop-plugins.md) for matching and composition rules.
 
 ## Runtime process and lifecycle
 

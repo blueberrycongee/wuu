@@ -9,11 +9,7 @@
   "minimumWuuVersion": "0.1.0",
   "runtime": { "protocol": "wuu-plugin-v1", "command": "@wuu-official-helper:automation", "timeout": 30 },
   "desktop": { "entry": "desktop.js" },
-  "contributes": {
-    "navigation": [
-      { "id": "automation", "title": "Automations", "view": "automation.catalog", "icon": "clock", "order": 40 }
-    ]
-  },
+  "contributes": {},
   "interface": { "displayName": "Automation", "shortDescription": "Schedule prompts and recurring Agent work.", "developerName": "Wuu", "category": "Productivity", "capabilities": ["Write"] },
   "officialNativeHelper": { "id": "automation", "environment": "WUU_AUTOMATION_PLUGIN_HELPER", "executable": "wuu-automation-plugin" }
 }

@@ -313,7 +313,6 @@ describe("AppSidebar layout", () => {
       `project:${SCRATCH_PSEUDO_PROJECT_ID}`,
       "project:project-1",
       "project:project-2",
-      "command:settings",
     ]);
   });
 

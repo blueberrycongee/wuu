@@ -688,7 +688,6 @@ type ExtensionContributions struct {
 	Slots          []ExtensionSlotContributionDescriptor      `json:"slots,omitempty"`
 	Surfaces       []ExtensionSurfaceContributionDescriptor   `json:"surfaces,omitempty"`
 	Presenters     []ExtensionPresenterContributionDescriptor `json:"presenters,omitempty"`
-	Navigation     []ExtensionViewEntryDescriptor             `json:"navigation,omitempty"`
 	WorkspaceTools []ExtensionViewEntryDescriptor             `json:"workspace_tools,omitempty"`
 	SettingsPages  []ExtensionViewEntryDescriptor             `json:"settings_pages,omitempty"`
 }

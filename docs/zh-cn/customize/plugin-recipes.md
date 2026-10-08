@@ -75,7 +75,7 @@ export function activate(api: PluginGenerationApi): void {
 }
 ```
 
-`view` 必须匹配同一插件注册的 ID。设置页使用 `settingsPages`，导航入口使用 `navigation`。只有确实需要初始打开位置时才添加 `registerViewPlacement`，不要把每个可选工具都强制打开在工作台上。
+`view` 必须匹配同一插件注册的 ID。设置页使用 `settingsPages`；Ribbon 入口通过 `registerDestination` 和 `registerRibbonItem` 注册，见[桌面 UI 插件](desktop-plugins.md)。只有确实需要初始打开位置时才添加 `registerViewPlacement`，不要把每个可选工具都强制打开在工作台上。
 
 ## 连接页面和运行时
 

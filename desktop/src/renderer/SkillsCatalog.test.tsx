@@ -1,4 +1,6 @@
+import * as React from "react";
 import { act } from "react";
+import { PluginHost } from "./plugins/PluginHost";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ExtensionInventoryRecord, SkillSummary, WuuDesktopApi } from "../shared/protocol";
@@ -42,6 +44,27 @@ afterEach(() => {
 });
 
 describe("SkillsCatalog", () => {
+  it("lists live registered destinations and removes them when their generation unloads", async () => {
+    installSkillList([]);
+    const pluginHost = new PluginHost({ react: React });
+    await pluginHost.activateGeneration({ pluginId: "sample", generation: "one", register(api) {
+      api.registerViewType({ id: "page", title: "Page", render: () => null });
+      api.registerDestination({ id: "page", title: "Live destination", icon: "folder", primaryViewType: "page" });
+    } });
+    const record: ExtensionInventoryRecord = {
+      id: "sample", name: "Sample", kind: "plugin", state: "active", enabled: true,
+      provenance: { kind: "plugin", source: "bundled", scope: "bundled", plugin_id: "sample", official: true },
+    };
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<SkillsCatalog pluginHost={pluginHost} extensionInventory={[record]} />);
+    });
+    await act(async () => { buttonByText("Sample")?.click(); });
+    expect(container.textContent).toContain("Live destination");
+    await act(async () => { pluginHost.unload("sample"); });
+    expect(container.textContent).not.toContain("Live destination");
+  });
+
   it("keeps local install available with an empty catalog and treats picker cancellation as a no-op", async () => {
     installSkillList([]);
     const onInstallPluginPackage = vi.fn().mockResolvedValue(undefined);

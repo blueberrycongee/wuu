@@ -414,7 +414,6 @@ export type ExtensionContributions = {
   slots?: ExtensionSlotContributionDescriptor[];
   surfaces?: ExtensionSurfaceContributionDescriptor[];
   presenters?: ExtensionPresenterContributionDescriptor[];
-  navigation?: ExtensionViewEntryDescriptor[];
   workspace_tools?: ExtensionViewEntryDescriptor[];
   settings_pages?: ExtensionViewEntryDescriptor[];
 };

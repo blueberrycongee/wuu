@@ -71,7 +71,7 @@
 
 `contributes.commands` 中的命令包含本地 ID 和 kind。`prompt_template` 引用包内有大小限制的 UTF-8 文件，提供宿主管理的输入框动作；`runtime_action` 指向桌面 generation 注册的命令，只有声明不会执行代码。
 
-UI 声明放在 `contributes.slots`、`surfaces`、`presenters`、`navigation`、`workspaceTools` 或 `settingsPages` 中，描述放置位置和入口，实际渲染仍由桌面模块注册。匹配与组合规则见[桌面 UI 插件](desktop-plugins.md)。
+UI 声明放在 `contributes.slots`、`surfaces`、`presenters`、`workspaceTools` 或 `settingsPages` 中，描述放置位置和入口，实际渲染仍由桌面模块注册。匹配与组合规则见[桌面 UI 插件](desktop-plugins.md)。
 
 ## 运行时进程和生命周期
 

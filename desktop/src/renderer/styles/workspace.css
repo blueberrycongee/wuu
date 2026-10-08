@@ -3474,3 +3474,13 @@ html[data-focus-modality="keyboard"] .runtime-panel-summary :is(
 .workspace-right-panel[data-navigation-mode="files"] .workspace-panel-tabbar {
   padding-right: max(var(--control-toolbar-inset), var(--window-controls-inset-right));
 }
+
+/* The same retained editor/tool host occupies the main outlet in Files.
+   Destination placement never changes the utility sidebar preference. */
+.app-shell .workspace-right-panel[data-navigation-mode="files"] {
+  grid-column: 2;
+  width: 100%;
+  justify-self: stretch;
+  pointer-events: auto;
+  border-left: 0;
+}

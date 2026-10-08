@@ -485,7 +485,6 @@ func (s *Server) currentExtensionInventory() []ExtensionInventoryRecord {
 			}
 			return entries
 		}
-		navigation := viewEntries(item.Navigation)
 		workspaceTools := viewEntries(item.WorkspaceTools)
 		settingsPages := viewEntries(item.SettingsPages)
 		presentation := pluginPresentation(item.Manifest)
@@ -529,11 +528,11 @@ func (s *Server) currentExtensionInventory() []ExtensionInventoryRecord {
 		if item.Desktop != nil {
 			packageRecord.Desktop = &ExtensionDesktopDescriptor{Entry: item.Desktop.Entry}
 		}
-		if len(commands) > 0 || len(themes) > 0 || len(settings) > 0 || len(slots) > 0 || len(surfaces) > 0 || len(presenters) > 0 || len(navigation) > 0 || len(workspaceTools) > 0 || len(settingsPages) > 0 {
+		if len(commands) > 0 || len(themes) > 0 || len(settings) > 0 || len(slots) > 0 || len(surfaces) > 0 || len(presenters) > 0 || len(workspaceTools) > 0 || len(settingsPages) > 0 {
 			packageRecord.Contributions = &ExtensionContributions{
 				Commands: commands, Themes: themes, Settings: settings,
 				Slots: slots, Surfaces: surfaces, Presenters: presenters,
-				Navigation: navigation, WorkspaceTools: workspaceTools, SettingsPages: settingsPages,
+				WorkspaceTools: workspaceTools, SettingsPages: settingsPages,
 			}
 		}
 		if pending, ok := pendingUpdatesByID[item.ID]; ok && item.Source == "user" {
