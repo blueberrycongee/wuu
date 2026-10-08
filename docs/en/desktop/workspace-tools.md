@@ -4,6 +4,8 @@ Use the workspace panels to inspect what actually happened during a task. A conv
 
 The left sidebar keeps the visibility and width you choose when you resize the window or zoom the interface. Use its toggle or drag its divider to collapse it.
 
+Expanding the right panel adds the current conversation as the first tab beside the tool tabs. Select it to return to the conversation without leaving the expanded layout; select a tool tab to switch back. The conversation draft is preserved. Exiting the expanded layout restores the conversation and tools side by side.
+
 ## App zoom
 
 Press **Command + + / −** on macOS (**Ctrl + + / −** on other platforms) to

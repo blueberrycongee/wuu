@@ -733,6 +733,8 @@ export function App(): JSX.Element {
   const [workspaceFilter, setWorkspaceFilter] = useState("");
   const {
     workspaceViewTabs,
+    workspaceConversationActive,
+    focusWorkspaceConversation,
     workspaceActiveViewTabID,
     workspaceActiveFileTabID,
     ensureWorkspaceToolTab,
@@ -752,8 +754,10 @@ export function App(): JSX.Element {
     toggleRightPanel,
   } = useWorkspaceToolState({
     rightPanelOpen,
+    rightPanelGlobalized,
     setRightPanelOpenWithMotion,
   });
+  const workspaceToolsCoverConversation = rightPanelGlobalized && !workspaceConversationActive;
   const [environmentPanelOpen, setEnvironmentPanelOpen] = useState(false);
   const [environmentPanelDismissed, setEnvironmentPanelDismissed] =
     useState(false);
@@ -1206,7 +1210,7 @@ export function App(): JSX.Element {
     ? workspaceViewTabs.find((tab) => tab.id === workspaceActiveViewTabID)
     : undefined;
   const workspaceSelectionEnabled =
-    rightPanelGlobalized &&
+    workspaceToolsCoverConversation &&
     (activeWorkspaceViewTab?.kind === "files" ||
       activeWorkspaceViewTab?.kind === "file");
   const activeWorkspaceFileTab = workspaceActiveFileTabID
@@ -2332,7 +2336,7 @@ export function App(): JSX.Element {
   // A docked preview sits beside the conversation, whose own input is in
   // reach; the document input appears once the preview takes the window.
   const documentComposerVisible = Boolean(
-    state.initialized && rightPanelGlobalized &&
+    state.initialized && workspaceToolsCoverConversation &&
     !splitConversation &&
     !showingManagementCatalog && !showingPrimaryPluginView &&
     (activePreviewFile || activePreviewArtifact),
@@ -2348,7 +2352,7 @@ export function App(): JSX.Element {
     Boolean(state.initialized) &&
     !splitConversation &&
     !showingManagementCatalog &&
-    !rightPanelGlobalized &&
+    !workspaceToolsCoverConversation &&
     !showingPrimaryPluginView;
 
   useEffect(() => {
@@ -2917,7 +2921,7 @@ export function App(): JSX.Element {
     ENABLE_ENVIRONMENT_PANEL &&
     state.initialized &&
     !poppedOutMode &&
-    !rightPanelGlobalized &&
+    !workspaceToolsCoverConversation &&
     !sideThreadPanelVisible &&
     // The card describes the conversation's workspace; pages that replace the
     // conversation have nothing for it to describe.
@@ -2964,7 +2968,7 @@ export function App(): JSX.Element {
     sidebarAnimating ? " sidebar-animating" : ""
   }${rightPanelAnimating ? " right-panel-animating" : ""}${resizingSidebar ? " resizing-sidebar" : ""}${
     resizingRightPanel ? " resizing-right-panel" : ""
-  }${rightPanelOpen ? " right-panel-open" : ""}${rightPanelGlobalized && rightPanelOpen ? " right-panel-globalized" : ""}${resizingSplit ? " resizing-split" : ""}`;
+  }${rightPanelOpen ? " right-panel-open" : ""}${rightPanelGlobalized && rightPanelOpen ? " right-panel-globalized" : ""}${workspaceConversationActive ? " workspace-conversation-active" : ""}${resizingSplit ? " resizing-split" : ""}`;
   const shellStyle = {
     "--sidebar-width": `${effectiveSidebarWidth}px`,
     "--sidebar-open-width": `${sidebarWidth}px`,
@@ -4352,7 +4356,7 @@ export function App(): JSX.Element {
 
   async function submitFileSelectionEdit(part: FileSelectionPart): Promise<boolean> {
     const current = appStateRef.current;
-    const splitPane = splitConversation && !rightPanelGlobalized ? current.activePane : undefined;
+    const splitPane = splitConversation && !workspaceToolsCoverConversation ? current.activePane : undefined;
     const thread = splitPane ? threadForPane(current, splitPane) : activeThreadForState(current);
     if (viewSwitchPending || !current.activeContext || !current.initialized || thread?.read_only) return false;
     const draft = createComposerMessage(part.text, [], [], [part]);
@@ -5218,7 +5222,7 @@ export function App(): JSX.Element {
     ((activeThread !== undefined && !activeThread.read_only && !activeThread.ephemeral) ||
       currentSessionTab?.kind === "draft");
 
-  const selectionUsesSplitDraft = splitConversation && !rightPanelGlobalized;
+  const selectionUsesSplitDraft = splitConversation && !workspaceToolsCoverConversation;
   const selectionThread = selectionUsesSplitDraft ? threadForPane(state, state.activePane) : activeThread;
 
   return (
@@ -5465,7 +5469,7 @@ export function App(): JSX.Element {
           ) : null}
 
       <main
-        inert={rightPanelOpen && rightPanelGlobalized}
+        inert={workspaceToolsCoverConversation}
         data-wuu-component="conversation-pane"
         data-primary-plugin-view={showingPrimaryPluginView ? "" : undefined}
         className={`conversation-pane${environmentPanelVisible ? " environment-panel-visible" : ""}${
@@ -5806,6 +5810,11 @@ export function App(): JSX.Element {
           onReorderTabs={reorderWorkspaceViewTabs}
           onOpenFile={openWorkspaceFile}
           globalized={rightPanelGlobalized}
+          conversationTab={rightPanelGlobalized ? {
+            title: activeTitle,
+            active: workspaceConversationActive,
+            onSelect: focusWorkspaceConversation,
+          } : undefined}
           sheetPhase={workspaceSheetPhase}
           onToggleGlobalize={toggleWorkspacePanelGlobalized}
           canExitGlobalized={

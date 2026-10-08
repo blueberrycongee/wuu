@@ -75,10 +75,11 @@ app.whenReady().then(async () => {
       const strip = document.querySelector(".workspace-panel-tabs");
       const header = document.querySelector(".workspace-panel-tabbar");
       const active = strip.querySelector(".workspace-tool-tab.active");
-      const box = (node) => node.getBoundingClientRect().toJSON();
+      const box = (node) => node?.getBoundingClientRect().toJSON() ?? null;
       return { strip: box(strip), header: box(header), active: box(active),
         tabs: [...strip.querySelectorAll(".workspace-tool-tab:not(.closing)")].map((tab) => ({
           tab: box(tab), label: box(tab.querySelector(".workspace-tool-tab-main > span")),
+          conversation: tab.classList.contains("workspace-conversation-tab"),
           close: box(tab.querySelector(".workspace-tool-tab-close")),
         })) };
     });
@@ -89,17 +90,114 @@ app.whenReady().then(async () => {
       "The active tab meets its content edge");
     assert.ok(geometry.active.left >= geometry.strip.left - 1 && geometry.active.right <= geometry.strip.right + 1,
       "The selected tab remains in view");
-    for (const { tab, label, close } of geometry.tabs) {
+    for (const { tab, label, close, conversation } of geometry.tabs) {
       assert.ok(label.width >= 16, "Overflow keeps tab labels readable rather than hiding them");
-      assert.ok(close.width >= 24 && close.height >= 24, "Close retains its independent hit target");
-      assert.ok(close.left >= label.right - 1 && close.right <= tab.right + 1, "Label and close lanes do not overlap");
+      if (!conversation) {
+        assert.ok(close, "Every tool tab retains its close action");
+        assert.ok(close.width >= 24 && close.height >= 24, "Close retains its independent hit target");
+        assert.ok(close.left >= label.right - 1 && close.right <= tab.right + 1, "Label and close lanes do not overlap");
+      }
     }
     results.push({ scenario, geometry });
   };
   await checkTabGeometry("tabs-docked-light");
 
+  await evaluate(() => {
+    window.workspaceConversationPane = document.querySelector('.conversation-pane');
+    const input = document.querySelector('.composer textarea');
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(input, 'Keep this conversation draft');
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await click('.workspace-panel-globalize');
+  await waitFor(() => Boolean(document.querySelector('.workspace-conversation-tab')));
+  assert.equal((await tabs()).length, 2, 'The full-width header contains the conversation and tool tabs');
+  await checkTabGeometry('conversation-tab-with-new-page');
+  await click('.workspace-conversation-tab [role="tab"]');
+  await waitFor(() => document.querySelector('.workspace-conversation-tab [role="tab"]').getAttribute('aria-selected') === 'true');
+  for (const width of [1440, 900]) {
+    win.setContentSize(width, 900);
+    await waitFor((width) => innerWidth === width, width);
+    for (const theme of ['light', 'dark']) {
+      for (const size of [14, 20]) {
+        await evaluate(({ theme, size }) => {
+          document.documentElement.dataset.theme = theme;
+          document.documentElement.style.setProperty('--font-ui', size + 'px');
+        }, { theme, size });
+        const scenario = `conversation-tab-${width}-${theme}-${size}`;
+        await checkTabGeometry(scenario);
+        const surface = await evaluate(() => {
+          const main = document.querySelector('.conversation-pane');
+          const input = main.querySelector('.composer textarea');
+          const rect = input.getBoundingClientRect();
+          const header = document.querySelector('.workspace-panel-tabbar').getBoundingClientRect();
+          return {
+            samePane: main === window.workspaceConversationPane,
+            inert: main.inert, draft: input.value,
+            inputReceivesPointer: input === document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2),
+            inputBelowHeader: rect.top >= header.bottom,
+            fullWidth: Math.abs(main.getBoundingClientRect().right - innerWidth) <= 1,
+            bodyHidden: getComputedStyle(document.querySelector('.workspace-panel-body')).visibility === 'hidden',
+            selectedTabs: document.querySelectorAll('.workspace-panel-tabs [role="tab"][aria-selected="true"]').length,
+          };
+        });
+        assert.deepEqual(surface, { samePane: true, inert: false, draft: 'Keep this conversation draft',
+          inputReceivesPointer: true, inputBelowHeader: true, fullWidth: true, bodyHidden: true, selectedTabs: 1 });
+        results.push({ scenario, surface });
+      }
+    }
+  }
+  win.setContentSize(1440, 900);
+  await waitFor(() => innerWidth === 1440);
+  await evaluate(() => {
+    document.documentElement.dataset.theme = 'light';
+    document.documentElement.style.setProperty('--font-ui', '14px');
+    document.querySelector('.workspace-conversation-tab [role="tab"]').focus();
+  });
+  win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Right' });
+  win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Right' });
+  await waitFor(() => document.querySelector('.conversation-pane').inert);
+  assert.equal(await evaluate(() => document.activeElement.getAttribute('aria-selected')), 'true');
+  await click('.workspace-conversation-tab [role="tab"]');
+  await click('.workspace-panel-globalize');
+  await waitFor(() => !document.querySelector('.workspace-conversation-tab'));
+  assert.equal((await tabs()).length, 1, 'Docking restores the original tool strip');
+  await evaluate(() => {
+    const input = document.querySelector('.composer textarea');
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(input, '');
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await checkTabGeometry('conversation-tab-return-to-dock');
+
   await click('[data-wuu-tool="review"]');
   await waitFor(() => Boolean(document.querySelector('[data-wuu-view="review"]')));
+  await waitFor(() => Boolean(document.querySelector('.workspace-monaco-diff-editor .view-line')));
+  await evaluate(() => { window.workspaceReviewEditor = document.querySelector('.workspace-monaco-diff-editor .monaco-diff-editor'); });
+  await click('.workspace-panel-globalize');
+  await capture('conversation-tab-review-visible');
+  await click('.workspace-conversation-tab [role="tab"]');
+  for (const theme of ['light', 'dark']) {
+    await evaluate((theme) => { document.documentElement.dataset.theme = theme; }, theme);
+    await capture(`conversation-tab-review-hidden-${theme}`);
+    const visibility = await evaluate(() => {
+      const editor = document.querySelector('.workspace-monaco-diff-editor');
+      const lines = [...editor.querySelectorAll('.view-line')];
+      return { lineCount: lines.length,
+        visibleLines: lines.filter(line => line.checkVisibility({ checkVisibilityCSS: true, checkOpacity: true })).length,
+        interactive: !editor.closest('[inert]'),
+      };
+    });
+    assert.ok(visibility.lineCount > 0, 'The real diff editor remains mounted');
+    assert.equal(visibility.visibleLines, 0, 'No diff text paints over the selected conversation');
+    assert.equal(visibility.interactive, false, 'Hidden diff cannot receive input');
+    results.push({ scenario: `review hidden behind conversation in ${theme}`, visibility });
+  }
+  await evaluate(() => { document.documentElement.dataset.theme = 'light'; });
+  await click('.workspace-tool-tab:not(.workspace-conversation-tab) [role="tab"]');
+  await waitFor(() => document.querySelector('.workspace-monaco-diff-editor .view-line')?.checkVisibility({ checkVisibilityCSS: true, checkOpacity: true }));
+  assert.equal(await evaluate(() => window.workspaceReviewEditor === document.querySelector('.workspace-monaco-diff-editor .monaco-diff-editor')), true);
+  await capture('conversation-tab-review-restored');
+  await click('.workspace-panel-globalize');
+  await waitFor(() => !document.querySelector('.workspace-conversation-tab'));
   const reviewTabs = await tabs();
   await click(".workspace-panel-add");
   await click('[data-wuu-tool="review"]');
@@ -195,6 +293,7 @@ app.whenReady().then(async () => {
   assert.equal(await evaluate(() => document.querySelector(".workspace-file-resource.active").textContent.includes("File temporarily unavailable")), false);
   await capture("file-preview-read-recovered");
   results.push({ scenario: "failed file read retries in place", passed: true });
+  const conversationHistory = await evaluate(() => document.querySelector('.conversation-width').textContent);
   await click(".workspace-panel-globalize");
   await waitFor(() => document.querySelector('.workspace-markdown-reading')?.textContent.includes("Workspace navigation notes"));
   for (const theme of ["light", "dark"]) {
@@ -305,6 +404,18 @@ app.whenReady().then(async () => {
   // A docked preview leaves only the conversation input; the draft follows
   // it there and back once the preview takes the window again.
   await setDocumentDraft('Edit this file');
+  await evaluate(() => { window.workspaceResourceTab = document.querySelector('.workspace-tool-tab.active [role="tab"]'); });
+  await click('.workspace-conversation-tab [role="tab"]');
+  await waitFor(() => !document.querySelector('.document-composer-wrap'));
+  assert.equal(await evaluate(() => document.querySelector('.conversation-pane .composer textarea').value), 'Edit this file');
+  assert.equal(await evaluate(() => document.querySelector('.conversation-width').textContent), conversationHistory,
+    'The conversation tab keeps the existing message history');
+  assert.equal(await evaluate(() => document.querySelector('.workspace-conversation-tab [role="tab"]').getAttribute('aria-label')
+    === document.querySelector('.conversation-title-heading h1').textContent), true);
+  await capture('conversation-tab-existing-thread');
+  await evaluate(() => window.workspaceResourceTab.click());
+  await waitFor(() => Boolean(document.querySelector('.document-composer-wrap')));
+  assert.equal(await evaluate(() => document.querySelector('.document-composer-wrap textarea').value), 'Edit this file');
   await click(".workspace-panel-globalize");
   await waitFor(() => !document.querySelector('.app-shell').classList.contains('right-panel-globalized'));
   await waitFor(() => !document.querySelector('.document-composer-wrap'));

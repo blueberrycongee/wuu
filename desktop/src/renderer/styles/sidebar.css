@@ -167,6 +167,30 @@
   visibility: hidden;
 }
 
+/* Keep the conversation mounted under the shared header so switching tabs
+ * preserves its history, selection and scroll position. Tool content retains
+ * its layout while hidden, including editors and the terminal. */
+.app-shell.workspace-conversation-active .conversation-pane {
+  grid-column: 2 / -1;
+  pointer-events: auto;
+}
+
+.app-shell.workspace-conversation-active .workspace-right-panel {
+  background: transparent;
+  box-shadow: none;
+  pointer-events: none;
+}
+
+.app-shell.workspace-conversation-active .workspace-panel-tabbar {
+  pointer-events: auto;
+}
+
+.app-shell.workspace-conversation-active .workspace-panel-body {
+  visibility: hidden;
+  /* Monaco sets visibility on descendants, so suppress the whole painted layer. */
+  opacity: 0;
+}
+
 .globalized-sidebar-toggle-region {
   position: fixed;
   /* Match the shared toolbar center, including when zoomed controls require

@@ -1,3 +1,4 @@
+import { useCallback, useEffect, useState } from "react";
 import type { RuntimeContext } from "../shared/protocol";
 import type { ArtifactPreviewRequest } from "./ArtifactPreviewContext";
 import type { WorkspacePanelView } from "./WorkspacePanels";
@@ -16,9 +17,11 @@ import {
 
 export function useWorkspaceToolState({
   rightPanelOpen,
+  rightPanelGlobalized,
   setRightPanelOpenWithMotion
 }: {
   rightPanelOpen: boolean;
+  rightPanelGlobalized: boolean;
   setRightPanelOpenWithMotion: (open: boolean) => void;
 }): {
   // Unified right-panel tab strip: the four singleton tools plus zero or
@@ -26,6 +29,8 @@ export function useWorkspaceToolState({
   workspaceViewTabs: WorkspaceViewTab[];
   workspaceActiveViewTabID: string | undefined;
   workspaceActiveFileTabID: string | undefined;
+  workspaceConversationActive: boolean;
+  focusWorkspaceConversation: () => void;
   ensureWorkspaceToolTab: (view: WorkspacePanelView) => void;
   activateWorkspaceTool: (view: WorkspacePanelView) => void;
   openWorkspaceTool: (view: WorkspacePanelView) => void;
@@ -47,13 +52,27 @@ export function useWorkspaceToolState({
     tabs: workspaceViewTabs,
     activeTabID: workspaceActiveViewTabID,
     activeFileTabID: workspaceActiveFileTabID,
-    openTab,
-    focusTab,
+    openTab: openWorkspaceTab,
+    focusTab: focusWorkspaceTab,
     closeTab,
     closeTabsWhere,
     reorderTabs,
     syncProjectTab,
   } = useWorkspaceViewTabs(rightPanelOpen);
+  const [conversationSelected, setConversationSelected] = useState(false);
+  useEffect(() => {
+    if (!rightPanelGlobalized) setConversationSelected(false);
+  }, [rightPanelGlobalized]);
+  const focusWorkspaceConversation = useCallback(() => setConversationSelected(true), []);
+  const focusTab = useCallback((id: string | undefined) => {
+    setConversationSelected(false);
+    focusWorkspaceTab(id);
+  }, [focusWorkspaceTab]);
+
+  function openTab(...args: Parameters<typeof openWorkspaceTab>): void {
+    if (args[1]?.activate !== false) setConversationSelected(false);
+    openWorkspaceTab(...args);
+  }
 
   function ensureWorkspaceToolTab(view: WorkspacePanelView): void {
     if (!workspaceViewTabs.some((tab) => tab.id === view)) {
@@ -145,6 +164,8 @@ export function useWorkspaceToolState({
     workspaceViewTabs,
     workspaceActiveViewTabID,
     workspaceActiveFileTabID,
+    workspaceConversationActive: rightPanelGlobalized && conversationSelected,
+    focusWorkspaceConversation,
     ensureWorkspaceToolTab,
     activateWorkspaceTool,
     openWorkspaceTool,

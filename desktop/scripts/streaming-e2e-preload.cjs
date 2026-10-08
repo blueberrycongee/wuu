@@ -159,6 +159,12 @@ contextBridge.exposeInMainWorld("wuu", {
     providers: [{ name: provider, type: "mock", model, connection_locked: true }]
   }),
   ...(process.env.WUU_WORKSPACE_NEW_TAB_E2E ? {
+    listGitChanges: async () => ({ is_repo: true, root: cwd,
+      files: [{ path: "src/review-example.ts", status: "modified", additions: 20, deletions: 20 }] }),
+    readGitFileDiff: async (path) => ({ is_repo: true, path, status: "modified",
+      additions: 20, deletions: 20, patch: "", truncated: false,
+      original_text: "const value = 'before';\n".repeat(20),
+      modified_text: "const value = 'after';\n".repeat(20) }),
     listWorkspaceFiles: async () => ({ root: cwd, paths: Object.keys(workspaceDemoFiles), truncated: false }),
     listWorkspaceDirectory: async (path = "") => {
       const relative = workspaceDemoPath(path).replace(/\/$/, "");
