@@ -55,7 +55,12 @@ export function TurnSourcesRow({ sources, running = false, onOpen, inline = fals
         index={newURLs.findIndex(item => item.url === source.url)} />)}
       <button type="button" className="web-research-more" aria-expanded={expanded} aria-controls={detailsID}
         aria-label={label}
-        onClick={event => onExpandedChange?.(!expanded, event.currentTarget)}>{label}</button>
+        onClick={event => onExpandedChange?.(!expanded, event.currentTarget)}
+        onKeyDown={event => {
+          if (event.key !== "Escape" || !expanded) return;
+          event.preventDefault(); event.stopPropagation();
+          onExpandedChange?.(false, event.currentTarget);
+        }}>{label}</button>
     </div>
   </div>;
 }

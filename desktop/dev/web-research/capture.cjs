@@ -135,6 +135,11 @@ app.whenReady().then(async () => {
     assert.ok(overflow.sourceDetails.x + overflow.sourceDetails.width <= width);
     assert.ok(overflow.body.height <= 330, "search inspection stays bounded");
     assert.ok(await run("document.querySelector('.process-surface-fold').open && !!document.querySelector('.process-surface-tool-list')"), "source control opens the actual tool details too");
+    assert.ok(await run(`(() => {
+      const owner = document.querySelector('.process-surface-inline-controls').getBoundingClientRect();
+      const control = document.querySelector('.web-research-more').getBoundingClientRect();
+      return control.left >= owner.left && control.right <= owner.right + 1;
+    })()`), "the complete source-count control stays inside its header");
     await shot(`${name}-expanded`);
     // The disclosure may be revisited while the search is still running.
     // Already received sources must not masquerade as new results again.

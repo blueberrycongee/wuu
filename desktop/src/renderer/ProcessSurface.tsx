@@ -429,7 +429,9 @@ export function ProcessSurface({
         bodyRef={processScroll.scrollRef}
         bodyProps={{ [AUTO_FOLLOW_NESTED_SCROLL_ATTR]: "true", id: sourceDetailsID, inert: !expanded,
           onKeyDownCapture: event => {
-            if (event.key !== "Escape") return;
+            if (!hasWebActivity || event.key !== "Escape") return;
+            const target = event.target;
+            if (target instanceof Element && target.closest("input, textarea, [contenteditable=true], [role=textbox]")) return;
             event.preventDefault();
             event.stopPropagation();
             setExpanded(false);
