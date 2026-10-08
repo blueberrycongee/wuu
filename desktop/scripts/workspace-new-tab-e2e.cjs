@@ -145,8 +145,8 @@ app.whenReady().then(async () => {
   win.webContents.sendInputEvent({ type: "keyUp", keyCode: "Return" });
   await waitFor(() => document.querySelector(".workspace-tool-menu-more").open);
   await evaluate(() => {
-    const notes = [...document.querySelectorAll('[data-wuu-plugin="user:workspace-e2e"]')]
-      .find((button) => button.querySelector("strong")?.textContent === "Workspace notes");
+    const notes = [...document.querySelectorAll('.workspace-tool-menu [data-wuu-component="workspace-tool"][data-wuu-plugin="user:workspace-e2e"]')]
+      .find((button) => button.querySelector("strong")?.textContent === "Workspace notes with a long descriptive title");
     if (!notes) throw new Error("Workspace notes tool is missing");
     notes.click();
   });
