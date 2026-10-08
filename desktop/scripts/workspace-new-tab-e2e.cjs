@@ -319,6 +319,10 @@ app.whenReady().then(async () => {
     for (const width of [1440, 760, 560]) {
       win.setContentSize(width, 900);
       await waitFor((width) => innerWidth === width, width);
+      // The file split refits after the resize settles; measure that layout.
+      await waitFor(() => !document.documentElement.matches('.window-resizing, .layout-motion-active'));
+      if (width === 760) assert.equal(await evaluate(() => document.querySelector('.app-shell').classList.contains('sidebar-collapsed')),
+        false, 'a narrower window keeps the sidebar the user left open');
       await evaluate((size) => {
         document.documentElement.style.setProperty('--font-ui', size + 'px');
         document.documentElement.style.setProperty('--conversation-message-font-size', size + 'px');

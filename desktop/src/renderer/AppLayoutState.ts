@@ -31,7 +31,6 @@ export const SIDEBAR_DEFAULT_WIDTH = 264;
 // its contents harder to scan.
 export const SIDEBAR_MIN_WIDTH = 240;
 export const SIDEBAR_MAX_WIDTH = 520;
-export const SIDEBAR_AUTO_COLLAPSE_WINDOW_WIDTH = 900;
 // Below this width the renderer switches from multi-column/tab rails to
 // single-surface navigation. Touch phones retain it in landscape; tablets and
 // desktop windows use the available viewport width.
@@ -109,10 +108,6 @@ function sidebarShouldCollapse(width: number): boolean {
   return width <= SIDEBAR_COLLAPSE_WIDTH;
 }
 
-function sidebarShouldAutoCollapseForWindow(width: number): boolean {
-  return width < SIDEBAR_AUTO_COLLAPSE_WINDOW_WIDTH;
-}
-
 function clampSidebarWidth(width: number): number {
   return clamp(width, SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH);
 }
@@ -135,11 +130,11 @@ function initialSidebarWidth(): number {
   return storedWidth(SIDEBAR_WIDTH_KEY, SIDEBAR_DEFAULT_WIDTH, SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH);
 }
 
+// Only the user opens or closes the sidebar. A narrow window squeezes the
+// conversation instead; below the compact breakpoint the sidebar becomes a
+// drawer without changing this preference.
 function initialSidebarCollapsed(): boolean {
-  return (
-    window.localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "true" ||
-    sidebarShouldAutoCollapseForWindow(window.innerWidth)
-  );
+  return window.localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "true";
 }
 
 function initialWorkspaceRightPanelWidth(): number {
@@ -331,7 +326,7 @@ export function useAppLayoutState({
   const [sidebarPreferredWidth, setSidebarPreferredWidth] = useState(initialSidebarWidth);
   const [observedWindowWidth, setWindowWidth] = useState(() => window.innerWidth);
   const windowWidth = viewportWidth ?? observedWindowWidth;
-  const [sidebarCollapsed, setSidebarCollapsedState] = useState(initialSidebarCollapsed);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(initialSidebarCollapsed);
   const [resizingSidebar, setResizingSidebar] = useState(false);
   const [sidebarAnimating, setSidebarAnimating] = useState(false);
   const [workspaceRightPanelWidth, setWorkspaceRightPanelWidth] = useState(initialWorkspaceRightPanelWidth);
@@ -347,14 +342,6 @@ export function useAppLayoutState({
   const splitResizeSessionRef = useRef<SplitResizeSession | null>(null);
   const sidebarMotionTimerRef = useRef<number | undefined>(undefined);
   const rightPanelMotionTimerRef = useRef<number | undefined>(undefined);
-  const sidebarAutoCollapsedRef = useRef(
-    sidebarShouldAutoCollapseForWindow(window.innerWidth) &&
-      window.localStorage.getItem(SIDEBAR_COLLAPSED_KEY) !== "true"
-  );
-  const setSidebarCollapsed = useCallback((collapsed: boolean): void => {
-    sidebarAutoCollapsedRef.current = false;
-    setSidebarCollapsedState(collapsed);
-  }, []);
   // Window resizing changes the canvas, not the user-selected sidebar width.
   const sidebarWidth = sidebarPreferredWidth;
   const screenShortSide = Math.min(window.screen.width, window.screen.height);
@@ -536,9 +523,7 @@ export function useAppLayoutState({
 
   useEffect(() => {
     window.localStorage.setItem(SIDEBAR_WIDTH_KEY, String(sidebarPreferredWidth));
-    if (!sidebarAutoCollapsedRef.current) {
-      window.localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(sidebarCollapsed));
-    }
+    window.localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(sidebarCollapsed));
   }, [sidebarPreferredWidth, sidebarCollapsed]);
 
   useEffect(() => {
@@ -697,38 +682,14 @@ export function useAppLayoutState({
   useEffect(() => {
     function handleResize(): void {
       if (viewportWidth !== undefined) return;
-      const nextWindowWidth = window.innerWidth;
-      setWindowWidth(nextWindowWidth);
-      const autoCollapseSidebar =
-        !resizingSidebar &&
-        sidebarShouldAutoCollapseForWindow(nextWindowWidth);
-      const restoreAutoCollapsedSidebar =
-        !autoCollapseSidebar && sidebarAutoCollapsedRef.current;
-      if (autoCollapseSidebar) {
-        if (!sidebarCollapsed) {
-          sidebarAutoCollapsedRef.current = true;
-          startSidebarMotion();
-          onCloseWorkspaceMenu();
-        }
-        setSidebarCollapsedState(true);
-      } else if (restoreAutoCollapsedSidebar) {
-        sidebarAutoCollapsedRef.current = false;
-        startSidebarMotion();
-        setSidebarCollapsedState(false);
-      }
+      setWindowWidth(window.innerWidth);
       // The right panel keeps its remembered width; render clamps it to the
       // available window space without replacing the saved preference.
     }
 
     window.addEventListener("resize", handleResize);
     return () => window.removeEventListener("resize", handleResize);
-  }, [
-    onCloseWorkspaceMenu,
-    resizingSidebar,
-    sidebarCollapsed,
-    startSidebarMotion,
-    viewportWidth,
-  ]);
+  }, [viewportWidth]);
 
   // Sidebar / right-panel drags resize the conversation viewport every frame.
   // Reuse the window-resize deferred-scroll path so ResizeObserver consumers
