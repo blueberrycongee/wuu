@@ -18,6 +18,8 @@ import { TurnEditSummaryPresentation } from "./TurnEditSummaryPresentation";
 import { ENABLE_TURN_ARTIFACT_SUMMARY, ENABLE_TURN_EDIT_SUMMARY } from "./FeatureFlags";
 import type { TurnFileDiffSelection } from "./TurnFileDiffTypes";
 import {
+  CONTINUE_TURN_EVENT,
+  type ContinueTurnDetail,
   OPEN_SETTINGS_EVENT,
   type OpenSettingsDetail,
   StreamStatusNotice,
@@ -34,7 +36,9 @@ import {
   messageFlowAgentMessageItemID,
   turnAnchorID,
   turnEndedInFailure,
+  turnLeftPartialWork,
 } from "./TurnViewHelpers";
+import { translateCurrent as t } from "./i18n";
 import { desktopPluginHost } from "./plugins/DesktopPluginRuntime";
 import { PluginSurface } from "./plugins";
 
@@ -92,7 +96,7 @@ export function TurnView(props: TurnViewProps): JSX.Element | null {
           editMessage: props.onEditMessage,
         },
       }}
-      fallback={<TurnContent {...props} turn={projectedTurn} />}
+      fallback={<TurnContent {...props} threadID={threadId} turn={projectedTurn} />}
     />
     </ArtifactThreadContext.Provider>
   );
@@ -100,6 +104,15 @@ export function TurnView(props: TurnViewProps): JSX.Element | null {
 
 function openModelServices(): void {
   window.dispatchEvent(new CustomEvent<OpenSettingsDetail>(OPEN_SETTINGS_EVENT, { detail: { page: "providers" } }));
+}
+
+// Resolves once the app sent the follow-up, or at once when nothing claimed
+// the request.
+function continueTurn(threadID: string): Promise<void> {
+  return new Promise((resolve) => {
+    const detail: ContinueTurnDetail = { threadID, text: t("turnFailure.continuePrompt"), done: () => resolve() };
+    if (window.dispatchEvent(new CustomEvent(CONTINUE_TURN_EVENT, { detail, cancelable: true }))) resolve();
+  });
 }
 
 function workspaceTurnForPresentation(turn: Turn): Turn {
@@ -112,6 +125,7 @@ function workspaceTurnForPresentation(turn: Turn): Turn {
 
 function TurnContent({
   turn,
+  threadID,
   cwd,
   onOpenFile,
   onOpenURL,
@@ -251,7 +265,14 @@ function TurnContent({
     ? previousStreamStatus.current
     : undefined;
   const renderedStreamStatus = visibleStreamStatus ?? retainedStreamStatus;
-  const retryFailedTurn = isLatestTurn && turnEndedInFailure(turn) && retryMessage && onEditMessage && onSubmitEditMessage
+  // A turn that already wrote part of its reply or ran steps continues from
+  // them; resending its message would rewind the thread and drop that work.
+  const recoverable = isLatestTurn && turnEndedInFailure(turn) && onEditMessage && onSubmitEditMessage;
+  const leftPartialWork = recoverable ? turnLeftPartialWork(turn) : false;
+  const continueFailedTurn = recoverable && leftPartialWork && threadID
+    ? () => continueTurn(threadID)
+    : undefined;
+  const retryFailedTurn = recoverable && !leftPartialWork && retryMessage
     ? () => onSubmitEditMessage(
         turn.id, retryMessage, retryMessage.input_text ?? retryMessage.text ?? "",
         retryMessage.images ?? [], retryMessage.files ?? [], retryMessage.content_parts,
@@ -261,6 +282,7 @@ function TurnContent({
     display: failureDisplay,
     error: turn.error,
     onRetry: retryFailedTurn,
+    onContinue: continueFailedTurn,
     onOpenSettings: isLatestTurn ? openModelServices : undefined,
   };
   const incomplete = turn.status === "failed" || turn.status === "interrupted";

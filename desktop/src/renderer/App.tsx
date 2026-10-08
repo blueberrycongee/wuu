@@ -240,7 +240,7 @@ import {
   statusMessageForError,
 } from "./UserFacingErrors";
 import { TurnView } from "./TurnView";
-import { OPEN_SETTINGS_EVENT, type OpenSettingsDetail } from "./TurnNotice";
+import { CONTINUE_TURN_EVENT, OPEN_SETTINGS_EVENT, type ContinueTurnDetail, type OpenSettingsDetail } from "./TurnNotice";
 import {
   WorkspaceRightPanel,
 } from "./WorkspacePanels";
@@ -3713,6 +3713,26 @@ export function App(): JSX.Element {
     if (!codexPetCommandsReady || typeof api.onCodexPetCommand !== "function") return;
     return api.onCodexPetCommand((command) => codexPetCommandHandlerRef.current(command));
   }, [codexPetCommandsReady]);
+
+  // A failure notice continues an interrupted reply in its own conversation,
+  // the same way the pet sends text: without touching the composer draft.
+  const continueTurnHandlerRef = useRef<(detail: ContinueTurnDetail) => void>(() => undefined);
+  continueTurnHandlerRef.current = ({ threadID, text, done }) => {
+    void submitCodexPetText(text, { thread_id: threadID })
+      .catch((error: unknown) => {
+        showErrorToast(error);
+        return false;
+      })
+      .then(done);
+  };
+  useEffect(() => {
+    const handle = (event: Event): void => {
+      event.preventDefault();
+      continueTurnHandlerRef.current((event as CustomEvent<ContinueTurnDetail>).detail);
+    };
+    window.addEventListener(CONTINUE_TURN_EVENT, handle);
+    return () => window.removeEventListener(CONTINUE_TURN_EVENT, handle);
+  }, []);
 
   const {
     startNewThread,

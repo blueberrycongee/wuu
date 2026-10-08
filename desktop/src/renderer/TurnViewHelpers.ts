@@ -481,6 +481,19 @@ export function turnEndedInFailure(turn: Turn): boolean {
   );
 }
 
+/**
+ * Whether a failed turn left output the conversation keeps: reply text or a
+ * step that ran. The next turn sees both, so continuing builds on them while
+ * resending the message would discard them. Reasoning alone is not kept.
+ */
+export function turnLeftPartialWork(turn: Turn): boolean {
+  return turn.items.some((item) =>
+    item.type === "tool_call" ||
+    (item.type === "agent_message" &&
+      (streamFieldValue(turn.id, item, "text").trim().length > 0 || (item.images?.length ?? 0) > 0)),
+  );
+}
+
 export function turnProgressContent(
   turn: Turn,
   elapsedMs: number,

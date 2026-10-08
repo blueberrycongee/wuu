@@ -2655,37 +2655,46 @@
   color: var(--conversation-process-control-color, var(--process-control-color-fallback));
 }
 
-/* The turn's answer did not arrive. The retrying state and the settled
- * failure share one frame, so the card that counts down to a retry is the
- * card that later explains what went wrong and offers the next step. The
- * symbol keeps its own column: a wrapped title, the explanation and the
- * actions all start on one text edge, --card-padding inside the frame. */
+/* The turn's answer did not arrive. One row, read left to right: the symbol,
+ * what happened, then the recovery slot on the trailing edge. The slot holds
+ * the retry countdown while the core retries and the action once it gives
+ * up; both are the same pill, so the change happens in place. The surface is
+ * a fill, not a frame, that hugs its sentence from the reply's text edge, so
+ * the action follows the words instead of waiting across the column. It
+ * turns to the error tint only when the turn has failed. */
 .turn-failure {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  column-gap: var(--space-3);
+  --turn-failure-pill-height: 28px;
+  --turn-failure-inset: 6px;
+  display: flex;
+  align-items: flex-start;
+  width: fit-content;
   min-width: 0;
+  max-width: 100%;
   box-sizing: border-box;
-  padding: var(--card-padding);
-  border: 1px solid var(--message-flow-card-border);
-  border-radius: var(--message-flow-card-radius);
-  background: var(--message-flow-card-bg);
+  padding: var(--turn-failure-inset) var(--turn-failure-inset) var(--turn-failure-inset) var(--space-3);
+  /* Concentric with the pill it holds. */
+  border-radius: calc(var(--turn-failure-pill-height) / 2 + var(--turn-failure-inset));
+  background: var(--danger-soft);
   color: var(--ink);
   font-size: var(--conversation-message-font-size);
   line-height: var(--conversation-process-line-height);
+  transition: background-color var(--motion-slow) var(--ease-out);
 }
 
-.turn-failure > :not(.turn-failure-icon) {
-  grid-column: 2;
+.turn-failure.is-retrying {
+  background: var(--message-flow-card-bg);
 }
 
-/* Centered on the title's first line. The status colour pairs with the
- * symbol and the title; it is never the only signal. */
+/* The symbol and the first line of text sit on the pill's centre line, so
+ * a single-line row is balanced and a wrapped one keeps its action beside
+ * the title. The status colour pairs with the symbol and the title; it is
+ * never the only signal. */
 .turn-failure-icon {
-  grid-row: 1;
+  flex: none;
   width: var(--icon-size);
   height: var(--icon-size);
-  margin-top: calc((var(--conversation-process-line-height) - var(--icon-size)) / 2);
+  margin-top: calc((var(--turn-failure-pill-height) - var(--icon-size)) / 2);
+  margin-inline-end: var(--space-2);
   color: var(--danger);
 }
 
@@ -2693,8 +2702,185 @@
   color: var(--warning);
 }
 
+/* Everything after the symbol starts at one text edge. */
+.turn-failure-main {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+/* The recovery slot follows the sentence while both fit on a line;
+ * otherwise it moves under the words, starting where they do, instead of
+ * squeezing them. */
+.turn-failure-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--space-1) var(--space-3);
+}
+
+.turn-failure-message {
+  min-width: 0;
+  margin: 0;
+  padding-block: calc((var(--turn-failure-pill-height) - 1lh) / 2);
+  overflow-wrap: anywhere;
+}
+
+.turn-failure-title {
+  margin-inline-end: var(--space-2);
+  font-weight: var(--weight-medium);
+}
+
+.turn-failure-body {
+  color: var(--ink-soft);
+}
+
+/* A text disclosure at the end of the sentence: the technical record is for
+ * the reader who asks for it. */
+.turn-failure-details-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink-tertiary);
+  cursor: pointer;
+  font: inherit;
+  vertical-align: baseline;
+  white-space: nowrap;
+  transition: color var(--motion-fast) var(--ease-out);
+}
+
+.turn-failure-details-toggle:hover {
+  color: var(--ink-soft);
+}
+
+.turn-failure-details-toggle:focus-visible {
+  border-radius: 4px;
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.turn-failure-details-toggle > .turn-failure-details-chevron {
+  width: var(--icon-size-xs);
+  height: var(--icon-size-xs);
+  transition: rotate var(--motion-base) var(--ease-out);
+}
+
+.turn-failure-details-toggle[aria-expanded="true"] > .turn-failure-details-chevron {
+  rotate: 90deg;
+}
+
+.turn-failure-recovery {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+/* Countdown and action share one geometry so the slot never resizes its
+ * row when recovery gives up. */
+.turn-failure-pill {
+  display: inline-flex;
+  min-width: 4.5em;
+  height: var(--turn-failure-pill-height);
+  box-sizing: border-box;
+  align-items: center;
+  justify-content: center;
+  padding: 0 var(--space-3);
+  border: 0;
+  border-radius: var(--radius-pill);
+  font: inherit;
+  font-size: var(--font-ui);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* The wait fills the pill from the leading edge, like progress inside a
+ * button, and empties into the action that replaces it. */
+.turn-failure-countdown {
+  background:
+    linear-gradient(
+      to right,
+      color-mix(in srgb, var(--ink) 7%, transparent) calc(var(--retry-progress, 0) * 100%),
+      transparent 0
+    ),
+    var(--surface-2);
+  color: var(--ink-soft);
+}
+
+.turn-failure-action {
+  background: var(--paper);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--danger) 14%, transparent);
+  color: var(--ink);
+  cursor: pointer;
+  font-weight: var(--weight-medium);
+  transition:
+    background-color var(--motion-fast) var(--ease-out),
+    box-shadow var(--motion-fast) var(--ease-out),
+    scale var(--motion-fast) var(--ease-out);
+}
+
+.turn-failure-action:hover {
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--danger) 26%, transparent);
+}
+
+.turn-failure-action:active {
+  scale: 0.97;
+}
+
+.turn-failure-action:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.turn-failure-action:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+/* Beside the fix, resending is the quieter choice: bare text, so it starts
+ * on the text edge when the slot wraps under the sentence. */
+.turn-failure-action:not(.is-primary):has(+ .is-primary) {
+  min-width: 0;
+  margin-inline-end: var(--space-2);
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--ink-soft);
+}
+
+.turn-failure-action:not(.is-primary):has(+ .is-primary):hover {
+  color: var(--ink);
+}
+
+.turn-failure-details > .collapsible-details-inner {
+  display: grid;
+  row-gap: var(--space-1);
+  /* Inline-start padding belongs to the shared fold's mascot-room offset. */
+  padding-block: var(--space-1) var(--space-2);
+  padding-inline-end: var(--space-2);
+}
+
+.turn-failure-facts {
+  margin: 0;
+  color: var(--ink-tertiary);
+  font-size: var(--font-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.turn-failure-diagnostic {
+  margin: 0;
+  color: var(--ink-soft);
+  font-family: var(--font-mono);
+  font-size: var(--appearance-code-size);
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 /*
- * Boxed recovery cards are turn siblings, so they only inherit the 8px item
+ * Recovery rows are turn siblings, so they only inherit the 8px item
  * rhythm. The process↔answer landmark is 16px — the same pause a diff card
  * gets after prose. Add the remainder; the parent gap already supplies the
  * rest.
@@ -2716,10 +2902,10 @@
 }
 
 /* A failure that happens in front of the reader resolves out of the pending
- * row rather than popping in: the card comes into focus from a slight blur,
- * then its explanation and actions follow a beat apart. History renders
- * still. The retrying → failed change keeps the same card; only the part
- * that was folded unfolds (.turn-failure-reveal). */
+ * row rather than popping in: the row comes into focus from a slight blur.
+ * When a retrying row gives up, the row stays; the tint warms, the symbol
+ * swaps, the reason slides in after the title and the action takes the
+ * countdown's place. History renders still. */
 .turn-failure.is-arriving {
   animation: turn-failure-arrive var(--motion-slow) var(--ease-out) both;
 }
@@ -2737,110 +2923,14 @@
   animation: wuu-enter var(--motion-base) var(--ease-out) both;
 }
 
-.turn-failure.is-arriving .turn-failure-code {
+.turn-failure.is-arriving :is(.turn-failure-body, .turn-failure-details-toggle) {
   --enter-x: -4px;
   animation: wuu-enter var(--motion-base) var(--ease-out) calc(var(--motion-fast) / 2) both;
 }
 
-.turn-failure.is-arriving .turn-failure-reveal > .collapsible-details-inner > :is(.turn-failure-body, .turn-failure-actions) {
-  --enter-y: 4px;
-  animation: wuu-enter var(--motion-slow) var(--ease-out) var(--motion-fast) both;
-}
-
-.turn-failure.is-arriving .turn-failure-reveal > .collapsible-details-inner > .turn-failure-actions {
-  animation-delay: calc(var(--motion-fast) * 1.5);
-}
-
-.turn-failure-head {
-  display: flex;
-  min-width: 0;
-  align-items: baseline;
-  gap: var(--space-2);
-}
-
-.turn-failure-title {
-  min-width: 0;
-  overflow-wrap: anywhere;
-  font-weight: var(--weight-medium);
-}
-
-.turn-failure-code,
-.turn-failure-status {
-  flex: none;
-  color: var(--ink-tertiary);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-
-/* The countdown owns the trailing edge, so the title never moves while the
- * seconds change width. */
-.turn-failure-status {
-  margin-inline-start: auto;
-}
-
-.turn-failure-body {
-  margin: var(--space-1) 0 0;
-  color: var(--ink-soft);
-  overflow-wrap: anywhere;
-}
-
-.turn-failure-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-2);
-  margin-top: var(--space-3);
-}
-
-/* A text disclosure, not a third button: the technical record is for the
- * reader who asks for it. Its ink starts on the text edge when it stands
- * alone and keeps a group gap after the actions. */
-.turn-failure-details-toggle {
-  display: inline-flex;
-  min-height: var(--control-field-height);
-  align-items: center;
-  gap: var(--space-1);
-  border: 0;
-  background: transparent;
-  color: var(--ink-tertiary);
-  cursor: pointer;
-  font: inherit;
-  padding: 0;
-  transition: color var(--motion-fast) var(--ease-out);
-}
-
-.settings-button + .turn-failure-details-toggle {
-  margin-inline-start: var(--space-2);
-}
-
-.turn-failure-details-toggle:hover {
-  color: var(--ink-soft);
-}
-
-.turn-failure-details-toggle > .turn-failure-details-chevron {
-  width: var(--icon-size-xs);
-  height: var(--icon-size-xs);
-  transition: rotate var(--motion-base) var(--ease-out);
-}
-
-.turn-failure-details-toggle[aria-expanded="true"] > .turn-failure-details-chevron {
-  rotate: 90deg;
-}
-
-.turn-failure-details > .collapsible-details-inner {
-  display: grid;
-  row-gap: var(--space-2);
-  padding-top: var(--space-3);
-}
-
-.turn-failure-diagnostic {
-  margin: 0;
-  color: var(--ink-soft);
-  font-family: var(--font-mono);
-  font-size: var(--appearance-code-size);
-  line-height: 1.6;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
+.turn-failure.is-arriving .turn-failure-pill {
+  --enter-scale: 0.92;
+  animation: wuu-enter var(--motion-base) var(--ease-out) var(--motion-fast) both;
 }
 
 /* Retain the actual wrapping notice height after settlement. */

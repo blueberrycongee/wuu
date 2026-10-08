@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { ImagePreviewProvider } from "../../src/renderer/ImagePreview";
 import { applyMessageFlowFontSize } from "../../src/renderer/MessageFlowFontSizeSection";
 import { TurnView } from "../../src/renderer/TurnView";
+import { CONTINUE_TURN_EVENT, type ContinueTurnDetail } from "../../src/renderer/TurnNotice";
 import type { Turn } from "../../src/shared/protocol";
 import { ThreadItemView } from "../../src/renderer/ThreadItemView";
 import { WuuUIRoot } from "../../src/renderer/ui/layers/UILayerHost";
@@ -136,8 +137,11 @@ const failureCases: Record<string, Turn> = {
     error: { message: "stream request failed: dial tcp: lookup api.example.com: no such host", category: "network" } },
   dropped: { id: "failure-dropped", status: "failed", items_view: "full", items: [
     { ...failureRequest, id: "failure-dropped-q" },
-    { id: "failure-dropped-a", type: "agent_message", status: "completed", terminal: false, text: "最近一周主要有三类改动：桌面端消息流的排版调整、自动化页面的重构，以及" },
+    { id: "failure-dropped-a", type: "agent_message", status: "completed", terminal: false, text: "最近一周主要有三类改动。\n\n**桌面端消息流**：用户消息的悬停动作移到气泡下方，失败卡片改为原地展开，长回复的段落间距统一到阅读节奏。\n\n**自动化页面**：列表与详情重新分栏，运行记录按日期分组，并补上了进入和切换时的动效。\n\n**工作区标签**：展开的工作区标签现在与对话共享，新建标签会" },
   ], error: { message: "stream error: unexpected EOF before response.completed", category: "network", recovery: { attempt_count: 1, retry_count: 0, max_attempts: 6, submission_count: 1, stop_reason: "replay_unsafe", failure_category: "incomplete_stream" } } },
+  auth: { id: "failure-auth", status: "failed", items_view: "full", items: [{ ...failureRequest, id: "failure-auth-q" }],
+    error: { message: "stream request failed: HTTP 401: 401 Unauthorized: {\"error\":{\"message\":\"Incorrect API key provided.\"}}", category: "auth", status_code: 401,
+      recovery: { attempt_count: 1, retry_count: 0, max_attempts: 6, submission_count: 1, stop_reason: "non_retryable", failure_category: "authentication" } } },
   unknown: { id: "failure-unknown", status: "failed", items_view: "full", items: [{ ...failureRequest, id: "failure-unknown-q" }],
     error: { message: "HTTP 400: invalid_request_error: messages.1.content.0.tool_use_id: unexpected tool_use_id found in tool_result blocks: toolu_01ABC", category: "invalid_request", status_code: 400, code: "invalid_request_error" } },
   retrying: { id: "failure-retrying", status: "in_progress", items_view: "full", items: [
@@ -163,13 +167,21 @@ function FailureSurface(): JSX.Element {
     return () => window.clearTimeout(timer);
   }, [stage]);
   const retry = () => new Promise<void>(resolve => window.setTimeout(resolve, 600));
+  useEffect(() => {
+    const resume = (event: Event): void => {
+      event.preventDefault();
+      window.setTimeout(() => (event as CustomEvent<ContinueTurnDetail>).detail.done(true), 600);
+    };
+    window.addEventListener(CONTINUE_TURN_EVENT, resume);
+    return () => window.removeEventListener(CONTINUE_TURN_EVENT, resume);
+  }, []);
   return <WuuUIRoot>
     <button type="button" className="fixture-replay" onClick={() => setStage(0)}>回放：发送 → 重试 → 失败</button>
     {stage !== undefined ? <div className="fixture-failure-case" data-case="live"><TurnView turn={liveFailureTurn(stage)} isLatestTurn onStreamFrame={() => {}}
       streamStatus={stage === 0 ? { text: "正在思考", liveProgress: true } : undefined}
       onEditMessage={() => {}} onSubmitEditMessage={retry} /></div> : null}
     {Object.entries(failureCases).map(([name, turn]) => <div key={name} className="fixture-failure-case" data-case={name}>
-      <TurnView turn={turn} isLatestTurn onStreamFrame={() => {}} onEditMessage={() => {}} onSubmitEditMessage={retry} />
+      <TurnView turn={turn} threadID="fixture" isLatestTurn onStreamFrame={() => {}} onEditMessage={() => {}} onSubmitEditMessage={retry} />
     </div>)}
   </WuuUIRoot>;
 }

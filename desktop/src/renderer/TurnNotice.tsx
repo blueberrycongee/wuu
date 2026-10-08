@@ -1,6 +1,6 @@
 import { showErrorToast } from "./Toast";
 import { ChevronRight, CircleAlert, TriangleAlert } from "./WuuIcons";
-import { useEffect, useId, useState, useSyncExternalStore } from "react";
+import { useEffect, useId, useState, useSyncExternalStore, type CSSProperties } from "react";
 import type { ThreadItem, ThreadItemStatus, TurnError } from "../shared/protocol";
 import { isUnchangedContextCompaction, type TurnEventDisplay } from "./TurnEvents";
 import { userFacingErrorForMessage, type UserFacingErrorDisplay, type UserFacingErrorTone } from "./UserFacingErrors";
@@ -16,6 +16,15 @@ import type { SettingsPage } from "./SettingsView";
 /** Window event a conversation notice sends to open Settings on a page. */
 export const OPEN_SETTINGS_EVENT = "wuu:open-settings";
 export type OpenSettingsDetail = { page: SettingsPage };
+
+/**
+ * Window event a failure notice sends to continue an interrupted reply. The
+ * thread already holds the partial reply, so the text is an ordinary
+ * follow-up in that conversation. A handler calls preventDefault to claim
+ * the request and reports through done once the message was sent or not.
+ */
+export const CONTINUE_TURN_EVENT = "wuu:continue-turn";
+export type ContinueTurnDetail = { threadID: string; text: string; done: (sent: boolean) => void };
 
 export type SystemEventDisplay = {
   label: string;
@@ -241,11 +250,13 @@ function subscribeOnline(onChange: () => void): () => void {
 }
 
 /**
- * The turn's answer did not arrive. One card covers the whole recovery: while
- * the core retries it shows the cause and a countdown; when recovery gives up
- * the same card names what happened in plain words, the one next step, and
- * the provider's own message behind a disclosure. Actions come from the
- * caller, which offers them only on the latest turn.
+ * The turn's answer did not arrive. One row covers the whole recovery: what
+ * happened reads on the left, the next step sits in the trailing slot. While
+ * the core retries, that slot counts down; when recovery gives up, the same
+ * row takes the error tint and the countdown gives its place to the action.
+ * The status code, retry count and the provider's own message wait behind
+ * Details. Actions come from the caller, which offers them only on the
+ * latest turn.
  */
 export function TurnFailureNotice({
   display,
@@ -253,6 +264,7 @@ export function TurnFailureNotice({
   reconnect,
   arriving = false,
   onRetry,
+  onContinue,
   onOpenSettings,
 }: {
   /** Absent while a reconnect item is still retrying. */
@@ -262,7 +274,10 @@ export function TurnFailureNotice({
   reconnect?: ThreadItem;
   /** The failure happened in front of the reader rather than in history. */
   arriving?: boolean;
+  /** Sends the turn's message again; offered when the turn left nothing. */
   onRetry?: () => void | Promise<void>;
+  /** Picks up after the partial reply the turn left, keeping it. */
+  onContinue?: () => void | Promise<void>;
   onOpenSettings?: () => void;
 }): JSX.Element {
   const retrying = reconnect?.status === "in_progress";
@@ -278,29 +293,31 @@ export function TurnFailureNotice({
       ? reconnectFallbackTitle(reconnect)
       : titleWithoutStatus(display?.title, status) || t("error.requestFailedTitle");
   const retries = error?.recovery?.retry_count ?? reconnect?.retry_count ?? 0;
-  const guidance = t(kind ? FAILURE_COPY[kind].body : "turnFailure.genericBody");
-  const body = retries > 0 && kind !== "offline"
-    ? t("turnFailure.retried", { count: formatCurrentNumber(retries), guidance })
-    : guidance;
+  const body = t(kind ? FAILURE_COPY[kind].body : "turnFailure.genericBody");
   const settingsFirst = kind === "auth" || kind === "quota" || kind === "model";
   const openSettings = settingsFirst ? onOpenSettings : undefined;
   // Replaying an oversized conversation fails the same way; the body names
   // the step that helps instead.
-  const retry = kind === "context" ? undefined : onRetry;
-  const [retryPending, setRetryPending] = useState(false);
+  const recover = kind === "context" ? undefined : onContinue ?? onRetry;
+  const continues = recover !== undefined && recover === onContinue;
+  const [recoverPending, setRecoverPending] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const detailsID = useId();
   const diagnostic = retrying ? "" : message?.trim() ?? "";
+  const facts = retrying
+    ? []
+    : [status ? `HTTP ${status}` : "", retries > 0 ? t("turnFailure.retried", { count: formatCurrentNumber(retries) }) : ""].filter(Boolean);
+  const hasDetails = Boolean(diagnostic) || facts.length > 0;
 
-  async function runRetry(): Promise<void> {
-    if (!retry || retryPending) return;
-    setRetryPending(true);
+  async function runRecover(): Promise<void> {
+    if (!recover || recoverPending) return;
+    setRecoverPending(true);
     try {
-      await retry();
-    } catch (retryError) {
-      showErrorToast(retryError);
+      await recover();
+    } catch (recoverError) {
+      showErrorToast(recoverError);
     } finally {
-      setRetryPending(false);
+      setRecoverPending(false);
     }
   }
 
@@ -312,44 +329,13 @@ export function TurnFailureNotice({
       aria-label={title}
     >
       <Icon key={retrying ? "retrying" : "failed"} size={16} aria-hidden="true" className="turn-failure-icon" />
-      <div className="turn-failure-head">
-        <span className="turn-failure-title">{title}</span>
-        {retrying ? (
-          <span
-            className="turn-failure-status"
-            role={countdown.waiting ? "progressbar" : undefined}
-            aria-label={countdown.text}
-            aria-valuemin={countdown.waiting ? 0 : undefined}
-            aria-valuemax={countdown.waiting ? 100 : undefined}
-            aria-valuenow={countdown.waiting ? Math.round(countdown.progress * 100) : undefined}
-          >
-            {countdown.text}
-          </span>
-        ) : status ? (
-          <span className="turn-failure-code">HTTP {status}</span>
-        ) : null}
-      </div>
-      {/* Retrying shows only the head; giving up unfolds the rest in place. */}
-      <CollapsibleDetails expanded={!retrying} className="turn-failure-reveal">
-        <p className="turn-failure-body">{body}</p>
-        {openSettings || retry || diagnostic ? (
-          <div className="turn-failure-actions">
-            {openSettings ? (
-              <button type="button" className="settings-button settings-button-primary" onClick={openSettings}>
-                {t("turnFailure.openSettings")}
-              </button>
-            ) : null}
-            {retry ? (
-              <button
-                type="button"
-                className={`settings-button${openSettings ? "" : " settings-button-primary"}`}
-                disabled={retryPending}
-                onClick={() => void runRetry()}
-              >
-                {t(retryPending ? "appState.retryNow" : "appState.retryAction")}
-              </button>
-            ) : null}
-            {diagnostic ? (
+      <div className="turn-failure-main">
+        <div className="turn-failure-line">
+          <p className="turn-failure-message">
+            <span className="turn-failure-title">{title}</span>
+            {retrying ? null : <span className="turn-failure-body">{body}</span>}
+            {hasDetails ? " " : null}
+            {hasDetails ? (
               <button
                 type="button"
                 className="turn-failure-details-toggle"
@@ -361,14 +347,50 @@ export function TurnFailureNotice({
                 <ChevronRight className="turn-failure-details-chevron icon-xs" aria-hidden="true" />
               </button>
             ) : null}
-          </div>
-        ) : null}
-        {diagnostic ? (
+          </p>
+          {retrying ? (
+            <div className="turn-failure-recovery">
+              <span
+                key="countdown"
+                className="turn-failure-pill turn-failure-countdown"
+                style={{ "--retry-progress": countdown.progress } as CSSProperties}
+                role={countdown.waiting ? "progressbar" : undefined}
+                aria-label={countdown.text}
+                aria-valuemin={countdown.waiting ? 0 : undefined}
+                aria-valuemax={countdown.waiting ? 100 : undefined}
+                aria-valuenow={countdown.waiting ? Math.round(countdown.progress * 100) : undefined}
+              >
+                {countdown.text}
+              </span>
+            </div>
+          ) : recover || openSettings ? (
+            <div className="turn-failure-recovery">
+              {recover ? (
+                <button
+                  type="button"
+                  className="turn-failure-pill turn-failure-action"
+                  title={t(continues ? "turnFailure.continueHint" : "turnFailure.retryHint")}
+                  disabled={recoverPending}
+                  onClick={() => void runRecover()}
+                >
+                  {continues ? t("turnFailure.continue") : t(recoverPending ? "appState.retryNow" : "appState.retryAction")}
+                </button>
+              ) : null}
+              {openSettings ? (
+                <button type="button" className="turn-failure-pill turn-failure-action is-primary" onClick={openSettings}>
+                  {t("turnFailure.openSettings")}
+                </button>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+        {hasDetails ? (
           <CollapsibleDetails id={detailsID} expanded={detailsOpen} className="turn-failure-details">
-            <p className="turn-failure-diagnostic">{diagnostic}</p>
+            {facts.length > 0 ? <p className="turn-failure-facts">{facts.join(" · ")}</p> : null}
+            {diagnostic ? <p className="turn-failure-diagnostic">{diagnostic}</p> : null}
           </CollapsibleDetails>
         ) : null}
-      </CollapsibleDetails>
+      </div>
     </aside>
   );
 }
