@@ -615,7 +615,7 @@
     {
       "name": "unanchored:workspace.css",
       "synthetic": true,
-      "rows": 222
+      "rows": 223
     },
     {
       "name": "unanchored:wuu-mascot.css",
@@ -2401,6 +2401,7 @@
     {"anchor":"unanchored:workspace.css","state":"default","file":"workspace.css","selector":".workspace-panel-compact-heading strong","prop":"color","variable":"--ink","status":"bridged","tokens":["--wuu-color-text"]},
     {"anchor":"unanchored:workspace.css","state":"default","file":"workspace.css","selector":".workspace-panel-empty","prop":"color","variable":"--ink","status":"bridged","tokens":["--wuu-color-text"]},
     {"anchor":"unanchored:workspace.css","state":"default","file":"workspace.css","selector":".workspace-panel-empty span","prop":"color","variable":"--ink-soft","status":"bridged","tokens":["--wuu-color-text-muted"]},
+    {"anchor":"unanchored:workspace.css","state":"default","file":"workspace.css","selector":".workspace-panel-tabbar","prop":"background","variable":"--surface-1","status":"bridged","tokens":["--wuu-color-surface"]},
     {"anchor":"unanchored:workspace.css","state":"default","file":"workspace.css","selector":".workspace-panel-tabbar","prop":"box-shadow","variable":"--hairline-soft","status":"bridged","tokens":["--wuu-border-subtle"]},
     {"anchor":"unanchored:workspace.css","state":"default","file":"workspace.css","selector":".workspace-review-branch","prop":"color","variable":"--ink-soft","status":"bridged","tokens":["--wuu-color-text-muted"]},
     {"anchor":"unanchored:workspace.css","state":"default","file":"workspace.css","selector":".workspace-review-diff-panel","prop":"background","variable":"--paper","status":"bridged","tokens":["--wuu-color-canvas"]},
@@ -2474,7 +2475,7 @@
     {"anchor":"unanchored:workspace.css","state":"hover","file":"workspace.css","selector":".workspace-tool-tab:hover, .workspace-tool-tab:focus-within","prop":"background","variable":"--ink-overlay-4","status":"unbridged","tokens":[]},
     {"anchor":"unanchored:workspace.css","state":"hover","file":"workspace.css","selector":".workspace-tool-tab:hover, .workspace-tool-tab:focus-within","prop":"color","variable":"--ink","status":"bridged","tokens":["--wuu-color-text"]},
     {"anchor":"unanchored:workspace.css","state":"hover","file":"workspace.css","selector":".workspace-tool-tab.active, .workspace-tool-tab.active:hover, .workspace-tool-tab.active:focus-within","prop":"background","variable":"--paper","status":"bridged","tokens":["--wuu-color-canvas"]},
-    {"anchor":"unanchored:workspace.css","state":"hover","file":"workspace.css","selector":".workspace-tool-tab.active, .workspace-tool-tab.active:hover, .workspace-tool-tab.active:focus-within","prop":"box-shadow","variable":"--wuu-accent","status":"bridged","tokens":["--wuu-accent","--wuu-color-accent","--wuu-color-text"]},
+    {"anchor":"unanchored:workspace.css","state":"hover","file":"workspace.css","selector":".workspace-tool-tab.active, .workspace-tool-tab.active:hover, .workspace-tool-tab.active:focus-within","prop":"border-color","variable":"--hairline-soft","status":"bridged","tokens":["--wuu-border-subtle"]},
     {"anchor":"unanchored:workspace.css","state":"hover","file":"workspace.css","selector":".workspace-tool-tab.active, .workspace-tool-tab.active:hover, .workspace-tool-tab.active:focus-within","prop":"color","variable":"--ink-strong","status":"bridged","tokens":["--wuu-color-text"]},
     {"anchor":"unanchored:workspace.css","state":"hover","file":"workspace.css","selector":".workspace-tree-context-menu-item:hover, .workspace-tree-context-menu-item:focus-visible","prop":"background","variable":"--menu-hover","status":"bridged","tokens":["--wuu-color-surface-muted"]},
     {"anchor":"unanchored:workspace.css","state":"selected","file":"workspace.css","selector":".workspace-tool-menu-item:active, .workspace-tool-menu-more > summary:active","prop":"background","variable":"--ink-overlay-8","status":"unbridged","tokens":[]},

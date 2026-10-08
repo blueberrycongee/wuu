@@ -64,6 +64,35 @@ app.whenReady().then(async () => {
   assert.equal((await tabs()).filter((tab) => tab.selected).length, 1);
   assert.equal(await evaluate(() => document.querySelectorAll('[data-wuu-component="workspace-resume-tab"]').length), 0);
   await capture("empty-light");
+
+  // Both the dock and the full-width canvas use the same tab strip. Check
+  // live hit targets and overflow, including selection after a resize.
+  const checkTabGeometry = async (scenario) => {
+    await capture(scenario);
+    const geometry = await evaluate(() => {
+      const strip = document.querySelector(".workspace-panel-tabs");
+      const header = document.querySelector(".workspace-panel-tabbar");
+      const active = strip.querySelector(".workspace-tool-tab.active");
+      const box = (node) => node.getBoundingClientRect().toJSON();
+      return { strip: box(strip), header: box(header), active: box(active),
+        tabs: [...strip.querySelectorAll(".workspace-tool-tab:not(.closing)")].map((tab) => ({
+          tab: box(tab), label: box(tab.querySelector(".workspace-tool-tab-main > span")),
+          close: box(tab.querySelector(".workspace-tool-tab-close")),
+        })) };
+    });
+    assert.ok(Math.abs(geometry.active.bottom - geometry.header.bottom) <= 1,
+      "The active tab meets its content edge");
+    assert.ok(geometry.active.left >= geometry.strip.left - 1 && geometry.active.right <= geometry.strip.right + 1,
+      "The selected tab remains in view");
+    for (const { tab, label, close } of geometry.tabs) {
+      assert.ok(label.width >= 16, "Overflow keeps tab labels readable rather than hiding them");
+      assert.ok(close.width >= 24 && close.height >= 24, "Close retains its independent hit target");
+      assert.ok(close.left >= label.right - 1 && close.right <= tab.right + 1, "Label and close lanes do not overlap");
+    }
+    results.push({ scenario, geometry });
+  };
+  await checkTabGeometry("tabs-docked-light");
+
   await click('[data-wuu-tool="review"]');
   await waitFor(() => Boolean(document.querySelector('[data-wuu-view="review"]')));
   const reviewTabs = await tabs();
@@ -93,7 +122,42 @@ app.whenReady().then(async () => {
   await click('[data-wuu-plugin="user:workspace-e2e"]');
   await waitFor(() => Boolean(document.querySelector("[data-workspace-e2e-notes]")));
   assert.equal((await tabs()).length, 2);
+  for (const theme of ["light", "dark"]) {
+    for (const size of [14, 20]) {
+      await evaluate(({ theme, size }) => {
+        document.documentElement.dataset.theme = theme;
+        document.documentElement.style.setProperty("--font-ui", size + "px");
+      }, { theme, size });
+      await checkTabGeometry(`tabs-docked-${theme}-${size}`);
+      await click(".workspace-panel-globalize");
+      await checkTabGeometry(`tabs-canvas-${theme}-${size}`);
+      await click(".workspace-panel-globalize");
+    }
+  }
+  await evaluate(() => {
+    document.documentElement.dataset.theme = "light";
+    document.documentElement.style.setProperty("--font-ui", "14px");
+  });
+
   results.push({ scenario: "keyboard discovery and installed extension selection", passed: true });
+
+  for (let index = 0; index < 5; index++) await click(".workspace-panel-add");
+  await waitFor(() => document.querySelectorAll('.workspace-panel-tabs [role="tab"]').length === 7);
+  await checkTabGeometry("tabs-overflow-last");
+  await evaluate(() => document.querySelector('.workspace-tool-tab.active [role="tab"]').focus());
+  win.webContents.sendInputEvent({ type: "keyDown", keyCode: "Home" });
+  win.webContents.sendInputEvent({ type: "keyUp", keyCode: "Home" });
+  await waitFor(() => document.querySelector('.workspace-panel-tabs [role="tab"]').getAttribute("aria-selected") === "true");
+  await checkTabGeometry("tabs-overflow-first");
+  win.webContents.sendInputEvent({ type: "keyDown", keyCode: "End" });
+  win.webContents.sendInputEvent({ type: "keyUp", keyCode: "End" });
+  await waitFor(() => [...document.querySelectorAll('.workspace-panel-tabs [role="tab"]')].at(-1).getAttribute("aria-selected") === "true");
+  await checkTabGeometry("tabs-overflow-keyboard-last");
+  for (let count = 7; count > 2; count--) {
+    await click(".workspace-tool-tab.active .workspace-tool-tab-close");
+    await waitFor((count) => document.querySelectorAll('.workspace-panel-tabs [role="tab"]').length === count, count - 1);
+  }
+
 
   // Open a real conversation file link; resume must retain the editor resource.
   await evaluate(() => {
@@ -114,6 +178,23 @@ app.whenReady().then(async () => {
   } });
   await click(".conversation-width .rich-file-link");
   await waitFor(() => Boolean(document.querySelector('[data-wuu-view="file"]')));
+  await click('[data-wuu-destination="files"]');
+  await waitFor(() => document.querySelector('.workspace-right-panel').dataset.navigationMode === "files");
+  for (const theme of ["light", "dark"]) {
+    for (const size of [14, 20]) {
+      await evaluate(({ theme, size }) => {
+        document.documentElement.dataset.theme = theme;
+        document.documentElement.style.setProperty("--font-ui", size + "px");
+      }, { theme, size });
+      await checkTabGeometry(`tabs-files-${theme}-${size}`);
+    }
+  }
+  await evaluate(() => {
+    document.documentElement.dataset.theme = "light";
+    document.documentElement.style.setProperty("--font-ui", "14px");
+  });
+  await click('[data-wuu-destination="conversations"]');
+  await waitFor(() => !document.querySelector('.workspace-right-panel').dataset.navigationMode);
   const fileTabs = await tabs();
   const editorID = await evaluate(() => document.querySelector(".workspace-file-resource.active").dataset.workspaceTabId);
   await click(".workspace-panel-add");

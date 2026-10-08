@@ -352,8 +352,8 @@ export function WorkspaceRightPanel({
       content.style.removeProperty("--workspace-document-composer-inset");
     };
   }, [Boolean(focusedComposer), activeTab?.kind, open, present]);
-  // Tabs shrink before the strip scrolls; once it does, the active tab is
-  // brought into view, again after a newcomer has grown to its width.
+  // Keep the active tab visible after selection, opening and pane resizing.
+  // Tabs retain their label/close lanes instead of collapsing to icons.
   useLayoutEffect(() => {
     const strip = tabListRef.current;
     if (!strip || !activeTabID) {
@@ -374,7 +374,19 @@ export function WorkspaceRightPanel({
     };
     reveal();
     const timer = window.setTimeout(reveal, motionDurationMs("--motion-base", 180));
-    return () => window.clearTimeout(timer);
+    const settle = createWindowResizeSettleScheduler(reveal);
+    const observer = new ResizeObserver(() => {
+      if (isWindowResizing()) settle.schedule();
+      else reveal();
+    });
+    observer.observe(strip);
+    const activeElement = strip.querySelector<HTMLElement>(".workspace-tool-tab.active");
+    if (activeElement) observer.observe(activeElement);
+    return () => {
+      settle.cancel();
+      window.clearTimeout(timer);
+      observer.disconnect();
+    };
   }, [activeTabID, tabListRef, visibleTabs.length]);
 
   useEffect(() => {
@@ -1217,7 +1229,7 @@ function SortableWorkspaceViewTab({
       data-wuu-active={active ? "true" : "false"}
       data-wuu-state={isDragging ? "dragging" : undefined}
     >
-      {/* A narrow tab may show only its icon, so the name is always a hover away. */}
+      {/* Keep the full resource path available when its title is truncated. */}
       <Tooltip content={tooltip}>
         <button
           ref={setActivatorNodeRef}
