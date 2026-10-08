@@ -39,10 +39,12 @@ app.whenReady().then(async () => {
     await settle();
     assert.equal(await run("window.sourceArrivals"), 0, label);
   };
+  // Scroll-driven edge fades intentionally stay active while a details pane is open.
+  // Only finite document-timeline animations can settle with elapsed time.
   const settle = async () => { await frames(); await run(`Promise.race([
-    Promise.allSettled(document.getAnimations().filter(a => a.playState === 'running' && a.effect.getTiming().iterations !== Infinity).map(a => a.finished)),
+    Promise.allSettled(document.getAnimations().filter(a => a.timeline === document.timeline && a.playState === 'running' && a.effect.getTiming().iterations !== Infinity).map(a => a.finished)),
     new Promise((_, reject) => setTimeout(() => reject(new Error('Motion failed to settle: ' + JSON.stringify(
-      document.getAnimations().filter(a => a.playState === 'running' && a.effect.getTiming().iterations !== Infinity)
+      document.getAnimations().filter(a => a.timeline === document.timeline && a.playState === 'running' && a.effect.getTiming().iterations !== Infinity)
         .map(a => ({ name: a.animationName, target: a.effect.target?.className, time: a.currentTime, timing: a.effect.getTiming() }))
     ))), 3000))
   ])`); };
