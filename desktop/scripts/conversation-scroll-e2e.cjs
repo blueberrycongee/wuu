@@ -551,7 +551,14 @@ app.whenReady().then(async () => {
   emit(win, "thread/resumed", { thread: thread(THREAD_ID, [bootTurn, ...history, live], true) });
   await until(win, () => document.querySelectorAll(".turn").length >= 38, "history to render");
   if (process.env.WUU_SCROLL_E2E_ONLY === "submission-reflow") {
-    emit(win, "turn/completed", { thread_id: THREAD_ID, turn: { ...live, status: "completed", completed_at: now } });
+    // Older offscreen turns may retain their measured heights. Keep wrapping
+    // prose in the immediately preceding turn so this scenario causes reflow.
+    emit(win, "turn/completed", { thread_id: THREAD_ID, turn: {
+      ...live, status: "completed", completed_at: now,
+      items: [live.items[0], { ...liveAgent, status: "completed",
+        text: Array.from({ length: 12 }, (_, index) => paragraph(36, index).repeat(3)).join("\n\n"),
+      }],
+    } });
     await frames(win, 4);
     await verifySubmissionReflow(win, results);
     assert.deepEqual(errors, [], `Renderer errors: ${errors.join("\n")}`);
