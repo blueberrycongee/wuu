@@ -155,3 +155,9 @@
 @starting-style {
   .turn-web-research.is-inline.is-revealing { height: auto; margin: 0; }
 }
+
+/* A search header may resize while focus moves between its independent
+ * controls. Its outer height-animation wrappers clip paint, not scrollable
+ * content; keep native focus from horizontally scrolling those wrappers. */
+.collapsible-details:has(.turn-web-research),
+.collapsible-details-inner:has(.turn-web-research) { overflow: clip; }

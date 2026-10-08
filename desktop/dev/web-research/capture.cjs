@@ -130,6 +130,7 @@ app.whenReady().then(async () => {
     const overflow = await measure();
     assert.equal(overflow.detailCount, 8, "the group reveals ALL eight sources, including the visible header icons");
     assert.equal(overflow.region.height, flowHeight, "the source header keeps its geometry");
+    assert.ok(Math.abs(overflow.summary.x - arrival.summary.x) <= 1, "expanding search details does not horizontally scroll the outer fold");
     assert.ok(Math.abs(overflow.sourceDetails.x - overflow.summary.x) <= 1, "expanded sources align with the search row left edge");
     assert.ok(overflow.sourceDetails.x + overflow.sourceDetails.width <= width);
     assert.ok(overflow.body.height <= 330, "search inspection stays bounded");
@@ -189,6 +190,7 @@ app.whenReady().then(async () => {
     await frames();
     const many = await measure();
     assert.equal(many.detailCount, 20);
+    assert.ok(Math.abs(many.summary.x - done.summary.x) <= 1, "keyboard source navigation preserves the outer fold left edge");
     assert.ok(many.pageWidth <= width);
     assert.ok(many.body && many.body.height <= 330);
     assert.ok(await run(`(() => {
