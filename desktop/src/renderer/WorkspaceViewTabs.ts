@@ -77,6 +77,7 @@ export function workspaceProjectViewTab(projectID: string, title: string): Works
 
 export type WorkspaceViewTab =
   | { kind: "new"; id: string }
+  | { kind: "side-thread"; id: "side-thread" }
   | WorkspaceToolViewTab
   | WorkspaceDiffViewTab
   | WorkspaceFileViewTab

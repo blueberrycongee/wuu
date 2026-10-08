@@ -6,6 +6,12 @@ The left sidebar keeps the visibility and width you choose when you resize the w
 
 Expanding the right panel adds the current conversation as the first tab beside the tool tabs. Select it to return to the conversation without leaving the expanded layout; select a tool tab to switch back. The conversation draft is preserved. Exiting the expanded layout restores the conversation and tools side by side.
 
+## Side chat
+
+Use `/side` or **Ask in side chat** to open the side chat tab in the right sidebar. It shares the sidebar width and expanded layout with files and other tools. File selections keep their quote card, and the original file stays available in its tab.
+
+Side chat follows the selected main conversation; each conversation keeps its own side history and draft. Switching tool tabs or collapsing the sidebar preserves the draft and lets a running answer continue. Closing the side chat tab preserves its history; use the chat's stop or reset action to interrupt or clear it. In the expanded layout, the side chat tab has its own input, while the main conversation remains available through its first tab.
+
 ## App zoom
 
 Press **Command + + / −** on macOS (**Ctrl + + / −** on other platforms) to

@@ -136,7 +136,7 @@ async function run() {
   await win.webContents.removeInsertedCSS(classicScrollbars);
   await evaluate(win, () => window.dispatchEvent(new Event("focus")));
   checkGeometry(await settledGeometry(win, 1380, ".side-thread-panel"));
-  await evaluate(win, () => document.querySelector(".side-thread-panel__close").click());
+  await evaluate(win, () => document.querySelector('[data-wuu-tab-kind="side-thread"] .workspace-tool-tab-close').click());
   await waitFor(win, () => !document.querySelector(".side-thread-panel"));
 
   win.setContentSize(1024, 820);

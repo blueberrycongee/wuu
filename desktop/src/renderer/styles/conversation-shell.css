@@ -82,31 +82,8 @@
   --conversation-composer-clearance: calc(var(--section-gap) - var(--conversation-dock-top-space));
 }
 
-.conversation-pane {
-  /* The info card is UI text, so it widens with the text size: 280px at the
-   * 14.5px default (App.tsx's room check uses the same ratio), with a 44px
-   * gap between the card and the conversation it reserves room beside. */
-  --environment-panel-width: max(280px, round(up, calc(var(--font-ui) * 280 / 14.5), 4px));
-  --environment-panel-flow-gap: 44px;
-  --environment-panel-reserved-width: calc(
-    var(--environment-panel-width) + var(--environment-panel-flow-gap)
-  );
-  --environment-panel-edge-gap: 18px;
-  /* Reserve only the space needed to keep a centered composer clear of the
-     right panel. As the effective sidebar shrinks and the conversation pane
-     grows, this falls smoothly to zero so the message flow returns to the
-     visual center of the window. */
-  --environment-panel-content-inset: clamp(
-    0px,
-    calc(
-      var(--session-composer-width) + var(--environment-panel-width) +
-        var(--environment-panel-width) + var(--environment-panel-edge-gap) +
-        var(--environment-panel-edge-gap) + var(--environment-panel-flow-gap) +
-        var(--environment-panel-flow-gap) - 100vw + var(--sidebar-width, 0px) +
-        var(--workspace-right-panel-reserved-width, 0px)
-    ),
-    var(--environment-panel-reserved-width)
-  );
+.conversation-pane,
+.side-thread-panel {
   /* Conversation-only tokens. Shared session-level tokens
      (outer width, horizontal padding, composer width/radius) live in
      session.css at :root — change them there and nothing else.
@@ -173,6 +150,33 @@
   --conversation-message-action-size: var(--wuu-message-action-size, max(24px, calc(var(--conversation-message-action-icon-size) + 9px)));
   --conversation-user-action-size: max(20px, calc(var(--conversation-message-action-icon-size) + 5px));
   --conversation-activity-gap: 8px;
+}
+
+.conversation-pane {
+  /* The info card is UI text, so it widens with the text size: 280px at the
+   * 14.5px default (App.tsx's room check uses the same ratio), with a 44px
+   * gap between the card and the conversation it reserves room beside. */
+  --environment-panel-width: max(280px, round(up, calc(var(--font-ui) * 280 / 14.5), 4px));
+  --environment-panel-flow-gap: 44px;
+  --environment-panel-reserved-width: calc(
+    var(--environment-panel-width) + var(--environment-panel-flow-gap)
+  );
+  --environment-panel-edge-gap: 18px;
+  /* Reserve only the space needed to keep a centered composer clear of the
+     right panel. As the effective sidebar shrinks and the conversation pane
+     grows, this falls smoothly to zero so the message flow returns to the
+     visual center of the window. */
+  --environment-panel-content-inset: clamp(
+    0px,
+    calc(
+      var(--session-composer-width) + var(--environment-panel-width) +
+        var(--environment-panel-width) + var(--environment-panel-edge-gap) +
+        var(--environment-panel-edge-gap) + var(--environment-panel-flow-gap) +
+        var(--environment-panel-flow-gap) - 100vw + var(--sidebar-width, 0px) +
+        var(--workspace-right-panel-reserved-width, 0px)
+    ),
+    var(--environment-panel-reserved-width)
+  );
   --conversation-visible-inset-left: 0px;
   --conversation-visible-inset-right: 0px;
   --dock-composer-height: 0px;
@@ -182,8 +186,7 @@
   position: relative;
   min-width: 0;
   min-height: 0;
-  /* The second column hosts the generic side-thread panel when open. */
-  grid-template-columns: minmax(0, 1fr) 0;
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: var(--window-titlebar-height) minmax(0, 1fr);
   overflow: hidden;
   background: var(--paper);
@@ -191,7 +194,7 @@
   transition: grid-template-columns var(--environment-panel-motion-duration) var(--environment-panel-motion-easing);
 }
 
-/* Conversation content flows in column 1; a side-thread panel uses column 2. */
+/* Floating surfaces and conversation content share the reading column. */
 .conversation-pane > * {
   grid-column: 1;
 }
@@ -223,22 +226,6 @@
   visibility: visible;
 }
 
-.conversation-pane.side-thread-panel-visible {
-  grid-template-columns: minmax(0, 1fr) var(--side-thread-width, 400px);
-  --conversation-visible-inset-right: var(--side-thread-width, 400px);
-}
-
-.conversation-pane.environment-panel-reserved.side-thread-panel-visible {
-  --conversation-visible-inset-right: calc(
-    var(--environment-panel-content-inset) + var(--side-thread-width, 400px)
-  );
-}
-
-.conversation-pane.side-thread-panel-visible .environment-side-stack {
-  right: calc(var(--side-thread-width, 400px) + var(--environment-panel-edge-gap));
-}
-
-.resizing-side-thread .conversation-pane,
 .window-resizing .conversation-pane {
   transition: none;
 }

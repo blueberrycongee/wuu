@@ -450,21 +450,19 @@ describe("workspace file tabs", () => {
     act(() => selectionActions!.askSide!(selectionSource));
     await flushAsync();
     await flushAsync();
-    expect(container.querySelector(".conversation-pane")?.hasAttribute("inert")).toBe(false);
-    const side = container.querySelector<HTMLElement>(".side-thread-panel")!;
+    expect(container.querySelector(".conversation-pane")?.hasAttribute("inert")).toBe(true);
+    const side = container.querySelector<HTMLElement>(".workspace-right-panel .side-thread-panel")!;
     expect(side.closest("[inert]")).toBeNull();
     expect(side.querySelector(".composer-file-selection-card")).not.toBeNull();
     expect(document.activeElement).toBe(side.querySelector("textarea"));
-    expect(container.querySelector<HTMLTextAreaElement>("[data-main-conversation-composer] textarea")!.value).toBe("Keep the main question");
+    expect(container.querySelector('[data-main-conversation-composer="document"]')).toBeNull();
     expect(window.wuu.startTurn).not.toHaveBeenCalled();
     expect(window.wuu.sendSideThreadMessage).not.toHaveBeenCalled();
-    expect(container.querySelector(".workspace-right-panel")?.getAttribute("aria-hidden")).toBe(width === 2000 ? "false" : "true");
-    if (width !== 2000) {
-      await act(async () => side.querySelector<HTMLButtonElement>(".side-thread-panel__close")!.click());
-      await act(async () => container.querySelector<HTMLButtonElement>(".rich-file-link")!.click());
-      await flushAsync();
-    }
+    expect(container.querySelector(".workspace-right-panel")?.getAttribute("aria-hidden")).toBe("false");
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-wuu-tab-kind="side-thread"] .workspace-tool-tab-close')!.click());
+    await flushAsync();
     expect(container.querySelector(".workspace-file-resource.active .workspace-file-preview")?.textContent).toContain("Artifact");
+    expect(container.querySelector<HTMLTextAreaElement>('[data-main-conversation-composer="document"] textarea')!.value).toBe("Keep the main question");
   });
 
   it("restores file selection attachments after first turn failure with untouched draft", async () => {

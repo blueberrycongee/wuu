@@ -50,21 +50,14 @@ function makeEntry(
 
 function renderPanel(
   entry: SideThreadEntryState,
-  callbacks: {
-    onClose?: () => void;
-    onResizeStart?: (event: unknown) => void;
-    onChangeDraft?: (draft: string) => void;
-  } = {},
 ): HTMLElement {
   return mount(
     createElement(SideThreadPanel, {
       entry,
       mainThreadId: "main-1",
-      width: 400,
+      active: true,
+      title: "Main conversation",
       composer: createElement("textarea", { "aria-label": "side composer" }),
-      onClose: callbacks.onClose ?? (() => {}),
-      onResizeStart: callbacks.onResizeStart ?? (() => {}),
-      onChangeDraft: callbacks.onChangeDraft ?? (() => {}),
     }),
   );
 }
@@ -82,8 +75,8 @@ describe("SideThreadPanel", () => {
       }],
     });
     const container = mount(<ArtifactPreviewContext.Provider value={openMainPreview}>
-      <SideThreadPanel entry={entry} mainThreadId="main-1" width={400} composer={<textarea aria-label="side composer" />}
-        onClose={() => {}} onResizeStart={() => {}} onChangeDraft={() => {}} />
+      <SideThreadPanel entry={entry} mainThreadId="main-1" active title="Main conversation" composer={<textarea aria-label="side composer" />}
+        />
     </ArtifactPreviewContext.Provider>);
     await act(async () => container.querySelector<HTMLButtonElement>('.turn-edit-summary-overview')!.click());
     expect(openMainPreview).not.toHaveBeenCalled();
@@ -123,32 +116,12 @@ describe("SideThreadPanel", () => {
         ref,
         entry: makeEntry(),
         mainThreadId: "main-1",
-        width: 400,
+        active: true,
+        title: "Main conversation",
         composer: createElement("textarea", { "aria-label": "side composer" }),
-        onClose: () => {},
-        onResizeStart: () => {},
-        onChangeDraft: () => {},
       }),
     );
     act(() => ref.current?.focusComposer());
     expect(document.activeElement).toBe(container.querySelector("textarea"));
-  });
-
-  it("keeps shell actions and resize semantics", () => {
-    const onClose = vi.fn();
-    const container = renderPanel(makeEntry(), {
-      onClose,
-    });
-    act(() => {
-      container.querySelector<HTMLButtonElement>(
-        ".side-thread-panel__close",
-      )?.click();
-    });
-    expect(onClose).toHaveBeenCalledTimes(1);
-    expect(
-      container
-        .querySelector(".side-thread-panel__resizer")
-        ?.getAttribute("aria-valuenow"),
-    ).toBe("400");
   });
 });

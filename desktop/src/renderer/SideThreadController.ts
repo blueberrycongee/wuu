@@ -2,8 +2,7 @@ import {
   useCallback,
   useEffect,
   useRef,
-  useState,
-  type PointerEvent as ReactPointerEvent
+  useState
 } from "react";
 import type {
   RuntimeContext,
@@ -15,9 +14,6 @@ import type {
   SideThreadSelection
 } from "../shared/protocol";
 import {
-  SIDE_THREAD_DEFAULT_WIDTH,
-  SIDE_THREAD_MAX_WIDTH,
-  clampSideThreadWidth,
   createInitialSideThreadStore,
   ensureSideThreadEntry,
   reduceSideThreadStore,
@@ -31,7 +27,6 @@ const SIDE_THREAD_RECOVERY_POLL_MS = 2_000;
 
 export type SideThreadController = {
   entry: SideThreadStoreState["byThread"][string] | undefined;
-  width: number;
   open: () => void;
   close: () => void;
   toggle: () => void;
@@ -40,7 +35,6 @@ export type SideThreadController = {
   sendMessage: (prompt: string) => void;
   interrupt: () => void;
   reset: () => void;
-  startResize: (event: ReactPointerEvent<HTMLButtonElement>) => void;
   sendDisabledReason?: string;
   requestError?: string;
 };
@@ -51,7 +45,6 @@ export type SideThreadControllerOptions = {
   ipc?: SideThreadIPC;
   disabled?: boolean;
   disabledReason?: string;
-  maxWidth?: number;
 };
 
 export type SideThreadIPC = {
@@ -105,12 +98,11 @@ export function useSideThreadController(
       : undefined;
 
   const [store, setStore] = useState<SideThreadStoreState>(() =>
-    createInitialSideThreadStore(SIDE_THREAD_DEFAULT_WIDTH)
+    createInitialSideThreadStore()
   );
   const storeRef = useRef(store);
   const openGenerationRef = useRef(new Map<string, number>());
   const pendingSendTasksRef = useRef(new Map<string, Promise<void>>());
-  const resizeCleanupRef = useRef<(() => void) | undefined>(undefined);
   const lastActiveRuntimeKeyRef = useRef<string | undefined>(undefined);
   const activeRuntimeKey =
     activeThreadId && activeContext?.cwd
@@ -120,9 +112,6 @@ export function useSideThreadController(
   activeRuntimeKeyRef.current = activeRuntimeKey;
   storeRef.current = store;
   const entry = activeThreadId ? store.byThread[activeThreadId] : undefined;
-  // Layout constrains the visible width without replacing the user's preference.
-  const width = Math.min(store.width, clampSideThreadWidth(options.maxWidth ?? SIDE_THREAD_MAX_WIDTH));
-
   const dispatch = useCallback((action: SideThreadAction) => {
     setStore((previous) => reduceSideThreadStore(previous, action));
   }, []);
@@ -265,10 +254,6 @@ export function useSideThreadController(
       window.clearInterval(timer);
     };
   }, [activeRuntimeKey, activeThreadId, entry?.open, entry?.summary?.status, ipcImpl]);
-
-  useEffect(() => {
-    return () => resizeCleanupRef.current?.();
-  }, []);
 
   const open = useCallback(() => {
     if (!activeThreadId) {
@@ -515,51 +500,8 @@ export function useSideThreadController(
       });
   }, [activeThreadId, dispatch, effectiveDisabled, ipcImpl]);
 
-  const startResize = useCallback(
-    (event: ReactPointerEvent<HTMLButtonElement>) => {
-      if (event.button !== 0) {
-        return;
-      }
-      event.preventDefault();
-      resizeCleanupRef.current?.();
-
-      const startX = event.clientX;
-      const startWidth = width;
-      const pointerId = event.pointerId;
-      const target = event.currentTarget;
-      const root = document.documentElement;
-      target.setPointerCapture?.(pointerId);
-      root.classList.add("resizing-side-thread");
-
-      const handleMove = (moveEvent: PointerEvent) => {
-        dispatch({
-          type: "setWidth",
-          width: clampSideThreadWidth(startWidth + startX - moveEvent.clientX)
-        });
-      };
-      const cleanup = () => {
-        window.removeEventListener("pointermove", handleMove);
-        window.removeEventListener("pointerup", cleanup);
-        window.removeEventListener("pointercancel", cleanup);
-        root.classList.remove("resizing-side-thread");
-        if (target.hasPointerCapture?.(pointerId)) {
-          target.releasePointerCapture?.(pointerId);
-        }
-        if (resizeCleanupRef.current === cleanup) {
-          resizeCleanupRef.current = undefined;
-        }
-      };
-      resizeCleanupRef.current = cleanup;
-      window.addEventListener("pointermove", handleMove);
-      window.addEventListener("pointerup", cleanup);
-      window.addEventListener("pointercancel", cleanup);
-    },
-    [dispatch, width]
-  );
-
   return {
     entry,
-    width,
     open,
     close,
     toggle,
@@ -568,7 +510,6 @@ export function useSideThreadController(
     sendMessage,
     interrupt,
     reset,
-    startResize,
     sendDisabledReason:
       effectiveDisabled || !activeContext
         ? effectiveReason ?? t("sideThread.selectWorkspace")

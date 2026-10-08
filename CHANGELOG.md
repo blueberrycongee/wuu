@@ -24,6 +24,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Move side chat into the right sidebar's shared tabs, preserving each conversation's
+  history and draft across tool switches and keeping the expanded layout when opened.
+
 - Remove the legacy compact navigation layout. Resizing desktop windows keeps
   the sidebar's chosen visibility and width, with the same navigation and tools.
 

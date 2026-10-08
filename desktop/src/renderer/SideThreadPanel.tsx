@@ -8,21 +8,13 @@ import {
   useLayoutEffect,
   useMemo,
   useRef,
-  type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from "react";
-import { PanelRightClose } from "./WuuIcons";
 import { useAutoFollowScrollContainer } from "./AutoFollowScroll";
 import { ConversationTurnList } from "./ConversationTurnList";
 import { sideThreadMessagesToTurns } from "./SideThreadTurns";
-import {
-  SIDE_THREAD_MAX_WIDTH,
-  SIDE_THREAD_MIN_WIDTH,
-  type SideThreadEntryState,
-} from "./SideThreadState";
-import { Tooltip } from "./Tooltip";
+import type { SideThreadEntryState } from "./SideThreadState";
 import { latestAgentMessageItemID, TurnView } from "./TurnView";
-import { useI18n } from "./i18n";
 
 export type SideThreadPanelHandle = {
   focusComposer: () => void;
@@ -31,12 +23,10 @@ export type SideThreadPanelHandle = {
 type SideThreadPanelProps = {
   entry: SideThreadEntryState;
   mainThreadId: string;
-  width: number;
+  active: boolean;
+  title: string;
   composer: ReactNode;
   cwd?: string;
-  onClose: () => void;
-  onResizeStart: (event: ReactPointerEvent<HTMLButtonElement>) => void;
-  onChangeDraft: (draft: string) => void;
   onOpenFile?: (path: string) => void;
 };
 
@@ -45,22 +35,19 @@ export const SideThreadPanel = forwardRef<SideThreadPanelHandle, SideThreadPanel
     {
       entry,
       mainThreadId,
-      width,
+      active,
+      title,
       composer,
       cwd,
-      onClose,
-      onResizeStart,
-      onChangeDraft,
       onOpenFile,
     },
     ref,
   ) {
-    const { t } = useI18n();
     const titleID = useId();
     const panelRef = useRef<HTMLElement | null>(null);
     const composerHostRef = useRef<HTMLDivElement | null>(null);
     const footerRef = useRef<HTMLDivElement | null>(null);
-    const bodyScroll = useAutoFollowScrollContainer({ open: true });
+    const bodyScroll = useAutoFollowScrollContainer({ open: active });
     const turns = useMemo(
       () => sideThreadMessagesToTurns(entry.messages),
       [entry.messages],
@@ -91,7 +78,7 @@ export const SideThreadPanel = forwardRef<SideThreadPanelHandle, SideThreadPanel
     useLayoutEffect(() => {
       const panel = panelRef.current;
       const footer = footerRef.current;
-      if (!panel || !footer) {
+      if (!active || !panel || !footer) {
         return undefined;
       }
 
@@ -108,7 +95,7 @@ export const SideThreadPanel = forwardRef<SideThreadPanelHandle, SideThreadPanel
       const observer = new ResizeObserver(updateFooterHeight);
       observer.observe(footer);
       return () => observer.disconnect();
-    }, [bodyScroll]);
+    }, [active, bodyScroll]);
 
     const handleStreamFrame = useCallback(() => {
       bodyScroll.scheduleScrollToBottom();
@@ -123,36 +110,17 @@ export const SideThreadPanel = forwardRef<SideThreadPanelHandle, SideThreadPanel
         data-wuu-component="side-thread"
         aria-labelledby={titleID}
       >
-        <button
-          type="button"
-          className="side-thread-panel__resizer"
-          role="separator"
-          aria-label={t("sideThread.resize")}
-          aria-orientation="vertical"
-          aria-valuemin={SIDE_THREAD_MIN_WIDTH}
-          aria-valuemax={SIDE_THREAD_MAX_WIDTH}
-          aria-valuenow={width}
-          onPointerDown={onResizeStart}
-        />
         <header className="side-thread-panel__header">
-          <h2 id={titleID} className="side-thread-panel__title">{t("sideThread.title")}</h2>
-          <Tooltip content={t("sideThread.collapse")}>
-            <button
-              type="button"
-              className="icon-button side-thread-panel__close"
-              onClick={onClose}
-              aria-label={t("sideThread.collapse")}
-            >
-              <PanelRightClose />
-            </button>
-          </Tooltip>
+          <h2 id={titleID} className="side-thread-panel__title" title={title}>
+            {title}
+          </h2>
         </header>
 
         <div
           ref={bodyScroll.scrollRef}
           className="side-thread-panel__body"
           role="log"
-          aria-live="polite"
+          aria-live={active ? "polite" : "off"}
         >
           <div className="conversation-width session-flow side-thread-panel__conversation">
             <ConversationTurnList

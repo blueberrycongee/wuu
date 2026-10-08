@@ -450,7 +450,7 @@ app.whenReady().then(async () => {
   await click('.slash-command-item[data-command-name="side"]');
   await until(() => document.querySelector(".side-thread-panel"), "side thread");
   await snapshot("side thread");
-  await click(".side-thread-panel__close");
+  await click('[data-wuu-tab-kind="side-thread"] .workspace-tool-tab-close');
   await settle();
   await evaluate(() => {
     const message = document.querySelector('[data-user-message-id="resize-user-35"]');

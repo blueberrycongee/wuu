@@ -181,7 +181,6 @@ import {
   SIDEBAR_MAX_WIDTH,
   SIDEBAR_MIN_WIDTH,
   sidebarMotionMs,
-  WORKSPACE_CONVERSATION_SAFE_WIDTH,
   WORKSPACE_RIGHT_PANEL_MAIN_MIN_WIDTH,
   WORKSPACE_RIGHT_PANEL_MAX_WIDTH,
   WORKSPACE_RIGHT_PANEL_MIN_WIDTH,
@@ -739,6 +738,7 @@ export function App(): JSX.Element {
     workspaceActiveFileTabID,
     ensureWorkspaceToolTab,
     openWorkspaceTool,
+    openWorkspaceSideThread,
     openWorkspacePluginTool,
     openWorkspaceDiffTab,
     openWorkspaceFileTab,
@@ -1386,7 +1386,6 @@ export function App(): JSX.Element {
   const sideThread = useSideThreadController({
     activeThreadId: activeThreadID,
     activeContext: state.activeContext,
-    maxWidth: window.innerWidth - environmentPanelPaneOffset - WORKSPACE_RIGHT_PANEL_MAIN_MIN_WIDTH,
   });
   const sideThreadPanelRef = useRef<SideThreadPanelHandle>(null);
   const pendingSideSelectionRef = useRef<{ threadID: string; selection: SideThreadSelection } | null>(null);
@@ -2903,7 +2902,11 @@ export function App(): JSX.Element {
     }
     return Array.from(names);
   }, [state.thread, state.secondaryThread, state.threads]);
-  const sideThreadPanelVisible = Boolean(activeThreadID && sideThread.entry?.open);
+  const sideThreadPanelVisible = Boolean(activeThreadID && rightPanelOpen &&
+    !workspaceConversationActive && workspaceActiveViewTabID === "side-thread");
+  useEffect(() => {
+    if (sideThreadPanelVisible && !sideThread.entry?.open) sideThread.open();
+  }, [sideThreadPanelVisible, sideThread.entry?.open, sideThread.open]);
   useEffect(() => {
     if (!sideThreadPanelVisible || isTouchWebShell()) {
       return undefined;
@@ -2912,7 +2915,7 @@ export function App(): JSX.Element {
       sideThreadPanelRef.current?.focusComposer();
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [sideThreadPanelVisible]);
+  }, [sideThreadPanelVisible, activeThreadID]);
   // The environment panel floats inside the conversation pane, so it can
   // coexist with the docked workspace right panel. Only the globalized
   // (full-window sheet) right panel blocks it, because that mode makes the
@@ -2922,7 +2925,6 @@ export function App(): JSX.Element {
     state.initialized &&
     !poppedOutMode &&
     !workspaceToolsCoverConversation &&
-    !sideThreadPanelVisible &&
     // The card describes the conversation's workspace; pages that replace the
     // conversation have nothing for it to describe.
     !showingManagementCatalog &&
@@ -2946,12 +2948,6 @@ export function App(): JSX.Element {
   const sidebarVisible = !poppedOutMode;
   const sidebarToggleVisible = sidebarVisible;
 
-  useEffect(() => {
-    if (sideThread.entry?.open && environmentPanelOpen) {
-      sideThread.close();
-    }
-  }, [environmentPanelOpen, sideThread.close, sideThread.entry?.open]);
-
   const shellClassName = `app-shell${poppedOutMode ? " popped-out-shell" : ""}${sidebarDrawerMode ? " sidebar-collapsed" : ""}${
     sidebarDrawerMode && sidebarDrawerVisible ? " sidebar-drawer-open" : ""
   }${
@@ -2974,7 +2970,6 @@ export function App(): JSX.Element {
     "--sidebar-open-width": `${sidebarWidth}px`,
     "--workspace-sheet-left": `${sidebarDrawerMode ? 0 : effectiveSidebarWidth}px`,
     "--workspace-right-panel-width": `${clampedWorkspaceRightPanelWidth}px`,
-    "--side-thread-width": `${sideThread.width}px`,
     "--conversation-split-left": `${splitLeftPercent}%`,
   } as CSSProperties;
   const pullRequestDisabledReason = pullRequestUnavailableReason(
@@ -3040,21 +3035,9 @@ export function App(): JSX.Element {
     if (!activeThreadID) {
       return;
     }
-    if (rightPanelGlobalized) {
-      // The destination remounts the main composer; publish its input-local
-      // draft before leaving the document surface.
-      setPrompt(currentPrimaryComposerDraft().prompt);
-    }
-    revealConversationFromFocusedWorkspace();
-    if (rightPanelOpen && window.innerWidth - effectiveSidebarWidth - clampedWorkspaceRightPanelWidth - sideThread.width < WORKSPACE_CONVERSATION_SAFE_WIDTH) {
-      setRightPanelOpenWithMotion(false);
-    }
-    if (!sideThread.entry?.open) {
-      setEnvironmentPanelOpen(false);
-      setEnvironmentPanelDismissed(true);
-      setEnvironmentPanelMenu(null);
-      sideThread.open();
-    }
+    openWorkspaceSideThread();
+    if (!sideThread.entry?.open) sideThread.open();
+    requestAnimationFrame(() => sideThreadPanelRef.current?.focusComposer());
     const trimmed = prompt?.trim();
     if (trimmed) {
       sideThread.sendMessage(trimmed);
@@ -5474,8 +5457,6 @@ export function App(): JSX.Element {
         data-primary-plugin-view={showingPrimaryPluginView ? "" : undefined}
         className={`conversation-pane${environmentPanelVisible ? " environment-panel-visible" : ""}${
           environmentPanelReserved ? " environment-panel-reserved" : ""
-        }${
-          sideThreadPanelVisible ? " side-thread-panel-visible" : ""
         }`}
         ref={conversationPaneRef}
       >
@@ -5555,41 +5536,6 @@ export function App(): JSX.Element {
           onCloseFilePreview={handleCloseFilePreview}
           switchLoadingVisible={pendingViewSwitch?.visible === true}
         />
-
-        {sideThreadPanelVisible && activeThreadID && sideThread.entry ? (
-          <SideThreadPanel
-            ref={sideThreadPanelRef}
-            entry={sideThread.entry}
-            mainThreadId={activeThreadID}
-            width={sideThread.width}
-            cwd={activeThread?.cwd ?? state.activeContext?.cwd}
-            onOpenFile={openWorkspaceFile}
-            composer={
-              <SideThreadComposer
-                draft={sideThread.entry.draft}
-                selection={sideThread.entry.draftSelection}
-                onRemoveSelection={() => sideThread.setDraftSelection(undefined)}
-                onOpenFile={openWorkspaceFile}
-                running={sideThread.entry.streaming}
-                disabledReason={sideThread.sendDisabledReason}
-                error={sideThread.requestError}
-                queryHistorySessionID={
-                  sideThread.entry.summary?.side_thread_id ?? `side:${activeThreadID}`
-                }
-                queryHistory={sideThread.entry.messages
-                  .filter((message) => message.role === "user")
-                  .map((message) => message.text)}
-                onChangeDraft={sideThread.setDraft}
-                onSend={sideThread.sendMessage}
-                onInterrupt={sideThread.interrupt}
-                onReset={sideThread.reset}
-              />
-            }
-            onClose={sideThread.close}
-            onResizeStart={sideThread.startResize}
-            onChangeDraft={sideThread.setDraft}
-          />
-        ) : null}
 
         {state.initialized ? (
           <div
@@ -5805,7 +5751,10 @@ export function App(): JSX.Element {
           onOpenPluginTool={openWorkspacePluginTool}
           onShowTools={showWorkspaceToolPicker}
           onResumeTab={resumeWorkspaceViewTab}
-          onCloseTab={closeWorkspaceViewTab}
+          onCloseTab={(id) => {
+            if (id === "side-thread") sideThread.close();
+            closeWorkspaceViewTab(id);
+          }}
           onDirtyFileTabsChange={rememberWorkspaceDirtyFiles}
           onReorderTabs={reorderWorkspaceViewTabs}
           onOpenFile={openWorkspaceFile}
@@ -5815,6 +5764,40 @@ export function App(): JSX.Element {
             active: workspaceConversationActive,
             onSelect: focusWorkspaceConversation,
           } : undefined}
+          sideThreadContent={activeThreadID && sideThread.entry ? (
+            <SideThreadPanel
+              key={activeThreadID}
+              ref={sideThreadPanelRef}
+              entry={sideThread.entry}
+              mainThreadId={activeThreadID}
+              active={sideThreadPanelVisible}
+              title={activeTitle}
+              cwd={activeThread?.cwd ?? state.activeContext?.cwd}
+              onOpenFile={openWorkspaceFile}
+              composer={
+                <SideThreadComposer
+                  draft={sideThread.entry.draft}
+                  selection={sideThread.entry.draftSelection}
+                  onRemoveSelection={() => sideThread.setDraftSelection(undefined)}
+                  onOpenFile={openWorkspaceFile}
+                  running={sideThread.entry.streaming}
+                  disabledReason={sideThread.sendDisabledReason}
+                  error={sideThread.requestError}
+                  queryHistorySessionID={
+                    sideThread.entry.summary?.side_thread_id ?? `side:${activeThreadID}`
+                  }
+                  queryHistory={sideThread.entry.messages
+                    .filter((message) => message.role === "user")
+                    .map((message) => message.text)}
+                  onChangeDraft={sideThread.setDraft}
+                  onSend={sideThread.sendMessage}
+                  onInterrupt={sideThread.interrupt}
+                  onReset={sideThread.reset}
+                />
+              }
+            />
+          ) : <div className="workspace-side-thread-empty">{t("sideThread.selectConversation")}</div>}
+          sideThreadRunning={sideThread.entry?.streaming}
           sheetPhase={workspaceSheetPhase}
           onToggleGlobalize={toggleWorkspacePanelGlobalized}
           canExitGlobalized={

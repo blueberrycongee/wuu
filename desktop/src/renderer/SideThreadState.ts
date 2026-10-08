@@ -8,7 +8,7 @@ import type {
 } from "../shared/protocol";
 
 export type SideThreadEntryState = {
-  // Closing the panel preserves history and draft for this main thread.
+  // Closing the tab preserves history and draft for this main thread.
   open: boolean;
   // Null means no side thread has been persisted yet.
   summary: SideThreadSummary | null;
@@ -19,13 +19,8 @@ export type SideThreadEntryState = {
   lastError?: string;
 };
 
-export const SIDE_THREAD_DEFAULT_WIDTH = 400;
-export const SIDE_THREAD_MIN_WIDTH = 320;
-export const SIDE_THREAD_MAX_WIDTH = 640;
-
 export type SideThreadStoreState = {
   byThread: Record<string, SideThreadEntryState>;
-  width: number;
 };
 
 export function createEmptySideThreadEntry(): SideThreadEntryState {
@@ -38,13 +33,8 @@ export function createEmptySideThreadEntry(): SideThreadEntryState {
   };
 }
 
-export function createInitialSideThreadStore(
-  width: number = SIDE_THREAD_DEFAULT_WIDTH
-): SideThreadStoreState {
-  return {
-    byThread: {},
-    width: clampSideThreadWidth(width)
-  };
+export function createInitialSideThreadStore(): SideThreadStoreState {
+  return { byThread: {} };
 }
 
 // A failed reply already shows its error in the transcript. Only failures no
@@ -58,19 +48,6 @@ export function sideThreadRequestError(
   return latestReply?.status === "failed" && latestReply.error_message === error
     ? undefined
     : error;
-}
-
-export function clampSideThreadWidth(value: number): number {
-  if (!Number.isFinite(value)) {
-    return SIDE_THREAD_DEFAULT_WIDTH;
-  }
-  if (value < SIDE_THREAD_MIN_WIDTH) {
-    return SIDE_THREAD_MIN_WIDTH;
-  }
-  if (value > SIDE_THREAD_MAX_WIDTH) {
-    return SIDE_THREAD_MAX_WIDTH;
-  }
-  return Math.round(value);
 }
 
 export function ensureSideThreadEntry(
@@ -114,8 +91,7 @@ export type SideThreadAction =
   | { type: "setStreaming"; mainThreadId: string; streaming: boolean }
   | { type: "setError"; mainThreadId: string; error: string | undefined }
   | { type: "reset"; mainThreadId: string }
-  | { type: "applyEvent"; event: SideThreadEvent }
-  | { type: "setWidth"; width: number };
+  | { type: "applyEvent"; event: SideThreadEvent };
 
 export function reduceSideThreadStore(
   store: SideThreadStoreState,
@@ -179,8 +155,6 @@ export function reduceSideThreadStore(
       return updateEntry(store, action.mainThreadId, resetEntry);
     case "applyEvent":
       return applySideThreadEvent(store, action.event);
-    case "setWidth":
-      return { ...store, width: clampSideThreadWidth(action.width) };
     default:
       return store;
   }
