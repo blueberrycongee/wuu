@@ -2697,8 +2697,7 @@
  * Boxed recovery cards are turn siblings, so they only inherit the 8px item
  * rhythm. The process↔answer landmark is 16px — the same pause a diff card
  * gets after prose. Add the remainder; the parent gap already supplies the
- * rest. After a user bubble, subtract the bubble's trailing gap so the
- * visible band stays 16px rather than 24px.
+ * rest.
  */
 .turn > .turn-failure {
   margin-top: calc(
@@ -2706,11 +2705,50 @@
   );
 }
 
+/* A failure with no reply before it stands where the reply would: it keeps
+ * the query → reply gap, which already clears the query's hover actions
+ * hanging below the bubble. */
 .turn > .user-message-block + .turn-failure {
   margin-top: calc(
-    var(--conversation-process-answer-gap) - var(--conversation-turn-item-gap) -
+    var(--conversation-user-rule-gap) - var(--conversation-turn-item-gap) -
       var(--conversation-user-message-trailing-gap)
   );
+}
+
+/* A failure that happens in front of the reader resolves out of the pending
+ * row rather than popping in: the card comes into focus from a slight blur,
+ * then its explanation and actions follow a beat apart. History renders
+ * still. The retrying → failed change keeps the same card; only the part
+ * that was folded unfolds (.turn-failure-reveal). */
+.turn-failure.is-arriving {
+  animation: turn-failure-arrive var(--motion-slow) var(--ease-out) both;
+}
+
+@keyframes turn-failure-arrive {
+  from {
+    opacity: 0;
+    filter: blur(4px);
+    translate: 0 4px;
+  }
+}
+
+.turn-failure.is-arriving .turn-failure-icon {
+  --enter-scale: 0.6;
+  animation: wuu-enter var(--motion-base) var(--ease-out) both;
+}
+
+.turn-failure.is-arriving .turn-failure-code {
+  --enter-x: -4px;
+  animation: wuu-enter var(--motion-base) var(--ease-out) calc(var(--motion-fast) / 2) both;
+}
+
+.turn-failure.is-arriving .turn-failure-reveal > .collapsible-details-inner > :is(.turn-failure-body, .turn-failure-actions) {
+  --enter-y: 4px;
+  animation: wuu-enter var(--motion-slow) var(--ease-out) var(--motion-fast) both;
+}
+
+.turn-failure.is-arriving .turn-failure-reveal > .collapsible-details-inner > .turn-failure-actions {
+  animation-delay: calc(var(--motion-fast) * 1.5);
 }
 
 .turn-failure-head {
@@ -2793,12 +2831,6 @@
   display: grid;
   row-gap: var(--space-2);
   padding-top: var(--space-3);
-}
-
-.turn-failure-recovery {
-  margin: 0;
-  color: var(--ink-soft);
-  white-space: pre-line;
 }
 
 .turn-failure-diagnostic {

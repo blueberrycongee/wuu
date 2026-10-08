@@ -908,6 +908,21 @@ it("removes the recovery card immediately on item removal without duplicating st
   expect(container.querySelector(".turn-failure")).toBeNull();
 });
 
+it("keeps the retrying card's node when automatic recovery gives up", () => {
+  const item: ThreadItem = { id: "retry", type: "stream_reconnect", status: "in_progress", reason: "network", retry_at_ms: Date.now() + 5000 };
+  const turn = makeTurn("in_progress", [makeCommentary("Working"), item]);
+  container = document.createElement("div");
+  document.body.appendChild(container);
+  root = createRoot(container);
+  act(() => { root!.render(<TurnView turn={turn} isLatestTurn onStreamFrame={() => {}} />); });
+  const card = container.querySelector(".turn-failure.is-retrying");
+  expect(card).not.toBeNull();
+  act(() => { root!.render(<TurnView turn={{ ...turn, status: "interrupted", items: [turn.items[0], { ...item, status: "failed" }] }} isLatestTurn onStreamFrame={() => {}} />); });
+  expect(container.querySelectorAll("aside.turn-failure")).toHaveLength(1);
+  expect(container.querySelector("aside.turn-failure")).toBe(card);
+  expect(card!.getAttribute("role")).toBe("alert");
+});
+
 // Automatic recovery that gives up settles the turn as interrupted, not
 // failed; its card explains the same failure and needs the same retry.
 it.each(["failed", "interrupted"] as const)("routes the retry of a turn that ended %s through the existing history retry action", async (status) => {
