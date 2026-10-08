@@ -9,7 +9,9 @@ const profile = fs.mkdtempSync(path.join(app.getPath("temp"), "wuu-web-research-
 app.setPath("userData", profile);
 
 app.whenReady().then(async () => {
-  const win = new BrowserWindow({ show: false, width: 900, height: 760,
+  // Xvfb supplies an isolated display in CI. A hidden window can throttle
+  // compositor frames, stretching short transitions into multi-second waits.
+  const win = new BrowserWindow({ show: true, width: 900, height: 760,
     webPreferences: { contextIsolation: true, nodeIntegration: false, backgroundThrottling: false } });
   // The long-list fixture includes deliberately unavailable domains, exercising
   // letter fallbacks without depending on DNS failures or request timeouts.
@@ -39,7 +41,10 @@ app.whenReady().then(async () => {
   };
   const settle = async () => { await frames(); await run(`Promise.race([
     Promise.allSettled(document.getAnimations().filter(a => a.playState === 'running' && a.effect.getTiming().iterations !== Infinity).map(a => a.finished)),
-    new Promise((_, reject) => setTimeout(() => reject(new Error('Motion failed to settle')), 3000))
+    new Promise((_, reject) => setTimeout(() => reject(new Error('Motion failed to settle: ' + JSON.stringify(
+      document.getAnimations().filter(a => a.playState === 'running' && a.effect.getTiming().iterations !== Infinity)
+        .map(a => ({ name: a.animationName, target: a.effect.target?.className, time: a.currentTime, timing: a.effect.getTiming() }))
+    ))), 3000))
   ])`); };
   const shot = async name => fs.writeFileSync(path.join(output, `${name}.png`), (await win.webContents.capturePage()).toPNG());
   const point = async selector => run(`(() => { const r = document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect(); return { x: Math.round(r.x+r.width/2), y: Math.round(r.y+r.height/2) }; })()`);
