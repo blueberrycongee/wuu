@@ -36,6 +36,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Align document-preview workspace controls inside the inset conversation tray.
+
 - Keep resumed Claude engine turns running when a background task notification
   produces a result before the user's reply, preventing silent empty completion.
 

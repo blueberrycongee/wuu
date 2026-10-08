@@ -103,6 +103,33 @@
 .workspace-document-turn-result { min-width: 0; }
 .workspace-document-turn-result > .rich-content + .rich-content { margin-top: 14px; }
 .workspace-document-turn-composer { position: relative; z-index: 10; pointer-events: none; }
+/* Workspace controls sit inside the inset transcript tray above the input. */
+.workspace-document-turn-composer .composer-workspace-bar {
+  margin-inline:
+    calc(var(--document-dock-tray-inset) + var(--card-padding) - var(--space-2))
+    calc(var(--document-dock-tray-inset) + var(--space-3));
+}
+@container composer-shell (max-width: 480px) {
+  .workspace-document-turn-composer .composer-workspace-bar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .workspace-document-turn-composer .composer-git-controls {
+    max-width: 100%;
+    flex-wrap: wrap;
+  }
+  .workspace-document-turn-composer .composer-git-controls::before {
+    display: none;
+  }
+  .workspace-document-turn-composer .composer-worktree-toggle {
+    min-width: 0;
+    max-width: 100%;
+  }
+  .workspace-document-turn-composer .composer-worktree-toggle > span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}
 .workspace-document-turn-menu {
   position: absolute;
   z-index: 20;
