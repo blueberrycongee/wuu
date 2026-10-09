@@ -11,7 +11,7 @@ import {
   type StatusSnapshotV1,
 } from "../../shared/workbench";
 import { RichContent } from "../RichContent";
-import { desktopPluginHost } from "./DesktopPluginRuntime";
+import { desktopPluginHost, DesktopPluginRuntime } from "./DesktopPluginRuntime";
 import { DesktopWorkbench, PluginViewContent, visibleWorkbenchView, WorkbenchController } from "./Workbench";
 import { PluginHost, type PluginGenerationApi } from "./PluginHost";
 
@@ -803,3 +803,41 @@ function inventoryPlugin(id: string): ExtensionInventoryRecord {
     enabled: true,
   };
 }
+
+it.each(["direct-same", "disable-enable", "changed-code"])("recovers embedded views after %s activation", async (mode) => {
+  const previousWuu = window.wuu;
+  window.wuu = { ...previousWuu, loadPluginDesktopModule: async ({ id, fingerprint }: { id: string; fingerprint: string }) => ({ id, fingerprint, digest: "a".repeat(64), url: "wuu-plugin://module/review.js"}) } as typeof window.wuu;
+  const log = vi.spyOn(console, "error").mockImplementation(() => {});
+  let broken = true;
+  const View = () => {
+    if (broken) throw new Error("transient render failure");
+    return <span data-recovered>Recovered</span>;
+  };
+  const register = (api: PluginGenerationApi) => { api.registerViewType({ id: "panel", title: "Panel", render: View }); };
+  const host = new PluginHost({ react: React });
+  const controller = new WorkbenchController(host);
+  const runtime = new DesktopPluginRuntime(host, async () => ({ activate: register }));
+  const plugin = {id: "user:review", kind: "plugin", state: "active", approval_state: "granted", enabled: true, fingerprint: "same", desktop: { entry: "desktop.js" }} as ExtensionInventoryRecord;
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  try {
+    await runtime.sync([plugin]);
+    await act(async () => root.render(<PluginViewContent controller={controller} pluginId={plugin.id} viewTypeId="panel" />));
+    expect(container.querySelector('[role="alert"]')).not.toBeNull();
+    broken = false;
+    if (mode === "direct-same") await act(async () => host.activateGeneration({ pluginId: plugin.id, generation: "same", register }));
+    if (mode === "disable-enable") {
+      await act(async () => runtime.sync([{ ...plugin, enabled: false }]));
+      await act(async () => runtime.sync([plugin]));
+    }
+    if (mode === "changed-code") await act(async () => runtime.sync([{ ...plugin, fingerprint: "new" }]));
+    expect(container.querySelector('[data-recovered]')?.textContent).toBe("Recovered");
+  } finally {
+    await act(async () => root.unmount());
+    controller.dispose();
+    container.remove();
+    log.mockRestore();
+    window.wuu = previousWuu;
+  }
+});

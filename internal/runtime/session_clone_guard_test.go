@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/tools"
 )
 
 type cloneGuardClient struct{}
@@ -99,7 +100,15 @@ func TestCloneForThreadModelCopiesEveryExportedField(t *testing.T) {
 		}
 	}
 
-	clone := original.cloneForThreadModel()
+	var err error
+	original.Toolkit, err = tools.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	clone, err := original.cloneForThreadModel()
+	if err != nil {
+		t.Fatal(err)
+	}
 	cloneValue := reflect.ValueOf(clone).Elem()
 	for i := 0; i < cloneValue.NumField(); i++ {
 		field := kind.Field(i)

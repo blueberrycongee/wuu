@@ -209,15 +209,15 @@ func (s *Session) MaxParallel() int {
 	return s.maxParallel
 }
 
-// cloneForThreadModel copies the shared, immutable session dependencies used
-// to build a thread runtime. Thread-specific mutable dependencies are replaced
+// cloneForThreadModel snapshots the session dependencies used to build a
+// thread runtime. Thread-specific mutable dependencies are replaced
 // by the caller below. The caller must release the shadow's temporary plugin
 // generation reference after construction; a successful ThreadRuntime retains
 // its own reference. The retired-generation index belongs to the publishing
 // Session and is intentionally not shared with these independently locked shadows.
-func (s *Session) cloneForThreadModel() *Session {
+func (s *Session) cloneForThreadModel() (*Session, error) {
 	if s == nil {
-		return nil
+		return nil, errors.New("runtime session is required")
 	}
 	s.pluginGenerationMu.Lock()
 	defer s.pluginGenerationMu.Unlock()
@@ -270,6 +270,7 @@ func (s *Session) cloneForThreadModel() *Session {
 		Permissions:                 s.Permissions,
 		PermissionModeExplicit:      s.PermissionModeExplicit,
 		maxParallel:                 s.maxParallel,
+		workerOrientation:           s.workerOrientation,
 		ExperimentalCoordinatorMode: s.ExperimentalCoordinatorMode,
 		ToolLoadingPreference:       s.ToolLoadingPreference,
 		ToolLoadingMode:             s.ToolLoadingMode,
@@ -281,8 +282,21 @@ func (s *Session) cloneForThreadModel() *Session {
 		DefaultEngine:               s.DefaultEngine,
 		engines:                     s.engines,
 	}
+	// Publication mutates the root toolkit and runner in place. Snapshot both
+	// while pinning their generation, before construction can run callbacks or
+	// yield to another publication. Cloning only reads local registries here.
+	if s.Toolkit != nil {
+		var err error
+		clone.Toolkit, err = s.Toolkit.CloneForRoot(s.Toolkit.RootDir())
+		if err != nil {
+			return nil, err
+		}
+	}
+	if s.StreamRunner != nil {
+		clone.StreamRunner = cloneStreamRunnerForThread(s.StreamRunner, s.StreamRunner.Tools)
+	}
 	clone.pluginGeneration.retain()
-	return clone
+	return clone, nil
 }
 
 type ReadinessIssue struct {
@@ -1101,10 +1115,13 @@ func (s *Session) NewThreadRuntimeForRootModel(sessionID, rootDir string, select
 	}
 	if selected.Speed == "" && (providerName == "" || model == "" || (providerName == s.ProviderName && model == s.Model && requested.Variant == currentVariant && requested.Effort == currentEffort)) {
 		// Permission changes do not require rebuilding an unchanged model client.
-		shadow := s.cloneForThreadModel()
+		shadow, err := s.cloneForThreadModel()
+		if err != nil {
+			return nil, err
+		}
 		defer s.releasePluginGeneration(shadow.pluginGeneration)
 		shadow.Permissions = permissions
-		threadRuntime, err := shadow.NewThreadRuntimeForRoot(sessionID, rootDir)
+		threadRuntime, err := shadow.newThreadRuntimeForRoot(sessionID, rootDir)
 		if err != nil {
 			return nil, err
 		}
@@ -1138,7 +1155,10 @@ func (s *Session) NewThreadRuntimeForRootModel(sessionID, rootDir string, select
 		return nil, err
 	}
 
-	shadow := s.cloneForThreadModel()
+	shadow, err := s.cloneForThreadModel()
+	if err != nil {
+		return nil, err
+	}
 	defer s.releasePluginGeneration(shadow.pluginGeneration)
 	shadow.Permissions = permissions
 	shadow.ProviderName = resolvedName
@@ -1146,7 +1166,6 @@ func (s *Session) NewThreadRuntimeForRootModel(sessionID, rootDir string, select
 	shadow.ModelRoles = roles
 	shadow.ModelBudget = ResolveModelBudget(model, ruleProviderCfg, cfg.Agent.MaxContextTokens)
 	shadow.WorkerModelBudget = ResolveModelBudget(roles.Worker.Model, roles.Worker.RuleProviderConfig, cfg.Agent.MaxContextTokens)
-	shadow.StreamRunner = cloneStreamRunnerForThread(s.StreamRunner, nil)
 	if shadow.StreamRunner == nil {
 		return nil, fmt.Errorf("stream runner is required")
 	}
@@ -1175,8 +1194,8 @@ func (s *Session) NewThreadRuntimeForRootModel(sessionID, rootDir string, select
 	if threadRoot == "" {
 		threadRoot = s.RootDir
 	}
-	if s.Toolkit != nil {
-		kit, cloneErr := s.Toolkit.CloneForRoot(threadRoot)
+	if shadow.Toolkit != nil {
+		kit, cloneErr := shadow.Toolkit.CloneForRoot(threadRoot)
 		if cloneErr != nil {
 			return nil, cloneErr
 		}
@@ -1204,7 +1223,7 @@ func (s *Session) NewThreadRuntimeForRootModel(sessionID, rootDir string, select
 	shadow.BaseSystemPrompt = promptResult.Content
 	shadow.BaseSystemPromptSections = promptResult.Sections
 	shadow.StreamRunner.UpdateSystemPromptWithSections(promptResult.Content, agentPromptSections(promptResult.Sections))
-	threadRuntime, err := shadow.NewThreadRuntimeForRoot(sessionID, threadRoot)
+	threadRuntime, err := shadow.newThreadRuntimeForRoot(sessionID, threadRoot)
 	if err != nil {
 		return nil, err
 	}
@@ -1216,6 +1235,17 @@ func (s *Session) NewThreadRuntimeForRootModel(sessionID, rootDir string, select
 // tools are rooted at rootDir while durable artifacts stay in the parent
 // workspace state directory.
 func (s *Session) NewThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRuntime, error) {
+	shadow, err := s.cloneForThreadModel()
+	if err != nil {
+		return nil, err
+	}
+	defer s.releasePluginGeneration(shadow.pluginGeneration)
+	return shadow.newThreadRuntimeForRoot(sessionID, rootDir)
+}
+
+// newThreadRuntimeForRoot consumes a private model snapshot. No publication
+// mutex is held while creating workers or invoking plugin capabilities.
+func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRuntime, error) {
 	if s == nil {
 		return nil, fmt.Errorf("runtime session is required")
 	}

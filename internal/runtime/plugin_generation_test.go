@@ -20,6 +20,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/session"
+	"github.com/blueberrycongee/wuu/internal/tools"
 )
 
 type generationClient struct {
@@ -576,7 +577,10 @@ func TestThreadModelCloneKeepsGenerationDuringConstruction(t *testing.T) {
 	defer session.Cleanup()
 	defer session.pluginGeneration.close()
 	session.retiredPluginGenerations = make(map[*PluginGeneration]struct{})
-	shadow := session.cloneForThreadModel()
+	shadow, err := session.cloneForThreadModel()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if shadow.retiredPluginGenerations != nil {
 		t.Fatal("thread-model shadow shared the publishing Session's generation index")
 	}
@@ -1024,5 +1028,49 @@ func TestMutablePackageSnapshotRejectsChangedApprovedBytes(t *testing.T) {
 	}
 	if _, _, err := snapshotMutableExecutionPackages([]pluginpkg.Plugin{item}); err == nil {
 		t.Fatal("changed bytes inherited old trust")
+	}
+}
+
+func TestThreadModelConstructionPinsGenerationDependencies(t *testing.T) {
+	old := testPluginGeneration("plugin", &generationClient{id: "plugin"})
+	old.mcp = mcp.NewManager()
+	old.compactions = agent.NewCompactionRegistry()
+	s := testGenerationSession(old)
+	s.RootDir = t.TempDir()
+	s.WuuHome = t.TempDir()
+	s.StateDir = t.TempDir()
+	s.SessionDir = t.TempDir()
+	s.StreamRunner = &agent.StreamRunner{CompactionRegistry: old.compactions}
+	var err error
+	s.Toolkit, err = tools.New(s.RootDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Toolkit.SetMCPManager(old.mcp)
+	defer s.Cleanup()
+	shadow, err := s.cloneForThreadModel()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.ReleasePluginGeneration(shadow.pluginGeneration)
+	next := testPluginGeneration("plugin", &generationClient{id: "plugin"})
+	next.mcp = mcp.NewManager()
+	next.compactions = agent.NewCompactionRegistry()
+	if err := s.ActivatePluginGeneration(next, nil); err != nil {
+		t.Fatal(err)
+	}
+	rt, err := shadow.newThreadRuntimeForRoot("construction", s.RootDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.ReleasePluginGeneration(rt.PluginGeneration)
+	if rt.PluginGeneration != old {
+		t.Fatal("fixture did not pin old generation")
+	}
+	if rt.Toolkit.MCPManager() != old.mcp {
+		t.Error("old-generation runtime inherited new-generation MCP manager")
+	}
+	if rt.StreamRunner.CompactionRegistry != old.compactions {
+		t.Error("old-generation runtime inherited new-generation compaction registry")
 	}
 }

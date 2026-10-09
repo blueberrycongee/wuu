@@ -681,6 +681,7 @@ function WorkbenchView({ controller, definition, view, siblingViews }: Workbench
         key={`${view.pluginId}:${view.generation}:${view.id}`}
         pluginId={view.pluginId}
         generation={view.generation}
+        activation={controller.host.getGenerationActivation(view.pluginId, view.generation)}
         services={controller.services}
         onUseDefault={() => void controller.closeView(view.id)}
       >
@@ -751,6 +752,7 @@ export function PluginViewContent({
         key={`${pluginId}:${definition.generation}:${viewTypeId}`}
         pluginId={pluginId}
         generation={definition.generation}
+        activation={controller.host.getGenerationActivation(pluginId, definition.generation)}
         services={controller.services}
         onUseDefault={onFailure ?? (() => undefined)}
         onError={onFailure}
@@ -784,6 +786,7 @@ export function WorkbenchContentRenderer(props: WorkbenchContentRendererProps): 
       key={`${renderer.pluginId}:${renderer.generation}:${renderer.id}`}
       pluginId={renderer.pluginId}
       generation={renderer.generation}
+      activation={props.controller.host.getGenerationActivation(renderer.pluginId, renderer.generation)}
       services={props.controller.services}
       onUseDefault={() => undefined}
       fallback={props.fallback}
@@ -798,6 +801,7 @@ export function WorkbenchContentRenderer(props: WorkbenchContentRendererProps): 
 }
 
 interface PluginErrorBoundaryProps {
+  activation?: object;
   pluginId: string;
   generation: string;
   services: WorkbenchServices;
@@ -824,7 +828,7 @@ export class PluginErrorBoundary extends React.Component<PluginErrorBoundaryProp
   componentDidUpdate(previous: PluginErrorBoundaryProps): void {
     if (
       this.state.error !== undefined &&
-      (previous.pluginId !== this.props.pluginId || previous.generation !== this.props.generation)
+      (previous.activation !== this.props.activation || previous.pluginId !== this.props.pluginId || previous.generation !== this.props.generation)
     ) {
       this.setState({ error: undefined });
     }
