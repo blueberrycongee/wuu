@@ -196,8 +196,11 @@ func TestPluginReloadAdoptsNextIdleTurnWithoutLosingConversation(t *testing.T) {
 // and its plugin resources until finalization, even when a newer generation is live.
 func TestPluginReloadWaitsForOutstandingBackgroundWork(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
+	rt.WuuHome = t.TempDir()
 	publishReloadBehaviorGeneration(t, rt, "old implementation", "Read the fixture")
 	t.Cleanup(func() { _, _ = rt.Cleanup() })
+	oldHost := rt.PluginHost
+	shutdownPath := rt.Plugins[0].Runtime.Env["WUU_RELOAD_TEST_SHUTDOWN"]
 	srv := New(rt, &lockedBuffer{})
 	t.Cleanup(srv.Close)
 	worker := newBlockingStreamClient("worker finished")
@@ -227,6 +230,9 @@ func TestPluginReloadWaitsForOutstandingBackgroundWork(t *testing.T) {
 	releaseThreadRuntimeSubscription(first, th.runtimeSubscription)
 	first.AgentControl = control
 	th.runtimeSubscription = srv.subscribeThreadRuntime(th.ID, first)
+	// Drop terminal status fanout while leaving the reliable finalizer attached.
+	// Retirement must be driven by the lease quiescence boundary, not notifications.
+	control.Unsubscribe(th.runtimeSubscription.statusCh)
 	spawned, err := control.Spawn(context.Background(), agentcontrol.SpawnRequest{
 		Type: agentcontrol.DefaultSubagentType, TaskName: "pin_generation", Description: "Retain the plugin runtime until finalization", Prompt: "wait", Isolation: string(agentcontrol.IsolationInplace),
 	})
@@ -237,6 +243,16 @@ func TestPluginReloadWaitsForOutstandingBackgroundWork(t *testing.T) {
 	case <-worker.started:
 	case <-time.After(5 * time.Second):
 		t.Fatal("worker did not start")
+	}
+	th.mu.Lock()
+	acquired, admissionErr := srv.tryAcquireThreadExecutionLeaseLocked(th)
+	if admissionErr == nil && acquired {
+		th.releaseThreadExecutionLeaseLocked()
+	}
+	loopStarted := th.pluginExecutionLease != nil && th.pluginLeaseReleaseLoop
+	th.mu.Unlock()
+	if admissionErr != nil || !acquired || !loopStarted {
+		t.Fatalf("foreground lease did not wait for its background worker: acquired=%v loop=%v err=%v", acquired, loopStarted, admissionErr)
 	}
 	publishReloadBehaviorGeneration(t, rt, "new implementation", "Read the fixture")
 	srv.retireIdlePluginRuntimes()
@@ -250,15 +266,19 @@ func TestPluginReloadWaitsForOutstandingBackgroundWork(t *testing.T) {
 	unblock()
 	waitForAgentStatus(t, control, spawned.AgentID, subagent.StatusCompleted)
 	waitForWorkerFinalization(t, control)
-	next, err := srv.ensureThreadRuntime(th)
-	if err != nil {
-		t.Fatal(err)
+	// No new turn or runtime acquisition may be needed to retire the process.
+	waitPluginGenerationWatchTest(t, func() bool {
+		th.mu.Lock()
+		retired := th.execRuntime == nil && th.pluginExecutionLease == nil
+		th.mu.Unlock()
+		shutdown, err := os.ReadFile(shutdownPath)
+		return retired && err == nil && string(shutdown) == "old implementation"
+	})
+	if len(oldHost.Statuses()) != 0 || len(oldHost.ToolDefinitions()) != 0 {
+		t.Fatal("quiescent background generation retained its host registrations")
 	}
-	if next == first {
-		t.Fatal("idle runtime retained the superseded generation after worker finalization")
-	}
-	if !rt.IsCurrentPluginGeneration(next.PluginGeneration) {
-		t.Fatal("idle runtime did not acquire the published generation")
+	if statuses := rt.PluginHost.Statuses(); len(statuses) != 1 || statuses[0].State != pluginhost.StateActive {
+		t.Fatalf("background retirement affected the live generation: %+v", statuses)
 	}
 }
 

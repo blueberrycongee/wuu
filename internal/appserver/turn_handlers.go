@@ -1270,6 +1270,11 @@ func (s *Server) ensureThreadRuntime(th *threadState) (*runtime.ThreadRuntime, e
 		}
 		th.execRuntime = threadRuntime
 		th.runtimeSubscription = sub
+		th.onPluginLeaseQuiescent = func() {
+			// Retirement joins subscriptions and finalizers, so the lease
+			// release loop only schedules server-owned cleanup after unlocking.
+			s.startBackground(s.retireIdlePluginRuntimes)
+		}
 		th.runtimePluginEpoch = s.pluginGenerationEpoch.Load()
 		th.runtimePluginRevision = s.pluginRuntimeRevision.Load()
 		th.mu.Unlock()

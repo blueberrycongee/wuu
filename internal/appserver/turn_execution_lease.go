@@ -279,7 +279,13 @@ func (th *threadState) schedulePluginGenerationLeaseReleaseLocked() {
 			if !th.running && (th.execRuntime == nil || !threadRuntimeHasOutstandingWork(th.ID, th.execRuntime)) {
 				th.releasePluginGenerationExecutionLeaseLocked()
 				th.pluginLeaseReleaseLoop = false
+				onQuiescent := th.onPluginLeaseQuiescent
 				th.mu.Unlock()
+				// This is the reliable drain boundary, including recovered
+				// finalizations and terminal notifications dropped by fanout.
+				if onQuiescent != nil {
+					onQuiescent()
+				}
 				return
 			}
 			th.mu.Unlock()

@@ -20,6 +20,8 @@ The current local installer stages packages and updates for a separate trust dec
 
 ## Runtime generations
 
+Reload does not transfer arbitrary process or module variables into the replacement. Keep durable business state in host storage or session records, and version any persistent data whose format can change. Conversation history and plugin implementation lifetime are separate.
+
 A runtime generation groups the selected packages with their processes, tools, capabilities, hooks, skills, MCP connections, service registry, and owned package snapshots. Building a candidate does not immediately replace the active generation.
 
 During preflight, processes initialize and describe their contracts. Only read-phase host services are available then; plugins should start timers and other active behavior in `activate`, not `initialize`. The host checks the candidate before binding it into the session.
