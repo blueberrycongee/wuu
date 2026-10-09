@@ -608,6 +608,7 @@ export function Composer({
   const slashQuery = slashDraft?.query ?? "";
   const slashSkillContextKey = activeContext ? composerRuntimeContextKey(activeContext) : "";
   const slashSkillCountKey = initialized?.extension_trust?.main_session?.skills?.count ?? 0;
+  const slashSkillInventory = initialized?.extension_inventory;
   const slashRuntimeReady = Boolean(activeContext && initialized);
   const subscribePluginHost = useCallback(
     (listener: () => void) => pluginHost.subscribe(listener),
@@ -697,6 +698,7 @@ export function Composer({
       return;
     }
     let cancelled = false;
+    setSlashSkills([]);
     void loadSlashSkills();
     return () => {
       cancelled = true;
@@ -714,7 +716,7 @@ export function Composer({
         }
       }
     }
-  }, [readOnly, slashRuntimeReady, slashSkillContextKey, slashSkillCountKey, textOnly, skillThreadID]);
+  }, [readOnly, slashRuntimeReady, slashSkillContextKey, slashSkillCountKey, slashSkillInventory, textOnly, skillThreadID]);
 
   useEffect(() => {
     if (readOnly) {

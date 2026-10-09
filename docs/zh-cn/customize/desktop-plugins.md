@@ -35,7 +35,15 @@ manifest 的 `contributes.slots`、`surfaces`、`presenters` 描述贡献，桌�
 
 ## Presenter 和动作
 
-Presenter 接收 `contractVersion`、目标、可选匹配键、公开快照、当前边界的 `host` 和 `fallback`。包装模式应把当前 fallback 保留在输出中；替换模式负责整个边界。宿主处理多个替换之间的竞争并组合包装，渲染失败时在受影响的边界回退。
+Presenter 接收 `contractVersion`、目标、可选匹配键、公开 `snapshot`、当前边界的 `host`，以及三种组合方式：
+
+- `next()` 继续执行下一个 Presenter；`next({ snapshot })` 只为下游 Presenter 提供替换快照。
+- `fallback` 等价于使用当前快照的 `next()`，保留现有包装的行为。
+- `original` 是宿主原生渲染，跳过剩余 Presenter。改变快照不会改变这份原生渲染。
+
+包装始终位于替换之外，优先级越高的包装越靠外。用户首选的替换先执行；替换可自行渲染整个边界，也可显式通过 `next()` / `fallback` 让下游处理。下游 Presenter 只有在输出被纳入时才会挂载。不要修改共享快照；需要调整时向 `next` 传入新值，并保持目标的快照契约。
+
+贡献渲染失败时，使用其未经修改的传入快照回退到下一个 Presenter。插件的其余部分保持加载；重新激活后，失败的贡献可再次运行。
 
 当前内置目标为 `conversation.item`、`conversation.process`、`conversation.tool-activity`、`conversation.composer`、`header.conversation`、`header.workspace`、`navigation.primary`、`app.status`、`content.preview` 和 `settings`。TypeScript 类型允许更多字符串，不代表宿主会渲染任意新目标。
 

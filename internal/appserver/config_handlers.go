@@ -227,7 +227,7 @@ func (s *Server) currentGeneralSettingsSummary() GeneralSettingsSummary {
 		summary.PTC = cfg.PTC
 		summary.ExecutionEnvironments = cfg.ExecutionEnvironments
 		activePluginServers := make(map[string]bool)
-		for _, item := range s.rt.Plugins {
+		for _, item := range s.rt.ExtensionSnapshot().Plugins {
 			for name := range item.MCPServers {
 				activePluginServers[runtime.PluginMCPServerName(item.ID, name)] = true
 			}
@@ -295,10 +295,11 @@ func (s *Server) currentExtensionTrustSummary() ExtensionTrustSummary {
 				mcpKnownTools = len(manager.AllTools())
 			}
 		}
+		snapshot := s.rt.ExtensionSnapshot()
 		main.MCP = extensionSurfaceSummary(mcpKnownTools > 0, mcpKnownTools)
-		main.Skills = extensionSurfaceSummary(len(s.rt.Skills) > 0, len(s.rt.Skills))
+		main.Skills = extensionSurfaceSummary(len(snapshot.Skills) > 0, len(snapshot.Skills))
 		main.Hooks = ExtensionSurfaceTrustSummary{Allowed: s.rt.HookDispatcher != nil, Active: hookDispatcherHasAny(s.rt.HookDispatcher)}
-		main.Plugins = ExtensionSurfaceTrustSummary{Allowed: true, Active: len(s.rt.ActivePlugins) > 0, Count: len(s.rt.ActivePlugins)}
+		main.Plugins = ExtensionSurfaceTrustSummary{Allowed: true, Active: len(snapshot.ActivePlugins) > 0, Count: len(snapshot.ActivePlugins)}
 		main.ExternalTools = main.MCP
 	}
 	reviewer := ExtensionSessionTrustSummary{
@@ -319,31 +320,40 @@ func (s *Server) currentExtensionInventory() []ExtensionInventoryRecord {
 	if s == nil || s.rt == nil {
 		return nil
 	}
+	return s.extensionInventory(s.rt.ExtensionSnapshot())
+}
+
+func (s *Server) currentExtensionState() ([]ExtensionInventoryRecord, []SkillSummary) {
+	snapshot := s.rt.ExtensionSnapshot()
+	return s.extensionInventory(snapshot), s.skillSummaries(snapshot.Skills, s.rt.RootDir)
+}
+
+func (s *Server) extensionInventory(snapshot runtime.ExtensionSnapshot) []ExtensionInventoryRecord {
 	cfg := s.currentExtensionConfig()
 	grants := extensions.Settings{}
 	if cfg.Extensions != nil {
 		grants = *cfg.Extensions
 	}
-	if s.rt.ExtensionSettings != nil {
-		grants = *s.rt.ExtensionSettings
+	if snapshot.ExtensionSettings != nil {
+		grants = *snapshot.ExtensionSettings
 	}
 	pluginsByID := make(map[string]struct {
 		scope    string
 		official bool
-	}, len(s.rt.Plugins))
-	for _, item := range s.rt.Plugins {
+	}, len(snapshot.Plugins))
+	for _, item := range snapshot.Plugins {
 		pluginsByID[item.ID] = struct {
 			scope    string
 			official bool
 		}{scope: normalizedExtensionScope(item.Source, item.ManifestPath, s.rt.RootDir), official: item.Official}
 	}
-	activePluginSubjects := make(map[string]struct{}, len(s.rt.ActivePlugins))
-	for _, item := range s.rt.ActivePlugins {
+	activePluginSubjects := make(map[string]struct{}, len(snapshot.ActivePlugins))
+	for _, item := range snapshot.ActivePlugins {
 		activePluginSubjects[item.SubjectID] = struct{}{}
 	}
 	runtimeStatuses := make(map[string]pluginhost.Status)
-	if s.rt.PluginHost != nil {
-		for _, status := range s.rt.PluginHost.Statuses() {
+	if snapshot.PluginHost != nil {
+		for _, status := range snapshot.PluginHost.Statuses() {
 			runtimeStatuses[status.ID] = status
 		}
 	}
@@ -354,12 +364,14 @@ func (s *Server) currentExtensionInventory() []ExtensionInventoryRecord {
 		}
 	}
 	packageActivationIssues := make(map[string][]pluginpkg.ActivationIssue)
-	if plan, err := runtime.ResolvePluginActivationPlan(cfg, s.rt.Plugins); err == nil {
+	packageDependencies := make(map[string][]string)
+	if plan, err := runtime.ResolvePluginActivationPlan(cfg, snapshot.Plugins); err == nil {
 		packageActivationIssues = plan.Issues
+		packageDependencies = plan.Dependencies
 	}
 
-	records := make([]ExtensionInventoryRecord, 0, len(s.rt.Skills)+len(s.rt.Plugins))
-	for _, skill := range s.rt.Skills {
+	records := make([]ExtensionInventoryRecord, 0, len(snapshot.Skills)+len(snapshot.Plugins))
+	for _, skill := range snapshot.Skills {
 		source := strings.TrimSpace(skill.Source)
 		scope := normalizedExtensionScope(source, skill.Path, s.rt.RootDir)
 		pluginID := strings.TrimPrefix(source, "plugin:")
@@ -383,7 +395,7 @@ func (s *Server) currentExtensionInventory() []ExtensionInventoryRecord {
 			State: ExtensionStateActive,
 		})
 	}
-	for _, item := range s.rt.Plugins {
+	for _, item := range snapshot.Plugins {
 		scope := normalizedExtensionScope(item.Source, item.ManifestPath, s.rt.RootDir)
 		pluginSource := pluginManifestSource(item.ManifestPath)
 		if item.SubjectID == "" || item.Fingerprint == "" {
@@ -406,8 +418,6 @@ func (s *Server) currentExtensionInventory() []ExtensionInventoryRecord {
 			switch status.State {
 			case pluginhost.StateStarting:
 				runtimeState = ExtensionRuntimeStarting
-			case pluginhost.StateActive:
-				runtimeState = ExtensionRuntimeActive
 			case pluginhost.StateFailed:
 				runtimeState = ExtensionRuntimeFailed
 			case pluginhost.StateStopped:
@@ -518,6 +528,8 @@ func (s *Server) currentExtensionInventory() []ExtensionInventoryRecord {
 			RuntimeState:         runtimeState,
 			LastError:            lastError,
 			Requires:             cloneSortedStrings(item.Requires),
+			Dependencies:         append([]extensions.PackageDependency(nil), item.Dependencies...),
+			ResolvedDependencies: cloneSortedStrings(packageDependencies[item.ID]),
 			Breaks:               cloneSortedStrings(item.Breaks),
 			Conflicts:            cloneSortedStrings(item.Conflicts),
 			Enabled:              &enabled,
@@ -899,10 +911,11 @@ func (s *Server) handleExtensionPackageUpdate(req Request) error {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	defer releaseMutation()
+	snapshot := s.rt.ExtensionSnapshot()
 	var selected *pluginpkg.Plugin
-	for index := range s.rt.Plugins {
-		if s.rt.Plugins[index].SubjectID == strings.TrimSpace(params.ID) {
-			selected = &s.rt.Plugins[index]
+	for index := range snapshot.Plugins {
+		if snapshot.Plugins[index].SubjectID == strings.TrimSpace(params.ID) {
+			selected = &snapshot.Plugins[index]
 			break
 		}
 	}
@@ -928,7 +941,7 @@ func (s *Server) handleExtensionPackageUpdate(req Request) error {
 		return s.writeResponse(req.ID, nil, fmt.Errorf("resolve user config: %w", err))
 	}
 	approvedAt := time.Now().UTC()
-	preparedSettings := cloneExtensionSettings(s.rt.ExtensionSettings)
+	preparedSettings := cloneExtensionSettings(snapshot.ExtensionSettings)
 	if err := applyExtensionPackageAction(&preparedSettings, params.Action, *selected, approvedAt); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
@@ -1003,9 +1016,10 @@ func (s *Server) handleExtensionCatalogRefresh(req Request) error {
 	if err := s.rt.RefreshExtensions(s.currentExtensionConfig()); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
+	inventory, skills := s.currentExtensionState()
 	return s.writePluginGenerationResponse(req, ExtensionCatalogRefreshResult{
-		ExtensionInventory: s.currentExtensionInventory(),
-		Skills:             s.skillSummaries(s.rt.Skills, s.rt.RootDir),
+		ExtensionInventory: inventory,
+		Skills:             skills,
 	}, nil, releaseMutation)
 }
 
@@ -1952,7 +1966,7 @@ func (s *Server) handleSkillList(req Request) error {
 
 func (s *Server) skillCatalog(threadID string) ([]skills.Skill, string, error) {
 	if strings.TrimSpace(threadID) == "" {
-		return s.rt.Skills, s.rt.RootDir, nil
+		return s.rt.ExtensionSnapshot().Skills, s.rt.RootDir, nil
 	}
 	th, err := s.ensureThreadLoaded(threadID)
 	if err != nil {
@@ -1977,7 +1991,7 @@ func (s *Server) skillCatalog(threadID string) ([]skills.Skill, string, error) {
 	root := th.CWD
 	th.mu.Unlock()
 	if sessionWorkspacePath(root) == sessionWorkspacePath(s.rt.RootDir) {
-		return s.rt.Skills, s.rt.RootDir, nil
+		return s.rt.ExtensionSnapshot().Skills, s.rt.RootDir, nil
 	}
 	// Engines without a native toolkit cannot resolve a different checkout's catalog.
 	return nil, root, nil

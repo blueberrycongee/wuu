@@ -14,8 +14,9 @@ func (s *Session) PluginGenerationSnapshot() session.PluginGenerationSnapshot {
 	if s == nil {
 		return session.PluginGenerationSnapshot{}
 	}
-	bindings := make([]session.PluginGenerationBinding, 0, len(s.ActivePlugins))
-	for _, plugin := range s.ActivePlugins {
+	active := s.ExtensionSnapshot().ActivePlugins
+	bindings := make([]session.PluginGenerationBinding, 0, len(active))
+	for _, plugin := range active {
 		bindings = append(bindings, session.PluginGenerationBinding{
 			ID:          plugin.ID,
 			Fingerprint: plugin.Fingerprint,

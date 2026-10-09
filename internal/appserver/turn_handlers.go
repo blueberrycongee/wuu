@@ -3576,11 +3576,18 @@ func (s *Server) drainQueuedTurns(threadID string) (capacityFull bool) {
 		s.clearQueuedTurnDrain(threadID)
 		return
 	}
+	if s.beforeQueuedTurnThreadLookupForTest != nil {
+		s.beforeQueuedTurnThreadLookupForTest()
+	}
 	th := s.thread(threadID)
 	if th == nil {
 		discardedEntries := s.discardQueuedTurns(threadID)
 		for _, entry := range discardedEntries {
-			s.notifyPluginTurnDiscarded(threadID, entry, "thread no longer exists")
+			if s.closed.Load() {
+				s.notifyPluginTurnDiscardedWithRetry(threadID, entry, "app-server closed before queued turn started", true)
+			} else {
+				s.notifyPluginTurnDiscarded(threadID, entry, "thread no longer exists")
+			}
 		}
 		s.clearQueuedTurnDrain(threadID)
 		return
@@ -3612,6 +3619,15 @@ func (s *Server) drainQueuedTurns(threadID string) (capacityFull bool) {
 		executionBusy = false
 		retryableAdmission = false
 		requeueCandidate = false
+	}
+	if errors.Is(err, errServerClosed) && entry.snapshot.PluginTurn != nil {
+		// A claimed item is no longer in Close's pending-queue snapshot. Only
+		// shutdown before durable admission is replayable; a rejected launcher
+		// can also return errServerClosed after the user turn was appended.
+		if _, admitted := s.findSessionInput(th, entry.msg.ClientID); !admitted {
+			s.notifyPluginTurnDiscardedWithRetry(threadID, entry, "app-server closed before queued turn started", true)
+			err = nil
+		}
 	}
 	if err != nil && !executionBusy && !retryableAdmission && !errors.Is(err, errQueuedTurnCancelled) {
 		providers.DebugLogf("start queued turn for thread %q: %v", threadID, err)
@@ -3950,8 +3966,14 @@ func (s *Server) startQueuedTurn(ctx context.Context, threadID string, entry que
 	}
 	entry.msg.Steered = false
 
+	if s.beforeQueuedTurnThreadLookupForTest != nil {
+		s.beforeQueuedTurnThreadLookupForTest()
+	}
 	th := s.thread(threadID)
 	if th == nil {
+		if s.closed.Load() {
+			return false, errServerClosed
+		}
 		return false, fmt.Errorf("thread %q not found", threadID)
 	}
 	var threadRuntime *runtime.ThreadRuntime

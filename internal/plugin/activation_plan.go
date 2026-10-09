@@ -11,6 +11,8 @@ type ActivationIssueKind string
 const (
 	ActivationIssueMissingRequirement ActivationIssueKind = "missing_requirement"
 	ActivationIssueConflict           ActivationIssueKind = "conflict"
+	ActivationIssueVersionMismatch    ActivationIssueKind = "version_mismatch"
+	ActivationIssueOptionalCycle      ActivationIssueKind = "optional_cycle"
 )
 
 type ActivationIssue struct {
@@ -19,14 +21,15 @@ type ActivationIssue struct {
 }
 
 type ActivationPlan struct {
-	Plugins []Plugin
-	Issues  map[string][]ActivationIssue
+	Dependencies map[string][]string
+	Plugins      []Plugin
+	Issues       map[string][]ActivationIssue
 }
 
-// BuildActivationPlan applies the manifest's simple package relationships.
-// Hard incompatibilities and dependency cycles reject the generation. Missing
-// requirements leave only the dependent package inactive. Soft conflicts are
-// reported without changing activation.
+// BuildActivationPlan resolves installed package relationships without granting
+// trust or installing packages. Hard incompatibilities and required dependency
+// cycles reject the generation. Missing or incompatible requirements deactivate
+// their dependents. Optional edges never block activation.
 func BuildActivationPlan(candidates []Plugin) (ActivationPlan, error) {
 	byID := make(map[string]Plugin, len(candidates))
 	ids := make([]string, 0, len(candidates))
@@ -38,6 +41,7 @@ func BuildActivationPlan(candidates []Plugin) (ActivationPlan, error) {
 		if _, exists := byID[id]; exists {
 			return ActivationPlan{}, fmt.Errorf("plugin activation contains duplicate id %q", id)
 		}
+		candidate.Requires = candidate.RequiredPluginIDs()
 		byID[id] = candidate
 		ids = append(ids, id)
 	}
@@ -51,6 +55,21 @@ func BuildActivationPlan(candidates []Plugin) (ActivationPlan, error) {
 	for changed := true; changed; {
 		changed = false
 		for _, id := range ids {
+			if !available[id] {
+				continue
+			}
+			for _, dependency := range byID[id].Dependencies {
+				matches, err := matchesDependencyVersion(byID[dependency.ID].Version, dependency.Version)
+				if err != nil {
+					return ActivationPlan{}, fmt.Errorf("plugin %q dependency %q: %w", id, dependency.ID, err)
+				}
+				if !dependency.Optional && available[dependency.ID] && !matches {
+					available[id] = false
+					issues[id] = append(issues[id], ActivationIssue{Kind: ActivationIssueVersionMismatch, RelatedPluginID: dependency.ID})
+					changed = true
+					break
+				}
+			}
 			if !available[id] {
 				continue
 			}
@@ -93,14 +112,62 @@ func BuildActivationPlan(candidates []Plugin) (ActivationPlan, error) {
 		}
 	}
 
-	ordered, err := topologicalActivationOrder(byID, available, ids)
+	dependencies := make(map[string][]string)
+	for _, id := range ids {
+		if available[id] {
+			dependencies[id] = append([]string(nil), byID[id].Requires...)
+		}
+	}
+	if _, err := topologicalActivationOrder(byID, available, ids, dependencies); err != nil {
+		return ActivationPlan{}, err
+	}
+	// Optional edges improve order only. Add them deterministically when they
+	// cannot turn a valid required graph into an unusable generation.
+	for _, id := range ids {
+		if !available[id] {
+			continue
+		}
+		optional := append([]Dependency(nil), byID[id].Dependencies...)
+		sort.Slice(optional, func(i, j int) bool { return optional[i].ID < optional[j].ID })
+		for _, dependency := range optional {
+			if !dependency.Optional || !available[dependency.ID] {
+				continue
+			}
+			matches, _ := matchesDependencyVersion(byID[dependency.ID].Version, dependency.Version)
+			if !matches {
+				continue
+			}
+			if dependencyReachable(dependencies, dependency.ID, id, map[string]bool{}) {
+				issues[id] = append(issues[id], ActivationIssue{Kind: ActivationIssueOptionalCycle, RelatedPluginID: dependency.ID})
+				continue
+			}
+			dependencies[id] = normalizeStrings(append(dependencies[id], dependency.ID))
+		}
+	}
+	ordered, err := topologicalActivationOrder(byID, available, ids, dependencies)
 	if err != nil {
 		return ActivationPlan{}, err
 	}
-	return ActivationPlan{Plugins: ordered, Issues: issues}, nil
+	return ActivationPlan{Plugins: ordered, Issues: issues, Dependencies: dependencies}, nil
 }
 
-func topologicalActivationOrder(byID map[string]Plugin, available map[string]bool, ids []string) ([]Plugin, error) {
+func dependencyReachable(graph map[string][]string, from, target string, seen map[string]bool) bool {
+	if from == target {
+		return true
+	}
+	if seen[from] {
+		return false
+	}
+	seen[from] = true
+	for _, next := range graph[from] {
+		if dependencyReachable(graph, next, target, seen) {
+			return true
+		}
+	}
+	return false
+}
+
+func topologicalActivationOrder(byID map[string]Plugin, available map[string]bool, ids []string, dependencies map[string][]string) ([]Plugin, error) {
 	remaining := make(map[string]int)
 	dependents := make(map[string][]string)
 	for _, id := range ids {
@@ -108,7 +175,7 @@ func topologicalActivationOrder(byID map[string]Plugin, available map[string]boo
 			continue
 		}
 		remaining[id] = 0
-		for _, requiredID := range byID[id].Requires {
+		for _, requiredID := range dependencies[id] {
 			if !available[requiredID] {
 				continue
 			}

@@ -511,6 +511,12 @@ func (s *Service) Run(parent context.Context, request RunRequest, opts RunOption
 		if output.overflowed() {
 			result.Error = "PTC output exceeded the byte limit"
 		}
+		// Owner cancellation wins over a guest error racing transport teardown.
+		// The execution context is also canceled by ordinary successful cleanup.
+		if ownerErr := ownerContext.Err(); ownerErr != nil {
+			result.Error = ownerErr.Error()
+			result.Value = nil
+		}
 	}()
 	nextID := 1
 	for {

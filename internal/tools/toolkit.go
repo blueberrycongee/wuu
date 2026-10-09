@@ -306,6 +306,8 @@ func (t *Toolkit) CloneForRoot(rootDir string) (*Toolkit, error) {
 		OnSessionWorkspaceChanged: t.env.OnSessionWorkspaceChanged,
 	}
 
+	env.skillCatalog.Store(t.env.skillCatalog.Load())
+
 	clone := &Toolkit{
 		env:                 &env,
 		boundary:            t.boundary,
@@ -522,14 +524,37 @@ func (t *Toolkit) SetStateDir(dir string) {
 	t.env.StateDir = strings.TrimSpace(dir)
 }
 
-// SetSkills attaches the discovered skills.
+// SetSkills publishes discovered skills while retaining the bound generation's
+// availability gate. Worker rediscovery must not revive revoked plugin skills.
 func (t *Toolkit) SetSkills(s []skills.Skill) {
-	t.env.Skills = s
+	catalog := &skillCatalog{skills: append([]skills.Skill(nil), s...)}
+	for {
+		previous := t.env.skillCatalog.Load()
+		if previous != nil {
+			catalog.available = previous.available
+		}
+		if t.env.skillCatalog.CompareAndSwap(previous, catalog) {
+			return
+		}
+	}
 }
 
-// Skills returns the currently registered skills (read-only).
+// SetSkillsWithAvailability binds an immutable catalog to a generation's live
+// availability gate. The callback must be safe for concurrent use. Passing nil
+// explicitly removes the gate; existing toolkit clones keep their original one.
+func (t *Toolkit) SetSkillsWithAvailability(s []skills.Skill, available func(skills.Skill) bool) {
+	t.env.skillCatalog.Store(&skillCatalog{skills: append([]skills.Skill(nil), s...), available: available})
+}
+
+// FilterAvailableSkills applies the bound generation's gate to newly discovered
+// skills, without replacing its catalog or applying the model surface filter.
+func (t *Toolkit) FilterAvailableSkills(s []skills.Skill) []skills.Skill {
+	return t.env.skillCatalog.Load().filter(s)
+}
+
+// Skills returns currently available skills, before model surface filtering.
 func (t *Toolkit) Skills() []skills.Skill {
-	return t.env.Skills
+	return t.env.AvailableSkills()
 }
 
 // SetSessionID sets the current session ID.

@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "id": "text-analysis-example",
+  "name": "Text Analysis Service",
+  "version": "1.0.0",
+  "description": "Provides a reusable, stateless text analysis service.",
+  "runtime": {
+    "protocol": "wuu-plugin-v1",
+    "command": "node",
+    "args": [
+      "dist/runtime.js"
+    ]
+  }
+}

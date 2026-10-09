@@ -41,7 +41,8 @@ func (p Plugin) PackageContract() (PackageContract, error) {
 		RequestedPermissions: append([]string(nil), p.RequestedPermissions...),
 		ActivityKinds:        append([]string(nil), p.ActivityKinds...),
 		MinimumWuuVersion:    p.MinimumWuuVersion,
-		Requires:             append([]string(nil), p.Requires...),
+		Requires:             p.RequiredPluginIDs(),
+		Dependencies:         append([]Dependency(nil), p.Dependencies...),
 		Breaks:               append([]string(nil), p.Breaks...),
 		Conflicts:            append([]string(nil), p.Conflicts...),
 	}

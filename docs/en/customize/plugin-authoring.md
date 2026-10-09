@@ -30,13 +30,29 @@ This example needs both declared files. Omit `runtime` for a desktop-only or dec
 | `version` | Plugin's version, separate from Wuu's product version |
 | `minimum_wuu_version` | Minimum Wuu CalVer, such as `2026.9.1`; not a substitute for service/API compatibility |
 | `platforms` | Optional supported host platforms |
-| `requires` | Package IDs that must be available; a missing requirement leaves the dependent inactive |
+| `requires` | Legacy required package IDs, without version constraints |
+| `dependencies` | Package relationships as `{ id, version?, optional? }`; required dependencies must be available and match the version constraint |
 | `breaks` | Hard incompatibilities; an active incompatible pair rejects the activation plan |
 | `conflicts` | Soft conflicts reported without automatically disabling either package |
 | `skills`, `hooks`, `mcpServers` | Contributions using the corresponding [skill](skill-authoring.md), [hook](hooks.md), and [MCP](mcp.md) contracts |
 | `contributes` | Commands, themes, settings, UI declarations, and view entry points |
 
-Package relationships are IDs, not version ranges or a dependency downloader. Dependency cycles reject the activation plan. `requested_permissions` describes requested authority; it does not sandbox the plugin process.
+`dependencies` adds version checks without changing the package schema. For example:
+
+```json
+{
+  "dependencies": [
+    { "id": "text-analysis-example", "version": "^1.0.0" },
+    { "id": "draft-export", "version": ">=1.2.0 <2.0.0", "optional": true }
+  ]
+}
+```
+
+Omit `version` to accept any package version. Constraints use SemVer syntax, including exact versions, comparisons, `^`, and `~`; a prerelease must be explicitly admitted by the constraint. These are plugin package versions, not Wuu's product CalVer. `requires` remains supported and combines with required `dependencies`. Do not declare the same dependency as both optional and required.
+
+A missing, disabled, untrusted, or version-incompatible required dependency leaves its consumer and downstream required consumers inactive. Optional dependencies do not block activation when unavailable or incompatible. Available matching dependencies establish provider-before-consumer ordering; required dependency cycles reject the activation plan. An optional ordering edge that would create a cycle is skipped with a diagnostic. Relationships never download, install, enable, or grant trust to another package. `breaks` and `conflicts` remain ID lists. `requested_permissions` describes requested authority; it does not sandbox the plugin process.
+
+Package dependencies and runtime service requirements serve different purposes. A package dependency selects an installed package and its lifecycle order. `provided_services` / `required_services` negotiate a named API and service major version; they do not select by package ID or inherit that package's version. Declare both when a feature needs a specific package and its API. A service-only consumer can instead accept any eligible provider of that service.
 
 ## Declarative contributions
 
@@ -179,6 +195,23 @@ The Peers plugin uses `if_running: "steer"` to deliver terminal replies into act
 Return `provided_services` during initialization and implement `invokeService`. A descriptor contains a dotted lowercase name, strict `MAJOR.MINOR.PATCH` version, and methods with `input_schema` and `output_schema` identifiers. These identifiers name contracts; they are not inline JSON Schema definitions.
 
 Consumers declare the service name and major version, then call the gateway. The host supplies the caller identity and routes to the active provider. Do not address another plugin's process or depend on its private files. A package cannot provide and require the same service name in one initialization result. Missing required services block the consumer; duplicate providers for a name and major version produce diagnostics rather than merging their implementations.
+
+The [service composition example](../../../examples/plugins/service-composition/README.md) contains two buildable packages: a stateless text-analysis provider and a writing-report tool that consumes its version-1 API. It demonstrates both declarations and a real gateway call.
+
+For composition acceptance, exercise more than successful service calls: activate a provider and a consumer with a package-owned skill, then terminate the provider and make its next initialization fail. After a recovery check, verify that retained and new consumer toolkits cannot load the skill or call the revoked contributions, while independent packages and ordinary workspace skills still work. Verify that an already-created prompt remains unchanged. This scenario needs no model request: a JSONL runtime fixture and direct `load_skill` calls can check the lifecycle boundary.
+
+### Reentrant service handlers
+
+The TypeScript runtime adapter keeps ordinary requests ordered by default. Set `RuntimePlugin.concurrentServices` to the names of provided services whose handlers may safely overlap other handlers:
+
+```ts
+const plugin: RuntimePlugin = {
+  concurrentServices: ["example.text.analysis"],
+  // initialize, invokeService, and other callbacks...
+};
+```
+
+Use this only for reentrant handlers: protect shared mutable state and propagate cancellation. In an A → B → A service call chain, A's callback service must be able to run while its original handler awaits B. Opt-in applies to incoming `service.invoke` requests for the listed names; it does not make every tool or capability concurrent, grant service authority, or resolve package dependency cycles. Initialization and activation remain barriers. Shutdown stops new admission and waits for admitted work before cleanup. This is asynchronous overlap in one JavaScript process, not worker-thread execution.
 
 ## Execution and cancellation
 

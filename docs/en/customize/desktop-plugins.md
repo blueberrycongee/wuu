@@ -35,7 +35,15 @@ Manifest declarations under `contributes.slots`, `surfaces`, or `presenters` des
 
 ## Presenters and actions
 
-A presenter receives `contractVersion`, a target, an optional match key, a public snapshot, a scoped `host`, and a `fallback`. A wrapper keeps the current fallback in its output. A replacement renders the whole boundary. The host resolves competing replacements and composes wrappers; render failures fall back at the affected boundary.
+A presenter receives `contractVersion`, a target, an optional match key, a public `snapshot`, a scoped `host`, and three composition choices:
+
+- `next()` continues to the next presenter. `next({ snapshot })` supplies a replacement snapshot to downstream presenters only.
+- `fallback` is equivalent to `next()` with the current snapshot, preserving existing wrappers.
+- `original` is the host's native rendering, bypassing the remaining presenters. A changed snapshot does not alter this native rendering.
+
+Wrappers stay outside replacements, with higher-priority wrappers outermost. The user's preferred replacement runs first; a replacement may render the boundary itself or explicitly delegate with `next()` / `fallback`. Downstream presenters mount only when their output is included. Do not mutate the shared snapshot; pass a new value to `next` when adapting it, and preserve the target's snapshot contract.
+
+A failing contribution falls back to the next presenter with its unmodified incoming snapshot. The rest of the plugin stays loaded; reactivation allows the failed contribution to run again.
 
 Current built-in targets are `conversation.item`, `conversation.process`, `conversation.tool-activity`, `conversation.composer`, `header.conversation`, `header.workspace`, `navigation.primary`, `app.status`, `content.preview`, and `settings`. A permissive TypeScript string type does not mean the host renders arbitrary new targets.
 

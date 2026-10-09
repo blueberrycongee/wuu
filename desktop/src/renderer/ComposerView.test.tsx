@@ -12,6 +12,7 @@ import {
   type PermissionMode,
 } from "./ComposerView";
 import { ImagePreviewProvider } from "./ImagePreview";
+import { initialState, reduceServerEvent, type AppState } from "./AppState";
 import { ConversationSplitPane } from "./ConversationSplitPane";
 import { permissionModeOption } from "./ComposerRuntimeMenus";
 import { COMPOSER_COMMAND_MENU_WIDTH } from "./ComposerTypes";
@@ -2484,6 +2485,51 @@ describe("Composer send control", () => {
     });
     await act(async () => { await Promise.resolve(); });
     expect(window.wuu.listSkills).toHaveBeenCalledWith(expected);
+  });
+
+  it("removes revoked skills on same-epoch inventory updates without refetching on unrelated renders", async () => {
+    const skill: SkillSummary = {
+      name: "dependency-review", path: "/plugins/consumer/skills/review/SKILL.md",
+      source: "plugin:consumer", description: "Review with the provider", user_invocable: true, disable_model_invoke: false,
+    };
+    installSkillList([skill]);
+    const context: RuntimeContext = { kind: "project", project_id: "repo", cwd: "/repo" };
+    const plugin = {
+      id: "user:consumer", name: "Consumer", kind: "plugin" as const, state: "granted" as const,
+      provenance: { kind: "plugin" as const, source: "user", scope: "user", plugin_id: "consumer" },
+      runtime_state: "active" as const,
+    };
+    let state: AppState = { ...initialState, activeContext: context, initialized: initialized() };
+    const inventoryEvent = (runtime_state: "active" | "failed") => ({
+      kind: "notification" as const, workdir: context.cwd,
+      message: { method: "plugin/inventory/changed", params: {
+        epoch: 7, extension_inventory: [{ ...plugin, runtime_state }], skills: runtime_state === "active" ? [skill] : [],
+      } },
+    });
+    state = reduceServerEvent(state, inventoryEvent("active"));
+    const render = () => renderComposer({
+      initialized: state.initialized!, activeContext: context, prompt: "/dependency-review",
+    });
+    render();
+    await act(async () => { await Promise.resolve(); });
+    const skillOption = () => document.body.querySelector('[id$="-skill:dependency-review"]');
+    expect(skillOption()).not.toBeNull();
+    expect(window.wuu.listSkills).toHaveBeenCalledTimes(1);
+
+    state = { ...state, initialized: { ...state.initialized!, model: "updated-model" } };
+    render();
+    await act(async () => { await Promise.resolve(); });
+    expect(window.wuu.listSkills).toHaveBeenCalledTimes(1);
+    expect(skillOption()).not.toBeNull();
+
+    let finish!: (value: { skills: SkillSummary[] }) => void;
+    vi.mocked(window.wuu.listSkills).mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    state = reduceServerEvent(state, inventoryEvent("failed"));
+    render();
+    expect(window.wuu.listSkills).toHaveBeenCalledTimes(2);
+    expect(skillOption()).toBeNull();
+    await act(async () => { finish({ skills: [] }); });
+    expect(skillOption()).toBeNull();
   });
 
   it.each(["review", "commit", "audit", "compact", "release-check"])("preserves explicitly selected %s skill identity", async (name) => {

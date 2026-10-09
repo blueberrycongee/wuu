@@ -12,6 +12,7 @@ import {
   SETTINGS_ACTIONS,
   STATUS_ACTIONS,
   VIEW_PLACEMENT_REGIONS,
+  createManifest,
   handleRuntimeRequest,
   kernelServiceCall,
   requireKernelService,
@@ -296,4 +297,16 @@ const serviceChanged = await handleRuntimeRequest(servicePlugin, {
 });
 if (!("result" in serviceChanged)) {
   throw new Error(`unexpected service.changed response: ${JSON.stringify(serviceChanged)}`);
+}
+
+await import("./runtime-composition.test.js");
+
+const dependentManifest = createManifest({
+  id: "workspace-sidebar",
+  requires: ["workspace-core"],
+  dependencies: [{ id: "workspace-core", version: "^2.0.0" }, { id: "notes", optional: true }],
+});
+if (JSON.stringify(dependentManifest.requires) !== '["workspace-core"]'
+  || JSON.stringify(dependentManifest.dependencies) !== '[{"id":"workspace-core","version":"^2.0.0"},{"id":"notes","optional":true}]') {
+  throw new Error("createManifest lost dependency declarations");
 }

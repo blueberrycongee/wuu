@@ -27,6 +27,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Add a subtle, continuous divider below the conversation titlebar and the
+  right workspace panel header, using the same theme-aware line strength.
+
 - Paint the light navigation rail as one opaque near-white surface on every
   platform instead of the macOS sidebar material, whose wallpaper-tinted gray
   read as dirt beside the white canvas. Workspace tabs now fit their titles,

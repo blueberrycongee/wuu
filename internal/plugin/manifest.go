@@ -111,6 +111,7 @@ type Manifest struct {
 	SettingsPages        []ViewEntryContributionSpec       `json:"settings_pages,omitempty"`
 	Interface            json.RawMessage                   `json:"interface,omitempty"`
 	Platforms            []string                          `json:"platforms,omitempty"`
+	Dependencies         []Dependency                      `json:"dependencies,omitempty"`
 	Requires             []string                          `json:"requires,omitempty"`
 	Breaks               []string                          `json:"breaks,omitempty"`
 	Conflicts            []string                          `json:"conflicts,omitempty"`
@@ -445,6 +446,7 @@ type rawManifest struct {
 	Desktop                json.RawMessage `json:"desktop"`
 	Interface              json.RawMessage `json:"interface"`
 	Platforms              []string        `json:"platforms"`
+	Dependencies           json.RawMessage `json:"dependencies"`
 	Requires               []string        `json:"requires"`
 	Breaks                 []string        `json:"breaks"`
 	Conflicts              []string        `json:"conflicts"`
@@ -476,7 +478,7 @@ var supportedManifestFields = map[string]struct{}{
 	"homepage": {}, "repository": {}, "license": {}, "keywords": {},
 	"skills": {}, "runtime": {}, "hooks": {}, "mcpServers": {}, "mcp_servers": {},
 	"contributes": {}, "desktop": {}, "interface": {}, "platforms": {},
-	"requires": {}, "breaks": {}, "conflicts": {},
+	"dependencies": {}, "requires": {}, "breaks": {}, "conflicts": {},
 	"requestedPermissions": {}, "requested_permissions": {},
 	"activityKinds": {}, "activity_kinds": {},
 	"officialNativeHelper": {}, "official_native_helper": {},
@@ -542,6 +544,10 @@ func normalizeManifest(data []byte, root string, official bool) (Manifest, error
 		return Manifest{}, fmt.Errorf("requires id or name")
 	}
 	requires, err := normalizePackageRelationships(id, "requires", raw.Requires)
+	if err != nil {
+		return Manifest{}, err
+	}
+	dependencies, requires, err := normalizeDependencies(id, raw.Dependencies, requires)
 	if err != nil {
 		return Manifest{}, err
 	}
@@ -646,6 +652,7 @@ func normalizeManifest(data []byte, root string, official bool) (Manifest, error
 		Interface:            cloneRaw(raw.Interface),
 		Platforms:            normalizeStrings(raw.Platforms),
 		Requires:             requires,
+		Dependencies:         dependencies,
 		Breaks:               breaks,
 		Conflicts:            conflicts,
 		RequestedPermissions: requested,

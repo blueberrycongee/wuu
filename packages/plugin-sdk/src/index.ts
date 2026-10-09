@@ -9,6 +9,8 @@
  * @module
  */
 
+import type { PluginDependency } from "./bundle-contract.js";
+
 import type {
   PublicIconName,
   PublicSyntaxTokenName,
@@ -1288,6 +1290,13 @@ export async function importArtifact(
 }
 
 export interface RuntimePlugin {
+  /**
+   * Service names whose handlers may overlap tools, capabilities, and services.
+   * Opt in only when handlers are safe for concurrent access. This permits a
+   * service callback into a plugin already awaiting another plugin. Other
+   * requests remain ordered; lifecycle requests are barriers for all handlers.
+   */
+  concurrentServices?: readonly string[];
   initialize(params: RuntimeInitializeParams, host: RuntimeHost): RuntimeInitializeResult | Promise<RuntimeInitializeResult>;
   activate?(host: RuntimeHost): void | Promise<void>;
   invokeCapability?(params: CapabilityInvokeParams, host: RuntimeHost, execution: RuntimeExecutionContext): CapabilityInvokeResult | Promise<CapabilityInvokeResult>;
@@ -1423,6 +1432,7 @@ type PendingHostCall = {
 
 class JSONLRuntimeHost implements RuntimeHost {
   private sequence = 0;
+  private closed = false;
   private supported = new Set<HostServiceMethod>();
   private readonly pending = new Map<string, PendingHostCall>();
 
@@ -1440,6 +1450,7 @@ class JSONLRuntimeHost implements RuntimeHost {
     method: M,
     params: HostServiceContracts[M]["params"],
   ): Promise<HostServiceContracts[M]["result"]> {
+    if (this.closed) return Promise.reject(new Error("runtime transport closed"));
     if (!this.supports(method)) {
       return Promise.reject(new Error(`host service ${method} is not supported`));
     }
@@ -1473,6 +1484,7 @@ class JSONLRuntimeHost implements RuntimeHost {
   }
 
   close(): void {
+    this.closed = true;
     for (const pending of this.pending.values()) {
       pending.reject(new Error("runtime transport closed"));
     }
@@ -1492,16 +1504,20 @@ export async function runJSONLRuntime(
     return next;
   };
   const host = new JSONLRuntimeHost(send);
-  const executions = new Map<string, AbortController>();
+  const executions = new Map<string, Set<AbortController>>();
   const active = new Set<Promise<void>>();
+  const concurrentServices = new Set(plugin.concurrentServices ?? []);
   let requests = Promise.resolve();
+  let lifecycle = requests;
+  let shuttingDown = false;
   const track = (task: Promise<void>): void => {
-    requests = task.catch(() => undefined);
     active.add(task);
     void task.then(() => active.delete(task), () => active.delete(task));
   };
   const enqueueResponse = (value: unknown): void => {
-    track(requests.then(() => send(value)));
+    const task = requests.then(() => send(value));
+    requests = task.catch(() => undefined);
+    track(task);
   };
   const processLine = (line: string): void => {
     if (line.trim() === "") return;
@@ -1514,40 +1530,65 @@ export async function runJSONLRuntime(
     }
     if (host.route(parsed)) return;
     if (isExecutionCancelRequest(parsed)) {
-      executions.get(parsed.params.execution_id)?.abort();
+      for (const controller of executions.get(parsed.params.execution_id) ?? []) controller.abort();
       return;
     }
     if (!isRuntimeRequest(parsed)) {
       enqueueResponse({ id: "invalid", error: { message: "invalid runtime request" } });
       return;
     }
-    if (parsed.method === "initialize") host.configure(parsed.params.supported_host_services);
+    if (shuttingDown) {
+      track(send({ id: parsed.id, error: { message: "runtime is shutting down" } }));
+      return;
+    }
+    const isLifecycle = parsed.method === "initialize" || parsed.method === "activate" || parsed.method === "shutdown";
+    if (parsed.method === "shutdown") shuttingDown = true;
+    const concurrent = parsed.method === "service.invoke" && concurrentServices.has(parsed.params.service);
     const executionId = runtimeRequestExecutionId(parsed);
     const controller = new AbortController();
-    if (executionId !== "") executions.set(executionId, controller);
+    // Even legacy requests without an execution id must stop on transport loss.
+    let controllers = executions.get(executionId);
+    if (!controllers) executions.set(executionId, controllers = new Set());
+    controllers.add(controller);
     const execution = { executionId, signal: controller.signal } satisfies RuntimeExecutionContext;
-    const task = requests
-      .then(() => handleRuntimeRequest(plugin, parsed, host, execution))
+    // A lifecycle frame waits for everything already admitted. Opted-in
+    // service calls may bypass ordinary work, but never an earlier lifecycle
+    // frame. Capture the barrier now so later frames cannot create a cycle.
+    const ready = isLifecycle ? Promise.all([...active]) : concurrent ? lifecycle : requests;
+    const task = ready
+      .then(() => {
+        if (parsed.method === "initialize") host.configure(parsed.params.supported_host_services);
+        return handleRuntimeRequest(plugin, parsed, host, execution);
+      })
       .then(send)
       .finally(() => {
-        if (executionId !== "" && executions.get(executionId) === controller) executions.delete(executionId);
+        const controllers = executions.get(executionId);
+        controllers?.delete(controller);
+        if (controllers?.size === 0) executions.delete(executionId);
       });
+    if (!concurrent) requests = task.catch(() => undefined);
+    if (isLifecycle) lifecycle = requests;
     track(task);
   };
   const decoder = new TextDecoder();
   let buffered = "";
-  for await (const chunk of streams.input) {
-    buffered += typeof chunk === "string" ? chunk : decoder.decode(chunk, { stream: true });
-    const lines = buffered.split("\n");
-    buffered = lines.pop() ?? "";
-    for (const line of lines) processLine(line);
+  try {
+    for await (const chunk of streams.input) {
+      buffered += typeof chunk === "string" ? chunk : decoder.decode(chunk, { stream: true });
+      const lines = buffered.split("\n");
+      buffered = lines.pop() ?? "";
+      for (const line of lines) processLine(line);
+    }
+    buffered += decoder.decode();
+    if (buffered.trim() !== "") processLine(buffered);
+  } finally {
+    host.close();
+    for (const controllers of executions.values()) {
+      for (const controller of controllers) controller.abort();
+    }
+    await Promise.all(active);
+    await writes;
   }
-  buffered += decoder.decode();
-  if (buffered.trim() !== "") processLine(buffered);
-  host.close();
-  for (const controller of executions.values()) controller.abort();
-  await Promise.all(active);
-  await writes;
 }
 
 function isExecutionCancelRequest(value: unknown): value is RuntimeExecutionCancelRequest {
@@ -1918,6 +1959,11 @@ export interface PresenterProps {
   readonly key?: string;
   readonly snapshot: unknown;
   readonly host: PresentationHost;
+  /** Original host rendering, unaffected by other presenters. */
+  readonly original: unknown;
+  /** Lazily continue with lower-priority presenters, optionally with a new snapshot. */
+  readonly next: (input?: { readonly snapshot: unknown }) => unknown;
+  /** Equivalent to next() with the current snapshot. */
   readonly fallback: unknown;
 }
 
@@ -2036,6 +2082,8 @@ export function createManifest(options: {
   version?: string;
   description?: string;
   icon?: PluginManifestIcon;
+  requires?: string[];
+  dependencies?: PluginDependency[];
 }): Record<string, unknown> {
   return {
     schema_version: 1,
@@ -2044,6 +2092,8 @@ export function createManifest(options: {
     version: options.version ?? "0.1.0",
     description: options.description ?? `A Wuu plugin: ${options.id}`,
     ...(options.icon ? { icon: options.icon } : {}),
+    ...(options.requires ? { requires: options.requires } : {}),
+    ...(options.dependencies ? { dependencies: options.dependencies } : {}),
   };
 }
 

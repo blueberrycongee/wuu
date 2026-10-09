@@ -44,10 +44,11 @@ func (s *Server) handlePluginDesktopModuleRead(req Request) error {
 		return s.writeResponse(req.ID, nil, errors.New("plugin id and fingerprint are required"))
 	}
 
+	snapshot := s.rt.ExtensionSnapshot()
 	var selected *pluginpkg.Plugin
-	for index := range s.rt.Plugins {
-		if s.rt.Plugins[index].SubjectID == params.ID {
-			selected = &s.rt.Plugins[index]
+	for index := range snapshot.Plugins {
+		if snapshot.Plugins[index].SubjectID == params.ID {
+			selected = &snapshot.Plugins[index]
 			break
 		}
 	}
@@ -72,8 +73,8 @@ func (s *Server) handlePluginDesktopModuleRead(req Request) error {
 	fresh.AuthorizedDev = selected.AuthorizedDev
 
 	settings := extensions.Settings{}
-	if s.rt.ExtensionSettings != nil {
-		settings = *s.rt.ExtensionSettings
+	if snapshot.ExtensionSettings != nil {
+		settings = *snapshot.ExtensionSettings
 	} else if cfg := s.currentExtensionConfig(); cfg.Extensions != nil {
 		settings = *cfg.Extensions
 	}
@@ -82,6 +83,9 @@ func (s *Server) handlePluginDesktopModuleRead(req Request) error {
 	active := state == ExtensionStateGranted || state == ExtensionStateActive
 	if !enabled || !approved || !active {
 		return s.writeResponse(req.ID, nil, errors.New("desktop plugin is not approved and enabled"))
+	}
+	if err := desktopPluginRuntimeError(snapshot.PluginHost, fresh.ID); err != nil {
+		return s.writeResponse(req.ID, nil, err)
 	}
 	if fresh.Desktop == nil {
 		return s.writeResponse(req.ID, nil, errors.New("plugin does not declare a desktop entry"))
@@ -123,10 +127,11 @@ func (s *Server) handlePluginIconRead(req Request) error {
 		return s.writeResponse(req.ID, nil, errors.New("plugin id, fingerprint, and icon path are required"))
 	}
 
+	snapshot := s.rt.ExtensionSnapshot()
 	var selected *pluginpkg.Plugin
-	for index := range s.rt.Plugins {
-		if s.rt.Plugins[index].SubjectID == params.ID {
-			selected = &s.rt.Plugins[index]
+	for index := range snapshot.Plugins {
+		if snapshot.Plugins[index].SubjectID == params.ID {
+			selected = &snapshot.Plugins[index]
 			break
 		}
 	}
@@ -220,12 +225,13 @@ func (s *Server) handlePluginPackageInstall(req Request) error {
 		if err != nil {
 			return s.writeResponse(req.ID, nil, fmt.Errorf("stage plugin package update: %w", err))
 		}
+		inventory, skills := s.currentExtensionState()
 		return s.writePluginGenerationResponse(req, PluginPackageInstallResult{
 			Package:            pluginPackageMetadata(pending.Package),
 			Pending:            true,
 			ActiveFingerprint:  pending.ActiveFingerprint,
-			ExtensionInventory: s.currentExtensionInventory(),
-			Skills:             s.skillSummaries(s.rt.Skills, s.rt.RootDir),
+			ExtensionInventory: inventory,
+			Skills:             skills,
 		}, nil, releaseMutation)
 	} else if !os.IsNotExist(statErr) {
 		return s.writeResponse(req.ID, nil, fmt.Errorf("inspect installed plugin package %q: %w", inspected.ID, statErr))
@@ -263,9 +269,10 @@ func (s *Server) handlePluginPackageRemove(req Request) error {
 	if err := pluginpkg.ValidateInstallID(params.ID); err != nil {
 		return s.writeResponse(req.ID, nil, fmt.Errorf("remove plugin package: %w", err))
 	}
+	snapshot := s.rt.ExtensionSnapshot()
 	var selected *pluginpkg.Plugin
-	for index := range s.rt.Plugins {
-		item := &s.rt.Plugins[index]
+	for index := range snapshot.Plugins {
+		item := &snapshot.Plugins[index]
 		if item.Source == "user" && item.ID == params.ID {
 			selected = item
 			break
@@ -282,7 +289,7 @@ func (s *Server) handlePluginPackageRemove(req Request) error {
 	if err != nil {
 		return s.writeResponse(req.ID, nil, fmt.Errorf("resolve plugin policy path: %w", err))
 	}
-	preparedSettings := cloneExtensionSettings(s.rt.ExtensionSettings)
+	preparedSettings := cloneExtensionSettings(snapshot.ExtensionSettings)
 	preparedSettings.Revoke(selected.SubjectID)
 	cfg := s.currentExtensionConfig()
 	cfg.Extensions = &preparedSettings
@@ -349,11 +356,12 @@ func (s *Server) handlePluginPackageRemove(req Request) error {
 	}
 	s.schedulePluginTurnLifecycleReplay()
 	s.resetThreadRuntimesForGeneralSettings("")
+	inventory, skills := s.currentExtensionState()
 	return s.writePluginGenerationResponse(req, PluginPackageRemoveResult{
 		ID:                 removed.ID,
 		Removed:            removed.Removed,
-		ExtensionInventory: s.currentExtensionInventory(),
-		Skills:             s.skillSummaries(s.rt.Skills, s.rt.RootDir),
+		ExtensionInventory: inventory,
+		Skills:             skills,
 	}, activationErr, releaseMutation)
 }
 
@@ -378,8 +386,9 @@ func (s *Server) handlePendingPluginUpdate(req Request, params ExtensionPackageU
 	if err != nil {
 		return s.writeResponse(req.ID, nil, fmt.Errorf("resolve plugin update policy path: %w", err))
 	}
-	previousSettings := cloneExtensionSettings(s.rt.ExtensionSettings)
-	preparedSettings := cloneExtensionSettings(s.rt.ExtensionSettings)
+	snapshot := s.rt.ExtensionSnapshot()
+	previousSettings := cloneExtensionSettings(snapshot.ExtensionSettings)
+	preparedSettings := cloneExtensionSettings(snapshot.ExtensionSettings)
 	scope := extensions.GrantScopeUser
 	if prior, ok := preparedSettings.Grants[selected.SubjectID]; ok && prior.Scope != "" {
 		scope = prior.Scope
@@ -585,7 +594,8 @@ func (s *Server) refreshPluginPackages() ([]ExtensionInventoryRecord, []SkillSum
 		return nil, nil, err
 	}
 	s.schedulePluginTurnLifecycleReplay()
-	return s.currentExtensionInventory(), s.skillSummaries(s.rt.Skills, s.rt.RootDir), nil
+	inventory, skills := s.currentExtensionState()
+	return inventory, skills, nil
 }
 
 // refreshPluginCatalog updates the installed-package inventory without
@@ -596,7 +606,8 @@ func (s *Server) refreshPluginCatalog() ([]ExtensionInventoryRecord, []SkillSumm
 	if err := s.rt.RefreshPluginCatalog(); err != nil {
 		return nil, nil, err
 	}
-	return s.currentExtensionInventory(), s.skillSummaries(s.rt.Skills, s.rt.RootDir), nil
+	inventory, skills := s.currentExtensionState()
+	return inventory, skills, nil
 }
 
 func pluginPackageMetadata(item pluginpkg.PackageInspection) PluginPackageMetadata {
@@ -624,8 +635,9 @@ func (s *Server) writePluginGenerationResponse(req Request, result any, activati
 	if activationErr == nil {
 		return s.writeResponse(req.ID, result, nil)
 	}
+	inventory, skills := s.currentExtensionState()
 	notifyErr := s.writeNotification(NotificationPluginInventoryChanged, PluginInventoryChangedNotification{
-		Epoch: s.pluginGenerationEpoch.Load(), ExtensionInventory: s.currentExtensionInventory(), Skills: s.skillSummaries(s.rt.Skills, s.rt.RootDir),
+		Epoch: s.pluginGenerationEpoch.Load(), ExtensionInventory: inventory, Skills: skills,
 	})
 	return errors.Join(notifyErr, s.writeResponse(req.ID, nil, activationErr))
 }

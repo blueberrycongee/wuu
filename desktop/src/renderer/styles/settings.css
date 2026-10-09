@@ -210,8 +210,8 @@
   -webkit-app-region: drag;
 }
 
-/* The strip carries no edge at rest, like the conversation titlebar. Once the
- * page scrolls under it, a hairline separates the fixed strip from the moving
+/* The strip carries no edge at rest. Once the page scrolls under it,
+ * a hairline separates the fixed strip from the moving
  * content. Engines without scroll timelines keep the edge-free strip. */
 @supports (timeline-scope: --settings-scroll) and (animation-timeline: --settings-scroll) {
   .settings-main {

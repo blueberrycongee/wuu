@@ -903,7 +903,12 @@ export interface PresenterProps {
   readonly key?: string;
   readonly snapshot: unknown;
   readonly host: PresentationHost;
+  /** Continue through the remaining presenters with the current snapshot. */
   readonly fallback: React.ReactNode;
+  /** The host-owned rendering, bypassing all remaining presenters. */
+  readonly original: React.ReactNode;
+  /** Override only the downstream plugin snapshot; the host rendering is unchanged. */
+  readonly next: (input?: { readonly snapshot: unknown }) => React.ReactNode;
 }
 
 export interface PresenterDefinition {
