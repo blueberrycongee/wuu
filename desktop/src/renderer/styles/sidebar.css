@@ -18,13 +18,14 @@
   --sidebar-resizer-hover-ring: rgba(255, 255, 255, 0.4);
   --sidebar-nav-item-hover-ring: var(--wuu-nav-item-hover-ring, rgba(255, 255, 255, 0.42));
   --sidebar-nav-item-focus-shadow: var(--focus-ring);
-  /* Selection is the row's only location signal, so it must read on the
-   * rail itself: about 1.25:1 against the rail fill, where the shared
-   * --selection-surface (tuned for the white canvas) nearly vanished. */
+  /* Selection is the row's only location signal. In light it is a sheet
+   * of paper lifted off the rail (an edge and a soft shadow) rather than a
+   * darker fill, so the rail stays clean while the row still reads. */
   --sidebar-row-selected-bg: var(
     --wuu-nav-item-active-background,
-    var(--wuu-color-surface-elevated, var(--gray-300))
+    var(--wuu-color-surface-elevated, var(--paper))
   );
+  --sidebar-row-selected-shadow: 0 0 0 1px var(--hairline-soft), 0 1px 2px var(--shadow-color-medium);
   --sidebar-project-row-pending-bg: rgba(255, 255, 255, 0.24);
   --sidebar-project-loading-notch: rgba(19, 19, 20, 0.18);
   --sidebar-row-icon-hover-bg-default: var(--ink-overlay-6);
@@ -1120,7 +1121,7 @@
 }
 
 .nav-item[aria-current="page"] {
-  box-shadow: none;
+  box-shadow: var(--sidebar-row-selected-shadow);
   background: var(--sidebar-row-selected-bg);
   color: var(--ink);
 }
@@ -1132,13 +1133,14 @@
 
 .thread-row.active {
   background: var(--sidebar-row-selected-bg);
+  box-shadow: var(--sidebar-row-selected-shadow);
   color: var(--ink-strong);
   transform: none;
 }
 
 .thread-row.active:hover {
   background: var(--sidebar-row-selected-bg);
-  box-shadow: none;
+  box-shadow: var(--sidebar-row-selected-shadow);
   transform: none;
 }
 

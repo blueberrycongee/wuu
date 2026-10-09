@@ -4,6 +4,12 @@
 :root {
   --settings-canvas: var(--paper);
   --settings-card: var(--wuu-color-surface, var(--gray-0));
+  /* A group is a sheet lifted off the canvas: a large corner, a faint edge
+   * and a soft shadow, so grouping reads without a gray frame. */
+  --settings-group-radius: var(--radius-md);
+  --settings-group-shadow: var(--shadow-soft);
+  /* Row breathing room; empty lines and list rows share it. */
+  --settings-row-pad-block: var(--space-3);
   --subscription-meter: var(--wuu-accent);
   /* Usage charts and the home overview share one ramp: a single blue stepped
    * in lightness, so the four levels and an empty day each read at a glance
@@ -155,6 +161,7 @@
  * widen the label and shift it while switching pages. */
 .settings-nav-item.active {
   background: var(--sidebar-row-selected-bg);
+  box-shadow: var(--sidebar-row-selected-shadow);
   color: var(--ink-strong);
 }
 
@@ -289,9 +296,53 @@
   animation: content-swap-enter var(--content-swap-duration) var(--content-swap-easing) both;
 }
 
+/* --- Titlebar crumb ------------------------------------------------------
+ * "Settings / Page" sits in the window strip, set like the conversation
+ * title, with page actions at its trailing edge. The page opens on its
+ * scope line or first group instead of repeating its name in large type.
+ * ------------------------------------------------------------------------- */
+
+.settings-titlebar {
+  gap: var(--space-2);
+}
+
+.settings-crumb-root,
+.settings-crumb-separator {
+  flex: 0 0 auto;
+  color: var(--ink-tertiary);
+  font-size: var(--font-body);
+  white-space: nowrap;
+}
+
+.settings-titlebar-slot {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.settings-titlebar-slot > .settings-page-title {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink-strong);
+  font-size: var(--font-body);
+  font-weight: var(--weight-medium);
+  letter-spacing: normal;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-titlebar-slot > .settings-page-actions {
+  min-height: 0;
+  margin: 0 0 0 auto;
+  -webkit-app-region: no-drag;
+}
+
 /* --- Page header ----------------------------------------------------------
- * Title, an optional line that states the page's scope, and page actions
- * aligned with the title line.
+ * Outside the settings window (a page rendered alone), the title, its scope
+ * line and page actions form a header at the top of the page.
  * ------------------------------------------------------------------------- */
 
 .settings-page-header {
@@ -363,9 +414,8 @@
 }
 
 /* --- Section --------------------------------------------------------------
- * A section title labels its group; it is the only semibold text on the
- * page besides the page title. Rows stay regular so the hierarchy reads
- * page → section → setting.
+ * A section title is a quiet label above its group. The settings inside
+ * carry the weight, so the eye lands on what can be changed.
  * ------------------------------------------------------------------------- */
 
 .settings-section {
@@ -389,9 +439,9 @@
 
 .settings-section-title {
   margin: 0;
-  color: var(--ink-strong);
+  color: var(--ink-soft);
   font-size: var(--font-ui);
-  font-weight: var(--weight-semibold);
+  font-weight: var(--weight-medium);
   line-height: 1.4;
 }
 
@@ -447,8 +497,8 @@
 }
 
 /* --- Group ----------------------------------------------------------------
- * One hairline enclosure per group; rows inside are separated by the
- * softer tier and never carry their own frames.
+ * One lifted sheet per group; rows inside are separated by the softer
+ * hairline and never carry their own frames.
  * ------------------------------------------------------------------------- */
 
 .settings-group {
@@ -456,7 +506,9 @@
   min-width: 0;
   flex-direction: column;
   border: 1px solid var(--hairline);
-  border-radius: var(--radius-sm);
+  border-radius: var(--settings-group-radius);
+  background: var(--settings-card);
+  box-shadow: var(--settings-group-shadow);
   padding-inline: var(--card-padding);
 }
 
@@ -467,7 +519,7 @@
 /* Empty and loading lines stand in for rows at a row's height. */
 .settings-group-empty {
   display: flex;
-  min-height: calc(var(--control-field-height) + var(--space-2) * 2);
+  min-height: calc(var(--control-field-height) + var(--settings-row-pad-block) * 2);
   align-items: center;
   margin: 0;
   color: var(--ink-tertiary);
@@ -490,9 +542,9 @@
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: var(--space-2) var(--space-6);
-  min-height: calc(var(--control-field-height) + var(--space-2) * 2);
+  min-height: calc(var(--control-field-height) + var(--settings-row-pad-block) * 2);
   border-bottom: 1px solid var(--hairline-soft);
-  padding: var(--space-2) 0;
+  padding: var(--settings-row-pad-block) 0;
 }
 
 /* `block` rows stack the label over a full-width control. */
@@ -516,10 +568,12 @@
   overflow-wrap: anywhere;
 }
 
+/* The setting's name is the anchor of its row; its description stays
+ * regular and soft so the two never compete. */
 .settings-row-label-title {
-  color: var(--ink);
+  color: var(--ink-strong);
   font-size: var(--font-ui);
-  font-weight: var(--weight-regular);
+  font-weight: var(--weight-medium);
   line-height: 1.4;
 }
 
@@ -528,6 +582,7 @@
   font-size: var(--font-sm);
   font-weight: var(--weight-regular);
   line-height: 1.5;
+  max-width: 60ch;
   /* Descriptions can quote paths, which have no spaces to break at. */
   overflow-wrap: anywhere;
 }
@@ -867,10 +922,10 @@
 
 .settings-engine-row {
   display: flex;
-  min-height: calc(var(--control-field-height) + var(--space-2) * 2);
+  min-height: calc(var(--control-field-height) + var(--settings-row-pad-block) * 2);
   align-items: center;
   gap: var(--space-3);
-  padding-block: var(--space-2);
+  padding-block: var(--settings-row-pad-block);
 }
 
 /* Onboarding's agent choice keeps a radio list. */
@@ -899,6 +954,7 @@
  * why. */
 .settings-engine-row-toggle .settings-engine-row-name {
   color: var(--ink-soft);
+  font-weight: var(--weight-regular);
 }
 
 .settings-engine-row-toggle .settings-engine-row-icon {
@@ -945,7 +1001,8 @@
 .settings-engine-row-name {
   min-width: 0;
   overflow: hidden;
-  color: var(--ink);
+  color: var(--ink-strong);
+  font-weight: var(--weight-medium);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1050,8 +1107,9 @@ button.settings-engine-expand:hover {
   gap: var(--space-3);
   padding: var(--card-padding);
   border: 1px solid var(--hairline);
-  border-radius: var(--radius-sm);
+  border-radius: var(--settings-group-radius);
   background: var(--settings-card);
+  box-shadow: var(--settings-group-shadow);
   container: subscription-card / inline-size;
 }
 
@@ -2362,12 +2420,12 @@ button.settings-engine-expand:hover {
 .settings-archive-row {
   display: flex;
   min-width: 0;
-  min-height: calc(var(--control-field-height) + var(--space-2) * 2);
+  min-height: calc(var(--control-field-height) + var(--settings-row-pad-block) * 2);
   align-items: center;
   justify-content: space-between;
   gap: var(--space-4);
   border-bottom: 1px solid var(--hairline-soft);
-  padding: var(--space-2) 0;
+  padding: var(--settings-row-pad-block) 0;
 }
 
 .settings-archive-row:last-child {

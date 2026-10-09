@@ -82,7 +82,7 @@ import { AppearanceTypography } from "./AppearanceTypography";
 import { BackgroundSettings } from "./background/BackgroundSettings";
 import { ExecutionEnvironmentSettings } from "./ExecutionEnvironmentSettings";
 import { SettingsInputUnit, SettingsRow } from "./SettingsRow";
-import { SettingsGroup, SettingsPageHeader, SettingsSection, type SettingsStatusTone } from "./SettingsSection";
+import { SettingsGroup, SettingsPageHeader, SettingsSection, SettingsTitlebarSlot, type SettingsStatusTone } from "./SettingsSection";
 import { toastErrorMessage } from "./Toast";
 import type { ArchiveDeletionState } from "./useArchiveDeletion";
 import { EngineSettingsSection } from "./EngineSettingsSection";
@@ -322,6 +322,7 @@ export function SettingsView({
   const [advancedError, setAdvancedError] = useState<{ field: AdvancedField; message: string } | null>(null);
   const [copyState, setCopyState] = useState<CopyState>("idle");
   const settingsScrollRef = useRef<HTMLDivElement>(null);
+  const [titlebarSlot, setTitlebarSlot] = useState<HTMLDivElement | null>(null);
   // Last persisted draft of each numeric advanced field, recorded when
   // initialized state syncs in and after every successful commit. Blurring
   // an untouched field is a no-op instead of a redundant IPC round-trip.
@@ -759,138 +760,143 @@ export function SettingsView({
         />
       )}
       <main className="settings-main" data-wuu-component="settings-content">
-        <div className="settings-titlebar">
-          {isTouchWebShell() && <button type="button" className="settings-phone-back" aria-label={t("common.back")} onClick={onBack}><ArrowLeft size={22} /></button>}
-          {/* Match the main shell's docked/collapsed slots. Keep the collapsed
-           * toggle inside the drag strip so native hit testing honors no-drag. */}
-          {sidebarCollapsed ? sidebarToggle : null}
-        </div>
-        <div ref={settingsScrollRef} className="settings-scroll">
-          <div
-            className="settings-page"
-            data-wuu-component="settings-page"
-            data-wuu-page={activePage}
-            key={activePage}
-          >
-            {activePluginSettingsRecord ? (
-              <>
-                <SettingsPageHeader title={activePluginSettingsRecord.name} />
-                <PluginSettingsEditor plugin={activePluginSettingsRecord} />
-              </>
-            ) : activeCustomPluginPage ? (
-              <>
-                <SettingsPageHeader title={pluginPageTitle ?? activeCustomPluginPage.title} />
-                <PluginViewContent
-                  controller={workbenchController}
-                  pluginId={activeCustomPluginPage.pluginId}
-                  viewTypeId={activeCustomPluginPage.view}
-                  context={Object.freeze({ surface: "settings" })}
-                  settings={settingsPageHost}
-                  onFailure={() => setActivePage("providers")}
-                />
-              </>
-            ) : activePage === "subscriptions" && ENABLE_SUBSCRIPTIONS ? (
-              <SubscriptionDashboard
-                inventory={engineInventory}
-                providers={providers}
-                onSelectBuiltinModel={(provider, model) => onSave(provider, model)}
-              />
-            ) : activePage === "providers" ? (
-              <ModelServicesPage
-                initialized={initialized}
-                running={running}
-                runningProviderNames={runningProviderNameSet}
-                onSave={onSave}
-                onRemoveProvider={onRemoveProvider}
-                onRefreshModelCatalog={onRefreshModelCatalog}
-              />
-            ) : activePage === "agents" ? (
-              <EngineSettingsSection
-                result={engineInventory}
-                loadError={engineInventoryError}
-                onRefresh={onRefreshEngineInventory}
-                onUpdate={onUpdateEngineInventory}
-              />
-            ) : activePage === "advanced" ? (
-              <SettingsRuntimePage
-                initialized={initialized}
-                running={running}
-                autoCompact={autoCompactDraft}
-                compactThreshold={compactThresholdDraft}
-                compactKeepRecent={compactKeepRecentDraft}
-                providerContextWindow={providerContextWindowDraft}
-                providerContextWindowCurrent={formatOptionalTokenCount(
-                  initialized?.advanced_settings?.context_window_tokens,
-                )}
-                providerContextWindowSource={advancedContextSourceLabel(
-                  initialized?.advanced_settings?.context_window_source,
-                  t,
-                )}
-                maxContextTokens={maxContextTokensDraft}
-                maxSteps={maxStepsDraft}
-                temperature={temperatureDraft}
-                error={advancedError}
-                onAutoCompactToggle={toggleAutoCompact}
-                onCompactThresholdChange={setCompactThresholdDraft}
-                onCompactKeepRecentChange={setCompactKeepRecentDraft}
-                onProviderContextWindowChange={setProviderContextWindowDraft}
-                onMaxContextTokensChange={setMaxContextTokensDraft}
-                onMaxStepsChange={setMaxStepsDraft}
-                onTemperatureChange={setTemperatureDraft}
-                onCommitField={commitAdvancedField}
-                onGeneralSave={onGeneralSave}
-                onAdvancedSave={onAdvancedSave}
-              />
-            ) : activePage === "general" ? (
-              <SettingsGeneralPage
-                desktopBuild={desktopBuild}
-                copyState={copyState}
-                onCopyVersion={copyVersionInfo}
-              />
-            ) : activePage === "appearance" ? (
-              <SettingsAppearancePage
-                codexPets={codexPets}
-                codexPetsLoading={codexPetsLoading}
-                codexPetsError={codexPetsError}
-                onCodexPetsRefresh={onCodexPetsRefresh}
-                onCodexPetsUpdate={onCodexPetsUpdate}
-              />
-            ) : activePage === "mcp" ? (
-              <SettingsMCPPage
-                initialized={initialized}
-                running={running}
-                mcpServers={mcpServers}
-                mcpLoading={mcpLoading}
-                mcpError={mcpError}
-                mcpBusyServer={mcpBusyServer}
-                onGeneralSave={onGeneralSave}
-                onMCPAction={runMCPAction}
-                onMCPAuthStart={startMCPAuth}
-                onMCPAuthFinish={finishMCPAuth}
-                onMCPAuthRemove={removeMCPAuth}
-              />
-            ) : activePage === "remote" && remoteControlAvailable() ? (
-              <>
-                <SettingsPageHeader title={t("settings.remote")} />
-                <SettingsRemotePageContainer />
-              </>
-            ) : activePage === "archive" ? (
-              <SettingsArchivePage
-                archivedThreads={archivedThreads ?? []}
-                onUnarchiveThread={onUnarchiveThread}
-                deletion={archiveDeletion}
-                onDeleteAll={onDeleteAllArchivedThreads}
-                onRetry={onRetryArchiveDeletion}
-              />
-            ) : (
-              <SettingsUsagePage
-                usage={usage}
-                loading={usageLoading}
-                error={usageError}
-              />
-            )}
+        <SettingsTitlebarSlot.Provider value={titlebarSlot}>
+          <div className="settings-titlebar">
+            {isTouchWebShell() && <button type="button" className="settings-phone-back" aria-label={t("common.back")} onClick={onBack}><ArrowLeft size={22} /></button>}
+            {/* Match the main shell's docked/collapsed slots. Keep the collapsed
+             * toggle inside the drag strip so native hit testing honors no-drag. */}
+            {sidebarCollapsed ? sidebarToggle : null}
+            <span className="settings-crumb-root">{t("settings.navigation")}</span>
+            <span className="settings-crumb-separator" aria-hidden="true">/</span>
+            <div ref={setTitlebarSlot} className="settings-titlebar-slot" />
           </div>
-        </div>
+          <div ref={settingsScrollRef} className="settings-scroll">
+            <div
+              className="settings-page"
+              data-wuu-component="settings-page"
+              data-wuu-page={activePage}
+              key={activePage}
+            >
+              {activePluginSettingsRecord ? (
+                <>
+                  <SettingsPageHeader title={activePluginSettingsRecord.name} />
+                  <PluginSettingsEditor plugin={activePluginSettingsRecord} />
+                </>
+              ) : activeCustomPluginPage ? (
+                <>
+                  <SettingsPageHeader title={pluginPageTitle ?? activeCustomPluginPage.title} />
+                  <PluginViewContent
+                    controller={workbenchController}
+                    pluginId={activeCustomPluginPage.pluginId}
+                    viewTypeId={activeCustomPluginPage.view}
+                    context={Object.freeze({ surface: "settings" })}
+                    settings={settingsPageHost}
+                    onFailure={() => setActivePage("providers")}
+                  />
+                </>
+              ) : activePage === "subscriptions" && ENABLE_SUBSCRIPTIONS ? (
+                <SubscriptionDashboard
+                  inventory={engineInventory}
+                  providers={providers}
+                  onSelectBuiltinModel={(provider, model) => onSave(provider, model)}
+                />
+              ) : activePage === "providers" ? (
+                <ModelServicesPage
+                  initialized={initialized}
+                  running={running}
+                  runningProviderNames={runningProviderNameSet}
+                  onSave={onSave}
+                  onRemoveProvider={onRemoveProvider}
+                  onRefreshModelCatalog={onRefreshModelCatalog}
+                />
+              ) : activePage === "agents" ? (
+                <EngineSettingsSection
+                  result={engineInventory}
+                  loadError={engineInventoryError}
+                  onRefresh={onRefreshEngineInventory}
+                  onUpdate={onUpdateEngineInventory}
+                />
+              ) : activePage === "advanced" ? (
+                <SettingsRuntimePage
+                  initialized={initialized}
+                  running={running}
+                  autoCompact={autoCompactDraft}
+                  compactThreshold={compactThresholdDraft}
+                  compactKeepRecent={compactKeepRecentDraft}
+                  providerContextWindow={providerContextWindowDraft}
+                  providerContextWindowCurrent={formatOptionalTokenCount(
+                    initialized?.advanced_settings?.context_window_tokens,
+                  )}
+                  providerContextWindowSource={advancedContextSourceLabel(
+                    initialized?.advanced_settings?.context_window_source,
+                    t,
+                  )}
+                  maxContextTokens={maxContextTokensDraft}
+                  maxSteps={maxStepsDraft}
+                  temperature={temperatureDraft}
+                  error={advancedError}
+                  onAutoCompactToggle={toggleAutoCompact}
+                  onCompactThresholdChange={setCompactThresholdDraft}
+                  onCompactKeepRecentChange={setCompactKeepRecentDraft}
+                  onProviderContextWindowChange={setProviderContextWindowDraft}
+                  onMaxContextTokensChange={setMaxContextTokensDraft}
+                  onMaxStepsChange={setMaxStepsDraft}
+                  onTemperatureChange={setTemperatureDraft}
+                  onCommitField={commitAdvancedField}
+                  onGeneralSave={onGeneralSave}
+                  onAdvancedSave={onAdvancedSave}
+                />
+              ) : activePage === "general" ? (
+                <SettingsGeneralPage
+                  desktopBuild={desktopBuild}
+                  copyState={copyState}
+                  onCopyVersion={copyVersionInfo}
+                />
+              ) : activePage === "appearance" ? (
+                <SettingsAppearancePage
+                  codexPets={codexPets}
+                  codexPetsLoading={codexPetsLoading}
+                  codexPetsError={codexPetsError}
+                  onCodexPetsRefresh={onCodexPetsRefresh}
+                  onCodexPetsUpdate={onCodexPetsUpdate}
+                />
+              ) : activePage === "mcp" ? (
+                <SettingsMCPPage
+                  initialized={initialized}
+                  running={running}
+                  mcpServers={mcpServers}
+                  mcpLoading={mcpLoading}
+                  mcpError={mcpError}
+                  mcpBusyServer={mcpBusyServer}
+                  onGeneralSave={onGeneralSave}
+                  onMCPAction={runMCPAction}
+                  onMCPAuthStart={startMCPAuth}
+                  onMCPAuthFinish={finishMCPAuth}
+                  onMCPAuthRemove={removeMCPAuth}
+                />
+              ) : activePage === "remote" && remoteControlAvailable() ? (
+                <>
+                  <SettingsPageHeader title={t("settings.remote")} />
+                  <SettingsRemotePageContainer />
+                </>
+              ) : activePage === "archive" ? (
+                <SettingsArchivePage
+                  archivedThreads={archivedThreads ?? []}
+                  onUnarchiveThread={onUnarchiveThread}
+                  deletion={archiveDeletion}
+                  onDeleteAll={onDeleteAllArchivedThreads}
+                  onRetry={onRetryArchiveDeletion}
+                />
+              ) : (
+                <SettingsUsagePage
+                  usage={usage}
+                  loading={usageLoading}
+                  error={usageError}
+                />
+              )}
+            </div>
+          </div>
+        </SettingsTitlebarSlot.Provider>
       </main>
     </div>
   );

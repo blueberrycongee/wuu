@@ -24,6 +24,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Redraw settings as lifted sheets with quiet section labels and roomier rows
+  that name each setting in medium weight, move the page name and its actions
+  into a "Settings / page" titlebar, and mark the selected rail row in light
+  mode as paper lifted off the rail instead of a darker fill.
+
 - Reorganize settings around one label and one control per row with a shared
   control width: pick the default agent from a menu above the installed list,
   show the default model and reasoning effort as rows, list connected providers

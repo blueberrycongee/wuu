@@ -223,11 +223,12 @@
   --sidebar-edge-shadow: 1px 0 16px rgba(20, 24, 28, 0.025);
   --sidebar-hover-card-rim: rgba(255, 255, 255, 0.06);
   --sidebar-drawer-bg: var(--sidebar-material-fill);
-  /* About 1.3:1 against the rail, matching the light rail selection. */
+  /* About 1.3:1 against the rail; a lighter fill already reads as lifted. */
   --sidebar-row-selected-bg: var(
     --wuu-nav-item-active-background,
     var(--wuu-color-surface-elevated, var(--gray-100))
   );
+  --sidebar-row-selected-shadow: 0 0 0 0 transparent;
   --sidebar-resizer-hover-bg: var(--ink-overlay-18);
   --sidebar-resizer-hover-ring: rgba(0, 0, 0, 0.4);
   --sidebar-nav-item-hover-ring: var(--wuu-nav-item-hover-ring, rgba(255, 255, 255, 0.08));
