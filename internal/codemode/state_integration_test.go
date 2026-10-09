@@ -649,3 +649,52 @@ func TestNodeStateSurvivesMutableGuestIntrinsics(t *testing.T) {
 		t.Fatalf("intrinsics corrupt commit=%+v %v", result, err)
 	}
 }
+
+func TestNodeStateCancellationOverridesGuestFailureDuringCleanup(t *testing.T) {
+	s := nodeService(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	cleaning, released := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	release := func() { once.Do(func() { close(released) }) }
+	t.Cleanup(release)
+	opts := RunOptions{CWD: t.TempDir(), StateScope: "actor", Executor: nodeExecutor(func(ctx context.Context, _ providers.ToolCall) (toolresult.Result, error) {
+		<-ctx.Done()
+		close(cleaning)
+		<-released
+		return toolresult.Result{}, ctx.Err()
+	})}
+	seed, err := s.Run(context.Background(), RunRequest{Code: `store("saved",1);`}, opts)
+	if err != nil || seed.Error != "" {
+		t.Fatalf("seed=%+v %v", seed, err)
+	}
+	done := make(chan RunResult, 1)
+	go func() {
+		result, err := s.Run(ctx, RunRequest{Code: `tools.wait({}); store("saved",2); throw new Error("guest failed");`, Tools: []ToolDefinition{{Name: "wait"}}}, opts)
+		if err != nil {
+			result.Error = err.Error()
+		}
+		done <- result
+	}()
+	// Cleanup cancels execution I/O after receiving the guest's error frame.
+	// Hold it open until owner cancellation, fixing the order without sleeps.
+	select {
+	case <-cleaning:
+	case <-time.After(10 * time.Second):
+		t.Fatal("guest failure never entered cleanup")
+	}
+	cancel()
+	release()
+	select {
+	case result := <-done:
+		if result.Error != context.Canceled.Error() || len(result.Value) != 0 || !strings.Contains(result.CallSummary, `"wait": interrupted`) {
+			t.Fatalf("guest failure obscured owner cancellation: %+v", result)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("canceled cleanup did not finish")
+	}
+	result, err := s.Run(context.Background(), RunRequest{Code: `return load("saved");`}, opts)
+	if err != nil || result.Error != "" || string(result.Value) != "1" {
+		t.Fatalf("canceled guest failure changed committed state: %+v %v", result, err)
+	}
+}
