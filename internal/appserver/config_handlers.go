@@ -18,6 +18,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/approvefor"
 	"github.com/blueberrycongee/wuu/internal/authstorage"
 	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/enginecatalog"
 	"github.com/blueberrycongee/wuu/internal/extensions"
 	"github.com/blueberrycongee/wuu/internal/grokbuildspec"
 	"github.com/blueberrycongee/wuu/internal/hooks"
@@ -1228,8 +1229,8 @@ func (s *Server) handleConfigModelUpdate(req Request) error {
 	if threadID != "" && (providerName != "" || model != "" || params.Variant != nil || params.Effort != nil || params.PermissionMode != nil || params.ApproveForMe != nil) {
 		return s.writeResponse(req.ID, nil, errors.New("save provider configuration separately from conversation selection"))
 	}
-	if params.Speed != nil {
-		return s.writeResponse(req.ID, nil, errors.New("speed is a conversation setting; provide thread_id without provider configuration changes"))
+	if params.Speed != nil || params.ResetModel || params.ModelOptions != nil {
+		return s.writeResponse(req.ID, nil, errors.New("engine selection and speed are conversation settings; provide thread_id without provider configuration changes"))
 	}
 	explicitSelection := !keepSelection && (providerName != "" || model != "" ||
 		params.Effort != nil || params.Variant != nil || params.PermissionMode != nil)
@@ -2084,7 +2085,17 @@ func (s *Server) handleThreadModelSelection(req Request, params ConfigModelUpdat
 	provider, model := th.ModelProvider, th.Model
 	variant, effort, permission := th.ModelVariant, th.ModelEffort, th.PermissionMode
 	speed, engineID, approveForMe := th.Speed, th.EngineID, th.ApproveForMe
+	modelOptions := th.ModelOptions
 	th.mu.Unlock()
+	if params.ModelOptions != nil && len(*params.ModelOptions) > 0 {
+		entry, ok := enginecatalog.Lookup(engineID)
+		if !ok || entry.Protocol != "acp" && entry.Protocol != "opencode" {
+			return s.writeResponse(req.ID, nil, errors.New("this engine does not expose additional model options"))
+		}
+	}
+	if agentengine.NormalizeEngineID(engineID) == agentengine.EngineWuu && params.ResetModel {
+		return s.writeResponse(req.ID, nil, errors.New("reset_model applies only to external engines"))
+	}
 	if params.Speed != nil {
 		speed = strings.TrimSpace(*params.Speed)
 		if err := validateSpeed(speed); err != nil {
@@ -2095,8 +2106,20 @@ func (s *Server) handleThreadModelSelection(req Request, params ConfigModelUpdat
 		if params.Provider != "" && params.Provider != provider {
 			return s.writeResponse(req.ID, nil, errors.New("an external engine owns its provider selection"))
 		}
+		if params.ResetModel {
+			model, effort, speed, modelOptions = "", "", "", nil
+		}
 		if params.Model != "" {
+			if model != params.Model {
+				effort, speed, modelOptions = "", "", nil
+			}
 			model = params.Model
+		}
+		if params.ModelOptions != nil {
+			modelOptions = *params.ModelOptions
+		}
+		if params.Speed != nil {
+			speed = strings.TrimSpace(*params.Speed)
 		}
 		if params.Effort != nil {
 			effort = *params.Effort
@@ -2104,7 +2127,7 @@ func (s *Server) handleThreadModelSelection(req Request, params ConfigModelUpdat
 		if params.PermissionMode != nil {
 			permission = config.NormalizePermissionMode(*params.PermissionMode)
 		}
-		if err := s.updateThreadRuntimeForModelUpdate(th, provider, model, "", effort, speed, permission, false); err != nil {
+		if err := s.updateThreadRuntimeForModelUpdate(th, provider, model, "", effort, speed, permission, false, modelOptions); err != nil {
 			return s.writeResponse(req.ID, nil, err)
 		}
 		return s.writeThreadModelSelectionResponse(req, th)
@@ -2183,7 +2206,7 @@ func (s *Server) handleThreadModelSelection(req Request, params ConfigModelUpdat
 	} else if !approvefor.EnabledForMode(permission) {
 		approveForMe = false
 	}
-	if err := s.updateThreadRuntimeForModelUpdate(th, resolvedName, model, selection.Variant, selection.LegacyEffort, speed, permission, approveForMe); err != nil {
+	if err := s.updateThreadRuntimeForModelUpdate(th, resolvedName, model, selection.Variant, selection.LegacyEffort, speed, permission, approveForMe, nil); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	return s.writeThreadModelSelectionResponse(req, th)
@@ -2201,7 +2224,7 @@ func (s *Server) writeThreadModelSelectionResponse(req Request, th *threadState)
 	}, nil)
 }
 
-func (s *Server) updateThreadRuntimeForModelUpdate(th *threadState, providerName, model, variant, effort, speed, permissionMode string, approveForMe bool) error {
+func (s *Server) updateThreadRuntimeForModelUpdate(th *threadState, providerName, model, variant, effort, speed, permissionMode string, approveForMe bool, modelOptions map[string]string) error {
 	if th == nil {
 		return nil
 	}
@@ -2211,6 +2234,7 @@ func (s *Server) updateThreadRuntimeForModelUpdate(th *threadState, providerName
 		Variant:        variant,
 		Effort:         effort,
 		Speed:          speed,
+		ModelOptions:   modelOptions,
 		PermissionMode: permissionMode,
 		ApproveForMe:   approveForMe,
 	}
@@ -2224,7 +2248,7 @@ func (s *Server) updateThreadRuntimeForModelUpdate(th *threadState, providerName
 	modelSelectionChanged := th.ModelProvider != strings.TrimSpace(selection.Provider) ||
 		th.Model != strings.TrimSpace(selection.Model) ||
 		th.ModelVariant != strings.TrimSpace(selection.Variant) ||
-		th.ModelEffort != strings.TrimSpace(selection.Effort) || th.Speed != selection.Speed
+		th.ModelEffort != strings.TrimSpace(selection.Effort) || th.Speed != selection.Speed || !reflect.DeepEqual(th.ModelOptions, selection.ModelOptions)
 	applyThreadRuntimeSelection(th, selection)
 	if modelSelectionChanged && th.execRuntime != nil {
 		detached = detachThreadRuntimeLocked(th)
@@ -2476,6 +2500,11 @@ func (s *Server) pinLegacyRuntimeSelections() {
 		return
 	}
 	for _, sess := range sessions {
+		// External engines own their defaults; an empty model is an intentional
+		// native selection, not a legacy Wuu session that needs backfilling.
+		if agentengine.NormalizeEngineID(sess.EngineID) != agentengine.EngineWuu {
+			continue
+		}
 		selection := runtimeSelectionFromSession(sess)
 		legacySelection := selection.PermissionMode == ""
 		changed := false

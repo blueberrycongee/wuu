@@ -13,7 +13,11 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"sort"
 	"strconv"
+
+	"github.com/blueberrycongee/wuu/internal/agentengine"
+	"github.com/blueberrycongee/wuu/internal/enginecatalog"
 	"strings"
 	"time"
 
@@ -29,6 +33,12 @@ type openCodeClient struct {
 }
 
 func (s *Session) runOpenCode(ctx context.Context, message providers.ChatMessage, t *turn) error {
+	return s.withOpenCodeServer(ctx, func(ctx context.Context, c *openCodeClient) error {
+		return s.openCodeTurn(ctx, c, message, t)
+	})
+}
+
+func (s *Session) withOpenCodeServer(ctx context.Context, run func(context.Context, *openCodeClient) error) error {
 	secret := make([]byte, 32)
 	if _, err := rand.Read(secret); err != nil {
 		return err
@@ -96,11 +106,110 @@ func (s *Session) runOpenCode(ctx context.Context, message providers.ChatMessage
 		}
 	}()
 	defer func() { cancelRun(); <-monitorDone }()
-	err = s.openCodeTurn(runCtx, c, message, t)
+	err = run(runCtx, c)
 	if ctx.Err() == nil && runCtx.Err() != nil {
-		return errors.New("OpenCode process exited before the turn completed")
+		return errors.New("OpenCode process exited before the request completed")
 	}
 	return err
+}
+
+func (e *Engine) discoverOpenCodeCatalog(ctx context.Context) (DiscoveredCatalog, error) {
+	s := &Session{engine: e, binding: agentengine.ThreadBinding{RootDir: e.root}}
+	var catalog DiscoveredCatalog
+	err := s.withOpenCodeServer(ctx, func(ctx context.Context, c *openCodeClient) error {
+		models, err := c.models(ctx)
+		catalog.Models = models
+		return err
+	})
+	return catalog, err
+}
+
+// /provider includes unconfigured providers too. Only connected providers are
+// executable in this native environment; map keys preserve provider/model IDs.
+func (c *openCodeClient) models(ctx context.Context) ([]DiscoveredModel, error) {
+	var response struct {
+		All []struct {
+			ID     string `json:"id"`
+			Name   string `json:"name"`
+			Models map[string]struct {
+				Name     string                     `json:"name"`
+				Variants map[string]json.RawMessage `json:"variants"`
+			} `json:"models"`
+		} `json:"all"`
+		Connected []string `json:"connected"`
+	}
+	if err := c.call(ctx, "GET", "/provider", nil, &response); err != nil {
+		return nil, err
+	}
+	defaultModel, err := c.defaultModel(ctx)
+	if err != nil {
+		return nil, err
+	}
+	connected := make(map[string]bool, len(response.Connected))
+	for _, id := range response.Connected {
+		connected[id] = true
+	}
+	var models []DiscoveredModel
+	for _, provider := range response.All {
+		if !connected[provider.ID] {
+			continue
+		}
+		for id, model := range provider.Models {
+			var variants []string
+			for variant := range model.Variants {
+				variants = append(variants, variant)
+			}
+			sort.Strings(variants)
+			value := provider.ID + "/" + id
+			name := model.Name
+			if name == "" {
+				name = id
+			}
+			item := DiscoveredModel{ID: value, DisplayName: provider.ID + " / " + name, IsDefault: value == defaultModel}
+			if len(variants) > 0 {
+				option := enginecatalog.ModelOption{ID: "variant", Label: "Variant", Type: "select"}
+				for _, variant := range variants {
+					option.Choices = append(option.Choices, enginecatalog.ModelChoice{Value: variant, Label: variant})
+				}
+				item.Options = []enginecatalog.ModelOption{option}
+			}
+			models = append(models, item)
+		}
+	}
+	sort.Slice(models, func(i, j int) bool { return models[i].ID < models[j].ID })
+	return models, nil
+}
+
+// Agent configuration takes precedence over the workspace model on native
+// prompts. The API does not expose the recent-model fallback; never guess it.
+func (c *openCodeClient) defaultModel(ctx context.Context) (string, error) {
+	var config struct {
+		Model        string `json:"model"`
+		DefaultAgent string `json:"default_agent"`
+	}
+	if err := c.call(ctx, "GET", "/config", nil, &config); err != nil {
+		return "", err
+	}
+	var agents []struct {
+		Name  string `json:"name"`
+		Model *struct {
+			ProviderID string `json:"providerID"`
+			ModelID    string `json:"modelID"`
+		} `json:"model"`
+	}
+	if err := c.call(ctx, "GET", "/agent", nil, &agents); err != nil {
+		return "", err
+	}
+	name := config.DefaultAgent
+	if name == "" {
+		name = "build"
+	}
+	for _, agent := range agents {
+		if agent.Name == name && agent.Model != nil {
+			return agent.Model.ProviderID + "/" + agent.Model.ModelID, nil
+		}
+	}
+	return config.Model, nil
 }
 
 func engineEnvironment(overrides map[string]string) []string {
@@ -205,6 +314,7 @@ func (s *Session) openCodeTurn(ctx context.Context, c *openCodeClient, message p
 		return fmt.Errorf("unsupported OpenCode server version %q; this integration requires 1.x", health.Version)
 	}
 	ref := s.binding.ExternalRef
+	resumed := ref != ""
 	// Append a last-match native rule on every turn, including resume, so an
 	// earlier unconfined selection cannot survive a later permission change.
 	permission := map[string]any{"permission": []map[string]string{{"permission": "*", "pattern": "*", "action": "ask"}}}
@@ -223,6 +333,7 @@ func (s *Session) openCodeTurn(ctx context.Context, c *openCodeClient, message p
 		// no reset entry point for the reference, so every later turn would
 		// fail the same way. Start a fresh session and say so, because the
 		// agent's earlier context is gone.
+		resumed = false
 		notice = engineResumeNotice(s.engine.entry.Name, truncateUTF8(err.Error(), 200))
 		if retryErr := c.call(setup, "POST", "/session", permission, &native); retryErr != nil {
 			return fmt.Errorf("resume OpenCode session: %w; create session: %w", err, retryErr)
@@ -258,12 +369,49 @@ func (s *Session) openCodeTurn(ctx context.Context, c *openCodeClient, message p
 	if s.binding.Instructions != "" {
 		prompt["system"] = s.binding.Instructions
 	}
-	if model := strings.TrimSpace(s.binding.Model); model != "" {
+	modelID := strings.TrimSpace(s.binding.Model)
+	if modelID == "" && resumed {
+		var err error
+		modelID, err = c.defaultModel(setup)
+		if err != nil {
+			return err
+		}
+		if modelID == "" {
+			return errors.New("OpenCode does not expose an effective default model for resumed sessions; configure its model or select a model explicitly")
+		}
+	}
+	if model := modelID; model != "" {
 		provider, modelID, ok := strings.Cut(model, "/")
 		if !ok || provider == "" || modelID == "" {
 			return errors.New("OpenCode model must use provider/model format")
 		}
 		prompt["model"] = map[string]string{"providerID": provider, "modelID": modelID}
+	}
+	for id := range s.binding.ModelOptions {
+		if id != "variant" {
+			return fmt.Errorf("OpenCode does not advertise model option %q", id)
+		}
+	}
+	if variant, selected := s.binding.ModelOptions["variant"]; selected {
+		models, err := c.models(ctx)
+		if err != nil {
+			return err
+		}
+		valid := false
+		for _, model := range models {
+			if model.ID != modelID && !(modelID == "" && model.IsDefault) {
+				continue
+			}
+			for _, option := range model.Options {
+				for _, choice := range option.Choices {
+					valid = valid || choice.Value == variant
+				}
+			}
+		}
+		if !valid {
+			return fmt.Errorf("OpenCode does not advertise variant %q for model %q", variant, modelID)
+		}
+		prompt["variant"] = variant
 	}
 	streamCtx, cancelStream := context.WithCancel(ctx)
 	defer cancelStream()

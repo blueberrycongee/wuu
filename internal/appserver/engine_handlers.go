@@ -19,24 +19,28 @@ import (
 )
 
 const (
-	codexEngineModelCatalogTTL     = 6 * time.Hour
-	acpEngineModelCatalogTTL       = 10 * time.Minute
-	acpEngineModelDiscoveryTimeout = 10 * time.Second
+	engineModelCatalogTTL       = 2 * time.Minute
+	engineModelDiscoveryTimeout = 30 * time.Second
 )
 
-type codexEngineModelCatalogCacheEntry struct {
+type engineModelCatalogCacheEntry struct {
+	gate       chan struct{}
+	key        [32]byte
+	completed  time.Time
+	err        error
+	status     string
 	binaryPath string
 	models     []EngineModelInfo
 	modes      []EnginePermissionModeInfo
 	expiresAt  time.Time
 }
 
-func (e *codexEngineModelCatalogCacheEntry) load(binaryPath string, now time.Time) ([]EngineModelInfo, bool) {
+func (e *engineModelCatalogCacheEntry) load(binaryPath string, now time.Time) ([]EngineModelInfo, bool) {
 	models, _, ok := e.loadCatalog(binaryPath, now)
 	return models, ok
 }
 
-func (e *codexEngineModelCatalogCacheEntry) loadCatalog(binaryPath string, now time.Time) ([]EngineModelInfo, []EnginePermissionModeInfo, bool) {
+func (e *engineModelCatalogCacheEntry) loadCatalog(binaryPath string, now time.Time) ([]EngineModelInfo, []EnginePermissionModeInfo, bool) {
 	if e == nil || e.binaryPath != binaryPath || !now.Before(e.expiresAt) {
 		return nil, nil, false
 	}
@@ -47,7 +51,9 @@ func (e *codexEngineModelCatalogCacheEntry) loadCatalog(binaryPath string, now t
 // settings for the settings UI.
 func (s *Server) handleEngineList(req Request) error {
 	var params struct {
-		IncludeQuota bool `json:"include_quota"`
+		IncludeQuota  bool   `json:"include_quota"`
+		RefreshModels bool   `json:"refresh_models"`
+		CWD           string `json:"cwd"`
 	}
 	if len(req.Params) > 0 {
 		if err := decodeParams(req.Params, &params); err != nil {
@@ -58,7 +64,7 @@ func (s *Server) handleEngineList(req Request) error {
 		return s.writeResponse(req.ID, nil, errors.New("runtime is not initialized"))
 	}
 	result := EngineListResult{
-		Engines:  s.engineInventory(),
+		Engines:  s.engineInventoryAt(firstNonEmpty(params.CWD, s.rt.RootDir), params.RefreshModels),
 		Settings: s.engineSettingsFromConfig(),
 	}
 	if params.IncludeQuota {
@@ -95,9 +101,17 @@ func (s *Server) handleEngineUpdate(req Request) error {
 // engineInventory lists every supported engine, including disabled or missing
 // external binaries, so settings never confuse absence with a loading state.
 func (s *Server) engineInventory() []EngineInfo {
+	return s.engineInventoryWithRefresh(false)
+}
+
+func (s *Server) engineInventoryWithRefresh(refreshModels bool) []EngineInfo {
 	if s.rt == nil {
 		return nil
 	}
+	return s.engineInventoryAt(s.rt.RootDir, refreshModels)
+}
+
+func (s *Server) engineInventoryAt(root string, refreshModels bool) []EngineInfo {
 	var out []EngineInfo
 	// Built-in engine is always present.
 	out = append(out, EngineInfo{
@@ -119,6 +133,7 @@ func (s *Server) engineInventory() []EngineInfo {
 		path  string
 	}
 	var probes []acpProbe
+	claudeIndex := -1
 	for _, entry := range enginecatalog.Entries() {
 		id := agentengine.EngineID(entry.ID)
 		desc := descriptors[id]
@@ -139,20 +154,15 @@ func (s *Server) engineInventory() []EngineInfo {
 			path, err := s.codexBinaryPath()
 			info.BinaryPath = path
 			info.BinaryOK, info.Error = binaryStatus(path, err)
-			if info.Enabled && info.BinaryOK && s.rt.CodexHost() != nil {
-				models, modelErr := s.cachedCodexEngineModels(path, s.rt.CodexHost())
-				if modelErr != nil {
-					info.ModelsError = modelErr.Error()
-				} else {
-					info.Models = models
-				}
+			if info.Enabled && info.BinaryOK {
+				probes = append(probes, acpProbe{index: len(out), entry: entry, path: path})
 			}
 		case "claude":
 			path, err := s.claudeBinaryPath()
 			info.BinaryPath = path
 			info.BinaryOK, info.Error = binaryStatus(path, err)
 			if info.Enabled && info.BinaryOK {
-				info.Models = claudeEngineModels()
+				claudeIndex = len(out)
 			}
 		default:
 			override := ""
@@ -163,25 +173,39 @@ func (s *Server) engineInventory() []EngineInfo {
 			info.BinaryPath = path
 			info.BinaryOK, info.Error = binaryStatus(path, err)
 			info.PermissionModes = hostPermissionModes(entry.Protocol)
-			if entry.Protocol == "acp" && info.Enabled && info.BinaryOK {
+			if info.Enabled && info.BinaryOK {
 				probes = append(probes, acpProbe{index: len(out), entry: entry, path: path})
 			}
 		}
 		out = append(out, info)
 	}
-	if len(probes) == 0 {
-		return out
-	}
 	var wg sync.WaitGroup
+	if claudeIndex >= 0 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			info := &out[claudeIndex]
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer cancel()
+			models, err := s.claudeEngineModelCatalog.List(ctx, info.BinaryPath, root, refreshModels)
+			info.Models = claudeEngineModels(models)
+			info.ModelsStatus = enginecatalog.CatalogStatus(len(models), err)
+			if err != nil && len(models) > 0 {
+				info.ModelsStatus = "stale"
+			}
+			if err != nil && !errors.Is(err, enginecatalog.ErrCatalogUnsupported) {
+				info.ModelsError = err.Error()
+			}
+		}()
+	}
 	for _, probe := range probes {
 		wg.Add(1)
 		go func(probe acpProbe) {
 			defer wg.Done()
-			engine := externalengine.New(probe.entry, probe.path, s.rt.RootDir)
-			models, modes, err := s.cachedACPEngineCatalog(probe.entry.ID, probe.path, engine)
-			if err != nil {
+			models, modes, status, err := s.cachedEngineCatalog(probe.entry, probe.path, root, refreshModels)
+			out[probe.index].ModelsStatus = status
+			if err != nil && !errors.Is(err, enginecatalog.ErrCatalogUnsupported) {
 				out[probe.index].ModelsError = err.Error()
-				return
 			}
 			out[probe.index].Models = models
 			if len(modes) > 0 {
@@ -255,74 +279,91 @@ func engineLatestRequest(record session.SubscriptionActivity) *EngineLatestReque
 	return latest
 }
 
-// cachedCodexEngineModels keeps the expensive app-server model catalog
-// independent from lightweight binary detection. Engine settings can be
-// revisited or re-detected without restarting Codex; a binary-path change
-// naturally misses the cache and resolves a fresh catalog.
-func (s *Server) cachedCodexEngineModels(binaryPath string, host *codexengine.Host) ([]EngineModelInfo, error) {
-	s.engineModelCatalogMu.Lock()
-	defer s.engineModelCatalogMu.Unlock()
-
-	now := time.Now()
-	if models, ok := s.codexEngineModelCatalogCache.load(binaryPath, now); ok {
-		return models, nil
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+// cachedEngineCatalog serializes probes for an engine and rechecks native
+// configuration before publishing. Failed refreshes retain only same-context
+// results, accompanied by the error; successful empty responses replace them.
+func (s *Server) cachedEngineCatalog(entry enginecatalog.Entry, binary, root string, force bool) ([]EngineModelInfo, []EnginePermissionModeInfo, string, error) {
+	requested := time.Now()
+	ctx, cancel := context.WithTimeout(context.Background(), engineModelDiscoveryTimeout)
 	defer cancel()
-	models, err := host.ListModels(ctx)
-	if err != nil {
-		return nil, err
-	}
-	converted := codexEngineModels(models)
-	s.codexEngineModelCatalogCache = &codexEngineModelCatalogCacheEntry{
-		binaryPath: binaryPath,
-		models:     cloneEngineModels(converted),
-		expiresAt:  now.Add(codexEngineModelCatalogTTL),
-	}
-	return converted, nil
-}
-
-func (s *Server) cachedACPEngineModels(engineID, binaryPath string, engine *externalengine.Engine) ([]EngineModelInfo, error) {
-	models, _, err := s.cachedACPEngineCatalog(engineID, binaryPath, engine)
-	return models, err
-}
-
-func (s *Server) cachedACPEngineCatalog(engineID, binaryPath string, engine *externalengine.Engine) ([]EngineModelInfo, []EnginePermissionModeInfo, error) {
 	s.engineModelCatalogMu.Lock()
-	if entry := s.acpEngineModelCatalogCache[engineID]; entry != nil {
-		if models, modes, ok := entry.loadCatalog(binaryPath, time.Now()); ok {
-			s.engineModelCatalogMu.Unlock()
-			return models, modes, nil
-		}
+	if s.engineModelCatalogCache == nil {
+		s.engineModelCatalogCache = make(map[string]*engineModelCatalogCacheEntry)
+	}
+	cache := s.engineModelCatalogCache[entry.ID]
+	if cache == nil {
+		cache = &engineModelCatalogCacheEntry{gate: make(chan struct{}, 1)}
+		s.engineModelCatalogCache[entry.ID] = cache
 	}
 	s.engineModelCatalogMu.Unlock()
-
-	ctx, cancel := context.WithTimeout(context.Background(), acpEngineModelDiscoveryTimeout)
-	defer cancel()
-	discovered, err := engine.DiscoverCatalog(ctx)
+	select {
+	case cache.gate <- struct{}{}:
+		defer func() { <-cache.gate }()
+	case <-ctx.Done():
+		return nil, nil, "error", ctx.Err()
+	}
+	key, err := enginecatalog.DiscoveryContext(entry.ID, binary, root)
 	if err != nil {
-		return nil, nil, err
+		cache.models, cache.modes, cache.completed, cache.expiresAt = nil, nil, time.Time{}, time.Time{}
+		cache.status, cache.err = "", nil
+		return nil, nil, "error", err
 	}
-	converted := acpEngineModels(discovered.Models)
-	modes := acpEnginePermissionModes(discovered.Modes)
-	s.engineModelCatalogMu.Lock()
-	defer s.engineModelCatalogMu.Unlock()
-	if s.acpEngineModelCatalogCache == nil {
-		s.acpEngineModelCatalogCache = make(map[string]*codexEngineModelCatalogCacheEntry)
+	if key != cache.key {
+		cache.key, cache.binaryPath = key, binary
+		cache.models, cache.modes, cache.completed, cache.err = nil, nil, time.Time{}, nil
+		cache.expiresAt = time.Time{}
+		cache.status = ""
 	}
-	s.acpEngineModelCatalogCache[engineID] = &codexEngineModelCatalogCacheEntry{
-		binaryPath: binaryPath,
-		models:     cloneEngineModels(converted),
-		modes:      cloneEnginePermissionModes(modes),
-		expiresAt:  time.Now().Add(acpEngineModelCatalogTTL),
+	if cache.completed.After(requested) || !force && time.Now().Before(cache.expiresAt) {
+		models, modes, _ := cache.loadCatalog(binary, cache.completed)
+		return models, modes, cache.status, cache.err
 	}
-	return converted, modes, nil
+	var models []EngineModelInfo
+	var modes []EnginePermissionModeInfo
+	var discoverErr error
+	if entry.Protocol == "codex" {
+		// Discovery uses a short-lived host in the session directory so a live
+		// conversation cannot keep an obsolete account/configuration snapshot.
+		discovered, err := codexengine.NewHost(binary, root).ListModels(ctx)
+		models, discoverErr = codexEngineModels(discovered), err
+	} else {
+		discovered, err := externalengine.New(entry, binary, root).DiscoverCatalog(ctx)
+		models, modes, discoverErr = acpEngineModels(discovered.Models), acpEnginePermissionModes(discovered.Modes), err
+	}
+	current, err := enginecatalog.DiscoveryContext(entry.ID, binary, root)
+	if err != nil || current != key {
+		cache.models, cache.modes, cache.completed, cache.expiresAt = nil, nil, time.Time{}, time.Time{}
+		cache.status, cache.err = "", nil
+		if err != nil {
+			return nil, nil, "error", err
+		}
+		return nil, nil, "error", errors.New("engine configuration changed during model discovery; refresh to retry")
+	}
+	cache.completed, cache.err = time.Now(), discoverErr
+	previousStatus := cache.status
+	cache.status = enginecatalog.CatalogStatus(len(models), discoverErr)
+	ttl := engineModelCatalogTTL
+	if discoverErr == nil || errors.Is(discoverErr, enginecatalog.ErrCatalogUnsupported) {
+		cache.models, cache.modes = models, modes
+	} else {
+		ttl = 5 * time.Second
+		if previousStatus == "ready" || previousStatus == "empty" || previousStatus == "stale" {
+			cache.status = "stale"
+		} else {
+			cache.models, cache.modes = models, modes
+			if len(models) > 0 {
+				cache.status = "partial"
+			}
+		}
+	}
+	cache.expiresAt = cache.completed.Add(ttl)
+	return cloneEngineModels(cache.models), cloneEnginePermissionModes(cache.modes), cache.status, cache.err
 }
 
 func (s *Server) invalidateACPEngineModelCatalog(engineID string) {
 	s.engineModelCatalogMu.Lock()
 	defer s.engineModelCatalogMu.Unlock()
-	delete(s.acpEngineModelCatalogCache, engineID)
+	delete(s.engineModelCatalogCache, engineID)
 }
 
 func hostPermissionModes(protocol string) []EnginePermissionModeInfo {
@@ -374,6 +415,7 @@ func acpEngineModels(models []externalengine.DiscoveredModel) []EngineModelInfo 
 			IsDefault:        model.IsDefault,
 			FastMode:         model.FastMode,
 			DefaultSpeed:     model.DefaultSpeed,
+			Options:          enginecatalog.CloneModelOptions(model.Options),
 		})
 	}
 	return out
@@ -386,6 +428,7 @@ func cloneEngineModels(models []EngineModelInfo) []EngineModelInfo {
 	cloned := make([]EngineModelInfo, len(models))
 	for i, model := range models {
 		cloned[i] = model
+		cloned[i].Options = enginecatalog.CloneModelOptions(model.Options)
 		cloned[i].SupportedEfforts = append([]string(nil), model.SupportedEfforts...)
 	}
 	return cloned
@@ -436,16 +479,23 @@ func codexEngineModels(models []codexengine.ModelListItem) []EngineModelInfo {
 	return out
 }
 
-// Claude Code exposes stable model aliases through --model. The CLI resolves
-// each alias to the account's current eligible model, so this list does not
-// hard-code dated model versions.
-func claudeEngineModels() []EngineModelInfo {
-	efforts := []string{"low", "medium", "high", "xhigh", "max"}
-	return []EngineModelInfo{
-		{ID: "sonnet", DisplayName: "Sonnet", DefaultEffort: "high", SupportedEfforts: efforts, IsDefault: true},
-		{ID: "opus", DisplayName: "Opus", FastMode: true, DefaultEffort: "high", SupportedEfforts: efforts},
-		{ID: "haiku", DisplayName: "Haiku", DefaultEffort: "high", SupportedEfforts: efforts},
+func claudeEngineModels(models []claudeengine.ModelInfo) []EngineModelInfo {
+	out := make([]EngineModelInfo, 0, len(models))
+	for _, model := range models {
+		name := strings.TrimSpace(model.DisplayName)
+		if name == "" || name == model.ResolvedModel {
+			name = model.Value
+		}
+		if model.ResolvedModel != "" && !strings.Contains(name, model.ResolvedModel) {
+			name += " · " + model.ResolvedModel
+		}
+		out = append(out, EngineModelInfo{
+			ID: model.Value, DisplayName: name, ResolvedModel: model.ResolvedModel,
+			SupportedEfforts: append([]string(nil), model.SupportedEffortLevels...),
+			FastMode:         model.SupportsFastMode,
+		})
 	}
+	return out
 }
 
 // claudeBinaryPath resolves the claude binary: a settings override, otherwise

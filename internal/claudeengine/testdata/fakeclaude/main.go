@@ -65,6 +65,10 @@ func main() {
 			continue
 		}
 		var envelope struct {
+			RequestID string `json:"request_id"`
+			Request   struct {
+				Subtype string `json:"subtype"`
+			} `json:"request"`
 			Type            string  `json:"type"`
 			UUID            string  `json:"uuid"`
 			ParentToolUseID *string `json:"parent_tool_use_id"`
@@ -73,6 +77,13 @@ func main() {
 			} `json:"message"`
 		}
 		if err := json.Unmarshal([]byte(line), &envelope); err != nil {
+			continue
+		}
+		if envelope.Type == "control_request" && envelope.Request.Subtype == "get_settings" {
+			send(map[string]any{"type": "control_response", "response": map[string]any{
+				"request_id": envelope.RequestID, "subtype": "success",
+				"response": map[string]any{"applied": map[string]any{"model": "claude-sonnet-4"}},
+			}})
 			continue
 		}
 		if prompt, ok := envelope.Message.Content.(string); ok && strings.HasPrefix(prompt, "background_") {

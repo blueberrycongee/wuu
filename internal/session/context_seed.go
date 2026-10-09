@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -75,12 +76,22 @@ type ContextSeed struct {
 }
 
 type SessionRuntimeSelection struct {
-	Speed          string `json:"speed,omitempty"`
-	Provider       string `json:"provider"`
-	Model          string `json:"model"`
-	Variant        string `json:"variant,omitempty"`
-	Effort         string `json:"effort,omitempty"`
-	PermissionMode string `json:"permission_mode,omitempty"`
+	ModelOptions   map[string]string `json:"model_options,omitempty"`
+	Speed          string            `json:"speed,omitempty"`
+	Provider       string            `json:"provider"`
+	Model          string            `json:"model"`
+	Variant        string            `json:"variant,omitempty"`
+	Effort         string            `json:"effort,omitempty"`
+	PermissionMode string            `json:"permission_mode,omitempty"`
+}
+
+// Empty and omitted option maps encode identically and must compare equally
+// when an idempotent launch request is replayed after persistence.
+func (s SessionRuntimeSelection) equal(other SessionRuntimeSelection) bool {
+	return s.Provider == other.Provider && s.Model == other.Model &&
+		s.Variant == other.Variant && s.Effort == other.Effort &&
+		s.Speed == other.Speed && s.PermissionMode == other.PermissionMode &&
+		maps.Equal(s.ModelOptions, other.ModelOptions)
 }
 
 type SessionLaunchInput struct {
@@ -370,7 +381,7 @@ func putSessionLaunchTx(tx *sql.Tx, record SessionLaunchRecord) (SessionLaunchRe
 		return SessionLaunchRecord{}, err
 	}
 	if ok {
-		if existing.Revision != record.Revision || existing.Runtime != record.Runtime || existing.SourceSession != record.SourceSession || existing.SourceCutoff != record.SourceCutoff {
+		if existing.Revision != record.Revision || !existing.Runtime.equal(record.Runtime) || existing.SourceSession != record.SourceSession || existing.SourceCutoff != record.SourceCutoff {
 			return SessionLaunchRecord{}, fmt.Errorf("%w: request %q", ErrSessionLaunchConflict, record.RequestID)
 		}
 		if existing.Status == SessionLaunchCommitted && record.Status != SessionLaunchCommitted {

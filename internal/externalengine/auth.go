@@ -52,6 +52,7 @@ func acpInitializeParams() map[string]any {
 		"clientCapabilities": map[string]any{
 			"fs":       map[string]any{"readTextFile": false, "writeTextFile": false},
 			"terminal": false,
+			"session":  map[string]any{"configOptions": map[string]any{"boolean": map[string]any{}}},
 		},
 	}
 }

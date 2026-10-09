@@ -1737,8 +1737,10 @@ app.whenReady().then(async () => {
       threadID?: string,
       speed?: string,
       targetContext?: RuntimeContext,
+      engineSelection?: { reset_model?: boolean; model_options?: Record<string, string> },
     ) =>
       appServerRequest<ConfigModelUpdateResult>(event, "config/model/update", {
+        ...engineSelection,
         // Omitted provider/model are inherited from the target thread, so
         // their empties are dropped instead of sent. Effort/variant/permission
         // forward whenever explicitly provided: an explicit empty variant is
@@ -1793,8 +1795,12 @@ app.whenReady().then(async () => {
         settings ?? {},
       ),
   );
-  ipcMain.handle("wuu:engines-list", (event, options?: { include_quota?: boolean }) =>
-    appServerRequest<EngineListResult>(event, "engine/list", { include_quota: options?.include_quota === true }),
+  ipcMain.handle("wuu:engines-list", (event, options?: { include_quota?: boolean; refresh_models?: boolean; cwd?: string }, context?: RuntimeContext) =>
+    appServerRequest<EngineListResult>(event, "engine/list", {
+      include_quota: options?.include_quota === true,
+      refresh_models: options?.refresh_models === true,
+      cwd: options?.cwd,
+    }, context),
   );
   ipcMain.handle("wuu:engines-update", (event, params: EngineUpdateParams) =>
     appServerRequest<EngineListResult>(event, "engine/update", params ?? {}),

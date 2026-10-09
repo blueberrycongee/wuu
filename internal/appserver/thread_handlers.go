@@ -16,6 +16,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/agentthread"
 	"github.com/blueberrycongee/wuu/internal/approvefor"
 	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/enginecatalog"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
@@ -101,6 +102,13 @@ func (s *Server) handleThreadStart(req Request) error {
 	}
 	selection := s.currentSessionRuntimeSelection()
 	selection.Speed = strings.TrimSpace(params.Speed)
+	selection.ModelOptions = params.ModelOptions
+	if len(params.ModelOptions) > 0 {
+		entry, ok := enginecatalog.Lookup(string(engineID))
+		if !ok || entry.Protocol != "acp" && entry.Protocol != "opencode" {
+			return s.writeResponse(req.ID, nil, errors.New("this engine does not expose additional model options"))
+		}
+	}
 	if err := validateSpeed(selection.Speed); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
@@ -608,6 +616,7 @@ type forkSourceThread struct {
 	modelVariant   string
 	modelEffort    string
 	speed          string
+	modelOptions   map[string]string
 	permissionMode string
 	approveForMe   bool
 	cwd            string
@@ -723,23 +732,23 @@ func (s *Server) handleThreadFork(req Request) error {
 		cleanupWorktree()
 		return s.writeResponse(req.ID, nil, err)
 	}
+	// Bind first so native-default selections may persist an empty model.
+	// A fork inherits its source's engine; threads never silently switch.
+	if _, err := session.SetEngine(s.rt.SessionDir, sess.ID, source.thread.EngineID); err != nil {
+		_, _ = session.Delete(s.rt.SessionDir, sess.ID)
+		cleanupWorktree()
+		return s.writeResponse(req.ID, nil, err)
+	}
 	updatedSession, err := session.SetRuntimeSelection(s.rt.SessionDir, sess.ID, session.RuntimeSelection{
 		Provider:       source.modelProvider,
 		Model:          source.model,
 		Variant:        source.modelVariant,
 		Effort:         source.modelEffort,
 		Speed:          source.speed,
+		ModelOptions:   source.modelOptions,
 		PermissionMode: source.permissionMode,
 		ApproveForMe:   source.approveForMe,
 	})
-	if err != nil {
-		_, _ = session.Delete(s.rt.SessionDir, sess.ID)
-		cleanupWorktree()
-		return s.writeResponse(req.ID, nil, err)
-	}
-	// A fork inherits its source's engine binding; threads never silently
-	// switch engines.
-	updatedSession, err = session.SetEngine(s.rt.SessionDir, sess.ID, source.thread.EngineID)
 	if err != nil {
 		_, _ = session.Delete(s.rt.SessionDir, sess.ID)
 		cleanupWorktree()
@@ -930,6 +939,7 @@ func (s *Server) loadForkSourceThread(id string, now time.Time) (forkSourceThrea
 			modelVariant:   th.ModelVariant,
 			modelEffort:    th.ModelEffort,
 			speed:          th.Speed,
+			modelOptions:   th.ModelOptions,
 			permissionMode: th.PermissionMode,
 			approveForMe:   th.ApproveForMe,
 			cwd:            th.CWD,
@@ -1001,6 +1011,7 @@ func (s *Server) loadForkSourceThread(id string, now time.Time) (forkSourceThrea
 		modelVariant:   th.ModelVariant,
 		modelEffort:    th.ModelEffort,
 		speed:          th.Speed,
+		modelOptions:   th.ModelOptions,
 		permissionMode: th.PermissionMode,
 		approveForMe:   th.ApproveForMe,
 		cwd:            th.CWD,
@@ -1478,10 +1489,10 @@ func applySessionMetadata(th *threadState, metadata session.Session) {
 	th.Instructions = effectiveSessionInstructions(metadata)
 	th.ProjectID = projectIDForSession(metadata)
 	th.ProjectRole = projectRoleForSession(metadata)
-	if selection := runtimeSelectionFromSession(metadata); selection.Provider != "" && selection.Model != "" {
+	th.EngineID = string(agentengine.NormalizeEngineID(metadata.EngineID))
+	if selection := runtimeSelectionFromSession(metadata); selection.Provider != "" && (selection.Model != "" || th.EngineID != string(agentengine.EngineWuu)) {
 		applyThreadRuntimeSelection(th, selection)
 	}
-	th.EngineID = string(agentengine.NormalizeEngineID(metadata.EngineID))
 	th.EngineRef = strings.TrimSpace(metadata.EngineRef)
 	th.ForkedFromID = metadata.ForkedFromID
 	th.ForkedFromTurnID = metadata.ForkedFromTurnID
@@ -1527,6 +1538,7 @@ func runtimeSelectionFromSession(sess session.Session) session.RuntimeSelection 
 		Variant:        strings.TrimSpace(sess.Variant),
 		Effort:         strings.TrimSpace(sess.Effort),
 		Speed:          sess.Speed,
+		ModelOptions:   sess.ModelOptions,
 		PermissionMode: strings.TrimSpace(sess.PermissionMode),
 		ApproveForMe:   sess.ApproveForMe,
 	}
@@ -1541,6 +1553,7 @@ func applyThreadRuntimeSelection(th *threadState, selection session.RuntimeSelec
 	th.ModelVariant = strings.TrimSpace(selection.Variant)
 	th.ModelEffort = strings.TrimSpace(selection.Effort)
 	th.Speed = selection.Speed
+	th.ModelOptions = selection.ModelOptions
 	if mode := strings.TrimSpace(selection.PermissionMode); mode != "" {
 		th.PermissionMode = config.NormalizePermissionMode(mode)
 	}
@@ -1553,6 +1566,9 @@ func threadEntryFromSession(sess session.Session, provider, model string) thread
 		updatedAt = sess.CreatedAt
 	}
 	selection := runtimeSelectionFromSession(sess)
+	if agentengine.NormalizeEngineID(sess.EngineID) != agentengine.EngineWuu {
+		provider, model = string(agentengine.NormalizeEngineID(sess.EngineID)), ""
+	}
 	permissionMode := ""
 	if selection.PermissionMode != "" {
 		permissionMode = config.NormalizePermissionMode(selection.PermissionMode)
@@ -1571,6 +1587,7 @@ func threadEntryFromSession(sess session.Session, provider, model string) thread
 			ModelVariant:          selection.Variant,
 			ModelEffort:           selection.Effort,
 			Speed:                 selection.Speed,
+			ModelOptions:          selection.ModelOptions,
 			PermissionMode:        permissionMode,
 			ApproveForMe:          sess.ApproveForMe,
 			EngineID:              string(agentengine.NormalizeEngineID(sess.EngineID)),

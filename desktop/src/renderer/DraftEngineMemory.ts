@@ -21,6 +21,7 @@ export type DraftEngineMemory = {
   model: string;
   effort: string;
   speed?: string;
+  model_options?: Record<string, string>;
 };
 
 export function readDraftEngineMemory(): DraftEngineMemory | undefined {
@@ -37,7 +38,7 @@ export function writeDraftEngineMemory(memory: DraftEngineMemory): void {
     DRAFT_ENGINE_MEMORY_KEY,
     parseDraftEngineMemory,
     draftEngineMemoryIdentity,
-    { engine, model: memory.model, effort: memory.effort, ...(memory.speed === undefined ? {} : { speed: memory.speed }) },
+    { engine, model: memory.model, effort: memory.effort, model_options: memory.model_options, ...(memory.speed === undefined ? {} : { speed: memory.speed }) },
   );
 }
 
@@ -61,6 +62,9 @@ function parseDraftEngineMemory(value: unknown): DraftEngineMemory | undefined {
     model: typeof record.model === "string" ? record.model : "",
     effort: typeof record.effort === "string" ? record.effort : "",
     ...(typeof record.speed === "string" ? { speed: record.speed } : {}),
+    ...(record.model_options && typeof record.model_options === "object" && !Array.isArray(record.model_options)
+      && Object.values(record.model_options).every(value => typeof value === "string")
+      ? { model_options: record.model_options as Record<string, string> } : {}),
   };
 }
 
@@ -98,7 +102,7 @@ export function resolveDraftEngineMemory(
   if (!engine) return undefined;
   const runtime = runtimeWithinCatalog(engine, memory.model, memory.effort)
     ?? { model: "", effort: "" };
-  return { engine: memory.engine, ...runtime, ...(memory.speed === undefined ? {} : { speed: engine.models?.find(model => model.id === runtime.model)?.fast_mode ? memory.speed : "" }) };
+  return { engine: memory.engine, ...runtime, model_options: runtime.model === memory.model ? memory.model_options : undefined, ...(memory.speed === undefined ? {} : { speed: engine.models?.find(model => model.id === runtime.model)?.fast_mode ? memory.speed : "" }) };
 }
 
 /**
@@ -111,7 +115,7 @@ export function resolveDraftEngineMemory(
 export function rememberedEngineRuntime(
   engineID: string,
   inventory: EngineListResult | undefined,
-): { model: string; effort: string; speed?: string } | undefined {
+): { model: string; effort: string; speed?: string; model_options?: Record<string, string> } | undefined {
   const id = engineID.trim();
   if (!id || id === "wuu") return undefined;
   const memory = recentDraftEngineSelections().find((entry) => entry.engine === id);
@@ -119,7 +123,7 @@ export function rememberedEngineRuntime(
   const engine = engineForMemory(id, inventory);
   if (!engine) return undefined;
   const runtime = runtimeWithinCatalog(engine, memory.model, memory.effort);
-  return runtime ? { ...runtime, ...(memory.speed === undefined ? {} : { speed: engine.models?.find(model => model.id === runtime.model)?.fast_mode ? memory.speed : "" }) } : undefined;
+  return runtime ? { ...runtime, model_options: memory.model_options, ...(memory.speed === undefined ? {} : { speed: engine.models?.find(model => model.id === runtime.model)?.fast_mode ? memory.speed : "" }) } : undefined;
 }
 
 function engineForMemory(
@@ -146,6 +150,7 @@ function runtimeWithinCatalog(
   if (models.length === 0) {
     return engine.models_error ? { model, effort } : { model: "", effort: "" };
   }
+  if (model === "") return { model, effort };
   const rememberedModel = models.find((item) => item.id === model);
   if (!rememberedModel) return undefined;
   return {

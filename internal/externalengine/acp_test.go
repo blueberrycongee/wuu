@@ -537,6 +537,14 @@ func TestACPHelper(t *testing.T) {
 	var promptID json.RawMessage
 	selectedModel, selectedEffort, selectedMode := "", "", ""
 	selectedSpeed := "off"
+	booleanSupported, selectedBoolean := false, false
+	booleanSession := func() map[string]any {
+		options := []any{map[string]any{"id": "model", "category": "model", "type": "select", "currentValue": "model-a", "options": []any{map[string]string{"value": "model-a"}}}}
+		if booleanSupported {
+			options = append(options, map[string]any{"id": "extended_context", "name": "Extended context", "category": "model_config", "type": "boolean", "currentValue": selectedBoolean})
+		}
+		return map[string]any{"sessionId": "native-session", "configOptions": options}
+	}
 	speedSessions := map[string]map[string]string{}
 	defaultSpeed := strings.TrimPrefix(scenario, "speed-reset-")
 	nextSession := 0
@@ -602,6 +610,21 @@ func TestACPHelper(t *testing.T) {
 		result := any(map[string]any{})
 		switch msg.Method {
 		case "initialize":
+			if scenario == "boolean-options" {
+				var params struct {
+					Capabilities struct {
+						Session struct {
+							ConfigOptions struct {
+								Boolean map[string]any `json:"boolean"`
+							} `json:"configOptions"`
+						} `json:"session"`
+					} `json:"clientCapabilities"`
+				}
+				if json.Unmarshal(msg.Params, &params) != nil {
+					os.Exit(2)
+				}
+				booleanSupported = params.Capabilities.Session.ConfigOptions.Boolean != nil
+			}
 			version := 1
 			if scenario == "version" {
 				version = 2
@@ -612,6 +635,28 @@ func TestACPHelper(t *testing.T) {
 			}
 			result = map[string]any{"protocolVersion": version, "agentCapabilities": caps}
 		case "session/new":
+			if scenario == "empty-model-option" {
+				result = map[string]any{
+					"sessionId": "native-session",
+					"configOptions": []any{
+						map[string]any{"id": "model", "name": "Model", "category": "model", "type": "select", "currentValue": "model-a", "options": []any{map[string]string{"value": "model-a", "name": "Model A"}}},
+						map[string]any{"id": "context", "name": "Context", "category": "model_config", "type": "select", "currentValue": "", "options": []any{}},
+					},
+				}
+				break
+			}
+			if scenario == "empty-model-config" {
+				result = map[string]any{
+					"sessionId":     "native-session",
+					"models":        map[string]any{"currentModelId": "legacy-model", "availableModels": []any{map[string]string{"modelId": "legacy-model", "name": "Legacy model"}}},
+					"configOptions": []any{map[string]any{"id": "model", "category": "model", "type": "select", "currentValue": "", "options": []any{}}},
+				}
+				break
+			}
+			if scenario == "boolean-options" {
+				result = booleanSession()
+				break
+			}
 			if scenario == "speed" || scenario == "speed-catalog" {
 				result = speedACPSessionResult("model-a", "fast-mode", selectedSpeed)
 				break
@@ -670,6 +715,20 @@ func TestACPHelper(t *testing.T) {
 			selectedModel = params.ModelID
 			result = map[string]any{}
 		case "session/set_config_option":
+			if scenario == "boolean-options" {
+				var params struct {
+					ConfigID string `json:"configId"`
+					Type     string `json:"type"`
+					Value    *bool  `json:"value"`
+				}
+				if json.Unmarshal(msg.Params, &params) != nil || !booleanSupported || params.ConfigID != "extended_context" || params.Type != "boolean" || params.Value == nil {
+					write(map[string]any{"jsonrpc": "2.0", "id": msg.ID, "error": map[string]any{"code": -32602, "message": "boolean configuration requires negotiated support, type, and boolean value"}})
+					continue
+				}
+				selectedBoolean = *params.Value
+				result = booleanSession()
+				break
+			}
 			if scenario == "speed" || scenario == "speed-catalog" {
 				var params struct {
 					ConfigID string
@@ -702,6 +761,19 @@ func TestACPHelper(t *testing.T) {
 			case "mode":
 				selectedMode = params.Value
 			}
+			if scenario == "grok" {
+				configuration := grokACPSessionResult()
+				for _, raw := range configuration["configOptions"].([]any) {
+					option := raw.(map[string]any)
+					if option["id"] == "model" && selectedModel != "" {
+						option["currentValue"] = selectedModel
+					}
+					if option["id"] == "reasoning_effort" && selectedEffort != "" {
+						option["currentValue"] = selectedEffort
+					}
+				}
+				result = configuration
+			}
 		case "session/load":
 			if scenario == "load-error" {
 				write(map[string]any{"jsonrpc": "2.0", "id": msg.ID, "error": map[string]any{"code": -32000, "message": "session not found"}})
@@ -712,6 +784,11 @@ func TestACPHelper(t *testing.T) {
 			}
 			text("old replay")
 		case "session/prompt":
+			if scenario == "boolean-options" {
+				text(fmt.Sprint(selectedBoolean))
+				result = map[string]string{"stopReason": "end_turn"}
+				break
+			}
 			if scenario == "speed" || scenario == "speed-catalog" {
 				text(selectedSpeed)
 				result = map[string]string{"stopReason": "end_turn"}
@@ -1100,5 +1177,87 @@ func TestACPSpeedResetRestoresModelDefaultAfterResume(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestACPBooleanOptionsNegotiateAndUseNativeWireType(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	engine := testEngine(t, "boolean-options")
+	catalog, err := engine.DiscoverCatalog(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(catalog.Models) != 1 || len(catalog.Models[0].Options) != 1 || catalog.Models[0].Options[0].ID != "extended_context" {
+		t.Fatalf("negotiated boolean option missing from catalog: %+v", catalog.Models)
+	}
+	binding := testBinding()
+	binding.ModelOptions = map[string]string{"extended_context": "true"}
+	session, err := engine.SessionForThread(ctx, binding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close(ctx)
+	result, err := session.RunTurn(ctx, testInput(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Result.Content != "true" {
+		t.Fatalf("native boolean selection = %q, want true", result.Result.Content)
+	}
+}
+
+func TestACPEmptyModelConfigTakesPrecedenceOverLegacyModels(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	engine := testEngine(t, "empty-model-config")
+	t.Run("catalog", func(t *testing.T) {
+		catalog, err := engine.DiscoverCatalog(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(catalog.Models) != 0 {
+			t.Fatalf("authoritative empty configuration exposed legacy models: %+v", catalog.Models)
+		}
+	})
+	t.Run("selection", func(t *testing.T) {
+		binding := testBinding()
+		binding.Model = "legacy-model"
+		session, err := engine.SessionForThread(ctx, binding)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer session.Close(ctx)
+		_, err = session.RunTurn(ctx, testInput(), nil)
+		if err == nil || !strings.Contains(err.Error(), "is not advertised") {
+			t.Fatalf("legacy model excluded by configuration was not rejected: %v", err)
+		}
+	})
+}
+
+func TestACPEmptyOptionChoicesSerializeAsArray(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	catalog, err := testEngine(t, "empty-model-option").DiscoverCatalog(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(catalog.Models) != 1 || len(catalog.Models[0].Options) != 1 {
+		t.Fatalf("missing model option: %+v", catalog.Models)
+	}
+	// Cached catalogs use this clone before serializing for the model picker.
+	options := enginecatalog.CloneModelOptions(catalog.Models[0].Options)
+	data, err := json.Marshal(options[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire struct {
+		Choices json.RawMessage `json:"choices"`
+	}
+	if err := json.Unmarshal(data, &wire); err != nil {
+		t.Fatal(err)
+	}
+	if string(wire.Choices) != "[]" {
+		t.Fatalf("empty native choices serialized as %s, want []", wire.Choices)
 	}
 }
