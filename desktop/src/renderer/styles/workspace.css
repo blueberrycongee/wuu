@@ -109,7 +109,7 @@
   background: var(--paper);
   /* Clear native window controls and reserve the shell-owned sidebar toggle,
      including while the reading canvas is a full-width sheet. */
-  padding: 0 calc(max(var(--control-toolbar-inset), var(--window-controls-inset-right)) + var(--control-size-toolbar) + 4px) 0 8px;
+  padding: 0 calc(max(var(--control-toolbar-inset), var(--window-controls-inset-right)) + var(--control-size-toolbar) + var(--control-toolbar-gap)) 0 8px;
   -webkit-app-region: drag;
   position: relative;
   z-index: 1;

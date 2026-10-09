@@ -5260,19 +5260,6 @@ export function App(): JSX.Element {
         >
           <BrowserPiPHostReporter />
           {!poppedOutMode ? (
-            <button
-              className="icon-button side-panel-toggle-button shell-right-sidebar-toggle"
-              data-wuu-component="right-sidebar-toggle"
-              type="button"
-              aria-label={t(rightPanelOpen ? "shell.closeRightSidebar" : "shell.openRightSidebar")}
-              aria-expanded={rightPanelOpen}
-              aria-pressed={rightPanelOpen}
-              onClick={toggleRightPanel}
-            >
-              <SidePanelToggleIcon side="right" open={rightPanelOpen} />
-            </button>
-          ) : null}
-          {!poppedOutMode ? (
             <>
           <div
             ref={sidebarHoverZoneRef}
@@ -5923,6 +5910,21 @@ export function App(): JSX.Element {
           },
         }}
       />
+      {/* macOS applies app regions in DOM order, so a later drag titlebar would
+        * cover this no-drag control. Keep it as the shell's last child. */}
+      {!poppedOutMode ? (
+        <button
+          className="icon-button side-panel-toggle-button shell-right-sidebar-toggle"
+          data-wuu-component="right-sidebar-toggle"
+          type="button"
+          aria-label={t(rightPanelOpen ? "shell.closeRightSidebar" : "shell.openRightSidebar")}
+          aria-expanded={rightPanelOpen}
+          aria-pressed={rightPanelOpen}
+          onClick={toggleRightPanel}
+        >
+          <SidePanelToggleIcon side="right" open={rightPanelOpen} />
+        </button>
+      ) : null}
       </div>
     </ArtifactPreviewContext.Provider>
     </WorkspaceBrowserOpenContext.Provider>
