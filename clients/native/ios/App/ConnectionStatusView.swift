@@ -29,9 +29,9 @@ struct ConnectionStatusView: View {
                     Text(offlineMessage)
                 }
                 Spacer(minLength: 0)
+                // Keep the presenter alive while an automatic reconnect is in progress.
+                if !detail.isEmpty { DetailButton(detail: detail, label: "断开原因") }
                 if !connecting {
-                    // The transport reason is often a long raw error; it stays one tap away.
-                    if !detail.isEmpty { DetailButton(detail: detail, label: "断开原因") }
                     Button("重连", action: reconnect)
                         .foregroundStyle(.primary).frame(minWidth: 44, minHeight: 44)
                 }
