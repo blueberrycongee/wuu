@@ -27,10 +27,12 @@ import (
 )
 
 // PluginGeneration is a complete replacement for the plugin-owned surfaces of a
-// Session. It owns every process and private package snapshot. Live policy
-// changes publish a new generation for later conversations; already-started
-// conversations keep a reference until they rebuild. Close retires resources
-// in reverse ownership order and records a structured revocation report.
+// Session. It owns every process and private package snapshot. Conversations
+// adopt published updates at their next idle turn boundary; active turns and
+// background work retain their generation until they settle. Committed removal
+// or disable revokes that plugin across all retained generations immediately.
+// Close retires the remaining resources in reverse ownership order and records
+// a structured revocation report.
 type PluginGeneration struct {
 	id                string
 	settings          config.Config
@@ -277,9 +279,10 @@ func (s *Session) buildPluginGeneration(cfg config.Config, discovered []pluginpk
 // ActivatePluginGeneration swaps a prebuilt candidate into the Session as a
 // transaction: runtime activation is validated first, then live bindings are
 // applied, then commit persists policy, and only then is the candidate
-// published. Conversations that already pinned the previous generation keep
-// using it until they rebuild; the old generation is retired after those
-// references are released. Any failure before publication restores the old
+// published. Active work keeps its pinned implementation until an idle-boundary
+// rebuild releases it. Removed or disabled plugins are revoked from every
+// retained generation after publication, independently of those references.
+// Any failure before publication restores the old
 // live bindings, closes the candidate, and returns the error; a failed
 // candidate never touches the current generation.
 func (s *Session) ActivatePluginGeneration(candidate *PluginGeneration, commit func() error) error {
@@ -390,6 +393,9 @@ func (g *PluginGeneration) revokeMissingPlugins(activeIDs map[string]bool, clien
 					providers.DebugLogf("revoke disabled plugin MCP server %q: %v", name, err)
 				}
 			}
+		}
+		if g.systemPrompts != nil {
+			g.systemPrompts.RemoveByPlugin(item.ID)
 		}
 		if g.compactions != nil {
 			g.compactions.RemoveByPlugin(item.ID)

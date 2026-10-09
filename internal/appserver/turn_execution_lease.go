@@ -69,6 +69,9 @@ func (s *Server) tryAcquireThreadExecutionLeaseLocked(th *threadState) (bool, er
 			if needsRecovery {
 				s.pluginRuntimeRevision.Add(1)
 			}
+			// Admission still owns th.mu; cleanup must run after that lock is
+			// released rather than taking other thread locks inside this path.
+			_ = s.startBackground(s.retireIdlePluginRuntimes)
 		}
 		s.pluginGenerationRefreshMu.Unlock()
 		th.pluginExecutionLease = lease

@@ -34,6 +34,9 @@ func TestPluginReloadBehaviorProcess(t *testing.T) {
 		return
 	}
 	err := plugingo.Serve(context.Background(), plugingo.Handler{
+		Shutdown: func(context.Context) error {
+			return os.WriteFile(os.Getenv("WUU_RELOAD_TEST_SHUTDOWN"), []byte(marker), 0600)
+		},
 		Definition: plugingo.Definition{Tools: []plugingo.Tool{{ID: "read", Description: os.Getenv("WUU_RELOAD_TEST_DESCRIPTION"), InputSchema: map[string]any{"type": "object"}, Activity: &plugingo.ToolActivity{ReadOnly: true, ConcurrencySafe: true, Risk: "low"}}}},
 		ExecuteTool: func(context.Context, plugingo.Host, plugingo.ToolCall) (plugingo.ToolResult, error) {
 			return plugingo.TextResult(marker), nil
@@ -56,7 +59,7 @@ func publishReloadBehaviorGeneration(t *testing.T, rt *runtime.Session, marker, 
 		rt.StreamRunner.Tools = kit
 	}
 	root := t.TempDir()
-	manifest := pluginpkg.Manifest{SchemaVersion: 1, ID: "reload-fixture", Runtime: &pluginpkg.RuntimeSpec{Protocol: pluginhost.ProtocolName, Command: os.Args[0], Args: []string{"-test.run=^TestPluginReloadBehaviorProcess$"}, Env: map[string]string{"WUU_RELOAD_TEST_MARKER": marker, "WUU_RELOAD_TEST_DESCRIPTION": description}}}
+	manifest := pluginpkg.Manifest{SchemaVersion: 1, ID: "reload-fixture", Runtime: &pluginpkg.RuntimeSpec{Protocol: pluginhost.ProtocolName, Command: os.Args[0], Args: []string{"-test.run=^TestPluginReloadBehaviorProcess$"}, Env: map[string]string{"WUU_RELOAD_TEST_MARKER": marker, "WUU_RELOAD_TEST_DESCRIPTION": description, "WUU_RELOAD_TEST_SHUTDOWN": filepath.Join(root, "shutdown-observed")}}}
 	raw, err := json.Marshal(manifest)
 	if err != nil {
 		t.Fatal(err)
@@ -136,6 +139,7 @@ func TestPluginReloadAdoptsNextIdleTurnWithoutLosingConversation(t *testing.T) {
 				description = "Read the updated fixture"
 			}
 			publishReloadBehaviorGeneration(t, rt, "new implementation", description)
+			srv.retireIdlePluginRuntimes()
 			srv.pluginRuntimeRevision.Add(1)
 			active, err := srv.ensureThreadRuntime(th)
 			if err != nil {
@@ -235,6 +239,7 @@ func TestPluginReloadWaitsForOutstandingBackgroundWork(t *testing.T) {
 		t.Fatal("worker did not start")
 	}
 	publishReloadBehaviorGeneration(t, rt, "new implementation", "Read the fixture")
+	srv.retireIdlePluginRuntimes()
 	retained, err := srv.ensureThreadRuntime(th)
 	if err != nil {
 		t.Fatal(err)
@@ -254,5 +259,91 @@ func TestPluginReloadWaitsForOutstandingBackgroundWork(t *testing.T) {
 	}
 	if !rt.IsCurrentPluginGeneration(next.PluginGeneration) {
 		t.Fatal("idle runtime did not acquire the published generation")
+	}
+}
+
+// The public mutation transaction must retire idle consumers immediately;
+// waiting for another turn leaves plugin processes alive indefinitely.
+func TestPluginReloadRetiresIdleGenerationOnMutationCommit(t *testing.T) {
+	client := &fakeClient{response: providers.ChatResponse{Content: "saved answer"}}
+	rt := newTestRuntime(t, client)
+	rt.WuuHome = t.TempDir()
+	publishReloadBehaviorGeneration(t, rt, "old implementation", "Read the fixture")
+	t.Cleanup(func() { _, _ = rt.Cleanup() })
+	oldHost := rt.PluginHost
+	shutdownPath := rt.Plugins[0].Runtime.Env["WUU_RELOAD_TEST_SHUTDOWN"]
+	out := &lockedBuffer{}
+	srv := New(rt, out)
+	t.Cleanup(srv.Close)
+	if err := srv.handleLine(context.Background(), []byte(`{"id":"create","method":"thread/start"}`)); err != nil {
+		t.Fatal(err)
+	}
+	threadID := remarshal[ThreadStartResult](t, responseByID(t, parseOutput(t, out.String()), "create")["result"]).Thread.ID
+	request := fmt.Sprintf(`{"id":"turn","method":"turn/start","params":{"thread_id":%q,"prompt":"save this conversation"}}`, threadID)
+	if err := srv.handleLine(context.Background(), []byte(request)); err != nil {
+		t.Fatal(err)
+	}
+	waitForTurnCompletedCountForThread(t, out, threadID, 1)
+	th := srv.thread(threadID)
+	th.mu.Lock()
+	oldRuntime := th.execRuntime
+	history := cloneHistory(th.History)
+	th.mu.Unlock()
+	if oldRuntime == nil {
+		t.Fatal("completed turn did not retain its current runtime")
+	}
+	persistedBefore, err := loadChatMessages(rt.SessionDir, threadID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// An epoch advance with no actual replacement must not churn the runtime.
+	release, err := srv.beginPluginGenerationMutation("catalog test", pluginGenerationMutationCatalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	release()
+	th.mu.Lock()
+	retained := th.execRuntime
+	th.mu.Unlock()
+	if retained != oldRuntime || len(oldHost.Statuses()) != 1 {
+		t.Fatal("catalog-only commit retired the still-current generation")
+	}
+	if _, err := os.Stat(shutdownPath); !os.IsNotExist(err) {
+		t.Fatalf("old process shutdown before replacement: %v", err)
+	}
+	release, err = srv.beginPluginGenerationMutation("replace test", pluginGenerationMutationLive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	func() {
+		defer release()
+		publishReloadBehaviorGeneration(t, rt, "new implementation", "Read the fixture")
+	}()
+	th.mu.Lock()
+	current := th.execRuntime
+	historyAfter := cloneHistory(th.History)
+	th.mu.Unlock()
+	if current != nil {
+		t.Fatal("superseded idle runtime survived the completed mutation")
+	}
+	if len(oldHost.Statuses()) != 0 || len(oldHost.ToolDefinitions()) != 0 {
+		t.Fatal("old host retained a process or callable tools after idle retirement")
+	}
+	shutdown, err := os.ReadFile(shutdownPath)
+	if err != nil || string(shutdown) != "old implementation" {
+		t.Fatalf("old subprocess did not acknowledge shutdown: %q, %v", shutdown, err)
+	}
+	if !reflect.DeepEqual(history, historyAfter) || srv.thread(threadID) != th {
+		t.Fatal("idle retirement changed conversation identity or in-memory history")
+	}
+	persistedAfter, err := loadChatMessages(rt.SessionDir, threadID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(persistedBefore, persistedAfter) {
+		t.Fatal("idle retirement rewrote persisted conversation history")
+	}
+	if len(rt.PluginHost.Statuses()) != 1 || rt.PluginHost.Statuses()[0].State != pluginhost.StateActive {
+		t.Fatal("idle retirement closed the newly published process")
 	}
 }

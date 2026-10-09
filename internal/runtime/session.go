@@ -212,7 +212,8 @@ func (s *Session) MaxParallel() int {
 // to build a thread runtime. Thread-specific mutable dependencies are replaced
 // by the caller below. The caller must release the shadow's temporary plugin
 // generation reference after construction; a successful ThreadRuntime retains
-// its own reference.
+// its own reference. The retired-generation index belongs to the publishing
+// Session and is intentionally not shared with these independently locked shadows.
 func (s *Session) cloneForThreadModel() *Session {
 	if s == nil {
 		return nil
@@ -311,10 +312,10 @@ type ThreadRuntime struct {
 	// EngineID is the agent engine this runtime executes for. It is stamped
 	// from the thread's persisted binding; the built-in engine is "wuu".
 	EngineID agentengine.EngineID
-	// PluginGeneration is the plugin host, hooks, MCP, and capabilities this
-	// conversation started against. Enable/disable publishes a new generation for
-	// later conversations; this pointer keeps the previous one alive until the
-	// runtime is released.
+	// PluginGeneration owns the host, hooks, MCP, and capabilities currently
+	// bound to this conversation. Active work keeps this reference until an
+	// idle-boundary rebuild adopts an update; committed disable or removal
+	// revokes the affected plugin even while this generation remains pinned.
 	PluginGeneration *PluginGeneration
 }
 

@@ -129,7 +129,13 @@ func (s *Server) refreshPluginGenerationIfChanged() error {
 	// shared lease while a same-server mutation holds the local mutex, causing
 	// that mutation's non-blocking exclusive lease attempt to fail spuriously.
 	s.pluginGenerationRefreshMu.Lock()
-	defer s.pluginGenerationRefreshMu.Unlock()
+	refreshed := false
+	defer func() {
+		s.pluginGenerationRefreshMu.Unlock()
+		if refreshed {
+			s.retireIdlePluginRuntimes()
+		}
+	}()
 	observedEpoch, err = session.ReadPluginGenerationEpoch(s.rt.WuuHome)
 	if err != nil || observedEpoch == s.pluginGenerationEpoch.Load() {
 		return err
@@ -150,6 +156,7 @@ func (s *Server) refreshPluginGenerationIfChanged() error {
 	if err != nil {
 		return err
 	}
+	refreshed = true
 	// The refresh mutex still serializes local mutations while the shared lease
 	// is dropped and the observed epoch is published.
 	if err := lease.Release(); err != nil {

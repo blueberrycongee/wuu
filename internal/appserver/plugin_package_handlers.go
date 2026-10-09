@@ -517,6 +517,7 @@ func (s *Server) beginPluginGenerationMutation(action string, kind pluginGenerat
 				providers.DebugLogf("release plugin catalog mutation lease: %v", err)
 			}
 			releaseLocal()
+			s.retireIdlePluginRuntimes()
 		}, nil
 	}
 
@@ -544,6 +545,7 @@ func (s *Server) beginPluginGenerationMutation(action string, kind pluginGenerat
 		// observe the advanced epoch and refresh independently.
 		s.pluginGenerationEpoch.Store(epoch)
 		releaseLocal()
+		s.retireIdlePluginRuntimes()
 	}, nil
 }
 

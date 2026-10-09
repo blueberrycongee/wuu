@@ -2343,6 +2343,9 @@ func usageContextWindowTokens(runner *agent.StreamRunner) int {
 }
 
 func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState, threadRuntime *runtime.ThreadRuntime, turnID string, turnRuntime turnRuntimeSnapshot, history []providers.ChatMessage, requestContext []agent.ContextSegment) {
+	// A refresh during this turn kept its generation leased. Release it once
+	// all turn cleanup has finished, unless background work still depends on it.
+	defer s.retireIdlePluginRuntimes()
 	notify := func(method string, params any) {
 		_ = s.writeNotification(method, params)
 	}

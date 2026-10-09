@@ -375,6 +375,9 @@ func TestDisabledRuntimeRetiresEveryPinnedGenerationAfterCommit(t *testing.T) {
 		generation.settings.Hooks = map[string][]config.HookEntry{string(hooks.PostToolUse): {{Type: "command", Command: "user-hook"}}}
 		generation.hooks = buildHookDispatcher(generation.settings, generation.active, nil, "", nil)
 		generation.host.Add(peer)
+		generation.systemPrompts = agent.NewSystemPromptAssembler()
+		generation.systemPrompts.AddWithOwner(agent.NewStaticPromptSection("disabled", "disabled prompt", 1), "disabled")
+		generation.systemPrompts.AddWithOwner(agent.NewStaticPromptSection("peer", "peer prompt", 1), "peer")
 		generation.active[0].MCPServers = map[string]config.MCPServerConfig{"legacy": {}}
 		generation.mcp = mcp.NewManager()
 		enabled := false
@@ -432,6 +435,9 @@ func TestDisabledRuntimeRetiresEveryPinnedGenerationAfterCommit(t *testing.T) {
 		}
 		if err := generation.mcp.Connect(context.Background(), "user-server"); err != nil {
 			t.Fatalf("unrelated user MCP configuration was revoked: %v", err)
+		}
+		if prompt, _ := generation.systemPrompts.Assemble(""); prompt != "peer prompt" {
+			t.Fatalf("disabled prompt remained available for future assembly: %q", prompt)
 		}
 		if generation.hooks.HasHooks(hooks.PreToolUse) || !generation.hooks.HasHooks(hooks.PostToolUse) {
 			t.Fatal("disable did not remove plugin hooks while preserving user hooks")
@@ -568,7 +574,11 @@ func TestThreadModelCloneKeepsGenerationDuringConstruction(t *testing.T) {
 	session := testGenerationSession(testPluginGeneration("plugin", client))
 	defer session.Cleanup()
 	defer session.pluginGeneration.close()
+	session.retiredPluginGenerations = make(map[*PluginGeneration]struct{})
 	shadow := session.cloneForThreadModel()
+	if shadow.retiredPluginGenerations != nil {
+		t.Fatal("thread-model shadow shared the publishing Session's generation index")
+	}
 	defer func() { shadow.ReleasePluginGeneration(shadow.pluginGeneration) }()
 	candidate, err := session.buildPluginGeneration(config.Config{}, []pluginpkg.Plugin{testRuntimePlugin("plugin")}, nil, nil, func(context.Context, pluginhost.ProcessConfig) (pluginhost.Client, error) {
 		return &generationClient{id: "plugin"}, nil
