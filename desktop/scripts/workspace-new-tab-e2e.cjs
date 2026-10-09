@@ -1,3 +1,4 @@
+const { attachComposerFiles } = require("./composer-attachment-e2e.cjs");
 // Production renderer with the shared synthetic bridge. Verifies new-page
 // selection/recovery and an installed extension through the public view API.
 // Run: npm run test:e2e:workspace-new-tab; evidence: out/workspace-new-tab-e2e.
@@ -483,13 +484,9 @@ app.whenReady().then(async () => {
       assertReadableEditor(await documentGeometry(name + '-shortened'), name);
       await setDocumentDraft('');
       assertReadableEditor(await documentGeometry(name + '-cleared'), name);
-      await evaluate(() => {
-        const transfer = new DataTransfer();
-        transfer.items.add(new File(['%PDF-1.4 layout fixture'], 'layout-fixture.pdf', { type: 'application/pdf' }));
-        const input = document.querySelector('.document-composer-wrap input[type="file"]');
-        input.files = transfer.files;
-        input.dispatchEvent(new Event('change', { bubbles: true }));
-      });
+      await attachComposerFiles(win, ".document-composer-wrap", [{
+        contents: "%PDF-1.4 layout fixture", name: "layout-fixture.pdf", type: "application/pdf",
+      }]);
       await waitFor(() => Boolean(document.querySelector('.document-composer-wrap .composer-file-card')));
       const attached = await documentGeometry(name + '-attached');
       assert.ok(attached.frame.height >= empty.frame.height && attached.tray?.height > 0,

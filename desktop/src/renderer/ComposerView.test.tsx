@@ -256,6 +256,50 @@ function renderComposer(props: {
 }
 
 describe("attachment picker focus recovery", () => {
+  it("drives the E2E attachment action without selecting another composer's picker", async () => {
+    const { attachComposerFiles } = require("../../scripts/composer-attachment-e2e.cjs") as {
+      attachComposerFiles: (win: unknown, owner: string, files: Array<{ contents: string; name: string; type: string }>) => Promise<void>;
+    };
+    const onPasteAttachmentFiles = vi.fn();
+    renderComposer({ onPasteAttachmentFiles });
+    const decoy = document.createElement("input");
+    decoy.type = "file";
+    const decoyChange = vi.fn();
+    decoy.addEventListener("change", decoyChange);
+    document.body.prepend(decoy);
+    const originalTransfer = globalThis.DataTransfer;
+    class Transfer {
+      files: File[] = [];
+      items = { add: (file: File) => this.files.push(file) };
+    }
+    Object.defineProperty(globalThis, "DataTransfer", { configurable: true, writable: true, value: Transfer });
+    // jsdom lacks FileList construction; preserve the real click/change flow.
+    for (const input of container.querySelectorAll<HTMLInputElement>('input[type="file"]')) {
+      Object.defineProperty(input, "files", { configurable: true, writable: true, value: [] });
+    }
+    const picker = container.querySelector<HTMLInputElement>('input[type="file"]')!;
+    const pickerClick = vi.fn((event: Event) => expect(event.defaultPrevented).toBe(true));
+    picker.addEventListener("click", pickerClick);
+    const originalClick = HTMLInputElement.prototype.click;
+    try {
+      let selection!: Promise<void>;
+      act(() => {
+        selection = attachComposerFiles({ webContents: {
+          executeJavaScript: (source: string) => window.eval(source),
+        } }, ".composer", [{ contents: "fixture", name: "owned.pdf", type: "application/pdf" }]);
+      });
+      await act(async () => { await selection; });
+      expect(onPasteAttachmentFiles).toHaveBeenCalledTimes(1);
+      expect(onPasteAttachmentFiles.mock.calls[0][0][0].name).toBe("owned.pdf");
+      expect(pickerClick).toHaveBeenCalledTimes(1);
+      expect(decoyChange).not.toHaveBeenCalled();
+      expect(HTMLInputElement.prototype.click).toBe(originalClick);
+    } finally {
+      decoy.remove();
+      Object.defineProperty(globalThis, "DataTransfer", { configurable: true, writable: true, value: originalTransfer });
+    }
+  });
+
   afterEach(() => { vi.restoreAllMocks(); });
 
   function openPicker(): { textarea: HTMLTextAreaElement; input: HTMLInputElement } {
