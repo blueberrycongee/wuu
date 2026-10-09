@@ -1,6 +1,7 @@
 package appserver
 
 import (
+	"encoding/json"
 	"os"
 	"reflect"
 	"testing"
@@ -144,5 +145,29 @@ func TestResolveSubagentModelAliasUsesVerificationCapabilityRole(t *testing.T) {
 	}
 	if result.Runtime.Provider != rt.ModelRoles.Verification.Provider || result.Runtime.Model != rt.ModelRoles.Verification.Model {
 		t.Fatalf("verification runtime = %+v, role = %+v", result.Runtime, rt.ModelRoles.Verification)
+	}
+}
+
+// The public worker capability must preserve its configured model and effort.
+func TestResolveSubagentModelAliasUsesWorkerRole(t *testing.T) {
+	rt := newTestRuntime(t, &fakeClient{})
+	cfg := config.Config{DefaultProvider: "fake-provider", Providers: map[string]config.ProviderConfig{"fake-provider": {Type: "openai-compatible", BaseURL: "https://example.test/v1", APIKey: "test-key", Model: "main-model"}}, Agent: config.AgentConfig{ModelRoles: config.ModelRolesConfig{Worker: config.ModelRoleConfig{Provider: "fake-provider", Model: "worker-model", Effort: "xhigh"}}}}
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(rt.ConfigPath, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	roles, err := modelroles.Resolve(cfg, modelroles.ResolveOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt.ModelRoles = roles
+	srv := New(rt, &lockedBuffer{})
+	t.Cleanup(srv.Close)
+	resolved := srv.resolveSubagentModelAlias("@worker")
+	if resolved.Err != nil || !resolved.Found || resolved.Runtime.Model != "worker-model" || resolved.Runtime.Effort != "xhigh" {
+		t.Fatalf("worker role = %+v", resolved)
 	}
 }

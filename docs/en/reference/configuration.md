@@ -56,6 +56,8 @@ Replace the endpoint and model with values your service supports, and supply the
 
 [External engines](../getting-started/external-engines.md) are separate programs, not provider types. Their machine-local `engines` configuration controls detection, executable selection, and the default engine. In the desktop, changing a conversation's model does not necessarily change the workspace default; use settings when you intend to change future sessions.
 
+The Subagent plugin uses `agent.model_roles.worker` for a child task when `spawn_agent` omits `model`. An explicit model alias overrides that default. The public Session API also accepts `model_alias: "@worker"` to select this role.
+
 ## Tool loading
 
 `agent.tool_loading` defaults to `auto`. Supported first-party paths use native

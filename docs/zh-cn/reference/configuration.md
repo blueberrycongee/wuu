@@ -56,6 +56,8 @@ Provider 条目为一条模型连接命名。例如，下面的用户配置片�
 
 [外部引擎](../getting-started/external-engines.md)是独立程序，不是 provider 类型。机器本地的 `engines` 配置控制检测、可执行文件选择和默认引擎。在桌面中修改某个会话的模型，不一定改变工作区默认值；需要影响未来会话时，应从设置中修改。
 
+Subagent 插件在 `spawn_agent` 未指定 `model` 时，使用 `agent.model_roles.worker` 为子任务选择模型。显式模型别名会覆盖此默认值。公共 Session API 也接受 `model_alias: "@worker"` 来选择这个角色。
+
 ## 工具加载
 
 `agent.tool_loading` 默认为 `auto`。已支持的官方接口使用原生加载：

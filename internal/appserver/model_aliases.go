@@ -28,7 +28,7 @@ func (s *Server) resolveSubagentModelAlias(alias string) agentcontrol.AliasResol
 	}
 	validAliases := normalizedModelAliasNames(cfg.Agent.ModelAliases)
 	configuredAlias := configuredModelAliasExists(cfg.Agent.ModelAliases, alias)
-	if !configuredAlias && alias != "@verification" {
+	if !configuredAlias && alias != "@verification" && alias != "@worker" {
 		return agentcontrol.AliasResolutionResult{
 			Unknown:      true,
 			ValidAliases: validAliases,
@@ -42,6 +42,8 @@ func (s *Server) resolveSubagentModelAlias(alias string) agentcontrol.AliasResol
 		}
 	} else if alias == "@verification" {
 		selection = s.rt.ModelRoles.Verification
+	} else {
+		selection = s.rt.ModelRoles.Worker
 	}
 	client, err := providerfactory.BuildStreamClient(selection.RuleProviderConfig, selection.Provider)
 	if err != nil {

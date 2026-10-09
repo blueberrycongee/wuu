@@ -148,7 +148,11 @@ func spawnAgent(ctx context.Context, host pluginapi.Host, call pluginapi.ToolCal
 		workspace = "worktree"
 		contextSource = "fork"
 	}
-	record, err := createTask(ctx, host, pluginapi.SessionCreateParams{RequestID: "create-" + requestID, Name: name, Visibility: "plugin", ParentSessionID: call.SessionID, ContextSource: contextSource, Workspace: workspace, ModelAlias: strings.TrimSpace(args.Model), Instructions: workerInstructions(strings.TrimSpace(args.SubagentType))}, taskRecord{ParentSessionID: call.SessionID, ParentTurnID: call.TurnID, Name: name, RequestID: "turn-" + requestID, State: "created"})
+	model := strings.TrimSpace(args.Model)
+	if model == "" {
+		model = "@worker"
+	}
+	record, err := createTask(ctx, host, pluginapi.SessionCreateParams{RequestID: "create-" + requestID, Name: name, Visibility: "plugin", ParentSessionID: call.SessionID, ContextSource: contextSource, Workspace: workspace, ModelAlias: model, Instructions: workerInstructions(strings.TrimSpace(args.SubagentType))}, taskRecord{ParentSessionID: call.SessionID, ParentTurnID: call.TurnID, Name: name, RequestID: "turn-" + requestID, State: "created"})
 	if err != nil {
 		return pluginapi.ToolResult{}, err
 	}
@@ -802,7 +806,7 @@ func objectSchema(properties map[string]any, required ...string) map[string]any 
 	return map[string]any{"type": "object", "properties": properties, "required": required}
 }
 func spawnSchema() map[string]any {
-	return objectSchema(map[string]any{"description": stringField("Short 3-5 word summary of what the agent will do."), "prompt": stringField("Concrete, self-contained task brief with scope, constraints, acceptance criteria, and deliverable."), "subagent_type": stringField("Optional specialized agent type."), "name": stringField("Optional addressable task name using lowercase letters, digits, and underscores."), "model": stringField("Optional configured model alias or host capability model such as @verification."), "context": map[string]any{"type": "string", "enum": []string{"fresh", "fork"}, "description": "Optional conversation context source. Defaults to fresh; fork inherits the parent conversation."}, "isolation": map[string]any{"type": "string", "enum": []string{"worktree"}}, "run_in_background": map[string]any{"type": "boolean", "default": true, "description": "Return immediately when true. Set false when the parent must wait for this result before continuing; a foreground wait automatically becomes background after ten minutes."}}, "description", "prompt")
+	return objectSchema(map[string]any{"description": stringField("Short 3-5 word summary of what the agent will do."), "prompt": stringField("Concrete, self-contained task brief with scope, constraints, acceptance criteria, and deliverable."), "subagent_type": stringField("Optional specialized agent type."), "name": stringField("Optional addressable task name using lowercase letters, digits, and underscores."), "model": stringField("Optional configured model alias or host capability model such as @verification. Defaults to the configured @worker role."), "context": map[string]any{"type": "string", "enum": []string{"fresh", "fork"}, "description": "Optional conversation context source. Defaults to fresh; fork inherits the parent conversation."}, "isolation": map[string]any{"type": "string", "enum": []string{"worktree"}}, "run_in_background": map[string]any{"type": "boolean", "default": true, "description": "Return immediately when true. Set false when the parent must wait for this result before continuing; a foreground wait automatically becomes background after ten minutes."}}, "description", "prompt")
 }
 
 func workerInstructions(workerType string) string {

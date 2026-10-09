@@ -168,6 +168,25 @@ func (h *captureHost) CallHost(_ context.Context, method string, params, result 
 	return json.Unmarshal([]byte(response), result)
 }
 
+// An omitted model must use the configured worker role instead of inheriting
+// the parent; explicit aliases remain covered by the public-service test below.
+func TestSpawnUsesWorkerRoleByDefault(t *testing.T) {
+	host := &captureHost{}
+	_, err := executeTool(context.Background(), host, pluginapi.ToolCall{ToolID: "spawn_agent", SessionID: "parent-1", Arguments: json.RawMessage(`{"description":"Review parser","prompt":"Inspect and report."}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, call := range host.calls {
+		if call.method == pluginapi.HostServiceSessionCreate {
+			if call.params["model_alias"] != "@worker" {
+				t.Fatalf("worker selection = %v", call.params["model_alias"])
+			}
+			return
+		}
+	}
+	t.Fatal("child session was not created")
+}
+
 func TestSpawnComposesPublicSessionServices(t *testing.T) {
 	host := &captureHost{}
 	result, err := executeTool(context.Background(), host, pluginapi.ToolCall{ToolID: "spawn_agent", SessionID: "parent-1", Arguments: json.RawMessage(`{"description":"Review parser","prompt":"Inspect and report.","subagent_type":"general-purpose","model":"cheap","run_in_background":true}`)})
