@@ -262,11 +262,7 @@ func processCompletionIDs(clientID string) []string {
 }
 
 func processCompletionAnswerIDs(clientID string) []string {
-	clientID = strings.TrimSpace(clientID)
-	if !strings.HasPrefix(clientID, processCompletionAnswerClientIDPrefix) {
-		return nil
-	}
-	return splitAgentCompletionResultIDs(strings.TrimPrefix(clientID, processCompletionAnswerClientIDPrefix))
+	return completionReceipts(clientID).Processes
 }
 
 func uniqueSortedCompletionIDs(ids []string) []string {
@@ -285,35 +281,7 @@ func uniqueSortedCompletionIDs(ids []string) []string {
 }
 
 func markProcessCompletionAnswer(res *agent.LoopResult, processIDs []string) bool {
-	if res == nil || len(res.NewMessages) == 0 {
-		return false
-	}
-	ids := uniqueSortedCompletionIDs(processIDs)
-	if len(ids) == 0 {
-		return false
-	}
-	wanted := make(map[string]bool, len(ids))
-	for _, id := range ids {
-		wanted[id] = true
-	}
-	markerIndex := -1
-	for i, msg := range res.NewMessages {
-		for _, id := range processCompletionIDs(msg.ClientID) {
-			if wanted[id] {
-				markerIndex = i
-				break
-			}
-		}
-	}
-	for i := len(res.NewMessages) - 1; i > markerIndex; i-- {
-		msg := &res.NewMessages[i]
-		if !strings.EqualFold(strings.TrimSpace(msg.Role), "assistant") || strings.TrimSpace(msg.Content) == "" {
-			continue
-		}
-		msg.ClientID = processCompletionAnswerClientIDPrefix + strings.Join(ids, ",")
-		return true
-	}
-	return false
+	return markCompletionAnswer(res, completionAnswerReceipts{Processes: processIDs})
 }
 
 func processCompletionMarkerAnswered(history []providers.ChatMessage, processID string) bool {

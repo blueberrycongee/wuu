@@ -2367,6 +2367,7 @@ func TestServerConfigModelUpdateReconfiguresEditTools(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new thread toolkit: %v", err)
 	}
+	kit.ConfigureSurfaceForProviderModel(rt.ProviderName, rt.Model, true)
 	rt.Toolkit = kit
 	if err := os.WriteFile(rt.ConfigPath, []byte(`{
   "default_provider": "fake-provider",
@@ -10411,5 +10412,58 @@ func TestUsageOverviewReportsZeroWithoutRecordedUsage(t *testing.T) {
 	result := remarshal[UsageOverviewResponse](t, response["result"])
 	if result.TotalSessions != 0 || result.Metrics.ActiveDays != 0 || result.Days == nil || len(result.Days) != 0 {
 		t.Fatalf("unexpected overview without usage: %+v", result)
+	}
+}
+
+func TestThreadBrowserSurfaceRequiresNegotiatedClient(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		client   bool
+		disabled bool
+	}{
+		{name: "headless"},
+		{name: "desktop", client: true},
+		{name: "desktop explicitly disabled", client: true, disabled: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rt := newTestRuntime(t, &fakeClient{})
+			kit, err := tools.New(rt.RootDir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			kit.ConfigureSurfaceForProviderModel("openai", "gpt-6.1-sol", true)
+			kit.SetBrowserEnabled(!tc.disabled)
+			rt.Toolkit = kit
+			out := &lockedBuffer{}
+			srv := New(rt, out)
+			t.Cleanup(srv.Close)
+			methods := []string{}
+			if tc.client {
+				methods = []string{MethodBrowserCDP, MethodBrowserScreenshot, MethodBrowserOpenTab, MethodBrowserCloseTab, MethodBrowserSetVisibility, MethodBrowserListTabs}
+			}
+			dispatchPayload(t, srv, "init-browser", MethodInitialize, map[string]any{
+				"capabilities": map[string]any{"reverse_rpc": map[string]any{"methods": methods}},
+			})
+			dispatchPayload(t, srv, "start-browser", MethodThreadStart, ThreadStartParams{})
+			started := remarshal[ThreadStartResult](t, responseByID(t, parseOutput(t, out.String()), "start-browser")["result"])
+			thread := srv.thread(started.Thread.ID)
+			built, err := srv.ensureThreadRuntime(thread)
+			if err != nil {
+				t.Fatal(err)
+			}
+			available := containsTestString(built.Toolkit.SurfaceToolNames(), "wuu_browser")
+			if available != (tc.client && !tc.disabled) {
+				t.Fatalf("browser surface availability=%t, negotiated=%t, disabled=%t", available, tc.client, tc.disabled)
+			}
+			before, _ := json.Marshal(built.Toolkit.Definitions())
+			reused, err := srv.ensureThreadRuntime(thread)
+			if err != nil || reused != built {
+				t.Fatalf("runtime reuse: %v", err)
+			}
+			after, _ := json.Marshal(reused.Toolkit.Definitions())
+			if !bytes.Equal(before, after) {
+				t.Fatal("unchanged negotiated capabilities changed tool definitions across turns")
+			}
+		})
 	}
 }

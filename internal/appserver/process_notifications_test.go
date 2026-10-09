@@ -675,3 +675,129 @@ terminal:
 		t.Fatalf("persisted answer should prevent duplicate model work, got %d requests", requestCount)
 	}
 }
+
+func TestProcessCompletionsJoinActiveTurn(t *testing.T) {
+	rt := newTestRuntime(t, &fakeClient{})
+	provider := newGatedProvider(8)
+	rt.StreamRunner.Client = providers.AdaptStreamClient(provider)
+	manager, err := process.NewManager(rt.RootDir, filepath.Join(rt.RootDir, "process-runtime"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	threadID := "active-process-results"
+	if _, err := session.CreateWithMetadata(rt.SessionDir, threadID, rt.RootDir); err != nil {
+		t.Fatal(err)
+	}
+	out := &lockedBuffer{}
+	server := New(rt, out)
+	t.Cleanup(server.Close)
+	th := newThreadState(threadID, nil, rt.ProviderName, rt.Model, rt.RootDir, true, time.Now().UTC())
+	th.execRuntime = &runtime.ThreadRuntime{StreamRunner: rt.StreamRunner, ProcessManager: manager}
+	server.threads[threadID] = th
+	startedTurn, err := server.startQueuedTurn(context.Background(), threadID, queuedTurn{id: "work", msg: providers.ChatMessage{Role: "user", Content: "Complete the work."}})
+	if err != nil || !startedTurn {
+		t.Fatalf("start: %v, %v", startedTurn, err)
+	}
+	first := provider.next(t)
+	events := make(chan process.Event, 16)
+	manager.Subscribe(events)
+	var wanted []string
+	for _, kind := range []string{"pending-one", "pending-two", "already-read", "other-owner"} {
+		owner := threadID
+		if kind == "other-owner" {
+			owner = "another-thread"
+		}
+		p, err := manager.Start(context.Background(), process.StartOptions{Command: "printf 'complete\\n'", OwnerKind: process.OwnerMainAgent, OwnerID: owner, Lifecycle: process.LifecycleManaged})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var terminal process.Event
+		for terminal.Process.ID == "" {
+			select {
+			case event := <-events:
+				if event.Process.ID == p.ID && event.Cause == process.EventCauseNaturalExit {
+					terminal = event
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("process did not finish")
+			}
+		}
+		if kind == "already-read" {
+			if _, err := manager.MarkCompletionDelivered(p.ID, "process_result"); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if owner == threadID {
+			server.enqueueProcessCompletionTurn(threadID, p.ID, processCompletionChatMessage(manager, terminal))
+		}
+		if strings.HasPrefix(kind, "pending-") {
+			wanted = append(wanted, p.ID)
+		}
+	}
+	first.response <- providers.ChatResponse{Content: "Continue checking.", FinishReason: providers.FinishReasonContinue}
+	second := provider.next(t)
+	check := func(req providers.ChatRequest) {
+		t.Helper()
+		seen := map[string]int{}
+		for _, msg := range req.Messages {
+			for _, id := range processCompletionIDs(msg.ClientID) {
+				seen[id]++
+			}
+		}
+		if len(seen) != len(wanted) {
+			t.Fatalf("delivered completion IDs = %v, want %v", seen, wanted)
+		}
+		for _, id := range wanted {
+			if seen[id] != 1 {
+				t.Fatalf("completion %s appears %d times", id, seen[id])
+			}
+		}
+	}
+	check(second.request)
+	second.response <- providers.ChatResponse{Content: "One final check.", FinishReason: providers.FinishReasonContinue}
+	third := provider.next(t)
+	check(third.request)
+	third.response <- providers.ChatResponse{Content: "Verified both results."}
+	waitForTurnCompletedForThread(t, out, threadID)
+	waitForThreadLeaseRelease(t, rt.SessionDir, threadID)
+	for _, id := range wanted {
+		pending, err := manager.CompletionPending(id)
+		if err != nil || pending {
+			t.Fatalf("completion not acknowledged: %s, %v, %v", id, pending, err)
+		}
+	}
+	records, _, err := loadProviderPersistedMessages(rt.SessionDir, threadID, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	persisted := chatMessagesFromPersistedMessages(records)
+	for _, id := range wanted {
+		if !processCompletionMarkerAnswered(persisted, id) {
+			t.Fatalf("persisted answer lost completion receipt %s", id)
+		}
+	}
+	server.tryDrainAgentCompletionTurns(threadID, true)
+	server.backgroundWG.Wait()
+	select {
+	case <-provider.calls:
+		t.Fatal("consumed completion started another model turn")
+	default:
+	}
+}
+
+func TestCompletionAnswersPreserveBothReceiptKinds(t *testing.T) {
+	messages := []providers.ChatMessage{
+		{Role: "user", ClientID: agentCompletionClientIDForResult("result-one"), Content: "agent finished"},
+		{Role: "user", Name: wuucontext.ProcessNotificationMessageName, Steered: true, ClientID: processCompletionClientID([]string{"process-one"}), Content: "process finished"},
+		{Role: "assistant", Content: "Both results checked."},
+	}
+	res := agent.LoopResult{NewMessages: providers.CloneChatMessages(messages), DurableNewMessages: providers.CloneChatMessages(messages), DurableMessagesTracked: true}
+	if !markAgentCompletionAnswer(&res, []string{"result-one"}) || !markProcessCompletionAnswer(&res, []string{"process-one"}) {
+		t.Fatal("completion not marked")
+	}
+	for _, history := range [][]providers.ChatMessage{res.NewMessages, res.DurableNewMessages} {
+		if !agentCompletionMarkerAnswered(history, "result-one") || !processCompletionMarkerAnswered(history, "process-one") {
+			t.Errorf("answer lost one receipt kind: %+v", history)
+		}
+	}
+}
