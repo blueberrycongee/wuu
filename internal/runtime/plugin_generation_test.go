@@ -13,16 +13,20 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/extensions"
 	"github.com/blueberrycongee/wuu/internal/hooks"
+	"github.com/blueberrycongee/wuu/internal/mcp"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/session"
+	"github.com/blueberrycongee/wuu/internal/tools"
 )
 
 type generationClient struct {
 	id           string
 	closed       bool
+	onClose      func()
 	closeOrder   *[]string
 	capabilities []pluginhost.CapabilityDescriptor
 	invoke       func(pluginhost.CapabilityInvokeParams) (pluginhost.CapabilityInvokeResult, error)
@@ -39,6 +43,9 @@ func (c *generationClient) Status() pluginhost.Status {
 }
 func (c *generationClient) Close(context.Context) error {
 	c.closed = true
+	if c.onClose != nil {
+		c.onClose()
+	}
 	if c.closeOrder != nil {
 		*c.closeOrder = append(*c.closeOrder, c.id)
 	}
@@ -205,6 +212,64 @@ func TestFailedCandidateClosesStartedProcessesAndPreservesOldGeneration(t *testi
 	}
 }
 
+func TestRefreshCandidatePreservesHealthyRuntimeOnFailure(t *testing.T) {
+	for _, failure := range []string{"startup", "required-service"} {
+		t.Run(failure, func(t *testing.T) {
+			oldClient := &generationClient{id: "live"}
+			old := testPluginGeneration("live", oldClient)
+			session := testGenerationSession(old)
+			defer session.Cleanup()
+			candidateClient := &fakeServicePluginClient{id: "live", required: []pluginhost.ServiceRequirement{{Name: "missing.service", MajorVersion: 1, Required: true}}}
+			candidate, err := session.buildPluginGeneration(config.Config{}, []pluginpkg.Plugin{testRuntimePlugin("live")}, nil, nil,
+				func(context.Context, pluginhost.ProcessConfig) (pluginhost.Client, error) {
+					if failure == "startup" {
+						return nil, errors.New("replacement startup failed")
+					}
+					return candidateClient, nil
+				})
+			if candidate != nil {
+				defer candidate.close()
+			}
+			if err == nil {
+				t.Fatal("refresh accepted a failed replacement for a healthy runtime")
+			}
+			if oldClient.closed || session.PluginHost != old.host {
+				t.Fatal("failed replacement changed the healthy runtime")
+			}
+			if !session.IsCurrentPluginGeneration(old) {
+				t.Fatal("failed replacement changed the committed generation identity")
+			}
+			if failure == "required-service" && !candidateClient.closed {
+				t.Fatal("failed candidate was not closed")
+			}
+		})
+	}
+}
+
+func TestRefreshCandidateAllowsRemovalAndIsolatesNewOptionalFailure(t *testing.T) {
+	oldClient := &generationClient{id: "removed"}
+	session := testGenerationSession(testPluginGeneration("removed", oldClient))
+	defer session.Cleanup()
+	candidate, err := session.buildPluginGeneration(config.Config{}, []pluginpkg.Plugin{testRuntimePlugin("new")}, nil, nil,
+		func(context.Context, pluginhost.ProcessConfig) (pluginhost.Client, error) {
+			return nil, errors.New("new optional runtime unavailable")
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer candidate.close()
+	if err := session.ActivatePluginGeneration(candidate, nil); err != nil {
+		t.Fatal(err)
+	}
+	if !oldClient.closed {
+		t.Fatal("removed runtime was not retired")
+	}
+	statuses := session.PluginHost.Statuses()
+	if len(statuses) != 1 || statuses[0].ID != "new" || statuses[0].State != pluginhost.StateFailed {
+		t.Fatalf("optional failure diagnostics = %+v", statuses)
+	}
+}
+
 func TestCapabilityConflictClosesCandidateAndPreservesOldGeneration(t *testing.T) {
 	oldClient := &generationClient{id: "old"}
 	old := testPluginGeneration("old", oldClient)
@@ -280,13 +345,16 @@ func TestActivatePluginGenerationKeepsPinnedConversationGeneration(t *testing.T)
 	if pinned != old {
 		t.Fatal("session did not pin the current generation")
 	}
-	candidateClient := &generationClient{id: "candidate"}
-	candidate := testPluginGeneration("candidate", candidateClient)
+	candidateClient := &generationClient{id: "old"}
+	candidate := testPluginGeneration("old", candidateClient)
 	if err := session.ActivatePluginGeneration(candidate, nil); err != nil {
 		t.Fatal(err)
 	}
 	if session.PluginHost != candidate.host {
 		t.Fatal("candidate was not published as the live generation")
+	}
+	if session.IsCurrentPluginGeneration(pinned) || !session.IsCurrentPluginGeneration(candidate) {
+		t.Fatal("committed generation identity did not change after publication")
 	}
 	if oldClient.closed {
 		t.Fatal("pinned conversation generation was closed during the swap")
@@ -297,6 +365,97 @@ func TestActivatePluginGenerationKeepsPinnedConversationGeneration(t *testing.T)
 	session.ReleasePluginGeneration(pinned)
 	if !oldClient.closed {
 		t.Fatal("pinned generation survived after the last conversation released it")
+	}
+}
+
+func TestDisabledRuntimeRetiresEveryPinnedGenerationAfterCommit(t *testing.T) {
+	makeGeneration := func() (*PluginGeneration, *generationClient, *generationClient) {
+		disabled, peer := &generationClient{id: "disabled"}, &generationClient{id: "peer"}
+		generation := testPluginGeneration("disabled", disabled)
+		generation.active[0].Hooks = map[string][]config.HookEntry{string(hooks.PreToolUse): {{Type: "command", Command: "disabled-hook"}}}
+		generation.active = append(generation.active, testRuntimePlugin("peer"))
+		generation.settings.Hooks = map[string][]config.HookEntry{string(hooks.PostToolUse): {{Type: "command", Command: "user-hook"}}}
+		generation.hooks = buildHookDispatcher(generation.settings, generation.active, nil, "", nil)
+		generation.host.Add(peer)
+		generation.systemPrompts = agent.NewSystemPromptAssembler()
+		generation.systemPrompts.AddWithOwner(agent.NewStaticPromptSection("disabled", "disabled prompt", 1), "disabled")
+		generation.systemPrompts.AddWithOwner(agent.NewStaticPromptSection("peer", "peer prompt", 1), "peer")
+		generation.active[0].MCPServers = map[string]config.MCPServerConfig{"legacy": {}}
+		generation.mcp = mcp.NewManager()
+		enabled := false
+		generation.mcp.Configure(map[string]mcp.ServerConfig{
+			PluginMCPServerName("disabled", "legacy"): {Enabled: &enabled},
+			"user-server": {Enabled: &enabled},
+		})
+		return generation, disabled, peer
+	}
+	first, firstDisabled, firstPeer := makeGeneration()
+	session := testGenerationSession(first)
+	defer session.Cleanup()
+	firstPin := session.RetainPluginGeneration()
+	defer session.ReleasePluginGeneration(firstPin)
+	second, secondDisabled, secondPeer := makeGeneration()
+	if err := session.ActivatePluginGeneration(second, nil); err != nil {
+		t.Fatal(err)
+	}
+	secondPin := session.RetainPluginGeneration()
+	defer session.ReleasePluginGeneration(secondPin)
+	if firstDisabled.closed || firstPeer.closed {
+		t.Fatal("same-ID update retired pinned implementation")
+	}
+	failed := testPluginGeneration("peer", &generationClient{id: "peer"})
+	if err := session.ActivatePluginGeneration(failed, func() error { return errors.New("persist failed") }); err == nil {
+		t.Fatal("commit unexpectedly succeeded")
+	}
+	if firstDisabled.closed || secondDisabled.closed {
+		t.Fatal("failed disable retired live implementation")
+	}
+	if err := first.mcp.Connect(context.Background(), PluginMCPServerName("disabled", "legacy")); err != nil {
+		t.Fatalf("failed disable revoked plugin MCP: %v", err)
+	}
+	current := testPluginGeneration("peer", &generationClient{id: "peer"})
+	for _, client := range []*generationClient{firstDisabled, secondDisabled} {
+		client.onClose = func() {
+			if !session.IsCurrentPluginGeneration(current) {
+				t.Error("retirement ran before publication")
+			}
+		}
+	}
+	if err := session.ActivatePluginGeneration(current, nil); err != nil {
+		t.Fatal(err)
+	}
+	if !firstDisabled.closed || !secondDisabled.closed {
+		t.Fatal("disable missed a pinned generation")
+	}
+	if firstPeer.closed || secondPeer.closed {
+		t.Fatal("disable retired unrelated plugin")
+	}
+	for _, generation := range []*PluginGeneration{first, second} {
+		enabled := false
+		if err := generation.mcp.Add(context.Background(), mcp.ServerConfig{Name: PluginMCPServerName("disabled", "legacy"), Enabled: &enabled}); !errors.Is(err, mcp.ErrServerRevoked) {
+			t.Fatalf("disabled plugin MCP reconnect error = %v", err)
+		}
+		if err := generation.mcp.Connect(context.Background(), "user-server"); err != nil {
+			t.Fatalf("unrelated user MCP configuration was revoked: %v", err)
+		}
+		if prompt, _ := generation.systemPrompts.Assemble(""); prompt != "peer prompt" {
+			t.Fatalf("disabled prompt remained available for future assembly: %q", prompt)
+		}
+		if generation.hooks.HasHooks(hooks.PreToolUse) || !generation.hooks.HasHooks(hooks.PostToolUse) {
+			t.Fatal("disable did not remove plugin hooks while preserving user hooks")
+		}
+		for _, status := range generation.host.Statuses() {
+			if status.ID == "disabled" {
+				t.Fatal("disabled runtime remains callable")
+			}
+		}
+	}
+	reenabled, enabledClient, _ := makeGeneration()
+	if err := session.ActivatePluginGeneration(reenabled, nil); err != nil {
+		t.Fatal(err)
+	}
+	if enabledClient.closed || first.hooks.HasHooks(hooks.PreToolUse) || second.hooks.HasHooks(hooks.PreToolUse) {
+		t.Fatal("re-enabling resurrected a retired implementation")
 	}
 }
 
@@ -389,7 +548,9 @@ func TestThreadModelRuntimeKeepsGenerationUntilReleased(t *testing.T) {
 				threads = append(threads, thread)
 				defer func() { session.ReleasePluginGeneration(thread.PluginGeneration) }()
 			}
-			candidate, err := session.buildPluginGeneration(config.Config{}, nil, nil, nil, startPluginClient)
+			candidate, err := session.buildPluginGeneration(config.Config{}, []pluginpkg.Plugin{testRuntimePlugin("plugin")}, nil, nil, func(context.Context, pluginhost.ProcessConfig) (pluginhost.Client, error) {
+				return &generationClient{id: "plugin"}, nil
+			})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -415,9 +576,18 @@ func TestThreadModelCloneKeepsGenerationDuringConstruction(t *testing.T) {
 	session := testGenerationSession(testPluginGeneration("plugin", client))
 	defer session.Cleanup()
 	defer session.pluginGeneration.close()
-	shadow := session.cloneForThreadModel()
+	session.retiredPluginGenerations = make(map[*PluginGeneration]struct{})
+	shadow, err := session.cloneForThreadModel()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if shadow.retiredPluginGenerations != nil {
+		t.Fatal("thread-model shadow shared the publishing Session's generation index")
+	}
 	defer func() { shadow.ReleasePluginGeneration(shadow.pluginGeneration) }()
-	candidate, err := session.buildPluginGeneration(config.Config{}, nil, nil, nil, startPluginClient)
+	candidate, err := session.buildPluginGeneration(config.Config{}, []pluginpkg.Plugin{testRuntimePlugin("plugin")}, nil, nil, func(context.Context, pluginhost.ProcessConfig) (pluginhost.Client, error) {
+		return &generationClient{id: "plugin"}, nil
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -461,47 +631,160 @@ type preparedGenerationClient struct {
 	*generationClient
 	activateErr  error
 	activateCall int
+	onActivate   func()
 }
 
 func (c *preparedGenerationClient) Status() pluginhost.Status {
+	if c.status != nil {
+		return *c.status
+	}
 	return pluginhost.Status{ID: c.id, State: pluginhost.StatePrepared}
 }
 
 func (c *preparedGenerationClient) Activate(context.Context) error {
 	c.activateCall++
+	if c.onActivate != nil {
+		c.onActivate()
+	}
+	c.status = &pluginhost.Status{ID: c.id, State: pluginhost.StateActive}
+	if c.activateErr != nil {
+		c.status.State = pluginhost.StateFailed
+		c.status.Error = c.activateErr.Error()
+	}
 	return c.activateErr
 }
 
-func TestCandidateActivationFailureLeavesCurrentGenerationUntouched(t *testing.T) {
+func TestCandidateActivationFailurePreservesCommittedGeneration(t *testing.T) {
 	oldClient := &generationClient{id: "old"}
 	old := testPluginGeneration("old", oldClient)
 	session := testGenerationSession(old)
-
+	defer session.Cleanup()
+	committed := false
 	broken := &preparedGenerationClient{
 		generationClient: &generationClient{id: "broken"},
 		activateErr:      errors.New("activate failed"),
+		onActivate: func() {
+			if !committed {
+				t.Error("candidate produced activation effects before durable commit")
+			}
+		},
 	}
 	candidate := testPluginGeneration("broken", broken)
+	err := session.ActivatePluginGeneration(candidate, func() error { committed = true; return nil })
+	if err == nil || !strings.Contains(err.Error(), "committed") {
+		t.Fatalf("activation error must distinguish committed changes: %v", err)
+	}
+	if !committed || session.pluginGeneration != candidate || session.PluginHost != candidate.host {
+		t.Fatal("activation failure contradicted committed policy by restoring old generation")
+	}
+	if !oldClient.closed {
+		t.Fatal("removed old implementation remained active after commit")
+	}
+	if statuses := session.PluginHost.Statuses(); len(statuses) != 1 || statuses[0].State != pluginhost.StateFailed {
+		t.Fatalf("failed activation diagnostics unavailable: %+v", statuses)
+	}
+}
 
-	commitCalled := false
-	err := session.ActivatePluginGeneration(candidate, func() error {
-		commitCalled = true
-		return nil
-	})
-	if err == nil {
-		t.Fatal("activation unexpectedly succeeded")
+// Prepared contributions must not survive a failed native activation, while
+// independent declarative hooks and healthy runtime contributions remain usable.
+func TestFailedActivationDoesNotPublishPreparedNativeContributions(t *testing.T) {
+	old := testPluginGeneration("old", &generationClient{id: "old"})
+	session := testGenerationSession(old)
+	session.RootDir = t.TempDir()
+	session.ProviderName, session.Model = "fixture", "model"
+	defer session.Cleanup()
+	makeClient := func(id string, priority int, activationErr error) *preparedGenerationClient {
+		return &preparedGenerationClient{
+			generationClient: &generationClient{
+				id: id,
+				capabilities: []pluginhost.CapabilityDescriptor{
+					{ID: pluginhost.CapabilityAgentSystemPromptSection, Kind: "transform", Version: 1, Priority: priority},
+					{ID: pluginhost.CapabilityAgentCompaction, Kind: "decision", Version: 1, Priority: priority},
+					{ID: pluginhost.CapabilityAgentRequestTransform, Kind: "transform", Version: 1, Priority: priority},
+				},
+				invoke: func(params pluginhost.CapabilityInvokeParams) (pluginhost.CapabilityInvokeResult, error) {
+					var output any
+					switch params.Capability {
+					case pluginhost.CapabilityAgentSystemPromptSection:
+						output = pluginhost.SystemPromptSectionOutput{Text: id + " prompt"}
+					case pluginhost.CapabilityAgentCompaction:
+						output = pluginhost.CompactionOutput{Messages: []providers.ChatMessage{{Role: "system", Content: id + " compacted"}}}
+					case pluginhost.CapabilityAgentRequestTransform:
+						output = pluginhost.RequestTransformOutput{}
+					default:
+						return pluginhost.CapabilityInvokeResult{}, fmt.Errorf("unexpected capability %q", params.Capability)
+					}
+					data, err := json.Marshal(output)
+					return pluginhost.CapabilityInvokeResult{Output: data}, err
+				},
+			},
+			activateErr: activationErr,
+		}
 	}
-	if commitCalled {
-		t.Fatal("commit ran after activation failure")
+	broken := makeClient("broken", 100, errors.New("activation failed"))
+	healthy := makeClient("healthy", 1, nil)
+	brokenPlugin := testRuntimePlugin("broken")
+	brokenPlugin.Hooks = map[string][]config.HookEntry{string(hooks.PreToolUse): {{Type: "command", Command: "independent-hook"}}}
+	candidate, err := session.buildPluginGeneration(config.Config{}, []pluginpkg.Plugin{brokenPlugin, testRuntimePlugin("healthy")}, nil, nil,
+		func(_ context.Context, cfg pluginhost.ProcessConfig) (pluginhost.Client, error) {
+			if cfg.ID == "broken" {
+				return broken, nil
+			}
+			return healthy, nil
+		})
+	if err != nil {
+		t.Fatal(err)
 	}
-	if session.pluginGeneration != old || session.PluginHost != old.host || session.ActivePlugins[0].ID != "old" {
-		t.Fatalf("current generation changed after failed activation: active=%+v", session.ActivePlugins)
+	if prompt, _ := candidate.systemPrompts.Assemble(""); !strings.Contains(prompt, "broken prompt") {
+		t.Fatal("fixture did not prepare failed runtime's native contribution")
 	}
-	if oldClient.closed {
-		t.Fatal("old generation was closed by the failed candidate")
+	if err := session.ActivatePluginGeneration(candidate, nil); !PluginGenerationWasCommitted(err) {
+		t.Fatalf("expected committed activation failure, got %v", err)
 	}
-	if !broken.closed {
-		t.Fatal("failed candidate kept candidate-owned resources")
+	if prompt, _ := candidate.systemPrompts.Assemble(""); prompt != "healthy prompt" {
+		t.Errorf("published prompt = %q", prompt)
+	}
+	if strings.Contains(session.BaseSystemPrompt, "broken prompt") {
+		t.Error("failed native prompt reached live Session")
+	}
+	messages, err := candidate.compactions.Resolve(nil).Compact(context.Background(), "model", nil)
+	if err != nil || len(messages) != 1 || messages[0].Content != "healthy compacted" {
+		t.Errorf("healthy compaction was shadowed: messages=%+v err=%v", messages, err)
+	}
+	if err := candidate.requestTransforms.Apply(context.Background(), &providers.ChatRequest{Model: "model"}, nil); err != nil {
+		t.Errorf("failed transform blocked healthy request: %v", err)
+	}
+	if !candidate.hooks.HasHooks(hooks.PreToolUse) {
+		t.Error("independent declarative hook was removed")
+	}
+	foundFailure := false
+	for _, status := range session.PluginHost.Statuses() {
+		if status.ID == "broken" && status.State == pluginhost.StateFailed {
+			foundFailure = true
+		}
+	}
+	if !foundFailure {
+		t.Error("failed activation diagnostic was removed")
+	}
+	if healthy.closed {
+		t.Error("healthy runtime was retired")
+	}
+}
+
+func TestCandidateCommitFailureCannotRunActivationEffects(t *testing.T) {
+	old := testPluginGeneration("old", &generationClient{id: "old"})
+	session := testGenerationSession(old)
+	defer session.Cleanup()
+	client := &preparedGenerationClient{generationClient: &generationClient{id: "candidate"}}
+	candidate := testPluginGeneration("candidate", client)
+	if err := session.ActivatePluginGeneration(candidate, func() error { return errors.New("persist failed") }); err == nil {
+		t.Fatal("commit unexpectedly succeeded")
+	}
+	if client.activateCall != 0 {
+		t.Fatal("failed durable commit still ran candidate activation")
+	}
+	if !client.closed || session.pluginGeneration != old {
+		t.Fatal("failed preparation was not cleaned up with old generation preserved")
 	}
 }
 
@@ -626,6 +909,9 @@ func TestRefreshPluginCatalogKeepsActiveGeneration(t *testing.T) {
 	if err := session.RefreshPluginCatalog(); err != nil {
 		t.Fatal(err)
 	}
+	if !session.IsCurrentPluginGeneration(generation) {
+		t.Fatal("catalog refresh changed the committed generation identity")
+	}
 	if session.PluginHost != host || session.pluginGeneration != generation || generation.host != host {
 		t.Fatal("catalog refresh touched the active plugin generation")
 	}
@@ -658,5 +944,133 @@ func testRuntimePlugin(id string) pluginpkg.Plugin {
 			},
 		},
 		Official: true,
+	}
+}
+
+func TestMutableGenerationOwnsLazyAssetsAndPreservesProvenance(t *testing.T) {
+	for _, source := range []string{"dev", "user"} {
+		t.Run(source, func(t *testing.T) {
+			root := t.TempDir()
+			manifest := filepath.Join(root, "plugin.json")
+			if err := os.WriteFile(manifest, []byte(fmt.Sprintf(`{"id":"snapshot-dev","name":"Snapshot dev","version":"1","skills":["skills"],"runtime":{"protocol":%q,"command":"./runtime.sh"}}`, pluginhost.ProtocolName)), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(filepath.Join(root, "skills"), 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(root, "asset.txt"), []byte("old asset"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(root, "runtime.sh"), []byte("#!/bin/sh\n"), 0700); err != nil {
+				t.Fatal(err)
+			}
+			item, err := pluginpkg.LoadManifest(manifest, source)
+			if err != nil {
+				t.Fatal(err)
+			}
+			item.AuthorizedDev = source == "dev"
+			cfg := config.Config{Extensions: &extensions.Settings{}}
+			if source == "user" {
+				if err := cfg.Extensions.RecordGrant(extensions.Grant{SubjectID: item.SubjectID, Fingerprint: item.Fingerprint, Scope: extensions.GrantScopeUser, Permissions: item.EffectivePermissions}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			s := &Session{}
+			generation, err := s.buildPluginGeneration(cfg, []pluginpkg.Plugin{item}, nil, nil, func(_ context.Context, pc pluginhost.ProcessConfig) (pluginhost.Client, error) {
+				if !strings.HasPrefix(pc.Command, pc.PluginRoot+string(filepath.Separator)) || pc.PluginRoot == root {
+					t.Fatalf("runtime not rebased: %+v", pc)
+				}
+				return &generationClient{id: item.ID}, nil
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer generation.close()
+			if len(generation.active) != 1 {
+				t.Fatalf("active: %+v", generation.active)
+			}
+			snap := generation.active[0]
+			if snap.Root == root || snap.SubjectID != item.SubjectID || snap.Fingerprint != item.Fingerprint || snap.AuthorizedDev != item.AuthorizedDev {
+				t.Fatalf("snapshot identity: %+v", snap)
+			}
+			if generation.plugins[0].Root != root {
+				t.Fatal("catalog root changed")
+			}
+			if err := os.RemoveAll(root); err != nil {
+				t.Fatal(err)
+			}
+			data, err := os.ReadFile(filepath.Join(snap.Root, "asset.txt"))
+			if err != nil || string(data) != "old asset" {
+				t.Fatalf("lazy asset: %s %v", data, err)
+			}
+			if err := generation.close(); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := os.Stat(snap.Root); !os.IsNotExist(err) {
+				t.Fatalf("snapshot not retired: %v", err)
+			}
+		})
+	}
+}
+
+func TestMutablePackageSnapshotRejectsChangedApprovedBytes(t *testing.T) {
+	root := t.TempDir()
+	manifest := filepath.Join(root, "plugin.json")
+	if err := os.WriteFile(manifest, []byte(`{"id":"changed-snapshot"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	item, err := pluginpkg.LoadManifest(manifest, "user")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "new-code.js"), []byte("changed"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := snapshotMutableExecutionPackages([]pluginpkg.Plugin{item}); err == nil {
+		t.Fatal("changed bytes inherited old trust")
+	}
+}
+
+func TestThreadModelConstructionPinsGenerationDependencies(t *testing.T) {
+	old := testPluginGeneration("plugin", &generationClient{id: "plugin"})
+	old.mcp = mcp.NewManager()
+	old.compactions = agent.NewCompactionRegistry()
+	s := testGenerationSession(old)
+	s.RootDir = t.TempDir()
+	s.WuuHome = t.TempDir()
+	s.StateDir = t.TempDir()
+	s.SessionDir = t.TempDir()
+	s.StreamRunner = &agent.StreamRunner{CompactionRegistry: old.compactions}
+	var err error
+	s.Toolkit, err = tools.New(s.RootDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Toolkit.SetMCPManager(old.mcp)
+	defer s.Cleanup()
+	shadow, err := s.cloneForThreadModel()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.ReleasePluginGeneration(shadow.pluginGeneration)
+	next := testPluginGeneration("plugin", &generationClient{id: "plugin"})
+	next.mcp = mcp.NewManager()
+	next.compactions = agent.NewCompactionRegistry()
+	if err := s.ActivatePluginGeneration(next, nil); err != nil {
+		t.Fatal(err)
+	}
+	rt, err := shadow.newThreadRuntimeForRoot("construction", s.RootDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.ReleasePluginGeneration(rt.PluginGeneration)
+	if rt.PluginGeneration != old {
+		t.Fatal("fixture did not pin old generation")
+	}
+	if rt.Toolkit.MCPManager() != old.mcp {
+		t.Error("old-generation runtime inherited new-generation MCP manager")
+	}
+	if rt.StreamRunner.CompactionRegistry != old.compactions {
+		t.Error("old-generation runtime inherited new-generation compaction registry")
 	}
 }

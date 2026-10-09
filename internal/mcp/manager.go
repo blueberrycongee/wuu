@@ -13,12 +13,19 @@ import (
 	"github.com/blueberrycongee/wuu/internal/extensions"
 )
 
+type serverLifecycle struct {
+	ctx     context.Context
+	cancel  context.CancelFunc
+	revoked bool
+}
+
 // Manager holds all active MCP client connections and exposes their tools.
 type Manager struct {
 	mu         sync.RWMutex
 	configs    map[string]ServerConfig
 	clients    map[string]*Client
 	statuses   map[string]ServerStatus
+	servers    map[string]*serverLifecycle
 	generation uint64
 	oauth      *OAuthManager
 	ctx        context.Context
@@ -32,6 +39,7 @@ type Manager struct {
 var (
 	ErrOAuthRequired = errors.New("mcp OAuth authentication required")
 	ErrManagerClosed = errors.New("mcp manager is closed")
+	ErrServerRevoked = errors.New("mcp server is revoked")
 )
 
 const defaultMCPRedirectURI = "http://127.0.0.1/callback"
@@ -50,6 +58,7 @@ func NewManager() *Manager {
 		configs:   make(map[string]ServerConfig),
 		clients:   make(map[string]*Client),
 		statuses:  make(map[string]ServerStatus),
+		servers:   make(map[string]*serverLifecycle),
 		ctx:       ctx,
 		cancel:    cancel,
 		closeDone: make(chan struct{}),
@@ -86,7 +95,7 @@ func (m *Manager) Configure(configs map[string]ServerConfig) {
 	}
 	for name, cfg := range configs {
 		name = strings.TrimSpace(name)
-		if name == "" {
+		if name == "" || m.serverRevoked(name) {
 			continue
 		}
 		cfg.Name = name
@@ -111,7 +120,7 @@ func (m *Manager) Add(ctx context.Context, cfg ServerConfig) error {
 	if cfg.Name == "" {
 		return fmt.Errorf("mcp server name is required")
 	}
-	ctx, finish, err := m.beginConnection(ctx)
+	ctx, finish, err := m.beginConnection(ctx, cfg.Name)
 	if err != nil {
 		return err
 	}
@@ -135,8 +144,8 @@ func (m *Manager) Add(ctx context.Context, cfg ServerConfig) error {
 			token, tokenErr = oauth.AccessToken(ctx, cfg.Name)
 		}
 		if tokenErr != nil && (!errors.Is(tokenErr, credentialstore.ErrNotFound) || cfg.OAuth != nil) {
-			if m.isClosed() {
-				return ErrManagerClosed
+			if lifecycleErr := m.connectionError(cfg.Name); lifecycleErr != nil {
+				return lifecycleErr
 			}
 			m.recordStatus(ServerStatus{Name: cfg.Name, State: MCPServerStateAuthRequired, AuthStatus: MCPAuthStatusNotLoggedIn, Error: tokenErr.Error()})
 			if errors.Is(tokenErr, credentialstore.ErrNotFound) {
@@ -172,8 +181,8 @@ func (m *Manager) Add(ctx context.Context, cfg ServerConfig) error {
 		client, err = ConnectStdio(ctx, cfg)
 	}
 	if err != nil {
-		if m.isClosed() {
-			return ErrManagerClosed
+		if lifecycleErr := m.connectionError(cfg.Name); lifecycleErr != nil {
+			return lifecycleErr
 		}
 		m.recordStatus(ServerStatus{Name: cfg.Name, State: classifyConnectError(err), AuthStatus: authStatusAfterConnectError(cfg, err), Connected: false, Error: err.Error()})
 		return err
@@ -184,8 +193,8 @@ func (m *Manager) Add(ctx context.Context, cfg ServerConfig) error {
 	// Eagerly discover tools so the toolkit can include them.
 	if _, derr := client.DiscoverTools(ctx); derr != nil {
 		_ = client.Close()
-		if m.isClosed() {
-			return ErrManagerClosed
+		if lifecycleErr := m.connectionError(cfg.Name); lifecycleErr != nil {
+			return lifecycleErr
 		}
 		err := fmt.Errorf("discover tools for %q: %w", cfg.Name, derr)
 		m.recordStatus(ServerStatus{Name: cfg.Name, State: MCPServerStateFailed, AuthStatus: authStatusForConfig(cfg), Connected: false, Error: err.Error()})
@@ -197,6 +206,11 @@ func (m *Manager) Add(ctx context.Context, cfg ServerConfig) error {
 		m.mu.Unlock()
 		_ = client.Close()
 		return ErrManagerClosed
+	}
+	if m.serverRevoked(cfg.Name) {
+		m.mu.Unlock()
+		_ = client.Close()
+		return ErrServerRevoked
 	}
 	if connectionErr := client.ConnectionError(); connectionErr != nil {
 		err := fmt.Errorf("mcp server %q connection closed: %w", cfg.Name, connectionErr)
@@ -228,13 +242,23 @@ func (m *Manager) Add(ctx context.Context, cfg ServerConfig) error {
 	return nil
 }
 
-func (m *Manager) beginConnection(parent context.Context) (context.Context, func(), error) {
+func (m *Manager) beginConnection(parent context.Context, name string) (context.Context, func(), error) {
 	m.mu.Lock()
 	if m.closed {
 		m.mu.Unlock()
 		return nil, nil, ErrManagerClosed
 	}
-	lifecycle := m.ctx
+	if m.serverRevoked(name) {
+		m.mu.Unlock()
+		return nil, nil, ErrServerRevoked
+	}
+	server := m.servers[name]
+	if server == nil {
+		ctx, cancel := context.WithCancel(m.ctx)
+		server = &serverLifecycle{ctx: ctx, cancel: cancel}
+		m.servers[name] = server
+	}
+	lifecycle := server.ctx
 	m.operations.Add(1)
 	m.mu.Unlock()
 
@@ -249,10 +273,22 @@ func (m *Manager) beginConnection(parent context.Context) (context.Context, func
 	}, nil
 }
 
-func (m *Manager) isClosed() bool {
+// serverRevoked requires m.mu to be held.
+func (m *Manager) serverRevoked(name string) bool {
+	server := m.servers[name]
+	return server != nil && server.revoked
+}
+
+func (m *Manager) connectionError(name string) error {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return m.closed
+	if m.closed {
+		return ErrManagerClosed
+	}
+	if m.serverRevoked(name) {
+		return ErrServerRevoked
+	}
+	return nil
 }
 
 func (m *Manager) clientConnectionFailed(name string, client *Client, err error) {
@@ -380,7 +416,7 @@ func (m *Manager) Refresh(ctx context.Context, name string) error {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		for _, cfg := range m.Configs() {
-			if err := m.Add(ctx, cfg); err != nil {
+			if err := m.Add(ctx, cfg); err != nil && !errors.Is(err, ErrServerRevoked) {
 				return err
 			}
 		}
@@ -395,6 +431,57 @@ func (m *Manager) Refresh(ctx context.Context, name string) error {
 	return m.Add(ctx, cfg)
 }
 
+// Revoke permanently disables one server for this manager's lifetime. Pending
+// connections are canceled and cannot publish a client or overwrite its disabled
+// status. A replacement generation must use a new manager to admit the name.
+func (m *Manager) Revoke(name string) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return errors.New("mcp server name is required")
+	}
+	m.mu.Lock()
+	if m.closed {
+		m.mu.Unlock()
+		return ErrManagerClosed
+	}
+	server := m.servers[name]
+	if server != nil && server.revoked {
+		m.mu.Unlock()
+		return nil
+	}
+	if server == nil {
+		server = &serverLifecycle{}
+		m.servers[name] = server
+	}
+	server.revoked = true
+	cancel := server.cancel
+	cfg := m.configs[name]
+	cfg.Name = name
+	enabled := false
+	cfg.Enabled = &enabled
+	m.configs[name] = cfg
+	authStatus := authStatusForConfig(cfg)
+	if current := m.statuses[name]; current.AuthStatus == MCPAuthStatusOAuth {
+		authStatus = MCPAuthStatusOAuth
+	}
+	client := m.clients[name]
+	delete(m.clients, name)
+	m.statuses[name] = ServerStatus{Name: name, State: MCPServerStateDisabled, AuthStatus: authStatus}
+	m.generation++
+	if client != nil {
+		m.operations.Add(1)
+	}
+	m.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	if client != nil {
+		defer m.operations.Done()
+		return client.Close()
+	}
+	return nil
+}
+
 // Remove disconnects an MCP server by name.
 func (m *Manager) Remove(name string) error {
 	return m.Disconnect(name)
@@ -402,6 +489,10 @@ func (m *Manager) Remove(name string) error {
 
 func (m *Manager) Disconnect(name string) error {
 	m.mu.Lock()
+	if m.serverRevoked(name) {
+		m.mu.Unlock()
+		return nil
+	}
 	c, ok := m.clients[name]
 	authStatus := authStatusForConfig(m.configs[name])
 	if current := m.statuses[name]; current.AuthStatus == MCPAuthStatusOAuth {
@@ -480,7 +571,7 @@ func (m *Manager) catalogChanged(name string) {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.closed {
+	if m.closed || m.serverRevoked(name) {
 		return
 	}
 	m.generation++
@@ -589,7 +680,7 @@ func (m *Manager) Close() error {
 func (m *Manager) recordStatus(status ServerStatus) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.closed {
+	if m.closed || m.serverRevoked(status.Name) {
 		return
 	}
 	if strings.TrimSpace(status.Name) == "" {
@@ -604,7 +695,7 @@ func (m *Manager) recordStatus(status ServerStatus) {
 func (m *Manager) rememberConfig(cfg ServerConfig) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.closed {
+	if m.closed || m.serverRevoked(cfg.Name) {
 		return
 	}
 	if m.configs == nil {

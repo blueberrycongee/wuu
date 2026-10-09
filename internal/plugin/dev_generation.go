@@ -21,12 +21,14 @@ const (
 )
 
 // DevAuthorization is the durable, one-time grant for one plugin development
-// directory. Token is never copied into a published generation.
+// source. An empty SourceKind denotes a legacy directory grant. Token is never
+// copied into a published generation.
 type DevAuthorization struct {
-	PluginID  string    `json:"plugin_id"`
-	Directory string    `json:"directory"`
-	Token     string    `json:"token,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
+	PluginID   string    `json:"plugin_id"`
+	Directory  string    `json:"directory"`
+	SourceKind string    `json:"source_kind,omitempty"`
+	Token      string    `json:"token,omitempty"`
+	CreatedAt  time.Time `json:"created_at"`
 }
 
 type devGenerationReceipt struct {
@@ -69,8 +71,10 @@ func ReadDevAuthorization(wuuHome, pluginID string) (DevAuthorization, error) {
 }
 
 // PublishDevGeneration stages a complete package and its authorization receipt
-// before atomically replacing the host-consumed development generation.
-// Callers must hold the exclusive plugin-generation mutation lease.
+// before replacing the host-consumed development generation. Discovery can
+// recover the previous signed package if the process exits between renames.
+// Callers must hold the plugin-catalog mutation lease and advance its epoch
+// after successful publication.
 func PublishDevGeneration(wuuHome, developerDirectory, source string, authorization DevAuthorization) (Plugin, error) {
 	if strings.TrimSpace(authorization.Token) == "" {
 		return Plugin{}, errors.New("dev authorization token is required")
@@ -214,6 +218,36 @@ func discoverAuthorizedDev(wuuHome string) []Plugin {
 			out = append(out, item)
 		}
 	}
+	// Publication uses two renames. A process exit between them leaves the last
+	// good generation in a hidden backup. Read it in place: discovery can run
+	// under a shared execution lease, so it must not rename or delete files.
+	// A present destination always wins, including an invalid one; recovery
+	// must not hide a failed integrity check or replace another directory.
+	recovered := make(map[string]Plugin)
+	ambiguous := make(map[string]bool)
+	for _, entry := range entries {
+		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), ".previous-") {
+			continue
+		}
+		item, err := loadAuthorizedDevGeneration(wuuHome, filepath.Join(root, entry.Name()))
+		if err != nil {
+			continue
+		}
+		if _, err := os.Lstat(filepath.Join(root, item.ID)); !os.IsNotExist(err) {
+			continue
+		}
+		if _, exists := recovered[item.ID]; exists {
+			ambiguous[item.ID] = true
+		}
+		recovered[item.ID] = item
+	}
+	for id, item := range recovered {
+		// Multiple interrupted publications cannot be ordered by the unsigned
+		// receipt timestamp. Keep the files for explicit recovery instead.
+		if !ambiguous[id] {
+			out = append(out, item)
+		}
+	}
 	return out
 }
 
@@ -226,7 +260,7 @@ func loadAuthorizedDevGeneration(wuuHome, container string) (Plugin, error) {
 	if err := json.Unmarshal(data, &receipt); err != nil {
 		return Plugin{}, err
 	}
-	if filepath.Base(container) != receipt.PluginID {
+	if filepath.Base(container) != receipt.PluginID && !strings.HasPrefix(filepath.Base(container), ".previous-") {
 		return Plugin{}, errors.New("dev generation container does not match its receipt")
 	}
 	authorization, err := ReadDevAuthorization(wuuHome, receipt.PluginID)

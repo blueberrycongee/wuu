@@ -27,7 +27,7 @@ wuu plugin approve my-plugin
 
 The current local updater stages a replacement fingerprint and leaves the installed generation in place until it is accepted. Check the pending update in the detail page. A package whose content changed can require a refreshed trust decision; do not assume that copying new files has activated them.
 
-Disable a package to stop its contributions for later conversations without removing its files. A conversation that is already running keeps the generation it started with. Remove it when it is no longer needed:
+A committed disable stops the plugin across retained runtime generations without removing its files: native executions are canceled, owned MCP servers cannot reconnect, and future legacy hooks and transforms are removed. Already-running legacy hooks retain their caller lifetime; completed effects and conversation history remain. This differs from a same-ID update, which lets active work finish on its original generation. Remove the package when it is no longer needed:
 
 ```bash
 wuu plugin disable my-plugin
@@ -38,6 +38,8 @@ wuu plugin remove my-plugin
 Settings and plugin storage are preserved by default. Removal does not erase all data the plugin created or undo completed operations.
 
 ## Recovery and troubleshooting
+
+If an operation reports that the change was committed but runtime activation failed, the settings or package change has already taken effect. Read the new inventory's failure diagnostics before retrying; the old runtime is not automatically restored. See the [generation lifecycle](plugin-system.md#runtime-generations).
 
 The detail page distinguishes pending trust, disabled, starting, active, failed, and update states. Read the actual error instead of treating every missing feature as an installation failure. A package may also be blocked by a missing requirement or an incompatible peer package.
 

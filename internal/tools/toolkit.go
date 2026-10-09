@@ -121,6 +121,11 @@ func (t *Toolkit) checkPermission(ctx context.Context, info ToolInfo, call provi
 	if err := t.boundary.Check(info, call); err != nil {
 		return err
 	}
+	// Host plugin code is not confined by the workspace process sandbox.
+	// Optional review must not silently turn into implicit execution trust.
+	if info.Name == "plugin_manager" && !info.ReadOnly && t.boundary.Enforce && (!t.approveForMe || t.reviewer == nil || config.NormalizePermissionMode(t.env.PermissionMode) != config.PermissionModeStandard) {
+		return reviewBlocked(info.Name, "plugin_trust_required", "host plugin execution requires configured Approve for me authorization or an explicitly unconfined session", "ask the user to authorize plugin management through their permission settings; do not bypass workspace restrictions")
+	}
 	if err := t.reviewToolCall(ctx, info, call); err != nil {
 		return err
 	}
@@ -293,6 +298,7 @@ func (t *Toolkit) CloneForRoot(rootDir string) (*Toolkit, error) {
 		BrowserBridge:             t.env.BrowserBridge,
 		BrowserTabs:               t.env.BrowserTabs,
 		ArtifactPublisher:         t.env.ArtifactPublisher,
+		PluginManager:             t.env.PluginManager,
 		WorkingNotesHome:          t.env.WorkingNotesHome,
 		FileScopeRoots:            append([]string(nil), t.env.FileScopeRoots...),
 		Skills:                    t.env.Skills,
@@ -382,6 +388,9 @@ func (t *Toolkit) rebuildRegistry() {
 		NewBrowserTool(e),
 		// Deferred tool discovery
 		NewToolSearchTool(t),
+	}
+	if e.PluginManager != nil {
+		registered = append(registered, &PluginManagerTool{env: e})
 	}
 	if e.ArtifactPublisher != nil {
 		registered = append(registered, NewPresentArtifactTool(e))

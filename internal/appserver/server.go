@@ -118,6 +118,7 @@ type threadState struct {
 	executionLease                 *session.ThreadExecutionLease
 	pluginExecutionLease           *session.PluginGenerationLease
 	pluginLeaseReleaseLoop         bool
+	onPluginLeaseQuiescent         func()
 	runtimePluginEpoch             uint64
 	runtimePluginRevision          uint64
 	admissionReserved              bool

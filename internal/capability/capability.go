@@ -64,7 +64,8 @@ const (
 	CapabilityProjectSessions Capability = "project.sessions"
 
 	// Extensions (MCP, plugins).
-	CapabilityMCP Capability = "mcp"
+	CapabilityMCP              Capability = "mcp"
+	CapabilityPluginManagement Capability = "plugin.management"
 
 	// Discovery: tool_search and related progressive-disclosure
 	// tools. Listed under its own capability so permission routing
@@ -107,6 +108,7 @@ func All() []Capability {
 		CapabilitySkill,
 		CapabilityProjectSessions,
 		CapabilityMCP,
+		CapabilityPluginManagement,
 		CapabilityDiscovery,
 		CapabilityCodeMode,
 		CapabilityBrowser,

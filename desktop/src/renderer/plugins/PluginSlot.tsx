@@ -29,6 +29,7 @@ export interface PluginSlotContributionProps extends PluginSlotProps {
 }
 
 interface ContributionBoundaryProps {
+  activation: object | undefined;
   host: PluginHost;
   slotId: PluginSlotId;
   contribution: RegisteredPluginSlotContribution;
@@ -51,6 +52,12 @@ class ContributionBoundary extends Component<ContributionBoundaryProps, Contribu
   componentDidCatch(error: unknown, _errorInfo: ErrorInfo): void {
     const { contribution, host, slotId } = this.props;
     host.recordRenderFailure(contribution, { slotId }, error);
+  }
+
+  componentDidUpdate(previous: ContributionBoundaryProps): void {
+    if (this.state.failed && previous.activation !== this.props.activation) {
+      this.setState({ failed: false });
+    }
   }
 
   render(): ReactNode {
@@ -107,6 +114,7 @@ export function PluginSlotContribution({
     {
       host,
       slotId: id,
+      activation: host.getGenerationActivation(contribution.pluginId, contribution.generation),
       contribution,
     },
     <div

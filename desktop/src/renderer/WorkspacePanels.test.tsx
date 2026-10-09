@@ -17,6 +17,7 @@ import {
   workspaceDiffViewTab,
   workspaceFileViewTab,
   workspaceToolViewTab,
+  workspacePluginViewTab,
   type WorkspaceViewTab,
 } from "./WorkspaceViewTabs";
 import { hoverTooltipText, unhoverTooltip } from "./tooltipTestUtils";
@@ -196,6 +197,23 @@ function baseProps(): Parameters<typeof WorkspaceRightPanel>[0] {
 vi.mock("./WorkspacePdfPreview", () => ({ WorkspacePdfPreview: () => <div>PDF preview</div> }));
 
 describe("WorkspaceRightPanel", () => {
+  it("exposes plugin workspace View actions as auxiliary commands", async () => {
+    const pluginHost = new PluginHost({ react: React });
+    const workbenchController = new WorkbenchController(pluginHost);
+    const execute = vi.fn();
+    await pluginHost.activateGeneration({ pluginId: "workspace-actions", generation: "one", register(api) {
+      api.registerViewType({ id: "workspace.view", title: "Workspace view", render: () => <div>Workspace plugin body</div> });
+      api.registerCommand({ id: "workspace.refresh", title: "Refresh workspace view", placements: ["view.title"], execute });
+    } });
+    const tab = workspacePluginViewTab({ id: "workspace", pluginId: "workspace-actions", generation: "one", view: "workspace.view", title: "Workspace view" });
+    mount(<WorkspaceRightPanel {...baseProps()} tabs={[tab]} activeTabID={tab.id} pluginHost={pluginHost} workbenchController={workbenchController} />);
+    const action = container!.querySelector<HTMLButtonElement>('button[aria-label="Refresh workspace view"]')!;
+    expect(action).not.toBeNull();
+    await act(async () => action.click());
+    expect(execute).toHaveBeenCalledWith(expect.objectContaining({ target: "view.title", region: "auxiliary", viewTypeId: "workspace.view" }));
+    workbenchController.dispose();
+  });
+
   it("replaces its owned tabbar boundary with a live workspace header presenter", async () => {
     const pluginHost = new PluginHost({ react: React });
     const workbenchController = new WorkbenchController(pluginHost);

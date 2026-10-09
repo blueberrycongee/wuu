@@ -1094,6 +1094,7 @@ export function WorkspaceRightPanel({
                     controller={workbenchController}
                     pluginId={activeTab.pluginId}
                     viewTypeId={activeTab.viewTypeId}
+                    region="auxiliary"
                     context={Object.freeze({ region: "workspace", tabId: activeTab.id })}
                   />
                 ) : null}

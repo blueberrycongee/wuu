@@ -7,6 +7,7 @@ import (
 	"github.com/fsnotify/fsnotify"
 
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/session"
 )
 
@@ -120,7 +121,7 @@ func (s *Server) refreshPluginGenerationIfChanged() error {
 		return nil
 	}
 	observedEpoch, err := session.ReadPluginGenerationEpoch(s.rt.WuuHome)
-	if err != nil || observedEpoch == s.pluginGenerationEpoch.Load() {
+	if err != nil {
 		return err
 	}
 
@@ -128,10 +129,20 @@ func (s *Server) refreshPluginGenerationIfChanged() error {
 	// cross-process execution lease. Otherwise this watcher can briefly hold a
 	// shared lease while a same-server mutation holds the local mutex, causing
 	// that mutation's non-blocking exclusive lease attempt to fail spuriously.
-	s.pluginGenerationRefreshMu.Lock()
-	defer s.pluginGenerationRefreshMu.Unlock()
+	// Activation can synchronously submit input through host services. Such
+	// admission must queue rather than wait for the activation that called it.
+	if !s.pluginGenerationRefreshMu.TryLock() {
+		return errPluginGenerationRefreshBusy
+	}
+	refreshed := false
+	defer func() {
+		s.pluginGenerationRefreshMu.Unlock()
+		if refreshed {
+			s.retireIdlePluginRuntimes()
+		}
+	}()
 	observedEpoch, err = session.ReadPluginGenerationEpoch(s.rt.WuuHome)
-	if err != nil || observedEpoch == s.pluginGenerationEpoch.Load() {
+	if err != nil || (observedEpoch == s.pluginGenerationEpoch.Load() && !s.rt.PluginGenerationNeedsRecovery()) {
 		return err
 	}
 	lease, acquired, err := session.TryAcquirePluginGenerationExecutionLease(s.rt.WuuHome)
@@ -143,19 +154,65 @@ func (s *Server) refreshPluginGenerationIfChanged() error {
 	}
 	defer lease.Release()
 	epoch := lease.Epoch()
-	if epoch == s.pluginGenerationEpoch.Load() {
+	needsRecovery := s.rt.PluginGenerationNeedsRecovery()
+	if epoch == s.pluginGenerationEpoch.Load() && !needsRecovery {
 		return nil
 	}
-	inventory, skills, err := s.refreshPluginPackages()
+	catalog, catalogAcquired, err := session.TryAcquirePluginCatalogReadLease(s.rt.WuuHome)
 	if err != nil {
 		return err
 	}
+	if !catalogAcquired {
+		return errPluginGenerationRefreshBusy
+	}
+	epoch, err = session.ReadPluginGenerationEpoch(s.rt.WuuHome)
+	if err != nil {
+		_ = catalog.Release()
+		return err
+	}
+	// Snapshot complete disk state before opening any effectful activation.
+	// A plugin's activate callback may itself publish another catalog change.
+	// Keep this observed epoch with the prepared candidate. Publication can
+	// advance again during activation; recording that newer epoch here would
+	// hide a change this candidate never loaded. The next refresh adopts it.
+
+	var candidate *runtime.PluginGeneration
+	if s.refreshExtensionsForTest == nil {
+		candidate, err = s.rt.PreflightExtensions(s.currentExtensionConfig())
+	}
+	releaseErr := catalog.Release()
+	if err != nil {
+		return err
+	}
+	if releaseErr != nil {
+		if candidate != nil {
+			s.rt.ReleasePluginGeneration(candidate)
+		}
+		return releaseErr
+	}
+	if candidate != nil {
+		err = s.rt.ActivatePluginGeneration(candidate, nil)
+	} else {
+		err = s.refreshExtensions(s.currentExtensionConfig())
+	}
+	if err != nil {
+		if !runtime.PluginGenerationWasCommitted(err) {
+			return err
+		}
+		providers.DebugLogf("refresh plugin generation: %v", err)
+	}
+	s.schedulePluginTurnLifecycleReplay()
+	inventory, skills := s.currentExtensionInventory(), s.skillSummaries(s.rt.Skills, s.rt.RootDir)
+	refreshed = true
 	// The refresh mutex still serializes local mutations while the shared lease
 	// is dropped and the observed epoch is published.
 	if err := lease.Release(); err != nil {
 		return err
 	}
 	s.pluginGenerationEpoch.Store(epoch)
+	if needsRecovery {
+		s.pluginRuntimeRevision.Add(1)
+	}
 	return s.writeNotification(NotificationPluginInventoryChanged, PluginInventoryChangedNotification{
 		Epoch:              epoch,
 		ExtensionInventory: inventory,

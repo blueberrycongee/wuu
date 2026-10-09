@@ -43,6 +43,12 @@ func TestPluginCLIMutationsAdvanceSharedGeneration(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	active, acquired, err := session.TryAcquirePluginGenerationExecutionLease(home)
+	if err != nil || !acquired {
+		t.Fatalf("start unrelated running turn: acquired=%v err=%v", acquired, err)
+	}
+	defer active.Release()
+
 	commands := [][]string{
 		{"plugin", "install", source},
 		{"plugin", "approve", "live-demo"},
@@ -156,7 +162,7 @@ func TestPluginCLIPolicyActionsUseExactFingerprint(t *testing.T) {
 		t.Fatal(err)
 	}
 	source := t.TempDir()
-	if err := os.WriteFile(filepath.Join(source, "plugin.json"), []byte(`{"id":"policy-demo"}`), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(source, "plugin.json"), []byte(`{"id":"policy-demo","default_enabled":false}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pluginpkg.InstallPackage(home, source); err != nil {
@@ -180,6 +186,9 @@ func TestPluginCLIPolicyActionsUseExactFingerprint(t *testing.T) {
 	if !ok || grant.Scope != extensions.GrantScopeUser {
 		t.Fatalf("grant = %+v, %v", grant, ok)
 	}
+	if !loaded.Extensions.IsEnabled(approved.SubjectID, false) {
+		t.Fatalf("approval did not enable a default-disabled plugin: %+v", loaded.Extensions)
+	}
 
 	_ = captureStdout(t, func() {
 		if err := run([]string{"plugin", "disable", "policy-demo"}); err != nil {
@@ -192,6 +201,18 @@ func TestPluginCLIPolicyActionsUseExactFingerprint(t *testing.T) {
 	}
 	if loaded.Extensions == nil || !loaded.Extensions.IsDisabled(approved.SubjectID) {
 		t.Fatalf("plugin was not disabled: %+v", loaded.Extensions)
+	}
+	_ = captureStdout(t, func() {
+		if err := run([]string{"plugin", "approve", "policy-demo"}); err != nil {
+			t.Fatalf("plugin reapprove: %v", err)
+		}
+	})
+	loaded, _, err = config.LoadFrom("", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Extensions == nil || !loaded.Extensions.IsEnabled(approved.SubjectID, false) {
+		t.Fatalf("reapproval did not reenable a disabled plugin: %+v", loaded.Extensions)
 	}
 }
 
@@ -301,5 +322,33 @@ func TestPluginCLIStagesAndDecidesUpdatesWithoutReplacingEarly(t *testing.T) {
 		if _, ok := loaded.Extensions.Grants[promoted.SubjectID]; ok {
 			t.Fatalf("removed plugin grant remains: %+v", loaded.Extensions.Grants)
 		}
+	}
+}
+
+// A completed disk change is not a successful publication if peers cannot
+// observe its epoch. The caller must receive that failure and the lock must
+// still be released so a repaired catalog can be used again.
+func TestPluginCLIMutationReportsPublicationFailure(t *testing.T) {
+	home := t.TempDir()
+	finish, err := beginPluginCLIMutation(home, "enable")
+	if err != nil {
+		t.Fatal(err)
+	}
+	epochPath := filepath.Join(home, ".plugin-generation.lock")
+	if err := os.WriteFile(epochPath, []byte{1}, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := finish(); err == nil {
+		t.Fatal("corrupt epoch was reported as successful publication")
+	}
+	if err := os.WriteFile(epochPath, make([]byte, 8), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	next, err := beginPluginCLIMutation(home, "enable")
+	if err != nil {
+		t.Fatalf("mutation lock retained after publication failure: %v", err)
+	}
+	if err := next(); err != nil {
+		t.Fatal(err)
 	}
 }

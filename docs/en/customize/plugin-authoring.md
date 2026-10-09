@@ -82,14 +82,14 @@ With `@wuu/plugin-sdk`, implement `RuntimePlugin` and pass it to `runJSONLRuntim
 | Callback | Responsibility |
 | --- | --- |
 | `initialize(params, host)` | Return tools, capabilities, provided services, and required services |
-| `activate(host)` | Start timers, subscriptions, or other behavior after activation |
+| `activate(host)` | Start timers, subscriptions, or other behavior after the runtime change commits |
 | `executeTool(params, host, execution)` | Run a registered tool and return its result |
 | `invokeCapability(params, host, execution)` | Handle a declared capability |
 | `invokeService(params, host, execution)` | Serve one host-routed service call |
 | `serviceChanged(params, host)` | Respond to a service resolution change |
 | `shutdown()` | Stop plugin-owned work and release resources |
 
-Initialization is preparation, not permission to start product behavior. The host permits only its read-phase services during preflight. Defer writes and background work until activation, and make shutdown safe after partial initialization. A generation can fail or be superseded before it becomes active.
+Initialization is preparation, not permission to start product behavior. The host permits only its read-phase services during native preflight. Defer writes and background work to `activate`, and make shutdown safe after partial initialization or partial activation. Preparation and persistence failures preserve the old runtime without calling candidate `activate`. Once the change commits, an activation failure leaves a degraded new generation with failure diagnostics; it does not restore the old generation or undo external effects. Avoid duplicate effects when explicitly retrying activation. Trusted initialization code and MCP preparation may still have external effects outside the host service boundary. See [runtime generations](plugin-system.md#runtime-generations) for the commit boundary.
 
 ## Tools and capabilities
 
@@ -188,9 +188,19 @@ Tool and capability calls have a host-owned execution ID. The SDK supplies `exec
 
 The `security.authorize` service may further restrict an operation, but cannot relax the host's mandatory boundary. A `sandbox.process` provider must supply real filesystem enforcement; it is not a command approval dialog. See [permissions](../reference/permissions.md) before implementing either.
 
+## Agent-managed development
+
+The built-in deferred `plugin_manager` tool accepts `status`, `apply`, `enable`, and `disable`. `apply` takes a workspace-local TypeScript file or development package directory and performs a one-shot publish through a host-selected CLI bridge. It accepts neither arbitrary commands nor a caller-selected Wuu home. Source execution requires host-code authorization before validation/import, separately from permission to write the source file. See the [agent workflow](plugin-quickstart.md#let-the-agent-add-a-tool).
+
+Status returns a `plugins` list. Compare `published_fingerprint` with `current_conversation_fingerprint` and inspect `adoption_pending`, `desired_enabled`, `trusted`, and `current_conversation_runtime_state`. An `error` reports runtime diagnostics when present. These fields report publication, policy, and this conversation's bindings; they do not prove a particular tool succeeded or a desktop view rendered.
+
+The current turn keeps its tool and prompt generation. Finish that turn before discovering and invoking updated tools at the next idle turn boundary. Publication is not a tool invocation or a rendered UI check, and it does not schedule a continuation by itself.
+
 ## Development and distribution
 
-`wuu plugin create` generates `agent`, `desktop`, or `full` package scaffolds. The current development command expects a directory with `plugin.json` and a `package.json` build script. `wuu plugin dev` rebuilds and publishes development generations; it is not a manifest-free single-TypeScript-file loader. The quickstarts show how to use the matching local SDK and bundle required runtime code.
+`wuu plugin dev ./extension.ts` runs a single file whose default export implements `RuntimePlugin`. Wuu supplies the matching SDK and generates the process adapter internally; manifests, installation, packaging, and builds are optional for this development path. It requires Node.js 22.7 or later with `--experimental-transform-types` support and supports only Node builtins and `@wuu/plugin-sdk` imports. It snapshots each candidate and validates syntax, imports, and its default export before publication, retaining the last published source on loading failure. Import validation executes module top-level code, so it is not a side-effect-free check. `initialize` runs only in the actual host with its read-phase services. Preparation failure preserves the old runtime; activation happens after commit and can leave a failed new runtime, as described above. See the [agent quickstart](plugin-quickstart.md) for a complete example.
+
+`wuu plugin create` generates `agent`, `desktop`, or `full` package scaffolds. For a directory, `wuu plugin dev` uses its `plugin.json` and `package.json` build script, then publishes the built development generation. Both paths keep watching after a failed build/load so fixing and saving recovers without restarting. Filesystem events are debounced, with periodic reconciliation for missed events; `--poll` must be positive.
 
 Use `validate` for package structure, `test` for executable initialization and negotiated descriptors, and real conversations or rendered UI for behavior. `pack` creates a local zip; it does not upload to a registry. Inspect the archive before distributing it: preparation excludes `.git` and `node_modules`, not every local file that might contain private data.
 

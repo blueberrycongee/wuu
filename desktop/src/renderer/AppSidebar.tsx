@@ -1754,12 +1754,7 @@ export function AppSidebar({
   ]);
 
   const nativeSidebar = (
-    <aside
-      className="sidebar"
-      data-wuu-component="sidebar"
-      onPointerEnter={onPointerEnter}
-      onPointerLeave={onPointerLeave}
-    >
+    <>
       <div className="sidebar-content">
         <div className="traffic-spacer">
           {onToggleSidebar ? (
@@ -2312,7 +2307,7 @@ export function AppSidebar({
           )}
         />
       </div>
-    </aside>
+    </>
   );
   const organizedSidebar = (
     <SessionOrganizationProvider value={organizationActions}>
@@ -2327,6 +2322,8 @@ export function AppSidebar({
         ...navigationNodes,
       ]}
       fallback={organizedSidebar}
+      onPointerEnter={onPointerEnter}
+      onPointerLeave={onPointerLeave}
     />
   );
 }

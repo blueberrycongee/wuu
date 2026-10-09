@@ -1,0 +1,15 @@
+{
+  "name": "action-notes-example",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "npm run typecheck && node --check desktop.js",
+    "typecheck": "tsc --noEmit",
+    "test": "npm run build && node test/contract.test.mjs"
+  },
+  "devDependencies": {
+    "@wuu/plugin-sdk": "file:../../../packages/plugin-sdk",
+    "typescript": "^5.9.0"
+  }
+}

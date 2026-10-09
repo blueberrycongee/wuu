@@ -10,6 +10,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Run a default-exported TypeScript plugin directly with `wuu plugin dev`, using
+  the embedded SDK without a manifest or build, and keep watching through failed saves.
+
 - Add a compact conversation input inside the right file preview, keeping the
   conversation visible and the selected file attached as request context. Preserve
   the current draft when closing, minimizing, or restoring the preview input.
@@ -58,6 +61,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Show inline code in answers as the same chip as in user messages, so a theme's
   inline-code background now applies to answers too.
+- Apply published plugin generations at the next idle conversation turn while
+  retaining active work, conversation history, and session identity.
 
 - Move side chat into the right sidebar's shared tabs, preserving each conversation's
   history and draft across tool switches and keeping the expanded layout when opened.
@@ -77,6 +82,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Expand a workspace without conversations in place instead of flashing a
   loading row and spinner. The workspace header shows a spinner only when its
   conversation list or switch takes longer than a moment.
+- Preserve working plugins when replacement startup or service negotiation fails,
+  propagate execution cancellation, and retire stale desktop callbacks on reload.
 
 - Avoid delivering an already-answered background process result again when a new
   user turn reloads a session before the result acknowledgement was saved.

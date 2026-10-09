@@ -3,7 +3,6 @@ package main
 import (
 	"path/filepath"
 	"testing"
-	"time"
 )
 
 func TestSnapshotPluginSourceSkipsIgnoredAndHiddenDirs(t *testing.T) {
@@ -34,16 +33,15 @@ func TestSnapshotPluginSourceSkipsIgnoredAndHiddenDirs(t *testing.T) {
 func TestChangedPluginSourcePathsReportsAddedChangedRemoved(t *testing.T) {
 	t.Parallel()
 
-	base := time.Date(2026, 8, 13, 0, 0, 0, 0, time.UTC)
 	before := pluginSourceSnapshot{
-		"a.ts":       {ModTime: base, Size: 1},
-		"b.ts":       {ModTime: base, Size: 2},
-		"removed.ts": {ModTime: base, Size: 1},
+		"a.ts":       {1},
+		"b.ts":       {2},
+		"removed.ts": {1},
 	}
 	after := pluginSourceSnapshot{
-		"a.ts": {ModTime: base.Add(time.Second), Size: 1},
-		"b.ts": {ModTime: base, Size: 3},
-		"c.ts": {ModTime: base, Size: 1},
+		"a.ts": {4},
+		"b.ts": {3},
+		"c.ts": {1},
 	}
 
 	got := changedPluginSourcePaths(before, after)

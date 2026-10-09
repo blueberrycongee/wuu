@@ -54,9 +54,9 @@ func TestPluginSettingsValidateOwnershipTypeScopeAndGeneration(t *testing.T) {
 }
 
 func TestPluginDiagnosticsExposeIsolatedCapabilityFailures(t *testing.T) {
-	srv, item, out := newPluginStateTestServer(t)
-	broken := &isolatedFailureClient{id: item.ID, invokeErr: errors.New("observer boom")}
-	srv.rt.PluginHost = pluginhost.New(broken)
+	srv, item, out := newPluginStateTestServer(t, func(id string) pluginhost.Client {
+		return &isolatedFailureClient{id: id, invokeErr: errors.New("observer boom")}
+	})
 	if err := srv.notifyPluginTurnCompleted(context.Background(), pluginhost.AgentTurnCompletedInput{}); err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +110,7 @@ func TestPluginStorageIsNamespacedAndScopeIsExplicit(t *testing.T) {
 	}
 }
 
-func newPluginStateTestServer(t *testing.T) (*Server, pluginpkg.Plugin, *lockedBuffer) {
+func newPluginStateTestServer(t *testing.T, runtimeClients ...func(string) pluginhost.Client) (*Server, pluginpkg.Plugin, *lockedBuffer) {
 	t.Helper()
 	rt := newTestRuntime(t, &fakeClient{})
 	rt.WuuHome = t.TempDir()
@@ -131,8 +131,18 @@ func newPluginStateTestServer(t *testing.T) (*Server, pluginpkg.Plugin, *lockedB
 	if err := rt.ExtensionSettings.RecordGrant(extensions.Grant{SubjectID: item.SubjectID, Fingerprint: item.Fingerprint}); err != nil {
 		t.Fatal(err)
 	}
+	// Complete runtime construction before New starts recovery watchers.
+	var clients []pluginhost.Client
+	for _, create := range runtimeClients {
+		clients = append(clients, create(item.ID))
+	}
+	if len(clients) > 0 {
+		rt.PluginHost = pluginhost.New(clients...)
+	}
 	out := &lockedBuffer{}
-	return New(rt, out), item, out
+	srv := New(rt, out)
+	t.Cleanup(srv.Close)
+	return srv, item, out
 }
 
 func TestPluginRegistryIntrospectReturnsKernelServices(t *testing.T) {

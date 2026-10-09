@@ -108,20 +108,21 @@ func TestActivatePluginGenerationPersistsRevocationReports(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(reports) != 2 {
-		t.Fatalf("expected failed candidate and retired old generation reports, got %+v", reports)
+		t.Fatalf("expected retired degraded and old generation reports, got %+v", reports)
 	}
-	// Newest first: the retired old generation, then the rejected candidate.
-	if reports[0].GenerationID != old.id || reports[0].Failed() {
-		t.Fatalf("retired old generation report = %+v", reports[0])
+	// Newest first: the degraded generation retired by the later publication,
+	// then the old generation retired when the degraded one was committed.
+	if reports[0].GenerationID != failedCandidate.id || reports[0].Failed() {
+		t.Fatalf("retired degraded generation report = %+v", reports[0])
 	}
-	if reports[1].GenerationID != failedCandidate.id {
-		t.Fatalf("rejected candidate report = %+v", reports[1])
+	if reports[1].GenerationID != old.id {
+		t.Fatalf("retired old generation report = %+v", reports[1])
 	}
 	limited, err := session.PluginGenerationRevocations(1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(limited) != 1 || limited[0].GenerationID != old.id {
+	if len(limited) != 1 || limited[0].GenerationID != failedCandidate.id {
 		t.Fatalf("limited reports = %+v", limited)
 	}
 }

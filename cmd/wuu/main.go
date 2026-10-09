@@ -2263,6 +2263,8 @@ Usage:
   wuu session list|show|trace|search|archive|delete|export [flags]
   wuu skills lint [--json] PATH...
   wuu plugin inspect|install|update|list|approve|reject|enable|disable|remove [flags]
+  wuu plugin create|validate|build|test|pack [flags]
+  wuu plugin dev [--watch=false] [--poll DURATION] FILE.ts|DIRECTORY
   wuu debug app-server initialize [flags]
   wuu debug app-server send [flags] METHOD [JSON]
   wuu debug protocol events [flags] THREAD_ID

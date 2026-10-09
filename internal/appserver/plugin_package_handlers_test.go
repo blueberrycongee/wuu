@@ -11,7 +11,6 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/extensions"
@@ -459,6 +458,68 @@ func TestLivePluginPolicyMutationIsAllowedWhileTurnRuns(t *testing.T) {
 	}
 }
 
+func TestPluginGenerationMutationPublicationFailureReachesResponse(t *testing.T) {
+	rt := newTestRuntime(t, &fakeClient{})
+	rt.WuuHome = retryingTempDir(t)
+	out := &lockedBuffer{}
+	srv := &Server{rt: rt, out: out, threads: map[string]*threadState{}}
+	finish, err := srv.beginPluginGenerationMutation("install", pluginGenerationMutationCatalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer finish()
+	if err := os.WriteFile(filepath.Join(rt.WuuHome, ".plugin-generation.lock"), []byte{1}, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.writePluginGenerationResponse(Request{ID: json.RawMessage(`"publication"`)}, PluginPackageInstallResult{}, nil, finish); err != nil {
+		t.Fatal(err)
+	}
+	response := responseByID(t, parseOutput(t, out.String()), "publication")
+	if response["error"] == nil || response["result"] != nil {
+		t.Fatalf("failed publication was reported as success: %+v", response)
+	}
+	if srv.pluginGenerationMutation.Load() {
+		t.Fatal("failed publication kept admission closed")
+	}
+	if err := finish(); err == nil || !strings.Contains(err.Error(), "publication") {
+		t.Fatalf("repeated finish lost publication error: %v", err)
+	}
+	if !srv.pluginGenerationRefreshMu.TryLock() {
+		t.Fatal("failed publication retained local mutation lock")
+	}
+	srv.pluginGenerationRefreshMu.Unlock()
+	if err := os.WriteFile(filepath.Join(rt.WuuHome, ".plugin-generation.lock"), make([]byte, 8), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	lease, acquired, err := session.TryAcquirePluginCatalogMutationLease(rt.WuuHome)
+	if err != nil || !acquired {
+		t.Fatalf("failed publication retained catalog lease: acquired=%v err=%v", acquired, err)
+	}
+	if err := lease.Release(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPluginGenerationMutationFinishIsIdempotent(t *testing.T) {
+	rt := newTestRuntime(t, &fakeClient{})
+	rt.WuuHome = retryingTempDir(t)
+	srv := &Server{rt: rt, threads: map[string]*threadState{}}
+	finish, err := srv.beginPluginGenerationMutation("install", pluginGenerationMutationCatalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer finish()
+	for range 2 {
+		if err := finish(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	epoch, err := session.ReadPluginGenerationEpoch(rt.WuuHome)
+	if err != nil || epoch != 1 {
+		t.Fatalf("repeated finish advanced publication twice: epoch=%d err=%v", epoch, err)
+	}
+}
+
 func TestPluginGenerationMutationIsBlockedByAnotherAppServerExecution(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	rt.WuuHome = retryingTempDir(t)
@@ -510,6 +571,7 @@ func TestConcurrentPluginGenerationAdmissionsRefreshOnce(t *testing.T) {
 	var calls atomic.Int32
 	srv := &Server{
 		rt:      rt,
+		out:     &lockedBuffer{},
 		threads: map[string]*threadState{},
 		refreshExtensionsForTest: func(config.Config) error {
 			calls.Add(1)
@@ -536,14 +598,22 @@ func TestConcurrentPluginGenerationAdmissionsRefreshOnce(t *testing.T) {
 	go admit("first")
 	go admit("second")
 	<-started
-	time.Sleep(50 * time.Millisecond)
-	close(allowRefresh)
 	for range 2 {
 		result := <-results
-		if result.err != nil || !result.acquired {
-			t.Fatalf("admission failed: acquired=%v err=%v", result.acquired, result.err)
+		if result.err != nil || result.acquired {
+			t.Fatalf("admission must yield while refresh owns activation: acquired=%v err=%v", result.acquired, result.err)
 		}
 	}
+	close(allowRefresh)
+	waitPluginGenerationWatchTest(t, func() bool { return srv.pluginGenerationEpoch.Load() == 1 })
+	for _, id := range []string{"first", "second"} {
+		admit(id)
+		result := <-results
+		if result.err != nil || !result.acquired {
+			t.Fatalf("retry admission failed: %+v", result)
+		}
+	}
+	srv.Close()
 	if got := calls.Load(); got != 1 {
 		t.Fatalf("generation refresh calls = %d, want 1", got)
 	}
@@ -631,6 +701,13 @@ description: Verifies plugin package removal.
 		t.Fatalf("approved plugin skill was not activated: %+v", state.skillNames)
 	}
 
+	externalExecution, acquired, err := session.TryAcquirePluginGenerationExecutionLease(rt.WuuHome)
+	if err != nil || !acquired {
+		t.Fatalf("external execution: %v %v", acquired, err)
+	}
+	defer externalExecution.Release()
+	retained := rt.RetainPluginGeneration()
+	defer rt.ReleasePluginGeneration(retained)
 	callPluginPackageRPC(t, srv, "remove", MethodPluginPackageRemove, PluginPackageRemoveParams{ID: "remove-demo"})
 	response := responseByID(t, parseOutput(t, out.String()), "remove")
 	if response["error"] != nil {
@@ -686,9 +763,15 @@ func TestPluginPackageHandlersRejectInvalidPathAndID(t *testing.T) {
 	}
 }
 
-func TestPluginPackageActivationMutationsRejectRunningTurn(t *testing.T) {
+func TestPluginPackageMutationsPreserveUnrelatedRunningTurn(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	rt.WuuHome = retryingTempDir(t)
+	configPath, err := statepath.ConfigPath(rt.HomeDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writePluginPackageFile(t, configPath, `{"default_provider":"fake-provider","providers":{"fake-provider":{"type":"openai-compatible","base_url":"https://example.test/v1","model":"fake-model"}}}`)
+
 	source := t.TempDir()
 	writePluginPackageFile(t, filepath.Join(source, "plugin.json"), `{"id":"busy-demo"}`)
 	out := &lockedBuffer{}
@@ -700,20 +783,24 @@ func TestPluginPackageActivationMutationsRejectRunningTurn(t *testing.T) {
 
 	// Installation is catalog-only and must proceed while a turn runs.
 	callPluginPackageRPC(t, srv, "install-busy", MethodPluginPackageInstall, PluginPackageInstallParams{Path: source})
-	// Activation-class mutations swap the live generation and must wait.
+	// Removal revokes only the removed plugin, not unrelated turns.
 	callPluginPackageRPC(t, srv, "remove-busy", MethodPluginPackageRemove, PluginPackageRemoveParams{ID: "busy-demo"})
 	messages := parseOutput(t, out.String())
 	install := responseByID(t, messages, "install-busy")
 	if _, hasError := install["error"]; hasError {
 		t.Fatalf("install error = %v", install["error"])
 	}
-	message := responseErrorMessage(t, responseByID(t, messages, "remove-busy"))
-	if !strings.Contains(message, "while a turn is running") {
-		t.Fatalf("remove error = %q", message)
+	removal := responseByID(t, messages, "remove-busy")
+	if removal["error"] != nil {
+		t.Fatalf("remove error: %v", removal["error"])
 	}
-	if _, err := os.Stat(filepath.Join(rt.WuuHome, "plugins", "busy-demo")); err != nil {
-		t.Fatalf("running-turn install did not write the package: %v", err)
+	if _, err := os.Stat(filepath.Join(rt.WuuHome, "plugins", "busy-demo")); !os.IsNotExist(err) {
+		t.Fatalf("package remains: %v", err)
 	}
+	if !thread.running {
+		t.Fatal("unrelated turn was stopped")
+	}
+
 }
 
 func callPluginPackageRPC(t *testing.T, srv *Server, id, method string, params any) {

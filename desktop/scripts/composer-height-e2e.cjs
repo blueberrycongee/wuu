@@ -1,3 +1,4 @@
+const { attachComposerFiles } = require("./composer-attachment-e2e.cjs");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
@@ -88,13 +89,9 @@ async function run() {
       await setDraft(win, "");
       near((await geometry(win)).inputHeight, empty.inputHeight, `${label}: clearing shrinks input`);
       if (variant === "populated") {
-        await evaluate(win, () => {
-          const transfer = new DataTransfer();
-          transfer.items.add(new File(["%PDF-1.4 layout fixture"], "layout-fixture.pdf", { type: "application/pdf" }));
-          const input = document.querySelector('[data-main-conversation-composer] input[type="file"]');
-          input.files = transfer.files;
-          input.dispatchEvent(new Event("change", { bubbles: true }));
-        });
+        await attachComposerFiles(win, "[data-main-conversation-composer]", [{
+          contents: "%PDF-1.4 layout fixture", name: "layout-fixture.pdf", type: "application/pdf",
+        }]);
         await waitFor(win, () => !!document.querySelector('[data-main-conversation-composer] .composer-file-card'));
         await geometry(win);
         await checkEndClearance(win, `${label}: attachment`);

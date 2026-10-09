@@ -1,3 +1,4 @@
+import { openComposerAttachmentPicker } from "./test/attachmentPicker";
 /**
  * Session switching keeps the outgoing conversation covered until the resumed
  * target has restored its presentation and scroll position.
@@ -382,8 +383,8 @@ async function pickPendingAttachment(owner: Element, extension: "pdf" | "png" | 
   const type = extension === "pdf" ? "application/pdf" : extension === "png" ? "image/png" : "video/mp4";
   const file = new File([bytes], `A-only.${extension}`, { type });
   Object.defineProperty(file, "arrayBuffer", { value: () => read.promise });
+  const input = openComposerAttachmentPicker(owner);
   await act(async () => {
-    const input = owner.querySelector<HTMLInputElement>('input[type="file"]')!;
     Object.defineProperty(input, "files", { configurable: true, value: [file] });
     input.dispatchEvent(new Event("change", { bubbles: true }));
   });
@@ -1267,8 +1268,8 @@ describe("session tab switch latency", () => {
     vi.spyOn(ComposerMessages, "composerImagePlaceholder").mockReturnValue({ ...encoded, data: "", encodePromise: encoding.promise });
     await act(async () => { root = createRoot(container); root.render(<App />); });
     await flushAsync();
+    const input = openComposerAttachmentPicker(container.querySelector('[data-main-conversation-composer="dock"]')!);
     await act(async () => {
-      const input = container.querySelector<HTMLInputElement>('[data-main-conversation-composer="dock"] input[type="file"]')!;
       Object.defineProperty(input, "files", { value: [new File(["image"], "image.png", { type: "image/png" })] });
       input.dispatchEvent(new Event("change", { bubbles: true }));
       setMainComposerPrompt("inspect this in alpha");
