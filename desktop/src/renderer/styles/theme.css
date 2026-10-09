@@ -162,6 +162,7 @@
   --hljs-literal: var(--wuu-syntax-literal, #b0a0e8);
   --hljs-meta: var(--wuu-syntax-meta, #98a1a9);
   --codex-runtime-trigger-icon: var(--wuu-color-text-muted, #8f959a);
+  --workspace-tab-active-bg: var(--surface-3);
 
   /* composer.css / composer-context-meter.css / chat.css */
   --composer-frame-shadow: var(--shadow-composer);

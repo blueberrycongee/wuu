@@ -1,10 +1,10 @@
 /* Component color tokens for sidebar.css.
    Light-theme values; the dark theme overrides these in base.css theme blocks. */
 :root {
-  /* On macOS the rail is the system sidebar material (main process). A thin
-   * neutral veil keeps text contrast steady while the material stays
-   * visible; a heavy veil only mixed the wallpaper into a flat, tinted gray. */
-  --sidebar-material-fill: color-mix(in srgb, var(--surface-1) 45%, transparent);
+  /* One opaque near-white step below the canvas on every platform. A
+   * translucent system material took its gray from the wallpaper and read
+   * as dirt beside the white canvas. */
+  --sidebar-material-fill: var(--surface-1);
   /* Rail/content boundary: a crisp dark hairline instead of the old white
    * edge + white inset pair, which were invisible against the white content
    * column and left the boundary to be read from the gray brightness step.
@@ -12,7 +12,7 @@
   --sidebar-material-edge: rgba(19, 19, 20, 0.07);
   --sidebar-material-inner-edge: transparent;
   --sidebar-hover-card-rim: rgba(255, 255, 255, 0.72);
-  --sidebar-drawer-bg: var(--surface-2);
+  --sidebar-drawer-bg: var(--sidebar-material-fill);
   --sidebar-brand-wordmark-color: var(--ink-strong);
   --sidebar-resizer-hover-bg: var(--ink-overlay-18);
   --sidebar-resizer-hover-ring: rgba(255, 255, 255, 0.4);
@@ -26,7 +26,7 @@
     var(--wuu-color-surface-elevated, var(--paper))
   );
   --sidebar-row-selected-shadow: 0 0 0 1px var(--hairline-soft), 0 1px 2px var(--shadow-color-medium);
-  --sidebar-project-row-pending-bg: rgba(255, 255, 255, 0.24);
+  --sidebar-project-row-pending-bg: var(--ink-overlay-4);
   --sidebar-project-loading-notch: rgba(19, 19, 20, 0.18);
   --sidebar-row-icon-hover-bg-default: var(--ink-overlay-6);
   --sidebar-row-action-archive-confirm-bg: rgba(184, 79, 53, 0.1);
@@ -39,13 +39,6 @@
   /* Must stay a valid <shadow> (not `none`): it is one item in a comma-
    * separated box-shadow list. */
   --sidebar-edge-shadow: 0 0 0 0 transparent;
-}
-
-/* Windows has no vibrancy view. Use an opaque navigation surface instead
- * of relying on the native material behind the translucent web layer. The
- * dark rail is already opaque (theme.css). */
-:root[data-platform="win32"]:not([data-theme="dark"]) {
-  --sidebar-material-fill: var(--surface-2);
 }
 
 .app-shell {
@@ -258,10 +251,9 @@
   );
 }
 
-/* Glass rail surface — shared between the main sidebar (`<aside class="sidebar">`)
+/* Rail surface — shared between the main sidebar (`<aside class="sidebar">`)
  * and the settings rail (`<aside class="settings-sidebar">`). Single source of
- * truth so future tweaks to the translucent material (border opacity,
- * highlight brightness, ambient shadow, ::before gradient stops) update both
+ * truth so future tweaks to the rail (fill, edge, ambient shadow) update both
  * shells at once. Each shell keeps its own layout-specific declarations in
  * the rules below — main owns z-index / overflow / transitions / motion
  * tokens, settings owns padding / gap. */

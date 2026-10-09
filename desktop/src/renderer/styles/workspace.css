@@ -57,6 +57,8 @@
   --hljs-literal: var(--wuu-syntax-literal, #6f5ca7);
   --hljs-meta: var(--wuu-syntax-meta, #5f6870);
   --codex-runtime-trigger-icon: var(--wuu-color-text-muted, #707579);
+  /* One quiet step off the paper: the title's weight carries selection. */
+  --workspace-tab-active-bg: var(--surface-2);
 }
 
 .workspace-right-panel {
@@ -92,11 +94,11 @@
 }
 
 /* The panel's chrome sits on the same paper as the conversation titlebar
- * beside it; tabs and tree rows use the session strip's chip vocabulary. */
+ * beside it. Tabs are the strip's content, so their chips stand a size above
+ * the strip's icon buttons instead of matching them. */
 .workspace-right-panel {
-  --workspace-tab-chip-active-bg: var(--shell-session-tab-active-bg);
   --workspace-tab-chip-hover-bg: var(--ink-overlay-4);
-  --workspace-tab-chip-height: var(--control-size-toolbar);
+  --workspace-tab-chip-height: var(--control-size-roomy);
   --workspace-tab-chip-inset: calc((var(--window-titlebar-height) - var(--workspace-tab-chip-height)) / 2);
   /* Tab chips, tool rows, and tree rows float inside the pane like sidebar
    * rows; their own padding takes up the rest, putting the leading glyph on
@@ -358,6 +360,12 @@
   flex: 0 0 auto;
 }
 
+/* The glyph already flips between expand and collapse. A held fill beside
+ * the tabs would read as a second selection. */
+.workspace-panel-tabbar .workspace-panel-globalize.active:not(:hover) {
+  background: transparent;
+}
+
 /* One strip for the dock and the full-width reading canvas. Tab boxes run
  * down to the content edge; the band above them still drags the window. */
 .workspace-panel-tabs {
@@ -382,12 +390,14 @@
   display: flex;
   position: relative;
   /* Reserve title and close lanes before scrolling, but never make one tab
-   * wider than the strip left by the dock's toolbar/native controls. Equal
-   * widths keep horizontal drag sorting stable in both pane sizes. */
-  min-width: min(100cqw, calc(4em + var(--icon-size) + var(--control-size-inline) + 24px));
+   * wider than the strip left by the dock's toolbar/native controls. A tab
+   * fits its title, so a short one does not stretch into a long bar. The
+   * floor keeps two characters: the title's padding, icon gap and close
+   * margin come to the leading pad plus 14px. */
+  min-width: min(100cqw, calc(2em + var(--icon-size) + var(--control-size-inline) + var(--workspace-row-pad-x) + 14px));
   max-width: 220px;
   height: 100%;
-  flex: 1 1 0%;
+  flex: 0 1 auto;
   align-items: center;
   box-sizing: border-box;
   padding-bottom: var(--workspace-tab-chip-inset);
@@ -470,12 +480,10 @@
   cursor: grabbing;
   opacity: 0.98;
   pointer-events: none;
-  /* Portaled outside the panel: restate the chip tokens it reads. */
-  --workspace-tab-chip-active-bg: var(--shell-session-tab-active-bg);
-  --workspace-tab-chip-height: var(--control-size-toolbar);
+  /* Portaled outside the panel: restate the tokens it reads. */
   --workspace-tab-chip-inset: 0px;
   --workspace-row-pad-x: calc(var(--pane-inset) - var(--space-2));
-  height: var(--workspace-tab-chip-height);
+  height: var(--control-size-roomy);
   border-radius: var(--radius-sm);
   background: var(--paper);
   color: var(--ink-strong);
@@ -502,10 +510,9 @@
   background: var(--workspace-tab-chip-hover-bg);
 }
 
-/* A filled chip and stronger title distinguish selection from hover. */
-.workspace-tool-tab.active::before,
-.workspace-tool-tab-drag-overlay::before {
-  background: var(--workspace-tab-chip-active-bg);
+/* A quiet fill and stronger title distinguish selection from hover. */
+.workspace-tool-tab.active:not(.workspace-tool-tab-drag-overlay)::before {
+  background: var(--workspace-tab-active-bg);
 }
 
 .workspace-tool-tab.active,

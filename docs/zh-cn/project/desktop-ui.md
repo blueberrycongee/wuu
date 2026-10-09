@@ -44,6 +44,10 @@ npm --prefix desktop run dev:onboarding
 关闭页面会恢复之前激活的标签。新建页面的分区保持易读宽度，但从标签下方的面板
 边缘缩进处开始，不在宽面板里居中，因此工具图标与标签图标对齐。
 
+每个标签按标题宽度显示，有上限，不再平分整条标签栏。选中的标签是比纸面低一级的
+浅色底块，标题使用中等字重。标签比标签栏里的图标按钮高一级，先读到内容，再读到
+操作。全面板按钮不保留按下的底色，图标本身已经表明方向。
+
 运行 `npm --prefix desktop run test:e2e:workspace-new-tab`，通过合成桥接检查生产 renderer
 中的选择、单例复用、关闭恢复、键盘导航和扩展加载。`desktop/out/workspace-new-tab-e2e/`
 里的截图和 `results.json` 覆盖浅深主题、14px/20px UI 字号及宽窄窗口；不验证真实

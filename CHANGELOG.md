@@ -24,6 +24,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Paint the light navigation rail as one opaque near-white surface on every
+  platform instead of the macOS sidebar material, whose wallpaper-tinted gray
+  read as dirt beside the white canvas. Workspace tabs now fit their titles,
+  select with a quieter fill, and stand a size above the strip's icon buttons.
+
 - Gather how new conversations start on General: the default agent, then the
   built-in agent's model, reasoning effort and environment. The Agents, Model
   providers and Built-in agent pages keep their lists.

@@ -50,6 +50,12 @@ the previously active tab. The page's sections keep a readable width but start
 on the pane inset under the tabs instead of centering in a wide panel, so tool
 icons line up with the tab icons.
 
+Each tab fits its title, up to a cap, instead of stretching to share the strip.
+The selected tab is a quiet fill one step off the paper, and its title takes the
+medium weight. Tabs stand a size above the strip's icon buttons, so the content
+of the strip reads before its actions. The full-panel button keeps no held fill:
+its glyph already shows which way it goes.
+
 Run `npm --prefix desktop run test:e2e:workspace-new-tab` for production-renderer
 checks of selection, singleton reuse, close recovery, keyboard navigation, and
 extension loading through a synthetic bridge. Screenshots and `results.json` in
