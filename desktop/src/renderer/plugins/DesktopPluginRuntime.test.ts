@@ -48,6 +48,108 @@ describe("DesktopPluginRuntime", () => {
     }
   });
 
+  it("orders dependency activation, reloads unchanged consumers, and cleans up in reverse", async () => {
+    const events: string[] = [];
+    installDesktopModuleLoader(vi.fn(async ({ id, fingerprint }) => ({
+      id, fingerprint, digest: "a".repeat(64), url: `${id}/${fingerprint}`,
+    })));
+    const runtime = new DesktopPluginRuntime(new PluginHost({ react: React }), async (url) => ({
+      activate(api: { registerCleanup(fn: () => void): void }) {
+        events.push(`start:${url}`);
+        api.registerCleanup(() => events.push(`stop:${url}`));
+      },
+    }));
+    const provider = dependencyPlugin("provider");
+    const consumer = dependencyPlugin("consumer", ["provider"]);
+    expect(await runtime.sync([consumer, provider])).toEqual([]);
+    expect(events).toEqual(["start:user:provider/fingerprint-one", "start:user:consumer/fingerprint-one"]);
+    events.length = 0;
+    await runtime.sync([consumer, { ...provider, fingerprint: "two" }]);
+    expect(events.indexOf("stop:user:consumer/fingerprint-one")).toBeLessThan(events.indexOf("stop:user:provider/fingerprint-one"));
+    expect(events.at(-1)).toBe("start:user:consumer/fingerprint-one");
+    events.length = 0;
+    await runtime.sync([consumer, { ...provider, enabled: false }]);
+    expect(events).toEqual(["stop:user:consumer/fingerprint-one", "stop:user:provider/two"]);
+  });
+
+  it("blocks missing, cyclic, inactive and transitively unavailable required dependencies", async () => {
+    const load = vi.fn(async () => ({ activate() {} }));
+    installDesktopModuleLoader(vi.fn(async ({ id, fingerprint }) => ({
+      id, fingerprint, digest: "a".repeat(64), url: id,
+    })));
+    const runtime = new DesktopPluginRuntime(new PluginHost({ react: React }), load);
+    await runtime.sync([
+      dependencyPlugin("missing", ["absent"]), dependencyPlugin("transitive", ["missing"]),
+      dependencyPlugin("cycle-a", ["cycle-b"]), dependencyPlugin("cycle-b", ["cycle-a"]),
+      { ...dependencyPlugin("inactive"), runtime_state: "inactive" },
+      dependencyPlugin("inactive-consumer", ["inactive"]),
+    ]);
+    expect(load).not.toHaveBeenCalled();
+  });
+
+  it("honors core version mismatches without reimplementing version matching in the renderer", async () => {
+    const load = vi.fn(async () => ({ activate() {} }));
+    const runtime = new DesktopPluginRuntime(new PluginHost({ react: React }), load);
+    const plugin = { ...dependencyPlugin("consumer"), activation_issues: [{ kind: "version_mismatch" as const, related_plugin_id: "provider" }] };
+    const read = vi.fn(async ({ id, fingerprint }: { id: string; fingerprint: string }) => ({
+      id, fingerprint, digest: "a".repeat(64), url: id,
+    }));
+    installDesktopModuleLoader(read);
+    await runtime.sync([plugin]);
+    expect(read).not.toHaveBeenCalled();
+    expect(load).not.toHaveBeenCalled();
+  });
+
+  it("cascades desktop startup failure while independent plugins still activate", async () => {
+    const activated: string[] = [];
+    installDesktopModuleLoader(vi.fn(async ({ id, fingerprint }) => ({
+      id, fingerprint, digest: "a".repeat(64), url: id,
+    })));
+    const runtime = new DesktopPluginRuntime(new PluginHost({ react: React }), async (id) => ({
+      activate() {
+        if (id === "user:provider") throw new Error("provider failed");
+        activated.push(id);
+      },
+    }));
+    const failures = await runtime.sync([
+      dependencyPlugin("consumer", ["provider"]), dependencyPlugin("provider"), dependencyPlugin("independent"),
+    ]);
+    expect(activated).toEqual(["user:independent"]);
+    expect(failures.map((failure) => failure.pluginId).sort()).toEqual(["user:consumer", "user:provider"]);
+    await runtime.sync([]);
+  });
+
+  it("keeps optional failure nonblocking and stable, then rebinds on provider recovery", async () => {
+    const events: string[] = [];
+    let fail = true;
+    installDesktopModuleLoader(vi.fn(async ({ id, fingerprint }) => ({
+      id, fingerprint, digest: "a".repeat(64), url: id,
+    })));
+    const runtime = new DesktopPluginRuntime(new PluginHost({ react: React }), async (id) => ({
+      activate(api: { registerCleanup(fn: () => void): void }) {
+        events.push(id);
+        if (id === "user:provider" && fail) throw new Error("optional provider failed");
+        api.registerCleanup(() => events.push(`stop:${id}`));
+      },
+    }));
+    const consumer = { ...dependencyPlugin("consumer"), resolved_dependencies: ["provider"] };
+    const inventory = [consumer, dependencyPlugin("provider")];
+    const failures = await runtime.sync(inventory);
+    expect(events).toEqual(["user:provider", "user:consumer"]);
+    expect(failures.map((failure) => failure.pluginId)).toEqual(["user:provider"]);
+    events.length = 0;
+    await runtime.sync(inventory);
+    expect(events).toEqual(["user:provider"]);
+    fail = false;
+    events.length = 0;
+    await runtime.sync(inventory);
+    expect(events).toEqual(["user:provider", "stop:user:consumer", "user:consumer"]);
+    events.length = 0;
+    await runtime.sync(inventory);
+    expect(events).toEqual([]);
+    await runtime.sync([]);
+  });
+
   it("loads approved generations once and unloads disabled plugins", async () => {
     const load = vi.fn(async () => ({
       activate: (api: { registerStyle(style: { id: string; css: string }): unknown }) => {
@@ -84,13 +186,13 @@ describe("DesktopPluginRuntime", () => {
     }));
     installDesktopModuleLoader(read);
     const runtime = new DesktopPluginRuntime(new PluginHost({ react: React }), load);
-    const plugin = { ...inventoryPlugin(), runtime_state: "inactive" as const };
+    const plugin = inventoryPlugin();
 
     expect(await runtime.sync([plugin], true)).toEqual([]);
     expect(read).not.toHaveBeenCalled();
     expect(activate).not.toHaveBeenCalled();
 
-    // A desktop-only plugin does not need a running backend to activate.
+    // Core marks desktop-only plugins active even without a backend process.
     expect(await runtime.sync([plugin], false)).toEqual([]);
     expect(activate).toHaveBeenCalledTimes(1);
     expect(await runtime.sync([plugin], true)).toEqual([]);
@@ -232,6 +334,7 @@ function inventoryPlugin(): ExtensionInventoryRecord {
     state: "granted",
     approval_state: "granted",
     enabled: true,
+    runtime_state: "active",
     fingerprint: "fingerprint-one",
     desktop: { entry: "desktop.js" },
   };
@@ -243,4 +346,9 @@ function installDesktopModuleLoader(
   const api = { ...(window.wuu ?? {}) } as WuuDesktopApi;
   api.loadPluginDesktopModule = loader;
   window.wuu = api;
+}
+
+function dependencyPlugin(id: string, requires: string[] = []): ExtensionInventoryRecord {
+  const plugin = inventoryPlugin();
+  return { ...plugin, id: `user:${id}`, provenance: { ...plugin.provenance, plugin_id: id }, requires };
 }

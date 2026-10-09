@@ -30,13 +30,29 @@
 | `version` | 插件自身版本，与 Wuu 产品版本分开 |
 | `minimum_wuu_version` | 最低 Wuu CalVer，例如 `2026.9.1`，不能代替服务或 API 兼容性检查 |
 | `platforms` | 可选的宿主平台限制 |
-| `requires` | 必须可用的插件包 ID；缺少依赖时，该插件不激活 |
+| `requires` | 兼容旧格式的必需包 ID，不含版本约束 |
+| `dependencies` | `{ id, version?, optional? }` 形式的包关系；必需依赖必须可用且满足版本约束 |
 | `breaks` | 硬不兼容关系；不兼容的包同时启用会拒绝激活计划 |
 | `conflicts` | 软冲突，只报告，不自动禁用任何一方 |
 | `skills`、`hooks`、`mcpServers` | 分别使用[技能](skill-authoring.md)、[hook](hooks.md)、[MCP](mcp.md) 契约的贡献 |
 | `contributes` | 命令、主题、设置、UI 声明和视图入口 |
 
-包关系填写 ID，不是版本范围，也不会自动下载依赖。依赖环会拒绝激活计划。`requested_permissions` 描述申请的权限，不会为插件进程建立沙箱。
+`dependencies` 在不改变包 schema 的前提下增加版本检查。例如：
+
+```json
+{
+  "dependencies": [
+    { "id": "text-analysis-example", "version": "^1.0.0" },
+    { "id": "draft-export", "version": ">=1.2.0 <2.0.0", "optional": true }
+  ]
+}
+```
+
+省略 `version` 表示接受任意包版本。约束使用 SemVer 语法，包括精确版本、比较、`^` 和 `~`；预发布版本必须由约束明确允许。这些是插件包版本，不是 Wuu 的产品 CalVer。`requires` 仍受支持，并与必需的 `dependencies` 合并。不要将同一依赖同时声明为可选和必需。
+
+必需依赖缺失、被禁用、未获信任或版本不兼容时，消费者及其下游必需消费者保持未激活。可选依赖不可用或不兼容时，不阻止激活。可用且版本匹配的依赖建立 provider 先于消费者的顺序；必需依赖环会拒绝激活计划。若可选排序边会构成环，则跳过该边并记录诊断。声明关系不会下载、安装、启用其他包，也不会授予信任。`breaks` 和 `conflicts` 仍为 ID 列表。`requested_permissions` 描述申请的权限，不会为插件进程建立沙箱。
+
+包依赖与运行时服务要求用途不同。包依赖选择已安装的包并确定生命周期顺序；`provided_services` / `required_services` 协商命名 API 和服务主版本，不按包 ID 选择，也不继承包版本。功能需要特定包及其 API 时，应同时声明两者。仅依赖服务的消费者则可接受该服务的任意合格 provider。
 
 ## 声明式贡献
 
@@ -177,6 +193,21 @@ Peers 插件通过 `if_running: "steer"` 尽量把终态回执注入当前工作
 初始化时返回 `provided_services`，并实现 `invokeService`。描述包含小写点分名称、严格的 `MAJOR.MINOR.PATCH` 版本，以及带 `input_schema`、`output_schema` 标识的方法。这些标识命名契约，不是内嵌 JSON Schema 定义。
 
 消费者声明服务名和主版本，再通过统一入口调用。宿主提供调用者身份并路由到活动 provider，不应直接寻址另一个插件进程或依赖其私有文件。同一初始化结果不能同时提供和消费同名服务。缺少必需服务会阻止消费者激活；同名同主版本的多个 provider 会产生诊断，不会合并实现。
+
+[服务组合示例](../../../examples/plugins/service-composition/README.md)（英文）包含两个可构建的包：无状态的文本分析 provider，以及消费其版本 1 API 的写作报告工具。示例展示两种声明和真实的 gateway 调用。
+
+### 可重入服务处理函数
+
+TypeScript 运行时适配器默认按顺序处理普通请求。对于能够安全地与其他处理函数重叠执行的服务，可将其名称加入 `RuntimePlugin.concurrentServices`：
+
+```ts
+const plugin: RuntimePlugin = {
+  concurrentServices: ["example.text.analysis"],
+  // initialize、invokeService 等回调……
+};
+```
+
+只对可重入的处理函数启用：保护共享可变状态，并传递取消信号。在 A → B → A 服务调用链中，A 等待 B 时，其回调服务必须能够执行。此选项仅影响所列名称的入站 `service.invoke` 请求，不会让所有工具或能力并发，不会授予服务权限，也不会解决包依赖环。初始化和激活仍是执行屏障；shutdown 停止接收新工作，等待已接收的工作结束后再清理。这是同一个 JavaScript 进程中的异步重叠执行，不是工作线程。
 
 ## 执行与取消
 

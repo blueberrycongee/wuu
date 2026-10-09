@@ -773,6 +773,8 @@ type ExtensionInventoryRecord struct {
 	RuntimeState         ExtensionRuntimeState            `json:"runtime_state,omitempty"`
 	LastError            string                           `json:"last_error,omitempty"`
 	Requires             []string                         `json:"requires,omitempty"`
+	Dependencies         []extensions.PackageDependency   `json:"dependencies,omitempty"`
+	ResolvedDependencies []string                         `json:"resolved_dependencies,omitempty"`
 	Breaks               []string                         `json:"breaks,omitempty"`
 	Conflicts            []string                         `json:"conflicts,omitempty"`
 	ActivationIssues     []ExtensionPluginActivationIssue `json:"activation_issues,omitempty"`

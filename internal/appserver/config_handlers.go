@@ -353,8 +353,10 @@ func (s *Server) currentExtensionInventory() []ExtensionInventoryRecord {
 		}
 	}
 	packageActivationIssues := make(map[string][]pluginpkg.ActivationIssue)
+	packageDependencies := make(map[string][]string)
 	if plan, err := runtime.ResolvePluginActivationPlan(cfg, s.rt.Plugins); err == nil {
 		packageActivationIssues = plan.Issues
+		packageDependencies = plan.Dependencies
 	}
 
 	records := make([]ExtensionInventoryRecord, 0, len(s.rt.Skills)+len(s.rt.Plugins))
@@ -517,6 +519,8 @@ func (s *Server) currentExtensionInventory() []ExtensionInventoryRecord {
 			RuntimeState:         runtimeState,
 			LastError:            lastError,
 			Requires:             cloneSortedStrings(item.Requires),
+			Dependencies:         append([]extensions.PackageDependency(nil), item.Dependencies...),
+			ResolvedDependencies: cloneSortedStrings(packageDependencies[item.ID]),
 			Breaks:               cloneSortedStrings(item.Breaks),
 			Conflicts:            cloneSortedStrings(item.Conflicts),
 			Enabled:              &enabled,

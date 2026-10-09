@@ -817,7 +817,12 @@ it.each(["direct-same", "disable-enable", "changed-code"])("recovers embedded vi
   const host = new PluginHost({ react: React });
   const controller = new WorkbenchController(host);
   const runtime = new DesktopPluginRuntime(host, async () => ({ activate: register }));
-  const plugin = {id: "user:review", kind: "plugin", state: "active", approval_state: "granted", enabled: true, fingerprint: "same", desktop: { entry: "desktop.js" }} as ExtensionInventoryRecord;
+  const plugin: ExtensionInventoryRecord = {
+    ...inventoryPlugin("user:review"),
+    runtime_state: "active",
+    fingerprint: "same",
+    desktop: { entry: "desktop.js" },
+  };
   const container = document.createElement("div");
   document.body.append(container);
   const root = createRoot(container);

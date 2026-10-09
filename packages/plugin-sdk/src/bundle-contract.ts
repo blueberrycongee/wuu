@@ -23,6 +23,15 @@ export interface DesktopDeclaration {
   entry: string;
 }
 
+/** A package dependency; omitted version accepts any installed version. */
+export interface PluginDependency {
+  id: string;
+  /** Semantic-version constraint checked by the host during activation. */
+  version?: string;
+  /** Missing or incompatible optional dependencies do not block activation. */
+  optional?: boolean;
+}
+
 export interface BundleManifest {
   schema_version: number;
   id: string;
@@ -31,6 +40,8 @@ export interface BundleManifest {
   description?: string;
   agent?: AgentDeclaration;
   desktop?: DesktopDeclaration;
+  requires?: string[];
+  dependencies?: PluginDependency[];
 }
 
 export interface GenerationInput {

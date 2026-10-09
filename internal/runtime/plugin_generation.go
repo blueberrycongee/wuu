@@ -251,6 +251,7 @@ func (s *Session) buildPluginGeneration(cfg config.Config, discovered []pluginpk
 			return nil, pluginActivationError(status.ID, errors.New(status.Error), closeErr)
 		}
 	}
+	active = availablePluginPackages(active, host)
 	systemPrompts, compactions, err := buildPluginAgentCapabilities(context.Background(), host, s.ProviderName, s.Model, s.RootDir)
 	if err != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -337,6 +338,18 @@ func (s *Session) ActivatePluginGeneration(candidate *PluginGeneration, commit f
 	// Activation may synchronously call host services. Keep old bindings
 	// available until activation settles, without holding their lookup mutex.
 	activationErr := activatePluginHost(context.Background(), candidate.host)
+	available := availablePluginPackages(candidate.active, candidate.host)
+	if len(available) != len(candidate.active) {
+		activeIDs := make(map[string]bool, len(available))
+		for _, item := range available {
+			activeIDs[item.ID] = true
+		}
+		candidate.revokeMissingPlugins(activeIDs, s.TitleClient, s.Model)
+		candidate.active = available
+		candidate.pluginSkills = discoverPluginSkills(available)
+		candidate.skills = discoverSkillsWithPlugins(s.RootDir, s.HomeDir, s.WuuHome, candidate.pluginSkills, candidate.settings.Skills)
+		candidate.mcpBinding = mcpActivityBindingsFromPlugins(available)
+	}
 	// Preparation materializes native contributions before the effectful
 	// lifecycle opens. Failed runtimes must not leave cached prompts or win
 	// decision/transform dispatch in the degraded generation. Keep their status
@@ -405,11 +418,44 @@ func (s *Session) ActivatePluginGeneration(candidate *PluginGeneration, commit f
 func (g *PluginGeneration) revokeMissingPlugins(activeIDs map[string]bool, client providers.Client, model string) {
 	g.revokedMu.Lock()
 	defer g.revokedMu.Unlock()
+	// Same-ID replacements can change their requirements. A pinned generation
+	// still needs its own providers; never apply the replacement's graph to it.
+	retainedIDs := make(map[string]bool, len(g.active))
+	for _, item := range g.active {
+		retainedIDs[item.ID] = activeIDs[item.ID] && !g.revokedPlugins[item.ID]
+	}
+	for changed := true; changed; {
+		changed = false
+		for _, item := range g.active {
+			if !retainedIDs[item.ID] {
+				continue
+			}
+			for _, required := range item.RequiredPluginIDs() {
+				if !retainedIDs[required] {
+					retainedIDs[item.ID] = false
+					changed = true
+					break
+				}
+			}
+		}
+	}
+	activeIDs = retainedIDs
 	var remaining []pluginpkg.Plugin
-	changed := false
 	for _, item := range g.active {
 		if activeIDs[item.ID] && !g.revokedPlugins[item.ID] {
 			remaining = append(remaining, item)
+		}
+	}
+	dependencyFailures := make(map[string]error)
+	if g.host != nil {
+		dependencyFailures = g.host.PackageDependencyFailures()
+	}
+	changed := false
+	// g.active is provider-first. Consumers must release their resources while
+	// provider services are still available, including in pinned generations.
+	for index := len(g.active) - 1; index >= 0; index-- {
+		item := g.active[index]
+		if activeIDs[item.ID] && !g.revokedPlugins[item.ID] {
 			continue
 		}
 		if g.revokedPlugins[item.ID] {
@@ -424,6 +470,9 @@ func (g *PluginGeneration) revokeMissingPlugins(activeIDs map[string]bool, clien
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 			outcome, _ := g.host.RetirePlugin(ctx, item.ID, &pluginhost.UserQuestionError{Code: "plugin_disabled", Message: "plugin was removed or disabled"})
 			cancel()
+			if failure := dependencyFailures[item.ID]; failure != nil {
+				g.host.Add(pluginhost.Failed(item.ID, failure))
+			}
 			if outcome.Err != nil {
 				providers.DebugLogf("retire disabled plugin %q: %v", item.ID, outcome.Err)
 			}

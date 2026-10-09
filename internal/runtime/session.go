@@ -495,6 +495,7 @@ func NewSession(opts Options) (*Session, error) {
 		userQuestions = pluginhost.NewUserQuestionBroker()
 	}
 	pluginHost, pluginKernel := startPluginHost(activePlugins, rootDir, workspaceID, wuuHome, workspaceStateDir, pluginTurnRouter, userQuestions)
+	activePlugins = availablePluginPackages(activePlugins, pluginHost)
 	systemPrompts, compactions, capabilityErr := buildPluginAgentCapabilities(context.Background(), pluginHost, resolvedName, providerCfg.Model, rootDir)
 	if capabilityErr != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)

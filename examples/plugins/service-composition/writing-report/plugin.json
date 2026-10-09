@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "id": "writing-report-example",
+  "name": "Writing Report Tool",
+  "version": "1.0.0",
+  "description": "Uses the text analysis service to report draft length.",
+  "runtime": {
+    "protocol": "wuu-plugin-v1",
+    "command": "node",
+    "args": [
+      "dist/runtime.js"
+    ]
+  },
+  "dependencies": [
+    {
+      "id": "text-analysis-example",
+      "version": "^1.0.0"
+    }
+  ]
+}

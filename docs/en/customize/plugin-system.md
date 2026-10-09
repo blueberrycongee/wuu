@@ -14,9 +14,11 @@ Bundled and external packages use the same runtime and desktop registration cont
 
 Discovery reads user packages, workspace packages, authorized development directories, and bundled packages. User packages normally live in `$WUU_HOME/plugins`; workspace packages live in `.wuu/plugins` under the workspace. Legacy singular `plugin` directories are also recognized. When IDs collide, later discovery replaces the earlier candidate; bundled packages are considered last.
 
-Finding a manifest does not mean running it. The host evaluates enabled state, trust, platform and minimum-version compatibility, package relationships, and runtime negotiation. Missing `requires` dependencies leave consumers inactive; `breaks` and dependency cycles can reject the activation plan. `conflicts` produces a diagnostic rather than choosing a winner automatically.
+Finding a manifest does not mean running it. The host evaluates enabled state, trust, platform and minimum-version compatibility, package relationships, and runtime negotiation. Required package dependencies use legacy `requires` IDs or versioned `dependencies` entries. Missing or incompatible required dependencies leave consumers and their transitive required dependents inactive; `breaks` and required dependency cycles can reject the activation plan. Matching optional dependencies add ordering when possible, but their absence or failure does not block consumers. `conflicts` produces a diagnostic rather than choosing a winner automatically.
 
 The current local installer stages packages and updates for a separate trust decision. Development authorization applies to a specific directory. Package identity includes content and source context, so an ID or version string alone is not proof that the currently approved bytes are running. See [plugin management](plugins.md) for the actual install and update flow.
+
+Package relationships do not install dependencies, enable disabled packages, or grant trust. They also do not grant service-call authority: runtime `provided_services` and `required_services` negotiate service names and major versions separately. See [package relationships](plugin-authoring.md#package-structure-and-manifest).
 
 ## Runtime generations
 
@@ -28,6 +30,8 @@ During preflight, native runtime processes initialize and describe their contrac
 
 The runtime transition prepares the candidate, commits the associated package or policy changes, and only then calls native `activate`. If preparation or the durable commit fails, the candidate is closed and the old runtime remains current; candidate `activate` is not called.
 
+Providers initialize and activate before their package consumers. A required provider's initialization or activation failure blocks its transitive required consumers, including relationships through declarative-only packages. Blocked consumers do not expose their tools, hooks, skills, MCP servers, or desktop contributions. Independent packages can still activate; a provider's own runtime failure does not automatically remove its independent declarative contributions.
+
 After the commit succeeds, an activation failure publishes the new generation in a degraded state instead of restoring the old one. The operation reports that the change was committed but runtime activation failed, and the inventory retains the failure diagnostics. Mutation handlers still synchronize committed settings, finish removal cleanup where applicable, and notify clients. Refresh accepts that published state and logs its activation failure rather than treating it as a failed refresh to retry on every watcher interval. External effects already performed by activation cannot be rolled back.
 
 After publication, an existing conversation adopts the new generation at its next idle turn boundary. A running turn and its outstanding background work retain their generation until that work settles. The host rebuilds plugin bindings together while retaining conversation history and session identity; the previous generation retires after its last lease is released. Catalog-only changes and pre-commit failures do not replace a healthy pinned generation. Later cleanup errors are reported separately and do not roll back the committed change.
@@ -36,7 +40,7 @@ During preparation, a candidate that fails to initialize or negotiate required s
 
 Reload preserves history, not an unconditional cache-hit guarantee. Identical model-facing definitions can reuse the provider prefix; changed tools, prompt sections, or deferred discovery state may invalidate it.
 
-Retirement closes MCP connections, clears prompt and compaction registrations, cancels plugin executions, shuts down processes, revokes service routing, and removes owned snapshots. Shutdown retains access to the host services needed to release plugin-owned work before routing is closed. Plugins must still stop their own timers, subscriptions, and background work; the host cannot infer arbitrary resources created by extension code.
+Dependent packages retire before their providers, including revocation of retained generations after a disable or removal. Optional dependency failures do not cascade into consumers. Retirement closes MCP connections, clears prompt and compaction registrations, cancels plugin executions, shuts down processes, revokes service routing, and removes owned snapshots. Shutdown retains access to the host services needed to release plugin-owned work before routing is closed. Plugins must still stop their own timers, subscriptions, and background work; the host cannot infer arbitrary resources created by extension code.
 
 Cleanup produces structured revocation records, persisted in `plugin-generation-revocations.jsonl` under Wuu's home directory. These distinguish publication success from retirement failures and help diagnose resources that did not close normally.
 
@@ -53,6 +57,8 @@ Capabilities compose at defined points, such as adding prompt context or observi
 ## Desktop generations and composition
 
 The desktop loads an eligible package's ESM entry and calls `activate(api)`. Registrations belong to that package generation. The host validates declared contributions and view targets before publishing it, then disposes the prior desktop generation. A failed candidate registration is disposed without replacing the existing desktop generation.
+
+Required providers must finish desktop activation successfully before consumers start. Independent branches may initialize concurrently. A provider replacement also reloads unchanged consumers; removing or disabling a required provider blocks them. Cleanup disposes consumers before providers. A failed replacement can preserve that package's previous desktop generation, but consumers do not activate against the unsuccessfully staged required replacement. Optional startup failures do not block consumers.
 
 This desktop transaction is separate from the Go runtime transaction. Do not assume one atomic rollback spans package installation, runtime activation, and every renderer window. Inspect the runtime and desktop diagnostics for the surface that failed.
 

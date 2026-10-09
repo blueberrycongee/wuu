@@ -89,6 +89,62 @@ describe("PluginPresentation", () => {
     expect(container?.querySelector("b")?.getAttribute("data-key")).toBe("message");
   });
 
+  it("delegates lazily with a downstream snapshot and preserves the original host rendering", async () => {
+    const { host, controller } = setup();
+    const lower = vi.fn(({ snapshot, original }: import("../../shared/workbench").PresenterProps) => <section data-lower>{(snapshot as { label: string }).label}{original}</section>);
+    await host.activateGeneration({ pluginId: "pipeline", generation: "one", register(api) {
+      api.registerPresenter({ id: "lower", target: "content.preview", priority: 0, render: lower });
+      api.registerPresenter({ id: "upper", target: "content.preview", priority: 10, render: ({ snapshot, next }) =>
+        (snapshot as { delegate: boolean }).delegate ? next({ snapshot: { label: "rewritten" } }) : <b data-owned>owned</b> });
+      api.registerPresenter({ id: "wrapper", target: "content.preview", mode: "wrap", render: ({ next }) => <main>{next()}</main> });
+    } });
+    const present = (delegate: boolean) => <PluginPresentation host={host} controller={controller} target="content.preview" snapshot={{ delegate }} fallback={<span data-native>native</span>} />;
+    render(present(false));
+    expect(lower).not.toHaveBeenCalled();
+    expect(container?.querySelector("main [data-owned]")).toBeTruthy();
+    render(present(true));
+    expect(container?.querySelector("main [data-lower]")?.textContent).toBe("rewrittennative");
+    act(() => host.unload("pipeline"));
+    expect(container?.textContent).toBe("native");
+    controller.dispose();
+  });
+
+  it("lets the preferred replacement delegate while wrappers rewrite only downstream snapshots", async () => {
+    const { host, controller } = setup();
+    await host.activateGeneration({ pluginId: "alpha", generation: "one", register(api) {
+      api.registerPresenter({ id: "preferred", target: "content.preview", render: ({ next }) => <aside data-preferred>{next()}</aside> });
+      api.registerPresenter({ id: "wrapper", target: "content.preview", mode: "wrap", render: ({ next }) => next({ snapshot: { label: "from wrapper" } }) });
+    } });
+    await host.activateGeneration({ pluginId: "zeta", generation: "one", register(api) {
+      api.registerPresenter({ id: "higher", target: "content.preview", priority: 10, render: ({ snapshot, original }) => <section>{(snapshot as { label: string }).label}{original}</section> });
+    } });
+    host.setConflictPreference("presenter:content.preview:", "alpha");
+    render(<PluginPresentation host={host} controller={controller} target="content.preview" snapshot={{ label: "host" }} fallback={<span>native</span>} />);
+    expect(container?.querySelector("[data-preferred] section")?.textContent).toBe("from wrappernative");
+    controller.dispose();
+  });
+
+  it("recovers a failed middleware contribution through the untouched downstream snapshot", async () => {
+    const { host, controller } = setup();
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      await host.activateGeneration({ pluginId: "pipeline", generation: "one", register(api) {
+        api.registerPresenter({ id: "lower", target: "content.preview", render: ({ snapshot }) => <span data-lower>{(snapshot as { label: string }).label}</span> });
+        api.registerPresenter({ id: "broken", target: "content.preview", priority: 10, render: ({ next }) => {
+          next({ snapshot: { label: "corrupted" } });
+          throw new Error("failed after delegation");
+        } });
+        api.registerPresenter({ id: "wrapper", target: "content.preview", mode: "wrap", render: ({ fallback }) => <main>{fallback}</main> });
+      } });
+      render(<PluginPresentation host={host} controller={controller} target="content.preview" snapshot={{ label: "original" }} fallback={<span>native</span>} />);
+      expect(container?.querySelector("main [data-lower]")?.textContent).toBe("original");
+      expect(host.getGenerationDiagnostics("pipeline", "one")).toHaveLength(1);
+    } finally {
+      consoleError.mockRestore();
+      controller.dispose();
+    }
+  });
+
   it("validates actions, dispatches supported input, and rejects stale hosts", async () => {
     const { host, controller } = setup();
     let presentationHost: import("../../shared/workbench").PresentationHost | undefined;

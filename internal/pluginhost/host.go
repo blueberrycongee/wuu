@@ -62,15 +62,16 @@ type RegisteredTool struct {
 
 // Host owns the active plugin clients and their negotiated contributions.
 type Host struct {
-	mu              sync.RWMutex
-	clients         []Client
-	tools           map[string]RegisteredTool
-	toolOrder       []string
-	capabilities    []RegisteredCapability
-	diagnostics     map[string]map[string]string
-	serviceRegistry *ServiceRegistry
-	executions      *ExecutionTracker
-	materialize     func(context.Context, ToolExecutionScope, *toolresult.Result) error
+	mu                  sync.RWMutex
+	clients             []Client
+	tools               map[string]RegisteredTool
+	toolOrder           []string
+	capabilities        []RegisteredCapability
+	diagnostics         map[string]map[string]string
+	serviceRegistry     *ServiceRegistry
+	packageRequirements map[string][]string
+	executions          *ExecutionTracker
+	materialize         func(context.Context, ToolExecutionScope, *toolresult.Result) error
 }
 
 type ContributionDiagnostic struct {
@@ -553,15 +554,22 @@ func (h *Host) Activate(ctx context.Context) error {
 	clients := append([]Client(nil), h.clients...)
 	h.mu.RUnlock()
 	var err error
+	blocked := h.PackageDependencyFailures()
 	for _, client := range clients {
+		if blocked[client.ID()] != nil {
+			continue
+		}
 		lifecycle, ok := client.(lifecycleClient)
 		if !ok || client.Status().State != StatePrepared {
 			continue
 		}
 		if activateErr := lifecycle.Activate(ctx); activateErr != nil {
 			err = errors.Join(err, fmt.Errorf("activate plugin %q: %w", client.ID(), activateErr))
+			h.BlockFailedPackageDependencies(ctx)
+			blocked = h.PackageDependencyFailures()
 		}
 	}
+	h.BlockFailedPackageDependencies(ctx)
 	return err
 }
 
