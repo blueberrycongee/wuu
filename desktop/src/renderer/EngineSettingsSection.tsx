@@ -1,5 +1,5 @@
 import { ChevronRight, ExternalLink, RefreshCw } from "./WuuIcons";
-import { useCallback, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useMemo, useState } from "react";
 import type {
   EngineInfo,
   EngineListResult,
@@ -11,19 +11,21 @@ import { EngineIcon } from "./EngineIcons";
 import { EngineAuthentication } from "./EngineAuthentication";
 import { engineLabel } from "./EngineDisplay";
 import { useI18n } from "./i18n";
-import { SettingsPageHeader, SettingsSection } from "./SettingsSection";
+import { SelectMenu, type SelectMenuOption } from "./SelectMenu";
+import { SettingsRow } from "./SettingsRow";
+import { SettingsGroup, SettingsPageHeader, SettingsSection } from "./SettingsSection";
 
 const BUILTIN_ENGINE = "wuu";
 
 type AgentRowState = { text: string; selectable: boolean };
 
 /**
- * The Agent settings page: one row per agent, so each agent appears exactly
- * once. Detected agents share the default radio group, each with its switch on
- * the row; the path override (and sign-in for ACP agents) opens under the
- * row's disclosure. An agent Wuu cannot find waits in a second group: its row
- * opens to say why once, with its install link and path override, instead of
- * repeating an install icon on every row.
+ * The Agent settings page. The default agent is one labeled picker, so the
+ * choice reads as a setting rather than a column of unlabeled radios. Each
+ * installed external agent then appears once, with its switch on the row and
+ * its path override (and sign-in for ACP agents) under the row's disclosure.
+ * An agent Wuu cannot find waits in a last group: its row opens to say why
+ * once, with its install link and path override.
  */
 export function EngineSettingsSection({
   result,
@@ -128,93 +130,59 @@ export function EngineSettingsSection({
     );
   };
 
-  // A detected agent: the radio picks the default, the switch turns it on or
-  // off, and the disclosure holds its path override.
-  const renderDetectedRow = (
-    id: string,
-    state: AgentRowState,
-    control?: ReactNode,
-    advanced?: ReactNode,
-  ): JSX.Element => {
+  // An installed agent: the switch turns it on or off, and the disclosure
+  // holds its path override.
+  const renderDetected = (engine: EngineInfo): JSX.Element => {
+    const { id } = engine;
+    const enabled = binarySettings[id]?.enabled !== false;
     const expanded = expandedId === id;
-    const engine = engineById(id);
     const label = engineLabel(id, engine);
     return (
       <div
         key={id}
         className="settings-engine-item"
         data-testid={`settings-engine-${id}-status`}
-        aria-label={`${label} · ${state.text}`}
+        aria-label={`${label} · ${externalState(engine).text}`}
       >
         <div className="settings-engine-row">
-          <input
-            id={`settings-engine-radio-${id}`}
-            className="settings-engine-radio"
-            type="radio"
-            name="settings-default-engine"
-            checked={defaultEngine === id}
-            disabled={busy || !state.selectable}
-            data-testid={`settings-engine-${id}-radio`}
-            onChange={() => selectDefault(id)}
-          />
-          <label
-            className="settings-engine-row-main"
-            htmlFor={`settings-engine-radio-${id}`}
-          >
+          <span className="settings-engine-row-main">
             <span className="settings-engine-row-icon" aria-hidden="true">
               <EngineIcon engine={id} />
             </span>
             <span className="settings-engine-row-name">{label}</span>
-          </label>
-          {control}
-          {advanced ? (
-            <button
-              className="settings-engine-expand"
-              type="button"
-              aria-expanded={expanded}
-              aria-label={`${label} ${t("settings.engineAdvanced")}`}
-              data-testid={`settings-engine-${id}-advanced-toggle`}
-              onClick={() => toggleExpanded(id)}
-            >
-              <ChevronRight className={`icon settings-disclosure-chevron${expanded ? " open" : ""}`} aria-hidden="true" />
-            </button>
-          ) : (
-            // Keeps switches aligned with rows that have a disclosure.
-            <span className="settings-engine-expand" aria-hidden="true" />
-          )}
+          </span>
+          <button
+            className="settings-switch"
+            type="button"
+            role="switch"
+            aria-checked={enabled}
+            aria-label={`${label} ${enabled ? t("settings.engineDisable") : t("settings.engineEnable")}`}
+            data-testid={`settings-engine-${id}-enabled`}
+            disabled={busy}
+            onClick={() => void save({ [id]: { enabled: !enabled } })}
+          >
+            <span className="settings-switch-thumb" aria-hidden="true" />
+          </button>
+          <button
+            className="settings-engine-expand"
+            type="button"
+            aria-expanded={expanded}
+            aria-label={`${label} ${t("settings.engineAdvanced")}`}
+            data-testid={`settings-engine-${id}-advanced-toggle`}
+            onClick={() => toggleExpanded(id)}
+          >
+            <ChevronRight className={`icon settings-disclosure-chevron${expanded ? " open" : ""}`} aria-hidden="true" />
+          </button>
         </div>
-        {advanced && expanded ? (
-          <div className="settings-engine-advanced">{advanced}</div>
+        {expanded ? (
+          <div className="settings-engine-advanced">
+            {pathInput(engine, engine.binary_path || t("settings.engineAutoBinary"))}
+            {engine.protocol === "acp" && enabled ? (
+              <EngineAuthentication key={`${id}-${binarySettings[id]?.binary_path ?? ""}`} engineID={id} />
+            ) : null}
+          </div>
         ) : null}
       </div>
-    );
-  };
-
-  const renderDetected = (engine: EngineInfo): JSX.Element => {
-    const { id } = engine;
-    const enabled = binarySettings[id]?.enabled !== false;
-    const label = engineLabel(id, engine);
-    return renderDetectedRow(
-      id,
-      externalState(engine),
-      <button
-        className="settings-switch"
-        type="button"
-        role="switch"
-        aria-checked={enabled}
-        aria-label={`${label} ${enabled ? t("settings.engineDisable") : t("settings.engineEnable")}`}
-        data-testid={`settings-engine-${id}-enabled`}
-        disabled={busy}
-        onClick={() => void save({ [id]: { enabled: !enabled } })}
-      >
-        <span className="settings-switch-thumb" aria-hidden="true" />
-      </button>,
-      <>
-        {pathInput(engine, engine.binary_path || t("settings.engineAutoBinary"))}
-        {engine.protocol === "acp" && enabled ? (
-          <EngineAuthentication key={`${id}-${binarySettings[id]?.binary_path ?? ""}`} engineID={id} />
-        ) : null}
-      </>,
     );
   };
 
@@ -232,8 +200,6 @@ export function EngineSettingsSection({
         aria-label={`${label} · ${t("settings.engineNotInstalled")}`}
       >
         <div className="settings-engine-row">
-          {/* The radio's footprint keeps both groups on one icon column. */}
-          <span className="settings-engine-radio is-placeholder" aria-hidden="true" />
           <button
             className="settings-engine-row-main settings-engine-row-toggle"
             type="button"
@@ -275,6 +241,20 @@ export function EngineSettingsSection({
   const external = engines.filter((engine) => engine.id !== BUILTIN_ENGINE);
   const detected = external.filter((engine) => engine.binary_ok);
   const missing = external.filter((engine) => !engine.binary_ok);
+  // Every installed agent is listed so a switched-off one says why it cannot
+  // be picked instead of silently leaving the choice set.
+  const defaultOptions: SelectMenuOption[] = [
+    { value: BUILTIN_ENGINE, label: engineLabel(BUILTIN_ENGINE, engineById(BUILTIN_ENGINE)), hint: t("settings.engineBuiltin") },
+    ...detected.map((engine) => {
+      const state = externalState(engine);
+      return {
+        value: engine.id,
+        label: engineLabel(engine.id, engine),
+        hint: state.selectable ? undefined : state.text,
+        disabled: !state.selectable,
+      };
+    }),
+  ];
 
   return (
     <>
@@ -297,11 +277,11 @@ export function EngineSettingsSection({
         }
       />
       <section
-        className="settings-section settings-agent-section"
+        className="settings-section"
         data-wuu-component="settings-section"
         data-testid="settings-agent-engines"
       >
-        <div className="settings-group settings-engine-body">
+        <SettingsGroup>
           {result === undefined ? (
             <div
               className="settings-engine-skeleton"
@@ -315,22 +295,34 @@ export function EngineSettingsSection({
               </div>
             </div>
           ) : (
-            <div role="radiogroup" aria-label={t("settings.defaultEngine")}>
-              {renderDetectedRow(BUILTIN_ENGINE, {
-                text: t("settings.engineBuiltin"),
-                selectable: true,
-              })}
-              {detected.map((engine) => renderDetected(engine))}
-            </div>
+            <SettingsRow title={t("settings.defaultEngine")}>
+              <SelectMenu
+                triggerClassName="settings-select-trigger"
+                ariaLabel={t("settings.defaultEngine")}
+                dataTestid="settings-default-engine"
+                value={defaultEngine}
+                options={defaultOptions}
+                disabled={busy}
+                flip
+                onChange={selectDefault}
+              />
+            </SettingsRow>
           )}
-        </div>
+        </SettingsGroup>
         {error || loadError ? <p className="settings-error" role="alert">{error || loadError}</p> : null}
       </section>
+      {detected.length > 0 ? (
+        <SettingsSection title={t("settings.engineInstalled")} testID="settings-agent-installed">
+          <SettingsGroup>
+            {detected.map((engine) => renderDetected(engine))}
+          </SettingsGroup>
+        </SettingsSection>
+      ) : null}
       {missing.length > 0 ? (
         <SettingsSection title={t("settings.engineNotInstalled")} testID="settings-agent-missing">
-          <div className="settings-group settings-engine-body">
+          <SettingsGroup>
             {missing.map((engine) => renderMissing(engine))}
-          </div>
+          </SettingsGroup>
         </SettingsSection>
       ) : null}
     </>

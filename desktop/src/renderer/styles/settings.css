@@ -272,6 +272,10 @@
   container-name: settings-page;
   container-type: inline-size;
   --settings-column-width: calc(var(--font-ui) * 50);
+  /* Every picker and text field on a page shares one width, so trailing
+   * controls start on one edge down a group instead of following their
+   * current value's length. */
+  --settings-control-width: calc(var(--font-ui) * 16);
   --settings-pad: var(--page-padding);
   --settings-gap: var(--section-gap);
   width: min(calc(var(--settings-column-width) + var(--settings-pad) * 2), 100%);
@@ -427,10 +431,10 @@
   gap: var(--space-2);
 }
 
-/* Text fields and pickers share one width, so their edges line up down the
- * form; numbers keep their narrower field. */
-.settings-form .settings-row-control > :is(.settings-input:not(.settings-input-num), .select-menu) {
-  width: calc(var(--font-ui) * 16);
+/* Text fields and pickers take the page's control width, so their edges line
+ * up down a group; numbers keep their narrower field. */
+.settings-row-control > :is(.settings-input:not(.settings-input-num), .select-menu) {
+  width: var(--settings-control-width);
   max-width: 100%;
 }
 
@@ -524,6 +528,8 @@
   font-size: var(--font-sm);
   font-weight: var(--weight-regular);
   line-height: 1.5;
+  /* Descriptions can quote paths, which have no spaces to break at. */
+  overflow-wrap: anywhere;
 }
 
 .settings-row-control {
@@ -562,7 +568,6 @@
 /* SelectMenu triggers share the input chrome so a row mixing both reads as
  * one control family. */
 .settings-row .settings-select-trigger {
-  min-width: 160px;
   border: 1px solid var(--hairline);
   box-shadow: none;
 }
@@ -851,11 +856,9 @@
 }
 
 /* --- Agent page ---------------------------------------------------------------
- * One row per agent: the radio picks the default, the switch turns a detected
- * agent on or off, and the path override opens under the row's disclosure.
- * Agents Wuu cannot find wait in their own group, where the whole row opens.
- * Rows without a disclosure keep its footprint so trailing controls end on the
- * same axis.
+ * The default agent is an ordinary picker row. Installed agents follow, one
+ * row each with its switch and the disclosure for its path override. Agents
+ * Wuu cannot find wait in their own group, where the whole row opens.
  * ----------------------------------------------------------------------------- */
 
 .settings-engine-item + .settings-engine-item {
@@ -870,6 +873,7 @@
   padding-block: var(--space-2);
 }
 
+/* Onboarding's agent choice keeps a radio list. */
 .settings-engine-radio {
   width: var(--icon-size-sm);
   height: var(--icon-size-sm);
@@ -883,36 +887,28 @@
   cursor: default;
 }
 
-.settings-engine-radio.is-placeholder {
-  visibility: hidden;
-}
-
 .settings-engine-row-main {
   display: flex;
   min-width: 0;
   flex: 1 1 auto;
   align-items: center;
   gap: var(--space-3);
-  cursor: pointer;
 }
 
-.settings-engine-radio:disabled ~ .settings-engine-row-main {
-  cursor: default;
-}
-
-/* An agent that is off or missing steps back to the soft ink, still readable;
- * its switch or its group says why. */
-:is(.settings-engine-radio:disabled ~ .settings-engine-row-main, .settings-engine-row-toggle) .settings-engine-row-name {
+/* A missing agent steps back to the soft ink, still readable; its group says
+ * why. */
+.settings-engine-row-toggle .settings-engine-row-name {
   color: var(--ink-soft);
 }
 
-:is(.settings-engine-radio:disabled ~ .settings-engine-row-main, .settings-engine-row-toggle) .settings-engine-row-icon {
+.settings-engine-row-toggle .settings-engine-row-icon {
   color: var(--ink-tertiary);
 }
 
 /* A missing agent's whole row is its disclosure. */
 .settings-engine-row-toggle {
   min-height: var(--control-field-height);
+  cursor: pointer;
   border-radius: var(--radius-xs);
   background: transparent;
   padding: 0;
@@ -973,18 +969,12 @@ button.settings-engine-expand:hover {
   background: var(--ink-overlay-6);
 }
 
-/* The overrides align with the agent name, past the radio and the mark. */
+/* The overrides align with the agent name, past its mark. */
 .settings-engine-advanced {
   display: grid;
   justify-items: start;
   gap: var(--space-3);
-  padding: 0 0 var(--space-4) calc(var(--icon-size-sm) + var(--icon-size) + var(--space-3) * 2);
-}
-
-/* The switch sits before the disclosure, so chevrons end every row of both
- * groups on one axis. */
-.settings-engine-row > .settings-switch {
-  order: 0;
+  padding: 0 0 var(--space-4) calc(var(--icon-size) + var(--space-3));
 }
 
 .settings-engine-path-row {
@@ -1693,11 +1683,6 @@ button.settings-engine-expand:hover {
 
 .settings-row-attention[data-tone="danger"] {
   color: var(--danger);
-}
-
-.settings-codex-pet-select {
-  max-width: 14em;
-  min-width: 0;
 }
 
 /* --- Usage page ------------------------------------------------------------------ */
@@ -2514,14 +2499,15 @@ button.settings-engine-expand:hover {
     justify-content: flex-start;
   }
 
-  /* Switches and icon actions are narrow enough to stay beside their label. */
-  .settings-row:not(:has(> .settings-row-control > :not(.settings-switch, .plugin-setting-switch, .settings-row-actions, .settings-icon-button))) {
+  /* Switches, numbers and icon actions are narrow enough to stay beside
+   * their label. */
+  .settings-row:not(:has(> .settings-row-control > :not(.settings-switch, .plugin-setting-switch, .settings-row-actions, .settings-icon-button, .settings-input-num, .settings-input-unit))) {
     grid-template-columns: minmax(0, 1fr) auto;
     align-items: center;
   }
 
-  /* Stacked form fields span the row like other stacked pickers. */
-  .settings-form .settings-row-control > :is(.settings-input:not(.settings-input-num), .select-menu) {
+  /* Stacked fields and pickers span the row. */
+  .settings-row-control > :is(.settings-input:not(.settings-input-num), .select-menu) {
     width: 100%;
   }
 }

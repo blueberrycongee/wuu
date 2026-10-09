@@ -24,6 +24,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Reorganize settings around one label and one control per row with a shared
+  control width: pick the default agent from a menu above the installed list,
+  show the default model and reasoning effort as rows, list connected providers
+  in one group, and set interface and code fonts with their sizes on two rows.
+
 - Give the neutral grays a true neutral hue instead of a cool cyan cast, and draw
   the macOS light sidebar on the system sidebar material under a thinner veil.
 

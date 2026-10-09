@@ -547,8 +547,9 @@ function ServicesOverview({
   );
 }
 
-// The one choice most people make here: what a new conversation uses. The
-// model name is the control, so it is not repeated beside a picker.
+// The one choice most people make here: what a new conversation uses. Model
+// and effort are ordinary labeled rows; the service the model comes from is
+// the model row's description, since one model name can come from several.
 function DefaultModelCard({
   providers,
   labels,
@@ -599,12 +600,23 @@ function DefaultModelCard({
 
   return (
     <SettingsSection title={t("provider.defaultModel")}>
-      <div className="model-default-card" data-testid="settings-default-model">
-        {identity ? <ServiceMark identity={identity} /> : <span className="provider-mark is-quiet" aria-hidden="true" />}
-        <div className="model-default-copy">
+      <div className="settings-group" data-wuu-component="settings-group" data-testid="settings-default-model">
+        <SettingsRow
+          title={t("provider.modelLabel")}
+          description={identity ? (
+            <span className="model-default-service">
+              {labels.get(providerName) ?? identity.label}
+              {identity.attention ? (
+                <span className="model-default-attention">
+                  <AlertTriangle className="icon-sm" aria-hidden="true" />
+                  {identity.attention}
+                </span>
+              ) : null}
+            </span>
+          ) : undefined}
+        >
           <SelectMenu
-            className="model-default-select"
-            triggerClassName="model-default-trigger"
+            triggerClassName="settings-select-trigger"
             ariaLabel={t("provider.chooseDefaultModel")}
             dataTestid="settings-default-model-select"
             value={`${providerName}\n${modelID}`}
@@ -614,6 +626,8 @@ function DefaultModelCard({
             searchPlaceholder={t("provider.searchModels")}
             emptyMessage={t("provider.noModelMatches")}
             disabled={running || pending !== null || optionCount === 0}
+            align="right"
+            flip
             onChange={(value) => {
               const [nextProvider = "", nextModel = ""] = value.split("\n");
               const target = providers.find((item) => item.name === nextProvider);
@@ -624,19 +638,9 @@ function DefaultModelCard({
               });
             }}
           />
-          <span className="model-default-service">
-            {identity ? labels.get(providerName) ?? identity.label : ""}
-            {identity?.attention ? (
-              <span className="model-default-attention">
-                <AlertTriangle className="icon-sm" aria-hidden="true" />
-                {identity.attention}
-              </span>
-            ) : null}
-          </span>
-        </div>
+        </SettingsRow>
         {effortOptions.length > 1 ? (
-          <div className="model-default-effort">
-            <span id="model-default-effort-label">{t("provider.reasoningEffort")}</span>
+          <SettingsRow title={t("provider.reasoningEffort")}>
             <SelectMenu
               triggerClassName="settings-select-trigger"
               ariaLabel={t("provider.reasoningEffort")}
@@ -646,7 +650,7 @@ function DefaultModelCard({
               options={effortOptions.map((option) => ({ value: option, label: variantLabel(option) }))}
               onChange={(next) => void commit({ provider: providerName, model: modelID, variant: next })}
             />
-          </div>
+          </SettingsRow>
         ) : null}
       </div>
       {error ? <p className="settings-error" role="alert">{error}</p> : null}

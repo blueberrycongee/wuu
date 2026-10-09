@@ -27,6 +27,15 @@ afterEach(() => {
   container.remove();
 });
 
+function defaultPicker(): HTMLButtonElement {
+  return container.querySelector<HTMLButtonElement>('[data-testid="settings-default-engine"]')!;
+}
+
+async function openDefaultPicker(): Promise<HTMLButtonElement[]> {
+  await act(async () => defaultPicker().click());
+  return [...document.querySelectorAll<HTMLButtonElement>(".select-menu-item")];
+}
+
 function render(result: EngineListResult | undefined, onUpdate = vi.fn(), onRefresh = vi.fn()) {
   act(() => {
     root.render(
@@ -48,7 +57,8 @@ describe("EngineSettingsSection", () => {
     };
     const onUpdate = vi.fn().mockResolvedValue(live);
     render(live, onUpdate);
-    await act(async () => container.querySelector<HTMLInputElement>('[data-testid="settings-engine-devin-radio"]')!.click());
+    const devin = (await openDefaultPicker()).find((item) => item.dataset.value === "devin")!;
+    await act(async () => devin.click());
     expect(onUpdate).toHaveBeenLastCalledWith({ default_engine: "devin" });
     await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="settings-engine-devin-advanced-toggle"]')!.click());
     expect(container.querySelector<HTMLInputElement>('[data-testid="settings-engine-devin-path"]')!.value).toBe("/opt/devin");
@@ -60,10 +70,7 @@ describe("EngineSettingsSection", () => {
     const onRefresh = vi.fn();
     render(inventory, vi.fn(), onRefresh);
 
-    expect(container.querySelector('[role="radiogroup"]')).not.toBeNull();
-    expect(
-      container.querySelector<HTMLInputElement>('[data-testid="settings-engine-wuu-radio"]')?.checked,
-    ).toBe(true);
+    expect(defaultPicker().textContent).toContain("Wuu");
     expect(container.querySelector('[data-testid="settings-engine-codex-status"]')?.getAttribute("aria-label")).toContain("已就绪");
     expect(onRefresh).not.toHaveBeenCalled();
   });
@@ -82,7 +89,7 @@ describe("EngineSettingsSection", () => {
 
     expect(onRefresh).toHaveBeenCalledOnce();
     expect(refresh.disabled).toBe(true);
-    expect(container.querySelector('[data-testid="settings-engine-wuu-radio"]')).not.toBeNull();
+    expect(defaultPicker()).not.toBeNull();
 
     await act(async () => {
       resolveRefresh?.(inventory);
@@ -94,11 +101,11 @@ describe("EngineSettingsSection", () => {
     render(undefined);
 
     expect(container.querySelector('[aria-busy="true"]')).not.toBeNull();
-    expect(container.querySelector('[role="radiogroup"]')).toBeNull();
+    expect(container.querySelector('[data-testid="settings-default-engine"]')).toBeNull();
     expect(container.querySelector('[data-testid="settings-engine-refresh"]')).not.toBeNull();
   });
 
-  it("keeps an undetected agent listed but unselectable, with the reason on the row", () => {
+  it("keeps an undetected agent listed but unselectable, with the reason on the row", async () => {
     const missingClaude: EngineListResult = {
       engines: [
         { id: "wuu", enabled: true, binary_ok: true },
@@ -109,10 +116,28 @@ describe("EngineSettingsSection", () => {
     };
     render(missingClaude);
 
-    expect(container.querySelector('input[data-testid="settings-engine-claude-radio"]:not(:disabled)')).toBeNull();
+    const options = await openDefaultPicker();
+    expect(options.map((item) => item.dataset.value)).toEqual(["wuu", "codex"]);
     expect(
       container.querySelector('[data-testid="settings-engine-claude-status"]')?.getAttribute("aria-label"),
     ).toContain("未安装");
+  });
+
+  it("lists a switched-off agent in the default picker without letting it be picked", async () => {
+    const onUpdate = vi.fn();
+    render({
+      engines: [
+        { id: "wuu", enabled: true, binary_ok: true },
+        { id: "codex", enabled: false, binary_ok: true },
+      ],
+      settings: { default_engine: "wuu", codex: { enabled: false } },
+    }, onUpdate);
+
+    const codex = (await openDefaultPicker()).find((item) => item.dataset.value === "codex")!;
+    expect(codex.disabled).toBe(true);
+    expect(codex.textContent).toContain("已停用");
+    await act(async () => codex.click());
+    expect(onUpdate).not.toHaveBeenCalled();
   });
 
   it("shows a detected binary path only in the override field", async () => {
