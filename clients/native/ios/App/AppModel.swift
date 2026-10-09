@@ -2,8 +2,19 @@ import SwiftUI
 import WuuCore
 import CryptoKit
 
+private struct PairedLocation: Codable {
+    let host: String
+    let workspace: String
+    let thread: String?
+}
+
 @MainActor @Observable final class AppModel {
     var account: AccountSession?
+    var pairedComputers: [PairedComputer] = []
+    var selectedPair: PairedComputer?
+    var hasSavedConnections: Bool { account != nil || !pairedComputers.isEmpty }
+    var pairingBusy = false
+    var receivedPairingLink: String?
     let push = PushNotifications()
     var devices: [AccountDevice] = []
     var host: AccountDevice?
@@ -68,10 +79,17 @@ import CryptoKit
         clearAbandonedAttachmentPreviews()
         do {
             account = try vault.load("session", as: AccountSession.self)
+            pairedComputers = try vault.load("paired-computers", as: [PairedComputer].self) ?? []
+            if let location = try vault.load("paired-location", as: PairedLocation.self),
+               let pair = pairedComputers.first(where: { $0.id == location.host }) {
+                selectedPair = pair
+                host = AccountDevice(pub: pair.hostPub, name: pair.hostName, role: "host", online: false)
+                activeID = location.thread; workspace = location.workspace
+            }
             resetRecovery = try vault.load("recovery", as: String.self)
             if let account, let directory = try vault.load("directory", as: RememberedDirectory.self)?.restore(account: account) {
                 devices = directory.devices; authMethod = directory.auth_method; directoryCached = true
-                if let location = try vault.load("location", as: NavigationLocation.self)?.restore(account: account, devices: devices) {
+                if selectedPair == nil, let location = try vault.load("location", as: NavigationLocation.self)?.restore(account: account, devices: devices) {
                     host = devices.first { $0.pub == location.host }
                     activeID = location.thread; workspace = location.workspace
                     history = try ConversationHistory(account: account, host: location.host, directory: cacheDirectory)
@@ -82,10 +100,41 @@ import CryptoKit
         push.bind(account)
     }
     func rememberLocation() {
-        guard let account, let host else { return }
+        guard let host else { return }
         do {
-            try vault.save(NavigationLocation(account: account, host: host.pub, workspace: workspace, thread: activeID), key: "location")
+            if let selectedPair {
+                try vault.save(PairedLocation(host: selectedPair.id, workspace: workspace, thread: activeID), key: "paired-location")
+            } else if let account {
+                try vault.save(NavigationLocation(account: account, host: host.pub, workspace: workspace, thread: activeID), key: "location")
+            }
         } catch { self.error = error.localizedDescription }
+    }
+    func pairComputer(_ input: String) async throws {
+        guard !pairingBusy else { throw CancellationError() }
+        pairingBusy = true
+        defer { pairingBusy = false }
+        let pair = try await PairedComputer.pair(input, deviceName: UIDevice.current.name)
+        try Task.checkCancellation()
+        var computers = pairedComputers.filter { $0.id != pair.id }
+        computers.append(pair)
+        try vault.save(computers, key: "paired-computers")
+        pairedComputers = computers
+        receivedPairingLink = nil
+        try await selectComputer(pair)
+    }
+    func selectComputer(_ pair: PairedComputer) async throws {
+        let selection = await leaveHost()
+        guard opening == selection, pairedComputers.contains(pair) else { return }
+        selectedPair = pair
+        host = AccountDevice(pub: pair.hostPub, name: pair.hostName, role: "host", online: false)
+        rememberLocation()
+        foreground()
+    }
+    func forgetComputer(_ pair: PairedComputer) async throws {
+        let computers = pairedComputers.filter { $0.id != pair.id }
+        try vault.save(computers, key: "paired-computers")
+        pairedComputers = computers
+        if selectedPair?.id == pair.id { await leaveHost(); foreground() }
     }
     func perform(_ operation: @escaping @MainActor () async throws -> Void) {
         let stamp = epoch
@@ -223,7 +272,7 @@ import CryptoKit
         devices = directory.devices
         authMethod = directory.auth_method
         directoryCached = false
-        if let host, !devices.contains(where: { $0.pub == host.pub && $0.role == "host" }) {
+        if selectedPair == nil, let host, !devices.contains(where: { $0.pub == host.pub && $0.role == "host" }) {
             await leaveHost(removeCache: true)
             guard self.account == account else { return }
             foreground()
@@ -256,7 +305,7 @@ import CryptoKit
         if NativeUIFixture.enabled { return }
         #endif
         isForeground = true
-        if account == nil {
+        if account == nil && selectedPair == nil {
             if let pending = try? vault.load("github", as: GitHubPending.self), pending.expires > Date() {
                 githubURL = pending.authorizationURL
                 pollGitHub(pending)
@@ -311,6 +360,8 @@ import CryptoKit
     }
     @discardableResult func leaveHost(removeCache: Bool = false) async -> UUID {
         try? vault.delete("location")
+        try? vault.delete("paired-location")
+        selectedPair = nil
         host = nil
         let oldHistory = history
         history = nil; host = nil; entries = []; threads = []; activeID = nil; live = nil; saved = nil
@@ -339,7 +390,7 @@ import CryptoKit
         try vault.delete("github")
         try vault.delete("directory")
         githubURL = nil; devices = []; authMethod = ""; directoryCached = false
-        await leaveHost()
+        if selectedPair == nil { await leaveHost() }
         if FileManager.default.fileExists(atPath: cacheDirectory.path) { try FileManager.default.removeItem(at: cacheDirectory) }
     }
     func openPushHost(_ pub: String) async throws {
@@ -367,12 +418,15 @@ import CryptoKit
         try await syncHistory()
     }
     func connect() async {
-        guard !connecting, !connected, let account, let host else { return }
+        guard !connecting, !connected, let host, account != nil || selectedPair != nil else { return }
         connecting = true
         let stamp = epoch
         defer { if epoch == stamp { connecting = false } }
         do {
-            let connection = try RemoteConnection(account: account, host: host.pub)
+            let connection: RemoteConnection
+            if let selectedPair { connection = try RemoteConnection(computer: selectedPair) }
+            else if let account { connection = try RemoteConnection(account: account, host: host.pub) }
+            else { return }
             remote = connection
             events?.cancel()
             events = Task {
@@ -419,14 +473,15 @@ import CryptoKit
         // A missing conversation or failed directory read is not a transport failure.
         guard let connection = remote, epoch == stamp else { return }
         do {
-            try await loadQuestions()
+            async let pendingQuestions: Void = loadQuestions()
             let result = try await connection.call("workspace/list")
             guard epoch == stamp else { return }
             workspaces = result["workspaces"].array
-            if !workspaces.contains(where: { $0["path"].string == workspace }) { workspace = result["current"].string ?? workspaces.first?["path"].string ?? "" }
-            try await loadThreads()
-            guard epoch == stamp else { return }
+            if workspace.isEmpty { workspace = result["current"].string ?? workspaces.first?["path"].string ?? "" }
+            async let pendingThreads: Void = loadThreads()
             if let id = activeID { try await open(id, preservingContent: true) }
+            try await pendingThreads
+            try await pendingQuestions
         } catch is CancellationError {} catch {
             if epoch == stamp, remote === connection { report(error) }
         }
@@ -446,7 +501,7 @@ import CryptoKit
     }
     func open(_ id: String, preservingContent: Bool = false) async throws {
         opening = UUID(); let selection = opening
-        if !preservingContent || activeID != id { live = nil; saved = nil }
+        if activeID != id || (!preservingContent && connected) { live = nil; saved = nil }
         activeID = id; imagePreviews.clear(); loadingHistory = false; loadingContent = []; attachmentPreview = nil; loadingAttachment = false
         let stamp = epoch
         if connected, let remote {
@@ -490,16 +545,21 @@ import CryptoKit
         guard epoch == stamp, opening == selection, self.remote === remote else { return }
         self.live?.expandContent(message.contentRef, item: item)
     }
-    func startThread() async throws {
+    func startThread(workdir: String? = nil) async throws {
         guard let remote, connected else { throw NativeError.invalid("请先连接电脑") }
+        let directory = (workdir ?? workspace).trimmingCharacters(in: .whitespacesAndNewlines)
         let stamp = epoch; opening = UUID(); let selection = opening
-        var params: JSONValue = [:]
-        if !workspace.isEmpty { params = ["cwd": .string(workspace)] }
-        let result = try await remote.call("thread/start", params: params)
-        guard epoch == stamp, opening == selection else { return }
+        var params: [String: JSONValue] = [:]
+        if !directory.isEmpty { params["cwd"] = .string(directory) }
+        if let id = workspaces.first(where: { $0["path"].string == directory })?["id"].string {
+            params["workspace_id"] = .string(id)
+        }
+        let result = try await remote.call("thread/start", params: .object(params))
+        guard epoch == stamp, opening == selection else { throw CancellationError() }
         let thread = ChatThread(result["thread"])
+        workspace = thread.cwd
         activeID = thread.id; live = thread; saved = nil; imagePreviews.clear(); loadingHistory = false; loadingContent = []; attachmentPreview = nil; loadingAttachment = false
-        try await loadThreads()
+        perform { try await self.loadThreads() }
     }
     func send(_ text: String, attachments: [InputAttachment] = []) async throws {
         guard !sending, let remote, let live, connected, !live.readOnly, !live.archived, !text.isEmpty || !attachments.isEmpty else { throw NativeError.invalid("当前无法发送") }

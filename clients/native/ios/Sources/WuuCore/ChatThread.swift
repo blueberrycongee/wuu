@@ -59,6 +59,7 @@ public struct PendingMessage: Identifiable, Sendable {
 public struct ChatThread: Identifiable, Sendable {
     public let id: String
     public var title: String
+    public var cwd: String
     public var updatedAt: String
     public var pinned: Bool
     public var archived: Bool
@@ -77,6 +78,7 @@ public struct ChatThread: Identifiable, Sendable {
         self.pending = pending.map { PendingMessage($0, held: false) } + held.map { PendingMessage($0, held: true) }
         id = value["id"].string ?? ""
         title = value["title"].string ?? value["preview"].string ?? "新会话"
+        cwd = value["cwd"].string ?? ""
         updatedAt = value["updated_at"].string ?? ""
         pinned = value["pinned"].bool
         archived = value["archived"].bool
@@ -154,7 +156,7 @@ public struct ChatThread: Identifiable, Sendable {
     public mutating func apply(_ method: String, _ params: JSONValue) {
         if method == "thread/updated", params["thread"]["id"].string == id {
             let thread = ChatThread(params["thread"])
-            title = thread.title; pinned = thread.pinned; archived = thread.archived; updatedAt = thread.updatedAt
+            title = thread.title; cwd = thread.cwd; pinned = thread.pinned; archived = thread.archived; updatedAt = thread.updatedAt
             settings = thread.settings; engine = thread.engine; readOnly = thread.readOnly
             return
         }
