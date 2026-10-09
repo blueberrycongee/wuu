@@ -136,9 +136,9 @@ func TestProjectInboxRetryStopsWithOnlyInformationalInput(t *testing.T) {
 		t.Fatal(err)
 	}
 	srv.drainSessionInbox(target.ID)
-	srv.projectInboxMu.Lock()
-	n := len(srv.projectInboxDrains)
-	srv.projectInboxMu.Unlock()
+	srv.sessionInboxMu.Lock()
+	n := len(srv.sessionInboxDrains)
+	srv.sessionInboxMu.Unlock()
 	if n != 0 {
 		t.Fatalf("informational inbox retained %d retries", n)
 	}
@@ -161,7 +161,7 @@ func TestProjectInboxCoalescesRetriesAndClose(t *testing.T) {
 		stopped *atomic.Bool
 	}
 	timers := make(chan timer, 10)
-	srv.projectInboxAfterFunc = func(d time.Duration, f func()) func() {
+	srv.sessionInboxAfterFunc = func(d time.Duration, f func()) func() {
 		stopped := &atomic.Bool{}
 		timers <- timer{d, f, stopped}
 		return func() { stopped.Store(true) }
@@ -186,7 +186,7 @@ func TestProjectInboxCoalescesRetriesAndClose(t *testing.T) {
 	case <-time.After(gatedProviderTimeout):
 		t.Fatal("retry did not rearm")
 	}
-	if next.delay <= first.delay || next.delay > projectInboxMaxRetryDelay {
+	if next.delay <= first.delay || next.delay > sessionInboxMaxRetryDelay {
 		t.Fatalf("backoff=%v", next.delay)
 	}
 	calls.assertIdle(t)
@@ -200,9 +200,9 @@ func TestProjectInboxCoalescesRetriesAndClose(t *testing.T) {
 		t.Fatalf("closed scheduler rearmed: %v", extra.delay)
 	default:
 	}
-	srv.projectInboxMu.Lock()
-	n := len(srv.projectInboxDrains)
-	srv.projectInboxMu.Unlock()
+	srv.sessionInboxMu.Lock()
+	n := len(srv.sessionInboxDrains)
+	srv.sessionInboxMu.Unlock()
 	if n != 0 {
 		t.Fatalf("Close retained %d drains", n)
 	}
@@ -226,9 +226,9 @@ func TestProjectCapacityQueuedTurnUsesProjectRetry(t *testing.T) {
 	if !srv.hasQueuedUserTurns(b.ID) {
 		t.Fatal("capacity discarded queue")
 	}
-	srv.projectInboxMu.Lock()
+	srv.sessionInboxMu.Lock()
 	n := len(srv.projectCapacityRetries[lead.ID])
-	srv.projectInboxMu.Unlock()
+	srv.sessionInboxMu.Unlock()
 	if n != 1 {
 		t.Fatalf("capacity retries=%d", n)
 	}

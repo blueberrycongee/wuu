@@ -123,6 +123,39 @@ afterEach(() => {
 });
 
 describe("TurnView", () => {
+  it("groups adjacent messages by source session, preserving intervening user input", () => {
+    const message = (id: string, source = "side-a"): ThreadItem => ({
+      id, type: "user_message", origin: "host", read_only: true,
+      presentation_kind: "session_message", related_session_id: source,
+      name: "Fusion Sidekick", text: `Private dispatch ${id}`,
+    });
+    const view = render(makeTurn("completed", [
+      message("a1"), message("a2"),
+      { id: "real-user", type: "user_message", text: "Actual user input" },
+      message("a3"), message("b1", "side-b"),
+    ]));
+    const buttons = view.querySelectorAll(".session-message-source");
+    expect(buttons).toHaveLength(3);
+    expect(buttons[0].textContent).toContain("2");
+    expect(view.textContent).toContain("Actual user input");
+    expect(view.textContent).not.toContain("Private dispatch");
+    expect(view.querySelector("#user-msg-turn-1-a2")).not.toBeNull();
+  });
+
+  it.each(["agent_message", "tool_call"] as const)("does not merge notifications across %s output", (type) => {
+    const message = (id: string): ThreadItem => ({
+      id, type: "user_message", origin: "host", presentation_kind: "session_message",
+      related_session_id: "side-a", name: "Fusion Sidekick", text: `Private dispatch ${id}`,
+    });
+    const view = render(makeTurn("completed", [
+      message("before-output"),
+      { id: "output", type, status: "completed", terminal: true, name: "shell", text: "Verification result" },
+      message("after-output"),
+    ]));
+    expect(view.querySelectorAll(".session-message-source")).toHaveLength(2);
+    expect(view.textContent).not.toContain("Private dispatch");
+  });
+
   it.each(["interrupted", "failed", "completed"] as const)(
     "settles streamed text when the turn becomes %s before item completion",
     (status) => {

@@ -1737,8 +1737,10 @@ app.whenReady().then(async () => {
       threadID?: string,
       speed?: string,
       targetContext?: RuntimeContext,
+      fusion?: boolean,
     ) =>
       appServerRequest<ConfigModelUpdateResult>(event, "config/model/update", {
+        ...(fusion === undefined ? {} : { fusion }),
         // Omitted provider/model are inherited from the target thread, so
         // their empties are dropped instead of sent. Effort/variant/permission
         // forward whenever explicitly provided: an explicit empty variant is

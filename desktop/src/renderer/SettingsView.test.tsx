@@ -761,7 +761,7 @@ describe("SettingsView advanced settings", () => {
     await commit(temperature);
     expect(onAdvancedSave.mock.calls.length).toBe(callsBefore);
 
-    const switchButton = container.querySelector(".settings-switch") as HTMLButtonElement;
+    const switchButton = container.querySelector('[data-testid="settings-advanced"] .settings-switch') as HTMLButtonElement;
     await act(async () => {
       switchButton.dispatchEvent(new MouseEvent("click", { bubbles: true }));
       await Promise.resolve();

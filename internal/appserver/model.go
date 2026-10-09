@@ -67,6 +67,8 @@ func (th *threadState) snapshotTurnsLocked(turns []Turn) Thread {
 		SessionControl:  th.SessionControl,
 		ID:              th.ID,
 		Source:          th.Source,
+		Fusion:          th.Fusion,
+		FusionLeadID:    th.FusionLeadID,
 		ProjectID:       th.ProjectID,
 		ProjectRole:     th.ProjectRole,
 		ParentID:        th.ParentID,
@@ -88,7 +90,7 @@ func (th *threadState) snapshotTurnsLocked(turns []Turn) Thread {
 		TreeInterrupted: th.workerTreeFrozen,
 		// Plugin-visible sessions remain writable by their owning plugin, but the
 		// user-facing conversation is an inspector and must not expose a composer.
-		ReadOnly:              th.ReadOnly || th.Visibility == pluginhost.SessionVisibilityPlugin || projectExecutionDisabled(th.Source),
+		ReadOnly:              th.ReadOnly || th.Source == fusionSideSource || th.Visibility == pluginhost.SessionVisibilityPlugin || projectExecutionDisabled(th.Source),
 		Ephemeral:             th.Ephemeral,
 		Pinned:                th.PinnedAt != nil,
 		FolderID:              th.FolderID,
@@ -151,6 +153,9 @@ func (th *threadState) startTurnLocked(turnID string, userMsg providers.ChatMess
 		ItemsView:     TurnItemsViewFull,
 		Status:        TurnStatusInProgress,
 		StartedAt:     &now,
+	}
+	if th.Fusion != nil {
+		turn.Fusion = &FusionTurn{FusionSelection: *th.Fusion, State: "lead"}
 	}
 	th.Turns = append(th.Turns, turn)
 	return turn
@@ -2039,6 +2044,11 @@ func cloneTurns(turns []Turn) []Turn {
 	out := make([]Turn, len(turns))
 	for i, turn := range turns {
 		out[i] = turn
+		if turn.Fusion != nil {
+			fusion := *turn.Fusion
+			fusion.Delegations = append([]FusionDelegation(nil), turn.Fusion.Delegations...)
+			out[i].Fusion = &fusion
+		}
 		out[i].Items = make([]ThreadItem, len(turn.Items))
 		for j, item := range turn.Items {
 			out[i].Items[j] = cloneThreadItem(item)

@@ -62,6 +62,7 @@ const (
 
 	// A project coordinator's managed sessions.
 	CapabilityProjectSessions Capability = "project.sessions"
+	CapabilityFusionDelegate  Capability = "fusion.delegate"
 
 	// Extensions (MCP, plugins).
 	CapabilityMCP              Capability = "mcp"
@@ -107,6 +108,7 @@ func All() []Capability {
 		CapabilityTodo,
 		CapabilitySkill,
 		CapabilityProjectSessions,
+		CapabilityFusionDelegate,
 		CapabilityMCP,
 		CapabilityPluginManagement,
 		CapabilityDiscovery,

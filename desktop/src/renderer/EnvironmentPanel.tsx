@@ -31,6 +31,7 @@ export function EnvironmentPanel({
   panelRef,
   motionState,
   gitStatus,
+  fusion,
   activeMenu,
   running,
   pullRequestDisabledReason,
@@ -50,6 +51,7 @@ export function EnvironmentPanel({
   motionState: EnvironmentPanelMotionState;
   initialized: InitializeResult;
   gitStatus?: GitStatusResult;
+  fusion?: import("../shared/protocol").FusionSelection | null;
   activeMenu: EnvironmentPanelMenu;
   running: boolean;
   pullRequestDisabledReason: string;
@@ -123,6 +125,14 @@ export function EnvironmentPanel({
       {pluginSections}
 
       <div className="environment-panel-body">
+        {fusion ? <section className="environment-fusion-section" aria-label={t("environment.fusionModels")}>
+          <h2>Fusion</h2>
+          <dl className="environment-fusion-pair">
+            <div><dt>Lead</dt><dd>{fusion.lead.model}{fusion.lead.variant || fusion.lead.effort ? ` · ${fusion.lead.variant || fusion.lead.effort}` : ""}</dd></div>
+            <div><dt>Sidekick</dt><dd>{fusion.sidekick.model}{fusion.sidekick.variant || fusion.sidekick.effort ? ` · ${fusion.sidekick.variant || fusion.sidekick.effort}` : ""}</dd></div>
+          </dl>
+        </section> : null}
+
         {thread?.worktree ? <WorktreeNotice key={thread.worktree.path} thread={thread} /> : null}
         {notRepository ? (
           <p className="environment-panel-note">{t("environment.notGitRepository")}</p>

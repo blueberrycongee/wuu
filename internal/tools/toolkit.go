@@ -395,6 +395,9 @@ func (t *Toolkit) rebuildRegistry() {
 	if e.ArtifactPublisher != nil {
 		registered = append(registered, NewPresentArtifactTool(e))
 	}
+	if e.FusionDelegate != nil {
+		registered = append(registered, &FusionDelegateTool{env: e})
+	}
 	if e.ProjectSessions != nil {
 		registered = append(registered, NewProjectSessionTool(e))
 	}
@@ -984,12 +987,24 @@ func (t *Toolkit) ConfigureSurfaceForProviderModel(providerName, model string, f
 // tool-specific path checks.
 func (t *Toolkit) SetActiveProfile(p modelprofile.Profile, forMainAgent bool) {
 	kind := modelprofile.SurfaceWorker
-	if t.env != nil && t.env.ProjectSessions != nil {
+	if t.env != nil && t.env.FusionDelegate != nil {
+		kind = modelprofile.SurfaceFusionLead
+	} else if t.env != nil && t.env.ProjectSessions != nil {
 		kind = modelprofile.SurfaceProjectSession
 	} else if forMainAgent {
 		kind = modelprofile.SurfaceMain
 	}
 	t.setActiveProfileForSurface(p, kind)
+}
+
+// SetFusionDelegate adds Fusion coordination to the ordinary session toolkit.
+func (t *Toolkit) SetFusionDelegate(handler FusionDelegateHandler) {
+	if t == nil || t.env == nil || (t.env.FusionDelegate == nil && handler == nil) {
+		return
+	}
+	t.env.FusionDelegate = handler
+	t.rebuildRegistry()
+	t.SetActiveProfile(t.ActiveProfile(), true)
 }
 
 // SetProjectSessions adds project operations to the ordinary session toolkit.

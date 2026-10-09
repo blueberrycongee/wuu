@@ -19,6 +19,34 @@ func (s *Server) rebindThreadWorkspace(threadID, requestedRoot string) error {
 	if s.thread(threadID) == nil {
 		return session.ErrSessionNotFound
 	}
+	current, found, err := session.Find(s.rt.SessionDir, threadID)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return session.ErrSessionNotFound
+	}
+	if current.Source == fusionSideSource {
+		return errors.New("the Fusion Lead owns the pair's shared workspace")
+	}
+	var sides []session.Session
+	if current.Fusion != nil {
+		// Lead may call this tool during its own turn. Hold creation and the
+		// idle Side's execution lease, rather than rejecting the running Lead.
+		s.sessionCreateMu.Lock()
+		defer s.sessionCreateMu.Unlock()
+		sides, err = s.fusionSides(threadID)
+		if err != nil {
+			return err
+		}
+		for _, side := range sides {
+			_, release, err := s.beginThreadRuntimeSelectionMutation(side.ID)
+			if err != nil {
+				return fmt.Errorf("Sidekick must be idle before moving the Fusion workspace: %w", err)
+			}
+			defer release()
+		}
+	}
 	baseRoot, err := canonicalWorkspaceDirectory(s.rt.RootDir)
 	if err != nil {
 		return fmt.Errorf("resolve project workspace: %w", err)
@@ -85,6 +113,17 @@ func (s *Server) rebindThreadWorkspace(threadID, requestedRoot string) error {
 		// A broken output stream must not report the operation as rejected and
 		// leave the executing toolkit on its old root.
 		providers.DebugLogf("notify rebound thread %q: %v", threadID, err)
+	}
+	for _, side := range sides {
+		side.CWD, side.WorktreePath = metadata.CWD, metadata.WorktreePath
+		side.WorktreeBaseHEAD, side.WorktreeBaseRepo = metadata.WorktreeBaseHEAD, metadata.WorktreeBaseRepo
+		thread, err := s.threadAfterMetadataUpdate(side)
+		if err != nil {
+			providers.DebugLogf("enrich rebound Sidekick %q: %v", side.ID, err)
+		}
+		if err := s.notifyThreadUpdated(thread); err != nil {
+			providers.DebugLogf("notify rebound Sidekick %q: %v", side.ID, err)
+		}
 	}
 	return nil
 }

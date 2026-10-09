@@ -100,6 +100,7 @@ func (s *Server) handleThreadStart(req Request) error {
 		return s.writeResponse(req.ID, nil, agentengine.CheckEngine(engineID))
 	}
 	selection := s.currentSessionRuntimeSelection()
+	var fusionPair *config.FusionSelection
 	selection.Speed = strings.TrimSpace(params.Speed)
 	if err := validateSpeed(selection.Speed); err != nil {
 		return s.writeResponse(req.ID, nil, err)
@@ -148,6 +149,21 @@ func (s *Server) handleThreadStart(req Request) error {
 	}
 	// Review is owned by the built-in engine and never expands permission mode.
 	selection.ApproveForMe = selection.ApproveForMe && engineID == agentengine.EngineWuu && approvefor.EnabledForMode(selection.PermissionMode)
+	if params.Fusion {
+		if params.Ephemeral || params.Project != nil || params.Handoff != nil || engineID != agentengine.EngineWuu {
+			return s.writeResponse(req.ID, nil, errors.New("Fusion requires a persistent ordinary Wuu conversation"))
+		}
+		cfg, _, err := s.rt.LoadEffectiveConfig()
+		if err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+		pair, err := cfg.FusionPair()
+		if err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+		fusionPair = &pair
+		selection.Provider, selection.Model, selection.Variant, selection.Effort, selection.Speed = pair.Lead.Provider, pair.Lead.Model, pair.Lead.Variant, pair.Lead.Effort, ""
+	}
 	if params.Project != nil {
 		th, err := s.startProjectThread(selection, engineID, params)
 		if err != nil {
@@ -228,6 +244,11 @@ func (s *Server) handleThreadStart(req Request) error {
 		if _, err := session.SetRuntimeSelection(s.rt.SessionDir, id, selection); err != nil {
 			return s.writeResponse(req.ID, nil, err)
 		}
+		if fusionPair != nil {
+			if _, err := session.SetFusion(s.rt.SessionDir, id, *fusionPair, true); err != nil {
+				return s.writeResponse(req.ID, nil, err)
+			}
+		}
 		// Bind project threads to the active workspace's stable id so their
 		// state and listing survive the project moving. Scratch threads carry
 		// no project id.
@@ -247,6 +268,7 @@ func (s *Server) handleThreadStart(req Request) error {
 		history = append(history, providers.ChatMessage{Role: "system", Content: prompt})
 	}
 	th := newThreadState(id, history, s.rt.ProviderName, s.rt.Model, threadCWD, persistHistory, time.Now().UTC())
+	th.Fusion = fusionPair
 	th.EngineID = string(engineID)
 	th.Source = threadSource
 	applyThreadRuntimeSelection(th, selection)
@@ -509,6 +531,15 @@ func (s *Server) loadPersistedThreadState(id string, now time.Time) (*threadStat
 	th.Turns = applyTokenUsageMetasToTurns(th.Turns, loaded.tokenMetas)
 	th.WorkspaceKind = workspaceKindForCWD(s.rt.WuuHome, threadCWD)
 	applySessionMetadata(th, loaded.metadata)
+	states, err := s.fusionTurnStates(id, loaded.metadata.Fusion)
+	if err != nil {
+		return nil, err
+	}
+	for index := range th.Turns {
+		if state := states[th.Turns[index].ID]; state != nil {
+			th.Turns[index].Fusion = state
+		}
+	}
 	th.SessionControl, err = s.readThreadSessionControl(id)
 	if err != nil {
 		return nil, err
@@ -1207,7 +1238,17 @@ func (s *Server) handleThreadListArchived(req Request) error {
 		sessions[i] = relocatedSessionMetadata(sessions[i], registered)
 	}
 	s.refreshListedSessionMetadata(sessions)
+	present := make(map[string]bool, len(sessions))
 	for _, sess := range sessions {
+		present[sess.ID] = true
+	}
+	hiddenSides := make(map[string]bool)
+	for _, sess := range sessions {
+		// The pair has one archive entry. Legacy orphans remain manageable.
+		if sess.Source == fusionSideSource && present[sess.ParentID] {
+			hiddenSides[sess.ID] = true
+			continue
+		}
 		if sess.Visibility == pluginhost.SessionVisibilityPlugin {
 			continue
 		}
@@ -1234,7 +1275,7 @@ func (s *Server) handleThreadListArchived(req Request) error {
 		if thread.ReadOnly && !projectExecutionDisabled(thread.Source) {
 			continue
 		}
-		if !thread.Archived {
+		if !thread.Archived || hiddenSides[thread.ID] {
 			continue
 		}
 		entries[thread.ID] = entry
@@ -1329,38 +1370,44 @@ func (s *Server) handleThreadArchive(req Request) error {
 		return s.writeResponse(req.ID, nil, errors.New("thread_id is required"))
 	}
 	if params.Archived && params.Force {
+		// Validate the owner before force can interrupt a managed Sidekick.
+		if _, err := session.FusionLifecycleSessions(s.rt.SessionDir, id); err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
 		s.settleThreadExecutionForForcedArchive(id)
-	}
-	if params.Archived {
-		if th := s.thread(id); th != nil {
-			th.mu.Lock()
-			running := th.running
-			th.mu.Unlock()
-			if running {
-				return s.writeResponse(req.ID, nil, errors.New("cannot archive a running thread"))
-			}
+		if err := s.stopFusionSides(id); err != nil {
+			return s.writeResponse(req.ID, nil, err)
 		}
 	}
-	var mutationLease *session.ThreadExecutionLease
-	if params.Archived {
-		var leaseErr error
-		mutationLease, leaseErr = s.tryAcquireThreadMutationLease(id)
-		if leaseErr != nil {
-			return s.writeResponse(req.ID, nil, leaseErr)
-		}
+	members, release, err := s.beginThreadLifecycleMutation(id)
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
 	}
+	defer release()
 	metadata, err := session.UpdateArchived(s.rt.SessionDir, id, params.Archived)
 	if err != nil {
-		releaseThreadMutationLease(id, mutationLease)
 		return s.writeResponse(req.ID, nil, err)
 	}
 	thread, err := s.threadAfterMetadataUpdate(metadata)
 	if err != nil {
-		releaseThreadMutationLease(id, mutationLease)
 		return s.writeResponse(req.ID, nil, err)
 	}
-	releaseThreadMutationLease(id, mutationLease)
-	return s.writeResponse(req.ID, ThreadArchiveResult{Thread: thread}, nil)
+	threads := []Thread{thread}
+	for _, member := range members[1:] {
+		updated, _, err := session.Find(s.rt.SessionDir, member.ID)
+		if err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+		view, err := s.threadAfterMetadataUpdate(updated)
+		if err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+		threads = append(threads, view)
+		if err := s.notifyThreadUpdated(view); err != nil {
+			return err
+		}
+	}
+	return s.writeResponse(req.ID, ThreadArchiveResult{Thread: thread, Threads: threads}, nil)
 }
 
 var errArchivedWhileRunning = errors.New("archived while the conversation was still running")
@@ -1473,9 +1520,14 @@ func applySessionMetadata(th *threadState, metadata session.Session) {
 	}
 	th.Title = metadata.Title
 	th.Source = metadata.Source
+	th.FusionLeadID = fusionLeadIDForSession(metadata)
 	th.Owner = metadata.Owner
 	th.Visibility = metadata.Visibility
 	th.Instructions = effectiveSessionInstructions(metadata)
+	th.Fusion = nil
+	if metadata.FusionEnabled {
+		th.Fusion = metadata.Fusion
+	}
 	th.ProjectID = projectIDForSession(metadata)
 	th.ProjectRole = projectRoleForSession(metadata)
 	if selection := runtimeSelectionFromSession(metadata); selection.Provider != "" && selection.Model != "" {
@@ -1564,6 +1616,8 @@ func threadEntryFromSession(sess session.Session, provider, model string) thread
 			ReadOnly:              projectExecutionDisabled(sess.Source),
 			ProjectID:             projectIDForSession(sess),
 			ProjectRole:           projectRoleForSession(sess),
+			Fusion:                activeFusionPair(sess),
+			FusionLeadID:          fusionLeadIDForSession(sess),
 			Preview:               firstNonEmpty(sess.Title, sess.Summary),
 			Title:                 sess.Title,
 			ModelProvider:         firstNonEmpty(selection.Provider, provider),

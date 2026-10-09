@@ -138,6 +138,8 @@ export type InitializeParams = {
 };
 
 export type InitializeResult = {
+  /** Local draft or active conversation mode; real provider/model stay separate. */
+  fusion?: FusionSelection;
   speed?: string;
   status?: "ready" | "needs_setup";
   issues?: RuntimeIssue[];
@@ -256,7 +258,27 @@ export type RuntimeIssue = {
   message: string;
 };
 
+export type FusionSelection = { lead: ModelAliasSummary; sidekick: ModelAliasSummary };
+export type FusionConfig = FusionSelection & { enabled: boolean; default: boolean };
+export type FusionDelegation = { dispatch_id: string; session_id: string; turn_id?: string; state: string; error?: TurnError; input_tokens?: number; output_tokens?: number; cache_creation_tokens?: number; cache_read_tokens?: number };
+export type FusionProgress = { turn_id: string; tool?: string; summary?: string };
+export type FusionReport = { report_id: string; revision: number; status: Exclude<TurnStatus, "in_progress">; output?: string; error?: TurnError };
+export type FusionTask = {
+  task_id: string; side_id: string; lead_id: string; lead_turn_id: string;
+  revision: number; read_only: boolean; latest_client_id: string; review_rounds: number;
+  elapsed_ms: number; execution_state: "idle" | "running";
+  usage: { lead_input_tokens: number; lead_output_tokens: number; side_input_tokens: number; side_output_tokens: number };
+  report_id?: string; report_revision?: number; feedback?: string; stop_reason?: string;
+  created_at: string; updated_at: string; progress?: FusionProgress;
+} & (
+  | { state: "queued" | "running"; report?: FusionReport }
+  | { state: "awaiting_review" | "completed" | "failed"; report: FusionReport }
+  | { state: "cancelled"; report?: FusionReport }
+);
+export type FusionTurn = FusionSelection & { state: string; side_id?: string; delegations?: FusionDelegation[]; tasks?: FusionTask[] };
+
 export type AdvancedSettingsSummary = {
+  fusion?: FusionConfig;
   max_steps: number;
   max_context_tokens: number;
   temperature: number;
@@ -1041,6 +1063,7 @@ export type AuthXAILoginPollResult = {
 };
 
 export type RuntimeAdvancedSettingsUpdate = {
+  fusion?: FusionConfig;
   max_steps?: number;
   max_context_tokens?: number;
   temperature?: number;
@@ -1732,6 +1755,9 @@ export type SessionOrganization = {
 };
 
 export type Thread = {
+  fusion?: FusionSelection | null;
+  /** Persistent Sidekick owner, including archived or disabled Fusion pairs. */
+  fusion_lead_id?: string;
   speed?: string;
   session_control?: { manager_id: string; manager_name: string; state: "active" | "paused" | "taken_over"; revision: number };
   id: string;
@@ -1783,6 +1809,7 @@ export type Thread = {
 };
 
 export type ThreadStartParams = {
+  fusion?: boolean;
   speed?: string;
   ephemeral?: boolean;
   cwd?: string;
@@ -2108,6 +2135,7 @@ export type InstructionsListResult = {
 };
 
 export type Turn = {
+  fusion?: FusionTurn;
   id: string;
   kind?: TurnKind;
   // The runtime selection captured when this turn began. It remains stable
@@ -2822,7 +2850,8 @@ export type WuuDesktopApi = {
     permissionMode?: string,
     threadId?: string,
     speed?: string,
-    targetContext?: RuntimeContext
+    targetContext?: RuntimeContext,
+    fusion?: boolean
   ) => Promise<ConfigModelUpdateResult>;
   removeProvider: (
     provider: string,
@@ -3001,12 +3030,12 @@ export type WuuDesktopApi = {
     // Escape hatch for conversations stuck in a running state: the server
     // interrupts and settles the stuck turn, then archives.
     force?: boolean
-  ) => Promise<{ thread: Thread }>;
+  ) => Promise<{ thread: Thread; threads?: Thread[] }>;
   // Permanently deletes a conversation (history, artifacts, and any fork
   // worktree). Mirrors the `thread/delete` RPC; running threads are rejected
   // server-side.
   // onlyIfArchived is checked atomically with deletion; restored sessions are rejected.
-  deleteThread: (threadId: string, options?: { onlyIfArchived?: boolean }) => Promise<{ thread_id: string }>;
+  deleteThread: (threadId: string, options?: { onlyIfArchived?: boolean }) => Promise<{ thread_id: string; thread_ids?: string[] }>;
   compactThread: (threadId: string) => Promise<{ turn: Turn }>;
   startTurn: (
     threadId: string,

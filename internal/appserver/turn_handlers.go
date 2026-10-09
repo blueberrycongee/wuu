@@ -175,6 +175,9 @@ func (s *Server) handleTurnStartAdmission(ctx context.Context, req Request, allo
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
+	if th.Source == fusionSideSource {
+		return s.writeResponse(req.ID, nil, errors.New("Sidekick is managed by its Fusion Lead; send requirements in the Lead conversation"))
+	}
 	permissions, err := s.resolveThreadTurnPermissions(th, params.PermissionMode)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
@@ -291,11 +294,21 @@ func (s *Server) ensureThreadRuntimeAfterAdmission(th *threadState) (*runtime.Th
 	if metadata, found, err := session.Find(s.rt.SessionDir, th.ID); err != nil {
 		return nil, err
 	} else if found {
+		if metadata.FusionEnabled {
+			cfg, _, err := s.rt.LoadEffectiveConfig()
+			if err != nil {
+				return nil, err
+			}
+			if err := cfg.ValidateFusionPair(*metadata.Fusion); err != nil {
+				return nil, err
+			}
+		}
 		th.mu.Lock()
 		th.Source = metadata.Source
 		th.ProjectID = projectIDForSession(metadata)
 		th.ProjectRole = projectRoleForSession(metadata)
 		th.Instructions = effectiveSessionInstructions(metadata)
+		th.Fusion = activeFusionPair(metadata)
 		th.mu.Unlock()
 		isProject := metadata.Source == projectSource || metadata.Source == projectSessionSource
 		if threadRuntime.Toolkit != nil {
@@ -304,6 +317,7 @@ func (s *Server) ensureThreadRuntimeAfterAdmission(th *threadState) (*runtime.Th
 				handler = s.projectSessionHandler(th.ID)
 			}
 			threadRuntime.Toolkit.SetProjectSessions(handler)
+			threadRuntime.Toolkit.SetFusionDelegate(s.fusionHandlerForThread(th))
 		}
 	}
 	if err := s.refreshThreadGitAttribution(threadRuntime); err != nil {
@@ -538,7 +552,7 @@ func (s *Server) handleTurnQueue(req Request) error {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	th.mu.Lock()
-	readOnly := th.ReadOnly
+	readOnly := th.ReadOnly || th.Source == fusionSideSource
 	th.mu.Unlock()
 	if readOnly {
 		return s.writeResponse(req.ID, nil, errors.New("thread is read-only"))
@@ -1199,7 +1213,7 @@ func (s *Server) ensureThreadRuntime(th *threadState) (*runtime.ThreadRuntime, e
 			threadRuntime, err = s.rt.NewThreadRuntimeForRootModel(th.ID, browserWorkdir, selection)
 		}
 	}
-	if errors.Is(err, runtime.ErrThreadProviderUnavailable) {
+	if errors.Is(err, runtime.ErrThreadProviderUnavailable) && th.Fusion == nil && th.Source != fusionSideSource {
 		// The pinned provider was removed from config after this session
 		// selected it. Self-heal the dead provider/model pair to the
 		// workspace defaults so the turn proceeds instead of every send
@@ -1227,6 +1241,9 @@ func (s *Server) ensureThreadRuntime(th *threadState) (*runtime.ThreadRuntime, e
 	th.mu.Lock()
 	coordinator := th.Source == projectSource || th.Source == projectSessionSource
 	th.mu.Unlock()
+	if threadRuntime.Toolkit != nil {
+		threadRuntime.Toolkit.SetFusionDelegate(s.fusionHandlerForThread(th))
+	}
 	if coordinator && threadRuntime.Toolkit != nil {
 		threadRuntime.Toolkit.SetProjectSessions(s.projectSessionHandler(th.ID))
 	}
@@ -1922,6 +1939,9 @@ func (s *Server) interruptThreadExecution(threadID, expectedRunID, expectedTurnI
 			interruptedThread = th.snapshotLocked()
 		}
 		th.mu.Unlock()
+		if err := s.stopFusionSides(threadID); err != nil {
+			return false, err
+		}
 		if hasAgentWork && threadRuntime.AgentControl != nil {
 			threadRuntime.AgentControl.FreezeWorkerTree()
 		}
@@ -1982,6 +2002,9 @@ func (s *Server) interruptThreadExecution(threadID, expectedRunID, expectedTurnI
 	// synchronous observer callback here would otherwise re-enter that ordered
 	// process and prevent the cancellation response from ever being returned.
 	cancel()
+	if err := s.stopFusionSides(threadID); err != nil {
+		return true, err
+	}
 	s.notifyPluginTurnInterruptedAsync(pluginhost.AgentTurnInterruptedInput{
 		ThreadID: threadID,
 		TurnID:   turnID,
@@ -2798,6 +2821,18 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 			TurnID:   turnID,
 			Event:    sanitizeStreamEvent(ev),
 		})
+		if ev.Type == providers.EventToolUseStart || ev.Type == providers.EventToolUseEnd || ev.Type == providers.EventMessage {
+			th.mu.Lock()
+			source := th.Source
+			th.mu.Unlock()
+			if source == fusionSideSource {
+				// Ordinary managed sessions keep their parent in durable metadata;
+				// threadState.ParentID is reserved for agent workers.
+				if metadata, found, err := session.Find(s.rt.SessionDir, th.ID); err == nil && found {
+					s.publishFusionState(metadata.ParentID)
+				}
+			}
+		}
 	})
 	// RunTurn returns the engine outcome; the built-in wuu engine's result is
 	// the native loop result the rest of the turn accounting consumes.
@@ -3109,6 +3144,7 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 		}
 	})
 	s.afterProjectTurn(th, turn, turnRuntime.CompactOnly)
+	s.afterFusionTurn(th, turn, turnRuntime.CompactOnly)
 	if reference := turnRuntime.PluginTurn; reference != nil {
 		lifecycleState := pluginhost.TurnLifecycleCompleted
 		errorText := ""

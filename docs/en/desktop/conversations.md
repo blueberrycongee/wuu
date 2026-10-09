@@ -10,6 +10,24 @@ Delete is permanent: it removes saved history and cleans up associated artifacts
 
 After the first send, the workspace sidebar immediately shows the pending conversation. You can switch away and return while it is being created. Stop cancels this wait and retains your input; a late creation response does not send the cancelled message or keep an unused empty conversation. Starting another conversation uses a separate draft.
 
+## Use Fusion
+
+In **Settings → Built-in agent → Fusion**, enable Fusion and choose separate Lead and Sidekick models and reasoning levels. You can make it the default for new conversations. In the composer's model service menu, choose **Fusion**; selecting a regular model leaves the mode. Fusion runs on the built-in Wuu engine without plugins or the experimental Project Agent build.
+
+The main conversation is the Lead: it plans, briefs the Sidekick, reviews the changes and tests, and replies to you. The Sidekick works in an ordinary persistent conversation with its own tools and history, in the same workspace. Review corrections continue in that Sidekick. Both models are pinned when the conversation enables Fusion; later settings changes affect new conversations. The model menu displays the pinned pair; change the defaults in Settings for new conversations.
+
+Each delegated task records its requirements revision and actual Sidekick report. The Lead checks the work and evidence, then accepts that exact report or sends consolidated correction feedback to the same Sidekick. A successful Sidekick turn remains awaiting review until the Lead accepts it. A delegation waits for its exact result by default. A timeout or an explicit background dispatch leaves the Sidekick running and delivers its result once when ready. Adding a requirement while the Lead waits wakes it to handle your message. The Lead can update an active task, including asking it to wrap up and report. Updates advance the requirements revision, so an older report cannot be accepted for newer requirements. A task can narrow Sidekick permissions to read-only; it never widens the conversation permissions. **Stop** interrupts the Lead and Sidekick and invalidates their old queued work; history and completed changes remain. The Lead must confirm that the Sidekick is idle before taking over the same files.
+
+The model menu lists the conversation's actual Lead and Sidekick models. The turn header shows which role is working and retains Sidekick failures after the Lead finishes. Click **Message from Sidekick** to open its actual conversation in split view, even during execution or after failure or cancellation. The Sidekick pane is read-only; send requirements in the Lead conversation. Expand process details for public progress, failure diagnostics, cancellation reasons, task elapsed time, review correction count, and recorded usage for both conversations. Fusion coordinates writes to the shared workspace, while the Lead can read and review during execution. Normal usage statistics include both conversations. Wuu does not estimate savings from a hypothetical single-model run.
+
+If the app server exits during a task, recovery marks consumed work with no live executor as failed and reports the interruption to the Lead. It preserves history and file changes without replaying that work. The Lead can inspect the result and explicitly request a correction or delegate a new task. Inputs that had not started remain queued.
+
+Write coordination lasts for each tool call. A background command can keep writing after that call returns, so the participants must finish or stop commands that modify task files before handing them over. Development servers and watchers may remain when their output paths do not conflict with the other participant's edits; the brief or report must identify those processes and paths. Fusion does not enforce exclusive file access for background processes.
+
+Archive, restore, and permanently delete the pair through the Lead, including after leaving Fusion mode. Archiving preserves both histories and shows one entry in Settings → Archive. Restoring reuses the same Sidekick. Permanent deletion removes both histories and their session resources; worktrees with uncommitted changes are preserved. Both conversations must be idle before archiving or deleting.
+
+Moving the Lead to a linked worktree moves both conversations together. The Sidekick must be idle before this move and cannot change its workspace independently.
+
 ## Find a conversation
 
 Open **Search conversations** in the sidebar or press **Command + P** (**Ctrl + P** on Windows and Linux). With no query, pinned conversations appear first, followed by recently updated conversations. Type to search titles and history across projects, including archived conversations. Results show their project and, for content matches, a highlighted excerpt in the same row. Otherwise identical results also show their last-updated date and time.

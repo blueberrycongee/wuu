@@ -29,6 +29,7 @@ beforeEach(() => {
 
 afterEach(() => {
   window.localStorage.removeItem("wuu.desktop.sidebarFunctionalGroupOrder");
+  window.localStorage.removeItem("wuu.desktop.sidebarPinnedItems");
   act(() => root?.unmount());
   desktopPluginHost.unload("test:app-sidebar-navigation");
   desktopPluginHost.unload("test:app-sidebar-view");
@@ -489,6 +490,84 @@ describe("AppSidebar layout", () => {
     // Only explicit release restores ordinary visibility.
     renderThreads([coordinator, { ...members[0], source: undefined, project_id: undefined }, members[1], chat]);
     expect(ordinaryTitles().sort()).toEqual([chat.title, members[0].title].sort());
+  });
+
+  it("hides Fusion Sidekick sessions without changing sidebar inputs or saved organization", () => {
+    vi.useFakeTimers();
+    const runningSide = sidebarThread("fusion-side-running", "Hidden running Sidekick", {
+      source: "fusion-side",
+      status: "in_progress",
+      pinned: true,
+      folder_id: "saved-folder",
+    });
+    const unreadSide = sidebarThread("fusion-side-unread", "Hidden unread Sidekick", {
+      source: "fusion-side",
+      latest_completed_turn_id: "side-turn",
+    });
+    const recentSide = sidebarThread("fusion-side-recent", "Hidden recent Sidekick", {
+      source: "fusion-side",
+    });
+    const lead = sidebarThread("fusion-lead", "Visible Fusion lead", {
+      status: "in_progress",
+      pinned: true,
+    });
+    const conversation = sidebarThread("chat", "Visible ordinary conversation", {
+      latest_completed_turn_id: "chat-turn",
+    });
+    const workspaceThreads = [runningSide, unreadSide, recentSide, lead, conversation];
+    const workspaceThreadsByWorkspaceID = { "project-1": workspaceThreads };
+    const pinnedThreads = [runningSide, lead];
+    const savedPins = JSON.stringify([
+      { kind: "thread", id: runningSide.id },
+      { kind: "thread", id: lead.id },
+    ]);
+    window.localStorage.setItem("wuu.desktop.sidebarPinnedItems", savedPins);
+
+    renderSidebar({
+      expandedSidebarSectionIDs: new Set(["project-1"]),
+      pinnedThreads,
+      workspaceThreadsByWorkspaceID,
+    });
+
+    expect(container.textContent).not.toContain(runningSide.title);
+    expect(container.textContent).not.toContain(unreadSide.title);
+    expect(container.textContent).not.toContain(recentSide.title);
+    expect(container.textContent).toContain(lead.title);
+    expect(container.textContent).toContain(conversation.title);
+    expect(container.querySelector(".sidebar-notifications-button")?.getAttribute("aria-label")).toContain("2");
+
+    act(() => {
+      container.querySelector<HTMLElement>('section[data-section-id="project-1"] .sidebar-section-header-group')
+        ?.dispatchEvent(new MouseEvent("pointerover", { bubbles: true }));
+      vi.advanceTimersByTime(400);
+    });
+    const hoverCounts = [...document.querySelectorAll(".sidebar-hover-card-count")].map((node) => node.textContent);
+    expect(hoverCounts[0]).toContain("2");
+    expect(hoverCounts[0]).not.toContain("3");
+
+    attentionStickyIDs = new Set([recentSide.id]);
+    unreadViewOpen = true;
+    renderSidebar({
+      expandedSidebarSectionIDs: new Set(["project-1"]),
+      pinnedThreads,
+      workspaceThreadsByWorkspaceID,
+    });
+    expect(container.querySelector(".sidebar-unread-view")?.textContent).not.toContain(runningSide.title);
+    expect(container.querySelector(".sidebar-unread-view")?.textContent).not.toContain(unreadSide.title);
+    expect(container.querySelector(".sidebar-unread-view")?.textContent).not.toContain(recentSide.title);
+    const runningSection = container.querySelector("#sidebar-running-heading")?.closest("section");
+    expect(runningSection?.textContent).toContain(lead.title);
+    expect(runningSection?.querySelector(".sidebar-unread-count")?.textContent).toBe("1");
+    const unreadSection = container.querySelector("#sidebar-unread-heading")?.closest("section");
+    expect(unreadSection?.textContent).toContain(conversation.title);
+    expect(unreadSection?.querySelector(".sidebar-unread-count")?.textContent).toBe("1");
+    expect(container.querySelector("#sidebar-recent-heading")).toBeNull();
+
+    expect(workspaceThreadsByWorkspaceID["project-1"]).toBe(workspaceThreads);
+    expect(workspaceThreads).toEqual([runningSide, unreadSide, recentSide, lead, conversation]);
+    expect(pinnedThreads).toEqual([runningSide, lead]);
+    expect(runningSide.folder_id).toBe("saved-folder");
+    expect(window.localStorage.getItem("wuu.desktop.sidebarPinnedItems")).toBe(savedPins);
   });
 
   it("clears a viewed project's unread dot without marking its hidden sessions read", () => {

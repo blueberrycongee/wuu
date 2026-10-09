@@ -198,14 +198,14 @@ func TestProjectPersistentSideDispatchesAndReplays(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	side := first.(projectSessionView)
+	side := first.(managedSessionView)
 	if side.Workspace != "shared" {
 		t.Fatalf("side workspace = %q", side.Workspace)
 	}
 	call := calls.next(t, request.Prompt)
 	request.Prompt = "Correct the implementation boundary"
 	second, err := handler(context.Background(), "correct-side", request)
-	if err != nil || second.(projectSessionView).SessionID != side.SessionID {
+	if err != nil || second.(managedSessionView).SessionID != side.SessionID {
 		t.Fatalf("side follow-up = %+v, %v", second, err)
 	}
 	if _, err := handler(context.Background(), "correct-side", request); err != nil {
@@ -232,7 +232,7 @@ func TestProjectDispatchRecoversOrIsFencedByStop(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			worker := created.(projectSessionView)
+			worker := created.(managedSessionView)
 			calls.next(t, "Initial worker brief").response <- providersResponse("Initial work complete")
 			completed := waitForThread(t, srv, worker.SessionID, func(th Thread) bool { return th.Status == ThreadStatusIdle && th.LatestCompletedTurnID != "" })
 			lease, acquired, err := session.TryAcquireThreadExecutionLease(rt.SessionDir, worker.SessionID)
@@ -241,7 +241,7 @@ func TestProjectDispatchRecoversOrIsFencedByStop(t *testing.T) {
 			}
 			defer lease.Release()
 			queued, err := srv.projectSessionHandler(lead.ID)(context.Background(), "queued-followup", tools.ProjectSessionRequest{Action: "send", SessionID: worker.SessionID, Prompt: "Durable follow-up brief"})
-			if err != nil || queued.(projectSessionView).State != "queued" {
+			if err != nil || queued.(managedSessionView).State != "queued" {
 				t.Fatalf("queued = %+v, %v", queued, err)
 			}
 			if stop {
@@ -289,7 +289,7 @@ func TestProjectCorrectionReturnsBeforeExecutionAndRetainsExactReceipt(t *testin
 	initial := calls.next(t, "Initial blocking work")
 	yes := true
 	value, err := handler(context.Background(), "correct-side", tools.ProjectSessionRequest{Action: "side", Prompt: "Requested correction output", Block: &yes})
-	if err != nil || value.(projectSessionView).TurnID != "" {
+	if err != nil || value.(managedSessionView).TurnID != "" {
 		t.Fatalf("async correction: %+v %v", value, err)
 	}
 	side := projectManagedSessions(t, client, lead.ID)[0]
@@ -297,7 +297,7 @@ func TestProjectCorrectionReturnsBeforeExecutionAndRetainsExactReceipt(t *testin
 	calls.next(t, "Requested correction output").response <- providersResponse("Requested correction completed")
 	project, _ := srv.projectCoordinator(lead.ID)
 	value, err = srv.waitProjectSession(context.Background(), project, project, tools.ProjectSessionRequest{SessionID: side.ID}, "project:"+lead.ID+":correct-side")
-	if err != nil || value.(projectSessionView).FinalOutput != "Requested correction completed" {
+	if err != nil || value.(managedSessionView).FinalOutput != "Requested correction completed" {
 		t.Fatalf("host receipt: %+v %v", value, err)
 	}
 }
@@ -320,11 +320,11 @@ func TestProjectWaitTimeoutAndCompletedTurn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	side := created.(projectSessionView)
+	side := created.(managedSessionView)
 	call := calls.next(t, "Implementation to wait for")
 	request := tools.ProjectSessionRequest{Action: "wait", SessionID: side.SessionID, TurnID: side.TurnID, TimeoutMS: 1}
 	waited, err := hostProjectWait(srv, lead.ID)(context.Background(), "timeout", request)
-	if err != nil || !waited.(projectSessionView).TimedOut {
+	if err != nil || !waited.(managedSessionView).TimedOut {
 		t.Fatalf("timeout = %+v, %v", waited, err)
 	}
 	th := srv.thread(side.SessionID)
@@ -346,7 +346,7 @@ func TestProjectWaitTimeoutAndCompletedTurn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result := waited.(projectSessionView)
+	result := waited.(managedSessionView)
 	if result.TimedOut || result.TurnID != side.TurnID || result.TurnStatus != TurnStatusCompleted || result.FinalOutput != "Verified implementation output" {
 		t.Fatalf("completed wait = %+v", result)
 	}
@@ -366,7 +366,7 @@ func TestProjectWaitObservesRemoteTurnCompletion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	side := created.(projectSessionView)
+	side := created.(managedSessionView)
 	held := calls.next(t, "First remote task")
 	active, err := session.ThreadExecutionActive(rt.SessionDir, side.SessionID)
 	if err != nil || !active {
@@ -382,7 +382,7 @@ func TestProjectWaitObservesRemoteTurnCompletion(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		view := value.(projectSessionView)
+		view := value.(managedSessionView)
 		if !view.TimedOut || view.State != "running" || view.TurnID != side.TurnID || view.TurnStatus != TurnStatusInProgress || view.FinalOutput != "" {
 			t.Fatalf("unfinished remote result = %+v", view)
 		}
@@ -411,7 +411,7 @@ func TestProjectWaitObservesRemoteTurnCompletion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	view := value.(projectSessionView)
+	view := value.(managedSessionView)
 	if view.TimedOut || view.TurnStatus != TurnStatusCompleted || view.FinalOutput != "First remote result" {
 		t.Fatalf("completed remote result = %+v", view)
 	}
@@ -427,7 +427,7 @@ func TestProjectWaitObservesRemoteTurnCompletion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	view = value.(projectSessionView)
+	view = value.(managedSessionView)
 	if view.TimedOut || view.State != "running" || view.TurnID != side.TurnID || view.TurnStatus != TurnStatusCompleted || view.FinalOutput != "First remote result" {
 		t.Fatalf("previous result while a later remote turn runs = %+v", view)
 	}
@@ -444,7 +444,7 @@ func TestProjectRecoveryDoesNotReportRemoteActiveTurn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	worker := created.(projectSessionView)
+	worker := created.(managedSessionView)
 	calls.next(t, "Work held in the remote provider")
 	if worker.TurnID == "" {
 		t.Fatal("dispatch did not identify its admitted turn")
@@ -489,7 +489,7 @@ func TestProjectWaitRequiresTerminalEvidenceWithoutExecutor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	view := value.(projectSessionView)
+	view := value.(managedSessionView)
 	if !view.TimedOut || view.State != "idle" || view.TurnStatus != TurnStatusInProgress || view.FinalOutput != "" {
 		t.Fatalf("unsettled result without executor = %+v", view)
 	}
@@ -508,7 +508,7 @@ func TestProjectWaitRequiresTerminalEvidenceWithoutExecutor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	view = value.(projectSessionView)
+	view = value.(managedSessionView)
 	if !view.TimedOut || view.State != "running" || view.TurnStatus != TurnStatusInProgress || view.FinalOutput != "" {
 		t.Fatalf("unsettled result during a later local turn = %+v", view)
 	}
@@ -567,7 +567,7 @@ func TestProjectRoleModelsPersistAndRespectOverrides(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		child, found, err := session.Find(rt.SessionDir, result.(projectSessionView).SessionID)
+		child, found, err := session.Find(rt.SessionDir, result.(managedSessionView).SessionID)
 		if err != nil || !found || child.Provider != "fake-provider" || child.Model != tc.model {
 			t.Fatalf("child = %+v, %v", child, err)
 		}
@@ -583,7 +583,7 @@ func TestProjectRoleModelsPersistAndRespectOverrides(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	child, _, err := session.Find(rt.SessionDir, result.(projectSessionView).SessionID)
+	child, _, err := session.Find(rt.SessionDir, result.(managedSessionView).SessionID)
 	if err != nil || child.Model != "side-model" {
 		t.Fatalf("persistent side switched = %+v, %v", child, err)
 	}
@@ -971,7 +971,7 @@ func TestProjectSideAndWorkersReuseOrdinarySessions(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if reused.(projectSessionView).SessionID != side.ID {
+			if reused.(managedSessionView).SessionID != side.ID {
 				t.Fatalf("created a second side: %+v", reused)
 			}
 			if len(projectManagedSessions(t, client, lead.ID)) != 1 {
@@ -983,7 +983,7 @@ func TestProjectSideAndWorkersReuseOrdinarySessions(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			workerID := workerView.(projectSessionView).SessionID
+			workerID := workerView.(managedSessionView).SessionID
 			workerCall := calls.next(t, "Verify the team feature")
 			if !requestToolNames(workerCall.request)["session"] {
 				t.Fatal("worker has no session communication tool")
@@ -1010,7 +1010,7 @@ func TestProjectSideAndWorkersReuseOrdinarySessions(t *testing.T) {
 			reopened := New(rt, &lockedBuffer{})
 			t.Cleanup(reopened.Close)
 			reused, err = reopened.projectSessionHandler(lead.ID)(context.Background(), "reuse-after-restart", tools.ProjectSessionRequest{Action: "create", Role: "side", Prompt: "Continue"})
-			if err != nil || reused.(projectSessionView).SessionID != side.ID {
+			if err != nil || reused.(managedSessionView).SessionID != side.ID {
 				t.Fatalf("reloaded side = %+v, %v", reused, err)
 			}
 			metadata, found, err := session.Find(rt.SessionDir, side.ID)
@@ -1036,7 +1036,7 @@ func TestProjectPeerMessagesRespectMembershipAndStopFence(t *testing.T) {
 			t.Fatal(err)
 		}
 		calls.next(t, prompt).response <- providersResponse("Ready.")
-		th := waitForThread(t, srv, view.(projectSessionView).SessionID, func(th Thread) bool { return th.LatestCompletedTurnID != "" })
+		th := waitForThread(t, srv, view.(managedSessionView).SessionID, func(th Thread) bool { return th.LatestCompletedTurnID != "" })
 		settleCoordinator(t, srv, calls, lead.ID, "Coordinate peer work", "Ready.", projectResultClientID(th.ID, th.LatestCompletedTurnID))
 		return th
 	}
@@ -1085,7 +1085,7 @@ func TestProjectPeerInboxRecoversWithoutDuplicateDelivery(t *testing.T) {
 		t.Fatal(err)
 	}
 	calls.next(t, "Prepare recovery work").response <- providersResponse("Ready.")
-	member := waitForThread(t, srv, view.(projectSessionView).SessionID, func(th Thread) bool { return th.LatestCompletedTurnID != "" })
+	member := waitForThread(t, srv, view.(managedSessionView).SessionID, func(th Thread) bool { return th.LatestCompletedTurnID != "" })
 	resultID := projectResultClientID(member.ID, member.LatestCompletedTurnID)
 	settleCoordinator(t, srv, calls, lead.ID, "Ready.", "Noted.", resultID)
 	if _, err := srv.projectSessionHandler(member.ID)(context.Background(), "information", tools.ProjectSessionRequest{Action: "message", SessionID: lead.ID, Prompt: "Informational recovery note"}); err != nil {
@@ -1124,7 +1124,7 @@ func TestProjectInterruptedSideWorkDoesNotWakeRecipients(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sideID := view.(projectSessionView).SessionID
+	sideID := view.(managedSessionView).SessionID
 	calls.next(t, "Prepare side").response <- providersResponse("Side ready.")
 	side := waitForThread(t, srv, sideID, func(th Thread) bool { return th.LatestCompletedTurnID != "" })
 	settleCoordinator(t, srv, calls, lead.ID, "Side ready.", "Noted.", projectResultClientID(sideID, side.LatestCompletedTurnID))
@@ -1132,7 +1132,7 @@ func TestProjectInterruptedSideWorkDoesNotWakeRecipients(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	workerID := view.(projectSessionView).SessionID
+	workerID := view.(managedSessionView).SessionID
 	calls.next(t, "Hold worker")
 	client.rpc(t, MethodTurnInterrupt, TurnInterruptParams{ThreadID: workerID}, nil)
 	waitForThread(t, srv, workerID, func(th Thread) bool { return th.LatestCompletedTurnID != "" && th.Status == ThreadStatusIdle })
@@ -1195,7 +1195,7 @@ func TestProjectRecoversLegacyControlWithoutWaking(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			sideID := sideView.(projectSessionView).SessionID
+			sideID := sideView.(managedSessionView).SessionID
 			calls.next(t, "Prepare side").response <- providersResponse("Side ready.")
 			side := waitForThread(t, srv, sideID, func(th Thread) bool { return th.LatestCompletedTurnID != "" })
 			settleCoordinator(t, srv, calls, lead.ID, "Side ready.", "Noted.", projectResultClientID(sideID, side.LatestCompletedTurnID))
@@ -1203,7 +1203,7 @@ func TestProjectRecoversLegacyControlWithoutWaking(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			memberID := view.(projectSessionView).SessionID
+			memberID := view.(managedSessionView).SessionID
 			held := calls.next(t, "Prepare legacy work")
 			active, _, err := session.ReadControl(rt.SessionDir, memberID)
 			if err != nil {
@@ -1277,7 +1277,7 @@ func TestProjectPeerSteerDoesNotOutliveSenderControl(t *testing.T) {
 		t.Fatal(err)
 	}
 	calls.next(t, "Inspect steering").response <- providersResponse("Sender ready.")
-	sender := waitForThread(t, srv, view.(projectSessionView).SessionID, func(th Thread) bool { return th.LatestCompletedTurnID != "" })
+	sender := waitForThread(t, srv, view.(managedSessionView).SessionID, func(th Thread) bool { return th.LatestCompletedTurnID != "" })
 	settleCoordinator(t, srv, calls, lead.ID, "Sender ready.", "Ready.", projectResultClientID(sender.ID, sender.LatestCompletedTurnID))
 	var turn TurnStartResult
 	client.rpc(t, MethodTurnStart, TurnStartParams{ThreadID: lead.ID, Prompt: "Wait for the current model response"}, &turn)
@@ -1305,7 +1305,7 @@ func TestProjectSideWaitsForAdoptedWorker(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	side := value.(projectSessionView)
+	side := value.(managedSessionView)
 	calls.next(t, "side stays busy")
 	var ordinary ThreadStartResult
 	client.rpc(t, MethodThreadStart, ThreadStartParams{}, &ordinary)
@@ -1318,7 +1318,7 @@ func TestProjectSideWaitsForAdoptedWorker(t *testing.T) {
 	if err != nil {
 		t.Fatalf("side cannot wait for adopted worker: %v", err)
 	}
-	if !result.(projectSessionView).TimedOut {
+	if !result.(managedSessionView).TimedOut {
 		t.Fatalf("expected in-flight wait timeout: %+v", result)
 	}
 }

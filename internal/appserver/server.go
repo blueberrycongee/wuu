@@ -40,6 +40,7 @@ var (
 )
 
 type threadState struct {
+	Fusion     *config.FusionSelection
 	ID         string
 	Source     string
 	Owner      string
@@ -48,11 +49,12 @@ type threadState struct {
 	// refreshed runtime system prompt.
 	Instructions string
 	// ProjectID is the coordinator of a project's managed session.
-	ProjectID   string
-	ProjectRole string
-	ParentID    string
-	AgentPath   string
-	History     []providers.ChatMessage
+	ProjectID    string
+	ProjectRole  string
+	FusionLeadID string
+	ParentID     string
+	AgentPath    string
+	History      []providers.ChatMessage
 	// historyHeadSeq is the physical append-only session_messages head that
 	// History was reconstructed through. It must not be derived from the
 	// logical messages: a checkpoint may retain no records or only old seqs.
@@ -302,14 +304,14 @@ type Server struct {
 	// handleSideThreadGetHistory treat nil as the "feature off" path.
 	sideThreadStore *sidethread.Store
 	controlMu       sync.Mutex
-	projectCreateMu sync.Mutex
+	sessionCreateMu sync.Mutex
 	// inboxMu orders deliveries into a session so pending input is admitted
 	// in creation order.
 	inboxMu                sync.Mutex
-	projectInboxMu         sync.Mutex
+	sessionInboxMu         sync.Mutex
 	projectCapacityRetries map[string]map[string]func() bool
-	projectInboxDrains     map[string]*projectInboxDrain
-	projectInboxAfterFunc  func(time.Duration, func()) func()
+	sessionInboxDrains     map[string]*sessionInboxDrain
+	sessionInboxAfterFunc  func(time.Duration, func()) func()
 	sideTurnMu             sync.Mutex
 	sideTurns              map[string]*sideThreadTurn
 }
@@ -435,6 +437,7 @@ func NewWithCredentialStore(rt *runtime.Session, out io.Writer, store credential
 	s.startInferenceJournalMaintenance()
 	if rt != nil && rt.SessionDir != "" {
 		s.startProjectRecovery()
+		s.startFusionRecovery()
 	}
 	s.startPluginGenerationWatch()
 	s.startConfigWatch()
@@ -699,7 +702,7 @@ func (s *Server) Close() {
 	}
 	s.closeOnce.Do(func() {
 		s.closed.Store(true)
-		s.closeProjectInboxDrains()
+		s.closeSessionInboxDrains()
 		s.cancelEngineAuth("")
 		if s.storageMaintenanceCancel != nil {
 			s.storageMaintenanceCancel()

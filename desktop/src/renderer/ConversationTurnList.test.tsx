@@ -1,6 +1,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { TurnView } from "./TurnView";
 import type { Turn } from "../shared/protocol";
 import {
   ConversationTurnList,
@@ -93,6 +94,26 @@ function mountTurns(turns: Turn[], forcedFullTurnIDs?: string[]): void {
 }
 
 describe("ConversationTurnList", () => {
+  it("groups notification-only turns without crossing an assistant answer or losing original anchors", () => {
+    const notification = (index: number): Turn => ({
+      id: `notice-${index}`, status: "completed", items_view: "full", items: [{
+        id: `message-${index}`, type: "user_message", origin: "host",
+        presentation_kind: "session_message", related_session_id: "side-a",
+        name: "Fusion Sidekick", text: `Private dispatch ${index}`, read_only: true,
+      }],
+    });
+    const turns = [...Array.from({ length: 5 }, (_, i) => notification(i)), makeTurn(10), notification(5)];
+    render(<ConversationTurnList threadID="owner" turns={turns}
+      renderTurn={turn => <TurnView turn={turn} onStreamFrame={() => {}} />} />);
+    const buttons = container.querySelectorAll(".session-message-source");
+    expect(buttons).toHaveLength(2);
+    expect(buttons[0].textContent).toContain("5");
+    expect(container.textContent).toContain("Agent answer 10");
+    expect(container.textContent).not.toContain("Private dispatch");
+    expect(container.querySelector(`#${userMessageAnchorID("notice-4", "message-4")}`)).not.toBeNull();
+    expect(container.querySelector("#turn-notice-4")).not.toBeNull();
+  });
+
   it("renders all turns fully below the collapse threshold", () => {
     const turns = Array.from(
       { length: TURN_LIST_COLLAPSE_THRESHOLD },

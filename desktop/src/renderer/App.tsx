@@ -302,6 +302,7 @@ import { ProjectActionsProvider, type ProjectActions, type ProjectThread } from 
 import { isProjectCoordinator, PROJECT_SESSION_SOURCE, projectSessionsOf } from "./ProjectSessions";
 import { ProjectStatusCapsule } from "./ProjectViews";
 import { createRuntimeSettingsActions } from "./RuntimeSettingsActions";
+import { fusionSideRunning } from "./FusionStatus";
 import { createConversationPaneActions } from "./ConversationPaneActions";
 import {
   createConversationHistoryActions,
@@ -408,6 +409,7 @@ function newThreadRuntimeParams(
     speed: initialized?.speed,
     permission_mode: initialized?.permissions?.mode,
     approve_for_me: initialized?.permissions?.approve_for_me,
+    ...(initialized?.fusion ? { fusion: true } : {}),
   };
 }
 
@@ -2210,7 +2212,7 @@ export function App(): JSX.Element {
         turn.id === target || turn.items.some((item) => item.type === "user_message"
           && item.source_id && `${OPTIMISTIC_TURN_ID_PREFIX}${item.source_id}` === target)
       ));
-      if (thread && !isThreadRunning(thread) && !turnAdmissionsRef.current.has(threadID)
+      if (thread && !isThreadRunning(thread) && !fusionSideRunning(thread) && !turnAdmissionsRef.current.has(threadID)
         && (stopRequestsRef.current[threadID] !== "retry" || targetEnded)) {
         setStopRequest(threadID);
       } else if (thread && stopRequestsRef.current[threadID] === "pending" && thread.turns.some(
@@ -2617,6 +2619,14 @@ export function App(): JSX.Element {
     const context = origin.activeContext;
     if (!origin.thread || !context) return;
     const requestID = ++relatedSplitRequestRef.current;
+    if (origin.thread.id === threadID) {
+      setState(current => ({ ...current, activePane: "primary", activeSessionTabID: threadSessionTabID(threadID) }));
+      return;
+    }
+    if (origin.secondaryThread?.id === threadID) {
+      setState(current => ({ ...current, activePane: "secondary", activeSessionTabID: threadSessionTabID(threadID) }));
+      return;
+    }
     const viewRequestID = getCurrentViewSwitchRequestID();
     const ownsView = (current = appStateRef.current): boolean =>
       requestID === relatedSplitRequestRef.current && isCurrentViewSwitchRequest(viewRequestID)
@@ -2806,6 +2816,7 @@ export function App(): JSX.Element {
   const activeThreadCanSteer = activeTurnAcceptsSteering(activeThread);
   const activeThreadAnswerReady = activeTurnIsAnswerReady(activeThread);
   const composerTurnRunning = activeThreadIsRunning && !activeThreadAnswerReady;
+  const activeFusionSideRunning = fusionSideRunning(activeThread);
   const activeThreadStreamStatus = activeThreadAnswerReady
     ? undefined
     : turnStreamStatusForThread(state, activeThread);
@@ -3201,12 +3212,12 @@ export function App(): JSX.Element {
         stopState={activeThread ? stopRequests[activeThread.id] : undefined}
         running={
           Boolean(activePendingThreadCreation) ||
-          (!activeThreadReadOnly && composerTurnRunning) ||
+          (!activeThreadReadOnly && (composerTurnRunning || activeFusionSideRunning)) ||
           viewContextSwitchPending
         }
         runtimeControlsDisabled={
           Boolean(activePendingThreadCreation) ||
-          (!activeThreadReadOnly && activeThreadIsRunning) ||
+          (!activeThreadReadOnly && (activeThreadIsRunning || activeFusionSideRunning)) ||
           viewContextSwitchPending
         }
         telemetryTurnID={telemetryTurnID}
@@ -5164,7 +5175,8 @@ export function App(): JSX.Element {
           onSidebarResizeStart={startSidebarResize}
           onSidebarSeparatorKey={handleSidebarSeparatorKey}
           archivedThreads={state.threads
-            .filter((thread) => thread.archived)
+            .filter((thread) => thread.archived && !(thread.source === "fusion-side"
+              && state.threads.some(parent => parent.id === thread.fusion_lead_id)))
             .map((thread) => {
               const project = state.projects.find((candidate) =>
                 threadBelongsToWorkspace(thread, candidate),

@@ -358,6 +358,7 @@ const CachedConversationPane = memo(function CachedConversationPane({
                     : null}
                 </>
               }
+              sessionMessageGroupBoundaryTurnIDs={entriesByAfterTurnID.keys()}
               renderAfterTurn={(turn) => (
                 <>
                   {(entriesByAfterTurnID.get(turn.id) ?? []).map(renderContextEntry)}

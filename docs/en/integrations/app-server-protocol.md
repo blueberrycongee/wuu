@@ -71,7 +71,18 @@ restored since the list was read is rejected without losing its history or side
 conversation. Omitting the option retains ordinary idle-conversation deletion.
 Clients deleting an archive snapshot should send one guarded request per ID and
 report individual failures; the operation is not an atomic batch. Successful
-requests return `{ "thread_id": "..." }`.
+requests return `{ "thread_id": "...", "thread_ids": ["..."] }`.
+
+Fusion lifecycle operations target the Lead and include all its owned Sidekicks,
+even after Fusion is disabled. Sidekick metadata exposes its persistent owner as
+`fusion_lead_id`, including when archived or Fusion is disabled; `session_control`
+only describes active management. Archive and restore update the pair atomically;
+`thread/archive` returns the Lead in `thread` and every affected member in
+`threads`. `thread/list_archived` lists the Lead once. Permanent deletion removes
+the pair atomically and returns every deleted ID in `thread_ids`; clients close
+all affected panes and tabs. Direct lifecycle changes to an owned Sidekick are
+rejected. Older servers may omit `threads` and `thread_ids`; clients then apply
+the result to the requested conversation only.
 
 `thread/search` accepts `query` and `limit` (at most 100). Its `results` contain
 thread metadata, a `snippet`, and an optional `message_seq` identifying the

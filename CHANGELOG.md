@@ -10,6 +10,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Native Fusion conversations with pinned Lead/Sidekick models, a persistent
+  Sidekick session, versioned requirements and exact-report review, durable
+  result recovery, shared-workspace write coordination, read-only delegation,
+  coordinated Stop, and compact links to the live Sidekick conversation.
+
 - Run a default-exported TypeScript plugin directly with `wuu plugin dev`, using
   the embedded SDK without a manifest or build, and keep watching through failed saves.
 
@@ -26,6 +31,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   to conversation TODO plans, respecting reduced-motion preferences.
 
 ### Changed
+
+- Give split conversations a compact fixed header, keeping the close action
+  separate from message sources and accessible while scrolling.
 
 - Paint the light navigation rail as one opaque near-white surface on every
   platform instead of the macOS sidebar material, whose wallpaper-tinted gray
@@ -78,6 +86,16 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   overflow, and reduced-motion support that does not replay received sources.
 
 ### Fixed
+
+- Archive, restore, and permanently delete Fusion Lead/Sidekick conversations
+  together, including their open panes, histories, and session resources.
+- Settle interrupted Fusion tasks after app-server shutdown or a crash, report
+  the interruption once, and allow subsequent delegation without replaying work.
+- Publish Sidekick progress to the Lead while both conversations are running.
+- Identify Fusion message sources as Lead or Sidekick even before conversation
+  titles exist, including historical messages with empty source names.
+- Preserve session-local Fusion checkpoints during delegation and read-only work,
+  and include live progress when inspecting the latest task without its ID.
 
 - Expand a workspace without conversations in place instead of flashing a
   loading row and spinner. The workspace header shows a spinner only when its

@@ -104,18 +104,18 @@ export function createThreadMutationActions(
     showErrorToast(status);
   }
 
-  function prepareConfirmedThreadRemoval(threadID: string): SessionTab | undefined {
+  function prepareConfirmedThreadRemoval(threadIDs: ReadonlySet<string>): SessionTab | undefined {
     const current = deps.getAppState();
     if (current.thread && current.secondaryThread && current.activeContext
-      && (current.thread.id === threadID || current.secondaryThread.id === threadID)) {
-      const survivingPane = current.thread.id === threadID ? "secondary" : "primary";
+      && threadIDs.has(current.thread.id) !== threadIDs.has(current.secondaryThread.id)) {
+      const survivingPane = threadIDs.has(current.thread.id) ? "secondary" : "primary";
       const survivingThread = survivingPane === "primary" ? current.thread : current.secondaryThread;
       const draft = cloneComposerDraft(deps.getSplitComposerDrafts()[survivingPane]);
       deps.restorePrimaryComposerDraft(draft);
       deps.resetSplitComposerDrafts();
       return createThreadSessionTab(survivingThread, current.activeContext, draft);
     }
-    if (threadID !== activeThreadIDForState(current)) {
+    if (!threadIDs.has(activeThreadIDForState(current) ?? "")) {
       return undefined;
     }
     const fallback = current.activeContext
@@ -269,26 +269,7 @@ export function createThreadMutationActions(
       const result = force
         ? await window.wuu.archiveThread(thread.id, true, true)
         : await window.wuu.archiveThread(thread.id, true);
-      // Destructive local cleanup follows server confirmation and belongs
-      // only to the conversation that is still active now.
-      deps.clearThreadPendingComposerMessages(thread.id);
-      const fallbackTab = prepareConfirmedThreadRemoval(thread.id);
-      // Archived conversations remain in AppState for Settings → Archive, and
-      // the optimistic flip already dropped the sidebar row; the confirmation
-      // only needs to tear down the panes/tabs that still show the thread.
-      deps.setAppState((current) => {
-        const nextTabs = removeSessionTab(
-          current.sessionTabs,
-          threadSessionTabID(thread.id),
-        );
-        return archiveMarkThreadState(
-          current,
-          result.thread.id,
-          true,
-          nextTabs,
-          fallbackTab,
-        );
-      });
+      removeConfirmedThreads((result.threads ?? [result.thread]).map(member => member.id), true);
       return { ok: true };
     } catch (error) {
       if (previousThread) {
@@ -336,17 +317,13 @@ export function createThreadMutationActions(
     }));
     try {
       const result = await window.wuu.archiveThread(thread.id, false);
-      deps.updateCachedSidebarThread(result.thread);
+      const restored = result.threads ?? [result.thread];
+      for (const member of restored) deps.updateCachedSidebarThread(member);
       deps.setAppState((current) => ({
         ...current,
-        thread:
-          current.thread?.id === thread.id ? result.thread : current.thread,
-        secondaryThread:
-          current.secondaryThread?.id === thread.id
-            ? result.thread
-            : current.secondaryThread,
-        threads: upsertThread(current.threads, result.thread),
-        status: current.status === "ready" ? "ready" : current.status,
+        thread: restored.find(member => member.id === current.thread?.id) ?? current.thread,
+        secondaryThread: restored.find(member => member.id === current.secondaryThread?.id) ?? current.secondaryThread,
+        threads: restored.reduce((threads, member) => upsertThread(threads, member), current.threads),
       }));
     } catch (error) {
       if (previousThread) {
@@ -382,8 +359,8 @@ export function createThreadMutationActions(
       return;
     }
     try {
-      await window.wuu.deleteThread(thread.id);
-      removeDeletedThread(thread.id);
+      const result = await window.wuu.deleteThread(thread.id);
+      removeConfirmedThreads(result.thread_ids ?? [thread.id], false);
     } catch (error) {
       setStatus(
         error instanceof Error
@@ -396,41 +373,47 @@ export function createThreadMutationActions(
   async function deleteArchivedThread(threadID: string): Promise<void> {
     // Errors propagate to the batch so partial failures remain visible/retryable.
     // Never fall back to an unguarded delete against an older backend.
-    await window.wuu.deleteThread(threadID, { onlyIfArchived: true });
-    removeDeletedThread(threadID);
+    const result = await window.wuu.deleteThread(threadID, { onlyIfArchived: true });
+    removeConfirmedThreads(result.thread_ids ?? [threadID], false);
   }
 
-  function removeDeletedThread(threadID: string): void {
-    deps.clearThreadPendingComposerMessages(threadID);
-    const fallbackTab = prepareConfirmedThreadRemoval(threadID);
-    deps.removeCachedSidebarThread(threadID);
+  function removeConfirmedThreads(ids: string[], archived: boolean): void {
+    const threadIDs = new Set(ids);
+    for (const id of threadIDs) {
+      deps.clearThreadPendingComposerMessages(id);
+      deps.removeCachedSidebarThread(id);
+    }
+    const fallbackTab = prepareConfirmedThreadRemoval(threadIDs);
     deps.setAppState((current) => {
-      const nextTabs = removeSessionTab(current.sessionTabs, threadSessionTabID(threadID));
-      return archiveMarkThreadState(current, threadID, false, nextTabs, fallbackTab);
+      const nextTabs = ids.reduce((tabs, id) => removeSessionTab(tabs, threadSessionTabID(id)), current.sessionTabs);
+      return archiveMarkThreadState(current, threadIDs, archived, nextTabs, fallbackTab);
     });
   }
 
   function archiveMarkThreadState(
     current: AppState,
-    threadID: string,
+    threadIDs: ReadonlySet<string>,
     archived: boolean,
     nextTabs: AppState["sessionTabs"],
     fallbackTab: SessionTab | undefined,
   ): AppState {
+    const idsForTabs = new Set([...threadIDs].map(threadSessionTabID));
+    const removingPrimary = threadIDs.has(current.thread?.id ?? "");
+    const removingSecondary = threadIDs.has(current.secondaryThread?.id ?? "");
     const closingSplit = Boolean(current.thread && current.secondaryThread
-      && (current.thread.id === threadID || current.secondaryThread.id === threadID));
-    const remainingThread = current.thread?.id === threadID
-      ? current.secondaryThread
+      && (removingPrimary || removingSecondary));
+    const remainingThread = removingPrimary
+      ? (removingSecondary ? undefined : current.secondaryThread)
       : current.thread;
     return {
       ...current,
       thread: remainingThread,
-      secondaryThread: closingSplit || current.secondaryThread?.id === threadID
+      secondaryThread: closingSplit || removingSecondary
         ? undefined : current.secondaryThread,
       activePane: closingSplit ? "primary" : current.activePane,
       sessionTabs: fallbackTab ? ensureSessionTab(nextTabs, fallbackTab) : nextTabs,
       activeSessionTabID:
-        current.activeSessionTabID === threadSessionTabID(threadID) &&
+        idsForTabs.has(current.activeSessionTabID ?? "") &&
         fallbackTab
           ? fallbackTab.id
           : current.activeSessionTabID,
@@ -440,13 +423,13 @@ export function createThreadMutationActions(
       // drops the record entirely.
       threads:
         archived === false
-          ? current.threads.filter((candidate) => candidate.id !== threadID)
+          ? current.threads.filter((candidate) => !threadIDs.has(candidate.id))
           : current.threads.map((candidate) =>
-              candidate.id === threadID
+              threadIDs.has(candidate.id)
                 ? { ...candidate, archived: true }
                 : candidate,
             ),
-      running: activeThreadIDForState(current) === threadID
+      running: threadIDs.has(activeThreadIDForState(current) ?? "")
         ? isThreadRunning(remainingThread) : current.running,
       status: "ready",
     };

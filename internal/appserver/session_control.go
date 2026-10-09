@@ -75,9 +75,14 @@ func (s *Server) threadSessionControl(_ string, c session.Control) *ThreadSessio
 	if !strings.HasPrefix(c.ManagerID, "plugin:") {
 		project, live := s.projectCoordinator(c.ManagerID)
 		if !live {
-			return nil
+			lead, _, err := s.fusionActor(c.ManagerID, c.SessionID)
+			if err != nil {
+				return nil
+			}
+			name = firstNonEmpty(lead.Title, "Fusion Lead")
+		} else {
+			name = project.Title
 		}
-		name = project.Title
 	}
 	return &ThreadSessionControl{ManagerID: c.ManagerID, ManagerName: name, State: c.State, Revision: c.Revision}
 }
@@ -90,12 +95,22 @@ func (s *Server) takeSessionControlForInput(id string) error {
 	if s == nil || s.rt == nil {
 		return nil
 	}
+	metadata, found, err := session.Find(s.rt.SessionDir, id)
+	if err != nil {
+		return err
+	}
+	if found && metadata.Source == fusionSideSource {
+		return errors.New("Sidekick is managed by its Fusion Lead; send requirements in the Lead conversation")
+	}
 	c, ok, err := session.ReadControl(s.rt.SessionDir, id)
 	if err != nil {
 		return err
 	}
 	if ok && c.State != session.ControlReleased && !strings.HasPrefix(c.ManagerID, "plugin:") {
 		if _, live := s.projectCoordinator(c.ManagerID); live {
+			return nil
+		}
+		if _, _, err := s.fusionActor(c.ManagerID, id); err == nil {
 			return nil
 		}
 	}
@@ -118,19 +133,34 @@ func (s *Server) takeSessionControl(id, state string) error {
 		return nil
 	}
 	project, live := s.projectCoordinator(c.ManagerID)
-	if live {
+	_, _, fusionErr := s.fusionActor(c.ManagerID, id)
+	fusion := fusionErr == nil
+	if live || fusion {
 		// Stop revokes previously admitted inputs, not membership. A later
 		// explicit instruction uses the new revision and remains admissible.
 		state = session.ControlActive
 	} else if c.State == state {
 		return nil
 	}
-	c, err = session.ChangeControl(s.rt.SessionDir, id, c.ManagerID, state, c.Revision)
+	if fusion {
+		err = session.CancelFusionTasks(s.rt.SessionDir, c.ManagerID, "The user stopped Sidekick")
+		if err == nil {
+			c, _, err = session.ReadControl(s.rt.SessionDir, id)
+		}
+	} else {
+		c, err = session.ChangeControl(s.rt.SessionDir, id, c.ManagerID, state, c.Revision)
+	}
 	if err != nil {
 		return err
 	}
 	s.revokeSessionInputs(id)
 	s.publishSessionControl(id)
+	if fusion {
+		if err := session.EnqueueInbox(s.rt.SessionDir, session.InboxMessage{ClientID: fmt.Sprintf("fusion-stop:%s:%d", id, c.Revision), SessionID: c.ManagerID, RelatedSessionID: id, Cause: "fusion_stopped", Content: "The user stopped Sidekick. Respect their stop intent; do not automatically restart this work. Its history and completed results remain available.", Wake: false}); err != nil {
+			return err
+		}
+		s.startBackground(func() { s.drainSessionInbox(c.ManagerID) })
+	}
 	if live {
 		if w, found, err := s.workForMember(project.ID, id); err != nil {
 			return err

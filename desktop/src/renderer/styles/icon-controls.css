@@ -65,7 +65,7 @@
 /* All top-row controls share geometry, including narrow windows and the
  * fixed toggle above a hover drawer. Size the placeholder from this token too. */
 :is(.titlebar, .settings-titlebar, .traffic-spacer, .workspace-panel-tabbar,
-    .side-thread-panel__header, .globalized-sidebar-toggle-region) .icon-button,
+    .side-thread-panel__header, .conversation-split-header, .globalized-sidebar-toggle-region) .icon-button,
 .shell-right-sidebar-toggle {
   flex: 0 0 auto;
   width: var(--control-size-toolbar);

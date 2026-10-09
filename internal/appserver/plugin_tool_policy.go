@@ -24,7 +24,8 @@ func (s *Server) configureSessionToolPolicy(sessionID string, threadRuntime *run
 		return err
 	}
 	encoded := strings.TrimSpace(metadata.ToolPolicyJSON)
-	if encoded == "" && metadata.Source != projectSource && metadata.Source != projectSessionSource {
+	fusion := metadata.Source == fusionSideSource || metadata.FusionEnabled
+	if encoded == "" && metadata.Source != projectSource && metadata.Source != projectSessionSource && !fusion {
 		return nil
 	}
 	var policy pluginhost.SessionToolPolicy
@@ -50,6 +51,9 @@ func (s *Server) configureSessionToolPolicy(sessionID string, threadRuntime *run
 			return s.acquireProjectWorkTool(metadata, call, guard.base)
 		}
 	}
+	if fusion {
+		guarded = s.fusionToolPolicy(metadata, guarded)
+	}
 	threadRuntime.StreamRunner.Tools = guarded
 	if guard, ok := guarded.(*sessionToolPolicyExecutor); ok && threadRuntime.Toolkit != nil {
 		for _, definition := range threadRuntime.Toolkit.Definitions() {
@@ -59,6 +63,15 @@ func (s *Server) configureSessionToolPolicy(sessionID string, threadRuntime *run
 		}
 	}
 	return nil
+}
+
+func (s *Server) fusionToolPolicy(metadata session.Session, base agent.ToolExecutor) agent.ToolExecutor {
+	guard, ok := base.(*sessionToolPolicyExecutor)
+	if !ok {
+		guard = &sessionToolPolicyExecutor{base: base}
+	}
+	guard.acquire = func(call providers.ToolCall) (func(), error) { return s.acquireFusionTool(metadata, call, guard.base) }
+	return guard
 }
 
 // sessionToolPolicyExecutor is an attenuation-only decorator. It filters the

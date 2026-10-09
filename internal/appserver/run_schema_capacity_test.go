@@ -40,7 +40,7 @@ func TestProjectCapacityRetainsSchemaContinuation(t *testing.T) {
 				stopped *atomic.Bool
 			}
 			timers := make(chan scheduled, 16)
-			srv.projectInboxAfterFunc = func(delay time.Duration, fire func()) func() {
+			srv.sessionInboxAfterFunc = func(delay time.Duration, fire func()) func() {
 				stopped := &atomic.Bool{}
 				timers <- scheduled{delay, fire, stopped}
 				return func() { stopped.Store(true) }
@@ -85,7 +85,7 @@ func TestProjectCapacityRetainsSchemaContinuation(t *testing.T) {
 			case <-time.After(gatedProviderTimeout):
 				t.Fatal("blocked schema continuation lost its retry")
 			}
-			if timer.delay <= threadExecutionLeaseRetryDelay || timer.delay > projectInboxMaxRetryDelay {
+			if timer.delay <= threadExecutionLeaseRetryDelay || timer.delay > sessionInboxMaxRetryDelay {
 				t.Fatalf("retry backoff=%v", timer.delay)
 			}
 			assertSchemaUserTurns(t, srv, worker.ID, 1)
@@ -201,7 +201,7 @@ func TestProjectCapacitySchemaContinuationHonorsRemoteStop(t *testing.T) {
 			rt.InferenceJournalRuntime = journal
 			rt.ActivityRegistry = activity.NewRegistry()
 			timers := make(chan func(), 16)
-			srv.projectInboxAfterFunc = func(_ time.Duration, fire func()) func() {
+			srv.sessionInboxAfterFunc = func(_ time.Duration, fire func()) func() {
 				timers <- fire
 				return func() {}
 			}

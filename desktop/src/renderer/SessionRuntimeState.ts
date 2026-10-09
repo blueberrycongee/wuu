@@ -14,6 +14,7 @@ export function runtimeViewForSession(
   }
   return {
     ...initialized,
+    fusion: thread.fusion ?? undefined,
     provider: thread.model_provider || initialized.provider,
     model: thread.model || initialized.model,
     variant: thread.model_variant ?? initialized.variant,

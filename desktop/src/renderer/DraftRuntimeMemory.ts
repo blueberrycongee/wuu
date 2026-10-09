@@ -166,6 +166,9 @@ export function applyDraftRuntimeMemory(
   const rememberedMode = readDraftPermissionMemory();
   const rememberedApproveForMe = readDraftApproveForMeMemory();
   let next = initialized;
+  const fusion = initialized.advanced_settings?.fusion;
+  if (fusion?.enabled && fusion.default) next = { ...next, fusion: { lead: fusion.lead, sidekick: fusion.sidekick } };
+  else if (next.fusion) next = { ...next, fusion: undefined };
   if (remembered) {
     next = {
       ...next,
@@ -213,7 +216,8 @@ export function seedDraftRuntimeFromMemory(state: AppState): AppState {
   if (!state.initialized || activeThreadForState(state)) return state;
   const next = applyDraftRuntimeMemory(state.initialized);
   if (
-    next.provider === state.initialized.provider
+    next.fusion === state.initialized.fusion
+    && next.provider === state.initialized.provider
     && next.model === state.initialized.model
     && (next.variant ?? "") === (state.initialized.variant ?? "")
     && (next.effort ?? "") === (state.initialized.effort ?? "")

@@ -194,6 +194,7 @@ func (s *Server) currentAdvancedSettingsSummary() AdvancedSettingsSummary {
 		summary.DisableAutoCompact = s.rt.StreamRunner.DisableAutoCompact
 	}
 	if cfg, _, err := s.rt.LoadEffectiveConfig(); err == nil {
+		summary.Fusion = cfg.Agent.Fusion
 		summary.MaxSteps = cfg.Agent.MaxSteps
 		summary.MaxContextTokens = cfg.Agent.MaxContextTokens
 		summary.Temperature = cfg.Agent.Temperature
@@ -1021,7 +1022,7 @@ func (s *Server) handleConfigAdvancedUpdate(req Request) error {
 	}
 	modelAliases := modelAliasConfigUpdate(params.ModelAliases)
 	verificationModel := modelRoleConfigUpdate(params.VerificationModel)
-	if modelAliases != nil || verificationModel != nil || params.ProjectModels != nil {
+	if modelAliases != nil || verificationModel != nil || params.ProjectModels != nil || params.Fusion != nil {
 		candidate, _, err := s.rt.LoadEffectiveConfig()
 		if err != nil {
 			return s.writeResponse(req.ID, nil, err)
@@ -1036,6 +1037,9 @@ func (s *Server) handleConfigAdvancedUpdate(req Request) error {
 		}
 		if verificationModel != nil {
 			candidate.Agent.ModelRoles.Verification = *verificationModel
+		}
+		if params.Fusion != nil {
+			candidate.Agent.Fusion = params.Fusion
 		}
 		if params.ProjectModels != nil {
 			candidate.Agent.ProjectModels = *params.ProjectModels
@@ -1055,6 +1059,7 @@ func (s *Server) handleConfigAdvancedUpdate(req Request) error {
 		ModelAliases:            modelAliases,
 		VerificationModel:       verificationModel,
 		ProjectModels:           params.ProjectModels,
+		Fusion:                  params.Fusion,
 	}); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
@@ -2032,8 +2037,8 @@ func (s *Server) beginThreadRuntimeSelectionMutation(threadID string) (*threadSt
 	}
 	th.runtimeSelectionMutation = true
 	persist := th.PersistHistory
+	fusion := th.Fusion != nil
 	th.mu.Unlock()
-
 	var mutationLease *session.ThreadExecutionLease
 	if persist {
 		mutationLease, err = s.tryAcquireThreadMutationLease(threadID)
@@ -2047,11 +2052,32 @@ func (s *Server) beginThreadRuntimeSelectionMutation(threadID string) (*threadSt
 			return nil, func() {}, err
 		}
 	}
+	var sideReleases []func()
 	release := func() {
+		for _, releaseSide := range sideReleases {
+			releaseSide()
+		}
 		releaseThreadMutationLease(threadID, mutationLease)
 		th.mu.Lock()
 		th.runtimeSelectionMutation = false
 		th.mu.Unlock()
+	}
+	if fusion {
+		// Hold the Side's ordinary mutation lease too. An inbox retry cannot
+		// start it between the idle check and a pair permission/model update.
+		sides, err := s.fusionSides(threadID)
+		for _, side := range sides {
+			_, releaseSide, sideErr := s.beginThreadRuntimeSelectionMutation(side.ID)
+			if sideErr != nil {
+				err = sideErr
+				break
+			}
+			sideReleases = append(sideReleases, releaseSide)
+		}
+		if err != nil {
+			release()
+			return nil, func() {}, fmt.Errorf("%w: Sidekick must be idle; stop Fusion first: %v", errThreadRuntimeSelectionBusy, err)
+		}
 	}
 	return th, release, nil
 }
@@ -2066,6 +2092,29 @@ func (s *Server) handleThreadModelSelection(req Request, params ConfigModelUpdat
 	}
 	defer release()
 	th.mu.Lock()
+	side := th.Source == fusionSideSource
+	th.mu.Unlock()
+	if side {
+		return s.writeResponse(req.ID, nil, errors.New("Sidekick uses the Fusion pair; change mode or permissions in its Lead conversation"))
+	}
+	var leaveFusion *session.Session
+	if params.Fusion != nil {
+		if *params.Fusion || params.Model == "" {
+			return s.updateThreadFusion(req, th, *params.Fusion)
+		}
+		metadata, found, err := session.Find(s.rt.SessionDir, th.ID)
+		if err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+		if found && metadata.Fusion != nil {
+			leaveFusion = &metadata
+		}
+	}
+	th.mu.Lock()
+	if th.Fusion != nil && leaveFusion == nil && (params.Model != "" || params.Provider != "" || params.Effort != nil || params.Variant != nil || params.Speed != nil) {
+		th.mu.Unlock()
+		return s.writeResponse(req.ID, nil, errors.New("Fusion models are pinned; select a regular model to leave Fusion"))
+	}
 
 	provider, model := th.ModelProvider, th.Model
 	variant, effort, permission := th.ModelVariant, th.ModelEffort, th.PermissionMode
@@ -2168,6 +2217,20 @@ func (s *Server) handleThreadModelSelection(req Request, params ConfigModelUpdat
 		approveForMe = *params.ApproveForMe && approvefor.EnabledForMode(permission)
 	} else if !approvefor.EnabledForMode(permission) {
 		approveForMe = false
+	}
+	// Validate the complete regular selection before leaving the pinned pair.
+	// A rejected provider/model update must preserve the current Fusion mode.
+	if leaveFusion != nil {
+		if err := s.stopFusionSides(th.ID); err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+		if _, err := session.SetFusion(s.rt.SessionDir, th.ID, *leaveFusion.Fusion, false); err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+		th.mu.Lock()
+		th.Fusion = nil
+		th.Instructions = leaveFusion.Instructions
+		th.mu.Unlock()
 	}
 	if err := s.updateThreadRuntimeForModelUpdate(th, resolvedName, model, selection.Variant, selection.LegacyEffort, speed, permission, approveForMe); err != nil {
 		return s.writeResponse(req.ID, nil, err)

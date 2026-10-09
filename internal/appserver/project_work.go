@@ -40,8 +40,8 @@ type projectWorkView struct {
 	SubmissionTurnID string              `json:"submission_turn_id,omitempty"`
 	Delivery         string              `json:"delivery,omitempty"`
 	Blocker          string              `json:"blocker,omitempty"`
-	LeadDispatch     *projectSessionView `json:"lead_dispatch,omitempty"`
-	ExecutorDispatch *projectSessionView `json:"executor_dispatch,omitempty"`
+	LeadDispatch     *managedSessionView `json:"lead_dispatch,omitempty"`
+	ExecutorDispatch *managedSessionView `json:"executor_dispatch,omitempty"`
 	Usage            []projectRoleUsage  `json:"usage,omitempty"`
 }
 
@@ -216,7 +216,7 @@ func (s *Server) projectWork(ctx context.Context, actorID, callID string, r tool
 				}
 				// Submission precedes terminal settlement. Failed turns also reach
 				// reviewing for diagnosis, so phase alone cannot authorize acceptance.
-				turns, err := s.loadDurableProjectTurns(w.ExecutorID)
+				turns, err := s.loadDurableSessionTurns(w.ExecutorID)
 				if err != nil {
 					return nil, err
 				}
@@ -287,7 +287,7 @@ func (s *Server) projectWork(ctx context.Context, actorID, callID string, r tool
 	if err != nil {
 		return nil, err
 	}
-	s.startBackground(func() { s.kickProjectInboxDrain(w.ProjectID) })
+	s.startBackground(func() { s.kickSessionInboxDrain(w.ProjectID) })
 
 	// Requirement corrections fence writes immediately and interrupt stale execution.
 	// Execution leases remain held until the owning processes really exit.
@@ -386,7 +386,7 @@ func (s *Server) currentWorkAssignmentTurn(id, clientID string) (string, error) 
 // An unchanged assignment covers its automatic continuation turns. A newer
 // assignment must be consumed first; a late result before it cannot satisfy it.
 func (s *Server) requireWorkAssignmentTurn(id, clientID, turnID string) error {
-	turns, err := s.loadDurableProjectTurns(id)
+	turns, err := s.loadDurableSessionTurns(id)
 	if err != nil {
 		return err
 	}
@@ -499,8 +499,8 @@ func (s *Server) reconcileProjectWork(w session.ProjectWork) (resultErr error) {
 }
 
 func (s *Server) ensureWorkMember(w session.ProjectWork, id, role string, model session.RuntimeSelection, sharedWith string) error {
-	s.projectCreateMu.Lock()
-	defer s.projectCreateMu.Unlock()
+	s.sessionCreateMu.Lock()
+	defer s.sessionCreateMu.Unlock()
 	if metadata, found, err := session.Find(s.rt.SessionDir, id); err != nil {
 		return err
 	} else if found {
@@ -558,7 +558,7 @@ func (s *Server) projectWorkView(w session.ProjectWork, includeUsage bool) (proj
 	for _, entry := range []struct {
 		id    string
 		input *session.ProjectWorkInput
-		dst   **projectSessionView
+		dst   **managedSessionView
 	}{{w.LeadID, w.LeadInput, &view.LeadDispatch}, {w.ExecutorID, w.ExecutorInput, &view.ExecutorDispatch}} {
 		if entry.input == nil {
 			continue
@@ -570,7 +570,7 @@ func (s *Server) projectWorkView(w session.ProjectWork, includeUsage bool) (proj
 		if !found {
 			continue
 		}
-		receipt, err := s.projectDispatchReceipt(metadata, entry.input.ClientID)
+		receipt, err := s.sessionDispatchReceipt(metadata, entry.input.ClientID)
 		if err != nil {
 			return view, err
 		}
@@ -715,7 +715,7 @@ func (s *Server) recoverProjectWork(projectID string) error {
 			if active {
 				continue
 			}
-			turns, err := s.loadDurableProjectTurns(memberID)
+			turns, err := s.loadDurableSessionTurns(memberID)
 			if err != nil {
 				continue
 			}

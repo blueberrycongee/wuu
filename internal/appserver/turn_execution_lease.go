@@ -169,6 +169,15 @@ func (s *Server) refreshDurableThreadHistoryLocked(th *threadState) error {
 	th.Turns = turnsFromPersistedHistory(th.ID, loaded.displayHistory, time.Now().UTC(), s.resolveParticipantSummary)
 	s.restorePluginToolLabels(th.Turns)
 	th.Turns = applyTokenUsageMetasToTurns(th.Turns, loaded.tokenMetas)
+	fusionStates, err := s.fusionTurnStates(th.ID, loaded.metadata.Fusion)
+	if err != nil {
+		return err
+	}
+	for index := range th.Turns {
+		if state := fusionStates[th.Turns[index].ID]; state != nil {
+			th.Turns[index].Fusion = state
+		}
+	}
 	th.currentTurn = ""
 	th.currentTurnKind = ""
 	th.currentExecutionRunID = ""

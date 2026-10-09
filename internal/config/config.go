@@ -333,6 +333,7 @@ type AgentConfig struct {
 	// ProjectModels selects defaults for newly created project members. Empty
 	// selections inherit the lead; existing sessions retain their saved model.
 	ProjectModels ProjectModelsConfig `json:"project_models,omitempty"`
+	Fusion        *FusionConfig       `json:"fusion,omitempty"`
 	// DisableAutoCompact turns off the proactive auto-compact pass
 	// that fires when the conversation reaches the model's usable input
 	// window after reserving output headroom. The reactive overflow
@@ -422,6 +423,7 @@ type AdvancedRuntimeUpdate struct {
 	ModelAliases      map[string]*ModelRoleConfig
 	VerificationModel *ModelRoleConfig
 	ProjectModels     *ProjectModelsConfig
+	Fusion            *FusionConfig
 }
 
 type GeneralSettingsUpdate struct {
@@ -717,6 +719,11 @@ func (c Config) ResolveProvider(name string) (ProviderConfig, string, error) {
 
 // Validate performs semantic checks.
 func (c Config) Validate() error {
+	if c.Agent.Fusion != nil && c.Agent.Fusion.Enabled {
+		if _, err := c.FusionPair(); err != nil {
+			return err
+		}
+	}
 	if err := c.ExecutionEnvironments.Validate(); err != nil {
 		return err
 	}
@@ -1497,6 +1504,9 @@ func UpdateAdvancedRuntime(configPath, providerName string, update AdvancedRunti
 	setOptionalFloat(agent, "compact_threshold_pct", update.CompactThresholdPct, 0)
 	setOptionalInt(agent, "compact_keep_recent_tokens", update.CompactKeepRecentTokens)
 	setOptionalBool(agent, "disable_auto_compact", update.DisableAutoCompact)
+	if update.Fusion != nil {
+		agent["fusion"] = *update.Fusion
+	}
 	if update.ProjectModels != nil {
 		if *update.ProjectModels == (ProjectModelsConfig{}) {
 			delete(agent, "project_models")

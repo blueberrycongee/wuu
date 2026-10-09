@@ -44,7 +44,7 @@ func TestProjectPeerAdmissionRechecksControlsAfterPromptHook(t *testing.T) {
 					t.Fatal(err)
 				}
 				calls.next(t, brief).response <- providersResponse("Member ready.")
-				member := waitForThread(t, srv, result.(projectSessionView).SessionID, func(th Thread) bool {
+				member := waitForThread(t, srv, result.(managedSessionView).SessionID, func(th Thread) bool {
 					return th.Status == ThreadStatusIdle && th.LatestCompletedTurnID != ""
 				})
 				settleCoordinator(t, srv, calls, lead.ID, "Member ready.", "Ready.", projectResultClientID(member.ID, member.LatestCompletedTurnID))
