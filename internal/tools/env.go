@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/agentcontrol"
@@ -203,7 +204,10 @@ type Env struct {
 	// Reads are rejected the same as writes. Empty keeps the ordinary
 	// workspace-confinement behavior for named-agent runs.
 	FileScopeRoots []string
-	Skills         []skills.Skill
+	// Skills is the immutable bootstrap catalog for directly constructed Envs.
+	// Runtime updates publish skillCatalog instead of mutating this slice.
+	Skills       []skills.Skill
+	skillCatalog atomic.Pointer[skillCatalog]
 	// ActiveSurface is the compiled model profile surface currently
 	// governing this tool environment. Tools with secondary catalogs
 	// such as load_skill use it to avoid exposing instructions that
@@ -781,7 +785,7 @@ func (e *Env) VisibleSkills() []skills.Skill {
 	if e == nil {
 		return nil
 	}
-	return FilterSkillsForSurface(e.Skills, e.ActiveSurface)
+	return FilterSkillsForSurface(e.AvailableSkills(), e.ActiveSurface)
 }
 
 // ProcessSkillBody processes a skill body with variable substitution. Inline

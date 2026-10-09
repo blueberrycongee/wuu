@@ -198,6 +198,8 @@ Consumers declare the service name and major version, then call the gateway. The
 
 The [service composition example](../../../examples/plugins/service-composition/README.md) contains two buildable packages: a stateless text-analysis provider and a writing-report tool that consumes its version-1 API. It demonstrates both declarations and a real gateway call.
 
+For composition acceptance, exercise more than successful service calls: activate a provider and a consumer with a package-owned skill, then terminate the provider and make its next initialization fail. After a recovery check, verify that retained and new consumer toolkits cannot load the skill or call the revoked contributions, while independent packages and ordinary workspace skills still work. Verify that an already-created prompt remains unchanged. This scenario needs no model request: a JSONL runtime fixture and direct `load_skill` calls can check the lifecycle boundary.
+
 ### Reentrant service handlers
 
 The TypeScript runtime adapter keeps ordinary requests ordered by default. Set `RuntimePlugin.concurrentServices` to the names of provided services whose handlers may safely overlap other handlers:

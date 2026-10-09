@@ -488,6 +488,10 @@ func NewSession(opts Options) (*Session, error) {
 	if err := catalogLease.Release(); err != nil {
 		return nil, err
 	}
+	// Root worker callbacks run only after this dormant control is bound. The
+	// pointer is assigned once before startup; each callback reads a current
+	// immutable generation snapshot rather than constructor-captured skills.
+	var runtimeSession *Session
 	var agentControl *agentcontrol.AgentControl
 	pluginTurnRouter := NewPluginSessionRouter()
 	var userQuestions *pluginhost.UserQuestionBroker
@@ -643,11 +647,7 @@ func NewSession(opts Options) (*Session, error) {
 			HistoryDir:                     "",
 			WorkerSysPrompt:                workerBaseSystemPrompt,
 			WorkerPrompt: func(workerRoot string, wt agentcontrol.WorkerType, meta agentthread.Metadata, isolation agentcontrol.IsolationMode) (string, error) {
-				files, workerSkills := instructionFiles, discoveredSkills
-				if !sameRuntimeRoot(workerRoot, rootDir) {
-					files = discoverInstructions(workerRoot, opts.HomeDir, cfg.Instructions)
-					workerSkills = discoverSkillsWithPlugins(workerRoot, opts.HomeDir, wuuHome, pluginSkills, cfg.Skills)
-				}
+				files, workerSkills := runtimeSession.guidanceForRoot(workerRoot, nil)
 				return buildWorkerBasePrompt(workerRoot, sessionDate, "", workerToolProviderName, workerToolModeModel, workerToolSurface, files, workerSkills), nil
 			},
 			WorkerFactory: func(workerRoot string, wt agentcontrol.WorkerType, meta agentthread.Metadata) (agent.ToolExecutor, error) {
@@ -666,11 +666,8 @@ func NewSession(opts Options) (*Session, error) {
 				}
 				wkit.SetStateDir(workerStateDir)
 				wkit.SetProcessManager(processMgr)
-				workerSkills := discoveredSkills
-				if !sameRuntimeRoot(workerRoot, rootDir) {
-					workerSkills = discoverSkillsWithPlugins(workerRoot, opts.HomeDir, wuuHome, pluginSkills, cfg.Skills)
-				}
-				wkit.SetSkills(workerSkills)
+				_, workerSkills, workerGeneration := runtimeSession.skillSnapshotForRoot(workerRoot, nil)
+				wkit.SetSkillsWithAvailability(workerSkills, workerGeneration.skillAvailable)
 				wkit.SetAgentControl(agentControl)
 				wkit.ConfigureSurfaceForProviderModel(workerToolProviderName, workerToolModeModel, false)
 				wkit.SetToolSearchEnabled(workerToolSearchEnabled)
@@ -758,7 +755,7 @@ func NewSession(opts Options) (*Session, error) {
 		configLoadMode = ConfigLoadFile
 	}
 
-	runtimeSession := &Session{
+	runtimeSession = &Session{
 		ProviderName:                resolvedName,
 		Model:                       providerCfg.Model,
 		RootDir:                     rootDir,
@@ -905,6 +902,7 @@ func NewSession(opts Options) (*Session, error) {
 	runtimeSession.pluginGeneration.retain()
 	if toolkit != nil {
 		toolkit.SetPluginManager(runtimeSession.pluginManager(runtimeSession.pluginGeneration, runPluginManagementCommand))
+		toolkit.SetSkillsWithAvailability(discoveredSkills, runtimeSession.pluginGeneration.skillAvailable)
 	}
 	snapshotsOwned = false
 	// The legacy/root control remains dormant until SetSessionID binds its real
@@ -1219,7 +1217,7 @@ func (s *Session) NewThreadRuntimeForRootModel(sessionID, rootDir string, select
 	promptResult := buildBaseSystemPromptResult(
 		threadRoot, shadow.SessionDate, config.DefaultSystemPrompt(), "",
 		resolvedName, apiModel, activeSurfaceWithDeferredToolCatalog(shadow.Toolkit, shadow.DeferredToolCatalogPrompt),
-		shadow.InstructionFiles, "", "", shadow.Skills,
+		shadow.InstructionFiles, "", "", shadow.AvailableSkills(),
 	)
 	shadow.BaseSystemPrompt = promptResult.Content
 	shadow.BaseSystemPromptSections = promptResult.Sections
@@ -1326,7 +1324,7 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 		kit.SetArtifactPublisher(newArtifactPublisher(wuuHome))
 		kit.SetPluginManager(s.pluginManager(generation, runPluginManagementCommand))
 		kit.SetProcessManager(threadProcessManager)
-		kit.SetSkills(threadSkills)
+		kit.SetSkillsWithAvailability(threadSkills, generation.skillAvailable)
 		ConfigureToolkitPermissions(kit, s.Permissions)
 		kit.SetApproveForMe(false)
 		kit.SetSessionID(id)
@@ -2273,6 +2271,7 @@ func (s *Session) RefreshExtensions(cfg config.Config) error {
 	if s == nil {
 		return errors.New("runtime is not initialized")
 	}
+	s.RevokeFailedPluginDependencies()
 	candidate, err := s.PreflightExtensions(cfg)
 	if err != nil {
 		return err
@@ -2683,16 +2682,31 @@ func BoundaryForMode(mode string) tools.WorkspaceBoundary {
 // guidanceForRoot preserves the pinned plugin generation and user discovery
 // configuration while replacing project guidance with the actual checkout.
 func (s *Session) guidanceForRoot(root string, generation *PluginGeneration) ([]instructions.File, []skills.Skill) {
+	files, discovered, _ := s.skillSnapshotForRoot(root, generation)
+	return files, discovered
+}
+
+// Return the owner with its content so callers never combine old skill bytes
+// with a replacement generation's admission gate.
+func (s *Session) skillSnapshotForRoot(root string, generation *PluginGeneration) ([]instructions.File, []skills.Skill, *PluginGeneration) {
+	s.pluginGenerationMu.Lock()
 	snapshot, discovered := s.pluginSkills, s.Skills
 	skillConfig := s.skillsConfig
+	if generation == nil {
+		generation = s.pluginGeneration
+	}
 	if generation != nil {
 		snapshot, discovered = generation.pluginSkills, generation.skills
 		skillConfig = generation.settings.Skills
 	}
+	s.pluginGenerationMu.Unlock()
 	if sameRuntimeRoot(root, s.RootDir) {
-		return s.InstructionFiles, discovered
+		return s.InstructionFiles, generation.filterSkills(discovered), generation
 	}
-	return discoverInstructions(root, s.HomeDir, s.instructionConfig), discoverSkillsWithPlugins(root, s.HomeDir, s.WuuHome, snapshot, skillConfig)
+	snapshot.project = generation.filterSkills(snapshot.project)
+	snapshot.user = generation.filterSkills(snapshot.user)
+	discovered = discoverSkillsWithPlugins(root, s.HomeDir, s.WuuHome, snapshot, skillConfig)
+	return discoverInstructions(root, s.HomeDir, s.instructionConfig), generation.filterSkills(discovered), generation
 }
 
 func discoverInstructions(rootDir, homeDir string, cfg config.InstructionFilesConfig) []instructions.File {
@@ -2731,6 +2745,12 @@ func (s *Session) RefreshSystemPrompt(providerName, model string) string {
 	if s == nil {
 		return ""
 	}
+	return s.refreshSystemPromptWithSkills(providerName, model, s.AvailableSkills())
+}
+
+// applyPluginGeneration already holds the session publication lock. Its caller
+// supplies the generation-filtered skills instead of recursively reading it.
+func (s *Session) refreshSystemPromptWithSkills(providerName, model string, discovered []skills.Skill) string {
 	baseSystemPromptResult := buildBaseSystemPromptResult(
 		s.RootDir,
 		s.SessionDate,
@@ -2742,7 +2762,7 @@ func (s *Session) RefreshSystemPrompt(providerName, model string) string {
 		s.InstructionFiles,
 		"",
 		"",
-		s.Skills,
+		discovered,
 	)
 	baseSystemPrompt, pluginSections := assemblePluginSystemPrompt(baseSystemPromptResult.Content, s.systemPrompts)
 	s.BaseSystemPrompt = baseSystemPrompt

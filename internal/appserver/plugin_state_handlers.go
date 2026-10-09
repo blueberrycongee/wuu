@@ -207,7 +207,8 @@ func (s *Server) requireActiveDesktopPlugin(id, fingerprint string) (pluginpkg.P
 	if id == "" || fingerprint == "" {
 		return pluginpkg.Plugin{}, errors.New("plugin id and fingerprint are required")
 	}
-	for _, plugin := range s.rt.Plugins {
+	snapshot := s.rt.ExtensionSnapshot()
+	for _, plugin := range snapshot.Plugins {
 		if plugin.SubjectID != id {
 			continue
 		}
@@ -215,8 +216,8 @@ func (s *Server) requireActiveDesktopPlugin(id, fingerprint string) (pluginpkg.P
 			return pluginpkg.Plugin{}, errors.New("plugin generation is no longer active")
 		}
 		settings := extensions.Settings{}
-		if s.rt.ExtensionSettings != nil {
-			settings = *s.rt.ExtensionSettings
+		if snapshot.ExtensionSettings != nil {
+			settings = *snapshot.ExtensionSettings
 		} else if cfg := s.currentExtensionConfig(); cfg.Extensions != nil {
 			settings = *cfg.Extensions
 		}
@@ -224,9 +225,24 @@ func (s *Server) requireActiveDesktopPlugin(id, fingerprint string) (pluginpkg.P
 		if !enabled || (approval != ExtensionApprovalGranted && approval != ExtensionApprovalOfficial) || (state != ExtensionStateGranted && state != ExtensionStateActive) {
 			return pluginpkg.Plugin{}, errors.New("desktop plugin is not approved and enabled")
 		}
+		if err := desktopPluginRuntimeError(snapshot.PluginHost, plugin.ID); err != nil {
+			return pluginpkg.Plugin{}, err
+		}
 		return plugin, nil
 	}
 	return pluginpkg.Plugin{}, fmt.Errorf("plugin %q is not available in this workspace", id)
+}
+
+func desktopPluginRuntimeError(host *pluginhost.Host, id string) error {
+	if host == nil {
+		return nil
+	}
+	for _, status := range host.Statuses() {
+		if status.ID == id && (status.State == pluginhost.StateFailed || status.State == pluginhost.StateStopped) {
+			return errors.New("desktop plugin runtime is no longer active")
+		}
+	}
+	return nil
 }
 
 func pluginStorageScope(scope PluginValueScope) (pluginsettings.Scope, error) {

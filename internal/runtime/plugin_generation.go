@@ -57,6 +57,7 @@ type PluginGeneration struct {
 	// generation. A retired generation stays open until the last conversation
 	// that started against it is released.
 	refs           atomic.Int32
+	revocationMu   sync.Mutex
 	revokedMu      sync.Mutex
 	revokedPlugins map[string]bool
 }
@@ -89,6 +90,71 @@ func (s *Session) PluginGenerationNeedsRecovery() bool {
 		}
 	}
 	return false
+}
+
+// RevokeFailedPluginDependencies stops required consumers of failed runtimes
+// in the current and retained generations. Each generation keeps its immutable
+// snapshots and its own admission mask; a crash in an older implementation does
+// not revoke the same package ID in a healthy replacement. Call outside thread
+// admission locks because shutdown may synchronously call host services.
+func (s *Session) RevokeFailedPluginDependencies() bool {
+	if s == nil {
+		return false
+	}
+	s.pluginTransitionMu.Lock()
+	defer s.pluginTransitionMu.Unlock()
+	s.pluginGenerationMu.Lock()
+	captured := false
+	if s.pluginGeneration == nil && s.PluginHost != nil {
+		s.pluginGeneration = s.capturePluginGeneration()
+		captured = true
+	}
+	current := s.pluginGeneration
+	var generations []*PluginGeneration
+	if current != nil {
+		current.retain()
+		generations = append(generations, current)
+	}
+	for generation := range s.retiredPluginGenerations {
+		if generation == current {
+			continue
+		}
+		for refs := generation.refs.Load(); refs > 0; refs = generation.refs.Load() {
+			if generation.refs.CompareAndSwap(refs, refs+1) {
+				generations = append(generations, generation)
+				break
+			}
+		}
+	}
+	s.pluginGenerationMu.Unlock()
+	// Embedded sessions may acquire their first generation here. Production
+	// toolkits are already bound at generation construction/publication.
+	if captured && s.Toolkit != nil {
+		s.Toolkit.SetSkillsWithAvailability(current.skills, current.skillAvailable)
+	}
+	changed := false
+	for _, generation := range generations {
+		failures := generation.host.PackageDependencyFailures()
+		activeIDs := make(map[string]bool, len(generation.active))
+		invalidated := false
+		generation.revokedMu.Lock()
+		for _, item := range generation.active {
+			activeIDs[item.ID] = failures[item.ID] == nil
+			if failures[item.ID] != nil && !generation.revokedPlugins[item.ID] {
+				invalidated = true
+			}
+		}
+		generation.revokedMu.Unlock()
+		if invalidated {
+			generation.revokeMissingPlugins(activeIDs, s.TitleClient, s.Model)
+			if generation == current && s.HookDispatcher != nil && s.HookDispatcher != generation.hooks {
+				s.HookDispatcher.Replace(generation.hooks)
+			}
+			changed = true
+		}
+		s.releasePluginGeneration(generation)
+	}
+	return changed
 }
 
 // PreflightExtensionPolicy builds a replacement from the current package set
@@ -416,8 +482,9 @@ func (s *Session) ActivatePluginGeneration(candidate *PluginGeneration, commit f
 // conversation still pins this generation. Updates with the same ID retain
 // their old implementation until outstanding work releases it.
 func (g *PluginGeneration) revokeMissingPlugins(activeIDs map[string]bool, client providers.Client, model string) {
+	g.revocationMu.Lock()
+	defer g.revocationMu.Unlock()
 	g.revokedMu.Lock()
-	defer g.revokedMu.Unlock()
 	// Same-ID replacements can change their requirements. A pinned generation
 	// still needs its own providers; never apply the replacement's graph to it.
 	retainedIDs := make(map[string]bool, len(g.active))
@@ -446,11 +513,7 @@ func (g *PluginGeneration) revokeMissingPlugins(activeIDs map[string]bool, clien
 			remaining = append(remaining, item)
 		}
 	}
-	dependencyFailures := make(map[string]error)
-	if g.host != nil {
-		dependencyFailures = g.host.PackageDependencyFailures()
-	}
-	changed := false
+	var retiring []pluginpkg.Plugin
 	// g.active is provider-first. Consumers must release their resources while
 	// provider services are still available, including in pinned generations.
 	for index := len(g.active) - 1; index >= 0; index-- {
@@ -465,7 +528,22 @@ func (g *PluginGeneration) revokeMissingPlugins(activeIDs map[string]bool, clien
 			g.revokedPlugins = make(map[string]bool)
 		}
 		g.revokedPlugins[item.ID] = true
-		changed = true
+		retiring = append(retiring, item)
+	}
+	// Publish the entire mask before any shutdown callback. Such callbacks may
+	// read skills or inventory, so no mask lock may span an external effect.
+	g.revokedMu.Unlock()
+	if len(retiring) == 0 {
+		return
+	}
+	dependencyFailures := make(map[string]error)
+	if g.host != nil {
+		dependencyFailures = g.host.PackageDependencyFailures()
+	}
+	if g.hooks != nil {
+		g.hooks.Replace(buildHookDispatcher(g.settings, remaining, client, model, nil))
+	}
+	for _, item := range retiring {
 		if g.host != nil {
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 			outcome, _ := g.host.RetirePlugin(ctx, item.ID, &pluginhost.UserQuestionError{Code: "plugin_disabled", Message: "plugin was removed or disabled"})
@@ -495,11 +573,7 @@ func (g *PluginGeneration) revokeMissingPlugins(activeIDs map[string]bool, clien
 			g.requestTransforms.RemoveByPlugin(item.ID)
 		}
 	}
-	if changed && g.hooks != nil {
-		// Dispatcher replacement fences later hooks. A legacy hook that already
-		// started remains owned by its caller's execution context.
-		g.hooks.Replace(buildHookDispatcher(g.settings, remaining, client, model, nil))
-	}
+
 }
 
 func (g *PluginGeneration) retain() {
@@ -623,12 +697,12 @@ func (s *Session) applyPluginGeneration(generation *PluginGeneration) {
 	s.pluginSkills = generation.pluginSkills
 	if s.Toolkit != nil {
 		s.Toolkit.SetPluginManager(s.pluginManager(generation, runPluginManagementCommand))
-		s.Toolkit.SetSkills(s.Skills)
+		s.Toolkit.SetSkillsWithAvailability(s.Skills, generation.skillAvailable)
 		s.Toolkit.SetMCPActivityBindings(generation.mcpBinding)
 		s.Toolkit.SetMCPManager(generation.mcp)
 		configureToolkitSecurityExtensions(s.Toolkit, generation.host.ServiceRegistry())
 	}
-	s.RefreshSystemPrompt(s.ProviderName, s.Model)
+	s.refreshSystemPromptWithSkills(s.ProviderName, s.Model, generation.filterSkills(generation.skills))
 }
 
 // close retires every generation-owned resource in reverse ownership order
@@ -639,6 +713,14 @@ func (g *PluginGeneration) close() error {
 	if g == nil {
 		return nil
 	}
+	g.revokedMu.Lock()
+	if g.revokedPlugins == nil {
+		g.revokedPlugins = make(map[string]bool)
+	}
+	for _, item := range g.active {
+		g.revokedPlugins[item.ID] = true
+	}
+	g.revokedMu.Unlock()
 	report := &GenerationRevocationReport{GenerationID: g.id, RetiredAt: time.Now().UTC()}
 	g.revocation = report
 	var err error

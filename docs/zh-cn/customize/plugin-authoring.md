@@ -196,6 +196,8 @@ Peers 插件通过 `if_running: "steer"` 尽量把终态回执注入当前工作
 
 [服务组合示例](../../../examples/plugins/service-composition/README.md)（英文）包含两个可构建的包：无状态的文本分析 provider，以及消费其版本 1 API 的写作报告工具。示例展示两种声明和真实的 gateway 调用。
 
+组合验收不能只检查成功的服务调用：激活 provider 和带包内技能的消费者，再终止 provider，并让其下一次初始化失败。恢复检查后，验证已有和新建的消费者工具集都不能加载该技能或调用已撤销贡献，而独立包和普通工作区技能仍可用；同时验证已经创建的提示词保持不变。这个场景不需要模型请求：可用 JSONL 运行时测试进程和直接 `load_skill` 调用检查生命周期边界。
+
 ### 可重入服务处理函数
 
 TypeScript 运行时适配器默认按顺序处理普通请求。对于能够安全地与其他处理函数重叠执行的服务，可将其名称加入 `RuntimePlugin.concurrentServices`：
