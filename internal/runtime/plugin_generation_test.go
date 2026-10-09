@@ -205,6 +205,64 @@ func TestFailedCandidateClosesStartedProcessesAndPreservesOldGeneration(t *testi
 	}
 }
 
+func TestRefreshCandidatePreservesHealthyRuntimeOnFailure(t *testing.T) {
+	for _, failure := range []string{"startup", "required-service"} {
+		t.Run(failure, func(t *testing.T) {
+			oldClient := &generationClient{id: "live"}
+			old := testPluginGeneration("live", oldClient)
+			session := testGenerationSession(old)
+			defer session.Cleanup()
+			candidateClient := &fakeServicePluginClient{id: "live", required: []pluginhost.ServiceRequirement{{Name: "missing.service", MajorVersion: 1, Required: true}}}
+			candidate, err := session.buildPluginGeneration(config.Config{}, []pluginpkg.Plugin{testRuntimePlugin("live")}, nil, nil,
+				func(context.Context, pluginhost.ProcessConfig) (pluginhost.Client, error) {
+					if failure == "startup" {
+						return nil, errors.New("replacement startup failed")
+					}
+					return candidateClient, nil
+				})
+			if candidate != nil {
+				defer candidate.close()
+			}
+			if err == nil {
+				t.Fatal("refresh accepted a failed replacement for a healthy runtime")
+			}
+			if oldClient.closed || session.PluginHost != old.host {
+				t.Fatal("failed replacement changed the healthy runtime")
+			}
+			if !session.IsCurrentPluginGeneration(old) {
+				t.Fatal("failed replacement changed the committed generation identity")
+			}
+			if failure == "required-service" && !candidateClient.closed {
+				t.Fatal("failed candidate was not closed")
+			}
+		})
+	}
+}
+
+func TestRefreshCandidateAllowsRemovalAndIsolatesNewOptionalFailure(t *testing.T) {
+	oldClient := &generationClient{id: "removed"}
+	session := testGenerationSession(testPluginGeneration("removed", oldClient))
+	defer session.Cleanup()
+	candidate, err := session.buildPluginGeneration(config.Config{}, []pluginpkg.Plugin{testRuntimePlugin("new")}, nil, nil,
+		func(context.Context, pluginhost.ProcessConfig) (pluginhost.Client, error) {
+			return nil, errors.New("new optional runtime unavailable")
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer candidate.close()
+	if err := session.ActivatePluginGeneration(candidate, nil); err != nil {
+		t.Fatal(err)
+	}
+	if !oldClient.closed {
+		t.Fatal("removed runtime was not retired")
+	}
+	statuses := session.PluginHost.Statuses()
+	if len(statuses) != 1 || statuses[0].ID != "new" || statuses[0].State != pluginhost.StateFailed {
+		t.Fatalf("optional failure diagnostics = %+v", statuses)
+	}
+}
+
 func TestCapabilityConflictClosesCandidateAndPreservesOldGeneration(t *testing.T) {
 	oldClient := &generationClient{id: "old"}
 	old := testPluginGeneration("old", oldClient)
@@ -287,6 +345,9 @@ func TestActivatePluginGenerationKeepsPinnedConversationGeneration(t *testing.T)
 	}
 	if session.PluginHost != candidate.host {
 		t.Fatal("candidate was not published as the live generation")
+	}
+	if session.IsCurrentPluginGeneration(pinned) || !session.IsCurrentPluginGeneration(candidate) {
+		t.Fatal("committed generation identity did not change after publication")
 	}
 	if oldClient.closed {
 		t.Fatal("pinned conversation generation was closed during the swap")
@@ -625,6 +686,9 @@ func TestRefreshPluginCatalogKeepsActiveGeneration(t *testing.T) {
 	}
 	if err := session.RefreshPluginCatalog(); err != nil {
 		t.Fatal(err)
+	}
+	if !session.IsCurrentPluginGeneration(generation) {
+		t.Fatal("catalog refresh changed the committed generation identity")
 	}
 	if session.PluginHost != host || session.pluginGeneration != generation || generation.host != host {
 		t.Fatal("catalog refresh touched the active plugin generation")

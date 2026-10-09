@@ -198,12 +198,40 @@ func (s *Session) buildPluginGeneration(cfg config.Config, discovered []pluginpk
 		}
 		active = activationPlan.Plugins
 	}
-	host, kernel, err := buildPluginHost(active, s.RootDir, s.WorkspaceID, s.WuuHome, s.StateDir, required, start, s.PluginSessionRouter, s.UserQuestions)
+	// A refresh may isolate a newly broken optional runtime, but must not
+	// replace an already working runtime with a failed candidate. Requirements
+	// only apply to runtimes in the candidate, so intentional removals and
+	// disables remain possible.
+	requiredRuntimes := make(map[string]bool, len(required))
+	for id, value := range required {
+		requiredRuntimes[id] = value
+	}
+	if s.PluginHost != nil {
+		for _, status := range s.PluginHost.Statuses() {
+			if status.State == pluginhost.StateActive {
+				requiredRuntimes[status.ID] = true
+			}
+		}
+	}
+	host, kernel, err := buildPluginHost(active, s.RootDir, s.WorkspaceID, s.WuuHome, s.StateDir, requiredRuntimes, start, s.PluginSessionRouter, s.UserQuestions)
 	if err != nil {
 		for _, root := range ownedRoots {
 			_ = os.RemoveAll(root)
 		}
 		return nil, err
+	}
+	// Service negotiation can reject a prepared runtime after process startup.
+	// Treat that exactly like startup failure for required replacements.
+	for _, status := range host.Statuses() {
+		if requiredRuntimes[status.ID] && status.State == pluginhost.StateFailed {
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			closeErr := host.Close(ctx)
+			cancel()
+			for _, root := range ownedRoots {
+				_ = os.RemoveAll(root)
+			}
+			return nil, pluginActivationError(status.ID, errors.New(status.Error), closeErr)
+		}
 	}
 	systemPrompts, compactions, err := buildPluginAgentCapabilities(context.Background(), host, s.ProviderName, s.Model, s.RootDir)
 	if err != nil {
@@ -312,6 +340,18 @@ func (g *PluginGeneration) Release() bool {
 		providers.DebugLogf("plugin generation cleanup: %v", err)
 	}
 	return true
+}
+
+// IsCurrentPluginGeneration reports whether a conversation is bound to the
+// currently published generation. Catalog changes and rejected candidates do
+// not change this identity, unlike the durable mutation epoch.
+func (s *Session) IsCurrentPluginGeneration(generation *PluginGeneration) bool {
+	if s == nil {
+		return false
+	}
+	s.pluginGenerationMu.Lock()
+	defer s.pluginGenerationMu.Unlock()
+	return s.pluginGeneration == generation
 }
 
 func (s *Session) RetainPluginGeneration() *PluginGeneration {
