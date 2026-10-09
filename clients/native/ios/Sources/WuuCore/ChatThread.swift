@@ -123,6 +123,15 @@ public struct ChatThread: Identifiable, Sendable {
         // Reads during layout must be O(1); unchanged turns keep their parsed tool payloads.
         messages = turns.flatMap { projectedTurns[$0["id"].string ?? ""] ?? [] }
         rows = ConversationRow.grouped(messages)
+        reconcilePending()
+    }
+    private mutating func reconcilePending() {
+        guard !pending.isEmpty else { return }
+        // The host materializes queue and steering IDs as user-item source IDs.
+        let materialized = Set(turns.flatMap { $0["items"].array }
+            .filter { $0["type"].string == "user_message" }
+            .compactMap { $0["source_id"].string })
+        pending.removeAll { materialized.contains($0.id) }
     }
     /// Older pages can split a turn. Retain live updates and deletions received while fetching.
     public mutating func prependHistory(_ page: JSONValue) {
@@ -154,6 +163,7 @@ public struct ChatThread: Identifiable, Sendable {
         }
     }
     public mutating func apply(_ method: String, _ params: JSONValue) {
+        defer { reconcilePending() }
         if method == "thread/updated", params["thread"]["id"].string == id {
             let thread = ChatThread(params["thread"])
             title = thread.title; cwd = thread.cwd; pinned = thread.pinned; archived = thread.archived; updatedAt = thread.updatedAt
@@ -176,11 +186,8 @@ public struct ChatThread: Identifiable, Sendable {
             let removed = params[method == "turn/dequeued" ? "queue_id" : "steer_id"].string
             pending.removeAll { $0.id == removed }; return
         }
-        defer {
-            if !pending.isEmpty {
-                let materialized = Set(turns.flatMap { $0["items"].array }.compactMap { $0["client_id"].string })
-                pending.removeAll { materialized.contains($0.id) }
-            }
+        if method == "turn/started", let queueID = params["queue_id"].string {
+            pending.removeAll { $0.id == queueID }
         }
         if params["turn"] != .null {
             let turn = params["turn"]
