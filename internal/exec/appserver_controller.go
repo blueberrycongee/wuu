@@ -58,7 +58,7 @@ func NewLocalAppServerController(ctx context.Context, opts Options) (Controller,
 	if err != nil {
 		return nil, err
 	}
-	client, err := embedded.Connect(ctx, wuusdk.ClientOptions{Name: "wuu-exec"})
+	client, err := embedded.Connect(ctx, wuusdk.ClientOptions{Name: "wuu-exec", DeferredNotificationContent: true})
 	if err != nil {
 		_ = embedded.Close()
 		return nil, err

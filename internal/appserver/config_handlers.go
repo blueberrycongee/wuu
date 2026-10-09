@@ -50,6 +50,7 @@ func (s *Server) handleInitialize(req Request) error {
 		return s.writeResponse(req.ID, nil, fmt.Errorf("unsupported protocol version %q (server uses %q)", params.ProtocolVersion, ProtocolVersion))
 	}
 	s.setClientMethods(params.Capabilities.ReverseRPC.Methods)
+	s.deferredNotificationContent.Store(params.Capabilities.DeferredNotificationContent)
 	s.pinLegacyRuntimeSelections()
 	core := version.Info()
 	runtimeHost := s.rt.HostInfo()

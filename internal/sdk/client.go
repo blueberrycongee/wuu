@@ -18,6 +18,9 @@ import (
 type ClientOptions struct {
 	Name    string
 	Version string
+	// DeferredNotificationContent allows large snapshot content in events to
+	// use app-server content references. RPC responses retain their requested view.
+	DeferredNotificationContent bool
 }
 
 // BuildInfo identifies the embedded core build.
@@ -228,13 +231,15 @@ func (r *Runtime) Connect(ctx context.Context, opts ClientOptions) (*Client, err
 
 	var raw json.RawMessage
 	err := c.rpc.call(ctx, appserver.MethodInitialize, struct {
-		ProtocolVersion string `json:"protocol_version"`
+		ProtocolVersion string                       `json:"protocol_version"`
+		Capabilities    appserver.ClientCapabilities `json:"capabilities,omitempty"`
 		Client          struct {
 			Name    string `json:"name,omitempty"`
 			Version string `json:"version,omitempty"`
 		} `json:"client,omitempty"`
 	}{
 		ProtocolVersion: ProtocolVersion,
+		Capabilities:    appserver.ClientCapabilities{DeferredNotificationContent: opts.DeferredNotificationContent},
 		Client: struct {
 			Name    string `json:"name,omitempty"`
 			Version string `json:"version,omitempty"`

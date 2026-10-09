@@ -130,6 +130,7 @@ export type InitializeParams = {
     version?: string;
   };
   capabilities?: {
+    deferred_notification_content?: boolean;
     reverse_rpc?: {
       methods?: string[];
     };
