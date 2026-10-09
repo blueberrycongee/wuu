@@ -272,6 +272,12 @@ func (s *Server) handleTurnStartAdmission(ctx context.Context, req Request, allo
 }
 
 func (s *Server) threadRuntimePluginGenerationMatches(th *threadState) bool {
+	// Catalog changes and failed mutations also advance the disk epoch. A
+	// pinned runtime only needs rebuilding when activation actually replaced
+	// its generation, not when package metadata was refreshed.
+	if s != nil && s.rt != nil && th != nil && th.execRuntime != nil && th.execRuntime.PluginGeneration != nil {
+		return s.rt.IsCurrentPluginGeneration(th.execRuntime.PluginGeneration)
+	}
 	return s != nil && th != nil &&
 		th.runtimePluginEpoch == s.pluginGenerationEpoch.Load() &&
 		th.runtimePluginRevision == s.pluginRuntimeRevision.Load()
@@ -1118,7 +1124,12 @@ func (s *Server) ensureThreadRuntime(th *threadState) (*runtime.ThreadRuntime, e
 	if existing != nil && !running {
 		selectionMismatch := !s.threadRuntimeMatchesSelectionLocked(th, existing)
 		workspaceMismatch := existing.Toolkit != nil && sessionWorkspacePath(existing.Toolkit.RootDir()) != sessionWorkspacePath(th.CWD)
-		if th.pendingRuntimeReset || selectionMismatch || workspaceMismatch {
+		pluginMismatch := !s.threadRuntimePluginGenerationMatches(th)
+		// A generation belongs to live work, not the lifetime of a conversation.
+		// Rebuild only after its turns and workers settle so tools, hooks and
+		// worker closures move together. The history and session cache key stay;
+		// changed model-facing definitions can invalidate the provider prefix.
+		if th.pendingRuntimeReset || selectionMismatch || workspaceMismatch || pluginMismatch {
 			if !threadRuntimeHasOutstandingWork(th.ID, existing) {
 				detached = detachThreadRuntimeLocked(th)
 				existing = nil
