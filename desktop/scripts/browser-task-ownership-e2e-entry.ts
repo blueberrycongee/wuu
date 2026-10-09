@@ -66,7 +66,7 @@ let serial = 0;
 
 function respond(res: ServerResponse, tool?: Record<string, unknown>) {
   res.writeHead(200, { "Content-Type": "text/event-stream" });
-  const delta = tool ? { role: "assistant", tool_calls: [{ index: 0, id: `fixture-${++serial}`, type: "function", function: { name: "browser", arguments: JSON.stringify(tool) } }] }
+  const delta = tool ? { role: "assistant", tool_calls: [{ index: 0, id: `fixture-${++serial}`, type: "function", function: { name: "wuu_browser", arguments: JSON.stringify(tool) } }] }
     : { role: "assistant", content: "Browser fixture complete." };
   res.write(`data: ${JSON.stringify({ id: "fixture", choices: [{ index: 0, delta, finish_reason: null }] })}\n\n`);
   res.end(`data: ${JSON.stringify({ id: "fixture", choices: [{ index: 0, delta: {}, finish_reason: tool ? "tool_calls" : "stop" }], usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 } })}\n\ndata: [DONE]\n\n`);
@@ -82,6 +82,11 @@ const server = createServer((req, res) => {
   req.on("end", () => {
     const input = JSON.parse(body);
     providerRequests.push(input);
+    if (!input.tools?.length) {
+      if (input.stream) respond(res);
+      else { res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify({ choices: [{ message: { role: "assistant", content: "Browser fixture" }, finish_reason: "stop" }] })); }
+      return;
+    }
     const prompt = JSON.stringify(input.messages?.filter((message: { role: string }) => message.role === "user") ?? []);
     const marker = /OWNERSHIP_[ABC]/.exec(prompt)?.[0];
     if (!marker) { respond(res); return; }
@@ -139,8 +144,9 @@ app.whenReady().then(async () => {
   baseURL = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
   writeFileSync(join(home, "config.json"), JSON.stringify({
     default_provider: "fixture",
+    agent: { tool_loading: "flat", max_steps: 20 },
+    providers: { fixture: { type: "openai-compatible", base_url: `${baseURL}/v1`, api_key: "fixture-only", model: "fixture", models: { fixture: { tool_call: true, modalities: { input: ["text"], output: ["text"] }, limit: { context: 200000, output: 8000 } } } } },
     engines: Object.fromEntries(["codex", "claude", "cursor", "devin", "grok", "hermes", "pi", "opencode", "antigravity"].map(id => [id, { enabled: false }])),
-    providers: { fixture: { type: "openai-compatible", base_url: `${baseURL}/v1`, api_key: "fixture-only", model: "fixture" } },
   }));
   const main = new BrowserWindow({ show: false, width: 900, height: 650 });
   const context: RuntimeContext = { kind: "no_project", cwd: workdir };
