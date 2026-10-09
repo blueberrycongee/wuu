@@ -136,8 +136,7 @@ async function run() {
   await click(main, '.sidebar-account-trigger');
   await waitFor(main, () => document.querySelector('[data-settings-page="providers"]'));
   await click(main, '[data-settings-page="providers"]');
-  await waitFor(main, () => document.querySelector('[data-testid="settings-default-model"]') && document.querySelector('[data-catalog="deepseek"]'));
-  assert.match(await evaluate(main, () => document.querySelector('[data-testid="settings-default-model"]').textContent), /fixture/);
+  await waitFor(main, () => document.querySelector('[data-provider="fixture"] .model-service-badge') && document.querySelector('[data-catalog="deepseek"]'));
   await capture(main, '01-overview.png');
 
   // The grouped catalog searches the complete directory, preserves the
@@ -223,10 +222,17 @@ async function run() {
   assert.equal(config.providers.gateway.model, 'fixture-b');
 
   await click(main, '[data-testid="settings-provider-back"]');
-  await waitFor(main, () => document.querySelector('[data-testid="settings-default-model"]')?.textContent.includes('fixture-b'));
+  await waitFor(main, () => document.querySelector('[data-provider="gateway"] .model-service-badge'));
   const cards = await evaluate(main, () => [...document.querySelectorAll('[data-testid="settings-provider-card"]')].map(card => ({ name: card.dataset.provider, label: card.getAttribute('aria-label'), isDefault: Boolean(card.querySelector('.model-service-badge')) })));
   assert.deepEqual(cards.filter(card => card.isDefault).map(card => card.name), ['gateway']);
   await capture(main, '06-overview-after.png');
+
+  // General gathers how new conversations start; it shows the new default.
+  await click(main, '[data-settings-page="general"]');
+  await waitFor(main, () => document.querySelector('[data-testid="settings-default-model-select"]')?.textContent.includes('fixture-b'));
+  await capture(main, '06-general-new-conversations.png');
+  await click(main, '[data-settings-page="providers"]');
+  await waitFor(main, () => document.querySelector('[data-provider="gateway"]'));
 
   // Every theme, text size, and width keeps controls inside the column.
   const layouts = [];
@@ -251,7 +257,7 @@ async function run() {
   await waitFor(main, () => document.querySelector('[data-testid="settings-provider-remove-confirm"]'));
   await capture(main, '08-remove-confirm.png');
   await click(main, '[data-testid="settings-provider-remove-confirm"]');
-  await waitFor(main, () => document.querySelector('[data-testid="settings-default-model"]') && !document.querySelector('[data-provider="deepseek"]'));
+  await waitFor(main, () => document.querySelector('[data-provider="gateway"]') && !document.querySelector('[data-provider="deepseek"]'));
   assert.equal(readConfig().providers.deepseek, undefined);
   assert.ok(!storedSecrets().includes('sk-e2e-deepseek'), 'Removing a service removes its saved key.');
 

@@ -725,7 +725,7 @@ describe("WorkspaceGroup remove workspace", () => {
     });
   }
 
-  it("shows loading instead of an empty state before project sessions hydrate", () => {
+  it("reports a hydrating project on its header without opening an empty body", () => {
     const project = makeWorkspace("project-1", "wuu", "/repo/wuu");
     act(() => {
       root = createRoot(container);
@@ -739,8 +739,11 @@ describe("WorkspaceGroup remove workspace", () => {
       );
     });
 
-    expect(container.textContent).toContain("正在加载对话");
+    // A placeholder row here would flash and vanish whenever the list resolves
+    // empty within a frame, so the header carries the loading state alone.
     expect(container.textContent).not.toContain("还没有对话");
+    expect(container.querySelector(".thread-list-collapse")).toBeNull();
+    expect(container.querySelector(".project-row")?.getAttribute("aria-busy")).toBe("true");
     expect(container.querySelector(".project-row-loading")).not.toBeNull();
   });
 

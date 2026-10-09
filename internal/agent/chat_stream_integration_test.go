@@ -272,6 +272,25 @@ func runChatStream(t *testing.T, body string, failAfterExecution bool) chatStrea
 			o.reconnects++
 		}
 	})
+	if failAfterExecution && tool.effects.Load() > 0 {
+		// Cancellation can return before the streamed tool's ledger write finishes.
+		// Keep its store alive until the result is durable, without delaying the
+		// upstream failure that exercises the running-tool replay fence.
+		for {
+			pending, err := ledger.PendingProjection(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(pending) == 1 {
+				break
+			}
+			select {
+			case <-ctx.Done():
+				t.Fatal("executed tool result was not durably settled")
+			case <-time.After(time.Millisecond):
+			}
+		}
+	}
 	o.requests, o.effects, o.toolResults = requests.Load(), tool.effects.Load(), toolResults.Load()
 	t.Logf("requests=%d reconnects=%d effects=%d tool_results=%d status=%s content=%q err=%v", o.requests, o.reconnects, o.effects, o.toolResults, o.result.DriverStatus, o.result.Content, o.err)
 	return o

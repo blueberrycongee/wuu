@@ -47,14 +47,21 @@
   --activity-toggle-hover-color: var(--gray-650);
   --activity-toggle-hover-color-alt: var(--wuu-color-text-muted, var(--gray-600));
   --activity-detail-color: var(--wuu-color-text-muted, var(--gray-550));
+  /* A tool row's target (file, query, command) sits between the row's
+   * tertiary verb and prose ink, so a run of rows scans by what was touched
+   * without competing with the answer. */
+  --activity-target-color: color-mix(in srgb, var(--ink) 50%, var(--ink-soft));
   /* Diff counts are status text: the status roles already pass contrast on
    * the canvas, where the brighter diff greens did not. */
   --diff-insert-color: var(--success);
   --diff-delete-color: var(--danger);
-  /* Links reuse the one interface blue; hover moves toward the theme ink,
-   * which darkens it on light and lightens it on dark. */
-  --rich-link-color: var(--wuu-color-link, var(--info));
-  --rich-link-hover-color: var(--wuu-color-link-hover, color-mix(in oklab, var(--info) 75%, var(--ink-strong)));
+  /* Links in prose are ink with an underline: the underline is the cue, so
+   * a reply full of PR, CI and doc links still reads as one paragraph
+   * rather than a row of blue buttons. Hover strengthens the underline. */
+  --rich-link-color: var(--wuu-color-link, var(--ink));
+  --rich-link-hover-color: var(--wuu-color-link-hover, var(--ink-strong));
+  --rich-link-underline-color: color-mix(in srgb, currentColor 35%, transparent);
+  --rich-link-icon-color: var(--ink-muted);
   /* Prose surfaces share the neutral ramp: blocks recede, inline code
    * gets a small contrast step without resembling a selected control. */
   --message-flow-card-bg: var(--surface-1);
@@ -2308,6 +2315,10 @@
   font-weight: var(--weight-medium);
 }
 
+.activity-target {
+  color: var(--activity-target-color);
+}
+
 .activity-add {
   color: var(--diff-insert-color);
 }
@@ -3191,28 +3202,20 @@
 
 .rich-link {
   color: var(--rich-link-color);
-  text-decoration-line: none;
+  text-decoration-line: underline;
+  text-decoration-thickness: 1px;
+  text-decoration-color: var(--rich-link-underline-color);
+  text-underline-offset: 0.22em;
 }
 
-/* Inside the black outgoing bubble the default link blue (tuned for light
- * prose) is nearly invisible, so links switch to the light-on-dark palette.
- * File links drop their inherited-ink color for the same reason and keep the
- * underline as the click affordance. */
+/* Themes can paint the outgoing bubble; its links follow the bubble's own
+ * link palette. */
 .user-message .rich-link {
   color: var(--user-message-link-color);
 }
 
 .user-message .rich-link:hover,
 .user-message .rich-link:focus-visible {
-  color: var(--user-message-link-hover-color);
-}
-
-.user-message .rich-file-link {
-  color: var(--user-message-link-color);
-  text-decoration-color: currentColor;
-}
-
-.user-message .rich-file-link:hover {
   color: var(--user-message-link-hover-color);
 }
 
@@ -3318,11 +3321,6 @@
 }
 
 .rich-file-link {
-  color: inherit;
-  text-decoration-line: underline;
-  text-decoration-thickness: 1px;
-  text-decoration-color: var(--wuu-color-text-muted, var(--gray-550));
-  text-underline-offset: 0.18em;
   appearance: none;
   -webkit-appearance: none;
   border: 0;
@@ -3354,8 +3352,8 @@
   height: 1em;
   align-items: center;
   justify-content: center;
-  margin-right: 4px;
-  color: currentColor;
+  margin-right: 0.3em;
+  color: var(--rich-link-icon-color);
   vertical-align: -0.12em;
 }
 
@@ -3381,11 +3379,10 @@
 .rich-link:hover,
 .rich-file-link:focus-visible {
   color: var(--rich-link-hover-color);
+  text-decoration-color: currentColor;
 }
 
 .rich-file-link:hover {
-  color: var(--rich-link-hover-color);
-  text-decoration-color: currentColor;
   background: transparent;
 }
 
