@@ -1004,7 +1004,8 @@ html.resizing-workspace-file-split * {
   justify-items: center;
   gap: var(--section-gap);
   overflow-y: auto;
-  padding: var(--space-8) var(--panel-padding);
+  /* Row glyphs land on the same inset as the review list and file tree. */
+  padding: var(--space-5) var(--space-2);
 }
 
 .workspace-tool-menu-section {
@@ -1017,11 +1018,11 @@ html.resizing-workspace-file-split * {
  * rows, so the empty panel reads as navigation rather than a list of cards. */
 .workspace-tool-menu-section h2 {
   margin: 0 0 var(--space-1);
-  padding: 0 var(--space-3);
+  padding: 0 var(--space-2);
   color: var(--ink-tertiary);
-  font-size: var(--font-ui);
-  font-weight: var(--weight-regular);
-  line-height: 1.5;
+  font-size: var(--font-sm);
+  font-weight: var(--weight-medium);
+  line-height: var(--line-ui);
 }
 
 .workspace-tool-menu-list {
@@ -1042,7 +1043,7 @@ html.resizing-workspace-file-split * {
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--ink);
-  padding: 0 var(--space-3);
+  padding: 0 var(--space-2);
   font-size: var(--font-ui);
   line-height: 1.5;
   text-align: start;
@@ -2356,22 +2357,27 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   white-space: nowrap;
 }
 
+/* Matches the file tree's search: a quiet filled field that takes the field
+ * surface only while in use, so both panel tabs open on the same control. */
 .workspace-review-search {
   min-width: 0;
   min-height: var(--control-field-height);
   margin: 0 var(--space-2) var(--space-2);
-  border: 1px solid var(--field-border);
+  border: 1px solid transparent;
   border-radius: var(--radius-sm);
-  background: var(--field-bg);
+  background: var(--ink-overlay-4);
   color: var(--ink);
   font: inherit;
   font-size: var(--font-ui);
   padding: var(--control-padding-block) var(--space-2);
-  transition: background-color var(--motion-fast) var(--ease-out);
+  transition:
+    background-color var(--motion-fast) var(--ease-out),
+    border-color var(--motion-fast) var(--ease-out);
 }
 
-.workspace-review-search:hover {
-  background: var(--field-hover-bg);
+.workspace-review-search:focus {
+  border-color: var(--field-border);
+  background: var(--field-bg);
 }
 
 .workspace-review-list-scroll {
