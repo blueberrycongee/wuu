@@ -281,10 +281,10 @@ func (h *Host) InvokeCapability(ctx context.Context, capability RegisteredCapabi
 		h.mu.RUnlock()
 		return fmt.Errorf("plugin %q capability %q is not active", capability.PluginID, capability.Descriptor.ID)
 	}
-	executionID := h.executions.Begin(capability.PluginID)
+	executionID, executionCtx := h.executions.begin(capability.PluginID, ctx, ToolExecuteInput{}, false)
 	h.mu.RUnlock()
 	defer h.executions.End(executionID)
-	result, err := capability.client.InvokeCapability(ctx, CapabilityInvokeParams{
+	result, err := capability.client.InvokeCapability(executionCtx, CapabilityInvokeParams{
 		Capability:  capability.Descriptor.ID,
 		ExecutionID: executionID,
 		Input:       inputJSON,
@@ -411,10 +411,11 @@ func (h *Host) ExecuteTool(ctx context.Context, name string, input ToolExecuteIn
 		return toolresult.Result{}, fmt.Errorf("plugin tool %q is not registered", name)
 	}
 	input.Tool = name
-	input.ExecutionID = h.executions.BeginTool(tool.PluginID, ctx, input)
+	executionID, executionCtx := h.executions.begin(tool.PluginID, ctx, input, true)
+	input.ExecutionID = executionID
 	h.mu.RUnlock()
 	defer h.executions.End(input.ExecutionID)
-	response, err := tool.client.ExecuteTool(ctx, ToolExecuteParams{
+	response, err := tool.client.ExecuteTool(executionCtx, ToolExecuteParams{
 		ToolExecuteInput: input,
 		ToolID:           tool.Registration.ID,
 	})
@@ -432,7 +433,7 @@ func (h *Host) ExecuteTool(ctx context.Context, name string, input ToolExecuteIn
 		if scopeErr != nil {
 			return toolresult.Result{}, scopeErr
 		}
-		if err := materialize(ctx, scope, &response.Result); err != nil {
+		if err := materialize(executionCtx, scope, &response.Result); err != nil {
 			return toolresult.Result{}, fmt.Errorf("plugin %q tool %q materialize artifacts: %w", tool.PluginID, name, err)
 		}
 		if err := response.Result.Validate(); err != nil {
@@ -602,7 +603,6 @@ func (h *Host) CloseWithOutcomes(ctx context.Context) []ClientShutdownOutcome {
 	if h == nil {
 		return nil
 	}
-	h.CancelExecutions(&UserQuestionError{Code: "generation_closed", Message: "plugin generation retired"})
 	h.mu.Lock()
 	clients := append([]Client(nil), h.clients...)
 	h.clients = nil
@@ -610,6 +610,10 @@ func (h *Host) CloseWithOutcomes(ctx context.Context) []ClientShutdownOutcome {
 	h.toolOrder = nil
 	h.capabilities = nil
 	h.mu.Unlock()
+
+	// Revoke admission before taking the cancellation snapshot so no dispatch
+	// can register an execution after that snapshot and escape cancellation.
+	h.CancelExecutions(&UserQuestionError{Code: "generation_closed", Message: "plugin generation retired"})
 
 	outcomes := make([]ClientShutdownOutcome, 0, len(clients))
 	for i := len(clients) - 1; i >= 0; i-- {

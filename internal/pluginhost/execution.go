@@ -86,14 +86,16 @@ func NewExecutionTracker() *ExecutionTracker {
 
 // Begin registers one dispatch and returns its execution ID.
 func (t *ExecutionTracker) Begin(pluginID string) string {
-	return t.begin(pluginID, context.Background(), ToolExecuteInput{}, false)
+	id, _ := t.begin(pluginID, context.Background(), ToolExecuteInput{}, false)
+	return id
 }
 
 func (t *ExecutionTracker) BeginTool(pluginID string, ctx context.Context, input ToolExecuteInput) string {
-	return t.begin(pluginID, ctx, input, true)
+	id, _ := t.begin(pluginID, ctx, input, true)
+	return id
 }
 
-func (t *ExecutionTracker) begin(pluginID string, ctx context.Context, input ToolExecuteInput, tool bool) string {
+func (t *ExecutionTracker) begin(pluginID string, ctx context.Context, input ToolExecuteInput, tool bool) (string, context.Context) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -108,7 +110,7 @@ func (t *ExecutionTracker) begin(pluginID string, ctx context.Context, input Too
 		ctx: executionCtx, cancel: cancel, tool: tool,
 	}
 	t.mu.Unlock()
-	return id
+	return id, executionCtx
 }
 
 // End closes the execution. It is idempotent and never blocks: the core's

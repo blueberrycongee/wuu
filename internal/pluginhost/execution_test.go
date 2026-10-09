@@ -3,6 +3,7 @@ package pluginhost
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -200,4 +201,240 @@ func TestExecutionTrackerCancelAllKeepsGenerationCause(t *testing.T) {
 		t.Fatalf("scope cause = %v", context.Cause(scope.Context))
 	}
 	tracker.End(id)
+}
+
+// Both dispatch paths must expose the tracked lifetime to the RPC client.
+type executionLifecycleClient struct {
+	*fakeCapabilityClient
+	dispatch func(context.Context, string) error
+	close    func() error
+	invalid  bool
+}
+
+func (c *executionLifecycleClient) Tools() []ToolRegistration {
+	return []ToolRegistration{{ID: "run", Description: "Run", InputSchema: map[string]any{"type": "object"}}}
+}
+
+func (c *executionLifecycleClient) ExecuteTool(ctx context.Context, params ToolExecuteParams) (ToolExecuteResult, error) {
+	if err := c.dispatch(ctx, params.ExecutionID); err != nil {
+		return ToolExecuteResult{}, err
+	}
+	if c.invalid {
+		return ToolExecuteResult{Result: toolresult.Result{Content: []toolresult.ContentPart{{Type: "invalid"}}}}, nil
+	}
+	return ToolExecuteResult{Result: toolresult.Result{Content: []toolresult.ContentPart{{Type: toolresult.ContentTypeText, Text: "done"}}}}, nil
+}
+
+func (c *executionLifecycleClient) InvokeCapability(ctx context.Context, params CapabilityInvokeParams) (CapabilityInvokeResult, error) {
+	if err := c.dispatch(ctx, params.ExecutionID); err != nil {
+		return CapabilityInvokeResult{}, err
+	}
+	if c.invalid {
+		return CapabilityInvokeResult{Output: json.RawMessage(`{"unexpected":true}`)}, nil
+	}
+	return CapabilityInvokeResult{Output: json.RawMessage(`{}`)}, nil
+}
+
+func (c *executionLifecycleClient) Close(context.Context) error {
+	if c.close != nil {
+		return c.close()
+	}
+	return nil
+}
+
+func newExecutionLifecycleHost(kind string, client *executionLifecycleClient) (*Host, func(context.Context) error) {
+	client.fakeCapabilityClient = &fakeCapabilityClient{
+		fakeClient:   &fakeClient{id: "lifecycle", status: Status{State: StateActive}},
+		capabilities: []CapabilityDescriptor{{ID: CapabilityAgentTurnCompleted, Version: 1}},
+	}
+	host := New(client)
+	return host, func(ctx context.Context) error {
+		if kind == "tool" {
+			_, err := host.ExecuteTool(ctx, host.ToolDefinitions()[0].Name, ToolExecuteInput{ThreadID: "thread", TurnID: "turn", CallID: "call"})
+			return err
+		}
+		capability, _ := host.Capability(client.ID(), CapabilityAgentTurnCompleted)
+		return host.InvokeCapability(ctx, capability, AgentTurnCompletedInput{}, &AgentTurnCompletedOutput{})
+	}
+}
+
+func TestHostDispatchCancellationReachesClient(t *testing.T) {
+	for _, kind := range []string{"tool", "capability"} {
+		for _, trigger := range []string{"cancel_all", "retire", "caller"} {
+			t.Run(kind+"/"+trigger, func(t *testing.T) {
+				type contextKey struct{}
+				deadline := time.Now().Add(time.Minute)
+				parent, release := context.WithDeadline(context.Background(), deadline)
+				defer release()
+				caller, cancel := context.WithCancelCause(context.WithValue(parent, contextKey{}, "caller value"))
+				defer cancel(nil)
+				started := make(chan context.Context, 1)
+				finished := make(chan error, 1)
+				client := &executionLifecycleClient{dispatch: func(ctx context.Context, _ string) error {
+					started <- ctx
+					<-ctx.Done()
+					return context.Cause(ctx)
+				}}
+				host, invoke := newExecutionLifecycleHost(kind, client)
+				go func() { finished <- invoke(caller) }()
+				var rpcContext context.Context
+				select {
+				case rpcContext = <-started:
+				case <-time.After(time.Second):
+					t.Fatal("dispatch never reached client")
+				}
+				if got := rpcContext.Value(contextKey{}); got != "caller value" {
+					t.Fatalf("RPC lost caller context value: %v", got)
+				}
+				if got, ok := rpcContext.Deadline(); !ok || !got.Equal(deadline) {
+					t.Fatalf("RPC lost caller deadline: %v, %v", got, ok)
+				}
+				cause := errors.New("execution stopped")
+				switch trigger {
+				case "cancel_all":
+					host.CancelExecutions(cause)
+					host.CancelExecutions(errors.New("second cancellation"))
+				case "retire":
+					client.close = func() error {
+						if !errors.Is(context.Cause(rpcContext), cause) {
+							t.Error("RPC must be canceled before client shutdown")
+						}
+						return nil
+					}
+					if outcome, found := host.RetirePlugin(context.Background(), client.ID(), cause); !found || outcome.Err != nil {
+						t.Fatalf("retire = (%+v, %v)", outcome, found)
+					}
+				case "caller":
+					cancel(cause)
+				}
+				select {
+				case err := <-finished:
+					if !errors.Is(err, cause) {
+						t.Fatalf("dispatch error = %v, want original cancellation cause", err)
+					}
+				case <-time.After(time.Second):
+					t.Fatal("tracked cancellation did not stop the active RPC")
+				}
+				if got := host.ExecutionSnapshots(); len(got) != 0 {
+					t.Fatalf("canceled execution still live: %+v", got)
+				}
+				if trigger != "caller" && caller.Err() != nil {
+					t.Fatal("execution cancellation canceled its caller")
+				}
+			})
+		}
+	}
+}
+
+func TestHostDispatchCompletionEndsTrackedContext(t *testing.T) {
+	for _, kind := range []string{"tool", "capability"} {
+		for _, outcome := range []string{"success", "client_error", "invalid_result"} {
+			t.Run(kind+"/"+outcome, func(t *testing.T) {
+				var rpcContext context.Context
+				var executionID string
+				calls := 0
+				clientError := errors.New("client failed")
+				client := &executionLifecycleClient{invalid: outcome == "invalid_result", dispatch: func(ctx context.Context, id string) error {
+					calls++
+					rpcContext, executionID = ctx, id
+					if outcome == "client_error" {
+						return clientError
+					}
+					return nil
+				}}
+				host, invoke := newExecutionLifecycleHost(kind, client)
+				err := invoke(context.Background())
+				if (err == nil) != (outcome == "success") || outcome == "client_error" && !errors.Is(err, clientError) {
+					t.Fatalf("dispatch error = %v for %s", err, outcome)
+				}
+				if calls != 1 || executionID == "" {
+					t.Fatalf("dispatch calls = %d, execution ID = %q", calls, executionID)
+				}
+				if !IsUserQuestionErrorCode(context.Cause(rpcContext), "execution_cancelled") {
+					t.Fatalf("returned RPC context still open: %v", context.Cause(rpcContext))
+				}
+				if got := host.ExecutionSnapshots(); len(got) != 0 {
+					t.Fatalf("completed execution still live: %+v", got)
+				}
+				if late := host.RecordExecutionUpdate(client.ID(), ExecutionUpdateParams{ExecutionID: executionID}); late == nil || late.Code != "execution_not_found" {
+					t.Fatalf("late update = %v", late)
+				}
+				cause := context.Cause(rpcContext)
+				host.CancelExecutions(errors.New("later retirement"))
+				if context.Cause(rpcContext) != cause {
+					t.Fatal("completed execution terminated again")
+				}
+			})
+		}
+	}
+}
+
+func TestHostCancellationReachesResultMaterialization(t *testing.T) {
+	client := &executionLifecycleClient{dispatch: func(context.Context, string) error { return nil }}
+	host, invoke := newExecutionLifecycleHost("tool", client)
+	started := make(chan struct{})
+	host.SetToolResultMaterializer(func(ctx context.Context, scope ToolExecutionScope, result *toolresult.Result) error {
+		close(started)
+		select {
+		case <-ctx.Done():
+			return context.Cause(ctx)
+		case <-time.After(time.Second):
+			return errors.New("materialization did not receive execution cancellation")
+		}
+	})
+	finished := make(chan error, 1)
+	go func() { finished <- invoke(context.Background()) }()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("materialization did not start")
+	}
+	cause := errors.New("generation retired during materialization")
+	host.CancelExecutions(cause)
+	if err := <-finished; !errors.Is(err, cause) {
+		t.Fatalf("materialization error = %v, want cancellation cause", err)
+	}
+	if got := host.ExecutionSnapshots(); len(got) != 0 {
+		t.Fatalf("materialized execution still live: %+v", got)
+	}
+}
+
+func TestHostCloseRevokesDispatchBeforeCancelingExecutions(t *testing.T) {
+	client := &executionLifecycleClient{dispatch: func(context.Context, string) error {
+		t.Error("new dispatch admitted while the host was canceling executions")
+		return nil
+	}}
+	host, _ := newExecutionLifecycleHost("tool", client)
+	toolName := host.ToolDefinitions()[0].Name
+	capability, _ := host.Capability(client.ID(), CapabilityAgentTurnCompleted)
+	id := host.executions.Begin(client.ID())
+	record := host.executions.live[id]
+	cancel := record.cancel
+	defer func() {
+		record.cancel = cancel
+		host.executions.End(id)
+	}()
+	cancellations := 0
+	// Observe the cancellation boundary synchronously: a new RPC admitted here
+	// would miss CancelAll's snapshot and could outlive generation shutdown.
+	record.cancel = func(cause error) {
+		cancellations++
+		cancel(cause)
+		if _, err := host.ExecuteTool(context.Background(), toolName, ToolExecuteInput{}); err == nil || !strings.Contains(err.Error(), "not registered") {
+			t.Errorf("tool dispatch during close = %v, want admission revoked", err)
+		}
+		if err := host.InvokeCapability(context.Background(), capability, AgentTurnCompletedInput{}, &AgentTurnCompletedOutput{}); err == nil || !strings.Contains(err.Error(), "not active") {
+			t.Errorf("capability dispatch during close = %v, want admission revoked", err)
+		}
+	}
+	client.close = func() error {
+		if cancellations != 1 || !IsUserQuestionErrorCode(context.Cause(record.ctx), "generation_closed") {
+			t.Errorf("client shutdown preceded execution cancellation: count=%d cause=%v", cancellations, context.Cause(record.ctx))
+		}
+		return nil
+	}
+	outcomes := host.CloseWithOutcomes(context.Background())
+	if len(outcomes) != 1 || outcomes[0].Err != nil {
+		t.Fatalf("close outcomes = %+v", outcomes)
+	}
 }
