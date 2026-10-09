@@ -691,2029 +691,768 @@ func (s *Server) reserveBackground(work func()) (*backgroundLaunch, bool) {
 
 // Close synchronously stops work owned by this app-server connection. It does
 // not return until locally admitted turns, workers, and their durable terminal
-// finalizers have released execution ownership.…42540 tokens truncated…nfunc (s *Server) persistTurnTrace(threadRuntime *runtime.ThreadRuntime, runner *agent.StreamRunner, threadID string, turnRuntime turnRuntimeSnapshot, turn Turn, res agent.LoopResult, runErr error, toolRecordStart int, contextRequests []sessiontrace.RequestContextRecord, providerStates []sessiontrace.ProviderStateRecord, compactAttempts []sessiontrace.CompactRecord, barrierRejectionsArg ...[]sessiontrace.BarrierToolBatchRejectionRecord) (string, error) {
-	if threadRuntime == nil || threadRuntime.Toolkit == nil {
-		return "", nil
-	}
-	tracePath := sessiontrace.Path(threadRuntime.Toolkit.SessionDir())
-	if strings.TrimSpace(tracePath) == "" {
-		return "", nil
-	}
-	providerName := strings.TrimSpace(turnRuntime.ProviderName)
-	if s != nil && s.rt != nil {
-		providerName = firstNonEmpty(providerName, s.rt.ProviderName)
-	}
-	permissions := turnRuntime.permissions()
-	model := ""
-	apiModel := ""
-	if runner != nil {
-		model = runner.Model
-		apiModel = runner.APIModel
-	}
-	modelBudget := threadRuntime.ModelBudget
-	errorText := ""
-	if runErr != nil {
-		errorText = runErr.Error()
-	}
-	turnRecord := sessiontrace.TurnRecord{
-		ThreadID:            threadID,
-		TurnID:              turn.ID,
-		Status:              string(turn.Status),
-		ProviderName:        providerName,
-		Model:               model,
-		APIModel:            apiModel,
-		ModelProfile:        sessiontrace.NewModelProfileRecordWithBudget(providerName, model, apiModel, modelBudget),
-		PermissionMode:      permissions.Mode,
-		StartedAt:           turn.StartedAt,
-		CompletedAt:         turn.CompletedAt,
-		DurationMS:          turn.DurationMS,
-		InputTokens:         res.InputTokens,
-		OutputTokens:        res.OutputTokens,
-		CacheCreationTokens: res.CacheCreationTokens,
-		CacheReadTokens:     res.CacheReadTokens,
-		FinishReason:        string(res.FinishReason),
-		StopReason:          res.StopReason,
-		Truncated:           res.Truncated,
-		HistoryRewritten:    res.HistoryRewritten,
-		DriverID:            res.DriverID,
-		DriverVersion:       res.DriverVersion,
-		DriverContract:      res.DriverContractVersion,
-		DriverStatus:        res.DriverStatus,
-		DriverCheckpoint:    append(json.RawMessage(nil), res.DriverCheckpoint...),
-		Error:               errorText,
-	}
-	finalRecord := sessiontrace.FinalRecord{
-		Status:              string(turn.Status),
-		InputTokens:         res.InputTokens,
-		OutputTokens:        res.OutputTokens,
-		CacheCreationTokens: res.CacheCreationTokens,
-		CacheReadTokens:     res.CacheReadTokens,
-		FinishReason:        string(res.FinishReason),
-		StopReason:          res.StopReason,
-		Truncated:           res.Truncated,
-		FinalAnswerPreview:  res.Content,
-		Error:               errorText,
-	}
-	records := threadRuntime.Toolkit.ToolTelemetry()
-	if toolRecordStart > 0 && toolRecordStart < len(records) {
-		records = records[toolRecordStart:]
-	} else if toolRecordStart >= len(records) {
-		records = nil
-	}
-	var barrierRejections []sessiontrace.BarrierToolBatchRejectionRecord
-	if len(barrierRejectionsArg) > 0 {
-		barrierRejections = barrierRejectionsArg[0]
-	}
-	if err := sessiontrace.AppendTurn(tracePath, turnRecord, finalRecord, threadRuntime.Toolkit.ToolInfos(), records, contextRequests, providerStates, compactAttempts, barrierRejections); err != nil {
-		return "", err
-	}
-	return tracePath, nil
-}
-
-func compactRecord(info agent.CompactAttemptInfo) sessiontrace.CompactRecord {
-	return sessiontrace.CompactRecord{
-		Reason:            string(info.Reason),
-		Status:            string(info.Status),
-		TokensBefore:      info.TokensBefore,
-		LastResponseTotal: info.LastResponseTotal,
-		PendingDelta:      info.PendingDelta,
-		UsageAdjustment:   string(info.UsageAdjustment),
-		MessagesBefore:    info.MessagesBefore,
-		MessagesAfter:     info.MessagesAfter,
-		Error:             info.Error,
-	}
-}
-
-func barrierToolBatchRejectionRecord(info agent.ToolBatchRejectionInfo) sessiontrace.BarrierToolBatchRejectionRecord {
-	return sessiontrace.BarrierToolBatchRejectionRecord{
-		StepIndex:     info.StepIndex,
-		BarrierTool:   info.BarrierTool,
-		SiblingTools:  append([]string(nil), info.SiblingTools...),
-		ToolCallCount: info.ToolCallCount,
-	}
-}
-
-func providerStateRecord(state *providers.ProviderStateSummary) sessiontrace.ProviderStateRecord {
-	if state == nil {
-		return sessiontrace.ProviderStateRecord{}
-	}
-	return sessiontrace.ProviderStateRecord{
-		StepIndex:              state.StepIndex,
-		Provider:               state.Provider,
-		Protocol:               state.Protocol,
-		Transport:              state.Transport,
-		ReplayMode:             state.ReplayMode,
-		PreviousResponseIDUsed: state.PreviousResponseIDUsed,
-		ConnectionReused:       state.ConnectionReused,
-		Diagnostic:             state.Diagnostic,
-		TransportFailurePhase:  state.TransportFailurePhase,
-		FallbackTransport:      state.FallbackTransport,
-		EventsEmitted:          state.EventsEmitted,
-		FallbackActive:         state.FallbackActive,
-		FallbackReason:         state.FallbackReason,
-		FallbackPinStatus:      state.FallbackPinStatus,
-		FallbackRetryAfterMS:   state.FallbackRetryAfterMS,
-		FallbackTTLMS:          state.FallbackTTLMS,
-		InputItems:             state.InputItems,
-		FullInputItems:         state.FullInputItems,
-		DeltaInputItems:        state.DeltaInputItems,
-	}
-}
-
-func attachUsageToLatestRequestContext(records []sessiontrace.RequestContextRecord, usage providers.TokenUsage) {
-	if len(records) == 0 {
+// finalizers have released execution ownership. The shared runtime.Session
+// remains owned by the caller and may be cleaned up after Close returns.
+func (s *Server) Close() {
+	if s == nil {
 		return
 	}
-	record := &records[len(records)-1]
-	record.InputTokens = usage.InputTokens
-	record.OutputTokens = usage.OutputTokens
-	record.CacheCreationTokens = usage.CacheCreationTokens
-	record.CacheReadTokens = usage.CacheReadTokens
-}
+	s.closeOnce.Do(func() {
+		s.closed.Store(true)
+		s.closeProjectInboxDrains()
+		s.cancelEngineAuth("")
+		if s.storageMaintenanceCancel != nil {
+			s.storageMaintenanceCancel()
+			s.storageMaintenanceCancel = nil
+		}
+		if s.pluginTurnUnbind != nil {
+			s.pluginTurnUnbind()
+			s.pluginTurnUnbind = nil
+		}
+		if s.userQuestionUnbind != nil {
+			s.userQuestionUnbind()
+			s.userQuestionUnbind = nil
+		}
+		if s.userQuestionStop != nil {
+			close(s.userQuestionStop)
+			<-s.userQuestionDone
+			s.userQuestionStop = nil
+			s.userQuestionDone = nil
+		}
+		s.cancelSideThreads()
+		// Synchronize with startBackground so no new owned goroutine can be
+		// added after the shutdown waiter begins.
+		s.backgroundMu.Lock()
+		s.backgroundMu.Unlock()
 
-func (s *Server) enqueueAgentCompletionTurn(threadID, agentID, resultID string, msg providers.ChatMessage, snapshot *subagent.SubAgentSnapshot) {
-	if s == nil || s.closed.Load() {
-		return
-	}
-	threadID = strings.TrimSpace(threadID)
-	if threadID == "" || !chatMessageHasUserPayload(msg) {
-		return
-	}
-	th := s.thread(threadID)
-	if th == nil || !canResumeAgentCompletionThread(th) {
-		return
-	}
-	if strings.TrimSpace(msg.Role) == "" {
-		msg.Role = "user"
-	}
-
-	s.agentCompletionMu.Lock()
-	if s.closed.Load() {
-		s.agentCompletionMu.Unlock()
-		return
-	}
-	if s.pendingAgentCompletionTurns == nil {
-		s.pendingAgentCompletionTurns = make(map[string][]agentCompletionTurn)
-	}
-	resultID = strings.TrimSpace(resultID)
-	if resultID != "" {
-		for _, pending := range s.pendingAgentCompletionTurns[threadID] {
-			if strings.TrimSpace(pending.resultID) == resultID {
-				s.agentCompletionMu.Unlock()
-				return
+		s.mu.Lock()
+		threads := make([]*threadState, 0, len(s.threads))
+		for _, th := range s.threads {
+			if th != nil {
+				threads = append(threads, th)
 			}
 		}
-	}
-	s.pendingAgentCompletionTurns[threadID] = append(s.pendingAgentCompletionTurns[threadID], agentCompletionTurn{
-		agentID:  strings.TrimSpace(agentID),
-		resultID: resultID,
-		msg:      msg,
-		snapshot: cloneSubAgentSnapshot(snapshot),
-	})
-	s.agentCompletionMu.Unlock()
+		clear(s.threads)
+		s.mu.Unlock()
 
-	s.kickAgentCompletionDrain(threadID)
-}
-
-func (s *Server) enqueueQueuedUserTurn(threadID string, entry queuedTurn) bool {
-	return s.enqueueQueuedUserTurnWithPolicy(threadID, entry, false)
-}
-
-func (s *Server) enqueueRequeuedUserTurn(threadID string, entry queuedTurn) bool {
-	return s.enqueueQueuedUserTurnWithPolicy(threadID, entry, true)
-}
-
-func (s *Server) enqueueQueuedUserTurnWithPolicy(threadID string, entry queuedTurn, supersedeCancellation bool) bool {
-	if s == nil || s.closed.Load() {
-		return false
-	}
-	threadID = strings.TrimSpace(threadID)
-	entry.id = strings.TrimSpace(entry.id)
-	if threadID == "" || entry.id == "" || !chatMessageHasUserPayload(entry.msg) {
-		return false
-	}
-	if strings.TrimSpace(entry.msg.Role) == "" {
-		entry.msg.Role = "user"
-	}
-	// Keep an upstream request identity distinct from the local queue identity.
-	// Plugin session sends use ClientID for idempotency across lifecycle replay;
-	// replacing it with the queue ID makes the same request look new on retry.
-	if strings.TrimSpace(entry.msg.ClientID) == "" {
-		entry.msg.ClientID = entry.id
-	}
-	entry.msg.Steered = false
-
-	s.queuedTurnMu.Lock()
-	if s.closed.Load() {
-		s.queuedTurnMu.Unlock()
-		return false
-	}
-	if s.pendingQueuedTurns == nil {
-		s.pendingQueuedTurns = make(map[string][]queuedTurn)
-	}
-	if supersedeCancellation {
-		// A queue cancellation from a stale client belongs to this message's
-		// previous delivery mode. An explicit steer -> queue transition is the
-		// new authoritative intent for the stable id and supersedes it.
-		key := queuedTurnClaimKey(threadID, entry.id)
-		if s.cancelledPendingSubmissions[key] == session.HeldUserWorkOriginQueue {
-			delete(s.cancelledPendingSubmissions, key)
+		// Close worker-turn admission before the first cancellation wave. BeginShutdown
+		// synchronizes with any Manager.Spawn/Followup already at its commit point,
+		// so StopAll cannot miss a worker that appears immediately behind it.
+		controls := make(map[*agentcontrol.AgentControl]struct{})
+		collectThreadAgentControls(threads, controls)
+		for control := range controls {
+			control.BeginShutdown()
 		}
-	}
-	if s.isCancelledPendingSubmissionLocked(threadID, entry.id, session.HeldUserWorkOriginQueue) {
-		s.queuedTurnMu.Unlock()
-		return false
-	}
-	for _, pending := range s.pendingQueuedTurns[threadID] {
-		if pending.id == entry.id {
-			s.queuedTurnMu.Unlock()
-			return false
+		// Cancellation is asynchronous, so issue it to all threads first instead
+		// of serializing shutdown behind one provider.
+		for _, th := range threads {
+			th.mu.Lock()
+			cancel := th.cancel
+			th.mu.Unlock()
+			if cancel != nil {
+				cancel()
+			}
 		}
-	}
-	if claim := s.claimedQueuedTurns[queuedTurnClaimKey(threadID, entry.id)]; claim != nil && !claim.cancelled {
-		s.queuedTurnMu.Unlock()
-		return false
-	}
-	s.pendingQueuedTurns[threadID] = append(s.pendingQueuedTurns[threadID], entry)
-	s.queuedTurnMu.Unlock()
-	return true
-}
+		for control := range controls {
+			control.StopAll()
+			control.YieldWorkerTerminalFinalizations()
+		}
 
-func (s *Server) recordCancelledPendingSubmission(threadID, id, origin string) {
-	key := queuedTurnClaimKey(threadID, id)
-	if key == "\x00" {
-		return
-	}
-	s.queuedTurnMu.Lock()
-	defer s.queuedTurnMu.Unlock()
-	if s.cancelledPendingSubmissions == nil {
-		s.cancelledPendingSubmissions = make(map[string]string)
-	}
-	if len(s.cancelledPendingSubmissions) >= maxCancelledPendingSubmissions {
+		s.stopInferenceJournalMaintenance()
+
+		// Stop every browser activity this process owns BEFORE dropping the
+		// activity subscription below. Stop emits an EventStopped that
+		// notifyActivityEvent forwards to the desktop so it can tear down the
+		// backing WebContentsView; stdout is still writable here. Ordered after
+		// unsubscribe the event would have no listener and the desktop would
+		// leak a hidden view plus a ghost activity in the UI.
+		s.stopBrowserActivitiesAndEmit()
+
+		if s.activityUnsubscribe != nil {
+			s.activityUnsubscribe()
+			s.activityUnsubscribe = nil
+		}
+
+		// Release any in-flight server-initiated calls. Turn-context
+		// cancellation above already unblocks callClient waiters via ctx.Done;
+		// this is the belt-and-suspenders sweep for calls whose ctx outlives
+		// Close. Delivery is non-blocking (buffered chans) so closeOnce can
+		// never wedge the process on a shutdown drain.
+		s.failPendingClientCalls()
+
+		s.queuedTurnMu.Lock()
+		queuedOnClose := make(map[string][]queuedTurn, len(s.pendingQueuedTurns))
+		for threadID, entries := range s.pendingQueuedTurns {
+			queuedOnClose[threadID] = append([]queuedTurn(nil), entries...)
+		}
+		clear(s.pendingQueuedTurns)
+		clear(s.claimedQueuedTurns)
 		clear(s.cancelledPendingSubmissions)
-	}
-	s.cancelledPendingSubmissions[key] = origin
-}
-
-func (s *Server) isCancelledPendingSubmission(threadID, id, origin string) bool {
-	s.queuedTurnMu.Lock()
-	defer s.queuedTurnMu.Unlock()
-	return s.isCancelledPendingSubmissionLocked(threadID, id, origin)
-}
-
-func (s *Server) isCancelledPendingSubmissionLocked(threadID, id, origin string) bool {
-	key := queuedTurnClaimKey(threadID, id)
-	return s.cancelledPendingSubmissions[key] == origin
-}
-
-func (s *Server) removeQueuedUserTurn(threadID, queueID string) (queuedTurn, bool) {
-	threadID = strings.TrimSpace(threadID)
-	queueID = strings.TrimSpace(queueID)
-	if threadID == "" || queueID == "" {
-		return queuedTurn{}, false
-	}
-	s.queuedTurnMu.Lock()
-	defer s.queuedTurnMu.Unlock()
-	pending := s.pendingQueuedTurns[threadID]
-	next := pending[:0]
-	var removed queuedTurn
-	found := false
-	for _, entry := range pending {
-		if !found && entry.id == queueID {
-			removed = entry
-			found = true
-			continue
-		}
-		next = append(next, entry)
-	}
-	if len(next) == 0 {
-		delete(s.pendingQueuedTurns, threadID)
-	} else {
-		s.pendingQueuedTurns[threadID] = next
-	}
-	if !found {
-		claim := s.claimedQueuedTurns[queuedTurnClaimKey(threadID, queueID)]
-		if claim != nil && !claim.cancelled && !claim.committed {
-			claim.cancelled = true
-			removed = claim.entry
-			found = true
-		}
-	}
-	return removed, found
-}
-
-func (s *Server) replaceQueuedUserTurn(threadID, queueID string, msg providers.ChatMessage) (queuedTurn, bool) {
-	threadID = strings.TrimSpace(threadID)
-	queueID = strings.TrimSpace(queueID)
-	if threadID == "" || queueID == "" || !chatMessageHasUserPayload(msg) {
-		return queuedTurn{}, false
-	}
-	if strings.TrimSpace(msg.Role) == "" {
-		msg.Role = "user"
-	}
-	msg.ClientID = queueID
-	msg.Steered = false
-
-	s.queuedTurnMu.Lock()
-	defer s.queuedTurnMu.Unlock()
-	pending := s.pendingQueuedTurns[threadID]
-	for index, entry := range pending {
-		if entry.id != queueID {
-			continue
-		}
-		updated := queuedTurn{id: queueID, msg: msg, snapshot: entry.snapshot}
-		pending[index] = updated
-		s.pendingQueuedTurns[threadID] = pending
-		return updated, true
-	}
-	return queuedTurn{}, false
-}
-
-func (s *Server) findQueuedUserTurn(threadID, queueID string) (queuedTurn, bool) {
-	threadID = strings.TrimSpace(threadID)
-	queueID = strings.TrimSpace(queueID)
-	if threadID == "" || queueID == "" {
-		return queuedTurn{}, false
-	}
-	s.queuedTurnMu.Lock()
-	defer s.queuedTurnMu.Unlock()
-	for _, entry := range s.pendingQueuedTurns[threadID] {
-		if entry.id == queueID {
-			return entry, true
-		}
-	}
-	claim := s.claimedQueuedTurns[queuedTurnClaimKey(threadID, queueID)]
-	if claim != nil && !claim.cancelled {
-		return claim.entry, true
-	}
-	return queuedTurn{}, false
-}
-
-func (s *Server) kickQueuedTurnDrain(threadID string) {
-	s.tryDrainQueuedTurns(threadID, false)
-}
-
-func (s *Server) tryDrainQueuedTurns(threadID string, synchronous bool) (capacityFull bool) {
-	if s == nil || s.closed.Load() {
-		return
-	}
-	threadID = strings.TrimSpace(threadID)
-	if threadID == "" {
-		return
-	}
-	if s.activeExecutionRunID(threadID) != "" {
-		return
-	}
-
-	s.queuedTurnMu.Lock()
-	if s.closed.Load() {
+		clear(s.drainingQueuedTurns)
 		s.queuedTurnMu.Unlock()
-		return
-	}
-	if len(s.pendingQueuedTurns[threadID]) == 0 || s.drainingQueuedTurns[threadID] {
-		s.queuedTurnMu.Unlock()
-		return
-	}
-	if s.drainingQueuedTurns == nil {
-		s.drainingQueuedTurns = make(map[string]bool)
-	}
-	s.drainingQueuedTurns[threadID] = true
-	s.queuedTurnMu.Unlock()
-
-	if synchronous {
-		return s.drainQueuedTurns(threadID)
-	}
-	_ = s.startBackground(func() { s.drainQueuedTurns(threadID) })
-	return
+		for threadID, entries := range queuedOnClose {
+			for _, entry := range entries {
+				s.notifyPluginTurnDiscardedWithRetry(threadID, entry, "app-server closed before queued turn started", true)
+			}
+		}
+		s.agentCompletionMu.Lock()
+		clear(s.pendingAgentCompletionTurns)
+		clear(s.drainingAgentCompletionTurns)
+		s.agentCompletionMu.Unlock()
+		s.waitForOwnedShutdown(threads, controls)
+		s.interruptAttachedRunsOnClose()
+		for _, th := range threads {
+			s.releaseThreadRuntime(th)
+		}
+		s.releasePresence()
+	})
 }
 
-func (s *Server) drainQueuedTurns(threadID string) (capacityFull bool) {
+// ownedShutdownDrainTimeout bounds Close's wait for owned turns, workers, and
+// their terminal finalizers. A wedged execution then surfaces as a loud log
+// and a proceeding shutdown instead of a process that can never exit; durable
+// terminal records and execution leases keep the drained state recoverable.
+const ownedShutdownDrainTimeout = time.Minute
+
+func (s *Server) waitForOwnedShutdown(threads []*threadState, controls map[*agentcontrol.AgentControl]struct{}) {
 	if s == nil {
 		return
 	}
-	if s.closed.Load() {
-		entries := s.discardQueuedTurns(threadID)
-		for _, entry := range entries {
-			s.notifyPluginTurnDiscardedWithRetry(threadID, entry, "app-server closed before queued turn started", true)
-		}
-		s.clearQueuedTurnDrain(threadID)
-		return
+	deadline := time.Now().Add(ownedShutdownDrainTimeout)
+	// Drain/title/side workers can still have admitted a turn immediately before
+	// Close marked the server closed. Wait for those launchers first, then for
+	// every turn/worker lease this Server owns to be released by its normal
+	// terminal path. External owners are deliberately absent from these local
+	// snapshots, so shutdown never waits for unrelated app-server processes.
+	background := make(chan struct{})
+	go func() {
+		s.backgroundWG.Wait()
+		close(background)
+	}()
+	select {
+	case <-background:
+	case <-time.After(ownedShutdownDrainTimeout):
+		log.Printf("wuu: shutdown drain timed out after %s: owned background goroutines still running", ownedShutdownDrainTimeout)
 	}
-	th := s.thread(threadID)
-	if th == nil {
-		discardedEntries := s.discardQueuedTurns(threadID)
-		for _, entry := range discardedEntries {
-			s.notifyPluginTurnDiscarded(threadID, entry, "thread no longer exists")
-		}
-		s.clearQueuedTurnDrain(threadID)
-		return
+	// A launcher already inside startBackground may have attached a thread
+	// runtime after the first shutdown snapshot. Once all launchers and turns
+	// have stopped, collect those late local controls and cancel their workers
+	// before waiting for the final execution leases.
+	collectThreadAgentControls(threads, controls)
+	for control := range controls {
+		control.BeginShutdown()
+		control.StopAll()
+		control.YieldWorkerTerminalFinalizations()
 	}
-	if threadIsRunning(th) {
-		s.clearQueuedTurnDrain(threadID)
-		// Completion may have tried to kick the queue while this drain still
-		// owned the marker and been rejected as a duplicate. Recheck after
-		// releasing ownership so that interleaving cannot lose the only wake-up.
-		if !threadIsRunning(th) {
-			s.kickQueuedTurnDrain(threadID)
-		}
-		return
+	if s.afterWorkerShutdownStopWavesForTest != nil {
+		s.afterWorkerShutdownStopWavesForTest()
 	}
-
-	entry, ok := s.takeNextQueuedUserTurn(threadID)
-	if !ok {
-		s.clearQueuedTurnDrain(threadID)
-		return
-	}
-	started, err := s.startQueuedTurn(context.Background(), threadID, entry)
-	executionBusy := errors.Is(err, errThreadExecutionBusy)
-	retryableAdmission := errors.Is(err, errRetryableTurnAdmission)
-	capacityFull = errors.Is(err, session.ErrProjectWorkerCapacity)
-	requeueCandidate := !started && (err == nil || executionBusy || retryableAdmission)
-	cancelled := s.settleQueuedTurnClaim(threadID, entry, requeueCandidate)
-	if errors.Is(err, errQueuedTurnCancelled) || cancelled {
-		err = errQueuedTurnCancelled
-		executionBusy = false
-		retryableAdmission = false
-		requeueCandidate = false
-	}
-	if err != nil && !executionBusy && !retryableAdmission && !errors.Is(err, errQueuedTurnCancelled) {
-		providers.DebugLogf("start queued turn for thread %q: %v", threadID, err)
-		if reference := entry.snapshot.PluginTurn; reference != nil {
-			// Terminal observation: persist to the outbox and deliver in the
-			// background. The drain must never synchronously re-enter a plugin
-			// helper that may be blocked inside a host service call waiting on
-			// this very drain (single-worker plugin processes).
-			s.notifyPluginTurnLifecycleAsync(reference.PluginID, pluginhost.AgentTurnLifecycleInput{
-				RequestID: reference.RequestID, State: pluginhost.TurnLifecycleFailed,
-				ThreadID: threadID, QueueID: reference.QueueID, Error: err.Error(),
-			})
-		}
-		if entry.snapshot.PluginTurn == nil {
-			if holdErr := s.holdRejectedQueuedTurn(threadID, entry, err); holdErr == nil {
-				err = nil
-			} else {
-				providers.DebugLogf("hold rejected queued turn for thread %q: %v", threadID, holdErr)
-			}
-		}
-		if err != nil {
-			_ = s.writeNotification(NotificationTurnDequeued, TurnDequeuedNotification{
-				ThreadID: threadID,
-				QueueID:  entry.id,
-			})
-		}
-	}
-	requeued := requeueCandidate && !cancelled
-	s.clearQueuedTurnDrain(threadID)
-	if requeued && (executionBusy || retryableAdmission) {
-		if capacityFull && s.deferProjectCapacityRetry(threadID, "queued", func() bool { return s.tryDrainQueuedTurns(threadID, true) }) {
+	for shutdownExecutionActive(threads, controls) {
+		if !time.Now().Before(deadline) {
+			log.Printf("wuu: shutdown drain timed out after %s: releasing with owned executions still active", ownedShutdownDrainTimeout)
+			forceReleaseAbandonedThreadExecutions(threads)
 			return
 		}
-		s.scheduleThreadExecutionLeaseRetry(func() { s.kickQueuedTurnDrain(threadID) })
-		return
-	}
-	if requeued || s.hasQueuedUserTurns(threadID) {
-		s.kickQueuedTurnDrain(threadID)
-	}
-	return
-}
-
-func (s *Server) startThreadUserTurn(ctx context.Context, th *threadState, userMsg providers.ChatMessage, snapshot turnRuntimeSnapshot, failIfRunning bool, readOnlyPolicy turnReadOnlyPolicy) (startedThreadTurn, bool, error) {
-	return s.startThreadUserTurnWithAdmission(ctx, th, userMsg, snapshot, failIfRunning, readOnlyPolicy, turnAdmissionHooks{})
-}
-
-// startThreadUserTurnWithAdmission owns every durable pre-turn side effect.
-// It acquires the cross-process lease and refreshes disk state before running
-// hooks, then keeps ownership through the user append and turn lifecycle.
-func (s *Server) startThreadUserTurnWithAdmission(ctx context.Context, th *threadState, userMsg providers.ChatMessage, snapshot turnRuntimeSnapshot, failIfRunning bool, readOnlyPolicy turnReadOnlyPolicy, hooks turnAdmissionHooks) (startedThreadTurn, bool, error) {
-	if th == nil {
-		return startedThreadTurn{}, false, errors.New("thread is required")
-	}
-	if s == nil || s.closed.Load() {
-		return startedThreadTurn{}, false, errServerClosed
-	}
-	if strings.TrimSpace(userMsg.Role) == "" {
-		userMsg.Role = "user"
-	}
-	if !chatMessageHasUserPayload(userMsg) {
-		return startedThreadTurn{}, false, nil
-	}
-	if failIfRunning {
-		if err := s.waitAndHandoffAnswerReadyTurn(ctx, th); err != nil {
-			return startedThreadTurn{}, false, err
-		}
-	}
-	turnID := session.NewID()
-	turnCtx, cancel := context.WithCancel(ctx)
-	now := time.Now().UTC()
-
-	th.mu.Lock()
-	if s.closed.Load() {
-		th.mu.Unlock()
-		cancel()
-		return startedThreadTurn{}, false, errServerClosed
-	}
-	if th.running {
-		th.mu.Unlock()
-		cancel()
-		if failIfRunning {
-			return startedThreadTurn{}, false, fmt.Errorf("thread %q already has a running turn", th.ID)
-		}
-		return startedThreadTurn{}, false, nil
-	}
-	if th.ReadOnly {
-		switch readOnlyPolicy {
-		case turnReadOnlyFail:
-			th.mu.Unlock()
-			cancel()
-			return startedThreadTurn{}, false, errors.New("thread is read-only")
-		case turnReadOnlySkip:
-			th.mu.Unlock()
-			cancel()
-			return startedThreadTurn{}, false, nil
-		}
-	}
-	acquired, err := s.tryAcquireThreadExecutionLeaseLocked(th)
-	if err != nil {
-		th.mu.Unlock()
-		cancel()
-		return startedThreadTurn{}, false, err
-	}
-	if !acquired {
-		threadID := th.ID
-		th.mu.Unlock()
-		cancel()
-		return startedThreadTurn{}, false, threadExecutionBusyError(threadID)
-	}
-	if err := s.refreshDurableThreadHistoryLocked(th); err != nil {
-		th.releaseThreadExecutionLeaseLocked()
-		th.mu.Unlock()
-		cancel()
-		return startedThreadTurn{}, false, err
-	}
-	if th.ReadOnly {
-		switch readOnlyPolicy {
-		case turnReadOnlyFail:
-			th.releaseThreadExecutionLeaseLocked()
-			th.mu.Unlock()
-			cancel()
-			return startedThreadTurn{}, false, errors.New("thread is read-only")
-		case turnReadOnlySkip:
-			th.releaseThreadExecutionLeaseLocked()
-			th.mu.Unlock()
-			cancel()
-			return startedThreadTurn{}, false, nil
-		}
-	}
-	th.mu.Unlock()
-
-	abortAdmission := func() {
-		th.mu.Lock()
-		th.releaseThreadExecutionLeaseLocked()
-		th.mu.Unlock()
-		cancel()
-	}
-	if err := s.validateInboxInput(userMsg); err != nil {
-		abortAdmission()
-		return startedThreadTurn{}, false, err
-	}
-	if snapshot.Control != nil {
-		if err := session.ValidateControl(s.rt.SessionDir, *snapshot.Control); err != nil {
-			abortAdmission()
-			return startedThreadTurn{}, false, err
-		}
-	}
-	if userMsg.ClientID != "" && isGeneratedSessionInput(userMsg.Origin) {
-		if _, found := s.findSessionInput(th, userMsg.ClientID); found {
-			abortAdmission()
-			return startedThreadTurn{}, false, errSessionInputApplied
-		}
-	}
-	if hooks.afterLease != nil {
-		if err := hooks.afterLease(th, &userMsg); err != nil {
-			abortAdmission()
-			return startedThreadTurn{}, false, err
-		}
-	}
-
-	th.mu.Lock()
-	threadID := th.ID
-	threadCWD := th.CWD
-	th.mu.Unlock()
-	if !chatMessageHasUserPayload(userMsg) {
-		abortAdmission()
-		return startedThreadTurn{}, false, nil
-	}
-	if s.rt != nil && s.rt.HookDispatcher != nil {
-		if _, err := s.rt.HookDispatcher.Dispatch(ctx, hookspkg.UserPromptSubmit, &hookspkg.Input{
-			SessionID: threadID, CWD: threadCWD, Prompt: userMsg.Content,
-		}); err != nil {
-			abortAdmission()
-			return startedThreadTurn{}, false, fmt.Errorf("user prompt hook: %w", err)
-		}
-	}
-
-	th.mu.Lock()
-	if s.closed.Load() {
-		th.releaseThreadExecutionLeaseLocked()
-		th.mu.Unlock()
-		cancel()
-		return startedThreadTurn{}, false, errServerClosed
-	}
-	// running cannot become true while executionLease is our local admission
-	// reservation, but retain the guard so future non-turn writers fail closed.
-	if th.running {
-		th.releaseThreadExecutionLeaseLocked()
-		th.mu.Unlock()
-		cancel()
-		if failIfRunning {
-			return startedThreadTurn{}, false, fmt.Errorf("thread %q already has a running turn", th.ID)
-		}
-		return startedThreadTurn{}, false, nil
-	}
-	if th.ReadOnly {
-		switch readOnlyPolicy {
-		case turnReadOnlyFail:
-			th.releaseThreadExecutionLeaseLocked()
-			th.mu.Unlock()
-			cancel()
-			return startedThreadTurn{}, false, errors.New("thread is read-only")
-		case turnReadOnlySkip:
-			th.releaseThreadExecutionLeaseLocked()
-			th.mu.Unlock()
-			cancel()
-			return startedThreadTurn{}, false, nil
-		}
-	}
-	var commitAfterAppend func() error
-	if hooks.beforeUserAppendLocked != nil {
-		var err error
-		commitAfterAppend, err = hooks.beforeUserAppendLocked(th)
-		if err != nil {
-			th.releaseThreadExecutionLeaseLocked()
-			th.mu.Unlock()
-			cancel()
-			return startedThreadTurn{}, false, err
-		}
-	}
-	var userMsgSeq int
-	userAlreadyPersisted := false
-	if clientID := strings.TrimSpace(userMsg.ClientID); clientID != "" {
-		for _, existing := range th.History {
-			if strings.TrimSpace(existing.ClientID) == clientID {
-				userAlreadyPersisted = true
-				userMsgSeq = existing.Seq
-				break
-			}
-		}
-	}
-	if th.PersistHistory && !userAlreadyPersisted {
-		seq, err := appendControlledChatMessage(s.rt.SessionDir, th.ID, userMsg, snapshot.Control, snapshot.ExecutionControlBaseline)
-		if err != nil {
-			th.releaseThreadExecutionLeaseLocked()
-			th.mu.Unlock()
-			cancel()
-			return startedThreadTurn{}, false, err
-		}
-		userMsgSeq = seq
-		th.historyHeadSeq = max(th.historyHeadSeq, seq)
-	}
-	userMsg.Seq = userMsgSeq
-	if commitAfterAppend != nil {
-		if err := commitAfterAppend(); err != nil {
-			th.releaseThreadExecutionLeaseLocked()
-			th.mu.Unlock()
-			cancel()
-			return startedThreadTurn{}, false, errors.Join(errRetryableTurnAdmission, err)
-		}
-	}
-	history := cloneHistory(th.History)
-	if !userAlreadyPersisted {
-		history = append(history, userMsg)
-	}
-	th.History = history
-	th.cancel = cancel
-	var turn Turn
-	resumed := false
-	if userAlreadyPersisted {
-		turn, resumed = th.resumePersistedUserTurnLocked(userMsg.ClientID, now)
-	}
-	if !resumed {
-		if th.PersistHistory {
-			// Persisted turns are reconstructed from conversation order after a
-			// restart or cross-process refresh. Give the live turn that same stable
-			// ID now so item/turn references returned to clients remain valid after
-			// the next admission refresh.
-			turnID = fmt.Sprintf("%s-turn-%04d", th.ID, len(th.Turns)+1)
-		}
-		turn = th.startTurnLocked(turnID, userMsg, now)
-	} else {
-		turnID = turn.ID
-	}
-	turnRuntime := turnRuntimeSnapshotLocked(th)
-	if snapshot.hasPermissions() || snapshot.PermissionExplicit {
-		turnRuntime = turnRuntime.withPermissions(snapshot.permissions())
-		turnRuntime.PermissionExplicit = snapshot.PermissionExplicit
-	}
-	turnRuntime.ForceCompact = snapshot.ForceCompact
-	turnRuntime.CompactOnly = snapshot.CompactOnly
-	turnRuntime.HistoryBaselineSeq = th.historyHeadSeq
-	turnRuntime.AgentCompletionResultIDs = append([]string(nil), snapshot.AgentCompletionResultIDs...)
-	turnRuntime.ProcessCompletionIDs = append([]string(nil), snapshot.ProcessCompletionIDs...)
-	// Completion results folded from a lifted tree freeze are answered by
-	// this user turn (foldFrozenWorkerTree staged them under the same lock
-	// discipline as the snapshot fields).
-	if len(th.frozenTreeResultIDs) > 0 {
-		turnRuntime.AgentCompletionResultIDs = append(turnRuntime.AgentCompletionResultIDs, th.frozenTreeResultIDs...)
-		th.frozenTreeResultIDs = nil
-	}
-	turnRuntime.ExecutionRunID = snapshot.ExecutionRunID
-	turnRuntime.PluginTurn = clonePluginTurnReference(snapshot.PluginTurn)
-	th.currentExecutionRunID = turnRuntime.ExecutionRunID
-	turnRuntime.RequestContext = cloneContextSegments(snapshot.RequestContext)
-	th.mu.Unlock()
-	s.noticeProjectUserMessage(th, userMsg)
-
-	return startedThreadTurn{
-		ctx:        turnCtx,
-		cancel:     cancel,
-		turnID:     turnID,
-		turn:       turn,
-		runtime:    turnRuntime,
-		history:    history,
-		admittedAt: now,
-		userMsgSeq: userMsgSeq,
-	}, true, nil
-}
-
-func (s *Server) startQueuedTurn(ctx context.Context, threadID string, entry queuedTurn) (bool, error) {
-	threadID = strings.TrimSpace(threadID)
-	if threadID == "" {
-		return false, errors.New("thread_id is required")
-	}
-	if strings.TrimSpace(entry.msg.Role) == "" {
-		entry.msg.Role = "user"
-	}
-	if !chatMessageHasUserPayload(entry.msg) {
-		return false, nil
-	}
-	entry.id = strings.TrimSpace(entry.id)
-	if entry.id == "" {
-		entry.id = session.NewID()
-	}
-	if strings.TrimSpace(entry.msg.ClientID) == "" {
-		entry.msg.ClientID = entry.id
-	}
-	entry.msg.Steered = false
-
-	th := s.thread(threadID)
-	if th == nil {
-		return false, fmt.Errorf("thread %q not found", threadID)
-	}
-	var threadRuntime *runtime.ThreadRuntime
-	// Permissions are re-resolved at start time, never trusted from the
-	// queue-time snapshot: a permission change landing while the turn waited
-	// in the queue must govern the turn that actually runs.
-	permissions, err := s.resolveThreadTurnPermissions(th, nil)
-	if err != nil {
-		return false, err
-	}
-
-	snapshot := entry.snapshot.withPermissions(permissions)
-	started, ok, err := s.startThreadUserTurnWithAdmission(
-		ctx,
-		th,
-		entry.msg,
-		snapshot,
-		false,
-		turnReadOnlyFail,
-		turnAdmissionHooks{
-			afterLease: func(admitted *threadState, _ *providers.ChatMessage) error {
-				var runtimeErr error
-				threadRuntime, runtimeErr = s.ensureThreadRuntimeAfterAdmission(admitted)
-				if runtimeErr != nil {
-					return runtimeErr
-				}
-				return gateAlreadyDeliveredCompletions(admitted.History, threadRuntime, snapshot.AgentCompletionResultIDs, snapshot.ProcessCompletionIDs)
-			},
-			beforeUserAppendLocked: func(_ *threadState) (func() error, error) {
-				if err := s.commitQueuedTurnClaim(threadID, entry.id); err != nil {
-					return nil, err
-				}
-				return nil, nil
-			},
-		},
-	)
-	if errors.Is(err, errAgentCompletionAlreadyDelivered) {
-		return true, nil
-	}
-	if err != nil || !ok {
-		return ok, err
-	}
-	if s.beforeQueuedTurnBackgroundForTest != nil {
-		s.beforeQueuedTurnBackgroundForTest()
-	}
-	launch, accepted := s.reserveBackground(func() {
-		s.runTurn(started.ctx, th, threadRuntime, started.turnID, started.runtime, started.history)
-	})
-	if !accepted {
-		persistErr := s.abortStartedThreadTurnDurably(th, started, errServerClosed)
-		return false, errors.Join(errServerClosed, persistErr)
-	}
-	defer launch.Cancel()
-
-	if err := s.writeNotification(NotificationTurnStarted, TurnStartedNotification{
-		ThreadID: threadID,
-		Turn:     started.turn,
-		QueueID:  entry.id,
-	}); err != nil {
-		return false, errors.Join(err, s.abortStartedThreadTurnDurably(th, started, err))
-	}
-	if len(entry.followups) > 0 {
-		th.mu.Lock()
-		if th.currentTurn == started.turnID {
-			for _, followup := range entry.followups {
-				followup.Steered = true
-				th.pendingSteers = append(th.pendingSteers, followup)
-			}
-			th.signalSteerWakeLocked()
-		}
-		th.mu.Unlock()
-	}
-	if entry.resumeBrowser != nil {
-		entry.resumeBrowser()
-	}
-	launch.Commit()
-	if reference := started.runtime.PluginTurn; reference != nil {
-		// Best-effort background observation. Plugin helpers are single-worker
-		// processes; a synchronous call from the drain can re-enter a helper
-		// that is blocked in a host service waiting on this drain.
-		s.notifyPluginTurnLifecycleAsync(reference.PluginID, pluginhost.AgentTurnLifecycleInput{
-			RequestID: reference.RequestID, State: pluginhost.TurnLifecycleRunning,
-			ThreadID: threadID, TurnID: started.turnID, QueueID: reference.QueueID,
-			StartedAt: &started.admittedAt,
-		})
-	}
-	return true, nil
-}
-
-func gateAlreadyDeliveredCompletions(history []providers.ChatMessage, threadRuntime *runtime.ThreadRuntime, agentResultIDs, processIDs []string) error {
-	agentResultIDs = uniqueSortedCompletionIDs(agentResultIDs)
-	processIDs = uniqueSortedCompletionIDs(processIDs)
-	if len(agentResultIDs) == 0 && len(processIDs) == 0 {
-		return nil
-	}
-	if len(agentResultIDs) > 0 {
-		if threadRuntime == nil || threadRuntime.AgentControl == nil {
-			return errors.Join(errRetryableTurnAdmission, errors.New("agent completion control is unavailable"))
-		}
-		for _, resultID := range agentResultIDs {
-			consumer, err := threadRuntime.AgentControl.AgentResultDeliveryConsumer(resultID)
-			if err != nil {
-				return errors.Join(errRetryableTurnAdmission, err)
-			}
-			if consumer != "" {
-				return errAgentCompletionAlreadyDelivered
-			}
-			if agentCompletionMarkerAnswered(history, resultID) {
-				claimed, consumedBy, err := threadRuntime.AgentControl.ClaimAgentResultDeliveryID(resultID, "auto_completion")
-				if err != nil {
-					return errors.Join(errRetryableTurnAdmission, err)
-				}
-				if !claimed && consumedBy == "" {
-					return errors.Join(errRetryableTurnAdmission, fmt.Errorf("agent result delivery %q is unavailable", resultID))
-				}
-				return errAgentCompletionAlreadyDelivered
-			}
-		}
-	}
-	if len(processIDs) > 0 {
-		if threadRuntime == nil || threadRuntime.ProcessManager == nil {
-			return errors.Join(errRetryableTurnAdmission, errors.New("process completion manager is unavailable"))
-		}
-		for _, processID := range processIDs {
-			pending, err := threadRuntime.ProcessManager.CompletionPending(processID)
-			if err != nil {
-				return errors.Join(errRetryableTurnAdmission, err)
-			}
-			if !pending {
-				return errAgentCompletionAlreadyDelivered
-			}
-			if processCompletionMarkerAnswered(history, processID) {
-				if _, err := threadRuntime.ProcessManager.MarkCompletionDelivered(processID, "history_answer"); err != nil {
-					return errors.Join(errRetryableTurnAdmission, err)
-				}
-				return errAgentCompletionAlreadyDelivered
-			}
-		}
-	}
-	return nil
-}
-
-func (s *Server) takeNextQueuedUserTurn(threadID string) (queuedTurn, bool) {
-	s.queuedTurnMu.Lock()
-	defer s.queuedTurnMu.Unlock()
-	pending := s.pendingQueuedTurns[threadID]
-	if len(pending) == 0 {
-		return queuedTurn{}, false
-	}
-	index := 0
-	for candidate := range pending {
-		if pending[candidate].snapshot.PluginTurn == nil {
-			index = candidate
-			break
-		}
-	}
-	entry := pending[index]
-	if len(pending) == 1 {
-		delete(s.pendingQueuedTurns, threadID)
-	} else {
-		next := append([]queuedTurn(nil), pending[:index]...)
-		s.pendingQueuedTurns[threadID] = append(next, pending[index+1:]...)
-	}
-	if s.claimedQueuedTurns == nil {
-		s.claimedQueuedTurns = make(map[string]*queuedTurnClaim)
-	}
-	s.claimedQueuedTurns[queuedTurnClaimKey(threadID, entry.id)] = &queuedTurnClaim{entry: entry}
-	return entry, true
-}
-
-func queuedTurnClaimKey(threadID, queueID string) string {
-	return strings.TrimSpace(threadID) + "\x00" + strings.TrimSpace(queueID)
-}
-
-// commitQueuedTurnClaim runs while the thread lock is held immediately before
-// the user message append. A dequeue that wins first prevents the append;
-// after this point the message is committed and cancellation is too late.
-func (s *Server) commitQueuedTurnClaim(threadID, queueID string) error {
-	s.queuedTurnMu.Lock()
-	defer s.queuedTurnMu.Unlock()
-	claim := s.claimedQueuedTurns[queuedTurnClaimKey(threadID, queueID)]
-	if claim == nil {
-		return nil
-	}
-	if claim.cancelled {
-		return errQueuedTurnCancelled
-	}
-	claim.committed = true
-	return nil
-}
-
-// settleQueuedTurnClaim closes the temporary ownership gap between taking an
-// entry and committing or putting it back. Claim removal and requeue happen
-// under one lock, so cancellation can never miss both representations.
-func (s *Server) settleQueuedTurnClaim(threadID string, entry queuedTurn, requeue bool) bool {
-	s.queuedTurnMu.Lock()
-	defer s.queuedTurnMu.Unlock()
-	key := queuedTurnClaimKey(threadID, entry.id)
-	claim := s.claimedQueuedTurns[key]
-	cancelled := claim != nil && claim.cancelled
-	delete(s.claimedQueuedTurns, key)
-	if requeue && !cancelled {
-		existing := append([]queuedTurn(nil), s.pendingQueuedTurns[threadID]...)
-		s.pendingQueuedTurns[threadID] = append([]queuedTurn{entry}, existing...)
-	}
-	return cancelled
-}
-
-func (s *Server) prependQueuedUserTurns(threadID string, entries []queuedTurn) {
-	threadID = strings.TrimSpace(threadID)
-	if threadID == "" || len(entries) == 0 {
-		return
-	}
-	s.queuedTurnMu.Lock()
-	defer s.queuedTurnMu.Unlock()
-	if s.closed.Load() {
-		return
-	}
-	if s.pendingQueuedTurns == nil {
-		s.pendingQueuedTurns = make(map[string][]queuedTurn)
-	}
-	existing := append([]queuedTurn(nil), s.pendingQueuedTurns[threadID]...)
-	s.pendingQueuedTurns[threadID] = append(append([]queuedTurn(nil), entries...), existing...)
-}
-
-func (s *Server) hasQueuedUserTurns(threadID string) bool {
-	s.queuedTurnMu.Lock()
-	defer s.queuedTurnMu.Unlock()
-	return len(s.pendingQueuedTurns[threadID]) > 0
-}
-
-func (s *Server) hasQueuedUserWork(threadID string) bool {
-	s.queuedTurnMu.Lock()
-	defer s.queuedTurnMu.Unlock()
-	return len(s.pendingQueuedTurns[threadID]) > 0 || s.drainingQueuedTurns[threadID]
-}
-
-func (s *Server) discardQueuedUserTurns(threadID string) []string {
-	return queuedTurnIDs(s.discardQueuedTurns(threadID))
-}
-
-func (s *Server) discardQueuedTurns(threadID string) []queuedTurn {
-	threadID = strings.TrimSpace(threadID)
-	if threadID == "" {
-		return nil
-	}
-	s.queuedTurnMu.Lock()
-	defer s.queuedTurnMu.Unlock()
-	entries := append([]queuedTurn(nil), s.pendingQueuedTurns[threadID]...)
-	delete(s.pendingQueuedTurns, threadID)
-	return entries
-}
-
-func (s *Server) discardQueuedUserWork(threadID string) []string {
-	threadID = strings.TrimSpace(threadID)
-	if threadID == "" {
-		return nil
-	}
-	s.queuedTurnMu.Lock()
-	defer s.queuedTurnMu.Unlock()
-	queueIDs := queuedTurnIDs(s.pendingQueuedTurns[threadID])
-	delete(s.pendingQueuedTurns, threadID)
-	delete(s.drainingQueuedTurns, threadID)
-	return queueIDs
-}
-
-func queuedTurnIDs(entries []queuedTurn) []string {
-	if len(entries) == 0 {
-		return nil
-	}
-	queueIDs := make([]string, 0, len(entries))
-	for _, entry := range entries {
-		if id := strings.TrimSpace(entry.id); id != "" {
-			queueIDs = append(queueIDs, id)
-		}
-	}
-	return queueIDs
-}
-
-func (s *Server) notifyQueuedTurnsDequeued(threadID string, queueIDs []string) {
-	for _, queueID := range queueIDs {
-		_ = s.writeNotification(NotificationTurnDequeued, TurnDequeuedNotification{
-			ThreadID: threadID,
-			QueueID:  queueID,
-		})
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 
-func (s *Server) clearQueuedTurnDrain(threadID string) {
-	s.queuedTurnMu.Lock()
-	defer s.queuedTurnMu.Unlock()
-	delete(s.drainingQueuedTurns, threadID)
-}
-
-func (s *Server) kickAgentCompletionDrain(threadID string) {
-	s.tryDrainAgentCompletionTurns(threadID, false)
-}
-
-func (s *Server) tryDrainAgentCompletionTurns(threadID string, synchronous bool) (capacityFull bool) {
-	if s == nil || s.closed.Load() {
-		return
-	}
-	threadID = strings.TrimSpace(threadID)
-	if threadID == "" {
-		return
-	}
-
-	s.agentCompletionMu.Lock()
-	if s.closed.Load() {
-		s.agentCompletionMu.Unlock()
-		return
-	}
-	if len(s.pendingAgentCompletionTurns[threadID]) == 0 || s.drainingAgentCompletionTurns[threadID] {
-		s.agentCompletionMu.Unlock()
-		return
-	}
-	if s.drainingAgentCompletionTurns == nil {
-		s.drainingAgentCompletionTurns = make(map[string]bool)
-	}
-	s.drainingAgentCompletionTurns[threadID] = true
-	s.agentCompletionMu.Unlock()
-
-	if synchronous {
-		return s.drainAgentCompletionTurns(threadID)
-	}
-	_ = s.startBackground(func() { s.drainAgentCompletionTurns(threadID) })
-	return
-}
-
-func (s *Server) drainAgentCompletionTurns(threadID string) (capacityFull bool) {
-	if s == nil {
-		return
-	}
-	if s.closed.Load() {
-		s.discardPendingAgentCompletionTurns(threadID)
-		s.clearAgentCompletionDrain(threadID)
-		return
-	}
-	th := s.thread(threadID)
-	if th == nil || !canResumeAgentCompletionThread(th) {
-		s.discardPendingAgentCompletionTurns(threadID)
-		s.clearAgentCompletionDrain(threadID)
-		return
-	}
-	if threadIsRunning(th) {
-		s.clearAgentCompletionDrain(threadID)
-		// Match the queued-user drain handshake: a completion kick can race with
-		// this owner releasing its marker, so recheck after the release before
-		// allowing the wake-up to disappear.
-		if !threadIsRunning(th) {
-			s.kickAgentCompletionDrain(threadID)
-		}
-		return
-	}
-	// User-authored work wins over automatic completion wakeups. The user turn
-	// will kick this drain again after it reaches a terminal state.
-	if s.hasQueuedUserWork(threadID) {
-		s.clearAgentCompletionDrain(threadID)
-		s.kickQueuedTurnDrain(threadID)
-		return
-	}
-	// A frozen tree holds its pending completion turns: the next user turn
-	// consumes them as part of the whole-tree snapshot instead of synthetic
-	// turns waking a frozen orchestration (turn/interrupt tree freeze).
-	th.mu.Lock()
-	frozen := th.workerTreeFrozen
-	th.mu.Unlock()
-	if frozen {
-		s.clearAgentCompletionDrain(threadID)
-		return
-	}
-
-	pending := s.takePendingAgentCompletionTurns(threadID)
-	if len(pending) == 0 {
-		s.clearAgentCompletionDrain(threadID)
-		return
-	}
-	// One durable result id per synthetic wakeup gives retries a stable
-	// idempotency key independent of process-local batching boundaries.
-	current := pending[:1]
-	if len(pending) > 1 {
-		s.prependPendingAgentCompletionTurns(threadID, pending[1:])
-	}
-
-	started, err := s.startSyntheticTurn(context.Background(), threadID, combineAgentCompletionMessages(current), current)
-	executionBusy := errors.Is(err, errThreadExecutionBusy)
-	retryableAdmission := errors.Is(err, errRetryableTurnAdmission)
-	capacityFull = errors.Is(err, session.ErrProjectWorkerCapacity)
-	if err != nil && !executionBusy {
-		providers.DebugLogf("start agent completion turn for thread %q: %v", threadID, err)
-	}
-	requeued := false
-	if !started && (err == nil || executionBusy || retryableAdmission) {
-		s.prependPendingAgentCompletionTurns(threadID, current)
-		requeued = true
-	}
-	s.clearAgentCompletionDrain(threadID)
-	if requeued && (executionBusy || retryableAdmission) {
-		if capacityFull && s.deferProjectCapacityRetry(threadID, "completion", func() bool { return s.tryDrainAgentCompletionTurns(threadID, true) }) {
-			return
-		}
-		s.scheduleThreadExecutionLeaseRetry(func() { s.kickAgentCompletionDrain(threadID) })
-		return
-	}
-	// Admission can consume an already delivered result without starting a turn.
-	// In that case no runTurn will wake the remaining completion queue.
-	if requeued || s.hasQueuedAgentCompletionWork(threadID) {
-		s.kickAgentCompletionDrain(threadID)
-	}
-	return
-}
-
-func (s *Server) startSyntheticTurn(ctx context.Context, threadID string, userMsg providers.ChatMessage, pending []agentCompletionTurn) (bool, error) {
-	threadID = strings.TrimSpace(threadID)
-	if threadID == "" {
-		return false, errors.New("thread_id is required")
-	}
-	if strings.TrimSpace(userMsg.Role) == "" {
-		userMsg.Role = "user"
-	}
-	if !chatMessageHasUserPayload(userMsg) {
-		return false, nil
-	}
-
-	th := s.thread(threadID)
-	if th == nil {
-		return false, fmt.Errorf("thread %q not found", threadID)
-	}
-	if !canResumeAgentCompletionThread(th) {
-		return false, nil
-	}
-	var threadRuntime *runtime.ThreadRuntime
-	pending = cloneAgentCompletionTurns(pending)
-	completionResultIDs := make([]string, 0, len(pending))
-	processCompletionIDs := make([]string, 0, len(pending))
-	for _, turn := range pending {
-		if resultID := strings.TrimSpace(turn.resultID); resultID != "" {
-			completionResultIDs = append(completionResultIDs, resultID)
-		}
-		if processID := strings.TrimSpace(turn.processID); processID != "" {
-			processCompletionIDs = append(processCompletionIDs, processID)
-		}
-	}
-
-	started, ok, err := s.startThreadUserTurnWithAdmission(
-		ctx,
-		th,
-		userMsg,
-		turnRuntimeSnapshot{AgentCompletionResultIDs: completionResultIDs, ProcessCompletionIDs: processCompletionIDs, ExecutionRunID: s.activeExecutionRunID(threadID)},
-		false,
-		turnReadOnlySkip,
-		turnAdmissionHooks{
-			afterLease: func(admitted *threadState, admittedMsg *providers.ChatMessage) error {
-				var err error
-				threadRuntime, err = s.ensureThreadRuntimeAfterAdmission(admitted)
-				if err != nil {
-					return err
-				}
-				if err := gateAlreadyDeliveredCompletions(admitted.History, threadRuntime, completionResultIDs, processCompletionIDs); err != nil {
-					return err
-				}
-				*admittedMsg = combineAgentCompletionMessages(pending)
-				if clientID := agentCompletionClientID(pending); clientID != "" {
-					admittedMsg.ClientID = clientID
-				} else if clientID := processCompletionClientID(processCompletionIDs); clientID != "" {
-					admittedMsg.ClientID = clientID
-				}
-				return nil
-			},
-		},
-	)
-	if errors.Is(err, errAgentCompletionAlreadyDelivered) {
-		return true, nil
-	}
-	if err != nil || !ok {
-		return ok, err
-	}
-	if err := s.attachExecutionTurn(started.runtime.ExecutionRunID, threadID, started.turnID, started.admittedAt); err != nil {
-		persistErr := s.abortStartedThreadTurnDurably(th, started, err)
-		return false, errors.Join(err, persistErr)
-	}
-
-	_ = s.writeNotification(NotificationTurnStarted, TurnStartedNotification{
-		ThreadID: threadID,
-		Turn:     started.turn,
-	})
-	if !s.startBackground(func() {
-		s.runTurn(started.ctx, th, threadRuntime, started.turnID, started.runtime, started.history)
-	}) {
-		// The synthetic completion message was already appended durably at
-		// admission; a memory-only rollback would leave an orphan user
-		// message with no terminal meta after restart, and its completion
-		// result could be consumed twice. Record the terminal projection
-		// exactly like a rejected ordinary user turn.
-		persistErr := s.abortStartedThreadTurnDurably(th, started, errServerClosed)
-		return false, errors.Join(errServerClosed, persistErr)
-	}
-	return true, nil
-}
-
-func canResumeAgentCompletionThread(th *threadState) bool {
-	if th == nil {
-		return false
-	}
-	th.mu.Lock()
-	defer th.mu.Unlock()
-	return !th.ReadOnly
-}
-
-func threadIsRunning(th *threadState) bool {
-	if th == nil {
-		return false
-	}
-	th.mu.Lock()
-	defer th.mu.Unlock()
-	return th.running
-}
-
-// waitAndHandoffAnswerReadyTurn lets a user follow-up take the execution slot
-// once the current turn's final answer is visible. Leftover provider cleanup
-// is cancelled and completed, not treated as a busy rejection.
-func (s *Server) waitAndHandoffAnswerReadyTurn(ctx context.Context, th *threadState) error {
-	if s == nil || th == nil {
-		return errors.New("thread is required")
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	for {
-		if s.closed.Load() {
-			return errServerClosed
-		}
-		th.mu.Lock()
-		if !th.running {
-			th.mu.Unlock()
-			return nil
-		}
-		if !currentTurnIsAnswerReadyLocked(th) {
-			th.mu.Unlock()
-			return nil
-		}
-		if !th.interrupting {
-			th.completeAfterAnswerReadyCancel = true
-		}
-		cancel := th.cancel
-		waiter := th.addIdleWaiterLocked()
-		th.mu.Unlock()
-		if cancel != nil {
-			cancel()
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-waiter:
-		}
-	}
-}
-
-func (s *Server) takePendingAgentCompletionTurns(threadID string) []agentCompletionTurn {
-	s.agentCompletionMu.Lock()
-	defer s.agentCompletionMu.Unlock()
-	if s.closed.Load() {
-		return nil
-	}
-	pending := cloneAgentCompletionTurns(s.pendingAgentCompletionTurns[threadID])
-	delete(s.pendingAgentCompletionTurns, threadID)
-	return pending
-}
-
-func (s *Server) prependPendingAgentCompletionTurns(threadID string, turns []agentCompletionTurn) {
-	if len(turns) == 0 {
-		return
-	}
-	s.agentCompletionMu.Lock()
-	defer s.agentCompletionMu.Unlock()
-	if s.closed.Load() {
-		return
-	}
-	if s.pendingAgentCompletionTurns == nil {
-		s.pendingAgentCompletionTurns = make(map[string][]agentCompletionTurn)
-	}
-	existing := cloneAgentCompletionTurns(s.pendingAgentCompletionTurns[threadID])
-	s.pendingAgentCompletionTurns[threadID] = append(cloneAgentCompletionTurns(turns), existing...)
-}
-
-func (s *Server) discardPendingAgentCompletionTurns(threadID string) {
-	s.agentCompletionMu.Lock()
-	defer s.agentCompletionMu.Unlock()
-	delete(s.pendingAgentCompletionTurns, threadID)
-}
-
-func (s *Server) clearAgentCompletionDrain(threadID string) {
-	s.agentCompletionMu.Lock()
-	defer s.agentCompletionMu.Unlock()
-	delete(s.drainingAgentCompletionTurns, threadID)
-}
-
-func (s *Server) hasQueuedAgentCompletionWork(threadID string) bool {
-	s.agentCompletionMu.Lock()
-	defer s.agentCompletionMu.Unlock()
-	return len(s.pendingAgentCompletionTurns[threadID]) > 0 || s.drainingAgentCompletionTurns[threadID]
-}
-
-func combineAgentCompletionMessages(turns []agentCompletionTurn) providers.ChatMessage {
-	if len(turns) == 0 {
-		return providers.ChatMessage{Role: "user", ReadOnly: true}
-	}
-	if len(turns) == 1 {
-		msg := turns[0].msg
-		msg.ReadOnly = true
-		return msg
-	}
-	contents := make([]string, 0, len(turns))
-	name := ""
-	for _, turn := range turns {
-		msg := turn.msg
-		if name == "" {
-			name = strings.TrimSpace(msg.Name)
-		}
-		if content := strings.TrimSpace(msg.Content); content != "" {
-			contents = append(contents, content)
-		}
-	}
-	return providers.ChatMessage{
-		Role: "user",
-		Name: name,
-		// A merged completion is generated evidence even when its parts have
-		// different (or legacy missing) names/origins and lose their envelopes.
-		ReadOnly: true,
-		Content:  strings.Join(contents, "\n\n"),
-	}
-}
-
-const (
-	agentCompletionClientIDPrefix       = "wuu-agent-completion:"
-	agentCompletionAnswerClientIDPrefix = "wuu-agent-completion-answer:"
-)
-
-func agentCompletionClientID(turns []agentCompletionTurn) string {
-	ids := make([]string, 0, len(turns))
-	seen := make(map[string]bool, len(turns))
-	for _, turn := range turns {
-		id := strings.TrimSpace(turn.resultID)
-		if id == "" || seen[id] {
+// forceReleaseAbandonedThreadExecutions breaks the execution leases a timed-out
+// drain would otherwise abandon. In a process-exit shutdown the OS reclaims
+// the flocks anyway, but an embedded host (remote device sessions) keeps the
+// process alive: a stuck turn goroutine would hold its same-process lock
+// forever and every successor app-server would see the thread as busy.
+// Releasing the lease makes the durable state read exactly like a crashed
+// owner — the turn meta still says running, so the successor's normal
+// crash-recovery settles it. The stuck goroutine's own finalizer becomes a
+// no-op: releaseTurnExecutionLocked ignores a turn id that no longer matches.
+func forceReleaseAbandonedThreadExecutions(threads []*threadState) {
+	for _, th := range threads {
+		if th == nil {
 			continue
 		}
-		seen[id] = true
-		ids = append(ids, id)
+		th.mu.Lock()
+		if th.executionLease != nil {
+			log.Printf("wuu: shutdown abandoning turn %q on thread %q: force-releasing its execution lease for successor recovery", th.currentTurn, th.ID)
+			th.releaseTurnExecutionLocked(th.currentTurn)
+		}
+		th.mu.Unlock()
 	}
-	if len(ids) == 0 {
-		return ""
-	}
-	sort.Strings(ids)
-	return agentCompletionClientIDPrefix + strings.Join(ids, ",")
 }
 
-func agentCompletionClientIDForResult(resultID string) string {
-	resultID = strings.TrimSpace(resultID)
-	if resultID == "" {
-		return ""
-	}
-	return agentCompletionClientIDPrefix + resultID
-}
-
-func agentCompletionResultIDs(clientID string) []string {
-	clientID = strings.TrimSpace(clientID)
-	if !strings.HasPrefix(clientID, agentCompletionClientIDPrefix) {
-		return nil
-	}
-	raw := strings.TrimPrefix(clientID, agentCompletionClientIDPrefix)
-	if raw == "" {
-		return nil
-	}
-	parts := strings.Split(raw, ",")
-	out := make([]string, 0, len(parts))
-	for _, part := range parts {
-		if id := strings.TrimSpace(part); id != "" {
-			out = append(out, id)
+func collectThreadAgentControls(threads []*threadState, controls map[*agentcontrol.AgentControl]struct{}) {
+	for _, th := range threads {
+		if th == nil {
+			continue
+		}
+		th.mu.Lock()
+		threadRuntime := th.execRuntime
+		th.mu.Unlock()
+		if threadRuntime != nil && threadRuntime.AgentControl != nil {
+			controls[threadRuntime.AgentControl] = struct{}{}
 		}
 	}
-	return out
 }
 
-func agentCompletionAnswerResultIDs(clientID string) []string {
-	return completionReceipts(clientID).Agents
-}
-
-func splitAgentCompletionResultIDs(raw string) []string {
-	if strings.TrimSpace(raw) == "" {
-		return nil
+func (s *Server) releasePresence() {
+	if s == nil || s.presenceLease == nil {
+		return
 	}
-	parts := strings.Split(raw, ",")
-	out := make([]string, 0, len(parts))
-	for _, part := range parts {
-		if id := strings.TrimSpace(part); id != "" {
-			out = append(out, id)
+	lease := s.presenceLease
+	s.presenceLease = nil
+	if err := lease.Release(); err != nil {
+		providers.DebugLogf("release app-server presence: %v", err)
+	}
+}
+
+func shutdownExecutionActive(threads []*threadState, controls map[*agentcontrol.AgentControl]struct{}) bool {
+	for _, th := range threads {
+		if th == nil {
+			continue
+		}
+		th.mu.Lock()
+		owned := th.executionLease != nil || th.admissionReserved
+		th.mu.Unlock()
+		if owned {
+			return true
 		}
 	}
-	return out
-}
-
-// markAgentCompletionAnswer stamps the successful final assistant row with a
-// durable outcome marker. A streamed partial assistant from a cancelled or
-// failed turn never receives this marker, so restart recovery cannot mistake
-// visible partial text for a completed consumption of the child result.
-func markAgentCompletionAnswer(res *agent.LoopResult, resultIDs []string) bool {
-	return markCompletionAnswer(res, completionAnswerReceipts{Agents: resultIDs})
-}
-
-func agentCompletionMarkerAnswered(history []providers.ChatMessage, resultID string) bool {
-	resultID = strings.TrimSpace(resultID)
-	if resultID == "" {
-		return false
-	}
-	marker := -1
-	for i, msg := range history {
-		for _, id := range agentCompletionResultIDs(msg.ClientID) {
-			if id == resultID {
-				marker = i
-				break
-			}
-		}
-	}
-	if marker < 0 {
-		return false
-	}
-	for _, msg := range history[marker+1:] {
-		for _, answeredID := range agentCompletionAnswerResultIDs(msg.ClientID) {
-			if answeredID == resultID {
-				return true
-			}
-		}
-		if strings.EqualFold(strings.TrimSpace(msg.Role), "user") &&
-			!msg.Hidden && !msg.Steered && !compact.IsInternalContextMessage(msg) {
-			return false
+	for control := range controls {
+		if control != nil && control.HasOwnedWorkerExecutions() {
+			return true
 		}
 	}
 	return false
 }
 
-func cloneAgentCompletionTurns(turns []agentCompletionTurn) []agentCompletionTurn {
-	if len(turns) == 0 {
-		return nil
-	}
-	msgs := make([]providers.ChatMessage, 0, len(turns))
-	for _, turn := range turns {
-		msgs = append(msgs, turn.msg)
-	}
-	msgs = cloneHistory(msgs)
-	out := make([]agentCompletionTurn, 0, len(turns))
-	for i, turn := range turns {
-		out = append(out, agentCompletionTurn{
-			agentID:   turn.agentID,
-			resultID:  turn.resultID,
-			processID: turn.processID,
-			msg:       msgs[i],
-			snapshot:  cloneSubAgentSnapshot(turn.snapshot),
-		})
-	}
-	return out
+func RunStdio(ctx context.Context, rt *runtime.Session, in io.Reader, out io.Writer) error {
+	return RunStdioForDevice(ctx, rt, in, out, nil)
 }
 
-func cloneSubAgentSnapshot(snapshot *subagent.SubAgentSnapshot) *subagent.SubAgentSnapshot {
-	if snapshot == nil {
-		return nil
+// RunStdioForDevice runs the protocol loop for a remote device session,
+// binding the device/push_* methods to the transport's per-device registrar.
+// Local desktop sessions call RunStdio, which leaves the registrar nil so
+// those methods fail explicitly instead of parking tokens nowhere.
+func RunStdioForDevice(ctx context.Context, rt *runtime.Session, in io.Reader, out io.Writer, registrar PushRegistrar) error {
+	if rt == nil {
+		return errors.New("runtime session is required")
 	}
-	clone := *snapshot
-	return &clone
+	s := New(rt, out)
+	s.pushRegistrar = registrar
+	defer s.Close()
+	if s.startupErr != nil {
+		return s.startupErr
+	}
+	if s.bootOwner && strings.TrimSpace(rt.WuuHome) != "" {
+		maintenanceCtx, cancel := context.WithCancel(context.Background())
+		s.storageMaintenanceCancel = cancel
+		if !s.startBackground(func() { s.maintainSessionStorage(maintenanceCtx) }) {
+			cancel()
+			s.storageMaintenanceCancel = nil
+		}
+	}
+	return runStdioScanner(ctx, s, in)
 }
 
-func queuedTurnSummary(threadID string, entry queuedTurn) QueuedTurn {
-	preview := strings.TrimSpace(chatMessageDisplayContent(entry.msg))
-	if preview == "" && len(entry.msg.Images) > 0 {
-		if len(entry.msg.Images) == 1 {
-			preview = "[Image #1]"
-		} else {
-			preview = fmt.Sprintf("[%d images]", len(entry.msg.Images))
-		}
-	}
-	if preview == "" && len(entry.msg.Files) > 0 {
-		if len(entry.msg.Files) == 1 {
-			preview = filePreview(entry.msg.Files[0], 1)
-		} else {
-			preview = fmt.Sprintf("[%d files]", len(entry.msg.Files))
-		}
-	}
-	return QueuedTurn{
-		ID:         entry.id,
-		ThreadID:   threadID,
-		Preview:    preview,
-		ImageCount: len(entry.msg.Images),
-		FileCount:  len(entry.msg.Files),
-	}
-}
-
-func chatMessageHasUserPayload(msg providers.ChatMessage) bool {
-	return strings.TrimSpace(msg.Content) != "" || len(msg.Images) > 0 || len(msg.Files) > 0
-}
-
-func queuedTurnsFromSteers(msgs []providers.ChatMessage) []queuedTurn {
-	if len(msgs) == 0 {
-		return nil
-	}
-	out := make([]queuedTurn, 0, len(msgs))
-	for _, msg := range msgs {
-		id := strings.TrimSpace(msg.ClientID)
-		if id == "" {
-			id = session.NewID()
-		}
-		msg.ClientID = id
-		msg.Steered = false
-		snapshot := turnRuntimeSnapshot{}
-		if pluginID, requestID, ok := pluginSessionRequestFromClientID(id); ok {
-			snapshot.PluginTurn = &pluginTurnReference{PluginID: pluginID, RequestID: requestID}
-		}
-		if ids := agentCompletionResultIDs(id); len(ids) > 0 {
-			snapshot.AgentCompletionResultIDs = ids
-		}
-		out = append(out, queuedTurn{id: id, msg: msg, snapshot: snapshot})
-	}
-	return out
-}
-
-func coalescedQueuedTurnsFromSteers(msgs []providers.ChatMessage) []queuedTurn {
-	queued := queuedTurnsFromSteers(msgs)
-	if len(queued) < 2 {
-		return queued
-	}
-	out := make([]queuedTurn, 0, len(queued))
-	for index := 0; index < len(queued); {
-		entry := queued[index]
-		reference := entry.snapshot.PluginTurn
-		if reference == nil {
-			out = append(out, entry)
-			index++
-			continue
-		}
-		next := index + 1
-		for next < len(queued) {
-			candidate := queued[next].snapshot.PluginTurn
-			if candidate == nil || candidate.PluginID != reference.PluginID {
-				break
-			}
-			entry.followups = append(entry.followups, queued[next].msg)
-			next++
-		}
-		out = append(out, entry)
-		index = next
-	}
-	return out
-}
-
-func filterConsumedAgentCompletionSteers(steers []providers.ChatMessage, control *agentcontrol.AgentControl) []providers.ChatMessage {
-	if len(steers) == 0 || control == nil {
-		return steers
-	}
-	out := make([]providers.ChatMessage, 0, len(steers))
-	for _, steer := range steers {
-		ids := agentCompletionResultIDs(steer.ClientID)
-		if len(ids) == 0 {
-			out = append(out, steer)
-			continue
-		}
-		consumed := false
-		for _, id := range ids {
-			consumer, _ := control.AgentResultDeliveryConsumer(id)
-			if consumer != "" {
-				consumed = true
-				break
-			}
-		}
-		if !consumed {
-			out = append(out, steer)
-		}
-	}
-	return out
-}
-
-func (s *Server) persistTurnResultLocked(th *threadState, res agent.LoopResult, rewriteHistory bool, providerName, model string, historyBaselineSeq int) error {
-	if !th.PersistHistory {
-		return nil
-	}
-	indexHistory := th.History
-	if rewriteHistory {
-		rewriteBaselineSeq := max(historyBaselineSeq, res.HistoryArchiveHeadSeq)
-		if res.DurableMessagesTracked && len(res.DurableNewMessages) > 0 {
-			seqs, endSeq, err := appendChatMessagesReturningSeqs(s.rt.SessionDir, th.ID, res.DurableNewMessages)
-			if err != nil {
-				return err
-			}
-			th.History = applyPersistedHistorySeqs(th.History, res.DurableNewMessages, seqs)
-			if endSeq > rewriteBaselineSeq {
-				rewriteBaselineSeq = endSeq
-			}
-		}
-		if err := rewriteChatHistoryAtBaseline(s.rt.SessionDir, th.ID, th.History, rewriteBaselineSeq); err != nil {
-			return err
-		}
-		// The transaction may have merged meta tail records that arrived while
-		// the model ran. Count the committed history rather than
-		// overwriting the session index from the turn's pre-merge snapshot.
-		if committedRecords, committedHeadSeq, err := loadProviderPersistedMessages(s.rt.SessionDir, th.ID, false); err != nil {
-			return err
-		} else {
-			committed := chatMessagesFromPersistedMessages(committedRecords)
-			indexHistory = committed
-			th.History = cloneHistory(committed)
-			th.historyHeadSeq = committedHeadSeq
-		}
-	} else {
-		messagesToAppend := res.NewMessages
-		if res.DurableMessagesTracked {
-			messagesToAppend = res.DurableNewMessages
-		}
-		if err := appendChatMessages(s.rt.SessionDir, th.ID, messagesToAppend); err != nil {
-			return err
-		}
-	}
-	if err := appendTokenUsage(s.rt.SessionDir, th.ID, providerName, model, providers.TokenUsage{
-		InputTokens:         res.InputTokens,
-		OutputTokens:        res.OutputTokens,
-		CacheCreationTokens: res.CacheCreationTokens,
-		CacheReadTokens:     res.CacheReadTokens,
-	}, res.ContextTokens); err != nil {
-		return err
-	}
-	if err := session.UpdateIndex(s.rt.SessionDir, th.ID, persistableMessageCount(indexHistory), threadPreview(indexHistory)); err != nil {
-		return err
-	}
-	s.invalidateSettingsUsage()
-	return nil
-}
-
-func applyPersistedHistorySeqs(messages, persisted []providers.ChatMessage, seqs []int) []providers.ChatMessage {
-	if len(messages) == 0 || len(persisted) == 0 || len(seqs) == 0 {
-		return messages
-	}
-	out := cloneHistory(messages)
-	searchFrom := 0
-	for persistedIndex, persistedMessage := range persisted {
-		if persistedIndex >= len(seqs) || seqs[persistedIndex] <= 0 {
-			continue
-		}
-		persistedMessage.Seq = 0
-		for messageIndex := searchFrom; messageIndex < len(out); messageIndex++ {
-			candidate := providers.CloneChatMessage(out[messageIndex])
-			candidate.Seq = 0
-			if !reflect.DeepEqual(candidate, persistedMessage) {
-				continue
-			}
-			out[messageIndex].Seq = seqs[persistedIndex]
-			searchFrom = messageIndex + 1
-			break
-		}
-	}
-	return out
-}
-
-func (s *Server) persistFailedTurnResultLocked(th *threadState, res agent.LoopResult, rewriteHistory bool, providerName, model string, historyBaselineSeq int) error {
-	if th.PersistHistory {
-		return s.persistTurnResultLocked(th, res, rewriteHistory, providerName, model, historyBaselineSeq)
-	}
-	if err := appendTokenUsage(s.rt.SessionDir, th.ID, providerName, model, providers.TokenUsage{
-		InputTokens:         res.InputTokens,
-		OutputTokens:        res.OutputTokens,
-		CacheCreationTokens: res.CacheCreationTokens,
-		CacheReadTokens:     res.CacheReadTokens,
-	}, res.ContextTokens); err != nil {
-		return err
-	}
-	s.invalidateSettingsUsage()
-	return nil
-}
-
-type settingsUsageCacheEntry struct {
-	response  SettingsUsageResponse
-	zone      string
-	expiresAt time.Time
-}
-
-// usageLocation resolves the IANA time zone a usage request buckets days in.
-// Empty means UTC; an unknown zone is an error rather than a silent UTC
-// fallback.
-func usageLocation(zone string) (*time.Location, error) {
-	zone = strings.TrimSpace(zone)
-	if zone == "" {
-		return time.UTC, nil
-	}
-	loc, err := time.LoadLocation(zone)
-	if err != nil {
-		return nil, fmt.Errorf("invalid timezone: %w", err)
-	}
-	return loc, nil
-}
-
-func (s *Server) invalidateSettingsUsage() {
+func (s *Server) handleLine(ctx context.Context, raw []byte) error {
 	if s == nil {
-		return
+		return errors.New("app-server is required")
 	}
-	s.settingsUsageMu.Lock()
-	s.settingsUsageCache = nil
-	s.settingsUsageMu.Unlock()
-}
-
-// handleSettingsUsage returns the aggregated token usage snapshot for
-// the desktop settings page. The snapshot always covers the full
-// token_usage trail — every row, including zero-At legacy imports, so
-// long-running sessions and migrated history contribute their real
-// totals.
-func (s *Server) handleSettingsUsage(req Request) error {
-	var params SettingsUsageQuery
-	if err := decodeParams(req.Params, &params); err != nil {
-		return s.writeResponse(req.ID, nil, err)
+	if s.startupErr != nil {
+		return s.startupErr
 	}
-	loc, err := usageLocation(params.TimeZone)
-	if err != nil {
-		return s.writeResponse(req.ID, nil, err)
+	var req Request
+	if err := json.Unmarshal(raw, &req); err != nil {
+		return s.writeResponse(nil, nil, fmt.Errorf("parse request: %w", err))
 	}
-	sessDir := s.rt.SessionDir
-	now := time.Now().UTC()
-	s.settingsUsageMu.Lock()
-	defer s.settingsUsageMu.Unlock()
-	if cached := s.settingsUsageCache; cached != nil && cached.zone == loc.String() && now.Before(cached.expiresAt) {
-		return s.writeResponse(req.ID, cached.response, nil)
+	// A line with an id but no method is the desktop client's Response to a
+	// server-initiated request (browser/*). Route it to the waiting caller
+	// before the method switch, otherwise it falls through to default and gets
+	// answered with an "unknown method" error, silently dropping the reply.
+	if req.Method == "" && len(req.ID) > 0 {
+		s.deliverClientResponse(raw)
+		return nil
 	}
-
-	scan, err := insight.CollectUsageScan(sessDir)
-	if err != nil {
-		return s.writeResponse(req.ID, nil, fmt.Errorf("collect usage: %w", err))
-	}
-	rows := scan.TokenRows
-
-	metrics, days := aggregateUsageRows(rows, loc)
-
-	response := SettingsUsageResponse{
-		TotalSessions:   countUsageSessions(rows),
-		GeneratedAt:     now.Format(time.RFC3339Nano),
-		Metrics:         metrics,
-		ModelBreakdowns: buildUsageModelBreakdowns(rows),
-		SkillUsage:      scan.Skills,
-		Days:            days,
-	}
-	// Usage analytics is an approximate convenience view, not a live meter.
-	// Keep the full-history scan out of the normal interaction path for two hours.
-	s.settingsUsageCache = &settingsUsageCacheEntry{response: response, zone: loc.String(), expiresAt: now.Add(2 * time.Hour)}
-	return s.writeResponse(req.ID, response, nil)
-}
-
-// handleUsageOverview returns the empty conversation home's usage summary.
-// Unlike handleSettingsUsage it reads only token_usage rows, so it needs no
-// cache, and it buckets days in the caller's time zone so they line up with
-// the calendar the desktop draws.
-func (s *Server) handleUsageOverview(req Request) error {
-	var params UsageOverviewParams
-	if err := decodeParams(req.Params, &params); err != nil {
-		return s.writeResponse(req.ID, nil, err)
-	}
-	loc, err := usageLocation(params.TimeZone)
-	if err != nil {
-		return s.writeResponse(req.ID, nil, err)
-	}
-	rows, err := session.ListTokenUsage(s.rt.SessionDir)
-	if err != nil {
-		return s.writeResponse(req.ID, nil, fmt.Errorf("collect usage: %w", err))
-	}
-	metrics, days := aggregateUsageRows(rows, loc)
-	return s.writeResponse(req.ID, UsageOverviewResponse{
-		TotalSessions: countUsageSessions(rows),
-		Metrics:       metrics,
-		Days:          days,
-	}, nil)
-}
-
-// countUsageSessions returns the number of distinct session IDs present
-// in the token_usage trail.
-func countUsageSessions(rows []insight.TokenUsageRow) int {
-	seen := make(map[string]struct{})
-	for _, r := range rows {
-		seen[r.SessionID] = struct{}{}
-	}
-	return len(seen)
-}
-
-func buildUsageModelBreakdowns(rows []insight.TokenUsageRow) []insight.ModelUsage {
-	buckets := make(map[string]*insight.ModelUsage)
-	sessionsByBucket := make(map[string]map[string]struct{})
-	for _, r := range rows {
-		key := r.Provider + "|" + r.Model
-		bucket, ok := buckets[key]
-		if !ok {
-			bucket = &insight.ModelUsage{Provider: r.Provider, Model: r.Model}
-			buckets[key] = bucket
-		}
-		bucket.InputTokens += r.InputTokens
-		bucket.OutputTokens += r.OutputTokens
-		bucket.CacheCreationTokens += r.CacheCreationTokens
-		bucket.CacheReadTokens += r.CacheReadTokens
-		if r.SessionID != "" {
-			seen := sessionsByBucket[key]
-			if seen == nil {
-				seen = make(map[string]struct{})
-				sessionsByBucket[key] = seen
+	switch req.Method {
+	case MethodInitialize:
+		return s.handleInitialize(req)
+	case MethodConfigRead:
+		return s.handleConfigRead(req)
+	case MethodConfigModelUpdate:
+		return s.handleConfigModelUpdate(req)
+	case MethodConfigAdvancedUpdate:
+		return s.handleConfigAdvancedUpdate(req)
+	case MethodConfigGeneralUpdate:
+		return s.handleConfigGeneralUpdate(req)
+	case MethodEngineList:
+		// Engine discovery asks the external Codex host for its model list and
+		// can take several seconds. The composer refreshes this inventory when
+		// its model picker opens; running it on the serial stdio loop would make
+		// the model/effort update clicked next wait behind discovery.
+		if !s.startBackground(func() {
+			if err := s.handleEngineList(req); err != nil {
+				log.Printf("wuu: engine/list: %v", err)
 			}
-			seen[r.SessionID] = struct{}{}
+		}) {
+			return s.writeResponse(req.ID, nil, errServerClosed)
 		}
+		return nil
+	case MethodEngineUpdate:
+		return s.handleEngineUpdate(req)
+	case MethodEngineAuthMethods, MethodEngineAuthenticate, MethodEngineAuthCancel:
+		return s.handleEngineAuth(ctx, req)
+	case MethodExtensionCatalogRefresh:
+		return s.handleExtensionCatalogRefresh(req)
+	case MethodExtensionPackageUpdate:
+		return s.handleExtensionPackageUpdate(req)
+	case MethodPluginPackageInspect:
+		return s.handlePluginPackageInspect(req)
+	case MethodPluginPackageInstall:
+		return s.handlePluginPackageInstall(req)
+	case MethodPluginPackageRemove:
+		return s.handlePluginPackageRemove(req)
+	case MethodPluginDesktopModuleRead:
+		return s.handlePluginDesktopModuleRead(req)
+	case MethodPluginIconRead:
+		return s.handlePluginIconRead(req)
+	case MethodPluginSettingGet:
+		return s.handlePluginSettingGet(req)
+	case MethodPluginSettingSet:
+		return s.handlePluginSettingSet(req)
+	case MethodPluginDiagnosticsList:
+		return s.handlePluginDiagnosticsList(req)
+	case MethodPluginGenerationDiagnosticsList:
+		return s.handlePluginGenerationDiagnosticsList(req)
+	case MethodPluginRegistryIntrospect:
+		return s.handlePluginRegistryIntrospect(req)
+	case MethodPluginExecutionsList:
+		return s.handlePluginExecutionsList(req)
+	case MethodPluginStorageGet:
+		return s.handlePluginStorageGet(req)
+	case MethodPluginStorageSet:
+		return s.handlePluginStorageSet(req)
+	case MethodPluginClientRequest:
+		return s.handlePluginClientRequest(ctx, req)
+	case MethodUserQuestionList:
+		return s.handleUserQuestionList(req)
+	case MethodUserQuestionRespond:
+		return s.handleUserQuestionRespond(req)
+	case MethodUserQuestionCancel:
+		return s.handleUserQuestionCancel(req)
+	case MethodUserQuestionHold:
+		return s.handleUserQuestionHold(req)
+	case MethodConfigCodexCredentials:
+		return s.handleConfigCodexCredentials(req)
+	case MethodConfigCodexModels:
+		// Model discovery performs an external Codex request. Keep it off the
+		// serial stdio dispatch loop so unrelated local mutations, especially a
+		// model selection made from the same menu, are not queued behind network
+		// latency. Response writes and the model cache are independently locked.
+		if !s.startBackground(func() {
+			if err := s.handleConfigCodexModels(ctx, req); err != nil {
+				log.Printf("wuu: config/codex/models: %v", err)
+			}
+		}) {
+			return s.writeResponse(req.ID, nil, errServerClosed)
+		}
+		return nil
+	case MethodAuthXAILoginStart:
+		return s.handleAuthXAILoginStart(ctx, req)
+	case MethodAuthXAILoginPoll:
+		return s.handleAuthXAILoginPoll(ctx, req)
+	case MethodAuthXAILoginCancel:
+		return s.handleAuthXAILoginCancel(req)
+	case MethodConfigCatalogProviders:
+		return s.handleConfigModelCatalogProviders(req)
+	case MethodConfigCatalogRefresh:
+		if !s.startBackground(func() {
+			if err := s.handleConfigModelCatalogRefresh(ctx, req); err != nil {
+				log.Printf("wuu: config/model-catalog/refresh: %v", err)
+			}
+		}) {
+			return s.writeResponse(req.ID, nil, errServerClosed)
+		}
+		return nil
+	case MethodConfigProviderRemove:
+		return s.handleConfigProviderRemove(req)
+	case MethodSkillList:
+		return s.handleSkillList(req)
+	case MethodThreadStart:
+		return s.handleThreadStart(req)
+	case MethodThreadResume:
+		return s.handleThreadResume(req)
+	case "thread/history/read":
+		return s.handleThreadHistoryRead(req)
+	case "message/image/read":
+		return s.handleMarkdownImageRead(ctx, req)
+	case "thread/attachment/read", "thread/content/read":
+		return s.handleThreadAttachmentRead(req)
+	case MethodThreadFork:
+		return s.handleThreadFork(req)
+	case MethodThreadEditMessage:
+		return s.handleThreadEditMessage(req)
+	case MethodThreadContextComposition:
+		return s.handleThreadContextComposition(req)
+	case MethodInstructionsList:
+		return s.handleInstructionsList(req)
+	case MethodSideThreadOpen:
+		return s.handleSideThreadOpen(req)
+	case MethodSideThreadGetHistory:
+		return s.handleSideThreadGetHistory(req)
+	case MethodSideThreadSend:
+		return s.handleSideThreadSendMessage(req)
+	case MethodSideThreadInterrupt:
+		return s.handleSideThreadInterrupt(req)
+	case MethodSideThreadReset:
+		return s.handleSideThreadReset(req)
+	case MethodThreadList:
+		return s.handleThreadList(req)
+	case MethodThreadListAll:
+		return s.handleThreadListAll(req)
+	case MethodThreadListArchived:
+		return s.handleThreadListArchived(req)
+	case MethodThreadSearch:
+		return s.handleThreadSearch(req)
+	case MethodThreadPreview:
+		return s.handleThreadPreview(req)
+	case "thread/textSnapshot":
+		return s.handleThreadTextSnapshot(req)
+	case "thread/control/return":
+		return s.handleThreadControl(ctx, req)
+	case "thread/control/take":
+		return s.handleThreadTakeControl(req)
+	case MethodProjectWork:
+		return s.handleProjectWork(req)
+	case MethodProjectSession:
+		return s.handleProjectSession(req)
+	case MethodThreadPin:
+		return s.handleThreadPin(req)
+	case MethodThreadOrganizationUpdate:
+		return s.handleThreadOrganizationUpdate(req)
+	case MethodSessionOrganizationList:
+		return s.handleSessionOrganizationList(req)
+	case MethodSessionFolderCreate:
+		return s.handleOrganizationGroupCreate(req)
+	case MethodSessionFolderUpdate:
+		return s.handleOrganizationGroupUpdate(req)
+	case MethodSessionFolderReorder:
+		return s.handleOrganizationGroupReorder(req)
+	case MethodSessionFolderDelete:
+		return s.handleOrganizationGroupDelete(req)
+	case MethodThreadArchive:
+		return s.handleThreadArchive(req)
+	case MethodThreadCompactStart:
+		return s.handleThreadCompactStart(ctx, req)
+	case MethodThreadRename:
+		return s.handleThreadRename(req)
+	case MethodThreadDelete:
+		return s.handleThreadDelete(req)
+	case MethodWorkspaceGitStatus, MethodWorkspaceGitChanges, MethodWorkspaceGitDiff:
+		if !s.startBackground(func() {
+			if err := s.handleWorkspaceGit(ctx, req); err != nil {
+				log.Printf("wuu: workspace git view: %v", err)
+			}
+		}) {
+			return s.writeResponse(req.ID, nil, errServerClosed)
+		}
+		return nil
+	case MethodWorkspaceDirectoryList, MethodWorkspaceFileRead, MethodWorkspaceFileResolve, MethodWorkspaceFileChunk:
+		return s.handleWorkspaceView(req)
+	case MethodWorkspaceList:
+		return s.handleWorkspaceList(req)
+	case MethodWorkspaceStateCleanup:
+		return s.handleWorkspaceStateCleanup(req)
+	case MethodThreadRegenerateTitle:
+		// Title generation is a synchronous LLM call. Keep it off the
+		// serial stdio dispatch loop so unrelated requests are not queued
+		// behind provider latency; response writes are independently locked.
+		if !s.startBackground(func() {
+			if err := s.handleThreadRegenerateTitle(ctx, req); err != nil {
+				log.Printf("wuu: thread/regenerate-title: %v", err)
+			}
+		}) {
+			return s.writeResponse(req.ID, nil, errServerClosed)
+		}
+		return nil
+	case MethodTextPolish:
+		// Same reasoning as title regeneration: a synchronous LLM call must
+		// not stall the serial dispatch loop.
+		if !s.startBackground(func() {
+			if err := s.handleTextPolish(req); err != nil {
+				log.Printf("wuu: text/polish: %v", err)
+			}
+		}) {
+			return s.writeResponse(req.ID, nil, errServerClosed)
+		}
+		return nil
+	case MethodGitCommitMessage:
+		// Same reasoning as title regeneration: a synchronous LLM call must
+		// not stall the serial dispatch loop.
+		if !s.startBackground(func() {
+			if err := s.handleGitCommitMessage(req); err != nil {
+				log.Printf("wuu: git/commit-message: %v", err)
+			}
+		}) {
+			return s.writeResponse(req.ID, nil, errServerClosed)
+		}
+		return nil
+	case MethodTurnStart:
+		return s.handleTurnStart(ctx, req)
+	case MethodTurnQueue:
+		return s.handleTurnQueue(req)
+	case MethodTurnUpdateQueued:
+		return s.handleTurnUpdateQueued(req)
+	case MethodTurnDequeue:
+		return s.handleTurnDequeue(req)
+	case MethodTurnSteer:
+		return s.handleTurnSteer(req)
+	case MethodTurnUnsteer:
+		return s.handleTurnUnsteer(req)
+	case MethodTurnRequeue:
+		return s.handleTurnRequeue(req)
+	case MethodTurnInterrupt:
+		return s.handleTurnInterrupt(req)
+	case MethodRunStart:
+		return s.handleRunStart(ctx, req)
+	case MethodRunInterrupt:
+		return s.handleRunInterrupt(ctx, req)
+	case MethodProcessList:
+		return s.handleProcessList(req)
+	case MethodProcessRead:
+		return s.handleProcessRead(ctx, req)
+	case MethodProcessWrite:
+		return s.handleProcessWrite(req)
+	case MethodProcessResize:
+		return s.handleProcessResize(req)
+	case MethodProcessStop:
+		return s.handleProcessStop(req)
+	case MethodMCPList:
+		return s.handleMCPList(req)
+	case MethodMCPConnect:
+		return s.handleMCPConnect(ctx, req)
+	case MethodMCPDisconnect:
+		return s.handleMCPDisconnect(req)
+	case MethodMCPRefresh:
+		return s.handleMCPRefresh(ctx, req)
+	case MethodMCPAuthStart:
+		return s.handleMCPAuthStart(ctx, req)
+	case MethodMCPAuthStatus:
+		return s.handleMCPAuthStatus(ctx, req)
+	case MethodMCPAuthFinish:
+		return s.handleMCPAuthFinish(ctx, req)
+	case MethodMCPAuthRemove:
+		return s.handleMCPAuthRemove(ctx, req)
+	case MethodActivityList:
+		return s.handleActivityList(req)
+	case MethodActivityTakeover:
+		return s.handleActivityTakeover(req)
+	case MethodActivityRelease:
+		return s.handleActivityRelease(req)
+	case MethodActivityStop:
+		return s.handleActivityStop(req)
+	case MethodShutdown:
+		if err := s.writeResponse(req.ID, OKResult{OK: true}, nil); err != nil {
+			return err
+		}
+		s.Close()
+		return errShutdown
+	case MethodSettingsUsage:
+		return s.handleSettingsUsage(req)
+	case MethodUsageOverview:
+		// Every visit to the empty conversation home requests this summary.
+		// Keep the store read off the serial stdio loop so a prompt sent right
+		// away does not wait behind it.
+		if !s.startBackground(func() {
+			if err := s.handleUsageOverview(req); err != nil {
+				log.Printf("wuu: usage/overview: %v", err)
+			}
+		}) {
+			return s.writeResponse(req.ID, nil, errServerClosed)
+		}
+		return nil
+	case MethodDevicePushRegister:
+		return s.handleDevicePushRegister(req)
+	case MethodDevicePushUnregister:
+		return s.handleDevicePushUnregister(req)
+	default:
+		return s.writeResponse(req.ID, nil, fmt.Errorf("unknown method %q", req.Method))
 	}
+}
 
-	breakdowns := make([]insight.ModelUsage, 0, len(buckets))
-	for key, bucket := range buckets {
-		// token_usage rows double as context-size markers (compaction
-		// checkpoints, turns whose provider reported no usage): their token
-		// sums are all zero. A bucket made only of such rows carries no
-		// spend signal and would render as a meaningless 0/0 card.
-		if bucket.TotalContextTokens() == 0 {
-			continue
-		}
-		bucket.Sessions = len(sessionsByBucket[key])
-		breakdowns = append(breakdowns, *bucket)
+func (s *Server) thread(id string) *threadState {
+	s.mu.Lock()
+	th := s.threads[id]
+	s.mu.Unlock()
+	if th == nil {
+		return nil
 	}
-	sort.Slice(breakdowns, func(i, j int) bool {
-		return breakdowns[i].TotalContextTokens() > breakdowns[j].TotalContextTokens()
+	th.mu.Lock()
+	th.LastAccessedAt = time.Now().UTC()
+	th.mu.Unlock()
+	return th
+}
+
+func sanitizeStreamEvent(ev providers.StreamEvent) StreamEventPayload {
+	out := StreamEventPayload{
+		Type:      ev.Type,
+		Content:   ev.Content,
+		Truncated: ev.Truncated,
+	}
+	if ev.Message != nil && !ev.Message.Hidden {
+		out.Message = ev.Message
+	}
+	if ev.ToolCall != nil {
+		out.ToolCall = ev.ToolCall
+	}
+	if ev.ToolResult != "" {
+		out.ToolResult = ev.ToolResult
+	}
+	if ev.ToolResultDetail != nil {
+		detail := ev.ToolResultDetail.Clone()
+		out.ToolResultDetail = &detail
+	}
+	if ev.TodoUpdate != nil {
+		out.TodoUpdate = ev.TodoUpdate
+	}
+	if ev.AgentActivity != nil {
+		activity := *ev.AgentActivity
+		out.AgentActivity = &activity
+	}
+	if ev.Lifecycle != nil {
+		out.Lifecycle = sanitizeStreamLifecycle(ev.Lifecycle)
+	}
+	if ev.RequestContext != nil {
+		out.RequestContext = ev.RequestContext
+	}
+	if ev.ProviderState != nil {
+		out.ProviderState = ev.ProviderState
+	}
+	if ev.Usage != nil {
+		out.Usage = ev.Usage
+	}
+	if ev.StopReason != "" {
+		out.StopReason = ev.StopReason
+	}
+	if ev.FinishReason != "" {
+		out.FinishReason = string(ev.FinishReason)
+	}
+	if ev.Error != nil {
+		out.Error = ev.Error.Error()
+	}
+	return out
+}
+
+func sanitizeStreamLifecycle(lifecycle *providers.StreamLifecycle) *StreamLifecyclePayload {
+	if lifecycle == nil {
+		return nil
+	}
+	payload := &StreamLifecyclePayload{
+		Phase:           string(lifecycle.Phase),
+		OperationID:     lifecycle.OperationID,
+		OperationKind:   string(lifecycle.OperationKind),
+		WorkloadProfile: string(lifecycle.WorkloadProfile),
+		PayloadVersion:  lifecycle.PayloadVersion,
+		AttemptID:       lifecycle.AttemptID,
+		Attempt:         lifecycle.Attempt,
+		MaxAttempts:     lifecycle.MaxAttempts,
+		SubmissionID:    lifecycle.SubmissionID,
+		SubmissionCount: lifecycle.SubmissionCount,
+		RetryCount:      lifecycle.RetryCount,
+		MaxRetries:      lifecycle.MaxRetries,
+		RetryInMS:       durationMilliseconds(lifecycle.RetryIn),
+		ElapsedMS:       durationMilliseconds(lifecycle.Elapsed),
+		Reason:          lifecycle.Reason,
+		FailureCategory: lifecycle.FailureCategory,
+		RecoveryAction:  lifecycle.RecoveryAction,
+		BudgetDimension: lifecycle.BudgetDimension,
+		ReplayReason:    lifecycle.ReplayReason,
+		ResetPartial:    lifecycle.ResetPartial,
+	}
+	if lifecycle.Workflow.WorkflowID != "" {
+		workflow := lifecycle.Workflow
+		payload.Workflow = &WorkflowSnapshotPayload{
+			ID: workflow.WorkflowID, Operations: workflow.Operations,
+			Attempts: workflow.Attempts, Submissions: workflow.Submissions,
+			TransportSwitches:          workflow.TransportSwitches,
+			CredentialRefreshes:        workflow.CredentialRefreshes,
+			PayloadTransforms:          workflow.PayloadTransforms,
+			ChildOperations:            workflow.ChildOperations,
+			RecoveryWaitMS:             workflow.RecoveryWaitMillis,
+			KnownSubmissions:           workflow.KnownSubmissions,
+			EstimatedSubmissions:       workflow.EstimatedSubmissions,
+			UnknownBillableSubmissions: workflow.UnknownBillableSubmissions,
+			KnownInputTokens:           workflow.KnownUsage.InputTokens,
+			KnownOutputTokens:          workflow.KnownUsage.OutputTokens,
+			EstimatedInputTokens:       workflow.EstimatedUsage.InputTokens,
+			EstimatedOutputTokens:      workflow.EstimatedUsage.OutputTokens,
+		}
+	}
+	return payload
+}
+
+func durationMilliseconds(duration time.Duration) int64 {
+	if duration <= 0 {
+		return 0
+	}
+	return duration.Milliseconds()
+}
+
+func decodeParams(raw json.RawMessage, dst any) error {
+	if len(raw) == 0 {
+		raw = []byte("{}")
+	}
+	dec := json.NewDecoder(strings.NewReader(string(raw)))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(dst); err != nil {
+		return fmt.Errorf("invalid params: %w", err)
+	}
+	return nil
+}
+
+func (s *Server) writeResponse(id json.RawMessage, result any, err error) error {
+	resp := Response{ID: id, Result: result}
+	if err != nil {
+		resp.Result = nil
+		resp.Error = &ResponseError{
+			Code:    "error",
+			Message: err.Error(),
+		}
+	}
+	return s.writeJSON(resp)
+}
+
+func (s *Server) writeNotification(method string, params any) error {
+	if s.deferredNotificationContent.Load() {
+		switch payload := params.(type) {
+		case TurnCompletedNotification:
+			payload.Turn = notificationTurn(payload.ThreadID, payload.Turn)
+			params = payload
+		case TurnErrorNotification:
+			payload.Turn = notificationTurn(payload.ThreadID, payload.Turn)
+			params = payload
+		case ThreadStartedNotification:
+			payload.Thread = notificationThread(payload.Thread)
+			params = payload
+		case ThreadResumedNotification:
+			payload.Thread = notificationThread(payload.Thread)
+			params = payload
+		case ThreadUpdatedNotification:
+			payload.Thread = notificationThread(payload.Thread)
+			params = payload
+		}
+	}
+	return s.writeJSON(Notification{
+		Method: method,
+		Params: params,
 	})
-	return breakdowns
 }
 
-// aggregateUsageRows is the single source of truth for the desktop
-// usage views' metrics and daily series. It never reads from session
-// metadata — only the per-row token_usage trail — so the headline
-// numbers and the heatmap stay numerically consistent. Days and the date
-// range are calendar dates in loc.
-func aggregateUsageRows(rows []insight.TokenUsageRow, loc *time.Location) (SettingsUsageMetrics, []SettingsUsageDay) {
-	metrics := SettingsUsageMetrics{}
-	type dayBucket struct {
-		input, output, cacheRead, cacheCreation int
-		turns                                   int
+func (s *Server) writeJSON(v any) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	enc := json.NewEncoder(s.out)
+	if err := enc.Encode(v); err != nil {
+		return fmt.Errorf("write app-server message: %w", err)
 	}
-	daysByDate := make(map[string]*dayBucket)
-
-	var minAt, maxAt time.Time
-	for _, r := range rows {
-		metrics.InputTokens += r.InputTokens
-		metrics.OutputTokens += r.OutputTokens
-		metrics.CacheReadTokens += r.CacheReadTokens
-		metrics.CacheCreationTokens += r.CacheCreationTokens
-		metrics.Turns++
-		if !r.At.IsZero() {
-			if minAt.IsZero() || r.At.Before(minAt) {
-				minAt = r.At
-			}
-			if r.At.After(maxAt) {
-				maxAt = r.At
-			}
-			date := r.At.In(loc).Format("2006-01-02")
-			bucket, ok := daysByDate[date]
-			if !ok {
-				bucket = &dayBucket{}
-				daysByDate[date] = bucket
-			}
-			bucket.input += r.InputTokens
-			bucket.output += r.OutputTokens
-			bucket.cacheRead += r.CacheReadTokens
-			bucket.cacheCreation += r.CacheCreationTokens
-			bucket.turns++
-		}
-	}
-
-	metrics.PromptTokens = metrics.InputTokens + metrics.CacheReadTokens
-	metrics.ContextTokens = metrics.InputTokens + metrics.CacheReadTokens + metrics.OutputTokens
-	if metrics.PromptTokens > 0 {
-		metrics.CacheHitRate = float64(metrics.CacheReadTokens) / float64(metrics.PromptTokens)
-	}
-	if !minAt.IsZero() {
-		metrics.DateRange = [2]string{minAt.In(loc).Format("2006-01-02"), maxAt.In(loc).Format("2006-01-02")}
-		metrics.ActiveDays = len(daysByDate)
-	}
-
-	days := make([]SettingsUsageDay, 0, len(daysByDate))
-	for date, b := range daysByDate {
-		prompt := b.input + b.cacheRead
-		var rate float64
-		if prompt > 0 {
-			rate = float64(b.cacheRead) / float64(prompt)
-		}
-		days = append(days, SettingsUsageDay{
-			Date:                date,
-			InputTokens:         b.input,
-			OutputTokens:        b.output,
-			CacheCreationTokens: b.cacheCreation,
-			CacheReadTokens:     b.cacheRead,
-			CacheHitRate:        rate,
-			Turns:               b.turns,
-		})
-	}
-	sort.Slice(days, func(i, j int) bool { return days[i].Date < days[j].Date })
-
-	return metrics, days
-}
-
-// truncateUsageTitle shortens a session's first user message down to a
-// reasonable card headline; the desktop may trim further before display.
-func truncateUsageTitle(s string) string {
-	const max = 60
-	s = strings.TrimSpace(s)
-	r := []rune(s)
-	if len(r) <= max {
-		return s
-	}
-	return string(r[:max-1]) + "…"
-}
-
-// stopHookMessage provides a single-line, bounded snippet of the turn's final
-// assistant message for Stop hooks that surface it to the user (for example a
-// desktop notification). Collapsing whitespace keeps the payload easy to embed
-// in plain-text commands without exposing raw formatting or a full response.
-func stopHookMessage(res agent.LoopResult) string {
-	const max = 200
-	text := strings.Join(strings.Fields(strings.TrimSpace(res.Content)), " ")
-	r := []rune(text)
-	if len(r) <= max {
-		return text
-	}
-	return string(r[:max-1]) + "…"
-}
-
-func requestContextSystemSections(sections []agent.SystemPromptSectionInfo) []sessiontrace.SystemSectionRecord {
-	if len(sections) == 0 {
-		return nil
-	}
-	out := make([]sessiontrace.SystemSectionRecord, 0, len(sections))
-	for _, section := range sections {
-		out = append(out, sessiontrace.SystemSectionRecord{
-			Key:    section.Key,
-			Static: section.Static,
-			Bytes:  section.Bytes,
-			Hash:   section.Hash,
-		})
-	}
-	return out
-}
-
-func cloneStringIntMap(in map[string]int) map[string]int {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make(map[string]int, len(in))
-	for key, value := range in {
-		out[key] = value
-	}
-	return out
+	return nil
 }
