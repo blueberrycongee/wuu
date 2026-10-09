@@ -278,6 +278,27 @@ jobs:
         id: build-fixture-core
         run: go build -o "${{ runner.temp }}/wuu-session-switch-core" ./cmd/wuu
 
+      - name: Verify browser task ownership and takeover
+        if: ${{ !cancelled() && steps.build-fixture-core.outcome == 'success' }}
+        timeout-minutes: 5
+        shell: bash
+        env:
+          WUU_BROWSER_OWNERSHIP_OUTPUT: ${{ runner.temp }}/wuu-browser-ownership-evidence
+          WUU_BROWSER_OWNERSHIP_CORE: ${{ runner.temp }}/wuu-session-switch-core
+        run: |
+          mkdir -p "$WUU_BROWSER_OWNERSHIP_OUTPUT"
+          set -o pipefail
+          xvfb-run --auto-servernum node desktop/scripts/browser-task-ownership-e2e.cjs 2>&1 | tee "$WUU_BROWSER_OWNERSHIP_OUTPUT/run.log"
+
+      - name: Upload browser ownership evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-ownership-evidence
+          path: ${{ runner.temp }}/wuu-browser-ownership-evidence/
+          if-no-files-found: ignore
+          retention-days: 14
+
       - name: Verify compact Fast mode controls
         if: ${{ !cancelled() && steps.build-fixture-core.outcome == 'success' }}
         timeout-minutes: 5
