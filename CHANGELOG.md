@@ -39,6 +39,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Avoid delivering an already-answered background process result again when a new
+  user turn reloads a session before the result acknowledgement was saved.
+
 - Keep conversation messages and image tables within narrow panes when the sidebar
   remains open, and let page scrolling resume at fractional image-gallery edges.
 

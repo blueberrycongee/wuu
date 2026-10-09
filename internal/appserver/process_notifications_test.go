@@ -801,3 +801,112 @@ func TestCompletionAnswersPreserveBothReceiptKinds(t *testing.T) {
 		}
 	}
 }
+
+// Reconstruct the persisted answer-before-ack crash window. This does not kill
+// an OS appserver: it rebuilds its manager and server from real persisted state.
+func TestNormalTurnReconcilesAnsweredProcessCompletionAfterReload(t *testing.T) {
+	client := &fakeClient{response: providers.ChatResponse{Content: "Answer to new unrelated request."}}
+	rt := newTestRuntime(t, client)
+	id := "receipt-reload-regression"
+	if _, err := session.CreateWithMetadata(rt.SessionDir, id, rt.RootDir); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(rt.RootDir, "process-runtime")
+	manager, err := process.NewManager(rt.RootDir, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	events := make(chan process.Event, 8)
+	manager.Subscribe(events)
+	p, err := manager.Start(context.Background(), process.StartOptions{Command: "printf 'completed once\\n'", OwnerKind: process.OwnerMainAgent, OwnerID: id, Lifecycle: process.LifecycleManaged})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.After(5 * time.Second)
+await:
+	for {
+		select {
+		case ev := <-events:
+			if ev.Process.ID == p.ID && ev.Cause == process.EventCauseNaturalExit {
+				*p = ev.Process
+				break await
+			}
+		case <-deadline:
+			t.Fatal("no terminal process event")
+		}
+	}
+	// Seed exactly the durable messages that survived, but leave the process
+	// delivery record unacknowledged, as after a crash between the two writes.
+	original := []providers.ChatMessage{
+		processCompletionChatMessage(manager, process.Event{Process: *p}),
+		{Role: "assistant", ClientID: processCompletionAnswerClientIDPrefix + p.ID, Content: "The background task already succeeded."},
+	}
+	if err := rewriteChatHistory(rt.SessionDir, id, original); err != nil {
+		t.Fatal(err)
+	}
+	restarted, err := process.NewManager(rt.RootDir, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt.ProcessManager = restarted
+	loaded, err := loadChatMessages(rt.SessionDir, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !processCompletionMarkerAnswered(loaded, p.ID) {
+		t.Fatal("reloaded persisted answer does not reconcile")
+	}
+	if pending, err := restarted.CompletionPending(p.ID); err != nil || !pending {
+		t.Fatalf("setup pending=%v err=%v", pending, err)
+	}
+	out := &lockedBuffer{}
+	server := New(rt, out)
+	t.Cleanup(server.Close)
+	// No in-memory thread or runtime is preinstalled. Production turn/start loads
+	// the session, admits the ordinary user turn, constructs its runtime and runs
+	// BeforeStep while completion recovery competes for the execution lease.
+	raw, err := json.Marshal(map[string]any{"id": "ordinary", "method": MethodTurnStart, "params": TurnStartParams{ThreadID: id, Prompt: "What is two plus two?"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := server.handleLine(context.Background(), raw); err != nil {
+		t.Fatal(err)
+	}
+	waitForTurnCompletedForThread(t, out, id)
+	waitForThreadLeaseRelease(t, rt.SessionDir, id)
+	client.mu.Lock()
+	requests := append([]providers.ChatRequest(nil), client.requests...)
+	client.mu.Unlock()
+	if len(requests) != 1 {
+		t.Fatalf("requests=%d output=%s", len(requests), out.String())
+	}
+
+	var injected, receipts, completionMessages int
+	for _, msg := range requests[0].Messages {
+		if msg.Role == "assistant" && msg.ClientID == processCompletionAnswerClientIDPrefix+p.ID {
+			receipts++
+		}
+		for _, pid := range processCompletionIDs(msg.ClientID) {
+			if pid == p.ID {
+				completionMessages++
+				if msg.Steered {
+					injected++
+				}
+			}
+		}
+	}
+	t.Logf("Persisted prior answer receipts=%d; completion messages in normal request=%d; newly steered completions=%d", receipts, completionMessages, injected)
+	if receipts != 1 || injected != 0 || completionMessages != 1 {
+		t.Fatalf("answered completion was reinjected: receipt=%d injected=%d messages=%+v", receipts, injected, requests[0].Messages)
+	}
+	if pending, err := restarted.CompletionPending(p.ID); err != nil || pending {
+		t.Fatalf("reconciled completion pending=%v err=%v", pending, err)
+	}
+	reconciled, err := restarted.Get(p.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reconciled.CompletionConsumedBy != "history_answer" {
+		t.Fatalf("completion consumer=%q, want history_answer", reconciled.CompletionConsumedBy)
+	}
+}

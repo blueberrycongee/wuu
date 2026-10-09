@@ -2710,6 +2710,14 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 					if slices.Contains(turnRuntime.ProcessCompletionIDs, p.ID) || !processEventBelongsToThread(th.ID, threadRuntime.AgentControl, event) {
 						continue
 					}
+					// An answer can survive a restart before its delivery acknowledgement.
+					// Reconcile that receipt just as synthetic turn admission does.
+					if err := gateAlreadyDeliveredCompletions(history, threadRuntime, nil, []string{p.ID}); err != nil {
+						if !errors.Is(err, errAgentCompletionAlreadyDelivered) {
+							providers.DebugLogf("reconcile active process completion %q for thread %q: %v", p.ID, th.ID, err)
+						}
+						continue
+					}
 					message := processCompletionChatMessage(manager, event)
 					message.Steered = true
 					messages = append(messages, message)
