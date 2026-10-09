@@ -57,6 +57,8 @@
   --hljs-literal: var(--wuu-syntax-literal, #6f5ca7);
   --hljs-meta: var(--wuu-syntax-meta, #5f6870);
   --codex-runtime-trigger-icon: var(--wuu-color-text-muted, #707579);
+  /* One quiet step off the paper: the title's weight carries selection. */
+  --workspace-tab-active-bg: var(--surface-2);
 }
 
 .workspace-right-panel {
@@ -92,12 +94,17 @@
 }
 
 /* The panel's chrome sits on the same paper as the conversation titlebar
- * beside it; tabs and tree rows use the session strip's chip vocabulary. */
+ * beside it. Tabs are the strip's content, so their chips stand a size above
+ * the strip's icon buttons instead of matching them. */
 .workspace-right-panel {
-  --workspace-tab-chip-active-bg: var(--shell-session-tab-active-bg);
   --workspace-tab-chip-hover-bg: var(--ink-overlay-4);
-  --workspace-tab-chip-height: var(--control-size-toolbar);
+  --workspace-tab-chip-height: var(--control-size-roomy);
   --workspace-tab-chip-inset: calc((var(--window-titlebar-height) - var(--workspace-tab-chip-height)) / 2);
+  /* Tab chips, tool rows, and tree rows float inside the pane like sidebar
+   * rows; their own padding takes up the rest, putting the leading glyph on
+   * the pane inset. */
+  --workspace-row-inset: var(--space-2);
+  --workspace-row-pad-x: calc(var(--pane-inset) - var(--workspace-row-inset));
 }
 
 .workspace-panel-tabbar {
@@ -109,7 +116,7 @@
   background: var(--paper);
   /* Clear native window controls and reserve the shell-owned sidebar toggle,
      including while the reading canvas is a full-width sheet. */
-  padding: 0 calc(max(var(--control-toolbar-inset), var(--window-controls-inset-right)) + var(--control-size-toolbar) + 4px) 0 8px;
+  padding: 0 calc(max(var(--control-toolbar-inset), var(--window-controls-inset-right)) + var(--control-size-toolbar) + var(--control-toolbar-gap)) 0 var(--workspace-row-inset);
   -webkit-app-region: drag;
   position: relative;
   z-index: 1;
@@ -353,6 +360,12 @@
   flex: 0 0 auto;
 }
 
+/* The glyph already flips between expand and collapse. A held fill beside
+ * the tabs would read as a second selection. */
+.workspace-panel-tabbar .workspace-panel-globalize.active:not(:hover) {
+  background: transparent;
+}
+
 /* One strip for the dock and the full-width reading canvas. Tab boxes run
  * down to the content edge; the band above them still drags the window. */
 .workspace-panel-tabs {
@@ -377,12 +390,14 @@
   display: flex;
   position: relative;
   /* Reserve title and close lanes before scrolling, but never make one tab
-   * wider than the strip left by the dock's toolbar/native controls. Equal
-   * widths keep horizontal drag sorting stable in both pane sizes. */
-  min-width: min(100cqw, calc(4em + var(--icon-size) + var(--control-size-inline) + 24px));
+   * wider than the strip left by the dock's toolbar/native controls. A tab
+   * fits its title, so a short one does not stretch into a long bar. The
+   * floor keeps two characters: the title's padding, icon gap and close
+   * margin come to the leading pad plus 14px. */
+  min-width: min(100cqw, calc(2em + var(--icon-size) + var(--control-size-inline) + var(--workspace-row-pad-x) + 14px));
   max-width: 220px;
   height: 100%;
-  flex: 1 1 0%;
+  flex: 0 1 auto;
   align-items: center;
   box-sizing: border-box;
   padding-bottom: var(--workspace-tab-chip-inset);
@@ -465,11 +480,10 @@
   cursor: grabbing;
   opacity: 0.98;
   pointer-events: none;
-  /* Portaled outside the panel: restate the chip tokens it reads. */
-  --workspace-tab-chip-active-bg: var(--shell-session-tab-active-bg);
-  --workspace-tab-chip-height: var(--control-size-toolbar);
+  /* Portaled outside the panel: restate the tokens it reads. */
   --workspace-tab-chip-inset: 0px;
-  height: var(--workspace-tab-chip-height);
+  --workspace-row-pad-x: calc(var(--pane-inset) - var(--space-2));
+  height: var(--control-size-roomy);
   border-radius: var(--radius-sm);
   background: var(--paper);
   color: var(--ink-strong);
@@ -496,10 +510,9 @@
   background: var(--workspace-tab-chip-hover-bg);
 }
 
-/* A filled chip and stronger title distinguish selection from hover. */
-.workspace-tool-tab.active::before,
-.workspace-tool-tab-drag-overlay::before {
-  background: var(--workspace-tab-chip-active-bg);
+/* A quiet fill and stronger title distinguish selection from hover. */
+.workspace-tool-tab.active:not(.workspace-tool-tab-drag-overlay)::before {
+  background: var(--workspace-tab-active-bg);
 }
 
 .workspace-tool-tab.active,
@@ -523,7 +536,7 @@
   background: transparent;
   color: inherit;
   cursor: inherit;
-  padding: 0 var(--space-1) 0 10px;
+  padding: 0 var(--space-1) 0 var(--workspace-row-pad-x);
   text-align: left;
 }
 
@@ -700,7 +713,6 @@ html[data-focus-modality="keyboard"] .workspace-tool-tab-close:focus-visible {
 .workspace-right-panel[data-wuu-view="files"] .workspace-files-split:not(.tree-hidden)
   .workspace-files-tree {
   grid-column: 1;
-  padding: 10px 0;
 }
 
 .workspace-files-split.tree-dragging::after {
@@ -824,6 +836,9 @@ html.resizing-workspace-file-split * {
   position: relative;
   grid-row: 1;
   flex-direction: column;
+  /* The tree owns its row inset on both sides, so the resizer hairline and
+   * the panel edge are equivalent pane edges whichever side it docks to. */
+  padding: 10px 0;
   /* Same paper as the document and tab strip; the resizer hairline is the
    * only division, so the tree reads as part of the panel, not a gray well. */
   background: var(--paper);
@@ -831,12 +846,10 @@ html.resizing-workspace-file-split * {
 
 .workspace-files-split[data-tree-side="right"] .workspace-files-tree {
   grid-column: 2;
-  padding: 10px 0 10px 10px;
 }
 
 .workspace-files-split[data-tree-side="left"] .workspace-files-tree {
   grid-column: 1;
-  padding: 10px 0;
 }
 
 .workspace-files-tree .workspace-file-panel {
@@ -844,13 +857,15 @@ html.resizing-workspace-file-split * {
 }
 
 /* Beside a document the tree can move to the other side: the button ends the
- * search row, in the column the field leaves free for it. */
+ * search row, in the column the field leaves free for it. It matches the
+ * field's box, which sits 1px inside the tree's top padding where its focus
+ * ring draws, and puts its glyph on the pane inset like the leading icons. */
 .workspace-file-tree-drag-handle {
   display: grid;
   position: absolute;
   z-index: 1;
-  inset-block-start: 10px;
-  inset-inline-end: 4px;
+  inset-block-start: 11px;
+  inset-inline-end: var(--control-toolbar-inset);
   width: var(--control-size-toolbar);
   height: var(--control-field-height);
   place-items: center;
@@ -996,15 +1011,17 @@ html.resizing-workspace-file-split * {
   padding-bottom: var(--workspace-document-composer-inset, 180px);
 }
 
+/* Sections keep a readable maximum width but start under the tabs, on the
+ * pane inset, rather than floating centered when the panel is widened. */
 .workspace-tool-menu {
   display: grid;
   height: 100%;
   min-width: 0;
   align-content: start;
-  justify-items: center;
+  justify-items: start;
   gap: var(--section-gap);
   overflow-y: auto;
-  padding: var(--space-8) var(--panel-padding);
+  padding: var(--space-5) var(--workspace-row-inset);
 }
 
 .workspace-tool-menu-section {
@@ -1017,11 +1034,11 @@ html.resizing-workspace-file-split * {
  * rows, so the empty panel reads as navigation rather than a list of cards. */
 .workspace-tool-menu-section h2 {
   margin: 0 0 var(--space-1);
-  padding: 0 var(--space-3);
+  padding: 0 var(--workspace-row-pad-x);
   color: var(--ink-tertiary);
-  font-size: var(--font-ui);
-  font-weight: var(--weight-regular);
-  line-height: 1.5;
+  font-size: var(--font-sm);
+  font-weight: var(--weight-medium);
+  line-height: var(--line-ui);
 }
 
 .workspace-tool-menu-list {
@@ -1042,7 +1059,7 @@ html.resizing-workspace-file-split * {
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--ink);
-  padding: 0 var(--space-3);
+  padding: 0 var(--workspace-row-pad-x);
   font-size: var(--font-ui);
   line-height: 1.5;
   text-align: start;
@@ -1801,30 +1818,6 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   font-style: italic;
 }
 
-/* Links: use the message-stream blue palette, underline only on hover so a dense badge row in
-   READMEs doesn't read as a wall of underlined text. Each selector gets
-   its own rule so the cssRuleBody test helper can match it without
-   having to know how to walk past comma-separated selector lists. */
-.workspace-markdown-reading .rich-link.rich-web-link {
-  color: var(--rich-link-color);
-  text-decoration: none;
-}
-
-.workspace-markdown-reading .rich-link.rich-file-link {
-  color: var(--rich-link-color);
-  text-decoration: none;
-}
-
-.workspace-markdown-reading .rich-link.rich-web-link:hover {
-  color: var(--rich-link-hover-color);
-  text-decoration: underline;
-}
-
-.workspace-markdown-reading .rich-link.rich-file-link:hover {
-  color: var(--rich-link-hover-color);
-  text-decoration: underline;
-}
-
 /* Inline code: keep this selector more specific than the shared message-flow
    rule and exclude fenced code, which owns its surface through .rich-code. */
 .workspace-markdown-reading .rich-content :not(pre) > code {
@@ -2325,8 +2318,9 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   grid-template-columns: minmax(0, 1fr);
   gap: 2px var(--space-3);
   /* Header text, search text, folder labels and status letters share the
-   * list's inset: the scroll padding plus a row's own padding. */
-  padding: var(--space-3) var(--space-4) var(--space-2);
+   * list's inset: the scroll padding plus a row's own padding, which together
+   * are the pane inset, as in the file tree and the tools launcher. */
+  padding: var(--space-3) var(--pane-inset) var(--space-2);
 }
 
 .workspace-review-list-summary {
@@ -2356,22 +2350,27 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   white-space: nowrap;
 }
 
+/* Matches the file tree's search: a quiet filled field that takes the field
+ * surface only while in use, so both panel tabs open on the same control. */
 .workspace-review-search {
   min-width: 0;
   min-height: var(--control-field-height);
-  margin: 0 var(--space-2) var(--space-2);
-  border: 1px solid var(--field-border);
+  margin: 0 var(--workspace-row-inset) var(--space-2);
+  border: 1px solid transparent;
   border-radius: var(--radius-sm);
-  background: var(--field-bg);
+  background: var(--ink-overlay-4);
   color: var(--ink);
   font: inherit;
   font-size: var(--font-ui);
-  padding: var(--control-padding-block) var(--space-2);
-  transition: background-color var(--motion-fast) var(--ease-out);
+  padding: var(--control-padding-block) calc(var(--workspace-row-pad-x) - 1px);
+  transition:
+    background-color var(--motion-fast) var(--ease-out),
+    border-color var(--motion-fast) var(--ease-out);
 }
 
-.workspace-review-search:hover {
-  background: var(--field-hover-bg);
+.workspace-review-search:focus {
+  border-color: var(--field-border);
+  background: var(--field-bg);
 }
 
 .workspace-review-list-scroll {
@@ -2381,7 +2380,7 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   align-content: start;
   gap: var(--space-2);
   overflow: auto;
-  padding: 0 var(--space-2) var(--space-3);
+  padding: 0 var(--workspace-row-inset) var(--space-3);
 }
 
 .workspace-review-group {
@@ -2395,7 +2394,7 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   color: var(--ink-tertiary);
   font-size: var(--font-sm);
   line-height: var(--line-body);
-  padding: var(--space-1) var(--space-2) 2px;
+  padding: var(--space-1) var(--workspace-row-pad-x) 2px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -2412,7 +2411,7 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   background: transparent;
   color: var(--ink);
   font-size: var(--font-ui);
-  padding: 0 var(--space-2);
+  padding: 0 var(--workspace-row-pad-x);
   text-align: left;
   transition: background-color var(--motion-fast) var(--ease-out);
 }
@@ -2430,7 +2429,7 @@ html[data-focus-modality="keyboard"] .workspace-review-row:focus-visible {
 }
 
 .workspace-review-group:has(.workspace-review-group-label) .workspace-review-row {
-  padding-left: calc(var(--space-2) + var(--space-3));
+  padding-left: calc(var(--workspace-row-pad-x) + var(--space-3));
 }
 
 .workspace-review-row-name {

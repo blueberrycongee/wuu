@@ -20,23 +20,23 @@
   /* --- Neutral gray ramp, dark declaration. Same slots as the light
    *     ramp in base.css: 0-350 surfaces/hairlines (deeper = further
    *     from the reader), 400-650 text grays, 800-900 strong text. --- */
-  --gray-0: #1a1c1e;
-  --gray-50: #232528;
-  --gray-100: #292c2f;
-  --gray-150: #303336;
-  --gray-200: #373a3d;
-  --gray-250: #3c3f43;
-  --gray-300: #45484c;
-  --gray-350: #515458;
-  --gray-400: #606367;
-  --gray-450: #73767a;
-  --gray-500: #888b8f;
-  --gray-550: #95989c;
-  --gray-600: #a4a7ab;
-  --gray-650: #b2b4b8;
-  --gray-700: #c0c3c6;
-  --gray-800: #d2d5d8;
-  --gray-900: #e5e7ea;
+  --gray-0: #1c1c1d;
+  --gray-50: #252526;
+  --gray-100: #2b2b2d;
+  --gray-150: #323234;
+  --gray-200: #39393b;
+  --gray-250: #3e3e40;
+  --gray-300: #474749;
+  --gray-350: #535355;
+  --gray-400: #626264;
+  --gray-450: #757577;
+  --gray-500: #8a8a8c;
+  --gray-550: #97979a;
+  --gray-600: #a6a6a9;
+  --gray-650: #b4b4b6;
+  --gray-700: #c2c2c4;
+  --gray-800: #d4d4d7;
+  --gray-900: #e7e7e9;
 
   /* --- Ink scale: light text on dark paper --- */
   --ink-strong: var(--wuu-color-text, var(--gray-900));
@@ -66,11 +66,11 @@
   --field-hover-bg: var(--wuu-control-field-background, var(--surface-2));
 
   /* Ink overlays flip to white-based veils. */
-  --ink-overlay-4: rgba(222, 225, 229, 0.05);
-  --ink-overlay-6: rgba(222, 225, 229, 0.07);
-  --ink-overlay-8: rgba(222, 225, 229, 0.09);
-  --ink-overlay-12: rgba(222, 225, 229, 0.13);
-  --ink-overlay-18: rgba(222, 225, 229, 0.2);
+  --ink-overlay-4: rgba(224, 224, 227, 0.05);
+  --ink-overlay-6: rgba(224, 224, 227, 0.07);
+  --ink-overlay-8: rgba(224, 224, 227, 0.09);
+  --ink-overlay-12: rgba(224, 224, 227, 0.13);
+  --ink-overlay-18: rgba(224, 224, 227, 0.2);
   /* Fine inset highlights give dark surfaces depth without an outer glow.
      Overlays retain black ambient shadows to separate overlapping content.
      Keep the complete recipe inside the public override, including `none`. */
@@ -162,6 +162,7 @@
   --hljs-literal: var(--wuu-syntax-literal, #b0a0e8);
   --hljs-meta: var(--wuu-syntax-meta, #98a1a9);
   --codex-runtime-trigger-icon: var(--wuu-color-text-muted, #8f959a);
+  --workspace-tab-active-bg: var(--surface-3);
 
   /* composer.css / composer-context-meter.css / chat.css */
   --composer-frame-shadow: var(--shadow-composer);
@@ -223,11 +224,12 @@
   --sidebar-edge-shadow: 1px 0 16px rgba(20, 24, 28, 0.025);
   --sidebar-hover-card-rim: rgba(255, 255, 255, 0.06);
   --sidebar-drawer-bg: var(--sidebar-material-fill);
-  /* About 1.3:1 against the rail, matching the light rail selection. */
+  /* About 1.3:1 against the rail; a lighter fill already reads as lifted. */
   --sidebar-row-selected-bg: var(
     --wuu-nav-item-active-background,
     var(--wuu-color-surface-elevated, var(--gray-100))
   );
+  --sidebar-row-selected-shadow: 0 0 0 0 transparent;
   --sidebar-resizer-hover-bg: var(--ink-overlay-18);
   --sidebar-resizer-hover-ring: rgba(0, 0, 0, 0.4);
   --sidebar-nav-item-hover-ring: var(--wuu-nav-item-hover-ring, rgba(255, 255, 255, 0.08));

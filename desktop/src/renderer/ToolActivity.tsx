@@ -235,26 +235,30 @@ export function ToolActivityRow({
   }
 
   // Each section carries both an action verb (title) and a target (detail).
-  // Concatenate them so the rendered row reads as "动词 目标" — without
-  // this, taking detail alone would drop the verb and surface a bare file
-  // name with no hint of what was done to it. Sections without a detail
-  // (e.g. "计划") fall back to the title alone. Multiple sections in the
-  // same row join with "，".
-  const summaryText = sections
-    .map((s) => {
+  // The row reads as "动词 目标", with the verb one tone quieter so the eye
+  // lands on what was touched. Taking detail alone would drop the verb and
+  // surface a bare file name with no hint of what was done to it. Sections
+  // without a detail (e.g. "计划") fall back to the title alone. Multiple
+  // sections in the same row join with "，".
+  const summaryParts = sections
+    .map((s): { text: string; className?: string }[] => {
       // Command details are already complete action phrases such as
       // "搜索软件包" or "运行测试". Prefixing them with the generic section
-      // title produced awkward rows like "检查 运行命令".
-      if (s.kind === "command" && s.detail) return s.detail;
-      // A plugin label is already a complete user-facing name. Prefixing it
-      // with the generic "使用工具" title only exposes the implementation
-      // category and makes the aggregate row feel repetitive.
-      if (s.kind === "unknown" && s.detail) return s.detail;
-      if (s.detail && s.title) return `${s.title} ${s.detail}`;
-      return s.detail || s.title;
+      // title produced awkward rows like "检查 运行命令". A plugin label is
+      // likewise a complete user-facing name; the generic "使用工具" title
+      // would only expose the implementation category.
+      if ((s.kind === "command" || s.kind === "unknown") && s.detail) {
+        return [{ text: s.detail, className: "activity-target" }];
+      }
+      if (s.detail && s.title) {
+        return [{ text: `${s.title} ` }, { text: s.detail, className: "activity-target" }];
+      }
+      const text = s.detail || s.title;
+      return text ? [{ text }] : [];
     })
-    .filter(Boolean)
-    .join("，");
+    .filter((parts) => parts.length > 0)
+    .flatMap((parts, index) => (index > 0 ? [{ text: "，" }, ...parts] : parts));
+  const summaryText = summaryParts.map((part) => part.text).join("");
 
   const className = `activity-group${summary.running ? " running" : ""}`;
 
@@ -269,6 +273,7 @@ export function ToolActivityRow({
           <LightweightStreamingText
             className="activity-summary-text"
             text={summaryText}
+            parts={summaryParts}
             live={streaming ?? false}
           />
           {summary.additions > 0 ? (

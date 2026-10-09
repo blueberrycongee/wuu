@@ -2,7 +2,7 @@
 
 Choose **Settings → Runtime → Execution environments** to run workspace tools in a container or on a remote machine. Local execution remains the default. Install the same Wuu revision in the environment; a protocol mismatch stops execution.
 
-Create a profile, then select it as the default for new conversations. The choice and profile are saved with each conversation. Editing or deleting the profile does not move an existing conversation. Older conversations retain local execution. Forks inherit the profile and receive a separate environment unless sharing is enabled. Inplace subagents and read-only side conversations use their parent’s environment.
+Create a profile under **Settings → Built-in agent**, then select it as the default for new conversations in **Settings → General**. The choice and profile are saved with each conversation. Editing or deleting the profile does not move an existing conversation. Older conversations retain local execution. Forks inherit the profile and receive a separate environment unless sharing is enabled. Inplace subagents and read-only side conversations use their parent’s environment.
 
 File tools, search, shell commands, Git, programmatic tool calling and background processes all use that environment. Process controls and completion events return to the desktop. Published artifacts are copied back as immutable snapshots, with a 256 MiB limit per artifact. Model connections, plugins, browser integration, notes and history remain on the host. This setting does not sandbox extensions.
 

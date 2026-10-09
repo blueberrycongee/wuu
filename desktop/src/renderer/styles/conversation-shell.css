@@ -4,13 +4,13 @@
   --shell-process-control-color: var(--ink-tertiary);
   --shell-session-tab-active-bg: var(--surface-3);
   --shell-session-tab-main-focus-shadow: var(--focus-ring);
-  --shell-session-tab-status-default: rgba(17, 19, 21, 0.22);
-  --shell-session-tab-status-running-notch: rgba(17, 19, 21, 0.18);
-  --shell-session-tab-pending-count-bg: rgba(17, 19, 21, 0.1);
-  --shell-session-tab-active-pending-count-bg: rgba(17, 19, 21, 0.14);
+  --shell-session-tab-status-default: rgba(19, 19, 20, 0.22);
+  --shell-session-tab-status-running-notch: rgba(19, 19, 20, 0.18);
+  --shell-session-tab-pending-count-bg: rgba(19, 19, 20, 0.1);
+  --shell-session-tab-active-pending-count-bg: rgba(19, 19, 20, 0.14);
   --shell-todo-card-bg: #fff;
   --shell-todo-card-border: var(--hairline);
-  --shell-todo-card-ink: #111315;
+  --shell-todo-card-ink: #131314;
   --shell-todo-card-soft: #3e4449;
   --shell-todo-card-muted: #74797e;
   /* Shared floating-surface recipe for conversation controls. The composer
@@ -28,8 +28,8 @@
   --shell-jump-pill-hover-bg: var(--conversation-floating-surface-hover-bg);
   --shell-jump-pill-hover-border: var(--conversation-floating-surface-hover-border);
   --shell-jump-pill-focus-shadow-1: var(--conversation-floating-surface-focus);
-  --shell-jump-progress-step-bg: color-mix(in srgb, var(--wuu-color-text, #111315) 6%, transparent);
-  --shell-jump-progress-step-in-progress-bg: color-mix(in srgb, var(--wuu-color-text, #111315) 20%, transparent);
+  --shell-jump-progress-step-bg: color-mix(in srgb, var(--wuu-color-text, #131314) 6%, transparent);
+  --shell-jump-progress-step-in-progress-bg: color-mix(in srgb, var(--wuu-color-text, #131314) 20%, transparent);
   /* Message-flow body typography. Owned at :root (not on .conversation-pane)
      so a user setting written to <html style="..."> cascades globally
      without being shadowed by a more specific selector. Default 13px
