@@ -886,15 +886,13 @@ function EngineRuntimeMenu({
             <div className="codex-model-groups">
               {engine?.models_error ? (
                 <div className="composer-menu-note warning">
-                  <strong>{t("runtime.modelsLoadFailed")}</strong>
+                  <strong>{t(models.length > 0 ? "runtime.modelsRefreshFailed" : "runtime.modelsLoadFailed")}</strong>
                   <span>{engine.models_error}</span>
                 </div>
               ) : null}
-              {models.length === 0 ? (
+              {models.length === 0 && !engine?.models_error ? (
                 <div className="composer-menu-empty">
-                  {engine?.models_error
-                    ? t("runtime.noModels")
-                    : t("runtime.engineDefaultModelHint", { engine: engineLabel(selectedEngine, engine) })}
+                  {t("runtime.engineDefaultModelHint", { engine: engineLabel(selectedEngine, engine) })}
                 </div>
               ) : null}
               {models.length > 0 && filteredModels.length === 0 ? (
@@ -910,6 +908,7 @@ function EngineRuntimeMenu({
                         role="menuitemradio"
                         type="button"
                         key={model.id}
+                        title={model.display_name || model.id}
                         disabled={disabled}
                         aria-checked={selected}
                         onClick={() => selectModel(model)}

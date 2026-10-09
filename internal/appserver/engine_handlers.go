@@ -47,7 +47,8 @@ func (e *codexEngineModelCatalogCacheEntry) loadCatalog(binaryPath string, now t
 // settings for the settings UI.
 func (s *Server) handleEngineList(req Request) error {
 	var params struct {
-		IncludeQuota bool `json:"include_quota"`
+		IncludeQuota  bool `json:"include_quota"`
+		RefreshModels bool `json:"refresh_models"`
 	}
 	if len(req.Params) > 0 {
 		if err := decodeParams(req.Params, &params); err != nil {
@@ -58,7 +59,7 @@ func (s *Server) handleEngineList(req Request) error {
 		return s.writeResponse(req.ID, nil, errors.New("runtime is not initialized"))
 	}
 	result := EngineListResult{
-		Engines:  s.engineInventory(),
+		Engines:  s.engineInventoryWithRefresh(params.RefreshModels),
 		Settings: s.engineSettingsFromConfig(),
 	}
 	if params.IncludeQuota {
@@ -95,6 +96,10 @@ func (s *Server) handleEngineUpdate(req Request) error {
 // engineInventory lists every supported engine, including disabled or missing
 // external binaries, so settings never confuse absence with a loading state.
 func (s *Server) engineInventory() []EngineInfo {
+	return s.engineInventoryWithRefresh(false)
+}
+
+func (s *Server) engineInventoryWithRefresh(refreshModels bool) []EngineInfo {
 	if s.rt == nil {
 		return nil
 	}
@@ -119,6 +124,7 @@ func (s *Server) engineInventory() []EngineInfo {
 		path  string
 	}
 	var probes []acpProbe
+	claudeIndex := -1
 	for _, entry := range enginecatalog.Entries() {
 		id := agentengine.EngineID(entry.ID)
 		desc := descriptors[id]
@@ -152,7 +158,7 @@ func (s *Server) engineInventory() []EngineInfo {
 			info.BinaryPath = path
 			info.BinaryOK, info.Error = binaryStatus(path, err)
 			if info.Enabled && info.BinaryOK {
-				info.Models = claudeEngineModels()
+				claudeIndex = len(out)
 			}
 		default:
 			override := ""
@@ -169,10 +175,21 @@ func (s *Server) engineInventory() []EngineInfo {
 		}
 		out = append(out, info)
 	}
-	if len(probes) == 0 {
-		return out
-	}
 	var wg sync.WaitGroup
+	if claudeIndex >= 0 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			info := &out[claudeIndex]
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer cancel()
+			models, err := s.claudeEngineModelCatalog.List(ctx, info.BinaryPath, s.rt.RootDir, refreshModels)
+			info.Models = claudeEngineModels(models)
+			if err != nil {
+				info.ModelsError = err.Error()
+			}
+		}()
+	}
 	for _, probe := range probes {
 		wg.Add(1)
 		go func(probe acpProbe) {
@@ -436,16 +453,23 @@ func codexEngineModels(models []codexengine.ModelListItem) []EngineModelInfo {
 	return out
 }
 
-// Claude Code exposes stable model aliases through --model. The CLI resolves
-// each alias to the account's current eligible model, so this list does not
-// hard-code dated model versions.
-func claudeEngineModels() []EngineModelInfo {
-	efforts := []string{"low", "medium", "high", "xhigh", "max"}
-	return []EngineModelInfo{
-		{ID: "sonnet", DisplayName: "Sonnet", DefaultEffort: "high", SupportedEfforts: efforts, IsDefault: true},
-		{ID: "opus", DisplayName: "Opus", FastMode: true, DefaultEffort: "high", SupportedEfforts: efforts},
-		{ID: "haiku", DisplayName: "Haiku", DefaultEffort: "high", SupportedEfforts: efforts},
+func claudeEngineModels(models []claudeengine.ModelInfo) []EngineModelInfo {
+	out := make([]EngineModelInfo, 0, len(models))
+	for _, model := range models {
+		name := strings.TrimSpace(model.DisplayName)
+		if name == "" || name == model.ResolvedModel {
+			name = model.Value
+		}
+		if model.ResolvedModel != "" && !strings.Contains(name, model.ResolvedModel) {
+			name += " · " + model.ResolvedModel
+		}
+		out = append(out, EngineModelInfo{
+			ID: model.Value, DisplayName: name, ResolvedModel: model.ResolvedModel,
+			SupportedEfforts: append([]string(nil), model.SupportedEffortLevels...),
+			FastMode:         model.SupportsFastMode, IsDefault: model.Value == "default",
+		})
 	}
+	return out
 }
 
 // claudeBinaryPath resolves the claude binary: a settings override, otherwise

@@ -1437,6 +1437,8 @@ type EnginePermissionModeInfo struct {
 }
 
 type EngineModelInfo struct {
+	// ResolvedModel is the CLI-reported target of ID; ID remains the selection value.
+	ResolvedModel    string   `json:"resolved_model,omitempty"`
 	FastMode         bool     `json:"fast_mode,omitempty"`
 	DefaultSpeed     string   `json:"default_speed,omitempty"`
 	ID               string   `json:"id"`

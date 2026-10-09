@@ -329,7 +329,7 @@ import {
 } from "./SessionRuntimeState";
 export { SIDEBAR_DRAWER_HOVER_OPEN_DELAY_MS } from "./SidebarDrawerState";
 
-const ENGINE_INVENTORY_STALE_MS = 6 * 60 * 60 * 1000;
+const ENGINE_INVENTORY_STALE_MS = 2 * 60 * 1000;
 // Globalized-sheet phases: docked (grid child) → arming (promoted to a
 // full-window fixed sheet, teleported over its dock slot for one frame) →
 // open (slid to cover the window) → exiting (sliding back to park) →
@@ -926,11 +926,12 @@ export function App(): JSX.Element {
   const dismissModelCatalogTip = useCallback(() => {
     setModelCatalogTip(null);
   }, []);
-  // Agent engine inventory is session-scoped and shared by the composer and
-  // settings. Settings must never throw away a usable snapshot just because
-  // its page remounted; refreshes replace the snapshot only after they finish.
-  // A six-hour freshness window avoids repeatedly starting the Codex
-  // app-server while still allowing a long-idle app to discover CLI changes.
+  // Agent engine inventory is shared by the composer and settings within a
+  // runtime context. A workspace switch must not reuse another CLI environment.
+  // Settings remounts keep the snapshot until a refresh finishes.
+  // Recheck on focus after two minutes so native login/config changes become
+  // visible. Each engine owns its expensive discovery cache on the server.
+  const engineInventoryContext = state.activeContext ? runtimeContextKey(state.activeContext) : "";
   const [engineInventory, setEngineInventory] = useState<EngineListResult | undefined>();
   const [engineInventoryError, setEngineInventoryError] = useState("");
   const engineInventoryRef = useRef<EngineListResult | undefined>(undefined);
@@ -950,7 +951,7 @@ export function App(): JSX.Element {
     const fresh = cached !== undefined
       && Date.now() - engineInventoryFetchedAtRef.current < ENGINE_INVENTORY_STALE_MS;
     if (!force && fresh) return Promise.resolve(cached);
-    if (engineInventoryRefreshRef.current) return engineInventoryRefreshRef.current;
+    if (!force && engineInventoryRefreshRef.current) return engineInventoryRefreshRef.current;
     // Focused renderer tests and older preload bridges can expose only a
     // partial desktop API. Preserve the previous best-effort degradation
     // rather than making engine discovery block the rest of the shell.
@@ -958,7 +959,7 @@ export function App(): JSX.Element {
 
     const request = engineInventoryRequestRef.current + 1;
     engineInventoryRequestRef.current = request;
-    const pending = window.wuu.listEngines()
+    const pending = window.wuu.listEngines(force ? { refresh_models: true } : undefined)
       .then((next) => {
         storeEngineInventory(next, request);
         return next;
@@ -987,8 +988,14 @@ export function App(): JSX.Element {
   }, [storeEngineInventory]);
 
   useEffect(() => {
+    engineInventoryRequestRef.current += 1;
+    engineInventoryRefreshRef.current = null;
+    engineInventoryRef.current = undefined;
+    engineInventoryFetchedAtRef.current = 0;
+    setEngineInventory(undefined);
+    setEngineInventoryError("");
     void refreshEngineInventory();
-  }, [refreshEngineInventory]);
+  }, [engineInventoryContext, refreshEngineInventory]);
   useEffect(() => {
     const refreshAfterLongIdle = () => {
       void refreshEngineInventory();

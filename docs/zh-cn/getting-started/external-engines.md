@@ -42,13 +42,17 @@ Antigravity 也会检测 `agy_acp_server.par`；Linux 启动时附加 `--uid=`�
 
 此界面只支持 Agent 驱动的认证方式，没有可选方式时请使用原生 CLI。查询方式不是检查账号状态，登录成功也不保证模型可用。Wuu 不会把这些引擎的凭据导入模型服务。
 
+Claude Code 通过 CLI 初始化握手发现模型，无需发送提示词。模型选择器显示 CLI 返回的模型名称和实际映射目标，选择值保留 CLI 原始别名与上下文后缀。推理档位和快速模式支持情况来自 CLI，不再由 Wuu 固定列举。发现结果反映已安装 CLI 及其配置，不代表账号一定能调用每个返回的模型。
+
+修改原生登录或配置后，可在 **设置 → Agent → 重新检测** 重新读取。Claude 发现结果缓存两分钟，复用前检查 CLI 登录状态、可执行文件及设置文件元数据；手动刷新会绕过缓存。刷新失败时，仅保留同一环境下上次成功的列表，并在模型选择器显示警告；没有历史结果时显示发现错误，不补入静态模型列表。
+
 ACP 引擎如果在 `session/new` 中声明了模型，输入框会列出这些模型。Grok 使用其一等模型列表（`grok-4.7`、`grok-4.6`、`grok-4.5` 等）并通过 `session/set_model` 切换；推理强度在 Agent 声明 `thought_level` 时可选。Agent 未声明模型时仍显示 **Agent 默认模型**。Wuu 不会套用自己的模型服务目录。通过 API 指定 ACP 模型时，必须使用 Agent 声明的模型；OpenCode 模型 ID 使用 `provider/model` 格式。ACP 图片附件会写成本地文件，并把路径写进提示词，让 Agent 用自己的读文件工具查看。Wuu 不发送 ACP 图片内容块，即使 Agent 声明了图片输入也一样。宿主 HTTP MCP 工具若不被支持，仍会报错，不会丢弃这些工具。
 
 ## Fast mode
 
 打开模型浮层，所选模型支持加速时，标题行会显示紧凑的闪电按钮。速度与推理强度独立，按会话保存；已有会话空闲时也可以修改，并用于下一次请求。重置按钮恢复引擎自身的配置默认值。`/fast`、`/fast on`、`/fast off` 和 `/fast status` 使用同一组选项。加速可能增加费用或额度消耗，实际可用性由账户和服务决定。
 
-Codex 从实时模型目录读取支持情况，并在原生会话创建、恢复及每轮请求中发送 `serviceTier: "fast"` 或 `"default"`。Claude 引擎为符合条件的 Opus 选项传递显式 `fastMode` 设置。ACP 逐模型发现选择项，支持分组取值；通过 `session/set_config_option` 使用 agent 宣告的 `fast-mode`、`fast_mode`、`speed` 或 `service_tier` ID 和取值。切换模型后先刷新完整配置列表，再设置速度。未宣告可识别速度选项的 agent 不显示开关；当前 OpenCode 集成没有宣告该能力。
+Codex 从实时模型目录读取支持情况，并在原生会话创建、恢复及每轮请求中发送 `serviceTier: "fast"` 或 `"default"`。Claude 引擎为 CLI 元数据声明支持的模型选项传递显式 `fastMode` 设置。ACP 逐模型发现选择项，支持分组取值；通过 `session/set_config_option` 使用 agent 宣告的 `fast-mode`、`fast_mode`、`speed` 或 `service_tier` ID 和取值。切换模型后先刷新完整配置列表，再设置速度。未宣告可识别速度选项的 agent 不显示开关；当前 OpenCode 集成没有宣告该能力。
 
 这些映射依据上游的 [Codex 速度配置（英文）](https://learn.chatgpt.com/docs/agent-configuration/speed)、[原生 CLI Fast mode（英文）](https://code.claude.com/docs/en/fast-mode)、[ACP 会话配置协议（英文）](https://agentclientprotocol.com/protocol/v1/session-config-options)及 [Codex ACP 适配器](https://github.com/agentclientprotocol/codex-acp/blob/main/src/FastModeConfig.ts)。保存的选项代表 Wuu 请求的速度，不保证上游服务一定提供加速处理。
 

@@ -79,6 +79,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Discover Claude Code engine models and capabilities from the installed CLI,
+  including new model families and custom alias mappings. Refresh detection
+  reloads the list; failed refreshes retain results only for the same CLI,
+  login and configuration environment and surface the error.
+
 - Expand a workspace without conversations in place instead of flashing a
   loading row and spinner. The workspace header shows a spinner only when its
   conversation list or switch takes longer than a moment.

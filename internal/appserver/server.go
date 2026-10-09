@@ -17,6 +17,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/activity"
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/agentcontrol"
+	"github.com/blueberrycongee/wuu/internal/claudeengine"
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/credentialstore"
 	"github.com/blueberrycongee/wuu/internal/execution"
@@ -251,6 +252,7 @@ type Server struct {
 	codexModelsMu   sync.Mutex
 	codexModelCache map[string]map[string]config.ProviderModelConfig
 
+	claudeEngineModelCatalog     claudeengine.ModelCatalog
 	engineModelCatalogMu         sync.Mutex
 	codexEngineModelCatalogCache *codexEngineModelCatalogCacheEntry
 	acpEngineModelCatalogCache   map[string]*codexEngineModelCatalogCacheEntry

@@ -1148,6 +1148,8 @@ export type EnginePermissionModeInfo = {
 
 /** One model exposed by an external agent engine. */
 export type EngineModelInfo = {
+  /** CLI-reported target; id remains the value passed back to the engine. */
+  resolved_model?: string;
   fast_mode?: boolean;
   default_speed?: string;
   id: string;
@@ -2834,7 +2836,7 @@ export type WuuDesktopApi = {
   updateGeneralSettings: (
     settings: RuntimeGeneralSettingsUpdate
   ) => Promise<ConfigGeneralUpdateResult>;
-  listEngines: (options?: { include_quota?: boolean }) => Promise<EngineListResult>;
+  listEngines: (options?: { include_quota?: boolean; refresh_models?: boolean }) => Promise<EngineListResult>;
   updateEngines: (params: EngineUpdateParams) => Promise<EngineListResult>;
   listEngineAuthMethods: (engineID: string) => Promise<EngineAuthResult>;
   authenticateEngine: (engineID: string, methodID: string) => Promise<EngineAuthResult>;

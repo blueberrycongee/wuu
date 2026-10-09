@@ -291,6 +291,13 @@ availability, while `settings.<id>.enabled` is the persisted opt-in/opt-out
 preference. Do not infer an installed program or authenticated account from the
 preference alone.
 
+For Claude Code, `engine/list` accepts `{ "refresh_models": true }` to bypass
+the CLI discovery cache. Model `id` is the original CLI selection value; optional
+`resolved_model` reports its actual target without replacing that value. Effort
+levels and fast-mode support come from CLI metadata. When refresh fails,
+`models_error` accompanies the last successful `models` only if the CLI login
+and configuration context still match; otherwise no old models are returned.
+
 For subscription views, `engine/list` accepts optional `{ "include_quota": true }`.
 It reads upstream allowances using the credentials of each configured provider
 and supported installed agents, and returns configured services in
