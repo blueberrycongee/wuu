@@ -98,8 +98,6 @@ settings.css .settings-usage-heatmap-cell[data-level="4"], .settings-heatmap-leg
 settings.css .settings-usage-trend-day i background --settings-heatmap-level-3
 settings.css .settings-usage-trend-day:hover i background --settings-heatmap-level-4
 settings.css button.settings-engine-expand:hover background --ink-overlay-6
-side-thread.css .side-thread-panel__resizer:hover::before, .side-thread-panel__resizer:focus-visible::before, .resizing-side-thread .side-thread-panel__resizer::before background --sidebar-resizer-hover-bg
-side-thread.css .side-thread-panel__resizer:hover::before, .side-thread-panel__resizer:focus-visible::before, .resizing-side-thread .side-thread-panel__resizer::before box-shadow --sidebar-resizer-hover-ring
 sidebar.css .project-row .project-row-loading border-top-color --sidebar-project-loading-notch
 sidebar.css .project-row.pending-switch background --sidebar-project-row-pending-bg
 sidebar.css .sidebar-collapsed.sidebar-drawer-open :is(.sidebar, .settings-sidebar), .sidebar-collapsed.sidebar-drawer-closing :is(.sidebar, .settings-sidebar), .sidebar-drawer-docking :is(.sidebar, .settings-sidebar), .sidebar-collapsed:not(.resizing-sidebar) :is(.sidebar, .settings-sidebar):focus-within border-right-color --sidebar-drawer-edge
@@ -167,6 +165,7 @@ turns.css .turn-artifact-gallery-toolbar .icon-button, .turn-artifact-image-tool
 turns.css .turn-artifact-gallery-toolbar .icon-button:is(:hover, :active):not(:disabled), .turn-artifact-image-toolbar .icon-button:is(:hover, :active):not(:disabled) color --artifact-gallery-control-fg-hover
 turns.css .turn-artifact-gallery-toolbar::before, .turn-artifact-image-toolbar::before background --artifact-gallery-control-glow
 turns.css .turn-collapsed-marker background --ink-overlay-18
+turns.css .turn-failure background --danger-soft
 turns.css .turn-process-toggle[role="button"]:hover :is(.turn-process-title, .turn-process-meta, .turn-process-chevron) color --activity-toggle-hover-color
 turns.css .turn-reasoning-summary:hover, .turn-reasoning-summary:focus-visible text-decoration-color --ink-overlay-18
 video-attachment.css .video-attachment-play color --video-attachment-play-color
@@ -193,10 +192,11 @@ workspace.css .workspace-files-resizer:hover::before, .workspace-files-resizer:f
 workspace.css .workspace-review-resizer:hover::before, .workspace-review-resizer:focus-visible::before, .workspace-review-panel.resizing-split .workspace-review-resizer::before background --sidebar-resizer-hover-bg
 workspace.css .workspace-review-resizer:hover::before, .workspace-review-resizer:focus-visible::before, .workspace-review-panel.resizing-split .workspace-review-resizer::before box-shadow --sidebar-resizer-hover-ring
 workspace.css .workspace-review-row:hover background --ink-overlay-4
+workspace.css .workspace-review-search background --ink-overlay-4
 workspace.css .workspace-tool-menu-item:active, .workspace-tool-menu-more > summary:active background --ink-overlay-8
 workspace.css .workspace-tool-menu-item:hover, .workspace-tool-menu-more > summary:hover background --ink-overlay-4
 workspace.css .workspace-tool-tab-close:hover background --ink-overlay-8
-workspace.css .workspace-tool-tab:hover, .workspace-tool-tab:focus-within background --ink-overlay-4
+workspace.css .workspace-tool-tab:hover::before, .workspace-tool-tab:focus-within::before background --workspace-tab-chip-hover-bg
 wuu-mascot.css .wuu-accessory-trim fill --wuu-mascot-mix-white
 wuu-mascot.css .wuu-mascot-activity-fill fill --wuu-mascot-mix-white
 wuu-mascot.css .wuu-mascot-thinking-bubble fill --wuu-mascot-mix-white
