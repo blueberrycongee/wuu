@@ -97,6 +97,10 @@ func (h *Host) ListModels(ctx context.Context) ([]ModelListItem, error) {
 		return nil, err
 	}
 	defer h.Release()
+	return listModels(ctx, client)
+}
+
+func listModels(ctx context.Context, client *Client) ([]ModelListItem, error) {
 	models := make([]ModelListItem, 0)
 	cursor := ""
 	seen := make(map[string]struct{})

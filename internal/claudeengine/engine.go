@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/agentengine"
@@ -299,7 +300,30 @@ func (s *Session) spawn(ctx context.Context, sub *turnSubscription) (*Transport,
 			args = append(args, "--mcp-config", string(encoded))
 		}
 	}
-	if model := strings.TrimSpace(s.model); model != "" {
+	model := strings.TrimSpace(s.model)
+	if model == "" && ref != "" {
+		// Resume restores the transcript's last model. Neither omission nor
+		// the "default" alias restores settings.model / ANTHROPIC_MODEL.
+		probeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		raw, err := queryNativeControl(probeCtx, s.engine.binaryPath, s.rootDir, "get_settings")
+		cancel()
+		if err != nil {
+			return nil, fmt.Errorf("read configured Claude model: %w", err)
+		}
+		var defaults struct {
+			Applied struct {
+				Model string `json:"model"`
+			} `json:"applied"`
+		}
+		if err := json.Unmarshal(raw, &defaults); err != nil {
+			return nil, err
+		}
+		model = defaults.Applied.Model
+		if model == "" {
+			return nil, errors.New("Claude did not report its configured model; select a model explicitly")
+		}
+	}
+	if model != "" {
 		args = append(args, "--model", model)
 	}
 	if effort := strings.TrimSpace(s.effort); effort != "" {

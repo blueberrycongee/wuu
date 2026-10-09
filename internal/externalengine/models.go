@@ -1,6 +1,13 @@
 package externalengine
 
-import "strings"
+import (
+	"encoding/json"
+	"fmt"
+	"strconv"
+	"strings"
+
+	"github.com/blueberrycongee/wuu/internal/enginecatalog"
+)
 
 // DiscoveredModel is one model an ACP agent advertised on session/new.
 type DiscoveredModel struct {
@@ -11,29 +18,95 @@ type DiscoveredModel struct {
 	IsDefault        bool
 	FastMode         bool
 	DefaultSpeed     string
+	Options          []enginecatalog.ModelOption
 }
 
 type acpConfigOption struct {
 	ID       string            `json:"id"`
+	Name     string            `json:"name"`
 	Category string            `json:"category"`
 	Type     string            `json:"type"`
 	Current  string            `json:"currentValue"`
 	Options  []acpConfigChoice `json:"options"`
 }
 
+// Some agents expose boolean configuration alongside ACP select options.
+func (o *acpConfigOption) UnmarshalJSON(data []byte) error {
+	type option acpConfigOption
+	var wire struct {
+		*option
+		Current json.RawMessage `json:"currentValue"`
+	}
+	wire.option = (*option)(o)
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	if len(wire.Current) == 0 {
+		return nil
+	}
+	if o.Type == "boolean" {
+		var value bool
+		if err := json.Unmarshal(wire.Current, &value); err != nil {
+			return err
+		}
+		o.Current = strconv.FormatBool(value)
+		return nil
+	}
+	if err := json.Unmarshal(wire.Current, &o.Current); err != nil {
+		return fmt.Errorf("configuration %q: %w", o.ID, err)
+	}
+	return nil
+}
+
+func (s acpSession) modelOptions() []enginecatalog.ModelOption {
+	var options []enginecatalog.ModelOption
+	speed, _, _ := s.speedOption()
+	for _, option := range s.ConfigOptions {
+		if option.ID == "" || speed != nil && option.ID == speed.ID {
+			continue
+		}
+		if option.Category != "" && option.Category != "model_config" {
+			continue
+		}
+		if option.Type != "select" && option.Type != "boolean" {
+			continue
+		}
+		label := option.Name
+		if label == "" {
+			label = option.ID
+		}
+		item := enginecatalog.ModelOption{ID: option.ID, Label: label, Type: option.Type, DefaultValue: option.Current}
+		if option.Type == "boolean" {
+			item.Choices = []enginecatalog.ModelChoice{{Value: "false", Label: "Off"}, {Value: "true", Label: "On"}}
+		} else {
+			for _, choice := range option.choices() {
+				label := choice.Name
+				if label == "" {
+					label = choice.Value
+				}
+				item.Choices = append(item.Choices, enginecatalog.ModelChoice{Value: choice.Value, Label: label})
+			}
+		}
+		options = append(options, item)
+	}
+	return options
+}
+
 func modelsFromACPSession(session acpSession) []DiscoveredModel {
-	efforts, defaultEffort := thoughtLevelFromOptions(session.ConfigOptions)
 	models := modelsFromConfigOptions(session.ConfigOptions)
 	if len(models) == 0 {
 		models = modelsFromFirstClass(session)
 	}
-	models = attachEfforts(models, efforts, defaultEffort)
-	option, _, _ := session.speedOption()
 	for i := range models {
-		models[i].FastMode = option != nil
+		if !models[i].IsDefault {
+			continue
+		}
+		models[i].Options = session.modelOptions()
+		efforts, current := thoughtLevelFromOptions(session.ConfigOptions)
+		models[i] = attachEfforts(models[i:i+1], efforts, current)[0]
+		option, on, _ := session.speedOption()
 		if option != nil {
-			_, on, _ := session.speedOption()
-			models[i].DefaultSpeed = "standard"
+			models[i].FastMode, models[i].DefaultSpeed = true, "standard"
 			if option.Current == on {
 				models[i].DefaultSpeed = "fast"
 			}
@@ -62,18 +135,11 @@ func modelsFromConfigOptions(options []acpConfigOption) []DiscoveredModel {
 		if option.Type != "select" || option.Category != "model" {
 			continue
 		}
-		hasReal := false
-		for _, choice := range option.choices() {
-			if id := strings.TrimSpace(choice.Value); id != "" && !strings.EqualFold(id, "default") {
-				hasReal = true
-				break
-			}
-		}
 		var models []DiscoveredModel
 		current := strings.TrimSpace(option.Current)
 		for _, choice := range option.choices() {
 			id := strings.TrimSpace(choice.Value)
-			if id == "" || hasReal && strings.EqualFold(id, "default") {
+			if id == "" {
 				continue
 			}
 			name := strings.TrimSpace(choice.Name)

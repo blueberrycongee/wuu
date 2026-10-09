@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/blueberrycongee/wuu/internal/enginecatalog"
 )
 
 // ModelInfo preserves the CLI's selection value separately from its resolved
@@ -78,7 +80,7 @@ func (c *ModelCatalog) List(ctx context.Context, binary, root string, force bool
 		return nil, errors.New("Claude login or configuration changed during model discovery; refresh to retry")
 	}
 	c.completed, c.err = time.Now(), discoverErr
-	if discoverErr == nil {
+	if discoverErr == nil || errors.Is(discoverErr, enginecatalog.ErrCatalogUnsupported) {
 		c.models = models
 	}
 	return cloneModels(c.models), c.err
@@ -188,12 +190,43 @@ func modelContext(ctx context.Context, binary, root string) ([32]byte, error) {
 // message or making a model turn. It uses the same executable, environment and
 // workspace as the engine. Hooks and MCP startup are unnecessary for discovery.
 func DiscoverModels(ctx context.Context, binary, root string) ([]ModelInfo, error) {
+	raw, err := queryNativeControl(ctx, binary, root, "initialize")
+	if err != nil {
+		return nil, err
+	}
+	var response struct {
+		Models []ModelInfo `json:"models"`
+	}
+	if err := json.Unmarshal(raw, &response); err != nil {
+		return nil, err
+	}
+	if response.Models == nil {
+		return nil, enginecatalog.ErrCatalogUnsupported
+	}
+	models := make([]ModelInfo, 0, len(response.Models))
+	seen := make(map[string]bool)
+	for _, model := range response.Models {
+		model.Value = strings.TrimSpace(model.Value)
+		if model.Value == "" || seen[model.Value] {
+			continue
+		}
+		seen[model.Value] = true
+		if model.SupportsEffort != nil && !*model.SupportsEffort {
+			model.SupportedEffortLevels = nil
+		}
+		models = append(models, model)
+	}
+	return models, nil
+}
+
+// queryNativeControl never prompts or persists a session. get_settings exposes
+// the CLI's applied defaults, including native settings/environment precedence.
+func queryNativeControl(ctx context.Context, binary, root, method string) (json.RawMessage, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	transport, err := NewTransport(TransportOptions{
-		BinaryPath: binary,
-		CWD:        root,
+		BinaryPath: binary, CWD: root,
 		Args: []string{
 			"--print", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
 			"--no-session-persistence", "--strict-mcp-config", "--mcp-config", `{"mcpServers":{}}`,
@@ -206,8 +239,8 @@ func DiscoverModels(ctx context.Context, binary, root string) ([]ModelInfo, erro
 	defer transport.Close()
 	const requestID = "wuu-model-discovery"
 	type outcome struct {
-		models []ModelInfo
-		err    error
+		response json.RawMessage
+		err      error
 	}
 	done := make(chan outcome, 1)
 	var once sync.Once
@@ -216,51 +249,32 @@ func DiscoverModels(ctx context.Context, binary, root string) ([]ModelInfo, erro
 		var frame struct {
 			Type     string `json:"type"`
 			Response struct {
-				RequestID string `json:"request_id"`
-				Subtype   string `json:"subtype"`
-				Response  struct {
-					Models []ModelInfo `json:"models"`
-				} `json:"response"`
+				RequestID string          `json:"request_id"`
+				Subtype   string          `json:"subtype"`
+				Response  json.RawMessage `json:"response"`
 			} `json:"response"`
 		}
 		if json.Unmarshal([]byte(line), &frame) != nil || frame.Type != "control_response" || frame.Response.RequestID != requestID {
 			return
 		}
 		if frame.Response.Subtype != "success" {
-			finish(outcome{err: errors.New("Claude rejected model discovery")})
+			finish(outcome{err: fmt.Errorf("Claude rejected %s", method)})
 			return
 		}
-		var models []ModelInfo
-		seen := make(map[string]bool)
-		for _, model := range frame.Response.Response.Models {
-			model.Value = strings.TrimSpace(model.Value)
-			if model.Value == "" || seen[model.Value] {
-				continue
-			}
-			seen[model.Value] = true
-			if model.SupportsEffort != nil && !*model.SupportsEffort {
-				model.SupportedEffortLevels = nil
-			}
-			models = append(models, model)
-		}
-		if len(models) == 0 {
-			finish(outcome{err: errors.New("Claude returned an empty model catalog")})
-			return
-		}
-		finish(outcome{models: models})
+		finish(outcome{response: frame.Response.Response})
 	})
 	transport.OnClose(func(reason string) { finish(outcome{err: fmt.Errorf("Claude model discovery: %s", reason)}) })
 	request := map[string]any{
 		"type": "control_request", "request_id": requestID,
-		"request": map[string]string{"subtype": "initialize"},
+		"request": map[string]string{"subtype": method},
 	}
 	if err := transport.WriteLine(ctx, marshalLine(request)); err != nil {
-		return nil, fmt.Errorf("initialize Claude model discovery: %w", err)
+		return nil, fmt.Errorf("Claude %s: %w", method, err)
 	}
 	select {
 	case out := <-done:
-		return out.models, out.err
+		return out.response, out.err
 	case <-ctx.Done():
-		return nil, fmt.Errorf("Claude model discovery: %w", ctx.Err())
+		return nil, fmt.Errorf("Claude %s: %w", method, ctx.Err())
 	}
 }

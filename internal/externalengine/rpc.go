@@ -35,6 +35,63 @@ func (r *rpc) notify(ctx context.Context, method string, params any) error {
 	return r.child.write(ctx, map[string]any{"jsonrpc": "2.0", "method": method, "params": params})
 }
 
+func (r *rpc) receive(ctx context.Context) (rpcMessage, error) {
+	var msg rpcMessage
+	select {
+	case <-ctx.Done():
+		return msg, ctx.Err()
+	case f, ok := <-r.child.frames:
+		if !ok {
+			return msg, errors.New("engine connection closed")
+		}
+		if f.err != nil {
+			return msg, f.err
+		}
+		if err := json.Unmarshal(f.data, &msg); err != nil {
+			return msg, fmt.Errorf("invalid engine JSON: %w", err)
+		}
+		if msg.Version != "2.0" {
+			return msg, errors.New("engine did not send JSON-RPC 2.0")
+		}
+		return msg, nil
+	}
+}
+
+func (r *rpc) dispatch(ctx context.Context, msg rpcMessage) error {
+	isRequest := len(msg.ID) > 0 && string(msg.ID) != "null"
+	value, err := r.handle(ctx, msg.Method, msg.Params, isRequest)
+	if !isRequest {
+		return err
+	}
+	reply := map[string]any{"jsonrpc": "2.0", "id": msg.ID}
+	if err != nil {
+		rpcErr := &rpcError{Code: -32603, Message: err.Error()}
+		_ = errors.As(err, &rpcErr)
+		reply["error"] = rpcErr
+	} else {
+		reply["result"] = value
+	}
+	return r.child.write(ctx, reply)
+}
+
+// wait processes delayed configuration notifications until the requested state
+// is advertised. The caller supplies a bounded deadline, never a polling sleep.
+func (r *rpc) wait(ctx context.Context, ready func() bool) error {
+	for !ready() {
+		msg, err := r.receive(ctx)
+		if err != nil {
+			return err
+		}
+		if msg.Method == "" {
+			return errors.New("engine sent an unsolicited response while awaiting configuration")
+		}
+		if err := r.dispatch(ctx, msg); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (r *rpc) call(ctx context.Context, method string, params, result any) error {
 	r.nextID++
 	id := fmt.Sprintf("wuu-%d", r.nextID)
@@ -42,72 +99,42 @@ func (r *rpc) call(ctx context.Context, method string, params, result any) error
 		return err
 	}
 	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case f, ok := <-r.child.frames:
-			if !ok {
-				return errors.New("engine connection closed")
+		msg, err := r.receive(ctx)
+		if err != nil {
+			return err
+		}
+		if msg.Method != "" {
+			err := r.dispatch(ctx, msg)
+			var settled *acpTurnSettled
+			if errors.As(err, &settled) {
+				return applyACPTurnSettled(result, settled)
 			}
-			if f.err != nil {
-				return f.err
+			if err != nil {
+				return err
 			}
-			var msg rpcMessage
-			if err := json.Unmarshal(f.data, &msg); err != nil {
-				return fmt.Errorf("invalid engine JSON: %w", err)
-			}
-			if msg.Version != "2.0" {
-				return errors.New("engine did not send JSON-RPC 2.0")
-			}
-			if msg.Method != "" {
-				isRequest := len(msg.ID) > 0 && string(msg.ID) != "null"
-				value, err := r.handle(ctx, msg.Method, msg.Params, isRequest)
-				if !isRequest {
-					var settled *acpTurnSettled
-					if errors.As(err, &settled) {
-						return applyACPTurnSettled(result, settled)
-					}
-					if err != nil {
-						return err
-					}
-					continue
-				}
-				reply := map[string]any{"jsonrpc": "2.0", "id": msg.ID}
-				if err != nil {
-					rpcErr := &rpcError{Code: -32603, Message: err.Error()}
-					_ = errors.As(err, &rpcErr)
-					reply["error"] = rpcErr
-				} else {
-					reply["result"] = value
-				}
-				if err := r.child.write(ctx, reply); err != nil {
-					return err
-				}
+			continue
+		}
+		if !rpcResponseIDMatches(msg.ID, id) {
+			// A prompt can still be running when a stale or unsolicited
+			// result arrives. Handshake calls must reject a desynced stream.
+			if method == "session/prompt" {
 				continue
 			}
-			if !rpcResponseIDMatches(msg.ID, id) {
-				// A prompt can still be running when a stale or unsolicited
-				// result arrives. Handshake calls must keep failing on a
-				// desynced stream; the prompt wait must not.
-				if method == "session/prompt" {
-					continue
-				}
-				return errors.New("engine replied with an unexpected request ID")
-			}
-			if msg.Error != nil {
-				return msg.Error
-			}
-			if len(msg.Result) == 0 {
-				return errors.New("engine response has no result")
-			}
-			if result == nil {
-				return nil
-			}
-			if err := json.Unmarshal(msg.Result, result); err != nil {
-				return fmt.Errorf("decode %s result: %w", method, err)
-			}
+			return errors.New("engine replied with an unexpected request ID")
+		}
+		if msg.Error != nil {
+			return msg.Error
+		}
+		if len(msg.Result) == 0 {
+			return errors.New("engine response has no result")
+		}
+		if result == nil {
 			return nil
 		}
+		if err := json.Unmarshal(msg.Result, result); err != nil {
+			return fmt.Errorf("decode %s result: %w", method, err)
+		}
+		return nil
 	}
 }
 

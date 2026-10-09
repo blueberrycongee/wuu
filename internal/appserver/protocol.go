@@ -8,6 +8,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/agentcontrol"
 	"github.com/blueberrycongee/wuu/internal/capability"
 	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/enginecatalog"
 	"github.com/blueberrycongee/wuu/internal/execution"
 	"github.com/blueberrycongee/wuu/internal/executionenv"
 	"github.com/blueberrycongee/wuu/internal/extensions"
@@ -966,17 +967,20 @@ type PluginStorageResult struct {
 }
 
 type ConfigModelUpdateParams struct {
-	Speed          *string `json:"speed,omitempty"`
-	ThreadID       string  `json:"thread_id,omitempty"`
-	Provider       string  `json:"provider,omitempty"`
-	Model          string  `json:"model"`
-	Effort         *string `json:"effort,omitempty"`
-	Variant        *string `json:"variant,omitempty"`
-	PermissionMode *string `json:"permission_mode,omitempty"`
-	ApproveForMe   *bool   `json:"approve_for_me,omitempty"`
-	BaseURL        *string `json:"base_url,omitempty"`
-	APIKey         *string `json:"api_key,omitempty"`
-	AuthToken      *string `json:"auth_token,omitempty"`
+	// ResetModel clears all external model overrides before applying supplied fields.
+	ResetModel     bool               `json:"reset_model,omitempty"`
+	ModelOptions   *map[string]string `json:"model_options,omitempty"`
+	Speed          *string            `json:"speed,omitempty"`
+	ThreadID       string             `json:"thread_id,omitempty"`
+	Provider       string             `json:"provider,omitempty"`
+	Model          string             `json:"model"`
+	Effort         *string            `json:"effort,omitempty"`
+	Variant        *string            `json:"variant,omitempty"`
+	PermissionMode *string            `json:"permission_mode,omitempty"`
+	ApproveForMe   *bool              `json:"approve_for_me,omitempty"`
+	BaseURL        *string            `json:"base_url,omitempty"`
+	APIKey         *string            `json:"api_key,omitempty"`
+	AuthToken      *string            `json:"auth_token,omitempty"`
 	// Type is the provider protocol type used when CreateProvider is true.
 	// Accepted values: "openai", "openai-compatible", "anthropic", "claude",
 	// "anthropic-official", "xai-subscription", "grok-build". Codex OAuth types remain
@@ -1337,6 +1341,7 @@ type ProviderModelVariantSummary struct {
 }
 
 type ThreadStartParams struct {
+	ModelOptions map[string]string `json:"model_options,omitempty"`
 	// Project starts a project coordinator in the workspace instead of an
 	// ordinary conversation.
 	Project     *ThreadProjectParams `json:"project,omitempty"`
@@ -1394,8 +1399,9 @@ type EngineInfo struct {
 	// Error carries a human-readable reason when the engine is not usable.
 	Error string `json:"error,omitempty"`
 	// Models is the engine-owned model inventory used by the composer picker.
-	Models      []EngineModelInfo `json:"models,omitempty"`
-	ModelsError string            `json:"models_error,omitempty"`
+	Models       []EngineModelInfo `json:"models,omitempty"`
+	ModelsError  string            `json:"models_error,omitempty"`
+	ModelsStatus string            `json:"models_status,omitempty"`
 	// PermissionModes is the host access menu for this engine. ACP agents
 	// advertise native ids/labels; omitted modes are not offered in the
 	// composer. Empty native id still means the host can apply the selection
@@ -1437,6 +1443,7 @@ type EnginePermissionModeInfo struct {
 }
 
 type EngineModelInfo struct {
+	Options []enginecatalog.ModelOption `json:"options,omitempty"`
 	// ResolvedModel is the CLI-reported target of ID; ID remains the selection value.
 	ResolvedModel    string   `json:"resolved_model,omitempty"`
 	FastMode         bool     `json:"fast_mode,omitempty"`
@@ -2273,6 +2280,7 @@ type ThreadSessionControl struct {
 }
 
 type Thread struct {
+	ModelOptions   map[string]string     `json:"model_options,omitempty"`
 	Speed          string                `json:"speed,omitempty"`
 	SessionControl *ThreadSessionControl `json:"session_control,omitempty"`
 	ID             string                `json:"id"`

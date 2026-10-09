@@ -65,6 +65,7 @@ type threadState struct {
 	ModelProvider  string
 	Model          string
 	ModelVariant   string
+	ModelOptions   map[string]string
 	ModelEffort    string
 	Speed          string
 	PermissionMode string
@@ -252,10 +253,9 @@ type Server struct {
 	codexModelsMu   sync.Mutex
 	codexModelCache map[string]map[string]config.ProviderModelConfig
 
-	claudeEngineModelCatalog     claudeengine.ModelCatalog
-	engineModelCatalogMu         sync.Mutex
-	codexEngineModelCatalogCache *codexEngineModelCatalogCacheEntry
-	acpEngineModelCatalogCache   map[string]*codexEngineModelCatalogCacheEntry
+	claudeEngineModelCatalog claudeengine.ModelCatalog
+	engineModelCatalogMu     sync.Mutex
+	engineModelCatalogCache  map[string]*engineModelCatalogCacheEntry
 
 	xaiLoginMu sync.Mutex
 	xaiLogins  *xaisub.LoginHub

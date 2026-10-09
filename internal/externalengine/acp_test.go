@@ -702,6 +702,19 @@ func TestACPHelper(t *testing.T) {
 			case "mode":
 				selectedMode = params.Value
 			}
+			if scenario == "grok" {
+				configuration := grokACPSessionResult()
+				for _, raw := range configuration["configOptions"].([]any) {
+					option := raw.(map[string]any)
+					if option["id"] == "model" && selectedModel != "" {
+						option["currentValue"] = selectedModel
+					}
+					if option["id"] == "reasoning_effort" && selectedEffort != "" {
+						option["currentValue"] = selectedEffort
+					}
+				}
+				result = configuration
+			}
 		case "session/load":
 			if scenario == "load-error" {
 				write(map[string]any{"jsonrpc": "2.0", "id": msg.ID, "error": map[string]any{"code": -32000, "message": "session not found"}})

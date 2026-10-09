@@ -306,20 +306,48 @@ func (s *Session) matchesThread(threadID string) bool {
 
 // ensureThread runs thread/start once and persists the native thread id.
 func (s *Session) ensureThread(ctx context.Context) error {
-	if s.speed == "" {
-		// Omitting a tier on a warm native thread inherits its previous override.
-		// Resolve the configured default so reset also clears that saved override.
+	if s.speed == "" || s.model == "" || s.effort == "" {
+		// Omitting fields on a warm native thread inherits its previous
+		// overrides. Resolve the native configuration before every new binding.
 		var response struct {
 			Config struct {
-				ServiceTier *string `json:"service_tier"`
+				Model       string          `json:"model"`
+				Effort      ReasoningEffort `json:"model_reasoning_effort"`
+				ServiceTier *string         `json:"service_tier"`
 			} `json:"config"`
 		}
 		if err := s.client.Request(ctx, "config/read", map[string]any{"cwd": s.rootDir, "includeLayers": false}, &response); err != nil {
 			return fmt.Errorf("codex config/read: %w", err)
 		}
-		s.speed = "standard"
-		if response.Config.ServiceTier != nil && *response.Config.ServiceTier != "" {
-			s.speed = *response.Config.ServiceTier
+		if s.model == "" {
+			s.model = response.Config.Model
+		}
+		if s.effort == "" {
+			s.effort = response.Config.Effort
+		}
+		if s.model == "" || s.effort == "" {
+			models, err := listModels(ctx, s.client)
+			if err != nil {
+				return err
+			}
+			for _, model := range models {
+				id := model.Model
+				if id == "" {
+					id = model.ID
+				}
+				if s.model == "" && model.IsDefault {
+					s.model = id
+				}
+				if id == s.model && s.effort == "" {
+					s.effort = model.DefaultReasoningEffort
+				}
+			}
+		}
+		if s.speed == "" {
+			s.speed = "standard"
+			if response.Config.ServiceTier != nil && *response.Config.ServiceTier != "" {
+				s.speed = *response.Config.ServiceTier
+			}
 		}
 	}
 	s.mu.Lock()
@@ -328,6 +356,9 @@ func (s *Session) ensureThread(ctx context.Context) error {
 	sandbox, approval, _ := codexPermissionSettings(s.permissionMode)
 	config := s.threadConfig()
 	if ref != "" {
+		if s.model == "" {
+			return errors.New("codex did not expose its configured default model; select a model before resuming")
+		}
 		var resp ThreadResumeResponse
 		if err := s.client.Request(ctx, MethodThreadResume, ThreadResumeParams{
 			ThreadID: ref, Model: s.model, CWD: s.rootDir,

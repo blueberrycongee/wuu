@@ -16,6 +16,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/agentthread"
 	"github.com/blueberrycongee/wuu/internal/approvefor"
 	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/enginecatalog"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
@@ -101,6 +102,13 @@ func (s *Server) handleThreadStart(req Request) error {
 	}
 	selection := s.currentSessionRuntimeSelection()
 	selection.Speed = strings.TrimSpace(params.Speed)
+	selection.ModelOptions = params.ModelOptions
+	if len(params.ModelOptions) > 0 {
+		entry, ok := enginecatalog.Lookup(string(engineID))
+		if !ok || entry.Protocol != "acp" && entry.Protocol != "opencode" {
+			return s.writeResponse(req.ID, nil, errors.New("this engine does not expose additional model options"))
+		}
+	}
 	if err := validateSpeed(selection.Speed); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
@@ -608,6 +616,7 @@ type forkSourceThread struct {
 	modelVariant   string
 	modelEffort    string
 	speed          string
+	modelOptions   map[string]string
 	permissionMode string
 	approveForMe   bool
 	cwd            string
@@ -729,6 +738,7 @@ func (s *Server) handleThreadFork(req Request) error {
 		Variant:        source.modelVariant,
 		Effort:         source.modelEffort,
 		Speed:          source.speed,
+		ModelOptions:   source.modelOptions,
 		PermissionMode: source.permissionMode,
 		ApproveForMe:   source.approveForMe,
 	})
@@ -930,6 +940,7 @@ func (s *Server) loadForkSourceThread(id string, now time.Time) (forkSourceThrea
 			modelVariant:   th.ModelVariant,
 			modelEffort:    th.ModelEffort,
 			speed:          th.Speed,
+			modelOptions:   th.ModelOptions,
 			permissionMode: th.PermissionMode,
 			approveForMe:   th.ApproveForMe,
 			cwd:            th.CWD,
@@ -1001,6 +1012,7 @@ func (s *Server) loadForkSourceThread(id string, now time.Time) (forkSourceThrea
 		modelVariant:   th.ModelVariant,
 		modelEffort:    th.ModelEffort,
 		speed:          th.Speed,
+		modelOptions:   th.ModelOptions,
 		permissionMode: th.PermissionMode,
 		approveForMe:   th.ApproveForMe,
 		cwd:            th.CWD,
@@ -1527,6 +1539,7 @@ func runtimeSelectionFromSession(sess session.Session) session.RuntimeSelection 
 		Variant:        strings.TrimSpace(sess.Variant),
 		Effort:         strings.TrimSpace(sess.Effort),
 		Speed:          sess.Speed,
+		ModelOptions:   sess.ModelOptions,
 		PermissionMode: strings.TrimSpace(sess.PermissionMode),
 		ApproveForMe:   sess.ApproveForMe,
 	}
@@ -1541,6 +1554,7 @@ func applyThreadRuntimeSelection(th *threadState, selection session.RuntimeSelec
 	th.ModelVariant = strings.TrimSpace(selection.Variant)
 	th.ModelEffort = strings.TrimSpace(selection.Effort)
 	th.Speed = selection.Speed
+	th.ModelOptions = selection.ModelOptions
 	if mode := strings.TrimSpace(selection.PermissionMode); mode != "" {
 		th.PermissionMode = config.NormalizePermissionMode(mode)
 	}
@@ -1571,6 +1585,7 @@ func threadEntryFromSession(sess session.Session, provider, model string) thread
 			ModelVariant:          selection.Variant,
 			ModelEffort:           selection.Effort,
 			Speed:                 selection.Speed,
+			ModelOptions:          selection.ModelOptions,
 			PermissionMode:        permissionMode,
 			ApproveForMe:          sess.ApproveForMe,
 			EngineID:              string(agentengine.NormalizeEngineID(sess.EngineID)),
