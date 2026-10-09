@@ -3,6 +3,7 @@ package appserver
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/tools"
@@ -47,7 +48,7 @@ func (s *Server) waitProjectSession(ctx context.Context, project, actor session.
 	if actor.ID != project.ID && (actor.ProjectRole != "side" || projectRoleForSession(metadata) != "worker") {
 		return nil, errors.New("only the lead can wait for members; the side can wait for workers")
 	}
-	return s.waitSessionDispatch(ctx, metadata, request, clientID, func() error {
+	return s.waitSessionDispatch(ctx, metadata, request, clientID, time.Minute, func() error {
 		if _, _, _, err := s.projectActor(actor.ID); err != nil {
 			return err
 		}

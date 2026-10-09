@@ -11,10 +11,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/tools"
 )
 
-const (
-	sessionWaitDefault = time.Minute
-	sessionWaitMaximum = 5 * time.Minute
-)
+const sessionWaitMaximum = 5 * time.Minute
 
 type managedSessionView struct {
 	Role                  string     `json:"role"`
@@ -127,8 +124,8 @@ func (s *Server) sessionDispatchReceipt(metadata session.Session, clientID strin
 
 // waitSessionDispatch is shared by Project Agent and Fusion. It follows the
 // persisted input ID through steering and checks exact terminal evidence.
-func (s *Server) waitSessionDispatch(ctx context.Context, metadata session.Session, request tools.ProjectSessionRequest, clientID string, validate func() error, wake <-chan struct{}) (any, error) {
-	timeout := sessionWaitDefault
+func (s *Server) waitSessionDispatch(ctx context.Context, metadata session.Session, request tools.ProjectSessionRequest, clientID string, defaultTimeout time.Duration, validate func() error, wake <-chan struct{}) (any, error) {
+	timeout := defaultTimeout
 	if request.TimeoutMS < 0 {
 		return nil, errors.New("timeout_ms must be positive")
 	}
@@ -140,8 +137,12 @@ func (s *Server) waitSessionDispatch(ctx context.Context, metadata session.Sessi
 			timeout = time.Duration(request.TimeoutMS) * time.Millisecond
 		}
 	}
-	deadline := time.NewTimer(timeout)
-	defer deadline.Stop()
+	var deadlineC <-chan time.Time
+	if timeout > 0 {
+		deadline := time.NewTimer(timeout)
+		defer deadline.Stop()
+		deadlineC = deadline.C
+	}
 	// Other hosts do not share idle signals. Recheck admission and control
 	// fences without generating model polling turns.
 	recheck := time.NewTicker(100 * time.Millisecond)
@@ -229,7 +230,7 @@ func (s *Server) waitSessionDispatch(ctx context.Context, metadata session.Sessi
 		case <-wake:
 			view.State = "lead_input"
 			return view, nil
-		case <-deadline.C:
+		case <-deadlineC:
 			view.TimedOut = true
 			return view, nil
 		case <-idle:

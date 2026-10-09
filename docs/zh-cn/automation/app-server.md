@@ -179,3 +179,18 @@ wuu debug app-server send --workdir /path/to/project config/read '{}'
 stdio 协议是受信任的本地控制接口，不是带认证的网络服务。远程或托管部署必须在外围提供
 传输安全和隔离。[协议参考](../../en/integrations/app-server-protocol.md)（英文）说明消息
 格式、能力协商、选择规则和云端进程身份。
+
+## Fusion 委派
+
+通过 `thread/start` 的 `fusion: true` 创建持久化 Wuu 对话，使用已配置的 Lead 和
+Sidekick。Lead 负责决策和审查，持久化 Sidekick 使用独立历史，在共享工作区执行完整任务。
+
+`fusion_delegate` 默认阻塞等待。省略 `timeout_ms` 时，等待完成、取消或 Lead 收到新输入。
+显式超时最多五分钟，超时后 Sidekick 继续运行。`block: false` 允许 Lead 开展独立工作；
+之后调用 `wait` 会接管结果投递。如果 `wait_status` 为 `report_delivered`，报告正文已通过
+后台通知送达；等待响应仍保留状态和失败信息，`inspect` 可以重新取得完整报告。只有审查
+当前任务版本后，才能接受报告。
+
+只读研究任务不会占用工作区写权限。执行实现任务的 Sidekick 则保留写权限，直到完成，或
+被停止并真正空闲。协调范围是工具调用，因此交接工作区前还须结束会冲突的后台写入进程。
+Lead 回合结束本身不代表全部 Fusion 工作完成；客户端还需检查任务状态和执行状态。

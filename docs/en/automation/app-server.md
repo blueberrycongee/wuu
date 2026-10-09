@@ -151,3 +151,23 @@ The stdio protocol is a trusted local control surface, not an authenticated netw
 service. A remote or hosted deployment must provide its own transport security and
 isolation around it. The [protocol reference](../integrations/app-server-protocol.md)
 covers message shapes, capabilities, selection rules, and cloud process identity.
+
+## Fusion handoffs
+
+Start a persistent Wuu conversation with `thread/start` and `fusion: true` to use
+its configured Lead and Sidekick. The Lead owns decisions and review; the persistent
+Sidekick executes complete briefs in the shared workspace with independent history.
+
+`fusion_delegate` blocks by default. With no `timeout_ms`, it waits for completion,
+cancellation or new Lead input. Explicit timeouts are capped at five minutes and
+leave the Sidekick running. `block: false` enables independent Lead work; a later
+`wait` takes over result delivery. If `wait_status` is `report_delivered`, the report
+text is already in a background notification; status and failure metadata remain
+in the wait response, and `inspect` can recover the full report. Reports require
+review of the current task revision before acceptance.
+
+Read-only research does not reserve workspace writes. An implementing Sidekick
+reserves them until it finishes or is stopped and actually becomes idle. This
+coordination covers tool calls, so participants must also finish conflicting
+background writers before handing over the workspace. A Lead turn ending does
+not by itself mean all Fusion work has completed; inspect task and execution state.

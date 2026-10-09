@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/config"
@@ -238,4 +239,31 @@ func TestFusionReadOnlyAssignmentDoesNotBlockLeadWrites(t *testing.T) {
 			client.rpc(t, MethodTurnInterrupt, TurnInterruptParams{ThreadID: created.Thread.ID}, nil)
 		})
 	}
+}
+
+// Default blocking handoffs wait for completion, not repeated model polling.
+// Virtual time covers a long handoff without adding minutes to the test suite.
+func TestFusionDefaultWaitDoesNotPoll(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		srv, client, calls := newFusionFixture(t)
+		var created ThreadStartResult
+		client.rpc(t, MethodThreadStart, ThreadStartParams{Fusion: true}, &created)
+		client.rpc(t, MethodTurnStart, TurnStartParams{ThreadID: created.Thread.ID, Prompt: "Implement feature"}, nil)
+		calls.next(t).response <- fusionTool("long-handoff", `{"message":"Implement and verify"}`)
+		side := calls.next(t)
+		synctest.Wait()
+		time.Sleep(2 * time.Minute)
+		select {
+		case call := <-calls.calls:
+			t.Fatalf("unfinished handoff woke Lead: %+v", call.request.Messages)
+		default:
+		}
+		side.response <- fusionReply("Long implementation complete")
+		lead := calls.next(t)
+		if !strings.Contains(lead.request.Messages[len(lead.request.Messages)-1].Content, "Long implementation complete") {
+			t.Fatal("completion did not wake Lead")
+		}
+		lead.response <- fusionReply("Reviewed")
+		fusionAwait(t, srv, created.Thread.ID, func(th Thread) bool { return th.Status == ThreadStatusIdle })
+	})
 }
