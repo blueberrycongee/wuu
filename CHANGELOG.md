@@ -24,6 +24,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Gather how new conversations start on General: the default agent, then the
+  built-in agent's model, reasoning effort and environment. The Agents, Model
+  providers and Built-in agent pages keep their lists.
+
 - Redraw settings as lifted sheets with quiet section labels and roomier rows
   that name each setting in medium weight, move the page name and its actions
   into a "Settings / page" titlebar, and mark the selected rail row in light

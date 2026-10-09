@@ -18,14 +18,99 @@ import { SettingsGroup, SettingsPageHeader, SettingsSection } from "./SettingsSe
 const BUILTIN_ENGINE = "wuu";
 
 type AgentRowState = { text: string; selectable: boolean };
+type Translate = ReturnType<typeof useI18n>["t"];
+
+function externalSettings(result: EngineListResult | undefined): Record<string, EngineBinarySettings | undefined> {
+  const { default_engine: _default, ...binarySettings } = result?.settings ?? {};
+  return binarySettings;
+}
+
+// Availability of an external agent. Unavailable agents stay listed instead of
+// silently leaving the choice set; the row's switch or its group says why.
+function externalState(
+  engine: EngineInfo | undefined,
+  binarySettings: Record<string, EngineBinarySettings | undefined>,
+  t: Translate,
+): AgentRowState {
+  if (engine?.enabled && engine.binary_ok) {
+    return { text: t("settings.engineReady"), selectable: true };
+  }
+  if (engine && (binarySettings[engine.id]?.enabled === false || (engine.binary_ok && !engine.enabled))) {
+    return { text: t("settings.engineDisabled"), selectable: false };
+  }
+  return { text: t("settings.engineNotInstalled"), selectable: false };
+}
 
 /**
- * The Agent settings page. The default agent is one labeled picker, so the
- * choice reads as a setting rather than a column of unlabeled radios. Each
- * installed external agent then appears once, with its switch on the row and
- * its path override (and sign-in for ACP agents) under the row's disclosure.
- * An agent Wuu cannot find waits in a last group: its row opens to say why
- * once, with its install link and path override.
+ * The agent new conversations start with, as one labeled picker. Every
+ * installed agent is listed, so a switched-off one says why it cannot be
+ * picked instead of silently leaving the choice set.
+ */
+export function DefaultEngineRow({
+  result,
+  onUpdate,
+}: {
+  result?: EngineListResult;
+  onUpdate: (params: EngineUpdateParams) => Promise<EngineListResult>;
+}): JSX.Element {
+  const { t } = useI18n();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const binarySettings = externalSettings(result);
+  const defaultEngine = result?.settings?.default_engine ?? BUILTIN_ENGINE;
+  const engines = result?.engines ?? [];
+  const options: SelectMenuOption[] = [
+    { value: BUILTIN_ENGINE, label: engineLabel(BUILTIN_ENGINE, engines.find((e) => e.id === BUILTIN_ENGINE)), hint: t("settings.engineBuiltin") },
+    ...engines.filter((engine) => engine.id !== BUILTIN_ENGINE && engine.binary_ok).map((engine) => {
+      const state = externalState(engine, binarySettings, t);
+      return {
+        value: engine.id,
+        label: engineLabel(engine.id, engine),
+        hint: state.selectable ? undefined : state.text,
+        disabled: !state.selectable,
+      };
+    }),
+  ];
+
+  async function select(id: string): Promise<void> {
+    if (id === defaultEngine) return;
+    // The composer remembers the last agent picked there. An explicit default
+    // change here is the newer decision, so drop that memory instead of
+    // letting it mask the setting.
+    clearDraftEngineMemory();
+    setBusy(true);
+    setError("");
+    try {
+      await onUpdate({ default_engine: id });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <SettingsRow title={t("settings.newConversationAgent")} error={error || undefined}>
+      <SelectMenu
+        triggerClassName="settings-select-trigger"
+        ariaLabel={t("settings.defaultEngine")}
+        dataTestid="settings-default-engine"
+        value={defaultEngine}
+        options={options}
+        // Until detection lands only the built-in agent is known.
+        disabled={busy || result === undefined}
+        flip
+        onChange={(id) => void select(id)}
+      />
+    </SettingsRow>
+  );
+}
+
+/**
+ * The Agent settings page. Each installed external agent appears once, with
+ * its switch on the row and its path override (and sign-in for ACP agents)
+ * under the row's disclosure. An agent Wuu cannot find waits in a last group:
+ * its row opens to say why once, with its install link and path override.
  */
 export function EngineSettingsSection({
   result,
@@ -69,41 +154,7 @@ export function EngineSettingsSection({
   }, [onUpdate]);
 
   const engines = useMemo(() => result?.engines ?? [], [result]);
-  const settings = result?.settings;
-  const { default_engine: _default, ...externalSettings } = settings ?? {};
-  const binarySettings: Record<string, EngineBinarySettings | undefined> = externalSettings;
-  const defaultEngine = settings?.default_engine ?? BUILTIN_ENGINE;
-  const engineById = useCallback(
-    (id: string): EngineInfo | undefined => engines.find((e) => e.id === id),
-    [engines],
-  );
-
-  const selectDefault = useCallback(
-    (id: string) => {
-      if (id === defaultEngine) return;
-      // The composer remembers the last agent picked there. An explicit
-      // default change here is the newer decision, so drop that memory
-      // instead of letting it mask the setting.
-      clearDraftEngineMemory();
-      void save({ default_engine: id });
-    },
-    [defaultEngine, save],
-  );
-
-  // Row availability for an external agent. Unavailable agents stay listed
-  // instead of silently leaving the choice set; the row's switch or its group
-  // says why.
-  const externalState = (
-    engine: EngineInfo | undefined,
-  ): AgentRowState => {
-    if (engine?.enabled && engine.binary_ok) {
-      return { text: t("settings.engineReady"), selectable: true };
-    }
-    if (engine && (binarySettings[engine.id]?.enabled === false || (engine.binary_ok && !engine.enabled))) {
-      return { text: t("settings.engineDisabled"), selectable: false };
-    }
-    return { text: t("settings.engineNotInstalled"), selectable: false };
-  };
+  const binarySettings = externalSettings(result);
 
   const toggleExpanded = (id: string) => setExpandedId((current) => (current === id ? null : id));
 
@@ -142,7 +193,7 @@ export function EngineSettingsSection({
         key={id}
         className="settings-engine-item"
         data-testid={`settings-engine-${id}-status`}
-        aria-label={`${label} · ${externalState(engine).text}`}
+        aria-label={`${label} · ${externalState(engine, binarySettings, t).text}`}
       >
         <div className="settings-engine-row">
           <span className="settings-engine-row-main">
@@ -241,20 +292,6 @@ export function EngineSettingsSection({
   const external = engines.filter((engine) => engine.id !== BUILTIN_ENGINE);
   const detected = external.filter((engine) => engine.binary_ok);
   const missing = external.filter((engine) => !engine.binary_ok);
-  // Every installed agent is listed so a switched-off one says why it cannot
-  // be picked instead of silently leaving the choice set.
-  const defaultOptions: SelectMenuOption[] = [
-    { value: BUILTIN_ENGINE, label: engineLabel(BUILTIN_ENGINE, engineById(BUILTIN_ENGINE)), hint: t("settings.engineBuiltin") },
-    ...detected.map((engine) => {
-      const state = externalState(engine);
-      return {
-        value: engine.id,
-        label: engineLabel(engine.id, engine),
-        hint: state.selectable ? undefined : state.text,
-        disabled: !state.selectable,
-      };
-    }),
-  ];
 
   return (
     <>
@@ -276,41 +313,22 @@ export function EngineSettingsSection({
           </button>
         }
       />
-      <section
-        className="settings-section"
-        data-wuu-component="settings-section"
-        data-testid="settings-agent-engines"
-      >
+      {error || loadError ? <p className="settings-error" role="alert">{error || loadError}</p> : null}
+      {result === undefined ? (
         <SettingsGroup>
-          {result === undefined ? (
-            <div
-              className="settings-engine-skeleton"
-              role="status"
-              aria-label={t("settings.engineDetecting")}
-              aria-busy="true"
-            >
-              <div className="settings-engine-row" aria-hidden="true">
-                <span className="settings-engine-skeleton-line settings-engine-skeleton-title" />
-                <span className="settings-engine-skeleton-line settings-engine-skeleton-description" />
-              </div>
+          <div
+            className="settings-engine-skeleton"
+            role="status"
+            aria-label={t("settings.engineDetecting")}
+            aria-busy="true"
+          >
+            <div className="settings-engine-row" aria-hidden="true">
+              <span className="settings-engine-skeleton-line settings-engine-skeleton-title" />
+              <span className="settings-engine-skeleton-line settings-engine-skeleton-description" />
             </div>
-          ) : (
-            <SettingsRow title={t("settings.defaultEngine")}>
-              <SelectMenu
-                triggerClassName="settings-select-trigger"
-                ariaLabel={t("settings.defaultEngine")}
-                dataTestid="settings-default-engine"
-                value={defaultEngine}
-                options={defaultOptions}
-                disabled={busy}
-                flip
-                onChange={selectDefault}
-              />
-            </SettingsRow>
-          )}
+          </div>
         </SettingsGroup>
-        {error || loadError ? <p className="settings-error" role="alert">{error || loadError}</p> : null}
-      </section>
+      ) : null}
       {detected.length > 0 ? (
         <SettingsSection title={t("settings.engineInstalled")} testID="settings-agent-installed">
           <SettingsGroup>

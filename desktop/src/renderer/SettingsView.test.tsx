@@ -453,7 +453,30 @@ describe("SettingsView model services", () => {
     expect(container.querySelector('[data-testid="settings-provider-custom"]')).not.toBeNull();
   });
 
-  it("leads with the default model and names connected services by vendor", async () => {
+  it("gathers how new conversations start on General", async () => {
+    installServicesStub();
+    const onSave = vi.fn(async () => {});
+    renderSettings({ initialized: servicesInitialized(), initialPage: "general", locale: "en-US", onSave });
+    await flush();
+
+    const group = container.querySelector('[data-testid="settings-new-conversations"]');
+    expect(group?.querySelector('[data-testid="settings-default-engine"]')).not.toBeNull();
+    expect(group?.querySelector('[data-testid="settings-default-model-select"]')?.textContent).toContain("GPT-6 Astra");
+    expect(group?.textContent).toContain("ChatGPT");
+    expect(group?.querySelector('[aria-label="Default for new conversations"]')).not.toBeNull();
+  });
+
+  it("sends General to Model providers when no service is connected", async () => {
+    installServicesStub();
+    renderSettings({ initialized: baseInitialized({ provider: "", model: "", providers: [] }), initialPage: "general" });
+    await flush();
+
+    click(container.querySelector('[data-testid="settings-providers-empty"]'));
+    await flush();
+    expect(container.querySelector('[data-testid="settings-provider-custom"]')).not.toBeNull();
+  });
+
+  it("names connected services by vendor", async () => {
     installServicesStub();
     const initialized = servicesInitialized();
     const beforeBrowsing = structuredClone(initialized);
@@ -461,9 +484,6 @@ describe("SettingsView model services", () => {
     renderSettings({ initialized, initialPage: "providers", locale: "en-US", onSave });
     await flush();
 
-    const defaultCard = container.querySelector('[data-testid="settings-default-model"]');
-    expect(defaultCard?.textContent).toContain("GPT-6 Astra");
-    expect(defaultCard?.textContent).toContain("ChatGPT");
     const cards = [...container.querySelectorAll('[data-testid="settings-provider-card"]')];
     expect(cards.map((card) => card.getAttribute("aria-label"))).toEqual(["ChatGPT", "DeepSeek", "OpenRouter"]);
     expect(cards[0]?.textContent).toContain("Default");
@@ -586,7 +606,6 @@ describe("SettingsView model services", () => {
     renderSettings({ initialized: baseInitialized({ provider: "", model: "", providers: [] }), initialPage: "providers", onSave });
     await flush();
 
-    expect(container.querySelector('[data-testid="settings-providers-empty"]')).not.toBeNull();
     click(container.querySelector('[data-testid="settings-provider-custom"]'));
     const dialog = document.querySelector('[role="dialog"]')!;
     expect(dialog.querySelector('[data-testid="settings-provider-connect-default"]')?.getAttribute("aria-checked")).toBe("true");

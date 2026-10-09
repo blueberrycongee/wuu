@@ -485,18 +485,6 @@ function ServicesOverview({
       />
 
       {providers.length > 0 ? (
-        <DefaultModelCard providers={providers} labels={labels} initialized={initialized} running={running} onSave={onSave} />
-      ) : (
-        // The default model's place says what is missing; the services to
-        // add follow directly below.
-        <SettingsSection title={t("provider.defaultModel")}>
-          <SettingsGroup>
-            <p className="settings-group-empty" data-testid="settings-providers-empty">{t("provider.emptyTitle")}</p>
-          </SettingsGroup>
-        </SettingsSection>
-      )}
-
-      {providers.length > 0 ? (
         <SettingsSection title={t("provider.connectedSection")}>
           <div className="model-service-grid" role="list" aria-label={t("provider.connectedSection")}>
             {providers.map((provider) => {
@@ -550,20 +538,25 @@ function ServicesOverview({
 // The one choice most people make here: what a new conversation uses. Model
 // and effort are ordinary labeled rows; the service the model comes from is
 // the model row's description, since one model name can come from several.
-function DefaultModelCard({
-  providers,
-  labels,
+/**
+ * The built-in agent's default model and reasoning effort as settings rows,
+ * for the group that sets how new conversations start. Without a connected
+ * service the model row points to where one is added.
+ */
+export function DefaultModelRows({
   initialized,
   running,
   onSave,
+  onAddService,
 }: {
-  providers: readonly ProviderSummary[];
-  labels: ReadonlyMap<string, string>;
   initialized?: InitializeResult;
   running: boolean;
   onSave: SaveProvider;
+  onAddService: () => void;
 }): JSX.Element {
   const { t } = useI18n();
+  const providers = initialized?.providers ?? [];
+  const labels = useMemo(() => serviceLabels(providers, t), [providers, t]);
   const [error, setError] = useState("");
   const [pending, setPending] = useState<{ provider: string; model: string; variant: string } | null>(null);
   const providerName = pending?.provider ?? initialized?.provider ?? "";
@@ -598,63 +591,71 @@ function DefaultModelCard({
     }
   }
 
+  if (providers.length === 0) {
+    return (
+      <SettingsRow title={t("provider.modelLabel")} description={t("provider.noService")}>
+        <button type="button" className="settings-button" data-testid="settings-providers-empty" onClick={onAddService}>
+          {t("provider.addSection")}
+        </button>
+      </SettingsRow>
+    );
+  }
+
   return (
-    <SettingsSection title={t("provider.defaultModel")}>
-      <div className="settings-group" data-wuu-component="settings-group" data-testid="settings-default-model">
-        <SettingsRow
-          title={t("provider.modelLabel")}
-          description={identity ? (
-            <span className="model-default-service">
-              {labels.get(providerName) ?? identity.label}
-              {identity.attention ? (
-                <span className="model-default-attention">
-                  <AlertTriangle className="icon-sm" aria-hidden="true" />
-                  {identity.attention}
-                </span>
-              ) : null}
-            </span>
-          ) : undefined}
-        >
+    <>
+      <SettingsRow
+        title={t("provider.modelLabel")}
+        error={error || undefined}
+        description={identity ? (
+          <span className="model-default-service">
+            {labels.get(providerName) ?? identity.label}
+            {identity.attention ? (
+              <span className="model-default-attention">
+                <AlertTriangle className="icon-sm" aria-hidden="true" />
+                {identity.attention}
+              </span>
+            ) : null}
+          </span>
+        ) : undefined}
+      >
+        <SelectMenu
+          triggerClassName="settings-select-trigger"
+          ariaLabel={t("provider.chooseDefaultModel")}
+          dataTestid="settings-default-model-select"
+          value={`${providerName}\n${modelID}`}
+          placeholder={modelID || t("provider.chooseDefaultModel")}
+          groups={groups}
+          searchable={optionCount > MODEL_SEARCH_THRESHOLD}
+          searchPlaceholder={t("provider.searchModels")}
+          emptyMessage={t("provider.noModelMatches")}
+          disabled={running || pending !== null || optionCount === 0}
+          align="right"
+          flip
+          onChange={(value) => {
+            const [nextProvider = "", nextModel = ""] = value.split("\n");
+            const target = providers.find((item) => item.name === nextProvider);
+            void commit({
+              provider: nextProvider,
+              model: nextModel,
+              variant: normalizedVariantForProviderModel(variant, target, nextModel),
+            });
+          }}
+        />
+      </SettingsRow>
+      {effortOptions.length > 1 ? (
+        <SettingsRow title={t("provider.reasoningEffort")}>
           <SelectMenu
             triggerClassName="settings-select-trigger"
-            ariaLabel={t("provider.chooseDefaultModel")}
-            dataTestid="settings-default-model-select"
-            value={`${providerName}\n${modelID}`}
-            placeholder={modelID || t("provider.chooseDefaultModel")}
-            groups={groups}
-            searchable={optionCount > MODEL_SEARCH_THRESHOLD}
-            searchPlaceholder={t("provider.searchModels")}
-            emptyMessage={t("provider.noModelMatches")}
-            disabled={running || pending !== null || optionCount === 0}
+            ariaLabel={t("provider.reasoningEffort")}
+            value={variant}
             align="right"
-            flip
-            onChange={(value) => {
-              const [nextProvider = "", nextModel = ""] = value.split("\n");
-              const target = providers.find((item) => item.name === nextProvider);
-              void commit({
-                provider: nextProvider,
-                model: nextModel,
-                variant: normalizedVariantForProviderModel(variant, target, nextModel),
-              });
-            }}
+            disabled={running || pending !== null}
+            options={effortOptions.map((option) => ({ value: option, label: variantLabel(option) }))}
+            onChange={(next) => void commit({ provider: providerName, model: modelID, variant: next })}
           />
         </SettingsRow>
-        {effortOptions.length > 1 ? (
-          <SettingsRow title={t("provider.reasoningEffort")}>
-            <SelectMenu
-              triggerClassName="settings-select-trigger"
-              ariaLabel={t("provider.reasoningEffort")}
-              value={variant}
-              align="right"
-              disabled={running || pending !== null}
-              options={effortOptions.map((option) => ({ value: option, label: variantLabel(option) }))}
-              onChange={(next) => void commit({ provider: providerName, model: modelID, variant: next })}
-            />
-          </SettingsRow>
-        ) : null}
-      </div>
-      {error ? <p className="settings-error" role="alert">{error}</p> : null}
-    </SettingsSection>
+      ) : null}
+    </>
   );
 }
 

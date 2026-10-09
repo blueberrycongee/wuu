@@ -80,13 +80,13 @@ export type ArchivedSessionView = {
 import { ENABLE_REMOTE_CONTROL, ENABLE_SUBSCRIPTIONS } from "./FeatureFlags";
 import { AppearanceTypography } from "./AppearanceTypography";
 import { BackgroundSettings } from "./background/BackgroundSettings";
-import { ExecutionEnvironmentSettings } from "./ExecutionEnvironmentSettings";
+import { DefaultEnvironmentRow, ExecutionEnvironmentSettings } from "./ExecutionEnvironmentSettings";
 import { SettingsInputUnit, SettingsRow } from "./SettingsRow";
 import { SettingsGroup, SettingsPageHeader, SettingsSection, SettingsTitlebarSlot, type SettingsStatusTone } from "./SettingsSection";
 import { toastErrorMessage } from "./Toast";
 import type { ArchiveDeletionState } from "./useArchiveDeletion";
-import { EngineSettingsSection } from "./EngineSettingsSection";
-import { ModelServicesPage } from "./ModelServicesPage";
+import { DefaultEngineRow, EngineSettingsSection } from "./EngineSettingsSection";
+import { DefaultModelRows, ModelServicesPage } from "./ModelServicesPage";
 import { SubscriptionDashboard } from "./SubscriptionDashboard";
 import { SettingsRemotePage } from "./SettingsRemotePage";
 import { ThemePreferenceControl } from "./ThemePreferenceSection";
@@ -848,6 +848,13 @@ export function SettingsView({
                 />
               ) : activePage === "general" ? (
                 <SettingsGeneralPage
+                  initialized={initialized}
+                  running={running}
+                  engineInventory={engineInventory}
+                  onUpdateEngineInventory={onUpdateEngineInventory}
+                  onSave={onSave}
+                  onGeneralSave={onGeneralSave}
+                  onAddService={() => setActivePage("providers")}
                   desktopBuild={desktopBuild}
                   copyState={copyState}
                   onCopyVersion={copyVersionInfo}
@@ -1260,10 +1267,24 @@ function SettingsRuntimePage({
 /* -------------------------------------------------------------------------- */
 
 function SettingsGeneralPage({
+  initialized,
+  running,
+  engineInventory,
+  onUpdateEngineInventory,
+  onSave,
+  onGeneralSave,
+  onAddService,
   desktopBuild,
   copyState,
   onCopyVersion
 }: {
+  initialized?: InitializeResult;
+  running: boolean;
+  engineInventory?: EngineListResult;
+  onUpdateEngineInventory: (params: EngineUpdateParams) => Promise<EngineListResult>;
+  onSave: (provider: string, model: string, effort?: string, connection?: RuntimeConnectionUpdate, variant?: string) => Promise<void>;
+  onGeneralSave: (settings: RuntimeGeneralSettingsUpdate) => Promise<void>;
+  onAddService: () => void;
   desktopBuild: DesktopBuildInfo | undefined;
   copyState: CopyState;
   onCopyVersion: () => Promise<void>;
@@ -1272,7 +1293,25 @@ function SettingsGeneralPage({
   return (
     <>
       <SettingsPageHeader title={t("settings.general")} />
-      <SettingsSection testID="settings-general">
+      {/* How a new conversation starts, gathered from the pages that own each
+        * part: the agent, then the built-in agent's model and environment. */}
+      <SettingsSection
+        title={t("settings.newConversations")}
+        description={t("settings.newConversationsDescription")}
+        testID="settings-new-conversations"
+      >
+        <SettingsGroup>
+          <DefaultEngineRow result={engineInventory} onUpdate={onUpdateEngineInventory} />
+          <DefaultModelRows initialized={initialized} running={running} onSave={onSave} onAddService={onAddService} />
+          <DefaultEnvironmentRow
+            value={initialized?.general_settings?.execution_environments ?? {}}
+            disabled={running || !initialized}
+            onSave={onGeneralSave}
+          />
+        </SettingsGroup>
+      </SettingsSection>
+
+      <SettingsSection title={t("settings.textInterface")} testID="settings-general">
         <SettingsGroup>
           <SettingsRow title={t("settings.language")}>
             <LanguagePreferenceControl />

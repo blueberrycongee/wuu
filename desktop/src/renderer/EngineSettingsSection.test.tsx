@@ -2,7 +2,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { EngineListResult } from "../shared/protocol";
-import { EngineSettingsSection } from "./EngineSettingsSection";
+import { DefaultEngineRow, EngineSettingsSection } from "./EngineSettingsSection";
 
 const inventory: EngineListResult = {
   engines: [
@@ -36,14 +36,19 @@ async function openDefaultPicker(): Promise<HTMLButtonElement[]> {
   return [...document.querySelectorAll<HTMLButtonElement>(".select-menu-item")];
 }
 
+// The default picker lives on the General page and the agent list on the
+// Agents page; both read and write the same inventory.
 function render(result: EngineListResult | undefined, onUpdate = vi.fn(), onRefresh = vi.fn()) {
   act(() => {
     root.render(
-      <EngineSettingsSection
-        result={result}
-        onRefresh={onRefresh}
-        onUpdate={onUpdate}
-      />,
+      <>
+        <DefaultEngineRow result={result} onUpdate={onUpdate} />
+        <EngineSettingsSection
+          result={result}
+          onRefresh={onRefresh}
+          onUpdate={onUpdate}
+        />
+      </>,
     );
   });
   return { onUpdate, onRefresh };
@@ -101,7 +106,7 @@ describe("EngineSettingsSection", () => {
     render(undefined);
 
     expect(container.querySelector('[aria-busy="true"]')).not.toBeNull();
-    expect(container.querySelector('[data-testid="settings-default-engine"]')).toBeNull();
+    expect(defaultPicker().disabled).toBe(true);
     expect(container.querySelector('[data-testid="settings-engine-refresh"]')).not.toBeNull();
   });
 
