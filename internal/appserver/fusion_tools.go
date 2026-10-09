@@ -14,7 +14,8 @@ import (
 // paths and finish conflicting writers before handing over task files.
 func (s *Server) acquireFusionTool(member session.Session, call providers.ToolCall, base agent.ToolExecutor) (func(), error) {
 	noop := func() {}
-	if call.Name == "fusion_delegate" {
+	// Session-local checkpoints do not write the shared workspace.
+	if call.Name == "fusion_delegate" || call.Name == "notes" {
 		return noop, nil
 	}
 	if metadata, ok := base.(agent.ToolMetadataProvider); ok {

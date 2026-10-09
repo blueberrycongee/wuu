@@ -66,7 +66,7 @@ func (s *Server) inspectFusionTask(leadID, taskID string) (any, error) {
 		return nil, err
 	}
 	if len(tasks) > 0 {
-		return s.fusionTaskView(tasks[len(tasks)-1])
+		return s.fusionTaskLiveView(tasks[len(tasks)-1])
 	}
 	sides, err := s.fusionSides(leadID)
 	if err != nil {
