@@ -107,6 +107,13 @@ type CommandSpec struct {
 // PackageSpec is the deterministic fingerprint input for an entire plugin
 // package. It intentionally omits secret values and includes only normalized
 // manifest fields, surface descriptors, and hashes of referenced entry files.
+// PackageDependency is a package relationship, not an installation or trust grant.
+type PackageDependency struct {
+	ID       string `json:"id"`
+	Version  string `json:"version,omitempty"`
+	Optional bool   `json:"optional,omitempty"`
+}
+
 type PackageSpec struct {
 	ID                   string                   `json:"id"`
 	Source               string                   `json:"source"`
@@ -124,6 +131,7 @@ type PackageSpec struct {
 	RequestedPermissions []string                 `json:"requested_permissions,omitempty"`
 	ActivityKinds        []string                 `json:"activity_kinds,omitempty"`
 	MinimumWuuVersion    string                   `json:"minimum_wuu_version,omitempty"`
+	Dependencies         []PackageDependency      `json:"dependencies,omitempty"`
 	Requires             []string                 `json:"requires,omitempty"`
 	Breaks               []string                 `json:"breaks,omitempty"`
 	Conflicts            []string                 `json:"conflicts,omitempty"`
@@ -166,9 +174,11 @@ func normalizePackageSpec(spec PackageSpec) PackageSpec {
 		ActivityKinds:        normalizedStrings(spec.ActivityKinds),
 		MinimumWuuVersion:    strings.TrimSpace(spec.MinimumWuuVersion),
 		Requires:             normalizedStrings(spec.Requires),
+		Dependencies:         append([]PackageDependency(nil), spec.Dependencies...),
 		Breaks:               normalizedStrings(spec.Breaks),
 		Conflicts:            normalizedStrings(spec.Conflicts),
 	}
+	sort.Slice(normalized.Dependencies, func(i, j int) bool { return normalized.Dependencies[i].ID < normalized.Dependencies[j].ID })
 	if spec.Runtime != nil {
 		normalized.Runtime = &RuntimeSpec{
 			Protocol: strings.TrimSpace(spec.Runtime.Protocol),
