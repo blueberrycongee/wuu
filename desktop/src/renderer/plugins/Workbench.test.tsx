@@ -7,11 +7,12 @@ import type { ExtensionInventoryRecord } from "../../shared/protocol";
 import {
   STATUS_ACTIONS,
   type PresentationHost,
+  type ViewHostAPI,
   type StatusSnapshotV1,
 } from "../../shared/workbench";
 import { RichContent } from "../RichContent";
 import { desktopPluginHost } from "./DesktopPluginRuntime";
-import { DesktopWorkbench, visibleWorkbenchView, WorkbenchController } from "./Workbench";
+import { DesktopWorkbench, PluginViewContent, visibleWorkbenchView, WorkbenchController } from "./Workbench";
 import { PluginHost, type PluginGenerationApi } from "./PluginHost";
 
 describe("WorkbenchController", () => {
@@ -24,6 +25,45 @@ describe("WorkbenchController", () => {
     window.localStorage.clear();
     document.documentElement.removeAttribute("style");
     document.documentElement.removeAttribute("data-theme");
+  });
+
+  it.each(["view", "renderer", "inspector", "presenter"] as const)("revokes captured %s host actions across same-fingerprint reactivation", async (kind) => {
+    const host = new PluginHost({ react: React });
+    const command = vi.fn();
+    const dispatch = vi.fn();
+    const getStorage = vi.fn(async () => "saved");
+    const controller = new WorkbenchController(host, { getStorage });
+    const register = (api: PluginGenerationApi): void => {
+      api.registerViewType({ id: "panel", title: "Panel", render: () => null });
+      api.registerCommand({ id: "run", title: "Run", execute: command });
+    };
+    try {
+      await host.activateGeneration({ pluginId: "owner", generation: "same", register });
+      const id = await controller.openPluginView("owner", "panel");
+      const view = controller.getSnapshot().views.find((item) => item.id === id)!;
+      const api = kind === "view" ? controller.createViewHostAPI(view)
+        : kind === "renderer" ? controller.createRendererHostAPI("owner", "same")
+        : kind === "inspector" ? controller.createInspectorHostAPI("owner", "same")
+        : controller.createPresentationHostAPI("owner", "same", ["act"], dispatch);
+      await api.executeCommand("run", "before");
+      expect(command).toHaveBeenCalledWith("before");
+      command.mockClear();
+      await host.activateGeneration({ pluginId: "owner", generation: "same", register });
+      await expect(api.executeCommand("run", "stale")).rejects.toThrow("no longer active");
+      await expect(api.openView("panel")).rejects.toThrow("no longer active");
+      if (kind === "presenter") await expect((api as PresentationHost).invoke("act", "stale")).rejects.toThrow("no longer active");
+      if (kind !== "inspector") await expect((api as ViewHostAPI).getStorage("setting")).rejects.toThrow("no longer active");
+      expect(command).not.toHaveBeenCalled();
+      expect(dispatch).not.toHaveBeenCalled();
+      expect(getStorage).not.toHaveBeenCalled();
+      const current = controller.createPresentationHostAPI("owner", "same", ["act"], dispatch);
+      await current.executeCommand("run", "current");
+      await current.invoke("act", "current");
+      expect(command).toHaveBeenCalledWith("current");
+      expect(dispatch).toHaveBeenCalledWith("act", "current");
+    } finally {
+      controller.dispose();
+    }
   });
 
   it("updates service handles without publishing an unchanged snapshot", () => {
@@ -364,7 +404,7 @@ describe("DesktopWorkbench product path", () => {
   beforeEach(() => {
     window.localStorage.clear();
     container = document.createElement("div");
-    container.innerHTML = '<aside class="sidebar"></aside><main class="conversation-pane"></main>';
+    container.innerHTML = '<aside class="sidebar" data-workbench-region="navigation"></aside><main class="conversation-pane"></main>';
     document.body.appendChild(container);
     const workbenchRoot = document.createElement("div");
     workbenchRoot.dataset.workbenchRoot = "true";
@@ -376,6 +416,69 @@ describe("DesktopWorkbench product path", () => {
     act(() => root.unmount());
     container.remove();
     document.querySelectorAll(".plugin-workbench-status").forEach((item) => item.remove());
+  });
+
+  it.each(["settings", "auxiliary"] as const)("mounts embedded %s view actions without an empty toolbar", async (region) => {
+    const host = new PluginHost({ react: React });
+    const controller = new WorkbenchController(host);
+    const execute = vi.fn();
+    await host.activateGeneration({ pluginId: "user:embedded-actions", generation: "one", register(api) {
+      api.registerViewType({ id: "embedded.view", title: "Embedded", render: () => <div>Embedded body</div> });
+    } });
+    await act(async () => root.render(<PluginViewContent controller={controller} pluginId="user:embedded-actions" viewTypeId="embedded.view" region={region} />));
+    expect(container.querySelector('[role="toolbar"]')).toBeNull();
+    let actionRegistration: { dispose(): void } | undefined;
+    await act(async () => host.activateGeneration({ pluginId: "user:embedded-actions", generation: "two", register(api) {
+      api.registerViewType({ id: "embedded.view", title: "Embedded", render: () => <div>Embedded body</div> });
+      actionRegistration = api.registerCommand({ id: "embedded.refresh", title: "Refresh embedded view", placements: ["view.title"], execute });
+    } }));
+    const action = container.querySelector<HTMLButtonElement>('button[aria-label="Refresh embedded view"]')!;
+    expect(action).not.toBeNull();
+    await act(async () => action.click());
+    expect(execute).toHaveBeenCalledWith(expect.objectContaining({ target: "view.title", region, viewTypeId: "embedded.view", viewPluginId: "user:embedded-actions" }));
+    await act(async () => actionRegistration!.dispose());
+    expect(container.querySelector('[role="toolbar"]')).toBeNull();
+    controller.dispose();
+  });
+
+  it.each(["primary", "auxiliary"] as const)("mounts %s view-title commands with public context and replaces them on reload", async (region) => {
+    const host = new PluginHost({ react: React });
+    const firstExecute = vi.fn();
+    const secondExecute = vi.fn();
+    const register = (api: PluginGenerationApi, execute: ReturnType<typeof vi.fn>): void => {
+      api.registerViewType({ id: "actions.view", title: "Actions view", render: () => <div>View body</div> });
+      api.registerViewPlacement({ id: "actions-panel", region, view: "actions.view" });
+      api.registerCommand({
+        id: "actions.refresh", title: "Refresh plugin view", placements: ["view.title"], execute,
+        when: (context) => context.target === "view.title" && context.viewTypeId === "actions.view",
+      });
+      api.registerCommand({
+        id: "actions.other", title: "Other view action", placements: ["view.title"], execute: vi.fn(),
+        when: (context) => context.target === "view.title" && context.viewTypeId === "other.view",
+      });
+    };
+    await host.activateGeneration({ pluginId: "user:view-actions", generation: "one", register: (api) => register(api, firstExecute) });
+    await act(async () => root.render(<DesktopWorkbench host={host} inventory={[inventoryPlugin("user:view-actions")]} />));
+    const header = container.querySelector(".plugin-workbench-view-header")!;
+    const action = header.querySelector<HTMLButtonElement>('button[aria-label="Refresh plugin view"]')!;
+    expect(action).not.toBeNull();
+    expect(header.textContent).not.toContain("Other view action");
+    expect(header.querySelector('[role="tablist"]')!.compareDocumentPosition(action) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(action.compareDocumentPosition([...header.querySelectorAll("button")].at(-1)!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    await act(async () => action.click());
+    expect(firstExecute).toHaveBeenCalledWith({
+      contractVersion: 1, target: "view.title", viewId: "placement:user:view-actions:actions-panel",
+      viewTypeId: "actions.view", viewPluginId: "user:view-actions", region,
+    });
+    expect(Object.isFrozen(firstExecute.mock.calls[0]?.[0])).toBe(true);
+    await act(async () => host.activateGeneration({ pluginId: "user:view-actions", generation: "two", register: (api) => register(api, secondExecute) }));
+    await act(async () => action.click());
+    expect(firstExecute).toHaveBeenCalledOnce();
+    const replacement = container.querySelector<HTMLButtonElement>('button[aria-label="Refresh plugin view"]')!;
+    await act(async () => replacement.click());
+    expect(secondExecute).toHaveBeenCalledOnce();
+    await act(async () => host.unload("user:view-actions"));
+    expect(container.querySelector('button[aria-label="Refresh plugin view"]')).toBeNull();
   });
 
   it("renders default View placements and restores built-in UI after unload", async () => {

@@ -1308,42 +1308,6 @@ export function Composer({
           >
             {topAccessory ? <div className="composer-cover-accessory">{topAccessory}</div> : null}
           <div className="composer" hidden={Boolean(topAccessory)}>
-            {textOnly ? null : (
-              <>
-                <input
-                  ref={attachmentInputRef}
-                  className="composer-file-input"
-                  type="file"
-                  accept={COMPOSER_ATTACHMENT_ACCEPT}
-                  multiple
-                  tabIndex={-1}
-                  onClick={onAttachmentPickerClick}
-                  onChange={(event) => {
-                    const selected = Array.from(event.currentTarget.files ?? []);
-                    event.currentTarget.value = "";
-                    if (selected.length > 0) {
-                      onPasteAttachmentFiles(selected);
-                    }
-                  }}
-                />
-                <input
-                  ref={photosInputRef}
-                  className="composer-file-input"
-                  type="file"
-                  accept="image/*"
-                  multiple
-                  tabIndex={-1}
-                  onClick={onAttachmentPickerClick}
-                  onChange={(event) => {
-                    const selected = Array.from(event.currentTarget.files ?? []);
-                    event.currentTarget.value = "";
-                    if (selected.length > 0) {
-                      onPasteAttachmentFiles(selected);
-                    }
-                  }}
-                />
-              </>
-            )}
             <ComposerTextarea
               ref={textareaRef}
               expanded={isComposerExpanded}
@@ -1568,6 +1532,43 @@ export function Composer({
       ) : null}
     </div>
   );
+  // File pickers serve host actions even when a plugin replaces the native composer.
+  const attachmentPickers = textOnly ? null : (
+    <>
+      <input
+        ref={attachmentInputRef}
+        className="composer-file-input"
+        type="file"
+        accept={COMPOSER_ATTACHMENT_ACCEPT}
+        multiple
+        tabIndex={-1}
+        onClick={onAttachmentPickerClick}
+        onChange={(event) => {
+          const selected = Array.from(event.currentTarget.files ?? []);
+          event.currentTarget.value = "";
+          if (selected.length > 0) {
+            onPasteAttachmentFiles(selected);
+          }
+        }}
+      />
+      <input
+        ref={photosInputRef}
+        className="composer-file-input"
+        type="file"
+        accept="image/*"
+        multiple
+        tabIndex={-1}
+        onClick={onAttachmentPickerClick}
+        onChange={(event) => {
+          const selected = Array.from(event.currentTarget.files ?? []);
+          event.currentTarget.value = "";
+          if (selected.length > 0) {
+            onPasteAttachmentFiles(selected);
+          }
+        }}
+      />
+    </>
+  );
   const nativeComposer = variant === "hero" ? (
     <div
       className={className}
@@ -1590,32 +1591,35 @@ export function Composer({
     : (["send" as const]);
   const activeSubmissionMode = running && onSteer ? "steer" : running && onQueue ? "queue" : "send";
   return (
-    <ComposerPresentation
-      enabled={mainConversation}
-      fallback={nativeComposer}
-      draftText={prompt}
-      files={files}
-      images={images}
-      queuedMessages={queuedMessages}
-      pendingMessages={guideMessages}
-      running={running}
-      readOnly={readOnly}
-      sendDisabled={effectiveSendDisabled}
-      variant={variant}
-      threadId={queryHistorySessionID}
-      initialized={initialized}
-      contextUsage={contextUsage}
-      disabledReason={readOnly || effectiveSendDisabled ? statusText || undefined : undefined}
-      activeSubmissionMode={activeSubmissionMode}
-      availableSubmissionModes={availableSubmissionModes}
-      attachmentInputRef={attachmentInputRef}
-      attachmentsEnabled={!textOnly}
-      onSetDraft={setPrompt}
-      onRemoveFile={onRemoveFile}
-      onRemoveImage={onRemoveImage}
-      onSubmit={submitDraft}
-      onStop={onInterrupt}
-    />
+    <>
+      {attachmentPickers}
+      <ComposerPresentation
+        enabled={mainConversation}
+        fallback={nativeComposer}
+        draftText={prompt}
+        files={files}
+        images={images}
+        queuedMessages={queuedMessages}
+        pendingMessages={guideMessages}
+        running={running}
+        readOnly={readOnly}
+        sendDisabled={effectiveSendDisabled}
+        variant={variant}
+        threadId={queryHistorySessionID}
+        initialized={initialized}
+        contextUsage={contextUsage}
+        disabledReason={readOnly || effectiveSendDisabled ? statusText || undefined : undefined}
+        activeSubmissionMode={activeSubmissionMode}
+        availableSubmissionModes={availableSubmissionModes}
+        attachmentInputRef={attachmentInputRef}
+        attachmentsEnabled={!textOnly}
+        onSetDraft={setPrompt}
+        onRemoveFile={onRemoveFile}
+        onRemoveImage={onRemoveImage}
+        onSubmit={submitDraft}
+        onStop={onInterrupt}
+      />
+    </>
   );
 }
 

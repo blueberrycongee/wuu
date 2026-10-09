@@ -5,6 +5,8 @@ import type {
   CSSSnippet,
   InspectorSectionDefinition,
   PluginUIKit,
+  PluginCommandPresentation,
+  PluginCommandActionContext,
   PresentationMode,
   PresentationTarget,
   PresenterDefinition,
@@ -87,7 +89,7 @@ export interface RegisteredPluginViewEntry extends PluginViewEntryDeclaration {
   readonly generation: string;
 }
 
-export interface PluginCommandRegistration {
+export interface PluginCommandRegistration extends PluginCommandPresentation {
   /** Host action contexts in which this command can accept structured input. */
   contexts?: readonly string[];
   id: string;
@@ -250,6 +252,16 @@ export interface RegisteredPluginCommand extends PluginCommandRegistration {
   readonly generation: string;
 }
 
+export interface PluginCommandAction {
+  readonly command: RegisteredPluginCommand;
+  readonly enabled: boolean;
+}
+
+export interface PluginCommandActionResolution {
+  readonly actions: readonly PluginCommandAction[];
+  readonly failures: readonly { command: RegisteredPluginCommand; error: unknown }[];
+}
+
 export interface RegisteredComposerStatusSource extends ComposerStatusSourceRegistration {
   readonly pluginId: string;
   readonly generation: string;
@@ -386,7 +398,8 @@ interface SurfaceRecord extends OrderedRecord {
   readonly render: PluginSurfaceRegistration["render"];
 }
 
-interface CommandRecord extends OrderedRecord {
+interface CommandRecord extends OrderedRecord, PluginCommandPresentation {
+  snapshot?: RegisteredPluginCommand;
   readonly contexts?: readonly string[];
   readonly title: string;
   readonly execute: PluginCommandRegistration["execute"];
@@ -654,6 +667,42 @@ export class PluginHost {
     active.active = false;
     this.disposeGeneration(active);
     this.refreshPublicState();
+  }
+
+  /** Resolve host action rows without publishing diagnostics during React rendering. */
+  resolveCommandActions(context: PluginCommandActionContext): PluginCommandActionResolution {
+    const input = freezeCommandActionContext(context);
+    const actions: PluginCommandAction[] = [];
+    const failures: { command: RegisteredPluginCommand; error: unknown }[] = [];
+    for (const command of this.commandSnapshot) {
+      try {
+        const enabled = commandActionEnabled(command, input);
+        if (enabled !== undefined) actions.push({ command, enabled });
+      } catch (error: unknown) {
+        failures.push({ command, error });
+      }
+    }
+    return { actions, failures };
+  }
+
+  /** Recheck the exact published callback and its predicates before dispatching a host action. */
+  async executeCommandAction(command: RegisteredPluginCommand, context: PluginCommandActionContext): Promise<unknown> {
+    if (!this.commandSnapshot.includes(command)) throw new Error("Plugin command is no longer active");
+    const input = freezeCommandActionContext(context);
+    const enabled = commandActionEnabled(command, input);
+    if (enabled === undefined) throw new Error("Plugin command is no longer visible");
+    if (!enabled) throw new Error("Plugin command is disabled");
+    const result = await command.execute(input);
+    if (!this.commandSnapshot.includes(command)) throw new Error("Plugin command is no longer active");
+    return result;
+  }
+
+  recordCommandFailure(command: RegisteredPluginCommand, error: unknown): void {
+    if (!this.commandSnapshot.includes(command)) return;
+    this.addDiagnostic({
+      pluginId: command.pluginId, generation: command.generation, kind: "render",
+      contributionId: command.id, message: `Plugin command ${command.id} failed: ${errorMessage(error)}`, cause: error,
+    });
   }
 
   getSlotSnapshot(slotId: PluginSlotId): readonly RegisteredPluginSlotContribution[] {
@@ -1004,6 +1053,10 @@ export class PluginHost {
       registerCommand: (command: PluginCommandRegistration) => {
         this.assertAccepting(state);
         const id = this.claimRegistrationId(state, "command", command.id);
+        if (command.icon !== undefined && !isPublicIconName(command.icon)) throw new Error(`Unsupported plugin command icon: ${command.icon}`);
+        if (command.placements?.some((target) => target !== "view.title" && target !== "conversation.message.actions")) {
+          throw new Error("Unsupported plugin command placement");
+        }
         const record: CommandRecord = {
           pluginId: state.pluginId,
           generation: state.generation,
@@ -1011,6 +1064,10 @@ export class PluginHost {
           order: normalizeOrder(command.order),
           title: requireNonEmpty(command.title, "command title"),
           contexts: command.contexts ? Object.freeze([...command.contexts]) : undefined,
+          placements: command.placements ? Object.freeze([...new Set(command.placements)]) : undefined,
+          icon: command.icon,
+          when: command.when,
+          enabled: command.enabled,
           execute: (input) => {
             this.assertActive(state);
             if (record.removed) throw new Error("Plugin command is no longer registered");
@@ -1818,12 +1875,16 @@ function toPublicSurfaceContribution(record: SurfaceRecord): RegisteredPluginSur
 }
 
 function toPublicCommand(record: CommandRecord): RegisteredPluginCommand {
-  return Object.freeze({
+  return record.snapshot ??= Object.freeze({
     pluginId: record.pluginId,
     generation: record.generation,
     id: record.id,
     title: record.title,
     contexts: record.contexts,
+    placements: record.placements,
+    icon: record.icon,
+    when: record.when,
+    enabled: record.enabled,
     order: record.order,
     execute: record.execute,
   });
@@ -2104,6 +2165,28 @@ function validateThemeTokens(contribution: ThemeTokens): void {
     }
     requireExactNonEmpty(value, `syntax token ${name}`);
   }
+}
+
+function commandActionEnabled(command: RegisteredPluginCommand, context: PluginCommandActionContext): boolean | undefined {
+  if (!command.placements?.includes(context.target)) return undefined;
+  const visible = command.when === undefined ? true : command.when(context);
+  if (typeof visible !== "boolean") throw new Error("Plugin command visibility must return a boolean synchronously");
+  if (!visible) return undefined;
+  const enabled = command.enabled === undefined ? true : command.enabled(context);
+  if (typeof enabled !== "boolean") throw new Error("Plugin command enablement must return a boolean synchronously");
+  return enabled;
+}
+
+function freezeCommandActionContext(context: PluginCommandActionContext): PluginCommandActionContext {
+  // These public snapshots contain only data. Never freeze the caller's live objects.
+  const snapshot = structuredClone(context);
+  const freeze = (value: unknown): void => {
+    if (typeof value !== "object" || value === null || Object.isFrozen(value)) return;
+    for (const child of Object.values(value)) freeze(child);
+    Object.freeze(value);
+  };
+  freeze(snapshot);
+  return snapshot;
 }
 
 function sameContributions(

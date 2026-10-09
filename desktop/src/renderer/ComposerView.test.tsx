@@ -21,6 +21,8 @@ import { ComposerTokenGauge } from "./ComposerTokenGauge";
 import { WORKSPACE_FILE_DRAG_MIME, type QueuedComposerMessage } from "./ComposerMessages";
 import { hoverTooltipText, unhoverTooltip } from "./tooltipTestUtils";
 import { PluginHost } from "./plugins/PluginHost";
+import { desktopPluginHost } from "./plugins/DesktopPluginRuntime";
+import { COMPOSER_ACTIONS, type PresentationHost } from "../shared/workbench";
 import { readCollapsedPromptParts, rememberCollapsedPromptParts } from "./ComposerCollapsedPrompt";
 import { buildFileSelectionPart } from "./FileSelectionContext";
 import type {
@@ -280,6 +282,52 @@ describe("attachment picker focus recovery", () => {
       await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
     });
   }
+
+  it("keeps attachment picking usable through composer replacement and unload", async () => {
+    const onPasteAttachmentFiles = vi.fn();
+    renderComposer({ mainConversation: true, prompt: "Keep this draft", onPasteAttachmentFiles });
+    const input = container.querySelector<HTMLInputElement>('input[type="file"]')!;
+    const click = vi.spyOn(input, "click");
+    let presenterHost: PresentationHost | undefined;
+    try {
+      await act(async () => desktopPluginHost.activateGeneration({
+        pluginId: "composer-attachment-test", generation: "one", register(api) {
+          api.registerPresenter({ id: "replacement", target: "conversation.composer", render: ({ host }) => {
+            presenterHost = host;
+            return <button data-plugin-attachment>Plugin attachment</button>;
+          } });
+        },
+      }));
+      expect(container.querySelector("textarea")).toBeNull();
+      expect(container.querySelector<HTMLInputElement>('input[type="file"]')).toBe(input);
+      expect(presenterHost?.actions).toContain(COMPOSER_ACTIONS.addAttachment);
+      await act(async () => { await presenterHost?.invoke(COMPOSER_ACTIONS.addAttachment); });
+      expect(click).toHaveBeenCalledTimes(1);
+      await settlePicker(input, "cancel");
+      expect(onPasteAttachmentFiles).not.toHaveBeenCalled();
+      for (let pick = 0; pick < 2; pick++) {
+        await act(async () => { await presenterHost?.invoke(COMPOSER_ACTIONS.addAttachment); });
+        await settlePicker(input, "change");
+        expect(input.value).toBe("");
+      }
+      expect(click).toHaveBeenCalledTimes(3);
+      expect(onPasteAttachmentFiles).toHaveBeenCalledTimes(2);
+      expect(onPasteAttachmentFiles.mock.calls[0]?.[0]?.[0]?.name).toBe("sample.pdf");
+      renderComposer({ mainConversation: true, prompt: "Keep this draft", readOnly: true, onPasteAttachmentFiles });
+      await expect(presenterHost?.invoke(COMPOSER_ACTIONS.addAttachment)).rejects.toThrow("read-only");
+      expect(click).toHaveBeenCalledTimes(3);
+      renderComposer({ mainConversation: true, prompt: "Keep this draft", onPasteAttachmentFiles });
+      act(() => desktopPluginHost.unload("composer-attachment-test"));
+      expect(container.querySelector("textarea")).not.toBeNull();
+      expect(container.querySelectorAll('input[type="file"]')).toHaveLength(2);
+      expect(openPicker().input).toBe(input);
+      expect(click).toHaveBeenCalledTimes(4);
+      await settlePicker(input, "change");
+      expect(onPasteAttachmentFiles).toHaveBeenCalledTimes(3);
+    } finally {
+      act(() => desktopPluginHost.unload("composer-attachment-test"));
+    }
+  });
 
   it.each([
     ["main", "change"], ["main", "cancel"], ["split", "change"], ["split", "cancel"],

@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DesktopProject, InitializeResult } from "../shared/protocol";
 import { AppSidebar } from "./AppSidebar";
 import { desktopPluginHost } from "./plugins/DesktopPluginRuntime";
+import { DesktopWorkbench, WorkbenchController } from "./plugins/Workbench";
 import type { NavigationSnapshotV1 } from "../shared/workbench";
 import {
   initialState,
@@ -30,6 +31,7 @@ afterEach(() => {
   window.localStorage.removeItem("wuu.desktop.sidebarFunctionalGroupOrder");
   act(() => root?.unmount());
   desktopPluginHost.unload("test:app-sidebar-navigation");
+  desktopPluginHost.unload("test:app-sidebar-view");
   root = null;
   container.remove();
   vi.useRealTimers();
@@ -284,7 +286,68 @@ describe("AppSidebar layout", () => {
     expect(container.querySelector<HTMLElement>(".sidebar-notifications-button")?.dataset.hasUnread).toBeUndefined();
   });
 
-  it("lets a navigation presenter replace the complete production sidebar root", async () => {
+  it("keeps an open navigation View mounted when the navigation presenter is replaced and unloaded", async () => {
+    function NavigationView(): JSX.Element {
+      const [count, setCount] = useState(0);
+      return <button data-navigation-view onClick={() => setCount(count + 1)}>View clicks: {count}</button>;
+    }
+    await desktopPluginHost.activateGeneration({
+      pluginId: "test:app-sidebar-view",
+      generation: "one",
+      register(api) {
+        api.registerViewType({ id: "navigation.view", title: "Navigation view", render: NavigationView });
+      },
+    });
+    const controller = new WorkbenchController(desktopPluginHost, {}, {
+      getItem: () => null, setItem: () => {}, removeItem: () => {},
+    });
+    try {
+      const viewID = await controller.openView("navigation.view", { region: "navigation" });
+      act(() => {
+        root = createRoot(container);
+        root.render(<>
+          <SidebarHarness options={{}} />
+          <DesktopWorkbench host={desktopPluginHost} controller={controller} />
+        </>);
+      });
+      const navigation = container.querySelector("aside.sidebar");
+      const view = container.querySelector<HTMLButtonElement>("[data-navigation-view]");
+      expect(view).not.toBeNull();
+      act(() => view!.click());
+      expect(view?.textContent).toBe("View clicks: 1");
+
+      await act(async () => desktopPluginHost.activateGeneration({
+        pluginId: "test:app-sidebar-navigation",
+        generation: "replacement",
+        register(api) {
+          api.registerPresenter({
+            id: "sidebar", target: "navigation.primary",
+            render: () => <nav data-custom-sidebar-root>Custom navigation</nav>,
+          });
+        },
+      }));
+      expect(container.querySelector("[data-custom-sidebar-root]")).not.toBeNull();
+      expect(container.querySelector("[data-navigation-view]")).toBe(view);
+      expect(navigation?.contains(view)).toBe(true);
+      expect(container.querySelectorAll("aside.sidebar")).toHaveLength(1);
+      act(() => view!.click());
+      expect(view?.textContent).toBe("View clicks: 2");
+
+      act(() => desktopPluginHost.unload("test:app-sidebar-navigation"));
+      expect(container.querySelector("[data-custom-sidebar-root]")).toBeNull();
+      expect(container.querySelector(".sidebar-content")).not.toBeNull();
+      expect(container.querySelector("[data-navigation-view]")).toBe(view);
+      expect(view?.textContent).toBe("View clicks: 2");
+      expect(container.querySelectorAll("aside.sidebar")).toHaveLength(1);
+      await act(async () => controller.closeView(viewID));
+      expect(container.querySelector("[data-navigation-view]")).toBeNull();
+      expect(container.querySelector(".sidebar-content")).not.toBeNull();
+    } finally {
+      controller.dispose();
+    }
+  });
+
+  it("lets a navigation presenter replace production navigation within one stable shell", async () => {
     let snapshot: NavigationSnapshotV1 | undefined;
     await desktopPluginHost.activateGeneration({
       pluginId: "test:app-sidebar-navigation",
@@ -304,7 +367,8 @@ describe("AppSidebar layout", () => {
     renderSidebar();
 
     expect(container.querySelector("[data-custom-sidebar-root]")?.textContent).toBe("custom");
-    expect(container.querySelector("aside.sidebar")).toBeNull();
+    expect(container.querySelectorAll("aside.sidebar")).toHaveLength(1);
+    expect(container.querySelector(".sidebar-content")).toBeNull();
     expect(snapshot?.nodes.map(({ id }) => id)).toEqual([
       "command:new-conversation",
       "command:search-conversations",

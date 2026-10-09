@@ -52,6 +52,38 @@ export const VIEW_PLACEMENT_REGIONS = [
 ] as const;
 export type ViewPlacementRegion = (typeof VIEW_PLACEMENT_REGIONS)[number];
 
+/** Stable host action locations; commands without placements remain programmatic. */
+export type PluginCommandPlacement = "view.title" | "conversation.message.actions";
+
+/** Public action input. Direct or palette invocations may still omit input. */
+export type PluginCommandActionContext =
+  | Readonly<{
+    contractVersion: 1;
+    target: "view.title";
+    viewId: string;
+    viewTypeId: string;
+    viewPluginId: string;
+    region: ViewPlacementRegion;
+  }>
+  | Readonly<{
+    contractVersion: 1;
+    target: "conversation.message.actions";
+    threadId?: string;
+    turnId: string;
+    item: ConversationItemSnapshotV1;
+  }>;
+
+/** Optional presentation of an existing command in host-owned action rows. */
+export interface PluginCommandPresentation {
+  readonly placements?: readonly PluginCommandPlacement[];
+  readonly icon?: PublicIconName;
+  /** Synchronous, side-effect-free visibility predicate; a thrown error hides this action. */
+  readonly when?: (context: PluginCommandActionContext) => boolean;
+  /** Synchronous, side-effect-free availability predicate, checked again on click. */
+  readonly enabled?: (context: PluginCommandActionContext) => boolean;
+}
+
+
 /** Persistence policy for a view instance. */
 export type ViewPersistence = "session" | "durable";
 

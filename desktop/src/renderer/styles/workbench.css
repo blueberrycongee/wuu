@@ -520,3 +520,17 @@
   background: var(--paper);
   box-shadow: var(--shadow-card);
 }
+
+/* Embedded settings and workspace views reuse the same bounded title actions. */
+.plugin-view-title-actions,
+.plugin-workbench-view-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.plugin-view-title-actions {
+  justify-content: flex-end;
+  padding: var(--space-1) var(--space-2);
+}

@@ -1,4 +1,4 @@
-import { useCallback, useMemo, type ReactNode } from "react";
+import { useCallback, useMemo, type ReactNode, type PointerEventHandler } from "react";
 
 import {
   NAVIGATION_ACTIONS,
@@ -16,6 +16,8 @@ export interface NavigationSourceNode extends NavigationNodeV1 {
 export interface NavigationPresentationProps {
   readonly nodes: readonly NavigationSourceNode[];
   readonly fallback: ReactNode;
+  readonly onPointerEnter?: PointerEventHandler<HTMLElement>;
+  readonly onPointerLeave?: PointerEventHandler<HTMLElement>;
 }
 
 interface NavigationModel {
@@ -103,22 +105,34 @@ export function createNavigationModel(
 export function NavigationPresentation({
   nodes,
   fallback,
+  onPointerEnter,
+  onPointerLeave,
 }: NavigationPresentationProps): ReactNode {
   const model = useMemo(() => createNavigationModel(nodes), [nodes]);
   const dispatchAction = useCallback(
     (action: string, input?: unknown) => model.dispatchAction(action, input),
     [model],
   );
+  // Views portal into this host-owned shell, whose lifetime must not depend
+  // on a presenter retaining the native navigation fallback.
   return (
-    <PluginPresentation
-      host={desktopPluginHost}
-      controller={desktopWorkbenchController}
-      target="navigation.primary"
-      snapshot={model.snapshot}
-      fallback={fallback}
-      actions={model.actions}
-      dispatchAction={dispatchAction}
-    />
+    <aside
+      className="sidebar"
+      data-wuu-component="sidebar"
+      data-workbench-region="navigation"
+      onPointerEnter={onPointerEnter}
+      onPointerLeave={onPointerLeave}
+    >
+      <PluginPresentation
+        host={desktopPluginHost}
+        controller={desktopWorkbenchController}
+        target="navigation.primary"
+        snapshot={model.snapshot}
+        fallback={fallback}
+        actions={model.actions}
+        dispatchAction={dispatchAction}
+      />
+    </aside>
   );
 }
 
