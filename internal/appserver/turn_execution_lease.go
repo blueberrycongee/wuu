@@ -57,23 +57,23 @@ func (s *Server) tryAcquireThreadExecutionLeaseLocked(th *threadState) (bool, er
 		if !acquired {
 			return false, nil
 		}
-		s.pluginGenerationRefreshMu.Lock()
-		needsRecovery := s.rt.PluginGenerationNeedsRecovery()
-		if epoch := lease.Epoch(); epoch != s.pluginGenerationEpoch.Load() || needsRecovery {
-			if err := s.refreshExtensions(s.currentExtensionConfig()); err != nil {
-				s.pluginGenerationRefreshMu.Unlock()
-				_ = lease.Release()
-				return false, fmt.Errorf("refresh plugin generation %d: %w", epoch, err)
-			}
-			s.pluginGenerationEpoch.Store(epoch)
-			if needsRecovery {
-				s.pluginRuntimeRevision.Add(1)
-			}
-			// Admission still owns th.mu; cleanup must run after that lock is
-			// released rather than taking other thread locks inside this path.
-			_ = s.startBackground(s.retireIdlePluginRuntimes)
+		// This function owns th.mu. Never initialize or activate plugins here:
+		// their synchronous host callbacks can inspect or submit to this thread.
+		if !s.pluginGenerationRefreshMu.TryLock() {
+			_ = lease.Release()
+			return false, nil
 		}
+		needsRefresh := lease.Epoch() != s.pluginGenerationEpoch.Load() || s.rt.PluginGenerationNeedsRecovery()
 		s.pluginGenerationRefreshMu.Unlock()
+		if needsRefresh {
+			_ = lease.Release()
+			_ = s.startBackground(func() {
+				if err := s.refreshPluginGenerationIfChanged(); err != nil && !errors.Is(err, errPluginGenerationRefreshBusy) {
+					providers.DebugLogf("refresh plugin generation before admission: %v", err)
+				}
+			})
+			return false, nil
+		}
 		th.pluginExecutionLease = lease
 		newPluginLease = true
 	}

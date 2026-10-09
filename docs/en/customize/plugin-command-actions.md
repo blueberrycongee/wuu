@@ -37,7 +37,7 @@ Commands and their placed buttons belong to the activating plugin generation. Th
 
 Use `registerCleanup` for plugin-owned subscriptions, timers, and other resources. React subscriptions should return an unsubscribe function. Keep asynchronous work generation-scoped and ignore late results after disposal. The example uses `useSyncExternalStore` with the host's React runtime and closes its local store on cleanup.
 
-Development reload replaces registrations with the new generation. A successful reload resets this example's temporary notes and refresh counter. Failed publication keeps the last published generation; a desktop activation error is reported separately in plugin status. Do not depend on a reload to preserve module variables.
+Development reload replaces registrations with the new generation. A successful reload resets this example's temporary notes and refresh counter. A build or package-validation failure keeps the last published development artifact; a desktop activation error is reported separately in plugin status. For packages with a native runtime, post-commit activation failure follows the [runtime generation contract](plugin-system.md#runtime-generations), not a general rollback guarantee. Do not depend on a reload to preserve module variables.
 
 ## Verify the interaction
 

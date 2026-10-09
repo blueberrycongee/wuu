@@ -188,6 +188,7 @@ type Session struct {
 	// DefaultEngine is the engine id used for new threads when the caller
 	// does not request one explicitly (settings default; empty = wuu).
 	DefaultEngine      agentengine.EngineID
+	pluginTransitionMu sync.Mutex
 	pluginGenerationMu sync.Mutex
 	pluginGeneration   *PluginGeneration
 	// Retired generations are tracked without an extra reference so policy
@@ -1938,6 +1939,8 @@ func (s *Session) Cleanup() (process.CleanupResult, error) {
 	if s == nil {
 		return process.CleanupResult{}, nil
 	}
+	s.pluginTransitionMu.Lock()
+	defer s.pluginTransitionMu.Unlock()
 	var cleanupErr error
 	if s.HookDispatcher != nil {
 		sessionID := ""
@@ -1955,17 +1958,19 @@ func (s *Session) Cleanup() (process.CleanupResult, error) {
 		s.AgentControl = nil
 	}
 	s.pluginGenerationMu.Lock()
-	if s.pluginGeneration != nil {
-		generation := s.pluginGeneration
+	generation := s.pluginGeneration
+	if generation != nil {
 		s.pluginGeneration = nil
 		s.PluginHost = nil
-		s.releasePluginGenerationLocked(generation)
+	}
+	s.pluginGenerationMu.Unlock()
+	if generation != nil {
+		s.releasePluginGeneration(generation)
 	} else if s.Toolkit != nil {
 		if manager := s.Toolkit.MCPManager(); manager != nil {
 			cleanupErr = errors.Join(cleanupErr, manager.Close())
 		}
 	}
-	s.pluginGenerationMu.Unlock()
 	if s.InferenceJournalRuntime != nil {
 		cleanupErr = errors.Join(cleanupErr, s.InferenceJournalRuntime.Close())
 		s.InferenceJournalRuntime = nil
@@ -2188,8 +2193,8 @@ func permissionSetContains(granted, required []string) bool {
 	return true
 }
 
-// SetExtensionSettings keeps the live policy and generation rollback snapshot
-// aligned after a durable settings transaction.
+// SetExtensionSettings keeps the live policy and current-generation settings
+// snapshot aligned after a durable settings transaction.
 func (s *Session) SetExtensionSettings(settings *extensions.Settings) {
 	if s == nil {
 		return
@@ -2212,7 +2217,14 @@ func (s *Session) RefreshExtensions(cfg config.Config) error {
 	if err != nil {
 		return err
 	}
-	return s.ActivatePluginGeneration(candidate, nil)
+	err = s.ActivatePluginGeneration(candidate, nil)
+	if PluginGenerationWasCommitted(err) {
+		// The observed desired state is already published. Its failed runtime
+		// is diagnostic state, not a reason to restart every watcher interval.
+		providers.DebugLogf("refresh plugin generation: %v", err)
+		return nil
+	}
+	return err
 }
 
 // RefreshPluginCatalog updates the installed-package inventory only. It never

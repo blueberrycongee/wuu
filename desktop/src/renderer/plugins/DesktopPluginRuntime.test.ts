@@ -12,6 +12,42 @@ afterEach(() => {
 });
 
 describe("DesktopPluginRuntime", () => {
+  it.each([false, true])("activates independent plugins while another is pending, then safe mode=%s", async (safeMode) => {
+    let release!: () => void;
+    let signalStarted!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const started = new Promise<void>((resolve) => { signalStarted = resolve; });
+    const healthy = vi.fn();
+    installDesktopModuleLoader(vi.fn(async ({ id, fingerprint }) => ({
+      id, fingerprint, digest: "a".repeat(64), url: `wuu-plugin://module/${id}.js`,
+    })));
+    const host = new PluginHost({ react: React });
+    const runtime = new DesktopPluginRuntime(host, async (url) => ({
+      activate: url.includes("slow") ? async () => { signalStarted(); await gate; } : healthy,
+    }));
+    const pending = runtime.sync([
+      { ...inventoryPlugin(), id: "user:slow" },
+      { ...inventoryPlugin(), id: "user:healthy" },
+    ]);
+    try {
+      await started;
+      await vi.waitFor(() => expect(host.isGenerationActive("user:healthy", "fingerprint-one")).toBe(true), { timeout: 100 });
+      expect(healthy).toHaveBeenCalledTimes(1);
+      expect(host.isGenerationActive("user:slow", "fingerprint-one")).toBe(false);
+      if (safeMode) {
+        await runtime.sync([], true);
+        expect(host.isGenerationActive("user:healthy", "fingerprint-one")).toBe(false);
+      }
+      release();
+      expect(await pending).toEqual([]);
+      expect(host.isGenerationActive("user:slow", "fingerprint-one")).toBe(!safeMode);
+    } finally {
+      release();
+      await pending;
+      await runtime.sync([]);
+    }
+  });
+
   it("loads approved generations once and unloads disabled plugins", async () => {
     const load = vi.fn(async () => ({
       activate: (api: { registerStyle(style: { id: string; css: string }): unknown }) => {

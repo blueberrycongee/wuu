@@ -120,7 +120,7 @@ func (s *Server) refreshPluginGenerationIfChanged() error {
 		return nil
 	}
 	observedEpoch, err := session.ReadPluginGenerationEpoch(s.rt.WuuHome)
-	if err != nil || observedEpoch == s.pluginGenerationEpoch.Load() {
+	if err != nil {
 		return err
 	}
 
@@ -128,7 +128,11 @@ func (s *Server) refreshPluginGenerationIfChanged() error {
 	// cross-process execution lease. Otherwise this watcher can briefly hold a
 	// shared lease while a same-server mutation holds the local mutex, causing
 	// that mutation's non-blocking exclusive lease attempt to fail spuriously.
-	s.pluginGenerationRefreshMu.Lock()
+	// Activation can synchronously submit input through host services. Such
+	// admission must queue rather than wait for the activation that called it.
+	if !s.pluginGenerationRefreshMu.TryLock() {
+		return errPluginGenerationRefreshBusy
+	}
 	refreshed := false
 	defer func() {
 		s.pluginGenerationRefreshMu.Unlock()
@@ -137,7 +141,7 @@ func (s *Server) refreshPluginGenerationIfChanged() error {
 		}
 	}()
 	observedEpoch, err = session.ReadPluginGenerationEpoch(s.rt.WuuHome)
-	if err != nil || observedEpoch == s.pluginGenerationEpoch.Load() {
+	if err != nil || (observedEpoch == s.pluginGenerationEpoch.Load() && !s.rt.PluginGenerationNeedsRecovery()) {
 		return err
 	}
 	lease, acquired, err := session.TryAcquirePluginGenerationExecutionLease(s.rt.WuuHome)
@@ -149,7 +153,8 @@ func (s *Server) refreshPluginGenerationIfChanged() error {
 	}
 	defer lease.Release()
 	epoch := lease.Epoch()
-	if epoch == s.pluginGenerationEpoch.Load() {
+	needsRecovery := s.rt.PluginGenerationNeedsRecovery()
+	if epoch == s.pluginGenerationEpoch.Load() && !needsRecovery {
 		return nil
 	}
 	inventory, skills, err := s.refreshPluginPackages()
@@ -163,6 +168,9 @@ func (s *Server) refreshPluginGenerationIfChanged() error {
 		return err
 	}
 	s.pluginGenerationEpoch.Store(epoch)
+	if needsRecovery {
+		s.pluginRuntimeRevision.Add(1)
+	}
 	return s.writeNotification(NotificationPluginInventoryChanged, PluginInventoryChangedNotification{
 		Epoch:              epoch,
 		ExtensionInventory: inventory,

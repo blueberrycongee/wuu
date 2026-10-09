@@ -1,5 +1,6 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
-import { FloatingMenuPortal, handleFloatingMenuKeyDown, useFloatingMenuFocus } from "../ComposerFloatingMenu";
+import { FloatingMenuPortal, handleFloatingMenuKeyDown, menuOpeningKey, useFloatingMenuFocus } from "../ComposerFloatingMenu";
+import { isTouchWebShell } from "../ComposerFocus";
 import { AlertCircle, Ellipsis } from "../WuuIcons";
 import type { PluginCommandActionContext } from "../../shared/workbench";
 import { PublicIcon } from "../PublicIcon";
@@ -29,6 +30,7 @@ export function PluginCommandActions({ host, context, buttonClassName = "setting
   const actions = usePluginCommandActions(host, context);
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
+  const [focusFromEnd, setFocusFromEnd] = useState(false);
   const trigger = useRef<HTMLButtonElement | null>(null);
   const menu = useRef<HTMLDivElement | null>(null);
   const target = context.target === "view.title" ? `view:${context.viewId}` : `message:${context.threadId}:${context.turnId}:${context.item.id}`;
@@ -65,7 +67,14 @@ export function PluginCommandActions({ host, context, buttonClassName = "setting
     });
   }, [host, actions]);
   useEffect(() => { if (overflow.length === 0) setOpen(false); }, [overflow.length]);
-  useFloatingMenuFocus(menu, target, open);
+  useFloatingMenuFocus(menu, target, open, focusFromEnd);
+  const noEnabledOverflow = overflow.every((action) => !action.enabled);
+  useEffect(() => {
+    if (!open || !noEnabledOverflow || isTouchWebShell()) return;
+    // An all-disabled dialog still needs keyboard focus for Escape and Tab.
+    const frame = requestAnimationFrame(() => menu.current?.focus({ preventScroll: true }));
+    return () => cancelAnimationFrame(frame);
+  }, [open, target, noEnabledOverflow]);
   useEffect(() => {
     if (!open) return;
     const dismiss = (event: PointerEvent): void => {
@@ -80,9 +89,14 @@ export function PluginCommandActions({ host, context, buttonClassName = "setting
     {actions.slice(0, 2).map((action) => button(action, buttonClassName))}
     {overflow.length > 0 ? <Fragment>
       <button ref={trigger} type="button" className={buttonClassName} aria-label={t("settings.more")} title={t("settings.more")} aria-haspopup="dialog" aria-expanded={open}
-        onClick={() => setOpen((current) => !current)}><Ellipsis className="icon" aria-hidden="true" /></button>
+        onClick={() => { setFocusFromEnd(false); setOpen((current) => !current); }}
+        onKeyDown={(event) => {
+          if (open) { handleFloatingMenuKeyDown(event, () => setOpen(false), trigger.current); return; }
+          const direction = menuOpeningKey(event);
+          if (direction) { setFocusFromEnd(direction === "end"); setOpen(true); }
+        }}><Ellipsis className="icon" aria-hidden="true" /></button>
       {open ? <FloatingMenuPortal anchorRef={trigger} owner="plugin-command-actions" placement="below" align="right" width={240} flip>
-        <div ref={menu} className="composer-context-menu composer-plugin-tools-menu" role="dialog" aria-label={t("settings.more")}
+        <div ref={menu} className="composer-context-menu composer-plugin-tools-menu" role="dialog" tabIndex={-1} aria-label={t("settings.more")}
           onKeyDown={(event) => handleFloatingMenuKeyDown(event, () => setOpen(false), trigger.current)}>
           {overflow.map((action) => <div className="composer-plugin-tools-item" key={`${action.command.pluginId}:${action.command.id}`}>
             <span className="composer-plugin-tools-label">{action.command.title}</span>

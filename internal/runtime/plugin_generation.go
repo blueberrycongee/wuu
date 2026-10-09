@@ -276,15 +276,28 @@ func (s *Session) buildPluginGeneration(cfg config.Config, discovered []pluginpk
 	return generation, nil
 }
 
-// ActivatePluginGeneration swaps a prebuilt candidate into the Session as a
-// transaction: runtime activation is validated first, then live bindings are
-// applied, then commit persists policy, and only then is the candidate
-// published. Active work keeps its pinned implementation until an idle-boundary
-// rebuild releases it. Removed or disabled plugins are revoked from every
-// retained generation after publication, independently of those references.
-// Any failure before publication restores the old
-// live bindings, closes the candidate, and returns the error; a failed
-// candidate never touches the current generation.
+// PluginGenerationWasCommitted distinguishes post-commit activation failure
+// from preparation or persistence failure. Callers must finish durable cleanup
+// and report the new generation's diagnostics instead of rolling policy back.
+func PluginGenerationWasCommitted(err error) bool {
+	var committed *pluginGenerationCommittedError
+	return errors.As(err, &committed)
+}
+
+type pluginGenerationCommittedError struct{ cause error }
+
+func (e *pluginGenerationCommittedError) Error() string {
+	return fmt.Sprintf("plugin change was committed, but runtime activation failed: %v", e.cause)
+}
+func (e *pluginGenerationCommittedError) Unwrap() error { return e.cause }
+
+// ActivatePluginGeneration persists a prepared candidate before opening its
+// effectful lifecycle. Persistence failure preserves the current generation
+// without invoking candidate activation. After commit, activation failure is a
+// degraded published generation, exposed through status inventory and a
+// PluginGenerationWasCommitted error; external effects cannot be rolled back.
+// Active work retains same-ID implementations until its idle boundary, while
+// removal or disable revokes that plugin across all retained generations.
 func (s *Session) ActivatePluginGeneration(candidate *PluginGeneration, commit func() error) error {
 	if s == nil {
 		return errors.New("runtime is not initialized")
@@ -292,31 +305,45 @@ func (s *Session) ActivatePluginGeneration(candidate *PluginGeneration, commit f
 	if candidate == nil || candidate.host == nil || candidate.hooks == nil {
 		return errors.New("plugin candidate generation is not initialized")
 	}
+	s.pluginTransitionMu.Lock()
+	defer s.pluginTransitionMu.Unlock()
 	s.pluginGenerationMu.Lock()
-	locked := true
-	defer func() {
-		if locked {
-			s.pluginGenerationMu.Unlock()
-		}
-	}()
 	old := s.pluginGeneration
 	if old == nil {
 		old = s.capturePluginGeneration()
 	}
-	if err := activatePluginHost(context.Background(), candidate.host); err != nil {
-		activationErr := errors.Join(fmt.Errorf("activate plugin candidate: %w", err), candidate.close())
-		s.persistRevocationReport(candidate)
-		return activationErr
-	}
-	s.applyPluginGeneration(candidate)
 	if commit != nil {
 		if err := commit(); err != nil {
-			s.applyPluginGeneration(old)
+			s.pluginGenerationMu.Unlock()
 			commitErr := errors.Join(err, candidate.close())
 			s.persistRevocationReport(candidate)
 			return commitErr
 		}
 	}
+	s.pluginGenerationMu.Unlock()
+	// Activation may synchronously call host services. Keep old bindings
+	// available until activation settles, without holding their lookup mutex.
+	activationErr := activatePluginHost(context.Background(), candidate.host)
+	// Preparation materializes native contributions before the effectful
+	// lifecycle opens. Failed runtimes must not leave cached prompts or win
+	// decision/transform dispatch in the degraded generation. Keep their status
+	// diagnostics and independent declarative package features intact.
+	for _, status := range candidate.host.Statuses() {
+		if status.State != pluginhost.StateFailed {
+			continue
+		}
+		if candidate.systemPrompts != nil {
+			candidate.systemPrompts.RemoveByPlugin(status.ID)
+		}
+		if candidate.compactions != nil {
+			candidate.compactions.RemoveByPlugin(status.ID)
+		}
+		if candidate.requestTransforms != nil {
+			candidate.requestTransforms.RemoveByPlugin(status.ID)
+		}
+	}
+	s.pluginGenerationMu.Lock()
+	s.applyPluginGeneration(candidate)
 	s.pluginGeneration = candidate
 	candidate.retain()
 	// Conversations that already pinned the previous generation keep using it
@@ -346,13 +373,15 @@ func (s *Session) ActivatePluginGeneration(candidate *PluginGeneration, commit f
 		}
 	}
 	s.pluginGenerationMu.Unlock()
-	locked = false
 	// Plugin shutdown can call host services. Never hold the Session mutex
 	// across those callbacks; temporary references keep the old hosts alive.
 	s.releasePluginGeneration(old)
 	for _, generation := range retired {
 		generation.revokeMissingPlugins(activeIDs, s.TitleClient, s.Model)
 		s.releasePluginGeneration(generation)
+	}
+	if activationErr != nil {
+		return &pluginGenerationCommittedError{cause: activationErr}
 	}
 	return nil
 }
@@ -480,17 +509,6 @@ func (s *Session) releasePluginGeneration(generation *PluginGeneration) {
 		s.pluginGenerationMu.Lock()
 		delete(s.retiredPluginGenerations, generation)
 		s.pluginGenerationMu.Unlock()
-		s.persistRevocationReport(generation)
-	}
-}
-
-func (s *Session) releasePluginGenerationLocked(generation *PluginGeneration) {
-	if generation == nil {
-		return
-	}
-	closed := generation.Release()
-	if closed {
-		delete(s.retiredPluginGenerations, generation)
 		s.persistRevocationReport(generation)
 	}
 }

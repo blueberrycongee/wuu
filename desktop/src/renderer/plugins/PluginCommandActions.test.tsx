@@ -18,6 +18,33 @@ describe("PluginCommandActions", () => {
   });
   afterEach(() => { act(() => root.unmount()); container.remove(); });
 
+  it.each([false, true])("keeps overflow keyboard navigation usable when all actions disabled=%s", async (disabled) => {
+    const host = new PluginHost({ react: React });
+    await host.activateGeneration({ pluginId: "keyboard", generation: "one", register(api) {
+      for (let index = 0; index < 4; index++) api.registerCommand({
+        id: `action-${index}`, title: `Action ${index}`, placements: ["view.title"], enabled: () => !disabled, execute() {},
+      });
+    } });
+    act(() => root.render(<PluginCommandActions host={host} context={context} />));
+    const trigger = container.querySelector<HTMLButtonElement>('[aria-haspopup="dialog"]')!;
+    trigger.focus();
+    act(() => trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true })));
+    await act(async () => { await new Promise<void>((resolve) => requestAnimationFrame(() => resolve())); });
+    const dialog = document.querySelector<HTMLElement>('[role="dialog"]');
+    expect(dialog).not.toBeNull();
+    expect(document.activeElement).toBe(disabled ? dialog : dialog?.querySelector('[aria-label="Action 3"]'));
+    act(() => document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(document.activeElement).toBe(trigger);
+    act(() => trigger.click());
+    await act(async () => { await new Promise<void>((resolve) => requestAnimationFrame(() => resolve())); });
+    const reopened = document.querySelector<HTMLElement>('[role="dialog"]');
+    expect(document.activeElement).toBe(disabled ? reopened : reopened?.querySelector('[aria-label="Action 2"]'));
+    act(() => document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true })));
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(document.activeElement).toBe(trigger);
+  });
+
   it("adds nothing without placements, renders semantic icons, isolates predicates, and removes actions on unload", async () => {
     const host = new PluginHost({ react: React });
     act(() => root.render(<PluginCommandActions host={host} context={context} />));

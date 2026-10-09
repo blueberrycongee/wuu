@@ -20,6 +20,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
+	"github.com/blueberrycongee/wuu/internal/statepath"
 	"github.com/blueberrycongee/wuu/internal/subagent"
 	"github.com/blueberrycongee/wuu/internal/tools"
 	plugingo "github.com/blueberrycongee/wuu/packages/plugin-go"
@@ -33,11 +34,38 @@ func TestPluginReloadBehaviorProcess(t *testing.T) {
 	if marker == "" {
 		return
 	}
+	var callbackHost plugingo.Host
+	var required []plugingo.HostService
+	if os.Getenv("WUU_RELOAD_TEST_SESSION") != "" {
+		required = []plugingo.HostService{{ID: plugingo.HostServiceSessionSend, Required: true}}
+	}
 	err := plugingo.Serve(context.Background(), plugingo.Handler{
+		Initialize: func(_ context.Context, host plugingo.Host, _ plugingo.InitializeParams) error {
+			callbackHost = host
+			return nil
+		},
+		Activate: func(context.Context) error {
+			if message := os.Getenv("WUU_RELOAD_TEST_ACTIVATE_ERROR"); message != "" {
+				return fmt.Errorf("%s", message)
+			}
+
+			if target := os.Getenv("WUU_RELOAD_TEST_SESSION"); target != "" {
+				ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+				defer cancel()
+				var result plugingo.SessionSendResult
+				err := plugingo.CallHostService(ctx, callbackHost, plugingo.HostServiceSessionSend, plugingo.SessionSendParams{RequestID: "activate-send", SessionID: target, Input: plugingo.SessionInput{Prompt: "activation callback"}}, &result)
+				if err != nil {
+					return err
+				}
+				raw, _ := json.Marshal(result)
+				return os.WriteFile(os.Getenv("WUU_RELOAD_TEST_CALLBACK_RESULT"), raw, 0600)
+			}
+			return nil
+		},
 		Shutdown: func(context.Context) error {
 			return os.WriteFile(os.Getenv("WUU_RELOAD_TEST_SHUTDOWN"), []byte(marker), 0600)
 		},
-		Definition: plugingo.Definition{Tools: []plugingo.Tool{{ID: "read", Description: os.Getenv("WUU_RELOAD_TEST_DESCRIPTION"), InputSchema: map[string]any{"type": "object"}, Activity: &plugingo.ToolActivity{ReadOnly: true, ConcurrencySafe: true, Risk: "low"}}}},
+		Definition: plugingo.Definition{RequiredHostServices: required, Tools: []plugingo.Tool{{ID: "read", Description: os.Getenv("WUU_RELOAD_TEST_DESCRIPTION"), InputSchema: map[string]any{"type": "object"}, Activity: &plugingo.ToolActivity{ReadOnly: true, ConcurrencySafe: true, Risk: "low"}}}},
 		ExecuteTool: func(context.Context, plugingo.Host, plugingo.ToolCall) (plugingo.ToolResult, error) {
 			return plugingo.TextResult(marker), nil
 		},
@@ -365,5 +393,136 @@ func TestPluginReloadRetiresIdleGenerationOnMutationCommit(t *testing.T) {
 	}
 	if len(rt.PluginHost.Statuses()) != 1 || rt.PluginHost.Statuses()[0].State != pluginhost.StateActive {
 		t.Fatal("idle retirement closed the newly published process")
+	}
+}
+
+func TestPluginGrantActivationFailurePublishesCommittedInventory(t *testing.T) {
+	rt := newTestRuntime(t, &fakeClient{})
+	rt.WuuHome = retryingTempDir(t)
+	configPath, err := statepath.ConfigPath(rt.HomeDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writePluginPackageFile(t, configPath, `{"default_provider":"fake-provider","providers":{"fake-provider":{"type":"openai-compatible","base_url":"https://example.test/v1","model":"fake-model"}}}`)
+	root := t.TempDir()
+	manifest := pluginpkg.Manifest{SchemaVersion: 1, ID: "activate-failure", Runtime: &pluginpkg.RuntimeSpec{Protocol: pluginhost.ProtocolName, Command: os.Args[0], Args: []string{"-test.run=^TestPluginReloadBehaviorProcess$"}, Env: map[string]string{"WUU_RELOAD_TEST_MARKER": "failed", "WUU_RELOAD_TEST_DESCRIPTION": "read fixture", "WUU_RELOAD_TEST_ACTIVATE_ERROR": "activation refused", "WUU_RELOAD_TEST_SHUTDOWN": filepath.Join(t.TempDir(), "shutdown")}}}
+	raw, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writePluginPackageFile(t, filepath.Join(root, "plugin.json"), string(raw))
+	out := &lockedBuffer{}
+	srv := New(rt, out)
+	defer srv.Close()
+	callPluginPackageRPC(t, srv, "install", MethodPluginPackageInstall, PluginPackageInstallParams{Path: root})
+	installed := remarshal[PluginPackageInstallResult](t, responseByID(t, parseOutput(t, out.String()), "install")["result"])
+	record := pluginPackageRecord(t, installed.ExtensionInventory, "activate-failure")
+	callPluginPackageRPC(t, srv, "grant", MethodExtensionPackageUpdate, ExtensionPackageUpdateParams{ID: record.ID, Fingerprint: record.Fingerprint, Action: ExtensionPackageGrant})
+	response := responseByID(t, parseOutput(t, out.String()), "grant")
+	if !strings.Contains(fmt.Sprint(response["error"]), "committed") {
+		t.Fatalf("expected explicit committed activation error: %+v", response)
+	}
+	current := pluginPackageRecord(t, srv.currentExtensionInventory(), "activate-failure")
+	if current.RuntimeState != ExtensionRuntimeFailed {
+		t.Fatalf("runtime state = %+v", current)
+	}
+	cfg, _, err := config.LoadPath(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Extensions.Grants) == 0 || len(rt.ExtensionSettings.Grants) == 0 {
+		t.Fatal("committed grants must remain in durable and live settings")
+	}
+	found := false
+	for _, message := range parseOutput(t, out.String()) {
+		if message["method"] != NotificationPluginInventoryChanged {
+			continue
+		}
+		notification := remarshal[PluginInventoryChangedNotification](t, message["params"])
+		failed := pluginPackageRecord(t, notification.ExtensionInventory, "activate-failure")
+		if failed.RuntimeState == ExtensionRuntimeFailed {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("committed failure must notify the UI of the new failed inventory")
+	}
+}
+
+// Exercise a real plugin-to-host RPC while the app-server owns its refresh
+// boundary. The callback must be queued, not time out waiting for that boundary.
+func TestPluginRefreshActivationCanQueueSessionSend(t *testing.T) {
+	for _, admission := range []bool{false, true} {
+		t.Run(fmt.Sprintf("admission=%v", admission), func(t *testing.T) {
+			rt := newTestRuntime(t, &fakeClient{response: providers.ChatResponse{Content: "done"}})
+			// Start without a watcher; drive the exact refresh boundary deterministically.
+			rt.WuuHome = ""
+			rt.PluginSessionRouter = runtime.NewPluginSessionRouter()
+			out := &lockedBuffer{}
+			srv := New(rt, out)
+			defer srv.Close()
+			rt.WuuHome = retryingTempDir(t)
+			callPluginPackageRPC(t, srv, "thread", MethodThreadStart, ThreadStartParams{})
+			threadID := remarshal[ThreadStartResult](t, responseByID(t, parseOutput(t, out.String()), "thread")["result"]).Thread.ID
+			root := t.TempDir()
+			resultPath := filepath.Join(root, "callback-result")
+			manifest := pluginpkg.Manifest{SchemaVersion: 1, ID: "reload-callback", Runtime: &pluginpkg.RuntimeSpec{Protocol: pluginhost.ProtocolName, Command: os.Args[0], Args: []string{"-test.run=^TestPluginReloadBehaviorProcess$"}, Env: map[string]string{"WUU_RELOAD_TEST_MARKER": "callback", "WUU_RELOAD_TEST_DESCRIPTION": "read fixture", "WUU_RELOAD_TEST_SHUTDOWN": filepath.Join(root, "shutdown"), "WUU_RELOAD_TEST_SESSION": threadID, "WUU_RELOAD_TEST_CALLBACK_RESULT": resultPath}}}
+			raw, _ := json.Marshal(manifest)
+			path := filepath.Join(root, "plugin.json")
+			if err := os.WriteFile(path, raw, 0600); err != nil {
+				t.Fatal(err)
+			}
+			item, err := pluginpkg.LoadManifest(path, "user")
+			if err != nil {
+				t.Fatal(err)
+			}
+			item.Official = true
+			rt.Plugins = []pluginpkg.Plugin{item}
+			srv.refreshExtensionsForTest = func(cfg config.Config) error {
+				candidate, err := rt.PreflightExtensionPolicy(cfg)
+				if err != nil {
+					return err
+				}
+				err = rt.ActivatePluginGeneration(candidate, nil)
+				if runtime.PluginGenerationWasCommitted(err) {
+					return nil
+				}
+				return err
+			}
+			epoch := advancePluginGenerationWatchTestEpoch(t, rt.WuuHome)
+			if admission {
+				th, err := srv.ensureThreadLoaded(threadID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				th.mu.Lock()
+				acquired, err := srv.tryAcquireThreadExecutionLeaseLocked(th)
+				if acquired {
+					th.releaseThreadExecutionLeaseLocked()
+				}
+				th.mu.Unlock()
+				if err != nil {
+					t.Fatal(err)
+				}
+			} else if err := srv.refreshPluginGenerationIfChanged(); err != nil {
+				t.Fatal(err)
+			}
+			waitPluginGenerationWatchTest(t, func() bool { return srv.pluginGenerationEpoch.Load() == epoch })
+			raw, err = os.ReadFile(resultPath)
+			if err != nil {
+				t.Fatalf("activation callback did not complete: %v; statuses=%+v", err, rt.PluginHost.Statuses())
+			}
+			var result plugingo.SessionSendResult
+			if err := json.Unmarshal(raw, &result); err != nil {
+				t.Fatal(err)
+			}
+			if result.State != pluginhost.TurnLifecycleQueued {
+				t.Fatalf("activation callback state=%+v", result)
+			}
+			if statuses := rt.PluginHost.Statuses(); len(statuses) != 1 || statuses[0].State != pluginhost.StateActive {
+				t.Fatalf("activation failed: %+v", statuses)
+			}
+			waitForTurnCompletedForThread(t, out, threadID)
+		})
 	}
 }

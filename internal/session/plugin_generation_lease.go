@@ -112,16 +112,24 @@ func (l *PluginGenerationLease) Advance() (uint64, error) {
 // advanceEpochLocked increments and persists the epoch without requiring the
 // exclusive lock. Writers must serialize themselves (catalog mutations use
 // the dedicated catalog lock) and hold the shared generation lock to exclude
-// concurrent activations.
+// concurrent activations. The caller also holds l.mu.
 func (l *PluginGenerationLease) advanceEpochLocked() (uint64, error) {
 	if l == nil || l.file == nil {
 		return 0, errors.New("plugin generation lease is not held")
 	}
-	l.epoch++
-	if err := writePluginGenerationEpoch(l.file, l.epoch); err != nil {
+	// A catalog writer may have read its shared generation snapshot before
+	// another writer committed. Re-read under the writer lock to retain each
+	// completed mutation's change signal.
+	epoch, err := readPluginGenerationEpoch(l.file)
+	if err != nil {
 		return 0, err
 	}
-	return l.epoch, nil
+	epoch++
+	if err := writePluginGenerationEpoch(l.file, epoch); err != nil {
+		return 0, err
+	}
+	l.epoch = epoch
+	return epoch, nil
 }
 
 func writePluginGenerationEpoch(file *os.File, epoch uint64) error {
@@ -211,7 +219,12 @@ func TryAcquirePluginCatalogMutationLease(wuuHome string) (*PluginCatalogMutatio
 }
 
 func (l *PluginCatalogMutationLease) Epoch() uint64 {
-	if l == nil || l.generation == nil {
+	if l == nil {
+		return 0
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.generation == nil {
 		return 0
 	}
 	return l.generation.Epoch()
@@ -220,11 +233,16 @@ func (l *PluginCatalogMutationLease) Epoch() uint64 {
 // Advance persists the next mutation epoch. Callers must advance after their
 // disk changes are complete and while the lease is still held.
 func (l *PluginCatalogMutationLease) Advance() (uint64, error) {
-	if l == nil || l.generation == nil {
+	if l == nil {
 		return 0, errors.New("plugin catalog mutation lease is required")
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	if l.generation == nil {
+		return 0, errors.New("plugin catalog mutation lease is required")
+	}
+	l.generation.mu.Lock()
+	defer l.generation.mu.Unlock()
 	return l.generation.advanceEpochLocked()
 }
 

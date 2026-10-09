@@ -626,47 +626,160 @@ type preparedGenerationClient struct {
 	*generationClient
 	activateErr  error
 	activateCall int
+	onActivate   func()
 }
 
 func (c *preparedGenerationClient) Status() pluginhost.Status {
+	if c.status != nil {
+		return *c.status
+	}
 	return pluginhost.Status{ID: c.id, State: pluginhost.StatePrepared}
 }
 
 func (c *preparedGenerationClient) Activate(context.Context) error {
 	c.activateCall++
+	if c.onActivate != nil {
+		c.onActivate()
+	}
+	c.status = &pluginhost.Status{ID: c.id, State: pluginhost.StateActive}
+	if c.activateErr != nil {
+		c.status.State = pluginhost.StateFailed
+		c.status.Error = c.activateErr.Error()
+	}
 	return c.activateErr
 }
 
-func TestCandidateActivationFailureLeavesCurrentGenerationUntouched(t *testing.T) {
+func TestCandidateActivationFailurePreservesCommittedGeneration(t *testing.T) {
 	oldClient := &generationClient{id: "old"}
 	old := testPluginGeneration("old", oldClient)
 	session := testGenerationSession(old)
-
+	defer session.Cleanup()
+	committed := false
 	broken := &preparedGenerationClient{
 		generationClient: &generationClient{id: "broken"},
 		activateErr:      errors.New("activate failed"),
+		onActivate: func() {
+			if !committed {
+				t.Error("candidate produced activation effects before durable commit")
+			}
+		},
 	}
 	candidate := testPluginGeneration("broken", broken)
+	err := session.ActivatePluginGeneration(candidate, func() error { committed = true; return nil })
+	if err == nil || !strings.Contains(err.Error(), "committed") {
+		t.Fatalf("activation error must distinguish committed changes: %v", err)
+	}
+	if !committed || session.pluginGeneration != candidate || session.PluginHost != candidate.host {
+		t.Fatal("activation failure contradicted committed policy by restoring old generation")
+	}
+	if !oldClient.closed {
+		t.Fatal("removed old implementation remained active after commit")
+	}
+	if statuses := session.PluginHost.Statuses(); len(statuses) != 1 || statuses[0].State != pluginhost.StateFailed {
+		t.Fatalf("failed activation diagnostics unavailable: %+v", statuses)
+	}
+}
 
-	commitCalled := false
-	err := session.ActivatePluginGeneration(candidate, func() error {
-		commitCalled = true
-		return nil
-	})
-	if err == nil {
-		t.Fatal("activation unexpectedly succeeded")
+// Prepared contributions must not survive a failed native activation, while
+// independent declarative hooks and healthy runtime contributions remain usable.
+func TestFailedActivationDoesNotPublishPreparedNativeContributions(t *testing.T) {
+	old := testPluginGeneration("old", &generationClient{id: "old"})
+	session := testGenerationSession(old)
+	session.RootDir = t.TempDir()
+	session.ProviderName, session.Model = "fixture", "model"
+	defer session.Cleanup()
+	makeClient := func(id string, priority int, activationErr error) *preparedGenerationClient {
+		return &preparedGenerationClient{
+			generationClient: &generationClient{
+				id: id,
+				capabilities: []pluginhost.CapabilityDescriptor{
+					{ID: pluginhost.CapabilityAgentSystemPromptSection, Kind: "transform", Version: 1, Priority: priority},
+					{ID: pluginhost.CapabilityAgentCompaction, Kind: "decision", Version: 1, Priority: priority},
+					{ID: pluginhost.CapabilityAgentRequestTransform, Kind: "transform", Version: 1, Priority: priority},
+				},
+				invoke: func(params pluginhost.CapabilityInvokeParams) (pluginhost.CapabilityInvokeResult, error) {
+					var output any
+					switch params.Capability {
+					case pluginhost.CapabilityAgentSystemPromptSection:
+						output = pluginhost.SystemPromptSectionOutput{Text: id + " prompt"}
+					case pluginhost.CapabilityAgentCompaction:
+						output = pluginhost.CompactionOutput{Messages: []providers.ChatMessage{{Role: "system", Content: id + " compacted"}}}
+					case pluginhost.CapabilityAgentRequestTransform:
+						output = pluginhost.RequestTransformOutput{}
+					default:
+						return pluginhost.CapabilityInvokeResult{}, fmt.Errorf("unexpected capability %q", params.Capability)
+					}
+					data, err := json.Marshal(output)
+					return pluginhost.CapabilityInvokeResult{Output: data}, err
+				},
+			},
+			activateErr: activationErr,
+		}
 	}
-	if commitCalled {
-		t.Fatal("commit ran after activation failure")
+	broken := makeClient("broken", 100, errors.New("activation failed"))
+	healthy := makeClient("healthy", 1, nil)
+	brokenPlugin := testRuntimePlugin("broken")
+	brokenPlugin.Hooks = map[string][]config.HookEntry{string(hooks.PreToolUse): {{Type: "command", Command: "independent-hook"}}}
+	candidate, err := session.buildPluginGeneration(config.Config{}, []pluginpkg.Plugin{brokenPlugin, testRuntimePlugin("healthy")}, nil, nil,
+		func(_ context.Context, cfg pluginhost.ProcessConfig) (pluginhost.Client, error) {
+			if cfg.ID == "broken" {
+				return broken, nil
+			}
+			return healthy, nil
+		})
+	if err != nil {
+		t.Fatal(err)
 	}
-	if session.pluginGeneration != old || session.PluginHost != old.host || session.ActivePlugins[0].ID != "old" {
-		t.Fatalf("current generation changed after failed activation: active=%+v", session.ActivePlugins)
+	if prompt, _ := candidate.systemPrompts.Assemble(""); !strings.Contains(prompt, "broken prompt") {
+		t.Fatal("fixture did not prepare failed runtime's native contribution")
 	}
-	if oldClient.closed {
-		t.Fatal("old generation was closed by the failed candidate")
+	if err := session.ActivatePluginGeneration(candidate, nil); !PluginGenerationWasCommitted(err) {
+		t.Fatalf("expected committed activation failure, got %v", err)
 	}
-	if !broken.closed {
-		t.Fatal("failed candidate kept candidate-owned resources")
+	if prompt, _ := candidate.systemPrompts.Assemble(""); prompt != "healthy prompt" {
+		t.Errorf("published prompt = %q", prompt)
+	}
+	if strings.Contains(session.BaseSystemPrompt, "broken prompt") {
+		t.Error("failed native prompt reached live Session")
+	}
+	messages, err := candidate.compactions.Resolve(nil).Compact(context.Background(), "model", nil)
+	if err != nil || len(messages) != 1 || messages[0].Content != "healthy compacted" {
+		t.Errorf("healthy compaction was shadowed: messages=%+v err=%v", messages, err)
+	}
+	if err := candidate.requestTransforms.Apply(context.Background(), &providers.ChatRequest{Model: "model"}, nil); err != nil {
+		t.Errorf("failed transform blocked healthy request: %v", err)
+	}
+	if !candidate.hooks.HasHooks(hooks.PreToolUse) {
+		t.Error("independent declarative hook was removed")
+	}
+	foundFailure := false
+	for _, status := range session.PluginHost.Statuses() {
+		if status.ID == "broken" && status.State == pluginhost.StateFailed {
+			foundFailure = true
+		}
+	}
+	if !foundFailure {
+		t.Error("failed activation diagnostic was removed")
+	}
+	if healthy.closed {
+		t.Error("healthy runtime was retired")
+	}
+}
+
+func TestCandidateCommitFailureCannotRunActivationEffects(t *testing.T) {
+	old := testPluginGeneration("old", &generationClient{id: "old"})
+	session := testGenerationSession(old)
+	defer session.Cleanup()
+	client := &preparedGenerationClient{generationClient: &generationClient{id: "candidate"}}
+	candidate := testPluginGeneration("candidate", client)
+	if err := session.ActivatePluginGeneration(candidate, func() error { return errors.New("persist failed") }); err == nil {
+		t.Fatal("commit unexpectedly succeeded")
+	}
+	if client.activateCall != 0 {
+		t.Fatal("failed durable commit still ran candidate activation")
+	}
+	if !client.closed || session.pluginGeneration != old {
+		t.Fatal("failed preparation was not cleaned up with old generation preserved")
 	}
 }
 

@@ -542,9 +542,9 @@ func (h *Host) ExecutionSnapshots() []ExecutionSnapshot {
 	return h.executions.Snapshot()
 }
 
-// Activate starts prepared runtimes so the generation can be validated before
-// publication. Failures are isolated to the affected runtime and remain
-// visible through status inventory.
+// Activate opens the effectful lifecycle of prepared runtimes. The caller owns
+// the durable commit and publication boundary; activation effects cannot be
+// rolled back. Failures remain visible through status inventory.
 func (h *Host) Activate(ctx context.Context) error {
 	if h == nil {
 		return nil

@@ -14,6 +14,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/extensions"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/statepath"
 )
@@ -287,7 +288,7 @@ func (s *Server) handlePluginPackageRemove(req Request) error {
 		}
 		return cause
 	}
-	if err := s.rt.ActivatePluginGeneration(candidate, func() error {
+	activationErr := s.rt.ActivatePluginGeneration(candidate, func() error {
 		var prepareErr error
 		packageRemoval, removed, prepareErr = pluginpkg.PrepareUninstallPackage(s.rt.WuuHome, params.ID)
 		if prepareErr != nil {
@@ -310,8 +311,9 @@ func (s *Server) handlePluginPackageRemove(req Request) error {
 			return rollbackRemoval(fmt.Errorf("clear plugin policy: %w", prepareErr))
 		}
 		return nil
-	}); err != nil {
-		return s.writeResponse(req.ID, nil, err)
+	})
+	if activationErr != nil && !runtime.PluginGenerationWasCommitted(activationErr) {
+		return s.writeResponse(req.ID, nil, activationErr)
 	}
 	s.rt.SetExtensionSettings(&persisted)
 	if pendingRemoval != nil {
@@ -326,12 +328,12 @@ func (s *Server) handlePluginPackageRemove(req Request) error {
 	}
 	s.schedulePluginTurnLifecycleReplay()
 	s.resetThreadRuntimesForGeneralSettings("")
-	return s.writeResponse(req.ID, PluginPackageRemoveResult{
+	return s.writePluginGenerationResponse(req, PluginPackageRemoveResult{
 		ID:                 removed.ID,
 		Removed:            removed.Removed,
 		ExtensionInventory: s.currentExtensionInventory(),
 		Skills:             s.skillSummaries(s.rt.Skills, s.rt.RootDir),
-	}, nil)
+	}, activationErr)
 }
 
 func (s *Server) handlePendingPluginUpdate(req Request, params ExtensionPackageUpdateParams, selected pluginpkg.Plugin) error {
@@ -385,7 +387,7 @@ func (s *Server) handlePendingPluginUpdate(req Request, params ExtensionPackageU
 		return s.writeResponse(req.ID, nil, fmt.Errorf("activate pending plugin update: %w", err))
 	}
 	var settings extensions.Settings
-	if err := s.rt.ActivatePluginGeneration(candidate, func() error {
+	activationErr := s.rt.ActivatePluginGeneration(candidate, func() error {
 		updated, persistErr := config.UpdateExtensionSettings(configPath, func(settings *extensions.Settings) error {
 			return settings.RecordGrant(grant)
 		})
@@ -401,13 +403,14 @@ func (s *Server) handlePendingPluginUpdate(req Request, params ExtensionPackageU
 			return fmt.Errorf("promote pending plugin update: %w", promoteErr)
 		}
 		return nil
-	}); err != nil {
-		return s.writeResponse(req.ID, nil, err)
+	})
+	if activationErr != nil && !runtime.PluginGenerationWasCommitted(activationErr) {
+		return s.writeResponse(req.ID, nil, activationErr)
 	}
 	s.rt.SetExtensionSettings(&settings)
 	s.schedulePluginTurnLifecycleReplay()
 	s.resetThreadRuntimesForGeneralSettings("")
-	return s.writeResponse(req.ID, ExtensionPackageUpdateResult{ExtensionInventory: s.currentExtensionInventory()}, nil)
+	return s.writePluginGenerationResponse(req, ExtensionPackageUpdateResult{ExtensionInventory: s.currentExtensionInventory()}, activationErr)
 }
 
 func cloneExtensionSettings(current *extensions.Settings) extensions.Settings {
@@ -437,8 +440,8 @@ func cloneExtensionSettings(current *extensions.Settings) extensions.Settings {
 }
 
 // pluginGenerationMutationKind distinguishes package-file changes that must
-// wait for exclusive ownership from live policy changes that publish a new
-// generation for later conversations.
+// wait for exclusive ownership from live policy changes with idle-boundary
+// generation adoption and immediate revocation of disabled or removed plugins.
 type pluginGenerationMutationKind int
 
 const (
@@ -541,8 +544,9 @@ func (s *Server) beginPluginGenerationMutation(action string, kind pluginGenerat
 			providers.DebugLogf("release plugin generation mutation lease: %v", err)
 		}
 		// This server performed the complete serialized transaction and already
-		// has its final runtime state, including rollback on failure. Peers still
-		// observe the advanced epoch and refresh independently.
+		// has its final runtime state: either the retained old generation or the
+		// committed new one, including activation failures. Peers still observe
+		// the advanced epoch and refresh independently.
 		s.pluginGenerationEpoch.Store(epoch)
 		releaseLocal()
 		s.retireIdlePluginRuntimes()
@@ -584,4 +588,16 @@ func pluginPackageMetadata(item pluginpkg.PackageInspection) PluginPackageMetada
 		EffectivePermissions: append([]string(nil), item.EffectivePermissions...),
 		UnsupportedFields:    append([]string(nil), item.UnsupportedFields...),
 	}
+}
+
+// A post-commit activation failure is not a policy rollback. Publish the new
+// inventory even though the requesting UI receives an actionable error.
+func (s *Server) writePluginGenerationResponse(req Request, result any, activationErr error) error {
+	if activationErr == nil {
+		return s.writeResponse(req.ID, result, nil)
+	}
+	notifyErr := s.writeNotification(NotificationPluginInventoryChanged, PluginInventoryChangedNotification{
+		Epoch: s.pluginGenerationEpoch.Load(), ExtensionInventory: s.currentExtensionInventory(), Skills: s.skillSummaries(s.rt.Skills, s.rt.RootDir),
+	})
+	return errors.Join(notifyErr, s.writeResponse(req.ID, nil, activationErr))
 }

@@ -370,6 +370,12 @@ func (s *Server) startThreadCompactTurn(ctx context.Context, req Request, th *th
 	if th == nil {
 		return s.writeResponse(req.ID, nil, errors.New("thread not found"))
 	}
+	if err := s.refreshPluginGenerationIfChanged(); err != nil {
+		if errors.Is(err, errPluginGenerationRefreshBusy) {
+			err = threadExecutionBusyError(th.ID)
+		}
+		return s.writeResponse(req.ID, nil, err)
+	}
 	displayPrompt = strings.TrimSpace(displayPrompt)
 	if displayPrompt == "" {
 		displayPrompt = "/" + manualCompactSlashCommandName
@@ -3670,6 +3676,14 @@ func (s *Server) startThreadUserTurnWithAdmission(ctx context.Context, th *threa
 		if err := s.waitAndHandoffAnswerReadyTurn(ctx, th); err != nil {
 			return startedThreadTurn{}, false, err
 		}
+	}
+	// Refresh before taking the target thread lock: activate may synchronously
+	// use session.send, list, or inspect. Reentrant sends use normal queue retry.
+	if err := s.refreshPluginGenerationIfChanged(); err != nil {
+		if errors.Is(err, errPluginGenerationRefreshBusy) {
+			err = threadExecutionBusyError(th.ID)
+		}
+		return startedThreadTurn{}, false, err
 	}
 	turnID := session.NewID()
 	turnCtx, cancel := context.WithCancel(ctx)

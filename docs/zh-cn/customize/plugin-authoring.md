@@ -82,14 +82,14 @@ UI 声明放在 `contributes.slots`、`surfaces`、`presenters`、`navigation`�
 | 回调 | 职责 |
 | --- | --- |
 | `initialize(params, host)` | 返回工具、能力、提供的服务和需要的服务 |
-| `activate(host)` | 激活后启动定时器、订阅或其他行为 |
+| `activate(host)` | 运行时变更提交后，启动定时器、订阅或其他行为 |
 | `executeTool(params, host, execution)` | 执行已注册工具，返回结果 |
 | `invokeCapability(params, host, execution)` | 处理已声明能力 |
 | `invokeService(params, host, execution)` | 响应一次宿主路由的服务调用 |
 | `serviceChanged(params, host)` | 响应服务解析变化 |
 | `shutdown()` | 停止插件拥有的工作并释放资源 |
 
-初始化是准备阶段，不代表可以开始产品行为。预检查期间，宿主只允许调用读取阶段的服务。写入和后台任务应推迟到激活后，shutdown 也应能安全处理只完成部分初始化的情况。generation 在成为活动版本前可能失败或被替换。
+初始化是准备阶段，不代表可以开始产品行为。原生预检查期间，宿主只允许调用读取阶段的服务。写入和后台任务应推迟到 `activate`，shutdown 也应能安全处理部分初始化或部分激活。准备和持久化失败时保留旧运行时，不调用候选的 `activate`。变更提交后，激活失败会留下带失败诊断的降级新 generation，不恢复旧代，也不撤销外部效果。明确重试激活时，应避免重复产生效果。可信初始化代码和 MCP 准备仍可能在宿主服务边界之外产生外部效果。提交边界见[运行时 generation](plugin-system.md#运行时-generation)。
 
 ## 工具和能力
 
@@ -188,7 +188,7 @@ Peers 插件通过 `if_running: "steer"` 尽量把终态回执注入当前工作
 
 ## 开发和分发
 
-`wuu plugin dev ./extension.ts` 直接运行默认导出实现 `RuntimePlugin` 的单文件。Wuu 提供匹配的 SDK 并在内部生成进程适配器；此开发路径不要求 manifest、安装、打包或构建。需要支持 `--experimental-transform-types` 的 Node.js 22.7 或更高版本，仅支持 Node 内置模块和 `@wuu/plugin-sdk` 导入。每次发布前保存候选快照，检查语法、导入和默认导出；加载失败则保留上次发布的源码。初始化仅在实际宿主中进行，使用其读取阶段服务，并由宿主负责 generation 回滚。完整示例见 [Agent 插件快速上手](plugin-quickstart.md)。
+`wuu plugin dev ./extension.ts` 直接运行默认导出实现 `RuntimePlugin` 的单文件。Wuu 提供匹配的 SDK 并在内部生成进程适配器；此开发路径不要求 manifest、安装、打包或构建。需要支持 `--experimental-transform-types` 的 Node.js 22.7 或更高版本，仅支持 Node 内置模块和 `@wuu/plugin-sdk` 导入。每次发布前保存候选快照，检查语法、导入和默认导出；加载失败则保留上次发布的源码。初始化仅在实际宿主中进行，使用其读取阶段服务。准备失败保留旧运行时；激活发生在提交之后，失败时可能留下新运行时的失败状态，契约见上文。完整示例见 [Agent 插件快速上手](plugin-quickstart.md)。
 
 `wuu plugin create` 生成 `agent`、`desktop` 或 `full` 包骨架。对于目录，`wuu plugin dev` 使用其中的 `plugin.json` 和 `package.json` 构建脚本，再发布构建后的开发 generation。两条路径在构建或加载失败后都会继续监听，修复并保存即可恢复，不需要重启。文件事件经过防抖，并定期核对以补偿遗漏；`--poll` 必须为正数。
 

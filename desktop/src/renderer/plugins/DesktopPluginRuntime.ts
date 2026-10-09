@@ -110,16 +110,16 @@ export class DesktopPluginRuntime {
     if (epoch !== this.syncEpoch) return [];
     if (preferences) this.host.setConflictPreferences(preferences);
 
-    const failures: DesktopPluginFailure[] = [];
-    for (const plugin of desired.values()) {
+    // One extension's asynchronous startup must not block unrelated extensions.
+    const failures = await Promise.all([...desired.values()].map(async (plugin): Promise<DesktopPluginFailure | undefined> => {
       const fingerprint = plugin.fingerprint;
       if (!fingerprint || this.activeGenerations.get(plugin.id) === fingerprint) {
-        continue;
+        return undefined;
       }
       try {
-        if (epoch !== this.syncEpoch) return failures;
+        if (epoch !== this.syncEpoch) return undefined;
         const loaded = await window.wuu?.loadPluginDesktopModule?.({ id: plugin.id, fingerprint });
-        if (epoch !== this.syncEpoch) return failures;
+        if (epoch !== this.syncEpoch) return undefined;
         if (!loaded || loaded.id !== plugin.id || loaded.fingerprint !== fingerprint) {
           throw new Error("Desktop plugin module identity mismatch");
         }
@@ -143,13 +143,14 @@ export class DesktopPluginRuntime {
         }
       } catch (error: unknown) {
         if (epoch !== this.syncEpoch || error instanceof PluginGenerationSupersededError) {
-          continue;
+          return undefined;
         }
         // Failed staging leaves the previous generation live; only inventory removal disables it.
-        failures.push({ pluginId: plugin.id, fingerprint, error });
+        return { pluginId: plugin.id, fingerprint, error };
       }
-    }
-    return failures;
+      return undefined;
+    }));
+    return failures.filter((failure): failure is DesktopPluginFailure => failure !== undefined);
   }
 }
 

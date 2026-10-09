@@ -938,7 +938,7 @@ func (s *Server) handleExtensionPackageUpdate(req Request) error {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	var persistedSettings extensions.Settings
-	if err := s.rt.ActivatePluginGeneration(candidate, func() error {
+	activationErr := s.rt.ActivatePluginGeneration(candidate, func() error {
 		updated, updateErr := config.UpdateExtensionSettings(userConfigPath, func(settings *extensions.Settings) error {
 			return applyExtensionPackageAction(settings, params.Action, *selected, approvedAt)
 		})
@@ -947,12 +947,13 @@ func (s *Server) handleExtensionPackageUpdate(req Request) error {
 		}
 		persistedSettings = updated
 		return nil
-	}); err != nil {
-		return s.writeResponse(req.ID, nil, err)
+	})
+	if activationErr != nil && !runtime.PluginGenerationWasCommitted(activationErr) {
+		return s.writeResponse(req.ID, nil, activationErr)
 	}
 	s.rt.SetExtensionSettings(&persistedSettings)
 	s.schedulePluginTurnLifecycleReplay()
-	return s.writeResponse(req.ID, ExtensionPackageUpdateResult{ExtensionInventory: s.currentExtensionInventory()}, nil)
+	return s.writePluginGenerationResponse(req, ExtensionPackageUpdateResult{ExtensionInventory: s.currentExtensionInventory()}, activationErr)
 }
 
 func applyExtensionPackageAction(settings *extensions.Settings, action ExtensionPackageAction, selected pluginpkg.Plugin, approvedAt time.Time) error {

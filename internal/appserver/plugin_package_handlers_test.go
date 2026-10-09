@@ -11,7 +11,6 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/extensions"
@@ -510,6 +509,7 @@ func TestConcurrentPluginGenerationAdmissionsRefreshOnce(t *testing.T) {
 	var calls atomic.Int32
 	srv := &Server{
 		rt:      rt,
+		out:     &lockedBuffer{},
 		threads: map[string]*threadState{},
 		refreshExtensionsForTest: func(config.Config) error {
 			calls.Add(1)
@@ -536,14 +536,22 @@ func TestConcurrentPluginGenerationAdmissionsRefreshOnce(t *testing.T) {
 	go admit("first")
 	go admit("second")
 	<-started
-	time.Sleep(50 * time.Millisecond)
-	close(allowRefresh)
 	for range 2 {
 		result := <-results
-		if result.err != nil || !result.acquired {
-			t.Fatalf("admission failed: acquired=%v err=%v", result.acquired, result.err)
+		if result.err != nil || result.acquired {
+			t.Fatalf("admission must yield while refresh owns activation: acquired=%v err=%v", result.acquired, result.err)
 		}
 	}
+	close(allowRefresh)
+	waitPluginGenerationWatchTest(t, func() bool { return srv.pluginGenerationEpoch.Load() == 1 })
+	for _, id := range []string{"first", "second"} {
+		admit(id)
+		result := <-results
+		if result.err != nil || !result.acquired {
+			t.Fatalf("retry admission failed: %+v", result)
+		}
+	}
+	srv.Close()
 	if got := calls.Load(); got != 1 {
 		t.Fatalf("generation refresh calls = %d, want 1", got)
 	}
