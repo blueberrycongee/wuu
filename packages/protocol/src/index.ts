@@ -2558,6 +2558,12 @@ export type DesktopQuickAccessUpdateResult = {
   error?: "invalid_shortcut" | "unavailable";
 };
 
+export type DesktopQuickAccessRecordingEvent = { recordingID: number } & (
+  | { shortcut: string; error?: never; cancelled?: never }
+  | { error: "invalid_shortcut" | "reserved"; shortcut?: never; cancelled?: never }
+  | { cancelled: true; shortcut?: never; error?: never }
+);
+
 // Keep the supported locale registry executable as well as typed. Every shell
 // validates persisted settings and IPC payloads with these guards, so adding a
 // locale has one protocol-level entry point instead of duplicated string lists.
@@ -2952,6 +2958,8 @@ export type WuuDesktopApi = {
   getDesktopQuickAccess?: () => Promise<DesktopQuickAccessSnapshot>;
   updateDesktopQuickAccess?: (update: DesktopQuickAccessUpdate) => Promise<DesktopQuickAccessUpdateResult>;
   onDesktopQuickAccessChange?: (handler: (snapshot: DesktopQuickAccessSnapshot) => void) => () => void;
+  setDesktopQuickAccessRecording?: (recordingID: number, enabled: boolean) => Promise<void>;
+  onDesktopQuickAccessRecorded?: (handler: (event: DesktopQuickAccessRecordingEvent) => void) => () => void;
   // Appearance. The preference persists in desktop-settings.json; the
   // renderer resolves "system" against prefers-color-scheme and stamps
   // data-theme on <html>. `initialThemePreference` is read synchronously

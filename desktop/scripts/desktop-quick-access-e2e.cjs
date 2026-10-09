@@ -62,6 +62,8 @@ const home = process.env.WUU_HOME;
 const project = path.join(fixture, 'project');
 const settingsPath = path.join(home, 'desktop-settings.json');
 app.setPath('userData', path.join(fixture, 'profile'));
+// The recorder must also work with release accelerator/security guards enabled.
+Object.defineProperty(app, 'isPackaged', { get: () => true });
 delete process.env.ELECTRON_RENDERER_URL;
 const evaluate = (window, fn, arg) => window.webContents.executeJavaScript(`(${fn})(${JSON.stringify(arg)})`);
 async function until(check, label) {
@@ -71,6 +73,16 @@ async function until(check, label) {
 }
 const waitFor = (window, fn, arg) => until(() => evaluate(window, fn, arg), String(fn));
 const click = (window, selector) => evaluate(window, selector => document.querySelector(selector).click(), selector);
+async function beginRecording(window) {
+  window.show(); window.focus();
+  await until(() => window.isFocused(), 'recorder window focused');
+  await click(window, '[data-testid="quick-access-record"]');
+  await waitFor(window, () => document.querySelector('[data-testid="quick-access-record"]').getAttribute('aria-pressed') === 'true');
+}
+async function input(window, keyCode, modifiers = []) {
+  window.webContents.sendInputEvent({ type: 'keyDown', keyCode, modifiers });
+  window.webContents.sendInputEvent({ type: 'keyUp', keyCode, modifiers });
+}
 const snapshot = window => evaluate(window, () => window.wuu.getDesktopQuickAccess());
 const update = (window, value) => evaluate(window, value => window.wuu.updateDesktopQuickAccess(value), value);
 async function openSettings(window) {
@@ -123,14 +135,54 @@ import(pathToFileURL(path.join(desktop, 'out/main/index.js')).href).then(async (
     assert.equal(globalShortcut.isRegistered('Control+Alt+F9'), true);
     results.push('invalid and occupied bindings preserve previous binding and independent owner');
 
-    await click(main, '[data-testid="quick-access-record"]');
+    await beginRecording(main);
+    main.webContents.setZoomFactor(1.1);
+    let navigations = 0;
+    main.webContents.on('did-start-navigation', () => { navigations++; });
+    for (const [keyCode, modifiers] of [
+      ['0', ['control']], ['r', ['control']],
+      ['i', ['control', 'shift']], ['F12', ['control']],
+    ]) {
+      await evaluate(main, () => {
+        window.__quickAccessReserved = false;
+        window.__quickAccessReservedCleanup?.();
+        window.__quickAccessReservedCleanup = window.wuu.onDesktopQuickAccessRecorded(event => {
+          if (event.error === 'reserved') window.__quickAccessReserved = true;
+        });
+      });
+      await input(main, keyCode, modifiers);
+      await waitFor(main, () => window.__quickAccessReserved === true
+        && document.querySelector('[data-testid="settings-quick-access"] [role="alert"]'));
+      assert.equal((await snapshot(main)).shortcut, original);
+      assert.ok(Math.abs(main.webContents.getZoomFactor() - 1.1) < 0.0001, 'Reserved recording must not alter zoom');
+      assert.equal(main.webContents.isDevToolsOpened(), false);
+      assert.equal(navigations, 0, 'Reserved recording must not reload');
+    }
+    await input(main, 'Escape');
+    await waitFor(main, () => document.querySelector('[data-testid="quick-access-record"]').getAttribute('aria-pressed') === 'false');
+    await input(main, '0', ['control']);
+    await until(() => main.webContents.getZoomFactor() === 1, 'normal zoom still works after recording');
+    await input(main, 'r', ['control']);
+    await input(main, 'i', ['control', 'shift']);
+    await evaluate(main, () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    assert.equal(navigations, 0);
+    assert.equal(main.webContents.isDevToolsOpened(), false);
+    results.push('packaged reserved keys report errors without zoom/reload/devtools; normal guards and zoom remain active after recording');
+    await beginRecording(main);
+    execFileSync('xdotool', ['key', '--clearmodifiers', 'ctrl+shift+space']);
+    await waitFor(main, () => document.querySelector('[data-testid="quick-access-record"]').getAttribute('aria-pressed') === 'false');
+    assert.equal((await snapshot(main)).shortcut, original);
+    results.push('the already-owned global shortcut can be recorded again');
+
+
+    await beginRecording(main);
     main.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'a' });
     main.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'a' });
     await waitFor(main, () => document.querySelector('[data-testid="settings-quick-access"] [role="alert"]'));
     main.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' });
     main.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Escape' });
     await waitFor(main, () => document.querySelector('[data-testid="quick-access-record"]').getAttribute('aria-pressed') === 'false');
-    await click(main, '[data-testid="quick-access-record"]');
+    await beginRecording(main);
     main.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'F9', modifiers: ['control', 'alt'] });
     main.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'F9', modifiers: ['control', 'alt'] });
     await waitFor(main, () => document.querySelector('[data-testid="settings-quick-access"] [role="alert"]')
@@ -138,7 +190,7 @@ import(pathToFileURL(path.join(desktop, 'out/main/index.js')).href).then(async (
     assert.equal((await snapshot(main)).shortcut, original);
     results.push('recording rejects plain keys, Escape cancels without closing settings, conflicts surface in UI');
 
-    await click(main, '[data-testid="quick-access-record"]');
+    await beginRecording(main);
     main.webContents.sendInputEvent({ type: 'keyDown', keyCode: '8', modifiers: ['control', 'shift'] });
     main.webContents.sendInputEvent({ type: 'keyUp', keyCode: '8', modifiers: ['control', 'shift'] });
     await until(async () => (await snapshot(main)).shortcut === 'Control+Shift+8', 'recorded shortcut');
@@ -165,7 +217,11 @@ import(pathToFileURL(path.join(desktop, 'out/main/index.js')).href).then(async (
     results.push('record, disable, reset and repeated native summon preserve unsent main draft');
     results.push('unavailable workspace does not navigate or replace the existing draft');
 
+    await openSettings(main);
+    await beginRecording(main);
     const popout = await createPopout(main);
+    await waitFor(main, () => document.querySelector('[data-testid="quick-access-record"]').getAttribute('aria-pressed') === 'false');
+    results.push('focus transfer cancels recording before another window receives input');
     await typeDraft(popout, 'Unsent popped-out draft');
     await openSettings(main);
     await click(main, '[data-testid="quick-access-on-top"]');
@@ -176,6 +232,7 @@ import(pathToFileURL(path.join(desktop, 'out/main/index.js')).href).then(async (
     secondPopout.close();
     popout.show(); popout.focus();
     await until(() => popout.isFocused(), 'popout focused');
+    main.hide(); // Do not let the window manager focus main after minimizing the popout.
     popout.minimize();
     await until(() => popout.isMinimized(), 'popout minimized');
     await summon(popout, 'ctrl+shift+space');

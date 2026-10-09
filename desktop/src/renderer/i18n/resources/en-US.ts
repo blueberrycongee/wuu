@@ -1,6 +1,8 @@
 import type { TranslationKey } from "./zh-CN";
 
 export const enUS = {
+  "quickAccess.reserved": "This shortcut is reserved by Wuu. Choose another combination.",
+  "quickAccess.recordFailed": "Shortcut recording could not start. Try again.",
   "quickAccess.title": "Quick access",
   "quickAccess.shortcut": "Show or focus Wuu",
   "quickAccess.description": "Bring back your last active conversation window without changing its conversation or draft. Wuu must be running.",

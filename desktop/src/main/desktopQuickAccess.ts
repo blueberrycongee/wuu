@@ -1,11 +1,13 @@
-import { globalShortcut, type BrowserWindow } from "electron";
+import { globalShortcut, type BrowserWindow, type Input } from "electron";
 import type {
   DesktopQuickAccessSnapshot,
   DesktopQuickAccessUpdate,
   DesktopQuickAccessUpdateResult,
+  DesktopQuickAccessRecordingEvent,
 } from "../shared/protocol";
 import { readDesktopSettings, writeDesktopSettings } from "./desktopSettings";
 import type { WindowRegistry } from "./windowRegistry";
+import { desktopZoomAction, isBlockedProductionShortcut } from "./appShellGuards";
 
 const DEFAULT_SHORTCUT = `${process.platform === "darwin" ? "Command" : "Control"}+Shift+Space`;
 
@@ -24,6 +26,7 @@ function normalizeShortcut(value: string): string | null {
 export class DesktopQuickAccess {
   private registeredShortcut = "";
   private lastConversationWindow: BrowserWindow | null = null;
+  private readonly recordings = new Map<number, number>();
 
   constructor(
     private readonly windows: WindowRegistry,
@@ -51,14 +54,83 @@ export class DesktopQuickAccess {
   }
 
   attachWindow(window: BrowserWindow): void {
+    const windowID = window.webContents.id;
     if (this.windows.roleForWindow(window.webContents.id) === "popped-out") {
       window.setAlwaysOnTop(readDesktopSettings().pop_out_always_on_top === true);
     }
     if (window.isFocused() || !this.lastConversationWindow) this.lastConversationWindow = window;
     window.on("focus", () => { this.lastConversationWindow = window; });
+    window.on("blur", () => this.cancelRecording(window));
+    window.webContents.on("did-start-loading", () => this.cancelRecording(window));
+    window.webContents.on("render-process-gone", () => this.cancelRecording(window));
     window.on("closed", () => {
+      this.recordings.delete(windowID);
       if (this.lastConversationWindow === window) this.lastConversationWindow = null;
     });
+  }
+
+  setRecording(windowID: number, recordingID: number, enabled: boolean): void {
+    if (!Number.isSafeInteger(recordingID) || recordingID <= 0 || typeof enabled !== "boolean") {
+      throw new Error("Invalid shortcut recording session");
+    }
+    if (enabled) {
+      const window = this.windows.windowForID(windowID);
+      if (!window || window.isDestroyed() || !window.isFocused()) throw new Error("Shortcut recording requires a focused window");
+      this.recordings.set(windowID, recordingID);
+    }
+    else if (this.recordings.get(windowID) === recordingID) this.recordings.delete(windowID);
+  }
+
+  recordInput(window: BrowserWindow, input: Input): boolean {
+    const recordingID = this.recordings.get(window.webContents.id);
+    if (recordingID === undefined) return false;
+    if (input.key === "Tab") {
+      this.cancelRecording(window);
+      return false; // Preserve normal keyboard navigation out of the recorder.
+    }
+    if (input.type !== "keyDown" || input.isAutoRepeat || input.isComposing) return true;
+    if (input.key === "Escape") {
+      this.cancelRecording(window);
+      return true;
+    }
+    if (["Meta", "Control", "Alt", "Shift"].includes(input.key)) return true;
+    // Reserved actions stay reserved in development and packaged builds. Never
+    // bypass production guards or let recording change zoom/reload the renderer.
+    if (isBlockedProductionShortcut(input) || desktopZoomAction(input, process.platform)) {
+      this.sendRecording(window, { recordingID, error: "reserved" });
+      return true;
+    }
+    const key = input.code === "Space" ? "Space"
+      : /^Key[A-Z]$/.test(input.code) ? input.code.slice(3)
+      : /^Digit[0-9]$/.test(input.code) ? input.code.slice(5)
+      : input.key.replace(/^Arrow/, "").toUpperCase();
+    const normalizedKey = ["UP", "DOWN", "LEFT", "RIGHT"].includes(key) ? key[0] + key.slice(1).toLowerCase() : key;
+    const modifiers = [
+      ...(input.meta ? [process.platform === "darwin" ? "Command" : "Super"] : []),
+      ...(input.control ? ["Control"] : []),
+      ...(input.alt ? ["Alt"] : []),
+      ...(input.shift ? ["Shift"] : []),
+    ];
+    const shortcut = normalizeShortcut([...modifiers, normalizedKey].join("+"));
+    if (!shortcut) this.sendRecording(window, { recordingID, error: "invalid_shortcut" });
+    else {
+      this.recordings.delete(window.webContents.id);
+      this.sendRecording(window, { recordingID, shortcut });
+    }
+    return true;
+  }
+
+  private cancelRecording(window: BrowserWindow): void {
+    const recordingID = this.recordings.get(window.webContents.id);
+    if (recordingID === undefined) return;
+    this.recordings.delete(window.webContents.id);
+    this.sendRecording(window, { recordingID, cancelled: true });
+  }
+
+  private sendRecording(window: BrowserWindow, event: DesktopQuickAccessRecordingEvent): void {
+    if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
+      window.webContents.send("wuu:desktop-quick-access-recorded", event);
+    }
   }
 
   update(update: DesktopQuickAccessUpdate): DesktopQuickAccessUpdateResult {
@@ -101,6 +173,7 @@ export class DesktopQuickAccess {
   }
 
   dispose(): void {
+    this.recordings.clear();
     if (this.registeredShortcut) globalShortcut.unregister(this.registeredShortcut);
     this.registeredShortcut = "";
   }
@@ -110,6 +183,13 @@ export class DesktopQuickAccess {
       if (globalShortcut.isRegistered(shortcut)) return false;
       return globalShortcut.register(shortcut, () => {
         let window = this.lastConversationWindow;
+        const recordingID = window && !window.isDestroyed() && window.isFocused()
+          ? this.recordings.get(window.webContents.id) : undefined;
+        if (window && recordingID !== undefined) {
+          this.recordings.delete(window.webContents.id);
+          this.sendRecording(window, { recordingID, shortcut });
+          return;
+        }
         if (!window || window.isDestroyed()) window = this.windows.mainWindow();
         if (!window || window.isDestroyed()) {
           this.createMainWindow();

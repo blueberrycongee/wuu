@@ -1,4 +1,5 @@
 import type { MenuItemConstructorOptions } from "electron";
+import type { DesktopZoomAction } from "../shared/DesktopPageZoom";
 
 export type AppShellKeyboardInput = {
   key: string;
@@ -56,6 +57,17 @@ export function isBlockedProductionShortcut(input: AppShellKeyboardInput): boole
   const macDevToolsChord = input.meta && input.alt;
   const otherDevToolsChord = input.control && input.shift;
   return devToolsKey && (macDevToolsChord || otherDevToolsChord);
+}
+
+export function desktopZoomAction(
+  input: AppShellKeyboardInput & { code?: string },
+  platform: string,
+): DesktopZoomAction | undefined {
+  const modifier = platform === "darwin" ? input.meta : input.control;
+  if (!modifier || input.alt || (platform === "darwin" && input.control)) return;
+  if (input.key === "+" || input.key === "=") return "in";
+  if (input.key === "-" || input.code === "NumpadSubtract") return "out";
+  if (input.key === "0" && !input.shift) return "reset";
 }
 
 export function installProductionAppShellGuards(

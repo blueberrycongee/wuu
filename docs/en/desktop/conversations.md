@@ -4,7 +4,7 @@ A conversation keeps messages, tool activity, and results together. Continue the
 
 ## Quick access and floating conversations
 
-In **Settings → General → Quick access**, record a global shortcut or choose **Use default** (Command + Shift + Space on macOS, Ctrl + Shift + Space elsewhere). No shortcut is assigned initially. Wuu must be running. The shortcut restores and focuses the last active main or popped-out conversation window, preserving its conversation and unsent draft. It does not send a message. If that window has closed, Wuu opens or focuses the main window.
+In **Settings → General → Quick access**, record a global shortcut or choose **Use default** (Command + Shift + Space on macOS, Ctrl + Shift + Space elsewhere). No shortcut is assigned initially. Wuu must be running. The shortcut restores and focuses the last active main or popped-out conversation window, preserving its conversation and unsent draft. It does not send a message. If that window has closed, Wuu opens or focuses the main window. Wuu-reserved combinations show an error instead of changing zoom, reloading, or opening developer tools. Escape, Tab, or leaving the recorder cancels recording.
 
 If the shortcut is already in use or the desktop cannot register it, choose another combination; the previous working shortcut remains active. **Disable** releases the shortcut. **Keep popped-out chats on top** applies to all current and future popped-out conversation windows. These preferences persist after restart.
 

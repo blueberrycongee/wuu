@@ -1,4 +1,6 @@
 export const zhCN = {
+  "quickAccess.reserved": "Wuu 已保留此快捷键，请选择其他组合键。",
+  "quickAccess.recordFailed": "无法开始录制快捷键，请重试。",
   "quickAccess.title": "快捷访问",
   "quickAccess.shortcut": "显示或聚焦 Wuu",
   "quickAccess.description": "唤回上次使用的对话窗口，保留当前对话和草稿。Wuu 需保持运行。",
