@@ -114,7 +114,8 @@ function renderShell({ inventory: available }: { inventory?: ExtensionInventoryR
 
 function findButton(label: string): HTMLButtonElement | undefined {
   return [...container.querySelectorAll<HTMLButtonElement>("button")]
-    .find((item) => item.getAttribute("aria-label") === label || item.textContent === label);
+    .find((item) => item.getAttribute("aria-label") === label || item.textContent === label
+      || item.querySelector(".thread-row-title")?.textContent === label);
 }
 
 function button(label: string): HTMLButtonElement {

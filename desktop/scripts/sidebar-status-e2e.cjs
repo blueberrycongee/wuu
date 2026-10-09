@@ -7,7 +7,7 @@ fs.mkdirSync(path.join(desktop, "out"), { recursive: true });
 const temp = fs.mkdtempSync(path.join(desktop, "out/sidebar-status-e2e-"));
 app.setPath("userData", path.join(temp, "profile"));
 app.whenReady().then(async () => {
-  const timeout = setTimeout(() => app.exit(1), 60000);
+  const timeout = setTimeout(() => app.exit(1), 120000);
   const results = [];
   try {
     const { build } = await import("vite");
@@ -61,6 +61,57 @@ app.whenReady().then(async () => {
           if (passive.forkRight !== undefined) assert.ok(passive.forkRight + 2 <= passive.dotLeft, "Fork overlaps switching indicator");
           assert.equal(focused.opacity, "0", "Keyboard actions must hide the switching dot");
           assert.ok(focused.titleRight + 2 <= focused.actionsLeft, "Title overlaps keyboard actions");
+        }
+      }
+    }
+    // Row ages sit between the title and every accessory combination, and give
+    // their place to the actions on keyboard focus.
+    await build({ configFile: false, root: path.join(desktop, "dev/sidebar-accessories"),
+      base: "./", logLevel: "warn", build: { outDir: path.join(temp, "accessories") } });
+    for (const theme of ["light", "dark"]) {
+      for (const size of ["14", "20"]) {
+        await win.loadFile(path.join(temp, "accessories/index.html"), { query: { theme, size } });
+        const rows = await win.webContents.executeJavaScript(`(async () => {
+          while (!document.querySelector('.thread-row-age')) await new Promise(requestAnimationFrame);
+          await document.fonts.ready;
+          const settle = async () => {
+            await new Promise(requestAnimationFrame);
+            await new Promise(requestAnimationFrame);
+            document.getAnimations().filter(a => a.effect.getComputedTiming().iterations !== Infinity).forEach(a => a.finish());
+          };
+          await settle();
+          const rows = [];
+          for (const row of document.querySelectorAll('.thread-row')) {
+            const age = row.querySelector('.thread-row-age');
+            const title = row.querySelector('.thread-row-title').getBoundingClientRect();
+            const dot = getComputedStyle(row, '::before');
+            const bounds = row.getBoundingClientRect();
+            const limits = [bounds.right];
+            if (row.matches('.running, .has-unread, .pending-switch')) limits.push(bounds.right - parseFloat(dot.right) - parseFloat(dot.width));
+            const fork = row.querySelector('.thread-row-fork-icon');
+            if (fork) limits.push(fork.getBoundingClientRect().left);
+            const ageBounds = age?.getBoundingClientRect();
+            row.querySelector('.thread-row-main').focus();
+            await settle();
+            rows.push({ title: row.querySelector('.thread-row-title').textContent, running: row.classList.contains('running'),
+              titleRight: title.right, ageLeft: ageBounds?.left, ageRight: ageBounds?.right, limit: Math.min(...limits),
+              focusedAgeDisplay: age && getComputedStyle(age).display });
+            document.activeElement.blur();
+          }
+          await settle();
+          return rows;
+        })()`);
+        results.push({ theme, size, fixture: "accessories", rows });
+        fs.writeFileSync(path.join(temp, `accessories-${theme}-${size}.png`), (await win.webContents.capturePage()).toPNG());
+        for (const row of rows) {
+          if (row.running) {
+            assert.equal(row.ageRight, undefined, `Running row shows an age: ${JSON.stringify(row)}`);
+            continue;
+          }
+          assert.ok(row.ageRight > row.ageLeft, `Missing row age: ${JSON.stringify(row)}`);
+          assert.ok(row.titleRight <= row.ageLeft, `Title overlaps row age: ${JSON.stringify(row)}`);
+          assert.ok(row.ageRight + 2 <= row.limit, `Row age overlaps an accessory: ${JSON.stringify(row)}`);
+          assert.equal(row.focusedAgeDisplay, "none", `Keyboard focus must hand the age's place to the actions: ${JSON.stringify(row)}`);
         }
       }
     }

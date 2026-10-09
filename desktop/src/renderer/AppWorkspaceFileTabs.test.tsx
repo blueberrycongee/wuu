@@ -285,8 +285,8 @@ describe("workspace file tabs", () => {
     });
     await flushAsync();
     const select = async (title: string) => {
-      const button = Array.from(container.querySelectorAll<HTMLButtonElement>(".sidebar button"))
-        .find((entry) => entry.textContent === title);
+      const button = Array.from(container.querySelectorAll(".sidebar .thread-row-title"))
+        .find((entry) => entry.textContent === title)?.closest("button");
       expect(button, title).toBeDefined();
       await act(async () => button!.click());
       await flushAsync();
@@ -374,8 +374,8 @@ describe("workspace file tabs", () => {
     await flushAsync();
     const close = container.querySelector<HTMLButtonElement>('[data-wuu-component="right-sidebar-toggle"]')!;
     await act(async () => close.focus());
-    const select = Array.from(container.querySelectorAll<HTMLButtonElement>(".sidebar button"))
-      .find((entry) => entry.textContent === "Other conversation")!;
+    const select = Array.from(container.querySelectorAll(".sidebar .thread-row-title"))
+      .find((entry) => entry.textContent === "Other conversation")?.closest("button")!;
     expect(select).toBeDefined();
     await act(async () => select.click());
     await flushAsync();

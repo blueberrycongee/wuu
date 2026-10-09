@@ -7,6 +7,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from "react";
 import { SidebarNameDialog } from "./SidebarNameDialog";
 import { confirmAction } from "./ConfirmDialog";
@@ -35,9 +36,38 @@ import {
   ThreadHoverCardContent,
   WorkspaceHoverCardContent,
 } from "./SidebarHoverCard";
+import { formatCompactAge, threadLastActivity } from "./TurnViewHelpers";
 
 function unpinnedThreads(threads: ThreadSummary[]): ThreadSummary[] {
   return threads.filter((thread) => !thread.pinned);
+}
+
+// Row ages share one minute tick, so a sidebar left open stays current
+// without a timer per row.
+const minuteClockListeners = new Set<() => void>();
+let minuteClockNow = Date.now();
+let minuteClockTimer: number | undefined;
+
+function subscribeMinuteClock(listener: () => void): () => void {
+  minuteClockListeners.add(listener);
+  if (minuteClockTimer === undefined) {
+    minuteClockNow = Date.now();
+    minuteClockTimer = window.setInterval(() => {
+      minuteClockNow = Date.now();
+      for (const notify of minuteClockListeners) notify();
+    }, 60_000);
+  }
+  return () => {
+    minuteClockListeners.delete(listener);
+    if (minuteClockListeners.size === 0) {
+      window.clearInterval(minuteClockTimer);
+      minuteClockTimer = undefined;
+    }
+  };
+}
+
+function useMinuteClock(): number {
+  return useSyncExternalStore(subscribeMinuteClock, () => minuteClockNow);
 }
 
 const PROJECT_THREAD_INITIAL_VISIBLE_COUNT = 5;
@@ -762,6 +792,7 @@ function ThreadRows({
   onDropSession?: (project: ThreadSummary, threadID: string) => void;
 }): JSX.Element {
   const { t } = useI18n();
+  const now = useMinuteClock();
   const organization = useSessionOrganizationActions();
   const [contextMenu, setContextMenu] = useState<{
     x: number;
@@ -1018,6 +1049,11 @@ function ThreadRows({
                 onDoubleClick={() => openRenameDialog(thread)}
               >
                 <ThreadRowTitle title={title} />
+                {running || pendingSwitch ? null : (
+                  <span className="thread-row-age" aria-hidden="true">
+                    {formatCompactAge(threadLastActivity(thread), now)}
+                  </span>
+                )}
               </button>
               {forkMarker ? (
                 <Split

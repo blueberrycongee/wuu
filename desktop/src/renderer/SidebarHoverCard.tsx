@@ -23,7 +23,7 @@ import { type HoverRevealLayerProps, useRetainHoverOwner } from "./HoverReveal";
 import { useI18n } from "./i18n";
 import { isProjectCoordinator } from "./ProjectSessions";
 import { LiveDuration } from "./TurnProgress";
-import { formatRelativeTime } from "./TurnViewHelpers";
+import { formatRelativeTime, threadLastActivity } from "./TurnViewHelpers";
 import { UILayerPortal } from "./ui/layers/UILayerHost";
 import { AlertTriangle, Folder, GitBranch, MessageSquare, Project, Split } from "./WuuIcons";
 
@@ -220,7 +220,7 @@ export function ThreadHoverCardContent({
     if (save && next !== title.trim()) onRename?.(thread, next);
   }
   const latestTurn = thread.turns.at(-1);
-  const lastActivity = latestTurn?.completed_at ?? latestTurn?.started_at ?? thread.updated_at;
+  const lastActivity = threadLastActivity(thread);
   const runStartedAt = running && latestTurn?.status === "in_progress" && latestTurn.started_at
     ? Date.parse(latestTurn.started_at)
     : NaN;

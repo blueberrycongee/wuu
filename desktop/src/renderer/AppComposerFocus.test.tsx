@@ -927,8 +927,8 @@ describe("main composer focus continuity", () => {
     expect(container.querySelector('textarea[aria-label="main composer dock"]')).toBeNull();
     await act(async () => { rejectSend(new Error("deferred send failed")); });
     await flushAsync();
-    const source = Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
-      .find(button => button.textContent?.trim() === "focus continuity");
+    const source = Array.from(container.querySelectorAll(".thread-row-title"))
+      .find(title => title.textContent?.trim() === "focus continuity")?.closest("button");
     expect(source).toBeDefined();
     await act(async () => { source!.click(); });
     await flushAsync();
@@ -957,8 +957,8 @@ describe("main composer focus continuity", () => {
     expect(container.querySelector('textarea[aria-label="main composer dock"]')).toBeNull();
     await act(async () => { acknowledge({ ok: true }); });
     await flushAsync();
-    const source = Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
-      .find(button => button.textContent?.trim() === "focus continuity")!;
+    const source = Array.from(container.querySelectorAll(".thread-row-title"))
+      .find(title => title.textContent?.trim() === "focus continuity")?.closest("button")!;
     await act(async () => { source.click(); });
     await flushAsync();
     expect(mainComposer("dock").value).toBe("Recover queue after Skills");
