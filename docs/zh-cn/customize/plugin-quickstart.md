@@ -1,6 +1,46 @@
 # Agent 插件快速上手
 
-本教程为内置 Wuu 引擎添加一个 `greet` 工具。插件以 Node.js 进程运行，返回文本结果。需要 Wuu CLI、Node.js 22 或更高版本，以及与 CLI 匹配的 Wuu 源码检出目录，用于获取 SDK。
+从一个 TypeScript 文件和 Wuu CLI 开始。此路径需要支持 `--experimental-transform-types` 的 Node.js 22.7 或更高版本。Wuu 提供匹配的 SDK，不需要源码检出、npm 安装、manifest 或构建命令。
+
+## 运行一个文件
+
+将以下内容保存为 `hello.ts`：
+
+```ts
+import type { RuntimePlugin } from "@wuu/plugin-sdk";
+
+export default {
+  initialize() {
+    return {
+      tools: [{
+        id: "greet",
+        description: "Return a friendly greeting",
+        input_schema: { type: "object", properties: {}, additionalProperties: false },
+        activity: { read_only: true, concurrency_safe: true, risk: "low" },
+      }],
+    };
+  },
+  executeTool() {
+    return { result: { content: [{ type: "text", text: "Hello from my plugin!" }] } };
+  },
+} satisfies RuntimePlugin;
+```
+
+执行：
+
+```bash
+wuu plugin dev ./hello.ts
+```
+
+此操作授权这个具体文件并监听变化。默认导出遵循公开的 `RuntimePlugin` 契约。Wuu 保存文件快照，检查语法、导入和默认导出，不执行初始化，再发布隔离的开发 generation。修改问候语并保存即可重载。语法、导入或导出失败时保留上次发布的 generation；修复并保存后会自动重试，包括首次加载失败的情况。仍有执行占用当前 generation 时，发布可能推迟。实际宿主随后提供读取阶段服务，负责候选版本的初始化、激活或回滚。发布成功不等于每个已打开会话都已激活新版本，请检查插件的实际状态。
+
+请使用普通 `.ts` 文件，不支持符号链接。单文件路径仅支持 Node 内置模块和 `@wuu/plugin-sdk` 导入。其他本地文件、npm 依赖、JSX 或自定义 `tsconfig` 转换需要下方的插件包流程。直接执行 TypeScript 不进行类型检查。stdout 保留给协议，诊断信息使用 `console.error`。开发授权表示信任这个来源，不会沙箱化代码，也不代表已批准分发包。
+
+源码变化经过防抖，每两秒核对一次，即使文件监听器出错也会继续核对。`--poll 500ms` 可修改这个必须为正数的间隔；`--watch=false` 发布一次后退出。Ctrl+C 停止监听，已发布的开发 generation 仍然可用。可在 Skills & Plugins 中禁用，或使用命令打印的 ID 执行 `wuu plugin disable <id>`。
+
+## 扩展为插件包
+
+需要多个源文件、桌面贡献或分发时，使用插件包。以下示例为内置 Wuu 引擎添加 `greet` 工具，使用与 CLI 匹配的 Wuu 源码目录获取 SDK。
 
 ## 准备 SDK 和插件包
 
@@ -77,7 +117,7 @@ wuu plugin dev .
 
 `validate` 检查包结构。`test` 启动运行时，检查初始化、协议协商、能力描述和工具注册，但不会调用 `greet`，也不能证明工具在会话中的行为正确。
 
-`dev` 授权当前目录，构建候选版本，并发布开发 generation。编辑期间保持它运行；保存后会再次构建。构建或包验证失败时，保留之前发布的 generation。仍有执行占用当前 generation 时，刷新可能推迟。命令成功发布不等于所有桌面或运行时贡献均已成功激活，还应检查插件的实际状态。
+`dev` 授权当前目录，构建候选版本，并发布开发 generation。编辑期间保持它运行；保存后会再次构建。构建或包验证失败时，保留之前发布的 generation，并继续监听修复后的保存。仍有执行占用当前 generation 时，刷新可能推迟。命令成功发布不等于所有桌面或运行时贡献均已成功激活，还应检查插件的实际状态。
 
 打开使用 Wuu 引擎的会话，让它调用问候工具向某个名字打招呼，确认工具结果包含问候语。这一步验证了契约测试未覆盖的实际行为。
 

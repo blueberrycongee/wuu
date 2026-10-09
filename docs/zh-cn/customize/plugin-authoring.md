@@ -188,7 +188,9 @@ Peers 插件通过 `if_running: "steer"` 尽量把终态回执注入当前工作
 
 ## 开发和分发
 
-`wuu plugin create` 生成 `agent`、`desktop` 或 `full` 包骨架。当前开发命令需要包含 `plugin.json` 和 `package.json` 构建脚本的目录。`wuu plugin dev` 重新构建并发布开发 generation，并不是无 manifest 的单 TypeScript 文件加载器。快速上手展示了如何使用匹配的本地 SDK，并打包必要的运行时代码。
+`wuu plugin dev ./extension.ts` 直接运行默认导出实现 `RuntimePlugin` 的单文件。Wuu 提供匹配的 SDK 并在内部生成进程适配器；此开发路径不要求 manifest、安装、打包或构建。需要支持 `--experimental-transform-types` 的 Node.js 22.7 或更高版本，仅支持 Node 内置模块和 `@wuu/plugin-sdk` 导入。每次发布前保存候选快照，检查语法、导入和默认导出；加载失败则保留上次发布的源码。初始化仅在实际宿主中进行，使用其读取阶段服务，并由宿主负责 generation 回滚。完整示例见 [Agent 插件快速上手](plugin-quickstart.md)。
+
+`wuu plugin create` 生成 `agent`、`desktop` 或 `full` 包骨架。对于目录，`wuu plugin dev` 使用其中的 `plugin.json` 和 `package.json` 构建脚本，再发布构建后的开发 generation。两条路径在构建或加载失败后都会继续监听，修复并保存即可恢复，不需要重启。文件事件经过防抖，并定期核对以补偿遗漏；`--poll` 必须为正数。
 
 用 `validate` 检查包结构，`test` 检查可执行初始化和协商描述，再通过真实会话或界面验证行为。`pack` 生成本地 zip，不会上传到 registry。分发前应检查压缩包内容：准备阶段排除 `.git` 和 `node_modules`，不会排除所有可能包含私人数据的本地文件。
 

@@ -1,6 +1,46 @@
 # Agent plugin quickstart
 
-This tutorial adds a `greet` tool to the built-in Wuu engine. The plugin runs as a Node.js process and returns a text result. It needs the Wuu CLI, Node.js 22 or later, and a Wuu source checkout matching your CLI for the SDK.
+Start with one TypeScript file and a Wuu CLI. Node.js 22.7 or later with `--experimental-transform-types` support is required for this path. Wuu supplies its matching SDK; no checkout, npm install, manifest, or build command is needed.
+
+## Run one file
+
+Save this as `hello.ts`:
+
+```ts
+import type { RuntimePlugin } from "@wuu/plugin-sdk";
+
+export default {
+  initialize() {
+    return {
+      tools: [{
+        id: "greet",
+        description: "Return a friendly greeting",
+        input_schema: { type: "object", properties: {}, additionalProperties: false },
+        activity: { read_only: true, concurrency_safe: true, risk: "low" },
+      }],
+    };
+  },
+  executeTool() {
+    return { result: { content: [{ type: "text", text: "Hello from my plugin!" }] } };
+  },
+} satisfies RuntimePlugin;
+```
+
+Run:
+
+```bash
+wuu plugin dev ./hello.ts
+```
+
+This authorizes that exact file and watches it. The default export is the public `RuntimePlugin` contract. Wuu snapshots the file, checks syntax, imports, and the default export without initializing it, and publishes an isolated development generation. Edit the greeting and save to reload. Syntax, import, or export failures retain the last published generation; fixing the file and saving retries automatically, including after an initial failure. An in-flight execution can defer publication. The actual host then initializes the candidate with its read-phase services and owns activation or rollback. Publication does not prove activation in every open conversation; check the plugin's actual status.
+
+Use a regular `.ts` file, not a symlink. Only Node builtins and `@wuu/plugin-sdk` imports are supported in this single-file path. Other local files, npm dependencies, JSX, and custom `tsconfig` transforms need the package workflow below. TypeScript execution does not type-check your code. Keep stdout for the protocol; use `console.error` for diagnostics. Development authorization grants trust to this source; it does not sandbox code or approve a distributed package.
+
+Source changes are debounced and reconciled every two seconds, including after filesystem-watch errors. `--poll 500ms` changes that positive interval; `--watch=false` publishes once and exits. Ctrl+C stops watching, leaving the published development generation available. Disable it through Skills & Plugins or `wuu plugin disable <id>` using the ID printed by the command.
+
+## Grow into a package
+
+For multiple source files, desktop contributions, or distribution, use a package. This example adds a `greet` tool to the built-in Wuu engine using a source checkout matching your CLI for the SDK.
 
 ## Prepare the SDK and package
 
@@ -77,7 +117,7 @@ wuu plugin dev .
 
 `validate` checks the package. `test` starts its runtime and checks initialization, protocol negotiation, capability descriptors, and tool registration; it does not exercise `greet` or prove behavior in a conversation.
 
-`dev` authorizes this directory, builds a candidate, and publishes a development generation. Keep it running while editing. Saves trigger another build; build or package-validation failure leaves the previously published generation in place. Refresh can be deferred while an execution owns the active generation. The command's successful publication is not proof that every desktop or runtime contribution activated successfully—inspect the plugin's actual status too.
+`dev` authorizes this directory, builds a candidate, and publishes a development generation. Keep it running while editing. Saves trigger another build; build or package-validation failure leaves the previously published generation in place and continues watching for a repair. Refresh can be deferred while an execution owns the active generation. The command's successful publication is not proof that every desktop or runtime contribution activated successfully—inspect the plugin's actual status too.
 
 Open a conversation using the Wuu engine and ask it to use the greeting tool for a name. Confirm the tool result says hello. This verifies the behavior that the contract test does not cover.
 

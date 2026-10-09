@@ -21,12 +21,14 @@ const (
 )
 
 // DevAuthorization is the durable, one-time grant for one plugin development
-// directory. Token is never copied into a published generation.
+// source. An empty SourceKind denotes a legacy directory grant. Token is never
+// copied into a published generation.
 type DevAuthorization struct {
-	PluginID  string    `json:"plugin_id"`
-	Directory string    `json:"directory"`
-	Token     string    `json:"token,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
+	PluginID   string    `json:"plugin_id"`
+	Directory  string    `json:"directory"`
+	SourceKind string    `json:"source_kind,omitempty"`
+	Token      string    `json:"token,omitempty"`
+	CreatedAt  time.Time `json:"created_at"`
 }
 
 type devGenerationReceipt struct {

@@ -190,7 +190,9 @@ The `security.authorize` service may further restrict an operation, but cannot r
 
 ## Development and distribution
 
-`wuu plugin create` generates `agent`, `desktop`, or `full` package scaffolds. The current development command expects a directory with `plugin.json` and a `package.json` build script. `wuu plugin dev` rebuilds and publishes development generations; it is not a manifest-free single-TypeScript-file loader. The quickstarts show how to use the matching local SDK and bundle required runtime code.
+`wuu plugin dev ./extension.ts` runs a single file whose default export implements `RuntimePlugin`. Wuu supplies the matching SDK and generates the process adapter internally; manifests, installation, packaging, and builds are optional for this development path. It requires Node.js 22.7 or later with `--experimental-transform-types` support and supports only Node builtins and `@wuu/plugin-sdk` imports. It snapshots each candidate and validates syntax, imports, and its default export before publication, retaining the last published source on loading failure. Initialization runs only in the actual host, with its read-phase services and generation rollback. See the [agent quickstart](plugin-quickstart.md) for a complete example.
+
+`wuu plugin create` generates `agent`, `desktop`, or `full` package scaffolds. For a directory, `wuu plugin dev` uses its `plugin.json` and `package.json` build script, then publishes the built development generation. Both paths keep watching after a failed build/load so fixing and saving recovers without restarting. Filesystem events are debounced, with periodic reconciliation for missed events; `--poll` must be positive.
 
 Use `validate` for package structure, `test` for executable initialization and negotiated descriptors, and real conversations or rendered UI for behavior. `pack` creates a local zip; it does not upload to a registry. Inspect the archive before distributing it: preparation excludes `.git` and `node_modules`, not every local file that might contain private data.
 
