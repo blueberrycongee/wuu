@@ -466,7 +466,7 @@ export type ExtensionPendingUpdate = {
 };
 
 export type ExtensionPluginActivationIssue = {
-  kind: "missing_requirement" | "conflict";
+  kind: "missing_requirement" | "conflict" | "version_mismatch" | "optional_cycle";
   related_plugin_id: string;
 };
 
@@ -504,6 +504,8 @@ export type ExtensionInventoryRecord = {
   runtime_state?: ExtensionRuntimeState;
   last_error?: string;
   requires?: string[];
+  dependencies?: Array<{ id: string; version?: string; optional?: boolean }>;
+  resolved_dependencies?: string[];
   breaks?: string[];
   conflicts?: string[];
   activation_issues?: ExtensionPluginActivationIssue[];

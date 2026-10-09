@@ -63,6 +63,7 @@ function renderContribution(
   props: PluginPresentationProps,
   contribution: RegisteredPresenter,
   fallback: ReactNode,
+  next: import("../../shared/workbench").PresenterProps["next"],
 ): ReactNode {
   const presentationHost = props.controller.createPresentationHostAPI(
     contribution.pluginId,
@@ -88,6 +89,8 @@ function renderContribution(
         snapshot: props.snapshot,
         host: presentationHost,
         fallback,
+        original: props.fallback,
+        next,
       }),
     }),
   );
@@ -101,10 +104,22 @@ export function PluginPresentation(props: PluginPresentationProps): ReactNode {
     [enabled, host, target, presentationKey],
   );
   const presenters = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
-  const replacement = presenters.filter((presenter) => presenter.mode === "replace").at(-1);
-  let content = replacement ? renderContribution(props, replacement, props.fallback) : props.fallback;
-  for (const wrapper of presenters.filter((presenter) => presenter.mode === "wrap")) {
-    content = renderContribution(props, wrapper, content);
-  }
-  return content;
+  // Preserve wrapper nesting and the preferred replacement's precedence. A
+  // presenter only mounts the rest of the chain when it returns next/fallback.
+  const chain = [
+    ...presenters.filter((presenter) => presenter.mode === "wrap").reverse(),
+    ...presenters.filter((presenter) => presenter.mode === "replace").reverse(),
+  ];
+  const draw = (index: number, snapshot: unknown): ReactNode => {
+    const contribution = chain[index];
+    if (contribution === undefined) return props.fallback;
+    const fallback = draw(index + 1, snapshot);
+    return renderContribution(
+      { ...props, snapshot },
+      contribution,
+      fallback,
+      (input) => input === undefined ? fallback : draw(index + 1, input.snapshot),
+    );
+  };
+  return draw(0, props.snapshot);
 }

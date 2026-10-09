@@ -120,11 +120,6 @@ func (s *Server) refreshPluginGenerationIfChanged() error {
 	if s == nil || s.rt == nil || s.rt.WuuHome == "" || s.closed.Load() {
 		return nil
 	}
-	observedEpoch, err := session.ReadPluginGenerationEpoch(s.rt.WuuHome)
-	if err != nil {
-		return err
-	}
-
 	// Take the same local serialization boundary used by mutations before the
 	// cross-process execution lease. Otherwise this watcher can briefly hold a
 	// shared lease while a same-server mutation holds the local mutex, causing
@@ -135,13 +130,25 @@ func (s *Server) refreshPluginGenerationIfChanged() error {
 		return errPluginGenerationRefreshBusy
 	}
 	refreshed := false
+	invalidated := false
 	defer func() {
+		if invalidated && !refreshed {
+			inventory, skills := s.currentExtensionState()
+			if err := s.writeNotification(NotificationPluginInventoryChanged, PluginInventoryChangedNotification{
+				Epoch: s.pluginGenerationEpoch.Load(), ExtensionInventory: inventory, Skills: skills,
+			}); err != nil {
+				providers.DebugLogf("notify invalidated plugin dependencies: %v", err)
+			}
+		}
 		s.pluginGenerationRefreshMu.Unlock()
 		if refreshed {
 			s.retireIdlePluginRuntimes()
 		}
 	}()
-	observedEpoch, err = session.ReadPluginGenerationEpoch(s.rt.WuuHome)
+	// Revoke failed dependencies before an epoch/recovery early return. A pinned
+	// older generation may fail while the current generation remains healthy.
+	invalidated = s.rt.RevokeFailedPluginDependencies()
+	observedEpoch, err := session.ReadPluginGenerationEpoch(s.rt.WuuHome)
 	if err != nil || (observedEpoch == s.pluginGenerationEpoch.Load() && !s.rt.PluginGenerationNeedsRecovery()) {
 		return err
 	}
@@ -202,7 +209,7 @@ func (s *Server) refreshPluginGenerationIfChanged() error {
 		providers.DebugLogf("refresh plugin generation: %v", err)
 	}
 	s.schedulePluginTurnLifecycleReplay()
-	inventory, skills := s.currentExtensionInventory(), s.skillSummaries(s.rt.Skills, s.rt.RootDir)
+	inventory, skills := s.currentExtensionState()
 	refreshed = true
 	// The refresh mutex still serializes local mutations while the shared lease
 	// is dropped and the observed epoch is published.

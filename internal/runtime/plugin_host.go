@@ -23,7 +23,17 @@ func startPluginClient(ctx context.Context, cfg pluginhost.ProcessConfig) (plugi
 func startPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHome, workspaceStateDir string, turnRouter *PluginSessionRouter, userQuestions *pluginhost.UserQuestionBroker) (*pluginhost.Host, *kernelHostServices) {
 	host, kernel, err := buildPluginHost(plugins, projectRoot, workspaceID, wuuHome, workspaceStateDir, nil, startPluginClient, turnRouter, userQuestions)
 	if err != nil {
-		return pluginhost.New(pluginhost.Failed("capability-negotiation", err)), nil
+		// A fatal negotiation closes the entire prepared generation. Preserve
+		// each unavailable runtime and the graph so initial-session consumers
+		// cannot keep their hooks, skills, or MCP servers alive without it.
+		failed := newPluginHostWithRequirements(plugins)
+		for _, item := range plugins {
+			if item.Runtime != nil {
+				failed.Add(pluginhost.Failed(item.ID, err))
+			}
+		}
+		failed.BlockFailedPackageDependencies(context.Background())
+		return failed, nil
 	}
 	if err := activatePluginHost(context.Background(), host); err != nil {
 		providers.DebugLogf("activate initial plugin generation: %v", err)
@@ -39,7 +49,7 @@ func activatePluginHost(ctx context.Context, host *pluginhost.Host) error {
 }
 
 func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHome, workspaceStateDir string, required map[string]bool, start pluginClientStarter, turnRouter *PluginSessionRouter, userQuestions *pluginhost.UserQuestionBroker) (*pluginhost.Host, *kernelHostServices, error) {
-	host := pluginhost.New()
+	host := newPluginHostWithRequirements(plugins)
 	var started []pluginhost.Client
 	kernel := newKernelHostServices(func() uint64 {
 		epoch, err := session.ReadPluginGenerationEpoch(wuuHome)
@@ -64,6 +74,13 @@ func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHo
 		return err
 	}
 	for _, item := range plugins {
+		if dependencyErr := host.PackageDependencyFailures()[item.ID]; dependencyErr != nil {
+			host.Add(pluginhost.Failed(item.ID, dependencyErr))
+			if required[item.ID] {
+				return nil, nil, pluginActivationError(item.ID, dependencyErr, closeStarted())
+			}
+			continue
+		}
 		if item.Runtime == nil {
 			continue
 		}
@@ -113,6 +130,7 @@ func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHo
 		}
 		host.Add(client)
 	}
+	host.BlockFailedPackageDependencies(context.Background())
 	if err := host.ValidateCapabilities(); err != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		closeErr := host.Close(ctx)
@@ -462,4 +480,27 @@ func (p *pluginCompactionProvider) Compact(ctx context.Context, model string, me
 		return nil, fmt.Errorf("plugin compaction returned invalid tool-call history: %w", err)
 	}
 	return compacted, nil
+}
+
+// availablePluginPackages keeps independent declarative features of a failed
+// runtime, but excludes every package whose required runtime is unavailable.
+func availablePluginPackages(plugins []pluginpkg.Plugin, host *pluginhost.Host) []pluginpkg.Plugin {
+	blocked := host.PackageDependencyFailures()
+	available := make([]pluginpkg.Plugin, 0, len(plugins))
+	for _, item := range plugins {
+		if blocked[item.ID] == nil {
+			available = append(available, item)
+		}
+	}
+	return available
+}
+
+func newPluginHostWithRequirements(plugins []pluginpkg.Plugin) *pluginhost.Host {
+	host := pluginhost.New()
+	requirements := make(map[string][]string, len(plugins))
+	for _, item := range plugins {
+		requirements[item.ID] = item.RequiredPluginIDs()
+	}
+	host.SetPackageRequirements(requirements)
+	return host
 }
