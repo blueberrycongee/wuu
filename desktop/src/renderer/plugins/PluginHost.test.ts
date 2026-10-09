@@ -216,6 +216,71 @@ describe("PluginHost", () => {
     expect(document.head.querySelector("style[data-wuu-plugin-id=notes]")).toBeNull();
   });
 
+  it.each(["unload", "replace"])("immediately cleans up a pending generation on %s", async (action) => {
+    const host = new PluginHost({ react: React });
+    const cleanup: string[] = [];
+    let api!: PluginGenerationApi;
+    let finish!: () => void;
+    const gate = new Promise<void>((resolve) => { finish = resolve; });
+    const pending = host.activateGeneration({
+      pluginId: "pending", generation: "one",
+      async register(value) {
+        api = value;
+        api.registerCleanup(() => { cleanup.push("one"); });
+        await gate;
+      },
+    });
+    if (action === "unload") host.unload("pending");
+    else await host.activateGeneration({ pluginId: "pending", generation: "two", register() {} });
+
+    expect(cleanup).toEqual(["one"]);
+    expect(() => api.registerCommand(command("late"))).toThrow("no longer registering");
+    expect(() => api.onHostEvent(() => {})).toThrow("no longer active");
+    finish();
+    await expect(pending).rejects.toThrow("superseded");
+    expect(cleanup).toEqual(["one"]);
+    expect(host.getGenerationDiagnostics("pending", "one")).toEqual([]);
+    host.unload("pending");
+  });
+
+  it.each(["runtime", "workspaces", "threads"])("rejects stale %s results even when the replacement reuses the same fingerprint", async (operation) => {
+    let finish!: () => void;
+    const gate = new Promise<void>((resolve) => { finish = resolve; });
+    const host = new PluginHost({
+      react: React,
+      invokeRuntime: async () => { await gate; return { ok: true }; },
+      listWorkspaces: async () => { await gate; return { workspaces: [] }; },
+      listThreads: async () => { await gate; return []; },
+    });
+    let api!: PluginGenerationApi;
+    await host.activateGeneration({ pluginId: "async", generation: "same", register(value) { api = value; } });
+    const request = operation === "runtime" ? api.invokeRuntime("read")
+      : operation === "workspaces" ? api.listWorkspaces() : api.listThreads("/workspace");
+    await host.activateGeneration({ pluginId: "async", generation: "same", register() {} });
+    finish();
+    await expect(request).rejects.toThrow("no longer active");
+    host.unload("async");
+  });
+
+  it("rejects retained command callbacks after their generation is replaced", async () => {
+    const host = new PluginHost({ react: React });
+    const executed: string[] = [];
+    await host.activateGeneration({ pluginId: "commands", generation: "same", register(api) {
+      api.registerCommand({ id: "run", title: "Run", execute: () => { executed.push("old"); } });
+      api.registerSlot("workspace.header", { id: "label", render: () => "old" });
+    } });
+    const retained = host.getCommands()[0]!;
+    await host.activateGeneration({ pluginId: "commands", generation: "same", register(api) {
+      api.registerCommand({ id: "run", title: "Run", execute: () => { executed.push("new"); } });
+      api.registerSlot("workspace.header", { id: "label", render: () => "new" });
+    } });
+    expect(() => retained.execute()).toThrow("no longer active");
+    host.getCommands()[0]!.execute();
+    expect(executed).toEqual(["new"]);
+    expect(host.getSlotSnapshot("workspace.header")[0]!.render({})).toBe("new");
+    host.unload("commands");
+  });
+
   it("keeps a staged replacement private until its registration callback completes", async () => {
     const host = new PluginHost({ react: React });
     await host.activateGeneration({
@@ -721,6 +786,22 @@ describe("PluginHost", () => {
     expect(() => firstApi?.onHostEvent(() => {})).toThrow("no longer active");
     host.publishHostEvent({ kind: "notification", method: "turn/started" });
     expect(received).toHaveLength(1);
+  });
+
+  it.each(["one", "two"])("ignores delayed render reports from a retired run when replacing with %s", async (generation) => {
+    const host = new PluginHost({ react: React });
+    const register = (api: PluginGenerationApi) => {
+      api.registerSlot("composer.above", contribution("status"));
+    };
+    await host.activateGeneration({ pluginId: "render", generation: "one", register });
+    const retired = host.getSlotSnapshot("composer.above")[0]!;
+    await host.activateGeneration({ pluginId: "render", generation, register });
+    host.recordRenderFailure(retired, { slotId: "composer.above" }, new Error("late failure"));
+    expect(host.getGenerationDiagnostics("render", "one")).toEqual([]);
+    const current = host.getSlotSnapshot("composer.above")[0]!;
+    host.recordRenderFailure(current, { slotId: "composer.above" }, new Error("current failure"));
+    expect(host.getGenerationDiagnostics("render", generation)).toHaveLength(1);
+    host.unload("render");
   });
 
   it("deduplicates repeated diagnostics and clears them after a successful reactivation", async () => {

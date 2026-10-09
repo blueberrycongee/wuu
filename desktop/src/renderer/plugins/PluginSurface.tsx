@@ -22,6 +22,7 @@ export interface PluginSurfaceProps {
 }
 
 interface SurfaceBoundaryProps {
+  activation: object | undefined;
   host: PluginHost;
   surfaceId: PluginSurfaceId;
   contribution: RegisteredPluginSurfaceContribution;
@@ -45,6 +46,12 @@ class SurfaceBoundary extends Component<SurfaceBoundaryProps, SurfaceBoundarySta
   componentDidCatch(error: unknown, _errorInfo: ErrorInfo): void {
     const { contribution, host, surfaceId } = this.props;
     host.recordRenderFailure(contribution, { surfaceId }, error);
+  }
+
+  componentDidUpdate(previous: SurfaceBoundaryProps): void {
+    if (this.state.failed && previous.activation !== this.props.activation) {
+      this.setState({ failed: false });
+    }
   }
 
   render(): ReactNode {
@@ -77,6 +84,7 @@ function renderContribution(
       key: `${contribution.pluginId}:${contribution.generation}:${contribution.id}`,
       host,
       surfaceId,
+      activation: host.getGenerationActivation(contribution.pluginId, contribution.generation),
       contribution,
       fallback,
     },

@@ -65,6 +65,26 @@ describe("DesktopPluginRuntime", () => {
     await runtime.sync([]);
   });
 
+  it.each(["disable", "safe-mode"])("removes active contributions before conflict preferences settle on %s", async (action) => {
+    const cleanup = vi.fn();
+    installDesktopModuleLoader(vi.fn(async ({ id, fingerprint }) => ({
+      id, fingerprint, digest: "a".repeat(64), url: "wuu-plugin://module/demo.js",
+    })));
+    const host = new PluginHost({ react: React });
+    const runtime = new DesktopPluginRuntime(host, async () => ({
+      activate(api: { registerCleanup(fn: () => void): void }) { api.registerCleanup(cleanup); },
+    }));
+    const plugin = inventoryPlugin();
+    await runtime.sync([plugin]);
+    let finish!: (value: Record<string, string>) => void;
+    window.wuu!.getPluginConflictPreferences = vi.fn(() => new Promise<Record<string, string>>((resolve) => { finish = resolve; }));
+    const pending = runtime.sync(action === "disable" ? [{ ...plugin, enabled: false }] : [plugin], action === "safe-mode");
+    expect(cleanup).toHaveBeenCalledTimes(1);
+    expect(host.isGenerationActive(plugin.id, plugin.fingerprint!)).toBe(false);
+    finish({});
+    expect(await pending).toEqual([]);
+  });
+
   it("does not activate an in-flight module after entering safe mode", async () => {
     let finishRead!: (value: Awaited<ReturnType<WuuDesktopApi["loadPluginDesktopModule"]>>) => void;
     let started!: () => void;
@@ -87,6 +107,43 @@ describe("DesktopPluginRuntime", () => {
     finishRead({ id: plugin.id, fingerprint: plugin.fingerprint!, digest: "a".repeat(64), url: "wuu-plugin://module/demo.js" });
     expect(await pending).toEqual([]);
     expect(activate).not.toHaveBeenCalled();
+  });
+
+  it.each(["import", "register"])("keeps the last working generation after replacement %s fails", async (failure) => {
+    installDesktopModuleLoader(vi.fn(async ({ id, fingerprint }) => ({
+      id, fingerprint, digest: "a".repeat(64), url: `wuu-plugin://module/${fingerprint}.js`,
+    })));
+    const cleanup = vi.fn();
+    const load = vi.fn(async (url: string) => {
+      if (url.includes("fingerprint-two")) {
+        if (failure === "import") throw new Error("replacement import failed");
+        return { activate() { throw new Error("replacement registration failed"); } };
+      }
+      return { activate(api: {
+        registerCleanup(fn: () => void): void;
+        registerCommand(command: { id: string; title: string; execute(): string }): unknown;
+      }) {
+        api.registerCleanup(cleanup);
+        api.registerCommand({ id: "working", title: "Working", execute: () => "last good" });
+      } };
+    });
+    const host = new PluginHost({ react: React });
+    const runtime = new DesktopPluginRuntime(host, load);
+    const plugin = inventoryPlugin();
+    expect(await runtime.sync([plugin])).toEqual([]);
+    const replacement = { ...plugin, fingerprint: "fingerprint-two" };
+    expect(await runtime.sync([replacement])).toEqual([
+      expect.objectContaining({ pluginId: plugin.id, fingerprint: "fingerprint-two" }),
+    ]);
+    expect(cleanup).not.toHaveBeenCalled();
+    expect(host.isGenerationActive(plugin.id, plugin.fingerprint!)).toBe(true);
+    expect(host.getCommands()[0]!.execute()).toBe("last good");
+    // Returning to the working inventory does not activate an already live run again.
+    expect(await runtime.sync([plugin])).toEqual([]);
+    expect(load).toHaveBeenCalledTimes(2);
+    await runtime.sync([replacement], true);
+    expect(cleanup).toHaveBeenCalledTimes(1);
+    expect(host.getCommands()).toEqual([]);
   });
 
   it("keeps activation failures isolated", async () => {

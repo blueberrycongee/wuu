@@ -83,9 +83,6 @@ export class DesktopPluginRuntime {
     safeMode = false,
   ): Promise<readonly DesktopPluginFailure[]> {
     const epoch = ++this.syncEpoch;
-    const preferences = await window.wuu?.getPluginConflictPreferences?.();
-    if (epoch !== this.syncEpoch) return [];
-    if (preferences) this.host.setConflictPreferences(preferences);
     const desired = new Map(
       (safeMode ? [] : inventory)
         .filter(isLoadableDesktopPlugin)
@@ -107,6 +104,11 @@ export class DesktopPluginRuntime {
         this.activeGenerations.delete(pluginId);
       }
     }
+
+    // Disabling a plugin must take effect even while unrelated preferences are loading.
+    const preferences = await window.wuu?.getPluginConflictPreferences?.();
+    if (epoch !== this.syncEpoch) return [];
+    if (preferences) this.host.setConflictPreferences(preferences);
 
     const failures: DesktopPluginFailure[] = [];
     for (const plugin of desired.values()) {
@@ -143,11 +145,7 @@ export class DesktopPluginRuntime {
         if (epoch !== this.syncEpoch || error instanceof PluginGenerationSupersededError) {
           continue;
         }
-        const active = this.activeGenerations.get(plugin.id);
-        if (active && active !== fingerprint) {
-          this.host.unload(plugin.id);
-          this.activeGenerations.delete(plugin.id);
-        }
+        // Failed staging leaves the previous generation live; only inventory removal disables it.
         failures.push({ pluginId: plugin.id, fingerprint, error });
       }
     }

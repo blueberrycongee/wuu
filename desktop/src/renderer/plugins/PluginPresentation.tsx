@@ -27,6 +27,7 @@ export interface PluginPresentationProps {
 const EMPTY_PRESENTERS: readonly RegisteredPresenter[] = Object.freeze([]);
 
 interface BoundaryProps {
+  activation: object | undefined;
   host: PluginHost;
   contribution: RegisteredPresenter;
   fallback: ReactNode;
@@ -39,6 +40,12 @@ class PresentationBoundary extends Component<BoundaryProps, { failed: boolean }>
   componentDidCatch(error: unknown, _info: ErrorInfo): void {
     this.props.host.recordPresenterFailure(this.props.contribution, error);
   }
+  componentDidUpdate(previous: BoundaryProps): void {
+    if (this.state.failed && previous.activation !== this.props.activation) {
+      this.setState({ failed: false });
+    }
+  }
+
   render(): ReactNode { return this.state.failed ? this.props.fallback : this.props.children; }
 }
 
@@ -68,6 +75,7 @@ function renderContribution(
     {
       key: `${contribution.pluginId}:${contribution.generation}:${contribution.id}`,
       host: props.host,
+      activation: props.host.getGenerationActivation(contribution.pluginId, contribution.generation),
       contribution,
       fallback,
     },

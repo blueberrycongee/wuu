@@ -19,6 +19,7 @@ export interface PluginConversationCardsProps {
 }
 
 class ConversationCardBoundary extends Component<{
+  activation: object | undefined;
   card: RegisteredConversationCard;
   host: PluginHost;
   fallback: ReactNode;
@@ -32,6 +33,12 @@ class ConversationCardBoundary extends Component<{
 
   componentDidCatch(error: unknown, _info: ErrorInfo): void {
     this.props.host.recordConversationCardFailure(this.props.card, error);
+  }
+
+  componentDidUpdate(previous: { activation: object | undefined }): void {
+    if (this.state.failed && previous.activation !== this.props.activation) {
+      this.setState({ failed: false });
+    }
   }
 
   render(): ReactNode {
@@ -97,6 +104,7 @@ export function PluginConversationCards({
             </header>
             <div className="plugin-conversation-card-content">
               <ConversationCardBoundary
+                activation={host.getGenerationActivation(card.pluginId, card.generation)}
                 card={card}
                 fallback={<div className="plugin-conversation-card-error">{t("pluginCard.renderFailed")}</div>}
                 host={host}
