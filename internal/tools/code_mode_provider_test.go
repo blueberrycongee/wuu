@@ -90,7 +90,7 @@ func TestCodeModeLargeCatalogCanStreamAcrossProviders(t *testing.T) {
 						tool.Name, tool.Description = tool.Function.Name, tool.Function.Description
 					}
 					direct[tool.Name] = true
-					if tool.Name != "run_code" && tool.Name != "new_context" && tool.Name != "set_session_workspace" && tool.Name != "write_file" && tool.Name != "edit_file" {
+					if tool.Name != "run_code" && tool.Name != "new_context" && tool.Name != "set_session_workspace" && tool.Name != "write_file" && tool.Name != "edit_file" && tool.Name != "read_file" && tool.Name != "bash" && tool.Name != "process" {
 						t.Errorf("ordinary tool leaked at top level: %s", tool.Name)
 					}
 					if tool.Name == "run_code" {

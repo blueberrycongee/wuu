@@ -618,10 +618,10 @@ func (s *Service) Run(parent context.Context, request RunRequest, opts RunOption
 				reply := map[string]any{"id": id, "error": message}
 				if callErr == nil {
 					reply["value"] = value
-					// Select one representation before the program's output budget.
-					// Keep the canonical value (including its compact view) intact.
+					// Ordinary emission uses producer data before the program output budget.
+					// Keep explicit compact views for replaying previously recorded programs.
 					display := value
-					if request.ResultView == ResultViewData {
+					if request.ResultView != ResultViewCompact {
 						display.ModelText = nil
 						if len(display.StructuredContent) > 0 {
 							display.Content = nil

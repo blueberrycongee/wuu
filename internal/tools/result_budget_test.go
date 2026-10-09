@@ -42,7 +42,11 @@ func TestGenericResultPagesRecoverUnicodeAndSurviveCallIDReuse(t *testing.T) {
 	var recovered strings.Builder
 	pageText := settled.TextProjection()
 	for pages := 0; ; pages++ {
-		if pages > 200 || !utf8.ValidString(pageText) || estimateResultTokens(pageText) > defaultProjectionTokenBudget {
+		budget := readFileProjectionTokenBudget
+		if pages == 0 {
+			budget = defaultProjectionTokenBudget
+		}
+		if pages > 200 || !utf8.ValidString(pageText) || estimateResultTokens(pageText) > budget {
 			t.Fatal("page exceeded its budget or failed to advance")
 		}
 		page := parseOut(t, pageText)

@@ -258,10 +258,10 @@ func (t *Toolkit) CloneForRoot(rootDir string) (*Toolkit, error) {
 		abs = ev
 	}
 	// Build a fresh Env from the source toolkit's configured dependencies.
-	// We must NOT do `env := *t.env`: Env embeds testRunState, which holds a
+	// We must NOT do `env := *t.env`: Env embeds webEvidenceState, which holds a
 	// sync.RWMutex, and the sync package contract forbids copying a Mutex or
 	// RWMutex after first use (go vet's copylocks analyzer enforces this).
-	// The lock-bearing per-session state fields (readState, testState,
+	// The lock-bearing per-session state fields (readState,
 	// webState, toolTelemetry, gitAttributionShell) stay zero so each cloned session
 	// owns independent mutable state, matching the original intent.
 	env := Env{

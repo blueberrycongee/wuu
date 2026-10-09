@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -134,5 +135,42 @@ func TestBashRunTimeoutPromotesToBackground(t *testing.T) {
 	}
 	if stopped.Status != proc.StatusStopped {
 		t.Fatalf("promoted process should stop cleanly: %+v", stopped)
+	}
+}
+
+func TestBashPromotedVerificationRemainsPending(t *testing.T) {
+	root := t.TempDir()
+	runner := filepath.Join(root, "node_modules", ".bin", "vitest")
+	mustWriteFile(t, runner, "#!/bin/sh\nprintf 'partial\\n'\nsleep 30\n")
+	if err := os.Chmod(runner, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	kit := newShellTestToolkit(t, root)
+	kit.SetSessionID("thread-pending-verification")
+	manager, err := proc.NewManager(root, filepath.Join(t.TempDir(), "runtime"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = manager.CleanupSession() }()
+	kit.SetProcessManager(manager)
+	resp, err := executeEnvelope(kit, context.Background(), providers.ToolCall{
+		Name: "bash", Arguments: `{"command":"npx vitest --run","timeout_seconds":1}`,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result shellExecutionResult
+	if err := json.Unmarshal([]byte(resp), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.PromotedProcessID == "" {
+		t.Fatalf("verification must continue as a managed process: %s", resp)
+	}
+	record, err := manager.Get(result.PromotedProcessID)
+	if err != nil || record.Status != proc.StatusRunning {
+		t.Fatalf("verification must still be running: %+v, %v", record, err)
+	}
+	if result.Verification != nil {
+		t.Error("a running verification must not acquire a completed verdict")
 	}
 }

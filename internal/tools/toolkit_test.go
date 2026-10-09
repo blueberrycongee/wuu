@@ -156,7 +156,7 @@ func TestToolkit_WriteAndReadFile(t *testing.T) {
 		} `json:"range"`
 		OmittedRanges []map[string]int `json:"omitted_ranges"`
 	}
-	if err := json.Unmarshal([]byte(readResp), &readParsed); err != nil {
+	if err := decodeReadModelView(readResp, &readParsed); err != nil {
 		t.Fatalf("parse read response: %v", err)
 	}
 	if !strings.HasPrefix(readParsed.WorkspaceRevision, "fs:worktree:") {
@@ -166,23 +166,15 @@ func TestToolkit_WriteAndReadFile(t *testing.T) {
 		t.Fatalf("unexpected read range metadata: %+v", readParsed)
 	}
 
-	unchangedResp, err := kit.Execute(context.Background(), providers.ToolCall{
+	repeatedResp, err := kit.Execute(context.Background(), providers.ToolCall{
 		Name:      "read_file",
 		Arguments: `{"path":"dir/a.txt"}`,
 	})
 	if err != nil {
 		t.Fatalf("second read_file: %v", err)
 	}
-	var unchangedParsed struct {
-		WorkspaceRevision string   `json:"workspace_revision"`
-		Unchanged         bool     `json:"unchanged"`
-		Suggestions       []string `json:"next_suggestions"`
-	}
-	if err := json.Unmarshal([]byte(unchangedResp), &unchangedParsed); err != nil {
-		t.Fatalf("parse unchanged read response: %v", err)
-	}
-	if !unchangedParsed.Unchanged || unchangedParsed.WorkspaceRevision == "" || len(unchangedParsed.Suggestions) == 0 {
-		t.Fatalf("unexpected unchanged read metadata: %+v", unchangedParsed)
+	if repeatedResp != readResp {
+		t.Fatalf("explicit reread must retain the same content and range: %s", repeatedResp)
 	}
 }
 
@@ -208,7 +200,7 @@ func TestToolkit_ReadFileAllowsSessionArtifactRefs(t *testing.T) {
 		Path    string `json:"path"`
 		Content string `json:"content"`
 	}
-	if err := json.Unmarshal([]byte(readResp), &parsed); err != nil {
+	if err := decodeReadModelView(readResp, &parsed); err != nil {
 		t.Fatalf("parse read response: %v", err)
 	}
 	if parsed.Path != "$SESSION_DIR/harness/artifacts/worker-1/result.md" || !strings.Contains(parsed.Content, "artifact result") {
@@ -385,7 +377,7 @@ func TestToolkit_ReadFileStreamsLargeFileRange(t *testing.T) {
 		Truncated     bool             `json:"truncated"`
 		OmittedRanges []map[string]int `json:"omitted_ranges"`
 	}
-	if err := json.Unmarshal([]byte(resp), &parsed); err != nil {
+	if err := decodeReadModelView(resp, &parsed); err != nil {
 		t.Fatalf("parse response: %v", err)
 	}
 	if parsed.NumLines != 3 || parsed.StartLine != 3001 || parsed.TotalLines != 5000 || !parsed.Truncated {
@@ -427,7 +419,7 @@ func TestToolkit_ReadFileStreamsLargeFileRange(t *testing.T) {
 		} `json:"range"`
 		NumLines int `json:"num_lines"`
 	}
-	if err := json.Unmarshal([]byte(rangeResp), &rangeParsed); err != nil {
+	if err := decodeReadModelView(rangeResp, &rangeParsed); err != nil {
 		t.Fatalf("parse range response: %v", err)
 	}
 	if rangeParsed.NumLines != 3 || rangeParsed.Range.StartLine != 42 || rangeParsed.Range.EndLine != 44 {
@@ -614,7 +606,7 @@ func TestToolkit_ReadThenEditPreservesLineEndings(t *testing.T) {
 			var excerpt struct {
 				Content string `json:"content"`
 			}
-			if err := json.Unmarshal([]byte(read), &excerpt); err != nil {
+			if err := decodeReadModelView(read, &excerpt); err != nil {
 				t.Fatal(err)
 			}
 			lines := strings.Split(strings.TrimSuffix(excerpt.Content, "\n"), "\n")
@@ -1841,4 +1833,22 @@ func TestToolkit_GrepIncludeMatchesRelativePaths_Ripgrep(t *testing.T) {
 	if len(parsed.Matches) != 1 || parsed.Matches[0].File != "src/app/main.ts" {
 		t.Fatalf("unexpected matches for src/**/*.ts: %+v", parsed.Matches)
 	}
+}
+
+// Decode the model observation independently of the canonical rich result.
+func decodeReadModelView(view string, out any) error {
+	header, content, rendered := strings.Cut(view, "\n")
+	if !rendered {
+		return json.Unmarshal([]byte(view), out)
+	}
+	var metadata map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(header), &metadata); err != nil {
+		return err
+	}
+	metadata["content"], _ = json.Marshal(content)
+	data, err := json.Marshal(metadata)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(data, out)
 }

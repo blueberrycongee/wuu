@@ -48,24 +48,18 @@ func TestCodeModeReadFileProjectedContinuation(t *testing.T) {
 	defer runtime.Cancel()
 	// A non-default starting line and bounded range catch replay, gaps, and
 	// continuation accidentally escaping the original request.
-	source := `let args = {path: "records.txt", offset: 51, limit: 400};
- let expected = 51, pages = 0;
- while (args) {
-   const result = await tools.read_file(args);
-   if (pages === 0 && JSON.parse(result.content[0].text).num_lines !== 400) throw new Error("raw binding result was truncated");
-   const page = JSON.parse(result.model_text ?? result.content[0].text);
-   const lines = page.content.trimEnd().split("\n");
-   if (page.start_line !== expected || page.num_lines !== lines.length) throw new Error("bad page metadata");
-   for (const line of lines) {
-     const match = line.match(/^\s*(\d*)\|record-(\d+) x+$/);
-     if (!match || (match[1] && Number(match[1]) !== expected) || Number(match[2]) !== expected) throw new Error("gap or duplicate at " + expected);
-     expected++;
-   }
-   if (page.range.end_line !== expected - 1) throw new Error("bad range");
-   args = page.continuation?.has_more ? page.continuation.next : null;
-   if (++pages > 100) throw new Error("continuation did not terminate");
+	source := `const result = await tools.read_file({path:"records.txt",offset:51,limit:400});
+ const original = result.content[0].text;
+ if (JSON.parse(original).num_lines !== 400) throw Error("canonical range changed");
+ let page = JSON.parse(result.model_text), recovered = "", pages = 0;
+ while (true) {
+   recovered += page.content;
+   if (++pages > 100) throw Error("continuation did not terminate");
+   if (!page.continuation?.has_more) break;
+   const next = await tools.read_file(page.continuation.next);
+   page = JSON.parse(next.content[0].text);
  }
- if (pages < 2 || expected !== 451) throw new Error("incomplete requested range: pages=" + pages + " next=" + expected);
+ if (pages < 2 || recovered !== original) throw Error("recovery lost or duplicated bytes");
  console.log("READ_CONTINUATION_OK");`
 	args, _ := json.Marshal(map[string]any{"code": source, "description": "Read continuation"})
 	messages, err := runtime.ExecuteFinalCalls(ctx, []providers.ToolCall{{ID: "read-run", Name: "run_code", Arguments: string(args)}}, nil)

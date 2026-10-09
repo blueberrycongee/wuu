@@ -52,11 +52,11 @@ func searchFixtureKit(t *testing.T, root, session string) *Toolkit {
 
 func searchFixtureCall(t *testing.T, kit *Toolkit, name string, args map[string]any) string {
 	t.Helper()
-	out, err := kit.Execute(context.Background(), providers.ToolCall{Name: name, Arguments: mustMarshalMap(args)})
+	out, err := kit.ExecuteResult(context.Background(), providers.ToolCall{Name: name, Arguments: mustMarshalMap(args)})
 	if err != nil {
-		t.Fatalf("%s: %v\n%s", name, err, out)
+		t.Fatalf("%s: %v\n%s", name, err, out.TextProjection())
 	}
-	return out
+	return out.Content[0].Text
 }
 
 type searchFixturePage struct {

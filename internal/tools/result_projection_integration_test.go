@@ -20,60 +20,26 @@ func ptrToolResult(text string) *toolresult.Result {
 }
 
 func TestFileMutationProjectionPreservesRecoveryAndWarnings(t *testing.T) {
-	for _, tool := range []string{"edit_file", "write_file"} {
-		t.Run(tool, func(t *testing.T) {
-			kit, err := New(t.TempDir())
-			if err != nil {
-				t.Fatal(err)
-			}
-			kit.env.SessionDir = t.TempDir()
-			kit.env.ToolResultProjectionMode = "active"
-			t.Setenv(projectionModeEnvVar, "")
-			action := "edit"
-			if tool == "write_file" {
-				action = "overwrite"
-			}
-			payload, err := json.Marshal(map[string]any{
-				"action": action, "path": "worker.go", "new_file_sha": "sha256:new",
-				"workspace_revision": "fs:updated", "contract_warning": "Retain the existing contract check.",
-				"next_suggestions": []string{"Inspect the warning before proceeding."},
-				"diff": map[string]any{"hunks": []any{map[string]any{"old_start": 1, "new_start": 1,
-					"lines": []any{map[string]any{"op": "insert", "content": strings.Repeat("already sent source ", 80)}}}}},
-			})
-			if err != nil {
-				t.Fatal(err)
-			}
-			raw := toolresult.FromText(string(payload))
-			call := providers.ToolCall{ID: "mutation", Name: tool, Arguments: `{}`}
-			got := kit.FinalizeToolResult(call, raw)
-			var view map[string]any
-			if err := json.Unmarshal([]byte(got.TextProjection()), &view); err != nil {
-				t.Fatal(err)
-			}
-			if view["path"] != "worker.go" || view["contract_warning"] != "Retain the existing contract check." || view["new_file_sha"] != "sha256:new" {
-				t.Fatalf("mutation evidence or warning lost: %v", view)
-			}
-			if strings.Contains(got.TextProjection(), "already sent source") || got.Content[0].Text != string(payload) {
-				t.Fatal("diff was duplicated in the view or removed from canonical content")
-			}
-			projection, ok := view["projection"].(map[string]any)
-			if !ok {
-				t.Fatal("missing recovery metadata")
-			}
-			ref, _ := projection["artifact_ref"].(string)
-			recovered, err := os.ReadFile(ref)
-			if err != nil || !bytes.Equal(recovered, payload) {
-				t.Fatalf("full diff is not recoverable: %v", err)
-			}
-			if again := kit.FinalizeToolResult(call, got); !reflect.DeepEqual(again, got) {
-				t.Fatal("settled mutation observation changed on replay")
-			}
-			failure := toolresult.FromErrorText("old_text_not_found: read the current file before retrying")
-			failed := kit.FinalizeToolResult(call, failure)
-			if !failed.IsError || failed.TextProjection() != failure.TextProjection() {
-				t.Fatal("mutation failure diagnosis was hidden")
-			}
-		})
+	for _, name := range []string{"edit_file", "write_file"} {
+		kit, err := New(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		kit.SetSessionDir(t.TempDir())
+		payload := `{"action":"edit","path":"worker.go","contract_warning":"retain warning","diff":{"lines":["literal source"]}}`
+		raw := toolresult.FromText(payload)
+		call := providers.ToolCall{ID: "mutation", Name: name, Arguments: `{}`}
+		got := kit.FinalizeToolResult(call, raw)
+		if got.TextProjection() != payload || !reflect.DeepEqual(got.Content, raw.Content) {
+			t.Fatal("mutation evidence changed")
+		}
+		if again := kit.FinalizeToolResult(call, got); !reflect.DeepEqual(again, got) {
+			t.Fatal("settled mutation changed on replay")
+		}
+		raw.IsError = true
+		if failed := kit.FinalizeToolResult(call, raw); !failed.IsError || failed.TextProjection() != payload {
+			t.Fatal("failure evidence lost")
+		}
 	}
 }
 
@@ -158,44 +124,6 @@ func TestChokePoint_ModeOff_UsesGenericBudgetNoDiagnostics(t *testing.T) {
 	}
 }
 
-func TestChokePoint_ModeShadow_MeasuresButDoesNotApply(t *testing.T) {
-	call, text, records := runFakeList(t, "shadow")
-	assertGenericContinuation(t, text)
-	rec := recordFor(records, call.ID)
-	if rec == nil || rec.Projection == nil {
-		t.Fatalf("shadow mode must record projection diagnostics")
-	}
-	if !rec.Projection.Applied {
-		t.Fatalf("shadow diagnostics should show the projection would apply: %+v", rec.Projection)
-	}
-	if rec.Projection.ProjectionHash == "" || rec.Projection.OriginalHash == "" {
-		t.Fatalf("shadow diagnostics must carry content hashes for stability tracking")
-	}
-}
-
-func TestChokePoint_ModeActive_AppliesBoundedProjection(t *testing.T) {
-	call, text, records := runFakeList(t, "active")
-	if !strings.HasPrefix(strings.TrimSpace(text), "{") {
-		t.Fatalf("active mode must return the projected JSON envelope, got: %s", snip(text, 80))
-	}
-	if got := estimateResultTokens(text); got > defaultProjectionTokenBudget {
-		t.Fatalf("active projection over budget: %d tokens", got)
-	}
-	if !strings.Contains(text, "projection") || !strings.Contains(text, "artifact_ref") {
-		t.Fatalf("active projection must reference its artifact")
-	}
-	rec := recordFor(records, call.ID)
-	if rec == nil || rec.Projection == nil || !rec.Projection.Applied {
-		t.Fatalf("active mode must record an applied projection: %+v", rec)
-	}
-	if rec.Projection.ProjectedTokens >= rec.Projection.OriginalTokens {
-		t.Fatalf("active projection must reduce tokens: %+v", rec.Projection)
-	}
-	if rec.ResultRef == "" {
-		t.Fatalf("active projection must record a recovery ref")
-	}
-}
-
 type fakeBashTool struct{ text string }
 
 func (f fakeBashTool) Name() string { return "bash" }
@@ -233,19 +161,20 @@ func TestChokePoint_OverBudgetBashUsesGenericSettlement(t *testing.T) {
 	}
 	assertGenericContinuation(t, returned.TextProjection())
 	rec := recordFor(kit.ToolTelemetry(), call.ID)
-	if rec == nil || rec.Projection == nil || rec.Projection.Applied {
+	if rec == nil || rec.Projection != nil || !rec.ResultBudgeted {
 		t.Fatalf("over-budget bash must fail open into generic settlement: %+v", rec)
 	}
 	archived, err := os.ReadFile(parseOut(t, returned.TextProjection())["artifact_ref"].(string))
-	if err != nil || string(archived) != raw {
+	fullView, _, ok := renderBashModelView(raw, 0)
+	if err != nil || !ok || string(archived) != fullView || returned.Content[0].Text != raw {
 		t.Fatalf("generic archive lost original evidence: %v", err)
 	}
 	// A file cannot serve as the session directory: archival must fail open
-	// without settling the oversized text.
+	// without discarding any of the terminal output.
 	kit.env.SessionDir = parseOut(t, returned.TextProjection())["artifact_ref"].(string)
 	input := toolresult.FromText(raw)
-	if got := kit.FinalizeToolResult(call, input); !reflect.DeepEqual(got, input) {
-		t.Fatal("archival failure changed the original result")
+	if got := kit.FinalizeToolResult(call, input); got.TextProjection() != fullView || !reflect.DeepEqual(got.Content, input.Content) {
+		t.Fatal("archival failure lost terminal output or the audit payload")
 	}
 }
 
@@ -258,16 +187,8 @@ func TestBashViewModesAndEligibility(t *testing.T) {
 			raw.StructuredContent = json.RawMessage(`{"stdout":"private program data"}`)
 			kit := &Toolkit{env: &Env{ToolResultProjectionMode: mode}}
 			got, _, budgeted, diag := kit.finalizeToolResult(providers.ToolCall{Name: "bash"}, raw)
-			if mode == "off" {
-				if diag != nil {
-					t.Fatal("off mode computed projection")
-				}
-			} else if diag == nil || diag.Reason != reasonRendered {
-				t.Fatalf("missing view diagnostics: %+v", diag)
-			}
-			rendered := got.TextProjection() == "ok\nwarning"
-			if rendered != (mode == "active") || (mode != "active" && got.TextProjection() != raw.TextProjection()) {
-				t.Fatalf("projection mode %s changed the wrong model text: %q", mode, got.TextProjection())
+			if diag != nil || got.TextProjection() != "ok\nwarning" || !reflect.DeepEqual(got.Content, raw.Content) {
+				t.Fatalf("legacy mode %s changed canonical output: %q", mode, got.TextProjection())
 			}
 			if budgeted {
 				t.Fatal("a complete view must not advertise omitted evidence")
@@ -315,7 +236,7 @@ func TestBashViewSurvivesStorageAndRequestPreparation(t *testing.T) {
 		t.Fatal("execution did not settle the view separately from the producer payload")
 	}
 	record := recordFor(kit.ToolTelemetry(), call.ID)
-	if record == nil || record.Projection == nil || !record.Projection.Applied || record.Projection.Reason != reasonRendered {
+	if record == nil || record.Projection != nil {
 		t.Fatalf("execution did not record view diagnostics: %+v", record)
 	}
 	if record.ResultBudgeted || record.ResultRef != "" {
@@ -365,29 +286,45 @@ func TestBashViewSurvivesStorageAndRequestPreparation(t *testing.T) {
 	}
 }
 
-func TestChokePoint_EnvOverrideBeatsConfiguredMode(t *testing.T) {
-	t.Setenv(projectionModeEnvVar, "active")
+func TestCommandReceiptPreservesExecutionAndProgramData(t *testing.T) {
 	kit, err := New(t.TempDir())
 	if err != nil {
-		t.Fatalf("New: %v", err)
+		t.Fatal(err)
 	}
-	kit.env.SessionDir = t.TempDir()
-	kit.env.ToolResultProjectionMode = "off" // env override should win
-	call := providers.ToolCall{ID: "c", Name: "list_files", Arguments: "{}"}
-	returned, err := kit.executeKnownToolResult(
-		context.Background(), call, fakeListTool{text: listEnvelope(3000)})
+	kit.SetSessionDir(t.TempDir())
+	call := providers.ToolCall{ID: "receipt", Name: "bash", Arguments: `{"command":"printf 'receipt-out\\n'; printf 'receipt-err\\n' >&2; exit 7"}`}
+	result, err := kit.ExecuteResult(context.Background(), call)
 	if err != nil {
-		t.Fatalf("execute: %v", err)
+		t.Fatal(err)
 	}
-	if !strings.HasPrefix(strings.TrimSpace(returned.TextProjection()), "{") {
-		t.Fatalf("env override to active did not take effect: %s", snip(returned.TextProjection(), 80))
+	view := result.TextProjection()
+	if strings.Count(view, "receipt-out") != 1 || strings.Count(view, "receipt-err") != 1 || !strings.Contains(view, "Exit code 7") || strings.Contains(view, "printf") {
+		t.Fatalf("terminal receipt repeats command/output or loses exit status: %q", view)
+	}
+	var data struct {
+		Stdout     string `json:"stdout"`
+		Stderr     string `json:"stderr"`
+		ExitCode   int    `json:"exit_code"`
+		FullLogRef string `json:"full_log_ref"`
+	}
+	if err := json.Unmarshal(result.StructuredContent, &data); err != nil {
+		t.Fatal(err)
+	}
+	if data.Stdout != "receipt-out\n" || data.Stderr != "receipt-err\n" || data.ExitCode != 7 || data.FullLogRef == "" {
+		t.Fatalf("program data lost: %+v", data)
+	}
+	log, err := os.ReadFile(data.FullLogRef)
+	if err != nil || !strings.Contains(string(log), "receipt-out") || !strings.Contains(string(log), "receipt-err") {
+		t.Fatalf("full log missing: %v", err)
+	}
+	if !strings.Contains(result.Content[0].Text, "classification") {
+		t.Fatal("audit envelope lost")
+	}
+	if again := kit.FinalizeToolResult(call, result); !reflect.DeepEqual(again, result) {
+		t.Fatal("settled history changed")
 	}
 }
 
-// TestActiveProjection_IsStableThroughWireProjection proves the fix closes the
-// bypass: once the result is finalized (bounded, text-only), the provider
-// projection cannot restore a larger result, and repeated preparation is
-// byte-identical (cache-safe within an epoch).
 func TestActiveProjection_IsStableThroughWireProjection(t *testing.T) {
 	call, projectedText, _ := runFakeList(t, "active")
 
@@ -482,4 +419,47 @@ func toolContent(msgs []providers.ChatMessage, callID string) string {
 		}
 	}
 	return ""
+}
+
+// Readable source must remain literal while the canonical programmatic result
+// and range/continuation facts survive settlement and replay.
+func TestReadFileModelViewPreservesLiteralSourceAndRecovery(t *testing.T) {
+	kit, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	kit.env.SessionDir = t.TempDir()
+	t.Setenv(projectionModeEnvVar, "active")
+	source := "7|const path = \"C:\\\\tmp\";\n|const greeting = \"你好\";\n"
+	for _, continuation := range []any{nil, map[string]any{"has_more": true, "next": map[string]any{"continuation": "opaque-cursor"}}} {
+		envelope := map[string]any{"action": "read", "path": "quoted.js", "content": source, "start_line": 7, "num_lines": 2, "total_lines": 30, "truncated": true, "contract_warning": "source warning", "continuation": continuation}
+		payload, err := json.Marshal(envelope)
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw := toolresult.FromText(string(payload))
+		raw.StructuredContent = json.RawMessage(`{"text":"canonical source"}`)
+		call := providers.ToolCall{ID: "read-view", Name: "read_file", Arguments: `{}`}
+		got := kit.FinalizeToolResult(call, raw)
+		var metadata map[string]any
+		if err := json.Unmarshal([]byte(got.TextProjection()), &metadata); err != nil {
+			t.Fatal(err)
+		}
+		if metadata["content"] != source {
+			t.Fatal("literal source lost")
+		}
+		delete(metadata, "content")
+		delete(envelope, "content")
+		expected, _ := json.Marshal(envelope)
+		actual, _ := json.Marshal(metadata)
+		if !bytes.Equal(actual, expected) {
+			t.Fatalf("range, warning or recovery metadata lost: %s", actual)
+		}
+		if !reflect.DeepEqual(got.Content, raw.Content) || !bytes.Equal(got.StructuredContent, raw.StructuredContent) {
+			t.Fatal("canonical result was mutated")
+		}
+		if again := kit.FinalizeToolResult(call, got); !reflect.DeepEqual(again, got) {
+			t.Fatal("settled read changed on replay")
+		}
+	}
 }

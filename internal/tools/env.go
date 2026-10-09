@@ -29,8 +29,8 @@ func currentExecutionPath(env *Env) string {
 	return strings.TrimSpace(env.AgentPath)
 }
 
-// ReadFileEntry tracks file content known to the session for read deduplication
-// and active-file context freshness.
+// ReadFileEntry tracks file operations for active-file context freshness.
+// A recorded read does not imply its content reached the model.
 type ReadFileEntry struct {
 	MtimeUnix     int64
 	MtimeUnixNano int64
@@ -69,13 +69,6 @@ func (r *readFileState) hasBeenRead(absPath string) bool {
 	return ok
 }
 
-func (r *readFileState) getEntry(absPath string) (ReadFileEntry, bool) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	entry, ok := r.state[absPath]
-	return entry, ok
-}
-
 func (r *readFileState) snapshot() map[string]ReadFileEntry {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -84,81 +77,6 @@ func (r *readFileState) snapshot() map[string]ReadFileEntry {
 		out[path] = entry
 	}
 	return out
-}
-
-type testRunEntry struct {
-	CommandHash    string
-	Revision       string
-	Failed         bool
-	Command        string
-	Scope          string
-	Purpose        string
-	ExitCode       int
-	TimedOut       bool
-	DurationMS     int64
-	FailureSummary testFailureSummary
-	FullLogRef     string
-	CreatedAt      time.Time
-}
-
-type testRunState struct {
-	mu      sync.RWMutex
-	records []testRunEntry
-}
-
-func (s *testRunState) record(commandHash, revision string, failed bool) {
-	if commandHash == "" || revision == "" {
-		return
-	}
-	s.recordEntry(testRunEntry{
-		CommandHash: commandHash,
-		Revision:    revision,
-		Failed:      failed,
-		CreatedAt:   time.Now().UTC(),
-	})
-}
-
-func (s *testRunState) recordEntry(entry testRunEntry) {
-	if entry.CommandHash == "" || entry.Revision == "" {
-		return
-	}
-	if entry.CreatedAt.IsZero() {
-		entry.CreatedAt = time.Now().UTC()
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.records = append(s.records, entry)
-}
-
-func (s *testRunState) consecutiveFailures(commandHash, revision string) int {
-	if commandHash == "" || revision == "" {
-		return 0
-	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	count := 0
-	for i := len(s.records) - 1; i >= 0; i-- {
-		record := s.records[i]
-		if record.CommandHash != commandHash || record.Revision != revision {
-			continue
-		}
-		if !record.Failed {
-			break
-		}
-		count++
-	}
-	return count
-}
-
-func (s *testRunState) latestFailure() (testRunEntry, bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	for i := len(s.records) - 1; i >= 0; i-- {
-		if s.records[i].Failed {
-			return s.records[i], true
-		}
-	}
-	return testRunEntry{}, false
 }
 
 type webEvidenceEntry struct {
@@ -299,7 +217,6 @@ type Env struct {
 	OnSessionWorkspaceChanged func(root string) error
 
 	readState *readFileState
-	testState testRunState
 	webState  webEvidenceState
 
 	toolTelemetry toolTelemetry
@@ -456,35 +373,11 @@ func (e *Env) HasBeenRead(absPath string) bool {
 	return e.readState.hasBeenRead(absPath)
 }
 
-// GetReadEntry returns the read state for a file, if any.
-func (e *Env) GetReadEntry(absPath string) (ReadFileEntry, bool) {
-	if e.readState == nil {
-		return ReadFileEntry{}, false
-	}
-	return e.readState.getEntry(absPath)
-}
-
 func (e *Env) ReadEntries() map[string]ReadFileEntry {
 	if e.readState == nil {
 		return nil
 	}
 	return e.readState.snapshot()
-}
-
-func (e *Env) RecordTestRun(commandHash, revision string, failed bool) {
-	e.testState.record(commandHash, revision, failed)
-}
-
-func (e *Env) RecordTestRunResult(entry testRunEntry) {
-	e.testState.recordEntry(entry)
-}
-
-func (e *Env) ConsecutiveTestFailures(commandHash, revision string) int {
-	return e.testState.consecutiveFailures(commandHash, revision)
-}
-
-func (e *Env) LatestTestFailure() (testRunEntry, bool) {
-	return e.testState.latestFailure()
 }
 
 func (e *Env) RecordWebEvidence(entry webEvidenceEntry) {
