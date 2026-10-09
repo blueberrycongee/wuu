@@ -57,8 +57,8 @@
   align-items: center;
   gap: var(--space-3);
   /* Matches the service cards' border so marks and names share one axis. */
-  border: 1px solid var(--hairline-soft);
-  border-radius: var(--radius-md);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
   background: var(--settings-card);
   padding: var(--space-4);
 }
@@ -187,7 +187,7 @@
   grid-template-columns: auto minmax(0, 1fr) auto auto;
   align-items: center;
   gap: var(--space-3);
-  border: 1px solid var(--hairline-soft);
+  border: 1px solid var(--hairline);
   border-radius: var(--radius-sm);
   background: var(--settings-card);
   color: var(--ink);
@@ -199,7 +199,7 @@
 }
 
 .model-service-card:hover {
-  border-color: var(--hairline);
+  border-color: var(--hairline-strong);
   background: color-mix(in srgb, var(--settings-card) 94%, var(--ink));
 }
 
@@ -257,8 +257,8 @@
 .model-service-catalog {
   display: grid;
   gap: var(--space-3);
-  border: 1px solid var(--hairline-soft);
-  border-radius: var(--radius-md);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
   background: var(--settings-card);
   padding: var(--space-3) var(--space-4);
 }

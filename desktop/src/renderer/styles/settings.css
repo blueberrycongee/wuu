@@ -86,11 +86,11 @@
   min-height: var(--sidebar-row-height);
   align-items: center;
   gap: var(--sidebar-nav-column-gap);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--ink-tertiary);
   font-size: var(--font-ui);
-  font-weight: var(--weight-medium);
+  font-weight: var(--sidebar-label-weight);
   padding: 0 var(--sidebar-row-pad-x);
   text-align: left;
   transition: background var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out);
@@ -140,7 +140,7 @@
   background: transparent;
   color: var(--ink-soft);
   font-size: var(--font-ui);
-  font-weight: 400;
+  font-weight: var(--sidebar-label-weight);
   padding: 0 var(--sidebar-row-pad-x);
   text-align: left;
   transition: background var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out);
@@ -151,10 +151,11 @@
   color: var(--ink);
 }
 
+/* Selection is the fill alone, as in the main rail: a heavier weight would
+ * widen the label and shift it while switching pages. */
 .settings-nav-item.active {
   background: var(--sidebar-row-selected-bg);
   color: var(--ink-strong);
-  font-weight: var(--weight-medium);
 }
 
 /* =========================================================================
@@ -366,7 +367,7 @@
 .settings-section {
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
+  gap: var(--section-heading-gap);
 }
 
 .settings-section-header {
@@ -639,11 +640,6 @@
   width: 9.5em;
   text-align: right;
   font-variant-numeric: tabular-nums;
-}
-
-/* The background group follows the theme cards as part of one section. */
-.settings-theme-background {
-  margin-top: var(--space-1);
 }
 
 /* A unit sits inside its field after the number. An empty field whose
@@ -1071,7 +1067,7 @@ button.settings-engine-expand:hover {
   gap: var(--space-3);
   padding: var(--card-padding);
   border: 1px solid var(--hairline);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   background: var(--settings-card);
   container: subscription-card / inline-size;
 }
@@ -1088,9 +1084,12 @@ button.settings-engine-expand:hover {
   border-top: 1px solid var(--hairline-soft);
 }
 
+/* The header reserves the model control's height, so titles in neighboring
+ * cards share a line and a header does not grow when its catalog loads. */
 .settings-subscription-main {
   display: flex;
   min-width: 0;
+  min-height: var(--control-size-inline);
   align-items: center;
   gap: var(--space-2);
 }

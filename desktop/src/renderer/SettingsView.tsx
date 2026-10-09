@@ -1318,7 +1318,7 @@ function SettingsAppearancePage(petProps: CodexPetSettingsProps): JSX.Element {
       <SettingsSection title={t("settings.sectionTheme")} testID="settings-appearance">
         <ThemePreferenceControl />
         {isTouchWebShell() ? null : (
-          <div className="settings-theme-background" data-testid="settings-background">
+          <div data-testid="settings-background">
             <SettingsGroup><BackgroundSettings /></SettingsGroup>
           </div>
         )}

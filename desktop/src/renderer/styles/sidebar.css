@@ -325,7 +325,6 @@
   --sidebar-content-pad-x: var(--space-2);
   --sidebar-row-pad-x: calc(var(--pane-inset) - var(--sidebar-content-pad-x));
   --sidebar-label-weight: 400;
-  --sidebar-selected-weight: 500;
   --sidebar-label-size: var(--font-ui);
   --sidebar-heading-size: max(12px, round(nearest, calc(var(--sidebar-label-size) - 2px), 1px));
   /* Dense rows, clear groups: rows sit two label heights tall, and the
