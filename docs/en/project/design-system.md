@@ -45,7 +45,9 @@ Wuu's identity is monochrome-first, with paper, ink, and neutral surfaces rather
 
 Built-in light mode separates a white reading canvas from a muted navigation rail. Settings share the reading canvas, with whitespace and hairlines separating groups. Dark mode expresses the same hierarchy on charcoal surfaces: the rail sits one step below the canvas, never above it, so the reading area stays the brightest region in both themes. Custom themes retain their public color and control overrides.
 
-The neutral ramp (`--gray-*`) uses one OKLCH hue with near-zero chroma, so every surface reads as the same material at a different depth. Regenerate a step from its lightness instead of hand-picking hex; a step that drifts in hue looks like a stain next to its neighbors.
+The neutral ramp (`--gray-*`) uses one OKLCH hue with near-zero chroma, so every surface reads as the same material at a different depth. Keep the hue neutral rather than cool: on a fill as large as the rail, a slight cyan cast reads as dirt rather than temperature. Regenerate a step from its lightness instead of hand-picking hex; a step that drifts in hue looks like a stain next to its neighbors.
+
+On macOS the light rail is the system sidebar material under a thin neutral veil, so the desktop shows through faintly as it does in other native sidebars. Windows, Linux, the dark theme and custom themes use an opaque rail.
 
 Selection in the rail is the only location signal, so it is a filled row at about 1.25:1 against the rail and the label keeps its regular weight. Tool-picker rows stay unfilled until hovered or pressed. The user's own message is a quiet neutral bubble, because the reader already knows what they wrote. Code in an answer is an inset one tonal step from the canvas without a frame; a border on top of the fill would draw the same boundary twice. Inline code takes the same step as a small chip in answers and user messages alike, so an identifier stays findable in CJK prose, where a bare monospace run reads as a font fallback.
 

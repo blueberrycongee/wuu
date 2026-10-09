@@ -1,14 +1,15 @@
 /* Component color tokens for sidebar.css.
    Light-theme values; the dark theme overrides these in base.css theme blocks. */
 :root {
-  /* A muted navigation surface separates the rail from the reading canvas.
-   * Keep a translucent veil so native vibrancy and custom artwork still show. */
-  --sidebar-material-fill: color-mix(in srgb, var(--surface-2) 82%, transparent);
+  /* On macOS the rail is the system sidebar material (main process). A thin
+   * neutral veil keeps text contrast steady while the material stays
+   * visible; a heavy veil only mixed the wallpaper into a flat, tinted gray. */
+  --sidebar-material-fill: color-mix(in srgb, var(--surface-1) 45%, transparent);
   /* Rail/content boundary: a crisp dark hairline instead of the old white
    * edge + white inset pair, which were invisible against the white content
    * column and left the boundary to be read from the gray brightness step.
    * The dark theme keeps its own light-on-dark edge overrides in theme.css. */
-  --sidebar-material-edge: rgba(17, 19, 21, 0.07);
+  --sidebar-material-edge: rgba(19, 19, 20, 0.07);
   --sidebar-material-inner-edge: transparent;
   --sidebar-hover-card-rim: rgba(255, 255, 255, 0.72);
   --sidebar-drawer-bg: var(--surface-2);
@@ -25,14 +26,14 @@
     var(--wuu-color-surface-elevated, var(--gray-300))
   );
   --sidebar-project-row-pending-bg: rgba(255, 255, 255, 0.24);
-  --sidebar-project-loading-notch: rgba(17, 19, 21, 0.18);
+  --sidebar-project-loading-notch: rgba(19, 19, 20, 0.18);
   --sidebar-row-icon-hover-bg-default: var(--ink-overlay-6);
   --sidebar-row-action-archive-confirm-bg: rgba(184, 79, 53, 0.1);
   --sidebar-thread-list-button-hover-bg: var(--ink-overlay-4);
-  --sidebar-thread-spinner-notch: rgba(17, 19, 21, 0.18);
+  --sidebar-thread-spinner-notch: rgba(19, 19, 20, 0.18);
   --sidebar-settings-button-hover-ring: rgba(255, 255, 255, 0.42);
   /* Collapsed-drawer chrome. */
-  --sidebar-drawer-edge: rgba(17, 19, 21, 0.09);
+  --sidebar-drawer-edge: rgba(19, 19, 20, 0.09);
   --sidebar-drawer-inner-edge: transparent;
   /* Must stay a valid <shadow> (not `none`): it is one item in a comma-
    * separated box-shadow list. */

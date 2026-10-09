@@ -18,11 +18,11 @@
   /* Theme preview swatches render miniature copies of each theme, so
      their values are content: they must not follow the active theme. */
   --settings-preview-light-canvas: #ffffff;
-  --settings-preview-light-sidebar: #f0f2f4;
-  --settings-preview-light-line: #dde0e3;
-  --settings-preview-dark-canvas: #1a1c1e;
-  --settings-preview-dark-sidebar: #131517;
-  --settings-preview-dark-line: #3c3f43;
+  --settings-preview-light-sidebar: #f1f1f4;
+  --settings-preview-light-line: #dfdfe2;
+  --settings-preview-dark-canvas: #1c1c1d;
+  --settings-preview-dark-sidebar: #151516;
+  --settings-preview-dark-line: #3e3e40;
   /* The remote-control QR keeps a white quiet zone so phones can scan
      it in dark theme too. */
   --settings-remote-qr-quiet-zone: #ffffff;

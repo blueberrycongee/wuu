@@ -24,6 +24,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Give the neutral grays a true neutral hue instead of a cool cyan cast, and draw
+  the macOS light sidebar on the system sidebar material under a thinner veil.
+
 - Align the right panel's tabs, file tree, review list, and tool list on the
   sidebar's pane inset, and give the file and review filters one quiet search
   field. Settings rows are denser, and settings groups and cards share one frame.

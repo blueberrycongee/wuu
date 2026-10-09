@@ -232,7 +232,7 @@ const DEFAULT_WINDOW_BACKGROUND = "#f6f6f4";
 // Dark-theme counterpart, matching --paper in theme.css. Used on Windows
 // where the window fill (not a vibrancy material) is what shows behind the
 // transparent web layer — a dark-theme launch must not flash white.
-const DARK_WINDOW_BACKGROUND = "#1d2024";
+const DARK_WINDOW_BACKGROUND = "#1c1c1d";
 // Matches the renderer titlebar row (48px in the tabbed/popped-out states)
 // so the overlay buttons center on the same strip the renderer draws.
 const WINDOWS_TITLEBAR_OVERLAY_HEIGHT = 48;
@@ -822,7 +822,7 @@ function mainWindowMaterialOptions(): Pick<
   return {
     backgroundColor: "#00000000",
     transparent: true,
-    vibrancy: "under-window",
+    vibrancy: "sidebar",
     visualEffectState: "active",
   };
 }
