@@ -46,7 +46,9 @@ replaces that page in place; if the tool is already open, Wuu closes the new pag
 and focuses its existing tab. Installed extensions appear under **More tools**.
 **Continue viewing** links to up to four currently open files, diffs, or delivered
 artifacts; it is absent when none are open. Closing a page restores
-the previously active tab.
+the previously active tab. The page's sections keep a readable width but start
+on the pane inset under the tabs instead of centering in a wide panel, so tool
+icons line up with the tab icons.
 
 Run `npm --prefix desktop run test:e2e:workspace-new-tab` for production-renderer
 checks of selection, singleton reuse, close recovery, keyboard navigation, and

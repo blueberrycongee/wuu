@@ -9,6 +9,7 @@ import { initialState, type ThreadSummary } from "../../src/renderer/AppState";
 import { ConversationTitleActions, ConversationTitleContent } from "../../src/renderer/ConversationShellRenderers";
 import type { SettingsUsageDay, WuuDesktopApi, Turn, UsageOverviewResponse } from "../../src/shared/protocol";
 import { applyMessageFlowFontSize } from "../../src/renderer/MessageFlowFontSizeSection";
+import { applyMeasuredScrollbarWidth } from "../../src/renderer/ScrollbarMetrics";
 import { ImagePreviewProvider } from "../../src/renderer/ImagePreview";
 import { WuuUIRoot } from "../../src/renderer/ui/layers/UILayerHost";
 import { AppBackground } from "../../src/renderer/background/AppBackground";
@@ -28,7 +29,7 @@ const answer = `这次调整以三栏布局为基准，让导航、阅读与工�
 
 - 左栏保留紧凑的工作区与会话层级。
 - 中间集中呈现任务进展与最终结果。
-- 右栏使用居中的工具列表，减少无意义的卡片。
+- 右栏的工具列表与标签页对齐，减少无意义的卡片。
 
 ### 放大后依然可读
 
@@ -122,5 +123,8 @@ if (import.meta.env.DEV) {
     listWorkspaceDirectory: async (path = "") => ({ root: "/preview", path, truncated: false, entries: path ? [] : ["README.md", "排版验收说明.md", "long-file-name-for-truncation-review.ts", ...Array.from({ length: 40 }, (_, i) => `component-${i}.tsx`)].map(name => ({ name, path: name, kind: "file" })) }),
     getUsageOverview: async () => sampleUsageOverview(new URLSearchParams(location.search).has("new-user")),
   } as unknown as WuuDesktopApi;
+  // Stamp the real scrollbar gutter as the product boot does; the composer and
+  // the file tree size themselves from it.
+  applyMeasuredScrollbarWidth();
   createRoot(document.getElementById("root")!).render(<Fixture/>);
 }

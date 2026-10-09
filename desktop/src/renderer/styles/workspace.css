@@ -98,6 +98,11 @@
   --workspace-tab-chip-hover-bg: var(--ink-overlay-4);
   --workspace-tab-chip-height: var(--control-size-toolbar);
   --workspace-tab-chip-inset: calc((var(--window-titlebar-height) - var(--workspace-tab-chip-height)) / 2);
+  /* Tab chips, tool rows, and tree rows float inside the pane like sidebar
+   * rows; their own padding takes up the rest, putting the leading glyph on
+   * the pane inset. */
+  --workspace-row-inset: var(--space-2);
+  --workspace-row-pad-x: calc(var(--pane-inset) - var(--workspace-row-inset));
 }
 
 .workspace-panel-tabbar {
@@ -109,7 +114,7 @@
   background: var(--paper);
   /* Clear native window controls and reserve the shell-owned sidebar toggle,
      including while the reading canvas is a full-width sheet. */
-  padding: 0 calc(max(var(--control-toolbar-inset), var(--window-controls-inset-right)) + var(--control-size-toolbar) + var(--control-toolbar-gap)) 0 8px;
+  padding: 0 calc(max(var(--control-toolbar-inset), var(--window-controls-inset-right)) + var(--control-size-toolbar) + var(--control-toolbar-gap)) 0 var(--workspace-row-inset);
   -webkit-app-region: drag;
   position: relative;
   z-index: 1;
@@ -469,6 +474,7 @@
   --workspace-tab-chip-active-bg: var(--shell-session-tab-active-bg);
   --workspace-tab-chip-height: var(--control-size-toolbar);
   --workspace-tab-chip-inset: 0px;
+  --workspace-row-pad-x: calc(var(--pane-inset) - var(--space-2));
   height: var(--workspace-tab-chip-height);
   border-radius: var(--radius-sm);
   background: var(--paper);
@@ -523,7 +529,7 @@
   background: transparent;
   color: inherit;
   cursor: inherit;
-  padding: 0 var(--space-1) 0 10px;
+  padding: 0 var(--space-1) 0 var(--workspace-row-pad-x);
   text-align: left;
 }
 
@@ -700,7 +706,6 @@ html[data-focus-modality="keyboard"] .workspace-tool-tab-close:focus-visible {
 .workspace-right-panel[data-wuu-view="files"] .workspace-files-split:not(.tree-hidden)
   .workspace-files-tree {
   grid-column: 1;
-  padding: 10px 0;
 }
 
 .workspace-files-split.tree-dragging::after {
@@ -824,6 +829,9 @@ html.resizing-workspace-file-split * {
   position: relative;
   grid-row: 1;
   flex-direction: column;
+  /* The tree owns its row inset on both sides, so the resizer hairline and
+   * the panel edge are equivalent pane edges whichever side it docks to. */
+  padding: 10px 0;
   /* Same paper as the document and tab strip; the resizer hairline is the
    * only division, so the tree reads as part of the panel, not a gray well. */
   background: var(--paper);
@@ -831,12 +839,10 @@ html.resizing-workspace-file-split * {
 
 .workspace-files-split[data-tree-side="right"] .workspace-files-tree {
   grid-column: 2;
-  padding: 10px 0 10px 10px;
 }
 
 .workspace-files-split[data-tree-side="left"] .workspace-files-tree {
   grid-column: 1;
-  padding: 10px 0;
 }
 
 .workspace-files-tree .workspace-file-panel {
@@ -844,13 +850,15 @@ html.resizing-workspace-file-split * {
 }
 
 /* Beside a document the tree can move to the other side: the button ends the
- * search row, in the column the field leaves free for it. */
+ * search row, in the column the field leaves free for it. It matches the
+ * field's box, which sits 1px inside the tree's top padding where its focus
+ * ring draws, and puts its glyph on the pane inset like the leading icons. */
 .workspace-file-tree-drag-handle {
   display: grid;
   position: absolute;
   z-index: 1;
-  inset-block-start: 10px;
-  inset-inline-end: 4px;
+  inset-block-start: 11px;
+  inset-inline-end: var(--control-toolbar-inset);
   width: var(--control-size-toolbar);
   height: var(--control-field-height);
   place-items: center;
@@ -996,16 +1004,17 @@ html.resizing-workspace-file-split * {
   padding-bottom: var(--workspace-document-composer-inset, 180px);
 }
 
+/* Sections keep a readable maximum width but start under the tabs, on the
+ * pane inset, rather than floating centered when the panel is widened. */
 .workspace-tool-menu {
   display: grid;
   height: 100%;
   min-width: 0;
   align-content: start;
-  justify-items: center;
+  justify-items: start;
   gap: var(--section-gap);
   overflow-y: auto;
-  /* Row glyphs land on the same inset as the review list and file tree. */
-  padding: var(--space-5) var(--space-2);
+  padding: var(--space-5) var(--workspace-row-inset);
 }
 
 .workspace-tool-menu-section {
@@ -1018,7 +1027,7 @@ html.resizing-workspace-file-split * {
  * rows, so the empty panel reads as navigation rather than a list of cards. */
 .workspace-tool-menu-section h2 {
   margin: 0 0 var(--space-1);
-  padding: 0 var(--space-2);
+  padding: 0 var(--workspace-row-pad-x);
   color: var(--ink-tertiary);
   font-size: var(--font-sm);
   font-weight: var(--weight-medium);
@@ -1043,7 +1052,7 @@ html.resizing-workspace-file-split * {
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--ink);
-  padding: 0 var(--space-2);
+  padding: 0 var(--workspace-row-pad-x);
   font-size: var(--font-ui);
   line-height: 1.5;
   text-align: start;
@@ -2326,8 +2335,9 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   grid-template-columns: minmax(0, 1fr);
   gap: 2px var(--space-3);
   /* Header text, search text, folder labels and status letters share the
-   * list's inset: the scroll padding plus a row's own padding. */
-  padding: var(--space-3) var(--space-4) var(--space-2);
+   * list's inset: the scroll padding plus a row's own padding, which together
+   * are the pane inset, as in the file tree and the tools launcher. */
+  padding: var(--space-3) var(--pane-inset) var(--space-2);
 }
 
 .workspace-review-list-summary {
@@ -2362,14 +2372,14 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
 .workspace-review-search {
   min-width: 0;
   min-height: var(--control-field-height);
-  margin: 0 var(--space-2) var(--space-2);
+  margin: 0 var(--workspace-row-inset) var(--space-2);
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
   background: var(--ink-overlay-4);
   color: var(--ink);
   font: inherit;
   font-size: var(--font-ui);
-  padding: var(--control-padding-block) var(--space-2);
+  padding: var(--control-padding-block) calc(var(--workspace-row-pad-x) - 1px);
   transition:
     background-color var(--motion-fast) var(--ease-out),
     border-color var(--motion-fast) var(--ease-out);
@@ -2387,7 +2397,7 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   align-content: start;
   gap: var(--space-2);
   overflow: auto;
-  padding: 0 var(--space-2) var(--space-3);
+  padding: 0 var(--workspace-row-inset) var(--space-3);
 }
 
 .workspace-review-group {
@@ -2401,7 +2411,7 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   color: var(--ink-tertiary);
   font-size: var(--font-sm);
   line-height: var(--line-body);
-  padding: var(--space-1) var(--space-2) 2px;
+  padding: var(--space-1) var(--workspace-row-pad-x) 2px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -2418,7 +2428,7 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   background: transparent;
   color: var(--ink);
   font-size: var(--font-ui);
-  padding: 0 var(--space-2);
+  padding: 0 var(--workspace-row-pad-x);
   text-align: left;
   transition: background-color var(--motion-fast) var(--ease-out);
 }
@@ -2436,7 +2446,7 @@ html[data-focus-modality="keyboard"] .workspace-review-row:focus-visible {
 }
 
 .workspace-review-group:has(.workspace-review-group-label) .workspace-review-row {
-  padding-left: calc(var(--space-2) + var(--space-3));
+  padding-left: calc(var(--workspace-row-pad-x) + var(--space-3));
 }
 
 .workspace-review-row-name {
