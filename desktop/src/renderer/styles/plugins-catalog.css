@@ -45,10 +45,10 @@
 
 button.catalog-row,
 .catalog-row-open {
-  min-height: calc(var(--control-field-height) + var(--space-3) * 2);
+  min-height: calc(var(--control-field-height) + var(--space-2) * 2);
   align-content: center;
   border: 0;
-  padding: var(--space-3) 0;
+  padding: var(--space-2) 0;
   background: transparent;
   cursor: pointer;
   font: inherit;
@@ -412,8 +412,8 @@ button.catalog-row,
  * target unless they open something, like the services onboarding lists as
  * connected; they keep the row height. */
 .catalog-row:is(.plugin-contribution, .plugin-permission-row, .onboarding-connection) {
-  min-height: calc(var(--control-field-height) + var(--space-3) * 2);
-  padding: var(--space-3) 0;
+  min-height: calc(var(--control-field-height) + var(--space-2) * 2);
+  padding: var(--space-2) 0;
   cursor: default;
 }
 

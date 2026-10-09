@@ -170,7 +170,7 @@
 /* An empty section there is one quiet line at a row's height, like a
  * settings group with nothing in it, not a centred poster. */
 .settings-scroll .plugin-ui-state {
-  min-height: calc(var(--control-field-height) + var(--space-3) * 2);
+  min-height: calc(var(--control-field-height) + var(--space-2) * 2);
   place-content: center start;
   justify-items: start;
   padding: 0;

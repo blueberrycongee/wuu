@@ -462,7 +462,7 @@
 /* Empty and loading lines stand in for rows at a row's height. */
 .settings-group-empty {
   display: flex;
-  min-height: calc(var(--control-field-height) + var(--space-3) * 2);
+  min-height: calc(var(--control-field-height) + var(--space-2) * 2);
   align-items: center;
   margin: 0;
   color: var(--ink-tertiary);
@@ -485,9 +485,9 @@
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: var(--space-2) var(--space-6);
-  min-height: calc(var(--control-field-height) + var(--space-3) * 2);
+  min-height: calc(var(--control-field-height) + var(--space-2) * 2);
   border-bottom: 1px solid var(--hairline-soft);
-  padding: var(--space-3) 0;
+  padding: var(--space-2) 0;
 }
 
 /* `block` rows stack the label over a full-width control. */
@@ -868,7 +868,7 @@
 
 .settings-engine-row {
   display: flex;
-  min-height: calc(var(--control-field-height) + var(--space-3) * 2);
+  min-height: calc(var(--control-field-height) + var(--space-2) * 2);
   align-items: center;
   gap: var(--space-3);
   padding-block: var(--space-2);
@@ -2384,7 +2384,7 @@ button.settings-engine-expand:hover {
 .settings-archive-row {
   display: flex;
   min-width: 0;
-  min-height: calc(var(--control-field-height) + var(--space-3) * 2);
+  min-height: calc(var(--control-field-height) + var(--space-2) * 2);
   align-items: center;
   justify-content: space-between;
   gap: var(--space-4);
