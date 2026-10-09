@@ -117,7 +117,7 @@ function notify(event: ServerEvent) {
   if (event.message.method.startsWith("activity/")) {
     const activity = event.message.params as unknown as ActivitySession;
     activityByThread.set(activity.thread_id, activity);
-    host!.updateActivity(activity);
+    host!.updateActivity(activity, event.message.method);
     if (activity.controller !== "agent" || activity.state === "stopped") revocations.get(activity.thread_id)?.resolve();
   }
   if (event.message.method === "turn/completed") {
@@ -136,7 +136,7 @@ async function request(threadID: string, method: string, params: Record<string, 
 }
 async function readTab(tabID: string): Promise<WebContentsView | undefined> {
   const meta = host!.tabSurfaceMeta(workdir, tabID);
-  return views.find(view => !view.webContents.isDestroyed() && view.webContents.getURL() === meta?.url);
+  return views.find(view => view.webContents && !view.webContents.isDestroyed() && view.webContents.getURL() === meta?.url);
 }
 
 app.whenReady().then(async () => {
