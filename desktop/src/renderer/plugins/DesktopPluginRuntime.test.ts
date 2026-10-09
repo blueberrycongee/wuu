@@ -72,6 +72,99 @@ describe("DesktopPluginRuntime", () => {
     expect(events).toEqual(["stop:user:consumer/fingerprint-one", "stop:user:provider/two"]);
   });
 
+  it.each(["required", "transitive", "optional"])("cleans up a pending %s consumer before replacing its provider", async (relationship) => {
+    const events: string[] = [];
+    let release!: () => void;
+    let signalStarted!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const started = new Promise<void>((resolve) => { signalStarted = resolve; });
+    let consumerStarts = 0;
+    installDesktopModuleLoader(vi.fn(async ({ id, fingerprint }) => ({
+      id, fingerprint, digest: "a".repeat(64), url: `${id}/${fingerprint}`,
+    })));
+    const host = new PluginHost({ react: React });
+    const runtime = new DesktopPluginRuntime(host, async (url) => ({
+      async activate(api: { registerCleanup(fn: () => void): void }) {
+        events.push(`start:${url}`);
+        api.registerCleanup(() => events.push(`stop:${url}`));
+        if (url.startsWith("user:consumer/") && ++consumerStarts === 1) {
+          signalStarted();
+          await gate;
+        }
+      },
+    }));
+    const provider = dependencyPlugin("provider");
+    const consumer = relationship === "optional"
+      ? { ...dependencyPlugin("consumer"), resolved_dependencies: ["provider"] }
+      : dependencyPlugin("consumer", [relationship === "transitive" ? "bridge" : "provider"]);
+    const bridge = relationship === "transitive" ? [dependencyPlugin("bridge", ["provider"])] : [];
+    const pending = runtime.sync([consumer, ...bridge, provider]);
+    try {
+      await started;
+      expect(await runtime.sync([consumer, ...bridge, { ...provider, fingerprint: "two" }])).toEqual([]);
+      expect(events).toContain("stop:user:consumer/fingerprint-one");
+      expect(events).toContain("stop:user:provider/fingerprint-one");
+      expect(events.indexOf("stop:user:consumer/fingerprint-one")).toBeLessThan(events.indexOf("stop:user:provider/fingerprint-one"));
+      expect(host.isGenerationActive(consumer.id, consumer.fingerprint!)).toBe(true);
+      expect(host.isGenerationActive(provider.id, "two")).toBe(true);
+    } finally {
+      release();
+      await pending;
+      await runtime.sync([]);
+    }
+  });
+
+  it("preserves the current pending consumer across same-fingerprint supersession without blocking independent plugins", async () => {
+    const events: string[] = [];
+    const releases: (() => void)[] = [];
+    const gates = [0, 1].map(() => new Promise<void>((resolve) => { releases.push(resolve); }));
+    const signalStarted: (() => void)[] = [];
+    const started = [0, 1].map(() => new Promise<void>((resolve) => { signalStarted.push(resolve); }));
+    let consumerStarts = 0;
+    installDesktopModuleLoader(vi.fn(async ({ id, fingerprint }) => ({
+      id, fingerprint, digest: "a".repeat(64), url: `${id}/${fingerprint}`,
+    })));
+    const host = new PluginHost({ react: React });
+    const runtime = new DesktopPluginRuntime(host, async (url) => ({
+      async activate(api: { registerCleanup(fn: () => void): void }) {
+        if (url.startsWith("user:consumer/")) {
+          const index = consumerStarts++;
+          events.push(`start:consumer:${index}`);
+          api.registerCleanup(() => events.push(`stop:consumer:${index}`));
+          signalStarted[index]?.();
+          await gates[index];
+        } else {
+          events.push(`start:${url}`);
+          api.registerCleanup(() => events.push(`stop:${url}`));
+        }
+      },
+    }));
+    const provider = dependencyPlugin("provider");
+    const consumer = dependencyPlugin("consumer", ["provider"]);
+    const inventory = [consumer, provider];
+    const first = runtime.sync(inventory);
+    let second: ReturnType<DesktopPluginRuntime["sync"]> | undefined;
+    try {
+      await started[0];
+      second = runtime.sync([...inventory, dependencyPlugin("independent")]);
+      await started[1];
+      expect(host.isGenerationActive("user:independent", "fingerprint-one")).toBe(true);
+      releases[0]!();
+      await first;
+      expect(events.filter((event) => event === "start:user:provider/fingerprint-one")).toHaveLength(1);
+      expect(events).not.toContain("stop:user:provider/fingerprint-one");
+      expect(await runtime.sync([consumer, { ...provider, fingerprint: "two" }, dependencyPlugin("independent")])).toEqual([]);
+      expect(events).toContain("stop:consumer:1");
+      expect(events).toContain("stop:user:provider/fingerprint-one");
+      expect(events.indexOf("stop:consumer:1")).toBeLessThan(events.indexOf("stop:user:provider/fingerprint-one"));
+      expect(host.isGenerationActive(consumer.id, consumer.fingerprint!)).toBe(true);
+    } finally {
+      releases.forEach((release) => release());
+      await Promise.all([first, second]);
+      await runtime.sync([]);
+    }
+  });
+
   it("blocks missing, cyclic, inactive and transitively unavailable required dependencies", async () => {
     const load = vi.fn(async () => ({ activate() {} }));
     installDesktopModuleLoader(vi.fn(async ({ id, fingerprint }) => ({

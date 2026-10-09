@@ -72,6 +72,7 @@ export class DesktopPluginRuntime {
   private readonly activeGenerations = new Map<string, string>();
   private desiredPlugins = new Map<string, ExtensionInventoryRecord>();
   private readonly activeDependencies = new Map<string, string>();
+  private readonly pendingDependencies = new Map<string, { signature: string }>();
   private syncEpoch = 0;
 
   constructor(
@@ -125,11 +126,19 @@ export class DesktopPluginRuntime {
       providers.forEach(visit);
       return JSON.stringify([providers, [...graph].sort(([left], [right]) => left.localeCompare(right)).map(([, node]) => node)]);
     };
+    const dependenciesChanged = (id: string, live = false): boolean => {
+      const active = this.activeDependencies.get(id);
+      const pending = this.pendingDependencies.get(id)?.signature;
+      if (active === undefined && pending === undefined) return false;
+      const signature = dependencySignature(id, live);
+      return (active !== undefined && active !== signature) || (pending !== undefined && pending !== signature);
+    };
 
     const unload = (id: string): void => {
       this.host.unload(id);
       this.activeGenerations.delete(id);
       this.activeDependencies.delete(id);
+      this.pendingDependencies.delete(id);
     };
     const previousDesired = this.desiredPlugins;
     this.desiredPlugins = desired;
@@ -139,8 +148,7 @@ export class DesktopPluginRuntime {
     const knownPluginIds = new Set([...previousOrder.reverse(), ...this.activeGenerations.keys()]);
     for (const pluginId of knownPluginIds) {
       const plugin = desired.get(pluginId);
-      if (!plugin?.desktop || (this.activeDependencies.has(pluginId)
-        && this.activeDependencies.get(pluginId) !== dependencySignature(pluginId))) {
+      if (!plugin?.desktop || dependenciesChanged(pluginId)) {
         unload(pluginId);
       }
     }
@@ -170,6 +178,9 @@ export class DesktopPluginRuntime {
         if (!fingerprint || this.activeGenerations.get(plugin.id) === fingerprint) {
           return true;
         }
+        // Staging callbacks can already own provider resources before activation commits.
+        const pending = { signature: dependencySignature(plugin.id, true) };
+        this.pendingDependencies.set(plugin.id, pending);
         try {
           if (epoch !== this.syncEpoch) return false;
           const loaded = await window.wuu?.loadPluginDesktopModule?.({ id: plugin.id, fingerprint });
@@ -198,8 +209,7 @@ export class DesktopPluginRuntime {
             // Recovery changes availability without changing inventory. Fence
             // every affected consumer in reverse order before any can restart.
             for (const dependent of dependencyOrder(desired).reverse()) {
-              if (this.activeDependencies.has(dependent)
-                && this.activeDependencies.get(dependent) !== dependencySignature(dependent, true)) {
+              if (dependenciesChanged(dependent, true)) {
                 unload(dependent);
               }
             }
@@ -211,6 +221,10 @@ export class DesktopPluginRuntime {
           // Failed staging leaves the previous generation live; only inventory removal disables it.
           failures.push({ pluginId: plugin.id, fingerprint, error });
           return false;
+        } finally {
+          if (this.pendingDependencies.get(plugin.id) === pending) {
+            this.pendingDependencies.delete(plugin.id);
+          }
         }
         return true;
       })();
