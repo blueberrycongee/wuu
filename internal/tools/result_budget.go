@@ -11,9 +11,9 @@ import (
 	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
 
-// Recovery pages share the read_file byte cursor, including for long single
-// lines. The serialized envelope, not just its payload, must fit the target.
-const projectionPreviewBytes = 4_096
+// Bound each recovery read's allocation independently of the serialized token
+// budget. The initial page already holds the full result and needs no byte cap.
+const maxRecoveryPageBytes = 128 * 1024
 
 // finalizeGenericToolResult is the settlement boundary for results that did
 // not take a tool-specific projection. It bounds only the model-visible text,
@@ -62,7 +62,7 @@ func buildBoundedResultReference(path, contextual string, isError bool, budgetTo
 		"total_bytes":    len(contextual),
 		"is_error":       isError,
 	}
-	if page, ok := buildResultPage(envelope, path, []byte(contextual), 0, len(contextual), projectionPreviewBytes, contentSHA, budgetTokens); ok {
+	if page, ok := buildResultPage(envelope, path, []byte(contextual), 0, len(contextual), len(contextual), contentSHA, budgetTokens); ok {
 		return page, true
 	}
 	// A tiny requested budget must not expose the full output or prevent an
@@ -98,7 +98,7 @@ func buildResultPage(envelope map[string]any, path string, data []byte, offset, 
 		continuation := map[string]any{"has_more": hasMore}
 		if hasMore {
 			continuation["next"] = map[string]any{
-				"continuation": encodeReadFileByteContinuation(path, offset+keep, limit, end, contentSHA),
+				"continuation": encodeReadFileByteContinuation(path, offset+keep, min(limit, maxRecoveryPageBytes), end, contentSHA),
 			}
 		}
 		envelope["continuation"] = continuation

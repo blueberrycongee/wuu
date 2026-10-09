@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -22,109 +23,142 @@ var devWatchIgnoredDirs = map[string]bool{
 	"dist":         true,
 }
 
-// watchDevDirFS watches the plugin source tree with fsnotify and refreshes the
-// development generation after each settled save burst. It falls back to
-// polling when the platform watcher cannot be created.
-func watchDevDirFS(wuuHome, dir, packageManager string, pollInterval time.Duration, initialPending bool) {
-	watcher, err := fsnotify.NewWatcher()
+// devWatchState records the source seen before an attempt, separately from the
+// last successful publication. Failed builds wait for another edit; execution
+// lease contention retries without requiring the author to save again.
+type devWatchState struct {
+	attempted pluginSourceSnapshot
+	published pluginSourceSnapshot
+	pending   bool
+}
+
+func (state *devWatchState) refresh(dir string, refresh func() (pluginDiagnostic, error)) {
+	current := snapshotPluginSource(dir)
+	if !state.pending && len(changedPluginSourcePaths(state.attempted, current)) == 0 {
+		return
+	}
+	diagnostic, err := refresh()
+	if errors.Is(err, errDevGenerationBusy) {
+		if !state.pending {
+			diagnostic.Message = err.Error()
+			printDevDiagnostic(diagnostic)
+		}
+		state.pending = true
+		return
+	}
+	state.pending = false
+	// Capture before building: an edit during the build must trigger another pass.
+	state.attempted = current
 	if err != nil {
-		fmt.Printf("fsnotify unavailable (%v); falling back to polling every %s\n", err, pollInterval)
-		watchDevDir(wuuHome, dir, packageManager, pollInterval, initialPending)
-		return
+		diagnostic.Message = err.Error()
 	}
-	defer watcher.Close()
-
-	if err := addDevWatchDirs(watcher, dir); err != nil {
-		fmt.Printf("fsnotify setup failed (%v); falling back to polling every %s\n", err, pollInterval)
-		watchDevDir(wuuHome, dir, packageManager, pollInterval, initialPending)
-		return
+	printDevDiagnostic(diagnostic)
+	if err == nil {
+		if changed := changedPluginSourcePaths(state.published, current); len(changed) > 0 {
+			printDevReloadHint(dir, changed)
+		}
+		state.published = current
 	}
+}
 
-	fmt.Printf("Watching for changes (fsnotify, debounce %s)... (Ctrl+C to stop)\n", devWatchDebounce)
-
-	lastSnapshot := snapshotPluginSource(dir)
-
+// watchDevDirFS combines low-latency filesystem events with periodic source
+// reconciliation. Reconciliation also recovers lost events and replaced roots;
+// an unavailable watcher must never require restarting the development command.
+func watchDevDirFS(ctx context.Context, wuuHome, dir, packageManager string, pollInterval time.Duration, initial pluginSourceSnapshot, initialPending bool) {
+	info, statErr := os.Stat(dir)
+	singleFile := statErr == nil && !info.IsDir()
+	watcher, err := fsnotify.NewWatcher()
+	if err == nil {
+		defer watcher.Close()
+		if err = addDevWatchDirs(watcher, dir); err != nil {
+			fmt.Printf("watch setup: %v; source reconciliation remains active\n", err)
+		}
+	} else {
+		fmt.Printf("fsnotify unavailable (%v); polling every %s\n", err, pollInterval)
+	}
+	var events <-chan fsnotify.Event
+	var watchErrors <-chan error
+	if watcher != nil {
+		events, watchErrors = watcher.Events, watcher.Errors
+	}
+	ticker := time.NewTicker(pollInterval)
+	defer ticker.Stop()
+	state := devWatchState{attempted: initial, published: initial, pending: initialPending}
+	refresh := func() (pluginDiagnostic, error) { return refreshDevGeneration(ctx, wuuHome, dir, packageManager) }
 	var debounce *time.Timer
 	var debounceC <-chan time.Time
-	pending := false
-	schedule := func(delay time.Duration) {
+	schedule := func() {
 		if debounce == nil {
-			debounce = time.NewTimer(delay)
+			debounce = time.NewTimer(devWatchDebounce)
 		} else {
-			if !debounce.Stop() && pending {
+			if !debounce.Stop() {
 				select {
 				case <-debounce.C:
 				default:
 				}
 			}
-			debounce.Reset(delay)
+			debounce.Reset(devWatchDebounce)
 		}
 		debounceC = debounce.C
-		pending = true
 	}
-	stopDebounce := func() {
+	defer func() {
 		if debounce != nil {
-			if !debounce.Stop() && pending {
-				select {
-				case <-debounce.C:
-				default:
-				}
-			}
+			debounce.Stop()
 		}
-		debounceC = nil
-		pending = false
-	}
-	defer stopDebounce()
-	if initialPending {
-		schedule(pollInterval)
-	}
-
+	}()
+	// Cover edits between the initial build and watcher setup.
+	state.refresh(dir, refresh)
+	fmt.Printf("Watching for changes (debounce %s, reconciliation %s)... (Ctrl+C to stop)\n", devWatchDebounce, pollInterval)
 	for {
 		select {
-		case event, ok := <-watcher.Events:
+		case <-ctx.Done():
+			return
+		case event, ok := <-events:
 			if !ok {
-				return
+				events = nil
+				continue
+			}
+			if singleFile && filepath.Clean(event.Name) != filepath.Clean(dir) {
+				continue
 			}
 			if devWatchIgnoresEvent(dir, event) {
 				continue
 			}
-			if event.Op&fsnotify.Create != 0 {
-				if info, err := os.Stat(event.Name); err == nil && info.IsDir() && !devWatchIgnoredDirs[filepath.Base(event.Name)] {
-					// New source trees must be watched too; fsnotify is not recursive.
-					_ = addDevWatchDirs(watcher, event.Name)
-				}
-			}
 			if event.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Remove|fsnotify.Rename) != 0 {
-				schedule(devWatchDebounce)
+				schedule()
 			}
-		case err, ok := <-watcher.Errors:
+		case watchErr, ok := <-watchErrors:
 			if !ok {
-				return
-			}
-			fmt.Printf("watch error: %v\n", err)
-		case <-debounceC:
-			pending = false
-			debounceC = nil
-			currentSnapshot := snapshotPluginSource(dir)
-			changed := changedPluginSourcePaths(lastSnapshot, currentSnapshot)
-			diagnostic, err := refreshDevGeneration(wuuHome, dir, packageManager)
-			if errors.Is(err, errDevGenerationBusy) {
-				schedule(pollInterval)
+				watchErrors = nil
 				continue
 			}
-			printDevDiagnostic(diagnostic)
-			if err == nil {
-				if len(changed) > 0 {
-					printDevReloadHint(dir, changed)
+			fmt.Printf("watch error: %v; source reconciliation remains active\n", watchErr)
+			schedule()
+		case <-ticker.C:
+			if watcher != nil && events != nil {
+				// fsnotify is not recursive. Re-register directories after creation or
+				// replacement, including saves that raced their initial registration.
+				if err := addDevWatchDirs(watcher, dir); err != nil {
+					fmt.Printf("watch registration: %v; source reconciliation remains active\n", err)
 				}
-				lastSnapshot = currentSnapshot
 			}
+			// Do not interrupt an editor save burst that is already debouncing.
+			if debounceC == nil {
+				state.refresh(dir, refresh)
+			}
+		case <-debounceC:
+			debounceC = nil
+			state.refresh(dir, refresh)
 		}
 	}
 }
 
 // addDevWatchDirs registers root and every non-ignored subdirectory.
 func addDevWatchDirs(watcher *fsnotify.Watcher, root string) error {
+	if info, err := os.Stat(root); err == nil && !info.IsDir() {
+		// Watch the parent so atomic file replacement does not remove our watch.
+		return watcher.Add(filepath.Dir(root))
+	}
 	return filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr

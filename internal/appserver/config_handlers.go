@@ -50,6 +50,7 @@ func (s *Server) handleInitialize(req Request) error {
 		return s.writeResponse(req.ID, nil, fmt.Errorf("unsupported protocol version %q (server uses %q)", params.ProtocolVersion, ProtocolVersion))
 	}
 	s.setClientMethods(params.Capabilities.ReverseRPC.Methods)
+	s.deferredNotificationContent.Store(params.Capabilities.DeferredNotificationContent)
 	s.pinLegacyRuntimeSelections()
 	core := version.Info()
 	runtimeHost := s.rt.HostInfo()
@@ -909,7 +910,7 @@ func (s *Server) handleExtensionPackageUpdate(req Request) error {
 		return s.writeResponse(req.ID, nil, fmt.Errorf("extension package %q was not found", params.ID))
 	}
 	if params.Action == ExtensionPackagePromoteUpdate || params.Action == ExtensionPackageRejectUpdate {
-		return s.handlePendingPluginUpdate(req, params, *selected)
+		return s.handlePendingPluginUpdate(req, params, *selected, releaseMutation)
 	}
 	providedFingerprint := strings.TrimSpace(params.Fingerprint)
 	if providedFingerprint != "" && providedFingerprint != selected.Fingerprint {
@@ -938,7 +939,7 @@ func (s *Server) handleExtensionPackageUpdate(req Request) error {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	var persistedSettings extensions.Settings
-	if err := s.rt.ActivatePluginGeneration(candidate, func() error {
+	activationErr := s.rt.ActivatePluginGeneration(candidate, func() error {
 		updated, updateErr := config.UpdateExtensionSettings(userConfigPath, func(settings *extensions.Settings) error {
 			return applyExtensionPackageAction(settings, params.Action, *selected, approvedAt)
 		})
@@ -947,12 +948,13 @@ func (s *Server) handleExtensionPackageUpdate(req Request) error {
 		}
 		persistedSettings = updated
 		return nil
-	}); err != nil {
-		return s.writeResponse(req.ID, nil, err)
+	})
+	if activationErr != nil && !runtime.PluginGenerationWasCommitted(activationErr) {
+		return s.writeResponse(req.ID, nil, activationErr)
 	}
 	s.rt.SetExtensionSettings(&persistedSettings)
 	s.schedulePluginTurnLifecycleReplay()
-	return s.writeResponse(req.ID, ExtensionPackageUpdateResult{ExtensionInventory: s.currentExtensionInventory()}, nil)
+	return s.writePluginGenerationResponse(req, ExtensionPackageUpdateResult{ExtensionInventory: s.currentExtensionInventory()}, activationErr, releaseMutation)
 }
 
 func applyExtensionPackageAction(settings *extensions.Settings, action ExtensionPackageAction, selected pluginpkg.Plugin, approvedAt time.Time) error {
@@ -1001,10 +1003,10 @@ func (s *Server) handleExtensionCatalogRefresh(req Request) error {
 	if err := s.rt.RefreshExtensions(s.currentExtensionConfig()); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	return s.writeResponse(req.ID, ExtensionCatalogRefreshResult{
+	return s.writePluginGenerationResponse(req, ExtensionCatalogRefreshResult{
 		ExtensionInventory: s.currentExtensionInventory(),
 		Skills:             s.skillSummaries(s.rt.Skills, s.rt.RootDir),
-	}, nil)
+	}, nil, releaseMutation)
 }
 
 func (s *Server) handleConfigAdvancedUpdate(req Request) error {

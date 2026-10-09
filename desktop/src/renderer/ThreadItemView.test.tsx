@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ThreadItem, Turn } from "../shared/protocol";
 import { streamTextKey, streamTextStore } from "./StreamText";
 import { ImagePreviewProvider } from "./ImagePreview";
+import { ArtifactThreadContext } from "./ArtifactPreviewContext";
 import { ThreadItemView } from "./ThreadItemView";
 import { groupProjectEvents } from "./ProjectViews";
 import { clearToasts, ToastViewport } from "./Toast";
@@ -40,6 +41,7 @@ function makeUserMessage(text: string, id = "user-1"): ThreadItem {
 
 function render({
   item,
+  owningThreadID,
   turnStatus,
   turnStartedAt,
   actionableAgentMessageID,
@@ -49,6 +51,7 @@ function render({
   onForkMessage,
 }: {
   item: ThreadItem;
+  owningThreadID?: string;
   turnStatus: Turn["status"];
   turnStartedAt?: string;
   actionableAgentMessageID?: string;
@@ -67,18 +70,20 @@ function render({
     root!.render(
       <WuuUIRoot>
         <ImagePreviewProvider>
-          <ThreadItemView
-            turnID="turn-1"
-            turnStatus={turnStatus}
-            turnStartedAt={turnStartedAt}
-            item={item}
-            streaming={streaming}
-            actionableAgentMessageID={actionableAgentMessageID}
-            latestAgentMessageID={latestAgentMessageID}
-            onStreamFrame={() => {}}
-            onEditMessage={onEditMessage}
-            onForkMessage={onForkMessage}
-          />
+          <ArtifactThreadContext.Provider value={owningThreadID}>
+            <ThreadItemView
+              turnID="turn-1"
+              turnStatus={turnStatus}
+              turnStartedAt={turnStartedAt}
+              item={item}
+              streaming={streaming}
+              actionableAgentMessageID={actionableAgentMessageID}
+              latestAgentMessageID={latestAgentMessageID}
+              onStreamFrame={() => {}}
+              onEditMessage={onEditMessage}
+              onForkMessage={onForkMessage}
+            />
+          </ArtifactThreadContext.Provider>
           <ToastViewport />
         </ImagePreviewProvider>
       </WuuUIRoot>,
@@ -111,6 +116,38 @@ afterEach(() => {
 });
 
 describe("ThreadItemView", () => {
+  it.each(["user_message", "agent_message"] as const)("mounts plugin actions for %s with only the public message snapshot", async (type) => {
+    const execute = vi.fn();
+    desktopPluginHost.setActiveConversationThread("another-active-thread");
+    await desktopPluginHost.activateGeneration({
+      pluginId: "thread-item-production-test", generation: "actions-one",
+      register(api) {
+        api.registerCommand({ id: "message.inspect", title: "Inspect plugin message", placements: ["conversation.message.actions"], execute });
+      },
+    });
+    const item = type === "user_message" ? makeUserMessage("") : makeFinalAnswer("completed");
+    (item as ThreadItem & { privateValue: string }).privateValue = "must-not-leak";
+    render({ item, owningThreadID: "public-thread", turnStatus: "completed", streaming: false });
+    const action = container!.querySelector<HTMLButtonElement>('button[aria-label="Inspect plugin message"]')!;
+    expect(action).not.toBeNull();
+    expect(action.closest(type === "user_message" ? ".user-message-actions" : ".agent-message-actions")).not.toBeNull();
+    await act(async () => action.click());
+    expect(execute).toHaveBeenCalledOnce();
+    const context = execute.mock.calls[0]?.[0];
+    expect(context).toMatchObject({ contractVersion: 1, target: "conversation.message.actions", threadId: "public-thread", turnId: "turn-1", item: { id: item.id, kind: type === "user_message" ? "user-message" : "assistant-message", text: item.text } });
+    expect(Object.isFrozen(context)).toBe(true);
+    expect(Object.isFrozen(context.item)).toBe(true);
+    expect(context.item).not.toHaveProperty("privateValue");
+    expect(context.item).not.toHaveProperty("type");
+    await act(async () => desktopPluginHost.unload("thread-item-production-test"));
+    expect(container!.querySelector('button[aria-label="Inspect plugin message"]')).toBeNull();
+    await act(async () => action.click());
+    expect(execute).toHaveBeenCalledOnce();
+    if (type === "user_message") expect(container!.querySelector(".user-message-actions")).toBeNull();
+    else expect(container!.querySelector('.agent-message-actions[aria-label]')).toBeNull();
+  });
+
+
   it.each([false, true])("aligns selection actions and comments to the same source start for reverse=%s", (reverse) => {
     vi.spyOn(HTMLElement.prototype, "getClientRects").mockReturnValue([{}] as unknown as DOMRectList);
     vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {

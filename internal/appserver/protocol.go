@@ -271,6 +271,9 @@ type ClientInfo struct {
 
 type ClientCapabilities struct {
 	ReverseRPC ReverseRPCCapabilities `json:"reverse_rpc,omitempty"`
+	// DeferredNotificationContent permits large snapshot payloads to use
+	// thread/content/read and thread/attachment/read references in notifications.
+	DeferredNotificationContent bool `json:"deferred_notification_content,omitempty"`
 }
 
 type ReverseRPCCapabilities struct {

@@ -229,10 +229,10 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const DEV_CACHE_CLEANUP_THRESHOLD_BYTES = 512 * 1024 * 1024;
 const DEV_CACHE_DIRECTORIES = ["Cache", "Code Cache", "GPUCache", "DawnCache"];
 const DEFAULT_WINDOW_BACKGROUND = "#f6f6f4";
-// Dark-theme counterpart, matching --paper in theme.css. Used on Windows
-// where the window fill (not a vibrancy material) is what shows behind the
-// transparent web layer — a dark-theme launch must not flash white.
-const DARK_WINDOW_BACKGROUND = "#1d2024";
+// Dark-theme counterpart, matching --paper in theme.css. The window fill is
+// what shows behind the transparent web layer before first paint, so a
+// dark-theme launch must not flash white.
+const DARK_WINDOW_BACKGROUND = "#1c1c1d";
 // Matches the renderer titlebar row (48px in the tabbed/popped-out states)
 // so the overlay buttons center on the same strip the renderer draws.
 const WINDOWS_TITLEBAR_OVERLAY_HEIGHT = 48;
@@ -812,21 +812,6 @@ function openExternalNavigation(rawURL: unknown): Promise<boolean> {
   return openExternalURL(rawURL, (url) => shell.openExternal(url));
 }
 
-function mainWindowMaterialOptions(): Pick<
-  BrowserWindowConstructorOptions,
-  "backgroundColor" | "transparent" | "vibrancy" | "visualEffectState"
-> {
-  if (process.platform !== "darwin") {
-    return { backgroundColor: windowBackgroundColor() };
-  }
-  return {
-    backgroundColor: "#00000000",
-    transparent: true,
-    vibrancy: "under-window",
-    visualEffectState: "active",
-  };
-}
-
 function resolvedThemeIsDark(): boolean {
   const preference = getThemePreference();
   if (preference === "system") return nativeTheme.shouldUseDarkColors;
@@ -843,15 +828,13 @@ function syncNativeThemeSource(): void {
   nativeTheme.themeSource = preference === "system" ? "system" : preference;
 }
 
-// Pre-paint window fill. macOS keeps the fixed light color (the vibrancy
-// material paints over it); elsewhere the fill IS the visible backdrop, so
-// it follows the stored theme.
+// Pre-paint window fill. It is the visible backdrop until the renderer
+// paints, so it follows the stored theme.
 function windowBackgroundColor(): string {
-  if (process.platform === "darwin") return DEFAULT_WINDOW_BACKGROUND;
   if (resolvedThemeIsDark()) return DARK_WINDOW_BACKGROUND;
-  // Linux WCO paints over the page fill; match renderer --paper (#ffffff)
-  // so the control strip does not sit on the warmer #f6f6f4 window fill.
-  if (process.platform === "linux") return "#ffffff";
+  // Match renderer --paper (#ffffff): on Linux the WCO paints over the page
+  // fill, and on macOS the canvas starts at the window edge.
+  if (process.platform !== "win32") return "#ffffff";
   return DEFAULT_WINDOW_BACKGROUND;
 }
 
@@ -937,8 +920,6 @@ function nonMacTitleBarOverlay(): Electron.TitleBarOverlay {
 // "system" — re-pushes the native chrome (Windows controls overlay,
 // non-macOS window background fill) to all of them, and the new
 // preference is broadcast so each renderer re-applies data-theme.
-// macOS skips both: its vibrancy material and transparent fill are
-// theme-independent.
 const themedChromeWindows = new Set<BrowserWindow>();
 
 function registerThemedChromeWindow(win: BrowserWindow): void {
@@ -956,7 +937,6 @@ function registerThemedChromeWindow(win: BrowserWindow): void {
 }
 
 function syncThemedWindowChrome(): void {
-  if (process.platform === "darwin") return;
   const background = windowBackgroundColor();
   const overlay = usesWindowControlsOverlay() ? nonMacTitleBarOverlay() : undefined;
   for (const win of themedChromeWindows) {
@@ -1170,7 +1150,7 @@ function createWindow(options: { inactive?: boolean } = {}): void {
     show: !options.inactive,
     resizable: onboardingComplete,
     ...windowFrameOptions(),
-    ...mainWindowMaterialOptions(),
+    backgroundColor: windowBackgroundColor(),
     webPreferences: {
       preload: join(__dirname, "../preload/index.cjs"),
       contextIsolation: true,

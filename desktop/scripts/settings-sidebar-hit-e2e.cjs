@@ -47,7 +47,7 @@ async function run() {
   await verifyTitlebarContinuity(win);
   win.setContentSize(1180, 820);
   win.webContents.setZoomFactor(1);
-  await waitFor(win, () => !document.querySelector(".app-shell")?.classList.contains("compact-navigation"), 3000);
+  await waitFor(win, () => window.innerWidth === 1180, 3000);
   await evaluate(win, () => {
     document.documentElement.style.setProperty("--desktop-page-zoom", "1");
     document.documentElement.style.setProperty("--font-ui", "14px");
@@ -150,12 +150,12 @@ async function verifyTitlebarContinuity(win) {
           document.documentElement.style.setProperty('--font-ui', '${font}px');
           document.documentElement.style.setProperty('--desktop-page-zoom', '${zoom}');
         `);
-        for (const layout of ["docked", "collapsed", "compact"]) {
+        for (const layout of ["docked", "collapsed", "narrow"]) {
           // Keep the CSS viewport in the requested layout as page zoom changes.
-          win.setContentSize(Math.round((layout === "compact" ? 600 : 1180) * zoom), 820);
-          await waitFor(win, layout === "compact"
-            ? () => document.querySelector(".app-shell").classList.contains("compact-navigation")
-            : () => !document.querySelector(".app-shell").classList.contains("compact-navigation"), 3000);
+          win.setContentSize(Math.round((layout === "narrow" ? 600 : 1180) * zoom), 820);
+          await waitFor(win, layout === "narrow"
+            ? () => Math.abs(window.innerWidth - 600) <= 1
+            : () => Math.abs(window.innerWidth - 1180) <= 1, 3000);
           await waitFor(win, () => !document.querySelector(".app-shell")?.classList.contains("sidebar-animating"), 3000);
           const collapsed = await evaluate(win, () => document.querySelector(".app-shell").classList.contains("sidebar-collapsed"));
           if (collapsed !== (layout !== "docked")) {

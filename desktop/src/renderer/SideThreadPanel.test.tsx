@@ -5,7 +5,10 @@ import {
   SideThreadPanel,
   type SideThreadPanelHandle,
 } from "./SideThreadPanel";
+import { ArtifactPreviewContext } from "./ArtifactPreviewContext";
 import type { SideThreadEntryState } from "./SideThreadState";
+
+vi.mock("./WorkspacePdfPreview", () => ({ WorkspacePdfPreview: () => <div>Side PDF</div> }));
 
 let mountedRoots: Root[] = [];
 let mountedContainers: HTMLElement[] = [];
@@ -47,26 +50,39 @@ function makeEntry(
 
 function renderPanel(
   entry: SideThreadEntryState,
-  callbacks: {
-    onClose?: () => void;
-    onResizeStart?: (event: unknown) => void;
-    onChangeDraft?: (draft: string) => void;
-  } = {},
 ): HTMLElement {
   return mount(
     createElement(SideThreadPanel, {
       entry,
       mainThreadId: "main-1",
-      width: 400,
+      active: true,
+      title: "Main conversation",
       composer: createElement("textarea", { "aria-label": "side composer" }),
-      onClose: callbacks.onClose ?? (() => {}),
-      onResizeStart: callbacks.onResizeStart ?? (() => {}),
-      onChangeDraft: callbacks.onChangeDraft ?? (() => {}),
     }),
   );
 }
 
 describe("SideThreadPanel", () => {
+  it("keeps side-thread PDFs in their own preview instead of sending them to the main conversation", async () => {
+    const openMainPreview = vi.fn();
+    const entry = makeEntry({
+      summary: { side_thread_id: "side-1", main_thread_id: "main-1", status: "completed", revision: 1, created_at: "", updated_at: "" },
+      messages: [{ id: "side-answer", side_thread_id: "side-1", role: "assistant", text: "", status: "completed", created_at: "",
+        items: [{ id: "side-pdf", type: "tool_call", status: "completed", name: "present_artifact", result_detail: { content: [{
+          type: "file", mime_type: "application/pdf", name: "side.pdf", uri: "wuu-artifact://workspace/side-1/digest/side.pdf",
+          artifact: { placement: "turn_end", sha256: "digest" },
+        }] } }],
+      }],
+    });
+    const container = mount(<ArtifactPreviewContext.Provider value={openMainPreview}>
+      <SideThreadPanel entry={entry} mainThreadId="main-1" active title="Main conversation" composer={<textarea aria-label="side composer" />}
+        />
+    </ArtifactPreviewContext.Provider>);
+    await act(async () => container.querySelector<HTMLButtonElement>('.turn-edit-summary-overview')!.click());
+    expect(openMainPreview).not.toHaveBeenCalled();
+    expect(container.querySelector('.artifact-preview-overlay')).not.toBeNull();
+  });
+
   it("reserves the measured floating footer height in the scroll flow", () => {
     vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
       function getBoundingClientRect(this: HTMLElement) {
@@ -100,32 +116,12 @@ describe("SideThreadPanel", () => {
         ref,
         entry: makeEntry(),
         mainThreadId: "main-1",
-        width: 400,
+        active: true,
+        title: "Main conversation",
         composer: createElement("textarea", { "aria-label": "side composer" }),
-        onClose: () => {},
-        onResizeStart: () => {},
-        onChangeDraft: () => {},
       }),
     );
     act(() => ref.current?.focusComposer());
     expect(document.activeElement).toBe(container.querySelector("textarea"));
-  });
-
-  it("keeps shell actions and resize semantics", () => {
-    const onClose = vi.fn();
-    const container = renderPanel(makeEntry(), {
-      onClose,
-    });
-    act(() => {
-      container.querySelector<HTMLButtonElement>(
-        ".side-thread-panel__close",
-      )?.click();
-    });
-    expect(onClose).toHaveBeenCalledTimes(1);
-    expect(
-      container
-        .querySelector(".side-thread-panel__resizer")
-        ?.getAttribute("aria-valuenow"),
-    ).toBe("400");
   });
 });

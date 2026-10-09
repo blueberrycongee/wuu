@@ -10,4 +10,8 @@ body,
   height: 100%;
   border-inline-start: 1px solid var(--hairline-soft);
   margin-inline-start: auto;
+  /* The app mounts the panel inside .workspace-right-panel; restate the row
+   * inset tokens that container owns. */
+  --workspace-row-inset: var(--space-2);
+  --workspace-row-pad-x: calc(var(--pane-inset) - var(--workspace-row-inset));
 }

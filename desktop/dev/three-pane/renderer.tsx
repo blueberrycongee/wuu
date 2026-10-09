@@ -9,6 +9,7 @@ import { initialState, type ThreadSummary } from "../../src/renderer/AppState";
 import { ConversationTitleActions, ConversationTitleContent } from "../../src/renderer/ConversationShellRenderers";
 import type { SettingsUsageDay, WuuDesktopApi, Turn, UsageOverviewResponse } from "../../src/shared/protocol";
 import { applyMessageFlowFontSize } from "../../src/renderer/MessageFlowFontSizeSection";
+import { applyMeasuredScrollbarWidth } from "../../src/renderer/ScrollbarMetrics";
 import { ImagePreviewProvider } from "../../src/renderer/ImagePreview";
 import { WuuUIRoot } from "../../src/renderer/ui/layers/UILayerHost";
 import { AppBackground } from "../../src/renderer/background/AppBackground";
@@ -28,11 +29,11 @@ const answer = `这次调整以三栏布局为基准，让导航、阅读与工�
 
 - 左栏保留紧凑的工作区与会话层级。
 - 中间集中呈现任务进展与最终结果。
-- 右栏使用居中的工具列表，减少无意义的卡片。
+- 右栏的工具列表与标签页对齐，减少无意义的卡片。
 
 ### 放大后依然可读
 
-同一套 UI 字体覆盖两侧导航和正文；代码继续使用独立字号。长标题正常省略，文件名不会与状态或操作重叠。
+同一套 UI 字体覆盖两侧导航和正文；代码继续使用独立字号，句中的 \`layout.reading\` 也一样。长标题正常省略，文件名不会与状态或操作重叠。
 
 \`\`\`ts
 const layout = { navigation: true, reading: true };
@@ -100,7 +101,7 @@ function Fixture() {
       </div></aside>
       <main className="conversation-pane" style={{ "--dock-composer-height": `${dockHeight}px` } as CSSProperties}>
         <header className="titlebar"><div className="title-block"><PanelLeft className="icon"/><ConversationTitleContent state={initialState} activeTitle={title} onStartNewThread={noop} onRenameTitle={setTitle} titleEditKey="sample-0"/></div>
-          <ConversationTitleActions state={initialState} compactNavigation={params.has("compact")} onStartNewThread={noop}
+          <ConversationTitleActions state={initialState}
             environmentToggleRef={environmentToggleRef} environmentPanelVisible={environmentOpen}
             onToggleEnvironmentPanel={() => setEnvironmentOpen(value => !value)}
             rightPanelOpen={rightOpen} onToggleRightPanel={() => setRightOpen(value => !value)} />
@@ -111,7 +112,7 @@ function Fixture() {
         </div>
         <footer ref={dock} className="composer-wrap dock-composer-wrap"><div className="composer-stack"><div className="composer-shell"><div className="composer-frame-shell"><div className="composer-frame"><div className="composer"><textarea aria-label="示例输入" placeholder="即刻开始"/><div className="composer-bar"><div className="composer-bar-left"><button className="composer-tool-button" aria-label="附件"><Plus className="icon"/></button></div><div className="composer-bar-right"><button className="codex-runtime-trigger">Wuu · 示例模型</button><button className="composer-action-button composer-send-button" disabled aria-label="发送"><ArrowUp className="icon"/></button></div></div></div></div></div></div></div></footer>
       </main>
-      <WorkspaceRightPanel open={rightOpen} present={rightOpen} tabs={tabs} activeTabID={activeTab} activeContext={{ kind: "no_project", cwd: "/preview" }} workspaceContext={{ kind: "no_project", cwd: "/preview" }} onSelectTab={setActiveTab} onOpenTool={openTool} onShowTools={() => setActiveTab(undefined)} onCloseTab={id => { setTabs(current => current.filter(tab => tab.id !== id)); setActiveTab(undefined); }} onReorderTabs={noop} onOpenFile={noop} onClose={() => setRightOpen(false)} globalized={globalized} onToggleGlobalize={() => setGlobalized(value => !value)}/>
+      <WorkspaceRightPanel open={rightOpen} present={rightOpen} tabs={tabs} activeTabID={activeTab} activeContext={{ kind: "no_project", cwd: "/preview" }} workspaceContext={{ kind: "no_project", cwd: "/preview" }} onSelectTab={setActiveTab} onOpenTool={openTool} onShowTools={() => setActiveTab(undefined)} onCloseTab={id => { setTabs(current => current.filter(tab => tab.id !== id)); setActiveTab(undefined); }} onReorderTabs={noop} onOpenFile={noop} globalized={globalized} onToggleGlobalize={() => setGlobalized(value => !value)}/>
     </div>
   </ImagePreviewProvider></WuuUIRoot>;
 }
@@ -122,5 +123,8 @@ if (import.meta.env.DEV) {
     listWorkspaceDirectory: async (path = "") => ({ root: "/preview", path, truncated: false, entries: path ? [] : ["README.md", "排版验收说明.md", "long-file-name-for-truncation-review.ts", ...Array.from({ length: 40 }, (_, i) => `component-${i}.tsx`)].map(name => ({ name, path: name, kind: "file" })) }),
     getUsageOverview: async () => sampleUsageOverview(new URLSearchParams(location.search).has("new-user")),
   } as unknown as WuuDesktopApi;
+  // Stamp the real scrollbar gutter as the product boot does; the composer and
+  // the file tree size themselves from it.
+  applyMeasuredScrollbarWidth();
   createRoot(document.getElementById("root")!).render(<Fixture/>);
 }

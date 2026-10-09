@@ -91,14 +91,18 @@ async function run() {
         const main = document.querySelector(".conversation-pane > .scroll-region");
         const side = document.querySelector(".side-thread-panel");
         return { main: main.getBoundingClientRect().toJSON(), side: side.getBoundingClientRect().toJSON(),
-          mainInert: Boolean(main.closest("[inert]")), viewportWidth: innerWidth };
+          mainInert: Boolean(main.closest("[inert]")), viewportWidth: innerWidth,
+          globalized: document.querySelector(".app-shell").classList.contains("right-panel-globalized"),
+          sideInWorkspace: Boolean(side.closest(".workspace-right-panel")) };
       });
       report.layoutObservations.push({ label, sideLayout });
-      assert.equal(sideLayout.mainInert, false, "The side-chat destination must leave the main conversation interactive");
-      assert.ok(sideLayout.main.right <= sideLayout.side.left + 1, "Main and side chat must not overlap");
-      // AppLayoutState's existing 352px minimum protects the main reading area.
-      assert.ok(sideLayout.viewportWidth < 760 || sideLayout.main.width >= 352 - 1,
-        `Side chat must preserve the established main-column minimum: ${JSON.stringify(sideLayout)}`);
+      assert.equal(sideLayout.sideInWorkspace, true, "Side chat belongs to the workspace sidebar");
+      assert.equal(sideLayout.mainInert, sideLayout.globalized, "Only the expanded workspace covers the main conversation");
+      if (!sideLayout.globalized) {
+        assert.ok(sideLayout.main.right <= sideLayout.side.left + 1, "Main and side chat must not overlap");
+        assert.ok(sideLayout.viewportWidth < 760 || sideLayout.main.width >= 352 - 1,
+          `Side chat must preserve the established main-column minimum: ${JSON.stringify(sideLayout)}`);
+      }
       await click(".side-thread-panel .composer-file-selection-card .composer-document-card-main");
       await waitFor(expected => document.querySelector(".composer-file-selection-card-popover .composer-response-selection-quote")?.textContent === expected, "side selection details", quote);
       await visibleGeometry(".composer-file-selection-card-popover");
@@ -131,9 +135,10 @@ async function run() {
       }
       await click(".composer-file-selection-card-popover .composer-response-selection-remove");
       await waitFor(() => !document.querySelector(".side-thread-panel .composer-file-selection-card .composer-document-card-main"), "side selection removed");
-      await click(".side-thread-panel__close");
-      await showWorkspacePanel();
-      await openFile(file);
+      await click('[data-wuu-tab-kind="side-thread"] .workspace-tool-tab-close');
+      await waitFor(() => Boolean(document.querySelector('.workspace-file-resource.active .file-selection-surface')) &&
+        Boolean(document.querySelector('.workspace-document-composer [data-main-conversation-composer]')),
+        "closing side chat returns to its source document");
       assert.equal(await evaluate(composerValue), draft, "Side selection must preserve the main draft");
       assert.equal((await snapshot()).submissions.length, initial.submissions.length, "Opening a side selection must not submit a main turn");
 
@@ -297,10 +302,21 @@ async function run() {
     await fill(".file-selection-action-menu textarea", wrappedComment);
     await checkFilePlacement(`${variant.name}-wrapped-comment`);
     await screenshot(`${variant.name}-wrapped-comment`);
-    const editorRect = await visibleGeometry(".workspace-file-resource.active .monaco-editor");
-    // Use the same native CDP wheel path as the sidebar scrolling fixture.
-    const wheelPoint = { x: Math.round(editorRect.x + editorRect.width - 30), y: Math.round(editorRect.y + editorRect.height / 2) };
-    assert.equal(await evaluate(point => Boolean(document.elementFromPoint(point.x, point.y)?.closest(".monaco-editor")), wheelPoint), true, "Native wheel target must hit the editor");
+    await visibleGeometry(".workspace-file-resource.active .monaco-editor");
+    // The comment popup can cover the midpoint in a narrow panel. Wheel over
+    // an exposed part of the editor, as a reader would, without dismissing it.
+    const wheelPoint = await evaluate(() => {
+      const editor = document.querySelector('.workspace-file-resource.active .monaco-editor');
+      const rect = editor.getBoundingClientRect();
+      for (const yFraction of [0.5, 0.25, 0.75, 0.1]) {
+        for (const xFraction of [0.9, 0.5, 0.1]) {
+          const point = { x: Math.round(rect.x + rect.width * xFraction), y: Math.round(rect.y + rect.height * yFraction) };
+          if (document.elementFromPoint(point.x, point.y)?.closest('.monaco-editor') === editor) return point;
+        }
+      }
+      return null;
+    });
+    assert.ok(wheelPoint, "Native wheel target must hit an exposed part of the editor");
     win.focus();
     await win.webContents.debugger.sendCommand("Input.dispatchMouseEvent", { type: "mouseMoved", ...wheelPoint });
     await win.webContents.debugger.sendCommand("Input.dispatchMouseEvent", { type: "mouseWheel", ...wheelPoint, deltaY: 60, deltaX: 0 });
@@ -371,7 +387,7 @@ async function verifyTextAttachments(variant) {
   assert.deepEqual(sent.contentParts.map(({ type, text }) => ({ type, text })), [{ type: "pasted_text", text }, { type: "text", text: question }]);
   await evaluate(() => window.selectionE2E.complete());
   await waitFor(() => composerValue() === "" && !document.querySelector("[data-main-conversation-composer] .composer-collapsed-prompt-card"), "sent text attachment cleared");
-  await click(".workspace-panel-close");
+  await click('button[aria-label="Close right sidebar"]');
   await waitFor(() => document.querySelector(".workspace-right-panel")?.getAttribute("aria-hidden") !== "false", "conversation visible for history preview");
   await click(".user-message-pasted-text-toggle");
   await waitFor(text => document.querySelector(".user-message-pasted-text-content")?.textContent === text, "sent attachment preview", text);
@@ -418,6 +434,10 @@ async function openFile(file) {
     const expand = Array.from(document.querySelectorAll("button")).find(button => /expand to full panel|展开为全面板/i.test(button.getAttribute("aria-label") || ""));
     expand?.click();
   });
+  // A narrow document hides its docked tree; use the Files tab to choose another resource.
+  if (!await evaluate(() => Boolean(document.querySelector('.workspace-file-tree-frame file-tree-container')))) {
+    await openFiles();
+  }
   await waitFor(file => {
     const root = document.querySelector(".workspace-file-tree-frame file-tree-container")?.shadowRoot;
     return Array.from(root?.querySelectorAll("[data-item-path]") ?? []).some(row => row.getAttribute("data-item-path") === file);

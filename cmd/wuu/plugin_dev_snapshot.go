@@ -1,20 +1,17 @@
 package main
 
 import (
+	"crypto/sha256"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
-	"time"
 )
 
-// pluginSourceFile is the identity of one watched source file. ModTime alone
-// is not enough: some editors preserve timestamps, so size is included as a
-// cheap second signal.
-type pluginSourceFile struct {
-	ModTime time.Time
-	Size    int64
-}
+// pluginSourceFile identifies bytes rather than timestamps: atomic editors can
+// preserve modification times, and touching unchanged source should not rebuild.
+type pluginSourceFile [sha256.Size]byte
 
 // pluginSourceSnapshot maps slash-normalized package-relative paths to their
 // current file identity. Ignored directories are excluded so build output and
@@ -41,7 +38,11 @@ func snapshotPluginSource(root string) pluginSourceSnapshot {
 		if err != nil {
 			return nil
 		}
-		out[filepath.ToSlash(rel)] = pluginSourceFile{ModTime: info.ModTime(), Size: info.Size()}
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return nil
+		}
+		out[filepath.ToSlash(rel)] = sha256.Sum256(content)
 		return nil
 	})
 	return out
@@ -53,7 +54,7 @@ func changedPluginSourcePaths(before, after pluginSourceSnapshot) []string {
 	var out []string
 	for rel, current := range after {
 		previous, ok := before[rel]
-		if !ok || !previous.ModTime.Equal(current.ModTime) || previous.Size != current.Size {
+		if !ok || previous != current {
 			out = append(out, rel)
 		}
 	}

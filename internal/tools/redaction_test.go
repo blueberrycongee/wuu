@@ -40,3 +40,11 @@ func TestRedactToolOutput_PEMPrivateKey(t *testing.T) {
 		t.Fatalf("expected PEM block redaction marker, got: %s", got)
 	}
 }
+
+func TestRedactToolOutputPreservesDottedIdentifiers(t *testing.T) {
+	input := "test_manifest_replay (parityctl.test_parity.IntegrationTests.test_manifest_replay) ... ok\n" +
+		"package_name.module_name.function_name\n"
+	if got := redactToolOutput(input); got != input {
+		t.Fatalf("ordinary test identifiers were redacted: %s", got)
+	}
+}

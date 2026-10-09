@@ -60,7 +60,7 @@ wuu plugin dev .
 
 For a desktop-only package, `test` checks the package and reports that runtime initialization was skipped. It does not import or render the desktop module. The host requires a self-contained entry: if you later add runtime imports, bundle them rather than shipping unresolved imports beside this file.
 
-`dev` authorizes the supplied directory and publishes rebuilt development generations as files change. A failed build or package check keeps the last published generation; publication can wait for active executions. Check the desktop plugin status for activation errors.
+`dev` authorizes the supplied directory and publishes rebuilt development generations as files change. A failed build or package check keeps the last published generation; publication can wait for active executions. Check the desktop plugin status for activation errors. Desktop registration has its own lifecycle. If you add a native runtime entry, its post-commit activation failure does not roll back the package change; see [plugin architecture](plugin-system.md#runtime-generations).
 
 In Wuu Desktop, click the toggle and confirm its label and pressed state change. Test keyboard focus, both themes, a narrow window, and a larger UI font. Disabling the plugin should remove the control. React state is local to the mounted component and is not durable plugin storage.
 

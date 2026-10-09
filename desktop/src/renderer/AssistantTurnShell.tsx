@@ -39,8 +39,6 @@ import {
 } from "./TurnProgress";
 import { ProcessSurface, ProcessSurfaceMascot } from "./ProcessSurface";
 import { CONVERSATION_TURN_REVEAL_EVENT, type ConversationTurnRevealDetail, turnEndedInFailure, turnProgressContent } from "./TurnViewHelpers";
-import { collectTurnSources } from "./ToolActivityHelpers";
-import { TurnSourcesRow } from "./TurnSourcesRow";
 import {
   AUTO_FOLLOW_NESTED_SCROLL_ATTR,
   useAutoFollowScrollContainer,
@@ -137,28 +135,6 @@ export function AssistantTurnShell({
       ...output.flatMap((item) => item.entry?.position === "process" ? [item.entry] : []),
     ])
     : undefined;
-  // Sources derive from the full turn — web_search and web_fetch happen
-  // in the process region, but the source affordance belongs beside the
-  // process header so it reads as turn metadata instead of extra answer
-  // content. Dedupe by host is handled inside collectTurnSources so a
-  // burst of hits on the same domain still produces a single icon.
-  // process_group entries wrap several raw items under one .items array,
-  // so we flatten entries.items ?? [entry.item] before feeding the helper.
-  const turnSources = useMemo(
-    () =>
-      collectTurnSources(
-        display.entries.flatMap((entry) => entry.items ?? [entry.item]),
-      ),
-    [display.entries],
-  );
-  const handleOpenSource = useCallback((
-    url: string,
-    modifiers?: { metaKey?: boolean; ctrlKey?: boolean; altKey?: boolean; button?: number },
-  ): void => {
-    if (modifiers) onOpenURL?.(url, modifiers);
-    else onOpenURL?.(url);
-  }, [onOpenURL]);
-
   // An in_progress turn always shows the process header, even before the
   // first server item arrives (the optimistic placeholder right after
   // send). Without this the shell mounts as an empty box and the user
@@ -196,6 +172,7 @@ export function AssistantTurnShell({
   const entryProps = {
     turn,
     cwd,
+    onOpenURL,
     onOpenFile,
     onOpenAgent,
     actionableAgentMessageID,
@@ -217,8 +194,6 @@ export function AssistantTurnShell({
           latestPreview={
             answerHandoffRequested ? undefined : display.latestProcessPreview
           }
-          sources={turnSources}
-          onOpenSource={handleOpenSource}
           {...entryProps}
         />
       ) : null}
@@ -242,10 +217,9 @@ function TurnProcessFold({
   activeGrayEntryKey,
   collapseRequested,
   latestPreview,
-  sources,
-  onOpenSource,
   cwd,
   onOpenFile,
+  onOpenURL,
   onOpenAgent,
   actionableAgentMessageID,
   latestAgentMessageID,
@@ -259,10 +233,9 @@ function TurnProcessFold({
   activeGrayEntryKey?: string;
   collapseRequested: boolean;
   latestPreview?: TurnProcessPreview;
-  sources: ReturnType<typeof collectTurnSources>;
-  onOpenSource?: (url: string, modifiers?: { metaKey?: boolean; ctrlKey?: boolean; altKey?: boolean; button?: number }) => void;
   cwd?: string;
   onOpenFile?: (path: string) => void;
+  onOpenURL?: (url: string, modifiers?: { metaKey?: boolean; ctrlKey?: boolean; altKey?: boolean; button?: number }) => void;
   onOpenAgent?: (agentID: string) => void;
   actionableAgentMessageID?: string;
   latestAgentMessageID?: string;
@@ -533,7 +506,6 @@ return (
           {toggleContent}
         </div>
         {fusionTask ? <SessionMessageSource source={fusionTask.side_id} name="Sidekick" /> : null}
-        <TurnSourcesRow sources={sources} onOpen={onOpenSource} />
       </div>
       {hasDetails || hasPreview ? (
         <CollapsibleDetails
@@ -560,6 +532,7 @@ return (
                     turn={turn}
                     cwd={cwd}
                     onOpenFile={onOpenFile}
+                    onOpenURL={onOpenURL}
                     onOpenAgent={onOpenAgent}
                     actionableAgentMessageID={actionableAgentMessageID}
                     latestAgentMessageID={latestAgentMessageID}
@@ -605,6 +578,7 @@ function EntryRenderer({
   turn,
   cwd,
   onOpenFile,
+  onOpenURL,
   onOpenAgent,
   actionableAgentMessageID,
   latestAgentMessageID,
@@ -618,6 +592,7 @@ function EntryRenderer({
   turn: Turn;
   cwd?: string;
   onOpenFile?: (path: string) => void;
+  onOpenURL?: (url: string, modifiers?: { metaKey?: boolean; ctrlKey?: boolean; altKey?: boolean; button?: number }) => void;
   onOpenAgent?: (agentID: string) => void;
   actionableAgentMessageID?: string;
   latestAgentMessageID?: string;
@@ -631,6 +606,7 @@ function EntryRenderer({
     return (
       <ProcessSurface
         processItems={entry.items ?? [item]}
+        onOpenURL={onOpenURL}
         cwd={cwd}
         streaming={streaming}
         active={activeGray}
@@ -807,10 +783,10 @@ function turnProcessTitle(
       ? taskFinishedLabel(elapsedMs)
       : translate("task.status.completed");
   }
-  // The failure card below says what went wrong; the fold header keeps the
-  // duration a finished turn shows.
+  // The failure card below says what went wrong; the fold header only names
+  // the record, so the two never state the failure twice.
   if (turnEndedInFailure(turn)) {
-    return hasKnownDuration ? taskFinishedLabel(elapsedMs) : translate("messageFlow.activityFailed");
+    return hasKnownDuration ? taskFinishedLabel(elapsedMs) : translate("messageFlow.activityLog");
   }
   if (turn.status === "interrupted") return translate("turn.orchestrationPaused");
   if (turn.status === "completed") {

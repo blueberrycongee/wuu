@@ -78,12 +78,15 @@ export function useHoverReveal<K>({
   disabled: locallyDisabled = false,
   focus = "any",
   interactive = false,
+  propagateEscape = false,
 }: {
   disabled?: boolean;
   // "keyboard" opens on focus only when the keyboard moved it. Large layers
   // use it so a click, or the window regaining focus, doesn't pop one up.
   focus?: "any" | "keyboard";
   interactive?: boolean;
+  // Let an owning disclosure handle the same Escape after its hint closes.
+  propagateEscape?: boolean;
 } = {}): {
   revealed: HoverRevealTarget<K> | null;
   anchorHandlers: (key: K) => HoverRevealAnchorHandlers;
@@ -237,7 +240,7 @@ export function useHoverReveal<K>({
     }
     const handleKeyDown = (event: KeyboardEvent): void => {
       if (event.key === "Escape") {
-        event.stopPropagation();
+        if (!propagateEscape) event.stopPropagation();
         suppressUntilLeaveRef.current = true;
         const anchorHovered = revealedRef.current?.anchor.matches(":hover");
         if (interactive && layerRef.current?.contains(document.activeElement)) {
@@ -297,7 +300,7 @@ export function useHoverReveal<K>({
       stopContextMenuWatch();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, interactive]);
+  }, [open, interactive, propagateEscape]);
 
   // External state can retire a layer mid-hover (content cleared, or the
   // anchor became disabled). Clear timers before the owner finishes closing.

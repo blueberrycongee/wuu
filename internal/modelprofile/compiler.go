@@ -61,8 +61,8 @@ func (DefaultCompiler) Compile(p Profile, kind SurfaceKind) capability.Surface {
 	addSessionTools(b)
 	addSkillTools(b)
 	addExtensionTools(b)
-	b.addVisible("edit_file", capability.CapabilityFileEdit)
 	b.addVisible("write_file", capability.CapabilityFileEdit)
+	b.addVisible("edit_file", capability.CapabilityFileEdit)
 	addPrompt(b, p)
 	if kind != SurfaceWorker {
 		addSessionWorkspaceTool(b)
@@ -224,6 +224,7 @@ func addSkillTools(b *surfaceBuilder) {
 }
 
 func addExtensionTools(b *surfaceBuilder) {
+	b.addDeferred("plugin_manager", capability.CapabilityPluginManagement)
 	// MCP has no stable built-in tool name because concrete MCP
 	// tools are discovered at runtime. The deferred capability says
 	// this profile may load MCP tools through tool_search; the tools
@@ -247,7 +248,7 @@ Do not access sensitive credential paths or use broad staging, destructive Git o
 
 func addPrompt(b *surfaceBuilder, p Profile) {
 	label := b.surface.ProfileName
-	guidance := "Use edit_file for targeted changes and write_file for new files or complete rewrites."
+	guidance := "Use write_file to create files and edit_file for exact replacements. Pass file content as literal text; batch already-decided replacements in edits."
 	if p.Execution.AllowDirectShell {
 		guidance += " Use bash for command execution." + shellPromptPolicy
 	} else {

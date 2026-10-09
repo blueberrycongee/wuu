@@ -70,7 +70,7 @@ class ExternalAgentActivityStore {
       this.activitiesByThread.set(threadId, activities);
     }
     const key = `${turnId}:${activity.engine}:${activity.id}`;
-    if (activity.state === "completed") {
+    if (activity.state === "completed" || activity.state === "stopped") {
       if (!activities.delete(key)) return;
     } else {
       const state = composerState(activity.state);
@@ -134,12 +134,12 @@ function parseActivity(value: unknown): ExternalAgentActivity | undefined {
   const state = stringField(activity, "state");
   if (!id || !label || !engine || engine === "wuu") return undefined;
   if (state !== "queued" && state !== "running" && state !== "waiting"
-    && state !== "failed" && state !== "completed") return undefined;
+    && state !== "failed" && state !== "completed" && state !== "stopped") return undefined;
   return { id, engine, label, state };
 }
 
 function composerState(state: ExternalAgentActivity["state"]): ComposerStatusState {
-  return state === "failed" ? "error" : state === "completed" ? "idle" : state;
+  return state === "failed" ? "error" : state === "completed" || state === "stopped" ? "idle" : state;
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

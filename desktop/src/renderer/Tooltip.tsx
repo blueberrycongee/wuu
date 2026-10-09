@@ -55,6 +55,7 @@ export function Tooltip({
   children,
   disabled = false,
   side = "top",
+  propagateEscape = false,
 }: {
   /** Designed hint text. Empty/undefined disables the tooltip. */
   content?: string | null;
@@ -62,13 +63,15 @@ export function Tooltip({
   children: ReactNode;
   disabled?: boolean;
   side?: TooltipSide;
+  /** Also let the owning disclosure handle Escape after dismissing the hint. */
+  propagateEscape?: boolean;
 }): JSX.Element {
   const wrapperRef = useRef<HTMLSpanElement>(null);
   const layerRef = useRef<HTMLDivElement>(null);
   const [position, setPosition] = useState<CSSProperties | null>(null);
 
   const inactive = disabled || !content || content.trim() === "";
-  const { revealed, anchorHandlers } = useHoverReveal<true>({ disabled: inactive });
+  const { revealed, anchorHandlers } = useHoverReveal<true>({ disabled: inactive, propagateEscape });
   const open = revealed !== null;
   useRetainHoverOwner(open);
 

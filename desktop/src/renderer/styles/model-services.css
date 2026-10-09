@@ -49,69 +49,8 @@
   line-height: 1;
 }
 
-/* --- Default model -------------------------------------------------------- */
-
-.model-default-card {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: var(--space-3);
-  /* Matches the service cards' border so marks and names share one axis. */
-  border: 1px solid var(--hairline-soft);
-  border-radius: var(--radius-md);
-  background: var(--settings-card);
-  padding: var(--space-4);
-}
-
-.model-default-copy {
-  display: grid;
-  min-width: 0;
-  justify-items: start;
-  gap: 2px;
-}
-
-/* The menu spans the column while its trigger hugs the name. Offset by
- * the menu inset and item padding to align the options with the model text. */
-.model-default-select {
-  --model-default-text-inset: calc(var(--menu-inset) + var(--space-2));
-  justify-self: stretch;
-  max-width: min(100%, 22em);
-  margin-inline-start: calc(var(--model-default-text-inset) * -1);
-}
-
-/* The model name is the control: title-sized text that fills on hover. Its
- * text keeps the service line's edge; the padding reaches past it. It draws
- * no border, which would push the text a pixel past that edge. */
-.select-menu-trigger.model-default-trigger {
-  display: inline-flex;
-  width: auto;
-  max-width: 100%;
-  min-height: 0;
-  border: 0;
-  border-radius: var(--radius-xs);
-  background: transparent;
-  color: var(--ink-strong);
-  font-size: calc(var(--font-ui) * 1.15);
-  font-weight: var(--weight-medium);
-  line-height: 1.35;
-  padding: 2px var(--space-2) 2px var(--model-default-text-inset);
-}
-
-.select-menu-trigger.model-default-trigger:hover:not(:disabled),
-.select-menu-trigger.model-default-trigger[aria-expanded="true"] {
-  background: var(--surface-3);
-}
-
-.select-menu-trigger.model-default-trigger .select-menu-value {
-  flex: 0 1 auto;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.model-default-trigger .select-menu-chevron {
-  color: var(--ink-tertiary);
-}
+/* --- Default model --------------------------------------------------------
+ * Ordinary settings rows; the model row names its service underneath. */
 
 .model-default-service {
   display: flex;
@@ -119,9 +58,6 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 2px var(--space-3);
-  color: var(--ink-soft);
-  font-size: var(--font-sm);
-  line-height: 1.5;
 }
 
 .model-default-attention,
@@ -138,42 +74,18 @@
   color: var(--warning);
 }
 
-/* One labeled control on the card's center line, like a settings row, so it
- * does not compete with the name and service lines beside it. The select
- * keeps the menu's 160px floor, so the menu matches its trigger. */
-.model-default-effort {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.model-default-effort > span {
-  color: var(--ink-soft);
-  font-size: var(--font-sm);
-  white-space: nowrap;
-}
-
-.model-default-effort > .select-menu {
-  width: max(9.5em, 160px);
-}
-
-@container settings-page (max-width: 32em) {
-  .model-default-card {
-    grid-template-columns: auto minmax(0, 1fr);
-  }
-
-  /* Under the name, not the mark. */
-  .model-default-effort {
-    grid-column: 2;
-  }
-}
-
 /* --- Connected services ----------------------------------------------------- */
 
+/* One list in a settings group, rows divided like the catalog's. */
 .model-service-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 17em), 1fr));
-  gap: var(--space-3);
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  border: 1px solid var(--hairline);
+  border-radius: var(--settings-group-radius);
+  background: var(--settings-card);
+  box-shadow: var(--settings-group-shadow);
+  padding-inline: var(--card-padding);
 }
 
 .model-service-grid > [role="listitem"] {
@@ -181,30 +93,26 @@
   min-width: 0;
 }
 
+.model-service-grid > [role="listitem"] + [role="listitem"] {
+  border-top: 1px solid var(--hairline-soft);
+}
+
 .model-service-card {
   display: grid;
   min-width: 0;
+  min-height: calc(var(--control-field-height) + var(--settings-row-pad-block) * 2);
   grid-template-columns: auto minmax(0, 1fr) auto auto;
   align-items: center;
   gap: var(--space-3);
-  border: 1px solid var(--hairline-soft);
-  border-radius: var(--radius-sm);
-  background: var(--settings-card);
+  border: 0;
+  background: transparent;
   color: var(--ink);
-  padding: var(--space-3) var(--space-4);
+  padding: var(--settings-row-pad-block) 0;
   text-align: left;
-  transition:
-    background var(--motion-fast) var(--ease-out),
-    border-color var(--motion-fast) var(--ease-out);
-}
-
-.model-service-card:hover {
-  border-color: var(--hairline);
-  background: color-mix(in srgb, var(--settings-card) 94%, var(--ink));
 }
 
 .model-service-card:hover .settings-disclosure-chevron {
-  color: var(--ink-soft);
+  color: var(--ink);
 }
 
 .model-service-card-copy {
@@ -223,6 +131,7 @@
 .model-service-card-title {
   color: var(--ink-strong);
   font-size: var(--font-ui);
+  font-weight: var(--weight-medium);
   line-height: 1.4;
 }
 
@@ -257,9 +166,10 @@
 .model-service-catalog {
   display: grid;
   gap: var(--space-3);
-  border: 1px solid var(--hairline-soft);
-  border-radius: var(--radius-md);
+  border: 1px solid var(--hairline);
+  border-radius: var(--settings-group-radius);
   background: var(--settings-card);
+  box-shadow: var(--settings-group-shadow);
   padding: var(--space-3) var(--space-4);
 }
 

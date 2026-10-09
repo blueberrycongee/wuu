@@ -223,7 +223,7 @@ function Fixture() {
       />
       <main className="conversation-pane" style={{ "--dock-composer-height": `${dockHeight}px` } as CSSProperties}>
         <header className="titlebar"><div className="title-block"><span>{draft ? "新项目" : current?.title}</span></div>
-          <ConversationTitleActions state={{ ...state, thread: draft ? undefined : current }} onStartNewThread={noop}
+          <ConversationTitleActions state={{ ...state, thread: draft ? undefined : current }}
             environmentToggleRef={environmentToggleRef} environmentPanelVisible={false} onToggleEnvironmentPanel={noop}
             rightPanelOpen={tabs.length > 0} onToggleRightPanel={noop} />
         </header>
@@ -242,7 +242,7 @@ function Fixture() {
       <WorkspaceRightPanel open={tabs.length > 0} present={tabs.length > 0} tabs={tabs} activeTabID={activeTab}
         activeContext={state.activeContext} workspaceContext={state.activeContext} onSelectTab={setActiveTab} onOpenTool={noop}
         onShowTools={() => setActiveTab(undefined)} onCloseTab={id => { setTabs(currentTabs => currentTabs.filter(tab => tab.id !== id)); setActiveTab(undefined); }}
-        onReorderTabs={noop} onOpenFile={noop} onClose={() => setTabs([])} globalized={false} onToggleGlobalize={noop} />
+        onReorderTabs={noop} onOpenFile={noop} globalized={false} onToggleGlobalize={noop} />
     </div>
   </ProjectActionsProvider></WuuUIRoot>;
 }

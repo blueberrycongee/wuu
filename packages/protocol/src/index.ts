@@ -130,6 +130,7 @@ export type InitializeParams = {
     version?: string;
   };
   capabilities?: {
+    deferred_notification_content?: boolean;
     reverse_rpc?: {
       methods?: string[];
     };
@@ -2309,7 +2310,7 @@ export type ExternalAgentActivity = {
   id: string;
   engine: string;
   label: string;
-  state: "queued" | "running" | "waiting" | "failed" | "completed";
+  state: "queued" | "running" | "waiting" | "failed" | "completed" | "stopped";
 };
 
 export type TurnEventNotification = {

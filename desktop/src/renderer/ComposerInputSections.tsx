@@ -1,3 +1,4 @@
+import { useComposerAttachmentFocus } from "./useComposerAttachmentFocus";
 import { VideoAttachment } from "./VideoAttachment";
 import { COMPOSER_ATTACHMENT_ACCEPT } from "./ComposerMessages";
 import * as React from "react";
@@ -209,6 +210,9 @@ export function SplitPaneComposer({
     storageKey: queryHistorySessionID
   });
   const fileSelectionActions = useFileSelectionActions();
+  const onAttachmentPickerClick = useComposerAttachmentFocus(
+    textareaRef, queryHistorySessionID, fileSelectionActions?.ownerKey, readOnly,
+  );
   const fileSelectionParts = collapsedPromptBlocks.flatMap((block) =>
     block.part?.type === "file_selection" ? [block.part] : []);
 
@@ -351,6 +355,7 @@ export function SplitPaneComposer({
                   accept={COMPOSER_ATTACHMENT_ACCEPT}
                   multiple
                   tabIndex={-1}
+                  onClick={onAttachmentPickerClick}
                   onChange={(event) => {
                     const selected = Array.from(event.currentTarget.files ?? []);
                     event.currentTarget.value = "";
@@ -366,6 +371,7 @@ export function SplitPaneComposer({
                   accept="image/*"
                   multiple
                   tabIndex={-1}
+                  onClick={onAttachmentPickerClick}
                   onChange={(event) => {
                     const selected = Array.from(event.currentTarget.files ?? []);
                     event.currentTarget.value = "";

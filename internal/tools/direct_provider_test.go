@@ -42,6 +42,8 @@ func TestDirectToolsCanStreamAcrossProviders(t *testing.T) {
 				var req struct {
 					Tools []struct {
 						Name        string         `json:"name"`
+						Type        string         `json:"type"`
+						Format      map[string]any `json:"format"`
 						Parameters  map[string]any `json:"parameters"`
 						InputSchema map[string]any `json:"input_schema"`
 						Function    *struct {

@@ -130,6 +130,7 @@ func RunToolLoop(
 		}()
 	}
 
+	turnRouting := &providers.TurnRouting{}
 	messages := make([]providers.ChatMessage, len(history))
 	copy(messages, history)
 	// Transient context is request-only across runs, but append-only inside
@@ -617,6 +618,7 @@ func RunToolLoop(
 		operation.ParentOperationID = nextOperationParentID
 		nextOperationParentID = ""
 		req := providers.ChatRequest{
+			TurnRouting:                 turnRouting,
 			Provider:                    cfg.ProviderName,
 			Model:                       cfg.Model,
 			Messages:                    requestMessages,
@@ -757,6 +759,12 @@ func RunToolLoop(
 		)
 		if cfg.OnRequestContext != nil {
 			cfg.OnRequestContext(requestInfo)
+		}
+		if cfg.RequestContextStore != nil {
+			checkpoint := RequestContextCheckpoint{Provider: cfg.ProviderName, Model: req.Model, DriverID: cfg.DriverID, DriverVersion: cfg.DriverVersion, State: buildRetainedRequestContextState(retainedContext, messages)}
+			if err := cfg.RequestContextStore.Save(ctx, checkpoint); err != nil {
+				return loopResultSnapshot(messages, startLen, historyRewritten, totalIn, totalOut, totalCacheCreation, totalCacheRead), fmt.Errorf("persist request context: %w", err)
+			}
 		}
 		if cfg.ModelInputReceiptStore != nil {
 			receipt := ModelInputReceipt{
@@ -977,6 +985,7 @@ func RunToolLoop(
 		}
 
 		assistant := providers.ChatMessage{
+			ProviderItems:        result.ProviderItems,
 			Role:                 "assistant",
 			Images:               result.Images,
 			Content:              result.Content,

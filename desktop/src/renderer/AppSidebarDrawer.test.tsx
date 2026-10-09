@@ -10,7 +10,6 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { translateCurrent } from "./i18n";
 import type {
   InitializeResult,
   ServerEvent,
@@ -40,7 +39,7 @@ vi.mock("./WorkspaceMonacoEditor", () => ({
 }));
 
 import { App, SIDEBAR_DRAWER_HOVER_OPEN_DELAY_MS } from "./App";
-import { sidebarMotionMs } from "./AppLayoutState";
+import { sidebarMotionMs, sidebarDrawerExitMs } from "./AppLayoutState";
 import {
   createWindowResizeSettleScheduler,
   WINDOW_RESIZE_SETTLE_DELAY_MS,
@@ -355,11 +354,11 @@ describe("collapsed sidebar hover drawer", () => {
   });
 
   it.each([
-    ["web", true, 390, true],
-    ["web", true, 820, false],
-    ["web", false, 390, false],
-    ["desktop", true, 390, false],
-  ] as const)("uses swipe-only phone navigation and restores the titlebar on wider layouts: %s touch=%s width=%s", async (host, coarse, width, inComposer) => {
+    ["web", true, 390],
+    ["web", true, 820],
+    ["web", false, 390],
+    ["desktop", true, 390],
+  ] as const)("keeps navigation available at every viewport width: %s touch=%s width=%s", async (host, coarse, width) => {
     document.documentElement.dataset.hostKind = host;
     window.innerWidth = width;
     vi.mocked(window.matchMedia).mockImplementation((query) => ({
@@ -368,18 +367,17 @@ describe("collapsed sidebar hover drawer", () => {
       addListener: vi.fn(), removeListener: vi.fn(), dispatchEvent: vi.fn(),
     }));
     await renderCollapsedApp();
-    expect(Boolean(container.querySelector('[data-wuu-component="conversation-titlebar"]'))).toBe(!inComposer);
-    expect(Boolean(container.querySelector(`aside button[aria-label="${translateCurrent("sidebar.switchWorkspace")}"]`))).toBe(host === "web" && coarse && width < 700);
-    expect(container.querySelector('.composer-bar .compact-conversation-actions')).toBeNull();
+    expect(container.querySelector('[data-wuu-component="conversation-titlebar"]')).not.toBeNull();
+    expect(appShell()?.dataset.wuuSidebarMode).toBe("collapsed");
     await act(async () => {
       window.innerWidth = 820;
       window.dispatchEvent(new Event("resize"));
     });
     expect(container.querySelector('[data-wuu-component="conversation-titlebar"]')).not.toBeNull();
-    expect(container.querySelector('.composer-bar .compact-conversation-actions')).toBeNull();
+    expect(appShell()?.dataset.wuuSidebarMode).toBe("collapsed");
   });
 
-  it.each(["web", "desktop"])("%s keeps the sidebar toggle appropriate while the drawer is open", async (host) => {
+  it.each(["web", "desktop"])("%s lets the user dock and collapse the sidebar in a narrow window", async (host) => {
     document.documentElement.dataset.hostKind = host;
     window.innerWidth = 390;
     vi.mocked(window.matchMedia).mockImplementation((query) => ({
@@ -392,7 +390,7 @@ describe("collapsed sidebar hover drawer", () => {
     expect(toggle()).not.toBeNull();
     await act(async () => { toggle()!.click(); });
     await act(async () => { vi.advanceTimersByTime(400); });
-    expect(appShell()?.dataset.wuuSidebarMode).toBe("drawer");
+    expect(appShell()?.dataset.wuuSidebarMode).toBe("docked");
     expect(toggle()).not.toBeNull();
     expect(toggle()!.getAttribute("aria-pressed")).toBe("true");
     await act(async () => {
@@ -710,7 +708,7 @@ describe("collapsed sidebar hover drawer", () => {
           relatedTarget: document.body,
         }),
       );
-      vi.advanceTimersByTime(sidebarMotionMs());
+      vi.advanceTimersByTime(sidebarDrawerExitMs());
     });
 
     expect(appShell()?.classList.contains("sidebar-drawer-open")).toBe(false);
@@ -872,7 +870,7 @@ describe("collapsed sidebar hover drawer", () => {
     );
   });
 
-  it("returns to conversation when compact focus navigation selects a session", async () => {
+  it("returns to conversation when a focused narrow workspace selects a session", async () => {
     installWuuApi([
       threadFixture(
         "thread-active",
@@ -889,15 +887,7 @@ describe("collapsed sidebar hover drawer", () => {
     await renderCollapsedApp();
 
     await act(async () => {
-      container
-        .querySelector<HTMLButtonElement>('.compact-conversation-actions [aria-haspopup="menu"]')!
-        .click();
-    });
-    await act(async () => {
-      const openPanel = [...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')]
-        .find(button => button.textContent === "打开右侧栏");
-      expect(openPanel).toBeTruthy();
-      openPanel!.click();
+      container.querySelector<HTMLButtonElement>('[data-wuu-component="right-sidebar-toggle"]')!.click();
       await Promise.resolve();
     });
     expect(appShell()?.classList.contains("right-panel-globalized")).toBe(true);
@@ -915,7 +905,8 @@ describe("collapsed sidebar hover drawer", () => {
 
     expect(appShell()?.classList.contains("right-panel-open")).toBe(false);
     expect(appShell()?.classList.contains("right-panel-globalized")).toBe(false);
-    expect(appShell()?.classList.contains("sidebar-drawer-open")).toBe(false);
+    // Session selection keeps the desktop drawer available until pointer exit.
+    expect(appShell()?.classList.contains("sidebar-drawer-open")).toBe(true);
     expect(container.querySelector(".conversation-pane")?.hasAttribute("inert")).toBe(false);
   });
 
@@ -943,7 +934,7 @@ describe("collapsed sidebar hover drawer", () => {
 
     await movePointerOver(document.body);
     await act(async () => {
-      vi.advanceTimersByTime(sidebarMotionMs());
+      vi.advanceTimersByTime(sidebarDrawerExitMs());
     });
 
     expect(appShell()?.classList.contains("sidebar-drawer-open")).toBe(false);

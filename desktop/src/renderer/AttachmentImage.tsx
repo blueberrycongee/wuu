@@ -1,10 +1,12 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import type { InputImage } from "../shared/protocol";
 import { imageSource } from "./ComposerMessages";
 import { useI18n } from "./i18n";
 import { useImagePreviewRegistration } from "./ImagePreviewGallery";
 
-export function AttachmentImage({ image, label, previewTitle = label, className, previewDisabled, decoding, onOpen }: {
+type OpenImage = (src: string, origin: HTMLElement) => void;
+
+export function AttachmentImage({ image, label, previewTitle = label, className, previewDisabled, decoding, onOpen, renderActions }: {
   image: InputImage;
   label: string;
   previewTitle?: string;
@@ -12,7 +14,9 @@ export function AttachmentImage({ image, label, previewTitle = label, className,
   previewDisabled?: boolean;
   /** Surfaces that animate an image in pass "async" so decoding never holds a frame. */
   decoding?: "async" | "auto";
-  onOpen: (src: string, origin: HTMLElement) => void;
+  onOpen: OpenImage;
+  /** Additional actions share original-image loading and its error/retry state. */
+  renderActions?: (open: (handler: OpenImage) => void, disabled: boolean) => ReactNode;
 }): JSX.Element {
   const { t } = useI18n();
   const [data, setData] = useState("");
@@ -49,9 +53,9 @@ export function AttachmentImage({ image, label, previewTitle = label, className,
     element.current = node;
     register(node);
   }, [register]);
-  async function open(): Promise<void> {
+  async function open(handler: OpenImage = onOpen): Promise<void> {
     if (previewDisabled || loading) return;
-    if (!remote) { onOpen(src, element.current!); return; }
+    if (!remote) { handler(src, element.current!); return; }
     const requestGeneration = generation.current;
     setLoading(true); setError("");
     try {
@@ -59,16 +63,18 @@ export function AttachmentImage({ image, label, previewTitle = label, className,
       const loaded = await window.wuu.readRemoteAttachment(image.remote_ref!);
       if (generation.current !== requestGeneration) return;
       setData(loaded);
-      onOpen(imageSource({ ...image, data: loaded }), element.current!);
+      handler(imageSource({ ...image, data: loaded }), element.current!);
     } catch (cause) {
       if (generation.current !== requestGeneration) return;
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally { if (generation.current === requestGeneration) setLoading(false); }
   }
+  const actions = renderActions?.(handler => { void open(handler); }, loading || Boolean(previewDisabled));
   if (remote && !preview) return <>
     <button ref={imageRef} type="button" className={className} disabled={loading || previewDisabled} aria-label={labelOpen} onClick={() => void open()}>
       {loading ? t("common.loadingEllipsis") : label}
     </button>
+    {actions}
     {error ? <span role="alert">{error}</span> : null}
   </>;
   return <><img ref={imageRef} className={className} src={src} alt={label} decoding={decoding} role={previewDisabled ? undefined : "button"}
@@ -76,5 +82,5 @@ export function AttachmentImage({ image, label, previewTitle = label, className,
     tabIndex={previewDisabled ? -1 : 0} aria-label={previewDisabled ? undefined : labelOpen}
     onClick={() => void open()} onKeyDown={event => {
       if (event.key === "Enter" || event.key === " ") { event.preventDefault(); void open(); }
-    }} />{error ? <span role="alert">{error}</span> : null}</>;
+    }} />{actions}{error ? <span role="alert">{error}</span> : null}</>;
 }

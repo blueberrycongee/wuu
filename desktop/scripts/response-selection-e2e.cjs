@@ -303,6 +303,8 @@ async function checkPlacement(name, expected, expectedSide) {
   const height = complete.bottom - complete.top;
   const aboveFits = source.top >= height + 16;
   const belowFits = viewport.height - source.bottom >= height + 16;
+  if (expectedSide === "below" && (aboveFits || !belowFits))
+    throw new Error(`${name}: fixture must leave insufficient space above and enough below the complete comment popup: ${JSON.stringify(geometry)}`);
   const above = complete.bottom <= source.top + 1;
   const below = complete.top >= source.bottom - 1;
   if (aboveFits && !above) throw new Error(`${name}: popup should be above the source: ${JSON.stringify(geometry)}`);
@@ -345,14 +347,29 @@ async function placementCoverage() {
   report.cases.push("source annotation Escape restores action focus and clears its unsaved draft on reopen");
   win.setContentSize(760, 420);
   const top = await select("Native drag selection", false, false, false, "start");
+  // Align the selected text with the scroll viewport, not its containing answer:
+  // the answer's leading blocks and shell spacing can leave room above the popup.
+  await evaluate(() => {
+    const scroll = document.querySelector(".conversation-pane > .scroll-region");
+    const source = window.getSelection().getRangeAt(0).getBoundingClientRect();
+    scroll.scrollBy({ top: source.top - scroll.getBoundingClientRect().top - 20, behavior: "instant" });
+  });
+  await settle();
   await click(".response-selection-toolbar .selection-action-comment-toggle");
-  await win.webContents.insertText("Top-edge fallback 第二行 😀");
+  await until(() => document.activeElement === document.querySelector(".response-selection-toolbar textarea"),
+    "top-edge annotation input receives native focus");
+  // A single-line comment fits above the source after shell/header changes.
+  // Exercise the fallback with a full-height real editor, not a forced position.
+  const topComment = "Top-edge fallback 第二行 😀\nKeep this instruction.\nPreserve the selected passage.\nUse the available space below.\nKeep native focus while scrolling.";
+  await win.webContents.insertText(topComment);
+  await until(value => document.querySelector(".response-selection-toolbar textarea")?.value === value,
+    "top-edge annotation receives the complete multiline draft", topComment);
   await checkPlacement("placement-top-edge-comment", top, "below");
   const moved = await evaluate(() => { const scroll = document.querySelector(".conversation-pane > .scroll-region"); const before = scroll.scrollTop; scroll.scrollBy({ top: -20, behavior: "instant" }); return scroll.scrollTop !== before; });
   if (!moved) throw new Error("Visible-source scroll scenario did not move the source viewport");
   await checkPlacement("placement-visible-source-scroll", top);
   const preserved = await evaluate(() => { const input = document.querySelector(".response-selection-commenting textarea, .response-selection-toolbar textarea"); return { value: input?.value, focused: document.activeElement === input }; });
-  if (preserved.value !== "Top-edge fallback 第二行 😀" || !preserved.focused) throw new Error("Moving the source lost the comment or input focus");
+  if (preserved.value !== topComment || !preserved.focused) throw new Error("Moving the source lost the comment or input focus");
   await evaluate(() => { const scroll = document.querySelector(".conversation-pane > .scroll-region"); scroll.scrollTo({ top: scroll.scrollHeight, behavior: "instant" }); });
   await until(() => !document.querySelector(".response-selection-toolbar"), "fully offscreen source dismisses the popup");
   report.cases.push("source-left full-range anchors; forward/reverse native drag; multiline comment growth; narrow edge clamp; top fallback; visible-source scroll preserves comment/focus; offscreen dismissal");
@@ -460,7 +477,7 @@ async function run() {
   await win.webContents.debugger.sendCommand("Emulation.setFocusEmulationEnabled", { enabled: true });
   await until(selector => !!document.querySelector(selector), "rendered response", surface);
   await evaluate(() => {
-    for (const toggle of document.querySelectorAll('.environment-toggle-button[aria-pressed="true"], .title-actions .side-panel-toggle-button[aria-pressed="true"]')) toggle.click();
+    for (const toggle of document.querySelectorAll('.environment-toggle-button[aria-pressed="true"], [data-wuu-component=right-sidebar-toggle][aria-pressed="true"]')) toggle.click();
     if (!document.querySelector(".app-shell").classList.contains("sidebar-collapsed")) document.querySelector(".sidebar-toggle-button").click();
   });
   await settle();
@@ -614,7 +631,7 @@ function servePreview() {
       observer.observe(sourceRoot,{subtree:true,childList:true,characterData:true});
       for(let node=sourceRoot.closest('article');node;node=node.parentElement)observer.observe(node,{attributes:true,attributeOldValue:true,attributeFilter:['hidden','inert','aria-hidden','style','class','data-thread-id','data-response-settled']});
       new MutationObserver(records=>{for(const record of records)for(const node of [...record.addedNodes,...record.removedNodes])if(node.nodeType===1&&node.matches('.response-selection-toolbar'))trace({type:'toolbar-lifecycle',target:node,detail:{connected:node.isConnected}})}).observe(document.body,{childList:true});
-      for(const toggle of document.querySelectorAll('.environment-toggle-button[aria-pressed="true"], .title-actions .side-panel-toggle-button[aria-pressed="true"]'))toggle.click();
+      for(const toggle of document.querySelectorAll('.environment-toggle-button[aria-pressed="true"], [data-wuu-component=right-sidebar-toggle][aria-pressed="true"]'))toggle.click();
       if(!document.querySelector('.app-shell').classList.contains('sidebar-collapsed'))document.querySelector('.sidebar-toggle-button').click();
       if(params.has('theme'))document.documentElement.dataset.theme=params.get('theme');
       if(params.has('font')){document.documentElement.style.setProperty('--conversation-message-font-size',params.get('font')+'px');document.documentElement.style.setProperty('--ui-font-size',params.get('font')+'px')}

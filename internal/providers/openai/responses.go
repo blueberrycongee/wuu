@@ -19,6 +19,7 @@ import (
 const responsesFinalAnswerTailGrace = 2 * time.Second
 
 func (c *Client) responsesChat(ctx context.Context, req providers.ChatRequest) (providers.ChatResponse, error) {
+	ctx = c.withResponsesTurnRouting(ctx, req)
 	payload, err := c.buildResponsesRequest(req, false)
 	if err != nil {
 		return providers.ChatResponse{}, err
@@ -64,6 +65,7 @@ func (c *Client) responsesChat(ctx context.Context, req providers.ChatRequest) (
 }
 
 func (c *Client) responsesStreamChat(ctx context.Context, req providers.ChatRequest) (<-chan providers.StreamEvent, error) {
+	ctx = c.withResponsesTurnRouting(ctx, req)
 	payload, err := c.buildResponsesRequest(req, true)
 	if err != nil {
 		return nil, err
@@ -433,6 +435,7 @@ func appendResponsesInputItem(input []responsesInputItem, msg providers.ChatMess
 	}
 
 	if msg.Role == "assistant" {
+		start := len(input)
 		for _, providerItem := range msg.ProviderItems {
 			if item, ok := responsesProviderInputItem(providerItem, provider, providerStateScope); ok {
 				input = append(input, item)
@@ -488,6 +491,9 @@ func appendResponsesInputItem(input []responsesInputItem, msg providers.ChatMess
 		}
 		if strings.TrimSpace(msg.Content) == "" && len(msg.ToolCalls) == 0 && len(msg.ProviderItems) == 0 && len(msg.Images) == 0 {
 			input = append(input, responsesInputItem{Role: "assistant", Content: ""})
+		}
+		if ordered, ok := responsesOrderedReplay(msg, provider, providerStateScope, model, input[start:]); ok {
+			input = append(input[:start], ordered...)
 		}
 		return input
 	}
@@ -827,6 +833,8 @@ func (c *Client) doSingleResponsesRequest(
 		httpReq.Header.Set(k, v)
 	}
 
+	routing := responsesTurnRoutingFromContext(ctx)
+	routing.apply(httpReq.Header)
 	mode := "unary"
 	if acceptStream {
 		mode = "stream"
@@ -869,6 +877,7 @@ func (c *Client) doSingleResponsesRequest(
 		lease.FailError(err)
 		return nil, nil, err
 	}
+	routing.remember(resp.Header)
 	return resp, lease, nil
 }
 
@@ -923,12 +932,14 @@ func (c *Client) readResponsesSSE(ctx context.Context, resp *http.Response, leas
 	var sawToolCall bool
 	var text responsesTextStream
 	var images responsesImageStream
+	var responseItems []responsesInputItem
 
 	scanner := providers.NewSSEReader(resp.Body, resetIdle)
 	for scanner.Scan() {
 		data := scanner.Event().Data
 		if data == "[DONE]" {
 			pending.emitEnds(emit)
+			emitResponsesReplayItems(emit, nil, responseItems, text.emitted.String())
 			lease.Succeed()
 			emit.Send(providers.StreamEvent{Type: providers.EventDone})
 			return
@@ -950,6 +961,7 @@ func (c *Client) readResponsesSSE(ctx context.Context, resp *http.Response, leas
 			return
 		}
 
+		responsesTurnRoutingFromContext(ctx).rememberEvent(event)
 		switch event.Type {
 		case "response.reasoning_summary_text.delta", "response.reasoning_text.delta":
 			pendingReasoning.appendDelta(event, event.Delta, emit)
@@ -976,6 +988,9 @@ func (c *Client) readResponsesSSE(ctx context.Context, resp *http.Response, leas
 			pending.setArguments(event)
 
 		case "response.output_item.done":
+			if item, ok := responsesOutputItemReplayInput(event.Item); ok {
+				responseItems = append(responseItems, item)
+			}
 			switch event.Item.Type {
 			case "reasoning":
 				pendingReasoning.emitDone(event, emit)
@@ -997,6 +1012,7 @@ func (c *Client) readResponsesSSE(ctx context.Context, resp *http.Response, leas
 			pending.emitEnds(emit)
 			usage, stopReason, finishReason, truncated := responsesDoneMetadata(event.Response, sawToolCall, event.Type)
 			lease.SucceedWithUsage(usage)
+			emitResponsesReplayItems(emit, event.Response, responseItems, text.emitted.String())
 			emit.Send(providers.StreamEvent{
 				Type:              providers.EventDone,
 				Usage:             usage,
@@ -1020,6 +1036,7 @@ func (c *Client) readResponsesSSE(ctx context.Context, resp *http.Response, leas
 	if finalAnswerTailFired.Load() && !sawToolCall && ctx.Err() == nil {
 		providers.DebugLogf("Responses SSE inferred completion after final-answer tail grace")
 		lease.Succeed()
+		emitResponsesReplayItems(emit, nil, responseItems, text.emitted.String())
 		emit.Send(responsesInferredFinalAnswerDoneEvent())
 		return
 	}
@@ -1515,7 +1532,14 @@ func (r responsesResponse) asChatResponse(model string) (providers.ChatResponse,
 
 	usage, stopReason, finishReason, truncated := responsesDoneMetadata(&r, len(calls) > 0, "")
 
+	var replay []responsesInputItem
+	for _, output := range r.Output {
+		if item, ok := responsesOutputItemReplayInput(output); ok {
+			replay = append(replay, item)
+		}
+	}
 	return providers.ChatResponse{
+		ProviderItems:     responsesReplayProviderItems(replay),
 		Images:            images,
 		Content:           strings.Join(contentParts, "\n"),
 		Phase:             phase,
@@ -1748,6 +1772,7 @@ func (e *responsesError) asError() error {
 }
 
 type responsesStreamEvent struct {
+	Headers     map[string]any      `json:"headers,omitempty"`
 	Input       string              `json:"input,omitempty"`
 	Type        string              `json:"type"`
 	Code        string              `json:"code,omitempty"`
@@ -1809,4 +1834,91 @@ func normalizedResponsesToolArguments(kind providers.ToolCallKind, input string)
 	}
 	args, _ := json.Marshal(map[string]string{"input": input})
 	return string(args)
+}
+
+func responsesReplayProviderItems(items []responsesInputItem) []providers.ProviderItem {
+	var result []providers.ProviderItem
+	for _, item := range items {
+		raw, err := json.Marshal(item)
+		if err != nil {
+			return nil
+		}
+		var probe struct {
+			Type string `json:"type"`
+		}
+		if json.Unmarshal(raw, &probe) != nil {
+			return nil
+		}
+		result = append(result, providers.ProviderItem{Type: probe.Type, Data: string(raw)})
+	}
+	return result
+}
+
+func emitResponsesReplayItems(emit *providers.StreamEmitter, response *responsesResponse, items []responsesInputItem, content string) {
+	items, complete := responsesWebSocketFinalReplayItems(response, items, content)
+	if !complete {
+		return
+	}
+	for _, item := range responsesReplayProviderItems(items) {
+		if !emit.Send(providers.StreamEvent{Type: providers.EventProviderItem, ProviderItem: &item}) {
+			return
+		}
+	}
+}
+
+// Native order is authoritative only while the portable message still matches
+// it. History editing, tool ID repair and model switches must not resurrect a
+// stale snapshot. Old messages without native items keep their original wire form.
+func responsesOrderedReplay(msg providers.ChatMessage, provider, scope, model string, portable []responsesInputItem) ([]responsesInputItem, bool) {
+	if len(msg.ProviderItems) == 0 || (msg.ProviderItemModel != "" && msg.ProviderItemModel != model) || (msg.ProviderItemProvider != "" && msg.ProviderItemProvider != provider) {
+		return nil, false
+	}
+	var ordered []responsesInputItem
+	var text []string
+	var other []responsesInputItem
+	var phase string
+	for _, item := range msg.ProviderItems {
+		if item.Type == "compaction" || (item.Provider != "" && item.Provider != provider) || (item.Scope != "" && item.Scope != scope) {
+			return nil, false
+		}
+		var native responsesInputItem
+		if json.Unmarshal([]byte(item.Data), &native) != nil || native.Type != item.Type {
+			return nil, false
+		}
+		switch native.Type {
+		case "message":
+			text = append(text, responsesInputItemText(native))
+			phase = native.Phase
+		case "reasoning", "function_call", "custom_tool_call", "tool_search_call", "image_generation_call":
+			other = append(other, native)
+		default:
+			return nil, false
+		}
+		ordered = append(ordered, native)
+	}
+	// Unary portable text historically joins messages with a newline; streams
+	// concatenate deltas. Keep both portable contracts without changing old history.
+	if (strings.Join(text, "") != msg.Content && strings.Join(text, "\n") != msg.Content) || phase != string(msg.Phase) {
+		return nil, false
+	}
+	for _, item := range portable {
+		if item.Type == "message" || (item.Role == "assistant" && item.Type == "") {
+			continue
+		}
+		found := -1
+		for i, native := range other {
+			if responsesInputItemEqual(native, item) {
+				found = i
+				break
+			}
+		}
+		if found < 0 {
+			return nil, false
+		}
+		other = append(other[:found], other[found+1:]...)
+	}
+	if len(other) > 0 {
+		return nil, false
+	}
+	return ordered, true
 }

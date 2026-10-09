@@ -1,7 +1,7 @@
 import * as React from "react";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { PRESENTATION_TARGETS } from "../../shared/workbench";
+import { PRESENTATION_TARGETS, type PluginCommandActionContext } from "../../shared/workbench";
 
 import {
   PLUGIN_SLOT_IDS,
@@ -214,6 +214,146 @@ describe("PluginHost", () => {
     expect(host.getCommands()).toEqual([]);
     expect(host.getLocaleEntries("en")).toEqual({});
     expect(document.head.querySelector("style[data-wuu-plugin-id=notes]")).toBeNull();
+  });
+
+  it.each(["unload", "replace"])("immediately cleans up a pending generation on %s", async (action) => {
+    const host = new PluginHost({ react: React });
+    const cleanup: string[] = [];
+    let api!: PluginGenerationApi;
+    let finish!: () => void;
+    const gate = new Promise<void>((resolve) => { finish = resolve; });
+    const pending = host.activateGeneration({
+      pluginId: "pending", generation: "one",
+      async register(value) {
+        api = value;
+        api.registerCleanup(() => { cleanup.push("one"); });
+        await gate;
+      },
+    });
+    if (action === "unload") host.unload("pending");
+    else await host.activateGeneration({ pluginId: "pending", generation: "two", register() {} });
+
+    expect(cleanup).toEqual(["one"]);
+    expect(() => api.registerCommand(command("late"))).toThrow("no longer registering");
+    expect(() => api.onHostEvent(() => {})).toThrow("no longer active");
+    finish();
+    await expect(pending).rejects.toThrow("superseded");
+    expect(cleanup).toEqual(["one"]);
+    expect(host.getGenerationDiagnostics("pending", "one")).toEqual([]);
+    host.unload("pending");
+  });
+
+  it.each(["runtime", "workspaces", "threads"])("rejects stale %s results even when the replacement reuses the same fingerprint", async (operation) => {
+    let finish!: () => void;
+    const gate = new Promise<void>((resolve) => { finish = resolve; });
+    const host = new PluginHost({
+      react: React,
+      invokeRuntime: async () => { await gate; return { ok: true }; },
+      listWorkspaces: async () => { await gate; return { workspaces: [] }; },
+      listThreads: async () => { await gate; return []; },
+    });
+    let api!: PluginGenerationApi;
+    await host.activateGeneration({ pluginId: "async", generation: "same", register(value) { api = value; } });
+    const request = operation === "runtime" ? api.invokeRuntime("read")
+      : operation === "workspaces" ? api.listWorkspaces() : api.listThreads("/workspace");
+    await host.activateGeneration({ pluginId: "async", generation: "same", register() {} });
+    finish();
+    await expect(request).rejects.toThrow("no longer active");
+    host.unload("async");
+  });
+
+  it("rejects retained command callbacks after their generation is replaced", async () => {
+    const host = new PluginHost({ react: React });
+    const executed: string[] = [];
+    await host.activateGeneration({ pluginId: "commands", generation: "same", register(api) {
+      api.registerCommand({ id: "run", title: "Run", execute: () => { executed.push("old"); } });
+      api.registerSlot("workspace.header", { id: "label", render: () => "old" });
+    } });
+    const retained = host.getCommands()[0]!;
+    await host.activateGeneration({ pluginId: "commands", generation: "same", register(api) {
+      api.registerCommand({ id: "run", title: "Run", execute: () => { executed.push("new"); } });
+      api.registerSlot("workspace.header", { id: "label", render: () => "new" });
+    } });
+    expect(() => retained.execute()).toThrow("no longer active");
+    host.getCommands()[0]!.execute();
+    expect(executed).toEqual(["new"]);
+    expect(host.getSlotSnapshot("workspace.header")[0]!.render({})).toBe("new");
+    host.unload("commands");
+  });
+
+  it("resolves command placements without changing unplaced commands and contains predicate failures", async () => {
+    const host = new PluginHost({ react: React });
+    const context: PluginCommandActionContext = { contractVersion: 1, target: "view.title", viewId: "v", viewTypeId: "notes", viewPluginId: "notes", region: "auxiliary" };
+    await host.activateGeneration({ pluginId: "notes", generation: "one", register(api) {
+      api.registerCommand({ id: "plain", title: "Plain", execute() {} });
+      api.registerCommand({ id: "hidden", title: "Hidden", placements: ["view.title"], when: () => false, execute() {} });
+      api.registerCommand({ id: "broken", title: "Broken", placements: ["view.title"], when: () => { throw new Error("predicate failed"); }, execute() {} });
+      api.registerCommand({ id: "disabled", title: "Disabled", placements: ["view.title"], enabled: () => false, order: 2, execute() {} });
+      api.registerCommand({ id: "first", title: "First", placements: ["view.title"], order: 1, execute() {} });
+    } });
+    const resolved = host.resolveCommandActions(context);
+    expect(resolved.actions.map(({ command, enabled }) => [command.id, enabled])).toEqual([["first", true], ["disabled", false]]);
+    expect(resolved.failures).toHaveLength(1);
+    expect(host.getCommands()).toHaveLength(5);
+    host.unload("notes");
+    expect(host.resolveCommandActions(context).actions).toEqual([]);
+  });
+
+  it("rechecks action enablement and exact run identity at invocation", async () => {
+    const host = new PluginHost({ react: React });
+    const context: PluginCommandActionContext = { contractVersion: 1, target: "view.title", viewId: "v", viewTypeId: "notes", viewPluginId: "notes", region: "auxiliary" };
+    let enabled = true;
+    const calls: unknown[] = [];
+    const register = (api: PluginGenerationApi): void => { api.registerCommand({ id: "refresh", title: "Refresh", placements: ["view.title"], enabled: () => enabled, execute: (input) => { calls.push(input); } }); };
+    await host.activateGeneration({ pluginId: "notes", generation: "same", register });
+    const old = host.getCommands()[0]!;
+    enabled = false;
+    await expect(host.executeCommandAction(old, context)).rejects.toThrow("disabled");
+    enabled = true;
+    await host.executeCommandAction(old, context);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toEqual(context);
+    expect(Object.isFrozen(calls[0])).toBe(true);
+    await host.activateGeneration({ pluginId: "notes", generation: "same", register });
+    await expect(host.executeCommandAction(old, context)).rejects.toThrow("no longer active");
+    expect(calls).toHaveLength(1);
+    host.unload("notes");
+  });
+
+  it("retains command identity during unrelated registry changes and freezes nested action data", async () => {
+    const host = new PluginHost({ react: React });
+    let finish!: () => void;
+    const gate = new Promise<void>((resolve) => { finish = resolve; });
+    const item = { contractVersion: 1 as const, id: "item", kind: "assistant-message" as const, content: [{ type: "plain-text" as const, text: "original" }] };
+    const context: PluginCommandActionContext = { contractVersion: 1, target: "conversation.message.actions", turnId: "turn", item };
+    await host.activateGeneration({ pluginId: "notes", generation: "one", register(api) {
+      api.registerCommand({ id: "save", title: "Save", placements: ["conversation.message.actions"], execute: async (input) => {
+        const received = input as Extract<PluginCommandActionContext, { target: "conversation.message.actions" }>;
+        expect(Object.isFrozen(received.item.content![0])).toBe(true);
+        await gate;
+        return "saved";
+      } });
+    } });
+    const command = host.getCommands()[0]!;
+    const pending = host.executeCommandAction(command, context);
+    await host.activateGeneration({ pluginId: "other", generation: "one", register(api) { api.registerCommand({ id: "other", title: "Other", execute() {} }); } });
+    expect(host.getCommands().find((row) => row.pluginId === "notes")).toBe(command);
+    expect(Object.isFrozen(item)).toBe(false);
+    finish();
+    await expect(pending).resolves.toBe("saved");
+    host.unload("notes"); host.unload("other");
+  });
+
+  it("fails closed when supplied command predicates do not return booleans", async () => {
+    const host = new PluginHost({ react: React });
+    const context: PluginCommandActionContext = { contractVersion: 1, target: "view.title", viewId: "v", viewTypeId: "notes", viewPluginId: "notes", region: "auxiliary" };
+    await host.activateGeneration({ pluginId: "notes", generation: "one", register(api) {
+      api.registerCommand({ id: "invalid", title: "Invalid", placements: ["view.title"], when: (() => undefined) as unknown as () => boolean, execute() {} });
+    } });
+    const result = host.resolveCommandActions(context);
+    expect(result.actions).toEqual([]);
+    expect(result.failures).toHaveLength(1);
+    host.unload("notes");
   });
 
   it("keeps a staged replacement private until its registration callback completes", async () => {
@@ -721,6 +861,22 @@ describe("PluginHost", () => {
     expect(() => firstApi?.onHostEvent(() => {})).toThrow("no longer active");
     host.publishHostEvent({ kind: "notification", method: "turn/started" });
     expect(received).toHaveLength(1);
+  });
+
+  it.each(["one", "two"])("ignores delayed render reports from a retired run when replacing with %s", async (generation) => {
+    const host = new PluginHost({ react: React });
+    const register = (api: PluginGenerationApi) => {
+      api.registerSlot("composer.above", contribution("status"));
+    };
+    await host.activateGeneration({ pluginId: "render", generation: "one", register });
+    const retired = host.getSlotSnapshot("composer.above")[0]!;
+    await host.activateGeneration({ pluginId: "render", generation, register });
+    host.recordRenderFailure(retired, { slotId: "composer.above" }, new Error("late failure"));
+    expect(host.getGenerationDiagnostics("render", "one")).toEqual([]);
+    const current = host.getSlotSnapshot("composer.above")[0]!;
+    host.recordRenderFailure(current, { slotId: "composer.above" }, new Error("current failure"));
+    expect(host.getGenerationDiagnostics("render", generation)).toHaveLength(1);
+    host.unload("render");
   });
 
   it("deduplicates repeated diagnostics and clears them after a successful reactivation", async () => {

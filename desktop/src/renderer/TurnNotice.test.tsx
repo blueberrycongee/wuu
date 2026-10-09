@@ -391,9 +391,9 @@ describe("TurnFailureNotice", () => {
     status_code: 401,
     recovery: { attempt_count: 1, retry_count: 0, max_attempts: 11, submission_count: 1, stop_reason: "non_retryable", failure_category: "authentication" },
   };
-  const buttons = (host: HTMLElement) => [...host.querySelectorAll<HTMLButtonElement>(".turn-failure-actions > button:not(.turn-failure-details-toggle)")];
+  const buttons = (host: HTMLElement) => [...host.querySelectorAll<HTMLButtonElement>(".turn-failure-recovery > button")];
 
-  it("offers Model services before a retry when the service rejects the credentials", async () => {
+  it("offers Model services beside a retry when the service rejects the credentials", async () => {
     const retry = vi.fn();
     const openSettings = vi.fn();
     const host = mount(
@@ -402,13 +402,11 @@ describe("TurnFailureNotice", () => {
     const aside = host.querySelector("aside.turn-failure");
     expect(aside?.getAttribute("role")).toBe("alert");
     expect(aside?.querySelector(".turn-failure-title")?.textContent).toBe(t("turnFailure.auth"));
-    expect(aside?.querySelector(".turn-failure-body")?.textContent).toBe(t("turnFailure.authBody"));
-    const [first, second] = buttons(host);
-    expect(first.textContent).toBe(t("turnFailure.openSettings"));
-    expect(second.textContent).toBe(t("appState.retryAction"));
-    act(() => { first.click(); });
+    const actions = buttons(host);
+    expect(actions.map((button) => button.textContent).sort()).toEqual([t("appState.retryAction"), t("turnFailure.openSettings")].sort());
+    act(() => { actions.find((button) => button.textContent === t("turnFailure.openSettings"))!.click(); });
     expect(openSettings).toHaveBeenCalledOnce();
-    await act(async () => { second.click(); });
+    await act(async () => { actions.find((button) => button.textContent === t("appState.retryAction"))!.click(); });
     expect(retry).toHaveBeenCalledOnce();
   });
 
@@ -420,16 +418,27 @@ describe("TurnFailureNotice", () => {
     act(() => { toggle.click(); });
     expect(toggle.getAttribute("aria-expanded")).toBe("true");
     expect(host.querySelector(".turn-failure-diagnostic")?.textContent).toBe(serverError.message);
-    expect(host.querySelector(".turn-failure-recovery")?.textContent).toBe(userFacingErrorForMessage(serverError, "turn").detail);
   });
 
-  it("says that automatic recovery already retried before it gave up", () => {
+  it("keeps the status and the automatic retries with the technical record", () => {
     const host = mount(<TurnFailureNotice display={userFacingErrorForMessage(serverError, "turn")} error={serverError} onRetry={vi.fn()} />);
     expect(host.querySelector(".turn-failure-title")?.textContent).toBe(t("turnFailure.unavailable"));
-    expect(host.querySelector(".turn-failure-body")?.textContent).toBe(
-      t("turnFailure.retried", { count: "10", guidance: t("turnFailure.unavailableBody") }),
-    );
+    expect(host.querySelector(".turn-failure-message")?.textContent).not.toContain("500");
     expect(buttons(host).map((button) => button.textContent)).toEqual([t("appState.retryAction")]);
+    act(() => { host.querySelector<HTMLButtonElement>(".turn-failure-details-toggle")!.click(); });
+    // The service's own message already names the status.
+    expect(host.querySelector(".turn-failure-facts")?.textContent).toBe(t("turnFailure.retried", { count: "10" }));
+    expect(host.querySelector(".turn-failure-diagnostic")?.textContent).toContain("HTTP 500");
+  });
+
+  it("continues from a partial reply rather than resending the message", async () => {
+    const retry = vi.fn();
+    const resume = vi.fn();
+    const host = mount(<TurnFailureNotice display={userFacingErrorForMessage(serverError, "turn")} error={serverError} onRetry={retry} onContinue={resume} />);
+    expect(buttons(host).map((button) => button.textContent)).toEqual([t("turnFailure.continue")]);
+    await act(async () => { buttons(host)[0].click(); });
+    expect(resume).toHaveBeenCalledOnce();
+    expect(retry).not.toHaveBeenCalled();
   });
 
   it("does not offer a retry that would overflow the context again", () => {
@@ -452,6 +461,44 @@ describe("TurnFailureNotice", () => {
     expect(button.disabled).toBe(false);
   });
 
+  it("unfolds the retrying card into the failure instead of replacing it", () => {
+    const item = { id: "reconnect-1", type: "stream_reconnect", status: "in_progress", reason: "rate_limit", retry_count: 2, retry_at_ms: Date.now() + 3000 } as const;
+    const host = mount(<TurnFailureNotice reconnect={item} />);
+    const card = host.querySelector("aside.turn-failure")!;
+    expect(card.getAttribute("role")).toBe("status");
+    expect(host.querySelector(".turn-failure-body")).toBeNull();
+    const failed = { ...item, status: "failed" } as const;
+    act(() => { root?.render(<TurnFailureNotice reconnect={failed} display={userFacingErrorForMessage("rate limited", "turn")} onRetry={vi.fn()} />); });
+    expect(host.querySelector("aside.turn-failure")).toBe(card);
+    expect(card.getAttribute("role")).toBe("alert");
+    expect(card.classList.contains("is-retrying")).toBe(false);
+    expect(card.querySelector(".turn-failure-title")?.textContent).toBe(t("turnFailure.rateLimit"));
+    expect(buttons(host).map((button) => button.textContent)).toEqual([t("appState.retryAction")]);
+  });
+
+  it("names an unrecognized status only in the details", () => {
+    const error = {
+      message: "stream request failed: HTTP 400: 400 Bad Request: {\"error\":{\"type\":\"invalid_request_error\"}}",
+      category: "provider" as const,
+      status_code: 400,
+    };
+    const host = mount(<TurnFailureNotice display={userFacingErrorForMessage(error, "turn")} error={error} onRetry={vi.fn()} />);
+    expect(host.querySelector(".turn-failure-message")?.textContent).not.toContain("400");
+    act(() => { host.querySelector<HTMLButtonElement>(".turn-failure-details-toggle")!.click(); });
+    expect(host.querySelector(".turn-failure-details")?.textContent).toContain("HTTP 400");
+  });
+
+  it("says the device is offline when a transport failure happens without a network", () => {
+    vi.spyOn(navigator, "onLine", "get").mockReturnValue(false);
+    try {
+      const item = { id: "reconnect-1", type: "stream_reconnect", status: "failed", text: "dial tcp: lookup api.example.com: no such host", reason: "network", retry_count: 3 } as const;
+      const host = mount(<TurnFailureNotice display={userFacingErrorForMessage(item.text, "turn")} reconnect={item} />);
+      expect(host.querySelector(".turn-failure-title")?.textContent).toBe(t("turnFailure.offline"));
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
   it("explains a historical failure without offering actions", () => {
     const item = { id: "reconnect-1", type: "stream_reconnect", status: "failed", text: "connection reset by peer", reason: "network", retry_count: 5, max_retries: 5 } as const;
     const host = mount(<TurnFailureNotice display={userFacingErrorForMessage(item.text, "turn")} reconnect={item} />);
@@ -467,7 +514,7 @@ describe("TurnFailureNotice", () => {
     ["server", undefined, "turnFailure.unavailable"],
     ["deadline", undefined, "turnFailure.timeout"],
     ["network", undefined, "turnFailure.network"],
-    ["incomplete_stream", undefined, "turnFailure.network"],
+    ["incomplete_stream", undefined, "turnFailure.dropped"],
     ["context_overflow", undefined, "turnFailure.context"],
     ["request_too_large", undefined, "error.requestTooLargeTitle"],
     // App-servers that predate the structured category only carry the
@@ -482,7 +529,7 @@ describe("TurnFailureNotice", () => {
       const host = mount(<TurnFailureNotice display={userFacingErrorForMessage(text ?? "", "turn")} reconnect={item} />);
       expect(host.querySelector(".turn-failure-title")?.textContent).toBe(t(titleKey));
       if (text) {
-        expect(host.querySelector(".turn-failure-head")?.textContent).not.toContain(text);
+        expect(host.querySelector(".turn-failure-message")?.textContent).not.toContain(text);
       }
     },
   );

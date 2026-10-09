@@ -66,8 +66,14 @@ func TestThreadModelClonesReuseProcessManagerPool(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.ProcessManager = manager
-	first := s.cloneForThreadModel()
-	second := s.cloneForThreadModel()
+	first, err := s.cloneForThreadModel()
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := s.cloneForThreadModel()
+	if err != nil {
+		t.Fatal(err)
+	}
 	root, state := t.TempDir(), t.TempDir()
 	a, err := first.processManagerForThread(root, state)
 	if err != nil {

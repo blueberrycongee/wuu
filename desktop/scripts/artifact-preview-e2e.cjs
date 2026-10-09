@@ -217,8 +217,10 @@ app.whenReady().then(async () => {
       images[images.length - 1].scrollIntoView({ block: "center" });
     });
     await waitFor(win, () => [...document.querySelectorAll('.turn-artifact-inline-image img')].every(image => image.complete && image.naturalWidth > 0));
-    for (const width of [1440, 760]) {
+    for (const width of [1440, 760, 430]) {
       win.setContentSize(width, 900);
+      await settle(win);
+      await waitFor(win, () => !document.documentElement.classList.contains('window-resizing') && !document.documentElement.classList.contains('layout-motion-active'));
       await settle(win);
       const geometry = await evaluate(win, () => [...document.querySelectorAll('.turn-artifact-inline-image img')].map(image => {
         const rect = image.getBoundingClientRect();
@@ -241,17 +243,69 @@ app.whenReady().then(async () => {
         images[images.length - 1].closest('button').click();
       });
       await waitFor(win, () => Boolean(document.querySelector('.image-preview-image.loaded')));
+      assert.equal(await evaluate(win, () => document.querySelector('.image-preview-image').src), source, 'Primary image clicks must still open the full viewer');
+      assert.equal(await evaluate(win, () => Boolean(document.querySelector('.artifact-preview-panel'))), false);
+      await evaluate(win, () => document.querySelector('.image-preview-toolbar .wuu-icon-x').closest('button').click());
+      await waitFor(win, () => !document.querySelector('.image-preview-overlay'));
+      await evaluate(win, () => [...document.querySelectorAll('[data-artifact-panel]')].at(-1).scrollIntoView({ block: 'center', behavior: 'instant' }));
+      await settle(win);
+      const panelPoint = await evaluate(win, () => {
+        const rect = [...document.querySelectorAll('[data-artifact-panel]')].at(-1).getBoundingClientRect();
+        return { x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) };
+      });
+      win.webContents.sendInputEvent({ type: 'mouseMove', ...panelPoint });
+      await settle(win);
+      const hit = await evaluate(win, () => {
+        const button = [...document.querySelectorAll('[data-artifact-panel]')].at(-1);
+        const rect = button.getBoundingClientRect();
+        const target = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+        return { matches: button.contains(target), target: target?.outerHTML.slice(0, 300), x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2), opacity: getComputedStyle(button.closest('.turn-artifact-image-toolbar')).opacity };
+      });
+      assert.ok(hit.matches, `The side-panel control must receive pointer input: ${JSON.stringify(hit)}`);
+      win.webContents.sendInputEvent({ type: 'mouseDown', button: 'left', clickCount: 1, x: hit.x, y: hit.y });
+      win.webContents.sendInputEvent({ type: 'mouseUp', button: 'left', clickCount: 1, x: hit.x, y: hit.y });
+      await waitFor(win, () => Boolean(document.querySelector('.artifact-preview-panel .artifact-preview-image')));
+      assert.equal(await evaluate(win, () => Boolean(document.querySelector('.image-preview-overlay'))), false, 'The side-panel action must not also open the viewer');
+      await waitFor(win, () => !document.querySelector('.artifact-preview-flight'));
+      assert.equal(await evaluate(win, () => document.querySelector('.artifact-preview-image').src), source);
+      assert.equal(await evaluate(win, () => {
+        const image = document.querySelector('.artifact-preview-image').getBoundingClientRect();
+        const body = document.querySelector('.artifact-preview-body').getBoundingClientRect();
+        return image.left >= body.left - 1 && image.right <= body.right + 1 && image.top >= body.top - 1 && image.bottom <= body.bottom + 1;
+      }), true, 'Portrait and panoramic images must fit completely inside the preview');
+      for (const theme of ['light', 'dark']) {
+        for (const size of [14, 20]) {
+          await win.webContents.executeJavaScript(`document.documentElement.dataset.theme=${JSON.stringify(theme)};document.documentElement.style.setProperty('--font-ui','${size}px')`);
+          await settle(win);
+          await evaluate(win, () => Promise.all(document.getAnimations()
+            .filter(animation => Number.isFinite(animation.effect.getComputedTiming().endTime))
+            .map(animation => animation.finished.catch(() => {}))));
+          assert.equal(await evaluate(win, () => {
+            const actions = document.querySelector('.artifact-preview-actions').getBoundingClientRect();
+            const panel = document.querySelector('.artifact-preview-panel').getBoundingClientRect();
+            return actions.left >= panel.left && actions.right <= panel.right;
+          }), true, 'Image actions must remain inside the panel at larger text sizes');
+          fs.writeFileSync(path.join(output, `image-panel-${index}-${theme}-${size}-${width}.png`), (await win.webContents.capturePage()).toPNG());
+        }
+      }
+      await evaluate(win, () => document.querySelector('.artifact-preview-enlarge').click());
+      await waitFor(win, () => Boolean(document.querySelector('.image-preview-image.loaded')));
       assert.equal(await evaluate(win, () => document.querySelector('.image-preview-image').src), source, "Enlarging must still open the complete original image");
       if (index === 2) assert.equal(await evaluate(win, () => document.querySelector('.image-preview-navigation')), null);
       await evaluate(win, () => document.querySelector('.image-preview-toolbar .wuu-icon-x').closest('button').click());
       await waitFor(win, () => !document.querySelector('.image-preview-overlay'));
+      await evaluate(win, () => [...document.querySelectorAll('.artifact-preview-actions button')].at(-1).click());
+      await waitFor(win, () => !document.querySelector('.artifact-preview-panel') && !document.querySelector('.artifact-preview-flight'));
     }
   }
   await evaluate(win, () => {
-    const opener = document.querySelectorAll('.turn-artifact-inline-image button')[1];
+    const opener = document.querySelectorAll('[data-artifact-panel]')[1];
     opener.focus();
     opener.click();
   });
+  await waitFor(win, () => Boolean(document.querySelector('.artifact-preview-enlarge')));
+  await waitFor(win, () => !document.querySelector('.artifact-preview-flight'));
+  await evaluate(win, () => { document.querySelector('.artifact-preview-enlarge').focus(); document.querySelector('.artifact-preview-enlarge').click(); });
   await waitFor(win, () => Boolean(document.querySelector('.image-preview-image.loaded')));
   assert.equal(await evaluate(win, () => document.querySelector('.image-preview-position').textContent), '2 / 2');
   await evaluate(win, () => {
@@ -290,11 +344,77 @@ app.whenReady().then(async () => {
   assert.equal(await evaluate(win, () => document.querySelector('.image-preview-navigation button:last-child').disabled), true);
   await evaluate(win, () => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
   await waitFor(win, () => !document.querySelector('.image-preview-overlay'));
-  assert.equal(await evaluate(win, () => document.activeElement === document.querySelectorAll('.turn-artifact-inline-image button')[1]), true);
+  assert.equal(await evaluate(win, () => document.activeElement === document.querySelector('.artifact-preview-enlarge')), true);
+
+  // Recovery contracts: closing during entry, resizing, and changing motion
+  // preferences must leave both the card and the panel usable.
+  win.setContentSize(1440, 900);
+  await settle(win);
+  for (let remaining = 8; remaining > 0 && await evaluate(win, () => Boolean(document.querySelector('.artifact-preview-panel'))); remaining -= 1) {
+    await evaluate(win, () => [...document.querySelectorAll('.artifact-preview-actions button')].at(-1).click());
+    await settle(win);
+  }
+  await waitFor(win, () => !document.querySelector('.artifact-preview-flight'));
+  await evaluate(win, () => {
+    document.documentElement.dataset.appearanceMotion = 'full';
+    const opener = document.querySelectorAll('[data-artifact-panel]')[1];
+    opener.scrollIntoView({ block: 'center' });
+  });
+  await settle(win);
+  await evaluate(win, () => document.querySelectorAll('[data-artifact-panel]')[1].click());
+  await waitFor(win, () => Boolean(document.querySelector('.artifact-preview-flight')));
+  fs.writeFileSync(path.join(output, 'image-flight.png'), (await win.webContents.capturePage()).toPNG());
+  await evaluate(win, () => [...document.querySelectorAll('.artifact-preview-actions button')].at(-1).click());
+  await waitFor(win, () => !document.querySelector('.artifact-preview-panel') && !document.querySelector('.artifact-preview-flight'));
+  assert.equal(await evaluate(win, () => getComputedStyle(document.querySelectorAll('.turn-artifact-inline-image img')[1]).visibility), 'visible');
+  await evaluate(win, () => document.querySelectorAll('[data-artifact-panel]')[1].click());
+  await waitFor(win, () => Boolean(document.querySelector('.artifact-preview-flight')));
+  win.setContentSize(1000, 800);
+  await waitFor(win, () => !document.querySelector('.artifact-preview-flight'));
+  assert.equal(await evaluate(win, () => getComputedStyle(document.querySelector('.artifact-preview-image')).visibility), 'visible');
+  await evaluate(win, () => [...document.querySelectorAll('.artifact-preview-actions button')].at(-1).click());
+  await waitFor(win, () => !document.querySelector('.artifact-preview-panel') && !document.querySelector('.artifact-preview-flight'));
+  await evaluate(win, () => {
+    document.querySelectorAll('[data-artifact-panel]')[1].scrollIntoView({ block: 'center' });
+    document.documentElement.dataset.appearanceMotion = 'reduce';
+  });
+  await settle(win);
+  await evaluate(win, () => document.querySelectorAll('[data-artifact-panel]')[1].click());
+  await waitFor(win, () => Boolean(document.querySelector('.artifact-preview-image')));
+  assert.equal(await evaluate(win, () => Boolean(document.querySelector('.artifact-preview-flight'))), false);
+  await evaluate(win, () => [...document.querySelectorAll('.artifact-preview-actions button')].at(-1).click());
+  await waitFor(win, () => !document.querySelector('.artifact-preview-panel'));
+  await evaluate(win, () => delete document.documentElement.dataset.appearanceMotion);
+  await evaluate(win, () => document.querySelectorAll('[data-artifact-panel]')[1].click());
+  await waitFor(win, () => Boolean(document.querySelector('.artifact-preview-flight')));
+  await evaluate(win, () => document.documentElement.dataset.appearanceMotion = 'reduce');
+  await waitFor(win, () => !document.querySelector('.artifact-preview-flight'));
+  assert.equal(await evaluate(win, () => getComputedStyle(document.querySelector('.artifact-preview-image')).visibility), 'visible');
+  await evaluate(win, () => [...document.querySelectorAll('.artifact-preview-actions button')].at(-1).click());
+  await waitFor(win, () => !document.querySelector('.artifact-preview-panel'));
+  await evaluate(win, () => delete document.documentElement.dataset.appearanceMotion);
+  await evaluate(win, () => document.querySelectorAll('[data-artifact-panel]')[1].click());
+  await waitFor(win, () => Boolean(document.querySelector('.artifact-preview-flight')));
+  await evaluate(win, () => document.querySelector('.artifact-preview-enlarge').click());
+  await waitFor(win, () => Boolean(document.querySelector('.image-preview-image.loaded')));
+  assert.equal(await evaluate(win, () => Boolean(document.querySelector('.artifact-preview-flight'))), false, 'Enlarging during entry must settle the flight');
+  await evaluate(win, () => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
+  await waitFor(win, () => !document.querySelector('.image-preview-overlay'));
+  await evaluate(win, () => document.querySelector('button[aria-label="Close right sidebar"]').click());
+  await waitFor(win, () => document.querySelector('.workspace-right-panel')?.getAttribute('aria-hidden') === 'true' && !document.querySelector('.artifact-preview-flight'));
+  assert.equal(await evaluate(win, () => getComputedStyle(document.querySelectorAll('.turn-artifact-inline-image img')[1]).visibility), 'visible');
+  await evaluate(win, () => document.querySelectorAll('[data-artifact-panel]')[1].click());
+  await waitFor(win, () => Boolean(document.querySelector('.artifact-preview-panel')));
+  await waitFor(win, () => !document.querySelector('.artifact-preview-flight'));
+  await evaluate(win, () => document.querySelector('.workspace-tool-tab-close').click());
+  await waitFor(win, () => !document.querySelector('.artifact-preview-panel') && !document.querySelector('.artifact-preview-flight'));
+  fs.writeFileSync(path.join(output, 'motion-evidence.json'), JSON.stringify({ rapidClose: true, resize: true, reducedMotion: true, reducedMotionDuringEntry: true, enlargeDuringEntry: true, panelClose: true, tabClose: true }, null, 2));
 
   // Real pointer input protects hit testing, including the toolbar's blank margin.
   for (const target of ['stage', 'toolbar']) {
-    await evaluate(win, () => document.querySelectorAll('.turn-artifact-inline-image button')[1].click());
+    await evaluate(win, () => document.querySelectorAll('[data-artifact-panel]')[1].click());
+    await waitFor(win, () => Boolean(document.querySelector('.artifact-preview-enlarge')));
+    await evaluate(win, () => document.querySelector('.artifact-preview-enlarge').click());
     await waitFor(win, () => Boolean(document.querySelector('.image-preview-image.loaded')));
     const imagePoint = await evaluate(win, () => {
       const rect = document.querySelector('.image-preview-image').getBoundingClientRect();
@@ -311,6 +431,55 @@ app.whenReady().then(async () => {
     win.webContents.sendInputEvent({ type: 'mouseDown', button: 'left', clickCount: 1, ...point });
     win.webContents.sendInputEvent({ type: 'mouseUp', button: 'left', clickCount: 1, ...point });
     await waitFor(win, () => !document.querySelector('.image-preview-overlay'));
+    await evaluate(win, () => [...document.querySelectorAll('.artifact-preview-actions button')].at(-1).click());
+    await waitFor(win, () => !document.querySelector('.artifact-preview-panel') && !document.querySelector('.artifact-preview-flight'));
+  }
+
+  // The per-image panel action must coexist with the carousel/grid control.
+  const controlsTurn = { id: 'image-controls-turn', status: 'completed', items_view: 'full', items: [
+    { id: 'controls-user', type: 'user_message', status: 'completed', text: 'Compare these two images.' },
+    { ...delivery(2), id: 'controls-images', result_detail: { content: [delivery(2).result_detail.content[0], delivery(3).result_detail.content[0]] } },
+    { id: 'controls-answer', type: 'agent_message', phase: 'final_answer', terminal: true, status: 'completed', text: 'Two views of the landscape.' },
+  ] };
+  emit(win, 'turn/started', { thread_id: threadID, turn: { ...controlsTurn, status: 'in_progress' } });
+  emit(win, 'turn/completed', { thread_id: threadID, turn: controlsTurn });
+  await waitFor(win, () => document.querySelectorAll('[data-turn-id="image-controls-turn"] [data-artifact-panel]').length === 2);
+  for (const theme of ['light', 'dark']) {
+    for (const size of [14, 20]) {
+      for (const width of [1440, 430]) {
+        win.setContentSize(width, 900);
+        await settle(win);
+        await waitFor(win, () => !document.documentElement.classList.contains('window-resizing') && !document.documentElement.classList.contains('layout-motion-active'));
+        await win.webContents.executeJavaScript(`document.documentElement.dataset.theme=${JSON.stringify(theme)};document.documentElement.style.setProperty('--font-ui','${size}px')`);
+        for (const tiled of [false, true]) {
+          await evaluate(win, () => {
+            const group = document.querySelector('[data-turn-id="image-controls-turn"]');
+            group.querySelector('[data-artifact-panel]').scrollIntoView({ block: 'center', behavior: 'instant' });
+            group.querySelector('.turn-artifact-image-preview > button').focus();
+          });
+          win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Tab' });
+          win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Tab' });
+          await settle(win);
+          await evaluate(win, () => Promise.all(document.getAnimations()
+            .filter(animation => Number.isFinite(animation.effect.getComputedTiming().endTime))
+            .map(animation => animation.finished.catch(() => {}))));
+          const controls = await evaluate(win, () => {
+            const group = document.querySelector('[data-turn-id="image-controls-turn"]');
+            const button = group.querySelector('[data-artifact-panel]');
+            const rect = button.getBoundingClientRect();
+            const toggle = group.querySelector('[data-gallery-toggle]').getBoundingClientRect();
+            const picture = button.closest('.turn-artifact-image-preview').getBoundingClientRect();
+            return { visible: Number(getComputedStyle(button.closest('.turn-artifact-image-toolbar')).opacity) === 1 && rect.width >= 24 && rect.height >= 24,
+              contained: rect.left >= picture.left && rect.right <= picture.right && rect.top >= picture.top && rect.bottom <= picture.bottom,
+              separate: rect.bottom <= toggle.top || rect.top >= toggle.bottom || rect.right <= toggle.left || rect.left >= toggle.right,
+              focus: document.activeElement === button };
+          });
+          assert.deepEqual(controls, { visible: true, contained: true, separate: true, focus: true });
+          fs.writeFileSync(path.join(output, `image-actions-${theme}-${size}-${width}-${tiled ? 'grid' : 'carousel'}.png`), (await win.webContents.capturePage()).toPNG());
+          await evaluate(win, () => document.querySelector('[data-turn-id="image-controls-turn"] [data-gallery-toggle]').click());
+        }
+      }
+    }
   }
 
   // Record synthetic frames in Chromium so this test needs no binary fixture,
@@ -492,7 +661,7 @@ app.whenReady().then(async () => {
   console.log('Image inspection e2e passed: reads, PTC and background results collapsed, explicit delivery visible, expand/collapse, enlarge, focus restoration, light/dark, 14/20px, wide/narrow.');
   if (!inspectionOnly) {
   console.log('Video preview e2e passed: managed/local playback, no autoplay, seeking, range bytes, card reopen, failure fallback, light/dark, 14/20px, wide/narrow layout.');
-  console.log("Artifact preview e2e passed: completion, managed HTML/text/images, sandbox, dismissal, manual reopen, light/dark, 14/20px, wide/narrow geometry, portrait/panorama fit, gallery navigation, boundaries and focus restoration.");
+  console.log("Artifact preview e2e passed: primary image viewer, separate panel action, completion, managed HTML/text/images, sandbox, dismissal, manual reopen, light/dark, 14/20px, wide/narrow geometry, portrait/panorama fit, gallery navigation, boundaries and focus restoration.");
   }
   win.destroy();
   app.exit(0);

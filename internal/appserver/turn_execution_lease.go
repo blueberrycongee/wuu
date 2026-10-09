@@ -57,20 +57,23 @@ func (s *Server) tryAcquireThreadExecutionLeaseLocked(th *threadState) (bool, er
 		if !acquired {
 			return false, nil
 		}
-		s.pluginGenerationRefreshMu.Lock()
-		needsRecovery := s.rt.PluginGenerationNeedsRecovery()
-		if epoch := lease.Epoch(); epoch != s.pluginGenerationEpoch.Load() || needsRecovery {
-			if err := s.refreshExtensions(s.currentExtensionConfig()); err != nil {
-				s.pluginGenerationRefreshMu.Unlock()
-				_ = lease.Release()
-				return false, fmt.Errorf("refresh plugin generation %d: %w", epoch, err)
-			}
-			s.pluginGenerationEpoch.Store(epoch)
-			if needsRecovery {
-				s.pluginRuntimeRevision.Add(1)
-			}
+		// This function owns th.mu. Never initialize or activate plugins here:
+		// their synchronous host callbacks can inspect or submit to this thread.
+		if !s.pluginGenerationRefreshMu.TryLock() {
+			_ = lease.Release()
+			return false, nil
 		}
+		needsRefresh := lease.Epoch() != s.pluginGenerationEpoch.Load() || s.rt.PluginGenerationNeedsRecovery()
 		s.pluginGenerationRefreshMu.Unlock()
+		if needsRefresh {
+			_ = lease.Release()
+			_ = s.startBackground(func() {
+				if err := s.refreshPluginGenerationIfChanged(); err != nil && !errors.Is(err, errPluginGenerationRefreshBusy) {
+					providers.DebugLogf("refresh plugin generation before admission: %v", err)
+				}
+			})
+			return false, nil
+		}
 		th.pluginExecutionLease = lease
 		newPluginLease = true
 	}
@@ -277,15 +280,19 @@ func (th *threadState) schedulePluginGenerationLeaseReleaseLocked() {
 		defer ticker.Stop()
 		for range ticker.C {
 			th.mu.Lock()
-			if th.pluginExecutionLease == nil {
-				th.pluginLeaseReleaseLoop = false
-				th.mu.Unlock()
-				return
-			}
-			if !th.running && (th.execRuntime == nil || !threadRuntimeHasOutstandingWork(th.ID, th.execRuntime)) {
+			// A finalizer may have released the lease before this poll. It must
+			// still notify retirement; releasing the lease is not equivalent to
+			// releasing the thread runtime's reference to its old generation.
+			if th.pluginExecutionLease == nil || (!th.running && (th.execRuntime == nil || !threadRuntimeHasOutstandingWork(th.ID, th.execRuntime))) {
 				th.releasePluginGenerationExecutionLeaseLocked()
 				th.pluginLeaseReleaseLoop = false
+				onQuiescent := th.onPluginLeaseQuiescent
 				th.mu.Unlock()
+				// This is the reliable drain boundary, including recovered
+				// finalizations and terminal notifications dropped by fanout.
+				if onQuiescent != nil {
+					onQuiescent()
+				}
 				return
 			}
 			th.mu.Unlock()

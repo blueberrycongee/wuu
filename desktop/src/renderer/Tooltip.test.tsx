@@ -153,6 +153,19 @@ describe("Tooltip", () => {
     expect(tooltipLayer()).toBeNull();
   });
 
+  it.each([false, true])("only propagates Escape when explicitly enabled: %s", (propagateEscape) => {
+    const trigger = renderTooltip({ propagateEscape });
+    const onKeyDown = vi.fn();
+    container.addEventListener("keydown", onKeyDown);
+    pointerOver(trigger);
+    act(() => vi.advanceTimersByTime(400));
+    expect(tooltipLayer()).not.toBeNull();
+    act(() => trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+    expect(tooltipLayer()).toBeNull();
+    expect(onKeyDown).toHaveBeenCalledTimes(propagateEscape ? 1 : 0);
+    container.removeEventListener("keydown", onKeyDown);
+  });
+
   it("closes on scroll", () => {
     const trigger = renderTooltip();
     pointerOver(trigger);

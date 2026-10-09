@@ -33,7 +33,7 @@ async function run() {
   // gutter discontinuity from an intentional sidebar layout change.
   await evaluate(win, () => {
     for (const toggle of document.querySelectorAll(
-      '.environment-toggle-button[aria-pressed="true"], .title-actions .side-panel-toggle-button[aria-pressed="true"]'
+      '.environment-toggle-button[aria-pressed="true"], [data-wuu-component=right-sidebar-toggle][aria-pressed="true"]'
     )) toggle.click();
     if (!document.querySelector(".app-shell").classList.contains("sidebar-collapsed")) {
       document.querySelector(".sidebar-toggle-button").click();
@@ -136,7 +136,7 @@ async function run() {
   await win.webContents.removeInsertedCSS(classicScrollbars);
   await evaluate(win, () => window.dispatchEvent(new Event("focus")));
   checkGeometry(await settledGeometry(win, 1380, ".side-thread-panel"));
-  await evaluate(win, () => document.querySelector(".side-thread-panel__close").click());
+  await evaluate(win, () => document.querySelector('[data-wuu-tab-kind="side-thread"] .workspace-tool-tab-close').click());
   await waitFor(win, () => !document.querySelector(".side-thread-panel"));
 
   win.setContentSize(1024, 820);
@@ -204,7 +204,6 @@ async function settledGeometry(win, width, paneSelector = ".conversation-pane") 
       const contentRight = scrollRect.right - scrollbarWidth / 2 - parseFloat(scrollStyle.paddingRight);
       return {
         windowWidth: innerWidth,
-        compact: document.querySelector(".app-shell").classList.contains("compact-navigation"),
         composerWidth: rect.width,
         composerLeft: rect.left,
         composerRight: rect.right,

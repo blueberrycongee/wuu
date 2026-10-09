@@ -1,14 +1,21 @@
 package main
 
 import (
+	"bufio"
+	"bytes"
+	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
 
+	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
+	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/session"
 )
 
@@ -147,7 +154,7 @@ func TestDevRefreshIsAtomicAndSeparateFromNormalInstall(t *testing.T) {
 		t.Fatal(err)
 	}
 	manager := writePluginDevTestManager(t, `mkdir -p dist; cp src.js dist/index.js`)
-	if diagnostic, err := refreshDevGeneration(home, dir, manager); err != nil || diagnostic.Level != "pass" {
+	if diagnostic, err := refreshDevGeneration(context.Background(), home, dir, manager); err != nil || diagnostic.Level != "pass" {
 		t.Fatalf("first refresh = %+v, %v", diagnostic, err)
 	}
 	devArtifact := filepath.Join(home, "dev", "generations", "dev-test", "package", "dist", "index.js")
@@ -168,19 +175,20 @@ func TestDevRefreshIsAtomicAndSeparateFromNormalInstall(t *testing.T) {
 	if execution.Epoch() != initialEpoch+1 {
 		t.Fatalf("published generation epoch = %d, want %d", execution.Epoch(), initialEpoch+1)
 	}
-	writePluginDevTestFile(t, filepath.Join(dir, "src.js"), "export const value = 'blocked';")
-	if diagnostic, err := refreshDevGeneration(home, dir, manager); err == nil || diagnostic.Check != "dev.mutation" {
-		t.Fatalf("refresh while execution owns generation = %+v, %v", diagnostic, err)
+	writePluginDevTestFile(t, filepath.Join(dir, "src.js"), "export const value = 'live';")
+	if diagnostic, err := refreshDevGeneration(context.Background(), home, dir, manager); err != nil || diagnostic.Level != "pass" {
+		t.Fatalf("live refresh while execution owns generation = %+v, %v", diagnostic, err)
 	}
 	if err := execution.Release(); err != nil {
 		t.Fatal(err)
 	}
 	blocked, err := os.ReadFile(devArtifact)
-	if err != nil || string(blocked) != string(before) {
-		t.Fatalf("execution-blocked refresh replaced generation: %q, %v", blocked, err)
+	if err != nil || string(blocked) == string(before) {
+		t.Fatalf("execution-compatible refresh did not publish generation: %q, %v", blocked, err)
 	}
+	before = blocked
 	failingManager := writePluginDevTestManager(t, `exit 7`)
-	if diagnostic, err := refreshDevGeneration(home, dir, failingManager); err == nil || diagnostic.Level != "fail" {
+	if diagnostic, err := refreshDevGeneration(context.Background(), home, dir, failingManager); err == nil || diagnostic.Level != "fail" {
 		t.Fatalf("failing refresh = %+v, %v", diagnostic, err)
 	}
 	after, err := os.ReadFile(devArtifact)
@@ -230,5 +238,226 @@ func writePluginDevTestFile(t *testing.T, path, content string) {
 	}
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestPluginDevRejectsInvalidPollInterval(t *testing.T) {
+	for _, interval := range []string{"0s", "-1s"} {
+		err := runPluginDevMode([]string{"--poll", interval, t.TempDir()})
+		if err == nil || !strings.Contains(err.Error(), "poll interval must be positive") {
+			t.Fatalf("poll %s: %v", interval, err)
+		}
+	}
+}
+
+func TestSingleTypeScriptDevPublishesAndPreservesLastGood(t *testing.T) {
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("node is required")
+	}
+	home := t.TempDir()
+	source := filepath.Join(t.TempDir(), "hello.ts")
+	code := `import { KERNEL_SERVICE_METHOD } from "@wuu/plugin-sdk";
+import type { RuntimePlugin } from "@wuu/plugin-sdk";
+const message: string = "hello";
+export default {
+ initialize() { return { tools: [{ id: "hello", description: "Say hello", input_schema: { type: "object" } }] }; },
+ activate() { if (KERNEL_SERVICE_METHOD !== "call") throw new Error("SDK import failed"); },
+ executeTool() { return { result: { content: [{ type: "text", text: message }] } }; }
+} satisfies RuntimePlugin;
+`
+	writePluginDevTestFile(t, source, code)
+	id, err := readPluginIdentity(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authDir := filepath.Join(home, "dev", "plugins")
+	if err := os.MkdirAll(authDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := authorizeDevDirectory(authDir, id, source); err != nil {
+		t.Fatal(err)
+	}
+	if diagnostic, err := refreshDevGeneration(context.Background(), home, source, ""); err != nil {
+		t.Fatalf("publish one TS file: %+v, %v", diagnostic, err)
+	}
+	packageRoot := filepath.Join(home, "dev", "generations", id, "package")
+	manifest, err := pluginpkg.LoadManifest(filepath.Join(packageRoot, "plugin.json"), "dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	client, err := pluginhost.Start(ctx, pluginhost.ProcessConfig{ID: id, Command: manifest.Runtime.Command, Args: manifest.Runtime.Args, PluginRoot: packageRoot, WuuHome: home, Timeout: 5 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := client.ExecuteTool(ctx, pluginhost.ToolExecuteParams{ToolID: "hello", ToolExecuteInput: pluginhost.ToolExecuteInput{CallID: "hello-call", Tool: "hello", CWD: t.TempDir(), Arguments: json.RawMessage(`{}`)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(result)
+	if err != nil || !strings.Contains(string(encoded), "hello") {
+		t.Fatalf("tool result = %s, %v", encoded, err)
+	}
+	if err := client.Close(ctx); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(filepath.Join(packageRoot, "extension.ts"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, broken := range []string{"export default {", "export default {}", `import "./untracked.ts"; export default { initialize() { return {}; } }`} {
+		writePluginDevTestFile(t, source, broken)
+		if _, err := refreshDevGeneration(context.Background(), home, source, ""); err == nil {
+			t.Fatalf("accepted broken TS: %s", broken)
+		}
+		after, err := os.ReadFile(filepath.Join(packageRoot, "extension.ts"))
+		if err != nil || string(after) != string(before) {
+			t.Fatalf("failed reload changed last-good code: %s, %v", after, err)
+		}
+	}
+	// Initialization belongs to the real host: it may read kernel services that
+	// are unavailable to this source loader. Publication only validates loading.
+	writePluginDevTestFile(t, source, `export default { initialize() { throw new Error("actual host must validate initialization"); } };`)
+	if _, err := refreshDevGeneration(context.Background(), home, source, ""); err != nil {
+		t.Fatalf("source loader ran initialization without a host: %v", err)
+	}
+	writePluginDevTestFile(t, source, strings.Replace(code, `"hello";`, `"reloaded";`, 1))
+	if _, err := refreshDevGeneration(context.Background(), home, source, ""); err != nil {
+		t.Fatalf("repair-save did not recover: %v", err)
+	}
+	after, err := os.ReadFile(filepath.Join(packageRoot, "extension.ts"))
+	if err != nil || !strings.Contains(string(after), "reloaded") {
+		t.Fatalf("updated source not published: %s, %v", after, err)
+	}
+}
+
+// This subprocess exercises the CLI's initial-failure path and the real source
+// watcher, rather than only calling the publication helper directly.
+func TestPluginDevWatchRepairsInitialLoadFailure(t *testing.T) {
+	if os.Getenv("WUU_DEV_WATCH_TEST_HELPER") == "1" {
+		if err := runPlugin([]string{"dev", "--poll", "20ms", os.Getenv("WUU_DEV_WATCH_TEST_SOURCE")}); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	if runtime.GOOS == "windows" {
+		t.Skip("subprocess interrupt requires Unix signals")
+	}
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("node is required")
+	}
+	source := filepath.Join(t.TempDir(), "watch.ts")
+	writePluginDevTestFile(t, source, "export default {")
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestPluginDevWatchRepairsInitialLoadFailure$")
+	cmd.Env = append(os.Environ(), "WUU_DEV_WATCH_TEST_HELPER=1", "WUU_DEV_WATCH_TEST_SOURCE="+source, "WUU_HOME="+t.TempDir())
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer cmd.Process.Kill()
+	diagnostics := make(chan pluginDiagnostic)
+	go func() {
+		defer close(diagnostics)
+		scanner := bufio.NewScanner(stdout)
+		scanner.Buffer(make([]byte, 4096), 1<<20)
+		for scanner.Scan() {
+			var diagnostic pluginDiagnostic
+			if json.Unmarshal(scanner.Bytes(), &diagnostic) == nil && diagnostic.Check != "" {
+				select {
+				case diagnostics <- diagnostic:
+				case <-ctx.Done():
+					return
+				}
+			}
+		}
+	}()
+	expect := func(level string) {
+		t.Helper()
+		select {
+		case diagnostic, ok := <-diagnostics:
+			if !ok || diagnostic.Level != level {
+				t.Fatalf("want %s diagnostic; got %+v, stream open=%v", level, diagnostic, ok)
+			}
+		case <-ctx.Done():
+			t.Fatalf("watcher did not report %s: %v", level, ctx.Err())
+		}
+	}
+	expect("fail")
+	writePluginDevTestFile(t, source, `export default { initialize() { return {}; } };`)
+	expect("pass")
+	// An atomic editor save replaces the watched inode. The parent-directory
+	// watch and reconciliation must still notice the next source revision.
+	replacement := source + ".saving"
+	writePluginDevTestFile(t, replacement, `export default { initialize() { return { tools: [] }; } };`)
+	if err := os.Rename(replacement, source); err != nil {
+		t.Fatal(err)
+	}
+	expect("pass")
+	if err := cmd.Process.Signal(os.Interrupt); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Wait(); err != nil {
+		t.Fatalf("watch command exit: %v\n%s", err, stderr.String())
+	}
+}
+
+func TestSingleTypeScriptDevRejectsSymlinkSource(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "source.ts")
+	link := filepath.Join(root, "link.ts")
+	writePluginDevTestFile(t, source, `export default { initialize() { return {}; } };`)
+	if err := os.Symlink(source, link); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	if _, err := readPluginIdentity(link); err == nil || !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("symlink authorization = %v", err)
+	}
+	if _, cleanup, err := prepareSingleFilePlugin(context.Background(), link); err == nil {
+		cleanup()
+		t.Fatal("symlink candidate was prepared")
+	}
+}
+
+func TestSingleTypeScriptDevRejectsSourceKindReplacementBeforeBuild(t *testing.T) {
+	home := t.TempDir()
+	source := filepath.Join(t.TempDir(), "source.ts")
+	writePluginDevTestFile(t, source, `export default { initialize() { return {}; } };`)
+	id, err := readPluginIdentity(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authDir := filepath.Join(home, "dev", "plugins")
+	if err := os.MkdirAll(authDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := authorizeDevDirectory(authDir, id, source); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(source); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(source, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writePluginDevTestFile(t, filepath.Join(source, "plugin.json"), fmt.Sprintf(`{"schema_version":1,"id":%q,"desktop":{"entry":"dist/index.js"}}`, id))
+	writePluginDevTestFile(t, filepath.Join(source, "package.json"), `{"scripts":{"build":"custom-build"}}`)
+	marker := filepath.Join(t.TempDir(), "build-ran")
+	manager := writePluginDevTestManager(t, fmt.Sprintf("touch %q; mkdir -p dist; echo 'export {}' > dist/index.js", marker))
+	if _, err := refreshDevGeneration(context.Background(), home, source, manager); err == nil || !strings.Contains(err.Error(), "source kind") {
+		t.Fatalf("source kind replacement = %v", err)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("build ran before source kind validation: %v", err)
+	}
+	if err := authorizeDevDirectory(authDir, id, source); err == nil {
+		t.Fatal("rerunning silently broadened file authorization into directory authorization")
 	}
 }

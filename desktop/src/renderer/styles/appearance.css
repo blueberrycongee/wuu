@@ -42,8 +42,7 @@
 .thread-row-context-menu,
 .workspace-tree-context-menu,
 .select-menu-panel,
-.codex-runtime-menu,
-.turn-source-overflow-list {
+.codex-runtime-menu {
   font-size: var(--font-menu);
   font-weight: var(--weight-medium);
 }
@@ -98,7 +97,11 @@ pre, code, .rich-content pre.rich-code, .rich-content pre.rich-code code,
 .user-message-raw-query, .workspace-markdown-reading {
   letter-spacing: var(--tracking-prose);
 }
-.appearance-font-picker { width: clamp(160px, 22vw, 240px); min-width: 0; }
+/* The face takes the page's picker width; its size field follows it. */
+.appearance-font-picker { width: var(--settings-control-width); min-width: 0; }
+@container settings-page (max-width: 32em) {
+  .appearance-font-picker { flex: 1 1 auto; width: auto; }
+}
 .appearance-font-picker .select-menu, .appearance-font-picker .settings-select-trigger { width: 100%; }
 .composer textarea, .workspace-markdown-reading {
   font-family: var(--appearance-ui-font, system-ui, sans-serif);

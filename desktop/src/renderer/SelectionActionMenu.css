@@ -3,6 +3,8 @@
   position: fixed;
   z-index: 220;
   box-sizing: border-box;
+  /* Position changes must not change the measured width through shrink-to-fit. */
+  width: max-content;
   max-width: calc(100vw - 16px);
   padding: var(--menu-inset);
   border: 1px solid var(--menu-border);

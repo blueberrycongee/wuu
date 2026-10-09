@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useLayoutEffect, useState } from "react";
 import { arrayMove } from "@dnd-kit/sortable";
 import type { ExtensionIconDescriptor, RuntimeContext } from "../shared/protocol";
 import {
@@ -77,6 +77,7 @@ export function workspaceProjectViewTab(projectID: string, title: string): Works
 
 export type WorkspaceViewTab =
   | { kind: "new"; id: string }
+  | { kind: "side-thread"; id: "side-thread" }
   | WorkspaceToolViewTab
   | WorkspaceDiffViewTab
   | WorkspaceFileViewTab
@@ -345,7 +346,7 @@ export function reorderViewTabs(
 /**
  * React binding composed by WorkspaceToolState.ts for the right-panel tabs.
  */
-export function useWorkspaceViewTabs(): {
+export function useWorkspaceViewTabs(panelOpen: boolean): {
   tabs: WorkspaceViewTab[];
   activeTabID: string | undefined;
   activeFileTabID: string | undefined;
@@ -357,6 +358,15 @@ export function useWorkspaceViewTabs(): {
   syncProjectTab: (project: { id: string; title: string } | undefined) => void;
 } {
   const [state, setState] = useState<WorkspaceViewTabsState>(initialWorkspaceViewTabsState);
+
+  useLayoutEffect(() => {
+    if (!panelOpen || state.activeTabID) return;
+    // The picker owns a real tab, including when a saved open panel is restored.
+    // Check the latest state so concurrent opens and Strict Mode cannot duplicate it.
+    setState((current) => current.activeTabID
+      ? current
+      : openViewTab(current, { kind: "new", id: `new:${crypto.randomUUID()}` }));
+  }, [panelOpen, state.activeTabID]);
 
   const openTab = useCallback((tab: WorkspaceViewTab, options?: WorkspaceViewTabOpenOptions) => {
     setState((current) => openViewTab(current, tab, options));

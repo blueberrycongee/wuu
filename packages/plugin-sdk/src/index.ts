@@ -46,6 +46,38 @@ export const VIEW_PLACEMENT_REGIONS = [
   "overlay",
 ] as const;
 export type ViewPlacementRegion = (typeof VIEW_PLACEMENT_REGIONS)[number];
+
+/** Stable host action locations; commands without placements remain programmatic. */
+export type PluginCommandPlacement = "view.title" | "conversation.message.actions";
+
+/** Public action input. Direct or palette invocations may still omit input. */
+export type PluginCommandActionContext =
+  | Readonly<{
+    contractVersion: 1;
+    target: "view.title";
+    viewId: string;
+    viewTypeId: string;
+    viewPluginId: string;
+    region: ViewPlacementRegion;
+  }>
+  | Readonly<{
+    contractVersion: 1;
+    target: "conversation.message.actions";
+    threadId?: string;
+    turnId: string;
+    item: ConversationItemSnapshotV1;
+  }>;
+
+/** Optional presentation of an existing command in host-owned action rows. */
+export interface PluginCommandPresentation {
+  readonly placements?: readonly PluginCommandPlacement[];
+  readonly icon?: PublicIconName;
+  /** Synchronous, side-effect-free visibility predicate; a thrown error hides this action. */
+  readonly when?: (context: PluginCommandActionContext) => boolean;
+  /** Synchronous, side-effect-free availability predicate, checked again on click. */
+  readonly enabled?: (context: PluginCommandActionContext) => boolean;
+}
+
 export type ViewPersistence = "session" | "durable";
 
 /** Artwork declared in plugin.json for the package or a host-owned entry. */
@@ -1937,7 +1969,7 @@ export interface SurfaceRegistration {
   render(context: Readonly<Record<string, unknown>>, fallback: unknown): unknown;
 }
 
-export interface CommandRegistration {
+export interface CommandRegistration extends PluginCommandPresentation {
   /** Host action contexts in which this command can accept structured input. */
   contexts?: readonly string[];
   id: string;

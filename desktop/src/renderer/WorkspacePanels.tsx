@@ -33,7 +33,6 @@ import {
   isWindowResizing,
 } from "./WindowResizeState";
 import {
-  ArrowLeft,
   ChevronDown,
   FileDiff,
   FileText,
@@ -41,7 +40,9 @@ import {
   Globe,
   GripHorizontal,
   LayoutGrid,
+  LoaderCircle,
   Maximize2,
+  MessageCircle,
   Minimize2,
   PanelLeft,
   PanelLeftOpen,
@@ -71,6 +72,7 @@ import { WorkspaceReviewPanel } from "./WorkspaceReviewPanels";
 import { ProjectPanel } from "./ProjectPanels";
 import { confirmAction } from "./ConfirmDialog";
 import { WorkspacePanelLoading } from "./LoadingViews";
+import { WorkspacePanelEmpty } from "./WorkspacePanelEmpty";
 import type { WorkspaceFileViewTab, WorkspaceViewTab } from "./WorkspaceViewTabs";
 import { handleTabListKeyDown, useTabCloseFocusRestoration } from "./TabKeyboardNavigation";
 import { useStripEnterReady, useTabExitRetention } from "./TabMotion";
@@ -133,6 +135,7 @@ const WORKSPACE_FILE_TREE_WIDTH_KEY = "wuu.desktop.fileTreeWidth";
 const WORKSPACE_FILE_TREE_SIDE_KEY = "wuu.desktop.fileTreeSide";
 const WORKSPACE_FILE_TREE_VISIBLE_KEY = "wuu.desktop.fileTreeVisible";
 const WORKSPACE_PANEL_PREWARM_TIMEOUT_MS = 2_000;
+const WORKSPACE_CONVERSATION_TAB_ID = "conversation";
 
 type WorkspaceFileTreeSide = "left" | "right";
 
@@ -189,7 +192,6 @@ function initialWorkspaceFileTreeVisible(): boolean {
 }
 
 export function WorkspaceRightPanel({
-  compactNavigation = false,
   open,
   present,
   prewarm = false,
@@ -210,8 +212,10 @@ export function WorkspaceRightPanel({
   onDirtyFileTabsChange,
   onReorderTabs,
   onOpenFile,
-  onClose,
   globalized,
+  conversationTab,
+  sideThreadContent,
+  sideThreadRunning = false,
   sheetPhase = "docked",
   onToggleGlobalize,
   canExitGlobalized = true,
@@ -224,7 +228,6 @@ export function WorkspaceRightPanel({
   pluginHost,
   workbenchController,
 }: {
-  compactNavigation?: boolean;
   open: boolean;
   present: boolean;
   prewarm?: boolean;
@@ -249,9 +252,11 @@ export function WorkspaceRightPanel({
   onCloseTab: (id: string) => void;
   onDirtyFileTabsChange?: (dirty: boolean) => void;
   onReorderTabs: (activeID: string, overID: string) => void;
-  onOpenFile: (path: string) => void;
-  onClose: () => void;
+  onOpenFile: (path: string, sourceContext?: RuntimeContext) => void;
   globalized: boolean;
+  conversationTab?: { title: string; active: boolean; onSelect: () => void };
+  sideThreadContent?: ReactNode;
+  sideThreadRunning?: boolean;
   // Globalize-sheet phase from App's phase machine; drives the data-sheet
   // attribute that promotes the panel to a full-window sheet in CSS.
   sheetPhase?: "docked" | "arming" | "open" | "exiting" | "docking";
@@ -274,7 +279,10 @@ export function WorkspaceRightPanel({
     () => effectivePluginHost.getWorkspaceTools(),
     () => effectivePluginHost.getWorkspaceTools(),
   );
-  const activeTab = activeTabID ? tabs.find((tab) => tab.id === activeTabID) : undefined;
+  const conversationActive = Boolean(conversationTab?.active);
+  const selectedTabID = conversationActive ? WORKSPACE_CONVERSATION_TAB_ID : activeTabID;
+  const visibleTabs = tabs;
+  const activeTab = activeTabID ? visibleTabs.find((tab) => tab.id === activeTabID) : undefined;
   const terminalTabOpen = tabs.some((tab) => tab.kind === "terminal");
   // Latch after the terminal has been shown so a later tool tab does not
   // tear the pty down. Closing the terminal tab releases it.
@@ -285,7 +293,6 @@ export function WorkspaceRightPanel({
     setTerminalMounted(false);
   }
   const fileTabs = tabs.filter((tab): tab is WorkspaceFileViewTab => tab.kind === "file");
-  const visibleTabs = tabs;
   const showingPicker = !activeTab || activeTab.kind === "new";
   const [dirtyFileTabIDs, setDirtyFileTabIDs] = useState<Set<string>>(() => new Set());
   const enterReady = useStripEnterReady();
@@ -296,15 +303,15 @@ export function WorkspaceRightPanel({
   const [fileTreeSide, setFileTreeSide] = useState<WorkspaceFileTreeSide>(initialWorkspaceFileTreeSide);
   const [fileTreeVisible, setFileTreeVisible] = useState(initialWorkspaceFileTreeVisible);
   // Too narrow for the tree beside a document: the document takes the panel
-  // and the tree stays one step away, as in compact navigation.
+  // and the tree stays available through the Files tab.
   const [fileSplitStacked, setFileSplitStacked] = useState(false);
-  const stackedFileView = !compactNavigation && fileSplitStacked && activeTab?.kind === "file";
+  const stackedFileView = fileSplitStacked && activeTab?.kind === "file";
   // The saved visibility is untouched; a stacked document only sets it aside.
   const fileTreeDocked = fileTreeVisible && !stackedFileView;
   // The Files tab is the tree itself; beside a document the tree follows the
   // saved choice.
-  const fileTreeShown = compactNavigation || activeTab?.kind === "files" || fileTreeDocked;
-  const fileTreeBesideDocument = activeTab?.kind === "file" && fileTreeDocked && !compactNavigation;
+  const fileTreeShown = activeTab?.kind === "files" || fileTreeDocked;
+  const fileTreeBesideDocument = activeTab?.kind === "file" && fileTreeDocked;
   const moveFileTreeLabel = t(fileTreeSide === "right" ? "workspace.moveFileTreeLeft" : "workspace.moveFileTreeRight");
   const [draggingFileTree, setDraggingFileTree] = useState(false);
   const [fileTreeDropSide, setFileTreeDropSide] = useState<WorkspaceFileTreeSide | undefined>(undefined);
@@ -316,6 +323,7 @@ export function WorkspaceRightPanel({
   const fileSplitRef = useRef<HTMLDivElement>(null);
   const fileContentRef = useRef<HTMLElement>(null);
   const documentComposerRef = useRef<HTMLDivElement>(null);
+  const artifactContentRef = useRef<HTMLDivElement>(null);
   const fileTreeRef = useRef<HTMLElement>(null);
   const fileTreeDragPreviewRef = useRef<HTMLDivElement>(null);
   const fileSplitResizeRef = useRef<{ startX: number; startTreeWidth: number } | null>(null);
@@ -324,13 +332,13 @@ export function WorkspaceRightPanel({
   const draggingTab = draggingTabID ? tabs.find((tab) => tab.id === draggingTabID) : undefined;
   const addButtonRef = useRef<HTMLButtonElement>(null);
   const { requestFocusRestoration, tabListRef } = useTabCloseFocusRestoration(
-    activeTabID,
-    visibleTabs.map((tab) => tab.id),
+    selectedTabID,
+    [...(conversationTab ? [WORKSPACE_CONVERSATION_TAB_ID] : []), ...visibleTabs.map((tab) => tab.id)],
     addButtonRef,
   );
 
   useLayoutEffect(() => {
-    const content = fileContentRef.current;
+    const content = activeTab?.kind === "artifact" ? artifactContentRef.current : fileContentRef.current;
     const composer = documentComposerRef.current;
     if (!content || !composer) return;
     // Document annotations must remain above the floating composer's actual
@@ -345,12 +353,12 @@ export function WorkspaceRightPanel({
       observer?.disconnect();
       content.style.removeProperty("--workspace-document-composer-inset");
     };
-  }, [Boolean(focusedComposer), activeTab?.kind, open, present]);
-  // Tabs shrink before the strip scrolls; once it does, the active tab is
-  // brought into view, again after a newcomer has grown to its width.
+  }, [Boolean(focusedComposer), activeTab?.kind, activeTab?.id, open, present]);
+  // Keep the active tab visible after selection, opening and pane resizing.
+  // Tabs retain their label/close lanes instead of collapsing to icons.
   useLayoutEffect(() => {
     const strip = tabListRef.current;
-    if (!strip || !activeTabID) {
+    if (!strip || !selectedTabID) {
       return undefined;
     }
     const reveal = (): void => {
@@ -368,8 +376,20 @@ export function WorkspaceRightPanel({
     };
     reveal();
     const timer = window.setTimeout(reveal, motionDurationMs("--motion-base", 180));
-    return () => window.clearTimeout(timer);
-  }, [activeTabID, tabListRef, visibleTabs.length]);
+    const settle = createWindowResizeSettleScheduler(reveal);
+    const observer = new ResizeObserver(() => {
+      if (isWindowResizing()) settle.schedule();
+      else reveal();
+    });
+    observer.observe(strip);
+    const activeElement = strip.querySelector<HTMLElement>(".workspace-tool-tab.active");
+    if (activeElement) observer.observe(activeElement);
+    return () => {
+      settle.cancel();
+      window.clearTimeout(timer);
+      observer.disconnect();
+    };
+  }, [selectedTabID, Boolean(conversationTab), tabListRef, visibleTabs.length]);
 
   useEffect(() => {
     if (!prewarm && !open) {
@@ -656,9 +676,10 @@ export function WorkspaceRightPanel({
     onCloseTab(tab.id);
   }
 
-  const headerTabs = tabs.map((tab) => {
+  const headerTabs = visibleTabs.map((tab) => {
     const busy = (tab.kind === "terminal" && terminalThread?.status === "in_progress") ||
-      (tab.kind === "browser" && browserActivity?.state === "active");
+      (tab.kind === "browser" && browserActivity?.state === "active") ||
+      (tab.kind === "side-thread" && sideThreadRunning);
     return {
       id: tab.id,
       title: workspaceViewTabLabel(tab),
@@ -668,27 +689,21 @@ export function WorkspaceRightPanel({
       dirty: (tab.kind === "file" && dirtyFileTabIDs.has(tab.id)) || undefined,
     };
   });
-  const navigateBack = compactNavigation && open ? () => {
-    if (showingPicker) onClose();
-    else if (activeTab.kind === "file") onOpenTool("files");
-    else onShowTools();
-  } : undefined;
   const headerSnapshot = immutableHeaderSnapshot({
     scope: "workspace",
-    title: activeTab ? workspaceViewTabLabel(activeTab) : t("workspace.artifactsAndTools"),
-    subtitle: activeTab?.kind === "file" || activeTab?.kind === "diff" ? activeTab.path : undefined,
-    tabs: compactNavigation ? undefined : headerTabs,
-    activeTabId: compactNavigation ? undefined : activeTabID,
-    canNavigateBack: navigateBack ? true : undefined,
+    title: conversationActive ? conversationTab?.title : activeTab ? workspaceViewTabLabel(activeTab) : t("workspace.artifactsAndTools"),
+    subtitle: !conversationActive && (activeTab?.kind === "file" || activeTab?.kind === "diff") ? activeTab.path : undefined,
+    tabs: conversationTab ? [{ id: WORKSPACE_CONVERSATION_TAB_ID, title: conversationTab.title, kind: "conversation" }, ...headerTabs] : headerTabs,
+    activeTabId: selectedTabID,
     busy: headerTabs.some((tab) => tab.busy) || undefined,
     dirty: headerTabs.some((tab) => tab.dirty) || undefined,
   });
 
   return (
     <aside
-      className={`workspace-right-panel${compactNavigation ? " compact-navigation" : ""}${showingPicker ? " tools" : " detail"}${activeTab?.kind === "review" ? " review" : ""}${activeTab?.kind === "diff" ? " diff" : ""}${activeTab?.kind === "files" || activeTab?.kind === "file" ? " files" : ""}${activeTab?.kind === "terminal" ? " terminal" : ""}${activeTab?.kind === "browser" ? " browser" : ""}${focusedComposer && activeTab?.kind === "file" ? " document-focus" : ""}`}
+      className={`workspace-right-panel${showingPicker ? " tools" : " detail"}${activeTab?.kind === "review" ? " review" : ""}${activeTab?.kind === "diff" ? " diff" : ""}${activeTab?.kind === "files" || activeTab?.kind === "file" ? " files" : ""}${activeTab?.kind === "terminal" ? " terminal" : ""}${activeTab?.kind === "browser" ? " browser" : ""}${focusedComposer ? " document-focus" : ""}`}
       data-wuu-component="workspace-panel"
-      data-wuu-view={activeTab?.kind ?? "picker"}
+      data-wuu-view={conversationActive ? "conversation" : activeTab?.kind ?? "picker"}
       data-sheet={
         sheetPhase === "exiting"
           ? "parked"
@@ -707,41 +722,22 @@ export function WorkspaceRightPanel({
             scope: "workspace",
             open,
             globalized,
-            activeViewKind: activeTab?.kind,
+            activeViewKind: conversationActive ? "conversation" : activeTab?.kind,
           })}
         />
         <HeaderPresentation
           snapshot={headerSnapshot}
           host={pluginHost}
           controller={workbenchController}
-          onNavigateBack={navigateBack}
-          onSelectTab={compactNavigation ? undefined : onSelectTab}
-          onCloseTab={compactNavigation ? undefined : (tabId) => {
+          onSelectTab={(tabId) => {
+            if (tabId === WORKSPACE_CONVERSATION_TAB_ID) conversationTab?.onSelect();
+            else onSelectTab(tabId);
+          }}
+          onCloseTab={(tabId) => {
             const tab = tabs.find((candidate) => candidate.id === tabId);
             if (tab) void requestCloseTab(tab);
           }}
-          fallback={compactNavigation ? (
-            <>
-              {globalized ? <span className="workspace-panel-sidebar-hit-hole" aria-hidden="true" /> : null}
-              <button
-                className="icon-button workspace-panel-back"
-                type="button"
-                aria-label={t("common.back")}
-                disabled={!open}
-                onClick={navigateBack}
-              >
-                <ArrowLeft className="icon" />
-              </button>
-              <div className="workspace-panel-compact-heading">
-                <strong>
-                  {activeTab ? workspaceViewTabLabel(activeTab) : t("workspace.artifactsAndTools")}
-                </strong>
-                {activeTab?.kind === "file" || activeTab?.kind === "diff" ? (
-                  <span>{activeTab.path}</span>
-                ) : null}
-              </div>
-            </>
-          ) : (
+          fallback={(
             <>
         {globalized ? (
           <span className="workspace-panel-sidebar-hit-hole" aria-hidden="true" />
@@ -764,6 +760,29 @@ export function WorkspaceRightPanel({
               data-scroll-fade="inline"
               onKeyDown={handleTabListKeyDown}
             >
+              {conversationTab ? (
+                <div
+                  className={`workspace-tool-tab workspace-conversation-tab${conversationActive ? " active" : ""}`}
+                  data-wuu-component="workspace-conversation-tab"
+                  data-wuu-active={conversationActive ? "true" : "false"}
+                >
+                  <Tooltip content={conversationTab.title}>
+                    <button
+                      className="workspace-tool-tab-main"
+                      type="button"
+                      role="tab"
+                      aria-selected={conversationActive}
+                      aria-label={conversationTab.title}
+                      tabIndex={conversationActive ? 0 : -1}
+                      disabled={!open}
+                      onClick={conversationTab.onSelect}
+                    >
+                      <MessageCircle className="icon" />
+                      <span>{conversationTab.title}</span>
+                    </button>
+                  </Tooltip>
+                </div>
+              ) : null}
               {tabEntries.map((entry) => {
                 const tab = entry.tab;
                 if (entry.closing) {
@@ -784,13 +803,14 @@ export function WorkspaceRightPanel({
                     </div>
                   );
                 }
-                const active = tab.id === activeTabID;
+                const active = tab.id === selectedTabID;
                 return (
                   <SortableWorkspaceViewTab
                     key={tab.id}
                     tab={tab}
                     active={active}
                     dirty={tab.kind === "file" && dirtyFileTabIDs.has(tab.id)}
+                    busy={tab.kind === "side-thread" && sideThreadRunning}
                     open={open}
                     reorderable={visibleTabs.length > 1}
                     onSelect={() => onSelectTab(tab.id)}
@@ -814,7 +834,7 @@ export function WorkspaceRightPanel({
               {draggingTab ? (
                 <WorkspaceViewTabPreview
                   tab={draggingTab}
-                  active={draggingTab.id === activeTabID}
+                  active={draggingTab.id === selectedTabID}
                   dirty={dirtyFileTabIDs.has(draggingTab.id)}
                   width={draggingTabWidth}
                 />
@@ -857,35 +877,17 @@ export function WorkspaceRightPanel({
         >
           {globalized ? <Minimize2 className="icon" /> : <Maximize2 className="icon" />}
         </button>
-        <button
-          className="icon-button workspace-panel-close"
-          type="button"
-          aria-label={t("workspace.closeRightPanel")}
-          disabled={!open}
-          onClick={onClose}
-        >
-          <X className="icon" />
-        </button>
             </>
           )}
         />
-        {compactNavigation ? activeTab ? (
-          <button
-            className="icon-button workspace-panel-close-tab"
-            type="button"
-            aria-label={t("workspace.closeTab", { label: workspaceViewTabLabel(activeTab) })}
-            disabled={!open}
-            onClick={() => void requestCloseTab(activeTab)}
-          >
-            <X className="icon" />
-          </button>
-        ) : (
-          <span className="workspace-panel-compact-action-slot" aria-hidden="true" />
-        ) : null}
       </div>
       {bodyMounted ? (
         <>
-          <div className={`workspace-panel-body${showingPicker ? " picker" : ""}`}>
+          <div
+            className={`workspace-panel-body${showingPicker ? " picker" : ""}`}
+            inert={conversationActive}
+            aria-hidden={conversationActive || undefined}
+          >
             <div
               className={`workspace-files-split${resizingFileSplit ? " resizing" : ""}${fileTreeShown ? "" : " tree-hidden"}${draggingFileTree ? " tree-dragging" : ""}`}
               data-wuu-component="workspace-files"
@@ -906,7 +908,7 @@ export function WorkspaceRightPanel({
                 <div className="workspace-files-content-body">
                   {fileTabs.map((tab) => (
                     <WorkspaceFileResource
-                      active={open && activeTab?.kind === "file" && tab.id === activeFileTabID}
+                      active={open && !conversationActive && activeTab?.kind === "file" && tab.id === activeFileTabID}
                       key={tab.id}
                       onDirtyChange={updateFileDirtyState}
                       onOpenFile={onOpenFile}
@@ -1012,7 +1014,7 @@ export function WorkspaceRightPanel({
                 aria-hidden={activeTab?.kind !== "browser"}
               >
                 <WorkspaceBrowserPanel
-                  visible={open && activeTab?.kind === "browser"}
+                  visible={open && !conversationActive && activeTab?.kind === "browser"}
                   threadID={terminalThread?.id}
                   activeContext={activeContext}
                   activity={browserActivity}
@@ -1030,13 +1032,22 @@ export function WorkspaceRightPanel({
                 aria-hidden={activeTab?.kind !== "terminal"}
               >
                 <WorkspaceTerminalHost
-                  active={activeTab?.kind === "terminal"}
+                  active={open && !conversationActive && activeTab?.kind === "terminal"}
                   activeContext={workspaceContext}
                   thread={terminalThread}
                 />
               </div>
             ) : null}
-            {activeTab?.kind === "files" || activeTab?.kind === "file" || activeTab?.kind === "browser" || activeTab?.kind === "terminal" ? null : (
+            {tabs.some((tab) => tab.kind === "side-thread") ? (
+              <div
+                className="workspace-side-thread-content"
+                hidden={activeTab?.kind !== "side-thread"}
+                inert={!open || conversationActive || activeTab?.kind !== "side-thread"}
+              >
+                {sideThreadContent}
+              </div>
+            ) : null}
+            {activeTab?.kind === "files" || activeTab?.kind === "file" || activeTab?.kind === "browser" || activeTab?.kind === "terminal" || activeTab?.kind === "side-thread" ? null : (
               <div
                 className="workspace-panel-content-swap"
                 key={activeTab?.id ?? "picker"}
@@ -1055,13 +1066,21 @@ export function WorkspaceRightPanel({
                     onClose={() => onCloseTab(activeTab.id)}
                   />
                 ) : activeTab.kind === "artifact" ? (
+                  <div className="workspace-artifact-document" ref={artifactContentRef}>
                   <ArtifactPreview
-                    active={open}
+                    active={open && !conversationActive}
                     artifact={activeTab.artifact}
+                    motion={activeTab.motion}
                     cwd={activeTab.cwd}
                     mode="panel"
                     onClose={() => onCloseTab(activeTab.id)}
                   />
+                  {focusedComposer ? (
+                    <div ref={documentComposerRef} className="workspace-document-composer" data-testid="workspace-document-composer">
+                      {focusedComposer}
+                    </div>
+                  ) : null}
+                  </div>
                 ) : activeTab.kind === "review" ? (
                   <WorkspaceReviewPanel
                     gitStatus={gitStatus}
@@ -1075,6 +1094,7 @@ export function WorkspaceRightPanel({
                     controller={workbenchController}
                     pluginId={activeTab.pluginId}
                     viewTypeId={activeTab.viewTypeId}
+                    region="auxiliary"
                     context={Object.freeze({ region: "workspace", tabId: activeTab.id })}
                   />
                 ) : null}
@@ -1131,7 +1151,7 @@ function WorkspaceFileResource({
 }: {
   active: boolean;
   onDirtyChange: (tabID: string, dirty: boolean) => void;
-  onOpenFile: (path: string) => void;
+  onOpenFile: (path: string, sourceContext?: RuntimeContext) => void;
   tab: WorkspaceFileViewTab;
   refreshKey?: string;
 }): JSX.Element {
@@ -1145,8 +1165,9 @@ function WorkspaceFileResource({
       target
         ? formatWorkspaceFileTarget(resolveWorkspaceFileTarget(tab.path, target))
         : reference,
+      tab.context,
     );
-  }, [onOpenFile, tab.path]);
+  }, [onOpenFile, tab.path, tab.context]);
 
   return (
     <div
@@ -1173,6 +1194,7 @@ function SortableWorkspaceViewTab({
   tab,
   active,
   dirty,
+  busy,
   open,
   reorderable,
   onSelect,
@@ -1182,6 +1204,7 @@ function SortableWorkspaceViewTab({
   tab: WorkspaceViewTab;
   active: boolean;
   dirty: boolean;
+  busy: boolean;
   open: boolean;
   reorderable: boolean;
   onSelect: () => void;
@@ -1213,9 +1236,10 @@ function SortableWorkspaceViewTab({
       aria-grabbed={isDragging || undefined}
       data-wuu-component="workspace-tool-tab"
       data-wuu-active={active ? "true" : "false"}
+      data-wuu-tab-kind={tab.kind}
       data-wuu-state={isDragging ? "dragging" : undefined}
     >
-      {/* A narrow tab may show only its icon, so the name is always a hover away. */}
+      {/* Keep the full resource path available when its title is truncated. */}
       <Tooltip content={tooltip}>
         <button
           ref={setActivatorNodeRef}
@@ -1225,13 +1249,14 @@ function SortableWorkspaceViewTab({
           {...listeners}
           role="tab"
           aria-selected={active}
+          aria-busy={busy || undefined}
           aria-label={dirty ? t("workspace.tabUnsaved", { label }) : label}
           tabIndex={active ? 0 : -1}
           disabled={!open}
           onClick={onSelect}
           onDoubleClick={onDoubleClick}
         >
-        <WorkspaceViewTabIcon tab={tab} className="icon" />
+        {busy ? <LoaderCircle className="icon control-busy-icon" aria-hidden="true" /> : <WorkspaceViewTabIcon tab={tab} className="icon" />}
         <span>{label}</span>
         {dirty ? <span className="workspace-tab-dirty-indicator" aria-hidden="true" /> : null}
       </button>
@@ -1272,6 +1297,7 @@ function WorkspaceViewTabPreview({
       style={width ? { width } : undefined}
       data-wuu-component="workspace-tool-tab"
       data-wuu-active={active ? "true" : "false"}
+      data-wuu-tab-kind={tab.kind}
       data-wuu-state="dragging"
     >
       <div className="workspace-tool-tab-main">
@@ -1426,6 +1452,7 @@ function workspaceToolFor(view: WorkspacePanelView): (typeof WORKSPACE_TOOL_ITEM
 
 function workspaceViewTabLabel(tab: WorkspaceViewTab): string {
   if (tab.kind === "new") return translateCurrent("workspace.newPage");
+  if (tab.kind === "side-thread") return translateCurrent("sideThread.title");
   return tab.kind === "diff" || tab.kind === "file" || tab.kind === "plugin" || tab.kind === "artifact" || tab.kind === "project"
     ? tab.title
     : translateCurrent(workspaceToolFor(tab.kind).titleKey);
@@ -1433,6 +1460,7 @@ function workspaceViewTabLabel(tab: WorkspaceViewTab): string {
 
 function workspaceViewTabTooltip(tab: WorkspaceViewTab): string {
   if (tab.kind === "new") return translateCurrent("workspace.newPage");
+  if (tab.kind === "side-thread") return translateCurrent("sideThread.title");
   if (tab.kind === "plugin" || tab.kind === "artifact" || tab.kind === "project") return tab.title;
   return tab.kind === "diff" || tab.kind === "file"
     ? tab.path
@@ -1441,6 +1469,7 @@ function workspaceViewTabTooltip(tab: WorkspaceViewTab): string {
 
 function WorkspaceViewTabIcon({ tab, className }: { tab: WorkspaceViewTab; className?: string }): JSX.Element {
   if (tab.kind === "new") return <LayoutGrid className={className} />;
+  if (tab.kind === "side-thread") return <MessageCircle className={className} />;
   if (tab.kind === "diff") {
     return <FileDiff className={className} />;
   }

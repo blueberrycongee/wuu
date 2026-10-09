@@ -4,6 +4,12 @@
 :root {
   --settings-canvas: var(--paper);
   --settings-card: var(--wuu-color-surface, var(--gray-0));
+  /* A group is a sheet lifted off the canvas: a large corner, a faint edge
+   * and a soft shadow, so grouping reads without a gray frame. */
+  --settings-group-radius: var(--radius-md);
+  --settings-group-shadow: var(--shadow-soft);
+  /* Row breathing room; empty lines and list rows share it. */
+  --settings-row-pad-block: var(--space-3);
   --subscription-meter: var(--wuu-accent);
   /* Usage charts and the home overview share one ramp: a single blue stepped
    * in lightness, so the four levels and an empty day each read at a glance
@@ -18,11 +24,11 @@
   /* Theme preview swatches render miniature copies of each theme, so
      their values are content: they must not follow the active theme. */
   --settings-preview-light-canvas: #ffffff;
-  --settings-preview-light-sidebar: #f0f2f4;
-  --settings-preview-light-line: #dde0e3;
-  --settings-preview-dark-canvas: #1a1c1e;
-  --settings-preview-dark-sidebar: #131517;
-  --settings-preview-dark-line: #3c3f43;
+  --settings-preview-light-sidebar: #f1f1f4;
+  --settings-preview-light-line: #dfdfe2;
+  --settings-preview-dark-canvas: #1c1c1d;
+  --settings-preview-dark-sidebar: #151516;
+  --settings-preview-dark-line: #3e3e40;
   /* The remote-control QR keeps a white quiet zone so phones can scan
      it in dark theme too. */
   --settings-remote-qr-quiet-zone: #ffffff;
@@ -86,11 +92,11 @@
   min-height: var(--sidebar-row-height);
   align-items: center;
   gap: var(--sidebar-nav-column-gap);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--ink-tertiary);
   font-size: var(--font-ui);
-  font-weight: var(--weight-medium);
+  font-weight: var(--sidebar-label-weight);
   padding: 0 var(--sidebar-row-pad-x);
   text-align: left;
   transition: background var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out);
@@ -140,7 +146,7 @@
   background: transparent;
   color: var(--ink-soft);
   font-size: var(--font-ui);
-  font-weight: 400;
+  font-weight: var(--sidebar-label-weight);
   padding: 0 var(--sidebar-row-pad-x);
   text-align: left;
   transition: background var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out);
@@ -151,10 +157,12 @@
   color: var(--ink);
 }
 
+/* Selection is the fill alone, as in the main rail: a heavier weight would
+ * widen the label and shift it while switching pages. */
 .settings-nav-item.active {
   background: var(--sidebar-row-selected-bg);
+  box-shadow: var(--sidebar-row-selected-shadow);
   color: var(--ink-strong);
-  font-weight: var(--weight-medium);
 }
 
 /* =========================================================================
@@ -271,6 +279,10 @@
   container-name: settings-page;
   container-type: inline-size;
   --settings-column-width: calc(var(--font-ui) * 50);
+  /* Every picker and text field on a page shares one width, so trailing
+   * controls start on one edge down a group instead of following their
+   * current value's length. */
+  --settings-control-width: calc(var(--font-ui) * 16);
   --settings-pad: var(--page-padding);
   --settings-gap: var(--section-gap);
   width: min(calc(var(--settings-column-width) + var(--settings-pad) * 2), 100%);
@@ -284,9 +296,53 @@
   animation: content-swap-enter var(--content-swap-duration) var(--content-swap-easing) both;
 }
 
+/* --- Titlebar crumb ------------------------------------------------------
+ * "Settings / Page" sits in the window strip, set like the conversation
+ * title, with page actions at its trailing edge. The page opens on its
+ * scope line or first group instead of repeating its name in large type.
+ * ------------------------------------------------------------------------- */
+
+.settings-titlebar {
+  gap: var(--space-2);
+}
+
+.settings-crumb-root,
+.settings-crumb-separator {
+  flex: 0 0 auto;
+  color: var(--ink-tertiary);
+  font-size: var(--font-body);
+  white-space: nowrap;
+}
+
+.settings-titlebar-slot {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.settings-titlebar-slot > .settings-page-title {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink-strong);
+  font-size: var(--font-body);
+  font-weight: var(--weight-medium);
+  letter-spacing: normal;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-titlebar-slot > .settings-page-actions {
+  min-height: 0;
+  margin: 0 0 0 auto;
+  -webkit-app-region: no-drag;
+}
+
 /* --- Page header ----------------------------------------------------------
- * Title, an optional line that states the page's scope, and page actions
- * aligned with the title line.
+ * Outside the settings window (a page rendered alone), the title, its scope
+ * line and page actions form a header at the top of the page.
  * ------------------------------------------------------------------------- */
 
 .settings-page-header {
@@ -358,15 +414,14 @@
 }
 
 /* --- Section --------------------------------------------------------------
- * A section title labels its group; it is the only semibold text on the
- * page besides the page title. Rows stay regular so the hierarchy reads
- * page → section → setting.
+ * A section title is a quiet label above its group. The settings inside
+ * carry the weight, so the eye lands on what can be changed.
  * ------------------------------------------------------------------------- */
 
 .settings-section {
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
+  gap: var(--section-heading-gap);
 }
 
 .settings-section-header {
@@ -384,9 +439,9 @@
 
 .settings-section-title {
   margin: 0;
-  color: var(--ink-strong);
+  color: var(--ink-soft);
   font-size: var(--font-ui);
-  font-weight: var(--weight-semibold);
+  font-weight: var(--weight-medium);
   line-height: 1.4;
 }
 
@@ -426,10 +481,10 @@
   gap: var(--space-2);
 }
 
-/* Text fields and pickers share one width, so their edges line up down the
- * form; numbers keep their narrower field. */
-.settings-form .settings-row-control > :is(.settings-input:not(.settings-input-num), .select-menu) {
-  width: calc(var(--font-ui) * 16);
+/* Text fields and pickers take the page's control width, so their edges line
+ * up down a group; numbers keep their narrower field. */
+.settings-row-control > :is(.settings-input:not(.settings-input-num), .select-menu) {
+  width: var(--settings-control-width);
   max-width: 100%;
 }
 
@@ -442,8 +497,8 @@
 }
 
 /* --- Group ----------------------------------------------------------------
- * One hairline enclosure per group; rows inside are separated by the
- * softer tier and never carry their own frames.
+ * One lifted sheet per group; rows inside are separated by the softer
+ * hairline and never carry their own frames.
  * ------------------------------------------------------------------------- */
 
 .settings-group {
@@ -451,7 +506,9 @@
   min-width: 0;
   flex-direction: column;
   border: 1px solid var(--hairline);
-  border-radius: var(--radius-sm);
+  border-radius: var(--settings-group-radius);
+  background: var(--settings-card);
+  box-shadow: var(--settings-group-shadow);
   padding-inline: var(--card-padding);
 }
 
@@ -462,7 +519,7 @@
 /* Empty and loading lines stand in for rows at a row's height. */
 .settings-group-empty {
   display: flex;
-  min-height: calc(var(--control-field-height) + var(--space-3) * 2);
+  min-height: calc(var(--control-field-height) + var(--settings-row-pad-block) * 2);
   align-items: center;
   margin: 0;
   color: var(--ink-tertiary);
@@ -485,9 +542,9 @@
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: var(--space-2) var(--space-6);
-  min-height: calc(var(--control-field-height) + var(--space-3) * 2);
+  min-height: calc(var(--control-field-height) + var(--settings-row-pad-block) * 2);
   border-bottom: 1px solid var(--hairline-soft);
-  padding: var(--space-3) 0;
+  padding: var(--settings-row-pad-block) 0;
 }
 
 /* `block` rows stack the label over a full-width control. */
@@ -511,10 +568,12 @@
   overflow-wrap: anywhere;
 }
 
+/* The setting's name is the anchor of its row; its description stays
+ * regular and soft so the two never compete. */
 .settings-row-label-title {
-  color: var(--ink);
+  color: var(--ink-strong);
   font-size: var(--font-ui);
-  font-weight: var(--weight-regular);
+  font-weight: var(--weight-medium);
   line-height: 1.4;
 }
 
@@ -523,6 +582,9 @@
   font-size: var(--font-sm);
   font-weight: var(--weight-regular);
   line-height: 1.5;
+  max-width: 60ch;
+  /* Descriptions can quote paths, which have no spaces to break at. */
+  overflow-wrap: anywhere;
 }
 
 .settings-row-control {
@@ -561,7 +623,6 @@
 /* SelectMenu triggers share the input chrome so a row mixing both reads as
  * one control family. */
 .settings-row .settings-select-trigger {
-  min-width: 160px;
   border: 1px solid var(--hairline);
   box-shadow: none;
 }
@@ -639,11 +700,6 @@
   width: 9.5em;
   text-align: right;
   font-variant-numeric: tabular-nums;
-}
-
-/* The background group follows the theme cards as part of one section. */
-.settings-theme-background {
-  margin-top: var(--space-1);
 }
 
 /* A unit sits inside its field after the number. An empty field whose
@@ -855,11 +911,9 @@
 }
 
 /* --- Agent page ---------------------------------------------------------------
- * One row per agent: the radio picks the default, the switch turns a detected
- * agent on or off, and the path override opens under the row's disclosure.
- * Agents Wuu cannot find wait in their own group, where the whole row opens.
- * Rows without a disclosure keep its footprint so trailing controls end on the
- * same axis.
+ * The default agent is an ordinary picker row. Installed agents follow, one
+ * row each with its switch and the disclosure for its path override. Agents
+ * Wuu cannot find wait in their own group, where the whole row opens.
  * ----------------------------------------------------------------------------- */
 
 .settings-engine-item + .settings-engine-item {
@@ -868,12 +922,13 @@
 
 .settings-engine-row {
   display: flex;
-  min-height: calc(var(--control-field-height) + var(--space-3) * 2);
+  min-height: calc(var(--control-field-height) + var(--settings-row-pad-block) * 2);
   align-items: center;
   gap: var(--space-3);
-  padding-block: var(--space-2);
+  padding-block: var(--settings-row-pad-block);
 }
 
+/* Onboarding's agent choice keeps a radio list. */
 .settings-engine-radio {
   width: var(--icon-size-sm);
   height: var(--icon-size-sm);
@@ -887,36 +942,29 @@
   cursor: default;
 }
 
-.settings-engine-radio.is-placeholder {
-  visibility: hidden;
-}
-
 .settings-engine-row-main {
   display: flex;
   min-width: 0;
   flex: 1 1 auto;
   align-items: center;
   gap: var(--space-3);
-  cursor: pointer;
 }
 
-.settings-engine-radio:disabled ~ .settings-engine-row-main {
-  cursor: default;
-}
-
-/* An agent that is off or missing steps back to the soft ink, still readable;
- * its switch or its group says why. */
-:is(.settings-engine-radio:disabled ~ .settings-engine-row-main, .settings-engine-row-toggle) .settings-engine-row-name {
+/* A missing agent steps back to the soft ink, still readable; its group says
+ * why. */
+.settings-engine-row-toggle .settings-engine-row-name {
   color: var(--ink-soft);
+  font-weight: var(--weight-regular);
 }
 
-:is(.settings-engine-radio:disabled ~ .settings-engine-row-main, .settings-engine-row-toggle) .settings-engine-row-icon {
+.settings-engine-row-toggle .settings-engine-row-icon {
   color: var(--ink-tertiary);
 }
 
 /* A missing agent's whole row is its disclosure. */
 .settings-engine-row-toggle {
   min-height: var(--control-field-height);
+  cursor: pointer;
   border-radius: var(--radius-xs);
   background: transparent;
   padding: 0;
@@ -953,7 +1001,8 @@
 .settings-engine-row-name {
   min-width: 0;
   overflow: hidden;
-  color: var(--ink);
+  color: var(--ink-strong);
+  font-weight: var(--weight-medium);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -977,18 +1026,12 @@ button.settings-engine-expand:hover {
   background: var(--ink-overlay-6);
 }
 
-/* The overrides align with the agent name, past the radio and the mark. */
+/* The overrides align with the agent name, past its mark. */
 .settings-engine-advanced {
   display: grid;
   justify-items: start;
   gap: var(--space-3);
-  padding: 0 0 var(--space-4) calc(var(--icon-size-sm) + var(--icon-size) + var(--space-3) * 2);
-}
-
-/* The switch sits before the disclosure, so chevrons end every row of both
- * groups on one axis. */
-.settings-engine-row > .settings-switch {
-  order: 0;
+  padding: 0 0 var(--space-4) calc(var(--icon-size) + var(--space-3));
 }
 
 .settings-engine-path-row {
@@ -1046,15 +1089,8 @@ button.settings-engine-expand:hover {
   flex: 0 0 auto;
 }
 
-/* Allowances are compared across services, so this dashboard uses the pane
- * width rather than the narrower label/control column used by forms. */
-.settings-page:has(> .settings-subscriptions) {
-  --settings-column-width: calc(var(--font-ui) * 78);
-  --settings-pad: var(--space-4);
-}
-
 .settings-subscriptions {
-  gap: var(--space-4);
+  gap: var(--settings-gap);
 }
 
 .settings-subscription-list {
@@ -1071,8 +1107,9 @@ button.settings-engine-expand:hover {
   gap: var(--space-3);
   padding: var(--card-padding);
   border: 1px solid var(--hairline);
-  border-radius: var(--radius-md);
+  border-radius: var(--settings-group-radius);
   background: var(--settings-card);
+  box-shadow: var(--settings-group-shadow);
   container: subscription-card / inline-size;
 }
 
@@ -1088,9 +1125,12 @@ button.settings-engine-expand:hover {
   border-top: 1px solid var(--hairline-soft);
 }
 
+/* The header reserves the model control's height, so titles in neighboring
+ * cards share a line and a header does not grow when its catalog loads. */
 .settings-subscription-main {
   display: flex;
   min-width: 0;
+  min-height: var(--control-size-inline);
   align-items: center;
   gap: var(--space-2);
 }
@@ -1122,7 +1162,7 @@ button.settings-engine-expand:hover {
   overflow-wrap: anywhere;
   color: var(--ink);
   font-size: var(--font-ui);
-  font-weight: var(--weight-semibold);
+  font-weight: var(--weight-regular);
 }
 
 .settings-subscription-status {
@@ -1439,11 +1479,12 @@ button.settings-engine-expand:hover {
   min-width: 0;
 }
 
-/* Cards shrink together in a narrow column instead of wrapping one away. */
+/* The cards split the column, so their edges meet the groups below, and
+ * shrink together in a narrow column instead of wrapping one away. */
 .settings-theme-card {
   display: flex;
   min-width: 0;
-  flex: 0 1 calc(var(--font-ui) * 9);
+  flex: 1 1 0;
   flex-direction: column;
   align-items: stretch;
   gap: var(--space-2);
@@ -1458,7 +1499,7 @@ button.settings-engine-expand:hover {
   display: block;
   overflow: hidden;
   width: 100%;
-  aspect-ratio: 16 / 10;
+  aspect-ratio: 2 / 1;
   container-type: inline-size;
   border: 1px solid var(--hairline);
   border-radius: var(--radius-sm);
@@ -1489,7 +1530,7 @@ button.settings-engine-expand:hover {
   color: var(--ink);
 }
 
-/* Drawn like the native radios on the Agent page: a boundary ring at rest, a
+/* Drawn like the native radios in onboarding: a boundary ring at rest, a
  * thick ink ring around a paper center when chosen. */
 .settings-theme-card-radio {
   width: var(--icon-size-sm);
@@ -1694,11 +1735,6 @@ button.settings-engine-expand:hover {
 
 .settings-row-attention[data-tone="danger"] {
   color: var(--danger);
-}
-
-.settings-codex-pet-select {
-  max-width: 14em;
-  min-width: 0;
 }
 
 /* --- Usage page ------------------------------------------------------------------ */
@@ -2384,12 +2420,12 @@ button.settings-engine-expand:hover {
 .settings-archive-row {
   display: flex;
   min-width: 0;
-  min-height: calc(var(--control-field-height) + var(--space-3) * 2);
+  min-height: calc(var(--control-field-height) + var(--settings-row-pad-block) * 2);
   align-items: center;
   justify-content: space-between;
   gap: var(--space-4);
   border-bottom: 1px solid var(--hairline-soft);
-  padding: var(--space-2) 0;
+  padding: var(--settings-row-pad-block) 0;
 }
 
 .settings-archive-row:last-child {
@@ -2515,14 +2551,15 @@ button.settings-engine-expand:hover {
     justify-content: flex-start;
   }
 
-  /* Switches and icon actions are narrow enough to stay beside their label. */
-  .settings-row:not(:has(> .settings-row-control > :not(.settings-switch, .plugin-setting-switch, .settings-row-actions, .settings-icon-button))) {
+  /* Switches, numbers, short values, buttons and icon actions are narrow
+   * enough to stay beside their label. */
+  .settings-row:not(:has(> .settings-row-control > :not(.settings-switch, .plugin-setting-switch, .settings-row-actions, .settings-row-control-value, .settings-button, .settings-input-num, .settings-input-unit))) {
     grid-template-columns: minmax(0, 1fr) auto;
     align-items: center;
   }
 
-  /* Stacked form fields span the row like other stacked pickers. */
-  .settings-form .settings-row-control > :is(.settings-input:not(.settings-input-num), .select-menu) {
+  /* Stacked fields and pickers span the row. */
+  .settings-row-control > :is(.settings-input:not(.settings-input-num), .select-menu) {
     width: 100%;
   }
 }

@@ -1,8 +1,9 @@
-import { lazy, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ChevronRight, Download, ExternalLink, FileDiff, Images, LayoutGrid, X } from "./WuuIcons";
+import { lazy, Suspense, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { ChevronRight, Download, ExternalLink, FileDiff, Images, LayoutGrid, Maximize2, PanelRight, X } from "./WuuIcons";
 
 import type { ThreadItem, ToolResultContentPart, Turn } from "../shared/protocol";
-import { useImagePreview } from "./ImagePreview";
+import { useImagePreview, useOptionalImagePreview } from "./ImagePreview";
+import type { ArtifactPreviewMotion } from "./ArtifactPreviewMotion";
 import { useImagePreviewRegistration } from "./ImagePreviewGallery";
 import { useI18n } from "./i18n";
 import { desktopWorkbenchController } from "./plugins/DesktopPluginRuntime";
@@ -20,7 +21,7 @@ import {
 } from "./TurnOutputSummaryCard";
 import { Tooltip } from "./Tooltip";
 import { TruncatedText } from "./TruncatedText";
-import { useArtifactPreview } from "./ArtifactPreviewContext";
+import { ArtifactPreviewContext, ArtifactThreadContext, useArtifactPreview } from "./ArtifactPreviewContext";
 import { VideoPreview } from "./VideoPreview";
 import { videoMimeType } from "../shared/videoMimeType";
 
@@ -141,10 +142,11 @@ export function TurnInlineArtifactOutputs({
       if (event.ctrlKey || event.metaKey || event.shiftKey || event.deltaX !== 0) return;
       const delta = event.deltaY * (event.deltaMode === 1 ? parseFloat(getComputedStyle(gallery).fontSize)
         : event.deltaMode === 2 ? gallery.clientWidth : 1);
-      const next = Math.max(0, Math.min(gallery.scrollWidth - gallery.clientWidth, gallery.scrollLeft + delta));
-      if (next === gallery.scrollLeft) return;
-      event.preventDefault();
-      gallery.scrollLeft = next;
+      const previous = gallery.scrollLeft;
+      gallery.scrollLeft = previous + delta;
+      // Let the browser clamp fractional scroll limits before deciding whether
+      // this wheel moved the gallery or should continue scrolling the page.
+      if (gallery.scrollLeft !== previous) event.preventDefault();
     };
     gallery.addEventListener("wheel", onWheel, { passive: false });
     return () => gallery.removeEventListener("wheel", onWheel);
@@ -220,9 +222,9 @@ export function TurnEndArtifactOutputs({
 
   if (files.length === 0) return null;
 
-  const openArtifact = (artifact: TurnArtifact): void => {
+  const openArtifact = (artifact: TurnArtifact, origin: HTMLElement): void => {
     if (canPreviewArtifact(artifact)) {
-      openPreview(artifact);
+      openPreview(artifact, origin);
       return;
     }
     const workspacePath = workspaceArtifactPath(artifact.uri, cwd);
@@ -234,7 +236,7 @@ export function TurnEndArtifactOutputs({
       void window.wuu?.openExternal?.(artifact.uri);
       return;
     }
-    openPreview(artifact);
+    openPreview(artifact, origin);
   };
 
   if (compact) {
@@ -281,7 +283,7 @@ export function TurnEndArtifactOutputs({
             </Tooltip>
           }
           trailing={<TurnOutputSummaryChevron />}
-          onOpen={() => openArtifact(single)}
+          onOpen={(event) => openArtifact(single, event.currentTarget)}
           openLabel={t("artifacts.openNamed", { name: single.name })}
         />
       ) : (
@@ -293,7 +295,7 @@ export function TurnEndArtifactOutputs({
             key: artifact.id,
             name: artifact.name,
             tooltip: artifact.name,
-            onOpen: () => openArtifact(artifact),
+            onOpen: (event) => openArtifact(artifact, event.currentTarget),
             openLabel: t("artifacts.openNamed", { name: artifact.name }),
           }))}
           footer={hiddenCount > 0 ? (
@@ -329,7 +331,7 @@ function ArtifactRenderer({
   artifact: TurnArtifact;
   cwd?: string;
   onOpenFile?: (path: string) => void;
-  onPreview?: (artifact: TurnArtifact) => void;
+  onPreview?: (artifact: TurnArtifact, origin?: HTMLElement) => void;
   variant: "inline" | "card";
   inspectionExpanded?: boolean;
 }): JSX.Element {
@@ -416,7 +418,25 @@ function InlineArtifact({ artifact, cwd }: { artifact: TurnArtifact; cwd?: strin
   const { t } = useI18n();
   const { openPreview } = useImagePreview();
   const [failedSource, setFailedSource] = useState<string>();
+  const frameRef = useRef<HTMLDivElement>(null);
+  const panel = useContext(ArtifactPreviewContext);
+  const threadID = useContext(ArtifactThreadContext);
   const source = artifactSource(artifact, cwd);
+  const openImage = (item: TurnArtifact, origin?: HTMLElement): void => {
+    const src = artifactSource(item, cwd);
+    if (src) openPreview({ src, alt: item.name, title: item.name }, origin);
+  };
+  const openArtifact = useArtifactPreview(openImage, cwd);
+  const renderPanelAction = (onClick: () => void, disabled: boolean): ReactNode => panel && threadID && !artifact.foldPreview ? (
+    <div className="turn-artifact-image-toolbar">
+      <Tooltip content={t("artifacts.openInPanel")}>
+        <button type="button" className="icon-button" data-artifact-panel=""
+          aria-label={t("artifacts.openInPanel")} disabled={disabled} onClick={onClick}>
+          <PanelRight className="icon" aria-hidden="true" />
+        </button>
+      </Tooltip>
+    </div>
+  ) : null;
   const register = useImagePreviewRegistration(source && failedSource !== source && artifact.mimeType.startsWith("image/")
     ? { src: source, alt: artifact.name, title: artifact.name } : null);
   let image: ReactNode;
@@ -427,6 +447,8 @@ function InlineArtifact({ artifact, cwd }: { artifact: TurnArtifact; cwd?: strin
         label={t("imagePreview.label")}
         previewTitle={artifact.name}
         onOpen={(src, origin) => openPreview({ src, alt: artifact.name, title: artifact.name }, origin)}
+        renderActions={(open, disabled) => renderPanelAction(() => open((src, origin) =>
+          openArtifact({ ...artifact, uri: src, data: undefined, text: undefined }, origin)), disabled)}
       />
     );
   } else if (!source || !artifact.mimeType.startsWith("image/")) {
@@ -436,7 +458,7 @@ function InlineArtifact({ artifact, cwd }: { artifact: TurnArtifact; cwd?: strin
       <button
         type="button"
         ref={register}
-        onClick={event => openPreview({ src: source, alt: artifact.name, title: artifact.name }, event.currentTarget)}
+        onClick={event => openImage(artifact, event.currentTarget)}
         aria-label={t("artifacts.previewNamed", { name: artifact.name })}
         disabled={failedSource === source}
       >
@@ -450,7 +472,10 @@ function InlineArtifact({ artifact, cwd }: { artifact: TurnArtifact; cwd?: strin
   }
   return (
     <figure className="turn-artifact-inline-image">
-      <div className="turn-artifact-image-preview">{image}</div>
+      <div className="turn-artifact-image-preview" ref={frameRef}>
+        {image}
+        {!artifact.remoteRef ? renderPanelAction(() => openArtifact(artifact, frameRef.current!.querySelector("button")!), failedSource === source) : null}
+      </div>
     </figure>
   );
 }
@@ -464,13 +489,13 @@ function ArtifactCard({
   artifact: TurnArtifact;
   cwd?: string;
   onOpenFile?: (path: string) => void;
-  onPreview?: (artifact: TurnArtifact) => void;
+  onPreview?: (artifact: TurnArtifact, origin?: HTMLElement) => void;
 }): JSX.Element {
   const { t } = useI18n();
   if (artifact.remoteRef && artifact.mimeType.startsWith("image/")) return <InlineArtifact artifact={artifact} cwd={cwd} />;
-  const open = (): void => {
+  const open = (origin: HTMLElement): void => {
     if (canPreviewArtifact(artifact)) {
-      onPreview?.(artifact);
+      onPreview?.(artifact, origin);
       return;
     }
     const workspacePath = workspaceArtifactPath(artifact.uri, cwd);
@@ -482,13 +507,13 @@ function ArtifactCard({
       void window.wuu?.openExternal?.(artifact.uri);
       return;
     }
-    onPreview?.(artifact);
+    onPreview?.(artifact, origin);
   };
   return (
     <button
       type="button"
       className="turn-output-summary-row turn-edit-summary-row is-clickable"
-      onClick={open}
+      onClick={(event) => open(event.currentTarget)}
       aria-label={t("artifacts.openNamed", { name: artifact.name })}
     >
       <span className="turn-output-summary-file">
@@ -508,17 +533,24 @@ export function ArtifactPreview({
   cwd,
   onClose,
   mode = "overlay",
+  motion,
 }: {
   artifact: TurnArtifact;
   active?: boolean;
   cwd?: string;
   onClose: () => void;
   mode?: "overlay" | "panel";
+  motion?: ArtifactPreviewMotion;
 }): JSX.Element {
   const { t } = useI18n();
   const source = useArtifactPreviewSource(artifact, cwd);
+  const imagePreview = useOptionalImagePreview();
   const [downloadError,setDownloadError] = useState("");
   const dialogRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    if (mode === "panel" && dialogRef.current) return motion?.attach(dialogRef.current);
+  }, [motion, mode]);
+  useLayoutEffect(() => { if (!active) motion?.close(); }, [active, motion]);
   useEffect(() => {
     if (mode === "panel") return;
     const previouslyFocused = document.activeElement instanceof HTMLElement
@@ -620,6 +652,21 @@ export function ArtifactPreview({
             <TruncatedText as="strong" text={artifact.name} />
           </div>
           <div className="artifact-preview-actions">
+            {source && artifact.mimeType.startsWith("image/") && imagePreview ? (
+              <Tooltip content={t("imagePreview.label")}>
+                <button
+                  className="artifact-preview-enlarge"
+                  type="button"
+                  aria-label={t("imagePreview.label")}
+                  onClick={(event) => {
+                    motion?.cancel();
+                    imagePreview.openPreview({ src: source, alt: artifact.name, title: artifact.name }, motion?.origin.deref() ?? event.currentTarget);
+                  }}
+                >
+                  <Maximize2 className="icon" aria-hidden="true" />
+                </button>
+              </Tooltip>
+            ) : null}
             {source ? (
               <Tooltip content={t("artifacts.download")}>
                 <button type="button" onClick={download} aria-label={t("artifacts.downloadNamed", { name: artifact.name })}>

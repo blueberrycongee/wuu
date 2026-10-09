@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -26,10 +27,12 @@ import (
 )
 
 // PluginGeneration is a complete replacement for the plugin-owned surfaces of a
-// Session. It owns every process and private package snapshot. Live policy
-// changes publish a new generation for later conversations; already-started
-// conversations keep a reference until they rebuild. Close retires resources
-// in reverse ownership order and records a structured revocation report.
+// Session. It owns every process and private package snapshot. Conversations
+// adopt published updates at their next idle turn boundary; active turns and
+// background work retain their generation until they settle. Committed removal
+// or disable revokes that plugin across all retained generations immediately.
+// Close retires the remaining resources in reverse ownership order and records
+// a structured revocation report.
 type PluginGeneration struct {
 	id                string
 	settings          config.Config
@@ -53,7 +56,9 @@ type PluginGeneration struct {
 	// refs counts the live Session plus any ThreadRuntime still bound to this
 	// generation. A retired generation stays open until the last conversation
 	// that started against it is released.
-	refs atomic.Int32
+	refs           atomic.Int32
+	revokedMu      sync.Mutex
+	revokedPlugins map[string]bool
 }
 
 // PreflightExtensions discovers and builds a replacement without changing the
@@ -69,10 +74,16 @@ func (s *Session) PreflightExtensions(cfg config.Config) (*PluginGeneration, err
 // state and subsequently failed. Startup failures are excluded so one broken
 // optional plugin does not force a rebuild before every turn.
 func (s *Session) PluginGenerationNeedsRecovery() bool {
-	if s == nil || s.PluginHost == nil {
+	if s == nil {
 		return false
 	}
-	for _, status := range s.PluginHost.Statuses() {
+	s.pluginGenerationMu.Lock()
+	host := s.PluginHost
+	s.pluginGenerationMu.Unlock()
+	if host == nil {
+		return false
+	}
+	for _, status := range host.Statuses() {
 		if status.State == pluginhost.StateFailed && !status.StartedAt.IsZero() {
 			return true
 		}
@@ -198,12 +209,47 @@ func (s *Session) buildPluginGeneration(cfg config.Config, discovered []pluginpk
 		}
 		active = activationPlan.Plugins
 	}
-	host, kernel, err := buildPluginHost(active, s.RootDir, s.WorkspaceID, s.WuuHome, s.StateDir, required, start, s.PluginSessionRouter, s.UserQuestions)
+	var snapshotRoots []string
+	var snapshotErr error
+	active, snapshotRoots, snapshotErr = snapshotMutableExecutionPackages(active)
+	if snapshotErr != nil {
+		return nil, snapshotErr
+	}
+	ownedRoots = append(ownedRoots, snapshotRoots...)
+	// A refresh may isolate a newly broken optional runtime, but must not
+	// replace an already working runtime with a failed candidate. Requirements
+	// only apply to runtimes in the candidate, so intentional removals and
+	// disables remain possible.
+	requiredRuntimes := make(map[string]bool, len(required))
+	for id, value := range required {
+		requiredRuntimes[id] = value
+	}
+	if s.PluginHost != nil {
+		for _, status := range s.PluginHost.Statuses() {
+			if status.State == pluginhost.StateActive {
+				requiredRuntimes[status.ID] = true
+			}
+		}
+	}
+	host, kernel, err := buildPluginHost(active, s.RootDir, s.WorkspaceID, s.WuuHome, s.StateDir, requiredRuntimes, start, s.PluginSessionRouter, s.UserQuestions)
 	if err != nil {
 		for _, root := range ownedRoots {
 			_ = os.RemoveAll(root)
 		}
 		return nil, err
+	}
+	// Service negotiation can reject a prepared runtime after process startup.
+	// Treat that exactly like startup failure for required replacements.
+	for _, status := range host.Statuses() {
+		if requiredRuntimes[status.ID] && status.State == pluginhost.StateFailed {
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			closeErr := host.Close(ctx)
+			cancel()
+			for _, root := range ownedRoots {
+				_ = os.RemoveAll(root)
+			}
+			return nil, pluginActivationError(status.ID, errors.New(status.Error), closeErr)
+		}
 	}
 	systemPrompts, compactions, err := buildPluginAgentCapabilities(context.Background(), host, s.ProviderName, s.Model, s.RootDir)
 	if err != nil {
@@ -243,14 +289,28 @@ func (s *Session) buildPluginGeneration(cfg config.Config, discovered []pluginpk
 	return generation, nil
 }
 
-// ActivatePluginGeneration swaps a prebuilt candidate into the Session as a
-// transaction: runtime activation is validated first, then live bindings are
-// applied, then commit persists policy, and only then is the candidate
-// published. Conversations that already pinned the previous generation keep
-// using it until they rebuild; the old generation is retired after those
-// references are released. Any failure before publication restores the old
-// live bindings, closes the candidate, and returns the error; a failed
-// candidate never touches the current generation.
+// PluginGenerationWasCommitted distinguishes post-commit activation failure
+// from preparation or persistence failure. Callers must finish durable cleanup
+// and report the new generation's diagnostics instead of rolling policy back.
+func PluginGenerationWasCommitted(err error) bool {
+	var committed *pluginGenerationCommittedError
+	return errors.As(err, &committed)
+}
+
+type pluginGenerationCommittedError struct{ cause error }
+
+func (e *pluginGenerationCommittedError) Error() string {
+	return fmt.Sprintf("plugin change was committed, but runtime activation failed: %v", e.cause)
+}
+func (e *pluginGenerationCommittedError) Unwrap() error { return e.cause }
+
+// ActivatePluginGeneration persists a prepared candidate before opening its
+// effectful lifecycle. Persistence failure preserves the current generation
+// without invoking candidate activation. After commit, activation failure is a
+// degraded published generation, exposed through status inventory and a
+// PluginGenerationWasCommitted error; external effects cannot be rolled back.
+// Active work retains same-ID implementations until its idle boundary, while
+// removal or disable revokes that plugin across all retained generations.
 func (s *Session) ActivatePluginGeneration(candidate *PluginGeneration, commit func() error) error {
 	if s == nil {
 		return errors.New("runtime is not initialized")
@@ -258,33 +318,139 @@ func (s *Session) ActivatePluginGeneration(candidate *PluginGeneration, commit f
 	if candidate == nil || candidate.host == nil || candidate.hooks == nil {
 		return errors.New("plugin candidate generation is not initialized")
 	}
+	s.pluginTransitionMu.Lock()
+	defer s.pluginTransitionMu.Unlock()
 	s.pluginGenerationMu.Lock()
-	defer s.pluginGenerationMu.Unlock()
 	old := s.pluginGeneration
 	if old == nil {
 		old = s.capturePluginGeneration()
 	}
-	if err := activatePluginHost(context.Background(), candidate.host); err != nil {
-		activationErr := errors.Join(fmt.Errorf("activate plugin candidate: %w", err), candidate.close())
-		s.persistRevocationReport(candidate)
-		return activationErr
-	}
-	s.applyPluginGeneration(candidate)
 	if commit != nil {
 		if err := commit(); err != nil {
-			s.applyPluginGeneration(old)
+			s.pluginGenerationMu.Unlock()
 			commitErr := errors.Join(err, candidate.close())
 			s.persistRevocationReport(candidate)
 			return commitErr
 		}
 	}
+	s.pluginGenerationMu.Unlock()
+	// Activation may synchronously call host services. Keep old bindings
+	// available until activation settles, without holding their lookup mutex.
+	activationErr := activatePluginHost(context.Background(), candidate.host)
+	// Preparation materializes native contributions before the effectful
+	// lifecycle opens. Failed runtimes must not leave cached prompts or win
+	// decision/transform dispatch in the degraded generation. Keep their status
+	// diagnostics and independent declarative package features intact.
+	for _, status := range candidate.host.Statuses() {
+		if status.State != pluginhost.StateFailed {
+			continue
+		}
+		if candidate.systemPrompts != nil {
+			candidate.systemPrompts.RemoveByPlugin(status.ID)
+		}
+		if candidate.compactions != nil {
+			candidate.compactions.RemoveByPlugin(status.ID)
+		}
+		if candidate.requestTransforms != nil {
+			candidate.requestTransforms.RemoveByPlugin(status.ID)
+		}
+	}
+	s.pluginGenerationMu.Lock()
+	s.applyPluginGeneration(candidate)
 	s.pluginGeneration = candidate
 	candidate.retain()
 	// Conversations that already pinned the previous generation keep using it
 	// until they rebuild. The Session reference is released here; remaining
 	// thread runtimes keep the processes and tools alive.
-	s.releasePluginGenerationLocked(old)
+	if s.retiredPluginGenerations == nil {
+		s.retiredPluginGenerations = make(map[*PluginGeneration]struct{})
+	}
+	s.retiredPluginGenerations[old] = struct{}{}
+	activeIDs := make(map[string]bool, len(candidate.active))
+	for _, item := range candidate.active {
+		activeIDs[item.ID] = true
+	}
+	var retired []*PluginGeneration
+	for generation := range s.retiredPluginGenerations {
+		// A thread-model shadow can release its final reference independently
+		// of this Session. Never resurrect that generation while it closes.
+		for refs := generation.refs.Load(); ; refs = generation.refs.Load() {
+			if refs <= 0 {
+				delete(s.retiredPluginGenerations, generation)
+				break
+			}
+			if generation.refs.CompareAndSwap(refs, refs+1) {
+				retired = append(retired, generation)
+				break
+			}
+		}
+	}
+	s.pluginGenerationMu.Unlock()
+	// Plugin shutdown can call host services. Never hold the Session mutex
+	// across those callbacks; temporary references keep the old hosts alive.
+	s.releasePluginGeneration(old)
+	for _, generation := range retired {
+		generation.revokeMissingPlugins(activeIDs, s.TitleClient, s.Model)
+		s.releasePluginGeneration(generation)
+	}
+	if activationErr != nil {
+		return &pluginGenerationCommittedError{cause: activationErr}
+	}
 	return nil
+}
+
+// revokeMissingPlugins stops removed or disabled implementations even when a
+// conversation still pins this generation. Updates with the same ID retain
+// their old implementation until outstanding work releases it.
+func (g *PluginGeneration) revokeMissingPlugins(activeIDs map[string]bool, client providers.Client, model string) {
+	g.revokedMu.Lock()
+	defer g.revokedMu.Unlock()
+	var remaining []pluginpkg.Plugin
+	changed := false
+	for _, item := range g.active {
+		if activeIDs[item.ID] && !g.revokedPlugins[item.ID] {
+			remaining = append(remaining, item)
+			continue
+		}
+		if g.revokedPlugins[item.ID] {
+			continue
+		}
+		if g.revokedPlugins == nil {
+			g.revokedPlugins = make(map[string]bool)
+		}
+		g.revokedPlugins[item.ID] = true
+		changed = true
+		if g.host != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			outcome, _ := g.host.RetirePlugin(ctx, item.ID, &pluginhost.UserQuestionError{Code: "plugin_disabled", Message: "plugin was removed or disabled"})
+			cancel()
+			if outcome.Err != nil {
+				providers.DebugLogf("retire disabled plugin %q: %v", item.ID, outcome.Err)
+			}
+		}
+		if g.mcp != nil {
+			for localName := range item.MCPServers {
+				name := PluginMCPServerName(item.ID, localName)
+				if err := g.mcp.Revoke(name); err != nil {
+					providers.DebugLogf("revoke disabled plugin MCP server %q: %v", name, err)
+				}
+			}
+		}
+		if g.systemPrompts != nil {
+			g.systemPrompts.RemoveByPlugin(item.ID)
+		}
+		if g.compactions != nil {
+			g.compactions.RemoveByPlugin(item.ID)
+		}
+		if g.requestTransforms != nil {
+			g.requestTransforms.RemoveByPlugin(item.ID)
+		}
+	}
+	if changed && g.hooks != nil {
+		// Dispatcher replacement fences later hooks. A legacy hook that already
+		// started remains owned by its caller's execution context.
+		g.hooks.Replace(buildHookDispatcher(g.settings, remaining, client, model, nil))
+	}
 }
 
 func (g *PluginGeneration) retain() {
@@ -314,6 +480,18 @@ func (g *PluginGeneration) Release() bool {
 	return true
 }
 
+// IsCurrentPluginGeneration reports whether a conversation is bound to the
+// currently published generation. Catalog changes and rejected candidates do
+// not change this identity, unlike the durable mutation epoch.
+func (s *Session) IsCurrentPluginGeneration(generation *PluginGeneration) bool {
+	if s == nil {
+		return false
+	}
+	s.pluginGenerationMu.Lock()
+	defer s.pluginGenerationMu.Unlock()
+	return s.pluginGeneration == generation
+}
+
 func (s *Session) RetainPluginGeneration() *PluginGeneration {
 	return s.retainPluginGeneration()
 }
@@ -340,17 +518,10 @@ func (s *Session) releasePluginGeneration(generation *PluginGeneration) {
 	if s == nil || generation == nil {
 		return
 	}
-	s.pluginGenerationMu.Lock()
-	defer s.pluginGenerationMu.Unlock()
-	s.releasePluginGenerationLocked(generation)
-}
-
-func (s *Session) releasePluginGenerationLocked(generation *PluginGeneration) {
-	if generation == nil {
-		return
-	}
-	closed := generation.Release()
-	if closed {
+	if generation.Release() {
+		s.pluginGenerationMu.Lock()
+		delete(s.retiredPluginGenerations, generation)
+		s.pluginGenerationMu.Unlock()
 		s.persistRevocationReport(generation)
 	}
 }
@@ -402,6 +573,7 @@ func (s *Session) applyPluginGeneration(generation *PluginGeneration) {
 	s.Skills = append([]skills.Skill(nil), generation.skills...)
 	s.pluginSkills = generation.pluginSkills
 	if s.Toolkit != nil {
+		s.Toolkit.SetPluginManager(s.pluginManager(generation, runPluginManagementCommand))
 		s.Toolkit.SetSkills(s.Skills)
 		s.Toolkit.SetMCPActivityBindings(generation.mcpBinding)
 		s.Toolkit.SetMCPManager(generation.mcp)
@@ -600,4 +772,49 @@ func (s *Session) PluginExecutionSnapshots() []pluginhost.ExecutionSnapshot {
 		return nil
 	}
 	return s.PluginHost.ExecutionSnapshots()
+}
+
+// snapshotMutableExecutionPackages detaches executable and lazy declarative paths
+// from the replaceable installed/development catalog. Callers serialize the copy with
+// publication; the returned roots belong to the generation, not discovery.
+func snapshotMutableExecutionPackages(active []pluginpkg.Plugin) ([]pluginpkg.Plugin, []string, error) {
+	result := append([]pluginpkg.Plugin(nil), active...)
+	var roots []string
+	fail := func(err error) ([]pluginpkg.Plugin, []string, error) {
+		for _, root := range roots {
+			_ = os.RemoveAll(root)
+		}
+		return nil, nil, err
+	}
+	for i, item := range active {
+		if item.Source != "dev" && item.Source != "user" {
+			continue
+		}
+		root, err := snapshotPluginPackage(item.Root)
+		if err != nil {
+			return fail(fmt.Errorf("snapshot mutable plugin %q: %w", item.ID, err))
+		}
+		roots = append(roots, root)
+		relative, err := filepath.Rel(item.Root, item.ManifestPath)
+		if err != nil {
+			return fail(err)
+		}
+		manifest, err := packageManifestPath(root, relative)
+		if err != nil {
+			return fail(err)
+		}
+		copied, err := pluginpkg.LoadManifestWithOptions(manifest, pluginpkg.LoadOptions{Source: item.Source, Official: item.Official, WorkspaceID: item.WorkspaceID})
+		if err != nil {
+			return fail(err)
+		}
+		// Normalization rebases execution paths; package-relative fingerprints
+		// must still match the exact catalog identity before retaining its trust.
+		if copied.SubjectID != item.SubjectID || copied.Fingerprint != item.Fingerprint {
+			return fail(fmt.Errorf("plugin %q changed while its execution package was being snapshotted", item.ID))
+		}
+		copied.AuthorizedDev = item.AuthorizedDev
+		copied.EffectivePermissions = append([]string(nil), item.EffectivePermissions...)
+		result[i] = copied
+	}
+	return result, roots, nil
 }

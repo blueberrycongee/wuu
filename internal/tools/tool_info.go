@@ -188,8 +188,10 @@ func isDirectMCPToolCandidate(tool Tool) bool {
 
 func classifyToolKind(name string) ToolKind {
 	switch name {
-	case "read_file", "write_file", "list_files", "edit_file", "present_artifact":
+	case "read_file", "write_file", "list_files", "edit_file", "apply_patch", "present_artifact":
 		return ToolKindFile
+	case "plugin_manager":
+		return ToolKindPlugin
 	case "grep", "glob":
 		return ToolKindSearch
 	case "tool_search":
@@ -221,7 +223,7 @@ func isDeferredByDefault(name string) bool {
 		return true
 	}
 	switch name {
-	case "thread_get":
+	case "thread_get", "plugin_manager":
 		return true
 	default:
 		return false

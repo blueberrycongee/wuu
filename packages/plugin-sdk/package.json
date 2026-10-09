@@ -19,7 +19,9 @@
     "dist/index.js",
     "dist/index.d.ts",
     "dist/theme-contract.generated.js",
-    "dist/theme-contract.generated.d.ts"
+    "dist/theme-contract.generated.d.ts",
+    "dist/bundle-contract.js",
+    "dist/bundle-contract.d.ts"
   ],
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

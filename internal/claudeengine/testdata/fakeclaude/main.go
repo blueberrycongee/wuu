@@ -66,6 +66,7 @@ func main() {
 		}
 		var envelope struct {
 			Type            string  `json:"type"`
+			UUID            string  `json:"uuid"`
 			ParentToolUseID *string `json:"parent_tool_use_id"`
 			Message         struct {
 				Content any `json:"content"`
@@ -74,12 +75,53 @@ func main() {
 		if err := json.Unmarshal([]byte(line), &envelope); err != nil {
 			continue
 		}
+		if prompt, ok := envelope.Message.Content.(string); ok && strings.HasPrefix(prompt, "background_") {
+			if !backgroundScenario(prompt, envelope.UUID) {
+				return
+			}
+			continue
+		}
 		if path := os.Getenv("WUU_TEST_CLAUDE_INPUT"); path != "" {
 			if err := os.WriteFile(path, []byte(line), 0600); err != nil {
 				panic(err)
 			}
 			sendResult(false, "Input captured")
 			continue
+		}
+		if prompt, ok := envelope.Message.Content.(string); ok && strings.HasPrefix(prompt, "task_notification_") {
+			if resumeID != "notification-session" {
+				panic("task notification scenario requires --resume notification-session")
+			}
+			send(map[string]any{
+				"type": "system", "subtype": "task_notification", "status": "stopped",
+				"task_id": "previous-agent", "session_id": resumeID,
+			})
+			result := map[string]any{
+				"type": "result", "subtype": "success", "is_error": false,
+				"num_turns": 0, "result": "", "origin": map[string]any{"kind": "task-notification"},
+				"usage": map[string]any{"input_tokens": 0, "output_tokens": 0},
+			}
+			switch prompt {
+			case "task_notification_text":
+				result["result"] = "Previous agent completed."
+			case "task_notification_error":
+				result["subtype"] = "error_during_execution"
+				result["is_error"] = true
+				result["errors"] = []string{"Previous agent stopped."}
+			}
+			send(result)
+			if prompt == "task_notification_exit" {
+				return
+			}
+			send(map[string]any{"type": "system", "subtype": "init", "session_id": resumeID})
+			switch prompt {
+			case "task_notification_turn_error":
+				sendResult(true, "")
+				continue
+			case "task_notification_empty_turn":
+				sendResult(false, "")
+				continue
+			}
 		}
 		if strings.Contains(line, "wait_forever") {
 			send(map[string]any{

@@ -76,7 +76,7 @@ describe("WorkspaceDocumentTurnDock", () => {
       root.render(
         <I18nProvider>
           <WorkspaceDocumentTurnDock key={key} turns={turns} waitingQuery={waitingQuery}>
-            <div data-testid="composer">Composer</div>
+            <textarea data-testid="composer" data-wuu-component="composer-input" defaultValue="Keep my draft" />
           </WorkspaceDocumentTurnDock>
         </I18nProvider>,
       );
@@ -90,7 +90,6 @@ describe("WorkspaceDocumentTurnDock", () => {
       ".workspace-document-turn-summary",
     );
     expect(toggle?.getAttribute("aria-expanded")).toBe("false");
-    expect(toggle?.textContent).toBe("");
     expect(container.querySelector(".workspace-document-turn-details")).toBeNull();
 
     act(() => toggle?.click());
@@ -244,6 +243,107 @@ describe("WorkspaceDocumentTurnDock", () => {
 
     expect(container.querySelector('[data-testid="composer"]')).not.toBeNull();
     expect(container.querySelector('[data-testid="workspace-document-turn-drawer"]')).toBeNull();
+  });
+
+  it("reveals the header on editor focus without expanding the result", () => {
+    render([turn("focus")]);
+    const header = container.querySelector(".workspace-document-turn-header");
+    expect(header?.getAttribute("aria-hidden")).toBe("true");
+    act(() => container.querySelector<HTMLTextAreaElement>("textarea")?.focus());
+    expect(header?.getAttribute("aria-hidden")).toBe("false");
+    expect(container.querySelector(".workspace-document-turn-summary")?.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("does not remount the real composer when the first final answer arrives", () => {
+    const pending = turn("first-final");
+    pending.items = [pending.items[0]];
+    render([pending]);
+    const input = container.querySelector("textarea")!;
+    act(() => input.focus());
+    input.value = "An unsent draft";
+    input.setSelectionRange(3, 8);
+    render([turn("first-final")]);
+    expect(container.querySelector("textarea")).toBe(input);
+    expect(document.activeElement).toBe(input);
+    expect(input.value).toBe("An unsent draft");
+    expect(input.selectionStart).toBe(3);
+  });
+
+  it("preserves the draft and expanded presentation through minimize and restore", () => {
+    render([turn("minimize")]);
+    const input = container.querySelector("textarea")!;
+    act(() => input.focus());
+    act(() => container.querySelector<HTMLButtonElement>(".workspace-document-turn-summary")?.click());
+    act(() => container.querySelector<HTMLButtonElement>('[data-testid="document-chat-minimize"]')?.click());
+    expect(container.querySelector("textarea")).toBe(input);
+    expect(container.querySelector(".workspace-document-turn-content")?.hasAttribute("inert")).toBe(true);
+    act(() => container.querySelector<HTMLButtonElement>('[data-testid="document-chat-restore"]')?.click());
+    expect(document.activeElement).toBe(input);
+    expect(input.value).toBe("Keep my draft");
+    expect(container.querySelector(".workspace-document-turn-summary")?.getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("keeps owned composer popovers open and collapses on an outside pointer", () => {
+    render([turn("owned-focus")]);
+    act(() => container.querySelector<HTMLTextAreaElement>("textarea")?.focus());
+    act(() => container.querySelector<HTMLButtonElement>(".workspace-document-turn-summary")?.click());
+    const portal = document.createElement("button");
+    portal.dataset.floatingMenuOwner = "composer-plus";
+    document.body.appendChild(portal);
+    act(() => portal.focus());
+    act(() => portal.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true })));
+    expect(container.querySelector(".workspace-document-turn-summary")?.getAttribute("aria-expanded")).toBe("true");
+    act(() => document.body.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true })));
+    expect(container.querySelector(".workspace-document-turn-summary")?.getAttribute("aria-expanded")).toBe("false");
+    portal.remove();
+  });
+
+  it("collapses the result on Escape without clearing or blurring the editor", () => {
+    render([turn("escape")]);
+    const input = container.querySelector("textarea")!;
+    act(() => input.focus());
+    act(() => container.querySelector<HTMLButtonElement>(".workspace-document-turn-summary")?.click());
+    act(() => input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+    expect(container.querySelector(".workspace-document-turn-summary")?.getAttribute("aria-expanded")).toBe("false");
+    expect(document.activeElement).toBe(input);
+    expect(input.value).toBe("Keep my draft");
+  });
+
+  it("keeps a newly arriving result minimized until the owner restores it", () => {
+    render([turn("before-minimize")]);
+    act(() => container.querySelector<HTMLTextAreaElement>("textarea")?.focus());
+    act(() => container.querySelector<HTMLButtonElement>('[data-testid="document-chat-minimize"]')?.click());
+    const restore = container.querySelector<HTMLButtonElement>('[data-testid="document-chat-restore"]')!;
+    render([turn("before-minimize"), turn("after-minimize")]);
+    expect(document.activeElement).toBe(restore);
+    expect(container.querySelector(".workspace-document-turn-content")?.hasAttribute("inert")).toBe(true);
+    act(() => restore.click());
+    expect(container.querySelector(".workspace-document-turn-summary")?.getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("opens only the real conversation callback and supports menu keyboard dismissal", () => {
+    let opened = 0;
+    act(() => root.render(<I18nProvider>
+      <WorkspaceDocumentTurnDock turns={[turn("menu")]} onOpenConversation={() => { opened += 1; }}>
+        <textarea data-wuu-component="composer-input" defaultValue="A draft" />
+      </WorkspaceDocumentTurnDock>
+    </I18nProvider>));
+    act(() => container.querySelector<HTMLTextAreaElement>("textarea")?.focus());
+    const options = container.querySelector<HTMLButtonElement>('[aria-haspopup="menu"]')!;
+    act(() => options.click());
+    const menu = container.querySelector('[role="menu"]')!;
+    const items = menu.querySelectorAll<HTMLButtonElement>('[role="menuitem"]');
+    expect(document.activeElement).toBe(items[0]);
+    act(() => items[0].dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true })));
+    expect(document.activeElement).toBe(items[1]);
+    act(() => items[1].dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+    expect(container.querySelector('[role="menu"]')).toBeNull();
+    expect(document.activeElement).toBe(options);
+    expect(opened).toBe(0);
+    act(() => options.click());
+    act(() => container.querySelector<HTMLButtonElement>('[role="menuitem"]')?.click());
+    expect(opened).toBe(1);
+    expect(container.querySelector("textarea")?.value).toBe("A draft");
   });
 
 });

@@ -17,6 +17,7 @@ import {
   workspaceDiffViewTab,
   workspaceFileViewTab,
   workspaceToolViewTab,
+  workspacePluginViewTab,
   type WorkspaceViewTab,
 } from "./WorkspaceViewTabs";
 import { hoverTooltipText, unhoverTooltip } from "./tooltipTestUtils";
@@ -188,13 +189,31 @@ function baseProps(): Parameters<typeof WorkspaceRightPanel>[0] {
     onCloseTab: () => {},
     onReorderTabs: () => {},
     onOpenFile: () => {},
-    onClose: () => {},
     globalized: false,
     onToggleGlobalize: () => {},
   };
 }
 
+vi.mock("./WorkspacePdfPreview", () => ({ WorkspacePdfPreview: () => <div>PDF preview</div> }));
+
 describe("WorkspaceRightPanel", () => {
+  it("exposes plugin workspace View actions as auxiliary commands", async () => {
+    const pluginHost = new PluginHost({ react: React });
+    const workbenchController = new WorkbenchController(pluginHost);
+    const execute = vi.fn();
+    await pluginHost.activateGeneration({ pluginId: "workspace-actions", generation: "one", register(api) {
+      api.registerViewType({ id: "workspace.view", title: "Workspace view", render: () => <div>Workspace plugin body</div> });
+      api.registerCommand({ id: "workspace.refresh", title: "Refresh workspace view", placements: ["view.title"], execute });
+    } });
+    const tab = workspacePluginViewTab({ id: "workspace", pluginId: "workspace-actions", generation: "one", view: "workspace.view", title: "Workspace view" });
+    mount(<WorkspaceRightPanel {...baseProps()} tabs={[tab]} activeTabID={tab.id} pluginHost={pluginHost} workbenchController={workbenchController} />);
+    const action = container!.querySelector<HTMLButtonElement>('button[aria-label="Refresh workspace view"]')!;
+    expect(action).not.toBeNull();
+    await act(async () => action.click());
+    expect(execute).toHaveBeenCalledWith(expect.objectContaining({ target: "view.title", region: "auxiliary", viewTypeId: "workspace.view" }));
+    workbenchController.dispose();
+  });
+
   it("replaces its owned tabbar boundary with a live workspace header presenter", async () => {
     const pluginHost = new PluginHost({ react: React });
     const workbenchController = new WorkbenchController(pluginHost);
@@ -242,22 +261,6 @@ describe("WorkspaceRightPanel", () => {
     await act(async () => presentationHost?.invoke("header.select-tab", { tabId: tab.id }));
     await act(async () => presentationHost?.invoke("header.close-tab", { tabId: tab.id }));
     expect(onSelectTab).toHaveBeenCalledWith(tab.id);
-    expect(onCloseTab).toHaveBeenCalledWith(tab.id);
-    const onOpenTool = vi.fn();
-    onCloseTab.mockClear();
-    act(() => root?.render(
-      <WorkspaceRightPanel {...baseProps()} compactNavigation tabs={[tab]} activeTabID={tab.id}
-        onOpenTool={onOpenTool} onCloseTab={onCloseTab}
-        pluginHost={pluginHost} workbenchController={workbenchController} />,
-    ));
-    expect(snapshots.at(-1)?.tabs).toBeUndefined();
-    expect(presentationHost?.actions).not.toContain("header.select-tab");
-    expect(presentationHost?.actions).not.toContain("header.close-tab");
-    await expect(presentationHost!.invoke("header.select-tab", { tabId: tab.id })).rejects.toThrow();
-    expect(snapshots.at(-1)?.canNavigateBack).toBe(true);
-    await act(async () => presentationHost?.invoke("header.navigate-back"));
-    expect(onOpenTool).toHaveBeenCalledWith("files");
-    act(() => container?.querySelector<HTMLButtonElement>(".workspace-panel-close-tab")?.click());
     expect(onCloseTab).toHaveBeenCalledWith(tab.id);
   });
 
@@ -496,7 +499,7 @@ describe("WorkspaceRightPanel", () => {
         tabs={[fileTab]}
         activeTabID={fileTab.id}
         activeFileTabID={fileTab.id}
-        workspaceContext={context}
+        workspaceContext={{ kind: "no_project", cwd: "/other-root" }}
         onOpenFile={onOpenFile}
       />,
     );
@@ -506,7 +509,7 @@ describe("WorkspaceRightPanel", () => {
     act(() => {
       container?.querySelector<HTMLButtonElement>(".rich-file-link")?.click();
     });
-    expect(onOpenFile).toHaveBeenCalledWith("src/App.tsx#L12");
+    expect(onOpenFile).toHaveBeenCalledWith("src/App.tsx#L12", context);
   });
 
   it("resizes and persists the right-side file tree", async () => {
@@ -671,6 +674,51 @@ describe("WorkspaceRightPanel", () => {
     await act(async () => Promise.resolve());
     expect(split.classList.contains("tree-hidden")).toBe(false);
     expect(window.localStorage.getItem("wuu.desktop.fileTreeVisible")).toBe("true");
+  });
+
+  it.each(["file", "artifact"] as const)("updates document clearance and releases observers when changing resources (%s)", async (kind) => {
+    const observations = new Map<Element, ResizeObserverCallback>();
+    vi.stubGlobal("ResizeObserver", class {
+      private targets: Element[] = [];
+      constructor(private callback: ResizeObserverCallback) {}
+      observe(target: Element): void {
+        this.targets.push(target);
+        observations.set(target, this.callback);
+      }
+      disconnect(): void {
+        this.targets.forEach((target) => observations.delete(target));
+      }
+    });
+    const context: RuntimeContext = { kind: "project", project_id: "project-1", cwd: "/repo/project" };
+    const makeTab = (name: string) => kind === "file" ? workspaceFileViewTab({ context, path: name }) : workspaceArtifactViewTab({
+      threadID: "thread-1", cwd: context.cwd,
+      artifact: { id: name, itemId: name, index: 0, type: "file", name, mimeType: "application/pdf",
+        placement: "turn_end", uri: `wuu-artifact://workspace/thread-1/digest/${name}` },
+    });
+    const tab = makeTab("first.pdf");
+    const props = { ...baseProps(), tabs: [tab], activeTabID: tab.id, activeFileTabID: tab.id, workspaceContext: context };
+    mount(<WorkspaceRightPanel {...props} focusedComposer={<div>Compose</div>} />);
+    await act(async () => Promise.resolve());
+    const contentSelector = kind === "file" ? ".workspace-files-content" : ".workspace-artifact-document";
+    const content = container!.querySelector<HTMLElement>(contentSelector)!;
+    const composer = container!.querySelector<HTMLElement>(".workspace-document-composer")!;
+    Object.defineProperty(composer, "getBoundingClientRect", { value: () => ({ height: 320 }) });
+    act(() => observations.get(composer)!([], {} as ResizeObserver));
+    expect(content.style.getPropertyValue("--workspace-document-composer-inset")).toBe("336px");
+    const nextTab = makeTab("second.pdf");
+    const nextProps = { ...props, tabs: [tab, nextTab], activeTabID: nextTab.id, activeFileTabID: nextTab.id };
+    await act(async () => root!.render(<WorkspaceRightPanel {...nextProps} focusedComposer={<div>Compose</div>} />));
+    const nextComposer = container!.querySelector<HTMLElement>(".workspace-document-composer")!;
+    const nextContent = container!.querySelector<HTMLElement>(contentSelector)!;
+    expect(observations.has(nextComposer)).toBe(true);
+    if (kind === "artifact") {
+      expect(nextComposer).not.toBe(composer);
+      expect(observations.has(composer)).toBe(false);
+      expect(nextContent.style.getPropertyValue("--workspace-document-composer-inset")).toBe("16px");
+    }
+    act(() => root!.render(<WorkspaceRightPanel {...nextProps} />));
+    expect(nextContent.style.getPropertyValue("--workspace-document-composer-inset")).toBe("");
+    expect(observations.has(nextComposer)).toBe(false);
   });
 
   it("clamps the tree width so the file content keeps usable space", () => {

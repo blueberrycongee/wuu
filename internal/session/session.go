@@ -1343,6 +1343,7 @@ func migrateSchema(db *sql.DB) error {
 			context_source TEXT NOT NULL DEFAULT '',
 			creation_request_id TEXT NOT NULL DEFAULT '',
 			instructions TEXT NOT NULL DEFAULT '',
+			request_context_json TEXT NOT NULL DEFAULT '',
 			tool_policy_json TEXT NOT NULL DEFAULT ''
 		)`,
 		`CREATE TABLE IF NOT EXISTS session_folders (
@@ -1374,6 +1375,7 @@ func migrateSchema(db *sql.DB) error {
 				steered INTEGER NOT NULL DEFAULT 0,
 				reasoning_content TEXT NOT NULL DEFAULT '',
 			reasoning_blocks_json TEXT NOT NULL DEFAULT '',
+			provider_items_json TEXT NOT NULL DEFAULT '',
 			content_parts_json TEXT NOT NULL DEFAULT '',
 			images_json TEXT NOT NULL DEFAULT '',
 			files_json TEXT NOT NULL DEFAULT '',
@@ -1914,6 +1916,12 @@ WHERE workflow_id = ''`); err != nil {
 	if err := migration.addColumnIfMissing("session_messages", "hidden", "INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return err
 	}
+	if err := migration.addColumnIfMissing("sessions", "request_context_json", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := migration.addColumnIfMissing("session_messages", "provider_items_json", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
 	if err := migration.addColumnIfMissing("session_messages", "content_parts_json", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
@@ -2411,18 +2419,18 @@ func insertHistoryRecordTx(tx *sql.Tx, id string, seq int, rec HistoryRecord) er
 	_, err := tx.Exec(`
 			INSERT INTO session_messages (
 				session_id, seq, role, content, display_content, origin, origin_id, cause, presentation_kind, related_session_id, read_only, phase, provider_item_id, provider_item_model, client_id, hidden, steered, reasoning_content,
-				reasoning_blocks_json, content_parts_json, images_json, files_json, tool_calls_json, discovered_tools_json,
+				reasoning_blocks_json, provider_items_json, content_parts_json, images_json, files_json, tool_calls_json, discovered_tools_json,
 				tool_call_id, tool_invocation_id, tool_result_kind, tool_result_json, finish_reason, stop_reason, truncated, name, at, input_tokens, output_tokens, context_tokens, cache_creation_tokens, cache_read_tokens, retry_count, max_retries,
 				provider, model
 			) VALUES (
 				?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-				?, ?, ?, ?, ?, ?,
+				?, ?, ?, ?, ?, ?, ?,
 				?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 			)`,
 		id, seq, strings.ToLower(strings.TrimSpace(storedRec.Role)), storedRec.Content, storedRec.DisplayContent,
 		strings.TrimSpace(storedRec.Origin), strings.TrimSpace(storedRec.OriginID), strings.TrimSpace(storedRec.Cause), strings.TrimSpace(storedRec.PresentationKind), strings.TrimSpace(storedRec.RelatedSessionID), boolInt(storedRec.ReadOnly),
 		strings.TrimSpace(storedRec.Phase), strings.TrimSpace(storedRec.ProviderItemID), strings.TrimSpace(storedRec.ProviderItemModel), storedRec.ClientID, boolInt(storedRec.Hidden), boolInt(storedRec.Steered), storedRec.ReasoningContent,
-		rawJSONText(storedRec.ReasoningBlocks), rawJSONText(storedRec.ContentParts), rawJSONText(storedRec.Images), rawJSONText(storedRec.Files), rawJSONText(storedRec.ToolCalls), rawJSONText(storedRec.DiscoveredTools),
+		rawJSONText(storedRec.ReasoningBlocks), rawJSONText(storedRec.ProviderItems), rawJSONText(storedRec.ContentParts), rawJSONText(storedRec.Images), rawJSONText(storedRec.Files), rawJSONText(storedRec.ToolCalls), rawJSONText(storedRec.DiscoveredTools),
 		storedRec.ToolCallID, storedRec.ToolInvocationID, storedRec.ToolResultKind, rawJSONText(storedRec.ToolResult), storedRec.FinishReason, storedRec.StopReason, boolInt(storedRec.Truncated), storedRec.Name, nullableValueTimeText(storedRec.At), storedRec.InputTokens, storedRec.OutputTokens, storedRec.ContextTokens, storedRec.CacheCreationTokens, storedRec.CacheReadTokens, storedRec.RetryCount, storedRec.MaxRetries,
 		strings.TrimSpace(storedRec.Provider), strings.TrimSpace(storedRec.Model),
 	)
@@ -2468,7 +2476,7 @@ WHERE owner_id = ? AND status = 'settled'
 const historyRecordsSelect = `
 	SELECT seq, role, content, display_content, origin, origin_id, cause, presentation_kind, related_session_id, read_only, phase, client_id, hidden, steered, reasoning_content,
 	       provider_item_id, provider_item_model,
-	       reasoning_blocks_json, content_parts_json, images_json, files_json, tool_calls_json, discovered_tools_json,
+	       reasoning_blocks_json, provider_items_json, content_parts_json, images_json, files_json, tool_calls_json, discovered_tools_json,
 	       tool_call_id, tool_invocation_id, tool_result_kind, tool_result_json, finish_reason, stop_reason, truncated, name, at, input_tokens, output_tokens, context_tokens, cache_creation_tokens, cache_read_tokens, retry_count, max_retries,
 	       provider, model
 	FROM session_messages`
@@ -2502,13 +2510,13 @@ func scanHistoryRecords(rows *sql.Rows) ([]HistoryRecord, error) {
 	for rows.Next() {
 		var rec HistoryRecord
 		var hidden, steered, truncated, readOnly int
-		var reasoningBlocks, contentParts, images, files, toolCalls, discoveredTools, toolResult string
+		var reasoningBlocks, providerItems, contentParts, images, files, toolCalls, discoveredTools, toolResult string
 		var at sql.NullString
 		if err := rows.Scan(
 			&rec.Seq,
 			&rec.Role, &rec.Content, &rec.DisplayContent, &rec.Origin, &rec.OriginID, &rec.Cause, &rec.PresentationKind, &rec.RelatedSessionID, &readOnly, &rec.Phase, &rec.ClientID, &hidden, &steered, &rec.ReasoningContent,
 			&rec.ProviderItemID, &rec.ProviderItemModel,
-			&reasoningBlocks, &contentParts, &images, &files, &toolCalls, &discoveredTools,
+			&reasoningBlocks, &providerItems, &contentParts, &images, &files, &toolCalls, &discoveredTools,
 			&rec.ToolCallID, &rec.ToolInvocationID, &rec.ToolResultKind, &toolResult, &rec.FinishReason, &rec.StopReason, &truncated, &rec.Name, &at, &rec.InputTokens, &rec.OutputTokens, &rec.ContextTokens, &rec.CacheCreationTokens, &rec.CacheReadTokens, &rec.RetryCount, &rec.MaxRetries,
 			&rec.Provider, &rec.Model,
 		); err != nil {
@@ -2519,6 +2527,7 @@ func scanHistoryRecords(rows *sql.Rows) ([]HistoryRecord, error) {
 		rec.Steered = steered != 0
 		rec.Truncated = truncated != 0
 		rec.ReasoningBlocks = rawMessage(reasoningBlocks)
+		rec.ProviderItems = rawMessage(providerItems)
 		rec.ContentParts = rawMessage(contentParts)
 		rec.Images = rawMessage(images)
 		rec.Files = rawMessage(files)

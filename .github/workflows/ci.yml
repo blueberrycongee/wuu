@@ -165,6 +165,27 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y fonts-noto-cjk fonts-noto-color-emoji
 
+      - name: Guard workspace tabs and navigation
+        if: ${{ !cancelled() && steps.build-renderer.outcome == 'success' }}
+        timeout-minutes: 3
+        shell: bash
+        run: |
+          mkdir -p desktop/out/workspace-new-tab-e2e
+          set -o pipefail
+          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/workspace-new-tab-e2e.cjs 2>&1 | tee desktop/out/workspace-new-tab-e2e/run.log
+
+      - name: Upload workspace tab evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: workspace-tab-evidence
+          path: |
+            desktop/out/workspace-new-tab-e2e/*.png
+            desktop/out/workspace-new-tab-e2e/*.json
+            desktop/out/workspace-new-tab-e2e/*.log
+          if-no-files-found: ignore
+          retention-days: 14
+
       - name: Guard file selections and side-chat chips
         if: ${{ !cancelled() && steps.build-renderer.outcome == 'success' }}
         timeout-minutes: 5

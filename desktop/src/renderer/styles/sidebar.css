@@ -1,49 +1,44 @@
 /* Component color tokens for sidebar.css.
    Light-theme values; the dark theme overrides these in base.css theme blocks. */
 :root {
-  /* A muted navigation surface separates the rail from the reading canvas.
-   * Keep a translucent veil so native vibrancy and custom artwork still show. */
-  --sidebar-material-fill: color-mix(in srgb, var(--surface-2) 82%, transparent);
+  /* One opaque near-white step below the canvas on every platform. A
+   * translucent system material took its gray from the wallpaper and read
+   * as dirt beside the white canvas. */
+  --sidebar-material-fill: var(--surface-1);
   /* Rail/content boundary: a crisp dark hairline instead of the old white
    * edge + white inset pair, which were invisible against the white content
    * column and left the boundary to be read from the gray brightness step.
    * The dark theme keeps its own light-on-dark edge overrides in theme.css. */
-  --sidebar-material-edge: rgba(17, 19, 21, 0.07);
+  --sidebar-material-edge: rgba(19, 19, 20, 0.07);
   --sidebar-material-inner-edge: transparent;
   --sidebar-hover-card-rim: rgba(255, 255, 255, 0.72);
-  --sidebar-drawer-bg: var(--surface-2);
+  --sidebar-drawer-bg: var(--sidebar-material-fill);
   --sidebar-brand-wordmark-color: var(--ink-strong);
   --sidebar-resizer-hover-bg: var(--ink-overlay-18);
   --sidebar-resizer-hover-ring: rgba(255, 255, 255, 0.4);
   --sidebar-nav-item-hover-ring: var(--wuu-nav-item-hover-ring, rgba(255, 255, 255, 0.42));
   --sidebar-nav-item-focus-shadow: var(--focus-ring);
-  /* Selection is the row's only location signal, so it must read on the
-   * rail itself: about 1.25:1 against the rail fill, where the shared
-   * --selection-surface (tuned for the white canvas) nearly vanished. */
+  /* Selection is the row's only location signal. In light it is a sheet
+   * of paper lifted off the rail (an edge and a soft shadow) rather than a
+   * darker fill, so the rail stays clean while the row still reads. */
   --sidebar-row-selected-bg: var(
     --wuu-nav-item-active-background,
-    var(--wuu-color-surface-elevated, var(--gray-300))
+    var(--wuu-color-surface-elevated, var(--paper))
   );
-  --sidebar-project-row-pending-bg: rgba(255, 255, 255, 0.24);
-  --sidebar-project-loading-notch: rgba(17, 19, 21, 0.18);
+  --sidebar-row-selected-shadow: 0 0 0 1px var(--hairline-soft), 0 1px 2px var(--shadow-color-medium);
+  --sidebar-project-row-pending-bg: var(--ink-overlay-4);
+  --sidebar-project-loading-notch: rgba(19, 19, 20, 0.18);
   --sidebar-row-icon-hover-bg-default: var(--ink-overlay-6);
   --sidebar-row-action-archive-confirm-bg: rgba(184, 79, 53, 0.1);
   --sidebar-thread-list-button-hover-bg: var(--ink-overlay-4);
-  --sidebar-thread-spinner-notch: rgba(17, 19, 21, 0.18);
+  --sidebar-thread-spinner-notch: rgba(19, 19, 20, 0.18);
   --sidebar-settings-button-hover-ring: rgba(255, 255, 255, 0.42);
   /* Collapsed-drawer chrome. */
-  --sidebar-drawer-edge: rgba(17, 19, 21, 0.09);
+  --sidebar-drawer-edge: rgba(19, 19, 20, 0.09);
   --sidebar-drawer-inner-edge: transparent;
   /* Must stay a valid <shadow> (not `none`): it is one item in a comma-
    * separated box-shadow list. */
   --sidebar-edge-shadow: 0 0 0 0 transparent;
-}
-
-/* Windows has no vibrancy view. Use an opaque navigation surface instead
- * of relying on the native material behind the translucent web layer. The
- * dark rail is already opaque (theme.css). */
-:root[data-platform="win32"]:not([data-theme="dark"]) {
-  --sidebar-material-fill: var(--surface-2);
 }
 
 .app-shell {
@@ -71,6 +66,20 @@
    * docked workspace track from their viewport-based inset calculation. */
   --workspace-right-panel-reserved-width: var(--workspace-right-panel-width, 360px);
   grid-template-columns: var(--sidebar-width, 296px) minmax(0, 1fr) var(--workspace-right-panel-width, 360px);
+}
+
+/* This control belongs to the window chrome, not either moving track. It
+ * remains reachable when the workspace owns focus and the conversation is inert. */
+.shell-right-sidebar-toggle {
+  position: absolute;
+  top: calc((var(--window-titlebar-height) - var(--control-size-toolbar)) / 2);
+  right: max(var(--control-toolbar-inset), var(--window-controls-inset-right));
+  z-index: 151;
+  -webkit-app-region: no-drag;
+}
+
+.shell-right-sidebar-toggle * {
+  -webkit-app-region: no-drag;
 }
 
 .app-shell.popped-out-shell,
@@ -153,6 +162,30 @@
   visibility: hidden;
 }
 
+/* Keep the conversation mounted under the shared header so switching tabs
+ * preserves its history, selection and scroll position. Tool content retains
+ * its layout while hidden, including editors and the terminal. */
+.app-shell.workspace-conversation-active .conversation-pane {
+  grid-column: 2 / -1;
+  pointer-events: auto;
+}
+
+.app-shell.workspace-conversation-active .workspace-right-panel {
+  background: transparent;
+  box-shadow: none;
+  pointer-events: none;
+}
+
+.app-shell.workspace-conversation-active .workspace-panel-tabbar {
+  pointer-events: auto;
+}
+
+.app-shell.workspace-conversation-active .workspace-panel-body {
+  visibility: hidden;
+  /* Monaco sets visibility on descendants, so suppress the whole painted layer. */
+  opacity: 0;
+}
+
 .globalized-sidebar-toggle-region {
   position: fixed;
   /* Match the shared toolbar center, including when zoomed controls require
@@ -218,10 +251,9 @@
   );
 }
 
-/* Glass rail surface — shared between the main sidebar (`<aside class="sidebar">`)
+/* Rail surface — shared between the main sidebar (`<aside class="sidebar">`)
  * and the settings rail (`<aside class="settings-sidebar">`). Single source of
- * truth so future tweaks to the translucent material (border opacity,
- * highlight brightness, ambient shadow, ::before gradient stops) update both
+ * truth so future tweaks to the rail (fill, edge, ambient shadow) update both
  * shells at once. Each shell keeps its own layout-specific declarations in
  * the rules below — main owns z-index / overflow / transitions / motion
  * tokens, settings owns padding / gap. */
@@ -287,7 +319,6 @@
   --sidebar-content-pad-x: var(--space-2);
   --sidebar-row-pad-x: calc(var(--pane-inset) - var(--sidebar-content-pad-x));
   --sidebar-label-weight: 400;
-  --sidebar-selected-weight: 500;
   --sidebar-label-size: var(--font-ui);
   --sidebar-heading-size: max(12px, round(nearest, calc(var(--sidebar-label-size) - 2px), 1px));
   /* Dense rows, clear groups: rows sit two label heights tall, and the
@@ -346,6 +377,14 @@
 .sidebar-collapsed .sidebar-content {
   opacity: 0;
   transform: translate3d(-18px, 0, 0) scale(0.988);
+}
+
+/* Dock/undock clips a stable content width. Drawer motion still belongs to
+ * its outer rail; navigation labels never scale or rewrap during a toggle. */
+.sidebar-animating:not(.sidebar-drawer-closing) .sidebar-content {
+  opacity: 1;
+  transform: none;
+  transition: none;
 }
 
 .sidebar-hover-zone {
@@ -541,55 +580,6 @@
     transform var(--sidebar-drawer-exit-duration) var(--sidebar-drawer-exit-easing);
 }
 
-/* Compact navigation turns the familiar left rail into the phone's session
- * screen. Keep the same sidebar data and actions, but let the drawer own the
- * whole viewport instead of exposing a narrow desktop column. */
-.app-shell.compact-navigation .sidebar-hover-zone {
-  display: none;
-}
-
-.app-shell.compact-navigation {
-  /* Crossing into compact navigation must not resize an already-open drawer.
-   * Keep the responsive desktop width and only cap it when the phone viewport
-   * genuinely cannot leave enough backdrop visible to dismiss the sheet. */
-  --compact-session-switcher-width: min(var(--sidebar-open-width, 296px), 80vw);
-}
-
-.app-shell.compact-navigation.sidebar-collapsed:is(.sidebar-drawer-open, .sidebar-drawer-closing)
-  .sidebar {
-  width: var(--compact-session-switcher-width);
-  min-width: var(--compact-session-switcher-width);
-  padding-top: env(safe-area-inset-top, 0px);
-  padding-bottom: env(safe-area-inset-bottom, 0px);
-  border-right: 1px solid var(--sidebar-drawer-edge);
-  box-shadow: var(--shadow-drawer-right);
-}
-
-/* The desktop drawer keeps its content at --sidebar-open-width so the rail is
- * clipped rather than squeezed during dock/collapse animation. On phones that
- * stored width can exceed 80vw, making the content layer bleed past the modal
- * drawer's visible edge. Compact navigation has no width animation, so bind
- * the inner layer to the drawer instead. */
-.app-shell.compact-navigation.sidebar-collapsed:is(.sidebar-drawer-open, .sidebar-drawer-closing)
-  .sidebar-content {
-  width: 100%;
-  min-width: 0;
-}
-
-.compact-session-switcher-backdrop {
-  display: none;
-}
-
-.app-shell.compact-navigation.sidebar-drawer-open .compact-session-switcher-backdrop {
-  display: block;
-  position: absolute;
-  z-index: 139;
-  inset: 0;
-  border: 0;
-  padding: 0;
-  background: transparent;
-}
-
 .sidebar-resizer {
   position: absolute;
   top: 0;
@@ -651,7 +641,7 @@
   box-shadow: none;
 }
 
-.app-shell.resizing-sidebar.right-panel-open .workspace-right-panel {
+.app-shell.resizing-sidebar.right-panel-open:not(.right-panel-globalized) .workspace-right-panel {
   position: absolute;
   top: 0;
   right: 0;
@@ -1123,7 +1113,7 @@
 }
 
 .nav-item[aria-current="page"] {
-  box-shadow: none;
+  box-shadow: var(--sidebar-row-selected-shadow);
   background: var(--sidebar-row-selected-bg);
   color: var(--ink);
 }
@@ -1135,13 +1125,14 @@
 
 .thread-row.active {
   background: var(--sidebar-row-selected-bg);
+  box-shadow: var(--sidebar-row-selected-shadow);
   color: var(--ink-strong);
   transform: none;
 }
 
 .thread-row.active:hover {
   background: var(--sidebar-row-selected-bg);
-  box-shadow: none;
+  box-shadow: var(--sidebar-row-selected-shadow);
   transform: none;
 }
 
@@ -1747,6 +1738,15 @@ html[data-focus-modality="keyboard"] :is(
     scale var(--motion-fast) var(--ease-out);
 }
 
+/* A workspace list or switch usually settles within a few frames. Hold its
+ * spinner back so a quick load shows nothing and a slow one still reports
+ * progress. The delay also applies under reduced motion. */
+.project-row .project-row-loading.deferred {
+  animation:
+    wuu-fade-in var(--motion-fast) var(--ease-out) 240ms backwards,
+    wuu-spin var(--session-loading-spin-duration) linear infinite;
+}
+
 .project-row-unread {
   grid-column: 3;
   width: var(--sidebar-project-unread-size);
@@ -1841,9 +1841,6 @@ html[data-focus-modality="keyboard"] :is(
 .project-group:focus-within .project-row .project-row-loading {
   scale: 0.72;
 }
-
-/* `.sidebar-section-empty-note` (the shared empty-state placeholder) is
- * styled at the bottom of the file. */
 
 /* One intrinsic-height transition owns the reveal and its heading gap. Avoid
  * inherited measured heights and descendant phase rules: a functional group
@@ -2540,18 +2537,6 @@ html[data-focus-modality="keyboard"] .thread-row-context-menu:focus-visible {
 
 .project-row.expanded .project-row-icon:has([data-project-icon-kind="pinned"]) .project-row-icon-state.expanded {
   transform: rotate(-45deg) scale(1);
-}
-
-/* Unified empty-note row for sections that have no children. */
-.sidebar-section-empty-note {
-  color: var(--sidebar-heading-ink);
-  font-size: var(--sidebar-heading-size, var(--font-sm));
-  line-height: 1.4;
-  padding: 4px var(--sidebar-row-pad-x) 4px
-    calc(
-      var(--sidebar-row-pad-x) + var(--sidebar-nav-icon-col) +
-        var(--sidebar-nav-column-gap)
-    );
 }
 
 /* Only the overlaid project add button needs a reserved grid slot. Other

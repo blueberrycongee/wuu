@@ -14,10 +14,10 @@ const (
 	// enter the model context; they hot reload without a new session.
 	ReloadEffectCapability ReloadEffect = "capability"
 	// ReloadEffectMind surfaces enter the model context (tools, skills, hooks,
-	// MCP schemas, prompts); they take effect for new sessions only.
+	// MCP schemas, prompts); conversations adopt them at the next idle turn boundary.
 	ReloadEffectMind ReloadEffect = "mind"
 	// ReloadEffectTrust is the collection switch (manifest/install/enable/disable
-	// semantics); it atomically replaces the plugin generation.
+	// semantics); it publishes a generation with independent runtime and UI adoption.
 	ReloadEffectTrust ReloadEffect = "trust"
 )
 
@@ -45,7 +45,7 @@ func ClassifyReload(manifest Manifest, changedPaths []string) ReloadHint {
 		return ReloadHint{
 			Effect:  ReloadEffectTrust,
 			Paths:   changed,
-			Message: "manifest changed: generation switched atomically; desktop reloads now and agent surfaces apply to new sessions",
+			Message: "manifest changed: generation published; desktop reloads independently and conversations adopt agent surfaces at the next idle turn boundary",
 		}
 	}
 
@@ -68,13 +68,13 @@ func ClassifyReload(manifest Manifest, changedPaths []string) ReloadHint {
 		return ReloadHint{
 			Effect:  ReloadEffectMind,
 			Paths:   changed,
-			Message: "agent-link and frontend files changed: the package follows session snapshots; new sessions get both, open sessions keep the old snapshot",
+			Message: "agent-link and frontend files changed: running turns keep their snapshot; agent surfaces apply at the next idle turn boundary and desktop reloads independently",
 		}
 	case mindMatched:
 		return ReloadHint{
 			Effect:  ReloadEffectMind,
 			Paths:   changed,
-			Message: "agent-link change: applies to new sessions; current sessions keep the old snapshot",
+			Message: "agent-link change: applies at the next idle turn boundary; running turns keep their snapshot",
 		}
 	case capabilityMatched:
 		return ReloadHint{
@@ -86,7 +86,7 @@ func ClassifyReload(manifest Manifest, changedPaths []string) ReloadHint {
 		return ReloadHint{
 			Effect:  ReloadEffectMind,
 			Paths:   changed,
-			Message: "agent plugin change: applies to new sessions; current sessions keep the old snapshot",
+			Message: "agent plugin change: applies at the next idle turn boundary; running turns keep their snapshot",
 		}
 	case capability && !mind:
 		return ReloadHint{
@@ -98,7 +98,7 @@ func ClassifyReload(manifest Manifest, changedPaths []string) ReloadHint {
 		return ReloadHint{
 			Effect:  ReloadEffectMind,
 			Paths:   changed,
-			Message: "could not attribute the change to a single surface: package refreshed; frontend-only edits hot reload, agent-link edits apply to new sessions",
+			Message: "could not attribute the change to a single surface: package refreshed; frontend-only edits hot reload, agent-link edits apply at the next idle turn boundary",
 		}
 	}
 }

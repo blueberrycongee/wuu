@@ -1,3 +1,4 @@
+const { attachComposerFiles } = require("./composer-attachment-e2e.cjs");
 // Production renderer with the shared synthetic bridge. Verifies new-page
 // selection/recovery and an installed extension through the public view API.
 // Run: npm run test:e2e:workspace-new-tab; evidence: out/workspace-new-tab-e2e.
@@ -10,8 +11,10 @@ const desktop = path.resolve(__dirname, "..");
 const output = path.join(desktop, "out/workspace-new-tab-e2e");
 fs.mkdirSync(output, { recursive: true });
 app.setPath("userData", fs.mkdtempSync(path.join(output, "profile-")));
-process.env.WUU_STREAM_E2E_CWD = output;
+const workspaceRoot = "/workspace/tabbar-demo";
+process.env.WUU_STREAM_E2E_CWD = workspaceRoot;
 process.env.WUU_WORKSPACE_NEW_TAB_E2E = "1";
+process.env.WUU_WORKSPACE_FILE_RETRY_E2E = "src/a-long-workspace-file-name-for-checking-new-page-truncation.md";
 protocol.registerSchemesAsPrivileged([{ scheme: "wuu-plugin", privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } }]);
 
 const results = [];
@@ -21,7 +24,7 @@ app.whenReady().then(async () => {
     + "api.registerViewType({ id: 'notes', title: 'Workspace notes',"
     + "render: () => api.react.createElement('div', { 'data-workspace-e2e-notes': true }, 'Extension notes') });"
     + "}", { headers: { "Content-Type": "text/javascript", "Access-Control-Allow-Origin": "*" } }));
-  const win = new BrowserWindow({ width: 1440, height: 900, show: false, titleBarStyle: "hiddenInset",
+  const win = new BrowserWindow({ width: 1440, height: 900, useContentSize: true, show: false, titleBarStyle: "hiddenInset",
     webPreferences: { preload: path.join(__dirname, "streaming-e2e-preload.cjs"),
       contextIsolation: true, sandbox: false, backgroundThrottling: false } });
   win.webContents.on("console-message", ({ level, message }) => {
@@ -58,14 +61,144 @@ app.whenReady().then(async () => {
   win.webContents.debugger.attach("1.3");
   await win.webContents.debugger.sendCommand("Emulation.setFocusEmulationEnabled", { enabled: true });
   await waitFor(() => Boolean(document.querySelector(".composer textarea")));
-  await click(".title-actions .side-panel-toggle-button");
-  await click(".workspace-panel-add");
+  await click("[data-wuu-component=right-sidebar-toggle]");
   await waitFor(() => Boolean(document.querySelector('[data-wuu-view="new"] .workspace-tool-menu')));
+  assert.equal((await tabs()).length, 1, "Opening an empty panel creates one new-page tab");
   assert.equal((await tabs()).filter((tab) => tab.selected).length, 1);
   assert.equal(await evaluate(() => document.querySelectorAll('[data-wuu-component="workspace-resume-tab"]').length), 0);
   await capture("empty-light");
+
+  // Both the dock and the full-width canvas use the same tab strip. Check
+  // live hit targets and overflow, including selection after a resize.
+  const checkTabGeometry = async (scenario) => {
+    await capture(scenario);
+    const geometry = await evaluate(() => {
+      const strip = document.querySelector(".workspace-panel-tabs");
+      const header = document.querySelector(".workspace-panel-tabbar");
+      const active = strip.querySelector(".workspace-tool-tab.active");
+      const box = (node) => node?.getBoundingClientRect().toJSON() ?? null;
+      return { strip: box(strip), header: box(header), active: box(active),
+        tabs: [...strip.querySelectorAll(".workspace-tool-tab:not(.closing)")].map((tab) => ({
+          tab: box(tab), label: box(tab.querySelector(".workspace-tool-tab-main > span")),
+          conversation: tab.classList.contains("workspace-conversation-tab"),
+          close: box(tab.querySelector(".workspace-tool-tab-close")),
+        })) };
+    });
+    fs.writeFileSync(path.join(output, scenario + ".json"), JSON.stringify(geometry, null, 2));
+    assert.ok(geometry.active.width <= geometry.strip.width + 1,
+      "One tab fits the available strip even with large text and docked toolbar controls");
+    assert.ok(Math.abs(geometry.active.bottom - geometry.header.bottom) <= 1,
+      "The active tab meets its content edge");
+    assert.ok(geometry.active.left >= geometry.strip.left - 1 && geometry.active.right <= geometry.strip.right + 1,
+      "The selected tab remains in view");
+    for (const { tab, label, close, conversation } of geometry.tabs) {
+      assert.ok(label.width >= 16, "Overflow keeps tab labels readable rather than hiding them");
+      if (!conversation) {
+        assert.ok(close, "Every tool tab retains its close action");
+        assert.ok(close.width >= 24 && close.height >= 24, "Close retains its independent hit target");
+        assert.ok(close.left >= label.right - 1 && close.right <= tab.right + 1, "Label and close lanes do not overlap");
+      }
+    }
+    results.push({ scenario, geometry });
+  };
+  await checkTabGeometry("tabs-docked-light");
+
+  await evaluate(() => {
+    window.workspaceConversationPane = document.querySelector('.conversation-pane');
+    const input = document.querySelector('.composer textarea');
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(input, 'Keep this conversation draft');
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await click('.workspace-panel-globalize');
+  await waitFor(() => Boolean(document.querySelector('.workspace-conversation-tab')));
+  assert.equal((await tabs()).length, 2, 'The full-width header contains the conversation and tool tabs');
+  await checkTabGeometry('conversation-tab-with-new-page');
+  await click('.workspace-conversation-tab [role="tab"]');
+  await waitFor(() => document.querySelector('.workspace-conversation-tab [role="tab"]').getAttribute('aria-selected') === 'true');
+  for (const width of [1440, 900]) {
+    win.setContentSize(width, 900);
+    await waitFor((width) => innerWidth === width, width);
+    for (const theme of ['light', 'dark']) {
+      for (const size of [14, 20]) {
+        await evaluate(({ theme, size }) => {
+          document.documentElement.dataset.theme = theme;
+          document.documentElement.style.setProperty('--font-ui', size + 'px');
+        }, { theme, size });
+        const scenario = `conversation-tab-${width}-${theme}-${size}`;
+        await checkTabGeometry(scenario);
+        const surface = await evaluate(() => {
+          const main = document.querySelector('.conversation-pane');
+          const input = main.querySelector('.composer textarea');
+          const rect = input.getBoundingClientRect();
+          const header = document.querySelector('.workspace-panel-tabbar').getBoundingClientRect();
+          return {
+            samePane: main === window.workspaceConversationPane,
+            inert: main.inert, draft: input.value,
+            inputReceivesPointer: input === document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2),
+            inputBelowHeader: rect.top >= header.bottom,
+            fullWidth: Math.abs(main.getBoundingClientRect().right - innerWidth) <= 1,
+            bodyHidden: getComputedStyle(document.querySelector('.workspace-panel-body')).visibility === 'hidden',
+            selectedTabs: document.querySelectorAll('.workspace-panel-tabs [role="tab"][aria-selected="true"]').length,
+          };
+        });
+        assert.deepEqual(surface, { samePane: true, inert: false, draft: 'Keep this conversation draft',
+          inputReceivesPointer: true, inputBelowHeader: true, fullWidth: true, bodyHidden: true, selectedTabs: 1 });
+        results.push({ scenario, surface });
+      }
+    }
+  }
+  win.setContentSize(1440, 900);
+  await waitFor(() => innerWidth === 1440);
+  await evaluate(() => {
+    document.documentElement.dataset.theme = 'light';
+    document.documentElement.style.setProperty('--font-ui', '14px');
+    document.querySelector('.workspace-conversation-tab [role="tab"]').focus();
+  });
+  win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Right' });
+  win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Right' });
+  await waitFor(() => document.querySelector('.conversation-pane').inert);
+  assert.equal(await evaluate(() => document.activeElement.getAttribute('aria-selected')), 'true');
+  await click('.workspace-conversation-tab [role="tab"]');
+  await click('.workspace-panel-globalize');
+  await waitFor(() => !document.querySelector('.workspace-conversation-tab'));
+  assert.equal((await tabs()).length, 1, 'Docking restores the original tool strip');
+  await evaluate(() => {
+    const input = document.querySelector('.composer textarea');
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(input, '');
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await checkTabGeometry('conversation-tab-return-to-dock');
+
   await click('[data-wuu-tool="review"]');
   await waitFor(() => Boolean(document.querySelector('[data-wuu-view="review"]')));
+  await waitFor(() => Boolean(document.querySelector('.workspace-monaco-diff-editor .view-line')));
+  await evaluate(() => { window.workspaceReviewEditor = document.querySelector('.workspace-monaco-diff-editor .monaco-diff-editor'); });
+  await click('.workspace-panel-globalize');
+  await capture('conversation-tab-review-visible');
+  await click('.workspace-conversation-tab [role="tab"]');
+  for (const theme of ['light', 'dark']) {
+    await evaluate((theme) => { document.documentElement.dataset.theme = theme; }, theme);
+    await capture(`conversation-tab-review-hidden-${theme}`);
+    const visibility = await evaluate(() => {
+      const editor = document.querySelector('.workspace-monaco-diff-editor');
+      const lines = [...editor.querySelectorAll('.view-line')];
+      return { lineCount: lines.length,
+        visibleLines: lines.filter(line => line.checkVisibility({ checkVisibilityCSS: true, checkOpacity: true })).length,
+        interactive: !editor.closest('[inert]'),
+      };
+    });
+    assert.ok(visibility.lineCount > 0, 'The real diff editor remains mounted');
+    assert.equal(visibility.visibleLines, 0, 'No diff text paints over the selected conversation');
+    assert.equal(visibility.interactive, false, 'Hidden diff cannot receive input');
+    results.push({ scenario: `review hidden behind conversation in ${theme}`, visibility });
+  }
+  await evaluate(() => { document.documentElement.dataset.theme = 'light'; });
+  await click('.workspace-tool-tab:not(.workspace-conversation-tab) [role="tab"]');
+  await waitFor(() => document.querySelector('.workspace-monaco-diff-editor .view-line')?.checkVisibility({ checkVisibilityCSS: true, checkOpacity: true }));
+  assert.equal(await evaluate(() => window.workspaceReviewEditor === document.querySelector('.workspace-monaco-diff-editor .monaco-diff-editor')), true);
+  await capture('conversation-tab-review-restored');
+  await click('.workspace-panel-globalize');
+  await waitFor(() => !document.querySelector('.workspace-conversation-tab'));
   const reviewTabs = await tabs();
   await click(".workspace-panel-add");
   await click('[data-wuu-tool="review"]');
@@ -93,7 +226,42 @@ app.whenReady().then(async () => {
   await click('[data-wuu-plugin="user:workspace-e2e"]');
   await waitFor(() => Boolean(document.querySelector("[data-workspace-e2e-notes]")));
   assert.equal((await tabs()).length, 2);
+  for (const theme of ["light", "dark"]) {
+    for (const size of [14, 20]) {
+      await evaluate(({ theme, size }) => {
+        document.documentElement.dataset.theme = theme;
+        document.documentElement.style.setProperty("--font-ui", size + "px");
+      }, { theme, size });
+      await checkTabGeometry(`tabs-docked-${theme}-${size}`);
+      await click(".workspace-panel-globalize");
+      await checkTabGeometry(`tabs-canvas-${theme}-${size}`);
+      await click(".workspace-panel-globalize");
+    }
+  }
+  await evaluate(() => {
+    document.documentElement.dataset.theme = "light";
+    document.documentElement.style.setProperty("--font-ui", "14px");
+  });
+
   results.push({ scenario: "keyboard discovery and installed extension selection", passed: true });
+
+  for (let index = 0; index < 5; index++) await click(".workspace-panel-add");
+  await waitFor(() => document.querySelectorAll('.workspace-panel-tabs [role="tab"]').length === 7);
+  await checkTabGeometry("tabs-overflow-last");
+  await evaluate(() => document.querySelector('.workspace-tool-tab.active [role="tab"]').focus());
+  win.webContents.sendInputEvent({ type: "keyDown", keyCode: "Home" });
+  win.webContents.sendInputEvent({ type: "keyUp", keyCode: "Home" });
+  await waitFor(() => document.querySelector('.workspace-panel-tabs [role="tab"]').getAttribute("aria-selected") === "true");
+  await checkTabGeometry("tabs-overflow-first");
+  win.webContents.sendInputEvent({ type: "keyDown", keyCode: "End" });
+  win.webContents.sendInputEvent({ type: "keyUp", keyCode: "End" });
+  await waitFor(() => [...document.querySelectorAll('.workspace-panel-tabs [role="tab"]')].at(-1).getAttribute("aria-selected") === "true");
+  await checkTabGeometry("tabs-overflow-keyboard-last");
+  for (let count = 7; count > 2; count--) {
+    await click(".workspace-tool-tab.active .workspace-tool-tab-close");
+    await waitFor((count) => document.querySelectorAll('.workspace-panel-tabs [role="tab"]').length === count, count - 1);
+  }
+
 
   // Open a real conversation file link; resume must retain the editor resource.
   await evaluate(() => {
@@ -104,9 +272,10 @@ app.whenReady().then(async () => {
   });
   await waitFor(() => document.querySelector(".conversation-width")?.textContent.includes("Open workspace notes"));
   const threadID = "thread-immediate-title-e2e";
-  win.webContents.send("test:server-event", { workdir: output, kind: "notification", message: {
+  win.webContents.send("test:server-event", { workdir: workspaceRoot, kind: "notification", message: {
     method: "turn/completed", params: { thread_id: threadID, turn: {
-      id: "turn-" + threadID, status: "completed", items_view: "full", items: [
+      id: "turn-" + threadID, status: "completed", items_view: "full",
+      context_tokens: 32000, input_tokens: 24000, output_tokens: 1200, usage_model: "mock-stream", items: [
         { id: "file-link", type: "agent_message", status: "completed",
           text: "[Workspace notes](src/a-long-workspace-file-name-for-checking-new-page-truncation.md)" },
       ],
@@ -114,6 +283,229 @@ app.whenReady().then(async () => {
   } });
   await click(".conversation-width .rich-file-link");
   await waitFor(() => Boolean(document.querySelector('[data-wuu-view="file"]')));
+  await waitFor(() => document.querySelector(".workspace-file-resource.active .workspace-panel-empty")?.textContent.includes("File temporarily unavailable"));
+  const failedFileTabs = await tabs();
+  const failedResourceID = await evaluate(() => document.querySelector(".workspace-file-resource.active").dataset.workspaceTabId);
+  await capture("file-preview-read-failed");
+  await click(".workspace-file-resource.active .workspace-panel-empty button");
+  await waitFor(() => document.querySelector(".workspace-markdown-reading")?.textContent.includes("Workspace navigation notes"));
+  assert.deepEqual(await tabs(), failedFileTabs, "Retry keeps the same file tab and selection");
+  assert.equal(await evaluate(() => document.querySelector(".workspace-file-resource.active").dataset.workspaceTabId), failedResourceID);
+  assert.equal(await evaluate(() => document.querySelector(".workspace-file-resource.active").textContent.includes("File temporarily unavailable")), false);
+  await capture("file-preview-read-recovered");
+  results.push({ scenario: "failed file read retries in place", passed: true });
+  const conversationHistory = await evaluate(() => document.querySelector('.conversation-width').textContent);
+  await click(".workspace-panel-globalize");
+  await waitFor(() => document.querySelector('.workspace-markdown-reading')?.textContent.includes("Workspace navigation notes"));
+  for (const theme of ["light", "dark"]) {
+    for (const size of [14, 20]) {
+      await evaluate(({ theme, size }) => {
+        document.documentElement.dataset.theme = theme;
+        document.documentElement.style.setProperty("--font-ui", size + "px");
+      }, { theme, size });
+      await checkTabGeometry(`tabs-files-${theme}-${size}`);
+    }
+  }
+  await evaluate(() => {
+    document.documentElement.dataset.theme = "light";
+    document.documentElement.style.setProperty("--font-ui", "14px");
+  });
+  // Measure the real document editor rather than its stylesheet: short drafts
+  // share a row with send; wrapped drafts and attachments restore editing space.
+  await waitFor(() => Boolean(document.querySelector('.document-composer-wrap textarea')));
+  await waitFor(() => Boolean(document.querySelector('.document-composer-wrap .composer-context-meter'))
+    && Boolean(document.querySelector('.document-composer-wrap .codex-runtime-effort')));
+  const setDocumentDraft = async (value) => {
+    await evaluate((value) => {
+      const input = document.querySelector('.document-composer-wrap textarea');
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(input, value);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    }, value);
+    await waitFor((value) => document.querySelector('.document-composer-wrap textarea')?.value === value, value);
+  };
+  const documentGeometry = async (name) => {
+    await capture(name);
+    const geometry = await evaluate(() => {
+      const root = document.querySelector('.document-composer-wrap');
+      const input = root.querySelector('textarea');
+      const frame = root.querySelector('.composer-frame');
+      const send = root.querySelector('.composer-action-button');
+      const toolbar = [...root.querySelectorAll('.composer, .composer-bar')].find((node) => {
+        const style = getComputedStyle(node);
+        return style.display !== 'contents' && style.containerName.split(' ').includes('composer-toolbar');
+      });
+      if (!toolbar) throw new Error('Missing the active composer-toolbar query container');
+      if (!getComputedStyle(root).containerName.split(' ').includes('document-composer'))
+        throw new Error('Missing the document-composer query container');
+      const box = (node) => node.getBoundingClientRect().toJSON();
+      const contentWidth = (node) => {
+        const style = getComputedStyle(node);
+        return box(node).width - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight)
+          - parseFloat(style.borderLeftWidth) - parseFloat(style.borderRightWidth);
+      };
+      return { frame: box(frame), input: box(input), send: box(send),
+        frameRadius: parseFloat(getComputedStyle(frame).borderTopLeftRadius),
+        fontSize: parseFloat(getComputedStyle(input).fontSize), lineHeight: parseFloat(getComputedStyle(input).lineHeight),
+        clientHeight: input.clientHeight, scrollHeight: input.scrollHeight,
+        viewportWidth: innerWidth, viewportHeight: innerHeight, focused: document.activeElement === input,
+        value: input.value, selectionStart: input.selectionStart, selectionEnd: input.selectionEnd,
+        runtime: box(root.querySelector('.codex-runtime-trigger')),
+        context: box(root.querySelector('.composer-context-meter')),
+        contextLabel: box(root.querySelector('.composer-context-meter-label')),
+        effort: box(root.querySelector('.codex-runtime-effort')),
+        composerWidth: contentWidth(root), toolbarWidth: contentWidth(toolbar),
+        tray: root.querySelector('.composer-attachment-tray') ? box(root.querySelector('.composer-attachment-tray')) : null,
+        attachment: root.querySelector('.composer-file-card') ? box(root.querySelector('.composer-file-card')) : null };
+    });
+    assert.ok(Number.isFinite(geometry.composerWidth) && geometry.composerWidth > 0
+      && Number.isFinite(geometry.toolbarWidth) && geometry.toolbarWidth > 0,
+      name + ': both responsive containers have measurable content widths');
+    assert.ok(geometry.frame.left >= -1 && geometry.frame.right <= geometry.viewportWidth + 1,
+      name + ': editor remains within the viewport');
+    assert.ok(geometry.frame.top >= 0 && geometry.frame.bottom <= geometry.viewportHeight + 1,
+      name + ': editor remains vertically reachable');
+    assert.ok(geometry.input.width >= 32 && geometry.send.width >= 24 && geometry.send.height >= 24,
+      name + ': text and send retain usable hit targets');
+    fs.writeFileSync(path.join(output, name + '.json'), JSON.stringify(geometry, null, 2));
+    results.push({ scenario: name, geometry });
+    return geometry;
+  };
+  const assertReadableEditor = (geometry, name) => {
+    const sameRow = Math.abs(geometry.input.y + geometry.input.height / 2 - geometry.send.y - geometry.send.height / 2) <= 2;
+    if (sameRow) assert.ok(geometry.frameRadius >= geometry.frame.height / 2 - 1,
+      name + ': a one-row document input reads as a capsule');
+    assert.ok(geometry.input.width >= geometry.fontSize * 8,
+      name + ': input retains room to read and edit a short phrase');
+    if (geometry.composerWidth >= 680) assert.ok(sameRow, name + ': wide short drafts retain the compact single row');
+    if (sameRow) {
+      assert.ok(geometry.frame.height <= Math.max(44, geometry.lineHeight + 12) + 4,
+        name + ': wide short editor stays compact at the selected font size');
+      assert.ok(geometry.input.right <= geometry.runtime.left + 1,
+        name + ': inline runtime controls do not overlap the text');
+    } else {
+      assert.ok(geometry.input.bottom <= geometry.send.top + 1,
+        name + ': narrow input has its own row above the send controls');
+      assert.ok(geometry.input.width >= geometry.frame.width * 0.8,
+        name + ': stacked input uses the available reading width');
+    }
+    assert.ok(geometry.runtime.width > 0 && geometry.runtime.right <= geometry.send.left + 1,
+      name + ': model menu and send remain available without overlap');
+    if (geometry.toolbarWidth <= 560) {
+      assert.equal(geometry.context.width, 0, name + ': narrow toolbar folds the context meter');
+    } else {
+      assert.ok(geometry.context.width > 0 && geometry.runtime.left >= geometry.context.right - 1,
+        name + ': wider toolbar retains the context ring beside runtime controls');
+      if (geometry.toolbarWidth <= 680) assert.equal(geometry.contextLabel.width, 0,
+        name + ': medium toolbar keeps the context ring without its verbose label');
+    }
+    if (geometry.toolbarWidth <= 420 || (sameRow && geometry.composerWidth <= 680)) assert.equal(geometry.effort.width, 0,
+      name + ': constrained toolbar folds effort without stealing the input lane');
+    assert.ok(geometry.scrollHeight <= geometry.clientHeight + 1, name + ': short draft and placeholder are not clipped');
+  };
+  // A docked preview leaves only the conversation input; the draft follows
+  // it there and back once the preview takes the window again.
+  await setDocumentDraft('Edit this file');
+  await evaluate(() => { window.workspaceResourceTab = document.querySelector('.workspace-tool-tab.active [role="tab"]'); });
+  await click('.workspace-conversation-tab [role="tab"]');
+  await waitFor(() => !document.querySelector('.document-composer-wrap'));
+  assert.equal(await evaluate(() => document.querySelector('.conversation-pane .composer textarea').value), 'Edit this file');
+  assert.equal(await evaluate(() => document.querySelector('.conversation-width').textContent), conversationHistory,
+    'The conversation tab keeps the existing message history');
+  assert.equal(await evaluate(() => document.querySelector('.workspace-conversation-tab [role="tab"]').getAttribute('aria-label')
+    === document.querySelector('.conversation-title-heading h1').textContent), true);
+  await capture('conversation-tab-existing-thread');
+  await evaluate(() => window.workspaceResourceTab.click());
+  await waitFor(() => Boolean(document.querySelector('.document-composer-wrap')));
+  assert.equal(await evaluate(() => document.querySelector('.document-composer-wrap textarea').value), 'Edit this file');
+  await click(".workspace-panel-globalize");
+  await waitFor(() => !document.querySelector('.app-shell').classList.contains('right-panel-globalized'));
+  await waitFor(() => !document.querySelector('.document-composer-wrap'));
+  assert.deepEqual(await evaluate(() => [...document.querySelectorAll('[data-main-conversation-composer]')]
+    .map((node) => node.dataset.mainConversationComposer)), ['dock']);
+  assert.equal(await evaluate(() => document.querySelector('.conversation-pane').hasAttribute('inert')), false);
+  await waitFor(() => document.querySelector('[data-main-conversation-composer="dock"] textarea')?.value === 'Edit this file');
+  await capture('document-composer-docked-hidden');
+  await click(".workspace-panel-globalize");
+  await waitFor(() => document.querySelector('.document-composer-wrap textarea')?.value === 'Edit this file');
+  for (const size of [14, 20]) {
+    for (const width of [1440, 760, 560]) {
+      win.setContentSize(width, 900);
+      await waitFor((width) => innerWidth === width, width);
+      // The file split refits after the resize settles; measure that layout.
+      await waitFor(() => !document.documentElement.matches('.window-resizing, .layout-motion-active'));
+      if (width === 760) assert.equal(await evaluate(() => document.querySelector('.app-shell').classList.contains('sidebar-collapsed')),
+        false, 'a narrower window keeps the sidebar the user left open');
+      await evaluate((size) => {
+        document.documentElement.style.setProperty('--font-ui', size + 'px');
+        document.documentElement.style.setProperty('--conversation-message-font-size', size + 'px');
+        document.documentElement.dataset.theme = size === 14 ? 'light' : 'dark';
+        window.dispatchEvent(new Event('wuu-content-size-change'));
+      }, size);
+      const name = `document-composer-${size}-${width}`;
+      await setDocumentDraft('');
+      await evaluate(() => document.querySelector('.document-composer-wrap textarea').blur());
+      const empty = await documentGeometry(name + '-empty');
+      assert.ok(Math.abs(empty.fontSize - size) <= 1, name + ': requested font preference is actually rendered');
+      assertReadableEditor(empty, name);
+      const inputTarget = await evaluate(() => {
+        const input = document.querySelector('.document-composer-wrap textarea');
+        const rect = input.getBoundingClientRect();
+        const x = rect.left + rect.width / 2, y = rect.top + rect.height / 2;
+        return { x, y, hit: document.elementFromPoint(x, y) === input };
+      });
+      assert.ok(inputTarget.hit, name + ': textarea center receives pointer input without an overlay');
+      win.webContents.sendInputEvent({ type: 'mouseDown', button: 'left', clickCount: 1,
+        x: Math.round(inputTarget.x), y: Math.round(inputTarget.y) });
+      win.webContents.sendInputEvent({ type: 'mouseUp', button: 'left', clickCount: 1,
+        x: Math.round(inputTarget.x), y: Math.round(inputTarget.y) });
+      await waitFor(() => document.activeElement === document.querySelector('.document-composer-wrap textarea'));
+      await win.webContents.insertText('Edit');
+      await waitFor(() => document.querySelector('.document-composer-wrap textarea').value === 'Edit');
+      await evaluate(() => document.querySelector('.document-composer-wrap textarea').setSelectionRange(1, 3));
+      const focused = await documentGeometry(name + '-focused');
+      assertReadableEditor(focused, name);
+      assert.ok(focused.focused && focused.selectionStart === 1 && focused.selectionEnd === 3,
+        name + ': focusing preserves the live editor selection');
+      assert.ok(Math.abs(focused.frame.height - empty.frame.height) <= 2, name + ': focus does not expand the editor');
+      await setDocumentDraft('Continuous words wrap naturally while editing the selected document. '.repeat(12));
+      await waitFor(() => {
+        const root = document.querySelector('.document-composer-wrap');
+        return root.querySelector('textarea').getBoundingClientRect().height > 40
+          && root.querySelector('.composer-action-button').getBoundingClientRect().top > root.querySelector('textarea').getBoundingClientRect().top;
+      });
+      const wrapped = await documentGeometry(name + '-wrapped');
+      assert.ok(wrapped.input.height > empty.input.height, name + ': soft wrapping grows the editor');
+      assert.ok(!wrapped.value.includes('\n'), name + ': growth is exercised without explicit line breaks');
+      await evaluate(() => document.querySelector('.document-composer-wrap textarea').blur());
+      const blurred = await documentGeometry(name + '-wrapped-blurred');
+      assert.ok(Math.abs(blurred.input.height - wrapped.input.height) <= 2,
+        name + ': blur preserves wrapped draft space');
+      await setDocumentDraft('Edit');
+      assertReadableEditor(await documentGeometry(name + '-shortened'), name);
+      await setDocumentDraft('');
+      assertReadableEditor(await documentGeometry(name + '-cleared'), name);
+      await attachComposerFiles(win, ".document-composer-wrap", [{
+        contents: "%PDF-1.4 layout fixture", name: "layout-fixture.pdf", type: "application/pdf",
+      }]);
+      await waitFor(() => Boolean(document.querySelector('.document-composer-wrap .composer-file-card')));
+      const attached = await documentGeometry(name + '-attached');
+      assert.ok(attached.frame.height >= empty.frame.height && attached.tray?.height > 0,
+        name + ': attachment restores the full editor and a visible tray');
+      assert.ok(attached.attachment?.top >= 0 && attached.attachment.bottom <= attached.frame.top + 2,
+        name + ': attachment remains reachable above the editor');
+      await click('.document-composer-wrap .composer-attachment-card-remove');
+      await waitFor(() => !document.querySelector('.document-composer-wrap .composer-file-card'));
+      assertReadableEditor(await documentGeometry(name + '-attachment-removed'), name);
+    }
+  }
+  win.setContentSize(1440, 900);
+  await waitFor(() => innerWidth === 1440);
+  await evaluate(() => {
+    document.documentElement.style.setProperty('--conversation-message-font-size', '14px');
+    document.documentElement.style.setProperty('--font-ui', '14px');
+    document.documentElement.dataset.theme = 'light';
+  });
+  await click(".workspace-panel-globalize");
   const fileTabs = await tabs();
   const editorID = await evaluate(() => document.querySelector(".workspace-file-resource.active").dataset.workspaceTabId);
   await click(".workspace-panel-add");
@@ -132,8 +524,8 @@ app.whenReady().then(async () => {
         document.documentElement.style.setProperty("--font-ui", size + "px");
       }, { theme, size });
       for (const width of [1440, 1000, 560]) {
-        win.setSize(width, 900);
-        await waitFor((width) => window.innerWidth === width, width);
+        win.setContentSize(width, 900);
+        await waitFor((width) => window.innerWidth === width && window.innerHeight === 900, width);
         const geometry = await evaluate(() => {
           const menu = document.querySelector(".workspace-tool-menu");
           return { width: menu.getBoundingClientRect().width, clientWidth: menu.clientWidth, scrollWidth: menu.scrollWidth,
@@ -150,7 +542,7 @@ app.whenReady().then(async () => {
       }
     }
   }
-  win.setSize(560, 420);
+  win.setContentSize(560, 420);
   await waitFor(() => window.innerWidth === 560 && window.innerHeight === 420);
   const scroll = await evaluate(() => {
     const menu = document.querySelector(".workspace-tool-menu");
@@ -163,7 +555,7 @@ app.whenReady().then(async () => {
   assert.equal(await evaluate(() => document.querySelector(".workspace-panel-tabbar").getBoundingClientRect().y), scroll.headerY);
   results.push({ scenario: "short window scrolling with fixed header", geometry: scroll });
 
-  win.setSize(1440, 900);
+  win.setContentSize(1440, 900);
   await waitFor(() => window.innerWidth === 1440 && window.innerHeight === 900);
   await evaluate(() => {
     document.documentElement.dataset.theme = "light";
@@ -171,7 +563,6 @@ app.whenReady().then(async () => {
     document.querySelector(".workspace-tool-menu").scrollTop = 0;
     document.querySelector(".workspace-tool-menu-more").open = false;
   });
-  await waitFor(() => !document.querySelector(".workspace-right-panel.compact-navigation"));
   await capture("light-14-default");
   await evaluate(() => document.querySelector(".workspace-tool-menu-more > summary").focus());
   await waitFor(() => document.activeElement === document.querySelector(".workspace-tool-menu-more > summary"));
@@ -197,6 +588,12 @@ app.whenReady().then(async () => {
   });
   fs.writeFileSync(path.join(output, "preview-light.png"), (await win.webContents.capturePage(panelBounds)).toPNG());
   results.push({ scenario: "new page with reduced motion", passed: true });
+  await win.loadFile(path.join(desktop, "out/renderer/index.html"));
+  await waitFor(() => Boolean(document.querySelector('.workspace-right-panel[data-wuu-view="new"] .workspace-tool-menu')));
+  assert.equal((await tabs()).length, 1, "Restoring an open panel creates one new-page tab");
+  assert.equal((await tabs()).filter((tab) => tab.selected).length, 1);
+  await capture("restored-empty-light");
+  results.push({ scenario: "restored open panel has one selected new page", passed: true });
   fs.writeFileSync(path.join(output, "results.json"), JSON.stringify(results, null, 2));
   console.log("Workspace new page E2E passed. Evidence: " + output);
   clearTimeout(timeout);

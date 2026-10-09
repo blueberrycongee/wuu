@@ -30,6 +30,7 @@ import { useI18n } from "../i18n";
 import { X } from "../WuuIcons";
 import { createPluginTranslator } from "./pluginI18n";
 import { PluginPresentation } from "./PluginPresentation";
+import { PluginCommandActions, usePluginCommandActions } from "./PluginCommandActions";
 
 const LAYOUT_STORAGE_KEY = "wuu.plugin-workbench.layout.v1";
 const MAX_STORAGE_VALUE_LENGTH = 1_048_576;
@@ -208,8 +209,9 @@ export class WorkbenchController {
   }
 
   createViewHostAPI(view: WorkbenchViewState): ViewHostAPI {
+    const activation = this.host.getGenerationActivation(view.pluginId, view.generation);
     const requireActive = (): void => {
-      if (!this.host.isGenerationActive(view.pluginId, view.generation)) {
+      if (!activation || this.host.getGenerationActivation(view.pluginId, view.generation) !== activation) {
         throw new Error("Plugin host context is no longer active");
       }
     };
@@ -240,8 +242,9 @@ export class WorkbenchController {
   }
 
   createInspectorHostAPI(pluginId: string, generation: string): InspectorSectionHostAPI {
+    const activation = this.host.getGenerationActivation(pluginId, generation);
     const requireActive = (): void => {
-      if (!this.host.isGenerationActive(pluginId, generation)) {
+      if (!activation || this.host.getGenerationActivation(pluginId, generation) !== activation) {
         throw new Error("Plugin host context is no longer active");
       }
     };
@@ -263,13 +266,14 @@ export class WorkbenchController {
     actions: readonly string[],
     dispatcher?: (action: string, input?: unknown) => unknown | Promise<unknown>,
   ): PresentationHost {
+    const activation = this.host.getGenerationActivation(pluginId, generation);
     const base = this.createRendererHostAPI(pluginId, generation);
     const advertised = Object.freeze([...new Set(actions)]);
     return Object.freeze({
       ...base,
       actions: advertised,
       invoke: async (action: string, input?: unknown) => {
-        if (!this.host.isGenerationActive(pluginId, generation)) {
+        if (!activation || this.host.getGenerationActivation(pluginId, generation) !== activation) {
           throw new Error("Plugin host context is no longer active");
         }
         if (!advertised.includes(action)) throw new Error(`Presentation action is not supported: ${action}`);
@@ -617,8 +621,21 @@ interface WorkbenchViewProps {
   siblingViews: readonly WorkbenchViewState[];
 }
 
+function viewCommandContext(view: WorkbenchViewState) {
+  return Object.freeze({
+    contractVersion: 1 as const,
+    target: "view.title" as const,
+    viewId: view.id,
+    viewTypeId: view.viewTypeId,
+    viewPluginId: view.pluginId,
+    region: view.region,
+  });
+}
+
 function WorkbenchView({ controller, definition, view, siblingViews }: WorkbenchViewProps): JSX.Element {
   const View = definition.render;
+  const commandContext = React.useMemo(() => viewCommandContext(view), [view]);
+  const hasTitleActions = usePluginCommandActions(controller.host, commandContext).length > 0;
   const host = React.useMemo(() => controller.createViewHostAPI(view), [controller, view]);
   const { locale, t } = useI18n();
   const translate = React.useMemo(
@@ -627,7 +644,7 @@ function WorkbenchView({ controller, definition, view, siblingViews }: Workbench
   );
   return (
     <section className={`plugin-workbench-view plugin-workbench-view-${view.region}`} data-plugin-id={view.pluginId}>
-      {view.region !== "primary" ? <header className="plugin-workbench-view-header">
+      {view.region !== "primary" || hasTitleActions ? <header className="plugin-workbench-view-header">
         <div role="tablist" aria-label={t("plugins.viewTabs")}>
           {siblingViews.map((sibling) => (
             <button
@@ -643,20 +660,28 @@ function WorkbenchView({ controller, definition, view, siblingViews }: Workbench
             </button>
           ))}
         </div>
-        <button
-          type="button"
-          className="settings-button settings-button-ghost settings-icon-button"
-          aria-label={t("common.close")}
-          title={t("common.close")}
-          onClick={() => void controller.closeView(view.id)}
-        >
-          <X className="icon" aria-hidden="true" />
-        </button>
+        <div className="plugin-workbench-view-actions">
+          <PluginCommandActions
+            host={controller.host}
+            context={commandContext}
+            buttonClassName="settings-button settings-button-ghost settings-icon-button"
+          />
+          <button
+            type="button"
+            className="settings-button settings-button-ghost settings-icon-button"
+            aria-label={t("common.close")}
+            title={t("common.close")}
+            onClick={() => void controller.closeView(view.id)}
+          >
+            <X className="icon" aria-hidden="true" />
+          </button>
+        </div>
       </header> : null}
       <PluginErrorBoundary
         key={`${view.pluginId}:${view.generation}:${view.id}`}
         pluginId={view.pluginId}
         generation={view.generation}
+        activation={controller.host.getGenerationActivation(view.pluginId, view.generation)}
         services={controller.services}
         onUseDefault={() => void controller.closeView(view.id)}
       >
@@ -670,6 +695,7 @@ export function PluginViewContent({
   controller,
   pluginId,
   viewTypeId,
+  region = "settings",
   context = Object.freeze({}),
   settings,
   onFailure,
@@ -677,6 +703,7 @@ export function PluginViewContent({
   controller: WorkbenchController;
   pluginId: string;
   viewTypeId: string;
+  region?: ViewPlacementRegion;
   context?: Readonly<Record<string, unknown>>;
   settings?: SettingsPageHostAPI;
   onFailure?: () => void;
@@ -690,10 +717,12 @@ export function PluginViewContent({
     pluginId,
     generation: definition.generation,
     viewTypeId,
-    region: "settings",
+    region,
     persistence: "session",
     context: freezeContext(context),
-  }) : undefined, [context, definition, pluginId, viewTypeId]);
+  }) : undefined, [context, definition, pluginId, region, viewTypeId]);
+  const commandContext = React.useMemo(() => view === undefined ? undefined : viewCommandContext(view), [view]);
+  const hasTitleActions = usePluginCommandActions(controller.host, commandContext).length > 0;
   const host = React.useMemo(() => {
     if (!view) return undefined;
     const base = controller.createViewHostAPI(view);
@@ -714,10 +743,16 @@ export function PluginViewContent({
       data-wuu-plugin={pluginId}
       data-wuu-view={viewTypeId}
     >
+      {hasTitleActions && commandContext ? (
+        <div className="plugin-view-title-actions" role="toolbar" aria-label={definition.title}>
+          <PluginCommandActions host={controller.host} context={commandContext} />
+        </div>
+      ) : null}
       <PluginErrorBoundary
         key={`${pluginId}:${definition.generation}:${viewTypeId}`}
         pluginId={pluginId}
         generation={definition.generation}
+        activation={controller.host.getGenerationActivation(pluginId, definition.generation)}
         services={controller.services}
         onUseDefault={onFailure ?? (() => undefined)}
         onError={onFailure}
@@ -751,6 +786,7 @@ export function WorkbenchContentRenderer(props: WorkbenchContentRendererProps): 
       key={`${renderer.pluginId}:${renderer.generation}:${renderer.id}`}
       pluginId={renderer.pluginId}
       generation={renderer.generation}
+      activation={props.controller.host.getGenerationActivation(renderer.pluginId, renderer.generation)}
       services={props.controller.services}
       onUseDefault={() => undefined}
       fallback={props.fallback}
@@ -765,6 +801,7 @@ export function WorkbenchContentRenderer(props: WorkbenchContentRendererProps): 
 }
 
 interface PluginErrorBoundaryProps {
+  activation?: object;
   pluginId: string;
   generation: string;
   services: WorkbenchServices;
@@ -791,7 +828,7 @@ export class PluginErrorBoundary extends React.Component<PluginErrorBoundaryProp
   componentDidUpdate(previous: PluginErrorBoundaryProps): void {
     if (
       this.state.error !== undefined &&
-      (previous.pluginId !== this.props.pluginId || previous.generation !== this.props.generation)
+      (previous.activation !== this.props.activation || previous.pluginId !== this.props.pluginId || previous.generation !== this.props.generation)
     ) {
       this.setState({ error: undefined });
     }
@@ -839,7 +876,7 @@ export function visibleWorkbenchView(
 
 function resolveRegionTarget(region: ViewPlacementRegion): Element | null {
   if (region === "overlay") return document.body;
-  if (region === "navigation") return document.querySelector(".sidebar");
+  if (region === "navigation") return document.querySelector('[data-workbench-region="navigation"]');
   if (region === "auxiliary") {
     return document.querySelector(".workspace-right-panel") ?? document.querySelector(".conversation-pane");
   }

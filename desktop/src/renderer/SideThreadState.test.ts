@@ -4,10 +4,6 @@ import type {
   SideThreadSummary
 } from "../shared/protocol";
 import {
-  SIDE_THREAD_DEFAULT_WIDTH,
-  SIDE_THREAD_MAX_WIDTH,
-  SIDE_THREAD_MIN_WIDTH,
-  clampSideThreadWidth,
   createEmptySideThreadEntry,
   createInitialSideThreadStore,
   ensureSideThreadEntry,
@@ -39,25 +35,6 @@ function message(overrides: Partial<SideThreadMessage> = {}): SideThreadMessage 
 }
 
 describe("SideThreadState", () => {
-  describe("createInitialSideThreadStore", () => {
-    it("treats non-finite width as default", () => {
-      expect(createInitialSideThreadStore(NaN).width).toBe(SIDE_THREAD_DEFAULT_WIDTH);
-      expect(createInitialSideThreadStore(Infinity).width).toBe(SIDE_THREAD_DEFAULT_WIDTH);
-    });
-  });
-
-  describe("clampSideThreadWidth", () => {
-    it("clamps below the minimum", () => {
-      expect(clampSideThreadWidth(200)).toBe(SIDE_THREAD_MIN_WIDTH);
-    });
-    it("clamps above the maximum", () => {
-      expect(clampSideThreadWidth(900)).toBe(SIDE_THREAD_MAX_WIDTH);
-    });
-    it("rounds fractional values", () => {
-      expect(clampSideThreadWidth(421.6)).toBe(422);
-    });
-  });
-
   describe("ensureSideThreadEntry", () => {
     it("creates an empty entry on demand without mutating the original store", () => {
       const store = createInitialSideThreadStore();

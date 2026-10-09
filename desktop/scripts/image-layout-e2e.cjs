@@ -287,13 +287,16 @@ app.whenReady().then(async () => {
                 table.scrollLeft = table.scrollWidth;
                 const right = image.getBoundingClientRect().right;
                 table.scrollLeft = initialScroll;
-                return rect.width >= 100 && rect.height > 0 && tableBounds.left >= bounds.left && tableBounds.right <= bounds.right
+                // Table previews keep a readable intrinsic width; carousel
+                // thumbnails scale with the available conversation column.
+                const readable = table.classList.contains("rich-table-wrap") ? rect.width >= 100 : rect.width > 0;
+                return readable && rect.height > 0 && tableBounds.left >= bounds.left && tableBounds.right <= bounds.right
                   && left >= tableBounds.left - 1 && right <= tableBounds.right + 1;
               }
               return rect.width > 0 && rect.height > 0 && rect.left >= bounds.left && rect.right <= bounds.right;
             });
           }, activeSelector);
-          assert.ok(contained, "Portrait and panorama previews must fit the conversation at every width/font size");
+          assert.ok(contained, `${kind}-${theme}-${font}-${width}: portrait and panorama previews must fit the conversation`);
           await capture(`${kind}-${theme}-${font}-${width}`);
           if (kind === "artifact") {
             win.webContents.sendInputEvent({ type: "mouseMove", x: 1, y: 1 });
@@ -353,6 +356,12 @@ app.whenReady().then(async () => {
         }
       }
       if (kind === "artifact" && count > 1 && width === 1180) {
+        // The theme/font matrix ends at 420px. Restore this scenario's width
+        // before pointer interactions, where thumbnail toolbars have a different footprint.
+        win.setContentSize(width, 820);
+        await until(width => window.innerWidth === width && window.innerHeight === 820, width);
+        await frames();
+        await until(layoutMotionSettled);
         await evaluate(selector => {
           const list = document.querySelector(`${selector} .turn-artifact-gallery-items`);
           list.scrollLeft = 0;
@@ -404,8 +413,11 @@ app.whenReady().then(async () => {
         await frames();
         await capture("gallery-entry");
         const imageTarget = await evaluate(() => {
-          const rect = document.activeElement.getBoundingClientRect();
-          return { x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) };
+          const button = document.activeElement;
+          const rect = button.getBoundingClientRect();
+          const x = Math.round(rect.left + rect.width / 2), y = Math.round(rect.top + rect.height / 2);
+          if (!button.contains(document.elementFromPoint(x, y))) throw new Error("Image preview click target is obscured");
+          return { x, y };
         });
         // Use a real pointer click so hover and focus follow the image target.
         win.webContents.sendInputEvent({ type: "mouseMove", ...imageTarget });

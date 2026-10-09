@@ -29,6 +29,14 @@ identity, `runtime_host`, workspace and model summaries, permissions, extension
 inventory, feature flags, and effective `max_parallel`. `status: needs_setup`
 with `issues` means the connection works but runtime configuration needs attention.
 
+Clients may set `capabilities.deferred_notification_content: true` during
+initialization to receive large content as `thread/content/read` or
+`thread/attachment/read` references in thread snapshots and terminal turn
+notifications. Item identities, order, membership, and status remain complete;
+the capability does not change stored history or RPC response views. Clients
+must support these references before opting in. `wuu exec` enables this mode
+to keep large tool results out of its bounded completion-event queue.
+
 Correlate responses by ID and keep reading notifications while requests are
 outstanding. Do not assume every line is the response to the most recent request.
 The stdio scanner has a 64 MiB line buffer limit; attachment/provider limits are

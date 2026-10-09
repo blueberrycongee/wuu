@@ -7,6 +7,13 @@
 !internal/**
 !prompts/
 !prompts/**
+!packages/
+!packages/plugin-sdk/
+!packages/plugin-sdk/embed.go
+!packages/plugin-sdk/src/
+!packages/plugin-sdk/src/index.ts
+!packages/plugin-sdk/src/theme-contract.generated.ts
+!packages/plugin-sdk/src/bundle-contract.ts
 !deploy/
 !deploy/remote/
 !deploy/remote/Dockerfile

@@ -1124,6 +1124,10 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
   padding-right: 52px;
 }
 
+.document-composer-wrap {
+  container: document-composer / inline-size;
+}
+
 .document-composer-wrap .composer-stack {
   --composer-collapsed-min-height: 80px;
 }
@@ -1171,6 +1175,92 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
 .document-composer-wrap .composer-bar {
   height: 36px;
   padding-bottom: 2px;
+}
+
+/* Short document drafts share one row with the existing controls. Focus only
+   reveals the document title; attachments, wrapping, or explicit expansion
+   restore the full editor without replacing its DOM or input state. */
+/* Keep a full-width input row when runtime controls would crowd the draft. */
+@container document-composer (min-width: 560px) {
+  .document-composer-wrap .composer-stack:not(.is-expanded):not([data-multiline]):not([data-has-attachments]) {
+    --composer-collapsed-min-height: 44px;
+
+    .composer:not([hidden]) {
+      /* The toolbar has no box in this layout, so its responsive controls use
+         the full editor's real inline size instead. */
+      container: composer-toolbar / inline-size;
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto auto;
+      align-items: center;
+      gap: 4px;
+      padding: 6px;
+    }
+
+    /* One row reads as a capsule while reading beside it: the plus and send
+       circles at its ends sit concentric with the round caps. Wrapping,
+       attachments or explicit expansion return to the panel radius. */
+    .composer-frame {
+      border-radius: var(--radius-pill);
+    }
+
+    .composer textarea {
+      grid-column: 2;
+      grid-row: 1;
+      min-width: 0;
+      --composer-document-input-height: max(32px, var(--conversation-reading-line-height));
+      padding: max(0px, calc((32px - var(--conversation-reading-line-height)) / 2)) 0;
+    }
+
+    .composer-bar {
+      container: normal;
+      display: contents;
+    }
+
+    .composer-bar-left {
+      grid-column: 1;
+      grid-row: 1;
+      gap: 2px;
+    }
+
+    .composer-bar-right {
+      grid-column: 4;
+      grid-row: 1;
+      gap: 4px;
+    }
+
+    .composer-expand-button {
+      position: relative;
+      inset: auto;
+      grid-column: 3;
+      grid-row: 1;
+      opacity: 1;
+    }
+
+    .permission-chip {
+      width: 32px;
+      padding-inline: 8px;
+    }
+
+    .permission-chip > span,
+    .permission-chip > svg:last-child {
+      display: none;
+    }
+
+    .codex-runtime-label {
+      max-width: 8em;
+    }
+
+    /* On one row the draft sits beside the usage readout; the readout is
+       status, not a control, so it recedes to secondary ink. */
+    .composer-context-meter {
+      color: var(--ink-soft);
+    }
+
+    @container document-composer (max-width: 680px) {
+      .codex-runtime-effort { display: none; }
+      .codex-runtime-label { max-width: 6em; }
+    }
+  }
 }
 
 .composer textarea:disabled {

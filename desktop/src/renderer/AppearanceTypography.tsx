@@ -54,10 +54,16 @@ export function AppearanceTypography({ section = "text" }: { section?: "text" | 
       {saveError}
     </SettingsSection>;
   }
-  const fonts = [
-    { key: "uiFont", label: "settings.uiFont" },
-    { key: "codeFont", label: "settings.codeFont" },
-  ] as const;
+  const fontPicker = (key: "uiFont" | "codeFont"): JSX.Element => {
+    const label = key === "codeFont" ? "settings.codeFont" : "settings.uiFont";
+    const names = key === "codeFont" ? monoFonts : localFonts;
+    const current = preferences[key];
+    const options = [{ value: "", label: t("settings.systemFont") }, ...names.map((name) => ({ value: name, label: name }))];
+    if (current && !names.includes(current)) options.push({ value: current, label: current });
+    return <div className="appearance-font-picker" onClickCapture={() => { void loadFonts(); }} onKeyDownCapture={(event) => { if (["Enter", " ", "ArrowDown", "ArrowUp"].includes(event.key)) void loadFonts(); }}>
+      <SelectMenu ariaLabel={t(label)} value={current} onChange={(value) => update({ [key]: value })} options={options} searchable triggerClassName="settings-select-trigger" />
+    </div>;
+  };
   const fontsAreDefault = preferences.uiFont === appearanceDefaults.uiFont && preferences.codeFont === appearanceDefaults.codeFont;
   // Resetting is offered only when there is something to reset.
   return <SettingsSection
@@ -67,8 +73,14 @@ export function AppearanceTypography({ section = "text" }: { section?: "text" | 
       onClick={() => update({ uiFont: appearanceDefaults.uiFont, codeFont: appearanceDefaults.codeFont })}>{t("settings.resetFonts")}</button>}
   >
     <SettingsGroup>
-      <SettingsRow title={t("settings.uiSize")}><MessageFlowFontSizeControl /></SettingsRow>
-      <SettingsRow title={t("settings.codeSize")}>
+      {/* Each row pairs a face with its size, so both rows end in the same
+       * two controls. */}
+      <SettingsRow title={t("settings.textInterface")}>
+        {fontPicker("uiFont")}
+        <MessageFlowFontSizeControl />
+      </SettingsRow>
+      <SettingsRow title={t("settings.textCode")}>
+        {fontPicker("codeFont")}
         <input className="settings-input settings-input-num settings-input-num-center" aria-label={t("settings.codeSize")} type="number" min={9} max={24} step={1} value={sizeDraft}
           onChange={(event) => {
             setSizeDraft(event.target.value);
@@ -78,17 +90,6 @@ export function AppearanceTypography({ section = "text" }: { section?: "text" | 
           onBlur={(event) => commitSize(event.currentTarget.value)}
           onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }} />
       </SettingsRow>
-      {fonts.map(({ key, label }) => {
-        const names = key === "codeFont" ? monoFonts : localFonts;
-        const current = preferences[key];
-        const options = [{ value: "", label: t("settings.systemFont") }, ...names.map((name) => ({ value: name, label: name }))];
-        if (current && !names.includes(current)) options.push({ value: current, label: current });
-        return <SettingsRow key={key} title={t(label)}>
-          <div className="appearance-font-picker" onClickCapture={() => { void loadFonts(); }} onKeyDownCapture={(event) => { if (["Enter", " ", "ArrowDown", "ArrowUp"].includes(event.key)) void loadFonts(); }}>
-            <SelectMenu ariaLabel={t(label)} value={current} onChange={(value) => update({ [key]: value })} options={options} searchable triggerClassName="settings-select-trigger" />
-          </div>
-        </SettingsRow>;
-      })}
     </SettingsGroup>
     {(fontStatus === "loading" || fontStatus === "error") && <p className="settings-section-note" role="status">{t(fontStatus === "error" ? "settings.fontLoadFailed" : "settings.fontLoading")}</p>}
     {saveError}

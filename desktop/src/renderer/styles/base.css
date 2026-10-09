@@ -35,9 +35,10 @@
    * Component CSS must reach for these steps (or the semantic aliases
    * below) instead of inventing local hex values. The ramp is anchored
    * to the message-flow neutrals, which are the reference appearance.
-   * Every step shares one OKLCH hue (255) at near-zero chroma, keeping
-   * the lightness of the step it replaced: fields, navigation and prose
-   * share one cool temperature, and contrast comes from lightness alone.
+   * Every step shares one OKLCH hue (286) at chroma 0.003, keeping the
+   * lightness of the step it replaced. Higher chroma or a cyan hue reads
+   * as a dirty cast on large fills such as the sidebar, so contrast comes
+   * from lightness alone.
    * Regenerate a step from its lightness instead of hand-picking hex.
    *
    * Slots 400-650 are text grays, 0-350 surfaces/hairlines, 800-900 the
@@ -46,22 +47,22 @@
    * in both themes.
    * ------------------------------------------------------------------ */
   --gray-0: #ffffff;
-  --gray-50: #f7f8fb;
-  --gray-100: #f0f2f4;
-  --gray-150: #e9ebed;
-  --gray-200: #e3e5e8;
-  --gray-250: #dde0e3;
-  --gray-300: #d7dadd;
-  --gray-350: #cfd1d5;
-  --gray-400: #b3b5b9;
-  --gray-450: #9da1a4;
-  --gray-500: #8c8f93;
-  --gray-550: #787b7f;
-  --gray-600: #707478;
-  --gray-650: #5d6064;
-  --gray-700: #3a3d40;
-  --gray-800: #212326;
-  --gray-900: #111315;
+  --gray-50: #f8f8fa;
+  --gray-100: #f1f1f4;
+  --gray-150: #eaeaed;
+  --gray-200: #e5e5e7;
+  --gray-250: #dfdfe2;
+  --gray-300: #d9d9dc;
+  --gray-350: #d1d1d3;
+  --gray-400: #b5b5b7;
+  --gray-450: #a0a0a2;
+  --gray-500: #8e8e90;
+  --gray-550: #7a7a7c;
+  --gray-600: #737375;
+  --gray-650: #5f5f61;
+  --gray-700: #3c3c3e;
+  --gray-800: #232324;
+  --gray-900: #131314;
 
   --ink-strong: var(--wuu-color-text, var(--gray-900));
   --ink: var(--wuu-color-text, var(--gray-800));
@@ -101,11 +102,11 @@
   --hairline-soft: var(--wuu-border-subtle, var(--ink-overlay-6));
   /* Ink-overlay alpha steps. Pre-tokenised so future opacity tweaks
      happen here, not scattered across CSS files. */
-  --ink-overlay-4: rgba(33, 35, 38, 0.04);
-  --ink-overlay-6: rgba(33, 35, 38, 0.06);
-  --ink-overlay-8: rgba(33, 35, 38, 0.08);
-  --ink-overlay-12: rgba(33, 35, 38, 0.12);
-  --ink-overlay-18: rgba(33, 35, 38, 0.18);
+  --ink-overlay-4: rgba(35, 35, 36, 0.04);
+  --ink-overlay-6: rgba(35, 35, 36, 0.06);
+  --ink-overlay-8: rgba(35, 35, 36, 0.08);
+  --ink-overlay-12: rgba(35, 35, 36, 0.12);
+  --ink-overlay-18: rgba(35, 35, 36, 0.18);
 
   /* Light elevation recipes: controls < cards < popovers < modal dialogs.
      Dark inset recipes live in theme.css.
@@ -316,9 +317,9 @@
   --sidebar-drawer-enter-easing: var(--ease-out);
   --sidebar-drawer-exit-duration: 220ms;
   --sidebar-drawer-exit-easing: var(--ease-in);
-  --sidebar-motion-duration: var(--motion-slow);
+  --sidebar-motion-duration: var(--motion-base);
   --sidebar-motion-ease: var(--ease-out);
-  --workspace-panel-motion-duration: var(--motion-slow);
+  --workspace-panel-motion-duration: var(--motion-base);
   --workspace-panel-motion-ease: var(--ease-out);
   /* Reference animation (do not retune casually): the environment panel's
    * paired enter/exit is the quality bar for panel motion — enter decelerates

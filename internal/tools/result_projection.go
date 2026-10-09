@@ -48,13 +48,14 @@ const (
 	// projectorVersion is recorded in diagnostics so telemetry can attribute a
 	// projected result to the exact projector revision that produced it. Bump
 	// on any change that alters projected bytes for the same input.
-	projectorVersion = "12"
+	projectorVersion = "15"
 )
 
-// commandViewRenderers render the plain-text model view of command tools.
-var commandViewRenderers = map[string]func(rawText string, budgetTokens int) (string, projectionOmission, bool){
-	"bash":    renderBashModelView,
-	"process": renderProcessModelView,
+// toolViewRenderers render readable model views without changing canonical data.
+var toolViewRenderers = map[string]func(rawText string, budgetTokens int) (string, projectionOmission, bool){
+	"read_file": renderReadFileModelView,
+	"bash":      renderBashModelView,
+	"process":   renderProcessModelView,
 }
 
 // projectionTokenBudget returns the per-result budget for a tool; tools without
@@ -239,8 +240,6 @@ func (t *Toolkit) finalizeToolResult(call providers.ToolCall, result toolresult.
 	if result.ModelText != nil {
 		return result, "", false, nil
 	}
-	var diagnostic *ProjectionDiagnostics
-	mode := t.env.toolResultProjectionMode()
 	budget := projectionTokenBudget(call.Name)
 	if call.Name == codeModeExecToolName {
 		args, err := decodeCodeModeArguments(call.Arguments)
@@ -249,26 +248,30 @@ func (t *Toolkit) finalizeToolResult(call providers.ToolCall, result toolresult.
 			budget = max(1, *args.MaxOutputTokens)
 		}
 	}
-	if builtInProjectionText(result) && mode != projectionModeOff && builtInProjectionAllowlist[call.Name] {
-		stable, diag := finalizeBuiltInToolResult(t.env.SessionDir, call.Name, call.ID, result, budget)
-		diagnostic = &diag
-		if mode == projectionModeActive && diag.Applied {
-			// ResultBudgeted drives truncation warnings and recovery context. A
-			// rendered view omits evidence only when it had to drop lines.
-			budgeted := diag.Reason == reasonProjected || diag.OmittedLines > 0
-			return stable, diag.ArtifactRef, budgeted, diagnostic
-		}
-	}
 	input := result
 	if builtInProjectionText(result) && builtInProjectionAllowlist[call.Name] {
 		// The built-in text envelope is the complete display contract. A generic
 		// structured index would duplicate source excerpts (including on small
 		// results and in shadow/off mode).
 		input.StructuredContent = nil
+		// Format terminal receipts before applying the single generic budget.
+		// The audit envelope repeats the command and output and belongs in the
+		// durable record, not in every subsequent model request. Zero disables
+		// the legacy renderers' own clipping; archival below owns the budget.
+		var text string
+		var ok bool
+		switch call.Name {
+		case "bash":
+			text, _, ok = renderBashModelView(result.Content[0].Text, 0)
+		case "process":
+			text, _, ok = renderProcessModelView(result.Content[0].Text, 0)
+		}
+		if ok {
+			input.Content = toolresult.FromText(text).Content
+		}
 	}
 	settled, ref, paged := finalizeGenericToolResult(t.env.SessionDir, call.ID, input, budget)
-	settled.StructuredContent = result.StructuredContent
-	return settled, ref, paged, diagnostic
+	return settleModelText(result, settled.TextProjection()), ref, paged, nil
 }
 
 // Structured tool data is private to programmatic callers; rendering the text
@@ -336,13 +339,17 @@ func finalizeBuiltInToolResult(sessionDir, toolName, callID string, raw toolresu
 		diag.Reason = reasonNotEligible
 		return raw, diag
 	}
+	// Mutation views describe successful effects. Preserve failure evidence;
+	// other tools may still paginate a structured failure result.
+	if raw.IsError && (toolName == "edit_file" || toolName == "write_file") {
+		diag.Reason = reasonNotEligible
+		return raw, diag
+	}
 	diag.Eligible = true
 
-	// Command tools render a plain-text view instead of paging their JSON
-	// envelope. The producers already bound their output and name how to
-	// recover the rest (the full log, or process reads by offset), so no
-	// separate artifact is needed.
-	if render := commandViewRenderers[toolName]; render != nil {
+	// Readable views preserve the producer's recovery metadata. If the view
+	// does not fit, fall through to the existing artifact-backed projection.
+	if render := toolViewRenderers[toolName]; render != nil {
 		if view, om, ok := render(rawText, budgetTokens); ok {
 			stable := settleModelText(raw, view)
 			diag.Applied = true
@@ -384,6 +391,12 @@ func finalizeBuiltInToolResult(sessionDir, toolName, callID string, raw toolresu
 		diag.ArtifactWritten = !reused
 		diag.ArtifactRef = ref
 		return raw, diag
+	}
+
+	if toolName == "read_file" {
+		if view, _, ok := renderReadFileModelView(projected, budgetTokens); ok {
+			projected = view
+		}
 	}
 
 	stable := settleModelText(raw, projected)

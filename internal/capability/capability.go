@@ -23,7 +23,7 @@ const (
 	// Explicit delivery of a file snapshot to the user, not model observation.
 	CapabilityArtifactPresent Capability = "artifact.present"
 
-	// Filesystem editing through edit_file and write_file for every model.
+	// Filesystem editing through literal write_file and edit_file operations.
 	CapabilityFileEdit Capability = "file.edit"
 
 	// Search surface.
@@ -65,7 +65,8 @@ const (
 	CapabilityFusionDelegate  Capability = "fusion.delegate"
 
 	// Extensions (MCP, plugins).
-	CapabilityMCP Capability = "mcp"
+	CapabilityMCP              Capability = "mcp"
+	CapabilityPluginManagement Capability = "plugin.management"
 
 	// Discovery: tool_search and related progressive-disclosure
 	// tools. Listed under its own capability so permission routing
@@ -109,6 +110,7 @@ func All() []Capability {
 		CapabilityProjectSessions,
 		CapabilityFusionDelegate,
 		CapabilityMCP,
+		CapabilityPluginManagement,
 		CapabilityDiscovery,
 		CapabilityCodeMode,
 		CapabilityBrowser,

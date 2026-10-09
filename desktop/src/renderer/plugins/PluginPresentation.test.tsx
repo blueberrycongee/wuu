@@ -4,8 +4,12 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { PluginHost } from "./PluginHost";
+import { PluginHost, type PluginGenerationApi } from "./PluginHost";
 import { PluginPresentation } from "./PluginPresentation";
+import { PluginSlot } from "./PluginSlot";
+import { PluginSurface } from "./PluginSurface";
+import { PluginInspectorSections } from "./PluginInspector";
+import { PluginConversationCards } from "./PluginConversationCards";
 import { WorkbenchController } from "./Workbench";
 
 let root: Root | undefined;
@@ -19,6 +23,57 @@ afterEach(() => {
 });
 
 describe("PluginPresentation", () => {
+  it.each(["slot", "surface", "presenter", "inspector", "card"] as const)("recovers a mounted %s after same-code reactivation without remounting ordinary updates", async (kind) => {
+    const { host, controller } = setup();
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    let broken = true;
+    let attempts = 0;
+    let mounts = 0;
+    function Content(): React.ReactNode {
+      React.useEffect(() => { mounts++; }, []);
+      attempts++;
+      if (broken) throw new Error("activation failed to render");
+      return <span data-recovered>recovered</span>;
+    }
+    // The same function can be registered by separate activations of one module.
+    const content = () => <Content />;
+    const register = (api: PluginGenerationApi): void => {
+      if (kind === "slot") api.registerSlot("composer.above", { id: "item", render: content });
+      else if (kind === "surface") api.registerSurface("conversation.message", { id: "item", mode: "replace", render: content });
+      else if (kind === "presenter") api.registerPresenter({ id: "item", target: "content.preview", render: content });
+      else if (kind === "inspector") api.registerInspectorSection({ id: "item", title: "Item", render: Content });
+      else api.showConversationCard({ id: "item", threadId: "thread", title: "Item", render: content });
+    };
+    const element = (): React.ReactNode => {
+      if (kind === "slot") return <PluginSlot host={host} id="composer.above" context={{}} />;
+      if (kind === "surface") return <PluginSurface host={host} id="conversation.message" fallback={<span>native</span>} />;
+      if (kind === "presenter") return <PluginPresentation host={host} controller={controller} target="content.preview" snapshot={{}} fallback={<span>native</span>} />;
+      if (kind === "inspector") return <PluginInspectorSections host={host} controller={controller} snapshot={{ contractVersion: 1, session: { status: "idle" } }} />;
+      return <PluginConversationCards host={host} threadId="thread" />;
+    };
+    try {
+      await host.activateGeneration({ pluginId: "repair", generation: "same", register });
+      render(element());
+      expect(container?.querySelector("[data-recovered]")).toBeNull();
+      const failedAttempts = attempts;
+      await act(async () => host.activateGeneration({ pluginId: "unrelated", generation: "one", register() {} }));
+      render(element());
+      expect(attempts).toBe(failedAttempts);
+      broken = false;
+      await act(async () => host.activateGeneration({ pluginId: "repair", generation: "same", register }));
+      expect(container?.querySelector("[data-recovered]")?.textContent).toBe("recovered");
+      expect(mounts).toBe(1);
+      const node = container?.querySelector("[data-recovered]");
+      render(element());
+      await act(async () => host.activateGeneration({ pluginId: "unrelated", generation: "two", register() {} }));
+      expect(container?.querySelector("[data-recovered]")).toBe(node);
+      expect(mounts).toBe(1);
+    } finally {
+      consoleError.mockRestore();
+      controller.dispose();
+    }
+  });
+
   it("selects the highest replacement and composes wrappers in registry order", async () => {
     const { host, controller } = setup();
     await host.activateGeneration({ pluginId: "zeta", generation: "one", register(api) {

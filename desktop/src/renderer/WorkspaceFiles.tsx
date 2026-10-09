@@ -12,6 +12,7 @@ import type {
 import type { WorkspaceFileSelection } from "./LinkTargets";
 import { WORKSPACE_FILE_DRAG_MIME } from "./ComposerMessages";
 import { RichContent } from "./RichContent";
+import { revealScrollbar } from "./ScrollbarReveal";
 import { FileSelectionSurface } from "./FileSelectionSurface";
 import type { WorkspaceMonacoViewState } from "./WorkspaceMonacoEditor";
 import { desktopApiErrorMessage } from "./WorkspaceReviewHelpers";
@@ -34,13 +35,19 @@ const WorkspacePdfPreview = lazy(async () => ({
   default: (await import("./WorkspacePdfPreview")).WorkspacePdfPreview,
 }));
 
-const WORKSPACE_FILE_TREE_STYLE: CSSProperties = {
+const WORKSPACE_FILE_TREE_STYLE = {
   contain: "strict",
   height: "100%",
   minHeight: 0,
   minWidth: 0,
-  width: "100%"
-};
+  width: "100%",
+  // The tree measures its scrollbar gutter once per shadow root, before
+  // unsafeCSS gives the scroller the renderer's thin scrollbar, and caches the
+  // wider default width. A host declaration outranks that :host value, so pass
+  // the renderer's measured gutter instead. Remove once @pierre/trees measures
+  // with unsafeCSS applied.
+  "--trees-scrollbar-gutter-measured": "var(--scrollbar-width)"
+} as CSSProperties;
 
 const WORKSPACE_TREE_CSS = `
   :host {
@@ -58,34 +65,74 @@ const WORKSPACE_TREE_CSS = `
     --trees-search-font-weight-override: 400;
     --trees-focus-ring-color-override: var(--focus-ring);
     /* Rows and the search field share one outer edge and one content axis:
-       highlight edges meet the field border, icons meet the placeholder. */
-    --trees-item-margin-x-override: 8px;
-    --trees-padding-inline-override: 0px;
+       highlight edges meet the field border at the panel's row inset, and
+       icons meet the placeholder on the pane inset. The scroll container owns
+       the row inset because only it subtracts the scrollbar gutter, so rows
+       and field also end on the same edge. */
+    --trees-padding-inline-override: var(--workspace-row-inset);
+    --trees-item-margin-x-override: 0px;
+    --trees-item-padding-x-override: var(--workspace-row-pad-x);
   }
 
+  /* Document styles stop at the shadow boundary, so the tree restates the
+     renderer's scrollbar policy (styles/scrollbars.css) for its scroller. */
+  [data-file-tree-virtualized-scroll='true'] {
+    scrollbar-width: thin;
+    scrollbar-color: var(--scrollbar-ink) var(--scrollbar-track-bg);
+    transition: --scrollbar-ink var(--motion-slower) var(--ease-out);
+  }
+
+  .scrollbar-visible {
+    --scrollbar-ink: var(--scrollbar-thumb);
+    transition-duration: var(--motion-base);
+  }
+
+  /* Rows end where the scroller's padding or its gutter does, whichever is
+     wider; the field ends there too. */
   [data-file-tree-search-container] {
     box-sizing: border-box;
     width: 100%;
     margin-inline: 0;
-    padding-inline: var(--trees-item-margin-x);
+    padding-inline-end: max(
+      var(--trees-padding-inline),
+      var(--trees-scrollbar-gutter-measured, var(--trees-scrollbar-gutter))
+    );
   }
 
+  /* The shared field box. The document's border-box sizing stops at the shadow
+     boundary, so without it the row-height input grows by its padding and
+     border and stands taller than the dock handle beside it. */
   [data-file-tree-search-input] {
+    box-sizing: border-box;
     min-width: 0;
-    padding-inline: calc(var(--trees-item-padding-x) - 1px);
-    border: var(--wuu-workspace-file-tree-search-border, 1px solid var(--field-border));
+    height: var(--control-field-height);
+    padding: var(--control-padding-block) calc(var(--trees-item-padding-x) - 1px);
+    line-height: 1.5;
+    border: var(--wuu-workspace-file-tree-search-border, 1px solid transparent);
     border-radius: var(--wuu-workspace-file-tree-search-radius, var(--radius-sm));
-    background: var(--wuu-workspace-file-tree-search-background, var(--field-bg));
+    background: var(--wuu-workspace-file-tree-search-background, var(--ink-overlay-4));
     color: var(--wuu-workspace-file-tree-color, var(--ink));
+    transition:
+      background-color var(--motion-fast) var(--ease-out),
+      border-color var(--motion-fast) var(--ease-out);
+  }
+
+  /* A quiet filled field at rest, like the tree rows below it; editing lifts
+     it onto the field surface with the shared field edge. */
+  [data-file-tree-search-input]:focus,
+  [data-file-tree-search-input][data-file-tree-search-input-fake-focus="true"] {
+    border-color: var(--field-border);
+    background: var(--wuu-workspace-file-tree-search-background, var(--field-bg));
   }
 
   [data-file-tree-search-input]::placeholder {
     color: var(--placeholder-ink);
   }
 
-  /* Beside a document the dock handle sits at the end of the search row. */
-  :host-context(.workspace-files-tree.dockable) [data-file-tree-search-input] {
-    margin-inline-end: 40px;
+  /* Beside a document the dock handle ends the search row on the toolbar inset
+     (workspace.css); the field stops one gap before it. */
+  :host-context(.workspace-files-tree.dockable) [data-file-tree-search-container] {
+    padding-inline-end: calc(var(--control-toolbar-inset) + var(--control-size-toolbar) + var(--space-2));
   }
 
   :host-context(html[data-focus-modality="pointer"]) [data-file-tree-search-input]:focus-visible,
@@ -131,7 +178,9 @@ export function WorkspaceFileTree({
   const [directories, setDirectories] = useState<Record<string, WorkspaceDirectoryListResult>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>();
+  const [reloadGeneration, setReloadGeneration] = useState(0);
   const loadingDirectoriesRef = useRef(new Set<string>());
+  const directoryGenerationRef = useRef(0);
   const workspaceRoot = activeContext?.cwd;
   const selectedWorkspaceFilePath = useMemo(
     () => normalizeSelectedWorkspaceFilePath(selectedFilePath, workspaceRoot),
@@ -139,6 +188,8 @@ export function WorkspaceFileTree({
   );
 
   useEffect(() => {
+    directoryGenerationRef.current += 1;
+    loadingDirectoriesRef.current = new Set();
     if (!open || !workspaceRoot) {
       setDirectories({});
       setLoading(false);
@@ -156,8 +207,11 @@ export function WorkspaceFileTree({
     }).finally(() => {
       if (!cancelled) setLoading(false);
     });
-    return () => { cancelled = true; };
-  }, [open, workspaceRoot, locale]);
+    return () => {
+      cancelled = true;
+      directoryGenerationRef.current += 1;
+    };
+  }, [open, workspaceRoot, locale, reloadGeneration]);
 
   if (!workspaceRoot) {
     return <WorkspacePanelEmpty title={t("workspace.files.noWorkspace")} />;
@@ -168,7 +222,13 @@ export function WorkspaceFileTree({
   }
 
   if (error) {
-    return <WorkspacePanelEmpty title={t("workspace.files.readFailedTitle")} description={error} />;
+    return <WorkspacePanelEmpty
+      title={t("workspace.files.readFailedTitle")}
+      description={error}
+      action={<button type="button" className="secondary-button" onClick={() => setReloadGeneration(value => value + 1)}>
+        {t("appState.retryAction")}
+      </button>}
+    />;
   }
 
   const rootDirectory = directories[""];
@@ -180,18 +240,25 @@ export function WorkspaceFileTree({
     <div className="workspace-file-panel">
       {rootDirectory.truncated ? <div className="workspace-file-tree-limit">{t("workspace.files.truncated")}</div> : null}
       <WorkspaceFileTreeView
+        key={workspaceRoot}
         directories={directories}
         workspaceRoot={rootDirectory.root}
         selectedFilePath={selectedWorkspaceFilePath}
         onOpenFile={onOpenFile}
         onLoadDirectory={(path) => {
           if (directories[path] || loadingDirectoriesRef.current.has(path)) return;
-          loadingDirectoriesRef.current.add(path);
+          const generation = directoryGenerationRef.current;
+          const pending = loadingDirectoriesRef.current;
+          pending.add(path);
           void window.wuu.listWorkspaceDirectory(path, workspaceRoot).then((result) => {
-            setDirectories((current) => ({ ...current, [path]: result }));
+            if (directoryGenerationRef.current === generation) {
+              setDirectories((current) => ({ ...current, [path]: result }));
+            }
           }).catch((nextError) => {
-            setError(desktopApiErrorMessage(nextError, translateCurrent("workspace.files.readDirectoryFailed")));
-          }).finally(() => loadingDirectoriesRef.current.delete(path));
+            if (directoryGenerationRef.current === generation) {
+              setError(desktopApiErrorMessage(nextError, translateCurrent("workspace.files.readDirectoryFailed")));
+            }
+          }).finally(() => pending.delete(path));
         }}
       />
     </div>
@@ -308,7 +375,17 @@ const WorkspaceFileTreeView = memo(function WorkspaceFileTreeView({ directories,
     enhanceShadowTree();
     const observer = new MutationObserver(enhanceShadowTree);
     observer.observe(host.shadowRoot, { childList: true, subtree: true });
-    return () => observer.disconnect();
+    // Scroll events are not composed, so the document's reveal listener never
+    // sees the tree's scroller; reveal its thumb from inside the shadow root.
+    const shadowRoot = host.shadowRoot;
+    const handleScroll = (event: Event): void => {
+      if (event.target instanceof HTMLElement) revealScrollbar(event.target);
+    };
+    shadowRoot.addEventListener("scroll", handleScroll, { capture: true, passive: true });
+    return () => {
+      observer.disconnect();
+      shadowRoot.removeEventListener("scroll", handleScroll, { capture: true });
+    };
   }, [locale]);
 
   useEffect(() => {
@@ -713,7 +790,13 @@ export function WorkspaceFilePreview({
   const fallback = loading ? (
       <WorkspacePanelEmpty title={t("workspace.files.opening")} />
     ) : error ? (
-      <WorkspacePanelEmpty title={t("workspace.files.openFailedTitle")} description={error} />
+      <WorkspacePanelEmpty
+        title={t("workspace.files.openFailedTitle")}
+        description={error}
+        action={<button type="button" className="secondary-button" onClick={() => setPresenterReloadKey(value => value + 1)}>
+          {t("appState.retryAction")}
+        </button>}
+      />
     ) : !file ? (
       <WorkspacePanelEmpty title={t("workspace.files.noContent")} />
     ) : file.renderable_url ? (

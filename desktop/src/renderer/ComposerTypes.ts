@@ -31,6 +31,7 @@ export type FloatingMenuOwner =
   | "composer-plus"
   | "composer-attach"
   | "composer-plugin-tools"
+  | "plugin-command-actions"
   | "composer-slash"
   | "codex-runtime"
   | "composer-query-history"

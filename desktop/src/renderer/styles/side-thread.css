@@ -1,15 +1,27 @@
-/* The side thread occupies the conversation pane's second grid column. */
+/* Side chat shares the workspace panel's tabs, width and resize boundary. */
+.workspace-side-thread-content:not([hidden]) {
+  display: flex;
+  height: 100%;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.workspace-side-thread-empty {
+  margin: auto;
+  padding: 16px;
+  color: var(--ink-soft);
+}
 
 .side-thread-panel {
   position: relative;
   display: grid;
-  grid-column: 2;
-  grid-row: 1 / -1;
+  flex: 1;
   width: 100%;
-  grid-template-rows: var(--window-titlebar-height) minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
-  border-left: 1px solid var(--hairline-soft);
   background: var(--paper);
   color: var(--ink);
 }
@@ -20,102 +32,20 @@
   box-sizing: border-box;
 }
 
-/* Keep a wide hit target while rendering a one-pixel separator. */
-.side-thread-panel__resizer {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: -5px;
-  z-index: 30;
-  width: 10px;
-  padding: 0;
-  margin: 0;
-  border: 0;
-  background: transparent;
-  cursor: col-resize;
-  outline: 0;
-  -webkit-app-region: no-drag;
-}
-
-.side-thread-panel__resizer::before {
-  position: absolute;
-  inset: 0;
-  left: 50%;
-  width: 1px;
-  border-radius: var(--radius-pill);
-  background: transparent;
-  content: "";
-  transform: translateX(-50%);
-  transition:
-    background var(--motion-fast) var(--ease-out),
-    box-shadow var(--motion-fast) var(--ease-out),
-    opacity var(--motion-fast) var(--ease-out);
-}
-
-.side-thread-panel__resizer:hover::before,
-.side-thread-panel__resizer:focus-visible::before,
-.resizing-side-thread .side-thread-panel__resizer::before {
-  background: var(--sidebar-resizer-hover-bg);
-  box-shadow: 0 0 0 1px var(--sidebar-resizer-hover-ring);
-}
-
-.resizing-side-thread,
-.resizing-side-thread * {
-  cursor: col-resize !important;
-  user-select: none !important;
-}
-
-@container style(--motion-reduced: 1) {
-  .side-thread-panel__resizer::before {
-    transition: none;
-  }
-}
-
-/* The header shares the conversation titlebar's row and axes: the title
- * starts on the pane inset and the close glyph ends on it. */
 .side-thread-panel__header {
-  display: flex;
   min-width: 0;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--control-toolbar-gap);
-  padding: 0 var(--control-toolbar-inset) 0 var(--window-titlebar-padding-inline);
-  /* The panel spans the titlebar row, so this header is the only drag
-   * strip on the right of the conversation pane. Match .titlebar and
-   * .workspace-panel-tabbar; interactive children opt out below. */
-  -webkit-app-region: drag;
+  width: 100%;
+  max-width: calc(var(--session-outer-width) + 2 * var(--scrollbar-width));
+  margin-inline: auto;
+  padding: 12px calc(var(--session-outer-padding-inline) + var(--scrollbar-width)) 0;
 }
 
-.side-thread-panel__header button,
-.side-thread-panel__header button * {
-  -webkit-app-region: no-drag;
-}
-
-/* With the workspace right panel closed, this header runs along the
- * window's right edge and clears the OS window controls like .titlebar:
- * the Windows controls overlay, or Linux's frameless caption buttons. */
-.app-shell:not(.right-panel-open) .side-thread-panel__header {
-  padding-right: max(var(--control-toolbar-inset), var(--window-controls-inset-right));
-}
-
-:root[data-platform="linux"] .app-shell:not(.right-panel-open) .side-thread-panel__header {
-  padding-right: var(--linux-caption-width);
-}
-
-/* The side panel takes the window's top-right corner from the conversation
- * titlebar, which then keeps its neutral end padding. */
-.conversation-pane.side-thread-panel-visible .titlebar {
-  padding-right: var(--control-toolbar-inset);
-}
-
-/* Same role and ink as the conversation title beside it. */
 .side-thread-panel__title {
-  min-width: 0;
   margin: 0;
   overflow: hidden;
-  color: var(--ink-strong);
+  color: var(--ink-soft);
   font-size: var(--font-body);
-  font-weight: var(--weight-medium);
+  font-weight: var(--weight-regular);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -138,7 +68,6 @@
      the generic .conversation-width rule loaded later so the compact panel
      starts near its own header while retaining the shared session-flow
      horizontal inset used by the main conversation. */
-  max-width: none;
   padding-block: 4px 0;
 }
 
@@ -155,7 +84,6 @@
   /* Match the body's content box before resolving percentage gutters: the
      body reserves the stable gutter on both edges, so mirror it on both. */
   padding-inline: var(--scrollbar-width);
-  --session-composer-width: 100%;
 }
 
 .side-thread-panel__composer-host .composer-wrap {
@@ -164,6 +92,6 @@
 }
 
 .side-thread-panel__composer-host .composer-stack {
-  width: 100%;
+  width: min(100%, var(--session-composer-width));
   transform: none;
 }

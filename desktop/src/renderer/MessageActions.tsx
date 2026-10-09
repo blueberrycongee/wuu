@@ -10,7 +10,7 @@ import {
   Split,
   X,
 } from "./WuuIcons";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { InputFile, InputImage } from "../shared/protocol";
 import { AttachmentImage } from "./AttachmentImage";
 import { useImagePreview } from "./ImagePreview";
@@ -23,12 +23,16 @@ export function AgentMessageActions({
   placement,
   timestamp,
   showFork = true,
+  showCopy = true,
+  children,
 }: {
   getText: () => string;
   onFork?: () => void;
   placement: "overlay" | "persistent";
   timestamp?: string | null;
   showFork?: boolean;
+  showCopy?: boolean;
+  children?: ReactNode;
 }): JSX.Element {
   const { t } = useI18n();
 
@@ -39,8 +43,9 @@ export function AgentMessageActions({
       data-wuu-placement={placement}
       aria-label={t("message.assistantActions")}
     >
-      <MessageCopyButton getText={getText} className="message-action-button" iconSize={15} />
+      {showCopy ? <MessageCopyButton getText={getText} className="message-action-button" iconSize={15} /> : null}
       {showFork ? <MessageForkButton onFork={onFork} /> : null}
+      {children}
       <MessageTime timestamp={timestamp} />
     </div>
   );

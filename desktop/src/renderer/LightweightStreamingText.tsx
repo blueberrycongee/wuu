@@ -19,6 +19,12 @@ type LightweightStreamingTextProps = {
    */
   live: boolean;
   className?: string;
+  /**
+   * Optional styled runs whose concatenated text equals `text`. The reveal
+   * still advances over the whole string; each run keeps its class while
+   * it fills, so a two-tone label never changes tone when it settles.
+   */
+  parts?: readonly { text: string; className?: string }[];
 };
 
 const PREVIEW_CONFIG = {
@@ -79,7 +85,8 @@ function computeRevealDuration(delta: number): number {
 export function LightweightStreamingText({
   text,
   live,
-  className
+  className,
+  parts
 }: LightweightStreamingTextProps): JSX.Element {
   const [visibleLength, setVisibleLength] = useState(text.length);
   const visibleRef = useRef(text.length);
@@ -186,5 +193,15 @@ export function LightweightStreamingText({
     };
   }, [text, live]);
 
-  return <span className={className}>{text.slice(0, visibleLength)}</span>;
+  if (!parts) return <span className={className}>{text.slice(0, visibleLength)}</span>;
+  let start = 0;
+  return (
+    <span className={className}>
+      {parts.map((part, index) => {
+        const visible = part.text.slice(0, Math.max(0, visibleLength - start));
+        start += part.text.length;
+        return visible ? <span key={index} className={part.className}>{visible}</span> : null;
+      })}
+    </span>
+  );
 }

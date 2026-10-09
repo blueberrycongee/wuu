@@ -1,11 +1,10 @@
+import { createArtifactComposerFile } from "./ArtifactComposerFile";
 import { composerSkillPrompt } from "./ComposerSlashCommands";
 import { forgetLocalTurnTiming } from "./LocalTurnTiming";
 import { subscribeServerEvents } from "./ServerEvents";
-import { PhoneNavigationContext } from "./PhoneNavigationContext";
 import { AccountScreen } from "./AccountScreen";
 import { hostSupports } from "./HostCapabilities";
 import { focusComposerTextarea, isTouchWebShell } from "./ComposerFocus";
-import { useSidebarTouchGesture } from "./SidebarTouchGesture";
 import { readThreadReadState, writeThreadReadState } from "./ThreadReadState";
 import { FileSelectionProvider, type FileSelectionPart } from "./FileSelectionContext";
 import { readCollapsedPromptParts, rememberCollapsedPromptParts } from "./ComposerCollapsedPrompt";
@@ -15,7 +14,6 @@ import {
   type CSSProperties,
   type RefObject,
   useCallback,
-  useContext,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -89,7 +87,6 @@ import {
   useConversationScrollState,
   type ConversationScrollSnapshot,
 } from "./ConversationScrollState";
-import { PullToNewSession } from "./PullToNewSession";
 import { useConversationSearch } from "./ConversationSearchState";
 import { useConversationSearchNavigation } from "./ConversationSearchNavigation";
 import {
@@ -184,7 +181,7 @@ import {
   SIDEBAR_MAX_WIDTH,
   SIDEBAR_MIN_WIDTH,
   sidebarMotionMs,
-  WORKSPACE_CONVERSATION_SAFE_WIDTH,
+  WORKSPACE_RIGHT_PANEL_MAIN_MIN_WIDTH,
   WORKSPACE_RIGHT_PANEL_MAX_WIDTH,
   WORKSPACE_RIGHT_PANEL_MIN_WIDTH,
   useAppLayoutState,
@@ -216,6 +213,7 @@ import {
 import type { SettingsPage } from "./SettingsView";
 import {
   ENABLE_EMBEDDED_BROWSER,
+  ENABLE_ENVIRONMENT_PANEL,
   ENABLE_ACCOUNT,
 } from "./FeatureFlags";
 import { ArchiveTip } from "./ArchiveTip";
@@ -242,7 +240,7 @@ import {
   statusMessageForError,
 } from "./UserFacingErrors";
 import { TurnView } from "./TurnView";
-import { OPEN_SETTINGS_EVENT, type OpenSettingsDetail } from "./TurnNotice";
+import { CONTINUE_TURN_EVENT, OPEN_SETTINGS_EVENT, type ContinueTurnDetail, type OpenSettingsDetail } from "./TurnNotice";
 import {
   WorkspaceRightPanel,
 } from "./WorkspacePanels";
@@ -462,7 +460,6 @@ function projectNameFromGoal(goal: string): string {
 }
 
 export function App(): JSX.Element {
-  const phoneNavigation = useContext(PhoneNavigationContext);
   const { locale, t } = useI18n();
   const [popOutInit] = useState<PopOutInitResult | null>(() => readPopOutInit());
   const poppedOutMode = Boolean(popOutInit?.kind && popOutInit.context);
@@ -564,7 +561,6 @@ export function App(): JSX.Element {
     useState<MainComposerFocusRequest | null>(null);
   const userInteractionVersionRef = useRef(0);
   const {
-    compactNavigation,
     sidebarWidth,
     sidebarCollapsed,
     resizingSidebar,
@@ -652,9 +648,9 @@ export function App(): JSX.Element {
   const [unreadViewOpen, setUnreadViewOpen] = useState(false);
   const [attentionStickyIDs, setAttentionStickyIDs] = useState<Set<string>>(() => new Set());
   // A manually expanded workspace owns the main stage, not the navigation
-  // rail. Keep a docked sidebar docked; only an already-collapsed or compact
-  // sidebar remains a drawer while the workspace is expanded.
-  const sidebarDrawerMode = compactNavigation || sidebarCollapsed;
+  // rail. Keep a docked sidebar docked; only an already-collapsed sidebar
+  // remains a drawer while the workspace is expanded.
+  const sidebarDrawerMode = sidebarCollapsed;
   const {
     sidebarDrawerPhase,
     sidebarHoverScope,
@@ -673,28 +669,6 @@ export function App(): JSX.Element {
     dockingMotionMs: sidebarMotionMs,
   });
   const sidebarDrawerVisible = sidebarDrawerPhase === "open";
-  const toggleSessionSwitcher = useCallback((): void => {
-    if (!compactNavigation) {
-      toggleSidebar();
-      return;
-    }
-    if (sidebarDrawerVisible) {
-      closeSidebarDrawer();
-      return;
-    }
-    openSidebarDrawerNow();
-  }, [
-    closeSidebarDrawer,
-    compactNavigation,
-    openSidebarDrawerNow,
-    sidebarDrawerVisible,
-    toggleSidebar,
-  ]);
-  const closeCompactSessionSwitcher = useCallback((): void => {
-    if (compactNavigation) {
-      closeSidebarDrawer();
-    }
-  }, [closeSidebarDrawer, compactNavigation]);
   const {
     collapsedSidebarSectionIDs,
     expandedSidebarSectionIDs,
@@ -740,13 +714,6 @@ export function App(): JSX.Element {
   const [branchMenuOpen, setBranchMenuOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
-  useSidebarTouchGesture(
-    appShellRef,
-    Boolean(state.initialized) && compactNavigation && !poppedOutMode && !settingsOpen && !accountOpen,
-    sidebarDrawerPhase,
-    openSidebarDrawerNow,
-    closeSidebarDrawer,
-  );
   const [onboardingComplete, setOnboardingComplete] = useState(
     () => window.wuu?.initialOnboardingComplete ?? true,
   );
@@ -767,10 +734,13 @@ export function App(): JSX.Element {
   const [workspaceFilter, setWorkspaceFilter] = useState("");
   const {
     workspaceViewTabs,
+    workspaceConversationActive,
+    focusWorkspaceConversation,
     workspaceActiveViewTabID,
     workspaceActiveFileTabID,
     ensureWorkspaceToolTab,
     openWorkspaceTool,
+    openWorkspaceSideThread,
     openWorkspacePluginTool,
     openWorkspaceDiffTab,
     openWorkspaceFileTab,
@@ -786,8 +756,10 @@ export function App(): JSX.Element {
     toggleRightPanel,
   } = useWorkspaceToolState({
     rightPanelOpen,
+    rightPanelGlobalized,
     setRightPanelOpenWithMotion,
   });
+  const workspaceToolsCoverConversation = rightPanelGlobalized && !workspaceConversationActive;
   const [environmentPanelOpen, setEnvironmentPanelOpen] = useState(false);
   const [environmentPanelDismissed, setEnvironmentPanelDismissed] =
     useState(false);
@@ -1172,13 +1144,19 @@ export function App(): JSX.Element {
     const handleFocusIn = (event: FocusEvent): void => {
       const target = event.target;
       const workspacePanel = appShellRef.current?.querySelector(".workspace-right-panel");
-      if (target instanceof HTMLElement && !workspacePanel?.contains(target)) {
+      if (
+        target instanceof HTMLElement &&
+        !workspacePanel?.contains(target) &&
+        // Closing via window chrome must not replace the reading position's
+        // focus target. When it opens the panel, the toggle is a valid owner.
+        !(rightPanelOpen && target.closest('[data-wuu-component="right-sidebar-toggle"]'))
+      ) {
         lastFocusOutsideWorkspaceRef.current = { element: target, owner: workspaceFocusOwner };
       }
     };
     document.addEventListener("focusin", handleFocusIn);
     return () => document.removeEventListener("focusin", handleFocusIn);
-  }, [workspaceFocusOwner]);
+  }, [rightPanelOpen, workspaceFocusOwner]);
 
   useLayoutEffect(() => {
     const fullPanel = rightPanelOpen && rightPanelGlobalized;
@@ -1187,10 +1165,7 @@ export function App(): JSX.Element {
 
     appShellRef.current
       ?.querySelector<HTMLElement>(".sidebar")
-      ?.toggleAttribute(
-        "inert",
-        fullPanel && sidebarDrawerMode && !sidebarDrawerVisible,
-      );
+      ?.toggleAttribute("inert", fullPanel && sidebarDrawerMode && !sidebarDrawerVisible);
 
     if (fullPanel && !previous.fullPanel) {
       appShellRef.current
@@ -1202,6 +1177,8 @@ export function App(): JSX.Element {
     }
     if ((previous.fullPanel && !fullPanel) || (previous.open && !rightPanelOpen)) {
       if (viewSwitchPending) return;
+      // An explicit return-to-conversation request owns focus over passive restoration.
+      if (mainComposerFocusRequest?.interactionVersion === userInteractionVersionRef.current) return;
       const previousFocus = lastFocusOutsideWorkspaceRef.current;
       // Focus return must not reveal old history or follow a reused control into
       // a different conversation. Reading position remains owned by scrolling.
@@ -1219,7 +1196,7 @@ export function App(): JSX.Element {
         )
         ?.focus({ preventScroll: true });
     }
-  }, [rightPanelGlobalized, rightPanelOpen, sidebarDrawerMode, sidebarDrawerVisible, viewSwitchPending, workspaceFocusOwner]);
+  }, [rightPanelGlobalized, rightPanelOpen, sidebarDrawerMode, sidebarDrawerVisible, viewSwitchPending, workspaceFocusOwner, mainComposerFocusRequest]);
 
   // Workspace panel (file tree / file preview / terminal / review) root: follows the
   // active thread's own cwd when it differs from state.activeContext — the
@@ -1235,7 +1212,7 @@ export function App(): JSX.Element {
     ? workspaceViewTabs.find((tab) => tab.id === workspaceActiveViewTabID)
     : undefined;
   const workspaceSelectionEnabled =
-    rightPanelGlobalized &&
+    workspaceToolsCoverConversation &&
     (activeWorkspaceViewTab?.kind === "files" ||
       activeWorkspaceViewTab?.kind === "file");
   const activeWorkspaceFileTab = workspaceActiveFileTabID
@@ -2344,16 +2321,40 @@ export function App(): JSX.Element {
     return queries;
   }, [turns]);
   const showingPrimaryPluginView = usePrimaryPluginViewCover();
+  const previewTargetThread = threadForPane(state, state.activePane);
+  const previewTargetContext = workspacePanelContext(state.activeContext, previewTargetThread);
+  const activePreviewFile = activeWorkspaceViewTab?.kind === "file" &&
+    activeWorkspaceViewTab.id === activeWorkspaceFileTabID &&
+    sameRuntimeContext(activeWorkspaceViewTab.context, previewTargetContext) &&
+    activeWorkspaceViewTab.context.cwd === previewTargetContext?.cwd
+      ? activeWorkspaceViewTab : undefined;
+  const activePreviewArtifact = activeWorkspaceViewTab?.kind === "artifact" &&
+    activeWorkspaceViewTab.artifact.mimeType === "application/pdf" &&
+    activeWorkspaceViewTab.artifact.uri?.startsWith("wuu-artifact:") &&
+    activeWorkspaceViewTab.threadID === previewTargetThread?.id &&
+    activeWorkspaceViewTab.cwd === previewTargetThread.cwd
+      ? activeWorkspaceViewTab : undefined;
+  // A docked preview sits beside the conversation, whose own input is in
+  // reach; the document input appears once the preview takes the window.
+  const documentComposerVisible = Boolean(
+    state.initialized && workspaceToolsCoverConversation &&
+    !splitConversation &&
+    !showingManagementCatalog && !showingPrimaryPluginView &&
+    (activePreviewFile || activePreviewArtifact),
+  );
+  const previousDocumentComposerOwner = useRef(documentComposerVisible);
+  useLayoutEffect(() => {
+    if (previousDocumentComposerOwner.current === documentComposerVisible) return;
+    previousDocumentComposerOwner.current = documentComposerVisible;
+    // Text is input-local until idle. Publish it before the new surface paints.
+    setPrompt(currentPrimaryComposerDraft().prompt);
+  }, [documentComposerVisible, setPrompt, currentPrimaryComposerDraft]);
   const mainConversationDockVisible =
     Boolean(state.initialized) &&
     !splitConversation &&
     !showingManagementCatalog &&
-    !rightPanelGlobalized &&
+    !workspaceToolsCoverConversation &&
     !showingPrimaryPluginView;
-
-  // The account-based phone app keeps visible session navigation alongside swipes.
-  const composerNavigation = !phoneNavigation && compactNavigation && isTouchWebShell() &&
-    mainConversationDockVisible && !poppedOutMode;
 
   useEffect(() => {
     // Delivered snapshots may belong to either visible conversation pane.
@@ -2708,13 +2709,13 @@ export function App(): JSX.Element {
   ): void => {
     openWorkspaceBrowserOrExternal(url, modifiers, openWorkspaceBrowser);
   });
-  const openWorkspaceFile = useStableCallback((path: string): void => {
+  const openWorkspaceFile = useStableCallback((path: string, sourceContext?: RuntimeContext): void => {
     // Stamp the same derived context the workspace panel's file tree/preview
     // are rooted at (workspacePanelContext), not the raw activeContext — for
     // a worktree-fork thread these differ, and activeWorkspaceFile's match
     // above must be comparing against the same context or the tab silently
     // stops highlighting/previewing once opened.
-    const context = workspacePanelContext(
+    const context = sourceContext ?? workspacePanelContext(
       appStateRef.current.activeContext,
       appStateRef.current.thread,
     );
@@ -2912,7 +2913,11 @@ export function App(): JSX.Element {
     }
     return Array.from(names);
   }, [state.thread, state.secondaryThread, state.threads]);
-  const sideThreadPanelVisible = Boolean(activeThreadID && sideThread.entry?.open);
+  const sideThreadPanelVisible = Boolean(activeThreadID && rightPanelOpen &&
+    !workspaceConversationActive && workspaceActiveViewTabID === "side-thread");
+  useEffect(() => {
+    if (sideThreadPanelVisible && !sideThread.entry?.open) sideThread.open();
+  }, [sideThreadPanelVisible, sideThread.entry?.open, sideThread.open]);
   useEffect(() => {
     if (!sideThreadPanelVisible || isTouchWebShell()) {
       return undefined;
@@ -2921,16 +2926,16 @@ export function App(): JSX.Element {
       sideThreadPanelRef.current?.focusComposer();
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [sideThreadPanelVisible]);
+  }, [sideThreadPanelVisible, activeThreadID]);
   // The environment panel floats inside the conversation pane, so it can
   // coexist with the docked workspace right panel. Only the globalized
   // (full-window sheet) right panel blocks it, because that mode makes the
   // entire conversation pane inert.
   const environmentPanelCanShow = Boolean(
+    ENABLE_ENVIRONMENT_PANEL &&
     state.initialized &&
     !poppedOutMode &&
-    !rightPanelGlobalized &&
-    !sideThreadPanelVisible &&
+    !workspaceToolsCoverConversation &&
     // The card describes the conversation's workspace; pages that replace the
     // conversation have nothing for it to describe.
     !showingManagementCatalog &&
@@ -2954,13 +2959,7 @@ export function App(): JSX.Element {
   const sidebarVisible = !poppedOutMode;
   const sidebarToggleVisible = sidebarVisible;
 
-  useEffect(() => {
-    if (sideThread.entry?.open && environmentPanelOpen) {
-      sideThread.close();
-    }
-  }, [environmentPanelOpen, sideThread.close, sideThread.entry?.open]);
-
-  const shellClassName = `app-shell${poppedOutMode ? " popped-out-shell" : ""}${compactNavigation ? " compact-navigation" : ""}${sidebarDrawerMode ? " sidebar-collapsed" : ""}${
+  const shellClassName = `app-shell${poppedOutMode ? " popped-out-shell" : ""}${sidebarDrawerMode ? " sidebar-collapsed" : ""}${
     sidebarDrawerMode && sidebarDrawerVisible ? " sidebar-drawer-open" : ""
   }${
     sidebarDrawerMode &&
@@ -2976,13 +2975,12 @@ export function App(): JSX.Element {
     sidebarAnimating ? " sidebar-animating" : ""
   }${rightPanelAnimating ? " right-panel-animating" : ""}${resizingSidebar ? " resizing-sidebar" : ""}${
     resizingRightPanel ? " resizing-right-panel" : ""
-  }${rightPanelOpen ? " right-panel-open" : ""}${rightPanelGlobalized && rightPanelOpen ? " right-panel-globalized" : ""}${resizingSplit ? " resizing-split" : ""}`;
+  }${rightPanelOpen ? " right-panel-open" : ""}${rightPanelGlobalized && rightPanelOpen ? " right-panel-globalized" : ""}${workspaceConversationActive ? " workspace-conversation-active" : ""}${resizingSplit ? " resizing-split" : ""}`;
   const shellStyle = {
     "--sidebar-width": `${effectiveSidebarWidth}px`,
     "--sidebar-open-width": `${sidebarWidth}px`,
     "--workspace-sheet-left": `${sidebarDrawerMode ? 0 : effectiveSidebarWidth}px`,
     "--workspace-right-panel-width": `${clampedWorkspaceRightPanelWidth}px`,
-    "--side-thread-width": `${sideThread.width}px`,
     "--conversation-split-left": `${splitLeftPercent}%`,
   } as CSSProperties;
   const pullRequestDisabledReason = pullRequestUnavailableReason(
@@ -3048,21 +3046,9 @@ export function App(): JSX.Element {
     if (!activeThreadID) {
       return;
     }
-    if (rightPanelGlobalized) {
-      // The destination remounts the main composer; publish its input-local
-      // draft before leaving the document surface.
-      setPrompt(currentPrimaryComposerDraft().prompt);
-    }
-    revealConversationFromFocusedWorkspace();
-    if (rightPanelOpen && window.innerWidth - effectiveSidebarWidth - clampedWorkspaceRightPanelWidth - sideThread.width < WORKSPACE_CONVERSATION_SAFE_WIDTH) {
-      setRightPanelOpenWithMotion(false);
-    }
-    if (!sideThread.entry?.open) {
-      setEnvironmentPanelOpen(false);
-      setEnvironmentPanelDismissed(true);
-      setEnvironmentPanelMenu(null);
-      sideThread.open();
-    }
+    openWorkspaceSideThread();
+    if (!sideThread.entry?.open) sideThread.open();
+    requestAnimationFrame(() => sideThreadPanelRef.current?.focusComposer());
     const trimmed = prompt?.trim();
     if (trimmed) {
       sideThread.sendMessage(trimmed);
@@ -3183,8 +3169,7 @@ export function App(): JSX.Element {
     return (
       <>
       <Composer
-        canSelectWorkspace={!composerNavigation && !activeThread && !activePendingNewThreadTurn}
-        hideExpandButton={composerNavigation}
+        canSelectWorkspace={!activeThread && !activePendingNewThreadTurn}
         topAccessory={pendingUserQuestionOffer ? (
           <UserQuestionCard
             key={pendingUserQuestionOffer.request_id}
@@ -3210,7 +3195,7 @@ export function App(): JSX.Element {
         permissionLocked={projectComposer}
         placeholder={activeProjectDraft ? t("projects.draftPlaceholder") : undefined}
         containerRef={variant === "dock" ? dockComposerRef : undefined}
-        prompt={prompt}
+        prompt={currentPrimaryComposerDraft().prompt}
         promptRevision={promptRevision}
         setPrompt={setPromptFromInput}
         files={composerFiles}
@@ -3740,6 +3725,26 @@ export function App(): JSX.Element {
     return api.onCodexPetCommand((command) => codexPetCommandHandlerRef.current(command));
   }, [codexPetCommandsReady]);
 
+  // A failure notice continues an interrupted reply in its own conversation,
+  // the same way the pet sends text: without touching the composer draft.
+  const continueTurnHandlerRef = useRef<(detail: ContinueTurnDetail) => void>(() => undefined);
+  continueTurnHandlerRef.current = ({ threadID, text, done }) => {
+    void submitCodexPetText(text, { thread_id: threadID })
+      .catch((error: unknown) => {
+        showErrorToast(error);
+        return false;
+      })
+      .then(done);
+  };
+  useEffect(() => {
+    const handle = (event: Event): void => {
+      event.preventDefault();
+      continueTurnHandlerRef.current((event as CustomEvent<ContinueTurnDetail>).detail);
+    };
+    window.addEventListener(CONTINUE_TURN_EVENT, handle);
+    return () => window.removeEventListener(CONTINUE_TURN_EVENT, handle);
+  }, []);
+
   const {
     startNewThread,
     selectSessionTab,
@@ -3799,7 +3804,6 @@ export function App(): JSX.Element {
     }
     closePrimaryPluginView();
     revealConversationFromFocusedWorkspace();
-    closeCompactSessionSwitcher();
     const origin = document.activeElement;
     focusHeroAfter(
       startNewThreadInWorkspace(workspace.id).then((started) => {
@@ -4199,8 +4203,8 @@ export function App(): JSX.Element {
       contentParts,
       draft.selections,
     );
-    const activeDocumentPath = pane ? undefined : activeWorkspaceFile;
-    const message =
+    const activeDocumentPath = !pane && documentComposerVisible ? activePreviewFile?.path : undefined;
+    let message =
       draftMessage && activeDocumentPath
         ? { ...draftMessage, activeDocument: { path: activeDocumentPath } }
         : draftMessage;
@@ -4224,6 +4228,17 @@ export function App(): JSX.Element {
       && !hasReadyProvider(currentState.initialized.providers)) {
       showNoModelConfiguredToast();
       return false;
+    }
+    let implicitArtifactFileID: string | undefined;
+    if (!pane && documentComposerVisible && activePreviewArtifact && targetThread) {
+      try {
+        const file = createArtifactComposerFile(activePreviewArtifact, targetThread.id);
+        implicitArtifactFileID = file.id;
+        message = { ...message, files: [...message.files.filter(existing => existing.id !== file.id), file] };
+      } catch (error) {
+        showErrorToast(error);
+        return false;
+      }
     }
     if (consumedOfferID && pendingUserQuestionOffer?.request_id === consumedOfferID) {
       void cancelUserQuestion(consumedOfferID).catch(() => undefined);
@@ -4260,7 +4275,7 @@ export function App(): JSX.Element {
       if (sent) return;
       submittedThread ??= admission?.thread;
       const latest = appStateRef.current;
-      const recoveryDraft = { ...composerContextFromMessage(message.text, message.contentParts), images: message.images, files: message.files };
+      const recoveryDraft = { ...composerContextFromMessage(message.text, message.contentParts), images: message.images, files: message.files.filter(file => file.id !== implicitArtifactFileID) };
       const latestTab = activeSessionTab(latest);
       const stillTarget = submittedThread
         ? latestTab?.kind === "thread" &&
@@ -4355,7 +4370,7 @@ export function App(): JSX.Element {
 
   async function submitFileSelectionEdit(part: FileSelectionPart): Promise<boolean> {
     const current = appStateRef.current;
-    const splitPane = splitConversation && !rightPanelGlobalized ? current.activePane : undefined;
+    const splitPane = splitConversation && !workspaceToolsCoverConversation ? current.activePane : undefined;
     const thread = splitPane ? threadForPane(current, splitPane) : activeThreadForState(current);
     if (viewSwitchPending || !current.activeContext || !current.initialized || thread?.read_only) return false;
     const draft = createComposerMessage(part.text, [], [], [part]);
@@ -5222,7 +5237,7 @@ export function App(): JSX.Element {
     ((activeThread !== undefined && !activeThread.read_only && !activeThread.ephemeral) ||
       currentSessionTab?.kind === "draft");
 
-  const selectionUsesSplitDraft = splitConversation && !rightPanelGlobalized;
+  const selectionUsesSplitDraft = splitConversation && !workspaceToolsCoverConversation;
   const selectionThread = selectionUsesSplitDraft ? threadForPane(state, state.activePane) : activeThread;
 
   return (
@@ -5289,12 +5304,9 @@ export function App(): JSX.Element {
           ) : null}
           <HoverRevealScopeContext.Provider value={sidebarHoverScope}>
             <AppSidebar
-              onToggleSidebar={sidebarDrawerMode ? undefined : toggleSessionSwitcher}
+              onToggleSidebar={sidebarDrawerMode ? undefined : toggleSidebar}
               sidebarCollapsed={sidebarCollapsed}
               sidebarVisible={!sidebarDrawerMode || sidebarDrawerVisible}
-              mobileNavigation={compactNavigation && isTouchWebShell()}
-              drawerVisible={sidebarDrawerVisible}
-              onNavigateAway={closeCompactSessionSwitcher}
               state={state}
               sidebarWorkspaces={sidebarWorkspaces}
               pendingConversations={pendingThreadCreations.map((pending) => ({
@@ -5304,7 +5316,6 @@ export function App(): JSX.Element {
               }))}
               onSelectPendingConversation={(tabID) => {
                 closePrimaryPluginView();
-                closeCompactSessionSwitcher();
                 void selectSessionTab(tabID);
               }}
               activeWorkspaceID={
@@ -5329,12 +5340,10 @@ export function App(): JSX.Element {
               onStartNewThread={() => {
                 closePrimaryPluginView();
                 revealConversationFromFocusedWorkspace();
-                closeCompactSessionSwitcher();
                 startNewThreadWithComposerFocus();
               }}
               onOpenSkillsTab={() => {
                 closePrimaryPluginView();
-                closeCompactSessionSwitcher();
                 openSkillsTab();
               }}
               onMarkThreadsViewed={(threads) => {
@@ -5348,7 +5357,6 @@ export function App(): JSX.Element {
               onSelectThread={(id) => {
                 closePrimaryPluginView();
                 revealConversationFromFocusedWorkspace();
-                closeCompactSessionSwitcher();
                 void activateThread(id);
               }}
               onTogglePinned={(thread) => void toggleThreadPinned(thread)}
@@ -5385,7 +5393,6 @@ export function App(): JSX.Element {
                         project_id: project.id,
                         cwd: project.path,
                       });
-                      closeCompactSessionSwitcher();
                       openWorkspaceTool("files");
                     }
                   : undefined
@@ -5393,13 +5400,11 @@ export function App(): JSX.Element {
               onStartNewThreadInWorkspace={(id) => {
                 closePrimaryPluginView();
                 revealConversationFromFocusedWorkspace();
-                closeCompactSessionSwitcher();
                 startNewThreadInWorkspaceWithComposerFocus(id);
               }}
               onSelectWorkspaceThread={(workspaceID, threadID) => {
                 closePrimaryPluginView();
                 revealConversationFromFocusedWorkspace();
-                closeCompactSessionSwitcher();
                 void selectWorkspaceThread(workspaceID, threadID);
               }}
               onRemoveWorkspace={(id) => void removeProject(id)}
@@ -5424,15 +5429,6 @@ export function App(): JSX.Element {
               }}
             />
           </HoverRevealScopeContext.Provider>
-
-          {compactNavigation ? (
-            <button
-              className="compact-session-switcher-backdrop"
-              type="button"
-              aria-label={t("app.collapseLeftSidebar")}
-              onClick={closeSidebarDrawer}
-            />
-          ) : null}
 
           {/* Hidden rather than unmounted: inserting or removing a shell child
               ahead of the conversation makes sibling selectors restyle every
@@ -5475,18 +5471,14 @@ export function App(): JSX.Element {
           ) : null}
 
       <main
-        inert={rightPanelOpen && rightPanelGlobalized}
+        inert={workspaceToolsCoverConversation}
         data-wuu-component="conversation-pane"
         data-primary-plugin-view={showingPrimaryPluginView ? "" : undefined}
-        data-composer-navigation={composerNavigation || undefined}
         className={`conversation-pane${environmentPanelVisible ? " environment-panel-visible" : ""}${
           environmentPanelReserved ? " environment-panel-reserved" : ""
-        }${
-          sideThreadPanelVisible ? " side-thread-panel-visible" : ""
         }`}
         ref={conversationPaneRef}
       >
-        {composerNavigation ? <div aria-hidden="true" /> : (
         <header className="titlebar" data-wuu-component="conversation-titlebar">
           <div className="title-block">
             {sidebarToggleVisible && sidebarDrawerMode && !rightPanelGlobalized ? (
@@ -5500,7 +5492,7 @@ export function App(): JSX.Element {
                     : "app.expandLeftSidebar",
                 )}
                 aria-pressed={sidebarDrawerVisible}
-                onClick={toggleSessionSwitcher}
+                onClick={toggleSidebar}
                 onPointerEnter={scheduleSidebarDrawerOpen}
                 onPointerLeave={(event) =>
                   scheduleSidebarDrawerCloseFromPointerLeave(event.nativeEvent)
@@ -5521,18 +5513,15 @@ export function App(): JSX.Element {
           </div>
           <ConversationTitleActions
             state={state}
-            compactNavigation={compactNavigation}
             pluginPageVisible={showingPrimaryPluginView || showingManagementCatalog}
-            onStartNewThread={startNewThreadWithComposerFocus}
             environmentToggleRef={environmentToggleRef}
             environmentPanelVisible={environmentPanelVisible}
             onToggleEnvironmentPanel={toggleEnvironmentPanel}
             rightPanelOpen={rightPanelOpen}
             onToggleRightPanel={toggleRightPanel}
+            showRightPanelToggle={false}
           />
         </header>
-
-        )}
         <ConversationSidePanels
           state={state}
           environmentPanelVisible={environmentPanelVisible}
@@ -5566,41 +5555,6 @@ export function App(): JSX.Element {
           onCloseFilePreview={handleCloseFilePreview}
           switchLoadingVisible={pendingViewSwitch?.visible === true}
         />
-
-        {sideThreadPanelVisible && activeThreadID && sideThread.entry ? (
-          <SideThreadPanel
-            ref={sideThreadPanelRef}
-            entry={sideThread.entry}
-            mainThreadId={activeThreadID}
-            width={sideThread.width}
-            cwd={activeThread?.cwd ?? state.activeContext?.cwd}
-            onOpenFile={openWorkspaceFile}
-            composer={
-              <SideThreadComposer
-                draft={sideThread.entry.draft}
-                selection={sideThread.entry.draftSelection}
-                onRemoveSelection={() => sideThread.setDraftSelection(undefined)}
-                onOpenFile={openWorkspaceFile}
-                running={sideThread.entry.streaming}
-                disabledReason={sideThread.sendDisabledReason}
-                error={sideThread.requestError}
-                queryHistorySessionID={
-                  sideThread.entry.summary?.side_thread_id ?? `side:${activeThreadID}`
-                }
-                queryHistory={sideThread.entry.messages
-                  .filter((message) => message.role === "user")
-                  .map((message) => message.text)}
-                onChangeDraft={sideThread.setDraft}
-                onSend={sideThread.sendMessage}
-                onInterrupt={sideThread.interrupt}
-                onReset={sideThread.reset}
-              />
-            }
-            onClose={sideThread.close}
-            onResizeStart={sideThread.startResize}
-            onChangeDraft={sideThread.setDraft}
-          />
-        ) : null}
 
         {state.initialized ? (
           <div
@@ -5756,17 +5710,6 @@ export function App(): JSX.Element {
           />
         )}
 
-        {compactNavigation && isTouchWebShell() && mainConversationDockVisible &&
-        !emptyConversation && !splitConversation && !showingManagementCatalog &&
-        activeThreadID && state.activeContext ? (
-          <PullToNewSession
-            key={activeThreadID}
-            containerRef={conversationScrollRef}
-            contentRef={scrollContentRef}
-            bottomAnchor={dockComposerNode}
-            onNewSession={startNewThreadWithComposerFocus}
-          />
-        ) : null}
         {mainConversationDockVisible ? renderComposer("dock") : null}
 
 
@@ -5811,7 +5754,6 @@ export function App(): JSX.Element {
       ) : null}
       {poppedOutMode ? null : (
         <WorkspaceRightPanel
-          compactNavigation={compactNavigation}
           open={rightPanelOpen}
           present={rightPanelOpen || rightPanelAnimating}
           prewarm={Boolean(state.initialized)}
@@ -5828,12 +5770,53 @@ export function App(): JSX.Element {
           onOpenPluginTool={openWorkspacePluginTool}
           onShowTools={showWorkspaceToolPicker}
           onResumeTab={resumeWorkspaceViewTab}
-          onCloseTab={closeWorkspaceViewTab}
+          onCloseTab={(id) => {
+            if (id === "side-thread") sideThread.close();
+            closeWorkspaceViewTab(id);
+          }}
           onDirtyFileTabsChange={rememberWorkspaceDirtyFiles}
           onReorderTabs={reorderWorkspaceViewTabs}
           onOpenFile={openWorkspaceFile}
-          onClose={() => setRightPanelOpenWithMotion(false)}
           globalized={rightPanelGlobalized}
+          conversationTab={rightPanelGlobalized ? {
+            title: activeTitle,
+            active: workspaceConversationActive,
+            onSelect: focusWorkspaceConversation,
+          } : undefined}
+          sideThreadContent={activeThreadID && sideThread.entry ? (
+            <SideThreadPanel
+              key={activeThreadID}
+              ref={sideThreadPanelRef}
+              entry={sideThread.entry}
+              mainThreadId={activeThreadID}
+              active={sideThreadPanelVisible}
+              title={activeTitle}
+              cwd={activeThread?.cwd ?? state.activeContext?.cwd}
+              onOpenFile={openWorkspaceFile}
+              composer={
+                <SideThreadComposer
+                  draft={sideThread.entry.draft}
+                  selection={sideThread.entry.draftSelection}
+                  onRemoveSelection={() => sideThread.setDraftSelection(undefined)}
+                  onOpenFile={openWorkspaceFile}
+                  running={sideThread.entry.streaming}
+                  disabledReason={sideThread.sendDisabledReason}
+                  error={sideThread.requestError}
+                  queryHistorySessionID={
+                    sideThread.entry.summary?.side_thread_id ?? `side:${activeThreadID}`
+                  }
+                  queryHistory={sideThread.entry.messages
+                    .filter((message) => message.role === "user")
+                    .map((message) => message.text)}
+                  onChangeDraft={sideThread.setDraft}
+                  onSend={sideThread.sendMessage}
+                  onInterrupt={sideThread.interrupt}
+                  onReset={sideThread.reset}
+                />
+              }
+            />
+          ) : <div className="workspace-side-thread-empty">{t("sideThread.selectConversation")}</div>}
+          sideThreadRunning={sideThread.entry?.streaming}
           sheetPhase={workspaceSheetPhase}
           onToggleGlobalize={toggleWorkspacePanelGlobalized}
           canExitGlobalized={
@@ -5845,10 +5828,16 @@ export function App(): JSX.Element {
           browserOverlaySuppressed={browserOverlaySuppressed}
           onBrowserUserInteraction={pauseBrowserTask}
           focusedComposer={
-            rightPanelGlobalized && activeWorkspaceFileTabID
+            documentComposerVisible
               ? (
                   <WorkspaceDocumentTurnDock
                     key={activeThreadID ?? state.activeSessionTabID}
+                    title={activeTitle}
+                    onOpenConversation={() => {
+                      setPrompt(currentPrimaryComposerDraft().prompt);
+                      setRightPanelOpenWithMotion(false);
+                      requestMainComposerFocus("dock");
+                    }}
                     cwd={activeThread?.cwd ?? state.activeContext?.cwd}
                     onOpenFile={openWorkspaceFile}
                     waitingQuery={
@@ -5933,6 +5922,21 @@ export function App(): JSX.Element {
           },
         }}
       />
+      {/* macOS applies app regions in DOM order, so a later drag titlebar would
+        * cover this no-drag control. Keep it as the shell's last child. */}
+      {!poppedOutMode ? (
+        <button
+          className="icon-button side-panel-toggle-button shell-right-sidebar-toggle"
+          data-wuu-component="right-sidebar-toggle"
+          type="button"
+          aria-label={t(rightPanelOpen ? "shell.closeRightSidebar" : "shell.openRightSidebar")}
+          aria-expanded={rightPanelOpen}
+          aria-pressed={rightPanelOpen}
+          onClick={toggleRightPanel}
+        >
+          <SidePanelToggleIcon side="right" open={rightPanelOpen} />
+        </button>
+      ) : null}
       </div>
     </ArtifactPreviewContext.Provider>
     </WorkspaceBrowserOpenContext.Provider>

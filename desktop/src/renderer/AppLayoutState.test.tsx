@@ -1,10 +1,8 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import * as ComposerFocus from "./ComposerFocus";
 import {
   rightPanelMotionMs,
-  SIDEBAR_AUTO_COLLAPSE_WINDOW_WIDTH,
   SIDEBAR_DEFAULT_WIDTH,
   SIDEBAR_MIN_WIDTH,
   sidebarMotionMs,
@@ -29,6 +27,7 @@ interface Harness {
   handleRightPanelSeparatorKey: ReturnType<
     typeof useAppLayoutState
   >["handleRightPanelSeparatorKey"];
+  rightPanelOpen: boolean;
   rightPanelAnimating: ReturnType<typeof useAppLayoutState>["rightPanelAnimating"];
   toggleSidebar: ReturnType<typeof useAppLayoutState>["toggleSidebar"];
   startSidebarResize: ReturnType<typeof useAppLayoutState>["startSidebarResize"];
@@ -47,8 +46,8 @@ let container: HTMLDivElement;
 let root: Root | null = null;
 let latest: Harness | null = null;
 const originalInnerWidth = window.innerWidth;
-const narrowWindowWidth = SIDEBAR_AUTO_COLLAPSE_WINDOW_WIDTH - 1;
-const roomyWindowWidth = SIDEBAR_AUTO_COLLAPSE_WINDOW_WIDTH + 120;
+const narrowWindowWidth = 820;
+const roomyWindowWidth = 1020;
 
 function makePointerDownEvent(clientX: number): React.PointerEvent<HTMLDivElement> {
   // The hook only reads `button`, `clientX`, and `preventDefault`, so a plain
@@ -76,6 +75,7 @@ function renderHookHarness(): void {
       workspaceRightPanelWidth: hook.workspaceRightPanelWidth,
       clampedWorkspaceRightPanelWidth: hook.clampedWorkspaceRightPanelWidth,
       handleRightPanelSeparatorKey: hook.handleRightPanelSeparatorKey,
+      rightPanelOpen: hook.rightPanelOpen,
       rightPanelAnimating: hook.rightPanelAnimating,
       toggleSidebar: hook.toggleSidebar,
       startSidebarResize: hook.startSidebarResize,
@@ -110,13 +110,13 @@ it("can use an explicit embedded viewport without reacting to the outer window",
   }
   root = createRoot(container);
   act(() => root!.render(<ExtensionHarness />));
-  const before = { sidebarWidth: view.sidebarWidth, collapsed: view.sidebarCollapsed, compact: view.compactNavigation };
+  const before = { sidebarWidth: view.sidebarWidth, collapsed: view.sidebarCollapsed };
   act(() => root!.render(<ExtensionHarness width={900} />));
   act(() => { setInnerWidth(1380); window.dispatchEvent(new Event("resize")); });
-  expect({ sidebarWidth: view.sidebarWidth, collapsed: view.sidebarCollapsed, compact: view.compactNavigation }).toEqual(before);
+  expect({ sidebarWidth: view.sidebarWidth, collapsed: view.sidebarCollapsed }).toEqual(before);
   act(() => { setInnerWidth(900); root!.render(<ExtensionHarness />); });
   act(() => window.dispatchEvent(new Event("resize")));
-  expect({ sidebarWidth: view.sidebarWidth, collapsed: view.sidebarCollapsed, compact: view.compactNavigation }).toEqual(before);
+  expect({ sidebarWidth: view.sidebarWidth, collapsed: view.sidebarCollapsed }).toEqual(before);
 });
 
 beforeEach(() => {
@@ -146,32 +146,58 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-it("keeps the full content width when opening navigation on a phone", () => {
-  vi.spyOn(ComposerFocus, "isTouchWebShell").mockReturnValue(true);
-  vi.spyOn(window.screen, "width", "get").mockReturnValue(430);
-  vi.spyOn(window.screen, "height", "get").mockReturnValue(932);
-  setInnerWidth(430);
-  renderHookHarness();
-  expect(latest!.effectiveSidebarWidth).toBe(0);
-  act(() => latest!.toggleSidebar());
-  expect(latest!.sidebarCollapsed).toBe(false);
-  expect(latest!.effectiveSidebarWidth).toBe(0);
-  act(() => latest!.toggleSidebar());
-  expect(latest!.effectiveSidebarWidth).toBe(0);
+describe("independent panel preferences", () => {
+  it("restores right-panel visibility without changing left navigation", () => {
+    window.localStorage.setItem("wuu.desktop.workspaceRightPanelOpen", "true");
+    window.localStorage.setItem("wuu.desktop.sidebarCollapsed", "true");
+    renderHookHarness();
+    expect(latest!.rightPanelOpen).toBe(true);
+    expect(latest!.sidebarCollapsed).toBe(true);
+    act(() => latest!.setRightPanelOpenWithMotion(false));
+    expect(window.localStorage.getItem("wuu.desktop.workspaceRightPanelOpen")).toBe("false");
+    expect(latest!.sidebarCollapsed).toBe(true);
+    act(() => latest!.toggleSidebar());
+    expect(latest!.rightPanelOpen).toBe(false);
+  });
+
+  it("keeps the preferred right width when a clamped separator is clicked without dragging", () => {
+    window.localStorage.setItem("wuu.desktop.workspaceRightPanelWidth", "800");
+    renderHookHarness();
+    act(() => latest!.setRightPanelOpenWithMotion(true));
+    expect(latest!.clampedWorkspaceRightPanelWidth).toBeLessThan(800);
+    act(() => latest!.startRightPanelResize(makePointerDownEvent(800)));
+    act(() => window.dispatchEvent(new Event("pointerup")));
+    expect(latest!.workspaceRightPanelWidth).toBe(800);
+    expect(window.localStorage.getItem("wuu.desktop.workspaceRightPanelWidth")).toBe("800");
+  });
+
+  it("clamps the right panel against an embedded viewport rather than the outer window", () => {
+    setInnerWidth(1800);
+    window.localStorage.setItem("wuu.desktop.workspaceRightPanelWidth", "800");
+    let layout!: ReturnType<typeof useAppLayoutState>;
+    function Embedded() {
+      layout = useAppLayoutState({ viewportWidth: 1100, onCloseWorkspaceMenu: () => {} });
+      return null;
+    }
+    root = createRoot(container);
+    act(() => root!.render(<Embedded />));
+    expect(layout.clampedWorkspaceRightPanelWidth).toBe(1100 - SIDEBAR_DEFAULT_WIDTH - 352);
+    expect(layout.workspaceRightPanelWidth).toBe(800);
+  });
 });
 
-it.each([
-  { touch: true, shortSide: 430, focused: true },
-  { touch: true, shortSide: 820, focused: false },
-  { touch: false, shortSide: 430, focused: false },
-])("keeps phone tools in one surface after rotation ($touch, $shortSide)", ({ touch, shortSide, focused }) => {
-  vi.spyOn(ComposerFocus, "isTouchWebShell").mockReturnValue(touch);
-  vi.spyOn(window.screen, "width", "get").mockReturnValue(932);
-  vi.spyOn(window.screen, "height", "get").mockReturnValue(shortSide);
-  setInnerWidth(932);
+it("lets a direct resize interrupt a panel toggle without animated drag lag", () => {
   renderHookHarness();
-  expect(latest?.workspaceRightPanelAutoGlobalized).toBe(focused);
-  expect(latest?.workspaceRightPanelDockableWithoutSidebar).toBe(!focused);
+  act(() => latest!.setRightPanelOpenWithMotion(true));
+  expect(document.documentElement.classList.contains(LAYOUT_MOTION_CLASS)).toBe(true);
+  act(() => latest!.startRightPanelResize(makePointerDownEvent(800)));
+  expect(document.documentElement.classList.contains(LAYOUT_MOTION_CLASS)).toBe(false);
+  expect(document.documentElement.classList.contains(WINDOW_RESIZING_CLASS)).toBe(true);
+  act(() => window.dispatchEvent(new Event("pointerup")));
+  act(() => latest!.toggleSidebar());
+  expect(document.documentElement.classList.contains(LAYOUT_MOTION_CLASS)).toBe(true);
+  act(() => latest!.startSidebarResize(makePointerDownEvent(0)));
+  expect(document.documentElement.classList.contains(LAYOUT_MOTION_CLASS)).toBe(false);
 });
 
 describe("useAppLayoutState window-resizing class", () => {
@@ -283,7 +309,8 @@ describe("useAppLayoutState responsive workspace presentation", () => {
       setInnerWidth(674);
       window.dispatchEvent(new Event("resize"));
     });
-    expect(latest!.sidebarCollapsed).toBe(true);
+    expect(latest!.sidebarCollapsed).toBe(false);
+    expect(latest!.effectiveSidebarWidth).toBe(SIDEBAR_DEFAULT_WIDTH);
     expect(latest!.workspaceRightPanelAutoGlobalized).toBe(true);
     expect(latest!.workspaceRightPanelDockableWithoutSidebar).toBe(false);
 
@@ -441,41 +468,24 @@ describe("useAppLayoutState initial widths", () => {
     expect(latest!.sidebarWidth).toBe(300);
   });
 
-  it("starts with the sidebar collapsed when the window is too narrow", () => {
+  it("keeps an open sidebar open in a narrow window", () => {
     setInnerWidth(narrowWindowWidth);
-
     renderHookHarness();
+    expect(latest!.sidebarCollapsed).toBe(false);
 
-    expect(latest!.sidebarCollapsed).toBe(true);
-    expect(latest!.sidebarWidth).toBe(SIDEBAR_DEFAULT_WIDTH);
+    act(() => {
+      setInnerWidth(600);
+      window.dispatchEvent(new Event("resize"));
+    });
+    expect(latest!.effectiveSidebarWidth).toBe(SIDEBAR_DEFAULT_WIDTH);
+    expect(latest!.sidebarCollapsed).toBe(false);
 
     act(() => {
       setInnerWidth(roomyWindowWidth);
       window.dispatchEvent(new Event("resize"));
     });
-
     expect(latest!.sidebarCollapsed).toBe(false);
-  });
-
-  it("auto-collapses an open sidebar when the window becomes too narrow", () => {
-    setInnerWidth(roomyWindowWidth);
-    renderHookHarness();
-    expect(latest!.sidebarCollapsed).toBe(false);
-
-    act(() => {
-      setInnerWidth(narrowWindowWidth);
-      window.dispatchEvent(new Event("resize"));
-    });
-
-    expect(latest!.sidebarCollapsed).toBe(true);
-    expect(latest!.sidebarWidth).toBe(SIDEBAR_DEFAULT_WIDTH);
-
-    act(() => {
-      setInnerWidth(roomyWindowWidth);
-      window.dispatchEvent(new Event("resize"));
-    });
-
-    expect(latest!.sidebarCollapsed).toBe(false);
+    expect(latest!.effectiveSidebarWidth).toBe(SIDEBAR_DEFAULT_WIDTH);
     expect(window.localStorage.getItem("wuu.desktop.sidebarCollapsed")).toBe("false");
   });
 

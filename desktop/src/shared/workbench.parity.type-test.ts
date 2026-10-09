@@ -18,6 +18,8 @@ type SnapshotParity = [
 ];
 
 type ActionParity = [
+  Expect<Equal<SDK.PluginCommandActionContext, Desktop.PluginCommandActionContext>>,
+  Expect<Equal<SDK.PluginCommandPresentation, Desktop.PluginCommandPresentation>>,
   Expect<Equal<SDK.ConversationItemActionId, Desktop.ConversationItemActionId>>,
   Expect<Equal<SDK.ComposerActionId, Desktop.ComposerActionId>>,
   Expect<Equal<SDK.HeaderActionId, Desktop.HeaderActionId>>,

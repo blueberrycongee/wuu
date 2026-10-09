@@ -112,18 +112,18 @@ await tools.read_file({path: "screenshots/settings.png"});
 
 ## 程序化工具调用
 
-内置引擎默认使用程序化工具调用（PTC）。文件读取、命令、搜索、浏览器、API
-和扩展工具通过 `run_code` 执行。**设置 → 内置 Agent → 程序化工具调用**提供适用于所有模型的
+内置引擎默认启用程序化工具调用（PTC）。基础文件和命令工具也支持直接调用，
+`run_code` 用于组合工具或处理结果。**设置 → 内置 Agent → 程序化工具调用**提供适用于所有模型的
 全局开关。明确保存的选择会保留；配置省略开关时采用默认值。修改须等
 当前轮次空闲，并从下一轮生效。外部引擎继续使用自己的工具。
 
 用户交互、显式附件交付、上下文替换、工作区切换及代理／会话生命周期控制保留
 为独立直调工具。扩展可为此类工具声明 `direct_only`。直调专用工具不能从程序
-内调用。`write_file` 和 `edit_file` 同时接受直接调用：传递文件原文时优先直调，
-避免额外的 JavaScript 字符串转义和插值。参数依赖计算或前序工具结果时，仍可在
-`run_code` 内调用它们。两条路径使用相同的执行、权限和工作区检查。
-启用 PTC 时，其他普通工具不能绕过它。绑定保留精确名称、权限以及模型
-家族对应的编辑原语。
+内调用。`read_file`、`write_file`、`edit_file`、`bash` 和 `process` 同时接受直接调用。
+传递文件原文时优先直接写入或编辑，避免 JavaScript 字符串转义和插值。
+同一文件中已经确定的多处修改使用 `edit_file` 的 `edits` 数组；全部匹配成功后才写入。
+参数依赖计算或前序结果时，仍可在 `run_code` 内调用这些工具。
+两条路径使用相同的执行、权限和工作区检查；其他普通工具在启用 PTC 时通过程序调用。
 
 ### 发现、执行与结果
 
@@ -154,18 +154,14 @@ await tools.read_file({path: "screenshots/settings.png"});
 属于普通 JSON 数据；打印时应自行选择展示视图。在判断某项不存在之前，
 先检查并续读工具返回的后续页。
 
-`result_view: "compact"`（默认）输出现有的精简展示。
-文件编辑成功后，精简展示可以省略 diff 片段，同时保留操作结果、文件哈希、版本和警告。
-完整 diff 仍保留在原始结果和引用的结果文件中。
-`result_view: "data"` 将 `structured_content` 输出为 JSON；没有结构化数据时，
-输出未经模型投影裁剪的内容视图。嵌套结果和捕获的 `ToolCallError.result` 同样适用，
-不会改变原始结果、`model_text` 或检查点；图片与音频仍走原有附件路径。
-两种视图都受本次 `max_output_tokens` 预算约束；只调大预算不会展开精简摘要。
-数据视图仍保留工具自身的分页、传输上限和恢复元数据，不会自动读取后续页或日志。
-需要查看精简摘要会省略的证据时，可以这样调用：
+默认数据视图将 `structured_content` 输出为 JSON；没有结构化数据时输出原始内容。
+嵌套结果和捕获的 `ToolCallError.result` 同样适用。程序在选取数据后应用
+`max_output_tokens` 预算；工具自身的分页、传输上限和恢复元数据仍然有效，
+打印不会自动读取后续页或日志。原有调用方仍可显式选择 `result_view: "compact"`
+获取精简展示。两种视图都不改变原始数据和检查点。例如：
 
 ```javascript
-// @run_code: {"result_view":"data","max_output_tokens":14000}
+// @run_code: {"max_output_tokens":14000}
 text(await tools.bash({command:'cat src/example.cc'}));
 ```
 

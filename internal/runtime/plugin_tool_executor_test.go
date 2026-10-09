@@ -194,7 +194,7 @@ func TestCodeModeOnlyIncludesPluginToolsInNestedSurface(t *testing.T) {
 	name := host.ToolDefinitions()[0].Name
 	executor := newPluginToolExecutor(kit, host, "thread", root)
 	for _, def := range executor.Definitions() {
-		if def.Name == name || def.Name == "read_file" {
+		if def.Name == name {
 			t.Fatalf("leaf tool exposed at top level: %s", def.Name)
 		}
 	}

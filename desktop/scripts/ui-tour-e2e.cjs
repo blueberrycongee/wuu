@@ -92,7 +92,7 @@ write(path.join(site, 'index.html'), '<!doctype html>\n<title>Landing</title>\n<
 
 // ---- scripted provider -------------------------------------------------------
 const longText = Array.from({ length: 14 }, (_, i) => `### 第 ${i + 1} 部分\n\n阅读体验来自稳定的节奏。文字大小可以按个人习惯调整，而段落、标题和列表之间的关系应该始终清楚。第 ${i + 1} 段还包含 \`inline-code\` 和一个 [链接](https://example.com)。\n\n- 要点一：保持对齐\n- 要点二：保持留白\n`).join('\n');
-const answer = `已经把设置页的间距整理了一遍，下面是这次改动的要点。
+const answer = `已经把设置页的间距整理了一遍，下面是这次改动的要点。改动集中在 [src/components/Sidebar.tsx](src/components/Sidebar.tsx)，规则参考了 [设计系统说明](https://example.com/design-system)。
 
 ## 改动概览
 

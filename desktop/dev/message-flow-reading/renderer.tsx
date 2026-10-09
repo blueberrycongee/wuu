@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { ImagePreviewProvider } from "../../src/renderer/ImagePreview";
 import { applyMessageFlowFontSize } from "../../src/renderer/MessageFlowFontSizeSection";
 import { TurnView } from "../../src/renderer/TurnView";
+import { CONTINUE_TURN_EVENT, type ContinueTurnDetail } from "../../src/renderer/TurnNotice";
 import type { Turn } from "../../src/shared/protocol";
 import { ThreadItemView } from "../../src/renderer/ThreadItemView";
 import { WuuUIRoot } from "../../src/renderer/ui/layers/UILayerHost";
@@ -125,6 +126,69 @@ const mediaTurns: Turn[] = [{
   ],
 }];
 
+// One first-query turn per failure the reader meets most. The live replay
+// starts the latest case in progress so its arrival can be inspected.
+const failureRequest = { type: "user_message" as const, status: "completed" as const, text: "帮我总结一下这个仓库最近一周的改动。" };
+const failureCases: Record<string, Turn> = {
+  rateLimit: { id: "failure-rate", status: "failed", items_view: "full", items: [{ ...failureRequest, id: "failure-rate-q" }],
+    error: { message: "HTTP 429: rate_limit_error: Number of request tokens has exceeded your per-minute rate limit (org_123, model gpt-x)", category: "provider", status_code: 429,
+      recovery: { attempt_count: 4, retry_count: 3, max_attempts: 6, submission_count: 4, stop_reason: "non_retryable", failure_category: "rate_limit" } } },
+  offline: { id: "failure-offline", status: "failed", items_view: "full", items: [{ ...failureRequest, id: "failure-offline-q" }],
+    error: { message: "stream request failed: dial tcp: lookup api.example.com: no such host", category: "network" } },
+  dropped: { id: "failure-dropped", status: "failed", items_view: "full", duration_ms: 48000, started_at: "2026-09-17T06:00:00Z", completed_at: "2026-09-17T06:00:48Z", items: [
+    { ...failureRequest, id: "failure-dropped-q" },
+    { id: "failure-dropped-a", type: "agent_message", status: "completed", terminal: false, text: "最近一周主要有三类改动。\n\n**桌面端消息流**：用户消息的悬停动作移到气泡下方，失败卡片改为原地展开，长回复的段落间距统一到阅读节奏。\n\n**自动化页面**：列表与详情重新分栏，运行记录按日期分组，并补上了进入和切换时的动效。\n\n**工作区标签**：展开的工作区标签现在与对话共享，新建标签会" },
+  ], error: { message: "stream error: unexpected EOF before response.completed", category: "network", recovery: { attempt_count: 1, retry_count: 0, max_attempts: 6, submission_count: 1, stop_reason: "replay_unsafe", failure_category: "incomplete_stream" } } },
+  auth: { id: "failure-auth", status: "failed", items_view: "full", items: [{ ...failureRequest, id: "failure-auth-q" }],
+    error: { message: "stream request failed: HTTP 401: 401 Unauthorized: {\"error\":{\"message\":\"Incorrect API key provided.\"}}", category: "auth", status_code: 401,
+      recovery: { attempt_count: 1, retry_count: 0, max_attempts: 6, submission_count: 1, stop_reason: "non_retryable", failure_category: "authentication" } } },
+  unknown: { id: "failure-unknown", status: "failed", items_view: "full", items: [{ ...failureRequest, id: "failure-unknown-q" }],
+    error: { message: "HTTP 400: invalid_request_error: messages.1.content.0.tool_use_id: unexpected tool_use_id found in tool_result blocks: toolu_01ABC", category: "invalid_request", status_code: 400, code: "invalid_request_error" } },
+  context: { id: "failure-context", status: "failed", items_view: "full", items: [{ ...failureRequest, id: "failure-context-q" }],
+    error: { message: "HTTP 400: prompt is too long: 214312 tokens > 200000 maximum", category: "provider", status_code: 400,
+      recovery: { attempt_count: 1, retry_count: 0, max_attempts: 6, submission_count: 1, stop_reason: "non_retryable", failure_category: "context_overflow" } } },
+  retrying: { id: "failure-retrying", status: "in_progress", items_view: "full", items: [
+    { ...failureRequest, id: "failure-retrying-q" },
+    { id: "failure-retrying-r", type: "stream_reconnect", status: "in_progress", reason: "overloaded", retry_count: 2, retry_at_ms: Date.now() + 600_000, text: "Upstream overloaded" },
+  ] },
+};
+
+function liveFailureTurn(stage: number): Turn {
+  const base = failureCases.rateLimit;
+  if (stage === 0) return { ...base, status: "in_progress", error: undefined };
+  if (stage === 1) return { ...base, status: "in_progress", error: undefined, items: [...base.items,
+    { id: "failure-live-r", type: "stream_reconnect", status: "in_progress", reason: "rate_limit", retry_count: 1, retry_at_ms: Date.now() + 1500, text: "Too many requests" }] };
+  return { ...base, status: "failed", items: [...base.items,
+    { id: "failure-live-r", type: "stream_reconnect", status: "failed", reason: "rate_limit", retry_count: 3, text: "Too many requests" }] };
+}
+
+function FailureSurface(): JSX.Element {
+  const [stage, setStage] = useState<number | undefined>(undefined);
+  useEffect(() => {
+    if (stage === undefined || stage >= 2) return;
+    const timer = window.setTimeout(() => setStage(stage + 1), stage === 0 ? 900 : 1700);
+    return () => window.clearTimeout(timer);
+  }, [stage]);
+  const retry = () => new Promise<void>(resolve => window.setTimeout(resolve, 600));
+  useEffect(() => {
+    const resume = (event: Event): void => {
+      event.preventDefault();
+      window.setTimeout(() => (event as CustomEvent<ContinueTurnDetail>).detail.done(true), 600);
+    };
+    window.addEventListener(CONTINUE_TURN_EVENT, resume);
+    return () => window.removeEventListener(CONTINUE_TURN_EVENT, resume);
+  }, []);
+  return <WuuUIRoot>
+    <button type="button" className="fixture-replay" onClick={() => setStage(0)}>回放：发送 → 重试 → 失败</button>
+    {stage !== undefined ? <div className="fixture-failure-case" data-case="live"><TurnView turn={liveFailureTurn(stage)} isLatestTurn onStreamFrame={() => {}}
+      streamStatus={stage === 0 ? { text: "正在思考", liveProgress: true } : undefined}
+      onEditMessage={() => {}} onSubmitEditMessage={retry} /></div> : null}
+    {Object.entries(failureCases).map(([name, turn]) => <div key={name} className="fixture-failure-case" data-case={name}>
+      <TurnView turn={turn} threadID="fixture" isLatestTurn onStreamFrame={() => {}} onEditMessage={() => {}} onSubmitEditMessage={retry} />
+    </div>)}
+  </WuuUIRoot>;
+}
+
 function Fixture(): JSX.Element {
   const params = new URLSearchParams(location.search);
   const [size, setSize] = useState<number>(Number(params.get("size")) || MESSAGE_FLOW_FONT_SIZE_RANGE.default);
@@ -158,13 +222,13 @@ function Fixture(): JSX.Element {
       <strong>Wuu · 消息流排版验收</strong>
       <label>字号<select aria-label="字号" value={size} onChange={event => setSize(Number(event.target.value))}>{[MESSAGE_FLOW_FONT_SIZE_RANGE.min, 14, 14.5, 16, 18, MESSAGE_FLOW_FONT_SIZE_RANGE.max].map(value => <option key={value}>{value}</option>)}</select></label>
       <label>主题<select aria-label="主题" value={theme} onChange={event => setTheme(event.target.value)}><option value="light">浅色</option><option value="dark">深色</option></select></label>
-      <label>渲染方式<select aria-label="渲染方式" value={surface} onChange={event => setSurface(event.target.value)}><option value="conversation">完整对话</option><option value="images">消息图片</option><option value="lifecycle">回复完成与动作占位</option><option value="stream">流式分块</option><option value="rich">普通 Markdown</option><option value="chat">聊天气泡</option><option value="user">用户消息</option><option value="edit">编辑用户消息</option><option value="workspace">文件预览</option></select></label>
+      <label>渲染方式<select aria-label="渲染方式" value={surface} onChange={event => setSurface(event.target.value)}><option value="conversation">完整对话</option><option value="images">消息图片</option><option value="lifecycle">回复完成与动作占位</option><option value="stream">流式分块</option><option value="rich">普通 Markdown</option><option value="chat">聊天气泡</option><option value="user">用户消息</option><option value="edit">编辑用户消息</option><option value="workspace">文件预览</option><option value="failures">失败与中断</option></select></label>
       <label><input aria-label="流式状态" type="checkbox" checked={live} onChange={event => setLive(event.target.checked)} />显示流式光标</label>
       <button type="button" disabled={playing || surface !== "stream"} onClick={() => { setRun(value => value + 1); setPlaying(true); }}>逐段播放</button>
     </header>
     <main className="conversation-pane fixture-pane">
-      <div className={`fixture-column${(surface === "conversation" || surface === "images") ? " fixture-production-turns" : ""}`}>
-        {surface === "conversation" || surface === "images" ? <WuuUIRoot>{turns.map((turn, index) => <TurnView key={turn.id} turn={turn} onStreamFrame={() => {}} isLatestTurn={index === turns.length - 1} latestAgentMessageID={surface === "images" ? "media-answer" : "sample-short"} />)}</WuuUIRoot> : <>
+      <div className={`fixture-column${(surface === "conversation" || surface === "images" || surface === "failures") ? " fixture-production-turns" : ""}`}>
+        {surface === "failures" ? <FailureSurface /> : surface === "conversation" || surface === "images" ? <WuuUIRoot>{turns.map((turn, index) => <TurnView key={turn.id} turn={turn} onStreamFrame={() => {}} isLatestTurn={index === turns.length - 1} latestAgentMessageID={surface === "images" ? "media-answer" : "sample-short"} />)}</WuuUIRoot> : <>
         <section className="turn">
           <div className="message user-message">请用一组包含段落、分点和嵌套列表的内容，检查消息流的阅读节奏。</div>
           <div className="fixture-process turn-process-entry">已完成 3 项操作 · 排版验收示例</div>

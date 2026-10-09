@@ -63,6 +63,25 @@ describe("file selection surface", () => {
     expect(document.activeElement).toBe(comment.querySelector("textarea"));
   });
 
+  it.each(["transitionend", "transitioncancel"])("realigns the selection after its reading sheet moves (%s)", (eventType) => {
+    let sourceLeft = 370;
+    vi.mocked(HTMLElement.prototype.getBoundingClientRect).mockImplementation(function (this: HTMLElement) {
+      return this.classList.contains("file-selection-action-menu")
+        ? new DOMRect(0, 0, 200, 40) : new DOMRect(0, 0, 700, 600);
+    });
+    Object.defineProperty(Range.prototype, "getBoundingClientRect", { configurable: true, value: () => new DOMRect(sourceLeft, 240, 100, 24) });
+    render(); select();
+    const toolbar = document.querySelector<HTMLElement>(".file-selection-action-menu")!;
+    expect(Number.parseFloat(toolbar.style.left)).toBe(370);
+    sourceLeft = 342;
+    const event = new Event(eventType, { bubbles: true });
+    Object.defineProperty(event, "propertyName", { value: "transform" });
+    act(() => container.dispatchEvent(event));
+    expect(Number.parseFloat(toolbar.style.left)).toBe(342);
+    click("Add to conversation");
+    expect(state.actions!.addQuote).toHaveBeenCalledWith(source);
+  });
+
   it("does not expose tools or callbacks without context, or for an inactive file", () => {
     state.actions = null; render(); select();
     expect(document.querySelector('[role="toolbar"]')).toBeNull();

@@ -1,3 +1,4 @@
+import { useCallback, useEffect, useState } from "react";
 import type { RuntimeContext } from "../shared/protocol";
 import type { ArtifactPreviewRequest } from "./ArtifactPreviewContext";
 import type { WorkspacePanelView } from "./WorkspacePanels";
@@ -16,9 +17,11 @@ import {
 
 export function useWorkspaceToolState({
   rightPanelOpen,
+  rightPanelGlobalized,
   setRightPanelOpenWithMotion
 }: {
   rightPanelOpen: boolean;
+  rightPanelGlobalized: boolean;
   setRightPanelOpenWithMotion: (open: boolean) => void;
 }): {
   // Unified right-panel tab strip: the four singleton tools plus zero or
@@ -26,9 +29,12 @@ export function useWorkspaceToolState({
   workspaceViewTabs: WorkspaceViewTab[];
   workspaceActiveViewTabID: string | undefined;
   workspaceActiveFileTabID: string | undefined;
+  workspaceConversationActive: boolean;
+  focusWorkspaceConversation: () => void;
   ensureWorkspaceToolTab: (view: WorkspacePanelView) => void;
   activateWorkspaceTool: (view: WorkspacePanelView) => void;
   openWorkspaceTool: (view: WorkspacePanelView) => void;
+  openWorkspaceSideThread: () => void;
   openWorkspacePluginTool: (entry: RegisteredPluginViewEntry) => void;
   openWorkspaceDiffTab: (input: { threadID: string; path: string; selection: TurnFileDiffSelection }) => void;
   openWorkspaceFileTab: (input: { context: RuntimeContext; path: string }) => void;
@@ -43,17 +49,31 @@ export function useWorkspaceToolState({
   reorderWorkspaceViewTabs: (activeID: string, overID: string) => void;
   toggleRightPanel: () => void;
 } {
+  const [conversationSelected, setConversationSelected] = useState(false);
   const {
     tabs: workspaceViewTabs,
     activeTabID: workspaceActiveViewTabID,
     activeFileTabID: workspaceActiveFileTabID,
-    openTab,
-    focusTab,
+    openTab: openWorkspaceTab,
+    focusTab: focusWorkspaceTab,
     closeTab,
     closeTabsWhere,
     reorderTabs,
     syncProjectTab,
-  } = useWorkspaceViewTabs();
+  } = useWorkspaceViewTabs(rightPanelOpen && !conversationSelected);
+  useEffect(() => {
+    if (!rightPanelGlobalized) setConversationSelected(false);
+  }, [rightPanelGlobalized]);
+  const focusWorkspaceConversation = useCallback(() => setConversationSelected(true), []);
+  const focusTab = useCallback((id: string | undefined) => {
+    setConversationSelected(false);
+    focusWorkspaceTab(id);
+  }, [focusWorkspaceTab]);
+
+  function openTab(...args: Parameters<typeof openWorkspaceTab>): void {
+    if (args[1]?.activate !== false) setConversationSelected(false);
+    openWorkspaceTab(...args);
+  }
 
   function ensureWorkspaceToolTab(view: WorkspacePanelView): void {
     if (!workspaceViewTabs.some((tab) => tab.id === view)) {
@@ -67,6 +87,11 @@ export function useWorkspaceToolState({
 
   function openWorkspaceTool(view: WorkspacePanelView): void {
     openTab(workspaceToolViewTab(view), { replaceActiveNewTab: true });
+    setRightPanelOpenWithMotion(true);
+  }
+
+  function openWorkspaceSideThread(): void {
+    openTab({ kind: "side-thread", id: "side-thread" }, { replaceActiveNewTab: true });
     setRightPanelOpenWithMotion(true);
   }
 
@@ -115,16 +140,17 @@ export function useWorkspaceToolState({
     setRightPanelOpenWithMotion(true);
   }
 
-  // When closing a tab drains the panel to empty, hide the right panel too.
-  // Otherwise the panel would fall back to the tool picker whenever the user
-  // dismisses their last diff / file / tool tab, which conflicts with the
-  // intent of "I'm just peeking — close it when I'm done".
+  // The final tool returns to the conversation: beside a docked panel, or
+  // through the pinned conversation tab while the workspace is expanded.
   function closeWorkspaceViewTab(id: string): void {
+    const tab = workspaceViewTabs.find((candidate) => candidate.id === id);
+    if (rightPanelOpen && workspaceActiveViewTabID === id && tab?.kind === "artifact") tab.motion?.close();
     const willEmpty =
       workspaceViewTabs.length === 1 && workspaceViewTabs[0]?.id === id;
     closeTab(id);
     if (willEmpty) {
-      setRightPanelOpenWithMotion(false);
+      if (rightPanelGlobalized) focusWorkspaceConversation();
+      else setRightPanelOpenWithMotion(false);
     }
   }
 
@@ -135,7 +161,8 @@ export function useWorkspaceToolState({
       workspaceViewTabs.length > 0 && workspaceViewTabs.every(predicate);
     closeTabsWhere(predicate);
     if (willEmpty) {
-      setRightPanelOpenWithMotion(false);
+      if (rightPanelGlobalized) focusWorkspaceConversation();
+      else setRightPanelOpenWithMotion(false);
     }
   }
 
@@ -143,9 +170,12 @@ export function useWorkspaceToolState({
     workspaceViewTabs,
     workspaceActiveViewTabID,
     workspaceActiveFileTabID,
+    workspaceConversationActive: rightPanelGlobalized && conversationSelected,
+    focusWorkspaceConversation,
     ensureWorkspaceToolTab,
     activateWorkspaceTool,
     openWorkspaceTool,
+    openWorkspaceSideThread,
     openWorkspacePluginTool,
     openWorkspaceDiffTab,
     openWorkspaceFileTab,

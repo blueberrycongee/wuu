@@ -47,7 +47,7 @@ import {
   SIDEBAR_MIN_WIDTH,
 } from "./AppLayoutState";
 import { EnvironmentSideStack } from "./EnvironmentSideStack";
-import { CompactConversationActions } from "./CompactConversationActions"
+import { ENABLE_ENVIRONMENT_PANEL } from "./FeatureFlags";
 import {
   Composer,
 } from "./ComposerView";
@@ -523,27 +523,25 @@ export function ConversationTitleContent({
 
 export type ConversationTitleActionsProps = {
   state: AppState;
-  compactNavigation?: boolean;
   /** A primary plugin page covers the conversation and its environment panel. */
   pluginPageVisible?: boolean;
-  onStartNewThread: () => void;
   environmentToggleRef: RefObject<HTMLButtonElement | null>;
   environmentPanelVisible: boolean;
   onToggleEnvironmentPanel: () => void;
   rightPanelOpen: boolean;
   onToggleRightPanel: () => void;
+  showRightPanelToggle?: boolean;
 };
 
 export function ConversationTitleActions({
   state,
-  compactNavigation,
   pluginPageVisible,
-  onStartNewThread,
   environmentToggleRef,
   environmentPanelVisible,
   onToggleEnvironmentPanel,
   rightPanelOpen,
   onToggleRightPanel,
+  showRightPanelToggle = true,
 }: ConversationTitleActionsProps): JSX.Element {
   const { t } = useI18n();
   const projectActions = useProjectActions();
@@ -564,15 +562,6 @@ export function ConversationTitleActions({
   </> : control ? <span className="session-control-label" title={control.state === "active" ? t("sessionControl.takeoverHint") : `${control.manager_name} · ${controlLabel}`}>
     {control.manager_name} · {controlLabel}
   </span> : null;
-  if (compactNavigation) {
-    return <div className="title-actions">{management}<CompactConversationActions
-      canStartNewThread={Boolean(state.activeContext)} onStartNewThread={onStartNewThread}
-      environmentAvailable={!pluginPageVisible}
-      environmentToggleRef={environmentToggleRef} environmentPanelVisible={environmentPanelVisible}
-      onToggleEnvironmentPanel={onToggleEnvironmentPanel} rightPanelOpen={rightPanelOpen}
-      onToggleRightPanel={onToggleRightPanel}
-    /></div>;
-  }
   const environmentLabel = environmentPanelVisible
     ? t("shell.hideEnvironmentInfo")
     : t("shell.showEnvironmentInfo");
@@ -580,7 +569,7 @@ export function ConversationTitleActions({
   return (
     <div className="title-actions">
       {management}
-      {pluginPageVisible ? null : (
+      {!ENABLE_ENVIRONMENT_PANEL || pluginPageVisible ? null : (
         <Tooltip content={environmentLabel} side="bottom">
           <button
             ref={environmentToggleRef}
@@ -594,7 +583,7 @@ export function ConversationTitleActions({
           </button>
         </Tooltip>
       )}
-      <Tooltip content={rightPanelLabel} side="bottom">
+      {showRightPanelToggle ? <Tooltip content={rightPanelLabel} side="bottom">
         <button
           className="icon-button side-panel-toggle-button"
           type="button"
@@ -604,7 +593,7 @@ export function ConversationTitleActions({
         >
           <SidePanelToggleIcon side="right" open={rightPanelOpen} />
         </button>
-      </Tooltip>
+      </Tooltip> : null}
     </div>
   );
 }

@@ -2,6 +2,16 @@
 
 Use the workspace panels to inspect what actually happened during a task. A conversation records the agent's activity; the files and Git diff show what is on disk now.
 
+The left sidebar keeps the visibility and width you choose when you resize the window or zoom the interface. Use its toggle or drag its divider to collapse it.
+
+Expanding the right panel adds the current conversation as the first tab beside the tool tabs. Select it to return to the conversation without leaving the expanded layout; select a tool tab to switch back. The conversation draft is preserved. Exiting the expanded layout restores the conversation and tools side by side.
+
+## Side chat
+
+Use `/side` or **Ask in side chat** to open the side chat tab in the right sidebar. It shares the sidebar width and expanded layout with files and other tools. File selections keep their quote card, and the original file stays available in its tab.
+
+Side chat follows the selected main conversation; each conversation keeps its own side history and draft. Switching tool tabs or collapsing the sidebar preserves the draft and lets a running answer continue. Closing the side chat tab preserves its history; use the chat's stop or reset action to interrupt or clear it. In the expanded layout, the side chat tab has its own input, while the main conversation remains available through its first tab.
+
 ## App zoom
 
 Press **Command + + / −** on macOS (**Ctrl + + / −** on other platforms) to
@@ -14,6 +24,10 @@ These shortcuts apply to Wuu windows, not embedded browser pages.
 ## Files
 
 Open **Files** or enter `/files` to browse the workspace. Select a file to view supported text, code, images, or documents. This view follows the current file, not its content at the time of an earlier message.
+
+In a single conversation, opening a workspace file keeps the conversation visible and places its input at the bottom of the right preview. Requests from this input include the selected file as context. The draft belongs to the conversation: closing the preview returns it to the conversation input. Use the preview’s conversation menu to return to the full conversation, or minimize and restore the floating input while reading. The optional full-panel button gives the document more space.
+
+For a PDF delivered in the current conversation, the preview input sends that exact snapshot as a PDF attachment. Workspace-file previews instead identify the selected file by its workspace path. Switching to another tool removes the preview’s implicit file context from subsequent requests.
 
 ### Agent file search
 

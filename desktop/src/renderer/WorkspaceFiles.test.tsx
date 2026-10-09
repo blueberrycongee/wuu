@@ -227,6 +227,47 @@ async function clickMenuItem(text: string): Promise<void> {
 }
 
 describe("WorkspaceFileTree", () => {
+  it.each(["", "src"])("recovers a directory failure at %j by retrying the current root", async (failedPath) => {
+    let shouldFail = true;
+    listWorkspaceDirectory.mockImplementation(async (path = "", cwd = "/repo") => {
+      if (path === failedPath && shouldFail) throw new Error("Directory unavailable");
+      return { ...directoryResults[path], root: cwd };
+    });
+    await render(<WorkspaceFileTree activeContext={activeContext} open onOpenFile={() => {}} />);
+    await settleDirectoryLoads();
+    if (failedPath) {
+      await act(async () => rowButtonByTitle("src/").click());
+      await settleDirectoryLoads();
+    }
+    expect(container.textContent).toContain("Directory unavailable");
+    const retry = container.querySelector<HTMLButtonElement>('.workspace-panel-empty button');
+    expect(retry).not.toBeNull();
+    shouldFail = false;
+    await act(async () => retry!.click());
+    await settleDirectoryLoads();
+    expect(listWorkspaceDirectory).toHaveBeenLastCalledWith("", "/repo");
+    expect(rowButtonByTitle("README.md")).toBeTruthy();
+    expect(container.textContent).not.toContain("Directory unavailable");
+  });
+
+  it("ignores a retried root response after navigating to another root", async () => {
+    listWorkspaceDirectory.mockRejectedValueOnce(new Error("Root unavailable"));
+    await render(<WorkspaceFileTree activeContext={activeContext} open onOpenFile={() => {}} />);
+    await settleDirectoryLoads();
+    let completeRetry!: (result: WorkspaceDirectoryListResult) => void;
+    listWorkspaceDirectory.mockImplementationOnce(() => new Promise(resolve => { completeRetry = resolve; }));
+    const retry = container.querySelector<HTMLButtonElement>('.workspace-panel-empty button');
+    expect(retry).not.toBeNull();
+    await act(async () => retry!.click());
+    await render(<WorkspaceFileTree activeContext={{ kind: "no_project", cwd: "/other" }} open onOpenFile={() => {}} />);
+    await settleDirectoryLoads();
+    await act(async () => completeRetry({ root: "/repo", path: "", entries: [{ kind: "file", name: "stale.ts", path: "stale.ts" }], truncated: false }));
+    await settleDirectoryLoads();
+    expect(listWorkspaceDirectory).toHaveBeenLastCalledWith("", "/other");
+    expect(rowButtonByTitle("README.md")).toBeTruthy();
+    expect(treeShadowRoot().querySelector('[data-item-path="stale.ts"]')).toBeNull();
+  });
+
   it.skipIf(process.platform === "win32").each([
     [" note.txt", "note.txt"],
     ["note.txt ", "note.txt"],
@@ -276,6 +317,35 @@ describe("WorkspaceFileTree", () => {
     await settleDirectoryLoads();
     expect(readWorkspaceFile).toHaveBeenCalledWith("src/ note.txt", cwd);
     expect(container.textContent).toContain("button code");
+  });
+
+  it.each(["resolve", "reject"])("ignores a stale child directory %s after switching roots", async (outcome) => {
+    let completeOld: (result: WorkspaceDirectoryListResult) => void = () => {};
+    let rejectOld: (error: Error) => void = () => {};
+    listWorkspaceDirectory.mockImplementation((path = "", cwd = "/repo") => {
+      if (path === "src" && cwd === "/repo") {
+        return new Promise((resolve, reject) => { completeOld = resolve; rejectOld = reject; });
+      }
+      return Promise.resolve({ ...directoryResults[path], root: cwd });
+    });
+    await render(<WorkspaceFileTree activeContext={activeContext} open onOpenFile={() => {}} />);
+    await settleDirectoryLoads();
+    await act(async () => rowButtonByTitle("src/").click());
+    const nextContext: RuntimeContext = { kind: "no_project", cwd: "/other" };
+    await render(<WorkspaceFileTree activeContext={nextContext} open onOpenFile={() => {}} />);
+    await settleDirectoryLoads();
+    await act(async () => rowButtonByTitle("src/").click());
+    await settleDirectoryLoads();
+    expect(listWorkspaceDirectory).toHaveBeenCalledWith("src", "/other");
+    await act(async () => {
+      if (outcome === "reject") rejectOld(new Error("Old root disappeared"));
+      else completeOld({ root: "/repo", path: "src", entries: [{ kind: "file", name: "stale.ts", path: "src/stale.ts" }], truncated: false });
+      await Promise.resolve();
+    });
+    await settleDirectoryLoads();
+    expect(treeShadowRoot().querySelector('[data-item-path="src/stale.ts"]')).toBeNull();
+    expect(rowButtonByTitle("src/index.ts")).toBeTruthy();
+    expect(container.textContent).not.toContain("Old root disappeared");
   });
 
   it("expands and scrolls to the selected workspace file path", async () => {
@@ -454,6 +524,43 @@ describe("WorkspaceFileTree", () => {
 
     expect(readWorkspaceFile).toHaveBeenCalledWith("src/components/Button.tsx", "/repo");
     expect(container.textContent).toContain("button code");
+  });
+
+  it.each([false, true])("retries a failed file read in place after a previous successful read: %s", async (previouslyLoaded) => {
+    const preview = (refreshKey: string, active = true) => (
+      <WorkspaceFilePreview
+        activeContext={activeContext}
+        selectedFilePath="/repo/src/components/Button.tsx"
+        refreshKey={refreshKey}
+        active={active}
+      />
+    );
+    if (previouslyLoaded) {
+      await render(preview("initial"));
+      await settleDirectoryLoads();
+    }
+    readWorkspaceFile.mockRejectedValueOnce(new Error("File temporarily unavailable"));
+    await render(preview("failed"));
+    await settleDirectoryLoads();
+    expect(container.textContent).toContain("File temporarily unavailable");
+
+    const readsBeforeRetry = readWorkspaceFile.mock.calls.length;
+    await render(preview("failed", false));
+    await render(preview("failed"));
+    expect(readWorkspaceFile).toHaveBeenCalledTimes(readsBeforeRetry);
+
+    readWorkspaceFile.mockResolvedValueOnce(workspaceFile({
+      path: "src/components/Button.tsx", text: "Recovered file content",
+    }));
+    const retry = container.querySelector<HTMLButtonElement>(".workspace-panel-empty button");
+    expect(retry).not.toBeNull();
+    await act(async () => retry!.click());
+    await settleDirectoryLoads();
+
+    expect(readWorkspaceFile).toHaveBeenCalledTimes(readsBeforeRetry + 1);
+    expect(readWorkspaceFile).toHaveBeenLastCalledWith("src/components/Button.tsx", "/repo");
+    expect(container.textContent).toContain("Recovered file content");
+    expect(container.textContent).not.toContain("File temporarily unavailable");
   });
 
   it("exports the complete selected file and reports native save failures", async () => {

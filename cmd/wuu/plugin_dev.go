@@ -12,6 +12,7 @@ import (
 	"io/fs"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
 	"time"
@@ -219,7 +220,7 @@ func runPluginBuild(args []string) error {
 		return pluginCLIError(errors.New("plugin build requires a plugin directory path"))
 	}
 	source := fs.Arg(0)
-	if err := executePluginBuild(source, strings.TrimSpace(*packageManager)); err != nil {
+	if err := executePluginBuild(context.Background(), source, strings.TrimSpace(*packageManager)); err != nil {
 		return pluginCLIError(fmt.Errorf("build failed: %w", err))
 	}
 	prepared, cleanup, err := preparePluginSource(source)
@@ -240,7 +241,7 @@ type pluginProjectPackage struct {
 	PackageManager string            `json:"packageManager"`
 }
 
-func executePluginBuild(source, packageManagerOverride string) error {
+func executePluginBuild(ctx context.Context, source, packageManagerOverride string) error {
 	abs, err := filepath.Abs(source)
 	if err != nil {
 		return fmt.Errorf("resolve project path: %w", err)
@@ -260,7 +261,7 @@ func executePluginBuild(source, packageManagerOverride string) error {
 	if err != nil {
 		return err
 	}
-	cmd := exec.Command(manager, "run", "build")
+	cmd := exec.CommandContext(ctx, manager, "run", "build")
 	cmd.Dir = abs
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -484,21 +485,27 @@ func runPluginPack(args []string) error {
 // DevAuthorization records a one-time dev directory grant.
 type DevAuthorization = pluginpkg.DevAuthorization
 
-var errDevGenerationBusy = errors.New("plugin executions currently own the active generation")
+var errDevGenerationBusy = errors.New("plugin catalog is being read or published by another operation")
 
 func runPluginDevMode(args []string) error {
 	fs := flag.NewFlagSet("plugin dev", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	watch := fs.Bool("watch", true, "Watch for file changes and auto-reload")
-	pollInterval := fs.Duration("poll", 2*time.Second, "Poll interval for file watching")
+	pollInterval := fs.Duration("poll", 2*time.Second, "Source reconciliation interval (must be positive)")
 	packageManager := fs.String("package-manager", "", "Package manager executable")
 	if err := fs.Parse(args); err != nil {
 		return pluginCLIError(err)
 	}
-	if fs.NArg() == 0 {
-		return pluginCLIError(errors.New("plugin dev requires a plugin directory path"))
+	if fs.NArg() != 1 {
+		return pluginCLIError(errors.New("plugin dev requires one TypeScript file or plugin directory path"))
 	}
-	dir := fs.Arg(0)
+	if *pollInterval <= 0 {
+		return pluginCLIError(errors.New("poll interval must be positive"))
+	}
+	dir, err := filepath.Abs(fs.Arg(0))
+	if err != nil {
+		return pluginCLIError(fmt.Errorf("resolve source: %w", err))
+	}
 
 	wuuHome, err := statepath.Home("")
 	if err != nil {
@@ -510,74 +517,62 @@ func runPluginDevMode(args []string) error {
 		return pluginCLIError(fmt.Errorf("create dev dir: %w", err))
 	}
 
-	abs, err := filepath.Abs(dir)
-	if err != nil {
-		return pluginCLIError(fmt.Errorf("resolve path: %w", err))
-	}
-
 	pluginID, err := readPluginIdentity(dir)
 	if err != nil {
 		return pluginCLIError(fmt.Errorf("dev: %w", err))
 	}
-	if err := authorizeDevDirectory(devDir, pluginID, abs); err != nil {
+	if err := authorizeDevDirectory(devDir, pluginID, dir); err != nil {
 		return pluginCLIError(fmt.Errorf("dev authorization: %w", err))
 	}
 
 	fmt.Printf("Dev mode authorized for %s\n", pluginID)
-	fmt.Printf("  directory:  %s\n", dir)
+	fmt.Printf("  source:     %s\n", dir)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+	initialSnapshot := snapshotPluginSource(dir)
 	initialRefreshPending := false
-	if diagnostic, err := refreshDevGeneration(wuuHome, dir, strings.TrimSpace(*packageManager)); err != nil {
+	if diagnostic, err := refreshDevGeneration(ctx, wuuHome, dir, strings.TrimSpace(*packageManager)); err != nil {
+		diagnostic.Message = err.Error()
 		printDevDiagnostic(diagnostic)
-		if !*watch || !errors.Is(err, errDevGenerationBusy) {
+		if !*watch {
 			return pluginCLIError(err)
 		}
-		initialRefreshPending = true
+		initialRefreshPending = errors.Is(err, errDevGenerationBusy)
 	} else {
 		printDevDiagnostic(diagnostic)
 	}
 	if *watch {
-		fmt.Printf("  watching:   yes (fsnotify; poll fallback interval %s)\n", pollInterval.String())
+		fmt.Printf("  watching:   yes (fsnotify; source reconciliation every %s)\n", pollInterval.String())
 		fmt.Printf("  Save source files to refresh the isolated development generation.\n")
 	}
 
 	if *watch {
-		watchDevDirFS(wuuHome, dir, strings.TrimSpace(*packageManager), *pollInterval, initialRefreshPending)
+		watchDevDirFS(ctx, wuuHome, dir, strings.TrimSpace(*packageManager), *pollInterval, initialSnapshot, initialRefreshPending)
 	}
 
 	return nil
 }
 
-func watchDevDir(wuuHome, dir, packageManager string, interval time.Duration, initialPending bool) {
-	lastSnapshot := snapshotPluginSource(dir)
-	pending := initialPending
-
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-
-	fmt.Printf("Watching for changes... (Ctrl+C to stop)\n")
-	for range ticker.C {
-		currentSnapshot := snapshotPluginSource(dir)
-		changed := changedPluginSourcePaths(lastSnapshot, currentSnapshot)
-		if len(changed) > 0 {
-			pending = true
-		}
-		if !pending {
-			continue
-		}
-		diagnostic, err := refreshDevGeneration(wuuHome, dir, packageManager)
-		if errors.Is(err, errDevGenerationBusy) {
-			continue
-		}
-		printDevDiagnostic(diagnostic)
-		if err == nil && len(changed) > 0 {
-			printDevReloadHint(dir, changed)
-		}
-		pending = false
-		lastSnapshot = currentSnapshot
-	}
-}
-
 func readPluginIdentity(dir string) (string, error) {
+	info, err := os.Stat(dir)
+	if err != nil {
+		return "", err
+	}
+	if !info.IsDir() {
+		if link, err := os.Lstat(dir); err != nil {
+			return "", err
+		} else if link.Mode()&os.ModeSymlink != 0 {
+			return "", errors.New("single-file development source must not be a symlink; use its target path")
+		}
+		if !info.Mode().IsRegular() || strings.ToLower(filepath.Ext(dir)) != ".ts" {
+			return "", errors.New("development source must be a .ts file or plugin directory")
+		}
+		abs, err := filepath.Abs(dir)
+		if err != nil {
+			return "", err
+		}
+		return singleFilePluginID(abs), nil
+	}
 	var identity struct {
 		ID string `json:"id"`
 	}
@@ -595,10 +590,25 @@ func readPluginIdentity(dir string) (string, error) {
 }
 
 func authorizeDevDirectory(devDir, pluginID, directory string) error {
+	info, err := os.Stat(directory)
+	if err != nil {
+		return err
+	}
+	sourceKind := "file"
+	if info.IsDir() {
+		sourceKind = "directory"
+	}
 	authPath := filepath.Join(devDir, pluginID+".json")
 	if data, err := os.ReadFile(authPath); err == nil {
 		var existing DevAuthorization
 		if json.Unmarshal(data, &existing) == nil && existing.PluginID == pluginID && existing.Directory == directory {
+			existingKind := existing.SourceKind
+			if existingKind == "" {
+				existingKind = "directory"
+			}
+			if existingKind != sourceKind {
+				return fmt.Errorf("plugin %q is already authorized for a different source kind", pluginID)
+			}
 			return nil
 		}
 		return fmt.Errorf("plugin %q is already authorized for a different directory", pluginID)
@@ -609,7 +619,7 @@ func authorizeDevDirectory(devDir, pluginID, directory string) error {
 	if _, err := rand.Read(tokenBytes); err != nil {
 		return err
 	}
-	auth := DevAuthorization{PluginID: pluginID, Directory: directory, Token: hex.EncodeToString(tokenBytes), CreatedAt: time.Now().UTC()}
+	auth := DevAuthorization{PluginID: pluginID, Directory: directory, SourceKind: sourceKind, Token: hex.EncodeToString(tokenBytes), CreatedAt: time.Now().UTC()}
 	data, err := json.MarshalIndent(auth, "", "  ")
 	if err != nil {
 		return err
@@ -634,8 +644,8 @@ func authorizeDevDirectory(devDir, pluginID, directory string) error {
 	return os.Rename(temporaryPath, authPath)
 }
 
-func refreshDevGeneration(wuuHome, dir, packageManager string) (pluginDiagnostic, error) {
-	probe, acquired, err := session.TryAcquirePluginGenerationMutationLease(wuuHome)
+func refreshDevGeneration(ctx context.Context, wuuHome, dir, packageManager string) (pluginDiagnostic, error) {
+	probe, acquired, err := session.TryAcquirePluginCatalogMutationLease(wuuHome)
 	if err != nil {
 		return pluginDiagnostic{Level: "fail", Check: "dev.mutation", Message: err.Error()}, fmt.Errorf("dev generation mutation check failed; previous generation preserved: %w", err)
 	}
@@ -646,12 +656,46 @@ func refreshDevGeneration(wuuHome, dir, packageManager string) (pluginDiagnostic
 		return pluginDiagnostic{Level: "fail", Check: "dev.mutation", Message: err.Error()}, fmt.Errorf("release dev generation mutation check: %w", err)
 	}
 
-	if err := executePluginBuild(dir, packageManager); err != nil {
-		return pluginDiagnostic{Level: "fail", Check: "dev.build", Message: err.Error()}, fmt.Errorf("dev build failed; previous generation preserved: %w", err)
-	}
-	prepared, cleanup, err := preparePluginSource(dir)
+	info, err := os.Stat(dir)
 	if err != nil {
-		return pluginDiagnostic{Level: "fail", Check: "dev.prepare", Message: err.Error()}, fmt.Errorf("dev package preparation failed; previous generation preserved: %w", err)
+		return pluginDiagnostic{Level: "fail", Check: "dev.prepare", Message: err.Error()}, fmt.Errorf("dev source unavailable; previous generation preserved: %w", err)
+	}
+	sourceID, err := readPluginIdentity(dir)
+	if err != nil {
+		return pluginDiagnostic{Level: "fail", Check: "dev.authorization", Message: err.Error()}, err
+	}
+	authorization, err := pluginpkg.ReadDevAuthorization(wuuHome, sourceID)
+	if err != nil {
+		return pluginDiagnostic{Level: "fail", Check: "dev.authorization", Message: err.Error()}, fmt.Errorf("dev authorization failed; previous generation preserved: %w", err)
+	}
+	expectedKind := authorization.SourceKind
+	if expectedKind == "" {
+		expectedKind = "directory"
+	}
+	actualKind := "file"
+	if info.IsDir() {
+		actualKind = "directory"
+	}
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return pluginDiagnostic{Level: "fail", Check: "dev.authorization", Message: err.Error()}, err
+	}
+	if authorization.Directory != abs || expectedKind != actualKind {
+		err := errors.New("development source path or source kind differs from its authorization; previous generation preserved")
+		return pluginDiagnostic{Level: "fail", Check: "dev.authorization", Message: err.Error()}, err
+	}
+	var prepared string
+	var cleanup func()
+	if info.IsDir() {
+		if err := executePluginBuild(ctx, dir, packageManager); err != nil {
+			return pluginDiagnostic{Level: "fail", Check: "dev.build", Message: err.Error()}, fmt.Errorf("dev build failed; previous generation preserved: %w", err)
+		}
+		prepared, cleanup, err = preparePluginSource(dir)
+	} else {
+		prepared, cleanup, err = prepareSingleFilePlugin(ctx, dir)
+	}
+	if err != nil {
+		return pluginDiagnostic{Level: "fail", Check: "dev.prepare", Message: err.Error()}, fmt.Errorf("dev source preparation failed; previous generation preserved: %w", err)
 	}
 	defer cleanup()
 	inspection, err := pluginpkg.InspectPackage(prepared)
@@ -665,11 +709,11 @@ func refreshDevGeneration(wuuHome, dir, packageManager string) (pluginDiagnostic
 	if err := pluginpkg.CheckMinimumWuuVersion(manifest.MinimumWuuVersion, version.Info().Version); err != nil {
 		return pluginDiagnostic{Level: "fail", Check: "dev.compat", Message: err.Error()}, fmt.Errorf("dev compatibility check failed; previous generation preserved: %w", err)
 	}
-	authorization, err := pluginpkg.ReadDevAuthorization(wuuHome, inspection.ID)
-	if err != nil {
-		return pluginDiagnostic{Level: "fail", Check: "dev.authorization", Message: err.Error()}, fmt.Errorf("dev authorization failed; previous generation preserved: %w", err)
+	if inspection.ID != authorization.PluginID {
+		err := errors.New("prepared plugin identity differs from the authorized source; previous generation preserved")
+		return pluginDiagnostic{Level: "fail", Check: "dev.authorization", Message: err.Error()}, err
 	}
-	lease, acquired, err := session.TryAcquirePluginGenerationMutationLease(wuuHome)
+	lease, acquired, err := session.TryAcquirePluginCatalogMutationLease(wuuHome)
 	if err != nil {
 		return pluginDiagnostic{Level: "fail", Check: "dev.mutation", Message: err.Error()}, fmt.Errorf("dev generation mutation failed; previous generation preserved: %w", err)
 	}
@@ -677,13 +721,16 @@ func refreshDevGeneration(wuuHome, dir, packageManager string) (pluginDiagnostic
 		return pluginDiagnostic{Level: "fail", Check: "dev.mutation", Message: errDevGenerationBusy.Error()}, fmt.Errorf("dev generation refresh deferred; previous generation preserved: %w", errDevGenerationBusy)
 	}
 	defer lease.Release()
-	epoch, err := lease.Advance()
-	if err != nil {
-		return pluginDiagnostic{Level: "fail", Check: "dev.mutation", Message: err.Error()}, fmt.Errorf("dev generation epoch advance failed; previous generation preserved: %w", err)
-	}
 	published, err := pluginpkg.PublishDevGeneration(wuuHome, dir, prepared, authorization)
 	if err != nil {
 		return pluginDiagnostic{Level: "fail", Check: "dev.refresh", Message: err.Error()}, fmt.Errorf("dev generation refresh failed; previous generation preserved: %w", err)
+	}
+	epoch, err := lease.Advance()
+	if err != nil {
+		return pluginDiagnostic{Level: "fail", Check: "dev.mutation"}, fmt.Errorf("dev package published but generation signal failed: %w", err)
+	}
+	if err := lease.Release(); err != nil {
+		return pluginDiagnostic{Level: "fail", Check: "dev.mutation"}, fmt.Errorf("dev package published but catalog lease release failed: %w", err)
 	}
 	return pluginDiagnostic{Level: "pass", Check: "dev.refresh", Message: fmt.Sprintf("published generation %s at epoch %d from %s", published.Fingerprint, epoch, published.Root)}, nil
 }

@@ -59,7 +59,7 @@ function PluginInspectorSection({
     >
       <h2>{contribution.title}</h2>
       <div className="plugin-inspector-section-content">
-        <InspectorSectionErrorBoundary contribution={contribution} host={host}>
+        <InspectorSectionErrorBoundary contribution={contribution} host={host} activation={host.getGenerationActivation(contribution.pluginId, contribution.generation)}>
           <Content
             snapshot={snapshot}
             host={controller.createInspectorHostAPI(
@@ -74,6 +74,7 @@ function PluginInspectorSection({
 }
 
 interface InspectorSectionErrorBoundaryProps {
+  activation: object | undefined;
   contribution: RegisteredInspectorSection;
   host: PluginHost;
   children: React.ReactNode;
@@ -101,7 +102,8 @@ class InspectorSectionErrorBoundary extends React.Component<
     const before = previous.contribution;
     const current = this.props.contribution;
     if (this.state.error !== undefined && (
-      before.pluginId !== current.pluginId
+      previous.activation !== this.props.activation
+      || before.pluginId !== current.pluginId
       || before.generation !== current.generation
       || before.id !== current.id
     )) {

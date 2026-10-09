@@ -15,6 +15,76 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   result recovery, shared-workspace write coordination, read-only delegation,
   coordinated Stop, and compact links to the live Sidekick conversation.
 
+- Run a default-exported TypeScript plugin directly with `wuu plugin dev`, using
+  the embedded SDK without a manifest or build, and keep watching through failed saves.
+
+- Add a compact conversation input inside the right file preview, keeping the
+  conversation visible and the selected file attached as request context. Preserve
+  the current draft when closing, minimizing, or restoring the preview input.
+  Keep short inputs compact and adapt to narrow panels, wrapped text, or attachments.
+
+- Add a small side-panel action to delivered images while keeping direct clicks
+  in the full image viewer. Connect artifact previews to the right panel with
+  reversible transitions that respect reduced motion and fit portrait images.
+
+- Add count-driven progress rings and in-place running-to-completed transitions
+  to conversation TODO plans, respecting reduced-motion preferences.
+
+### Changed
+
+- Give split conversations a compact fixed header, keeping the close action
+  separate from message sources and accessible while scrolling.
+
+- Paint the light navigation rail as one opaque near-white surface on every
+  platform instead of the macOS sidebar material, whose wallpaper-tinted gray
+  read as dirt beside the white canvas. Workspace tabs now fit their titles,
+  select with a quieter fill, and stand a size above the strip's icon buttons.
+
+- Gather how new conversations start on General: the default agent, then the
+  built-in agent's model, reasoning effort and environment. The Agents, Model
+  providers and Built-in agent pages keep their lists.
+
+- Redraw settings as lifted sheets with quiet section labels and roomier rows
+  that name each setting in medium weight, move the page name and its actions
+  into a "Settings / page" titlebar, and mark the selected rail row in light
+  mode as paper lifted off the rail instead of a darker fill.
+
+- Reorganize settings around one label and one control per row with a shared
+  control width: pick the default agent from a menu above the installed list,
+  show the default model and reasoning effort as rows, list connected providers
+  in one group, and set interface and code fonts with their sizes on two rows.
+  Keep subscriptions in the same column as other settings pages, let theme
+  previews span it, and hide Delete all archived when nothing is archived.
+
+- Give the neutral grays a true neutral hue instead of a cool cyan cast, and draw
+  the macOS light sidebar on the system sidebar material under a thinner veil.
+
+- Draw links in answers, user messages, and file previews in body ink with a
+  thin underline instead of blue, and set tool-row targets (files, commands,
+  queries) a step darker than their verbs so a run of tool rows scans by target.
+
+- Align the right panel's tabs, file tree, review list, and tool list on the
+  sidebar's pane inset, and give the file and review filters one quiet search
+  field. Settings rows are denser, and settings groups and cards share one frame.
+
+- Show inline code in answers as the same chip as in user messages, so a theme's
+  inline-code background now applies to answers too.
+- Apply published plugin generations at the next idle conversation turn while
+  retaining active work, conversation history, and session identity.
+
+- Move side chat into the right sidebar's shared tabs, preserving each conversation's
+  history and draft across tool switches and keeping the expanded layout when opened.
+
+- Remove the legacy compact navigation layout. Resizing desktop windows keeps
+  the sidebar's chosen visibility and width, with the same navigation and tools.
+
+- Temporarily hide the conversation information/environment panel and its titlebar
+  button, including automatic expansion in wide windows.
+
+- Move web sources into their tool-call groups as compact circular website icons,
+  with continuous arrival, title and URL tooltips, readable keyboard-accessible
+  overflow, and reduced-motion support that does not replay received sources.
+
 ### Fixed
 
 - Archive, restore, and permanently delete Fusion Lead/Sidekick conversations
@@ -24,11 +94,41 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Publish Sidekick progress to the Lead while both conversations are running.
 - Identify Fusion message sources as Lead or Sidekick even before conversation
   titles exist, including historical messages with empty source names.
+- Preserve session-local Fusion checkpoints during delegation and read-only work,
+  and include live progress when inspecting the latest task without its ID.
 
-### Changed
+- Expand a workspace without conversations in place instead of flashing a
+  loading row and spinner. The workspace header shows a spinner only when its
+  conversation list or switch takes longer than a moment.
+- Preserve working plugins when replacement startup or service negotiation fails,
+  propagate execution cancellation, and retire stale desktop callbacks on reload.
 
-- Give split conversations a compact fixed header, keeping the close action
-  separate from message sources and accessible while scrolling.
+- Avoid delivering an already-answered background process result again when a new
+  user turn reloads a session before the result acknowledgement was saved.
+
+- Keep conversation messages and image tables within narrow panes when the sidebar
+  remains open, and let page scrolling resume at fractional image-gallery edges.
+
+- Align document-preview workspace controls inside the inset conversation tray.
+
+- Keep Claude engine turns open for background agents and their automatic
+  summaries, preserving the full reply and surfacing follow-up failures. Ignore
+  late task updates after completion and distinguish stopped agents from success.
+
+- Keep resumed Claude engine turns running when a background task notification
+  produces a result before the user's reply, preventing silent empty completion.
+
+- Retry failed file previews in place without closing or replacing the selected tab.
+
+- Restore complete conversation history after reload, including intermediate
+  reasoning, tool results, and image artifacts released from model context.
+
+- Keep basic file and command tools directly callable alongside Code Mode, support
+  atomic literal edits, and prefer existing verification unless new tests are requested.
+- Preserve provider-native response order and restart context for cache-friendly
+  continuation; deliver background results during active work and persist their consumption.
+- Remove duplicate terminal receipts and failure reminders; apply one recoverable
+  output budget while retaining canonical tool data and complete audit records.
 
 ## [2026.10.6] - 2026-10-06
 

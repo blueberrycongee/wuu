@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
 
@@ -16,10 +17,10 @@ type RetainedContextMessage struct {
 // RetainedRequestContextState carries the provider-transcript request-only
 // context across runs so the next run's first request can byte-extend this
 // run's last request instead of diverging at the first context injection
-// point of the previous turn. It is in-memory, best-effort state: dropping it
-// costs one prompt-cache miss, never correctness. The durable fingerprint
-// makes invalidation automatic — any history rewrite, fork, external edit, or
-// process restart fails the check and the run starts a fresh transcript.
+// point of the previous turn. A compact checkpoint also preserves it
+// across process restarts. It remains best-effort: dropping it costs a prompt
+// cache miss, never correctness. The durable fingerprint invalidates positions
+// after a history rewrite or external edit.
 type RetainedRequestContextState struct {
 	Messages []RetainedContextMessage
 	// DurableLen and DurableHash fingerprint the filtered durable history
@@ -79,4 +80,19 @@ func buildRetainedRequestContextState(retained []RetainedContextMessage, durable
 		DurableLen:  len(durable),
 		DurableHash: hashMessagesForRequestShape(durable),
 	}
+}
+
+// RequestContextCheckpoint stores only the request-only insertions and their
+// durable-history fingerprint, never another copy of the conversation.
+type RequestContextCheckpoint struct {
+	Provider      string                       `json:"provider"`
+	Model         string                       `json:"model"`
+	DriverID      string                       `json:"driver_id"`
+	DriverVersion string                       `json:"driver_version"`
+	State         *RetainedRequestContextState `json:"state"`
+}
+
+type RequestContextStore interface {
+	Load(context.Context) (RequestContextCheckpoint, bool, error)
+	Save(context.Context, RequestContextCheckpoint) error
 }

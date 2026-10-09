@@ -1,6 +1,5 @@
 import { hostSupports } from "./HostCapabilities";
 import { SidebarAccountMenu } from "./SidebarAccountMenu";
-import { MobileSidebar } from "./MobileSidebar";
 import {
   ChevronRight,
   Folder,
@@ -448,11 +447,8 @@ export function AppSidebar({
   onAttentionStickyIDsChange,
   pluginHost = desktopPluginHost,
   workbenchController = desktopWorkbenchController,
-  mobileNavigation = false,
-  drawerVisible = false,
   sidebarVisible = true,
   sidebarCollapsed = false,
-  onNavigateAway,
   onToggleSidebar,
 }: {
   state: AppState;
@@ -525,11 +521,8 @@ export function AppSidebar({
   onAttentionStickyIDsChange?: (ids: Set<string>) => void;
   pluginHost?: PluginHost;
   workbenchController?: WorkbenchController;
-  mobileNavigation?: boolean;
-  drawerVisible?: boolean;
   sidebarVisible?: boolean;
   sidebarCollapsed?: boolean;
-  onNavigateAway?: () => void;
   onToggleSidebar?: () => void;
 }): JSX.Element {
   const { t } = useI18n();
@@ -1774,12 +1767,7 @@ export function AppSidebar({
   ]);
 
   const nativeSidebar = (
-    <aside
-      className="sidebar"
-      data-wuu-component="sidebar"
-      onPointerEnter={onPointerEnter}
-      onPointerLeave={onPointerLeave}
-    >
+    <>
       <div className="sidebar-content">
         <div className="traffic-spacer">
           {onToggleSidebar ? (
@@ -2332,35 +2320,11 @@ export function AppSidebar({
           )}
         />
       </div>
-    </aside>
+    </>
   );
   const organizedSidebar = (
     <SessionOrganizationProvider value={organizationActions}>
-      {mobileNavigation ? <MobileSidebar
-        onNavigateAway={onNavigateAway}
-        visible={drawerVisible}
-        state={state}
-        sidebarWorkspaces={sidebarWorkspaces}
-        activeThreadID={activeThreadID}
-        pendingThreadID={pendingThreadID}
-        workspaceThreadsByWorkspaceID={sidebarWorkspaceThreadsByWorkspaceID}
-        loadingWorkspaceThreadIDs={loadingWorkspaceThreadIDs}
-        onStartNewThreadInWorkspace={onStartNewThreadInWorkspace}
-        onLoadWorkspaceThreads={onLoadWorkspaceThreads}
-        onSelectWorkspaceThread={onSelectWorkspaceThread}
-        onTogglePinned={toggleThreadPinned}
-        onArchiveThread={onArchiveThread}
-        onRenameThread={onRenameThread}
-        onDeleteThread={onDeleteThread}
-        onRemoveWorkspace={onRemoveWorkspace}
-        onRelocateWorkspace={onRelocateWorkspace}
-        onFocusWorkspace={onFocusWorkspace}
-        onCreateWorkspace={onCreateWorkspace}
-        onOpenWorkspaceFolder={onOpenWorkspaceFolder}
-        commands={[...primaryNavigationNodes, ...pluginNavigationNodes, ...navigationNodes]}
-      /> : (
-        <SidebarHoverFactsContext.Provider value={hoverFacts}>{nativeSidebar}</SidebarHoverFactsContext.Provider>
-      )}
+      <SidebarHoverFactsContext.Provider value={hoverFacts}>{nativeSidebar}</SidebarHoverFactsContext.Provider>
     </SessionOrganizationProvider>
   );
   return (
@@ -2371,6 +2335,8 @@ export function AppSidebar({
         ...navigationNodes,
       ]}
       fallback={organizedSidebar}
+      onPointerEnter={onPointerEnter}
+      onPointerLeave={onPointerLeave}
     />
   );
 }

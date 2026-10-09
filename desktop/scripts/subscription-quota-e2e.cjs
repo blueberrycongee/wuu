@@ -166,7 +166,7 @@ async function capture(win, name) {
   captures.push({ name, crop, zoom, pixelRatio, pixelSize });
 }
 async function refresh(win) {
-  await click(win, '[data-testid="settings-subscriptions"] header button');
+  await click(win, '.settings-main:has([data-testid="settings-subscriptions"]) .settings-titlebar-slot .settings-page-actions button');
   await waitFor(win, () => document.querySelector('[data-testid="settings-subscriptions"]')?.getAttribute('aria-busy') === 'false');
 }
 let main;

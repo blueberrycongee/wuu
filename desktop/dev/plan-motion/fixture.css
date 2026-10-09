@@ -1,0 +1,15 @@
+body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(--font-sans); font-size: var(--font-ui); }
+.plan-preview { width: min(760px, 100%); margin: 0 auto; padding: 40px 24px 24px; }
+.plan-preview-eyebrow { color: var(--ink-tertiary); font-size: 11px; letter-spacing: 0.12em; }
+.plan-preview h1 { margin: 14px 0 12px; font-size: 28px; font-weight: 500; }
+.plan-preview header p { color: var(--ink-soft); margin: 0; }
+.plan-preview-stage { position: relative; height: 460px; --dock-composer-height: 80px; --conversation-visible-inset-left: 0px; --conversation-visible-inset-right: 0px; --session-outer-padding-inline: 0px; --session-composer-width: 100%; }
+.plan-preview-message { padding-top: 64px; line-height: 1.8; }
+.plan-preview-message p { margin: 0 0 10px; }
+.plan-preview-message p + p { color: var(--ink-tertiary); }
+.plan-preview-composer { position: absolute; inset: auto 0 0; height: 68px; border: 1px solid var(--hairline); border-radius: var(--radius-lg); display: flex; align-items: center; justify-content: space-between; padding: 0 20px; color: var(--ink-tertiary); }
+.plan-preview-composer span { color: var(--ink); font-size: 20px; }
+.plan-preview footer { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 24px; }
+.plan-preview footer button { border: 1px solid var(--hairline); border-radius: var(--radius-sm); background: var(--surface-1); color: var(--ink); font: inherit; padding: 8px 12px; cursor: pointer; }
+.plan-preview footer button:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
+@media (max-width: 500px) { .plan-preview { padding: 28px 16px 20px; } .plan-preview h1 { font-size: 24px; } }

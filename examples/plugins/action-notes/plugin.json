@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "id": "action-notes-example",
+  "name": "Action Notes Example",
+  "version": "0.1.0",
+  "description": "Adds scoped view-title and message actions with a plugin-owned temporary notes list.",
+  "desktop": { "entry": "desktop.js" },
+  "contributes": {
+    "workspaceTools": [
+      { "id": "notes-entry", "view": "notes", "title": "Action notes" }
+    ]
+  }
+}

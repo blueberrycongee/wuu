@@ -9,6 +9,7 @@ import (
 	"log"
 	"mime"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -274,6 +275,12 @@ func (s *Server) handleTurnStartAdmission(ctx context.Context, req Request, allo
 }
 
 func (s *Server) threadRuntimePluginGenerationMatches(th *threadState) bool {
+	// Catalog changes and failed mutations also advance the disk epoch. A
+	// pinned runtime only needs rebuilding when activation actually replaced
+	// its generation, not when package metadata was refreshed.
+	if s != nil && s.rt != nil && th != nil && th.execRuntime != nil && th.execRuntime.PluginGeneration != nil {
+		return s.rt.IsCurrentPluginGeneration(th.execRuntime.PluginGeneration)
+	}
 	return s != nil && th != nil &&
 		th.runtimePluginEpoch == s.pluginGenerationEpoch.Load() &&
 		th.runtimePluginRevision == s.pluginRuntimeRevision.Load()
@@ -376,6 +383,12 @@ func (s *Server) handleThreadCompactStart(ctx context.Context, req Request) erro
 func (s *Server) startThreadCompactTurn(ctx context.Context, req Request, th *threadState, displayPrompt string) error {
 	if th == nil {
 		return s.writeResponse(req.ID, nil, errors.New("thread not found"))
+	}
+	if err := s.refreshPluginGenerationIfChanged(); err != nil {
+		if errors.Is(err, errPluginGenerationRefreshBusy) {
+			err = threadExecutionBusyError(th.ID)
+		}
+		return s.writeResponse(req.ID, nil, err)
 	}
 	displayPrompt = strings.TrimSpace(displayPrompt)
 	if displayPrompt == "" {
@@ -1131,7 +1144,12 @@ func (s *Server) ensureThreadRuntime(th *threadState) (*runtime.ThreadRuntime, e
 	if existing != nil && !running {
 		selectionMismatch := !s.threadRuntimeMatchesSelectionLocked(th, existing)
 		workspaceMismatch := existing.Toolkit != nil && sessionWorkspacePath(existing.Toolkit.RootDir()) != sessionWorkspacePath(th.CWD)
-		if th.pendingRuntimeReset || selectionMismatch || workspaceMismatch {
+		pluginMismatch := !s.threadRuntimePluginGenerationMatches(th)
+		// A generation belongs to live work, not the lifetime of a conversation.
+		// Rebuild only after its turns and workers settle so tools, hooks and
+		// worker closures move together. The history and session cache key stay;
+		// changed model-facing definitions can invalidate the provider prefix.
+		if th.pendingRuntimeReset || selectionMismatch || workspaceMismatch || pluginMismatch {
 			if !threadRuntimeHasOutstandingWork(th.ID, existing) {
 				detached = detachThreadRuntimeLocked(th)
 				existing = nil
@@ -1237,6 +1255,11 @@ func (s *Server) ensureThreadRuntime(th *threadState) (*runtime.ThreadRuntime, e
 		// closure must carry this thread's id + workdir so tab operations route
 		// to the desktop views keyed by (workdir, tab_id). Set once at runtime
 		// creation; the existing-runtime fast path above keeps it attached.
+		// A headless client cannot execute browser actions. Apply the negotiated
+		// capability before the first request, preserving an explicit disable.
+		if !s.supportsBrowserClient() {
+			threadRuntime.Toolkit.SetBrowserEnabled(false)
+		}
 		threadRuntime.Toolkit.SetBrowserBridge(s.browserBridgeForThread(browserWorkdir, th.ID))
 		threadRuntime.Toolkit.SetOnSessionWorkspaceChanged(func(root string) error {
 			if err := s.rebindThreadWorkspace(th.ID, root); err != nil {
@@ -1270,6 +1293,11 @@ func (s *Server) ensureThreadRuntime(th *threadState) (*runtime.ThreadRuntime, e
 		}
 		th.execRuntime = threadRuntime
 		th.runtimeSubscription = sub
+		th.onPluginLeaseQuiescent = func() {
+			// Retirement joins subscriptions and finalizers, so the lease
+			// release loop only schedules server-owned cleanup after unlocking.
+			s.startBackground(s.retireIdlePluginRuntimes)
+		}
 		th.runtimePluginEpoch = s.pluginGenerationEpoch.Load()
 		th.runtimePluginRevision = s.pluginRuntimeRevision.Load()
 		th.mu.Unlock()
@@ -2349,6 +2377,9 @@ func usageContextWindowTokens(runner *agent.StreamRunner) int {
 }
 
 func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState, threadRuntime *runtime.ThreadRuntime, turnID string, turnRuntime turnRuntimeSnapshot, history []providers.ChatMessage, requestContext []agent.ContextSegment) {
+	// A refresh during this turn kept its generation leased. Release it once
+	// all turn cleanup has finished, unless background work still depends on it.
+	defer s.retireIdlePluginRuntimes()
 	notify := func(method string, params any) {
 		_ = s.writeNotification(method, params)
 	}
@@ -2712,6 +2743,34 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 			}
 			if len(steers) > 0 {
 				messages = append(messages, steers...)
+			}
+			// Completed processes join the next request while work is active.
+			// Keep the durable obligation until this turn's answer is persisted;
+			// the existing completion queue remains the recovery path on failure.
+			if threadRuntime != nil && threadRuntime.ProcessManager != nil {
+				manager := threadRuntime.ProcessManager
+				pending, err := manager.PendingCompletions()
+				if err != nil {
+					providers.DebugLogf("read active process completions for thread %q: %v", th.ID, err)
+				}
+				for _, p := range pending {
+					event := process.Event{Process: p}
+					if slices.Contains(turnRuntime.ProcessCompletionIDs, p.ID) || !processEventBelongsToThread(th.ID, threadRuntime.AgentControl, event) {
+						continue
+					}
+					// An answer can survive a restart before its delivery acknowledgement.
+					// Reconcile that receipt just as synthetic turn admission does.
+					if err := gateAlreadyDeliveredCompletions(history, threadRuntime, nil, []string{p.ID}); err != nil {
+						if !errors.Is(err, errAgentCompletionAlreadyDelivered) {
+							providers.DebugLogf("reconcile active process completion %q for thread %q: %v", p.ID, th.ID, err)
+						}
+						continue
+					}
+					message := processCompletionChatMessage(manager, event)
+					message.Steered = true
+					messages = append(messages, message)
+					turnRuntime.ProcessCompletionIDs = append(turnRuntime.ProcessCompletionIDs, p.ID)
+				}
 			}
 			return messages
 		}
@@ -3653,6 +3712,14 @@ func (s *Server) startThreadUserTurnWithAdmission(ctx context.Context, th *threa
 		if err := s.waitAndHandoffAnswerReadyTurn(ctx, th); err != nil {
 			return startedThreadTurn{}, false, err
 		}
+	}
+	// Refresh before taking the target thread lock: activate may synchronously
+	// use session.send, list, or inspect. Reentrant sends use normal queue retry.
+	if err := s.refreshPluginGenerationIfChanged(); err != nil {
+		if errors.Is(err, errPluginGenerationRefreshBusy) {
+			err = threadExecutionBusyError(th.ID)
+		}
+		return startedThreadTurn{}, false, err
 	}
 	turnID := session.NewID()
 	turnCtx, cancel := context.WithCancel(ctx)
@@ -4603,11 +4670,7 @@ func agentCompletionResultIDs(clientID string) []string {
 }
 
 func agentCompletionAnswerResultIDs(clientID string) []string {
-	clientID = strings.TrimSpace(clientID)
-	if !strings.HasPrefix(clientID, agentCompletionAnswerClientIDPrefix) {
-		return nil
-	}
-	return splitAgentCompletionResultIDs(strings.TrimPrefix(clientID, agentCompletionAnswerClientIDPrefix))
+	return completionReceipts(clientID).Agents
 }
 
 func splitAgentCompletionResultIDs(raw string) []string {
@@ -4629,41 +4692,7 @@ func splitAgentCompletionResultIDs(raw string) []string {
 // failed turn never receives this marker, so restart recovery cannot mistake
 // visible partial text for a completed consumption of the child result.
 func markAgentCompletionAnswer(res *agent.LoopResult, resultIDs []string) bool {
-	if res == nil || len(resultIDs) == 0 || len(res.NewMessages) == 0 {
-		return false
-	}
-	clean := make([]string, 0, len(resultIDs))
-	seen := make(map[string]bool, len(resultIDs))
-	for _, resultID := range resultIDs {
-		resultID = strings.TrimSpace(resultID)
-		if resultID == "" || seen[resultID] {
-			continue
-		}
-		seen[resultID] = true
-		clean = append(clean, resultID)
-	}
-	if len(clean) == 0 {
-		return false
-	}
-	sort.Strings(clean)
-	markerIndex := -1
-	for i, msg := range res.NewMessages {
-		for _, markerID := range agentCompletionResultIDs(msg.ClientID) {
-			if seen[markerID] {
-				markerIndex = i
-				break
-			}
-		}
-	}
-	for i := len(res.NewMessages) - 1; i > markerIndex; i-- {
-		msg := &res.NewMessages[i]
-		if !strings.EqualFold(strings.TrimSpace(msg.Role), "assistant") || strings.TrimSpace(msg.Content) == "" {
-			continue
-		}
-		msg.ClientID = agentCompletionAnswerClientIDPrefix + strings.Join(clean, ",")
-		return true
-	}
-	return false
+	return markCompletionAnswer(res, completionAnswerReceipts{Agents: resultIDs})
 }
 
 func agentCompletionMarkerAnswered(history []providers.ChatMessage, resultID string) bool {

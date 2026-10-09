@@ -1,6 +1,6 @@
 /// <reference path="../shared/jsx-compat.d.ts" />
 
-import { Fragment, useLayoutEffect, useRef } from "react";
+import { useLayoutEffect, useRef } from "react";
 import type {
   InputFile,
   InputImage,
@@ -19,9 +19,10 @@ import { TurnEditSummaryPresentation } from "./TurnEditSummaryPresentation";
 import { ENABLE_TURN_ARTIFACT_SUMMARY, ENABLE_TURN_EDIT_SUMMARY } from "./FeatureFlags";
 import type { TurnFileDiffSelection } from "./TurnFileDiffTypes";
 import {
+  CONTINUE_TURN_EVENT,
+  type ContinueTurnDetail,
   OPEN_SETTINGS_EVENT,
   type OpenSettingsDetail,
-  StreamReconnectNotice,
   StreamStatusNotice,
   TurnEventNotice,
   TurnFailureNotice,
@@ -36,7 +37,9 @@ import {
   messageFlowAgentMessageItemID,
   turnAnchorID,
   turnEndedInFailure,
+  turnLeftPartialWork,
 } from "./TurnViewHelpers";
+import { translateCurrent as t } from "./i18n";
 import { desktopPluginHost } from "./plugins/DesktopPluginRuntime";
 import { PluginSurface } from "./plugins";
 
@@ -94,7 +97,7 @@ export function TurnView(props: TurnViewProps): JSX.Element | null {
           editMessage: props.onEditMessage,
         },
       }}
-      fallback={<TurnContent {...props} turn={projectedTurn} />}
+      fallback={<TurnContent {...props} threadID={threadId} turn={projectedTurn} />}
     />
     </ArtifactThreadContext.Provider>
   );
@@ -102,6 +105,15 @@ export function TurnView(props: TurnViewProps): JSX.Element | null {
 
 function openModelServices(): void {
   window.dispatchEvent(new CustomEvent<OpenSettingsDetail>(OPEN_SETTINGS_EVENT, { detail: { page: "providers" } }));
+}
+
+// Resolves once the app sent the follow-up, or at once when nothing claimed
+// the request.
+function continueTurn(threadID: string): Promise<void> {
+  return new Promise((resolve) => {
+    const detail: ContinueTurnDetail = { threadID, text: t("turnFailure.continuePrompt"), done: () => resolve() };
+    if (window.dispatchEvent(new CustomEvent(CONTINUE_TURN_EVENT, { detail, cancelable: true }))) resolve();
+  });
 }
 
 function workspaceTurnForPresentation(turn: Turn): Turn {
@@ -114,6 +126,7 @@ function workspaceTurnForPresentation(turn: Turn): Turn {
 
 function TurnContent({
   turn,
+  threadID,
   cwd,
   onOpenFile,
   onOpenURL,
@@ -235,12 +248,6 @@ function TurnContent({
   useLayoutEffect(() => {
     if (turn.status === "in_progress") previousStreamStatus.current = visibleStreamStatus;
   }, [turn.status, visibleStreamStatus]);
-  // Ordinary streaming has no transport notice. Preserve space only for a
-  // notice that was actually visible at settlement, using its real layout.
-  const retainedStreamStatus = isLatestTurn && turn.status !== "in_progress" && !streamStatus
-    ? previousStreamStatus.current
-    : undefined;
-  const renderedStreamStatus = visibleStreamStatus ?? retainedStreamStatus;
   const retryMessage = userItems.at(-1);
   const event = turnEventForTurn(turn);
   // A failed reconnect already carries the cause, so the turn event stays
@@ -252,21 +259,33 @@ function TurnContent({
     : event?.presentation === "notice" && event.source === "turn" && event.notice.category !== "cancelled"
       ? event.notice
       : undefined;
-  const retryFailedTurn = isLatestTurn && turnEndedInFailure(turn) && retryMessage && onEditMessage && onSubmitEditMessage
+  // Ordinary streaming has no transport notice. Preserve space only for a
+  // notice that was actually visible at settlement, using its real layout.
+  // A failure card takes over that row instead of sitting below a blank one.
+  const retainedStreamStatus = isLatestTurn && turn.status !== "in_progress" && !streamStatus && !failureDisplay
+    ? previousStreamStatus.current
+    : undefined;
+  const renderedStreamStatus = visibleStreamStatus ?? retainedStreamStatus;
+  // A turn that already wrote part of its reply or ran steps continues from
+  // them; resending its message would rewind the thread and drop that work.
+  const recoverable = isLatestTurn && turnEndedInFailure(turn) && onEditMessage && onSubmitEditMessage;
+  const leftPartialWork = recoverable ? turnLeftPartialWork(turn) : false;
+  const continueFailedTurn = recoverable && leftPartialWork && threadID
+    ? () => continueTurn(threadID)
+    : undefined;
+  const retryFailedTurn = recoverable && !leftPartialWork && retryMessage
     ? () => onSubmitEditMessage(
         turn.id, retryMessage, retryMessage.input_text ?? retryMessage.text ?? "",
         retryMessage.images ?? [], retryMessage.files ?? [], retryMessage.content_parts,
       )
     : undefined;
-  const failureNotice = failureDisplay ? (
-    <TurnFailureNotice
-      display={failureDisplay}
-      error={turn.error}
-      reconnect={failedReconnect}
-      onRetry={retryFailedTurn}
-      onOpenSettings={isLatestTurn ? openModelServices : undefined}
-    />
-  ) : null;
+  const failureProps = {
+    display: failureDisplay,
+    error: turn.error,
+    onRetry: retryFailedTurn,
+    onContinue: continueFailedTurn,
+    onOpenSettings: isLatestTurn ? openModelServices : undefined,
+  };
   const incomplete = turn.status === "failed" || turn.status === "interrupted";
   const editSummary = ENABLE_TURN_EDIT_SUMMARY ? (
     <TurnEditSummaryPresentation
@@ -332,15 +351,24 @@ function TurnContent({
           }
         />
       ) : null}
-      {reconnectItems.map((item) => item === failedReconnect
-        ? <Fragment key={item.id}>{failureNotice}</Fragment>
-        : <StreamReconnectNotice key={item.id} item={item} />)}
+      {/* One element per reconnect item, so a retrying card that gives up
+          keeps its node and unfolds into the failure in place. */}
+      {reconnectItems.map((item) => item === failedReconnect || item.status === "in_progress" ? (
+        <TurnFailureNotice
+          key={item.id}
+          reconnect={item}
+          arriving={animateCompletionActions}
+          {...(item === failedReconnect ? failureProps : undefined)}
+        />
+      ) : null)}
       {renderedStreamStatus ? (
         <div className={visibleStreamStatus ? undefined : "turn-stream-status-spacer"} aria-hidden={!visibleStreamStatus || undefined}>
           <StreamStatusNotice status={renderedStreamStatus} />
         </div>
       ) : null}
-      {event ? (failureDisplay ? failureNotice : <TurnEventNotice event={event} />) : null}
+      {event && !failedReconnect ? (failureDisplay
+        ? <TurnFailureNotice {...failureProps} arriving={animateCompletionActions} />
+        : <TurnEventNotice event={event} />) : null}
       {incomplete ? outputSummary : null}
     </section>
   );

@@ -152,7 +152,7 @@ func TestPersistFreshContextKeepsReleasedOriginalsAddressable(t *testing.T) {
 // Loading must retain usage from the active physical transcript even when a
 // provider checkpoint omits it, and must not repair storage owned by a live turn.
 func TestPersistedThreadLoadPreservesActiveTranscript(t *testing.T) {
-	for _, scenario := range []string{"plain", "checkpoint", "empty_checkpoint", "edited_branch", "execution_owned"} {
+	for _, scenario := range []string{"plain", "checkpoint", "tail_checkpoint", "empty_checkpoint", "edited_branch", "execution_owned"} {
 		t.Run(scenario, func(t *testing.T) {
 			rt := newTestRuntime(t, &fakeClient{})
 			const id = "resume-fork"
@@ -169,7 +169,7 @@ func TestPersistedThreadLoadPreservesActiveTranscript(t *testing.T) {
 			at := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 			records := []sessionstore.HistoryRecord{
 				{Role: "user", Content: "first prompt", At: at},
-				{Role: "assistant", ToolCalls: json.RawMessage(`[{"id":"call-1","name":"read_file","arguments":"{}"}]`), At: at},
+				{Role: "assistant", Content: "checking the image", ReasoningContent: "inspect the result", ToolCalls: json.RawMessage(`[{"id":"call-1","name":"read_file","arguments":"{}"}]`), At: at},
 				{Role: "tool", ToolCallID: "call-1", Name: "read_file", Content: "rich result", ToolResult: json.RawMessage(`{"content":[{"type":"text","text":"rich result"},{"type":"image","data":"aW1hZ2U=","mime_type":"image/png"}]}`), At: at},
 				{Role: "assistant", Content: "first answer", Phase: string(providers.MessagePhaseFinalAnswer), At: at},
 				{Role: "meta", Content: "token_usage", InputTokens: 12, OutputTokens: 3, ContextTokens: 18, Model: "first-usage-model", At: at},
@@ -188,9 +188,13 @@ func TestPersistedThreadLoadPreservesActiveTranscript(t *testing.T) {
 			}
 			switch scenario {
 			case "checkpoint":
-				// Keeping seq 1 makes the display projection use this replacement
-				// directly. Its missing usage still belongs to the durable turns.
+				// Model context can omit process records even while retaining the
+				// first prompt; the visible transcript must keep those records.
 				if err := sessionstore.RewriteHistoryRecordsAtBaseline(rt.SessionDir, id, []sessionstore.HistoryRecord{raw[0], raw[3], raw[6], raw[7]}, 10); err != nil {
+					t.Fatal(err)
+				}
+			case "tail_checkpoint":
+				if err := sessionstore.RewriteHistoryRecordsAtBaseline(rt.SessionDir, id, raw[6:8], 10); err != nil {
 					t.Fatal(err)
 				}
 			case "empty_checkpoint":
@@ -253,6 +257,24 @@ func TestPersistedThreadLoadPreservesActiveTranscript(t *testing.T) {
 			}
 			if !reflect.DeepEqual(got, want) {
 				t.Fatalf("loaded state changed: got=%+v want=%+v", got.snapshotLocked(), want.snapshotLocked())
+			}
+			wantTurns := 2
+			if scenario == "edited_branch" {
+				wantTurns = 1
+			}
+			if len(got.Turns) != wantTurns {
+				t.Fatalf("restored %d turns, want %d active turns", len(got.Turns), wantTurns)
+			}
+			items := got.Turns[0].Items
+			if len(items) != 5 || items[1].Type != ThreadItemReasoning || items[1].Text != "inspect the result" ||
+				items[2].Text != "checking the image" || items[2].Terminal ||
+				items[3].Type != ThreadItemToolCall || items[3].Name != "read_file" ||
+				items[4].Text != "first answer" || !items[4].Terminal {
+				t.Fatalf("restored process/answer structure changed: %+v", items)
+			}
+			result := items[3].ResultDetail
+			if result == nil || len(result.Content) != 2 || result.Content[1].Type != "image" || result.Content[1].Data != "aW1hZ2U=" {
+				t.Fatalf("restored tool image is missing: %+v", result)
 			}
 			gotJSON, _ := json.Marshal(got.snapshotLocked())
 			wantJSON, _ := json.Marshal(want.snapshotLocked())

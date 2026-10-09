@@ -83,7 +83,7 @@ func TestPluginGenerationMutationWaitsForSameServerRefresh(t *testing.T) {
 	}
 
 	type mutationResult struct {
-		release func()
+		release func() error
 		err     error
 	}
 	mutationDone := make(chan mutationResult, 1)

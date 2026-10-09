@@ -601,9 +601,9 @@ func (s *Server) loadPersistedThreadSnapshot(id string) (persistedThreadSnapshot
 		return persistedThreadSnapshot{}, err
 	}
 	rawHistory := append([]persistedMessage(nil), displayHistory...)
-	displayHistory = displayHistoryAcrossProviderCheckpoint(displayHistory, providerRecords)
-	// Usage belongs to the active physical transcript, including records a
-	// provider checkpoint omits. Reuse that read before display normalization.
+	// Display and usage belong to the complete active transcript. Provider
+	// checkpoints can release process records and images from model context;
+	// they must not remove them from the conversation restored by the client.
 	tokenMetas := make([]persistedMessage, 0)
 	for _, rec := range rawHistory {
 		if strings.EqualFold(strings.TrimSpace(rec.Role), "meta") {
@@ -911,7 +911,7 @@ func (s *Server) handleThreadEditMessage(req Request) error {
 			th.mu.Unlock()
 			return s.writeResponse(req.ID, nil, loadErr)
 		}
-		committedDisplay = displayHistoryAcrossProviderCheckpoint(activeRecords, committedRecords)
+		committedDisplay = activeRecords
 		committedHistory = chatMessagesFromPersistedMessages(committedRecords)
 		th.historyHeadSeq = committedHeadSeq
 		if err := session.UpdateIndex(s.rt.SessionDir, th.ID, persistableMessageCount(committedHistory), threadPreview(committedHistory)); err != nil {

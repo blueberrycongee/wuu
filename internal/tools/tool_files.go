@@ -237,29 +237,6 @@ func (t *ReadFileTool) ExecuteResult(ctx context.Context, argsJSON string) (tool
 		"total_lines":    readResult.TotalLines,
 	}
 
-	// Dedup check: same file, same range, same content → return stub.
-	if entry, ok := t.env.GetReadEntry(resolved); ok {
-		if !entry.WrittenByTool && entry.Offset == args.Offset && entry.Limit == limit {
-			unchanged := entry.ContentSHA256 != "" && entry.ContentSHA256 == contentHash
-			if entry.ContentSHA256 == "" {
-				unchanged = readEntryMatchesInfo(entry, info)
-			}
-			if unchanged {
-				result := map[string]any{
-					"action":             "read_unchanged",
-					"path":               displayPath,
-					"workspace_revision": workspaceRevision(ctx, t.env.RevisionRoot(ctx)),
-					"content_sha256":     contentHash,
-					"range":              readFileRangeMetadata(args.Offset, len(readResult.Lines)),
-					"unchanged":          true,
-					"message":            "File unchanged since last read. Refer to the earlier read result.",
-					"next_suggestions":   []string{"use the earlier read result as evidence, or request a different offset/limit if more context is needed"},
-				}
-				return toolResultWithData(result, data)
-			}
-		}
-	}
-
 	// Anchor every page independently; keep a separator on unnumbered lines
 	// so source indentation and literal pipes remain unambiguous when copied.
 	var buf strings.Builder
@@ -271,7 +248,8 @@ func (t *ReadFileTool) ExecuteResult(ctx context.Context, argsJSON string) (tool
 		fmt.Fprintf(&buf, "|%s\n", line)
 	}
 
-	// Record read state for deduplication and active-file context freshness.
+	// Track freshness without suppressing explicit reads: Code Mode may not have
+	// printed the earlier result, or its final output may have been cropped.
 	t.env.RecordRead(resolved, ReadFileEntry{
 		MtimeUnix:     info.ModTime().Unix(),
 		MtimeUnixNano: info.ModTime().UnixNano(),
@@ -786,8 +764,8 @@ func readFileByteWindow(ctx context.Context, env *Env, resolved, displayPath str
 	if limit <= 0 {
 		return "", errors.New("read_file byte_range.limit must be positive")
 	}
-	if limit > projectionPreviewBytes {
-		return "", fmt.Errorf("read_file byte_range.limit must be <= %d", projectionPreviewBytes)
+	if limit > maxRecoveryPageBytes {
+		return "", fmt.Errorf("read_file byte_range.limit must be <= %d", maxRecoveryPageBytes)
 	}
 	f, err := os.Open(resolved)
 	if err != nil {
@@ -846,7 +824,7 @@ func readFileByteWindow(ctx context.Context, env *Env, resolved, displayPath str
 		"total_bytes":        fileSize,
 		"segment_end_offset": segmentEnd,
 	}
-	page, ok := buildResultPage(result, displayPath, data, offset, int(segmentEnd), limit, contentSHA, defaultProjectionTokenBudget)
+	page, ok := buildResultPage(result, displayPath, data, offset, int(segmentEnd), limit, contentSHA, readFileProjectionTokenBudget)
 	if !ok {
 		return "", errors.New("read_file recovery metadata exceeds the page budget; use a shorter path")
 	}
@@ -877,7 +855,7 @@ func (t *WriteFileTool) Definition() providers.ToolDefinition {
 			"- Existing files larger than 32KB require overwrite_policy=\"explicit_user_requested\" or generated-file policy; use the scoped file editing tool exposed in this session for ordinary source edits\n" +
 			"- Set create_only=true when the file must not already exist\n" +
 			"- Sensitive credential paths such as .env, credentials, secrets, and private keys are rejected unless full access is active\n" +
-			"- Returns workspace_revision and a structured diff showing what changed",
+			"- Returns the outcome and warnings; the complete result and diff remain recoverable",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -1242,19 +1220,19 @@ func (t *EditFileTool) IsConcurrencySafe() bool { return false }
 func (t *EditFileTool) Definition() providers.ToolDefinition {
 	return providers.ToolDefinition{
 		Name: "edit_file",
-		Description: "Performs exact string replacement in a file.\n\n" +
+		Description: "Apply one or more exact string replacements to one file using edits. Replacement text is literal data.\n\n" +
 			"Usage:\n" +
 			"- Use old_text copied from current file evidence; if it no longer matches, read the relevant range and retry\n" +
 			"- In numbered reads and error snippets, discard the line number and first |; preserve all whitespace after | exactly (tabs and spaces differ)\n" +
 			"- For files using CRLF throughout, LF excerpts and replacement lines are converted to CRLF; mixed line endings require exact bytes\n" +
-			"- Provide old_text (must match exactly once) and new_text\n" +
+			"- Batch edits run in order against the preceding result. All matches must succeed before the file is written; a failed batch leaves the file unchanged\n" +
 			"- Use replace_all=true to replace every occurrence instead of requiring unique match\n" +
 			"- The edit will FAIL if old_text is not unique — provide more context or use replace_all\n" +
 			"- old_text and new_text must differ — identical values are rejected\n" +
 			"- Use empty new_text to delete a section\n" +
 			"- Prefer this over write_file for modifications — it only sends the diff\n" +
 			"- Sensitive credential paths such as .env, credentials, secrets, and private keys are rejected unless full access is active\n" +
-			"- Returns workspace_revision and a structured diff showing what changed",
+			"- Returns the outcome and warnings; the complete result and diff remain recoverable",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -1262,59 +1240,86 @@ func (t *EditFileTool) Definition() providers.ToolDefinition {
 					"type":        "string",
 					"description": "File path. Relative paths resolve from the workspace root; full access also allows absolute or outside-workspace paths.",
 				},
-				"old_text": map[string]any{
-					"type":        "string",
-					"description": "Exact text to find and replace.",
-				},
-				"new_text": map[string]any{
-					"type":        "string",
-					"description": "Text to replace old_text with. Use empty string to delete.",
-				},
-				"replace_all": map[string]any{
-					"type":        "boolean",
-					"description": "Replace all occurrences. Default false (must match exactly once).",
+				"edits": map[string]any{
+					"type": "array", "minItems": 1,
+					"description": "Ordered replacements in this file. Include all already-decided changes in one call.",
+					"items": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"old_text":    map[string]any{"type": "string", "description": "Exact text to match after preceding replacements."},
+							"new_text":    map[string]any{"type": "string", "description": "Literal replacement; empty string deletes the match."},
+							"replace_all": map[string]any{"type": "boolean", "description": "Replace every occurrence. Default false requires a unique match."},
+						},
+						"required": []string{"old_text", "new_text"},
+					},
 				},
 			},
-			"required": []string{"path", "old_text", "new_text"},
+			"required":             []string{"path", "edits"},
+			"additionalProperties": false,
 		},
 	}
 }
 
-func (t *EditFileTool) ValidateInput(argsJSON string) error {
-	var args struct {
-		Path    string `json:"path"`
-		OldText string `json:"old_text"`
-	}
-	if err := decodeArgs(argsJSON, &args); err != nil {
-		return err
+type fileTextEdit struct {
+	OldText    string  `json:"old_text"`
+	NewText    *string `json:"new_text"`
+	ReplaceAll bool    `json:"replace_all"`
+}
+
+type editFileArgs struct {
+	Path       string         `json:"path"`
+	OldText    *string        `json:"old_text"`
+	NewText    *string        `json:"new_text"`
+	ReplaceAll *bool          `json:"replace_all"`
+	Edits      []fileTextEdit `json:"edits"`
+}
+
+func decodeEditFileArgs(raw string) (editFileArgs, error) {
+	var args editFileArgs
+	if err := decodeArgs(raw, &args); err != nil {
+		return args, err
 	}
 	if strings.TrimSpace(args.Path) == "" {
-		return errors.New("edit_file requires path")
+		return args, errors.New("edit_file requires path")
 	}
-	if args.OldText == "" {
-		return errors.New("edit_file requires old_text")
+	if args.Edits != nil {
+		if args.OldText != nil || args.NewText != nil || args.ReplaceAll != nil {
+			return args, errors.New("edit_file cannot combine edits with top-level old_text, new_text or replace_all")
+		}
+		if len(args.Edits) == 0 {
+			return args, errors.New("edit_file requires non-empty edits")
+		}
+	} else {
+		// Existing conversations and programmatic clients may still send the
+		// original single-edit shape; new model requests advertise only edits.
+		if args.OldText == nil {
+			return args, errors.New("edit_file requires old_text or edits")
+		}
+		args.Edits = []fileTextEdit{{OldText: *args.OldText, NewText: args.NewText, ReplaceAll: args.ReplaceAll != nil && *args.ReplaceAll}}
 	}
-	return nil
+	for i, edit := range args.Edits {
+		if edit.OldText == "" {
+			return args, fmt.Errorf("edit %d: edit_file requires old_text", i+1)
+		}
+		if edit.NewText == nil {
+			return args, fmt.Errorf("edit %d: edit_file requires new_text (use an empty string to delete)", i+1)
+		}
+		if edit.OldText == *edit.NewText {
+			return args, fmt.Errorf("edit %d: old_text and new_text are identical, no changes needed", i+1)
+		}
+	}
+	return args, nil
+}
+
+func (t *EditFileTool) ValidateInput(argsJSON string) error {
+	_, err := decodeEditFileArgs(argsJSON)
+	return err
 }
 
 func (t *EditFileTool) Execute(ctx context.Context, argsJSON string) (string, error) {
-	var args struct {
-		Path       string `json:"path"`
-		OldText    string `json:"old_text"`
-		NewText    string `json:"new_text"`
-		ReplaceAll bool   `json:"replace_all"`
-	}
-	if err := decodeArgs(argsJSON, &args); err != nil {
+	args, err := decodeEditFileArgs(argsJSON)
+	if err != nil {
 		return "", err
-	}
-	if strings.TrimSpace(args.Path) == "" {
-		return "", errors.New("edit_file requires path")
-	}
-	if args.OldText == "" {
-		return "", errors.New("edit_file requires old_text")
-	}
-	if args.OldText == args.NewText {
-		return "", errors.New("old_text and new_text are identical, no changes needed")
 	}
 
 	resolved, err := t.env.ResolvePath(args.Path)
@@ -1331,11 +1336,11 @@ func (t *EditFileTool) Execute(ctx context.Context, argsJSON string) (string, er
 		return "", err
 	}
 	return withFileMutationQueue(resolved, func() (string, error) {
-		return t.executeResolvedEdit(ctx, resolved, args.Path, args.OldText, args.NewText, args.ReplaceAll)
+		return t.executeResolvedEdit(ctx, resolved, args.Path, args.Edits)
 	})
 }
 
-func (t *EditFileTool) executeResolvedEdit(ctx context.Context, resolved, displayPath, oldText, newText string, replaceAll bool) (string, error) {
+func (t *EditFileTool) executeResolvedEdit(ctx context.Context, resolved, displayPath string, edits []fileTextEdit) (string, error) {
 	info, err := os.Stat(resolved)
 	if err != nil {
 		return "", fmt.Errorf("stat file: %w", err)
@@ -1351,38 +1356,13 @@ func (t *EditFileTool) executeResolvedEdit(ctx context.Context, resolved, displa
 	oldSHA := sha256Hex(content)
 
 	text := string(content)
-	// read_file presents LF excerpts. Adapt edit inputs to uniform CRLF files
-	// without normalizing the file itself or changing mixed-ending matching.
-	crlf := strings.Count(text, "\r\n")
-	if crlf > 0 && crlf == strings.Count(text, "\n") && crlf == strings.Count(text, "\r") {
-		oldText = strings.ReplaceAll(strings.ReplaceAll(oldText, "\r\n", "\n"), "\n", "\r\n")
-		newText = strings.ReplaceAll(strings.ReplaceAll(newText, "\r\n", "\n"), "\n", "\r\n")
-		if oldText == newText {
-			return "", errors.New("old_text and new_text are identical, no changes needed")
+	newContent := text
+	for i, edit := range edits {
+		var err error
+		newContent, err = replaceFileText(newContent, edit.OldText, *edit.NewText, edit.ReplaceAll)
+		if err != nil {
+			return "", fmt.Errorf("edit %d: %w\nNo changes were written; candidate locations refer to the staged content after preceding edits", i+1, err)
 		}
-	}
-	count := strings.Count(text, oldText)
-	if count == 0 {
-		return "", editTextMatchError{
-			Kind:       "old_text_not_found",
-			Expected:   oldText,
-			Candidates: closestEditTextCandidates(text, oldText, 3),
-		}
-	}
-
-	var newContent string
-	if replaceAll {
-		newContent = strings.ReplaceAll(text, oldText, newText)
-	} else {
-		if count > 1 {
-			return "", editTextMatchError{
-				Kind:       "ambiguous_old_text",
-				Expected:   oldText,
-				MatchCount: count,
-				Candidates: exactEditTextCandidates(text, oldText, 5),
-			}
-		}
-		newContent = strings.Replace(text, oldText, newText, 1)
 	}
 
 	if err := os.WriteFile(resolved, []byte(newContent), 0o644); err != nil {
@@ -1408,6 +1388,42 @@ func (t *EditFileTool) executeResolvedEdit(ctx context.Context, resolved, displa
 		result["next_suggestions"] = []string{"address the contract_warning before anything else", "run targeted validation with command execution if that capability is exposed, otherwise inspect the resulting diff before finishing"}
 	}
 	return mustJSON(result)
+}
+
+func replaceFileText(text, oldText, newText string, replaceAll bool) (string, error) {
+	// read_file presents LF excerpts. Adapt edit inputs to uniform CRLF files
+	// without normalizing the file itself or changing mixed-ending matching.
+	crlf := strings.Count(text, "\r\n")
+	if crlf > 0 && crlf == strings.Count(text, "\n") && crlf == strings.Count(text, "\r") {
+		oldText = strings.ReplaceAll(strings.ReplaceAll(oldText, "\r\n", "\n"), "\n", "\r\n")
+		newText = strings.ReplaceAll(strings.ReplaceAll(newText, "\r\n", "\n"), "\n", "\r\n")
+		if oldText == newText {
+			return "", errors.New("old_text and new_text are identical, no changes needed")
+		}
+	}
+	count := strings.Count(text, oldText)
+	if count == 0 {
+		return "", editTextMatchError{
+			Kind:       "old_text_not_found",
+			Expected:   oldText,
+			Candidates: closestEditTextCandidates(text, oldText, 3),
+		}
+	}
+
+	if replaceAll {
+		return strings.ReplaceAll(text, oldText, newText), nil
+	} else {
+		if count > 1 {
+			return "", editTextMatchError{
+				Kind:       "ambiguous_old_text",
+				Expected:   oldText,
+				MatchCount: count,
+				Candidates: exactEditTextCandidates(text, oldText, 5),
+			}
+		}
+		return strings.Replace(text, oldText, newText, 1), nil
+	}
+
 }
 
 type editTextCandidate struct {

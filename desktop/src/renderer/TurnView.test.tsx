@@ -6,7 +6,7 @@ import { ASSISTANT_TURN_PRESENTATION_STABILIZE_MS } from "./AssistantTurnPresent
 import { PROCESS_NOTIFICATION_NAME } from "./InternalUserNotification";
 import { desktopPluginHost } from "./plugins/DesktopPluginRuntime";
 import { TurnView } from "./TurnView";
-import { OPEN_SETTINGS_EVENT } from "./TurnNotice";
+import { CONTINUE_TURN_EVENT, OPEN_SETTINGS_EVENT, type ContinueTurnDetail } from "./TurnNotice";
 import { translateCurrent as t } from "./i18n";
 import type { TurnStreamStatus } from "./AppState";
 import { ImagePreviewProvider } from "./ImagePreview";
@@ -941,6 +941,21 @@ it("removes the recovery card immediately on item removal without duplicating st
   expect(container.querySelector(".turn-failure")).toBeNull();
 });
 
+it("keeps the retrying card's node when automatic recovery gives up", () => {
+  const item: ThreadItem = { id: "retry", type: "stream_reconnect", status: "in_progress", reason: "network", retry_at_ms: Date.now() + 5000 };
+  const turn = makeTurn("in_progress", [makeCommentary("Working"), item]);
+  container = document.createElement("div");
+  document.body.appendChild(container);
+  root = createRoot(container);
+  act(() => { root!.render(<TurnView turn={turn} isLatestTurn onStreamFrame={() => {}} />); });
+  const card = container.querySelector(".turn-failure.is-retrying");
+  expect(card).not.toBeNull();
+  act(() => { root!.render(<TurnView turn={{ ...turn, status: "interrupted", items: [turn.items[0], { ...item, status: "failed" }] }} isLatestTurn onStreamFrame={() => {}} />); });
+  expect(container.querySelectorAll("aside.turn-failure")).toHaveLength(1);
+  expect(container.querySelector("aside.turn-failure")).toBe(card);
+  expect(card!.getAttribute("role")).toBe("alert");
+});
+
 // Automatic recovery that gives up settles the turn as interrupted, not
 // failed; its card explains the same failure and needs the same retry.
 it.each(["failed", "interrupted"] as const)("routes the retry of a turn that ended %s through the existing history retry action", async (status) => {
@@ -958,13 +973,42 @@ it.each(["failed", "interrupted"] as const)("routes the retry of a turn that end
   root = createRoot(container);
   const turn = makeTurn(status, [user, item]);
   act(() => { root!.render(<ImagePreviewProvider><TurnView turn={turn} isLatestTurn onEditMessage={onEditMessage} onSubmitEditMessage={onSubmitEditMessage} onStreamFrame={() => {}} /></ImagePreviewProvider>); });
-  const retryButton = () => [...container!.querySelectorAll<HTMLButtonElement>(".turn-failure-actions button")]
+  const retryButton = () => [...container!.querySelectorAll<HTMLButtonElement>(".turn-failure-recovery button")]
     .find((button) => button.textContent === t("appState.retryAction"));
   await act(async () => { retryButton()?.click(); });
   expect(onSubmitEditMessage).toHaveBeenCalledWith(turn.id, user, user.input_text, user.images, user.files, user.content_parts);
   expect(onEditMessage).not.toHaveBeenCalled();
   act(() => { root!.render(<ImagePreviewProvider><TurnView turn={turn} onEditMessage={onEditMessage} onStreamFrame={() => {}} /></ImagePreviewProvider>); });
   expect(retryButton()).toBeUndefined();
+});
+
+// The thread keeps what an interrupted turn already wrote. Resending the
+// message would rewind past it, so the card continues from it instead.
+it("continues a turn that already wrote part of its reply instead of resending it", async () => {
+  const user: ThreadItem = { id: "user", type: "user_message", status: "completed", text: "Write the report" };
+  const partial: ThreadItem = { id: "partial", type: "agent_message", status: "completed", text: "First half of the report" };
+  const item: ThreadItem = { id: "retry", type: "stream_reconnect", status: "failed", reason: "incomplete_stream" };
+  const onSubmitEditMessage = vi.fn();
+  const continued = vi.fn((event: Event) => {
+    event.preventDefault();
+    (event as CustomEvent<ContinueTurnDetail>).detail.done(true);
+  });
+  window.addEventListener(CONTINUE_TURN_EVENT, continued);
+  try {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    const turn = makeTurn("interrupted", [user, partial, item]);
+    act(() => { root!.render(<TurnView turn={turn} threadID="thread-1" isLatestTurn onEditMessage={vi.fn()} onSubmitEditMessage={onSubmitEditMessage} onStreamFrame={() => {}} />); });
+    const labels = [...container.querySelectorAll<HTMLButtonElement>(".turn-failure-recovery button")].map((button) => button.textContent);
+    expect(labels).toEqual([t("turnFailure.continue")]);
+    await act(async () => { container!.querySelector<HTMLButtonElement>(".turn-failure-recovery button")!.click(); });
+    expect(continued).toHaveBeenCalledOnce();
+    expect((continued.mock.calls[0][0] as CustomEvent<ContinueTurnDetail>).detail).toMatchObject({ threadID: "thread-1", text: t("turnFailure.continuePrompt") });
+    expect(onSubmitEditMessage).not.toHaveBeenCalled();
+  } finally {
+    window.removeEventListener(CONTINUE_TURN_EVENT, continued);
+  }
 });
 
 it("sends a rejected credential to Model services from the latest turn only", () => {
@@ -979,14 +1023,14 @@ it("sends a rejected credential to Model services from the latest turn only", ()
   window.addEventListener(OPEN_SETTINGS_EVENT, opened);
   try {
     const view = render(turn, true);
-    const settings = [...view.querySelectorAll<HTMLButtonElement>(".turn-failure-actions button")]
+    const settings = [...view.querySelectorAll<HTMLButtonElement>(".turn-failure-recovery button")]
       .find((button) => button.textContent === t("turnFailure.openSettings"));
     act(() => settings?.click());
     expect(opened).toHaveBeenCalledOnce();
     expect((opened.mock.calls[0][0] as CustomEvent).detail).toEqual({ page: "providers" });
     rerender(turn, false);
     expect(view.querySelector(".turn-failure")).not.toBeNull();
-    expect(view.querySelectorAll(".turn-failure-actions button:not(.turn-failure-details-toggle)")).toHaveLength(0);
+    expect(view.querySelectorAll(".turn-failure-recovery button")).toHaveLength(0);
   } finally {
     window.removeEventListener(OPEN_SETTINGS_EVENT, opened);
   }

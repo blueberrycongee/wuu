@@ -343,7 +343,7 @@ func (c *Client) responsesStreamChatWebSocketWithSessionLocked(ctx context.Conte
 	}
 	providers.DebugLogf("Responses websocket request: session=%q previous_response_id=%v input_items=%d full_input_items=%d",
 		session.id, strings.TrimSpace(requestPayload.PreviousResponseID) != "", len(requestPayload.Input), len(fullPayload.Input))
-	body, err := marshalResponsesWebSocketCreate(requestPayload)
+	body, err := marshalResponsesWebSocketCreate(ctx, requestPayload)
 	if err != nil {
 		session.busy = false
 		session.mu.Unlock()
@@ -586,6 +586,7 @@ func (c *Client) readResponsesWebSocket(ctx context.Context, session, fallbackSe
 			session.mu.Unlock()
 			providers.DebugLogf("Responses WebSocket inferred completion after final-answer tail grace")
 			lease.Succeed()
+			emitResponsesReplayItems(emit, nil, responseItems, text.emitted.String())
 			emit.Send(responsesInferredFinalAnswerDoneEvent())
 			return
 		}
@@ -695,6 +696,7 @@ func (c *Client) readResponsesWebSocket(ctx context.Context, session, fallbackSe
 			emit.Send(providers.StreamEvent{Type: providers.EventError, Error: err})
 			return
 		}
+		responsesTurnRoutingFromContext(ctx).rememberEvent(event)
 		if responsesWebSocketConnectionLimitReached(event) && !sawProviderEvent {
 			// Connection capacity is transport-specific. The retry/fallback owns
 			// a new lease, while account-wide rate limits remain shared.
@@ -793,6 +795,7 @@ func (c *Client) readResponsesWebSocket(ctx context.Context, session, fallbackSe
 			}
 			session.mu.Unlock()
 			lease.SucceedWithUsage(usage)
+			emitResponsesReplayItems(emit, event.Response, responseItems, text.emitted.String())
 			emit.Send(providers.StreamEvent{
 				Type:              providers.EventDone,
 				Usage:             usage,
@@ -1369,7 +1372,7 @@ func responsesInputItemText(item responsesInputItem) string {
 	}
 }
 
-func marshalResponsesWebSocketCreate(payload responsesRequest) ([]byte, error) {
+func marshalResponsesWebSocketCreate(ctx context.Context, payload responsesRequest) ([]byte, error) {
 	body, err := marshalResponsesRequest(payload)
 	if err != nil {
 		return nil, err
@@ -1377,6 +1380,14 @@ func marshalResponsesWebSocketCreate(payload responsesRequest) ([]byte, error) {
 	var object map[string]json.RawMessage
 	if err := json.Unmarshal(body, &object); err != nil {
 		return nil, err
+	}
+	routing := responsesTurnRoutingFromContext(ctx)
+	if token := routing.state.Token(routing.scope); token != "" {
+		metadata, err := json.Marshal(map[string]string{responsesTurnStateHeader: token})
+		if err != nil {
+			return nil, err
+		}
+		object["client_metadata"] = metadata
 	}
 	object["type"] = json.RawMessage(`"response.create"`)
 	return json.Marshal(object)

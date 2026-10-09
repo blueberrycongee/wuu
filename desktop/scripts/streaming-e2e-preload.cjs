@@ -3,11 +3,15 @@ const { contextBridge, ipcRenderer } = require("electron");
 const cwd = process.env.WUU_STREAM_E2E_CWD || process.cwd();
 const runtimeContext = { kind: "no_project", cwd };
 let startedThreadCount = 0;
+let workspacePreviewReadFailed = false;
 const threads = new Map();
 
 function projectList() {
   return {
-    projects: [],
+    projects: process.env.WUU_WORKSPACE_NEW_TAB_E2E ? [{
+      id: "tabbar-demo", name: "Tabbar demo", path: cwd,
+      created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z",
+    }] : [],
     active_context: runtimeContext
   };
 }
@@ -19,6 +23,7 @@ function mockThread(id, source) {
     preview: "",
     model_provider: "e2e",
     model: "mock-stream",
+    ...(process.env.WUU_WORKSPACE_NEW_TAB_E2E ? { model_variant: "medium" } : {}),
     cwd,
     status: "idle",
     ...(source ? { source } : {}),
@@ -57,6 +62,28 @@ const projectWorks = new Map(["a", "b"].map((suffix) => ["project-" + suffix, {
   phase: "planning", lead_id: "worker-" + suffix, workspace: "worktree", usage: [],
   lead_dispatch: { session_id: "worker-" + suffix, state: "running", delivery_state: "consumed", turn_id: "brief-turn" },
 }]));
+
+// Only the workspace-tab scenario enables these sanitized in-memory resources.
+const workspaceDemoFiles = {
+  "README.md": "# Tabbar demo\n\nA small workspace for navigation and reading checks.\n",
+  "src/a-long-workspace-file-name-for-checking-new-page-truncation.md": [
+    "# Workspace navigation notes", "",
+    "Keep the current document close while moving between conversations and files.", "",
+    "## Reading and navigation", "",
+    "- Select a file from the workspace tree.",
+    "- Keep several resources open without losing your place.",
+    "- Use the tab title to return to a document after checking another view.", "",
+    "## Keyboard access", "",
+    "Arrow keys move between tabs. Home and End jump to the first and last resource.", "",
+    "Long names stay available in the tab tooltip. Close controls keep their own space.", "",
+  ].join("\n"),
+  "src/navigation.ts": "export const destinations = ['conversations', 'files'];\n",
+  "docs/review-notes.md": "# Review notes\n\nCheck readable labels, stable close targets, and retained document state.\n",
+};
+function workspaceDemoPath(path) {
+  const normalized = path.replace(/\\/g, "/");
+  return normalized === cwd ? "" : normalized.startsWith(cwd + "/") ? normalized.slice(cwd.length + 1) : normalized;
+}
 
 contextBridge.exposeInMainWorld("wuu", {
   projectWork: async (params) => {
@@ -120,7 +147,11 @@ contextBridge.exposeInMainWorld("wuu", {
     provider: "e2e",
     model: "mock-stream",
     workspace_root: cwd,
-    providers: [{ name: "e2e", type: "mock", model: "mock-stream", connection_locked: true }]
+    ...(process.env.WUU_WORKSPACE_NEW_TAB_E2E ? { variant: "medium" } : {}),
+    providers: [{ name: "e2e", type: "mock", model: "mock-stream", connection_locked: true,
+      ...(process.env.WUU_WORKSPACE_NEW_TAB_E2E ? { models: [{ id: "mock-stream", display_name: "Workspace preview model",
+        supported_efforts: ["low", "medium", "high"], capabilities: { context_window: 128000 } }] } : {}),
+    }]
   }),
   updateRuntimeSettings: async (provider, model) => ({
     provider,
@@ -128,6 +159,38 @@ contextBridge.exposeInMainWorld("wuu", {
     providers: [{ name: provider, type: "mock", model, connection_locked: true }]
   }),
   ...(process.env.WUU_WORKSPACE_NEW_TAB_E2E ? {
+    listGitChanges: async () => ({ is_repo: true, root: cwd,
+      files: [{ path: "src/review-example.ts", status: "modified", additions: 20, deletions: 20 }] }),
+    readGitFileDiff: async (path) => ({ is_repo: true, path, status: "modified",
+      additions: 20, deletions: 20, patch: "", truncated: false,
+      original_text: "const value = 'before';\n".repeat(20),
+      modified_text: "const value = 'after';\n".repeat(20) }),
+    listWorkspaceFiles: async () => ({ root: cwd, paths: Object.keys(workspaceDemoFiles), truncated: false }),
+    listWorkspaceDirectory: async (path = "") => {
+      const relative = workspaceDemoPath(path).replace(/\/$/, "");
+      const prefix = relative ? relative + "/" : "";
+      const entries = new Map();
+      for (const file of Object.keys(workspaceDemoFiles)) {
+        if (!file.startsWith(prefix)) continue;
+        const rest = file.slice(prefix.length);
+        const name = rest.split("/")[0];
+        const kind = rest.includes("/") ? "directory" : "file";
+        entries.set(name, { kind, name, path: prefix + name + (kind === "directory" ? "/" : "") });
+      }
+      return { root: cwd, path: relative, entries: [...entries.values()], truncated: false };
+    },
+    readWorkspaceFile: async (path) => {
+      const relative = workspaceDemoPath(path);
+      if (relative === process.env.WUU_WORKSPACE_FILE_RETRY_E2E && !workspacePreviewReadFailed) {
+        workspacePreviewReadFailed = true;
+        throw new Error("File temporarily unavailable");
+      }
+      const text = workspaceDemoFiles[relative];
+      if (text === undefined) throw new Error("Unknown demo file: " + relative);
+      return { root: cwd, path: relative, absolute_path: cwd + "/" + relative,
+        size_bytes: new TextEncoder().encode(text).length, mtime_ms: 1000,
+        sha256: "a".repeat(64), binary: false, truncated: false, text };
+    },
     loadPluginDesktopModule: async ({ id, fingerprint }) => ({
       id, fingerprint, digest: "a".repeat(64), url: "wuu-plugin://module/workspace-new-tab-e2e.js",
     }),

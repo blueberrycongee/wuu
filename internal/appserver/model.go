@@ -1638,6 +1638,14 @@ func projectPersistedHistory(threadID string, history []persistedMessage, now ti
 		if current == nil {
 			continue
 		}
+		// In the durable transcript, compaction can be recorded after the
+		// triggering user message. Attach it before the resumed assistant/tool
+		// output instead of leaving it pending until an unrelated later turn.
+		for _, item := range pendingCompactions {
+			item.ID = nextItemID(current.ID)
+			appendItem(item, -1, true)
+		}
+		pendingCompactions = nil
 		switch msg.Role {
 		case "assistant":
 			if strings.TrimSpace(msg.ReasoningContent) != "" {
@@ -1721,6 +1729,13 @@ func projectPersistedHistory(threadID string, history []persistedMessage, now ti
 		default:
 			item := chatMessageItem(nextItemID(current.ID), msg)
 			appendItem(item, historyIndex, true)
+		}
+	}
+	// A turn-end checkpoint may append its summary after the final message.
+	if current != nil {
+		for _, item := range pendingCompactions {
+			item.ID = nextItemID(current.ID)
+			appendItem(item, -1, true)
 		}
 	}
 	return historyProjection{Turns: turns, ItemOrigins: itemOrigins, TurnSpans: turnSpans}

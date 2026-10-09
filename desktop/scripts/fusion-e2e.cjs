@@ -97,7 +97,7 @@ async function capture(name) {
     }; requestAnimationFrame(check);
   }));
   const layout = await evaluate(main, () => {
-    const selectors = ['.codex-runtime-trigger', '.runtime-panel', '.runtime-panel-fusion-model', '.runtime-panel-fusion-role', '.fusion-status-summary', '.fusion-failure', '.environment-fusion-section', '.fusion-selections', '.fusion-selection', '.fusion-selection .settings-select-trigger'];
+    const selectors = ['.codex-runtime-trigger', '.runtime-panel', '.runtime-panel-fusion-model', '.runtime-panel-fusion-role', '.fusion-status-summary', '.fusion-failure', '.fusion-selections', '.fusion-selection', '.fusion-selection .settings-select-trigger'];
     const measurements = selectors.flatMap(selector => [...document.querySelectorAll(selector)].map(node => {
       const rect = node.getBoundingClientRect(), style = getComputedStyle(node);
       return { selector, text: node.textContent, x: rect.x, y: rect.y, width: rect.width, height: rect.height, clientWidth: node.clientWidth, scrollWidth: node.scrollWidth, fontSize: style.fontSize, visible: rect.width > 0 && rect.height > 0 };
@@ -289,18 +289,6 @@ server.listen(0, '127.0.0.1', async () => {
       await capture(`conversation-${theme}-${font}-${width}`);
     }
     main.setContentSize(1180, 860);
-    await waitFor(main, () => document.querySelector('.environment-toggle-button, .compact-conversation-actions button[aria-haspopup="menu"]'));
-    await evaluate(main, () => {
-      const button = document.querySelector('.environment-toggle-button');
-      if (button) { if (button.getAttribute('aria-pressed') !== 'true') button.click(); }
-      else document.querySelector('.compact-conversation-actions button[aria-haspopup="menu"]').click();
-    });
-    await waitFor(main, () => document.querySelector('.environment-fusion-section, .conversation-actions-menu'));
-    await evaluate(main, () => {
-      if (!document.querySelector('.environment-fusion-section')) document.querySelector('.conversation-actions-menu [role="menuitem"]').click();
-    });
-    await waitFor(main, () => document.querySelector('.environment-fusion-section'));
-    await capture('session-info');
     await evaluate(main, () => document.querySelector('.sidebar-account-trigger')?.click());
     await waitFor(main, () => document.querySelector('[data-settings-page="providers"]'));
     await evaluate(main, () => document.querySelector('[data-settings-page="providers"]').click());
@@ -388,8 +376,6 @@ server.listen(0, '127.0.0.1', async () => {
       document.querySelector('.sidebar-collapse-toggle[aria-label="Expand left sidebar"]')?.click();
       const projectRow = [...document.querySelectorAll('.project-row')].find(node => node.textContent === 'Fusion acceptance');
       if (!projectRow.classList.contains('expanded')) projectRow.click();
-      const environment = document.querySelector('.environment-toggle-button');
-      if (environment?.getAttribute('aria-pressed') === 'true') environment.click();
     });
     const lifecycleTitle = 'Fusion lifecycle acceptance';
     await evaluate(main, async ({ id, title }) => { await window.wuu.renameThread(id, title); }, { id: leadID, title: lifecycleTitle });

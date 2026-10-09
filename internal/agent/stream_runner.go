@@ -176,6 +176,7 @@ type StreamRunner struct {
 	LoopDriver             loopdriver.Driver
 	DriverCheckpointStore  loopdriver.CheckpointStore
 	ModelInputReceiptStore ModelInputReceiptStore
+	RequestContextStore    RequestContextStore
 
 	usageMu                sync.Mutex
 	conversationUsage      *UsageTracker
@@ -442,6 +443,7 @@ func (r *StreamRunner) runModelToolLoop(ctx context.Context, history []providers
 		DriverID:                 descriptor.ID,
 		DriverVersion:            descriptor.Version,
 		ModelInputReceiptStore:   r.ModelInputReceiptStore,
+		RequestContextStore:      r.RequestContextStore,
 		Temperature:              r.Temperature,
 		MediaInput:               mediaInput,
 		MaxSteps:                 maxSteps,
@@ -598,6 +600,17 @@ func (r *StreamRunner) runModelToolLoop(ctx context.Context, history []providers
 		NativeDeferredToolDiscovery: r.NativeDeferredToolDiscovery,
 		PromptCacheKey:              r.PromptCacheKey,
 		RetainedRequestContext:      r.takeRetainedRequestContext(),
+	}
+	if cfg.RetainedRequestContext == nil && r.RequestContextStore != nil {
+		checkpoint, found, err := r.RequestContextStore.Load(ctx)
+		if err != nil {
+			return LoopResult{}, fmt.Errorf("restore request context: %w", err)
+		}
+		if found && checkpoint.Provider == cfg.ProviderName && checkpoint.Model == cfg.Model && checkpoint.DriverID == cfg.DriverID && checkpoint.DriverVersion == cfg.DriverVersion {
+			// The loop checks the durable fingerprint and current producers before
+			// reusing positions, so rewrites and removed guidance remain safe.
+			cfg.RetainedRequestContext = checkpoint.State
+		}
 	}
 	cfg.ForkCompactionNote = r.compactionNoteFork(cfg.RetainedRequestContext)
 	if contextWindowsEnabled {
@@ -1346,6 +1359,7 @@ func (s *streamStep) Execute(ctx context.Context, req providers.ChatRequest) (St
 		thinkingBuf       strings.Builder
 		images            []providers.InputImage
 		reasoningBlocks   []providers.ReasoningBlock
+		providerItems     []providers.ProviderItem
 		pendingTools      = map[int]*providers.ToolCall{}
 		usage             *providers.TokenUsage
 		stopReason        string
@@ -1416,7 +1430,7 @@ func (s *streamStep) Execute(ctx context.Context, req providers.ChatRequest) (St
 		}
 		return nil
 	}
-	if err := s.runReliableStream(ctx, req, &contentBuf, &thinkingBuf, &reasoningBlocks, &images, pendingTools, &messagePhase, &providerItemID, &providerItemModel, &usage, &stopReason, &finishReason, &truncated, resetRuntime, replayGuard, observeEvent); err != nil {
+	if err := s.runReliableStream(ctx, req, &contentBuf, &thinkingBuf, &reasoningBlocks, &providerItems, &images, pendingTools, &messagePhase, &providerItemID, &providerItemModel, &usage, &stopReason, &finishReason, &truncated, resetRuntime, replayGuard, observeEvent); err != nil {
 		if rt := currentToolRuntime(); rt != nil {
 			rt.Cancel()
 		}
@@ -1442,6 +1456,7 @@ func (s *streamStep) Execute(ctx context.Context, req providers.ChatRequest) (St
 			partialToolRuntime = nil
 		}
 		partial := StepResult{
+			ProviderItems:    providerItems,
 			Images:           images,
 			Content:          contentBuf.String(),
 			Phase:            messagePhase,
@@ -1527,7 +1542,12 @@ func (s *streamStep) Execute(ctx context.Context, req providers.ChatRequest) (St
 		if fbProvider != "" && strings.TrimSpace(fbModel) == "" {
 			fbModel = req.Model
 		}
+		for i := range resp.ProviderItems {
+			resp.ProviderItems[i].Provider = req.Provider
+			resp.ProviderItems[i].Scope = req.ProviderStateScope
+		}
 		return StepResult{
+			ProviderItems:        resp.ProviderItems,
 			Images:               resp.Images,
 			Content:              resp.Content,
 			Phase:                resp.Phase,
@@ -1557,6 +1577,7 @@ func (s *streamStep) Execute(ctx context.Context, req providers.ChatRequest) (St
 		providerItemModel = req.Model
 	}
 	return StepResult{
+		ProviderItems:        providerItems,
 		Images:               images,
 		Content:              contentBuf.String(),
 		Phase:                messagePhase,
@@ -1671,6 +1692,7 @@ func (s *streamStep) runReliableStream(
 	contentBuf *strings.Builder,
 	thinkingBuf *strings.Builder,
 	reasoningBlocks *[]providers.ReasoningBlock,
+	providerItems *[]providers.ProviderItem,
 	images *[]providers.InputImage,
 	pendingTools map[int]*providers.ToolCall,
 	messagePhase *providers.MessagePhase,
@@ -1689,12 +1711,13 @@ func (s *streamStep) runReliableStream(
 	resetPartialOutput := func() {
 		hadContent := contentBuf.Len() > 0
 		hadThinking := thinkingBuf.Len() > 0
-		if !hadContent && !hadThinking && len(*reasoningBlocks) == 0 && len(*images) == 0 {
+		if !hadContent && !hadThinking && len(*reasoningBlocks) == 0 && len(*images) == 0 && len(*providerItems) == 0 {
 			return
 		}
 		contentBuf.Reset()
 		thinkingBuf.Reset()
 		*reasoningBlocks = nil
+		*providerItems = nil
 		*images = nil
 		*messagePhase = ""
 		*providerItemID = ""
@@ -1773,6 +1796,15 @@ func (s *streamStep) runReliableStream(
 
 		for event := range ch {
 			switch event.Type {
+			case providers.EventProviderItem:
+				if event.ProviderItem != nil {
+					item := *event.ProviderItem
+					item.Provider = req.Provider
+					item.Scope = req.ProviderStateScope
+					*providerItems = append(*providerItems, item)
+					*providerItemModel = req.Model
+				}
+
 			case providers.EventImage:
 				if event.Image != nil {
 					*images = append(*images, *event.Image)

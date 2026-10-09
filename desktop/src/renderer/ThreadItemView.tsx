@@ -5,8 +5,10 @@ import {
   type ClipboardEvent as ReactClipboardEvent,
   type DragEvent as ReactDragEvent,
   type KeyboardEvent as ReactKeyboardEvent,
+  useContext,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState
 } from "react";
@@ -33,6 +35,7 @@ import {
   useLongTextCollapse,
 } from "./LongTextCollapse";
 import { RichContent } from "./RichContent";
+import { ArtifactThreadContext } from "./ArtifactPreviewContext";
 import { AssistantResponseArticle, ResponseSelectionReference } from "./ResponseSelection";
 import {
   AgentMessageActions,
@@ -60,7 +63,8 @@ import {
   userFacingErrorForMessage,
 } from "./UserFacingErrors";
 import { useI18n } from "./i18n";
-import { ConversationItemPresentation } from "./plugins/ConversationItemPresentation";
+import { ConversationItemPresentation, toConversationItemSnapshot } from "./plugins/ConversationItemPresentation";
+import { PluginCommandActions, usePluginCommandActions } from "./plugins/PluginCommandActions";
 import {
   ConversationMessageSurface,
   type ConversationMessageSurfaceContext,
@@ -227,8 +231,25 @@ function BuiltInThreadItemView({
   onSubmitEditMessage,
   onOpenAgent,
   editSummaryCard,
+  pluginHost = desktopPluginHost,
 }: ThreadItemViewProps): JSX.Element | null {
   const { t } = useI18n();
+  const owningThreadId = useContext(ArtifactThreadContext);
+  const threadId = owningThreadId ?? pluginHost.getActiveConversationThreadId();
+  const commandContext = useMemo(() => {
+    if (editing || (item.type !== "user_message" && item.type !== "agent_message")) return undefined;
+    return Object.freeze({
+      contractVersion: 1 as const,
+      target: "conversation.message.actions" as const,
+      ...(threadId === undefined ? {} : { threadId }),
+      turnId: turnID,
+      item: toConversationItemSnapshot(item, item.type === "user_message" ? "user-message" : "assistant-message"),
+    });
+  }, [editing, item, threadId, turnID]);
+  const hasPluginActions = usePluginCommandActions(pluginHost, commandContext).length > 0;
+  const pluginActions = commandContext === undefined ? null : (
+    <PluginCommandActions host={pluginHost} context={commandContext} buttonClassName="message-action-button" />
+  );
   const streamLive = item.status === "in_progress" && turnStatus === "in_progress";
   // Only a live item/turn completion handoff should animate. Historical
   // completed messages mount without this marker, so virtualized content does
@@ -315,7 +336,7 @@ function BuiltInThreadItemView({
       );
       return (
         <div
-          className={`user-message-block${copyable || editActionVisible || relatedSessionAvailable ? " user-message-block-with-actions" : ""}`}
+          className={`user-message-block${copyable || editActionVisible || relatedSessionAvailable || hasPluginActions ? " user-message-block-with-actions" : ""}`}
           data-wuu-component="message"
           data-wuu-variant="user"
           id={messageAnchor}
@@ -325,7 +346,7 @@ function BuiltInThreadItemView({
           <div className="user-message-motion" data-message-arrival>
           {messageContent}
           </div>
-          {!editing && (copyable || editActionVisible || relatedSessionAvailable) ? (
+          {!editing && (copyable || editActionVisible || relatedSessionAvailable || hasPluginActions) ? (
             <div
               className="message-actions user-message-actions"
               data-wuu-component="message-actions"
@@ -358,6 +379,7 @@ function BuiltInThreadItemView({
                   iconSize={15}
                 />
               ) : null}
+              {pluginActions}
             </div>
           ) : null}
         </div>
@@ -385,15 +407,14 @@ function BuiltInThreadItemView({
       // A completed final item is the user-visible completion boundary. The
       // backend can materialize a fork from the live turn snapshot while
       // provider cleanup and durable turn settlement continue independently.
-      const actionsVisible = forkVisible;
+      const actionsVisible = forkVisible || hasPluginActions;
       const actionsPersistent =
         actionsVisible &&
         (item.id === latestAgentMessageID || finalItemCompletedBeforeTurn);
-      // Reserve the action slot only in the answer region. Live process
-      // commentary is also in_progress; a reserved bar there is invisible
-      // but still occupies the answer-action gap until the item completes.
-      const reserveActionSlot = !isProcessText &&
-        (copyable || item.status === "in_progress");
+      // Without contributed actions, reserve space only for final answers.
+      // Live commentary must not gain an empty answer-action gap.
+      const reserveActionSlot = hasPluginActions || (!isProcessText &&
+        (copyable || item.status === "in_progress"));
       return (
         <AssistantResponseArticle
           id={messageAnchorID(turnID, item.id)}
@@ -425,13 +446,16 @@ function BuiltInThreadItemView({
               getText={() => streamFieldValue(turnID, item, "text")}
               placement={actionsPersistent ? "persistent" : "overlay"}
               timestamp={turnAnswerReadyAt}
-              showFork
+              showCopy={copyable}
+              showFork={forkVisible}
               onFork={
                 forkVisible && onForkMessage
                   ? () => onForkMessage(turnID, item.id)
                   : undefined
               }
-            />
+            >
+              {pluginActions}
+            </AgentMessageActions>
           ) : reserveActionSlot ? (
             <div className="message-actions agent-message-actions" aria-hidden="true" />
           ) : null}

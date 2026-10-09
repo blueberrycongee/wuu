@@ -26,7 +26,6 @@ afterEach(() => {
     }
   });
   roots = [];
-  document.documentElement.classList.remove("resizing-side-thread");
   vi.useRealTimers();
 });
 
@@ -388,30 +387,4 @@ describe("useSideThreadController", () => {
     expect(hook.get().entry?.streaming).toBe(false);
   });
 
-  it("updates the shared grid width and clears resize state on pointer up", () => {
-    const { ipc } = makeIPC();
-    const hook = mountController(ipc);
-    const separator = document.createElement("button");
-
-    act(() => {
-      hook.get().startResize({
-        button: 0,
-        clientX: 100,
-        pointerId: 1,
-        currentTarget: separator,
-        preventDefault: vi.fn()
-      } as unknown as React.PointerEvent<HTMLButtonElement>);
-    });
-    expect(document.documentElement.classList.contains("resizing-side-thread")).toBe(true);
-
-    act(() => {
-      window.dispatchEvent(new MouseEvent("pointermove", { clientX: 50 }));
-    });
-    expect(hook.get().width).toBe(450);
-
-    act(() => {
-      window.dispatchEvent(new Event("pointerup"));
-    });
-    expect(document.documentElement.classList.contains("resizing-side-thread")).toBe(false);
-  });
 });

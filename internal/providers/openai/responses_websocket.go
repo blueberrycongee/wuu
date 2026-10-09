@@ -117,6 +117,8 @@ func (d CodexWebSocketDialer) dialCodexWebSocket(
 		defer cancel()
 	}
 
+	routing := responsesTurnRoutingFromContext(ctx)
+	routing.apply(headers)
 	conn, resp, err := websocket.Dial(dialCtx, wsURL, &websocket.DialOptions{
 		HTTPHeader: headers,
 		HTTPClient: d.HTTPClient,
@@ -129,6 +131,7 @@ func (d CodexWebSocketDialer) dialCodexWebSocket(
 		}
 		return nil, &CodexWebSocketDialError{URL: wsURL, StatusCode: statusCode, Err: err}
 	}
+	routing.remember(resp.Header)
 	conn.SetReadLimit(codexWebSocketReadLimitBytes)
 	return conn, nil
 }

@@ -5,6 +5,8 @@ import type {
   CSSSnippet,
   InspectorSectionDefinition,
   PluginUIKit,
+  PluginCommandPresentation,
+  PluginCommandActionContext,
   PresentationMode,
   PresentationTarget,
   PresenterDefinition,
@@ -87,7 +89,7 @@ export interface RegisteredPluginViewEntry extends PluginViewEntryDeclaration {
   readonly generation: string;
 }
 
-export interface PluginCommandRegistration {
+export interface PluginCommandRegistration extends PluginCommandPresentation {
   /** Host action contexts in which this command can accept structured input. */
   contexts?: readonly string[];
   id: string;
@@ -250,6 +252,16 @@ export interface RegisteredPluginCommand extends PluginCommandRegistration {
   readonly generation: string;
 }
 
+export interface PluginCommandAction {
+  readonly command: RegisteredPluginCommand;
+  readonly enabled: boolean;
+}
+
+export interface PluginCommandActionResolution {
+  readonly actions: readonly PluginCommandAction[];
+  readonly failures: readonly { command: RegisteredPluginCommand; error: unknown }[];
+}
+
 export interface RegisteredComposerStatusSource extends ComposerStatusSourceRegistration {
   readonly pluginId: string;
   readonly generation: string;
@@ -386,7 +398,8 @@ interface SurfaceRecord extends OrderedRecord {
   readonly render: PluginSurfaceRegistration["render"];
 }
 
-interface CommandRecord extends OrderedRecord {
+interface CommandRecord extends OrderedRecord, PluginCommandPresentation {
+  snapshot?: RegisteredPluginCommand;
   readonly contexts?: readonly string[];
   readonly title: string;
   readonly execute: PluginCommandRegistration["execute"];
@@ -576,6 +589,7 @@ export class PluginHost {
     const previousPending = this.pendingActivations.get(pluginId);
     if (previousPending) {
       previousPending.cancelled = true;
+      this.disposeGeneration(previousPending.state);
     }
     this.pendingActivations.set(pluginId, pending);
 
@@ -590,6 +604,10 @@ export class PluginHost {
       state.acceptingRegistrations = false;
       if (this.pendingActivations.get(pluginId) === pending) {
         this.pendingActivations.delete(pluginId);
+      }
+      if (pending.cancelled || error instanceof PluginGenerationSupersededError) {
+        this.disposeGeneration(state);
+        throw new PluginGenerationSupersededError(pluginId, generation);
       }
       this.addDiagnostic({
         pluginId,
@@ -618,7 +636,8 @@ export class PluginHost {
       previous.active = false;
       this.disposeGeneration(previous);
     }
-    this.refreshPublicState();
+    // Fingerprints identify code, not this activation's callbacks and resource ownership.
+    this.refreshPublicState(previous?.generation === generation);
 
     return createDisposable(() => {
       if (this.activeGenerations.get(pluginId) === state) {
@@ -637,6 +656,7 @@ export class PluginHost {
     if (pending) {
       pending.cancelled = true;
       this.pendingActivations.delete(normalizedPluginId);
+      this.disposeGeneration(pending.state);
     }
 
     const active = this.activeGenerations.get(normalizedPluginId);
@@ -647,6 +667,42 @@ export class PluginHost {
     active.active = false;
     this.disposeGeneration(active);
     this.refreshPublicState();
+  }
+
+  /** Resolve host action rows without publishing diagnostics during React rendering. */
+  resolveCommandActions(context: PluginCommandActionContext): PluginCommandActionResolution {
+    const input = freezeCommandActionContext(context);
+    const actions: PluginCommandAction[] = [];
+    const failures: { command: RegisteredPluginCommand; error: unknown }[] = [];
+    for (const command of this.commandSnapshot) {
+      try {
+        const enabled = commandActionEnabled(command, input);
+        if (enabled !== undefined) actions.push({ command, enabled });
+      } catch (error: unknown) {
+        failures.push({ command, error });
+      }
+    }
+    return { actions, failures };
+  }
+
+  /** Recheck the exact published callback and its predicates before dispatching a host action. */
+  async executeCommandAction(command: RegisteredPluginCommand, context: PluginCommandActionContext): Promise<unknown> {
+    if (!this.commandSnapshot.includes(command)) throw new Error("Plugin command is no longer active");
+    const input = freezeCommandActionContext(context);
+    const enabled = commandActionEnabled(command, input);
+    if (enabled === undefined) throw new Error("Plugin command is no longer visible");
+    if (!enabled) throw new Error("Plugin command is disabled");
+    const result = await command.execute(input);
+    if (!this.commandSnapshot.includes(command)) throw new Error("Plugin command is no longer active");
+    return result;
+  }
+
+  recordCommandFailure(command: RegisteredPluginCommand, error: unknown): void {
+    if (!this.commandSnapshot.includes(command)) return;
+    this.addDiagnostic({
+      pluginId: command.pluginId, generation: command.generation, kind: "render",
+      contributionId: command.id, message: `Plugin command ${command.id} failed: ${errorMessage(error)}`, cause: error,
+    });
   }
 
   getSlotSnapshot(slotId: PluginSlotId): readonly RegisteredPluginSlotContribution[] {
@@ -775,6 +831,12 @@ export class PluginHost {
     return this.activeGenerations.get(pluginId)?.generation === generation;
   }
 
+  /** Renderer-local identity for one activation, including retries of unchanged code. */
+  getGenerationActivation(pluginId: string, generation: string): object | undefined {
+    const active = this.activeGenerations.get(pluginId);
+    return active?.generation === generation ? active : undefined;
+  }
+
   hasActivePlugin(pluginId: string): boolean {
     return this.activeGenerations.has(pluginId);
   }
@@ -812,6 +874,9 @@ export class PluginHost {
     location: { slotId: PluginSlotId } | { surfaceId: PluginSurfaceId },
     error: unknown,
   ): void {
+    const current = "slotId" in location
+      ? this.getSlotSnapshot(location.slotId) : this.getSurfaceSnapshot(location.surfaceId);
+    if (!current.some((record) => record === contribution)) return;
     const kind = "slotId" in location ? "slot" : "surface";
     this.addDiagnostic({
       pluginId: contribution.pluginId,
@@ -825,6 +890,7 @@ export class PluginHost {
   }
 
   recordPresenterFailure(contribution: RegisteredPresenter, error: unknown): void {
+    if (!this.presenterSnapshot.includes(contribution)) return;
     this.addDiagnostic({
       pluginId: contribution.pluginId,
       generation: contribution.generation,
@@ -836,6 +902,7 @@ export class PluginHost {
   }
 
   recordConversationCardFailure(card: RegisteredConversationCard, error: unknown): void {
+    if (!this.conversationCardSnapshot.includes(card)) return;
     this.addDiagnostic({
       pluginId: card.pluginId,
       generation: card.generation,
@@ -847,6 +914,7 @@ export class PluginHost {
   }
 
   recordInspectorFailure(contribution: RegisteredInspectorSection, error: unknown): void {
+    if (!this.inspectorSectionSnapshot.includes(contribution)) return;
     this.addDiagnostic({
       pluginId: contribution.pluginId,
       generation: contribution.generation,
@@ -908,34 +976,34 @@ export class PluginHost {
         if (!this.runtimeInvoker) {
           throw new Error("Plugin runtime requests are unavailable");
         }
-        if (this.activeGenerations.get(state.pluginId) !== state || state.disposed) {
-          throw new Error("Plugin generation is no longer active");
-        }
-        return this.runtimeInvoker({
+        this.assertActive(state);
+        const result = await this.runtimeInvoker({
           pluginId: state.pluginId,
           generation: state.generation,
           method: requireNonEmpty(method, "plugin runtime method"),
           input,
           ...(options?.workspaceId ? { workspaceId: options.workspaceId } : {}),
         });
+        this.assertActive(state);
+        return result;
       },
       listWorkspaces: async () => {
         if (!this.workspaceLister) {
           throw new Error("Workspace listing is unavailable");
         }
-        if (this.activeGenerations.get(state.pluginId) !== state || state.disposed) {
-          throw new Error("Plugin generation is no longer active");
-        }
-        return this.workspaceLister();
+        this.assertActive(state);
+        const result = await this.workspaceLister();
+        this.assertActive(state);
+        return result;
       },
       listThreads: async (workspaceRoot: string) => {
         if (!this.threadLister) {
           throw new Error("Thread listing is unavailable");
         }
-        if (this.activeGenerations.get(state.pluginId) !== state || state.disposed) {
-          throw new Error("Plugin generation is no longer active");
-        }
-        return this.threadLister(requireNonEmpty(workspaceRoot, "workspace root"));
+        this.assertActive(state);
+        const result = await this.threadLister(requireNonEmpty(workspaceRoot, "workspace root"));
+        this.assertActive(state);
+        return result;
       },
       onHostEvent: (handler: (event: unknown) => void) => {
         this.assertUsable(state);
@@ -985,6 +1053,10 @@ export class PluginHost {
       registerCommand: (command: PluginCommandRegistration) => {
         this.assertAccepting(state);
         const id = this.claimRegistrationId(state, "command", command.id);
+        if (command.icon !== undefined && !isPublicIconName(command.icon)) throw new Error(`Unsupported plugin command icon: ${command.icon}`);
+        if (command.placements?.some((target) => target !== "view.title" && target !== "conversation.message.actions")) {
+          throw new Error("Unsupported plugin command placement");
+        }
         const record: CommandRecord = {
           pluginId: state.pluginId,
           generation: state.generation,
@@ -992,7 +1064,15 @@ export class PluginHost {
           order: normalizeOrder(command.order),
           title: requireNonEmpty(command.title, "command title"),
           contexts: command.contexts ? Object.freeze([...command.contexts]) : undefined,
-          execute: command.execute,
+          placements: command.placements ? Object.freeze([...new Set(command.placements)]) : undefined,
+          icon: command.icon,
+          when: command.when,
+          enabled: command.enabled,
+          execute: (input) => {
+            this.assertActive(state);
+            if (record.removed) throw new Error("Plugin command is no longer registered");
+            return command.execute(input);
+          },
           removed: false,
         };
         state.commands.push(record);
@@ -1265,6 +1345,12 @@ export class PluginHost {
     return disposable;
   }
 
+  private assertActive(state: GenerationState): void {
+    if (this.activeGenerations.get(state.pluginId) !== state || state.disposed) {
+      throw new Error("Plugin generation is no longer active");
+    }
+  }
+
   private assertAccepting(state: GenerationState): void {
     if (!state.acceptingRegistrations) {
       throw new Error(`Plugin generation ${state.pluginId}@${state.generation} is no longer registering`);
@@ -1403,7 +1489,7 @@ export class PluginHost {
     }
   }
 
-  private refreshPublicState(): void {
+  private refreshPublicState(replaceSnapshots = false): void {
     let changed = false;
     const conflicts: PluginContributionConflict[] = [];
     const slotRecords = new Map<PluginSlotId, SlotRecord[]>();
@@ -1466,7 +1552,7 @@ export class PluginHost {
         .sort(compareOrdered)
         .map(toPublicSlotContribution));
       const previous = this.slotSnapshots.get(slotId) ?? EMPTY_SLOT_SNAPSHOT;
-      if (!sameContributions(previous, next)) {
+      if (replaceSnapshots || !sameContributions(previous, next)) {
         this.slotSnapshots.set(slotId, next);
         changed = true;
         for (const listener of this.slotListeners.get(slotId) ?? []) {
@@ -1486,7 +1572,7 @@ export class PluginHost {
       if (resolved.conflict) conflicts.push(resolved.conflict);
       const next = Object.freeze(resolved.records.map(toPublicSurfaceContribution));
       const previous = this.surfaceSnapshots.get(surfaceId) ?? EMPTY_SURFACE_SNAPSHOT;
-      if (!sameContributions(previous, next)) {
+      if (replaceSnapshots || !sameContributions(previous, next)) {
         this.surfaceSnapshots.set(surfaceId, next);
         changed = true;
         for (const listener of this.surfaceListeners.get(surfaceId) ?? []) {
@@ -1496,13 +1582,13 @@ export class PluginHost {
     }
 
     const nextCommands = Object.freeze(commands.sort(compareOrdered).map(toPublicCommand));
-    if (!sameContributions(this.commandSnapshot, nextCommands)) {
+    if (replaceSnapshots || !sameContributions(this.commandSnapshot, nextCommands)) {
       this.commandSnapshot = nextCommands;
       changed = true;
     }
 
     const nextViews = Object.freeze(views.sort(compareOrdered).map(toPublicViewType));
-    if (!sameContributions(this.viewSnapshot, nextViews)) {
+    if (replaceSnapshots || !sameContributions(this.viewSnapshot, nextViews)) {
       this.viewSnapshot = nextViews;
       changed = true;
     }
@@ -1510,7 +1596,7 @@ export class PluginHost {
     const nextViewPlacements = Object.freeze(
       viewPlacements.sort(compareOrdered).map(toPublicViewPlacement),
     );
-    if (!sameContributions(this.viewPlacementSnapshot, nextViewPlacements)) {
+    if (replaceSnapshots || !sameContributions(this.viewPlacementSnapshot, nextViewPlacements)) {
       this.viewPlacementSnapshot = nextViewPlacements;
       changed = true;
     }
@@ -1518,7 +1604,7 @@ export class PluginHost {
     const nextInspectorSections = Object.freeze(
       inspectorSections.sort(compareOrdered).map(toPublicInspectorSection),
     );
-    if (!sameContributions(this.inspectorSectionSnapshot, nextInspectorSections)) {
+    if (replaceSnapshots || !sameContributions(this.inspectorSectionSnapshot, nextInspectorSections)) {
       this.inspectorSectionSnapshot = nextInspectorSections;
       changed = true;
     }
@@ -1528,35 +1614,35 @@ export class PluginHost {
       || compareText(left.pluginId, right.pluginId)
       || compareText(left.id, right.id);
     const nextNavigation = Object.freeze(navigationEntries.sort(compareViewEntry));
-    if (!sameContributions(this.navigationSnapshot, nextNavigation)) {
+    if (replaceSnapshots || !sameContributions(this.navigationSnapshot, nextNavigation)) {
       this.navigationSnapshot = nextNavigation;
       changed = true;
     }
     const nextWorkspaceTools = Object.freeze(workspaceTools.sort(compareViewEntry));
-    if (!sameContributions(this.workspaceToolSnapshot, nextWorkspaceTools)) {
+    if (replaceSnapshots || !sameContributions(this.workspaceToolSnapshot, nextWorkspaceTools)) {
       this.workspaceToolSnapshot = nextWorkspaceTools;
       changed = true;
     }
     const nextSettingsPages = Object.freeze(settingsPages.sort(compareViewEntry));
-    if (!sameContributions(this.settingsPageSnapshot, nextSettingsPages)) {
+    if (replaceSnapshots || !sameContributions(this.settingsPageSnapshot, nextSettingsPages)) {
       this.settingsPageSnapshot = nextSettingsPages;
       changed = true;
     }
 
     const nextRenderers = Object.freeze(renderers.sort(compareOrdered).map(toPublicRenderer));
-    if (!sameContributions(this.rendererSnapshot, nextRenderers)) {
+    if (replaceSnapshots || !sameContributions(this.rendererSnapshot, nextRenderers)) {
       this.rendererSnapshot = nextRenderers;
       changed = true;
     }
 
     const nextThemeTokens = Object.freeze(themeTokens.sort(compareOrdered).map(toPublicThemeTokens));
-    if (!sameContributions(this.themeTokenSnapshot, nextThemeTokens)) {
+    if (replaceSnapshots || !sameContributions(this.themeTokenSnapshot, nextThemeTokens)) {
       this.themeTokenSnapshot = nextThemeTokens;
       changed = true;
     }
 
     const nextStatusItems = Object.freeze(statusItems.sort(compareOrdered).map(toPublicStatusItem));
-    if (!sameContributions(this.statusItemSnapshot, nextStatusItems)) {
+    if (replaceSnapshots || !sameContributions(this.statusItemSnapshot, nextStatusItems)) {
       this.statusItemSnapshot = nextStatusItems;
       changed = true;
     }
@@ -1564,7 +1650,7 @@ export class PluginHost {
     const nextComposerStatusSources = Object.freeze(
       composerStatusSources.sort(compareOrdered).map(toPublicComposerStatusSource),
     );
-    if (!sameContributions(this.composerStatusSourceSnapshot, nextComposerStatusSources)) {
+    if (replaceSnapshots || !sameContributions(this.composerStatusSourceSnapshot, nextComposerStatusSources)) {
       this.composerStatusSourceSnapshot = nextComposerStatusSources;
       changed = true;
       for (const listener of this.composerStatusSourceListeners) listener();
@@ -1576,7 +1662,7 @@ export class PluginHost {
     );
     conflicts.push(...resolvedPresenters.conflicts);
     const nextPresenters = Object.freeze(resolvedPresenters.records.map(toPublicPresenter));
-    if (!sameContributions(this.presenterSnapshot, nextPresenters)) {
+    if (replaceSnapshots || !sameContributions(this.presenterSnapshot, nextPresenters)) {
       this.presenterSnapshot = nextPresenters;
       this.presenterQuerySnapshots.clear();
       changed = true;
@@ -1591,7 +1677,7 @@ export class PluginHost {
         key: record.key!,
         render: record.compatibilityRender!,
       })));
-    if (!sameContributions(this.toolActivityPresenterSnapshot, nextToolActivityPresenters)) {
+    if (replaceSnapshots || !sameContributions(this.toolActivityPresenterSnapshot, nextToolActivityPresenters)) {
       this.toolActivityPresenterSnapshot = nextToolActivityPresenters;
       changed = true;
     }
@@ -1789,12 +1875,16 @@ function toPublicSurfaceContribution(record: SurfaceRecord): RegisteredPluginSur
 }
 
 function toPublicCommand(record: CommandRecord): RegisteredPluginCommand {
-  return Object.freeze({
+  return record.snapshot ??= Object.freeze({
     pluginId: record.pluginId,
     generation: record.generation,
     id: record.id,
     title: record.title,
     contexts: record.contexts,
+    placements: record.placements,
+    icon: record.icon,
+    when: record.when,
+    enabled: record.enabled,
     order: record.order,
     execute: record.execute,
   });
@@ -2075,6 +2165,28 @@ function validateThemeTokens(contribution: ThemeTokens): void {
     }
     requireExactNonEmpty(value, `syntax token ${name}`);
   }
+}
+
+function commandActionEnabled(command: RegisteredPluginCommand, context: PluginCommandActionContext): boolean | undefined {
+  if (!command.placements?.includes(context.target)) return undefined;
+  const visible = command.when === undefined ? true : command.when(context);
+  if (typeof visible !== "boolean") throw new Error("Plugin command visibility must return a boolean synchronously");
+  if (!visible) return undefined;
+  const enabled = command.enabled === undefined ? true : command.enabled(context);
+  if (typeof enabled !== "boolean") throw new Error("Plugin command enablement must return a boolean synchronously");
+  return enabled;
+}
+
+function freezeCommandActionContext(context: PluginCommandActionContext): PluginCommandActionContext {
+  // These public snapshots contain only data. Never freeze the caller's live objects.
+  const snapshot = structuredClone(context);
+  const freeze = (value: unknown): void => {
+    if (typeof value !== "object" || value === null || Object.isFrozen(value)) return;
+    for (const child of Object.values(value)) freeze(child);
+    Object.freeze(value);
+  };
+  freeze(snapshot);
+  return snapshot;
 }
 
 function sameContributions(

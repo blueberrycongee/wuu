@@ -140,7 +140,7 @@ async function panelDiagnostic() {
     save();
   }
   await measure("left-empty", ".sidebar-resizer", 190, "--sidebar-width");
-  await click(".title-actions .side-panel-toggle-button");
+  await click("[data-wuu-component=right-sidebar-toggle]");
   await until(() => document.querySelector(".workspace-right-panel-resizer"), "right panel");
   await measure("right-empty", ".workspace-right-panel-resizer", -140, "--workspace-right-panel-width");
   assert.deepEqual(result.errors, [], "no renderer errors");
@@ -416,16 +416,24 @@ app.whenReady().then(async () => {
   }
   await evaluate(() => { if (document.querySelector(".app-shell").classList.contains("sidebar-collapsed")) document.querySelector(".sidebar-toggle-button").click(); });
   await settle();
+  // Keep the reading column below its maximum width without an information panel.
+  win.setContentSize(1080, 860);
+  await settle();
   await motion("window live reflow", async () => {
     for (let index = 0; index <= 40; index++) {
       const fraction = index <= 20 ? index / 20 : (40 - index) / 20;
-      win.setContentSize(Math.round(1380 - fraction * 260), 860);
+      win.setContentSize(Math.round(1080 - fraction * 200), 860);
       await delay(16);
     }
   }, false);
   await motion("left live reflow", () => drag(".sidebar-resizer", 190));
+  // Leave enough room below the reading-width cap for collapse to cross line
+  // boundaries with both Linux and macOS font metrics.
+  win.setContentSize(880, 860);
   await motion("left collapse and expand", async () => { await click(".sidebar-toggle-button"); await settle(); await click(".sidebar-toggle-button"); }, false);
-  await click(".title-actions .side-panel-toggle-button");
+  win.setContentSize(1380, 860);
+  await settle();
+  await click("[data-wuu-component=right-sidebar-toggle]");
   await until(() => document.querySelector(".workspace-right-panel-resizer"), "right panel");
   await settle();
   await motion("right live reflow", () => drag(".workspace-right-panel-resizer", -140));
@@ -433,8 +441,8 @@ app.whenReady().then(async () => {
   await until(() => document.querySelector(".workspace-browser-host"), "browser host");
   await motion("browser live reflow", () => drag(".workspace-right-panel-resizer", -140));
   await snapshot("browser panel");
-  await motion("right collapse and expand", async () => { await click(".title-actions .side-panel-toggle-button"); await settle(); await click(".title-actions .side-panel-toggle-button"); }, false);
-  await click(".title-actions .side-panel-toggle-button");
+  await motion("right collapse and expand", async () => { await click("[data-wuu-component=right-sidebar-toggle]"); await settle(); await click("[data-wuu-component=right-sidebar-toggle]"); }, false);
+  await click("[data-wuu-component=right-sidebar-toggle]");
   await settle();
   await evaluate(() => {
     const input = document.querySelector("[data-main-conversation-composer] textarea");
@@ -445,7 +453,7 @@ app.whenReady().then(async () => {
   await click('.slash-command-item[data-command-name="side"]');
   await until(() => document.querySelector(".side-thread-panel"), "side thread");
   await snapshot("side thread");
-  await click(".side-thread-panel__close");
+  await click('[data-wuu-tab-kind="side-thread"] .workspace-tool-tab-close');
   await settle();
   await evaluate(() => {
     const message = document.querySelector('[data-user-message-id="resize-user-35"]');
@@ -465,7 +473,13 @@ app.whenReady().then(async () => {
   save();
   await click(".conversation-split-close");
   await until(() => !document.querySelector(".conversation-split-pane"), "close split");
-  await click(".title-actions .side-panel-toggle-button");
+  // Closing the side-chat tab can leave the browser panel open. Restore its
+  // explicit open state instead of toggling it closed and finding a stale resizer.
+  await evaluate(() => {
+    const toggle = document.querySelector("[data-wuu-component=right-sidebar-toggle]");
+    if (toggle.getAttribute("aria-expanded") !== "true") toggle.click();
+  });
+  await settle();
   await until(() => document.querySelector(".workspace-right-panel-resizer"), "restore browser panel");
   await until(() => document.querySelector(".workspace-browser-host") || document.querySelector('[data-wuu-tool="browser"]'), "restored browser or tool picker");
   if (!await evaluate(() => Boolean(document.querySelector(".workspace-browser-host")))) {

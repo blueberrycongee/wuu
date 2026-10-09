@@ -120,6 +120,7 @@ type threadState struct {
 	executionLease                 *session.ThreadExecutionLease
 	pluginExecutionLease           *session.PluginGenerationLease
 	pluginLeaseReleaseLoop         bool
+	onPluginLeaseQuiescent         func()
 	runtimePluginEpoch             uint64
 	runtimePluginRevision          uint64
 	admissionReserved              bool
@@ -203,10 +204,11 @@ type Server struct {
 	// scanner goroutine delivers exactly one clientResponse into. clientCallMu
 	// guards both the map and clientCallSeq; see callClient for the strict
 	// register/deliver/delete deadlock discipline these fields require.
-	clientCallMu  sync.Mutex
-	clientCalls   map[string]chan clientResponse
-	clientCallSeq uint64
-	clientMethods map[string]struct{}
+	clientCallMu                sync.Mutex
+	clientCalls                 map[string]chan clientResponse
+	clientCallSeq               uint64
+	clientMethods               map[string]struct{}
+	deferredNotificationContent atomic.Bool
 
 	// pushRegistrar is the host-side hook invoked by the device/push_*
 	// methods. The desktop main pipeline leaves it nil so the methods
@@ -1423,6 +1425,25 @@ func (s *Server) writeResponse(id json.RawMessage, result any, err error) error 
 }
 
 func (s *Server) writeNotification(method string, params any) error {
+	if s.deferredNotificationContent.Load() {
+		switch payload := params.(type) {
+		case TurnCompletedNotification:
+			payload.Turn = notificationTurn(payload.ThreadID, payload.Turn)
+			params = payload
+		case TurnErrorNotification:
+			payload.Turn = notificationTurn(payload.ThreadID, payload.Turn)
+			params = payload
+		case ThreadStartedNotification:
+			payload.Thread = notificationThread(payload.Thread)
+			params = payload
+		case ThreadResumedNotification:
+			payload.Thread = notificationThread(payload.Thread)
+			params = payload
+		case ThreadUpdatedNotification:
+			payload.Thread = notificationThread(payload.Thread)
+			params = payload
+		}
+	}
 	return s.writeJSON(Notification{
 		Method: method,
 		Params: params,

@@ -14,6 +14,29 @@ const backendNames: Record<Exclude<ExecutionEnvironmentProfile["backend"], "comm
 // The core treats an empty lifetime as this many seconds.
 const DEFAULT_LIFETIME_SECONDS = "600";
 
+/** Where the built-in agent runs new conversations: on this machine or in a
+ * configured environment. */
+export function DefaultEnvironmentRow({ value, disabled, onSave }: {
+  value: EnvironmentSettings;
+  disabled: boolean;
+  onSave: (value: RuntimeGeneralSettingsUpdate) => Promise<void>;
+}): JSX.Element {
+  const { t } = useI18n();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  async function select(selected: string): Promise<void> {
+    setBusy(true); setError("");
+    try { await onSave({ execution_environments: { ...value, default: selected } }); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : t("settings.saveFailed")); }
+    finally { setBusy(false); }
+  }
+  return <SettingsRow title={t("execution.environmentLabel")} description={t("execution.defaultHint")} error={error || undefined}>
+    <SelectMenu triggerClassName="settings-select-trigger" ariaLabel={t("execution.default")} value={value.default || "local"} disabled={disabled || busy}
+      onChange={(selected) => void select(selected)}
+      options={[{ value: "local", label: t("execution.local") }, ...Object.keys(value.profiles ?? {}).map((id) => ({ value: id, label: id }))]} />
+  </SettingsRow>;
+}
+
 export function ExecutionEnvironmentSettings({ value, disabled, onSave }: {
   value: EnvironmentSettings;
   disabled: boolean;
@@ -74,11 +97,7 @@ export function ExecutionEnvironmentSettings({ value, disabled, onSave }: {
     actions={<button className="settings-button settings-button-ghost" type="button" disabled={locked || editing !== null} onClick={() => edit("")}>
       <Plus className="icon" aria-hidden="true" />{t("execution.add")}</button>}>
     <SettingsGroup>
-      <SettingsRow title={t("execution.default")} description={t("execution.defaultHint")}>
-        <SelectMenu triggerClassName="settings-select-trigger" ariaLabel={t("execution.default")} value={value.default || "local"} disabled={locked}
-          onChange={(selected) => void save({ ...value, default: selected })}
-          options={[{ value: "local", label: t("execution.local") }, ...Object.keys(profiles).map((id) => ({ value: id, label: id }))]} />
-      </SettingsRow>
+      {Object.keys(profiles).length === 0 ? <p className="settings-group-empty">{t("execution.empty")}</p> : null}
       {Object.entries(profiles).map(([id, entry]) => <SettingsRow key={id} title={id} description={`${backendLabel(entry.backend)} · ${entry.workspace || "/workspace"}`}>
         <div className="settings-row-actions">
           <button className="settings-button settings-button-ghost settings-icon-button" type="button" disabled={locked}

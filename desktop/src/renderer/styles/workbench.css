@@ -170,7 +170,7 @@
 /* An empty section there is one quiet line at a row's height, like a
  * settings group with nothing in it, not a centred poster. */
 .settings-scroll .plugin-ui-state {
-  min-height: calc(var(--control-field-height) + var(--space-3) * 2);
+  min-height: calc(var(--control-field-height) + var(--space-2) * 2);
   place-content: center start;
   justify-items: start;
   padding: 0;
@@ -519,4 +519,18 @@
   color: var(--ink-soft);
   background: var(--paper);
   box-shadow: var(--shadow-card);
+}
+
+/* Embedded settings and workspace views reuse the same bounded title actions. */
+.plugin-view-title-actions,
+.plugin-workbench-view-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.plugin-view-title-actions {
+  justify-content: flex-end;
+  padding: var(--space-1) var(--space-2);
 }

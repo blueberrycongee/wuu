@@ -11,6 +11,12 @@ import {
   threadSessionTabID,
 } from "./AppState";
 
+// Exercise the retained panel interactions while the product entry point is hidden.
+vi.mock("./FeatureFlags", async (importOriginal) => ({
+  ...await importOriginal<typeof import("./FeatureFlags")>(),
+  ENABLE_ENVIRONMENT_PANEL: true,
+}));
+
 vi.mock("./ConversationSplitPane", () => ({
   ConversationSplitPane: ({
     onOpenFile,
@@ -334,15 +340,13 @@ describe("ConversationTitleContent presentation boundary", () => {
   });
 });
 
-describe("compact conversation actions", () => {
+describe("conversation actions", () => {
   function setup(activeContext = initialState.activeContext) {
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
     const props = {
       state: { ...initialState, activeContext },
-      compactNavigation: true,
-      onStartNewThread: vi.fn(),
       environmentToggleRef: createRef<HTMLButtonElement>(),
       environmentPanelVisible: false,
       onToggleEnvironmentPanel: vi.fn(),
@@ -352,59 +356,6 @@ describe("compact conversation actions", () => {
     act(() => root?.render(<ConversationTitleActions {...props} />));
     return props;
   }
-  const menuItems = () => Array.from(document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'));
-  function key(target: Element, value: string) {
-    act(() => { target.dispatchEvent(new KeyboardEvent("keydown", { key: value, bubbles: true, cancelable: true })); });
-  }
-
-  it("starts a conversation directly and disables creation without a context", () => {
-    const props = setup({ kind: "project", project_id: "project-1", cwd: "/repo/project" });
-    act(() => container.querySelector<HTMLButtonElement>("button")!.click());
-    expect(props.onStartNewThread).toHaveBeenCalledOnce();
-    act(() => root?.render(<ConversationTitleActions {...props} state={initialState} />));
-    expect(container.querySelector<HTMLButtonElement>("button")!.disabled).toBe(true);
-    expect(document.querySelector('[role="menu"]')).toBeNull();
-  });
-
-  it("opens secondary actions with keyboard navigation and restores focus on Escape", () => {
-    const props = setup();
-    const trigger = props.environmentToggleRef.current!;
-    key(trigger, "ArrowDown");
-    expect(document.activeElement).toBe(menuItems()[0]);
-    key(menuItems()[0], "ArrowUp");
-    expect(document.activeElement).toBe(menuItems()[1]);
-    key(menuItems()[1], "Home");
-    expect(document.activeElement).toBe(menuItems()[0]);
-    key(menuItems()[0], "Escape");
-    expect(document.querySelector('[role="menu"]')).toBeNull();
-    expect(document.activeElement).toBe(trigger);
-    key(trigger, "ArrowUp");
-    expect(document.activeElement).toBe(menuItems()[1]);
-  });
-
-  it("runs panel actions once and closes the menu", () => {
-    const props = setup();
-    act(() => props.environmentToggleRef.current!.click());
-    act(() => menuItems()[0].click());
-    expect(props.onToggleEnvironmentPanel).toHaveBeenCalledOnce();
-    expect(document.querySelector('[role="menu"]')).toBeNull();
-    act(() => props.environmentToggleRef.current!.click());
-    act(() => menuItems()[1].click());
-    expect(props.onToggleRightPanel).toHaveBeenCalledOnce();
-    expect(document.querySelector('[role="menu"]')).toBeNull();
-  });
-
-  it("dismisses on outside interaction and removes the menu when the layout widens", () => {
-    const props = setup();
-    act(() => props.environmentToggleRef.current!.click());
-    act(() => document.body.dispatchEvent(new Event("pointerdown", { bubbles: true })));
-    expect(document.querySelector('[role="menu"]')).toBeNull();
-    act(() => props.environmentToggleRef.current!.click());
-    act(() => root?.render(<ConversationTitleActions {...props} compactNavigation={false} />));
-    expect(document.querySelector('[role="menu"]')).toBeNull();
-    expect(container.querySelectorAll("button")).toHaveLength(2);
-  });
-
   it("drops the covered conversation's environment action on a plugin page", () => {
     const props = setup();
     act(() => root?.render(<ConversationTitleActions {...props} pluginPageVisible />));
@@ -413,8 +364,6 @@ describe("compact conversation actions", () => {
     act(() => panel.click());
     expect(props.onToggleRightPanel).toHaveBeenCalledOnce();
     expect(document.querySelector('[role="menu"]')).toBeNull();
-    act(() => root?.render(<ConversationTitleActions {...props} pluginPageVisible compactNavigation={false} />));
-    expect(props.environmentToggleRef.current).toBeNull();
     expect(container.querySelectorAll("button")).toHaveLength(1);
   });
 });

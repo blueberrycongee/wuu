@@ -47,11 +47,12 @@ func codeModeDefsToProviderDefs(defs []codemode.ToolDefinition) []providers.Tool
 func TestPTCGlobalSwitchAndExecutionBoundary(t *testing.T) {
 	kit := newCodeModeTestToolkit(t)
 	kit.ConfigurePTC(kit.CodeModeService(), config.PTCConfig{Enabled: true})
-	if !contains("run_code", kit.Definitions()) || contains("read_file", kit.Definitions()) {
-		t.Fatal("PTC surface is not collapsed")
+	if !contains("run_code", kit.Definitions()) || !contains("read_file", kit.Definitions()) {
+		t.Fatal("PTC surface lost direct file access")
 	}
-	if _, err := kit.ExecuteResult(context.Background(), providers.ToolCall{Name: "read_file", Arguments: `{"path":"README.md"}`}); err == nil {
-		t.Fatal("model-direct leaf call bypassed PTC")
+	mustWriteFile(t, filepath.Join(kit.RootDir(), "direct.txt"), "DIRECT_READ_OK")
+	if result, err := kit.ExecuteResult(context.Background(), providers.ToolCall{Name: "read_file", Arguments: `{"path":"direct.txt"}`}); err != nil || !strings.Contains(result.TextProjection(), "DIRECT_READ_OK") {
+		t.Fatalf("direct read failed: %v %+v", err, result)
 	}
 	kit.ConfigurePTC(kit.CodeModeService(), config.PTCConfig{Enabled: false})
 	kit.ConfigureSurfaceForProviderModel("anthropic", "claude-sonnet-4", true)
@@ -162,7 +163,9 @@ func TestPTCResultViewUsesProgramBudget(t *testing.T) {
 		budget           int
 		middle, archived bool
 	}{
-		{"compact", 14000, false, false},
+		{"", 14000, true, false},
+		{"", 1024, false, true},
+		{"compact", 14000, true, false},
 		{"data", 14000, true, false},
 		{"data", 1024, false, true},
 	} {
@@ -184,7 +187,7 @@ func TestPTCResultViewUsesProgramBudget(t *testing.T) {
 			if estimateResultTokens(view) > tc.budget {
 				t.Fatal("program budget exceeded")
 			}
-			if tc.view == "data" && !tc.archived {
+			if tc.view != "compact" && !tc.archived {
 				var data struct {
 					Stdout   string `json:"stdout"`
 					Stderr   string `json:"stderr"`
@@ -418,7 +421,10 @@ func TestPTCResultOutputDoesNotRepeatOrQuoteToolViews(t *testing.T) {
 		}
 		var observation map[string]any
 		if err := json.Unmarshal([]byte(view), &observation); err != nil {
-			t.Fatalf("tool view acquired JSON string quoting: %q: %v", view, err)
+			t.Fatalf("tool data acquired JSON string quoting: %q: %v", view, err)
+		}
+		if observation["text"] != "UNIQUE_PTC_EVIDENCE" {
+			t.Fatalf("source was escaped or altered: %q", view)
 		}
 	}
 }
@@ -503,17 +509,12 @@ func TestPTCSurfaceSummaryKeepsNestedCapabilitiesReachable(t *testing.T) {
 	if !surface.HasAvailableCapability(capability.CapabilityCommandBash) {
 		t.Fatal("nested command capability lost")
 	}
-	for _, direct := range surface.VisibleCapabilities() {
-		if direct == capability.CapabilityCommandBash {
-			t.Fatal("nested command reported as direct")
-		}
-	}
 	summary := surface.Summarize()
 	if summary.NestedCapabilityMap["bash"] != string(capability.CapabilityCommandBash) || summary.EditPrimitive != "edit_file" {
 		t.Fatalf("snapshot lost nested mapping: %+v", summary)
 	}
-	if _, ok := summary.ToolCapabilityMap["read_file"]; ok {
-		t.Fatal("snapshot advertises direct read")
+	if _, ok := summary.ToolCapabilityMap["read_file"]; !ok {
+		t.Fatal("snapshot omitted direct read")
 	}
 }
 
@@ -686,6 +687,33 @@ func TestPTCRepeatedProgramAdvancesCheckpoint(t *testing.T) {
 	}
 }
 
+func TestPTCReadRecoversUndisplayedContent(t *testing.T) {
+	for _, scenario := range []string{"unprinted", "cropped batch"} {
+		t.Run(scenario, func(t *testing.T) {
+			kit := newCodeModeTestToolkit(t)
+			kit.SetSessionDir(t.TempDir())
+			mustWriteFile(t, filepath.Join(kit.RootDir(), "target.txt"), "RECOVER_THIS_EVIDENCE\n")
+			mustWriteFile(t, filepath.Join(kit.RootDir(), "padding.txt"), strings.Repeat("unrelated evidence\n", 4000))
+			code := `await tools.read_file({path:"target.txt"}); text("read completed");`
+			if scenario == "cropped batch" {
+				code = `text(await tools.read_file({path:"padding.txt"})); text(await tools.read_file({path:"target.txt"})); text("trailing padding ".repeat(4000));`
+			}
+			first := runPTCProgram(t, kit, code, 1024)
+			firstView := providers.ProjectToolResult(first).ToolText
+			if first.IsError || strings.Contains(firstView, "RECOVER_THIS_EVIDENCE") {
+				t.Fatalf("first read must not expose target evidence: %s", firstView)
+			}
+			if scenario == "cropped batch" && !strings.Contains(firstView, "archived_tool_result") {
+				t.Fatalf("batch was not cropped: %s", firstView)
+			}
+			second := runPTCProgram(t, kit, `text(await tools.read_file({path:"target.txt"}));`)
+			if second.IsError || !strings.Contains(providers.ProjectToolResult(second).ToolText, "RECOVER_THIS_EVIDENCE") {
+				t.Fatalf("explicit reread did not recover content: %s", second.TextProjection())
+			}
+		})
+	}
+}
+
 func TestPTCRepeatedProgramKeepsLeafObservations(t *testing.T) {
 	kit := newCodeModeTestToolkit(t)
 	if err := os.WriteFile(filepath.Join(kit.RootDir(), "fixture.txt"), []byte("unchanged"), 0600); err != nil {
@@ -703,8 +731,8 @@ func TestPTCRepeatedProgramKeepsLeafObservations(t *testing.T) {
 			reads = append(reads, record)
 		}
 	}
-	if len(reads) != 3 || !reads[2].Success || reads[2].ResultAction != "read_unchanged" {
-		t.Fatalf("repeated leaf observation must retain its successful unchanged result: %+v", reads)
+	if len(reads) != 3 || !reads[2].Success || reads[2].ResultAction != "read" {
+		t.Fatalf("repeated leaf observation must retain its successful read result: %+v", reads)
 	}
 	kit.DisableTools("read_file")
 	if result := runPTCProgram(t, kit, `await tools.read_file({path:"fixture.txt"}); return true;`); !result.IsError {

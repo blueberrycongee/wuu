@@ -9,7 +9,6 @@ import type {
 } from "./plugins/PluginHost";
 import { useI18n } from "./i18n";
 import { externalAgentActivityStatusSource } from "./ExternalAgentActivityStore";
-import { Check, Circle } from "./WuuIcons";
 
 const EMPTY_ITEMS: readonly ResolvedStatusItem[] = Object.freeze([]);
 const MAX_VISIBLE_ITEMS = 3;
@@ -136,6 +135,15 @@ function TodoStatusCapsule({ todoUpdate }: { todoUpdate: TodoUpdate }) {
         tabIndex={0}
         aria-label={progressLabel}
       >
+        <svg className="conversation-status-todo-progress" viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+          <circle className="todo-progress-track" cx="10" cy="10" r="7" />
+          <circle
+            className="todo-progress-value"
+            cx="10" cy="10" r="7" pathLength="100"
+            strokeDasharray="100"
+            strokeDashoffset={100 - (completed / total) * 100}
+          />
+        </svg>
         <span className="conversation-status-label">TODO</span>
         <span className="conversation-status-secondary">
           {formatNumber(completed)}/{formatNumber(total)}
@@ -145,7 +153,10 @@ function TodoStatusCapsule({ todoUpdate }: { todoUpdate: TodoUpdate }) {
         {todoUpdate.todos.map((item, index) => (
           <li className={`is-${item.status}`} key={`${index}:${item.content}`}>
             <span className="conversation-status-todo-marker" aria-hidden="true">
-              {item.status === "completed" ? <Check /> : <Circle />}
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" focusable="false">
+                <circle className="todo-step-ring" cx="10" cy="10" r="7" pathLength="100" />
+                <path className="todo-step-check" d="m5 10 3.2 3.2L15 6.5" pathLength="1" />
+              </svg>
             </span>
             <span>{item.content}</span>
           </li>

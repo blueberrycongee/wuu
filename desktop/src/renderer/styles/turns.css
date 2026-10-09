@@ -47,14 +47,21 @@
   --activity-toggle-hover-color: var(--gray-650);
   --activity-toggle-hover-color-alt: var(--wuu-color-text-muted, var(--gray-600));
   --activity-detail-color: var(--wuu-color-text-muted, var(--gray-550));
+  /* A tool row's target (file, query, command) sits between the row's
+   * tertiary verb and prose ink, so a run of rows scans by what was touched
+   * without competing with the answer. */
+  --activity-target-color: color-mix(in srgb, var(--ink) 50%, var(--ink-soft));
   /* Diff counts are status text: the status roles already pass contrast on
    * the canvas, where the brighter diff greens did not. */
   --diff-insert-color: var(--success);
   --diff-delete-color: var(--danger);
-  /* Links reuse the one interface blue; hover moves toward the theme ink,
-   * which darkens it on light and lightens it on dark. */
-  --rich-link-color: var(--wuu-color-link, var(--info));
-  --rich-link-hover-color: var(--wuu-color-link-hover, color-mix(in oklab, var(--info) 75%, var(--ink-strong)));
+  /* Links in prose are ink with an underline: the underline is the cue, so
+   * a reply full of PR, CI and doc links still reads as one paragraph
+   * rather than a row of blue buttons. Hover strengthens the underline. */
+  --rich-link-color: var(--wuu-color-link, var(--ink));
+  --rich-link-hover-color: var(--wuu-color-link-hover, var(--ink-strong));
+  --rich-link-underline-color: color-mix(in srgb, currentColor 35%, transparent);
+  --rich-link-icon-color: var(--ink-muted);
   /* Prose surfaces share the neutral ramp: blocks recede, inline code
    * gets a small contrast step without resembling a selected control. */
   --message-flow-card-bg: var(--surface-1);
@@ -1864,11 +1871,6 @@
   display: flex;
   width: 100%;
   min-width: 0;
-  /* Keep the row height constant whether or not the sources pill is
-     present. The pill is 26px (4px padding around the 18px icon stack)
-     and taller than the 20px process text line. It pops in while a web
-     search is still streaming; without a reserved height its appearance
-     would grow the row and shift the whole message flow below it. */
   min-height: 26px;
   align-items: center;
   gap: 12px;
@@ -2356,6 +2358,10 @@
   font-weight: var(--weight-medium);
 }
 
+.activity-target {
+  color: var(--activity-target-color);
+}
+
 .activity-add {
   color: var(--diff-insert-color);
 }
@@ -2417,6 +2423,7 @@
   --process-mascot-room: 12px;
 }
 
+.process-surface,
 .process-surface-fold {
   --process-summary-icon-size: 28px;
   --process-summary-icon-gap: 8px;
@@ -2702,37 +2709,48 @@
   color: var(--conversation-process-control-color, var(--process-control-color-fallback));
 }
 
-/* The turn's answer did not arrive. The retrying state and the settled
- * failure share one frame, so the card that counts down to a retry is the
- * card that later explains what went wrong and offers the next step. The
- * symbol keeps its own column: a wrapped title, the explanation and the
- * actions all start on one text edge, --card-padding inside the frame. */
+/* The turn's answer did not arrive. One row, read left to right: the symbol,
+ * what happened, then the recovery slot on the trailing edge. The slot holds
+ * the retry countdown while the core retries and the action once it gives
+ * up; both are the same pill, so the change happens in place. The surface is
+ * a fill, not a frame, that hugs its sentence from the reply's text edge, so
+ * the action follows the words instead of waiting across the column. It
+ * turns to the error tint only when the turn has failed. */
 .turn-failure {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  column-gap: var(--space-3);
+  /* The pill tracks the reading line so it stays concentric at any type size. */
+  --turn-failure-pill-height: calc(var(--conversation-process-line-height) + 6px);
+  --turn-failure-inset: 6px;
+  display: flex;
+  align-items: flex-start;
+  width: fit-content;
   min-width: 0;
+  max-width: 100%;
   box-sizing: border-box;
-  padding: var(--card-padding);
-  border: 1px solid var(--message-flow-card-border);
-  border-radius: var(--message-flow-card-radius);
-  background: var(--message-flow-card-bg);
+  /* Text keeps a full gutter on both sides; only the trailing pill steps out
+   * to the inset, so its ends stay concentric with the surface. */
+  padding: var(--turn-failure-inset) var(--space-3);
+  border-radius: calc(var(--turn-failure-pill-height) / 2 + var(--turn-failure-inset));
+  background: var(--danger-soft);
   color: var(--ink);
   font-size: var(--conversation-message-font-size);
   line-height: var(--conversation-process-line-height);
+  transition: background-color var(--motion-slow) var(--ease-out);
 }
 
-.turn-failure > :not(.turn-failure-icon) {
-  grid-column: 2;
+.turn-failure.is-retrying {
+  background: var(--message-flow-card-bg);
 }
 
-/* Centered on the title's first line. The status colour pairs with the
- * symbol and the title; it is never the only signal. */
+/* The symbol and the first line of text sit on the pill's centre line, so
+ * a single-line row is balanced and a wrapped one keeps its action beside
+ * the title. The status colour pairs with the symbol and the title; it is
+ * never the only signal. */
 .turn-failure-icon {
-  grid-row: 1;
+  flex: none;
   width: var(--icon-size);
   height: var(--icon-size);
-  margin-top: calc((var(--conversation-process-line-height) - var(--icon-size)) / 2);
+  margin-top: calc((var(--turn-failure-pill-height) - var(--icon-size)) / 2);
+  margin-inline-end: var(--space-2);
   color: var(--danger);
 }
 
@@ -2740,90 +2758,66 @@
   color: var(--warning);
 }
 
-/*
- * Boxed recovery cards are turn siblings, so they only inherit the 8px item
- * rhythm. The process↔answer landmark is 16px — the same pause a diff card
- * gets after prose. Add the remainder; the parent gap already supplies the
- * rest. After a user bubble, subtract the bubble's trailing gap so the
- * visible band stays 16px rather than 24px.
- */
-.turn > .turn-failure {
-  margin-top: calc(
-    var(--conversation-process-answer-gap) - var(--conversation-turn-item-gap)
-  );
-}
-
-.turn > .user-message-block + .turn-failure {
-  margin-top: calc(
-    var(--conversation-process-answer-gap) - var(--conversation-turn-item-gap) -
-      var(--conversation-user-message-trailing-gap)
-  );
-}
-
-.turn-failure-head {
-  display: flex;
+/* Everything after the symbol starts at one text edge. */
+.turn-failure-main {
+  flex: 0 1 auto;
   min-width: 0;
-  align-items: baseline;
-  gap: var(--space-2);
+}
+
+/* The recovery slot follows the sentence while both fit on a line;
+ * otherwise it moves under the words, starting where they do, instead of
+ * squeezing them. */
+.turn-failure-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--space-1) var(--space-3);
+}
+
+.turn-failure-message {
+  min-width: 0;
+  margin: 0;
+  padding-block: calc((var(--turn-failure-pill-height) - 1lh) / 2);
+  overflow-wrap: anywhere;
 }
 
 .turn-failure-title {
-  min-width: 0;
-  overflow-wrap: anywhere;
   font-weight: var(--weight-medium);
 }
 
-.turn-failure-code,
-.turn-failure-status {
-  flex: none;
-  color: var(--ink-tertiary);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-
-/* The countdown owns the trailing edge, so the title never moves while the
- * seconds change width. */
-.turn-failure-status {
-  margin-inline-start: auto;
+.turn-failure-title:not(:last-child) {
+  margin-inline-end: var(--space-2);
 }
 
 .turn-failure-body {
-  margin: var(--space-1) 0 0;
   color: var(--ink-soft);
-  overflow-wrap: anywhere;
 }
 
-.turn-failure-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-2);
-  margin-top: var(--space-3);
-}
-
-/* A text disclosure, not a third button: the technical record is for the
- * reader who asks for it. Its ink starts on the text edge when it stands
- * alone and keeps a group gap after the actions. */
+/* A text disclosure at the end of the sentence: the technical record is for
+ * the reader who asks for it. */
 .turn-failure-details-toggle {
   display: inline-flex;
-  min-height: var(--control-field-height);
   align-items: center;
-  gap: var(--space-1);
+  gap: 2px;
+  padding: 0;
   border: 0;
   background: transparent;
   color: var(--ink-tertiary);
   cursor: pointer;
   font: inherit;
-  padding: 0;
+  vertical-align: baseline;
+  white-space: nowrap;
   transition: color var(--motion-fast) var(--ease-out);
-}
-
-.settings-button + .turn-failure-details-toggle {
-  margin-inline-start: var(--space-2);
 }
 
 .turn-failure-details-toggle:hover {
   color: var(--ink-soft);
+}
+
+.turn-failure-details-toggle:focus-visible {
+  border-radius: 4px;
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
 }
 
 .turn-failure-details-toggle > .turn-failure-details-chevron {
@@ -2836,16 +2830,103 @@
   rotate: 90deg;
 }
 
-.turn-failure-details > .collapsible-details-inner {
-  display: grid;
-  row-gap: var(--space-2);
-  padding-top: var(--space-3);
+.turn-failure-recovery {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-1);
+  margin-inline-end: calc(var(--turn-failure-inset) - var(--space-3));
 }
 
-.turn-failure-recovery {
-  margin: 0;
+/* Countdown and action share one geometry so the slot never resizes its
+ * row when recovery gives up. */
+.turn-failure-pill {
+  display: inline-flex;
+  min-width: 4.5em;
+  height: var(--turn-failure-pill-height);
+  box-sizing: border-box;
+  align-items: center;
+  justify-content: center;
+  padding: 0 var(--space-3);
+  border: 0;
+  border-radius: var(--radius-pill);
+  font: inherit;
+  font-size: var(--font-ui);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* The wait fills the pill from the leading edge, like progress inside a
+ * button, and empties into the action that replaces it. */
+.turn-failure-countdown {
+  background:
+    linear-gradient(
+      to right,
+      color-mix(in srgb, var(--ink) 7%, transparent) calc(var(--retry-progress, 0) * 100%),
+      transparent 0
+    ),
+    var(--surface-2);
   color: var(--ink-soft);
-  white-space: pre-line;
+}
+
+.turn-failure-action {
+  background: var(--paper);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--danger) 14%, transparent);
+  color: var(--ink);
+  cursor: pointer;
+  font-weight: var(--weight-medium);
+  transition:
+    background-color var(--motion-fast) var(--ease-out),
+    box-shadow var(--motion-fast) var(--ease-out),
+    scale var(--motion-fast) var(--ease-out);
+}
+
+.turn-failure-action:hover {
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--danger) 26%, transparent);
+}
+
+.turn-failure-action:active {
+  scale: 0.97;
+}
+
+.turn-failure-action:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.turn-failure-action:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+/* Beside the fix, resending is the quieter choice: bare text, so it starts
+ * on the text edge when the slot wraps under the sentence. */
+.turn-failure-action:not(.is-primary):has(+ .is-primary) {
+  min-width: 0;
+  margin-inline-end: var(--space-2);
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--ink-soft);
+}
+
+.turn-failure-action:not(.is-primary):has(+ .is-primary):hover {
+  color: var(--ink);
+}
+
+.turn-failure-details > .collapsible-details-inner {
+  display: grid;
+  row-gap: var(--space-1);
+  /* Inline-start padding belongs to the shared fold's mascot-room offset. The
+   * bottom completes the surface's gutter below the record. */
+  padding-block: var(--space-1) calc(var(--space-3) - var(--turn-failure-inset));
+}
+
+.turn-failure-facts {
+  margin: 0;
+  color: var(--ink-tertiary);
+  font-size: var(--font-sm);
+  font-variant-numeric: tabular-nums;
 }
 
 .turn-failure-diagnostic {
@@ -2856,6 +2937,60 @@
   line-height: 1.6;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+/*
+ * Recovery rows are turn siblings, so they only inherit the 8px item
+ * rhythm. The process↔answer landmark is 16px — the same pause a diff card
+ * gets after prose. Add the remainder; the parent gap already supplies the
+ * rest.
+ */
+.turn > .turn-failure {
+  margin-top: calc(
+    var(--conversation-process-answer-gap) - var(--conversation-turn-item-gap)
+  );
+}
+
+/* A failure with no reply before it stands where the reply would: it keeps
+ * the query → reply gap, which already clears the query's hover actions
+ * hanging below the bubble. */
+.turn > .user-message-block + .turn-failure {
+  margin-top: calc(
+    var(--conversation-user-rule-gap) - var(--conversation-turn-item-gap) -
+      var(--conversation-user-message-trailing-gap)
+  );
+}
+
+/* A failure that happens in front of the reader resolves out of the pending
+ * row rather than popping in: the row comes into focus from a slight blur.
+ * When a retrying row gives up, the row stays; the tint warms, the symbol
+ * swaps, the reason slides in after the title and the action takes the
+ * countdown's place. History renders still. */
+.turn-failure.is-arriving {
+  animation: turn-failure-arrive var(--motion-slow) var(--ease-out) both;
+}
+
+@keyframes turn-failure-arrive {
+  from {
+    opacity: 0;
+    filter: blur(4px);
+    translate: 0 4px;
+  }
+}
+
+.turn-failure.is-arriving .turn-failure-icon {
+  --enter-scale: 0.6;
+  animation: wuu-enter var(--motion-base) var(--ease-out) both;
+}
+
+.turn-failure.is-arriving :is(.turn-failure-body, .turn-failure-details-toggle) {
+  --enter-x: -4px;
+  animation: wuu-enter var(--motion-base) var(--ease-out) calc(var(--motion-fast) / 2) both;
+}
+
+.turn-failure.is-arriving .turn-failure-pill {
+  --enter-scale: 0.92;
+  animation: wuu-enter var(--motion-base) var(--ease-out) var(--motion-fast) both;
 }
 
 /* Retain the actual wrapping notice height after settlement. */
@@ -2892,11 +3027,9 @@
  * cached conversation kept mounted behind the active pane. */
 :root[data-renderer-hidden] .turn-process-live-dot,
 :root[data-renderer-hidden] .tool-activity-marker.is-running,
-:root[data-renderer-hidden] .turn-source-avatar[data-load-state="loading"]::before,
 :root[data-renderer-hidden] .loading-rail::after,
 .cached-conversation-pane[data-active="false"] .turn-process-live-dot,
-.cached-conversation-pane[data-active="false"] .tool-activity-marker.is-running,
-.cached-conversation-pane[data-active="false"] .turn-source-avatar[data-load-state="loading"]::before {
+.cached-conversation-pane[data-active="false"] .tool-activity-marker.is-running {
   animation-play-state: paused;
 }
 
@@ -3112,28 +3245,20 @@
 
 .rich-link {
   color: var(--rich-link-color);
-  text-decoration-line: none;
+  text-decoration-line: underline;
+  text-decoration-thickness: 1px;
+  text-decoration-color: var(--rich-link-underline-color);
+  text-underline-offset: 0.22em;
 }
 
-/* Inside the black outgoing bubble the default link blue (tuned for light
- * prose) is nearly invisible, so links switch to the light-on-dark palette.
- * File links drop their inherited-ink color for the same reason and keep the
- * underline as the click affordance. */
+/* Themes can paint the outgoing bubble; its links follow the bubble's own
+ * link palette. */
 .user-message .rich-link {
   color: var(--user-message-link-color);
 }
 
 .user-message .rich-link:hover,
 .user-message .rich-link:focus-visible {
-  color: var(--user-message-link-hover-color);
-}
-
-.user-message .rich-file-link {
-  color: var(--user-message-link-color);
-  text-decoration-color: currentColor;
-}
-
-.user-message .rich-file-link:hover {
   color: var(--user-message-link-hover-color);
 }
 
@@ -3239,11 +3364,6 @@
 }
 
 .rich-file-link {
-  color: inherit;
-  text-decoration-line: underline;
-  text-decoration-thickness: 1px;
-  text-decoration-color: var(--wuu-color-text-muted, var(--gray-550));
-  text-underline-offset: 0.18em;
   appearance: none;
   -webkit-appearance: none;
   border: 0;
@@ -3275,8 +3395,8 @@
   height: 1em;
   align-items: center;
   justify-content: center;
-  margin-right: 4px;
-  color: currentColor;
+  margin-right: 0.3em;
+  color: var(--rich-link-icon-color);
   vertical-align: -0.12em;
 }
 
@@ -3302,11 +3422,10 @@
 .rich-link:hover,
 .rich-file-link:focus-visible {
   color: var(--rich-link-hover-color);
+  text-decoration-color: currentColor;
 }
 
 .rich-file-link:hover {
-  color: var(--rich-link-hover-color);
-  text-decoration-color: currentColor;
   background: transparent;
 }
 
@@ -4960,7 +5079,8 @@ pre {
   min-width: 0;
 }
 
-.turn-artifact-gallery-toolbar {
+.turn-artifact-gallery-toolbar,
+.turn-artifact-image-toolbar {
   position: absolute;
   top: 8px;
   right: 8px;
@@ -4972,8 +5092,9 @@ pre {
   isolation: isolate;
 }
 
-/* A soft white glow provides contrast without adding a solid button surface. */
-.turn-artifact-gallery-toolbar::before {
+/* White light supports the icon over media without a dark halo or button box. */
+.turn-artifact-gallery-toolbar::before,
+.turn-artifact-image-toolbar::before {
   content: "";
   position: absolute;
   inset: -4px;
@@ -4984,27 +5105,36 @@ pre {
   pointer-events: none;
 }
 
-.turn-artifact-inline-list:is(:hover, :focus-within) > .turn-artifact-gallery-toolbar {
+.turn-artifact-inline-list:is(:hover, :focus-within) > .turn-artifact-gallery-toolbar,
+.turn-artifact-inline-image:is(:hover, :focus-within) .turn-artifact-image-toolbar {
   opacity: 1;
   pointer-events: auto;
 }
 
-.turn-artifact-gallery-toolbar .icon-button {
+.turn-artifact-gallery-toolbar .icon-button,
+.turn-artifact-image-toolbar .icon-button {
   color: var(--artifact-gallery-control-fg);
   background: transparent;
   border: 0;
 }
 
-.turn-artifact-gallery-toolbar .icon-button:is(:hover, :active):not(:disabled) {
+.turn-artifact-gallery-toolbar .icon-button:is(:hover, :active):not(:disabled),
+.turn-artifact-image-toolbar .icon-button:is(:hover, :active):not(:disabled) {
   color: var(--artifact-gallery-control-fg-hover);
   background: transparent;
 }
 
 @media (hover: none), (pointer: coarse) {
-  .turn-artifact-gallery-toolbar {
+  .turn-artifact-gallery-toolbar,
+  .turn-artifact-image-toolbar {
     opacity: 1;
     pointer-events: auto;
   }
+}
+
+.turn-artifact-image-toolbar {
+  top: auto;
+  bottom: 8px;
 }
 
 .turn-artifact-gallery-items {
@@ -5092,7 +5222,7 @@ html[data-focus-modality="keyboard"] .turn-artifact-gallery-items:focus-visible 
   object-fit: scale-down;
 }
 
-.turn-artifact-inline-image button {
+.turn-artifact-image-preview > button {
   display: grid;
   place-items: center;
   width: 100%;
@@ -5109,12 +5239,12 @@ html[data-focus-modality="keyboard"] .turn-artifact-gallery-items:focus-visible 
   overflow-wrap: anywhere;
 }
 
-.turn-artifact-inline-image button:not(:disabled),
+.turn-artifact-image-preview > button:not(:disabled),
 .turn-artifact-inline-image img[role="button"] {
   cursor: zoom-in;
 }
 
-.turn-artifact-inline-image button:focus-visible,
+.turn-artifact-image-preview > button:focus-visible,
 .turn-artifact-inline-image img[role="button"]:focus-visible {
   outline: 2px solid var(--image-preview-outline-focus);
   outline-offset: 2px;
@@ -5253,10 +5383,11 @@ html[data-focus-modality="keyboard"] .turn-artifact-gallery-items:focus-visible 
 }
 
 .artifact-preview-image {
+  position: absolute;
+  inset: 0;
   display: block;
-  max-width: 100%;
-  max-height: 100%;
-  margin: auto;
+  width: 100%;
+  height: 100%;
   object-fit: contain;
 }
 
@@ -5563,299 +5694,6 @@ button.turn-edit-summary-overview:focus-visible {
 @media (max-width: 720px) {
   .chip-gallery-entry {
     grid-template-columns: 1fr;
-  }
-}
-
-/*
- * Assistant-turn sources pill (ChatGPT / Claude "来源 N" treatment).
- *
- * Lives as assistant-turn metadata. One stacked favicon per unique host
- * the turn consulted through web_search / web_fetch. Each icon is a real
- * button that hands its URL to the OS default browser via
- * window.wuu.openExternal.
- *
- * Layout: flex row of overlapping icon buttons + trailing label.
- * The icons overlap so 5 hosts read as a compact stack rather than
- * 5 separate circles eating the right margin. The label sits after
- * the icon stack so the user's eye lands on the count first.
- *
- * Palette: a quiet ink veil, no outline. --bg-soft / --border-soft were
- * never defined, so the previous fill and 16% gray ring were leftover
- * fallbacks that made the pill read as a control instead of metadata.
- * --ink-overlay-6 groups the favicon stack without that extra edge;
- * hover steps to --ink-overlay-8. Icon rings use --paper so stacked
- * favicons stay separated against the veil.
- */
-.turn-sources-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 0;
-  padding: 4px 10px 4px 6px;
-  border: 0;
-  border-radius: var(--radius-pill);
-  background: var(--ink-overlay-6);
-  font-size: var(--font-sm);
-  line-height: 1;
-  color: var(--ink-tertiary);
-  flex: 0 0 auto;
-}
-
-/* Single-source variant: the whole pill is a <button>, so the user
- * agent default styles (font, line-height, padding inheritance) need to
- * be reset and we need an explicit pointer cursor + hover affordance.
- * The icon and label stay inside the button, so the click target spans
- * the entire pill — no dead zone where hover shows the URL but click
- * does nothing. */
-button.turn-sources-pill {
-  font: inherit;
-  color: inherit;
-  cursor: pointer;
-  transition: background-color var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out);
-}
-
-button.turn-sources-pill:hover,
-button.turn-sources-pill:focus-visible {
-  background: var(--ink-overlay-8);
-  color: var(--ink);
-}
-
-.turn-sources-icons {
-  display: inline-flex;
-  align-items: center;
-}
-
-/* Avatar wrapper holds the favicon image (or the first-letter fallback
- * when the favicon 404s). While the network request is pending, a quiet
- * shimmer keeps the slot from reading as a broken white circle. */
-.turn-source-avatar {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 100%;
-  height: 100%;
-  overflow: hidden;
-  border-radius: inherit;
-  background: var(--ink-overlay-6);
-  transition: background-color var(--motion-fast) var(--ease-out);
-}
-
-.turn-source-avatar[data-load-state="loading"]::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(
-    105deg,
-    transparent 20%,
-    color-mix(in srgb, var(--ink-muted) 16%, transparent) 50%,
-    transparent 80%
-  );
-  transform: translateX(-100%);
-  animation: turn-source-avatar-shimmer 1.35s ease-in-out infinite;
-}
-
-/* A search usually returns several hosts at once. Stagger the shimmer
- * across the stacked slots so they read as one loading cluster instead
- * of a row of identical indicators flashing in lockstep. Each favicon
- * still resolves independently and leaves the sequence as soon as it
- * is ready. */
-.turn-source-icon:nth-child(2) .turn-source-avatar::before {
-  animation-delay: 70ms;
-}
-
-.turn-source-icon:nth-child(3) .turn-source-avatar::before {
-  animation-delay: 140ms;
-}
-
-.turn-source-icon:nth-child(4) .turn-source-avatar::before {
-  animation-delay: 210ms;
-}
-
-.turn-source-icon:nth-child(5) .turn-source-avatar::before {
-  animation-delay: 280ms;
-}
-
-.turn-source-icon:nth-child(6) .turn-source-avatar::before {
-  animation-delay: 350ms;
-}
-
-.turn-source-avatar[data-load-state="loaded"] {
-  background: transparent;
-}
-
-@keyframes turn-source-avatar-shimmer {
-  to {
-    transform: translateX(100%);
-  }
-}
-
-/* Negative margin pulls adjacent icons into the overlap; the
- * explicit ring keeps each icon readable on the dark / noisy
- * surfaces where the pill can sit. */
-.turn-source-icon,
-.turn-source-icon-frame {
-  position: relative;
-  width: 18px;
-  height: 18px;
-  border-radius: var(--radius-pill);
-  border: 1.5px solid var(--paper);
-  background: var(--paper);
-  padding: 0;
-  margin: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  overflow: hidden;
-  /* Dim the chrome so the favicon dominates; the icon is the
-   * affordance, the button border is just legibility. */
-  color: var(--ink-strong);
-}
-
-.turn-source-icon {
-  cursor: pointer;
-  transition: transform var(--motion-fast) var(--ease-out), box-shadow var(--motion-fast) var(--ease-out);
-}
-
-.turn-source-icon + .turn-source-icon {
-  margin-left: -6px;
-}
-
-.turn-source-icon:hover,
-.turn-source-icon:focus-visible {
-  transform: translateY(-1px);
-  box-shadow: var(--shadow-soft);
-  z-index: 1;
-}
-
-.turn-source-icon img,
-.turn-source-icon-frame img {
-  width: 14px;
-  height: 14px;
-  display: block;
-  opacity: 0;
-  transition: opacity var(--motion-fast) var(--ease-out);
-}
-
-.turn-source-avatar[data-load-state="loaded"] img {
-  opacity: 1;
-}
-
-/* Hosts whose favicon 404s fall through to a first-letter avatar.
- * Kept tiny — the favicon stack is a glance affordance, not a
- * label surface. */
-.turn-source-fallback {
-  font-size: 10px;
-  font-weight: var(--weight-semibold, 600);
-  line-height: 1;
-  color: var(--ink-strong);
-  user-select: none;
-}
-
-.turn-sources-label {
-  font-weight: var(--weight-medium, 500);
-  white-space: nowrap;
-}
-
-/* Overflow indicator. Anchors an absolutely-positioned dropdown menu
- * under the badge so the menu doesn't displace the pill itself.
- * The wrapper keeps the document-level "click outside to close"
- * logic scoped: anything inside this span — the badge OR the menu —
- * is "inside", so an item click opens the URL without immediately
- * re-closing the menu via the outside-click handler. */
-.turn-source-overflow {
-  position: relative;
-  display: inline-flex;
-}
-
-.turn-source-overflow-badge {
-  /* Reads as part of the icon stack but visually distinct from real
-   * favicons so users see it as a count, not a host. The "+N" label
-   * is set on the button itself so screen readers and copy/paste
-   * both get the number. */
-  background: var(--paper);
-  color: var(--ink-tertiary);
-  font-size: 10px;
-  font-weight: var(--weight-semibold, 600);
-  line-height: 1;
-  letter-spacing: -0.02em;
-}
-
-.turn-source-overflow-list {
-  position: absolute;
-  top: calc(100% + 6px);
-  right: 0;
-  /* Sit above any in-conversation card the user might be hovering.
-   * The process fold below could grow into this z-band, so leave
-   * a comfortable gap. */
-  z-index: 50;
-  margin: 0;
-  padding: 4px;
-  list-style: none;
-  min-width: 240px;
-  max-width: 320px;
-  max-height: 280px;
-  overflow-y: auto;
-  border-radius: var(--radius-xs);
-  background: var(--menu-bg);
-  border: 1px solid var(--menu-border);
-  box-shadow: var(--shadow-pop);
-}
-
-.turn-source-overflow-item {
-  display: block;
-  width: 100%;
-  text-align: left;
-  padding: 6px 10px;
-  border-radius: var(--radius-xs);
-  background: transparent;
-  border: 0;
-  cursor: pointer;
-  color: var(--ink);
-  font: inherit;
-}
-
-.turn-source-overflow-item:hover,
-.turn-source-overflow-item:focus-visible {
-  background: var(--menu-hover);
-}
-
-.turn-source-overflow-item-title {
-  display: block;
-  font-size: var(--font-menu);
-  line-height: var(--line-ui);
-  font-weight: var(--weight-medium);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.turn-source-overflow-item-host {
-  display: block;
-  font-size: var(--font-xs);
-  line-height: var(--line-ui);
-  color: var(--ink-tertiary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* Honor the OS-level "reduce motion" preference — the hover lift
- * transitions from `transition: transform` are motion rather than
- * decorative; users who opted out shouldn't see them. */
-@container style(--motion-reduced: 1) {
-  .turn-source-icon {
-    transition: none;
-  }
-
-  .turn-source-avatar,
-  .turn-source-avatar img {
-    transition: none;
-  }
-
-  .turn-source-avatar[data-load-state="loading"]::before {
-    animation: none;
-    transform: none;
   }
 }
 
