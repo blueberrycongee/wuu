@@ -1450,6 +1450,7 @@ func (s *Session) NewThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 	runner.PromptCacheKey = strings.TrimSpace(id)
 	runner.InferenceJournal = s.InferenceJournalForOwner(id)
 	runner.DriverCheckpointStore = sessionDriverCheckpointStore{sessDir: s.SessionDir, sessionID: id}
+	runner.RequestContextStore = sessionRequestContextStore{sessDir: s.SessionDir, sessionID: id}
 	runner.CompactionNoteStore = sessionCompactionNoteStore{sessDir: s.SessionDir, sessionID: id}
 	if kit != nil {
 		kit.SetContextWindowToolsEnabled(runner.ContextWindowsAvailable())
@@ -1678,6 +1679,7 @@ func cloneStreamRunnerForThread(base *agent.StreamRunner, toolExecutor agent.Too
 		LoopDriver:                  base.LoopDriver,
 		DriverCheckpointStore:       base.DriverCheckpointStore,
 		ModelInputReceiptStore:      base.ModelInputReceiptStore,
+		RequestContextStore:         base.RequestContextStore,
 		CompactionRegistry:          base.CompactionRegistry,
 		CompactionNoteStore:         base.CompactionNoteStore,
 		ArchiveHistory:              base.ArchiveHistory,
@@ -2821,4 +2823,39 @@ func workerToolSurfaceForToolkit(kit *tools.Toolkit, providerName, model string,
 	surface := wkit.ActiveSurface()
 	surface.DeferredToolCatalog, err = wkit.DeferredToolCatalogSystemSection()
 	return surface, err
+}
+
+type sessionRequestContextStore struct{ sessDir, sessionID string }
+
+func (store sessionRequestContextStore) Load(ctx context.Context) (agent.RequestContextCheckpoint, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return agent.RequestContextCheckpoint{}, false, err
+	}
+	raw, err := session.LoadRequestContextCheckpoint(store.sessDir, store.sessionID)
+	if errors.Is(err, session.ErrSessionNotFound) {
+		return agent.RequestContextCheckpoint{}, false, nil
+	}
+	if err != nil || len(raw) == 0 {
+		return agent.RequestContextCheckpoint{}, false, err
+	}
+	var checkpoint agent.RequestContextCheckpoint
+	if err := json.Unmarshal(raw, &checkpoint); err != nil {
+		return checkpoint, false, fmt.Errorf("decode request context checkpoint: %w", err)
+	}
+	return checkpoint, true, nil
+}
+
+func (store sessionRequestContextStore) Save(ctx context.Context, checkpoint agent.RequestContextCheckpoint) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	payload, err := json.Marshal(checkpoint)
+	if err != nil {
+		return fmt.Errorf("encode request context checkpoint: %w", err)
+	}
+	err = session.SaveRequestContextCheckpoint(store.sessDir, store.sessionID, payload)
+	if errors.Is(err, session.ErrSessionNotFound) {
+		return nil
+	}
+	return err
 }

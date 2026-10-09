@@ -23,7 +23,7 @@ const (
 	// Explicit delivery of a file snapshot to the user, not model observation.
 	CapabilityArtifactPresent Capability = "artifact.present"
 
-	// Filesystem editing through edit_file and write_file for every model.
+	// Filesystem editing through literal write_file and edit_file operations.
 	CapabilityFileEdit Capability = "file.edit"
 
 	// Search surface.

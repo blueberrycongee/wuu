@@ -155,11 +155,6 @@ func TestSettledResultProviderHTTP(t *testing.T) {
 					if index == 1 && text != smallText {
 						t.Error("smaller output changed")
 					}
-					if index == 1 && !zero {
-						if text != "started\nwarning: deprecated\nFAIL: assertion\nExit code 1" {
-							t.Fatalf("wire restored the JSON envelope or lost failure evidence: %s", text)
-						}
-					}
 					if zero && index == 0 && text != "" {
 						t.Error("zero allocation was restored")
 					}

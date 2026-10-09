@@ -240,3 +240,89 @@ func TestHistoryRetainsStructuredImageReferencesAndReadsOriginalContentIndex(t *
 		t.Fatal("wrong original tool-result image")
 	}
 }
+
+// Terminal delivery must remain usable after tools produced multi-megabyte
+// results. The item list is authoritative; full content remains addressable.
+func TestTerminalNotificationsDeferLargeToolContent(t *testing.T) {
+	for _, method := range []string{NotificationTurnCompleted, NotificationTurnError, NotificationThreadStarted, NotificationThreadResumed, NotificationThreadUpdated} {
+		t.Run(method, func(t *testing.T) {
+			rt := newTestRuntime(t, &fakeClient{})
+			out := &lockedBuffer{}
+			srv := New(rt, out)
+			if err := srv.handleLine(context.Background(), []byte(`{"id":"init","method":"initialize","params":{"capabilities":{"deferred_notification_content":true}}}`)); err != nil {
+				t.Fatal(err)
+			}
+			th := newThreadState("large-results", nil, rt.ProviderName, rt.Model, rt.RootDir, false, time.Now())
+			turn := Turn{ID: "turn", Status: TurnStatusCompleted, ItemsView: TurnItemsViewFull}
+			for i := 0; i < 20; i++ {
+				turn.Items = append(turn.Items, ThreadItem{ID: fmt.Sprint(i), Type: ThreadItemToolCall, Status: ThreadItemStatusCompleted, Result: strings.Repeat("result", 200_000)})
+			}
+			turn.Items = append(turn.Items, ThreadItem{ID: "final", Type: ThreadItemAgentMessage, Status: ThreadItemStatusCompleted, Terminal: true, Text: "All done."})
+			th.Turns = []Turn{turn}
+			srv.threads[th.ID] = th
+			var params any = TurnCompletedNotification{ThreadID: th.ID, Turn: turn, Content: "All done."}
+			if method == NotificationTurnError {
+				params = TurnErrorNotification{ThreadID: th.ID, TurnID: turn.ID, Turn: turn, Error: "provider stopped"}
+			}
+			switch method {
+			case NotificationThreadStarted:
+				params = ThreadStartedNotification{Thread: th.snapshotLocked()}
+			case NotificationThreadResumed:
+				params = ThreadResumedNotification{Thread: th.snapshotLocked()}
+			case NotificationThreadUpdated:
+				params = ThreadUpdatedNotification{Thread: th.snapshotLocked()}
+			}
+			if err := srv.writeNotification(method, params); err != nil {
+				t.Fatal(err)
+			}
+			if size := len(out.String()); size > 256*1024 {
+				t.Fatalf("terminal notification duplicates large tool content: %d bytes", size)
+			}
+			received := remarshal[TurnCompletedNotification](t, notificationByMethod(t, parseOutput(t, out.String()), method)["params"])
+			if strings.HasPrefix(method, "thread/") {
+				received.Turn = remarshal[ThreadUpdatedNotification](t, notificationByMethod(t, parseOutput(t, out.String()), method)["params"]).Thread.Turns[0]
+			}
+			if received.Turn.ItemsView != TurnItemsViewFull || len(received.Turn.Items) != len(turn.Items) || received.Turn.Items[20].Text != "All done." {
+				t.Fatal("terminal membership or final answer changed")
+			}
+			for i, item := range received.Turn.Items[:20] {
+				if item.ID != turn.Items[i].ID || item.RemoteContentRef == "" {
+					t.Fatal("tool content lost its identity or read address")
+				}
+				if th.Turns[0].Items[i].Result != turn.Items[i].Result || len(th.Turns[0].Items[i].Result) != 1_200_000 {
+					t.Fatal("delivery mutated retained content")
+				}
+			}
+			refBytes, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(received.Turn.Items[0].RemoteContentRef, "content:"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var ref []string
+			if err := json.Unmarshal(refBytes, &ref); err != nil {
+				t.Fatal(err)
+			}
+			request, _ := json.Marshal(map[string]any{"id": "read", "method": "thread/content/read", "params": map[string]any{"thread_id": ref[0], "turn_id": ref[1], "item_id": ref[2], "sha256": ref[3]}})
+			if err := srv.handleLine(context.Background(), request); err != nil {
+				t.Fatal(err)
+			}
+			response := responseByID(t, parseOutput(t, out.String()), "read")
+			if response["error"] != nil || response["result"] == nil {
+				t.Fatalf("complete tool content cannot be read: %v", response["error"])
+			}
+		})
+	}
+}
+
+func TestNotificationContentDeferralRequiresClientCapability(t *testing.T) {
+	rt := newTestRuntime(t, &fakeClient{})
+	out := &lockedBuffer{}
+	srv := New(rt, out)
+	turn := Turn{ID: "turn", Status: TurnStatusCompleted, Items: []ThreadItem{{ID: "tool", Type: ThreadItemToolCall, Result: strings.Repeat("x", 100_000)}}}
+	if err := srv.writeNotification(NotificationTurnCompleted, TurnCompletedNotification{ThreadID: "thread", Turn: turn}); err != nil {
+		t.Fatal(err)
+	}
+	received := remarshal[TurnCompletedNotification](t, notificationByMethod(t, parseOutput(t, out.String()), NotificationTurnCompleted)["params"])
+	if received.Turn.Items[0].Result != turn.Items[0].Result || received.Turn.Items[0].RemoteContentRef != "" {
+		t.Fatal("unnegotiated client received deferred content")
+	}
+}

@@ -29,7 +29,7 @@ func TestSessionPTCGlobalSwitch(t *testing.T) {
 				foundRun = foundRun || d.Name == "run_code"
 				foundRead = foundRead || d.Name == "read_file"
 			}
-			if foundRun != enabled || foundRead == enabled {
+			if foundRun != enabled || !foundRead {
 				t.Fatalf("PTC=%v run=%v read=%v", enabled, foundRun, foundRead)
 			}
 		}
@@ -53,7 +53,7 @@ func TestWorkerPTCSurfaceUsesGlobalSetting(t *testing.T) {
 		_, run := surface.Tools["run_code"]
 		_, direct := surface.Tools["read_file"]
 		_, nested := surface.NestedTools["read_file"]
-		if run != enabled || direct == enabled || nested != enabled {
+		if run != enabled || !direct || nested != enabled {
 			t.Fatalf("worker surface=%+v", surface)
 		}
 	}

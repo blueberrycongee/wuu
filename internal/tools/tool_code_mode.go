@@ -45,7 +45,7 @@ func (*CodeModeExecTool) Definition() providers.ToolDefinition {
 		Freeform:    true,
 		Description: codeModeDescription,
 		InputSchema: map[string]any{"type": "object", "additionalProperties": false, "required": []string{"input"}, "properties": map[string]any{
-			"input": map[string]any{"type": "string", "description": "JavaScript source. Optional first-line // @run_code: JSON sets max_output_tokens, result_view, timeout_ms or description."},
+			"input": map[string]any{"type": "string", "description": "JavaScript source. Optional first-line // @run_code: JSON sets max_output_tokens, timeout_ms or description."},
 		}},
 	}
 }
@@ -166,7 +166,11 @@ func (t *Toolkit) codeModeToolCatalog() string {
 	shown := 0
 	for _, tool := range nested {
 		if t.CodeModeDirectCallAllowed(tool.Name) {
-			fmt.Fprintf(&b, "\n- tools.%s uses the same arguments as the directly advertised %s tool.\n", tool.Name, tool.Name)
+			if tool.Freeform {
+				fmt.Fprintf(&b, "\n- tools.%s({input: literalText}) invokes the directly advertised %s tool.\n", tool.Name, tool.Name)
+			} else {
+				fmt.Fprintf(&b, "\n- tools.%s uses the same arguments as the directly advertised %s tool.\n", tool.Name, tool.Name)
+			}
 			shown++
 			continue
 		}
@@ -265,9 +269,10 @@ func codeModeToolDefinition(d providers.ToolDefinition) (codemode.ToolDefinition
 // CodeModeDirectCallAllowed is the shared top-level routing policy. Availability
 // and authorization are checked separately at dispatch time.
 func (t *Toolkit) CodeModeDirectCallAllowed(name string) bool {
-	// Literal file content need not cross a JavaScript string boundary. Keep
-	// these tools composable for edits whose arguments are computed in a program.
-	if name == "write_file" || name == "edit_file" {
+	// Ordinary file and command operations do not require a program wrapper.
+	// The same tools remain composable when their arguments depend on results.
+	switch name {
+	case "read_file", "write_file", "edit_file", "bash", "process":
 		return true
 	}
 	return t.codeModeDirectOnly(name)
@@ -294,21 +299,21 @@ const codeModeDescription = `Run JavaScript or erasable TypeScript to compose to
 
 Execution:
 - Call await tools.name(args). No direct filesystem, network, process, imports or timers; use tools for effects.
-- Prefer the directly advertised write_file and edit_file tools for literal file content, so it is not evaluated as JavaScript. Their tools bindings remain available when arguments depend on computation or preceding results in this program.
+- Call the directly advertised file and command tools for individual operations. Use this tool for dependent sequences, parallel independent work, or processing results before displaying them. Literal file content can go directly to write_file or edit_file without JavaScript evaluation.
 - Use the core binding declarations below directly. Find other tools with await searchTools(query, {limit:8, offset:0}); inspect exact arguments with await describeTool(name). Tool names are exact; bracket access handles punctuation.
-- Await dependent calls and writes in order. Use bounded Promise.all for independent reads. Await every call before returning: programs have no continuation and tool effects are not transactional.
+- Await dependent calls and writes in order within the same program when the next action is already known; return to the model when an observation requires a new decision. Use bounded Promise.all for independent reads. Await every call before returning: programs have no continuation and tool effects are not transactional.
 - For long work use bash run_in_background and process handles. Directly advertised interaction and lifecycle tools stay outside programs.
 
 Text and output:
 - Treat nested source as literal data. Ordinary JS strings process backslashes; template literals interpolate ${...}, including String.raw templates. A quoted shell heredoc protects against shell expansion only, after JavaScript has parsed the command. Preserve the intended bytes at each language boundary.
 - text(value), console.log(value), or return value emits output. Strings print literally; other values print as JSON. Keep intermediate data private and print only evidence needed for the next decision.
-- Tool results contain content, optional structured_content and optional model_text. Use structured_content or content for computation; model_text is a display projection. Successful image/audio results attach automatically.
-- Printing a tool result uses compact by default. Choose result_view:"data" for structured_content (or unprojected content when absent). Explicitly selected fields are ordinary data. Producer pagination and transport limits still apply.
+- Image and audio results from nested tools are forwarded automatically and share one result size limit. Use small media batches; max_output_tokens controls text only.
+- Tool results contain content and optional structured_content. Use these fields for filtering and computation. Successful image/audio results attach automatically.
+- Printing a tool result emits structured_content, or content when no structured data exists. The program output budget applies after selection; producer pagination and transport limits remain explicit in the result.
 
 Options:
-- Optional first line: // @run_code: {"max_output_tokens": 14000, "result_view": "data"}
+- Optional first line: // @run_code: {"max_output_tokens": 14000}
 - max_output_tokens: 0–32768, default 8192. Bounds emitted text, not intermediate values. Excess output is archived for recovery; earlier observations never change. Tiny budgets retain essential recovery metadata.
-- result_view: "compact" or "data". A larger budget alone does not expand compact excerpts.
 - timeout_ms: positive milliseconds; omitted means no elapsed deadline. Includes approval and tool waits. description is an optional short activity label.
 
 State and failures:

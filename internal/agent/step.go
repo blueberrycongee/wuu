@@ -18,6 +18,7 @@ import (
 // the loop doesn't care whether the response came from a one-shot
 // Chat or a fully-consumed SSE stream.
 type StepResult struct {
+	ProviderItems []providers.ProviderItem
 	// Content is the assistant's text for this round (concatenation
 	// of all content deltas in the streaming case).
 	Content string
@@ -224,6 +225,7 @@ type LoopConfig struct {
 	DriverID                 string
 	DriverVersion            string
 	ModelInputReceiptStore   ModelInputReceiptStore
+	RequestContextStore      RequestContextStore
 	// Temperature is the sampling temperature; 0 means provider default.
 	Temperature float64
 	// MediaInput is the admission policy for user-supplied media on every

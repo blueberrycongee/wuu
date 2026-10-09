@@ -88,8 +88,8 @@ func TestServerUnifiedEditingResumesHistoricalPatch(t *testing.T) {
 				require.Empty(t, results[id].Error, "%s: %+v", id, results[id])
 				require.NotContains(t, results[id].Result, `"ok":false`)
 			}
-			require.Contains(t, results["edit"].Result, "diff")
-			require.Contains(t, results["write"].Result, "new_file_sha")
+			require.Contains(t, results["edit"].Result, "value.txt")
+			require.Contains(t, results["write"].Result, "ready.txt")
 			require.Contains(t, results["verify"].Result, "EDIT_FLOW_OK")
 			require.ElementsMatch(t, []string{"value.txt", "ready.txt"}, changed)
 			data, err := os.ReadFile(filepath.Join(rt.RootDir, "value.txt"))

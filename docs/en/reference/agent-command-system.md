@@ -2,6 +2,29 @@
 
 The built-in Wuu engine starts every command with `bash`: tests, builds, lint, git, scripts, and, with `run_in_background`, servers and watchers. `process` inspects and controls commands that are already running in the background. Both run on the host machine in the session's workspace and share one process manager. External engines have their own command implementations; this page describes Wuu's tools.
 
+## Task completion and context
+
+The main agent carries authorized work through implementation, appropriate
+verification and a report of the outcome. It uses authorization already given
+in the conversation, resolves routine choices independently, and preserves the
+active objective when the user supplies a correction or asks for status. Reviews
+and planning requests alone do not authorize implementation; commits and remote
+writes still follow the session's authorization boundaries.
+
+General collaboration guidance is stable across model requests. Available tools,
+permissions and optional extension behavior come from the runtime rather than
+assumptions in the base prompt. Tool-specific recovery belongs in the tool's
+result or description. Completed observations remain in order; new results and
+context changes are appended. Provider-native response items are retained for
+continuation, including after a session restart. Cache hits still depend on the
+provider and are measured from returned usage.
+
+## Code Mode output budget
+
+Inside `run_code`, tools return producer data for filtering and computation. Printing a tool result emits its `structured_content`, or its content when structured data is absent; it does not substitute the direct tool's compact display. Set `max_output_tokens` in the first-line `// @run_code:` options to bound the combined text sent to the model. Output beyond that budget is saved with a recovery reference. Completed observations remain unchanged on replay.
+
+Producer limits still apply: file/search pagination, process read ranges, command stream transport limits, and media size limits are separate from the model's text budget. Follow the returned continuation or full-log reference when a producer reports omitted data.
+
 ## Run a command
 
 `bash` takes `command`, `timeout_seconds`, `cwd`, `run_in_background`, `purpose`, and `scope`:
@@ -15,11 +38,11 @@ The built-in Wuu engine starts every command with `bash`: tests, builds, lint, g
 }
 ```
 
-The model receives the command's output as a terminal would show it: stdout, then stderr. A successful run adds nothing else. The model sees extra lines only when they change the next step: `Exit code N` for a failure, the full-log path when a stream was cut, a timeout hand-off, or a sandbox denial. Each stream keeps its head and tail, so a test runner's summary survives even when the middle is cut. Terminal color codes and progress-bar redraws are removed from this view. Recognized test, build, lint, and type-check commands also record verification metadata; the model sees the failure summary only when the output was cut, plus a warning once repeated failures at the same workspace revision will block a rerun. `scope` describes the intended coverage (`targeted`, `affected`, or `full`) and does not change which tests run. `purpose` is kept in the audit log only.
+The model receives the command's output as a terminal would show it: stdout, then stderr. A successful run adds nothing else. The model sees extra lines only when they change the next step: `Exit code N` for a failure, the full-log path when a stream was cut, a timeout hand-off, or a sandbox denial. Each stream keeps its head and tail, so a test runner's summary survives even when the middle is cut. Terminal color codes and progress-bar redraws are removed from this view. Recognized test, build, lint, and type-check commands also record verification metadata; the model sees the failure summary only when the output was cut, without injecting an additional failure summary into later requests or blocking a retry at the same workspace revision. `scope` describes the intended coverage (`targeted`, `affected`, or `full`) and does not change which tests run. `purpose` is kept in the audit log only.
 
 Clients and durable records keep the full JSON envelope: exit code, duration, both excerpts, byte counts, classification, workspace revision, the full-log reference and hash, and verification details. The desktop terminal panel renders from that envelope.
 
-Commands must be non-interactive: do not depend on an editor, pager, or terminal prompt. The default wait is 300 seconds, with a range of 1–3600. On timeout, Wuu normally transfers the running process to its background manager and reports the process ID; the result says the command is still running and its completion starts a new turn. This is **not** a successful verification or proof that the command stopped. If transfer is unavailable, Wuu stops the process. Cancelling the calling turn also stops a foreground command rather than promoting it.
+Commands must be non-interactive: do not depend on an editor, pager, or terminal prompt. The default wait is 300 seconds, with a range of 1–3600. On timeout, Wuu normally transfers the running process to its background manager and reports the process ID; the result says the command is still running and its completion is delivered to the owning conversation. This is **not** a successful verification or proof that the command stopped. If transfer is unavailable, Wuu stops the process. Cancelling the calling turn also stops a foreground command rather than promoting it.
 
 ## Background and interactive work
 
@@ -32,7 +55,7 @@ Start a server, watcher, or interactive command with `run_in_background` rather 
 }
 ```
 
-The call returns the process ID immediately. Background commands run in a pseudo-terminal so the desktop can take them over; macOS and Linux support PTYs, while Windows falls back to pipes. A natural exit starts a new turn in the owning conversation, and `wuu exec` waits for that continuation. For a long-lived service whose exit should not resume or hold open the task, set `completion_mode=detached` with `process action=update`.
+The call returns the process ID immediately. Background commands run in a pseudo-terminal so the desktop can take them over; macOS and Linux support PTYs, while Windows falls back to pipes. A natural exit is delivered at the next model step when the owning conversation is active; otherwise it starts a continuation, which `wuu exec` waits for. Results already read by the model do not trigger another delivery. Successful consumption is persisted with the answer so restart recovery does not repeat an acknowledged result. For a long-lived service whose exit should not resume or hold open the task, set `completion_mode=detached` with `process action=update`.
 
 `process` works on running processes:
 
@@ -89,6 +112,8 @@ Run validation separately with `bash` when command execution is available:
 A failed command leaves completed edits in place. If validation moves to the background, wait for its terminal result before treating it as passed. Retry validation without repeating successful edits.
 
 Wuu no longer executes the built-in `apply_patch` tool or its `dry_run` and `then_run` options. Historical patch records remain readable and visible when a conversation resumes; new edits use the tools above. Tools managed by the external Codex engine are unchanged.
+
+With Code Mode enabled, read_file, write_file, edit_file, bash, and process remain directly callable. Use run_code for composition or computation; basic operations need no JavaScript wrapper. Explicit rereads return the requested content. Nested results retain canonical data; only emitted output is budgeted and archived for recovery, without rewriting earlier conversation history.
 
 ## Logs and lifetime
 

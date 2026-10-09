@@ -291,7 +291,11 @@ func TestReadFileProjectedPagesPreserveRequestedRange(t *testing.T) {
 			t.Fatal(err)
 		}
 		result, _ := finalizeBuiltInToolResult(kit.env.SessionDir, "read_file", fmt.Sprintf("read-%d", pages), toolresult.FromText(raw), defaultProjectionTokenBudget)
-		page := parseOut(t, result.TextProjection())
+		header, content, rendered := strings.Cut(result.TextProjection(), "\n")
+		page := parseOut(t, header)
+		if rendered {
+			page["content"] = content
+		}
 		lines := contentLines(page["content"].(string))
 		rangeMeta := page["range"].(map[string]any)
 		if len(lines) == 0 || page["start_line"] != float64(nextLine) ||
@@ -345,12 +349,15 @@ func TestReadFileProjectedPagesPreserveRequestedRange(t *testing.T) {
 func TestReadFileByteRecoverySurvivesResultSettlement(t *testing.T) {
 	t.Setenv(projectionModeEnvVar, "active")
 	for _, tc := range []struct {
-		name string
-		body string
+		name  string
+		body  string
+		limit int
 	}{
-		{name: "escaped text", body: strings.Repeat("\t\r\n\"\\<>&", 1800)},
-		{name: "short lines", body: strings.Repeat("\n", 10000)},
-		{name: "binary", body: strings.Repeat("\x00\xff\n", 3500)},
+		{name: "legacy escaped text", limit: 4096, body: strings.Repeat("\t\r\n\"\\<>&", 1800)},
+		{name: "short lines", limit: 65536, body: strings.Repeat("\n", 10000)},
+		{name: "binary", limit: 65536, body: strings.Repeat("\x00\xff\n", 3500)},
+		{name: "large UTF8 page", limit: 65536, body: strings.Repeat("source 😀 café 中文\n", 5000)},
+		{name: "large escaped page", limit: 65536, body: strings.Repeat("\t\r\n\"\\<>&", 8000)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			kit, err := New(t.TempDir())
@@ -363,7 +370,7 @@ func TestReadFileByteRecoverySurvivesResultSettlement(t *testing.T) {
 			original := prefix + tc.body + "previously displayed tail\n"
 			mustWriteFile(t, artifact, original)
 			end := len(prefix) + len(tc.body)
-			token := encodeReadFileByteContinuation(artifact, len(prefix), projectionPreviewBytes, end, sha256Hex([]byte(original)))
+			token := encodeReadFileByteContinuation(artifact, len(prefix), tc.limit, end, sha256Hex([]byte(original)))
 			args := mustMarshalMap(map[string]any{"continuation": token})
 			var recovered strings.Builder
 			for pageNumber := 0; ; pageNumber++ {
@@ -388,8 +395,14 @@ func TestReadFileByteRecoverySurvivesResultSettlement(t *testing.T) {
 					}
 					content = string(decoded)
 				}
-				if len(content) == 0 || page["byte_count"] != float64(len(content)) || len(content) > projectionPreviewBytes {
+				if len(content) == 0 || page["byte_count"] != float64(len(content)) || len(content) > tc.limit {
 					t.Fatalf("byte page count disagrees with displayed content: count=%v displayed=%d", page["byte_count"], len(content))
+				}
+				if estimateResultTokens(result.TextProjection()) > readFileProjectionTokenBudget {
+					t.Fatal("recovery exceeded the file-read budget")
+				}
+				if tc.limit > 4096 && pageNumber == 0 && len(tc.body) > 32768 && len(content) <= 8192 {
+					t.Fatalf("recovery discarded usable file-read budget: got %d bytes", len(content))
 				}
 				recovered.WriteString(content)
 				continuation := page["continuation"].(map[string]any)

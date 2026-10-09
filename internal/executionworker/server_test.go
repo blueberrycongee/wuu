@@ -161,7 +161,7 @@ text(r); console.log({results:[r]}); return r;`,
 			t.Fatal(err)
 		}
 		want := "compact"
-		if view == codemode.ResultViewData {
+		if view != codemode.ResultViewCompact {
 			want = `{"text":"full evidence"}`
 		}
 		encoded, _ := json.Marshal(want)

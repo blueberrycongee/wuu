@@ -416,6 +416,9 @@ type ChatRequest struct {
 	Tools       []ToolDefinition
 	Temperature float64
 	CacheHint   *CacheHint
+	// TurnRouting is shared only within one model/tool loop, including retries.
+	// Provider adapters must never serialize it into model-visible input.
+	TurnRouting *TurnRouting
 	// Operation correlates one logical model operation across execution
 	// attempts and transport fallbacks. Provider clients must not send it on
 	// the wire.
@@ -464,6 +467,8 @@ type ChatRequest struct {
 
 // ChatResponse is the normalized response from providers.
 type ChatResponse struct {
+	// ProviderItems preserves the ordered native output alongside portable fields.
+	ProviderItems     []ProviderItem
 	Images            []InputImage
 	Content           string
 	Phase             MessagePhase

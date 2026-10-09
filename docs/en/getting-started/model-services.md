@@ -164,8 +164,9 @@ image for the model. External agent engines use their own file and image tools.
 
 ## Programmatic tool calling
 
-The built-in engine uses programmatic tool calling (PTC) by default. Command,
-read, search, browser, API and extension tools run through `run_code`.
+The built-in engine enables programmatic tool calling (PTC) by default.
+Basic file and command tools also accept direct calls; `run_code` combines
+tools or processes their results.
 **Settings → Built-in agent → Programmatic tool calling** provides one switch
 for all models. Explicit saved choices are preserved; configurations
 that omit the switch use the default. Changes require idle turns and apply on
@@ -174,12 +175,14 @@ the next turn. External engines keep their own tools.
 Interaction, explicit artifact delivery, context replacement, workspace changes,
 and agent/session lifecycle controls remain separate direct tools. Extensions
 can declare `direct_only` for those controls. A direct-only tool cannot be called
-from a program. `write_file` and `edit_file` also accept direct calls: prefer these
-for literal file content to avoid JavaScript string escaping and interpolation.
-They remain available inside `run_code` when arguments depend on computation or
-earlier tool results. Both paths use the same execution, permission and workspace
-checks. Other ordinary tools cannot bypass PTC while it is enabled. Available
-bindings retain their exact names and permissions.
+from a program. `read_file`, `write_file`, `edit_file`, `bash`, and `process`
+also accept direct calls. Prefer direct writes and edits for literal file content
+to avoid JavaScript string escaping and interpolation. Batch already-decided
+replacements in one file with `edit_file`'s `edits` array; all matches must
+succeed before the file is written. These tools remain available inside
+`run_code` when arguments depend on computation or earlier results. Both paths
+use the same execution, permission and workspace checks. Other ordinary tools
+use PTC while it is enabled.
 
 ### Discover, execute and inspect results
 
@@ -217,21 +220,17 @@ fields, copied objects and values restored with `load` are ordinary JSON data;
 select their display view when printing them. Follow continuation metadata before
 concluding that something is absent.
 
-`result_view: "compact"` (the default) emits the existing short display.
-Successful file edits can omit diff hunks from this display while retaining
-the outcome, file hashes, revision and warnings. The complete diff remains in
-the canonical result and the referenced artifact.
-`result_view: "data"` emits `structured_content` as JSON, or the unprojected
-content view when structured data is absent. This also applies to nested results
-and caught `ToolCallError.result`, without changing the canonical result,
-`model_text`, or checkpoints. Images/audio retain their normal attachment path.
-The program's `max_output_tokens` budget bounds either view; raising this budget
-alone does not expand a compact excerpt. Data views retain producer pagination,
-transport limits and recovery metadata. They do not fetch missing pages or logs.
-Use a data view when the compact excerpt would omit evidence, for example:
+The default data view emits `structured_content` as JSON, or the original
+content when structured data is absent. It applies to nested results and caught
+`ToolCallError.result`. The program's `max_output_tokens` budget is applied after
+selection. Producer pagination, transport limits and recovery metadata still
+apply; printing does not fetch missing pages or logs. Explicit
+`result_view: "compact"` remains available for existing callers that need the
+short model display. Neither view changes canonical data or checkpoints.
+For example:
 
 ```javascript
-// @run_code: {"result_view":"data","max_output_tokens":14000}
+// @run_code: {"max_output_tokens":14000}
 text(await tools.bash({command:'cat src/example.cc'}));
 ```
 

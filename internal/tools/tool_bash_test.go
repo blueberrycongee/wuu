@@ -41,7 +41,7 @@ func TestBashRunRecordsFullLogSHA256(t *testing.T) {
 	}
 }
 
-func TestBashRunAddsVerificationSummaryAndRetryEvidence(t *testing.T) {
+func TestBashRunAddsVerificationSummary(t *testing.T) {
 	root := t.TempDir()
 	mustWriteFile(t, filepath.Join(root, "go.mod"), "module example.com/bashverify\n\ngo 1.22\n")
 	mustWriteFile(t, filepath.Join(root, "fail_test.go"), `package bashverify
@@ -77,9 +77,6 @@ func TestBashVerificationFailure(t *testing.T) {
 		}
 		if !parsed.Verification.FailureSummary.Failed || !containsString(parsed.Verification.FailureSummary.FailingTests, "TestBashVerificationFailure") {
 			t.Fatalf("failure summary did not identify failing test: %+v\n%s", parsed.Verification.FailureSummary, resp)
-		}
-		if parsed.Verification.RepeatGuard["previous_failed_runs"] != float64(i) {
-			t.Fatalf("verification failure history missing: %+v", parsed.Verification.RepeatGuard)
 		}
 	}
 }

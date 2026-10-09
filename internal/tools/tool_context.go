@@ -43,9 +43,6 @@ func (t *Toolkit) ContextBlocks() []wuucontext.Block {
 			blocks = append(blocks, block)
 		}
 	}
-	if block, ok := t.TestFailureContextBlock(); ok {
-		blocks = append(blocks, block)
-	}
 	return blocks
 }
 
@@ -296,57 +293,6 @@ func activeFileContextStatus(absPath string, entry ReadFileEntry) string {
 		return "current_after_write"
 	}
 	return "current"
-}
-
-func (t *Toolkit) TestFailureContextBlock() (wuucontext.Block, bool) {
-	if t == nil || t.env == nil {
-		return wuucontext.Block{}, false
-	}
-	failure, ok := t.env.LatestTestFailure()
-	if !ok {
-		return wuucontext.Block{}, false
-	}
-	currentRevision := workspaceRevision(context.Background(), t.env.RootDir)
-	status := "current"
-	if currentRevision != "" && failure.Revision != "" && currentRevision != failure.Revision {
-		status = "possibly_stale"
-	}
-
-	var b strings.Builder
-	fmt.Fprintf(&b, "status: %s\n", status)
-	fmt.Fprintf(&b, "command: %s\n", strings.TrimSpace(failure.Command))
-	if strings.TrimSpace(failure.Scope) != "" {
-		fmt.Fprintf(&b, "scope: %s\n", strings.TrimSpace(failure.Scope))
-	}
-	if strings.TrimSpace(failure.Purpose) != "" {
-		fmt.Fprintf(&b, "purpose: %s\n", redactToolOutput(strings.TrimSpace(failure.Purpose)))
-	}
-	fmt.Fprintf(&b, "exit_code: %d\n", failure.ExitCode)
-	fmt.Fprintf(&b, "timed_out: %t\n", failure.TimedOut)
-	fmt.Fprintf(&b, "duration_ms: %d\n", failure.DurationMS)
-	if failure.Revision != "" {
-		fmt.Fprintf(&b, "failure_revision: %s\n", failure.Revision)
-	}
-	if currentRevision != "" {
-		fmt.Fprintf(&b, "current_revision: %s\n", currentRevision)
-	}
-	if failure.FullLogRef != "" {
-		fmt.Fprintf(&b, "full_log_ref: %s\n", failure.FullLogRef)
-	}
-	writeTestFailureSummaryContext(&b, failure.FailureSummary)
-	if status == "possibly_stale" {
-		b.WriteString("next_suggestion: workspace changed since this failure; rerun targeted verification before trusting it as current.\n")
-	} else {
-		b.WriteString("next_suggestion: inspect implicated files, form a hypothesis, patch minimally, then rerun targeted verification.\n")
-	}
-
-	return wuucontext.Block{
-		Kind:        wuucontext.BlockTestFailures,
-		Title:       "Latest test failure",
-		Source:      "bash",
-		TokenBudget: 900,
-		Content:     strings.TrimRight(b.String(), "\n"),
-	}, true
 }
 
 func activeFileReadRange(entry ReadFileEntry) string {

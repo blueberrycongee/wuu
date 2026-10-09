@@ -58,6 +58,8 @@ func (c *budgetToolClient) ExecuteTool(_ context.Context, input pluginhost.ToolE
 func TestNativeToolResultBudgetHTTP(t *testing.T) {
 	// Even a batch of individually bounded pages must retain every recovery
 	// cursor. Its combined text exceeds the old batch-wide truncation threshold.
+	// Leave enough context for the full batch so this checks result settlement,
+	// not the independent context-compaction lifecycle.
 	largeBatch := make([]int, 45)
 	for i := range largeBatch {
 		largeBatch[i] = 10000
@@ -130,7 +132,7 @@ func TestNativeToolResultBudgetHTTP(t *testing.T) {
 			defer server.Close()
 			rt, err := NewSession(Options{RootDir: root, HomeDir: home, SafeMode: true, Config: config.Config{
 				DefaultProvider: "synthetic", Providers: map[string]config.ProviderConfig{
-					"synthetic": {Type: "openai-compatible", WireAPI: "chat", Model: "gpt-4o", BaseURL: server.URL, APIKey: "synthetic-key", AuthToken: "synthetic-token"},
+					"synthetic": {Type: "openai-compatible", WireAPI: "chat", Model: "gpt-4o", ContextWindow: 262144, BaseURL: server.URL, APIKey: "synthetic-key", AuthToken: "synthetic-token"},
 				},
 			}})
 			if err != nil {

@@ -168,9 +168,7 @@ func (s Surface) DeferredToolNames() []string {
 //
 // Iteration is sorted by tool name so the return value is stable
 // across runs even when a capability has more than one model-visible
-// tool (e.g. file.edit on Claude exposes both edit_file and
-// write_file; this method always returns edit_file). Callers that
-// need the full list should iterate Tools directly.
+// tool. Callers that need the full list should iterate Tools directly.
 func (s Surface) ToolForCapability(c Capability) (string, bool) {
 	for _, name := range s.ToolNames() {
 		if s.Tools[name] == c {

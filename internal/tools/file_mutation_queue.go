@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"os"
 	"path/filepath"
 	"sync"
 )
@@ -46,8 +47,27 @@ func withFileMutationQueue[T any](path string, mutate func() (T, error)) (T, err
 
 func fileMutationQueueKey(path string) string {
 	cleaned := filepath.Clean(path)
-	if canonical, err := filepath.EvalSymlinks(cleaned); err == nil {
+	if canonical, err := fileMutationPath(cleaned); err == nil {
 		return canonical
 	}
 	return cleaned
+}
+
+// Resolve aliases through existing ancestors even when an add or move target's
+// parent directories do not exist yet. The same key is used for conflict
+// detection and mutation queues; execution retains permission-checked paths.
+func fileMutationPath(path string) (string, error) {
+	resolved, err := filepath.EvalSymlinks(path)
+	if err == nil {
+		return resolved, nil
+	}
+	parent := filepath.Dir(path)
+	if !os.IsNotExist(err) || parent == path {
+		return "", err
+	}
+	resolved, err = fileMutationPath(parent)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(resolved, filepath.Base(path)), nil
 }

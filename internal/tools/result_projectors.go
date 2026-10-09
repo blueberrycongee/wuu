@@ -30,25 +30,36 @@ func init() {
 // outcome and warnings visible without replaying that code as a JSON diff.
 func projectFileMutationResult(rawText string, pc projectorContext) (string, projectionOmission, bool) {
 	m, ok := parseToolEnvelope(rawText)
-	if !ok || (m["action"] != "edit" && m["action"] != "overwrite") {
-		return "", projectionOmission{}, false
-	}
-	diff, ok := m["diff"].(map[string]any)
 	if !ok {
 		return "", projectionOmission{}, false
 	}
-	hunks, ok := diff["hunks"].([]any)
-	if !ok || len(hunks) == 0 {
+	var outcome string
+	switch m["action"] {
+	case "edit":
+		outcome = "Edited"
+	case "overwrite":
+		outcome = "Wrote"
+	case "create":
+		outcome = "Created"
+	default:
 		return "", projectionOmission{}, false
 	}
-	delete(diff, "hunks")
-	setProjectionMeta(m, pc.BudgetTokens, pc.ArtifactRef,
-		"The edit succeeded. Read the full result artifact if the exact applied diff is needed.",
-		map[string]any{"omitted_diff_hunks": len(hunks)})
-	out, ok := marshalEnvelope(m)
-	if !ok || len(out) >= len(rawText) || estimateResultTokens(out) > pc.BudgetTokens {
+	path, ok := m["path"].(string)
+	if !ok || path == "" {
 		return "", projectionOmission{}, false
 	}
+	var view strings.Builder
+	fmt.Fprintf(&view, "%s %q.", outcome, path)
+	if warning, ok := m["contract_warning"].(string); ok && warning != "" {
+		fmt.Fprintf(&view, "\nWarning: %s", warning)
+	}
+	fmt.Fprintf(&view, "\nFull result: %s", pc.ArtifactRef)
+	out := view.String()
+	if len(out) >= len(rawText) || estimateResultTokens(out) > pc.BudgetTokens {
+		return "", projectionOmission{}, false
+	}
+	diff, _ := m["diff"].(map[string]any)
+	hunks, _ := diff["hunks"].([]any)
 	return out, projectionOmission{Records: len(hunks)}, true
 }
 
@@ -377,4 +388,24 @@ func extractBashFullLogRef(rawText string) string {
 	}
 	ref, _ := m["full_log_ref"].(string)
 	return ref
+}
+
+// Separate source from its JSON envelope so quotes, escapes and line breaks
+// are read literally. Keep every metadata field, including warnings and cursors.
+func renderReadFileModelView(rawText string, budgetTokens int) (string, projectionOmission, bool) {
+	m, ok := parseToolEnvelope(rawText)
+	if !ok || m["action"] != "read" {
+		return "", projectionOmission{}, false
+	}
+	content, ok := m["content"].(string)
+	if !ok {
+		return "", projectionOmission{}, false
+	}
+	delete(m, "content")
+	header, ok := marshalEnvelope(m)
+	view := header + "\n" + content
+	if !ok || estimateResultTokens(view) > budgetTokens {
+		return "", projectionOmission{}, false
+	}
+	return view, projectionOmission{}, true
 }

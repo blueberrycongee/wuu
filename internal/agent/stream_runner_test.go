@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"reflect"
@@ -2873,4 +2874,64 @@ func equalChatMessages(a, b []providers.ChatMessage) bool {
 		}
 	}
 	return true
+}
+
+// Serialize cache checkpoints between separate runners, as the restart path
+// does; no in-memory retained transcript is shared by the two turns.
+type restartContextStore struct{ raw []byte }
+
+func (s *restartContextStore) Save(_ context.Context, receipt RequestContextCheckpoint) error {
+	var err error
+	s.raw, err = json.Marshal(receipt)
+	return err
+}
+func (s *restartContextStore) Load(_ context.Context) (RequestContextCheckpoint, bool, error) {
+	if len(s.raw) == 0 {
+		return RequestContextCheckpoint{}, false, nil
+	}
+	var receipt RequestContextCheckpoint
+	err := json.Unmarshal(s.raw, &receipt)
+	return receipt, err == nil, err
+}
+func TestStreamRunnerRestoresRequestPrefixAfterRestart(t *testing.T) {
+	for _, change := range []string{"unchanged", "edited history", "different model", "different provider", "removed guidance"} {
+		t.Run(change, func(t *testing.T) {
+			store := &restartContextStore{}
+			client := &mockStreamClient{events: []providers.StreamEvent{{Type: providers.EventContentDelta, Content: "done"}, {Type: providers.EventDone}}}
+			guidance := func() []ContextSegment {
+				return RequestOnlyContextMessages([]providers.ChatMessage{contextWindowReminder("stable guidance")})
+			}
+			runner := &StreamRunner{Client: client, ProviderName: "gateway", Model: "m", RequestContextStore: store, BeforeRequestContext: guidance}
+			history := []providers.ChatMessage{{Role: "user", Content: "first"}}
+			result, err := runner.RunWithCallback(context.Background(), history, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			first := providers.CloneChatMessages(client.requests[0].Messages)
+			history = append(history, result.NewMessages...)
+			history = append(history, providers.ChatMessage{Role: "user", Content: "second"})
+			restarted := &StreamRunner{Client: client, ProviderName: "gateway", Model: "m", RequestContextStore: store, BeforeRequestContext: guidance}
+			switch change {
+			case "edited history":
+				history[0].Content = "edited"
+			case "different model":
+				restarted.Model = "other-model"
+			case "different provider":
+				restarted.ProviderName = "other-provider"
+			case "removed guidance":
+				restarted.BeforeRequestContext = nil
+			}
+			if _, err := restarted.RunWithCallback(context.Background(), history, nil); err != nil {
+				t.Fatal(err)
+			}
+			second := client.requests[1].Messages
+			prefix := len(second) >= len(first) && reflect.DeepEqual(first, second[:len(first)])
+			if prefix != (change == "unchanged") {
+				t.Fatalf("prefix continuity=%v, first=%+v second=%+v", prefix, first, second)
+			}
+			if change == "removed guidance" && countMessagesContaining(second, "stable guidance") != 0 {
+				t.Fatal("removed guidance was restored")
+			}
+		})
+	}
 }

@@ -49,6 +49,14 @@ func renderBashModelView(rawText string, budgetTokens int) (string, projectionOm
 	}
 	stdoutLines := viewLines(r.StdoutTail)
 	stderrLines := viewLines(r.StderrTail)
+	if !r.Truncated && r.Output != "" {
+		// The combined output can be complete even when the shorter per-stream
+		// excerpts were cut. Prefer it once, preserving that additional evidence.
+		stdoutLines = viewLines(r.Output)
+		stderrLines = nil
+		r.StdoutTailTruncated = false
+		r.StderrTailTruncated = false
+	}
 	status := bashStatusLines(r)
 	marker := omittedLinesMarker("full log: " + viewLogRef(r))
 	build := func(keepOut, keepErr int) (string, int) {
@@ -108,10 +116,6 @@ func bashStatusLines(r shellExecutionResult) []string {
 			if summary := strings.TrimRight(b.String(), "\n"); summary != "" {
 				lines = append(lines, summary)
 			}
-		}
-		failures := intJSONNumber(v.RepeatGuard["previous_failed_runs"]) + 1
-		if failures > 1 {
-			lines = append(lines, fmt.Sprintf("This check has failed %d times with this workspace marker; inspect the latest failure before retrying.", failures))
 		}
 	}
 	return lines

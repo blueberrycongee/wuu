@@ -226,7 +226,6 @@ type bashVerificationResult struct {
 	Passed            bool               `json:"passed"`
 	FailureSummary    testFailureSummary `json:"failure_summary"`
 	WorkspaceRevision string             `json:"workspace_revision,omitempty"`
-	RepeatGuard       map[string]any     `json:"repeat_guard,omitempty"` // Legacy wire name for advisory failure history.
 	CommandHash       string             `json:"command_hash,omitempty"`
 	NextSuggestions   []string           `json:"next_suggestions,omitempty"`
 }
@@ -259,7 +258,8 @@ func (t *BashTool) executeRun(ctx context.Context, args bashArgs) (toolresult.Re
 	}
 
 	revision := workspaceRevision(ctx, t.env.RevisionRoot(ctx))
-	commandHash := sha256Hex([]byte(command))
+	// Identical commands in different directories verify different suites.
+	commandHash := sha256Hex([]byte(runCWD + "\x00" + command))
 	result, err := executeShellCommandInDir(ctx, t.env, command, timeout, runCWD)
 	if err != nil {
 		return toolresult.Result{}, err
@@ -275,8 +275,12 @@ func (t *BashTool) executeRun(ctx context.Context, args bashArgs) (toolresult.Re
 		result.FullLogError = fullLogErr
 	}
 	if verification {
-		result.Verification = t.enrichVerificationResult(command, commandHash, revision, args, result)
-		result.NextSuggestions = result.Verification.NextSuggestions
+		// Promotion ends the foreground wait, not the verification. Preserve
+		// the running-process guidance until a completion result is available.
+		if result.PromotedProcessID == "" {
+			result.Verification = enrichVerificationResult(commandHash, revision, args, result)
+			result.NextSuggestions = result.Verification.NextSuggestions
+		}
 		if resolved.Changed {
 			result.RequestedCommand = t.env.RedactToolOutput(resolved.Requested)
 			result.ResolvedCommand = result.Command
@@ -306,7 +310,7 @@ func bashCommandLooksLikeVerification(command string) bool {
 	return classification.Risk == ToolRiskMedium && classification.Reason == "local verification command"
 }
 
-func (t *BashTool) enrichVerificationResult(command, commandHash, revision string, args bashArgs, shellResult shellExecutionResult) *bashVerificationResult {
+func enrichVerificationResult(commandHash, revision string, args bashArgs, shellResult shellExecutionResult) *bashVerificationResult {
 	scope := strings.TrimSpace(args.Scope)
 	if scope == "" {
 		scope = "targeted"
@@ -315,24 +319,6 @@ func (t *BashTool) enrichVerificationResult(command, commandHash, revision strin
 	if shellResult.ExitCode != 0 {
 		failureSummary.Failed = true
 	}
-	failed := shellResult.ExitCode != 0 || shellResult.TimedOut || failureSummary.Failed
-	previousFailures := 0
-	if revision != "" {
-		previousFailures = t.env.ConsecutiveTestFailures(commandHash, revision)
-	}
-	t.env.RecordTestRunResult(testRunEntry{
-		CommandHash:    commandHash,
-		Revision:       revision,
-		Failed:         failed,
-		Command:        command,
-		Scope:          scope,
-		Purpose:        args.Purpose,
-		ExitCode:       shellResult.ExitCode,
-		TimedOut:       shellResult.TimedOut,
-		DurationMS:     shellResult.DurationMS,
-		FailureSummary: failureSummary,
-		FullLogRef:     shellResult.FullLogRef,
-	})
 	return &bashVerificationResult{
 		Kind:              "verification",
 		Scope:             scope,
@@ -340,9 +326,6 @@ func (t *BashTool) enrichVerificationResult(command, commandHash, revision strin
 		FailureSummary:    failureSummary,
 		WorkspaceRevision: revision,
 		CommandHash:       commandHashPrefix(commandHash),
-		RepeatGuard: map[string]any{
-			"previous_failed_runs": previousFailures,
-		},
-		NextSuggestions: runTestNextSuggestions(shellResult, failureSummary),
+		NextSuggestions:   runTestNextSuggestions(shellResult, failureSummary),
 	}
 }

@@ -64,6 +64,25 @@ func TestHistoryContentPartsRoundTrip(t *testing.T) {
 	}
 }
 
+func TestHistoryProviderItemsSurviveReopen(t *testing.T) {
+	dir := t.TempDir()
+	sess, err := CreateWithMetadata(dir, "native-output", t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := json.RawMessage(`[{"type":"reasoning","data":"{\"type\":\"reasoning\",\"encrypted_content\":\"opaque\"}","provider":"gateway","scope":"credential-model"},{"type":"message","data":"{\"type\":\"message\",\"id\":\"msg_1\"}","provider":"gateway"}]`)
+	if err := AppendHistoryRecord(dir, sess.ID, HistoryRecord{Role: "assistant", Content: "visible", ProviderItems: want}); err != nil {
+		t.Fatal(err)
+	}
+	records, err := LoadHistoryRecords(dir, sess.ID, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 1 || string(records[0].ProviderItems) != string(want) {
+		t.Fatalf("native replay payload lost on reload: %+v", records)
+	}
+}
+
 func TestSQLiteDSNNormalizesPaths(t *testing.T) {
 	const suffix = "?_pragma=busy_timeout%285000%29&_pragma=foreign_keys%281%29&_txlock=immediate"
 
@@ -768,8 +787,9 @@ func TestMigrateLegacySessionMessagesRemainsReadable(t *testing.T) {
 		t.Fatal(err)
 	}
 	parts := json.RawMessage(`[{"type":"text","text":"new history"}]`)
+	native := json.RawMessage(`[{"type":"compaction","data":"opaque","provider":"gateway"}]`)
 	if err := AppendHistoryRecord(dir, "thread-1", HistoryRecord{
-		Role: "user", Content: "new history", ContentParts: parts, RetryCount: 2, MaxRetries: 3,
+		Role: "user", Content: "new history", ContentParts: parts, ProviderItems: native, RetryCount: 2, MaxRetries: 3,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -778,7 +798,7 @@ func TestMigrateLegacySessionMessagesRemainsReadable(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(history) != 2 || history[0].Content != "hello" || history[1].Content != "new history" ||
-		string(history[1].ContentParts) != string(parts) || history[1].RetryCount != 2 || history[1].MaxRetries != 3 {
+		string(history[1].ContentParts) != string(parts) || string(history[1].ProviderItems) != string(native) || history[1].RetryCount != 2 || history[1].MaxRetries != 3 {
 		t.Fatalf("history changed after reopening migrated store: %+v", history)
 	}
 	saved, ok, err := Find(dir, "thread-1")
@@ -1236,5 +1256,28 @@ func TestDeleteArchivedChecksDurableArchiveState(t *testing.T) {
 				t.Fatalf("ordinary deletion must remain available for active sessions: %v", err)
 			}
 		})
+	}
+}
+
+func TestRequestContextCheckpointKeepsOnlyLatestState(t *testing.T) {
+	dir := t.TempDir()
+	sess, err := CreateWithMetadata(dir, "context-cache", t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := LoadRequestContextCheckpoint(dir, sess.ID); err != nil || len(got) != 0 {
+		t.Fatalf("empty checkpoint: %s %v", got, err)
+	}
+	for _, payload := range []json.RawMessage{json.RawMessage(`{"state":{"DurableLen":1}}`), json.RawMessage(`{"state":{"DurableLen":4}}`)} {
+		if err := SaveRequestContextCheckpoint(dir, sess.ID, payload); err != nil {
+			t.Fatal(err)
+		}
+		got, err := LoadRequestContextCheckpoint(dir, sess.ID)
+		if err != nil || string(got) != string(payload) {
+			t.Fatalf("checkpoint reload: %s %v", got, err)
+		}
+	}
+	if err := SaveRequestContextCheckpoint(dir, "missing", json.RawMessage(`{}`)); !errors.Is(err, ErrSessionNotFound) {
+		t.Fatalf("missing session: %v", err)
 	}
 }

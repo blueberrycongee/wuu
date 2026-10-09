@@ -90,6 +90,27 @@ func RemoteThreadItem(threadID, turnID string, item ThreadItem) ThreadItem {
 	return historyItem(threadID, turnID, item)
 }
 
+// Snapshot delivery keeps the authoritative item list without replaying every
+// large tool payload into client event queues. Full content stays in the thread
+// and is readable through the same references used by history pages.
+func notificationTurn(threadID string, turn Turn) Turn {
+	items := make([]ThreadItem, len(turn.Items))
+	for i, item := range turn.Items {
+		items[i] = RemoteThreadItem(threadID, turn.ID, item)
+	}
+	turn.Items = items
+	return turn
+}
+
+func notificationThread(thread Thread) Thread {
+	turns := make([]Turn, len(thread.Turns))
+	for i, turn := range thread.Turns {
+		turns[i] = notificationTurn(thread.ID, turn)
+	}
+	thread.Turns = turns
+	return thread
+}
+
 func historyItem(threadID, turnID string, item ThreadItem) ThreadItem {
 	source := item
 	item = cloneThreadItem(item)

@@ -39,6 +39,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Avoid delivering an already-answered background process result again when a new
+  user turn reloads a session before the result acknowledgement was saved.
+
 - Keep conversation messages and image tables within narrow panes when the sidebar
   remains open, and let page scrolling resume at fractional image-gallery edges.
 
@@ -51,6 +54,13 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Restore complete conversation history after reload, including intermediate
   reasoning, tool results, and image artifacts released from model context.
+
+- Keep basic file and command tools directly callable alongside Code Mode, support
+  atomic literal edits, and prefer existing verification unless new tests are requested.
+- Preserve provider-native response order and restart context for cache-friendly
+  continuation; deliver background results during active work and persist their consumption.
+- Remove duplicate terminal receipts and failure reminders; apply one recoverable
+  output budget while retaining canonical tool data and complete audit records.
 
 ## [2026.10.6] - 2026-10-06
 

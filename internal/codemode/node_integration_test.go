@@ -541,7 +541,7 @@ store("result", result);
 text(result);
 console.log({results: [result]});
 return result;`, Tools: []ToolDefinition{{Name: "read"}}}, opts)
-	if err != nil || result.Error != "" || string(result.Value) != `"visible evidence"` || strings.Join(result.Logs, "\n") != "visible evidence\n{\"results\":[\"visible evidence\"]}" {
+	if err != nil || result.Error != "" || string(result.Value) != `"{\"count\":42}"` || strings.Join(result.Logs, "\n") != "{\"count\":42}\n{\"results\":[\"{\\\"count\\\":42}\"]}" {
 		t.Fatalf("result output repeated raw data: %+v %v", result, err)
 	}
 	result, err = s.Run(context.Background(), RunRequest{Code: `const saved = load("result"); return [saved.content[0].text, saved.structured_content.count];`}, opts)
@@ -557,7 +557,7 @@ return result;`, Tools: []ToolDefinition{{Name: "read"}}}, opts)
 
 func TestNodeToolResultOutputPreservesEmptyAndFallbackViews(t *testing.T) {
 	s := nodeService(t)
-	for _, mode := range []ResultView{ResultViewCompact, ResultViewData} {
+	for _, mode := range []ResultView{"", ResultViewCompact, ResultViewData} {
 		for _, view := range []*string{nil, new(string)} {
 			opts := RunOptions{CWD: t.TempDir(), Executor: nodeExecutor(func(context.Context, providers.ToolCall) (toolresult.Result, error) {
 				return toolresult.Result{Content: []toolresult.ContentPart{{Type: toolresult.ContentTypeText, Text: "raw evidence"}}, ModelText: view}, nil
