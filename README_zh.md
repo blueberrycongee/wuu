@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="landing/assets/brand/wuu.svg" width="88" alt="">
+  <img src="assets/app-icon-256.png" width="88" height="88" alt="Wuu">
 </p>
 
 <h1 align="center">wuu</h1>
@@ -27,6 +27,18 @@
 ![Agent 排查一个日期 bug：跑测试、修代码，改动在审查面板中打开](landing/assets/readme/demo-zh.gif)
 
 用户反馈 10 月 1 日的支出被算进了 9 月。Agent 先搜代码、跑测试复现问题，再修好月份的计算、补上测试。点一下就能在审查面板里看到这次改动。
+
+## Agent 基准测试
+
+在 [PR #630](https://github.com/blueberrycongee/wuu/pull/630) 记录的 Terminal-Bench 4 实验中，三个 Agent 框架各运行了同一组 18 道任务。Wuu 的通过率与 Codex 持平，**记录的 API 总费用低 11.0%**；相比 Pi，Wuu 多通过一道任务，**总费用低 6.6%**。
+
+| Agent 框架 | 通过任务数 | 通过率 | 记录的 API 总费用（美元） | 每个成功任务的成本（美元） |
+| --- | ---: | ---: | ---: | ---: |
+| **Wuu** | **10/18** | **55.6%** | **$32.40** | **$3.24** |
+| Codex（Code Mode） | 10/18 | 55.6% | $36.42 | $3.64 |
+| Pi | 9/18 | 50.0% | $34.68 | $3.85 |
+
+三个框架均使用 GPT-6 Astra，推理强度设为 high，每个框架运行 18 道任务，共 54 次运行，并关闭技能、记忆、向用户提问和子 Agent。Codex 0.150.1 与 Pi 0.84.4 保留各自的原生提示词。Codex 开启 Code Mode（`code_mode=true`、`code_mode_only=true`）；Wuu 直接暴露基础工具，同时支持按需用 Code Mode 编排调用。费用包含缓存输入，不包含标题生成；每个成功任务的成本按 API 总费用除以通过任务数计算。
 
 ## 预览版能做什么
 
