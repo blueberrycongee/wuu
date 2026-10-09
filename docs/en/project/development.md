@@ -269,7 +269,7 @@ The older `clients/mobile`, `clients/mobile-web`, and `clients/mobile-app` phone
 
 ## CI coverage
 
-[Native mobile](../../../.github/workflows/native-mobile.yml) runs only through manual `workflow_dispatch`, not on pull requests or pushes. It retains core integration checks, unsigned iOS/Android Release builds, and Android lint. Native phones are outside the current release scope; restore automatic coverage before bringing them into that scope. Desktop delivery does not require mobile validation.
+[Native mobile](../../../.github/workflows/native-mobile.yml) runs iOS core integration and unsigned simulator/device builds on pull requests and `main` pushes that change the iOS client, shared native fixtures, remote protocol, or Go dependencies. Manual `workflow_dispatch` also runs the existing Android integration, Release builds and lint. These checks do not cover device signing, store distribution, or physical phone interaction.
 
 [The main CI workflow](../../../.github/workflows/ci.yml) runs repository metadata checks, Go checks/tests, desktop checks/tests/builds, and SDK/client checks/tests/builds. It skips changes confined to `docs/` and `docs-site/`. Go CI supplies PostgreSQL for database-backed coverage.
 

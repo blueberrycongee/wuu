@@ -4,7 +4,7 @@ import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { PhoneAccess, phoneAddress, phonePairLink, phoneAccessConfig } from "./phoneAccess";
+import { PhoneAccess, phoneAddress, phoneAccessConfig } from "./phoneAccess";
 import type { RemoteHostManager } from "./remoteControl";
 import { getPhoneAccessEnabled, setPhoneAccessEnabled, getThemePreference, setThemePreference } from "./desktopSettings";
 vi.mock("node:os", async importOriginal => ({ ...(await importOriginal<typeof import("node:os")>()), networkInterfaces: () => ({ en0: [{ address: "192.168.1.8", family: "IPv4", internal: false }] }) }));
@@ -22,13 +22,10 @@ beforeEach(() => {
   }
 });
 
-it("uses a LAN address and keeps the pairing secret out of HTTP queries", () => {
+it("uses a reachable LAN address", () => {
   const entry = (address: string, internal = false) => ({ address, family: "IPv4", internal, netmask: "", cidr: null, mac: "" } as const);
   expect(phoneAddress({ lo0: [entry("127.0.0.1", true)], en0: [entry("192.168.1.8")] })).toBe("192.168.1.8");
   expect(() => phoneAddress({ lo0: [entry("127.0.0.1", true)] })).toThrow();
-  const link = new URL(phonePairLink("http://192.168.1.8:8787/", "wuu://pair?secret=abc")!);
-  expect(link.search).toBe("");
-  expect(new URLSearchParams(link.hash.slice(1)).get("pair")).toBe("wuu://pair?secret=abc");
 });
 
 describe("phone access lifecycle", () => {

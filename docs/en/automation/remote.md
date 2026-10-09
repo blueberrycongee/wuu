@@ -4,13 +4,38 @@ Remote control connects a paired client to a Wuu host through a Relay. The host
 runs the agent and accesses the workspace; the Relay routes the end-to-end encrypted
 app-server connection. Pairing grants control of the host, not just a read-only view.
 
-All production desktop builds, including local packages, hide account and
-remote-control UI until phone access ships. These entries remain available through
-`make dev`; setting `VITE_ENABLE_ACCOUNT=true` or `VITE_ENABLE_REMOTE_CONTROL=true`
-does not enable them in a production build. This
-guide covers the source CLI and development client, not a promised phone setup
-screen in the released desktop. Build the CLI using the
-[development guide](../project/development.md).
+The desktop Settings → Phone access page can pair the native iOS app without an
+account. Build the app from [the native client project](../../../clients/native/README.md);
+there is no public App Store distribution yet. Account login on the desktop remains
+development-only. Build the CLI using the [development guide](../project/development.md).
+
+## Connect the iOS app
+
+1. Keep Wuu open on your computer. In Settings → Phone access, allow access and
+   show a pairing code.
+2. Put the phone on the same Wi-Fi, or configure a reachable Tailscale address or
+   relay as described below. In the app, choose Connect computer and scan the
+   pairing code, or paste its link and choose Connect.
+3. Choose a conversation, or start a new one and select a working folder. You can
+   also enter an existing absolute folder path on the computer. Messages and task
+   controls use the encrypted connection to that computer.
+
+The app saves the pinned computer identity and phone key in the iOS keychain.
+It restores the last computer, folder and conversation after relaunch. Returning
+from the background creates a fresh encrypted connection; sent messages are never
+automatically replayed. The computer must be online to create, send or stop work.
+Account-based history sync and notifications require an account connection.
+
+For Tailscale or a reverse proxy, configure the desktop process with
+`WUU_WEB_URL` set to the reachable HTTP(S) origin and `WUU_WEB_LISTEN` set to the
+local address to listen on (for example, a Tailscale address and port). For a
+separate relay, also set `WUU_WEB_RELAY_URL` to its `wss://…/v1/connect` endpoint.
+The pairing code carries that endpoint. Both devices must be able to reach it;
+installing Tailscale alone does not change an already saved relay address.
+Generate a new code and pair again after changing the advertised endpoint.
+
+Removing a computer on the phone forgets its local identity. To revoke that
+phone's access, remove the device in the computer's Phone access settings.
 
 ## Prepare a Relay
 

@@ -221,7 +221,7 @@ iOS 构建打包已提交的小球与过程摘要资源快照，不要求快照�
 
 ## CI 覆盖范围
 
-[Native mobile](../../../.github/workflows/native-mobile.yml) 仅通过 `workflow_dispatch` 手动运行，不在拉取请求或推送时触发。它保留核心集成检查、iOS/Android 未签名 Release 构建和 Android lint。当前手机端不在发布范围内，纳入发布范围前应恢复自动验证；桌面交付不以移动端验证为前提。
+[Native mobile](../../../.github/workflows/native-mobile.yml) 在修改 iOS 客户端、共享原生测试环境、远程协议或 Go 依赖的拉取请求与 `main` 推送上，运行 iOS 核心集成和未签名模拟器／真机目标构建。手动 `workflow_dispatch` 还会运行原有 Android 集成、Release 构建和 lint。这些检查不覆盖真机签名、商店分发或实体手机交互。
 
 [主 CI 工作流](../../../.github/workflows/ci.yml)运行仓库元数据、Go 检查与测试、桌面检查/测试/构建，以及 SDK/客户端检查/测试/构建。只修改 `docs/` 和 `docs-site/` 时跳过该工作流。Go CI 提供 PostgreSQL，以覆盖依赖数据库的测试。
 

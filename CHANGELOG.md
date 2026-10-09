@@ -10,6 +10,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Pair the native iOS app directly with a computer from desktop Phone access,
+  keeping identities in the iOS keychain. Restore the last computer, working
+  folder and conversation, and choose a folder before starting a new conversation.
+
 - Run a default-exported TypeScript plugin directly with `wuu plugin dev`, using
   the embedded SDK without a manifest or build, and keep watching through failed saves.
 
