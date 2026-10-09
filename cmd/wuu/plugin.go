@@ -86,7 +86,7 @@ func runPluginInspect(args []string) error {
 	return printPluginPackageOutput(packageInspectionOutput(inspection), *jsonOutput, "Valid plugin package")
 }
 
-func runPluginInstall(args []string) error {
+func runPluginInstall(args []string) (retErr error) {
 	fs, jsonOutput := pluginFlagSet("plugin install")
 	if err := fs.Parse(args); err != nil {
 		return pluginCLIError(err)
@@ -107,7 +107,7 @@ func runPluginInstall(args []string) error {
 	if err != nil {
 		return pluginCLIError(err)
 	}
-	defer releaseMutation()
+	defer func() { retErr = errors.Join(retErr, releaseMutation()) }()
 	if _, statErr := os.Lstat(filepath.Join(home, "plugins", inspection.ID)); statErr == nil {
 		pending, err := pluginpkg.StagePackageUpdate(home, source)
 		if err != nil {
@@ -133,7 +133,7 @@ func runPluginInstall(args []string) error {
 	return printPluginPackageOutput(output, *jsonOutput, "Installed plugin package; approval is required before code activation")
 }
 
-func runPluginUpdate(args []string) error {
+func runPluginUpdate(args []string) (retErr error) {
 	fs, jsonOutput := pluginFlagSet("plugin update")
 	if err := fs.Parse(args); err != nil {
 		return pluginCLIError(err)
@@ -157,7 +157,7 @@ func runPluginUpdate(args []string) error {
 	if err != nil {
 		return pluginCLIError(err)
 	}
-	defer releaseMutation()
+	defer func() { retErr = errors.Join(retErr, releaseMutation()) }()
 	pending, err := pluginpkg.StagePackageUpdate(home, source)
 	if err != nil {
 		return pluginCLIError(err)
@@ -243,7 +243,7 @@ func runPluginList(args []string) error {
 	return nil
 }
 
-func runPluginRemove(args []string) error {
+func runPluginRemove(args []string) (retErr error) {
 	fs, jsonOutput := pluginFlagSet("plugin remove")
 	if err := fs.Parse(args); err != nil {
 		return pluginCLIError(err)
@@ -260,7 +260,7 @@ func runPluginRemove(args []string) error {
 	if err != nil {
 		return pluginCLIError(err)
 	}
-	defer releaseMutation()
+	defer func() { retErr = errors.Join(retErr, releaseMutation()) }()
 	pending, pendingErr := pluginpkg.ReadPendingUpdate(home, id)
 	if pendingErr != nil && !errors.Is(pendingErr, pluginpkg.ErrPendingUpdateNotFound) {
 		return pluginCLIError(pendingErr)
@@ -321,7 +321,7 @@ func runPluginRemove(args []string) error {
 	return printPluginPackageOutput(output, *jsonOutput, message)
 }
 
-func runPluginPolicy(action string, args []string) error {
+func runPluginPolicy(action string, args []string) (retErr error) {
 	fs, jsonOutput := pluginFlagSet("plugin " + action)
 	workdir := fs.String("workdir", "", "workspace directory for a project plugin")
 	if err := fs.Parse(args); err != nil {
@@ -339,7 +339,7 @@ func runPluginPolicy(action string, args []string) error {
 	if err != nil {
 		return pluginCLIError(err)
 	}
-	defer releaseMutation()
+	defer func() { retErr = errors.Join(retErr, releaseMutation()) }()
 	item, err := discoverPluginForPolicy(id, *workdir)
 	if err != nil {
 		return pluginCLIError(err)
@@ -382,13 +382,17 @@ func runPluginPolicy(action string, args []string) error {
 			if item.Source == "project" {
 				scope = extensions.GrantScopeProject
 			}
-			return settings.RecordGrant(extensions.Grant{
+			if err := settings.RecordGrant(extensions.Grant{
 				SubjectID:   item.SubjectID,
 				Fingerprint: item.Fingerprint,
 				Scope:       scope,
 				Permissions: append([]string(nil), item.EffectivePermissions...),
 				ApprovedAt:  time.Now().UTC(),
-			})
+			}); err != nil {
+				return err
+			}
+			settings.SetEnabled(item.SubjectID, true)
+			return nil
 		case "reject":
 			return settings.RecordRejection(item.SubjectID, item.Fingerprint)
 		case "enable":
@@ -417,21 +421,7 @@ func runPluginPolicy(action string, args []string) error {
 	return printPluginPackageOutput(output, *jsonOutput, "Updated plugin policy")
 }
 
-func beginPluginCLIMutation(wuuHome, action string) (func(), error) {
-	if action == "remove" {
-		lease, acquired, err := session.TryAcquirePluginGenerationMutationLease(wuuHome)
-		if err != nil {
-			return nil, fmt.Errorf("begin plugin %s mutation: %w", action, err)
-		}
-		if !acquired {
-			return nil, fmt.Errorf("plugin %s refused because executions currently own the active generation", action)
-		}
-		if _, err := lease.Advance(); err != nil {
-			_ = lease.Release()
-			return nil, fmt.Errorf("advance plugin %s generation: %w", action, err)
-		}
-		return func() { _ = lease.Release() }, nil
-	}
+func beginPluginCLIMutation(wuuHome, action string) (func() error, error) {
 	lease, acquired, err := session.TryAcquirePluginCatalogMutationLease(wuuHome)
 	if err != nil {
 		return nil, fmt.Errorf("begin plugin %s mutation: %w", action, err)
@@ -439,12 +429,13 @@ func beginPluginCLIMutation(wuuHome, action string) (func(), error) {
 	if !acquired {
 		return nil, fmt.Errorf("cannot %s plugin packages while another app-server is changing the plugin catalog", action)
 	}
-	return func() {
-		if _, err := lease.Advance(); err != nil {
-			_ = lease.Release()
-			return
+	return func() error {
+		_, advanceErr := lease.Advance()
+		releaseErr := lease.Release()
+		if err := errors.Join(advanceErr, releaseErr); err != nil {
+			return fmt.Errorf("plugin %s catalog change may be saved, but publication could not be confirmed: %w", action, err)
 		}
-		_ = lease.Release()
+		return nil
 	}, nil
 }
 

@@ -441,6 +441,14 @@ func NewSession(opts Options) (*Session, error) {
 	providers.InitDebugLog(statepath.LogDir(wuuHome))
 	setupCatwalk(cfg)
 
+	catalogLease, catalogAcquired, err := session.TryAcquirePluginCatalogReadLease(wuuHome)
+	if err != nil {
+		return nil, fmt.Errorf("read initial plugin catalog: %w", err)
+	}
+	if !catalogAcquired {
+		return nil, errors.New("plugin catalog is being published by another process")
+	}
+	defer catalogLease.Release()
 	discoveredPlugins := discoverPlugins(rootDir, wuuHome)
 	safeMode := opts.SafeMode || strings.TrimSpace(os.Getenv("WUU_SAFE_MODE")) == "1"
 	var activePlugins []pluginpkg.Plugin
@@ -450,6 +458,21 @@ func NewSession(opts Options) (*Session, error) {
 			return nil, activationErr
 		}
 		activePlugins = activationPlan.Plugins
+	}
+	activePlugins, initialSnapshotRoots, err := snapshotMutableExecutionPackages(activePlugins)
+	if err != nil {
+		return nil, err
+	}
+	snapshotsOwned := true
+	defer func() {
+		if snapshotsOwned {
+			for _, root := range initialSnapshotRoots {
+				_ = os.RemoveAll(root)
+			}
+		}
+	}()
+	if err := catalogLease.Release(); err != nil {
+		return nil, err
 	}
 	var agentControl *agentcontrol.AgentControl
 	pluginTurnRouter := NewPluginSessionRouter()
@@ -840,6 +863,7 @@ func NewSession(opts Options) (*Session, error) {
 	initialHooks := hooks.NewDispatcher(nil)
 	initialHooks.Replace(hookDispatcher)
 	runtimeSession.pluginGeneration = &PluginGeneration{
+		ownedRoots:    initialSnapshotRoots,
 		settings:      cfg,
 		plugins:       append([]pluginpkg.Plugin(nil), discoveredPlugins...),
 		active:        append([]pluginpkg.Plugin(nil), activePlugins...),
@@ -864,6 +888,10 @@ func NewSession(opts Options) (*Session, error) {
 		runtimeSession.pluginGeneration.mcp = toolkit.MCPManager()
 	}
 	runtimeSession.pluginGeneration.retain()
+	if toolkit != nil {
+		toolkit.SetPluginManager(runtimeSession.pluginManager(runtimeSession.pluginGeneration, runPluginManagementCommand))
+	}
+	snapshotsOwned = false
 	// The legacy/root control remains dormant until SetSessionID binds its real
 	// artifact directories. Per-thread controls created by NewThreadRuntime are
 	// likewise started only after app-server installs their terminal finalizer.
@@ -1265,6 +1293,7 @@ func (s *Session) NewThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 		}
 		kit.SetStateDir(stateDir)
 		kit.SetArtifactPublisher(newArtifactPublisher(wuuHome))
+		kit.SetPluginManager(s.pluginManager(generation, runPluginManagementCommand))
 		kit.SetProcessManager(threadProcessManager)
 		kit.SetSkills(threadSkills)
 		ConfigureToolkitPermissions(kit, s.Permissions)

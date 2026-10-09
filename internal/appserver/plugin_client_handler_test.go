@@ -32,9 +32,11 @@ func (c *pluginClientRequestTestRuntime) InvokeCapability(_ context.Context, par
 }
 
 func TestPluginClientRequestRoutesOnlyToActiveGeneration(t *testing.T) {
-	srv, item, out := newPluginStateTestServer(t)
-	client := &pluginClientRequestTestRuntime{id: item.ID}
-	srv.rt.PluginHost = pluginhost.New(client)
+	var client *pluginClientRequestTestRuntime
+	srv, item, out := newPluginStateTestServer(t, func(id string) pluginhost.Client {
+		client = &pluginClientRequestTestRuntime{id: id}
+		return client
+	})
 
 	callPluginPackageRPC(t, srv, "ok", MethodPluginClientRequest, PluginClientRequestParams{
 		ID: item.SubjectID, Fingerprint: item.Fingerprint, Method: "example.summary", Input: json.RawMessage(`{"thread_id":"thread-1"}`),

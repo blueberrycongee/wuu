@@ -177,3 +177,33 @@ func TestPluginCatalogMutationEpochConcurrentWithAdvanceAndRelease(t *testing.T)
 		t.Fatal("released lease advanced the epoch")
 	}
 }
+
+func TestPluginCatalogReadLeaseProtectsSnapshotWithoutBlockingExecution(t *testing.T) {
+	home := t.TempDir()
+	reader, acquired, err := TryAcquirePluginCatalogReadLease(home)
+	if err != nil || !acquired {
+		t.Fatalf("read: %v %v", acquired, err)
+	}
+	defer reader.Release()
+	execution, acquired, err := TryAcquirePluginGenerationExecutionLease(home)
+	if err != nil || !acquired {
+		t.Fatalf("execution: %v %v", acquired, err)
+	}
+	defer execution.Release()
+	writer, acquired, err := TryAcquirePluginCatalogMutationLease(home)
+	if err != nil || acquired || writer != nil {
+		t.Fatalf("writer overlapped snapshot: %v %v", acquired, err)
+	}
+	if err := reader.Release(); err != nil {
+		t.Fatal(err)
+	}
+	writer, acquired, err = TryAcquirePluginCatalogMutationLease(home)
+	if err != nil || !acquired {
+		t.Fatalf("writer after snapshot: %v %v", acquired, err)
+	}
+	defer writer.Release()
+	reader, acquired, err = TryAcquirePluginCatalogReadLease(home)
+	if err != nil || acquired || reader != nil {
+		t.Fatalf("snapshot overlapped writer: %v %v", acquired, err)
+	}
+}

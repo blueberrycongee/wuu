@@ -73,7 +73,8 @@ func ReadDevAuthorization(wuuHome, pluginID string) (DevAuthorization, error) {
 // PublishDevGeneration stages a complete package and its authorization receipt
 // before replacing the host-consumed development generation. Discovery can
 // recover the previous signed package if the process exits between renames.
-// Callers must hold the exclusive plugin-generation mutation lease.
+// Callers must hold the plugin-catalog mutation lease and advance its epoch
+// after successful publication.
 func PublishDevGeneration(wuuHome, developerDirectory, source string, authorization DevAuthorization) (Plugin, error) {
 	if strings.TrimSpace(authorization.Token) == "" {
 		return Plugin{}, errors.New("dev authorization token is required")

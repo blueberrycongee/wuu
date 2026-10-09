@@ -7,6 +7,7 @@ import (
 	"github.com/fsnotify/fsnotify"
 
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/session"
 )
 
@@ -157,10 +158,51 @@ func (s *Server) refreshPluginGenerationIfChanged() error {
 	if epoch == s.pluginGenerationEpoch.Load() && !needsRecovery {
 		return nil
 	}
-	inventory, skills, err := s.refreshPluginPackages()
+	catalog, catalogAcquired, err := session.TryAcquirePluginCatalogReadLease(s.rt.WuuHome)
 	if err != nil {
 		return err
 	}
+	if !catalogAcquired {
+		return errPluginGenerationRefreshBusy
+	}
+	epoch, err = session.ReadPluginGenerationEpoch(s.rt.WuuHome)
+	if err != nil {
+		_ = catalog.Release()
+		return err
+	}
+	// Snapshot complete disk state before opening any effectful activation.
+	// A plugin's activate callback may itself publish another catalog change.
+	// Keep this observed epoch with the prepared candidate. Publication can
+	// advance again during activation; recording that newer epoch here would
+	// hide a change this candidate never loaded. The next refresh adopts it.
+
+	var candidate *runtime.PluginGeneration
+	if s.refreshExtensionsForTest == nil {
+		candidate, err = s.rt.PreflightExtensions(s.currentExtensionConfig())
+	}
+	releaseErr := catalog.Release()
+	if err != nil {
+		return err
+	}
+	if releaseErr != nil {
+		if candidate != nil {
+			s.rt.ReleasePluginGeneration(candidate)
+		}
+		return releaseErr
+	}
+	if candidate != nil {
+		err = s.rt.ActivatePluginGeneration(candidate, nil)
+	} else {
+		err = s.refreshExtensions(s.currentExtensionConfig())
+	}
+	if err != nil {
+		if !runtime.PluginGenerationWasCommitted(err) {
+			return err
+		}
+		providers.DebugLogf("refresh plugin generation: %v", err)
+	}
+	s.schedulePluginTurnLifecycleReplay()
+	inventory, skills := s.currentExtensionInventory(), s.skillSummaries(s.rt.Skills, s.rt.RootDir)
 	refreshed = true
 	// The refresh mutex still serializes local mutations while the shared lease
 	// is dropped and the observed epoch is published.

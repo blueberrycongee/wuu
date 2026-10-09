@@ -13,6 +13,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/extensions"
 	"github.com/blueberrycongee/wuu/internal/hooks"
 	"github.com/blueberrycongee/wuu/internal/mcp"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
@@ -939,5 +940,89 @@ func testRuntimePlugin(id string) pluginpkg.Plugin {
 			},
 		},
 		Official: true,
+	}
+}
+
+func TestMutableGenerationOwnsLazyAssetsAndPreservesProvenance(t *testing.T) {
+	for _, source := range []string{"dev", "user"} {
+		t.Run(source, func(t *testing.T) {
+			root := t.TempDir()
+			manifest := filepath.Join(root, "plugin.json")
+			if err := os.WriteFile(manifest, []byte(fmt.Sprintf(`{"id":"snapshot-dev","name":"Snapshot dev","version":"1","skills":["skills"],"runtime":{"protocol":%q,"command":"./runtime.sh"}}`, pluginhost.ProtocolName)), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(filepath.Join(root, "skills"), 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(root, "asset.txt"), []byte("old asset"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(root, "runtime.sh"), []byte("#!/bin/sh\n"), 0700); err != nil {
+				t.Fatal(err)
+			}
+			item, err := pluginpkg.LoadManifest(manifest, source)
+			if err != nil {
+				t.Fatal(err)
+			}
+			item.AuthorizedDev = source == "dev"
+			cfg := config.Config{Extensions: &extensions.Settings{}}
+			if source == "user" {
+				if err := cfg.Extensions.RecordGrant(extensions.Grant{SubjectID: item.SubjectID, Fingerprint: item.Fingerprint, Scope: extensions.GrantScopeUser, Permissions: item.EffectivePermissions}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			s := &Session{}
+			generation, err := s.buildPluginGeneration(cfg, []pluginpkg.Plugin{item}, nil, nil, func(_ context.Context, pc pluginhost.ProcessConfig) (pluginhost.Client, error) {
+				if !strings.HasPrefix(pc.Command, pc.PluginRoot+string(filepath.Separator)) || pc.PluginRoot == root {
+					t.Fatalf("runtime not rebased: %+v", pc)
+				}
+				return &generationClient{id: item.ID}, nil
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer generation.close()
+			if len(generation.active) != 1 {
+				t.Fatalf("active: %+v", generation.active)
+			}
+			snap := generation.active[0]
+			if snap.Root == root || snap.SubjectID != item.SubjectID || snap.Fingerprint != item.Fingerprint || snap.AuthorizedDev != item.AuthorizedDev {
+				t.Fatalf("snapshot identity: %+v", snap)
+			}
+			if generation.plugins[0].Root != root {
+				t.Fatal("catalog root changed")
+			}
+			if err := os.RemoveAll(root); err != nil {
+				t.Fatal(err)
+			}
+			data, err := os.ReadFile(filepath.Join(snap.Root, "asset.txt"))
+			if err != nil || string(data) != "old asset" {
+				t.Fatalf("lazy asset: %s %v", data, err)
+			}
+			if err := generation.close(); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := os.Stat(snap.Root); !os.IsNotExist(err) {
+				t.Fatalf("snapshot not retired: %v", err)
+			}
+		})
+	}
+}
+
+func TestMutablePackageSnapshotRejectsChangedApprovedBytes(t *testing.T) {
+	root := t.TempDir()
+	manifest := filepath.Join(root, "plugin.json")
+	if err := os.WriteFile(manifest, []byte(`{"id":"changed-snapshot"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	item, err := pluginpkg.LoadManifest(manifest, "user")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "new-code.js"), []byte("changed"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := snapshotMutableExecutionPackages([]pluginpkg.Plugin{item}); err == nil {
+		t.Fatal("changed bytes inherited old trust")
 	}
 }

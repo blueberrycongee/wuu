@@ -485,7 +485,7 @@ func runPluginPack(args []string) error {
 // DevAuthorization records a one-time dev directory grant.
 type DevAuthorization = pluginpkg.DevAuthorization
 
-var errDevGenerationBusy = errors.New("plugin executions currently own the active generation")
+var errDevGenerationBusy = errors.New("plugin catalog is being read or published by another operation")
 
 func runPluginDevMode(args []string) error {
 	fs := flag.NewFlagSet("plugin dev", flag.ContinueOnError)
@@ -645,7 +645,7 @@ func authorizeDevDirectory(devDir, pluginID, directory string) error {
 }
 
 func refreshDevGeneration(ctx context.Context, wuuHome, dir, packageManager string) (pluginDiagnostic, error) {
-	probe, acquired, err := session.TryAcquirePluginGenerationMutationLease(wuuHome)
+	probe, acquired, err := session.TryAcquirePluginCatalogMutationLease(wuuHome)
 	if err != nil {
 		return pluginDiagnostic{Level: "fail", Check: "dev.mutation", Message: err.Error()}, fmt.Errorf("dev generation mutation check failed; previous generation preserved: %w", err)
 	}
@@ -713,7 +713,7 @@ func refreshDevGeneration(ctx context.Context, wuuHome, dir, packageManager stri
 		err := errors.New("prepared plugin identity differs from the authorized source; previous generation preserved")
 		return pluginDiagnostic{Level: "fail", Check: "dev.authorization", Message: err.Error()}, err
 	}
-	lease, acquired, err := session.TryAcquirePluginGenerationMutationLease(wuuHome)
+	lease, acquired, err := session.TryAcquirePluginCatalogMutationLease(wuuHome)
 	if err != nil {
 		return pluginDiagnostic{Level: "fail", Check: "dev.mutation", Message: err.Error()}, fmt.Errorf("dev generation mutation failed; previous generation preserved: %w", err)
 	}
@@ -721,13 +721,16 @@ func refreshDevGeneration(ctx context.Context, wuuHome, dir, packageManager stri
 		return pluginDiagnostic{Level: "fail", Check: "dev.mutation", Message: errDevGenerationBusy.Error()}, fmt.Errorf("dev generation refresh deferred; previous generation preserved: %w", errDevGenerationBusy)
 	}
 	defer lease.Release()
-	epoch, err := lease.Advance()
-	if err != nil {
-		return pluginDiagnostic{Level: "fail", Check: "dev.mutation", Message: err.Error()}, fmt.Errorf("dev generation epoch advance failed; previous generation preserved: %w", err)
-	}
 	published, err := pluginpkg.PublishDevGeneration(wuuHome, dir, prepared, authorization)
 	if err != nil {
 		return pluginDiagnostic{Level: "fail", Check: "dev.refresh", Message: err.Error()}, fmt.Errorf("dev generation refresh failed; previous generation preserved: %w", err)
+	}
+	epoch, err := lease.Advance()
+	if err != nil {
+		return pluginDiagnostic{Level: "fail", Check: "dev.mutation"}, fmt.Errorf("dev package published but generation signal failed: %w", err)
+	}
+	if err := lease.Release(); err != nil {
+		return pluginDiagnostic{Level: "fail", Check: "dev.mutation"}, fmt.Errorf("dev package published but catalog lease release failed: %w", err)
 	}
 	return pluginDiagnostic{Level: "pass", Check: "dev.refresh", Message: fmt.Sprintf("published generation %s at epoch %d from %s", published.Fingerprint, epoch, published.Root)}, nil
 }

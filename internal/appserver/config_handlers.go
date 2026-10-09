@@ -909,7 +909,7 @@ func (s *Server) handleExtensionPackageUpdate(req Request) error {
 		return s.writeResponse(req.ID, nil, fmt.Errorf("extension package %q was not found", params.ID))
 	}
 	if params.Action == ExtensionPackagePromoteUpdate || params.Action == ExtensionPackageRejectUpdate {
-		return s.handlePendingPluginUpdate(req, params, *selected)
+		return s.handlePendingPluginUpdate(req, params, *selected, releaseMutation)
 	}
 	providedFingerprint := strings.TrimSpace(params.Fingerprint)
 	if providedFingerprint != "" && providedFingerprint != selected.Fingerprint {
@@ -953,7 +953,7 @@ func (s *Server) handleExtensionPackageUpdate(req Request) error {
 	}
 	s.rt.SetExtensionSettings(&persistedSettings)
 	s.schedulePluginTurnLifecycleReplay()
-	return s.writePluginGenerationResponse(req, ExtensionPackageUpdateResult{ExtensionInventory: s.currentExtensionInventory()}, activationErr)
+	return s.writePluginGenerationResponse(req, ExtensionPackageUpdateResult{ExtensionInventory: s.currentExtensionInventory()}, activationErr, releaseMutation)
 }
 
 func applyExtensionPackageAction(settings *extensions.Settings, action ExtensionPackageAction, selected pluginpkg.Plugin, approvedAt time.Time) error {
@@ -1002,10 +1002,10 @@ func (s *Server) handleExtensionCatalogRefresh(req Request) error {
 	if err := s.rt.RefreshExtensions(s.currentExtensionConfig()); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	return s.writeResponse(req.ID, ExtensionCatalogRefreshResult{
+	return s.writePluginGenerationResponse(req, ExtensionCatalogRefreshResult{
 		ExtensionInventory: s.currentExtensionInventory(),
 		Skills:             s.skillSummaries(s.rt.Skills, s.rt.RootDir),
-	}, nil)
+	}, nil, releaseMutation)
 }
 
 func (s *Server) handleConfigAdvancedUpdate(req Request) error {

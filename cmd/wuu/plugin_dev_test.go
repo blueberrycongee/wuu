@@ -175,17 +175,18 @@ func TestDevRefreshIsAtomicAndSeparateFromNormalInstall(t *testing.T) {
 	if execution.Epoch() != initialEpoch+1 {
 		t.Fatalf("published generation epoch = %d, want %d", execution.Epoch(), initialEpoch+1)
 	}
-	writePluginDevTestFile(t, filepath.Join(dir, "src.js"), "export const value = 'blocked';")
-	if diagnostic, err := refreshDevGeneration(context.Background(), home, dir, manager); err == nil || diagnostic.Check != "dev.mutation" {
-		t.Fatalf("refresh while execution owns generation = %+v, %v", diagnostic, err)
+	writePluginDevTestFile(t, filepath.Join(dir, "src.js"), "export const value = 'live';")
+	if diagnostic, err := refreshDevGeneration(context.Background(), home, dir, manager); err != nil || diagnostic.Level != "pass" {
+		t.Fatalf("live refresh while execution owns generation = %+v, %v", diagnostic, err)
 	}
 	if err := execution.Release(); err != nil {
 		t.Fatal(err)
 	}
 	blocked, err := os.ReadFile(devArtifact)
-	if err != nil || string(blocked) != string(before) {
-		t.Fatalf("execution-blocked refresh replaced generation: %q, %v", blocked, err)
+	if err != nil || string(blocked) == string(before) {
+		t.Fatalf("execution-compatible refresh did not publish generation: %q, %v", blocked, err)
 	}
+	before = blocked
 	failingManager := writePluginDevTestManager(t, `exit 7`)
 	if diagnostic, err := refreshDevGeneration(context.Background(), home, dir, failingManager); err == nil || diagnostic.Level != "fail" {
 		t.Fatalf("failing refresh = %+v, %v", diagnostic, err)

@@ -97,11 +97,10 @@ func publishReloadBehaviorGeneration(t *testing.T, rt *runtime.Session, marker, 
 	if err := os.WriteFile(path, raw, 0600); err != nil {
 		t.Fatal(err)
 	}
-	item, err := pluginpkg.LoadManifest(path, "user")
+	item, err := pluginpkg.LoadManifestWithOptions(path, pluginpkg.LoadOptions{Source: "user", Official: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	item.Official = true
 	rt.Plugins = []pluginpkg.Plugin{item}
 	candidate, err := rt.PreflightExtensionPolicy(config.Config{})
 	if err != nil {
@@ -489,11 +488,10 @@ func TestPluginRefreshActivationCanQueueSessionSend(t *testing.T) {
 			if err := os.WriteFile(path, raw, 0600); err != nil {
 				t.Fatal(err)
 			}
-			item, err := pluginpkg.LoadManifest(path, "user")
+			item, err := pluginpkg.LoadManifestWithOptions(path, pluginpkg.LoadOptions{Source: "user", Official: true})
 			if err != nil {
 				t.Fatal(err)
 			}
-			item.Official = true
 			rt.Plugins = []pluginpkg.Plugin{item}
 			srv.refreshExtensionsForTest = func(cfg config.Config) error {
 				candidate, err := rt.PreflightExtensionPolicy(cfg)

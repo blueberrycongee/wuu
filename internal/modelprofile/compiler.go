@@ -220,6 +220,7 @@ func addSkillTools(b *surfaceBuilder) {
 }
 
 func addExtensionTools(b *surfaceBuilder) {
+	b.addDeferred("plugin_manager", capability.CapabilityPluginManagement)
 	// MCP has no stable built-in tool name because concrete MCP
 	// tools are discovered at runtime. The deferred capability says
 	// this profile may load MCP tools through tool_search; the tools

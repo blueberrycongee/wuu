@@ -209,6 +209,13 @@ func (s *Session) buildPluginGeneration(cfg config.Config, discovered []pluginpk
 		}
 		active = activationPlan.Plugins
 	}
+	var snapshotRoots []string
+	var snapshotErr error
+	active, snapshotRoots, snapshotErr = snapshotMutableExecutionPackages(active)
+	if snapshotErr != nil {
+		return nil, snapshotErr
+	}
+	ownedRoots = append(ownedRoots, snapshotRoots...)
 	// A refresh may isolate a newly broken optional runtime, but must not
 	// replace an already working runtime with a failed candidate. Requirements
 	// only apply to runtimes in the candidate, so intentional removals and
@@ -566,6 +573,7 @@ func (s *Session) applyPluginGeneration(generation *PluginGeneration) {
 	s.Skills = append([]skills.Skill(nil), generation.skills...)
 	s.pluginSkills = generation.pluginSkills
 	if s.Toolkit != nil {
+		s.Toolkit.SetPluginManager(s.pluginManager(generation, runPluginManagementCommand))
 		s.Toolkit.SetSkills(s.Skills)
 		s.Toolkit.SetMCPActivityBindings(generation.mcpBinding)
 		s.Toolkit.SetMCPManager(generation.mcp)
@@ -764,4 +772,49 @@ func (s *Session) PluginExecutionSnapshots() []pluginhost.ExecutionSnapshot {
 		return nil
 	}
 	return s.PluginHost.ExecutionSnapshots()
+}
+
+// snapshotMutableExecutionPackages detaches executable and lazy declarative paths
+// from the replaceable installed/development catalog. Callers serialize the copy with
+// publication; the returned roots belong to the generation, not discovery.
+func snapshotMutableExecutionPackages(active []pluginpkg.Plugin) ([]pluginpkg.Plugin, []string, error) {
+	result := append([]pluginpkg.Plugin(nil), active...)
+	var roots []string
+	fail := func(err error) ([]pluginpkg.Plugin, []string, error) {
+		for _, root := range roots {
+			_ = os.RemoveAll(root)
+		}
+		return nil, nil, err
+	}
+	for i, item := range active {
+		if item.Source != "dev" && item.Source != "user" {
+			continue
+		}
+		root, err := snapshotPluginPackage(item.Root)
+		if err != nil {
+			return fail(fmt.Errorf("snapshot mutable plugin %q: %w", item.ID, err))
+		}
+		roots = append(roots, root)
+		relative, err := filepath.Rel(item.Root, item.ManifestPath)
+		if err != nil {
+			return fail(err)
+		}
+		manifest, err := packageManifestPath(root, relative)
+		if err != nil {
+			return fail(err)
+		}
+		copied, err := pluginpkg.LoadManifestWithOptions(manifest, pluginpkg.LoadOptions{Source: item.Source, Official: item.Official, WorkspaceID: item.WorkspaceID})
+		if err != nil {
+			return fail(err)
+		}
+		// Normalization rebases execution paths; package-relative fingerprints
+		// must still match the exact catalog identity before retaining its trust.
+		if copied.SubjectID != item.SubjectID || copied.Fingerprint != item.Fingerprint {
+			return fail(fmt.Errorf("plugin %q changed while its execution package was being snapshotted", item.ID))
+		}
+		copied.AuthorizedDev = item.AuthorizedDev
+		copied.EffectivePermissions = append([]string(nil), item.EffectivePermissions...)
+		result[i] = copied
+	}
+	return result, roots, nil
 }

@@ -17,8 +17,9 @@ const pluginGenerationLeaseFile = ".plugin-generation.lock"
 const pluginCatalogMutationLeaseFile = ".plugin-catalog.lock"
 
 // PluginGenerationLease coordinates plugin execution and mutation across every
-// app-server that shares a Wuu home. Executions hold shared leases; package or
-// policy mutations hold the exclusive lease.
+// app-server that shares a Wuu home. Executions hold shared leases. Catalog
+// publication uses its own writer lock and remains compatible with executions;
+// an exclusive generation lease is reserved for whole-generation maintenance.
 type PluginGenerationLease struct {
 	mu        sync.Mutex
 	file      *os.File
@@ -262,4 +263,26 @@ func (l *PluginCatalogMutationLease) Release() error {
 		l.generation = nil
 	}
 	return err
+}
+
+// TryAcquirePluginCatalogReadLease protects a short discovery/package snapshot
+// against catalog publication. It does not pin an execution generation; callers
+// must release it before invoking effectful plugin activation.
+func TryAcquirePluginCatalogReadLease(wuuHome string) (*PluginGenerationLease, bool, error) {
+	if strings.TrimSpace(wuuHome) == "" {
+		return nil, false, errors.New("Wuu home is required")
+	}
+	if err := securefs.Mkdir(wuuHome); err != nil {
+		return nil, false, err
+	}
+	file, err := securefs.OpenFile(filepath.Join(wuuHome, pluginCatalogMutationLeaseFile), os.O_CREATE|os.O_RDWR, securefs.FileMode)
+	if err != nil {
+		return nil, false, err
+	}
+	acquired, err := tryLockPluginGenerationFile(file, false)
+	if err != nil || !acquired {
+		_ = file.Close()
+		return nil, false, err
+	}
+	return &PluginGenerationLease{file: file}, true, nil
 }
