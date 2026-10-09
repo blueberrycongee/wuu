@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="landing/assets/brand/wuu.svg" width="88" alt="">
+  <img src="assets/readme-icon.png" width="88" height="88" alt="Wuu">
 </p>
 
 <h1 align="center">wuu</h1>
@@ -27,6 +27,18 @@ Point wuu at a folder, describe the task, and let an agent read the code, run co
 ![An agent investigates a date bug, runs the tests, patches the code, and the change opens in Review](landing/assets/readme/demo-en.gif)
 
 A user reports that October 1 expenses land in September. The agent searches the code, runs the tests to reproduce the bug, fixes the month calculation and adds a test. One click opens the change in Review.
+
+## Agent benchmark
+
+In the 18-task Terminal-Bench 4 subset reported in [PR #630](https://github.com/blueberrycongee/wuu/pull/630), Wuu matched Codex's pass rate at **11.0% lower recorded API cost**, and solved one more task than Pi at **6.6% lower cost**.
+
+| Harness | Passed | Pass rate | Recorded API cost (USD) | Cost per success (USD) |
+| --- | ---: | ---: | ---: | ---: |
+| **Wuu** | **10/18** | **55.6%** | **$32.40** | **$3.24** |
+| Codex (Code Mode) | 10/18 | 55.6% | $36.42 | $3.64 |
+| Pi | 9/18 | 50.0% | $34.68 | $3.85 |
+
+All three harnesses used GPT-6 Astra with high reasoning effort: 18 tasks each, 54 runs total, with skills, memory, ask-user and subagents disabled. Codex 0.150.1 and Pi 0.84.4 retained their native prompts. Codex enabled Code Mode (`code_mode=true`, `code_mode_only=true`); Wuu exposed direct tools alongside optional Code Mode composition. Costs include cached input and exclude title generation; cost per success is total recorded API cost divided by passed tasks.
 
 ## What's in the preview
 
