@@ -972,16 +972,17 @@ export function App(): JSX.Element {
   }, [storeEngineInventory, engineInventoryCwd]);
 
   const updateEngineInventory = useCallback(async (params: EngineUpdateParams) => {
-    const request = engineInventoryRequestRef.current + 1;
-    engineInventoryRequestRef.current = request;
+    engineInventoryRequestRef.current += 1;
     const next = await window.wuu.updateEngines(params);
+    // A save from a workspace we left must not cancel its successor's discovery.
+    if (engineInventoryContext !== engineInventoryContextRef.current) return next;
     // Settings responses use the project root. Refresh the session catalog
     // before publishing model choices for a worktree.
     engineInventoryRef.current = undefined;
     engineInventoryFetchedAtRef.current = 0;
     engineInventoryRefreshRef.current = null;
     return await refreshEngineInventory(true) ?? next;
-  }, [refreshEngineInventory]);
+  }, [engineInventoryContext, refreshEngineInventory]);
 
   useEffect(() => {
     engineInventoryRequestRef.current += 1;
@@ -1230,7 +1231,6 @@ export function App(): JSX.Element {
       : undefined;
   const activeThread = activeThreadForState(state);
   const activeThreadID = activeThread?.id;
-  const engineSelectionPending = !activeThread && !engineInventory && typeof window.wuu.listEngines === "function";
   const activeProjectDraft = projectAgentEnabled && !activeThread && currentSessionTab?.kind === "draft" && currentSessionTab.project === true;
   const activeThreadRunning = isThreadRunning(activeThread);
   const activeThreadHasRunningTurn = activeThread?.turns.some(turn => turn.status === "in_progress") ?? false;
@@ -1301,6 +1301,7 @@ export function App(): JSX.Element {
   // working in an external agent does not mean re-selecting it for every new
   // session (see DraftEngineMemory).
   const [draftEngine, setDraftEngine] = useState<string>("");
+  const engineSelectionPending = !activeThread && draftEngine !== "wuu" && !engineInventory && typeof window.wuu.listEngines === "function";
   const [draftEngineRuntime, setDraftEngineRuntime] = useState<EngineRuntimeSelection>({
     model: "",
     effort: "",

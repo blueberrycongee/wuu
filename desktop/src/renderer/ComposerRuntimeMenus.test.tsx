@@ -94,6 +94,52 @@ describe("RuntimePicker", () => {
     };
   }
 
+  it.each([true, false])("keeps external effort keyboard focus and rolls back rejected saves (saved=%s)", async (saved) => {
+    let finish!: (result: boolean) => void;
+    const onSelectEngineEffort = vi.fn(() => new Promise<boolean>((resolve) => { finish = resolve; }));
+    const initialized = runtimeWithEffort();
+    const anchor = createRef<HTMLDivElement>();
+    const engineProps = {
+      activeEngine: "codex", engineLocked: true, engineModel: "gpt-test", engineEffort: "low",
+      engines: [{ id: "codex", enabled: true, binary_ok: true, models: [{ id: "gpt-test", supported_efforts: ["low", "high"] }] }],
+      onSelectEngineEffort,
+    };
+    renderPicker("model", initialized, vi.fn(), vi.fn(), vi.fn(), anchor, engineProps);
+    await act(async () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+    const slider = document.querySelector<HTMLInputElement>('input[type="range"]')!;
+    const step = (value: string): void => {
+      act(() => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(slider, value);
+        slider.dispatchEvent(new Event("input", { bubbles: true }));
+        slider.dispatchEvent(new KeyboardEvent("keyup", { key: "ArrowRight", bubbles: true }));
+      });
+    };
+    act(() => slider.focus());
+    step("2");
+    expect(onSelectEngineEffort).toHaveBeenCalledExactlyOnceWith("high");
+    expect(document.activeElement).toBe(slider);
+    expect(slider.disabled).toBe(false);
+    expect(slider.getAttribute("aria-busy")).toBe("true");
+    step("1");
+    expect(onSelectEngineEffort).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      if (saved) {
+        renderPicker("model", initialized, vi.fn(), vi.fn(), vi.fn(), anchor, { ...engineProps, engineEffort: "high" });
+      }
+      finish(saved);
+    });
+    expect(document.activeElement).toBe(slider);
+    expect(slider.getAttribute("aria-busy")).toBeNull();
+    expect(slider.value).toBe(saved ? "2" : "1");
+    expect(document.querySelector(".runtime-panel-effort-value")?.textContent).toBe(variantLabel(saved ? "high" : "low"));
+
+    step(saved ? "1" : "2");
+    expect(onSelectEngineEffort).toHaveBeenCalledTimes(2);
+    expect(onSelectEngineEffort).toHaveBeenLastCalledWith(saved ? "low" : "high");
+    await act(async () => finish(false));
+    expect(document.activeElement).toBe(slider);
+  });
+
   it("toggles speed independently on a bound engine conversation", async () => {
     const speed = vi.fn().mockResolvedValue(true);
     const effort = vi.fn();

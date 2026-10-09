@@ -223,6 +223,7 @@ function RuntimePanelSummary({
   effortOptions,
   selectedEffort,
   effortDisabled,
+  effortSaving = false,
   speed,
   defaultSpeed,
   speedDisabled = false,
@@ -242,6 +243,7 @@ function RuntimePanelSummary({
   effortOptions: string[];
   selectedEffort: string;
   effortDisabled: boolean;
+  effortSaving?: boolean;
   speed?: string;
   defaultSpeed?: string;
   speedDisabled?: boolean;
@@ -274,8 +276,8 @@ function RuntimePanelSummary({
   const [previewEffort, setPreviewEffort] = useState(selectedEffort);
 
   useEffect(() => {
-    setPreviewEffort(selectedEffort);
-  }, [selectedEffort]);
+    if (!effortSaving) setPreviewEffort(selectedEffort);
+  }, [selectedEffort, effortSaving]);
 
   const engineName = engineLabel(engine);
   // A bound conversation cannot switch engines, so the engine is a label that
@@ -358,6 +360,7 @@ function RuntimePanelSummary({
             options={effortOptions}
             selectedVariant={selectedEffort}
             disabled={effortDisabled}
+            busy={effortSaving}
             onPreviewEffort={setPreviewEffort}
             onSelectEffort={onSelectEffort}
           />
@@ -819,7 +822,6 @@ function EngineRuntimeMenu({
         {view === "summary" ? (
           <>
           <RuntimePanelSummary
-            key={`${selectedModel}:${selectedEffort}:${saving}`}
             engine={engineLabel(selectedEngine, engine)}
             engineId={selectedEngine}
             showEngine
@@ -828,7 +830,8 @@ function EngineRuntimeMenu({
             model={effectiveModelID ? effectiveModel?.display_name || effectiveModelID : t("runtime.engineDefaultModel")}
             effortOptions={effortOptions}
             selectedEffort={selectedEffort}
-            effortDisabled={disabled || saving}
+            effortDisabled={disabled}
+            effortSaving={saving}
             speed={selectedSpeed}
             defaultSpeed={effectiveModel?.default_speed}
             speedDisabled={running}
@@ -1277,12 +1280,14 @@ function EffortSelector({
   options,
   selectedVariant,
   disabled = false,
+  busy = false,
   onPreviewEffort,
   onSelectEffort
 }: {
   options: string[];
   selectedVariant: string;
   disabled?: boolean;
+  busy?: boolean;
   onPreviewEffort?: (variant: string) => void;
   onSelectEffort: (variant: string) => void;
 }): JSX.Element {
@@ -1298,9 +1303,10 @@ function EffortSelector({
   const lastIndex = Math.max(orderedOptions.length - 1, 1);
 
   useEffect(() => {
+    if (busy) return;
     setPreviewIndex(null);
     pendingIndex.current = null;
-  }, [selectedIndex]);
+  }, [selectedIndex, busy]);
 
   const previewTo = (index: number): void => {
     pendingIndex.current = index;
@@ -1318,7 +1324,7 @@ function EffortSelector({
     endpointKey.current = null;
     activePointer.current = null;
     pendingIndex.current = null;
-    if (disabled || index === null) return;
+    if (disabled || busy || index === null) return;
     const next = orderedOptions[index];
     if (next !== undefined) onSelectEffort(next);
   };
@@ -1364,10 +1370,12 @@ function EffortSelector({
         step={1}
         value={displayIndex}
         disabled={disabled}
+        aria-disabled={busy || undefined}
+        aria-busy={busy || undefined}
         aria-label={translate("runtime.reasoningEffort")}
         aria-valuetext={variantLabel(orderedOptions[displayIndex] ?? selectedVariant)}
         onPointerDown={(event) => {
-          if (disabled || event.button !== 0) return;
+          if (disabled || busy || event.button !== 0) return;
           event.preventDefault();
           event.currentTarget.focus();
           event.currentTarget.setPointerCapture(event.pointerId);
@@ -1382,9 +1390,13 @@ function EffortSelector({
         onLostPointerCapture={() => {
           if (activePointer.current !== null) cancel();
         }}
-        onChange={(event) => previewTo(Number(event.currentTarget.value))}
+        onChange={(event) => { if (!busy) previewTo(Number(event.currentTarget.value)); }}
         onKeyDown={(event) => {
           if (disabled) return;
+          if (busy) {
+            if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown"].includes(event.key)) event.preventDefault();
+            return;
+          }
           if (event.key === "Home" || event.key === "End") {
             // An older settings response can replace the displayed value while
             // this key is held, even when the key produced no input event.
