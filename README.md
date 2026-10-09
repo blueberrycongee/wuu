@@ -38,7 +38,7 @@ In the 18-task Terminal-Bench 4 subset reported in [PR #630](https://github.com/
 | Codex (Code Mode) | 10/18 | 55.6% | $36.42 | $3.64 |
 | Pi | 9/18 | 50.0% | $34.68 | $3.85 |
 
-All three harnesses used GPT-6 Astra with high reasoning effort: 18 tasks each, 54 runs total, with skills, memory, ask-user and subagents disabled. Codex 0.150.1 and Pi 0.84.4 retained their native prompts. Codex enabled Code Mode (`code_mode=true`, `code_mode_only=true`); Wuu exposed direct tools alongside optional Code Mode composition. Costs include cached input and exclude title generation; cost per success is total recorded API cost divided by passed tasks. These results cover this subset and configuration, not the full benchmark.
+All three harnesses used GPT-6 Astra with high reasoning effort: 18 tasks each, 54 runs total, with skills, memory, ask-user and subagents disabled. Codex 0.150.1 and Pi 0.84.4 retained their native prompts. Codex enabled Code Mode (`code_mode=true`, `code_mode_only=true`); Wuu exposed direct tools alongside optional Code Mode composition. Costs include cached input and exclude title generation; cost per success is total recorded API cost divided by passed tasks.
 
 ## What's in the preview
 
