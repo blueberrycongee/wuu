@@ -245,6 +245,22 @@ including outstanding workers or a cross-process execution lease.
 {"id":"20","method":"config/model/update","params":{"thread_id":"thread-id","permission_mode":"read_only"}}
 ```
 
+For external-engine conversations, `reset_model: true` clears the model, effort,
+speed and additional options before applying other supplied selection fields.
+Changing `model` also clears dependent selections. `model_options` replaces the
+whole string-to-string map; `{}` clears it, while omission preserves it. ACP
+select values retain native IDs; boolean values are encoded as `"true"` or
+`"false"`. OpenCode accepts `variant`. The same map is accepted by `thread/start`,
+returned on thread snapshots and preserved through resume and fork. Selections
+are validated against the native configuration when the next turn starts; native
+rejection fails that turn visibly. These fields do not change the Extension API.
+Existing session databases gain an additive `model_options_json` column with an
+empty-object default; existing conversations retain their selections.
+
+```json
+{"id":"20b","method":"config/model/update","params":{"thread_id":"thread-id","reset_model":true}}
+```
+
 Provider connection changes belong to workspace configuration. Save them separately
 from targeted conversation selection: a request combining those operations is
 rejected.
@@ -283,7 +299,7 @@ workspace default should be read during execution.
 `engine/list` returns `{ engines, settings }`, including missing and disabled
 engines. Each entry has an `id`, `enabled`, and `binary_ok`; optional metadata
 includes `display_name`, `protocol`, `install_url`, `binary_path`, `error`,
-`models`, `models_error`, and `permission_modes`. `permission_modes` is the
+`models`, `models_status`, `models_error`, and `permission_modes`. `permission_modes` is the
 composer access menu for that engine: host `standard` / `read_only` /
 `unconfined` rows, with optional native `id` and `label` from an ACP
 `category=mode` option. Omitted rows are not offered. `enabled` describes runtime
@@ -291,12 +307,34 @@ availability, while `settings.<id>.enabled` is the persisted opt-in/opt-out
 preference. Do not infer an installed program or authenticated account from the
 preference alone.
 
-For Claude Code, `engine/list` accepts `{ "refresh_models": true }` to bypass
-the CLI discovery cache. Model `id` is the original CLI selection value; optional
-`resolved_model` reports its actual target without replacing that value. Effort
-levels and fast-mode support come from CLI metadata. When refresh fails,
-`models_error` accompanies the last successful `models` only if the CLI login
-and configuration context still match; otherwise no old models are returned.
+`engine/list` accepts `{ "cwd": "/absolute/session/directory", "refresh_models": true }`.
+`cwd` defaults to the runtime root; pass the actual conversation/worktree directory
+when it differs. Refresh bypasses each external engine's native discovery cache;
+overlapping probes for the same context share work. Successful catalogs expire
+after two minutes, failures retry after five seconds, and probes are bounded
+(Claude: 20-second outer budget; other engines: 30 seconds). Executable, environment
+and known native configuration/authentication metadata form the cache context;
+Claude also includes login status. The context is rechecked before publishing.
+Keychain-only and remote account changes require refresh or expiry.
+
+`models_status` distinguishes `ready`, authoritative `empty`, `unsupported`,
+`partial`, `error`, and `stale`. `partial` means some model probes failed;
+`stale` retains previously successful data only for the same context.
+`models_error` describes failed, partial or stale discovery. An authoritative empty
+result replaces previous models. A missing catalog never falls back to Wuu's
+provider catalog.
+
+Model `id` is the executable native selection value. Claude's optional
+`resolved_model` reports its target without replacing that value. Codex uses
+`model/list`; ACP uses model/configuration responses and subsequent configuration
+updates; OpenCode uses connected providers from `/provider` and preserves
+`provider/model` IDs. Capabilities belong to individual models. Optional `options`
+contains `{ id, label, type, default_value, choices: [{ value, label }] }`, where
+`type` is `select` or `boolean`. OpenCode variants use option ID `variant`.
+Choosing an empty external model means native configured behavior, not a pinned
+catalog default. Resuming requires an exposed native default; OpenCode cannot
+resolve its unexposed recent-model fallback and asks for explicit configuration
+or selection in that case.
 
 For subscription views, `engine/list` accepts optional `{ "include_quota": true }`.
 It reads upstream allowances using the credentials of each configured provider

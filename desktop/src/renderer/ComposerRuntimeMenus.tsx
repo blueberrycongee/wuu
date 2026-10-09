@@ -70,7 +70,7 @@ import type {
   PermissionMode
 } from "./ComposerTypes";
 import { COMPOSER_COMMAND_MENU_WIDTH, COMPOSER_PROJECT_MENU_WIDTH } from "./ComposerTypes";
-import { lastEffortForEngineModel } from "./DraftEngineMemory";
+import { SelectMenu } from "./SelectMenu";
 import { engineLabel } from "./EngineDisplay";
 import { EngineIcon } from "./EngineIcons";
 import { lastEffortForRuntimeModel, lastModelForProvider } from "./DraftRuntimeMemory";
@@ -522,10 +522,12 @@ export function RuntimePicker({
   engineModel,
   engineEffort,
   engineSpeed,
+  engineModelOptions,
   onSelectSpeed,
   onSelectEngine,
   onSelectEngineModel,
   onSelectEngineEffort,
+  onSelectEngineModelOptions,
   onToggleMenu,
   onSelectModel,
   onSelectEffort,
@@ -542,10 +544,12 @@ export function RuntimePicker({
   engineModel?: string;
   engineEffort?: string;
   engineSpeed?: string;
+  engineModelOptions?: Record<string, string>;
   onSelectSpeed?: (speed: string) => void | Promise<boolean>;
   onSelectEngine?: (id: string) => void;
-  onSelectEngineModel?: (model: string, effort: string) => void;
-  onSelectEngineEffort?: (effort: string) => void;
+  onSelectEngineModel?: (model: string, effort: string) => void | Promise<boolean>;
+  onSelectEngineEffort?: (effort: string) => void | Promise<boolean>;
+  onSelectEngineModelOptions?: (options: Record<string, string>) => void | Promise<boolean>;
   onToggleMenu: (menu: Exclude<CodexRuntimeMenu, null>) => void;
   onSelectModel: (provider: string, model: string, variant?: string) => void | Promise<boolean>;
   onSelectEffort: (variant: string) => void | Promise<boolean>;
@@ -672,7 +676,9 @@ export function RuntimePicker({
               selectedEffort={engineEffort ?? ""}
               selectedSpeed={engineSpeed ?? ""}
               onSelectSpeed={onSelectSpeed}
-              disabled={running || Boolean(engineLocked)}
+              selectedOptions={engineModelOptions}
+              onSelectOptions={onSelectEngineModelOptions}
+              disabled={running}
               onSelectModel={(model, effort) => onSelectEngineModel?.(model, effort)}
               onSelectEffort={(effort) => onSelectEngineEffort?.(effort)}
               engineOptions={engineOptions}
@@ -714,20 +720,13 @@ export function RuntimePicker({
   );
 }
 
-function engineModelDefaultEffort(model: EngineModelInfo): string {
-  const supported = model.supported_efforts ?? [];
-  if (model.default_effort && supported.includes(model.default_effort)) {
-    return model.default_effort;
-  }
-  if (supported.includes("medium")) return "medium";
-  return supported[0] ?? "";
-}
-
 function EngineRuntimeMenu({
   engine,
   selectedModel,
   selectedEffort,
   selectedSpeed,
+  selectedOptions = {},
+  onSelectOptions,
   onSelectSpeed,
   disabled,
   onSelectModel,
@@ -744,10 +743,12 @@ function EngineRuntimeMenu({
   selectedModel: string;
   selectedEffort: string;
   selectedSpeed: string;
+  selectedOptions?: Record<string, string>;
+  onSelectOptions?: (options: Record<string, string>) => void | Promise<boolean>;
   onSelectSpeed?: (speed: string) => void | Promise<boolean>;
   disabled: boolean;
-  onSelectModel: (model: string, effort: string) => void;
-  onSelectEffort: (effort: string) => void;
+  onSelectModel: (model: string, effort: string) => void | Promise<boolean>;
+  onSelectEffort: (effort: string) => void | Promise<boolean>;
   engineOptions: EngineOption[];
   selectedEngine: string;
   engineLocked: boolean;
@@ -761,11 +762,8 @@ function EngineRuntimeMenu({
   const [view, setView] = useState<RuntimePanelView>("summary");
   const [direction, setDirection] = useState<RuntimePanelDirection>("forward");
   const [query, setQuery] = useState("");
-  const [optimistic, setOptimistic] = useState<{ model: string; effort: string } | null>(null);
+  const [saving, setSaving] = useState(false);
   useFloatingMenuFocus(panelRef, `${engine?.id ?? "engine"}:${view}`);
-  useEffect(() => {
-    setOptimistic(null);
-  }, [selectedModel, selectedEffort]);
   useEffect(() => {
     setQuery("");
     setDirection("back");
@@ -788,30 +786,27 @@ function EngineRuntimeMenu({
         (model.display_name || model.id).toLocaleLowerCase().includes(normalizedQuery)
         || model.id.toLocaleLowerCase().includes(normalizedQuery))
     : models;
-  const effectiveModelID = optimistic?.model ?? selectedModel;
+  const effectiveModelID = selectedModel;
   const effectiveModel = models.find((model) => effectiveModelID ? model.id === effectiveModelID : model.is_default);
-  const effortOptions = orderedEffortOptions(effectiveModel?.supported_efforts ?? []);
-  const effectiveEffort = optimistic?.effort
-    ?? (effortOptions.includes(selectedEffort)
-      ? selectedEffort
-      : effectiveModel
-        ? engineModelDefaultEffort(effectiveModel)
-        : selectedEffort);
-  const selectModel = (model: EngineModelInfo): void => {
-    const effort = lastEffortForEngineModel(engine?.id ?? "", model.id)
-      || engineModelDefaultEffort(model);
-    setOptimistic({ model: model.id, effort });
-    onSelectModel(model.id, effort);
-    showSummary();
+  const supportedEfforts = effectiveModel?.supported_efforts ?? [];
+  const effortOptions = supportedEfforts.length ? orderedEffortOptions(["", ...supportedEfforts]) : [];
+  const changeSelection = async (save: () => void | Promise<boolean>): Promise<boolean> => {
+    if (saving || disabled) return false;
+    setSaving(true);
+    try { return await save() !== false; }
+    finally { setSaving(false); }
+  };
+  const selectModel = async (model: string): Promise<void> => {
+    if (await changeSelection(() => onSelectModel(model, ""))) showSummary();
   };
 
   return (
     <div
       ref={panelRef}
-      className={`codex-runtime-menu codex-model-menu runtime-panel is-${view}`}
+      className={`codex-runtime-menu codex-model-menu runtime-panel engine-runtime-panel is-${view}`}
       role="menu"
       style={{
-        ...runtimePanelStyle(view === "models" ? filteredModels.length : engineOptions.length, width),
+        ...runtimePanelStyle(view === "models" ? filteredModels.length + 1 : engineOptions.length, width),
         ...runtimeSummaryStyle({
           context: true,
           effort: effortOptions.length > 1,
@@ -822,27 +817,51 @@ function EngineRuntimeMenu({
     >
       <div key={`${engine?.id ?? "engine"}:${view}`} className={`runtime-panel-page is-${direction}`}>
         {view === "summary" ? (
+          <>
           <RuntimePanelSummary
+            key={`${selectedModel}:${selectedEffort}:${saving}`}
             engine={engineLabel(selectedEngine, engine)}
             engineId={selectedEngine}
             showEngine
             engineLocked={engineLocked}
             lockedDescription={lockedDescription}
-            model={effectiveModel?.display_name || effectiveModelID || t("runtime.engineDefaultModel")}
+            model={effectiveModelID ? effectiveModel?.display_name || effectiveModelID : t("runtime.engineDefaultModel")}
             effortOptions={effortOptions}
-            selectedEffort={effectiveEffort}
-            effortDisabled={disabled}
+            selectedEffort={selectedEffort}
+            effortDisabled={disabled || saving}
             speed={selectedSpeed}
             defaultSpeed={effectiveModel?.default_speed}
             speedDisabled={running}
             onSelectSpeed={effectiveModel?.fast_mode ? onSelectSpeed : undefined}
             onOpenEngines={() => openView("engines")}
             onOpenModels={() => openView("models")}
-            onSelectEffort={(effort) => {
-              setOptimistic((current) => ({ model: current?.model ?? selectedModel, effort }));
-              onSelectEffort(effort);
-            }}
+            onSelectEffort={(effort) => { void changeSelection(() => onSelectEffort(effort)); }}
           />
+          {effectiveModel?.options?.length ? (
+            <div className="runtime-model-options">
+              {effectiveModel.options.map(option => (
+                <div className="runtime-model-option" key={option.id}>
+                  <span>{option.label}</span>
+                  <SelectMenu
+                    ariaLabel={option.label}
+                    value={option.id in selectedOptions ? JSON.stringify(selectedOptions[option.id]) : ""}
+                    options={[
+                      { value: "", label: t("runtime.engineDefaultOption") },
+                      ...option.choices.map(choice => ({ value: JSON.stringify(choice.value), label: choice.label })),
+                    ]}
+                    disabled={disabled || saving}
+                    onChange={value => {
+                      const options = { ...selectedOptions };
+                      if (value === "") delete options[option.id];
+                      else options[option.id] = JSON.parse(value) as string;
+                      void changeSelection(() => onSelectOptions?.(options));
+                    }}
+                  />
+                </div>
+              ))}
+            </div>
+          ) : null}
+          </>
         ) : null}
         {view === "engines" ? (
           <>
@@ -877,22 +896,26 @@ function EngineRuntimeMenu({
                     const first = filteredModels[0];
                     if (event.key === "Enter" && first && !disabled) {
                       event.preventDefault();
-                      selectModel(first);
+                      void selectModel(first.id);
                     }
                   }}
                 />
               </label>
             ) : null}
             <div className="codex-model-groups">
+              <button className="codex-model-item" role="menuitemradio" type="button" aria-checked={!selectedModel} disabled={disabled || saving} onClick={() => { void selectModel(""); }}>
+                <span className="codex-model-item-name">{t("runtime.engineDefaultModel")}</span>
+                {!selectedModel ? <Check className="icon-lg" /> : null}
+              </button>
               {engine?.models_error ? (
                 <div className="composer-menu-note warning">
-                  <strong>{t(models.length > 0 ? "runtime.modelsRefreshFailed" : "runtime.modelsLoadFailed")}</strong>
+                  <strong>{t(engine.models_status === "partial" ? "runtime.modelsPartial" : models.length > 0 ? "runtime.modelsRefreshFailed" : "runtime.modelsLoadFailed")}</strong>
                   <span>{engine.models_error}</span>
                 </div>
               ) : null}
               {models.length === 0 && !engine?.models_error ? (
                 <div className="composer-menu-empty">
-                  {t("runtime.engineDefaultModelHint", { engine: engineLabel(selectedEngine, engine) })}
+                  {t(engine?.models_status === "empty" ? "runtime.modelsEmpty" : "runtime.engineDefaultModelHint", { engine: engineLabel(selectedEngine, engine) })}
                 </div>
               ) : null}
               {models.length > 0 && filteredModels.length === 0 ? (
@@ -909,9 +932,9 @@ function EngineRuntimeMenu({
                         type="button"
                         key={model.id}
                         title={model.display_name || model.id}
-                        disabled={disabled}
+                        disabled={disabled || saving}
                         aria-checked={selected}
-                        onClick={() => selectModel(model)}
+                        onClick={() => { void selectModel(model.id); }}
                       >
                         <span className="codex-model-item-name">{model.display_name || model.id}</span>
                         {selected ? <Check className="icon-lg" /> : null}

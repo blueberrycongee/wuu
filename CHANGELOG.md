@@ -79,10 +79,13 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
-- Discover Claude Code engine models and capabilities from the installed CLI,
-  including new model families and custom alias mappings. Refresh detection
-  reloads the list; failed refreshes retain results only for the same CLI,
-  login and configuration environment and surface the error.
+- Discover external-engine models in the conversation's actual working directory,
+  with native refresh, bounded probes and context-aware cache invalidation for
+  Codex, Claude Code, ACP engines and OpenCode. Preserve Claude aliases, discover
+  per-model ACP options and OpenCode variants, and distinguish empty, partial,
+  unsupported and failed catalogs. Save model options through resume and fork;
+  resetting selections restores native configured behavior on the next turn.
+  New conversations wait for engine discovery before submitting model parameters.
 
 - Expand a workspace without conversations in place instead of flashing a
   loading row and spinner. The workspace header shows a spinner only when its

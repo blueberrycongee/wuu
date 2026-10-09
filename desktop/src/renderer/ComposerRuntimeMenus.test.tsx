@@ -453,7 +453,7 @@ describe("RuntimePicker", () => {
     expect(onSelectEngine).toHaveBeenCalledExactlyOnceWith("hermes");
   });
 
-  it("lists advertised Grok models instead of Agent default", () => {
+  it("lists advertised Grok models with a native default reset", () => {
     renderPicker("model", runtimeWithEffort(), vi.fn(), vi.fn(), vi.fn(), createRef(), {
       activeEngine: "grok",
       engineModel: "grok-4.6",
@@ -492,7 +492,7 @@ describe("RuntimePicker", () => {
     const items = Array.from(document.querySelectorAll<HTMLButtonElement>(".codex-model-item")).map((item) =>
       item.querySelector(".codex-model-item-name")?.textContent
     );
-    expect(items).toEqual(["Grok 4.6", "Grok 4.5"]);
+    expect(items).toEqual([translateCurrent("runtime.engineDefaultModel"), "Grok 4.6", "Grok 4.5"]);
   });
 
   it("names the engine only when another one can be chosen", () => {
