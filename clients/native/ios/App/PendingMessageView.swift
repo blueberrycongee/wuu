@@ -33,6 +33,7 @@ struct PendingMessageView: View {
     }
     private func act(resume: Bool) {
         working = true
+        Haptics.tap()
         model.perform { defer { working = false }; try await model.pendingAction(message, resume: resume) }
     }
 }

@@ -26,8 +26,10 @@ struct ConnectionStatusView: View {
                             .accessibilityLabel(connectingMessage)
                     }
                 } else {
-                    Text(offlineMessage)
-                        .accessibilityHint(detail)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(offlineMessage)
+                        if !detail.isEmpty { Text(detail).font(.footnote).lineLimit(2) }
+                    }.accessibilityElement(children: .combine)
                 }
                 Spacer(minLength: 0)
                 if !connecting {

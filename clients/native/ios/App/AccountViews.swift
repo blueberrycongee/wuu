@@ -11,7 +11,7 @@ struct RecoveryView: View {
                     }
                     Text("请将下面的密钥保存到密码管理器。它可用于重置密码，切勿分享。确认后此页面不再展示。")
                     Text(model.recovery ?? "").font(.body.monospaced()).textSelection(.enabled)
-                    Button("我已安全保存") { model.perform { try model.acknowledgeRecovery() } }.buttonStyle(.borderedProminent)
+                    Button("我已安全保存") { model.perform { try model.acknowledgeRecovery() } }.mobilePrimaryAction()
                 }.padding()
             }.navigationTitle("保存账号恢复密钥")
         }

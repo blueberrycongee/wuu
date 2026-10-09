@@ -3,6 +3,7 @@ import WuuCore
 
 struct ConversationTimeline: View {
     @Bindable var model: AppModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var nearBottom = true
     @State private var following = true
     @State private var scrollState = TimelineScrollState()
@@ -28,8 +29,14 @@ struct ConversationTimeline: View {
                                 MessageBubble(model: model, message: row.messages[0])
                             }
                         }
-                        ForEach(model.live?.pending ?? []) { message in
-                            PendingMessageView(model: model, message: message)
+                        let pending = model.live?.pending ?? []
+                        if !pending.isEmpty {
+                            // Only queued cards animate; transcript rows keep their streaming layout.
+                            VStack(spacing: 18) {
+                                ForEach(pending) { message in
+                                    PendingMessageView(model: model, message: message).transition(.opacity)
+                                }
+                            }.animation(chromeAnimation(reduceMotion), value: pending.map(\.id))
                         }
                         if model.live?.running == true && model.messages.last?.tool == nil {
                             ConversationActivityMark(activity: model.messages.last?.role == "assistant" ? "responding" : "thinking", settings: model.live?.settings)
@@ -50,11 +57,14 @@ struct ConversationTimeline: View {
                         if following && scrollState.metrics?.interacting != true { proxy.scrollTo("bottom", anchor: .bottom) }
                     }
                     .overlay(alignment: .bottomTrailing) {
-                        if !nearBottom {
-                            Button { following = true; proxy.scrollTo("bottom", anchor: .bottom) } label: {
-                                Label("最新消息", systemImage: "arrow.down").font(.caption).padding(10).background(.regularMaterial, in: Capsule())
-                            }.padding(12)
-                        }
+                        ZStack {
+                            if !nearBottom {
+                                Button { following = true; proxy.scrollTo("bottom", anchor: .bottom) } label: {
+                                    Label("最新消息", systemImage: "arrow.down").font(.caption).padding(10).background(.regularMaterial, in: Capsule())
+                                        .frame(minHeight: 44)
+                                }.padding(12).transition(.opacity)
+                            }
+                        }.animation(chromeAnimation(reduceMotion), value: nearBottom)
                     }
             }
         }.sheet(item: $model.attachmentPreview) { attachment in AttachmentPreview(attachment: attachment) }
@@ -126,7 +136,7 @@ private struct MessageBubble: View {
                         .disabled(!model.connected || model.loadingContent.contains(message.id))
                 }
                 if !message.sourceSessionID.isEmpty {
-                    Button("复制", systemImage: "doc.on.doc") { UIPasteboard.general.string = message.text }
+                    Button("复制", systemImage: "doc.on.doc") { UIPasteboard.general.string = message.text; Haptics.tap() }
                         .labelStyle(.iconOnly).buttonStyle(.plain).foregroundStyle(.secondary)
                 }
             }
