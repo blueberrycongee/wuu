@@ -22,7 +22,18 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Add count-driven progress rings and in-place running-to-completed transitions
   to conversation TODO plans, respecting reduced-motion preferences.
 
+- Show how recently each sidebar conversation was active as a compact age beside
+  its title. Running rows keep their indicator, and hover or keyboard focus gives
+  the slot to the row actions.
+
 ### Changed
+
+- Align the right panel's tabs, file tree, review list, and tool list on the
+  sidebar's pane inset, and give the file and review filters one quiet search
+  field. Settings rows are denser, and settings groups and cards share one frame.
+
+- Show inline code in answers as the same chip as in user messages, so a theme's
+  inline-code background now applies to answers too.
 
 - Move side chat into the right sidebar's shared tabs, preserving each conversation's
   history and draft across tool switches and keeping the expanded layout when opened.
