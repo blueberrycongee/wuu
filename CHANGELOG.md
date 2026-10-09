@@ -53,6 +53,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Expand a workspace without conversations in place instead of flashing a
+  loading row and spinner. The workspace header shows a spinner only when its
+  conversation list or switch takes longer than a moment.
+
 - Avoid delivering an already-answered background process result again when a new
   user turn reloads a session before the result acknowledgement was saved.
 

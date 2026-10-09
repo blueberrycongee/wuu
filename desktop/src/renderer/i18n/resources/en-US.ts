@@ -413,7 +413,6 @@ export const enUS = {
   "threadSidebar.expandConversations": "Expand conversations",
   "threadSidebar.newInWorkspace": "Start a new conversation in {name}",
   "threadSidebar.missingWorkspace": "The workspace folder no longer exists, so a conversation cannot be created",
-  "threadSidebar.loadingConversations": "Loading conversations",
   "threadSidebar.noConversations": "No conversations yet",
   "threadSidebar.relocate": "Relocate…",
   "threadSidebar.removeWorkspace": "Remove workspace…",

@@ -404,11 +404,6 @@ export function WorkspaceGroup({
             <MessageSquarePlus className="icon" />
           </button>
         }
-        emptyNote={
-          loadingWorkspaceThreads
-            ? t("threadSidebar.loadingConversations")
-            : undefined
-        }
         hoverCard={() => (
           <WorkspaceHoverCardContent workspace={project} scratch={isScratchPseudo} />
         )}

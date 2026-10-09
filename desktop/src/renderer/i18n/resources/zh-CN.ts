@@ -410,7 +410,6 @@ export const zhCN = {
   "threadSidebar.expandConversations": "展开对话",
   "threadSidebar.newInWorkspace": "在 {name} 中新建对话",
   "threadSidebar.missingWorkspace": "工作区目录已不存在，无法新建对话",
-  "threadSidebar.loadingConversations": "正在加载对话",
   "threadSidebar.noConversations": "还没有对话",
   "threadSidebar.relocate": "重新定位…",
   "threadSidebar.removeWorkspace": "移除工作区…",

@@ -102,8 +102,6 @@ export function useSidebarSectionDragHandle(): SidebarSectionDragHandle | null {
  *   - Optional `ariaLabel` / `title` overrides so the section can
  *     describe its toggle verb ("展开 / 收起 对话") and surface unread
  *     state in the label.
- *   - `emptyNote`: shown in the body when no `children` are mounted
- *     so the height collapse animation has real content.
  *   - Optional `hoverCard`: workspace headers describe themselves in a
  *     sidebar hover card, which replaces the native `title` hint.
  *
@@ -126,7 +124,6 @@ export function SidebarSection({
   loading,
   actions,
   newItemButton,
-  emptyNote,
   hoverCard,
   children,
   onToggle,
@@ -151,10 +148,6 @@ export function SidebarSection({
   // Project rows show a + new-conversation button on hover. Rendered as
   // a sibling so it can position over the right edge of the header.
   newItemButton?: ReactNode;
-  // Optional placeholder row shown when the body has no children. Stays
-  // mounted while expanded so the height-collapse animation has content
-  // to animate (a 0→0 grid transition would otherwise vanish).
-  emptyNote?: ReactNode;
   // Rendered only while the header is hovered or keyboard-focused.
   hoverCard?: () => ReactNode;
   onToggle: () => void;
@@ -197,7 +190,7 @@ export function SidebarSection({
           type="button"
           aria-expanded={expanded}
           aria-label={ariaLabel}
-          aria-busy={pending || running || undefined}
+          aria-busy={pending || running || loading || undefined}
           aria-current={active ? "page" : undefined}
           title={hoverCard ? undefined : title}
           onClick={onToggle}
@@ -216,8 +209,10 @@ export function SidebarSection({
               aria-hidden="true"
             />
           </span>
-          {loading || (running && !expanded) ? (
+          {running && !expanded ? (
             <span className="project-row-loading" aria-hidden="true" />
+          ) : loading ? (
+            <span className="project-row-loading deferred" aria-hidden="true" />
           ) : null}
           {unread && !loading && !running ? (
             <span className="project-row-unread" aria-hidden="true" />
@@ -229,11 +224,7 @@ export function SidebarSection({
       {hoverCard && hover.revealed ? (
         <SidebarHoverCardLayer anchor={hover.revealed.anchor}>{hoverCard()}</SidebarHoverCardLayer>
       ) : null}
-      <SidebarCollapseBody expanded={expanded}>
-        {children ?? (emptyNote ? (
-          <div className="sidebar-section-empty-note">{emptyNote}</div>
-        ) : null)}
-      </SidebarCollapseBody>
+      <SidebarCollapseBody expanded={expanded}>{children}</SidebarCollapseBody>
     </>
   );
 }
