@@ -53,7 +53,7 @@ func (a adaptedStreamClient) StreamChat(ctx context.Context, req ChatRequest) (<
 		events = append(events, StreamEvent{Type: EventThinkingDone})
 	}
 	if resp.Content != "" {
-		events = append(events, StreamEvent{Type: EventContentDelta, Content: resp.Content, Phase: resp.Phase})
+		events = append(events, StreamEvent{Type: EventContentDelta, Content: resp.Content, Phase: resp.Phase, ProviderItemID: resp.ProviderItemID})
 	}
 	for _, image := range resp.Images {
 		events = append(events, StreamEvent{Type: EventImage, Image: &image})
@@ -68,6 +68,9 @@ func (a adaptedStreamClient) StreamChat(ctx context.Context, req ChatRequest) (<
 			Type:     EventToolUseEnd,
 			ToolCall: &toolCall,
 		})
+	}
+	for _, item := range resp.ProviderItems {
+		events = append(events, StreamEvent{Type: EventProviderItem, ProviderItem: &item})
 	}
 	events = append(events, StreamEvent{
 		Type:         EventDone,

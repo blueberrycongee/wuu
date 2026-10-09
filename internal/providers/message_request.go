@@ -113,6 +113,13 @@ func dropForeignProviderModelState(provider, model string, msgs []ChatMessage) [
 		if foreignMessage {
 			msgs[i].Content = downgradeReasoningToAssistantText(msgs[i])
 			msgs[i].ProviderItemID = ""
+			items := msgs[i].ProviderItems[:0]
+			for _, item := range msgs[i].ProviderItems {
+				if item.Type == "compaction" {
+					items = append(items, item)
+				}
+			}
+			msgs[i].ProviderItems = items
 			msgs[i].ReasoningContent = ""
 			msgs[i].ReasoningBlocks = nil
 			msgs[i].DiscoveredTools = nil
