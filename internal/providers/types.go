@@ -535,6 +535,7 @@ const (
 	AgentActivityWaiting   AgentActivityState = "waiting"
 	AgentActivityFailed    AgentActivityState = "failed"
 	AgentActivityCompleted AgentActivityState = "completed"
+	AgentActivityStopped   AgentActivityState = "stopped"
 )
 
 // AgentActivity is a transient observation of one native child agent owned by

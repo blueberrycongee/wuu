@@ -66,12 +66,19 @@ func main() {
 		}
 		var envelope struct {
 			Type            string  `json:"type"`
+			UUID            string  `json:"uuid"`
 			ParentToolUseID *string `json:"parent_tool_use_id"`
 			Message         struct {
 				Content any `json:"content"`
 			} `json:"message"`
 		}
 		if err := json.Unmarshal([]byte(line), &envelope); err != nil {
+			continue
+		}
+		if prompt, ok := envelope.Message.Content.(string); ok && strings.HasPrefix(prompt, "background_") {
+			if !backgroundScenario(prompt, envelope.UUID) {
+				return
+			}
 			continue
 		}
 		if path := os.Getenv("WUU_TEST_CLAUDE_INPUT"); path != "" {

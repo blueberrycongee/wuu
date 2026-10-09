@@ -2,6 +2,7 @@ package claudeengine
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -158,7 +159,7 @@ type Session struct {
 }
 
 // RunTurn sends one user prompt and translates the claude stream into Wuu
-// events. It blocks until the user input's result or the context is canceled.
+// events. It waits for the input and its background-agent follow-ups, or cancellation.
 func (s *Session) RunTurn(ctx context.Context, input agentengine.TurnInput, sink agentengine.EventSink) (agentengine.TurnResult, error) {
 	if s == nil || s.engine == nil {
 		return agentengine.TurnResult{}, errors.New("claude session is not configured")
@@ -173,6 +174,13 @@ func (s *Session) RunTurn(ctx context.Context, input agentengine.TurnInput, sink
 
 	done := make(chan turnOutcome, 1)
 	sub := newTurnSubscriptionForContext(ctx, sink, done)
+	var commandID [16]byte
+	if _, err := rand.Read(commandID[:]); err != nil {
+		return agentengine.TurnResult{}, err
+	}
+	commandID[6] = commandID[6]&0x0f | 0x40
+	commandID[8] = commandID[8]&0x3f | 0x80
+	sub.commandID = fmt.Sprintf("%x-%x-%x-%x-%x", commandID[:4], commandID[4:6], commandID[6:8], commandID[8:10], commandID[10:])
 	sub.onSessionID = s.persistSessionIDValue
 	transport, err := s.spawn(ctx, sub)
 	if err != nil {
@@ -185,7 +193,9 @@ func (s *Session) RunTurn(ctx context.Context, input agentengine.TurnInput, sink
 	}()
 
 	s.writeMu.Lock()
-	err = transport.WriteLine(ctx, marshalLine(userPromptEnvelope(message)))
+	prompt := userPromptEnvelope(message)
+	prompt.UUID = sub.commandID
+	err = transport.WriteLine(ctx, marshalLine(prompt))
 	s.writeMu.Unlock()
 	if err != nil {
 		return agentengine.TurnResult{}, fmt.Errorf("send claude user input: %w", err)
@@ -375,16 +385,24 @@ type turnSubscription struct {
 	onSessionID func(string)
 	closed      bool
 
-	text           strings.Builder
-	reasoning      strings.Builder
-	usage          providers.TokenUsage
-	tools          map[string]*pendingTool
-	toolIDByIndex  map[int]string
-	streamText     map[int]string
-	streamThinking map[int]string
-	agentTasks     map[string]observedAgentTask
-	lastRawResult  json.RawMessage
-	finishOnce     sync.Once
+	text                strings.Builder
+	reasoning           strings.Builder
+	usage               providers.TokenUsage
+	completedUsage      providers.TokenUsage
+	tools               map[string]*pendingTool
+	toolIDByIndex       map[int]string
+	streamText          map[int]string
+	streamThinking      map[int]string
+	agentTasks          map[string]*observedAgentTask
+	agentRuns           map[string]*observedAgentTask
+	agentToolIDs        map[string]string
+	commandID           string
+	inputPending        bool
+	hasUserResult       bool
+	continuationPending bool
+	segmentStart        int
+	lastRawResult       json.RawMessage
+	finishOnce          sync.Once
 }
 
 type pendingTool struct {
@@ -396,7 +414,11 @@ type pendingTool struct {
 
 type observedAgentTask struct {
 	activityID string
+	runID      string
+	toolID     string
 	label      string
+	state      providers.AgentActivityState
+	needsWake  bool
 }
 
 func newTurnSubscription(sink agentengine.EventSink, done chan turnOutcome) *turnSubscription {
@@ -415,7 +437,9 @@ func newTurnSubscriptionForContext(ctx context.Context, sink agentengine.EventSi
 		toolIDByIndex:  make(map[int]string),
 		streamText:     make(map[int]string),
 		streamThinking: make(map[int]string),
-		agentTasks:     make(map[string]observedAgentTask),
+		agentTasks:     make(map[string]*observedAgentTask),
+		agentRuns:      make(map[string]*observedAgentTask),
+		agentToolIDs:   make(map[string]string),
 	}
 }
 
@@ -459,6 +483,10 @@ type claudeLine struct {
 	TaskType        string          `json:"task_type"`
 	Description     string          `json:"description"`
 	Status          string          `json:"status"`
+	RunID           string          `json:"run_id"`
+	ToolUseResult   json.RawMessage `json:"tool_use_result"`
+	CommandUUID     string          `json:"command_uuid"`
+	State           string          `json:"state"`
 }
 
 // handleLine dispatches one stdout line. Unknown top-level types are
@@ -495,7 +523,23 @@ func (sub *turnSubscription) handleLine(line string) {
 		sub.mu.Unlock()
 	}
 	switch envelope.Type {
+	case "command_lifecycle":
+		if sub.commandID != "" && envelope.CommandUUID == sub.commandID {
+			switch envelope.State {
+			case "queued":
+				sub.inputPending = true
+			case "started", "completed":
+				sub.inputPending = false
+			case "cancelled", "canceled", "discarded", "failed":
+				err := fmt.Errorf("claude input %s before completing the turn", envelope.State)
+				sub.emit(providers.StreamEvent{Type: providers.EventError, Error: err})
+				sub.finish(sub.loopResult(sub.text.String(), ""), err)
+			}
+		}
 	case "system":
+		if strings.TrimSpace(envelope.ParentToolUseID) != "" {
+			return
+		}
 		// Real CLI 2.1.x emits the session id on the first system message
 		// (init or hook_started), whichever arrives first. Persist it immediately:
 		// waiting for the turn result loses the resume reference if the app exits
@@ -503,7 +547,9 @@ func (sub *turnSubscription) handleLine(line string) {
 		if envelope.SessionID != "" {
 			sub.observeSessionID(envelope.SessionID)
 		}
-		sub.handleTaskEvent(envelope)
+		if !sub.inputPending {
+			sub.handleTaskEvent(envelope)
+		}
 	case "assistant":
 		sub.handleAssistant(envelope)
 	case "stream_event":
@@ -533,12 +579,15 @@ func (sub *turnSubscription) observeSessionID(sessionID string) {
 }
 
 func (sub *turnSubscription) handleAssistant(envelope claudeLine) {
-	if strings.TrimSpace(envelope.ParentToolUseID) != "" {
+	if sub.inputPending || strings.TrimSpace(envelope.ParentToolUseID) != "" {
 		return
 	}
 	var msg assistantMessage
 	if err := json.Unmarshal(envelope.Message, &msg); err != nil {
 		return
+	}
+	if len(msg.Content) > 0 {
+		sub.beginContinuation()
 	}
 	for index, block := range msg.Content {
 		switch block.Type {
@@ -611,15 +660,19 @@ func (sub *turnSubscription) reconcileThinking(index int, full string) {
 }
 
 func (sub *turnSubscription) handleStreamEvent(envelope claudeLine) {
-	if strings.TrimSpace(envelope.ParentToolUseID) != "" {
+	if sub.inputPending || strings.TrimSpace(envelope.ParentToolUseID) != "" {
 		return
 	}
 	event, ok := decodeStreamEvent(envelope)
 	if !ok {
 		return
 	}
+	if event.Type == "message_start" || event.Type == "content_block_start" || event.Type == "content_block_delta" {
+		sub.beginContinuation()
+	}
 	switch event.Type {
 	case "message_start":
+		sub.consumeAgentNotifications()
 		clear(sub.streamText)
 		clear(sub.streamThinking)
 		clear(sub.toolIDByIndex)
@@ -719,6 +772,7 @@ func (sub *turnSubscription) startTool(index int, block assistantContentBlock) {
 		}
 	}
 	if agentActivity {
+		sub.agentToolIDs[block.ID] = claudeAgentToolLabel(block.Input)
 		sub.emitAgentActivity(block.ID, claudeAgentToolLabel(block.Input), providers.AgentActivityRunning)
 	}
 }
@@ -732,7 +786,7 @@ func (sub *turnSubscription) toolAtIndex(index int) *pendingTool {
 }
 
 func (sub *turnSubscription) handleUser(envelope claudeLine) {
-	if strings.TrimSpace(envelope.ParentToolUseID) != "" {
+	if sub.inputPending || strings.TrimSpace(envelope.ParentToolUseID) != "" {
 		return
 	}
 	var msg struct {
@@ -746,6 +800,12 @@ func (sub *turnSubscription) handleUser(envelope claudeLine) {
 	if err := json.Unmarshal(envelope.Message, &msg); err != nil {
 		return
 	}
+	var agentResult struct {
+		AgentID string `json:"agentId"`
+		IsAsync bool   `json:"isAsync"`
+		Status  string `json:"status"`
+	}
+	_ = json.Unmarshal(envelope.ToolUseResult, &agentResult)
 	for _, block := range msg.Content {
 		if block.Type != "tool_result" || sub.tools[block.ToolUseID] == nil {
 			continue
@@ -753,6 +813,18 @@ func (sub *turnSubscription) handleUser(envelope claudeLine) {
 		state := providers.AgentActivityCompleted
 		if block.IsError {
 			state = providers.AgentActivityFailed
+		}
+		if tool := sub.tools[block.ToolUseID]; tool.agentActivity {
+			if !block.IsError && (agentResult.IsAsync || agentResult.Status == "async_launched") {
+				sub.observeAgentTask(firstNonEmpty(agentResult.AgentID, block.ToolUseID), block.ToolUseID, sub.agentToolIDs[block.ToolUseID], "")
+			} else {
+				for _, task := range sub.agentTasks {
+					if task.activityID == block.ToolUseID || task == sub.agentTasks[agentResult.AgentID] {
+						task.state, task.needsWake = state, false
+						sub.emitAgentActivity(task.activityID, task.label, state)
+					}
+				}
+			}
 		}
 		sub.finishToolResult(block.ToolUseID, state, claudeToolResultText(block.Content))
 	}
@@ -792,32 +864,102 @@ func (sub *turnSubscription) handleTaskEvent(envelope claudeLine) {
 		if taskType := strings.TrimSpace(envelope.TaskType); taskType != "" && !strings.Contains(strings.ToLower(taskType), "agent") {
 			return
 		}
-		activityID := firstNonEmpty(envelope.ToolUseID, taskID)
-		label := strings.TrimSpace(envelope.Description)
-		if label == "" {
-			label = "Claude agent"
+		if envelope.TaskType == "" && sub.agentToolIDs[envelope.ToolUseID] == "" {
+			return
 		}
-		sub.agentTasks[taskID] = observedAgentTask{activityID: activityID, label: label}
-		sub.emitAgentActivity(activityID, label, providers.AgentActivityRunning)
+		sub.observeAgentTask(taskID, envelope.ToolUseID, envelope.Description, envelope.RunID)
 	case "task_progress":
 		task, ok := sub.agentTasks[taskID]
-		if !ok {
+		if !ok || !task.matchesRun(envelope) || task.state != providers.AgentActivityRunning {
 			return
 		}
 		if label := strings.TrimSpace(envelope.Description); label != "" {
 			task.label = label
-			sub.agentTasks[taskID] = task
 		}
 		sub.emitAgentActivity(task.activityID, task.label, providers.AgentActivityRunning)
 	case "task_notification":
 		task, ok := sub.agentTasks[taskID]
-		if !ok {
+		if (!ok || !task.matchesRun(envelope)) && sub.agentToolIDs[envelope.ToolUseID] != "" {
+			task = sub.observeAgentTask(taskID, envelope.ToolUseID, sub.agentToolIDs[envelope.ToolUseID], envelope.RunID)
+			ok = true
+		}
+		if !ok || !task.matchesRun(envelope) {
 			return
 		}
 		state := claudeTaskTerminalState(envelope.Status)
+		if state == "" || task.state != providers.AgentActivityRunning {
+			return
+		}
+		task.state, task.needsWake = state, true
 		sub.emitAgentActivity(task.activityID, task.label, state)
-		if state == providers.AgentActivityCompleted || state == providers.AgentActivityFailed {
-			delete(sub.agentTasks, taskID)
+	}
+}
+
+func (task *observedAgentTask) matchesRun(envelope claudeLine) bool {
+	return (envelope.RunID == "" || task.runID == "" || envelope.RunID == task.runID) &&
+		(envelope.ToolUseID == "" || task.toolID == "" || envelope.ToolUseID == task.toolID)
+}
+
+func (sub *turnSubscription) observeAgentTask(taskID, toolID, label, runID string) *observedAgentTask {
+	// A resumed agent retains task_id. Preserve past run identities so delayed
+	// starts and notifications cannot reopen or terminate a newer run.
+	if runID != "" {
+		if task := sub.agentRuns["run:"+taskID+":"+runID]; task != nil {
+			return task
+		}
+	}
+	if toolID != "" {
+		if task := sub.agentRuns["tool:"+toolID]; task != nil && (runID == "" || task.runID == "" || task.runID == runID) {
+			if runID != "" {
+				task.runID = runID
+				sub.agentRuns["run:"+taskID+":"+runID] = task
+			}
+			if sub.agentTasks[taskID] == nil {
+				sub.agentTasks[taskID] = task
+			}
+			return task
+		}
+	}
+	task := sub.agentTasks[taskID]
+	if task != nil && (runID == "" || task.runID == "" || task.runID == runID) && (toolID == "" || task.toolID == "" || task.toolID == toolID) {
+		if runID != "" {
+			task.runID = runID
+		}
+	} else {
+		task = &observedAgentTask{activityID: firstNonEmpty(toolID, taskID), toolID: toolID, runID: runID, label: firstNonEmpty(label, "Claude agent"), state: providers.AgentActivityRunning}
+		sub.agentTasks[taskID] = task
+		sub.emitAgentActivity(task.activityID, task.label, task.state)
+	}
+	if runID != "" {
+		sub.agentRuns["run:"+taskID+":"+runID] = task
+	}
+	if toolID != "" {
+		task.toolID = toolID
+		sub.agentRuns["tool:"+toolID] = task
+	}
+	return task
+}
+
+func (sub *turnSubscription) beginContinuation() {
+	if !sub.continuationPending {
+		return
+	}
+	sub.continuationPending = false
+	// Native result usage is per segment; keep settled totals while the next
+	// segment replaces its live usage with its authoritative result usage.
+	sub.completedUsage = sub.usage
+	if sub.text.Len() > 0 {
+		sub.text.WriteString("\n\n")
+		sub.emit(providers.StreamEvent{Type: providers.EventContentDelta, Content: "\n\n"})
+	}
+	sub.segmentStart = sub.text.Len()
+	sub.consumeAgentNotifications()
+}
+
+func (sub *turnSubscription) consumeAgentNotifications() {
+	for _, task := range sub.agentTasks {
+		if task.state != providers.AgentActivityRunning {
+			task.needsWake = false
 		}
 	}
 }
@@ -878,12 +1020,14 @@ func (sub *turnSubscription) emitAgentActivity(id, label string, state providers
 
 func claudeTaskTerminalState(status string) providers.AgentActivityState {
 	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "running", "in_progress":
-		return providers.AgentActivityRunning
 	case "failed", "error", "errored":
 		return providers.AgentActivityFailed
-	default:
+	case "completed", "complete", "succeeded", "success":
 		return providers.AgentActivityCompleted
+	case "stopped", "killed", "cancelled", "canceled", "interrupted":
+		return providers.AgentActivityStopped
+	default:
+		return ""
 	}
 }
 
@@ -911,10 +1055,10 @@ func claudeAgentToolLabel(input any) string {
 
 func (sub *turnSubscription) accumulateUsage(u tokenUsage) {
 	sub.usage = providers.TokenUsage{
-		InputTokens:         u.InputTokens,
-		OutputTokens:        u.OutputTokens,
-		CacheCreationTokens: u.CacheCreationInputTokens,
-		CacheReadTokens:     u.CacheReadInputTokens,
+		InputTokens:         sub.completedUsage.InputTokens + u.InputTokens,
+		OutputTokens:        sub.completedUsage.OutputTokens + u.OutputTokens,
+		CacheCreationTokens: sub.completedUsage.CacheCreationTokens + u.CacheCreationInputTokens,
+		CacheReadTokens:     sub.completedUsage.CacheReadTokens + u.CacheReadInputTokens,
 	}
 	sub.emit(providers.StreamEvent{Type: providers.EventUsage, Usage: &sub.usage})
 }
@@ -929,11 +1073,19 @@ func (sub *turnSubscription) handleResult(envelope claudeLine) {
 	}
 	// Resuming a session can produce results for pending task notifications
 	// before Claude processes the user input. They do not complete this turn.
-	if res.Origin != nil && res.Origin.Kind == "task-notification" {
+	if sub.inputPending || (!sub.hasUserResult && res.Origin != nil && res.Origin.Kind == "task-notification") {
 		return
 	}
-	stopReason := firstNonEmpty(res.StopReason, envelope.StopReason)
 	failed := res.IsError || strings.HasPrefix(res.Subtype, "error_")
+	// Claude 2.1.274+ acknowledges all but the last batched task completion
+	// with an empty, zero-turn result before delivering the shared model result.
+	// Those receipts must not consume notifications or close this Wuu turn.
+	if !failed && sub.hasUserResult && len(sub.agentTasks) > 0 && res.NumTurns != nil && *res.NumTurns == 0 && res.Result == "" {
+		return
+	}
+	sub.beginContinuation()
+	sub.hasUserResult = true
+	stopReason := firstNonEmpty(res.StopReason, envelope.StopReason)
 
 	// Close any in-flight tool rendering.
 	state := providers.AgentActivityCompleted
@@ -974,6 +1126,17 @@ func (sub *turnSubscription) handleResult(envelope claudeLine) {
 		return
 	}
 	content := sub.reconcileResultText(res.Result)
+	for _, task := range sub.agentTasks {
+		if task.state == providers.AgentActivityRunning || task.needsWake {
+			// Native result closes a segment, while its launched agents and their
+			// automatic follow-up still belong to this Wuu turn.
+			sub.continuationPending = true
+			clear(sub.streamText)
+			clear(sub.streamThinking)
+			clear(sub.toolIDByIndex)
+			return
+		}
+	}
 	sub.emit(providers.StreamEvent{
 		Type:         providers.EventDone,
 		FinishReason: providers.FinishReasonStop,
@@ -988,6 +1151,7 @@ func (sub *turnSubscription) reconcileResultText(full string) string {
 	if full == "" {
 		return streamed
 	}
+	full = streamed[:sub.segmentStart] + full
 	if streamed == "" {
 		sub.text.WriteString(full)
 		sub.emit(providers.StreamEvent{Type: providers.EventContentDelta, Content: full})
