@@ -3,12 +3,16 @@ package appserver
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/tools"
 )
@@ -186,4 +190,52 @@ type fusionWaitingContext struct {
 func (c *fusionWaitingContext) Done() <-chan struct{} {
 	c.once.Do(func() { close(c.waiting) })
 	return c.Context.Done()
+}
+
+// A read-only assignment must not reserve writes, while an implementing Side
+// must keep exclusive access. Both permissions are checked at tool execution.
+func TestFusionReadOnlyAssignmentDoesNotBlockLeadWrites(t *testing.T) {
+	for _, readOnly := range []bool{false, true} {
+		t.Run(fmt.Sprint(readOnly), func(t *testing.T) {
+			srv, client, calls := newFusionFixture(t)
+			var created ThreadStartResult
+			client.rpc(t, MethodThreadStart, ThreadStartParams{Fusion: true}, &created)
+			handler := srv.fusionDelegateHandler(created.Thread.ID)
+			value, err := handler(context.Background(), "research", tools.FusionDelegateRequest{Message: "Inspect independent requirements", ReadOnly: &readOnly, Block: new(bool)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			calls.next(t) // Keep the actual Side execution active.
+			task := value.(FusionTaskView)
+			lead, _, err := session.Find(srv.rt.SessionDir, created.Thread.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			kit, err := tools.New(srv.rt.RootDir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			call := providers.ToolCall{ID: "write", Name: "write_file", Arguments: `{"path":"lead.txt","content":"independent change"}`}
+			_, err = srv.fusionToolPolicy(lead, kit).Execute(context.Background(), call)
+			if readOnly {
+				if err != nil {
+					t.Fatalf("read-only researcher reserved writes: %v", err)
+				}
+				content, err := os.ReadFile(filepath.Join(srv.rt.RootDir, "lead.txt"))
+				if err != nil || string(content) != "independent change" {
+					t.Fatalf("Lead write did not execute: %q %v", content, err)
+				}
+				side, _, err := session.Find(srv.rt.SessionDir, task.SideID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := srv.fusionToolPolicy(side, kit).Execute(context.Background(), call); err == nil {
+					t.Fatal("read-only Side wrote to the shared workspace")
+				}
+			} else if err == nil {
+				t.Fatal("Lead wrote while Side owned implementation")
+			}
+			client.rpc(t, MethodTurnInterrupt, TurnInterruptParams{ThreadID: created.Thread.ID}, nil)
+		})
+	}
 }

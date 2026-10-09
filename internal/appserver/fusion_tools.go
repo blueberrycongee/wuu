@@ -48,7 +48,7 @@ func (s *Server) acquireFusionTool(member session.Session, call providers.ToolCa
 		if current != nil && current.ReadOnly {
 			return noop, errors.New("this Fusion task is read-only")
 		}
-	} else if current != nil && (current.State == session.FusionTaskQueued || current.State == session.FusionTaskRunning) {
+	} else if current != nil && !current.ReadOnly && (current.State == session.FusionTaskQueued || current.State == session.FusionTaskRunning) {
 		return noop, errors.New("Sidekick owns this workspace's writes; inspect or wait, or stop and confirm idle before taking over")
 	}
 	lease, acquired, err := session.TryAcquireThreadExecutionLease(s.rt.SessionDir, "fusion-write:"+leadID)
@@ -64,7 +64,8 @@ func (s *Server) acquireFusionTool(member session.Session, call providers.ToolCa
 			for _, side := range sides {
 				var view managedSessionView
 				view, err = s.managedSessionView(side)
-				if err != nil || view.State == "running" {
+				readOnlySide := current != nil && current.ReadOnly && current.SideID == side.ID
+				if err != nil || (view.State == "running" && !readOnlySide) {
 					if err == nil {
 						err = errors.New("Sidekick is still executing; wait for idle before writing")
 					}
