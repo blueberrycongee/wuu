@@ -74,10 +74,16 @@ func (s *Session) PreflightExtensions(cfg config.Config) (*PluginGeneration, err
 // state and subsequently failed. Startup failures are excluded so one broken
 // optional plugin does not force a rebuild before every turn.
 func (s *Session) PluginGenerationNeedsRecovery() bool {
-	if s == nil || s.PluginHost == nil {
+	if s == nil {
 		return false
 	}
-	for _, status := range s.PluginHost.Statuses() {
+	s.pluginGenerationMu.Lock()
+	host := s.PluginHost
+	s.pluginGenerationMu.Unlock()
+	if host == nil {
+		return false
+	}
+	for _, status := range host.Statuses() {
 		if status.State == pluginhost.StateFailed && !status.StartedAt.IsZero() {
 			return true
 		}

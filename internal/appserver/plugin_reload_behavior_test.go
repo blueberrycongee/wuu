@@ -20,6 +20,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
+	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/statepath"
 	"github.com/blueberrycongee/wuu/internal/subagent"
 	"github.com/blueberrycongee/wuu/internal/tools"
@@ -294,10 +295,26 @@ func TestPluginReloadWaitsForOutstandingBackgroundWork(t *testing.T) {
 	unblock()
 	waitForAgentStatus(t, control, spawned.AgentID, subagent.StatusCompleted)
 	waitForWorkerFinalization(t, control)
-	// No new turn or runtime acquisition may be needed to retire the process.
+	// Retirement must not require another user turn. The reliable worker
+	// finalizer may independently deliver a completion and build a new runtime;
+	// only retaining the old generation is a lifecycle failure.
+	t.Cleanup(func() {
+		if !t.Failed() {
+			return
+		}
+		th.mu.Lock()
+		current := th.execRuntime == nil || rt.IsCurrentPluginGeneration(th.execRuntime.PluginGeneration)
+		t.Logf("retirement state: old_runtime_retained=%v current_generation=%v lease=%v poll=%v running=%v admission=%v outstanding=%v", th.execRuntime == first, current, th.pluginExecutionLease != nil, th.pluginLeaseReleaseLoop, th.running, th.admissionReserved, threadRuntimeHasOutstandingWork(th.ID, th.execRuntime))
+		th.mu.Unlock()
+		raw, err := os.ReadFile(shutdownPath)
+		t.Logf("retired host statuses=%+v shutdown=%q read_error=%v", oldHost.Statuses(), raw, err)
+	})
 	waitPluginGenerationWatchTest(t, func() bool {
 		th.mu.Lock()
-		retired := th.execRuntime == nil && th.pluginExecutionLease == nil
+		retired := th.execRuntime != first && th.pluginExecutionLease == nil
+		if th.execRuntime != nil {
+			retired = retired && rt.IsCurrentPluginGeneration(th.execRuntime.PluginGeneration)
+		}
 		th.mu.Unlock()
 		shutdown, err := os.ReadFile(shutdownPath)
 		return retired && err == nil && string(shutdown) == "old implementation"
@@ -525,4 +542,41 @@ func TestPluginRefreshActivationCanQueueSessionSend(t *testing.T) {
 			waitForTurnCompletedForThread(t, out, threadID)
 		})
 	}
+}
+
+// A finalizer can release the execution lease before the background release
+// loop observes quiescence. That interleaving must still retire the old host.
+func TestPluginReloadRetiresAfterLeaseReleasedBeforePoll(t *testing.T) {
+	rt := newTestRuntime(t, &fakeClient{})
+	rt.WuuHome = t.TempDir()
+	publishReloadBehaviorGeneration(t, rt, "old implementation", "Read fixture")
+	t.Cleanup(func() { _, _ = rt.Cleanup() })
+	shutdownPath := rt.Plugins[0].Runtime.Env["WUU_RELOAD_TEST_SHUTDOWN"]
+	srv := New(rt, &lockedBuffer{})
+	t.Cleanup(srv.Close)
+	th := newThreadState("released-before-poll", nil, rt.ProviderName, rt.Model, rt.RootDir, false, time.Now().UTC())
+	srv.mu.Lock()
+	srv.threads[th.ID] = th
+	srv.mu.Unlock()
+	if _, err := srv.ensureThreadRuntime(th); err != nil {
+		t.Fatal(err)
+	}
+	publishReloadBehaviorGeneration(t, rt, "new implementation", "Read fixture")
+	lease, acquired, err := session.TryAcquirePluginGenerationExecutionLease(rt.WuuHome)
+	if err != nil || !acquired {
+		t.Fatalf("execution lease acquired=%v err=%v", acquired, err)
+	}
+	th.mu.Lock()
+	th.pluginExecutionLease = lease
+	th.schedulePluginGenerationLeaseReleaseLocked()
+	// Hold th.mu across both operations, so the poll can only observe nil.
+	th.releasePluginGenerationExecutionLeaseLocked()
+	th.mu.Unlock()
+	waitPluginGenerationWatchTest(t, func() bool {
+		th.mu.Lock()
+		retired := th.execRuntime == nil && !th.pluginLeaseReleaseLoop
+		th.mu.Unlock()
+		raw, err := os.ReadFile(shutdownPath)
+		return retired && err == nil && string(raw) == "old implementation"
+	})
 }

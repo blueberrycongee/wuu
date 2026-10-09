@@ -271,12 +271,10 @@ func (th *threadState) schedulePluginGenerationLeaseReleaseLocked() {
 		defer ticker.Stop()
 		for range ticker.C {
 			th.mu.Lock()
-			if th.pluginExecutionLease == nil {
-				th.pluginLeaseReleaseLoop = false
-				th.mu.Unlock()
-				return
-			}
-			if !th.running && (th.execRuntime == nil || !threadRuntimeHasOutstandingWork(th.ID, th.execRuntime)) {
+			// A finalizer may have released the lease before this poll. It must
+			// still notify retirement; releasing the lease is not equivalent to
+			// releasing the thread runtime's reference to its old generation.
+			if th.pluginExecutionLease == nil || (!th.running && (th.execRuntime == nil || !threadRuntimeHasOutstandingWork(th.ID, th.execRuntime))) {
 				th.releasePluginGenerationExecutionLeaseLocked()
 				th.pluginLeaseReleaseLoop = false
 				onQuiescent := th.onPluginLeaseQuiescent

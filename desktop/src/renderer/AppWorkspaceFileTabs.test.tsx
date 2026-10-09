@@ -1,3 +1,4 @@
+import { openComposerAttachmentPicker } from "./test/attachmentPicker";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -644,7 +645,7 @@ describe("workspace file tabs", () => {
     const attachment = { id: "file-selection-retry-attachment", filename: "context.pdf", media_type: "application/pdf", data: "JVBERg==" };
     const encode = vi.spyOn(composerMessages, "composerFilePlaceholder").mockReturnValue({ ...attachment, encodePromise: Promise.resolve(attachment) });
     try {
-      const input = container.querySelector<HTMLInputElement>("[data-main-conversation-composer] input[type=file]")!;
+      const input = openComposerAttachmentPicker(container.querySelector("[data-main-conversation-composer]")!);
       Object.defineProperty(input, "files", { configurable: true, value: [new File(["%PDF"], attachment.filename, { type: attachment.media_type })] });
       await act(async () => input.dispatchEvent(new Event("change", { bubbles: true })));
       await flushAsync();
@@ -716,7 +717,7 @@ describe("workspace file tabs", () => {
         return { ...attachment, encodePromise: Promise.resolve(attachment) };
       });
     try {
-      const input = composer.querySelector<HTMLInputElement>("input[type=file]")!;
+      const input = openComposerAttachmentPicker(composer);
       Object.defineProperty(input, "files", { configurable: true, value: [
         new File(["image"], "reference.png", { type: image.media_type }),
         ...files.map((file) => new File(["context"], file.filename, { type: file.media_type })),
