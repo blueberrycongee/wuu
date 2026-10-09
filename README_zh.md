@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/app-icon-256.png" width="88" height="88" alt="Wuu">
+  <img src="assets/readme-icon.png" width="88" height="88" alt="Wuu">
 </p>
 
 <h1 align="center">wuu</h1>
