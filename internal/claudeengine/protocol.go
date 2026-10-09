@@ -113,6 +113,7 @@ type resultMessage struct {
 	Type       string      `json:"type"`
 	Subtype    string      `json:"subtype,omitempty"`
 	IsError    bool        `json:"is_error"`
+	NumTurns   *int        `json:"num_turns,omitempty"`
 	StopReason string      `json:"stop_reason,omitempty"`
 	Result     string      `json:"result,omitempty"`
 	Errors     []string    `json:"errors,omitempty"`

@@ -76,6 +76,23 @@ func TestClaudeBackgroundContinuationPersistsOneCompletedTurn(t *testing.T) {
 	if !found {
 		t.Fatalf("final summary absent from durable history: %+v", history)
 	}
+	metas, err := loadMetaMessages(rt.SessionDir, threadID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	usageRecords := 0
+	for _, meta := range metas {
+		if meta.Content != "token_usage" {
+			continue
+		}
+		usageRecords++
+		if meta.InputTokens != 270 || meta.OutputTokens != 90 || meta.CacheCreationTokens != 30 || meta.CacheReadTokens != 180 {
+			t.Fatalf("incomplete durable continuation usage: %+v", meta)
+		}
+	}
+	if usageRecords != 1 {
+		t.Fatalf("usage records = %d, want one combined turn record", usageRecords)
+	}
 }
 
 func TestCodexEngineModelCatalogCacheUsesFreshMatchingBinary(t *testing.T) {

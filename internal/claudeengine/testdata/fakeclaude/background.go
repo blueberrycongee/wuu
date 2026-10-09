@@ -8,7 +8,7 @@ func backgroundScenario(prompt, commandID string) bool {
 	}
 	scenario := strings.TrimPrefix(prompt, "background_")
 	result := func(text, origin string, failed bool) {
-		frame := map[string]any{"type": "result", "subtype": "success", "is_error": failed, "result": text, "usage": map[string]int{"input_tokens": 90, "output_tokens": 30}}
+		frame := map[string]any{"type": "result", "subtype": "success", "is_error": failed, "result": text, "usage": map[string]int{"input_tokens": 90, "output_tokens": 30, "cache_creation_input_tokens": 10, "cache_read_input_tokens": 60}}
 		if origin != "" {
 			frame["origin"] = map[string]string{"kind": origin}
 		}
@@ -16,6 +16,15 @@ func backgroundScenario(prompt, commandID string) bool {
 			frame["subtype"] = "error_during_execution"
 		}
 		send(frame)
+	}
+	if scenario == "zero_turn_user_result" {
+		send(map[string]any{"type": "result", "subtype": "success", "is_error": false, "result": "", "num_turns": 0})
+		return true
+	}
+	if scenario == "discarded_input" {
+		send(map[string]any{"type": "command_lifecycle", "command_uuid": commandID, "state": "queued"})
+		send(map[string]any{"type": "command_lifecycle", "command_uuid": commandID, "state": "discarded"})
+		return true
 	}
 	if scenario == "queued_input" {
 		if commandID == "" {
@@ -55,7 +64,7 @@ func backgroundScenario(prompt, commandID string) bool {
 		status = "completed"
 	}
 	send(map[string]any{"type": "user", "tool_use_result": map[string]any{"agentId": "agent-1", "status": status, "isAsync": !strings.HasPrefix(scenario, "foreground")}, "message": map[string]any{"content": []any{map[string]any{"type": "tool_result", "tool_use_id": "spawn-1", "content": "Agent accepted"}}}})
-	if scenario == "parallel" {
+	if scenario == "parallel" || strings.HasPrefix(scenario, "coalesced_receipts") {
 		start("agent-2", "spawn-2")
 	}
 	if scenario == "already_consumed" {
@@ -84,9 +93,22 @@ func backgroundScenario(prompt, commandID string) bool {
 		result("First summary.", "task-notification", false)
 		terminal("agent-2", "spawn-2")
 	}
+	if strings.HasPrefix(scenario, "coalesced_receipts") {
+		terminal("agent-2", "spawn-2")
+		receipt := map[string]any{"type": "result", "subtype": "success", "is_error": false, "result": "", "num_turns": 0}
+		if scenario == "coalesced_receipts" {
+			receipt["origin"] = map[string]string{"kind": "task-notification"}
+		}
+		send(receipt)
+	}
+	if scenario == "zero_turn_wake_error" {
+		send(map[string]any{"type": "result", "subtype": "error_during_execution", "is_error": true, "result": "", "num_turns": 0})
+		return true
+	}
 	if scenario == "streamed_wake" {
 		send(map[string]any{"type": "stream_event", "event": map[string]any{"type": "message_start"}})
 		send(map[string]any{"type": "stream_event", "event": map[string]any{"type": "content_block_delta", "index": 0, "delta": map[string]any{"type": "text_delta", "text": "Partial summary"}}})
+		send(map[string]any{"type": "stream_event", "event": map[string]any{"type": "message_delta", "usage": map[string]int{"input_tokens": 3, "output_tokens": 7}}})
 	}
 	result("Final summary.", "task-notification", scenario == "wake_error")
 	return true
