@@ -13,6 +13,7 @@ import (
 // userEnvelope is the stdin user prompt shape.
 type userEnvelope struct {
 	Type            string      `json:"type"`
+	UUID            string      `json:"uuid,omitempty"`
 	Message         userMessage `json:"message"`
 	ParentToolUseID *string     `json:"parent_tool_use_id"`
 }

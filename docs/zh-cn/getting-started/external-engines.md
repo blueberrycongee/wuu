@@ -52,8 +52,14 @@ Codex 从实时模型目录读取支持情况，并在原生会话创建、恢�
 
 这些映射依据上游的 [Codex 速度配置（英文）](https://learn.chatgpt.com/docs/agent-configuration/speed)、[原生 CLI Fast mode（英文）](https://code.claude.com/docs/en/fast-mode)、[ACP 会话配置协议（英文）](https://agentclientprotocol.com/protocol/v1/session-config-options)及 [Codex ACP 适配器](https://github.com/agentclientprotocol/codex-acp/blob/main/src/FastModeConfig.ts)。保存的选项代表 Wuu 请求的速度，不保证上游服务一定提供加速处理。
 
+## 原生子代理
+
+Claude 后台子代理及其自动汇总属于同一个 Wuu 回合。已观察到的子代理仍在运行，或其结果还需要后续汇总时，仅报告启动情况的原生结果不会结束对话回合。Wuu 会保持进程，追加主代理的汇总，直到这些后续处理完成。子代理内部消息不会混入主回复。停止会取消整个回合并关闭进程，不会把子代理转为独立后台任务。
+
+目前原生子代理状态是临时展示。Codex 通过父回合报告子代理活动；Wuu 不提供可独立恢复的子会话。ACP 的完成仍遵循 Agent 的提示请求协议。厂商特有的 ACP 子代理扩展不构成通用后台生命周期契约，Wuu 也未通过它们提供持久子会话。
+
 ## 权限与会话恢复
 
 这些适配器以你的用户权限启动受信任的本地程序。Wuu 不会把它们的原生工具放入自己的操作系统进程沙箱。ACP Agent 如果广告了只读或 plan 模式，会写入该原生设置；否则拒绝 `read_only`，因为 Wuu 自己无法强制该边界。OpenCode 没有对等的原生模式，同样会被拒绝。标准模式会映射到 Agent 广告的询问模式（如有），协议收到的权限请求进入 Wuu 审批流程；没有审批支持时拒绝请求。`unconfined` 会映射到免询问的原生模式（如有），否则接受受支持的单次请求。ACP 审批不会转换成持久的 `allow_always` 规则。OpenCode 每轮都会刷新 `ask` 规则，恢复会话时也一样。Agent 不发起权限请求就执行的行为不在这一审批边界内。新外部引擎会话在调用方省略权限模式时默认使用 `unconfined`，请在统一输入框的权限菜单里明确选择。详见[权限说明](../reference/permissions.md)。
 
-Wuu 保存原生会话引用，并在后续轮次加载。如果 ACP Agent 不支持加载会话，或原会话加载失败，本轮会报错，不会静默创建新历史。一轮通常由原生提示请求的响应结束。Grok 还可能先发出 `x.ai/session/prompt_complete` 扩展通知；当这条通知先到时，Wuu 用它结束本轮，因为 Grok 的提示 RPC 可能在回合实际结束后仍挂起。Agent 确认提示之后的静默不作为完成依据。提示发出后完全没有队列记账、更新或请求，会报错：那是卡住的 Agent，不是 Extra high 推理。停止操作会取消原生任务并清理子进程。OpenCode 使用带密码的本机回环服务，每个进程生成新密码，不作为远程服务开放。
+Wuu 保存原生会话引用，并在后续轮次加载。如果 ACP Agent 不支持加载会话，或原会话加载失败，本轮会报错，不会静默创建新历史。ACP 回合通常由原生提示请求的响应结束。Grok 还可能先发出 `x.ai/session/prompt_complete` 扩展通知；当这条通知先到时，Wuu 用它结束本轮，因为 Grok 的提示 RPC 可能在回合实际结束后仍挂起。Agent 确认提示之后的静默不作为完成依据。提示发出后完全没有队列记账、更新或请求，会报错：那是卡住的 Agent，不是 Extra high 推理。停止操作会取消原生任务并清理子进程。OpenCode 使用带密码的本机回环服务，每个进程生成新密码，不作为远程服务开放。

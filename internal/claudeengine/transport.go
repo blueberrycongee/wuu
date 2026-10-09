@@ -1,6 +1,6 @@
 // Package claudeengine integrates the Claude Code CLI as an external agent
 // engine behind the agentengine seam. The CLI runs in headless stream-json
-// mode: one long-lived child per session, NDJSON on stdio, session resume
+// mode: one child per Wuu turn including agent follow-ups, NDJSON on stdio, session resume
 // via --resume <session-id>.
 package claudeengine
 

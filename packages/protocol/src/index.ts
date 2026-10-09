@@ -2282,7 +2282,7 @@ export type ExternalAgentActivity = {
   id: string;
   engine: string;
   label: string;
-  state: "queued" | "running" | "waiting" | "failed" | "completed";
+  state: "queued" | "running" | "waiting" | "failed" | "completed" | "stopped";
 };
 
 export type TurnEventNotification = {
