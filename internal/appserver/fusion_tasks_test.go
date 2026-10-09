@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/session"
@@ -111,4 +113,77 @@ func TestFusionTaskActiveUpdateAndReview(t *testing.T) {
 		t.Fatalf("report delivered twice: %s", data)
 	default:
 	}
+}
+
+// A background handoff can finish either before or during a later blocking
+// wait. Its report must reach the Lead through exactly one delivery path.
+func TestFusionWaitClaimsBackgroundReport(t *testing.T) {
+	srv, client, calls := newFusionFixture(t)
+	var created ThreadStartResult
+	client.rpc(t, MethodThreadStart, ThreadStartParams{Fusion: true}, &created)
+	client.rpc(t, MethodTurnStart, TurnStartParams{ThreadID: created.Thread.ID, Prompt: "Implement feature"}, nil)
+	calls.next(t).response <- fusionTool("background-wait", `{"message":"Implement and verify","block":false}`)
+	var side *gatedCall
+	for range 2 {
+		call := calls.next(t)
+		isSide := false
+		for _, message := range call.request.Messages {
+			isSide = isSide || message.Cause == "fusion"
+		}
+		if isSide {
+			side = call
+		} else {
+			call.response <- fusionReply("Independent review complete")
+		}
+	}
+	if side == nil {
+		t.Fatal("missing Sidekick request")
+	}
+	fusionAwait(t, srv, created.Thread.ID, func(th Thread) bool { return th.Status == ThreadStatusIdle })
+	handler := srv.fusionDelegateHandler(created.Thread.ID)
+	value, err := handler(context.Background(), "inspect", tools.FusionDelegateRequest{Action: "inspect"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := value.(FusionTaskView)
+	ctx := &fusionWaitingContext{Context: context.Background(), waiting: make(chan struct{})}
+	done := make(chan struct{})
+	var result any
+	var waitErr error
+	go func() {
+		defer close(done)
+		result, waitErr = handler(ctx, "wait", tools.FusionDelegateRequest{Action: "wait", TaskID: task.ID})
+	}()
+	select {
+	case <-ctx.waiting:
+	case <-time.After(gatedProviderTimeout):
+		t.Fatal("wait did not start")
+	}
+	side.response <- fusionReply("Implementation evidence")
+	select {
+	case <-done:
+	case <-time.After(gatedProviderTimeout):
+		t.Fatal("wait missed completion")
+	}
+	if waitErr != nil || result.(FusionTaskView).Report == nil || result.(FusionTaskView).Report.Output != "Implementation evidence" {
+		t.Fatalf("wait lost report: %+v %v", result, waitErr)
+	}
+	fusionAwait(t, srv, task.SideID, func(th Thread) bool { return th.Status == ThreadStatusIdle })
+	srv.recoverFusionInbox()
+	delivered, err := session.InboxHas(srv.rt.SessionDir, "fusion-task-result:"+task.ID+":"+result.(FusionTaskView).Report.ID)
+	if err != nil || delivered {
+		t.Fatalf("blocking report also entered the background inbox: %t %v", delivered, err)
+	}
+}
+
+// Signal the actual wait select, so completion never relies on a timing delay.
+type fusionWaitingContext struct {
+	context.Context
+	once    sync.Once
+	waiting chan struct{}
+}
+
+func (c *fusionWaitingContext) Done() <-chan struct{} {
+	c.once.Do(func() { close(c.waiting) })
+	return c.Context.Done()
 }

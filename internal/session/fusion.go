@@ -101,7 +101,7 @@ func ListFusionDispatches(dir, leadID string) ([]FusionDispatch, error) {
 
 // A terminal receipt cannot be reopened by a timeout racing Stop or completion.
 func SetFusionDelivery(dir, clientID, delivery string) error {
-	if delivery != "background" && delivery != "settled" {
+	if delivery != "waiting" && delivery != "background" && delivery != "settled" {
 		return errors.New("invalid Fusion delivery state")
 	}
 	db, err := openStore(dir)

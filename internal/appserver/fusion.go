@@ -363,6 +363,13 @@ func (s *Server) fusionDelegateHandler(leadID string) tools.FusionDelegateHandle
 		if !found {
 			return nil, session.ErrSessionNotFound
 		}
+		if action == "wait" {
+			// Transfer delivery back to the blocking caller before completion
+			// can enqueue a background report. Settled receipts stay settled.
+			if err := session.SetFusionDelivery(s.rt.SessionDir, task.LatestClientID, "waiting"); err != nil {
+				return nil, err
+			}
+		}
 		receipt, err := s.dispatchSessionInput(metadata, task.LatestClientID)
 		if err != nil {
 			return nil, err
@@ -412,6 +419,18 @@ func (s *Server) fusionDelegateHandler(leadID string) tools.FusionDelegateHandle
 		}
 		if delivery == "background" {
 			s.deliverFusionResults(leadID)
+		}
+		if action == "wait" && view.Report != nil {
+			// Completion may have won the delivery transfer. The inbox already
+			// owns that report, including when its notification is still queued.
+			delivered, err := session.InboxHas(s.rt.SessionDir, "fusion-task-result:"+task.ID+":"+view.Report.ID)
+			if err != nil {
+				return nil, err
+			}
+			if delivered {
+				view.Report.Output = ""
+				view.WaitStatus = "report_delivered"
+			}
 		}
 		s.publishFusionState(leadID)
 		return view, nil

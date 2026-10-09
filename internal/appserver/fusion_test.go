@@ -284,6 +284,19 @@ func TestFusionBackgroundReportDeliveredOnce(t *testing.T) {
 	if last.Cause != "fusion_result" || !strings.Contains(last.Content, "Background evidence") {
 		t.Fatalf("result provenance lost: %+v", last)
 	}
+	view, err := srv.fusionDelegateHandler(created.Thread.ID)(context.Background(), "inspect-delivered", tools.FusionDelegateRequest{Action: "inspect"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := view.(FusionTaskView)
+	value, err := srv.fusionDelegateHandler(created.Thread.ID)(context.Background(), "wait-delivered", tools.FusionDelegateRequest{Action: "wait", TaskID: task.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waited := value.(FusionTaskView)
+	if waited.Report == nil || waited.Report.Output != "" || waited.WaitStatus != "report_delivered" || waited.ReportID != task.ReportID {
+		t.Fatalf("wait repeated an already delivered report: %+v", waited)
+	}
 	report.response <- fusionReply("Reviewed background evidence")
 	fusionAwait(t, srv, created.Thread.ID, func(th Thread) bool { return th.Status == ThreadStatusIdle })
 	srv.recoverFusionInbox()
