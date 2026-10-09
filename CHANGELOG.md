@@ -28,6 +28,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   control width: pick the default agent from a menu above the installed list,
   show the default model and reasoning effort as rows, list connected providers
   in one group, and set interface and code fonts with their sizes on two rows.
+  Keep subscriptions in the same column as other settings pages, let theme
+  previews span it, and hide Delete all archived when nothing is archived.
 
 - Give the neutral grays a true neutral hue instead of a cool cyan cast, and draw
   the macOS light sidebar on the system sidebar material under a thinner veil.

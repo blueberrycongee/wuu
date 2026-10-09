@@ -1032,15 +1032,8 @@ button.settings-engine-expand:hover {
   flex: 0 0 auto;
 }
 
-/* Allowances are compared across services, so this dashboard uses the pane
- * width rather than the narrower label/control column used by forms. */
-.settings-page:has(> .settings-subscriptions) {
-  --settings-column-width: calc(var(--font-ui) * 78);
-  --settings-pad: var(--space-4);
-}
-
 .settings-subscriptions {
-  gap: var(--space-4);
+  gap: var(--settings-gap);
 }
 
 .settings-subscription-list {
@@ -1111,7 +1104,7 @@ button.settings-engine-expand:hover {
   overflow-wrap: anywhere;
   color: var(--ink);
   font-size: var(--font-ui);
-  font-weight: var(--weight-semibold);
+  font-weight: var(--weight-regular);
 }
 
 .settings-subscription-status {
@@ -1428,11 +1421,12 @@ button.settings-engine-expand:hover {
   min-width: 0;
 }
 
-/* Cards shrink together in a narrow column instead of wrapping one away. */
+/* The cards split the column, so their edges meet the groups below, and
+ * shrink together in a narrow column instead of wrapping one away. */
 .settings-theme-card {
   display: flex;
   min-width: 0;
-  flex: 0 1 calc(var(--font-ui) * 9);
+  flex: 1 1 0;
   flex-direction: column;
   align-items: stretch;
   gap: var(--space-2);
@@ -1447,7 +1441,7 @@ button.settings-engine-expand:hover {
   display: block;
   overflow: hidden;
   width: 100%;
-  aspect-ratio: 16 / 10;
+  aspect-ratio: 2 / 1;
   container-type: inline-size;
   border: 1px solid var(--hairline);
   border-radius: var(--radius-sm);
@@ -1478,7 +1472,7 @@ button.settings-engine-expand:hover {
   color: var(--ink);
 }
 
-/* Drawn like the native radios on the Agent page: a boundary ring at rest, a
+/* Drawn like the native radios in onboarding: a boundary ring at rest, a
  * thick ink ring around a paper center when chosen. */
 .settings-theme-card-radio {
   width: var(--icon-size-sm);
@@ -2499,9 +2493,9 @@ button.settings-engine-expand:hover {
     justify-content: flex-start;
   }
 
-  /* Switches, numbers and icon actions are narrow enough to stay beside
-   * their label. */
-  .settings-row:not(:has(> .settings-row-control > :not(.settings-switch, .plugin-setting-switch, .settings-row-actions, .settings-icon-button, .settings-input-num, .settings-input-unit))) {
+  /* Switches, numbers, buttons and icon actions are narrow enough to stay
+   * beside their label. */
+  .settings-row:not(:has(> .settings-row-control > :not(.settings-switch, .plugin-setting-switch, .settings-row-actions, .settings-button, .settings-input-num, .settings-input-unit))) {
     grid-template-columns: minmax(0, 1fr) auto;
     align-items: center;
   }

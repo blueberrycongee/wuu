@@ -1721,7 +1721,8 @@ function SettingsArchivePage({
     <>
       <SettingsPageHeader
         title={t("settings.archive")}
-        actions={(
+        // Deleting nothing is not an action; a running deletion keeps its progress.
+        actions={sortedThreads.length > 0 || deletion?.pending ? (
           <button
             type="button"
             className="settings-button settings-button-danger settings-archive-delete-all"
@@ -1733,7 +1734,7 @@ function SettingsArchivePage({
               ? t("settings.deletingArchived", deletion.progress)
               : t("settings.deleteAllArchived")}
           </button>
-        )}
+        ) : undefined}
       />
       <div className="settings-archive-page" aria-busy={deletion?.pending || undefined}>
         {deletion?.result || deletion?.error ? (
