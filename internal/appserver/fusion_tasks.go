@@ -1,6 +1,7 @@
 package appserver
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -16,11 +17,47 @@ type FusionProgress struct {
 }
 
 type FusionReport struct {
-	ID       string     `json:"report_id"`
-	Revision int        `json:"revision"`
-	Status   TurnStatus `json:"status"`
-	Output   string     `json:"output,omitempty"`
-	Error    *TurnError `json:"error,omitempty"`
+	ID           string               `json:"report_id"`
+	Revision     int                  `json:"revision"`
+	Status       TurnStatus           `json:"status"`
+	Output       string               `json:"output,omitempty"`
+	Error        *TurnError           `json:"error,omitempty"`
+	Verification []FusionVerification `json:"verification,omitempty"`
+}
+
+// FusionVerification records observed foreground checks, not a claim that the
+// task is correct. Failed checks remain visible alongside later successful runs.
+type FusionVerification struct {
+	Command           string `json:"command"`
+	ExitCode          int    `json:"exit_code"`
+	TimedOut          bool   `json:"timed_out"`
+	FullLogRef        string `json:"full_log_ref,omitempty"`
+	FullLogSHA256     string `json:"full_log_sha256,omitempty"`
+	WorkspaceRevision string `json:"workspace_revision,omitempty"`
+}
+
+func fusionReportVerification(turn Turn) []FusionVerification {
+	var checks []FusionVerification
+	for _, item := range turn.Items {
+		if item.Type != ThreadItemToolCall || item.Name != "bash" || item.ResultDetail == nil {
+			continue
+		}
+		for _, part := range item.ResultDetail.Content {
+			if part.Type != "text" {
+				continue
+			}
+			var result struct {
+				FusionVerification
+				Verification      json.RawMessage `json:"verification"`
+				PromotedProcessID string          `json:"promoted_process_id"`
+			}
+			if json.Unmarshal([]byte(part.Text), &result) != nil || len(result.Verification) == 0 || string(result.Verification) == "null" || result.PromotedProcessID != "" {
+				continue
+			}
+			checks = append(checks, result.FusionVerification)
+		}
+	}
+	return checks
 }
 
 type FusionTaskView struct {
@@ -144,7 +181,7 @@ func (s *Server) fusionTaskView(task session.FusionTask) (FusionTaskView, error)
 				}
 			}
 			if view.ReportID == turn.ID || view.State == session.FusionTaskCancelled {
-				view.Report = &FusionReport{ID: turn.ID, Revision: latest.Revision, Status: turn.Status, Output: finalAnswerText(*turn), Error: turn.Error}
+				view.Report = &FusionReport{ID: turn.ID, Revision: latest.Revision, Status: turn.Status, Output: finalAnswerText(*turn), Error: turn.Error, Verification: fusionReportVerification(*turn)}
 			}
 		}
 	}
@@ -222,6 +259,13 @@ func (s *Server) deliverFusionTaskResult(task session.FusionTask) {
 		return
 	}
 	content := fmt.Sprintf("Fusion task %s report %s, requirements revision %d (%s). Review actual work and evidence, then use review with this task_id, report_id and revision.\n\n%s", view.ID, view.Report.ID, view.Report.Revision, view.Report.Status, view.Report.Output)
+	if len(view.Report.Verification) > 0 {
+		evidence, err := json.Marshal(view.Report.Verification)
+		if err != nil {
+			return
+		}
+		content += "\n\nHost-recorded verification (command exits and recoverable logs, not task acceptance):\n" + string(evidence)
+	}
 	if view.Report.Error != nil {
 		content += "\n\nFailure: " + view.Report.Error.Message
 	}

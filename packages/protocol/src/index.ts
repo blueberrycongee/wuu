@@ -262,7 +262,8 @@ export type FusionSelection = { lead: ModelAliasSummary; sidekick: ModelAliasSum
 export type FusionConfig = FusionSelection & { enabled: boolean; default: boolean };
 export type FusionDelegation = { dispatch_id: string; session_id: string; turn_id?: string; state: string; error?: TurnError; input_tokens?: number; output_tokens?: number; cache_creation_tokens?: number; cache_read_tokens?: number };
 export type FusionProgress = { turn_id: string; tool?: string; summary?: string };
-export type FusionReport = { report_id: string; revision: number; status: Exclude<TurnStatus, "in_progress">; output?: string; error?: TurnError };
+export type FusionVerification = { command: string; exit_code: number; timed_out: boolean; full_log_ref?: string; full_log_sha256?: string; workspace_revision?: string };
+export type FusionReport = { report_id: string; revision: number; status: Exclude<TurnStatus, "in_progress">; output?: string; error?: TurnError; verification?: FusionVerification[] };
 export type FusionTask = {
   task_id: string; side_id: string; lead_id: string; lead_turn_id: string;
   revision: number; read_only: boolean; latest_client_id: string; review_rounds: number;

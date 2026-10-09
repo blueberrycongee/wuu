@@ -313,6 +313,9 @@ func (s *Server) fusionDelegateHandler(leadID string) tools.FusionDelegateHandle
 				return nil, err
 			}
 			task = view.FusionTask
+			if action == "update" && task.State == session.FusionTaskAwaitingReview {
+				return nil, fmt.Errorf("Fusion report is awaiting review; request missing evidence or corrections with action=review, verdict=request_changes, task_id=%s, report_id=%s, revision=%d", task.ID, task.ReportID, task.ReportRevision)
+			}
 			if action == "review" {
 				if request.Verdict == "accept" && task.State == session.FusionTaskCompleted && task.ReportID == request.ReportID && task.ReportRevision == request.Revision && task.Revision == request.Revision {
 					return view, nil
@@ -429,6 +432,7 @@ func (s *Server) fusionDelegateHandler(leadID string) tools.FusionDelegateHandle
 			}
 			if delivered {
 				view.Report.Output = ""
+				view.Report.Verification = nil
 				view.WaitStatus = "report_delivered"
 			}
 		}

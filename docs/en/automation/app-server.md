@@ -166,6 +166,16 @@ text is already in a background notification; status and failure metadata remain
 in the wait response, and `inspect` can recover the full report. Reports require
 review of the current task revision before acceptance.
 
+`report.verification` carries host-recorded foreground verification commands from
+the report's turn, including failed exits, workspace revisions and full log
+references. It survives transcript reload and accompanies background delivery;
+an already-delivered wait does not repeat it. These records are evidence, not a
+complete verification inventory or task acceptance. Sidekick reports should also
+include relevant artifact paths directly, rather than referring to private notes.
+Use `update` only while work is queued or running. Request missing evidence after
+completion through `review` with `verdict: request_changes` and the current report
+ID and revision; this retains the existing Sidekick and stale-report protection.
+
 Read-only research does not reserve workspace writes. An implementing Sidekick
 reserves them until it finishes or is stopped and actually becomes idle. This
 coordination covers tool calls, so participants must also finish conflicting

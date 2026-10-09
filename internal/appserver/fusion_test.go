@@ -3,6 +3,7 @@ package appserver
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -170,6 +171,50 @@ func TestFusionPersistentSideAndSynchronousReview(t *testing.T) {
 	}
 }
 
+// A Side may omit evidence from its prose or keep it in private notes. The
+// handoff must still expose actual verification exits and recoverable logs,
+// including failed checks, without mistaking ordinary file reads for tests.
+func TestFusionReportCarriesRecordedVerification(t *testing.T) {
+	srv, client, calls := newFusionFixture(t)
+	if err := os.WriteFile(filepath.Join(srv.rt.RootDir, "Makefile"), []byte(".PHONY: test\ntest:\n\t@echo FUSION_VERIFICATION_EVIDENCE\n\t@test \"$(FAIL)\" != 1\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var created ThreadStartResult
+	client.rpc(t, MethodThreadStart, ThreadStartParams{Fusion: true, PermissionMode: config.PermissionModeUnconfined}, &created)
+	client.rpc(t, MethodTurnStart, TurnStartParams{ThreadID: created.Thread.ID, Prompt: "Verify the fixture"}, nil)
+	calls.next(t).response <- fusionTool("evidence", `{"message":"Run the verification and report"}`)
+	for i, command := range []string{"make test FAIL=1", "make test"} {
+		args, _ := json.Marshal(map[string]string{"command": command})
+		calls.next(t).response <- providers.ChatResponse{ToolCalls: []providers.ToolCall{{ID: fmt.Sprintf("check-%d", i), Name: "bash", Arguments: string(args)}}, FinishReason: providers.FinishReasonToolCalls}
+	}
+	calls.next(t).response <- fusionReply("Verification finished; details are in my private notes.")
+	lead := calls.next(t)
+	var report struct {
+		Report struct {
+			Verification []struct {
+				Command    string `json:"command"`
+				ExitCode   int    `json:"exit_code"`
+				FullLogRef string `json:"full_log_ref"`
+			} `json:"verification"`
+		} `json:"report"`
+	}
+	if err := json.Unmarshal([]byte(lead.request.Messages[len(lead.request.Messages)-1].Content), &report); err != nil {
+		t.Fatal(err)
+	}
+	checks := report.Report.Verification
+	if len(checks) != 2 || checks[0].ExitCode == 0 || checks[1].ExitCode != 0 {
+		t.Fatalf("handoff lost the observed verification outcomes: %+v", checks)
+	}
+	for _, check := range checks {
+		data, err := os.ReadFile(check.FullLogRef)
+		if err != nil || !strings.Contains(string(data), "FUSION_VERIFICATION_EVIDENCE") {
+			t.Fatalf("verification log is not recoverable: %s: %v", check.FullLogRef, err)
+		}
+	}
+	lead.response <- fusionReply("Evidence reviewed")
+	fusionAwait(t, srv, created.Thread.ID, func(th Thread) bool { return th.Status == ThreadStatusIdle })
+}
+
 func TestFusionWaitYieldsToUserAndStopFencesSide(t *testing.T) {
 	srv, client, calls := newFusionFixture(t)
 	var created ThreadStartResult
@@ -256,8 +301,11 @@ func TestFusionSideSelectionAndPermissionBoundary(t *testing.T) {
 
 func TestFusionBackgroundReportDeliveredOnce(t *testing.T) {
 	srv, client, calls := newFusionFixture(t)
+	if err := os.WriteFile(filepath.Join(srv.rt.RootDir, "Makefile"), []byte(".PHONY: test\ntest:\n\t@echo BACKGROUND_VERIFICATION_EVIDENCE\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	var created ThreadStartResult
-	client.rpc(t, MethodThreadStart, ThreadStartParams{Fusion: true}, &created)
+	client.rpc(t, MethodThreadStart, ThreadStartParams{Fusion: true, PermissionMode: config.PermissionModeUnconfined}, &created)
 	var started TurnStartResult
 	client.rpc(t, MethodTurnStart, TurnStartParams{ThreadID: created.Thread.ID, Prompt: "Background feature"}, &started)
 	calls.next(t).response <- fusionTool("background", `{"message":"Background implementation","block":false}`)
@@ -278,7 +326,8 @@ func TestFusionBackgroundReportDeliveredOnce(t *testing.T) {
 		t.Fatal("no Side request")
 	}
 	fusionAwait(t, srv, created.Thread.ID, func(th Thread) bool { return th.Status == ThreadStatusIdle })
-	side.response <- fusionReply("Background evidence")
+	side.response <- providers.ChatResponse{ToolCalls: []providers.ToolCall{{ID: "background-check", Name: "bash", Arguments: `{"command":"make test"}`}}, FinishReason: providers.FinishReasonToolCalls}
+	calls.next(t).response <- fusionReply("Background evidence")
 	report := calls.next(t)
 	last := report.request.Messages[len(report.request.Messages)-1]
 	if last.Cause != "fusion_result" || !strings.Contains(last.Content, "Background evidence") {
@@ -289,12 +338,15 @@ func TestFusionBackgroundReportDeliveredOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	task := view.(FusionTaskView)
+	if len(task.Report.Verification) != 1 || !strings.Contains(last.Content, task.Report.Verification[0].FullLogRef) {
+		t.Fatalf("background notification lost the recorded verification: %+v", task.Report)
+	}
 	value, err := srv.fusionDelegateHandler(created.Thread.ID)(context.Background(), "wait-delivered", tools.FusionDelegateRequest{Action: "wait", TaskID: task.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
 	waited := value.(FusionTaskView)
-	if waited.Report == nil || waited.Report.Output != "" || waited.WaitStatus != "report_delivered" || waited.ReportID != task.ReportID {
+	if waited.Report == nil || waited.Report.Output != "" || len(waited.Report.Verification) != 0 || waited.WaitStatus != "report_delivered" || waited.ReportID != task.ReportID {
 		t.Fatalf("wait repeated an already delivered report: %+v", waited)
 	}
 	report.response <- fusionReply("Reviewed background evidence")
