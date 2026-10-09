@@ -163,7 +163,7 @@ jobs:
         if: ${{ !cancelled() && steps.build-renderer.outcome == 'success' }}
         run: |
           sudo apt-get update
-          sudo apt-get install -y fonts-noto-cjk fonts-noto-color-emoji
+          sudo apt-get install -y fonts-noto-cjk fonts-noto-color-emoji xdotool openbox
 
       - name: Guard workspace tabs and navigation
         if: ${{ !cancelled() && steps.build-renderer.outcome == 'success' }}
@@ -277,6 +277,27 @@ jobs:
       - name: Build desktop fixture core
         id: build-fixture-core
         run: go build -o "${{ runner.temp }}/wuu-session-switch-core" ./cmd/wuu
+
+      - name: Verify desktop quick access
+        if: ${{ !cancelled() && steps.build-fixture-core.outcome == 'success' && steps.build-renderer.outcome == 'success' }}
+        timeout-minutes: 8
+        shell: bash
+        env:
+          WUU_QUICK_ACCESS_OUTPUT: ${{ runner.temp }}/wuu-quick-access-evidence
+          WUU_DESKTOP_CORE: ${{ runner.temp }}/wuu-session-switch-core
+        run: |
+          mkdir -p "$WUU_QUICK_ACCESS_OUTPUT"
+          set -o pipefail
+          xvfb-run --auto-servernum --server-args="-screen 0 1600x1200x24" sh -c 'openbox --sm-disable >"$WUU_QUICK_ACCESS_OUTPUT/window-manager.log" 2>&1 & node desktop/scripts/desktop-quick-access-e2e.cjs' 2>&1 | tee "$WUU_QUICK_ACCESS_OUTPUT/run.log"
+
+      - name: Upload desktop quick-access evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-quick-access-evidence
+          path: ${{ runner.temp }}/wuu-quick-access-evidence/
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Verify compact Fast mode controls
         if: ${{ !cancelled() && steps.build-fixture-core.outcome == 'success' }}

@@ -2,6 +2,12 @@
 
 A conversation keeps messages, tool activity, and results together. Continue the same conversation for follow-up work; create a new one for an unrelated task or fork an earlier point to explore another approach.
 
+## Quick access and floating conversations
+
+In **Settings → General → Quick access**, record a global shortcut or choose **Use default** (Command + Shift + Space on macOS, Ctrl + Shift + Space elsewhere). No shortcut is assigned initially. Wuu must be running. The shortcut restores and focuses the last active main or popped-out conversation window, preserving its conversation and unsent draft. It does not send a message. If that window has closed, Wuu opens or focuses the main window.
+
+If the shortcut is already in use or the desktop cannot register it, choose another combination; the previous working shortcut remains active. **Disable** releases the shortcut. **Keep popped-out chats on top** applies to all current and future popped-out conversation windows. These preferences persist after restart.
+
 ## Start and organize conversations
 
 Select a workspace, then start a conversation. Click the title in the conversation title bar to rename it. The name is saved immediately for an existing conversation, and a new conversation keeps it when the first message creates the session. The sidebar menu still provides rename, pin, and archive. An archived conversation is hidden from the normal list and can be restored through **Settings → Archive**.

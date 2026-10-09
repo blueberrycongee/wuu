@@ -2541,6 +2541,23 @@ export const MESSAGE_FLOW_FONT_SIZE_RANGE = {
 
 export type ThemePreference = "system" | "light" | "dark";
 
+export type DesktopQuickAccessSnapshot = {
+  shortcut: string;
+  defaultShortcut: string;
+  shortcutStatus: "disabled" | "registered" | "unavailable";
+  popOutAlwaysOnTop: boolean;
+};
+
+export type DesktopQuickAccessUpdate = {
+  shortcut?: string;
+  popOutAlwaysOnTop?: boolean;
+};
+
+export type DesktopQuickAccessUpdateResult = {
+  snapshot: DesktopQuickAccessSnapshot;
+  error?: "invalid_shortcut" | "unavailable";
+};
+
 // Keep the supported locale registry executable as well as typed. Every shell
 // validates persisted settings and IPC payloads with these guards, so adding a
 // locale has one protocol-level entry point instead of duplicated string lists.
@@ -2932,6 +2949,9 @@ export type WuuDesktopApi = {
   windowClose?: () => Promise<void>;
   windowIsMaximized?: () => Promise<boolean>;
   onWindowMaximizedChange?: (handler: (maximized: boolean) => void) => () => void;
+  getDesktopQuickAccess?: () => Promise<DesktopQuickAccessSnapshot>;
+  updateDesktopQuickAccess?: (update: DesktopQuickAccessUpdate) => Promise<DesktopQuickAccessUpdateResult>;
+  onDesktopQuickAccessChange?: (handler: (snapshot: DesktopQuickAccessSnapshot) => void) => () => void;
   // Appearance. The preference persists in desktop-settings.json; the
   // renderer resolves "system" against prefers-color-scheme and stamps
   // data-theme on <html>. `initialThemePreference` is read synchronously

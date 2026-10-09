@@ -1,4 +1,5 @@
 import { saveArtifactFile } from "./artifactSave";
+import { DesktopQuickAccess } from "./desktopQuickAccess";
 import type { DesktopZoomAction } from "../shared/DesktopPageZoom";
 import { readCatalogSkill } from "./remoteSkills";
 import { inheritSystemProxy } from "./systemProxy";
@@ -248,6 +249,11 @@ let mainWindow: BrowserWindow | null = null;
 // them before the user acts on them (Electron retains only while referenced).
 const activeSystemNotifications = new Set<Notification>();
 const windowRegistry: WindowRegistry = createWindowRegistry();
+const desktopQuickAccess = new DesktopQuickAccess(
+  windowRegistry,
+  () => createWindow(),
+  snapshot => broadcastToAll("wuu:desktop-quick-access-changed", snapshot),
+);
 const projectManager = new ProjectManager();
 
 // Build-time globals injected by electron.vite.config.ts. TypeScript
@@ -1041,6 +1047,7 @@ function createPopOutWindow(params: PopOutWindowParams): BrowserWindow {
     runtimeContext: params.context,
     threadID: params.kind === "thread" ? params.threadID : undefined,
   });
+  desktopQuickAccess.attachWindow(win);
   windowRegistry.attachResizeHandlers(win, (phase) => {
     handleNativeWindowResizePhase(phase);
   });
@@ -1173,6 +1180,7 @@ function createWindow(options: { inactive?: boolean } = {}): void {
   registerThemedChromeWindow(mainWindow);
 
   windowRegistry.registerWindow(mainWindow, "main");
+  desktopQuickAccess.attachWindow(mainWindow);
   const win = mainWindow;
   const windowID = win.webContents.id;
 
@@ -2173,6 +2181,20 @@ app.whenReady().then(async () => {
     const win = BrowserWindow.fromWebContents(event.sender);
     return Boolean(win && !win.isDestroyed() && win.isMaximized());
   });
+  const requireConversationWindow = (event: IpcMainInvokeEvent): void => {
+    const role = windowRegistry.roleForWindow(event.sender.id);
+    if ((role !== "main" && role !== "popped-out") || event.senderFrame !== event.sender.mainFrame) {
+      throw new Error("Desktop quick access requires an application window");
+    }
+  };
+  ipcMain.handle("wuu:desktop-quick-access-get", (event) => {
+    requireConversationWindow(event);
+    return desktopQuickAccess.snapshot();
+  });
+  ipcMain.handle("wuu:desktop-quick-access-update", (event, update) => {
+    requireConversationWindow(event);
+    return desktopQuickAccess.update(update);
+  });
   ipcMain.handle("wuu:theme-preference-get", () => getThemePreference());
   ipcMain.on("wuu:onboarding-complete-get-sync", (event) => {
     event.returnValue = isOnboardingComplete();
@@ -2624,6 +2646,7 @@ app.whenReady().then(async () => {
   );
   syncNativeThemeSource();
   createWindow();
+  desktopQuickAccess.start();
   void phoneAccess.run(() => phoneAccess.restore(projectManager.ensureRuntimeContext().cwd));
 
   app.on("activate", () => {
@@ -2641,6 +2664,7 @@ app.on("before-quit", (event) => {
   if (quitCleanupFinished) return;
   event.preventDefault();
   if (quitCleanup) return;
+  desktopQuickAccess.dispose();
   terminalSessionManager.cleanup();
   // Destroy every agent view + the hidden host window before the pool shuts
   // down so no WebContentsView leaks past quit.
