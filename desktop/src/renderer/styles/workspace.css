@@ -1811,30 +1811,6 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   font-style: italic;
 }
 
-/* Links: use the message-stream blue palette, underline only on hover so a dense badge row in
-   READMEs doesn't read as a wall of underlined text. Each selector gets
-   its own rule so the cssRuleBody test helper can match it without
-   having to know how to walk past comma-separated selector lists. */
-.workspace-markdown-reading .rich-link.rich-web-link {
-  color: var(--rich-link-color);
-  text-decoration: none;
-}
-
-.workspace-markdown-reading .rich-link.rich-file-link {
-  color: var(--rich-link-color);
-  text-decoration: none;
-}
-
-.workspace-markdown-reading .rich-link.rich-web-link:hover {
-  color: var(--rich-link-hover-color);
-  text-decoration: underline;
-}
-
-.workspace-markdown-reading .rich-link.rich-file-link:hover {
-  color: var(--rich-link-hover-color);
-  text-decoration: underline;
-}
-
 /* Inline code: keep this selector more specific than the shared message-flow
    rule and exclude fenced code, which owns its surface through .rich-code. */
 .workspace-markdown-reading .rich-content :not(pre) > code {

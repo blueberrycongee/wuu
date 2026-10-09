@@ -27,6 +27,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Give the neutral grays a true neutral hue instead of a cool cyan cast, and draw
   the macOS light sidebar on the system sidebar material under a thinner veil.
 
+- Draw links in answers, user messages, and file previews in body ink with a
+  thin underline instead of blue, and set tool-row targets (files, commands,
+  queries) a step darker than their verbs so a run of tool rows scans by target.
+
 - Align the right panel's tabs, file tree, review list, and tool list on the
   sidebar's pane inset, and give the file and review filters one quiet search
   field. Settings rows are denser, and settings groups and cards share one frame.

@@ -49,7 +49,7 @@ The neutral ramp (`--gray-*`) uses one OKLCH hue with near-zero chroma, so every
 
 On macOS the light rail is the system sidebar material under a thin neutral veil, so the desktop shows through faintly as it does in other native sidebars. Windows, Linux, the dark theme and custom themes use an opaque rail.
 
-Selection in the rail is the only location signal, so it is a filled row at about 1.25:1 against the rail and the label keeps its regular weight. Tool-picker rows stay unfilled until hovered or pressed. The user's own message is a quiet neutral bubble, because the reader already knows what they wrote. Code in an answer is an inset one tonal step from the canvas without a frame; a border on top of the fill would draw the same boundary twice. Inline code takes the same step as a small chip in answers and user messages alike, so an identifier stays findable in CJK prose, where a bare monospace run reads as a font fallback.
+Selection in the rail is the only location signal, so it is a filled row at about 1.25:1 against the rail and the label keeps its regular weight. Tool-picker rows stay unfilled until hovered or pressed. The user's own message is a quiet neutral bubble, because the reader already knows what they wrote. Code in an answer is an inset one tonal step from the canvas without a frame; a border on top of the fill would draw the same boundary twice. Inline code takes the same step as a small chip in answers and user messages alike, so an identifier stays findable in CJK prose, where a bare monospace run reads as a font fallback. A tool row keeps its verb in `--ink-tertiary` and draws its target (file, query, or command) halfway between that and body ink, so a run of rows scans by what was touched without competing with the answer.
 
 Brand identity, action emphasis, and status are separate concerns. Primary actions can use strong foreground/background contrast without a saturated brand fill. Links, keyboard focus, and selection need recognizable interaction cues; success, warning, and danger need distinct meanings. Color supports these purposes rather than decorating every heading or selected item. Never rely on color alone for an essential distinction.
 
@@ -72,9 +72,11 @@ Success, warning, and danger tints are `--success-soft`, `--warning-soft`, and `
 
 The renderer defaults to neutral emphasis: `--wuu-accent` follows the theme's strong text color (dark in light mode, light in dark mode), and `--wuu-accent-press` mixes it toward the canvas. Sliders use the same accent through `--interaction-accent`. Extension themes can still override the public accent, pressed, and on-accent tokens.
 
-Links, `--info`, and the focus ring share one blue: the macOS link color, which is the platform's own text-safe blue (at least 4.5:1 on the canvas and on the user bubble in both themes). It is the only hue in the default chrome.
+`--info` and the focus ring share one blue: the macOS link color, which is the platform's own text-safe blue (at least 4.5:1 on the canvas and on the user bubble in both themes). It is the only hue in the default chrome.
 
-Keep status semantics separate from emphasis. TODO progress uses text colors and distinct marks, while high context usage uses warning color. Success, warning, danger, links, and focus retain their semantic colors rather than becoming neutral merely because the accent is neutral.
+Links in rendered Markdown (answers, user messages, and file previews) are ink with a thin underline at about a third of the text color; hover takes the strong ink and a full-strength underline. The underline is the link cue, so a reply full of PR, CI, and documentation links still reads as one paragraph. A link's file, site, or favicon mark sits in `--ink-muted` with a small gap before the label, and the underline never runs under it. Themes can still color links through `--wuu-color-link`.
+
+Keep status semantics separate from emphasis. TODO progress uses text colors and distinct marks, while high context usage uses warning color. Success, warning, danger, and focus retain their semantic colors rather than becoming neutral merely because the accent is neutral.
 
 ## Typography
 

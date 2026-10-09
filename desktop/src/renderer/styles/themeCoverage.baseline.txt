@@ -158,7 +158,7 @@ turns.css .message-image-overflow color --message-image-overflow-fg
 turns.css .message-image-overflow:hover background --message-image-overflow-bg-hover
 turns.css .process-surface-fold.has-details > .process-surface-row:hover, .process-surface-fold.has-details > .process-surface-row:focus-visible color --activity-toggle-hover-color
 turns.css .project-empty-actions button:hover background --project-empty-actions-hover-bg
-turns.css .rich-file-link text-decoration-color --gray-550
+turns.css .rich-link text-decoration-color --rich-link-underline-color
 turns.css .rich-mermaid-error border-color --danger-border
 turns.css .rich-mermaid-error background --danger-soft
 turns.css .turn-artifact-gallery-toolbar .icon-button, .turn-artifact-image-toolbar .icon-button color --artifact-gallery-control-fg
