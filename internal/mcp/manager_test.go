@@ -2,7 +2,9 @@ package mcp
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -287,5 +289,102 @@ func TestManagerDisconnectPreservesOAuthAuthenticationState(t *testing.T) {
 	status := manager.Status()["docs"]
 	if status.State != MCPServerStateStopped || status.AuthStatus != MCPAuthStatusOAuth {
 		t.Fatalf("status after disconnect = %+v", status)
+	}
+}
+
+func TestManagerRevokeFencesPendingConnectionsAndPreservesOtherServers(t *testing.T) {
+	for _, blockedMethod := range []string{"initialize", "tools/list"} {
+		t.Run(blockedMethod, func(t *testing.T) {
+			started := make(chan struct{})
+			release := make(chan struct{})
+			var once sync.Once
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodPost {
+					w.WriteHeader(http.StatusMethodNotAllowed)
+					return
+				}
+				var req Request
+				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+					http.Error(w, err.Error(), http.StatusBadRequest)
+					return
+				}
+				if r.URL.Path == "/retired" && req.Method == blockedMethod {
+					once.Do(func() { close(started) })
+					<-release
+				}
+				w.Header().Set("Content-Type", "application/json")
+				switch req.Method {
+				case "server/discover":
+					fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%d,"error":{"code":-32601,"message":"unsupported"}}`, req.ID)
+				case "initialize":
+					fmt.Fprint(w, initializeResultJSON(req.ID, "2025-06-18"))
+				case "tools/list":
+					fmt.Fprint(w, toolsListResultJSON(req.ID, "search"))
+				default:
+					w.WriteHeader(http.StatusAccepted)
+				}
+			}))
+			defer server.Close()
+			defer close(release)
+			manager := NewManager()
+			defer manager.Close()
+			retired := ServerConfig{Name: "retired", URL: server.URL + "/retired", Transport: TransportStreamableHTTP}
+			retained := ServerConfig{Name: "retained", URL: server.URL + "/retained", Transport: TransportStreamableHTTP}
+			if err := manager.Add(context.Background(), retained); err != nil {
+				t.Fatal(err)
+			}
+			finished := make(chan error, 1)
+			go func() { finished <- manager.Add(context.Background(), retired) }()
+			select {
+			case <-started:
+			case err := <-finished:
+				t.Fatalf("connection ended before blocked request: %v", err)
+			case <-time.After(2 * time.Second):
+				t.Fatal("pending connection did not reach blocked request")
+			}
+			if err := manager.Revoke(retired.Name); err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case err := <-finished:
+				if !errors.Is(err, ErrServerRevoked) {
+					t.Fatalf("pending Add = %v, want ErrServerRevoked", err)
+				}
+			case <-time.After(2 * time.Second):
+				t.Fatal("Revoke did not cancel the pending connection")
+			}
+			manager.Configure(map[string]ServerConfig{retired.Name: retired})
+			for name, attempt := range map[string]func() error{
+				"Add":     func() error { return manager.Add(context.Background(), retired) },
+				"Connect": func() error { return manager.Connect(context.Background(), retired.Name) },
+				"Refresh": func() error { return manager.Refresh(context.Background(), retired.Name) },
+			} {
+				if err := attempt(); !errors.Is(err, ErrServerRevoked) {
+					t.Fatalf("%s after revoke = %v, want ErrServerRevoked", name, err)
+				}
+			}
+			if cfg, ok := manager.Config(retired.Name); !ok || cfg.IsEnabled() {
+				t.Fatalf("revoked configuration resurrected: %+v, %v", cfg, ok)
+			}
+			if status := manager.Status()[retired.Name]; status.State != MCPServerStateDisabled || status.Connected {
+				t.Fatalf("revoked status resurrected: %+v", status)
+			}
+			if err := manager.Refresh(context.Background(), ""); err != nil {
+				t.Fatalf("refresh unrelated servers: %v", err)
+			}
+			if tools := manager.NativeTools(); len(tools) != 1 || tools[0].Provenance.Source != retained.Name {
+				t.Fatalf("revocation affected unrelated tools: %+v", tools)
+			}
+			if err := manager.Revoke(retained.Name); err != nil {
+				t.Fatal(err)
+			}
+			if tools := manager.NativeTools(); len(tools) != 0 {
+				t.Fatalf("active revoked client still publishes tools: %+v", tools)
+			}
+			generation := manager.Generation()
+			if err := manager.Revoke(retained.Name); err != nil || manager.Generation() != generation {
+				t.Fatalf("repeat revocation changed generation or failed: %v", err)
+			}
+		})
 	}
 }

@@ -14,6 +14,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/hooks"
+	"github.com/blueberrycongee/wuu/internal/mcp"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
@@ -23,6 +24,7 @@ import (
 type generationClient struct {
 	id           string
 	closed       bool
+	onClose      func()
 	closeOrder   *[]string
 	capabilities []pluginhost.CapabilityDescriptor
 	invoke       func(pluginhost.CapabilityInvokeParams) (pluginhost.CapabilityInvokeResult, error)
@@ -39,6 +41,9 @@ func (c *generationClient) Status() pluginhost.Status {
 }
 func (c *generationClient) Close(context.Context) error {
 	c.closed = true
+	if c.onClose != nil {
+		c.onClose()
+	}
 	if c.closeOrder != nil {
 		*c.closeOrder = append(*c.closeOrder, c.id)
 	}
@@ -338,8 +343,8 @@ func TestActivatePluginGenerationKeepsPinnedConversationGeneration(t *testing.T)
 	if pinned != old {
 		t.Fatal("session did not pin the current generation")
 	}
-	candidateClient := &generationClient{id: "candidate"}
-	candidate := testPluginGeneration("candidate", candidateClient)
+	candidateClient := &generationClient{id: "old"}
+	candidate := testPluginGeneration("old", candidateClient)
 	if err := session.ActivatePluginGeneration(candidate, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -358,6 +363,91 @@ func TestActivatePluginGenerationKeepsPinnedConversationGeneration(t *testing.T)
 	session.ReleasePluginGeneration(pinned)
 	if !oldClient.closed {
 		t.Fatal("pinned generation survived after the last conversation released it")
+	}
+}
+
+func TestDisabledRuntimeRetiresEveryPinnedGenerationAfterCommit(t *testing.T) {
+	makeGeneration := func() (*PluginGeneration, *generationClient, *generationClient) {
+		disabled, peer := &generationClient{id: "disabled"}, &generationClient{id: "peer"}
+		generation := testPluginGeneration("disabled", disabled)
+		generation.active[0].Hooks = map[string][]config.HookEntry{string(hooks.PreToolUse): {{Type: "command", Command: "disabled-hook"}}}
+		generation.active = append(generation.active, testRuntimePlugin("peer"))
+		generation.settings.Hooks = map[string][]config.HookEntry{string(hooks.PostToolUse): {{Type: "command", Command: "user-hook"}}}
+		generation.hooks = buildHookDispatcher(generation.settings, generation.active, nil, "", nil)
+		generation.host.Add(peer)
+		generation.active[0].MCPServers = map[string]config.MCPServerConfig{"legacy": {}}
+		generation.mcp = mcp.NewManager()
+		enabled := false
+		generation.mcp.Configure(map[string]mcp.ServerConfig{
+			PluginMCPServerName("disabled", "legacy"): {Enabled: &enabled},
+			"user-server": {Enabled: &enabled},
+		})
+		return generation, disabled, peer
+	}
+	first, firstDisabled, firstPeer := makeGeneration()
+	session := testGenerationSession(first)
+	defer session.Cleanup()
+	firstPin := session.RetainPluginGeneration()
+	defer session.ReleasePluginGeneration(firstPin)
+	second, secondDisabled, secondPeer := makeGeneration()
+	if err := session.ActivatePluginGeneration(second, nil); err != nil {
+		t.Fatal(err)
+	}
+	secondPin := session.RetainPluginGeneration()
+	defer session.ReleasePluginGeneration(secondPin)
+	if firstDisabled.closed || firstPeer.closed {
+		t.Fatal("same-ID update retired pinned implementation")
+	}
+	failed := testPluginGeneration("peer", &generationClient{id: "peer"})
+	if err := session.ActivatePluginGeneration(failed, func() error { return errors.New("persist failed") }); err == nil {
+		t.Fatal("commit unexpectedly succeeded")
+	}
+	if firstDisabled.closed || secondDisabled.closed {
+		t.Fatal("failed disable retired live implementation")
+	}
+	if err := first.mcp.Connect(context.Background(), PluginMCPServerName("disabled", "legacy")); err != nil {
+		t.Fatalf("failed disable revoked plugin MCP: %v", err)
+	}
+	current := testPluginGeneration("peer", &generationClient{id: "peer"})
+	for _, client := range []*generationClient{firstDisabled, secondDisabled} {
+		client.onClose = func() {
+			if !session.IsCurrentPluginGeneration(current) {
+				t.Error("retirement ran before publication")
+			}
+		}
+	}
+	if err := session.ActivatePluginGeneration(current, nil); err != nil {
+		t.Fatal(err)
+	}
+	if !firstDisabled.closed || !secondDisabled.closed {
+		t.Fatal("disable missed a pinned generation")
+	}
+	if firstPeer.closed || secondPeer.closed {
+		t.Fatal("disable retired unrelated plugin")
+	}
+	for _, generation := range []*PluginGeneration{first, second} {
+		enabled := false
+		if err := generation.mcp.Add(context.Background(), mcp.ServerConfig{Name: PluginMCPServerName("disabled", "legacy"), Enabled: &enabled}); !errors.Is(err, mcp.ErrServerRevoked) {
+			t.Fatalf("disabled plugin MCP reconnect error = %v", err)
+		}
+		if err := generation.mcp.Connect(context.Background(), "user-server"); err != nil {
+			t.Fatalf("unrelated user MCP configuration was revoked: %v", err)
+		}
+		if generation.hooks.HasHooks(hooks.PreToolUse) || !generation.hooks.HasHooks(hooks.PostToolUse) {
+			t.Fatal("disable did not remove plugin hooks while preserving user hooks")
+		}
+		for _, status := range generation.host.Statuses() {
+			if status.ID == "disabled" {
+				t.Fatal("disabled runtime remains callable")
+			}
+		}
+	}
+	reenabled, enabledClient, _ := makeGeneration()
+	if err := session.ActivatePluginGeneration(reenabled, nil); err != nil {
+		t.Fatal(err)
+	}
+	if enabledClient.closed || first.hooks.HasHooks(hooks.PreToolUse) || second.hooks.HasHooks(hooks.PreToolUse) {
+		t.Fatal("re-enabling resurrected a retired implementation")
 	}
 }
 
@@ -450,7 +540,9 @@ func TestThreadModelRuntimeKeepsGenerationUntilReleased(t *testing.T) {
 				threads = append(threads, thread)
 				defer func() { session.ReleasePluginGeneration(thread.PluginGeneration) }()
 			}
-			candidate, err := session.buildPluginGeneration(config.Config{}, nil, nil, nil, startPluginClient)
+			candidate, err := session.buildPluginGeneration(config.Config{}, []pluginpkg.Plugin{testRuntimePlugin("plugin")}, nil, nil, func(context.Context, pluginhost.ProcessConfig) (pluginhost.Client, error) {
+				return &generationClient{id: "plugin"}, nil
+			})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -478,7 +570,9 @@ func TestThreadModelCloneKeepsGenerationDuringConstruction(t *testing.T) {
 	defer session.pluginGeneration.close()
 	shadow := session.cloneForThreadModel()
 	defer func() { shadow.ReleasePluginGeneration(shadow.pluginGeneration) }()
-	candidate, err := session.buildPluginGeneration(config.Config{}, nil, nil, nil, startPluginClient)
+	candidate, err := session.buildPluginGeneration(config.Config{}, []pluginpkg.Plugin{testRuntimePlugin("plugin")}, nil, nil, func(context.Context, pluginhost.ProcessConfig) (pluginhost.Client, error) {
+		return &generationClient{id: "plugin"}, nil
+	})
 	if err != nil {
 		t.Fatal(err)
 	}

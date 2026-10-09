@@ -187,9 +187,12 @@ type Session struct {
 	codexHost *codexengine.Host
 	// DefaultEngine is the engine id used for new threads when the caller
 	// does not request one explicitly (settings default; empty = wuu).
-	DefaultEngine              agentengine.EngineID
-	pluginGenerationMu         sync.Mutex
-	pluginGeneration           *PluginGeneration
+	DefaultEngine      agentengine.EngineID
+	pluginGenerationMu sync.Mutex
+	pluginGeneration   *PluginGeneration
+	// Retired generations are tracked without an extra reference so policy
+	// revocation reaches older conversations without extending their lifetime.
+	retiredPluginGenerations   map[*PluginGeneration]struct{}
 	workerOrientation          string
 	threadProcessMu            sync.Mutex
 	threadProcesses            *threadProcessManagers

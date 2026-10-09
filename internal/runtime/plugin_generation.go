@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -53,7 +54,9 @@ type PluginGeneration struct {
 	// refs counts the live Session plus any ThreadRuntime still bound to this
 	// generation. A retired generation stays open until the last conversation
 	// that started against it is released.
-	refs atomic.Int32
+	refs           atomic.Int32
+	revokedMu      sync.Mutex
+	revokedPlugins map[string]bool
 }
 
 // PreflightExtensions discovers and builds a replacement without changing the
@@ -287,7 +290,12 @@ func (s *Session) ActivatePluginGeneration(candidate *PluginGeneration, commit f
 		return errors.New("plugin candidate generation is not initialized")
 	}
 	s.pluginGenerationMu.Lock()
-	defer s.pluginGenerationMu.Unlock()
+	locked := true
+	defer func() {
+		if locked {
+			s.pluginGenerationMu.Unlock()
+		}
+	}()
 	old := s.pluginGeneration
 	if old == nil {
 		old = s.capturePluginGeneration()
@@ -311,8 +319,90 @@ func (s *Session) ActivatePluginGeneration(candidate *PluginGeneration, commit f
 	// Conversations that already pinned the previous generation keep using it
 	// until they rebuild. The Session reference is released here; remaining
 	// thread runtimes keep the processes and tools alive.
-	s.releasePluginGenerationLocked(old)
+	if s.retiredPluginGenerations == nil {
+		s.retiredPluginGenerations = make(map[*PluginGeneration]struct{})
+	}
+	s.retiredPluginGenerations[old] = struct{}{}
+	activeIDs := make(map[string]bool, len(candidate.active))
+	for _, item := range candidate.active {
+		activeIDs[item.ID] = true
+	}
+	var retired []*PluginGeneration
+	for generation := range s.retiredPluginGenerations {
+		// A thread-model shadow can release its final reference independently
+		// of this Session. Never resurrect that generation while it closes.
+		for refs := generation.refs.Load(); ; refs = generation.refs.Load() {
+			if refs <= 0 {
+				delete(s.retiredPluginGenerations, generation)
+				break
+			}
+			if generation.refs.CompareAndSwap(refs, refs+1) {
+				retired = append(retired, generation)
+				break
+			}
+		}
+	}
+	s.pluginGenerationMu.Unlock()
+	locked = false
+	// Plugin shutdown can call host services. Never hold the Session mutex
+	// across those callbacks; temporary references keep the old hosts alive.
+	s.releasePluginGeneration(old)
+	for _, generation := range retired {
+		generation.revokeMissingPlugins(activeIDs, s.TitleClient, s.Model)
+		s.releasePluginGeneration(generation)
+	}
 	return nil
+}
+
+// revokeMissingPlugins stops removed or disabled implementations even when a
+// conversation still pins this generation. Updates with the same ID retain
+// their old implementation until outstanding work releases it.
+func (g *PluginGeneration) revokeMissingPlugins(activeIDs map[string]bool, client providers.Client, model string) {
+	g.revokedMu.Lock()
+	defer g.revokedMu.Unlock()
+	var remaining []pluginpkg.Plugin
+	changed := false
+	for _, item := range g.active {
+		if activeIDs[item.ID] && !g.revokedPlugins[item.ID] {
+			remaining = append(remaining, item)
+			continue
+		}
+		if g.revokedPlugins[item.ID] {
+			continue
+		}
+		if g.revokedPlugins == nil {
+			g.revokedPlugins = make(map[string]bool)
+		}
+		g.revokedPlugins[item.ID] = true
+		changed = true
+		if g.host != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			outcome, _ := g.host.RetirePlugin(ctx, item.ID, &pluginhost.UserQuestionError{Code: "plugin_disabled", Message: "plugin was removed or disabled"})
+			cancel()
+			if outcome.Err != nil {
+				providers.DebugLogf("retire disabled plugin %q: %v", item.ID, outcome.Err)
+			}
+		}
+		if g.mcp != nil {
+			for localName := range item.MCPServers {
+				name := PluginMCPServerName(item.ID, localName)
+				if err := g.mcp.Revoke(name); err != nil {
+					providers.DebugLogf("revoke disabled plugin MCP server %q: %v", name, err)
+				}
+			}
+		}
+		if g.compactions != nil {
+			g.compactions.RemoveByPlugin(item.ID)
+		}
+		if g.requestTransforms != nil {
+			g.requestTransforms.RemoveByPlugin(item.ID)
+		}
+	}
+	if changed && g.hooks != nil {
+		// Dispatcher replacement fences later hooks. A legacy hook that already
+		// started remains owned by its caller's execution context.
+		g.hooks.Replace(buildHookDispatcher(g.settings, remaining, client, model, nil))
+	}
 }
 
 func (g *PluginGeneration) retain() {
@@ -380,9 +470,12 @@ func (s *Session) releasePluginGeneration(generation *PluginGeneration) {
 	if s == nil || generation == nil {
 		return
 	}
-	s.pluginGenerationMu.Lock()
-	defer s.pluginGenerationMu.Unlock()
-	s.releasePluginGenerationLocked(generation)
+	if generation.Release() {
+		s.pluginGenerationMu.Lock()
+		delete(s.retiredPluginGenerations, generation)
+		s.pluginGenerationMu.Unlock()
+		s.persistRevocationReport(generation)
+	}
 }
 
 func (s *Session) releasePluginGenerationLocked(generation *PluginGeneration) {
@@ -391,6 +484,7 @@ func (s *Session) releasePluginGenerationLocked(generation *PluginGeneration) {
 	}
 	closed := generation.Release()
 	if closed {
+		delete(s.retiredPluginGenerations, generation)
 		s.persistRevocationReport(generation)
 	}
 }
