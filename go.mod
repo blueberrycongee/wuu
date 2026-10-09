@@ -3,8 +3,8 @@ module github.com/blueberrycongee/wuu
 go 1.26.5
 
 require (
-	github.com/Masterminds/semver/v3 v3.4.0
 	charm.land/catwalk v0.35.3
+	github.com/Masterminds/semver/v3 v3.4.0
 	github.com/coder/websocket v1.8.15
 	github.com/creack/pty v1.1.24
 	github.com/fsnotify/fsnotify v1.10.1
