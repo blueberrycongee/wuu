@@ -247,6 +247,7 @@ type Server struct {
 	deleteSessionForTest                func(string) (session.Session, error)
 	afterWorkerShutdownStopWavesForTest func()
 	beforeQueuedTurnBackgroundForTest   func()
+	beforeQueuedTurnThreadLookupForTest func()
 
 	codexModelsMu   sync.Mutex
 	codexModelCache map[string]map[string]config.ProviderModelConfig
@@ -786,7 +787,10 @@ func (s *Server) Close() {
 			queuedOnClose[threadID] = append([]queuedTurn(nil), entries...)
 		}
 		clear(s.pendingQueuedTurns)
-		clear(s.claimedQueuedTurns)
+		// Claimed inputs belong to their drain until settlement. Preserve its
+		// commit/cancellation evidence across shutdown so an explicit dequeue
+		// cannot become a replayable shutdown discard while its receipt is
+		// still being persisted. The owning drain removes the claim.
 		clear(s.cancelledPendingSubmissions)
 		clear(s.drainingQueuedTurns)
 		s.queuedTurnMu.Unlock()
