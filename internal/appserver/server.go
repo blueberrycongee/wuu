@@ -17,6 +17,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/activity"
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/agentcontrol"
+	"github.com/blueberrycongee/wuu/internal/claudeengine"
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/credentialstore"
 	"github.com/blueberrycongee/wuu/internal/execution"
@@ -64,6 +65,7 @@ type threadState struct {
 	ModelProvider  string
 	Model          string
 	ModelVariant   string
+	ModelOptions   map[string]string
 	ModelEffort    string
 	Speed          string
 	PermissionMode string
@@ -252,9 +254,9 @@ type Server struct {
 	codexModelsMu   sync.Mutex
 	codexModelCache map[string]map[string]config.ProviderModelConfig
 
-	engineModelCatalogMu         sync.Mutex
-	codexEngineModelCatalogCache *codexEngineModelCatalogCacheEntry
-	acpEngineModelCatalogCache   map[string]*codexEngineModelCatalogCacheEntry
+	claudeEngineModelCatalog claudeengine.ModelCatalog
+	engineModelCatalogMu     sync.Mutex
+	engineModelCatalogCache  map[string]*engineModelCatalogCacheEntry
 
 	xaiLoginMu sync.Mutex
 	xaiLogins  *xaisub.LoginHub

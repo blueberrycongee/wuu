@@ -1087,6 +1087,7 @@ export type EngineInfo = {
   binary_ok: boolean;
   error?: string;
   models?: EngineModelInfo[];
+  models_status?: "ready" | "empty" | "unsupported" | "error" | "partial" | "stale";
   models_error?: string;
   permission_modes?: EnginePermissionModeInfo[];
   latest_request?: EngineLatestRequest;
@@ -1150,6 +1151,9 @@ export type EnginePermissionModeInfo = {
 
 /** One model exposed by an external agent engine. */
 export type EngineModelInfo = {
+  options?: Array<{ id: string; label: string; type: "select" | "boolean"; default_value: string; choices: Array<{ value: string; label: string }> }>;
+  /** CLI-reported target; id remains the value passed back to the engine. */
+  resolved_model?: string;
   fast_mode?: boolean;
   default_speed?: string;
   id: string;
@@ -1734,6 +1738,7 @@ export type SessionOrganization = {
 };
 
 export type Thread = {
+  model_options?: Record<string, string>;
   speed?: string;
   session_control?: { manager_id: string; manager_name: string; state: "active" | "paused" | "taken_over"; revision: number };
   id: string;
@@ -1785,6 +1790,7 @@ export type Thread = {
 };
 
 export type ThreadStartParams = {
+  model_options?: Record<string, string>;
   speed?: string;
   ephemeral?: boolean;
   cwd?: string;
@@ -2824,7 +2830,8 @@ export type WuuDesktopApi = {
     permissionMode?: string,
     threadId?: string,
     speed?: string,
-    targetContext?: RuntimeContext
+    targetContext?: RuntimeContext,
+    engineSelection?: { reset_model?: boolean; model_options?: Record<string, string> }
   ) => Promise<ConfigModelUpdateResult>;
   removeProvider: (
     provider: string,
@@ -2836,7 +2843,7 @@ export type WuuDesktopApi = {
   updateGeneralSettings: (
     settings: RuntimeGeneralSettingsUpdate
   ) => Promise<ConfigGeneralUpdateResult>;
-  listEngines: (options?: { include_quota?: boolean }) => Promise<EngineListResult>;
+  listEngines: (options?: { include_quota?: boolean; refresh_models?: boolean; cwd?: string }, context?: RuntimeContext) => Promise<EngineListResult>;
   updateEngines: (params: EngineUpdateParams) => Promise<EngineListResult>;
   listEngineAuthMethods: (engineID: string) => Promise<EngineAuthResult>;
   authenticateEngine: (engineID: string, methodID: string) => Promise<EngineAuthResult>;

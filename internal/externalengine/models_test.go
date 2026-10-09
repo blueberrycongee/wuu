@@ -39,7 +39,7 @@ func TestModelsFromACPSessionUsesGrokFirstClassCatalog(t *testing.T) {
 	}
 }
 
-func TestModelsFromACPSessionPrefersConfigOptionsAndDropsDefaultAlias(t *testing.T) {
+func TestModelsFromACPSessionPrefersConfigOptionsAndPreservesDefaultAlias(t *testing.T) {
 	session := parseACPSession(t, `{
 		"models": {
 			"currentModelId": "legacy-low",
@@ -70,11 +70,11 @@ func TestModelsFromACPSessionPrefersConfigOptionsAndDropsDefaultAlias(t *testing
 		]
 	}`)
 	models := modelsFromACPSession(session)
-	if len(models) != 2 || models[0].ID != "grok-4.6" || models[1].ID != "grok-4.5" {
+	if len(models) != 3 || models[0].ID != "default" || models[1].ID != "grok-4.6" || models[2].ID != "grok-4.5" {
 		t.Fatalf("models = %+v", models)
 	}
-	if !models[0].IsDefault || models[0].DefaultEffort != "medium" {
-		t.Fatalf("default = %+v", models[0])
+	if !models[1].IsDefault || models[1].DefaultEffort != "medium" {
+		t.Fatalf("default = %+v", models[1])
 	}
 }
 

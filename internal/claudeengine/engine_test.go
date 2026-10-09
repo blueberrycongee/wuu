@@ -129,8 +129,8 @@ func TestEngineEndToEndFakeClaude(t *testing.T) {
 		t.Fatal(err)
 	}
 	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
-	if len(lines) != 3 {
-		t.Fatalf("native launches = %d, want 3", len(lines))
+	if len(lines) != 4 {
+		t.Fatalf("native launches = %d, want 4 (including default settings query)", len(lines))
 	}
 	for i, line := range lines {
 		var args []string
@@ -142,6 +142,15 @@ func TestEngineEndToEndFakeClaude(t *testing.T) {
 			flags[args[index]] = args[index+1]
 		}
 		if i == 2 {
+			if !strings.Contains(line, "--no-session-persistence") {
+				t.Fatal("settings query must not persist a session")
+			}
+			continue
+		}
+		if i == 3 {
+			if flags["--model"] != "claude-sonnet-4" {
+				t.Fatal("resume did not restore configured model")
+			}
 			if _, ok := flags["--settings"]; ok {
 				t.Fatal("inherited speed sent an override")
 			}

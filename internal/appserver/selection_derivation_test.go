@@ -4,9 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
+	"time"
 
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/agentcontrol"
@@ -371,4 +374,127 @@ func (stubProtocolEngine) Open(context.Context, agentengine.OpenRequest) (agente
 }
 func (stubProtocolEngine) Resume(context.Context, agentengine.ResumeRequest) (agentengine.Session, error) {
 	return nil, errors.New("unused")
+}
+
+func TestServerInitializePreservesExternalNativeDefault(t *testing.T) {
+	for _, reset := range []bool{false, true} {
+		t.Run(fmt.Sprintf("reset=%v", reset), func(t *testing.T) {
+			rt := newTestRuntime(t, &fakeClient{})
+			writeSelectionTestConfig(t, rt.ConfigPath)
+			registry := agentengine.NewRegistry()
+			if err := registry.Register(stubProtocolEngine{id: "cursor"}); err != nil {
+				t.Fatal(err)
+			}
+			rt.SetEnginesForTest(registry)
+			out := &lockedBuffer{}
+			srv := New(rt, out)
+			t.Cleanup(srv.Close)
+			params := ThreadStartParams{Engine: "cursor"}
+			if reset {
+				params.Model, params.Effort, params.Speed = "native-model", "high", "fast"
+				params.ModelOptions = map[string]string{"context_mode": "long"}
+			}
+			raw, _ := json.Marshal(map[string]any{"id": "start", "method": MethodThreadStart, "params": params})
+			if err := srv.handleLine(context.Background(), raw); err != nil {
+				t.Fatal(err)
+			}
+			response := responseByID(t, parseOutput(t, out.String()), "start")
+			if response["error"] != nil {
+				t.Fatalf("thread/start: %+v", response)
+			}
+			id := remarshal[ThreadStartResult](t, response["result"]).Thread.ID
+			if reset {
+				raw, _ = json.Marshal(map[string]any{"id": "reset", "method": "config/model/update", "params": ConfigModelUpdateParams{ThreadID: id, ResetModel: true}})
+				if err := srv.handleLine(context.Background(), raw); err != nil {
+					t.Fatal(err)
+				}
+				if response := responseByID(t, parseOutput(t, out.String()), "reset"); response["error"] != nil {
+					t.Fatalf("reset: %+v", response)
+				}
+			}
+
+			// A new connection initializes before it resumes persisted threads.
+			reopenedOut := &lockedBuffer{}
+			reopened := New(rt, reopenedOut)
+			t.Cleanup(reopened.Close)
+			if err := reopened.handleLine(context.Background(), []byte(`{"id":"initialize","method":"initialize","params":{}}`)); err != nil {
+				t.Fatal(err)
+			}
+			if response := responseByID(t, parseOutput(t, reopenedOut.String()), "initialize"); response["error"] != nil {
+				t.Fatalf("initialize: %+v", response)
+			}
+			if err := reopened.handleLine(context.Background(), []byte(`{"id":"list","method":"thread/list","params":{}}`)); err != nil {
+				t.Fatal(err)
+			}
+			listed := remarshal[ThreadListResult](t, responseByID(t, parseOutput(t, reopenedOut.String()), "list")["result"])
+			if len(listed.Threads) != 1 || listed.Threads[0].ModelProvider != "cursor" || listed.Threads[0].Model != "" {
+				t.Fatalf("thread/list replaced native defaults: %+v", listed)
+			}
+			raw, _ = json.Marshal(map[string]any{"id": "resume", "method": "thread/resume", "params": map[string]string{"session_id": id}})
+			if err := reopened.handleLine(context.Background(), raw); err != nil {
+				t.Fatal(err)
+			}
+			response = responseByID(t, parseOutput(t, reopenedOut.String()), "resume")
+			if response["error"] != nil {
+				t.Fatalf("thread/resume: %+v", response)
+			}
+			thread := remarshal[ThreadResumeResult](t, response["result"]).Thread
+			if thread.EngineID != "cursor" || thread.ModelProvider != "cursor" || thread.Model != "" || thread.ModelEffort != "" || thread.Speed != "" || len(thread.ModelOptions) != 0 {
+				t.Fatalf("initialize/resume replaced native defaults: %+v", thread)
+			}
+			persisted, ok, err := session.Find(rt.SessionDir, id)
+			if err != nil || !ok || persisted.Provider != "cursor" || persisted.Model != "" || len(persisted.ModelOptions) != 0 {
+				t.Fatalf("native defaults changed on disk: %+v, found=%v err=%v", persisted, ok, err)
+			}
+		})
+	}
+}
+
+func TestServerThreadForkPreservesExternalNativeSelection(t *testing.T) {
+	for _, model := range []string{"", "native-model"} {
+		t.Run("model="+model, func(t *testing.T) {
+			rt := newTestRuntime(t, &fakeClient{})
+			out := &lockedBuffer{}
+			srv := New(rt, out)
+			t.Cleanup(srv.Close)
+			const sourceID = "external-fork-source"
+			if _, err := session.CreateWithMetadata(rt.SessionDir, sourceID, rt.RootDir); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := session.SetEngine(rt.SessionDir, sourceID, "cursor"); err != nil {
+				t.Fatal(err)
+			}
+			options := map[string]string{"context_mode": "long"}
+			if _, err := session.SetRuntimeSelection(rt.SessionDir, sourceID, session.RuntimeSelection{Provider: "cursor", Model: model, ModelOptions: options, PermissionMode: config.PermissionModeUnconfined}); err != nil {
+				t.Fatal(err)
+			}
+			if err := rewriteChatHistory(rt.SessionDir, sourceID, []providers.ChatMessage{
+				{Role: "user", Content: "question"},
+				{Role: "assistant", Content: "answer", Phase: providers.MessagePhaseFinalAnswer},
+			}); err != nil {
+				t.Fatal(err)
+			}
+			source, err := srv.loadForkSourceThread(sourceID, time.Now())
+			if err != nil {
+				t.Fatal(err)
+			}
+			turn, item := finalAnswerItemForForkTest(t, source.thread.Turns, "answer")
+			raw, _ := json.Marshal(map[string]any{"id": "fork", "method": MethodThreadFork, "params": ThreadForkParams{ThreadID: sourceID, TurnID: turn.ID, ItemID: item.ID}})
+			if err := srv.handleLine(context.Background(), raw); err != nil {
+				t.Fatal(err)
+			}
+			response := responseByID(t, parseOutput(t, out.String()), "fork")
+			if response["error"] != nil {
+				t.Fatalf("fork native selection: %+v", response)
+			}
+			fork := remarshal[ThreadForkResult](t, response["result"]).Thread
+			if fork.EngineID != "cursor" || fork.ModelProvider != "cursor" || fork.Model != model || !reflect.DeepEqual(fork.ModelOptions, options) {
+				t.Fatalf("fork lost native selection: %+v", fork)
+			}
+			persisted, ok, err := session.Find(rt.SessionDir, fork.ID)
+			if err != nil || !ok || persisted.EngineID != "cursor" || persisted.Model != model || !reflect.DeepEqual(persisted.ModelOptions, options) {
+				t.Fatalf("fork selection did not persist: %+v, found=%v err=%v", persisted, ok, err)
+			}
+		})
+	}
 }

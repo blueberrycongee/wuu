@@ -199,10 +199,12 @@ export function Composer({
   engineModel,
   engineEffort,
   engineSpeed,
+  engineModelOptions,
   onSelectSpeed,
   onSelectEngine,
   onSelectEngineModel,
   onSelectEngineEffort,
+  onSelectEngineModelOptions,
   onSelectPermissionMode,
   onOpenSettings,
   onOpenSkillsCatalog,
@@ -308,10 +310,12 @@ export function Composer({
   engineModel?: string;
   engineEffort?: string;
   engineSpeed?: string;
+  engineModelOptions?: Record<string, string>;
   onSelectSpeed?: (speed: string) => void | Promise<boolean>;
   onSelectEngine?: (id: string) => void;
-  onSelectEngineModel?: (model: string, effort: string) => void;
-  onSelectEngineEffort?: (effort: string) => void;
+  onSelectEngineModel?: (model: string, effort: string) => void | Promise<boolean>;
+  onSelectEngineEffort?: (effort: string) => void | Promise<boolean>;
+  onSelectEngineModelOptions?: (options: Record<string, string>) => void | Promise<boolean>;
   onSelectPermissionMode: (mode: PermissionMode, approveForMe?: boolean) => void;
   onToggleBranchMenu: () => void;
   onOpenSettings: () => void;
@@ -1445,10 +1449,12 @@ export function Composer({
                         engineModel={engineModel}
                         engineEffort={engineEffort}
                         engineSpeed={engineSpeed}
+                        engineModelOptions={engineModelOptions}
                         onSelectSpeed={onSelectSpeed}
                         onSelectEngine={onSelectEngine}
                         onSelectEngineModel={onSelectEngineModel}
                         onSelectEngineEffort={onSelectEngineEffort}
+                        onSelectEngineModelOptions={onSelectEngineModelOptions}
                         onToggleMenu={onToggleCodexRuntimeMenu}
                         onSelectModel={onSelectRuntimeModel}
                         onSelectEffort={onSelectRuntimeEffort}

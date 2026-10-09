@@ -28,6 +28,7 @@ const (
 type hostSessionCreateParams struct {
 	SharedWorkspaceSessionID string
 	Speed                    string
+	ModelOptions             map[string]string
 	RequestID                string
 	Name                     string
 	Visibility               string
@@ -109,6 +110,7 @@ func (s *Server) createHostSessionThread(owner, source, id string, params hostSe
 		selection.Variant = params.Variant
 		selection.Effort = params.Effort
 		selection.Speed = params.Speed
+		selection.ModelOptions = params.ModelOptions
 		if params.PermissionMode != "" {
 			selection.PermissionMode = params.PermissionMode
 		}
@@ -126,9 +128,13 @@ func (s *Server) createHostSessionThread(owner, source, id string, params hostSe
 		selection.Variant = resolved.Runtime.Variant
 		selection.Effort = resolved.Runtime.Effort
 		selection.Speed = params.Speed
+		selection.ModelOptions = params.ModelOptions
 	}
 	if params.Speed != "" {
 		selection.Speed = params.Speed
+	}
+	if params.ModelOptions != nil {
+		selection.ModelOptions = params.ModelOptions
 	}
 	workspaceID := strings.TrimSpace(s.rt.WorkspaceID)
 	if params.WorkspaceID != "" || params.WorkspaceRoot != "" {
@@ -195,7 +201,7 @@ func (s *Server) createHostSessionThread(owner, source, id string, params hostSe
 		ForkedFromID: fork.ForkedFromID,
 		WorktreePath: worktree.Path, WorktreeBaseHEAD: worktree.BaseHEAD, WorktreeBaseRepo: worktree.BaseRepo,
 		Provider: selection.Provider, Model: selection.Model, Variant: selection.Variant,
-		Effort: selection.Effort, Speed: selection.Speed, PermissionMode: selection.PermissionMode, ApproveForMe: selection.ApproveForMe,
+		Effort: selection.Effort, Speed: selection.Speed, ModelOptions: selection.ModelOptions, PermissionMode: selection.PermissionMode, ApproveForMe: selection.ApproveForMe,
 		ProjectRole: params.ProjectRole, Instructions: params.Instructions, ToolPolicyJSON: toolPolicyJSON,
 	}
 	var records []session.HistoryRecord
@@ -220,7 +226,7 @@ func (s *Server) createHostSessionThread(owner, source, id string, params hostSe
 			RequestID: params.RequestID, Revision: 1, Kind: session.SessionLaunchKindHandoff,
 			SourceSession: seed.Source.SessionID, SourceCutoff: seed.Source.ThroughSeq,
 			Owner: owner, Producer: seed.Provenance.Producer,
-			Runtime: session.SessionRuntimeSelection{Provider: selection.Provider, Model: selection.Model, Variant: selection.Variant, Effort: selection.Effort, Speed: selection.Speed, PermissionMode: selection.PermissionMode},
+			Runtime: session.SessionRuntimeSelection{Provider: selection.Provider, Model: selection.Model, Variant: selection.Variant, Effort: selection.Effort, Speed: selection.Speed, ModelOptions: selection.ModelOptions, PermissionMode: selection.PermissionMode},
 		}
 		if params.Launch != nil {
 			if params.Launch.Revision > 0 {

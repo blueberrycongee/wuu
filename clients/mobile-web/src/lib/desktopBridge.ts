@@ -807,7 +807,7 @@ export class RemoteDesktopBridge {
         pending?.resolve({ error: { code: "rejected", message } });
       },
 
-      listEngines: () => this.call("engine/list"),
+      listEngines: (options, context) => this.call("engine/list", options, context?.cwd),
       refreshModelCatalog: () => this.call("config/model-catalog/refresh"),
       listCatalogProviders: (provider?: string) =>
         this.call("config/model-catalog/providers", provider ? { provider } : {}),
@@ -862,8 +862,9 @@ export class RemoteDesktopBridge {
       takeoverActivity: (thread_id, activity_id) => this.call("activity/takeover", { thread_id, activity_id }),
       releaseActivity: (thread_id, activity_id) => this.call("activity/release", { thread_id, activity_id }),
       stopActivity: (thread_id, activity_id) => this.call("activity/stop", { thread_id, activity_id }),
-      updateRuntimeSettings: (provider, model, effort, connection, variant, permissionMode, threadId, speed, targetContext) =>
+      updateRuntimeSettings: (provider, model, effort, connection, variant, permissionMode, threadId, speed, targetContext, engineSelection) =>
         this.call("config/model/update", {
+          ...engineSelection,
           ...(provider ? { provider } : {}),
           ...(model ? { model } : {}),
           ...(threadId ? { thread_id: threadId } : {}),

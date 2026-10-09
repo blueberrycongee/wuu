@@ -2867,11 +2867,12 @@ html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visibl
   display: block;
   width: min(var(--runtime-panel-width), calc(100vw - 16px));
   height: var(--runtime-summary);
-  max-height: min(
+  --runtime-max-height: min(
     var(--floating-menu-available-height, 999px),
     max(320px, calc(var(--runtime-row) * 8.5)),
     calc(100vh - 180px)
   );
+  max-height: var(--runtime-max-height);
   overflow: hidden;
   padding: 0;
   border-color: var(--hairline-soft);
@@ -2909,6 +2910,43 @@ html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visibl
   flex-direction: column;
   overflow: hidden;
   will-change: opacity, translate;
+}
+
+/* Discovery notices and empty states have text height, not model-row height. */
+.codex-model-menu.runtime-panel.is-models:has(.composer-menu-note, .composer-menu-empty) {
+  height: auto;
+}
+
+.codex-model-menu.runtime-panel.is-models:has(.composer-menu-note, .composer-menu-empty) > .runtime-panel-page {
+  position: relative;
+  max-height: calc(var(--runtime-max-height) - 2px);
+}
+
+.codex-model-menu.engine-runtime-panel.is-summary {
+  height: auto;
+}
+
+.engine-runtime-panel.is-summary > .runtime-panel-page {
+  position: relative;
+  max-height: calc(var(--runtime-max-height) - 2px);
+  overflow-y: auto;
+}
+
+.runtime-model-options {
+  display: grid;
+  gap: var(--space-2);
+  padding: 0 var(--space-2) var(--space-2);
+}
+
+.runtime-model-option {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.runtime-model-option > span {
+  overflow-wrap: anywhere;
 }
 
 .runtime-panel-page.is-forward {

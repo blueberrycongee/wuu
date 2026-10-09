@@ -71,6 +71,7 @@ export type RuntimeSettingsActions = {
   ) => Promise<boolean>;
   selectRuntimeEffort: (nextVariant: string) => Promise<boolean>;
   selectRuntimeSpeed: (speed: string) => Promise<boolean>;
+  selectEngineRuntime: (update: { model?: string; effort?: string; model_options?: Record<string, string>; reset_model?: boolean }) => Promise<boolean>;
   selectPermissionMode: (mode: PermissionMode, approveForMe?: boolean) => Promise<void>;
   setApproveForMe: (enabled: boolean) => Promise<void>;
   interrupt: () => Promise<void>;
@@ -78,6 +79,8 @@ export type RuntimeSettingsActions = {
 };
 
 type RuntimeSelectionUpdate = {
+  model_options?: Record<string, string>;
+  reset_model?: boolean;
   speed?: string;
   provider?: string;
   model?: string;
@@ -242,7 +245,7 @@ export function createRuntimeSettingsActions(
       !variantChanged &&
       !connectionChanged &&
       !permissionModeChanged &&
-      !approveForMeChanged && update.speed === undefined
+      !approveForMeChanged && update.speed === undefined && update.model_options === undefined && !update.reset_model
     ) {
       return;
     }
@@ -271,7 +274,9 @@ export function createRuntimeSettingsActions(
         targetThread?.id,
         update.speed,
       ];
-      if (targetContext) requestArgs.push(targetContext);
+      if (update.model_options !== undefined || update.reset_model) {
+        requestArgs.push(targetContext, { model_options: update.model_options, reset_model: update.reset_model });
+      } else if (targetContext) requestArgs.push(targetContext);
       const updated = await window.wuu.updateRuntimeSettings(...requestArgs);
       // Saving another service leaves the default, and the draft memory that
       // mirrors it, where they were.
@@ -317,6 +322,8 @@ export function createRuntimeSettingsActions(
         // Only the requested values may be used for a local thread patch;
         // thread/updated carries the server's resolved selection.
         const threadPatch: Partial<Thread> = {
+          ...(update.reset_model ? { model: "", model_effort: "", model_variant: "", speed: "", model_options: {} } : {}),
+          ...(update.model_options === undefined ? {} : { model_options: update.model_options }),
           ...(update.speed === undefined ? {} : { speed: update.speed }),
           ...(nextProvider === undefined
             ? {}
@@ -603,6 +610,16 @@ export function createRuntimeSettingsActions(
     // Keep the panel open — see selectRuntimeModel.
   }
 
+  async function selectEngineRuntime(update: Parameters<RuntimeSettingsActions["selectEngineRuntime"]>[0]): Promise<boolean> {
+    const state = deps.getAppState();
+    const thread = activeThreadForState(state);
+    if (!thread || !thread.engine_id || thread.engine_id === "wuu" || deps.getViewContextSwitchPending()) return false;
+    try {
+      await sendRuntimeSelection(update);
+      return true;
+    } catch { return false; }
+  }
+
   async function selectRuntimeSpeed(speed: string): Promise<boolean> {
     if (!deps.getAppState().initialized || deps.getViewContextSwitchPending()) return false;
     try {
@@ -686,6 +703,7 @@ export function createRuntimeSettingsActions(
     selectRuntimeModel,
     selectRuntimeEffort,
     selectRuntimeSpeed,
+    selectEngineRuntime,
     selectPermissionMode,
     setApproveForMe,
     interrupt,

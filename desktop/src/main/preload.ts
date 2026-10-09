@@ -234,6 +234,7 @@ const api: WuuDesktopApi = {
     threadId?: string,
     speed?: string,
     targetContext?: RuntimeContext,
+    engineSelection?: Parameters<WuuDesktopApi["updateRuntimeSettings"]>[9],
   ) =>
     ipcRenderer.invoke(
       "wuu:config-model-update",
@@ -246,6 +247,7 @@ const api: WuuDesktopApi = {
       threadId,
       speed,
       targetContext,
+      engineSelection,
     ),
   removeProvider: (
     provider: string,
@@ -255,7 +257,7 @@ const api: WuuDesktopApi = {
     ipcRenderer.invoke("wuu:config-advanced-update", settings),
   updateGeneralSettings: (settings) =>
     ipcRenderer.invoke("wuu:config-general-update", settings),
-  listEngines: (options) => ipcRenderer.invoke("wuu:engines-list", options),
+  listEngines: (options, context) => ipcRenderer.invoke("wuu:engines-list", options, context),
   updateEngines: (params) => ipcRenderer.invoke("wuu:engines-update", params),
   listEngineAuthMethods: (engineID) => ipcRenderer.invoke("wuu:engine-auth-methods", engineID),
   authenticateEngine: (engineID, methodID) => ipcRenderer.invoke("wuu:engine-authenticate", { engine_id: engineID, method_id: methodID }),

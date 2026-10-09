@@ -4,6 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   DesktopProject,
+  EngineListResult,
   InitializeResult,
   RuntimeContext,
   ServerEvent,
@@ -41,6 +42,7 @@ vi.mock("./ComposerView", async (importOriginal) => {
           }
         >
           <button aria-label="stop-probe" onClick={props.onInterrupt}>stop</button>
+          <button aria-label="select-wuu-engine-probe" onClick={() => props.onSelectEngine?.("wuu")}>Wuu</button>
           {props.queuedMessages.map((message) => (
             <span key={message.id}>
               <button aria-label={`remove ${message.text}`} onClick={() => props.onRemoveQueuedMessage(message.id)}>remove</button>
@@ -630,6 +632,80 @@ describe("main composer focus continuity", () => {
     await waitForMainComposerFocus("dock");
   });
 
+  it("allows an explicit Wuu pick after engine discovery fails without guessing the default", async () => {
+    installWuuApi();
+    window.wuu.listEngines = vi.fn().mockRejectedValue(new Error("engine discovery unavailable"));
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<App />);
+    });
+    await flushAsync();
+    expect(mainComposer("dock").parentElement?.dataset.sendDisabled).toBe("true");
+    await enterCommand(mainComposer("dock"), "first query");
+    expect(window.wuu.startThread).not.toHaveBeenCalled();
+
+    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="select-wuu-engine-probe"]')!.click());
+    expect(mainComposer("dock").parentElement?.dataset.sendDisabled).toBe("false");
+    await enterCommand(mainComposer("dock"), "first query");
+    expect(window.wuu.startThread).toHaveBeenCalledWith(expect.objectContaining({
+      engine: "wuu", provider: "fake", model: "fake-model",
+    }), { kind: "no_project", cwd: scratchCwd });
+  });
+
+  it("keeps the new workspace sendable when an older engine settings save finishes", async () => {
+    await import("./SettingsView");
+    installWuuApi();
+    window.wuu.getBuildInfo = vi.fn().mockResolvedValue({});
+    window.wuu.listMCPServers = vi.fn().mockResolvedValue({ servers: [] });
+    const inventory: EngineListResult = {
+      engines: [
+        { id: "wuu", enabled: true, binary_ok: true },
+        { id: "codex", enabled: true, binary_ok: true },
+      ],
+      settings: { default_engine: "wuu" },
+    };
+    let finishInventory!: (result: EngineListResult) => void;
+    window.wuu.listEngines = vi.fn((options) => options?.cwd === workspaceCwd
+      ? new Promise<EngineListResult>((resolve) => { finishInventory = resolve; })
+      : Promise.resolve(inventory));
+    let finishUpdate!: (result: EngineListResult) => void;
+    window.wuu.updateEngines = vi.fn(() => new Promise<EngineListResult>((resolve) => {
+      finishUpdate = resolve;
+    }));
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<App />);
+    });
+    await flushAsync();
+
+    await act(async () => container.querySelector<HTMLButtonElement>(".sidebar-account-trigger")!.click());
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-settings-page="providers"]')!.click());
+    await vi.waitFor(async () => {
+      await flushAsync();
+      expect(container.querySelector(".settings-nav")).not.toBeNull();
+    });
+    const agentsPage = Array.from(container.querySelectorAll<HTMLButtonElement>(".settings-nav button"))
+      .find((button) => button.textContent === translateCurrent("settings.agents"));
+    await act(async () => agentsPage!.click());
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="settings-engine-codex-enabled"]')!.click());
+    expect(window.wuu.updateEngines).toHaveBeenCalledWith({ codex: { enabled: false } });
+    await act(async () => container.querySelector<HTMLButtonElement>(".settings-back-button")!.click());
+    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="在 Focus Project 中新建对话"]')!.click());
+    await flushAsync();
+    expect(finishInventory).toBeTypeOf("function");
+
+    // The old save completes while the destination's first inventory is pending.
+    await act(async () => finishUpdate(inventory));
+    await flushAsync();
+    await act(async () => finishInventory(inventory));
+    await flushAsync();
+    expect(mainComposer("dock").parentElement?.dataset.sendDisabled).toBe("false");
+    await enterCommand(mainComposer("dock"), "query in the new workspace");
+    expect(window.wuu.startThread).toHaveBeenCalledWith(expect.objectContaining({ engine: "wuu" }), {
+      kind: "project", project_id: project.id, cwd: workspaceCwd,
+    });
+  });
+
   it("does not focus the old dock when project selection fails", async () => {
     await renderApp(false, { rejectWorkspaceSelection: true });
     const button = container.querySelector<HTMLButtonElement>(
@@ -756,6 +832,7 @@ describe("main composer focus continuity", () => {
 
     await waitForMainComposerFocus("dock");
     expect(window.wuu.startThread).toHaveBeenCalledWith({
+      engine: "wuu",
       provider: "fake",
       model: "fake-model",
       effort: "high",

@@ -25,7 +25,6 @@ import type {
   BrowserDockTarget,
   Agent,
   DesktopProject,
-  EngineInfo,
   EngineListResult,
   EngineUpdateParams,
   ExtensionPackageUpdateParams,
@@ -329,7 +328,7 @@ import {
 } from "./SessionRuntimeState";
 export { SIDEBAR_DRAWER_HOVER_OPEN_DELAY_MS } from "./SidebarDrawerState";
 
-const ENGINE_INVENTORY_STALE_MS = 6 * 60 * 60 * 1000;
+const ENGINE_INVENTORY_STALE_MS = 2 * 60 * 1000;
 // Globalized-sheet phases: docked (grid child) → arming (promoted to a
 // full-window fixed sheet, teleported over its dock slot for one frame) →
 // open (slid to cover the window) → exiting (sliding back to park) →
@@ -377,18 +376,7 @@ function isNoModelConfiguredError(message: string): boolean {
   );
 }
 
-type EngineRuntimeSelection = { model: string; effort: string; speed?: string };
-
-function defaultEngineRuntimeSelection(engine?: EngineInfo): EngineRuntimeSelection {
-  const model = engine?.models?.find((item) => item.is_default) ?? engine?.models?.[0];
-  const efforts = model?.supported_efforts ?? [];
-  const effort = model?.default_effort && efforts.includes(model.default_effort)
-    ? model.default_effort
-    : efforts.includes("medium")
-      ? "medium"
-      : efforts[0] ?? "";
-  return { model: model?.id ?? "", effort };
-}
+type EngineRuntimeSelection = { model: string; effort: string; speed?: string; model_options?: Record<string, string> };
 
 // Runtime settings for a new conversation: an external engine runs with its
 // runtime selection, Wuu with the configured provider and permissions.
@@ -926,31 +914,36 @@ export function App(): JSX.Element {
   const dismissModelCatalogTip = useCallback(() => {
     setModelCatalogTip(null);
   }, []);
-  // Agent engine inventory is session-scoped and shared by the composer and
-  // settings. Settings must never throw away a usable snapshot just because
-  // its page remounted; refreshes replace the snapshot only after they finish.
-  // A six-hour freshness window avoids repeatedly starting the Codex
-  // app-server while still allowing a long-idle app to discover CLI changes.
-  const [engineInventory, setEngineInventory] = useState<EngineListResult | undefined>();
+  // Agent engine inventory is shared by the composer and settings within a
+  // runtime context. A workspace switch must not reuse another CLI environment.
+  // Settings remounts keep the snapshot until a refresh finishes.
+  // Recheck on focus after two minutes so native login/config changes become
+  // visible. Each engine owns its expensive discovery cache on the server.
+  const engineInventoryCwd = activeThreadForState(state)?.cwd || state.activeContext?.cwd;
+  const engineInventoryContext = `${state.activeContext ? runtimeContextKey(state.activeContext) : ""}\u0000${engineInventoryCwd ?? ""}`;
+  const [engineInventorySnapshot, setEngineInventory] = useState<{ context: string; result: EngineListResult }>();
+  const engineInventory = engineInventorySnapshot?.context === engineInventoryContext ? engineInventorySnapshot.result : undefined;
+  const engineInventoryContextRef = useRef(engineInventoryContext);
+  engineInventoryContextRef.current = engineInventoryContext;
   const [engineInventoryError, setEngineInventoryError] = useState("");
   const engineInventoryRef = useRef<EngineListResult | undefined>(undefined);
   const engineInventoryFetchedAtRef = useRef(0);
   const engineInventoryRefreshRef = useRef<Promise<EngineListResult | undefined> | null>(null);
   const engineInventoryRequestRef = useRef(0);
   const storeEngineInventory = useCallback((next: EngineListResult, request: number) => {
-    if (request !== engineInventoryRequestRef.current) return;
+    if (request !== engineInventoryRequestRef.current || engineInventoryContext !== engineInventoryContextRef.current) return;
     engineInventoryRef.current = next;
     engineInventoryFetchedAtRef.current = Date.now();
-    setEngineInventory(next);
+    setEngineInventory({ context: engineInventoryContext, result: next });
     setEngineInventoryError("");
-  }, []);
+  }, [engineInventoryContext]);
 
   const refreshEngineInventory = useCallback((force = false): Promise<EngineListResult | undefined> => {
     const cached = engineInventoryRef.current;
     const fresh = cached !== undefined
       && Date.now() - engineInventoryFetchedAtRef.current < ENGINE_INVENTORY_STALE_MS;
     if (!force && fresh) return Promise.resolve(cached);
-    if (engineInventoryRefreshRef.current) return engineInventoryRefreshRef.current;
+    if (!force && engineInventoryRefreshRef.current) return engineInventoryRefreshRef.current;
     // Focused renderer tests and older preload bridges can expose only a
     // partial desktop API. Preserve the previous best-effort degradation
     // rather than making engine discovery block the rest of the shell.
@@ -958,7 +951,7 @@ export function App(): JSX.Element {
 
     const request = engineInventoryRequestRef.current + 1;
     engineInventoryRequestRef.current = request;
-    const pending = window.wuu.listEngines()
+    const pending = window.wuu.listEngines({ cwd: engineInventoryCwd, ...(force ? { refresh_models: true } : {}) })
       .then((next) => {
         storeEngineInventory(next, request);
         return next;
@@ -976,19 +969,30 @@ export function App(): JSX.Element {
       });
     engineInventoryRefreshRef.current = pending;
     return pending;
-  }, [storeEngineInventory]);
+  }, [storeEngineInventory, engineInventoryCwd]);
 
   const updateEngineInventory = useCallback(async (params: EngineUpdateParams) => {
-    const request = engineInventoryRequestRef.current + 1;
-    engineInventoryRequestRef.current = request;
+    engineInventoryRequestRef.current += 1;
     const next = await window.wuu.updateEngines(params);
-    storeEngineInventory(next, request);
-    return next;
-  }, [storeEngineInventory]);
+    // A save from a workspace we left must not cancel its successor's discovery.
+    if (engineInventoryContext !== engineInventoryContextRef.current) return next;
+    // Settings responses use the project root. Refresh the session catalog
+    // before publishing model choices for a worktree.
+    engineInventoryRef.current = undefined;
+    engineInventoryFetchedAtRef.current = 0;
+    engineInventoryRefreshRef.current = null;
+    return await refreshEngineInventory(true) ?? next;
+  }, [engineInventoryContext, refreshEngineInventory]);
 
   useEffect(() => {
+    engineInventoryRequestRef.current += 1;
+    engineInventoryRefreshRef.current = null;
+    engineInventoryRef.current = undefined;
+    engineInventoryFetchedAtRef.current = 0;
+    setEngineInventory(undefined);
+    setEngineInventoryError("");
     void refreshEngineInventory();
-  }, [refreshEngineInventory]);
+  }, [engineInventoryContext, refreshEngineInventory]);
   useEffect(() => {
     const refreshAfterLongIdle = () => {
       void refreshEngineInventory();
@@ -1297,6 +1301,7 @@ export function App(): JSX.Element {
   // working in an external agent does not mean re-selecting it for every new
   // session (see DraftEngineMemory).
   const [draftEngine, setDraftEngine] = useState<string>("");
+  const engineSelectionPending = !activeThread && draftEngine !== "wuu" && !engineInventory && typeof window.wuu.listEngines === "function";
   const [draftEngineRuntime, setDraftEngineRuntime] = useState<EngineRuntimeSelection>({
     model: "",
     effort: "",
@@ -1337,11 +1342,12 @@ export function App(): JSX.Element {
     }
     draftEngineSeed.current.done = true;
     setDraftEngine(remembered.engine);
-    setDraftEngineRuntime({ model: remembered.model, effort: remembered.effort, speed: remembered.speed });
+    setDraftEngineRuntime({ model: remembered.model, effort: remembered.effort, speed: remembered.speed, model_options: remembered.model_options });
     draftEngineRuntimeByID.current[remembered.engine] = {
       model: remembered.model,
       effort: remembered.effort,
       speed: remembered.speed,
+      model_options: remembered.model_options,
     };
     setDraftPermissionMode(remembered.engine === "wuu" ? "" : "unconfined");
   }, [activeThreadID, engineInventory]);
@@ -1350,9 +1356,7 @@ export function App(): JSX.Element {
       ?? (id === "wuu"
         ? { model: "", effort: "" }
         : rememberedEngineRuntime(id, engineInventory)
-          ?? defaultEngineRuntimeSelection(
-              engineInventory?.engines.find((engine) => engine.id === id),
-            ));
+          ?? { model: "", effort: "" });
     draftEngineSeed.current.done = true;
     setDraftEngine(id);
     setDraftPermissionMode(id === "wuu" ? "" : "unconfined");
@@ -3126,21 +3130,14 @@ export function App(): JSX.Element {
     const effectiveEngine = activeProjectDraft
       ? "wuu"
       : (activeThread?.engine_id ?? "") || draftEngine || defaultEngine || "wuu";
-    const effectiveEngineInfo = engineInventory?.engines.find(
-      (engine) => engine.id === effectiveEngine,
-    );
-    const defaultEngineRuntime = defaultEngineRuntimeSelection(effectiveEngineInfo);
     const effectiveEngineRuntime = activeThread && effectiveEngine !== "wuu"
       ? {
           model: activeThread.model,
           effort: activeThread.model_effort ?? activeThread.model_variant ?? "",
           speed: activeThread.speed ?? "",
+          model_options: activeThread.model_options,
         }
-      : {
-          model: draftEngineRuntime.model || defaultEngineRuntime.model,
-          effort: draftEngineRuntime.effort || defaultEngineRuntime.effort,
-          speed: draftEngineRuntime.speed ?? "",
-        };
+      : draftEngineRuntime;
     const projectComposer = activeProjectDraft || (activeThread !== undefined && isProjectCoordinator(activeThread));
     const composerPermissionMode = activeProjectDraft
       ? "read_only"
@@ -3196,7 +3193,7 @@ export function App(): JSX.Element {
           ? pendingComposerMessagesForActiveThread(activePendingThreadCreation.sessionTabID).queued
           : queuedMessages}
         guideMessages={guideMessages}
-        sendDisabled={submissionTargetPending || Boolean(activeThread && stopRequests[activeThread.id])}
+        sendDisabled={submissionTargetPending || engineSelectionPending || Boolean(activeThread && stopRequests[activeThread.id])}
         submitting={submittingThreadIDs.has(activeThread?.id ?? state.activeSessionTabID)}
         stopState={activeThread ? stopRequests[activeThread.id] : undefined}
         running={
@@ -3229,6 +3226,7 @@ export function App(): JSX.Element {
         engineModel={effectiveEngineRuntime.model}
         engineEffort={effectiveEngineRuntime.effort}
         engineSpeed={effectiveEngineRuntime.speed}
+        engineModelOptions={effectiveEngineRuntime.model_options}
         onSelectSpeed={async (speed) => {
           if (effectiveEngine === "wuu" || activeThread) return selectRuntimeSpeed(speed);
           const runtime = { ...effectiveEngineRuntime, speed };
@@ -3238,17 +3236,16 @@ export function App(): JSX.Element {
           return true;
         }}
         onSelectEngine={selectDraftEngine}
-        onSelectEngineModel={(model, effort) => {
+        onSelectEngineModel={async (model, effort) => {
+          if (activeThread) return selectEngineRuntime({ reset_model: true, model, effort });
           const runtime = { model, effort };
           setDraftEngineRuntime(runtime);
           draftEngineRuntimeByID.current[effectiveEngine] = runtime;
-          // Only a new conversation writes the memory: for an existing thread
-          // the engine is already bound and the picker is locked.
-          if (!activeThread) {
-            writeDraftEngineMemory({ engine: effectiveEngine, model, effort });
-          }
+          writeDraftEngineMemory({ engine: effectiveEngine, ...runtime });
+          return true;
         }}
-        onSelectEngineEffort={(effort) => {
+        onSelectEngineEffort={async (effort) => {
+          if (activeThread) return selectEngineRuntime({ effort });
           setDraftEngineRuntime((current) => {
             const runtime = { ...current, effort };
             draftEngineRuntimeByID.current[effectiveEngine] = runtime;
@@ -3259,9 +3256,19 @@ export function App(): JSX.Element {
               engine: effectiveEngine,
               model: effectiveEngineRuntime.model,
               speed: effectiveEngineRuntime.speed,
+              model_options: effectiveEngineRuntime.model_options,
               effort,
             });
           }
+          return true;
+        }}
+        onSelectEngineModelOptions={async (model_options) => {
+          if (activeThread) return selectEngineRuntime({ model_options });
+          const runtime = { ...draftEngineRuntime, model_options };
+          setDraftEngineRuntime(runtime);
+          draftEngineRuntimeByID.current[effectiveEngine] = runtime;
+          writeDraftEngineMemory({ engine: effectiveEngine, ...runtime });
+          return true;
         }}
         gitStatus={state.gitStatus}
         branchPickerDisabled={viewContextSwitchPending}
@@ -4079,6 +4086,7 @@ export function App(): JSX.Element {
     selectRuntimeModel,
     selectRuntimeEffort,
     selectRuntimeSpeed,
+    selectEngineRuntime,
     selectPermissionMode,
     interrupt,
     interruptPane,
@@ -4213,6 +4221,7 @@ export function App(): JSX.Element {
     ) {
       return false;
     }
+    if (!targetThread && engineSelectionPending) return false;
     if (!targetThread && (draftEngine || engineInventory?.settings?.default_engine || "wuu") === "wuu"
       && !hasReadyProvider(currentState.initialized.providers)) {
       showNoModelConfiguredToast();
@@ -4337,18 +4346,19 @@ export function App(): JSX.Element {
     const context: RuntimeContext = project
       ? { kind: "project", project_id: project.id, cwd: project.path }
       : workspace;
-    const engine = engineInventory?.settings?.default_engine || "wuu";
+    const inventory = await window.wuu.listEngines({ cwd: context.cwd }, context);
+    const engine = inventory.settings?.default_engine || "wuu";
     if (engine === "wuu" && !hasReadyProvider(current.initialized.providers)) {
       showNoModelConfiguredToast();
       return false;
     }
     const thread = requireThread(
-      await window.wuu.startThread(newThreadRuntimeParams(
+      await window.wuu.startThread({ engine, ...newThreadRuntimeParams(
         engine,
         current.initialized,
-        defaultEngineRuntimeSelection(engineInventory?.engines.find((entry) => entry.id === engine)),
+        { model: "", effort: "" },
         "unconfined",
-      ), context),
+      ) }, context),
       "thread/start did not return a thread",
     );
     const adopt = (state: AppState): AppState => ({ ...state, threads: upsertThread(state.threads, thread) });
@@ -4726,6 +4736,7 @@ export function App(): JSX.Element {
       !currentState.activeContext ||
       !currentState.initialized ||
       targetThread?.read_only ||
+      (!targetThread && engineSelectionPending) ||
       submissionTargetPending ||
       turnAdmissionsRef.current.has(targetThread?.id ?? currentState.activeSessionTabID) ||
       (targetThread && isThreadRunning(targetThread) &&
@@ -4751,14 +4762,9 @@ export function App(): JSX.Element {
       showNoModelConfiguredToast();
       return false;
     }
-    const defaultExternalRuntime = defaultEngineRuntimeSelection(
-      engineInventory?.engines.find((engine) => engine.id === newThreadEngine),
-    );
-    const newThreadEngineRuntime = {
-      model: draftEngineRuntime.model || defaultExternalRuntime.model,
-      effort: draftEngineRuntime.effort || defaultExternalRuntime.effort,
-      speed: draftEngineRuntime.speed,
-    };
+    // Empty external selections remain native defaults. Persisting the
+    // discovered default would turn it into an override in a new worktree.
+    const newThreadEngineRuntime = draftEngineRuntime;
     const newThreadWorktree = targetThread ? undefined : draftWorktreeFor(activeContext, currentState.gitStatus);
     let resolveAdmission!: TurnAdmission["resolve"];
     let cancelPreparation!: () => void;
@@ -4815,7 +4821,7 @@ export function App(): JSX.Element {
             effort: currentState.initialized?.variant || currentState.initialized?.effort,
             speed: currentState.initialized?.speed,
           } satisfies ThreadStartParams : {
-            ...(draftEngine ? { engine: draftEngine } : {}),
+            engine: newThreadEngine,
             ...(newThreadWorktree
               ? {
                   workspace: "worktree",

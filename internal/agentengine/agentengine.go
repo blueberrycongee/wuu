@@ -183,6 +183,8 @@ type ThreadBinding struct {
 	Effort   string
 	// Speed is empty to inherit, "standard" to disable acceleration, or "fast".
 	Speed string
+	// ModelOptions carries native option IDs and values; adapters preserve wire types.
+	ModelOptions map[string]string
 	// PermissionMode is the host's engine-neutral access selection. External
 	// engines map it to their native sandbox or permission mode.
 	PermissionMode string
