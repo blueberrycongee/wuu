@@ -2167,50 +2167,30 @@ html[data-focus-modality="keyboard"] .thread-row:has(> .thread-row-main:focus-vi
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-/* The age answers "how recent" without opening the row. Hover and keyboard
- * focus hand its place to the row actions; running and switching rows omit it
- * because their indicator already says the row is current. */
-.thread-row-age {
-  flex: 0 0 auto;
-  margin-inline-start: var(--sidebar-accessory-gap);
-  color: var(--ink-tertiary);
-  font-size: var(--sidebar-heading-size);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-
-.thread-row:is(:hover, :focus-within) .thread-row-age {
-  display: none;
-}
-
-/* Reserve the actual accessory footprint plus a reading gap at every size,
- * including the delayed switching indicator. The reservation sits on the
- * button so the title and its age both stay clear of the accessories. */
-.thread-row-main {
   transition: padding-right var(--motion-base) var(--ease-out);
 }
 
-.thread-row:has(.thread-row-fork-icon) .thread-row-main {
+/* Reserve the actual accessory footprint plus a reading gap at every size,
+ * including the delayed switching indicator. */
+.thread-row:has(.thread-row-fork-icon) .thread-row-main > .thread-row-title {
   padding-right: calc(var(--sidebar-row-action-size) + var(--sidebar-accessory-gap));
 }
 
-.thread-row:is(.running, .has-unread, .pending-switch) .thread-row-main {
+.thread-row:is(.running, .has-unread, .pending-switch) .thread-row-main > .thread-row-title {
   padding-right: calc(var(--sidebar-row-action-size) + var(--sidebar-accessory-gap));
 }
 
-.thread-row:is(.running, .has-unread, .pending-switch):has(.thread-row-fork-icon) .thread-row-main {
+.thread-row:is(.running, .has-unread, .pending-switch):has(.thread-row-fork-icon) .thread-row-main > .thread-row-title {
   padding-right: calc(var(--sidebar-row-action-size) * 2 + var(--sidebar-action-gap) + var(--sidebar-accessory-gap));
 }
 
-.thread-row:hover .thread-row-main,
-.thread-row:focus-within .thread-row-main {
+.thread-row:hover .thread-row-main > .thread-row-title,
+.thread-row:focus-within .thread-row-main > .thread-row-title {
   padding-right: calc(var(--sidebar-thread-actions-width) + var(--sidebar-accessory-gap));
 }
 
-.thread-row:hover:has(.thread-row-fork-icon) .thread-row-main,
-.thread-row:focus-within:has(.thread-row-fork-icon) .thread-row-main {
+.thread-row:hover:has(.thread-row-fork-icon) .thread-row-main > .thread-row-title,
+.thread-row:focus-within:has(.thread-row-fork-icon) .thread-row-main > .thread-row-title {
   padding-right: calc(var(--sidebar-thread-actions-width) + var(--sidebar-row-action-size) + var(--sidebar-action-gap) + var(--sidebar-accessory-gap));
 }
 
@@ -2320,7 +2300,7 @@ html[data-focus-modality="keyboard"] .thread-row:has(> .thread-row-main:focus-vi
 }
 
 @container style(--motion-reduced: 1) {
-  .thread-row-main {
+  .thread-row-main > .thread-row-title {
     transition: none;
   }
 

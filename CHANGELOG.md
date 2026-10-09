@@ -22,10 +22,6 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Add count-driven progress rings and in-place running-to-completed transitions
   to conversation TODO plans, respecting reduced-motion preferences.
 
-- Show how recently each sidebar conversation was active as a compact age beside
-  its title. Running rows keep their indicator, and hover or keyboard focus gives
-  the slot to the row actions.
-
 ### Changed
 
 - Align the right panel's tabs, file tree, review list, and tool list on the

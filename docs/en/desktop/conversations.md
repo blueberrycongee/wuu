@@ -4,7 +4,7 @@ A conversation keeps messages, tool activity, and results together. Continue the
 
 ## Start and organize conversations
 
-Select a workspace, then start a conversation. Click the title in the conversation title bar to rename it. The name is saved immediately for an existing conversation, and a new conversation keeps it when the first message creates the session. The sidebar menu still provides rename, pin, and archive. An archived conversation is hidden from the normal list and can be restored through **Settings → Archive**. Each sidebar row shows how long ago the conversation last had activity, such as `5m` or `3d`; running and switching rows show their indicator instead, and hovering a row shows its pin and archive buttons in that place.
+Select a workspace, then start a conversation. Click the title in the conversation title bar to rename it. The name is saved immediately for an existing conversation, and a new conversation keeps it when the first message creates the session. The sidebar menu still provides rename, pin, and archive. An archived conversation is hidden from the normal list and can be restored through **Settings → Archive**.
 
 Delete is permanent: it removes saved history and cleans up associated artifacts and any worktree still bound to the conversation. Preserve outputs and changes you need before deleting. Wuu rejects deletion while the conversation, its side chat, or its child agents are active.
 

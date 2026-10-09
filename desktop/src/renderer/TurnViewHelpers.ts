@@ -270,37 +270,6 @@ export function formatRelativeTime(iso: string | undefined): string {
   return t(days === 1 ? "time.dayAgo" : "time.daysAgo", { count: formatCurrentNumber(days) });
 }
 
-/** The latest turn's end or start, falling back to the thread's own update time. */
-export function threadLastActivity(
-  thread: Pick<Thread, "updated_at"> & { turns: ReadonlyArray<Pick<Turn, "started_at" | "completed_at">> },
-): string | undefined {
-  const latestTurn = thread.turns.at(-1);
-  return latestTurn?.completed_at ?? latestTurn?.started_at ?? thread.updated_at;
-}
-
-/**
- * A list-row age such as "5m" or "3d". Units floor so a value never reads
- * older than it is, and coarsen with distance because a row only needs
- * enough precision to tell recent work from old work.
- */
-export function formatCompactAge(iso: string | undefined, now: number): string {
-  const then = iso ? Date.parse(iso) : NaN;
-  if (Number.isNaN(then)) {
-    return "";
-  }
-  const minutes = Math.floor(Math.max(0, now - then) / 60_000);
-  const count = (value: number) => ({ count: formatCurrentNumber(value) });
-  if (minutes < 1) return t("time.compact.now");
-  if (minutes < 60) return t("time.compact.minutes", count(minutes));
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return t("time.compact.hours", count(hours));
-  const days = Math.floor(hours / 24);
-  if (days < 7) return t("time.compact.days", count(days));
-  if (days < 30) return t("time.compact.weeks", count(Math.floor(days / 7)));
-  if (days < 365) return t("time.compact.months", count(Math.floor(days / 30)));
-  return t("time.compact.years", count(Math.floor(days / 365)));
-}
-
 const JUMP_HIGHLIGHT_CLASS = "user-message-jump-flash";
 const JUMP_HIGHLIGHT_DURATION_MS = 800;
 // Try, then retry. The first attempt usually wins, but split conversations
