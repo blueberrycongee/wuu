@@ -1,5 +1,7 @@
 package enginecatalog
 
+import "slices"
+
 // ModelOption describes an engine's advertised model-dependent selector.
 // Values are opaque strings. Boolean options use "true" and "false" here;
 // their adapter restores the native boolean wire type when executing.
@@ -22,7 +24,7 @@ func CloneModelOptions(options []ModelOption) []ModelOption {
 	}
 	out := append([]ModelOption(nil), options...)
 	for i := range out {
-		out[i].Choices = append([]ModelChoice(nil), out[i].Choices...)
+		out[i].Choices = slices.Clone(out[i].Choices)
 	}
 	return out
 }

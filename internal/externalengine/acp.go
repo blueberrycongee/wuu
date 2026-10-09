@@ -719,17 +719,17 @@ func (session *acpSession) setConfigOption(ctx context.Context, r *rpc, ref, id,
 	revision := session.configurationRevision
 	modelOption := session.modelConfigOption()
 	changingModel := modelOption != nil && modelOption.ID == id && modelOption.Current != value
-	var wireValue any = value
+	params := map[string]any{"sessionId": ref, "configId": id, "value": value}
 	for _, option := range session.ConfigOptions {
 		if option.ID == id && option.Type == "boolean" {
 			if value != "true" && value != "false" {
 				return fmt.Errorf("invalid boolean value for %q", id)
 			}
-			wireValue = value == "true"
+			params["type"], params["value"] = "boolean", value == "true"
 		}
 	}
 	var updated acpSession
-	if err := r.call(ctx, "session/set_config_option", map[string]any{"sessionId": ref, "configId": id, "value": wireValue}, &updated); err != nil {
+	if err := r.call(ctx, "session/set_config_option", params, &updated); err != nil {
 		return err
 	}
 	if updated.ConfigOptions != nil {

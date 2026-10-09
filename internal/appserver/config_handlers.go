@@ -2486,6 +2486,11 @@ func (s *Server) pinLegacyRuntimeSelections() {
 		return
 	}
 	for _, sess := range sessions {
+		// External engines own their defaults; an empty model is an intentional
+		// native selection, not a legacy Wuu session that needs backfilling.
+		if agentengine.NormalizeEngineID(sess.EngineID) != agentengine.EngineWuu {
+			continue
+		}
 		selection := runtimeSelectionFromSession(sess)
 		legacySelection := selection.PermissionMode == ""
 		changed := false

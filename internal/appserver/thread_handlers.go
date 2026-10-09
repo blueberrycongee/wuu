@@ -732,6 +732,13 @@ func (s *Server) handleThreadFork(req Request) error {
 		cleanupWorktree()
 		return s.writeResponse(req.ID, nil, err)
 	}
+	// Bind first so native-default selections may persist an empty model.
+	// A fork inherits its source's engine; threads never silently switch.
+	if _, err := session.SetEngine(s.rt.SessionDir, sess.ID, source.thread.EngineID); err != nil {
+		_, _ = session.Delete(s.rt.SessionDir, sess.ID)
+		cleanupWorktree()
+		return s.writeResponse(req.ID, nil, err)
+	}
 	updatedSession, err := session.SetRuntimeSelection(s.rt.SessionDir, sess.ID, session.RuntimeSelection{
 		Provider:       source.modelProvider,
 		Model:          source.model,
@@ -742,14 +749,6 @@ func (s *Server) handleThreadFork(req Request) error {
 		PermissionMode: source.permissionMode,
 		ApproveForMe:   source.approveForMe,
 	})
-	if err != nil {
-		_, _ = session.Delete(s.rt.SessionDir, sess.ID)
-		cleanupWorktree()
-		return s.writeResponse(req.ID, nil, err)
-	}
-	// A fork inherits its source's engine binding; threads never silently
-	// switch engines.
-	updatedSession, err = session.SetEngine(s.rt.SessionDir, sess.ID, source.thread.EngineID)
 	if err != nil {
 		_, _ = session.Delete(s.rt.SessionDir, sess.ID)
 		cleanupWorktree()
@@ -1490,10 +1489,10 @@ func applySessionMetadata(th *threadState, metadata session.Session) {
 	th.Instructions = effectiveSessionInstructions(metadata)
 	th.ProjectID = projectIDForSession(metadata)
 	th.ProjectRole = projectRoleForSession(metadata)
-	if selection := runtimeSelectionFromSession(metadata); selection.Provider != "" && selection.Model != "" {
+	th.EngineID = string(agentengine.NormalizeEngineID(metadata.EngineID))
+	if selection := runtimeSelectionFromSession(metadata); selection.Provider != "" && (selection.Model != "" || th.EngineID != string(agentengine.EngineWuu)) {
 		applyThreadRuntimeSelection(th, selection)
 	}
-	th.EngineID = string(agentengine.NormalizeEngineID(metadata.EngineID))
 	th.EngineRef = strings.TrimSpace(metadata.EngineRef)
 	th.ForkedFromID = metadata.ForkedFromID
 	th.ForkedFromTurnID = metadata.ForkedFromTurnID
@@ -1567,6 +1566,9 @@ func threadEntryFromSession(sess session.Session, provider, model string) thread
 		updatedAt = sess.CreatedAt
 	}
 	selection := runtimeSelectionFromSession(sess)
+	if agentengine.NormalizeEngineID(sess.EngineID) != agentengine.EngineWuu {
+		provider, model = string(agentengine.NormalizeEngineID(sess.EngineID)), ""
+	}
 	permissionMode := ""
 	if selection.PermissionMode != "" {
 		permissionMode = config.NormalizePermissionMode(selection.PermissionMode)

@@ -75,7 +75,7 @@ func (s acpSession) modelOptions() []enginecatalog.ModelOption {
 		if label == "" {
 			label = option.ID
 		}
-		item := enginecatalog.ModelOption{ID: option.ID, Label: label, Type: option.Type, DefaultValue: option.Current}
+		item := enginecatalog.ModelOption{ID: option.ID, Label: label, Type: option.Type, DefaultValue: option.Current, Choices: []enginecatalog.ModelChoice{}}
 		if option.Type == "boolean" {
 			item.Choices = []enginecatalog.ModelChoice{{Value: "false", Label: "Off"}, {Value: "true", Label: "On"}}
 		} else {
@@ -94,7 +94,7 @@ func (s acpSession) modelOptions() []enginecatalog.ModelOption {
 
 func modelsFromACPSession(session acpSession) []DiscoveredModel {
 	models := modelsFromConfigOptions(session.ConfigOptions)
-	if len(models) == 0 {
+	if session.modelConfigOption() == nil {
 		models = modelsFromFirstClass(session)
 	}
 	for i := range models {
@@ -209,8 +209,11 @@ func (s acpSession) advertisedModelIDs() []string {
 		seen[id] = true
 		ids = append(ids, id)
 	}
-	for _, model := range modelsFromConfigOptions(s.ConfigOptions) {
-		add(model.ID)
+	if s.modelConfigOption() != nil {
+		for _, model := range modelsFromConfigOptions(s.ConfigOptions) {
+			add(model.ID)
+		}
+		return ids
 	}
 	if s.Models != nil {
 		for _, model := range s.Models.Available {
