@@ -26,13 +26,12 @@ struct ConnectionStatusView: View {
                             .accessibilityLabel(connectingMessage)
                     }
                 } else {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(offlineMessage)
-                        if !detail.isEmpty { Text(detail).font(.footnote).lineLimit(2) }
-                    }.accessibilityElement(children: .combine)
+                    Text(offlineMessage)
                 }
                 Spacer(minLength: 0)
                 if !connecting {
+                    // The transport reason is often a long raw error; it stays one tap away.
+                    if !detail.isEmpty { DetailButton(detail: detail, label: "断开原因") }
                     Button("重连", action: reconnect)
                         .foregroundStyle(.primary).frame(minWidth: 44, minHeight: 44)
                 }

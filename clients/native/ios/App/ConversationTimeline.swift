@@ -7,36 +7,36 @@ struct ConversationTimeline: View {
     @State private var nearBottom = true
     @State private var following = true
     @State private var scrollState = TimelineScrollState()
+    @State private var historyRequest: Task<Void, Never>?
+    @State private var historyFailed = false
     var body: some View {
         GeometryReader { _ in
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 18) {
                         if model.live?.historyCursor.isEmpty == false {
-                            Button(model.loadingHistory ? "正在读取…" : "加载更早的消息") { model.perform { try await model.loadOlder() } }
-                                .disabled(!model.connected || model.loadingHistory)
+                            HStack {
+                                Spacer()
+                                if historyFailed {
+                                    Button("读取失败，轻点重试") { loadHistory() }.disabled(!model.connected)
+                                } else if model.loadingHistory {
+                                    ProgressView().accessibilityLabel("正在读取更早的消息")
+                                }
+                                Spacer()
+                            }.frame(minHeight: 24)
                         }
                         ForEach(model.conversationRows) { row in
-                            if row.isToolGroup {
-                                VStack(alignment: .leading, spacing: 8) {
+                            VStack(alignment: .leading, spacing: 8) {
+                                if row.isToolGroup {
                                     ToolGroupView(messages: row.messages, settings: model.live?.settings,
                                         active: model.live?.running == true && row.messages.last?.id == model.messages.last?.id)
                                     ForEach(row.messages.filter { !$0.attachments.isEmpty }) { message in
                                         MessageAttachments(model: model, message: message)
                                     }
+                                } else {
+                                    MessageBubble(model: model, message: row.messages[0])
                                 }
-                            } else {
-                                MessageBubble(model: model, message: row.messages[0])
-                            }
-                        }
-                        let pending = model.live?.pending ?? []
-                        if !pending.isEmpty {
-                            // Only queued cards animate; transcript rows keep their streaming layout.
-                            VStack(spacing: 18) {
-                                ForEach(pending) { message in
-                                    PendingMessageView(model: model, message: message).transition(.opacity)
-                                }
-                            }.animation(chromeAnimation(reduceMotion), value: pending.map(\.id))
+                            }.id(row.id).background { TimelineRowAnchor(id: row.id, state: scrollState) }
                         }
                         if model.live?.running == true && model.messages.last?.tool == nil {
                             ConversationActivityMark(activity: model.messages.last?.role == "assistant" ? "responding" : "thinking", settings: model.live?.settings)
@@ -44,11 +44,12 @@ struct ConversationTimeline: View {
                         }
                         Color.clear.frame(height: 1).id("bottom")
                     }.padding(16).background {
-                        TimelineScrollReader { next in
+                        TimelineScrollReader(state: scrollState) { next in
                             let update = scrollState.update(next, following: following)
                             if nearBottom != next.atBottom { nearBottom = next.atBottom }
                             if following != update.following { following = update.following }
                             if update.scrollToBottom { proxy.scrollTo("bottom", anchor: .bottom) }
+                            if next.interacting && next.offset < 160 && !historyFailed { loadHistory() }
                         }
                     }
                 }.defaultScrollAnchor(.bottom)
@@ -68,37 +69,17 @@ struct ConversationTimeline: View {
                     }
             }
         }.sheet(item: $model.attachmentPreview) { attachment in AttachmentPreview(attachment: attachment) }
+            .onDisappear { historyRequest?.cancel() }
     }
-}
-
-private struct ToolGroupView: View {
-    let messages: [ChatMessage]
-    let settings: ThreadSettings?
-    let active: Bool
-    @State private var summary: ToolSummary?
-    @State private var failed = false
-    @State private var request: Task<Void, Never>?
-    private static let engine = ToolSummaryEngine(script: {
-        guard let url = Bundle.main.url(forResource: "process", withExtension: "js", subdirectory: "NativeUI") else { return "" }
-        return (try? String(contentsOf: url, encoding: .utf8)) ?? ""
-    }())
-    var body: some View {
-        HStack(alignment: .top, spacing: 8) {
-            if active { ConversationActivityMark(activity: summary?.activity ?? "tool", settings: settings) }
-            Text(summary?.text ?? (failed ? "动作摘要暂不可用" : "…"))
-                .foregroundStyle(summary?.failed == true ? Color.red : Color.secondary)
-                .lineLimit(2).frame(maxWidth: .infinity, alignment: .leading)
-        }.accessibilityIdentifier("tool-group")
-            .onAppear { refresh() }
-            .onChange(of: messages) { _, _ in refresh() }
-            .onDisappear { request?.cancel() }
-    }
-    private func refresh() {
-        request?.cancel()
-        request = Task {
-            let next = try? await Self.engine.summarize(messages.compactMap { $0.tool?.presentation })
-            guard !Task.isCancelled else { return }
-            summary = next; failed = next == nil
+    private func loadHistory() {
+        guard historyRequest == nil, model.connected, !model.loadingHistory,
+              model.live?.historyCursor.isEmpty == false else { return }
+        historyFailed = false
+        historyRequest = Task {
+            defer { historyRequest = nil }
+            do { try await model.loadOlder(beforePrepend: scrollState.preservePosition) }
+            catch is CancellationError {}
+            catch { if !Task.isCancelled { historyFailed = true } }
         }
     }
 }

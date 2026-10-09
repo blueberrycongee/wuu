@@ -527,13 +527,14 @@ private struct PairedLocation: Codable {
         _ = try await remote.call("config/model/update", params: settings.updateParams(threadID: threadID))
         guard epoch == stamp, opening == selection, self.remote === remote else { throw CancellationError() }
     }
-    func loadOlder() async throws {
+    func loadOlder(beforePrepend: () -> Void) async throws {
         guard connected, let remote, let live, !live.historyCursor.isEmpty, !loadingHistory else { return }
         let stamp = epoch, selection = opening
         loadingHistory = true
         defer { if epoch == stamp, opening == selection { loadingHistory = false } }
         let page = try await remote.call("thread/history/read", params: ["thread_id": .string(live.id), "cursor": .string(live.historyCursor)])
         guard epoch == stamp, opening == selection, self.remote === remote else { return }
+        beforePrepend()
         self.live?.prependHistory(page)
     }
     func expand(_ message: ChatMessage) async throws {
@@ -628,13 +629,25 @@ private struct PairedLocation: Codable {
         if live?.id == id { live?.title = title }
         try await loadThreads()
     }
-    func pendingAction(_ message: PendingMessage, resume: Bool) async throws {
+    enum PendingAction { case remove, resume, steer, requeue }
+    func pendingAction(_ message: PendingMessage, action: PendingAction) async throws {
         guard connected, let remote, let live, live.id == message.value["thread_id"].string, !live.readOnly,
               live.pending.contains(where: { $0.id == message.id }) else { throw NativeError.invalid("消息状态已改变，请重新打开会话") }
-        if resume {
+        switch action {
+        case .resume:
             guard message.held, !live.running else { throw NativeError.invalid("请等待当前处理结束") }
             _ = try await remote.call("turn/steer", params: message.resumeParams)
-        } else {
+        case .steer:
+            guard !message.held, message.origin == "queue", live.running,
+                  let turnID = live.turns.last(where: { $0["status"].string == "in_progress" })?["id"].string,
+                  case .object(var params) = message.resumeParams else { throw NativeError.invalid("当前回复已结束") }
+            // The host moves this same message atomically; never remove then resend it.
+            params["expected_turn_id"] = .string(turnID)
+            _ = try await remote.call("turn/steer", params: .object(params))
+        case .requeue:
+            guard !message.held, message.origin == "steer" else { throw NativeError.invalid("消息状态已改变") }
+            _ = try await remote.call("turn/requeue", params: ["thread_id": .string(live.id), "steer_id": .string(message.id)])
+        case .remove:
             _ = try await remote.call(message.origin == "steer" ? "turn/unsteer" : "turn/dequeue", params:
                 ["thread_id": .string(live.id), message.origin == "steer" ? "steer_id" : "queue_id": .string(message.id)])
         }

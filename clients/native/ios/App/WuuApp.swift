@@ -222,6 +222,7 @@ struct ConversationView: View {
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
             if model.activeID != nil {
+                PendingMessagesView(model: model)
                 MobileComposer(text: draft, attachments: attachments, model: model, enabled: composerEnabled,
                     sending: model.sending, placeholder: composerPlaceholder, identifier: "harness-composer",
                     stop: model.live?.running == true ? stopTurn : nil,

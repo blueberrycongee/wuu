@@ -42,14 +42,18 @@ struct NewConversationView: View {
                 if let customPath {
                     Section {
                         Button { selection = customPath; query = "" } label: {
-                            FolderRow(title: "使用此路径", path: customPath, symbol: "folder.badge.plus", selected: false)
+                            FolderRow(title: "使用此路径", detail: customPath, path: customPath, symbol: "folder.badge.plus", selected: false)
                         }
                     }
                 }
                 Section {
                     ForEach(matches, id: \.self) { path in
                         Button { selection = path } label: {
-                            FolderRow(title: folderName(path), path: path, symbol: "folder", selected: path == selection)
+                            // The name is the title; the parent locates it without repeating it.
+                            FolderRow(title: folderName(path), detail: parentPath(path), path: path, symbol: "folder", selected: path == selection)
+                        }
+                        .contextMenu {
+                            Button("复制路径", systemImage: "doc.on.doc") { UIPasteboard.general.string = path; Haptics.tap() }
                         }
                     }
                 }
@@ -60,10 +64,10 @@ struct NewConversationView: View {
                 if matches.isEmpty && customPath == nil {
                     if trimmedQuery.isEmpty {
                         ContentUnavailableView("没有最近的文件夹", systemImage: "folder",
-                            description: Text(model.connected ? "输入电脑上的完整路径，或使用电脑的默认文件夹开始。" : "电脑连接后显示文件夹。"))
+                            description: Text(model.connected ? "输入完整路径，或直接开始使用默认文件夹。" : "电脑连接后显示文件夹。"))
                     } else {
                         ContentUnavailableView("没有匹配的文件夹", systemImage: "magnifyingglass",
-                            description: Text("输入以 / 开头的完整路径，可以使用其他文件夹。"))
+                            description: Text("输入完整路径可以使用其他文件夹。"))
                     }
                 }
             }
@@ -81,7 +85,12 @@ struct NewConversationView: View {
     private var startBar: some View {
         VStack(spacing: 10) {
             Group {
-                if let failure { Text(failure).foregroundStyle(.red).textSelection(.enabled) }
+                if let failure {
+                    HStack(spacing: 4) {
+                        Text(failure).foregroundStyle(.red).lineLimit(2)
+                        if failure.count > 80 || failure.contains("\n") { DetailButton(detail: failure, label: "错误详情") }
+                    }
+                }
                 else if !model.connected { Text(model.connecting ? "正在连接电脑…" : "电脑未连接，连接后才能开始。").foregroundStyle(.secondary) }
                 else {
                     Label(selection.isEmpty ? "使用电脑的默认文件夹" : folderName(selection), systemImage: "folder")
@@ -118,8 +127,15 @@ struct NewConversationView: View {
     }
 }
 
+/// The containing folder of a host path, keeping the root itself ("/", "C:\").
+private func parentPath(_ path: String) -> String {
+    guard let cut = path.dropLast().lastIndex(where: { $0 == "/" || $0 == "\\" }) else { return path }
+    return String(path[...cut])
+}
+
 private struct FolderRow: View {
     let title: String
+    let detail: String
     let path: String
     let symbol: String
     let selected: Bool
@@ -129,16 +145,18 @@ private struct FolderRow: View {
             Image(systemName: symbol).font(.system(size: 20)).foregroundStyle(.secondary).frame(width: 24).accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
                 Text(title).foregroundStyle(.primary).lineLimit(2)
-                Text(path).font(.footnote).foregroundStyle(.secondary)
-                    .lineLimit(typeSize.isAccessibilitySize ? 3 : 1).truncationMode(.middle)
+                Text(detail).font(.footnote).foregroundStyle(.secondary)
+                    .lineLimit(typeSize.isAccessibilitySize ? 2 : 1).truncationMode(.middle)
             }
             Spacer(minLength: 8)
             if selected {
-                Image(systemName: "checkmark").fontWeight(.semibold).foregroundStyle(.tint).accessibilityHidden(true)
+                Image(systemName: "checkmark").font(.system(size: 17, weight: .semibold)).foregroundStyle(.tint).accessibilityHidden(true)
             }
         }
         .padding(.vertical, 2).contentShape(Rectangle())
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(title)
+        .accessibilityValue(path)
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }

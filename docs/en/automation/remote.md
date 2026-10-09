@@ -26,6 +26,12 @@ from the background creates a fresh encrypted connection; sent messages are neve
 automatically replayed. The computer must be online to create, send or stop work.
 Account-based history sync and notifications require an account connection.
 
+While a reply is running, follow-ups wait in a compact queue above the input.
+Tap a preview to read it in full, remove it, or steer the current reply. Pending
+steering can be moved back to the queue. Once the computer starts processing a
+message, it leaves the queue. Scroll up to load older messages automatically;
+tap an operation summary to see its details.
+
 For Tailscale or a reverse proxy, configure the desktop process with
 `WUU_WEB_URL` set to the reachable HTTP(S) origin and `WUU_WEB_LISTEN` set to the
 local address to listen on (for example, a Tailscale address and port). For a
