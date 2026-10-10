@@ -18,7 +18,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   Show tool groups as a short current action or count with details on demand.
   Copy messages, fork from replies, or edit and resend an earlier user message
   with its attachments. Keep user-message actions in the long-press menu and show reply
-  actions after the turn finishes. Fold preceding process text and tools when the
+  actions after the turn finishes, using compact shared desktop icons with full-size
+  touch targets. Fold preceding process text and tools when the
   final answer arrives, and arrange adjacent tool images together with visible
   thumbnail boundaries.
 

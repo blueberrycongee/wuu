@@ -217,23 +217,24 @@ private struct ReplyActions: View {
     @State private var reset: Task<Void, Never>?
     var body: some View {
         HStack(spacing: 0) {
-            action(copied ? "checkmark" : "doc.on.doc", label: copied ? "已复制消息" : "复制消息", id: "message-copy", perform: copy)
+            action(copied ? "WuuCheck" : "WuuCopy", label: copied ? "已复制消息" : "复制消息", id: "message-copy", perform: copy)
                 .disabled(message.text.isEmpty && message.contentRef.isEmpty)
-            action("arrow.triangle.branch", label: "从这条消息分叉", id: "message-fork") {
+            action("WuuSplit", label: "从这条消息分叉", id: "message-fork") {
                 model.perform { try await model.forkMessage(message) }
             }.disabled(!model.canFork(message))
         }
         .disabled(model.historyActionBusy)
         .foregroundStyle(.secondary)
         // Glyphs line up with the message edge and sit close to it; targets keep 44pt.
-        .padding(.leading, -13)
+        .padding(.leading, -15)
         .padding(.vertical, -6)
         .onDisappear { reset?.cancel() }
     }
-    private func action(_ symbol: String, label: String, id: String, perform: @escaping () -> Void) -> some View {
+    private func action(_ artwork: String, label: String, id: String, perform: @escaping () -> Void) -> some View {
         Button(action: perform) {
-            Image(systemName: symbol).font(.system(size: 15))
-                .contentTransition(reduceMotion ? .identity : .symbolEffect(.replace))
+            Image(artwork).renderingMode(.template).resizable()
+                .frame(width: 14, height: 14)
+                .contentTransition(reduceMotion ? .identity : .opacity)
                 .frame(width: 44, height: 44).contentShape(Rectangle())
         }
         .buttonStyle(.plain)

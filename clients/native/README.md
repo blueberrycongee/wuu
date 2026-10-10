@@ -51,6 +51,8 @@ node clients/native/shared-ui/build.mjs --check
 
 更新时一起提交 `NativeUI/mascot.html`、`NativeUI/process.js` 和 `NativeUI/sources.sha256`。`--check` 用于确认主动更新后的快照与当前源码一致，不是两端构建的前置条件。入口与边界见 [shared-ui](shared-ui/README.md)。
 
+回复操作的复制、分叉和成功勾号复用 `desktop/src/shared/iconArtwork.ts`，以 14pt 矢量图标显示并保留 44pt 触控区域。运行 `node clients/native/shared-ui/export-icons.mjs` 导出，再用同一命令加 `--check` 验证；一起提交 `ios/App/Assets.xcassets` 中三个 `Wuu*.imageset` 目录。Xcode 直接编译已提交的 SVG，无需 Node 或 WebView。
+
 iOS App 最低 iOS 17，使用 Xcode 打开 [ios/Wuu.xcodeproj](ios/Wuu.xcodeproj)，选择 `Wuu` scheme。模拟器运行使用 Xcode 自动生成的本地临时签名，无需开发团队；真机安装需要在 Xcode 配置自己的开发团队。Swift Package 是可单独测试的通信与缓存模块，不是另一个 App。
 
 ```sh
