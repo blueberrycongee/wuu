@@ -1351,7 +1351,7 @@ export class BrowserHostCoordinator {
       clearTimeout(frameTimer);
     }
     assertCurrent();
-    const image = await entry.contents.capturePage(undefined, { stayHidden: false });
+    const image = await entry.contents.capturePage(undefined, { stayHidden: true });
     assertCurrent();
     const size = image.getSize();
     const png = image.toPNG();

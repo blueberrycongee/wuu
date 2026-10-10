@@ -68,7 +68,7 @@ const activeTurnIDs = new Map<string, string>();
 const activeExecutionIDs = new Map<string, string>();
 const controlledResponses = new Map<string, ServerResponse>();
 const controlledWaiters = new Map<string, ReturnType<typeof deferred>>();
-const controlledMarkers = new Set(["OWNERSHIP_HIDDEN", "OWNERSHIP_C", "OWNERSHIP_C_CONTINUE", "OWNERSHIP_LIFECYCLE", "OWNERSHIP_KEEP", "OWNERSHIP_DISPOSE", "OWNERSHIP_SIBLING", "OWNERSHIP_FOREIGN", "OWNERSHIP_RETAINED_AGAIN"]);
+const controlledMarkers = new Set(["OWNERSHIP_HIDDEN", "OWNERSHIP_CAPTURE_CANCEL", "OWNERSHIP_C", "OWNERSHIP_C_CONTINUE", "OWNERSHIP_LIFECYCLE", "OWNERSHIP_KEEP", "OWNERSHIP_DISPOSE", "OWNERSHIP_SIBLING", "OWNERSHIP_FOREIGN", "OWNERSHIP_RETAINED_AGAIN"]);
 function controlledWaiter(marker: string) {
   let waiter = controlledWaiters.get(marker);
   if (!waiter) { waiter = deferred(); controlledWaiters.set(marker, waiter); }
@@ -395,7 +395,7 @@ app.whenReady().then(async () => {
   const hidden = await start("OWNERSHIP_HIDDEN");
   await bounded("hidden page navigation", controlledWaiter("OWNERSHIP_HIDDEN").promise);
   const hiddenTab = openedForThread(hidden)[0];
-  check("first preview starts in an unshown native host", !main.isVisible() && !host.isInPanel(workdir, hiddenTab));
+  check("first preview starts in an unshown native host", BrowserWindow.getAllWindows().every(window => !window.isVisible()) && !host.isInPanel(workdir, hiddenTab));
   await controlledTool("OWNERSHIP_HIDDEN", { action: "screenshot", tab_id: hiddenTab });
   const hiddenCapture = calls.find(call => call.method === "browser/screenshot" && call.params.thread_id === hidden);
   const hiddenReply = replies.find(reply => reply.id === hiddenCapture?.id);
@@ -412,9 +412,56 @@ app.whenReady().then(async () => {
     check("first hidden preview contains rendered page pixels", !image.isEmpty() && size.width === hiddenResult.width && size.height === hiddenResult.height && paintedPixels > 100 && paintedPixels < bitmap.length / 8, JSON.stringify({ size, paintedPixels }));
     writeFileSync(join(output, "first-hidden-preview.png"), readFileSync(hiddenResult.path));
   }
-  check("first screenshot does not present the browser panel", !main.isVisible() && !host.isInPanel(workdir, hiddenTab));
+  check("first screenshot does not present the browser panel", BrowserWindow.getAllWindows().every(window => !window.isVisible()) && !host.isInPanel(workdir, hiddenTab));
+  const hiddenView = await readTab(hiddenTab);
+  assert(hiddenView);
+  const savedPreview = hiddenResult?.path ? readFileSync(hiddenResult.path) : undefined;
+  await hiddenView.webContents.executeJavaScript("window.savedRAF = requestAnimationFrame; window.requestAnimationFrame = () => 0");
+  await controlledTool("OWNERSHIP_HIDDEN", { action: "screenshot", tab_id: hiddenTab });
+  const stalledCapture = calls.filter(call => call.method === "browser/screenshot" && call.params.thread_id === hidden).at(-1);
+  const stalledReply = replies.find(reply => reply.id === stalledCapture?.id);
+  check("stalled hidden frame wait has a bounded failure", stalledReply?.error === "Timed out waiting for browser capture frame", JSON.stringify(stalledReply));
+  check("failed capture preserves the previous history preview", Boolean(hiddenResult?.path && savedPreview?.equals(readFileSync(hiddenResult.path))));
+  await hiddenView.webContents.executeJavaScript("window.requestAnimationFrame = window.savedRAF; delete window.savedRAF");
   await finishControlled("OWNERSHIP_HIDDEN", hidden);
   check("hidden screenshot task cleans its temporary page", host.tabSurfaceMeta(workdir, hiddenTab) === undefined);
+
+  const captureCancelled = await start("OWNERSHIP_CAPTURE_CANCEL");
+  cancellations.set(captureCancelled, deferred());
+  await bounded("capture cancellation page", controlledWaiter("OWNERSHIP_CAPTURE_CANCEL").promise);
+  const cancelledCaptureTab = openedForThread(captureCancelled)[0];
+  const cancelledCaptureView = await readTab(cancelledCaptureTab);
+  assert(cancelledCaptureView);
+  const cancelledContents = cancelledCaptureView.webContents;
+  const captureGate = { entered: deferred(), resume: deferred() };
+  const executeJavaScript = cancelledContents.executeJavaScript.bind(cancelledContents);
+  cancelledContents.executeJavaScript = async (code, userGesture) => {
+    const result = await executeJavaScript(code, userGesture);
+    if (code.includes("requestAnimationFrame(() => requestAnimationFrame(resolve))")) {
+      captureGate.entered.resolve();
+      await captureGate.resume.promise;
+    }
+    return result;
+  };
+  const captureResponse = controlledResponses.get("OWNERSHIP_CAPTURE_CANCEL");
+  assert(captureResponse);
+  controlledResponses.delete("OWNERSHIP_CAPTURE_CANCEL");
+  respond(captureResponse, { action: "screenshot", tab_id: cancelledCaptureTab });
+  await bounded("real capture finishes renderer frame readiness", captureGate.entered.promise);
+  const cancelledCaptureCall = calls.find(call => call.method === "browser/screenshot" && call.params.thread_id === captureCancelled);
+  assert(cancelledCaptureCall?.params.dest_path && cancelledCaptureCall.params.request_id);
+  const cancelledPreview = String(cancelledCaptureCall.params.dest_path);
+  mkdirSync(dirname(cancelledPreview), { recursive: true });
+  writeFileSync(cancelledPreview, "previous-history-preview");
+  await pool.request("turn/interrupt", { thread_id: captureCancelled });
+  await bounded("Go cancels its pending capture", cancellations.get(captureCancelled)!.promise);
+  captureGate.resume.resolve();
+  await bounded("cancelled capture host request settles", hostCompletions.get(cancelledCaptureCall.id)!.promise);
+  await bounded("capture interruption cleanup", completed.get(captureCancelled)!.promise);
+  check("interruption rejects capture after awaited frame readiness", Boolean(replies.find(reply => reply.id === cancelledCaptureCall.id)?.error));
+  check("cancelled capture never overwrites its history artifact", readFileSync(cancelledPreview, "utf8") === "previous-history-preview");
+  check("capture interruption closes its temporary page", cancelledContents.isDestroyed() && host.tabSurfaceMeta(workdir, cancelledCaptureTab) === undefined && terminalEvents.get(captureCancelled)?.status === "interrupted");
+  check("capture readiness never presents a native window", BrowserWindow.getAllWindows().every(window => !window.isVisible()));
 
   // The fixture browser is real Chromium. The local provider drives every
   // opener click through the Go tool, reverse RPC, and native page input.
@@ -860,7 +907,7 @@ app.whenReady().then(async () => {
   const disposeResult = await disposedInput;
   check("disposal invalidates input before closing views", disposeResult !== "delivered" && host.tabSurfaceMeta(workdir, disposalTab) === undefined, disposeResult);
   await finishControlled("OWNERSHIP_DISPOSE", disposal);
-  writeFileSync(join(output, "results.json"), JSON.stringify({ checks, threads: { hidden, popup, sibling, lifecycle, retained, foreignThread, a, b, c, d, disposal }, tabs: { hiddenTab, popupTab, lifecycleTab, freshTab, retainedOpenerTab, handoffTab, retainedAgainTemporary, deliverableTab, persistentTab, finalTemporaryTab, aTab, bTab, cTab, dTab, disposalTab }, calls, replies, providerRequests, popupRequests, popupAdoptions, selfCloseErrors, selfCloseNotifications, clickRequests, nativeInputCommands, events }, null, 2));
+  writeFileSync(join(output, "results.json"), JSON.stringify({ checks, threads: { hidden, captureCancelled, popup, sibling, lifecycle, retained, foreignThread, a, b, c, d, disposal }, tabs: { hiddenTab, cancelledCaptureTab, popupTab, lifecycleTab, freshTab, retainedOpenerTab, handoffTab, retainedAgainTemporary, deliverableTab, persistentTab, finalTemporaryTab, aTab, bTab, cTab, dTab, disposalTab }, calls, replies, providerRequests, popupRequests, popupAdoptions, selfCloseErrors, selfCloseNotifications, clickRequests, nativeInputCommands, events }, null, 2));
   console.log(JSON.stringify(checks, null, 2));
   await pool.shutdown();
   host.destroyAll();
