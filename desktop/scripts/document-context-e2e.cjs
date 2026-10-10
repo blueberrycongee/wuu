@@ -104,6 +104,8 @@ async function nativeText(selector, text) {
   await main.webContents.insertText(text);
 }
 async function capture(name) {
+  await evaluate(() => Promise.all(document.getAnimations().filter(animation => Number.isFinite(animation.effect?.getComputedTiming().endTime))
+    .map(animation => animation.finished.catch(() => {}))));
   await evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   fs.writeFileSync(path.join(output, `${name}.png`), (await main.webContents.capturePage()).toPNG());
   screenshots.push(`${name}.png`);
@@ -339,7 +341,7 @@ async function run() {
   await evaluate(() => [...document.querySelectorAll('.pdf-selection-action-menu button')].find(button => button.textContent === 'Comment').click());
   await waitFor(() => document.activeElement?.matches('.pdf-selection-action-menu textarea'));
   await main.webContents.insertText('Discard this selection comment on navigation.');
-  const refreshedQuote = 'Updated workspace PDF: this is a new observed revision.';
+  const refreshedQuote = 'Updated PDF: a different revision.';
   fs.writeFileSync(path.join(project, 'guide.pdf'), pdf([refreshedQuote]));
   await evaluate(() => [...document.querySelectorAll('.workspace-tool-tab[data-wuu-tab-kind="file"] .workspace-tool-tab-main')].find(button => button.textContent === 'large.txt').click());
   await waitFor(() => !document.querySelector('.pdf-selection-action-menu'));
