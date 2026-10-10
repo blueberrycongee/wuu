@@ -119,6 +119,7 @@ private struct MessageBubble: View {
     @Bindable var model: AppModel
     let message: ChatMessage
     @State private var expanded = false
+    @State private var selection: MessageTextSelection?
     private var collapsible: Bool { !message.sourceSessionID.isEmpty && (message.text.prefix(401).count > 400 || message.text.filter { $0 == "\n" }.count > 6) }
     var body: some View {
         HStack {
@@ -132,7 +133,8 @@ private struct MessageBubble: View {
                 }
                 if !message.text.isEmpty {
                     VStack(alignment: .leading, spacing: 8) {
-                        MessageText(text: collapsible && !expanded ? String(message.text.prefix(240)) + "…" : message.text, markdown: message.role == "assistant")
+                        MessageText(text: collapsible && !expanded ? String(message.text.prefix(240)) + "…" : message.text,
+                                    markdown: message.role == "assistant", contextMenuEnabled: message.role != "user")
                             .foregroundStyle(message.role == "error" ? Color.red : Color.primary)
                         if collapsible {
                             Button(expanded ? "收起" : "显示更多", systemImage: expanded ? "chevron.up" : "chevron.down") { expanded.toggle() }
@@ -141,26 +143,60 @@ private struct MessageBubble: View {
                     }.padding(.horizontal, message.role == "user" ? 14 : 0)
                         .padding(.vertical, message.role == "user" ? 10 : 0)
                         .background(message.role == "user" ? Color.secondary.opacity(0.1) : .clear, in: RoundedRectangle(cornerRadius: 18))
+                        .contextMenu { if message.role == "user" { userActions } } preview: { userMenuPreview }
                 }
                 MessageAttachments(model: model, message: message)
+                    .contextMenu { if message.role == "user" { userActions } } preview: { userMenuPreview }
                 if !message.contentRef.isEmpty {
                     Button(model.loadingContent.contains(message.id) ? "正在读取…" : "加载完整消息") { model.perform { try await model.expand(message) } }
                         .disabled(!model.connected || model.loadingContent.contains(message.id))
                 }
-                if hasActions { MessageActions(model: model, message: message) }
+                if message.role == "assistant", !message.turnActive { ReplyActions(model: model, message: message) }
             }
+            .sheet(item: $selection) { TextSelectionSheet(text: $0.text) }
             if message.role != "user" { Spacer(minLength: 0) }
         }
     }
-    /// A reply still streaming gets its actions once it settles, as a finished message.
-    private var hasActions: Bool {
-        guard message.role == "user" || message.role == "assistant" else { return false }
-        return !(message.role == "assistant" && model.live?.running == true && message.id == model.messages.last?.id)
+    @ViewBuilder private var userMenuPreview: some View {
+        if message.role == "user" {
+            VStack(alignment: .trailing, spacing: 8) {
+                if !message.text.isEmpty {
+                    MessageText(text: message.text, markdown: false, contextMenuEnabled: false)
+                }
+                MessageAttachments(model: model, message: message)
+            }
+            .padding(14)
+            .buttonStyle(.plain)
+            .background(Color(uiColor: .secondarySystemBackground))
+            .onAppear {
+                // iOS 26 can loop layout when a context menu restores the composer's keyboard.
+                // Remove this workaround when that SwiftUI transition no longer hangs.
+                UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+            }
+        }
+    }
+    @ViewBuilder private var userActions: some View {
+        Button("复制", systemImage: "doc.on.doc") { model.perform { try await model.copyMessage(message) } }
+            .accessibilityIdentifier("message-copy")
+            .disabled(message.text.isEmpty && message.contentRef.isEmpty)
+        Button("编辑", systemImage: "pencil") { model.perform { try await model.beginHistoryEdit(message) } }
+            .accessibilityIdentifier("message-edit")
+            .disabled(model.historyActionBusy || !model.canEdit(message))
+        Button("选择文本", systemImage: "selection.pin.in.out") {
+            model.perform { selection = MessageTextSelection(text: try await model.messageText(message)) }
+        }.disabled(message.text.isEmpty && message.contentRef.isEmpty)
+        ShareLink(item: message.text) { Label("分享", systemImage: "square.and.arrow.up") }
+            .disabled(message.text.isEmpty)
     }
 }
 
-/// Copy, fork and edit under a message. The model decides availability and does the work.
-private struct MessageActions: View {
+private struct MessageTextSelection: Identifiable {
+    let id = UUID()
+    let text: String
+}
+
+/// Finished replies keep their quick actions; user messages own a context menu.
+private struct ReplyActions: View {
     let model: AppModel
     let message: ChatMessage
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -173,16 +209,11 @@ private struct MessageActions: View {
             action("arrow.triangle.branch", label: "从这条消息分叉", id: "message-fork") {
                 model.perform { try await model.forkMessage(message) }
             }.disabled(!model.canFork(message))
-            if message.role == "user" {
-                action("pencil", label: "编辑消息", id: "message-edit") {
-                    model.perform { try await model.beginHistoryEdit(message) }
-                }.disabled(!model.canEdit(message))
-            }
         }
         .disabled(model.historyActionBusy)
         .foregroundStyle(.secondary)
         // Glyphs line up with the message edge and sit close to it; targets keep 44pt.
-        .padding(message.role == "user" ? .trailing : .leading, -13)
+        .padding(.leading, -13)
         .padding(.vertical, -6)
         .onDisappear { reset?.cancel() }
     }

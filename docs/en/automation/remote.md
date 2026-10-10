@@ -33,7 +33,8 @@ message, it leaves the queue. Scroll up to load older messages automatically;
 tap an operation summary to see its details. When the final answer arrives, preceding
 process text and tools fold into a summary; image previews remain visible.
 
-Buttons below messages let you copy text or fork a new conversation at that point.
+Long-press your message bubble or attachments to copy, edit, select text, or
+share. Replies show copy and fork buttons after their turn finishes.
 Editing an earlier user message keeps its attachments and replaces subsequent
 conversation when you send it again. Cancel leaves history intact. Editing requires
 an online computer, an idle writable conversation, and no pending messages.

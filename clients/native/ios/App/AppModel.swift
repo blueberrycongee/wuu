@@ -598,26 +598,29 @@ private struct PairedLocation: Codable {
         _ = try await remote.call(live.running ? "turn/queue" : "turn/start", params: input.params(threadID: live.id, queued: live.running))
         guard epoch == stamp else { throw CancellationError() }
     }
-    func canFork(_ message: ChatMessage) -> Bool {
+    private func canChangeHistory(_ message: ChatMessage) -> Bool {
         guard connected, let live, !live.readOnly, !live.archived,
-              ["user", "assistant"].contains(message.role), let item = live.item(for: message) else { return false }
+              let item = live.item(for: message) else { return false }
         return item["status"].string != "in_progress" && !item["read_only"].bool
     }
+    func canFork(_ message: ChatMessage) -> Bool {
+        message.role == "assistant" && !message.turnActive && canChangeHistory(message)
+    }
     func canEdit(_ message: ChatMessage) -> Bool {
-        guard canFork(message), let live, !live.running, live.pending.isEmpty, message.role == "user",
+        guard canChangeHistory(message), let live, !live.running, live.pending.isEmpty, message.role == "user",
               let item = live.item(for: message) else { return false }
         return !["host", "plugin"].contains(item["origin"].string ?? "") && message.sourceSessionID.isEmpty
     }
+    func messageText(_ message: ChatMessage) async throws -> String {
+        guard !message.contentRef.isEmpty else { return message.text }
+        guard connected, let remote, let live, live.item(for: message) != nil else { throw NativeError.invalid("请连接电脑以读取完整消息") }
+        let stamp = epoch, selection = opening
+        let item = try await remote.readContent(message.contentRef, threadID: live.id)
+        guard epoch == stamp, opening == selection else { throw CancellationError() }
+        return item["text"].string ?? item["error"].string ?? ""
+    }
     func copyMessage(_ message: ChatMessage) async throws {
-        if message.contentRef.isEmpty {
-            UIPasteboard.general.string = message.text
-        } else {
-            guard connected, let remote, let live, live.item(for: message) != nil else { throw NativeError.invalid("请连接电脑以复制完整消息") }
-            let stamp = epoch, selection = opening
-            let item = try await remote.readContent(message.contentRef, threadID: live.id)
-            guard epoch == stamp, opening == selection else { throw CancellationError() }
-            UIPasteboard.general.string = item["text"].string ?? item["error"].string ?? ""
-        }
+        UIPasteboard.general.string = try await messageText(message)
         Haptics.tap()
     }
     func forkMessage(_ message: ChatMessage) async throws {

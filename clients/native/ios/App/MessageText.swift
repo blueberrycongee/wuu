@@ -4,11 +4,25 @@ import MarkdownUI
 struct MessageText: View {
     let text: String
     let markdown: Bool
+    var contextMenuEnabled = true
     @Environment(\.mobileTextSize) private var textSize
     @State private var content = MarkdownContent("")
     @State private var renderedText: String?
     @State private var selecting = false
     var body: some View {
+        if contextMenuEnabled {
+            rendered.textSelection(.enabled)
+                .contextMenu {
+                    Button("复制", systemImage: "doc.on.doc") { UIPasteboard.general.string = text; Haptics.tap() }
+                    Button("选择文本", systemImage: "selection.pin.in.out") { selecting = true }
+                    ShareLink(item: text) { Label("分享", systemImage: "square.and.arrow.up") }
+                }
+                .sheet(isPresented: $selecting) { TextSelectionSheet(text: text) }
+        } else {
+            rendered
+        }
+    }
+    private var rendered: some View {
         Group {
             if markdown, text.utf8.count <= 128 * 1024 {
                 Markdown(content)
@@ -53,18 +67,12 @@ struct MessageText: View {
             } else {
                 Text(text).font(.system(size: textSize)).lineSpacing(textSize * 0.2)
             }
-        }.textSelection(.enabled)
-            .contextMenu {
-                Button("复制", systemImage: "doc.on.doc") { UIPasteboard.general.string = text; Haptics.tap() }
-                Button("选择文本", systemImage: "selection.pin.in.out") { selecting = true }
-                ShareLink(item: text) { Label("分享", systemImage: "square.and.arrow.up") }
-            }
-            .sheet(isPresented: $selecting) { TextSelectionSheet(text: text) }
+        }
     }
 }
 
 /// Long-press selection in a bubble selects the whole message; this sheet allows any range.
-private struct TextSelectionSheet: View {
+struct TextSelectionSheet: View {
     let text: String
     @Environment(\.dismiss) private var dismiss
     @Environment(\.mobileTextSize) private var textSize
@@ -83,6 +91,7 @@ private struct SelectableText: UIViewRepresentable {
     let size: CGFloat
     func makeUIView(context: Context) -> UITextView {
         let view = UITextView()
+        view.accessibilityIdentifier = "message-selection-text"
         view.isEditable = false; view.isSelectable = true
         view.adjustsFontForContentSizeCategory = false
         view.backgroundColor = .clear
