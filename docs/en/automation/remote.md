@@ -33,10 +33,15 @@ message, it leaves the queue. Scroll up to load older messages automatically;
 tap an operation summary to see its details. When the final answer arrives, preceding
 process text and tools fold into a summary. Images read or inspected by tools stay
 inside the operation details and load when opened; explicitly presented images
-remain visible in the conversation.
+remain visible in the conversation. Published image previews and originals load
+through the encrypted connection when needed; opening an image checks its stored
+content digest.
 
 Long-press your message bubble or attachments to copy, edit, select text, or
-share. Replies show copy and fork buttons after their turn finishes.
+share. Replies show copy and fork buttons after their turn finishes. Forking lets
+you choose the current folder or a new Git worktree based on the current commit;
+a new worktree requires a Git repository. The new conversation initially loads
+recent history, with older messages available by scrolling up.
 Editing an earlier user message keeps its attachments and replaces subsequent
 conversation when you send it again. Cancel leaves history intact. Editing requires
 an online computer, an idle writable conversation, and no pending messages.

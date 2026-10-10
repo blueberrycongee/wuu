@@ -1511,6 +1511,8 @@ type ThreadForkParams struct {
 	ItemID   string            `json:"item_id,omitempty"`
 	Target   *ThreadForkTarget `json:"target,omitempty"`
 	Mode     string            `json:"mode,omitempty"`
+	// HistoryPage bounds the returned history; older items use thread/history/read.
+	HistoryPage bool `json:"history_page,omitempty"`
 }
 
 type ThreadForkTarget struct {

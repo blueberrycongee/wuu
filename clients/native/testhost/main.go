@@ -73,6 +73,7 @@ func main() {
 	must(testsupport.WriteConfig(filepath.Join(root, "config.json"), "native-test"))
 	rt := &runtime.Session{
 		ProviderName: "native-test", Model: "native-test", RootDir: root,
+		WuuHome: root, StateDir: filepath.Join(root, "workspaces", "fixture"),
 		ConfigPath: filepath.Join(root, "config.json"), ConfigLoadMode: runtime.ConfigLoadFile, HomeDir: root, SessionDir: filepath.Join(root, "sessions"),
 		HookDispatcher: hooks.NewDispatcher(nil), Toolkit: kit, UserQuestions: pluginhost.NewUserQuestionBroker(),
 		StreamRunner: &agent.StreamRunner{Client: providers.AdaptStreamClient(gate), Model: "native-test", SystemPrompt: "test"},
@@ -127,6 +128,23 @@ func main() {
 		}
 	}
 	must(png.Encode(&imageData, bitmap))
+	// Publish through the real runtime so remote reads exercise managed ownership.
+	artifactID := session.NewID()
+	must(os.WriteFile(filepath.Join(root, "published.png"), imageData.Bytes(), 0600))
+	artifactRuntime, err := rt.NewThreadRuntimeForRoot(artifactID, root)
+	must(err)
+	published, err := artifactRuntime.StreamRunner.Tools.(agent.RichToolExecutor).ExecuteResult(ctx,
+		providers.ToolCall{ID: "publish", Name: "present_artifact", Arguments: `{"path":"published.png"}`})
+	must(err)
+	publishedJSON, err := json.Marshal(published)
+	must(err)
+	_, err = session.CreateInitialized(rt.SessionDir, session.Session{ID: artifactID, CWD: root, Title: "Published image"}, []session.HistoryRecord{
+		{Role: "user", Content: "publish the fixture"},
+		{Role: "assistant", ToolCalls: json.RawMessage(`[{"id":"publish","name":"present_artifact","arguments":"{\"path\":\"published.png\"}"}]`)},
+		{Role: "tool", Name: "present_artifact", ToolCallID: "publish", ToolResult: publishedJSON},
+		{Role: "assistant", Content: "published"},
+	})
+	must(err)
 	var pdf bytes.Buffer
 	pdf.WriteString("%PDF-1.4\n")
 	objects := []string{"<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Kids [3 0 R] /Count 1 >>", "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Contents 4 0 R >>", "<< /Length 0 >>\nstream\nendstream"}
@@ -145,9 +163,10 @@ func main() {
 		"server": server.URL, "token": "test-only", "username": "native-test",
 		"pub": b64(phone.Public()), "deviceSeed": b64(phone.Seed()), "seed": b64(phone.Seed()),
 		"host": b64(store.Identity().Public()), "workspace": root,
-		"paged_thread": paged.ID,
-		"tool_thread":  toolHistory.ID,
-		"image":        base64.StdEncoding.EncodeToString(imageData.Bytes()), "pdf": base64.StdEncoding.EncodeToString(pdf.Bytes()),
+		"paged_thread":    paged.ID,
+		"tool_thread":     toolHistory.ID,
+		"artifact_thread": artifactID,
+		"image":           base64.StdEncoding.EncodeToString(imageData.Bytes()), "pdf": base64.StdEncoding.EncodeToString(pdf.Bytes()),
 	}))
 	commands := make(chan string)
 	go func() {

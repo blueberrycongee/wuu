@@ -84,6 +84,10 @@ struct ConversationTimeline: View {
                 ActivityInspectionSheet(model: model, inspection: inspection)
                     .presentationDetents([.medium, .large])
             }
+            .sheet(item: $model.pendingFork) { request in
+                MessageForkSheet(model: model, request: request)
+                    .presentationDetents([.medium, .large])
+            }
             .sheet(isPresented: Binding(get: { model.showingHistoryEdit && model.historyEdit != nil },
                                         set: { model.showingHistoryEdit = $0 })) {
                 if let edit = model.historyEdit { HistoryMessageEditView(model: model, edit: edit) }
@@ -203,6 +207,52 @@ private struct MessageBubble: View {
     }
 }
 
+private struct MessageForkSheet: View {
+    let model: AppModel
+    let request: MessageForkRequest
+    @State private var choosing: MessageForkMode?
+    @State private var error: String?
+    var body: some View {
+        NavigationStack {
+            List {
+                destination(.local, title: "当前目录", detail: "继续使用当前工作目录", icon: "folder")
+                destination(.worktree, title: "新的工作树", detail: "基于当前 Git 提交，改动不影响当前目录", icon: "arrow.triangle.branch")
+                if let error { Text(error).foregroundStyle(.red).font(.footnote) }
+            }
+            .navigationTitle("分叉到哪里").navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消") { model.pendingFork = nil }.disabled(choosing != nil)
+                }
+            }
+        }.interactiveDismissDisabled(choosing != nil)
+    }
+    private func destination(_ mode: MessageForkMode, title: String, detail: String, icon: String) -> some View {
+        Button {
+            guard choosing == nil else { return }
+            choosing = mode; error = nil
+            Task {
+                defer { choosing = nil }
+                do { try await model.forkMessage(request, mode: mode) }
+                catch is CancellationError {}
+                catch { self.error = error.localizedDescription }
+            }
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: icon).frame(width: 24).foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(title).foregroundStyle(.primary)
+                    Text(detail).font(.footnote).foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 0)
+                if choosing == mode { ProgressView() }
+            }.padding(.vertical, 8)
+        }
+        .accessibilityIdentifier("message-fork-" + mode.rawValue)
+        .disabled(choosing != nil || !model.connected || model.activeID != request.threadID || model.host?.pub != request.hostID)
+    }
+}
+
 private struct MessageTextSelection: Identifiable {
     let id = UUID()
     let text: String
@@ -220,7 +270,7 @@ private struct ReplyActions: View {
             action(copied ? "WuuCheck" : "WuuCopy", label: copied ? "已复制消息" : "复制消息", id: "message-copy", perform: copy)
                 .disabled(message.text.isEmpty && message.contentRef.isEmpty)
             action("WuuSplit", label: "从这条消息分叉", id: "message-fork") {
-                model.perform { try await model.forkMessage(message) }
+                model.beginFork(message)
             }.disabled(!model.canFork(message))
         }
         .disabled(model.historyActionBusy)

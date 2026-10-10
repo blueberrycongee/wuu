@@ -27,6 +27,15 @@ private struct PairedLocation: Codable {
     }
 }
 
+enum MessageForkMode: String { case local, worktree }
+
+struct MessageForkRequest: Identifiable {
+    let id = UUID()
+    let threadID: String
+    let hostID: String
+    let message: ChatMessage
+}
+
 @MainActor @Observable final class AppModel {
     var account: AccountSession?
     var pairedComputers: [PairedComputer] = []
@@ -47,6 +56,7 @@ private struct PairedLocation: Codable {
     var busy = false
     var sending = false
     var historyActionBusy = false
+    var pendingFork: MessageForkRequest?
     var showingHistoryEdit = false
     private var historyEdits: [String: HistoryMessageEdit] = [:]
     private var historyEditKey: String { (host?.pub ?? "") + ":" + (activeID ?? "") }
@@ -382,6 +392,7 @@ private struct PairedLocation: Codable {
         let oldRemote = remote; remote = nil
         connected = false; connecting = false; pendingApproval = nil; sending = false; historyActionBusy = false
         imagePreviews.clear(); loadingHistory = false; loadingContent = []; attachmentPreview = nil; loadingAttachment = false
+        pendingFork = nil
         questions = []; questionRevision += 1
         await oldRemote?.disconnect()
     }
@@ -623,17 +634,25 @@ private struct PairedLocation: Codable {
         UIPasteboard.general.string = try await messageText(message)
         Haptics.tap()
     }
-    func forkMessage(_ message: ChatMessage) async throws {
-        guard !historyActionBusy, canFork(message), let remote, let live, let item = live.item(for: message) else {
+    func beginFork(_ message: ChatMessage) {
+        guard !historyActionBusy, canFork(message), let live, let host else { return }
+        pendingFork = MessageForkRequest(threadID: live.id, hostID: host.pub, message: message)
+    }
+    func forkMessage(_ request: MessageForkRequest, mode: MessageForkMode) async throws {
+        let message = request.message
+        guard !historyActionBusy, canFork(message), let remote, let live,
+              live.id == request.threadID, host?.pub == request.hostID, let item = live.item(for: message) else {
             throw NativeError.invalid("当前无法从这条消息分叉")
         }
         let stamp = epoch, selection = opening
         historyActionBusy = true
         defer { if epoch == stamp { historyActionBusy = false } }
         let result = try await remote.call("thread/fork", params: ["thread_id": .string(live.id),
-            "turn_id": .string(message.turnID), "item_id": .string(message.itemID), "mode": "local",
+            "turn_id": .string(message.turnID), "item_id": .string(message.itemID), "mode": .string(mode.rawValue),
+            "history_page": true,
             "target": ["seq": item["seq"], "source_id": item["source_id"], "type": item["type"]]])
-        guard epoch == stamp, self.remote === remote else { return }
+        guard epoch == stamp, self.remote === remote else { throw CancellationError() }
+        if pendingFork?.id == request.id { pendingFork = nil }
         perform { try await self.loadThreads() }
         guard opening == selection else { return }
         let fork = ChatThread(result["thread"])

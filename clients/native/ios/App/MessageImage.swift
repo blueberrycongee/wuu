@@ -115,7 +115,7 @@ struct MessageAttachments: View {
         if tiles.contains(where: \.isImage) {
             ThumbnailLayout(own: own) {
                 ForEach(tiles.filter(\.isImage)) { tile in
-                    MessageImage(key: "\(model.activeID ?? ""):\(tile.message.id):\(tile.index):\(tile.value["remote_ref"].string ?? "")",
+                    MessageImage(key: "\(model.activeID ?? ""):\(tile.message.id):\(tile.index):\(tile.value["remote_ref"].string ?? tile.value["uri"].string ?? "")",
                         connected: model.connected, loader: model.imagePreviews,
                         read: { try await model.attachmentThumbnail(tile.message, index: tile.index) }, open: { open(tile) })
                 }

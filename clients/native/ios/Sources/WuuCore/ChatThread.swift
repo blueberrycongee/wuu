@@ -122,9 +122,11 @@ public struct ChatThread: Identifiable, Sendable {
                     role: type == "user_message" ? "user" : type == "error" ? "error" : type == "tool_call" ? "tool" : "assistant",
                     text: item["text"].string ?? item["error"].string ?? "", contentRef: item["remote_content_ref"].string ?? "",
                     attachments: item["images"].array + item["files"].array + item["markdown_images"].array +
-                        item["result_detail"]["content"].array.filter { $0["type"].string == "image" }.map { part in
-                            ["media_type": part["mime_type"], "data": part["data"], "remote_ref": part["remote_ref"],
-                             "artifact": part["artifact"]]
+                        item["result_detail"]["content"].array.enumerated().compactMap { index, part -> JSONValue? in
+                            guard part["type"].string == "image" else { return nil }
+                            return ["media_type": part["mime_type"], "data": part["data"], "remote_ref": part["remote_ref"],
+                                "artifact": part["artifact"], "uri": part["uri"], "filename": part["name"],
+                                "content_index": .number(Double(index)), "turn_id": turn["id"], "item_id": item["id"]]
                         },
                     tool: type == "tool_call" ? ToolActivity(item, turnStatus: turn["status"].string ?? "") : nil,
                     sourceSessionID: sessionMessage ? item["related_session_id"].string ?? "" : "",
