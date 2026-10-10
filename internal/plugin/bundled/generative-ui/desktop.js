@@ -335,6 +335,8 @@ const styles = `
 .plugin-genui tr:last-child td { border-bottom:0; }
 .plugin-genui-plot { display:grid; grid-template-columns:minmax(3ch, max-content) minmax(0, 1fr); gap:8px 12px; padding-top:4px; }
 .plugin-genui-y-labels { display:flex; flex-direction:column; justify-content:space-between; text-align:right; line-height:1; height:180px; }
+.plugin-genui-y-labels span:first-child { transform:translateY(-50%); }
+.plugin-genui-y-labels span:last-child { transform:translateY(50%); }
 .plugin-genui-chart { display:block; width:100%; height:180px; overflow:visible; }
 .plugin-genui-chart line, .plugin-genui-chart polyline { vector-effect:non-scaling-stroke; }
 .plugin-genui-x-labels { grid-column:2; display:flex; justify-content:space-between; gap:12px; min-width:0; }
