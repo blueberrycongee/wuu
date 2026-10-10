@@ -53,7 +53,8 @@ const server = http.createServer((req, res) => {
     const body = JSON.parse(raw);
     requests.push(body);
     const messages = body.messages || [];
-    const lastUser = messages.findLastIndex(message => message.role === 'user');
+    const lastUser = messages.findLastIndex(message => message.role === 'user'
+      && !(typeof message.content === 'string' && message.content.trimStart().startsWith('<system-reminder>')));
     const text = JSON.stringify(messages[lastUser]?.content || '');
     if (!body.stream) {
       res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -61,6 +62,12 @@ const server = http.createServer((req, res) => {
     }
     res.writeHead(200, { 'Content-Type': 'text/event-stream' });
     const chunk = (delta, finish_reason = null) => res.write(`data: ${JSON.stringify({ id: 'fixture', model: 'fixture', choices: [{ index: 0, delta, finish_reason }] })}\n\n`);
+    // Title generation can also stream and includes the original prompt. It
+    // has no tools; only a conversation request may trigger fixture delivery.
+    if (!body.tools?.length) {
+      chunk({ role: 'assistant', content: 'PDF review' }); chunk({}, 'stop');
+      return res.end('data: [DONE]\n\n');
+    }
     if (text.includes('Deliver the PDF fixture') && !messages.slice(lastUser + 1).some(message => message.role === 'tool')) {
       const available = (body.tools || []).some(tool => tool.function?.name === 'present_artifact');
       if (!available) errors.push('The real provider request did not expose present_artifact.');
