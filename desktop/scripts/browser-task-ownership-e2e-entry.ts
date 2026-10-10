@@ -68,6 +68,14 @@ const aWaiting = deferred();
 let heldA: ServerResponse | undefined;
 const dWaiting = deferred();
 let heldD: ServerResponse | undefined;
+let popupWaiting = deferred();
+let heldPopup: ServerResponse | undefined;
+const popupRequests: { method: string; url: string; body: string }[] = [];
+const popupAdoptions: { openerTabID: string; tabID: string; url: string }[] = [];
+const popupLoads = new Map<string, ReturnType<typeof deferred>>();
+const slowPopupStarted = deferred();
+let slowPopupResponse: ServerResponse | undefined;
+const popupNonce = "fixture-popup-nonce";
 let baseURL = "";
 let serial = 0;
 
@@ -79,6 +87,77 @@ function respond(res: ServerResponse, tool?: Record<string, unknown>) {
   res.end(`data: ${JSON.stringify({ id: "fixture", choices: [{ index: 0, delta: {}, finish_reason: tool ? "tool_calls" : "stop" }], usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 } })}\n\ndata: [DONE]\n\n`);
 }
 const server = createServer((req, res) => {
+  const pathname = new URL(req.url ?? "/", "http://127.0.0.1").pathname;
+  if (pathname === "/popup-opener") {
+    res.writeHead(200, { "Content-Type": "text/html" });
+    res.end(`<!doctype html><title>Popup opener</title>
+      <style>button{position:absolute;left:40px;width:240px;height:45px}</style>
+      <button style="top:40px" id="blank">Script-written blank popup</button>
+      <button style="top:100px" id="message">Opener message popup</button>
+      <form method="POST" action="/popup-form" target="_blank">
+        <input type="hidden" name="nonce" value="${popupNonce}">
+        <input type="hidden" name="payload" value="two words & a plus +">
+        <button style="top:160px" id="post">Submit POST to new tab</button>
+      </form>
+      <button style="top:220px" id="named">Open named popup</button>
+      <button style="top:280px" id="reuse">Reuse named popup</button>
+      <button style="top:340px" id="slow">Open loading popup</button>
+      <script>
+        window.popupState={messages:[]};
+        addEventListener('message', event => {
+          if(event.origin===location.origin && event.data.nonce==='${popupNonce}') {
+            popupState.messages.push({...event.data, sourceMatches:event.source===window.messageChild});
+          }
+        });
+        document.querySelector('#blank').onclick=()=>{
+          const child=window.open('about:blank','blank-proof');
+          popupState.blankReturned=!!child;
+          if(child){
+            child.document.write('<!doctype html><title>Script-written popup</title><body data-nonce="${popupNonce}">Blank popup content</body>');
+            child.document.close();
+            popupState.blankHasOpener=child.opener===window;
+          }
+        };
+        document.querySelector('#message').onclick=()=>{
+          window.messageChild=window.open('/popup-message','message-proof');
+          popupState.messageReturned=!!window.messageChild;
+        };
+        document.querySelector('#named').onclick=()=>{window.namedChild=window.open('/popup-named?step=1','reuse-proof');};
+        document.querySelector('#reuse').onclick=()=>{
+          const child=window.open('/popup-named?step=2','reuse-proof');
+          popupState.namedReused=!!child && child===window.namedChild;
+        };
+        document.querySelector('#slow').onclick=()=>{window.slowChild=window.open('/popup-slow','slow-proof');};
+      </script>`);
+    return;
+  }
+  if (pathname === "/popup-slow") {
+    popupRequests.push({ method: req.method ?? "", url: req.url ?? "", body: "" });
+    slowPopupResponse = res;
+    slowPopupStarted.resolve();
+    return;
+  }
+  if (["/popup-message", "/popup-form", "/popup-named"].includes(pathname)) {
+    let body = "";
+    req.on("data", data => { body += data; });
+    req.on("end", () => {
+      popupRequests.push({ method: req.method ?? "", url: req.url ?? "", body });
+      const proof = { kind: pathname.slice(1), nonce: popupNonce, method: req.method, body };
+      res.writeHead(200, { "Content-Type": "text/html" });
+      res.end(`<!doctype html><title>${pathname}${new URL(req.url ?? "/", "http://127.0.0.1").search}</title>
+        <body><h1>Popup child</h1><button id="target" style="position:absolute;left:100px;top:100px;width:100px;height:50px">Target</button>
+        <script>window.clicks=0;document.querySelector('#target').onclick=()=>window.clicks++;
+        window.popupProof=${JSON.stringify(proof)};window.popupProof.hasOpener=!!window.opener;
+        if(window.opener)window.opener.postMessage(window.popupProof,location.origin);
+        fetch('/popup-ready?source='+encodeURIComponent(location.pathname+location.search));</script>`);
+    });
+    return;
+  }
+  if (pathname === "/popup-ready") {
+    popupLoads.get(new URL(req.url ?? "/", "http://127.0.0.1").searchParams.get("source") ?? "")?.resolve();
+    res.writeHead(204).end();
+    return;
+  }
   if (req.method === "GET") {
     res.writeHead(200, { "Content-Type": "text/html" });
     res.end(`<!doctype html><title>${req.url}</title><body><h1>${req.url}</h1><button id="target" style="position:absolute;left:100px;top:100px;width:100px;height:50px">Target</button><input id="field" style="position:absolute;left:100px;top:200px"><script>window.clicks=0;document.querySelector('#target').onclick=()=>window.clicks++;</script>`);
@@ -95,11 +174,12 @@ const server = createServer((req, res) => {
       return;
     }
     const prompt = JSON.stringify(input.messages?.filter((message: { role: string }) => message.role === "user") ?? []);
-    const marker = /OWNERSHIP_[ABCD]/.exec(prompt)?.[0];
+    const marker = /OWNERSHIP_(?:POPUP|[ABCD])/.exec(prompt)?.[0];
     if (!marker) { respond(res); return; }
     const step = turns.get(marker) ?? 0;
     turns.set(marker, step + 1);
-    if (step === 0) { respond(res, { action: "navigate", url: `${baseURL}/${marker}` }); return; }
+    if (step === 0) { respond(res, { action: "navigate", url: `${baseURL}/${marker === "OWNERSHIP_POPUP" ? "popup-opener" : marker}` }); return; }
+    if (marker === "OWNERSHIP_POPUP") { heldPopup = res; popupWaiting.resolve(); return; }
     if (marker === "OWNERSHIP_A" && step === 1) { heldA = res; aWaiting.resolve(); return; }
     if (marker === "OWNERSHIP_A" && step === 2) { respond(res, { action: "finalize", keep: [] }); return; }
     if (marker === "OWNERSHIP_D") {
@@ -219,6 +299,10 @@ app.whenReady().then(async () => {
       return view as unknown as BrowserViewHandle;
     },
   ), () => undefined);
+  host.setRendererSink({
+    surface() {}, userInput() {}, presented() {},
+    adopted(payload) { popupAdoptions.push(payload); },
+  });
   pool.setClientTorndownHandler(cwd => host!.onClientTorndown(cwd));
   async function start(marker: string) {
     const { thread } = await pool!.request<{ thread: Thread }>("thread/start", { engine: "wuu", provider: "fixture", model: "fixture", permission_mode: "unconfined" });
@@ -226,6 +310,97 @@ app.whenReady().then(async () => {
     await pool!.request("turn/start", { thread_id: thread.id, prompt: marker });
     return thread.id;
   }
+  // The fixture browser is real Chromium. The local provider drives every
+  // opener click through the Go tool, reverse RPC, and native page input.
+  const popup = await start("OWNERSHIP_POPUP");
+  await bounded("popup opener is ready", popupWaiting.promise);
+  const popupTab = String(calls.find(call => call.method === "browser/open_tab" && call.params.thread_id === popup)?.params.tab_id ?? "");
+  const popupView = await readTab(popupTab);
+  assert(popupView, "The real Go turn opens the popup fixture page");
+  host.reportBounds(workdir, popupTab, main as unknown as BrowserHostWindowHandle, { x: 0, y: 0, width: 800, height: 600 }, 1, true);
+  main.showInactive();
+  await popupView.webContents.executeJavaScript("new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))");
+  async function popupTool(tool: Record<string, unknown>) {
+    const response = heldPopup;
+    assert(response, "The provider is waiting for its next popup action");
+    heldPopup = undefined;
+    popupWaiting = deferred();
+    respond(response, tool);
+    await bounded(`popup action ${tool.action}`, popupWaiting.promise);
+  }
+  type ListedTabs = { tab_ids: string[]; tabs: { tab_id: string; url: string; title: string }[] };
+  async function popupTabs() { return await request(popup, "browser/list_tabs") as ListedTabs; }
+  async function clickPopup(y: number, path?: string) {
+    if (path) popupLoads.set(path, deferred());
+    await popupTool({ action: "click", tab_id: popupTab, x: 120, y });
+    if (path) await bounded(`popup document ${path}`, popupLoads.get(path)!.promise);
+  }
+  await clickPopup(60);
+  const blankState = await popupView.webContents.executeJavaScript("window.popupState");
+  check("about:blank returns a live WindowProxy", blankState.blankReturned === true);
+  check("script-written blank popup keeps its opener", blankState.blankHasOpener === true);
+  const blank = (await popupTabs()).tabs.find(tab => tab.title === "Script-written popup");
+  check("script-written about:blank is adopted into the owning task", Boolean(blank), JSON.stringify(await popupTabs()));
+  if (blank) {
+    const blankView = await readTab(blank.tab_id);
+    check("adopted blank popup retains synchronously written content", await blankView?.webContents.executeJavaScript("document.body.dataset.nonce") === popupNonce);
+  }
+  await clickPopup(120, "/popup-message");
+  const message = (await popupTabs()).tabs.find(tab => tab.url === `${baseURL}/popup-message`);
+  check("navigated popup is adopted into the owning task", Boolean(message));
+  const messageView = message ? await readTab(message.tab_id) : undefined;
+  check("child sees the original opener", await messageView?.webContents.executeJavaScript("window.popupProof.hasOpener") === true);
+  const messageProof = await popupView.webContents.executeJavaScript(`new Promise(resolve => {
+    const proof = () => window.popupState.messages.find(message => message.kind === 'popup-message');
+    if(proof()) return resolve(proof());
+    const timer = setTimeout(() => { removeEventListener('message', receive); resolve(null); }, 2000);
+    function receive() { if(proof()) { clearTimeout(timer); removeEventListener('message', receive); resolve(proof()); } }
+    addEventListener('message', receive);
+  })`);
+  check("child postMessage reaches opener with original window identity", messageProof?.nonce === popupNonce && messageProof?.sourceMatches === true, JSON.stringify(messageProof));
+  await clickPopup(180, "/popup-form");
+  const submitted = popupRequests.filter(item => item.url === "/popup-form");
+  const formBody = new URLSearchParams(submitted[0]?.body);
+  check("target=_blank form preserves POST and encoded body", submitted.length === 1 && submitted[0]?.method === "POST" && formBody.get("nonce") === popupNonce && formBody.get("payload") === "two words & a plus +", JSON.stringify(submitted));
+  await clickPopup(240, "/popup-named?step=1");
+  const namedBefore = (await popupTabs()).tabs.filter(tab => tab.url.includes("/popup-named"));
+  await clickPopup(300, "/popup-named?step=2");
+  const namedAfter = (await popupTabs()).tabs.filter(tab => tab.url.includes("/popup-named"));
+  check("named popup reuses its WindowProxy", await popupView.webContents.executeJavaScript("window.popupState.namedReused") === true);
+  check("named popup reuses one owned tab", namedBefore.length === 1 && namedAfter.length === 1 && namedBefore[0].tab_id === namedAfter[0].tab_id && namedAfter[0].url.endsWith("?step=2"), JSON.stringify({ namedBefore, namedAfter }));
+  await popupTool({ action: "tabs" });
+  const sibling = await pool.request<{ thread: Thread }>("thread/start", { engine: "wuu", provider: "fixture", model: "fixture", permission_mode: "unconfined" });
+  const foreign = await request(sibling.thread.id, "browser/list_tabs") as ListedTabs;
+  check("a foreign thread cannot discover adopted popups", foreign.tab_ids.length === 0, JSON.stringify(foreign));
+  if (message && messageView) {
+    const rejectedClick = await request(sibling.thread.id, "browser/cdp", { tab_id: message.tab_id, method: "click", params: { x: 140, y: 120 } }).then(() => "delivered", error => String(error));
+    check("a foreign thread cannot click an adopted popup", rejectedClick !== "delivered" && await messageView.webContents.executeJavaScript("window.clicks") === 0, rejectedClick);
+    const rejectedClose = await request(sibling.thread.id, "browser/close_tab", { tab_id: message.tab_id }).then(() => "closed", error => String(error));
+    check("a foreign thread cannot close an adopted popup", rejectedClose !== "closed" && host.tabSurfaceMeta(workdir, message.tab_id) !== undefined, rejectedClose);
+  }
+  const beforeSlow = new Set((await popupTabs()).tab_ids);
+  await clickPopup(360);
+  await bounded("slow popup starts its actual HTTP navigation", slowPopupStarted.promise);
+  const slow = (await popupTabs()).tabs.find(tab => !beforeSlow.has(tab.tab_id));
+  check("a loading popup is owned before its response finishes", Boolean(slow));
+  if (slow) {
+    const adoptionCountBeforeClose = popupAdoptions.length;
+    await request(popup, "browser/close_tab", { tab_id: slow.tab_id });
+    slowPopupResponse!.end("<!doctype html><title>Closed popup response</title>");
+    await popupTool({ action: "tabs" });
+    check("closing a loading popup cannot resurrect it", !(await popupTabs()).tab_ids.includes(slow.tab_id) && host.tabSurfaceMeta(workdir, slow.tab_id) === undefined);
+    check("closed loading popup produces no stale adoption", !popupAdoptions.slice(adoptionCountBeforeClose).some(item => item.tabID === slow.tab_id));
+  } else slowPopupResponse!.end("<!doctype html><title>Unowned popup response</title>");
+  await request(popup, "browser/close_tab", { tab_id: popupTab });
+  check("owned popup outlives its explicitly closed opener", Boolean(message && host.tabSurfaceMeta(workdir, message.tab_id) && messageView && !messageView.webContents.isDestroyed()));
+  if (messageView && !messageView.webContents.isDestroyed()) {
+    check("surviving popup remains usable after opener close", await messageView.webContents.executeJavaScript("document.querySelector('#target').click(); window.clicks") === 1);
+  }
+  await popupTool({ action: "finalize", keep: [] });
+  check("owning task finalize closes all of its adopted popups", (await popupTabs()).tab_ids.length === 0);
+  respond(heldPopup!);
+  await bounded("popup task completes", completed.get(popup)!.promise);
+
   const a = await start("OWNERSHIP_A");
   await bounded("A waits with its tab", aWaiting.promise);
   const b = await start("OWNERSHIP_B");
@@ -382,7 +557,7 @@ app.whenReady().then(async () => {
   disposeGate.resume.resolve();
   const disposeResult = await disposedInput;
   check("disposal invalidates input before closing views", disposeResult !== "delivered" && host.tabSurfaceMeta(workdir, dTab) === undefined, disposeResult);
-  writeFileSync(join(output, "results.json"), JSON.stringify({ checks, threads: { a, b, c, d }, tabs: { aTab, bTab, cTab, dTab }, calls, providerRequests, events }, null, 2));
+  writeFileSync(join(output, "results.json"), JSON.stringify({ checks, threads: { a, b, c, d }, tabs: { aTab, bTab, cTab, dTab }, calls, providerRequests, popupRequests, popupAdoptions, events }, null, 2));
   console.log(JSON.stringify(checks, null, 2));
   await pool.shutdown();
   host.destroyAll();
@@ -393,7 +568,7 @@ app.whenReady().then(async () => {
   console.log(`PASS: browser task ownership and takeover; evidence ${output}`);
   app.exit(0);
 }).catch(async error => {
-  writeFileSync(join(output, "failure.json"), JSON.stringify({ error: String(error), checks, calls, providerRequests, events }, null, 2));
+  writeFileSync(join(output, "failure.json"), JSON.stringify({ error: String(error), checks, calls, providerRequests, popupRequests, popupAdoptions, events }, null, 2));
   console.error(error);
   await pool?.shutdown().catch(() => undefined);
   host?.destroyAll();
