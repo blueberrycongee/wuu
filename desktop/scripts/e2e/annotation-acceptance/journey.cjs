@@ -223,13 +223,14 @@ module.exports = async function annotationJourney({
               assert.ok(selectable, `${name}: quoted excerpt is selectable`);
               variant.states.excerptSelected = await checkpoint(name, '06-excerpt-selected');
             }
-            await nativeClick('.pdf-quote-comment-input');
             await evaluate(() => {
               const input = document.querySelector('.pdf-quote-comment-input');
+              input.focus();
               input.setSelectionRange(input.value.length, input.value.length);
             });
             comment += ' Recheck this saved quotation.';
             await main.webContents.insertText(' Recheck this saved quotation.');
+            await waitFor(expected => document.querySelector('.pdf-quote-comment-input')?.value === expected, comment);
             assert.equal(await evaluate(() => document.querySelector('.pdf-quote-comment-input').value), comment,
               `${name}: editing the draft comment updates the controlled value`);
             assert.equal(await evaluate(() => document.querySelector('.composer-file-selection-card-popover blockquote').textContent), firstQuote,
