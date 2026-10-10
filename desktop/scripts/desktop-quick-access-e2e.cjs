@@ -310,14 +310,37 @@ import(pathToFileURL(path.join(desktop, 'out/main/index.js')).href).then(async (
 
     for (const [theme, size, width] of [['light', 14, 1180], ['dark', 20, 820]]) {
       main.setSize(width, 900);
-      await evaluate(main, async ({ theme, size }) => {
-        await window.wuu.setThemePreference(theme);
-        await window.wuu.setMessageFlowFontSize(size);
+      await evaluate(main, () => window.dispatchEvent(new CustomEvent('wuu:open-settings', { detail: { page: 'appearance' } })));
+      await waitFor(main, () => document.querySelector('[data-testid="settings-message-flow-font-size-input"]'));
+      await click(main, `[data-testid="settings-theme-${theme}"]`);
+      await evaluate(main, () => document.querySelector('[data-testid="settings-message-flow-font-size-input"]').focus());
+      await input(main, 'a', ['control']);
+      await main.webContents.insertText(String(size));
+      await input(main, 'Tab');
+      await waitFor(main, size => Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--font-ui')) === size, size);
+      await until(async () => await evaluate(main, () => window.wuu.getMessageFlowFontSize()) === size, 'UI size persisted');
+      await openSettings(main);
+      await evaluate(main, async () => {
         document.querySelector('[data-testid="settings-quick-access"]').scrollIntoView({ block: 'center' });
         await document.fonts.ready;
-        await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-      }, { theme, size });
-      fs.writeFileSync(path.join(output, `${theme}-${size}-${width}.png`), (await main.webContents.capturePage()).toPNG());
+      });
+      // The missing-workspace case intentionally shows a toast. Capture after
+      // it and the zoom readout dismiss, and after live appearance transitions.
+      await waitFor(main, ({ theme, size }) => document.documentElement.dataset.theme === theme
+        && Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--font-ui')) === size
+        && !document.querySelector('.archive-tip, .desktop-zoom-readout')
+        && !document.getAnimations().some(animation => Number.isFinite(animation.effect.getComputedTiming().iterations)
+          && (animation.pending || animation.playState === 'running')), { theme, size });
+      await evaluate(main, () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      const rendered = await evaluate(main, () => ({
+        theme: document.documentElement.dataset.theme,
+        uiFontSize: Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--font-ui')),
+        viewport: { width: innerWidth, height: innerHeight },
+      }));
+      const name = `${theme}-${size}-${width}`;
+      fs.writeFileSync(path.join(output, `${name}.json`), JSON.stringify(rendered, null, 2));
+      fs.writeFileSync(path.join(output, `${name}.png`), (await main.webContents.capturePage()).toPNG());
+      record(`captured ${theme} at ${rendered.uiFontSize}px in ${rendered.viewport.width}px viewport`);
     }
     await back(main);
     assert.equal(await evaluate(main, () => document.querySelector('.composer textarea').value), 'Unsent main draft');
