@@ -435,6 +435,16 @@ exclusive. `revision` identifies the captured file content, not necessarily a
 Git revision. The server checks required metadata, supported intent, positive
 coordinates, and range ordering; it does not read the file or verify its revision.
 
+PDF selections add optional `source.pdf` metadata with one-based `start_page`
+and `end_page` (inclusive). Their four line/column fields are zero; pages are
+never encoded as text lines. A delivered PDF also retains `artifact_uri`,
+`artifact_sha256`, and `artifact_thread_id` inside `pdf`, with `revision` set to
+`sha256:<artifact_sha256>`. Wuu checks the page ordering and delivery identity
+fields for consistency. These fields identify the quoted snapshot; they do not
+grant file access or prove that a quoted passage appears in it. The desktop's
+Quote and Comment actions add the excerpt to the current draft without sending.
+Workspace PDF revisions identify the file observed when the excerpt was captured.
+
 Each file-selection `text` must contain the complete model-visible serialized
 block, including source context, intent, and any comment. Clients concatenate
 part texts in order to form `prompt`. The server keeps valid metadata only when

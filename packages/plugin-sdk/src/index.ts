@@ -1846,6 +1846,8 @@ export interface FilePreviewSnapshotV1 {
   readonly safeHostUrl?: string;
   readonly sizeBytes?: number;
   readonly binary?: boolean;
+  /** The exposed text was shortened to the host preview limit, independently of safeHostUrl. */
+  readonly truncated?: boolean;
   readonly readOnly?: boolean;
   readonly dirty?: boolean;
   readonly loading?: boolean;
