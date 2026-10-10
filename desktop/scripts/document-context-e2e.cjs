@@ -147,15 +147,20 @@ async function dragFirstPage() {
       if (window.__pdfDragEvents.length < 32) window.__pdfDragEvents.push({ type, buttons: event.buttons,
         trusted: event.isTrusted, x: event.clientX, y: event.clientY, target: `${target.nodeName}.${target.className || ''}` });
     }, { capture: true, signal: window.__pdfDragAbort.signal });
-    return { start: Math.floor(r.left), end: Math.ceil(r.right), y: Math.round((r.top + r.bottom) / 2) };
+    // Start and end inside the glyph span, rather than on the surrounding PDF layer.
+    return { start: Math.ceil(r.left), end: Math.floor(r.right), y: Math.round((r.top + r.bottom) / 2) };
   });
   await focusWindow();
+  const ranges = [];
   main.webContents.sendInputEvent({ type: 'mouseMove', x: bounds.start, y: bounds.y });
   main.webContents.sendInputEvent({ type: 'mouseDown', button: 'left', clickCount: 1, x: bounds.start, y: bounds.y });
   for (let step = 1; step <= 12; step++) {
     main.webContents.sendInputEvent({ type: 'mouseMove', button: 'left', modifiers: ['leftbuttondown'],
       x: Math.round(bounds.start + (bounds.end - bounds.start) * step / 12), y: bounds.y });
-    await evaluate(() => new Promise(resolve => requestAnimationFrame(resolve)));
+    ranges.push(await evaluate(() => new Promise(resolve => requestAnimationFrame(() => {
+      const selection = document.querySelector('[data-workspace-pdf-preview]').shadowRoot.getSelection();
+      resolve({ text: selection.toString(), collapsed: selection.isCollapsed, anchorOffset: selection.anchorOffset, focusOffset: selection.focusOffset });
+    }))));
   }
   main.webContents.sendInputEvent({ type: 'mouseUp', button: 'left', clickCount: 1, x: bounds.end, y: bounds.y });
   const result = await evaluate(() => {
@@ -166,7 +171,7 @@ async function dragFirstPage() {
         text: getComputedStyle(root.querySelector('.textLayer span')).userSelect,
         toolbar: getComputedStyle(root.querySelector('.workspace-pdf-toolbar')).userSelect } };
   });
-  selectionInput = { bounds, events: result.events, selectability: result.selectability };
+  selectionInput = { bounds, events: result.events, ranges, selectability: result.selectability };
   return result.text;
 }
 async function quoteSelection() {
@@ -469,5 +474,19 @@ async function fail(error) {
     selectionDiagnostics.webContentsFocused = main.webContents.isFocused();
   } catch {} }
   if (main && !main.isDestroyed()) { try { await capture('failure'); } catch {} }
+  if (main && !main.isDestroyed() && phase === 'quote stays in draft') { try {
+    const probe = await evaluate(async () => {
+      const root = document.querySelector('[data-workspace-pdf-preview]')?.shadowRoot;
+      const span = root?.querySelector('.page[data-page-number="1"] .textLayer span');
+      if (!span) return null;
+      const range = document.createRange(); range.selectNodeContents(span);
+      const selection = root.getSelection(); selection.removeAllRanges(); selection.addRange(range);
+      const beforeFrame = selection.toString();
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      const afterFrame = selection.toString(); selection.removeAllRanges();
+      return { beforeFrame, afterFrame };
+    });
+    selectionDiagnostics = { ...selectionDiagnostics, programmaticProbe: probe };
+  } catch {} }
   writeEvidence(false); clearTimeout(timeout); server.close(); console.error(error); app.exit(1);
 }
