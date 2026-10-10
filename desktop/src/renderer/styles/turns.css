@@ -69,10 +69,10 @@
   --rich-code-block-bg: var(--surface-2);
   --message-flow-card-border: var(--hairline);
   --message-flow-card-header-bg: var(--message-flow-card-bg);
-  --message-flow-card-hover-bg: var(--wuu-color-surface, var(--surface-1));
+  --message-flow-card-hover-bg: var(--surface-2);
   --message-flow-card-shadow: var(--shadow-soft);
   /* Embedded cards use a middle radius between controls and full panels. */
-  --message-flow-card-radius: 12px;
+  --message-flow-card-radius: calc((var(--radius-sm) + var(--radius-md)) / 2);
   --surface-chip: var(--surface-2);
   --fork-worktree-focus-ring: var(--focus-ring);
   --rich-blockquote-color: var(--wuu-color-text-muted, var(--gray-650));
@@ -350,25 +350,40 @@
 }
 
 .session-message-source {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-self: end;
-  gap: 6px;
+  gap: calc(var(--space-1) * 1.5);
   min-width: 0;
   max-width: 100%;
-  padding: 2px 0;
-  border: 0;
-  background: none;
-  color: var(--ink-tertiary);
+  min-height: var(--control-size-roomy);
+  padding: var(--control-padding-block) var(--control-padding-inline);
+  border: 1px solid var(--message-flow-card-border);
+  border-radius: var(--message-flow-card-radius);
+  background: var(--message-flow-card-bg);
+  color: var(--ink);
   font: inherit;
-  text-align: right;
+  font-size: var(--font-ui);
+  line-height: 1.4;
+  text-align: start;
   cursor: pointer;
 }
 
-.session-message-source svg { flex: none; }
-.session-message-source span { overflow-wrap: anywhere; }
-.session-message-source:hover:not(:disabled) { color: var(--ink); }
-.session-message-source:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
+.session-message-source svg {
+  flex: none;
+  width: var(--icon-size-xl);
+  height: var(--icon-size-xl);
+  color: var(--ink-soft);
+}
+.session-message-source span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.session-message-source:hover:not(:disabled) { background: var(--message-flow-card-hover-bg); }
+.session-message-source:active:not(:disabled) { background: var(--surface-3); }
+.session-message-source:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 3px; }
 .session-message-source:disabled { cursor: default; }
 
 /*
@@ -5139,20 +5154,6 @@ html[data-focus-modality="keyboard"] .turn-artifact-gallery-items:focus-visible 
   color: var(--ink);
 }
 
-.turn-output-summary-meta {
-  display: inline-flex;
-  flex-shrink: 0;
-  align-items: center;
-  gap: 8px;
-  color: var(--ink-tertiary);
-  font-size: var(--font-sm);
-}
-
-.turn-output-summary-meta .icon {
-  width: 14px;
-  height: 14px;
-}
-
 .turn-artifact-inline-image {
   align-self: flex-start;
   margin: 0;
@@ -5212,12 +5213,9 @@ html[data-focus-modality="keyboard"] .turn-artifact-gallery-items:focus-visible 
   font-size: var(--font-xs);
 }
 
-.turn-artifact-inline-card {
+.turn-edit-summary-card[data-wuu-component="artifact"] {
   width: min(100%, 620px);
-  overflow: hidden;
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-md);
-  background: var(--paper);
+  margin-top: 0;
 }
 
 .artifact-preview-overlay {
@@ -5368,10 +5366,15 @@ html[data-focus-modality="keyboard"] .turn-artifact-gallery-items:focus-visible 
 
 .artifact-preview-empty {
   display: grid;
+  box-sizing: border-box;
+  min-width: 0;
   min-height: 240px;
+  padding: var(--panel-padding);
   place-items: center;
   color: var(--ink-tertiary);
   font-size: var(--font-sm);
+  text-align: center;
+  overflow-wrap: anywhere;
 }
 
 @media (max-width: 720px) {
@@ -5464,7 +5467,7 @@ html[data-focus-modality="keyboard"] .turn-artifact-gallery-items:focus-visible 
   overflow: hidden;
   border: 1px solid var(--message-flow-card-border);
   border-radius: var(--message-flow-card-radius);
-  background: var(--paper);
+  background: var(--message-flow-card-bg);
   box-shadow: none;
 }
 
@@ -5506,7 +5509,7 @@ button.turn-edit-summary-overview {
 }
 
 button.turn-edit-summary-overview:hover {
-  background: var(--surface-1);
+  background: var(--message-flow-card-hover-bg);
 }
 
 button.turn-edit-summary-overview:focus-visible {
@@ -5523,8 +5526,8 @@ button.turn-edit-summary-overview:focus-visible {
 }
 
 .turn-edit-summary-icon .icon {
-  width: 20px;
-  height: 20px;
+  width: var(--icon-size-xl);
+  height: var(--icon-size-xl);
 }
 
 .turn-edit-summary-overview-copy {
@@ -5571,13 +5574,17 @@ button.turn-edit-summary-overview:focus-visible {
 }
 
 .turn-edit-summary-overview-trailing > .icon {
-  width: 16px;
-  height: 16px;
+  width: var(--icon-size);
+  height: var(--icon-size);
   color: var(--ink-muted);
 }
 
 .turn-edit-summary-list {
   padding: 0 var(--space-1) var(--space-1);
+}
+
+.turn-edit-summary-card.is-list-only .turn-edit-summary-list {
+  padding-top: var(--space-1);
 }
 
 .turn-edit-summary-row {
@@ -5597,6 +5604,60 @@ button.turn-edit-summary-overview:focus-visible {
 
 .turn-edit-summary-name {
   display: block;
+}
+
+.turn-output-summary-copy {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: calc(var(--space-1) / 2);
+}
+
+.turn-output-summary-description {
+  display: block;
+  min-width: 0;
+}
+
+.turn-artifact-meta {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-1);
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink-soft);
+  font-size: var(--font-sm);
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.turn-artifact-meta > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.turn-artifact-meta > span:not(:first-child) {
+  flex-shrink: 0;
+}
+
+.turn-edit-summary-card[data-wuu-component="turn-artifacts"] .turn-edit-summary-row {
+  gap: var(--space-3);
+  padding-block: var(--compact-padding-block);
+}
+
+.turn-edit-summary-card[data-wuu-component="turn-artifacts"] .turn-edit-summary-row > .icon {
+  flex: 0 0 auto;
+  width: var(--icon-size);
+  height: var(--icon-size);
+  color: var(--ink-muted);
+}
+
+.turn-edit-summary-card[data-wuu-component="turn-artifacts"] .turn-output-summary-name {
+  font-family: inherit;
+  font-size: var(--font-ui);
+  font-weight: var(--weight-medium);
+  line-height: 1.35;
 }
 
 .turn-edit-summary-stats {

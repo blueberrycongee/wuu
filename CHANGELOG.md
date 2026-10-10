@@ -31,6 +31,16 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Show the source of received session messages as a compact, theme-aware card
+  that opens the related conversation in a split pane. Keep message text,
+  copying, and long-message expansion separate from the navigation control.
+  Unify its card surface and corners with generated files and turn summaries.
+  Put artifact filenames first, with concise format and known size beneath,
+  with internal preview, workspace, and download actions. Show multi-file outputs
+  without a repeated heading and reveal larger groups three files at a time.
+  Add native file actions for managed artifacts, including macOS associated
+  applications and exported copies that preserve the original delivery.
+
 - Keep PDF selections highlighted while writing a compact annotation, show draft
   excerpts as readable document tiles, and group sent references into count pills
   with expandable excerpts and source navigation.

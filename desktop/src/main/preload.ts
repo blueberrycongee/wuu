@@ -425,6 +425,8 @@ const api: WuuDesktopApi = {
     ipcRenderer.invoke("wuu:file-show-in-folder", path),
   showWorkspaceItemMenu: (path: string) =>
     ipcRenderer.invoke("wuu:file-show-menu", path),
+  showArtifactItemMenu: (params) =>
+    ipcRenderer.invoke("wuu:artifact-show-menu", params),
   saveArtifactFile: async (name: string, source: string) => {
     // Blob URLs belong to this renderer and cannot be fetched by the main process.
     if (source.startsWith("blob:")) {
