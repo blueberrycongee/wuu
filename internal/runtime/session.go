@@ -1332,7 +1332,11 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 		kit.SetSessionsDir(s.SessionDir)
 		kit.SetWorkingNotesHome(wuuHome)
 		kit.SetBrowserTabs(browserTabs)
-		kit.SetImageInputSupported(s.ModelRoles.Main.Capabilities.ImageInput)
+		// Unknown custom model capabilities retain provider-validated image input,
+		// matching user attachments and read_file instead of becoming a denial.
+		if s.ModelRoles.Main.Capabilities.ImageInputKnown {
+			kit.SetImageInputSupported(s.ModelRoles.Main.Capabilities.ImageInput)
+		}
 		kit.SetAgentIdentity(id, agentthread.RootPath)
 		fileScopeExtras := []string{artifactDir}
 		// Rebase the file-scope whitelist on the thread root (the clone

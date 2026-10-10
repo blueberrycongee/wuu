@@ -66,7 +66,8 @@ func (t *BrowserTool) Definition() providers.ToolDefinition {
 			"Tabs stay hidden in the background by default; visiting a page does not show it to the user. " +
 			"Call set_visibility with visible=true only when the user's main goal is to watch the page, then set_visibility false or finalize when that goal ends. " +
 			"Read-only actions (observe, screenshot, tabs, wait_for) inspect page state; the others mutate it. " +
-			"Screenshot saves a UI preview and returns its path and dimensions, not image content to the model. " +
+			"observe and screenshot save a UI preview without sending image content by default. Set include_image=true only when visual evidence is needed; it attaches a bounded screenshot for image-capable models. " +
+			"Browser input coordinates are CSS pixels. Use the returned CSS viewport dimensions and delivered image dimensions to map a visual point; do not assume image pixels equal CSS pixels. " +
 			"observe returns readable content (headings, paragraphs, lists, and tables) and the interactive nodes from the same page view. Content that can be clicked includes its node_id. " +
 			"A long page sets content_next_offset; pass that value as content_offset to read the next slice. Node ids expire on the next observe. " +
 			finalizeDescription +
@@ -93,6 +94,10 @@ func (t *BrowserTool) Definition() providers.ToolDefinition {
 				"visible": map[string]any{
 					"type":        "boolean",
 					"description": "Used by action=set_visibility. true overlays the tab in the current session's right-side browser; false returns it to the hidden host.",
+				},
+				"include_image": map[string]any{
+					"type":        "boolean",
+					"description": "Used by observe or screenshot. Default false. Attach the visible page pixels to the model as well as saving the UI preview. Requires an image-capable model; text-only models can use observe without this flag. Screenshots may contain private page content.",
 				},
 				"node_id": map[string]any{
 					"type":        "integer",
@@ -166,6 +171,20 @@ func (t *BrowserTool) ValidateInput(argsJSON string) error {
 	if _, ok := browserKnownActions[action]; !ok {
 		return fmt.Errorf("browser tool: unsupported action %q: error_kind=unknown_action", action)
 	}
+	var imageArgs struct {
+		IncludeImage bool `json:"include_image"`
+	}
+	if err := json.Unmarshal([]byte(argsJSON), &imageArgs); err != nil {
+		return fmt.Errorf("browser tool has invalid arguments: %w", err)
+	}
+	if imageArgs.IncludeImage {
+		if action != "observe" && action != "screenshot" {
+			return errors.New("include_image is only supported by observe and screenshot")
+		}
+		if t.env != nil && t.env.ImageInputSupported != nil && !*t.env.ImageInputSupported {
+			return errors.New("browser visual observation requires an image-capable model: error_kind=image_input_unsupported model_next_action=\"use observe without include_image or choose an image-capable model\"")
+		}
+	}
 	if action == "navigate" {
 		var probe struct {
 			URL string `json:"url"`
@@ -213,6 +232,8 @@ type browserObservation struct {
 	ContentTotal      int                   `json:"content_total"`
 	ContentNextOffset *int                  `json:"content_next_offset"`
 	ScreenshotPath    string                `json:"screenshot_path"`
+	ViewportWidth     float64               `json:"viewport_width"`
+	ViewportHeight    float64               `json:"viewport_height"`
 }
 
 type browserContentBlock struct {
@@ -365,9 +386,18 @@ func (t *BrowserTool) doObserve(ctx context.Context, argsJSON string, bctx brows
 	destPath := t.previewPath(bctx)
 	params := map[string]any{"screenshot": destPath != "", "dest_path": destPath}
 	var observeArgs struct {
-		ContentOffset int `json:"content_offset"`
+		ContentOffset int  `json:"content_offset"`
+		IncludeImage  bool `json:"include_image"`
 	}
-	_ = decodeArgs(argsJSON, &observeArgs)
+	if err := decodeArgs(argsJSON, &observeArgs); err != nil {
+		return toolresult.Result{}, err
+	}
+	if observeArgs.IncludeImage {
+		if destPath == "" {
+			return toolresult.Result{}, errors.New("browser visual observation requires a session artifact directory: error_kind=no_artifact_dir")
+		}
+		params["include_image"] = true
+	}
 	if observeArgs.ContentOffset > 0 {
 		params["content_offset"] = observeArgs.ContentOffset
 	}
@@ -400,8 +430,8 @@ func (t *BrowserTool) doObserve(ctx context.Context, argsJSON string, bctx brows
 		}
 	}
 	structured, _ := json.Marshal(payload)
-	// The screenshot is a UI preview only: reference it as a file:// URI on the
-	// activity, never as a base64 image in the model result.
+	// Preview updates stay independent of explicit model image attachments.
+	// Ordinary DOM observations do not spend image tokens.
 	if bctx.setPreview != nil {
 		if sp := strings.TrimSpace(obs.ScreenshotPath); sp != "" {
 			bctx.setPreview(fileURI(sp))
@@ -410,10 +440,16 @@ func (t *BrowserTool) doObserve(ctx context.Context, argsJSON string, bctx brows
 		}
 	}
 	t.rememberTab(tabID, realURL, obs.Title, false)
-	return toolresult.Result{
+	result := toolresult.Result{
 		Content:           []toolresult.ContentPart{{Type: toolresult.ContentTypeText, Text: renderObserveText(tabID, obs)}},
 		StructuredContent: structured,
-	}, nil
+	}
+	if observeArgs.IncludeImage {
+		if err := t.attachBrowserImage(ctx, &result, destPath, obs.ViewportWidth, obs.ViewportHeight); err != nil {
+			return toolresult.Result{}, err
+		}
+	}
+	return result, nil
 }
 
 func (t *BrowserTool) doInput(ctx context.Context, action, argsJSON string, bctx browserActionContext) (toolresult.Result, error) {
@@ -439,19 +475,20 @@ func (t *BrowserTool) doScreenshot(ctx context.Context, argsJSON string, bctx br
 		return toolresult.Result{}, errors.New("browser screenshot requires a session artifact directory: error_kind=no_artifact_dir")
 	}
 	var args struct {
-		Format string `json:"format"`
+		Format       string `json:"format"`
+		IncludeImage bool   `json:"include_image"`
 	}
 	_ = decodeArgs(argsJSON, &args)
 	format := strings.TrimSpace(args.Format)
 	if format == "" {
 		format = "png"
 	}
-	res, err := t.env.BrowserBridge.Screenshot(ctx, tabID, destPath, format)
+	res, err := t.captureScreenshot(ctx, tabID, destPath, format, args.IncludeImage)
 	if err != nil && isTabNotFound(err) {
 		if url := t.tabURL(tabID); url != "" {
 			if oerr := t.env.BrowserBridge.OpenTab(ctx, tabID, url); oerr == nil {
 				t.rememberTab(tabID, url, "", false)
-				res, err = t.env.BrowserBridge.Screenshot(ctx, tabID, destPath, format)
+				res, err = t.captureScreenshot(ctx, tabID, destPath, format, args.IncludeImage)
 			}
 		}
 		if err != nil {
@@ -473,7 +510,64 @@ func (t *BrowserTool) doScreenshot(ctx context.Context, argsJSON string, bctx br
 	if bctx.setPreview != nil {
 		bctx.setPreview(fileURI(previewTarget))
 	}
-	return browserResult("screenshot", map[string]any{"tab_id": tabID, "width": res.Width, "height": res.Height, "path": previewTarget}), nil
+	result := browserResult("screenshot", map[string]any{"tab_id": tabID, "width": res.Width, "height": res.Height, "path": previewTarget})
+	if args.IncludeImage {
+		if err := t.attachBrowserImage(ctx, &result, destPath, res.ViewportWidth, res.ViewportHeight); err != nil {
+			return toolresult.Result{}, err
+		}
+	}
+	return result, nil
+}
+
+func (t *BrowserTool) captureScreenshot(ctx context.Context, tabID, destPath, format string, includeImage bool) (BrowserScreenshotResult, error) {
+	if !includeImage {
+		return t.env.BrowserBridge.Screenshot(ctx, tabID, destPath, format)
+	}
+	// Explicit visual evidence also asks the desktop for capture geometry. The
+	// preview-only bridge contract stays compatible with older desktop peers.
+	raw, err := t.env.BrowserBridge.Call(ctx, "browser/screenshot", map[string]any{
+		"workdir": t.rootDir(), "tab_id": tabID, "dest_path": destPath, "format": format, "include_image": true,
+	})
+	if err != nil {
+		return BrowserScreenshotResult{}, err
+	}
+	var result BrowserScreenshotResult
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return BrowserScreenshotResult{}, fmt.Errorf("decode browser screenshot: %w", err)
+	}
+	return result, nil
+}
+
+// Reuse read_file's bounded image normalization and session-file access checks.
+// Only the core-selected capture path is read, never a path supplied by the model
+// or an alternate path returned by the desktop. Image dimensions in read_image
+// describe the delivered pixels; viewport dimensions describe CDP input space.
+func (t *BrowserTool) attachBrowserImage(ctx context.Context, result *toolresult.Result, path string, viewportWidth, viewportHeight float64) error {
+	if viewportWidth <= 0 || viewportHeight <= 0 {
+		return errors.New("browser screenshot has no CSS viewport geometry: error_kind=missing_capture_geometry; observe again with an updated desktop client")
+	}
+	args, _ := json.Marshal(map[string]string{"path": path})
+	imageResult, err := NewReadFileTool(t.env).ExecuteResult(ctx, string(args))
+	if err != nil {
+		return fmt.Errorf("read browser screenshot: %w", err)
+	}
+	hasImage := false
+	for _, part := range imageResult.Content {
+		hasImage = hasImage || part.Type == toolresult.ContentTypeImage
+	}
+	if !hasImage {
+		return errors.New("browser screenshot did not produce image content")
+	}
+	geometry, _ := json.Marshal(map[string]any{
+		"coordinate_space": "css", "viewport_width": viewportWidth, "viewport_height": viewportHeight,
+		"mapping": "For a point (image_x, image_y) in the delivered image, use x=image_x*viewport_width/read_image.width and y=image_y*viewport_height/read_image.height. Re-observe after navigation or viewport changes.",
+	})
+	// Keep coordinate metadata ahead of potentially long DOM text so result
+	// budgeting cannot leave retained pixels without their scale.
+	content := []toolresult.ContentPart{{Type: toolresult.ContentTypeText, Text: string(geometry)}}
+	content = append(content, imageResult.Content...)
+	result.Content = append(content, result.Content...)
+	return nil
 }
 
 func (t *BrowserTool) doSetVisibility(ctx context.Context, argsJSON string, bctx browserActionContext) (toolresult.Result, error) {

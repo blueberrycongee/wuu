@@ -1,0 +1,52 @@
+name: Browser visual evidence
+on:
+  pull_request:
+    paths:
+      - "internal/tools/**"
+      - "internal/appserver/**"
+      - "internal/providers/**"
+      - "internal/runtime/**"
+      - "desktop/src/main/browserHostWindows.ts"
+      - "desktop/scripts/browser-visual-e2e*"
+      - ".github/workflows/browser-visual-e2e.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: browser-visual-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  browser-visual:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - name: Install desktop dependencies
+        run: npm ci --prefix desktop
+      - name: Build core
+        run: |
+          mkdir -p desktop/build/bin
+          go build -o desktop/build/bin/wuu-core ./cmd/wuu
+      - name: Exercise browser visual evidence
+        env:
+          WUU_BROWSER_VISUAL_OUTPUT: ${{ github.workspace }}/desktop/out/e2e/browser-visual
+        run: |
+          mkdir -p "$WUU_BROWSER_VISUAL_OUTPUT"
+          set -o pipefail
+          xvfb-run --auto-servernum node desktop/scripts/browser-visual-e2e.cjs 2>&1 | tee "$WUU_BROWSER_VISUAL_OUTPUT/run.log"
+      - name: Upload visual evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-visual-evidence
+          path: desktop/out/e2e/browser-visual
+          if-no-files-found: error
+          retention-days: 14

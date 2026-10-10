@@ -24,6 +24,13 @@ allowed-tools: [wuu_browser]
 - 长页面一次返回一段正文。结果给出 `content_next_offset` 时，下一次 `observe` 把 `content_offset` 设成那个值，直到没有下一段。节点编号以最新一次 `observe` 为准。
 - 导航和页脚里的链接不会重复进正文，它们仍在可交互节点里。
 
+## 视觉证据
+
+- 默认的 `observe` 返回正文和节点；预览图只用于用户界面。页面依赖画布、图表或视觉布局时，用 `observe` 或 `screenshot` 的 `include_image=true` 显式读取页面像素。无需再调用 `read_file`。只有支持图像输入的模型能使用此选项；纯文本模型继续使用默认的 DOM 观察。
+- 图像使用共享的大小限制和缩放流程。结果中的 `read_image.width` / `height` 是实际交给模型的图像尺寸；`viewport_width` / `viewport_height` 是浏览器输入的 CSS 像素尺寸，可能受 Retina、预览缩放和图像缩小影响而不同。对于图像中的点 `(image_x, image_y)`，用 `x=image_x*viewport_width/read_image.width`、`y=image_y*viewport_height/read_image.height` 换算。页面导航或视口变化后必须重新观察。
+- 页面捏合缩放或平移时，视觉请求会明确失败；先恢复捏合缩放，或继续使用 DOM 观察。普通页面缩放仍支持。
+- 图像是页面实际像素，可能包含私人内容；DOM 文本的凭据脱敏不等于图像已脱敏。仅在任务需要视觉证据时请求，不要为每次正文读取附带截图。
+
 ## 可见性
 
 - 默认在隐藏宿主里运行。用户看着的是一张悬浮卡片，它会在这次浏览期间保持打开。不要为了展示去打开或关闭工作区侧栏，也不要在步骤之间反复 `set_visibility`。

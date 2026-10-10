@@ -287,9 +287,11 @@ func sameRuntimeFileScopePath(left, right string) bool {
 // tool_browser never imports the appserver wire types; the bridge implementation
 // translates the protocol result into this shape.
 type BrowserScreenshotResult struct {
-	Width  int
-	Height int
-	Path   string
+	Width          int     `json:"width"`
+	Height         int     `json:"height"`
+	Path           string  `json:"path"`
+	ViewportWidth  float64 `json:"viewport_width,omitempty"`
+	ViewportHeight float64 `json:"viewport_height,omitempty"`
 }
 
 // BrowserBridge is the transport the browser tool uses to reach the desktop

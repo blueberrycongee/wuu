@@ -147,7 +147,7 @@ func (b *browserBridge) Screenshot(ctx context.Context, tabID, destPath, format 
 			return tools.BrowserScreenshotResult{}, fmt.Errorf("decode screenshot result: %w", err)
 		}
 	}
-	return tools.BrowserScreenshotResult{Width: res.Width, Height: res.Height, Path: res.Path}, nil
+	return tools.BrowserScreenshotResult{Width: res.Width, Height: res.Height, Path: res.Path, ViewportWidth: res.ViewportWidth, ViewportHeight: res.ViewportHeight}, nil
 }
 
 func (b *browserBridge) OpenTab(ctx context.Context, tabID, url string) error {

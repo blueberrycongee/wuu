@@ -220,12 +220,15 @@ export type BrowserScreenshotParams = {
   tab_id: string;
   dest_path: string;
   format?: string;
+  include_image?: boolean;
 };
 
 export type BrowserScreenshotResult = {
   width: number;
   height: number;
   path: string;
+  viewport_width?: number;
+  viewport_height?: number;
 };
 
 export type BrowserOpenTabParams = {
