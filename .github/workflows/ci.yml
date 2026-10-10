@@ -289,7 +289,7 @@ jobs:
         run: |
           mkdir -p "$WUU_DOCUMENT_OUTPUT"
           set -o pipefail
-          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/document-context-e2e.cjs 2>&1 | tee "$WUU_DOCUMENT_OUTPUT/run.log"
+          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/document-context-e2e.mjs 2>&1 | tee "$WUU_DOCUMENT_OUTPUT/run.log"
 
       - name: Upload PDF context evidence
         if: always()

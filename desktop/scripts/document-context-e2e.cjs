@@ -139,7 +139,7 @@ function writeEvidence(passed) {
   fs.writeFileSync(path.join(output, 'provider-requests.json'), JSON.stringify(requests, null, 2));
 }
 const timeout = setTimeout(() => { errors.push('Timed out'); writeEvidence(false); app.exit(1); }, 180000);
-(async () => {
+module.exports = (async () => {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const engines = Object.fromEntries(['codex', 'claude', 'cursor', 'devin', 'grok', 'hermes', 'pi', 'opencode', 'antigravity'].map(id => [id, { enabled: false }]));
   fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({ default_provider: 'fixture', engines,
@@ -147,7 +147,12 @@ const timeout = setTimeout(() => { errors.push('Timed out'); writeEvidence(false
   const stamp = '2026-01-01T00:00:00Z';
   fs.writeFileSync(path.join(home, 'projects.json'), JSON.stringify({ projects: [{ id: 'repo', name: 'document-fixture', path: project, created_at: stamp, updated_at: stamp }], active_context: { kind: 'project', project_id: 'repo', cwd: project } }));
   fs.writeFileSync(path.join(home, 'desktop-settings.json'), JSON.stringify({ onboarding_version: 100, language: 'en-US', theme: 'light' }));
+  assert.equal(app.isReady(), false, 'The ESM entry point must finish production setup before Electron readiness.');
   await import(pathToFileURL(path.join(desktop, 'out/main/index.js')).href);
+  void run().catch(fail);
+})().catch(fail);
+
+async function run() {
   while (!main) await delay(20);
   main.setSize(1380, 1000); main.show(); main.focus(); main.webContents.setBackgroundThrottling(false);
   await waitFor(() => document.querySelector('.composer textarea'));
@@ -381,8 +386,10 @@ db.commit()
   assert.equal(otherThread.turns.length, 0);
   checks.push('covered workspace PDF selection survives closing the panel and other split pane, then sends only to its intended conversation');
   phase = 'completed'; writeEvidence(true); clearTimeout(timeout); server.close(); app.quit();
-})().catch(async error => {
+}
+
+async function fail(error) {
   errors.push(error.stack || String(error));
   if (main && !main.isDestroyed()) { try { await capture('failure'); } catch {} }
   writeEvidence(false); clearTimeout(timeout); server.close(); console.error(error); app.exit(1);
-});
+}
