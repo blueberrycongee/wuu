@@ -9,7 +9,7 @@ struct ConversationTimeline: View {
     @State private var scrollState = TimelineScrollState()
     @State private var historyRequest: Task<Void, Never>?
     @State private var historyFailed = false
-    @State private var inspectedProcess: ProcessInspection?
+    @State private var inspectedProcess: ActivityInspection?
     var body: some View {
         GeometryReader { _ in
             ScrollViewReader { proxy in
@@ -31,11 +31,13 @@ struct ConversationTimeline: View {
                                 // Process groups also contain tools, so they are checked first.
                                 if row.isProcessGroup {
                                     ProcessGroupView(messages: row.messages, settings: model.live?.settings, active: row.processActive) {
-                                        inspectedProcess = ProcessInspection(id: row.messages[0].id, messages: row.messages)
+                                        inspectedProcess = ActivityInspection(id: row.messages[0].id, messages: row.messages)
                                     }
                                 } else if row.isToolGroup {
                                     ToolGroupView(messages: row.messages, settings: model.live?.settings,
-                                        active: model.live?.running == true && row.messages.last?.id == model.messages.last?.id)
+                                        active: model.live?.running == true && row.messages.last?.id == model.messages.last?.id) { summary in
+                                        inspectedProcess = ActivityInspection(id: row.id, messages: row.messages, toolsOnly: true, summary: summary)
+                                    }
                                 } else {
                                     MessageBubble(model: model, message: row.messages[0])
                                 }
@@ -87,7 +89,7 @@ struct ConversationTimeline: View {
         }.sheet(item: $model.attachmentPreview) { attachment in AttachmentPreview(attachment: attachment) }
             // Owned here, not by the row, so a turn finishing or regrouping cannot close it.
             .sheet(item: $inspectedProcess) { inspection in
-                ProcessInspectionSheet(model: model, inspection: inspection)
+                ActivityInspectionSheet(model: model, inspection: inspection)
                     .presentationDetents([.medium, .large])
             }
             .sheet(isPresented: Binding(get: { model.showingHistoryEdit && model.historyEdit != nil },
@@ -208,19 +210,26 @@ private struct MessageActions: View {
     }
 }
 
-private struct ProcessInspection: Identifiable {
-    /// The first folded message; it stays in the same group as the turn progresses.
+private struct ActivityInspection: Identifiable {
+    /// A member of the inspected group, retained when a final answer regroups the rows.
     let id: String
     let messages: [ChatMessage]
+    var toolsOnly = false
+    var summary: String?
 }
 
 /// Follows the live group while open, so new steps appear instead of the sheet closing.
-private struct ProcessInspectionSheet: View {
+private struct ActivityInspectionSheet: View {
     let model: AppModel
-    let inspection: ProcessInspection
+    let inspection: ActivityInspection
     var body: some View {
-        let row = model.conversationRows.first { $0.isProcessGroup && $0.messages.contains { $0.id == inspection.id } }
-        ProcessGroupDetails(model: model, messages: row?.messages ?? inspection.messages, settings: model.live?.settings,
-                            active: row?.processActive ?? false)
+        let row = model.conversationRows.first { $0.messages.contains { $0.id == inspection.id } }
+        let messages = row?.messages ?? inspection.messages
+        let active = row?.messages.contains { $0.turnActive } ?? false
+        if inspection.toolsOnly {
+            ToolGroupDetails(tools: messages.compactMap(\.tool), summary: inspection.summary, active: active)
+        } else {
+            ProcessGroupDetails(model: model, messages: messages, settings: model.live?.settings, active: active)
+        }
     }
 }

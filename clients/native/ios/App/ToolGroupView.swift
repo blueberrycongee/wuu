@@ -7,6 +7,7 @@ struct ToolGroupView: View {
     let messages: [ChatMessage]
     let settings: ThreadSettings?
     let active: Bool
+    var inspect: ((String?) -> Void)? = nil
     @State private var summary: ToolSummary?
     @State private var current: ToolSummary?
     @State private var unavailable = false
@@ -34,7 +35,9 @@ struct ToolGroupView: View {
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
     var body: some View {
-        Button { details = true } label: {
+        Button {
+            if let inspect { inspect(summary?.text) } else { details = true }
+        } label: {
             HStack(spacing: 8) {
                 if active {
                     ConversationActivityMark(activity: current?.activity ?? summary?.activity ?? "tool", settings: settings)
@@ -86,7 +89,7 @@ struct ToolGroupView: View {
 }
 
 /// Every operation in the group as one shared-rule line each, with its error when it failed.
-private struct ToolGroupDetails: View {
+struct ToolGroupDetails: View {
     let tools: [ToolActivity]
     let summary: String?
     let active: Bool
