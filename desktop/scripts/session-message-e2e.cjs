@@ -140,7 +140,7 @@ async function until(fn, label, ...args) {
 }
 async function hostUntil(fn, label) {
   const deadline = Date.now() + 15000;
-  while (Date.now() < deadline) { if (fn()) return; await delay(25); }
+  while (Date.now() < deadline) { if (await fn()) return; await delay(25); }
   throw new Error(`Timed out: ${label}`);
 }
 const frames = () => evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
@@ -468,12 +468,13 @@ db.commit()
   const copyEvidence = { expectedSource: 'longReply, verified unchanged in the real Go resume result',
     expected: describeText(longReply), samples: [] };
   const sampleClipboard = async label => {
-    const text = clipboard.readText();
+    const text = await clipboard.readText();
     let firstDifference = 0;
     while (firstDifference < text.length && firstDifference < longReply.length && text[firstDifference] === longReply[firstDifference]) firstDifference++;
     copyEvidence.samples.push({ label, elapsedMs: Math.round(performance.now() - copyStarted),
       actual: describeText(text), firstDifference: text === longReply ? null : firstDifference,
-      formats: clipboard.availableFormats(), selectionText: process.platform === 'linux' ? clipboard.readText('selection') : undefined,
+      formats: (await clipboard.read()).flatMap(item => item.types),
+      selectionText: process.platform === 'linux' ? await clipboard.selection.readText() : undefined,
       windowFocused: main.isFocused(), renderer: await evaluate(selector => ({
         documentFocused: document.hasFocus(), activeElement: document.activeElement?.outerHTML,
         control: document.querySelector(selector)?.outerHTML,
@@ -488,7 +489,9 @@ db.commit()
   await delay(100);
   await sampleClipboard('100ms after native copy click');
   try {
-    await hostUntil(() => clipboard.readText() === longReply, 'complete reply copied to native clipboard');
+    // Electron 44 clipboard reads are asynchronous. Compare the resolved native
+    // string, never the Promise, with the exact restored source text.
+    await hostUntil(async () => await clipboard.readText() === longReply, 'complete reply copied to native clipboard');
     await sampleClipboard('exact native clipboard match');
     pass('collapsed copy retains the complete reply in the native clipboard');
   } catch (error) {
