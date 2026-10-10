@@ -44,7 +44,7 @@ if (!bridgeNotice.isFile() || bridgeNotice.size === 0) throw new Error("Capture 
 execFileSync("codesign", ["--verify", "--strict", ...requirementArgs, captureBridge]);
 const mainExecutable = execFileSync("/usr/libexec/PlistBuddy", ["-c", "Print :CFBundleExecutable", join(app, "Contents/Info.plist")], { encoding: "utf8" }).trim();
 const appArchitectures = execFileSync("lipo", ["-archs", join(app, "Contents", "MacOS", mainExecutable)], { encoding: "utf8" }).trim().split(/\s+/);
-for (const binary of [appSnapshotExecutable, captureBridge]) execFileSync("lipo", ["-verify_arch", ...appArchitectures, binary]);
+for (const binary of [appSnapshotExecutable, captureBridge]) execFileSync("lipo", [binary, "-verify_arch", ...appArchitectures]);
 const bundleID = execFileSync("/usr/libexec/PlistBuddy", ["-c", "Print :CFBundleIdentifier", join(app, "Contents/Info.plist")], { encoding: "utf8" }).trim();
 if (bundleID !== "com.blueberrycongee.wuu") throw new Error("Release bundle identity changed");
 console.log(skipCua

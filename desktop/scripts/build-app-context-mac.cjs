@@ -36,7 +36,7 @@ copyFileSync(join(dirname(require.resolve("node-api-headers")), "LICENSE"),
 execFileSync("xcrun", ["clang++", "-std=c++17", "-fobjc-arc", "-bundle", "-undefined", "dynamic_lookup",
   "-mmacosx-version-min=14.0", "-arch", arch, "-DNAPI_VERSION=8", "-I", require("node-api-headers").include_dir,
   "-framework", "AppKit", "-framework", "CoreGraphics", join(source, "bridge", "CaptureTarget.mm"), "-o", bridge], { stdio: "inherit" });
-for (const binary of [executable, bridge]) execFileSync("lipo", ["-verify_arch", arch, binary], { stdio: "inherit" });
+for (const binary of [executable, bridge]) execFileSync("lipo", [binary, "-verify_arch", arch], { stdio: "inherit" });
 const identity = process.env.WUU_APP_CONTEXT_SIGN_ID || process.env.WUU_RELEASE_SIGN_ID || "-";
 for (const target of [bridge, bundle]) {
   execFileSync("codesign", ["--force", "--sign", identity, ...(process.env.WUU_RELEASE_KEYCHAIN ? ["--keychain", process.env.WUU_RELEASE_KEYCHAIN] : []), target], { stdio: "inherit" });
