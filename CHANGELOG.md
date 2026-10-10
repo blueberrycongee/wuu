@@ -27,6 +27,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Show the source of received session messages as a compact, theme-aware card
+  that opens the related conversation in a split pane. Keep message text,
+  copying, and long-message expansion separate from the navigation control.
+
 - Add a subtle, continuous divider below the conversation titlebar and the
   right workspace panel header, using the same theme-aware line strength.
 

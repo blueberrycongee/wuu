@@ -350,24 +350,39 @@
 }
 
 .session-message-source {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-self: end;
-  gap: 6px;
+  gap: calc(var(--space-1) * 1.5);
   min-width: 0;
   max-width: 100%;
-  padding: 2px 0;
-  border: 0;
-  background: none;
-  color: var(--ink-tertiary);
+  min-height: var(--control-size-roomy);
+  padding: var(--control-padding-block) var(--control-padding-inline);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  background: var(--surface-1);
+  color: var(--ink);
   font: inherit;
-  text-align: right;
+  font-size: var(--font-ui);
+  line-height: 1.4;
+  text-align: start;
   cursor: pointer;
 }
 
-.session-message-source svg { flex: none; }
-.session-message-source span { overflow-wrap: anywhere; }
-.session-message-source:hover:not(:disabled) { color: var(--ink); }
+.session-message-source svg {
+  flex: none;
+  width: var(--icon-size-xl);
+  height: var(--icon-size-xl);
+  color: var(--ink-soft);
+}
+.session-message-source span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.session-message-source:hover:not(:disabled) { background: var(--surface-2); }
+.session-message-source:active:not(:disabled) { background: var(--surface-3); }
 .session-message-source:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
 .session-message-source:disabled { cursor: default; }
 

@@ -278,6 +278,27 @@ jobs:
         id: build-fixture-core
         run: go build -o "${{ runner.temp }}/wuu-session-switch-core" ./cmd/wuu
 
+      - name: Verify incoming session cards and split drafts
+        if: ${{ !cancelled() && steps.build-fixture-core.outcome == 'success' }}
+        timeout-minutes: 4
+        shell: bash
+        env:
+          WUU_SESSION_MESSAGE_OUTPUT: ${{ runner.temp }}/wuu-session-message-evidence
+          WUU_DESKTOP_CORE: ${{ runner.temp }}/wuu-session-switch-core
+        run: |
+          mkdir -p "$WUU_SESSION_MESSAGE_OUTPUT"
+          set -o pipefail
+          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/session-message-e2e.cjs 2>&1 | tee "$WUU_SESSION_MESSAGE_OUTPUT/process.log"
+
+      - name: Upload session card acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: session-message-evidence
+          path: ${{ runner.temp }}/wuu-session-message-evidence/
+          if-no-files-found: ignore
+          retention-days: 14
+
       - name: Verify compact Fast mode controls
         if: ${{ !cancelled() && steps.build-fixture-core.outcome == 'success' }}
         timeout-minutes: 5
