@@ -92,6 +92,14 @@ E2E 用合成数据连接真实原生工具进程和生产用 artifact/插件渲
 记录工具结果、JSON 报告及深浅主题、宽窄窗口、默认和大字号截图。其存储适配器
 是合成的，不代表实际模型调用或打包应用验收。
 
+完整应用链路可运行 `npm --prefix desktop run test:e2e:generative-ui-app`。
+该脚本构建并启动真实 App/main/preload/core，在临时 home 中使用本机合成
+HTTP provider，检查默认关闭的工具发现、目录启用、原生工具结果进入消息流、
+生产插件存储写入和刷新恢复，以及禁用和重新启用后的降级恢复。
+实际 IPC、provider 请求、原生存储、截图和构建哈希保存在
+`desktop/out/e2e/generative-ui-app`，可用 `WUU_GENUI_APP_OUTPUT` 改目录。
+不使用外部模型或用户凭据；这是源码构建的应用验收，不是安装包验收。
+
 在仓库根目录运行 `go run scripts/generative-ui-lifecycle-e2e.go`，可使用独立
 临时 home 验证原生工具发现、执行、禁用、重新启用和安全模式；
 `WUU_GENERATIVE_UI_PLUGIN_HELPER` 指定 helper，`WUU_GENUI_LIFECYCLE_OUTPUT`

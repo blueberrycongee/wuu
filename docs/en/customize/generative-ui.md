@@ -108,6 +108,17 @@ and storage failure; it records tool output, JSON results, and light/dark,
 wide/narrow, default/large-font screenshots. Its storage adapter is synthetic;
 it does not claim a live provider call or packaged-app verification.
 
+For the complete application path, run
+`npm --prefix desktop run test:e2e:generative-ui-app`. This builds and opens the
+real App/main/preload/core with a loopback synthetic HTTP provider in a temporary
+home. It checks default-off tool discovery, catalog enablement, a real native
+tool result in the conversation, production plugin storage writes and reload,
+and disable/re-enable fallback. It records actual IPC, provider requests,
+native storage, screenshots and build hashes under
+`desktop/out/e2e/generative-ui-app` (`WUU_GENUI_APP_OUTPUT` overrides this).
+No external model or user credential is used. This is source-build application
+acceptance, not a packaged-distribution check.
+
 Run `go run scripts/generative-ui-lifecycle-e2e.go` from the repository root to
 check native tool discovery, execution, disable/re-enable and safe mode with an
 isolated temporary home; `WUU_GENERATIVE_UI_PLUGIN_HELPER` selects the helper and

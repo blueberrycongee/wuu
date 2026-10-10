@@ -11,7 +11,9 @@ on:
       - "desktop/src/renderer/ArtifactOutputs*"
       - "desktop/src/renderer/plugins/**"
       - "desktop/src/shared/workbench.ts"
-      - "desktop/scripts/generative-ui-e2e.cjs"
+      - "desktop/scripts/generative-ui*.cjs"
+      - "desktop/src/main/**"
+      - "desktop/src/renderer/App.tsx"
       - "scripts/generative-ui-lifecycle-e2e.go"
       - "desktop/package*.json"
   workflow_dispatch:
@@ -27,8 +29,9 @@ jobs:
   generative-ui:
     name: Generative UI E2E
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     env:
+      WUU_GENUI_APP_OUTPUT: ${{ github.workspace }}/desktop/out/e2e/generative-ui-app
       WUU_GENUI_OUTPUT: ${{ github.workspace }}/desktop/out/e2e/generative-ui
       WUU_GENERATIVE_UI_PLUGIN_HELPER: ${{ github.workspace }}/desktop/build/bin/wuu-generative-ui-plugin
     steps:
@@ -50,6 +53,10 @@ jobs:
         run: |
           mkdir -p desktop/build/bin
           go build -o "$WUU_GENERATIVE_UI_PLUGIN_HELPER" ./cmd/wuu-generative-ui-plugin
+      - name: Build production core and desktop
+        run: |
+          go build -o desktop/build/bin/wuu-core ./cmd/wuu
+          cd desktop && npx electron-vite build
       - name: Verify native discovery and disable lifecycle
         run: go run scripts/generative-ui-lifecycle-e2e.go
       - name: Verify tool output and interactive renderer
@@ -58,6 +65,12 @@ jobs:
           mkdir -p "$WUU_GENUI_OUTPUT"
           set -o pipefail
           xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/generative-ui-e2e.cjs 2>&1 | tee "$WUU_GENUI_OUTPUT/run.log"
+      - name: Verify complete App and production storage
+        shell: bash
+        run: |
+          mkdir -p "$WUU_GENUI_APP_OUTPUT"
+          set -o pipefail
+          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/generative-ui-app-e2e.cjs 2>&1 | tee "$WUU_GENUI_APP_OUTPUT/run.log"
       - name: Upload reproducible evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -68,5 +81,8 @@ jobs:
             desktop/out/e2e/generative-ui/*.png
             desktop/out/e2e/generative-ui/*.log
             desktop/out/e2e/generative-ui/failure.txt
+            desktop/out/e2e/generative-ui-app/*.json
+            desktop/out/e2e/generative-ui-app/*.png
+            desktop/out/e2e/generative-ui-app/*.log
           if-no-files-found: ignore
           retention-days: 14

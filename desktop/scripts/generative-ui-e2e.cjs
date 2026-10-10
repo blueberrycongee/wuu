@@ -215,17 +215,25 @@ app.whenReady().then(async () => {
   await waitFor(win, `document.querySelector('[data-genui-block="draft"] input[type="text"]')?.value === 'Design' && !document.querySelector('.plugin-genui-form-preview')`);
   results.checks.push('full renderer reload restores state; reset restores defaults and dismisses preview');
 
+  const settlePaint = () => evaluate(win, `(async () => {
+    await document.fonts.ready;
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    await Promise.all(document.getAnimations().filter(animation => animation.playState === 'running' && Number.isFinite(animation.effect.getComputedTiming().endTime)).map(animation => animation.finished.catch(() => {})));
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  })()`);
   for (const theme of ['light', 'dark']) for (const size of [14, 20]) for (const width of [1100, 480]) {
     win.setContentSize(width, 1200);
-    await evaluate(win, `document.documentElement.dataset.theme=${JSON.stringify(theme)};document.documentElement.style.setProperty('--wuu-font-size-ui', '${size}px');document.documentElement.style.setProperty('--font-ui', '${size}px');window.scrollTo(0,0)`);
-    await evaluate(win, 'new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+    await evaluate(win, `document.documentElement.dataset.theme=${JSON.stringify(theme)};document.documentElement.style.setProperty('--wuu-font-size-ui', '${size}px');document.documentElement.style.setProperty('--font-ui', '${size}px');window.scrollTo({top:0,behavior:'instant'})`);
+    await settlePaint();
     const geometry = await evaluate(win, `(() => { const r=document.querySelector('.plugin-genui').getBoundingClientRect(); return {width:innerWidth, right:r.right, left:r.left, scroll:document.documentElement.scrollWidth, lineStroke:getComputedStyle(document.querySelector('.plugin-genui-line')).stroke, labelSize:parseFloat(getComputedStyle(document.querySelector('.plugin-genui-y-labels')).fontSize), axisOffsets:[...document.querySelectorAll('.plugin-genui-y-labels span')].map((node,index)=>{const label=node.getBoundingClientRect(),plot=document.querySelector('.plugin-genui-chart').getBoundingClientRect();return Math.abs((label.top+label.bottom)/2-(plot.top+plot.height*index/2));})}; })()`);
     assert.ok(geometry.left >= 0 && geometry.right <= width + 1 && geometry.scroll <= width + 1, JSON.stringify(geometry));
     assert.notEqual(geometry.lineStroke, 'none', 'Chart line is painted without optional theme overrides');
     assert.ok(geometry.labelSize >= size, 'Chart labels retain the user UI font size');
     assert.ok(geometry.axisOffsets.every(offset=>offset<1), 'Y-axis labels align with their grid values');
     fs.writeFileSync(path.join(output, `${theme}-${size}-${width}.png`), (await win.webContents.capturePage()).toPNG());
-    await evaluate(win, `document.querySelector('[data-genui-block="draft"]').scrollIntoView({block:'center'})`);
+    await evaluate(win, `document.querySelector('[data-genui-block="draft"]').scrollIntoView({block:'center',behavior:'instant'})`);
+    await settlePaint();
+    assert.ok(await evaluate(win, `(() => { const r=document.querySelector('[data-genui-block="draft"] input').getBoundingClientRect(); return r.top>=0 && r.bottom<=innerHeight; })()`), 'Form input is visible before screenshot');
     fs.writeFileSync(path.join(output, `${theme}-${size}-${width}-form.png`), (await win.webContents.capturePage()).toPNG());
   }
   results.checks.push('light/dark, 14/20 px, wide/narrow screenshots and page overflow');
@@ -239,7 +247,8 @@ app.whenReady().then(async () => {
   const bars = toolCall(edit(s => { s.blocks[2].chartType = 'bar'; }), 'bar-render').result.result;
   await evaluate(win, `window.probe.result(${JSON.stringify(bars)})`);
   await waitFor(win, `document.querySelectorAll('.plugin-genui-chart rect').length === 30`);
-  await evaluate(win, `document.querySelector('[data-genui-block="progress"]').scrollIntoView({block:'center'})`);
+  await evaluate(win, `document.querySelector('[data-genui-block="progress"]').scrollIntoView({block:'center',behavior:'instant'})`);
+  await settlePaint();
   fs.writeFileSync(path.join(output, 'bar-chart.png'), (await win.webContents.capturePage()).toPNG());
   await evaluate(win, `window.probe.result(${JSON.stringify(result)})`);
   await waitFor(win, `document.querySelector('[data-wuu-component="generated-ui"]')?.getAttribute('aria-busy') === 'false'`);
