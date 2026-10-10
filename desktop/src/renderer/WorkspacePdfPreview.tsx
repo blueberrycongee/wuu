@@ -51,6 +51,7 @@ export function WorkspacePdfPreview({
       tabIndex={-1}
       className="workspace-file-pdf-preview"
       data-workspace-pdf-preview
+      data-selectable
       data-wuu-component="workspace-pdf-preview"
     >
       {shadowRoot

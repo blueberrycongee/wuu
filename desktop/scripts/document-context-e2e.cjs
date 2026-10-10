@@ -160,9 +160,13 @@ async function dragFirstPage() {
   main.webContents.sendInputEvent({ type: 'mouseUp', button: 'left', clickCount: 1, x: bounds.end, y: bounds.y });
   const result = await evaluate(() => {
     window.__pdfDragAbort.abort();
-    return { text: document.querySelector('[data-workspace-pdf-preview]').shadowRoot.getSelection().toString(), events: window.__pdfDragEvents };
+    const host = document.querySelector('[data-workspace-pdf-preview]'), root = host.shadowRoot;
+    return { text: root.getSelection().toString(), events: window.__pdfDragEvents,
+      selectability: { host: getComputedStyle(host).userSelect,
+        text: getComputedStyle(root.querySelector('.textLayer span')).userSelect,
+        toolbar: getComputedStyle(root.querySelector('.workspace-pdf-toolbar')).userSelect } };
   });
-  selectionInput = { bounds, events: result.events };
+  selectionInput = { bounds, events: result.events, selectability: result.selectability };
   return result.text;
 }
 async function quoteSelection() {

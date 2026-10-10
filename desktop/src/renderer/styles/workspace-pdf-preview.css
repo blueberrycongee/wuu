@@ -28,6 +28,8 @@
 /* A chrome row like Review's file row: the page count on the pane inset, the
  * zoom controls ending on the toolbar inset. */
 .workspace-pdf-toolbar {
+  user-select: none;
+  -webkit-user-select: none;
   display: flex;
   min-width: 0;
   min-height: calc(var(--control-size-toolbar) + var(--space-2) * 2);
@@ -116,12 +118,6 @@ button:focus-visible {
   margin: 0 auto 18px;
   border: 1px solid var(--hairline);
   background-color: var(--pdf-page-bg);
-}
-
-/* The desktop shell disables selection; PDF text opts back in inside its shadow root. */
-.textLayer {
-  user-select: text;
-  -webkit-user-select: text;
 }
 
 .workspace-pdf-status {
