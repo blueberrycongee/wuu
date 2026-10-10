@@ -32,6 +32,8 @@ contextBridge.exposeInMainWorld("wuu", {`);
 
 preload = preload.replace('contextBridge.exposeInMainWorld("wuu", {', `contextBridge.exposeInMainWorld("wuu", {
   platform: 'darwin',
+  getBuildInfo: async () => ({ core: undefined, desktop: { version: 'app-snapshot-e2e', date: '2026-10-09' } }),
+  listMCPServers: async () => ({ servers: [] }),
   getAppContextState: () => ipcRenderer.invoke('snapshot:state'),
   updateAppContextSettings: value => ipcRenderer.invoke('snapshot:save', value),
   requestAppContextPermission: () => ipcRenderer.invoke('snapshot:state'),
@@ -48,6 +50,9 @@ async function waitFor(win, fn) {
 async function capture(win, name) {
   if (!screenshots) return;
   await evaluate(win, () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  await evaluate(win, () => Promise.all(document.getAnimations()
+    .filter(animation => animation.effect?.getComputedTiming().endTime !== Infinity)
+    .map(animation => animation.finished.catch(() => {}))));
   const screenshot = await win.webContents.capturePage();
   assert.ok(screenshot.getSize().width > 1, 'A real display is required for visual evidence. Set WUU_APP_CONTEXT_E2E_SCREENSHOTS=0 for functional-only E2E.');
   fs.writeFileSync(path.join(output, name + '.png'), screenshot.toPNG());
