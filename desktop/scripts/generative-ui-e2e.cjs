@@ -265,6 +265,7 @@ app.whenReady().then(async () => {
       results.categoryAxes.push({ chartType, count, theme, size, width, labels });
       assert.ok(labels.every(label => label.offset < 1 && label.fontSize >= size), `${chartType} ${count} category labels align with marks without shrinking text`);
       if (chartType === 'bar' && count === 2) fs.writeFileSync(path.join(output, `bar-categories-${theme}-${size}-${width}.png`), (await win.webContents.capturePage()).toPNG());
+      if (chartType === 'bar' && count === 7 && width === 480) fs.writeFileSync(path.join(output, 'bar-categories-seven-dark-20-480.png'), (await win.webContents.capturePage()).toPNG());
     }
   }
   await evaluate(win, `window.probe.result(${JSON.stringify(result)})`);
