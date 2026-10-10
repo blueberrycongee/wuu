@@ -251,25 +251,30 @@ export async function activate(api) {
     const maximum = Math.max(0, ...points.map(point => point.value));
     const high = maximum === low ? low + 1 : maximum;
     const span = high - low;
-    const x = index => 60 + (index + 0.5) * 520 / points.length;
-    const y = number => 220 - (number - low) / span * 180;
+    const x = index => (index + 0.5) * 520 / points.length;
+    const y = number => 180 - (number - low) / span * 180;
     const selected = points[active];
     return h(ui.Section, { title: block.title, "data-genui-block": block.id },
       h(ui.Select, { label: "Show points", value: value.range, onChange: event => { setActive(-1); change({ range: event.target.value }); } },
         h("option", { value: "all" }, "All points"), h("option", { value: "10" }, "Last 10"), h("option", { value: "25" }, "Last 25")),
-      h("svg", { className: "plugin-genui-chart", viewBox: "0 0 620 265", role: "img", "aria-label": `${block.title ?? "Chart"}. ${points.length} points. Use the data table for exact values.` },
-        h("title", null, block.title ?? "Chart"),
-        ...[0, 0.5, 1].map((fraction, index) => h("g", { key: `grid-${index}` },
-          h("line", { x1: 60, x2: 580, y1: 40 + fraction * 180, y2: 40 + fraction * 180, className: "plugin-genui-grid" }),
-          h("text", { x: 52, y: 44 + fraction * 180, textAnchor: "end" }, formatAxis(high - fraction * span)))),
-        h("line", { x1: 60, x2: 580, y1: y(0), y2: y(0), className: "plugin-genui-axis" }),
-        block.chartType === "line" ? h("polyline", { points: points.map((point, index) => `${x(index)},${y(point.value)}`).join(" "), className: "plugin-genui-line" }) : null,
-        ...points.map((point, index) => h("g", { key: `point-${index}`, onMouseEnter: () => setActive(index), onMouseLeave: () => setActive(-1) },
-          block.chartType === "bar" ? h("rect", { x: x(index) - 180 / points.length, width: 360 / points.length, y: Math.min(y(0), y(point.value)), height: Math.max(1, Math.abs(y(point.value) - y(0))), className: "plugin-genui-mark" })
-            : h("circle", { cx: x(index), cy: y(point.value), r: points.length > 40 ? 2 : 4, className: "plugin-genui-mark" }),
-          h("title", null, `${point.label}: ${point.value}`))),
-        h("text", { x: 60, y: 241, textAnchor: "start" }, shorten(points[0].label)),
-        points.length > 1 ? h("text", { x: 580, y: 241, textAnchor: "end" }, shorten(points.at(-1).label)) : null,
+      h("div", { className: "plugin-genui-plot" },
+        // Keep labels outside the scalable SVG so narrow windows and large UI
+        // font preferences never shrink the text with the chart geometry.
+        h("div", { className: "plugin-genui-y-labels", "aria-hidden": true },
+          ...[high, low + span / 2, low].map((value, index) => h("span", { key: index }, formatAxis(value)))),
+        h("svg", { className: "plugin-genui-chart", viewBox: "0 0 520 180", preserveAspectRatio: "none", role: "img", "aria-label": `${block.title ?? "Chart"}. ${points.length} points. Use the data table for exact values.` },
+          h("title", null, block.title ?? "Chart"),
+          ...[0, 0.5, 1].map((fraction, index) => h("line", { key: `grid-${index}`, x1: 0, x2: 520, y1: fraction * 180, y2: fraction * 180, className: "plugin-genui-grid" })),
+          h("line", { x1: 0, x2: 520, y1: y(0), y2: y(0), className: "plugin-genui-axis" }),
+          block.chartType === "line" ? h("polyline", { points: points.map((point, index) => `${x(index)},${y(point.value)}`).join(" "), className: "plugin-genui-line" }) : null,
+          ...points.map((point, index) => h("g", { key: `point-${index}`, onMouseEnter: () => setActive(index), onMouseLeave: () => setActive(-1) },
+            block.chartType === "bar" ? h("rect", { x: x(index) - 180 / points.length, width: 360 / points.length, y: Math.min(y(0), y(point.value)), height: Math.max(1, Math.abs(y(point.value) - y(0))), className: "plugin-genui-mark" })
+              : h("circle", { cx: x(index), cy: y(point.value), r: points.length > 40 ? 2 : 4, className: "plugin-genui-mark" }),
+            h("title", null, `${point.label}: ${point.value}`))),
+        ),
+        h("div", { className: "plugin-genui-x-labels", "aria-hidden": true },
+          h("span", { title: points[0].label }, points[0].label),
+          points.length > 1 ? h("span", { title: points.at(-1).label }, points.at(-1).label) : null),
       ),
       h("p", { className: "plugin-genui-chart-caption" }, selected ? `${selected.label}: ${selected.value}` : [block.xLabel, block.yLabel].filter(Boolean).join(" · ") || `${points.length} points`),
       h("details", null, h("summary", null, "Chart data"),
@@ -313,34 +318,37 @@ export async function activate(api) {
 function formatAxis(value) {
   return new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 }).format(value);
 }
-function shorten(label) { return [...label].length > 24 ? [...label].slice(0, 23).join("") + "…" : label; }
 
 const styles = `
-.plugin-genui { display:grid; gap:20px; min-width:0; padding:20px; border:1px solid var(--wuu-color-border-subtle); border-radius:var(--wuu-radius-panel); color:var(--wuu-color-text); font-size:var(--wuu-font-size-ui, 14px); line-height:1.5; }
+.plugin-genui { --genui-border:var(--wuu-color-border-subtle, color-mix(in srgb, currentColor 16%, transparent)); display:grid; gap:20px; min-width:0; padding:20px; border:1px solid var(--genui-border); border-radius:var(--wuu-radius-panel, 16px); color:var(--wuu-color-text, currentColor); font-size:var(--wuu-font-size-ui, 14px); line-height:1.5; }
 .plugin-genui-header { display:flex; flex-wrap:wrap; gap:8px 16px; align-items:baseline; justify-content:space-between; }
 .plugin-genui-header h2 { font:inherit; font-weight:600; margin:0; overflow-wrap:anywhere; }
-.plugin-genui-muted { color:var(--wuu-color-text-muted); margin:0; }
+.plugin-genui-muted { color:var(--wuu-color-text-muted, currentColor); margin:0; }
 .plugin-genui-blocks { display:grid; gap:24px; margin:0; padding:0; border:0; min-width:0; }
 .plugin-genui-blocks > * { min-width:0; }
 .plugin-genui-text { white-space:pre-wrap; overflow-wrap:anywhere; margin:0; }
-.plugin-genui-table-scroll { max-width:100%; overflow:auto; border:1px solid var(--wuu-color-border-subtle); border-radius:var(--wuu-radius-control); }
+.plugin-genui-table-scroll { max-width:100%; overflow:auto; border:1px solid var(--genui-border); border-radius:var(--wuu-radius-control, 8px); }
 .plugin-genui table { width:100%; border-collapse:collapse; font:inherit; text-align:left; }
-.plugin-genui th, .plugin-genui td { padding:8px 12px; border-bottom:1px solid var(--wuu-color-border-subtle); max-width:320px; overflow-wrap:anywhere; vertical-align:top; }
+.plugin-genui th, .plugin-genui td { padding:8px 12px; border-bottom:1px solid var(--genui-border); max-width:320px; overflow-wrap:anywhere; vertical-align:top; }
 .plugin-genui th { font-weight:500; }
 .plugin-genui th button { white-space:normal; text-align:left; padding:0; }
 .plugin-genui tr:last-child td { border-bottom:0; }
-.plugin-genui-chart { width:100%; height:auto; overflow:visible; }
-.plugin-genui-chart text { fill:var(--wuu-color-text-muted); font-family:inherit; font-size:12px; }
-.plugin-genui-grid { stroke:var(--wuu-color-border-subtle); stroke-dasharray:3 4; }
-.plugin-genui-axis { stroke:var(--wuu-color-text-muted); }
-.plugin-genui-line { fill:none; stroke:var(--wuu-color-accent); stroke-width:2.5; }
-.plugin-genui-mark { fill:var(--wuu-color-accent); }
+.plugin-genui-plot { display:grid; grid-template-columns:minmax(3ch, max-content) minmax(0, 1fr); gap:8px 12px; padding-top:4px; }
+.plugin-genui-y-labels { display:flex; flex-direction:column; justify-content:space-between; text-align:right; line-height:1; height:180px; }
+.plugin-genui-chart { display:block; width:100%; height:180px; overflow:visible; }
+.plugin-genui-chart line, .plugin-genui-chart polyline { vector-effect:non-scaling-stroke; }
+.plugin-genui-x-labels { grid-column:2; display:flex; justify-content:space-between; gap:12px; min-width:0; }
+.plugin-genui-x-labels span { max-width:48%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.plugin-genui-grid { stroke:var(--genui-border); stroke-dasharray:3 4; }
+.plugin-genui-axis { stroke:var(--wuu-color-text-muted, currentColor); }
+.plugin-genui-line { fill:none; stroke:var(--wuu-color-accent, currentColor); stroke-width:2.5; }
+.plugin-genui-mark { fill:var(--wuu-color-accent, currentColor); }
 .plugin-genui-chart-caption { min-height:1.5em; margin:0; overflow-wrap:anywhere; }
 .plugin-genui-form { display:grid; gap:12px; }
 .plugin-genui-form-preview { display:grid; gap:12px; margin-top:12px; justify-items:start; }
 .plugin-genui-form-preview pre { font:inherit; white-space:pre-wrap; overflow-wrap:anywhere; max-width:100%; margin:0; }
-.plugin-genui summary { cursor:pointer; color:var(--wuu-color-text-muted); }
+.plugin-genui summary { cursor:pointer; color:var(--wuu-color-text-muted, currentColor); }
 .plugin-genui details[open] > summary { margin-bottom:12px; }
-.plugin-genui :focus-visible { outline:2px solid var(--wuu-color-accent); outline-offset:3px; }
+.plugin-genui :focus-visible { outline:2px solid var(--wuu-color-accent, currentColor); outline-offset:3px; }
 @media (max-width:600px) { .plugin-genui { padding:12px; } .plugin-genui th, .plugin-genui td { padding:8px; } }
 `;

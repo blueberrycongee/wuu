@@ -39,6 +39,7 @@ function toolCall(value, index = 1) {
 function edit(change) { const value = structuredClone(spec); change(value); return value; }
 const cases = [
   ['valid', spec, true],
+  ['bar-chart', edit(s => { s.blocks[2].chartType = 'bar'; }), true],
   ['empty-table', edit(s => { s.blocks[1].rows = []; }), true],
   ['zero-chart', edit(s => { s.blocks[2].points = [{ label: 'Zero', value: 0 }]; }), true],
   ['unicode', edit(s => { s.blocks[0].text = '中文🙂'; }), true],
@@ -218,13 +219,31 @@ app.whenReady().then(async () => {
     win.setContentSize(width, 1200);
     await evaluate(win, `document.documentElement.dataset.theme=${JSON.stringify(theme)};document.documentElement.style.setProperty('--wuu-font-size-ui', '${size}px');document.documentElement.style.setProperty('--font-ui', '${size}px');window.scrollTo(0,0)`);
     await evaluate(win, 'new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
-    const geometry = await evaluate(win, `(() => { const r=document.querySelector('.plugin-genui').getBoundingClientRect(); return {width:innerWidth, right:r.right, left:r.left, scroll:document.documentElement.scrollWidth}; })()`);
+    const geometry = await evaluate(win, `(() => { const r=document.querySelector('.plugin-genui').getBoundingClientRect(); return {width:innerWidth, right:r.right, left:r.left, scroll:document.documentElement.scrollWidth, lineStroke:getComputedStyle(document.querySelector('.plugin-genui-line')).stroke, labelSize:parseFloat(getComputedStyle(document.querySelector('.plugin-genui-y-labels')).fontSize)}; })()`);
     assert.ok(geometry.left >= 0 && geometry.right <= width + 1 && geometry.scroll <= width + 1, JSON.stringify(geometry));
+    assert.notEqual(geometry.lineStroke, 'none', 'Chart line is painted without optional theme overrides');
+    assert.ok(geometry.labelSize >= size, 'Chart labels retain the user UI font size');
     fs.writeFileSync(path.join(output, `${theme}-${size}-${width}.png`), (await win.webContents.capturePage()).toPNG());
     await evaluate(win, `document.querySelector('[data-genui-block="draft"]').scrollIntoView({block:'center'})`);
     fs.writeFileSync(path.join(output, `${theme}-${size}-${width}-form.png`), (await win.webContents.capturePage()).toPNG());
   }
   results.checks.push('light/dark, 14/20 px, wide/narrow screenshots and page overflow');
+  await click(win, '[data-genui-block="draft"] input[type="text"]');
+  win.webContents.sendInputEvent({type:'keyDown',keyCode:'Tab'});
+  win.webContents.sendInputEvent({type:'keyUp',keyCode:'Tab'});
+  await waitFor(win, `document.activeElement === document.querySelector('[data-genui-block="draft"] select')`);
+  assert.equal(await evaluate(win, `document.activeElement.matches(':focus-visible')`), true);
+  fs.writeFileSync(path.join(output, 'keyboard-focus.png'), (await win.webContents.capturePage()).toPNG());
+  results.checks.push('native keyboard focus reaches the next form control visibly');
+  const bars = toolCall(edit(s => { s.blocks[2].chartType = 'bar'; }), 'bar-render').result.result;
+  await evaluate(win, `window.probe.result(${JSON.stringify(bars)})`);
+  await waitFor(win, `document.querySelectorAll('.plugin-genui-chart rect').length === 30`);
+  await evaluate(win, `document.querySelector('[data-genui-block="progress"]').scrollIntoView({block:'center'})`);
+  fs.writeFileSync(path.join(output, 'bar-chart.png'), (await win.webContents.capturePage()).toPNG());
+  await evaluate(win, `window.probe.result(${JSON.stringify(result)})`);
+  await waitFor(win, `document.querySelector('[data-wuu-component="generated-ui"]')?.getAttribute('aria-busy') === 'false'`);
+  results.checks.push('bar chart renders through the same validated native resource path');
+
   await evaluate(win, 'window.probe.failStorage(true)');
   await input(win, '[data-genui-block="draft"] input[type="text"]', 'Still editable');
   await waitFor(win, `document.body.textContent.includes('could not be saved')`);
