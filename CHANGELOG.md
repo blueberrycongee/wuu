@@ -89,6 +89,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   pages and submitted form bodies in embedded browser popups. At turn end,
   close temporary tabs while keeping user pages, handoffs, deliverables and
   their live opener context; release automation control on retained pages.
+  Clean up native page self-closes without losing tab-close notifications or
+  leaving stale permission ownership.
 
 - Discover external-engine models in the conversation's actual working directory,
   with native refresh, bounded probes and context-aware cache invalidation for

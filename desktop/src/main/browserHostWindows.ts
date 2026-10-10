@@ -146,6 +146,10 @@ type BrowserRequest = { cancelled: boolean; workdir: string; threadID: string; t
 
 type TabEntry = {
   view: BrowserViewHandle;
+  // The view getter clears before a native self-close emits destroyed. Keep
+  // identity and liveness independent from that disposable view property.
+  contents: BrowserWebContentsHandle;
+  contentsID: number;
   workdir: string;
   tabID: string;
   threadID?: string;
@@ -399,7 +403,7 @@ export class BrowserHostCoordinator {
   // zoom factor is 1. undefined when the tab is gone.
   tabBounds(workdir: string, tabID: string): Rectangle | undefined {
     const entry = this.tabs.get(tabKey(workdir, tabID));
-    if (!entry || entry.view.webContents.isDestroyed()) return undefined;
+    if (!entry || entry.contents.isDestroyed()) return undefined;
     return entry.view.getBounds();
   }
 
@@ -416,13 +420,13 @@ export class BrowserHostCoordinator {
     zoom: number,
   ): Rectangle | undefined {
     const entry = this.tabs.get(tabKey(workdir, tabID));
-    if (!entry || entry.view.webContents.isDestroyed()) return undefined;
+    if (!entry || entry.contents.isDestroyed()) return undefined;
     const previous = entry.view.getBounds();
     this.reparent(entry, parent);
     const wasPanel = entry.inPanel;
     entry.inPanel = false;
     entry.presented = true;
-    entry.view.webContents.setZoomFactor(zoom);
+    entry.contents.setZoomFactor(zoom);
     entry.view.setBounds(rect);
     this.applyEntryActivity(entry);
     // The card is watch-only. Scrollbar paint reads as a control, and the
@@ -444,9 +448,9 @@ export class BrowserHostCoordinator {
     zoom: number,
   ): void {
     const entry = this.tabs.get(tabKey(workdir, tabID));
-    if (!entry || entry.view.webContents.isDestroyed()) return;
+    if (!entry || entry.contents.isDestroyed()) return;
     if (entry.currentParent !== owner) return;
-    entry.view.webContents.setZoomFactor(zoom);
+    entry.contents.setZoomFactor(zoom);
     entry.view.setBounds(rect);
   }
 
@@ -460,7 +464,7 @@ export class BrowserHostCoordinator {
     restore: Rectangle,
   ): void {
     const entry = this.tabs.get(tabKey(workdir, tabID));
-    if (!entry || entry.view.webContents.isDestroyed()) return;
+    if (!entry || entry.contents.isDestroyed()) return;
     if (entry.currentParent !== owner) return;
     this.reparent(entry, this.ensureHostWindow());
     const wasPanel = entry.inPanel;
@@ -468,7 +472,7 @@ export class BrowserHostCoordinator {
     entry.presented = false;
     // The card lays the page out at its own size. Handing the view back
     // must not leave that zoom on the hidden host.
-    entry.view.webContents.setZoomFactor(1);
+    entry.contents.setZoomFactor(1);
     entry.view.setBounds(restore);
     this.applyEntryActivity(entry);
     if (wasPanel) this.rendererSink?.presented();
@@ -476,16 +480,16 @@ export class BrowserHostCoordinator {
 
   tabSurfaceMeta(workdir: string, tabID: string): BrowserTabSurfaceMeta | undefined {
     const entry = this.tabs.get(tabKey(workdir, tabID));
-    if (!entry || entry.view.webContents.isDestroyed()) return undefined;
-    return { url: entry.view.webContents.getURL(), title: entry.view.webContents.getTitle() };
+    if (!entry || entry.contents.isDestroyed()) return undefined;
+    return { url: entry.contents.getURL(), title: entry.contents.getTitle() };
   }
 
   private async emitInteraction(entry: TabEntry, hint: BrowserInteractionHint): Promise<void> {
     const tasks = [...this.interactionListeners].map(async (listener) => {
       await listener(entry.workdir, entry.tabID, hint);
     });
-    if (entry.inPanel && hint.kind !== "move" && hint.kind !== "clear") {
-      tasks.push(entry.view.webContents.executeJavaScript(`window.__wuuAgentCursor?.feedback(${JSON.stringify(hint)})`).then(() => undefined));
+    if (entry.inPanel && hint.kind !== "move" && hint.kind !== "clear" && !entry.contents.isDestroyed()) {
+      tasks.push(entry.contents.executeJavaScript(`window.__wuuAgentCursor?.feedback(${JSON.stringify(hint)})`).then(() => undefined));
     }
     // A preview failure must not fail browser input.
     await Promise.allSettled(tasks);
@@ -556,7 +560,7 @@ export class BrowserHostCoordinator {
     };
     this.lastBounds.set(key, { window: target, rect });
     const entry = this.tabs.get(key);
-    if (!entry || entry.view.webContents.isDestroyed()) return;
+    if (!entry || entry.contents.isDestroyed()) return;
     if (entry.blockPresent && !force) return;
     entry.blockPresent = false;
     this.presentInPanel(entry, target, rect);
@@ -623,7 +627,7 @@ export class BrowserHostCoordinator {
 
   surface(workdir: string, tabID: string): BrowserSurfaceSnapshot | undefined {
     const entry = this.tabs.get(tabKey(workdir, tabID));
-    if (!entry || entry.view.webContents.isDestroyed()) return undefined;
+    if (!entry || entry.contents.isDestroyed()) return undefined;
     return this.snapshotOf(entry);
   }
 
@@ -642,21 +646,21 @@ export class BrowserHostCoordinator {
       if (!entry) {
         await this.openTab(workdir, { thread_id: threadID ?? "", tab_id: tabID, initial_url: target }, undefined, "persistent");
         entry = this.tabs.get(tabKey(workdir, tabID));
-      } else if (!entry.view.webContents.isDestroyed()) {
+      } else if (!entry.contents.isDestroyed()) {
         entry.status = "persistent";
         entry.controlledTurn = undefined;
         const current = entry;
-        await this.withActiveEntry(current, () => current.view.webContents.loadURL(target));
+        await this.withActiveEntry(current, () => current.contents.loadURL(target));
       }
-      if (!entry || entry.view.webContents.isDestroyed()) return undefined;
+      if (!entry || entry.contents.isDestroyed()) return undefined;
       this.presentIfCached(entry);
       return this.snapshotOf(entry);
     }
     const entry = this.tabs.get(tabKey(workdir, tabID));
-    if (!entry || entry.view.webContents.isDestroyed()) return undefined;
+    if (!entry || entry.contents.isDestroyed()) return undefined;
     entry.status = "persistent";
     entry.controlledTurn = undefined;
-    const contents = entry.view.webContents;
+    const contents = entry.contents;
     switch (command) {
       case "back":
         if (contents.canGoBack()) contents.goBack();
@@ -752,13 +756,13 @@ export class BrowserHostCoordinator {
     const inputGeneration = entry.inputGeneration;
     const initialURL = typeof params.initial_url === "string" ? params.initial_url : "";
     if (initialURL) {
-      await this.withActiveEntry(entry, () => entry.view.webContents.loadURL(initialURL));
+      await this.withActiveEntry(entry, () => entry.contents.loadURL(initialURL));
     }
     if (request) {
       this.assertRequestCurrent(request);
       if (!entry.agentInputAllowed || entry.inputGeneration !== inputGeneration) throw new Error("Browser control revoked during navigation");
     }
-    if (this.tabs.get(key) !== entry || entry.view.webContents.isDestroyed()) throw new Error("Browser tab closed during navigation");
+    if (this.tabs.get(key) !== entry || entry.contents.isDestroyed()) throw new Error("Browser tab closed during navigation");
     this.presentIfCached(entry);
     return { ok: true, tab_id: tabID };
   }
@@ -770,7 +774,7 @@ export class BrowserHostCoordinator {
     parent.addChildView(view);
     if (!view.webContents.debugger.isAttached()) view.webContents.debugger.attach("1.3");
     const entry: TabEntry = {
-      view, workdir, tabID, threadID, openerTabID: ownership.opener?.tabID,
+      view, contents: view.webContents, contentsID: view.webContents.id, workdir, tabID, threadID, openerTabID: ownership.opener?.tabID,
       creationTurn: ownership.turn, controlledTurn: ownership.turn, status: ownership.status ?? "temporary",
       inputGeneration: 0, pageGeneration: 0,
       agentInputAllowed: this.threadControls.get(tabKey(workdir, threadID ?? ""))?.allowed !== false,
@@ -780,7 +784,7 @@ export class BrowserHostCoordinator {
       activeOperations: 0, spectatorScrollbarEpoch: 0,
     };
     this.tabs.set(tabKey(workdir, tabID), entry);
-    this.agentWebContentsIds.add(view.webContents.id);
+    this.agentWebContentsIds.add(entry.contentsID);
     this.applyEntryActivity(entry);
     this.wireEntry(entry);
     return entry;
@@ -809,8 +813,8 @@ export class BrowserHostCoordinator {
       tabs.push({
         tab_id: entry.tabID,
         status: entry.status,
-        url: entry.view.webContents.getURL(),
-        title: entry.view.webContents.getTitle(),
+        url: entry.contents.getURL(),
+        title: entry.contents.getTitle(),
       });
     }
     return { tab_ids: ids, tabs };
@@ -924,12 +928,12 @@ export class BrowserHostCoordinator {
     // did-fail-load), which is far more robust than racing Page.loadEventFired
     // over the debugger on a hidden view. The wire contract is about the
     // {url,title} result, not the exact CDP verb used to get there.
-    await entry.view.webContents.loadURL(url);
-    return { url: entry.view.webContents.getURL(), title: entry.view.webContents.getTitle() };
+    await entry.contents.loadURL(url);
+    return { url: entry.contents.getURL(), title: entry.contents.getTitle() };
   }
 
   private async observe(entry: TabEntry, params: Record<string, JsonValue>, assertCurrent: () => void): Promise<JsonValue> {
-    const snapshot = await entry.view.webContents.debugger.sendCommand("DOMSnapshot.captureSnapshot", {
+    const snapshot = await entry.contents.debugger.sendCommand("DOMSnapshot.captureSnapshot", {
       computedStyles: [],
     });
     assertCurrent();
@@ -953,8 +957,8 @@ export class BrowserHostCoordinator {
     });
     const content = page.blocks.map((block) => readableBlockJSON(block, nodeIDByBackend));
     const result: Record<string, JsonValue> = {
-      url: entry.view.webContents.getURL(),
-      title: entry.view.webContents.getTitle(),
+      url: entry.contents.getURL(),
+      title: entry.contents.getTitle(),
       nodes,
       content,
       content_offset: page.offset,
@@ -973,7 +977,7 @@ export class BrowserHostCoordinator {
     const point = await this.resolvePoint(entry, params);
     await this.glideCursor(entry, point[0], point[1], assertCurrent);
     await this.withAgentInput(entry, async () => {
-      const dbg = entry.view.webContents.debugger;
+      const dbg = entry.contents.debugger;
       assertCurrent();
       await dbg.sendCommand("Input.dispatchMouseEvent", {
         type: "mousePressed",
@@ -998,7 +1002,7 @@ export class BrowserHostCoordinator {
   }
 
   private async typeText(entry: TabEntry, params: Record<string, JsonValue>, assertCurrent: () => void): Promise<JsonValue> {
-    const dbg = entry.view.webContents.debugger;
+    const dbg = entry.contents.debugger;
     let point: [number, number] | undefined;
     if (typeof params.node_id === "number") {
       const backendNodeId = this.requireBackendNode(entry, params.node_id);
@@ -1032,7 +1036,7 @@ export class BrowserHostCoordinator {
     if (aimed) await this.glideCursor(entry, x, y, assertCurrent);
     await this.withAgentInput(entry, () => {
       assertCurrent();
-      return entry.view.webContents.debugger.sendCommand("Input.dispatchMouseEvent", {
+      return entry.contents.debugger.sendCommand("Input.dispatchMouseEvent", {
         type: "mouseWheel",
         x,
         y,
@@ -1047,7 +1051,7 @@ export class BrowserHostCoordinator {
   private async key(entry: TabEntry, params: Record<string, JsonValue>, assertCurrent: () => void): Promise<JsonValue> {
     const chord = keyChord(params.keys);
     if (!chord) throw new Error("key requires keys");
-    const dbg = entry.view.webContents.debugger;
+    const dbg = entry.contents.debugger;
     await this.withAgentInput(entry, async () => {
       for (const stroke of chord) {
         const event = keyDispatch(stroke);
@@ -1080,7 +1084,7 @@ export class BrowserHostCoordinator {
   }
 
   private wireEntry(entry: TabEntry): void {
-    const contents = entry.view.webContents;
+    const contents = entry.contents;
     const publish = (): void => this.publishSurface(entry);
     const onNavigate = (...args: unknown[]): void => {
       entry.pageGeneration += 1;
@@ -1127,7 +1131,7 @@ export class BrowserHostCoordinator {
       const input = args[1] as { type?: string } | undefined;
       if (input?.type === "keyDown") this.noteUserInput(entry);
     });
-    contents.on("destroyed", () => this.destroyEntry(entry));
+    contents.on("destroyed", () => this.destroyEntry(entry, true));
     contents.setWindowOpenHandler((details) => {
       if (this.tabs.get(tabKey(entry.workdir, entry.tabID)) !== entry || contents.isDestroyed() || this.downWorkdirs.has(entry.workdir)) {
         return { action: "deny" };
@@ -1182,14 +1186,14 @@ export class BrowserHostCoordinator {
     this.reparent(entry, window);
     entry.presented = true;
     entry.inPanel = true;
-    entry.view.webContents.setZoomFactor(1);
+    entry.contents.setZoomFactor(1);
     entry.view.setBounds(rect);
     this.applyEntryActivity(entry);
     this.rendererSink?.presented();
   }
 
   private presentIfCached(entry: TabEntry): void {
-    if (entry.blockPresent || entry.view.webContents.isDestroyed()) return;
+    if (entry.blockPresent || entry.contents.isDestroyed()) return;
     const cached = this.lastBounds.get(tabKey(entry.workdir, entry.tabID));
     if (!cached) return;
     this.presentInPanel(entry, cached.window, cached.rect);
@@ -1211,7 +1215,7 @@ export class BrowserHostCoordinator {
     return () => {
       this.assertRequestCurrent(request);
       if (request.cancelled || !entry.agentInputAllowed || entry.inputGeneration !== inputGeneration ||
-        (!navigates && entry.pageGeneration !== pageGeneration) || entry.view.webContents.isDestroyed() ||
+        (!navigates && entry.pageGeneration !== pageGeneration) || entry.contents.isDestroyed() ||
         this.tabs.get(tabKey(entry.workdir, entry.tabID)) !== entry) {
         throw new Error("Browser action interrupted: control revoked, request cancelled, or page changed");
       }
@@ -1259,12 +1263,12 @@ export class BrowserHostCoordinator {
   // user click during the travel cancels the action.
   private async glideCursor(entry: TabEntry, x: number, y: number, assertCurrent: () => void): Promise<void> {
     assertCurrent();
-    if (!entry.presented || entry.suppressed || entry.view.webContents.isDestroyed()) return;
+    if (!entry.presented || entry.suppressed || entry.contents.isDestroyed()) return;
     if (!Number.isFinite(x) || !Number.isFinite(y)) return;
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       const arrival = entry.inPanel
-        ? entry.view.webContents.executeJavaScript(agentCursorCommandScript(x, y))
+        ? entry.contents.executeJavaScript(agentCursorCommandScript(x, y))
         : this.emitInteraction(entry, { kind: "move", x, y });
       // Navigation or a stalled renderer can abandon its JS promise. Bound
       // the wait in main as well as in the animation runtime.
@@ -1280,19 +1284,19 @@ export class BrowserHostCoordinator {
     assertCurrent();
   }
 
-  private clearCursor(entry: TabEntry): void {
+  private clearCursor(entry: TabEntry, contentsDestroyed = false): void {
     void this.emitInteraction(entry, { kind: "clear" });
-    if (entry.view.webContents.isDestroyed()) return;
-    void entry.view.webContents.executeJavaScript(clearAgentCursorScript()).catch(() => undefined);
+    if (contentsDestroyed || entry.contents.isDestroyed()) return;
+    void entry.contents.executeJavaScript(clearAgentCursorScript()).catch(() => undefined);
   }
 
   private publishSurface(entry: TabEntry): void {
-    if (entry.view.webContents.isDestroyed()) return;
+    if (entry.contents.isDestroyed()) return;
     this.rendererSink?.surface(this.snapshotOf(entry));
   }
 
   private snapshotOf(entry: TabEntry): BrowserSurfaceSnapshot {
-    const contents = entry.view.webContents;
+    const contents = entry.contents;
     return {
       workdir: entry.workdir,
       tabID: entry.tabID,
@@ -1309,9 +1313,9 @@ export class BrowserHostCoordinator {
   // Helpers.
   // -------------------------------------------------------------------------
   private applyEntryActivity(entry: TabEntry): void {
-    if (entry.view.webContents.isDestroyed()) return;
+    if (this.tabs.get(tabKey(entry.workdir, entry.tabID)) !== entry || entry.contents.isDestroyed()) return;
     const active = entry.presented || entry.activeOperations > 0;
-    entry.view.webContents.setBackgroundThrottling(!active);
+    entry.contents.setBackgroundThrottling(!active);
     entry.view.setVisible(active && !entry.suppressed);
   }
 
@@ -1335,7 +1339,7 @@ export class BrowserHostCoordinator {
     // capturePage with stayHidden temporarily bumps the capturer count so a
     // hidden host actually produces a real frame — Page.captureScreenshot over
     // CDP on a non-visible view returns a blank/stale image.
-    const image = await entry.view.webContents.capturePage(undefined, { stayHidden: true });
+    const image = await entry.contents.capturePage(undefined, { stayHidden: true });
     assertCurrent();
     const size = image.getSize();
     const png = image.toPNG();
@@ -1360,7 +1364,7 @@ export class BrowserHostCoordinator {
 
   private async pointForNode(entry: TabEntry, nodeID: number): Promise<[number, number]> {
     const backendNodeId = this.requireBackendNode(entry, nodeID);
-    const box = await entry.view.webContents.debugger.sendCommand("DOM.getBoxModel", { backendNodeId });
+    const box = await entry.contents.debugger.sendCommand("DOM.getBoxModel", { backendNodeId });
     const center = boxModelCenter(box);
     if (!center) throw new Error(`node_id ${nodeID} has no layout box; observe again`);
     return center;
@@ -1411,7 +1415,7 @@ export class BrowserHostCoordinator {
       // A parent change is an ownership handoff: the new owner decides the
       // display scale. Normalizing here means a visibility takeover never
       // inherits the PiP's shrink-to-fit zoom or the card's hidden scrollbars.
-      entry.view.webContents.setZoomFactor(1);
+      entry.contents.setZoomFactor(1);
       this.clearSpectatorScrollbars(entry);
       this.emitTabReparented(entry);
     }
@@ -1423,7 +1427,7 @@ export class BrowserHostCoordinator {
   }
 
   private async installSpectatorScrollbars(entry: TabEntry, epoch: number): Promise<void> {
-    const contents = entry.view.webContents;
+    const contents = entry.contents;
     if (contents.isDestroyed() || entry.spectatorScrollbarEpoch !== epoch) return;
     let overlay = true;
     try {
@@ -1457,7 +1461,7 @@ export class BrowserHostCoordinator {
     entry.spectatorScrollbarEpoch += 1;
     const key = entry.spectatorScrollbarKey;
     entry.spectatorScrollbarKey = undefined;
-    const contents = entry.view.webContents;
+    const contents = entry.contents;
     if (!key || contents.isDestroyed()) return;
     void contents.removeInsertedCSS(key).catch(() => undefined);
   }
@@ -1471,19 +1475,19 @@ export class BrowserHostCoordinator {
 
   private attachDebugger(entry: TabEntry, assertCurrent: () => void): void {
     assertCurrent();
-    if (!entry.view.webContents.debugger.isAttached()) entry.view.webContents.debugger.attach("1.3");
+    if (!entry.contents.debugger.isAttached()) entry.contents.debugger.attach("1.3");
     entry.debuggerAttached = true;
     assertCurrent();
   }
 
-  private releaseDebugger(entry: TabEntry): void {
+  private releaseDebugger(entry: TabEntry, contentsDestroyed = false): void {
     entry.inputGeneration += 1;
     entry.agentInputAllowed = false;
     entry.controlledTurn = undefined;
     entry.nodeMap.clear();
-    this.clearCursor(entry);
+    this.clearCursor(entry, contentsDestroyed);
     try {
-      if (entry.view.webContents.debugger.isAttached()) entry.view.webContents.debugger.detach();
+      if (!contentsDestroyed && !entry.contents.isDestroyed() && entry.contents.debugger.isAttached()) entry.contents.debugger.detach();
     } catch {
       // A closing or crashed contents may have already detached its debugger.
     }
@@ -1552,7 +1556,7 @@ export class BrowserHostCoordinator {
     return { closed, kept, tabs: this.listTabs(workdir, threadID).tabs };
   }
 
-  private destroyEntry(entry: TabEntry): void {
+  private destroyEntry(entry: TabEntry, contentsDestroyed = false): void {
     const key = tabKey(entry.workdir, entry.tabID);
     if (this.tabs.get(key) !== entry) return;
     this.tabs.delete(key);
@@ -1560,9 +1564,9 @@ export class BrowserHostCoordinator {
     entry.inputGeneration += 1;
     entry.pageGeneration += 1;
     entry.agentInputAllowed = false;
-    this.agentWebContentsIds.delete(entry.view.webContents.id);
+    this.agentWebContentsIds.delete(entry.contentsID);
     this.emitTabClosed(entry);
-    this.releaseDebugger(entry);
+    this.releaseDebugger(entry, contentsDestroyed);
     if (entry.currentParent) {
       try {
         entry.currentParent.removeChildView(entry.view);
@@ -1572,8 +1576,8 @@ export class BrowserHostCoordinator {
       entry.currentParent = undefined;
     }
     try {
-      if (!entry.view.webContents.isDestroyed()) {
-        entry.view.webContents.close();
+      if (!contentsDestroyed && !entry.contents.isDestroyed()) {
+        entry.contents.close();
       }
     } catch {
       // Already closing.
