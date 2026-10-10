@@ -22,6 +22,12 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   button spacing. Fold preceding process text and tools when the final answer
   arrives. Keep image inspection inside operation details, loading thumbnails on
   demand, while explicitly presented images remain visible in the conversation.
+  Choose the current folder or a new Git worktree when forking. Bound fork history
+  and notifications to keep long conversations connected. Load published artifact
+  images through their message references and overlap bounded image/content reads
+  to reduce waiting on higher-latency connections. Negotiate the host's existing
+  encrypted gzip transport on iOS, with bounded decoding and uncompressed small
+  streaming updates.
 
 - Run a default-exported TypeScript plugin directly with `wuu plugin dev`, using
   the embedded SDK without a manifest or build, and keep watching through failed saves.
