@@ -3,11 +3,13 @@ package appserver
 import (
 	"context"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 	"mime"
+	"net/url"
 	"reflect"
 	"slices"
 	"sort"
@@ -1781,6 +1783,26 @@ func validFileSelectionPart(part providers.MessageContentPart) bool {
 	if source == nil || strings.TrimSpace(source.Workspace) == "" || strings.TrimSpace(source.Path) == "" ||
 		strings.TrimSpace(source.Revision) == "" || source.Quote == "" {
 		return false
+	}
+	if pdf := source.PDF; pdf != nil {
+		if pdf.StartPage < 1 || pdf.EndPage < pdf.StartPage || source.StartLine != 0 || source.StartColumn != 0 || source.EndLine != 0 || source.EndColumn != 0 {
+			return false
+		}
+		// A URI is provenance, never permission to read a different resource.
+		if pdf.ArtifactURI != "" || pdf.ArtifactSHA256 != "" || pdf.ArtifactThreadID != "" {
+			uri, err := url.Parse(pdf.ArtifactURI)
+			if err != nil || uri.Scheme != "wuu-artifact" || len(pdf.ArtifactSHA256) != 64 || pdf.ArtifactThreadID == "" {
+				return false
+			}
+			segments := strings.Split(strings.TrimPrefix(uri.Path, "/"), "/")
+			if len(segments) != 3 || segments[0] != pdf.ArtifactThreadID || uri.Query().Get("sha256") != pdf.ArtifactSHA256 || source.Revision != "sha256:"+pdf.ArtifactSHA256 {
+				return false
+			}
+			if _, err := hex.DecodeString(pdf.ArtifactSHA256); err != nil {
+				return false
+			}
+		}
+		return true
 	}
 	return source.StartLine > 0 && source.StartColumn > 0 && source.EndLine > 0 && source.EndColumn > 0 &&
 		(source.EndLine > source.StartLine || (source.EndLine == source.StartLine && source.EndColumn >= source.StartColumn))

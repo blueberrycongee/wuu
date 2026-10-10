@@ -1,0 +1,86 @@
+.pdf-selection-menu {
+  position: fixed;
+  z-index: 220;
+  box-sizing: border-box;
+  width: max-content;
+  max-width: calc(100vw - 16px);
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--menu-border);
+  border-radius: var(--menu-shell-radius);
+  background: var(--menu-bg);
+  color: var(--ink);
+  font-size: var(--font-ui);
+  line-height: var(--line-ui);
+  box-shadow: var(--menu-shadow);
+}
+
+.pdf-selection-menu__actions {
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.pdf-selection-menu__actions > button {
+  display: inline-flex;
+  flex: 1 1 auto;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  min-width: 28px;
+  min-height: 28px;
+  padding: var(--space-1) var(--menu-inset);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  text-align: center;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+  transition: background-color var(--motion-fast) var(--ease-out);
+}
+
+.pdf-selection-menu__actions > button + button { border-inline-start: 1px solid var(--menu-border); }
+.pdf-selection-menu__actions > button:hover:not(:disabled) { background: var(--menu-hover); }
+.pdf-selection-menu__actions > button:disabled { color: var(--ink-muted); cursor: default; }
+html[data-focus-modality="keyboard"] .pdf-selection-menu__actions > button:focus-visible {
+  position: relative;
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+.pdf-selection-menu--commenting {
+  /* Scale the writing room with the user's UI type; the PDF adapter retains
+   * its own viewport and document-composer collision bounds. */
+  width: max(294px, calc(var(--font-ui) * 21));
+  border-radius: 22px;
+}
+
+html[data-focus-modality="keyboard"] .pdf-selection-menu--commenting:has(.pdf-selection-comment__input:focus-visible) {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.pdf-selection-menu__description {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+@media (pointer: coarse) {
+  .pdf-selection-menu__actions > button { min-height: 44px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pdf-selection-menu__actions > button { transition: none; }
+}
+
+@container style(--motion-reduced: 1) {
+  .pdf-selection-menu__actions > button { transition: none; }
+}

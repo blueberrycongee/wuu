@@ -1,4 +1,4 @@
-import { protocol } from "electron";
+import { protocol, type CustomScheme } from "electron";
 import { createHash } from "node:crypto";
 
 import type {
@@ -13,18 +13,16 @@ const MAX_CACHED_MODULES = 32;
 const modules = new Map<string, string>();
 const assets = new Map<string, { data: ArrayBuffer; mediaType: string }>();
 
-export function registerPluginModuleScheme(): void {
-  protocol.registerSchemesAsPrivileged([{
-    scheme: PLUGIN_MODULE_SCHEME,
-    privileges: {
-      standard: true,
-      secure: true,
-      supportFetchAPI: true,
-      corsEnabled: true,
-      codeCache: true,
-    },
-  }]);
-}
+export const pluginModuleScheme: CustomScheme = {
+  scheme: PLUGIN_MODULE_SCHEME,
+  privileges: {
+    standard: true,
+    secure: true,
+    supportFetchAPI: true,
+    corsEnabled: true,
+    codeCache: true,
+  },
+};
 
 export function registerPluginModuleProtocol(): void {
   protocol.handle(PLUGIN_MODULE_SCHEME, (request) => {

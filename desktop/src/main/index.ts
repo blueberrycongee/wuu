@@ -17,6 +17,7 @@ import {
   nativeTheme,
   Notification,
   powerMonitor,
+  protocol,
   screen,
   session as electronSession,
   systemPreferences,
@@ -186,13 +187,13 @@ import { mainTranslate, resolveMainLocale, setMainLocale } from "./i18n";
 import { sideThreadEventFromServerEvent } from "./sideThreadEvents";
 import {
   registerRenderableFileProtocol,
-  registerRenderableFileScheme,
+  renderableFileSchemes,
 } from "./renderableFileProtocol";
 import {
   cachePluginDesktopModule,
   cachePluginIcon,
   registerPluginModuleProtocol,
-  registerPluginModuleScheme,
+  pluginModuleScheme,
 } from "./pluginModuleProtocol";
 import { TerminalSessionManager } from "./terminalSessions";
 import { WorkspaceFileService } from "./workspaceFiles";
@@ -240,8 +241,9 @@ const ENABLE_EMBEDDED_BROWSER = process.env.WUU_ENABLE_BROWSER !== "0";
 if (process.argv.includes("--safe-mode")) {
   process.env.WUU_SAFE_MODE = "1";
 }
-registerRenderableFileScheme();
-registerPluginModuleScheme();
+// Electron forwards fetch/CORS privileges through one set of child-process
+// switches; a second registration would replace the first set.
+protocol.registerSchemesAsPrivileged([...renderableFileSchemes, pluginModuleScheme]);
 
 let mainWindow: BrowserWindow | null = null;
 // Live system notifications are kept referenced so the OS cannot collect

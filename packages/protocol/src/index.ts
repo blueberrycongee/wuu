@@ -1562,16 +1562,26 @@ export type ThreadItemType =
   | "error";
 export type ThreadItemStatus = "in_progress" | "completed" | "failed";
 
+// PDF selections use page coordinates; text line/column fields are zero.
+export type PdfSelectionReference = {
+  start_page: number;
+  end_page: number;
+  artifact_uri?: string;
+  artifact_sha256?: string;
+  artifact_thread_id?: string;
+};
+
 export type FileSelectionSource = {
   workspace: string;
   path: string;
-  // One-based lines and UTF-16 columns; the end position is exclusive.
+  // One-based lines and UTF-16 columns; zero when pdf supplies page coordinates.
   start_line: number;
   start_column: number;
   end_line: number;
   end_column: number;
   quote: string;
   revision: string;
+  pdf?: PdfSelectionReference;
 };
 
 // Ordered user-authored content carried by one message bubble. Binary

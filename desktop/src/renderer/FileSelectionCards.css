@@ -78,7 +78,8 @@
 .file-selection-quote-remove:hover { background: var(--menu-hover); }
 .file-selection-quote-remove:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 
-.file-selection-quote-entry { display: flex; align-items: flex-start; gap: 8px; }
+.file-selection-quote-entry { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px; }
+.file-selection-quote-entry > .file-selection-location-notice { flex-basis: 100%; margin: 0; }
 .file-selection-quote-entry + .file-selection-quote-entry { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--hairline); }
 .file-selection-quote-text { flex: 1; min-width: 0; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 
