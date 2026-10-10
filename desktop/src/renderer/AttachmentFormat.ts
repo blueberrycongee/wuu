@@ -1,4 +1,4 @@
-/** Display helpers shared by composer attachment cards and sent-message file cards. */
+/** Display helpers shared by attachment and artifact cards. */
 
 export function fileNameParts(filename: string): { stem: string; extension: string } {
   const dot = filename.lastIndexOf(".");
@@ -15,14 +15,23 @@ function base64ByteLength(data: string): number {
 }
 
 export function formatFileSize(data: string): string {
-  const bytes = base64ByteLength(data);
+  return formatByteSize(base64ByteLength(data));
+}
+
+export function formatByteSize(
+  bytes: number,
+  formatNumber?: (value: number, options?: Intl.NumberFormatOptions) => string,
+): string {
+  const format = (value: number, digits: number) => formatNumber
+    ? formatNumber(value, { minimumFractionDigits: digits, maximumFractionDigits: digits })
+    : value.toFixed(digits);
   if (bytes < 1024) {
-    return `${bytes} B`;
+    return `${format(bytes, 0)} B`;
   }
   const kilobytes = bytes / 1024;
   if (kilobytes < 1024) {
-    return `${kilobytes < 10 ? kilobytes.toFixed(1) : Math.round(kilobytes)} KB`;
+    return `${format(kilobytes, kilobytes < 10 ? 1 : 0)} KB`;
   }
   const megabytes = kilobytes / 1024;
-  return `${megabytes < 10 ? megabytes.toFixed(1) : Math.round(megabytes)} MB`;
+  return `${format(megabytes, megabytes < 10 ? 1 : 0)} MB`;
 }

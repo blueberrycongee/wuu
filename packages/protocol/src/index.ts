@@ -113,6 +113,15 @@ export type WorkspaceItemMenuResult = {
   action: "none";
 };
 
+export type ArtifactItemMenuParams = {
+  uri: string;
+  threadId: string;
+};
+
+export type ArtifactItemMenuResult = {
+  action: "none" | "save";
+};
+
 export type BuildInfoResult = {
   core: CoreBuildInfo | undefined;
   desktop: DesktopBuildInfo;
@@ -3103,6 +3112,9 @@ export type WuuDesktopApi = {
   // default app and the installed apps that can open this specific item.
   // Other shells keep their existing renderer-owned context menu.
   showWorkspaceItemMenu: (path: string) => Promise<WorkspaceItemMenuResult>;
+  // Managed deliveries only. External apps receive a verified temporary copy.
+  // macOS offers associated apps; other desktop hosts offer save and reveal.
+  showArtifactItemMenu?: (params: ArtifactItemMenuParams) => Promise<ArtifactItemMenuResult>;
   // Open an external URL via the OS default browser. Used by the
   // assistant turn's 来源 pill to send the user to the page the agent
   // actually consulted (web_search hit / web_fetch target) instead of
