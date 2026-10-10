@@ -54,11 +54,10 @@ function SelectionGroup({ parts, onRemove, onEdit, onOpenFile }: FileSelectionCa
 
   if (parts.length === 0) return null;
   return <div className="pdf-quote-group" data-wuu-component="sent-quote-card" data-wuu-variant="pdf">
-    <div ref={preview.anchorRef} onPointerEnter={event => preview.revealOnPointer(event.pointerType)}
-      onPointerLeave={preview.leave} onBlur={event => preview.blur(event.relatedTarget)}>
+    <div ref={preview.anchorRef} onBlur={event => preview.blur(event.relatedTarget)}>
       <button ref={preview.triggerRef} type="button" className="pdf-quote-pill"
         aria-expanded={preview.open} aria-controls={preview.open ? preview.panelId : undefined} aria-haspopup="dialog"
-        onFocus={preview.revealOnFocus} onClick={preview.activate}
+        onClick={preview.activate}
         onKeyDown={event => {
           if (event.key === "Tab" && !event.shiftKey && preview.open) { event.preventDefault(); preview.focusPanel(); }
         }}>
@@ -71,7 +70,6 @@ function SelectionGroup({ parts, onRemove, onEdit, onOpenFile }: FileSelectionCa
       mobileSheet={{ label, onClose: close }}>
       <div ref={preview.panelRef} id={preview.panelId} className="pdf-quote-preview"
         data-wuu-component="sent-quote-preview" role="dialog" tabIndex={-1} aria-label={label}
-        onPointerEnter={preview.retain} onPointerLeave={preview.leave} onFocus={preview.retain}
         onBlur={event => preview.blur(event.relatedTarget)} onKeyDown={event => event.stopPropagation()}>
         {parts.map(part => {
           const { source } = part;

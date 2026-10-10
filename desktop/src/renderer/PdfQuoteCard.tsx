@@ -5,48 +5,28 @@ import { ChevronDown, CornerUpLeft, Quote, Trash2, X } from "./WuuIcons";
 import { Tooltip } from "./Tooltip";
 import "./PdfQuoteCards.css";
 
-/** A shared preview keeps hover reading separate from an explicitly opened editor. */
+/** Draft and sent PDF references open only on explicit pointer or keyboard activation. */
 export function usePdfQuotePreview(onClose?: () => void) {
   const [open, setOpen] = useState(false);
   const anchorRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
-  const closeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  const pinned = useRef(false);
-  const returningFocus = useRef(false);
   const panelId = useId();
 
   function contains(target: EventTarget | null): boolean {
     return target instanceof Node && Boolean(anchorRef.current?.contains(target) || panelRef.current?.contains(target));
   }
-  function retain(): void { clearTimeout(closeTimer.current); }
   function close(restoreFocus = false): void {
-    retain();
-    pinned.current = false;
     setOpen(false);
     onClose?.();
-    if (restoreFocus) {
-      returningFocus.current = true;
-      triggerRef.current?.focus({ preventScroll: true });
-      returningFocus.current = false;
-    }
+    if (restoreFocus) triggerRef.current?.focus({ preventScroll: true });
   }
-  function leave(): void {
-    retain();
-    if (pinned.current) return;
-    closeTimer.current = setTimeout(() => {
-      if (!contains(document.activeElement)) close();
-    }, 100);
-  }
-  function reveal(): void { retain(); setOpen(true); }
   function activate(): void {
-    if (pinned.current) { close(); return; }
-    pinned.current = true;
-    reveal();
+    if (open) { close(); return; }
+    setOpen(true);
     requestAnimationFrame(() => panelRef.current?.focus({ preventScroll: true }));
   }
 
-  useEffect(() => () => clearTimeout(closeTimer.current), []);
   useEffect(() => {
     if (!open) return;
     const dismiss = (event: PointerEvent): void => { if (!contains(event.target)) close(); };
@@ -67,9 +47,7 @@ export function usePdfQuotePreview(onClose?: () => void) {
     };
   }, [open]);
 
-  return { open, anchorRef, triggerRef, panelRef, panelId, close, retain, leave, activate,
-    revealOnPointer: (pointerType: string) => { if (pointerType !== "touch") reveal(); },
-    revealOnFocus: () => { if (!returningFocus.current && triggerRef.current?.matches(":focus-visible")) reveal(); },
+  return { open, anchorRef, triggerRef, panelRef, panelId, close, activate,
     // Selecting non-focusable excerpt text blurs an editor to null. Outside
     // presses and window blur already dismiss; keep this internal gesture alive.
     blur: (next: EventTarget | null) => { if (next !== null && !contains(next)) close(); },
@@ -137,12 +115,11 @@ export function ComposerPdfQuoteCard({ text, comment = "", meta, sourceName, loc
   return <>
     <div ref={preview.anchorRef} className={`composer-attachment-card composer-document-card pdf-quote-tile${className ? ` ${className}` : ""}`}
       data-wuu-component="quote-card" data-wuu-variant="pdf"
-      onPointerEnter={event => preview.revealOnPointer(event.pointerType)} onPointerLeave={preview.leave}
       onBlur={event => preview.blur(event.relatedTarget)}>
       <button ref={preview.triggerRef} type="button" className="composer-document-card-main pdf-quote-tile-main"
         aria-label={t("responseSelection.open")} aria-expanded={preview.open}
         aria-controls={preview.open ? preview.panelId : undefined} aria-haspopup="dialog"
-        onClick={preview.activate} onFocus={preview.revealOnFocus}
+        onClick={preview.activate}
         onKeyDown={event => {
           if (event.key === "Tab" && !event.shiftKey && preview.open) { event.preventDefault(); preview.focusPanel(); }
         }}>
@@ -163,8 +140,7 @@ export function ComposerPdfQuoteCard({ text, comment = "", meta, sourceName, loc
       mobileSheet={{ label: t("responseSelection.quote"), onClose: () => preview.close(true) }}>
       <div ref={preview.panelRef} id={preview.panelId} className={`pdf-quote-preview${className ? ` ${className}-popover` : ""}`} role="dialog" tabIndex={-1}
         data-wuu-component="quote-preview" aria-label={t("responseSelection.quote")}
-        onPointerEnter={preview.retain} onPointerLeave={preview.leave}
-        onFocus={preview.retain} onBlur={event => preview.blur(event.relatedTarget)}
+        onBlur={event => preview.blur(event.relatedTarget)}
         onKeyDown={event => event.stopPropagation()}>
         <div className="pdf-quote-preview-heading">
           {onOpenSource ? <Tooltip content={t("responseSelection.source")}>
