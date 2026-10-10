@@ -120,6 +120,9 @@ async function scenario(name: string, vision: boolean, ptc: boolean, takeover = 
           // capture pixels, provider normalization, and CSS input independently.
           views[0].setBounds({ x: 0, y: 0, width: 2500, height: 1600 });
           views[0].webContents.setZoomFactor(1.25);
+          // Electron disables pinch zoom by default. Enable it only in this
+          // fixture so the later rejection check exercises an actual pinch.
+          await views[0].webContents.setVisualZoomLevelLimits(1, 3);
           views[0].setVisible(true);
           views[0].webContents.setBackgroundThrottling(false);
           try {
@@ -151,11 +154,15 @@ async function scenario(name: string, vision: boolean, ptc: boolean, takeover = 
         if (current === 7) {
           assert.equal(imagesOf(messages).length, 2); decodeObservation(messages, `${name}-screenshot`);
           await views[0].webContents.debugger.sendCommand("Emulation.setPageScaleFactor", { pageScaleFactor: 1.5 });
+          const pinch = await views[0].webContents.debugger.sendCommand("Page.getLayoutMetrics");
+          assert.ok(Math.abs(pinch.cssVisualViewport.scale - 1.5) < 0.01, "Fixture must establish a real pinched viewport");
+          evidence.push({ name, pinch: pinch.cssVisualViewport });
           return tool(res, { action: "observe", tab_id: tab, include_image: true });
         }
         if (current === 8) {
           assert.match(text, /unsupported_pinch_zoom/);
           await views[0].webContents.debugger.sendCommand("Emulation.setPageScaleFactor", { pageScaleFactor: 1 });
+          await views[0].webContents.setVisualZoomLevelLimits(1, 1);
           return tool(res, { action: "finalize", keep: [] });
         }
         assert.equal(current, 9); reply(res, { content: "Visual fixture complete" }, "stop");
