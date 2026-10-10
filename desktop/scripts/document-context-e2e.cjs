@@ -362,6 +362,37 @@ async function run() {
   assert.equal(multi.source.pdf.start_page, 1); assert.equal(multi.source.pdf.end_page, 2);
   checks.push('multi-page quote and authored comment survive the full application path');
 
+  phase = 'second-page quote returns to its source after send';
+  await evaluate(() => document.querySelector('[data-workspace-pdf-preview]').shadowRoot.querySelector('.page[data-page-number="2"]').scrollIntoView());
+  assert.equal(await selectPages(2), secondQuote);
+  await quoteSelection();
+  await click('.composer-file-selection-card .pdf-quote-tile-main');
+  await waitFor(() => document.querySelector('.pdf-quote-source-action'));
+  await click('.pdf-quote-source-action');
+  await waitFor(() => document.querySelector('[data-workspace-pdf-preview]').shadowRoot.querySelector('.workspace-pdf-page-count')?.textContent === '2 / 3');
+  await nativeText('.workspace-document-composer textarea', 'Return to the second page.');
+  await click('.workspace-document-composer .composer-send-button');
+  await waitFor(async id => (await window.wuu.resumeThread(id)).thread.turns.filter(turn => turn.status === 'completed').length >= 4, threadID, 60000);
+  const secondPagePart = (await currentParts()).filter(part => part.source?.pdf).at(-1);
+  assert.equal(secondPagePart.source.quote, secondQuote);
+  assert.equal(secondPagePart.source.pdf.start_page, 2);
+  assert.equal(secondPagePart.source.pdf.end_page, 2);
+  if (await evaluate(() => document.querySelector('.workspace-panel-globalize')?.getAttribute('aria-pressed') === 'true')) await click('.workspace-panel-globalize');
+  await waitFor(() => [...document.querySelectorAll('.pdf-quote-pill')].some(button => !button.closest('[inert]')));
+  await evaluate(() => document.querySelector('[data-workspace-pdf-preview]').shadowRoot.querySelector('.page[data-page-number="1"]').scrollIntoView());
+  await waitFor(() => document.querySelector('[data-workspace-pdf-preview]').shadowRoot.querySelector('.workspace-pdf-page-count')?.textContent === '1 / 3');
+  await evaluate(() => [...document.querySelectorAll('.pdf-quote-pill')].filter(button => !button.closest('[inert]')).at(-1).click());
+  await waitFor(() => document.querySelector('.pdf-quote-entry blockquote')?.textContent === 'Second PDF page: review this paragraph.');
+  await click('.pdf-quote-entry .pdf-quote-source-link');
+  await waitFor(() => document.querySelector('[data-workspace-pdf-preview]').shadowRoot.querySelector('.workspace-pdf-page-count')?.textContent === '2 / 3');
+  await capture('03-second-page-sent-source-return');
+  main.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'ESC' }); main.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'ESC' });
+  await waitFor(() => !document.querySelector('.pdf-quote-entry'));
+  if (await evaluate(() => document.querySelector('.workspace-panel-globalize')?.getAttribute('aria-pressed') === 'false')) await click('.workspace-panel-globalize');
+  await evaluate(() => document.querySelector('[data-workspace-pdf-preview]').shadowRoot.querySelector('.page[data-page-number="1"]').scrollIntoView());
+  await waitFor(() => document.querySelector('[data-workspace-pdf-preview]').shadowRoot.querySelector('.workspace-pdf-page-count')?.textContent === '1 / 3');
+  checks.push('a second-page quote survives send and opens page two from both its draft and sent reference');
+
   phase = 'same filename cannot replace the snapshot';
   fs.writeFileSync(path.join(project, 'guide.pdf'), pdf(['Replacement PDF with the same filename.']));
   assert.equal(await evaluate(() => document.querySelector('[data-workspace-pdf-preview]').shadowRoot.querySelector('.page[data-page-number="1"] .textLayer span').textContent), firstQuote);
@@ -415,7 +446,7 @@ async function run() {
   await waitFor(() => document.querySelectorAll('.composer-file-selection-card').length === 2);
   await nativeText('.workspace-document-composer textarea', 'Compare these two observed workspace revisions.');
   await click('.workspace-document-composer .composer-send-button');
-  await waitFor(async id => (await window.wuu.resumeThread(id)).thread.turns.filter(turn => turn.status === 'completed').length >= 4, threadID, 60000);
+  await waitFor(async id => (await window.wuu.resumeThread(id)).thread.turns.filter(turn => turn.status === 'completed').length >= 5, threadID, 60000);
   const workspaceParts = (await currentParts()).filter(part => part.source?.pdf && !part.source.pdf.artifact_uri);
   assert.equal(workspaceParts.length, 2);
   assert.deepEqual(workspaceParts.map(part => [part.source.quote, part.source.revision, part.comment || '']), [
@@ -439,10 +470,11 @@ async function run() {
   await main.loadFile(path.join(buildDir, 'renderer/index.html'));
   await waitFor(() => document.querySelector('.composer textarea'));
   const restored = (await currentParts()).filter(part => part.source?.pdf);
-  assert.equal(restored.length, 4); assert.equal(restored[0].source.pdf.artifact_sha256, originalSHA);
+  assert.equal(restored.length, 5); assert.equal(restored[0].source.pdf.artifact_sha256, originalSHA);
   assert.equal(restored[1].source.pdf.end_page, 2);
+  assert.equal(restored[2].source.quote, secondQuote); assert.equal(restored[2].source.pdf.start_page, 2);
   assert.deepEqual(errors, []);
-  assert.equal(restored[3].source.revision, revision(afterReplacement));
+  assert.equal(restored[4].source.revision, revision(afterReplacement));
   checks.push('renderer reload retains delivered and workspace PDF selections');
 
   phase = 'covered split keeps selection in the intended draft';
@@ -491,6 +523,29 @@ db.commit()
   await evaluate(() => [...document.querySelectorAll('.conversation-split-pane.active .rich-file-link')].find(link => link.textContent === 'working PDF').click());
   if (await evaluate(() => document.querySelector('.workspace-panel-globalize')?.getAttribute('aria-pressed') === 'false')) await click('.workspace-panel-globalize');
   await waitFor(() => document.querySelector('.conversation-pane[inert]') && document.querySelector('[data-workspace-pdf-preview]')?.shadowRoot?.querySelector('.textLayer span'));
+  // An unfinished selection comment belongs to its original conversation. A
+  // normal pane switch must discard it without attaching or sending it anywhere.
+  await click('.workspace-panel-globalize');
+  await waitFor(() => !document.querySelector('.conversation-pane[inert]'));
+  await selectPages(); await waitFor(() => document.querySelector('.pdf-selection-action-menu'));
+  await click('.pdf-selection-menu__comment-toggle');
+  await waitFor(() => document.activeElement?.matches('.pdf-selection-action-menu textarea'));
+  await main.webContents.insertText('Never move this unfinished comment to another conversation.');
+  await evaluate(() => document.querySelectorAll('.conversation-split-pane')[1].dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })));
+  await waitFor(id => document.querySelector('.conversation-split-pane.active')?.dataset.threadId === id
+    && !document.querySelector('.pdf-selection-action-menu'), relatedID);
+  assert.equal(await evaluate(() => document.querySelector('.conversation-split-pane.active textarea').value), 'Other pane draft remains separate.');
+  assert.equal(await evaluate(() => document.querySelectorAll('.composer-file-selection-card').length), 0);
+  await capture('06-stale-owner-comment-dismissed');
+  await evaluate(() => document.querySelector('.conversation-split-pane').dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })));
+  await waitFor(id => document.querySelector('.conversation-split-pane.active')?.dataset.threadId === id, threadID);
+  assert.equal(await evaluate(() => document.querySelector('.conversation-split-pane.active textarea').value), 'Keep this PDF quote in this conversation.');
+  assert.equal((await snapshot()).turns.length, splitTurnsBefore);
+  const relatedBefore = await evaluate(async id => (await window.wuu.resumeThread(id)).thread, relatedID);
+  assert.equal(relatedBefore.turns.length, 0);
+  await click('.workspace-panel-globalize');
+  await waitFor(() => document.querySelector('.conversation-pane[inert]'));
+  checks.push('switching conversation owner dismisses an unfinished PDF comment and preserves both separate drafts without sending');
   assert.equal(await selectPages(), refreshedQuote);
   await waitFor(() => document.querySelector('.pdf-selection-action-menu'));
   await click('.pdf-selection-action-menu button');
