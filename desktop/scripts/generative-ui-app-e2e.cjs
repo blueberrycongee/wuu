@@ -8,6 +8,8 @@ const path = require('node:path');
 const http = require('node:http');
 const { createHash } = require('node:crypto');
 const { pathToFileURL } = require('node:url');
+const childProcess = require('node:child_process');
+const { syncBuiltinESMExports } = require('node:module');
 const { app, ipcMain } = require('electron');
 const desktop = path.resolve(__dirname, '..');
 const root = path.dirname(desktop);
@@ -44,6 +46,19 @@ const rpc = [];
 const checks = [];
 const screenshots = [];
 const errors = [];
+const processes = [];
+const spawn = childProcess.spawn;
+childProcess.spawn = (...args) => {
+  const child = spawn(...args);
+  if (args[0] === process.env.WUU_DESKTOP_CORE) {
+    const env = args[2]?.env || {};
+    const entry = { command: args[0], args: args[1], helper: env.WUU_GENERATIVE_UI_PLUGIN_HELPER, home: env.WUU_HOME, safeMode: env.WUU_SAFE_MODE, stderr: '' };
+    processes.push(entry);
+    child.stderr?.on('data', chunk => { entry.stderr = (entry.stderr + chunk).slice(-16000); });
+  }
+  return child;
+};
+syncBuiltinESMExports();
 let emittedTool = false;
 let providerError;
 // Observe real handlers and their results; do not replace the preload or IPC.
@@ -54,7 +69,7 @@ ipcMain.handle = (channel, handler) => handle(channel, async (...args) => {
   try {
     const result = await handler(...args);
     entry.completed = true;
-    if (/plugin-storage|extension-package|thread-resume/.test(channel)) entry.result = result;
+    if (/plugin-storage|extension-package|thread-resume|initialize/.test(channel)) entry.result = result;
     return result;
   } catch (error) { entry.error = String(error); throw error; }
 });
@@ -194,6 +209,8 @@ async function run() {
   main.setSize(1280, 1000);
   main.show(); main.focus();
   await wait(() => document.querySelector('.composer textarea'));
+  const initialization = await until(() => rpc.find(entry => entry.channel === 'wuu:initialize' && entry.completed), 'native initialization');
+  assert.ok(initialization.result.extension_inventory.some(record => record.kind === 'plugin' && record.provenance?.plugin_id === 'generative-ui'), 'Real initialization must expose the disabled bundled plugin');
   await submit('GENUI_DEFAULT_OFF', 'Default-off discovery verified.');
   await catalog();
   assert.equal(await evaluate(selector => document.querySelector(selector).getAttribute('aria-checked'), pluginSwitch), 'false');
@@ -247,13 +264,13 @@ async function run() {
   pass('re-enabled historical renderer retains local edits without model activity');
   const evidence = { recordedAt: new Date().toISOString(), scope: 'Real App, main, preload, app-server, Go helper, native history and plugin storage; loopback synthetic HTTP provider only.',
     hashes: { harness: hash(__filename), core: hash(process.env.WUU_DESKTOP_CORE), helper: hash(process.env.WUU_GENERATIVE_UI_PLUGIN_HELPER), main: hash(path.join(desktop, 'out/main/index.js')), preload: hash(path.join(desktop, 'out/preload/index.cjs')) },
-    checks, screenshots, storage: stateDocuments(), requests, rpc, errors };
+    checks, screenshots, processes, storage: stateDocuments(), requests, rpc, errors };
   fs.writeFileSync(path.join(output, 'results.json'), JSON.stringify(evidence, null, 2));
   console.log(`Full App generative UI E2E passed: ${output}`);
 }
 run().then(() => { clearTimeout(timeout); server.close(); app.quit(); }).catch(async error => {
   clearTimeout(timeout);
-  fs.writeFileSync(path.join(output, 'failure.json'), JSON.stringify({ error: String(error.stack || error), fixture, checks, requests, rpc, errors }, null, 2));
+  fs.writeFileSync(path.join(output, 'failure.json'), JSON.stringify({ error: String(error.stack || error), fixture, checks, requests, rpc, errors, processes, binaries: { core: { path: process.env.WUU_DESKTOP_CORE, hash: hash(process.env.WUU_DESKTOP_CORE) }, helper: { path: process.env.WUU_GENERATIVE_UI_PLUGIN_HELPER, hash: hash(process.env.WUU_GENERATIVE_UI_PLUGIN_HELPER), mode: fs.statSync(process.env.WUU_GENERATIVE_UI_PLUGIN_HELPER).mode } } }, null, 2));
   if (main) fs.writeFileSync(path.join(output, 'failure.png'), (await main.webContents.capturePage()).toPNG());
   console.error(error); server.close(); app.exit(1);
 });
