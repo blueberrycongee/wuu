@@ -24,11 +24,12 @@ jobs:
     name: Capture real annotation variants
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    env:
-      WUU_ANNOTATION_OUTPUT: ${{ runner.temp }}/wuu-annotation-comparison
-      WUU_DOCUMENT_CORE: ${{ runner.temp }}/wuu-annotation-core
     steps:
       - uses: actions/checkout@v4
+      - name: Set capture paths
+        run: |
+          echo "WUU_ANNOTATION_OUTPUT=$RUNNER_TEMP/wuu-annotation-comparison" >> "$GITHUB_ENV"
+          echo "WUU_DOCUMENT_CORE=$RUNNER_TEMP/wuu-annotation-core" >> "$GITHUB_ENV"
       - uses: actions/setup-node@v4
         with:
           node-version-file: .node-version
