@@ -1315,8 +1315,8 @@ export class BrowserHostCoordinator {
   private applyEntryActivity(entry: TabEntry): void {
     if (this.tabs.get(tabKey(entry.workdir, entry.tabID)) !== entry || entry.contents.isDestroyed()) return;
     const active = entry.presented || entry.activeOperations > 0;
-    entry.contents.setBackgroundThrottling(!active);
     entry.view.setVisible(active && !entry.suppressed);
+    entry.contents.setBackgroundThrottling(!active);
   }
 
   private async withActiveEntry<T>(entry: TabEntry, operation: () => Promise<T>): Promise<T> {
@@ -1336,9 +1336,21 @@ export class BrowserHostCoordinator {
     assertCurrent: () => void,
   ): Promise<{ width: number; height: number; path: string }> {
     assertCurrent();
-    // Let Chromium render for this capture even before the native host has
-    // ever been shown. stayHidden suppresses that first frame and can reject
-    // with UnknownVizError; this option never shows or focuses the native window.
+    // A loaded hidden document may not have submitted its first compositor
+    // frame. Wait for rendering while withActiveEntry keeps it unthrottled;
+    // never show or focus the native window just to make a preview.
+    let frameTimer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        entry.contents.executeJavaScript("new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))"),
+        new Promise<never>((_, reject) => {
+          frameTimer = setTimeout(() => reject(new Error("Timed out waiting for browser capture frame")), 5000);
+        }),
+      ]);
+    } finally {
+      clearTimeout(frameTimer);
+    }
+    assertCurrent();
     const image = await entry.contents.capturePage(undefined, { stayHidden: false });
     assertCurrent();
     const size = image.getSize();
