@@ -91,6 +91,7 @@ const server = http.createServer((req, res) => {
         res.write(delta({ role: 'assistant', content: 'Generative UI acceptance' }));
       } else if (user.includes('GENUI_DEFAULT_OFF')) {
         assert.equal(uiTools.length, 0, 'Disabled-by-default tool must be absent from the actual provider request');
+        assert.ok(!JSON.stringify(input.tools).includes('plugin_generative_ui_render_ui_'), 'Disabled plugin must also be absent from nested discovery');
         res.write(delta({ role: 'assistant', content: 'Default-off discovery verified.' }));
       } else if (user.includes('GENUI_ENABLED')) {
         assert.equal(uiTools.length, 1, 'User enablement exposes exactly one render_ui tool');
@@ -104,6 +105,7 @@ const server = http.createServer((req, res) => {
         res.write(delta({ role: 'assistant', content: 'The interactive overview is ready.' }));
       } else if (user.includes('GENUI_DISABLED_AGAIN')) {
         assert.equal(uiTools.length, 0, 'Disabled tool is removed from subsequent actual provider requests');
+        assert.ok(!JSON.stringify(input.tools).includes('plugin_generative_ui_render_ui_'), 'Disabled plugin must also be removed from nested discovery');
         res.write(delta({ role: 'assistant', content: 'Disabled-again discovery verified.' }));
       } else {
         // The App may request a conversation title independently of the turn.
@@ -226,12 +228,13 @@ async function run() {
   assert.equal(await evaluate(() => document.querySelectorAll('[data-wuu-component="generated-ui"]').length), 1);
   assert.ok(await evaluate(() => document.querySelector('.session-flow [data-wuu-component="generated-ui"]')));
   pass('real model tool call reaches Go helper, persisted message flow, MIME registry and production renderer');
-  await capture('03-app-interactive.png', '[data-wuu-component="generated-ui"]');
+  await capture('03-app-interactive.png', '.plugin-genui-header');
   await type('[data-genui-block="teams"] input', 'Engineering');
   await type('[data-genui-block="draft"] input', 'Persisted via production storage');
   await click('[data-genui-block="draft"] button[type="submit"]');
   await wait(() => document.querySelector('.plugin-genui-form-preview')?.textContent.includes('Persisted via production storage'));
   await until(() => stateDocuments().some(doc => Object.values(doc.values).some(raw => raw.includes('Persisted via production storage') && raw.includes('Engineering'))), 'Go plugin-storage file persisted both edits');
+  await until(() => rpc.filter(entry => entry.channel === 'wuu:plugin-storage-set' && entry.completed).length >= 2, 'storage RPC acknowledgements after atomic file writes');
   const writes = rpc.filter(entry => entry.channel === 'wuu:plugin-storage-set' && entry.completed);
   assert.ok(writes.length >= 2 && writes.every(entry => entry.args[0].scope === 'user'));
   await capture('04-app-persisted-form.png', '[data-genui-block="draft"]');
