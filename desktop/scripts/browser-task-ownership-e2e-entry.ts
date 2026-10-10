@@ -713,7 +713,8 @@ app.whenReady().then(async () => {
   const dTab = String(opened("OWNERSHIP_D")?.tab_id ?? "");
   const dView = await readTab(dTab);
   assert(dView, "D's live page exists");
-  const dContentsID = dView.webContents.id;
+  const dContents = dView.webContents;
+  const dContentsID = dContents.id;
   // This case tests cancellation of a visible page's real Go command. Mount
   // the page before observe requests its preview, so Chromium has a surface.
   host.reportBounds(workdir, dTab, main as unknown as BrowserHostWindowHandle, { x: 0, y: 0, width: 800, height: 600 }, 1, true);
@@ -732,7 +733,7 @@ app.whenReady().then(async () => {
   check("turn interruption cancels a real pending Go browser call", !nativeInputCommands.some(command => command.webContentsID === dContentsID) && !clickRequests.includes("/OWNERSHIP_D"));
   await bounded("D interruption reaches authoritative cleanup", completed.get(d)!.promise);
   check("D terminates specifically as interrupted", terminalEvents.get(d)?.status === "interrupted", JSON.stringify(terminalEvents.get(d)));
-  check("interrupted turn closes its temporary page", host.tabSurfaceMeta(workdir, dTab) === undefined && dView.webContents.isDestroyed());
+  check("interrupted turn closes its temporary page", host.tabSurfaceMeta(workdir, dTab) === undefined && dContents.isDestroyed());
   const cancellation = events.find(event => {
     const wire = event as ServerEvent;
     return wire.kind === "notification" && wire.message.method === "browser/request_cancelled" &&
