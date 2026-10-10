@@ -1,4 +1,4 @@
-import type { Rectangle, Session } from "electron";
+import type { HandlerDetails, LoadURLOptions, Rectangle, Session, WebContents, WebContentsViewConstructorOptions, WindowOpenHandlerResponse } from "electron";
 import type { ActivitySession, BrowserSurfaceSnapshot, JsonValue, ServerEvent } from "../shared/protocol";
 import {
   agentCursorCommandScript,
@@ -66,7 +66,7 @@ export interface BrowserWebContentsHandle {
   readonly id: number;
   readonly debugger: BrowserDebuggerHandle;
   setBackgroundThrottling(allowed: boolean): void;
-  setWindowOpenHandler(handler: (details: { url?: string }) => { action: "deny" } | { action: "allow" }): void;
+  setWindowOpenHandler(handler: (details: Partial<HandlerDetails>) => WindowOpenHandlerResponse): void;
   canGoBack(): boolean;
   canGoForward(): boolean;
   goBack(): void;
@@ -84,7 +84,7 @@ export interface BrowserWebContentsHandle {
   // for display without disturbing the agent's coordinate space.
   setZoomFactor(factor: number): void;
   on(event: string, listener: (...args: unknown[]) => void): void;
-  loadURL(url: string): Promise<unknown>;
+  loadURL(url: string, options?: LoadURLOptions): Promise<unknown>;
   getURL(): string;
   getTitle(): string;
   capturePage(rect?: Rectangle, opts?: { stayHidden?: boolean }): Promise<BrowserNativeImageHandle>;
@@ -116,7 +116,7 @@ export interface BrowserHostWindowHandle extends BrowserParentWindowHandle {
 
 export interface BrowserHostDeps {
   createHostWindow(): BrowserHostWindowHandle;
-  createView(): BrowserViewHandle;
+  createView(options?: WebContentsViewConstructorOptions): BrowserViewHandle;
   writePng(destPath: string, data: Buffer): void;
   writeJson(destPath: string, data: string): void;
   now?(): number;
@@ -146,6 +146,7 @@ type TabEntry = {
   workdir: string;
   tabID: string;
   threadID?: string;
+  openerTabID?: string;
   inputGeneration: number;
   pageGeneration: number;
   agentInputAllowed: boolean;
@@ -687,40 +688,8 @@ export class BrowserHostCoordinator {
     const key = tabKey(workdir, tabID);
     let entry = this.tabs.get(key);
     if (!entry) {
-      const view = this.deps.createView();
-      // A new WebContentsView has empty bounds. Establish a desktop layout
-      // before navigation or PiP mounting, rather than laying out the page at
-      // the preview card's size and treating that as its original viewport.
-      view.setBounds({ x: 0, y: 0, width: 1280, height: 800 });
-      this.ensureHostWindow().contentView.addChildView(view);
-      if (!view.webContents.debugger.isAttached()) {
-        view.webContents.debugger.attach("1.3");
-      }
-      entry = {
-        view,
-        workdir,
-        tabID,
-        threadID: typeof params.thread_id === "string" && params.thread_id ? params.thread_id : undefined,
-        inputGeneration: 0,
-        pageGeneration: 0,
-        agentInputAllowed: this.threadControls.get(tabKey(workdir, String(params.thread_id ?? "")))?.allowed !== false,
-        debuggerAttached: true,
-        nodeMap: new Map(),
-        currentParent: this.ensureHostWindow().contentView,
-        suppressed: false,
-        presented: false,
-        inPanel: false,
-        blockPresent: false,
-        agentInputDepth: 0,
-        ignoreUserInputUntil: 0,
-        loading: false,
-        activeOperations: 0,
-        spectatorScrollbarEpoch: 0,
-      };
-      this.applyEntryActivity(entry);
-      this.tabs.set(key, entry);
-      this.agentWebContentsIds.add(view.webContents.id);
-      this.wireEntry(entry);
+      entry = this.registerTab(workdir, tabID, this.deps.createView(),
+        typeof params.thread_id === "string" && params.thread_id ? params.thread_id : undefined);
     }
     const initialURL = typeof params.initial_url === "string" ? params.initial_url : "";
     if (initialURL) {
@@ -728,6 +697,28 @@ export class BrowserHostCoordinator {
     }
     this.presentIfCached(entry);
     return { ok: true, tab_id: tabID };
+  }
+
+  private registerTab(workdir: string, tabID: string, view: BrowserViewHandle, threadID?: string, openerTabID?: string): TabEntry {
+    // Set a usable layout before the first navigation or script-written popup.
+    view.setBounds({ x: 0, y: 0, width: 1280, height: 800 });
+    const parent = this.ensureHostWindow().contentView;
+    parent.addChildView(view);
+    if (!view.webContents.debugger.isAttached()) view.webContents.debugger.attach("1.3");
+    const entry: TabEntry = {
+      view, workdir, tabID, threadID, openerTabID,
+      inputGeneration: 0, pageGeneration: 0,
+      agentInputAllowed: this.threadControls.get(tabKey(workdir, threadID ?? ""))?.allowed !== false,
+      debuggerAttached: true, nodeMap: new Map(), currentParent: parent,
+      suppressed: false, presented: false, inPanel: false, blockPresent: false,
+      agentInputDepth: 0, ignoreUserInputUntil: 0, loading: false,
+      activeOperations: 0, spectatorScrollbarEpoch: 0,
+    };
+    this.tabs.set(tabKey(workdir, tabID), entry);
+    this.agentWebContentsIds.add(view.webContents.id);
+    this.applyEntryActivity(entry);
+    this.wireEntry(entry);
+    return entry;
   }
 
   private closeTab(workdir: string, params: Record<string, JsonValue>): { ok: true } {
@@ -1067,30 +1058,44 @@ export class BrowserHostCoordinator {
       const input = args[1] as { type?: string } | undefined;
       if (input?.type === "keyDown") this.noteUserInput(entry);
     });
-    // A page-requested window stays inside this tab set. The native window is
-    // refused so the new page keeps the same session and panel.
+    contents.on("destroyed", () => this.destroyEntry(entry));
     contents.setWindowOpenHandler((details) => {
-      this.adoptPopup(entry, typeof details?.url === "string" ? details.url : "");
-      return { action: "deny" };
+      if (this.tabs.get(tabKey(entry.workdir, entry.tabID)) !== entry || contents.isDestroyed() || this.downWorkdirs.has(entry.workdir)) {
+        return { action: "deny" };
+      }
+      const target = details.url || "about:blank";
+      let protocol: string;
+      try { protocol = new URL(target).protocol; } catch { return { action: "deny" }; }
+      // Keep page-created content in the browser; never launch OS URL handlers.
+      if (!["http:", "https:", "blob:"].includes(protocol) && target !== "about:blank") return { action: "deny" };
+      return {
+        action: "allow",
+        outlivesOpener: true,
+        overrideBrowserWindowOptions: { show: false, webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false } },
+        createWindow: (options) => {
+          const view = this.deps.createView(options);
+          if (this.tabs.get(tabKey(entry.workdir, entry.tabID)) !== entry || contents.isDestroyed()) {
+            view.webContents.close();
+            return view.webContents as WebContents;
+          }
+          const tabID = `popup-${entry.tabID}-${this.popupSerial++}`;
+          const child = this.registerTab(entry.workdir, tabID, view, entry.threadID, entry.tabID);
+          child.agentInputAllowed = entry.agentInputAllowed;
+          // The supplied child retains Chromium's opener, WindowProxy, and POST
+          // navigation. Calling loadURL here would destroy that original context.
+          const childOptions = options as WebContentsViewConstructorOptions;
+          if (!childOptions.webContents) {
+            const post = details.postBody;
+            const headers = post ? `Content-Type: ${post.contentType}${post.boundary ? `; boundary=${post.boundary}` : ""}` : undefined;
+            void this.withActiveEntry(child, () => view.webContents.loadURL(target, {
+              httpReferrer: details.referrer, postData: post?.data, extraHeaders: headers,
+            })).catch(() => undefined); // did-fail-load publishes the navigation failure.
+          }
+          this.rendererSink?.adopted({ workdir: entry.workdir, openerTabID: entry.tabID, tabID, url: target });
+          return view.webContents as WebContents;
+        },
+      };
     });
-  }
-
-  private adoptPopup(opener: TabEntry, url: string): void {
-    const target = url.trim();
-    if (!target || target === "about:blank") return;
-    const tabID = `popup-${opener.tabID}-${this.popupSerial++}`;
-    void this.openTab(opener.workdir, { thread_id: opener.threadID ?? "", tab_id: tabID, initial_url: target })
-      .then(() => {
-        this.rendererSink?.adopted({
-          workdir: opener.workdir,
-          openerTabID: opener.tabID,
-          tabID,
-          url: target,
-        });
-      })
-      .catch(() => {
-        // The opener stays where it is when the new tab cannot be created.
-      });
   }
 
   private presentInPanel(entry: TabEntry, window: BrowserParentWindowHandle, rect: Rectangle): void {
@@ -1374,6 +1379,10 @@ export class BrowserHostCoordinator {
   }
 
   private destroyEntry(entry: TabEntry): void {
+    const key = tabKey(entry.workdir, entry.tabID);
+    if (this.tabs.get(key) !== entry) return;
+    this.tabs.delete(key);
+    this.lastBounds.delete(key);
     entry.inputGeneration += 1;
     entry.pageGeneration += 1;
     entry.agentInputAllowed = false;
@@ -2138,7 +2147,7 @@ export async function configureBrowserProxy(
 
 export function defaultBrowserHostDeps(
   createHostWindow: () => BrowserHostWindowHandle,
-  createView: () => BrowserViewHandle,
+  createView: (options?: WebContentsViewConstructorOptions) => BrowserViewHandle,
 ): BrowserHostDeps {
   return {
     createHostWindow,

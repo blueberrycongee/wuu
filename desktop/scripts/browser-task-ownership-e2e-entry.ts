@@ -8,7 +8,7 @@ import { createServer, type ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { app, BrowserWindow, WebContentsView } from "electron";
+import { app, BrowserWindow, WebContentsView, type WebContentsViewConstructorOptions } from "electron";
 import { AppServerClientPool } from "../src/main/appServerClients";
 import {
   BrowserHostCoordinator, defaultBrowserHostDeps,
@@ -282,8 +282,11 @@ app.whenReady().then(async () => {
     },
   }, defaultBrowserHostDeps(
     () => new BrowserWindow({ show: false, webPreferences: { sandbox: true } }) as unknown as BrowserHostWindowHandle,
-    () => {
-      const view = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false } });
+    (options?: WebContentsViewConstructorOptions) => {
+      const view = new WebContentsView({
+        webContents: options?.webContents,
+        webPreferences: { ...options?.webPreferences, sandbox: true, contextIsolation: true, nodeIntegration: false },
+      });
       const send = view.webContents.debugger.sendCommand.bind(view.webContents.debugger);
       view.webContents.debugger.sendCommand = async (method, params, session) => {
         const result = await send(method, params, session);

@@ -316,12 +316,15 @@ const browserHostCoordinator = new BrowserHostCoordinator(
           sandbox: true,
         },
       }) as unknown as BrowserHostWindowHandle,
-    () =>
+    (options) =>
       new WebContentsView({
+        ...options,
         webPreferences: {
+          ...options?.webPreferences,
           partition: BROWSER_PARTITION,
           contextIsolation: true,
           nodeIntegration: false,
+          sandbox: true,
         },
       }) as unknown as BrowserViewHandle,
   ),
