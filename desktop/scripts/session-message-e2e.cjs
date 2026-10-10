@@ -144,6 +144,11 @@ async function hostUntil(fn, label) {
 const frames = () => evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
 function key(keyCode, modifiers = []) {
   main.webContents.sendInputEvent({ type: 'keyDown', keyCode, modifiers });
+  // Match the native button activation sequence used by request-lifecycle and
+  // fast-mode acceptance. A keyDown alone omits Chromium's character event.
+  if (['Return', 'Enter', 'Space'].includes(keyCode) && modifiers.length === 0) {
+    main.webContents.sendInputEvent({ type: 'char', keyCode: keyCode === 'Space' ? ' ' : '\r' });
+  }
   main.webContents.sendInputEvent({ type: 'keyUp', keyCode, modifiers });
 }
 // Use native CDP mouse input; DOM access locates and validates the real hit area.
@@ -313,6 +318,15 @@ db.commit()
   messages.map(item => ({ text: item.text, origin: item.origin, target: item.related })));
   pass('incoming request/reply and missing-target metadata restored through Go');
 
+  // Save the default product presentation before the interaction checks so a
+  // later failure still leaves useful, exact-build artifact-card evidence.
+  for (const index of [5, 6, 7]) {
+    await openArtifactScene(index);
+    await evaluate(() => document.querySelector('.cached-conversation-pane[data-active="true"] .session-message-source').scrollIntoView({ block: 'start', behavior: 'instant' }));
+    await capture(`${index === 5 ? 'zip' : index === 6 ? 'patch' : 'multiple'}-cards-light-14px-initial`);
+  }
+  await openMain();
+
   await input(mainInput, 'Keep my primary draft');
   await evaluate(selector => document.querySelector(selector).scrollIntoView({ block: 'center', behavior: 'instant' }), card(0));
   await capture('request-card-light');
@@ -472,6 +486,8 @@ run().catch(async error => {
       fs.writeFileSync(path.join(output, 'failure.png'), (await main.webContents.capturePage()).toPNG());
       fs.writeFileSync(path.join(output, 'failure-state.json'), JSON.stringify(await evaluate(() => ({
         cards: [...document.querySelectorAll('.session-message-source')].map(node => node.outerHTML),
+        activeElement: document.activeElement?.outerHTML,
+        focusVisible: document.activeElement?.matches(':focus-visible'),
         panes: [...document.querySelectorAll('.conversation-split-pane, .cached-conversation-pane')].map(node => ({ id: node.dataset.threadId, active: node.dataset.active })),
         inputs: [...document.querySelectorAll('.composer textarea')].map(node => ({ text: node.value, rect: node.getBoundingClientRect().toJSON() })),
       })), null, 2));
