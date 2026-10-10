@@ -162,6 +162,11 @@ it("deduplicates identical published snapshots per turn without hiding new versi
   expect(collectTurnArtifacts({ ...turn, id: "next", items: [first] } as Turn)).toHaveLength(1);
   const mixed: ThreadItem = { ...first, result_detail: { content: [first.result_detail!.content![0], { type: "text", text: "Compared with itself" }, first.result_detail!.content![0]] } };
   expect(collectTurnArtifacts({ ...turn, items: [mixed] }).map(a => a.type)).toEqual(["image", "text", "image"]);
+  const instance = (id: string, ref: string): ThreadItem => ({
+    id, type: "tool_call", result_detail: { content: [{ type: "resource", mime_type: "application/vnd.example.ui+json", text: "{}",
+      artifact: { placement: "inline", ref, sha256: "same-content" } }] },
+  });
+  expect(collectTurnArtifacts({ items: [instance("one", "widget-one"), instance("two", "widget-two"), instance("repeat-one", "widget-one")] }).map(a => a.itemId)).toEqual(["one", "two"]);
 });
 
 it("does not infer artifacts from file diffs, file links, or inspection text", () => {
@@ -209,6 +214,15 @@ it("keeps document output data inspectable without projecting it into the image 
     expect(container.textContent).not.toContain("application/pdf");
     expect(container.textContent).not.toContain("Message 99");
     expect(container.querySelector(".tool-result-data")).toBeNull();
+    const resourceTurn = { items: [{ id: "interactive", type: "tool_call", result_detail: { content: [
+      { type: "text", text: "![Do not fetch](https://example.test/pixel)" },
+      { type: "resource", name: "Interactive resource", mime_type: "application/vnd.example.ui+json", text: "{}", artifact: { placement: "inline" } },
+    ] } }] } as Turn;
+    await act(async () => root.render(<TurnInlineArtifactOutputs artifacts={collectTurnArtifacts(resourceTurn)} />));
+    expect(container.textContent).toContain("![Do not fetch](https://example.test/pixel)");
+    expect(container.querySelector("img")).toBeNull();
+    expect(container.textContent).toContain("Interactive resource");
+    expect(container.querySelector("button")).not.toBeNull();
   } finally { act(() => root.unmount()); container.remove(); }
 });
 

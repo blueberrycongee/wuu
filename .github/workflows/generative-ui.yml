@@ -1,0 +1,90 @@
+name: Generative UI E2E
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/generative-ui.yml"
+      - "cmd/wuu-generative-ui-plugin/**"
+      - "plugins/generative-ui/**"
+      - "internal/plugin/**"
+      - "internal/runtime/**"
+      - "desktop/src/renderer/ArtifactOutputs*"
+      - "desktop/src/renderer/plugins/**"
+      - "desktop/src/shared/workbench.ts"
+      - "desktop/scripts/generative-ui*.cjs"
+      - "desktop/src/main/**"
+      - "desktop/src/renderer/App.tsx"
+      - "scripts/generative-ui-lifecycle-e2e.go"
+      - "desktop/package*.json"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: genui-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  generative-ui:
+    name: Generative UI E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      WUU_GENUI_APP_OUTPUT: ${{ github.workspace }}/desktop/out/e2e/generative-ui-app
+      WUU_GENUI_OUTPUT: ${{ github.workspace }}/desktop/out/e2e/generative-ui
+      WUU_GENERATIVE_UI_PLUGIN_HELPER: ${{ github.workspace }}/desktop/build/bin/wuu-generative-ui-plugin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - name: Install desktop dependencies
+        run: |
+          npm ci --prefix desktop
+          node desktop/node_modules/electron/install.js
+      - name: Build native UI tool
+        run: |
+          mkdir -p desktop/build/bin
+          go build -o "$WUU_GENERATIVE_UI_PLUGIN_HELPER" ./cmd/wuu-generative-ui-plugin
+      - name: Build production core and desktop
+        run: |
+          # Match build:core's product version; an unstamped Go pseudo-version
+          # may be v0.0.0 and correctly fail plugin minimum-version checks.
+          go build -ldflags "-X github.com/blueberrycongee/wuu/internal/version.Version=v$(cat VERSION)" -o desktop/build/bin/wuu-core ./cmd/wuu
+          cd desktop && npx electron-vite build
+      - name: Verify native discovery and disable lifecycle
+        run: go run scripts/generative-ui-lifecycle-e2e.go
+      - name: Verify tool output and interactive renderer
+        shell: bash
+        run: |
+          mkdir -p "$WUU_GENUI_OUTPUT"
+          set -o pipefail
+          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/generative-ui-e2e.cjs 2>&1 | tee "$WUU_GENUI_OUTPUT/run.log"
+      - name: Verify complete App and production storage
+        shell: bash
+        run: |
+          mkdir -p "$WUU_GENUI_APP_OUTPUT"
+          set -o pipefail
+          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/generative-ui-app-e2e.cjs 2>&1 | tee "$WUU_GENUI_APP_OUTPUT/run.log"
+      - name: Upload reproducible evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: generative-ui-evidence
+          path: |
+            desktop/out/e2e/generative-ui/*.json
+            desktop/out/e2e/generative-ui/*.png
+            desktop/out/e2e/generative-ui/*.log
+            desktop/out/e2e/generative-ui/failure.txt
+            desktop/out/e2e/generative-ui-app/*.json
+            desktop/out/e2e/generative-ui-app/*.png
+            desktop/out/e2e/generative-ui-app/*.log
+          if-no-files-found: ignore
+          retention-days: 14

@@ -67,7 +67,9 @@
     "test:e2e:browser-pip": "node scripts/browser-pip-e2e.cjs",
     "typecheck": "tsc --noEmit",
     "test:release-signing": "node --test scripts/test-release-signing.cjs",
-    "test:e2e:onboarding-workspaces": "electron scripts/onboarding-workspaces-e2e.cjs"
+    "test:e2e:onboarding-workspaces": "electron scripts/onboarding-workspaces-e2e.cjs",
+    "test:e2e:generative-ui": "electron scripts/generative-ui-e2e.cjs",
+    "test:e2e:generative-ui-app": "npm run build:core && npm run build && electron scripts/generative-ui-app-e2e.cjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

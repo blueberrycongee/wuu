@@ -1,0 +1,294 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "spec"
+  ],
+  "properties": {
+    "spec": {
+      "$ref": "#/$defs/spec"
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,47}$",
+      "maxLength": 48
+    },
+    "title": {
+      "type": "string",
+      "maxLength": 160,
+      "minLength": 1
+    },
+    "label": {
+      "type": "string",
+      "maxLength": 80,
+      "minLength": 1
+    },
+    "number": {
+      "type": "number",
+      "minimum": -1000000000000,
+      "maximum": 1000000000000
+    },
+    "scalar": {
+      "anyOf": [
+        {
+          "type": "string",
+          "maxLength": 500
+        },
+        {
+          "$ref": "#/$defs/number"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "spec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "title",
+        "fallback",
+        "blocks"
+      ],
+      "properties": {
+        "version": {
+          "type": "integer",
+          "const": 1
+        },
+        "title": {
+          "$ref": "#/$defs/title"
+        },
+        "fallback": {
+          "type": "string",
+          "maxLength": 8000,
+          "description": "Readable plain-text equivalent for clients that cannot render this UI.",
+          "minLength": 1
+        },
+        "blocks": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {
+            "oneOf": [
+              {
+                "$ref": "#/$defs/text"
+              },
+              {
+                "$ref": "#/$defs/table"
+              },
+              {
+                "$ref": "#/$defs/chart"
+              },
+              {
+                "$ref": "#/$defs/form"
+              }
+            ]
+          },
+          "minItems": 1
+        }
+      }
+    },
+    "text": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "type",
+        "text"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "type": {
+          "const": "text"
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 4000,
+          "minLength": 1
+        }
+      }
+    },
+    "table": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "type",
+        "columns",
+        "rows"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "type": {
+          "const": "table"
+        },
+        "title": {
+          "$ref": "#/$defs/title"
+        },
+        "columns": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "key",
+              "label"
+            ],
+            "properties": {
+              "key": {
+                "$ref": "#/$defs/id"
+              },
+              "label": {
+                "$ref": "#/$defs/label"
+              }
+            }
+          }
+        },
+        "rows": {
+          "type": "array",
+          "maxItems": 200,
+          "items": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 8,
+            "items": {
+              "$ref": "#/$defs/scalar"
+            }
+          },
+          "description": "Each row must contain exactly one scalar per column, in column order."
+        }
+      }
+    },
+    "chart": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "type",
+        "chartType",
+        "points"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "type": {
+          "const": "chart"
+        },
+        "title": {
+          "$ref": "#/$defs/title"
+        },
+        "chartType": {
+          "type": "string",
+          "enum": [
+            "bar",
+            "line"
+          ]
+        },
+        "xLabel": {
+          "$ref": "#/$defs/label"
+        },
+        "yLabel": {
+          "$ref": "#/$defs/label"
+        },
+        "points": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 100,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "label",
+              "value"
+            ],
+            "properties": {
+              "label": {
+                "$ref": "#/$defs/label"
+              },
+              "value": {
+                "$ref": "#/$defs/number"
+              }
+            }
+          }
+        }
+      }
+    },
+    "form": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "type",
+        "fields"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "type": {
+          "const": "form"
+        },
+        "title": {
+          "$ref": "#/$defs/title"
+        },
+        "fields": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 12,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "label",
+              "kind"
+            ],
+            "properties": {
+              "id": {
+                "$ref": "#/$defs/id"
+              },
+              "label": {
+                "$ref": "#/$defs/label"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "text",
+                  "number",
+                  "select",
+                  "checkbox"
+                ]
+              },
+              "options": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 20,
+                "items": {
+                  "$ref": "#/$defs/label"
+                },
+                "uniqueItems": true
+              },
+              "initial": {
+                "$ref": "#/$defs/scalar"
+              }
+            },
+            "description": "IDs must be unique within this form. Only select fields require options. Initial values must match the field kind; select initial values must be one of the options. Local preview, copy and reset only; no submission or host actions."
+          }
+        }
+      }
+    }
+  }
+}

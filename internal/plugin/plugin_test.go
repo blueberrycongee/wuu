@@ -193,7 +193,7 @@ func TestBundledOptionalPluginsAreInstalledButDisabledByDefault(t *testing.T) {
 		LookPath:  func(command string) (string, error) { return command, nil },
 		LookupEnv: func(string) (string, bool) { return "", false },
 	})
-	want := map[string]bool{"ask-user": false, "subagent": false, "dream": false, "memory": false}
+	want := map[string]bool{"ask-user": false, "subagent": false, "dream": false, "memory": false, "generative-ui": false}
 	for _, item := range plugins {
 		if _, ok := want[item.ID]; ok {
 			want[item.ID] = !item.EnabledByDefault()
