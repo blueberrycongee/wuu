@@ -156,6 +156,8 @@ async function run() {
   while (!main) await delay(20);
   main.setSize(1380, 1000); main.show(); main.focus(); main.webContents.setBackgroundThrottling(false);
   await waitFor(() => document.querySelector('.composer textarea'));
+  await evaluate(async () => { await fetch('wuu-plugin://module/fixture-missing.js', { mode: 'no-cors' }); });
+  checks.push('plugin scheme-support smoke resolves alongside document protocols');
   await nativeText('.composer textarea', 'Deliver the PDF fixture'); await click('.composer-send-button');
   phase = 'real artifact delivery';
   await waitFor(() => document.querySelector('[data-workspace-pdf-preview]')?.shadowRoot?.querySelector('.textLayer span'), undefined, 60000);
