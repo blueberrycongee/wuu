@@ -64,7 +64,9 @@ const server = http.createServer((req, res) => {
   req.on('end', () => {
     try {
       const input = JSON.parse(body);
-      const user = JSON.stringify((input.messages || []).findLast(message => message.role === 'user')?.content || '');
+      // Runtime reminder messages can follow the actual user input. Route by
+      // the last marked user request rather than the last role=user entry.
+      const user = JSON.stringify((input.messages || []).findLast(message => message.role === 'user' && /GENUI_(DEFAULT_OFF|ENABLED|DISABLED_AGAIN)/.test(JSON.stringify(message.content)))?.content || '');
       const toolNames = (input.tools || []).map(tool => tool.function?.name || tool.name);
       const uiTools = toolNames.filter(name => /^plugin_generative_ui_render_ui_[a-f0-9]+$/.test(name));
       requests.push({ path: req.url, body: input, toolNames, latestUser: user });
@@ -139,7 +141,9 @@ async function submit(text, answer) {
   await wait(() => document.querySelector('.composer textarea') && !document.querySelector('.composer-stop-button'));
   await type('.composer textarea', text);
   await wait(() => { const button = document.querySelector('.composer-send-button'); return button && !button.disabled && button.getAttribute('aria-busy') !== 'true'; });
+  const before = rpc.length;
   await click('.composer-send-button');
+  await until(() => rpc.slice(before).some(entry => entry.channel === 'wuu:turn-start'), 'real turn-start IPC after composer submission');
   await wait(text => [...document.querySelectorAll('.session-flow')].some(node => node.textContent.includes(text)), answer);
   await wait(() => !document.querySelector('.composer-stop-button'));
 }
@@ -155,8 +159,9 @@ async function catalog() {
   await wait(selector => document.querySelector(selector), pluginSwitch);
 }
 async function conversation() {
-  await wait(() => document.querySelector('.sidebar-session-row .thread-row-main'));
-  await click('.sidebar-session-row .thread-row-main');
+  await evaluate(() => document.querySelector('[data-section-id="genui-app"] button[aria-expanded="false"]')?.click());
+  await wait(() => document.querySelector('[data-section-id="genui-app"] .sidebar-session-row .thread-row-main'));
+  await click('[data-section-id="genui-app"] .sidebar-session-row .thread-row-main');
   await wait(() => document.querySelector('.composer textarea'));
 }
 const hash = filename => createHash('sha256').update(fs.readFileSync(filename)).digest('hex');
