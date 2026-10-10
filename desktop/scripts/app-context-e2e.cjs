@@ -50,9 +50,14 @@ async function waitFor(win, fn) {
 async function capture(win, name) {
   if (!screenshots) return;
   await evaluate(win, () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-  await evaluate(win, () => Promise.all(document.getAnimations()
-    .filter(animation => animation.effect?.getComputedTiming().endTime !== Infinity)
-    .map(animation => animation.finished.catch(() => {}))));
+  // Background/cached panes intentionally pause animations. Only the visible
+  // snapshot dialog and its scrim must finish entering; keep the wait bounded.
+  await waitFor(win, () => {
+    const panel = document.querySelector('.app-context-dialog');
+    if (!panel) return true;
+    return [panel, panel.closest('.app-modal-backdrop')].filter(Boolean).every(element =>
+      element.getAnimations().every(animation => ['finished', 'idle'].includes(animation.playState)));
+  });
   const screenshot = await win.webContents.capturePage();
   assert.ok(screenshot.getSize().width > 1, 'A real display is required for visual evidence. Set WUU_APP_CONTEXT_E2E_SCREENSHOTS=0 for functional-only E2E.');
   fs.writeFileSync(path.join(output, name + '.png'), screenshot.toPNG());
