@@ -10,6 +10,7 @@ const { promisify } = require('node:util');
 const { pathToFileURL } = require('node:url');
 const { createHash } = require('node:crypto');
 const desktop = path.resolve(__dirname, '..');
+const phases = ['lifecycle', 'restart', 'disabled-restart'];
 const output = path.resolve(process.env.WUU_QUICK_ACCESS_OUTPUT || path.join(desktop, 'out/e2e/quick-access'));
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 const xdotool = (...args) => promisify(execFile)('xdotool', args, { timeout: 10000, killSignal: 'SIGKILL' });
@@ -45,17 +46,17 @@ async function runDriver() {
     active_context: { kind: 'project', project_id: 'quick-access', cwd: project },
   }));
   try {
-    for (const phase of ['lifecycle', 'restart', 'disabled-restart']) {
+    for (const phase of phases) {
       console.log(`Starting quick access ${phase}`);
       const log = fs.openSync(path.join(output, `${phase}.log`), 'w');
       try {
         await new Promise((resolve, reject) => {
           // A separate process group lets the watchdog stop Electron and its
           // descendants even if a native call blocks the Electron event loop.
-          const child = spawn(require('electron'), ['--no-sandbox', __filename, phase], {
+          const child = spawn(require('electron'), ['--no-sandbox', __filename], {
             detached: true, stdio: ['ignore', 'pipe', 'pipe'],
             env: { ...process.env, HOME: home, WUU_HOME: home, CODEX_HOME: path.join(home, '.codex'),
-              WUU_QUICK_ACCESS_FIXTURE: fixture, WUU_QUICK_ACCESS_OUTPUT: output,
+              WUU_QUICK_ACCESS_FIXTURE: fixture, WUU_QUICK_ACCESS_OUTPUT: output, WUU_QUICK_ACCESS_PHASE: phase,
               WUU_DESKTOP_CORE: process.env.WUU_DESKTOP_CORE || path.join(desktop, 'build/bin/wuu-core'),
               WUU_ENABLE_BROWSER: '0', WUU_ENABLE_CUA_MAC: '0', WUU_SAFE_MODE: '1' },
           });
@@ -90,7 +91,7 @@ async function runDriver() {
     fs.writeFileSync(path.join(output, 'results.json'), JSON.stringify({
       platform: process.platform, transport: 'X11 globalShortcut + xdotool', macOS: 'not run',
       mainSHA256: createHash('sha256').update(fs.readFileSync(path.join(desktop, 'out/main/index.js'))).digest('hex'),
-      phases: ['lifecycle', 'restart', 'disabled-restart'].map(phase => JSON.parse(fs.readFileSync(path.join(output, `${phase}.json`), 'utf8'))),
+      phases: phases.map(phase => JSON.parse(fs.readFileSync(path.join(output, `${phase}.json`), 'utf8'))),
     }, null, 2));
   } finally { fs.rmSync(fixture, { recursive: true, force: true }); }
 }
@@ -101,7 +102,13 @@ if (!process.versions.electron) {
 }
 
 const { app, BrowserWindow, globalShortcut } = require('electron');
-const phase = process.argv[2];
+// Electron retains runtime flags in argv; keep phase selection independent of them.
+const phase = process.env.WUU_QUICK_ACCESS_PHASE;
+if (!phases.includes(phase)) {
+  console.error('Unknown quick-access E2E phase');
+  app.exit(1);
+  return;
+}
 const fixture = process.env.WUU_QUICK_ACCESS_FIXTURE;
 const home = process.env.WUU_HOME;
 const project = path.join(fixture, 'project');
@@ -162,6 +169,14 @@ const results = [];
 const record = result => { results.push(result); console.log(`PASS ${phase}: ${result}`); };
 console.log(`Loading Wuu for ${phase}`);
 const timeout = setTimeout(() => { console.error('Quick-access E2E timed out'); app.exit(1); }, 120000);
+const fail = error => {
+  console.error(error);
+  try { fs.writeFileSync(path.join(output, `${phase}-failure.txt`), String(error.stack || error)); }
+  finally { clearTimeout(timeout); app.exit(1); }
+};
+// Assertions in native quit callbacks must fail CI instead of opening an
+// unattended Electron error dialog that blocks the main-process watchdog.
+process.once('uncaughtException', fail);
 import(pathToFileURL(path.join(desktop, 'out/main/index.js')).href).then(async () => {
   await until(() => main, 'main window');
   console.log(`${phase}: main window created`);
@@ -342,8 +357,4 @@ import(pathToFileURL(path.join(desktop, 'out/main/index.js')).href).then(async (
     clearTimeout(timeout);
   });
   app.quit();
-}).catch(error => {
-  console.error(error);
-  fs.writeFileSync(path.join(output, `${phase}-failure.txt`), String(error.stack || error));
-  clearTimeout(timeout); app.exit(1);
-});
+}).catch(fail);
