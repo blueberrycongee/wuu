@@ -238,7 +238,13 @@ async function run() {
   await waitFor(() => document.querySelector('.composer textarea'));
   await evaluate(async () => { await fetch('wuu-plugin://module/fixture-missing.js', { mode: 'no-cors' }); });
   checks.push('plugin scheme-support smoke resolves alongside document protocols');
-  await nativeText('.composer textarea', 'Deliver the PDF fixture'); await click('.composer-send-button');
+  await nativeText('.composer textarea', 'Deliver the PDF fixture');
+  phase = 'first prompt submission readiness';
+  await waitFor(() => {
+    const button = document.querySelector('.composer-send-button');
+    return document.querySelector('.composer textarea')?.value === 'Deliver the PDF fixture' && button && !button.disabled;
+  });
+  await click('.composer-send-button');
   phase = 'real artifact delivery';
   await waitFor(() => document.querySelector('[data-workspace-pdf-preview]')?.shadowRoot?.querySelector('.textLayer span'), undefined, 60000);
   threadID = await evaluate(async () => (await window.wuu.listThreads()).threads[0].id);
