@@ -303,6 +303,37 @@ func resolveManagedArtifact(wuuHome, stateDir, threadID, raw string) (pluginhost
 	}, true, nil
 }
 
+// ReadManagedArtifact reads a published immutable snapshot within its owning
+// workspace and thread. The caller supplies its transport's decoded byte limit.
+func ReadManagedArtifact(wuuHome, stateDir, threadID, uri string, maxBytes int64) ([]byte, string, error) {
+	artifact, managed, err := resolveManagedArtifact(wuuHome, stateDir, threadID, uri)
+	if err != nil {
+		return nil, "", err
+	}
+	if !managed || artifact.Size <= 0 || artifact.Size > maxBytes {
+		return nil, "", fmt.Errorf("artifact is unavailable or exceeds %d bytes", maxBytes)
+	}
+	root, err := os.OpenRoot(stateDir)
+	if err != nil {
+		return nil, "", err
+	}
+	defer root.Close()
+	file, err := root.Open(filepath.Join("sessions", threadID, "artifacts", artifact.ID, artifact.Name))
+	if err != nil {
+		return nil, "", err
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, maxBytes+1))
+	if err != nil {
+		return nil, "", err
+	}
+	digest := sha256.Sum256(data)
+	if int64(len(data)) != artifact.Size || hex.EncodeToString(digest[:]) != artifact.SHA256 {
+		return nil, "", serviceError("artifact_invalid", "managed artifact contents changed")
+	}
+	return data, artifact.MIMEType, nil
+}
+
 func applyManagedArtifact(part *toolresult.ContentPart, artifact pluginhost.ArtifactImportResult) {
 	part.URI = artifact.URI
 	part.Name = artifact.Name

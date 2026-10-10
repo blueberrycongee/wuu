@@ -1,4 +1,5 @@
 import Foundation
+import zlib
 
 public enum RemoteEvent: Sendable {
     case attached
@@ -35,13 +36,22 @@ public actor RemoteConnection {
     private var attachWaiter: CheckedContinuation<Void, Error>?
 
     public init(account: AccountSession, host: String) throws {
-        identity = try DeviceIdentity(seed: Data(base64URL: account.deviceSeed))
+        let identity = try DeviceIdentity(seed: Data(base64URL: account.deviceSeed))
         guard identity.publicKey.base64URL == account.pub else { throw NativeError.invalid("Device identity mismatch") }
-        self.host = host
         var url = URLComponents(url: try AccountAPI.validateOrigin(account.server), resolvingAgainstBaseURL: false)!
         url.scheme = url.scheme == "https" ? "wss" : "ws"
         url.path = "/v1/connect"
-        relay = url.url!
+        try self.init(identity: identity, host: host, relay: url.url!)
+    }
+    public init(computer: PairedComputer) throws {
+        try self.init(identity: DeviceIdentity(seed: Data(base64URL: computer.deviceSeed)),
+                      host: computer.hostPub, relay: validateRelay(computer.relayURL))
+    }
+    private init(identity: DeviceIdentity, host: String, relay: URL) throws {
+        guard try Data(base64URL: host).count == 32 else { throw NativeError.invalid("Invalid computer identity") }
+        self.identity = identity
+        self.host = host
+        self.relay = relay
         session = URLSession(configuration: .ephemeral, delegate: NoRedirect(), delegateQueue: nil)
         let stream = AsyncStream<RemoteEvent>.makeStream()
         events = stream.stream
@@ -154,7 +164,7 @@ public actor RemoteConnection {
                 guard envelope["t"].string == "hs2" else { throw NativeError.invalid("Unexpected handshake reply") }
                 channel = try handshake.finish(JSONDecoder().decode(HandshakeReply.self, from: body))
                 self.handshake = nil
-                try await sealed(["t": "attach", "client_profile": "mobile_activity"])
+                try await sealed(["t": "attach", "client_profile": "mobile_activity", "accept_line_compression": "gzip"])
             } else if kind == 2, let channel {
                 let message = try JSONDecoder().decode(JSONValue.self, from: channel.open(Data(payload.dropFirst())))
                 try await handleSealed(message, epoch: stamp)
@@ -191,7 +201,7 @@ public actor RemoteConnection {
             }
         case "rpc":
             guard attached, let sequence = value["seq"].number, sequence > received else { return }
-            let line = value["line"]
+            let line = try decodeRPCLine(value)
             if let method = line["method"].string {
                 if line["id"] != .null { eventSink.yield(.request(line)) }
                 else { eventSink.yield(.notification(method, line["params"])) }
@@ -212,6 +222,42 @@ public actor RemoteConnection {
         case "bye": throw NativeError.invalid(value["reason"].string ?? "Computer closed connection")
         default: break
         }
+    }
+    private func decodeRPCLine(_ value: JSONValue) throws -> JSONValue {
+        guard let encoded = value["line_gzip"].string else { return value["line"] }
+        // Match the host's decoded RPC line limit; each gzip member is independent.
+        let limit = 32 * 1024 * 1024
+        guard value["line"] == .null, encoded.utf8.count <= (limit * 4 + 2) / 3 else {
+            throw NativeError.invalid("Invalid compressed RPC line")
+        }
+        let input = try Data(base64URL: encoded)
+        var stream = z_stream()
+        guard inflateInit2_(&stream, MAX_WBITS + 16, ZLIB_VERSION, Int32(MemoryLayout<z_stream>.size)) == Z_OK else {
+            throw NativeError.invalid("Cannot decode compressed RPC line")
+        }
+        defer { inflateEnd(&stream) }
+        var output = Data()
+        try input.withUnsafeBytes { raw in
+            stream.next_in = UnsafeMutablePointer<Bytef>(mutating: raw.bindMemory(to: Bytef.self).baseAddress)
+            stream.avail_in = uInt(raw.count)
+            var buffer = [UInt8](repeating: 0, count: 64 * 1024)
+            while true {
+                let status = buffer.withUnsafeMutableBytes { destination in
+                    stream.next_out = destination.bindMemory(to: Bytef.self).baseAddress
+                    stream.avail_out = uInt(destination.count)
+                    return inflate(&stream, Z_NO_FLUSH)
+                }
+                let count = buffer.count - Int(stream.avail_out)
+                guard output.count + count <= limit else { throw NativeError.invalid("Decompressed RPC line is too large") }
+                output.append(contentsOf: buffer.prefix(count))
+                if status == Z_STREAM_END {
+                    guard stream.avail_in == 0 else { throw NativeError.invalid("Unexpected data after compressed RPC line") }
+                    break
+                }
+                guard status == Z_OK, count > 0 else { throw NativeError.invalid("Incomplete or invalid compressed RPC line") }
+            }
+        }
+        return try JSONDecoder().decode(JSONValue.self, from: output)
     }
     private func ping(epoch stamp: UInt64) async throws {
         guard epoch == stamp else { throw CancellationError() }

@@ -801,9 +801,11 @@ func (s *Server) handleThreadFork(req Request) error {
 	s.mu.Unlock()
 
 	th.mu.Lock()
-	thread := th.snapshotLocked()
+	thread := th.resumeSnapshotLocked(params.HistoryPage)
 	th.mu.Unlock()
 	thread = s.threadWithWorktreeStatus(thread)
+	// The creation event uses the same page as the response; a duplicate full
+	// history would defeat paging before it reaches the remote transport.
 	if err := s.writeResponse(req.ID, ThreadForkResult{Thread: thread, Worktree: thread.Worktree}, nil); err != nil {
 		return err
 	}

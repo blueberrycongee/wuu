@@ -3,7 +3,7 @@ import type { DesktopZoomAction } from "../shared/DesktopPageZoom";
 import { readCatalogSkill } from "./remoteSkills";
 import { inheritSystemProxy } from "./systemProxy";
 import { RemoteAppServerBridge } from "./remoteAppServerBridge";
-import { PhoneAccess, phonePairLink } from "./phoneAccess";
+import { PhoneAccess } from "./phoneAccess";
 import {
   app,
   BrowserWindow,
@@ -676,7 +676,7 @@ async function remoteControlSnapshot(workdir: string): Promise<RemoteControlSnap
     status_error: statusError || phoneAccess.error() || undefined,
     host_running: remoteHostManager.isRunning(),
     host_enabled: phoneAccess.enabled(),
-    pair_uri: phonePairLink(phoneAccess.url(), remoteHostManager.currentPairUri()),
+    pair_uri: remoteHostManager.currentPairUri(),
     web_url: phoneAccess.url(),
   };
 }

@@ -4,10 +4,25 @@ import MarkdownUI
 struct MessageText: View {
     let text: String
     let markdown: Bool
+    var contextMenuEnabled = true
     @Environment(\.mobileTextSize) private var textSize
     @State private var content = MarkdownContent("")
     @State private var renderedText: String?
+    @State private var selecting = false
     var body: some View {
+        if contextMenuEnabled {
+            rendered.textSelection(.enabled)
+                .contextMenu {
+                    Button("复制", systemImage: "doc.on.doc") { UIPasteboard.general.string = text; Haptics.tap() }
+                    Button("选择文本", systemImage: "selection.pin.in.out") { selecting = true }
+                    ShareLink(item: text) { Label("分享", systemImage: "square.and.arrow.up") }
+                }
+                .sheet(isPresented: $selecting) { TextSelectionSheet(text: text) }
+        } else {
+            rendered
+        }
+    }
+    private var rendered: some View {
         Group {
             if markdown, text.utf8.count <= 128 * 1024 {
                 Markdown(content)
@@ -28,7 +43,8 @@ struct MessageText: View {
                             HStack {
                                 Text(block.language ?? "代码").font(.caption).foregroundStyle(.secondary)
                                 Spacer()
-                                Button("复制代码") { UIPasteboard.general.string = block.content }.font(.caption)
+                                Button("复制代码") { UIPasteboard.general.string = block.content; Haptics.tap() }.font(.caption)
+                                    .frame(minHeight: 44)
                             }
                             ScrollView(.horizontal) {
                                 block.label.markdownTextStyle { FontSize(.rem(MobileTypography.baseCodeSize / MobileTypography.baseTextSize)) }
@@ -51,8 +67,41 @@ struct MessageText: View {
             } else {
                 Text(text).font(.system(size: textSize)).lineSpacing(textSize * 0.2)
             }
-        }.textSelection(.enabled)
-            .contextMenu { Button("复制消息") { UIPasteboard.general.string = text } }
+        }
+    }
+}
+
+/// Long-press selection in a bubble selects the whole message; this sheet allows any range.
+struct TextSelectionSheet: View {
+    let text: String
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.mobileTextSize) private var textSize
+    var body: some View {
+        NavigationStack {
+            SelectableText(text: text, size: textSize)
+                .ignoresSafeArea(edges: .bottom)
+                .navigationTitle("选择文本").navigationBarTitleDisplayMode(.inline)
+                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { dismiss() } } }
+        }
+    }
+}
+
+private struct SelectableText: UIViewRepresentable {
+    let text: String
+    let size: CGFloat
+    func makeUIView(context: Context) -> UITextView {
+        let view = UITextView()
+        view.accessibilityIdentifier = "message-selection-text"
+        view.isEditable = false; view.isSelectable = true
+        view.adjustsFontForContentSizeCategory = false
+        view.backgroundColor = .clear
+        view.textContainerInset = UIEdgeInsets(top: 16, left: 16, bottom: 32, right: 16)
+        return view
+    }
+    func updateUIView(_ view: UITextView, context: Context) {
+        if view.text != text { view.text = text }
+        view.font = .systemFont(ofSize: size)
+        view.textColor = .label
     }
 }
 

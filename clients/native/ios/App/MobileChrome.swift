@@ -1,6 +1,35 @@
 import SwiftUI
 import WuuCore
 
+/// Last component of a host path. The computer may use POSIX or Windows separators.
+func folderName(_ path: String) -> String {
+    path.split(whereSeparator: { $0 == "/" || $0 == "\\" }).last.map(String.init) ?? path
+}
+
+/// Haptics for deliberate actions and their outcomes. Not for streaming, polling or reconnects,
+/// and not for system controls that already give their own feedback.
+@MainActor enum Haptics {
+    static func tap() { UIImpactFeedbackGenerator(style: .light).impactOccurred() }
+    static func success() { UINotificationFeedbackGenerator().notificationOccurred(.success) }
+    static func failure() { UINotificationFeedbackGenerator().notificationOccurred(.error) }
+}
+
+/// Restrained motion for chrome that appears or leaves; none when Reduce Motion is on.
+func chromeAnimation(_ reduceMotion: Bool) -> Animation? { reduceMotion ? nil : .easeOut(duration: 0.2) }
+
+extension View {
+    /// The app uses a monochrome tint; prominent labels need the opposite surface color.
+    func mobilePrimaryAction() -> some View {
+        buttonStyle(.borderedProminent).foregroundStyle(Color(uiColor: .systemBackground))
+    }
+    /// A presented sheet covers the root alert, so sheets attach their own.
+    func modelErrorAlert(_ model: AppModel) -> some View {
+        alert("提示", isPresented: Binding(get: { model.error != nil }, set: { if !$0 { model.error = nil } })) {
+            Button("知道了", role: .cancel) { model.error = nil }
+        } message: { Text(model.error ?? "") }
+    }
+}
+
 struct MobileCircleButton: View {
     let symbol: String
     let label: String
@@ -17,6 +46,7 @@ struct MobileCircleButton: View {
 
 struct MobileComposer: View {
     @Environment(\.mobileTextSize) private var textSize
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Binding var text: String
     @Binding var attachments: [InputAttachment]
     let model: AppModel
@@ -54,12 +84,13 @@ struct MobileComposer: View {
                 }.scrollIndicators(.hidden)
             }
             HStack(alignment: .bottom, spacing: 8) {
-                AttachmentPicker(attachments: $attachments, model: model).disabled(!enabled || sending)
+                // Drafts stay editable while the computer reconnects; only sending waits.
+                AttachmentPicker(attachments: $attachments, model: model).disabled(sending)
                 HStack(alignment: .bottom, spacing: 4) {
-                    TextField(enabled ? placeholder : "连接电脑后发送", text: $text, axis: .vertical)
+                    TextField(placeholder, text: $text, axis: .vertical)
                         .textInputAutocapitalization(.never).autocorrectionDisabled()
                         .font(.system(size: textSize)).lineLimit(1...6)
-                        .padding(.leading, 15).padding(.vertical, 12).disabled(!enabled)
+                        .padding(.leading, 15).padding(.vertical, 12)
                         .accessibilityIdentifier(identifier)
                     if let stop {
                         Button(action: stop) {
@@ -69,6 +100,7 @@ struct MobileComposer: View {
                                 .background(Color.primary, in: Circle())
                                 .frame(width: 44, height: 44)
                         }.disabled(!enabled).accessibilityLabel("停止生成")
+                            .transition(.opacity)
                     }
                     if stop == nil || canSend || sending {
                     Button(action: send) {
@@ -80,10 +112,14 @@ struct MobileComposer: View {
                             .background(canSend || sending ? Color.primary : Color.primary.opacity(0.08), in: Circle())
                             .frame(width: 44, height: 44)
                     }.disabled(!canSend).accessibilityLabel(sending ? "正在发送" : "发送")
+                        .transition(.opacity)
                     }
                 }.background(Color(uiColor: .secondarySystemBackground).opacity(0.6), in: RoundedRectangle(cornerRadius: 24))
                     .overlay(RoundedRectangle(cornerRadius: 24).stroke(Color.primary.opacity(0.08), lineWidth: 0.5))
+                    .animation(chromeAnimation(reduceMotion), value: stop != nil)
+                    .animation(chromeAnimation(reduceMotion), value: canSend)
             }
         }.padding(.horizontal, 12).padding(.vertical, 8)
+            .animation(chromeAnimation(reduceMotion), value: attachments.count)
     }
 }

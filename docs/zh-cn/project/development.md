@@ -146,6 +146,9 @@ CI 检查大历史样本的重复切换，恢复调用、布局及样式重算�
 `WUU_SWITCH_BUILD_COMMIT` 标识 UI 构建，`WUU_SWITCH_CORE_BUILD_COMMIT`
 标识独立选择的核心，便于 UI/核心交叉比较；始终保留实际构建哈希。
 仓库外保存的构建必须提供 UI 提交，其源码修改状态记为 null，并应同时保留已验证构建清单。
+隔离运行器导出不带 `.git` 的源码时，还需通过 `WUU_SWITCH_SOURCE_COMMIT` 和
+`WUU_SWITCH_SOURCE_CHANGES` 标识测试脚本来源，同时保留导出的源码及其哈希清单。
+未提供源码修改信息时记为 null，不视为干净的工作区。
 
 输入仍固定在服务已发送约三分之一内容时触发，新增零起始块索引、发送/接收字符进度、
 渲染文字大小、渲染器输入/帧时间偏移、主进程派发到帧的耗时和重叠长任务。
@@ -221,7 +224,7 @@ iOS 构建打包已提交的小球与过程摘要资源快照，不要求快照�
 
 ## CI 覆盖范围
 
-[Native mobile](../../../.github/workflows/native-mobile.yml) 仅通过 `workflow_dispatch` 手动运行，不在拉取请求或推送时触发。它保留核心集成检查、iOS/Android 未签名 Release 构建和 Android lint。当前手机端不在发布范围内，纳入发布范围前应恢复自动验证；桌面交付不以移动端验证为前提。
+[Native mobile](../../../.github/workflows/native-mobile.yml) 在修改 iOS 客户端、共享原生测试环境、远程协议或 Go 依赖的拉取请求与 `main` 推送上，运行 iOS 核心集成和未签名模拟器／真机目标构建。手动 `workflow_dispatch` 还会运行原有 Android 集成、Release 构建和 lint。这些检查不覆盖真机签名、商店分发或实体手机交互。
 
 [主 CI 工作流](../../../.github/workflows/ci.yml)运行仓库元数据、Go 检查与测试、桌面检查/测试/构建，以及 SDK/客户端检查/测试/构建。只修改 `docs/` 和 `docs-site/` 时跳过该工作流。Go CI 提供 PostgreSQL，以覆盖依赖数据库的测试。
 

@@ -1,7 +1,31 @@
 name: Native mobile
 
 on:
-  # Restore automatic coverage when native phones enter the release scope.
+  pull_request:
+    paths:
+      - "clients/native/ios/**"
+      - "clients/native/shared-ui/**"
+      - "clients/native/testhost/**"
+      - "clients/native/testaccount/**"
+      - "clients/native/testsupport/**"
+      - "clients/native/*.sh"
+      - "internal/remote/**"
+      - "go.mod"
+      - "go.sum"
+      - ".github/workflows/native-mobile.yml"
+  push:
+    branches: [main]
+    paths:
+      - "clients/native/ios/**"
+      - "clients/native/shared-ui/**"
+      - "clients/native/testhost/**"
+      - "clients/native/testaccount/**"
+      - "clients/native/testsupport/**"
+      - "clients/native/*.sh"
+      - "internal/remote/**"
+      - "go.mod"
+      - "go.sum"
+      - ".github/workflows/native-mobile.yml"
   workflow_dispatch:
 
 permissions:
@@ -48,6 +72,7 @@ jobs:
             native-ios-*.log
 
   android:
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:

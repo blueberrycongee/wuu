@@ -2,8 +2,47 @@ import SwiftUI
 import WuuCore
 import CryptoKit
 
+private struct PairedLocation: Codable {
+    let host: String
+    let workspace: String
+    let thread: String?
+}
+
+@MainActor @Observable final class HistoryMessageEdit: Identifiable {
+    let id = UUID()
+    let threadID: String
+    let hostID: String
+    let message: ChatMessage
+    let original: JSONValue
+    let attachments: [InputAttachment]
+    var text: String
+    var prepared = false
+    var submitting = false
+    var error: String?
+    var attachmentCount: Int { attachments.count }
+    init(threadID: String, hostID: String, message: ChatMessage, original: JSONValue, attachments: [InputAttachment]) {
+        self.threadID = threadID; self.hostID = hostID; self.message = message
+        self.original = original; self.attachments = attachments
+        text = original["input_text"].string ?? original["text"].string ?? ""
+    }
+}
+
+enum MessageForkMode: String { case local, worktree }
+
+struct MessageForkRequest: Identifiable {
+    let id = UUID()
+    let threadID: String
+    let hostID: String
+    let message: ChatMessage
+}
+
 @MainActor @Observable final class AppModel {
     var account: AccountSession?
+    var pairedComputers: [PairedComputer] = []
+    var selectedPair: PairedComputer?
+    var hasSavedConnections: Bool { account != nil || !pairedComputers.isEmpty }
+    var pairingBusy = false
+    var receivedPairingLink: String?
     let push = PushNotifications()
     var devices: [AccountDevice] = []
     var host: AccountDevice?
@@ -16,6 +55,15 @@ import CryptoKit
     var connecting = false
     var busy = false
     var sending = false
+    var historyActionBusy = false
+    var pendingFork: MessageForkRequest?
+    var showingHistoryEdit = false
+    private var historyEdits: [String: HistoryMessageEdit] = [:]
+    private var historyEditKey: String { (host?.pub ?? "") + ":" + (activeID ?? "") }
+    var historyEdit: HistoryMessageEdit? {
+        get { historyEdits[historyEditKey] }
+        set { historyEdits[historyEditKey] = newValue }
+    }
     var loadingHistory = false
     var loadingContent: Set<String> = []
     let imagePreviews = ImagePreviewLoader()
@@ -68,10 +116,17 @@ import CryptoKit
         clearAbandonedAttachmentPreviews()
         do {
             account = try vault.load("session", as: AccountSession.self)
+            pairedComputers = try vault.load("paired-computers", as: [PairedComputer].self) ?? []
+            if let location = try vault.load("paired-location", as: PairedLocation.self),
+               let pair = pairedComputers.first(where: { $0.id == location.host }) {
+                selectedPair = pair
+                host = AccountDevice(pub: pair.hostPub, name: pair.hostName, role: "host", online: false)
+                activeID = location.thread; workspace = location.workspace
+            }
             resetRecovery = try vault.load("recovery", as: String.self)
             if let account, let directory = try vault.load("directory", as: RememberedDirectory.self)?.restore(account: account) {
                 devices = directory.devices; authMethod = directory.auth_method; directoryCached = true
-                if let location = try vault.load("location", as: NavigationLocation.self)?.restore(account: account, devices: devices) {
+                if selectedPair == nil, let location = try vault.load("location", as: NavigationLocation.self)?.restore(account: account, devices: devices) {
                     host = devices.first { $0.pub == location.host }
                     activeID = location.thread; workspace = location.workspace
                     history = try ConversationHistory(account: account, host: location.host, directory: cacheDirectory)
@@ -82,10 +137,41 @@ import CryptoKit
         push.bind(account)
     }
     func rememberLocation() {
-        guard let account, let host else { return }
+        guard let host else { return }
         do {
-            try vault.save(NavigationLocation(account: account, host: host.pub, workspace: workspace, thread: activeID), key: "location")
+            if let selectedPair {
+                try vault.save(PairedLocation(host: selectedPair.id, workspace: workspace, thread: activeID), key: "paired-location")
+            } else if let account {
+                try vault.save(NavigationLocation(account: account, host: host.pub, workspace: workspace, thread: activeID), key: "location")
+            }
         } catch { self.error = error.localizedDescription }
+    }
+    func pairComputer(_ input: String) async throws {
+        guard !pairingBusy else { throw CancellationError() }
+        pairingBusy = true
+        defer { pairingBusy = false }
+        let pair = try await PairedComputer.pair(input, deviceName: UIDevice.current.name)
+        try Task.checkCancellation()
+        var computers = pairedComputers.filter { $0.id != pair.id }
+        computers.append(pair)
+        try vault.save(computers, key: "paired-computers")
+        pairedComputers = computers
+        receivedPairingLink = nil
+        try await selectComputer(pair)
+    }
+    func selectComputer(_ pair: PairedComputer) async throws {
+        let selection = await leaveHost()
+        guard opening == selection, pairedComputers.contains(pair) else { return }
+        selectedPair = pair
+        host = AccountDevice(pub: pair.hostPub, name: pair.hostName, role: "host", online: false)
+        rememberLocation()
+        foreground()
+    }
+    func forgetComputer(_ pair: PairedComputer) async throws {
+        let computers = pairedComputers.filter { $0.id != pair.id }
+        try vault.save(computers, key: "paired-computers")
+        pairedComputers = computers
+        if selectedPair?.id == pair.id { await leaveHost(); foreground() }
     }
     func perform(_ operation: @escaping @MainActor () async throws -> Void) {
         let stamp = epoch
@@ -223,7 +309,7 @@ import CryptoKit
         devices = directory.devices
         authMethod = directory.auth_method
         directoryCached = false
-        if let host, !devices.contains(where: { $0.pub == host.pub && $0.role == "host" }) {
+        if selectedPair == nil, let host, !devices.contains(where: { $0.pub == host.pub && $0.role == "host" }) {
             await leaveHost(removeCache: true)
             guard self.account == account else { return }
             foreground()
@@ -256,7 +342,7 @@ import CryptoKit
         if NativeUIFixture.enabled { return }
         #endif
         isForeground = true
-        if account == nil {
+        if account == nil && selectedPair == nil {
             if let pending = try? vault.load("github", as: GitHubPending.self), pending.expires > Date() {
                 githubURL = pending.authorizationURL
                 pollGitHub(pending)
@@ -304,13 +390,16 @@ import CryptoKit
         loginTask?.cancel()
         events?.cancel(); events = nil
         let oldRemote = remote; remote = nil
-        connected = false; connecting = false; pendingApproval = nil; sending = false
+        connected = false; connecting = false; pendingApproval = nil; sending = false; historyActionBusy = false
         imagePreviews.clear(); loadingHistory = false; loadingContent = []; attachmentPreview = nil; loadingAttachment = false
+        pendingFork = nil
         questions = []; questionRevision += 1
         await oldRemote?.disconnect()
     }
     @discardableResult func leaveHost(removeCache: Bool = false) async -> UUID {
         try? vault.delete("location")
+        try? vault.delete("paired-location")
+        selectedPair = nil
         host = nil
         let oldHistory = history
         history = nil; host = nil; entries = []; threads = []; activeID = nil; live = nil; saved = nil
@@ -339,7 +428,7 @@ import CryptoKit
         try vault.delete("github")
         try vault.delete("directory")
         githubURL = nil; devices = []; authMethod = ""; directoryCached = false
-        await leaveHost()
+        if selectedPair == nil { await leaveHost() }
         if FileManager.default.fileExists(atPath: cacheDirectory.path) { try FileManager.default.removeItem(at: cacheDirectory) }
     }
     func openPushHost(_ pub: String) async throws {
@@ -367,12 +456,15 @@ import CryptoKit
         try await syncHistory()
     }
     func connect() async {
-        guard !connecting, !connected, let account, let host else { return }
+        guard !connecting, !connected, let host, account != nil || selectedPair != nil else { return }
         connecting = true
         let stamp = epoch
         defer { if epoch == stamp { connecting = false } }
         do {
-            let connection = try RemoteConnection(account: account, host: host.pub)
+            let connection: RemoteConnection
+            if let selectedPair { connection = try RemoteConnection(computer: selectedPair) }
+            else if let account { connection = try RemoteConnection(account: account, host: host.pub) }
+            else { return }
             remote = connection
             events?.cancel()
             events = Task {
@@ -419,14 +511,15 @@ import CryptoKit
         // A missing conversation or failed directory read is not a transport failure.
         guard let connection = remote, epoch == stamp else { return }
         do {
-            try await loadQuestions()
+            async let pendingQuestions: Void = loadQuestions()
             let result = try await connection.call("workspace/list")
             guard epoch == stamp else { return }
             workspaces = result["workspaces"].array
-            if !workspaces.contains(where: { $0["path"].string == workspace }) { workspace = result["current"].string ?? workspaces.first?["path"].string ?? "" }
-            try await loadThreads()
-            guard epoch == stamp else { return }
+            if workspace.isEmpty { workspace = result["current"].string ?? workspaces.first?["path"].string ?? "" }
+            async let pendingThreads: Void = loadThreads()
             if let id = activeID { try await open(id, preservingContent: true) }
+            try await pendingThreads
+            try await pendingQuestions
         } catch is CancellationError {} catch {
             if epoch == stamp, remote === connection { report(error) }
         }
@@ -445,8 +538,9 @@ import CryptoKit
         threads = (query.isEmpty ? result["threads"].array : result["results"].array.map { $0["thread"] }).map { ChatThread($0) }
     }
     func open(_ id: String, preservingContent: Bool = false) async throws {
+        if activeID != id { showingHistoryEdit = false }
         opening = UUID(); let selection = opening
-        if !preservingContent || activeID != id { live = nil; saved = nil }
+        if activeID != id || (!preservingContent && connected) { live = nil; saved = nil }
         activeID = id; imagePreviews.clear(); loadingHistory = false; loadingContent = []; attachmentPreview = nil; loadingAttachment = false
         let stamp = epoch
         if connected, let remote {
@@ -472,13 +566,14 @@ import CryptoKit
         _ = try await remote.call("config/model/update", params: settings.updateParams(threadID: threadID))
         guard epoch == stamp, opening == selection, self.remote === remote else { throw CancellationError() }
     }
-    func loadOlder() async throws {
+    func loadOlder(beforePrepend: () -> Void) async throws {
         guard connected, let remote, let live, !live.historyCursor.isEmpty, !loadingHistory else { return }
         let stamp = epoch, selection = opening
         loadingHistory = true
         defer { if epoch == stamp, opening == selection { loadingHistory = false } }
         let page = try await remote.call("thread/history/read", params: ["thread_id": .string(live.id), "cursor": .string(live.historyCursor)])
         guard epoch == stamp, opening == selection, self.remote === remote else { return }
+        beforePrepend()
         self.live?.prependHistory(page)
     }
     func expand(_ message: ChatMessage) async throws {
@@ -490,16 +585,21 @@ import CryptoKit
         guard epoch == stamp, opening == selection, self.remote === remote else { return }
         self.live?.expandContent(message.contentRef, item: item)
     }
-    func startThread() async throws {
+    func startThread(workdir: String? = nil) async throws {
         guard let remote, connected else { throw NativeError.invalid("请先连接电脑") }
+        let directory = (workdir ?? workspace).trimmingCharacters(in: .whitespacesAndNewlines)
         let stamp = epoch; opening = UUID(); let selection = opening
-        var params: JSONValue = [:]
-        if !workspace.isEmpty { params = ["cwd": .string(workspace)] }
-        let result = try await remote.call("thread/start", params: params)
-        guard epoch == stamp, opening == selection else { return }
+        var params: [String: JSONValue] = [:]
+        if !directory.isEmpty { params["cwd"] = .string(directory) }
+        if let id = workspaces.first(where: { $0["path"].string == directory })?["id"].string {
+            params["workspace_id"] = .string(id)
+        }
+        let result = try await remote.call("thread/start", params: .object(params))
+        guard epoch == stamp, opening == selection else { throw CancellationError() }
         let thread = ChatThread(result["thread"])
+        workspace = thread.cwd
         activeID = thread.id; live = thread; saved = nil; imagePreviews.clear(); loadingHistory = false; loadingContent = []; attachmentPreview = nil; loadingAttachment = false
-        try await loadThreads()
+        perform { try await self.loadThreads() }
     }
     func send(_ text: String, attachments: [InputAttachment] = []) async throws {
         guard !sending, let remote, let live, connected, !live.readOnly, !live.archived, !text.isEmpty || !attachments.isEmpty else { throw NativeError.invalid("当前无法发送") }
@@ -508,6 +608,121 @@ import CryptoKit
         sending = true; defer { if epoch == stamp { sending = false } }
         _ = try await remote.call(live.running ? "turn/queue" : "turn/start", params: input.params(threadID: live.id, queued: live.running))
         guard epoch == stamp else { throw CancellationError() }
+    }
+    private func canChangeHistory(_ message: ChatMessage) -> Bool {
+        guard connected, let live, !live.readOnly, !live.archived,
+              let item = live.item(for: message) else { return false }
+        return item["status"].string != "in_progress" && !item["read_only"].bool
+    }
+    func canFork(_ message: ChatMessage) -> Bool {
+        message.role == "assistant" && !message.turnActive && canChangeHistory(message)
+    }
+    func canEdit(_ message: ChatMessage) -> Bool {
+        guard canChangeHistory(message), let live, !live.running, live.pending.isEmpty, message.role == "user",
+              let item = live.item(for: message) else { return false }
+        return !["host", "plugin"].contains(item["origin"].string ?? "") && message.sourceSessionID.isEmpty
+    }
+    func messageText(_ message: ChatMessage) async throws -> String {
+        guard !message.contentRef.isEmpty else { return message.text }
+        guard connected, let remote, let live, live.item(for: message) != nil else { throw NativeError.invalid("请连接电脑以读取完整消息") }
+        let stamp = epoch, selection = opening
+        let item = try await remote.readContent(message.contentRef, threadID: live.id)
+        guard epoch == stamp, opening == selection else { throw CancellationError() }
+        return item["text"].string ?? item["error"].string ?? ""
+    }
+    func copyMessage(_ message: ChatMessage) async throws {
+        UIPasteboard.general.string = try await messageText(message)
+        Haptics.tap()
+    }
+    func beginFork(_ message: ChatMessage) {
+        guard !historyActionBusy, canFork(message), let live, let host else { return }
+        pendingFork = MessageForkRequest(threadID: live.id, hostID: host.pub, message: message)
+    }
+    func forkMessage(_ request: MessageForkRequest, mode: MessageForkMode) async throws {
+        let message = request.message
+        guard !historyActionBusy, canFork(message), let remote, let live,
+              live.id == request.threadID, host?.pub == request.hostID, let item = live.item(for: message) else {
+            throw NativeError.invalid("当前无法从这条消息分叉")
+        }
+        let stamp = epoch, selection = opening
+        historyActionBusy = true
+        defer { if epoch == stamp { historyActionBusy = false } }
+        let result = try await remote.call("thread/fork", params: ["thread_id": .string(live.id),
+            "turn_id": .string(message.turnID), "item_id": .string(message.itemID), "mode": .string(mode.rawValue),
+            "history_page": true,
+            "target": ["seq": item["seq"], "source_id": item["source_id"], "type": item["type"]]])
+        guard epoch == stamp, self.remote === remote else { throw CancellationError() }
+        if pendingFork?.id == request.id { pendingFork = nil }
+        perform { try await self.loadThreads() }
+        guard opening == selection else { return }
+        let fork = ChatThread(result["thread"])
+        guard !fork.id.isEmpty else { throw NativeError.invalid("电脑未返回分叉会话") }
+        workspace = fork.cwd
+        try await open(fork.id)
+        Haptics.tap()
+    }
+    func beginHistoryEdit(_ message: ChatMessage) async throws {
+        guard !historyActionBusy, canEdit(message), let remote, let live, let host, var item = live.item(for: message) else {
+            throw NativeError.invalid("请在会话空闲、待发消息处理完毕且电脑在线时编辑")
+        }
+        if let edit = historyEdit {
+            if edit.message.id == message.id || edit.prepared { showingHistoryEdit = true; return }
+        }
+        let stamp = epoch, selection = opening
+        historyActionBusy = true
+        defer { if epoch == stamp { historyActionBusy = false } }
+        if !message.contentRef.isEmpty { item = try await remote.readContent(message.contentRef, threadID: live.id) }
+        // Resolve every original attachment before allowing a destructive history edit.
+        var attachments: [InputAttachment] = []
+        for attachment in item["images"].array + item["files"].array {
+            let loaded = try await remote.readAttachment(attachment, threadID: live.id, messageID: message.id)
+            attachments.append(try InputAttachment(filename: loaded.filename, mediaType: loaded.mediaType, data: loaded.data))
+        }
+        try InputAttachment.validate(attachments, text: item["input_text"].string ?? item["text"].string ?? "")
+        guard epoch == stamp, opening == selection, self.remote === remote, canEdit(message) else { throw CancellationError() }
+        historyEdit = HistoryMessageEdit(threadID: live.id, hostID: host.pub, message: message, original: item, attachments: attachments)
+        showingHistoryEdit = true
+    }
+    func submitHistoryEdit(_ edit: HistoryMessageEdit) async throws {
+        guard !edit.submitting, !sending, !historyActionBusy, connected, let remote, let live,
+              live.id == edit.threadID, host?.pub == edit.hostID, !live.readOnly, !live.archived else {
+            throw NativeError.invalid("请连接原来的电脑和会话后重试")
+        }
+        // A lost reply may follow an accepted send. Its durable input identity wins over retry.
+        if live.turns.flatMap({ $0["items"].array }).contains(where: { $0["source_id"].string == edit.id.uuidString }) {
+            historyEdit = nil; showingHistoryEdit = false; return
+        }
+        guard !live.running, live.pending.isEmpty else { throw NativeError.invalid("请先等待当前回复结束并处理待发消息") }
+        let text = edit.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty || !edit.attachments.isEmpty else { throw NativeError.invalid("消息不能为空") }
+        let input = try ChatInput(text: text, attachments: edit.attachments)
+        guard case .object(var params) = input.params(threadID: edit.threadID, queued: false) else { return }
+        params["client_id"] = .string(edit.id.uuidString)
+        let originalImages = edit.original["images"].array
+        params["images"] = .array((params["images"]?.array ?? []).enumerated().map { index, image in
+            guard originalImages.indices.contains(index), originalImages[index]["original"].bool,
+                  case .object(var value) = image else { return image }
+            value["original"] = true; return .object(value)
+        })
+        let stamp = epoch, selection = opening
+        edit.submitting = true; edit.error = nil; historyActionBusy = true; sending = true
+        defer {
+            edit.submitting = false
+            if epoch == stamp { historyActionBusy = false; sending = false }
+        }
+        if !edit.prepared {
+            guard canEdit(edit.message), let current = live.item(for: edit.message),
+                  current["seq"] == edit.original["seq"], current["source_id"] == edit.original["source_id"] else {
+                throw NativeError.invalid("原消息已改变，请重新打开消息后编辑；本次修改仍保留在这里")
+            }
+            _ = try await remote.call("thread/edit-message", params: ["thread_id": .string(edit.threadID),
+                "turn_id": .string(edit.message.turnID), "item_id": .string(edit.message.itemID)], snapshotTag: selection.uuidString)
+            edit.prepared = true
+        }
+        guard epoch == stamp, opening == selection, self.remote === remote else { throw CancellationError() }
+        _ = try await remote.call("turn/start", params: .object(params))
+        historyEdits[edit.hostID + ":" + edit.threadID] = nil
+        if epoch == stamp, opening == selection { showingHistoryEdit = false; Haptics.tap() }
     }
     func attachmentThumbnail(_ message: ChatMessage, index: Int) async throws -> LoadedAttachment {
         #if DEBUG
@@ -520,19 +735,19 @@ import CryptoKit
         guard epoch == stamp, opening == selected else { throw CancellationError() }
         return result
     }
-    func previewAttachment(_ message: ChatMessage, index: Int) async throws {
+    func loadAttachmentPreview(_ message: ChatMessage, index: Int) async throws -> LoadedAttachment? {
         #if DEBUG
-        if NativeUIFixture.enabled { attachmentPreview = try await fixtureAttachment(message, index: index); return }
+        if NativeUIFixture.enabled { return try await fixtureAttachment(message, index: index) }
         #endif
         guard connected, let remote, let live, !loadingAttachment, message.attachments.indices.contains(index),
-              live.messages.contains(where: { $0 == message }) else { return }
+              live.messages.contains(where: { $0 == message }) else { return nil }
         let stamp = epoch, selection = opening
         loadingAttachment = true
         defer { if epoch == stamp, opening == selection { loadingAttachment = false } }
         let result = try await remote.readAttachment(message.attachments[index], threadID: live.id, messageID: message.id)
         guard epoch == stamp, opening == selection, self.remote === remote,
-              self.live?.messages.contains(where: { $0 == message }) == true else { return }
-        attachmentPreview = result
+              self.live?.messages.contains(where: { $0 == message }) == true else { return nil }
+        return result
     }
     #if DEBUG
     private func fixtureAttachment(_ message: ChatMessage, index: Int) async throws -> LoadedAttachment {
@@ -568,13 +783,25 @@ import CryptoKit
         if live?.id == id { live?.title = title }
         try await loadThreads()
     }
-    func pendingAction(_ message: PendingMessage, resume: Bool) async throws {
+    enum PendingAction { case remove, resume, steer, requeue }
+    func pendingAction(_ message: PendingMessage, action: PendingAction) async throws {
         guard connected, let remote, let live, live.id == message.value["thread_id"].string, !live.readOnly,
               live.pending.contains(where: { $0.id == message.id }) else { throw NativeError.invalid("消息状态已改变，请重新打开会话") }
-        if resume {
+        switch action {
+        case .resume:
             guard message.held, !live.running else { throw NativeError.invalid("请等待当前处理结束") }
             _ = try await remote.call("turn/steer", params: message.resumeParams)
-        } else {
+        case .steer:
+            guard !message.held, message.origin == "queue", live.running,
+                  let turnID = live.turns.last(where: { $0["status"].string == "in_progress" })?["id"].string,
+                  case .object(var params) = message.resumeParams else { throw NativeError.invalid("当前回复已结束") }
+            // The host moves this same message atomically; never remove then resend it.
+            params["expected_turn_id"] = .string(turnID)
+            _ = try await remote.call("turn/steer", params: .object(params))
+        case .requeue:
+            guard !message.held, message.origin == "steer" else { throw NativeError.invalid("消息状态已改变") }
+            _ = try await remote.call("turn/requeue", params: ["thread_id": .string(live.id), "steer_id": .string(message.id)])
+        case .remove:
             _ = try await remote.call(message.origin == "steer" ? "turn/unsteer" : "turn/dequeue", params:
                 ["thread_id": .string(live.id), message.origin == "steer" ? "steer_id" : "queue_id": .string(message.id)])
         }

@@ -9,10 +9,21 @@ public struct ChatMessage: Identifiable, Sendable, Equatable {
     public var tool: ToolActivity?
     public var sourceSessionID: String
     public var sourceSessionName: String
-    public init(id: String, role: String, text: String, contentRef: String = "", attachments: [JSONValue] = [], tool: ToolActivity? = nil, sourceSessionID: String = "", sourceSessionName: String = "") {
+    public var turnID: String
+    public var itemID: String
+    public var isProcess: Bool
+    public var turnActive: Bool
+    /// Match desktop: explicit artifact placement publishes an image; ordinary tool images stay in the process.
+    public func isInspectionImage(_ attachment: JSONValue) -> Bool {
+        tool != nil && attachment["media_type"].string?.hasPrefix("image/") == true &&
+            (attachment["artifact"]["placement"].string ?? "").isEmpty
+    }
+    public var hasInlineAttachments: Bool { attachments.contains { !isInspectionImage($0) } }
+    public init(id: String, role: String, text: String, contentRef: String = "", attachments: [JSONValue] = [], tool: ToolActivity? = nil, sourceSessionID: String = "", sourceSessionName: String = "", turnID: String = "", itemID: String = "", isProcess: Bool = false, turnActive: Bool = false) {
         self.id = id; self.role = role; self.text = text; self.contentRef = contentRef; self.attachments = attachments
         self.tool = tool
         self.sourceSessionID = sourceSessionID; self.sourceSessionName = sourceSessionName
+        self.turnID = turnID; self.itemID = itemID; self.isProcess = isProcess; self.turnActive = turnActive
     }
 }
 
@@ -59,6 +70,7 @@ public struct PendingMessage: Identifiable, Sendable {
 public struct ChatThread: Identifiable, Sendable {
     public let id: String
     public var title: String
+    public var cwd: String
     public var updatedAt: String
     public var pinned: Bool
     public var archived: Bool
@@ -77,6 +89,7 @@ public struct ChatThread: Identifiable, Sendable {
         self.pending = pending.map { PendingMessage($0, held: false) } + held.map { PendingMessage($0, held: true) }
         id = value["id"].string ?? ""
         title = value["title"].string ?? value["preview"].string ?? "新会话"
+        cwd = value["cwd"].string ?? ""
         updatedAt = value["updated_at"].string ?? ""
         pinned = value["pinned"].bool
         archived = value["archived"].bool
@@ -88,8 +101,18 @@ public struct ChatThread: Identifiable, Sendable {
         historyCursor = value["history_cursor"].string ?? ""
         rebuildProjection()
     }
+    /// Keep the host's structured addresses intact; display IDs are not a wire protocol.
+    public func item(for message: ChatMessage) -> JSONValue? {
+        turns.first { $0["id"].string == message.turnID }?["items"].array.first { $0["id"].string == message.itemID }
+    }
     private static func project(_ turn: JSONValue) -> [ChatMessage] {
-            var messages: [ChatMessage] = turn["items"].array.compactMap { item in
+            let items = turn["items"].array
+            let active = turn["status"].string == "in_progress"
+            // Like desktop, only a structurally terminal answer ends the process region.
+            // Keep interrupted/error commentary readable when there is no final answer.
+            let hasAnswer = items.contains { $0["type"].string == "agent_message" && $0["terminal"].bool &&
+                (!($0["text"].string ?? "").isEmpty || !$0["images"].array.isEmpty || !$0["markdown_images"].array.isEmpty) }
+            var messages: [ChatMessage] = items.compactMap { item in
                 guard let type = item["type"].string, ["user_message", "agent_message", "error", "tool_call"].contains(type) else { return nil }
                 let sessionMessage = ["host", "plugin"].contains(item["origin"].string ?? "") && item["presentation_kind"].string == "session_message"
                 // Host-marked model notifications are not user messages; attributed peer messages remain visible.
@@ -99,12 +122,18 @@ public struct ChatThread: Identifiable, Sendable {
                     role: type == "user_message" ? "user" : type == "error" ? "error" : type == "tool_call" ? "tool" : "assistant",
                     text: item["text"].string ?? item["error"].string ?? "", contentRef: item["remote_content_ref"].string ?? "",
                     attachments: item["images"].array + item["files"].array + item["markdown_images"].array +
-                        item["result_detail"]["content"].array.filter { $0["type"].string == "image" }.map { part in
-                            ["media_type": part["mime_type"], "data": part["data"], "remote_ref": part["remote_ref"]]
+                        item["result_detail"]["content"].array.enumerated().compactMap { index, part -> JSONValue? in
+                            guard part["type"].string == "image" else { return nil }
+                            return ["media_type": part["mime_type"], "data": part["data"], "remote_ref": part["remote_ref"],
+                                "artifact": part["artifact"], "uri": part["uri"], "filename": part["name"],
+                                "content_index": .number(Double(index)), "turn_id": turn["id"], "item_id": item["id"]]
                         },
                     tool: type == "tool_call" ? ToolActivity(item, turnStatus: turn["status"].string ?? "") : nil,
                     sourceSessionID: sessionMessage ? item["related_session_id"].string ?? "" : "",
-                    sourceSessionName: item["name"].string ?? "")
+                    sourceSessionName: item["name"].string ?? "",
+                    turnID: turn["id"].string ?? "", itemID: item["id"].string ?? "",
+                    isProcess: hasAnswer && (type == "tool_call" || (type == "agent_message" && !item["terminal"].bool)),
+                    turnActive: active)
             }
             let cancelled = turn["status"].string == "interrupted" && turn["error"]["category"].string == "cancelled"
             if let error = turn["error"]["message"].string, !cancelled, !error.isEmpty, !messages.contains(where: { $0.role == "error" }) {
@@ -121,6 +150,15 @@ public struct ChatThread: Identifiable, Sendable {
         // Reads during layout must be O(1); unchanged turns keep their parsed tool payloads.
         messages = turns.flatMap { projectedTurns[$0["id"].string ?? ""] ?? [] }
         rows = ConversationRow.grouped(messages)
+        reconcilePending()
+    }
+    private mutating func reconcilePending() {
+        guard !pending.isEmpty else { return }
+        // The host materializes queue and steering IDs as user-item source IDs.
+        let materialized = Set(turns.flatMap { $0["items"].array }
+            .filter { $0["type"].string == "user_message" }
+            .compactMap { $0["source_id"].string })
+        pending.removeAll { materialized.contains($0.id) }
     }
     /// Older pages can split a turn. Retain live updates and deletions received while fetching.
     public mutating func prependHistory(_ page: JSONValue) {
@@ -152,9 +190,10 @@ public struct ChatThread: Identifiable, Sendable {
         }
     }
     public mutating func apply(_ method: String, _ params: JSONValue) {
+        defer { reconcilePending() }
         if method == "thread/updated", params["thread"]["id"].string == id {
             let thread = ChatThread(params["thread"])
-            title = thread.title; pinned = thread.pinned; archived = thread.archived; updatedAt = thread.updatedAt
+            title = thread.title; cwd = thread.cwd; pinned = thread.pinned; archived = thread.archived; updatedAt = thread.updatedAt
             settings = thread.settings; engine = thread.engine; readOnly = thread.readOnly
             return
         }
@@ -174,11 +213,8 @@ public struct ChatThread: Identifiable, Sendable {
             let removed = params[method == "turn/dequeued" ? "queue_id" : "steer_id"].string
             pending.removeAll { $0.id == removed }; return
         }
-        defer {
-            if !pending.isEmpty {
-                let materialized = Set(turns.flatMap { $0["items"].array }.compactMap { $0["client_id"].string })
-                pending.removeAll { materialized.contains($0.id) }
-            }
+        if method == "turn/started", let queueID = params["queue_id"].string {
+            pending.removeAll { $0.id == queueID }
         }
         if params["turn"] != .null {
             let turn = params["turn"]
