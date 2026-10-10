@@ -1661,7 +1661,7 @@ export function ComposerPlusButton({
                 <span className="composer-plus-menu-item-desc">{t("composer.addAttachmentHint")}</span>
               </button>
             )}
-            {window.wuu.platform === "darwin" && window.wuu.getAppContextState ? (
+            {window.wuu?.platform === "darwin" && window.wuu.getAppContextState ? (
               <button role="menuitem" type="button" onClick={() => { setOpen(false); openAppContextSetup(); }}>
                 <Eye className="icon-lg" />
                 <span className="composer-plus-menu-item-title">{t("composer.appContext.title")}</span>

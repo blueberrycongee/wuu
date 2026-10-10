@@ -655,11 +655,15 @@ jobs:
           WUU_ENABLE_CUA_MAC: "0"
         run: make build-macos
 
-      - name: Verify packaged native resources
+      - name: Ad-hoc sign and verify packaged native resources
         if: steps.native-packaging.outputs.required == 'true'
         env:
           WUU_SKIP_CUA_MAC: "1"
           WUU_ENABLE_CUA_MAC: "0"
+          # PR packaging skips electron-builder's signing hook. Explicitly use
+          # the existing certificate-free signer, never a CI signing identity.
+          WUU_RELEASE_SIGN_ID: ""
+          WUU_RELEASE_KEYCHAIN: ""
         run: |
           node - <<'NODE'
           const { readdirSync, existsSync } = require("node:fs");
@@ -670,7 +674,13 @@ jobs:
             .map(entry => join("desktop/release", entry.name, "wuu.app"))
             .filter(path => existsSync(path));
           if (bundles.length !== 1) throw new Error(`Expected one packaged macOS app, found ${bundles.length}`);
-          execFileSync(process.execPath, ["desktop/scripts/verify-mac-release.cjs", bundles[0]], { stdio: "inherit" });
+          (async () => {
+            await require("./desktop/scripts/sign-mac.cjs")({
+              app: bundles[0], platform: "darwin",
+              version: require("./desktop/node_modules/electron/package.json").version,
+            });
+            execFileSync(process.execPath, ["desktop/scripts/verify-mac-release.cjs", bundles[0]], { stdio: "inherit" });
+          })().catch(error => { console.error(error); process.exitCode = 1; });
           NODE
 
   windows-check:
