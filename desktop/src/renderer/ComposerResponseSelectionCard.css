@@ -139,3 +139,10 @@
 }
 
 .composer-response-selection-notice { margin: 0; color: var(--ink-soft); overflow-wrap: anywhere; }
+
+.composer-response-selection-meta {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: var(--font-sm);
+  overflow-wrap: anywhere;
+}

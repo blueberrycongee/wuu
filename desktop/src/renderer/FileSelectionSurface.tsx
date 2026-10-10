@@ -80,7 +80,7 @@ export function FileSelectionSurface({ workspace, path, text, active = true, chi
   const ownerKey = actions?.ownerKey;
   const current = capture?.ownerKey === ownerKey && capture?.source.workspace === workspace && capture.source.path === path ? capture : null;
   const stale = Boolean(current && current.source.revision !== revision);
-  const comments = actions?.comments.filter(part => part.source.workspace === workspace && part.source.path === path) ?? [];
+  const comments = actions?.comments.filter(part => !part.source.pdf && part.source.workspace === workspace && part.source.path === path) ?? [];
 
   const close = useCallback(() => {
     submissionRef.current++;

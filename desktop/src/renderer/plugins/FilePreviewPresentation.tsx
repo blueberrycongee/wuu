@@ -81,6 +81,7 @@ export function toFilePreviewSnapshot({
     safeHostUrl,
     sizeBytes: file?.size_bytes,
     binary: file?.binary,
+    truncated: file ? file.truncated && !file.binary : undefined,
     readOnly: true,
     dirty: false,
     loading,

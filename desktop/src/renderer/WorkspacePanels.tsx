@@ -1070,6 +1070,9 @@ export function WorkspaceRightPanel({
                   <ArtifactPreview
                     active={open && !conversationActive}
                     artifact={activeTab.artifact}
+                    threadID={activeTab.threadID}
+                    initialPage={activeTab.page}
+                    pageRequest={activeTab.pageRequest}
                     motion={activeTab.motion}
                     cwd={activeTab.cwd}
                     mode="panel"

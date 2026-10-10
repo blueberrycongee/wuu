@@ -232,15 +232,26 @@ func NormalizeMessagePhase(phase string) MessagePhase {
 
 // FileSelectionSource identifies the captured file revision and selection range.
 // Lines and UTF-16 columns are one-based; the end position is exclusive.
+// PDF selections use page coordinates instead and leave line/column fields zero.
 type FileSelectionSource struct {
-	Workspace   string `json:"workspace"`
-	Path        string `json:"path"`
-	StartLine   int    `json:"start_line"`
-	StartColumn int    `json:"start_column"`
-	EndLine     int    `json:"end_line"`
-	EndColumn   int    `json:"end_column"`
-	Quote       string `json:"quote"`
-	Revision    string `json:"revision"`
+	Workspace   string                 `json:"workspace"`
+	Path        string                 `json:"path"`
+	StartLine   int                    `json:"start_line"`
+	StartColumn int                    `json:"start_column"`
+	EndLine     int                    `json:"end_line"`
+	EndColumn   int                    `json:"end_column"`
+	Quote       string                 `json:"quote"`
+	Revision    string                 `json:"revision"`
+	PDF         *PDFSelectionReference `json:"pdf,omitempty"`
+}
+
+// PDFSelectionReference retains the page range and optional immutable delivery identity.
+type PDFSelectionReference struct {
+	StartPage        int    `json:"start_page"`
+	EndPage          int    `json:"end_page"`
+	ArtifactURI      string `json:"artifact_uri,omitempty"`
+	ArtifactSHA256   string `json:"artifact_sha256,omitempty"`
+	ArtifactThreadID string `json:"artifact_thread_id,omitempty"`
 }
 
 // ResponseSelection identifies a quoted assistant response and its authored comment.
@@ -283,6 +294,10 @@ func CloneMessageContentParts(parts []MessageContentPart) []MessageContentPart {
 	for i := range out {
 		if out[i].Source != nil {
 			source := *out[i].Source
+			if source.PDF != nil {
+				pdf := *source.PDF
+				source.PDF = &pdf
+			}
 			out[i].Source = &source
 		}
 		if out[i].Selection != nil {

@@ -7,6 +7,8 @@ export type ArtifactPreviewRequest = {
   cwd?: string;
   artifact: TurnArtifact;
   motion?: ArtifactPreviewMotion;
+  page?: number;
+  pageRequest?: string;
 };
 
 export const ArtifactPreviewContext = createContext<((request: ArtifactPreviewRequest) => void) | undefined>(undefined);
