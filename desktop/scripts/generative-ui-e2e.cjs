@@ -7,6 +7,7 @@ const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { createHash } = require('node:crypto');
 const { app, BrowserWindow, clipboard } = require('electron');
+let activeWindow;
 const { buildSync } = require('esbuild');
 const root = path.resolve(__dirname, '../..');
 const output = path.resolve(process.env.WUU_GENUI_OUTPUT || path.join(root, 'desktop/out/e2e/generative-ui'));
@@ -144,9 +145,12 @@ async function click(win, selector) {
   win.webContents.sendInputEvent({ type:'mouseUp', x:Math.round(box.x), y:Math.round(box.y), button:'left', clickCount:1 });
 }
 app.whenReady().then(async () => {
-  const win = new BrowserWindow({ width:1100, height:1200, show:false, webPreferences:{ contextIsolation:true, nodeIntegration:false, sandbox:true, backgroundThrottling:false } });
+  const win = new BrowserWindow({ width:1100, height:1200, show:true, webPreferences:{ contextIsolation:true, nodeIntegration:false, sandbox:true, backgroundThrottling:false } });
+  activeWindow = win;
   win.webContents.on('console-message', event => { if (event.level === 'error') console.error(event.message); });
   await win.loadFile(path.join(output, 'index.html'));
+  win.focus();
+  win.webContents.focus();
   await waitFor(win, '!!window.probe');
   assert.equal(await evaluate(win, `!!document.querySelector('[data-wuu-component="generated-ui"]')`), false);
   assert.ok(await evaluate(win, `document.body.textContent.includes('Design: 12 tasks')`));
@@ -242,5 +246,14 @@ app.whenReady().then(async () => {
   fs.writeFileSync(path.join(output, 'results.json'), JSON.stringify(results, null, 2));
   win.destroy();
   app.quit();
-}).catch(error => { console.error(error); fs.writeFileSync(path.join(output, 'failure.txt'), error.stack); app.exit(1); });
+}).catch(async error => {
+  console.error(error);
+  fs.writeFileSync(path.join(output, 'failure.txt'), error.stack);
+  if (activeWindow && !activeWindow.isDestroyed()) {
+    fs.writeFileSync(path.join(output, 'failure.png'), (await activeWindow.webContents.capturePage()).toPNG());
+    const state = await evaluate(activeWindow, `({text:document.body.innerText, focused:document.hasFocus(), activeElement:document.activeElement?.outerHTML})`).catch(() => null);
+    fs.writeFileSync(path.join(output, 'failure-state.json'), JSON.stringify(state, null, 2));
+  }
+  app.exit(1);
+});
 app.on('will-quit', () => fs.rmSync(profile, { recursive:true, force:true }));
