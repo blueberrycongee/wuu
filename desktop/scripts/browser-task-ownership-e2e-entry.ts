@@ -50,6 +50,9 @@ async function bounded<T>(label: string, promise: Promise<T>, timeout = 30_000):
 const events: unknown[] = [];
 const calls: { id: string; method: string; params: Record<string, unknown> }[] = [];
 const providerRequests: unknown[] = [];
+const replies: { id: string; result?: unknown; error?: string }[] = [];
+const clickRequests: string[] = [];
+const nativeInputCommands: { webContentsID: number; method: string; params: unknown }[] = [];
 const failures: string[] = [];
 const checks: { name: string; passed: boolean; detail?: string }[] = [];
 function check(name: string, condition: unknown, detail?: string) {
@@ -57,9 +60,24 @@ function check(name: string, condition: unknown, detail?: string) {
   if (!condition) failures.push(`${name}${detail ? `: ${detail}` : ""}`);
 }
 const completed = new Map<string, ReturnType<typeof deferred>>();
+const terminalEvents = new Map<string, { method: string; status?: string; error?: string }>();
 const activityByThread = new Map<string, ActivitySession>();
 const revocations = new Map<string, ReturnType<typeof deferred>>();
 const turns = new Map<string, number>();
+const activeTurnIDs = new Map<string, string>();
+const activeExecutionIDs = new Map<string, string>();
+const controlledResponses = new Map<string, ServerResponse>();
+const controlledWaiters = new Map<string, ReturnType<typeof deferred>>();
+const controlledMarkers = new Set(["OWNERSHIP_C", "OWNERSHIP_LIFECYCLE", "OWNERSHIP_KEEP", "OWNERSHIP_DISPOSE", "OWNERSHIP_SIBLING", "OWNERSHIP_FOREIGN", "OWNERSHIP_RETAINED_AGAIN"]);
+function controlledWaiter(marker: string) {
+  let waiter = controlledWaiters.get(marker);
+  if (!waiter) { waiter = deferred(); controlledWaiters.set(marker, waiter); }
+  return waiter;
+}
+function lastToolText(input: { messages?: { role: string; content?: unknown }[] }): string {
+  const last = [...(input.messages ?? [])].reverse().find(message => message.role === "tool");
+  return typeof last?.content === "string" ? last.content : JSON.stringify(last?.content ?? "");
+}
 const providerTabs = new Map<string, string>();
 const cancellations = new Map<string, ReturnType<typeof deferred>>();
 const hostCompletions = new Map<string, ReturnType<typeof deferred>>();
@@ -89,6 +107,11 @@ function respond(res: ServerResponse, tool?: Record<string, unknown>) {
 }
 const server = createServer((req, res) => {
   const pathname = new URL(req.url ?? "/", "http://127.0.0.1").pathname;
+  if (pathname === "/clicked") {
+    clickRequests.push(new URL(req.url ?? "/", "http://127.0.0.1").searchParams.get("source") ?? "");
+    res.writeHead(204).end();
+    return;
+  }
   if (pathname === "/popup-opener") {
     res.writeHead(200, { "Content-Type": "text/html" });
     res.end(`<!doctype html><title>Popup opener</title>
@@ -103,6 +126,8 @@ const server = createServer((req, res) => {
       <button style="top:220px" id="named">Open named popup</button>
       <button style="top:280px" id="reuse">Reuse named popup</button>
       <button style="top:340px" id="slow">Open loading popup</button>
+      <a href="/popup-native-shift" style="position:absolute;left:40px;top:400px;width:240px;height:40px;display:block">Shift-click native window</a>
+      <a href="/popup-native-foreground" style="position:absolute;left:40px;top:460px;width:240px;height:40px;display:block">Modified-click foreground tab</a>
       <script>
         window.popupState={messages:[]};
         addEventListener('message', event => {
@@ -138,7 +163,7 @@ const server = createServer((req, res) => {
     slowPopupStarted.resolve();
     return;
   }
-  if (["/popup-message", "/popup-form", "/popup-named"].includes(pathname)) {
+  if (["/popup-message", "/popup-form", "/popup-named", "/popup-native-shift", "/popup-native-foreground"].includes(pathname)) {
     let body = "";
     req.on("data", data => { body += data; });
     req.on("end", () => {
@@ -161,7 +186,7 @@ const server = createServer((req, res) => {
   }
   if (req.method === "GET") {
     res.writeHead(200, { "Content-Type": "text/html" });
-    res.end(`<!doctype html><title>${req.url}</title><body><h1>${req.url}</h1><button id="target" style="position:absolute;left:100px;top:100px;width:100px;height:50px">Target</button><input id="field" style="position:absolute;left:100px;top:200px"><script>window.clicks=0;document.querySelector('#target').onclick=()=>window.clicks++;</script>`);
+    res.end(`<!doctype html><title>${req.url}</title><body><h1>${req.url}</h1><button id="target" style="position:absolute;left:100px;top:100px;width:100px;height:50px">Target</button><input id="field" style="position:absolute;left:100px;top:200px"><script>window.clicks=0;document.querySelector('#target').onclick=()=>{window.clicks++;fetch('/clicked?source='+encodeURIComponent(location.pathname));};</script>`);
     return;
   }
   let body = "";
@@ -175,12 +200,19 @@ const server = createServer((req, res) => {
       return;
     }
     const prompt = JSON.stringify(input.messages?.filter((message: { role: string }) => message.role === "user") ?? []);
-    const marker = /OWNERSHIP_(?:POPUP|[ABCD])/.exec(prompt)?.[0];
+    const marker = [...prompt.matchAll(/OWNERSHIP_[A-Z_]+/g)].at(-1)?.[0];
     if (!marker) { respond(res); return; }
     const step = turns.get(marker) ?? 0;
     turns.set(marker, step + 1);
-    if (step === 0) { respond(res, { action: "navigate", url: `${baseURL}/${marker === "OWNERSHIP_POPUP" ? "popup-opener" : marker}` }); return; }
+    if (step === 0) { respond(res, { action: "navigate", url: `${baseURL}/${["OWNERSHIP_POPUP", "OWNERSHIP_LIFECYCLE", "OWNERSHIP_KEEP"].includes(marker) ? "popup-opener" : marker}` }); return; }
     if (marker === "OWNERSHIP_POPUP") { heldPopup = res; popupWaiting.resolve(); return; }
+    if (controlledMarkers.has(marker)) { controlledResponses.set(marker, res); controlledWaiter(marker).resolve(); return; }
+    if (marker === "OWNERSHIP_B" && step === 1) {
+      const tabID = /"tab_id":"([^"]+)"/.exec(lastToolText(input))?.[1];
+      if (!tabID) { res.writeHead(500).end("B navigate did not return its tab identity"); return; }
+      respond(res, { action: "finalize", tab_id: tabID });
+      return;
+    }
     if (marker === "OWNERSHIP_A" && step === 1) { heldA = res; aWaiting.resolve(); return; }
     if (marker === "OWNERSHIP_A" && step === 2) { respond(res, { action: "finalize", keep: [] }); return; }
     if (marker === "OWNERSHIP_D") {
@@ -221,6 +253,11 @@ function notify(event: ServerEvent) {
     } else pool!.rejectServerRequest(String(event.message.id), `Unexpected fixture request ${event.message.method}`);
   }
   if (event.kind !== "notification") return;
+  if (event.message.method === "browser/turn_started") {
+    const params = event.message.params as unknown as { thread_id: string; turn_id: string; execution_id: string };
+    activeTurnIDs.set(params.thread_id, params.turn_id);
+    activeExecutionIDs.set(params.thread_id, params.execution_id);
+  }
   if (event.message.method.startsWith("activity/")) {
     const activity = event.message.params as unknown as ActivitySession;
     activityByThread.set(activity.thread_id, activity);
@@ -233,7 +270,8 @@ function notify(event: ServerEvent) {
     cancellations.get(params.thread_id)?.resolve();
   }
   if (event.message.method === "turn/completed" || event.message.method === "turn/error") {
-    const params = event.message.params as unknown as { thread_id: string };
+    const params = event.message.params as unknown as { thread_id: string; turn?: { status?: string }; error?: string };
+    terminalEvents.set(params.thread_id, { method: event.message.method, status: params.turn?.status, error: params.error });
     completed.get(params.thread_id)?.resolve();
   }
 }
@@ -242,7 +280,7 @@ async function request(threadID: string, method: string, params: Record<string, 
   return bounded(method, new Promise((resolve, reject) => {
     injected.set(id, { resolve, reject });
     void host!.handleServerRequest({ workdir, kind: "server-request", message: {
-      id, method, params: { workdir, thread_id: threadID, ...params },
+      id, method, params: { workdir, thread_id: threadID, turn_id: activeTurnIDs.get(threadID), execution_id: activeExecutionIDs.get(threadID), ...params },
     } } as Extract<ServerEvent, { kind: "server-request" }>);
   }));
 }
@@ -266,16 +304,18 @@ app.whenReady().then(async () => {
   pool = new AppServerClientPool(() => context, () => workdir, notify, undefined, () => ({
     protocol_version: APP_SERVER_PROTOCOL_VERSION,
     client: { name: "browser-ownership-e2e", version: "fixture" },
-    capabilities: { reverse_rpc: { methods: [...BROWSER_REVERSE_RPC_METHODS] } },
+    capabilities: { reverse_rpc: { methods: [...new Set([...BROWSER_REVERSE_RPC_METHODS, "browser/finalize", "browser/turn_ended"])] } },
   }));
   host = new BrowserHostCoordinator({ mainWindow: () => main } as unknown as WindowRegistry, {
     respond(id, result) {
+      replies.push({ id, result });
       hostCompletions.get(id)?.resolve();
       const direct = injected.get(id);
       if (direct) { injected.delete(id); direct.resolve(result); }
       else pool!.respondToServerRequest(id, result);
     },
     reject(id, message) {
+      replies.push({ id, error: message });
       hostCompletions.get(id)?.resolve();
       const direct = injected.get(id);
       if (direct) { injected.delete(id); direct.reject(new Error(message)); }
@@ -287,6 +327,7 @@ app.whenReady().then(async () => {
       const view = createBrowserView(options);
       const send = view.webContents.debugger.sendCommand.bind(view.webContents.debugger);
       view.webContents.debugger.sendCommand = async (method, params, session) => {
+        if (method.startsWith("Input.")) nativeInputCommands.push({ webContentsID: view.webContents.id, method, params });
         const result = await send(method, params, session);
         if (method === "DOM.getBoxModel" && geometryGate) {
           const gate = geometryGate;
@@ -305,11 +346,37 @@ app.whenReady().then(async () => {
     adopted(payload) { popupAdoptions.push(payload); },
   });
   pool.setClientTorndownHandler(cwd => host!.onClientTorndown(cwd));
-  async function start(marker: string) {
-    const { thread } = await pool!.request<{ thread: Thread }>("thread/start", { engine: "wuu", provider: "fixture", model: "fixture", permission_mode: "unconfined" });
-    completed.set(thread.id, deferred());
-    await pool!.request("turn/start", { thread_id: thread.id, prompt: marker });
-    return thread.id;
+  async function start(marker: string, existingThread?: string, clientID?: string) {
+    const threadID = existingThread ?? (await pool!.request<{ thread: Thread }>("thread/start", { engine: "wuu", provider: "fixture", model: "fixture", permission_mode: "unconfined" })).thread.id;
+    completed.set(threadID, deferred());
+    terminalEvents.delete(threadID);
+    turns.set(marker, 0);
+    if (controlledMarkers.has(marker)) controlledWaiters.set(marker, deferred());
+    await pool!.request("turn/start", { thread_id: threadID, prompt: marker, ...(clientID ? { client_id: clientID } : {}) });
+    return threadID;
+  }
+  async function controlledTool(marker: string, tool: Record<string, unknown>) {
+    const response = controlledResponses.get(marker);
+    assert(response, `${marker} provider is waiting for its next action`);
+    controlledResponses.delete(marker);
+    controlledWaiters.set(marker, deferred());
+    respond(response, tool);
+    await bounded(`${marker} action ${tool.action}`, controlledWaiter(marker).promise);
+  }
+  function checkSuccessfulTurn(threadID: string, label: string) {
+    const terminal = terminalEvents.get(threadID);
+    check(`${label} completes successfully`, terminal?.method === "turn/completed" && terminal.status === "completed", JSON.stringify(terminal));
+  }
+  async function finishControlled(marker: string, threadID: string) {
+    const response = controlledResponses.get(marker);
+    assert(response, `${marker} provider is waiting to finish`);
+    controlledResponses.delete(marker);
+    respond(response);
+    await bounded(`${marker} authoritative turn completion`, completed.get(threadID)!.promise);
+    checkSuccessfulTurn(threadID, marker);
+  }
+  function openedForThread(threadID: string) {
+    return calls.filter(call => call.method === "browser/open_tab" && call.params.thread_id === threadID).map(call => String(call.params.tab_id));
   }
   // The fixture browser is real Chromium. The local provider drives every
   // opener click through the Go tool, reverse RPC, and native page input.
@@ -370,15 +437,18 @@ app.whenReady().then(async () => {
   check("named popup reuses its WindowProxy", await popupView.webContents.executeJavaScript("window.popupState.namedReused") === true);
   check("named popup reuses one owned tab", namedBefore.length === 1 && namedAfter.length === 1 && namedBefore[0].tab_id === namedAfter[0].tab_id && namedAfter[0].url.endsWith("?step=2"), JSON.stringify({ namedBefore, namedAfter }));
   await popupTool({ action: "tabs" });
-  const sibling = await pool.request<{ thread: Thread }>("thread/start", { engine: "wuu", provider: "fixture", model: "fixture", permission_mode: "unconfined" });
-  const foreign = await request(sibling.thread.id, "browser/list_tabs") as ListedTabs;
-  check("a foreign thread cannot discover adopted popups", foreign.tab_ids.length === 0, JSON.stringify(foreign));
+  const sibling = await start("OWNERSHIP_SIBLING");
+  await bounded("a real sibling turn owns its separate tab", controlledWaiter("OWNERSHIP_SIBLING").promise);
+  const foreign = await request(sibling, "browser/list_tabs") as ListedTabs;
+  const popupIDs = new Set((await popupTabs()).tab_ids);
+  check("a foreign thread cannot discover adopted popups", foreign.tab_ids.length === 1 && foreign.tab_ids.every(tabID => !popupIDs.has(tabID)), JSON.stringify(foreign));
   if (message && messageView) {
-    const rejectedClick = await request(sibling.thread.id, "browser/cdp", { tab_id: message.tab_id, method: "click", params: { x: 140, y: 120 } }).then(() => "delivered", error => String(error));
+    const rejectedClick = await request(sibling, "browser/cdp", { tab_id: message.tab_id, method: "click", params: { x: 140, y: 120 } }).then(() => "delivered", error => String(error));
     check("a foreign thread cannot click an adopted popup", rejectedClick !== "delivered" && await messageView.webContents.executeJavaScript("window.clicks") === 0, rejectedClick);
-    const rejectedClose = await request(sibling.thread.id, "browser/close_tab", { tab_id: message.tab_id }).then(() => "closed", error => String(error));
+    const rejectedClose = await request(sibling, "browser/close_tab", { tab_id: message.tab_id }).then(() => "closed", error => String(error));
     check("a foreign thread cannot close an adopted popup", rejectedClose !== "closed" && host.tabSurfaceMeta(workdir, message.tab_id) !== undefined, rejectedClose);
   }
+  await finishControlled("OWNERSHIP_SIBLING", sibling);
   const beforeSlow = new Set((await popupTabs()).tab_ids);
   await clickPopup(360);
   await bounded("slow popup starts its actual HTTP navigation", slowPopupStarted.promise);
@@ -401,11 +471,124 @@ app.whenReady().then(async () => {
   check("owning task finalize closes all of its adopted popups", (await popupTabs()).tab_ids.length === 0);
   respond(heldPopup!);
   await bounded("popup task completes", completed.get(popup)!.promise);
+  checkSuccessfulTurn(popup, "popup task");
+
+  // Natural completion is authoritative even if the model never finalizes.
+  // Public persisted recovery reuses the same client_id and logical turn_id.
+  // Its new execution must reject a delayed real cleanup from the old run.
+  const lifecycleClientID = "ownership-lifecycle-recovery";
+  const lifecycle = await start("OWNERSHIP_LIFECYCLE", undefined, lifecycleClientID);
+  await bounded("lifecycle turn opens an opener", controlledWaiter("OWNERSHIP_LIFECYCLE").promise);
+  const lifecycleTab = openedForThread(lifecycle)[0];
+  const lifecycleView = await readTab(lifecycleTab);
+  assert(lifecycleView);
+  host.reportBounds(workdir, lifecycleTab, main as unknown as BrowserHostWindowHandle, { x: 0, y: 0, width: 800, height: 600 }, 1, true);
+  await lifecycleView.webContents.executeJavaScript("new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))");
+  await controlledTool("OWNERSHIP_LIFECYCLE", { action: "click", tab_id: lifecycleTab, x: 120, y: 60 });
+  const lifecycleTabs = await request(lifecycle, "browser/list_tabs") as ListedTabs;
+  check("temporary lifecycle fixture includes a real page-opened child", lifecycleTabs.tab_ids.length === 2, JSON.stringify(lifecycleTabs));
+  const oldTurnID = activeTurnIDs.get(lifecycle);
+  const oldExecutionID = activeExecutionIDs.get(lifecycle);
+  await finishControlled("OWNERSHIP_LIFECYCLE", lifecycle);
+  check("normal turn completion closes temporary opener and popup without finalize", lifecycleTabs.tab_ids.length === 2 && lifecycleTabs.tab_ids.every(tabID => host!.tabSurfaceMeta(workdir, tabID) === undefined));
+  const oldEnd = calls.find(call => call.method === "browser/turn_ended" && call.params.thread_id === lifecycle && call.params.turn_id === oldTurnID && call.params.execution_id === oldExecutionID);
+  check("core requests cleanup with the actual immutable turn execution", Boolean(oldEnd && oldTurnID && oldExecutionID));
+  await start("OWNERSHIP_LIFECYCLE", lifecycle, lifecycleClientID);
+  await bounded("persisted recovery opens a fresh owned tab", controlledWaiter("OWNERSHIP_LIFECYCLE").promise);
+  const freshTab = openedForThread(lifecycle).at(-1)!;
+  check("resumed logical turn receives a fresh browser execution", Boolean(oldTurnID) && activeTurnIDs.get(lifecycle) === oldTurnID && Boolean(activeExecutionIDs.get(lifecycle)) && activeExecutionIDs.get(lifecycle) !== oldExecutionID);
+  if (oldEnd) {
+    const staleEnd = await request(lifecycle, "browser/turn_ended", oldEnd.params) as { stale?: boolean };
+    check("delayed old completion is rejected as stale", staleEnd.stale === true, JSON.stringify(staleEnd));
+    check("delayed old completion cannot close a fresh owned tab", host.tabSurfaceMeta(workdir, freshTab)?.url === `${baseURL}/popup-opener`);
+    const staleClose = await request(lifecycle, "browser/close_tab", { turn_id: oldTurnID, execution_id: oldExecutionID, tab_id: freshTab }).then(() => "closed", error => String(error));
+    check("an old turn cannot mutate the fresh turn's tab", staleClose !== "closed" && host.tabSurfaceMeta(workdir, freshTab) !== undefined, staleClose);
+  }
+  await finishControlled("OWNERSHIP_LIFECYCLE", lifecycle);
+  check("fresh completion still closes its own temporary tab", host.tabSurfaceMeta(workdir, freshTab) === undefined);
+
+  const retained = await start("OWNERSHIP_KEEP");
+  await bounded("retention turn opens a tab", controlledWaiter("OWNERSHIP_KEEP").promise);
+  const retainedOpenerTab = openedForThread(retained)[0];
+  const retainedOpenerView = await readTab(retainedOpenerTab);
+  assert(retainedOpenerView);
+  host.reportBounds(workdir, retainedOpenerTab, main as unknown as BrowserHostWindowHandle, { x: 0, y: 0, width: 800, height: 600 }, 1, true);
+  await retainedOpenerView.webContents.executeJavaScript("new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))");
+  popupLoads.set("/popup-message", deferred());
+  await controlledTool("OWNERSHIP_KEEP", { action: "click", tab_id: retainedOpenerTab, x: 120, y: 120 });
+  await bounded("retained popup loads with original opener", popupLoads.get("/popup-message")!.promise);
+  const retainedTabs = await request(retained, "browser/list_tabs") as ListedTabs;
+  const handoffTab = retainedTabs.tabs.find(tab => tab.url === `${baseURL}/popup-message`)?.tab_id;
+  assert(handoffTab, "Handoff target is a genuine page-created child");
+  await controlledTool("OWNERSHIP_KEEP", { action: "navigate", url: `${baseURL}/deliverable` });
+  const deliverableTab = openedForThread(retained).at(-1)!;
+  const persistentTab = "manually-opened-persistent-tab";
+  await host.runCommand(workdir, persistentTab, "navigate", `${baseURL}/persistent`, retained);
+  const handoffView = await readTab(handoffTab);
+  const deliverableView = await readTab(deliverableTab);
+  const persistentView = await readTab(persistentTab);
+  assert(handoffView && deliverableView && persistentView);
+  await controlledTool("OWNERSHIP_KEEP", { action: "tabs" });
+  await controlledTool("OWNERSHIP_KEEP", { action: "finalize", keep: [
+    { tab_id: handoffTab, status: "handoff" }, { tab_id: deliverableTab, status: "deliverable" },
+  ] });
+  check("atomic finalize preserves a kept popup's omitted opener", host.tabSurfaceMeta(workdir, retainedOpenerTab) !== undefined && !retainedOpenerView.webContents.isDestroyed());
+  check("finalize preserves a user-opened persistent tab omitted from model keep", host.tabSurfaceMeta(workdir, persistentTab)?.url === `${baseURL}/persistent`);
+  await controlledTool("OWNERSHIP_KEEP", { action: "navigate", url: `${baseURL}/temporary-after-finalize` });
+  const finalTemporaryTab = openedForThread(retained).at(-1)!;
+  await finishControlled("OWNERSHIP_KEEP", retained);
+  check("completion closes later temporary tabs after an earlier finalize", host.tabSurfaceMeta(workdir, finalTemporaryTab) === undefined);
+  check("completion preserves handoff, deliverable, persistent pages, and popup ancestry", [handoffTab, deliverableTab, persistentTab, retainedOpenerTab].every(tabID => host!.tabSurfaceMeta(workdir, tabID) !== undefined));
+  check("retained pages release automation debugger attachment at turn end", [handoffView, deliverableView, persistentView, retainedOpenerView].every(view => !view.webContents.isDestroyed() && !view.webContents.debugger.isAttached()));
+  const retainedEnd = calls.find(call => call.method === "browser/turn_ended" && call.params.thread_id === retained);
+  const retentionKeep = retainedEnd?.params.keep as { tab_id: string; status: string }[] | undefined;
+  check("core cleanup carries durable handoff and deliverable decisions", retentionKeep?.some(tab => tab.tab_id === handoffTab && tab.status === "handoff") && retentionKeep?.some(tab => tab.tab_id === deliverableTab && tab.status === "deliverable"), JSON.stringify(retentionKeep));
+  await handoffView.webContents.executeJavaScript(`window.opener?.postMessage({kind:'popup-message',nonce:'${popupNonce}',probe:'after-end'}, location.origin)`);
+  const retainedMessage = await retainedOpenerView.webContents.executeJavaScript(`new Promise(resolve => {
+    const proof=()=>window.popupState.messages.find(message=>message.probe==='after-end');
+    if(proof()) return resolve(proof());
+    const timer=setTimeout(()=>{removeEventListener('message',receive);resolve(null)},2000);
+    function receive(){if(proof()){clearTimeout(timer);removeEventListener('message',receive);resolve(proof())}}
+    addEventListener('message',receive);
+  })`);
+  check("retained child keeps its original opener message channel after completion", retainedMessage?.sourceMatches === true && retainedMessage?.nonce === popupNonce, JSON.stringify(retainedMessage));
+
+  await start("OWNERSHIP_RETAINED_AGAIN", retained);
+  await bounded("next authorized execution starts", controlledWaiter("OWNERSHIP_RETAINED_AGAIN").promise);
+  const retainedAgainTemporary = openedForThread(retained).at(-1)!;
+  host.reportBounds(workdir, handoffTab, main as unknown as BrowserHostWindowHandle, { x: 0, y: 0, width: 800, height: 600 }, 1, true);
+  await handoffView.webContents.executeJavaScript("new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))");
+  await controlledTool("OWNERSHIP_RETAINED_AGAIN", { action: "observe", tab_id: handoffTab });
+  check("a fresh authorized execution reattaches the retained popup debugger", handoffView.webContents.debugger.isAttached());
+  await controlledTool("OWNERSHIP_RETAINED_AGAIN", { action: "click", tab_id: handoffTab, x: 140, y: 120 });
+  check("a fresh authorized execution can use the retained popup", await handoffView.webContents.executeJavaScript("window.clicks") === 1);
+  await finishControlled("OWNERSHIP_RETAINED_AGAIN", retained);
+  check("later cleanup still preserves kept popup ancestry", host.tabSurfaceMeta(workdir, handoffTab) !== undefined && host.tabSurfaceMeta(workdir, retainedOpenerTab) !== undefined && host.tabSurfaceMeta(workdir, retainedAgainTemporary) === undefined);
+
+  // Native modified link clicks use Chromium's OpenURLFromTab path, which can
+  // create a child without supplying guest WebContents to Electron's handler.
+  // Run these after the task hands over the retained page to its user.
+  host.reportBounds(workdir, retainedOpenerTab, main as unknown as BrowserHostWindowHandle, { x: 0, y: 0, width: 800, height: 600 }, 1, true);
+  await retainedOpenerView.webContents.executeJavaScript("new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))");
+  const nativePopupCases: { path: string; y: number; modifiers: ("shift" | "control" | "meta")[]; label: string }[] = [
+    { path: "/popup-native-shift", y: 420, modifiers: ["shift"], label: "Shift-click new window" },
+    { path: "/popup-native-foreground", y: 480, modifiers: [process.platform === "darwin" ? "meta" : "control", "shift"], label: "modified-click foreground tab" },
+  ];
+  for (const scenario of nativePopupCases) {
+    popupLoads.set(scenario.path, deferred());
+    retainedOpenerView.webContents.sendInputEvent({ type: "mouseDown", x: 120, y: scenario.y, button: "left", clickCount: 1, modifiers: scenario.modifiers });
+    retainedOpenerView.webContents.sendInputEvent({ type: "mouseUp", x: 120, y: scenario.y, button: "left", clickCount: 1, modifiers: scenario.modifiers });
+    await bounded(`${scenario.label} loads the actual destination`, popupLoads.get(scenario.path)!.promise);
+    const adopted = popupAdoptions.find(item => item.openerTabID === retainedOpenerTab && item.url === `${baseURL}${scenario.path}`);
+    check(`${scenario.label} adopts and navigates its child`, Boolean(adopted && host.tabSurfaceMeta(workdir, adopted.tabID)?.url === `${baseURL}${scenario.path}`));
+    check(`${scenario.label} leaves its retained opener in place`, host.tabSurfaceMeta(workdir, retainedOpenerTab)?.url === `${baseURL}/popup-opener`);
+  }
 
   const a = await start("OWNERSHIP_A");
   await bounded("A waits with its tab", aWaiting.promise);
   const b = await start("OWNERSHIP_B");
   await bounded("B completes beside running A", completed.get(b)!.promise);
+  checkSuccessfulTurn(b, "retained sibling B");
   const opened = (marker: string) => calls.find(call => call.method === "browser/open_tab" && String(call.params.initial_url).endsWith(`/${marker}`))?.params;
   const aTab = String(opened("OWNERSHIP_A")?.tab_id ?? "");
   const bTab = String(opened("OWNERSHIP_B")?.tab_id ?? "");
@@ -415,11 +598,12 @@ app.whenReady().then(async () => {
   check("A cannot list B's tab", siblings.tab_ids.includes(aTab) && !siblings.tab_ids.includes(bTab), JSON.stringify(siblings));
   respond(heldA!, { action: "tabs" });
   await bounded("A finalizes", completed.get(a)!.promise);
+  checkSuccessfulTurn(a, "finalizing task A");
   check("A finalize preserves B's live page", host.tabSurfaceMeta(workdir, bTab)?.url === `${baseURL}/OWNERSHIP_B`);
   check("A finalize closes A's own tab", host.tabSurfaceMeta(workdir, aTab) === undefined);
 
   const c = await start("OWNERSHIP_C");
-  await bounded("C opens a live input page", completed.get(c)!.promise);
+  await bounded("C holds its real turn on a live input page", controlledWaiter("OWNERSHIP_C").promise);
   const cTab = String(opened("OWNERSHIP_C")?.tab_id ?? "");
   const cView = await readTab(cTab);
   assert(cView, "C page remains alive for input cancellation checks");
@@ -446,10 +630,13 @@ app.whenReady().then(async () => {
   await pool.request("activity/release", { thread_id: c, activity_id: activity.id });
   await request(c, "browser/cdp", { tab_id: cTab, method: "type", params: { text: "resumed" } });
   check("explicit release renews input authority", await cView.webContents.executeJavaScript("document.querySelector('#field').value") === "resumed");
-  const cross = await request(a, "browser/cdp", { tab_id: cTab, method: "type", params: { text: "sibling" } }).then(() => "delivered", error => String(error));
+  const foreignThread = await start("OWNERSHIP_FOREIGN");
+  await bounded("a fresh foreign execution is active", controlledWaiter("OWNERSHIP_FOREIGN").promise);
+  const cross = await request(foreignThread, "browser/cdp", { tab_id: cTab, method: "type", params: { text: "sibling" } }).then(() => "delivered", error => String(error));
   check("a sibling cannot address a known foreign tab ID", cross !== "delivered", cross);
-  const collision = await request(a, "browser/open_tab", { tab_id: cTab, initial_url: `${baseURL}/foreign` }).then(() => "delivered", error => String(error));
+  const collision = await request(foreignThread, "browser/open_tab", { tab_id: cTab, initial_url: `${baseURL}/foreign` }).then(() => "delivered", error => String(error));
   check("a sibling cannot reopen another thread's tab ID", collision !== "delivered" && cView.webContents.getURL() === `${baseURL}/OWNERSHIP_C`, collision);
+  await finishControlled("OWNERSHIP_FOREIGN", foreignThread);
   // Delay a real older takeover/release pair, then generate fresh native page
   // input. Only the response to that input's own takeover can clear its latch.
   const localTab = "native-input-page";
@@ -496,6 +683,7 @@ app.whenReady().then(async () => {
   const dTab = String(opened("OWNERSHIP_D")?.tab_id ?? "");
   const dView = await readTab(dTab);
   assert(dView, "D's live page exists");
+  const dContentsID = dView.webContents.id;
   // This case tests cancellation of a visible page's real Go command. Mount
   // the page before observe requests its preview, so Chromium has a surface.
   host.reportBounds(workdir, dTab, main as unknown as BrowserHostWindowHandle, { x: 0, y: 0, width: 800, height: 600 }, 1, true);
@@ -511,7 +699,10 @@ app.whenReady().then(async () => {
   await bounded("Go cancels its pending browser request", cancellations.get(d)!.promise);
   dGate.resume.resolve();
   await bounded("Cancelled host operation finishes", hostCompletions.get(dCall.id)!.promise);
-  check("turn interruption cancels a real pending Go browser call", await dView.webContents.executeJavaScript("window.clicks") === 0);
+  check("turn interruption cancels a real pending Go browser call", !nativeInputCommands.some(command => command.webContentsID === dContentsID) && !clickRequests.includes("/OWNERSHIP_D"));
+  await bounded("D interruption reaches authoritative cleanup", completed.get(d)!.promise);
+  check("D terminates specifically as interrupted", terminalEvents.get(d)?.status === "interrupted", JSON.stringify(terminalEvents.get(d)));
+  check("interrupted turn closes its temporary page", host.tabSurfaceMeta(workdir, dTab) === undefined && dView.webContents.isDestroyed());
   const cancellation = events.find(event => {
     const wire = event as ServerEvent;
     return wire.kind === "notification" && wire.message.method === "browser/request_cancelled" &&
@@ -548,17 +739,26 @@ app.whenReady().then(async () => {
   await cView.webContents.executeJavaScript("new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))");
   writeFileSync(join(output, "page.png"), (await cView.webContents.capturePage(undefined, { stayHidden: true })).toPNG());
 
-  const disposeObserve = await request(d, "browser/cdp", { tab_id: dTab, method: "observe", params: {} }) as { result: { nodes: { node_id: number; name: string }[] } };
+  await finishControlled("OWNERSHIP_C", c);
+  const disposal = await start("OWNERSHIP_DISPOSE");
+  await bounded("disposal turn opens a live page", controlledWaiter("OWNERSHIP_DISPOSE").promise);
+  const disposalTab = openedForThread(disposal)[0];
+  const disposalView = await readTab(disposalTab);
+  assert(disposalView);
+  host.reportBounds(workdir, disposalTab, main as unknown as BrowserHostWindowHandle, { x: 0, y: 0, width: 800, height: 600 }, 1, true);
+  await disposalView.webContents.executeJavaScript("new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))");
+  const disposeObserve = await request(disposal, "browser/cdp", { tab_id: disposalTab, method: "observe", params: {} }) as { result: { nodes: { node_id: number; name: string }[] } };
   const disposeTarget = disposeObserve.result.nodes.find(node => node.name === "Target")!;
   const disposeGate = { entered: deferred(), resume: deferred() };
   geometryGate = disposeGate;
-  const disposedInput = request(d, "browser/cdp", { tab_id: dTab, method: "click", params: { node_id: disposeTarget.node_id } }).then(() => "delivered", error => String(error));
-  await bounded("D geometry before disposal", disposeGate.entered.promise);
+  const disposedInput = request(disposal, "browser/cdp", { tab_id: disposalTab, method: "click", params: { node_id: disposeTarget.node_id } }).then(() => "delivered", error => String(error));
+  await bounded("disposal turn geometry before host shutdown", disposeGate.entered.promise);
   host.destroyAll();
   disposeGate.resume.resolve();
   const disposeResult = await disposedInput;
-  check("disposal invalidates input before closing views", disposeResult !== "delivered" && host.tabSurfaceMeta(workdir, dTab) === undefined, disposeResult);
-  writeFileSync(join(output, "results.json"), JSON.stringify({ checks, threads: { a, b, c, d }, tabs: { aTab, bTab, cTab, dTab }, calls, providerRequests, popupRequests, popupAdoptions, events }, null, 2));
+  check("disposal invalidates input before closing views", disposeResult !== "delivered" && host.tabSurfaceMeta(workdir, disposalTab) === undefined, disposeResult);
+  await finishControlled("OWNERSHIP_DISPOSE", disposal);
+  writeFileSync(join(output, "results.json"), JSON.stringify({ checks, threads: { popup, sibling, lifecycle, retained, foreignThread, a, b, c, d, disposal }, tabs: { popupTab, lifecycleTab, freshTab, retainedOpenerTab, handoffTab, retainedAgainTemporary, deliverableTab, persistentTab, finalTemporaryTab, aTab, bTab, cTab, dTab, disposalTab }, calls, replies, providerRequests, popupRequests, popupAdoptions, clickRequests, nativeInputCommands, events }, null, 2));
   console.log(JSON.stringify(checks, null, 2));
   await pool.shutdown();
   host.destroyAll();
@@ -569,7 +769,7 @@ app.whenReady().then(async () => {
   console.log(`PASS: browser task ownership and takeover; evidence ${output}`);
   app.exit(0);
 }).catch(async error => {
-  writeFileSync(join(output, "failure.json"), JSON.stringify({ error: String(error), checks, calls, providerRequests, popupRequests, popupAdoptions, events }, null, 2));
+  writeFileSync(join(output, "failure.json"), JSON.stringify({ error: String(error), checks, calls, replies, providerRequests, popupRequests, popupAdoptions, clickRequests, nativeInputCommands, events }, null, 2));
   console.error(error);
   await pool?.shutdown().catch(() => undefined);
   host?.destroyAll();
