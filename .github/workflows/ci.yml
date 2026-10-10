@@ -586,6 +586,24 @@ jobs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
+        with:
+          # PR checkout is GitHub's synthetic merge. Its first parent is the
+          # base tree, so this compares the complete PR rather than its last commit.
+          fetch-depth: 2
+
+      - name: Select native packaging validation
+        id: native-packaging
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = push ]; then
+            echo "required=true" >> "$GITHUB_OUTPUT"
+          elif git diff --quiet HEAD^ HEAD -- desktop/native desktop/package.json desktop/package-lock.json 'desktop/scripts/*mac*.cjs' 'desktop/scripts/*release*.cjs' .github/workflows/ci.yml; then
+            echo "required=false" >> "$GITHUB_OUTPUT"
+          else
+            status=$?
+            if [ "$status" -ne 1 ]; then exit "$status"; fi
+            echo "required=true" >> "$GITHUB_OUTPUT"
+          fi
 
       - uses: actions/setup-go@v5
         with:
@@ -624,15 +642,36 @@ jobs:
         run: make test-native
 
       - name: Install phone Web dependencies
-        if: github.event_name == 'push'
+        if: steps.native-packaging.outputs.required == 'true'
         run: |
           npm ci --prefix clients/core
           npm ci --prefix clients/mobile-web
 
       - name: Package macOS app
-        # Keep packaging on main; PRs still exercise the native helper above.
-        if: github.event_name == 'push'
+        # Validate the same ad-hoc, capture-only resource layout on native PRs.
+        if: steps.native-packaging.outputs.required == 'true'
+        env:
+          WUU_SKIP_CUA_MAC: "1"
+          WUU_ENABLE_CUA_MAC: "0"
         run: make build-macos
+
+      - name: Verify packaged native resources
+        if: steps.native-packaging.outputs.required == 'true'
+        env:
+          WUU_SKIP_CUA_MAC: "1"
+          WUU_ENABLE_CUA_MAC: "0"
+        run: |
+          node - <<'NODE'
+          const { readdirSync, existsSync } = require("node:fs");
+          const { join } = require("node:path");
+          const { execFileSync } = require("node:child_process");
+          const bundles = readdirSync("desktop/release", { withFileTypes: true })
+            .filter(entry => entry.isDirectory() && entry.name.startsWith("mac"))
+            .map(entry => join("desktop/release", entry.name, "wuu.app"))
+            .filter(path => existsSync(path));
+          if (bundles.length !== 1) throw new Error(`Expected one packaged macOS app, found ${bundles.length}`);
+          execFileSync(process.execPath, ["desktop/scripts/verify-mac-release.cjs", bundles[0]], { stdio: "inherit" });
+          NODE
 
   windows-check:
     name: Windows native check
