@@ -377,6 +377,9 @@ async function run() {
   assert.equal(secondPagePart.source.quote, secondQuote);
   assert.equal(secondPagePart.source.pdf.start_page, 2);
   assert.equal(secondPagePart.source.pdf.end_page, 2);
+  // Keep the destination scrollable: at full height all three short fixture
+  // pages fit in the docked viewer, which cannot scroll page two to the top.
+  main.setSize(1380, 650);
   if (await evaluate(() => document.querySelector('.workspace-panel-globalize')?.getAttribute('aria-pressed') === 'true')) await click('.workspace-panel-globalize');
   await waitFor(() => [...document.querySelectorAll('.pdf-quote-pill')].some(button => !button.closest('[inert]')));
   await evaluate(() => document.querySelector('[data-workspace-pdf-preview]').shadowRoot.querySelector('.page[data-page-number="1"]').scrollIntoView());
@@ -384,10 +387,17 @@ async function run() {
   await evaluate(() => [...document.querySelectorAll('.pdf-quote-pill')].filter(button => !button.closest('[inert]')).at(-1).click());
   await waitFor(() => document.querySelector('.pdf-quote-entry blockquote')?.textContent === 'Second PDF page: review this paragraph.');
   await click('.pdf-quote-entry .pdf-quote-source-link');
-  await waitFor(() => document.querySelector('[data-workspace-pdf-preview]').shadowRoot.querySelector('.workspace-pdf-page-count')?.textContent === '2 / 3');
+  await waitFor(() => {
+    const root = document.querySelector('[data-workspace-pdf-preview]').shadowRoot;
+    const top = root.querySelector('.workspace-pdf-container').getBoundingClientRect().top;
+    const pageTop = root.querySelector('.page[data-page-number="2"]').getBoundingClientRect().top;
+    return root.querySelector('.workspace-pdf-page-count')?.textContent === '2 / 3' && Math.abs(pageTop - top) <= 4;
+  });
   await capture('03-second-page-sent-source-return');
+  assert.equal(await evaluate(() => document.querySelector('[data-workspace-pdf-preview]').shadowRoot.querySelector('.workspace-pdf-page-count').textContent), '2 / 3');
   main.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'ESC' }); main.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'ESC' });
   await waitFor(() => !document.querySelector('.pdf-quote-entry'));
+  main.setSize(1380, 1000);
   if (await evaluate(() => document.querySelector('.workspace-panel-globalize')?.getAttribute('aria-pressed') === 'false')) await click('.workspace-panel-globalize');
   await evaluate(() => document.querySelector('[data-workspace-pdf-preview]').shadowRoot.querySelector('.page[data-page-number="1"]').scrollIntoView());
   await waitFor(() => document.querySelector('[data-workspace-pdf-preview]').shadowRoot.querySelector('.workspace-pdf-page-count')?.textContent === '1 / 3');
