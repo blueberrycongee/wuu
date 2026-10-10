@@ -162,6 +162,9 @@ func runLifecycle(helperPath, outputPath string) error {
 		}
 		check := lifecycleCheck{Stage: stage, ToolCount: len(definitions), Passed: true}
 		if wantCount == 1 {
+			if !definitions[0].DirectOnly {
+				return errors.New("render_ui must remain directly callable in PTC mode")
+			}
 			toolName = definitions[0].Name
 			result, err := rt.PluginHost.ExecuteTool(context.Background(), toolName, pluginhost.ToolExecuteInput{
 				ThreadID: "synthetic-thread", TurnID: "synthetic-turn", CallID: "call-" + stage, Arguments: arguments,

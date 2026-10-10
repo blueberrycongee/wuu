@@ -36,7 +36,10 @@ func Handler() pluginapi.Handler {
 	}
 	return pluginapi.Handler{
 		Definition: pluginapi.Definition{Tools: []pluginapi.Tool{{
-			ID:          "render_ui",
+			ID: "render_ui",
+			// Presentation must remain a top-level result in PTC mode, like
+			// present_artifact; nested programs do not forward UI resources.
+			DirectOnly:  true,
 			Description: "Render an experimental interactive UI in the conversation. Supply a version 1 declarative spec with a title, a useful plain-text fallback and 1–16 uniquely identified text, table, chart or form blocks. Tables support local search/sort; charts support local range selection; forms support local preview/copy/reset only. No HTML, scripts, styles, network requests, submission or host actions. Arguments must fit in 128 KiB.",
 			InputSchema: inputSchema,
 			Activity:    &pluginapi.ToolActivity{ReadOnly: true, ConcurrencySafe: true},

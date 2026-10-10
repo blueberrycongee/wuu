@@ -78,6 +78,9 @@ For example:
 }
 ```
 
+`render_ui` is a direct presentation tool, including when programmatic tool
+calling is enabled. Call it at the top level; it cannot run inside `run_code`.
+
 ## Boundaries and recovery
 
 Version 1 publishes complete specs after a tool call completes. It does not
