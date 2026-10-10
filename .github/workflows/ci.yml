@@ -147,6 +147,23 @@ jobs:
       - name: Typecheck
         run: make check-desktop
 
+      - name: Guard development renderer recovery
+        timeout-minutes: 3
+        shell: bash
+        run: |
+          mkdir -p "${{ runner.temp }}/wuu-renderer-recovery-evidence"
+          set -o pipefail
+          xvfb-run --auto-servernum npm --prefix desktop run test:renderer-recovery -- --no-sandbox 2>&1 | tee "${{ runner.temp }}/wuu-renderer-recovery-evidence/run.log"
+
+      - name: Upload renderer recovery evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: renderer-recovery-evidence
+          path: ${{ runner.temp }}/wuu-renderer-recovery-evidence
+          if-no-files-found: ignore
+          retention-days: 14
+
       - name: Build
         id: build-renderer
         shell: bash

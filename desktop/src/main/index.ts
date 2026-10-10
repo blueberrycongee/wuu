@@ -211,7 +211,7 @@ import {
   productionApplicationMenuTemplate,
 } from "./appShellGuards";
 import { createWindowRegistry, type WindowRegistry } from "./windowRegistry";
-import { installRendererRecovery, sendToWindow } from "./rendererProcessGone";
+import { installRendererRecovery, loadDevelopmentRenderer, sendToWindow } from "./rendererProcessGone";
 import {
   BrowserHostCoordinator,
   BROWSER_PARTITION,
@@ -794,19 +794,7 @@ function loadRenderer(window: BrowserWindow): void {
   });
 
   if (devRendererURL) {
-    window.webContents.on(
-      "did-fail-load",
-      (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
-        if (!isMainFrame || errorCode === -3) return;
-        console.error(
-          `[renderer] failed to load ${validatedURL || devRendererURL}: ${errorDescription} (${errorCode})`,
-        );
-        app.quit();
-      },
-    );
-    void window.loadURL(devRendererURL).catch(() => {
-      // did-fail-load logs the Chromium error and shuts down the stale dev host.
-    });
+    void loadDevelopmentRenderer(window, devRendererURL, app);
   } else {
     void window.loadFile(rendererPath);
   }

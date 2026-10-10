@@ -5366,10 +5366,15 @@ html[data-focus-modality="keyboard"] .turn-artifact-gallery-items:focus-visible 
 
 .artifact-preview-empty {
   display: grid;
+  box-sizing: border-box;
+  min-width: 0;
   min-height: 240px;
+  padding: var(--panel-padding);
   place-items: center;
   color: var(--ink-tertiary);
   font-size: var(--font-sm);
+  text-align: center;
+  overflow-wrap: anywhere;
 }
 
 @media (max-width: 720px) {

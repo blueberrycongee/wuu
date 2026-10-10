@@ -312,6 +312,74 @@ async function settle() {
     await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
   });
 }
+async function captureStablePreview(name, expectedName) {
+  await settle();
+  // Artifact flights are requestAnimationFrame-driven, not Web Animations.
+  // Wait for the real animation to finish without disabling or skipping it.
+  await until(() => !document.querySelector('.artifact-preview-flight, .artifact-preview-motion-hidden'), 'artifact preview flight completed');
+  let previous, stable = 0, geometry;
+  const deadline = Date.now() + 15000;
+  while (Date.now() < deadline) {
+    geometry = await evaluate(() => {
+      const panel = document.querySelector('.artifact-preview-panel');
+      const title = panel.querySelector('.artifact-preview-toolbar strong');
+      const actions = panel.querySelector('.artifact-preview-actions');
+      const empty = panel.querySelector('.artifact-preview-empty');
+      let emptyText, emptyPadding;
+      if (empty) {
+        const range = document.createRange(); range.selectNodeContents(empty);
+        emptyText = range.getBoundingClientRect().toJSON();
+        const style = getComputedStyle(empty);
+        emptyPadding = { left: parseFloat(style.paddingLeft), right: parseFloat(style.paddingRight) };
+      }
+      return { panel: panel.getBoundingClientRect().toJSON(), title: title.getBoundingClientRect().toJSON(),
+        titleText: title.textContent, actions: actions.getBoundingClientRect().toJSON(), emptyText, emptyPadding,
+        flightCount: document.querySelectorAll('.artifact-preview-flight, .artifact-preview-motion-hidden').length };
+    });
+    const current = JSON.stringify(geometry);
+    if (current === previous && geometry.flightCount === 0) { if (++stable >= 4) break; }
+    else stable = 0;
+    previous = current;
+    await delay(50);
+  }
+  assert.ok(stable >= 4, 'Preview geometry remains stable after the complete flight');
+  assert.equal(geometry.titleText, expectedName);
+  assert.ok(geometry.title.left >= geometry.panel.left + 1 && geometry.title.right <= geometry.actions.left, 'Preview title stays inside its own toolbar');
+  assert.ok(geometry.title.top >= geometry.panel.top && geometry.title.bottom <= geometry.panel.bottom, 'Preview title stays vertically within its pane');
+  if (geometry.emptyText) {
+    assert.ok(geometry.emptyPadding.left > 0 && geometry.emptyPadding.right > 0, 'Unsupported-format explanation has readable inline padding');
+    assert.ok(geometry.emptyText.left >= geometry.panel.left + geometry.emptyPadding.left - 1
+      && geometry.emptyText.right <= geometry.panel.right - geometry.emptyPadding.right + 1, 'Unsupported-format text stays inside its padded pane');
+  }
+  await capture(name);
+  pass(`${name} is stable and bounded after the real opening animation`, geometry);
+}
+
+async function saveZipFromNativeMenu(selector, mouseButton, previewExpected) {
+  const menuOffset = rpc.length, menuCount = nativeMenus.length;
+  expectedNativeMenu = true;
+  requestedDownload = files[0];
+  await click(selector, 0.5, mouseButton);
+  await hostUntil(() => nativeMenus.length === menuCount + 1 && nativeMenus[menuCount].shown, 'new actual native artifact menu shown');
+  assert.equal(nativeMenus[menuCount].labels[0], 'Save As…');
+  assert.equal(await evaluate(() => !!document.querySelector('.artifact-preview-panel')), previewExpected, 'Menu entry preserves the expected preview state');
+  // X11 input targets the actual OS popup, never a replacement menu callback.
+  const selectSave = spawnSync('xdotool', ['key', '--clearmodifiers', 'Home', 'Return'], { encoding: 'utf8', timeout: 5000 });
+  assert.equal(selectSave.status, 0, selectSave.stderr || String(selectSave.error));
+  await hostUntil(() => nativeMenus[menuCount].closed && rpc.slice(menuOffset).some(entry =>
+    entry.channel === 'wuu:artifact-show-menu' && entry.completed && entry.result?.action === 'save'), 'native Save selection completed');
+  const savedPath = path.join(fixture, 'saved-' + files[0].name);
+  await hostUntil(() => fs.existsSync(savedPath), 'native-menu save writes original bytes');
+  assert.deepEqual(fs.readFileSync(savedPath), files[0].bytes);
+  assert.ok(rpc.slice(menuOffset).some(entry => entry.channel === 'wuu:artifact-show-menu'
+    && entry.artifact.uri === artifacts[0].uri && entry.artifact.threadId === 'peer-files-zip'), 'The original owning thread and managed URI reach the production menu handler');
+  requestedDownload = undefined;
+  expectedNativeMenu = false;
+  // A fresh destination makes the next independent save completion observable.
+  fs.unlinkSync(savedPath);
+  return nativeMenus[menuCount];
+}
+
 async function capture(name) {
   await settle();
   const file = `${name}.png`;
@@ -625,29 +693,8 @@ db.commit()
 
   await openArtifactScene(5);
   assert.equal(process.platform, 'linux', 'Native menu acceptance runs on the supported Linux Xvfb worker');
-  const menuOffset = rpc.length;
-  expectedNativeMenu = true;
-  requestedDownload = files[0];
-  await click(`${artifactCard(5)} .turn-edit-summary-overview`, 0.5, 'right');
-  await hostUntil(() => nativeMenus.at(-1)?.shown, 'actual native artifact menu shown');
-  assert.equal(nativeMenus.at(-1).labels[0], 'Save As…');
-  assert.equal(await evaluate(() => !!document.querySelector('.artifact-preview-panel')), false, 'Right click does not open a preview');
-  // X11 keyboard events target the actual OS popup, not the renderer and not a
-  // replacement menu callback. Home selects the first (Save As) native item.
-  const selectSave = spawnSync('xdotool', ['key', '--clearmodifiers', 'Home', 'Return'], { encoding: 'utf8', timeout: 5000 });
-  assert.equal(selectSave.status, 0, selectSave.stderr || String(selectSave.error));
-  await hostUntil(() => nativeMenus.at(-1).closed && rpc.slice(menuOffset).some(entry =>
-    entry.channel === 'wuu:artifact-show-menu' && entry.completed && entry.result?.action === 'save'), 'native Save selection completed');
-  const contextSavePath = path.join(fixture, 'saved-' + files[0].name);
-  await hostUntil(() => fs.existsSync(contextSavePath), 'native context-menu save writes original bytes');
-  assert.deepEqual(fs.readFileSync(contextSavePath), files[0].bytes);
-  assert.ok(rpc.slice(menuOffset).some(entry => entry.channel === 'wuu:artifact-show-menu'
-    && entry.artifact.uri === artifacts[0].uri && entry.artifact.threadId === 'peer-files-zip'), 'The original owning thread and managed URI reach the production menu handler');
-  requestedDownload = undefined;
-  expectedNativeMenu = false;
-  // A fresh destination makes the later toolbar-save completion observable.
-  fs.unlinkSync(contextSavePath);
-  pass('Native right click and X11 menu selection save the original ZIP through the production managed-file path', nativeMenus.at(-1));
+  const contextMenu = await saveZipFromNativeMenu(`${artifactCard(5)} .turn-edit-summary-overview`, 'right', false);
+  pass('Native right click and X11 menu selection save the original ZIP through the production managed-file path', contextMenu);
 
   for (const [messageIndex, fileIndex] of [[5, 0], [6, 1]]) {
     await openArtifactScene(messageIndex);
@@ -658,7 +705,12 @@ db.commit()
     } else {
       assert.equal(await evaluate(() => !!document.querySelector('.artifact-preview-empty')), true, 'Unsupported ZIP retains the honest preview fallback');
     }
-    await capture(fileIndex ? 'patch-preview' : 'zip-preview');
+    await captureStablePreview(fileIndex ? 'patch-preview' : 'zip-preview', files[fileIndex].name);
+    if (fileIndex === 0) {
+      const toolbarMenu = await saveZipFromNativeMenu('.artifact-preview-actions button[aria-label="File actions"]', 'left', true);
+      assert.equal(await evaluate(() => !!document.querySelector('.artifact-preview-panel')), true, 'The ZIP sidebar remains open after native Save');
+      pass('ZIP sidebar File actions opens the native menu and saves the unchanged ZIP', toolbarMenu);
+    }
     requestedDownload = files[fileIndex];
     const savedPath = path.join(fixture, 'saved-' + requestedDownload.name);
     await click('.artifact-preview-actions button[aria-label^="Download"]');
