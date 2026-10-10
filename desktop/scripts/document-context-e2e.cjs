@@ -44,7 +44,7 @@ const originalPDF = pdf([firstQuote, secondQuote, 'Third PDF page: the source re
 const originalSHA = createHash('sha256').update(originalPDF).digest('hex');
 fs.writeFileSync(path.join(project, 'guide.pdf'), originalPDF);
 fs.writeFileSync(path.join(project, 'large.txt'), 'Preview content remains readable.\n'.repeat(20000));
-const requests = [], errors = [], screenshots = [], checks = [];
+const requests = [], errors = [], screenshots = [], checks = [], resizeEvidence = [];
 const server = http.createServer((req, res) => {
   let raw = '';
   req.on('data', chunk => raw += chunk);
@@ -109,6 +109,25 @@ async function capture(name) {
   await evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   fs.writeFileSync(path.join(output, `${name}.png`), (await main.webContents.capturePage()).toPNG());
   screenshots.push(`${name}.png`);
+}
+function pdfGeometry() {
+  const root = document.querySelector('[data-workspace-pdf-preview]')?.shadowRoot;
+  const container = root?.querySelector('.workspace-pdf-container');
+  const page = root?.querySelector('.page[data-page-number="1"]');
+  return { containerWidth: container?.clientWidth || 0, pageWidth: page?.getBoundingClientRect().width || 0,
+    zoom: root?.querySelector('.workspace-pdf-zoom-value')?.textContent };
+}
+async function fittedPdf() {
+  await evaluate(() => Promise.all(document.getAnimations().filter(animation => Number.isFinite(animation.effect?.getComputedTiming().endTime))
+    .map(animation => animation.finished.catch(() => {}))));
+  await evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  await waitFor(() => {
+    const root = document.querySelector('[data-workspace-pdf-preview]')?.shadowRoot;
+    const width = root?.querySelector('.workspace-pdf-container')?.clientWidth || 0;
+    const pageWidth = root?.querySelector('.page[data-page-number="1"]')?.getBoundingClientRect().width || 0;
+    return width > 0 && pageWidth > 0 && Math.abs(pageWidth - width) <= 4;
+  });
+  return evaluate(pdfGeometry);
 }
 async function selectPages(first = 1, last = first) {
   await evaluate(() => Promise.all(document.getAnimations().filter(animation => Number.isFinite(animation.effect?.getComputedTiming().endTime))
@@ -194,7 +213,7 @@ function writeEvidence(passed) {
   fs.writeFileSync(path.join(output, 'results.json'), JSON.stringify({ passed, phase, checks, errors, screenshots,
     boundary: 'Production Electron main/preload/renderer and Go core with a local synthetic provider and disposable related-session history. The initial PDF selection uses native mouse drag and Quote clicks; later ranges are programmatically established in the rendered text layer. PNGs are review evidence, not user visual acceptance.',
     core: process.env.WUU_DESKTOP_CORE, sourceCommit: process.env.WUU_DOCUMENT_COMMIT || null,
-    originalSHA, requests: requests.length, selectionInput, selectionDiagnostics }, null, 2));
+    originalSHA, requests: requests.length, resizeEvidence, selectionInput, selectionDiagnostics }, null, 2));
   fs.writeFileSync(path.join(output, 'provider-requests.json'), JSON.stringify(requests, null, 2));
 }
 const timeout = setTimeout(() => { errors.push('Timed out'); writeEvidence(false); app.exit(1); }, 180000);
@@ -227,6 +246,34 @@ async function run() {
   if (await evaluate(() => document.querySelector('.workspace-panel-globalize')?.getAttribute('aria-pressed') === 'false')) await click('.workspace-panel-globalize');
   await waitFor(() => document.querySelector('.workspace-document-composer textarea'));
   checks.push('real tool delivery produces a verified PDF snapshot');
+
+  phase = 'fit width follows the panel while manual zoom survives resize';
+  const wideFit = await fittedPdf(); resizeEvidence.push({ state: 'wide-fit', ...wideFit });
+  await click('.workspace-panel-globalize');
+  await waitFor(width => document.querySelector('[data-workspace-pdf-preview]').shadowRoot.querySelector('.workspace-pdf-container').clientWidth < width, wideFit.containerWidth);
+  const dockedFit = await fittedPdf(); resizeEvidence.push({ state: 'docked-fit', ...dockedFit });
+  assert.ok(dockedFit.pageWidth < wideFit.pageWidth);
+  await evaluate(() => document.querySelector('[data-workspace-pdf-preview]').shadowRoot.querySelector('button[aria-label="Zoom in"]').click());
+  await waitFor(width => document.querySelector('[data-workspace-pdf-preview]').shadowRoot.querySelector('.page[data-page-number="1"]').getBoundingClientRect().width > width, dockedFit.pageWidth);
+  const manualZoom = await evaluate(pdfGeometry); resizeEvidence.push({ state: 'manual-zoom', ...manualZoom });
+  await click('.workspace-panel-globalize');
+  await waitFor(width => document.querySelector('[data-workspace-pdf-preview]').shadowRoot.querySelector('.workspace-pdf-container').clientWidth > width, dockedFit.containerWidth);
+  await capture('00-manual-zoom-undocked');
+  const undockedManual = await evaluate(pdfGeometry); resizeEvidence.push({ state: 'manual-undocked', ...undockedManual });
+  assert.ok(Math.abs(undockedManual.pageWidth - manualZoom.pageWidth) <= 1);
+  main.setSize(1120, 1000);
+  await waitFor(width => document.querySelector('[data-workspace-pdf-preview]').shadowRoot.querySelector('.workspace-pdf-container').clientWidth < width, undockedManual.containerWidth);
+  await capture('00-manual-zoom-resized');
+  const resizedManual = await evaluate(pdfGeometry); resizeEvidence.push({ state: 'manual-resized', ...resizedManual });
+  assert.ok(Math.abs(resizedManual.pageWidth - manualZoom.pageWidth) <= 1);
+  await evaluate(() => document.querySelector('[data-workspace-pdf-preview]').shadowRoot.querySelector('.workspace-pdf-zoom-value').click());
+  const resetFit = await fittedPdf(); resizeEvidence.push({ state: 'reset-fit', ...resetFit });
+  main.setSize(1380, 1000);
+  await waitFor(width => document.querySelector('[data-workspace-pdf-preview]').shadowRoot.querySelector('.workspace-pdf-container').clientWidth > width, resetFit.containerWidth);
+  const restoredFit = await fittedPdf(); resizeEvidence.push({ state: 'restored-fit', ...restoredFit });
+  assert.ok(restoredFit.pageWidth > resetFit.pageWidth);
+  await capture('00-fit-width-restored');
+  checks.push('PDF fit tracks docked and resized viewport width, preserves manual zoom, and resumes after reset');
 
   phase = 'quote stays in draft';
   const beforeTurns = (await snapshot()).turns.length;

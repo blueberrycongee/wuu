@@ -126,6 +126,25 @@ function WorkspacePdfSurface({ url, title, hostRef, source, active, initialPage,
     eventBus.on("scalechanging", onScaleChanging);
     eventBus.on("pagechanging", onPageChanging);
 
+    // PDF.js observes container height, but its fit preset must be reapplied
+    // when the workspace panel changes width. Numeric zoom stays user-owned.
+    let observedWidth = -1;
+    let resizeFrame = 0;
+    const resizeObserver = new ResizeObserver(() => {
+      const width = container.clientWidth;
+      if (width === observedWidth) return;
+      observedWidth = width;
+      cancelAnimationFrame(resizeFrame);
+      if (width <= 0) return;
+      resizeFrame = requestAnimationFrame(() => {
+        resizeFrame = 0;
+        if (active && container.clientWidth > 0 && viewer.currentScaleValue === "page-width") {
+          viewer.currentScaleValue = "page-width";
+        }
+      });
+    });
+    resizeObserver.observe(container);
+
     void loadingTask.promise
       .then((document) => {
         if (!active) return;
@@ -146,6 +165,8 @@ function WorkspacePdfSurface({ url, title, hostRef, source, active, initialPage,
       eventBus.off("pagesinit", onPagesInit);
       eventBus.off("scalechanging", onScaleChanging);
       eventBus.off("pagechanging", onPageChanging);
+      resizeObserver.disconnect();
+      cancelAnimationFrame(resizeFrame);
       viewer.cleanup();
       void loadingTask.destroy();
       viewerRef.current = null;
