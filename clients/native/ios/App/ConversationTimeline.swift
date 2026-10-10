@@ -4,17 +4,22 @@ import WuuCore
 struct ConversationTimeline: View {
     @Bindable var model: AppModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
     @State private var nearBottom = true
     @State private var following = true
     @State private var scrollState = TimelineScrollState()
     @State private var historyRequest: Task<Void, Never>?
     @State private var historyFailed = false
     @State private var inspectedProcess: ActivityInspection?
+    private let inset: CGFloat = 16
+    private let rowSpacing: CGFloat = 18
     var body: some View {
-        GeometryReader { _ in
+        GeometryReader { geometry in
             ScrollViewReader { proxy in
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 18) {
+                    let rows = model.conversationRows
+                    let recentStart = rows.firstIndex { $0.messages[0].turnID == rows.last?.messages[0].turnID } ?? rows.endIndex
+                    VStack(alignment: .leading, spacing: rowSpacing) {
                         if model.live?.historyCursor.isEmpty == false {
                             HStack {
                                 Spacer()
@@ -26,33 +31,20 @@ struct ConversationTimeline: View {
                                 Spacer()
                             }.frame(minHeight: 24)
                         }
-                        ForEach(model.conversationRows) { row in
-                            VStack(alignment: .leading, spacing: 8) {
-                                // Process groups also contain tools, so they are checked first.
-                                if row.isProcessGroup {
-                                    ProcessGroupView(messages: row.messages, settings: model.live?.settings, active: row.processActive) {
-                                        inspectedProcess = ActivityInspection(id: row.messages[0].id, messages: row.messages)
-                                    }
-                                } else if row.isToolGroup {
-                                    ToolGroupView(messages: row.messages, settings: model.live?.settings,
-                                        active: model.live?.running == true && row.messages.last?.id == model.messages.last?.id) { summary in
-                                        inspectedProcess = ActivityInspection(id: row.id, messages: row.messages, toolsOnly: true, summary: summary)
-                                    }
-                                } else {
-                                    MessageBubble(model: model, message: row.messages[0])
-                                }
-                                // Folded rows keep their images visible, in order, in one grid.
-                                if row.isProcessGroup || row.isToolGroup, row.messages.contains(where: { !$0.attachments.isEmpty }) {
-                                    MessageAttachments(model: model, messages: row.messages)
-                                }
-                            }.id(row.id).background { TimelineRowAnchor(id: row.id, state: scrollState) }
+                        if recentStart > rows.startIndex {
+                            LazyVStack(alignment: .leading, spacing: rowSpacing) {
+                                ForEach(rows[..<recentStart]) { row in timelineRow(row, width: geometry.size.width) }
+                            }
                         }
+                        // Keep the newest turn mounted while keyboard/menu transitions resize the viewport.
+                        // Rejoin the lazy history when iOS no longer loops row phases around embedded UIKit views.
+                        ForEach(rows[recentStart...]) { row in timelineRow(row, width: geometry.size.width) }
                         if model.live?.running == true && model.messages.last?.tool == nil && model.conversationRows.last?.processActive != true {
                             ConversationActivityMark(activity: model.messages.last?.role == "assistant" ? "responding" : "thinking", settings: model.live?.settings)
                                 .accessibilityElement().accessibilityLabel("正在处理")
                         }
                         Color.clear.frame(height: 1).id("bottom")
-                    }.padding(16).background {
+                    }.padding(inset).background {
                         TimelineScrollReader(state: scrollState) { next in
                             let update = scrollState.update(next, following: following)
                             if nearBottom != next.atBottom { nearBottom = next.atBottom }
@@ -98,6 +90,29 @@ struct ConversationTimeline: View {
             }
             .onDisappear { historyRequest?.cancel() }
     }
+    private func timelineRow(_ row: ConversationRow, width: CGFloat) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            // Process groups also contain tools, so they are checked first.
+            if row.isProcessGroup {
+                ProcessGroupView(messages: row.messages, settings: model.live?.settings, active: row.processActive) {
+                    inspectedProcess = ActivityInspection(id: row.messages[0].id, messages: row.messages)
+                }
+            } else if row.isToolGroup {
+                ToolGroupView(messages: row.messages, settings: model.live?.settings,
+                    active: model.live?.running == true && row.messages.last?.id == model.messages.last?.id) { summary in
+                    inspectedProcess = ActivityInspection(id: row.id, messages: row.messages, toolsOnly: true, summary: summary)
+                }
+            } else {
+                MessageBubble(model: model, message: row.messages[0],
+                    // Compact-height menus sit beside the preview; avoid UIKit resizing its container.
+                    menuPreviewWidth: min(width - 2 * inset, verticalSizeClass == .compact ? 250 : 360))
+            }
+            // Folded rows keep their images visible, in order, in one grid.
+            if row.isProcessGroup || row.isToolGroup, row.messages.contains(where: { !$0.attachments.isEmpty }) {
+                MessageAttachments(model: model, messages: row.messages)
+            }
+        }.id(row.id).background { TimelineRowAnchor(id: row.id, state: scrollState) }
+    }
     private var pausedEdit: HistoryMessageEdit? {
         guard let edit = model.historyEdit, edit.prepared, edit.threadID == model.activeID, !model.showingHistoryEdit else { return nil }
         return edit
@@ -118,6 +133,7 @@ struct ConversationTimeline: View {
 private struct MessageBubble: View {
     @Bindable var model: AppModel
     let message: ChatMessage
+    let menuPreviewWidth: CGFloat
     @State private var expanded = false
     @State private var selection: MessageTextSelection?
     private var collapsible: Bool { !message.sourceSessionID.isEmpty && (message.text.prefix(401).count > 400 || message.text.filter { $0 == "\n" }.count > 6) }
@@ -162,17 +178,14 @@ private struct MessageBubble: View {
             VStack(alignment: .trailing, spacing: 8) {
                 if !message.text.isEmpty {
                     MessageText(text: message.text, markdown: false, contextMenuEnabled: false)
+                        .lineLimit(6)
                 }
                 MessageAttachments(model: model, message: message)
             }
             .padding(14)
+            .frame(width: menuPreviewWidth)
             .buttonStyle(.plain)
             .background(Color(uiColor: .secondarySystemBackground))
-            .onAppear {
-                // iOS 26 can loop layout when a context menu restores the composer's keyboard.
-                // Remove this workaround when that SwiftUI transition no longer hangs.
-                UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
-            }
         }
     }
     @ViewBuilder private var userActions: some View {
