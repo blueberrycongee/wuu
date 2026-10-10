@@ -85,7 +85,7 @@ const server = http.createServer((req, res) => {
   });
 });
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
-let main, threadID, phase = 'startup';
+let main, threadID, selectionDiagnostics, selectionInput, phase = 'startup';
 app.on('browser-window-created', (_event, win) => { main ||= win; });
 const evaluate = (fn, arg) => main.webContents.executeJavaScript(`(${fn})(${JSON.stringify(arg)})`, true);
 async function waitFor(fn, arg, timeout = 30000) {
@@ -94,7 +94,12 @@ async function waitFor(fn, arg, timeout = 30000) {
   throw new Error(`Timed out at ${phase}: ${fn}`);
 }
 async function click(selector) { await evaluate(selector => { const el = document.querySelector(selector); if (!el) throw new Error(`Missing ${selector}`); el.click(); }, selector); }
+async function focusWindow() {
+  main.focus(); main.webContents.focus();
+  await waitFor(() => document.hasFocus());
+}
 async function nativeText(selector, text) {
+  await focusWindow();
   await evaluate(selector => { const el = document.querySelector(selector); if (!el) throw new Error(`Missing ${selector}`); el.focus(); }, selector);
   await main.webContents.insertText(text);
 }
@@ -108,8 +113,11 @@ async function selectPages(first = 1, last = first) {
     .map(animation => animation.finished.catch(() => {}))));
   await waitFor(({ first, last }) => {
     const root = document.querySelector('[data-workspace-pdf-preview]')?.shadowRoot;
-    return root?.querySelector(`.page[data-page-number="${first}"] .textLayer span`)?.textContent
-      && root.querySelector(`.page[data-page-number="${last}"] .textLayer span`)?.textContent;
+    return [first, last].every(page => {
+      const span = root?.querySelector(`.page[data-page-number="${page}"] .textLayer span`);
+      const bounds = span?.getBoundingClientRect();
+      return span?.textContent && bounds.width > 0 && bounds.height > 0;
+    });
   }, { first, last });
   return evaluate(({ first, last }) => {
     const root = document.querySelector('[data-workspace-pdf-preview]').shadowRoot;
@@ -124,12 +132,24 @@ async function selectPages(first = 1, last = first) {
 async function dragFirstPage() {
   await evaluate(() => Promise.all(document.getAnimations().filter(animation => Number.isFinite(animation.effect?.getComputedTiming().endTime))
     .map(animation => animation.finished.catch(() => {}))));
+  await waitFor(() => {
+    const span = document.querySelector('[data-workspace-pdf-preview]')?.shadowRoot?.querySelector('.page[data-page-number="1"] .textLayer span');
+    const bounds = span?.getBoundingClientRect();
+    return span?.textContent && bounds.width > 0 && bounds.height > 0;
+  });
   const bounds = await evaluate(() => {
     const span = document.querySelector('[data-workspace-pdf-preview]').shadowRoot.querySelector('.page[data-page-number="1"] .textLayer span');
     const r = span.getBoundingClientRect();
+    window.__pdfDragEvents = [];
+    window.__pdfDragAbort = new AbortController();
+    for (const type of ['pointerdown', 'pointermove', 'pointerup']) document.addEventListener(type, event => {
+      const target = event.composedPath()[0];
+      if (window.__pdfDragEvents.length < 32) window.__pdfDragEvents.push({ type, buttons: event.buttons,
+        trusted: event.isTrusted, x: event.clientX, y: event.clientY, target: `${target.nodeName}.${target.className || ''}` });
+    }, { capture: true, signal: window.__pdfDragAbort.signal });
     return { start: Math.floor(r.left), end: Math.ceil(r.right), y: Math.round((r.top + r.bottom) / 2) };
   });
-  main.focus();
+  await focusWindow();
   main.webContents.sendInputEvent({ type: 'mouseMove', x: bounds.start, y: bounds.y });
   main.webContents.sendInputEvent({ type: 'mouseDown', button: 'left', clickCount: 1, x: bounds.start, y: bounds.y });
   for (let step = 1; step <= 12; step++) {
@@ -138,10 +158,16 @@ async function dragFirstPage() {
     await evaluate(() => new Promise(resolve => requestAnimationFrame(resolve)));
   }
   main.webContents.sendInputEvent({ type: 'mouseUp', button: 'left', clickCount: 1, x: bounds.end, y: bounds.y });
-  return evaluate(() => document.querySelector('[data-workspace-pdf-preview]').shadowRoot.getSelection().toString());
+  const result = await evaluate(() => {
+    window.__pdfDragAbort.abort();
+    return { text: document.querySelector('[data-workspace-pdf-preview]').shadowRoot.getSelection().toString(), events: window.__pdfDragEvents };
+  });
+  selectionInput = { bounds, events: result.events };
+  return result.text;
 }
 async function quoteSelection() {
   await waitFor(() => document.querySelector('.pdf-selection-action-menu'));
+  await focusWindow();
   const point = await evaluate(() => { const r = document.querySelector('.pdf-selection-action-menu button').getBoundingClientRect(); return { x: Math.round((r.left + r.right) / 2), y: Math.round((r.top + r.bottom) / 2) }; });
   main.webContents.sendInputEvent({ type: 'mouseMove', ...point });
   main.webContents.sendInputEvent({ type: 'mouseDown', button: 'left', clickCount: 1, ...point });
@@ -157,7 +183,7 @@ function writeEvidence(passed) {
   fs.writeFileSync(path.join(output, 'results.json'), JSON.stringify({ passed, phase, checks, errors, screenshots,
     boundary: 'Production Electron main/preload/renderer and Go core with a local synthetic provider and disposable related-session history. The initial PDF selection uses native mouse drag and Quote clicks; later ranges are programmatically established in the rendered text layer. PNGs are review evidence, not user visual acceptance.',
     core: process.env.WUU_DESKTOP_CORE, sourceCommit: process.env.WUU_DOCUMENT_COMMIT || null,
-    originalSHA, requests: requests.length }, null, 2));
+    originalSHA, requests: requests.length, selectionInput, selectionDiagnostics }, null, 2));
   fs.writeFileSync(path.join(output, 'provider-requests.json'), JSON.stringify(requests, null, 2));
 }
 const timeout = setTimeout(() => { errors.push('Timed out'); writeEvidence(false); app.exit(1); }, 180000);
@@ -415,6 +441,29 @@ db.commit()
 
 async function fail(error) {
   errors.push(error.stack || String(error));
+  if (main && !main.isDestroyed()) { try {
+    selectionDiagnostics = await evaluate(() => {
+      const host = document.querySelector('[data-workspace-pdf-preview]'), root = host?.shadowRoot;
+      const span = root?.querySelector('.page[data-page-number="1"] .textLayer span');
+      if (!span) return { hostPresent: Boolean(host) };
+      const bounds = span.getBoundingClientRect();
+      const describe = node => node ? `${node.nodeName}.${node.className || ''}` : null;
+      const summarize = selection => ({ text: selection?.toString(), count: selection?.rangeCount, collapsed: selection?.isCollapsed,
+        anchor: describe(selection?.anchorNode), focus: describe(selection?.focusNode),
+        rangeText: selection?.rangeCount ? selection.getRangeAt(0).toString() : null });
+      const ancestors = [];
+      for (let node = span; node instanceof Element; node = node.parentElement || node.getRootNode().host) {
+        const style = getComputedStyle(node);
+        ancestors.push({ node: describe(node), display: style.display, visibility: style.visibility,
+          userSelect: style.userSelect, pointerEvents: style.pointerEvents, inert: node.inert, hidden: node.hidden });
+      }
+      return { documentFocused: document.hasFocus(), bounds: bounds.toJSON(), ancestors, shadowSelection: summarize(root.getSelection()),
+        windowSelection: summarize(window.getSelection()), textLayer: span.parentElement.outerHTML.slice(0, 3000),
+        hit: describe(root.elementFromPoint((bounds.left + bounds.right) / 2, (bounds.top + bounds.bottom) / 2)) };
+    });
+    selectionDiagnostics.windowFocused = main.isFocused();
+    selectionDiagnostics.webContentsFocused = main.webContents.isFocused();
+  } catch {} }
   if (main && !main.isDestroyed()) { try { await capture('failure'); } catch {} }
   writeEvidence(false); clearTimeout(timeout); server.close(); console.error(error); app.exit(1);
 }
