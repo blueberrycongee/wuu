@@ -66,6 +66,8 @@ let heldControlThread: string | undefined;
 const heldControls: { activity: ActivitySession; method: string }[] = [];
 const aWaiting = deferred();
 let heldA: ServerResponse | undefined;
+const dWaiting = deferred();
+let heldD: ServerResponse | undefined;
 let baseURL = "";
 let serial = 0;
 
@@ -107,7 +109,9 @@ const server = createServer((req, res) => {
         const tabID = /"tab_id":"([^"]+)"/.exec(text)?.[1];
         if (!tabID) { res.writeHead(500).end(`Missing navigate tab: ${text}`); return; }
         providerTabs.set(marker, tabID);
-        respond(res, { action: "observe", tab_id: tabID }); return;
+        heldD = res;
+        dWaiting.resolve();
+        return;
       }
       if (step === 2) {
         const nodeID = /\[(\d+)\][^\n]*Target/.exec(text)?.[1];
@@ -312,10 +316,19 @@ app.whenReady().then(async () => {
   geometryGate = dGate;
   const d = await start("OWNERSHIP_D");
   cancellations.set(d, deferred());
-  await bounded("D's real Go click waits on geometry", dGate.entered.promise);
+  await bounded("D navigates before its next model action", dWaiting.promise);
   const dTab = String(opened("OWNERSHIP_D")?.tab_id ?? "");
   const dView = await readTab(dTab);
   assert(dView, "D's live page exists");
+  // This case tests cancellation of a visible page's real Go command. Mount
+  // the page before observe requests its preview, so Chromium has a surface.
+  host.reportBounds(workdir, dTab, main as unknown as BrowserHostWindowHandle, { x: 0, y: 0, width: 800, height: 600 }, 1, true);
+  await dView.webContents.executeJavaScript("new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))");
+  respond(heldD!, { action: "observe", tab_id: dTab });
+  await bounded("D's real Go click waits on geometry", Promise.race([
+    dGate.entered.promise,
+    completed.get(d)!.promise.then(() => { throw new Error("D completed before click geometry; inspect its tool results and provider requests"); }),
+  ]));
   const dCall = calls.find(call => call.method === "browser/cdp" && call.params.thread_id === d && call.params.method === "click");
   assert(dCall?.params.request_id, "Real Go click carries cancellation identity");
   await pool.request("turn/interrupt", { thread_id: d });
@@ -380,7 +393,7 @@ app.whenReady().then(async () => {
   console.log(`PASS: browser task ownership and takeover; evidence ${output}`);
   app.exit(0);
 }).catch(async error => {
-  writeFileSync(join(output, "failure.json"), JSON.stringify({ error: String(error), checks, calls, events }, null, 2));
+  writeFileSync(join(output, "failure.json"), JSON.stringify({ error: String(error), checks, calls, providerRequests, events }, null, 2));
   console.error(error);
   await pool?.shutdown().catch(() => undefined);
   host?.destroyAll();
