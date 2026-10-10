@@ -67,7 +67,7 @@ struct ProcessGroupDetails: View {
                 LazyVStack(alignment: .leading, spacing: 16) {
                     ForEach(segments, id: \.first?.id) { segment in
                         if segment[0].tool != nil {
-                            ToolGroupView(messages: segment, settings: settings,
+                            ToolGroupView(model: model, messages: segment, settings: settings,
                                           active: active && segment.last?.id == messages.last?.id)
                         } else if !segment[0].text.isEmpty {
                             MessageText(text: segment[0].text, markdown: segment[0].role == "assistant")

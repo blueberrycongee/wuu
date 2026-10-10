@@ -4,6 +4,7 @@ import WuuCore
 /// One compact line per run of tool calls. The shared desktop rules still produce every
 /// sentence; the phone shows the current step or a count and keeps the full account in a sheet.
 struct ToolGroupView: View {
+    let model: AppModel
     let messages: [ChatMessage]
     let settings: ThreadSettings?
     let active: Bool
@@ -64,7 +65,7 @@ struct ToolGroupView: View {
         .accessibilityHint("显示操作详情")
         .accessibilityIdentifier("tool-group")
         .sheet(isPresented: $details) {
-            ToolGroupDetails(tools: tools, summary: summary?.text, active: active)
+            ToolGroupDetails(model: model, messages: messages, summary: summary?.text, active: active)
                 .presentationDetents([.medium, .large])
         }
         .onAppear { refresh() }
@@ -90,11 +91,16 @@ struct ToolGroupView: View {
 
 /// Every operation in the group as one shared-rule line each, with its error when it failed.
 struct ToolGroupDetails: View {
-    let tools: [ToolActivity]
+    let model: AppModel
+    let messages: [ChatMessage]
+    private var toolMessages: [ChatMessage] { messages.filter { $0.tool != nil } }
+    private var tools: [ToolActivity] { toolMessages.compactMap(\.tool) }
     let summary: String?
     let active: Bool
     @Environment(\.dismiss) private var dismiss
     @State private var lines: [String] = []
+    // Present above this inspector, leaving its place intact when the image closes.
+    @State private var preview: LoadedAttachment?
     var body: some View {
         NavigationStack {
             List {
@@ -102,23 +108,32 @@ struct ToolGroupDetails: View {
                     Section { Text(summary).foregroundStyle(.secondary).textSelection(.enabled) }
                 }
                 Section {
-                    ForEach(Array(tools.enumerated()), id: \.offset) { index, tool in
-                        HStack(alignment: .firstTextBaseline, spacing: 10) {
-                            symbol(tool.status).font(.system(size: 13)).frame(width: 18).accessibilityHidden(true)
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(lines.indices.contains(index) && !lines[index].isEmpty ? lines[index] : tool.name)
-                                    .lineLimit(3).truncationMode(.middle)
-                                if tool.status == "failed" && !tool.error.isEmpty {
-                                    Text(tool.error).font(.footnote).foregroundStyle(.red)
-                                        .lineLimit(4).textSelection(.enabled)
+                    ForEach(Array(toolMessages.enumerated()), id: \.element.id) { index, message in
+                        if let tool = message.tool {
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                                    symbol(tool.status).font(.system(size: 13)).frame(width: 18).accessibilityHidden(true)
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text(lines.indices.contains(index) && !lines[index].isEmpty ? lines[index] : tool.name)
+                                            .lineLimit(3).truncationMode(.middle)
+                                        if tool.status == "failed" && !tool.error.isEmpty {
+                                            Text(tool.error).font(.footnote).foregroundStyle(.red)
+                                                .lineLimit(4).textSelection(.enabled)
+                                        }
+                                    }
+                                }
+                                .accessibilityElement(children: .combine)
+                                .accessibilityValue(tool.statusLabel)
+                                if message.attachments.contains(where: message.isInspectionImage) {
+                                    MessageAttachments(model: model, messages: [message], inspectionOnly: true, preview: $preview)
+                                        .buttonStyle(.plain)
                                 }
                             }
                         }
-                        .accessibilityElement(children: .combine)
-                        .accessibilityValue(tool.statusLabel)
                     }
                 }
             }
+            .sheet(item: $preview) { attachment in AttachmentPreview(attachment: attachment) }
             .navigationTitle(active ? "正在执行" : "\(tools.count) 项操作").navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { dismiss() } } }
             .task(id: tools.map(\.presentation)) {

@@ -716,19 +716,19 @@ private struct PairedLocation: Codable {
         guard epoch == stamp, opening == selected else { throw CancellationError() }
         return result
     }
-    func previewAttachment(_ message: ChatMessage, index: Int) async throws {
+    func loadAttachmentPreview(_ message: ChatMessage, index: Int) async throws -> LoadedAttachment? {
         #if DEBUG
-        if NativeUIFixture.enabled { attachmentPreview = try await fixtureAttachment(message, index: index); return }
+        if NativeUIFixture.enabled { return try await fixtureAttachment(message, index: index) }
         #endif
         guard connected, let remote, let live, !loadingAttachment, message.attachments.indices.contains(index),
-              live.messages.contains(where: { $0 == message }) else { return }
+              live.messages.contains(where: { $0 == message }) else { return nil }
         let stamp = epoch, selection = opening
         loadingAttachment = true
         defer { if epoch == stamp, opening == selection { loadingAttachment = false } }
         let result = try await remote.readAttachment(message.attachments[index], threadID: live.id, messageID: message.id)
         guard epoch == stamp, opening == selection, self.remote === remote,
-              self.live?.messages.contains(where: { $0 == message }) == true else { return }
-        attachmentPreview = result
+              self.live?.messages.contains(where: { $0 == message }) == true else { return nil }
+        return result
     }
     #if DEBUG
     private func fixtureAttachment(_ message: ChatMessage, index: Int) async throws -> LoadedAttachment {

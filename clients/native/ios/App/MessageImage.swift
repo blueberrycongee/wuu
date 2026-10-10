@@ -93,15 +93,21 @@ struct MessageAttachments: View {
     let model: AppModel
     let messages: [ChatMessage]
     var own = false
+    let inspectionOnly: Bool
+    @Binding private var preview: LoadedAttachment?
     init(model: AppModel, message: ChatMessage) {
-        self.model = model; messages = [message]; own = message.role == "user"
+        self.init(model: model, messages: [message])
+        own = message.role == "user"
     }
-    init(model: AppModel, messages: [ChatMessage]) {
-        self.model = model; self.messages = messages
+    init(model: AppModel, messages: [ChatMessage], inspectionOnly: Bool = false, preview: Binding<LoadedAttachment?>? = nil) {
+        self.model = model; self.messages = messages; self.inspectionOnly = inspectionOnly
+        _preview = preview ?? Binding(get: { model.attachmentPreview }, set: { model.attachmentPreview = $0 })
     }
     private var tiles: [AttachmentTile] {
         messages.flatMap { message in
-            message.attachments.enumerated().map { AttachmentTile(message: message, index: $0.offset, value: $0.element) }
+            // Filter after enumeration so reads keep the host attachment address.
+            message.attachments.enumerated().filter { message.isInspectionImage($0.element) == inspectionOnly }
+                .map { AttachmentTile(message: message, index: $0.offset, value: $0.element) }
         }
     }
     var body: some View {
@@ -122,7 +128,9 @@ struct MessageAttachments: View {
         }
     }
     private func open(_ tile: AttachmentTile) {
-        model.perform { try await model.previewAttachment(tile.message, index: tile.index) }
+        model.perform {
+            if let attachment = try await model.loadAttachmentPreview(tile.message, index: tile.index) { preview = attachment }
+        }
     }
 }
 

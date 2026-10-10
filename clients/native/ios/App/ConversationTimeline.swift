@@ -98,7 +98,7 @@ struct ConversationTimeline: View {
                     inspectedProcess = ActivityInspection(id: row.messages[0].id, messages: row.messages)
                 }
             } else if row.isToolGroup {
-                ToolGroupView(messages: row.messages, settings: model.live?.settings,
+                ToolGroupView(model: model, messages: row.messages, settings: model.live?.settings,
                     active: model.live?.running == true && row.messages.last?.id == model.messages.last?.id) { summary in
                     inspectedProcess = ActivityInspection(id: row.id, messages: row.messages, toolsOnly: true, summary: summary)
                 }
@@ -107,8 +107,8 @@ struct ConversationTimeline: View {
                     // Compact-height menus sit beside the preview; avoid UIKit resizing its container.
                     menuPreviewWidth: min(width - 2 * inset, verticalSizeClass == .compact ? 250 : 360))
             }
-            // Folded rows keep their images visible, in order, in one grid.
-            if row.isProcessGroup || row.isToolGroup, row.messages.contains(where: { !$0.attachments.isEmpty }) {
+            // Published artifacts stay in the timeline; inspection images belong to the folded details.
+            if row.isProcessGroup || row.isToolGroup, row.messages.contains(where: \.hasInlineAttachments) {
                 MessageAttachments(model: model, messages: row.messages)
             }
         }.id(row.id).background { TimelineRowAnchor(id: row.id, state: scrollState) }
@@ -225,8 +225,8 @@ private struct ReplyActions: View {
         }
         .disabled(model.historyActionBusy)
         .foregroundStyle(.secondary)
-        // Glyphs line up with the message edge and sit close to it; targets keep 44pt.
-        .padding(.leading, -15)
+        // Align glyphs with the message edge; compact horizontal targets retain 44pt height.
+        .padding(.leading, -9)
         .padding(.vertical, -6)
         .onDisappear { reset?.cancel() }
     }
@@ -235,7 +235,7 @@ private struct ReplyActions: View {
             Image(artwork).renderingMode(.template).resizable()
                 .frame(width: 14, height: 14)
                 .contentTransition(reduceMotion ? .identity : .opacity)
-                .frame(width: 44, height: 44).contentShape(Rectangle())
+                .frame(width: 32, height: 44).contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityLabel(label)
@@ -272,7 +272,7 @@ private struct ActivityInspectionSheet: View {
         let messages = row?.messages ?? inspection.messages
         let active = row?.messages.contains { $0.turnActive } ?? false
         if inspection.toolsOnly {
-            ToolGroupDetails(tools: messages.compactMap(\.tool), summary: inspection.summary, active: active)
+            ToolGroupDetails(model: model, messages: messages, summary: inspection.summary, active: active)
         } else {
             ProcessGroupDetails(model: model, messages: messages, settings: model.live?.settings, active: active)
         }

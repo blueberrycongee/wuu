@@ -13,6 +13,12 @@ public struct ChatMessage: Identifiable, Sendable, Equatable {
     public var itemID: String
     public var isProcess: Bool
     public var turnActive: Bool
+    /// Match desktop: explicit artifact placement publishes an image; ordinary tool images stay in the process.
+    public func isInspectionImage(_ attachment: JSONValue) -> Bool {
+        tool != nil && attachment["media_type"].string?.hasPrefix("image/") == true &&
+            (attachment["artifact"]["placement"].string ?? "").isEmpty
+    }
+    public var hasInlineAttachments: Bool { attachments.contains { !isInspectionImage($0) } }
     public init(id: String, role: String, text: String, contentRef: String = "", attachments: [JSONValue] = [], tool: ToolActivity? = nil, sourceSessionID: String = "", sourceSessionName: String = "", turnID: String = "", itemID: String = "", isProcess: Bool = false, turnActive: Bool = false) {
         self.id = id; self.role = role; self.text = text; self.contentRef = contentRef; self.attachments = attachments
         self.tool = tool
@@ -117,7 +123,8 @@ public struct ChatThread: Identifiable, Sendable {
                     text: item["text"].string ?? item["error"].string ?? "", contentRef: item["remote_content_ref"].string ?? "",
                     attachments: item["images"].array + item["files"].array + item["markdown_images"].array +
                         item["result_detail"]["content"].array.filter { $0["type"].string == "image" }.map { part in
-                            ["media_type": part["mime_type"], "data": part["data"], "remote_ref": part["remote_ref"]]
+                            ["media_type": part["mime_type"], "data": part["data"], "remote_ref": part["remote_ref"],
+                             "artifact": part["artifact"]]
                         },
                     tool: type == "tool_call" ? ToolActivity(item, turnStatus: turn["status"].string ?? "") : nil,
                     sourceSessionID: sessionMessage ? item["related_session_id"].string ?? "" : "",

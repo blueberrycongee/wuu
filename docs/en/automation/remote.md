@@ -31,7 +31,9 @@ Tap a preview to read it in full, remove it, or steer the current reply. Pending
 steering can be moved back to the queue. Once the computer starts processing a
 message, it leaves the queue. Scroll up to load older messages automatically;
 tap an operation summary to see its details. When the final answer arrives, preceding
-process text and tools fold into a summary; image previews remain visible.
+process text and tools fold into a summary. Images read or inspected by tools stay
+inside the operation details and load when opened; explicitly presented images
+remain visible in the conversation.
 
 Long-press your message bubble or attachments to copy, edit, select text, or
 share. Replies show copy and fork buttons after their turn finishes.
