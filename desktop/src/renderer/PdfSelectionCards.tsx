@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { FloatingMenuPortal } from "./ComposerFloatingMenu";
-import { RefinedQuoteExcerpt, useQuoteCardPreview } from "./ComposerQuoteCardRefined";
+import { PdfQuoteExcerpt, usePdfQuotePreview } from "./PdfQuoteCard";
 import type { FileSelectionCardsProps, FileSelectionPart } from "./FileSelectionCards";
 import { usePdfSelectionNavigation } from "./FileSelectionContext";
 import { readFileSelectionNavigation } from "./FileSelectionNavigation";
@@ -9,10 +9,10 @@ import { fileSelectionLocation } from "./PdfSelection";
 import { Tooltip } from "./Tooltip";
 import { CornerUpLeft, FileText, MessageSquare, Pencil, Quote, X } from "./WuuIcons";
 
-/** The alternative changes presentation only; saved sources are never rewritten. */
-export function SentFileSelectionCardsRefined({ parts, onRemove, onEdit, onOpenFile }: FileSelectionCardsProps): JSX.Element | null {
+/** PDF attachment groups retain their captured, immutable sources. */
+export function PdfSelectionCards({ parts, onRemove, onEdit, onOpenFile }: FileSelectionCardsProps): JSX.Element | null {
   if (parts.length === 0) return null;
-  return <div className="quote-refined-groups">
+  return <div className="pdf-quote-groups">
     <SelectionGroup parts={parts.filter(part => part.intent === "quote")} onRemove={onRemove} onOpenFile={onOpenFile} />
     <SelectionGroup parts={parts.filter(part => part.intent !== "quote")} onRemove={onRemove} onEdit={onEdit} onOpenFile={onOpenFile} />
   </div>;
@@ -22,7 +22,7 @@ function SelectionGroup({ parts, onRemove, onEdit, onOpenFile }: FileSelectionCa
   const { locale, t } = useI18n();
   const openPdf = usePdfSelectionNavigation();
   const [editing, setEditing] = useState<{ id: string; comment: string } | null>(null);
-  const preview = useQuoteCardPreview(() => setEditing(null));
+  const preview = usePdfQuotePreview(() => setEditing(null));
   const [locationNotices, setLocationNotices] = useState<Record<string, "changed" | "unavailable" | "original" | undefined>>({});
   const [opening, setOpening] = useState<string | null>(null);
   const allQuotes = parts.every(part => part.intent === "quote");
@@ -53,10 +53,10 @@ function SelectionGroup({ parts, onRemove, onEdit, onOpenFile }: FileSelectionCa
   function close(): void { preview.close(true); setEditing(null); }
 
   if (parts.length === 0) return null;
-  return <div className="quote-refined-group" data-wuu-component="sent-quote-card" data-wuu-variant="refined">
+  return <div className="pdf-quote-group" data-wuu-component="sent-quote-card" data-wuu-variant="pdf">
     <div ref={preview.anchorRef} onPointerEnter={event => preview.revealOnPointer(event.pointerType)}
       onPointerLeave={preview.leave} onBlur={event => preview.blur(event.relatedTarget)}>
-      <button ref={preview.triggerRef} type="button" className="quote-refined-pill"
+      <button ref={preview.triggerRef} type="button" className="pdf-quote-pill"
         aria-expanded={preview.open} aria-controls={preview.open ? preview.panelId : undefined} aria-haspopup="dialog"
         onFocus={preview.revealOnFocus} onClick={preview.activate}
         onKeyDown={event => {
@@ -69,7 +69,7 @@ function SelectionGroup({ parts, onRemove, onEdit, onOpenFile }: FileSelectionCa
       placement="above" align="left" width={360} offset={4} flip
       boundarySelector=".composer-frame, .composer-frame-shell, .composer-stack, .conversation-pane, .side-thread-panel, .workspace-file-layout"
       mobileSheet={{ label, onClose: close }}>
-      <div ref={preview.panelRef} id={preview.panelId} className="quote-refined-preview"
+      <div ref={preview.panelRef} id={preview.panelId} className="pdf-quote-preview"
         data-wuu-component="sent-quote-preview" role="dialog" tabIndex={-1} aria-label={label}
         onPointerEnter={preview.retain} onPointerLeave={preview.leave} onFocus={preview.retain}
         onBlur={event => preview.blur(event.relatedTarget)} onKeyDown={event => event.stopPropagation()}>
@@ -81,41 +81,41 @@ function SelectionGroup({ parts, onRemove, onEdit, onOpenFile }: FileSelectionCa
           const sourceLabel = `${source.path} · ${location}`;
           const notice = locationNotices[part.id];
           const sourceContent = <><FileText aria-hidden="true" /><span>{filename}</span>
-            <span className="quote-refined-location">{location}</span>{canOpen ? <CornerUpLeft aria-hidden="true" /> : null}</>;
-          return <section key={part.id} className="quote-refined-entry" data-selection-id={part.id}>
-            <div className="quote-refined-entry-heading">
-              {canOpen ? <Tooltip content={source.path}><button type="button" className="quote-refined-source-link"
+            <span className="pdf-quote-location">{location}</span>{canOpen ? <CornerUpLeft aria-hidden="true" /> : null}</>;
+          return <section key={part.id} className="pdf-quote-entry" data-selection-id={part.id}>
+            <div className="pdf-quote-entry-heading">
+              {canOpen ? <Tooltip content={source.path}><button type="button" className="pdf-quote-source-link"
                 aria-label={`${t("responseSelection.source")}: ${sourceLabel}`} disabled={opening !== null}
                 onClick={() => void openSource(part)}>{sourceContent}</button></Tooltip>
-                : <span className="quote-refined-source-link">{sourceContent}</span>}
-              {onEdit ? <button type="button" className="quote-refined-icon-action" aria-label={`${t("common.edit")} ${sourceLabel}`}
+                : <span className="pdf-quote-source-link">{sourceContent}</span>}
+              {onEdit ? <button type="button" className="pdf-quote-icon-action" aria-label={`${t("common.edit")} ${sourceLabel}`}
                 onClick={() => setEditing({ id: part.id, comment: part.comment ?? "" })}><Pencil aria-hidden="true" /></button> : null}
-              {onRemove ? <button type="button" className="quote-refined-icon-action" aria-label={`${t("common.remove")} ${sourceLabel}`}
+              {onRemove ? <button type="button" className="pdf-quote-icon-action" aria-label={`${t("common.remove")} ${sourceLabel}`}
                 onClick={() => onRemove(part.id)}><X aria-hidden="true" /></button> : null}
             </div>
-            {allQuotes ? <RefinedQuoteExcerpt text={source.quote} /> : <>
-              {editing?.id === part.id && onEdit ? <div className="quote-refined-editor">
-                <textarea autoFocus className="quote-refined-comment-input" wrap="soft" value={editing.comment}
+            {allQuotes ? <PdfQuoteExcerpt text={source.quote} /> : <>
+              {editing?.id === part.id && onEdit ? <div className="pdf-quote-editor">
+                <textarea autoFocus className="pdf-quote-comment-input" wrap="soft" value={editing.comment}
                   aria-label={locale === "zh-CN" ? "评论" : "Comment"}
                   onChange={event => setEditing({ id: part.id, comment: event.target.value })} />
-                <div className="quote-refined-editor-actions">
+                <div className="pdf-quote-editor-actions">
                   <button type="button" onClick={() => setEditing(null)}>{t("common.cancel")}</button>
                   <button type="button" onClick={() => { onEdit(part, editing.comment); setEditing(null); }}>{t("common.save")}</button>
                 </div>
-              </div> : part.comment ? <p className="quote-refined-comment">{part.comment}</p> : null}
-              <details className="quote-refined-original">
+              </div> : part.comment ? <p className="pdf-quote-comment">{part.comment}</p> : null}
+              <details className="pdf-quote-original">
                 <summary>{locale === "zh-CN" ? "原文" : "Original"}</summary>
-                <RefinedQuoteExcerpt text={source.quote} />
+                <PdfQuoteExcerpt text={source.quote} />
               </details>
             </>}
-            {notice ? <p className="quote-refined-notice" role="status">
+            {notice ? <p className="pdf-quote-notice" role="status">
               {t(notice === "original" ? "selectionChip.pdfOriginalConversation"
                 : notice === "changed" ? "selectionChip.locationChanged" : "selectionChip.locationUnavailable")}
             </p> : null}
           </section>;
         })}
-        {onRemove && parts.length > 1 ? <div className="quote-refined-footer">
-          <button type="button" className="quote-refined-remove-action"
+        {onRemove && parts.length > 1 ? <div className="pdf-quote-footer">
+          <button type="button" className="pdf-quote-remove-action"
             onClick={() => { preview.close(); onRemove(parts.map(part => part.id)); }}>{t("responseSelection.remove")}</button>
         </div> : null}
       </div>
@@ -123,4 +123,3 @@ function SelectionGroup({ parts, onRemove, onEdit, onOpenFile }: FileSelectionCa
   </div>;
 }
 
-export { SentFileSelectionCardsRefined as FileSelectionCards };

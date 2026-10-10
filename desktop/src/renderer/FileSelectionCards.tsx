@@ -6,6 +6,7 @@ import type { MessageContentPart } from "../shared/protocol";
 import { FloatingMenuPortal } from "./ComposerFloatingMenu";
 import { readFileSelectionNavigation } from "./FileSelectionNavigation";
 import { useI18n } from "./i18n";
+import { PdfSelectionCards } from "./PdfSelectionCards";
 import "./FileSelectionCards.css";
 
 export type FileSelectionPart = Extract<MessageContentPart, { type: "file_selection" }>;
@@ -20,9 +21,12 @@ export type FileSelectionCardsProps = {
 /** Shared attachment group for composer drafts and immutable message history. */
 export function FileSelectionCards({ parts, onRemove, onEdit, onOpenFile }: FileSelectionCardsProps): JSX.Element | null {
   if (parts.length === 0) return null;
+  const pdfParts = parts.filter(part => part.source.pdf);
+  const textParts = parts.filter(part => !part.source.pdf);
   return <div className="file-selection-groups">
-    <FileSelectionCardGroup parts={parts.filter((part) => part.intent === "quote")} onRemove={onRemove} onOpenFile={onOpenFile} />
-    <FileSelectionCardGroup parts={parts.filter((part) => part.intent !== "quote")} onRemove={onRemove} onEdit={onEdit} onOpenFile={onOpenFile} />
+    <PdfSelectionCards parts={pdfParts} onRemove={onRemove} onEdit={onEdit} onOpenFile={onOpenFile} />
+    <FileSelectionCardGroup parts={textParts.filter((part) => part.intent === "quote")} onRemove={onRemove} onOpenFile={onOpenFile} />
+    <FileSelectionCardGroup parts={textParts.filter((part) => part.intent !== "quote")} onRemove={onRemove} onEdit={onEdit} onOpenFile={onOpenFile} />
   </div>;
 }
 

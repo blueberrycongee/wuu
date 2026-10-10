@@ -8,14 +8,13 @@ module.exports = async function annotationJourney({
   main, output, evaluate, waitFor, focusWindow, nativeText, dragFirstPage,
   capture, snapshot, fittedPdf, firstQuote, originalSHA, checks,
 }) {
-  const directory = path.join(output, 'annotation-comparison');
+  const directory = path.join(output, 'annotation-acceptance');
   fs.mkdirSync(directory, { recursive: true });
   const matrix = [];
   const recordings = [];
   let recordingActive = false;
-  const variantName = process.env.WUU_ANNOTATION_VARIANT || 'current-style';
   const checkpoint = async (name, state) => {
-    await capture(`annotation-comparison/${name}-${state}`);
+    await capture(`annotation-acceptance/${name}-${state}`);
     if (recordingActive) await new Promise(resolve => setTimeout(resolve, 420));
     return evaluate(() => {
       const geometry = (selector) => {
@@ -26,7 +25,7 @@ module.exports = async function annotationJourney({
       };
       return { viewport: { width: innerWidth, height: innerHeight },
         menu: geometry('.pdf-selection-action-menu'),
-        comment: geometry('.selection-action-comment-input, .selection-comment-refined__input'),
+        comment: geometry('.pdf-selection-comment__input'),
         card: geometry('.composer-file-selection-card'),
         preview: geometry('.composer-file-selection-card-popover'),
         composer: geometry('.workspace-document-composer'),
@@ -102,9 +101,10 @@ module.exports = async function annotationJourney({
     };
   };
   const write = () => fs.writeFileSync(path.join(directory, 'manifest.json'), JSON.stringify({
-    variant: variantName, sourceCommit: process.env.WUU_DOCUMENT_COMMIT || null,
-    originalReferenceCommit: 'bc7e20a2fee14f578cb06ba2615e61080af73856', originalSHA,
-    boundary: 'Full Wuu Electron main/preload/renderer and Go core; local synthetic provider, disposable profile. Current-style and refined are separate development builds with the same behavior and input data. Screenshots are real rendered app evidence; they are not user acceptance.',
+    presentation: 'production', sourceCommit: process.env.WUU_DOCUMENT_COMMIT || null,
+    sourceHeadCommit: process.env.WUU_DOCUMENT_HEAD_COMMIT || null,
+    originalSHA,
+    boundary: 'Full Wuu Electron main/preload/renderer and Go core; local synthetic provider, disposable profile. The production electron.vite.config.ts output is used without import substitutions or a presentation switch. Screenshots are real rendered app evidence; they are not user acceptance.',
     matrix, recordings: recordings.map(({ frames, ...recording }) => ({ ...recording, frameCount: frames.length })),
   }, null, 2));
 
@@ -136,10 +136,10 @@ module.exports = async function annotationJourney({
             await waitFor(() => document.querySelector('.pdf-selection-action-menu'));
             variant.states.selection = await checkpoint(name, '02-selection');
             assertVisible(variant.states.selection.menu, variant.states.selection.viewport, `${name} menu`);
-            await nativeClick('.pdf-selection-action-menu .selection-action-comment-toggle, .pdf-selection-action-menu .selection-action-refined__comment-toggle');
+            await nativeClick('.pdf-selection-action-menu .pdf-selection-menu__comment-toggle');
             await waitFor(() => document.activeElement?.matches('.pdf-selection-action-menu textarea'));
             variant.states.commentFocus = await checkpoint(name, '03-comment-focus');
-            if (variantName === 'refined') {
+            {
               variant.focusedSourceHighlight = await sourceHighlights();
               assert.equal(variant.focusedSourceHighlight.length, 1, `${name}: focused comment keeps one source highlight`);
               assert.deepEqual(variant.focusedSourceHighlight[0].quotes, [firstQuote], `${name}: source highlight retains the exact captured quote`);
@@ -160,7 +160,7 @@ module.exports = async function annotationJourney({
               `${name}: composing keys preserve the comment`);
             escape();
             await waitFor(() => !document.querySelector('.pdf-selection-action-menu textarea'));
-            await nativeClick('.pdf-selection-action-menu .selection-action-comment-toggle, .pdf-selection-action-menu .selection-action-refined__comment-toggle');
+            await nativeClick('.pdf-selection-action-menu .pdf-selection-menu__comment-toggle');
             await waitFor(() => document.activeElement?.matches('.pdf-selection-action-menu textarea'));
             assert.equal(await evaluate(() => document.activeElement.value), comment,
               `${name}: Escape collapse and reopen retain the draft`);
@@ -182,21 +182,21 @@ module.exports = async function annotationJourney({
             assertVisible(variant.states.comment.menu, variant.states.comment.viewport, `${name} comment`);
             assert.ok(variant.states.comment.menu.rect.bottom <= variant.states.comment.composer.rect.top + 1,
               `${name}: comment stays clear of the bottom composer`);
-            await nativeClick('.selection-action-comment-submit, .selection-comment-refined__submit');
+            await nativeClick('.pdf-selection-comment__submit');
             await waitFor(() => !document.querySelector('.pdf-selection-action-menu')
               && document.querySelector('.composer-file-selection-card'));
             assert.equal((await snapshot()).turns.length, before, `${name}: comment remains unsent`);
-            if (variantName === 'refined') await assertHighlightCleared(name);
+            await assertHighlightCleared(name);
             variant.states.draft = await checkpoint(name, '05-draft');
-            await nativeClick('.composer-file-selection-card .composer-document-card-main, .composer-file-selection-card .quote-refined-tile-main');
+            await nativeClick('.composer-file-selection-card .pdf-quote-tile-main');
             await waitFor(() => document.querySelector('.composer-file-selection-card-popover blockquote'));
             variant.states.expanded = await checkpoint(name, '06-expanded');
             assertVisible(variant.states.expanded.preview, variant.states.expanded.viewport, `${name} quote preview`);
             assert.equal(await evaluate(() => document.querySelector('.composer-file-selection-card-popover blockquote').textContent), firstQuote);
-            assert.equal(await evaluate(() => document.querySelector('.composer-response-selection-comment, .quote-refined-comment-input').value), comment);
+            assert.equal(await evaluate(() => document.querySelector('.pdf-quote-comment-input').value), comment);
             if (record) {
               const points = await evaluate(() => {
-                document.querySelector('.composer-response-selection-comment, .quote-refined-comment-input').focus();
+                document.querySelector('.pdf-quote-comment-input').focus();
                 const quote = document.querySelector('.composer-file-selection-card-popover blockquote');
                 const node = document.createTreeWalker(quote, NodeFilter.SHOW_TEXT).nextNode();
                 const range = document.createRange();
@@ -222,23 +222,35 @@ module.exports = async function annotationJourney({
               const selectable = selected.trim().length > 5 && firstQuote.includes(selected.trim());
               variant.excerptSelection = { selected, selectable, userSelect: await evaluate(() =>
                 getComputedStyle(document.querySelector('.composer-file-selection-card-popover blockquote')).userSelect) };
-              // Current-style evidence records its existing copy limitation. The
-              // candidate must improve it without changing the saved quote.
-              if (variantName === 'refined') assert.ok(selectable, `${name}: quoted excerpt is selectable`);
+              assert.ok(selectable, `${name}: quoted excerpt is selectable`);
               variant.states.excerptSelected = await checkpoint(name, '06-excerpt-selected');
             }
-            await nativeClick('.composer-response-selection-source, .quote-refined-source-action');
+            await nativeClick('.pdf-quote-comment-input');
+            await evaluate(() => {
+              const input = document.querySelector('.pdf-quote-comment-input');
+              input.setSelectionRange(input.value.length, input.value.length);
+            });
+            comment += ' Recheck this saved quotation.';
+            await main.webContents.insertText(' Recheck this saved quotation.');
+            assert.equal(await evaluate(() => document.querySelector('.pdf-quote-comment-input').value), comment,
+              `${name}: editing the draft comment updates the controlled value`);
+            assert.equal(await evaluate(() => document.querySelector('.composer-file-selection-card-popover blockquote').textContent), firstQuote,
+              `${name}: editing a comment never mutates the quoted source`);
+            await nativeClick('.pdf-quote-source-action');
             await waitFor(() => !document.querySelector('.composer-file-selection-card-popover'));
             variant.states.sourceReturn = await checkpoint(name, '07-source-return');
             assert.equal(await evaluate(() => document.querySelector('[data-workspace-pdf-preview]').shadowRoot
               .querySelector('.page[data-page-number="1"] .textLayer span').textContent), firstQuote);
-            await nativeClick('.composer-file-selection-card .composer-document-card-main, .composer-file-selection-card .quote-refined-tile-main');
+            await nativeClick('.composer-file-selection-card .pdf-quote-tile-main');
             await waitFor(() => document.querySelector('.composer-file-selection-card-popover')?.contains(document.activeElement));
+            assert.equal(await evaluate(() => document.querySelector('.pdf-quote-comment-input').value), comment,
+              `${name}: source return and reopening retain the edited draft comment`);
+            variant.commentEdit = { retained: true, quoteUnchanged: true };
             escape();
             await waitFor(() => !document.querySelector('.composer-file-selection-card-popover'));
-            assert.equal(await evaluate(() => document.activeElement?.matches('.composer-file-selection-card .composer-document-card-main, .composer-file-selection-card .quote-refined-tile-main')), true,
+            assert.equal(await evaluate(() => document.activeElement?.matches('.composer-file-selection-card .pdf-quote-tile-main')), true,
               `${name}: Escape returns keyboard focus to the quote card`);
-            await nativeClick('.composer-file-selection-card .composer-attachment-card-remove, .composer-file-selection-card .quote-refined-tile-remove');
+            await nativeClick('.composer-file-selection-card .pdf-quote-tile-remove');
             await waitFor(() => !document.querySelector('.composer-file-selection-card'));
             assert.equal((await snapshot()).turns.length, before, `${name}: removing a draft reference does not send`);
             variant.states.removed = await checkpoint(name, '08-removed');
@@ -246,7 +258,7 @@ module.exports = async function annotationJourney({
             await waitFor(() => document.querySelector('.pdf-selection-action-menu'));
             await nativeClick('.pdf-selection-action-menu button[aria-label="Close"]');
             await waitFor(() => !document.querySelector('.pdf-selection-action-menu'));
-            if (variantName === 'refined') await assertHighlightCleared(`${name} cancellation`);
+            await assertHighlightCleared(`${name} cancellation`);
             variant.passed = true;
           } finally {
             if (stop) await stop();
@@ -255,7 +267,7 @@ module.exports = async function annotationJourney({
         }
       }
     }
-    checks.push('annotation A/B matrix: 8 matched viewports/themes/font sizes, native selection → comment → unsent draft → source return, removal and Escape focus');
+    checks.push('production annotation matrix: 8 viewports/themes/font sizes, native selection → comment → unsent draft → source return, removal and Escape focus');
   } finally {
     main.setSize(1380, 1000);
     await evaluate(() => {

@@ -1,7 +1,7 @@
 import { useId, useLayoutEffect, type RefObject } from "react";
 
 /** Keep the captured source readable when the annotation editor takes focus.
- * The build-only comparison adapter installs this hook in the PDF menu. */
+ * The captured range belongs to the current PDF menu and source owner. */
 export function usePdfSelectionHighlight(
   hostRef: RefObject<HTMLDivElement | null>,
   range: Range | undefined,

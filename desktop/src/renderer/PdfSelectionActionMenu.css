@@ -1,4 +1,4 @@
-.selection-action-refined {
+.pdf-selection-menu {
   position: fixed;
   z-index: 220;
   box-sizing: border-box;
@@ -15,14 +15,14 @@
   box-shadow: var(--menu-shadow);
 }
 
-.selection-action-refined__actions {
+.pdf-selection-menu__actions {
   display: flex;
   align-items: stretch;
   min-width: 0;
   max-width: 100%;
 }
 
-.selection-action-refined__actions > button {
+.pdf-selection-menu__actions > button {
   display: inline-flex;
   flex: 1 1 auto;
   align-items: center;
@@ -42,28 +42,28 @@
   transition: background-color var(--motion-fast) var(--ease-out);
 }
 
-.selection-action-refined__actions > button + button { border-inline-start: 1px solid var(--menu-border); }
-.selection-action-refined__actions > button:hover:not(:disabled) { background: var(--menu-hover); }
-.selection-action-refined__actions > button:disabled { color: var(--ink-muted); cursor: default; }
-html[data-focus-modality="keyboard"] .selection-action-refined__actions > button:focus-visible {
+.pdf-selection-menu__actions > button + button { border-inline-start: 1px solid var(--menu-border); }
+.pdf-selection-menu__actions > button:hover:not(:disabled) { background: var(--menu-hover); }
+.pdf-selection-menu__actions > button:disabled { color: var(--ink-muted); cursor: default; }
+html[data-focus-modality="keyboard"] .pdf-selection-menu__actions > button:focus-visible {
   position: relative;
   outline: 2px solid var(--focus-ring);
   outline-offset: -2px;
 }
 
-.selection-action-refined--commenting {
+.pdf-selection-menu--commenting {
   /* Scale the writing room with the user's UI type; the PDF adapter retains
    * its own viewport and document-composer collision bounds. */
   width: max(294px, calc(var(--font-ui) * 21));
   border-radius: 22px;
 }
 
-html[data-focus-modality="keyboard"] .selection-action-refined--commenting:has(.selection-comment-refined__input:focus-visible) {
+html[data-focus-modality="keyboard"] .pdf-selection-menu--commenting:has(.pdf-selection-comment__input:focus-visible) {
   outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
 
-.selection-action-refined__description {
+.pdf-selection-menu__description {
   position: absolute;
   width: 1px;
   height: 1px;
@@ -74,13 +74,13 @@ html[data-focus-modality="keyboard"] .selection-action-refined--commenting:has(.
 }
 
 @media (pointer: coarse) {
-  .selection-action-refined__actions > button { min-height: 44px; }
+  .pdf-selection-menu__actions > button { min-height: 44px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .selection-action-refined__actions > button { transition: none; }
+  .pdf-selection-menu__actions > button { transition: none; }
 }
 
 @container style(--motion-reduced: 1) {
-  .selection-action-refined__actions > button { transition: none; }
+  .pdf-selection-menu__actions > button { transition: none; }
 }

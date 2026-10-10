@@ -27,6 +27,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Keep PDF selections highlighted while writing a compact annotation, show draft
+  excerpts as readable document tiles, and group sent references into count pills
+  with expandable excerpts and source navigation.
+
 - Add a subtle, continuous divider below the conversation titlebar and the
   right workspace panel header, using the same theme-aware line strength.
 

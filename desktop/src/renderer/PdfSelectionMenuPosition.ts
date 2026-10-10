@@ -1,18 +1,9 @@
 type Bounds = Pick<DOMRect, "left" | "top" | "right" | "bottom">;
 
-export function selectionActionMenuMetrics(menu: HTMLElement | null, fallback: { width: number; height: number }) {
-  const box = menu?.getBoundingClientRect();
-  return {
-    width: menu?.offsetWidth || box?.width || fallback.width,
-    height: menu?.offsetHeight || box?.height || fallback.height,
-    gap: 8,
-  };
-}
-
 /** Use the first visible text fragment instead of centering between pages.
  * A retained comment can outlive scrolling its source out of view; its union
  * remains a stable fallback for the caller's collision clamp. */
-export function selectionActionMenuAnchor(range: Range, bounds: Bounds): DOMRect {
+export function pdfSelectionMenuAnchor(range: Range, bounds: Bounds): DOMRect {
   for (const rect of Array.from(range.getClientRects())) {
     const left = Math.max(rect.left, bounds.left);
     const top = Math.max(rect.top, bounds.top);
@@ -25,7 +16,7 @@ export function selectionActionMenuAnchor(range: Range, bounds: Bounds): DOMRect
 
 /** Center on the source. Keep Wuu's document and viewport collision protection
  * when the preferred position above the selection cannot fit. */
-export function selectionActionMenuPosition(anchor: Bounds, menu: { width: number; height: number; gap: number }, bounds: Bounds) {
+export function pdfSelectionMenuPosition(anchor: Bounds, menu: { width: number; height: number; gap: number }, bounds: Bounds) {
   const width = Math.min(menu.width, bounds.right - bounds.left);
   const height = Math.min(menu.height, bounds.bottom - bounds.top);
   const center = (anchor.left + anchor.right) / 2;

@@ -3,10 +3,11 @@ import { usePdfSelectionNavigation } from "./FileSelectionContext";
 import { useState } from "react";
 import type { FileSelectionSource } from "../shared/protocol";
 import { ComposerQuoteCard } from "./ComposerResponseSelectionCard";
+import { ComposerPdfQuoteCard } from "./PdfQuoteCard";
 import { readFileSelectionNavigation } from "./FileSelectionNavigation";
 import { useI18n } from "./i18n";
 
-/** File navigation adapts to the existing quote card without changing its chrome. */
+/** Source navigation stays shared while PDF excerpts use their document tile. */
 export function ComposerFileSelectionCard({ source, comment, onChangeComment, onRemove, onOpenFile }: {
   source: FileSelectionSource;
   comment?: string;
@@ -17,6 +18,7 @@ export function ComposerFileSelectionCard({ source, comment, onChangeComment, on
   const { t } = useI18n();
   const openPdf = usePdfSelectionNavigation();
   const [notice, setNotice] = useState<string | null>(null);
+  const QuoteCard = source.pdf ? ComposerPdfQuoteCard : ComposerQuoteCard;
   async function openSource(): Promise<boolean> {
     if (source.pdf?.artifact_uri) {
       const opened = openPdf?.(source) ?? false;
@@ -30,7 +32,9 @@ export function ComposerFileSelectionCard({ source, comment, onChangeComment, on
     onOpenFile?.(target.path);
     return !target.locationChanged;
   }
-  return <ComposerQuoteCard className="composer-file-selection-card" text={source.quote} comment={comment}
+  return <QuoteCard className="composer-file-selection-card" text={source.quote} comment={comment}
+    sourceName={source.pdf ? source.path.split(/[\\/]/).pop() : undefined}
+    location={source.pdf ? fileSelectionLocation(source) : undefined}
     showComment={Boolean(onChangeComment || comment)} meta={source.pdf ? `${source.path.split(/[\\/]/).pop()} · ${fileSelectionLocation(source)}` : `${source.path.split(/[\\/]/).pop()}:${source.start_line}`} notice={notice}
     onChangeComment={onChangeComment} onRemove={onRemove} onOpenSource={source.pdf?.artifact_uri ? openPdf ? openSource : undefined : onOpenFile ? openSource : undefined} />;
 }

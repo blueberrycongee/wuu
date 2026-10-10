@@ -2,8 +2,10 @@ import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "re
 import type { FileSelectionSource } from "../shared/protocol";
 import { useFileSelectionActions } from "./FileSelectionContext";
 import type { PdfPreviewSource } from "./PdfSelection";
-import { SelectionActionMenu } from "./SelectionActionMenu";
-import { selectionActionMenuMetrics, selectionActionMenuPosition } from "./SelectionActionMenuPosition";
+import { PdfSelectionActionMenu } from "./PdfSelectionActionMenu";
+import { usePdfSelectionHighlight } from "./PdfSelectionHighlight";
+import { pdfSelectionMenuAnchor, pdfSelectionMenuPosition } from "./PdfSelectionMenuPosition";
+import { selectionActionMenuMetrics } from "./SelectionActionMenuPosition";
 import { UILayerPortal } from "./ui/layers/UILayerHost";
 import { useI18n } from "./i18n";
 
@@ -28,6 +30,7 @@ export function PdfSelectionMenu({ hostRef, source, active }: {
   const sourceKey = JSON.stringify(source);
   const owner = actions?.ownerKey;
   const current = active && capture?.owner === owner && capture?.sourceKey === sourceKey ? capture : undefined;
+  usePdfSelectionHighlight(hostRef, current?.range);
 
   function close(): void {
     setCapture(undefined); setCommenting(false); setComment(""); setPosition(undefined);
@@ -109,13 +112,13 @@ export function PdfSelectionMenu({ hostRef, source, active }: {
       const right = Math.min(innerWidth - 8, bounds.right - 8);
       const bottom = Math.min(innerHeight - 8, bounds.bottom - 8, composer?.top ?? Infinity);
       if (right <= left || bottom <= top) { setPosition(undefined); return; }
-      const anchor = current.range.getBoundingClientRect();
+      const anchor = pdfSelectionMenuAnchor(current.range, { left, top, right, bottom });
       if (!commenting && (anchor.bottom < top || anchor.top > bottom || anchor.right < left || anchor.left > right)) {
         setPosition(undefined); return;
       }
       const width = Math.min(commenting ? 360 : 330, right - left);
       const metrics = selectionActionMenuMetrics(popup.current, { width, height: commenting ? 120 : 44 });
-      const placed = selectionActionMenuPosition(anchor, metrics, { left, top, right, bottom });
+      const placed = pdfSelectionMenuPosition(anchor, metrics, { left, top, right, bottom });
       setPosition({ left: placed.left, top: placed.top, width, height: bottom - top });
     };
     place();
@@ -134,7 +137,7 @@ export function PdfSelectionMenu({ hostRef, source, active }: {
   useLayoutEffect(() => { if (commenting) textarea.current?.focus({ preventScroll: true }); }, [commenting]);
 
   if (!current || !position || !actions) return null;
-  return <UILayerPortal layer="popover"><SelectionActionMenu ref={popup} className="pdf-selection-action-menu"
+  return <UILayerPortal layer="popover"><PdfSelectionActionMenu ref={popup} className="pdf-selection-action-menu"
     style={{ left: position.left, top: position.top, maxWidth: position.width, maxHeight: position.height, overflow: "auto" }}
     label={t("pdfSelection.actions")} addLabel={t("pdfSelection.add")} commentLabel={t("pdfSelection.comment")}
     commentPlaceholder={t("responseSelection.optionalComment")} commenting={commenting} comment={comment}
