@@ -22,7 +22,7 @@ if (!process.versions.electron) {
     `);
     const env = { ...process.env, WUU_RENDERER_RECOVERY_DIRECTORY: directory };
     delete env.ELECTRON_RUN_AS_NODE;
-    const result = spawnSync(require("electron"), [__filename], {
+    const result = spawnSync(require("electron"), [...process.argv.slice(2), __filename], {
       env, encoding: "utf8", timeout: 90_000,
     });
     process.stdout.write(result.stdout || "");
