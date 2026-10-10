@@ -1315,8 +1315,14 @@ export class BrowserHostCoordinator {
   private applyEntryActivity(entry: TabEntry): void {
     if (this.tabs.get(tabKey(entry.workdir, entry.tabID)) !== entry || entry.contents.isDestroyed()) return;
     const active = entry.presented || entry.activeOperations > 0;
-    entry.contents.setBackgroundThrottling(!active);
-    entry.view.setVisible(active && !entry.suppressed);
+    if (active) {
+      // Settle view visibility before waking the hidden renderer to paint.
+      entry.view.setVisible(!entry.suppressed);
+      entry.contents.setBackgroundThrottling(false);
+    } else {
+      entry.contents.setBackgroundThrottling(true);
+      entry.view.setVisible(false);
+    }
   }
 
   private async withActiveEntry<T>(entry: TabEntry, operation: () => Promise<T>): Promise<T> {

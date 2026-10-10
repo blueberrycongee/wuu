@@ -310,7 +310,15 @@ app.whenReady().then(async () => {
     providers: { fixture: { type: "openai-compatible", base_url: `${baseURL}/v1`, api_key: "fixture-only", model: "fixture", models: { fixture: { tool_call: true, modalities: { input: ["text"], output: ["text"] }, limit: { context: 200000, output: 8000 } } } } },
     engines: Object.fromEntries(["codex", "claude", "cursor", "devin", "grok", "hermes", "pi", "opencode", "antigravity"].map(id => [id, { enabled: false }])),
   }));
-  const main = new BrowserWindow({ show: false, width: 900, height: 650 });
+  const nativePresentations: { windowID: number; event: string }[] = [];
+  const hostWindows: BrowserWindow[] = [];
+  function watchPresentation(window: BrowserWindow) {
+    for (const event of ["show", "focus"] as const) {
+      window.on(event, () => nativePresentations.push({ windowID: window.id, event }));
+    }
+    return window;
+  }
+  const main = watchPresentation(new BrowserWindow({ show: false, width: 900, height: 650 }));
   const context: RuntimeContext = { kind: "no_project", cwd: workdir };
   pool = new AppServerClientPool(() => context, () => workdir, notify, undefined, () => ({
     protocol_version: APP_SERVER_PROTOCOL_VERSION,
@@ -333,7 +341,11 @@ app.whenReady().then(async () => {
       else pool!.rejectServerRequest(id, message);
     },
   }, defaultBrowserHostDeps(
-    () => new BrowserWindow({ show: false, webPreferences: { sandbox: true } }) as unknown as BrowserHostWindowHandle,
+    () => {
+      const window = watchPresentation(new BrowserWindow({ show: false, webPreferences: { sandbox: true } }));
+      hostWindows.push(window);
+      return window as unknown as BrowserHostWindowHandle;
+    },
     (options?: WebContentsViewConstructorOptions) => {
       const view = createBrowserView(options);
       const send = view.webContents.debugger.sendCommand.bind(view.webContents.debugger);
@@ -389,6 +401,20 @@ app.whenReady().then(async () => {
   function openedForThread(threadID: string) {
     return calls.filter(call => call.method === "browser/open_tab" && call.params.thread_id === threadID).map(call => String(call.params.tab_id));
   }
+  function inspectHiddenCapture(reply: typeof replies[number] | undefined, label: string, filename: string) {
+    const result = reply?.result as { path?: string; width?: number; height?: number } | undefined;
+    check(`real Go ${label} screenshot completes`, Boolean(result?.path && !reply?.error), JSON.stringify(reply));
+    const image = result?.path ? nativeImage.createFromPath(result.path) : nativeImage.createEmpty();
+    const size = image.getSize();
+    const bitmap = image.toBitmap();
+    let paintedPixels = 0;
+    for (let offset = 0; offset < bitmap.length; offset += 4) {
+      if (bitmap[offset + 3] > 0 && (bitmap[offset] < 240 || bitmap[offset + 1] < 240 || bitmap[offset + 2] < 240)) paintedPixels++;
+    }
+    check(`${label} preview contains rendered page pixels`, !image.isEmpty() && size.width === result?.width && size.height === result?.height && paintedPixels > 100 && paintedPixels < bitmap.length / 8, JSON.stringify({ size, paintedPixels }));
+    if (result?.path) writeFileSync(join(output, filename), readFileSync(result.path));
+    return result;
+  }
   // A first preview must work before either native window has ever been shown.
   // Use the real Go screenshot tool and inspect its saved image, not a second
   // capture after presenting the page (which would mask hidden-host readiness).
@@ -399,19 +425,7 @@ app.whenReady().then(async () => {
   await controlledTool("OWNERSHIP_HIDDEN", { action: "screenshot", tab_id: hiddenTab });
   const hiddenCapture = calls.find(call => call.method === "browser/screenshot" && call.params.thread_id === hidden);
   const hiddenReply = replies.find(reply => reply.id === hiddenCapture?.id);
-  const hiddenResult = hiddenReply?.result as { path?: string; width?: number; height?: number } | undefined;
-  check("real Go first hidden screenshot completes", Boolean(hiddenResult?.path && !hiddenReply?.error), JSON.stringify(hiddenReply));
-  if (hiddenResult?.path) {
-    const image = nativeImage.createFromPath(hiddenResult.path);
-    const size = image.getSize();
-    const bitmap = image.toBitmap();
-    let paintedPixels = 0;
-    for (let offset = 0; offset < bitmap.length; offset += 4) {
-      if (bitmap[offset + 3] > 0 && (bitmap[offset] < 240 || bitmap[offset + 1] < 240 || bitmap[offset + 2] < 240)) paintedPixels++;
-    }
-    check("first hidden preview contains rendered page pixels", !image.isEmpty() && size.width === hiddenResult.width && size.height === hiddenResult.height && paintedPixels > 100 && paintedPixels < bitmap.length / 8, JSON.stringify({ size, paintedPixels }));
-    writeFileSync(join(output, "first-hidden-preview.png"), readFileSync(hiddenResult.path));
-  }
+  const hiddenResult = inspectHiddenCapture(hiddenReply, "first hidden", "first-hidden-preview.png");
   check("first screenshot does not present the browser panel", BrowserWindow.getAllWindows().every(window => !window.isVisible()) && !host.isInPanel(workdir, hiddenTab));
   const hiddenView = await readTab(hiddenTab);
   assert(hiddenView);
@@ -425,6 +439,27 @@ app.whenReady().then(async () => {
   await hiddenView.webContents.executeJavaScript("window.requestAnimationFrame = window.savedRAF; delete window.savedRAF");
   await finishControlled("OWNERSHIP_HIDDEN", hidden);
   check("hidden screenshot task cleans its temporary page", host.tabSurfaceMeta(workdir, hiddenTab) === undefined);
+
+  // Alternate a freshly created hidden native host with another new tab in
+  // that same host. Each turn performs its own first Go screenshot; no retries
+  // or presentation may warm the compositor before the pixel assertion.
+  for (let round = 0; round < 8; round++) {
+    const freshHost = round % 2 === 0;
+    if (freshHost) host.destroyAll();
+    const previousHosts = hostWindows.length;
+    const threadID = await start("OWNERSHIP_HIDDEN");
+    await bounded(`cold hidden navigation ${round}`, controlledWaiter("OWNERSHIP_HIDDEN").promise);
+    const tabID = openedForThread(threadID)[0];
+    const label = `cold hidden ${round + 1}`;
+    check(`${label} uses the intended fresh host or tab`, hostWindows.length === previousHosts + Number(freshHost));
+    check(`${label} begins without native presentation`, nativePresentations.length === 0 && BrowserWindow.getAllWindows().every(window => !window.isVisible()) && !host.isInPanel(workdir, tabID));
+    await controlledTool("OWNERSHIP_HIDDEN", { action: "screenshot", tab_id: tabID });
+    const capture = calls.find(call => call.method === "browser/screenshot" && call.params.thread_id === threadID);
+    inspectHiddenCapture(replies.find(reply => reply.id === capture?.id), label, `cold-hidden-preview-${round + 1}.png`);
+    await finishControlled("OWNERSHIP_HIDDEN", threadID);
+    check(`${label} cleans its temporary page`, host.tabSurfaceMeta(workdir, tabID) === undefined);
+    check(`${label} never shows or focuses a native window`, nativePresentations.length === 0 && BrowserWindow.getAllWindows().every(window => !window.isVisible()), JSON.stringify(nativePresentations));
+  }
 
   const captureCancelled = await start("OWNERSHIP_CAPTURE_CANCEL");
   cancellations.set(captureCancelled, deferred());
