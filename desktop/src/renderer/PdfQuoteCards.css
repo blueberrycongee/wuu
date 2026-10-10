@@ -1,0 +1,251 @@
+.pdf-quote-tile {
+  position: relative;
+  flex: 0 0 auto;
+  width: max(160px, calc(var(--font-ui) * 12));
+  max-width: 100%;
+  color: var(--ink);
+  font-size: var(--font-ui);
+}
+
+.pdf-quote-tile .pdf-quote-tile-main {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
+  width: 100%;
+  min-width: 0;
+  height: calc(var(--font-ui) * 8.75);
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-lg);
+  background: var(--surface-1);
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+  transition: background-color var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out);
+}
+
+.pdf-quote-tile-excerpt {
+  display: -webkit-box;
+  flex: 1;
+  min-height: 0;
+  margin: var(--space-2) var(--space-3) 0;
+  padding-inline-end: var(--space-2);
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  color: var(--ink-soft);
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.pdf-quote-tile-source {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+  min-height: calc(var(--font-ui) * 2.25);
+  padding: var(--space-1) var(--space-2);
+  line-height: var(--line-ui);
+}
+
+.pdf-quote-tile-source > span:first-of-type {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pdf-quote-location { flex: 0 0 auto; margin-inline-start: auto; color: var(--ink-soft); white-space: nowrap; }
+
+.pdf-quote-tile-source > svg,
+.pdf-quote-preview-source > svg,
+.pdf-quote-source-action > svg,
+.pdf-quote-pill > svg,
+.pdf-quote-source-link > svg,
+.pdf-quote-icon-action > svg,
+.pdf-quote-disclosure > svg {
+  flex: 0 0 auto;
+  width: var(--icon-size-sm);
+  height: var(--icon-size-sm);
+}
+
+.pdf-quote-tile .pdf-quote-tile-remove {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  inset-block-start: -4px;
+  inset-inline-end: -4px;
+  display: grid;
+  width: 26px;
+  height: 26px;
+  padding: 5px;
+  place-items: center;
+  border: 1px solid var(--hairline);
+  border-radius: 50%;
+  background: var(--paper);
+  color: var(--ink);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--motion-fast) var(--ease-out), background-color var(--motion-fast) var(--ease-out);
+}
+
+.pdf-quote-tile-remove > svg { width: 100%; height: 100%; }
+.pdf-quote-tile:hover .pdf-quote-tile-remove,
+.pdf-quote-tile:focus-within .pdf-quote-tile-remove { opacity: 1; }
+.pdf-quote-tile-main:hover,
+.pdf-quote-tile-main[aria-expanded="true"] { background: var(--menu-hover); border-color: var(--hairline-strong); }
+
+.pdf-quote-preview[data-wuu-component] {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  box-sizing: border-box;
+  width: min(360px, var(--floating-menu-available-width, calc(100vw - 16px)));
+  max-height: min(440px, var(--floating-menu-available-height, 65dvh));
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: var(--space-3);
+  border: 1px solid var(--menu-border);
+  border-radius: var(--menu-shell-radius);
+  background: linear-gradient(var(--menu-bg), var(--menu-bg)), var(--paper);
+  box-shadow: var(--menu-shadow);
+  color: var(--ink);
+  font-size: var(--font-ui);
+  font-weight: var(--weight-regular);
+  line-height: var(--line-body);
+  transform-origin: bottom left;
+  --menu-enter-y: 3px;
+  animation: menu-enter var(--menu-enter-duration) var(--menu-enter-easing) both;
+}
+
+.floating-menu-below > .pdf-quote-preview { transform-origin: top left; --menu-enter-y: -3px; }
+.pdf-quote-preview .pdf-quote-preview-source { display: flex; align-items: flex-start; gap: var(--space-2); min-width: 0; margin: 0; color: var(--ink-soft); font: inherit; }
+.pdf-quote-preview-source > span:not(.pdf-quote-location) { min-width: 0; overflow-wrap: anywhere; }
+.pdf-quote-preview-source > svg { margin-top: .2em; }
+.pdf-quote-excerpt { min-width: 0; }
+.pdf-quote-excerpt-text {
+  max-height: calc(4 * var(--font-ui) * var(--line-body));
+  margin: 0;
+  overflow: hidden;
+  color: var(--ink);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: var(--line-body);
+  user-select: text;
+}
+.pdf-quote-excerpt-text[data-expanded="true"] { max-height: none; }
+.pdf-quote-disclosure,
+.pdf-quote-source-action,
+.pdf-quote-remove-action {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: 28px;
+  padding: 0 var(--space-1);
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--ink-soft);
+  font: inherit;
+  cursor: pointer;
+}
+.pdf-quote-disclosure { margin-top: var(--space-1); }
+.pdf-quote-disclosure[aria-expanded="true"] > svg { transform: rotate(180deg); }
+.pdf-quote-footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2); }
+.pdf-quote-comment-input {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: calc(var(--font-ui) * var(--line-body) + var(--space-2) * 2);
+  max-height: calc(var(--font-ui) * var(--line-body) * 5 + var(--space-2) * 2);
+  padding: var(--space-2);
+  resize: none;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  background: var(--field-bg);
+  color: var(--ink);
+  font: inherit;
+  line-height: inherit;
+  field-sizing: content;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.pdf-quote-comment-input::placeholder { color: var(--placeholder-ink); }
+.pdf-quote-comment,
+.pdf-quote-notice { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.pdf-quote-notice { color: var(--ink-soft); }
+.pdf-quote-remove-action { margin-inline-start: auto; }
+.pdf-quote-source-action:disabled { cursor: progress; opacity: .6; }
+.pdf-quote-preview button:hover:not(:disabled),
+.pdf-quote-tile-remove:hover { background: var(--menu-hover); color: var(--ink); }
+.pdf-quote-preview .pdf-quote-remove-action:hover { background: color-mix(in srgb, var(--danger) 10%, transparent); color: var(--danger); }
+.pdf-quote-tile button:focus-visible,
+.pdf-quote-preview button:focus-visible,
+.pdf-quote-preview summary:focus-visible,
+.pdf-quote-preview textarea:focus-visible,
+.pdf-quote-pill:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.pdf-quote-preview:focus { outline: none; }
+
+.pdf-quote-groups { display: flex; flex-wrap: wrap; gap: var(--space-2); min-width: 0; }
+.pdf-quote-group { position: relative; min-width: 0; max-width: 100%; }
+.pdf-quote-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: 32px;
+  max-width: min(320px, 100%);
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  background: var(--surface-1);
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--font-ui);
+  cursor: pointer;
+}
+.pdf-quote-pill > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pdf-quote-pill:hover,
+.pdf-quote-pill[aria-expanded="true"] { background: var(--menu-hover); }
+.pdf-quote-entry { display: grid; gap: var(--space-2); min-width: 0; }
+.pdf-quote-entry + .pdf-quote-entry { border-top: 1px solid var(--hairline); padding-top: var(--space-3); }
+.pdf-quote-entry-heading { display: flex; align-items: flex-start; gap: var(--space-1); min-width: 0; }
+.pdf-quote-source-link {
+  display: flex;
+  flex: 1;
+  align-items: flex-start;
+  gap: var(--space-1);
+  min-width: 0;
+  padding: var(--space-1) 0;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--ink-soft);
+  font: inherit;
+  text-align: start;
+}
+button.pdf-quote-source-link { padding: var(--space-1) 0; cursor: pointer; }
+.pdf-quote-source-link > span:not(.pdf-quote-location) { min-width: 0; overflow-wrap: anywhere; }
+.pdf-quote-source-link > svg { margin-top: .2em; }
+.pdf-quote-icon-action { display: grid; flex: 0 0 auto; place-items: center; width: 28px; height: 28px; padding: 4px; border: 0; border-radius: var(--radius-xs); background: transparent; color: var(--ink-soft); cursor: pointer; }
+.pdf-quote-original summary { cursor: pointer; color: var(--ink-soft); }
+.pdf-quote-original[open] summary { margin-bottom: var(--space-2); }
+.pdf-quote-editor { display: grid; gap: var(--space-2); }
+.pdf-quote-editor-actions { display: flex; justify-content: flex-end; gap: var(--space-2); }
+.pdf-quote-editor-actions button { min-height: 28px; border: 0; border-radius: var(--radius-xs); background: transparent; color: var(--ink); font: inherit; cursor: pointer; }
+
+@media (hover: none) { .pdf-quote-tile .pdf-quote-tile-remove { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .pdf-quote-preview[data-wuu-component] { animation: none; }
+  .pdf-quote-tile .pdf-quote-tile-main, .pdf-quote-tile .pdf-quote-tile-remove { transition: none; }
+}
+@container style(--motion-reduced: 1) {
+  .pdf-quote-preview[data-wuu-component] { animation: none; }
+  .pdf-quote-tile .pdf-quote-tile-main, .pdf-quote-tile .pdf-quote-tile-remove { transition: none; }
+}

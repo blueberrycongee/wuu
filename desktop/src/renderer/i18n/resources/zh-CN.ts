@@ -2237,6 +2237,13 @@ export const zhCN = {
   "projects.event.groupSessions": "来自{name}等 {sessions} 个会话的 {count} 条动态",
   "projects.event.details": "详情",
   "projects.event.hideDetails": "收起详情",
+  "pdfSelection.actions": "PDF 选区操作",
+  "pdfSelection.add": "添加到对话",
+  "pdfSelection.comment": "评论",
+  "pdfSelection.pages": "第 {start}–{end} 页 · 添加到草稿",
+  "selectionChip.pdfOriginalConversation": "请从原始交付卡片打开此 PDF，查看保存的版本。",
+  "workspace.files.previewTruncated": "仅显示此文件的前 512 KiB，原文件未更改。",
+  "pdfSelection.page": "第 {page} 页 · 添加到草稿",
 } as const;
 
 export type TranslationKey = keyof typeof zhCN;

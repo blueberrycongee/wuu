@@ -265,7 +265,7 @@ export function AssistantResponseArticle({ turnID, itemID, children, ...props }:
       if (toolbarRef.current?.contains(event.target as Node)) return;
       capture();
     };
-    const key = (event: KeyboardEvent) => { if (event.key === "Escape") clear(); };
+    const key = (event: KeyboardEvent) => { if (event.key === "Escape" && !event.isComposing) clear(); };
     const scroll = (event: Event) => {
       if (dragging || !capturedRef.current || toolbarRef.current?.contains(event.target as Node)) return;
       const root = article.querySelector<HTMLElement>(".agent-text");

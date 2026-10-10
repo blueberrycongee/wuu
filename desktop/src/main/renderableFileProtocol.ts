@@ -1,4 +1,4 @@
-import { net, protocol } from "electron";
+import { net, protocol, type CustomScheme } from "electron";
 import { pathToFileURL } from "node:url";
 import { renderableResponseHeaders, rangedFileResponse } from "./renderableFileRange";
 import { videoMimeType } from "../shared/videoMimeType";
@@ -12,21 +12,22 @@ import {
   verifyManagedArtifactFile,
 } from "./renderableFileURLs";
 
+export const renderableFileSchemes: CustomScheme[] =
+  ["wuu-file", "wuu-artifact"].map((scheme) => ({
+    scheme,
+    privileges: {
+      standard: true,
+      secure: true,
+      // PDF.js runs in the renderer and loads large documents incrementally
+      // through fetch + byte-range requests.
+      supportFetchAPI: true,
+      corsEnabled: true,
+      stream: true,
+    },
+  }));
+
 export function registerRenderableFileScheme(): void {
-  protocol.registerSchemesAsPrivileged(
-    ["wuu-file", "wuu-artifact"].map((scheme) => ({
-      scheme,
-      privileges: {
-        standard: true,
-        secure: true,
-        // PDF.js runs in the renderer and loads large documents incrementally
-        // through fetch + byte-range requests.
-        supportFetchAPI: true,
-        corsEnabled: true,
-        stream: true,
-      },
-    })),
-  );
+  protocol.registerSchemesAsPrivileged(renderableFileSchemes);
 }
 
 export function registerRenderableFileProtocol(wuuHome: string): void {
