@@ -56,6 +56,10 @@ var browserKnownActions = map[string]struct{}{
 }
 
 func (t *BrowserTool) Definition() providers.ToolDefinition {
+	finalizeDescription := "Call finalize before ending browser work: it retains named tabs as handoff or deliverable and closes other temporary tabs. Previously retained pages survive. A tab_id without keep retains that one tab as handoff. "
+	if t.env != nil && t.env.BrowserHostFinalize {
+		finalizeDescription = "Temporary tabs close automatically when the turn ends, including on interruption. finalize retains named tabs as handoff or deliverable and closes other temporary tabs; retained and user-owned pages survive. A tab_id without keep retains that one tab as handoff. "
+	}
 	return providers.ToolDefinition{
 		Name: browserToolName,
 		Description: "Drive an embedded browser: navigate pages, observe the DOM, click, type, scroll, screenshot, and manage tabs through a single action parameter. " +
@@ -65,7 +69,7 @@ func (t *BrowserTool) Definition() providers.ToolDefinition {
 			"Screenshot saves a UI preview and returns its path and dimensions, not image content to the model. " +
 			"observe returns readable content (headings, paragraphs, lists, and tables) and the interactive nodes from the same page view. Content that can be clicked includes its node_id. " +
 			"A long page sets content_next_offset; pass that value as content_offset to read the next slice. Node ids expire on the next observe. " +
-			"finalize keeps only tabs named in keep. A tab_id without keep retains that one tab as handoff. " +
+			finalizeDescription +
 			"Prefer node ids from observe over raw coordinates, and re-observe after an input to confirm the outcome before continuing.",
 		InputSchema: map[string]any{
 			"type": "object",
@@ -113,7 +117,7 @@ func (t *BrowserTool) Definition() providers.ToolDefinition {
 				},
 				"keep": map[string]any{
 					"type":        "array",
-					"description": "Used by action=finalize. Tabs to retain. Each item names tab_id and status (deliverable or handoff). Omitted tabs, including popups opened by the page, are closed. An explicit keep list wins over tab_id.",
+					"description": "Used by action=finalize. Tabs to retain. Each item names tab_id and status (deliverable or handoff). Omitted temporary tabs, including popups, are closed. Previously retained pages survive. An explicit keep list wins over tab_id.",
 					"items": map[string]any{
 						"type": "object",
 						"properties": map[string]any{
@@ -581,6 +585,9 @@ func modelTabRecords(records []BrowserTabRecord) []BrowserTabRecord {
 
 func (t *BrowserTool) doFinalize(ctx context.Context, argsJSON string) (toolresult.Result, error) {
 	keep := browserKeepSet(argsJSON)
+	if t.env.BrowserHostFinalize {
+		return t.doHostFinalize(ctx, keep)
+	}
 	live, liveKnown := t.listLiveTabs(ctx)
 	liveByID := make(map[string]BrowserLiveTab, len(live))
 	for _, tab := range live {
@@ -588,7 +595,27 @@ func (t *BrowserTool) doFinalize(ctx context.Context, argsJSON string) (toolresu
 	}
 	var records []BrowserTabRecord
 	if t.env.BrowserTabs != nil {
-		records, _ = t.env.BrowserTabs.List()
+		var err error
+		records, err = t.env.BrowserTabs.List()
+		if err != nil {
+			return toolresult.Result{}, err
+		}
+	}
+	// Retention is sticky. A later model keep list cannot silently reclaim a
+	// page already handed to the user, including a native user takeover.
+	for _, rec := range records {
+		if browserTabIsRetained(rec.Status) {
+			if _, explicit := keep[rec.TabID]; !explicit {
+				keep[rec.TabID] = rec.Status
+			}
+		}
+	}
+	for _, tab := range live {
+		if browserTabIsRetained(tab.Status) {
+			if _, explicit := keep[tab.ID]; !explicit {
+				keep[tab.ID] = tab.Status
+			}
+		}
 	}
 	var closed, kept []string
 	seen := make(map[string]bool, len(records))
@@ -606,14 +633,20 @@ func (t *BrowserTool) doFinalize(ctx context.Context, argsJSON string) (toolresu
 						}
 					}
 				}
-				_ = t.env.BrowserTabs.Put(rec)
+				if err := t.env.BrowserTabs.Put(rec); err != nil {
+					return toolresult.Result{}, err
+				}
 				kept = append(kept, rec.TabID)
 				delete(keep, rec.TabID)
 				continue
 			}
-			// Not kept: tear down the hidden view (best effort) and drop the record.
-			_ = t.env.BrowserBridge.CloseTab(ctx, rec.TabID)
-			_ = t.env.BrowserTabs.Delete(rec.TabID)
+			// Keep recovery data if the host rejected or could not confirm close.
+			if err := t.env.BrowserBridge.CloseTab(ctx, rec.TabID); err != nil {
+				return toolresult.Result{}, browserBridgeError("finalize", rec.TabID, err)
+			}
+			if err := t.env.BrowserTabs.Delete(rec.TabID); err != nil {
+				return toolresult.Result{}, err
+			}
 			closed = append(closed, rec.TabID)
 		}
 	}
@@ -627,20 +660,26 @@ func (t *BrowserTool) doFinalize(ctx context.Context, argsJSON string) (toolresu
 			}
 			if status, ok := keep[tab.ID]; ok {
 				if t.env.BrowserTabs != nil {
-					_ = t.env.BrowserTabs.Put(BrowserTabRecord{TabID: tab.ID, URL: tab.URL, Title: tab.Title, Status: status})
+					if err := t.env.BrowserTabs.Put(BrowserTabRecord{TabID: tab.ID, URL: tab.URL, Title: tab.Title, Status: status}); err != nil {
+						return toolresult.Result{}, err
+					}
 				}
 				kept = append(kept, tab.ID)
 				delete(keep, tab.ID)
 				continue
 			}
-			_ = t.env.BrowserBridge.CloseTab(ctx, tab.ID)
+			if err := t.env.BrowserBridge.CloseTab(ctx, tab.ID); err != nil {
+				return toolresult.Result{}, browserBridgeError("finalize", tab.ID, err)
+			}
 			closed = append(closed, tab.ID)
 		}
 	}
 	// Kept tabs the model minted this turn may not be in the store yet.
 	if t.env.BrowserTabs != nil {
 		for id, status := range keep {
-			_ = t.env.BrowserTabs.Put(BrowserTabRecord{TabID: id, Status: status})
+			if err := t.env.BrowserTabs.Put(BrowserTabRecord{TabID: id, Status: status}); err != nil {
+				return toolresult.Result{}, err
+			}
 			kept = append(kept, id)
 		}
 	}
@@ -649,6 +688,101 @@ func (t *BrowserTool) doFinalize(ctx context.Context, argsJSON string) (toolresu
 		Content:           []toolresult.ContentPart{{Type: toolresult.ContentTypeText, Text: renderFinalizeText(kept, closed)}},
 		StructuredContent: structured,
 	}, nil
+}
+
+func (t *BrowserTool) doHostFinalize(ctx context.Context, keep map[string]string) (toolresult.Result, error) {
+	store := t.env.BrowserTabs
+	if store != nil {
+		records, err := store.List()
+		if err != nil {
+			return toolresult.Result{}, err
+		}
+		for _, record := range records {
+			if browserTabIsRetained(record.Status) {
+				if _, explicit := keep[record.TabID]; !explicit {
+					keep[record.TabID] = record.Status
+				}
+			}
+		}
+		// Commit keep intent before dispatch: cancellation between host delivery
+		// and the reply must not make automatic turn cleanup close the page.
+		for id, status := range keep {
+			record, _, err := store.Get(id)
+			if err != nil {
+				return toolresult.Result{}, err
+			}
+			record.TabID, record.Status = id, status
+			record.UpdatedAt = time.Time{}
+			if err := store.Put(record); err != nil {
+				return toolresult.Result{}, err
+			}
+		}
+	}
+	keptTabs := make([]map[string]string, 0, len(keep))
+	for id, status := range keep {
+		keptTabs = append(keptTabs, map[string]string{"tab_id": id, "status": status})
+	}
+	raw, err := t.env.BrowserBridge.Call(ctx, "browser/finalize", map[string]any{"keep": keptTabs})
+	if err != nil {
+		return toolresult.Result{}, browserBridgeError("finalize", "", err)
+	}
+	var result struct {
+		Closed []string           `json:"closed"`
+		Kept   []string           `json:"kept"`
+		Stale  bool               `json:"stale"`
+		Tabs   []BrowserTabRecord `json:"tabs"`
+	}
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return toolresult.Result{}, fmt.Errorf("decode browser finalize result: %w", err)
+	}
+	if result.Stale {
+		return toolresult.Result{}, errors.New("browser turn has ended")
+	}
+	if store != nil {
+		live := make(map[string]BrowserTabRecord, len(result.Tabs))
+		for _, tab := range result.Tabs {
+			live[tab.TabID] = tab
+		}
+		for _, id := range result.Closed {
+			if err := store.Delete(id); err != nil {
+				return toolresult.Result{}, err
+			}
+		}
+		for _, id := range result.Kept {
+			record, _, err := store.Get(id)
+			if err != nil {
+				return toolresult.Result{}, err
+			}
+			record.TabID = id
+			if tab, ok := live[id]; ok {
+				record.URL, record.Title = tab.URL, tab.Title
+			}
+			if status, explicit := keep[id]; explicit {
+				record.Status = status
+			} else if !browserTabIsRetained(record.Status) {
+				// Includes protected opener ancestors and native user-taken pages.
+				record.Status = "persistent"
+			}
+			record.UpdatedAt = time.Time{}
+			if err := store.Put(record); err != nil {
+				return toolresult.Result{}, err
+			}
+		}
+	}
+	structured, _ := json.Marshal(map[string]any{"action": "finalize", "kept": result.Kept, "closed": result.Closed})
+	return toolresult.Result{
+		Content:           []toolresult.ContentPart{{Type: toolresult.ContentTypeText, Text: renderFinalizeText(result.Kept, result.Closed)}},
+		StructuredContent: structured,
+	}, nil
+}
+
+func browserTabIsRetained(status string) bool {
+	switch status {
+	case "handoff", "deliverable", "persistent":
+		return true
+	default:
+		return false
+	}
 }
 
 // syncLiveTabs reconciles the durable registry with the host. Views the host
@@ -678,6 +812,10 @@ func (t *BrowserTool) syncLiveTabs(ctx context.Context) ([]BrowserLiveTab, []Bro
 		tab, liveOK := liveByID[rec.TabID]
 		changed := false
 		if liveOK {
+			if browserTabIsRetained(tab.Status) && rec.Status != tab.Status {
+				rec.Status = tab.Status
+				changed = true
+			}
 			if rec.Dead {
 				rec.Dead = false
 				changed = true
@@ -703,7 +841,7 @@ func (t *BrowserTool) syncLiveTabs(ctx context.Context) ([]BrowserLiveTab, []Bro
 		if seen[tab.ID] {
 			continue
 		}
-		_ = t.env.BrowserTabs.Put(BrowserTabRecord{TabID: tab.ID, URL: tab.URL, Title: tab.Title})
+		_ = t.env.BrowserTabs.Put(BrowserTabRecord{TabID: tab.ID, URL: tab.URL, Title: tab.Title, Status: tab.Status})
 	}
 	records, listErr := t.env.BrowserTabs.List()
 	if listErr != nil {
@@ -747,10 +885,10 @@ func browserLiveIDs(live []BrowserLiveTab) []string {
 	return ids
 }
 
-// browserKeepSet is the set of tabs finalize retains. An explicit keep array,
-// including an empty one, is the whole decision. When keep is absent, a
-// tab_id retains that single tab as handoff — models that only have the
-// generic tab_id field still keep the page they named.
+// browserKeepSet is the current call's retention request. An explicit keep
+// array, including an empty one, overrides tab_id. Previously retained and
+// user-owned pages are protected separately. When keep is absent, tab_id
+// retains that single tab as handoff.
 func browserKeepSet(argsJSON string) map[string]string {
 	var raw map[string]json.RawMessage
 	_ = json.Unmarshal([]byte(argsJSON), &raw)

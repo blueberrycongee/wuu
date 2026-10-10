@@ -1,5 +1,5 @@
 import type { HandlerDetails, LoadURLOptions, Rectangle, Session, WebContents, WebContentsViewConstructorOptions, WindowOpenHandlerResponse } from "electron";
-import type { ActivitySession, BrowserSurfaceSnapshot, JsonValue, ServerEvent } from "../shared/protocol";
+import type { ActivitySession, BrowserListedTab, BrowserSurfaceSnapshot, BrowserTabStatus, BrowserTurnEndedResult, JsonValue, ServerEvent } from "../shared/protocol";
 import {
   agentCursorCommandScript,
   clearAgentCursorScript,
@@ -141,12 +141,18 @@ export type BrowserInteractionHint = AgentCursorFeedback
   | { kind: "move"; x: number; y: number }
   | { kind: "clear" };
 
+type BrowserTurn = { turnID: string; executionID: string; ended: boolean };
+type BrowserRequest = { cancelled: boolean; workdir: string; threadID: string; turn?: BrowserTurn };
+
 type TabEntry = {
   view: BrowserViewHandle;
   workdir: string;
   tabID: string;
   threadID?: string;
   openerTabID?: string;
+  creationTurn?: BrowserTurn;
+  controlledTurn?: BrowserTurn;
+  status: BrowserTabStatus;
   inputGeneration: number;
   pageGeneration: number;
   agentInputAllowed: boolean;
@@ -229,7 +235,8 @@ export class BrowserHostCoordinator {
   private readonly downWorkdirs = new Set<string>();
   private hostWindow: BrowserHostWindowHandle | undefined;
   private readonly threadControls = new Map<string, { controller: string; allowed: boolean; updatedAt: string; grantAt?: string; localTakeover?: number }>();
-  private readonly pendingRequests = new Map<string, { cancelled: boolean }>();
+  private readonly pendingRequests = new Map<string, BrowserRequest>();
+  private readonly threadTurns = new Map<string, BrowserTurn>();
   // Preview-surface listeners. Interaction hints flow main-side only (never
   // through the core protocol): they mirror actions this coordinator already
   // dispatched, so no model-visible data crosses a new channel.
@@ -272,12 +279,12 @@ export class BrowserHostCoordinator {
     const threadID = typeof params.thread_id === "string" ? params.thread_id.trim() : "";
     const requestID = typeof params.request_id === "string" ? params.request_id : "";
     const requestKey = requestID ? JSON.stringify([workdir, threadID, requestID]) : undefined;
-    const request = { cancelled: false };
+    const request: BrowserRequest = { cancelled: false, workdir, threadID, turn: this.threadTurns.get(tabKey(workdir, threadID)) };
     if (requestKey) this.pendingRequests.set(requestKey, request);
     try {
       if (!threadID) throw new Error("browser request requires thread_id");
       const result = await this.dispatch(method, workdir, threadID, params, request);
-      if (request.cancelled) throw new Error("Browser request cancelled");
+      if (method !== "browser/turn_ended") this.assertRequestCurrent(request);
       this.respondSafe(id, workdir, result);
     } catch (error) {
       this.rejectSafe(id, workdir, error instanceof Error ? error.message : String(error));
@@ -287,10 +294,32 @@ export class BrowserHostCoordinator {
   }
 
   handleServerEvent(event: ServerEvent): void {
-    if (event.kind !== "notification" || event.message.method !== "browser/request_cancelled") return;
+    if (event.kind !== "notification") return;
     const params = asRecord(event.message.params);
-    const key = JSON.stringify([params.workdir, params.thread_id, params.request_id]);
-    const request = this.pendingRequests.get(key);
+    if (event.message.method === "browser/turn_started") {
+      const workdir = typeof params.workdir === "string" ? params.workdir : event.workdir;
+      const threadID = typeof params.thread_id === "string" ? params.thread_id : "";
+      const turnID = typeof params.turn_id === "string" ? params.turn_id : "";
+      const executionID = typeof params.execution_id === "string" ? params.execution_id : "";
+      if (!threadID || !turnID || !executionID) return;
+      const key = tabKey(workdir, threadID);
+      const previous = this.threadTurns.get(key);
+      if (previous?.turnID === turnID && previous.executionID === executionID) return;
+      this.threadTurns.set(key, { turnID, executionID, ended: false });
+      for (const request of this.pendingRequests.values()) {
+        if (request.workdir === workdir && request.threadID === threadID) request.cancelled = true;
+      }
+      for (const entry of this.tabs.values()) {
+        if (entry.workdir !== workdir || entry.threadID !== threadID) continue;
+        entry.inputGeneration += 1;
+        entry.controlledTurn = undefined;
+        entry.agentInputAllowed = this.threadControls.get(key)?.allowed !== false;
+        this.clearCursor(entry);
+      }
+      return;
+    }
+    if (event.message.method !== "browser/request_cancelled") return;
+    const request = this.pendingRequests.get(JSON.stringify([params.workdir, params.thread_id, params.request_id]));
     if (request) request.cancelled = true;
   }
 
@@ -316,6 +345,9 @@ export class BrowserHostCoordinator {
     }
     for (const key of this.threadControls.keys()) {
       if (key.startsWith(tabKey(workdir, ""))) this.threadControls.delete(key);
+    }
+    for (const key of this.threadTurns.keys()) {
+      if (key.startsWith(tabKey(workdir, ""))) this.threadTurns.delete(key);
     }
     this.broadcastInvalidation(workdir);
   }
@@ -553,6 +585,16 @@ export class BrowserHostCoordinator {
     const grantAt = controlled && eventMethod === "activity/control_changed" ? updatedAt : previous?.grantAt;
     const allowed = controlled && localTakeover === undefined && (!previous || previous.allowed || eventMethod === "activity/control_changed");
     this.threadControls.set(key, { controller: activity.controller, allowed, updatedAt, grantAt, localTakeover });
+    if (activity.controller === "user" && eventMethod === "activity/control_changed") {
+      // An explicit takeover hands the task's live browsing context to the user,
+      // including popups that have not yet appeared in the core's tab store.
+      for (const entry of this.tabs.values()) {
+        if (entry.workdir === activity.workdir && entry.threadID === activity.thread_id) {
+          entry.status = "persistent";
+          entry.controlledTurn = undefined;
+        }
+      }
+    }
     this.applyThreadAuthority(activity.workdir, activity.thread_id, allowed);
   }
 
@@ -570,6 +612,7 @@ export class BrowserHostCoordinator {
   }
 
   private applyThreadAuthority(workdir: string, threadID: string, allowed: boolean): void {
+    allowed = allowed && this.threadTurns.get(tabKey(workdir, threadID))?.ended !== true;
     for (const entry of this.tabs.values()) {
       if (entry.workdir !== workdir || entry.threadID !== threadID) continue;
       if (entry.agentInputAllowed !== allowed || !allowed) entry.inputGeneration += 1;
@@ -597,9 +640,11 @@ export class BrowserHostCoordinator {
       if (!target) return this.surface(workdir, tabID);
       let entry = this.tabs.get(tabKey(workdir, tabID));
       if (!entry) {
-        await this.openTab(workdir, { thread_id: threadID ?? "", tab_id: tabID, initial_url: target });
+        await this.openTab(workdir, { thread_id: threadID ?? "", tab_id: tabID, initial_url: target }, undefined, "persistent");
         entry = this.tabs.get(tabKey(workdir, tabID));
       } else if (!entry.view.webContents.isDestroyed()) {
+        entry.status = "persistent";
+        entry.controlledTurn = undefined;
         const current = entry;
         await this.withActiveEntry(current, () => current.view.webContents.loadURL(target));
       }
@@ -609,6 +654,8 @@ export class BrowserHostCoordinator {
     }
     const entry = this.tabs.get(tabKey(workdir, tabID));
     if (!entry || entry.view.webContents.isDestroyed()) return undefined;
+    entry.status = "persistent";
+    entry.controlledTurn = undefined;
     const contents = entry.view.webContents;
     switch (command) {
       case "back":
@@ -647,6 +694,7 @@ export class BrowserHostCoordinator {
     this.tabs.clear();
     this.lastBounds.clear();
     this.threadControls.clear();
+    this.threadTurns.clear();
     for (const request of this.pendingRequests.values()) request.cancelled = true;
     if (this.hostWindow && !this.hostWindow.isDestroyed()) {
       this.hostWindow.destroy();
@@ -657,7 +705,16 @@ export class BrowserHostCoordinator {
   // -------------------------------------------------------------------------
   // Method dispatch.
   // -------------------------------------------------------------------------
-  private async dispatch(method: string, workdir: string, threadID: string, params: Record<string, JsonValue>, request: { cancelled: boolean }): Promise<unknown> {
+  private async dispatch(method: string, workdir: string, threadID: string, params: Record<string, JsonValue>, request: BrowserRequest): Promise<unknown> {
+    if (method === "browser/turn_ended" || method === "browser/finalize") {
+      return this.finalizeTabs(workdir, threadID, params, method === "browser/turn_ended", request);
+    }
+    this.assertRequestCurrent(request);
+    const turn = request.turn;
+    if (turn ? turn.ended || params.turn_id !== turn.turnID || params.execution_id !== turn.executionID
+      : Boolean(params.turn_id || params.execution_id)) {
+      throw new Error("Browser request belongs to an inactive execution");
+    }
     const tabID = typeof params.tab_id === "string" ? params.tab_id : "";
     const entry = this.tabs.get(tabKey(workdir, tabID));
     if (entry && entry.threadID !== threadID) throw new Error("browser tab belongs to another thread");
@@ -666,7 +723,7 @@ export class BrowserHostCoordinator {
     }
     switch (method) {
       case "browser/open_tab":
-        return this.openTab(workdir, params);
+        return this.openTab(workdir, params, request.turn, "temporary", request);
       case "browser/close_tab":
         return this.closeTab(workdir, params);
       case "browser/list_tabs":
@@ -682,31 +739,39 @@ export class BrowserHostCoordinator {
     }
   }
 
-  private async openTab(workdir: string, params: Record<string, JsonValue>): Promise<{ ok: true; tab_id: string }> {
+  private async openTab(workdir: string, params: Record<string, JsonValue>, turn?: BrowserTurn, status: BrowserTabStatus = "temporary", request?: BrowserRequest): Promise<{ ok: true; tab_id: string }> {
     const tabID = String(params.tab_id ?? "");
     if (!tabID) throw new Error("open_tab requires tab_id");
     const key = tabKey(workdir, tabID);
     let entry = this.tabs.get(key);
     if (!entry) {
       entry = this.registerTab(workdir, tabID, this.deps.createView(),
-        typeof params.thread_id === "string" && params.thread_id ? params.thread_id : undefined);
+        typeof params.thread_id === "string" && params.thread_id ? params.thread_id : undefined, { turn, status });
     }
+    if (turn) entry.controlledTurn = turn;
+    const inputGeneration = entry.inputGeneration;
     const initialURL = typeof params.initial_url === "string" ? params.initial_url : "";
     if (initialURL) {
       await this.withActiveEntry(entry, () => entry.view.webContents.loadURL(initialURL));
     }
+    if (request) {
+      this.assertRequestCurrent(request);
+      if (!entry.agentInputAllowed || entry.inputGeneration !== inputGeneration) throw new Error("Browser control revoked during navigation");
+    }
+    if (this.tabs.get(key) !== entry || entry.view.webContents.isDestroyed()) throw new Error("Browser tab closed during navigation");
     this.presentIfCached(entry);
     return { ok: true, tab_id: tabID };
   }
 
-  private registerTab(workdir: string, tabID: string, view: BrowserViewHandle, threadID?: string, openerTabID?: string): TabEntry {
+  private registerTab(workdir: string, tabID: string, view: BrowserViewHandle, threadID?: string, ownership: { opener?: TabEntry; turn?: BrowserTurn; status?: BrowserTabStatus } = {}): TabEntry {
     // Set a usable layout before the first navigation or script-written popup.
     view.setBounds({ x: 0, y: 0, width: 1280, height: 800 });
     const parent = this.ensureHostWindow().contentView;
     parent.addChildView(view);
     if (!view.webContents.debugger.isAttached()) view.webContents.debugger.attach("1.3");
     const entry: TabEntry = {
-      view, workdir, tabID, threadID, openerTabID,
+      view, workdir, tabID, threadID, openerTabID: ownership.opener?.tabID,
+      creationTurn: ownership.turn, controlledTurn: ownership.turn, status: ownership.status ?? "temporary",
       inputGeneration: 0, pageGeneration: 0,
       agentInputAllowed: this.threadControls.get(tabKey(workdir, threadID ?? ""))?.allowed !== false,
       debuggerAttached: true, nodeMap: new Map(), currentParent: parent,
@@ -734,15 +799,16 @@ export class BrowserHostCoordinator {
 
   private listTabs(workdir: string, threadID: string): {
     tab_ids: string[];
-    tabs: { tab_id: string; url: string; title: string }[];
+    tabs: BrowserListedTab[];
   } {
     const ids: string[] = [];
-    const tabs: { tab_id: string; url: string; title: string }[] = [];
+    const tabs: BrowserListedTab[] = [];
     for (const entry of this.tabs.values()) {
       if (entry.workdir !== workdir || entry.threadID !== threadID) continue;
       ids.push(entry.tabID);
       tabs.push({
         tab_id: entry.tabID,
+        status: entry.status,
         url: entry.view.webContents.getURL(),
         title: entry.view.webContents.getTitle(),
       });
@@ -779,12 +845,13 @@ export class BrowserHostCoordinator {
     return { ok: true };
   }
 
-  private async screenshot(workdir: string, params: Record<string, JsonValue>, request: { cancelled: boolean }): Promise<{ width: number; height: number; path: string }> {
+  private async screenshot(workdir: string, params: Record<string, JsonValue>, request: BrowserRequest): Promise<{ width: number; height: number; path: string }> {
     const entry = this.requireTab(workdir, String(params.tab_id ?? ""));
     const destPath = String(params.dest_path ?? "");
     if (!destPath) throw new Error("screenshot requires dest_path");
     const assertCurrent = this.operationGuard(entry, request);
     assertCurrent();
+    this.attachDebugger(entry, assertCurrent);
     const result = await this.withActiveEntry(entry, () => this.captureToFile(entry, destPath, assertCurrent));
     assertCurrent();
     return result;
@@ -794,16 +861,18 @@ export class BrowserHostCoordinator {
   private async cdpWithGate(
     workdir: string,
     params: Record<string, JsonValue>,
-    request: { cancelled: boolean },
+    request: BrowserRequest,
   ): Promise<{ result?: JsonValue; path?: string; size?: number }> {
     const entry = this.requireTab(workdir, String(params.tab_id ?? ""));
     const semanticMethod = String(params.method ?? "");
     const semanticParams = asRecord(params.params);
-    const assertCurrent = this.operationGuard(entry, request);
+    const assertCurrent = this.operationGuard(entry, request, semanticMethod === "navigate");
     assertCurrent();
+    this.attachDebugger(entry, assertCurrent);
     const output = await this.withActiveEntry(entry, () =>
       this.runSemantic(entry, semanticMethod, semanticParams, assertCurrent),
     );
+    assertCurrent();
     const json = JSON.stringify(output ?? null);
     const size = Buffer.byteLength(json, "utf8");
     if (size > MAX_INLINE_RESULT_BYTES) {
@@ -1063,6 +1132,16 @@ export class BrowserHostCoordinator {
       if (this.tabs.get(tabKey(entry.workdir, entry.tabID)) !== entry || contents.isDestroyed() || this.downWorkdirs.has(entry.workdir)) {
         return { action: "deny" };
       }
+      const activeTurn = entry.threadID ? this.threadTurns.get(tabKey(entry.workdir, entry.threadID)) : undefined;
+      const originTurn = entry.controlledTurn ?? (entry.status === "temporary" ? entry.creationTurn : undefined);
+      const popupTurn = originTurn && !originTurn.ended ? originTurn : undefined;
+      const inputGeneration = entry.inputGeneration;
+      if ((popupTurn && popupTurn !== activeTurn) || (!popupTurn && originTurn && entry.status === "temporary")) return { action: "deny" };
+      const validOpener = (): boolean => this.tabs.get(tabKey(entry.workdir, entry.tabID)) === entry &&
+        !contents.isDestroyed() && !this.downWorkdirs.has(entry.workdir) &&
+        (!popupTurn || (!popupTurn.ended && entry.agentInputAllowed && entry.inputGeneration === inputGeneration &&
+          this.threadTurns.get(tabKey(entry.workdir, entry.threadID ?? "")) === popupTurn));
+      if (!validOpener()) return { action: "deny" };
       const target = details.url || "about:blank";
       let protocol: string;
       try { protocol = new URL(target).protocol; } catch { return { action: "deny" }; }
@@ -1074,13 +1153,14 @@ export class BrowserHostCoordinator {
         overrideBrowserWindowOptions: { show: false, webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false } },
         createWindow: (options) => {
           const view = this.deps.createView(options);
-          if (this.tabs.get(tabKey(entry.workdir, entry.tabID)) !== entry || contents.isDestroyed()) {
+          if (!validOpener()) {
             view.webContents.close();
             return view.webContents as WebContents;
           }
           const tabID = `popup-${entry.tabID}-${this.popupSerial++}`;
-          const child = this.registerTab(entry.workdir, tabID, view, entry.threadID, entry.tabID);
+          const child = this.registerTab(entry.workdir, tabID, view, entry.threadID, { opener: entry, turn: popupTurn, status: popupTurn ? "temporary" : entry.status });
           child.agentInputAllowed = entry.agentInputAllowed;
+          if (!child.agentInputAllowed) this.releaseDebugger(child);
           // The supplied child retains Chromium's opener, WindowProxy, and POST
           // navigation. Calling loadURL here would destroy that original context.
           const childOptions = options as WebContentsViewConstructorOptions;
@@ -1125,15 +1205,17 @@ export class BrowserHostCoordinator {
     if (wasPanel) this.rendererSink?.presented();
   }
 
-  private operationGuard(entry: TabEntry, request: { cancelled: boolean }): () => void {
+  private operationGuard(entry: TabEntry, request: BrowserRequest, navigates = false): () => void {
     const inputGeneration = entry.inputGeneration;
     const pageGeneration = entry.pageGeneration;
     return () => {
+      this.assertRequestCurrent(request);
       if (request.cancelled || !entry.agentInputAllowed || entry.inputGeneration !== inputGeneration ||
-        entry.pageGeneration !== pageGeneration || entry.view.webContents.isDestroyed() ||
+        (!navigates && entry.pageGeneration !== pageGeneration) || entry.view.webContents.isDestroyed() ||
         this.tabs.get(tabKey(entry.workdir, entry.tabID)) !== entry) {
         throw new Error("Browser action interrupted: control revoked, request cancelled, or page changed");
       }
+      entry.controlledTurn = request.turn;
     };
   }
 
@@ -1153,6 +1235,8 @@ export class BrowserHostCoordinator {
     if (entry.agentInputDepth > 0) return;
     if (Date.now() < entry.ignoreUserInputUntil) return;
     entry.ignoreUserInputUntil = Date.now() + 300;
+    entry.status = "persistent";
+    entry.controlledTurn = undefined;
     const key = tabKey(entry.workdir, entry.threadID ?? "");
     const control = this.threadControls.get(key);
     // Manual browsing before the first browser activity has no agent lease to
@@ -1378,6 +1462,96 @@ export class BrowserHostCoordinator {
     void contents.removeInsertedCSS(key).catch(() => undefined);
   }
 
+  private assertRequestCurrent(request: BrowserRequest): void {
+    if (request.cancelled || request.turn?.ended ||
+      this.threadTurns.get(tabKey(request.workdir, request.threadID)) !== request.turn) {
+      throw new Error("Browser request belongs to an inactive execution");
+    }
+  }
+
+  private attachDebugger(entry: TabEntry, assertCurrent: () => void): void {
+    assertCurrent();
+    if (!entry.view.webContents.debugger.isAttached()) entry.view.webContents.debugger.attach("1.3");
+    entry.debuggerAttached = true;
+    assertCurrent();
+  }
+
+  private releaseDebugger(entry: TabEntry): void {
+    entry.inputGeneration += 1;
+    entry.agentInputAllowed = false;
+    entry.controlledTurn = undefined;
+    entry.nodeMap.clear();
+    this.clearCursor(entry);
+    try {
+      if (entry.view.webContents.debugger.isAttached()) entry.view.webContents.debugger.detach();
+    } catch {
+      // A closing or crashed contents may have already detached its debugger.
+    }
+    entry.debuggerAttached = false;
+  }
+
+  private finalizeTabs(workdir: string, threadID: string, params: Record<string, JsonValue>, ended: boolean, request: BrowserRequest): BrowserTurnEndedResult {
+    const turn = this.threadTurns.get(tabKey(workdir, threadID));
+    if (!turn || turn.ended || params.turn_id !== turn.turnID || params.execution_id !== turn.executionID) {
+      return { closed: [], kept: [], stale: true };
+    }
+    this.assertRequestCurrent(request);
+    const retained = new Map<string, BrowserTabStatus>();
+    for (const raw of Array.isArray(params.keep) ? params.keep : []) {
+      const keep = asRecord(raw);
+      if (typeof keep.tab_id !== "string" || !["persistent", "handoff", "deliverable"].includes(String(keep.status))) {
+        throw new Error("Invalid browser keep classification");
+      }
+      const entry = this.tabs.get(tabKey(workdir, keep.tab_id));
+      // A durable tab may not be materialized after a host restart.
+      if (!entry) continue;
+      if (entry.threadID !== threadID) throw new Error("browser tab belongs to another thread");
+      retained.set(entry.tabID, keep.status as BrowserTabStatus);
+    }
+    const entries = [...this.tabs.values()].filter(entry => entry.workdir === workdir && entry.threadID === threadID);
+    for (const entry of entries) {
+      if (entry.status !== "temporary" || (ended && params.preserve_all === true)) {
+        if (entry.status === "persistent" || !retained.has(entry.tabID)) {
+          retained.set(entry.tabID, entry.status === "temporary" ? "persistent" : entry.status);
+        }
+      }
+    }
+    // A retained popup still uses its opener's live WindowProxy and message
+    // context. Protect that ancestry before closing any temporary siblings.
+    for (const id of retained.keys()) {
+      let entry = this.tabs.get(tabKey(workdir, id));
+      const seen = new Set<string>();
+      while (entry?.openerTabID && !seen.has(entry.openerTabID)) {
+        seen.add(entry.openerTabID);
+        const opener = this.tabs.get(tabKey(workdir, entry.openerTabID));
+        if (!opener || opener.threadID !== threadID) break;
+        if (!retained.has(opener.tabID)) retained.set(opener.tabID, "persistent");
+        entry = opener;
+      }
+    }
+    if (ended) {
+      turn.ended = true;
+      for (const pending of this.pendingRequests.values()) {
+        if (pending !== request && pending.workdir === workdir && pending.threadID === threadID) pending.cancelled = true;
+      }
+    }
+    const closed: string[] = [];
+    const kept: string[] = [];
+    for (const entry of entries) {
+      const status = retained.get(entry.tabID);
+      if (!status) {
+        closed.push(entry.tabID);
+        this.destroyEntry(entry);
+      } else {
+        entry.status = status;
+        kept.push(entry.tabID);
+        // Keep the current view, zoom and PiP geometry intact for the user.
+        if (ended) this.releaseDebugger(entry);
+      }
+    }
+    return { closed, kept, tabs: this.listTabs(workdir, threadID).tabs };
+  }
+
   private destroyEntry(entry: TabEntry): void {
     const key = tabKey(entry.workdir, entry.tabID);
     if (this.tabs.get(key) !== entry) return;
@@ -1388,16 +1562,7 @@ export class BrowserHostCoordinator {
     entry.agentInputAllowed = false;
     this.agentWebContentsIds.delete(entry.view.webContents.id);
     this.emitTabClosed(entry);
-    if (entry.debuggerAttached) {
-      try {
-        if (entry.view.webContents.debugger.isAttached()) {
-          entry.view.webContents.debugger.detach();
-        }
-      } catch {
-        // Debugger auto-detaches on crash/navigation; ignore.
-      }
-      entry.debuggerAttached = false;
-    }
+    this.releaseDebugger(entry);
     if (entry.currentParent) {
       try {
         entry.currentParent.removeChildView(entry.view);

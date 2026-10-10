@@ -6,10 +6,29 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
+	"time"
 
 	"github.com/blueberrycongee/wuu/internal/activity"
+	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/tools"
 )
+
+// A turn token belongs to the execution that created it, including inherited
+// worker contexts. Neither a delayed request nor context.WithoutCancel may
+// borrow the identity or browser authority of a later turn.
+type browserTurnContextKey struct{}
+
+type browserTurnState struct {
+	mu          sync.Mutex
+	threadID    string
+	turnID      string
+	executionID string
+	closed      bool
+	bridges     map[string]*browserBridge
+}
+
+const browserTurnCleanupTimeout = 5 * time.Second
 
 // browserBridge implements tools.BrowserBridge by translating each call into a
 // server-initiated browser/* request over Server.callClient. One bridge is
@@ -60,7 +79,45 @@ func (b *browserBridge) Call(ctx context.Context, method string, params any) (js
 	scoped["workdir"], _ = json.Marshal(b.workdir)
 	scoped["thread_id"], _ = json.Marshal(b.threadID)
 	scoped["request_id"], _ = json.Marshal(requestID)
+	turn, _ := ctx.Value(browserTurnContextKey{}).(*browserTurnState)
+	lifecycle := b.srv.supportsClientMethod(MethodBrowserTurnEnded)
+	if lifecycle {
+		if turn == nil || turn.threadID != b.threadID {
+			return nil, errors.New("browser request requires an active turn context")
+		}
+		turn.mu.Lock()
+		if turn.closed {
+			turn.mu.Unlock()
+			return nil, errors.New("browser turn has ended")
+		}
+		if _, started := turn.bridges[b.workdir]; !started {
+			// Serialize lazy start with closing this token. In particular, an
+			// old worker cannot announce its turn after cleanup or a successor.
+			err = b.srv.writeJSONContext(ctx, Notification{
+				Method: NotificationBrowserTurnStarted,
+				Params: BrowserTurnStartedParams{
+					Workdir: b.workdir, ThreadID: b.threadID, TurnID: turn.turnID, ExecutionID: turn.executionID,
+				},
+			})
+			if err != nil {
+				turn.mu.Unlock()
+				return nil, err
+			}
+			turn.bridges[b.workdir] = b
+		}
+		turn.mu.Unlock()
+		scoped["turn_id"], _ = json.Marshal(turn.turnID)
+		scoped["execution_id"], _ = json.Marshal(turn.executionID)
+	}
 	result, err := b.srv.callClient(ctx, method, scoped)
+	if err == nil && lifecycle {
+		turn.mu.Lock()
+		closed := turn.closed
+		turn.mu.Unlock()
+		if closed {
+			err = errors.New("browser turn has ended")
+		}
+	}
 	if err != nil {
 		// A late desktop command must not outlive a cancelled or timed-out
 		// reverse RPC. The opaque ID targets only this request, not a new turn.
@@ -148,7 +205,7 @@ func (b *browserBridge) ListTabs(ctx context.Context) ([]tools.BrowserLiveTab, e
 			if tab.TabID == "" {
 				continue
 			}
-			out = append(out, tools.BrowserLiveTab{ID: tab.TabID, URL: tab.URL, Title: tab.Title})
+			out = append(out, tools.BrowserLiveTab{ID: tab.TabID, URL: tab.URL, Title: tab.Title, Status: tab.Status})
 		}
 		return out, nil
 	}
@@ -160,6 +217,90 @@ func (b *browserBridge) ListTabs(ctx context.Context) ([]tools.BrowserLiveTab, e
 		out = append(out, tools.BrowserLiveTab{ID: id})
 	}
 	return out, nil
+}
+
+// finishBrowserTurn runs before the execution lease and terminal notification
+// are released. It also runs after cancellation, using a bounded independent
+// context: a cancelled tool context cannot prevent the host releasing control.
+// It never stops the thread-wide activity or deletes screenshot artifacts.
+func (s *Server) finishBrowserTurn(turn *browserTurnState, kit *tools.Toolkit) error {
+	turn.mu.Lock()
+	if turn.closed {
+		turn.mu.Unlock()
+		return nil
+	}
+	turn.closed = true
+	bridges := make([]*browserBridge, 0, len(turn.bridges))
+	for _, bridge := range turn.bridges {
+		bridges = append(bridges, bridge)
+	}
+	turn.mu.Unlock()
+	if len(bridges) == 0 {
+		return nil
+	}
+
+	store := kit.BrowserTabStore()
+	keep := make([]BrowserKeptTab, 0)
+	var cleanupErr error
+	if store != nil {
+		records, err := store.List()
+		cleanupErr = err
+		for _, record := range records {
+			switch record.Status {
+			case "handoff", "deliverable", "persistent":
+				keep = append(keep, BrowserKeptTab{TabID: record.TabID, Status: record.Status})
+			}
+		}
+	}
+	preserveAll := cleanupErr != nil
+	ctx, cancel := context.WithTimeout(context.Background(), browserTurnCleanupTimeout)
+	defer cancel()
+	for _, bridge := range bridges {
+		raw, err := s.callClient(ctx, MethodBrowserTurnEnded, BrowserTurnEndedParams{
+			Workdir: bridge.workdir, ThreadID: turn.threadID, TurnID: turn.turnID, ExecutionID: turn.executionID,
+			Keep: keep, PreserveAll: preserveAll,
+		})
+		if err != nil {
+			cleanupErr = errors.Join(cleanupErr, err)
+			continue
+		}
+		var result BrowserTurnEndedResult
+		if err := json.Unmarshal(raw, &result); err != nil {
+			cleanupErr = errors.Join(cleanupErr, fmt.Errorf("decode browser turn cleanup: %w", err))
+			continue
+		}
+		if result.Stale || store == nil {
+			continue
+		}
+		live := make(map[string]BrowserListedTab, len(result.Tabs))
+		for _, tab := range result.Tabs {
+			live[tab.TabID] = tab
+		}
+		for _, id := range result.Closed {
+			cleanupErr = errors.Join(cleanupErr, store.Delete(id))
+		}
+		for _, id := range result.Kept {
+			record, _, err := store.Get(id)
+			if err != nil {
+				cleanupErr = errors.Join(cleanupErr, err)
+				continue
+			}
+			record.TabID = id
+			if tab, ok := live[id]; ok {
+				record.URL, record.Title = tab.URL, tab.Title
+			}
+			if record.Status != "deliverable" {
+				record.Status = "persistent"
+			}
+			record.UpdatedAt = time.Time{}
+			cleanupErr = errors.Join(cleanupErr, store.Put(record))
+		}
+	}
+	if cleanupErr != nil {
+		providers.DebugLogf("browser cleanup for thread %q turn %q: %v", turn.threadID, turn.turnID, cleanupErr)
+		return fmt.Errorf("browser turn cleanup: %w", cleanupErr)
+	}
+	return nil
 }
 
 // stopBrowserActivitiesAndEmit stops every browser-kind activity this process

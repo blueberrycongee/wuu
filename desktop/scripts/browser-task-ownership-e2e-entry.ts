@@ -68,7 +68,7 @@ const activeTurnIDs = new Map<string, string>();
 const activeExecutionIDs = new Map<string, string>();
 const controlledResponses = new Map<string, ServerResponse>();
 const controlledWaiters = new Map<string, ReturnType<typeof deferred>>();
-const controlledMarkers = new Set(["OWNERSHIP_C", "OWNERSHIP_LIFECYCLE", "OWNERSHIP_KEEP", "OWNERSHIP_DISPOSE", "OWNERSHIP_SIBLING", "OWNERSHIP_FOREIGN", "OWNERSHIP_RETAINED_AGAIN"]);
+const controlledMarkers = new Set(["OWNERSHIP_C", "OWNERSHIP_C_CONTINUE", "OWNERSHIP_LIFECYCLE", "OWNERSHIP_KEEP", "OWNERSHIP_DISPOSE", "OWNERSHIP_SIBLING", "OWNERSHIP_FOREIGN", "OWNERSHIP_RETAINED_AGAIN"]);
 function controlledWaiter(marker: string) {
   let waiter = controlledWaiters.get(marker);
   if (!waiter) { waiter = deferred(); controlledWaiters.set(marker, waiter); }
@@ -204,7 +204,11 @@ const server = createServer((req, res) => {
     if (!marker) { respond(res); return; }
     const step = turns.get(marker) ?? 0;
     turns.set(marker, step + 1);
-    if (step === 0) { respond(res, { action: "navigate", url: `${baseURL}/${["OWNERSHIP_POPUP", "OWNERSHIP_LIFECYCLE", "OWNERSHIP_KEEP"].includes(marker) ? "popup-opener" : marker}` }); return; }
+    if (step === 0) {
+      respond(res, marker === "OWNERSHIP_C_CONTINUE" ? { action: "tabs" }
+        : { action: "navigate", url: `${baseURL}/${["OWNERSHIP_POPUP", "OWNERSHIP_LIFECYCLE", "OWNERSHIP_KEEP"].includes(marker) ? "popup-opener" : marker}` });
+      return;
+    }
     if (marker === "OWNERSHIP_POPUP") { heldPopup = res; popupWaiting.resolve(); return; }
     if (controlledMarkers.has(marker)) { controlledResponses.set(marker, res); controlledWaiter(marker).resolve(); return; }
     if (marker === "OWNERSHIP_B" && step === 1) {
@@ -607,6 +611,23 @@ app.whenReady().then(async () => {
   const cTab = String(opened("OWNERSHIP_C")?.tab_id ?? "");
   const cView = await readTab(cTab);
   assert(cView, "C page remains alive for input cancellation checks");
+  const cContentsID = cView.webContents.id;
+  let cMarker = "OWNERSHIP_C";
+  async function awaitCTakeover(label: string) {
+    await bounded(`${label} interrupts the actual core execution`, completed.get(c)!.promise);
+    check(`${label} terminates its execution as interrupted`, terminalEvents.get(c)?.status === "interrupted", JSON.stringify(terminalEvents.get(c)));
+    // The core has already cancelled this HTTP request. Close the local fixture
+    // response without supplying a fabricated successful model completion.
+    controlledResponses.get(cMarker)?.end();
+    controlledResponses.delete(cMarker);
+  }
+  async function resumeC() {
+    const previousExecution = activeExecutionIDs.get(c);
+    cMarker = "OWNERSHIP_C_CONTINUE";
+    await start(cMarker, c);
+    await bounded("a real new C execution reconciles its retained tabs", controlledWaiter(cMarker).promise);
+    check("C resumes with a fresh core execution identity", Boolean(activeExecutionIDs.get(c)) && activeExecutionIDs.get(c) !== previousExecution);
+  }
   const observation = await request(c, "browser/cdp", { tab_id: cTab, method: "observe", params: {} }) as { result: { nodes: { node_id: number; name: string }[] } };
   const target = observation.result.nodes.find(node => node.name === "Target");
   assert(target, "Actual Chromium DOM observation includes the target");
@@ -623,13 +644,17 @@ app.whenReady().then(async () => {
   const interrupted = await pending;
   check("takeover cancels input awaiting geometry", interrupted !== "delivered", interrupted);
   check("revoked click never reaches the page", await cView.webContents.executeJavaScript("window.clicks") === 0);
-  await request(c, "browser/set_visibility", { tab_id: cTab, visible: false });
+  await awaitCTakeover("explicit takeover");
+  host.reportBounds(workdir, cTab, main as unknown as BrowserHostWindowHandle, null, 1);
   await cView.webContents.executeJavaScript("document.querySelector('#field').focus()");
   const staleType = await request(c, "browser/cdp", { tab_id: cTab, method: "type", params: { text: "stale" } }).then(() => "delivered", error => String(error));
   check("hidden input remains revoked", staleType !== "delivered" && await cView.webContents.executeJavaScript("document.querySelector('#field').value") === "", staleType);
   await pool.request("activity/release", { thread_id: c, activity_id: activity.id });
+  const oldReleasedInput = await request(c, "browser/cdp", { tab_id: cTab, method: "type", params: { text: "old-release" } }).then(() => "delivered", error => String(error));
+  check("explicit release cannot revive an ended execution", oldReleasedInput !== "delivered" && await cView.webContents.executeJavaScript("document.querySelector('#field').value") === "", oldReleasedInput);
+  await resumeC();
   await request(c, "browser/cdp", { tab_id: cTab, method: "type", params: { text: "resumed" } });
-  check("explicit release renews input authority", await cView.webContents.executeJavaScript("document.querySelector('#field').value") === "resumed");
+  check("explicit release and a fresh execution renew input authority", await cView.webContents.executeJavaScript("document.querySelector('#field').value") === "resumed");
   const foreignThread = await start("OWNERSHIP_FOREIGN");
   await bounded("a fresh foreign execution is active", controlledWaiter("OWNERSHIP_FOREIGN").promise);
   const cross = await request(foreignThread, "browser/cdp", { tab_id: cTab, method: "type", params: { text: "sibling" } }).then(() => "delivered", error => String(error));
@@ -640,7 +665,7 @@ app.whenReady().then(async () => {
   // Delay a real older takeover/release pair, then generate fresh native page
   // input. Only the response to that input's own takeover can clear its latch.
   const localTab = "native-input-page";
-  await request(c, "browser/open_tab", { tab_id: localTab, initial_url: `${baseURL}/local-input` });
+  await host.runCommand(workdir, localTab, "navigate", `${baseURL}/local-input`, c);
   const localView = await readTab(localTab);
   assert(localView, "A second task-owned tab is available for native input");
   host.reportBounds(workdir, localTab, main as unknown as BrowserHostWindowHandle, { x: 0, y: 0, width: 800, height: 600 }, 1, true);
@@ -656,20 +681,25 @@ app.whenReady().then(async () => {
   heldControlThread = c;
   await pool.request("activity/takeover", { thread_id: c, activity_id: activity.id });
   await pool.request("activity/release", { thread_id: c, activity_id: activity.id });
+  await awaitCTakeover("queued older takeover");
+  heldControlThread = undefined;
+  const delayedControls = heldControls.splice(0);
+  await resumeC();
   localView.webContents.sendInputEvent({ type: "mouseDown", x: 500, y: 400, button: "left", clickCount: 1 });
   localView.webContents.sendInputEvent({ type: "mouseUp", x: 500, y: 400, button: "left", clickCount: 1 });
   await bounded("native local input reaches browser host", localInput.promise);
   assert(localGeneration !== undefined, "Native input carries a takeover generation");
-  heldControlThread = undefined;
-  for (const held of heldControls.splice(0)) host.updateActivity(held.activity, held.method);
+  for (const held of delayedControls) host.updateActivity(held.activity, held.method);
   const queuedGrant = await request(c, "browser/cdp", { tab_id: localTab, method: "type", params: { text: "old-grant" } }).then(() => "delivered", error => String(error));
   check("queued old takeover and grant cannot override newer native input", queuedGrant !== "delivered", queuedGrant);
   const acknowledged = await pool.request<{ activity: ActivitySession }>("activity/takeover", { thread_id: c, activity_id: activity.id });
   host.acknowledgeLocalTakeover(acknowledged.activity, localGeneration);
   await pool.request("activity/release", { thread_id: c, activity_id: activity.id });
+  await awaitCTakeover("acknowledged native takeover");
+  await resumeC();
   await localView.webContents.executeJavaScript("document.querySelector('#field').value='';document.querySelector('#field').focus()");
   await request(c, "browser/cdp", { tab_id: localTab, method: "type", params: { text: "local-resumed" } });
-  check("matching local takeover acknowledgment permits a fresh grant", await localView.webContents.executeJavaScript("document.querySelector('#field').value") === "local-resumed");
+  check("matching local takeover acknowledgment permits a fresh execution grant", await localView.webContents.executeJavaScript("document.querySelector('#field').value") === "local-resumed");
 
   await request(c, "browser/close_tab", { tab_id: localTab });
 
@@ -724,6 +754,11 @@ app.whenReady().then(async () => {
   const navigationResult = await oldPageInput;
   check("same-URL return rejects old-page input", navigationResult !== "delivered" && await cView.webContents.executeJavaScript("window.clicks") === 0, navigationResult);
 
+  host.reportBounds(workdir, cTab, main as unknown as BrowserHostWindowHandle, { x: 0, y: 0, width: 800, height: 600 }, 1, true);
+  main.showInactive();
+  await cView.webContents.executeJavaScript("new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))");
+  writeFileSync(join(output, "page.png"), (await cView.webContents.capturePage(undefined, { stayHidden: true })).toPNG());
+  const commandsBeforeStop = nativeInputCommands.length;
   const stopObserve = await request(c, "browser/cdp", { tab_id: cTab, method: "observe", params: {} }) as { result: { nodes: { node_id: number; name: string }[] } };
   const stopTarget = stopObserve.result.nodes.find(node => node.name === "Target")!;
   const stopGate = { entered: deferred(), resume: deferred() };
@@ -733,13 +768,9 @@ app.whenReady().then(async () => {
   await pool.request("activity/stop", { thread_id: c, activity_id: activity.id });
   stopGate.resume.resolve();
   const stopResult = await stoppedInput;
-  check("activity stop cancels pending input", stopResult !== "delivered" && await cView.webContents.executeJavaScript("window.clicks") === 0, stopResult);
-  host.reportBounds(workdir, cTab, main as unknown as BrowserHostWindowHandle, { x: 0, y: 0, width: 800, height: 600 }, 1, true);
-  main.showInactive();
-  await cView.webContents.executeJavaScript("new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))");
-  writeFileSync(join(output, "page.png"), (await cView.webContents.capturePage(undefined, { stayHidden: true })).toPNG());
+  check("activity stop cancels pending input", stopResult !== "delivered" && !nativeInputCommands.slice(commandsBeforeStop).some(command => command.webContentsID === cContentsID), stopResult);
 
-  await finishControlled("OWNERSHIP_C", c);
+  await finishControlled(cMarker, c);
   const disposal = await start("OWNERSHIP_DISPOSE");
   await bounded("disposal turn opens a live page", controlledWaiter("OWNERSHIP_DISPOSE").promise);
   const disposalTab = openedForThread(disposal)[0];
