@@ -20,9 +20,9 @@ if (!process.versions.electron) {
       const { ipcRenderer } = require("electron");
       ipcRenderer.on("probe", (_event, payload) => ipcRenderer.send("probe-ack", payload));
     `);
-    const env = { ...process.env };
+    const env = { ...process.env, WUU_RENDERER_RECOVERY_DIRECTORY: directory };
     delete env.ELECTRON_RUN_AS_NODE;
-    const result = spawnSync(require("electron"), [__filename, directory], {
+    const result = spawnSync(require("electron"), [__filename], {
       env, encoding: "utf8", timeout: 90_000,
     });
     process.stdout.write(result.stdout || "");
@@ -35,8 +35,8 @@ if (!process.versions.electron) {
   }
 } else {
   const { app, BrowserWindow, ipcMain } = require("electron");
-  const directory = process.argv[2];
-  const { installRendererRecovery, sendToWindow } = require(path.join(directory, "recovery.cjs"));
+  const directory = process.env.WUU_RENDERER_RECOVERY_DIRECTORY;
+  const { installRendererRecovery, loadDevelopmentRenderer, sendToWindow } = require(path.join(directory, "recovery.cjs"));
   app.setPath("userData", path.join(directory, "profile"));
   app.setPath("crashDumps", directory);
   app.on("window-all-closed", () => {});
@@ -140,6 +140,43 @@ if (!process.versions.electron) {
     failed.choose("close");
     await closed;
     await acknowledge(second.window);
+    // The development server can disappear after a successful startup. A
+    // crash must still exhaust recovery and keep the other window alive.
+    const { createServer } = require("node:http");
+    const server = createServer((_request, response) => response.end("<!doctype html><title>Dev probe</title>"));
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const devURL = `http://127.0.0.1:${server.address().port}/`;
+    const devWindow = new BrowserWindow({ show: false });
+    windows.push(devWindow);
+    let devAttempts = 0;
+    let chooseDev;
+    installRendererRecovery(devWindow, {
+      app,
+      load: () => { devAttempts++; return devWindow.loadURL(devURL); },
+      stopTerminals: () => {},
+      prompt: () => new Promise((resolve) => {
+        chooseDev = resolve;
+        devWindow.emit("recovery-prompt");
+      }),
+    });
+    let quits = 0;
+    const devApp = { quit: () => { quits++; } };
+    await loadDevelopmentRenderer(devWindow, devURL, devApp);
+    await new Promise((resolve) => server.close(resolve));
+    const devPrompt = event(devWindow, "recovery-prompt");
+    crash(devWindow);
+    await devPrompt;
+    assert.equal(devAttempts, 3);
+    assert.equal(quits, 0, "recovery load failure must not quit the app");
+    await acknowledge(second.window);
+    const devClosed = event(devWindow, "closed");
+    chooseDev("close");
+    await devClosed;
+    const startup = new BrowserWindow({ show: false });
+    windows.push(startup);
+    await loadDevelopmentRenderer(startup, devURL, devApp);
+    assert.equal(quits, 1, "initial dev load failure must still quit the stale host");
+    console.log("PASS: dev server loss preserves recovery and initial failure exits");
     console.log("PASS: real renderer crashes, cooldown recovery, bounded retries, manual retry, failed loads, window isolation, persisted state, and IPC during frame disposal");
   }).then(() => finish(0), (error) => { console.error(error); finish(1); });
 

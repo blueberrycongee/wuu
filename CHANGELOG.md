@@ -82,6 +82,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Keep development renderer crash recovery running when the Vite server is
+  unavailable, instead of quitting the entire desktop app on the failed reload.
+
 - Discover external-engine models in the conversation's actual working directory,
   with native refresh, bounded probes and context-aware cache invalidation for
   Codex, Claude Code, ACP engines and OpenCode. Preserve Claude aliases, discover
