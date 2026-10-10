@@ -157,6 +157,8 @@ app.whenReady().then(async () => {
   await waitFor(win, () => Boolean(document.querySelector('.user-message-actions button:has(svg[data-icon="info"])')));
   await evaluate(win, () => document.querySelector('.user-message-actions button:has(svg[data-icon="info"])').click());
   await waitFor(win, () => document.querySelectorAll('.conversation-split-pane').length === 2);
+  const primaryAttachmentsBefore = await evaluate(win, () => [...document.querySelectorAll('.conversation-split-pane[data-thread-id="sidebar-fade-0"] .composer-attachment-tray-item')]
+    .map(item => ({ text: item.textContent, image: item.querySelector('img')?.getAttribute('src') })));
   await evaluate(win, () => {
     const pane = document.querySelector('.conversation-split-pane[data-thread-id="sidebar-fade-1"]');
     pane.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
@@ -179,7 +181,8 @@ app.whenReady().then(async () => {
   await waitFor(win, () => !document.querySelector('.conversation-pane')?.hasAttribute('inert'));
   assert.equal(await evaluate(win, () => document.querySelector('.conversation-split-pane[data-thread-id="sidebar-fade-1"] textarea').value), 'Preserve the secondary draft');
   assert.equal(await evaluate(win, () => document.querySelectorAll('.conversation-split-pane[data-thread-id="sidebar-fade-1"] .composer-attachment-tray-item').length), 2);
-  assert.equal(await evaluate(win, () => document.querySelectorAll('.conversation-split-pane[data-thread-id="sidebar-fade-0"] .composer-attachment-tray-item').length), 0);
+  assert.deepEqual(await evaluate(win, () => [...document.querySelectorAll('.conversation-split-pane[data-thread-id="sidebar-fade-0"] .composer-attachment-tray-item')]
+    .map(item => ({ text: item.textContent, image: item.querySelector('img')?.getAttribute('src') }))), primaryAttachmentsBefore);
   assert.equal(sends, 0); await capture(win, 'active-split-draft');
   const report = { result: 'passed', coverage: ['opt-in setup', 'local preview', 'cancel discards', 'add preserves draft', 'no implicit send', 'target failure has no Add', 'revoked preview cannot add', 'light/dark narrow/large renderer layouts', 'preview survives Settings route', 'covered split routes to actual active draft'], native_macos_capture: 'not exercised', screenshots: screenshots ? 'captured' : 'not exercised (functional-only mode)', console_errors: errors };
   assert.deepEqual(errors, []);
