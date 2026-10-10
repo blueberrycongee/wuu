@@ -47,7 +47,7 @@ async function bounded<T>(label: string, promise: Promise<T>, timeout = 30_000):
 }
 
 const events: unknown[] = [];
-const calls: { method: string; params: Record<string, unknown> }[] = [];
+const calls: { id: string; method: string; params: Record<string, unknown> }[] = [];
 const providerRequests: unknown[] = [];
 const failures: string[] = [];
 const checks: { name: string; passed: boolean; detail?: string }[] = [];
@@ -59,6 +59,11 @@ const completed = new Map<string, ReturnType<typeof deferred>>();
 const activityByThread = new Map<string, ActivitySession>();
 const revocations = new Map<string, ReturnType<typeof deferred>>();
 const turns = new Map<string, number>();
+const providerTabs = new Map<string, string>();
+const cancellations = new Map<string, ReturnType<typeof deferred>>();
+const hostCompletions = new Map<string, ReturnType<typeof deferred>>();
+let heldControlThread: string | undefined;
+const heldControls: { activity: ActivitySession; method: string }[] = [];
 const aWaiting = deferred();
 let heldA: ServerResponse | undefined;
 let baseURL = "";
@@ -88,13 +93,28 @@ const server = createServer((req, res) => {
       return;
     }
     const prompt = JSON.stringify(input.messages?.filter((message: { role: string }) => message.role === "user") ?? []);
-    const marker = /OWNERSHIP_[ABC]/.exec(prompt)?.[0];
+    const marker = /OWNERSHIP_[ABCD]/.exec(prompt)?.[0];
     if (!marker) { respond(res); return; }
     const step = turns.get(marker) ?? 0;
     turns.set(marker, step + 1);
     if (step === 0) { respond(res, { action: "navigate", url: `${baseURL}/${marker}` }); return; }
     if (marker === "OWNERSHIP_A" && step === 1) { heldA = res; aWaiting.resolve(); return; }
     if (marker === "OWNERSHIP_A" && step === 2) { respond(res, { action: "finalize", keep: [] }); return; }
+    if (marker === "OWNERSHIP_D") {
+      const last = [...input.messages].reverse().find((message: { role: string }) => message.role === "tool");
+      const text = typeof last?.content === "string" ? last.content : (last?.content ?? []).map((part: { text?: string }) => part.text ?? "").join("\n");
+      if (step === 1) {
+        const tabID = /"tab_id":"([^"]+)"/.exec(text)?.[1];
+        if (!tabID) { res.writeHead(500).end(`Missing navigate tab: ${text}`); return; }
+        providerTabs.set(marker, tabID);
+        respond(res, { action: "observe", tab_id: tabID }); return;
+      }
+      if (step === 2) {
+        const nodeID = /\[(\d+)\][^\n]*Target/.exec(text)?.[1];
+        if (!nodeID) { res.writeHead(500).end(`Missing observed target: ${text}`); return; }
+        respond(res, { action: "click", tab_id: providerTabs.get(marker), node_id: Number(nodeID) }); return;
+      }
+    }
     respond(res);
   });
 });
@@ -109,7 +129,9 @@ function notify(event: ServerEvent) {
   host?.handleServerEvent?.(event);
   if (event.kind === "server-request") {
     if (event.message.method.startsWith("browser/")) {
-      calls.push({ method: event.message.method, params: event.message.params as Record<string, unknown> });
+      const id = String(event.message.id);
+      hostCompletions.set(id, deferred());
+      calls.push({ id, method: event.message.method, params: event.message.params as Record<string, unknown> });
       void host!.handleServerRequest(event);
     } else pool!.rejectServerRequest(String(event.message.id), `Unexpected fixture request ${event.message.method}`);
   }
@@ -117,10 +139,15 @@ function notify(event: ServerEvent) {
   if (event.message.method.startsWith("activity/")) {
     const activity = event.message.params as unknown as ActivitySession;
     activityByThread.set(activity.thread_id, activity);
-    host!.updateActivity(activity, event.message.method);
+    if (heldControlThread === activity.thread_id) heldControls.push({ activity, method: event.message.method });
+    else host!.updateActivity(activity, event.message.method);
     if (activity.controller !== "agent" || activity.state === "stopped") revocations.get(activity.thread_id)?.resolve();
   }
-  if (event.message.method === "turn/completed") {
+  if (event.message.method === "browser/request_cancelled") {
+    const params = event.message.params as unknown as { thread_id: string };
+    cancellations.get(params.thread_id)?.resolve();
+  }
+  if (event.message.method === "turn/completed" || event.message.method === "turn/error") {
     const params = event.message.params as unknown as { thread_id: string };
     completed.get(params.thread_id)?.resolve();
   }
@@ -158,11 +185,13 @@ app.whenReady().then(async () => {
   }));
   host = new BrowserHostCoordinator({ mainWindow: () => main } as unknown as WindowRegistry, {
     respond(id, result) {
+      hostCompletions.get(id)?.resolve();
       const direct = injected.get(id);
       if (direct) { injected.delete(id); direct.resolve(result); }
       else pool!.respondToServerRequest(id, result);
     },
     reject(id, message) {
+      hostCompletions.get(id)?.resolve();
       const direct = injected.get(id);
       if (direct) { injected.delete(id); direct.reject(new Error(message)); }
       else pool!.rejectServerRequest(id, message);
@@ -241,8 +270,106 @@ app.whenReady().then(async () => {
   check("a sibling cannot address a known foreign tab ID", cross !== "delivered", cross);
   const collision = await request(a, "browser/open_tab", { tab_id: cTab, initial_url: `${baseURL}/foreign` }).then(() => "delivered", error => String(error));
   check("a sibling cannot reopen another thread's tab ID", collision !== "delivered" && cView.webContents.getURL() === `${baseURL}/OWNERSHIP_C`, collision);
-  writeFileSync(join(output, "page.png"), (await cView.webContents.capturePage()).toPNG());
-  writeFileSync(join(output, "results.json"), JSON.stringify({ checks, threads: { a, b, c }, tabs: { aTab, bTab, cTab }, calls, providerRequests, events }, null, 2));
+  // Delay a real older takeover/release pair, then generate fresh native page
+  // input. Only the response to that input's own takeover can clear its latch.
+  const localTab = "native-input-page";
+  await request(c, "browser/open_tab", { tab_id: localTab, initial_url: `${baseURL}/local-input` });
+  const localView = await readTab(localTab);
+  assert(localView, "A second task-owned tab is available for native input");
+  host.reportBounds(workdir, localTab, main as unknown as BrowserHostWindowHandle, { x: 0, y: 0, width: 800, height: 600 }, 1, true);
+  main.showInactive();
+  const localInput = deferred();
+  let localGeneration: number | undefined;
+  host.setRendererSink({
+    surface() {}, adopted() {}, presented() {},
+    userInput(payload) {
+      if (payload.threadID === c) { localGeneration = payload.inputGeneration; localInput.resolve(); }
+    },
+  });
+  heldControlThread = c;
+  await pool.request("activity/takeover", { thread_id: c, activity_id: activity.id });
+  await pool.request("activity/release", { thread_id: c, activity_id: activity.id });
+  localView.webContents.sendInputEvent({ type: "mouseDown", x: 500, y: 400, button: "left", clickCount: 1 });
+  localView.webContents.sendInputEvent({ type: "mouseUp", x: 500, y: 400, button: "left", clickCount: 1 });
+  await bounded("native local input reaches browser host", localInput.promise);
+  assert(localGeneration !== undefined, "Native input carries a takeover generation");
+  heldControlThread = undefined;
+  for (const held of heldControls.splice(0)) host.updateActivity(held.activity, held.method);
+  const queuedGrant = await request(c, "browser/cdp", { tab_id: localTab, method: "type", params: { text: "old-grant" } }).then(() => "delivered", error => String(error));
+  check("queued old takeover and grant cannot override newer native input", queuedGrant !== "delivered", queuedGrant);
+  const acknowledged = await pool.request<{ activity: ActivitySession }>("activity/takeover", { thread_id: c, activity_id: activity.id });
+  host.acknowledgeLocalTakeover(acknowledged.activity, localGeneration);
+  await pool.request("activity/release", { thread_id: c, activity_id: activity.id });
+  await localView.webContents.executeJavaScript("document.querySelector('#field').value='';document.querySelector('#field').focus()");
+  await request(c, "browser/cdp", { tab_id: localTab, method: "type", params: { text: "local-resumed" } });
+  check("matching local takeover acknowledgment permits a fresh grant", await localView.webContents.executeJavaScript("document.querySelector('#field').value") === "local-resumed");
+
+  await request(c, "browser/close_tab", { tab_id: localTab });
+
+  // Hold an actual model-generated Go browser call, interrupt its turn, and
+  // wait for its matching cancellation notification before releasing geometry.
+  const dGate = { entered: deferred(), resume: deferred() };
+  geometryGate = dGate;
+  const d = await start("OWNERSHIP_D");
+  cancellations.set(d, deferred());
+  await bounded("D's real Go click waits on geometry", dGate.entered.promise);
+  const dTab = String(opened("OWNERSHIP_D")?.tab_id ?? "");
+  const dView = await readTab(dTab);
+  assert(dView, "D's live page exists");
+  const dCall = calls.find(call => call.method === "browser/cdp" && call.params.thread_id === d && call.params.method === "click");
+  assert(dCall?.params.request_id, "Real Go click carries cancellation identity");
+  await pool.request("turn/interrupt", { thread_id: d });
+  await bounded("Go cancels its pending browser request", cancellations.get(d)!.promise);
+  dGate.resume.resolve();
+  await bounded("Cancelled host operation finishes", hostCompletions.get(dCall.id)!.promise);
+  check("turn interruption cancels a real pending Go browser call", await dView.webContents.executeJavaScript("window.clicks") === 0);
+  const cancellation = events.find(event => {
+    const wire = event as ServerEvent;
+    return wire.kind === "notification" && wire.message.method === "browser/request_cancelled" &&
+      (wire.message.params as Record<string, unknown>).request_id === dCall.params.request_id;
+  });
+  check("cancellation targets the original request identity", Boolean(cancellation));
+
+  // A main-frame navigation invalidates geometry even if it returns to the
+  // same URL. This directly exercises the production host's reverse RPC path.
+  const navObserve = await request(c, "browser/cdp", { tab_id: cTab, method: "observe", params: {} }) as { result: { nodes: { node_id: number; name: string }[] } };
+  const navTarget = navObserve.result.nodes.find(node => node.name === "Target")!;
+  const navGate = { entered: deferred(), resume: deferred() };
+  geometryGate = navGate;
+  const oldPageInput = request(c, "browser/cdp", { tab_id: cTab, method: "click", params: { node_id: navTarget.node_id } }).then(() => "delivered", error => String(error));
+  await bounded("C geometry before same-URL navigation", navGate.entered.promise);
+  await cView.webContents.loadURL(`${baseURL}/intermediate`);
+  await cView.webContents.loadURL(`${baseURL}/OWNERSHIP_C`);
+  navGate.resume.resolve();
+  const navigationResult = await oldPageInput;
+  check("same-URL return rejects old-page input", navigationResult !== "delivered" && await cView.webContents.executeJavaScript("window.clicks") === 0, navigationResult);
+
+  const stopObserve = await request(c, "browser/cdp", { tab_id: cTab, method: "observe", params: {} }) as { result: { nodes: { node_id: number; name: string }[] } };
+  const stopTarget = stopObserve.result.nodes.find(node => node.name === "Target")!;
+  const stopGate = { entered: deferred(), resume: deferred() };
+  geometryGate = stopGate;
+  const stoppedInput = request(c, "browser/cdp", { tab_id: cTab, method: "click", params: { node_id: stopTarget.node_id } }).then(() => "delivered", error => String(error));
+  await bounded("C geometry before stop", stopGate.entered.promise);
+  await pool.request("activity/stop", { thread_id: c, activity_id: activity.id });
+  stopGate.resume.resolve();
+  const stopResult = await stoppedInput;
+  check("activity stop cancels pending input", stopResult !== "delivered" && await cView.webContents.executeJavaScript("window.clicks") === 0, stopResult);
+  host.reportBounds(workdir, cTab, main as unknown as BrowserHostWindowHandle, { x: 0, y: 0, width: 800, height: 600 }, 1, true);
+  main.showInactive();
+  await cView.webContents.executeJavaScript("new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))");
+  writeFileSync(join(output, "page.png"), (await cView.webContents.capturePage(undefined, { stayHidden: true })).toPNG());
+
+  const disposeObserve = await request(d, "browser/cdp", { tab_id: dTab, method: "observe", params: {} }) as { result: { nodes: { node_id: number; name: string }[] } };
+  const disposeTarget = disposeObserve.result.nodes.find(node => node.name === "Target")!;
+  const disposeGate = { entered: deferred(), resume: deferred() };
+  geometryGate = disposeGate;
+  const disposedInput = request(d, "browser/cdp", { tab_id: dTab, method: "click", params: { node_id: disposeTarget.node_id } }).then(() => "delivered", error => String(error));
+  await bounded("D geometry before disposal", disposeGate.entered.promise);
+  host.destroyAll();
+  disposeGate.resume.resolve();
+  const disposeResult = await disposedInput;
+  check("disposal invalidates input before closing views", disposeResult !== "delivered" && host.tabSurfaceMeta(workdir, dTab) === undefined, disposeResult);
+  writeFileSync(join(output, "results.json"), JSON.stringify({ checks, threads: { a, b, c, d }, tabs: { aTab, bTab, cTab, dTab }, calls, providerRequests, events }, null, 2));
   console.log(JSON.stringify(checks, null, 2));
   await pool.shutdown();
   host.destroyAll();

@@ -301,8 +301,8 @@ const api: WuuDesktopApi = {
   pollXAILogin: (loginId: string) => ipcRenderer.invoke("wuu:auth-xai-login-poll", loginId),
   cancelXAILogin: (loginId: string) => ipcRenderer.invoke("wuu:auth-xai-login-cancel", loginId),
   listActivities: (threadId: string) => ipcRenderer.invoke("wuu:activity-list", threadId),
-  takeoverActivity: (threadId: string, activityId: string) =>
-    ipcRenderer.invoke("wuu:activity-takeover", threadId, activityId),
+  takeoverActivity: (threadId: string, activityId: string, inputGeneration?: number) =>
+    ipcRenderer.invoke("wuu:activity-takeover", threadId, activityId, inputGeneration),
   releaseActivity: (threadId: string, activityId: string) =>
     ipcRenderer.invoke("wuu:activity-release", threadId, activityId),
   stopActivity: (threadId: string, activityId: string) =>
@@ -593,7 +593,7 @@ type BrowserTakeoverApi = {
   browserSurface: (workdir: string, tabID: string) => Promise<BrowserSurfaceSnapshot | null>;
   onBrowserSurface: (handler: (snapshot: BrowserSurfaceSnapshot) => void) => () => void;
   onBrowserUserInput: (
-    handler: (payload: { workdir: string; tabID: string }) => void,
+    handler: (payload: { workdir: string; tabID: string; threadID?: string; inputGeneration?: number }) => void,
   ) => () => void;
   onBrowserTabAdopted: (handler: (payload: BrowserTabAdopted) => void) => () => void;
   onBrowserDock: (handler: (payload: BrowserDockTarget) => void) => () => void;

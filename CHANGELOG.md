@@ -82,6 +82,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Keep browser tab listing and cleanup within the owning conversation, including
+  popups. Reject cross-conversation tab access, and stop stale input after user
+  takeover, request cancellation, navigation, or tab teardown.
+
 - Discover external-engine models in the conversation's actual working directory,
   with native refresh, bounded probes and context-aware cache invalidation for
   Codex, Claude Code, ACP engines and OpenCode. Preserve Claude aliases, discover

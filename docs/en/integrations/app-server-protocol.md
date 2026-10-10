@@ -494,6 +494,10 @@ The browser client advertises all six methods: `browser/cdp`, `browser/screensho
 `browser/list_tabs`. These travel from core to client; they are not client-to-core
 methods despite appearing beside other method constants in the source.
 
+Every browser request carries a core-assigned `thread_id` and `workdir`. The client must scope tab creation, listing, input, capture, and cleanup to that conversation. Page-opened tabs inherit their opener's ownership. Reject an existing tab owned by another conversation rather than navigating or adopting it.
+
+A `request_id` identifies an in-flight browser operation. The `browser/request_cancelled` notification carries that ID with the same `thread_id` and `workdir` when the core stops waiting. Cancel only the matching operation, checking again after asynchronous work and before sending input. Activity takeover and stop revoke input for all tabs of that conversation. A later release grants fresh authority without resuming an old request.
+
 Reply with the server request's ID and a result or error while continuing to read
 the stream. Browser calls have a 30-second response timeout. Omitted capabilities
 do not authorize reverse requests. `wuu exec` does not advertise this interactive

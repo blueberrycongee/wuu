@@ -39,6 +39,21 @@ wuu app-server --workdir /path/to/project
 Schema 修正回合，因此单个 `turn/completed` 不代表整次运行结束。用 `run/interrupt`
 停止运行；关闭由客户端启动的服务前，先请求 `shutdown`。
 
+## 托管浏览器请求
+
+内嵌浏览器客户端应协商全部六个反向请求方法：`browser/cdp`、`browser/screenshot`、
+`browser/open_tab`、`browser/close_tab`、`browser/set_visibility` 和 `browser/list_tabs`。
+这些请求由核心发给客户端；客户端应持续读取协议流，并以原请求 ID 返回结果或错误。
+
+每个浏览器请求都带核心指定的 `thread_id` 和 `workdir`。标签页创建、列举、输入、截图和
+清理按对话隔离；页面打开的标签页继承来源页的归属。现有标签页属于其他对话时，应拒绝
+请求，不得导航或接管该标签页。
+
+`request_id` 标识进行中的操作。核心停止等待时，`browser/request_cancelled` 通知携带
+该 ID 及相同的 `thread_id`、`workdir`。只取消匹配的操作，在异步工作后和输入派发前
+再次检查。用户接管或停止活动会撤销该对话所有标签页的输入权限；之后归还控制权可
+授权新操作，但不能恢复已经撤销的请求。
+
 ## 复用会话
 
 `thread/resume` 接受 `session_id`，省略时选择工作区最近的可见会话。`thread/fork` 接受

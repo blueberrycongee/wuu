@@ -1440,7 +1440,7 @@ export function App(): JSX.Element {
     );
   }
 
-  async function pauseBrowserTask(): Promise<void> {
+  async function pauseBrowserTask(inputGeneration?: number): Promise<void> {
     if (!activeBrowserActivity) {
       return;
     }
@@ -1448,6 +1448,7 @@ export function App(): JSX.Element {
       const result = await window.wuu.takeoverActivity(
         activeBrowserActivity.thread_id,
         activeBrowserActivity.id,
+        inputGeneration,
       );
       mergeActivityResponse(result.activity);
     } catch (error) {

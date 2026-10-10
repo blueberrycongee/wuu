@@ -145,6 +145,10 @@ type TabEntry = {
   view: BrowserViewHandle;
   workdir: string;
   tabID: string;
+  threadID?: string;
+  inputGeneration: number;
+  pageGeneration: number;
+  agentInputAllowed: boolean;
   debuggerAttached: boolean;
   // node_id -> backendNodeId, rebuilt on every observe. node_id is a small
   // incrementing int handed to the model; backendNodeId is the CDP identity we
@@ -169,7 +173,6 @@ type TabEntry = {
   blockPresent: boolean;
   agentInputDepth: number;
   ignoreUserInputUntil: number;
-  userInterrupted: boolean;
   loading: boolean;
   loadError?: string;
   activeOperations: number;
@@ -181,7 +184,7 @@ type TabEntry = {
 
 type BrowserRendererSink = {
   surface: (snapshot: BrowserSurfaceSnapshot) => void;
-  userInput: (payload: { workdir: string; tabID: string }) => void;
+  userInput: (payload: { workdir: string; tabID: string; threadID?: string; inputGeneration?: number }) => void;
   adopted: (payload: { workdir: string; openerTabID: string; tabID: string; url: string }) => void;
   presented: () => void;
 };
@@ -224,6 +227,8 @@ export class BrowserHostCoordinator {
   // sends its next request (proof the core is back).
   private readonly downWorkdirs = new Set<string>();
   private hostWindow: BrowserHostWindowHandle | undefined;
+  private readonly threadControls = new Map<string, { controller: string; allowed: boolean; updatedAt: string; grantAt?: string; localTakeover?: number }>();
+  private readonly pendingRequests = new Map<string, { cancelled: boolean }>();
   // Preview-surface listeners. Interaction hints flow main-side only (never
   // through the core protocol): they mirror actions this coordinator already
   // dispatched, so no model-visible data crosses a new channel.
@@ -237,6 +242,7 @@ export class BrowserHostCoordinator {
   private readonly navigateListeners = new Set<(workdir: string, tabID: string, url: string) => void>();
   private rendererSink: BrowserRendererSink | undefined;
   private popupSerial = 0;
+  private localTakeoverSerial = 0;
   private readonly tabReparentedListeners = new Set<
     (workdir: string, tabID: string, parent: BrowserParentWindowHandle["contentView"] | undefined) => void
   >();
@@ -262,12 +268,29 @@ export class BrowserHostCoordinator {
     const workdir = typeof params.workdir === "string" && params.workdir ? params.workdir : event.workdir;
     // Receiving a request is proof this workdir's core is alive again.
     this.downWorkdirs.delete(workdir);
+    const threadID = typeof params.thread_id === "string" ? params.thread_id.trim() : "";
+    const requestID = typeof params.request_id === "string" ? params.request_id : "";
+    const requestKey = requestID ? JSON.stringify([workdir, threadID, requestID]) : undefined;
+    const request = { cancelled: false };
+    if (requestKey) this.pendingRequests.set(requestKey, request);
     try {
-      const result = await this.dispatch(method, workdir, params);
+      if (!threadID) throw new Error("browser request requires thread_id");
+      const result = await this.dispatch(method, workdir, threadID, params, request);
+      if (request.cancelled) throw new Error("Browser request cancelled");
       this.respondSafe(id, workdir, result);
     } catch (error) {
       this.rejectSafe(id, workdir, error instanceof Error ? error.message : String(error));
+    } finally {
+      if (requestKey) this.pendingRequests.delete(requestKey);
     }
+  }
+
+  handleServerEvent(event: ServerEvent): void {
+    if (event.kind !== "notification" || event.message.method !== "browser/request_cancelled") return;
+    const params = asRecord(event.message.params);
+    const key = JSON.stringify([params.workdir, params.thread_id, params.request_id]);
+    const request = this.pendingRequests.get(key);
+    if (request) request.cancelled = true;
   }
 
   // Called from index.ts on a server-exit event so a reply that lands after the
@@ -289,6 +312,9 @@ export class BrowserHostCoordinator {
         this.tabs.delete(key);
         this.lastBounds.delete(key);
       }
+    }
+    for (const key of this.threadControls.keys()) {
+      if (key.startsWith(tabKey(workdir, ""))) this.threadControls.delete(key);
     }
     this.broadcastInvalidation(workdir);
   }
@@ -511,12 +537,44 @@ export class BrowserHostCoordinator {
     return this.tabs.get(tabKey(workdir, tabID))?.inPanel === true;
   }
 
-  updateActivity(activity: ActivitySession): void {
+  updateActivity(activity: ActivitySession, eventMethod?: string): void {
     if (activity.kind !== "browser") return;
-    const entry = this.tabs.get(tabKey(activity.workdir, activity.target?.trim() || activity.id));
-    if (!entry || (activity.controller === "agent" && activity.state !== "stopped")) return;
-    entry.userInterrupted = true;
-    this.clearCursor(entry);
+    const key = tabKey(activity.workdir, activity.thread_id);
+    const previous = this.threadControls.get(key);
+    // The core emits UTC RFC3339Nano. Preserve all digits: Date.parse would
+    // collapse distinct revoke/grant events in the same millisecond.
+    const updatedAt = activityTimestamp(activity.updated_at);
+    if (previous && updatedAt < previous.updatedAt) return;
+    const controlled = activity.controller === "agent" && activity.state !== "stopped";
+    // A late metadata snapshot cannot renew revoked authority. Only an
+    // explicit control grant can do so, and old pending guards stay invalid.
+    const localTakeover = previous?.localTakeover;
+    const grantAt = controlled && eventMethod === "activity/control_changed" ? updatedAt : previous?.grantAt;
+    const allowed = controlled && localTakeover === undefined && (!previous || previous.allowed || eventMethod === "activity/control_changed");
+    this.threadControls.set(key, { controller: activity.controller, allowed, updatedAt, grantAt, localTakeover });
+    this.applyThreadAuthority(activity.workdir, activity.thread_id, allowed);
+  }
+
+  acknowledgeLocalTakeover(activity: ActivitySession, inputGeneration: number): void {
+    if (activity.kind !== "browser") return;
+    const key = tabKey(activity.workdir, activity.thread_id);
+    const control = this.threadControls.get(key);
+    if (!control || control.localTakeover !== inputGeneration) return;
+    // Only the response to this click's takeover request clears its latch.
+    // A newer release may already have arrived in the same protocol batch.
+    const allowed = control.controller === "agent" && control.grantAt !== undefined &&
+      control.grantAt > activityTimestamp(activity.updated_at);
+    this.threadControls.set(key, { ...control, allowed, localTakeover: undefined });
+    this.applyThreadAuthority(activity.workdir, activity.thread_id, allowed);
+  }
+
+  private applyThreadAuthority(workdir: string, threadID: string, allowed: boolean): void {
+    for (const entry of this.tabs.values()) {
+      if (entry.workdir !== workdir || entry.threadID !== threadID) continue;
+      if (entry.agentInputAllowed !== allowed || !allowed) entry.inputGeneration += 1;
+      entry.agentInputAllowed = allowed;
+      if (!allowed) this.clearCursor(entry);
+    }
   }
 
   surface(workdir: string, tabID: string): BrowserSurfaceSnapshot | undefined {
@@ -530,6 +588,7 @@ export class BrowserHostCoordinator {
     tabID: string,
     command: string,
     url?: string,
+    threadID?: string,
   ): Promise<BrowserSurfaceSnapshot | undefined> {
     if (!tabID) return undefined;
     if (command === "navigate") {
@@ -537,7 +596,7 @@ export class BrowserHostCoordinator {
       if (!target) return this.surface(workdir, tabID);
       let entry = this.tabs.get(tabKey(workdir, tabID));
       if (!entry) {
-        await this.openTab(workdir, { tab_id: tabID, initial_url: target });
+        await this.openTab(workdir, { thread_id: threadID ?? "", tab_id: tabID, initial_url: target });
         entry = this.tabs.get(tabKey(workdir, tabID));
       } else if (!entry.view.webContents.isDestroyed()) {
         const current = entry;
@@ -586,6 +645,8 @@ export class BrowserHostCoordinator {
     for (const entry of this.tabs.values()) this.destroyEntry(entry);
     this.tabs.clear();
     this.lastBounds.clear();
+    this.threadControls.clear();
+    for (const request of this.pendingRequests.values()) request.cancelled = true;
     if (this.hostWindow && !this.hostWindow.isDestroyed()) {
       this.hostWindow.destroy();
     }
@@ -595,20 +656,26 @@ export class BrowserHostCoordinator {
   // -------------------------------------------------------------------------
   // Method dispatch.
   // -------------------------------------------------------------------------
-  private async dispatch(method: string, workdir: string, params: Record<string, JsonValue>): Promise<unknown> {
+  private async dispatch(method: string, workdir: string, threadID: string, params: Record<string, JsonValue>, request: { cancelled: boolean }): Promise<unknown> {
+    const tabID = typeof params.tab_id === "string" ? params.tab_id : "";
+    const entry = this.tabs.get(tabKey(workdir, tabID));
+    if (entry && entry.threadID !== threadID) throw new Error("browser tab belongs to another thread");
+    if (method === "browser/open_tab" && this.threadControls.get(tabKey(workdir, threadID))?.allowed === false) {
+      throw new Error("Browser control revoked");
+    }
     switch (method) {
       case "browser/open_tab":
         return this.openTab(workdir, params);
       case "browser/close_tab":
         return this.closeTab(workdir, params);
       case "browser/list_tabs":
-        return this.listTabs(workdir);
+        return this.listTabs(workdir, threadID);
       case "browser/set_visibility":
         return this.setVisibility(workdir, params);
       case "browser/screenshot":
-        return this.screenshot(workdir, params);
+        return this.screenshot(workdir, params, request);
       case "browser/cdp":
-        return this.cdpWithGate(workdir, params);
+        return this.cdpWithGate(workdir, params, request);
       default:
         throw new Error(`unsupported browser method: ${method}`);
     }
@@ -633,6 +700,10 @@ export class BrowserHostCoordinator {
         view,
         workdir,
         tabID,
+        threadID: typeof params.thread_id === "string" && params.thread_id ? params.thread_id : undefined,
+        inputGeneration: 0,
+        pageGeneration: 0,
+        agentInputAllowed: this.threadControls.get(tabKey(workdir, String(params.thread_id ?? "")))?.allowed !== false,
         debuggerAttached: true,
         nodeMap: new Map(),
         currentParent: this.ensureHostWindow().contentView,
@@ -642,7 +713,6 @@ export class BrowserHostCoordinator {
         blockPresent: false,
         agentInputDepth: 0,
         ignoreUserInputUntil: 0,
-        userInterrupted: false,
         loading: false,
         activeOperations: 0,
         spectatorScrollbarEpoch: 0,
@@ -671,14 +741,14 @@ export class BrowserHostCoordinator {
     return { ok: true };
   }
 
-  private listTabs(workdir: string): {
+  private listTabs(workdir: string, threadID: string): {
     tab_ids: string[];
     tabs: { tab_id: string; url: string; title: string }[];
   } {
     const ids: string[] = [];
     const tabs: { tab_id: string; url: string; title: string }[] = [];
     for (const entry of this.tabs.values()) {
-      if (entry.workdir !== workdir) continue;
+      if (entry.workdir !== workdir || entry.threadID !== threadID) continue;
       ids.push(entry.tabID);
       tabs.push({
         tab_id: entry.tabID,
@@ -718,23 +788,30 @@ export class BrowserHostCoordinator {
     return { ok: true };
   }
 
-  private async screenshot(workdir: string, params: Record<string, JsonValue>): Promise<{ width: number; height: number; path: string }> {
+  private async screenshot(workdir: string, params: Record<string, JsonValue>, request: { cancelled: boolean }): Promise<{ width: number; height: number; path: string }> {
     const entry = this.requireTab(workdir, String(params.tab_id ?? ""));
     const destPath = String(params.dest_path ?? "");
     if (!destPath) throw new Error("screenshot requires dest_path");
-    return this.withActiveEntry(entry, () => this.captureToFile(entry, destPath));
+    const assertCurrent = this.operationGuard(entry, request);
+    assertCurrent();
+    const result = await this.withActiveEntry(entry, () => this.captureToFile(entry, destPath, assertCurrent));
+    assertCurrent();
+    return result;
   }
 
   // browser/cdp with the >1MB overflow gate applied to the semantic result.
   private async cdpWithGate(
     workdir: string,
     params: Record<string, JsonValue>,
+    request: { cancelled: boolean },
   ): Promise<{ result?: JsonValue; path?: string; size?: number }> {
     const entry = this.requireTab(workdir, String(params.tab_id ?? ""));
     const semanticMethod = String(params.method ?? "");
     const semanticParams = asRecord(params.params);
+    const assertCurrent = this.operationGuard(entry, request);
+    assertCurrent();
     const output = await this.withActiveEntry(entry, () =>
-      this.runSemantic(entry, semanticMethod, semanticParams),
+      this.runSemantic(entry, semanticMethod, semanticParams, assertCurrent),
     );
     const json = JSON.stringify(output ?? null);
     const size = Buffer.byteLength(json, "utf8");
@@ -758,20 +835,21 @@ export class BrowserHostCoordinator {
     entry: TabEntry,
     method: string,
     params: Record<string, JsonValue>,
+    assertCurrent: () => void,
   ): Promise<JsonValue> {
     switch (method) {
       case "navigate":
         return this.navigate(entry, params);
       case "observe":
-        return this.observe(entry, params);
+        return this.observe(entry, params, assertCurrent);
       case "click":
-        return this.click(entry, params);
+        return this.click(entry, params, assertCurrent);
       case "type":
-        return this.typeText(entry, params);
+        return this.typeText(entry, params, assertCurrent);
       case "scroll":
-        return this.scroll(entry, params);
+        return this.scroll(entry, params, assertCurrent);
       case "key":
-        return this.key(entry, params);
+        return this.key(entry, params, assertCurrent);
       case "wait":
         return this.wait(params);
       default:
@@ -790,10 +868,11 @@ export class BrowserHostCoordinator {
     return { url: entry.view.webContents.getURL(), title: entry.view.webContents.getTitle() };
   }
 
-  private async observe(entry: TabEntry, params: Record<string, JsonValue>): Promise<JsonValue> {
+  private async observe(entry: TabEntry, params: Record<string, JsonValue>, assertCurrent: () => void): Promise<JsonValue> {
     const snapshot = await entry.view.webContents.debugger.sendCommand("DOMSnapshot.captureSnapshot", {
       computedStyles: [],
     });
+    assertCurrent();
     const raw = interactableNodesFromSnapshot(snapshot);
     const page = pageReadableContent(readableBlocksFromSnapshot(snapshot), contentOffsetParam(params));
     // Rebuild the node map from scratch: node_ids are only valid until the next
@@ -824,17 +903,18 @@ export class BrowserHostCoordinator {
     if (page.nextOffset !== undefined) result.content_next_offset = page.nextOffset;
     const destPath = typeof params.dest_path === "string" ? params.dest_path : "";
     if (params.screenshot === true && destPath) {
-      const shot = await this.captureToFile(entry, destPath);
+      const shot = await this.captureToFile(entry, destPath, assertCurrent);
       result.screenshot_path = shot.path;
     }
     return result;
   }
 
-  private async click(entry: TabEntry, params: Record<string, JsonValue>): Promise<JsonValue> {
+  private async click(entry: TabEntry, params: Record<string, JsonValue>, assertCurrent: () => void): Promise<JsonValue> {
     const point = await this.resolvePoint(entry, params);
-    await this.glideCursor(entry, point[0], point[1]);
+    await this.glideCursor(entry, point[0], point[1], assertCurrent);
     await this.withAgentInput(entry, async () => {
       const dbg = entry.view.webContents.debugger;
+      assertCurrent();
       await dbg.sendCommand("Input.dispatchMouseEvent", {
         type: "mousePressed",
         x: point[0],
@@ -843,6 +923,7 @@ export class BrowserHostCoordinator {
         buttons: 1,
         clickCount: 1,
       });
+      assertCurrent();
       await dbg.sendCommand("Input.dispatchMouseEvent", {
         type: "mouseReleased",
         x: point[0],
@@ -856,22 +937,26 @@ export class BrowserHostCoordinator {
     return { ok: true };
   }
 
-  private async typeText(entry: TabEntry, params: Record<string, JsonValue>): Promise<JsonValue> {
+  private async typeText(entry: TabEntry, params: Record<string, JsonValue>, assertCurrent: () => void): Promise<JsonValue> {
     const dbg = entry.view.webContents.debugger;
     let point: [number, number] | undefined;
     if (typeof params.node_id === "number") {
       const backendNodeId = this.requireBackendNode(entry, params.node_id);
+      assertCurrent();
       await dbg.sendCommand("DOM.focus", { backendNodeId });
       point = await this.pointForNode(entry, params.node_id).catch(() => undefined);
     }
     const text = String(params.text ?? "");
-    if (point) await this.glideCursor(entry, point[0], point[1]);
-    await this.withAgentInput(entry, () => dbg.sendCommand("Input.insertText", { text }));
+    if (point) await this.glideCursor(entry, point[0], point[1], assertCurrent);
+    await this.withAgentInput(entry, () => {
+      assertCurrent();
+      return dbg.sendCommand("Input.insertText", { text });
+    });
     if (point) void this.emitInteraction(entry, { kind: "type", x: point[0], y: point[1] });
     return { ok: true };
   }
 
-  private async scroll(entry: TabEntry, params: Record<string, JsonValue>): Promise<JsonValue> {
+  private async scroll(entry: TabEntry, params: Record<string, JsonValue>, assertCurrent: () => void): Promise<JsonValue> {
     let x = 0;
     let y = 0;
     if (typeof params.node_id === "number") {
@@ -884,31 +969,35 @@ export class BrowserHostCoordinator {
     }
     const wheel = wheelDeltas(params.dx, params.dy);
     const aimed = typeof params.node_id === "number" || (typeof params.x === "number" && typeof params.y === "number");
-    if (aimed) await this.glideCursor(entry, x, y);
-    await this.withAgentInput(entry, () =>
-      entry.view.webContents.debugger.sendCommand("Input.dispatchMouseEvent", {
+    if (aimed) await this.glideCursor(entry, x, y, assertCurrent);
+    await this.withAgentInput(entry, () => {
+      assertCurrent();
+      return entry.view.webContents.debugger.sendCommand("Input.dispatchMouseEvent", {
         type: "mouseWheel",
         x,
         y,
         deltaX: wheel.dx,
         deltaY: wheel.dy,
-      }),
-    );
+      });
+    });
     void this.emitInteraction(entry, { kind: "scroll", x, y, direction: scrollDirection(wheel.dx, wheel.dy) });
     return { ok: true };
   }
 
-  private async key(entry: TabEntry, params: Record<string, JsonValue>): Promise<JsonValue> {
+  private async key(entry: TabEntry, params: Record<string, JsonValue>, assertCurrent: () => void): Promise<JsonValue> {
     const chord = keyChord(params.keys);
     if (!chord) throw new Error("key requires keys");
     const dbg = entry.view.webContents.debugger;
     await this.withAgentInput(entry, async () => {
       for (const stroke of chord) {
         const event = keyDispatch(stroke);
+        assertCurrent();
         await dbg.sendCommand("Input.dispatchKeyEvent", { type: "keyDown", ...event });
         if (event.text) {
+          assertCurrent();
           await dbg.sendCommand("Input.dispatchKeyEvent", { type: "char", text: event.text, key: event.key });
         }
+        assertCurrent();
         await dbg.sendCommand("Input.dispatchKeyEvent", { type: "keyUp", ...event });
       }
     });
@@ -934,11 +1023,18 @@ export class BrowserHostCoordinator {
     const contents = entry.view.webContents;
     const publish = (): void => this.publishSurface(entry);
     const onNavigate = (...args: unknown[]): void => {
+      entry.pageGeneration += 1;
+      entry.nodeMap.clear();
       this.clearCursor(entry);
       const url = typeof args[1] === "string" ? args[1] : contents.getURL();
       this.emitNavigate(entry.workdir, entry.tabID, url);
       publish();
     };
+    contents.on("did-start-navigation", (...args: unknown[]) => {
+      if (args[3] === false) return;
+      entry.pageGeneration += 1;
+      entry.nodeMap.clear();
+    });
     contents.on("did-navigate", onNavigate);
     contents.on("did-navigate-in-page", onNavigate);
     contents.on("did-start-loading", () => {
@@ -983,7 +1079,7 @@ export class BrowserHostCoordinator {
     const target = url.trim();
     if (!target || target === "about:blank") return;
     const tabID = `popup-${opener.tabID}-${this.popupSerial++}`;
-    void this.openTab(opener.workdir, { tab_id: tabID, initial_url: target })
+    void this.openTab(opener.workdir, { thread_id: opener.threadID ?? "", tab_id: tabID, initial_url: target })
       .then(() => {
         this.rendererSink?.adopted({
           workdir: opener.workdir,
@@ -1024,6 +1120,18 @@ export class BrowserHostCoordinator {
     if (wasPanel) this.rendererSink?.presented();
   }
 
+  private operationGuard(entry: TabEntry, request: { cancelled: boolean }): () => void {
+    const inputGeneration = entry.inputGeneration;
+    const pageGeneration = entry.pageGeneration;
+    return () => {
+      if (request.cancelled || !entry.agentInputAllowed || entry.inputGeneration !== inputGeneration ||
+        entry.pageGeneration !== pageGeneration || entry.view.webContents.isDestroyed() ||
+        this.tabs.get(tabKey(entry.workdir, entry.tabID)) !== entry) {
+        throw new Error("Browser action interrupted: control revoked, request cancelled, or page changed");
+      }
+    };
+  }
+
   private async withAgentInput<T>(entry: TabEntry, run: () => Promise<T>): Promise<T> {
     entry.agentInputDepth += 1;
     entry.ignoreUserInputUntil = Date.now() + 200;
@@ -1040,18 +1148,30 @@ export class BrowserHostCoordinator {
     if (entry.agentInputDepth > 0) return;
     if (Date.now() < entry.ignoreUserInputUntil) return;
     entry.ignoreUserInputUntil = Date.now() + 300;
-    entry.userInterrupted = true;
-    this.clearCursor(entry);
-    this.rendererSink?.userInput({ workdir: entry.workdir, tabID: entry.tabID });
+    const key = tabKey(entry.workdir, entry.threadID ?? "");
+    const control = this.threadControls.get(key);
+    // Manual browsing before the first browser activity has no agent lease to
+    // revoke. Do not create a tombstone that blocks the task's first action.
+    const inputGeneration = control ? ++this.localTakeoverSerial : undefined;
+    if (control) this.threadControls.set(key, {
+      ...control, allowed: false, localTakeover: inputGeneration,
+    });
+    for (const owned of this.tabs.values()) {
+      if (owned.workdir !== entry.workdir || owned.threadID !== entry.threadID) continue;
+      owned.inputGeneration += 1;
+      if (control) owned.agentInputAllowed = false;
+      this.clearCursor(owned);
+    }
+    this.rendererSink?.userInput({ workdir: entry.workdir, tabID: entry.tabID, threadID: entry.threadID, inputGeneration });
   }
 
   // Move the pointer to the action, then let the caller send the input.
   // Hidden pages skip the travel so background work is not delayed. A real
   // user click during the travel cancels the action.
-  private async glideCursor(entry: TabEntry, x: number, y: number): Promise<void> {
+  private async glideCursor(entry: TabEntry, x: number, y: number, assertCurrent: () => void): Promise<void> {
+    assertCurrent();
     if (!entry.presented || entry.suppressed || entry.view.webContents.isDestroyed()) return;
     if (!Number.isFinite(x) || !Number.isFinite(y)) return;
-    entry.userInterrupted = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       const arrival = entry.inPanel
@@ -1068,7 +1188,7 @@ export class BrowserHostCoordinator {
     } finally {
       clearTimeout(timer);
     }
-    if (entry.userInterrupted) throw new Error("Browser action interrupted by user input");
+    assertCurrent();
   }
 
   private clearCursor(entry: TabEntry): void {
@@ -1120,11 +1240,14 @@ export class BrowserHostCoordinator {
   private async captureToFile(
     entry: TabEntry,
     destPath: string,
+    assertCurrent: () => void,
   ): Promise<{ width: number; height: number; path: string }> {
+    assertCurrent();
     // capturePage with stayHidden temporarily bumps the capturer count so a
     // hidden host actually produces a real frame — Page.captureScreenshot over
     // CDP on a non-visible view returns a blank/stale image.
     const image = await entry.view.webContents.capturePage(undefined, { stayHidden: true });
+    assertCurrent();
     const size = image.getSize();
     const png = image.toPNG();
     // A hidden view can report a successful capture before it has a frame.
@@ -1251,6 +1374,9 @@ export class BrowserHostCoordinator {
   }
 
   private destroyEntry(entry: TabEntry): void {
+    entry.inputGeneration += 1;
+    entry.pageGeneration += 1;
+    entry.agentInputAllowed = false;
     this.agentWebContentsIds.delete(entry.view.webContents.id);
     this.emitTabClosed(entry);
     if (entry.debuggerAttached) {
@@ -1341,6 +1467,10 @@ export const SPECTATOR_SCROLLBAR_PROBE = `(function(){
   probe.remove();
   return overlay;
 })()`;
+
+function activityTimestamp(value: string): string {
+  return value.replace(/(?:\.(\d+))?Z$/, (_match, fraction: string | undefined) => `.${(fraction ?? "").padEnd(9, "0")}Z`);
+}
 
 // Composite (workdir, tab_id) key. The pool mints up to 3 cores, each of which
 // generates its own tab_ids independently, so a bare tab_id can collide across

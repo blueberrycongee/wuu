@@ -92,7 +92,7 @@ export function WorkspaceBrowserPanel({
   dockTarget?: BrowserDockTarget;
   requestedURL?: WorkspaceBrowserNavigationRequest;
   overlaySuppressed?: boolean;
-  onUserInteraction?: () => void | Promise<void>;
+  onUserInteraction?: (inputGeneration?: number) => void | Promise<void>;
 }): JSX.Element {
   const { t } = useI18n();
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -109,7 +109,6 @@ export function WorkspaceBrowserPanel({
     ?? requestedTabID ?? displayedBrowserTabID(activity, threadID);
   const selectedTabIDRef = useRef(selectedTabID);
   selectedTabIDRef.current = selectedTabID;
-  const showingAgentTab = Boolean(agentTabID && selectedTabID === agentTabID);
 
   const [currentURL, setCurrentURL] = useState("");
   const [draftURL, setDraftURL] = useState("");
@@ -198,22 +197,22 @@ export function WorkspaceBrowserPanel({
     return subscribe((payload) => {
       if (!workdir || payload.workdir !== workdir) return;
       if (payload.tabID !== selectedTabIDRef.current) return;
-      if (!showingAgentTab || !activity || activity.state === "stopped") return;
-      void onUserInteraction?.();
+      if (!activity || activity.state === "stopped" || payload.threadID !== activity.thread_id) return;
+      void onUserInteraction?.(payload.inputGeneration);
     });
-  }, [activity, onUserInteraction, showingAgentTab, workdir]);
+  }, [activity, onUserInteraction, workdir]);
 
   const runCommand = useCallback(async (command: "navigate" | "back" | "forward" | "reload" | "stop", url?: string) => {
     const tabID = selectedTabIDRef.current;
     const send = window.wuu?.browserCommand;
     if (!workdir || !tabID || typeof send !== "function") return;
-    if (showingAgentTab && activity && activity.state !== "stopped") {
+    if (activity && activity.thread_id === threadID && activity.state !== "stopped") {
       await onUserInteraction?.();
     }
     if (tabID !== selectedTabIDRef.current) return;
-    const snapshot = await send({ workdir, tabID, command, url });
+    const snapshot = await send({ workdir, threadID, tabID, command, url });
     if (snapshot && snapshot.tabID === selectedTabIDRef.current) applySurface(snapshot);
-  }, [activity, applySurface, onUserInteraction, showingAgentTab, workdir]);
+  }, [activity, applySurface, onUserInteraction, threadID, workdir]);
 
   const navigate = useCallback((rawInput: string) => {
     const target = resolveNavigationInput(rawInput);

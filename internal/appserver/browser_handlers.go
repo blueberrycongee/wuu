@@ -2,6 +2,7 @@ package appserver
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -35,23 +36,46 @@ func (b *browserBridge) unavailable() error {
 	return nil
 }
 
-// Call is the raw CDP escape hatch. It passes the browser/* method and a
-// fully-formed params payload straight through; the caller owns the params
-// shape (including workdir and tab_id) so the bridge does not have to model
-// every CDP command. The typed methods below inject workdir for the fixed
-// lifecycle operations.
+// Call stamps the bridge-owned task identity on every browser request, including
+// optional actions invoked through the generic bridge rather than typed helpers.
 func (b *browserBridge) Call(ctx context.Context, method string, params any) (json.RawMessage, error) {
 	if err := b.unavailable(); err != nil {
 		return nil, err
 	}
-	return b.srv.callClient(ctx, method, params)
+	if err := activity.ControlErr(ctx); err != nil {
+		return nil, err
+	}
+	if b.threadID == "" {
+		return nil, errors.New("browser request requires a thread context")
+	}
+	payload, err := json.Marshal(params)
+	if err != nil {
+		return nil, err
+	}
+	var scoped map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &scoped); err != nil || scoped == nil {
+		return nil, errors.New("browser request params must be an object")
+	}
+	requestID := rand.Text()
+	scoped["workdir"], _ = json.Marshal(b.workdir)
+	scoped["thread_id"], _ = json.Marshal(b.threadID)
+	scoped["request_id"], _ = json.Marshal(requestID)
+	result, err := b.srv.callClient(ctx, method, scoped)
+	if err != nil {
+		// A late desktop command must not outlive a cancelled or timed-out
+		// reverse RPC. The opaque ID targets only this request, not a new turn.
+		_ = b.srv.writeNotification(NotificationBrowserRequestCancelled, BrowserRequestCancelledParams{
+			Workdir: b.workdir, ThreadID: b.threadID, RequestID: requestID,
+		})
+	}
+	return result, err
 }
 
 func (b *browserBridge) Screenshot(ctx context.Context, tabID, destPath, format string) (tools.BrowserScreenshotResult, error) {
 	if err := b.unavailable(); err != nil {
 		return tools.BrowserScreenshotResult{}, err
 	}
-	raw, err := b.srv.callClient(ctx, MethodBrowserScreenshot, BrowserScreenshotParams{
+	raw, err := b.Call(ctx, MethodBrowserScreenshot, BrowserScreenshotParams{
 		Workdir:  b.workdir,
 		TabID:    tabID,
 		DestPath: destPath,
@@ -73,7 +97,7 @@ func (b *browserBridge) OpenTab(ctx context.Context, tabID, url string) error {
 	if err := b.unavailable(); err != nil {
 		return err
 	}
-	_, err := b.srv.callClient(ctx, MethodBrowserOpenTab, BrowserOpenTabParams{
+	_, err := b.Call(ctx, MethodBrowserOpenTab, BrowserOpenTabParams{
 		Workdir:    b.workdir,
 		TabID:      tabID,
 		InitialURL: url,
@@ -85,7 +109,7 @@ func (b *browserBridge) CloseTab(ctx context.Context, tabID string) error {
 	if err := b.unavailable(); err != nil {
 		return err
 	}
-	_, err := b.srv.callClient(ctx, MethodBrowserCloseTab, BrowserCloseTabParams{
+	_, err := b.Call(ctx, MethodBrowserCloseTab, BrowserCloseTabParams{
 		Workdir: b.workdir,
 		TabID:   tabID,
 	})
@@ -96,7 +120,7 @@ func (b *browserBridge) SetVisibility(ctx context.Context, tabID string, visible
 	if err := b.unavailable(); err != nil {
 		return err
 	}
-	_, err := b.srv.callClient(ctx, MethodBrowserSetVisibility, BrowserSetVisibilityParams{
+	_, err := b.Call(ctx, MethodBrowserSetVisibility, BrowserSetVisibilityParams{
 		Workdir: b.workdir,
 		TabID:   tabID,
 		Visible: visible,
@@ -108,7 +132,7 @@ func (b *browserBridge) ListTabs(ctx context.Context) ([]tools.BrowserLiveTab, e
 	if err := b.unavailable(); err != nil {
 		return nil, err
 	}
-	raw, err := b.srv.callClient(ctx, MethodBrowserListTabs, BrowserListTabsParams{Workdir: b.workdir})
+	raw, err := b.Call(ctx, MethodBrowserListTabs, BrowserListTabsParams{Workdir: b.workdir})
 	if err != nil {
 		return nil, err
 	}

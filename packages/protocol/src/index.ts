@@ -189,8 +189,10 @@ export type FeatureFlags = {
 // internal/appserver/protocol.go. No payload carries an activity_id: the client
 // auto-rejects server requests naming a stopped activity, which would wedge a
 // CDP call the moment a tab's activity is torn down. Tabs are addressed by
-// tab_id, minted core-side.
+// tab_id, minted core-side, and scoped to the bridge-owned thread_id.
 export type BrowserCDPParams = {
+  thread_id: string;
+  request_id?: string;
   workdir: string;
   tab_id: string;
   method: string;
@@ -206,6 +208,8 @@ export type BrowserCDPResult = {
 };
 
 export type BrowserScreenshotParams = {
+  thread_id: string;
+  request_id?: string;
   workdir: string;
   tab_id: string;
   dest_path: string;
@@ -219,24 +223,38 @@ export type BrowserScreenshotResult = {
 };
 
 export type BrowserOpenTabParams = {
+  thread_id: string;
+  request_id?: string;
   workdir: string;
   tab_id: string;
   initial_url?: string;
 };
 
 export type BrowserCloseTabParams = {
+  thread_id: string;
+  request_id?: string;
   workdir: string;
   tab_id: string;
 };
 
 export type BrowserSetVisibilityParams = {
+  thread_id: string;
+  request_id?: string;
   workdir: string;
   tab_id: string;
   visible: boolean;
 };
 
 export type BrowserListTabsParams = {
+  thread_id: string;
+  request_id?: string;
   workdir: string;
+};
+
+export type BrowserRequestCancelledParams = {
+  workdir: string;
+  thread_id: string;
+  request_id: string;
 };
 
 export type BrowserListedTab = {
@@ -986,6 +1004,7 @@ export type BrowserSurfaceSnapshot = {
 export type BrowserCommandName = "navigate" | "back" | "forward" | "reload" | "stop";
 
 export type BrowserCommandParams = {
+  threadID?: string;
   workdir: string;
   tabID: string;
   command: BrowserCommandName;
@@ -2876,7 +2895,7 @@ export type WuuDesktopApi = {
   pollXAILogin: (loginId: string) => Promise<AuthXAILoginPollResult>;
   cancelXAILogin: (loginId: string) => Promise<{ ok: boolean }>;
   listActivities: (threadId: string) => Promise<ActivityListResult>;
-  takeoverActivity: (threadId: string, activityId: string) => Promise<ActivityActionResult>;
+  takeoverActivity: (threadId: string, activityId: string, inputGeneration?: number) => Promise<ActivityActionResult>;
   releaseActivity: (threadId: string, activityId: string) => Promise<ActivityReleaseResult>;
   stopActivity: (threadId: string, activityId: string) => Promise<ActivityActionResult>;
   listSkills: (params?: SkillListParams) => Promise<SkillListResult>;
@@ -3175,7 +3194,7 @@ export type WuuDesktopApi = {
   ) => () => void;
   // Main→renderer: the user clicked or typed in the presented page.
   onBrowserUserInput?: (
-    handler: (payload: { workdir: string; tabID: string }) => void,
+    handler: (payload: { workdir: string; tabID: string; threadID?: string; inputGeneration?: number }) => void,
   ) => () => void;
   // Main→renderer: a page-opened tab should replace the opener in the panel.
   onBrowserTabAdopted?: (
