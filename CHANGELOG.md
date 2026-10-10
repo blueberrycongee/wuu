@@ -10,6 +10,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Add opt-in macOS app snapshots: capture a single frontmost window with a global shortcut, review its image and optional available text locally, then add it to a draft without sending. Computer Use remains excluded from release builds.
+
 - Run a default-exported TypeScript plugin directly with `wuu plugin dev`, using
   the embedded SDK without a manifest or build, and keep watching through failed saves.
 

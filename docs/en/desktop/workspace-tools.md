@@ -95,6 +95,18 @@ Open **Terminal** or enter `/terminal` to run a shell in the workspace. Commands
 
 Agent commands also have activity entries and results in the conversation. Long output can be stored as a log reference. For long-running processes, use their process controls to inspect output, send input, or stop them. See [commands and background tasks](../reference/agent-command-system.md).
 
+## App snapshots on macOS
+
+App snapshots are an opt-in, read-only way to attach one visible app window to a conversation. They require macOS 14 or later and a desktop build with the Wuu App Snapshot helper.
+
+Open the composer **+** menu, choose **App snapshot…**, set a shortcut, and enable it. Screen Recording permission is required; optional available window text also needs Accessibility permission. Grant the entry macOS shows for Wuu or Wuu App Snapshot in **System Settings → Privacy & Security**. These permissions do not turn on autonomous Computer Use.
+
+Keep Wuu’s main window open, switch to the app window you want to share, and press the shortcut. The shortcut synchronously identifies that window before the capture helper starts. Keep it in front until capture finishes. Wuu opens a local preview with the screenshot and, if enabled, the available text. Review it and choose **Add to draft**. The snapshot is sent to your selected model provider only when you send your message. Available text can include content outside the visible scroll area; secure Accessibility fields are skipped. Screenshots are not redacted, so review all visible content before adding them. Text is included only when a single app window can be associated unambiguously across the window and Accessibility APIs; multi-window apps and uncertain matches produce screenshot-only attachments.
+
+Press the shortcut again while capture is running to cancel. Closing the preview discards it. Closing or reloading Wuu’s main window also cancels capture and invalidates the preview; a late result will not reopen a replacement window. If the target window changes, closes, or loses capture permission, Wuu discards that attempt rather than capturing a different app or the whole screen. Turning the shortcut off stops an in-progress capture and clears its preview. It does not revoke macOS permissions; those remain under System Settings.
+
+The shortcut starts disabled, and no background history or audio is recorded. Ad-hoc preview builds may need permissions granted again after an update. Native capture and permission behavior require macOS validation; browser/Electron UI checks alone do not establish that support.
+
 ## Browser
 
 Open **Browser** or enter `/browser` to view a page in the workspace panel beside the conversation. That panel and the page the agent is using are the same tab: the address bar, back, forward, and reload all drive it. Clicking a web link in a message, a turn source capsule, or a compact browser activity row also opens or focuses that panel and navigates to the page. Hold Command (Ctrl on Windows) or middle-click to open it in the system browser instead. If you are already using another workspace tool, the page still navigates in that tab and does not steal the panel.

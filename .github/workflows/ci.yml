@@ -165,6 +165,27 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y fonts-noto-cjk fonts-noto-color-emoji
 
+      - name: Guard app snapshot draft flow
+        if: ${{ !cancelled() && steps.build-renderer.outcome == 'success' }}
+        timeout-minutes: 3
+        shell: bash
+        run: |
+          mkdir -p desktop/out/app-context-e2e
+          set -o pipefail
+          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/app-context-e2e.cjs 2>&1 | tee desktop/out/app-context-e2e/run.log
+
+      - name: Upload app snapshot renderer evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-snapshot-renderer-evidence
+          path: |
+            desktop/out/app-context-e2e/*.png
+            desktop/out/app-context-e2e/*.json
+            desktop/out/app-context-e2e/*.log
+          if-no-files-found: ignore
+          retention-days: 14
+
       - name: Guard workspace tabs and navigation
         if: ${{ !cancelled() && steps.build-renderer.outcome == 'success' }}
         timeout-minutes: 3
@@ -592,6 +613,12 @@ jobs:
 
       - name: Test macOS PTY lifecycle
         run: go test ./internal/process -run '^Test(PTY|ManagerTTY|StartTTY|WriteStdinToTTY)' -count=1
+
+      - name: Build read-only app snapshot helper
+        run: |
+          npm --prefix desktop run build:app-context-mac
+          "desktop/build/app-context/Wuu App Snapshot.app/Contents/MacOS/wuu-app-context" --status
+          ELECTRON_RUN_AS_NODE=1 desktop/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron -e 'if (typeof require(process.cwd() + "/desktop/build/app-context/capture-target.node").pinTarget !== "function") process.exit(1)'
 
       - name: Test native helper
         run: make test-native

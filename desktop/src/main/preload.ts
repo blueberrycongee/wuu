@@ -142,6 +142,15 @@ try {
 }
 
 const api: WuuDesktopApi = {
+  getAppContextState: () => ipcRenderer.invoke("wuu:app-context-state"),
+  updateAppContextSettings: (settings) => ipcRenderer.invoke("wuu:app-context-settings", settings),
+  requestAppContextPermission: (kind) => ipcRenderer.invoke("wuu:app-context-permission", kind),
+  discardAppContextSnapshot: (id) => ipcRenderer.invoke("wuu:app-context-discard", id),
+  onAppContextChanged: (handler) => {
+    const listener = () => handler();
+    ipcRenderer.on("wuu:app-context-changed", listener);
+    return () => ipcRenderer.removeListener("wuu:app-context-changed", listener);
+  },
   initialOnboardingComplete,
   completeOnboarding: () => ipcRenderer.invoke("wuu:onboarding-complete"),
   discoverRecentWorkspaces: () => ipcRenderer.invoke("wuu:onboarding-discover-workspaces"),

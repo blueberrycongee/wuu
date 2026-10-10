@@ -31,6 +31,12 @@ const build = spawnSync(process.execPath, [buildHelper], {
 if (build.status !== 0) {
   process.exit(build.status ?? 1);
 }
+const appContextBuild = spawnSync(process.execPath, [join(__dirname, "build-app-context-mac.cjs")], {
+  cwd: desktopRoot,
+  env: { ...process.env, ...(devSigning ? { WUU_APP_CONTEXT_SIGN_ID: devSigning.identity } : {}) },
+  stdio: "inherit",
+});
+if (appContextBuild.status !== 0) process.exit(appContextBuild.status ?? 1);
 const coreBuild = spawnSync(process.execPath, [buildCoreAndPluginHelpers, ...process.argv.slice(2)], {
   cwd: desktopRoot,
   env: process.env,

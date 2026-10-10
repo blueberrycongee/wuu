@@ -1,6 +1,28 @@
 import type { TranslationKey } from "./zh-CN";
 
 export const enUS = {
+  "composer.appContext.title": "App snapshot…",
+  "composer.appContext.preview": "Review app snapshot",
+  "composer.appContext.add": "Add to draft",
+  "composer.appContext.imageAlt": "Snapshot of {app}",
+  "composer.appContext.localPreview": "This preview stays on your Mac. Adding it prepares attachments; sending your message shares them with your selected model provider.",
+  "composer.appContext.textPermissionMissing": "Available text was not captured because Accessibility permission is missing. The screenshot can still be attached.",
+  "composer.appContext.textUnavailable": "Window text could not be associated unambiguously. Text capture currently requires a single app window. Only the screenshot and source information will be attached.",
+  "composer.appContext.textTruncated": "Available text was shortened to keep this snapshot bounded.",
+  "composer.appContext.availableText": "Review available text",
+  "composer.appContext.unavailable": "App snapshots require macOS 14 or later and the Wuu App Snapshot helper. Use a macOS build that includes the helper.",
+  "composer.appContext.instructions": "Keep Wuu’s main window open, enable a snapshot shortcut, switch to the app window you want to share, and press it. Wuu opens a local preview after capture. Press the shortcut again during capture to cancel.",
+  "composer.appContext.enable": "Enable app snapshot shortcut",
+  "composer.appContext.shortcut": "Shortcut",
+  "composer.appContext.shortcutHint": "Use Command, Control, or Option with a key. For example: Control+Alt+Space.",
+  "composer.appContext.includeText": "Include available window text",
+  "composer.appContext.textHint": "Optional. Accessibility text can include content outside the visible scroll area. Secure Accessibility fields are skipped; screenshots are not redacted.",
+  "composer.appContext.screenPermission": "Allow screen capture…",
+  "composer.appContext.textPermission": "Allow available text…",
+  "composer.appContext.permissionHint": "macOS permissions are separate from this shortcut. Grant access to Wuu or Wuu App Snapshot, as listed in Privacy & Security, then try again. No audio is recorded.",
+  "composer.appContext.capturing": "Capturing {app}…",
+  "composer.appContext.ready": "Ready: switch to another app, then press {shortcut}.",
+
   "execution.knownHosts": "SSH known hosts file",
   "execution.mount": "Host workspace directory (optional)",
   "execution.mountReadOnly": "Read-only host mount",

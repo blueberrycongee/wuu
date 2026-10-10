@@ -1,3 +1,4 @@
+import { AppContextCapture } from "./appContextCapture";
 import { saveArtifactFile } from "./artifactSave";
 import type { DesktopZoomAction } from "../shared/DesktopPageZoom";
 import { readCatalogSkill } from "./remoteSkills";
@@ -437,6 +438,33 @@ const codexPetActivity = new CodexPetActivity({
 const terminalSessionManager = new TerminalSessionManager(
   (windowID, event) => emitTerminalEvent(windowID, event),
 );
+
+const appContextOwnerGenerations = new Map<number, number>();
+function appContextOwner(): string | undefined {
+  const host = windowRegistry.mainWindow();
+  if (!host || host.isDestroyed() || host.webContents.isDestroyed()) return undefined;
+  const generation = appContextOwnerGenerations.get(host.webContents.id);
+  return generation === undefined ? undefined : `${host.webContents.id}:${generation}`;
+}
+const appContextCapture = new AppContextCapture((reveal, owner) => {
+  const host = windowRegistry.mainWindow();
+  if (!host || host.isDestroyed() || host.webContents.isDestroyed() || (owner && owner !== appContextOwner())) return;
+  // Delivery never creates a replacement owner for a cancelled/closed window.
+  if (reveal) { if (host.isMinimized()) host.restore(); host.show(); host.focus(); }
+  const generation = appContextOwner();
+  const send = (): void => {
+    if (!host.isDestroyed() && !host.webContents.isDestroyed() && generation === appContextOwner()) host.webContents.send("wuu:app-context-changed");
+  };
+  if (host.webContents.isLoadingMainFrame()) host.webContents.once("did-finish-load", send);
+  else send();
+}, appContextOwner);
+
+function requireAppContextSender(event: IpcMainInvokeEvent): void {
+  const host = windowRegistry.mainWindow();
+  if (!host || host.isDestroyed() || event.sender !== host.webContents || event.senderFrame !== event.sender.mainFrame) {
+    throw new Error("App snapshots are available from Wuu's main window only.");
+  }
+}
 
 async function showProjectDirectoryDialog(
   options: OpenDialogOptions,
@@ -1175,6 +1203,20 @@ function createWindow(options: { inactive?: boolean } = {}): void {
   windowRegistry.registerWindow(mainWindow, "main");
   const win = mainWindow;
   const windowID = win.webContents.id;
+  appContextOwnerGenerations.set(windowID, 0);
+  const invalidateAppContextOwner = (): void => {
+    const generation = appContextOwnerGenerations.get(windowID);
+    if (generation === undefined) return;
+    appContextOwnerGenerations.set(windowID, generation + 1);
+    appContextCapture.invalidateOwner(windowID);
+  };
+  win.webContents.on("did-start-navigation", (details) => {
+    if (details.isMainFrame && !details.isSameDocument) invalidateAppContextOwner();
+  });
+  win.webContents.on("render-process-gone", invalidateAppContextOwner);
+  win.webContents.once("destroyed", invalidateAppContextOwner);
+  win.on("close", invalidateAppContextOwner);
+  win.once("closed", () => { invalidateAppContextOwner(); appContextOwnerGenerations.delete(windowID); });
 
   windowRegistry.attachResizeHandlers(win, (phase) => {
     handleNativeWindowResizePhase(phase, win);
@@ -2622,6 +2664,24 @@ app.whenReady().then(async () => {
       return { ok: true };
     },
   );
+  ipcMain.handle("wuu:app-context-state", (event) => {
+    requireAppContextSender(event);
+    return appContextCapture.state();
+  });
+  ipcMain.handle("wuu:app-context-settings", (event, settings: unknown) => {
+    requireAppContextSender(event);
+    return appContextCapture.update(settings);
+  });
+  ipcMain.handle("wuu:app-context-permission", (event, kind: unknown) => {
+    requireAppContextSender(event);
+    return appContextCapture.requestPermission(kind);
+  });
+  ipcMain.handle("wuu:app-context-discard", (event, id: unknown) => {
+    requireAppContextSender(event);
+    if (id !== undefined && typeof id !== "string") throw new Error("Invalid snapshot identifier.");
+    return appContextCapture.cancel(id);
+  });
+  appContextCapture.start();
   syncNativeThemeSource();
   createWindow();
   void phoneAccess.run(() => phoneAccess.restore(projectManager.ensureRuntimeContext().cwd));
@@ -2641,6 +2701,7 @@ app.on("before-quit", (event) => {
   if (quitCleanupFinished) return;
   event.preventDefault();
   if (quitCleanup) return;
+  appContextCapture.dispose();
   terminalSessionManager.cleanup();
   // Destroy every agent view + the hidden host window before the pool shuts
   // down so no WebContentsView leaks past quit.
