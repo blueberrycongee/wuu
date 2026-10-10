@@ -294,6 +294,8 @@ async function run() {
       await evaluate(main, () => document.querySelector('.runtime-panel-model').click());
       await waitFor(main, () => [...document.querySelectorAll('.codex-model-item')].some(item => item.textContent.includes('Basic fixture model')));
       await evaluate(main, () => [...document.querySelectorAll('.codex-model-item')].find(item => item.textContent.includes('Basic fixture model')).click());
+      // The label updates optimistically; reopening the panel needs the committed model.
+      await waitFor(main, async id => (await window.wuu.resumeThread(id)).thread.model === 'fixture-basic', threadID);
       await waitFor(main, () => document.querySelector('.runtime-panel-model-name')?.textContent === 'Basic fixture model'
         && !document.querySelector('.runtime-panel-fast'));
     }
