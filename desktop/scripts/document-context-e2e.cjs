@@ -293,16 +293,13 @@ async function run() {
   assert.equal((await snapshot()).turns.length, beforeTurns, 'Adding a quote must not send.');
   checks.push('native PDF text drag and Quote click retain an unsent draft');
   await capture('01-quote-draft');
-  await click('.composer-file-selection-card .composer-document-card-main, .composer-file-selection-card .pdf-quote-tile-main');
+  await click('.composer-file-selection-card .pdf-quote-tile-main');
   await waitFor(() => document.querySelector('.composer-file-selection-card-popover blockquote'));
   assert.equal(await evaluate(() => document.querySelector('.composer-file-selection-card-popover blockquote').textContent), quote);
-  const sourceMeta = await evaluate(() => {
-    const baseline = document.querySelector('.composer-response-selection-meta');
-    if (baseline) return baseline.textContent;
-    return [...document.querySelectorAll('.pdf-quote-preview-source > span')].map(span => span.textContent).join(' · ');
-  });
+  const sourceMeta = await evaluate(() => [...document.querySelectorAll('.pdf-quote-preview-source > span')]
+    .map(span => span.textContent).join(' · '));
   assert.equal(sourceMeta, 'guide.pdf · p. 1');
-  await click('.composer-response-selection-source, .pdf-quote-source-action');
+  await click('.pdf-quote-source-action');
   await waitFor(() => !document.querySelector('.composer-file-selection-card-popover'));
   checks.push('quote card retains exact selected text and reopens the original snapshot');
 
@@ -356,7 +353,7 @@ async function run() {
   await waitFor(() => document.activeElement?.matches('.pdf-selection-action-menu textarea'));
   await main.webContents.insertText('Compare both selected pages.');
   const turnsBeforeComment = (await snapshot()).turns.length;
-  await click('.selection-action-comment-submit, .pdf-selection-comment__submit');
+  await click('.pdf-selection-comment__submit');
   assert.equal((await snapshot()).turns.length, turnsBeforeComment, 'Adding a comment must not send.');
   await nativeText('.workspace-document-composer textarea', 'Use this comment.'); await click('.workspace-document-composer .composer-send-button');
   await waitFor(async id => (await window.wuu.resumeThread(id)).thread.turns.filter(turn => turn.status === 'completed').length >= 3, threadID, 60000);
@@ -369,13 +366,13 @@ async function run() {
   fs.writeFileSync(path.join(project, 'guide.pdf'), pdf(['Replacement PDF with the same filename.']));
   assert.equal(await evaluate(() => document.querySelector('[data-workspace-pdf-preview]').shadowRoot.querySelector('.page[data-page-number="1"] .textLayer span').textContent), firstQuote);
   await selectPages(); await quoteSelection();
-  await click('.composer-file-selection-card .composer-document-card-main, .composer-file-selection-card .pdf-quote-tile-main');
-  await waitFor(() => document.querySelector('.composer-response-selection-source, .pdf-quote-source-action'));
-  await click('.composer-response-selection-source, .pdf-quote-source-action');
+  await click('.composer-file-selection-card .pdf-quote-tile-main');
+  await waitFor(() => document.querySelector('.pdf-quote-source-action'));
+  await click('.pdf-quote-source-action');
   await waitFor(() => document.querySelector('[data-workspace-pdf-preview]').shadowRoot.querySelector('.page[data-page-number="1"] .textLayer span')?.textContent === 'First PDF page: keep this original excerpt.');
   await capture('03-immutable-snapshot');
   // Remove the unsent quote before closing the viewer.
-  await click('.composer-file-selection-card .composer-attachment-card-remove, .composer-file-selection-card .pdf-quote-tile-remove');
+  await click('.composer-file-selection-card .pdf-quote-tile-remove');
   await click('.artifact-preview-actions button[aria-label="Close"]');
   checks.push('editing a workspace PDF does not change a delivered selection or its navigation');
 
@@ -429,12 +426,12 @@ async function run() {
   phase = 'sent workspace quote reports a changed source';
   if (await evaluate(() => document.querySelector('.workspace-panel-globalize')?.getAttribute('aria-pressed') === 'true')) await click('.workspace-panel-globalize');
   if (await evaluate(() => Boolean(document.querySelector('.workspace-conversation-tab button')))) await click('.workspace-conversation-tab button');
-  await waitFor(() => [...document.querySelectorAll('.file-selection-quote-chip .file-selection-tag, .pdf-quote-pill')].some(button => !button.closest('[inert]')));
-  await evaluate(() => [...document.querySelectorAll('.file-selection-quote-chip .file-selection-tag, .pdf-quote-pill')].filter(button => !button.closest('[inert]')).at(-1).click());
-  await waitFor(() => document.querySelector('.file-selection-quote-entry .file-selection-location, .pdf-quote-entry .pdf-quote-source-link'));
-  await click('.file-selection-quote-entry .file-selection-location, .pdf-quote-entry .pdf-quote-source-link');
-  await waitFor(() => document.querySelector('.file-selection-quote-entry .file-selection-location-notice, .pdf-quote-entry .pdf-quote-notice')?.textContent.includes('source location changed'));
-  assert.equal(await evaluate(() => document.querySelector('.file-selection-quote-text, .pdf-quote-entry blockquote').textContent), workingQuote);
+  await waitFor(() => [...document.querySelectorAll('.pdf-quote-pill')].some(button => !button.closest('[inert]')));
+  await evaluate(() => [...document.querySelectorAll('.pdf-quote-pill')].filter(button => !button.closest('[inert]')).at(-1).click());
+  await waitFor(() => document.querySelector('.pdf-quote-entry .pdf-quote-source-link'));
+  await click('.pdf-quote-entry .pdf-quote-source-link');
+  await waitFor(() => document.querySelector('.pdf-quote-entry .pdf-quote-notice')?.textContent.includes('source location changed'));
+  assert.equal(await evaluate(() => document.querySelector('.pdf-quote-entry blockquote').textContent), workingQuote);
   await capture('05-sent-quote-changed-source');
   checks.push('sent workspace quotes retain their excerpt and visibly disclose changed source locations');
 

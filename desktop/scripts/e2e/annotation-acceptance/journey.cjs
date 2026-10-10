@@ -139,12 +139,10 @@ module.exports = async function annotationJourney({
             await nativeClick('.pdf-selection-action-menu .pdf-selection-menu__comment-toggle');
             await waitFor(() => document.activeElement?.matches('.pdf-selection-action-menu textarea'));
             variant.states.commentFocus = await checkpoint(name, '03-comment-focus');
-            {
-              variant.focusedSourceHighlight = await sourceHighlights();
-              assert.equal(variant.focusedSourceHighlight.length, 1, `${name}: focused comment keeps one source highlight`);
-              assert.deepEqual(variant.focusedSourceHighlight[0].quotes, [firstQuote], `${name}: source highlight retains the exact captured quote`);
-              assert.ok(variant.focusedSourceHighlight[0].rects.length > 0, `${name}: highlighted range has visible text geometry`);
-            }
+            variant.focusedSourceHighlight = await sourceHighlights();
+            assert.equal(variant.focusedSourceHighlight.length, 1, `${name}: focused comment keeps one source highlight`);
+            assert.deepEqual(variant.focusedSourceHighlight[0].quotes, [firstQuote], `${name}: source highlight retains the exact captured quote`);
+            assert.ok(variant.focusedSourceHighlight[0].rects.length > 0, `${name}: highlighted range has visible text geometry`);
             let comment = size === 18
               ? 'Keep the saved version intact. Explain the original passage before suggesting a clearer alternative, and preserve the author’s intended meaning.'
               : 'Keep the saved version intact.';
