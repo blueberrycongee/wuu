@@ -9,6 +9,7 @@ struct ConversationTimeline: View {
     @State private var scrollState = TimelineScrollState()
     @State private var historyRequest: Task<Void, Never>?
     @State private var historyFailed = false
+    @State private var inspectedProcess: ProcessInspection?
     var body: some View {
         GeometryReader { _ in
             ScrollViewReader { proxy in
@@ -27,18 +28,24 @@ struct ConversationTimeline: View {
                         }
                         ForEach(model.conversationRows) { row in
                             VStack(alignment: .leading, spacing: 8) {
-                                if row.isToolGroup {
+                                // Process groups also contain tools, so they are checked first.
+                                if row.isProcessGroup {
+                                    ProcessGroupView(messages: row.messages, settings: model.live?.settings, active: row.processActive) {
+                                        inspectedProcess = ProcessInspection(id: row.messages[0].id, messages: row.messages)
+                                    }
+                                } else if row.isToolGroup {
                                     ToolGroupView(messages: row.messages, settings: model.live?.settings,
                                         active: model.live?.running == true && row.messages.last?.id == model.messages.last?.id)
-                                    ForEach(row.messages.filter { !$0.attachments.isEmpty }) { message in
-                                        MessageAttachments(model: model, message: message)
-                                    }
                                 } else {
                                     MessageBubble(model: model, message: row.messages[0])
                                 }
+                                // Folded rows keep their images visible, in order, in one grid.
+                                if row.isProcessGroup || row.isToolGroup, row.messages.contains(where: { !$0.attachments.isEmpty }) {
+                                    MessageAttachments(model: model, messages: row.messages)
+                                }
                             }.id(row.id).background { TimelineRowAnchor(id: row.id, state: scrollState) }
                         }
-                        if model.live?.running == true && model.messages.last?.tool == nil {
+                        if model.live?.running == true && model.messages.last?.tool == nil && model.conversationRows.last?.processActive != true {
                             ConversationActivityMark(activity: model.messages.last?.role == "assistant" ? "responding" : "thinking", settings: model.live?.settings)
                                 .accessibilityElement().accessibilityLabel("正在处理")
                         }
@@ -67,9 +74,31 @@ struct ConversationTimeline: View {
                             }
                         }.animation(chromeAnimation(reduceMotion), value: nearBottom)
                     }
+                    .safeAreaInset(edge: .bottom) {
+                        ZStack {
+                            if let edit = pausedEdit {
+                                HistoryEditResumeBanner(model: model, edit: edit)
+                                    .padding(.horizontal, 12).padding(.vertical, 8)
+                                    .transition(.opacity)
+                            }
+                        }.animation(chromeAnimation(reduceMotion), value: pausedEdit?.id)
+                    }
             }
         }.sheet(item: $model.attachmentPreview) { attachment in AttachmentPreview(attachment: attachment) }
+            // Owned here, not by the row, so a turn finishing or regrouping cannot close it.
+            .sheet(item: $inspectedProcess) { inspection in
+                ProcessInspectionSheet(model: model, inspection: inspection)
+                    .presentationDetents([.medium, .large])
+            }
+            .sheet(isPresented: Binding(get: { model.showingHistoryEdit && model.historyEdit != nil },
+                                        set: { model.showingHistoryEdit = $0 })) {
+                if let edit = model.historyEdit { HistoryMessageEditView(model: model, edit: edit) }
+            }
             .onDisappear { historyRequest?.cancel() }
+    }
+    private var pausedEdit: HistoryMessageEdit? {
+        guard let edit = model.historyEdit, edit.prepared, edit.threadID == model.activeID, !model.showingHistoryEdit else { return nil }
+        return edit
     }
     private func loadHistory() {
         guard historyRequest == nil, model.connected, !model.loadingHistory,
@@ -116,12 +145,82 @@ private struct MessageBubble: View {
                     Button(model.loadingContent.contains(message.id) ? "正在读取…" : "加载完整消息") { model.perform { try await model.expand(message) } }
                         .disabled(!model.connected || model.loadingContent.contains(message.id))
                 }
-                if !message.sourceSessionID.isEmpty {
-                    Button("复制", systemImage: "doc.on.doc") { UIPasteboard.general.string = message.text; Haptics.tap() }
-                        .labelStyle(.iconOnly).buttonStyle(.plain).foregroundStyle(.secondary)
-                }
+                if hasActions { MessageActions(model: model, message: message) }
             }
             if message.role != "user" { Spacer(minLength: 0) }
         }
+    }
+    /// A reply still streaming gets its actions once it settles, as a finished message.
+    private var hasActions: Bool {
+        guard message.role == "user" || message.role == "assistant" else { return false }
+        return !(message.role == "assistant" && model.live?.running == true && message.id == model.messages.last?.id)
+    }
+}
+
+/// Copy, fork and edit under a message. The model decides availability and does the work.
+private struct MessageActions: View {
+    let model: AppModel
+    let message: ChatMessage
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var copied = false
+    @State private var reset: Task<Void, Never>?
+    var body: some View {
+        HStack(spacing: 0) {
+            action(copied ? "checkmark" : "doc.on.doc", label: copied ? "已复制消息" : "复制消息", id: "message-copy", perform: copy)
+                .disabled(message.text.isEmpty && message.contentRef.isEmpty)
+            action("arrow.triangle.branch", label: "从这条消息分叉", id: "message-fork") {
+                model.perform { try await model.forkMessage(message) }
+            }.disabled(!model.canFork(message))
+            if message.role == "user" {
+                action("pencil", label: "编辑消息", id: "message-edit") {
+                    model.perform { try await model.beginHistoryEdit(message) }
+                }.disabled(!model.canEdit(message))
+            }
+        }
+        .disabled(model.historyActionBusy)
+        .foregroundStyle(.secondary)
+        // Glyphs line up with the message edge and sit close to it; targets keep 44pt.
+        .padding(message.role == "user" ? .trailing : .leading, -13)
+        .padding(.vertical, -6)
+        .onDisappear { reset?.cancel() }
+    }
+    private func action(_ symbol: String, label: String, id: String, perform: @escaping () -> Void) -> some View {
+        Button(action: perform) {
+            Image(systemName: symbol).font(.system(size: 15))
+                .contentTransition(reduceMotion ? .identity : .symbolEffect(.replace))
+                .frame(width: 44, height: 44).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+        .accessibilityIdentifier(id)
+    }
+    private func copy() {
+        model.perform {
+            // The model loads paged content, writes the pasteboard and gives feedback.
+            try await model.copyMessage(message)
+            copied = true
+            reset?.cancel()
+            reset = Task {
+                try? await Task.sleep(for: .seconds(1.5))
+                if !Task.isCancelled { copied = false }
+            }
+        }
+    }
+}
+
+private struct ProcessInspection: Identifiable {
+    /// The first folded message; it stays in the same group as the turn progresses.
+    let id: String
+    let messages: [ChatMessage]
+}
+
+/// Follows the live group while open, so new steps appear instead of the sheet closing.
+private struct ProcessInspectionSheet: View {
+    let model: AppModel
+    let inspection: ProcessInspection
+    var body: some View {
+        let row = model.conversationRows.first { $0.isProcessGroup && $0.messages.contains { $0.id == inspection.id } }
+        ProcessGroupDetails(model: model, messages: row?.messages ?? inspection.messages, settings: model.live?.settings,
+                            active: row?.processActive ?? false)
     }
 }

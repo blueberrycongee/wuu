@@ -8,6 +8,25 @@ private struct PairedLocation: Codable {
     let thread: String?
 }
 
+@MainActor @Observable final class HistoryMessageEdit: Identifiable {
+    let id = UUID()
+    let threadID: String
+    let hostID: String
+    let message: ChatMessage
+    let original: JSONValue
+    let attachments: [InputAttachment]
+    var text: String
+    var prepared = false
+    var submitting = false
+    var error: String?
+    var attachmentCount: Int { attachments.count }
+    init(threadID: String, hostID: String, message: ChatMessage, original: JSONValue, attachments: [InputAttachment]) {
+        self.threadID = threadID; self.hostID = hostID; self.message = message
+        self.original = original; self.attachments = attachments
+        text = original["input_text"].string ?? original["text"].string ?? ""
+    }
+}
+
 @MainActor @Observable final class AppModel {
     var account: AccountSession?
     var pairedComputers: [PairedComputer] = []
@@ -27,6 +46,14 @@ private struct PairedLocation: Codable {
     var connecting = false
     var busy = false
     var sending = false
+    var historyActionBusy = false
+    var showingHistoryEdit = false
+    private var historyEdits: [String: HistoryMessageEdit] = [:]
+    private var historyEditKey: String { (host?.pub ?? "") + ":" + (activeID ?? "") }
+    var historyEdit: HistoryMessageEdit? {
+        get { historyEdits[historyEditKey] }
+        set { historyEdits[historyEditKey] = newValue }
+    }
     var loadingHistory = false
     var loadingContent: Set<String> = []
     let imagePreviews = ImagePreviewLoader()
@@ -353,7 +380,7 @@ private struct PairedLocation: Codable {
         loginTask?.cancel()
         events?.cancel(); events = nil
         let oldRemote = remote; remote = nil
-        connected = false; connecting = false; pendingApproval = nil; sending = false
+        connected = false; connecting = false; pendingApproval = nil; sending = false; historyActionBusy = false
         imagePreviews.clear(); loadingHistory = false; loadingContent = []; attachmentPreview = nil; loadingAttachment = false
         questions = []; questionRevision += 1
         await oldRemote?.disconnect()
@@ -500,6 +527,7 @@ private struct PairedLocation: Codable {
         threads = (query.isEmpty ? result["threads"].array : result["results"].array.map { $0["thread"] }).map { ChatThread($0) }
     }
     func open(_ id: String, preservingContent: Bool = false) async throws {
+        if activeID != id { showingHistoryEdit = false }
         opening = UUID(); let selection = opening
         if activeID != id || (!preservingContent && connected) { live = nil; saved = nil }
         activeID = id; imagePreviews.clear(); loadingHistory = false; loadingContent = []; attachmentPreview = nil; loadingAttachment = false
@@ -569,6 +597,110 @@ private struct PairedLocation: Codable {
         sending = true; defer { if epoch == stamp { sending = false } }
         _ = try await remote.call(live.running ? "turn/queue" : "turn/start", params: input.params(threadID: live.id, queued: live.running))
         guard epoch == stamp else { throw CancellationError() }
+    }
+    func canFork(_ message: ChatMessage) -> Bool {
+        guard connected, let live, !live.readOnly, !live.archived,
+              ["user", "assistant"].contains(message.role), let item = live.item(for: message) else { return false }
+        return item["status"].string != "in_progress" && !item["read_only"].bool
+    }
+    func canEdit(_ message: ChatMessage) -> Bool {
+        guard canFork(message), let live, !live.running, live.pending.isEmpty, message.role == "user",
+              let item = live.item(for: message) else { return false }
+        return !["host", "plugin"].contains(item["origin"].string ?? "") && message.sourceSessionID.isEmpty
+    }
+    func copyMessage(_ message: ChatMessage) async throws {
+        if message.contentRef.isEmpty {
+            UIPasteboard.general.string = message.text
+        } else {
+            guard connected, let remote, let live, live.item(for: message) != nil else { throw NativeError.invalid("请连接电脑以复制完整消息") }
+            let stamp = epoch, selection = opening
+            let item = try await remote.readContent(message.contentRef, threadID: live.id)
+            guard epoch == stamp, opening == selection else { throw CancellationError() }
+            UIPasteboard.general.string = item["text"].string ?? item["error"].string ?? ""
+        }
+        Haptics.tap()
+    }
+    func forkMessage(_ message: ChatMessage) async throws {
+        guard !historyActionBusy, canFork(message), let remote, let live, let item = live.item(for: message) else {
+            throw NativeError.invalid("当前无法从这条消息分叉")
+        }
+        let stamp = epoch, selection = opening
+        historyActionBusy = true
+        defer { if epoch == stamp { historyActionBusy = false } }
+        let result = try await remote.call("thread/fork", params: ["thread_id": .string(live.id),
+            "turn_id": .string(message.turnID), "item_id": .string(message.itemID), "mode": "local",
+            "target": ["seq": item["seq"], "source_id": item["source_id"], "type": item["type"]]])
+        guard epoch == stamp, self.remote === remote else { return }
+        perform { try await self.loadThreads() }
+        guard opening == selection else { return }
+        let fork = ChatThread(result["thread"])
+        guard !fork.id.isEmpty else { throw NativeError.invalid("电脑未返回分叉会话") }
+        workspace = fork.cwd
+        try await open(fork.id)
+        Haptics.tap()
+    }
+    func beginHistoryEdit(_ message: ChatMessage) async throws {
+        guard !historyActionBusy, canEdit(message), let remote, let live, let host, var item = live.item(for: message) else {
+            throw NativeError.invalid("请在会话空闲、待发消息处理完毕且电脑在线时编辑")
+        }
+        if let edit = historyEdit {
+            if edit.message.id == message.id || edit.prepared { showingHistoryEdit = true; return }
+        }
+        let stamp = epoch, selection = opening
+        historyActionBusy = true
+        defer { if epoch == stamp { historyActionBusy = false } }
+        if !message.contentRef.isEmpty { item = try await remote.readContent(message.contentRef, threadID: live.id) }
+        // Resolve every original attachment before allowing a destructive history edit.
+        var attachments: [InputAttachment] = []
+        for attachment in item["images"].array + item["files"].array {
+            let loaded = try await remote.readAttachment(attachment, threadID: live.id, messageID: message.id)
+            attachments.append(try InputAttachment(filename: loaded.filename, mediaType: loaded.mediaType, data: loaded.data))
+        }
+        try InputAttachment.validate(attachments, text: item["input_text"].string ?? item["text"].string ?? "")
+        guard epoch == stamp, opening == selection, self.remote === remote, canEdit(message) else { throw CancellationError() }
+        historyEdit = HistoryMessageEdit(threadID: live.id, hostID: host.pub, message: message, original: item, attachments: attachments)
+        showingHistoryEdit = true
+    }
+    func submitHistoryEdit(_ edit: HistoryMessageEdit) async throws {
+        guard !edit.submitting, !sending, !historyActionBusy, connected, let remote, let live,
+              live.id == edit.threadID, host?.pub == edit.hostID, !live.readOnly, !live.archived else {
+            throw NativeError.invalid("请连接原来的电脑和会话后重试")
+        }
+        // A lost reply may follow an accepted send. Its durable input identity wins over retry.
+        if live.turns.flatMap({ $0["items"].array }).contains(where: { $0["source_id"].string == edit.id.uuidString }) {
+            historyEdit = nil; showingHistoryEdit = false; return
+        }
+        guard !live.running, live.pending.isEmpty else { throw NativeError.invalid("请先等待当前回复结束并处理待发消息") }
+        let text = edit.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty || !edit.attachments.isEmpty else { throw NativeError.invalid("消息不能为空") }
+        let input = try ChatInput(text: text, attachments: edit.attachments)
+        guard case .object(var params) = input.params(threadID: edit.threadID, queued: false) else { return }
+        params["client_id"] = .string(edit.id.uuidString)
+        let originalImages = edit.original["images"].array
+        params["images"] = .array((params["images"]?.array ?? []).enumerated().map { index, image in
+            guard originalImages.indices.contains(index), originalImages[index]["original"].bool,
+                  case .object(var value) = image else { return image }
+            value["original"] = true; return .object(value)
+        })
+        let stamp = epoch, selection = opening
+        edit.submitting = true; edit.error = nil; historyActionBusy = true; sending = true
+        defer {
+            edit.submitting = false
+            if epoch == stamp { historyActionBusy = false; sending = false }
+        }
+        if !edit.prepared {
+            guard canEdit(edit.message), let current = live.item(for: edit.message),
+                  current["seq"] == edit.original["seq"], current["source_id"] == edit.original["source_id"] else {
+                throw NativeError.invalid("原消息已改变，请重新打开消息后编辑；本次修改仍保留在这里")
+            }
+            _ = try await remote.call("thread/edit-message", params: ["thread_id": .string(edit.threadID),
+                "turn_id": .string(edit.message.turnID), "item_id": .string(edit.message.itemID)], snapshotTag: selection.uuidString)
+            edit.prepared = true
+        }
+        guard epoch == stamp, opening == selection, self.remote === remote else { throw CancellationError() }
+        _ = try await remote.call("turn/start", params: .object(params))
+        historyEdits[edit.hostID + ":" + edit.threadID] = nil
+        if epoch == stamp, opening == selection { showingHistoryEdit = false; Haptics.tap() }
     }
     func attachmentThumbnail(_ message: ChatMessage, index: Int) async throws -> LoadedAttachment {
         #if DEBUG

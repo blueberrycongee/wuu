@@ -30,7 +30,13 @@ While a reply is running, follow-ups wait in a compact queue above the input.
 Tap a preview to read it in full, remove it, or steer the current reply. Pending
 steering can be moved back to the queue. Once the computer starts processing a
 message, it leaves the queue. Scroll up to load older messages automatically;
-tap an operation summary to see its details.
+tap an operation summary to see its details. When the final answer arrives, preceding
+process text and tools fold into a summary; image previews remain visible.
+
+Buttons below messages let you copy text or fork a new conversation at that point.
+Editing an earlier user message keeps its attachments and replaces subsequent
+conversation when you send it again. Cancel leaves history intact. Editing requires
+an online computer, an idle writable conversation, and no pending messages.
 
 For Tailscale or a reverse proxy, configure the desktop process with
 `WUU_WEB_URL` set to the reachable HTTP(S) origin and `WUU_WEB_LISTEN` set to the

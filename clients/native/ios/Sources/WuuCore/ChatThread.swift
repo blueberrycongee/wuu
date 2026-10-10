@@ -9,10 +9,15 @@ public struct ChatMessage: Identifiable, Sendable, Equatable {
     public var tool: ToolActivity?
     public var sourceSessionID: String
     public var sourceSessionName: String
-    public init(id: String, role: String, text: String, contentRef: String = "", attachments: [JSONValue] = [], tool: ToolActivity? = nil, sourceSessionID: String = "", sourceSessionName: String = "") {
+    public var turnID: String
+    public var itemID: String
+    public var isProcess: Bool
+    public var turnActive: Bool
+    public init(id: String, role: String, text: String, contentRef: String = "", attachments: [JSONValue] = [], tool: ToolActivity? = nil, sourceSessionID: String = "", sourceSessionName: String = "", turnID: String = "", itemID: String = "", isProcess: Bool = false, turnActive: Bool = false) {
         self.id = id; self.role = role; self.text = text; self.contentRef = contentRef; self.attachments = attachments
         self.tool = tool
         self.sourceSessionID = sourceSessionID; self.sourceSessionName = sourceSessionName
+        self.turnID = turnID; self.itemID = itemID; self.isProcess = isProcess; self.turnActive = turnActive
     }
 }
 
@@ -90,8 +95,18 @@ public struct ChatThread: Identifiable, Sendable {
         historyCursor = value["history_cursor"].string ?? ""
         rebuildProjection()
     }
+    /// Keep the host's structured addresses intact; display IDs are not a wire protocol.
+    public func item(for message: ChatMessage) -> JSONValue? {
+        turns.first { $0["id"].string == message.turnID }?["items"].array.first { $0["id"].string == message.itemID }
+    }
     private static func project(_ turn: JSONValue) -> [ChatMessage] {
-            var messages: [ChatMessage] = turn["items"].array.compactMap { item in
+            let items = turn["items"].array
+            let active = turn["status"].string == "in_progress"
+            // Like desktop, only a structurally terminal answer ends the process region.
+            // Keep interrupted/error commentary readable when there is no final answer.
+            let hasAnswer = items.contains { $0["type"].string == "agent_message" && $0["terminal"].bool &&
+                (!($0["text"].string ?? "").isEmpty || !$0["images"].array.isEmpty || !$0["markdown_images"].array.isEmpty) }
+            var messages: [ChatMessage] = items.compactMap { item in
                 guard let type = item["type"].string, ["user_message", "agent_message", "error", "tool_call"].contains(type) else { return nil }
                 let sessionMessage = ["host", "plugin"].contains(item["origin"].string ?? "") && item["presentation_kind"].string == "session_message"
                 // Host-marked model notifications are not user messages; attributed peer messages remain visible.
@@ -106,7 +121,10 @@ public struct ChatThread: Identifiable, Sendable {
                         },
                     tool: type == "tool_call" ? ToolActivity(item, turnStatus: turn["status"].string ?? "") : nil,
                     sourceSessionID: sessionMessage ? item["related_session_id"].string ?? "" : "",
-                    sourceSessionName: item["name"].string ?? "")
+                    sourceSessionName: item["name"].string ?? "",
+                    turnID: turn["id"].string ?? "", itemID: item["id"].string ?? "",
+                    isProcess: hasAnswer && (type == "tool_call" || (type == "agent_message" && !item["terminal"].bool)),
+                    turnActive: active)
             }
             let cancelled = turn["status"].string == "interrupted" && turn["error"]["category"].string == "cancelled"
             if let error = turn["error"]["message"].string, !cancelled, !error.isEmpty, !messages.contains(where: { $0.role == "error" }) {

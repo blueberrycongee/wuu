@@ -16,6 +16,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   Keep queued input compact with preview and steering actions, remove consumed
   messages from the queue, and load older history automatically while scrolling.
   Show tool groups as a short current action or count with details on demand.
+  Copy and fork messages, or edit and resend an earlier user message with its
+  attachments. Fold preceding process text and tools when the final answer arrives,
+  and arrange adjacent tool images together with visible thumbnail boundaries.
 
 - Run a default-exported TypeScript plugin directly with `wuu plugin dev`, using
   the embedded SDK without a manifest or build, and keep watching through failed saves.
