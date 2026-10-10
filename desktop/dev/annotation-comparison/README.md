@@ -5,6 +5,9 @@ keeps its current presentation; `refined` replaces only the selection menu,
 comment input, draft quote card, and sent reference card imports. Both use the
 same production main process, preload, PDF viewer, composer, core, and behavior.
 The shipping build and user preferences have no comparison switch.
+The refined PDF view also retains a source highlight while its annotation is
+open, including when the comment input takes focus. It follows the captured
+range and clears with the owning selection or document.
 
 From the repository root, install the desktop dependencies and build a core:
 

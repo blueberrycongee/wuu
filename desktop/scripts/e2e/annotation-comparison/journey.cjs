@@ -47,6 +47,22 @@ module.exports = async function annotationJourney({
     main.webContents.sendInputEvent({ type: 'mouseDown', button: 'left', clickCount: 1, ...point });
     main.webContents.sendInputEvent({ type: 'mouseUp', button: 'left', clickCount: 1, ...point });
   };
+  const sourceHighlights = () => evaluate(() => {
+    const host = document.querySelector('[data-workspace-pdf-preview]');
+    const root = host?.shadowRoot;
+    return [...(root?.querySelectorAll('style[data-pdf-selection-highlight]') ?? [])].map(style => {
+      const key = style.dataset.pdfSelectionHighlight;
+      const ranges = [...(CSS.highlights?.get(key) ?? [])];
+      return { key, quotes: ranges.map(range => range.toString()),
+        rects: ranges.flatMap(range => [...range.getClientRects()].map(rect => rect.toJSON())) };
+    });
+  });
+  const assertHighlightCleared = async (name) => {
+    const highlights = await sourceHighlights();
+    assert.deepEqual(highlights, [], `${name}: inactive source highlight is removed`);
+    assert.deepEqual(await evaluate(() => [...(CSS.highlights?.keys() ?? [])]
+      .filter(key => key.startsWith('pdf-selection-'))), [], `${name}: no stale source highlight remains registered`);
+  };
   const escape = () => {
     main.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'ESC' });
     main.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'ESC' });
@@ -123,6 +139,12 @@ module.exports = async function annotationJourney({
             await nativeClick('.pdf-selection-action-menu .selection-action-comment-toggle, .pdf-selection-action-menu .selection-action-refined__comment-toggle');
             await waitFor(() => document.activeElement?.matches('.pdf-selection-action-menu textarea'));
             variant.states.commentFocus = await checkpoint(name, '03-comment-focus');
+            if (variantName === 'refined') {
+              variant.focusedSourceHighlight = await sourceHighlights();
+              assert.equal(variant.focusedSourceHighlight.length, 1, `${name}: focused comment keeps one source highlight`);
+              assert.deepEqual(variant.focusedSourceHighlight[0].quotes, [firstQuote], `${name}: source highlight retains the exact captured quote`);
+              assert.ok(variant.focusedSourceHighlight[0].rects.length > 0, `${name}: highlighted range has visible text geometry`);
+            }
             let comment = size === 18
               ? 'Keep the saved version intact. Explain the original passage before suggesting a clearer alternative, and preserve the author’s intended meaning.'
               : 'Keep the saved version intact.';
@@ -164,6 +186,7 @@ module.exports = async function annotationJourney({
             await waitFor(() => !document.querySelector('.pdf-selection-action-menu')
               && document.querySelector('.composer-file-selection-card'));
             assert.equal((await snapshot()).turns.length, before, `${name}: comment remains unsent`);
+            if (variantName === 'refined') await assertHighlightCleared(name);
             variant.states.draft = await checkpoint(name, '05-draft');
             await nativeClick('.composer-file-selection-card .composer-document-card-main, .composer-file-selection-card .quote-refined-tile-main');
             await waitFor(() => document.querySelector('.composer-file-selection-card-popover blockquote'));
@@ -210,7 +233,7 @@ module.exports = async function annotationJourney({
             assert.equal(await evaluate(() => document.querySelector('[data-workspace-pdf-preview]').shadowRoot
               .querySelector('.page[data-page-number="1"] .textLayer span').textContent), firstQuote);
             await nativeClick('.composer-file-selection-card .composer-document-card-main, .composer-file-selection-card .quote-refined-tile-main');
-            await waitFor(() => document.querySelector('.composer-file-selection-card-popover'));
+            await waitFor(() => document.querySelector('.composer-file-selection-card-popover')?.contains(document.activeElement));
             escape();
             await waitFor(() => !document.querySelector('.composer-file-selection-card-popover'));
             assert.equal(await evaluate(() => document.activeElement?.matches('.composer-file-selection-card .composer-document-card-main, .composer-file-selection-card .quote-refined-tile-main')), true,
@@ -219,6 +242,11 @@ module.exports = async function annotationJourney({
             await waitFor(() => !document.querySelector('.composer-file-selection-card'));
             assert.equal((await snapshot()).turns.length, before, `${name}: removing a draft reference does not send`);
             variant.states.removed = await checkpoint(name, '08-removed');
+            assert.equal(await dragFirstPage(), firstQuote);
+            await waitFor(() => document.querySelector('.pdf-selection-action-menu'));
+            await nativeClick('.pdf-selection-action-menu button[aria-label="Close"]');
+            await waitFor(() => !document.querySelector('.pdf-selection-action-menu'));
+            if (variantName === 'refined') await assertHighlightCleared(`${name} cancellation`);
             variant.passed = true;
           } finally {
             if (stop) await stop();

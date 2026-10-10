@@ -40,11 +40,14 @@ function annotationPresentation(): Plugin {
       if (id !== resolve(desktopRoot, "src/renderer/PdfSelectionMenu.tsx")) return null;
       const importNames = "selectionActionMenuMetrics, selectionActionMenuPosition";
       const rangeBounds = "current.range.getBoundingClientRect()";
-      if (!code.includes(importNames) || !code.includes(rangeBounds)) {
+      const captureState = "const current = active && capture?.owner === owner && capture?.sourceKey === sourceKey ? capture : undefined;";
+      if (!code.includes(importNames) || !code.includes(rangeBounds) || !code.includes(captureState)) {
         throw new Error("The PDF selection adapter changed; review the comparison mapping before rebuilding.");
       }
       return {
-        code: code.replace(importNames, `selectionActionMenuAnchor, ${importNames}`)
+        code: 'import { usePdfSelectionHighlight } from "./PdfSelectionHighlightRefined";\n'
+          + code.replace(importNames, `selectionActionMenuAnchor, ${importNames}`)
+          .replace(captureState, `${captureState}\n  usePdfSelectionHighlight(hostRef, current?.range);`)
           .replace(rangeBounds, "selectionActionMenuAnchor(current.range, { left, top, right, bottom })"),
         map: null,
       };
