@@ -55,7 +55,9 @@ jobs:
           go build -o "$WUU_GENERATIVE_UI_PLUGIN_HELPER" ./cmd/wuu-generative-ui-plugin
       - name: Build production core and desktop
         run: |
-          go build -o desktop/build/bin/wuu-core ./cmd/wuu
+          # Match build:core's product version; an unstamped Go pseudo-version
+          # may be v0.0.0 and correctly fail plugin minimum-version checks.
+          go build -ldflags "-X github.com/blueberrycongee/wuu/internal/version.Version=v$(cat VERSION)" -o desktop/build/bin/wuu-core ./cmd/wuu
           cd desktop && npx electron-vite build
       - name: Verify native discovery and disable lifecycle
         run: go run scripts/generative-ui-lifecycle-e2e.go
