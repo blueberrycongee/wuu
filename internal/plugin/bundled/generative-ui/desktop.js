@@ -343,7 +343,7 @@ const styles = `
 .plugin-genui-chart { display:block; width:100%; height:180px; overflow:visible; }
 .plugin-genui-chart line, .plugin-genui-chart polyline { vector-effect:non-scaling-stroke; }
 .plugin-genui-x-categories { grid-column:2; display:grid; min-width:0; text-align:center; }
-.plugin-genui-x-categories span { min-width:0; padding:0 4px; overflow-wrap:anywhere; }
+.plugin-genui-x-categories span { min-width:0; padding:0 4px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .plugin-genui-x-range { grid-column:2; text-align:center; overflow-wrap:anywhere; }
 .plugin-genui-grid { stroke:var(--genui-border); stroke-dasharray:3 4; }
 .plugin-genui-axis { stroke:var(--wuu-color-text-muted, currentColor); }
