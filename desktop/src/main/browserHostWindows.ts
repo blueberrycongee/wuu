@@ -794,7 +794,7 @@ export class BrowserHostCoordinator {
     if (!destPath) throw new Error("screenshot requires dest_path");
     const assertCurrent = this.operationGuard(entry, request);
     assertCurrent();
-    const result = await this.withActiveEntry(entry, () => this.captureToFile(entry, destPath, assertCurrent));
+    const result = await this.withActiveEntry(entry, () => this.captureToFile(entry, destPath, assertCurrent, params.include_image === true));
     assertCurrent();
     return result;
   }
@@ -903,8 +903,12 @@ export class BrowserHostCoordinator {
     if (page.nextOffset !== undefined) result.content_next_offset = page.nextOffset;
     const destPath = typeof params.dest_path === "string" ? params.dest_path : "";
     if (params.screenshot === true && destPath) {
-      const shot = await this.captureToFile(entry, destPath, assertCurrent);
+      const shot = await this.captureToFile(entry, destPath, assertCurrent, params.include_image === true);
       result.screenshot_path = shot.path;
+      if (shot.viewport_width !== undefined) {
+        result.viewport_width = shot.viewport_width;
+        result.viewport_height = shot.viewport_height!;
+      }
     }
     return result;
   }
@@ -1241,7 +1245,10 @@ export class BrowserHostCoordinator {
     entry: TabEntry,
     destPath: string,
     assertCurrent: () => void,
-  ): Promise<{ width: number; height: number; path: string }> {
+    includeViewport = false,
+  ): Promise<{ width: number; height: number; path: string; viewport_width?: number; viewport_height?: number }> {
+    assertCurrent();
+    const viewport = includeViewport ? await this.captureViewport(entry) : undefined;
     assertCurrent();
     // capturePage with stayHidden temporarily bumps the capturer count so a
     // hidden host actually produces a real frame — Page.captureScreenshot over
@@ -1255,8 +1262,43 @@ export class BrowserHostCoordinator {
     if (size.width <= 0 || size.height <= 0 || png.length === 0) {
       throw new Error("screenshot captured an empty frame");
     }
+    if (viewport) {
+      const after = await this.captureViewport(entry);
+      assertCurrent();
+      if (JSON.stringify(viewport) !== JSON.stringify(after)) {
+        throw new Error("Browser viewport changed during capture; observe again");
+      }
+    }
+    assertCurrent();
     this.deps.writePng(destPath, png);
-    return { width: size.width, height: size.height, path: destPath };
+    return {
+      width: size.width, height: size.height, path: destPath,
+      ...(viewport ? { viewport_width: viewport.width, viewport_height: viewport.height } : {}),
+    };
+  }
+
+  private async captureViewport(entry: TabEntry): Promise<{ width: number; height: number; x: number; y: number; offsetX: number; offsetY: number; scale: number; zoom: number; viewWidth: number; viewHeight: number; clientWidth: number; clientHeight: number; url: string }> {
+    // capturePage includes classic scrollbars; CDP clientWidth/clientHeight
+    // exclude them. The view bounds are DIP, and CDP zoom is the CSS-to-DIP
+    // ratio. NativeImage dimensions may instead be Retina-scaled pixels.
+    const bounds = entry.view.getBounds();
+    const metrics = await entry.view.webContents.debugger.sendCommand("Page.getLayoutMetrics");
+    const viewport = metrics.cssVisualViewport as Record<string, number> | undefined;
+    if (!viewport || !Number.isFinite(viewport.clientWidth) || !Number.isFinite(viewport.clientHeight)
+      || viewport.clientWidth <= 0 || viewport.clientHeight <= 0
+      || !Number.isFinite(viewport.zoom) || viewport.zoom <= 0 || bounds.width <= 0 || bounds.height <= 0) {
+      throw new Error("Browser screenshot has no CSS viewport geometry");
+    }
+    // CDP input uses the main-frame viewport. Pinch panning introduces an
+    // additional visual offset; reject it rather than guess a transform. Normal
+    // browser page zoom and device scale retain the explicit CSS/image mapping.
+    if (viewport.scale !== 1 || viewport.offsetX !== 0 || viewport.offsetY !== 0) {
+      throw new Error("unsupported_pinch_zoom: reset page pinch zoom before requesting visual evidence, or use DOM observation");
+    }
+    return { width: bounds.width / viewport.zoom, height: bounds.height / viewport.zoom,
+      viewWidth: bounds.width, viewHeight: bounds.height, clientWidth: viewport.clientWidth, clientHeight: viewport.clientHeight,
+      x: viewport.pageX, y: viewport.pageY, offsetX: viewport.offsetX, offsetY: viewport.offsetY,
+      scale: viewport.scale, zoom: viewport.zoom, url: entry.view.webContents.getURL() };
   }
 
   private async resolvePoint(entry: TabEntry, params: Record<string, JsonValue>): Promise<[number, number]> {

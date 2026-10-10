@@ -171,14 +171,24 @@ func browserActionIsDeliveryOnly(action string) bool {
 // there is no per-step argument inheritance or live-preview interaction to
 // publish; only the aggregate result shape differs from CUA.
 func browserSequenceHooks() riskSequenceHooks {
+	var visualEvidence []toolresult.ContentPart
 	return riskSequenceHooks{
-		build: func(status string, completed []map[string]any, nextStep int, lastImage *toolresult.ContentPart) toolresult.Result {
+		observe: func(_ string, result toolresult.Result) {
+			for i, part := range result.Content {
+				if part.Type == toolresult.ContentTypeImage {
+					// Browser captures put their complete geometry before the image.
+					// Keep that evidence with the last retained image, outside the
+					// abbreviated structured sequence receipts.
+					visualEvidence = append([]toolresult.ContentPart(nil), result.Content[:i+1]...)
+				}
+			}
+		},
+		// The shared spine's last-image argument cannot carry capture geometry.
+		build: func(status string, completed []map[string]any, nextStep int, _ *toolresult.ContentPart) toolresult.Result {
 			payload := map[string]any{"action": "sequence", "status": status, "completed_steps": completed, "next_step": nextStep}
 			structured, _ := json.Marshal(payload)
 			content := []toolresult.ContentPart{{Type: toolresult.ContentTypeText, Text: fmt.Sprintf("browser sequence %s after %d step(s).", status, len(completed))}}
-			if lastImage != nil {
-				content = append(content, *lastImage)
-			}
+			content = append(content, visualEvidence...)
 			return toolresult.Result{Content: content, StructuredContent: structured, IsError: status == "failed" || status == "partial"}
 		},
 	}

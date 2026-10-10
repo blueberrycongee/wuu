@@ -359,18 +359,21 @@ type BrowserCDPResult struct {
 }
 
 type BrowserScreenshotParams struct {
-	ThreadID  string `json:"thread_id"`
-	RequestID string `json:"request_id,omitempty"`
-	Workdir   string `json:"workdir"`
-	TabID     string `json:"tab_id"`
-	DestPath  string `json:"dest_path"`
-	Format    string `json:"format,omitempty"`
+	ThreadID     string `json:"thread_id"`
+	RequestID    string `json:"request_id,omitempty"`
+	Workdir      string `json:"workdir"`
+	TabID        string `json:"tab_id"`
+	DestPath     string `json:"dest_path"`
+	Format       string `json:"format,omitempty"`
+	IncludeImage bool   `json:"include_image,omitempty"`
 }
 
 type BrowserScreenshotResult struct {
-	Width  int    `json:"width"`
-	Height int    `json:"height"`
-	Path   string `json:"path"`
+	Width          int     `json:"width"`
+	Height         int     `json:"height"`
+	Path           string  `json:"path"`
+	ViewportWidth  float64 `json:"viewport_width,omitempty"`
+	ViewportHeight float64 `json:"viewport_height,omitempty"`
 }
 
 type BrowserOpenTabParams struct {

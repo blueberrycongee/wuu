@@ -10,6 +10,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Let browser observations explicitly attach bounded visual evidence to image-capable models, including CSS viewport and delivered-image dimensions for coordinate mapping. Ordinary DOM observations remain text-only.
+
 - Run a default-exported TypeScript plugin directly with `wuu plugin dev`, using
   the embedded SDK without a manifest or build, and keep watching through failed saves.
 
