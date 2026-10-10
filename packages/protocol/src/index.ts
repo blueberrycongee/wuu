@@ -1,3 +1,5 @@
+import type { AppContextSettings, AppContextState } from "./appContext";
+export type { AppContextSettings, AppContextSnapshot, AppContextState } from "./appContext";
 export type JsonValue =
   | null
   | boolean
@@ -2731,6 +2733,11 @@ export type ActiveDocumentContext = {
 };
 
 export type WuuDesktopApi = {
+  getAppContextState?: () => Promise<AppContextState>;
+  updateAppContextSettings?: (settings: AppContextSettings) => Promise<AppContextState>;
+  requestAppContextPermission?: (kind: "screen" | "text") => Promise<AppContextState>;
+  discardAppContextSnapshot?: (id?: string) => Promise<AppContextState>;
+  onAppContextChanged?: (handler: () => void) => () => void;
   /** Host operations that this adapter cannot perform. Omitted means the
    * desktop contract; renderers must hide or disable unavailable actions. */
   unsupportedMethods?: readonly (keyof WuuDesktopApi)[];

@@ -1,0 +1,9 @@
+.app-context-dialog { width: min(680px, calc(100vw - var(--space-6))); }
+.app-context-settings, .app-context-preview { display: flex; flex-direction: column; gap: var(--space-4); min-width: 0; }
+.app-context-settings > label { display: flex; align-items: center; gap: var(--space-2); }
+.app-context-settings .settings-input { flex: 1; min-width: 0; }
+.app-context-permissions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.app-context-preview img { display: block; max-width: 100%; max-height: 42vh; object-fit: contain; border-radius: var(--radius-md); }
+.app-context-preview pre { max-height: 24vh; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
+.app-context-hint { color: var(--ink-muted); }
+.app-context-error { color: var(--danger); }

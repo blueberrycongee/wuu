@@ -1,3 +1,4 @@
+import { openAppContextSetup } from "./AppContextCapture";
 import { hostSupports } from "./HostCapabilities";
 import {
   Bug,
@@ -1660,6 +1661,12 @@ export function ComposerPlusButton({
                 <span className="composer-plus-menu-item-desc">{t("composer.addAttachmentHint")}</span>
               </button>
             )}
+            {window.wuu?.platform === "darwin" && window.wuu.getAppContextState ? (
+              <button role="menuitem" type="button" onClick={() => { setOpen(false); openAppContextSetup(); }}>
+                <Eye className="icon-lg" />
+                <span className="composer-plus-menu-item-title">{t("composer.appContext.title")}</span>
+              </button>
+            ) : null}
             <PlusMenuCommands label={t("composer.plusSectionCommands")} commands={builtInCommands} onSelect={selectCommand} />
             <PlusMenuCommands label={t("composer.plusSectionSkills")} commands={skillCommands} onSelect={selectCommand} />
           </div>

@@ -23,10 +23,12 @@ desktop/out-e2e/
 # artifacts under tracked icon resources.
 desktop/build/mobile-web/
 desktop/build/bin/
+desktop/build/app-context/
 desktop/build/dev-host/
 desktop/build/.icon-work/
 desktop/release/
 desktop/native/cua-mac/.build/
+desktop/native/app-context-mac/.build/
 # inspect-cua-pip.cjs writes diagnostic JSON and window screenshots here.
 /artifacts/cua-pip/
 # Local agent snapshots, screenshots, and commit-check copies.

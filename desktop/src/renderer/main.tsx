@@ -1,3 +1,4 @@
+import { AppContextCaptureHost } from "./AppContextCapture";
 import ReactDOM from "react-dom/client";
 import { MESSAGE_FLOW_FONT_SIZE_RANGE } from "../shared/protocol";
 import { AccountScreen } from "./AccountScreen";
@@ -95,7 +96,7 @@ ReactDOM.createRoot(rendererRoot).render(
       <LinuxWindowControls />
       {ENABLE_ACCOUNT && window.wuu?.isAccountWindow && window.wuu.remoteAccount
         ? <AccountScreen standalone driver={window.wuu.remoteAccount} onBack={() => { void window.wuu.closeAccountWindow?.(); }} />
-        : <App />}
+        : <><App /><AppContextCaptureHost /></>}
       <ToastViewport />
       <ConfirmDialogHost />
     </WuuUIRoot>
