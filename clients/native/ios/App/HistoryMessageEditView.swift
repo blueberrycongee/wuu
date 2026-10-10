@@ -13,36 +13,13 @@ struct HistoryMessageEditView: View {
     private var empty: Bool { edit.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && edit.attachmentCount == 0 }
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
-                    TextEditor(text: $edit.text)
-                        .focused($focused)
-                        .scrollContentBackground(.hidden)
-                        .frame(height: 180)
-                        .padding(8)
-                        .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
-                        .disabled(busy)
-                        .accessibilityLabel("消息内容")
-                        .accessibilityIdentifier("history-edit-text")
-                    if edit.attachmentCount > 0 {
-                        Label("保留原消息的 \(edit.attachmentCount) 个附件", systemImage: "paperclip")
-                            .font(.footnote).foregroundStyle(.secondary)
-                    }
-                    Text(edit.prepared ? "之后的对话已被替换，这条消息还没有发送。" : "发送后将从这条消息重新开始，之后的对话会被替换。")
-                        .font(.footnote).foregroundStyle(.secondary)
-                    if let error = edit.error {
-                        HStack(alignment: .firstTextBaseline, spacing: 4) {
-                            Label(error, systemImage: "exclamationmark.triangle").lineLimit(3)
-                            if error.count > 120 || error.contains("\n") { DetailButton(detail: error, label: "错误详情") }
-                        }
-                        .font(.footnote).foregroundStyle(.red)
-                        .transition(.opacity)
-                    }
+            GeometryReader { geometry in
+                ScrollView {
+                    // Keep the focused editor within the keyboard-safe area, including its padding.
+                    editContent(editorHeight: min(180, max(44, geometry.size.height - 56)))
                 }
-                .padding(20)
-                .animation(chromeAnimation(reduceMotion), value: edit.error)
+                .scrollDismissesKeyboard(.interactively)
             }
-            .scrollDismissesKeyboard(.interactively)
             .navigationTitle("编辑消息").navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -61,6 +38,35 @@ struct HistoryMessageEditView: View {
             .onAppear { if !edit.prepared { focused = true } }
         }
         .interactiveDismissDisabled(busy)
+    }
+    private func editContent(editorHeight: CGFloat) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            TextEditor(text: $edit.text)
+                .focused($focused)
+                .scrollContentBackground(.hidden)
+                .frame(height: editorHeight)
+                .padding(8)
+                .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
+                .disabled(busy)
+                .accessibilityLabel("消息内容")
+                .accessibilityIdentifier("history-edit-text")
+            if edit.attachmentCount > 0 {
+                Label("保留原消息的 \(edit.attachmentCount) 个附件", systemImage: "paperclip")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
+            Text(edit.prepared ? "之后的对话已被替换，这条消息还没有发送。" : "发送后将从这条消息重新开始，之后的对话会被替换。")
+                .font(.footnote).foregroundStyle(.secondary)
+            if let error = edit.error {
+                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                    Label(error, systemImage: "exclamationmark.triangle").lineLimit(3)
+                    if error.count > 120 || error.contains("\n") { DetailButton(detail: error, label: "错误详情") }
+                }
+                .font(.footnote).foregroundStyle(.red)
+                .transition(.opacity)
+            }
+        }
+        .padding(20)
+        .animation(chromeAnimation(reduceMotion), value: edit.error)
     }
     private func close() {
         model.showingHistoryEdit = false
