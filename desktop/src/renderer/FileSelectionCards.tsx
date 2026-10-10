@@ -1,9 +1,12 @@
+import { fileSelectionLocation } from "./PdfSelection";
+import { usePdfSelectionNavigation } from "./FileSelectionContext";
 import { FileText, MessageSquare, Pencil, X } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 import type { MessageContentPart } from "../shared/protocol";
 import { FloatingMenuPortal } from "./ComposerFloatingMenu";
-import { fileSelectionNavigation } from "./FileSelectionNavigation";
+import { readFileSelectionNavigation } from "./FileSelectionNavigation";
 import { useI18n } from "./i18n";
+import { PdfSelectionCards } from "./PdfSelectionCards";
 import "./FileSelectionCards.css";
 
 export type FileSelectionPart = Extract<MessageContentPart, { type: "file_selection" }>;
@@ -18,9 +21,12 @@ export type FileSelectionCardsProps = {
 /** Shared attachment group for composer drafts and immutable message history. */
 export function FileSelectionCards({ parts, onRemove, onEdit, onOpenFile }: FileSelectionCardsProps): JSX.Element | null {
   if (parts.length === 0) return null;
+  const pdfParts = parts.filter(part => part.source.pdf);
+  const textParts = parts.filter(part => !part.source.pdf);
   return <div className="file-selection-groups">
-    <FileSelectionCardGroup parts={parts.filter((part) => part.intent === "quote")} onRemove={onRemove} onOpenFile={onOpenFile} />
-    <FileSelectionCardGroup parts={parts.filter((part) => part.intent !== "quote")} onRemove={onRemove} onEdit={onEdit} onOpenFile={onOpenFile} />
+    <PdfSelectionCards parts={pdfParts} onRemove={onRemove} onEdit={onEdit} onOpenFile={onOpenFile} />
+    <FileSelectionCardGroup parts={textParts.filter((part) => part.intent === "quote")} onRemove={onRemove} onOpenFile={onOpenFile} />
+    <FileSelectionCardGroup parts={textParts.filter((part) => part.intent !== "quote")} onRemove={onRemove} onEdit={onEdit} onOpenFile={onOpenFile} />
   </div>;
 }
 
@@ -28,12 +34,13 @@ function FileSelectionCardGroup({ parts, onRemove, onEdit, onOpenFile }: FileSel
   const { locale, t } = useI18n();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<{ id: string; comment: string } | null>(null);
-  const [locationNotices, setLocationNotices] = useState<Record<string, "changed" | "unavailable" | undefined>>({});
+  const [locationNotices, setLocationNotices] = useState<Record<string, "changed" | "unavailable" | "original" | undefined>>({});
   const anchorRef = useRef<HTMLButtonElement>(null);
   const chipRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const closeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const panelID = useId();
+  const openPdf = usePdfSelectionNavigation();
   const allComments = parts.every((part) => part.intent === "comment");
   const allEdits = parts.every((part) => part.intent === "edit");
   const allQuotes = parts.every((part) => part.intent === "quote");
@@ -45,19 +52,23 @@ function FileSelectionCardGroup({ parts, onRemove, onEdit, onOpenFile }: FileSel
       : parts.length === 1 ? "file reference" : "file references"}`;
 
   async function openFile(part: FileSelectionPart): Promise<void> {
-    let currentText: string | undefined;
-    try {
-      const file = await window.wuu.readWorkspaceFile(part.source.path, part.source.workspace);
-      // A truncated preview cannot establish that an excerpt is unique.
-      currentText = file.binary || file.truncated ? undefined : file.text;
-    } catch {
-      // Opening the file remains useful when its location cannot be verified.
+    if (part.source.pdf?.artifact_uri) {
+      const opened = openPdf?.(part.source) ?? false;
+      setLocationNotices(current => ({ ...current, [part.id]: opened ? undefined : "original" }));
+      return;
     }
-    const target = fileSelectionNavigation(part.source, currentText);
-    setLocationNotices((current) => ({ ...current, [part.id]: target.locationChanged
-      ? currentText === undefined ? "unavailable" : "changed"
-      : undefined }));
+    const target = await readFileSelectionNavigation(part.source);
+    setLocationNotices(current => ({ ...current, [part.id]: target.locationChanged
+      ? target.available ? "changed" : "unavailable" : undefined }));
     onOpenFile?.(target.path);
+  }
+
+  function locationNotice(id: string): JSX.Element | null {
+    const notice = locationNotices[id];
+    return notice ? <p className="file-selection-location-notice" role="status">
+      {t(notice === "original" ? "selectionChip.pdfOriginalConversation"
+        : notice === "changed" ? "selectionChip.locationChanged" : "selectionChip.locationUnavailable")}
+    </p> : null;
   }
 
   function cancelClose(): void {
@@ -158,11 +169,12 @@ function FileSelectionCardGroup({ parts, onRemove, onEdit, onOpenFile }: FileSel
             {allQuotes ? parts.map((part) => <div className="file-selection-quote-entry" key={part.id}>
               <p className="file-selection-quote-text">{part.source.quote}</p>
               {onOpenFile ? <button type="button" className="file-selection-location" onClick={() => void openFile(part)}>
-                {part.source.path}:{part.source.start_line}
+                {part.source.pdf ? `${part.source.path} · ${fileSelectionLocation(part.source)}` : `${part.source.path}:${part.source.start_line}`}
               </button> : null}
               {parts.length > 1 && onRemove ? <button type="button" className="file-selection-action"
-                aria-label={`${t("common.remove")} ${part.source.path}:${part.source.start_line}`}
+                aria-label={`${t("common.remove")} ${part.source.pdf ? `${part.source.path} · ${fileSelectionLocation(part.source)}` : `${part.source.path}:${part.source.start_line}`}`}
                 onClick={() => onRemove(part.id)}><X aria-hidden="true" /></button> : null}
+              {locationNotice(part.id)}
             </div>) : <>
             <div className="file-selection-panel-heading">
               <span>{label}</span>
@@ -174,7 +186,7 @@ function FileSelectionCardGroup({ parts, onRemove, onEdit, onOpenFile }: FileSel
             {parts.map((part) => {
               const { source } = part;
               const filename = source.path.split(/[\\/]/).pop() || source.path;
-              const location = `${source.start_line}:${source.start_column}–${source.end_line}:${source.end_column}`;
+              const location = fileSelectionLocation(source);
               return (
                 <section key={part.id} className="file-selection-card">
                   <div className="file-selection-card-heading">
@@ -206,11 +218,7 @@ function FileSelectionCardGroup({ parts, onRemove, onEdit, onOpenFile }: FileSel
                       </div>
                     </div>
                   ) : part.comment ? <p className="file-selection-comment">{part.comment}</p> : null}
-                  {locationNotices[part.id] ? <p className="file-selection-location-notice" role="status">
-                    {locationNotices[part.id] === "changed"
-                      ? locale === "zh-CN" ? "原文位置已变化，无法唯一定位。已打开文件，保留原始摘录。" : "The original location has changed and cannot be located uniquely. Opened the file; the saved excerpt is unchanged."
-                      : locale === "zh-CN" ? "无法读取当前文件，已打开文件但未定位。原始摘录仍保留。" : "Could not read the current file. Opened without a location; the saved excerpt is unchanged."}
-                  </p> : null}
+                  {locationNotice(part.id)}
                   <details className="file-selection-original">
                     <summary>{locale === "zh-CN" ? "原文" : "Original"}</summary>
                     <pre>{source.quote}</pre>

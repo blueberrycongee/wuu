@@ -548,7 +548,7 @@ export function ArtifactPreview({
   cwd,
   onClose,
   mode = "overlay",
-  motion,
+  motion, threadID, initialPage, pageRequest,
 }: {
   artifact: TurnArtifact;
   active?: boolean;
@@ -556,9 +556,14 @@ export function ArtifactPreview({
   onClose: () => void;
   mode?: "overlay" | "panel";
   motion?: ArtifactPreviewMotion;
+  threadID?: string;
+  initialPage?: number;
+  pageRequest?: string;
 }): JSX.Element {
   const { t } = useI18n();
   const source = useArtifactPreviewSource(artifact, cwd);
+  const contextualThreadID = useContext(ArtifactThreadContext);
+  const ownerThreadID = threadID ?? contextualThreadID;
   const imagePreview = useOptionalImagePreview();
   const [downloadError,setDownloadError] = useState("");
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -626,7 +631,11 @@ export function ArtifactPreview({
   } else if (artifact.mimeType === "application/pdf") {
     body = (
       <Suspense fallback={<div className="artifact-preview-empty">{t("imagePreview.loading")}</div>}>
-        <WorkspacePdfPreview url={source} title={artifact.name} />
+        <WorkspacePdfPreview url={source} title={artifact.name} active={active} initialPage={initialPage} pageRequest={pageRequest}
+          source={cwd && ownerThreadID && artifact.sha256 && artifact.uri?.startsWith("wuu-artifact:") ? {
+            workspace: cwd, path: artifact.name, revision: `sha256:${artifact.sha256}`,
+            artifact: { artifact_uri: artifact.uri, artifact_sha256: artifact.sha256, artifact_thread_id: ownerThreadID },
+          } : undefined} />
       </Suspense>
     );
   } else if (isHtmlMimeType(artifact.mimeType)) {

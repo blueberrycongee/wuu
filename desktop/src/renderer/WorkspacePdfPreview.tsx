@@ -1,6 +1,9 @@
+import { PdfSelectionMenu } from "./PdfSelectionMenu";
+import type { PdfPreviewSource } from "./PdfSelection";
 import { Minus, Plus } from "./WuuIcons";
 import {
   type ReactNode,
+  type RefObject,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -24,10 +27,14 @@ type PageChangingEvent = { pageNumber: number };
 
 export function WorkspacePdfPreview({
   url,
-  title,
+  title, source, active = true, initialPage, pageRequest,
 }: {
   url: string;
   title: string;
+  source?: PdfPreviewSource;
+  active?: boolean;
+  initialPage?: number;
+  pageRequest?: string;
 }): JSX.Element {
   const hostRef = useRef<HTMLDivElement>(null);
   const [shadowRoot, setShadowRoot] = useState<ShadowRoot>();
@@ -41,8 +48,10 @@ export function WorkspacePdfPreview({
   return (
     <div
       ref={hostRef}
+      tabIndex={-1}
       className="workspace-file-pdf-preview"
       data-workspace-pdf-preview
+      data-selectable
       data-wuu-component="workspace-pdf-preview"
     >
       {shadowRoot
@@ -50,7 +59,8 @@ export function WorkspacePdfPreview({
             <>
               <style>{pdfViewerCSS}</style>
               <style>{previewCSS}</style>
-              <WorkspacePdfSurface url={url} title={title} />
+              <WorkspacePdfSurface key={JSON.stringify([url, source])} url={url} title={title}
+                hostRef={hostRef} source={source} active={active} initialPage={initialPage} pageRequest={pageRequest} />
             </>,
             shadowRoot,
           )
@@ -59,7 +69,15 @@ export function WorkspacePdfPreview({
   );
 }
 
-function WorkspacePdfSurface({ url, title }: { url: string; title: string }): JSX.Element {
+function WorkspacePdfSurface({ url, title, hostRef, source, active, initialPage, pageRequest }: {
+  url: string;
+  title: string;
+  hostRef: RefObject<HTMLDivElement | null>;
+  source?: PdfPreviewSource;
+  active: boolean;
+  initialPage?: number;
+  pageRequest?: string;
+}): JSX.Element {
   const { t } = useI18n();
   const containerRef = useRef<HTMLDivElement>(null);
   const viewerElementRef = useRef<HTMLDivElement>(null);
@@ -75,6 +93,7 @@ function WorkspacePdfSurface({ url, title }: { url: string; title: string }): JS
     const viewerElement = viewerElementRef.current;
     if (!container || !viewerElement) return;
 
+    setReady(false); setError(""); setPageCount(0); setPageNumber(1);
     let active = true;
     const eventBus = new EventBus();
     const viewer = new PDFViewer({
@@ -95,6 +114,7 @@ function WorkspacePdfSurface({ url, title }: { url: string; title: string }): JS
       viewer.currentScaleValue = "page-width";
       setZoom(Math.round(viewer.currentScale * 100));
       setReady(true);
+      if (initialPage && Number.isSafeInteger(initialPage) && initialPage >= 1 && initialPage <= viewer.pagesCount) viewer.currentPageNumber = initialPage;
     };
     const onScaleChanging = ({ scale }: ScaleChangingEvent): void => {
       setZoom(Math.round(scale * 100));
@@ -105,6 +125,25 @@ function WorkspacePdfSurface({ url, title }: { url: string; title: string }): JS
     eventBus.on("pagesinit", onPagesInit);
     eventBus.on("scalechanging", onScaleChanging);
     eventBus.on("pagechanging", onPageChanging);
+
+    // PDF.js observes container height, but its fit preset must be reapplied
+    // when the workspace panel changes width. Numeric zoom stays user-owned.
+    let observedWidth = -1;
+    let resizeFrame = 0;
+    const resizeObserver = new ResizeObserver(() => {
+      const width = container.clientWidth;
+      if (width === observedWidth) return;
+      observedWidth = width;
+      cancelAnimationFrame(resizeFrame);
+      if (width <= 0) return;
+      resizeFrame = requestAnimationFrame(() => {
+        resizeFrame = 0;
+        if (active && container.clientWidth > 0 && viewer.currentScaleValue === "page-width") {
+          viewer.currentScaleValue = "page-width";
+        }
+      });
+    });
+    resizeObserver.observe(container);
 
     void loadingTask.promise
       .then((document) => {
@@ -126,11 +165,18 @@ function WorkspacePdfSurface({ url, title }: { url: string; title: string }): JS
       eventBus.off("pagesinit", onPagesInit);
       eventBus.off("scalechanging", onScaleChanging);
       eventBus.off("pagechanging", onPageChanging);
+      resizeObserver.disconnect();
+      cancelAnimationFrame(resizeFrame);
       viewer.cleanup();
       void loadingTask.destroy();
       viewerRef.current = null;
     };
   }, [url]);
+
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    if (ready && viewer && initialPage && Number.isSafeInteger(initialPage) && initialPage >= 1 && initialPage <= viewer.pagesCount) viewer.currentPageNumber = initialPage;
+  }, [initialPage, pageRequest, ready]);
 
   function updateScale(action: "decrease" | "increase" | "fit"): void {
     const viewer = viewerRef.current;
@@ -145,6 +191,7 @@ function WorkspacePdfSurface({ url, title }: { url: string; title: string }): JS
   }
 
   return (
+    <>
     <section className="workspace-pdf-shell" aria-label={title}>
       <header className="workspace-pdf-toolbar">
         <span className="workspace-pdf-page-count" aria-live="polite">
@@ -193,6 +240,10 @@ function WorkspacePdfSurface({ url, title }: { url: string; title: string }): JS
         ) : null}
       </div>
     </section>
+    {/* The surface and menu share a revision-keyed lifetime. A refreshed source
+        cannot label the previous viewer's text while its replacement loads. */}
+    <PdfSelectionMenu hostRef={hostRef} source={source} active={active && ready && !error} />
+    </>
   );
 }
 

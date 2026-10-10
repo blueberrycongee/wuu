@@ -147,6 +147,23 @@ jobs:
       - name: Typecheck
         run: make check-desktop
 
+      - name: Guard development renderer recovery
+        timeout-minutes: 3
+        shell: bash
+        run: |
+          mkdir -p "${{ runner.temp }}/wuu-renderer-recovery-evidence"
+          set -o pipefail
+          xvfb-run --auto-servernum npm --prefix desktop run test:renderer-recovery -- --no-sandbox 2>&1 | tee "${{ runner.temp }}/wuu-renderer-recovery-evidence/run.log"
+
+      - name: Upload renderer recovery evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: renderer-recovery-evidence
+          path: ${{ runner.temp }}/wuu-renderer-recovery-evidence
+          if-no-files-found: ignore
+          retention-days: 14
+
       - name: Test
         run: make test-desktop
 
@@ -277,6 +294,28 @@ jobs:
       - name: Build desktop fixture core
         id: build-fixture-core
         run: go build -o "${{ runner.temp }}/wuu-session-switch-core" ./cmd/wuu
+
+      - name: Verify PDF context through the desktop and core
+        if: ${{ !cancelled() && steps.build-fixture-core.outcome == 'success' && steps.build-renderer.outcome == 'success' }}
+        timeout-minutes: 4
+        shell: bash
+        env:
+          WUU_DOCUMENT_OUTPUT: ${{ runner.temp }}/wuu-document-context-evidence
+          WUU_DOCUMENT_CORE: ${{ runner.temp }}/wuu-session-switch-core
+          WUU_DOCUMENT_COMMIT: ${{ github.sha }}
+        run: |
+          mkdir -p "$WUU_DOCUMENT_OUTPUT"
+          set -o pipefail
+          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/document-context-e2e.mjs 2>&1 | tee "$WUU_DOCUMENT_OUTPUT/run.log"
+
+      - name: Upload PDF context evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: document-context-evidence
+          path: ${{ runner.temp }}/wuu-document-context-evidence/
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Verify compact Fast mode controls
         if: ${{ !cancelled() && steps.build-fixture-core.outcome == 'success' }}

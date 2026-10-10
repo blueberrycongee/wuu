@@ -2240,4 +2240,11 @@ export const enUS = {
   "projects.event.groupSessions": "{count} updates from {sessions} sessions, including {name}",
   "projects.event.details": "Details",
   "projects.event.hideDetails": "Hide details",
+  "pdfSelection.actions": "PDF selection actions",
+  "pdfSelection.add": "Add to conversation",
+  "pdfSelection.comment": "Comment",
+  "pdfSelection.pages": "Pages {start}–{end} · Adds to your draft",
+  "selectionChip.pdfOriginalConversation": "Open this PDF from its original delivery to view the saved version.",
+  "workspace.files.previewTruncated": "Only the first 512 KiB of this file is shown. The original file is unchanged.",
+  "pdfSelection.page": "Page {page} · Adds to your draft",
 } as const satisfies Record<TranslationKey, string>;
