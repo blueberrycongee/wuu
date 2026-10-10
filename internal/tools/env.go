@@ -190,6 +190,9 @@ type Env struct {
 	// browser backend is attached (for example the CLI/headless runtime), and
 	// the browser tool returns a clear execute-time error rather than panicking.
 	BrowserBridge BrowserBridge
+	// BrowserHostFinalize enables the negotiated atomic host cleanup. Older
+	// clients retain the per-tab finalize path until they advertise support.
+	BrowserHostFinalize bool
 	// BrowserTabs persists this thread's tab records (url/title/status/activity)
 	// so tabs survive core restarts and can be rebuilt on the first observe.
 	// Nil means tab state is not durable in this environment.
@@ -309,9 +312,10 @@ type BrowserBridge interface {
 // BrowserLiveTab is one view the desktop host currently has open for this
 // workspace. URL and Title are empty when the host only reports ids.
 type BrowserLiveTab struct {
-	ID    string
-	URL   string
-	Title string
+	ID     string
+	URL    string
+	Title  string
+	Status string
 }
 
 // BrowserTabRecord is the durable per-tab state the tool persists between turns

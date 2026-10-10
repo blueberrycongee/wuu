@@ -41,7 +41,7 @@ Schema 修正回合，因此单个 `turn/completed` 不代表整次运行结束�
 
 ## 托管浏览器请求
 
-内嵌浏览器客户端应协商全部六个反向请求方法：`browser/cdp`、`browser/screenshot`、
+内嵌浏览器客户端的基础能力包含六个反向请求方法：`browser/cdp`、`browser/screenshot`、
 `browser/open_tab`、`browser/close_tab`、`browser/set_visibility` 和 `browser/list_tabs`。
 这些请求由核心发给客户端；客户端应持续读取协议流，并以原请求 ID 返回结果或错误。
 
@@ -53,6 +53,12 @@ Schema 修正回合，因此单个 `turn/completed` 不代表整次运行结束�
 该 ID 及相同的 `thread_id`、`workdir`。只取消匹配的操作，在异步工作后和输入派发前
 再次检查。用户接管或停止活动会撤销该对话所有标签页的输入权限；之后归还控制权可
 授权新操作，但不能恢复已经撤销的请求。
+
+桌面客户端还协商 `browser/finalize` 和 `browser/turn_ended`，支持按执行实例清理。每个工作区的首次浏览器请求前，核心发送 `browser/turn_started`，携带 `workdir`、`thread_id`、`turn_id` 和不可变的 `execution_id`；同一次执行中的所有浏览器请求都带这组标识。逻辑轮次恢复时可以复用 `turn_id`，但必须分配新的执行 ID；旧执行的请求和结束通知不得影响新执行。
+
+`browser/finalize` 原子应用 `keep: [{tab_id, status}]`，其中状态为 `persistent`、`handoff` 或 `deliverable`，并关闭未保留的临时页面，但不结束执行。手动打开或接管的页面保持持久。保留弹窗时，先保护它仍存活的同任务来源页，再关闭临时页面。宿主重启后，持久记录中的标签 ID 可以尚未创建；若对应的存活标签属于其他任务，则返回错误。
+
+轮次完成或中断后，`browser/turn_ended` 带执行标识及保留记录。客户端先使未完成操作失效，再关闭临时页，并释放保留页面的调试器和输入、指针状态，不替换页面内容或改变当前预览布局。清理不得删除历史消息引用的截图文件。持久保留记录读取失败时，`preserve_all: true` 要求保留该任务所有页面，避免丢失上下文。两个方法都返回 `closed`、`kept`，以及可选的 `tabs`（含 `tab_id`、`url`、`title`、`status`）；过期结束请求返回 `stale: true`，不修改标签。未协商新增方法的宿主继续使用基础请求契约。
 
 ## 复用会话
 

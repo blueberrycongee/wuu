@@ -9,9 +9,11 @@ import { createServer, type ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
-import { app, BrowserWindow, WebContentsView, nativeImage } from "electron";
+import { app, BrowserWindow, type WebContentsView, nativeImage } from "electron";
 import { BrowserHostCoordinator, defaultBrowserHostDeps, type BrowserHostWindowHandle, type BrowserViewHandle } from "../src/main/browserHostWindows";
+import { createBrowserView } from "../src/main/browserView";
 import type { WindowRegistry } from "../src/main/windowRegistry";
+import { BROWSER_REVERSE_RPC_METHODS } from "../src/shared/protocol";
 
 const output = resolve(process.env.WUU_BROWSER_VISUAL_OUTPUT ?? "out/e2e/browser-visual");
 const fixture = mkdtempSync(join(tmpdir(), "wuu-browser-visual-"));
@@ -20,7 +22,6 @@ app.setPath("userData", join(fixture, "electron-profile"));
 app.on("window-all-closed", () => { /* The next isolated scenario creates its own windows. */ });
 mkdirSync(output, { recursive: true });
 const evidence: Record<string, unknown>[] = [];
-const browserMethods = ["browser/cdp", "browser/screenshot", "browser/open_tab", "browser/close_tab", "browser/set_visibility", "browser/list_tabs"];
 const page = `<!doctype html><meta charset="utf-8"><title>Visual evidence fixture</title>
 <style>html{overflow:scroll}body{margin:0;min-width:calc(100vw + 160px);min-height:calc(100vh + 160px)}::-webkit-scrollbar{width:24px;height:24px}canvas{position:absolute;inset:0;width:100vw;height:100vh}p,input{position:relative;z-index:1}p{margin:12px;font:20px sans-serif}</style>
 <canvas></canvas><p id="status">Waiting for canvas input</p><input type="password" value="fixture-password-secret">
@@ -83,6 +84,9 @@ async function scenario(name: string, vision: boolean, ptc: boolean, takeover = 
   let step = 0, tab = "", thread = "", activity = "", bridgeObservations = 0;
   let failure: Error | undefined;
   let lateFrameDelivered: Promise<void> | undefined;
+  let browserTurn: { turn_id: string; execution_id: string } | undefined;
+  let endingRequestID: string | undefined;
+  let browserEndResult: { closed: string[]; kept: string[]; stale?: boolean } | undefined;
   let resolveDone!: () => void, rejectDone!: (error: Error) => void;
   const done = new Promise<void>((resolve, reject) => { resolveDone = resolve; rejectDone = reject; });
   void done.catch(() => undefined); // The turn can fail before its start RPC resolves.
@@ -176,6 +180,7 @@ async function scenario(name: string, vision: boolean, ptc: boolean, takeover = 
   const main = new BrowserWindow({ show: false, webPreferences: { sandbox: true } });
   host = new BrowserHostCoordinator({ mainWindow: () => main } as unknown as WindowRegistry, {
     respond: (id, result) => {
+      if (id === endingRequestID) browserEndResult = result as typeof browserEndResult;
       if (takeover && (result as any)?.result?.screenshot_path) {
         // Hold an already captured frame at the real reverse-RPC boundary,
         // revoke the activity, then deliver the late response deterministically.
@@ -186,16 +191,25 @@ async function scenario(name: string, vision: boolean, ptc: boolean, takeover = 
     reject: (id, message) => send({ id, error: { code: "browser", message } }),
   }, defaultBrowserHostDeps(
     () => new BrowserWindow({ show: false, webPreferences: { sandbox: true } }) as unknown as BrowserHostWindowHandle,
-    () => { const view = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false } }); views.push(view); return view as unknown as BrowserViewHandle; },
+    (options) => { const view = createBrowserView(options); views.push(view); return view as unknown as BrowserViewHandle; },
   ), () => undefined);
   const reader = createInterface({ input: child.stdout });
   reader.on("line", line => {
     try {
       const message = JSON.parse(line);
       if (message.method?.startsWith("browser/") && message.id) {
+        assert.ok(browserTurn, "The core announces browser execution before its first action");
+        assert.equal(message.params?.turn_id, browserTurn.turn_id);
+        assert.equal(message.params?.execution_id, browserTurn.execution_id);
+        if (message.method === "browser/turn_ended") endingRequestID = message.id;
         if (message.params?.method === "observe") bridgeObservations++;
         void host.handleServerRequest({ workdir, kind: "server-request", message });
-      } else if (message.method === "browser/request_cancelled") {
+      } else if (message.method?.startsWith("browser/")) {
+        if (message.method === "browser/turn_started") {
+          assert.equal(message.params.thread_id, thread);
+          assert.ok(message.params.turn_id && message.params.execution_id);
+          browserTurn = { turn_id: message.params.turn_id, execution_id: message.params.execution_id };
+        }
         host.handleServerEvent({ workdir, kind: "notification", message });
       } else if (message.id && pending.has(String(message.id))) {
         const waiter = pending.get(String(message.id))!; pending.delete(String(message.id));
@@ -206,7 +220,10 @@ async function scenario(name: string, vision: boolean, ptc: boolean, takeover = 
         if (takeover && message.params.turn?.status === "interrupted") resolveDone();
         else rejectDone(new Error(JSON.stringify(message.params)));
       }
-      else if (message.method === "turn/completed") resolveDone();
+      else if (message.method === "turn/completed") {
+        assert.equal(message.params.turn?.status, takeover ? "interrupted" : "completed");
+        resolveDone();
+      }
     } catch (error) { rejectDone(error as Error); }
   });
   child.on("error", rejectDone);
@@ -216,15 +233,21 @@ async function scenario(name: string, vision: boolean, ptc: boolean, takeover = 
     pending.clear(); rejectDone(error);
   }, 60000);
   try {
-    await rpc("initialize", { client: { name: "browser-visual-e2e" }, capabilities: { reverse_rpc: { methods: browserMethods } } });
+    await rpc("initialize", { client: { name: "browser-visual-e2e" }, capabilities: { reverse_rpc: { methods: [...BROWSER_REVERSE_RPC_METHODS] } } });
     const started = await rpc("thread/start", { engine: "wuu", approve_for_me: false }); thread = started.thread.id;
     await rpc("turn/start", { thread_id: thread, prompt: "Run the isolated browser visual evidence fixture." });
     await done;
     if (takeover) { assert.ok(lateFrameDelivered); await lateFrameDelivered; }
     assert.equal(failure, undefined);
     assert.equal(step, takeover ? 2 : vision ? 10 : 5);
-    if (takeover) assert.equal(await views[0].webContents.executeJavaScript("document.querySelector('#status').textContent"), "Waiting for canvas input");
-    evidence.push({ scenario: name, status: "passed", providerRequests: step, bridgeObservations, vision, ptc, takeover, capabilityKnown });
+    assert.ok(browserEndResult, "Core releases the actual browser execution before terminal completion");
+    assert.notEqual(browserEndResult.stale, true);
+    if (takeover) {
+      assert.ok(browserEndResult.kept.includes(tab), "Takeover retains the user's live page");
+      assert.equal(views[0].webContents.debugger.isAttached(), false, "Turn end releases retained-page automation");
+      assert.equal(await views[0].webContents.executeJavaScript("document.querySelector('#status').textContent"), "Waiting for canvas input");
+    } else assert.equal(browserEndResult.kept.length, 0);
+    evidence.push({ scenario: name, status: "passed", providerRequests: step, bridgeObservations, vision, ptc, takeover, capabilityKnown, browserTurn, browserEndResult });
   } finally {
     clearTimeout(timer); reader.close(); child.stdin.end();
     await Promise.race([once(child, "exit"), new Promise(resolve => setTimeout(resolve, 3000))]);

@@ -95,6 +95,8 @@ export const BROWSER_REVERSE_RPC_METHODS = [
   "browser/close_tab",
   "browser/set_visibility",
   "browser/list_tabs",
+  "browser/finalize",
+  "browser/turn_ended",
 ] as const;
 
 export type CoreBuildInfo = {
@@ -192,6 +194,8 @@ export type FeatureFlags = {
 // tab_id, minted core-side, and scoped to the bridge-owned thread_id.
 export type BrowserCDPParams = {
   thread_id: string;
+  turn_id?: string;
+  execution_id?: string;
   request_id?: string;
   workdir: string;
   tab_id: string;
@@ -209,6 +213,8 @@ export type BrowserCDPResult = {
 
 export type BrowserScreenshotParams = {
   thread_id: string;
+  turn_id?: string;
+  execution_id?: string;
   request_id?: string;
   workdir: string;
   tab_id: string;
@@ -227,6 +233,8 @@ export type BrowserScreenshotResult = {
 
 export type BrowserOpenTabParams = {
   thread_id: string;
+  turn_id?: string;
+  execution_id?: string;
   request_id?: string;
   workdir: string;
   tab_id: string;
@@ -235,6 +243,8 @@ export type BrowserOpenTabParams = {
 
 export type BrowserCloseTabParams = {
   thread_id: string;
+  turn_id?: string;
+  execution_id?: string;
   request_id?: string;
   workdir: string;
   tab_id: string;
@@ -242,6 +252,8 @@ export type BrowserCloseTabParams = {
 
 export type BrowserSetVisibilityParams = {
   thread_id: string;
+  turn_id?: string;
+  execution_id?: string;
   request_id?: string;
   workdir: string;
   tab_id: string;
@@ -250,6 +262,8 @@ export type BrowserSetVisibilityParams = {
 
 export type BrowserListTabsParams = {
   thread_id: string;
+  turn_id?: string;
+  execution_id?: string;
   request_id?: string;
   workdir: string;
 };
@@ -264,11 +278,47 @@ export type BrowserListedTab = {
   tab_id: string;
   url?: string;
   title?: string;
+  status?: BrowserTabStatus;
 };
 
 export type BrowserListTabsResult = {
   tab_ids: string[];
   tabs?: BrowserListedTab[];
+};
+
+export type BrowserTabStatus = "temporary" | "persistent" | "handoff" | "deliverable";
+
+export type BrowserTurnStartedParams = {
+  workdir: string;
+  thread_id: string;
+  turn_id: string;
+  execution_id: string;
+};
+
+export type BrowserKeptTab = {
+  tab_id: string;
+  status: Exclude<BrowserTabStatus, "temporary">;
+};
+
+export type BrowserTurnEndedParams = BrowserTurnStartedParams & {
+  keep: BrowserKeptTab[];
+  preserve_all?: boolean;
+};
+
+export type BrowserTurnEndedResult = {
+  tabs?: BrowserListedTab[];
+  closed: string[];
+  kept: string[];
+  stale?: boolean;
+};
+
+export type BrowserFinalizeParams = {
+  workdir: string;
+  thread_id: string;
+  turn_id?: string;
+  execution_id?: string;
+  request_id?: string;
+  keep: BrowserKeptTab[];
 };
 
 export type RuntimeIssue = {
