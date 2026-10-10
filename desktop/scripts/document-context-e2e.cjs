@@ -121,9 +121,31 @@ async function selectPages(first = 1, last = first) {
     return selection.toString();
   }, { first, last });
 }
+async function dragFirstPage() {
+  await evaluate(() => Promise.all(document.getAnimations().filter(animation => Number.isFinite(animation.effect?.getComputedTiming().endTime))
+    .map(animation => animation.finished.catch(() => {}))));
+  const bounds = await evaluate(() => {
+    const span = document.querySelector('[data-workspace-pdf-preview]').shadowRoot.querySelector('.page[data-page-number="1"] .textLayer span');
+    const r = span.getBoundingClientRect();
+    return { start: Math.floor(r.left), end: Math.ceil(r.right), y: Math.round((r.top + r.bottom) / 2) };
+  });
+  main.focus();
+  main.webContents.sendInputEvent({ type: 'mouseMove', x: bounds.start, y: bounds.y });
+  main.webContents.sendInputEvent({ type: 'mouseDown', button: 'left', clickCount: 1, x: bounds.start, y: bounds.y });
+  for (let step = 1; step <= 12; step++) {
+    main.webContents.sendInputEvent({ type: 'mouseMove', button: 'left', modifiers: ['leftbuttondown'],
+      x: Math.round(bounds.start + (bounds.end - bounds.start) * step / 12), y: bounds.y });
+    await evaluate(() => new Promise(resolve => requestAnimationFrame(resolve)));
+  }
+  main.webContents.sendInputEvent({ type: 'mouseUp', button: 'left', clickCount: 1, x: bounds.end, y: bounds.y });
+  return evaluate(() => document.querySelector('[data-workspace-pdf-preview]').shadowRoot.getSelection().toString());
+}
 async function quoteSelection() {
   await waitFor(() => document.querySelector('.pdf-selection-action-menu'));
-  await click('.pdf-selection-action-menu button');
+  const point = await evaluate(() => { const r = document.querySelector('.pdf-selection-action-menu button').getBoundingClientRect(); return { x: Math.round((r.left + r.right) / 2), y: Math.round((r.top + r.bottom) / 2) }; });
+  main.webContents.sendInputEvent({ type: 'mouseMove', ...point });
+  main.webContents.sendInputEvent({ type: 'mouseDown', button: 'left', clickCount: 1, ...point });
+  main.webContents.sendInputEvent({ type: 'mouseUp', button: 'left', clickCount: 1, ...point });
   await waitFor(() => document.querySelector('.composer-file-selection-card'));
 }
 async function snapshot() { return evaluate(async id => (await window.wuu.resumeThread(id)).thread, threadID); }
@@ -133,7 +155,7 @@ async function currentParts() {
 }
 function writeEvidence(passed) {
   fs.writeFileSync(path.join(output, 'results.json'), JSON.stringify({ passed, phase, checks, errors, screenshots,
-    boundary: 'Production Electron main/preload/renderer and Go core with a local synthetic provider and disposable related-session history. Native PDF text selection is programmatically established in the rendered text layer. PNGs are review evidence, not user visual acceptance.',
+    boundary: 'Production Electron main/preload/renderer and Go core with a local synthetic provider and disposable related-session history. The initial PDF selection uses native mouse drag and Quote clicks; later ranges are programmatically established in the rendered text layer. PNGs are review evidence, not user visual acceptance.',
     core: process.env.WUU_DESKTOP_CORE, sourceCommit: process.env.WUU_DOCUMENT_COMMIT || null,
     originalSHA, requests: requests.length }, null, 2));
   fs.writeFileSync(path.join(output, 'provider-requests.json'), JSON.stringify(requests, null, 2));
@@ -171,10 +193,11 @@ async function run() {
 
   phase = 'quote stays in draft';
   const beforeTurns = (await snapshot()).turns.length;
-  const quote = await selectPages(); assert.equal(quote, firstQuote);
+  const quote = await dragFirstPage(); assert.equal(quote, firstQuote);
   await quoteSelection();
   await waitFor(() => !document.querySelector('.pdf-selection-action-menu'));
   assert.equal((await snapshot()).turns.length, beforeTurns, 'Adding a quote must not send.');
+  checks.push('native PDF text drag and Quote click retain an unsent draft');
   await capture('01-quote-draft');
   await click('.composer-file-selection-card .composer-document-card-main');
   await waitFor(() => document.querySelector('.composer-file-selection-card-popover blockquote'));
