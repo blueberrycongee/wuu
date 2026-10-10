@@ -5578,6 +5578,10 @@ button.turn-edit-summary-overview:focus-visible {
   padding: 0 var(--space-1) var(--space-1);
 }
 
+.turn-edit-summary-card.is-list-only .turn-edit-summary-list {
+  padding-top: var(--space-1);
+}
+
 .turn-edit-summary-row {
   min-height: var(--control-row-height);
   padding: var(--menu-item-padding-block) var(--menu-item-padding-inline);

@@ -9,7 +9,7 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { createHash } = require('node:crypto');
 const { pathToFileURL } = require('node:url');
-const { app, ipcMain, clipboard, dialog } = require('electron');
+const { app, ipcMain, clipboard, dialog, Menu } = require('electron');
 
 const desktop = path.resolve(__dirname, '..');
 const output = path.resolve(process.env.WUU_SESSION_MESSAGE_OUTPUT || path.join(desktop, 'out/session-message-e2e'));
@@ -62,6 +62,11 @@ const files = [
   { name: '跨会话交付产物需要保留完整长名称以便识别'.repeat(4) + '.patch', mime: 'text/x-diff', bytes: Buffer.from(patchText + '# Long filename fixture\n') },
   { name: 'README', mime: 'application/octet-stream', bytes: Buffer.from('Extensionless artifact with unknown displayed size.\n'), noSize: true },
   { name: 'notes.txt', mime: 'text/plain', bytes: Buffer.from('Review notes without supplied size metadata.\n'), noSize: true },
+  { name: 'delivery-summary.md', mime: 'text/markdown', bytes: Buffer.from('# Delivered files\nAll files remain individually accessible.\n') },
+  { name: 'settings.json', mime: 'application/json', bytes: Buffer.from('{"reviewed":true}\n') },
+  { name: 'changes.diff', mime: 'text/x-diff', bytes: Buffer.from(patchText) },
+  { name: 'empty.txt', mime: 'text/plain', bytes: Buffer.alloc(0) },
+  { name: 'last-delivery-note.txt', mime: 'text/plain', bytes: Buffer.from('The eighth file is reachable after two expansions.\n') },
 ];
 const artifacts = files.map((file, index) => {
   const threadID = index === 0 ? 'peer-files-zip' : index === 1 ? 'peer-files-patch' : 'peer-files-multiple';
@@ -82,7 +87,19 @@ const artifactSessions = [
   { id: 'peer-files-multiple', title: 'Multiple file delivery', messages: [{ name: 'Delivery review', related: 'peer-reply', origin: 'host', text: 'Review the delivered patch and supporting notes.', artifacts: artifacts.slice(2) }] },
 ];
 let requestedDownload;
-const savedDownloads = [];
+const savedDownloads = [], nativeMenus = [];
+let expectedNativeMenu;
+const originalMenuPopup = Menu.prototype.popup;
+Menu.prototype.popup = function (options) {
+  if (expectedNativeMenu) {
+    const menu = { labels: this.items.map(item => item.label), shown: false, closed: false };
+    nativeMenus.push(menu);
+    this.once('menu-will-show', () => { menu.shown = true; });
+    this.once('menu-will-close', () => { menu.closed = true; });
+  }
+  // Observe the real native menu; do not replace its UI or invoke callbacks.
+  return originalMenuPopup.call(this, options);
+};
 dialog.showSaveDialog = async (_parent, options) => {
   assert.ok(requestedDownload, 'Only an explicitly tested artifact download may open a picker');
   assert.equal(options.defaultPath, requestedDownload.name);
@@ -116,10 +133,14 @@ ipcMain.handle = (channel, handler) => originalHandle(channel, async (...args) =
   const entry = { channel, completed: false };
   if (channel === 'wuu:thread-resume') entry.thread = args[1];
   if (channel === 'wuu:thread-search') entry.query = args[1];
+  if (channel === 'wuu:artifact-show-menu') entry.artifact = args[1];
   rpc.push(entry);
   assert.ok(!['wuu:turn-start', 'wuu:turn-queue', 'wuu:turn-steer'].includes(channel), 'Acceptance must not invoke inference');
-  const result = await handler(...args);
+  let result;
+  try { result = await handler(...args); }
+  catch (error) { entry.error = String(error.stack || error); throw error; }
   if (channel === 'wuu:thread-search') entry.results = result.results.map(value => ({ id: value.thread.id, title: value.thread.title }));
+  if (channel === 'wuu:artifact-show-menu') entry.result = result;
   entry.completed = true;
   return result;
 });
@@ -153,10 +174,43 @@ function key(keyCode, modifiers = []) {
   }
   main.webContents.sendInputEvent({ type: 'keyUp', keyCode, modifiers });
 }
+// Native wheel input releases the conversation's follow-latest mode. A DOM
+// scroll alone can be overwritten by pending restored-position corrections.
+async function showInViewport(selector) {
+  const deadline = Date.now() + 15000;
+  let stable = 0, previousTop, sentWheel = false;
+  while (Date.now() < deadline) {
+    const geometry = await evaluate(selector => {
+      const element = document.querySelector(selector);
+      if (!element) return null;
+      const box = element.getBoundingClientRect(), viewport = element.closest('.scroll-region');
+      const clip = viewport?.getBoundingClientRect();
+      return { box: box.toJSON(), clip: clip?.toJSON(),
+        visible: box.top >= Math.max(0, clip?.top ?? 0) + 1 && box.bottom <= Math.min(innerHeight, clip?.bottom ?? innerHeight) - 1 };
+    }, selector);
+    if (!geometry) { await delay(25); continue; }
+    if (geometry.visible && (sentWheel || !geometry.clip) && previousTop !== undefined && Math.abs(geometry.box.top - previousTop) < 1) {
+      if (++stable >= 4) return;
+    } else stable = 0;
+    previousTop = geometry.box.top;
+    if (geometry.clip && (!sentWheel || !geometry.visible)) {
+      const clip = geometry.clip;
+      main.webContents.sendInputEvent({ type: 'mouseWheel',
+        x: Math.round(clip.left + clip.width / 2), y: Math.round(clip.top + clip.height / 2),
+        deltaX: 0, deltaY: Math.round(clip.top + clip.height / 2 - (geometry.box.top + geometry.box.height / 2)) || 1,
+        canScroll: true });
+      sentWheel = true;
+    } else if (!geometry.visible) {
+      await evaluate(selector => document.querySelector(selector).scrollIntoView({ block: 'center', behavior: 'instant' }), selector);
+    }
+    await delay(50);
+  }
+  throw new Error(`Target did not remain visible in its scroll viewport: ${selector}`);
+}
 // Use native CDP mouse input; DOM access locates and validates the real hit area.
-async function click(selector, fraction = 0.5) {
+async function click(selector, fraction = 0.5, button = 'left') {
   await until(selector => !!document.querySelector(selector), selector, selector);
-  await evaluate(selector => document.querySelector(selector).scrollIntoView({ block: 'center', behavior: 'instant' }), selector);
+  await showInViewport(selector);
   await settle();
   const point = await evaluate((selector, fraction) => {
     const element = document.querySelector(selector), box = element.getBoundingClientRect();
@@ -166,7 +220,7 @@ async function click(selector, fraction = 0.5) {
   }, selector, fraction);
   await main.webContents.debugger.sendCommand('Input.dispatchMouseEvent', { type: 'mouseMoved', ...point });
   for (const type of ['mousePressed', 'mouseReleased']) {
-    await main.webContents.debugger.sendCommand('Input.dispatchMouseEvent', { type, button: 'left', buttons: type === 'mousePressed' ? 1 : 0, clickCount: 1, ...point });
+    await main.webContents.debugger.sendCommand('Input.dispatchMouseEvent', { type, button, buttons: type === 'mousePressed' ? (button === 'right' ? 2 : 1) : 0, clickCount: 1, ...point });
   }
   await frames();
 }
@@ -269,11 +323,13 @@ async function checkCardGeometry(index, name, title) {
     const button = document.querySelector(selector), box = button.getBoundingClientRect();
     const block = button.closest('.user-message-block'), blockBox = block.getBoundingClientRect();
     const pane = button.closest('.conversation-split-pane, .conversation-pane').getBoundingClientRect();
+    const clip = button.closest('.scroll-region').getBoundingClientRect();
     const children = [...button.children].map(child => ({ tag: child.tagName, box: child.getBoundingClientRect().toJSON(), text: child.textContent }));
-    return { viewport: { width: innerWidth, height: innerHeight, devicePixelRatio }, box: box.toJSON(), block: blockBox.toJSON(), pane: pane.toJSON(),
+    return { viewport: { width: innerWidth, height: innerHeight, devicePixelRatio }, box: box.toJSON(), block: blockBox.toJSON(), pane: pane.toJSON(), clip: clip.toJSON(),
       scrollWidth: button.scrollWidth, clientWidth: button.clientWidth, children,
       name: button.textContent, accessibleName: button.getAttribute('aria-label') };
   }, card(index));
+  assert.ok(geometry.box.top >= geometry.clip.top && geometry.box.bottom <= geometry.clip.bottom, 'The pictured source card must be vertically visible in its scroll viewport');
   assert.ok(geometry.box.left >= 0 && geometry.box.right <= geometry.viewport.width + 1, 'Long-title card must fit the window');
   assert.ok(geometry.box.left >= geometry.block.left - 1 && geometry.box.right <= geometry.block.right + 1, 'Card must fit its message');
   assert.ok(geometry.box.left >= geometry.pane.left - 1 && geometry.box.right <= geometry.pane.right + 1, 'Card must not overlap the neighboring pane');
@@ -330,24 +386,32 @@ async function captureVisualMatrix() {
       await openMain();
       main.setContentSize(width, 960);
       await until(width => innerWidth === width, 'window size', width);
-      await evaluate(selector => document.querySelector(selector).scrollIntoView({ block: 'center', behavior: 'instant' }), card(1));
+      await showInViewport(card(1));
       await settle();
       await checkCardGeometry(1, `long-title-${theme}-${size}px-${width}`, longTitle);
       for (const index of [5, 6, 7]) {
         await openArtifactScene(index);
-        await evaluate(selector => document.querySelector(selector).scrollIntoView({ block: 'center', behavior: 'instant' }), artifactCard(index));
+        await showInViewport(artifactCard(index));
         await settle();
         const geometry = await evaluate(selector => {
           const card = document.querySelector(selector), bounds = card.getBoundingClientRect();
           const pane = card.closest('.conversation-pane').getBoundingClientRect();
           return { bounds: bounds.toJSON(), pane: pane.toJSON(), clientWidth: card.clientWidth, scrollWidth: card.scrollWidth,
             buttons: [...card.querySelectorAll('button')].map(button => ({ label: button.getAttribute('aria-label'), box: button.getBoundingClientRect().toJSON() })),
-            nestedButtons: card.querySelectorAll('button button').length };
+            nestedButtons: card.querySelectorAll('button button').length,
+            rowCount: card.querySelectorAll('.turn-edit-summary-row').length,
+            overviewCount: card.querySelectorAll('.turn-edit-summary-overview').length,
+            footerText: card.querySelector('.turn-edit-summary-more > span')?.textContent };
         }, artifactCard(index));
         assert.ok(geometry.bounds.left >= geometry.pane.left - 1 && geometry.bounds.right <= geometry.pane.right + 1, 'Artifact card fits its conversation pane');
         assert.ok(geometry.scrollWidth <= geometry.clientWidth + 1, 'Long artifact names must not overflow');
         assert.equal(geometry.nestedButtons, 0, 'Artifact rows retain independent actions');
-        assert.equal(geometry.buttons.length, index === 7 ? 3 : 1);
+        assert.equal(geometry.buttons.length, index === 7 ? 4 : 1);
+        if (index === 7) {
+          assert.equal(geometry.rowCount, 3);
+          assert.equal(geometry.overviewCount, 0, 'Multiple files have no redundant title row');
+          assert.equal(geometry.footerText, '8 files · 5 more');
+        }
         for (const button of geometry.buttons) assert.ok(button.box.left >= geometry.bounds.left - 1 && button.box.right <= geometry.bounds.right + 1, 'Artifact action fits its card');
         const scene = `${index === 5 ? 'zip' : index === 6 ? 'patch' : 'multiple'}-cards-${theme}-${size}px-${width}`;
         await capture(scene); pass(scene, geometry);
@@ -358,7 +422,7 @@ async function captureVisualMatrix() {
     await openMain();
     await click(card(4));
     await until(() => !!document.querySelector('.conversation-split-pane[data-thread-id="peer-cjk"]'), 'CJK source split');
-    await evaluate(selector => document.querySelector(selector).scrollIntoView({ block: 'center', behavior: 'instant' }), card(4));
+    await showInViewport(card(4));
     await settle();
     await checkCardGeometry(4, `short-body-cjk-split-${theme}-${size}px-820`, cjkTitle);
     await closeSplit();
@@ -536,6 +600,55 @@ db.commit()
   }
   pass('missing target and empty source are visibly disabled and cannot navigate');
 
+  await openArtifactScene(7);
+  for (const [visibleCount, hiddenCount] of [[3, 5], [6, 2], [8, 0]]) {
+    const state = await evaluate(selector => {
+      const card = document.querySelector(selector);
+      return { names: [...card.querySelectorAll('.turn-edit-summary-name')].map(node => node.textContent),
+        footer: card.querySelector('.turn-edit-summary-more > span')?.textContent,
+        more: card.querySelector('.turn-edit-summary-more-button')?.textContent,
+        overviewCount: card.querySelectorAll('.turn-edit-summary-overview').length };
+    }, artifactCard(7));
+    assert.deepEqual(state.names, files.slice(2, visibleCount + 2).map(file => file.name), 'Every revealed row keeps the original file order');
+    assert.equal(state.overviewCount, 0);
+    assert.equal(state.footer, hiddenCount ? `8 files · ${hiddenCount} more` : '8 files');
+    assert.equal(state.more, hiddenCount ? `Show ${Math.min(3, hiddenCount)} more` : undefined);
+    await showInViewport(artifactCard(7));
+    await capture(`multiple-files-${visibleCount}-of-8`);
+    if (hiddenCount) {
+      await click(`${artifactCard(7)} .turn-edit-summary-more-button`);
+      await until(({ selector, count }) => document.querySelectorAll(`${selector} .turn-edit-summary-row`).length === count,
+        'next file batch rendered', { selector: artifactCard(7), count: Math.min(visibleCount + 3, 8) });
+    }
+  }
+  pass('Eight files reveal in batches of three without a title row, retaining order and total/remaining counts');
+
+  await openArtifactScene(5);
+  assert.equal(process.platform, 'linux', 'Native menu acceptance runs on the supported Linux Xvfb worker');
+  const menuOffset = rpc.length;
+  expectedNativeMenu = true;
+  requestedDownload = files[0];
+  await click(`${artifactCard(5)} .turn-edit-summary-overview`, 0.5, 'right');
+  await hostUntil(() => nativeMenus.at(-1)?.shown, 'actual native artifact menu shown');
+  assert.equal(nativeMenus.at(-1).labels[0], 'Save As…');
+  assert.equal(await evaluate(() => !!document.querySelector('.artifact-preview-panel')), false, 'Right click does not open a preview');
+  // X11 keyboard events target the actual OS popup, not the renderer and not a
+  // replacement menu callback. Home selects the first (Save As) native item.
+  const selectSave = spawnSync('xdotool', ['key', '--clearmodifiers', 'Home', 'Return'], { encoding: 'utf8', timeout: 5000 });
+  assert.equal(selectSave.status, 0, selectSave.stderr || String(selectSave.error));
+  await hostUntil(() => nativeMenus.at(-1).closed && rpc.slice(menuOffset).some(entry =>
+    entry.channel === 'wuu:artifact-show-menu' && entry.completed && entry.result?.action === 'save'), 'native Save selection completed');
+  const contextSavePath = path.join(fixture, 'saved-' + files[0].name);
+  await hostUntil(() => fs.existsSync(contextSavePath), 'native context-menu save writes original bytes');
+  assert.deepEqual(fs.readFileSync(contextSavePath), files[0].bytes);
+  assert.ok(rpc.slice(menuOffset).some(entry => entry.channel === 'wuu:artifact-show-menu'
+    && entry.artifact.uri === artifacts[0].uri && entry.artifact.threadId === 'peer-files-zip'), 'The original owning thread and managed URI reach the production menu handler');
+  requestedDownload = undefined;
+  expectedNativeMenu = false;
+  // A fresh destination makes the later toolbar-save completion observable.
+  fs.unlinkSync(contextSavePath);
+  pass('Native right click and X11 menu selection save the original ZIP through the production managed-file path', nativeMenus.at(-1));
+
   for (const [messageIndex, fileIndex] of [[5, 0], [6, 1]]) {
     await openArtifactScene(messageIndex);
     await click(`${artifactCard(messageIndex)} .turn-edit-summary-overview`);
@@ -564,8 +677,8 @@ db.commit()
   fs.writeFileSync(path.join(output, 'results.json'), JSON.stringify({ passed: failures.length === 0, failures, boundary, recordedAt: new Date().toISOString(),
     source: spawnSync('git', ['rev-parse', 'HEAD'], { cwd: desktop, encoding: 'utf8' }).stdout.trim(), versions: process.versions,
     hashes: { harness: hash(__filename), core: hash(process.env.WUU_DESKTOP_CORE), main: hash(mainBundle), preload: hash(path.join(desktop, 'out/preload/index.cjs')) },
-    checks, screenshots, recordings, rpc, savedDownloads: savedDownloads.map(({ name }) => ({ name })),
-    limitations: ['Messages are seeded fixtures, not live cross-agent delivery.', 'The native save picker is replaced with a disposable test destination; downloaded bytes and the production save implementation are verified.', 'Linux Electron screenshots do not validate macOS-specific rendering.', 'Geometry checks and screenshots require human visual review.'],
+    checks, screenshots, recordings, rpc, nativeMenus, savedDownloads: savedDownloads.map(({ name }) => ({ name })),
+    limitations: ['Messages are seeded fixtures, not live cross-agent delivery.', 'The native save picker is replaced with a disposable test destination; downloaded bytes and the production save implementation are verified.', 'Linux Electron screenshots do not validate macOS-specific rendering or Launch Services Open With. The native Linux Save menu is exercised with real X11 keyboard events; capturePage does not include the native menu window.', 'Geometry checks and screenshots require human visual review.'],
   }, null, 2));
   assert.equal(failures.length, 0, failures.map(failure => failure.name).join('; '));
   log(`PASS ${checks.length} checks; ${screenshots.length} screenshots; ${recordings.length} recorded frames`);
@@ -589,6 +702,6 @@ run().catch(async error => {
       })), null, 2));
     } catch (captureError) { log(String(captureError)); }
   }
-  fs.writeFileSync(path.join(output, 'failure.json'), JSON.stringify({ error: String(error.stack || error), boundary, checks, failures, screenshots, rpc }, null, 2));
+  fs.writeFileSync(path.join(output, 'failure.json'), JSON.stringify({ error: String(error.stack || error), boundary, checks, failures, screenshots, rpc, nativeMenus }, null, 2));
   app.exit(1);
 });

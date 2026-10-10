@@ -1,5 +1,5 @@
-import { lazy, Suspense, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Archive, ChevronRight, Download, ExternalLink, FileDiff, FileText, Film, Images, LayoutGrid, Maximize2, PanelRight, X } from "./WuuIcons";
+import { lazy, Suspense, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
+import { Archive, ChevronRight, Download, Ellipsis, FileDiff, FileText, Film, Images, LayoutGrid, Maximize2, PanelRight, X } from "./WuuIcons";
 
 import type { ThreadItem, ToolResultContentPart, Turn } from "../shared/protocol";
 import { useImagePreview, useOptionalImagePreview } from "./ImagePreview";
@@ -21,6 +21,9 @@ import {
   turnOutputSummaryVisible,
 } from "./TurnOutputSummaryCard";
 import { Tooltip } from "./Tooltip";
+import { hostSupports } from "./HostCapabilities";
+import { ThreadContextMenu } from "./ThreadContextMenu";
+import { showErrorToast } from "./Toast";
 import { TruncatedText } from "./TruncatedText";
 import { ArtifactPreviewContext, ArtifactThreadContext, useArtifactPreview } from "./ArtifactPreviewContext";
 import { VideoPreview } from "./VideoPreview";
@@ -214,6 +217,7 @@ export function TurnEndArtifactOutputs({
   const [expanded, setExpanded] = useState(false);
   const files = turnEndFileArtifacts(artifacts);
   const openPreview = useArtifactPreview(setPreview, cwd);
+  const fileActions = useArtifactFileActions(cwd);
 
   useEffect(() => {
     if (preview && !files.some((artifact) => artifact.id === preview.id)) {
@@ -224,20 +228,7 @@ export function TurnEndArtifactOutputs({
   if (files.length === 0) return null;
 
   const openArtifact = (artifact: TurnArtifact, origin: HTMLElement): void => {
-    if (canPreviewArtifact(artifact)) {
-      openPreview(artifact, origin);
-      return;
-    }
-    const workspacePath = workspaceArtifactPath(artifact.uri, cwd);
-    if (workspacePath && onOpenFile) {
-      onOpenFile(workspacePath);
-      return;
-    }
-    if (artifact.uri && /^https?:/i.test(artifact.uri)) {
-      void window.wuu?.openExternal?.(artifact.uri);
-      return;
-    }
-    openPreview(artifact, origin);
+    openArtifactInPanel(artifact, origin, cwd, onOpenFile, openPreview);
   };
 
   if (compact) {
@@ -261,10 +252,6 @@ export function TurnEndArtifactOutputs({
     );
   }
 
-  const title = t(
-    files.length === 1 ? "artifacts.countOne" : "artifacts.count",
-    { count: formatNumber(files.length) },
-  );
   const visible = files.slice(0, visibleCount);
   const hiddenCount = Math.max(0, files.length - visibleCount);
   const nextCount = Math.min(TURN_OUTPUT_SUMMARY_BATCH_SIZE, hiddenCount);
@@ -278,28 +265,29 @@ export function TurnEndArtifactOutputs({
           icon={<ArtifactFileIcon artifact={single} />}
           title={single.name}
           subtitle={<ArtifactMetadata artifact={single} />}
-          trailing={<ArtifactOpenIndicator artifact={single} />}
+          trailing={<TurnOutputSummaryChevron />}
           onOpen={(event) => openArtifact(single, event.currentTarget)}
+          onContextMenu={(event) => fileActions.show(single, event)}
           openLabel={t("artifacts.openNamed", { name: single.name })}
           wrapOverview={(overview) => <Tooltip content={single.name}>{overview}</Tooltip>}
         />
       ) : (
         <TurnOutputSummaryCard
           component="turn-artifacts"
-          icon={<FileText className="icon" />}
-          title={title}
           rows={visible.map((artifact) => ({
             key: artifact.id,
             name: artifact.name,
             icon: <ArtifactFileIcon artifact={artifact} />,
             subtitle: <ArtifactMetadata artifact={artifact} />,
-            trailing: <ArtifactOpenIndicator artifact={artifact} />,
+            trailing: <TurnOutputSummaryChevron />,
             tooltip: artifact.name,
             onOpen: (event) => openArtifact(artifact, event.currentTarget),
+            onContextMenu: (event) => fileActions.show(artifact, event),
             openLabel: t("artifacts.openNamed", { name: artifact.name }),
           }))}
-          footer={hiddenCount > 0 ? (
+          footer={files.length > TURN_OUTPUT_SUMMARY_BATCH_SIZE ? (
             <TurnOutputSummaryMore
+              totalCount={files.length}
               hiddenCount={hiddenCount}
               nextCount={nextCount}
               onShowMore={() =>
@@ -309,6 +297,7 @@ export function TurnEndArtifactOutputs({
           ) : null}
         />
       )}
+      {fileActions.menu}
       {preview ? (
         <ArtifactPreview
           artifact={preview}
@@ -506,10 +495,86 @@ function ArtifactMetadata({ artifact }: { artifact: TurnArtifact }): JSX.Element
   );
 }
 
-function ArtifactOpenIndicator({ artifact }: { artifact: TurnArtifact }): JSX.Element {
-  return !canPreviewArtifact(artifact) && artifact.uri && /^https?:/i.test(artifact.uri)
-    ? <ExternalLink className="icon" aria-hidden="true" />
-    : <TurnOutputSummaryChevron />;
+function openArtifactInPanel(
+  artifact: TurnArtifact,
+  origin: HTMLElement,
+  cwd: string | undefined,
+  onOpenFile: ((path: string) => void) | undefined,
+  onPreview: ((artifact: TurnArtifact, origin?: HTMLElement) => void) | undefined,
+): void {
+  const workspacePath = workspaceArtifactPath(artifact.uri, cwd);
+  // Bare workspace references need the workspace reader. Managed deliveries
+  // and embedded bytes must retain their own immutable preview source.
+  if (workspacePath && onOpenFile && !artifact.data && artifact.text === undefined && !artifactSource(artifact, cwd)) {
+    onOpenFile(workspacePath);
+  } else {
+    onPreview?.(artifact, origin);
+  }
+}
+
+function nativeArtifactActionsAvailable(artifact: TurnArtifact, threadID: string | undefined): boolean {
+  return Boolean(threadID && !artifact.remoteRef && /^wuu-artifact:/i.test(artifact.uri ?? "")
+    && hostSupports("showArtifactItemMenu") && typeof window.wuu?.showArtifactItemMenu === "function");
+}
+
+async function downloadArtifact(name: string, source: string): Promise<void> {
+  if (hostSupports("saveArtifactFile") && window.wuu?.saveArtifactFile) {
+    await window.wuu.saveArtifactFile(name, source);
+    return;
+  }
+  const anchor = document.createElement("a");
+  anchor.href = source;
+  anchor.download = name;
+  anchor.rel = "noopener";
+  anchor.click();
+}
+
+// A native menu belongs to the window, not an individual mounted card. Ignore
+// repeated gestures while source verification or that menu is still pending.
+let nativeArtifactMenuPending = false;
+
+function useArtifactFileActions(cwd?: string, sourceThreadID?: string): {
+  show: (artifact: TurnArtifact, event: MouseEvent<HTMLElement>) => void;
+  menu: ReactNode;
+} {
+  const contextThreadID = useContext(ArtifactThreadContext);
+  const threadID = sourceThreadID ?? contextThreadID;
+  const [menu, setMenu] = useState<{ artifact: TurnArtifact; x: number; y: number }>();
+  const show = (artifact: TurnArtifact, event: MouseEvent<HTMLElement>): void => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (nativeArtifactMenuPending) return;
+    if (nativeArtifactActionsAvailable(artifact, threadID)) {
+      nativeArtifactMenuPending = true;
+      setMenu(undefined);
+      void window.wuu!.showArtifactItemMenu!({ uri: artifact.uri!, threadId: threadID! })
+        .then(async result => {
+          if (result.action === "save") await downloadArtifact(artifact.name, artifact.uri!);
+        })
+        .catch(error => showErrorToast(error))
+        .finally(() => { nativeArtifactMenuPending = false; });
+    } else {
+      const bounds = event.currentTarget.getBoundingClientRect();
+      setMenu({ artifact, x: event.clientX || bounds.left, y: event.clientY || bounds.bottom });
+    }
+  };
+  return {
+    show,
+    menu: menu ? <ArtifactDownloadMenu key={menu.artifact.id} {...menu} cwd={cwd} onClose={() => setMenu(undefined)} /> : null,
+  };
+}
+
+function ArtifactDownloadMenu({ artifact, cwd, x, y, onClose }: {
+  artifact: TurnArtifact; cwd?: string; x: number; y: number; onClose: () => void;
+}): JSX.Element {
+  const { t } = useI18n();
+  const source = useArtifactPreviewSource(artifact, cwd);
+  return <ThreadContextMenu x={x} y={y} onClose={onClose} items={[{
+    label: t("artifacts.download"),
+    icon: <Download className="icon" aria-hidden="true" />,
+    disabled: !source,
+    onSelect: () => { if (source) void downloadArtifact(artifact.name, source).catch(error => showErrorToast(error)); },
+  }]} />;
 }
 
 function ArtifactCard({
@@ -524,54 +589,52 @@ function ArtifactCard({
   onPreview?: (artifact: TurnArtifact, origin?: HTMLElement) => void;
 }): JSX.Element {
   const { t } = useI18n();
+  const fileActions = useArtifactFileActions(cwd);
   if (artifact.remoteRef && artifact.mimeType.startsWith("image/")) return <InlineArtifact artifact={artifact} cwd={cwd} />;
-  const open = (origin: HTMLElement): void => {
-    if (canPreviewArtifact(artifact)) {
-      onPreview?.(artifact, origin);
-      return;
-    }
-    const workspacePath = workspaceArtifactPath(artifact.uri, cwd);
-    if (workspacePath && onOpenFile) {
-      onOpenFile(workspacePath);
-      return;
-    }
-    if (artifact.uri && /^https?:/i.test(artifact.uri)) {
-      void window.wuu?.openExternal?.(artifact.uri);
-      return;
-    }
-    onPreview?.(artifact, origin);
-  };
+
   return (
-    <TurnOutputSummaryCard
-      component="artifact"
-      icon={<ArtifactFileIcon artifact={artifact} />}
-      title={artifact.name}
-      subtitle={<ArtifactMetadata artifact={artifact} />}
-      trailing={<ArtifactOpenIndicator artifact={artifact} />}
-      onOpen={(event) => open(event.currentTarget)}
-      openLabel={t("artifacts.openNamed", { name: artifact.name })}
-      wrapOverview={(overview) => <Tooltip content={artifact.name}>{overview}</Tooltip>}
-    />
+    <>
+      <TurnOutputSummaryCard
+        component="artifact"
+        icon={<ArtifactFileIcon artifact={artifact} />}
+        title={artifact.name}
+        subtitle={<ArtifactMetadata artifact={artifact} />}
+        trailing={<TurnOutputSummaryChevron />}
+        onOpen={(event) => openArtifactInPanel(artifact, event.currentTarget, cwd, onOpenFile, onPreview)}
+        onContextMenu={(event) => fileActions.show(artifact, event)}
+        openLabel={t("artifacts.openNamed", { name: artifact.name })}
+        wrapOverview={(overview) => <Tooltip content={artifact.name}>{overview}</Tooltip>}
+      />
+      {fileActions.menu}
+    </>
   );
 }
 
 export function ArtifactPreview({
   artifact,
+  threadID,
   active = true,
   cwd,
   onClose,
   mode = "overlay",
-  motion,
+  motion, initialPage, pageRequest,
 }: {
   artifact: TurnArtifact;
+  threadID?: string;
   active?: boolean;
   cwd?: string;
   onClose: () => void;
   mode?: "overlay" | "panel";
   motion?: ArtifactPreviewMotion;
+  initialPage?: number;
+  pageRequest?: string;
 }): JSX.Element {
   const { t } = useI18n();
   const source = useArtifactPreviewSource(artifact, cwd);
+  const contextualThreadID = useContext(ArtifactThreadContext);
+  const ownerThreadID = threadID ?? contextualThreadID;
+  const fileActions = useArtifactFileActions(cwd, ownerThreadID);
+  const nativeActions = nativeArtifactActionsAvailable(artifact, ownerThreadID);
   const imagePreview = useOptionalImagePreview();
   const [downloadError,setDownloadError] = useState("");
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -621,16 +684,7 @@ export function ArtifactPreview({
   }, [onClose, mode]);
 
   const download = (): void => {
-    if (!source) return;
-    if (window.wuu?.saveArtifactFile) {
-      void window.wuu.saveArtifactFile(artifact.name,source).catch(error=>setDownloadError(String(error)));
-      return;
-    }
-    const anchor = document.createElement("a");
-    anchor.href = source;
-    anchor.download = artifact.name;
-    anchor.rel = "noopener";
-    anchor.click();
+    if (source) void downloadArtifact(artifact.name, source).catch(error => setDownloadError(String(error)));
   };
 
   let body: ReactNode;
@@ -639,7 +693,11 @@ export function ArtifactPreview({
   } else if (artifact.mimeType === "application/pdf") {
     body = (
       <Suspense fallback={<div className="artifact-preview-empty">{t("imagePreview.loading")}</div>}>
-        <WorkspacePdfPreview url={source} title={artifact.name} />
+        <WorkspacePdfPreview url={source} title={artifact.name} active={active} initialPage={initialPage} pageRequest={pageRequest}
+          source={cwd && ownerThreadID && artifact.sha256 && artifact.uri?.startsWith("wuu-artifact:") ? {
+            workspace: cwd, path: artifact.name, revision: `sha256:${artifact.sha256}`,
+            artifact: { artifact_uri: artifact.uri, artifact_sha256: artifact.sha256, artifact_thread_id: ownerThreadID },
+          } : undefined} />
       </Suspense>
     );
   } else if (isHtmlMimeType(artifact.mimeType)) {
@@ -695,6 +753,13 @@ export function ArtifactPreview({
                 </button>
               </Tooltip>
             ) : null}
+            {nativeActions ? (
+              <Tooltip content={t("artifacts.fileActions")}>
+                <button type="button" aria-label={t("artifacts.fileActions")} onClick={event => fileActions.show(artifact, event)}>
+                  <Ellipsis className="icon" aria-hidden="true" />
+                </button>
+              </Tooltip>
+            ) : null}
             {source ? (
               <Tooltip content={t("artifacts.download")}>
                 <button type="button" onClick={download} aria-label={t("artifacts.downloadNamed", { name: artifact.name })}>
@@ -711,6 +776,7 @@ export function ArtifactPreview({
         </header>
         {downloadError && <p role="alert">{downloadError}</p>}
         <div className="artifact-preview-body">{body}</div>
+        {fileActions.menu}
       </div>
     </div>
   );
@@ -870,17 +936,6 @@ function artifactSource(artifact: TurnArtifact, cwd?: string): string | undefine
   if (isHtmlMimeType(artifact.mimeType)) return undefined;
   const path = absoluteArtifactPath(uri, cwd);
   return path && isHostRenderableMimeType(artifact.mimeType) ? renderableFileURL(path) : undefined;
-}
-
-function canPreviewArtifact(artifact: TurnArtifact): boolean {
-  const previewableMime = isHostRenderableMimeType(artifact.mimeType)
-    || artifact.mimeType.startsWith("audio/")
-    || artifact.mimeType.startsWith("text/");
-  return Boolean(
-    artifact.data
-    || artifact.text !== undefined
-    || (artifact.uri && previewableMime),
-  );
 }
 
 function workspaceArtifactPath(uri: string | undefined, cwd?: string): string | undefined {

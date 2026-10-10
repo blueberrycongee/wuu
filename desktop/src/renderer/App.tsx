@@ -1,3 +1,4 @@
+import { validPdfSelectionReference } from "./PdfSelection";
 import { createArtifactComposerFile } from "./ArtifactComposerFile";
 import { composerSkillPrompt } from "./ComposerSlashCommands";
 import { forgetLocalTurnTiming } from "./LocalTurnTiming";
@@ -5231,7 +5232,7 @@ export function App(): JSX.Element {
     ((activeThread !== undefined && !activeThread.read_only && !activeThread.ephemeral) ||
       currentSessionTab?.kind === "draft");
 
-  const selectionUsesSplitDraft = splitConversation && !workspaceToolsCoverConversation;
+  const selectionUsesSplitDraft = splitConversation;
   const selectionThread = selectionUsesSplitDraft ? threadForPane(state, state.activePane) : activeThread;
 
   return (
@@ -5248,6 +5249,16 @@ export function App(): JSX.Element {
         onEdit={submitFileSelectionEdit}
         onAskSide={activeThreadID ? (source) => openSideThreadWithSelection({ type: "file", file: source }) : undefined}
         onOpenFile={openWorkspaceFile}
+        onOpenPdf={(source) => {
+          const pdf = source.pdf;
+          if (poppedOutMode || !activeThread || !validPdfSelectionReference(pdf) || !pdf.artifact_uri || !pdf.artifact_sha256
+            || pdf.artifact_thread_id !== activeThread?.id || source.revision !== `sha256:${pdf.artifact_sha256}`) return false;
+          openWorkspaceArtifactTab({ threadID: activeThread.id, cwd: source.workspace, page: pdf.start_page, pageRequest: crypto.randomUUID(),
+            artifact: { id: pdf.artifact_uri, itemId: "", index: 0, type: "file", name: source.path,
+              mimeType: "application/pdf", uri: pdf.artifact_uri, sha256: pdf.artifact_sha256,
+              delivered: true, placement: "turn_end" } });
+          return true;
+        }}
         disabled={Boolean(selectionThread?.read_only) || viewSwitchPending || !state.initialized}
       >
       {archiveTipNode}

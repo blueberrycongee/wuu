@@ -155,9 +155,12 @@ Density follows content. A session link is one line with the roomy control's
 minimum height; its message body remains independently readable and selectable.
 A file has a primary filename in the UI font and a secondary line for its concise
 format and known byte size, separated by a small gap. Omit unavailable size rather
-than guessing. A single output needs no repeated file count; a group keeps one
-count and its individual file rows. Chevrons lead into the existing preview or
-workspace view; the external-link icon is reserved for external navigation.
+than guessing. Single outputs and groups of up to three files need no repeated
+heading. Larger groups show three rows at a time, with total and remaining counts
+below the list; each expansion reveals up to three more files. Chevrons lead into
+the internal preview or workspace view. Managed-file context menus provide native
+file actions: associated applications on macOS, saving, and revealing an exported
+copy in the file manager. External editors never receive the immutable snapshot.
 
 ## Icons, motion, and controls
 

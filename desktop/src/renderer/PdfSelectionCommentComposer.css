@@ -1,0 +1,94 @@
+.pdf-selection-comment {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-2);
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4);
+  border-radius: inherit;
+  color: var(--ink);
+  font: inherit;
+}
+
+.pdf-selection-comment__input {
+  display: block;
+  flex: 1 1 0;
+  box-sizing: border-box;
+  width: 0;
+  min-width: 0;
+  min-height: max(28px, calc(var(--font-ui) * 1.5 + 4px));
+  max-height: calc(var(--font-ui) * 1.5 * 5 + 4px);
+  margin: 0;
+  padding: 2px 0;
+  resize: none;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  line-height: 1.5;
+  field-sizing: content;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* The surrounding surface owns the input's rounded keyboard focus ring. */
+.pdf-selection-comment__input,
+.pdf-selection-comment__input:focus,
+.pdf-selection-comment__input:focus-visible,
+html[data-focus-modality="keyboard"] .pdf-selection-comment__input:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
+.pdf-selection-comment__input::placeholder { color: var(--ink-tertiary); }
+
+.pdf-selection-comment__submit {
+  display: grid;
+  flex: 0 0 auto;
+  box-sizing: border-box;
+  width: max(28px, calc(var(--font-ui) * 1.5 + 4px));
+  height: max(28px, calc(var(--font-ui) * 1.5 + 4px));
+  margin: 0;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  border-radius: var(--radius-circle);
+  background: var(--ink);
+  color: var(--paper);
+  cursor: pointer;
+  transition: background-color var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out);
+}
+
+.pdf-selection-comment__submit:hover { background: var(--ink-strong); }
+.pdf-selection-comment__submit:disabled { background: var(--surface-3); color: var(--ink-muted); cursor: default; }
+.pdf-selection-comment__submit:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.pdf-selection-comment__submit .icon { width: var(--icon-size-sm); height: var(--icon-size-sm); }
+
+.pdf-selection-comment__description {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+@media (pointer: coarse) {
+  .pdf-selection-comment__submit { width: 44px; height: 44px; }
+  .pdf-selection-comment__input { min-height: 44px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pdf-selection-comment__submit { transition: none; }
+}
+
+@container style(--motion-reduced: 1) {
+  .pdf-selection-comment__submit { transition: none; }
+}

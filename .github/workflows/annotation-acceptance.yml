@@ -1,0 +1,100 @@
+name: Annotation acceptance
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'desktop/src/renderer/**'
+      - 'desktop/electron.vite.config.ts'
+      - 'desktop/scripts/document-context-e2e.*'
+      - 'desktop/scripts/file-selection-e2e*'
+      - 'desktop/scripts/e2e/annotation-acceptance/**'
+      - '.github/workflows/annotation-acceptance.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: annotation-acceptance-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  accept:
+    name: Capture shipping annotation presentation
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Set capture paths
+        run: |
+          echo "WUU_ANNOTATION_OUTPUT=$RUNNER_TEMP/wuu-annotation-acceptance" >> "$GITHUB_ENV"
+          echo "WUU_DOCUMENT_CORE=$RUNNER_TEMP/wuu-annotation-core" >> "$GITHUB_ENV"
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - name: Install capture dependencies
+        run: |
+          npm ci --prefix desktop
+          node desktop/node_modules/electron/install.js
+          sudo apt-get update
+          sudo apt-get install -y xvfb ffmpeg fonts-noto-cjk fonts-noto-color-emoji
+      - name: Typecheck and script syntax
+        run: |
+          npm --prefix desktop run typecheck
+          node --check desktop/scripts/document-context-e2e.cjs
+          node --check desktop/scripts/e2e/annotation-acceptance/run.mjs
+          node --check desktop/scripts/e2e/annotation-acceptance/journey.cjs
+          node --check desktop/scripts/e2e/annotation-acceptance/evidence.mjs
+          make test-policy-check
+      - name: Build shipping presentation
+        id: build
+        shell: bash
+        run: |
+          mkdir -p "$WUU_ANNOTATION_OUTPUT"
+          git rev-parse HEAD > "$WUU_ANNOTATION_OUTPUT/source-commit.txt"
+          git ls-files desktop/src desktop/electron.vite.config.ts desktop/scripts/document-context-e2e.cjs desktop/scripts/e2e/annotation-acceptance | sort | xargs sha256sum > "$WUU_ANNOTATION_OUTPUT/source-sha256.txt"
+          (cd desktop && node_modules/.bin/electron-vite build)
+          find desktop/out -type f -print0 | sort -z | xargs -0 sha256sum > "$WUU_ANNOTATION_OUTPUT/build-sha256.txt"
+          go build -o "$WUU_DOCUMENT_CORE" ./cmd/wuu
+      - name: Capture production PDF journey
+        id: production
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        timeout-minutes: 8
+        shell: bash
+        run: |
+          export WUU_DOCUMENT_COMMIT="$(git rev-parse HEAD)"
+          export WUU_DOCUMENT_HEAD_COMMIT="${{ github.event.pull_request.head.sha || github.sha }}"
+          export WUU_DOCUMENT_OUTPUT="$WUU_ANNOTATION_OUTPUT/production"
+          mkdir -p "$WUU_DOCUMENT_OUTPUT"
+          set -o pipefail
+          xvfb-run --auto-servernum --server-args='-screen 0 1600x1200x24' desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/e2e/annotation-acceptance/run.mjs 2>&1 | tee "$WUU_DOCUMENT_OUTPUT/run.log"
+      - name: Check non-PDF selection regression
+        id: non_pdf
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        timeout-minutes: 8
+        shell: bash
+        run: |
+          export WUU_E2E_OUTPUT="$WUU_ANNOTATION_OUTPUT/non-pdf"
+          export WUU_E2E_VISIBLE=true
+          mkdir -p "$WUU_E2E_OUTPUT"
+          set -o pipefail
+          xvfb-run --auto-servernum --server-args='-screen 0 1600x1200x24' desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/file-selection-e2e.cjs 2>&1 | tee "$WUU_E2E_OUTPUT/run.log"
+      - name: Validate captured pixels and assemble frames
+        if: ${{ !cancelled() && steps.production.outcome == 'success' }}
+        run: node desktop/scripts/e2e/annotation-acceptance/evidence.mjs "$WUU_ANNOTATION_OUTPUT"
+      - name: Upload real-app evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: annotation-acceptance-evidence
+          path: ${{ runner.temp }}/wuu-annotation-acceptance/
+          if-no-files-found: warn
+          retention-days: 14

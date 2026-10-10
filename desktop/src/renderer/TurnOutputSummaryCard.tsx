@@ -18,6 +18,7 @@ export type TurnOutputSummaryRow = {
   subtitle?: ReactNode;
   trailing?: ReactNode;
   onOpen?: (event: MouseEvent<HTMLButtonElement>) => void;
+  onContextMenu?: (event: MouseEvent<HTMLButtonElement>) => void;
   openLabel?: string;
   wrap?: (row: ReactNode) => ReactNode;
 };
@@ -28,17 +29,19 @@ export function TurnOutputSummaryCard({
   subtitle,
   trailing,
   onOpen,
+  onContextMenu,
   openLabel,
   wrapOverview,
   rows,
   footer,
   component,
 }: {
-  icon: ReactNode;
-  title: string;
+  icon?: ReactNode;
+  title?: string;
   subtitle?: ReactNode;
   trailing?: ReactNode;
   onOpen?: (event: MouseEvent<HTMLButtonElement>) => void;
+  onContextMenu?: (event: MouseEvent<HTMLButtonElement>) => void;
   openLabel?: string;
   wrapOverview?: (overview: ReactNode) => ReactNode;
   rows?: readonly TurnOutputSummaryRow[];
@@ -64,6 +67,7 @@ export function TurnOutputSummaryCard({
       aria-label={openLabel}
       aria-describedby={subtitle ? descriptionId : undefined}
       onClick={onOpen}
+      onContextMenu={onContextMenu}
     >
       {overviewInner}
     </button>
@@ -73,10 +77,10 @@ export function TurnOutputSummaryCard({
 
   return (
     <div
-      className={`turn-edit-summary-card ${multiple ? "is-multiple" : "is-single"}`}
+      className={`turn-edit-summary-card ${multiple ? "is-multiple" : "is-single"}${title === undefined ? " is-list-only" : ""}`}
       data-wuu-component={component}
     >
-      {wrapOverview ? wrapOverview(overview) : overview}
+      {title === undefined ? null : wrapOverview ? wrapOverview(overview) : overview}
       {multiple ? (
         <div className="turn-output-summary-list turn-edit-summary-list">
           {rows!.map((row, index) => {
@@ -106,6 +110,7 @@ export function TurnOutputSummaryCard({
                 aria-label={row.openLabel}
                 aria-describedby={row.subtitle ? rowDescriptionId : undefined}
                 onClick={row.onOpen}
+                onContextMenu={row.onContextMenu}
               >
                 {content}
               </button>
@@ -126,10 +131,12 @@ export function TurnOutputSummaryChevron(): JSX.Element {
 }
 
 export function TurnOutputSummaryMore({
+  totalCount,
   hiddenCount,
   nextCount,
   onShowMore,
 }: {
+  totalCount?: number;
   hiddenCount: number;
   nextCount: number;
   onShowMore: () => void;
@@ -138,11 +145,14 @@ export function TurnOutputSummaryMore({
   return (
     <div className="turn-edit-summary-more">
       <span>
-        {t(hiddenCount === 1 ? "turnEdits.moreFileOne" : "turnEdits.moreFiles", {
+        {totalCount !== undefined ? t(hiddenCount > 0 ? "artifacts.totalWithHidden" : "artifacts.total", {
+          total: formatNumber(totalCount),
+          hidden: formatNumber(hiddenCount),
+        }) : t(hiddenCount === 1 ? "turnEdits.moreFileOne" : "turnEdits.moreFiles", {
           count: formatNumber(hiddenCount),
         })}
       </span>
-      <button
+      {hiddenCount > 0 ? <button
         className="turn-edit-summary-more-button"
         type="button"
         onClick={onShowMore}
@@ -150,7 +160,7 @@ export function TurnOutputSummaryMore({
         {t(nextCount === 1 ? "turnEdits.showMoreOne" : "turnEdits.showMore", {
           count: formatNumber(nextCount),
         })}
-      </button>
+      </button> : null}
     </div>
   );
 }

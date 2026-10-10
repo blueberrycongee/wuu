@@ -238,7 +238,7 @@ it("lists multiple presented files in the same summary rows as file changes", as
   const container = document.createElement("div"), root = createRoot(container); document.body.append(container);
   try {
     await act(async () => root.render(<TurnEndArtifactOutputs artifacts={collectTurnArtifacts(turn)} />));
-    expect(container.querySelector(".turn-edit-summary-overview-title")?.textContent).toBe("artifacts.count");
+    expect(container.querySelector(".turn-edit-summary-overview-title")).toBeNull();
     const rows = Array.from(container.querySelectorAll(".turn-edit-summary-row"));
     expect(rows.map((row) => row.querySelector(".turn-output-summary-name")?.textContent)).toEqual([
       "one.pdf",

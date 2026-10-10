@@ -483,6 +483,8 @@ export const zhCN = {
   "sessionControl.takeoverHint": "向此会话发送消息即接管会话。",
   "artifacts.title": "生成的产物",
   "artifacts.file": "文件",
+  "artifacts.total": "共 {total} 个文件",
+  "artifacts.totalWithHidden": "共 {total} 个文件 · 还有 {hidden} 个未展开",
   "artifacts.imageGallery": "图片组",
   "artifacts.openInPanel": "在侧栏打开",
   "artifacts.gridView": "切换为平铺视图",
@@ -494,6 +496,7 @@ export const zhCN = {
   "artifacts.retainedStopped": "已停止 · 已保留 {count} 个文件",
   "artifacts.openNamed": "打开 {name}",
   "artifacts.previewNamed": "预览 {name}",
+  "artifacts.fileActions": "文件操作",
   "artifacts.download": "下载",
   "artifacts.downloadNamed": "下载 {name}",
   "artifacts.previewUnavailable": "此格式暂不支持预览，你仍可以下载或在工作区中打开。",
@@ -2238,6 +2241,13 @@ export const zhCN = {
   "projects.event.groupSessions": "来自{name}等 {sessions} 个会话的 {count} 条动态",
   "projects.event.details": "详情",
   "projects.event.hideDetails": "收起详情",
+  "pdfSelection.actions": "PDF 选区操作",
+  "pdfSelection.add": "添加到对话",
+  "pdfSelection.comment": "评论",
+  "pdfSelection.pages": "第 {start}–{end} 页 · 添加到草稿",
+  "selectionChip.pdfOriginalConversation": "请从原始交付卡片打开此 PDF，查看保存的版本。",
+  "workspace.files.previewTruncated": "仅显示此文件的前 512 KiB，原文件未更改。",
+  "pdfSelection.page": "第 {page} 页 · 添加到草稿",
 } as const;
 
 export type TranslationKey = keyof typeof zhCN;
