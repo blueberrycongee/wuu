@@ -371,6 +371,19 @@ const api: WuuDesktopApi = {
       ipcRenderer.removeListener("wuu:language-preference-changed", listener);
   },
   initialMessageFlowFontSize,
+  getDesktopQuickAccess: () => ipcRenderer.invoke("wuu:desktop-quick-access-get"),
+  updateDesktopQuickAccess: (update) => ipcRenderer.invoke("wuu:desktop-quick-access-update", update),
+  setDesktopQuickAccessRecording: (recordingID, enabled) => ipcRenderer.invoke("wuu:desktop-quick-access-recording", recordingID, enabled),
+  onDesktopQuickAccessRecorded: (handler) => {
+    const listener = (_event: Electron.IpcRendererEvent, recording: Parameters<typeof handler>[0]) => handler(recording);
+    ipcRenderer.on("wuu:desktop-quick-access-recorded", listener);
+    return () => ipcRenderer.removeListener("wuu:desktop-quick-access-recorded", listener);
+  },
+  onDesktopQuickAccessChange: (handler) => {
+    const listener = (_event: Electron.IpcRendererEvent, snapshot: Parameters<typeof handler>[0]) => handler(snapshot);
+    ipcRenderer.on("wuu:desktop-quick-access-changed", listener);
+    return () => ipcRenderer.removeListener("wuu:desktop-quick-access-changed", listener);
+  },
   getThemePreference: () => ipcRenderer.invoke("wuu:theme-preference-get"),
   setThemePreference: (theme: ThemePreference) =>
     ipcRenderer.invoke("wuu:theme-preference-set", theme),

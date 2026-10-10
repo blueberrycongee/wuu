@@ -1,6 +1,24 @@
 import type { TranslationKey } from "./zh-CN";
 
 export const enUS = {
+  "quickAccess.reserved": "This shortcut is reserved by Wuu. Choose another combination.",
+  "quickAccess.recordFailed": "Shortcut recording could not start. Try again.",
+  "quickAccess.title": "Quick access",
+  "quickAccess.shortcut": "Show or focus Wuu",
+  "quickAccess.description": "Bring back your last active conversation window without changing its conversation or draft. Wuu must be running.",
+  "quickAccess.record": "Record quick-access shortcut",
+  "quickAccess.recording": "Press a shortcut…",
+  "quickAccess.recordHint": "Use Command, Control, or Alt with a letter, number, arrow, Space, or function key. Escape cancels.",
+  "quickAccess.disabled": "Not assigned",
+  "quickAccess.useDefault": "Use default",
+  "quickAccess.disable": "Disable",
+  "quickAccess.popOutOnTop": "Keep popped-out chats on top",
+  "quickAccess.popOutDescription": "Applies to all current and future popped-out conversation windows.",
+  "quickAccess.invalid": "Choose a key with Command, Control, or Alt. Plain typing keys cannot be global shortcuts.",
+  "quickAccess.unavailable": "This shortcut is unavailable or already in use. Choose another shortcut.",
+  "quickAccess.loadFailed": "Quick-access settings could not be loaded.",
+  "quickAccess.saveFailed": "Quick-access settings could not be saved. Your previous shortcut is unchanged.",
+
   "execution.knownHosts": "SSH known hosts file",
   "execution.mount": "Host workspace directory (optional)",
   "execution.mountReadOnly": "Read-only host mount",

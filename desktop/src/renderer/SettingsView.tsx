@@ -91,6 +91,7 @@ import { SubscriptionDashboard } from "./SubscriptionDashboard";
 import { SettingsRemotePage } from "./SettingsRemotePage";
 import { ThemePreferenceControl } from "./ThemePreferenceSection";
 import { LanguagePreferenceControl } from "./LanguagePreferenceSection";
+import { DesktopQuickAccessSettings } from "./DesktopQuickAccessSettings";
 import { formatCurrentNumber, useI18n } from "./i18n";
 import { Tooltip } from "./Tooltip";
 import { TruncatedText } from "./TruncatedText";
@@ -1318,6 +1319,8 @@ function SettingsGeneralPage({
           </SettingsRow>
         </SettingsGroup>
       </SettingsSection>
+
+      <DesktopQuickAccessSettings />
 
       <SettingsSection title={t("settings.about")} testID="settings-about">
         <SettingsGroup>

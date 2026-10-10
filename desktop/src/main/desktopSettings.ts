@@ -62,6 +62,8 @@ export type DesktopSettings = {
   // windowState.loadMainWindowBounds) so an unplugged display is treated as
   // "no saved bounds" rather than "open off-screen".
   main_window_bounds?: WindowBounds;
+  quick_access_shortcut?: string;
+  pop_out_always_on_top?: boolean;
   plugin_conflict_preferences?: PluginConflictPreferences;
   // Set only after the mandatory first-run flow has applied the user's
   // extension choices. A version keeps future onboarding changes explicit
@@ -84,6 +86,12 @@ export function readDesktopSettings(filePath: string = desktopSettingsPath()): D
     }
     const record = parsed as Record<string, unknown>;
     const settings: DesktopSettings = {};
+    if (typeof record.quick_access_shortcut === "string") {
+      settings.quick_access_shortcut = record.quick_access_shortcut;
+    }
+    if (typeof record.pop_out_always_on_top === "boolean") {
+      settings.pop_out_always_on_top = record.pop_out_always_on_top;
+    }
     if (typeof record.phone_access_enabled === "boolean") {
       settings.phone_access_enabled = record.phone_access_enabled;
     }

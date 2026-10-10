@@ -2584,3 +2584,10 @@ button.settings-engine-expand:hover {
     animation: none;
   }
 }
+/* Shortcut recording shares the settings controls and wraps on narrow windows. */
+.settings-quick-access-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}

@@ -10,6 +10,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Configure a global shortcut to restore the last active conversation window
+  without replacing its draft, and keep popped-out conversations on top.
+
 - Run a default-exported TypeScript plugin directly with `wuu plugin dev`, using
   the embedded SDK without a manifest or build, and keep watching through failed saves.
 
