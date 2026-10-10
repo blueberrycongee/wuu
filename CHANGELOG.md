@@ -86,6 +86,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Keep development renderer crash recovery running when the Vite server is
+  unavailable, instead of quitting the entire desktop app on the failed reload.
+
 - Keep selection comment editors open when Escape is used by an active text
   composition, including PDF, file and response selections.
 
