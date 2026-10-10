@@ -138,6 +138,7 @@ function pass(name, evidence) { checks.push({ name, passed: true, ...evidence })
 async function submit(text, answer) {
   await wait(() => document.querySelector('.composer textarea') && !document.querySelector('.composer-stop-button'));
   await type('.composer textarea', text);
+  await wait(() => { const button = document.querySelector('.composer-send-button'); return button && !button.disabled && button.getAttribute('aria-busy') !== 'true'; });
   await click('.composer-send-button');
   await wait(text => [...document.querySelectorAll('.session-flow')].some(node => node.textContent.includes(text)), answer);
   await wait(() => !document.querySelector('.composer-stop-button'));
