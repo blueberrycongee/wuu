@@ -3,12 +3,12 @@
 // case holds the result of an actual CDP geometry read to exercise its async
 // boundary without replacing the browser or fabricating a command response.
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { createServer, type ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { app, BrowserWindow, type WebContentsView, type WebContentsViewConstructorOptions } from "electron";
+import { app, BrowserWindow, nativeImage, type WebContentsView, type WebContentsViewConstructorOptions } from "electron";
 import { createBrowserView } from "../src/main/browserView";
 import { AppServerClientPool } from "../src/main/appServerClients";
 import {
@@ -68,7 +68,7 @@ const activeTurnIDs = new Map<string, string>();
 const activeExecutionIDs = new Map<string, string>();
 const controlledResponses = new Map<string, ServerResponse>();
 const controlledWaiters = new Map<string, ReturnType<typeof deferred>>();
-const controlledMarkers = new Set(["OWNERSHIP_C", "OWNERSHIP_C_CONTINUE", "OWNERSHIP_LIFECYCLE", "OWNERSHIP_KEEP", "OWNERSHIP_DISPOSE", "OWNERSHIP_SIBLING", "OWNERSHIP_FOREIGN", "OWNERSHIP_RETAINED_AGAIN"]);
+const controlledMarkers = new Set(["OWNERSHIP_HIDDEN", "OWNERSHIP_C", "OWNERSHIP_C_CONTINUE", "OWNERSHIP_LIFECYCLE", "OWNERSHIP_KEEP", "OWNERSHIP_DISPOSE", "OWNERSHIP_SIBLING", "OWNERSHIP_FOREIGN", "OWNERSHIP_RETAINED_AGAIN"]);
 function controlledWaiter(marker: string) {
   let waiter = controlledWaiters.get(marker);
   if (!waiter) { waiter = deferred(); controlledWaiters.set(marker, waiter); }
@@ -389,6 +389,33 @@ app.whenReady().then(async () => {
   function openedForThread(threadID: string) {
     return calls.filter(call => call.method === "browser/open_tab" && call.params.thread_id === threadID).map(call => String(call.params.tab_id));
   }
+  // A first preview must work before either native window has ever been shown.
+  // Use the real Go screenshot tool and inspect its saved image, not a second
+  // capture after presenting the page (which would mask hidden-host readiness).
+  const hidden = await start("OWNERSHIP_HIDDEN");
+  await bounded("hidden page navigation", controlledWaiter("OWNERSHIP_HIDDEN").promise);
+  const hiddenTab = openedForThread(hidden)[0];
+  check("first preview starts in an unshown native host", !main.isVisible() && !host.isInPanel(workdir, hiddenTab));
+  await controlledTool("OWNERSHIP_HIDDEN", { action: "screenshot", tab_id: hiddenTab });
+  const hiddenCapture = calls.find(call => call.method === "browser/screenshot" && call.params.thread_id === hidden);
+  const hiddenReply = replies.find(reply => reply.id === hiddenCapture?.id);
+  const hiddenResult = hiddenReply?.result as { path?: string; width?: number; height?: number } | undefined;
+  check("real Go first hidden screenshot completes", Boolean(hiddenResult?.path && !hiddenReply?.error), JSON.stringify(hiddenReply));
+  if (hiddenResult?.path) {
+    const image = nativeImage.createFromPath(hiddenResult.path);
+    const size = image.getSize();
+    const bitmap = image.toBitmap();
+    let paintedPixels = 0;
+    for (let offset = 0; offset < bitmap.length; offset += 4) {
+      if (bitmap[offset + 3] > 0 && (bitmap[offset] < 240 || bitmap[offset + 1] < 240 || bitmap[offset + 2] < 240)) paintedPixels++;
+    }
+    check("first hidden preview contains rendered page pixels", !image.isEmpty() && size.width === hiddenResult.width && size.height === hiddenResult.height && paintedPixels > 100, JSON.stringify({ size, paintedPixels }));
+    writeFileSync(join(output, "first-hidden-preview.png"), readFileSync(hiddenResult.path));
+  }
+  check("first screenshot does not present the browser panel", !main.isVisible() && !host.isInPanel(workdir, hiddenTab));
+  await finishControlled("OWNERSHIP_HIDDEN", hidden);
+  check("hidden screenshot task cleans its temporary page", host.tabSurfaceMeta(workdir, hiddenTab) === undefined);
+
   // The fixture browser is real Chromium. The local provider drives every
   // opener click through the Go tool, reverse RPC, and native page input.
   const popup = await start("OWNERSHIP_POPUP");
@@ -833,7 +860,7 @@ app.whenReady().then(async () => {
   const disposeResult = await disposedInput;
   check("disposal invalidates input before closing views", disposeResult !== "delivered" && host.tabSurfaceMeta(workdir, disposalTab) === undefined, disposeResult);
   await finishControlled("OWNERSHIP_DISPOSE", disposal);
-  writeFileSync(join(output, "results.json"), JSON.stringify({ checks, threads: { popup, sibling, lifecycle, retained, foreignThread, a, b, c, d, disposal }, tabs: { popupTab, lifecycleTab, freshTab, retainedOpenerTab, handoffTab, retainedAgainTemporary, deliverableTab, persistentTab, finalTemporaryTab, aTab, bTab, cTab, dTab, disposalTab }, calls, replies, providerRequests, popupRequests, popupAdoptions, selfCloseErrors, selfCloseNotifications, clickRequests, nativeInputCommands, events }, null, 2));
+  writeFileSync(join(output, "results.json"), JSON.stringify({ checks, threads: { hidden, popup, sibling, lifecycle, retained, foreignThread, a, b, c, d, disposal }, tabs: { hiddenTab, popupTab, lifecycleTab, freshTab, retainedOpenerTab, handoffTab, retainedAgainTemporary, deliverableTab, persistentTab, finalTemporaryTab, aTab, bTab, cTab, dTab, disposalTab }, calls, replies, providerRequests, popupRequests, popupAdoptions, selfCloseErrors, selfCloseNotifications, clickRequests, nativeInputCommands, events }, null, 2));
   console.log(JSON.stringify(checks, null, 2));
   await pool.shutdown();
   host.destroyAll();
