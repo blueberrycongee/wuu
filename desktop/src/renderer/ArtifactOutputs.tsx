@@ -39,6 +39,8 @@ export type TurnArtifact = Readonly<{
   data?: string;
   remoteRef?: string;
   text?: string;
+  /** Ordinary text accompanying an inline resource remains readable without its renderer. */
+  fallbackText?: string;
   foldText?: boolean;
   foldPreview?: boolean;
   uri?: string;
@@ -65,7 +67,10 @@ export function collectTurnArtifacts(turn: Pick<Turn, "items">): readonly TurnAr
       // Re-publishing an unchanged snapshot in the same turn should not repeat
       // its preview. Preserve ordered mixed results and different file versions.
       if (artifact.type !== "text" && artifact.sha256) {
-        const key = JSON.stringify([artifact.sha256, artifact.name, artifact.mimeType, artifact.placement, artifact.delivered, artifact.foldPreview]);
+        // Resource refs can name independent interactive instances even when
+        // their initial content is identical. File/image snapshots still dedupe.
+        const key = JSON.stringify([artifact.sha256, artifact.name, artifact.mimeType, artifact.placement, artifact.delivered, artifact.foldPreview,
+          artifact.type === "resource" ? artifact.ref : undefined]);
         const owner = presented.get(key);
         if (owner && owner !== item.id) return;
         presented.set(key, item.id);
@@ -336,6 +341,7 @@ function ArtifactRenderer({
   inspectionExpanded?: boolean;
 }): JSX.Element {
   const { t } = useI18n();
+  const threadId = useContext(ArtifactThreadContext);
   const [expanded, setExpanded] = useState(false);
   const fallback = artifact.type === "text" ? (
     <div className="turn-artifact-text-part">
@@ -343,6 +349,14 @@ function ArtifactRenderer({
     </div>
   ) : variant === "inline" && artifact.mimeType.startsWith("image/") ? (
     <InlineArtifact artifact={artifact} cwd={cwd} />
+  ) : variant === "inline" && artifact.type === "resource" && artifact.fallbackText ? (
+    <div className="turn-artifact-inline-card">
+      <div className="turn-artifact-text-part">
+        <p>{t("artifacts.previewUnavailable")}</p>
+        <p style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{artifact.fallbackText}</p>
+      </div>
+      <ArtifactCard artifact={artifact} cwd={cwd} onOpenFile={onOpenFile} onPreview={onPreview} />
+    </div>
   ) : variant === "inline" ? (
     <div className="turn-artifact-inline-card">
       <ArtifactCard
@@ -370,6 +384,7 @@ function ArtifactRenderer({
         artifactId: artifact.ref ?? artifact.id,
         partId: artifact.id,
         itemId: artifact.itemId,
+        threadId,
         placement: artifact.placement,
         variant,
       }}
@@ -763,6 +778,10 @@ function artifactFromContentPart(
     remoteRef: part.remote_ref,
     data,
     text,
+    fallbackText: part.type === "resource"
+      ? item.result_detail?.content?.filter((candidate) => candidate.type === "text")
+        .map((candidate) => candidate.text ?? "").join("\n").slice(0, 16_384) || undefined
+      : undefined,
     foldText: part.type === "text" && !part.artifact?.placement,
     // Explicit presentation survives PTC/background forwarding; ordinary tool
     // images are inspection evidence and mount only when the user expands them.

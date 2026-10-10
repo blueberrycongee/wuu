@@ -10,6 +10,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Add a default-disabled experimental Generative UI plugin with inline interactive
+  tables, charts and local forms, bounded declarative specs, per-result view-state
+  restoration, and readable fallback when the plugin is unavailable.
+
 - Run a default-exported TypeScript plugin directly with `wuu plugin dev`, using
   the embedded SDK without a manifest or build, and keep watching through failed saves.
 
