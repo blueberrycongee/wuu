@@ -1,3 +1,4 @@
+import { createBrowserView } from "./browserView";
 import { saveArtifactFile } from "./artifactSave";
 import type { DesktopZoomAction } from "../shared/DesktopPageZoom";
 import { readCatalogSkill } from "./remoteSkills";
@@ -23,7 +24,6 @@ import {
   type OpenDialogOptions,
   shell,
   type WebContents,
-  WebContentsView,
 } from "electron";
 import { readFile, readdir, rm, stat } from "node:fs/promises";
 import { dirname, join, resolve, sep } from "node:path";
@@ -316,17 +316,7 @@ const browserHostCoordinator = new BrowserHostCoordinator(
           sandbox: true,
         },
       }) as unknown as BrowserHostWindowHandle,
-    (options) =>
-      new WebContentsView({
-        ...options,
-        webPreferences: {
-          ...options?.webPreferences,
-          partition: BROWSER_PARTITION,
-          contextIsolation: true,
-          nodeIntegration: false,
-          sandbox: true,
-        },
-      }) as unknown as BrowserViewHandle,
+    (options) => createBrowserView(options) as unknown as BrowserViewHandle,
   ),
   (workdir) => broadcastToAll("wuu:browser-invalidate", { workdir }),
 );
