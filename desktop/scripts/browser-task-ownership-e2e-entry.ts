@@ -95,6 +95,8 @@ const popupLoads = new Map<string, ReturnType<typeof deferred>>();
 const slowPopupStarted = deferred();
 let slowPopupResponse: ServerResponse | undefined;
 const popupNonce = "fixture-popup-nonce";
+const selfCloseErrors: string[] = [];
+const selfCloseNotifications: { workdir: string; tabID: string }[] = [];
 let baseURL = "";
 let serial = 0;
 
@@ -128,6 +130,7 @@ const server = createServer((req, res) => {
       <button style="top:340px" id="slow">Open loading popup</button>
       <a href="/popup-native-shift" style="position:absolute;left:40px;top:400px;width:240px;height:40px;display:block">Shift-click native window</a>
       <a href="/popup-native-foreground" style="position:absolute;left:40px;top:460px;width:240px;height:40px;display:block">Modified-click foreground tab</a>
+      <button style="top:520px" id="self-close">Open self-closing popup</button>
       <script>
         window.popupState={messages:[]};
         addEventListener('message', event => {
@@ -154,6 +157,7 @@ const server = createServer((req, res) => {
           popupState.namedReused=!!child && child===window.namedChild;
         };
         document.querySelector('#slow').onclick=()=>{window.slowChild=window.open('/popup-slow','slow-proof');};
+        document.querySelector('#self-close').onclick=()=>{window.selfCloseChild=window.open('/popup-self-close','self-close-proof');};
       </script>`);
     return;
   }
@@ -163,7 +167,7 @@ const server = createServer((req, res) => {
     slowPopupStarted.resolve();
     return;
   }
-  if (["/popup-message", "/popup-form", "/popup-named", "/popup-native-shift", "/popup-native-foreground"].includes(pathname)) {
+  if (["/popup-message", "/popup-form", "/popup-named", "/popup-native-shift", "/popup-native-foreground", "/popup-self-close"].includes(pathname)) {
     let body = "";
     req.on("data", data => { body += data; });
     req.on("end", () => {
@@ -175,6 +179,9 @@ const server = createServer((req, res) => {
         <script>window.clicks=0;document.querySelector('#target').onclick=()=>window.clicks++;
         window.popupProof=${JSON.stringify(proof)};window.popupProof.hasOpener=!!window.opener;
         if(window.opener)window.opener.postMessage(window.popupProof,location.origin);
+        if(location.pathname==='/popup-self-close')addEventListener('message',event=>{
+          if(event.source===window.opener && event.origin===location.origin && event.data==='${popupNonce}')window.close();
+        });
         fetch('/popup-ready?source='+encodeURIComponent(location.pathname+location.search));</script>`);
     });
     return;
@@ -452,6 +459,42 @@ app.whenReady().then(async () => {
     const rejectedClose = await request(sibling, "browser/close_tab", { tab_id: message.tab_id }).then(() => "closed", error => String(error));
     check("a foreign thread cannot close an adopted popup", rejectedClose !== "closed" && host.tabSurfaceMeta(workdir, message.tab_id) !== undefined, rejectedClose);
   }
+  // A page closes its native child directly. Observe the real destruction
+  // before the host's listener, since the regression throws inside that listener.
+  // Record that exception only for this bounded scenario and fail explicitly.
+  await clickPopup(540, "/popup-self-close");
+  const selfCloseTab = (await popupTabs()).tabs.find(tab => tab.url === `${baseURL}/popup-self-close`);
+  assert(selfCloseTab, "The self-closing popup is adopted before it closes itself");
+  const selfCloseView = await readTab(selfCloseTab.tab_id);
+  const siblingTab = openedForThread(sibling)[0];
+  const siblingView = await readTab(siblingTab);
+  assert(selfCloseView && siblingView);
+  const selfCloseContents = selfCloseView.webContents;
+  const selfCloseContentsID = selfCloseContents.id;
+  const openerContents = popupView.webContents;
+  const siblingContents = siblingView.webContents;
+  const nativeDestroyed = deferred();
+  selfCloseContents.prependOnceListener("destroyed", nativeDestroyed.resolve);
+  const removeCloseListener = host.addTabClosedListener((cwd, tabID) => {
+    if (cwd === workdir && tabID === selfCloseTab.tab_id) selfCloseNotifications.push({ workdir: cwd, tabID });
+  });
+  const recordSelfCloseError = (error: Error) => { selfCloseErrors.push(error.stack ?? String(error)); };
+  process.on("uncaughtException", recordSelfCloseError);
+  try {
+    await openerContents.executeJavaScript(`window.selfCloseChild.postMessage('${popupNonce}', location.origin)`);
+    await bounded("the page executes window.close and destroys its native contents", nativeDestroyed.promise);
+    await new Promise<void>(resolve => setImmediate(resolve));
+  } finally {
+    process.removeListener("uncaughtException", recordSelfCloseError);
+    removeCloseListener();
+  }
+  check("native popup self-close raises no uncaught main exception", selfCloseErrors.length === 0, JSON.stringify(selfCloseErrors));
+  check("native popup self-close removes its registry entry", host.tabSurfaceMeta(workdir, selfCloseTab.tab_id) === undefined && !(await popupTabs()).tab_ids.includes(selfCloseTab.tab_id));
+  check("native popup self-close destroys the original contents", selfCloseContents.isDestroyed());
+  check("native popup self-close emits exactly one close notification", selfCloseNotifications.length === 1, JSON.stringify(selfCloseNotifications));
+  check("native popup self-close removes permission ownership", !host.ownsWebContents(selfCloseContentsID));
+  check("native popup self-close preserves opener and foreign sibling", !openerContents.isDestroyed() && !siblingContents.isDestroyed() && host.tabSurfaceMeta(workdir, popupTab)?.url === `${baseURL}/popup-opener` && host.tabSurfaceMeta(workdir, siblingTab)?.url === `${baseURL}/OWNERSHIP_SIBLING`);
+
   await finishControlled("OWNERSHIP_SIBLING", sibling);
   const beforeSlow = new Set((await popupTabs()).tab_ids);
   await clickPopup(360);
@@ -790,7 +833,7 @@ app.whenReady().then(async () => {
   const disposeResult = await disposedInput;
   check("disposal invalidates input before closing views", disposeResult !== "delivered" && host.tabSurfaceMeta(workdir, disposalTab) === undefined, disposeResult);
   await finishControlled("OWNERSHIP_DISPOSE", disposal);
-  writeFileSync(join(output, "results.json"), JSON.stringify({ checks, threads: { popup, sibling, lifecycle, retained, foreignThread, a, b, c, d, disposal }, tabs: { popupTab, lifecycleTab, freshTab, retainedOpenerTab, handoffTab, retainedAgainTemporary, deliverableTab, persistentTab, finalTemporaryTab, aTab, bTab, cTab, dTab, disposalTab }, calls, replies, providerRequests, popupRequests, popupAdoptions, clickRequests, nativeInputCommands, events }, null, 2));
+  writeFileSync(join(output, "results.json"), JSON.stringify({ checks, threads: { popup, sibling, lifecycle, retained, foreignThread, a, b, c, d, disposal }, tabs: { popupTab, lifecycleTab, freshTab, retainedOpenerTab, handoffTab, retainedAgainTemporary, deliverableTab, persistentTab, finalTemporaryTab, aTab, bTab, cTab, dTab, disposalTab }, calls, replies, providerRequests, popupRequests, popupAdoptions, selfCloseErrors, selfCloseNotifications, clickRequests, nativeInputCommands, events }, null, 2));
   console.log(JSON.stringify(checks, null, 2));
   await pool.shutdown();
   host.destroyAll();
@@ -801,7 +844,7 @@ app.whenReady().then(async () => {
   console.log(`PASS: browser task ownership and takeover; evidence ${output}`);
   app.exit(0);
 }).catch(async error => {
-  writeFileSync(join(output, "failure.json"), JSON.stringify({ error: String(error), checks, calls, replies, providerRequests, popupRequests, popupAdoptions, clickRequests, nativeInputCommands, events }, null, 2));
+  writeFileSync(join(output, "failure.json"), JSON.stringify({ error: String(error), checks, calls, replies, providerRequests, popupRequests, popupAdoptions, selfCloseErrors, selfCloseNotifications, clickRequests, nativeInputCommands, events }, null, 2));
   console.error(error);
   await pool?.shutdown().catch(() => undefined);
   host?.destroyAll();
