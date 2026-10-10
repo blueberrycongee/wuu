@@ -416,7 +416,7 @@ app.whenReady().then(async () => {
   const hiddenView = await readTab(hiddenTab);
   assert(hiddenView);
   const savedPreview = hiddenResult?.path ? readFileSync(hiddenResult.path) : undefined;
-  await hiddenView.webContents.executeJavaScript("window.savedRAF = requestAnimationFrame; window.requestAnimationFrame = () => 0");
+  await hiddenView.webContents.executeJavaScript("window.savedRAF = requestAnimationFrame; window.requestAnimationFrame = () => 0; undefined");
   await controlledTool("OWNERSHIP_HIDDEN", { action: "screenshot", tab_id: hiddenTab });
   const stalledCapture = calls.filter(call => call.method === "browser/screenshot" && call.params.thread_id === hidden).at(-1);
   const stalledReply = replies.find(reply => reply.id === stalledCapture?.id);
