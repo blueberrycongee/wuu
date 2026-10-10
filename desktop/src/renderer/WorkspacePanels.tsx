@@ -265,7 +265,7 @@ export function WorkspaceRightPanel({
   browserActivity?: ActivitySession;
   browserDockTarget?: BrowserDockTarget;
   browserOverlaySuppressed?: boolean;
-  onBrowserUserInteraction?: () => void | Promise<void>;
+  onBrowserUserInteraction?: (inputGeneration?: number) => void | Promise<void>;
   focusedComposer?: ReactNode;
   fileRefreshKey?: string;
   pluginHost?: PluginHost;

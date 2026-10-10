@@ -96,6 +96,18 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Keep browser tab listing and cleanup within the owning conversation, including
+  popups. Reject cross-conversation tab access, and stop stale input after user
+  takeover, request cancellation, navigation, or tab teardown.
+- Preserve page-created browsing contexts, opener messaging, script-filled blank
+  pages and submitted form bodies in embedded browser popups. At turn end,
+  close temporary tabs while keeping user pages, handoffs, deliverables and
+  their live opener context; release automation control on retained pages.
+  Clean up native page self-closes without losing tab-close notifications or
+  leaving stale permission ownership. Wait for the first rendered frame before
+  capturing hidden browser previews, and preserve history previews if capture
+  times out or the task is interrupted.
+
 - Keep development renderer crash recovery running when the Vite server is
   unavailable, instead of quitting the entire desktop app on the failed reload.
 

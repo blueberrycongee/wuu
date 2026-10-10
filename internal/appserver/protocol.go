@@ -149,6 +149,11 @@ const (
 	MethodBrowserCloseTab      = "browser/close_tab"
 	MethodBrowserSetVisibility = "browser/set_visibility"
 	MethodBrowserListTabs      = "browser/list_tabs"
+	MethodBrowserTurnEnded     = "browser/turn_ended"
+	MethodBrowserFinalize      = "browser/finalize"
+
+	NotificationBrowserRequestCancelled = "browser/request_cancelled"
+	NotificationBrowserTurnStarted      = "browser/turn_started"
 
 	NotificationThreadStarted          = "thread/started"
 	NotificationThreadResumed          = "thread/resumed"
@@ -336,12 +341,17 @@ type clientResponse struct {
 // packages/protocol/src/index.ts. None carry an activity_id: the desktop client
 // auto-rejects server requests whose activity_id names a stopped activity
 // (activityServerRequestRejection), which would wedge a CDP call the moment a
-// tab's activity is torn down. Tab addressing is by tab_id alone.
+// tab's activity is torn down. Every request carries the bridge-owned thread_id; the host rejects
+// attempts to list, close, or operate another thread's tab.
 type BrowserCDPParams struct {
-	Workdir string          `json:"workdir"`
-	TabID   string          `json:"tab_id"`
-	Method  string          `json:"method"`
-	Params  json.RawMessage `json:"params,omitempty"`
+	ExecutionID string          `json:"execution_id,omitempty"`
+	ThreadID    string          `json:"thread_id"`
+	TurnID      string          `json:"turn_id,omitempty"`
+	RequestID   string          `json:"request_id,omitempty"`
+	Workdir     string          `json:"workdir"`
+	TabID       string          `json:"tab_id"`
+	Method      string          `json:"method"`
+	Params      json.RawMessage `json:"params,omitempty"`
 }
 
 type BrowserCDPResult struct {
@@ -354,10 +364,14 @@ type BrowserCDPResult struct {
 }
 
 type BrowserScreenshotParams struct {
-	Workdir  string `json:"workdir"`
-	TabID    string `json:"tab_id"`
-	DestPath string `json:"dest_path"`
-	Format   string `json:"format,omitempty"`
+	ExecutionID string `json:"execution_id,omitempty"`
+	ThreadID    string `json:"thread_id"`
+	TurnID      string `json:"turn_id,omitempty"`
+	RequestID   string `json:"request_id,omitempty"`
+	Workdir     string `json:"workdir"`
+	TabID       string `json:"tab_id"`
+	DestPath    string `json:"dest_path"`
+	Format      string `json:"format,omitempty"`
 }
 
 type BrowserScreenshotResult struct {
@@ -367,30 +381,99 @@ type BrowserScreenshotResult struct {
 }
 
 type BrowserOpenTabParams struct {
-	Workdir    string `json:"workdir"`
-	TabID      string `json:"tab_id"`
-	InitialURL string `json:"initial_url,omitempty"`
+	ExecutionID string `json:"execution_id,omitempty"`
+	ThreadID    string `json:"thread_id"`
+	TurnID      string `json:"turn_id,omitempty"`
+	RequestID   string `json:"request_id,omitempty"`
+	Workdir     string `json:"workdir"`
+	TabID       string `json:"tab_id"`
+	InitialURL  string `json:"initial_url,omitempty"`
 }
 
 type BrowserCloseTabParams struct {
-	Workdir string `json:"workdir"`
-	TabID   string `json:"tab_id"`
+	ExecutionID string `json:"execution_id,omitempty"`
+	ThreadID    string `json:"thread_id"`
+	TurnID      string `json:"turn_id,omitempty"`
+	RequestID   string `json:"request_id,omitempty"`
+	Workdir     string `json:"workdir"`
+	TabID       string `json:"tab_id"`
 }
 
 type BrowserSetVisibilityParams struct {
-	Workdir string `json:"workdir"`
-	TabID   string `json:"tab_id"`
-	Visible bool   `json:"visible"`
+	ExecutionID string `json:"execution_id,omitempty"`
+	ThreadID    string `json:"thread_id"`
+	TurnID      string `json:"turn_id,omitempty"`
+	RequestID   string `json:"request_id,omitempty"`
+	Workdir     string `json:"workdir"`
+	TabID       string `json:"tab_id"`
+	Visible     bool   `json:"visible"`
 }
 
 type BrowserListTabsParams struct {
-	Workdir string `json:"workdir"`
+	ExecutionID string `json:"execution_id,omitempty"`
+	ThreadID    string `json:"thread_id"`
+	TurnID      string `json:"turn_id,omitempty"`
+	RequestID   string `json:"request_id,omitempty"`
+	Workdir     string `json:"workdir"`
+}
+
+// BrowserRequestCancelledParams revokes one in-flight desktop operation after
+// its caller has stopped waiting. New requests keep their own independent ID.
+type BrowserRequestCancelledParams struct {
+	Workdir   string `json:"workdir"`
+	ThreadID  string `json:"thread_id"`
+	RequestID string `json:"request_id"`
 }
 
 type BrowserListedTab struct {
-	TabID string `json:"tab_id"`
-	URL   string `json:"url,omitempty"`
-	Title string `json:"title,omitempty"`
+	TabID  string `json:"tab_id"`
+	URL    string `json:"url,omitempty"`
+	Title  string `json:"title,omitempty"`
+	Status string `json:"status,omitempty"`
+}
+
+// BrowserTurnStartedParams announces an immutable execution identity before
+// its first browser request. A workspace rebind announces each touched scope.
+type BrowserTurnStartedParams struct {
+	ExecutionID string `json:"execution_id"`
+	Workdir     string `json:"workdir"`
+	ThreadID    string `json:"thread_id"`
+	TurnID      string `json:"turn_id"`
+}
+
+type BrowserKeptTab struct {
+	TabID  string `json:"tab_id"`
+	Status string `json:"status"`
+}
+
+// BrowserTurnEndedParams releases browser control independently of a cancelled
+// tool context. Only the matching active turn may close temporary tabs. User
+// pages and keep survive; preserve_all is the safe fallback on a store error.
+type BrowserTurnEndedParams struct {
+	ExecutionID string           `json:"execution_id"`
+	Workdir     string           `json:"workdir"`
+	ThreadID    string           `json:"thread_id"`
+	TurnID      string           `json:"turn_id"`
+	Keep        []BrowserKeptTab `json:"keep"`
+	PreserveAll bool             `json:"preserve_all,omitempty"`
+}
+
+type BrowserTurnEndedResult struct {
+	Tabs   []BrowserListedTab `json:"tabs,omitempty"`
+	Closed []string           `json:"closed"`
+	Kept   []string           `json:"kept"`
+	Stale  bool               `json:"stale,omitempty"`
+}
+
+// BrowserFinalizeParams selects kept pages atomically, including live opener
+// ancestors, before closing temporary pages. It does not end the active turn.
+type BrowserFinalizeParams struct {
+	ExecutionID string           `json:"execution_id,omitempty"`
+	Workdir     string           `json:"workdir"`
+	ThreadID    string           `json:"thread_id"`
+	TurnID      string           `json:"turn_id,omitempty"`
+	RequestID   string           `json:"request_id,omitempty"`
+	Keep        []BrowserKeptTab `json:"keep"`
 }
 
 type BrowserListTabsResult struct {

@@ -1,3 +1,4 @@
+import { createBrowserView } from "./browserView";
 import { saveArtifactFile } from "./artifactSave";
 import { showArtifactItemMenu } from "./artifactItemMenu";
 import type { DesktopZoomAction } from "../shared/DesktopPageZoom";
@@ -25,7 +26,6 @@ import {
   type OpenDialogOptions,
   shell,
   type WebContents,
-  WebContentsView,
 } from "electron";
 import { readFile, readdir, rm, stat } from "node:fs/promises";
 import { dirname, join, resolve, sep } from "node:path";
@@ -320,14 +320,7 @@ const browserHostCoordinator = new BrowserHostCoordinator(
           sandbox: true,
         },
       }) as unknown as BrowserHostWindowHandle,
-    () =>
-      new WebContentsView({
-        webPreferences: {
-          partition: BROWSER_PARTITION,
-          contextIsolation: true,
-          nodeIntegration: false,
-        },
-      }) as unknown as BrowserViewHandle,
+    (options) => createBrowserView(options) as unknown as BrowserViewHandle,
   ),
   (workdir) => broadcastToAll("wuu:browser-invalidate", { workdir }),
 );
@@ -599,8 +592,9 @@ function emitServerEvent(event: ServerEvent): void {
     browserHostCoordinator.onClientTorndown(event.workdir);
     observationCoordinator.dropWorkdir(event.workdir);
   }
+  browserHostCoordinator.handleServerEvent(event);
   const browserActivity = observationActivityFromServerEvent(event);
-  if (browserActivity) browserHostCoordinator.updateActivity(browserActivity);
+  if (browserActivity && event.kind === "notification") browserHostCoordinator.updateActivity(browserActivity, event.message.method);
   observationCoordinator.handleServerEvent(event);
   const sideThreadEvent = sideThreadEventFromServerEvent(event);
   if (sideThreadEvent) {
@@ -2049,9 +2043,13 @@ app.whenReady().then(async () => {
   ipcMain.handle("wuu:activity-list", (event, threadId: string) =>
     appServerRequest<ActivityListResult>(event, "activity/list", { thread_id: threadId }),
   );
-  ipcMain.handle("wuu:activity-takeover", (event, threadId: string, activityId: string) =>
-    appServerRequest<ActivityActionResult>(event, "activity/takeover", { thread_id: threadId, activity_id: activityId }),
-  );
+  ipcMain.handle("wuu:activity-takeover", async (event, threadId: string, activityId: string, inputGeneration?: number) => {
+    const result = await appServerRequest<ActivityActionResult>(event, "activity/takeover", { thread_id: threadId, activity_id: activityId });
+    if (typeof inputGeneration === "number" && Number.isSafeInteger(inputGeneration)) {
+      browserHostCoordinator.acknowledgeLocalTakeover(result.activity, inputGeneration);
+    }
+    return result;
+  });
   ipcMain.handle("wuu:activity-release", (event, threadId: string, activityId: string) =>
     appServerRequest<ActivityReleaseResult>(event, "activity/release", { thread_id: threadId, activity_id: activityId }),
   );
@@ -2623,7 +2621,7 @@ app.whenReady().then(async () => {
     "wuu:browser-command",
     async (
       _event,
-      payload: { workdir: string; tabID: string; command: string; url?: string },
+      payload: { workdir: string; tabID: string; command: string; url?: string; threadID?: string },
     ) => {
       if (!ENABLE_EMBEDDED_BROWSER) return null;
       const snapshot = await browserHostCoordinator.runCommand(
@@ -2631,6 +2629,7 @@ app.whenReady().then(async () => {
         payload.tabID,
         payload.command,
         payload.url,
+        payload.threadID,
       );
       return snapshot ?? null;
     },

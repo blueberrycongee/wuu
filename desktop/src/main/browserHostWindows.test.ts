@@ -75,7 +75,7 @@ class FakeView implements BrowserViewHandle {
   goForwardCount = 0;
   reloadCount = 0;
   stopCount = 0;
-  windowOpenHandler: ((details: { url?: string }) => { action: "deny" } | { action: "allow" }) | undefined;
+  windowOpenHandler: Parameters<BrowserWebContentsHandle["setWindowOpenHandler"]>[0] | undefined;
   closed = false;
 
   readonly debuggerHandle: BrowserDebuggerHandle = {
@@ -111,7 +111,7 @@ class FakeView implements BrowserViewHandle {
       this.backgroundThrottling = allowed;
       this.backgroundThrottlingChanges.push(allowed);
     },
-    setWindowOpenHandler: (handler: (details: { url?: string }) => { action: "deny" } | { action: "allow" }) => {
+    setWindowOpenHandler: (handler) => {
       this.windowOpenHandler = handler;
     },
     canGoBack: () => this.back,
@@ -269,7 +269,8 @@ function serverRequest(
   return {
     workdir: typeof params.workdir === "string" ? params.workdir : "/repo",
     kind: "server-request",
-    message: { id, method, params },
+    // The Go core injects the requesting conversation into every reverse RPC.
+    message: { id, method, params: { thread_id: "thread-1", ...params } },
   };
 }
 
@@ -566,7 +567,7 @@ describe("BrowserHostCoordinator large-response gate", () => {
 });
 
 describe("BrowserHostCoordinator screenshot", () => {
-  it("captures with stayHidden and writes the PNG to dest_path", async () => {
+  it("captures a native page and writes the PNG to dest_path", async () => {
     const harness = makeHarness();
     await openTab(harness, "/repo", "t1");
 
@@ -661,8 +662,8 @@ describe("BrowserHostCoordinator lifecycle", () => {
     expect(harness.reply.respond).toHaveBeenLastCalledWith("list-1", {
       tab_ids: ["a1", "a2"],
       tabs: [
-        { tab_id: "a1", url: "https://example.com/", title: "Example" },
-        { tab_id: "a2", url: "https://example.com/", title: "Example" },
+        { tab_id: "a1", status: "temporary", url: "https://example.com/", title: "Example" },
+        { tab_id: "a2", status: "temporary", url: "https://example.com/", title: "Example" },
       ],
     });
   });
@@ -811,7 +812,16 @@ describe("BrowserHostCoordinator visibility takeover", () => {
     });
     await openTab(harness, "/repo", "t1");
     const view = harness.views[0];
-    view.windowOpenHandler?.({ url: "https://example.com/next" });
+    const response = view.windowOpenHandler?.({ url: "https://example.com/next" });
+    expect(response?.action).toBe("allow");
+    if (response?.action !== "allow") throw new Error("popup was not allowed");
+    expect(response.outlivesOpener).toBe(true);
+    expect(response.overrideBrowserWindowOptions?.webPreferences).toMatchObject({
+      sandbox: true, contextIsolation: true, nodeIntegration: false,
+    });
+    // Native-window dispositions ask the host to create their contents here.
+    const popupContents = response.createWindow?.({});
+    expect(popupContents).toBe(harness.views[1].webContents);
     await vi.waitFor(() => expect(adopted).toHaveLength(1));
     expect(harness.views).toHaveLength(2);
     expect(harness.views[1].loadedURLs).toContain("https://example.com/next");
@@ -1340,7 +1350,7 @@ describe("BrowserHostCoordinator preview surface accessors", () => {
     for (const listener of view.listeners.get("before-mouse-event") ?? []) listener({}, { type: "mouseDown" });
     await action;
     expect(view.sentCommands.filter((command) => command.method === "Input.dispatchMouseEvent")).toHaveLength(0);
-    expect(harness.reply.reject).toHaveBeenCalledWith("server-request-1", "Browser action interrupted by user input");
+    expect(harness.reply.reject).toHaveBeenCalledWith("server-request-1", "Browser action interrupted: control revoked, request cancelled, or page changed");
   });
 
   it("bounds the arrival wait when a preview renderer stops responding", async () => {

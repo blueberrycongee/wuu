@@ -499,10 +499,20 @@ for children has not delivered its final result.
 ## Server-initiated requests
 
 Reverse RPC is opt-in through `initialize.params.capabilities.reverse_rpc.methods`.
-The browser client advertises all six methods: `browser/cdp`, `browser/screenshot`,
+The basic browser client advertises six methods: `browser/cdp`, `browser/screenshot`,
 `browser/open_tab`, `browser/close_tab`, `browser/set_visibility`, and
 `browser/list_tabs`. These travel from core to client; they are not client-to-core
 methods despite appearing beside other method constants in the source.
+
+Every browser request carries a core-assigned `thread_id` and `workdir`. The client must scope tab creation, listing, input, capture, and cleanup to that conversation. Page-opened tabs inherit their opener's ownership. Reject an existing tab owned by another conversation rather than navigating or adopting it.
+
+A `request_id` identifies an in-flight browser operation. The `browser/request_cancelled` notification carries that ID with the same `thread_id` and `workdir` when the core stops waiting. Cancel only the matching operation, checking again after asynchronous work and before sending input. Activity takeover and stop revoke input for all tabs of that conversation. A later release grants fresh authority without resuming an old request.
+
+Desktop clients also advertise `browser/finalize` and `browser/turn_ended` for execution-scoped lifecycle support. Before the first browser request in a workspace, the core sends `browser/turn_started` with `workdir`, `thread_id`, `turn_id`, and an immutable `execution_id`. Every browser action in that execution carries the same tuple. A logical turn can resume with a new execution ID; reject requests and completion from an older execution even when its turn ID matches.
+
+`browser/finalize` atomically applies `keep: [{tab_id, status}]`, where status is `persistent`, `handoff`, or `deliverable`, and closes omitted temporary pages without ending the execution. Manual and user-taken pages remain persistent. Retained popups also protect their live same-task opener ancestry. Missing durable keep IDs may be absent after a host restart; a live ID owned by another task is an error.
+
+After completion or interruption, `browser/turn_ended` carries the execution tuple and retained records. Invalidate pending operations first, close temporary pages, and detach the debugger and clear input/cursor state on retained pages without replacing their live contents or current preview geometry. Cleanup must not delete screenshot artifacts referenced in history. On a durable keep-record read failure, `preserve_all: true` requests retaining all scoped pages instead of risking data loss. Both methods return `closed`, `kept`, and optional `tabs` with `tab_id`, `url`, `title`, and `status`; stale completion returns `stale: true` without modifying tabs. Hosts without the additional lifecycle methods retain the basic request contract.
 
 Reply with the server request's ID and a result or error while continuing to read
 the stream. Browser calls have a 30-second response timeout. Omitted capabilities
