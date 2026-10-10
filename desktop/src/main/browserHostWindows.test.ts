@@ -567,7 +567,7 @@ describe("BrowserHostCoordinator large-response gate", () => {
 });
 
 describe("BrowserHostCoordinator screenshot", () => {
-  it("captures with stayHidden and writes the PNG to dest_path", async () => {
+  it("captures a native page and writes the PNG to dest_path", async () => {
     const harness = makeHarness();
     await openTab(harness, "/repo", "t1");
 

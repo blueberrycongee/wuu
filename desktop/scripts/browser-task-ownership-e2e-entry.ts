@@ -409,7 +409,7 @@ app.whenReady().then(async () => {
     for (let offset = 0; offset < bitmap.length; offset += 4) {
       if (bitmap[offset + 3] > 0 && (bitmap[offset] < 240 || bitmap[offset + 1] < 240 || bitmap[offset + 2] < 240)) paintedPixels++;
     }
-    check("first hidden preview contains rendered page pixels", !image.isEmpty() && size.width === hiddenResult.width && size.height === hiddenResult.height && paintedPixels > 100, JSON.stringify({ size, paintedPixels }));
+    check("first hidden preview contains rendered page pixels", !image.isEmpty() && size.width === hiddenResult.width && size.height === hiddenResult.height && paintedPixels > 100 && paintedPixels < bitmap.length / 8, JSON.stringify({ size, paintedPixels }));
     writeFileSync(join(output, "first-hidden-preview.png"), readFileSync(hiddenResult.path));
   }
   check("first screenshot does not present the browser panel", !main.isVisible() && !host.isInPanel(workdir, hiddenTab));

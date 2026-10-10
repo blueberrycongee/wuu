@@ -1336,10 +1336,10 @@ export class BrowserHostCoordinator {
     assertCurrent: () => void,
   ): Promise<{ width: number; height: number; path: string }> {
     assertCurrent();
-    // capturePage with stayHidden temporarily bumps the capturer count so a
-    // hidden host actually produces a real frame — Page.captureScreenshot over
-    // CDP on a non-visible view returns a blank/stale image.
-    const image = await entry.contents.capturePage(undefined, { stayHidden: true });
+    // Let Chromium render for this capture even before the native host has
+    // ever been shown. stayHidden suppresses that first frame and can reject
+    // with UnknownVizError; this option never shows or focuses the native window.
+    const image = await entry.contents.capturePage(undefined, { stayHidden: false });
     assertCurrent();
     const size = image.getSize();
     const png = image.toPNG();
