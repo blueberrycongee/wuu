@@ -59,7 +59,10 @@ for (const scenario of manifests.baseline.matrix) {
     artifacts.push({ file: result, scenario: scenario.name, state, kind: 'side-by-side-real-screenshots' });
   }
 }
-const summary = { passed: results.baseline.passed && results.refined.passed,
+const observations = ['baseline', 'refined'].flatMap(variant => manifests[variant].matrix
+  .filter(item => item.excerptSelection && !item.excerptSelection.selectable)
+  .map(item => ({ variant, scenario: item.name, finding: 'Native drag did not select the excerpt inside the quote preview.', evidence: item.excerptSelection })));
+const summary = { observations, passed: results.baseline.passed && results.refined.passed,
   boundary: 'Screenshots and GIF frames come from real Electron app captures with a synthetic local provider. Labels and side-by-side composition are added for review. No generated UI, intermediate motion, or interpolated frames.',
   sourceCommit: manifests.refined.sourceCommit, originalReferenceCommit: manifests.baseline.originalReferenceCommit,
   baselineChecks: results.baseline.checks, refinedChecks: results.refined.checks,
@@ -68,6 +71,6 @@ fs.writeFileSync(path.join(output, 'comparison.json'), JSON.stringify(summary, n
 const media = artifacts.map(artifact => `<figure><figcaption>${artifact.file}</figcaption><img loading="lazy" src="${artifact.file}" alt="${artifact.file}"></figure>`).join('\n');
 fs.writeFileSync(path.join(output, 'index.html'), `<!doctype html><meta charset="utf-8"><title>Wuu annotation comparison</title>
 <style>body{font:15px system-ui;margin:24px;background:#f7f7f7;color:#222}img{max-width:100%;height:auto}figure{margin:28px 0}figcaption{margin:8px 0;font-weight:600}</style>
-<h1>Wuu annotation comparison</h1><p>${summary.boundary}</p><p>Commit: ${summary.sourceCommit}. Both full journeys passed: ${summary.passed}.</p>${media}`);
+<h1>Wuu annotation comparison</h1><p>${summary.boundary}</p><p>Commit: ${summary.sourceCommit}. Both full journeys passed: ${summary.passed}.</p><p>Observed limitations: ${observations.length ? observations.map(item => `${item.variant}, ${item.scenario}: ${item.finding}`).join(' ') : 'None recorded.'}</p>${media}`);
 console.log(JSON.stringify({ passed: summary.passed, directory: output, artifacts: artifacts.length }, null, 2));
 if (!summary.passed) process.exitCode = 1;

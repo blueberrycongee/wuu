@@ -143,8 +143,14 @@ module.exports = async function annotationJourney({
             assert.equal(await evaluate(() => document.activeElement.value), comment,
               `${name}: Escape collapse and reopen retain the draft`);
             if (size === 18) {
+              await evaluate(() => {
+                const input = document.querySelector('.pdf-selection-action-menu textarea');
+                input.setSelectionRange(input.value.length, input.value.length);
+              });
               main.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Enter', modifiers: ['shift'] });
+              main.webContents.sendInputEvent({ type: 'char', keyCode: '\r', modifiers: ['shift'] });
               main.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Enter', modifiers: ['shift'] });
+              await waitFor(expected => document.querySelector('.pdf-selection-action-menu textarea')?.value === expected, `${comment}\n`);
               await main.webContents.insertText('Keep the page reference with the draft.');
               comment += '\nKeep the page reference with the draft.';
               assert.equal(await evaluate(() => document.querySelector('.pdf-selection-action-menu textarea')?.value), comment,
@@ -190,7 +196,12 @@ module.exports = async function annotationJourney({
               assert.equal(await evaluate(() => Boolean(document.querySelector('.composer-file-selection-card-popover'))), true,
                 `${name}: textarea blur must not dismiss selecting the quoted excerpt`);
               const selected = await evaluate(() => window.getSelection().toString());
-              assert.ok(selected.trim().length > 5 && firstQuote.includes(selected.trim()), `${name}: quoted excerpt is selectable`);
+              const selectable = selected.trim().length > 5 && firstQuote.includes(selected.trim());
+              variant.excerptSelection = { selected, selectable, userSelect: await evaluate(() =>
+                getComputedStyle(document.querySelector('.composer-file-selection-card-popover blockquote')).userSelect) };
+              // Current-style evidence records its existing copy limitation. The
+              // candidate must improve it without changing the saved quote.
+              if (variantName === 'refined') assert.ok(selectable, `${name}: quoted excerpt is selectable`);
               variant.states.excerptSelected = await checkpoint(name, '06-excerpt-selected');
             }
             await nativeClick('.composer-response-selection-source, .quote-refined-source-action');
