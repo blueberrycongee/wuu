@@ -115,9 +115,11 @@ const originalHandle = ipcMain.handle.bind(ipcMain);
 ipcMain.handle = (channel, handler) => originalHandle(channel, async (...args) => {
   const entry = { channel, completed: false };
   if (channel === 'wuu:thread-resume') entry.thread = args[1];
+  if (channel === 'wuu:thread-search') entry.query = args[1];
   rpc.push(entry);
   assert.ok(!['wuu:turn-start', 'wuu:turn-queue', 'wuu:turn-steer'].includes(channel), 'Acceptance must not invoke inference');
   const result = await handler(...args);
+  if (channel === 'wuu:thread-search') entry.results = result.results.map(value => ({ id: value.thread.id, title: value.thread.title }));
   entry.completed = true;
   return result;
 });
@@ -155,7 +157,7 @@ function key(keyCode, modifiers = []) {
 async function click(selector, fraction = 0.5) {
   await until(selector => !!document.querySelector(selector), selector, selector);
   await evaluate(selector => document.querySelector(selector).scrollIntoView({ block: 'center', behavior: 'instant' }), selector);
-  await frames();
+  await settle();
   const point = await evaluate((selector, fraction) => {
     const element = document.querySelector(selector), box = element.getBoundingClientRect();
     const point = { x: Math.round(box.left + box.width * fraction), y: Math.round(box.top + box.height / 2) };
@@ -164,8 +166,9 @@ async function click(selector, fraction = 0.5) {
   }, selector, fraction);
   await main.webContents.debugger.sendCommand('Input.dispatchMouseEvent', { type: 'mouseMoved', ...point });
   for (const type of ['mousePressed', 'mouseReleased']) {
-    await main.webContents.debugger.sendCommand('Input.dispatchMouseEvent', { type, button: 'left', clickCount: 1, ...point });
+    await main.webContents.debugger.sendCommand('Input.dispatchMouseEvent', { type, button: 'left', buttons: type === 'mousePressed' ? 1 : 0, clickCount: 1, ...point });
   }
+  await frames();
 }
 // Stable restored message anchors keep selectors independent of surrounding turns.
 const message = index => `#user-msg-peer-main-turn-${String(index + 1).padStart(4, '0')}-peer-main-turn-${String(index + 1).padStart(4, '0')}-item-1`;
@@ -175,29 +178,66 @@ const mainInput = '[data-main-conversation-composer] .composer textarea';
 const splitInput = id => `.conversation-split-pane[data-thread-id="${id}"] .composer textarea`;
 async function input(selector, text) {
   await click(selector);
+  await until(selector => document.activeElement === document.querySelector(selector), 'native input focus', selector);
   await evaluate(selector => document.querySelector(selector).select(), selector);
   await main.webContents.insertText(text);
   await until((selector, text) => document.querySelector(selector)?.value === text, 'native draft insertion', selector, text);
 }
 async function openConversation(id, title) {
-  await until(() => !!document.querySelector('.composer textarea'), 'ready conversation shell');
+  await until(() => {
+    const input = document.querySelector('.composer textarea');
+    return input && !input.disabled && !input.readOnly;
+  }, 'ready conversation shell');
   key('P', [process.platform === 'darwin' ? 'meta' : 'control']);
   await until(() => document.activeElement === document.querySelector('.conversation-search-dialog input'), 'conversation search focus');
+  // Reuse the observable request/result barrier from conversation-search-e2e.
+  // A visible title may be a retained result while a new query is debouncing;
+  // the product correctly refuses that stale result until its request settles.
+  const current = await evaluate(() => document.querySelector('.conversation-search-dialog input').value);
+  if (current === title) {
+    await evaluate(() => document.querySelector('.conversation-search-dialog input').select());
+    await main.webContents.insertText('acceptance-query-reset');
+    await until(() => document.querySelector('.conversation-search-dialog input')?.value === 'acceptance-query-reset', 'distinct search edit');
+    await frames();
+  }
   await evaluate(() => document.querySelector('.conversation-search-dialog input').select());
+  const offset = rpc.length;
   await main.webContents.insertText(title);
-  await until(title => [...document.querySelectorAll('.conversation-search-result')].some(button =>
-    button.querySelector('.conversation-search-result-title')?.textContent === title), 'fixture search result', title);
-  const selector = await evaluate(title => {
-    const button = [...document.querySelectorAll('.conversation-search-result')].find(button =>
-      button.querySelector('.conversation-search-result-title')?.textContent === title);
-    button.dataset.peerAcceptanceTarget = 'current';
-    return '[data-peer-acceptance-target="current"]';
-  }, title);
-  await click(selector);
+  await until(title => document.querySelector('.conversation-search-dialog input')?.value === title, 'native search query', title);
+  await hostUntil(() => rpc.slice(offset).some(entry => entry.channel === 'wuu:thread-search' && entry.query === title && entry.completed), 'completed exact search request');
+  const response = rpc.slice(offset).filter(entry => entry.channel === 'wuu:thread-search' && entry.query === title && entry.completed).at(-1);
+  assert.ok(response.results.some(result => result.id === id), 'Search must return the intended fixture conversation');
+  await until(({ title, count }) => {
+    const results = document.querySelector('.conversation-search-results');
+    const buttons = [...document.querySelectorAll('.conversation-search-result')];
+    return results?.getAttribute('aria-busy') === 'false'
+      && document.querySelector('.conversation-search-dialog input')?.value === title
+      && buttons.length === count
+      && buttons.some(button => button.querySelector('.conversation-search-result-title')?.textContent === title);
+  }, 'current search results committed', { title, count: response.results.length });
+  await settle();
+  // The input's existing ArrowDown/Enter handler is the normal keyboard search
+  // flow. Select the exact current row without clicking during a layout change.
+  await evaluate(() => document.querySelector('.conversation-search-dialog input').focus());
+  const selected = await evaluate(title => [...document.querySelectorAll('.conversation-search-result')].findIndex(button =>
+    button.querySelector('.conversation-search-result-title')?.textContent === title), title);
+  // Every fixture title is unique. Home is not a search shortcut, so walk from
+  // the currently selected row using the same native ArrowDown path as users.
+  const currentIndex = await evaluate(() => [...document.querySelectorAll('.conversation-search-result')].findIndex(button => button.getAttribute('aria-selected') === 'true'));
+  for (let count = (selected - currentIndex + response.results.length) % response.results.length; count > 0; count--) {
+    key('Down');
+    await frames();
+  }
+  await until(title => document.querySelector('.conversation-search-result[aria-selected="true"] .conversation-search-result-title')?.textContent === title, 'exact selected search result', title);
+  // Search handles Enter on keyDown and prevents default; native buttons tested
+  // below use the complete character sequence instead.
+  main.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Enter' });
+  main.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Enter' });
   await until(id => document.querySelector('.cached-conversation-pane[data-active="true"]')?.dataset.threadId === id
     && !document.querySelector('.conversation-search-dialog'), 'active fixture conversation', id);
-  await frames();
+  await settle();
 }
+
 async function openMain() {
   await openConversation('peer-main', 'Peer collaboration');
   await until(selector => !!document.querySelector(selector), 'restored incoming cards', card(0));
@@ -487,6 +527,7 @@ run().catch(async error => {
       fs.writeFileSync(path.join(output, 'failure-state.json'), JSON.stringify(await evaluate(() => ({
         cards: [...document.querySelectorAll('.session-message-source')].map(node => node.outerHTML),
         activeElement: document.activeElement?.outerHTML,
+        search: document.querySelector('.conversation-search-dialog')?.outerHTML,
         focusVisible: document.activeElement?.matches(':focus-visible'),
         panes: [...document.querySelectorAll('.conversation-split-pane, .cached-conversation-pane')].map(node => ({ id: node.dataset.threadId, active: node.dataset.active })),
         inputs: [...document.querySelectorAll('.composer textarea')].map(node => ({ text: node.value, rect: node.getBoundingClientRect().toJSON() })),
