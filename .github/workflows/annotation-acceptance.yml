@@ -83,6 +83,7 @@ jobs:
         shell: bash
         run: |
           export WUU_E2E_OUTPUT="$WUU_ANNOTATION_OUTPUT/non-pdf"
+          export WUU_E2E_VISIBLE=true
           mkdir -p "$WUU_E2E_OUTPUT"
           set -o pipefail
           xvfb-run --auto-servernum --server-args='-screen 0 1600x1200x24' desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/file-selection-e2e.cjs 2>&1 | tee "$WUU_E2E_OUTPUT/run.log"
