@@ -10,6 +10,7 @@ const startupEntryNs = process.hrtime.bigint();
 // WUU_SWITCH_PACED_STREAM=1 measures native send, paced Markdown and typing.
 // WUU_SWITCH_STREAM_ONLY=1 runs only native long-conversation setup and streaming.
 // WUU_SWITCH_CORE_BUILD_COMMIT identifies a separately selected core in hybrid runs.
+// Exported source snapshots supply WUU_SWITCH_SOURCE_COMMIT and SOURCE_CHANGES.
 // WUU_SWITCH_SIDEBAR_THREADS=1500 adds metadata-only sidebar history.
 // WUU_SWITCH_ROUNDS controls warm repeats. Defaults live in the budget fixture.
 // WUU_SWITCH_INIT_DELAY_MS injects a readiness fault; never pool it with baseline.
@@ -134,7 +135,8 @@ const sidebarProjects = Array.from({ length: sidebarThreads ? (sidebarThreads >=
   return { id: `sidebar-project-${i}`, name: `Sidebar project ${i}`, path: cwd, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' };
 });
 fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({ default_provider: 'fixture', providers: { fixture: { type: 'openai-compatible', base_url: 'http://127.0.0.1:1/v1', api_key: 'fixture-only', model: 'fixture' } } }));
-if (subscriptionTurns || startupOnly) {
+{
+  // Every fixture excludes installed engines, including the switch budget run.
   const configPath = path.join(home, 'config.json');
   const config = JSON.parse(fs.readFileSync(configPath));
   if (subscriptionTurns) {
@@ -248,9 +250,9 @@ async function clearDraft(win, expected) {
     if (input?.value !== expected) throw new Error('Draft changed before cleanup');
     input.focus();
   }, expected);
-  const modifiers = [process.platform === 'darwin' ? 'meta' : 'control'];
-  win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'A', modifiers });
-  win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'A', modifiers });
+  // Synthetic Cmd+A does not reliably invoke macOS menu editing commands.
+  // Use Chromium's native selection command before the trusted deletion below.
+  win.webContents.selectAll();
   await evaluate(win, expected => new Promise((resolve, reject) => {
     const deadline = performance.now() + 30000;
     let frames = 0;
@@ -956,8 +958,8 @@ startFixtureProvider().then(() => { startupProbe?.mark('product-main-import'); r
   const rendererAssets = path.join(path.dirname(fileURLToPath(main.webContents.getURL())), 'assets');
   const metadata = {
     buildKind: process.env.WUU_SWITCH_BUILD_KIND || 'production-vite',
-    schemaVersion: 5, recordedAt: new Date().toISOString(), sourceCommit: git(['rev-parse', 'HEAD']),
-    sourceChanges: git(['status', '--short']),
+    schemaVersion: 5, recordedAt: new Date().toISOString(), sourceCommit: process.env.WUU_SWITCH_SOURCE_COMMIT || git(['rev-parse', 'HEAD']),
+    sourceChanges: process.env.WUU_SWITCH_SOURCE_COMMIT ? (process.env.WUU_SWITCH_SOURCE_CHANGES ?? null) : git(['status', '--short']),
     productSourceCommit: process.env.WUU_SWITCH_BUILD_COMMIT || git(['-C', path.dirname(mainBundle), 'rev-parse', 'HEAD']),
     coreSourceCommit: process.env.WUU_SWITCH_CORE_BUILD_COMMIT || null,
     productSourceChanges: (() => {

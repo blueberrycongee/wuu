@@ -179,6 +179,10 @@ as coverage. Keep this workload separate from full-journey results.
 UI/core comparisons. Both executable/bundle hashes remain recorded. Retained
 builds outside a Git checkout need the explicit UI commit; their source-change
 state is null, so retain their verified build manifest alongside the results.
+An isolated runner that exports source without `.git` also supplies
+`WUU_SWITCH_SOURCE_COMMIT` and `WUU_SWITCH_SOURCE_CHANGES` for the harness source.
+Retain the exported source and its hash manifest alongside the results; omitted
+source-change information is recorded as null, not as a clean checkout.
 
 Typing stays at the fixed one-third provider-write point. Results record its
 zero-based chunk index, emitted/received character progress, rendered text size,
