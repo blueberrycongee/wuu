@@ -271,6 +271,8 @@ async function run() {
     main.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'ESC' }); main.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'ESC' });
     await waitFor(() => !document.querySelector('.pdf-selection-action-menu'));
   }
+  main.setSize(1380, 1000);
+  await evaluate(() => { document.documentElement.dataset.theme = 'light'; document.documentElement.style.setProperty('--conversation-message-font-size', '14px'); document.documentElement.style.setProperty('--appearance-scale', '1'); });
   await evaluate(() => {
     const host = document.querySelector('[data-workspace-pdf-preview]');
     const span = host.shadowRoot.querySelector('.page[data-page-number="1"] .textLayer span');
@@ -408,6 +410,10 @@ db.commit()
   assert.equal(seed.status, 0, seed.stderr);
   main.setSize(1380, 1000);
   await main.loadFile(path.join(desktop, 'out/renderer/index.html'));
+  await waitFor(() => document.querySelector('[data-section-id="repo"] .project-row[aria-expanded]'));
+  if (await evaluate(() => document.querySelector('[data-section-id="repo"] .project-row').getAttribute('aria-expanded') === 'false')) {
+    await click('[data-section-id="repo"] .project-row');
+  }
   await waitFor(() => [...document.querySelectorAll('.thread-row-title')].some(title => title.textContent === 'Split PDF fixture'));
   await evaluate(() => [...document.querySelectorAll('.thread-row')].find(row => row.querySelector('.thread-row-title')?.textContent === 'Split PDF fixture').querySelector('.thread-row-main').click());
   await waitFor(id => document.querySelector(`.cached-conversation-pane[data-active="true"][data-thread-id="${id}"] .session-message-source:not(:disabled)`), splitID);
