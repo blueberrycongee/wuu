@@ -179,6 +179,15 @@ app.whenReady().then(async () => {
   await waitFor(win, () => !document.querySelector('.app-context-dialog'));
   await evaluate(win, () => document.querySelector('[data-wuu-component="right-sidebar-toggle"]').click());
   await waitFor(win, () => !document.querySelector('.conversation-pane')?.hasAttribute('inert'));
+  await waitFor(win, () => {
+    const shell = document.querySelector('.app-shell');
+    if (!shell || shell.classList.contains('right-panel-open') || shell.classList.contains('right-panel-animating')) return false;
+    if (document.querySelector('.workspace-right-panel')?.hasAttribute('data-sheet')) return false;
+    const input = document.querySelector('.conversation-split-pane[data-thread-id="sidebar-fade-1"] textarea');
+    if (!input) return false;
+    const rect = input.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0 && document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2) === input;
+  });
   assert.equal(await evaluate(win, () => document.querySelector('.conversation-split-pane[data-thread-id="sidebar-fade-1"] textarea').value), 'Preserve the secondary draft');
   assert.equal(await evaluate(win, () => document.querySelectorAll('.conversation-split-pane[data-thread-id="sidebar-fade-1"] .composer-attachment-tray-item').length), 2);
   assert.deepEqual(await evaluate(win, () => [...document.querySelectorAll('.conversation-split-pane[data-thread-id="sidebar-fade-0"] .composer-attachment-tray-item')]
