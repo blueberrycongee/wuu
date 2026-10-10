@@ -106,7 +106,7 @@ fs.writeFileSync(path.join(home, 'projects.json'), JSON.stringify({ projects: [p
 fs.writeFileSync(path.join(home, 'desktop-settings.json'), JSON.stringify({
   onboarding_version: 100, language: 'en-US', theme: 'light', message_flow_font_size: 14,
 }));
-const rpc = [], checks = [], screenshots = [], recordings = [];
+const rpc = [], checks = [], screenshots = [], recordings = [], failures = [];
 const boundary = 'Shipped Electron main/preload/renderer and Go history restoration/navigation; synthetic persisted incoming messages and managed artifact files. The save destination picker is supplied by the harness; protocol fetching, preview and file writing are real. No external inference or live peer-to-peer delivery.';
 let main, recordingTimer, pendingFrame = Promise.resolve();
 const log = text => { console.log(text); fs.appendFileSync(path.join(output, 'run.log'), `${text}\n`); };
@@ -310,6 +310,60 @@ async function closeSplit() {
   await click('.conversation-split-close');
   await until(() => !document.querySelector('.conversation-split-pane'), 'split closed');
 }
+async function setPresentation(theme, size) {
+  await evaluate(async (theme, size) => {
+    const themeResult = await window.wuu.setThemePreference(theme);
+    const sizeResult = await window.wuu.setMessageFlowFontSize(size);
+    if (!themeResult.ok || !sizeResult.ok) throw new Error('Preference update rejected');
+  }, theme, size);
+  const loaded = new Promise(resolve => main.webContents.once('did-finish-load', resolve));
+  main.webContents.reload(); await loaded;
+  await until((theme, size) => document.documentElement.dataset.theme === theme &&
+    Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--conversation-message-font-size')) === size,
+  'persisted theme and message font', theme, size);
+}
+async function captureVisualMatrix() {
+  for (const theme of ['light', 'dark']) for (const size of [14, 20]) {
+    await setPresentation(theme, size);
+    await openMain();
+    for (const width of [1380, 820]) {
+      await openMain();
+      main.setContentSize(width, 960);
+      await until(width => innerWidth === width, 'window size', width);
+      await evaluate(selector => document.querySelector(selector).scrollIntoView({ block: 'center', behavior: 'instant' }), card(1));
+      await settle();
+      await checkCardGeometry(1, `long-title-${theme}-${size}px-${width}`, longTitle);
+      for (const index of [5, 6, 7]) {
+        await openArtifactScene(index);
+        await evaluate(selector => document.querySelector(selector).scrollIntoView({ block: 'center', behavior: 'instant' }), artifactCard(index));
+        await settle();
+        const geometry = await evaluate(selector => {
+          const card = document.querySelector(selector), bounds = card.getBoundingClientRect();
+          const pane = card.closest('.conversation-pane').getBoundingClientRect();
+          return { bounds: bounds.toJSON(), pane: pane.toJSON(), clientWidth: card.clientWidth, scrollWidth: card.scrollWidth,
+            buttons: [...card.querySelectorAll('button')].map(button => ({ label: button.getAttribute('aria-label'), box: button.getBoundingClientRect().toJSON() })),
+            nestedButtons: card.querySelectorAll('button button').length };
+        }, artifactCard(index));
+        assert.ok(geometry.bounds.left >= geometry.pane.left - 1 && geometry.bounds.right <= geometry.pane.right + 1, 'Artifact card fits its conversation pane');
+        assert.ok(geometry.scrollWidth <= geometry.clientWidth + 1, 'Long artifact names must not overflow');
+        assert.equal(geometry.nestedButtons, 0, 'Artifact rows retain independent actions');
+        assert.equal(geometry.buttons.length, index === 7 ? 3 : 1);
+        for (const button of geometry.buttons) assert.ok(button.box.left >= geometry.bounds.left - 1 && button.box.right <= geometry.bounds.right + 1, 'Artifact action fits its card');
+        const scene = `${index === 5 ? 'zip' : index === 6 ? 'patch' : 'multiple'}-cards-${theme}-${size}px-${width}`;
+        await capture(scene); pass(scene, geometry);
+      }
+    }
+    // A short body must not let an unbroken source title set the grid's
+    // intrinsic width. Exercise the actual narrow split, not a component mock.
+    await openMain();
+    await click(card(4));
+    await until(() => !!document.querySelector('.conversation-split-pane[data-thread-id="peer-cjk"]'), 'CJK source split');
+    await evaluate(selector => document.querySelector(selector).scrollIntoView({ block: 'center', behavior: 'instant' }), card(4));
+    await settle();
+    await checkCardGeometry(4, `short-body-cjk-split-${theme}-${size}px-820`, cjkTitle);
+    await closeSplit();
+  }
+}
 app.on('browser-window-created', (_event, win) => { main ||= win; });
 app.on('quit', () => fs.rmSync(fixture, { recursive: true, force: true }));
 const watchdog = setTimeout(() => { log('Global acceptance deadline exceeded'); app.exit(1); }, 180000);
@@ -365,6 +419,11 @@ db.commit()
     await evaluate(() => document.querySelector('.cached-conversation-pane[data-active="true"] .session-message-source').scrollIntoView({ block: 'start', behavior: 'instant' }));
     await capture(`${index === 5 ? 'zip' : index === 6 ? 'patch' : 'multiple'}-cards-light-14px-initial`);
   }
+  // Independent visual evidence must survive a later behavioral assertion.
+  await captureVisualMatrix();
+  await setPresentation('light', 14);
+  main.setContentSize(1380, 960);
+  await until(() => innerWidth === 1380, 'restored interaction viewport');
   await openMain();
 
   await input(mainInput, 'Keep my primary draft');
@@ -403,9 +462,50 @@ db.commit()
 
   assert.equal(await evaluate(selector => document.querySelector(selector)?.getAttribute('aria-expanded'), `${message(1)} .user-message-expand-toggle`), 'false');
   clipboard.clear();
-  await evaluate(selector => document.querySelector(selector).focus(), `${message(1)} .message-copy-button`);
-  await click(`${message(1)} .message-copy-button`);
-  await hostUntil(() => clipboard.readText() === longReply, 'complete reply copied to native clipboard');
+  const copySelector = `${message(1)} .message-copy-button`;
+  const describeText = text => ({ text, utf16Length: text.length, utf8Length: Buffer.byteLength(text),
+    sha256: createHash('sha256').update(text).digest('hex') });
+  const copyEvidence = { expectedSource: 'longReply, verified unchanged in the real Go resume result',
+    expected: describeText(longReply), samples: [] };
+  const sampleClipboard = async label => {
+    const text = clipboard.readText();
+    let firstDifference = 0;
+    while (firstDifference < text.length && firstDifference < longReply.length && text[firstDifference] === longReply[firstDifference]) firstDifference++;
+    copyEvidence.samples.push({ label, elapsedMs: Math.round(performance.now() - copyStarted),
+      actual: describeText(text), firstDifference: text === longReply ? null : firstDifference,
+      formats: clipboard.availableFormats(), selectionText: process.platform === 'linux' ? clipboard.readText('selection') : undefined,
+      windowFocused: main.isFocused(), renderer: await evaluate(selector => ({
+        documentFocused: document.hasFocus(), activeElement: document.activeElement?.outerHTML,
+        control: document.querySelector(selector)?.outerHTML,
+      }), copySelector) });
+    fs.writeFileSync(path.join(output, 'clipboard-evidence.json'), JSON.stringify(copyEvidence, null, 2));
+  };
+  const copyStarted = performance.now();
+  await evaluate(selector => document.querySelector(selector).focus(), copySelector);
+  await sampleClipboard('before native copy click');
+  await click(copySelector);
+  await sampleClipboard('immediately after native copy click');
+  await delay(100);
+  await sampleClipboard('100ms after native copy click');
+  try {
+    await hostUntil(() => clipboard.readText() === longReply, 'complete reply copied to native clipboard');
+    await sampleClipboard('exact native clipboard match');
+    pass('collapsed copy retains the complete reply in the native clipboard');
+  } catch (error) {
+    await sampleClipboard('exact native clipboard check failed');
+    copyEvidence.rendererRead = await evaluate(async () => {
+      const result = await Promise.race([
+        Promise.resolve().then(() => navigator.clipboard.readText()).then(text => ({ text }), error => ({ error: String(error) })),
+        new Promise(resolve => setTimeout(() => resolve({ error: 'Renderer clipboard read timed out after 1000ms' }), 1000)),
+      ]);
+      return { ...result, documentFocused: document.hasFocus() };
+    });
+    fs.writeFileSync(path.join(output, 'clipboard-evidence.json'), JSON.stringify(copyEvidence, null, 2));
+    failures.push({ name: 'complete reply copied to native clipboard', error: String(error.stack || error), evidence: 'clipboard-evidence.json' });
+    log(`FAIL complete reply copied to native clipboard; see clipboard-evidence.json`);
+    // Keep the exact assertion as a final red gate while unrelated expansion,
+    // navigation and file checks continue. Never substitute a mocked clipboard.
+  }
   assert.equal(await evaluate(() => !!document.querySelector('.conversation-split-pane')), false);
   await click(`${message(1)} .user-message-expand-toggle`);
   await until(selector => document.querySelector(selector)?.getAttribute('aria-expanded') === 'true', 'full reply expanded', `${message(1)} .user-message-expand-toggle`);
@@ -414,7 +514,7 @@ db.commit()
   await capture('reply-expanded-light');
   assert.equal(await evaluate(() => !!document.querySelector('.conversation-split-pane')), false);
   await click(`${message(1)} .user-message-expand-toggle`);
-  pass('collapsed copy retains complete reply; expansion and copy do not navigate');
+  pass('expansion retains complete reply; expansion and copy do not navigate');
   await click(card(1));
   await until(() => !!document.querySelector('.conversation-split-pane[data-thread-id="peer-reply"]'), 'reply source split');
   assert.equal(await evaluate(selector => document.querySelector(selector)?.value, splitInput('peer-main')), 'Keep my primary draft');
@@ -456,63 +556,15 @@ db.commit()
     files.slice(0, 2).map(file => ({ name: file.name, size: file.bytes.length, sha256: createHash('sha256').update(file.bytes).digest('hex') })));
   await stopRecording();
 
-  for (const theme of ['light', 'dark']) for (const size of [14, 20]) {
-    await evaluate(async (theme, size) => {
-      const themeResult = await window.wuu.setThemePreference(theme);
-      const sizeResult = await window.wuu.setMessageFlowFontSize(size);
-      if (!themeResult.ok || !sizeResult.ok) throw new Error('Preference update rejected');
-    }, theme, size);
-    const loaded = new Promise(resolve => main.webContents.once('did-finish-load', resolve));
-    main.webContents.reload(); await loaded;
-    await until((theme, size) => document.documentElement.dataset.theme === theme &&
-      Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--conversation-message-font-size')) === size,
-    'persisted theme and message font', theme, size);
-    await openMain();
-    for (const width of [1380, 820]) {
-      await openMain();
-      main.setContentSize(width, 960);
-      await until(width => innerWidth === width, 'window size', width);
-      await evaluate(selector => document.querySelector(selector).scrollIntoView({ block: 'center', behavior: 'instant' }), card(1));
-      await settle();
-      await checkCardGeometry(1, `long-title-${theme}-${size}px-${width}`, longTitle);
-      for (const index of [5, 6, 7]) {
-        await openArtifactScene(index);
-        await evaluate(selector => document.querySelector(selector).scrollIntoView({ block: 'center', behavior: 'instant' }), artifactCard(index));
-        await settle();
-        const geometry = await evaluate(selector => {
-          const card = document.querySelector(selector), bounds = card.getBoundingClientRect();
-          const pane = card.closest('.conversation-pane').getBoundingClientRect();
-          return { bounds: bounds.toJSON(), pane: pane.toJSON(), clientWidth: card.clientWidth, scrollWidth: card.scrollWidth,
-            buttons: [...card.querySelectorAll('button')].map(button => ({ label: button.getAttribute('aria-label'), box: button.getBoundingClientRect().toJSON() })),
-            nestedButtons: card.querySelectorAll('button button').length };
-        }, artifactCard(index));
-        assert.ok(geometry.bounds.left >= geometry.pane.left - 1 && geometry.bounds.right <= geometry.pane.right + 1, 'Artifact card fits its conversation pane');
-        assert.ok(geometry.scrollWidth <= geometry.clientWidth + 1, 'Long artifact names must not overflow');
-        assert.equal(geometry.nestedButtons, 0, 'Artifact rows retain independent actions');
-        assert.equal(geometry.buttons.length, index === 7 ? 3 : 1);
-        for (const button of geometry.buttons) assert.ok(button.box.left >= geometry.bounds.left - 1 && button.box.right <= geometry.bounds.right + 1, 'Artifact action fits its card');
-        const scene = `${index === 5 ? 'zip' : index === 6 ? 'patch' : 'multiple'}-cards-${theme}-${size}px-${width}`;
-        await capture(scene); pass(scene, geometry);
-      }
-    }
-    // A short body must not let an unbroken source title set the grid's
-    // intrinsic width. Exercise the actual narrow split, not a component mock.
-    await openMain();
-    await click(card(4));
-    await until(() => !!document.querySelector('.conversation-split-pane[data-thread-id="peer-cjk"]'), 'CJK source split');
-    await evaluate(selector => document.querySelector(selector).scrollIntoView({ block: 'center', behavior: 'instant' }), card(4));
-    await settle();
-    await checkCardGeometry(4, `short-body-cjk-split-${theme}-${size}px-820`, cjkTitle);
-    await closeSplit();
-  }
   assert.ok(!rpc.some(entry => ['wuu:turn-start', 'wuu:turn-queue', 'wuu:turn-steer'].includes(entry.channel)), 'No inference attempted');
   const hash = file => createHash('sha256').update(fs.readFileSync(file)).digest('hex');
-  fs.writeFileSync(path.join(output, 'results.json'), JSON.stringify({ passed: true, boundary, recordedAt: new Date().toISOString(),
+  fs.writeFileSync(path.join(output, 'results.json'), JSON.stringify({ passed: failures.length === 0, failures, boundary, recordedAt: new Date().toISOString(),
     source: spawnSync('git', ['rev-parse', 'HEAD'], { cwd: desktop, encoding: 'utf8' }).stdout.trim(), versions: process.versions,
     hashes: { harness: hash(__filename), core: hash(process.env.WUU_DESKTOP_CORE), main: hash(mainBundle), preload: hash(path.join(desktop, 'out/preload/index.cjs')) },
     checks, screenshots, recordings, rpc, savedDownloads: savedDownloads.map(({ name }) => ({ name })),
     limitations: ['Messages are seeded fixtures, not live cross-agent delivery.', 'The native save picker is replaced with a disposable test destination; downloaded bytes and the production save implementation are verified.', 'Linux Electron screenshots do not validate macOS-specific rendering.', 'Geometry checks and screenshots require human visual review.'],
   }, null, 2));
+  assert.equal(failures.length, 0, failures.map(failure => failure.name).join('; '));
   log(`PASS ${checks.length} checks; ${screenshots.length} screenshots; ${recordings.length} recorded frames`);
   clearTimeout(watchdog);
   app.quit();
@@ -534,6 +586,6 @@ run().catch(async error => {
       })), null, 2));
     } catch (captureError) { log(String(captureError)); }
   }
-  fs.writeFileSync(path.join(output, 'failure.json'), JSON.stringify({ error: String(error.stack || error), boundary, checks, screenshots, rpc }, null, 2));
+  fs.writeFileSync(path.join(output, 'failure.json'), JSON.stringify({ error: String(error.stack || error), boundary, checks, failures, screenshots, rpc }, null, 2));
   app.exit(1);
 });
