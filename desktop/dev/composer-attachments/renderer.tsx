@@ -1,5 +1,6 @@
 // Production Composer with synthetic attachments; no product bridge or user data.
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+import { ComposerPdfQuoteCard } from "../../src/renderer/PdfQuoteCard";
 import { createRoot } from "react-dom/client";
 import { Composer, type CodexModelLoadState } from "../../src/renderer/ComposerView";
 import { useComposerDraftState } from "../../src/renderer/ComposerDraftState";
@@ -119,6 +120,8 @@ Object.assign(window, { fixtureIdle: () => queue });
 function Fixture(): JSX.Element {
   const draft = useComposerDraftState();
   const seeded = useRef(false);
+  const [quoteVisible, setQuoteVisible] = useState(params.has("quote"));
+  const [comment, setComment] = useState("");
   const hero = params.has("hero");
 
   useEffect(() => {
@@ -142,7 +145,8 @@ function Fixture(): JSX.Element {
         <button onClick={() => void run(() => pasteFiles([pdfFile()]))}>粘贴 PDF</button>
         <button onClick={() => void run(async () => pasteFiles([await videoFile()]))}>粘贴视频</button>
         <button onClick={() => void run(() => pasteText(longText()))}>粘贴长文本</button>
-        <button onClick={() => void run(() => { draft.setPrompt(""); draft.setComposerImages([]); draft.setComposerFiles([]); })}>模拟发送</button>
+        <button onClick={() => setQuoteVisible(true)}>添加 PDF 批注</button>
+        <button onClick={() => void run(() => { draft.setPrompt(""); draft.setComposerImages([]); draft.setComposerFiles([]); setQuoteVisible(false); setComment(""); })}>模拟发送</button>
         <button onClick={() => pasteFiles([new File(["fixture"], "archive.zip", { type: "application/zip" })])}>粘贴 ZIP</button>
       </div>
       <main className={`fixture-pane${hero ? " fixture-pane-hero" : ""}`}>
@@ -160,6 +164,12 @@ function Fixture(): JSX.Element {
           setPrompt={draft.setPromptFromInput}
           files={draft.composerFiles}
           images={draft.composerImages}
+          inlineSelection={quoteVisible ? <ComposerPdfQuoteCard
+            text={"设计评审\n输入框附件与文档引用\n统一卡片尺寸和文字层级，保留完整摘录与来源跳转，并检查大字号和窄窗口下的阅读体验。"}
+            sourceName="design-review.pdf" location="p. 1" comment={comment}
+            showComment={!params.has("quote-only")} onOpenSource={() => true}
+            onChangeComment={setComment} onRemove={() => setQuoteVisible(false)}
+          /> : undefined}
           queuedMessages={queued}
           guideMessages={[]}
           running={false}
@@ -204,7 +214,7 @@ function Fixture(): JSX.Element {
           onGuideQueuedMessage={noop}
           onEditQueuedMessage={noop}
           onEditGuideMessage={noop}
-          onSend={() => { draft.setPrompt(""); draft.setComposerImages([]); draft.setComposerFiles([]); }}
+          onSend={() => { draft.setPrompt(""); draft.setComposerImages([]); draft.setComposerFiles([]); setQuoteVisible(false); setComment(""); }}
           onInterrupt={noop}
         />
       </main>

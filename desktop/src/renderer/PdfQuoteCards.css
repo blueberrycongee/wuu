@@ -1,58 +1,17 @@
-.pdf-quote-tile {
-  position: relative;
-  flex: 0 0 auto;
-  width: max(160px, calc(var(--font-ui) * 12));
-  max-width: 100%;
-  color: var(--ink);
-  font-size: var(--font-ui);
-}
-
-.pdf-quote-tile .pdf-quote-tile-main {
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 0;
-  width: 100%;
-  min-width: 0;
-  height: calc(var(--font-ui) * 8.75);
-  padding: 0;
-  overflow: hidden;
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-lg);
-  background: var(--surface-1);
-  color: inherit;
-  font: inherit;
-  text-align: start;
-  cursor: pointer;
-  transition: background-color var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out);
-}
-
-.pdf-quote-tile-excerpt {
-  display: -webkit-box;
-  flex: 1;
-  min-height: 0;
-  margin: var(--space-2) var(--space-3) 0;
-  padding-inline-end: var(--space-2);
-  overflow: hidden;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 4;
-  color: var(--ink-soft);
-  line-height: 1.45;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
+/* PDF excerpts use the same compact attachment card as files and pasted text. */
+.pdf-quote-tile .pdf-quote-tile-excerpt {
+  font-weight: var(--weight-regular);
 }
 
 .pdf-quote-tile-source {
   display: flex;
-  flex: 0 0 auto;
   align-items: center;
-  gap: var(--space-1);
+  gap: var(--space-2);
   min-width: 0;
-  max-width: 100%;
-  box-sizing: border-box;
-  min-height: calc(var(--font-ui) * 2.25);
-  padding: var(--space-1) var(--space-2);
-  line-height: var(--line-ui);
+}
+
+.pdf-quote-tile-source .pdf-quote-location {
+  color: inherit;
 }
 
 .pdf-quote-tile-source > span:first-of-type {
@@ -64,7 +23,6 @@
 
 .pdf-quote-location { flex: 0 0 auto; margin-inline-start: auto; color: var(--ink-soft); white-space: nowrap; }
 
-.pdf-quote-tile-source > svg,
 .pdf-quote-preview-source > svg,
 .pdf-quote-source-action > svg,
 .pdf-quote-pill > svg,
@@ -76,31 +34,7 @@
   height: var(--icon-size-sm);
 }
 
-.pdf-quote-tile .pdf-quote-tile-remove {
-  position: absolute;
-  top: -4px;
-  right: -4px;
-  inset-block-start: -4px;
-  inset-inline-end: -4px;
-  display: grid;
-  width: 26px;
-  height: 26px;
-  padding: 5px;
-  place-items: center;
-  border: 1px solid var(--hairline);
-  border-radius: 50%;
-  background: var(--paper);
-  color: var(--ink);
-  cursor: pointer;
-  opacity: 0;
-  transition: opacity var(--motion-fast) var(--ease-out), background-color var(--motion-fast) var(--ease-out);
-}
-
-.pdf-quote-tile-remove > svg { width: 100%; height: 100%; }
-.pdf-quote-tile:hover .pdf-quote-tile-remove,
-.pdf-quote-tile:focus-within .pdf-quote-tile-remove { opacity: 1; }
-.pdf-quote-tile-main:hover,
-.pdf-quote-tile-main[aria-expanded="true"] { background: var(--menu-hover); border-color: var(--hairline-strong); }
+.pdf-quote-tile-main[aria-expanded="true"] { background: var(--surface-2); }
 
 .pdf-quote-preview[data-wuu-component] {
   display: flex;
@@ -126,9 +60,27 @@
 }
 
 .floating-menu-below > .pdf-quote-preview { transform-origin: top left; --menu-enter-y: -3px; }
-.pdf-quote-preview .pdf-quote-preview-source { display: flex; align-items: flex-start; gap: var(--space-2); min-width: 0; margin: 0; color: var(--ink-soft); font: inherit; }
-.pdf-quote-preview-source > span:not(.pdf-quote-location) { min-width: 0; overflow-wrap: anywhere; }
-.pdf-quote-preview-source > svg { margin-top: .2em; }
+.pdf-quote-preview[data-wuu-component="quote-preview"] { gap: var(--space-2); }
+.pdf-quote-preview-heading { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
+.pdf-quote-preview .pdf-quote-preview-source {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  min-height: 28px;
+  margin: 0;
+  padding: 0;
+  color: var(--ink-soft);
+  font: inherit;
+  text-align: start;
+}
+.pdf-quote-preview-source > span:not(.pdf-quote-location) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .pdf-quote-excerpt { min-width: 0; }
 .pdf-quote-excerpt-text {
   max-height: calc(4 * var(--font-ui) * var(--line-body));
@@ -156,7 +108,7 @@
   font: inherit;
   cursor: pointer;
 }
-.pdf-quote-disclosure { margin-top: var(--space-1); }
+.pdf-quote-disclosure { margin-top: var(--space-1); padding-inline: 0; }
 .pdf-quote-disclosure[aria-expanded="true"] > svg { transform: rotate(180deg); }
 .pdf-quote-footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2); }
 .pdf-quote-comment-input {
@@ -183,8 +135,7 @@
 .pdf-quote-notice { color: var(--ink-soft); }
 .pdf-quote-remove-action { margin-inline-start: auto; }
 .pdf-quote-source-action:disabled { cursor: progress; opacity: .6; }
-.pdf-quote-preview button:hover:not(:disabled),
-.pdf-quote-tile-remove:hover { background: var(--menu-hover); color: var(--ink); }
+.pdf-quote-preview button:hover:not(:disabled) { background: var(--menu-hover); color: var(--ink); }
 .pdf-quote-preview .pdf-quote-remove-action:hover { background: color-mix(in srgb, var(--danger) 10%, transparent); color: var(--danger); }
 .pdf-quote-tile button:focus-visible,
 .pdf-quote-preview button:focus-visible,
@@ -240,7 +191,6 @@ button.pdf-quote-source-link { padding: var(--space-1) 0; cursor: pointer; }
 .pdf-quote-editor-actions { display: flex; justify-content: flex-end; gap: var(--space-2); }
 .pdf-quote-editor-actions button { min-height: 28px; border: 0; border-radius: var(--radius-xs); background: transparent; color: var(--ink); font: inherit; cursor: pointer; }
 
-@media (hover: none) { .pdf-quote-tile .pdf-quote-tile-remove { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) {
   .pdf-quote-preview[data-wuu-component] { animation: none; }
   .pdf-quote-tile .pdf-quote-tile-main, .pdf-quote-tile .pdf-quote-tile-remove { transition: none; }

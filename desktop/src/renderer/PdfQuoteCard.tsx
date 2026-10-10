@@ -1,7 +1,8 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { FloatingMenuPortal } from "./ComposerFloatingMenu";
 import { useI18n } from "./i18n";
-import { ChevronDown, CornerUpLeft, Quote, X } from "./WuuIcons";
+import { ChevronDown, CornerUpLeft, Quote, Trash2, X } from "./WuuIcons";
+import { Tooltip } from "./Tooltip";
 import "./PdfQuoteCards.css";
 
 /** A shared preview keeps hover reading separate from an explicitly opened editor. */
@@ -130,24 +131,30 @@ export function ComposerPdfQuoteCard({ text, comment = "", meta, sourceName, loc
     setOpeningSource(false);
   });
   const sourceLabel = sourceName || meta || t("responseSelection.cardMeta");
+  const sourceHeading = <><span>{sourceLabel}</span>
+    {location ? <span className="pdf-quote-location">{location}</span> : null}
+    {onOpenSource ? <CornerUpLeft aria-hidden="true" /> : null}</>;
   return <>
-    <div ref={preview.anchorRef} className={`pdf-quote-tile${className ? ` ${className}` : ""}`}
+    <div ref={preview.anchorRef} className={`composer-attachment-card composer-document-card pdf-quote-tile${className ? ` ${className}` : ""}`}
       data-wuu-component="quote-card" data-wuu-variant="pdf"
       onPointerEnter={event => preview.revealOnPointer(event.pointerType)} onPointerLeave={preview.leave}
       onBlur={event => preview.blur(event.relatedTarget)}>
-      <button ref={preview.triggerRef} type="button" className="pdf-quote-tile-main"
+      <button ref={preview.triggerRef} type="button" className="composer-document-card-main pdf-quote-tile-main"
         aria-label={t("responseSelection.open")} aria-expanded={preview.open}
         aria-controls={preview.open ? preview.panelId : undefined} aria-haspopup="dialog"
         onClick={preview.activate} onFocus={preview.revealOnFocus}
         onKeyDown={event => {
           if (event.key === "Tab" && !event.shiftKey && preview.open) { event.preventDefault(); preview.focusPanel(); }
         }}>
-        <span className="pdf-quote-tile-excerpt">{text}</span>
-        <span className="pdf-quote-tile-source"><Quote aria-hidden="true" />
-          <span>{sourceLabel}</span>{location ? <span className="pdf-quote-location">{location}</span> : null}
+        <span className="composer-document-card-icon" aria-hidden="true"><Quote className="icon" /></span>
+        <span className="composer-document-card-text">
+          <span className="composer-document-card-title pdf-quote-tile-excerpt">{text.replace(/\s+/g, " ").trim()}</span>
+          <span className="composer-document-card-meta pdf-quote-tile-source">
+            <span>{sourceLabel}</span>{location ? <span className="pdf-quote-location">{location}</span> : null}
+          </span>
         </span>
       </button>
-      {onRemove ? <button type="button" className="pdf-quote-tile-remove" aria-label={t("responseSelection.remove")}
+      {onRemove ? <button type="button" className="composer-attachment-card-remove pdf-quote-tile-remove" aria-label={t("responseSelection.remove")}
         onClick={() => { preview.close(); onRemove(); }}><X aria-hidden="true" /></button> : null}
     </div>
     {preview.open ? <FloatingMenuPortal anchorRef={preview.anchorRef} owner="composer-attach"
@@ -159,10 +166,24 @@ export function ComposerPdfQuoteCard({ text, comment = "", meta, sourceName, loc
         onPointerEnter={preview.retain} onPointerLeave={preview.leave}
         onFocus={preview.retain} onBlur={event => preview.blur(event.relatedTarget)}
         onKeyDown={event => event.stopPropagation()}>
-        {meta || sourceName ? <div className="pdf-quote-preview-source">
-          <Quote aria-hidden="true" /><span>{sourceName || meta}</span>
-          {location ? <span className="pdf-quote-location">{location}</span> : null}
-        </div> : null}
+        <div className="pdf-quote-preview-heading">
+          {onOpenSource ? <Tooltip content={t("responseSelection.source")}>
+            <button type="button" className="pdf-quote-preview-source pdf-quote-source-action" disabled={openingSource}
+              aria-label={`${t("responseSelection.source")}: ${sourceLabel}${location ? ` · ${location}` : ""}`}
+              onClick={async () => {
+                const request = ++sourceRequest.current;
+                setOpeningSource(true);
+                try {
+                  const opened = await onOpenSource();
+                  if (request === sourceRequest.current && opened) preview.close();
+                } finally { if (request === sourceRequest.current) setOpeningSource(false); }
+              }}>{sourceHeading}</button>
+          </Tooltip> : <div className="pdf-quote-preview-source">{sourceHeading}</div>}
+          {onRemove ? <Tooltip content={t("responseSelection.remove")}>
+            <button type="button" className="pdf-quote-icon-action pdf-quote-remove-action" aria-label={t("responseSelection.remove")}
+              onClick={() => { preview.close(); onRemove(); }}><Trash2 aria-hidden="true" /></button>
+          </Tooltip> : null}
+        </div>
         <PdfQuoteExcerpt text={text} />
         {showComment && (onChangeComment || comment) ? onChangeComment ? <textarea
           className="pdf-quote-comment-input" rows={1} wrap="soft" value={comment}
@@ -170,19 +191,6 @@ export function ComposerPdfQuoteCard({ text, comment = "", meta, sourceName, loc
           onChange={event => onChangeComment(event.target.value)} />
           : <p className="pdf-quote-comment">{comment}</p> : null}
         {notice ? <p className="pdf-quote-notice" role="status">{notice}</p> : null}
-        {onOpenSource || onRemove ? <div className="pdf-quote-footer">
-          {onOpenSource ? <button type="button" className="pdf-quote-source-action" disabled={openingSource}
-            onClick={async () => {
-              const request = ++sourceRequest.current;
-              setOpeningSource(true);
-              try {
-                const opened = await onOpenSource();
-                if (request === sourceRequest.current && opened) preview.close();
-              } finally { if (request === sourceRequest.current) setOpeningSource(false); }
-            }}><CornerUpLeft aria-hidden="true" /><span>{t("responseSelection.source")}</span></button> : null}
-          {onRemove ? <button type="button" className="pdf-quote-remove-action"
-            onClick={() => { preview.close(); onRemove(); }}>{t("responseSelection.remove")}</button> : null}
-        </div> : null}
       </div>
     </FloatingMenuPortal> : null}
   </>;
