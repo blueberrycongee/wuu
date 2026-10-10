@@ -63,7 +63,7 @@ const cases = [
   ['too-many-rows', edit(s => { s.blocks[1].rows = Array(201).fill(['x', 1]); }), false],
   ['byte-budget', edit(s => { s.blocks = Array.from({ length: 16 }, (_, i) => ({ id: `text${i}`, type: 'text', text: '界'.repeat(4000) })); }), false],
 ];
-const results = { sourceSha256: createHash('sha256').update(fs.readFileSync(source)).digest('hex'), helperSha256: createHash('sha256').update(fs.readFileSync(helper)).digest('hex'), cases: [], checks: [] };
+const results = { sourceSha256: createHash('sha256').update(fs.readFileSync(source)).digest('hex'), helperSha256: createHash('sha256').update(fs.readFileSync(helper)).digest('hex'), cases: [], checks: [], categoryAxes: [] };
 const result = toolCall(spec).result?.result;
 assert.ok(result && !result.is_error, 'Valid tool result');
 const resource = result.content.find(part => part.type === 'resource');
@@ -250,9 +250,26 @@ app.whenReady().then(async () => {
   await evaluate(win, `document.querySelector('[data-genui-block="progress"]').scrollIntoView({block:'center',behavior:'instant'})`);
   await settlePaint();
   fs.writeFileSync(path.join(output, 'bar-chart.png'), (await win.webContents.capturePage()).toPNG());
+  for (const chartType of ['bar', 'line']) for (const count of [1, 2, 7]) {
+    const categories = toolCall(edit(s => {
+      s.blocks[2].chartType = chartType;
+      s.blocks[2].points = Array.from({ length: count }, (_, i) => ({ label: ['Design', 'Engineering'][i] || `Team ${i + 1}`, value: (i + 1) * 12 }));
+    }), `${chartType}-categories-${count}`).result.result;
+    await evaluate(win, `window.probe.result(${JSON.stringify(categories)})`);
+    await waitFor(win, `document.querySelectorAll('.plugin-genui-x-categories span').length === ${count}`);
+    for (const [theme, size, width] of [['light', 14, 1100], ['dark', 20, 480]]) {
+      win.setContentSize(width, 1200);
+      await evaluate(win, `document.documentElement.dataset.theme=${JSON.stringify(theme)};document.documentElement.style.setProperty('--wuu-font-size-ui', '${size}px');document.documentElement.style.setProperty('--font-ui', '${size}px');document.querySelector('[data-genui-block="progress"]').scrollIntoView({block:'center',behavior:'instant'})`);
+      await settlePaint();
+      const labels = await evaluate(win, `(() => { const marks=[...document.querySelectorAll('.plugin-genui-chart ${chartType === 'bar' ? 'rect' : 'circle'}')];return [...document.querySelectorAll('.plugin-genui-x-categories span')].map((node,index)=>{const label=node.getBoundingClientRect(),mark=marks[index].getBoundingClientRect();return {offset:Math.abs((label.left+label.right-mark.left-mark.right)/2),fontSize:parseFloat(getComputedStyle(node).fontSize)};}); })()`);
+      results.categoryAxes.push({ chartType, count, theme, size, width, labels });
+      assert.ok(labels.every(label => label.offset < 1 && label.fontSize >= size), `${chartType} ${count} category labels align with marks without shrinking text`);
+      if (chartType === 'bar' && count === 2) fs.writeFileSync(path.join(output, `bar-categories-${theme}-${size}-${width}.png`), (await win.webContents.capturePage()).toPNG());
+    }
+  }
   await evaluate(win, `window.probe.result(${JSON.stringify(result)})`);
   await waitFor(win, `document.querySelector('[data-wuu-component="generated-ui"]')?.getAttribute('aria-busy') === 'false'`);
-  results.checks.push('bar chart renders through the same validated native resource path');
+  results.checks.push('bar/line category-label centers for 1, 2 and 7 marks at wide/default and narrow/large sizes');
 
   await evaluate(win, 'window.probe.failStorage(true)');
   await input(win, '[data-genui-block="draft"] input[type="text"]', 'Still editable');

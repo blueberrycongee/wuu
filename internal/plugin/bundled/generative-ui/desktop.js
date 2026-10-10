@@ -272,9 +272,12 @@ export async function activate(api) {
               : h("circle", { cx: x(index), cy: y(point.value), r: points.length > 40 ? 2 : 4, className: "plugin-genui-mark" }),
             h("title", null, `${point.label}: ${point.value}`))),
         ),
-        h("div", { className: "plugin-genui-x-labels", "aria-hidden": true },
-          h("span", { title: points[0].label }, points[0].label),
-          points.length > 1 ? h("span", { title: points.at(-1).label }, points.at(-1).label) : null),
+        points.length <= 8
+          // Both chart types use the SVG's (index + 0.5) / count centers.
+          ? h("div", { className: "plugin-genui-x-categories", "aria-hidden": true, style: { gridTemplateColumns: `repeat(${points.length}, minmax(0, 1fr))` } },
+            points.map((point, index) => h("span", { key: index, title: point.label }, point.label)))
+          // Dense series use an explicit summary, not misleading endpoint ticks.
+          : h("div", { className: "plugin-genui-x-range", "aria-hidden": true }, `Range: ${points[0].label} – ${points.at(-1).label}`),
       ),
       h("p", { className: "plugin-genui-chart-caption" }, selected ? `${selected.label}: ${selected.value}` : [block.xLabel, block.yLabel].filter(Boolean).join(" · ") || `${points.length} points`),
       h("details", null, h("summary", null, "Chart data"),
@@ -339,8 +342,9 @@ const styles = `
 .plugin-genui-y-labels span:last-child { transform:translateY(50%); }
 .plugin-genui-chart { display:block; width:100%; height:180px; overflow:visible; }
 .plugin-genui-chart line, .plugin-genui-chart polyline { vector-effect:non-scaling-stroke; }
-.plugin-genui-x-labels { grid-column:2; display:flex; justify-content:space-between; gap:12px; min-width:0; }
-.plugin-genui-x-labels span { max-width:48%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.plugin-genui-x-categories { grid-column:2; display:grid; min-width:0; text-align:center; }
+.plugin-genui-x-categories span { min-width:0; padding:0 4px; overflow-wrap:anywhere; }
+.plugin-genui-x-range { grid-column:2; text-align:center; overflow-wrap:anywhere; }
 .plugin-genui-grid { stroke:var(--genui-border); stroke-dasharray:3 4; }
 .plugin-genui-axis { stroke:var(--wuu-color-text-muted, currentColor); }
 .plugin-genui-line { fill:none; stroke:var(--wuu-color-accent, currentColor); stroke-width:2.5; }

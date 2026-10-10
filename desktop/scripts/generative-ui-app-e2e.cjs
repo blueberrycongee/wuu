@@ -227,6 +227,14 @@ async function run() {
   await wait(() => document.querySelector('[data-wuu-component="generated-ui"]')?.getAttribute('aria-busy') === 'false');
   assert.equal(await evaluate(() => document.querySelectorAll('[data-wuu-component="generated-ui"]').length), 1);
   assert.ok(await evaluate(() => document.querySelector('.session-flow [data-wuu-component="generated-ui"]')));
+  assert.ok(await evaluate(() => {
+    const bars = [...document.querySelectorAll('.plugin-genui-chart rect')];
+    return bars.length === 2 && [...document.querySelectorAll('.plugin-genui-x-categories span')].length === bars.length
+      && [...document.querySelectorAll('.plugin-genui-x-categories span')].every((node, index) => {
+        const label = node.getBoundingClientRect(), bar = bars[index].getBoundingClientRect();
+        return Math.abs((label.left + label.right - bar.left - bar.right) / 2) < 1;
+      });
+  }), 'Production category labels align with their bar centers');
   pass('real model tool call reaches Go helper, persisted message flow, MIME registry and production renderer');
   await capture('03-app-interactive.png', '.plugin-genui-header');
   await type('[data-genui-block="teams"] input', 'Engineering');
