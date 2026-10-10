@@ -482,6 +482,7 @@ export const zhCN = {
   "sessionControl.takenOver": "已接管",
   "sessionControl.takeoverHint": "向此会话发送消息即接管会话。",
   "artifacts.title": "生成的产物",
+  "artifacts.file": "文件",
   "artifacts.imageGallery": "图片组",
   "artifacts.openInPanel": "在侧栏打开",
   "artifacts.gridView": "切换为平铺视图",

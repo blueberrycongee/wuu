@@ -30,6 +30,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Show the source of received session messages as a compact, theme-aware card
   that opens the related conversation in a split pane. Keep message text,
   copying, and long-message expansion separate from the navigation control.
+  Unify its card surface and corners with generated files and turn summaries.
+  Put artifact filenames first, with concise format and known size beneath,
+  while preserving existing preview, workspace, and download actions.
 
 - Add a subtle, continuous divider below the conversation titlebar and the
   right workspace panel header, using the same theme-aware line strength.

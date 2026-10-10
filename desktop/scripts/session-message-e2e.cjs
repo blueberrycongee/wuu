@@ -9,7 +9,7 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { createHash } = require('node:crypto');
 const { pathToFileURL } = require('node:url');
-const { app, ipcMain, clipboard } = require('electron');
+const { app, ipcMain, clipboard, dialog } = require('electron');
 
 const desktop = path.resolve(__dirname, '..');
 const output = path.resolve(process.env.WUU_SESSION_MESSAGE_OUTPUT || path.join(desktop, 'out/session-message-e2e'));
@@ -51,7 +51,47 @@ const messages = [
   { name: '', related: '', origin: 'plugin', text: 'This historical message has no source name or target.' },
   { name: cjkTitle, related: 'peer-cjk', origin: 'host', text: 'Please review.' },
 ];
+// Actual synthetic managed files exercise the shipped protocol and download
+// implementation. Only the OS destination picker is supplied by the harness.
+const patchText = 'diff --git a/card.txt b/card.txt\n--- a/card.txt\n+++ b/card.txt\n@@ -1 +1 @@\n-old card\n+consistent card\n';
+const zip = spawnSync('python3', ['-c', 'import io,zipfile,sys; out=io.BytesIO(); z=zipfile.ZipFile(out,"w"); z.writestr("README.txt","Synthetic acceptance package\\n"); z.close(); sys.stdout.buffer.write(out.getvalue())']);
+assert.equal(zip.status, 0, String(zip.stderr));
+const files = [
+  { name: 'wuu-session-cards.zip', mime: 'application/zip', bytes: zip.stdout },
+  { name: 'session-card-polish.patch', mime: 'text/x-diff', bytes: Buffer.from(patchText) },
+  { name: '跨会话交付产物需要保留完整长名称以便识别'.repeat(4) + '.patch', mime: 'text/x-diff', bytes: Buffer.from(patchText + '# Long filename fixture\n') },
+  { name: 'README', mime: 'application/octet-stream', bytes: Buffer.from('Extensionless artifact with unknown displayed size.\n'), noSize: true },
+  { name: 'notes.txt', mime: 'text/plain', bytes: Buffer.from('Review notes without supplied size metadata.\n'), noSize: true },
+];
+const artifacts = files.map((file, index) => {
+  const threadID = index === 0 ? 'peer-files-zip' : index === 1 ? 'peer-files-patch' : 'peer-files-multiple';
+  const id = String(index + 1).padStart(32, '0'), sha256 = createHash('sha256').update(file.bytes).digest('hex');
+  const root = path.join(home, 'workspaces', 'fixture', 'sessions', threadID, 'artifacts', id);
+  fs.mkdirSync(root, { recursive: true });
+  fs.writeFileSync(path.join(root, file.name), file.bytes);
+  fs.writeFileSync(path.join(root, '.artifact.json'), JSON.stringify({ version: 1, id, thread_id: threadID, plugin_id: 'fixture', name: file.name, sha256, size: file.bytes.length }));
+  return { type: 'file', name: file.name, mime_type: file.mime,
+    uri: `wuu-artifact://fixture/${threadID}/${id}/${encodeURIComponent(file.name)}?sha256=${sha256}`,
+    artifact: { placement: 'turn_end', ref: id, sha256, ...(file.noSize ? {} : { size_bytes: file.bytes.length }) } };
+});
+// Each output is the latest turn in its own conversation, matching the
+// product's latest-turn summary presentation rather than forcing old summaries.
+const artifactSessions = [
+  { id: 'peer-files-zip', title: 'Archive delivery', messages: [{ name: 'Package build', related: 'peer-request', origin: 'host', text: 'The archive is ready for review.', artifacts: [artifacts[0]] }] },
+  { id: 'peer-files-patch', title: 'Patch delivery', messages: [{ name: 'Patch review', related: 'peer-request', origin: 'plugin', text: 'The proposed patch is ready.', artifacts: [artifacts[1]] }] },
+  { id: 'peer-files-multiple', title: 'Multiple file delivery', messages: [{ name: 'Delivery review', related: 'peer-reply', origin: 'host', text: 'Review the delivered patch and supporting notes.', artifacts: artifacts.slice(2) }] },
+];
+let requestedDownload;
+const savedDownloads = [];
+dialog.showSaveDialog = async (_parent, options) => {
+  assert.ok(requestedDownload, 'Only an explicitly tested artifact download may open a picker');
+  assert.equal(options.defaultPath, requestedDownload.name);
+  const filePath = path.join(fixture, 'saved-' + requestedDownload.name);
+  savedDownloads.push({ name: requestedDownload.name, filePath });
+  return { canceled: false, filePath };
+};
 const sessions = [
+  ...artifactSessions,
   { id: 'peer-main', title: 'Peer collaboration', messages },
   { id: 'peer-request', title: 'UI review', messages: [{ text: 'Source request context.' }] },
   { id: 'peer-reply', title: longTitle, messages: [{ text: 'Source reply context.' }] },
@@ -67,7 +107,7 @@ fs.writeFileSync(path.join(home, 'desktop-settings.json'), JSON.stringify({
   onboarding_version: 100, language: 'en-US', theme: 'light', message_flow_font_size: 14,
 }));
 const rpc = [], checks = [], screenshots = [], recordings = [];
-const boundary = 'Shipped Electron main/preload/renderer and Go history restoration/navigation; synthetic persisted incoming messages. No external inference or live peer-to-peer delivery.';
+const boundary = 'Shipped Electron main/preload/renderer and Go history restoration/navigation; synthetic persisted incoming messages and managed artifact files. The save destination picker is supplied by the harness; protocol fetching, preview and file writing are real. No external inference or live peer-to-peer delivery.';
 let main, recordingTimer, pendingFrame = Promise.resolve();
 const log = text => { console.log(text); fs.appendFileSync(path.join(output, 'run.log'), `${text}\n`); };
 const pass = (name, evidence) => { checks.push({ name, evidence }); log(`PASS ${name}`); };
@@ -125,6 +165,7 @@ async function click(selector, fraction = 0.5) {
 // Stable restored message anchors keep selectors independent of surrounding turns.
 const message = index => `#user-msg-peer-main-turn-${String(index + 1).padStart(4, '0')}-peer-main-turn-${String(index + 1).padStart(4, '0')}-item-1`;
 const card = index => `${message(index)} .session-message-source`;
+const artifactCard = index => `.cached-conversation-pane[data-active="true"][data-thread-id="${artifactSessions[index - 5].id}"] [data-wuu-component="turn-artifacts"]`;
 const mainInput = '[data-main-conversation-composer] .composer textarea';
 const splitInput = id => `.conversation-split-pane[data-thread-id="${id}"] .composer textarea`;
 async function input(selector, text) {
@@ -133,18 +174,35 @@ async function input(selector, text) {
   await main.webContents.insertText(text);
   await until((selector, text) => document.querySelector(selector)?.value === text, 'native draft insertion', selector, text);
 }
-async function openMain() {
-  await until(() => [...document.querySelectorAll('.thread-row')].some(row => row.textContent.includes('Peer collaboration')), 'fixture sidebar');
-  const selector = await evaluate(() => {
-    const row = [...document.querySelectorAll('.thread-row')].find(row => row.textContent.includes('Peer collaboration'));
-    const button = row.querySelector('.thread-row-main') || row;
-    button.dataset.peerAcceptanceTarget = 'main';
-    return '[data-peer-acceptance-target="main"]';
-  });
+async function openConversation(id, title) {
+  await until(() => !!document.querySelector('.composer textarea'), 'ready conversation shell');
+  key('P', [process.platform === 'darwin' ? 'meta' : 'control']);
+  await until(() => document.activeElement === document.querySelector('.conversation-search-dialog input'), 'conversation search focus');
+  await evaluate(() => document.querySelector('.conversation-search-dialog input').select());
+  await main.webContents.insertText(title);
+  await until(title => [...document.querySelectorAll('.conversation-search-result')].some(button =>
+    button.querySelector('.conversation-search-result-title')?.textContent === title), 'fixture search result', title);
+  const selector = await evaluate(title => {
+    const button = [...document.querySelectorAll('.conversation-search-result')].find(button =>
+      button.querySelector('.conversation-search-result-title')?.textContent === title);
+    button.dataset.peerAcceptanceTarget = 'current';
+    return '[data-peer-acceptance-target="current"]';
+  }, title);
   await click(selector);
-  await until(selector => !!document.querySelector(selector), 'restored incoming cards', card(0));
+  await until(id => document.querySelector('.cached-conversation-pane[data-active="true"]')?.dataset.threadId === id
+    && !document.querySelector('.conversation-search-dialog'), 'active fixture conversation', id);
   await frames();
 }
+async function openMain() {
+  await openConversation('peer-main', 'Peer collaboration');
+  await until(selector => !!document.querySelector(selector), 'restored incoming cards', card(0));
+}
+async function openArtifactScene(index) {
+  const scene = artifactSessions[index - 5];
+  await openConversation(scene.id, scene.title);
+  await until(selector => !!document.querySelector(selector), 'latest delivered artifact card', artifactCard(index));
+}
+
 async function settle() {
   await evaluate(async () => {
     await document.fonts.ready;
@@ -225,10 +283,20 @@ db=sqlite3.connect(home/'sessions/sessions.sqlite3')
 db.execute('DELETE FROM session_messages'); db.execute('DELETE FROM sessions')
 for s in json.loads(sys.argv[2]):
     db.execute('INSERT INTO sessions (id,created_at,updated_at,title,cwd,workspace_id,provider,model,entries) VALUES (?,?,?,?,?,?,?,?,?)', (s['id'],'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',s['title'],p['path'],p['id'],'fixture','fixture',len(s['messages'])*2))
+    seq=0
     for i,m in enumerate(s['messages']):
+        seq+=1
         peer=bool(m.get('origin'))
-        db.execute('INSERT INTO session_messages (session_id,seq,role,content,display_content,origin,presentation_kind,related_session_id,read_only,name,at) VALUES (?,?,?,?,?,?,?,?,?,?,?)', (s['id'],i*2+1,'user',('Delivery context\\n\\n'+m['text']) if peer else m['text'],m['text'] if peer else '',m.get('origin',''),'session_message' if peer else '',m.get('related',''),int(peer),m.get('name',''),'2026-01-01T00:00:00Z'))
-        db.execute('INSERT INTO session_messages (session_id,seq,role,content,at) VALUES (?,?,?,?,?)', (s['id'],i*2+2,'assistant','Acknowledged.','2026-01-01T00:00:00Z'))
+        db.execute('INSERT INTO session_messages (session_id,seq,role,content,display_content,origin,presentation_kind,related_session_id,read_only,name,at) VALUES (?,?,?,?,?,?,?,?,?,?,?)', (s['id'],seq,'user',('Delivery context\\n\\n'+m['text']) if peer else m['text'],m['text'] if peer else '',m.get('origin',''),'session_message' if peer else '',m.get('related',''),int(peer),m.get('name',''),'2026-01-01T00:00:00Z'))
+        if m.get('artifacts'):
+            call='deliver-'+str(i)
+            seq+=1
+            db.execute('INSERT INTO session_messages (session_id,seq,role,tool_calls_json,at) VALUES (?,?,?,?,?)', (s['id'],seq,'assistant',json.dumps([{'id':call,'name':'present_artifact','arguments':'{}'}]),'2026-01-01T00:00:00Z'))
+            seq+=1
+            db.execute('INSERT INTO session_messages (session_id,seq,role,content,tool_call_id,name,tool_result_json,at) VALUES (?,?,?,?,?,?,?,?)', (s['id'],seq,'tool','Delivered files.',call,'present_artifact',json.dumps({'content':m['artifacts']}),'2026-01-01T00:00:00Z'))
+        seq+=1
+        db.execute('INSERT INTO session_messages (session_id,seq,role,content,at) VALUES (?,?,?,?,?)', (s['id'],seq,'assistant','Acknowledged.','2026-01-01T00:00:00Z'))
+    db.execute('UPDATE sessions SET entries=? WHERE id=?', (seq,s['id']))
 db.commit()
 `, home, JSON.stringify(sessions)], { encoding: 'utf8' });
   assert.equal(seed.status, 0, seed.stderr);
@@ -299,7 +367,6 @@ db.commit()
   await capture('reply-open-split');
   await closeSplit();
   pass('reply card navigates to its own source and retains the primary draft');
-  await stopRecording();
 
   for (const index of [2, 3]) {
     assert.equal(await evaluate(selector => document.querySelector(selector)?.disabled, card(index)), true);
@@ -311,6 +378,29 @@ db.commit()
     await capture(`unavailable-source-${index}`);
   }
   pass('missing target and empty source are visibly disabled and cannot navigate');
+
+  for (const [messageIndex, fileIndex] of [[5, 0], [6, 1]]) {
+    await openArtifactScene(messageIndex);
+    await click(`${artifactCard(messageIndex)} .turn-edit-summary-overview`);
+    await until(() => !!document.querySelector('.artifact-preview-panel'), 'managed artifact preview');
+    if (fileIndex === 1) {
+      await until(text => document.querySelector('.artifact-preview-text')?.textContent === text, 'complete patch preview', patchText);
+    } else {
+      assert.equal(await evaluate(() => !!document.querySelector('.artifact-preview-empty')), true, 'Unsupported ZIP retains the honest preview fallback');
+    }
+    await capture(fileIndex ? 'patch-preview' : 'zip-preview');
+    requestedDownload = files[fileIndex];
+    const savedPath = path.join(fixture, 'saved-' + requestedDownload.name);
+    await click('.artifact-preview-actions button[aria-label^="Download"]');
+    await hostUntil(() => fs.existsSync(savedPath), 'saved original artifact bytes');
+    assert.deepEqual(fs.readFileSync(savedPath), files[fileIndex].bytes, 'Download must preserve original artifact bytes');
+    requestedDownload = undefined;
+    await click('.artifact-preview-actions button[aria-label="Close"]');
+    await until(() => !document.querySelector('.artifact-preview-panel'), 'artifact preview closed');
+  }
+  pass('ZIP fallback and patch preview preserve complete downloads through managed protocol',
+    files.slice(0, 2).map(file => ({ name: file.name, size: file.bytes.length, sha256: createHash('sha256').update(file.bytes).digest('hex') })));
+  await stopRecording();
 
   for (const theme of ['light', 'dark']) for (const size of [14, 20]) {
     await evaluate(async (theme, size) => {
@@ -325,14 +415,35 @@ db.commit()
     'persisted theme and message font', theme, size);
     await openMain();
     for (const width of [1380, 820]) {
+      await openMain();
       main.setContentSize(width, 960);
       await until(width => innerWidth === width, 'window size', width);
       await evaluate(selector => document.querySelector(selector).scrollIntoView({ block: 'center', behavior: 'instant' }), card(1));
       await settle();
       await checkCardGeometry(1, `long-title-${theme}-${size}px-${width}`, longTitle);
+      for (const index of [5, 6, 7]) {
+        await openArtifactScene(index);
+        await evaluate(selector => document.querySelector(selector).scrollIntoView({ block: 'center', behavior: 'instant' }), artifactCard(index));
+        await settle();
+        const geometry = await evaluate(selector => {
+          const card = document.querySelector(selector), bounds = card.getBoundingClientRect();
+          const pane = card.closest('.conversation-pane').getBoundingClientRect();
+          return { bounds: bounds.toJSON(), pane: pane.toJSON(), clientWidth: card.clientWidth, scrollWidth: card.scrollWidth,
+            buttons: [...card.querySelectorAll('button')].map(button => ({ label: button.getAttribute('aria-label'), box: button.getBoundingClientRect().toJSON() })),
+            nestedButtons: card.querySelectorAll('button button').length };
+        }, artifactCard(index));
+        assert.ok(geometry.bounds.left >= geometry.pane.left - 1 && geometry.bounds.right <= geometry.pane.right + 1, 'Artifact card fits its conversation pane');
+        assert.ok(geometry.scrollWidth <= geometry.clientWidth + 1, 'Long artifact names must not overflow');
+        assert.equal(geometry.nestedButtons, 0, 'Artifact rows retain independent actions');
+        assert.equal(geometry.buttons.length, index === 7 ? 3 : 1);
+        for (const button of geometry.buttons) assert.ok(button.box.left >= geometry.bounds.left - 1 && button.box.right <= geometry.bounds.right + 1, 'Artifact action fits its card');
+        const scene = `${index === 5 ? 'zip' : index === 6 ? 'patch' : 'multiple'}-cards-${theme}-${size}px-${width}`;
+        await capture(scene); pass(scene, geometry);
+      }
     }
     // A short body must not let an unbroken source title set the grid's
     // intrinsic width. Exercise the actual narrow split, not a component mock.
+    await openMain();
     await click(card(4));
     await until(() => !!document.querySelector('.conversation-split-pane[data-thread-id="peer-cjk"]'), 'CJK source split');
     await evaluate(selector => document.querySelector(selector).scrollIntoView({ block: 'center', behavior: 'instant' }), card(4));
@@ -345,8 +456,8 @@ db.commit()
   fs.writeFileSync(path.join(output, 'results.json'), JSON.stringify({ passed: true, boundary, recordedAt: new Date().toISOString(),
     source: spawnSync('git', ['rev-parse', 'HEAD'], { cwd: desktop, encoding: 'utf8' }).stdout.trim(), versions: process.versions,
     hashes: { harness: hash(__filename), core: hash(process.env.WUU_DESKTOP_CORE), main: hash(mainBundle), preload: hash(path.join(desktop, 'out/preload/index.cjs')) },
-    checks, screenshots, recordings, rpc,
-    limitations: ['Messages are seeded fixtures, not live cross-agent delivery.', 'Linux Electron screenshots do not validate macOS-specific rendering.', 'Geometry checks and screenshots require human visual review.'],
+    checks, screenshots, recordings, rpc, savedDownloads: savedDownloads.map(({ name }) => ({ name })),
+    limitations: ['Messages are seeded fixtures, not live cross-agent delivery.', 'The native save picker is replaced with a disposable test destination; downloaded bytes and the production save implementation are verified.', 'Linux Electron screenshots do not validate macOS-specific rendering.', 'Geometry checks and screenshots require human visual review.'],
   }, null, 2));
   log(`PASS ${checks.length} checks; ${screenshots.length} screenshots; ${recordings.length} recorded frames`);
   clearTimeout(watchdog);

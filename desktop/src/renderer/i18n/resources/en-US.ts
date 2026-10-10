@@ -485,6 +485,7 @@ export const enUS = {
   "sessionControl.takenOver": "User control",
   "sessionControl.takeoverHint": "Sending a message takes control of this session.",
   "artifacts.title": "Generated artifacts",
+  "artifacts.file": "File",
   "artifacts.imageGallery": "Image gallery",
   "artifacts.openInPanel": "Open in side panel",
   "artifacts.gridView": "Show tiled view",

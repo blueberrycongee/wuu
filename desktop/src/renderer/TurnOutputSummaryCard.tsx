@@ -1,4 +1,4 @@
-import { Fragment, type MouseEvent, type ReactNode } from "react";
+import { Fragment, useId, type MouseEvent, type ReactNode } from "react";
 import { ChevronRight } from "./WuuIcons";
 
 import type { Turn } from "../shared/protocol";
@@ -14,6 +14,8 @@ export type TurnOutputSummaryRow = {
   key: string;
   name: string;
   tooltip?: string;
+  icon?: ReactNode;
+  subtitle?: ReactNode;
   trailing?: ReactNode;
   onOpen?: (event: MouseEvent<HTMLButtonElement>) => void;
   openLabel?: string;
@@ -43,13 +45,14 @@ export function TurnOutputSummaryCard({
   footer?: ReactNode;
   component?: string;
 }): JSX.Element {
+  const descriptionId = useId();
   const multiple = (rows?.length ?? 0) > 0;
   const overviewInner = (
     <>
       <span className="turn-edit-summary-icon" aria-hidden="true">{icon}</span>
       <span className="turn-edit-summary-overview-copy">
         <strong className="turn-edit-summary-overview-title">{title}</strong>
-        {subtitle}
+        {subtitle ? <span id={descriptionId} className="turn-output-summary-description">{subtitle}</span> : null}
       </span>
       {trailing ? <span className="turn-edit-summary-overview-trailing">{trailing}</span> : null}
     </>
@@ -59,6 +62,7 @@ export function TurnOutputSummaryCard({
       className="turn-edit-summary-overview is-clickable"
       type="button"
       aria-label={openLabel}
+      aria-describedby={subtitle ? descriptionId : undefined}
       onClick={onOpen}
     >
       {overviewInner}
@@ -75,17 +79,22 @@ export function TurnOutputSummaryCard({
       {wrapOverview ? wrapOverview(overview) : overview}
       {multiple ? (
         <div className="turn-output-summary-list turn-edit-summary-list">
-          {rows!.map((row) => {
+          {rows!.map((row, index) => {
+            const rowDescriptionId = `${descriptionId}-${index}`;
             const content = (
               <>
+                {row.icon ? <span className="turn-edit-summary-icon" aria-hidden="true">{row.icon}</span> : null}
                 <span className="turn-output-summary-file turn-edit-summary-file">
-                  {row.tooltip ? (
-                    <Tooltip content={row.tooltip}>
+                  <span className="turn-output-summary-copy">
+                    {row.tooltip ? (
+                      <Tooltip content={row.tooltip}>
+                        <span className="turn-output-summary-name turn-edit-summary-name">{row.name}</span>
+                      </Tooltip>
+                    ) : (
                       <span className="turn-output-summary-name turn-edit-summary-name">{row.name}</span>
-                    </Tooltip>
-                  ) : (
-                    <span className="turn-output-summary-name turn-edit-summary-name">{row.name}</span>
-                  )}
+                    )}
+                    {row.subtitle ? <span id={rowDescriptionId} className="turn-output-summary-description">{row.subtitle}</span> : null}
+                  </span>
                 </span>
                 {row.trailing}
               </>
@@ -95,6 +104,7 @@ export function TurnOutputSummaryCard({
                 className="turn-output-summary-row turn-edit-summary-row is-clickable"
                 type="button"
                 aria-label={row.openLabel}
+                aria-describedby={row.subtitle ? rowDescriptionId : undefined}
                 onClick={row.onOpen}
               >
                 {content}

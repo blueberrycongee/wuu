@@ -147,9 +147,6 @@ jobs:
       - name: Typecheck
         run: make check-desktop
 
-      - name: Test
-        run: make test-desktop
-
       - name: Build
         id: build-renderer
         shell: bash
@@ -298,6 +295,9 @@ jobs:
           path: ${{ runner.temp }}/wuu-session-message-evidence/
           if-no-files-found: ignore
           retention-days: 14
+
+      - name: Test
+        run: make test-desktop
 
       - name: Verify compact Fast mode controls
         if: ${{ !cancelled() && steps.build-fixture-core.outcome == 'success' }}

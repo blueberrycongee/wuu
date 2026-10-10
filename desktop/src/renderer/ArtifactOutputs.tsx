@@ -1,5 +1,5 @@
 import { lazy, Suspense, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ChevronRight, Download, ExternalLink, FileDiff, Images, LayoutGrid, Maximize2, PanelRight, X } from "./WuuIcons";
+import { Archive, ChevronRight, Download, ExternalLink, FileDiff, FileText, Film, Images, LayoutGrid, Maximize2, PanelRight, X } from "./WuuIcons";
 
 import type { ThreadItem, ToolResultContentPart, Turn } from "../shared/protocol";
 import { useImagePreview, useOptionalImagePreview } from "./ImagePreview";
@@ -10,6 +10,7 @@ import { desktopWorkbenchController } from "./plugins/DesktopPluginRuntime";
 import { WorkbenchContentRenderer } from "./plugins/Workbench";
 import { RichContent } from "./RichContent";
 import { AttachmentImage } from "./AttachmentImage";
+import { fileNameParts, formatByteSize } from "./AttachmentFormat";
 import { ProcessSurfaceFold } from "./ProcessSurfaceFold";
 import {
   TURN_OUTPUT_SUMMARY_BATCH_SIZE,
@@ -264,7 +265,6 @@ export function TurnEndArtifactOutputs({
     files.length === 1 ? "artifacts.countOne" : "artifacts.count",
     { count: formatNumber(files.length) },
   );
-  const icon = <FileDiff className="icon" />;
   const visible = files.slice(0, visibleCount);
   const hiddenCount = Math.max(0, files.length - visibleCount);
   const nextCount = Math.min(TURN_OUTPUT_SUMMARY_BATCH_SIZE, hiddenCount);
@@ -275,25 +275,25 @@ export function TurnEndArtifactOutputs({
       {single ? (
         <TurnOutputSummaryCard
           component="turn-artifacts"
-          icon={icon}
-          title={title}
-          subtitle={
-            <Tooltip content={single.name}>
-              <span className="turn-edit-summary-overview-path">{single.name}</span>
-            </Tooltip>
-          }
-          trailing={<TurnOutputSummaryChevron />}
+          icon={<ArtifactFileIcon artifact={single} />}
+          title={single.name}
+          subtitle={<ArtifactMetadata artifact={single} />}
+          trailing={<ArtifactOpenIndicator artifact={single} />}
           onOpen={(event) => openArtifact(single, event.currentTarget)}
           openLabel={t("artifacts.openNamed", { name: single.name })}
+          wrapOverview={(overview) => <Tooltip content={single.name}>{overview}</Tooltip>}
         />
       ) : (
         <TurnOutputSummaryCard
           component="turn-artifacts"
-          icon={icon}
+          icon={<FileText className="icon" />}
           title={title}
           rows={visible.map((artifact) => ({
             key: artifact.id,
             name: artifact.name,
+            icon: <ArtifactFileIcon artifact={artifact} />,
+            subtitle: <ArtifactMetadata artifact={artifact} />,
+            trailing: <ArtifactOpenIndicator artifact={artifact} />,
             tooltip: artifact.name,
             onOpen: (event) => openArtifact(artifact, event.currentTarget),
             openLabel: t("artifacts.openNamed", { name: artifact.name }),
@@ -343,15 +343,6 @@ function ArtifactRenderer({
     </div>
   ) : variant === "inline" && artifact.mimeType.startsWith("image/") ? (
     <InlineArtifact artifact={artifact} cwd={cwd} />
-  ) : variant === "inline" ? (
-    <div className="turn-artifact-inline-card">
-      <ArtifactCard
-        artifact={artifact}
-        cwd={cwd}
-        onOpenFile={onOpenFile}
-        onPreview={onPreview}
-      />
-    </div>
   ) : (
     <ArtifactCard
       artifact={artifact}
@@ -480,6 +471,47 @@ function InlineArtifact({ artifact, cwd }: { artifact: TurnArtifact; cwd?: strin
   );
 }
 
+function ArtifactFileIcon({ artifact }: { artifact: TurnArtifact }): JSX.Element {
+  const mimeType = artifact.mimeType.split(";", 1)[0].toLowerCase();
+  const extension = mimeType === "application/octet-stream" || mimeType === "text/plain"
+    ? fileNameParts(artifact.name).extension.toLowerCase() : "";
+  const Icon = [".zip", ".tar", ".gz", ".tgz", ".bz2", ".xz", ".7z", ".rar"].includes(extension)
+    || /(?:zip|compressed|archive|x-tar)$/.test(mimeType) ? Archive
+    : [".patch", ".diff"].includes(extension) || /(?:patch|diff)$/.test(mimeType) ? FileDiff
+    : mimeType.startsWith("image/") ? Images
+    : mimeType.startsWith("video/") ? Film
+    : FileText;
+  return <Icon className="icon" aria-hidden="true" />;
+}
+
+function ArtifactMetadata({ artifact }: { artifact: TurnArtifact }): JSX.Element {
+  const { t, formatNumber } = useI18n();
+  const suffix = fileNameParts(artifact.name).extension;
+  // Resource titles can contain dots without being filenames, such as v1.2.
+  const extension = /^\.[a-z][a-z0-9]{0,9}$/i.test(suffix) ? suffix.slice(1).toUpperCase() : "";
+  const mimeType = artifact.mimeType.split(";", 1)[0].toLowerCase();
+  const genericMime = mimeType === "application/octet-stream" || mimeType === "text/plain";
+  const mimeFormat = extensionForMimeType(mimeType).slice(1).toUpperCase()
+    || mimeType.match(/^[^/]+\/(?:x-)?([a-z][a-z0-9-]{0,11})$/)?.[1].toUpperCase();
+  const format = (genericMime ? extension : mimeFormat) || extension
+    || (mimeType === "text/plain" ? "TXT" : t("artifacts.file"));
+  const size = artifact.sizeBytes !== undefined && Number.isFinite(artifact.sizeBytes) && artifact.sizeBytes >= 0
+    ? formatByteSize(artifact.sizeBytes, formatNumber)
+    : undefined;
+  return (
+    <span className="turn-artifact-meta">
+      <span>{format}</span>
+      {size ? <><span aria-hidden="true">·</span><span>{size}</span></> : null}
+    </span>
+  );
+}
+
+function ArtifactOpenIndicator({ artifact }: { artifact: TurnArtifact }): JSX.Element {
+  return !canPreviewArtifact(artifact) && artifact.uri && /^https?:/i.test(artifact.uri)
+    ? <ExternalLink className="icon" aria-hidden="true" />
+    : <TurnOutputSummaryChevron />;
+}
+
 function ArtifactCard({
   artifact,
   cwd,
@@ -510,20 +542,16 @@ function ArtifactCard({
     onPreview?.(artifact, origin);
   };
   return (
-    <button
-      type="button"
-      className="turn-output-summary-row turn-edit-summary-row is-clickable"
-      onClick={(event) => open(event.currentTarget)}
-      aria-label={t("artifacts.openNamed", { name: artifact.name })}
-    >
-      <span className="turn-output-summary-file">
-        <strong className="turn-output-summary-name">{artifact.name}</strong>
-      </span>
-      <span className="turn-output-summary-meta">
-        <span>{artifact.mimeType}</span>
-        <ExternalLink aria-hidden="true" className="icon" />
-      </span>
-    </button>
+    <TurnOutputSummaryCard
+      component="artifact"
+      icon={<ArtifactFileIcon artifact={artifact} />}
+      title={artifact.name}
+      subtitle={<ArtifactMetadata artifact={artifact} />}
+      trailing={<ArtifactOpenIndicator artifact={artifact} />}
+      onOpen={(event) => open(event.currentTarget)}
+      openLabel={t("artifacts.openNamed", { name: artifact.name })}
+      wrapOverview={(overview) => <Tooltip content={artifact.name}>{overview}</Tooltip>}
+    />
   );
 }
 
