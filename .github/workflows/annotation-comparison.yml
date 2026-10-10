@@ -1,0 +1,103 @@
+name: Annotation comparison
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'desktop/src/renderer/*Selection*'
+      - 'desktop/src/renderer/*Quote*'
+      - 'desktop/src/renderer/ComposerDocumentCard*'
+      - 'desktop/dev/annotation-comparison/**'
+      - 'desktop/scripts/document-context-e2e.*'
+      - 'desktop/scripts/e2e/annotation-comparison/**'
+      - '.github/workflows/annotation-comparison.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: annotation-comparison-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compare:
+    name: Capture real annotation variants
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      WUU_ANNOTATION_OUTPUT: ${{ runner.temp }}/wuu-annotation-comparison
+      WUU_DOCUMENT_CORE: ${{ runner.temp }}/wuu-annotation-core
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - name: Install capture dependencies
+        run: |
+          npm ci --prefix desktop
+          node desktop/node_modules/electron/install.js
+          sudo apt-get update
+          sudo apt-get install -y xvfb ffmpeg fonts-noto-cjk fonts-noto-color-emoji
+      - name: Typecheck and script syntax
+        run: |
+          npm --prefix desktop run typecheck
+          node --check desktop/scripts/document-context-e2e.cjs
+          node --check desktop/scripts/e2e/annotation-comparison/journey.cjs
+          node --check desktop/scripts/e2e/annotation-comparison/compare.mjs
+          make test-policy-check
+      - name: Build both isolated presentations
+        id: build
+        shell: bash
+        run: |
+          mkdir -p "$WUU_ANNOTATION_OUTPUT"
+          git rev-parse HEAD > "$WUU_ANNOTATION_OUTPUT/source-commit.txt"
+          git ls-files desktop/src/renderer desktop/dev/annotation-comparison desktop/scripts/e2e/annotation-comparison | sort | xargs sha256sum > "$WUU_ANNOTATION_OUTPUT/source-sha256.txt"
+          for variant in baseline refined; do
+            (cd desktop && WUU_ANNOTATION_VARIANT="$variant" node_modules/.bin/electron-vite build --config dev/annotation-comparison/electron.vite.config.ts)
+          done
+          go build -o "$WUU_DOCUMENT_CORE" ./cmd/wuu
+      - name: Capture current style
+        id: baseline
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        timeout-minutes: 8
+        shell: bash
+        env:
+          WUU_ANNOTATION_VARIANT: baseline
+        run: |
+          export WUU_DOCUMENT_COMMIT="$(git rev-parse HEAD)"
+          export WUU_DOCUMENT_BUILD_DIR="$GITHUB_WORKSPACE/desktop/out-dev/annotation-comparison/baseline"
+          export WUU_DOCUMENT_OUTPUT="$WUU_ANNOTATION_OUTPUT/baseline"
+          mkdir -p "$WUU_DOCUMENT_OUTPUT"
+          set -o pipefail
+          xvfb-run --auto-servernum --server-args='-screen 0 1600x1200x24' desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/e2e/annotation-comparison/run.mjs 2>&1 | tee "$WUU_DOCUMENT_OUTPUT/run.log"
+      - name: Capture refined candidate
+        id: refined
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        timeout-minutes: 8
+        shell: bash
+        env:
+          WUU_ANNOTATION_VARIANT: refined
+        run: |
+          export WUU_DOCUMENT_COMMIT="$(git rev-parse HEAD)"
+          export WUU_DOCUMENT_BUILD_DIR="$GITHUB_WORKSPACE/desktop/out-dev/annotation-comparison/refined"
+          export WUU_DOCUMENT_OUTPUT="$WUU_ANNOTATION_OUTPUT/refined"
+          mkdir -p "$WUU_DOCUMENT_OUTPUT"
+          set -o pipefail
+          xvfb-run --auto-servernum --server-args='-screen 0 1600x1200x24' desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/e2e/annotation-comparison/run.mjs 2>&1 | tee "$WUU_DOCUMENT_OUTPUT/run.log"
+      - name: Assemble captured screenshots and frames
+        if: ${{ !cancelled() && steps.baseline.outcome == 'success' && steps.refined.outcome == 'success' }}
+        run: node desktop/scripts/e2e/annotation-comparison/compare.mjs "$WUU_ANNOTATION_OUTPUT"
+      - name: Upload real-app evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: annotation-comparison-evidence
+          path: ${{ runner.temp }}/wuu-annotation-comparison/
+          if-no-files-found: warn
+          retention-days: 14

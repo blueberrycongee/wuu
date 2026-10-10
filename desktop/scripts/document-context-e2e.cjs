@@ -10,6 +10,8 @@ const { spawnSync } = require('node:child_process');
 const { pathToFileURL } = require('node:url');
 const { app } = require('electron');
 const desktop = path.resolve(__dirname, '..');
+const buildDir = path.resolve(process.env.WUU_DOCUMENT_BUILD_DIR || path.join(desktop, 'out'));
+const annotationComparison = process.env.WUU_ANNOTATION_COMPARISON === '1';
 const output = path.resolve(process.env.WUU_DOCUMENT_OUTPUT || path.join(desktop, 'out/e2e/document-context'));
 const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'wuu-document-context-'));
 const home = path.join(fixture, 'wuu-home'), userHome = path.join(fixture, 'user-home'), project = path.join(fixture, 'project');
@@ -212,11 +214,11 @@ async function currentParts() {
 function writeEvidence(passed) {
   fs.writeFileSync(path.join(output, 'results.json'), JSON.stringify({ passed, phase, checks, errors, screenshots,
     boundary: 'Production Electron main/preload/renderer and Go core with a local synthetic provider and disposable related-session history. The initial PDF selection uses native mouse drag and Quote clicks; later ranges are programmatically established in the rendered text layer. PNGs are review evidence, not user visual acceptance.',
-    core: process.env.WUU_DESKTOP_CORE, sourceCommit: process.env.WUU_DOCUMENT_COMMIT || null,
+    core: process.env.WUU_DESKTOP_CORE, buildDir, annotationComparison, sourceCommit: process.env.WUU_DOCUMENT_COMMIT || null,
     originalSHA, requests: requests.length, resizeEvidence, selectionInput, selectionDiagnostics }, null, 2));
   fs.writeFileSync(path.join(output, 'provider-requests.json'), JSON.stringify(requests, null, 2));
 }
-const timeout = setTimeout(() => { errors.push('Timed out'); writeEvidence(false); app.exit(1); }, 180000);
+const timeout = setTimeout(() => { errors.push('Timed out'); writeEvidence(false); app.exit(1); }, annotationComparison ? 420000 : 180000);
 module.exports = (async () => {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const engines = Object.fromEntries(['codex', 'claude', 'cursor', 'devin', 'grok', 'hermes', 'pi', 'opencode', 'antigravity'].map(id => [id, { enabled: false }]));
@@ -226,7 +228,7 @@ module.exports = (async () => {
   fs.writeFileSync(path.join(home, 'projects.json'), JSON.stringify({ projects: [{ id: 'repo', name: 'document-fixture', path: project, created_at: stamp, updated_at: stamp }], active_context: { kind: 'project', project_id: 'repo', cwd: project } }));
   fs.writeFileSync(path.join(home, 'desktop-settings.json'), JSON.stringify({ onboarding_version: 100, language: 'en-US', theme: 'light' }));
   assert.equal(app.isReady(), false, 'The ESM entry point must finish production setup before Electron readiness.');
-  await import(pathToFileURL(path.join(desktop, 'out/main/index.js')).href);
+  await import(pathToFileURL(path.join(buildDir, 'main/index.js')).href);
   void run().catch(fail);
 })().catch(fail);
 
@@ -275,6 +277,14 @@ async function run() {
   await capture('00-fit-width-restored');
   checks.push('PDF fit tracks docked and resized viewport width, preserves manual zoom, and resumes after reset');
 
+  if (annotationComparison) {
+    phase = 'annotation comparison matrix';
+    await require('./e2e/annotation-comparison/journey.cjs')({
+      main, output, evaluate, waitFor, focusWindow, nativeText, dragFirstPage, selectPages,
+      capture, snapshot, fittedPdf, firstQuote, originalSHA, checks,
+    });
+  }
+
   phase = 'quote stays in draft';
   const beforeTurns = (await snapshot()).turns.length;
   const quote = await dragFirstPage(); assert.equal(quote, firstQuote);
@@ -283,11 +293,16 @@ async function run() {
   assert.equal((await snapshot()).turns.length, beforeTurns, 'Adding a quote must not send.');
   checks.push('native PDF text drag and Quote click retain an unsent draft');
   await capture('01-quote-draft');
-  await click('.composer-file-selection-card .composer-document-card-main');
+  await click('.composer-file-selection-card .composer-document-card-main, .composer-file-selection-card .quote-refined-tile-main');
   await waitFor(() => document.querySelector('.composer-file-selection-card-popover blockquote'));
   assert.equal(await evaluate(() => document.querySelector('.composer-file-selection-card-popover blockquote').textContent), quote);
-  assert.equal(await evaluate(() => document.querySelector('.composer-response-selection-meta').textContent), 'guide.pdf · p. 1');
-  await click('.composer-response-selection-source');
+  const sourceMeta = await evaluate(() => {
+    const baseline = document.querySelector('.composer-response-selection-meta');
+    if (baseline) return baseline.textContent;
+    return [...document.querySelectorAll('.quote-refined-preview-source > span')].map(span => span.textContent).join(' · ');
+  });
+  assert.equal(sourceMeta, 'guide.pdf · p. 1');
+  await click('.composer-response-selection-source, .quote-refined-source-action');
   await waitFor(() => !document.querySelector('.composer-file-selection-card-popover'));
   checks.push('quote card retains exact selected text and reopens the original snapshot');
 
@@ -341,7 +356,7 @@ async function run() {
   await waitFor(() => document.activeElement?.matches('.pdf-selection-action-menu textarea'));
   await main.webContents.insertText('Compare both selected pages.');
   const turnsBeforeComment = (await snapshot()).turns.length;
-  await click('.selection-action-comment-submit');
+  await click('.selection-action-comment-submit, .selection-comment-refined__submit');
   assert.equal((await snapshot()).turns.length, turnsBeforeComment, 'Adding a comment must not send.');
   await nativeText('.workspace-document-composer textarea', 'Use this comment.'); await click('.workspace-document-composer .composer-send-button');
   await waitFor(async id => (await window.wuu.resumeThread(id)).thread.turns.filter(turn => turn.status === 'completed').length >= 3, threadID, 60000);
@@ -354,13 +369,13 @@ async function run() {
   fs.writeFileSync(path.join(project, 'guide.pdf'), pdf(['Replacement PDF with the same filename.']));
   assert.equal(await evaluate(() => document.querySelector('[data-workspace-pdf-preview]').shadowRoot.querySelector('.page[data-page-number="1"] .textLayer span').textContent), firstQuote);
   await selectPages(); await quoteSelection();
-  await click('.composer-file-selection-card .composer-document-card-main');
-  await waitFor(() => document.querySelector('.composer-response-selection-source'));
-  await click('.composer-response-selection-source');
+  await click('.composer-file-selection-card .composer-document-card-main, .composer-file-selection-card .quote-refined-tile-main');
+  await waitFor(() => document.querySelector('.composer-response-selection-source, .quote-refined-source-action'));
+  await click('.composer-response-selection-source, .quote-refined-source-action');
   await waitFor(() => document.querySelector('[data-workspace-pdf-preview]').shadowRoot.querySelector('.page[data-page-number="1"] .textLayer span')?.textContent === 'First PDF page: keep this original excerpt.');
   await capture('03-immutable-snapshot');
   // Remove the unsent quote before closing the viewer.
-  await click('.composer-file-selection-card .composer-attachment-card-remove');
+  await click('.composer-file-selection-card .composer-attachment-card-remove, .composer-file-selection-card .quote-refined-tile-remove');
   await click('.artifact-preview-actions button[aria-label="Close"]');
   checks.push('editing a workspace PDF does not change a delivered selection or its navigation');
 
@@ -414,17 +429,17 @@ async function run() {
   phase = 'sent workspace quote reports a changed source';
   if (await evaluate(() => document.querySelector('.workspace-panel-globalize')?.getAttribute('aria-pressed') === 'true')) await click('.workspace-panel-globalize');
   if (await evaluate(() => Boolean(document.querySelector('.workspace-conversation-tab button')))) await click('.workspace-conversation-tab button');
-  await waitFor(() => [...document.querySelectorAll('.file-selection-quote-chip .file-selection-tag')].some(button => !button.closest('[inert]')));
-  await evaluate(() => [...document.querySelectorAll('.file-selection-quote-chip .file-selection-tag')].filter(button => !button.closest('[inert]')).at(-1).click());
-  await waitFor(() => document.querySelector('.file-selection-quote-entry .file-selection-location'));
-  await click('.file-selection-quote-entry .file-selection-location');
-  await waitFor(() => document.querySelector('.file-selection-quote-entry .file-selection-location-notice')?.textContent.includes('source location changed'));
-  assert.equal(await evaluate(() => document.querySelector('.file-selection-quote-text').textContent), workingQuote);
+  await waitFor(() => [...document.querySelectorAll('.file-selection-quote-chip .file-selection-tag, .quote-refined-pill')].some(button => !button.closest('[inert]')));
+  await evaluate(() => [...document.querySelectorAll('.file-selection-quote-chip .file-selection-tag, .quote-refined-pill')].filter(button => !button.closest('[inert]')).at(-1).click());
+  await waitFor(() => document.querySelector('.file-selection-quote-entry .file-selection-location, .quote-refined-entry .quote-refined-source-link'));
+  await click('.file-selection-quote-entry .file-selection-location, .quote-refined-entry .quote-refined-source-link');
+  await waitFor(() => document.querySelector('.file-selection-quote-entry .file-selection-location-notice, .quote-refined-entry .quote-refined-notice')?.textContent.includes('source location changed'));
+  assert.equal(await evaluate(() => document.querySelector('.file-selection-quote-text, .quote-refined-entry blockquote').textContent), workingQuote);
   await capture('05-sent-quote-changed-source');
   checks.push('sent workspace quotes retain their excerpt and visibly disclose changed source locations');
 
   phase = 'persisted provenance after renderer reload';
-  await main.loadFile(path.join(desktop, 'out/renderer/index.html'));
+  await main.loadFile(path.join(buildDir, 'renderer/index.html'));
   await waitFor(() => document.querySelector('.composer textarea'));
   const restored = (await currentParts()).filter(part => part.source?.pdf);
   assert.equal(restored.length, 4); assert.equal(restored[0].source.pdf.artifact_sha256, originalSHA);
@@ -456,7 +471,7 @@ db.commit()
 `, home, splitID, relatedID, project], { encoding: 'utf8', timeout: 10000 });
   assert.equal(seed.status, 0, seed.stderr);
   main.setSize(1380, 1000);
-  await main.loadFile(path.join(desktop, 'out/renderer/index.html'));
+  await main.loadFile(path.join(buildDir, 'renderer/index.html'));
   await waitFor(() => document.querySelector('[data-section-id="repo"] .project-row[aria-expanded]'));
   if (await evaluate(() => document.querySelector('[data-section-id="repo"] .project-row').getAttribute('aria-expanded') === 'false')) {
     await click('[data-section-id="repo"] .project-row');

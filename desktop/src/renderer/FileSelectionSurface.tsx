@@ -140,7 +140,7 @@ export function FileSelectionSurface({ workspace, path, text, active = true, chi
   useEffect(() => {
     if (!enabled || !current) return;
     const escape = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
+      if (event.key !== "Escape" || event.isComposing) return;
       event.preventDefault();
       event.stopPropagation();
       if (formRef.current?.kind === "comment") {

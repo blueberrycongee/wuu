@@ -1,0 +1,94 @@
+.selection-comment-refined {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-2);
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4);
+  border-radius: inherit;
+  color: var(--ink);
+  font: inherit;
+}
+
+.selection-comment-refined__input {
+  display: block;
+  flex: 1 1 0;
+  box-sizing: border-box;
+  width: 0;
+  min-width: 0;
+  min-height: max(28px, calc(var(--font-ui) * 1.5 + 4px));
+  max-height: calc(var(--font-ui) * 1.5 * 5 + 4px);
+  margin: 0;
+  padding: 2px 0;
+  resize: none;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  line-height: 1.5;
+  field-sizing: content;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* The surrounding surface owns the input's rounded keyboard focus ring. */
+.selection-comment-refined__input,
+.selection-comment-refined__input:focus,
+.selection-comment-refined__input:focus-visible,
+html[data-focus-modality="keyboard"] .selection-comment-refined__input:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
+.selection-comment-refined__input::placeholder { color: var(--ink-tertiary); }
+
+.selection-comment-refined__submit {
+  display: grid;
+  flex: 0 0 auto;
+  box-sizing: border-box;
+  width: max(28px, calc(var(--font-ui) * 1.5 + 4px));
+  height: max(28px, calc(var(--font-ui) * 1.5 + 4px));
+  margin: 0;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  border-radius: var(--radius-circle);
+  background: var(--ink);
+  color: var(--paper);
+  cursor: pointer;
+  transition: background-color var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out);
+}
+
+.selection-comment-refined__submit:hover { background: var(--ink-strong); }
+.selection-comment-refined__submit:disabled { background: var(--surface-3); color: var(--ink-muted); cursor: default; }
+.selection-comment-refined__submit:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.selection-comment-refined__submit .icon { width: var(--icon-size-sm); height: var(--icon-size-sm); }
+
+.selection-comment-refined__description {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+@media (pointer: coarse) {
+  .selection-comment-refined__submit { width: 44px; height: 44px; }
+  .selection-comment-refined__input { min-height: 44px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .selection-comment-refined__submit { transition: none; }
+}
+
+@container style(--motion-reduced: 1) {
+  .selection-comment-refined__submit { transition: none; }
+}

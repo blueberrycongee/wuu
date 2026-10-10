@@ -82,6 +82,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Keep selection comment editors open when Escape is used by an active text
+  composition, including PDF, file and response selections.
+
 - Discover external-engine models in the conversation's actual working directory,
   with native refresh, bounded probes and context-aware cache invalidation for
   Codex, Claude Code, ACP engines and OpenCode. Preserve Claude aliases, discover

@@ -88,7 +88,7 @@ export function PdfSelectionMenu({ hostRef, source, active }: {
       if (!hostRef.current?.contains(target) && !popup.current?.contains(target)) close();
     };
     const escape = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
+      if (event.key !== "Escape" || event.isComposing) return;
       event.preventDefault(); event.stopPropagation();
       if (commentingRef.current) { setCommenting(false); requestAnimationFrame(() => toggle.current?.focus()); }
       else { close(); hostRef.current?.focus({ preventScroll: true }); }
