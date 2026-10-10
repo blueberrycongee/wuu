@@ -5,17 +5,30 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { spawnSync, execFileSync } = require('node:child_process');
+const { spawn, execFile } = require('node:child_process');
+const { promisify } = require('node:util');
 const { pathToFileURL } = require('node:url');
 const { createHash } = require('node:crypto');
 const desktop = path.resolve(__dirname, '..');
 const output = path.resolve(process.env.WUU_QUICK_ACCESS_OUTPUT || path.join(desktop, 'out/e2e/quick-access'));
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+const xdotool = (...args) => promisify(execFile)('xdotool', args, { timeout: 10000, killSignal: 'SIGKILL' });
 
-if (!process.versions.electron) {
+async function runDriver() {
   assert.equal(process.platform, 'linux', 'This driver verifies X11; macOS needs native acceptance separately');
   assert.ok(process.env.DISPLAY, 'Run under Xvfb or an X11 desktop');
-  execFileSync('xdotool', ['version']);
+  console.log('Starting quick-access E2E driver');
+  await xdotool('version');
+  let activeChild;
+  const stopChild = () => {
+    if (!activeChild?.pid) return;
+    try { process.kill(-activeChild.pid, 'SIGKILL'); } catch (error) {
+      if (error.code !== 'ESRCH') throw error;
+    }
+  };
+  process.once('exit', stopChild);
+  process.once('SIGTERM', () => process.exit(143));
+  process.once('SIGINT', () => process.exit(130));
   fs.mkdirSync(output, { recursive: true });
   const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'wuu-quick-access-'));
   const home = path.join(fixture, 'home');
@@ -31,28 +44,60 @@ if (!process.versions.electron) {
     projects: [{ id: 'quick-access', name: 'Quick access acceptance', path: project, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' }],
     active_context: { kind: 'project', project_id: 'quick-access', cwd: project },
   }));
-  let failed = false;
   try {
     for (const phase of ['lifecycle', 'restart', 'disabled-restart']) {
-      const result = spawnSync(require('electron'), ['--no-sandbox', __filename, phase], {
-        encoding: 'utf8', timeout: 150000,
-        env: { ...process.env, HOME: home, WUU_HOME: home, CODEX_HOME: path.join(home, '.codex'),
-          WUU_QUICK_ACCESS_FIXTURE: fixture, WUU_QUICK_ACCESS_OUTPUT: output,
-          WUU_DESKTOP_CORE: process.env.WUU_DESKTOP_CORE || path.join(desktop, 'build/bin/wuu-core'),
-          WUU_ENABLE_BROWSER: '0', WUU_ENABLE_CUA_MAC: '0', WUU_SAFE_MODE: '1' },
-      });
-      fs.writeFileSync(path.join(output, `${phase}.log`), `${result.stdout || ''}${result.stderr || ''}`);
-      process.stdout.write(result.stdout || ''); process.stderr.write(result.stderr || '');
-      assert.equal(result.status, 0, `${phase} failed: ${result.error || result.signal || 'see log'}`);
+      console.log(`Starting quick access ${phase}`);
+      const log = fs.openSync(path.join(output, `${phase}.log`), 'w');
+      try {
+        await new Promise((resolve, reject) => {
+          // A separate process group lets the watchdog stop Electron and its
+          // descendants even if a native call blocks the Electron event loop.
+          const child = spawn(require('electron'), ['--no-sandbox', __filename, phase], {
+            detached: true, stdio: ['ignore', 'pipe', 'pipe'],
+            env: { ...process.env, HOME: home, WUU_HOME: home, CODEX_HOME: path.join(home, '.codex'),
+              WUU_QUICK_ACCESS_FIXTURE: fixture, WUU_QUICK_ACCESS_OUTPUT: output,
+              WUU_DESKTOP_CORE: process.env.WUU_DESKTOP_CORE || path.join(desktop, 'build/bin/wuu-core'),
+              WUU_ENABLE_BROWSER: '0', WUU_ENABLE_CUA_MAC: '0', WUU_SAFE_MODE: '1' },
+          });
+          activeChild = child;
+          let settled = false;
+          const finish = error => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            child.stdout.removeAllListeners('data');
+            child.stderr.removeAllListeners('data');
+            child.stdout.destroy();
+            child.stderr.destroy();
+            try { stopChild(); } catch (stopError) { error ||= stopError; }
+            activeChild = undefined;
+            if (error) reject(error); else resolve();
+          };
+          const timer = setTimeout(() => {
+            const message = `${phase} exceeded its 150-second process deadline\n`;
+            fs.writeSync(log, message);
+            process.stderr.write(message);
+            finish(new Error(message.trim()));
+          }, 150000);
+          child.stdout.on('data', chunk => { fs.writeSync(log, chunk); process.stdout.write(chunk); });
+          child.stderr.on('data', chunk => { fs.writeSync(log, chunk); process.stderr.write(chunk); });
+          child.once('error', finish);
+          child.once('close', (code, signal) => finish(code === 0 ? undefined
+            : new Error(`${phase} failed: ${signal || `exit ${code}`}`)));
+        });
+      } finally { fs.closeSync(log); }
     }
     fs.writeFileSync(path.join(output, 'results.json'), JSON.stringify({
       platform: process.platform, transport: 'X11 globalShortcut + xdotool', macOS: 'not run',
       mainSHA256: createHash('sha256').update(fs.readFileSync(path.join(desktop, 'out/main/index.js'))).digest('hex'),
       phases: ['lifecycle', 'restart', 'disabled-restart'].map(phase => JSON.parse(fs.readFileSync(path.join(output, `${phase}.json`), 'utf8'))),
     }, null, 2));
-  } catch (error) { failed = true; console.error(error); }
-  finally { fs.rmSync(fixture, { recursive: true, force: true }); }
-  process.exit(failed ? 1 : 0);
+  } finally { fs.rmSync(fixture, { recursive: true, force: true }); }
+}
+
+if (!process.versions.electron) {
+  runDriver().then(() => process.exit(0), error => { console.error(error); process.exit(1); });
+  return;
 }
 
 const { app, BrowserWindow, globalShortcut } = require('electron');
@@ -100,7 +145,7 @@ async function typeDraft(window, value) {
   await waitFor(window, value => document.querySelector('.composer textarea').value === value, value);
 }
 async function summon(window, chord) {
-  execFileSync('xdotool', ['key', '--clearmodifiers', chord]);
+  await xdotool('key', '--clearmodifiers', chord);
   await until(() => window.isVisible() && !window.isMinimized() && window.isFocused(), 'native shortcut focused target');
 }
 async function createPopout(main) {
@@ -114,10 +159,14 @@ async function createPopout(main) {
 let main;
 app.on('browser-window-created', (_event, window) => { main ||= window; });
 const results = [];
+const record = result => { results.push(result); console.log(`PASS ${phase}: ${result}`); };
+console.log(`Loading Wuu for ${phase}`);
 const timeout = setTimeout(() => { console.error('Quick-access E2E timed out'); app.exit(1); }, 120000);
 import(pathToFileURL(path.join(desktop, 'out/main/index.js')).href).then(async () => {
   await until(() => main, 'main window');
+  console.log(`${phase}: main window created`);
   await waitFor(main, () => document.querySelector('.composer textarea'));
+  console.log(`${phase}: composer ready`);
   if (phase === 'lifecycle') {
     assert.equal((await snapshot(main)).shortcutStatus, 'disabled');
     await typeDraft(main, 'Unsent main draft');
@@ -133,7 +182,7 @@ import(pathToFileURL(path.join(desktop, 'out/main/index.js')).href).then(async (
     assert.equal((await snapshot(main)).shortcut, original);
     assert.equal(globalShortcut.isRegistered(original), true);
     assert.equal(globalShortcut.isRegistered('Control+Alt+F9'), true);
-    results.push('invalid and occupied bindings preserve previous binding and independent owner');
+    record('invalid and occupied bindings preserve previous binding and independent owner');
 
     await beginRecording(main);
     main.webContents.setZoomFactor(1.1);
@@ -167,12 +216,13 @@ import(pathToFileURL(path.join(desktop, 'out/main/index.js')).href).then(async (
     await evaluate(main, () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     assert.equal(navigations, 0);
     assert.equal(main.webContents.isDevToolsOpened(), false);
-    results.push('packaged reserved keys report errors without zoom/reload/devtools; normal guards and zoom remain active after recording');
+    record('packaged reserved keys report errors without zoom/reload/devtools; normal guards and zoom remain active after recording');
     await beginRecording(main);
-    execFileSync('xdotool', ['key', '--clearmodifiers', 'ctrl+shift+space']);
+    // Let Electron handle X11 shortcut events while xdotool sends the chord.
+    await xdotool('key', '--clearmodifiers', 'ctrl+shift+space');
     await waitFor(main, () => document.querySelector('[data-testid="quick-access-record"]').getAttribute('aria-pressed') === 'false');
     assert.equal((await snapshot(main)).shortcut, original);
-    results.push('the already-owned global shortcut can be recorded again');
+    record('the already-owned global shortcut can be recorded again');
 
 
     await beginRecording(main);
@@ -188,7 +238,7 @@ import(pathToFileURL(path.join(desktop, 'out/main/index.js')).href).then(async (
     await waitFor(main, () => document.querySelector('[data-testid="settings-quick-access"] [role="alert"]')
       && document.querySelector('[data-testid="quick-access-record"]').getAttribute('aria-pressed') === 'false');
     assert.equal((await snapshot(main)).shortcut, original);
-    results.push('recording rejects plain keys, Escape cancels without closing settings, conflicts surface in UI');
+    record('recording rejects plain keys, Escape cancels without closing settings, conflicts surface in UI');
 
     await beginRecording(main);
     main.webContents.sendInputEvent({ type: 'keyDown', keyCode: '8', modifiers: ['control', 'shift'] });
@@ -214,14 +264,14 @@ import(pathToFileURL(path.join(desktop, 'out/main/index.js')).href).then(async (
       await summon(main, 'ctrl+shift+space');
       assert.equal(await evaluate(main, () => document.querySelector('.composer textarea').value), 'Unsent main draft');
     } finally { fs.renameSync(`${project}-unavailable`, project); }
-    results.push('record, disable, reset and repeated native summon preserve unsent main draft');
-    results.push('unavailable workspace does not navigate or replace the existing draft');
+    record('record, disable, reset and repeated native summon preserve unsent main draft');
+    record('unavailable workspace does not navigate or replace the existing draft');
 
     await openSettings(main);
     await beginRecording(main);
     const popout = await createPopout(main);
     await waitFor(main, () => document.querySelector('[data-testid="quick-access-record"]').getAttribute('aria-pressed') === 'false');
-    results.push('focus transfer cancels recording before another window receives input');
+    record('focus transfer cancels recording before another window receives input');
     await typeDraft(popout, 'Unsent popped-out draft');
     await openSettings(main);
     await click(main, '[data-testid="quick-access-on-top"]');
@@ -241,7 +291,7 @@ import(pathToFileURL(path.join(desktop, 'out/main/index.js')).href).then(async (
     popout.close(); main.hide();
     await summon(main, 'ctrl+shift+space');
     assert.equal(await evaluate(main, () => !!document.querySelector('[data-testid="settings-quick-access"]')), true);
-    results.push('live/new popouts on top; native minimized popout restore; closed target falls back without navigating settings');
+    record('live/new popouts on top; native minimized popout restore; closed target falls back without navigating settings');
 
     for (const [theme, size, width] of [['light', 14, 1180], ['dark', 20, 820]]) {
       main.setSize(width, 900);
@@ -269,12 +319,12 @@ import(pathToFileURL(path.join(desktop, 'out/main/index.js')).href).then(async (
     await click(main, '[data-testid="quick-access-disable"]');
     await until(async () => (await snapshot(main)).shortcutStatus === 'disabled', 'shortcut disabled after restart');
     assert.equal(globalShortcut.isRegistered('Control+Shift+Space'), false);
-    results.push('fresh process restores binding and popout preference; disable persists');
+    record('fresh process restores binding and popout preference; disable persists');
   } else {
     assert.equal((await snapshot(main)).shortcutStatus, 'disabled');
     assert.equal((await snapshot(main)).popOutAlwaysOnTop, false);
     assert.equal(globalShortcut.isRegistered('Control+Shift+Space'), false);
-    results.push('fresh process retains disabled shortcut and disabled on-top preference');
+    record('fresh process retains disabled shortcut and disabled on-top preference');
   }
   const owned = (await snapshot(main)).shortcut;
   if (!globalShortcut.isRegistered('Control+Alt+F9')) assert.equal(globalShortcut.register('Control+Alt+F9', () => {}), true);
@@ -284,7 +334,9 @@ import(pathToFileURL(path.join(desktop, 'out/main/index.js')).href).then(async (
     quitChecked = true;
     if (owned) assert.equal(globalShortcut.isRegistered(owned), false);
     assert.equal(globalShortcut.isRegistered('Control+Alt+F9'), true, 'Quit cleanup must not unregister another owner');
-    results.push('quit unregisters only the quick-access binding');
+    record('quit unregisters only the quick-access binding');
+  });
+  app.once('will-quit', () => {
     fs.writeFileSync(path.join(output, `${phase}.json`), JSON.stringify({ phase, electron: process.versions.electron, results }, null, 2));
     console.log(`PASS quick access ${phase}`);
     clearTimeout(timeout);
