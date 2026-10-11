@@ -128,6 +128,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Keep desktop retry and failure notices aligned with the message column, with a
+  stable countdown width and trailing recovery controls that wrap in narrow panes.
+
 - Limit the automation editor's Enabled click target to its label and switch so
   clicking the remaining header space does not accidentally pause or resume a task.
 
