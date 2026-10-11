@@ -71,17 +71,11 @@ export function SidebarHoverCardLayer({
     if (!layer) return;
     const place = (): void => {
       const row = anchor.getBoundingClientRect();
-      const sidebarRight = anchor.closest(".sidebar")?.getBoundingClientRect().right ?? row.right;
-      const left = Math.max(row.right, sidebarRight) + ANCHOR_GAP;
-      const availableWidth = window.innerWidth - left - VIEWPORT_MARGIN;
-      const minWidth = parseFloat(getComputedStyle(layer).minWidth);
-      // Let titles use the space beside the sidebar before wrapping. On narrow
-      // windows, allow the card to overlap the sidebar instead of squeezing it.
-      layer.style.maxWidth = `${availableWidth >= minWidth
-        ? availableWidth
-        : window.innerWidth - VIEWPORT_MARGIN * 2}px`;
       const card = layer.getBoundingClientRect();
-      // Center the title's first line on the row so it reads as a continuation.
+      // Clear of the sidebar edge rather than the row, whose inset would put
+      // the card on the divider; and with the title's first line centered on
+      // the row, so the card reads as a continuation of that line.
+      const sidebarRight = anchor.closest(".sidebar")?.getBoundingClientRect().right ?? row.right;
       const title = layer.querySelector(".sidebar-hover-card-title");
       const titleCenter = title
         ? title.getBoundingClientRect().top - card.top + parseFloat(getComputedStyle(title).lineHeight) / 2
@@ -89,7 +83,7 @@ export function SidebarHoverCardLayer({
       const maxLeft = Math.max(VIEWPORT_MARGIN, window.innerWidth - card.width - VIEWPORT_MARGIN);
       const maxTop = Math.max(VIEWPORT_MARGIN, window.innerHeight - card.height - VIEWPORT_MARGIN);
       const top = row.top + row.height / 2 - titleCenter;
-      layer.style.left = `${Math.min(left, maxLeft)}px`;
+      layer.style.left = `${Math.min(Math.max(row.right, sidebarRight) + ANCHOR_GAP, maxLeft)}px`;
       layer.style.top = `${Math.min(Math.max(top, VIEWPORT_MARGIN), maxTop)}px`;
       layer.style.visibility = "visible";
       // The entrance starts only once placed; see .sidebar-hover-card.

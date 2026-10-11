@@ -117,8 +117,7 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Consolidate sidebar hover-card status and time beneath the conversation title.
   Running sessions show elapsed time once; inactive sessions show recency alongside
-  any reply, failure, or interruption status. Let titles use the available width
-  beside the sidebar before wrapping instead of imposing a compact card width.
+  any reply, failure, or interruption status, leaving the full header for the title.
 
 - Keep iOS conversation content in place while reconnecting, merge overlapping
   history pages, and wait for a fresh snapshot before applying live updates.

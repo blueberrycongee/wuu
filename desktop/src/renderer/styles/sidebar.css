@@ -2591,9 +2591,9 @@ html[data-focus-modality="keyboard"] .thread-row-context-menu:focus-visible {
   z-index: 2147481900;
   display: flex;
   width: max-content;
-  /* Keep the minimum readable as the UI font grows; placement limits the width. */
+  /* In em so the card widens with the UI font size instead of wrapping more. */
   min-width: 14em;
-  max-width: calc(100vw - 16px);
+  max-width: min(22em, calc(100vw - 16px));
   flex-direction: column;
   gap: var(--space-2);
   padding: var(--space-2) var(--space-3);
