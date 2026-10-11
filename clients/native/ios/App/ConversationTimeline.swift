@@ -11,6 +11,11 @@ struct ConversationTimeline: View {
     @State private var historyRequest: Task<Void, Never>?
     @State private var historyFailed = false
     @State private var inspectedProcess: ActivityInspection?
+    @State private var presentedMessages: Set<String>
+    init(model: AppModel) {
+        self.model = model
+        _presentedMessages = State(initialValue: Set(model.messages.map(\.id)))
+    }
     private let inset: CGFloat = 16
     private let rowSpacing: CGFloat = 18
     var body: some View {
@@ -33,18 +38,21 @@ struct ConversationTimeline: View {
                         }
                         if recentStart > rows.startIndex {
                             LazyVStack(alignment: .leading, spacing: rowSpacing) {
-                                ForEach(rows[..<recentStart]) { row in timelineRow(row, width: geometry.size.width) }
+                                ForEach(rows[..<recentStart]) { row in timelineRow(row, size: geometry.size) }
                             }
                         }
                         // Keep the newest turn mounted while keyboard/menu transitions resize the viewport.
                         // Rejoin the lazy history when iOS no longer loops row phases around embedded UIKit views.
-                        ForEach(rows[recentStart...]) { row in timelineRow(row, width: geometry.size.width) }
+                        ForEach(rows[recentStart...]) { row in timelineRow(row, size: geometry.size) }
                         if model.live?.running == true && model.messages.last?.tool == nil && model.conversationRows.last?.processActive != true {
                             ConversationActivityMark(activity: model.messages.last?.role == "assistant" ? "responding" : "thinking", settings: model.live?.settings)
                                 .accessibilityElement().accessibilityLabel("正在处理")
                         }
-                        Color.clear.frame(height: 1).id("bottom")
-                    }.padding(inset).background {
+                    }.padding(inset)
+                        // Short conversations start at the top; once filled, normal bottom following takes over.
+                        .frame(minHeight: geometry.size.height, alignment: .top)
+                        .overlay(alignment: .bottom) { Color.clear.frame(height: 1).id("bottom") }
+                        .background {
                         TimelineScrollReader(state: scrollState) { next in
                             let update = scrollState.update(next, following: following)
                             if nearBottom != next.atBottom { nearBottom = next.atBottom }
@@ -53,7 +61,8 @@ struct ConversationTimeline: View {
                             if next.interacting && next.offset < 160 && !historyFailed { loadHistory() }
                         }
                     }
-                }.defaultScrollAnchor(.bottom)
+                }.coordinateSpace(name: "conversationViewport")
+                    .defaultScrollAnchor(.bottom)
                     .scrollDismissesKeyboard(.interactively)
                     .onChange(of: model.messages.last) { _, _ in
                         if following && scrollState.metrics?.interacting != true { proxy.scrollTo("bottom", anchor: .bottom) }
@@ -94,7 +103,7 @@ struct ConversationTimeline: View {
             }
             .onDisappear { historyRequest?.cancel() }
     }
-    private func timelineRow(_ row: ConversationRow, width: CGFloat) -> some View {
+    private func timelineRow(_ row: ConversationRow, size: CGSize) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             // Process groups also contain tools, so they are checked first.
             if row.isProcessGroup {
@@ -109,7 +118,13 @@ struct ConversationTimeline: View {
             } else {
                 MessageBubble(model: model, message: row.messages[0],
                     // Compact-height menus sit beside the preview; avoid UIKit resizing its container.
-                    menuPreviewWidth: min(width - 2 * inset, verticalSizeClass == .compact ? 250 : 360))
+                    menuPreviewWidth: min(size.width - 2 * inset, verticalSizeClass == .compact ? 250 : 360))
+                    .modifier(MessageArrivalMotion(viewportHeight: size.height, reduceMotion: reduceMotion) {
+                        let message = row.messages[0]
+                        let firstAppearance = presentedMessages.insert(message.id).inserted
+                        return firstAppearance && following && !model.loadingHistory && message.turnActive
+                            && message.role == "user" && message.id == model.messages.last(where: { $0.role == "user" })?.id
+                    })
             }
             // Published artifacts stay in the timeline; inspection images belong to the folded details.
             if row.isProcessGroup || row.isToolGroup, row.messages.contains(where: \.hasInlineAttachments) {
@@ -131,6 +146,43 @@ struct ConversationTimeline: View {
             catch is CancellationError {}
             catch { if !Task.isCancelled { historyFailed = true } }
         }
+    }
+}
+
+// Inspired by Motionbook's chatgpt-dot-send travel track. Native layout remains authoritative
+// as the keyboard moves; only the rendered bubble travels, never the scroll geometry.
+private struct MessageArrivalMotion: ViewModifier {
+    let viewportHeight: CGFloat
+    let reduceMotion: Bool
+    let shouldAnimate: () -> Bool
+    @State private var arriving = false
+    func body(content: Content) -> some View {
+        content
+            .visualEffect { effect, geometry in
+                effect.offset(y: arriving ? max(24, viewportHeight - geometry.frame(in: .named("conversationViewport")).maxY - 16) : 0)
+            }
+            .opacity(arriving ? 0 : 1)
+            .onAppear {
+                guard shouldAnimate(), !reduceMotion else { return }
+                var transaction = Transaction()
+                transaction.disablesAnimations = true
+                withTransaction(transaction) { arriving = true }
+            }
+            .task(id: arriving) {
+                guard arriving else { return }
+                // Commit the starting pose before beginning travel to the live layout position.
+                await Task.yield()
+                guard !Task.isCancelled else { return }
+                withAnimation(.spring(duration: 0.5, bounce: 0.06)) { arriving = false }
+            }
+            .onDisappear { arriving = false }
+            .onChange(of: reduceMotion) { _, reduced in
+                if reduced {
+                    var transaction = Transaction()
+                    transaction.disablesAnimations = true
+                    withTransaction(transaction) { arriving = false }
+                }
+            }
     }
 }
 
