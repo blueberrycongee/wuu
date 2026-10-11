@@ -394,7 +394,7 @@
    * fits its title, so a short one does not stretch into a long bar. The
    * floor keeps two characters: the title's padding, icon gap and close
    * margin come to the leading pad plus 14px. */
-  min-width: min(100cqw, calc(2em + var(--icon-size) + var(--control-size-inline) + var(--workspace-row-pad-x) + 14px));
+  min-width: min(100cqw, calc(2em + var(--icon-size) + var(--control-size-dismiss) + var(--workspace-row-pad-x) + 14px));
   max-width: 220px;
   height: 100%;
   flex: 0 1 auto;
@@ -568,7 +568,6 @@
   display: grid;
   flex: 0 0 auto;
   place-items: center;
-  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--ink-tertiary);
   cursor: pointer;
@@ -604,11 +603,6 @@ html[data-focus-modality="keyboard"] .workspace-tool-tab-close:focus-visible {
 .workspace-tool-tab:focus-within .workspace-tool-tab-close,
 .workspace-tool-tab.active .workspace-tool-tab-close {
   opacity: 1;
-}
-
-.workspace-tool-tab-close:hover {
-  background: var(--ink-overlay-8);
-  color: var(--ink);
 }
 
 .workspace-panel-add.active,

@@ -67,6 +67,7 @@
   opacity: 0;
   transition:
     opacity var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out),
     background-color var(--motion-fast) var(--ease-out);
 }
 
@@ -75,11 +76,6 @@
   position: absolute;
   inset: -4px;
   content: "";
-}
-
-.composer-attachment-card-remove svg {
-  width: var(--icon-size-xs);
-  height: var(--icon-size-xs);
 }
 
 .composer-attachment-card:hover .composer-attachment-card-remove,
@@ -202,11 +198,22 @@ html[data-focus-modality="keyboard"] .composer-media-card :is(.composer-media-ca
 
 /* Document cards: folded pastes and PDFs. */
 .composer-document-card {
+  --composer-attachment-remove-size: var(--control-size-dismiss);
   display: inline-flex;
   width: clamp(180px, calc(var(--font-ui) * 16), 280px);
   max-width: 100%;
   border: 1px solid var(--hairline-soft);
   background: var(--surface-1);
+}
+
+/* Keep dismissal in the corner with equal insets and no floating badge. */
+.composer-document-card .composer-attachment-card-remove {
+  top: var(--space-2);
+  right: var(--space-2);
+  border: 0;
+  background: transparent;
+  color: var(--ink-tertiary);
+  box-shadow: none;
 }
 
 .composer-document-card-main {
@@ -216,7 +223,7 @@ html[data-focus-modality="keyboard"] .composer-media-card :is(.composer-media-ca
   align-items: center;
   gap: var(--space-2);
   /* The trailing inset is the remove control's footprint plus a reading gap. */
-  padding: 0 calc(var(--composer-attachment-remove-size) + var(--space-2)) 0 var(--space-3);
+  padding: 0 calc(var(--composer-attachment-remove-size) + var(--space-4)) 0 var(--space-3);
   border: 0;
   border-radius: inherit;
   background: transparent;

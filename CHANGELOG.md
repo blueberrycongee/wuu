@@ -46,6 +46,12 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Keep desktop toolbar actions and tab close buttons compact at larger UI font
+  sizes, with inset circular hover feedback, circular focus rings, and consistent
+  dismissal icons. Keep the unframed close action in the top-right corner of
+  quoted-text and document attachments, preserving reading space and keyboard
+  focus. Retain contrasting badges on image thumbnails.
+
 - Show the source of received session messages as a compact, theme-aware card
   that opens the related conversation in a split pane. Keep message text,
   copying, and long-message expansion separate from the navigation control.
