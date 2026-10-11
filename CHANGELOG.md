@@ -101,6 +101,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Dismiss the iOS conversation keyboard when tapping the message area, including
+  blank space in an empty conversation, while preserving the draft.
+
 - Discover external-engine models in the conversation's actual working directory,
   with native refresh, bounded probes and context-aware cache invalidation for
   Codex, Claude Code, ACP engines and OpenCode. Preserve Claude aliases, discover

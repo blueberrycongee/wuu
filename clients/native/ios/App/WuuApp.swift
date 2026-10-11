@@ -85,6 +85,7 @@ struct ConversationView: View {
     @State private var newConversation = false
     @State private var searching = false
     @FocusState private var searchFocused: Bool
+    @FocusState private var composerFocused: Bool
     @State private var consent = false
     @State private var disableHistory = false
     @State private var archiveTarget: ChatThread?
@@ -197,16 +198,20 @@ struct ConversationView: View {
                     Task { await model.connect() }
                 }.transition(.opacity)
             }
-            if model.activeID == nil {
-                ContentUnavailableView {
-                    Label("选择或新建会话", systemImage: "bubble.left.and.bubble.right")
-                } actions: {
-                    Button("新会话") { newConversation = true }.disabled(!model.connected)
-                }.frame(maxHeight: .infinity)
-            } else {
-                ConversationTimeline(model: model).id(model.activeID)
-                    .overlay { if freshConversation { freshConversationHint } }
+            Group {
+                if model.activeID == nil {
+                    ContentUnavailableView {
+                        Label("选择或新建会话", systemImage: "bubble.left.and.bubble.right")
+                    } actions: {
+                        Button("新会话") { newConversation = true }.disabled(!model.connected)
+                    }.frame(maxHeight: .infinity)
+                } else {
+                    ConversationTimeline(model: model).id(model.activeID)
+                        .overlay { if freshConversation { freshConversationHint } }
+                }
             }
+            .contentShape(Rectangle())
+            .onTapGesture { composerFocused = false }
             if let request = model.pendingApproval {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("电脑需要处理请求：" + (request["method"].string ?? "")).font(.footnote).foregroundStyle(.secondary)
@@ -223,7 +228,7 @@ struct ConversationView: View {
             }
             if model.activeID != nil {
                 PendingMessagesView(model: model)
-                MobileComposer(text: draft, attachments: attachments, model: model, enabled: composerEnabled,
+                MobileComposer(text: draft, attachments: attachments, focused: $composerFocused, model: model, enabled: composerEnabled,
                     sending: model.sending, placeholder: composerPlaceholder, identifier: "harness-composer",
                     stop: model.live?.running == true ? stopTurn : nil,
                     send: send)
