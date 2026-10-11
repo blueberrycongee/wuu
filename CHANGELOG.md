@@ -135,6 +135,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Keep quoted-response source highlights visible through scrolling, composer reflow,
   and window resizing, while still clearing stale or hidden sources.
 
+- Keep desktop retry and failure notices aligned with the message column, with a
+  stable countdown width and trailing recovery controls that wrap in narrow panes.
+
 - Limit the automation editor's Enabled click target to its label and switch so
   clicking the remaining header space does not accidentally pause or resume a task.
 

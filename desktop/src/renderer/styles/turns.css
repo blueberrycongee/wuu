@@ -2684,17 +2684,15 @@
 /* The turn's answer did not arrive. One row, read left to right: the symbol,
  * what happened, then the recovery slot on the trailing edge. The slot holds
  * the retry countdown while the core retries and the action once it gives
- * up; both are the same pill, so the change happens in place. The surface is
- * a fill, not a frame, that hugs its sentence from the reply's text edge, so
- * the action follows the words instead of waiting across the column. It
- * turns to the error tint only when the turn has failed. */
+ * up. The surface spans the reading column so changing status text cannot
+ * resize it. It turns to the error tint only when the turn has failed. */
 .turn-failure {
   /* The pill tracks the reading line so it stays concentric at any type size. */
   --turn-failure-pill-height: calc(var(--conversation-process-line-height) + 6px);
   --turn-failure-inset: 6px;
   display: flex;
   align-items: flex-start;
-  width: fit-content;
+  width: 100%;
   min-width: 0;
   max-width: 100%;
   box-sizing: border-box;
@@ -2732,13 +2730,12 @@
 
 /* Everything after the symbol starts at one text edge. */
 .turn-failure-main {
-  flex: 0 1 auto;
+  flex: 1;
   min-width: 0;
 }
 
-/* The recovery slot follows the sentence while both fit on a line;
- * otherwise it moves under the words, starting where they do, instead of
- * squeezing them. */
+/* Keep recovery on the trailing edge; wrap it below the message when the
+ * reading column cannot fit both without squeezing the text. */
 .turn-failure-line {
   display: flex;
   flex-wrap: wrap;
@@ -2747,6 +2744,7 @@
 }
 
 .turn-failure-message {
+  flex: 1 1 auto;
   min-width: 0;
   margin: 0;
   padding-block: calc((var(--turn-failure-pill-height) - 1lh) / 2);
@@ -2805,13 +2803,16 @@
 .turn-failure-recovery {
   display: flex;
   flex: none;
+  flex-wrap: wrap;
+  max-width: 100%;
   align-items: center;
+  justify-content: flex-end;
   gap: var(--space-1);
+  margin-inline-start: auto;
   margin-inline-end: calc(var(--turn-failure-inset) - var(--space-3));
 }
 
-/* Countdown and action share one geometry so the slot never resizes its
- * row when recovery gives up. */
+/* Countdown and actions share the same reading-line height. */
 .turn-failure-pill {
   display: inline-flex;
   min-width: 4.5em;
@@ -2831,6 +2832,15 @@
 /* The wait fills the pill from the leading edge, like progress inside a
  * button, and empties into the action that replaces it. */
 .turn-failure-countdown {
+  /* Reserve room for seconds, minutes and the retrying label at any UI size. */
+  width: 13em;
+  min-width: 0;
+  max-width: 100%;
+  height: auto;
+  min-height: var(--turn-failure-pill-height);
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: center;
   background:
     linear-gradient(
       to right,
@@ -2871,8 +2881,7 @@
   opacity: 0.6;
 }
 
-/* Beside the fix, resending is the quieter choice: bare text, so it starts
- * on the text edge when the slot wraps under the sentence. */
+/* Beside provider settings, resending remains the quieter text action. */
 .turn-failure-action:not(.is-primary):has(+ .is-primary) {
   min-width: 0;
   margin-inline-end: var(--space-2);
