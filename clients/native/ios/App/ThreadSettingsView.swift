@@ -6,32 +6,38 @@ struct ThreadSettingsView: View {
     let thread: ChatThread
     @Environment(\.dismiss) private var dismiss
     @State private var selection: ThreadSettings
+    @State private var originalSettings: ThreadSettings
     @State private var providers: [RemoteProvider] = []
     @State private var loading = true
     @State private var saving = false
     @State private var error: String?
     @State private var confirmUnconfined = false
     init(model: AppModel, thread: ChatThread) {
-        self.model = model; self.thread = thread; _selection = State(initialValue: thread.settings)
+        self.model = model; self.thread = thread
+        _selection = State(initialValue: thread.settings); _originalSettings = State(initialValue: thread.settings)
     }
     private var models: [RemoteModel] { providers.first { $0.id == selection.provider }?.models ?? [] }
     private var variants: [String] { models.first { $0.id == selection.model }?.variants ?? [] }
     private var editable: Bool {
-        model.connected && !model.sending && model.live?.id == thread.id && model.live?.running == false &&
-        model.live?.readOnly == false && model.live?.archived == false && ["", "wuu"].contains(thread.engine)
+        model.connected && !model.refreshing && !model.sending && model.live?.id == thread.id && model.live?.running == false &&
+        model.live?.readOnly == false && model.live?.archived == false && ["", "wuu"].contains(model.live?.engine ?? "")
     }
     var body: some View {
         NavigationStack {
             Form {
                 Section {
-                    Picker("提供商", selection: $selection.provider) {
+                    Picker("提供商", selection: Binding(get: { selection.provider }, set: {
+                        selection.provider = $0; selection.model = models.first?.id ?? ""; selection.variant = ""
+                    })) {
                         if !providers.contains(where: { $0.id == selection.provider }) { Text(selection.provider).tag(selection.provider) }
                         ForEach(providers) { Text($0.id).tag($0.id) }
-                    }.onChange(of: selection.provider) { _, _ in selection.model = models.first?.id ?? ""; selection.variant = "" }
-                    Picker("模型", selection: $selection.model) {
+                    }
+                    Picker("模型", selection: Binding(get: { selection.model }, set: {
+                        selection.model = $0; selection.variant = ""
+                    })) {
                         if !models.contains(where: { $0.id == selection.model }) { Text(selection.model).tag(selection.model) }
                         ForEach(models) { Text($0.name).tag($0.id) }
-                    }.onChange(of: selection.model) { _, _ in selection.variant = "" }
+                    }
                     if !variants.isEmpty || !selection.variant.isEmpty {
                         Picker("推理配置", selection: $selection.variant) {
                             Text("模型默认").tag("")
@@ -53,15 +59,15 @@ struct ThreadSettingsView: View {
                 if loading { ProgressView() }
                 if !editable { Text("连接电脑并等待任务结束后可修改。其他执行引擎的设置请在电脑上管理。").foregroundStyle(.secondary) }
                 if let error { Text(error).foregroundStyle(.red).textSelection(.enabled) }
-            }.disabled(saving)
+            }.disabled(saving || loading)
                 .navigationTitle("会话设置").navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() }.disabled(saving) }
                     ToolbarItem(placement: .confirmationAction) {
                         Button("保存") {
-                            if selection.permission == "unconfined" && thread.settings.permission != "unconfined" { confirmUnconfined = true }
+                            if selection.permission == "unconfined" && originalSettings.permission != "unconfined" { confirmUnconfined = true }
                             else { save() }
-                        }.disabled(!editable || saving || loading || selection.provider.isEmpty || selection.model.isEmpty || selection == thread.settings)
+                        }.disabled(!editable || saving || loading || selection.provider.isEmpty || selection.model.isEmpty || selection == originalSettings)
                     }
                 }
                 .confirmationDialog("允许此会话不受限地访问电脑？", isPresented: $confirmUnconfined, titleVisibility: .visible) {
@@ -69,7 +75,12 @@ struct ThreadSettingsView: View {
                 } message: { Text("任务将不再受工作区文件和网络边界限制。仅对信任的任务开启。") }
                 .task {
                     defer { loading = false }
-                    do { providers = try await model.loadModelChoices(threadID: thread.id) }
+                    do {
+                        providers = try await model.loadModelChoices(threadID: thread.id)
+                        if let current = model.live, current.id == thread.id {
+                            selection = current.settings; originalSettings = current.settings
+                        }
+                    }
                     catch is CancellationError {} catch { self.error = error.localizedDescription }
                 }
         }

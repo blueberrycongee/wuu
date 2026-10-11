@@ -1,7 +1,7 @@
 import SwiftUI
 import WuuCore
 
-/// Chooses the computer's working folder before the conversation exists, then starts it there.
+/// Chooses the working folder for a local draft; the first send creates the host session.
 struct NewConversationView: View {
     @Bindable var model: AppModel
     var started: () -> Void
@@ -105,13 +105,13 @@ struct NewConversationView: View {
                     Text(starting ? "正在开始…" : "开始会话")
                 }.frame(maxWidth: .infinity, minHeight: 44)
             }.mobilePrimaryAction().controlSize(.large)
-                .disabled(starting || !model.connected)
+                .disabled(starting || !model.connected || model.sending)
         }
         .padding(.horizontal, 20).padding(.top, 12).padding(.bottom, 8)
         .background(.bar)
     }
     private func start() {
-        guard !starting, model.connected else { return }
+        guard !starting, !model.sending, model.connected else { return }
         starting = true; failure = nil
         let path = selection
         Task {

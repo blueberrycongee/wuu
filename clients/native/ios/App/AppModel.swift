@@ -593,6 +593,19 @@ struct MessageForkRequest: Identifiable {
         let stamp = epoch, selection = opening
         let result = try await remote.call("config/read")
         guard epoch == stamp, opening == selection, self.remote === remote else { throw CancellationError() }
+        if draftWorkspace != nil, pendingSettings[threadID] == nil {
+            let engines = try await remote.call("engine/list")
+            guard epoch == stamp, opening == selection, self.remote === remote, live?.id == threadID,
+                  draftWorkspace != nil, !sending else { throw CancellationError() }
+            let preferred = engines["settings"]["default_engine"].string ?? ""
+            let engine = engines["engines"].array.first { $0["id"].string == preferred && $0["enabled"].bool }?["id"].string ?? "wuu"
+            self.live?.engine = engine
+            self.live?.settings = engine == "wuu" ? ThreadSettings([
+                "model_provider": result["provider"], "model": result["model"],
+                "model_variant": result["variant"], "model_effort": result["effort"],
+                "permission_mode": result["permissions"]["mode"]
+            ]) : ThreadSettings(["permission_mode": "unconfined"])
+        }
         return result["providers"].array.map(RemoteProvider.init)
     }
     func updateSettings(_ settings: ThreadSettings, threadID: String) async throws {
@@ -629,19 +642,11 @@ struct MessageForkRequest: Identifiable {
         self.live?.expandContent(message.contentRef, item: item)
     }
     func startThread(workdir: String? = nil) async throws {
-        guard let remote, connected, !sending else { throw NativeError.invalid("请先连接电脑并等待发送完成") }
-        let stamp = epoch; opening = UUID(); let selection = opening
-        let selectedWorkspace = (workdir ?? workspace).trimmingCharacters(in: .whitespacesAndNewlines)
-        // Reading defaults preserves pre-send settings without creating a host session.
-        let config = try await remote.call("config/read")
-        let engines = try await remote.call("engine/list")
-        guard epoch == stamp, opening == selection, self.remote === remote, !sending else { throw CancellationError() }
-        let engine = engines["settings"]["default_engine"].string ?? "wuu"
-        let directory = selectedWorkspace.isEmpty ? config["workspace_root"].string ?? "" : selectedWorkspace
-        var thread = ChatThread(["id": .string(UUID().uuidString), "title": "", "cwd": .string(directory),
-            "engine_id": .string(engine), "model_provider": config["provider"], "model": config["model"],
-            "model_variant": config["variant"], "model_effort": config["effort"], "permission_mode": config["permissions"]["mode"]])
-        if !engine.isEmpty && engine != "wuu" { thread.settings = ThreadSettings(["permission_mode": "unconfined"]) }
+        guard connected, !sending else { throw NativeError.invalid("请先连接电脑并等待发送完成") }
+        opening = UUID()
+        let directory = (workdir ?? workspace).trimmingCharacters(in: .whitespacesAndNewlines)
+        // An empty engine follows the computer's default when the first message is sent.
+        let thread = ChatThread(["id": .string(UUID().uuidString), "title": "", "cwd": .string(directory), "engine_id": ""])
         draftWorkspace = directory; workspace = directory; showingHistoryEdit = false
         activeID = nil; live = thread; saved = nil; refreshing = false; imagePreviews.clear(); loadingHistory = false; loadingContent = []; attachmentPreview = nil; loadingAttachment = false
     }
