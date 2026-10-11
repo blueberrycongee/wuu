@@ -8,209 +8,26 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ## [Unreleased]
 
-### Added
+## [2026.10.11] - 2026-10-11
 
-- Fade newly streamed iOS reply text in place while keeping earlier text stable.
-  Coalesce Markdown updates so continuous token bursts remain visible, with native
-  glyph fades on iOS 18 and later and new-block fades on iOS 17. Respect reduced
-  motion and retain message copying and text selection after each fade.
+### Contributors
 
-- Pair the native iOS app directly with a computer from desktop Phone access,
-  keeping identities in the iOS keychain. Restore the last computer, working
-  folder and conversation, and choose a folder before starting a new conversation.
-  Keep queued input compact with preview and steering actions, remove consumed
-  messages from the queue, and load older history automatically while scrolling.
-  Show tool groups as a short current action or count with details on demand.
-  Copy messages, fork from replies, or edit and resend an earlier user message
-  with its attachments. Keep user-message actions in the long-press menu and show reply
-  actions after the turn finishes, using compact shared desktop icons and closer
-  button spacing. Fold preceding process text and tools when the final answer
-  arrives. Keep image inspection inside operation details, loading thumbnails on
-  demand, while explicitly presented images remain visible in the conversation.
-  Choose the current folder or a new Git worktree when forking. Bound fork history
-  and notifications to keep long conversations connected. Load published artifact
-  images through their message references and overlap bounded image/content reads
-  to reduce waiting on higher-latency connections. Negotiate the host's existing
-  encrypted gzip transport on iOS, with bounded decoding and uncompressed small
-  streaming updates.
+@blueberrycongee
 
-- Run a default-exported TypeScript plugin directly with `wuu plugin dev`, using
-  the embedded SDK without a manifest or build, and keep watching through failed saves.
+### Highlights
 
-- Add a compact conversation input inside the right file preview, keeping the
-  conversation visible and the selected file attached as request context. Preserve
-  the current draft when closing, minimizing, or restoring the preview input.
-  Keep short inputs compact and adapt to narrow panels, wrapped text, or attachments.
-
-- Add a small side-panel action to delivered images while keeping direct clicks
-  in the full image viewer. Connect artifact previews to the right panel with
-  reversible transitions that respect reduced motion and fit portrait images.
-
-- Add count-driven progress rings and in-place running-to-completed transitions
-  to conversation TODO plans, respecting reduced-motion preferences.
-
-### Changed
-
-- Stack desktop web-source icons into a compact overlapping group and remove the
-  visible source-count button. Keep direct source links and open the complete
-  source list from the search activity summary.
-
-- Keep desktop toolbar actions and tab close buttons compact at larger UI font
-  sizes, with inset circular hover feedback, circular focus rings, and consistent
-  dismissal icons. Keep the unframed close action in the top-right corner of
-  quoted-text and document attachments, preserving reading space and keyboard
-  focus. Retain contrasting badges on image thumbnails.
-
-- Tighten vertical spacing in expanded desktop tool activity lists.
-
-- Show the source of received session messages as a compact, theme-aware card
-  that opens the related conversation in a split pane. Keep message text,
-  copying, and long-message expansion separate from the navigation control.
-  Unify its card surface and corners with generated files and turn summaries.
-  Put artifact filenames first, with concise format and known size beneath,
-  with internal preview, workspace, and download actions. Show multi-file outputs
-  without a repeated heading and reveal larger groups three files at a time.
-  Add native file actions for managed artifacts, including macOS associated
-  applications and exported copies that preserve the original delivery.
-
-- Keep PDF selections highlighted while writing a compact annotation, show draft
-  excerpts as readable document tiles, and group sent references into count pills
-  with expandable excerpts and source navigation.
-
-- Add a subtle, continuous divider below the conversation titlebar and the
-  right workspace panel header, using the same theme-aware line strength.
-
-- Paint the light navigation rail as one opaque near-white surface on every
-  platform instead of the macOS sidebar material, whose wallpaper-tinted gray
-  read as dirt beside the white canvas. Workspace tabs now fit their titles,
-  select with a quieter fill, and stand a size above the strip's icon buttons.
-
-- Gather how new conversations start on General: the default agent, then the
-  built-in agent's model, reasoning effort and environment. The Agents, Model
-  providers and Built-in agent pages keep their lists.
-
-- Redraw settings as lifted sheets with quiet section labels and roomier rows
-  that name each setting in medium weight, move the page name and its actions
-  into a "Settings / page" titlebar, and mark the selected rail row in light
-  mode as paper lifted off the rail instead of a darker fill.
-
-- Reorganize settings around one label and one control per row with a shared
-  control width: pick the default agent from a menu above the installed list,
-  show the default model and reasoning effort as rows, list connected providers
-  in one group, and set interface and code fonts with their sizes on two rows.
-  Keep subscriptions in the same column as other settings pages, let theme
-  previews span it, and hide Delete all archived when nothing is archived.
-
-- Give the neutral grays a true neutral hue instead of a cool cyan cast, and draw
-  the macOS light sidebar on the system sidebar material under a thinner veil.
-
-- Draw links in answers, user messages, and file previews in body ink with a
-  thin underline instead of blue, and set tool-row targets (files, commands,
-  queries) a step darker than their verbs so a run of tool rows scans by target.
-
-- Align the right panel's tabs, file tree, review list, and tool list on the
-  sidebar's pane inset, and give the file and review filters one quiet search
-  field. Settings rows are denser, and settings groups and cards share one frame.
-
-- Show inline code in answers as the same chip as in user messages, so a theme's
-  inline-code background now applies to answers too.
-- Apply published plugin generations at the next idle conversation turn while
-  retaining active work, conversation history, and session identity.
-
-- Move side chat into the right sidebar's shared tabs, preserving each conversation's
-  history and draft across tool switches and keeping the expanded layout when opened.
-
-- Remove the legacy compact navigation layout. Resizing desktop windows keeps
-  the sidebar's chosen visibility and width, with the same navigation and tools.
-
-- Temporarily hide the conversation information/environment panel and its titlebar
-  button, including automatic expansion in wide windows.
-
-- Move web sources into their tool-call groups as compact circular website icons,
-  with continuous arrival, title and URL tooltips, readable keyboard-accessible
-  overflow, and reduced-motion support that does not replay received sources.
-
-### Fixed
-
-- Keep desktop retry and failure notices aligned with the message column, with a
-  stable countdown width and trailing recovery controls that wrap in narrow panes.
-
-- Limit the automation editor's Enabled click target to its label and switch so
-  clicking the remaining header space does not accidentally pause or resume a task.
-
-- Keep new iOS conversations as local drafts until the first message is sent,
-  preventing unused empty sessions from accumulating on the computer. Preserve
-  draft text, attachments, and selected settings through the first send and retries.
-
-- Consolidate sidebar hover-card status and time beneath the conversation title.
-  Running sessions show elapsed time once; inactive sessions show recency alongside
-  any reply, failure, or interruption status, leaving the full header for the title.
-
-- Keep iOS conversation content in place while reconnecting, merge overlapping
-  history pages, and wait for a fresh snapshot before applying live updates.
-  Simplify the attachment menu and show accurate disabled composer states.
-
-- Dismiss the iOS conversation keyboard when tapping the message area, including
-  blank space in an empty conversation, while preserving the draft.
-
-- Keep browser tab listing and cleanup within the owning conversation, including
-  popups. Reject cross-conversation tab access, and stop stale input after user
-  takeover, request cancellation, navigation, or tab teardown.
-- Preserve page-created browsing contexts, opener messaging, script-filled blank
-  pages and submitted form bodies in embedded browser popups. At turn end,
-  close temporary tabs while keeping user pages, handoffs, deliverables and
-  their live opener context; release automation control on retained pages.
-  Clean up native page self-closes without losing tab-close notifications or
-  leaving stale permission ownership. Wait for the first rendered frame before
-  capturing hidden browser previews, and preserve history previews if capture
-  times out or the task is interrupted.
-
-- Keep development renderer crash recovery running when the Vite server is
-  unavailable, instead of quitting the entire desktop app on the failed reload.
-
-- Keep selection comment editors open when Escape is used by an active text
-  composition, including PDF, file and response selections.
-
-- Discover external-engine models in the conversation's actual working directory,
-  with native refresh, bounded probes and context-aware cache invalidation for
-  Codex, Claude Code, ACP engines and OpenCode. Preserve Claude aliases, discover
-  per-model ACP options and OpenCode variants, and distinguish empty, partial,
-  unsupported and failed catalogs. Save model options through resume and fork;
-  resetting selections restores native configured behavior on the next turn.
-  New conversations wait for engine discovery before submitting model parameters.
-
-- Expand a workspace without conversations in place instead of flashing a
-  loading row and spinner. The workspace header shows a spinner only when its
-  conversation list or switch takes longer than a moment.
-- Preserve working plugins when replacement startup or service negotiation fails,
-  propagate execution cancellation, and retire stale desktop callbacks on reload.
-
-- Avoid delivering an already-answered background process result again when a new
-  user turn reloads a session before the result acknowledgement was saved.
-
-- Keep conversation messages and image tables within narrow panes when the sidebar
-  remains open, and let page scrolling resume at fractional image-gallery edges.
-
-- Align document-preview workspace controls inside the inset conversation tray.
-
-- Keep Claude engine turns open for background agents and their automatic
-  summaries, preserving the full reply and surfacing follow-up failures. Ignore
-  late task updates after completion and distinguish stopped agents from success.
-
-- Keep resumed Claude engine turns running when a background task notification
-  produces a result before the user's reply, preventing silent empty completion.
-
-- Retry failed file previews in place without closing or replacing the selected tab.
-
-- Restore complete conversation history after reload, including intermediate
-  reasoning, tool results, and image artifacts released from model context.
-
-- Keep basic file and command tools directly callable alongside Code Mode, support
-  atomic literal edits, and prefer existing verification unless new tests are requested.
-- Preserve provider-native response order and restart context for cache-friendly
-  continuation; deliver background results during active work and persist their consumption.
-- Remove duplicate terminal receipts and failure reminders; apply one recoverable
-  output budget while retaining canonical tool data and complete audit records.
+- Continue conversations inside expanded document previews, with preserved drafts,
+  PDF selections and annotations, and side chat in shared workspace tabs.
+- Refined desktop navigation, settings, artifact cards, web sources, and task
+  progress, with compact controls and steadier layouts in narrow panes.
+- Pair a separately built native iOS app through desktop Phone access. This
+  release publishes the macOS desktop only; no mobile app is included.
+- Apply plugin updates between turns without losing active work or conversation
+  history, and keep working plugins when replacement startup fails.
+- More reliable model discovery, Claude background-agent follow-ups, interrupted
+  replies, and complete conversation history after reload.
+- Preserve embedded-browser popups and submitted forms, keep tab access within
+  its owning conversation, and retain user pages while cleaning up temporary tabs.
 
 ## [2026.10.6] - 2026-10-06
 
