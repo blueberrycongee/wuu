@@ -46,6 +46,20 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Show the source of received session messages as a compact, theme-aware card
+  that opens the related conversation in a split pane. Keep message text,
+  copying, and long-message expansion separate from the navigation control.
+  Unify its card surface and corners with generated files and turn summaries.
+  Put artifact filenames first, with concise format and known size beneath,
+  with internal preview, workspace, and download actions. Show multi-file outputs
+  without a repeated heading and reveal larger groups three files at a time.
+  Add native file actions for managed artifacts, including macOS associated
+  applications and exported copies that preserve the original delivery.
+
+- Keep PDF selections highlighted while writing a compact annotation, show draft
+  excerpts as readable document tiles, and group sent references into count pills
+  with expandable excerpts and source navigation.
+
 - Add a subtle, continuous divider below the conversation titlebar and the
   right workspace panel header, using the same theme-aware line strength.
 
@@ -103,6 +117,24 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Dismiss the iOS conversation keyboard when tapping the message area, including
   blank space in an empty conversation, while preserving the draft.
+
+- Keep browser tab listing and cleanup within the owning conversation, including
+  popups. Reject cross-conversation tab access, and stop stale input after user
+  takeover, request cancellation, navigation, or tab teardown.
+- Preserve page-created browsing contexts, opener messaging, script-filled blank
+  pages and submitted form bodies in embedded browser popups. At turn end,
+  close temporary tabs while keeping user pages, handoffs, deliverables and
+  their live opener context; release automation control on retained pages.
+  Clean up native page self-closes without losing tab-close notifications or
+  leaving stale permission ownership. Wait for the first rendered frame before
+  capturing hidden browser previews, and preserve history previews if capture
+  times out or the task is interrupted.
+
+- Keep development renderer crash recovery running when the Vite server is
+  unavailable, instead of quitting the entire desktop app on the failed reload.
+
+- Keep selection comment editors open when Escape is used by an active text
+  composition, including PDF, file and response selections.
 
 - Discover external-engine models in the conversation's actual working directory,
   with native refresh, bounded probes and context-aware cache invalidation for

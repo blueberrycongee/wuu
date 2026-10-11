@@ -297,6 +297,7 @@ func (t *Toolkit) CloneForRoot(rootDir string) (*Toolkit, error) {
 		// precedent below is the same hazard).
 		BrowserBridge:             t.env.BrowserBridge,
 		BrowserTabs:               t.env.BrowserTabs,
+		BrowserHostFinalize:       t.env.BrowserHostFinalize,
 		ArtifactPublisher:         t.env.ArtifactPublisher,
 		PluginManager:             t.env.PluginManager,
 		WorkingNotesHome:          t.env.WorkingNotesHome,
@@ -702,6 +703,12 @@ func (t *Toolkit) SetBrowserBridge(bridge BrowserBridge) {
 	t.env.BrowserBridge = bridge
 }
 
+func (t *Toolkit) SetBrowserHostFinalize(enabled bool) {
+	if t != nil && t.env != nil {
+		t.env.BrowserHostFinalize = enabled
+	}
+}
+
 // SetBrowserTabs attaches the durable per-thread tab store. Nil keeps tab
 // addressing in-memory only.
 func (t *Toolkit) SetBrowserTabs(store BrowserTabStore) {
@@ -709,6 +716,15 @@ func (t *Toolkit) SetBrowserTabs(store BrowserTabStore) {
 		return
 	}
 	t.env.BrowserTabs = store
+}
+
+// BrowserTabStore returns the thread's durable browser records for authoritative
+// turn cleanup. The store serializes updates from tools and inherited workers.
+func (t *Toolkit) BrowserTabStore() BrowserTabStore {
+	if t == nil || t.env == nil {
+		return nil
+	}
+	return t.env.BrowserTabs
 }
 
 // SetBrowserEnabled gates the embedded browser tool. New toolkits keep it

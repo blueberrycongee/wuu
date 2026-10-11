@@ -1454,8 +1454,17 @@ func (s *Server) writeNotification(method string, params any) error {
 }
 
 func (s *Server) writeJSON(v any) error {
+	return s.writeJSONContext(context.Background(), v)
+}
+
+func (s *Server) writeJSONContext(ctx context.Context, v any) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
+	// Order the authority check with takeover/release notifications. An old
+	// cancelled request must not be written after a fresh control grant.
+	if err := activity.ControlErr(ctx); err != nil {
+		return err
+	}
 	enc := json.NewEncoder(s.out)
 	if err := enc.Encode(v); err != nil {
 		return fmt.Errorf("write app-server message: %w", err)

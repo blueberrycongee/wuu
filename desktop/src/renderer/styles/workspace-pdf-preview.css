@@ -28,6 +28,8 @@
 /* A chrome row like Review's file row: the page count on the pane inset, the
  * zoom controls ending on the toolbar inset. */
 .workspace-pdf-toolbar {
+  user-select: none;
+  -webkit-user-select: none;
   display: flex;
   min-width: 0;
   min-height: calc(var(--control-size-toolbar) + var(--space-2) * 2);

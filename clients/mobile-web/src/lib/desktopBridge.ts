@@ -124,6 +124,7 @@ const unavailableWebMethods = [
   "revealSession",
   "revealWorkspaceItem",
   "showWorkspaceItemMenu",
+  "showArtifactItemMenu",
   "popOutSession",
   "popOutClosed",
 ] as const satisfies readonly (keyof WuuDesktopApi)[];

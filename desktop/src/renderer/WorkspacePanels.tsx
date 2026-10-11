@@ -265,7 +265,7 @@ export function WorkspaceRightPanel({
   browserActivity?: ActivitySession;
   browserDockTarget?: BrowserDockTarget;
   browserOverlaySuppressed?: boolean;
-  onBrowserUserInteraction?: () => void | Promise<void>;
+  onBrowserUserInteraction?: (inputGeneration?: number) => void | Promise<void>;
   focusedComposer?: ReactNode;
   fileRefreshKey?: string;
   pluginHost?: PluginHost;
@@ -1070,6 +1070,9 @@ export function WorkspaceRightPanel({
                   <ArtifactPreview
                     active={open && !conversationActive}
                     artifact={activeTab.artifact}
+                    threadID={activeTab.threadID}
+                    initialPage={activeTab.page}
+                    pageRequest={activeTab.pageRequest}
                     motion={activeTab.motion}
                     cwd={activeTab.cwd}
                     mode="panel"

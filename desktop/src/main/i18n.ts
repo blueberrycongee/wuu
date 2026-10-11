@@ -38,6 +38,10 @@ const zhCN = {
   openInApplication: "在 {application} 中打开",
   openWith: "打开方式",
   copyPath: "复制路径",
+  saveArtifactAs: "另存为…",
+  showInFinder: "在访达中显示",
+  showInExplorer: "在资源管理器中显示",
+  showInFileManager: "在文件管理器中显示",
   projectUnavailable:
     "工作区目录当前不可用：{path}。请恢复该目录，或从工作区菜单选择“重新定位…”。",
 } as const;
@@ -78,6 +82,10 @@ const enUS = {
   openInApplication: "Open in {application}",
   openWith: "Open With",
   copyPath: "Copy Path",
+  saveArtifactAs: "Save As…",
+  showInFinder: "Show in Finder",
+  showInExplorer: "Show in Explorer",
+  showInFileManager: "Show in File Manager",
   projectUnavailable:
     "The workspace folder is currently unavailable: {path}. Restore the folder or choose Relocate from the workspace menu.",
 } as const satisfies Record<MainTranslationKey, string>;

@@ -300,7 +300,7 @@ func TestServerQueuedTurnWaitsForExternalThreadExecutionLease(t *testing.T) {
 	if err := external.Release(); err != nil {
 		t.Fatalf("release external lease: %v", err)
 	}
-	waitForMethod(t, out, NotificationTurnCompleted)
+	waitForTurnCompletedForThread(t, out, sess.ID)
 	assertFakeClientRequestCount(t, client, 1)
 	if srv.hasQueuedUserTurns(sess.ID) {
 		t.Fatal("queued turn remained pending after ownership became available")

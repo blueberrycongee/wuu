@@ -3468,3 +3468,16 @@ html[data-focus-modality="keyboard"] .runtime-panel-summary :is(
   75% { transform: translateX(1px) rotate(8deg); }
   88% { transform: translateX(-0.5px) rotate(-4deg); }
 }
+
+.workspace-file-preview-notice {
+  flex: none;
+  margin: 0;
+  padding: var(--space-2) var(--pane-inset);
+  color: var(--ink-soft);
+  border-bottom: 1px solid var(--hairline-soft);
+  font-size: var(--font-sm);
+}
+
+.workspace-file-preview.readonly:has(> .workspace-file-preview-notice) {
+  grid-template-rows: auto minmax(0, 1fr);
+}

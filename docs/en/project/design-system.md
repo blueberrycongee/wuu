@@ -122,7 +122,7 @@ Every edge that reads as aligned must come from one shared role, not from separa
 
 - **Pane inset.** In chrome rows such as sidebar rows, titlebars, and tab bars, the first and last visible glyph sits `--pane-inset` from the pane edge. Align ink, not button boxes: a control whose box is larger than its glyph subtracts its optical offset, such as `--control-toolbar-glyph-offset` for toolbar buttons. Rows that float inside a pane, in the sidebar, the workspace tabs, the file tree, the review list, and the tool list, split the inset between the list's padding and the row's own, so the hover fill keeps a margin from the edge while the glyph stays on the inset.
 - **Reading column.** Unframed content (paragraphs, headings, lists, process rows, answer actions) shares the column's leading edge. Message tables have no side frame, so their outer cell text also starts on that edge.
-- **Framed content.** Code blocks, the composer, message bubbles, and cards place text and icon glyphs `--card-padding` from the outer edge; a frame's border is part of that measurement. A code block's language label, its code, and the composer's text therefore share one axis. The query bubble and the composer draft keep that inset above and below their text as well: their block padding subtracts the line's half-leading, with an 8px floor, so glyphs sit the same distance from the frame at every text size.
+- **Framed content.** Code blocks, the composer, message bubbles, and reading cards place text and icon glyphs `--card-padding` from the outer edge; a frame's border is part of that measurement. A code block's language label, its code, and the composer's text therefore share one axis. Compact entry cards use the density roles described below. The query bubble and the composer draft keep that inset above and below their text as well: their block padding subtracts the line's half-leading, with an 8px floor, so glyphs sit the same distance from the frame at every text size.
 - **Accessory columns.** Sidebar trailing accessories of different sizes share one center axis. Headings reserve their accessory's footprint whether or not the section has one, so group spacing does not depend on which headings offer an action.
 
 Align peer labels, icon columns, and trailing actions. Indentation expresses hierarchy, independent of running or unread status. Reserve the real footprint of indicators and actions plus a reading gap. Give each spacing relationship one owner rather than accumulating wrapper gaps, child margins, and invisible drag targets. Use appropriate reading-width roles such as `--content-column-width`, not one mandatory width for every page.
@@ -133,6 +133,7 @@ Align peer labels, icon columns, and trailing actions. Indentation expresses hie
 | --- | --- | --- |
 | Inner highlights, menu rows, compact chips, media | `--radius-xs`, `--radius-media` | 6px |
 | Controls and small cards | `--radius-sm` | 8px |
+| Embedded message cards | `--message-flow-card-radius` | Midpoint of small and panel radii; 12px by default |
 | Panels, dialogs and the composer | `--radius-md`, `--radius-lg` | 16px; lg aliases md |
 | Compact menu shell | `--menu-shell-radius` | Inner radius + menu inset; 12px at standard density |
 | Panel overlays and dialogs | `--menu-radius` | Follows panel by default; theme-overridable |
@@ -141,6 +142,25 @@ Align peer labels, icon columns, and trailing actions. Indentation expresses hie
 Corners stay tight so a control reads as a control: a 32px field or button with an 8px corner is a rectangle, not a pill. Relate nested corners through their inset instead of assigning the same radius to every layer: a 16px panel holds 8px controls at 8px padding, and a menu shell is a 6px row plus its 6px inset. Pills are for switch tracks, badges, and capsules; circles suit avatars, dots, knobs, and icon-only close buttons. Do not round a text field or button into a pill for style.
 
 Choose elevation by purpose: `--shadow-soft` for light controls, `--shadow-card` for cards, `--shadow-composer` for the composer, `--shadow-pop` for popovers, and `--shadow-modal` for dialogs. Attached trays and edge drawers use directional roles. Light mode uses restrained ambient shadows. Dark mode defines surfaces with inset highlights while overlays retain black ambient shadows. Hover, focus, and expansion do not automatically increase elevation; ordinary content does not need shadows everywhere.
+
+### Message-flow cards
+
+Related-session links, generated files, and turn-end output summaries share the
+`--message-flow-card-*` radius, border, surface, and hover roles. They have a quiet
+one-pixel frame and no added elevation. Media keeps its existing media radius.
+Use the shared compact inline padding and leading `--icon-size-xl` role; reserve
+the trailing action's space so long names truncate without moving it.
+
+Density follows content. A session link is one line with the roomy control's
+minimum height; its message body remains independently readable and selectable.
+A file has a primary filename in the UI font and a secondary line for its concise
+format and known byte size, separated by a small gap. Omit unavailable size rather
+than guessing. Single outputs and groups of up to three files need no repeated
+heading. Larger groups show three rows at a time, with total and remaining counts
+below the list; each expansion reveals up to three more files. Chevrons lead into
+the internal preview or workspace view. Managed-file context menus provide native
+file actions: associated applications on macOS, saving, and revealing an exported
+copy in the file manager. External editors never receive the immutable snapshot.
 
 ## Icons, motion, and controls
 

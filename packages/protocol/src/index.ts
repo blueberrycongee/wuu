@@ -95,6 +95,8 @@ export const BROWSER_REVERSE_RPC_METHODS = [
   "browser/close_tab",
   "browser/set_visibility",
   "browser/list_tabs",
+  "browser/finalize",
+  "browser/turn_ended",
 ] as const;
 
 export type CoreBuildInfo = {
@@ -111,6 +113,15 @@ export type DesktopBuildInfo = {
 
 export type WorkspaceItemMenuResult = {
   action: "none";
+};
+
+export type ArtifactItemMenuParams = {
+  uri: string;
+  threadId: string;
+};
+
+export type ArtifactItemMenuResult = {
+  action: "none" | "save";
 };
 
 export type BuildInfoResult = {
@@ -189,8 +200,12 @@ export type FeatureFlags = {
 // internal/appserver/protocol.go. No payload carries an activity_id: the client
 // auto-rejects server requests naming a stopped activity, which would wedge a
 // CDP call the moment a tab's activity is torn down. Tabs are addressed by
-// tab_id, minted core-side.
+// tab_id, minted core-side, and scoped to the bridge-owned thread_id.
 export type BrowserCDPParams = {
+  thread_id: string;
+  turn_id?: string;
+  execution_id?: string;
+  request_id?: string;
   workdir: string;
   tab_id: string;
   method: string;
@@ -206,6 +221,10 @@ export type BrowserCDPResult = {
 };
 
 export type BrowserScreenshotParams = {
+  thread_id: string;
+  turn_id?: string;
+  execution_id?: string;
+  request_id?: string;
   workdir: string;
   tab_id: string;
   dest_path: string;
@@ -219,35 +238,93 @@ export type BrowserScreenshotResult = {
 };
 
 export type BrowserOpenTabParams = {
+  thread_id: string;
+  turn_id?: string;
+  execution_id?: string;
+  request_id?: string;
   workdir: string;
   tab_id: string;
   initial_url?: string;
 };
 
 export type BrowserCloseTabParams = {
+  thread_id: string;
+  turn_id?: string;
+  execution_id?: string;
+  request_id?: string;
   workdir: string;
   tab_id: string;
 };
 
 export type BrowserSetVisibilityParams = {
+  thread_id: string;
+  turn_id?: string;
+  execution_id?: string;
+  request_id?: string;
   workdir: string;
   tab_id: string;
   visible: boolean;
 };
 
 export type BrowserListTabsParams = {
+  thread_id: string;
+  turn_id?: string;
+  execution_id?: string;
+  request_id?: string;
   workdir: string;
+};
+
+export type BrowserRequestCancelledParams = {
+  workdir: string;
+  thread_id: string;
+  request_id: string;
 };
 
 export type BrowserListedTab = {
   tab_id: string;
   url?: string;
   title?: string;
+  status?: BrowserTabStatus;
 };
 
 export type BrowserListTabsResult = {
   tab_ids: string[];
   tabs?: BrowserListedTab[];
+};
+
+export type BrowserTabStatus = "temporary" | "persistent" | "handoff" | "deliverable";
+
+export type BrowserTurnStartedParams = {
+  workdir: string;
+  thread_id: string;
+  turn_id: string;
+  execution_id: string;
+};
+
+export type BrowserKeptTab = {
+  tab_id: string;
+  status: Exclude<BrowserTabStatus, "temporary">;
+};
+
+export type BrowserTurnEndedParams = BrowserTurnStartedParams & {
+  keep: BrowserKeptTab[];
+  preserve_all?: boolean;
+};
+
+export type BrowserTurnEndedResult = {
+  tabs?: BrowserListedTab[];
+  closed: string[];
+  kept: string[];
+  stale?: boolean;
+};
+
+export type BrowserFinalizeParams = {
+  workdir: string;
+  thread_id: string;
+  turn_id?: string;
+  execution_id?: string;
+  request_id?: string;
+  keep: BrowserKeptTab[];
 };
 
 export type RuntimeIssue = {
@@ -986,6 +1063,7 @@ export type BrowserSurfaceSnapshot = {
 export type BrowserCommandName = "navigate" | "back" | "forward" | "reload" | "stop";
 
 export type BrowserCommandParams = {
+  threadID?: string;
   workdir: string;
   tabID: string;
   command: BrowserCommandName;
@@ -1562,16 +1640,26 @@ export type ThreadItemType =
   | "error";
 export type ThreadItemStatus = "in_progress" | "completed" | "failed";
 
+// PDF selections use page coordinates; text line/column fields are zero.
+export type PdfSelectionReference = {
+  start_page: number;
+  end_page: number;
+  artifact_uri?: string;
+  artifact_sha256?: string;
+  artifact_thread_id?: string;
+};
+
 export type FileSelectionSource = {
   workspace: string;
   path: string;
-  // One-based lines and UTF-16 columns; the end position is exclusive.
+  // One-based lines and UTF-16 columns; zero when pdf supplies page coordinates.
   start_line: number;
   start_column: number;
   end_line: number;
   end_column: number;
   quote: string;
   revision: string;
+  pdf?: PdfSelectionReference;
 };
 
 // Ordered user-authored content carried by one message bubble. Binary
@@ -2876,7 +2964,7 @@ export type WuuDesktopApi = {
   pollXAILogin: (loginId: string) => Promise<AuthXAILoginPollResult>;
   cancelXAILogin: (loginId: string) => Promise<{ ok: boolean }>;
   listActivities: (threadId: string) => Promise<ActivityListResult>;
-  takeoverActivity: (threadId: string, activityId: string) => Promise<ActivityActionResult>;
+  takeoverActivity: (threadId: string, activityId: string, inputGeneration?: number) => Promise<ActivityActionResult>;
   releaseActivity: (threadId: string, activityId: string) => Promise<ActivityReleaseResult>;
   stopActivity: (threadId: string, activityId: string) => Promise<ActivityActionResult>;
   listSkills: (params?: SkillListParams) => Promise<SkillListResult>;
@@ -3093,6 +3181,9 @@ export type WuuDesktopApi = {
   // default app and the installed apps that can open this specific item.
   // Other shells keep their existing renderer-owned context menu.
   showWorkspaceItemMenu: (path: string) => Promise<WorkspaceItemMenuResult>;
+  // Managed deliveries only. External apps receive a verified temporary copy.
+  // macOS offers associated apps; other desktop hosts offer save and reveal.
+  showArtifactItemMenu?: (params: ArtifactItemMenuParams) => Promise<ArtifactItemMenuResult>;
   // Open an external URL via the OS default browser. Used by the
   // assistant turn's 来源 pill to send the user to the page the agent
   // actually consulted (web_search hit / web_fetch target) instead of
@@ -3175,7 +3266,7 @@ export type WuuDesktopApi = {
   ) => () => void;
   // Main→renderer: the user clicked or typed in the presented page.
   onBrowserUserInput?: (
-    handler: (payload: { workdir: string; tabID: string }) => void,
+    handler: (payload: { workdir: string; tabID: string; threadID?: string; inputGeneration?: number }) => void,
   ) => () => void;
   // Main→renderer: a page-opened tab should replace the opener in the panel.
   onBrowserTabAdopted?: (

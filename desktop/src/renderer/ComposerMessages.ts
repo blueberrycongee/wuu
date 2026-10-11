@@ -1,3 +1,4 @@
+import { fileSelectionLocation } from "./PdfSelection";
 import { beginLocalTurnTiming, bindLocalTurnTiming, forgetLocalTurnTiming, localTurnTiming } from "./LocalTurnTiming";
 import type { ClipboardEvent as ReactClipboardEvent } from "react";
 import type {
@@ -335,7 +336,7 @@ export function createComposerMessage(
 
 export function cloneMessageContentPart(part: MessageContentPart): MessageContentPart {
   if (part.type === "response_selection") return { ...part, selection: { ...part.selection, source: { ...part.selection.source } } };
-  if (part.type === "file_selection") return { ...part, source: { ...part.source } };
+  if (part.type === "file_selection") return { ...part, source: { ...part.source, ...(part.source.pdf ? { pdf: { ...part.source.pdf } } : {}) } };
   return { ...part };
 }
 
@@ -394,7 +395,7 @@ export function queuedMessagePreview(message: QueuedComposerMessage): string {
 export function queuedMessageFullPreview(message: QueuedComposerMessage): string {
   const displayText = message.contentParts?.some((part) => part.type === "file_selection")
     ? message.contentParts.map((part) => part.type === "file_selection"
-      ? `${part.source.path}:${part.source.start_line}–${part.source.end_line} · ${part.comment || part.source.quote}`
+      ? `${part.source.pdf ? `${part.source.path} · ${fileSelectionLocation(part.source)}` : `${part.source.path}:${part.source.start_line}–${part.source.end_line}`} · ${part.comment || part.source.quote}`
       : part.text).join("\n")
     : message.text;
   const text = displayText.trim().replace(/\s+/g, " ");

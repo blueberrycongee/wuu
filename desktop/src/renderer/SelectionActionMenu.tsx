@@ -37,11 +37,12 @@ export const SelectionActionMenu = forwardRef<HTMLDivElement, SelectionActionMen
           aria-label={commentPlaceholder} placeholder={commentPlaceholder} value={comment}
           onChange={event => onCommentChange(event.target.value)}
           onKeyDown={event => {
+            if (isComposerTextComposing(event)) return;
             if (event.key === "Escape") {
               event.preventDefault();
               event.stopPropagation();
               onCommentCancel();
-            } else if (event.key === "Enter" && !event.shiftKey && !isComposerTextComposing(event)) {
+            } else if (event.key === "Enter" && !event.shiftKey) {
               event.preventDefault();
               if (comment.trim() || allowEmptyComment) onCommentSubmit();
             }

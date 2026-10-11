@@ -155,6 +155,7 @@ describe("WorkspaceBrowserPanel", () => {
     expect(browserCommand).toHaveBeenCalledWith({
       workdir: "/repo",
       tabID: "user:thread-1",
+      threadID: "thread-1",
       command: "navigate",
       url: "http://app.local:3000",
     });
@@ -187,6 +188,7 @@ describe("WorkspaceBrowserPanel", () => {
     expect(browserCommand).toHaveBeenCalledWith({
       workdir: "/repo",
       tabID: "user:thread-1",
+      threadID: "thread-1",
       command: "navigate",
       url: "https://docs.example.com/api",
     });
@@ -258,7 +260,7 @@ describe("WorkspaceBrowserPanel", () => {
     expect(reportBrowserBounds).toHaveBeenCalledWith("/repo", "tab-live", null);
   });
 
-  it("pauses for direct input only on the displayed agent tab and waits before navigating", async () => {
+  it("pauses for same-thread input on the displayed tab and waits before navigating", async () => {
     let finishPause!: () => void;
     const paused = new Promise<void>((resolve) => { finishPause = resolve; });
     const onUserInteraction = vi.fn(() => paused);
@@ -276,12 +278,14 @@ describe("WorkspaceBrowserPanel", () => {
     render({ activity, onUserInteraction });
     const userInput = () => vi.mocked(window.wuu.onBrowserUserInput!).mock.calls.at(-1)![0];
     act(() => {
-      userInput()({ workdir: "/other", tabID: "tab-live" });
-      userInput()({ workdir: "/repo", tabID: "another-tab" });
+      userInput()({ threadID: "thread-1", inputGeneration: 1, workdir: "/other", tabID: "tab-live" });
+      userInput()({ threadID: "thread-1", inputGeneration: 1, workdir: "/repo", tabID: "another-tab" });
+      userInput()({ threadID: "other-thread", inputGeneration: 1, workdir: "/repo", tabID: "tab-live" });
     });
     expect(onUserInteraction).not.toHaveBeenCalled();
-    act(() => { userInput()({ workdir: "/repo", tabID: "tab-live" }); });
+    act(() => { userInput()({ threadID: "thread-1", inputGeneration: 1, workdir: "/repo", tabID: "tab-live" }); });
     expect(onUserInteraction).toHaveBeenCalledTimes(1);
+    expect(onUserInteraction).toHaveBeenCalledWith(1);
     onUserInteraction.mockClear();
     act(() => {
       surfaceHandlers.at(-1)!({
@@ -293,12 +297,12 @@ describe("WorkspaceBrowserPanel", () => {
     expect(onUserInteraction).toHaveBeenCalledTimes(1);
     expect(browserCommand).not.toHaveBeenCalled();
     await act(async () => { finishPause(); await paused; });
-    expect(browserCommand).toHaveBeenCalledWith({ workdir: "/repo", tabID: "tab-live", command: "back", url: undefined });
+    expect(browserCommand).toHaveBeenCalledWith({ workdir: "/repo", threadID: "thread-1", tabID: "tab-live", command: "back", url: undefined });
     onUserInteraction.mockClear();
     await act(async () => {
       rerender({ activity: { ...activity, controller: "user", state: "user_controlled" }, onUserInteraction });
     });
-    act(() => { userInput()({ workdir: "/repo", tabID: "tab-live" }); });
+    act(() => { userInput()({ threadID: "thread-1", inputGeneration: 1, workdir: "/repo", tabID: "tab-live" }); });
     expect(onUserInteraction).toHaveBeenCalledTimes(1);
     onUserInteraction.mockClear();
     await act(async () => {
@@ -308,7 +312,9 @@ describe("WorkspaceBrowserPanel", () => {
         onUserInteraction,
       });
     });
-    act(() => { userInput()({ workdir: "/repo", tabID: "retained-preview" }); });
+    act(() => { userInput()({ threadID: "other-thread", inputGeneration: 1, workdir: "/repo", tabID: "retained-preview" }); });
     expect(onUserInteraction).not.toHaveBeenCalled();
+    act(() => { userInput()({ threadID: "thread-1", inputGeneration: 2, workdir: "/repo", tabID: "retained-preview" }); });
+    expect(onUserInteraction).toHaveBeenCalledExactlyOnceWith(2);
   });
 });

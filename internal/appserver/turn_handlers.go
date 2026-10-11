@@ -2,12 +2,15 @@ package appserver
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 	"mime"
+	"net/url"
 	"reflect"
 	"slices"
 	"sort"
@@ -1244,6 +1247,7 @@ func (s *Server) ensureThreadRuntime(th *threadState) (*runtime.ThreadRuntime, e
 			threadRuntime.Toolkit.SetBrowserEnabled(false)
 		}
 		threadRuntime.Toolkit.SetBrowserBridge(s.browserBridgeForThread(browserWorkdir, th.ID))
+		threadRuntime.Toolkit.SetBrowserHostFinalize(s.supportsClientMethod(MethodBrowserFinalize) && s.supportsClientMethod(MethodBrowserTurnEnded))
 		threadRuntime.Toolkit.SetOnSessionWorkspaceChanged(func(root string) error {
 			if err := s.rebindThreadWorkspace(th.ID, root); err != nil {
 				return err
@@ -1781,6 +1785,26 @@ func validFileSelectionPart(part providers.MessageContentPart) bool {
 	if source == nil || strings.TrimSpace(source.Workspace) == "" || strings.TrimSpace(source.Path) == "" ||
 		strings.TrimSpace(source.Revision) == "" || source.Quote == "" {
 		return false
+	}
+	if pdf := source.PDF; pdf != nil {
+		if pdf.StartPage < 1 || pdf.EndPage < pdf.StartPage || source.StartLine != 0 || source.StartColumn != 0 || source.EndLine != 0 || source.EndColumn != 0 {
+			return false
+		}
+		// A URI is provenance, never permission to read a different resource.
+		if pdf.ArtifactURI != "" || pdf.ArtifactSHA256 != "" || pdf.ArtifactThreadID != "" {
+			uri, err := url.Parse(pdf.ArtifactURI)
+			if err != nil || uri.Scheme != "wuu-artifact" || len(pdf.ArtifactSHA256) != 64 || pdf.ArtifactThreadID == "" {
+				return false
+			}
+			segments := strings.Split(strings.TrimPrefix(uri.Path, "/"), "/")
+			if len(segments) != 3 || segments[0] != pdf.ArtifactThreadID || uri.Query().Get("sha256") != pdf.ArtifactSHA256 || source.Revision != "sha256:"+pdf.ArtifactSHA256 {
+				return false
+			}
+			if _, err := hex.DecodeString(pdf.ArtifactSHA256); err != nil {
+				return false
+			}
+		}
+		return true
 	}
 	return source.StartLine > 0 && source.StartColumn > 0 && source.EndLine > 0 && source.EndColumn > 0 &&
 		(source.EndLine > source.StartLine || (source.EndLine == source.StartLine && source.EndColumn >= source.StartColumn))
@@ -2355,6 +2379,13 @@ func usageContextWindowTokens(runner *agent.StreamRunner) int {
 }
 
 func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState, threadRuntime *runtime.ThreadRuntime, turnID string, turnRuntime turnRuntimeSnapshot, history []providers.ChatMessage, requestContext []agent.ContextSegment) {
+	browserTurn := &browserTurnState{threadID: th.ID, turnID: turnID, executionID: rand.Text(), bridges: make(map[string]*browserBridge)}
+	ctx = context.WithValue(ctx, browserTurnContextKey{}, browserTurn)
+	turnKit := s.rt.Toolkit
+	if threadRuntime != nil && threadRuntime.Toolkit != nil {
+		turnKit = threadRuntime.Toolkit
+	}
+	defer func() { _ = s.finishBrowserTurn(browserTurn, turnKit) }()
 	// A refresh during this turn kept its generation leased. Release it once
 	// all turn cleanup has finished, unless background work still depends on it.
 	defer s.retireIdlePluginRuntimes()
@@ -2533,10 +2564,6 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 	// worktree-bound thread's file/shell tools switch their execution CWD to
 	// the checkout (after their ordinary sandbox checks) even when the
 	// runtime happens to be rooted at the parent repo.
-	turnKit := s.rt.Toolkit
-	if threadRuntime != nil && threadRuntime.Toolkit != nil {
-		turnKit = threadRuntime.Toolkit
-	}
 	if turnWorktreePath != "" && turnKit != nil {
 		ctx = toolctx.WithWorktreeBinding(ctx, turnKit.RootDir(), turnWorktreePath)
 	}
@@ -2820,6 +2847,7 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 	// long-lived runner before the thread can become idle and admit another
 	// turn; the deferred call remains as panic-safe cleanup.
 	restoreRunner()
+	browserCleanupErr := s.finishBrowserTurn(browserTurn, turnKit)
 
 	if errors.Is(err, context.Canceled) {
 		th.mu.Lock()
@@ -2829,6 +2857,7 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 			err = nil
 		}
 	}
+	err = errors.Join(err, browserCleanupErr)
 
 	now := time.Now().UTC()
 	completionAnswerReady := false

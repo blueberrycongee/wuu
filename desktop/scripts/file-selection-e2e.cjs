@@ -330,13 +330,87 @@ async function run() {
     assert.equal(await evaluate(() => document.querySelector(".file-selection-action-menu textarea")?.value), wrappedComment, "Scrolling must preserve the comment");
     await screenshot(`${variant.name}-wrapped-scroll`);
     report.cases.push({ variant, file: "selection-wrapped.ts", checks: ["mid-file-wrapped-source-placement", "popup-clearance", "scroll-reanchor"] });
+    await verifyMixedSentSelections(variant);
     writeReport();
     win.destroy();
     win = undefined;
   }
   assert.deepEqual(report.errors, [], "Unexpected runtime or network errors");
+  report.completed = true;
   writeReport();
   console.log(`PASS ${report.cases.length} file selection cases. Report and screenshots: ${output}`);
+}
+
+async function verifyMixedSentSelections(variant) {
+  phase = `${variant.name}: mixed PDF and text history`;
+  await press("Escape");
+  await press("Escape");
+  if (await evaluate(() => document.querySelector('.workspace-right-panel')?.getAttribute('aria-hidden') === 'false')) {
+    await click('button[aria-label="Close right sidebar"]');
+  }
+  const previous = await snapshot();
+  const original = previous.submissions.flatMap(item => item.contentParts || [])
+    .find(part => part.type === "file_selection" && part.intent === "quote");
+  assert.ok(original);
+  const pdfSource = { workspace: original.source.workspace, path: "mixed-fixture.pdf",
+    start_line: 0, start_column: 0, end_line: 0, end_column: 0,
+    quote: "PDF text must keep its page provenance.", revision: "fixture-pdf-revision",
+    pdf: { start_page: 1, end_page: 1 } };
+  const parts = [
+    { ...original, id: "mixed-pdf-quote", source: pdfSource },
+    { ...original, id: "mixed-text-quote" },
+    { ...original, id: "mixed-pdf-comment", intent: "comment", source: pdfSource, comment: "PDF comment remains separate." },
+    { ...original, id: "mixed-text-comment", intent: "comment", comment: "Text comment remains separate." },
+  ];
+  // The existing in-memory bridge seeds history for this renderer-only routing
+  // case. The production PDF journey independently verifies real core payloads.
+  const turnId = await evaluate(async parts => {
+    const { thread } = window.selectionE2E.snapshot();
+    const { turn } = await window.wuu.startTurn(thread.id, "Mixed references", [], [], undefined, undefined, parts);
+    window.selectionE2E.complete();
+    return turn.id;
+  }, parts);
+  const scope = `[data-user-message-id="${turnId}-user"]`;
+  await waitFor(scope => document.querySelector(scope)?.querySelectorAll('.pdf-quote-pill').length === 2
+    && document.querySelector(scope)?.querySelectorAll('.file-selection-tag').length === 2,
+    "separate PDF and non-PDF sent groups", scope);
+  await evaluate(scope => document.querySelector(scope).scrollIntoView({ block: 'center' }), scope);
+  assert.deepEqual((await snapshot()).submissions.at(-1).contentParts, parts, "Mixed routing preserves all source metadata and comments");
+
+  await clickButton(scope, "1 selection", ".pdf-quote-pill");
+  await waitFor(() => Boolean(document.querySelector('[data-selection-id="mixed-pdf-quote"]')), "PDF quote preview");
+  assert.equal(await evaluate(() => document.querySelector('[data-selection-id="mixed-pdf-quote"] blockquote').textContent), pdfSource.quote);
+  assert.deepEqual(await evaluate(() => [...document.querySelectorAll('[data-selection-id="mixed-pdf-quote"] .pdf-quote-source-link > span')].map(node => node.textContent)), [pdfSource.path, "p. 1"]);
+  await screenshot(`${variant.name}-mixed-pdf-quote`);
+  await press("Escape");
+  await waitFor(() => !document.querySelector('[data-wuu-component="sent-quote-preview"]'), "PDF quote dismissed");
+
+  await click(`${scope} .file-selection-quote-chip .file-selection-tag`);
+  await waitFor(() => Boolean(document.querySelector('.file-selection-quote-panel')), "text quote preview");
+  assert.equal(await evaluate(() => document.querySelector('.file-selection-quote-text').textContent), original.source.quote);
+  assert.equal(await evaluate(() => document.querySelector('.file-selection-quote-entry .file-selection-location').textContent), `${original.source.path}:${original.source.start_line}`);
+  await screenshot(`${variant.name}-mixed-text-quote`);
+  await press("Escape");
+  await waitFor(() => !document.querySelector('.file-selection-quote-panel'), "text quote dismissed");
+
+  await clickButton(scope, "1 comment", ".pdf-quote-pill");
+  await waitFor(() => Boolean(document.querySelector('[data-selection-id="mixed-pdf-comment"]')), "PDF comment preview");
+  assert.equal(await evaluate(() => document.querySelector('[data-selection-id="mixed-pdf-comment"] .pdf-quote-comment').textContent), parts[2].comment);
+  await click('[data-selection-id="mixed-pdf-comment"] summary');
+  assert.equal(await evaluate(() => document.querySelector('[data-selection-id="mixed-pdf-comment"] blockquote').textContent), pdfSource.quote);
+  await screenshot(`${variant.name}-mixed-pdf-comment`);
+  await press("Escape");
+  await waitFor(() => !document.querySelector('[data-wuu-component="sent-quote-preview"]'), "PDF comment dismissed");
+
+  await clickButton(scope, "1 comment", ".file-selection-tag");
+  await waitFor(() => Boolean(document.querySelector('.file-selection-panel .file-selection-comment')), "text comment preview");
+  assert.equal(await evaluate(() => document.querySelector('.file-selection-panel .file-selection-comment').textContent), parts[3].comment);
+  await click('.file-selection-panel .file-selection-original summary');
+  assert.equal(await evaluate(() => document.querySelector('.file-selection-panel .file-selection-original pre').textContent), original.source.quote);
+  await screenshot(`${variant.name}-mixed-text-comment`);
+  await press("Escape");
+  report.cases.push({ variant, kind: "mixed-pdf-text-history", parts,
+    checks: ["separate-pdf-and-text-groups", "exact-source-metadata", "exact-quotes", "separate-comments"] });
 }
 
 async function verifyTextAttachments(variant) {

@@ -1,3 +1,4 @@
+import { validPdfSelectionReference } from "./PdfSelection";
 import { useRef, useState, type MutableRefObject } from "react";
 import type {
   MessageContentPart,
@@ -107,8 +108,11 @@ function heldComposerMessage(
           typeof source.path !== "string" || !source.path.trim() ||
           typeof source.revision !== "string" || !source.revision.trim() ||
           typeof source.quote !== "string" || !source.quote ||
-          ![source.start_line, source.start_column, source.end_line, source.end_column]
-            .every((value) => typeof value === "number" && Number.isSafeInteger(value) && value > 0)
+          (source.pdf !== undefined ? !validPdfSelectionReference(source.pdf)
+            || ![source.start_line, source.start_column, source.end_line, source.end_column].every(value => value === 0)
+            || (source.pdf.artifact_sha256 !== undefined && source.revision !== `sha256:${source.pdf.artifact_sha256}`)
+            : ![source.start_line, source.start_column, source.end_line, source.end_column]
+              .every((value) => typeof value === "number" && Number.isSafeInteger(value) && value > 0))
         ) return [];
         const startLine = source.start_line as number;
         const startColumn = source.start_column as number;
@@ -130,6 +134,7 @@ function heldComposerMessage(
             start_column: startColumn,
             end_line: endLine,
             end_column: endColumn,
+            ...(validPdfSelectionReference(source.pdf) ? { pdf: { ...source.pdf } } : {}),
           },
         }];
       }

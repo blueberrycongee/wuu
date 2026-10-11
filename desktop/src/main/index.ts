@@ -1,4 +1,6 @@
+import { createBrowserView } from "./browserView";
 import { saveArtifactFile } from "./artifactSave";
+import { showArtifactItemMenu } from "./artifactItemMenu";
 import type { DesktopZoomAction } from "../shared/DesktopPageZoom";
 import { readCatalogSkill } from "./remoteSkills";
 import { inheritSystemProxy } from "./systemProxy";
@@ -17,13 +19,13 @@ import {
   nativeTheme,
   Notification,
   powerMonitor,
+  protocol,
   screen,
   session as electronSession,
   systemPreferences,
   type OpenDialogOptions,
   shell,
   type WebContents,
-  WebContentsView,
 } from "electron";
 import { readFile, readdir, rm, stat } from "node:fs/promises";
 import { dirname, join, resolve, sep } from "node:path";
@@ -36,6 +38,7 @@ import {
   isLanguagePreference,
 } from "../shared/protocol";
 import type {
+  ArtifactItemMenuParams,
   ConfigAdvancedUpdateResult,
   ConfigGeneralUpdateResult,
   ConfigCodexModelsResult,
@@ -186,13 +189,13 @@ import { mainTranslate, resolveMainLocale, setMainLocale } from "./i18n";
 import { sideThreadEventFromServerEvent } from "./sideThreadEvents";
 import {
   registerRenderableFileProtocol,
-  registerRenderableFileScheme,
+  renderableFileSchemes,
 } from "./renderableFileProtocol";
 import {
   cachePluginDesktopModule,
   cachePluginIcon,
   registerPluginModuleProtocol,
-  registerPluginModuleScheme,
+  pluginModuleScheme,
 } from "./pluginModuleProtocol";
 import { TerminalSessionManager } from "./terminalSessions";
 import { WorkspaceFileService } from "./workspaceFiles";
@@ -208,7 +211,7 @@ import {
   productionApplicationMenuTemplate,
 } from "./appShellGuards";
 import { createWindowRegistry, type WindowRegistry } from "./windowRegistry";
-import { installRendererRecovery, sendToWindow } from "./rendererProcessGone";
+import { installRendererRecovery, loadDevelopmentRenderer, sendToWindow } from "./rendererProcessGone";
 import {
   BrowserHostCoordinator,
   BROWSER_PARTITION,
@@ -240,8 +243,9 @@ const ENABLE_EMBEDDED_BROWSER = process.env.WUU_ENABLE_BROWSER !== "0";
 if (process.argv.includes("--safe-mode")) {
   process.env.WUU_SAFE_MODE = "1";
 }
-registerRenderableFileScheme();
-registerPluginModuleScheme();
+// Electron forwards fetch/CORS privileges through one set of child-process
+// switches; a second registration would replace the first set.
+protocol.registerSchemesAsPrivileged([...renderableFileSchemes, pluginModuleScheme]);
 
 let mainWindow: BrowserWindow | null = null;
 // Live system notifications are kept referenced so the OS cannot collect
@@ -316,14 +320,7 @@ const browserHostCoordinator = new BrowserHostCoordinator(
           sandbox: true,
         },
       }) as unknown as BrowserHostWindowHandle,
-    () =>
-      new WebContentsView({
-        webPreferences: {
-          partition: BROWSER_PARTITION,
-          contextIsolation: true,
-          nodeIntegration: false,
-        },
-      }) as unknown as BrowserViewHandle,
+    (options) => createBrowserView(options) as unknown as BrowserViewHandle,
   ),
   (workdir) => broadcastToAll("wuu:browser-invalidate", { workdir }),
 );
@@ -595,8 +592,9 @@ function emitServerEvent(event: ServerEvent): void {
     browserHostCoordinator.onClientTorndown(event.workdir);
     observationCoordinator.dropWorkdir(event.workdir);
   }
+  browserHostCoordinator.handleServerEvent(event);
   const browserActivity = observationActivityFromServerEvent(event);
-  if (browserActivity) browserHostCoordinator.updateActivity(browserActivity);
+  if (browserActivity && event.kind === "notification") browserHostCoordinator.updateActivity(browserActivity, event.message.method);
   observationCoordinator.handleServerEvent(event);
   const sideThreadEvent = sideThreadEventFromServerEvent(event);
   if (sideThreadEvent) {
@@ -790,19 +788,7 @@ function loadRenderer(window: BrowserWindow): void {
   });
 
   if (devRendererURL) {
-    window.webContents.on(
-      "did-fail-load",
-      (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
-        if (!isMainFrame || errorCode === -3) return;
-        console.error(
-          `[renderer] failed to load ${validatedURL || devRendererURL}: ${errorDescription} (${errorCode})`,
-        );
-        app.quit();
-      },
-    );
-    void window.loadURL(devRendererURL).catch(() => {
-      // did-fail-load logs the Chromium error and shuts down the stale dev host.
-    });
+    void loadDevelopmentRenderer(window, devRendererURL, app);
   } else {
     void window.loadFile(rendererPath);
   }
@@ -1689,6 +1675,48 @@ app.whenReady().then(async () => {
     if (!parent) throw new Error("Artifact window is no longer available");
     await saveArtifactFile(parent, event.sender.session, name, source);
   });
+  ipcMain.handle("wuu:artifact-show-menu", async (event, input: ArtifactItemMenuParams) => {
+    const parent = BrowserWindow.fromWebContents(event.sender);
+    const sourceFrame = event.senderFrame;
+    if (!parent || parent.isDestroyed() || !sourceFrame || sourceFrame !== event.sender.mainFrame) {
+      throw new Error("Artifact window is no longer available");
+    }
+    if (!input || typeof input.threadId !== "string" || !input.threadId || typeof input.uri !== "string") {
+      throw new Error("Invalid artifact reference");
+    }
+    let navigated = false;
+    const onNavigation = (details: { isMainFrame: boolean; isSameDocument: boolean }): void => {
+      if (details.isMainFrame && !details.isSameDocument) navigated = true;
+    };
+    const isCurrentSource = (): boolean => !navigated && !parent.isDestroyed()
+      && !event.sender.isDestroyed() && !sourceFrame.isDestroyed() && event.sender.mainFrame === sourceFrame;
+    const onProcessGone = (): void => { navigated = true; };
+    event.sender.on("did-start-navigation", onNavigation);
+    event.sender.on("render-process-gone", onProcessGone);
+    try {
+      // Resolve the source session through its owning local core, not the active
+      // conversation's cwd. Remote/browser hosts do not expose this native IPC.
+      const { thread } = await appServerClientPool.requestForSession<ThreadResumeResult>(
+        runtimeContextForEvent(event), input.threadId, "thread/resume",
+        { session_id: input.threadId, response_only: true },
+      );
+      if (!isCurrentSource()) return { action: "none" };
+      const belongsToThread = thread.id === input.threadId && thread.turns.some(turn => turn.items.some(item =>
+        item.type === "tool_call" && item.result_detail?.content?.some(part => {
+          if (part.type === "text" || part.remote_ref) return false;
+          const resource = part.resource !== null && typeof part.resource === "object" && !Array.isArray(part.resource)
+            ? part.resource as Record<string, unknown> : undefined;
+          const uri = typeof part.uri === "string" && part.uri.trim() ? part.uri : resource?.uri;
+          return typeof uri === "string" && uri.trim() === input.uri;
+        }),
+      ));
+      if (!belongsToThread) throw new Error("Artifact is not available in the source conversation");
+      return await showArtifactItemMenu(parent, input, wuuHomePath(), isCurrentSource);
+    } finally {
+      event.sender.removeListener("did-start-navigation", onNavigation);
+      event.sender.removeListener("render-process-gone", onProcessGone);
+    }
+  });
   ipcMain.handle("wuu:open-external", async (_event, url: string) => {
     await openExternalNavigation(url);
   });
@@ -2015,9 +2043,13 @@ app.whenReady().then(async () => {
   ipcMain.handle("wuu:activity-list", (event, threadId: string) =>
     appServerRequest<ActivityListResult>(event, "activity/list", { thread_id: threadId }),
   );
-  ipcMain.handle("wuu:activity-takeover", (event, threadId: string, activityId: string) =>
-    appServerRequest<ActivityActionResult>(event, "activity/takeover", { thread_id: threadId, activity_id: activityId }),
-  );
+  ipcMain.handle("wuu:activity-takeover", async (event, threadId: string, activityId: string, inputGeneration?: number) => {
+    const result = await appServerRequest<ActivityActionResult>(event, "activity/takeover", { thread_id: threadId, activity_id: activityId });
+    if (typeof inputGeneration === "number" && Number.isSafeInteger(inputGeneration)) {
+      browserHostCoordinator.acknowledgeLocalTakeover(result.activity, inputGeneration);
+    }
+    return result;
+  });
   ipcMain.handle("wuu:activity-release", (event, threadId: string, activityId: string) =>
     appServerRequest<ActivityReleaseResult>(event, "activity/release", { thread_id: threadId, activity_id: activityId }),
   );
@@ -2589,7 +2621,7 @@ app.whenReady().then(async () => {
     "wuu:browser-command",
     async (
       _event,
-      payload: { workdir: string; tabID: string; command: string; url?: string },
+      payload: { workdir: string; tabID: string; command: string; url?: string; threadID?: string },
     ) => {
       if (!ENABLE_EMBEDDED_BROWSER) return null;
       const snapshot = await browserHostCoordinator.runCommand(
@@ -2597,6 +2629,7 @@ app.whenReady().then(async () => {
         payload.tabID,
         payload.command,
         payload.url,
+        payload.threadID,
       );
       return snapshot ?? null;
     },
