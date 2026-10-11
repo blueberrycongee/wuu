@@ -226,7 +226,8 @@ private struct MessageBubble: View {
                 if !message.text.isEmpty {
                     VStack(alignment: .leading, spacing: 8) {
                         MessageText(text: collapsible && !expanded ? String(message.text.prefix(240)) + "…" : message.text,
-                                    markdown: message.role == "assistant", contextMenuEnabled: message.role != "user")
+                                    markdown: message.role == "assistant", contextMenuEnabled: message.role != "user",
+                                    isLive: message.role == "assistant" && message.turnActive && message.id == model.messages.last?.id)
                             .foregroundStyle(message.role == "error" ? Color.red : Color.primary)
                         if collapsible {
                             Button(expanded ? "收起" : "显示更多", systemImage: expanded ? "chevron.up" : "chevron.down") { expanded.toggle() }

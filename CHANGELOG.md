@@ -10,6 +10,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Fade newly streamed iOS reply text in place while keeping earlier text stable.
+  Coalesce Markdown updates so continuous token bursts remain visible, with native
+  glyph fades on iOS 18 and later and new-block fades on iOS 17. Respect reduced
+  motion and retain message copying and text selection after each fade.
+
 - Pair the native iOS app directly with a computer from desktop Phone access,
   keeping identities in the iOS keychain. Restore the last computer, working
   folder and conversation, and choose a folder before starting a new conversation.

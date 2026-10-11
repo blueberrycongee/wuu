@@ -33,6 +33,8 @@ enum NativeUIFixture {
 
 struct NativeUIFixtureView: View {
     @Bindable var model: AppModel
+    @State private var stream: Task<Void, Never>?
+    @State private var streaming = false
     var body: some View {
         NavigationStack {
             ConversationTimeline(model: model)
@@ -40,6 +42,9 @@ struct NativeUIFixtureView: View {
                 .toolbarBackground(Color(uiColor: .systemBackground), for: .navigationBar)
                 .toolbarBackground(.visible, for: .navigationBar)
                 .toolbar {
+                    Button(streaming ? "停止" : "流式动画") {
+                        if streaming { stream?.cancel() } else { startStream() }
+                    }
                     Button("末尾追加") {
                         model.live?.apply("turn/started", ["thread_id": "local-ui-fixture", "turn": ["id": "stream", "status": "in_progress",
                             "items": [["id": "reply", "type": "agent_message", "text": "追加的新消息"]]]])
@@ -59,6 +64,54 @@ struct NativeUIFixtureView: View {
                         model.refreshing = false
                     }
                 }
+                .task {
+                    if ProcessInfo.processInfo.arguments.contains("--native-stream-fixture") { startStream() }
+                }
+                .onDisappear { stream?.cancel() }
+        }
+    }
+
+    private func startStream() {
+        stream?.cancel()
+        streaming = true
+        stream = Task {
+            let id = UUID().uuidString
+            let source = """
+            ### 流式动画
+
+            新收到的文字柔和淡入，已经读过的内容保持稳定。连续输出时仍然可以滚动、选择文字和打开链接。
+
+            **粗体文字**、`inline code`、[项目主页](https://wuu.ai)，以及中文、café、👨‍👩‍👧‍👦、🇨🇳 和 العربية。
+
+            - 第一项持续增长，不会反复闪烁。
+            - 第二项验证换行与列表布局。
+
+            ```swift
+            let message = "Hello Wuu"
+            print(message)
+            ```
+
+            | 状态 | 结果 |
+            | --- | --- |
+            | 连续输出 | 持续刷新 |
+            | 输出结束 | 完整保留 |
+
+            动画结束，正文、代码复制和链接仍然可用。
+            """
+            var output = ""
+            model.live?.apply("turn/started", ["thread_id": "local-ui-fixture", "turn": ["id": .string(id), "status": "in_progress",
+                "items": [["id": "reply", "type": "agent_message", "text": ""]]]])
+            // Continuous 20ms deltas exercise coalescing without a quiet debounce interval.
+            var rest = source[...]
+            while !rest.isEmpty && !Task.isCancelled {
+                let chunk = String(rest.prefix(3)); rest = rest.dropFirst(chunk.count)
+                output += chunk
+                model.live?.apply("item/agentMessage/delta", ["thread_id": "local-ui-fixture", "turn_id": .string(id), "item_id": "reply", "delta": .string(chunk)])
+                do { try await Task.sleep(for: .milliseconds(20)) } catch { break }
+            }
+            model.live?.apply("turn/completed", ["thread_id": "local-ui-fixture", "turn": ["id": .string(id), "status": "completed",
+                "items": [["id": "reply", "type": "agent_message", "text": .string(output)]]]])
+            streaming = false
         }
     }
 }
