@@ -26,7 +26,7 @@
   100000000000000000000020 = {isa = XCLocalSwiftPackageReference; relativePath = "."; };
   100000000000000000000021 = {isa = XCSwiftPackageProductDependency; productName = WuuCore; };
   100000000000000000000022 = {isa = PBXBuildFile; productRef = 100000000000000000000021; };
-  100000000000000000000030 = {isa = XCRemoteSwiftPackageReference; repositoryURL = "https://github.com/gonzalezreal/swift-markdown-ui"; requirement = {kind = exactVersion; version = 2.4.1; }; };
+  100000000000000000000030 = {isa = XCLocalSwiftPackageReference; relativePath = "Vendor/swift-markdown-ui"; };
   100000000000000000000031 = {isa = XCSwiftPackageProductDependency; package = 100000000000000000000030; productName = MarkdownUI; };
   100000000000000000000032 = {isa = PBXBuildFile; productRef = 100000000000000000000031; };
  };

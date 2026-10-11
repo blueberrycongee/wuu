@@ -26,7 +26,7 @@ iOS 会话将连续工具调用收成当前动作或操作数量，点开查看�
 
 iOS 的摘要规则在一个 JavaScriptCore 实例中执行，文字由 SwiftUI 排版，历史工具组不创建 WebView。读取、查看图片的结果默认收在操作详情中，展开后才加载缩略图；明确展示给用户的图片仍显示在消息流中。消息投影按更新缓存，Markdown 解析离开主线程；列表从滚动容器读取实际位置，手动上翻不被新消息拉回底部。流式 Markdown 按 100ms 的节奏合并解析，连续增量不会一直推迟显示。iOS 18 及以上使用原生文字绘制让新增内容在 300ms 内淡入，动画帧不重新解析 Markdown；iOS 17 使用新段落淡入。历史初次显示、系统减少动态效果和超过 128 KB 的普通文本不播放流式动画。当前淡入的段落在动画结束后恢复文字选择，整条消息和代码的复制入口始终可用；MarkdownUI 无法区分位置的重复同文段落直接显示，避免旧段落重复闪烁。
 
-助手消息使用原生 Markdown 排版，支持代码、列表、表格和网页链接；超过 128 KB 的单条文本使用普通文本显示。iOS 使用 MarkdownUI 2.4.1，Android 使用 Markwon 4.6.2 的原生 TextView，聊天文字不使用 WebView。Agent 回复中明确以 Markdown 图片语法引用的工作区图片，通过同一加密通道读取；代码块和普通文件链接不会触发图片读取。Markdown 不自动下载外部网络图片，网页链接仅打开 HTTP/HTTPS 地址。MarkdownUI 已进入维护期；其后继 Textual 要求 iOS 18，本客户端目前支持 iOS 17。
+助手消息使用原生 Markdown 排版，支持代码、列表、表格和网页链接；超过 128 KB 的单条文本使用普通文本显示。iOS 使用 [MarkdownUI 2.4.1 的本地兼容副本](ios/Vendor/swift-markdown-ui/README.md)，修复纯文本、Markdown 和 HTML 转换的 C 缓冲区泄漏；Android 使用 Markwon 4.6.2 的原生 TextView，聊天文字不使用 WebView。Agent 回复中明确以 Markdown 图片语法引用的工作区图片，通过同一加密通道读取；代码块和普通文件链接不会触发图片读取。Markdown 不自动下载外部网络图片，网页链接仅打开 HTTP/HTTPS 地址。MarkdownUI 已进入维护期；其后继 Textual 要求 iOS 18，本客户端目前支持 iOS 17。
 
 账号设置中的开源许可可离线阅读；两端安装包包含同一份依赖署名和许可文本，位于 [licenses](licenses)。更新依赖时同步核对这份清单。
 
