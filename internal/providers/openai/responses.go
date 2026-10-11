@@ -1295,7 +1295,11 @@ func (p *responsesPendingTools) appendDelta(event responsesStreamEvent, emit *pr
 		}
 		pt.args.WriteString(event.Delta)
 	}
-	emit.Send(providers.StreamEvent{Type: providers.EventToolUseDelta, Content: delta})
+	var call *providers.ToolCall
+	if pt != nil {
+		call = &providers.ToolCall{ID: pt.id, ProviderItemID: pt.itemID}
+	}
+	emit.Send(providers.StreamEvent{Type: providers.EventToolUseDelta, Content: delta, ToolCall: call})
 }
 
 func (p *responsesPendingTools) setArguments(event responsesStreamEvent) {

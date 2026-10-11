@@ -1241,11 +1241,17 @@ export class PluginHost {
 
       registerRenderer: (definition: RendererDefinition) => {
         this.assertAccepting(state);
+        if (definition.toolInput && (definition.category !== "tool-result"
+          || typeof definition.match !== "string" || !definition.match.trim()
+          || definition.match.includes("*") || !definition.toolInput.capability?.trim())) {
+          throw new Error("Tool input renderers require a literal MIME match and dispatch capability");
+        }
         const id = this.claimRegistrationId(state, "renderer", definition.id);
         const record: RendererRecord = {
           pluginId: state.pluginId, generation: state.generation, id,
           order: definition.priority ?? 0, removed: false,
-          definition: { ...definition, priority: definition.priority ?? 0 },
+          definition: { ...definition, priority: definition.priority ?? 0,
+            ...(definition.toolInput ? { toolInput: Object.freeze({ ...definition.toolInput }) } : {}) },
         };
         state.renderers.push(record);
         return this.ownRecord(state, record);

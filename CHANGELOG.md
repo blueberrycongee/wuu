@@ -10,6 +10,12 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Add a default-disabled experimental Generative UI plugin with composable layouts,
+  reactive local calculations, charts and forms, bounded data programs, per-result
+  state restoration, and readable fallback. Preview validated nodes while tool
+  arguments arrive and let explicit user actions continue the source conversation
+  without consuming composer drafts or attachments.
+
 - Run a default-exported TypeScript plugin directly with `wuu plugin dev`, using
   the embedded SDK without a manifest or build, and keep watching through failed saves.
 
@@ -95,6 +101,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   overflow, and reduced-motion support that does not replay received sources.
 
 ### Fixed
+
+- Keep streamed tool arguments attached to their originating call when providers
+  interleave parallel tool-call updates.
 
 - Keep browser tab listing and cleanup within the owning conversation, including
   popups. Reject cross-conversation tab access, and stop stale input after user

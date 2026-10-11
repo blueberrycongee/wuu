@@ -1860,8 +1860,19 @@ func (s *streamStep) runReliableStream(
 
 			case providers.EventToolUseDelta:
 				if len(pendingTools) > 0 {
-					latest := pendingTools[len(pendingTools)-1]
-					latest.Arguments += event.Content
+					owner := pendingTools[len(pendingTools)-1]
+					if event.ToolCall != nil && event.ToolCall.ID != "" {
+						owner = nil
+						for _, pending := range pendingTools {
+							if pending.ID == event.ToolCall.ID {
+								owner = pending
+								break
+							}
+						}
+					}
+					if owner != nil {
+						owner.Arguments += event.Content
+					}
 				}
 
 			case providers.EventToolUseEnd:

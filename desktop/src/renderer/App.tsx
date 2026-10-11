@@ -249,6 +249,9 @@ import { useWorkspaceToolState } from "./WorkspaceToolState";
 import type { WorkspaceViewTab } from "./WorkspaceViewTabs";
 import { ImagePreviewProvider } from "./ImagePreview";
 import { ArtifactPreviewContext } from "./ArtifactPreviewContext";
+import { collectTurnArtifacts } from "./ArtifactOutputs";
+import { ArtifactInteractionContext, type ArtifactInteractionSource } from "./ArtifactInteractionContext";
+import type { RendererInteractionSnapshotV1, RendererSubmissionV1 } from "../shared/workbench";
 import { useArtifactAutoPreview } from "./ArtifactAutoPreview";
 import {
   openWorkspaceBrowserOrExternal,
@@ -4315,6 +4318,67 @@ export function App(): JSX.Element {
     return true;
   }
 
+  function artifactSourceThread(source: ArtifactInteractionSource): Thread | undefined {
+    const current = appStateRef.current;
+    // Loaded visible conversations are authoritative. Never resolve an old
+    // card through a new active tab, sidebar summary, or model-provided id.
+    return [current.thread, current.secondaryThread].find(thread => thread?.id === source.threadId);
+  }
+
+  function artifactSourceAvailable(source: ArtifactInteractionSource): boolean {
+    const thread = artifactSourceThread(source);
+    if (!thread || thread.read_only || thread.archived) return false;
+    const turn = thread.turns.find(candidate => candidate.items.some(item => item.id === source.artifact.itemId));
+    const item = turn?.items.find(candidate => candidate.id === source.artifact.itemId);
+    if (!turn || turn.status !== "completed" || item?.status !== "completed" || item.read_only
+      || item.result_detail?.is_error) return false;
+    const artifact = collectTurnArtifacts(turn).find(candidate => candidate.id === source.artifact.id);
+    return artifact !== undefined && artifact.type === "resource"
+      && artifact.ref === source.artifact.ref && artifact.sha256 === source.artifact.sha256
+      && artifact.mimeType === source.artifact.mimeType
+      && artifact.text === source.artifact.text
+      && JSON.stringify(artifact.resource) === JSON.stringify(source.artifact.resource);
+  }
+
+  function artifactInteractionSnapshot(source: ArtifactInteractionSource): RendererInteractionSnapshotV1 {
+    const thread = artifactSourceThread(source);
+    const running = Boolean(thread && (isThreadRunning(thread) || turnAdmissionsRef.current.has(thread.id)
+      || queueLanesRef.current.has(thread.id) || stopRequestsRef.current[thread.id]));
+    const readOnly = !artifactSourceAvailable(source);
+    const disabledReason = readOnly ? "This artifact is not an active completed source"
+      : running ? "Wait for this conversation to finish"
+      : submissionTargetPending || viewSwitchPending || !appStateRef.current.initialized
+        ? "The conversation is not ready" : undefined;
+    return { contractVersion: 1, threadId: source.threadId, running, readOnly, disabledReason };
+  }
+
+  async function submitArtifactResponse(
+    source: ArtifactInteractionSource,
+    input: RendererSubmissionV1,
+    isCurrent: () => boolean,
+  ): Promise<void> {
+    const snapshot = artifactInteractionSnapshot(source);
+    if (!isCurrent() || snapshot.disabledReason) throw new Error(snapshot.disabledReason ?? "Artifact source is no longer active");
+    const thread = artifactSourceThread(source)!;
+    const attribution = {
+      threadId: thread.id,
+      turnId: thread.turns.find(turn => turn.items.some(item => item.id === source.artifact.itemId))!.id,
+      itemId: source.artifact.itemId,
+      artifactId: source.artifact.ref ?? source.artifact.id, title: source.artifact.name,
+      ...(input.context === undefined ? {} : { values: input.context }),
+    };
+    const context = `\n\nSubmitted artifact context (JSON):\n${JSON.stringify(attribution)}`;
+    const message = createComposerMessage(input.text + context, [], [], [
+      { type: "text", text: input.text },
+      { type: "pasted_text", title: "Interactive response", text: context },
+    ])!;
+    // This goes through the same turn admission, permission mode, persistence,
+    // cancellation and recovery path as the composer, without consuming drafts.
+    const sent = await sendComposerMessage(message, thread, appStateRef.current.activePane, undefined, undefined,
+      () => isCurrent() && artifactSourceAvailable(source));
+    if (!sent) throw new Error("The response was not sent. Your inputs have been kept.");
+  }
+
   // Sends pet input without touching the composer draft or what the main
   // window shows. A reply to a conversation that is no longer loaded fails
   // rather than redirecting the text.
@@ -4724,6 +4788,7 @@ export function App(): JSX.Element {
     targetPane = appStateRef.current.activePane,
     onThreadCreated?: (thread: Thread) => void,
     prepareThread?: () => Promise<Thread>,
+    canSubmit?: () => boolean,
   ): Promise<boolean> {
     // Captured before any await: on a brand-new conversation the thread
     // itself is created over IPC first, and the optimistic turn's live
@@ -4944,6 +5009,7 @@ export function App(): JSX.Element {
         setState(settle);
         return true;
       }
+      if (canSubmit && !canSubmit()) throw new Error("Content action source is no longer active");
       admission.sent = true;
       const [encodedImages, encodedFiles] = attachments;
       const images = inputImagesFromComposer(encodedImages);
@@ -5269,6 +5335,7 @@ export function App(): JSX.Element {
       <ProjectActionsProvider value={projectAgentEnabled ? projectActions : null}>
       <WorkspaceBrowserOpenContext.Provider value={poppedOutMode || isTouchWebShell() ? undefined : openWorkspaceBrowserURL}>
       <ArtifactPreviewContext.Provider value={poppedOutMode || isTouchWebShell() ? undefined : openWorkspaceArtifactTab}>
+      <ArtifactInteractionContext.Provider value={{ getSnapshot: artifactInteractionSnapshot, submit: submitArtifactResponse }}>
         <div
           ref={appShellRef}
           className={shellClassName}
@@ -5944,6 +6011,7 @@ export function App(): JSX.Element {
         </button>
       ) : null}
       </div>
+    </ArtifactInteractionContext.Provider>
     </ArtifactPreviewContext.Provider>
     </WorkspaceBrowserOpenContext.Provider>
     </ProjectActionsProvider>

@@ -1045,6 +1045,13 @@ export interface RendererDefinition {
   match: string | RegExp;
   /** Priority — higher values override lower-priority renderers. */
   priority?: number;
+  /** Opt into cumulative/coalesced tool argument snapshots for one dispatch
+   * capability. Requires a literal MIME match and the tool-result category.
+   * The host supplies content.preview and metadata.toolInput with turnId,
+   * argumentsText, status, and optional error. Previews are transient: do not
+   * execute effects or persist input state. The first matching final resource
+   * reuses the preview's part identity. */
+  toolInput?: Readonly<{ capability: string }>;
   /** React component that renders the content. */
   render: React.ComponentType<RendererProps>;
 }
@@ -1055,8 +1062,23 @@ export interface RendererProps {
   content: unknown;
   /** Additional metadata from the host. */
   metadata: Readonly<Record<string, unknown>>;
-  /** Host API for controlled interactions. */
-  host: ViewHostAPI;
+  /** Host-advertised actions are scoped to this mounted content instance. */
+  host: PresentationHost;
+}
+
+/** Submission from an explicitly activated content renderer. The host supplies
+ * conversation and artifact attribution and preserves the composer draft. */
+export interface RendererSubmissionV1 {
+  readonly text: string;
+  readonly context?: unknown;
+}
+
+export interface RendererInteractionSnapshotV1 {
+  readonly contractVersion: 1;
+  readonly threadId?: string;
+  readonly running: boolean;
+  readonly readOnly: boolean;
+  readonly disabledReason?: string;
 }
 
 // ---------------------------------------------------------------------------

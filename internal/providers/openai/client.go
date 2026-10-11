@@ -684,8 +684,9 @@ func (c *Client) readSSE(ctx context.Context, resp *http.Response, lease *provid
 			if tc.Function.Arguments != "" {
 				pt.args.WriteString(tc.Function.Arguments)
 				if !emit.Send(providers.StreamEvent{
-					Type:    providers.EventToolUseDelta,
-					Content: tc.Function.Arguments,
+					Type:     providers.EventToolUseDelta,
+					Content:  tc.Function.Arguments,
+					ToolCall: &providers.ToolCall{ID: pt.id},
 				}) {
 					return
 				}

@@ -53,6 +53,14 @@ For example, `conversation.composer.set-draft` accepts a string; attachment remo
 
 Tool activity presenters customize execution summaries and controls. Rich result bodies have separate host-owned placement: `inline` output precedes the answer and `turn_end` output follows it. Use a `tool-result` renderer for those bodies instead of rendering `structuredResult.content` again inside the activity presenter.
 
+## Interactive content renderers
+
+Content renderers also receive `host.actions` and `host.invoke`. When a completed conversation resource advertises `conversation.composer.submit`, it accepts `{ text, context? }`: up to 8,000 text characters and optional JSON context of up to 16,384 characters. Invoke it synchronously from a real button click or its native form submission, including keyboard activation. Form submission must match that click’s exact form and submit button; a standalone `requestSubmit()` does not authorize an action. The host consumes that interaction once, binds the source conversation and artifact, and submits through normal turn admission and permissions. The action rejects during a running turn, after source replacement or unmounting, or when its plugin is disabled. It leaves the composer draft and attachments intact. `metadata.interaction` reports `running`, `readOnly`, and an optional `disabledReason`; action availability must still be checked at invocation. This input contract is specific to content renderers; the composer presenter submits its existing draft without input.
+
+To preview streamed tool arguments, a `tool-result` registration may declare `toolInput: { capability }` with a literal MIME `match`. Only the current winning renderer for that MIME receives previews. `content.preview` marks transient output; `metadata.toolInput` contains cumulative/coalesced `argumentsText`, `turnId`, `status`, and optional `error`. Parse only complete bounded units, keep the last valid preview, and do not execute actions or persist speculative state. The first matching final resource retains the preview's part identity.
+
+Persist interaction state through ordinary plugin storage, scoped by the host's conversation and artifact identities. Stored view data is local to the current Wuu store; it is not cross-device synchronization. Restoration must not submit actions or overwrite edits made while a read was pending.
+
 ## Views, cards, and status
 
 A view is a registered component placed in `navigation`, `primary`, `auxiliary`, `inspector`, `settings`, or `overlay`. `registerViewPlacement` requests an initial placement. Manifest entries in `contributes.navigation`, `workspaceTools`, or `settingsPages` give users a host-owned way to open the view; each must refer to a view registered by that plugin.

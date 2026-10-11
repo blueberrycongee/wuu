@@ -53,6 +53,14 @@ Presenter 接收 `contractVersion`、目标、可选匹配键、公开 `snapshot
 
 工具活动 Presenter 定制执行摘要和控件。富结果正文由宿主单独放置：`inline` 输出位于回答之前，`turn_end` 输出位于回答之后。应使用 `tool-result` renderer 定制这些正文，而不是在工具活动 Presenter 中重复渲染 `structuredResult.content`。
 
+## 交互内容渲染器
+
+内容渲染器也接收 `host.actions` 和 `host.invoke`。已完成的会话资源公布 `conversation.composer.submit` 时，接受 `{ text, context? }`：文本最多 8,000 字符，可选 JSON 上下文最多 16,384 字符。必须在真实按钮点击或该点击引发的原生表单提交中同步调用，键盘激活按钮同样有效。表单提交必须匹配该次点击的表单与提交按钮；单独调用 `requestSubmit()` 不构成动作授权。宿主一次性消费交互凭据，绑定来源会话和产物，再通过普通轮次准入与权限流程提交。会话运行中、来源被替换或卸载、插件被禁用时会拒绝动作，并保留输入框草稿和附件。`metadata.interaction` 提供 `running`、`readOnly` 和可选 `disabledReason`；调用时仍会重新检查。此输入契约仅用于内容渲染器；输入框 Presenter 提交现有草稿，仍不接受动作输入。
+
+需要预览工具参数流时，`tool-result` 注册可声明 `toolInput: { capability }`，并使用字面 MIME `match`。只有当前实际负责该 MIME 的渲染器会收到预览。`content.preview` 标识临时输出；`metadata.toolInput` 提供累计且可能合并的 `argumentsText`、`turnId`、`status` 和可选 `error`。只解析完整且有界的数据单元，保留最近有效预览，不要执行动作或持久化尚未完成的状态。首个匹配的最终资源会沿用预览的 part 标识。
+
+通过普通插件存储保存交互状态，并以宿主提供的会话和产物标识隔离实例。保存的数据只属于当前 Wuu 存储，不提供跨设备同步。恢复状态不得触发提交，也不得覆盖读取尚未完成时用户已经做出的修改。
+
 ## View、卡片和状态
 
 View 是注册的组件，可以放在 `navigation`、`primary`、`auxiliary`、`inspector`、`settings` 或 `overlay`。`registerViewPlacement` 请求初始位置；manifest 的 `contributes.navigation`、`workspaceTools`、`settingsPages` 为用户提供宿主管理的打开入口，每个入口都必须引用该插件注册的视图。

@@ -399,7 +399,40 @@ export interface RendererDefinition {
   category: RendererCategory;
   match: string | RegExp;
   priority?: number;
+  /** Opt into cumulative/coalesced tool argument snapshots for one dispatch
+   * capability. Requires a literal MIME match and the tool-result category.
+   * The host supplies content.preview and metadata.toolInput with turnId,
+   * argumentsText, status, and optional error. Previews are transient: do not
+   * execute effects or persist input state. The first matching final resource
+   * reuses the preview's part identity. */
+  toolInput?: Readonly<{ capability: string }>;
   render: unknown; // React.ComponentType<RendererProps> — opaque in SDK
+}
+
+/** Props supplied to a registered content renderer. */
+export interface RendererProps {
+  readonly content: unknown;
+  readonly metadata: Readonly<Record<string, unknown>>;
+  readonly host: PresentationHost;
+}
+
+/** Input to conversation.composer.submit when advertised by a content renderer.
+ * Call synchronously from a trusted button click or its native form submission
+ * (including keyboard activation). Text is limited to 8,000
+ * characters; optional JSON context to 16,384 characters. The host binds the
+ * origin, rejects running/stale sources and preserves composer drafts. */
+export interface RendererSubmissionV1 {
+  readonly text: string;
+  readonly context?: unknown;
+}
+
+/** Host-owned metadata.interaction on conversation artifact renderers. */
+export interface RendererInteractionSnapshotV1 {
+  readonly contractVersion: 1;
+  readonly threadId?: string;
+  readonly running: boolean;
+  readonly readOnly: boolean;
+  readonly disabledReason?: string;
 }
 
 export interface ThemeTokens {

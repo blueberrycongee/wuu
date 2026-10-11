@@ -1233,10 +1233,12 @@ func (c *Client) handleSSEEvent(
 					return true
 				}
 			case "input_json_delta":
+				var call *providers.ToolCall
 				if bs != nil {
 					bs.argsJSON.WriteString(p.Delta.PartialJSON)
+					call = &providers.ToolCall{ID: bs.toolID}
 				}
-				if !emit.Send(providers.StreamEvent{Type: providers.EventToolUseDelta, Content: p.Delta.PartialJSON}) {
+				if !emit.Send(providers.StreamEvent{Type: providers.EventToolUseDelta, Content: p.Delta.PartialJSON, ToolCall: call}) {
 					return true
 				}
 			case "thinking_delta":

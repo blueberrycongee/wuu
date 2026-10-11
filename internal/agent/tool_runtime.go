@@ -130,7 +130,7 @@ func (r *TurnToolRuntime) ObserveStreamEvent(ctx context.Context, event provider
 		}
 		r.addStreamToolStart(event.ToolCall)
 	case providers.EventToolUseDelta:
-		r.appendStreamToolDelta(event.Content)
+		r.appendStreamToolDelta(event.ToolCall, event.Content)
 	case providers.EventToolUseEnd:
 		if event.ToolCall == nil || strings.TrimSpace(event.ToolCall.ID) == "" {
 			return nil
@@ -207,7 +207,7 @@ func (r *TurnToolRuntime) addStreamToolStart(call *providers.ToolCall) {
 	r.byID[call.ID] = run
 }
 
-func (r *TurnToolRuntime) appendStreamToolDelta(delta string) {
+func (r *TurnToolRuntime) appendStreamToolDelta(call *providers.ToolCall, delta string) {
 	if delta == "" {
 		return
 	}
@@ -216,7 +216,13 @@ func (r *TurnToolRuntime) appendStreamToolDelta(delta string) {
 	if r.canceled || len(r.runs) == 0 {
 		return
 	}
-	r.runs[len(r.runs)-1].call.Arguments += delta
+	run := r.runs[len(r.runs)-1]
+	if call != nil && call.ID != "" {
+		run = r.byID[call.ID]
+	}
+	if run != nil {
+		run.call.Arguments += delta
+	}
 }
 
 func (r *TurnToolRuntime) finalizeStreamTool(ctx context.Context, call *providers.ToolCall) {

@@ -795,7 +795,10 @@ func (th *threadState) applyStreamEventLocked(turnID string, ev providers.Stream
 			return nil
 		}
 		item, ok := th.latestToolItemLocked(turnID)
-		if !ok {
+		if ev.ToolCall != nil && ev.ToolCall.ID != "" {
+			item, ok = th.itemLocked(turnID, th.toolItems[ev.ToolCall.ID])
+		}
+		if !ok || item.Status != ThreadItemStatusInProgress {
 			return nil
 		}
 		item.Arguments = th.appendStreamTextLocked(item.ID, item.Arguments, ev.Content)

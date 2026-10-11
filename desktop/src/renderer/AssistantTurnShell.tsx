@@ -8,6 +8,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from "react";
 import type {
   ThreadItem,
@@ -51,6 +52,7 @@ import {
   collectTurnArtifacts,
   TurnInlineArtifactOutputs,
 } from "./ArtifactOutputs";
+import { desktopWorkbenchController } from "./plugins/DesktopPluginRuntime";
 
 const recoveredTurnStartedAt = new Map<string, number>();
 const MAX_RECOVERED_TURN_STARTS = 1_000;
@@ -124,7 +126,8 @@ export function AssistantTurnShell({
   const answerEntries = display.entries.filter(
     (entry) => entry.position === "answer",
   );
-  const artifacts = useMemo(() => collectTurnArtifacts(turn), [turn]);
+  const workbench = useSyncExternalStore(desktopWorkbenchController.subscribe, desktopWorkbenchController.getSnapshot);
+  const artifacts = useMemo(() => collectTurnArtifacts(turn), [turn, workbench]);
   const { processEntries, output } = layoutAssistantTurn(turn, display, artifacts);
   const activeGrayEntryKey = turn.status === "in_progress"
     ? latestActiveGrayProcessEntryKey([

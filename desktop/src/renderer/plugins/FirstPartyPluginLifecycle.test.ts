@@ -34,7 +34,7 @@ const repositoryRoot = basename(process.cwd()) === "desktop"
   ? resolve(process.cwd(), "..")
   : process.cwd();
 const bundledRoot = resolve(repositoryRoot, "internal/plugin/bundled");
-const firstPartyPluginIds = ["subagent", "automation", "memory", "dream", "todo"] as const;
+const firstPartyPluginIds = ["subagent", "automation", "memory", "dream", "todo", "generative-ui"] as const;
 
 afterEach(() => {
   for (const style of document.head.querySelectorAll("style[data-wuu-plugin-id]")) {
@@ -78,7 +78,7 @@ describe("first-party desktop plugin lifecycle", () => {
       "todo:current-todo",
     ]);
     expect(host.getPresenters("conversation.tool-activity", "todo").at(-1)?.pluginId).toBe("todo");
-    expect(document.head.querySelectorAll("style[data-wuu-plugin-id]")).toHaveLength(5);
+    expect(document.head.querySelectorAll("style[data-wuu-plugin-id]")).toHaveLength(6);
 
     for (const pluginId of firstPartyPluginIds) {
       host.disable(pluginId);
@@ -288,14 +288,12 @@ async function loadFirstPartyPlugin(
   const pluginRoot = resolve(bundledRoot, pluginId);
   const manifest = JSON.parse(readFileSync(resolve(pluginRoot, "plugin.json"), "utf8")) as FirstPartyManifest;
   const source = readFileSync(resolve(pluginRoot, manifest.desktop.entry), "utf8");
-  const executableSource = source.replace(
-    "export async function activate(api)",
-    "return async function activate(api)",
-  );
-  if (executableSource === source) {
+  if (!source.includes("export async function activate(api)")) {
     throw new Error(`First-party plugin ${pluginId} does not export activate(api)`);
   }
-  const activate: unknown = Function(executableSource)();
+  // Evaluate module-level constants before returning the activation function.
+  const executableSource = source.replace(/export (?=(?:async )?function )/g, "");
+  const activate: unknown = Function(`${executableSource}\nreturn activate;`)();
   if (typeof activate !== "function") {
     throw new Error(`First-party plugin ${pluginId} has an invalid activate export`);
   }

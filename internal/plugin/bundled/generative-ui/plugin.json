@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "id": "generative-ui",
+  "name": "Generative UI (Experimental)",
+  "description": "Render bounded declarative tables, charts and local forms in conversation.",
+  "icon": "layout-grid",
+  "version": "0.1.0",
+  "defaultEnabled": false,
+  "author": { "name": "Wuu" },
+  "minimumWuuVersion": "0.1.0",
+  "runtime": { "protocol": "wuu-plugin-v1", "command": "@wuu-official-helper:generative-ui", "timeout": 15 },
+  "desktop": { "entry": "desktop.js" },
+  "interface": { "displayName": "Generative UI (Experimental)", "shortDescription": "Interactive tables, charts and local forms.", "developerName": "Wuu", "category": "Productivity", "capabilities": ["Interaction"] },
+  "officialNativeHelper": { "id": "generative-ui", "environment": "WUU_GENERATIVE_UI_PLUGIN_HELPER", "executable": "wuu-generative-ui-plugin" }
+}
