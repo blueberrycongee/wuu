@@ -128,6 +128,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Limit the automation editor's Enabled click target to its label and switch so
+  clicking the remaining header space does not accidentally pause or resume a task.
+
 - Keep new iOS conversations as local drafts until the first message is sent,
   preventing unused empty sessions from accumulating on the computer. Preserve
   draft text, attachments, and selected settings through the first send and retries.
