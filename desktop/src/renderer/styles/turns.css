@@ -3061,11 +3061,16 @@
   }
 }
 
+.process-surface-body,
+.process-surface-tool-list .activity-timeline,
+.process-surface-reasoning-list {
+  gap: var(--space-2);
+}
+
 .process-surface-body {
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: var(--space-4);
   /* Expanded details are the fold's own content, not a nested column: every
    * row starts on the summary row's left edge, so the leading glyphs line up
    * as one list instead of stepping inward under the summary text. */
@@ -3104,10 +3109,6 @@
   min-width: 0;
 }
 
-.process-surface-tool-list .activity-timeline {
-  gap: var(--space-2);
-}
-
 .process-surface-tool-list .activity-row {
   display: flex;
   align-items: flex-start;
@@ -3123,6 +3124,7 @@
 }
 
 .process-surface-reasoning-list {
+  display: grid;
   min-width: 0;
 }
 
