@@ -20,10 +20,10 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 2px;
+  isolation: isolate;
 }
 
-.web-source-link,
-.web-research-more {
+.web-source-link {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -39,21 +39,13 @@
   cursor: pointer;
 }
 
-.web-source-circle { width: 32px; }
-.web-research-more { gap: 3px; border-radius: var(--radius-pill); padding-inline: 7px; }
-.web-research-more svg {
-  width: 12px;
-  height: 12px;
-  transition: rotate var(--motion-slow) var(--ease-out);
+.web-source-circle { position: relative; width: 32px; }
+.web-research-sources > .tooltip-trigger + .tooltip-trigger .web-source-circle {
+  margin-inline-start: -16px;
 }
-.web-research-more[aria-expanded="true"] svg { rotate: 180deg; }
-.web-research-count {
-  margin-inline-start: 6px;
-  color: var(--ink-soft);
-  font-size: var(--font-ui);
-  white-space: nowrap;
-  font-variant-numeric: tabular-nums;
-}
+.web-source-circle .web-source-avatar { box-shadow: 0 0 0 2px var(--paper); }
+.web-source-circle:hover,
+.web-source-circle:focus-visible { z-index: 1; }
 
 .web-source-avatar {
   position: relative;
@@ -86,9 +78,7 @@
   transform: translateY(-2px);
   border-color: var(--hairline-strong);
 }
-.web-research-more:hover { background: var(--ink-overlay-6); color: var(--ink); }
-.web-source-link:focus-visible,
-.web-research-more:focus-visible { outline: 2px solid var(--ink-soft); outline-offset: 1px; }
+.web-source-link:focus-visible { outline: 2px solid var(--ink-soft); outline-offset: 1px; }
 
 .web-source-avatar.is-arriving {
   animation: web-source-arrive var(--motion-slow) var(--ease-out) backwards;
@@ -138,7 +128,6 @@
 @container style(--motion-reduced: 1) {
   .web-source-avatar.is-arriving { animation: none; }
   .web-source-circle:hover .web-source-avatar { transform: none; }
-  .web-research-more svg { transition: none; }
 }
 
 /* Source actions share the process header without nesting buttons in summary. */
@@ -151,7 +140,6 @@
 .process-surface-summary-accessory { width: max-content; position: absolute; inset-block-start: 0; inset-inline-start: calc(var(--process-summary-width, 0px) + 8px); }
 .turn-web-research.is-inline { margin: 0; overflow: visible; height: auto; transition: none; }
 .turn-web-research.is-inline .web-research-sources { flex-wrap: nowrap; }
-.turn-web-research.is-inline .web-research-count { display: none; }
 @starting-style {
   .turn-web-research.is-inline.is-revealing { height: auto; margin: 0; }
 }

@@ -51,6 +51,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Stack desktop web-source icons into a compact overlapping group and remove the
+  visible source-count button. Keep direct source links and open the complete
+  source list from the search activity summary.
+
 - Keep desktop toolbar actions and tab close buttons compact at larger UI font
   sizes, with inset circular hover feedback, circular focus rings, and consistent
   dismissal icons. Keep the unframed close action in the top-right corner of

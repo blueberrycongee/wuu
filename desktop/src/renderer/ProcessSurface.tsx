@@ -414,11 +414,7 @@ export function ProcessSurface({
     <div className={className}>
       <ProcessSurfaceFold
         summary={summaryLine}
-        summaryAccessory={<TurnSourcesRow sources={sources} running={processEntryActive} onOpen={onOpenURL} inline
-          expanded={expanded} detailsID={sourceDetailsID} onExpandedChange={(open, trigger) => {
-            disclosureTrigger.current = trigger;
-            setExpanded(open);
-          }} />}
+        summaryAccessory={<TurnSourcesRow sources={sources} running={processEntryActive} onOpen={onOpenURL} inline />}
         disabled={!hasDetails}
         open={expanded}
         onToggle={handleToggle}
