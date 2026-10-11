@@ -233,23 +233,27 @@ export function ThreadHoverCardContent({
     .join(" · ");
 
   let status: ReactNode = null;
+  let statusTone: "running" | "failed" | "unread" | undefined;
   if (running) {
+    statusTone = "running";
     status = (
-      <p className="sidebar-hover-card-status" data-tone="running">
-        <span>
-          {t("sidebarHoverCard.statusRunning")}
-          {Number.isFinite(runStartedAt) ? <> · <LiveDuration startedAtMs={runStartedAt} /></> : null}
-        </span>
-      </p>
+      <>
+        {t("sidebarHoverCard.statusRunning")}
+        {Number.isFinite(runStartedAt) ? <> · <LiveDuration startedAtMs={runStartedAt} /></> : null}
+      </>
     );
   } else if (latestTurn?.status === "failed") {
     // A failure is what an unread failed turn has to say, so it wins.
-    status = <p className="sidebar-hover-card-status" data-tone="failed">{t("sidebarHoverCard.statusFailed")}</p>;
+    statusTone = "failed";
+    status = t("sidebarHoverCard.statusFailed");
   } else if (unread) {
-    status = <p className="sidebar-hover-card-status" data-tone="unread">{t("sidebarHoverCard.statusUnread")}</p>;
+    statusTone = "unread";
+    status = t("sidebarHoverCard.statusUnread");
   } else if (latestTurn?.status === "interrupted") {
-    status = <p className="sidebar-hover-card-status">{t("sidebarHoverCard.statusInterrupted")}</p>;
+    status = t("sidebarHoverCard.statusInterrupted");
   }
+  // While running, elapsed time replaces recency; both would describe the start.
+  const recency = running ? "" : formatRelativeTime(lastActivity);
 
   return (
     <>
@@ -290,11 +294,17 @@ export function ThreadHoverCardContent({
               {title}
             </button>
           ) : <span className="sidebar-hover-card-title">{title}</span>}
-          {lastActivity ? (
-            <span className="sidebar-hover-card-time">{formatRelativeTime(lastActivity)}</span>
-          ) : null}
         </div>
-        {status}
+        {status || recency ? (
+          <p className="sidebar-hover-card-status" data-tone={statusTone}>
+            <span>
+              {status}
+              {recency ? (
+                <span className="sidebar-hover-card-time">{status ? " · " : ""}{recency}</span>
+              ) : null}
+            </span>
+          </p>
+        ) : null}
       </div>
       <HoverCardFacts>
         {workspace ? <HoverCardFact icon={<Folder />}>{workspace.name}</HoverCardFact> : null}
