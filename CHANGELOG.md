@@ -52,6 +52,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   quoted-text and document attachments, preserving reading space and keyboard
   focus. Retain contrasting badges on image thumbnails.
 
+- Tighten vertical spacing in expanded desktop tool activity lists.
+
 - Show the source of received session messages as a compact, theme-aware card
   that opens the related conversation in a split pane. Keep message text,
   copying, and long-message expansion separate from the navigation control.
