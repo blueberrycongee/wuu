@@ -132,6 +132,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Keep quoted-response source highlights visible through scrolling, composer reflow,
+  and window resizing, while still clearing stale or hidden sources.
+
 - Limit the automation editor's Enabled click target to its label and switch so
   clicking the remaining header space does not accidentally pause or resume a task.
 
