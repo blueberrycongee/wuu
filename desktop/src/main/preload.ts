@@ -196,6 +196,8 @@ const api: WuuDesktopApi = {
     ipcRenderer.invoke("wuu:terminal-stop", id),
   listManagedProcesses: (threadId: string) =>
     ipcRenderer.invoke("wuu:managed-process-list", threadId),
+  cancelProcessNotifications: (threadId: string, processId: string) =>
+    ipcRenderer.invoke("wuu:process-cancel-notifications", threadId, processId),
   readManagedProcess: (params) =>
     ipcRenderer.invoke("wuu:managed-process-read", params),
   writeManagedProcess: (threadId: string, processId: string, input: string) =>

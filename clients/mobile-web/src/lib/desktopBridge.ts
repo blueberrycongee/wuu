@@ -860,6 +860,7 @@ export class RemoteDesktopBridge {
       reorderSessionFolders: (ids) => this.call("sessionFolder/reorder", { ids }),
       deleteSessionFolder: (id) => this.call("sessionFolder/delete", { id }),
       listManagedProcesses: (thread_id) => this.call("process/list", { thread_id }),
+      cancelProcessNotifications: (thread_id, process_id) => this.call("process/cancel-notifications", { thread_id, process_id }),
       takeoverActivity: (thread_id, activity_id) => this.call("activity/takeover", { thread_id, activity_id }),
       releaseActivity: (thread_id, activity_id) => this.call("activity/release", { thread_id, activity_id }),
       stopActivity: (thread_id, activity_id) => this.call("activity/stop", { thread_id, activity_id }),

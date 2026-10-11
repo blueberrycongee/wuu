@@ -10,6 +10,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- A Trigger button beside the latest assistant reply's timestamp shows background task wakeups, scheduled checks, and recent output, with a control to cancel automatic continuation without stopping the task.
+
 - Pair the native iOS app directly with a computer from desktop Phone access,
   keeping identities in the iOS keychain. Restore the last computer, working
   folder and conversation, and choose a folder before starting a new conversation.
@@ -114,6 +116,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   overflow, and reduced-motion support that does not replay received sources.
 
 ### Fixed
+
+- Deliver scheduled background-process checks while the task is still running, without treating them as process-exit notifications.
 
 - Keep new iOS conversations as local drafts until the first message is sent,
   preventing unused empty sessions from accumulating on the computer. Preserve

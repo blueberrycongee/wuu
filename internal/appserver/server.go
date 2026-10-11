@@ -1232,6 +1232,8 @@ func (s *Server) handleLine(ctx context.Context, raw []byte) error {
 		return s.handleProcessResize(req)
 	case MethodProcessStop:
 		return s.handleProcessStop(req)
+	case MethodProcessCancelNotifications:
+		return s.handleProcessCancelNotifications(req)
 	case MethodMCPList:
 		return s.handleMCPList(req)
 	case MethodMCPConnect:

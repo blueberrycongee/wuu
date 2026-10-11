@@ -4442,7 +4442,7 @@ func (s *Server) startSyntheticTurn(ctx context.Context, threadID string, userMs
 		if resultID := strings.TrimSpace(turn.resultID); resultID != "" {
 			completionResultIDs = append(completionResultIDs, resultID)
 		}
-		if processID := strings.TrimSpace(turn.processID); processID != "" {
+		if processID := strings.TrimSpace(turn.processID); processID != "" && turn.kind != agentCompletionTurnKindRecheck {
 			processCompletionIDs = append(processCompletionIDs, processID)
 		}
 	}
@@ -4463,6 +4463,20 @@ func (s *Server) startSyntheticTurn(ctx context.Context, threadID string, userMs
 				}
 				if err := gateAlreadyDeliveredCompletions(admitted.History, threadRuntime, completionResultIDs, processCompletionIDs); err != nil {
 					return err
+				}
+				// Rechecks belong to live processes, so they must not pass through
+				// the natural-exit completion gate or acquire its delivery marker.
+				for _, entry := range pending {
+					if entry.kind != agentCompletionTurnKindRecheck {
+						continue
+					}
+					p, err := threadRuntime.ProcessManager.Get(entry.processID)
+					if err != nil {
+						return errors.Join(errRetryableTurnAdmission, err)
+					}
+					if p.RecheckMinutes <= 0 || (p.Status != process.StatusStarting && p.Status != process.StatusRunning) {
+						return errAgentCompletionAlreadyDelivered
+					}
 				}
 				*admittedMsg = combineAgentCompletionMessages(pending)
 				if clientID := agentCompletionClientID(pending); clientID != "" {
@@ -4755,6 +4769,7 @@ func cloneAgentCompletionTurns(turns []agentCompletionTurn) []agentCompletionTur
 	out := make([]agentCompletionTurn, 0, len(turns))
 	for i, turn := range turns {
 		out = append(out, agentCompletionTurn{
+			kind:      turn.kind,
 			agentID:   turn.agentID,
 			resultID:  turn.resultID,
 			processID: turn.processID,

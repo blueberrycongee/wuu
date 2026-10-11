@@ -22,6 +22,7 @@ export function AgentMessageActions({
   onFork,
   placement,
   timestamp,
+  trailingAction,
   showFork = true,
   showCopy = true,
   children,
@@ -30,6 +31,7 @@ export function AgentMessageActions({
   onFork?: () => void;
   placement: "overlay" | "persistent";
   timestamp?: string | null;
+  trailingAction?: ReactNode;
   showFork?: boolean;
   showCopy?: boolean;
   children?: ReactNode;
@@ -47,6 +49,7 @@ export function AgentMessageActions({
       {showFork ? <MessageForkButton onFork={onFork} /> : null}
       {children}
       <MessageTime timestamp={timestamp} />
+      {trailingAction}
     </div>
   );
 }

@@ -112,6 +112,7 @@ const (
 	MethodProcessWrite                    = "process/write"
 	MethodProcessResize                   = "process/resize"
 	MethodProcessStop                     = "process/stop"
+	MethodProcessCancelNotifications      = "process/cancel-notifications"
 	MethodMCPList                         = "mcp/list"
 	MethodMCPConnect                      = "mcp/connect"
 	MethodMCPDisconnect                   = "mcp/disconnect"
@@ -1275,22 +1276,31 @@ type SkillListResult struct {
 	Skills []SkillSummary `json:"skills"`
 }
 
+// ProcessTrigger describes the host-owned wakeups associated with a process.
+type ProcessTrigger struct {
+	Status         string     `json:"status"`
+	OnExit         bool       `json:"on_exit"`
+	RecheckMinutes int        `json:"recheck_minutes,omitempty"`
+	NextRecheckAt  *time.Time `json:"next_recheck_at,omitempty"`
+}
+
 type ManagedProcessSummary struct {
-	ID             string    `json:"id"`
-	OwnerKind      string    `json:"owner_kind"`
-	OwnerID        string    `json:"owner_id"`
-	Lifecycle      string    `json:"lifecycle"`
-	Status         string    `json:"status"`
-	PID            int       `json:"pid"`
-	TTY            bool      `json:"tty,omitempty"`
-	Command        string    `json:"command"`
-	CWD            string    `json:"cwd"`
-	StartedAt      time.Time `json:"started_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
-	StoppedAt      time.Time `json:"stopped_at,omitempty"`
-	ExitCode       int       `json:"exit_code,omitempty"`
-	LastError      string    `json:"last_error,omitempty"`
-	InputAvailable bool      `json:"input_available,omitempty"`
+	ID             string          `json:"id"`
+	OwnerKind      string          `json:"owner_kind"`
+	OwnerID        string          `json:"owner_id"`
+	Lifecycle      string          `json:"lifecycle"`
+	Status         string          `json:"status"`
+	PID            int             `json:"pid"`
+	TTY            bool            `json:"tty,omitempty"`
+	Command        string          `json:"command"`
+	CWD            string          `json:"cwd"`
+	StartedAt      time.Time       `json:"started_at"`
+	UpdatedAt      time.Time       `json:"updated_at"`
+	StoppedAt      time.Time       `json:"stopped_at,omitempty"`
+	ExitCode       int             `json:"exit_code,omitempty"`
+	LastError      string          `json:"last_error,omitempty"`
+	InputAvailable bool            `json:"input_available,omitempty"`
+	Trigger        *ProcessTrigger `json:"trigger,omitempty"`
 }
 
 type ProcessListParams struct {

@@ -1,0 +1,105 @@
+.message-actions .message-action-button.conversation-trigger-button {
+  width: auto;
+  flex: none;
+  gap: 5px;
+  padding-inline: 6px;
+  font: inherit;
+}
+
+.conversation-trigger-button:focus-visible {
+  outline: 2px solid var(--ink-muted);
+  outline-offset: 2px;
+}
+
+.conversation-trigger-count {
+  font-variant-numeric: tabular-nums;
+}
+
+.composer-context-menu.conversation-trigger-panel {
+  display: flex;
+  flex-direction: column;
+  width: var(--floating-menu-available-width, 360px);
+  max-height: min(500px, var(--floating-menu-available-height, 70vh));
+  padding: 12px;
+  font-weight: var(--weight-regular);
+  font-size: var(--font-ui);
+  line-height: 1.5;
+  color: var(--ink);
+}
+
+.conversation-trigger-heading,
+.conversation-trigger-row-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.conversation-trigger-heading {
+  margin-bottom: 8px;
+  font-weight: var(--weight-medium);
+}
+
+.conversation-trigger-list {
+  min-height: 0;
+  max-height: min(420px, 55vh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.conversation-trigger-row + .conversation-trigger-row {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--hairline-soft);
+}
+
+.conversation-trigger-status {
+  flex-shrink: 0;
+  color: var(--ink-muted);
+}
+
+.conversation-trigger-panel p {
+  margin: 6px 0;
+  color: var(--ink-muted);
+  overflow-wrap: anywhere;
+}
+
+.conversation-trigger-command {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  margin-top: 4px;
+}
+
+.conversation-trigger-row details {
+  margin-block: 8px;
+}
+
+.conversation-trigger-row summary {
+  cursor: pointer;
+  color: var(--ink-muted);
+}
+
+.conversation-trigger-row pre {
+  max-height: 180px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  margin: 8px 0;
+  padding: 8px;
+  background: var(--surface-2);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: var(--appearance-code-size);
+}
+
+.conversation-trigger-panel .conversation-trigger-error {
+  color: var(--danger);
+}
+
+.conversation-trigger-panel :focus-visible {
+  outline: 2px solid var(--ink-muted);
+  outline-offset: 2px;
+}

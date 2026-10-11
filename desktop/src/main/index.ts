@@ -1536,6 +1536,9 @@ app.whenReady().then(async () => {
   ipcMain.handle("wuu:managed-process-list", (event, threadId: string) =>
     appServerRequest<ManagedProcessListResult>(event, "process/list", { thread_id: threadId }),
   );
+  ipcMain.handle("wuu:process-cancel-notifications", (event, threadId: string, processId: string) =>
+    appServerRequest<ManagedProcessActionResult>(event, "process/cancel-notifications", { thread_id: threadId, process_id: processId }),
+  );
   ipcMain.handle("wuu:managed-process-read", (event, params: ManagedProcessReadParams) =>
     appServerRequest<ManagedProcessReadResult>(event, "process/read", params),
   );

@@ -1594,6 +1594,12 @@ export type ManagedProcessSummary = {
   exit_code?: number;
   last_error?: string;
   input_available?: boolean;
+  trigger?: {
+    status: "waiting" | "received" | "handled" | "cancelled" | "stopped";
+    on_exit: boolean;
+    recheck_minutes?: number;
+    next_recheck_at?: string;
+  };
 };
 
 export type ManagedProcessListResult = {
@@ -2873,6 +2879,7 @@ export type WuuDesktopApi = {
   resizeTerminalSession: (id: string, cols: number, rows: number) => Promise<TerminalSessionActionResult>;
   stopTerminalSession: (id: string) => Promise<TerminalSessionActionResult>;
   listManagedProcesses: (threadId: string) => Promise<ManagedProcessListResult>;
+  cancelProcessNotifications: (threadId: string, processId: string) => Promise<ManagedProcessActionResult>;
   readManagedProcess: (params: ManagedProcessReadParams) => Promise<ManagedProcessReadResult>;
   writeManagedProcess: (
     threadId: string,
