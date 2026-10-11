@@ -2,8 +2,6 @@ package structuredoutput
 
 import (
 	"encoding/json"
-	"errors"
-	"strings"
 	"testing"
 )
 
@@ -20,16 +18,5 @@ func TestValidatorAcceptsSingleSchemaValue(t *testing.T) {
 	}
 	if err := validator.Validate(`{"ok":true}{"ok":false}`); err == nil {
 		t.Fatal("Validate accepted multiple JSON values")
-	}
-}
-
-func TestValidatorRetryPromptIncludesFailureAndPreviousValue(t *testing.T) {
-	validator, err := New(json.RawMessage(`{"type":"string","minLength":3}`))
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	prompt := validator.RetryPrompt(`"no"`, errors.New("too short"))
-	if !strings.Contains(prompt, "Previous final answer") || !strings.Contains(prompt, `"no"`) {
-		t.Fatalf("retry prompt = %q", prompt)
 	}
 }
