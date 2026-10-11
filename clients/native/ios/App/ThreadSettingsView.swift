@@ -17,7 +17,7 @@ struct ThreadSettingsView: View {
     private var models: [RemoteModel] { providers.first { $0.id == selection.provider }?.models ?? [] }
     private var variants: [String] { models.first { $0.id == selection.model }?.variants ?? [] }
     private var editable: Bool {
-        model.connected && model.live?.id == thread.id && model.live?.running == false &&
+        model.connected && !model.sending && model.live?.id == thread.id && model.live?.running == false &&
         model.live?.readOnly == false && model.live?.archived == false && ["", "wuu"].contains(thread.engine)
     }
     var body: some View {

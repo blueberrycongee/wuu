@@ -50,6 +50,15 @@ struct MessageForkRequest: Identifiable {
     var threads: [ChatThread] = []
     var activeID: String? { didSet { rememberLocation() } }
     var live: ChatThread?
+    // A draft uses the conversation projection locally, but has no persisted activeID.
+    var draftWorkspace: String?
+    private var pendingSettings: [String: ThreadSettings] = [:]
+    private var pendingTitles: [String: String] = [:]
+    private var composerDraftIDs: [String: String] = [:]
+    var composerKey: String {
+        let id = live?.id ?? activeID ?? "new"
+        return (host?.pub ?? "") + ":" + (composerDraftIDs[id] ?? id)
+    }
     var saved: HistoryThread?
     var connected = false
     var connecting = false
@@ -407,6 +416,7 @@ struct MessageForkRequest: Identifiable {
         host = nil
         let oldHistory = history
         history = nil; host = nil; entries = []; threads = []; activeID = nil; live = nil; saved = nil
+        draftWorkspace = nil
         workspace = ""; workspaces = []; historyEnabled = false; opening = UUID(); search = ""; archivedList = false
         let selection = opening
         await background()
@@ -556,6 +566,7 @@ struct MessageForkRequest: Identifiable {
     func open(_ id: String, preservingContent: Bool = false) async throws {
         if activeID != id { showingHistoryEdit = false }
         opening = UUID(); let selection = opening
+        draftWorkspace = nil
         // Reopening the displayed conversation keeps its rows and in-flight thumbnails.
         if activeID != id || (!preservingContent && connected) { live = nil; saved = nil; refreshing = false; imagePreviews.clear() }
         activeID = id; loadingHistory = false; loadingContent = []; attachmentPreview = nil; loadingAttachment = false
@@ -585,12 +596,18 @@ struct MessageForkRequest: Identifiable {
         return result["providers"].array.map(RemoteProvider.init)
     }
     func updateSettings(_ settings: ThreadSettings, threadID: String) async throws {
-        guard connected, !refreshing, let remote, let live, live.id == threadID, !live.running, !live.readOnly, !live.archived,
+        guard connected, !refreshing, !sending, let remote, let live, live.id == threadID, !live.running, !live.readOnly, !live.archived,
               live.engine.isEmpty || live.engine == "wuu" else { throw NativeError.invalid("请在会话空闲且电脑在线时修改设置") }
+        if draftWorkspace != nil {
+            self.live?.settings = settings
+            pendingSettings[threadID] = settings
+            return
+        }
         let stamp = epoch, selection = opening
         // The response describes global defaults. The ordered thread/updated event owns this selection.
         _ = try await remote.call("config/model/update", params: settings.updateParams(threadID: threadID))
         guard epoch == stamp, opening == selection, self.remote === remote else { throw CancellationError() }
+        pendingSettings.removeValue(forKey: threadID)
     }
     func loadOlder(beforePrepend: () -> Void) async throws {
         guard connected, !refreshing, let remote, let live, !live.historyCursor.isEmpty, !loadingHistory else { return }
@@ -612,27 +629,56 @@ struct MessageForkRequest: Identifiable {
         self.live?.expandContent(message.contentRef, item: item)
     }
     func startThread(workdir: String? = nil) async throws {
-        guard let remote, connected else { throw NativeError.invalid("请先连接电脑") }
-        let directory = (workdir ?? workspace).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let remote, connected, !sending else { throw NativeError.invalid("请先连接电脑并等待发送完成") }
         let stamp = epoch; opening = UUID(); let selection = opening
-        var params: [String: JSONValue] = [:]
-        if !directory.isEmpty { params["cwd"] = .string(directory) }
-        if let id = workspaces.first(where: { $0["path"].string == directory })?["id"].string {
-            params["workspace_id"] = .string(id)
-        }
-        let result = try await remote.call("thread/start", params: .object(params))
-        guard epoch == stamp, opening == selection else { throw CancellationError() }
-        let thread = ChatThread(result["thread"])
-        workspace = thread.cwd
-        activeID = thread.id; live = thread; saved = nil; refreshing = false; imagePreviews.clear(); loadingHistory = false; loadingContent = []; attachmentPreview = nil; loadingAttachment = false
-        perform { try await self.loadThreads() }
+        let selectedWorkspace = (workdir ?? workspace).trimmingCharacters(in: .whitespacesAndNewlines)
+        // Reading defaults preserves pre-send settings without creating a host session.
+        let config = try await remote.call("config/read")
+        let engines = try await remote.call("engine/list")
+        guard epoch == stamp, opening == selection, self.remote === remote, !sending else { throw CancellationError() }
+        let engine = engines["settings"]["default_engine"].string ?? "wuu"
+        let directory = selectedWorkspace.isEmpty ? config["workspace_root"].string ?? "" : selectedWorkspace
+        var thread = ChatThread(["id": .string(UUID().uuidString), "title": "", "cwd": .string(directory),
+            "engine_id": .string(engine), "model_provider": config["provider"], "model": config["model"],
+            "model_variant": config["variant"], "model_effort": config["effort"], "permission_mode": config["permissions"]["mode"]])
+        if !engine.isEmpty && engine != "wuu" { thread.settings = ThreadSettings(["permission_mode": "unconfined"]) }
+        draftWorkspace = directory; workspace = directory; showingHistoryEdit = false
+        activeID = nil; live = thread; saved = nil; refreshing = false; imagePreviews.clear(); loadingHistory = false; loadingContent = []; attachmentPreview = nil; loadingAttachment = false
     }
     func send(_ text: String, attachments: [InputAttachment] = []) async throws {
-        guard !sending, !refreshing, let remote, let live, connected, !live.readOnly, !live.archived, !text.isEmpty || !attachments.isEmpty else { throw NativeError.invalid("当前无法发送") }
+        guard !sending, !refreshing, let remote, var thread = live, connected, !thread.readOnly, !thread.archived,
+              !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty else { throw NativeError.invalid("当前无法发送") }
         let input = try ChatInput(text: text, attachments: attachments)
-        let stamp = epoch
+        let stamp = epoch, selection = opening
         sending = true; defer { if epoch == stamp { sending = false } }
-        _ = try await remote.call(live.running ? "turn/queue" : "turn/start", params: input.params(threadID: live.id, queued: live.running))
+        if let cwd = draftWorkspace {
+            var params: [String: JSONValue] = ["cwd": .string(cwd), "engine": .string(thread.engine)]
+            if let id = workspaces.first(where: { $0["path"].string == cwd })?["id"].string {
+                params["workspace_id"] = .string(id)
+            }
+            let result = try await remote.call("thread/start", params: .object(params))
+            guard epoch == stamp, opening == selection, self.remote === remote else { throw CancellationError() }
+            let draftID = thread.id
+            thread = ChatThread(result["thread"])
+            // Keep composer bindings stable, including an attachment still being prepared.
+            composerDraftIDs[thread.id] = draftID
+            pendingSettings[thread.id] = pendingSettings.removeValue(forKey: draftID)
+            pendingTitles[thread.id] = pendingTitles.removeValue(forKey: draftID)
+            // Keep this session on failure so an explicit retry never creates another one.
+            draftWorkspace = nil; live = thread; activeID = thread.id; workspace = thread.cwd
+            perform { try await self.loadThreads() }
+        }
+        if let settings = pendingSettings[thread.id] {
+            _ = try await remote.call("config/model/update", params: settings.updateParams(threadID: thread.id))
+            guard epoch == stamp, opening == selection, self.remote === remote else { throw CancellationError() }
+            pendingSettings.removeValue(forKey: thread.id)
+        }
+        if let title = pendingTitles[thread.id] {
+            _ = try await remote.call("thread/rename", params: ["thread_id": .string(thread.id), "title": .string(title)])
+            guard epoch == stamp, opening == selection, self.remote === remote else { throw CancellationError() }
+            pendingTitles.removeValue(forKey: thread.id)
+        }
+        _ = try await remote.call(thread.running ? "turn/queue" : "turn/start", params: input.params(threadID: thread.id, queued: thread.running))
         guard epoch == stamp else { throw CancellationError() }
     }
     private func canChangeHistory(_ message: ChatMessage) -> Bool {
@@ -803,9 +849,15 @@ struct MessageForkRequest: Identifiable {
     }
     func rename(_ id: String, title: String) async throws {
         guard connected, let remote else { throw NativeError.invalid("请先连接电脑") }
+        if draftWorkspace != nil, live?.id == id {
+            live?.title = title
+            pendingTitles[id] = title
+            return
+        }
         let stamp = epoch
         _ = try await remote.call("thread/rename", params: ["thread_id": .string(id), "title": .string(title)])
         guard epoch == stamp, self.remote === remote else { return }
+        pendingTitles.removeValue(forKey: id)
         if live?.id == id { live?.title = title }
         try await loadThreads()
     }

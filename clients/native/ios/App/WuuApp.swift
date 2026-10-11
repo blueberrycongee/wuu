@@ -105,13 +105,13 @@ struct ConversationView: View {
     init(model: AppModel, drafts: Binding<ComposerDrafts>) {
         self.model = model
         _drafts = drafts
-        _conversationPresented = State(initialValue: model.activeID != nil)
+        _conversationPresented = State(initialValue: model.activeID != nil || model.draftWorkspace != nil)
     }
     /// Server history sync belongs to the account's own host connection, not to direct pairs.
     private var accountHistory: Bool { model.account != nil && model.selectedPair == nil }
     private var hostName: String { (model.host?.name).flatMap { $0.isEmpty ? nil : $0 } ?? "电脑" }
     private var query: String { model.search.trimmingCharacters(in: .whitespacesAndNewlines) }
-    private var draftKey: String { (model.host?.pub ?? "") + ":" + (model.activeID ?? "new") }
+    private var draftKey: String { model.composerKey }
     private var draft: Binding<String> {
         let key = draftKey
         return Binding(get: { drafts.text[key] ?? "" }, set: { drafts.text[key] = $0 })
@@ -207,14 +207,14 @@ struct ConversationView: View {
                 }.transition(.opacity)
             }
             Group {
-                if model.activeID == nil {
+                if model.activeID == nil && model.draftWorkspace == nil {
                     ContentUnavailableView {
                         Label("选择或新建会话", systemImage: "bubble.left.and.bubble.right")
                     } actions: {
                         Button("新会话") { newConversation = true }.disabled(!model.connected)
                     }.frame(maxHeight: .infinity)
                 } else {
-                    ConversationTimeline(model: model).id(model.activeID)
+                    ConversationTimeline(model: model).id(model.live?.id ?? model.activeID)
                         .overlay { if freshConversation { freshConversationHint } }
                 }
             }
@@ -234,7 +234,7 @@ struct ConversationView: View {
                 QuestionView(model: model, request: request).id(request["request_id"].string)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
-            if model.activeID != nil {
+            if model.activeID != nil || model.draftWorkspace != nil {
                 PendingMessagesView(model: model)
                 MobileComposer(text: draft, attachments: attachments, focused: $composerFocused, model: model, enabled: composerEnabled,
                     sending: model.sending, placeholder: composerPlaceholder, identifier: "harness-composer",
@@ -261,7 +261,7 @@ struct ConversationView: View {
             }
             ToolbarItem(placement: .topBarTrailing) {
                 Button { newConversation = true } label: { Image(systemName: "square.and.pencil").font(.system(size: 19)) }
-                    .disabled(!model.connected).accessibilityLabel("新会话")
+                    .disabled(!model.connected || model.sending).accessibilityLabel("新会话")
             }
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
@@ -273,8 +273,8 @@ struct ConversationView: View {
                     Button("会话设置", systemImage: "slider.horizontal.3") { settingsThread = model.live }
                         .disabled(!model.connected || model.refreshing || model.live == nil)
                     Button("重命名", systemImage: "pencil") {
-                        renameID = model.activeID ?? ""; renameTitle = model.live?.title ?? ""; renaming = true
-                    }.disabled(!model.connected || model.refreshing || model.live == nil)
+                        renameID = model.live?.id ?? ""; renameTitle = model.live?.title ?? ""; renaming = true
+                    }.disabled(!model.connected || model.refreshing || model.sending || model.live == nil)
                     Button(model.live?.historyCursor.isEmpty == false || model.messages.contains(where: { !$0.contentRef.isEmpty }) ? "导出已加载文本" : "导出对话文本", systemImage: "square.and.arrow.up") {
                         exportDocument = ConversationDocument(text: model.messages.filter { $0.tool == nil }.map { "## \($0.role)\n\n\($0.text)" }.joined(separator: "\n\n"))
                         exporting = true

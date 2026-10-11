@@ -115,6 +115,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Keep new iOS conversations as local drafts until the first message is sent,
+  preventing unused empty sessions from accumulating on the computer. Preserve
+  draft text, attachments, and selected settings through the first send and retries.
+
 - Keep iOS conversation content in place while reconnecting, merge overlapping
   history pages, and wait for a fresh snapshot before applying live updates.
   Simplify the attachment menu and show accurate disabled composer states.
