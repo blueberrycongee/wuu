@@ -14,7 +14,8 @@ struct ThreadSettingsView: View {
     @State private var confirmUnconfined = false
     init(model: AppModel, thread: ChatThread) {
         self.model = model; self.thread = thread
-        _selection = State(initialValue: thread.settings); _originalSettings = State(initialValue: thread.settings)
+        let settings = model.settingsSelection(for: thread)
+        _selection = State(initialValue: settings); _originalSettings = State(initialValue: settings)
     }
     private var models: [RemoteModel] { providers.first { $0.id == selection.provider }?.models ?? [] }
     private var variants: [String] { models.first { $0.id == selection.model }?.variants ?? [] }
@@ -78,7 +79,7 @@ struct ThreadSettingsView: View {
                     do {
                         providers = try await model.loadModelChoices(threadID: thread.id)
                         if let current = model.live, current.id == thread.id {
-                            selection = current.settings; originalSettings = current.settings
+                            selection = model.settingsSelection(for: current); originalSettings = selection
                         }
                     }
                     catch is CancellationError {} catch { self.error = error.localizedDescription }

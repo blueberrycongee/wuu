@@ -588,6 +588,9 @@ struct MessageForkRequest: Identifiable {
             saved = body
         }
     }
+    func settingsSelection(for thread: ChatThread) -> ThreadSettings {
+        pendingSettings[thread.id] ?? thread.settings
+    }
     func loadModelChoices(threadID: String) async throws -> [RemoteProvider] {
         guard connected, let remote, live?.id == threadID else { throw CancellationError() }
         let stamp = epoch, selection = opening
@@ -616,6 +619,8 @@ struct MessageForkRequest: Identifiable {
             pendingSettings[threadID] = settings
             return
         }
+        // A failed first-send update must retry the user's latest saved choice.
+        if pendingSettings[threadID] != nil { pendingSettings[threadID] = settings }
         let stamp = epoch, selection = opening
         // The response describes global defaults. The ordered thread/updated event owns this selection.
         _ = try await remote.call("config/model/update", params: settings.updateParams(threadID: threadID))
