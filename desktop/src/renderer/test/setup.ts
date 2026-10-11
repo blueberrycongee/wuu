@@ -1,4 +1,14 @@
+import { options as preactOptions } from "preact";
+
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+// Pierre's Preact effects otherwise use a Node fallback timer that can outlive
+// jsdom's window and call a removed cancelAnimationFrame during teardown. Keep
+// after-paint work on window-owned timers, which jsdom cancels when it closes.
+// Remove this override when Preact's default scheduler owns timers on the window.
+preactOptions.requestAnimationFrame = (callback) => {
+  window.requestAnimationFrame(() => window.setTimeout(callback, 0));
+};
 
 // @pierre/trees wraps user CSS in cascade layers. jsdom 25 cannot parse
 // @layer and reports a stylesheet error every time a real file tree mounts.

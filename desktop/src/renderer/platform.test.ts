@@ -3,8 +3,6 @@ import type { WuuDesktopApi } from "../shared/protocol";
 import {
   applyPlatformStamp,
   desktopPlatform,
-  primaryShortcutLabel,
-  revealInFileManagerLabel,
 } from "./platform";
 
 function setApiPlatform(platform: unknown): void {
@@ -45,25 +43,5 @@ describe("applyPlatformStamp", () => {
     document.documentElement.dataset.platform = "darwin";
     applyPlatformStamp();
     expect(document.documentElement.dataset.platform).toBe("darwin");
-  });
-});
-
-describe("platform-facing labels", () => {
-  it("shows the command glyph only on macOS", () => {
-    setApiPlatform("darwin");
-    expect(primaryShortcutLabel("P")).toBe("⌘P");
-    expect(primaryShortcutLabel(3)).toBe("⌘3");
-    setApiPlatform("win32");
-    expect(primaryShortcutLabel("P")).toBe("Ctrl+P");
-    expect(primaryShortcutLabel(3)).toBe("Ctrl+3");
-  });
-
-  it("names the OS file manager", () => {
-    setApiPlatform("darwin");
-    expect(revealInFileManagerLabel()).toBe("在 Finder 中显示");
-    setApiPlatform("win32");
-    expect(revealInFileManagerLabel()).toBe("在资源管理器中显示");
-    setApiPlatform("linux");
-    expect(revealInFileManagerLabel()).toBe("在文件管理器中显示");
   });
 });

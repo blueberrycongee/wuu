@@ -19,7 +19,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Continue conversations inside expanded document previews, with preserved drafts,
   PDF selections and annotations, and side chat in shared workspace tabs.
 - Refined desktop navigation, settings, artifact cards, web sources, and task
-  progress, with compact controls and steadier layouts in narrow panes.
+  progress, with compact controls, steadier narrow layouts, and source highlights
+  that survive scrolling and resizing.
 - Pair a separately built native iOS app through desktop Phone access. This
   release publishes the macOS desktop only; no mobile app is included.
 - Apply plugin updates between turns without losing active work or conversation

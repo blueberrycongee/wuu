@@ -11,6 +11,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { setImmediate } from "node:timers/promises";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { RuntimeContext } from "../shared/protocol";
 import { GitService, gitWorkingTreeBusy, type CommitMessageGenerator } from "./gitService";
@@ -55,11 +56,13 @@ beforeEach(() => {
   vi.stubEnv("GIT_CONFIG_VALUE_0", "true");
 });
 
-afterEach(() => {
+afterEach(async () => {
   vi.unstubAllEnvs();
   for (const root of roots.splice(0)) {
     rmSync(root, { recursive: true, force: true });
   }
+  // Synchronous Git fixtures can starve Vitest's reporter RPC across many cases.
+  await setImmediate();
 });
 
 describe("GitService file previews", () => {

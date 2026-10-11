@@ -3,10 +3,6 @@
  * Merge-gate test policy: product tests must not read stylesheet source
  * to pin declarations. Fixture names, tool-call paths, and CSS module
  * mocks are not this check.
- *
- * Allowed CSS source reads:
- * - desktop/src/renderer/styles/base.test.ts (webview pointer-events during resize)
- * - desktop/src/renderer/styles/styleAudit.test.ts (no new color literals)
  */
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
@@ -24,10 +20,6 @@ const scanRoots = [
   "desktop/src",
   "scripts",
 ];
-const allowed = new Set([
-  "desktop/src/renderer/styles/base.test.ts",
-  "desktop/src/renderer/styles/styleAudit.test.ts",
-]);
 const cssSourceRead =
   /\b(?:readFileSync|readFile)\s*\(\s*(?:[^)]|\([^)]*\))*?\.css|\bread\s*\(\s*['"][^'"]+\.css['"]/;
 const skipDirs = new Set(["node_modules", "vendor", "dist", "out"]);
@@ -49,7 +41,7 @@ if (process.argv.includes("--self-test")) {
     console.error("CSS-source tests are not allowed in the merge gate:");
     for (const path of violations) console.error(`  ${path}`);
     console.error(
-      "Assert observable behavior instead. Allowed exceptions: base.test.ts (webview resize) and styleAudit.test.ts.",
+      "Assert observable behavior instead.",
     );
     process.exit(1);
   }
@@ -66,7 +58,6 @@ function walk(dir, violations) {
     if (!isTestFile(entry.name)) continue;
     const path = resolve(dir, entry.name);
     const rel = relative(repoRoot, path).split("\\").join("/");
-    if (allowed.has(rel)) continue;
     const source = readFileSync(path, "utf8");
     if (cssSourceRead.test(source)) violations.push(rel);
   }
