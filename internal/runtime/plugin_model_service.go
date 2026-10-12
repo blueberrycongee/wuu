@@ -134,11 +134,7 @@ func (k *modelRequestInvoker) InvokeService(callCtx context.Context, params plug
 		Provider: selection.Provider, Model: selection.APIModel,
 		Messages: messages, MaxTokens: input.MaxOutputTokens,
 		Temperature: cfg.Agent.Temperature, Effort: selection.LegacyEffort,
-		ProviderOptions: provideroptions.Clone(selection.ProviderOptions),
-	}
-	// Model defaults and wire aliases must not override this invocation's cap.
-	for _, key := range []string{"maxOutputTokens", "max_output_tokens", "max_tokens", "max_completion_tokens"} {
-		delete(request.ProviderOptions, key)
+		ProviderOptions: modelRequestProviderOptions(selection.ProviderOptions),
 	}
 	if preparer, ok := client.(providers.InferenceRequestPreparer); ok {
 		request, err = preparer.PrepareInferenceRequest(ctx, request)
@@ -150,6 +146,7 @@ func (k *modelRequestInvoker) InvokeService(callCtx context.Context, params plug
 		if request.MaxTokens <= 0 || request.MaxTokens > input.MaxOutputTokens {
 			return nil, serviceError("unsupported_limit", "configured model provider cannot preserve the requested output token limit")
 		}
+		request.ProviderOptions = modelRequestProviderOptions(request.ProviderOptions)
 	}
 	// Preserve an existing workflow's owner and budget. Client-request
 	// capabilities have no parent inference journal, so attribute them to the
@@ -193,6 +190,26 @@ func (k *modelRequestInvoker) InvokeService(callCtx context.Context, params plug
 		}
 	}
 	return marshalServiceResult(result)
+}
+
+func modelRequestProviderOptions(options map[string]any) map[string]any {
+	options = provideroptions.Clone(options)
+	// OpenAI-compatible adapters merge options over the final wire payload.
+	// Keep sampling, reasoning and text formatting, but reserve the selected
+	// model, explicit context, tool-free surface and bounded unary execution.
+	// Apply this on both sides of provider preparation, before journal hashing.
+	for _, key := range []string{
+		"model", "models", "messages", "input", "instructions", "system", "prompt", "suffix", "prediction",
+		"previous_response_id", "conversation", "context_management", "container",
+		"tools", "tool_choice", "functions", "function_call", "parallel_tool_calls", "parallelToolCalls",
+		"web_search_options", "search_parameters", "plugins",
+		"stream", "stream_options", "background", "n", "best_of", "modalities", "audio",
+		"store", "omitStore",
+		"maxOutputTokens", "max_output_tokens", "max_tokens", "max_completion_tokens",
+	} {
+		delete(options, key)
+	}
+	return options
 }
 
 func modelRequestError(err error) error {

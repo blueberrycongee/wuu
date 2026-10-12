@@ -73,8 +73,11 @@ async function stopChild() {
 const provider = createServer(async (request, response) => {
   let body = "";
   for await (const chunk of request) body += chunk;
-  const value = JSON.parse(body), tag = value.messages.at(-1).content;
-  const call = { tag, url: request.url, body: value };
+  const value = JSON.parse(body);
+  const wire = request.url.endsWith("/responses") ? "responses" : request.url.endsWith("/messages") ? "anthropic" : "chat";
+  const content = (wire === "responses" ? value.input : value.messages)?.at(-1)?.content;
+  const tag = typeof content === "string" ? content : content?.map(part => part.text ?? "").join("") ?? "missing-input";
+  const call = { tag, url: request.url, wire, body: value };
   providerCalls.push(call);
   events.emit("provider", call);
   response.on("close", () => {
@@ -87,7 +90,15 @@ const provider = createServer(async (request, response) => {
     response.flushHeaders();
     return;
   }
-  response.end(JSON.stringify({
+  response.end(JSON.stringify(wire === "responses" ? {
+    id: "fixture-response", status: "completed", model: value.model,
+    output: [{ type: "message", role: "assistant", content: [{ type: "output_text", text: `fixture:${tag}` }] }],
+    usage: { input_tokens: 7, output_tokens: 3, total_tokens: 10 },
+  } : wire === "anthropic" ? {
+    id: "fixture-response", type: "message", role: "assistant", model: value.model,
+    content: [{ type: "text", text: `fixture:${tag}` }], stop_reason: "end_turn",
+    usage: { input_tokens: 7, output_tokens: 3 },
+  } : {
     id: "fixture-response", object: "chat.completion", model: value.model,
     choices: [{ index: 0, message: { role: "assistant", content: `fixture:${tag}` }, finish_reason: "stop" }],
     usage: { prompt_tokens: 7, completion_tokens: 3, total_tokens: 10 },
@@ -130,20 +141,49 @@ runJSONLRuntime({
 }, { input: process.stdin, output: process.stdout });
 `);
   const configPath = join(home, "config.json");
+  const shapeOverrides = {
+    model: "configured-wrong-model", models: ["configured-fallback-model"],
+    messages: [{ role: "user", content: "configured-hidden-message" }],
+    input: [{ role: "user", content: "configured-hidden-input" }],
+    instructions: "configured-hidden-instructions", system: "configured-hidden-system",
+    prompt: { id: "configured-remote-prompt" }, suffix: "configured-hidden-suffix",
+    prediction: { type: "content", content: "configured-hidden-prediction" },
+    previous_response_id: "configured-previous-response", conversation: "configured-conversation",
+    context_management: [{ type: "compaction", compact_threshold: 1 }], container: "configured-container",
+    tools: [{ type: "web_search_preview" }], tool_choice: "required",
+    functions: [{ name: "configured_function", parameters: { type: "object" } }], function_call: "auto",
+    parallel_tool_calls: true, parallelToolCalls: true,
+    web_search_options: {}, search_parameters: { mode: "auto" }, plugins: [{ id: "web" }],
+    stream: true, stream_options: { include_usage: true }, background: true, n: 2, best_of: 2,
+    modalities: ["text", "audio"], audio: { voice: "alloy", format: "wav" }, store: true, omitStore: true,
+    maxOutputTokens: 128000, max_output_tokens: 128000, max_tokens: 128000, max_completion_tokens: 128000,
+  };
+  const fixtureConfig = (type, model, wire_api) => ({
+    type, wire_api, base_url: `http://127.0.0.1:${provider.address().port}`,
+    api_key: "synthetic-no-real-key", model,
+    models: { [model]: { options: {
+      ...shapeOverrides, temperature: 0.42, topP: 0.83, seed: 42,
+      ...(type === "anthropic" ? { thinking: { type: "enabled", budgetTokens: 16 }, effort: "low", topK: 17 }
+        : { reasoningEffort: "low", reasoningSummary: "auto", textVerbosity: "low",
+          ...(wire_api === "responses" ? { text: { format: { type: "text" } } } : { response_format: { type: "text" } }) }),
+    } } },
+  });
   await writeFile(configPath, JSON.stringify({
     default_provider: "fixture",
-    providers: { fixture: {
-      type: "openai-compatible", base_url: `http://127.0.0.1:${provider.address().port}`,
-      api_key: "synthetic-no-real-key", model: "gpt-test",
-      models: { "gpt-test": { options: {
-        maxOutputTokens: 128000, max_output_tokens: 128000, max_tokens: 128000, max_completion_tokens: 128000,
-      } } },
-    }, unsupported: {
+    providers: {
+      fixture: fixtureConfig("openai-compatible", "gpt-test"),
+      responses: fixtureConfig("openai-compatible", "gpt-test-responses", "responses"),
+      anthropic: fixtureConfig("anthropic", "claude-test"),
+      grok: fixtureConfig("grok-build", "grok-test"),
+      unsupported: {
       type: "openai-codex", base_url: `http://127.0.0.1:${provider.address().port}`,
       api_key: "synthetic-no-real-key", model: "gpt-test",
     } },
     agent: { permission_mode: "standard", model_aliases: {
       short: { provider: "fixture", model: "gpt-test-alias" },
+      responses: { provider: "responses", model: "gpt-test-responses" },
+      anthropic: { provider: "anthropic", model: "claude-test" },
+      grok: { provider: "grok", model: "grok-test" },
       unsupported: { provider: "unsupported", model: "gpt-test" },
     } },
     skills: { enabled: false }, ptc: { enabled: false },
@@ -189,6 +229,61 @@ runJSONLRuntime({
   assert(!providerCalls[0].body.tools?.length);
   result.checks.push("public SDK response and usage", "explicit messages, output cap, no tools");
   result.checks.push("configured provider options cannot override the output cap");
+  for (const [name, model, wire] of [["fixture", "gpt-test", "chat"], ["responses", "gpt-test-responses", "responses"],
+    ["anthropic", "claude-test", "anthropic"], ["grok", "grok-test", "chat"]]) {
+    const tag = name === "fixture" ? "success" : name;
+    const reply = name === "fixture" ? success : await call(name, { ...input(tag), model_alias: name });
+    assert.equal(reply.text, `fixture:${tag}`);
+    assert.equal(reply.model, model);
+    assert.equal(reply.provider, name);
+    assert.equal(reply.usage.input_tokens, 7);
+    assert.equal(reply.usage.output_tokens, 3);
+    const captured = providerCalls.find(call => call.tag === tag);
+    assert.equal(captured.wire, wire);
+    const body = captured.body;
+    assert.equal(body.model, reply.model, "reported model differs from actual wire model");
+    const ownedFields = new Set(["model", "messages", "input", "instructions", "system", "stream", "store", "max_tokens", "max_output_tokens"]);
+    for (const key of Object.keys(shapeOverrides)) {
+      if (!ownedFields.has(key)) assert.equal(body[key], undefined, `${name}: configured ${key} crossed the request boundary`);
+    }
+    assert(!body.stream, `${name}: configured streaming was enabled`);
+    assert(!body.store, `${name}: configured server-side storage was enabled`);
+    assert.equal(body.temperature, 0.42, `${name}: sampling option was lost`);
+    assert.equal(body.top_p, 0.83, `${name}: sampling alias was lost`);
+    if (wire === "responses") {
+      assert.equal(body.max_output_tokens, 32);
+      assert.equal(body.max_tokens, undefined);
+      assert.equal(body.instructions, input(tag).messages[0].content);
+      assert.deepEqual(body.input, [{ role: "user", content: tag }]);
+      assert.equal(body.messages, undefined);
+      assert.equal(body.system, undefined);
+      assert.deepEqual(body.reasoning, { effort: "low", summary: "auto" });
+      assert.deepEqual(body.text, { format: { type: "text" }, verbosity: "low" });
+      assert.equal(body.seed, 42);
+    } else {
+      assert.equal(body.max_tokens, 32);
+      assert.equal(body.max_output_tokens, undefined);
+      assert.equal(body.input, undefined);
+      assert.equal(body.instructions, undefined);
+      if (wire === "anthropic") {
+        assert.equal(body.system, input(tag).messages[0].content);
+        assert.equal(body.messages.length, 1);
+        assert.equal(body.messages[0].role, "user");
+        assert.equal(body.messages[0].content.map(part => part.text).join(""), tag);
+        assert.deepEqual(body.thinking, { type: "enabled", budget_tokens: 16 });
+        assert.deepEqual(body.output_config, { effort: "low" });
+        assert.equal(body.top_k, 17);
+      } else {
+        assert.deepEqual(body.messages, input(tag).messages);
+        assert.equal(body.system, undefined);
+        assert.equal(body.reasoning_effort, "low");
+        assert.equal(body.verbosity, "low");
+        assert.deepEqual(body.response_format, { type: "text" });
+        assert.equal(body.seed, 42);
+      }
+    }
+    result.checks.push(`${name}: configured request-shape overrides blocked; explicit context, selected model, cap and tuning preserved`);
+  }
   const alias = await call("alias", { ...input("alias"), model_alias: "short" });
   assert.equal(alias.model, "gpt-test-alias");
   assert.equal(providerCalls.at(-1).body.model, "gpt-test-alias");
@@ -248,13 +343,13 @@ runJSONLRuntime({
     };
   } finally { db.close(); }
   const accounting = result.accounting;
-  assert.equal(accounting.operations.length, 5);
+  assert.equal(accounting.operations.length, 8);
   assert(accounting.operations.every(operation => operation.owner_id === "plugin:model-fixture" && operation.kind === "auxiliary" && operation.status !== "active"));
   assert(accounting.workflows.every(workflow => workflow.status !== "active"));
-  assert.equal(accounting.submissions.length, 5);
+  assert.equal(accounting.submissions.length, 8);
   const reported = accounting.submissions.filter(submission => submission.has_reported_usage);
-  assert.equal(reported.length, 2);
-  assert.equal(reported.reduce((total, usage) => total + usage.reported_input_tokens + usage.reported_output_tokens, 0), 20);
+  assert.equal(reported.length, 5);
+  assert.equal(reported.reduce((total, usage) => total + usage.reported_input_tokens + usage.reported_output_tokens, 0), 50);
   assert.equal(accounting.sessions, 0);
   assert.equal(accounting.messages, 0);
   result.checks.push("durable terminal accounting, reported usage, zero sessions/messages");
