@@ -30,6 +30,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Keep reply actions stable when opening background triggers, preserve their
+  completion reveal order, and use a compact notification icon for the trigger list.
+
 - Align desktop navigation and control labels with icons using the selected
   font's rendered metrics, and preserve accents and descenders in workspace tabs.
 

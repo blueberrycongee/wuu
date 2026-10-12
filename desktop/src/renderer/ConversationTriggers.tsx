@@ -3,7 +3,7 @@ import type { ManagedProcessSummary } from "../shared/protocol";
 import { FloatingMenuPortal } from "./ComposerFloatingMenu";
 import { useConversationRenderActive } from "./ConversationRenderActivity";
 import { useI18n } from "./i18n";
-import { AlertCircle, X, Zap } from "./WuuIcons";
+import { AlertCircle, Bell, X } from "./WuuIcons";
 import "./styles/conversation-triggers.css";
 
 export function ConversationTriggers({ threadID }: { threadID: string }): JSX.Element {
@@ -68,6 +68,7 @@ export function ConversationTriggers({ threadID }: { threadID: string }): JSX.El
   }, [open]);
 
   const waiting = (processes ?? []).filter((process) => process.trigger?.status === "waiting" || process.trigger?.status === "received");
+  const label = waiting.length > 0 && !loadError ? `${t("triggers.title")} (${waiting.length})` : t("triggers.title");
   const ordered = [...(processes ?? [])].sort((a, b) => {
     const aActive = a.trigger?.status === "waiting" || a.trigger?.status === "received";
     const bActive = b.trigger?.status === "waiting" || b.trigger?.status === "received";
@@ -92,12 +93,10 @@ export function ConversationTriggers({ threadID }: { threadID: string }): JSX.El
 
   return <>
     <button ref={anchor} type="button" className="message-action-button conversation-trigger-button"
-      aria-label={t("triggers.title")} aria-haspopup="dialog" aria-expanded={open} aria-controls={open ? panelID : undefined}
-      title={t("triggers.title")} onClick={() => setOpen((value) => !value)}
+      aria-label={label} aria-haspopup="dialog" aria-expanded={open} aria-controls={open ? panelID : undefined}
+      title={label} onClick={() => setOpen((value) => !value)}
       onKeyDown={(event) => { if (event.key === "ArrowDown") { event.preventDefault(); setOpen(true); } }}>
-      {loadError ? <AlertCircle size={15} aria-hidden="true" /> : <Zap size={15} aria-hidden="true" />}
-      <span>Trigger</span>
-      {waiting.length > 0 && !loadError ? <span className="conversation-trigger-count">{waiting.length}</span> : null}
+      {loadError ? <AlertCircle size={15} aria-hidden="true" /> : <Bell size={15} aria-hidden="true" />}
     </button>
     {open ? <FloatingMenuPortal anchorRef={anchor} owner="conversation-triggers" placement="above" align="left" width={360} flip
       mobileSheet={{ label: t("triggers.title"), onClose: close }}>

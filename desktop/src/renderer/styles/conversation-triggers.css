@@ -1,20 +1,3 @@
-.message-actions .message-action-button.conversation-trigger-button {
-  width: auto;
-  flex: none;
-  gap: 5px;
-  padding-inline: 6px;
-  font: inherit;
-}
-
-.conversation-trigger-button:focus-visible {
-  outline: 2px solid var(--ink-muted);
-  outline-offset: 2px;
-}
-
-.conversation-trigger-count {
-  font-variant-numeric: tabular-nums;
-}
-
 .composer-context-menu.conversation-trigger-panel {
   display: flex;
   flex-direction: column;

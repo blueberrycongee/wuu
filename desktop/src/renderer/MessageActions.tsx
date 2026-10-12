@@ -37,12 +37,22 @@ export function AgentMessageActions({
   children?: ReactNode;
 }): JSX.Element {
   const { t } = useI18n();
+  const [revealFinished, setRevealFinished] = useState(false);
 
   return (
     <div
       className="message-actions agent-message-actions"
       data-wuu-component="message-actions"
       data-wuu-placement={placement}
+      data-reveal-finished={revealFinished || undefined}
+      // Consume the entrance when focus arrives. A portaled menu moves focus
+      // out of this DOM row; a temporary :focus-within override would replay it.
+      onFocusCapture={() => setRevealFinished(true)}
+      onAnimationEnd={(event) => {
+        if (event.animationName === "agent-actions-reveal" && event.target === event.currentTarget.lastElementChild) {
+          setRevealFinished(true);
+        }
+      }}
       aria-label={t("message.assistantActions")}
     >
       {showCopy ? <MessageCopyButton getText={getText} className="message-action-button" iconSize={15} /> : null}
