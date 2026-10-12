@@ -12,7 +12,9 @@ enum NativeUIFixture {
             ("Wuu\n图片预览" as NSString).draw(at: CGPoint(x: 35, y: 220), withAttributes: [.font: UIFont.systemFont(ofSize: 26), .foregroundColor: UIColor.white])
         }
         let attachment: JSONValue = ["media_type": "image/jpeg", "data": .string(image.jpegData(compressionQuality: 0.75)!.base64EncodedString()), "filename": "preview.jpg"]
-        let turns: [JSONValue] = (0..<80).map { index in
+        let arguments = ProcessInfo.processInfo.arguments
+        let count = arguments.contains("--native-composer-fixture") && arguments.contains("--native-empty-fixture") ? 0 : 80
+        let turns: [JSONValue] = (0..<count).map { index in
             let number = String(index)
             var items: [JSONValue] = [
                 ["id": "user", "type": "user_message", "text": .string("第 \(index + 1) 轮：检查图片与消息布局"), "images": .array(index % 4 == 0 ? [attachment, attachment, attachment, attachment] : [])],
