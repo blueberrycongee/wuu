@@ -120,9 +120,24 @@ async function check(name, body) {
 async function screenshot(name) {
   await frames();
   const file = `${name}.png`;
+  const layout = await evaluate((selector) => {
+    const suffix = document.querySelector(selector);
+    if (!suffix) return null;
+    const mirror = suffix.parentElement;
+    const viewport = suffix.closest('[data-wuu-component="composer-inline-completion"]');
+    const range = document.createRange();
+    range.selectNodeContents(suffix);
+    const style = getComputedStyle(mirror);
+    return { mirror: { clientWidth: mirror.clientWidth, scrollWidth: mirror.scrollWidth, scrollHeight: mirror.scrollHeight,
+      whiteSpace: style.whiteSpace, overflowWrap: style.overflowWrap, suffixWordBreak: getComputedStyle(suffix).wordBreak },
+      viewport: { width: viewport.clientWidth, height: viewport.clientHeight },
+      suffixLineRects: Array.from(range.getClientRects(), (rect) => rect.toJSON()) };
+  }, ghostSelector);
+  (state.screenshotLayouts ??= {})[file] = layout;
   fs.writeFileSync(path.join(output, file), (await bounded(win.webContents.capturePage(), "Screenshot capture")).toPNG());
   state.screenshots.push(file);
   save();
+  return layout;
 }
 async function fail(error) {
   if (failing) return;
@@ -207,6 +222,7 @@ app.whenReady().then(async () => {
 
   await check("host rendering and native Tab acceptance", async () => {
     const pending = await suggestion("Plan", " a focused check");
+    assert.equal(pending.context.kind, "main");
     assert.equal(await value(), "Plan", "a visible suggestion never changes the draft before acceptance");
     state.contexts.push(pending.context);
     await screenshot("wide-light-suggestion");
@@ -462,7 +478,10 @@ app.whenReady().then(async () => {
         save();
         await suggestion("Keep the native input word at this narrow wrap boundary: word", "AContinuousUnbrokenCompletionMustWrapWithoutMovingTheNativeCaret");
         state.visual.stage = "capture unbroken suffix";
-        await screenshot("narrow-unbroken-suffix-wrap");
+        const layout = await screenshot("narrow-unbroken-suffix-wrap");
+        assert.ok(layout.suffixLineRects.length > 1, "long unbroken suffix wraps to multiple lines");
+        assert.ok(layout.mirror.scrollWidth <= layout.mirror.clientWidth + 1, "wrapped suffix does not overflow horizontally");
+        assert.ok(layout.mirror.scrollHeight > layout.viewport.height, "overflow remains clipped to the stable native input viewport");
       }
     }
   });

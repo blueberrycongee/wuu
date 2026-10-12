@@ -68,11 +68,19 @@ View 是注册的组件，可以放在 `navigation`、`primary`、`auxiliary`、
 
 在 `activate(api)` 中调用 `registerComposerInlineCompletionProvider({ id, order, provideCompletion })` 注册 provider。回调接收只读的 `ComposerInlineCompletionContext` 和 `AbortSignal`，同步或通过 promise 返回 `{ text: "字面文本后缀" }` 或 `null`。没有建议时返回 `null`。宿主将已接受的文本追加到草稿；回调不替换整份草稿，也不接管 textarea。
 
-版本 1 的 context 包含 `composerId`、`revision`、可选的 `threadId` 和 `sideThreadId`、`draftText`、`selectionStart`、`selectionEnd` 和 `running`。选区偏移使用 JavaScript UTF-16 索引。`composerId` 是不透明标识，作用域为已挂载输入框及其会话/工作区上下文；revision 不是全局会话版本。侧会话输入框的 `threadId` 表示所属主会话，`sideThreadId` 表示已创建的侧会话；尚未创建侧会话的新草稿也有独立的 `composerId`。插件自行根据 `running` 决定是否提供建议。
+版本 1 的 context 包含 `kind`、`composerId`、`revision`、可选的 `threadId` 和 `sideThreadId`、`draftText`、`selectionStart`、`selectionEnd` 和 `running`。主输入框和分栏输入框的 `kind` 为 `main`，侧输入框为 `side`，尚无 `sideThreadId` 的新侧草稿也明确标为 `side`。选区偏移使用 JavaScript UTF-16 索引。`composerId` 是不透明标识，作用域为已挂载输入框及其会话/工作区上下文；revision 不是全局会话版本。侧会话输入框的 `threadId` 表示所属主会话，`sideThreadId` 表示已创建的侧会话。
+
+`running` 表示输入框的展示状态。最终回答就绪后，主输入框和分栏输入框可能已显示空闲，而运行时仍在收尾。值为 false 不代表该轮已成功结束。仅在成功完成后提供建议的策略应观察回合生命周期事件，并明确激活或重载后的行为。
+
+需要主会话上下文时，通过 `api.invokeRuntime` 传入 `threadId`，在运行时处理函数中调用已声明的 `host.session.history.read` 服务。重载后也能读取普通用户会话，其他插件的私有会话仍不可访问。插件自行选择有限的历史范围。侧会话历史独立存储，此运行时服务未开放读取；不要把 `sideThreadId` 当成它的 `session_id`。需要主会话历史的 provider 可以对 `kind: "side"` 返回 `null`，无需访问宿主私有状态。
 
 Provider 按 `order` 升序调用，再依次按插件 ID、注册 ID 排序，逐个尝试。第一个非空结果生效；无结果或 provider 出错时继续尝试下一项。宿主渲染建议文本，并在接受前核对请求是否仍然有效。上下文获取、提示词、防抖和请求预算由插件负责。该 API 不会安装补全 provider 或自动调用模型的策略。
 
+宿主在符合条件的输入状态变化时调用 provider。版本 1 没有由 provider 主动请求刷新的方法；无关的宿主事件或插件设置变化本身不会重新调用已返回的回调。等待事件或防抖应限制在当前可取消请求内，并设定时限；不符合条件时返回 `null`。尚未返回的 provider 会阻塞后续 provider，宿主不自动为 provider 设置超时。
+
 原生输入框只在已聚焦、可编辑且光标折叠在草稿末尾时请求建议，空草稿也可使用。输入法组合输入、斜杠命令草稿、打开的菜单或对话框，以及隐藏的折叠提示内容不参与补全。斜杠命令保留 Tab 优先级。无修饰键且非重复触发的 Tab 接受当前建议；没有建议时保留正常焦点导航。Escape 关闭当前建议或取消待处理请求。接受只修改草稿，不发送，并保留原生撤销。后缀支持多行，CRLF 会规范为 LF。
+
+灰字预览裁切在原生输入框的可视区域内，不撑高 textarea。接受时会插入完整后缀，包括超出预览范围的文本。
 
 编辑、选区变化、IME 输入、焦点、上下文或运行状态变化、provider 释放、禁用、重载和卸载会使待处理结果失效。应响应 abort signal，并清理自己创建的定时器和订阅。释放注册句柄会移除贡献，generation 清理也会释放它。忽略取消不能让过期结果改动草稿，但可能让插件自己的工作继续运行。
 

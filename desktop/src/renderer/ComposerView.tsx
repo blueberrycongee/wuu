@@ -120,6 +120,7 @@ import { focusComposerTextarea, isTouchWebShell } from "./ComposerFocus";
 import { useComposerHeight } from "./useComposerHeight";
 import { useWorkbenchConnected } from "./WorkbenchConnectionContext";
 import type { TurnContextUsage } from "./AppState";
+import type { ComposerInlineCompletionContext } from "../shared/workbench";
 
 const MemoizedComposerPluginSlot = memo(PluginSlot);
 const MemoizedComposerPluginToolbar = memo(ComposerPluginToolbar);
@@ -239,6 +240,7 @@ export function Composer({
   contextUsage,
   queryHistorySessionID,
   skillThreadID,
+  inlineCompletionKind = "main",
   threadId,
   sideThreadId,
   queryHistory = [],
@@ -360,6 +362,7 @@ export function Composer({
   queryHistorySessionID?: string;
   // Draft tabs have local history IDs but no server thread to query yet.
   skillThreadID?: string;
+  inlineCompletionKind?: ComposerInlineCompletionContext["kind"];
   // Real protocol identities; a draft tab ID is only a local editor identity.
   threadId?: string;
   sideThreadId?: string;
@@ -1356,6 +1359,7 @@ export function Composer({
               placeholder={composerPlaceholder}
               disabled={readOnly}
               pluginHost={pluginHost}
+              inlineCompletionKind={inlineCompletionKind}
               inlineCompletionEnabled={!hasCollapsedPromptBlocks && !disconnected && !topAccessory
                 && !menuOpen && !accessMenuOpen && !branchMenuOpen && !codexRuntimeMenu && !composerContextMenu}
               inlineCompletionContextKey={JSON.stringify([queryHistorySessionID, slashSkillContextKey, threadId, sideThreadId])}
@@ -1680,6 +1684,7 @@ type ComposerTextareaProps = {
   placeholder: string;
   disabled: boolean;
   pluginHost: PluginHost;
+  inlineCompletionKind: ComposerInlineCompletionContext["kind"];
   inlineCompletionEnabled: boolean;
   inlineCompletionContextKey: string;
   inlineCompletionRevisionKey: string;
@@ -1708,6 +1713,7 @@ const ComposerTextarea = forwardRef<HTMLTextAreaElement, ComposerTextareaProps>(
     placeholder,
     disabled,
     pluginHost,
+    inlineCompletionKind,
     inlineCompletionEnabled,
     inlineCompletionContextKey,
     inlineCompletionRevisionKey,
@@ -1773,6 +1779,7 @@ const ComposerTextarea = forwardRef<HTMLTextAreaElement, ComposerTextareaProps>(
     }
     const inline = useComposerInlineCompletion({
       host: pluginHost, inputRef, value, enabled: inlineCompletionEnabled && !disabled,
+      kind: inlineCompletionKind,
       contextKey: inlineCompletionContextKey, revisionKey: inlineCompletionRevisionKey,
       threadId, sideThreadId, running, compositionActive: compositionActiveRef.current, onInsert: publishValue,
     });

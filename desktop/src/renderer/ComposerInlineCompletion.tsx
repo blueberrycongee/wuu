@@ -32,12 +32,13 @@ type Suggestion = {
 // This lives beside the synchronous textarea value. App's persisted draft and
 // the surrounding composer chrome may still describe an earlier keystroke.
 export function useComposerInlineCompletion({
-  host, inputRef, value, enabled, contextKey, revisionKey, threadId, sideThreadId, running, compositionActive, onInsert,
+  host, inputRef, value, enabled, kind, contextKey, revisionKey, threadId, sideThreadId, running, compositionActive, onInsert,
 }: {
   host: PluginHost;
   inputRef: RefObject<HTMLTextAreaElement | null>;
   value: string;
   enabled: boolean;
+  kind: ComposerInlineCompletionContext["kind"];
   contextKey: string;
   revisionKey: string;
   threadId?: string;
@@ -47,9 +48,9 @@ export function useComposerInlineCompletion({
   onInsert: (value: string) => void;
 }) {
   const mountId = useId();
-  const identity = useRef({ contextKey, epoch: 0 });
-  if (identity.current.contextKey !== contextKey) {
-    identity.current = { contextKey, epoch: identity.current.epoch + 1 };
+  const identity = useRef({ contextKey, kind, epoch: 0 });
+  if (identity.current.contextKey !== contextKey || identity.current.kind !== kind) {
+    identity.current = { contextKey, kind, epoch: identity.current.epoch + 1 };
   }
   const composerId = `${mountId}:${identity.current.epoch}`;
   const subscribe = useCallback((listener: () => void) => host.subscribeComposerInlineCompletionProviders(listener), [host]);
@@ -77,14 +78,14 @@ export function useComposerInlineCompletion({
       && windowFocused.current && !composing.current && !menuOpen && !input.closest("[hidden], [inert]")
       && input.selectionStart === input.value.length && input.selectionEnd === input.value.length
       && !parseComposerSlashDraft(input.value);
-    const key = JSON.stringify([composerId, revisionKey, threadId, sideThreadId, running, input.value,
+    const key = JSON.stringify([composerId, kind, revisionKey, threadId, sideThreadId, running, input.value,
       input.selectionStart, input.selectionEnd, focused, windowFocused.current, composing.current, eligible]);
     const previous = observed.current;
     if (previous?.key === key && previous.providers === providers) return previous;
     request.current?.abort();
     const next: Observation = {
       key, providers, eligible,
-      context: Object.freeze({ contractVersion: 1, composerId, revision: ++revision.current,
+      context: Object.freeze({ contractVersion: 1, kind, composerId, revision: ++revision.current,
         ...(threadId === undefined ? {} : { threadId }),
         ...(sideThreadId === undefined ? {} : { sideThreadId }), running, draftText: input.value,
         selectionStart: input.selectionStart, selectionEnd: input.selectionEnd }),

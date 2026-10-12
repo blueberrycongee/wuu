@@ -1809,6 +1809,8 @@ export type ComposerSubmissionModeV1 = "send" | "queue" | "steer";
 /** One immutable request for an append-only suggestion in the host-owned composer. */
 export interface ComposerInlineCompletionContext {
   readonly contractVersion: 1;
+  /** Conversation kind, including before a side conversation has an ID. Split panes use main. */
+  readonly kind: "main" | "side";
   /** Opaque identity for this mounted input and conversation/workspace context. */
   readonly composerId: string;
   /** Changes whenever input, selection, composition, focus, or conversation state changes. */
@@ -1820,6 +1822,7 @@ export interface ComposerInlineCompletionContext {
   /** UTF-16 offsets into draftText. The host requests only at a collapsed end caret. */
   readonly selectionStart: number;
   readonly selectionEnd: number;
+  /** Composer presentation activity; false does not prove the latest turn succeeded or settled. */
   readonly running: boolean;
 }
 

@@ -140,6 +140,7 @@ export function SideThreadComposer({
       onInterrupt={onInterrupt}
       slashCommandsOverride={onReset ? slashCommands : undefined}
       onResetSideThread={onReset}
+      inlineCompletionKind="side"
       threadId={mainThreadId}
       sideThreadId={sideThreadId}
       queryHistorySessionID={queryHistorySessionID}

@@ -237,6 +237,7 @@ export function SplitPaneComposer({
   }
   const inline = useComposerInlineCompletion({
     host: desktopPluginHost, inputRef: textareaRef, value: visiblePromptValue,
+    kind: "main",
     enabled: !readOnly && connected && !hasCollapsedPromptBlocks && !cameraOpen,
     contextKey: queryHistorySessionID ?? "", revisionKey: JSON.stringify([submissionRevision, turnId, requestedHandoffIntent]),
     threadId: queryHistorySessionID, running, compositionActive: composing.current, onInsert: updateVisiblePrompt,

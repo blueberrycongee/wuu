@@ -220,6 +220,8 @@ async function requestText(host: RuntimeHost, content: string) {
 
 The timeout is bounded by both `timeout_ms` and the owning invocation's remaining lifetime. The runtime's default capability timeout is 30 seconds, so a request may end before 45 seconds. Set the package's runtime timeout deliberately rather than assuming the model service extends it. Cancellation, invocation completion, or generation revocation cancels outstanding provider work.
 
+The remote Web client also has an independent 30-second RPC deadline for `api.invokeRuntime`; increasing the package timeout does not extend it. When that deadline expires, the client requests cancellation of the original host invocation.
+
 The result contains `text`, `provider`, `model`, `finish_reason`, and `truncated`. Optional `usage` contains input, output, cache-creation, and cache-read token counts plus `cache_creation_unknown`; missing usage does not mean zero cost. Empty/non-text responses and responses requesting tool calls fail instead of starting a tool loop.
 
 The host reuses configured credentials, provider preparation, capacity coordination, retries, and inference accounting. It adds no conversation history, agent-specific request hooks, or tools and creates no persistent session. Select and limit context in the plugin. The service does not accept credentials, endpoint URLs, or arbitrary provider overrides. Explain what draft/history text will reach the configured provider, bound request frequency and output, and treat cancellation as best effort at avoiding further work: a submitted request may already incur charges.
