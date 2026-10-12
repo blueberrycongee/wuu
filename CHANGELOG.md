@@ -10,6 +10,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Optional read-only `memory.notebook` service for bounded index and topic reads,
+  with source revisions, UTF-8 limits, and explicit missing-file results.
+
 - Composable model extensions with full logical request snapshots, request hooks,
   around-call middleware, independent inference streams, explicitly selected
   adapters, and generation-owned background service calls.
@@ -33,6 +36,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Keep the sidebar's recent-history range stable while a first message creates
   its conversation, avoiding a temporary extra row and subsequent layout jump,
   including while saving a draft's custom name.
+- Keep reply actions stable when opening background triggers, preserve their
+  completion reveal order, and use a compact notification icon for the trigger list.
+
 - Align desktop navigation and control labels with icons using the selected
   font's rendered metrics, and preserve accents and descenders in workspace tabs.
 

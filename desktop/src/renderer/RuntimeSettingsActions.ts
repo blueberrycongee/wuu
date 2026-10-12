@@ -313,6 +313,9 @@ export function createRuntimeSettingsActions(
               extension_trust:
                 updated.extension_trust ?? current.initialized.extension_trust,
               providers: updated.providers ?? current.initialized.providers,
+              project_models: updated.project_models ?? current.initialized.project_models,
+              model_roles: updated.model_roles ?? current.initialized.model_roles,
+              model_aliases: updated.model_aliases ?? current.initialized.model_aliases,
               advanced_settings:
                 updated.advanced_settings ??
                 current.initialized.advanced_settings,
@@ -455,6 +458,10 @@ export function createRuntimeSettingsActions(
       return;
     }
     const updated = await window.wuu.removeProvider(target, options);
+    const replacedDefault = target === state.initialized.provider;
+    if (replacedDefault && selectionViewIsCurrent(state)) {
+      rememberDraftRuntime(updated.provider, updated.model, updated.variant ?? updated.effort ?? "");
+    }
     deps.setAppState((current) => ({
       ...current,
       initialized: current.initialized
@@ -462,8 +469,11 @@ export function createRuntimeSettingsActions(
             ...current.initialized,
             provider: updated.provider ?? current.initialized.provider,
             model: updated.model ?? current.initialized.model,
-            effort: updated.effort ?? current.initialized.effort,
-            variant: updated.variant ?? current.initialized.variant,
+            effort: updated.effort ?? (replacedDefault ? "" : current.initialized.effort),
+            variant: updated.variant ?? (replacedDefault ? "" : current.initialized.variant),
+            project_models: updated.project_models ?? current.initialized.project_models,
+            model_roles: updated.model_roles ?? current.initialized.model_roles,
+            model_aliases: updated.model_aliases ?? current.initialized.model_aliases,
             permissions:
               updated.permissions ?? current.initialized.permissions,
             extension_trust:

@@ -1592,11 +1592,11 @@
   padding-top: var(--conversation-answer-hover-action-gap);
 }
 
-/* Continue the live answer's reading order through copy, fork, and time.
+/* Continue the live answer's reading order through its actions and time.
  * Animate the children without moving their slots; historical turns never
  * receive the entrance marker. The short initial pause lets the stream
  * cursor begin settling before the staggered rise and fade. */
-.agent-actions-enter .agent-message-actions > * {
+.agent-actions-enter .agent-message-actions:not([data-reveal-finished]) > * {
   animation: agent-actions-reveal 1000ms var(--ease-out)
     calc(80ms + var(--agent-action-index, 0) * 300ms) both;
 }
@@ -1609,9 +1609,22 @@
   --agent-action-index: 2;
 }
 
-/* Keyboard focus must never land on a visually delayed control. */
-.agent-actions-enter .agent-message-actions:focus-within > * {
-  animation: none;
+.agent-actions-enter .agent-message-actions > :nth-child(4) {
+  --agent-action-index: 3;
+}
+
+.agent-actions-enter .agent-message-actions > :nth-child(5) {
+  --agent-action-index: 4;
+}
+
+/* Two direct plugin actions and their overflow control can extend the row
+ * to seven slots, including the timestamp and trigger. */
+.agent-actions-enter .agent-message-actions > :nth-child(6) {
+  --agent-action-index: 5;
+}
+
+.agent-actions-enter .agent-message-actions > :nth-child(7) {
+  --agent-action-index: 6;
 }
 
 @keyframes agent-actions-reveal {
@@ -1623,7 +1636,7 @@
 }
 
 @container style(--motion-reduced: 1) {
-  .agent-actions-enter .agent-message-actions > * {
+  .agent-actions-enter .agent-message-actions:not([data-reveal-finished]) > * {
     animation: none;
   }
 }
@@ -1700,7 +1713,8 @@
 
 .message-actions .message-action-button:hover,
 .message-actions .message-action-button:focus-visible,
-.message-actions .message-action-button[aria-pressed="true"] {
+.message-actions .message-action-button[aria-pressed="true"],
+.message-actions .message-action-button[aria-expanded="true"] {
   outline: 0;
   background: var(--surface-2);
   box-shadow: none;

@@ -283,9 +283,13 @@ without changing the default: the response reports the unchanged workspace
 selection, and idle conversations using the provider pick up the new
 connection. It cannot be combined with `thread_id`, `variant`, `effort`, or
 `permission_mode`, and on the default provider it cannot change the workspace
-model. `remove_model` hides a model choice so catalog refreshes cannot restore
-it; `add_model` restores a hidden choice or adds a model ID the catalog does not
-list. Provider summaries report hidden choices as `hidden_models`, and
+model. `remove_model` removes a model choice so catalog refreshes cannot restore
+it; the request must retain or supply a different selected `model`. Existing
+conversation, role, and alias selections retain their model metadata.
+`add_model` restores a removed choice or adds a model ID the catalog does not
+list. Model update and provider removal responses include `model_aliases` and
+`project_models`, including empty values, so clients can clear removed references.
+Provider summaries report removed choices as `hidden_models`, and
 `catalog_id` / `catalog_name` when the endpoint belongs to a model catalog
 service.
 

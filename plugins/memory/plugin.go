@@ -82,7 +82,7 @@ func Handler() pluginapi.Handler {
 				{ID: pluginapi.HostServiceSessionCreate, Required: true},
 				{ID: pluginapi.HostServiceSessionSend, Required: true},
 			},
-			ProvidedServices: []pluginapi.Service{sessionMemoryServiceDescriptor()},
+			ProvidedServices: []pluginapi.Service{sessionMemoryServiceDescriptor(), notebookMemoryServiceDescriptor()},
 		},
 		Initialize:       c.initialize,
 		Activate:         c.activate,
@@ -159,11 +159,15 @@ func (c *controller) executeTool(_ context.Context, _ pluginapi.Host, call plugi
 func (c *controller) invokeCapability(ctx context.Context, _ pluginapi.Host, call pluginapi.CapabilityCall) (json.RawMessage, error) {
 	switch call.Capability {
 	case capabilityPrompt:
-		snapshot, err := readSafeIndex(c.notebookPath())
-		if err != nil {
-			return nil, err
+		raw, err := os.ReadFile(filepath.Join(c.notebookPath(), indexFileName))
+		if err != nil && !os.IsNotExist(err) {
+			return nil, fmt.Errorf("memory: read index: %w", err)
 		}
-		return json.Marshal(map[string]string{"text": promptSection(c.notebookPath(), snapshot.Content)})
+		index, truncated := safeIndex(string(raw), maxIndexBytes)
+		if truncated {
+			index += "\n\n> WARNING: MEMORY.md was truncated before prompt injection. Keep index entries short and move detail into topic files."
+		}
+		return json.Marshal(map[string]string{"text": promptSection(c.notebookPath(), index)})
 	case capabilityClient:
 		var request struct {
 			Method string          `json:"method"`
@@ -328,14 +332,8 @@ func (c *controller) readFile(name string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return "", err
-	}
-	if len(raw) > maxMemoryFileBytes {
-		return "", fmt.Errorf("memory file exceeds %d bytes", maxMemoryFileBytes)
-	}
-	return string(raw), nil
+	raw, err := readNotebookFile(filepath.Dir(path), filepath.Base(path))
+	return string(raw), err
 }
 
 func (c *controller) readFileOptional(name string) (string, error) {

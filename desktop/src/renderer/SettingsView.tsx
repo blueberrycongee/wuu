@@ -244,7 +244,7 @@ export function SettingsView({
   shellRef?: RefObject<HTMLDivElement | null>;
   onBack: () => void;
   onSave: (provider: string, model: string, effort?: string, connection?: RuntimeConnectionUpdate, variant?: string) => Promise<void>;
-  onRemoveProvider: (provider: string) => Promise<void>;
+  onRemoveProvider: (provider: string, options?: { fallbackProvider?: string; fallbackModel?: string }) => Promise<void>;
   onRefreshModelCatalog: () => Promise<void>;
   onRefreshEngineInventory: () => Promise<EngineListResult | undefined>;
   onUpdateEngineInventory: (params: EngineUpdateParams) => Promise<EngineListResult>;

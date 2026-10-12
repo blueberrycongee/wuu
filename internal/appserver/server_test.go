@@ -37,6 +37,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/providerfactory"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/providers/codex"
+	"github.com/blueberrycongee/wuu/internal/providers/xaisub"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/sessiontrace"
@@ -3398,10 +3399,17 @@ func TestServerConfigProviderRemoveInactive(t *testing.T) {
       "api_key": "drop-key",
       "model": "drop-model"
     }
+  },
+  "agent": {
+    "model_roles": {"title": {"provider": "drop", "model": "drop-model"}},
+    "model_aliases": {"removed": {"provider": "drop", "model": "drop-model"}}
   }
 }`), 0644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
+	rt.ProviderName, rt.Model = "keep", "keep-model"
+	removedTitleClient := &fakeClient{}
+	rt.TitleClient = removedTitleClient
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 
@@ -3426,12 +3434,52 @@ func TestServerConfigProviderRemoveInactive(t *testing.T) {
 	if !strings.Contains(string(data), `"default_provider": "keep"`) {
 		t.Fatalf("default provider changed unexpectedly: %s", data)
 	}
-	if rt.ProviderName != "fake-provider" || rt.Model != "fake-model" {
+	if rt.ProviderName != "keep" || rt.Model != "keep-model" {
 		t.Fatalf("runtime selection changed for inactive removal: provider=%q model=%q", rt.ProviderName, rt.Model)
+	}
+	result := remarshal[ConfigProviderRemoveResult](t, responseByID(t, parseOutput(t, out.String()), "1")["result"])
+	if !rt.ModelRoles.Title.Inherited || rt.ModelRoles.Title.Model != "keep-model" {
+		t.Fatalf("title role retained removed provider selection: %+v", rt.ModelRoles.Title)
+	}
+	if rt.TitleClient == removedTitleClient {
+		t.Fatal("live title client still uses the removed provider")
+	}
+	if len(result.ModelAliases) != 0 {
+		t.Fatalf("removed aliases remained in response: %+v", result.ModelAliases)
+	}
+	if aliases, ok := responseByID(t, parseOutput(t, out.String()), "1")["result"].(map[string]any)["model_aliases"]; !ok || aliases == nil {
+		t.Fatal("response must include an empty alias map to clear renderer state")
 	}
 	if _, err := store.Get("drop"); err == nil {
 		t.Fatal("removed provider credential still exists")
 	}
+	// Subscription connections share one sign-in, including when one
+	// connection's name is the credential store's type key.
+	for _, name := range []string{xaisub.AuthProviderID, "supergrok-two"} {
+		if err := config.AddProviderIfMissing(rt.ConfigPath, name, config.ProviderConfig{Type: "xai-subscription", BaseURL: xaisub.DefaultBaseURL, Model: xaisub.DefaultModel}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := xaisub.PersistTokens(os.Getenv("HOME"), xaisub.TokenResponse{AccessToken: "synthetic-shared-token", ExpiresIn: time.Hour}, xaisub.DefaultBaseURL); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{xaisub.AuthProviderID, "supergrok-two"} {
+		request := fmt.Sprintf(`{"id":%q,"method":"config/provider/remove","params":{"provider":%q}}`, name, name)
+		if err := srv.handleLine(context.Background(), []byte(request)); err != nil {
+			t.Fatal(err)
+		}
+		if responseByID(t, parseOutput(t, out.String()), name)["error"] != nil {
+			t.Fatalf("subscription removal failed: %s", out.String())
+		}
+		credentials, err := store.Get(xaisub.AuthProviderID)
+		if name == xaisub.AuthProviderID && (err != nil || credentials.AccessToken != "synthetic-shared-token") {
+			t.Fatal("removing one connection signed out another subscription")
+		}
+		if err != nil || credentials.AccessToken != "synthetic-shared-token" {
+			t.Fatal("provider removal changed account-level subscription sign-in")
+		}
+	}
+
 }
 
 func TestServerConfigProviderRemoveActiveSwapsDefault(t *testing.T) {
@@ -3459,6 +3507,60 @@ func TestServerConfigProviderRemoveActiveSwapsDefault(t *testing.T) {
 	rt.Model = "drop-model"
 	out := &lockedBuffer{}
 	srv := New(rt, out)
+
+	store, err := authstorage.ForHome(os.Getenv("HOME"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Set("drop", authstorage.Credentials{Type: "api_key", APIKey: "saved-drop-key"}); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(rt.ConfigPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, fallback := range []string{"drop", "missing"} {
+		request := fmt.Sprintf(`{"id":"invalid-%s","method":"config/provider/remove","params":{"provider":"drop","fallback_provider":%q}}`, fallback, fallback)
+		if err := srv.handleLine(context.Background(), []byte(request)); err != nil {
+			t.Fatal(err)
+		}
+		if responseByID(t, parseOutput(t, out.String()), "invalid-"+fallback)["error"] == nil {
+			t.Fatalf("invalid fallback %q was accepted", fallback)
+		}
+		if credential, err := store.Get("drop"); err != nil || credential.APIKey != "saved-drop-key" {
+			t.Fatalf("rejected removal changed saved credentials: %+v %v", credential, err)
+		}
+		after, err := os.ReadFile(rt.ConfigPath)
+		if err != nil || string(before) != string(after) {
+			t.Fatalf("rejected removal changed config: %v", err)
+		}
+	}
+
+	if goruntime.GOOS != "windows" && os.Geteuid() != 0 {
+		configDir := filepath.Dir(rt.ConfigPath)
+		if err := os.Chmod(configDir, 0o500); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(configDir, 0o700) })
+		request := `{"id":"write-failure","method":"config/provider/remove","params":{"provider":"drop","fallback_provider":"keep"}}`
+		callErr := srv.handleLine(context.Background(), []byte(request))
+		if err := os.Chmod(configDir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if callErr != nil {
+			t.Fatal(callErr)
+		}
+		if responseByID(t, parseOutput(t, out.String()), "write-failure")["error"] == nil {
+			t.Fatal("read-only configuration unexpectedly accepted removal")
+		}
+		if credential, err := store.Get("drop"); err != nil || credential.APIKey != "saved-drop-key" {
+			t.Fatalf("failed config write lost saved credential: %+v %v", credential, err)
+		}
+		after, err := os.ReadFile(rt.ConfigPath)
+		if err != nil || string(before) != string(after) {
+			t.Fatalf("failed removal changed config: %v", err)
+		}
+	}
 
 	req := `{"id":"1","method":"config/provider/remove","params":{"provider":"drop","fallback_provider":"keep","fallback_model":"keep-model"}}`
 	if err := srv.handleLine(context.Background(), []byte(req)); err != nil {
@@ -3582,6 +3684,7 @@ func TestServerConfigProviderRemoveAllowsProviderPinnedByIdleArchivedSession(t *
 	if _, err := session.UpdateArchived(rt.SessionDir, "pinned-thread", true); err != nil {
 		t.Fatalf("archive session: %v", err)
 	}
+	rt.ProviderName, rt.Model = "keep", "keep-model"
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 
