@@ -215,7 +215,7 @@ func TestEngineEndToEndFakeCodex(t *testing.T) {
 	// Exercise failure recovery through the real subprocess and NDJSON adapter,
 	// with a second live conversation sharing the same process. No inference or
 	// user credentials are involved in this journey.
-	for _, mode := range []string{"completed-exit", "crash", "invalid-json", "overflow-completed", "overflow-unconfirmed", "cancel-unconfirmed", "cancel-start-confirmed", "start-response-invalid", "error-unconfirmed", "invalid-terminal"} {
+	for _, mode := range []string{"completed-exit", "crash", "invalid-json", "overflow-completed", "overflow-unconfirmed", "cancel-unconfirmed", "cancel-start-confirmed", "start-response-invalid", "error-unconfirmed", "invalid-terminal", "invalid-terminal-status"} {
 		t.Run(mode, func(t *testing.T) {
 			scenarioCtx, scenarioCancel := context.WithTimeout(context.Background(), 8*time.Second)
 			t.Cleanup(scenarioCancel)
@@ -312,7 +312,7 @@ func TestEngineEndToEndFakeCodex(t *testing.T) {
 					t.Fatalf("%s: emit output burst: %v", mode, err)
 				}
 				unblock()
-			} else if mode == "invalid-terminal" {
+			} else if strings.HasPrefix(mode, "invalid-terminal") {
 				if err := client.Request(scenarioCtx, "test/emitInvalidTerminal", map[string]string{"threadId": primary.(*Session).ref}, nil); err != nil {
 					t.Fatalf("emit invalid terminal: %v", err)
 				}
@@ -333,7 +333,7 @@ func TestEngineEndToEndFakeCodex(t *testing.T) {
 					t.Fatalf("%s: overflow not reported: %v", mode, out.err)
 				}
 			}
-			if mode == "overflow-completed" || mode == "cancel-start-confirmed" || mode == "start-response-invalid" || mode == "invalid-terminal" {
+			if mode == "overflow-completed" || mode == "cancel-start-confirmed" || mode == "start-response-invalid" || strings.HasPrefix(mode, "invalid-terminal") {
 				// Proof that the native turn stopped must leave its healthy peer alive.
 				if mode == "overflow-completed" {
 					func() {
@@ -374,7 +374,7 @@ func TestEngineEndToEndFakeCodex(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			starts := 0
+			starts, interrupts := 0, 0
 			for _, line := range strings.Split(strings.TrimSpace(string(requests)), "\n") {
 				var request struct{ Method string }
 				if err := json.Unmarshal([]byte(line), &request); err != nil {
@@ -383,6 +383,12 @@ func TestEngineEndToEndFakeCodex(t *testing.T) {
 				if request.Method == MethodTurnStart {
 					starts++
 				}
+				if request.Method == MethodTurnInterrupt {
+					interrupts++
+				}
+			}
+			if mode == "invalid-terminal-status" && interrupts != 2 {
+				t.Fatalf("invalid native terminal status left a turn without confirmed interruption: got %d interrupts, want primary and peer", interrupts)
 			}
 			if starts != 2 {
 				t.Fatalf("%s: turn submission replayed: got %d starts, want two conversations", mode, starts)

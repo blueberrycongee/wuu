@@ -737,6 +737,15 @@ func (sub *turnSubscription) enqueue(notification turnNotification) {
 		return
 	}
 	if notification.method == NotifyTurnCompleted {
+		switch envelope.Turn.Status {
+		case "completed", "interrupted", "failed":
+		default:
+			if sub.streamErr == nil {
+				sub.streamErr = fmt.Errorf("codex turn/completed returned nonterminal status %q", envelope.Turn.Status)
+			}
+			sub.signalLocked()
+			return
+		}
 		// Terminal delivery has its own slot. Ordinary output backpressure must
 		// never hide proof that the native turn has stopped.
 		sub.terminal = &notification

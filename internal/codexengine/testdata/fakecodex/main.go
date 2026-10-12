@@ -141,7 +141,7 @@ func main() {
 					"willRetry": false, "error": map[string]any{"message": "native stream failed"},
 				})
 				continue
-			case "pending", "overflow-completed", "overflow-unconfirmed", "cancel-unconfirmed", "cancel-start-confirmed", "invalid-terminal":
+			case "pending", "overflow-completed", "overflow-unconfirmed", "cancel-unconfirmed", "cancel-start-confirmed", "invalid-terminal", "invalid-terminal-status":
 				continue
 			}
 			notify("item/reasoning/textDelta", map[string]any{
@@ -195,8 +195,12 @@ func main() {
 				ThreadID string `json:"threadId"`
 			}
 			_ = json.Unmarshal(req.Params, &params)
+			var status any = 42
+			if modes[params.ThreadID] == "invalid-terminal-status" {
+				status = "inProgress"
+			}
 			notify("turn/completed", map[string]any{
-				"threadId": params.ThreadID, "turn": map[string]any{"id": turns[params.ThreadID], "status": 42},
+				"threadId": params.ThreadID, "turn": map[string]any{"id": turns[params.ThreadID], "status": status},
 			})
 			respond(req.ID, map[string]any{})
 		case "test/emitBurst":
