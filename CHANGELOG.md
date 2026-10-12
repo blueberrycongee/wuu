@@ -18,6 +18,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   use `rg` on machines without it installed. A user-installed `rg` still takes
   precedence.
 
+- Model services show vendor marks for LM Studio, Lynkr, Privatemode AI, and
+  Atomic Chat instead of letter placeholders.
+
 ### Fixed
 
 - Deliver scheduled background-process checks while the task is still running,
