@@ -175,9 +175,10 @@ func (s *Server) userMessageWithInputImages(threadID, prompt string, images []pr
 }
 
 // inputFilePathReference lists attachment working copies in the model-facing
-// text. This is the fallback that lets a model without native file input still
-// read the attachment with tools after the request boundary strips the file
-// bytes; see providers.MediaInputPolicy.
+// text. Together with inputImagePathReference, this is the fallback that lets a
+// model without native support for a media kind still read the attachment with
+// tools after the request boundary strips its bytes; see
+// providers.MediaInputPolicy.
 func inputFilePathReference(files []providers.InputFile) string {
 	var references strings.Builder
 	for _, file := range files {
