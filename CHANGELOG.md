@@ -41,6 +41,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Bound skill resource sampling for both selected skills and model tool calls,
+  honor request cancellation, and identify incomplete filename hints without
+  changing the resource base directory.
+
 - Keep the sidebar's recent-history range stable while a first message creates
   its conversation, avoiding a temporary extra row and subsequent layout jump,
   including while saving a draft's custom name.

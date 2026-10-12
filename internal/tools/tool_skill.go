@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"html"
-	"io/fs"
+	"io"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -49,6 +49,9 @@ func (t *LoadSkillTool) Definition() providers.ToolDefinition {
 }
 
 func (t *LoadSkillTool) Execute(ctx context.Context, argsJSON string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	var args struct {
 		Name      string `json:"name"`
 		Arguments string `json:"arguments"`
@@ -65,7 +68,10 @@ func (t *LoadSkillTool) Execute(ctx context.Context, argsJSON string) (string, e
 	}
 
 	body := t.env.ProcessSkillBody(ctx, skill, args.Arguments)
-	output := SkillContentBlock(skill, body)
+	output, err := SkillContentBlock(ctx, skill, body)
+	if err != nil {
+		return "", err
+	}
 
 	result := map[string]any{
 		"action": "load_skill",
@@ -80,25 +86,37 @@ func (t *LoadSkillTool) Execute(ctx context.Context, argsJSON string) (string, e
 	return mustJSON(result)
 }
 
-// SkillContentBlock formats loaded instructions and their relative resource base.
-func SkillContentBlock(skill skills.Skill, body string) string {
+// SkillContentBlock formats loaded instructions and bounded resource hints.
+// Cancellation aborts loading; unreadable or oversized directories only omit hints.
+func SkillContentBlock(ctx context.Context, skill skills.Skill, body string) (string, error) {
 	dir := strings.TrimSpace(skill.Dir)
-	files := sampleSkillFiles(dir, 10)
+	files, incomplete, err := sampleSkillFiles(ctx, dir, 10)
+	if err != nil {
+		return "", err
+	}
+	base := skillBaseReference(dir)
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	note := "Note: file list is sampled."
+	if incomplete {
+		note += " Sampling limits or unreadable directories may omit resources; use the base directory to locate files as needed."
+	}
 	return strings.Join([]string{
 		fmt.Sprintf(`<skill_content name="%s">`, html.EscapeString(skill.Name)),
 		fmt.Sprintf("# Skill: %s", skill.Name),
 		"",
 		strings.TrimSpace(body),
 		"",
-		"Base directory for this skill: " + skillBaseReference(dir),
+		"Base directory for this skill: " + base,
 		"Relative paths in this skill (e.g., scripts/, reference/) are relative to this base directory.",
-		"Note: file list is sampled.",
+		note,
 		"",
 		"<skill_files>",
 		files,
 		"</skill_files>",
 		"</skill_content>",
-	}, "\n")
+	}, "\n"), nil
 }
 
 func skillBaseReference(dir string) string {
@@ -114,32 +132,99 @@ func skillBaseReference(dir string) string {
 	return dir
 }
 
-func sampleSkillFiles(dir string, limit int) string {
+// Resource hints must not turn a skill load into an unbounded directory scan.
+const (
+	skillSampleEntryBudget    = 1024
+	skillSampleDirectoryLimit = 256
+	skillSampleDepthLimit     = 16
+)
+
+func sampleSkillFiles(ctx context.Context, dir string, limit int) (string, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return "", false, err
+	}
 	dir = strings.TrimSpace(dir)
 	if dir == "" || limit <= 0 {
-		return ""
+		return "", false, nil
 	}
-	info, err := os.Stat(dir)
-	if err != nil || !info.IsDir() {
-		return ""
+	// Keep the final dot: the OS must resolve dir as a directory before
+	// opening it, even if a concurrent replacement turns it into a FIFO.
+	root, err := os.OpenRoot(dir + string(filepath.Separator) + ".")
+	if err != nil {
+		return "", true, ctx.Err()
 	}
+	defer root.Close()
+	remaining := skillSampleEntryBudget
+	incomplete := false
 	var files []string
-	_ = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
+	var walk func(string, int) error
+	walk = func(relative string, depth int) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if remaining <= 1 || depth > skillSampleDepthLimit || len(files) >= limit {
+			incomplete = true
 			return nil
 		}
-		if strings.EqualFold(d.Name(), "SKILL.md") {
+		readLimit := min(skillSampleDirectoryLimit, remaining-1)
+		entries, err := readSkillSampleDirectory(root, relative, readLimit+1)
+		remaining -= len(entries)
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if (err != nil && !errors.Is(err, io.EOF)) || len(entries) > readLimit {
+			// An incomplete readdir prefix is filesystem-order dependent. Omit
+			// the whole directory rather than claim a deterministic sample.
+			incomplete = true
 			return nil
 		}
-		files = append(files, path)
+		// Include the directory separator in ordering so depth-first traversal
+		// matches sorting full paths, including names such as a.txt and a/.
+		key := func(entry os.DirEntry) string {
+			name := entry.Name()
+			if entry.IsDir() {
+				name += string(filepath.Separator)
+			}
+			return name
+		}
+		sort.Slice(entries, func(i, j int) bool { return key(entries[i]) < key(entries[j]) })
+		for _, entry := range entries {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if len(files) >= limit {
+				incomplete = true
+				break
+			}
+			path := filepath.Join(relative, entry.Name())
+			if entry.IsDir() {
+				if err := walk(path, depth+1); err != nil {
+					return err
+				}
+			} else if !strings.EqualFold(entry.Name(), "SKILL.md") {
+				// Symlink names may appear, but their targets are never enumerated.
+				files = append(files, filepath.Join(dir, path))
+			}
+		}
 		return nil
-	})
-	sort.Strings(files)
-	if len(files) > limit {
-		files = files[:limit]
+	}
+	if err := walk(".", 0); err != nil {
+		return "", false, err
 	}
 	for i, file := range files {
 		files[i] = fmt.Sprintf("<file>%s</file>", html.EscapeString(file))
 	}
-	return strings.Join(files, "\n")
+	return strings.Join(files, "\n"), incomplete, ctx.Err()
+}
+
+func readSkillSampleDirectory(root *os.Root, relative string, limit int) ([]os.DirEntry, error) {
+	// A final dot makes every resource path component a directory lookup.
+	// Do not use filepath.Join: cleaning away the dot could block on a FIFO.
+	// Root keeps raced symlink resolution inside the selected skill directory.
+	file, err := root.Open(relative + string(filepath.Separator) + ".")
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	return file.ReadDir(limit)
 }

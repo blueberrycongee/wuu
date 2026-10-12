@@ -176,10 +176,13 @@ func renderSlashTemplate(template slashCommandTemplate, args string) string {
 
 // Explicit skill drafts carry a catalog identity, never a path to read directly.
 // Resolving at submission freezes the instructions for queued turns and retries.
-func (s *Server) renderExplicitSkillPrompt(threadID, prompt string) (string, bool, error) {
+func (s *Server) renderExplicitSkillPrompt(ctx context.Context, threadID, prompt string) (string, bool, error) {
 	command, value, ok := splitSlashCommand(strings.TrimSpace(prompt))
 	if !strings.HasPrefix(strings.TrimSpace(prompt), "/") || !ok || command != "skill" {
 		return prompt, false, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return "", true, err
 	}
 	var identity struct {
 		Name    string                `json:"name"`
@@ -223,8 +226,11 @@ func (s *Server) renderExplicitSkillPrompt(threadID, prompt string) (string, boo
 			return "", true, fmt.Errorf("skill %q cannot be invoked by the user", identity.Name)
 		}
 		env := tools.Env{SessionID: threadID}
-		body := env.ProcessSkillBody(context.Background(), skill, arguments)
-		content := tools.SkillContentBlock(skill, body)
+		body := env.ProcessSkillBody(ctx, skill, arguments)
+		content, err := tools.SkillContentBlock(ctx, skill, body)
+		if err != nil {
+			return "", true, err
+		}
 		if arguments != "" {
 			content += "\n\n" + arguments
 		}

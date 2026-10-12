@@ -59,6 +59,8 @@ The parser accepts `model`, `context`, `agent`, `effort`, `paths`, and `hooks` f
 
 The body supports `${ARGUMENTS}`, `${CLAUDE_SKILL_DIR}`, and `${CLAUDE_SESSION_ID}`. Wuu substitutes the invocation arguments, skill directory, and current session ID. The load result includes the base directory and a sample of resource filenames; resolve relative resource paths from that directory.
 
+Resource sampling shows at most 10 filenames in path order. It reads at most 1,024 directory entries, considers only complete directories of up to 256 entries, and descends at most 16 levels. Wider, deeper, or unreadable directories are omitted with a notice; the sample is not a complete inventory. Symlink names may appear, but their targets are not enumerated. Sampling honors request cancellation between filesystem operations. These limits do not change the base directory or grant access to resources.
+
 Inline shell expressions and code fences remain text during normal loading. If a workflow needs dynamic information, ask the agent to obtain it through an available tool, so the usual permission checks apply.
 
 ## Install and validate

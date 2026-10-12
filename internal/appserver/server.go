@@ -1211,13 +1211,13 @@ func (s *Server) handleLine(ctx context.Context, raw []byte) error {
 	case MethodTurnStart:
 		return s.handleTurnStart(ctx, req)
 	case MethodTurnQueue:
-		return s.handleTurnQueue(req)
+		return s.handleTurnQueue(ctx, req)
 	case MethodTurnUpdateQueued:
-		return s.handleTurnUpdateQueued(req)
+		return s.handleTurnUpdateQueued(ctx, req)
 	case MethodTurnDequeue:
 		return s.handleTurnDequeue(req)
 	case MethodTurnSteer:
-		return s.handleTurnSteer(req)
+		return s.handleTurnSteer(ctx, req)
 	case MethodTurnUnsteer:
 		return s.handleTurnUnsteer(req)
 	case MethodTurnRequeue:
