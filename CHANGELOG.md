@@ -41,6 +41,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Bound plugin runtime shutdown, cancel blocked protocol writes, and retain a
+  capped stderr tail so stalled or noisy extensions cannot strand retirement.
+
 - Keep the sidebar's recent-history range stable while a first message creates
   its conversation, avoiding a temporary extra row and subsequent layout jump,
   including while saving a draft's custom name.

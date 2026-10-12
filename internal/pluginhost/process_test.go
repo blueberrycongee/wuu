@@ -6,7 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -29,28 +32,109 @@ func TestProcessClientLifecycle(t *testing.T) {
 		runPluginHelper()
 		return
 	}
-	root := t.TempDir()
-	client, err := Start(context.Background(), ProcessConfig{
-		ID:          "test-plugin",
-		Command:     os.Args[0],
-		Args:        []string{"-test.run=TestProcessClientLifecycle"},
-		Env:         map[string]string{"WUU_PLUGINHOST_HELPER": "1"},
-		PluginRoot:  root,
-		ProjectRoot: filepath.Dir(root),
-		WuuHome:     t.TempDir(),
-		Timeout:     2 * time.Second,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if client.Status().State != StateActive {
-		t.Fatalf("status = %+v", client.Status())
-	}
-	if err := client.Close(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if client.Status().State != StateStopped {
-		t.Fatalf("status = %+v", client.Status())
+	for _, mode := range []string{"normal", "stderr-tail", "descendant", "blocked-write"} {
+		t.Run(mode, func(t *testing.T) {
+			root := t.TempDir()
+			env := map[string]string{"WUU_PLUGINHOST_HELPER": "1", "WUU_PLUGINHOST_MODE": mode}
+			var listener *net.TCPListener
+			if mode == "descendant" || mode == "blocked-write" {
+				var err error
+				listener, err = net.ListenTCP("tcp", &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)})
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer listener.Close()
+				_ = listener.SetDeadline(time.Now().Add(5 * time.Second))
+				env["WUU_PLUGINHOST_CHILD_ADDR"] = listener.Addr().String()
+			}
+			client, err := Start(context.Background(), ProcessConfig{
+				ID: "test-plugin", Command: os.Args[0],
+				Args: []string{"-test.run=^TestProcessClientLifecycle$"}, Env: env,
+				PluginRoot: root, ProjectRoot: filepath.Dir(root), WuuHome: t.TempDir(),
+				Timeout: 2 * time.Second,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer client.Close(context.Background())
+			if client.Status().State != StateActive {
+				t.Fatalf("status = %+v", client.Status())
+			}
+			var conn net.Conn
+			if listener != nil {
+				conn, err = listener.Accept()
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer conn.Close()
+			}
+			if mode == "blocked-write" {
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				done := make(chan error, 1)
+				go func() {
+					_, err := client.ExecuteTool(ctx, ToolExecuteParams{
+						ToolID: "blocked", ToolExecuteInput: ToolExecuteInput{
+							ExecutionID: "blocked", Arguments: mustRaw(strings.Repeat("x", 2<<20)),
+						},
+					})
+					done <- err
+				}()
+				// The runtime acknowledges one byte of the next frame and then
+				// stops reading, so cancellation always exercises an active write.
+				_ = conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+				var ready [1]byte
+				if _, err := io.ReadFull(conn, ready[:]); err != nil {
+					t.Fatal(err)
+				}
+				cancel()
+				select {
+				case err := <-done:
+					if !errors.Is(err, context.Canceled) {
+						t.Fatalf("blocked write = %v, want canceled", err)
+					}
+				case <-time.After(3 * time.Second):
+					_ = conn.Close()
+					<-done
+					t.Fatal("cancellation did not interrupt the blocked plugin write")
+				}
+				if client.Status().State != StateFailed {
+					t.Fatalf("partially written transport remains usable: %+v", client.Status())
+				}
+			}
+			done := make(chan error, 1)
+			go func() { done <- client.Close(context.Background()) }()
+			select {
+			case err := <-done:
+				if err != nil {
+					t.Fatal(err)
+				}
+			case <-time.After(4 * time.Second):
+				if conn != nil {
+					_ = conn.Close()
+				}
+				<-done
+				t.Fatal("plugin shutdown did not finish within its retirement budget")
+			}
+			if client.Status().State != StateStopped {
+				t.Fatalf("status = %+v", client.Status())
+			}
+			if mode == "stderr-tail" {
+				stderr := client.stderr.String()
+				if len(stderr) > (64<<10)+100 || !strings.Contains(stderr, "truncated") || !strings.HasSuffix(stderr, "final plugin diagnostic") {
+					t.Fatalf("stderr tail lost its bound or final diagnostic: length=%d", len(stderr))
+				}
+			}
+			if mode == "descendant" {
+				_ = conn.SetReadDeadline(time.Now().Add(time.Second))
+				var b [1]byte
+				if _, err := conn.Read(b[:]); err == nil {
+					t.Fatal("unexpected descendant output")
+				} else if timeout, ok := err.(net.Error); ok && timeout.Timeout() {
+					t.Fatal("plugin shutdown left its descendant running")
+				}
+			}
+		})
 	}
 }
 
@@ -147,6 +231,25 @@ func runCapabilityHelper() {
 }
 
 func runPluginHelper() {
+	if address := os.Getenv("WUU_PLUGINHOST_DESCENDANT_ADDR"); address != "" {
+		conn, err := net.Dial("tcp", address)
+		if err != nil {
+			os.Exit(1)
+		}
+		_, _ = io.Copy(io.Discard, conn)
+		_ = conn.Close()
+		return
+	}
+	mode := os.Getenv("WUU_PLUGINHOST_MODE")
+	if mode == "descendant" {
+		child := exec.Command(os.Args[0], "-test.run=^TestProcessClientLifecycle$")
+		child.Env = append(os.Environ(), "WUU_PLUGINHOST_DESCENDANT_ADDR="+os.Getenv("WUU_PLUGINHOST_CHILD_ADDR"))
+		child.Stdout, child.Stderr = os.Stdout, os.Stderr
+		if err := child.Start(); err != nil {
+			os.Exit(1)
+		}
+	}
+
 	scanner := bufio.NewScanner(os.Stdin)
 	enc := json.NewEncoder(os.Stdout)
 	for scanner.Scan() {
@@ -166,6 +269,9 @@ func runPluginHelper() {
 			if params.ProtocolVersion != ProtocolVersion {
 				os.Exit(3)
 			}
+			if mode == "stderr-tail" {
+				_, _ = io.WriteString(os.Stderr, strings.Repeat("x", 128<<10)+"final plugin diagnostic")
+			}
 			result = InitializeResult{}
 		case "shutdown":
 			_ = enc.Encode(map[string]any{"id": req.ID, "result": result})
@@ -175,6 +281,20 @@ func runPluginHelper() {
 			continue
 		}
 		_ = enc.Encode(map[string]any{"id": req.ID, "result": result})
+		if mode == "blocked-write" && req.Method == "initialize" {
+			conn, err := net.Dial("tcp", os.Getenv("WUU_PLUGINHOST_CHILD_ADDR"))
+			if err != nil {
+				os.Exit(1)
+			}
+			var first [1]byte
+			if _, err := io.ReadFull(os.Stdin, first[:]); err != nil {
+				os.Exit(1)
+			}
+			_, _ = conn.Write([]byte{1})
+			_, _ = io.Copy(io.Discard, conn)
+			_ = conn.Close()
+			return
+		}
 	}
 }
 
