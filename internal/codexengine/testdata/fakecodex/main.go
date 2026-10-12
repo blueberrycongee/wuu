@@ -125,7 +125,7 @@ func main() {
 			if marker := os.Getenv("WUU_TEST_CODEX_FAIL_TURN_ONCE"); marker != "" {
 				if f, err := os.OpenFile(marker, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600); err == nil {
 					f.Close()
-					respondError(req.ID, -32603, "turn temporarily unavailable")
+					respondError(req.ID, -32602, "turn rejected before admission")
 					continue
 				}
 			}
