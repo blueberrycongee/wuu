@@ -68,7 +68,17 @@ func (s *Session) PreflightExtensions(cfg config.Config) (*PluginGeneration, err
 	if s == nil {
 		return nil, errors.New("runtime is not initialized")
 	}
-	return s.buildPluginGeneration(cfg, discoverPlugins(s.RootDir, s.WuuHome), nil, nil, startPluginClient)
+	return s.PreflightDiscoveredExtensions(cfg, discoverPlugins(s.RootDir, s.WuuHome))
+}
+
+// PreflightDiscoveredExtensions builds the already-observed catalog, allowing
+// refresh admission to fingerprint its exact inputs before starting processes.
+// Callers must serialize discovery and preparation with catalog publication.
+func (s *Session) PreflightDiscoveredExtensions(cfg config.Config, discovered []pluginpkg.Plugin) (*PluginGeneration, error) {
+	if s == nil {
+		return nil, errors.New("runtime is not initialized")
+	}
+	return s.buildPluginGeneration(cfg, discovered, nil, nil, startPluginClient)
 }
 
 // PluginGenerationNeedsRecovery reports a runtime process that reached active

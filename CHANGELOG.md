@@ -41,6 +41,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Back off repeated automatic plugin refresh failures without delaying changed
+  candidates or manual retries, while retaining healthy running generations.
 - Keep the sidebar's recent-history range stable while a first message creates
   its conversation, avoiding a temporary extra row and subsequent layout jump,
   including while saving a draft's custom name.
