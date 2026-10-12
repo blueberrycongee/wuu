@@ -7,7 +7,7 @@
 // ffmpeg encodes the GIFs:
 //   (cd <app>/desktop && npm run build:core && npm run build)
 //   node desktop/scripts/generate-readme-media.cjs [<app>/desktop]
-// Output: landing/assets/readme/{hero-light,hero-dark,files,models,plugins}-<lang>.* and demo-<lang>.gif
+// Output: landing/assets/readme/{hero-light,hero-dark,files,models,plugins}-<lang>.jpg and demo-<lang>.gif
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const http = require('node:http');
@@ -17,6 +17,10 @@ const { spawnSync } = require('node:child_process');
 const repository = path.resolve(__dirname, '../..');
 const output = path.join(repository, 'landing/assets/readme');
 const brand = path.join(repository, 'landing/assets/brand');
+// Full windows sit on this stage, in CSS pixels; every capture renders at
+// captureScale device pixels per CSS pixel.
+const captureScale = 2;
+const windowStage = { width: 1640, height: 1100, left: 100, top: 85 };
 
 if (!process.versions.electron) {
   const appDesktop = path.resolve(process.argv[2] || path.join(repository, 'desktop'));
@@ -37,9 +41,21 @@ if (!process.versions.electron) {
       });
       if (capture.error) throw capture.error;
       assert.equal(capture.status, 0, `Capture failed for ${lang}`);
+      // Each recorded frame fills the window on the stage; demo-frame.png then
+      // covers everything outside the rounded window with the backdrop, shadow
+      // and edge. Captures can come out a few pixels short of 1440x900, so they
+      // stretch to the window as the stills do. The palette covers the backdrop
+      // as well as the moving UI.
+      const [width, height, left, top] = ['width', 'height', 'left', 'top'].map(key => windowStage[key] * captureScale);
       const encode = spawnSync('ffmpeg', [
         '-v', 'error', '-y', '-f', 'concat', '-safe', '0', '-i', path.join(temporary, 'frames.txt'),
-        '-vf', 'fps=12,scale=1600:-1:flags=lanczos,split[a][b];[a]palettegen=max_colors=128:stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle',
+        '-i', path.join(temporary, 'demo-frame.png'),
+        '-filter_complex', [
+          `[0:v]scale=${1440 * captureScale}:${900 * captureScale}:flags=lanczos,pad=${width}:${height}:${left}:${top}[stage]`,
+          '[stage][1:v]overlay=format=rgb,fps=12,scale=1600:-1:flags=lanczos,split[a][b]',
+          '[a]palettegen=max_colors=256:stats_mode=full[p]',
+          '[b][p]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle',
+        ].join(';'),
         '-loop', '0', path.join(output, `demo-${lang}.gif`),
       ], { stdio: 'inherit' });
       if (encode.error) throw encode.error;
@@ -57,7 +73,7 @@ function capture(desktop, lang, temporary) {
   const { pathToFileURL } = require('node:url');
   const { app, BrowserWindow } = require('electron');
   const zh = lang === 'zh';
-  app.commandLine.appendSwitch('force-device-scale-factor', '2');
+  app.commandLine.appendSwitch('force-device-scale-factor', String(captureScale));
   app.commandLine.appendSwitch('force-color-profile', 'srgb');
   const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'wuu-readme-'));
   const home = path.join(fixture, 'wuu-home');
@@ -524,12 +540,16 @@ When importing a CSV, unknown columns are ignored. Rows without a date or amount
   };
 
   // ---- framing ----------------------------------------------------------------
-  // Lay captures out on an offscreen page at the capture scale, then export.
-  const compose = async (name, size, body, format) => {
-    const page = path.join(temporary, `${name}.html`);
+  // Every image sets its capture on a blurred brand backdrop as a rounded window
+  // or panel with an inner edge and a drop shadow. Pages render offscreen at the
+  // capture scale.
+  const url = file => pathToFileURL(file).href;
+  const render = async (size, body) => {
+    const page = path.join(temporary, 'frame.html');
     fs.writeFileSync(page, `<!doctype html><meta charset="utf-8"><style>
       html, body { margin: 0; background: transparent; }
       .stage { position: relative; width: ${size.width}px; height: ${size.height}px; overflow: hidden; }
+      .layer { position: absolute; inset: 0; }
       .backdrop { position: absolute; inset: -12px; width: calc(100% + 24px); height: calc(100% + 24px); object-fit: cover; filter: blur(2.5px); }
       .shot { position: absolute; overflow: hidden; background-repeat: no-repeat; background-size: 1440px 900px; }
       .shot::after { content: ''; position: absolute; inset: 0; border-radius: inherit; box-shadow: inset 0 0 0 1px var(--edge); }
@@ -542,27 +562,46 @@ When importing a CSV, unknown columns are ignored. Rows without a date or amount
       await win.loadFile(page);
       await evaluate(win, () => Promise.all([...document.images].map(image => image.decode())));
       await delay(300);
-      const image = (await win.webContents.capturePage()).resize({ width: format.width, quality: 'best' });
-      fs.writeFileSync(path.join(output, `${name}-${lang}.${format.jpeg ? 'jpg' : 'png'}`), format.jpeg ? image.toJPEG(86) : image.toPNG());
+      const image = await win.webContents.capturePage();
+      assert.equal(image.getSize().width, size.width * captureScale, 'Frames render at the capture scale');
+      return image;
     } finally {
       win.destroy();
     }
   };
-  const url = file => pathToFileURL(file).href;
-  const windowFrame = (file, left, top, edge, shadow) => `<div class="shot" style="left:${left}px;top:${top}px;width:1440px;height:900px;border-radius:12px;--edge:${edge};background-image:url('${url(file)}');box-shadow:${shadow}"></div>`;
+  const save = async (name, size, body, width) => {
+    const image = (await render(size, body)).resize({ width, quality: 'best' });
+    fs.writeFileSync(path.join(output, `${name}-${lang}.jpg`), image.toJPEG(86));
+  };
+  const backdrop = scene => `<img class="backdrop" src="${url(path.join(brand, `${scene}.webp`))}">`;
+  // A box shows the region of a window capture at (x, y). Without a capture it
+  // draws only its edge and shadow.
+  const box = ({ shot, left, top, width = 1440, height = 900, x = 0, y = 0, radius = 12, edge, shadow = 'none' }) =>
+    `<div class="shot" style="left:${left}px;top:${top}px;width:${width}px;height:${height}px;border-radius:${radius}px;--edge:${edge};box-shadow:${shadow}${shot ? `;background-image:url('${url(shot)}');background-position:-${x}px -${y}px` : ''}"></div>`;
+  const placed = { left: windowStage.left, top: windowStage.top };
+  const windowShadow = '0 12px 40px rgba(0,0,0,.59)';
+  const lightEdge = 'rgba(0,0,0,.18)';
   const frameAll = async crops => {
-    for (const [theme, scene, edge] of [['light', 'shore', 'rgba(0,0,0,.18)'], ['dark', 'dusk', 'rgba(255,255,255,.16)']]) {
-      await compose(`hero-${theme}`, { width: 1640, height: 1100 },
-        `<img class="backdrop" src="${url(path.join(brand, `${scene}.webp`))}">${windowFrame(shots[`hero-${theme}`], 100, 85, edge, '0 12px 40px rgba(0,0,0,.59)')}`,
-        { width: 1800, jpeg: true });
+    for (const [theme, scene, edge] of [['light', 'shore', lightEdge], ['dark', 'dusk', 'rgba(255,255,255,.16)']]) {
+      await save(`hero-${theme}`, windowStage, backdrop(scene) + box({ shot: shots[`hero-${theme}`], ...placed, edge, shadow: windowShadow }), 1800);
     }
-    await compose('files', { width: 1500, height: 960 }, windowFrame(shots.files, 30, 20, 'rgba(0,0,0,.18)', '0 7px 26px rgba(0,0,0,.27)'), { width: 1600 });
+    await save('files', windowStage, backdrop('shore') + box({ shot: shots.files, ...placed, edge: lightEdge, shadow: windowShadow }), 1800);
     for (const name of ['models', 'plugins']) {
       const crop = crops[name];
-      await compose(name, { width: crop.width + 40, height: crop.height + 45 },
-        `<div class="shot" style="left:20px;top:15px;width:${crop.width}px;height:${crop.height}px;border-radius:10px;--edge:rgba(0,0,0,.16);background-image:url('${url(shots[name])}');background-position:-${crop.x}px -${crop.y}px;box-shadow:0 5px 20px rgba(0,0,0,.2)"></div>`,
-        { width: 1400 });
+      await save(name, { width: crop.width + 88, height: crop.height + 96 },
+        backdrop('meadow') + box({ shot: shots[name], left: 44, top: 40, ...crop, radius: 10, edge: 'rgba(0,0,0,.16)', shadow: '0 10px 30px rgba(0,0,0,.45)' }), 1400);
     }
+    // The demo layer covers everything outside the rounded window; the encoder
+    // places each recorded frame beneath it.
+    const { width, height, left, top } = windowStage;
+    const right = left + 1440;
+    const bottom = top + 900;
+    const r = 12;
+    const outside = `M0 0H${width}V${height}H0Z M${left + r} ${top}H${right - r}A${r} ${r} 0 0 1 ${right} ${top + r}V${bottom - r}A${r} ${r} 0 0 1 ${right - r} ${bottom}H${left + r}A${r} ${r} 0 0 1 ${left} ${bottom - r}V${top + r}A${r} ${r} 0 0 1 ${left + r} ${top}Z`;
+    const mask = encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}"><path fill-rule="evenodd" d="${outside}"/></svg>`);
+    const layer = await render(windowStage,
+      `<div class="layer" style="-webkit-mask:url('data:image/svg+xml,${mask}')">${backdrop('meadow')}${box({ ...placed, edge: 'transparent', shadow: windowShadow })}</div>${box({ ...placed, edge: lightEdge })}`);
+    fs.writeFileSync(path.join(temporary, 'demo-frame.png'), layer.toPNG());
   };
 
   let main;
@@ -598,11 +637,14 @@ When importing a CSV, unknown columns are ignored. Rows without a date or amount
     await send(main, S.thinkPrompt);
     await newThread(main, 'landing-site');
     await send(main, S.sitePrompt);
-    // The Git card opens beside non-empty conversations in a repository.
-    // Closing it once keeps it closed for the session, including the recording.
-    await waitFor(main, () => document.querySelector('.environment-toggle-button.active'), undefined, 15000);
-    await evaluate(main, () => document.querySelector('.environment-toggle-button.active').click());
-    await waitFor(main, () => !document.querySelector('.environment-toggle-button.active'));
+    // Builds with the environment panel open its Git card beside non-empty
+    // conversations in a repository. Closing it once keeps it closed for the
+    // session, including the recording.
+    if (await evaluate(main, () => !!document.querySelector('.environment-toggle-button'))) {
+      await waitFor(main, () => document.querySelector('.environment-toggle-button.active'), undefined, 15000);
+      await evaluate(main, () => document.querySelector('.environment-toggle-button.active').click());
+      await waitFor(main, () => !document.querySelector('.environment-toggle-button.active'));
+    }
 
     await expandWorkspaces(main);
     await newThread(main, 'pocket-ledger');
@@ -665,6 +707,10 @@ When importing a CSV, unknown columns are ignored. Rows without a date or amount
     await reset(main);
     await clickLabel(main, L.plugins);
     await delay(1400);
+    // The Plugins page can open at the scroll offset left by the settings page.
+    await evaluate(main, () => {
+      for (let node = document.querySelector('.skills-catalog'); node; node = node.parentElement) node.scrollTop = 0;
+    });
     await shot(main, 'plugins');
     crops.plugins = await bounds(main, '.skills-catalog > *', 14);
     await frameAll(crops);

@@ -22,7 +22,7 @@ The contributor changing a product claim updates both languages and checks it ag
 
 ## README media
 
-`assets/readme/` holds the screenshots and demo GIFs used by the repository READMEs. They are captured from the real desktop app and Go core, driven by a scripted local model provider through synthetic example projects, so no account, credential, or personal session appears in them. The macOS window frame and traffic lights are drawn by the generator. The documentation site does not publish these files.
+`assets/readme/` holds the screenshots and demo GIFs used by the repository READMEs. They are captured from the real desktop app and Go core, driven by a scripted local model provider through synthetic example projects, so no account, credential, or personal session appears in them. The generator draws the macOS traffic lights and sets every capture on a blurred backdrop from `assets/brand/` as a rounded window or panel with an edge and a drop shadow, including each frame of the demo GIFs. The documentation site does not publish these files.
 
 Regenerate them after a release changes what they show. Build the app being described, usually a checkout of the release tag, then run the generator from this checkout. It needs a display (use `xvfb-run` on Linux) and `ffmpeg`:
 

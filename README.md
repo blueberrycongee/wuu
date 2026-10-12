@@ -17,16 +17,14 @@
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="landing/assets/readme/hero-dark-en.jpg">
-  <img src="landing/assets/readme/hero-light-en.jpg" alt="wuu with a finished bug fix: the conversation explains the cause and the test results, and Review shows the diff">
+  <img src="landing/assets/readme/hero-light-en.jpg" alt="wuu desktop app">
 </picture>
 
 Point wuu at a folder, describe the task, and let an agent read the code, run commands and edit files. The conversation shows each step as it happens. Beside it, Review shows the actual diff on disk, so you check the result rather than taking the summary on trust.
 
 ## See it in action
 
-![An agent investigates a date bug, runs the tests, patches the code, and the change opens in Review](landing/assets/readme/demo-en.gif)
-
-A user reports that October 1 expenses land in September. The agent searches the code, runs the tests to reproduce the bug, fixes the month calculation and adds a test. One click opens the change in Review.
+![wuu demo](landing/assets/readme/demo-en.gif)
 
 ## Agent benchmark
 
@@ -49,7 +47,7 @@ Connect OpenAI, Anthropic, DeepSeek, xAI, Kimi, Z.AI, MiniMax or Alibaba Cloud M
 Already use another coding agent? wuu can run Claude Code, Codex, Cursor, Devin, Grok, Hermes, OpenCode, Pi or Antigravity as the conversation's engine, with that agent's own login and tools. **Settings → Subscriptions** shows plan quotas and balances for every account in one place.
 
 <p align="center">
-  <img src="landing/assets/readme/models-en.png" width="640" alt="The Add a provider page: subscriptions, model-provider APIs, gateways, local servers and a custom endpoint">
+  <img src="landing/assets/readme/models-en.jpg" width="640" alt="Add a provider">
 </p>
 
 ### Keep the work in view
@@ -64,7 +62,7 @@ The workspace panel sits beside the conversation:
 Select text in a file to add it to the conversation, leave a comment, ask about it in a side chat, or have the agent edit just that passage. Responses work the same way: quote a passage into your next message.
 
 <p align="center">
-  <img src="landing/assets/readme/files-en.png" alt="A selected passage in docs/design.md with Add to conversation, Comment, Ask in side chat and Edit">
+  <img src="landing/assets/readme/files-en.jpg" alt="Selection actions in Files">
 </p>
 
 ### Steer without starting over
@@ -82,7 +80,7 @@ When the work belongs somewhere else, run the agent's tools in Docker, over SSH,
 Plugins add tools and features: scheduled automation, persistent goals, task checklists, memory, subagents and more. Each one can be turned on or off. You can install a local plugin, add skills, connect MCP servers and run hooks. Extensions use the same public API as the bundled plugins. See [Extend wuu](docs/en/customize/index.md).
 
 <p align="center">
-  <img src="landing/assets/readme/plugins-en.png" width="640" alt="The Plugins page listing Automation, Goal, Peers, TODO, Ask User, Dream, Memory and Subagent">
+  <img src="landing/assets/readme/plugins-en.jpg" width="640" alt="Plugins">
 </p>
 
 ## Get started
@@ -125,4 +123,4 @@ See [Contributing](CONTRIBUTING.md) to work on wuu, or [open an issue](https://g
 
 Thanks to [@Rosemary1812](https://github.com/Rosemary1812) for contributing to Fusion's multi-agent collaboration, including Lead/Sidekick collaboration design, user experience, and behavioral testing ([#489](https://github.com/blueberrycongee/wuu/pull/489)).
 
-Licensed under [MIT](LICENSE). Agent avatars use [blobatar](https://github.com/Alain00/blobatar), also MIT-licensed. The screenshots above come from the real app working on synthetic example projects; [landing/README.md](landing/README.md#readme-media) explains how to regenerate them.
+Licensed under [MIT](LICENSE). Agent avatars use [blobatar](https://github.com/Alain00/blobatar), also MIT-licensed.

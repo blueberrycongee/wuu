@@ -17,16 +17,14 @@
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="landing/assets/readme/hero-dark-zh.jpg">
-  <img src="landing/assets/readme/hero-light-zh.jpg" alt="wuu 刚修完一个 bug：对话里写明了原因和测试结果，旁边的审查面板显示代码改动">
+  <img src="landing/assets/readme/hero-light-zh.jpg" alt="wuu 桌面应用">
 </picture>
 
 选一个文件夹，说清楚要做什么，Agent 就会去读代码、跑命令、改文件。每一步都实时显示在对话里；旁边的审查面板是磁盘上真实的 diff。结果对不对，你自己看得到，不用只信它的总结。
 
 ## 看它怎么干活
 
-![Agent 排查一个日期 bug：跑测试、修代码，改动在审查面板中打开](landing/assets/readme/demo-zh.gif)
-
-用户反馈 10 月 1 日的支出被算进了 9 月。Agent 先搜代码、跑测试复现问题，再修好月份的计算、补上测试。点一下就能在审查面板里看到这次改动。
+![wuu 演示](landing/assets/readme/demo-zh.gif)
 
 ## Agent 基准测试
 
@@ -49,7 +47,7 @@
 已经在用别的编程 Agent？wuu 可以把 Claude Code、Codex、Cursor、Devin、Grok、Hermes、OpenCode、Pi 或 Antigravity 作为对话的引擎，沿用它们自己的登录和工具。**设置 → 订阅** 会把各个账号的额度和余额放在一起显示。
 
 <p align="center">
-  <img src="landing/assets/readme/models-zh.png" width="640" alt="添加服务页面：订阅、服务商 API、中转、本地服务和自定义端点">
+  <img src="landing/assets/readme/models-zh.jpg" width="640" alt="添加服务">
 </p>
 
 ### 过程和结果都看得见
@@ -64,7 +62,7 @@
 在文件里选中一段文字，可以把它添加到对话、写一条批注、在侧边聊天中提问，或者让 Agent 只改这一段。Agent 的回复也一样，选中一段就能引用到下一条消息里。
 
 <p align="center">
-  <img src="landing/assets/readme/files-zh.png" alt="在 docs/design.md 中选中一段文字，弹出添加到对话、批注、在侧边聊天中提问和编辑">
+  <img src="landing/assets/readme/files-zh.jpg" alt="文件中的选区操作">
 </p>
 
 ### 随时调整方向
@@ -82,7 +80,7 @@
 插件可以添加工具和功能，比如定时自动化、长期目标、任务清单、记忆、子 Agent 等，每一个都能单独开关。你还可以安装本地插件、添加技能、连接 MCP 服务、配置 hooks。扩展和内置插件用的是同一套公开 API。详见[扩展 Wuu](docs/zh-cn/customize/index.md)。
 
 <p align="center">
-  <img src="landing/assets/readme/plugins-zh.png" width="640" alt="插件页面列出 Automation、Goal、Peers、TODO、Ask User、Dream、Memory 和 Subagent">
+  <img src="landing/assets/readme/plugins-zh.jpg" width="640" alt="插件">
 </p>
 
 ## 开始使用
@@ -125,4 +123,4 @@ wuu 会在当前权限模式允许的范围内读写本地文件、运行命令�
 
 感谢 [@Rosemary1812](https://github.com/Rosemary1812) 为 Fusion 多 Agent 协作功能作出的贡献，包括 Lead/Sidekick 协作设计、交互体验和行为测试（[#489](https://github.com/blueberrycongee/wuu/pull/489)）。
 
-项目采用 [MIT 许可证](LICENSE)。Agent 头像使用同为 MIT 许可的 [blobatar](https://github.com/Alain00/blobatar)。上面的截图来自真实应用，处理的是虚构的示例项目；重新生成的方法见 [landing/README.md](landing/README.md#readme-media)。
+项目采用 [MIT 许可证](LICENSE)。Agent 头像使用同为 MIT 许可的 [blobatar](https://github.com/Alain00/blobatar)。
