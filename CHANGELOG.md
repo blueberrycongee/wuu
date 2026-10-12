@@ -41,6 +41,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Settle external-engine turns when their process disconnects or output exceeds
+  the stream buffer, retain partial output, and bound interruption cleanup.
+  If a native turn cannot confirm it stopped, its shared process is closed and
+  other attached turns receive explicit errors rather than staying running.
+
 - Keep the sidebar's recent-history range stable while a first message creates
   its conversation, avoiding a temporary extra row and subsequent layout jump,
   including while saving a draft's custom name.

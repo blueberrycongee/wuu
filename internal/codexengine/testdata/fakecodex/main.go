@@ -34,6 +34,9 @@ func notify(method string, params any) {
 }
 
 func main() {
+	threadCount, turnCount := 0, 0
+	turns := make(map[string]string)
+	modes := make(map[string]string)
 	scanner := bufio.NewScanner(os.Stdin)
 	scanner.Buffer(make([]byte, 1024*1024), 16*1024*1024)
 	for scanner.Scan() {
@@ -66,13 +69,15 @@ func main() {
 		case "config/read":
 			respond(req.ID, map[string]any{"config": map[string]any{"service_tier": os.Getenv("WUU_TEST_CODEX_DEFAULT_TIER")}})
 		case "thread/start":
+			threadCount++
+			threadID := fmt.Sprintf("codex-thread-%d", threadCount)
 			respond(req.ID, map[string]any{
-				"thread": map[string]any{"id": "codex-thread-1", "status": map[string]any{"type": "idle"}},
+				"thread": map[string]any{"id": threadID, "status": map[string]any{"type": "idle"}},
 				"model":  "gpt-5",
 				"cwd":    ".",
 			})
 			notify("thread/started", map[string]any{
-				"thread": map[string]any{"id": "codex-thread-1"},
+				"thread": map[string]any{"id": threadID},
 			})
 		case "thread/resume":
 			respond(req.ID, map[string]any{
@@ -88,42 +93,62 @@ func main() {
 			}
 			var params struct {
 				ThreadID string `json:"threadId"`
+				Input    []struct {
+					Text string `json:"text"`
+				} `json:"input"`
 			}
 			_ = json.Unmarshal(req.Params, &params)
+			turnCount++
+			turnID := fmt.Sprintf("turn-%d", turnCount)
+			turns[params.ThreadID] = turnID
+			mode := ""
+			if len(params.Input) > 0 && strings.HasPrefix(params.Input[0].Text, "e2e:") {
+				mode = strings.TrimPrefix(params.Input[0].Text, "e2e:")
+			}
+			modes[params.ThreadID] = mode
 			respond(req.ID, map[string]any{
-				"turn": map[string]any{"id": "turn-1"},
+				"turn": map[string]any{"id": turnID},
 			})
 			notify("turn/started", map[string]any{
 				"threadId": params.ThreadID,
-				"turn":     map[string]any{"id": "turn-1"},
+				"turn":     map[string]any{"id": turnID},
 			})
 			notify("item/started", map[string]any{
 				"threadId": params.ThreadID,
-				"turnId":   "turn-1",
+				"turnId":   turnID,
 				"item":     map[string]any{"id": "item-1", "type": "agentMessage"},
 			})
 			notify("item/agentMessage/delta", map[string]any{
 				"threadId": params.ThreadID,
-				"turnId":   "turn-1",
+				"turnId":   turnID,
 				"itemId":   "item-1",
 				"delta":    "Hello from ",
 			})
+			switch mode {
+			case "crash":
+				os.Exit(1)
+			case "invalid-json":
+				fmt.Fprintln(os.Stdout, "invalid JSON")
+				continue
+			case "pending", "overflow-completed", "overflow-unconfirmed", "cancel-unconfirmed":
+				continue
+			}
 			notify("item/reasoning/textDelta", map[string]any{
 				"threadId":     params.ThreadID,
-				"turnId":       "turn-1",
+				"turnId":       turnID,
 				"itemId":       "item-2",
 				"delta":        "thinking...",
 				"contentIndex": 0,
 			})
 			notify("item/agentMessage/delta", map[string]any{
 				"threadId": params.ThreadID,
-				"turnId":   "turn-1",
+				"turnId":   turnID,
 				"itemId":   "item-1",
 				"delta":    "codex.",
 			})
 			notify("thread/tokenUsage/updated", map[string]any{
 				"threadId": params.ThreadID,
-				"turnId":   "turn-1",
+				"turnId":   turnID,
 				"tokenUsage": map[string]any{
 					"total": map[string]any{"inputTokens": 100, "cachedInputTokens": 40, "outputTokens": 20, "reasoningOutputTokens": 5, "totalTokens": 120},
 					"last":  map[string]any{"inputTokens": 100, "cachedInputTokens": 40, "outputTokens": 20, "reasoningOutputTokens": 5, "totalTokens": 120},
@@ -131,23 +156,45 @@ func main() {
 			})
 			notify("item/completed", map[string]any{
 				"threadId": params.ThreadID,
-				"turnId":   "turn-1",
+				"turnId":   turnID,
 				"item":     map[string]any{"id": "item-1", "type": "agentMessage", "text": "Hello from codex.", "phase": "final_answer"},
 			})
 			notify("turn/completed", map[string]any{
 				"threadId": params.ThreadID,
-				"turn":     map[string]any{"id": "turn-1", "status": "completed"},
+				"turn":     map[string]any{"id": turnID, "status": "completed"},
 			})
+			if mode == "completed-exit" {
+				return
+			}
 		case "turn/interrupt":
 			var params struct {
 				ThreadID string `json:"threadId"`
 			}
 			_ = json.Unmarshal(req.Params, &params)
 			respond(req.ID, map[string]any{})
+			if strings.HasSuffix(modes[params.ThreadID], "-unconfirmed") {
+				continue
+			}
 			notify("turn/completed", map[string]any{
 				"threadId": params.ThreadID,
-				"turn":     map[string]any{"id": "turn-1", "status": "interrupted"},
+				"turn":     map[string]any{"id": turns[params.ThreadID], "status": "interrupted"},
 			})
+		case "test/emitBurst":
+			var params struct {
+				ThreadID string `json:"threadId"`
+			}
+			_ = json.Unmarshal(req.Params, &params)
+			for i := 0; i < 1024; i++ {
+				notify("item/agentMessage/delta", map[string]any{
+					"threadId": params.ThreadID, "turnId": turns[params.ThreadID], "itemId": "item-1", "delta": "burst ",
+				})
+			}
+			if modes[params.ThreadID] == "overflow-completed" {
+				notify("turn/completed", map[string]any{
+					"threadId": params.ThreadID, "turn": map[string]any{"id": turns[params.ThreadID], "status": "completed"},
+				})
+			}
+			respond(req.ID, map[string]any{})
 		case "thread/unsubscribe":
 			respond(req.ID, map[string]any{})
 		default:
