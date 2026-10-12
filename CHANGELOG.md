@@ -41,6 +41,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Show the running indicator only on the current iOS process group when a turn
+  resumes after earlier replies; completed groups and their inspectors stay idle.
 - Keep the sidebar's recent-history range stable while a first message creates
   its conversation, avoiding a temporary extra row and subsequent layout jump,
   including while saving a draft's custom name.

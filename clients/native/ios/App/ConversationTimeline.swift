@@ -395,7 +395,8 @@ private struct ActivityInspectionSheet: View {
     var body: some View {
         let row = model.conversationRows.first { $0.messages.contains { $0.id == inspection.id } }
         let messages = row?.messages ?? inspection.messages
-        let active = row?.messages.contains { $0.turnActive } ?? false
+        let active = row?.processActive == true || (row?.isToolGroup == true && model.live?.running == true &&
+            row?.messages.last?.id == model.messages.last?.id)
         if inspection.toolsOnly {
             ToolGroupDetails(model: model, messages: messages, summary: inspection.summary, active: active)
         } else {
