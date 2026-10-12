@@ -413,11 +413,12 @@ func TestExecutionCancelPreemptsRunning(t *testing.T) {
 			if err := await(started, "handler start"); err != nil {
 				t.Fatalf("handler started with invalid execution: %v", err)
 			}
-			// Cancel the second request while the first handler owns the queue.
-			// Its handler must never enter, even if it ignores cancellation.
+			// A service chain may queue multiple requests in the same execution.
+			// None may enter after cancellation, even if the handler ignores it.
 			queued := strings.ReplaceAll(test.request, `"invoke"`, `"queued"`)
 			queued = strings.ReplaceAll(queued, `"exec-1"`, `"exec-queued"`)
 			write(queued)
+			write(strings.ReplaceAll(queued, `"queued"`, `"queued-sibling"`))
 			write(`{"id":"cancel-queued","method":"execution.cancel","params":{"execution_id":"exec-queued"}}`)
 			if r := next(); r.ID != "cancel-queued" || r.Error != nil {
 				t.Fatalf("queued cancellation: %+v", r)
@@ -435,9 +436,9 @@ func TestExecutionCancelPreemptsRunning(t *testing.T) {
 				t.Fatal(err)
 			}
 			want := map[string]string{"invoke": string(wantResult), "cancel": `{}`}
-			for range 3 {
+			for range 4 {
 				r := next()
-				if r.ID == "queued" {
+				if r.ID == "queued" || r.ID == "queued-sibling" {
 					if r.Error == nil || r.Error.Message != context.Canceled.Error() || queuedHandlerCalled.Load() {
 						t.Fatalf("cancelled queued request entered handler: response=%+v called=%v", r, queuedHandlerCalled.Load())
 					}
@@ -518,12 +519,14 @@ func (s responseSink) Write(p []byte) (int, error) {
 
 func TestConcurrentCapabilityCancellationAndShutdown(t *testing.T) {
 	reader, writer := io.Pipe()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	responses := make(responseSink, 16)
 	started := make(chan struct{}, 1)
 	done := make(chan error, 1)
 	var active atomic.Bool
 	go func() {
-		done <- ServeIO(context.Background(), reader, responses, Handler{
+		done <- ServeIO(ctx, reader, responses, Handler{
 			ConcurrentCapabilities: []string{"read.wait"},
 			InvokeCapability: func(ctx context.Context, _ Host, _ CapabilityCall) (json.RawMessage, error) {
 				active.Store(true)
@@ -533,6 +536,9 @@ func TestConcurrentCapabilityCancellationAndShutdown(t *testing.T) {
 				return nil, ctx.Err()
 			},
 			ExecuteTool: func(context.Context, Host, ToolCall) (ToolResult, error) { return TextResult("pong"), nil },
+			InvokeService: func(context.Context, Host, ServiceCall) (json.RawMessage, error) {
+				return json.RawMessage(`{}`), nil
+			},
 			Shutdown: func(context.Context) error {
 				if active.Load() {
 					return errors.New("shutdown overlapped capability")
@@ -568,6 +574,12 @@ func TestConcurrentCapabilityCancellationAndShutdown(t *testing.T) {
 	write(`{"id":"ping","method":"tool.execute","params":{"tool_id":"ping","arguments":{}}}`)
 	if r := next(); r.ID != "ping" || r.Error != nil {
 		t.Fatalf("concurrent query blocked tool: %+v", r)
+	}
+	// Completing a nested callback must not unregister the still-running
+	// capability that shares its execution, or the cancel below cannot reach it.
+	write(`{"id":"nested","method":"service.invoke","params":{"service":"nested","method":"call","caller":"test","execution_id":"read-1"}}`)
+	if r := next(); r.ID != "nested" || r.Error != nil {
+		t.Fatalf("nested execution callback: %+v", r)
 	}
 	write(`{"id":"shutdown","method":"shutdown"}`)
 	// Cancellation must remain readable while shutdown waits for the query.

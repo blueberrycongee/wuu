@@ -401,7 +401,8 @@ Tool and capability calls have a host-owned execution ID. The SDK supplies `exec
 The Go and TypeScript runtimes reject cancelled tool, capability, and service
 requests before entering their handlers, including requests waiting behind other
 work or a lifecycle barrier. Cancelling an execution does not skip lifecycle
-callbacks needed for cleanup.
+callbacks needed for cleanup, and reaches every live callback sharing that
+execution ID.
 Once a handler has started, cancellation remains cooperative: propagate the Go
 context or TypeScript signal to operations that support it. Cancellation cannot
 undo completed effects or forcibly interrupt arbitrary plugin code.
