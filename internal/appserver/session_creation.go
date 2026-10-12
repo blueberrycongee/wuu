@@ -81,6 +81,9 @@ func (s *Server) createHostSessionThread(owner, source, id string, params hostSe
 		if loadErr != nil {
 			return nil, loadErr
 		}
+		if parent.metadata.EngineID != "" && parent.metadata.EngineID != "wuu" {
+			return nil, errors.New("managed context forks cannot copy native engine history; use thread/fork with a completed native turn")
+		}
 		threadCWD = firstNonEmpty(parent.metadata.CWD, threadCWD)
 		history = cloneForkHistory(parent.history)
 		fork = session.ForkMetadata{ForkedFromID: params.ParentSessionID}

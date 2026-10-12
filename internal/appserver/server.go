@@ -17,6 +17,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/activity"
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/agentcontrol"
+	"github.com/blueberrycongee/wuu/internal/agentengine"
 	"github.com/blueberrycongee/wuu/internal/claudeengine"
 	"github.com/blueberrycongee/wuu/internal/codexengine"
 	"github.com/blueberrycongee/wuu/internal/config"
@@ -125,6 +126,7 @@ type threadState struct {
 	runtimePluginEpoch             uint64
 	runtimePluginRevision          uint64
 	admissionReserved              bool
+	nativeHistoryMutation          bool
 	pendingSteers                  []providers.ChatMessage
 	nativeSteerInFlight            string
 	nativeSteerUnsupported         bool
@@ -290,6 +292,8 @@ type Server struct {
 	codexHostRelease             func()
 	engineAuthMu                 sync.Mutex
 	engineAuthCancels            map[string]context.CancelFunc
+	nativeHistoryCtx             context.Context
+	nativeHistoryCancel          context.CancelFunc
 	closeOnce                    sync.Once
 	closed                       atomic.Bool
 	pluginGenerationMutation     atomic.Bool
@@ -335,7 +339,9 @@ func New(rt *runtime.Session, out io.Writer) *Server {
 }
 
 func NewWithCredentialStore(rt *runtime.Session, out io.Writer, store credentialstore.Store, httpClient *http.Client) *Server {
+	nativeHistoryCtx, nativeHistoryCancel := context.WithCancel(context.Background())
 	s := &Server{
+		nativeHistoryCtx: nativeHistoryCtx, nativeHistoryCancel: nativeHistoryCancel,
 		rt:      rt,
 		out:     out,
 		threads: make(map[string]*threadState),
@@ -712,6 +718,9 @@ func (s *Server) Close() {
 	}
 	s.closeOnce.Do(func() {
 		s.closed.Store(true)
+		if s.nativeHistoryCancel != nil {
+			s.nativeHistoryCancel()
+		}
 		s.cancelPluginClientRequests()
 		s.closeProjectInboxDrains()
 		s.cancelEngineAuth("")
@@ -1113,10 +1122,35 @@ func (s *Server) handleLine(ctx context.Context, raw []byte) error {
 		return s.handleMarkdownImageRead(ctx, req)
 	case "thread/attachment/read", "thread/content/read":
 		return s.handleThreadAttachmentRead(req)
-	case MethodThreadFork:
-		return s.handleThreadFork(req)
-	case MethodThreadEditMessage:
-		return s.handleThreadEditMessage(req)
+	case MethodThreadFork, MethodThreadEditMessage:
+		handle := s.handleThreadFork
+		if req.Method == MethodThreadEditMessage {
+			handle = s.handleThreadEditMessage
+		}
+		var params struct {
+			ThreadID string `json:"thread_id"`
+		}
+		if json.Unmarshal(req.Params, &params) == nil && s.rt != nil {
+			metadata, found, err := session.Find(s.rt.SessionDir, strings.TrimSpace(params.ThreadID))
+			if err == nil && found && metadata.EngineRef != "" && agentengine.NormalizeEngineID(metadata.EngineID) != agentengine.EngineWuu {
+				// A native history RPC can wait on another process. Keep unrelated
+				// conversation reads and Stop requests off that wait; the handler's
+				// per-thread mutation lease still serializes its own conversation.
+				if !s.startBackground(func() {
+					operationCtx, cancel := context.WithCancel(ctx)
+					stop := context.AfterFunc(s.nativeHistoryCtx, cancel)
+					defer stop()
+					defer cancel()
+					if err := handle(operationCtx, req); err != nil {
+						log.Printf("wuu: %s: %v", req.Method, err)
+					}
+				}) {
+					return s.writeResponse(req.ID, nil, errServerClosed)
+				}
+				return nil
+			}
+		}
+		return handle(ctx, req)
 	case MethodThreadContextComposition:
 		return s.handleThreadContextComposition(req)
 	case MethodInstructionsList:

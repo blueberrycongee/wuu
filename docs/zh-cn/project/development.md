@@ -260,3 +260,15 @@ macOS 拉取请求测试原生辅助程序，推送到 `main` 时还生成桌面
 `cmd/wuu` 和 `internal` 包含 CLI 与 Go 核心；`desktop` 负责 Electron main/preload、renderer UI、IPC 和打包。`packages/protocol` 保存共享客户端协议类型，`clients/core` 实现无 UI 的远程行为。插件 SDK 和内置实现位于 `packages/plugin-sdk`、`packages/plugin-go` 和 `plugins`。
 
 Electron API 应留在桌面外壳。新外壳应通过[协议（英文）](../../en/integrations/app-server-protocol.md)与 `wuu app-server` 通信，不应依赖桌面内部实现或另建一套核心。行为变化时同步更新公开文档的中英文版本，放置和检查规则见[文档维护（英文）](../../../docs/README.md)。
+
+
+## 原生历史协议端到端验证
+
+先运行 `make build-go` 构建 CLI，再运行
+`go build -o bin/fakecodex ./internal/codexengine/testdata/fakecodex` 构建本地协议
+替身，最后运行 `node scripts/native-history-e2e.mjs`。脚本启动真实 Wuu 与
+fake Codex 子进程，并使用临时存储，不使用供应商凭据或真实推理。
+覆盖原生分支、编辑截止点、事务失败、不支持的响应、旧记录标识、父子隔离
+与重启恢复。结果和原始协议日志保存在 `.tmp/e2e/native-history/`，可通过
+`WUU_HISTORY_E2E_OUTPUT` 更改目录。这验证应用服务器协议，不代表桌面渲染
+或真实供应商 CLI 已通过验收。

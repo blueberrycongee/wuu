@@ -122,6 +122,14 @@ records. Retraction metadata is recorded for new edits; previously edited
 sessions without that metadata cannot reliably distinguish discarded branches
 from compacted history.
 
+For Codex, both operations create a bounded native branch before committing the
+new reference and Wuu history. Forks accept completed native turns or their final
+reply; edits exclude the selected prompt's whole native turn. Partial-turn cuts,
+unverifiable legacy identities, busy sources, unsupported adapters, or native
+responses that ignore the cutoff fail without changing the source. Empty native
+threads need no native copy. See [external engine history](../getting-started/external-engines.md#forking-and-editing-history)
+for supported boundaries and failure recovery. These operations never undo files.
+
 ## Turns and execution runs
 
 Interactive clients start a turn with text or attachments:

@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { EventEmitter, once } from "node:events";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { appendFile, chmod, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { join, resolve } from "node:path";
@@ -14,6 +15,10 @@ import { fileURLToPath } from "node:url";
 
 if (process.argv.includes("--native-fixture")) {
   const turns = new Map();
+  const statePath = process.env.WUU_STEER_NATIVE_LOG + ".state.json";
+  const threads = new Map(existsSync(statePath) ? JSON.parse(readFileSync(statePath, "utf8")) : []);
+  const save = () => writeFileSync(statePath, JSON.stringify([...threads]));
+  const history = threadID => ({ id: threadID, turns: (threads.get(threadID) ?? []).map(turn => ({ id: turn.id, status: turn.status, items: turn.items, itemsView: "full" })) });
   let threadIndex = 0, turnIndex = 0;
   const write = value => process.stdout.write(JSON.stringify(value) + "\n");
   const log = value => appendFile(process.env.WUU_STEER_NATIVE_LOG, JSON.stringify({ ...value, pid: process.pid }) + "\n");
@@ -23,7 +28,10 @@ if (process.argv.includes("--native-fixture")) {
     if (!turn) return;
     turn.status = status;
     const text = "Native answer: " + turn.inputs.join(" | ");
-    write({ method: "item/completed", params: { threadId: turn.threadID, turnId: turnID, item: { id: "answer-" + turnID, type: "agentMessage", text, phase: "final_answer" } } });
+    const item = { id: "answer-" + turnID, type: "agentMessage", text, phase: "final_answer" };
+    turn.items.push(item);
+    save();
+    write({ method: "item/completed", params: { threadId: turn.threadID, turnId: turnID, item } });
     write({ method: "turn/completed", params: { threadId: turn.threadID, turn: { id: turnID, status } } });
   };
   const control = createServer(async (req, res) => {
@@ -44,13 +52,28 @@ if (process.argv.includes("--native-fixture")) {
     switch (request.method) {
       case "initialize": reply(request.id, { userAgent: "synthetic-native-steering", codexHome: process.env.HOME }); break;
       case "model/list": reply(request.id, { data: [{ id: "fixture", model: "fixture", displayName: "Fixture", isDefault: true }], nextCursor: null }); break;
-      case "thread/start": reply(request.id, { thread: { id: `native-thread-${process.pid}-${++threadIndex}` }, model: "fixture" }); break;
+      case "thread/start": {
+        const id = `native-thread-${process.pid}-${++threadIndex}`;
+        threads.set(id, []); save();
+        reply(request.id, { thread: { id }, model: "fixture" }); break;
+      }
       case "thread/resume": reply(request.id, { thread: { id: p.threadId }, model: "fixture" }); break;
-      case "thread/read": reply(request.id, { thread: { id: p.threadId, turns: [...turns].filter(([, t]) => t.threadID === p.threadId).map(([id, t]) => ({ id, status: t.status, items: [] })) } }); break;
+      case "thread/read": reply(request.id, { thread: history(p.threadId) }); break;
+      case "thread/fork": {
+        const source = threads.get(p.threadId) ?? [];
+        const index = source.findIndex(turn => turn.id === (p.lastTurnId ?? p.beforeTurnId));
+        if (index < 0) { write({ id: request.id, error: { code: -32602, message: "native cutoff not found" } }); break; }
+        const id = `native-thread-${process.pid}-${++threadIndex}`;
+        threads.set(id, structuredClone(source.slice(0, index + (p.lastTurnId ? 1 : 0)))); save();
+        reply(request.id, { thread: history(id) }); break;
+      }
       case "thread/unsubscribe": reply(request.id, {}); break;
       case "turn/start": {
         const id = `native-turn-${process.pid}-${++turnIndex}`;
-        turns.set(id, { threadID: p.threadId, status: "inProgress", inputs: p.input.map(v => v.text ?? v.type) });
+        const turn = { id, threadID: p.threadId, status: "inProgress", inputs: p.input.map(v => v.text ?? v.type),
+          items: [{ id: "user-" + id, type: "userMessage", content: p.input }] };
+        turns.set(id, turn);
+        threads.set(p.threadId, [...(threads.get(p.threadId) ?? []), turn]); save();
         reply(request.id, { turn: { id } });
         write({ method: "item/agentMessage/delta", params: { threadId: p.threadId, turnId: id, itemId: "waiting-" + id, delta: "Native turn is waiting." } });
         await log({ started: id, threadID: p.threadId });
@@ -63,6 +86,9 @@ if (process.argv.includes("--native-fixture")) {
           write({ id: request.id, error: { code: -32600, message: "no matching active turn to steer" } }); break;
         }
         turn.inputs.push(text);
+        const item = { id: "user-" + p.clientUserMessageId, type: "userMessage", content: p.input };
+        turn.items.push(item); save();
+        write({ method: "item/completed", params: { threadId: p.threadId, turnId: p.expectedTurnId, item } });
         await log({ accepted: p.clientUserMessageId, turnID: p.expectedTurnId });
         if (text.startsWith("INTERNAL")) { write({ id: request.id, error: { code: -32603, message: "native submission reply was lost" } }); break; }
         if (text.startsWith("DELAY") || text.startsWith("LOST")) { turn.heldReply = request.id; break; }
@@ -166,6 +192,35 @@ async function run() {
     await control(active.nativeTurn);
     await waitFor(m => m.method === "turn/completed" && m.params?.turn?.id === active.turn, "native completion");
     check("native answer includes both supplements without a successor turn", () => { const answer = db.prepare("SELECT content FROM session_messages WHERE session_id=? AND role='assistant' ORDER BY seq DESC LIMIT 1").get(id); assert(answer.content.includes("First supplement")); assert(answer.content.includes("Second supplement")); });
+    if (process.env.WUU_STEER_HISTORY === "1") {
+      const historyRows = db.prepare("SELECT * FROM session_messages WHERE session_id=? ORDER BY seq").all(id);
+      check("acknowledged supplements persist the same native ID without clearing primary admission", () => {
+        const users = historyRows.filter(row => row.role === "user");
+        assert.equal(users.length, 3, "native user items must not duplicate acknowledged Wuu messages");
+        assert(users.every(row => row.engine_turn_id === active.nativeTurn));
+        assert(users.every(row => row.engine_turn_pending === 0));
+      });
+      const restored = (await resume(a, id)).thread, selected = restored.turns[0];
+      const final = selected.items.findLast(item => item.type === "agent_message");
+      const supplemental = selected.items.find(item => item.source_id === "native-one");
+      assert(final && supplemental);
+      const before = historyRows, sourceRef = db.prepare("SELECT engine_ref FROM sessions WHERE id=?").get(id).engine_ref;
+      const full = (await rpc(a, "thread/fork", { thread_id: id, turn_id: selected.id, item_id: final.id })).thread;
+      const copiedUsers = db.prepare("SELECT * FROM session_messages WHERE session_id=? AND role='user'").all(full.id);
+      check("complete native turn fork preserves primary input and every acknowledged supplement", () => {
+        assert.equal(copiedUsers.length, 3);
+        assert(copiedUsers.every(row => row.engine_turn_id === active.nativeTurn));
+        assert.notEqual(db.prepare("SELECT engine_ref FROM sessions WHERE id=?").get(full.id).engine_ref, sourceRef);
+      });
+      for (const method of ["thread/fork", "thread/edit-message"]) {
+        const partial = await raw(a, method, { thread_id: id, turn_id: selected.id, item_id: supplemental.id });
+        check(`${method} refuses a supplemental cut inside one native turn`, () => {
+          assert(partial.error, "partial native turn must not be guessed");
+          assert.deepEqual(db.prepare("SELECT * FROM session_messages WHERE session_id=? ORDER BY seq").all(id), before);
+          assert.equal(db.prepare("SELECT engine_ref FROM sessions WHERE id=?").get(id).engine_ref, sourceRef);
+        });
+      }
+    }
     const rejectID = await create(a), rejectTurn = await begin(a, rejectID);
     await steer(a, rejectID, rejectTurn.turn, "native-rejected", "REJECT safely");
     await waitFor(m => m.method === "turn/held" && m.params?.thread_id === rejectID && m.params?.error, "rejected held");

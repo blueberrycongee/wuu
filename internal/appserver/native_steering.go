@@ -80,7 +80,11 @@ func (s *Server) startNativeSteering(ctx context.Context, th *threadState, turnI
 			if dispatchErr == nil {
 				// Bound transport loss without holding the app-server dispatch loop.
 				steerCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
-				_, dispatchErr = engine.Steer(steerCtx, message)
+				var nativeTurnID string
+				nativeTurnID, dispatchErr = engine.Steer(steerCtx, message)
+				if dispatchErr == nil {
+					message.EngineTurnID = nativeTurnID
+				}
 				cancel()
 				unsupported = errors.Is(dispatchErr, agentengine.ErrSteerUnsupported)
 				if th.PersistHistory && (unsupported || errors.Is(dispatchErr, agentengine.ErrSteerRejected)) {
