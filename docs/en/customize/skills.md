@@ -14,7 +14,7 @@ Selecting a skill from the menu or catalog inserts a `/skill` draft with an expl
 
 The Wuu engine gives the model a catalog of skill names and descriptions. When a task matches, it can use `load_skill` to read the full workflow. A missing description keeps a skill out of that automatic-selection catalog. `disable-model-invocation: true` also prevents the model from loading it by name, while `user-invocable` independently controls direct user invocation.
 
-Availability depends on the workspace, discovered sources, and current tool surface. A skill that requires unavailable tools may be filtered out. Requirements can name reachable built-in, plugin, or MCP tools by their exact published names, including deferred and PTC tools. They never enable a disabled tool or grant permissions. Refresh the catalog after installing or editing one, and inspect the source path if the wrong version appears.
+Availability depends on the workspace, discovered sources, and current tool surface. A skill that requires unavailable tools may be filtered out. Requirements can name reachable built-in, plugin, or MCP tools by their exact published names, including deferred and PTC tools. Session tool restrictions apply to those requirements even before a tool is discovered or loaded. They never enable a disabled tool or grant permissions. Refresh the catalog after installing or editing one, and inspect the source path if the wrong version appears.
 
 ## Trust the workflow before using it
 

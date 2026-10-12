@@ -31,7 +31,7 @@ func skillAllowedBySurface(skill skills.Skill, surface capability.Surface) bool 
 	if surface.ProfileName == "" {
 		return true
 	}
-	if !surfaceHasVisibleCapability(surface, capability.CapabilityCommandBash) && skillMentionsTerminalOnlyPath(skill) {
+	if !skillSurfaceHasCapability(surface, capability.CapabilityCommandBash) && skillMentionsTerminalOnlyPath(skill) {
 		return false
 	}
 	if len(skill.AllowedTools) == 0 {
@@ -68,14 +68,27 @@ func surfaceAllowsSkillTool(surface capability.Surface, name string) bool {
 	}
 	switch name {
 	case "bash":
-		return surfaceHasVisibleCapability(surface, capability.CapabilityCommandBash)
+		return skillSurfaceHasCapability(surface, capability.CapabilityCommandBash)
 	case "process":
-		return surfaceHasVisibleCapability(surface, capability.CapabilityCommandBackground)
+		return skillSurfaceHasCapability(surface, capability.CapabilityCommandBackground)
 	case "git":
 		return false
 	default:
 		return false
 	}
+}
+
+// Profile capability flags describe the underlying model, not session tool
+// restrictions. Skill aliases require a concrete callable tool on this surface.
+func skillSurfaceHasCapability(surface capability.Surface, capabilityName capability.Capability) bool {
+	for _, names := range []map[string]capability.Capability{surface.Tools, surface.NestedTools} {
+		for _, available := range names {
+			if available == capabilityName {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func skillMentionsTerminalOnlyPath(skill skills.Skill) bool {

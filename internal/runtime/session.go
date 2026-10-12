@@ -647,6 +647,10 @@ func NewSession(opts Options) (*Session, error) {
 			HistoryDir:                     "",
 			WorkerSysPrompt:                workerBaseSystemPrompt,
 			WorkerPrompt: func(workerRoot string, wt agentcontrol.WorkerType, meta agentthread.Metadata, isolation agentcontrol.IsolationMode) (string, error) {
+				workerToolSurface, err := workerToolSurfaceForToolkit(toolkit, workerToolProviderName, workerToolModeModel, workerToolSearchEnabled)
+				if err != nil {
+					return "", err
+				}
 				files, workerSkills := runtimeSession.guidanceForRoot(workerRoot, nil)
 				return buildWorkerBasePrompt(workerRoot, sessionDate, "", workerToolProviderName, workerToolModeModel, workerToolSurface, files, workerSkills), nil
 			},
@@ -1417,6 +1421,10 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 							return "", errors.New("execution environments require inplace subagents; create Git worktrees inside the environment explicitly")
 						}
 						workerRoot = environment.Root()
+					}
+					workerToolSurface, err := workerToolSurfaceForToolkit(kit, workerToolProviderName, workerToolModeModel, workerToolSearchEnabled)
+					if err != nil {
+						return "", err
 					}
 					files, workerSkills := s.guidanceForRoot(workerRoot, generation)
 					return buildWorkerBasePrompt(workerRoot, s.SessionDate, s.workerOrientation, workerToolProviderName, workerToolModeModel, workerToolSurface, files, workerSkills), nil
