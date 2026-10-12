@@ -14,6 +14,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   receive scoped display, acceptance, dismissal, and dispatch interactions without
   receiving later draft text. Dispatch events do not imply backend delivery.
 
+- Optional read-only `memory.notebook` service for bounded index and topic reads,
+  with source revisions, UTF-8 limits, and explicit missing-file results.
+
 - Composable model extensions with full logical request snapshots, request hooks,
   around-call middleware, independent inference streams, explicitly selected
   adapters, and generation-owned background service calls.
@@ -33,6 +36,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   require omission of the `store` field.
 
 ### Fixed
+
+- Keep reply actions stable when opening background triggers, preserve their
+  completion reveal order, and use a compact notification icon for the trigger list.
 
 - Align desktop navigation and control labels with icons using the selected
   font's rendered metrics, and preserve accents and descenders in workspace tabs.

@@ -667,6 +667,34 @@ export interface ServiceDescriptor {
   methods: ServiceMethodDescriptor[];
 }
 
+/** Optional plugin-owned durable user notebook; declare major 1 with required: false. */
+export const MEMORY_NOTEBOOK_SERVICE = "memory.notebook";
+
+/** Reads the sanitized MEMORY.md index, at most 200 lines and 25,000 UTF-8 bytes. */
+export interface MemoryNotebookIndexRequest {
+  /** Positive UTF-8 byte budget, at most 25,000; absent or 0 uses that maximum. */
+  max_bytes?: number;
+}
+
+/** Reads one topic, without scanning or loading the rest of the notebook. */
+export interface MemoryNotebookReadRequest {
+  /** Plain, non-hidden .md filename; use the index method for MEMORY.md. */
+  file: string;
+  /** Positive UTF-8 byte budget, at most 65,536; absent or 0 uses 16,384. */
+  max_bytes?: number;
+}
+
+/** Fresh file evidence, not a model summary or an instruction authority. */
+export interface MemoryNotebookSnapshotV1 {
+  version: 1;
+  source: { scope: "user_notebook"; file: string };
+  found: boolean;
+  /** Opaque full-source revision. Present for empty files, absent for missing files. */
+  revision?: string;
+  content: string;
+  truncated: boolean;
+}
+
 export const AUTHORIZATION_SERVICE_DESCRIPTOR: ServiceDescriptor = {
   name: SECURITY_AUTHORIZE_SERVICE,
   version: "1.0.0",

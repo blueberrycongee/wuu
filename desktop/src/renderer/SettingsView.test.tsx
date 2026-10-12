@@ -552,24 +552,57 @@ describe("SettingsView model services", () => {
     expect(onSave).toHaveBeenLastCalledWith("deepseek", "deepseek-v4-pro", undefined, undefined, "");
   });
 
-  it("hides and restores model choices", async () => {
+  it("removes and restores model choices with an explicit replacement for selected models", async () => {
     installServicesStub();
     const onSave = vi.fn(async () => {});
-    renderSettings({ initialized: servicesInitialized(), initialPage: "providers", onSave });
+    const initialized = servicesInitialized();
+    renderSettings({ initialized, initialPage: "providers", onSave });
     await flush();
     click(container.querySelector('[data-provider="deepseek"]'));
 
-    // The service's own model cannot be hidden; its row keeps the slot empty.
-    expect(container.querySelector('[aria-label="隐藏 DeepSeek V4 Pro"]')).toBeNull();
+    click(container.querySelector('[aria-label="删除 DeepSeek V4 Flash"]'));
+    expect(onSave).not.toHaveBeenCalled();
     await act(async () => {
-      container.querySelector<HTMLButtonElement>('[aria-label="隐藏 DeepSeek V4 Flash"]')!.click();
+      document.querySelector<HTMLButtonElement>('[data-testid="settings-provider-remove-model-confirm"]')!.click();
     });
-    expect(onSave).toHaveBeenLastCalledWith("deepseek", "deepseek-v4-pro", undefined, { remove_model: "deepseek-v4-flash", keep_selection: true });
+    expect(onSave).toHaveBeenLastCalledWith("deepseek", "deepseek-v4-pro", undefined, { remove_model: "deepseek-v4-flash", keep_selection: true }, undefined);
+
+    click(container.querySelector('[aria-label="删除 DeepSeek V4 Pro"]'));
+    expect(document.querySelector<HTMLButtonElement>('[data-testid="settings-provider-remove-model-confirm"]')!.disabled).toBe(true);
+    click(document.querySelector('[data-testid="settings-provider-replacement-model"]'));
+    click(document.querySelector('[data-value="deepseek-v4-flash"]'));
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>('[data-testid="settings-provider-remove-model-confirm"]')!.click();
+    });
+    expect(onSave).toHaveBeenLastCalledWith("deepseek", "deepseek-v4-flash", undefined, { remove_model: "deepseek-v4-pro", keep_selection: true }, undefined);
+
+    // Removing the workspace default model atomically saves the chosen replacement.
+    renderSettings({ initialized: { ...initialized, provider: "deepseek", model: "deepseek-v4-pro" }, initialPage: "providers", onSave });
+    click(container.querySelector('[aria-label="删除 DeepSeek V4 Pro"]'));
+    click(document.querySelector('[data-testid="settings-provider-replacement-model"]'));
+    click(document.querySelector('[data-value="deepseek-v4-flash"]'));
+    onSave.mockRejectedValueOnce(new Error("Unable to save model choices"));
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>('[data-testid="settings-provider-remove-model-confirm"]')!.click();
+    });
+    expect(document.querySelector('.model-remove-dialog [role="alert"]')?.textContent).toBe("Unable to save model choices");
+    expect(document.querySelector('[data-testid="settings-provider-replacement-model"]')?.textContent).toContain("DeepSeek V4 Flash");
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>('[data-testid="settings-provider-remove-model-confirm"]')!.click();
+    });
+    expect(onSave).toHaveBeenLastCalledWith("deepseek", "deepseek-v4-flash", undefined, { remove_model: "deepseek-v4-pro", keep_selection: false }, "");
 
     await act(async () => {
       container.querySelector<HTMLButtonElement>('[aria-label="恢复 deepseek-old"]')!.click();
     });
     expect(onSave).toHaveBeenLastCalledWith("deepseek", "deepseek-v4-pro", undefined, { add_model: "deepseek-old", keep_selection: true });
+
+    // The last model cannot disappear while the provider still needs a selection.
+    const sole = initialized.providers!.find((provider) => provider.name === "deepseek")!;
+    renderSettings({ initialized: { ...initialized, provider: "deepseek", model: sole.model, providers: [{ ...sole, models: [{ id: sole.model }] }] }, initialPage: "providers", onSave });
+    click(container.querySelector('[data-testid="settings-provider-remove-model"]'));
+    expect(document.querySelector('[data-testid="settings-provider-replacement-model"]')).toBeNull();
+    expect(document.querySelector<HTMLButtonElement>('[data-testid="settings-provider-remove-model-confirm"]')!.disabled).toBe(true);
   });
 
   it("connects a catalog provider with its endpoint and suggested model", async () => {
@@ -644,7 +677,31 @@ describe("SettingsView model services", () => {
     await act(async () => {
       document.querySelector<HTMLButtonElement>('[data-testid="settings-provider-remove-confirm"]')!.click();
     });
-    expect(onRemoveProvider).toHaveBeenCalledWith("deepseek");
+    expect(onRemoveProvider).toHaveBeenCalledWith("deepseek", undefined);
+
+    const initialized = { ...servicesInitialized(), provider: "deepseek", model: "deepseek-v4-pro" };
+    renderSettings({ initialized, initialPage: "providers", onRemoveProvider });
+    click(container.querySelector('[data-provider="deepseek"]'));
+    click(container.querySelector('[aria-label="DeepSeek 的更多操作"]'));
+    click([...document.querySelectorAll('[role="menuitem"]')].find((item) => item.textContent?.includes("删除服务")));
+    expect(document.querySelector<HTMLButtonElement>('[data-testid="settings-provider-remove-confirm"]')!.disabled).toBe(true);
+    click(document.querySelector('[data-testid="settings-provider-removal-fallback"]'));
+    click(document.querySelector('[data-value="openai-codex"]'));
+    onRemoveProvider.mockRejectedValueOnce(new Error("Could not remove provider"));
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>('[data-testid="settings-provider-remove-confirm"]')!.click();
+    });
+    expect(document.querySelector('.model-service-remove-dialog [role="alert"]')?.textContent).toBe("Could not remove provider");
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>('[data-testid="settings-provider-remove-confirm"]')!.click();
+    });
+    expect(onRemoveProvider).toHaveBeenLastCalledWith("deepseek", { fallbackProvider: "openai-codex", fallbackModel: "gpt-6-astra" });
+
+    renderSettings({ initialized: { ...initialized, providers: initialized.providers!.filter((provider) => provider.name === "deepseek") }, initialPage: "providers", onRemoveProvider });
+    click(container.querySelector('[data-provider="deepseek"]'));
+    click(container.querySelector('[aria-label="DeepSeek 的更多操作"]'));
+    click([...document.querySelectorAll('[role="menuitem"]')].find((item) => item.textContent?.includes("删除服务")));
+    expect(document.querySelector<HTMLButtonElement>('[data-testid="settings-provider-remove-confirm"]')!.disabled).toBe(true);
   });
 
   it("refreshes the model catalog with a button-only loading state", async () => {

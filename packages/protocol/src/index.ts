@@ -768,6 +768,7 @@ export type ConfigModelUpdateResult = {
   model_profile?: ModelProfileSummary;
   tool_surface?: ToolSurfaceSummary;
   extension_trust?: ExtensionTrustSummary;
+  project_models?: ProjectModelsConfig;
   model_roles?: ModelRoleSummary[];
   model_aliases?: Record<string, ModelAliasSummary>;
   providers?: ProviderSummary[];
