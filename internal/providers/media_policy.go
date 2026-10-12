@@ -6,10 +6,24 @@ import (
 )
 
 // MediaInputPolicy carries the resolved admission decision for user-supplied
-// media on one request. A known unsupported kind is stripped at the request
-// boundary and replaced with a short marker. Unknown kinds pass through so a
-// missing catalog entry cannot silently discard media the user explicitly
-// supplied; provider validation remains the authority in that case.
+// media on one request.
+//
+// Design: the front end may attach anything; the model backend's declared
+// capabilities decide what reaches the wire. An unsupported attachment is
+// stripped from the request instead of failing it. For example, a PDF sent to
+// a model without file input becomes text only: the user's prompt, the PDF's
+// working-copy path, and a short omission marker. This works because the
+// working copy is written at submission time and its path is appended to the
+// message text (see appserver's inputFilePathReference), so the model can still
+// read the file with tools, for example by writing code that extracts the PDF.
+// Stored history keeps the original media for the UI and for models that can
+// consume it natively.
+//
+// Two cases deliberately deviate. Unknown kinds pass through so a missing
+// catalog entry cannot silently discard media the user explicitly supplied;
+// provider validation remains the authority in that case. Required media
+// fails the request instead (see ValidateRequiredMedia), because the task
+// depends on the model seeing it directly.
 //
 // The policy is request metadata only: provider clients must never serialize
 // it on the wire.
