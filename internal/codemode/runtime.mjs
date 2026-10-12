@@ -260,5 +260,6 @@ try {
   vm.withScope(() => vm.callFunction(run, api, vm.evalCode(source, "program.ts")));
   drain();
 } catch (error) { fail(error); }
-// The Go owner stops this process, including a busy interpreter, on every exit path.
-await new Promise(() => {});
+// The Go owner can close the channel before its stop signal arrives. Settle the
+// host wait on close so normal teardown cannot emit an unsettled-await diagnostic.
+await new Promise(resolve => channel.once("close", resolve));

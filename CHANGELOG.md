@@ -48,6 +48,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- PTC runtime shutdown settles when its control connection closes, keeping
+  native teardown warnings out of completed program results.
 - MCP server-request replies no longer block healthy tool calls or notifications.
   Reply work is bounded, follows its originating call's cancellation, and stops
   on connection close without replaying replies into a replacement session.
