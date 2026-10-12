@@ -143,7 +143,7 @@ app.whenReady().then(async () => {
     preload: path.join(__dirname, "resize-e2e-preload.cjs"), contextIsolation: true, nodeIntegration: false, sandbox: false, backgroundThrottling: false,
   } });
   win.webContents.on("console-message", ({ level, message }) => {
-    if (level >= 3 && !message.includes("Expected fixture provider failure")) state.errors.push({ phase, message });
+    if (level === "error" && !message.includes("Expected fixture provider failure")) state.errors.push({ phase, message });
   });
   win.webContents.on("render-process-gone", (_event, details) => { state.errors.push({ phase, message: `renderer exited: ${details.reason}` }); save(); });
   await win.loadFile(renderer);
@@ -277,10 +277,14 @@ app.whenReady().then(async () => {
     await draft("/rev");
     await until(() => Boolean(document.querySelector('[data-floating-menu-owner="composer-slash"] .slash-command-item:not(:disabled)')));
     await noGhost("slash drafts do not compete with inline providers");
+    const requestsBeforeTab = await evaluate(() => window.__inlineCompletionE2E.active.requests.length);
     await screenshot("slash-menu-priority");
     await key("Tab");
-    await until(() => !document.querySelector('[data-floating-menu-owner="composer-slash"]'));
-    assert.notEqual(await value(), "/rev", "Tab applies the selected slash command");
+    // Prompt commands remain in the menu for Enter submission after completion.
+    await until((selector) => document.querySelector(selector)?.value.trimEnd() === "/review", inputSelector);
+    assert.equal(await evaluate((selector) => document.activeElement === document.querySelector(selector), inputSelector), true);
+    assert.equal(await evaluate(() => window.__inlineCompletionE2E.active.requests.length), requestsBeforeTab, "slash Tab must not invoke inline providers");
+    await noGhost("completed slash command still owns the composer");
   });
 
   await check("provider failure and empty result fall through deterministically", async () => {
