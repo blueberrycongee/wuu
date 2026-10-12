@@ -763,6 +763,7 @@ export interface ToolActivityMetadata {
   /** Delegate effects through execution.invoke-tool without holding a leaf scheduling slot. */
   orchestrator?: boolean;
   read_only?: boolean;
+  /** Overlap with other explicitly safe tools; ordinary callbacks and unsafe tools stay exclusive. */
   concurrency_safe?: boolean;
   destructive?: boolean;
   risk?: string;
@@ -1389,7 +1390,8 @@ export interface RuntimePlugin {
    * Service names whose handlers may overlap tools, capabilities, and services.
    * Opt in only when handlers are safe for concurrent access. This permits a
    * service callback into a plugin already awaiting another plugin. Other
-   * requests remain ordered; lifecycle requests are barriers for all handlers.
+   * callbacks and tools without concurrency-safe metadata remain ordered;
+   * lifecycle requests are barriers for all handlers.
    */
   concurrentServices?: readonly string[];
   initialize(params: RuntimeInitializeParams, host: RuntimeHost): RuntimeInitializeResult | Promise<RuntimeInitializeResult>;
@@ -1591,6 +1593,9 @@ class JSONLRuntimeHost implements RuntimeHost {
   }
 }
 
+// Bound tool bodies without consuming the separate reentrant callback lane.
+const MAX_CONCURRENT_TOOLS = 8;
+
 /** Runs a plugin over Wuu's full-duplex JSON-lines transport. */
 export async function runJSONLRuntime(
   plugin: RuntimePlugin,
@@ -1607,17 +1612,43 @@ export async function runJSONLRuntime(
   const active = new Set<Promise<void>>();
   const concurrentServices = new Set(plugin.concurrentServices ?? []);
   const concurrentCapabilities = new Set(["model.adapter", "model.middleware", ...plugin.concurrentCapabilities ?? []]);
-  let requests = Promise.resolve();
-  let lifecycle = requests;
+  const concurrentTools = new Set<string>();
+  const queued: { run(): Promise<void>; canOverlap(): boolean }[] = [];
+  let running = 0;
+  let exclusive = false;
+  // Only adjacent explicitly safe tools share slots. Classification happens
+  // after preceding work, including initialize, publishes its registrations.
+  const pump = (): void => {
+    while (queued.length > 0 && !exclusive && running < MAX_CONCURRENT_TOOLS) {
+      const next = queued[0];
+      const safe = next.canOverlap();
+      if (!safe && running > 0) return;
+      queued.shift();
+      running++;
+      exclusive = !safe;
+      const finished = (): void => {
+        running--;
+        if (!safe) exclusive = false;
+        pump();
+      };
+      void next.run().then(finished, finished);
+    }
+  };
+  const schedule = (run: () => Promise<void>, canOverlap = () => false): Promise<void> => {
+    const task = new Promise<void>((resolve, reject) => {
+      queued.push({ run: () => Promise.resolve().then(run).then(resolve, reject), canOverlap });
+    });
+    pump();
+    return task;
+  };
+  let lifecycle = Promise.resolve();
   let shuttingDown = false;
   const track = (task: Promise<void>): void => {
     active.add(task);
     void task.then(() => active.delete(task), () => active.delete(task));
   };
   const enqueueResponse = (value: unknown): void => {
-    const task = requests.then(() => send(value));
-    requests = task.catch(() => undefined);
-    track(task);
+    track(schedule(() => send(value)));
   };
   const processLine = (line: string): void => {
     if (line.trim() === "") return;
@@ -1655,20 +1686,30 @@ export async function runJSONLRuntime(
     // A lifecycle frame waits for everything already admitted. Opted-in
     // service calls may bypass ordinary work, but never an earlier lifecycle
     // frame. Capture the barrier now so later frames cannot create a cycle.
-    const ready = isLifecycle ? Promise.all([...active]) : concurrent ? lifecycle : requests;
-    const task = ready
-      .then(() => {
-        if (parsed.method === "initialize") host.configure(parsed.params.supported_host_services);
-        return handleRuntimeRequest(plugin, parsed, host, execution);
-      })
-      .then(send)
+    const ready = isLifecycle ? Promise.all([...active]) : concurrent ? lifecycle : Promise.resolve();
+    const run = async (): Promise<void> => {
+      await ready;
+      if (parsed.method === "initialize") {
+        host.configure(parsed.params.supported_host_services);
+        concurrentTools.clear();
+      }
+      const response = await handleRuntimeRequest(plugin, parsed, host, execution);
+      if (parsed.method === "initialize" && "result" in response) {
+        const definition = response.result as RuntimeInitializeResult;
+        for (const tool of definition.tools ?? []) {
+          if (tool.activity?.concurrency_safe === true) concurrentTools.add(tool.id);
+        }
+      }
+      await send(response);
+    };
+    const task = (concurrent ? run() : schedule(run,
+      () => parsed.method === "tool.execute" && concurrentTools.has(parsed.params.tool_id)))
       .finally(() => {
         const controllers = executions.get(executionId);
         controllers?.delete(controller);
         if (controllers?.size === 0) executions.delete(executionId);
       });
-    if (!concurrent) requests = task.catch(() => undefined);
-    if (isLifecycle) lifecycle = requests;
+    if (isLifecycle) lifecycle = task.catch(() => undefined);
     track(task);
   };
   const decoder = new TextDecoder();

@@ -113,6 +113,25 @@ Initialization is preparation, not permission to start product behavior. The hos
 
 Register model tools in the initialization result's `tools` array. Each tool needs an `id`, `description`, and object `input_schema`. The host creates a namespaced public name. `execution_scopes` can limit availability to `root` or `child`; `activity` describes read-only behavior, concurrency safety, risk, and whether the tool orchestrates child tools. Declare real effects rather than marking a writer read-only to bypass scheduling or permission checks. These declarations are trusted-extension contracts, not a sandbox.
 
+Both SDK runtimes honor `activity.concurrency_safe: true` for tool dispatch.
+Adjacent explicitly safe tools may overlap, with at most eight tool handlers
+running per runtime. Omitted or false values, unknown tool IDs, and ordinary
+capability/service callbacks remain FIFO exclusive barriers. `read_only` alone
+does not enable concurrency. These barriers apply across both shared and distinct
+execution IDs. Initialize, activate, and shutdown also wait for previously
+admitted reentrant callbacks before proceeding.
+
+Protect shared mutable state before opting in. Keep each invocation's Go context
+or TypeScript execution context and scoped host with that invocation; do not
+store them in a shared current-call variable. Cancellation is registered while a
+frame is read and checked again before its handler starts, including after
+waiting for a tool slot. Canceling one execution aborts all its live callbacks
+without canceling independent executions. Already running code must cooperate
+with cancellation. Explicitly reentrant capabilities and services retain their
+separate lane so nested host callbacks can finish even when tool slots are full.
+The limit does not bound those callbacks or queued frames, and TypeScript overlap
+does not move synchronous CPU work to worker threads.
+
 Ordinary tools are PTC bindings by default when the session enables PTC. Set
 `direct_only: true` for user interaction, explicit delivery, or lifecycle
 controls that must remain model-direct. Such tools stay in the top-level

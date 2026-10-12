@@ -31,6 +31,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Plugin SDKs now overlap explicitly concurrency-safe tools in a bounded pool,
+  while ordinary handlers and lifecycle transitions retain ordered barriers.
+  Foreground subagent waits no longer serialize independent tasks, and a late
+  result cannot overwrite a newer follow-up task.
+
 - Approve for me shares the one-shot text request foundation with plugins while
   retaining host-owned permission decisions and the active conversation's model
   and tuning. Provider options cannot replace review evidence, switch models, or

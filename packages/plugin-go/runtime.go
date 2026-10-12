@@ -210,8 +210,10 @@ type ToolDisplay struct {
 type ToolActivity struct {
 	// Orchestrator delegates effects through execution.invoke-tool. It does not
 	// occupy a leaf scheduling slot while its child calls execute.
-	Orchestrator    bool   `json:"orchestrator,omitempty"`
-	ReadOnly        bool   `json:"read_only,omitempty"`
+	Orchestrator bool `json:"orchestrator,omitempty"`
+	ReadOnly     bool `json:"read_only,omitempty"`
+	// ConcurrencySafe allows overlap with other explicitly safe tools.
+	// Ordinary callbacks and unsafe tools remain exclusive.
 	ConcurrencySafe bool   `json:"concurrency_safe,omitempty"`
 	Destructive     bool   `json:"destructive,omitempty"`
 	Risk            string `json:"risk,omitempty"`
@@ -892,8 +894,9 @@ func kernelServiceForLegacyMethod(method string) (string, bool) {
 type Handler struct {
 	// ConcurrentCapabilities names capability handlers that may overlap tool
 	// execution and each other. Opt in only for handlers safe under concurrent
-	// access; all other requests retain ordered dispatch. Initialize completes
-	// before these handlers run, and shutdown waits for them to finish.
+	// access; ordinary callbacks and tools without concurrency-safe metadata
+	// retain ordered dispatch. Initialize completes before these handlers run,
+	// and shutdown waits for them to finish.
 	// model.adapter and model.middleware are always reentrant so callbacks can
 	// delegate model work through the host without deadlocking their caller.
 	ConcurrentCapabilities []string
@@ -1133,6 +1136,10 @@ type queuedDispatch struct {
 	priorConcurrent *sync.WaitGroup
 }
 
+// Keep one plugin from starting an unbounded number of tool handlers. Reentrant
+// capability callbacks use their own lane so nested host calls can still finish.
+const maxConcurrentTools = 8
+
 func Serve(ctx context.Context, handler Handler) error {
 	return ServeIO(ctx, os.Stdin, os.Stdout, handler)
 }
@@ -1149,39 +1156,77 @@ func ServeIO(ctx context.Context, input io.Reader, output io.Writer, handler Han
 	incomingRequests := make(chan queuedDispatch)
 	requests := make(chan queuedDispatch)
 	workerDone := make(chan error, 1)
+	workerExited := make(chan struct{})
 	var concurrent sync.WaitGroup
 	defer func() {
 		cancel()
 		client.closeTransport(context.Canceled)
 		concurrent.Wait()
+		<-workerExited
 	}()
 	go queueRequests(serveCtx, incomingRequests, requests)
 	go func() {
+		defer close(workerExited)
+		// Only the queue worker admits tools. Waiting for a slot never blocks
+		// the transport reader, which must keep routing replies and cancels.
+		finished := make(chan error, maxConcurrentTools)
+		running := 0
+		var workerErr error
+		waitTool := func() {
+			if err := <-finished; err != nil && workerErr == nil {
+				workerErr = err
+				client.closeTransport(err)
+				cancel()
+			}
+			running--
+		}
+		defer func() {
+			for running > 0 {
+				waitTool()
+			}
+			workerDone <- workerErr
+		}()
 		for envelope := range requests {
+			safe := false
+			if envelope.request.Method == "tool.execute" {
+				var call ToolCall
+				if json.Unmarshal(envelope.request.Params, &call) == nil {
+					for _, tool := range handler.Definition.Tools {
+						if tool.ID == call.ToolID {
+							safe = tool.Activity != nil && tool.Activity.ConcurrencySafe
+							break
+						}
+					}
+				}
+			}
+			if safe {
+				if running == maxConcurrentTools {
+					waitTool()
+				}
+				running++
+				go func() {
+					_, err := respondToDispatch(client, handler, envelope)
+					finished <- err
+				}()
+				continue
+			}
+			// Unsafe tools and ordinary callbacks form FIFO barriers across all
+			// execution IDs. Explicitly reentrant callbacks bypass this queue.
+			for running > 0 {
+				waitTool()
+			}
 			if envelope.priorConcurrent != nil {
 				envelope.priorConcurrent.Wait()
 			}
-			result, stop, err := dispatch(envelope.ctx, client, handler, envelope.request)
-			if envelope.release != nil {
-				envelope.release()
-			}
-			response := rpcResponse{ID: envelope.request.ID, Result: result}
+			stop, err := respondToDispatch(client, handler, envelope)
 			if err != nil {
-				response = rpcResponse{ID: envelope.request.ID, Error: &rpcError{Message: err.Error()}}
-			}
-			if writeErr := client.write(response); writeErr != nil {
-				workerDone <- writeErr
+				workerErr = err
 				return
 			}
-			if envelope.lifecycleDone != nil {
-				close(envelope.lifecycleDone)
-			}
 			if stop {
-				workerDone <- nil
 				return
 			}
 		}
-		workerDone <- nil
 	}()
 
 	acceptConcurrent := true
@@ -1253,20 +1298,15 @@ func ServeIO(ctx context.Context, input io.Reader, output io.Writer, handler Han
 				go func() {
 					defer concurrent.Done()
 					defer epoch.Done()
-					if envelope.release != nil {
-						defer envelope.release()
-					}
 					select {
 					case <-ready:
 					case <-serveCtx.Done():
+						if envelope.release != nil {
+							envelope.release()
+						}
 						return
 					}
-					result, _, err := dispatch(envelope.ctx, client, handler, envelope.request)
-					response := rpcResponse{ID: envelope.request.ID, Result: result}
-					if err != nil {
-						response = rpcResponse{ID: envelope.request.ID, Error: &rpcError{Message: err.Error()}}
-					}
-					if err := client.write(response); err != nil {
+					if _, err := respondToDispatch(client, handler, envelope); err != nil {
 						client.closeTransport(err)
 						cancel()
 					}
@@ -1295,6 +1335,24 @@ func ServeIO(ctx context.Context, input io.Reader, output io.Writer, handler Han
 		return readErr
 	}
 	return workerErr
+}
+
+func respondToDispatch(client *Client, handler Handler, envelope queuedDispatch) (bool, error) {
+	if envelope.release != nil {
+		defer envelope.release()
+	}
+	result, stop, err := dispatch(envelope.ctx, client, handler, envelope.request)
+	response := rpcResponse{ID: envelope.request.ID, Result: result}
+	if err != nil {
+		response = rpcResponse{ID: envelope.request.ID, Error: &rpcError{Message: err.Error()}}
+	}
+	if err := client.write(response); err != nil {
+		return false, err
+	}
+	if envelope.lifecycleDone != nil {
+		close(envelope.lifecycleDone)
+	}
+	return stop, nil
 }
 
 // queueRequests keeps host requests ordered without allowing handler backpressure
