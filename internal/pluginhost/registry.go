@@ -67,20 +67,23 @@ type serviceExecution struct {
 	cancel       context.CancelFunc
 	refs         int
 	participants map[string]struct{}
+	autonomous   bool
 }
 
 // ServiceRegistry resolves and routes service calls for one generation.
 type ServiceRegistry struct {
-	mu               sync.RWMutex
-	active           bool
-	open             bool
-	providers        map[serviceKey]serviceProvider
-	consumers        map[string]map[serviceKey]struct{}
-	notifiers        map[string]ServiceChangedNotifier
-	kernelLifecycles []kernelServiceLifecycle
-	executions       map[string]*serviceExecution
-	executionChanged chan struct{}
-	nextExecution    uint64
+	mu                sync.RWMutex
+	active            bool
+	open              bool
+	providers         map[serviceKey]serviceProvider
+	consumers         map[string]map[serviceKey]struct{}
+	notifiers         map[string]ServiceChangedNotifier
+	kernelLifecycles  []kernelServiceLifecycle
+	executions        map[string]*serviceExecution
+	executionChanged  chan struct{}
+	nextExecution     uint64
+	scopeTracker      *ExecutionTracker
+	backgroundStopped bool
 }
 
 // ServiceRegistration is the common provider entry consumed by the registry.
@@ -300,10 +303,31 @@ func (r *ServiceRegistry) acquireExecution(ctx context.Context, requestedID, cal
 			r.mu.Unlock()
 			return nil, "", nil, &HostServiceError{Code: "service_unavailable", Message: "service execution is unavailable"}
 		}
+		if execution.ctx.Err() != nil {
+			r.mu.Unlock()
+			return nil, "", nil, &HostServiceError{Code: "request_cancelled", Message: "owning execution was cancelled"}
+		}
 		execution.refs++
 		execution.participants[provider] = struct{}{}
 		r.mu.Unlock()
 		return execution.ctx, id, r.releaseExecution(id), nil
+	}
+	scoped := false
+	if r.scopeTracker != nil && id != "" && caller != "kernel" {
+		scope, scopeErr := r.scopeTracker.Resolve(caller, id)
+		if scopeErr != nil {
+			r.mu.Unlock()
+			return nil, "", nil, scopeErr
+		}
+		ctx, scoped = scope.Context, true
+	}
+	if err := ctx.Err(); err != nil {
+		r.mu.Unlock()
+		return nil, "", nil, &HostServiceError{Code: "request_cancelled", Message: "owning execution was cancelled"}
+	}
+	if r.backgroundStopped && !scoped && caller != "kernel" && !current.kernel {
+		r.mu.Unlock()
+		return nil, "", nil, &HostServiceError{Code: "generation_closed", Message: "generation is not accepting autonomous service calls"}
 	}
 	if !r.open || !canStart {
 		r.mu.Unlock()
@@ -317,6 +341,7 @@ func (r *ServiceRegistry) acquireExecution(ctx context.Context, requestedID, cal
 	r.executions[id] = &serviceExecution{
 		ctx: execCtx, cancel: cancel, refs: 1,
 		participants: map[string]struct{}{caller: {}, provider: {}},
+		autonomous:   !scoped && caller != "kernel" && !current.kernel,
 	}
 	r.mu.Unlock()
 	return execCtx, id, r.releaseExecution(id), nil
@@ -340,6 +365,35 @@ func (r *ServiceRegistry) releaseExecution(id string) func() {
 			r.mu.Unlock()
 		})
 	}
+}
+
+// invokeProvider gives each plugin callback its own generic execution scope.
+// The caller's scope supplies cancellation and attribution, never tool authority
+// or an execution ID owned by a different plugin. Kernel calls keep the incoming
+// scope because their scoped services validate the original plugin caller.
+func (r *ServiceRegistry) invokeProvider(ctx context.Context, provider serviceProvider, params ServiceInvokeParams) (json.RawMessage, error) {
+	r.mu.RLock()
+	tracker := r.scopeTracker
+	r.mu.RUnlock()
+	if provider.kernel || tracker == nil {
+		return provider.invoker.InvokeService(ctx, params)
+	}
+	callbackCtx, cancel := context.WithCancel(ctx)
+	executionID, callbackCtx := tracker.begin(provider.pluginID, callbackCtx, ToolExecuteInput{}, false)
+	r.mu.Lock()
+	r.executions[executionID] = &serviceExecution{
+		ctx: callbackCtx, cancel: cancel, refs: 1,
+		participants: map[string]struct{}{provider.pluginID: {}},
+	}
+	r.mu.Unlock()
+	release := r.releaseExecution(executionID)
+	defer func() {
+		tracker.End(executionID)
+		cancel()
+		release()
+	}()
+	params.ExecutionID = executionID
+	return provider.invoker.InvokeService(callbackCtx, params)
 }
 
 // HasProvider reports whether a provider exists for (name, major).
@@ -470,7 +524,7 @@ func (r *ServiceRegistry) Call(ctx context.Context, consumerPluginID string, par
 		return nil, executionErr
 	}
 	defer release()
-	result, err := provider.invoker.InvokeService(execCtx, ServiceInvokeParams{
+	result, err := r.invokeProvider(execCtx, provider, ServiceInvokeParams{
 		Service:     service,
 		Method:      method,
 		Caller:      consumerPluginID,
@@ -539,7 +593,7 @@ func (r *ServiceRegistry) CallProvider(ctx context.Context, service string, majo
 		return nil, executionErr
 	}
 	defer release()
-	result, err := provider.invoker.InvokeService(execCtx, ServiceInvokeParams{
+	result, err := r.invokeProvider(execCtx, provider, ServiceInvokeParams{
 		Service:     service,
 		Method:      method,
 		Caller:      "kernel",

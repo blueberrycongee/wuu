@@ -425,7 +425,10 @@ type ChatRequest struct {
 	// Provider is Wuu's configured provider identity. It is request metadata
 	// used to prevent provider-native state from crossing endpoints and is
 	// never serialized by provider adapters.
-	Provider    string
+	Provider string
+	// Adapter selects an exact plugin adapter. Empty or native uses the host protocol.
+	// It is host routing metadata and must never be sent to a provider.
+	Adapter     string
 	Model       string
 	Messages    []ChatMessage
 	Tools       []ToolDefinition

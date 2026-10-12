@@ -102,7 +102,7 @@ func (t *ExecutionTracker) begin(pluginID string, ctx context.Context, input Too
 		ctx = context.Background()
 	}
 	id := fmt.Sprintf("exec-%d", t.seq.Add(1))
-	executionCtx, cancel := context.WithCancelCause(ctx)
+	executionCtx, cancel := context.WithCancelCause(bindModelEventExecution(ctx, pluginID, id))
 	t.mu.Lock()
 	t.live[id] = &executionRecord{
 		snapshot: &ExecutionSnapshot{

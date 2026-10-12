@@ -132,6 +132,10 @@ type StreamRunner struct {
 	// BeforeRequest transforms the complete provider-neutral request immediately
 	// before it is sent. Runtime plugin hosts install their typed pipeline here.
 	BeforeRequest func(context.Context, *providers.ChatRequest) error
+	// WrapModelClient installs generation-scoped inference extensions after host
+	// request assembly while retaining the shared provider execution lifecycle.
+	WrapModelClient func(providers.StreamClient) providers.StreamClient
+
 	// OnRequestContext receives metadata-only summaries of request-only model
 	// context assembled before requests.
 	OnRequestContext func(info RequestContextInfo)
@@ -1017,7 +1021,11 @@ func (r *StreamRunner) currentUsageContract() string {
 func (r *StreamRunner) providerConnectionSnapshot() (providers.StreamClient, string) {
 	r.usageMu.Lock()
 	defer r.usageMu.Unlock()
-	return r.Client, r.ProviderObservationKey
+	client := r.Client
+	if client != nil && r.WrapModelClient != nil {
+		client = r.WrapModelClient(client)
+	}
+	return client, r.ProviderObservationKey
 }
 
 // UpdateProviderConnection atomically replaces the transport and its opaque

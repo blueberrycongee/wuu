@@ -170,6 +170,9 @@ async function readCounter(host: RuntimeHost): Promise<string | null> {
 | `host.storage.get/set/delete/keys` | 插件用户或工作区命名空间中的字符串值 |
 | `host.storage.compare-exchange` | 用 `{ scope, key, expected, value }` 条件替换，返回 `{ swapped, value }` |
 | `host.model.request` | 使用宿主配置完成一次有界的纯文本模型请求 |
+| `host.model.invoke` | 独立的完整逻辑模型调用与流式响应 |
+| `host.model.emit` | 流式适配器或 middleware 发出的事件 |
+| `host.background` | 调用插件自己服务的 generation 所属后台工作 |
 | `host.settings.get/list` | 声明的设置值 |
 | `host.session.create/send/list/inspect/cancel/control` | 按宿主生命周期规则创建和管理会话 |
 | `host.session.history.read/search` | 使用序列快照和续读游标访问有限历史 |
@@ -223,6 +226,54 @@ async function requestText(host: RuntimeHost, content: string) {
 结果包含 `text`、`provider`、`model`、`finish_reason` 和 `truncated`。可选的 `usage` 包含输入、输出、缓存创建、缓存读取 token 数及 `cache_creation_unknown`；缺少用量不代表零费用。空或非文本响应，以及请求工具调用的响应都会报错，不会启动工具循环。
 
 宿主复用已配置的凭据、提供商请求准备、容量协调、重试和推理用量记录。不自动加入对话历史、代理专用请求 hook 或工具，也不创建持久会话。上下文由插件自行选择和限制。此服务不接受凭据、端点 URL 或任意提供商覆盖。应说明哪些草稿或历史文本会发送给已配置的提供商，限制请求频率和输出；取消只能尽量避免后续工作，已提交的请求仍可能产生费用。
+
+## 可组合的模型扩展
+
+完整逻辑请求使用 `host.model.invoke` 版本 1；原有的 `host.model.request` 纯文本契约保持不变。在 `required_services` 中声明 `requireModelInvokeService()` 以获得服务调用权限，由活动的工具、capability、服务或后台执行提供生命周期。独立推理不会创建对话轮次，也不会执行模型返回的工具调用。
+
+`LogicalModelRequestV1` 包含 `version: 1`、提供商和模型身份、有序消息与工具、缓存提示、模型选项、工具选择、媒体准入和原生回放状态。消息保留 reasoning block、提供商原生 item 及其回退历史、工具调用和结果、发现的工具 schema，以及已解析的图片和文件字节。富工具结果保留 artifact 和延迟媒体引用，以及经过预算限制的 `model_text`。不导出本地临时文件路径、凭据、宿主重试对象或执行权限。复制快照时应保留未知的提供商选项和不透明原生数据。
+
+这是逻辑快照，不保证最终 HTTP 字节完全相同或缓存一定命中。上下文、路由、模型、适配器、原生状态兼容性或媒体变化时，插件需要使旧快照失效。已配置凭据、提供商请求准备、取消和推理用量记录仍由宿主负责。原生转发不能配置任意端点或凭据。
+
+| 扩展点 | 契约 |
+| --- | --- |
+| `model.request.transform` | 版本 1 的 `transform` capability，接收 `{ request, origin }`，在提供商调用前返回 `{ request? }`。 |
+| `model.request.observe` | 版本 1 的 `observe` capability，观察请求及终态响应或错误，并接收完整逻辑请求和宿主确认的来源。 |
+| `model.middleware` | 版本 1 的 `decision` capability，错误策略为 `propagate`；可包装调用、返回替代响应，或执行一次性 continuation。 |
+| `model.adapter` | 版本 1 的 `decision` capability，错误策略为 `propagate`；提供显式选中的适配器实现。 |
+
+插件发起的独立请求绕过请求 hook 和 around-call middleware，因此观察普通请求后重放不会递归触发同一策略。`origin.kind`、`plugin_id`、operation ID 和可用的会话上下文由宿主填写；复制这些字段不能冒充普通代理请求。
+
+### 独立调用与流式响应
+
+`invokeModel(host, { request, model_alias?, max_output_tokens?, timeout_ms? })` 返回 `{ response, origin }`。比较第二个模型时，选择已配置的模型别名。输出 token 和超时受宿主及所属执行约束；缺少用量不代表没有费用，取消也不能撤销已经提交的请求。完整请求保留自己的输出限制，除非显式通过 `max_output_tokens` 覆盖；独立调用默认超时 120 秒，最多 600 秒。输入和保留的流数据分别最多 16 MiB，每条流最多保留 4096 个事件。
+
+`startModelInvocation` 返回 `invocation_id`。`readModelInvocation` 接收该 ID、`cursor` 和可选 `wait_ms`，返回有序事件、下一游标、`done` 和终态结果或错误。句柄绑定当前插件 generation 和执行。`cancelModelInvocation` 取消活动流；`streamModel` 将这些方法包装成异步迭代器，在消费者提前退出或抛错时取消未完成工作。应在处理函数的生命周期内消费流；需要跨越原调用生命周期时，使用后台任务。转发事件时保留不透明的 `provider_state` 和 `lifecycle` 数据；`reset_partial` 为真时，在接收重试的新事件前丢弃已累计的部分输出。
+
+middleware 接收 `ModelMiddlewareInput`，包含 `request`、`origin`、`stream` 和 `continuation_id`。通过 `invokeModel` 或 `startModelInvocation` 转发时，携带该 continuation ID 和未经修改的请求。continuation 只能由当前活动回调使用一次，不接受模型别名或输出限制覆盖；修改输入应使用 request-transform 扩展点。直接返回响应可以跳过后续调用链；先转发再修改响应则包装下游行为，不另建一次推理 operation。
+
+### 可替换的适配器
+
+初始化时注册 `model_adapters: [{ id: "example.adapter", version: 1 }]` 并实现 `model.adapter`。ID 是全局唯一的点分名称，最多 160 个字符，各段可含小写字母、数字、`_` 和 `-`；候选 generation 内任何重复注册都会失败。通过 `request.adapter` 显式选择实现，或在模型配置中设置 `options.adapter` 以用于普通对话；请求中的显式值优先，`"native"` 选择宿主协议。保留选项在原生传输前会被移除。选中的适配器缺失或被撤销时会报错，不会回退到原生实现。适配器可以生成合成响应，也可以通过 `host.model.invoke` 发起另一条有界请求，并用 `adapter: "native"` 转发给原生提供商。
+
+回调接收 `{ adapter_id, request, stream }`。非流式调用返回 `{ response }`。流式调用可以直接返回该响应，也可以通过 `emitModelEvent` 发出有序事件，以恰好一个 `done` 或 `error` 结束，然后返回 `{}`。发事件前需声明 `requireModelEmitService()`。混合返回响应与事件、缺少终态事件，或在对应流式回调之外发事件都会失败。宿主不会向插件发送凭据。
+
+适配器在注册时明确声明用量记录方式：
+
+- `mode: "direct"`（默认值）：宿主在调用回调前记录一条可能计费的提交，并检查工作流预算。返回的用量是插件报告的本适配器用量；省略用量表示未知，不代表零。额外发起的 `host.model.invoke` 调用分别记录其提交和费用。
+- `mode: "delegate"`：用于包装器，例如 `{ id: "example.forward", version: 1, mode: "delegate" }`。宿主保留逻辑操作记录，但不记录一条可计费的父提交。响应中的用量仅用于汇总；每个宿主模型子调用分别记录实际提供商提交和用量，因此转发响应不会重复计费。
+
+这些模式是受信任扩展明确声明的用量契约。原生转发使用宿主配置的凭据和提供商传输。Extension API 不提供自动附加凭据的任意 HTTP 传输；对于插件代码在宿主服务之外自行发起的任意网络请求，Wuu 无法强制执行推理预算。
+
+两个 SDK 中的 `model.adapter` 和 `model.middleware` 处理函数都可重入，能与等待它们的工具或回调并发运行，因此应保护共享可变状态。TypeScript 的其他 `concurrentCapabilities` 和 `concurrentServices` 仍须显式启用；生命周期屏障继续有效。
+
+### 属于 generation 的后台工作
+
+声明 `requireBackgroundService()`，提供有明确结束点的版本化服务处理函数，在激活后调用 `startBackground(host, { key, service, method, params?, timeout_ms? })`。目标必须是同一插件 generation 自己提供的服务。启动返回 `{ job_id, execution_id }`，回调获得普通的作用域 host 和取消信号，因此可以在原对话或观察回调返回后调用模型服务。
+
+`inspectBackground(host, { job_id })` 返回 `running`、`completed`、`failed` 或 `cancelled`，以及结果或错误；`cancelBackground` 用于取消。活动 key 在每个插件内唯一，最多同时运行 64 个任务并保留 64 个终态结果；参数和结果分别最多 1 MiB。它不是持久调度器：重载、禁用、generation 退役或进程丢失会取消所属工作，旧 generation 不能再启动任务。计时器、调度策略、预算、快照失效和持久业务状态由插件负责，关闭时应清理计时器。
+
+公开 SDK 的[有界重放 fixture](../../../scripts/fixtures/model-pipeline/replay.ts)和[影子比较 fixture](../../../scripts/fixtures/model-pipeline/shadow.ts)使用合成数据验证这些扩展点。它们用于验收，不是默认安装的缓存或比较功能。对源码构建的 core 运行 `node scripts/plugin-model-pipeline-e2e.mjs`，驱动会使用本地模拟提供商并保存可重复检查的结果，不产生付费推理。
 
 ## 提供服务
 

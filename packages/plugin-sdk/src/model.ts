@@ -13,7 +13,7 @@ export const MODEL_ADAPTER_CAPABILITY = "model.adapter" as const;
 /** Portable model input. Credentials, retry state and execution authority stay in the host. */
 export interface LogicalModelRequestV1 {
   readonly version: 1;
-  /** Exact registered adapter ID; omitted or "native" uses the configured host protocol. */
+  /** Exact adapter ID; omitted inherits model configuration, "native" selects the host protocol. */
   readonly adapter?: string;
   readonly provider?: string;
   readonly model: string;
@@ -179,6 +179,11 @@ export interface ModelErrorV1 {
 }
 
 export interface ModelStreamEventV1 {
+  /** Discard accumulated partial output before accepting replacement-attempt events. */
+  readonly reset_partial?: boolean;
+  /** Opaque diagnostic/retry metadata; preserve it when forwarding events. */
+  readonly provider_state?: Readonly<Record<string, unknown>>;
+  readonly lifecycle?: Readonly<Record<string, unknown>>;
   readonly type: string;
   readonly content?: string;
   readonly phase?: string;
@@ -260,6 +265,8 @@ export interface ModelAdapterDescriptor {
   /** Globally unique dotted identifier; "native" is reserved for host protocols. */
   readonly id: string;
   readonly version: 1;
+  /** Direct (default) pre-admits one billable-capable callback. Delegate usage is summary-only; host model child calls own their costs. */
+  readonly mode?: "direct" | "delegate";
 }
 export interface ModelAdapterInput {
   readonly adapter_id: string;

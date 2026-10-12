@@ -71,6 +71,9 @@ type Host struct {
 	serviceRegistry     *ServiceRegistry
 	packageRequirements map[string][]string
 	executions          *ExecutionTracker
+	background          map[string]*backgroundJob
+	backgroundCompleted []string
+	backgroundClosed    bool
 	materialize         func(context.Context, ToolExecutionScope, *toolresult.Result) error
 }
 
@@ -127,6 +130,11 @@ func (h *Host) AttachServiceRegistry(registry *ServiceRegistry, conflicts []Serv
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.serviceRegistry = registry
+	if registry != nil {
+		registry.mu.Lock()
+		registry.scopeTracker = h.executions
+		registry.mu.Unlock()
+	}
 	for _, conflict := range conflicts {
 		if h.diagnostics[conflict.PluginID] == nil {
 			h.diagnostics[conflict.PluginID] = make(map[string]string)
@@ -199,6 +207,9 @@ func (h *Host) ValidateCapabilities() error {
 	h.mu.RLock()
 	registered := append([]RegisteredCapability(nil), h.capabilities...)
 	h.mu.RUnlock()
+	if err := h.validateModelAdapters(); err != nil {
+		return err
+	}
 	present := make(map[string]struct{}, len(registered))
 	for _, capability := range registered {
 		present[capability.Descriptor.ID] = struct{}{}
@@ -618,6 +629,7 @@ func (h *Host) CloseWithOutcomes(ctx context.Context) []ClientShutdownOutcome {
 	if h == nil {
 		return nil
 	}
+	h.StopBackground()
 	h.mu.Lock()
 	clients := append([]Client(nil), h.clients...)
 	h.clients = nil

@@ -10,6 +10,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Composable model extensions with full logical request snapshots, request hooks,
+  around-call middleware, independent inference streams, explicitly selected
+  adapters, and generation-owned background service calls.
 - Plugin APIs for host-rendered inline draft suffixes and bounded, text-only
   model requests through configured providers, with cancellation and lifecycle
   handling. Completion plugins supply their own policy; no completion provider

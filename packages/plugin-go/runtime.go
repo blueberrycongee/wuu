@@ -1133,6 +1133,7 @@ func ServeIO(ctx context.Context, input io.Reader, output io.Writer, handler Han
 	requests := make(chan queuedDispatch)
 	workerDone := make(chan error, 1)
 	var initialized atomic.Bool
+	var pendingLifecycles atomic.Int32
 	var concurrent sync.WaitGroup
 	defer func() {
 		cancel()
@@ -1142,7 +1143,8 @@ func ServeIO(ctx context.Context, input io.Reader, output io.Writer, handler Han
 	go queueRequests(serveCtx, incomingRequests, requests)
 	go func() {
 		for envelope := range requests {
-			if envelope.request.Method == "shutdown" {
+			isLifecycle := envelope.request.Method == "initialize" || envelope.request.Method == "activate" || envelope.request.Method == "shutdown"
+			if isLifecycle {
 				concurrent.Wait()
 			}
 			result, stop, err := dispatch(envelope.ctx, client, handler, envelope.request)
@@ -1159,6 +1161,9 @@ func ServeIO(ctx context.Context, input io.Reader, output io.Writer, handler Han
 			if writeErr := client.write(response); writeErr != nil {
 				workerDone <- writeErr
 				return
+			}
+			if isLifecycle {
+				pendingLifecycles.Add(-1)
 			}
 			if stop {
 				workerDone <- nil
@@ -1208,10 +1213,16 @@ func ServeIO(ctx context.Context, input io.Reader, output io.Writer, handler Han
 			_ = json.Unmarshal(request.Params, &probe)
 			envelope.ctx, envelope.release = client.trackExecution(serveCtx, probe.ExecutionID)
 		}
+		if request.Method == "initialize" || request.Method == "activate" || request.Method == "shutdown" {
+			// Close concurrent admission as soon as the lifecycle frame arrives,
+			// including while it is still queued behind an ordinary handler.
+			// The worker reopens it only after every queued lifecycle responds.
+			pendingLifecycles.Add(1)
+		}
 		if request.Method == "shutdown" {
 			acceptConcurrent = false
 		}
-		if acceptConcurrent && initialized.Load() && request.Method == "capability.invoke" {
+		if acceptConcurrent && initialized.Load() && pendingLifecycles.Load() == 0 && request.Method == "capability.invoke" {
 			var call CapabilityCall
 			_ = json.Unmarshal(request.Params, &call)
 			if call.Capability == CapabilityModelAdapter || call.Capability == CapabilityModelMiddleware || slices.Contains(handler.ConcurrentCapabilities, call.Capability) {

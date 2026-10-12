@@ -90,6 +90,7 @@ type ProcessClient struct {
 	tools              []ToolRegistration
 	protocol           int
 	capabilities       []CapabilityDescriptor
+	modelAdapters      []ModelAdapterDescriptor
 	providedServices   []ServiceDescriptor
 	requiredServices   []ServiceRequirement
 	negotiated         map[HostServiceMethod]struct{}
@@ -191,6 +192,7 @@ func Start(ctx context.Context, config ProcessConfig) (*ProcessClient, error) {
 		client.protocol = ProtocolVersion
 	}
 	client.capabilities = cloneCapabilityDescriptors(initialized.Capabilities)
+	client.modelAdapters = append([]ModelAdapterDescriptor(nil), initialized.ModelAdapters...)
 	client.providedServices = cloneServiceDescriptors(initialized.ProvidedServices)
 	client.requiredServices = cloneServiceRequirements(initialized.RequiredServices)
 	client.activationServices = map[HostServiceMethod]struct{}{ServiceCallMethod: {}}
@@ -247,8 +249,6 @@ func (c *ProcessClient) RequiredServices() []ServiceRequirement {
 
 // InvokeService delivers one registry-routed call to this provider plugin.
 func (c *ProcessClient) InvokeService(ctx context.Context, params ServiceInvokeParams) (json.RawMessage, error) {
-	finishExecution := c.watchExecution(ctx, params.ExecutionID)
-	defer finishExecution()
 	var result json.RawMessage
 	if err := c.call(ctx, ServiceInvokeMethod, params, &result); err != nil {
 		return nil, err
@@ -262,10 +262,15 @@ func (c *ProcessClient) NotifyServiceChanged(ctx context.Context, params Service
 }
 
 func (c *ProcessClient) InvokeCapability(ctx context.Context, params CapabilityInvokeParams) (CapabilityInvokeResult, error) {
-	callCtx, cancel := context.WithTimeout(ctx, c.config.Timeout)
-	defer cancel()
-	finishExecution := c.watchExecution(callCtx, params.ExecutionID)
-	defer finishExecution()
+	callCtx := ctx
+	if params.Capability != CapabilityModelAdapter && params.Capability != CapabilityModelMiddleware {
+		var cancel context.CancelFunc
+		callCtx, cancel = context.WithTimeout(ctx, c.config.Timeout)
+		defer cancel()
+	}
+	// Adapters and around-call middleware own potentially long model streams.
+	// Their caller controls the deadline; the handshake timeout must not kill
+	// a healthy provider operation or retire its plugin while it is streaming.
 	var result CapabilityInvokeResult
 	if err := c.call(callCtx, "capability.invoke", params, &result); err != nil {
 		if ctx.Err() == nil {
@@ -326,8 +331,6 @@ func (c *ProcessClient) ExecuteTool(ctx context.Context, params ToolExecuteParam
 	// Tool execution is owned by the turn context. The configured process
 	// timeout protects startup and lifecycle handshakes; applying it here would
 	// kill healthy long-running tools such as user interaction.
-	finishExecution := c.watchExecution(ctx, params.ExecutionID)
-	defer finishExecution()
 	var result ToolExecuteResult
 	if err := c.call(ctx, "tool.execute", params, &result); err != nil {
 		if ctx.Err() == nil {
@@ -404,6 +407,7 @@ func (c *ProcessClient) Close(ctx context.Context) error {
 	c.status.State = StateStopped
 	c.tools = nil
 	c.capabilities = nil
+	c.modelAdapters = nil
 	c.mu.Unlock()
 	return err
 }
@@ -434,6 +438,20 @@ func (c *ProcessClient) call(ctx context.Context, method string, params, result 
 	if err := c.writeLine(payload); err != nil {
 		return fmt.Errorf("write request: %w", err)
 	}
+	// The invoke frame must be written before cancellation can be signalled.
+	// Otherwise a fast cancel can arrive before the runtime registers its
+	// execution controller and leave an already-cancelled callback running.
+	var executionID string
+	switch input := params.(type) {
+	case ToolExecuteParams:
+		executionID = input.ExecutionID
+	case CapabilityInvokeParams:
+		executionID = input.ExecutionID
+	case ServiceInvokeParams:
+		executionID = input.ExecutionID
+	}
+	finishExecution := c.watchExecution(ctx, executionID)
+	defer finishExecution()
 
 	select {
 	case response := <-responseCh:
@@ -717,6 +735,7 @@ func (c *ProcessClient) setFailure(err error) {
 	c.status.Error = err.Error()
 	c.tools = nil
 	c.capabilities = nil
+	c.modelAdapters = nil
 }
 
 func (c *ProcessClient) fail(err error) {

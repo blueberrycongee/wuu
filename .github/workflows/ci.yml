@@ -67,7 +67,7 @@ jobs:
       - name: Test
         run: make test-go
 
-      - name: Build one-shot model acceptance prerequisites
+      - name: Build plugin model acceptance prerequisites
         run: |
           npm ci --prefix packages/plugin-sdk
           npm --prefix packages/plugin-sdk run build
@@ -94,6 +94,30 @@ jobs:
             ${{ runner.temp }}/wuu-plugin-model-evidence/*.json
             ${{ runner.temp }}/wuu-plugin-model-evidence/*.jsonl
             ${{ runner.temp }}/wuu-plugin-model-evidence/*.log
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Guard extensible model pipeline journeys
+        timeout-minutes: 4
+        shell: bash
+        env:
+          WUU_E2E_CORE: ${{ github.workspace }}/.tmp/bin/wuu
+          WUU_PIPELINE_E2E_OUTPUT: ${{ runner.temp }}/wuu-plugin-pipeline-evidence
+        run: |
+          mkdir -p "$WUU_PIPELINE_E2E_OUTPUT"
+          set -o pipefail
+          packages/plugin-sdk/node_modules/.bin/tsc -p scripts/fixtures/model-pipeline/tsconfig.json
+          node scripts/plugin-model-pipeline-e2e.mjs 2>&1 | tee "$WUU_PIPELINE_E2E_OUTPUT/run.log"
+
+      - name: Upload extensible model pipeline evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: plugin-model-pipeline-evidence
+          path: |
+            ${{ runner.temp }}/wuu-plugin-pipeline-evidence/*.json
+            ${{ runner.temp }}/wuu-plugin-pipeline-evidence/*.jsonl
+            ${{ runner.temp }}/wuu-plugin-pipeline-evidence/*.log
           if-no-files-found: ignore
           retention-days: 14
 

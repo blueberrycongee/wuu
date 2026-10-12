@@ -189,6 +189,11 @@ type ModelErrorV1 struct {
 }
 
 type ModelStreamEventV1 struct {
+	// ResetPartial discards accumulated output from superseded attempts.
+	ResetPartial bool `json:"reset_partial,omitempty"`
+	// Metadata payloads are retained verbatim when forwarding provider streams.
+	ProviderState     json.RawMessage        `json:"provider_state,omitempty"`
+	Lifecycle         json.RawMessage        `json:"lifecycle,omitempty"`
 	Type              string                 `json:"type"`
 	Content           string                 `json:"content,omitempty"`
 	Phase             string                 `json:"phase,omitempty"`
@@ -268,6 +273,10 @@ type ModelInvocationReadResult struct {
 type ModelAdapterDescriptor struct {
 	ID      string `json:"id"`
 	Version int    `json:"version"`
+	// Mode is direct (default) or delegate. Direct callbacks are admitted as
+	// potentially billable before invocation; delegate response usage is only
+	// a summary of independently accounted host.model.invoke child calls.
+	Mode string `json:"mode,omitempty"`
 }
 type ModelAdapterInput struct {
 	AdapterID string                `json:"adapter_id"`

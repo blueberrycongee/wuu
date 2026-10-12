@@ -664,6 +664,9 @@ type CapabilityInitializeResult struct {
 	// Capabilities lists the capabilities this plugin provides.
 	Capabilities []CapabilityDescriptor `json:"capabilities,omitempty"`
 
+	// ModelAdapters declares the named adapters implemented by model.adapter.
+	ModelAdapters []ModelAdapterDescriptor `json:"model_adapters,omitempty"`
+
 	// RequiredHostServices lists host services this plugin needs.
 	// Activation fails if any required service is unavailable.
 	RequiredHostServices []HostServiceDescriptor `json:"required_host_services,omitempty"`
@@ -896,7 +899,7 @@ func ValidateCapabilityDescriptor(c CapabilityDescriptor) error {
 	}
 	var requiredKind SeamKind
 	switch c.ID {
-	case CapabilityAgentRequestTransform:
+	case CapabilityAgentRequestTransform, CapabilityModelRequestTransform:
 		requiredKind = SeamTransform
 	case CapabilityAgentPreStep:
 		requiredKind = SeamTransform
@@ -904,14 +907,17 @@ func ValidateCapabilityDescriptor(c CapabilityDescriptor) error {
 		requiredKind = SeamTransform
 	case CapabilityAgentCompaction:
 		requiredKind = SeamDecision
-	case CapabilityAgentTurnCompleted:
+	case CapabilityAgentTurnCompleted, CapabilityModelRequestObserve:
 		requiredKind = SeamObserve
 	case CapabilityAgentTurnLifecycle:
 		requiredKind = SeamObserve
 	case CapabilityAgentTurnInterrupted:
 		requiredKind = SeamObserve
-	case CapabilityPluginClientRequest:
+	case CapabilityPluginClientRequest, CapabilityModelAdapter, CapabilityModelMiddleware:
 		requiredKind = SeamDecision
+	}
+	if c.ID == CapabilityModelMiddleware && policy != ErrorPolicyPropagate {
+		return fmt.Errorf("capability %s requires propagate error policy", id)
 	}
 	if requiredKind != "" && c.Kind != requiredKind {
 		return fmt.Errorf("capability %s requires kind %q", id, requiredKind)
@@ -937,7 +943,7 @@ func EffectiveErrorPolicy(c CapabilityDescriptor) ErrorPolicy {
 	if c.ErrorPolicy != "" {
 		return c.ErrorPolicy
 	}
-	if c.ID == CapabilityAgentTurnCompleted || c.ID == CapabilityAgentTurnLifecycle || c.ID == CapabilityAgentTurnInterrupted {
+	if c.ID == CapabilityAgentTurnCompleted || c.ID == CapabilityAgentTurnLifecycle || c.ID == CapabilityAgentTurnInterrupted || c.ID == CapabilityModelRequestObserve {
 		return ErrorPolicyIsolate
 	}
 	return ErrorPolicyPropagate
@@ -992,7 +998,7 @@ func ValidateCapabilityNegotiation(result CapabilityInitializeResult, supported 
 		return err
 	}
 	if version == ProtocolVersion {
-		if len(result.Capabilities) != 0 || len(result.RequiredHostServices) != 0 {
+		if len(result.Capabilities) != 0 || len(result.RequiredHostServices) != 0 || len(result.ModelAdapters) != 0 {
 			return errors.New("protocol v1 cannot declare capabilities or host services")
 		}
 		return nil
@@ -1004,7 +1010,7 @@ func ValidateCapabilityNegotiation(result CapabilityInitializeResult, supported 
 			return err
 		}
 		switch capability.ID {
-		case CapabilityAgentRequestTransform, CapabilityAgentPreStep, CapabilityAgentSystemPromptSection, CapabilityAgentCompaction, CapabilityAgentTurnCompleted, CapabilityAgentTurnLifecycle, CapabilityAgentTurnInterrupted, CapabilityPluginClientRequest:
+		case CapabilityModelRequestTransform, CapabilityModelRequestObserve, CapabilityModelMiddleware, CapabilityAgentRequestTransform, CapabilityAgentPreStep, CapabilityAgentSystemPromptSection, CapabilityAgentCompaction, CapabilityAgentTurnCompleted, CapabilityAgentTurnLifecycle, CapabilityAgentTurnInterrupted, CapabilityPluginClientRequest, CapabilityModelAdapter:
 		default:
 			return fmt.Errorf("capability %s is not supported by this host", capability.ID)
 		}
@@ -1012,6 +1018,10 @@ func ValidateCapabilityNegotiation(result CapabilityInitializeResult, supported 
 			return fmt.Errorf("duplicate capability %q", capability.ID)
 		}
 		seenCapabilities[capability.ID] = struct{}{}
+	}
+
+	if err := validateModelAdapterNegotiation(result); err != nil {
+		return err
 	}
 
 	available := make(map[HostServiceMethod]struct{}, len(supported))

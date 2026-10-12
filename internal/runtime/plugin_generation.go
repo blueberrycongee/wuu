@@ -28,8 +28,8 @@ import (
 
 // PluginGeneration is a complete replacement for the plugin-owned surfaces of a
 // Session. It owns every process and private package snapshot. Conversations
-// adopt published updates at their next idle turn boundary; active turns and
-// background work retain their generation until they settle. Committed removal
+// adopt published updates at their next idle turn boundary. Active foreground
+// turns retain their generation; publication cancels its background jobs. Committed removal
 // or disable revokes that plugin across all retained generations immediately.
 // Close retires the remaining resources in reverse ownership order and records
 // a structured revocation report.
@@ -402,6 +402,9 @@ func (s *Session) ActivatePluginGeneration(candidate *PluginGeneration, commit f
 		}
 	}
 	s.pluginGenerationMu.Unlock()
+	// Publication transfers background ownership before the replacement starts
+	// its timers. Existing foreground calls can continue on the old generation.
+	old.host.StopBackground()
 	// Activation may synchronously call host services. Keep old bindings
 	// available until activation settles, without holding their lookup mutex.
 	activationErr := activatePluginHost(context.Background(), candidate.host)
@@ -691,6 +694,7 @@ func (s *Session) applyPluginGeneration(generation *PluginGeneration) {
 		s.StreamRunner.Tools = replacePluginToolHost(s.StreamRunner.Tools, generation.host, "", s.RootDir)
 		s.StreamRunner.BeforeModelStep = pluginPreStepInjector(generation.host, s.ProviderName, s.Model, "", s.RootDir)
 		s.StreamRunner.BeforeRequest = pluginRequestInterceptorWithTransforms(generation.host, generation.requestTransforms, s.ProviderName, "", s.RootDir)
+		s.StreamRunner.WrapModelClient = pluginModelClientWrapper(generation.host)
 		s.StreamRunner.CompactionRegistry = generation.compactions
 	}
 	s.HookDispatcher = generation.hooks

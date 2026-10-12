@@ -452,6 +452,18 @@ func (k *kernelHostServices) KernelServiceRegistrations() []pluginhost.ServiceRe
 	}
 	registrations = append(registrations,
 		pluginhost.ServiceRegistration{
+			Descriptor: pluginhost.KernelModelInvokeDescriptor(),
+			Invoker:    &modelInvokeInvoker{parent: k, store: newModelInvocationStore()}, Kernel: true,
+		},
+		pluginhost.ServiceRegistration{
+			Descriptor: pluginhost.KernelModelEmitDescriptor(),
+			Invoker:    &modelEmitInvoker{parent: k}, Kernel: true,
+		},
+		pluginhost.ServiceRegistration{
+			Descriptor: pluginhost.KernelBackgroundDescriptor(),
+			Invoker:    &backgroundInvoker{parent: k}, Kernel: true,
+		},
+		pluginhost.ServiceRegistration{
 			Descriptor: pluginhost.KernelModelRequestDescriptor(),
 			Invoker:    &modelRequestInvoker{parent: k}, Kernel: true,
 		},

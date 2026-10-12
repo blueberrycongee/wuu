@@ -172,6 +172,9 @@ async function readCounter(host: RuntimeHost): Promise<string | null> {
 | `host.storage.get/set/delete/keys` | String values in the plugin's user or workspace namespace |
 | `host.storage.compare-exchange` | Conditional replacement using `{ scope, key, expected, value }`; returns `{ swapped, value }` |
 | `host.model.request` | One bounded, text-only model request using host configuration |
+| `host.model.invoke` | Independent full logical model calls and streams |
+| `host.model.emit` | Events from a streaming adapter or middleware |
+| `host.background` | Generation-owned calls to a plugin’s own service |
 | `host.settings.get/list` | Declared setting values |
 | `host.session.create/send/list/inspect/cancel/control` | Create and manage sessions through host lifecycle rules |
 | `host.session.history.read/search` | Bounded history access with sequence snapshots and continuation cursors |
@@ -225,6 +228,141 @@ The remote Web client also has an independent 30-second RPC deadline for `api.in
 The result contains `text`, `provider`, `model`, `finish_reason`, and `truncated`. Optional `usage` contains input, output, cache-creation, and cache-read token counts plus `cache_creation_unknown`; missing usage does not mean zero cost. Empty/non-text responses and responses requesting tool calls fail instead of starting a tool loop.
 
 The host reuses configured credentials, provider preparation, capacity coordination, retries, and inference accounting. It adds no conversation history, agent-specific request hooks, or tools and creates no persistent session. Select and limit context in the plugin. The service does not accept credentials, endpoint URLs, or arbitrary provider overrides. Explain what draft/history text will reach the configured provider, bound request frequency and output, and treat cancellation as best effort at avoiding further work: a submitted request may already incur charges.
+
+## Composable model extensions
+
+Use `host.model.invoke` version 1 for full logical requests. The earlier
+`host.model.request` text-only contract remains unchanged. Declare
+`requireModelInvokeService()` in `required_services`; declarations grant access
+to the service, while a live tool, capability, service, or background execution
+supplies the lifetime. Independent inference does not create a conversation turn
+or execute returned tool calls.
+
+`LogicalModelRequestV1` carries `version: 1`, provider/model identity, ordered
+messages and tools, cache hints, model options, tool choice, media admission and
+native replay state. Messages retain reasoning blocks, provider-native items and
+their fallback history, tool calls/results, discovered schemas, and resolved
+image/file bytes. Rich tool results retain artifact and deferred-media references
+and their budgeted `model_text`. Local working-copy paths, credentials, host retry
+objects and execution authority are not exported. Preserve unknown provider option
+keys and opaque native item data when copying a snapshot.
+
+These are logical snapshots, not guarantees of identical HTTP bytes or a cache
+hit. Plugins must invalidate retained snapshots when their context, route, model,
+adapter, native-state compatibility or media changes. The host remains responsible
+for configured credentials, provider preparation, cancellation and inference
+accounting. Native forwarding cannot install arbitrary endpoints or credentials.
+
+| Surface | Contract |
+| --- | --- |
+| `model.request.transform` | Version-1 `transform` capability. Receives `{ request, origin }`; returns `{ request? }` before provider dispatch. |
+| `model.request.observe` | Version-1 `observe` capability. Receives request and terminal response/error phases, with the logical request and host-authenticated origin. |
+| `model.middleware` | Version-1 `decision` capability with `propagate` errors. Wraps dispatch, returns a replacement response, or calls its single-use continuation. |
+| `model.adapter` | Version-1 `decision` capability with `propagate` errors. Supplies an explicitly selected adapter implementation. |
+
+Plugin-initiated independent calls bypass request hooks and around-call middleware,
+so observing a normal request and replaying it does not recursively trigger the
+same policy. `origin.kind`, `plugin_id`, operation IDs and available session context
+are host metadata; supplying copied metadata cannot impersonate an agent request.
+
+### Independent calls and streaming
+
+`invokeModel(host, { request, model_alias?, max_output_tokens?, timeout_ms? })`
+returns `{ response, origin }`. Use an existing configured alias to compare a
+second model. Output-token limits and timeouts are bounded by the host and owning
+execution; missing usage does not imply zero cost, and cancellation cannot undo
+an already submitted request. Full requests preserve their output limit unless
+`max_output_tokens` overrides it. The independent-call timeout defaults to
+120 seconds and accepts at most 600 seconds. Inputs and retained stream data are
+bounded to 16 MiB; each stream retains at most 4096 events.
+
+`startModelInvocation` returns an `invocation_id`. `readModelInvocation` accepts
+that ID plus `cursor` and optional `wait_ms`, and returns ordered events, the next
+cursor, `done`, and a terminal result or error. Handles belong to the current
+plugin generation and execution. `cancelModelInvocation` stops an active stream.
+`streamModel` wraps those methods as an async iterator and cancels unfinished work
+when a consumer breaks or throws. Consume streams within the handler lifetime;
+use a background job for work that must outlive the originating handler. Preserve
+opaque `provider_state` and `lifecycle` payloads when forwarding events. If
+`reset_partial` is true, discard prior partial output before accepting replacement
+events from a retry.
+
+A middleware receives `ModelMiddlewareInput` with `request`, `origin`, `stream`
+and `continuation_id`. Forward through `invokeModel` or `startModelInvocation`
+with that continuation ID and the unchanged request. The continuation may be used
+once, only by its live callback; alias/output overrides are not accepted. Use the
+request-transform seam for input edits. Returning a response without forwarding
+short-circuits the remaining chain. Forwarding and then modifying the response
+wraps downstream behavior without creating another inference operation.
+
+### Replaceable adapters
+
+Register `model_adapters: [{ id: "example.adapter", version: 1 }]` during
+initialization and implement `model.adapter`. IDs are globally unique dotted
+names, at most 160 characters, with lowercase letters, digits, `_` and `-` in
+each segment; duplicate registrations anywhere in a candidate generation fail.
+Select an implementation with `request.adapter`, or set `options.adapter` on a
+configured model for foreground calls. An explicit request value takes precedence;
+`"native"` selects the host protocol. The reserved option is stripped before native
+transport. A missing or revoked selected adapter fails without falling back.
+An adapter can return synthetic output or delegate
+a separate bounded call through `host.model.invoke` with `adapter: "native"`.
+
+The callback receives `{ adapter_id, request, stream }`. For a unary call, return
+`{ response }`. For a stream, either return that response or emit ordered events
+with `emitModelEvent`, ending in exactly one `done` or `error`, then return `{}`.
+Declare `requireModelEmitService()` to emit. Mixing response and emitted events,
+missing terminal events, or emitting outside the exact streaming callback fails.
+No credential is sent to the plugin.
+
+Adapter accounting is declared at registration:
+
+- `mode: "direct"` (the default) records a potentially billable submission and
+  checks the host workflow budget before invoking the callback. Returned usage
+  is plugin-reported usage for this adapter's work. Omitted usage remains unknown,
+  not zero. Any additional `host.model.invoke` calls have their own submissions
+  and costs.
+- `mode: "delegate"` is for wrappers such as
+  `{ id: "example.forward", version: 1, mode: "delegate" }`. The wrapper has
+  logical-operation accounting but no billable parent submission. Its response
+  usage is a summary only; each host model child records its own actual provider
+  submissions and usage, so forwarding a response does not charge it twice.
+
+These modes are explicit accounting contracts for trusted extensions. Native
+forwarding uses the host's configured credentials and provider transport. The
+Extension API does not provide a credential-attaching arbitrary HTTP transport,
+and Wuu cannot enforce its inference budget over arbitrary network requests made
+by plugin code outside host services.
+
+`model.adapter` and `model.middleware` handlers are intrinsically reentrant in
+both SDKs: they can overlap a tool or callback that is awaiting them. Protect shared
+mutable state. TypeScript's additional `concurrentCapabilities` and
+`concurrentServices` remain explicit opt-ins; lifecycle barriers still apply.
+
+### Generation-owned background work
+
+Declare `requireBackgroundService()`, provide a versioned service with a finite
+handler, then call `startBackground(host, { key, service, method, params?,
+timeout_ms? })` after activation. The target must be a service owned by that same
+plugin generation. Starting returns `{ job_id, execution_id }`; the callback
+receives a normal scoped host and cancellation signal. It may call the model
+service after the originating conversation or observer handler has returned.
+
+Use `inspectBackground(host, { job_id })` for `running`, `completed`, `failed` or
+`cancelled` and any result/error; use `cancelBackground` to stop it. A running key
+is unique per plugin, with at most 64 running jobs and 64 retained terminal results.
+Parameters and results are each bounded to 1 MiB. Handles and results are not a
+durable scheduler: reload, disable, generation retirement and process loss cancel
+owned work; old generations cannot start more. Plugins own timers, scheduling,
+budgets, snapshot invalidation and durable business state, and clear timers during
+shutdown.
+
+The public-SDK [bounded replay fixture](../../../scripts/fixtures/model-pipeline/replay.ts)
+and [shadow comparison fixture](../../../scripts/fixtures/model-pipeline/shadow.ts)
+exercise these surfaces with synthetic data. They are acceptance fixtures, not
+installed caching or comparison products. Run
+`node scripts/plugin-model-pipeline-e2e.mjs` against a source-built core; the driver
+uses a local fake provider and records repeatable evidence without paid inference.
 
 ## Providing a service
 
