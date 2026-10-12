@@ -17,6 +17,19 @@ import (
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
 
+// doneObservedContext makes the queued-write cancellation deterministic: the
+// request has reached its cancellable wait while another write owns the lock.
+type doneObservedContext struct {
+	context.Context
+	observed chan struct{}
+	once     sync.Once
+}
+
+func (ctx *doneObservedContext) Done() <-chan struct{} {
+	ctx.once.Do(func() { close(ctx.observed) })
+	return ctx.Context.Done()
+}
+
 // buildFakeCodex compiles the fake app-server binary once per test run.
 func buildFakeCodex(t *testing.T) string {
 	t.Helper()
@@ -200,6 +213,197 @@ func TestEngineEndToEndFakeCodex(t *testing.T) {
 		History: []providers.ChatMessage{{Role: "user", Content: "resume"}},
 	}, nil); err != nil {
 		t.Fatalf("resumed RunTurn: %v", err)
+	}
+
+	// Exercise failure recovery through the real subprocess and NDJSON adapter,
+	// with a second live conversation sharing the same process. No inference or
+	// user credentials are involved in this journey.
+	for _, mode := range []string{"completed-exit", "crash", "invalid-json", "overflow-completed", "overflow-unconfirmed", "cancel-unconfirmed", "cancel-start-confirmed", "start-response-invalid", "error-unconfirmed", "invalid-terminal", "invalid-terminal-status"} {
+		t.Run(mode, func(t *testing.T) {
+			scenarioCtx, scenarioCancel := context.WithTimeout(context.Background(), 8*time.Second)
+			t.Cleanup(scenarioCancel)
+			scenarioHost := NewHost(binary, t.TempDir())
+			requestLog := filepath.Join(t.TempDir(), "requests.jsonl")
+			scenarioHost.env = append(os.Environ(), "WUU_TEST_CODEX_REQUESTS="+requestLog)
+			scenarioEngine := NewEngine(scenarioHost)
+			peer, err := scenarioEngine.Open(scenarioCtx, agentengine.OpenRequest{ThreadID: "peer", RootDir: t.TempDir()})
+			if err != nil {
+				t.Fatal(err)
+			}
+			primary, err := scenarioEngine.Open(scenarioCtx, agentengine.OpenRequest{ThreadID: "primary", RootDir: t.TempDir()})
+			if err != nil {
+				t.Fatal(err)
+			}
+			client := primary.(*Session).client
+			t.Cleanup(func() { _ = client.Close() })
+			await := func(out <-chan turnOutcome) turnOutcome {
+				t.Helper()
+				select {
+				case result := <-out:
+					return result
+				case <-scenarioCtx.Done():
+					t.Fatalf("%s: turn remained running: %v", mode, scenarioCtx.Err())
+					return turnOutcome{}
+				}
+			}
+			peerStarted := make(chan struct{})
+			peerResult := make(chan turnOutcome, 1)
+			peerCtx, stopPeer := context.WithCancel(scenarioCtx)
+			go func() {
+				var once sync.Once
+				result, err := peer.RunTurn(peerCtx, agentengine.TurnInput{History: []providers.ChatMessage{{Role: "user", Content: "e2e:pending"}}}, func(event providers.StreamEvent) {
+					if event.Type == providers.EventContentDelta {
+						once.Do(func() { close(peerStarted) })
+					}
+				})
+				peerResult <- turnOutcome{result: result, err: err}
+			}()
+			select {
+			case <-peerStarted:
+			case <-scenarioCtx.Done():
+				t.Fatalf("%s: peer failed to start", mode)
+			}
+
+			started := make(chan struct{})
+			if mode == "cancel-start-confirmed" {
+				unsub := client.OnNotification(NotifyAgentMessageDelta, func(raw json.RawMessage) {
+					var params struct {
+						ThreadID string `json:"threadId"`
+					}
+					if json.Unmarshal(raw, &params) == nil && params.ThreadID != peer.(*Session).ref {
+						select {
+						case <-started:
+						default:
+							close(started)
+						}
+					}
+				})
+				defer unsub()
+			}
+			release := make(chan struct{})
+			var releaseOnce sync.Once
+			unblock := func() { releaseOnce.Do(func() { close(release) }) }
+			t.Cleanup(unblock)
+			primaryResult := make(chan turnOutcome, 1)
+			primaryCtx, stopPrimary := context.WithCancel(scenarioCtx)
+			go func() {
+				var once sync.Once
+				result, err := primary.RunTurn(primaryCtx, agentengine.TurnInput{History: []providers.ChatMessage{{Role: "user", Content: "e2e:" + mode}}}, func(event providers.StreamEvent) {
+					if event.Type == providers.EventContentDelta {
+						once.Do(func() {
+							if mode != "cancel-start-confirmed" {
+								close(started)
+							}
+						})
+						if strings.HasPrefix(mode, "overflow-") {
+							<-release
+						}
+					}
+				})
+				primaryResult <- turnOutcome{result: result, err: err}
+			}()
+			select {
+			case <-started:
+			case <-scenarioCtx.Done():
+				t.Fatalf("%s: primary failed to start", mode)
+			}
+			if strings.HasPrefix(mode, "overflow-") {
+				primary.(*Session).mu.Lock()
+				ref := primary.(*Session).ref
+				primary.(*Session).mu.Unlock()
+				if err := client.Request(scenarioCtx, "test/emitBurst", map[string]string{"threadId": ref}, nil); err != nil {
+					t.Fatalf("%s: emit output burst: %v", mode, err)
+				}
+				unblock()
+			} else if strings.HasPrefix(mode, "invalid-terminal") {
+				if err := client.Request(scenarioCtx, "test/emitInvalidTerminal", map[string]string{"threadId": primary.(*Session).ref}, nil); err != nil {
+					t.Fatalf("emit invalid terminal: %v", err)
+				}
+			} else if mode == "cancel-unconfirmed" || mode == "cancel-start-confirmed" {
+				stopPrimary()
+			}
+			out := await(primaryResult)
+			stopPrimary()
+			if mode == "completed-exit" {
+				if out.err != nil || out.result.Result.Content != "Hello from codex." {
+					t.Fatalf("terminal output lost before process exit: %+v", out)
+				}
+			} else {
+				partialRetained := out.result.Result.Content == "Hello from"
+				if strings.HasPrefix(mode, "overflow-") {
+					partialRetained = strings.HasPrefix(out.result.Result.Content, "Hello from burst ")
+				}
+				if out.err == nil || !partialRetained || len(out.result.Result.NewMessages) == 0 {
+					t.Fatalf("%s: missing explicit failure or retained partial output: %+v", mode, out)
+				}
+				if strings.HasPrefix(mode, "overflow-") && !errors.Is(out.err, errTurnStreamOverflow) {
+					t.Fatalf("%s: overflow not reported: %v", mode, out.err)
+				}
+			}
+			if mode == "overflow-completed" || mode == "cancel-start-confirmed" || mode == "start-response-invalid" || strings.HasPrefix(mode, "invalid-terminal") {
+				// Proof that the native turn stopped must leave its healthy peer alive.
+				if mode == "overflow-completed" {
+					func() {
+						client.transport.writeMu.Lock()
+						defer client.transport.writeMu.Unlock()
+						queuedCtx, cancelQueued := context.WithCancel(scenarioCtx)
+						defer cancelQueued()
+						observed := &doneObservedContext{Context: queuedCtx, observed: make(chan struct{})}
+						queuedResult := make(chan error, 1)
+						go func() { queuedResult <- client.Request(observed, "config/read", map[string]any{}, nil) }()
+						select {
+						case <-observed.observed:
+						case <-scenarioCtx.Done():
+							t.Fatal("queued request did not enter its write wait")
+						}
+						cancelQueued()
+						if err := <-queuedResult; !errors.Is(err, context.Canceled) {
+							t.Fatalf("queued write cancellation = %v", err)
+						}
+					}()
+				}
+				if err := client.Request(scenarioCtx, "config/read", map[string]any{}, nil); err != nil {
+					t.Fatalf("healthy peer lost its shared transport: %v", err)
+				}
+				select {
+				case out := <-peerResult:
+					t.Fatalf("unrelated thread was affected by primary failure: %+v", out)
+				default:
+				}
+				stopPeer()
+			}
+			peerOut := await(peerResult)
+			stopPeer()
+			if peerOut.err == nil || peerOut.result.Result.Content != "Hello from" {
+				t.Fatalf("%s: peer did not settle with its partial output: %+v", mode, peerOut)
+			}
+			requests, err := os.ReadFile(requestLog)
+			if err != nil {
+				t.Fatal(err)
+			}
+			starts, interrupts := 0, 0
+			for _, line := range strings.Split(strings.TrimSpace(string(requests)), "\n") {
+				var request struct{ Method string }
+				if err := json.Unmarshal([]byte(line), &request); err != nil {
+					t.Fatal(err)
+				}
+				if request.Method == MethodTurnStart {
+					starts++
+				}
+				if request.Method == MethodTurnInterrupt {
+					interrupts++
+				}
+			}
+			if mode == "invalid-terminal-status" && interrupts != 2 {
+				t.Fatalf("invalid native terminal status left a turn without confirmed interruption: got %d interrupts, want primary and peer", interrupts)
+			}
+			if starts != 2 {
+				t.Fatalf("%s: turn submission replayed: got %d starts, want two conversations", mode, starts)
+			}
+			t.Logf("journey=%s primary_error=%v peer_error=%v partial_output_retained=true turn_starts=%d", mode, out.err, peerOut.err, starts)
+			scenarioCancel()
+			_ = client.Close()
+		})
 	}
 }
 

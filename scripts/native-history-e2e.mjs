@@ -196,6 +196,8 @@ try {
   assert.deepEqual((await native()).threads[editedRef].turns, originalNative.turns.slice(0, 1));
   assert.deepEqual((await native()).threads[sourceRef], originalNative);
   check("edit atomically switches to the prefix before the selected user turn");
+  const warmLifecycle = (await readFile(env.WUU_TEST_CODEX_LIFECYCLE, "utf8")).trim().split("\n").map(JSON.parse);
+  assert.equal(warmLifecycle.filter(event => event.method === "initialize").length, 1, "ordinary turns and history mutations must retain one warm native host");
   await stop();
   await start();
   assert.equal((await resume(source.id)).turns.length, 1);
@@ -272,6 +274,30 @@ try {
   check("large native tool turns complete and fork with every native item intact");
 
   const nativeStarts = async () => (await readFile(env.WUU_TEST_CODEX_REQUESTS, "utf8")).trim().split("\n").map(JSON.parse).filter(request => request.method === "turn/start").length;
+  const emptyStart = (await rpc("thread/start", { engine: "codex" })).thread;
+  await mode("terminal-empty-start-response");
+  const emptyStarted = await run(emptyStart.id, "completed-before-empty-response");
+  assert.equal(emptyStarted.status, "failed", "the invalid response remains an explicit start error");
+  assert(rows(emptyStart.id).filter(row => row.role === "user").every(row => row.engine_turn_id && !row.engine_turn_pending));
+  assert(rows(emptyStart.id).some(row => row.role === "assistant" && row.content.includes("completed-before-empty-response")), "the completed native output must survive the response error");
+  await mode("");
+  assert.equal((await run(emptyStart.id, "continue-after-empty-response")).status, "completed");
+  check("early native completion plus an empty start response retains output and permits safe continuation");
+
+  const disconnected = (await rpc("thread/start", { engine: "codex" })).thread;
+  await mode("disconnect-without-terminal");
+  assert.equal((await run(disconnected.id, "disconnect-with-partial")).status, "failed");
+  assert(rows(disconnected.id).some(row => row.engine_turn_id && row.engine_turn_pending), "transport failure cannot synthesize native completion");
+  assert(rows(disconnected.id).some(row => row.role === "assistant" && row.content.includes("Retained partial output")));
+  const beforeDisconnectedRetry = await nativeStarts();
+  await mode("");
+  assert.equal((await run(disconnected.id, "must-not-repeat-disconnected-input")).status, "failed");
+  assert.equal(await nativeStarts(), beforeDisconnectedRetry);
+  await mode("settle-on-read");
+  assert.equal((await run(disconnected.id, "continue-after-verified-stop")).status, "completed");
+  assert(rows(disconnected.id).every(row => !row.engine_turn_pending));
+  check("native EOF preserves partial output and pending admission until a native read proves settlement");
+  await mode("");
   for (const uncertain of [false, true]) {
     const interrupted = (await rpc("thread/start", { engine: "codex" })).thread;
     await mode(uncertain ? "no-interrupt-reply" : "hold-turn");
@@ -337,7 +363,11 @@ try {
   check("unsupported external histories remain readable and unchanged after explicit fork/edit refusal");
 
   const lifecycle = (await readFile(env.WUU_TEST_CODEX_LIFECYCLE, "utf8")).trim().split("\n").map(JSON.parse);
-  assert.equal(lifecycle.filter(event => event.method === "initialize").length, 3);
+  // Three explicit app-server generations plus at most four native retirements:
+  // uncertain internal admission, injected EOF, unconfirmed Stop, and failed
+  // boundary persistence. None may introduce per-turn process recreation.
+  const initializations = lifecycle.filter(event => event.method === "initialize").length;
+  assert(initializations >= 3 && initializations <= 7, `unexpected native process churn: ${initializations}`);
   const wire = (await readFile(env.WUU_TEST_CODEX_REQUESTS, "utf8")).trim().split("\n").map(JSON.parse);
   assert(!wire.some(request => request.method === "thread/rollback" || request.method === "thread/revert"));
   assert(!wire.some(request => request.method === "thread/unsubscribe" && request.params.threadId === sourceRef), "never unsubscribe the source while cleaning a child");

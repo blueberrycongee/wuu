@@ -199,7 +199,7 @@ func handleHistory(req request) bool {
 			items = append(items, answer)
 		}
 		status := "completed"
-		if control.Mode == "hold-turn" || control.Mode == "no-interrupt-reply" {
+		if control.Mode == "hold-turn" || control.Mode == "no-interrupt-reply" || control.Mode == "disconnect-without-terminal" {
 			status = "inProgress"
 			items = items[:1]
 		}
@@ -215,14 +215,23 @@ func handleHistory(req request) bool {
 			respondError(req.ID, -32603, "injected failure after native admission")
 			return true
 		}
-		respond(req.ID, map[string]any{"turn": map[string]any{"id": id}})
+		if control.Mode != "terminal-empty-start-response" {
+			respond(req.ID, map[string]any{"turn": map[string]any{"id": id}})
+		}
 		notify("turn/started", map[string]any{"threadId": thread.ID, "turn": map[string]any{"id": id}})
 		for _, item := range items[1:] {
 			notify("item/started", map[string]any{"threadId": thread.ID, "turnId": id, "item": item})
 			notify("item/completed", map[string]any{"threadId": thread.ID, "turnId": id, "item": item})
 		}
+		if control.Mode == "disconnect-without-terminal" {
+			notify("item/agentMessage/delta", map[string]any{"threadId": thread.ID, "turnId": id, "itemId": id + "-partial", "delta": "Retained partial output"})
+			os.Exit(1)
+		}
 		if status != "inProgress" {
 			notify("turn/completed", map[string]any{"threadId": thread.ID, "turn": map[string]any{"id": id, "status": status}})
+		}
+		if control.Mode == "terminal-empty-start-response" {
+			respond(req.ID, map[string]any{"turn": map[string]any{"id": ""}})
 		}
 	case "turn/interrupt":
 		if control.Mode == "no-interrupt-reply" {

@@ -1081,6 +1081,7 @@ func (s *Server) ensureThreadRuntime(th *threadState) (*runtime.ThreadRuntime, e
 	// of a managed session and reuse of a runtime cached before rerouting.
 	th.mu.Lock()
 	boundProject := th.WorkspaceID != ""
+	engineID := agentengine.NormalizeEngineID(th.EngineID)
 	binding := session.Session{WorkspaceID: th.WorkspaceID, CWD: th.CWD, WorktreeBaseRepo: th.WorktreeBaseRepo}
 	th.mu.Unlock()
 	if boundProject {
@@ -1095,7 +1096,7 @@ func (s *Server) ensureThreadRuntime(th *threadState) (*runtime.ThreadRuntime, e
 	// External-engine threads (codex, later claude) carry no native
 	// StreamRunner: the engine session drives the turn in the external
 	// process. Only the engine stamp is needed on the runtime handle.
-	if agentengine.NormalizeEngineID(th.EngineID) != agentengine.EngineWuu {
+	if engineID != agentengine.EngineWuu {
 		if remote, err := s.rt.RemoteProcesses(th.ID); err != nil {
 			return nil, err
 		} else if remote != nil {
