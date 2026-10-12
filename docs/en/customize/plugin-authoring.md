@@ -398,6 +398,17 @@ Use this only for reentrant handlers: protect shared mutable state and propagate
 
 Tool and capability calls have a host-owned execution ID. The SDK supplies `execution.signal`; pass it to cancellable operations and stop work when it aborts. Returning from the invocation closes its scope. Late progress cannot reopen a completed execution, and cancellation does not wait for the plugin to acknowledge it.
 
+App-server's read-only `plugin/executions/list` returns `{ executions: [...] }`
+for the connected runtime's current generation and older generations still held
+by active work. Each row adds `generation_id` and `retained` to the host-local
+`id`, owning `plugin_id`, available execution scope, and latest progress. Use the
+pair `(generation_id, id)` as a stable diagnostic key: different generations can
+both have `exec-1`. The original `id` and cancellation routes do not change.
+Rows are sorted by generation ID, then execution ID, and disappear when the
+invocation finishes; reading the list does not keep a generation alive. This is
+a point-in-time view, not execution history or a cross-workspace inventory.
+Disabling a plugin cancels its work across retained generations as well.
+
 `reportExecutionUpdate`, `invokeTool`, `askUserQuestions`, and `importArtifact` call versioned services and require the corresponding declarations. An orchestrator uses `activity.orchestrator=true` and `execution.invoke-tool` to delegate effects through the normal tool path. Keep a child `call_id` stable across retries with identical tool name and arguments; do not reuse it for different work.
 
 The `security.authorize` service may further restrict an operation, but cannot relax the host's mandatory boundary. A `sandbox.process` provider must supply real filesystem enforcement; it is not a command approval dialog. See [permissions](../reference/permissions.md) before implementing either.

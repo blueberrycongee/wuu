@@ -41,6 +41,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Keep live plugin executions visible in diagnostics after hot reload, with
+  generation-scoped identities that distinguish overlapping execution IDs.
+
 - Keep the sidebar's recent-history range stable while a first message creates
   its conversation, avoiding a temporary extra row and subsequent layout jump,
   including while saving a draft's custom name.

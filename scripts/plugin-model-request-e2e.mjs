@@ -106,7 +106,9 @@ const provider = createServer(async (request, response) => {
 });
 await new Promise(resolve => provider.listen(0, "127.0.0.1", resolve));
 // Do not inherit credentials, Wuu settings, or provider endpoint overrides.
-const env = { PATH: process.env.PATH, HOME: scratch, WUU_HOME: home, WUU_NODE_EXECUTABLE: process.execPath };
+const env = { PATH: process.env.PATH, HOME: scratch, WUU_HOME: home, WUU_NODE_EXECUTABLE: process.execPath,
+  ...(process.env.GOMAXPROCS ? { GOMAXPROCS: process.env.GOMAXPROCS } : {}),
+};
 
 try {
   result.core_sha256 = createHash("sha256").update(await readFile(binary)).digest("hex");
@@ -121,17 +123,24 @@ try {
     name: "model-fixture", version: "0.1.0", type: "module", scripts: { build: 'node -e ""' },
   }));
   await writeFile(join(pkg, "runtime.mjs"), `
-import { runJSONLRuntime, requestModel, requireModelRequestService } from "./sdk/index.js";
+import { runJSONLRuntime, requestModel, requireModelRequestService, reportExecutionUpdate } from "./sdk/index.js";
 runJSONLRuntime({
   initialize() {
     return {
       protocol_version: 3,
       host_services: [{ id: "host.service.call", required: true }],
-      required_services: [requireModelRequestService()],
+      required_services: [requireModelRequestService(), { name: "execution.update", major_version: 1, required: true }],
       capabilities: [{ id: "plugin.client.request", kind: "decision", version: 1 }],
     };
   },
-  async invokeCapability(params, host) {
+  async invokeCapability(params, host, execution) {
+    if (params.input.method === "hold") {
+      await reportExecutionUpdate(host, { execution_id: execution.executionId,
+        message: params.input.input.tag, detail: { generation: params.input.input.tag } });
+      execution.signal.throwIfAborted();
+      await new Promise(resolve => execution.signal.addEventListener("abort", resolve, { once: true }));
+      return { output: { result: { stopped: true } } };
+    }
     try {
       return { output: { result: await requestModel(host, params.input.input) } };
     } catch (error) {
@@ -201,18 +210,103 @@ runJSONLRuntime({
     } catch { stderr += `\nnon-JSON stdout: ${line}`; }
   });
   const initialized = await rpc("initialize", { protocol_version: "wuu-app-server/v0.1", client: { name: "model-service-e2e" } });
-  const item = initialized.extension_inventory.find(plugin => plugin.id.endsWith(":model-fixture"));
+  let item = initialized.extension_inventory.find(plugin => plugin.id.endsWith(":model-fixture"));
   assert(item, "published fixture is missing");
   assert.equal(item.runtime_state, "active", JSON.stringify(item));
   result.plugin = item;
   const registry = await rpc("plugin/registry/introspect");
   assert(registry.services.some(service => service.service === "host.model.request" && service.version === "1.0.0" && service.kernel));
   result.checks.push("versioned service registration");
+  // Real plugin processes keep foreground client calls alive across reloads.
+  // Their first execution IDs deliberately collide; cancellation stays scoped
+  // to the original client identity, never to a diagnostic display key.
+  const snapshots = async () => (await rpc("plugin/executions/list")).executions;
+  const waitForExecution = async tag => {
+    const deadline = Date.now() + 10_000;
+    do {
+      const rows = await snapshots();
+      const row = rows.find(row => row.message === tag);
+      if (row) return row;
+      await new Promise(resolve => setTimeout(resolve, 20));
+    } while (Date.now() < deadline);
+    throw new Error(`Missing live execution: ${tag}`);
+  };
+  const hold = tag => {
+    const identity = { id: item.id, fingerprint: item.fingerprint, request_id: tag };
+    return { identity, response: rpcRaw("plugin/client/request", { ...identity, method: "hold", input: { tag } }) };
+  };
+  const reload = async () => {
+    const source = join(pkg, "runtime.mjs");
+    await writeFile(source, (await readFile(source, "utf8")) + "\n// Same-source lifecycle fixture update.\n");
+    const update = spawnSync(binary, ["plugin", "dev", "--watch=false", pkg], { env, encoding: "utf8", timeout: 20_000 });
+    assert.equal(update.status, 0, update.stderr);
+    const refreshed = await rpc("extension/catalog/refresh");
+    const previous = item;
+    item = refreshed.extension_inventory.find(plugin => plugin.id === previous.id);
+    assert.equal(item.runtime_state, "active");
+    assert.notEqual(item.fingerprint, previous.fingerprint);
+  };
+  const initialHold = hold("diagnostics-initial");
+  const initialRow = await waitForExecution("diagnostics-initial");
+  result.execution_diagnostics = { before_reload: await snapshots() };
+  await reload();
+  const secondHold = hold("diagnostics-second");
+  const secondRow = await waitForExecution("diagnostics-second");
+  const during = await snapshots();
+  result.execution_diagnostics.during_reload = during;
+  assert.equal(during.length, 2, "retained foreground execution disappeared after reload");
+  assert.equal(initialRow.id, secondRow.id, "fixture must exercise colliding host-local execution IDs");
+  assert(initialRow.generation_id && secondRow.generation_id);
+  assert.notEqual(initialRow.generation_id, secondRow.generation_id);
+  assert.equal(initialRow.retained, false);
+  assert.equal(secondRow.retained, false);
+  assert.equal(during.find(row => row.generation_id === initialRow.generation_id).retained, true);
+  assert.deepEqual(during, await snapshots(), "unchanged diagnostics must have stable ordering and identities");
+  assert.deepEqual(during.map(row => [row.generation_id, row.id]),
+    [...during].sort((a, b) => a.generation_id < b.generation_id ? -1 : a.generation_id > b.generation_id ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
+      .map(row => [row.generation_id, row.id]));
+  await reload();
+  const thirdHold = hold("diagnostics-third");
+  const thirdRow = await waitForExecution("diagnostics-third");
+  const multiple = await snapshots();
+  result.execution_diagnostics.multiple_retained = multiple;
+  assert.equal(multiple.length, 3);
+  assert.equal(multiple.filter(row => row.retained).length, 2);
+  assert.equal(new Set(multiple.map(row => `${row.generation_id}/${row.id}`)).size, 3);
+  assert.equal(thirdRow.id, initialRow.id);
+  assert.equal((await rpc("plugin/client/cancel", initialHold.identity)).cancelled, true);
+  assert((await initialHold.response).error);
+  const afterCancel = await snapshots();
+  result.execution_diagnostics.after_cancel = afterCancel;
+  assert.equal(afterCancel.length, 2, "old generation cancellation affected another generation");
+  assert(!afterCancel.some(row => row.generation_id === initialRow.generation_id));
+  const retirementDeadline = Date.now() + 10_000;
+  let retirement;
+  do {
+    // Repeated diagnostics run while the last foreground owner releases and
+    // shuts down its host; readers must not pin that generation themselves.
+    const [, diagnostics] = await Promise.all([snapshots(), rpc("plugin/generation-diagnostics/list")]);
+    retirement = diagnostics.reports.find(report => report.generation_id === initialRow.generation_id);
+    if (retirement) break;
+    await new Promise(resolve => setTimeout(resolve, 20));
+  } while (Date.now() < retirementDeadline);
+  assert(retirement, "diagnostic reads kept a released generation alive");
+  result.execution_diagnostics.retirement = retirement;
+  await rpc("extension/package/update", { id: item.id, fingerprint: item.fingerprint, action: "disable" });
+  assert((await secondHold.response).error);
+  assert((await thirdHold.response).error);
+  assert.deepEqual(await snapshots(), [], "disable left current or retained work visible");
+  result.execution_diagnostics.after_disable = await snapshots();
+  const enabled = await rpc("extension/package/update", { id: item.id, fingerprint: item.fingerprint, action: "enable" });
+  item = enabled.extension_inventory.find(plugin => plugin.id === item.id);
+  assert.equal(item.runtime_state, "active");
+  result.checks.push("retained execution diagnostics across repeated reload, colliding IDs, isolated cancellation, and disable");
   const before = await rpc("thread/list");
   const input = tag => ({ messages: [{ role: "system", content: "Return fixture data." }, { role: "user", content: tag }], max_output_tokens: 32 });
   const params = (request_id, value) => ({ id: item.id, fingerprint: item.fingerprint, request_id, method: "model", input: value });
   const call = async (requestID, value) => (await rpc("plugin/client/request", params(requestID, value))).result;
   const success = await call("success", input("success"));
+  assert.deepEqual(await snapshots(), [], "completed invocation remained in diagnostics");
   assert.equal(success.text, "fixture:success");
   assert.equal(success.provider, "fixture");
   assert.equal(success.model, "gpt-test");

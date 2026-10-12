@@ -304,6 +304,15 @@ const plugin: RuntimePlugin = {
 
 工具和能力调用具有宿主管理的执行 ID。SDK 提供 `execution.signal`，应传给可取消操作，在信号中止时停止工作。调用返回后，执行作用域关闭；迟到的进度不能重新打开已完成执行，取消也不会等待插件确认。
 
+App-server 的只读 `plugin/executions/list` 返回 `{ executions: [...] }`，
+包含当前连接运行时的当前 generation，以及仍被活动工作持有的旧 generation。
+每行在宿主局部 `id`、所属 `plugin_id`、可用执行作用域和最新进度之外，增加
+`generation_id` 与 `retained`。用 `(generation_id, id)` 作为稳定的诊断标识：
+不同 generation 都可能存在 `exec-1`。原有 `id` 和取消路由保持不变。
+结果按 generation ID、执行 ID 排序；调用结束后移除，读取列表不会延长
+任何 generation 的寿命。这是即时快照，不是执行历史或跨工作区清单。
+禁用插件也会取消其旧 generation 中的工作。
+
 `reportExecutionUpdate`、`invokeTool`、`askUserQuestions` 和 `importArtifact` 都调用版本化服务，需要对应声明。编排工具使用 `activity.orchestrator=true` 和 `execution.invoke-tool`，通过正常工具链委托副作用。重试相同工具和参数时，保持子调用 `call_id` 不变；不要用同一个 ID 表示不同工作。
 
 `security.authorize` 服务可以进一步限制操作，但不能放宽宿主的强制边界。`sandbox.process` provider 必须提供真实的文件系统约束，不是命令审批弹窗。实现前请阅读[权限](../reference/permissions.md)。
