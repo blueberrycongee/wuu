@@ -41,6 +41,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- MCP server-request replies no longer block healthy tool calls or notifications.
+  Reply work is bounded, follows its originating call's cancellation, and stops
+  on connection close without replaying replies into a replacement session.
+
 - Remote MCP notification streams recover after session expiry or credential
   refresh, discard obsolete session messages, and report unrecoverable handshakes
   as connection failures. Concurrent expired calls share one recovery, renewed

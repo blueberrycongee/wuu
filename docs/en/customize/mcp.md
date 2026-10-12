@@ -36,6 +36,19 @@ occurred. Other calls and the server notification stream stay connected.
 A POST response with another call's ID is rejected without resolving that other
 call. Server-initiated requests use a separate ID namespace.
 
+Replies to server-initiated requests use a separate bounded lane: up to four
+sends and 32 waiting replies per connection, with a five-second budget including
+queue time. A stalled reply does not block tool results or notifications.
+Completing or cancelling the originating POST call cancels its queued and active
+replies; a server cancellation targets the exact numeric or string request ID.
+Disconnect cancels reply work and waits for the senders to stop. Failed or
+excess replies fail their originating call without replaying it. An unsolicited
+request flood that fills the queue closes the connection with a capacity error;
+individual unsolicited send failures are logged. A reply rejected with an expired
+session is not resent into a new session. Queued replies and authentication retries
+stay bound to the session that received the request; replacing that session
+invalidates them without sending them with the new session ID.
+
 Remote `headers` are literal header values. Native `mcp_servers` does not expand `${VAR}` placeholders. Keep secrets out of committed configuration and do not assume a placeholder is a credential reference. `enabled: false` retains a definition without connecting at startup.
 
 ## Manage the connection

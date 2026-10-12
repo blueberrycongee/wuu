@@ -208,9 +208,10 @@ func (t *StreamableHTTPTransport) Send(ctx context.Context, req Request) error {
 	// Session expiry (spec, Session Management #3-4): a 404 for a request
 	// that carried the session ID means the server terminated the session;
 	// the client MUST start a new session with a new InitializeRequest.
-	// Re-initialize once and retry the original message once.
+	// Re-initialize once and retry the original message once. A reverse reply
+	// belongs to the old session and must never be replayed into a new one.
 	var herr *streamableHTTPError
-	if errors.As(err, &herr) && herr.status == http.StatusNotFound && herr.hadSession && req.Method != "initialize" {
+	if errors.As(err, &herr) && herr.status == http.StatusNotFound && herr.hadSession && req.Method != "" && req.Method != "initialize" {
 		if rerr := t.reinitialize(ctx, herr.generation); rerr != nil {
 			return fmt.Errorf("streamable HTTP session at %s expired (HTTP 404) and re-initialize failed: %w", t.endpoint, rerr)
 		}
@@ -240,6 +241,14 @@ func (t *StreamableHTTPTransport) postWithAuthRetry(ctx context.Context, req Req
 func (t *StreamableHTTPTransport) post(ctx context.Context, req Request, body []byte, forceRefresh bool) (err error) {
 	for {
 		t.mu.Lock()
+		// A queued reply or authentication retry still belongs to the session
+		// that received its server request, even before recovery publishes the
+		// next generation. Never borrow replacement-session headers.
+		if origin := req.requestOrigin; origin != nil && (origin.generation != t.generation ||
+			(t.recovery != nil && t.recovery.generation == origin.generation)) {
+			t.mu.Unlock()
+			return errors.New("mcp server request session is no longer current")
+		}
 		// Recovery owns the handshake notification. Ordinary messages must never
 		// observe its temporarily empty or not-yet-initialized session.
 		if recovery := t.recovery; recovery != nil && req.Method != "initialize" && req.Method != "notifications/initialized" {
@@ -526,6 +535,7 @@ func (t *StreamableHTTPTransport) consumeStream(ctx context.Context, body io.Rea
 			Error: &RPCError{Code: -32000, Message: fmt.Sprintf("streamable HTTP POST %s: response stream ended before reply: %v", t.endpoint, err)},
 		}, generation)
 	}
+	originContext := &serverRequestOrigin{ctx: ctx, generation: generation, callID: origin.ID, isCall: isCall}
 	reader := bufio.NewReader(body)
 	for {
 		event, err := readSSEEvent(reader)
@@ -550,6 +560,9 @@ func (t *StreamableHTTPTransport) consumeStream(ctx context.Context, body io.Rea
 		if isCall && msg.Method == "" && !responseMatchesRequest(origin, msg) {
 			fail(errors.New("response does not match the originating request"))
 			return
+		}
+		if isCall && msg.Method != "" {
+			msg.requestOrigin = originContext
 		}
 		t.observeInitialize(origin, msg, session, generation)
 		if !t.deliverContext(ctx, msg, generation) {
@@ -927,6 +940,12 @@ func (t *StreamableHTTPTransport) Receive(ctx context.Context) (Response, error)
 			}
 			t.mu.Unlock()
 			if current {
+				if message.response.Method != "" && message.response.requestOrigin == nil {
+					// A GET listener can restart after authentication refresh within
+					// one session. Its request replies follow the transport, not the
+					// individual GET stream's cancellation.
+					message.response.requestOrigin = &serverRequestOrigin{ctx: t.ctx, generation: message.generation}
+				}
 				return message.response, nil
 			}
 		}
