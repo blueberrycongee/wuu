@@ -459,7 +459,9 @@ func (m *Manager) RemoveOAuth(ctx context.Context, name string) error {
 	if err := oauth.Remove(ctx, cfg.Name); err != nil {
 		return err
 	}
-	m.closeClient(cfg.Name)
+	if err := m.Disconnect(cfg.Name); err != nil {
+		return err
+	}
 	m.recordStatus(ServerStatus{Name: cfg.Name, State: MCPServerStateAuthRequired, AuthStatus: MCPAuthStatusNotLoggedIn})
 	return nil
 }
@@ -825,21 +827,6 @@ func (m *Manager) recordConnectionStatus(generation uint64, status ServerStatus,
 		_ = client.Close()
 	}
 	return nil
-}
-
-func (m *Manager) closeClient(name string) {
-	m.mu.Lock()
-	c := m.clients[name]
-	if c != nil {
-		delete(m.clients, name)
-		m.generation++
-		m.operations.Add(1)
-	}
-	m.mu.Unlock()
-	if c != nil {
-		defer m.operations.Done()
-		_ = c.Close()
-	}
 }
 
 func cloneServerConfig(cfg ServerConfig) ServerConfig {
