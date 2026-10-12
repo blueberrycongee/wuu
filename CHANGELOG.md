@@ -10,6 +10,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Optional unsent-text recovery after a renderer reload, disabled by default.
+  Recovery copies are limited to the current window, 20 drafts, 32K characters
+  per draft and 24 hours; closing the window or disabling recovery clears them.
+  Attachments and quotes are excluded.
+
 - iOS conversation settings can select a computer's available engine before the
   first message, and edit the selected engine's models, reasoning and advertised
   permission modes. Existing conversations display their bound engine.

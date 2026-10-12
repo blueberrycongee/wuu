@@ -1,4 +1,7 @@
 export const zhCN = {
+  "settings.draftRecovery": "重新加载后恢复未发送文字",
+  "settings.draftRecoveryDescription": "默认关闭。开启后，在当前窗口本地保存最多 20 条文字草稿，保留 24 小时（每条最多 32K 字符）。关闭窗口或此开关会清理恢复副本。仅恢复文字，附件与引用关联不会恢复，请勿在保存的草稿中输入密钥。",
+  "settings.draftRecoveryUnavailable": "草稿恢复存储不可用，当前输入仍然保留。",
   "execution.knownHosts": "SSH 已知主机文件",
   "execution.mount": "本机工作目录（可选）",
   "execution.mountReadOnly": "只读挂载本机目录",
@@ -2175,6 +2178,7 @@ export const zhCN = {
   "runtime.startFailed": "启动运行时失败",
   "composer.compactFailed": "压缩上下文失败",
   "composer.sendFailed": "发送失败",
+  "composer.recoveredInterruptedDraft": "已恢复中断发送时的文字草稿。再次发送前请先检查对话记录，附件不会恢复。",
   "composer.failedDraftSaved": "发送失败，可以打开保留的草稿或丢弃它。",
   "composer.openFailedDraft": "打开草稿",
   "composer.discardFailedDraft": "丢弃未发送的草稿",

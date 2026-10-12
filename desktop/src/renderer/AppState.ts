@@ -2237,15 +2237,18 @@ function sessionTabForLoadedRuntime(
   context: RuntimeContext,
   thread: Thread | undefined,
 ): SessionTab {
+  // A recovered tab must match the directory as well as the project id.
+  // Workspace relocation must not put old input into a different runtime.
+  const contextTabs = tabs.filter((tab) => sameRuntimeContext(tab.context, context) && tab.context.cwd === context.cwd);
   if (thread) {
     return createThreadSessionTab(
       thread,
       context,
-      sessionTabDraftForThreadID(tabs, thread.id),
+      sessionTabDraftForThreadID(contextTabs, thread.id),
     );
   }
   return (
-    draftSessionTabForContext(tabs, context) ??
+    draftSessionTabForContext(contextTabs, context) ??
     createDraftSessionTab(draftSessionTabIDForContext(context), context)
   );
 }

@@ -92,6 +92,7 @@ export async function loadRuntime(
   workspaceState: ProjectListResult,
   options: {
     resumeLatestThread?: boolean;
+    resumeThreadID?: string;
   } = {},
 ): Promise<LoadedRuntimeState> {
   if (!workspaceState.active_context) {
@@ -112,7 +113,8 @@ export async function loadRuntime(
   // land), falling back to a pinned one when nothing else exists.
   const liveThreads = listedThreads.filter((candidate) => !candidate.archived);
   const defaultThread = resumeLatestThread
-    ? (liveThreads.find((candidate) => !candidate.pinned) ?? liveThreads[0])
+    ? (liveThreads.find((candidate) => candidate.id === options.resumeThreadID) ??
+      liveThreads.find((candidate) => !candidate.pinned) ?? liveThreads[0])
     : undefined;
   const resumed: ThreadResumeResult | undefined = defaultThread
     ? await window.wuu.resumeThread(defaultThread.id)

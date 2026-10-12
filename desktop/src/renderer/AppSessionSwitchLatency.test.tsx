@@ -1,3 +1,4 @@
+import { readComposerDraftRecovery, setComposerDraftRecoveryEnabled } from "./ComposerDraftRecovery";
 import { openComposerAttachmentPicker } from "./test/attachmentPicker";
 /**
  * Session switching keeps the outgoing conversation covered until the resumed
@@ -414,6 +415,7 @@ describe("session tab switch latency", () => {
     container = document.createElement("div");
     document.body.appendChild(container);
     window.localStorage.clear();
+    window.sessionStorage.clear();
   });
 
   afterEach(() => {
@@ -658,6 +660,7 @@ describe("session tab switch latency", () => {
     { activePane: "primary", direct: false }, { activePane: "secondary", direct: false },
     { activePane: "primary", direct: true }, { activePane: "secondary", direct: true },
   ])("preserves both split drafts from $activePane (direct pane promotion=$direct)", async ({ activePane, direct }) => {
+    setComposerDraftRecoveryEnabled(true);
     const { threadsByID } = installWuuApi();
     const third = { ...threadB(), id: "thread-third", preview: "third conversation" };
     threadsByID.set(third.id, third);
@@ -692,6 +695,12 @@ describe("session tab switch latency", () => {
     await flushAsync();
     const restoredB = mainComposerTextarea().value;
     expect({ restoredA, restoredB }).toEqual({ restoredA: "new draft for A", restoredB: "new draft for B" });
+    const recovered = readComposerDraftRecovery().tabs.filter(tab => tab.kind === "thread");
+    expect(recovered.find(tab => tab.threadID === threadAID)?.prompt).toBe("new draft for A");
+    expect(recovered.find(tab => tab.threadID === threadBID)?.prompt).toBe("new draft for B");
+    await act(async () => { root!.unmount(); root = createRoot(container); root.render(<App />); });
+    await flushAsync();
+    expect(mainComposerTextarea().value).toBe("new draft for B");
   });
 
   it("keeps the rendered target draft when a delayed fork completes after switching", async () => {
@@ -1255,6 +1264,7 @@ describe("session tab switch latency", () => {
   });
 
   it.each(["", "newer draft"])("preserves failed input without overwriting the current draft (%s)", async (newerDraft) => {
+    setComposerDraftRecoveryEnabled(true);
     const { startTurn } = installWuuApi();
     const pending = deferred<{ turn: Turn }>();
     startTurn.mockReturnValueOnce(pending.promise);
@@ -1263,19 +1273,25 @@ describe("session tab switch latency", () => {
     // Repeating an earlier prompt is not evidence that this send was admitted.
     const text = threadA().turns[0].items[0].text!;
     await act(async () => { setMainComposerPrompt(text); });
+    expect(readComposerDraftRecovery().tabs.map(tab => tab.kind !== "skills" && tab.prompt)).toContain(text);
     await act(async () => { mainComposerSendButton().click(); });
     expect(mainComposerTextarea().value).toBe("");
     await act(async () => { setMainComposerPrompt(newerDraft); });
+    expect(readComposerDraftRecovery().tabs.map(tab => tab.kind !== "skills" && tab.prompt)).toContain(text);
     await act(async () => { pending.reject(new Error("send rejected")); });
     expect(mainComposerTextarea().value).toBe(newerDraft || text);
     if (newerDraft) {
       expect(activeThreadProbe()?.dataset.latestUserText).toBe(text);
       expect(activeThreadProbe()?.dataset.latestTurnStatus).toBe("failed");
     }
+    const recovered = readComposerDraftRecovery().tabs.map(tab => tab.kind !== "skills" && tab.prompt);
+    expect(recovered).toContain(text);
+    if (newerDraft) expect(recovered).toContain(newerDraft);
     expect(startTurn).toHaveBeenCalledTimes(1);
   });
 
   it.each(["accepted", "rejected"])("does not reactivate a submitted conversation when its delayed response is %s", async (outcome) => {
+    setComposerDraftRecoveryEnabled(true);
     const { startTurn } = installWuuApi();
     const pending = deferred<{ turn: Turn }>();
     startTurn.mockReturnValueOnce(pending.promise);
@@ -1293,6 +1309,13 @@ describe("session tab switch latency", () => {
       }
     });
     expect(activeSessionTabLabel()).toContain("session switch B");
+    expect(mainComposerTextarea().value).toBe("draft for B");
+    const recovered = readComposerDraftRecovery().tabs.map(tab => tab.kind !== "skills" && tab.prompt);
+    expect(recovered).toContain("draft for B");
+    if (outcome === "accepted") expect(recovered).not.toContain("send to A");
+    else expect(recovered).toContain("send to A");
+    await act(async () => { root!.unmount(); root = createRoot(container); root.render(<App />); });
+    await flushAsync();
     expect(mainComposerTextarea().value).toBe("draft for B");
     expect(startTurn).toHaveBeenCalledTimes(1);
   });

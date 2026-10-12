@@ -1,3 +1,4 @@
+import { composerDraftRecoveryGeneration, composerDraftRecoveryEnabled, observeComposerDraftRecovery, readComposerDraftRecovery, sameRecoveryContext, writeComposerDraftRecovery } from "./ComposerDraftRecovery";
 import { validPdfSelectionReference } from "./PdfSelection";
 import { createArtifactComposerFile } from "./ArtifactComposerFile";
 import { SideConversationAvailableContext } from "./ResponseSelection";
@@ -413,6 +414,13 @@ function useStableCallback<T extends (...args: any[]) => any>(callback: T): T {
   );
 }
 
+// Canonical prompts include serialized file/quote context that is hidden behind
+// attachment chips. Only user-authored text crosses the recovery boundary.
+function composerRecoveryText(prompt: string, parts?: MessageContentPart[]): string {
+  return parts ? parts.filter((part) => part.type === "text" || part.type === "pasted_text")
+    .map((part) => part.text).join("") : prompt;
+}
+
 function readPopOutInit(): PopOutInitResult | null {
   try {
     const init = window.wuu.popOutInit();
@@ -452,8 +460,10 @@ export function App(): JSX.Element {
   const { locale, t } = useI18n();
   const [popOutInit] = useState<PopOutInitResult | null>(() => readPopOutInit());
   const poppedOutMode = Boolean(popOutInit?.kind && popOutInit.context);
+  const [recoveredDrafts] = useState(readComposerDraftRecovery);
   const [state, setState] = useState<AppState>(() => ({
     ...initialState,
+    sessionTabs: recoveredDrafts.tabs,
     lastViewedTurnByThreadID: readThreadReadState(),
   }));
   useEffect(() => {
@@ -474,7 +484,7 @@ export function App(): JSX.Element {
     prompt,
     promptRevision,
     setPrompt,
-    setPromptFromInput,
+    setPromptFromInput: updatePromptFromInput,
     composerImages,
     setComposerImages,
     composerFiles,
@@ -486,7 +496,7 @@ export function App(): JSX.Element {
     attachComposerAttachmentFiles,
     removeComposerImage,
     removeComposerFile,
-    setSplitComposerPrompt,
+    setSplitComposerPrompt: updateSplitComposerPrompt,
     attachSplitComposerAttachmentFiles,
     removeSplitComposerImage,
     removeSplitComposerFile,
@@ -1039,7 +1049,83 @@ export function App(): JSX.Element {
   const codexRuntimeRef = useRef<HTMLDivElement>(null);
   const environmentToggleRef = useRef<HTMLButtonElement>(null);
   const environmentPanelRef = useRef<HTMLDivElement>(null);
-  const appStateRef = useRef<AppState>(initialState);
+  const appStateRef = useRef<AppState>(state);
+  const pendingDraftRecovery = useRef(new Map<string, SessionTab>());
+  const recoveryTextSnapshots = useRef(new Map<string, { prompt: string; text: string; hasReferences: boolean }>());
+  const recoveryStorageWarning = useRef(false);
+  const saveDraftRecovery = useStableCallback((input?: { prompt: string; pane?: ConversationPaneID }) => {
+    if (!composerDraftRecoveryEnabled()) return;
+    const current = appStateRef.current;
+    // Boot has not selected a workspace yet. Never replace the recovery store
+    // with the initial empty/default composer while that selection is pending.
+    if (!current.initialized || !current.activeContext) return;
+    const tabs = new Map(current.sessionTabs.map((tab) => [tab.id, tab]));
+    if (current.thread && current.secondaryThread) {
+      for (const pane of ["primary", "secondary"] as const) {
+        const thread = pane === "primary" ? current.thread : current.secondaryThread;
+        const id = threadSessionTabID(thread.id);
+        const tab = tabs.get(id) ?? createThreadSessionTab(thread, resolveThreadRuntimeContext(thread, current.projects));
+        if (tab.kind === "skills") continue;
+        tabs.set(id, { ...tab, prompt: input?.pane === pane ? input.prompt : composerDraftsRef.current.split[pane].prompt });
+      }
+    } else {
+      const tab = tabs.get(current.activeSessionTabID);
+      if (tab && tab.kind !== "skills") {
+        tabs.set(tab.id, { ...tab, prompt: input && !input.pane ? input.prompt : composerDraftsRef.current.primary().prompt });
+      }
+    }
+    for (const [id, tab] of tabs) {
+      if (tab.kind === "skills") continue;
+      const parts = readCollapsedPromptParts(tab.kind === "thread" ? tab.threadID : id, tab.prompt);
+      const previous = recoveryTextSnapshots.current.get(id);
+      // The fold registry is bounded. Its eviction must not later serialize an
+      // unchanged hidden reference as if it were newly typed text. If input
+      // changes after its source metadata is lost, omit that uncertain draft.
+      const hasReferences = parts ? parts.some((part) => part.type !== "text" && part.type !== "pasted_text")
+        : Boolean(previous?.hasReferences && tab.prompt && tab.prompt !== previous.text);
+      const text = parts ? composerRecoveryText(tab.prompt, parts)
+        : previous?.prompt === tab.prompt ? previous.text
+        : hasReferences ? "" : tab.prompt;
+      recoveryTextSnapshots.current.set(id, { prompt: tab.prompt, text, hasReferences });
+      tabs.set(id, { ...tab, prompt: text });
+    }
+    for (const id of recoveryTextSnapshots.current.keys()) {
+      if (!tabs.has(id)) recoveryTextSnapshots.current.delete(id);
+    }
+    // Optimistic UI clearing is not acceptance. Retain the submitted text until
+    // the operation settles, without replacing input typed in the meantime.
+    for (const [messageID, tab] of pendingDraftRecovery.current) {
+      const live = tabs.get(tab.id);
+      if (!live || live.kind === "skills" || tab.kind === "skills") continue;
+      if (!live.prompt.trim()) tabs.set(tab.id, tab);
+      else if (live.prompt !== tab.prompt) {
+        const recovery = createDraftSessionTab(`draft:recovery:${messageID}`, tab.context, tab);
+        tabs.set(recovery.id, recovery);
+      }
+    }
+    const saved = writeComposerDraftRecovery([...tabs.values()], current.activeSessionTabID);
+    if (!saved && !recoveryStorageWarning.current) showErrorToast(t("settings.draftRecoveryUnavailable"));
+    recoveryStorageWarning.current = !saved;
+  });
+  function setPromptFromInput(value: string): void {
+    updatePromptFromInput(value);
+    // This is deliberately before the 400 ms shell publication: an immediate
+    // reload must recover the textarea's latest input, not its idle snapshot.
+    saveDraftRecovery({ prompt: value });
+  }
+  function setSplitComposerPrompt(pane: ConversationPaneID, value: string): void {
+    updateSplitComposerPrompt(pane, value);
+    saveDraftRecovery({ pane, prompt: value });
+  }
+  useEffect(() => {
+    saveDraftRecovery();
+  }, [state.sessionTabs, state.activeSessionTabID, state.initialized, state.activeContext,
+    state.thread?.id, state.secondaryThread?.id, prompt, promptRevision, splitComposerDrafts, saveDraftRecovery]);
+  useEffect(() => {
+    const stop = observeComposerDraftRecovery(() => saveDraftRecovery());
+    const timer = window.setInterval(() => saveDraftRecovery(), 60_000);
+    return () => { stop(); window.clearInterval(timer); };
+  }, [saveDraftRecovery]);
   const runningThreadReconcileInFlightRef = useRef("");
   const workspaceHasDirtyFilesRef = useRef(false);
   const lastFocusOutsideWorkspaceRef = useRef<{
@@ -1936,7 +2022,7 @@ export function App(): JSX.Element {
             return;
           }
           const { heldComposerMessages, ...runtimeAppState } = loadedState;
-          setState((current) => ({ ...current, ...runtimeAppState }));
+          restoreInitialComposerRuntime(runtimeAppState);
           if (loadedState.thread) {
             seedHeldComposerMessages(loadedState.thread.id, heldComposerMessages ?? []);
           }
@@ -1946,14 +2032,17 @@ export function App(): JSX.Element {
         const runtimeState = listedWorkspaces.active_context
           ? listedWorkspaces
           : await window.wuu.selectNoProject(false);
-        const loadedState = await loadRuntime(runtimeState);
+        const activeRecovery = recoveredDrafts.tabs.find((tab) => tab.id === recoveredDrafts.activeTabID &&
+          runtimeState.active_context && sameRecoveryContext(tab.context, runtimeState.active_context));
+        const loadedState = await loadRuntime(runtimeState, {
+          resumeLatestThread: activeRecovery?.kind !== "draft",
+          resumeThreadID: activeRecovery?.kind === "thread" ? activeRecovery.threadID : undefined,
+        });
         if (!mounted) {
           return;
         }
         const { heldComposerMessages, ...runtimeAppState } = loadedState;
-        setState((current) =>
-          withLoadedRuntimeSessionTab(current, runtimeAppState),
-        );
+        restoreInitialComposerRuntime(runtimeAppState);
         if (loadedState.thread) {
           seedHeldComposerMessages(loadedState.thread.id, heldComposerMessages ?? []);
         }
@@ -2291,7 +2380,9 @@ export function App(): JSX.Element {
       return;
     }
   }
-  const [failedDraftTabIDs, setFailedDraftTabIDs] = useState<string[]>([]);
+  const [failedDraftTabIDs, setFailedDraftTabIDs] = useState<string[]>(() => recoveredDrafts.tabs
+    .filter((tab) => tab.id.startsWith("draft:recovery:"))
+    .map((tab) => tab.id));
   useEffect(() => {
     setFailedDraftTabIDs((ids) => ids.includes(state.activeSessionTabID)
       ? ids.filter((id) => id !== state.activeSessionTabID)
@@ -3561,6 +3652,32 @@ export function App(): JSX.Element {
     );
   }
 
+  function restoreInitialComposerRuntime(loadedState: Partial<AppState>): void {
+    const context = loadedState.activeContext;
+    const current = appStateRef.current;
+    // Consent may change while workspace/session loading is awaiting IPC.
+    // Revalidate at the point recovered input becomes visible, not only at read.
+    const generationIsCurrent = recoveredDrafts.generation === composerDraftRecoveryGeneration();
+    const sessionTabs = current.sessionTabs.filter((tab) => {
+      if (!generationIsCurrent && recoveredDrafts.tabs.some((recovered) => recovered.id === tab.id)) return false;
+      // Check inactive projects too: their id may now name another directory.
+      if (tab.context.kind === "project") {
+        const tabContext = tab.context;
+        const project = loadedState.projects?.find((project) => project.id === tabContext.project_id);
+        if (!project || project.path !== tab.context.cwd) return false;
+      }
+      return !context || !sameRuntimeContext(tab.context, context) || sameRecoveryContext(tab.context, context);
+    });
+    let next = withLoadedRuntimeSessionTab({ ...current, sessionTabs }, loadedState);
+    const active = sessionTabs.find((tab) => tab.id === recoveredDrafts.activeTabID &&
+      context && sameRecoveryContext(tab.context, context));
+    if (!next.thread && active?.kind === "draft") next = { ...next, activeSessionTabID: active.id };
+    const tab = activeSessionTab(next);
+    if (tab) restorePrimaryComposerDraft(cloneSessionTabDraft(tab));
+    appStateRef.current = next;
+    setState(next);
+  }
+
   function restoreSessionTabComposerDraft(tab: SessionTab): void {
     restorePrimaryComposerDraft(cloneSessionTabDraft(tab));
     setSplitComposerDrafts(initialSplitComposerDrafts());
@@ -4280,13 +4397,33 @@ export function App(): JSX.Element {
     const submissionKey = targetThread?.id ?? currentState.activeSessionTabID;
     const admission = turnAdmissionsRef.current.get(submissionKey);
     const busy = targetThread && isThreadRunning(targetThread) && !activeTurnIsAnswerReady(targetThread);
+    const recoveryOwner = targetThread
+      ? createThreadSessionTab(targetThread, resolveThreadRuntimeContext(targetThread, currentState.projects), draft)
+      : activeSessionTab(currentState);
+    if (recoveryOwner && recoveryOwner.kind !== "skills") {
+      const parts = contentParts ?? readCollapsedPromptParts(
+        recoveryOwner.kind === "thread" ? recoveryOwner.threadID : recoveryOwner.id, draft.prompt,
+      );
+      const previous = recoveryTextSnapshots.current.get(recoveryOwner.id);
+      const text = parts ? composerRecoveryText(draft.prompt, parts)
+        : previous?.prompt === draft.prompt ? previous.text
+        : previous?.hasReferences ? "" : draft.prompt;
+      pendingDraftRecovery.current.set(message.id, { ...recoveryOwner, prompt: text });
+    }
     const operation = admission || (!busy && queueLanesRef.current.has(submissionKey))
       ? queueComposerMessage(message, targetThread, admission)
       : busy
       ? resolveComposerRunningAction(runningAction, targetThread) === "steer"
         ? steerComposerMessage(message, targetThread)
         : queueComposerMessage(message, targetThread)
-      : sendComposerMessage(message, targetThread, targetPane, (thread) => { submittedThread = thread; });
+      : sendComposerMessage(message, targetThread, targetPane, (thread) => {
+          submittedThread = thread;
+          for (const [id, recovery] of pendingDraftRecovery.current) {
+            if (recovery.kind !== "skills" && recovery.id === recoveryOwner?.id) {
+              pendingDraftRecovery.current.set(id, createThreadSessionTab(thread, recovery.context, recovery));
+            }
+          }
+        });
     if (pane) {
       setSplitComposerDrafts((current) => ({ ...current, [pane]: emptyComposerDraft() }));
     } else {
@@ -4294,7 +4431,8 @@ export function App(): JSX.Element {
     }
     const sessionTabID = currentState.activeSessionTabID;
     void operation.then((sent) => {
-      if (sent) return;
+      pendingDraftRecovery.current.delete(message.id);
+      if (sent) { saveDraftRecovery(); return; }
       submittedThread ??= admission?.thread;
       const latest = appStateRef.current;
       const recoveryDraft = { ...composerContextFromMessage(message.text, message.contentParts), images: message.images, files: message.files.filter(file => file.id !== implicitArtifactFileID) };
@@ -4315,6 +4453,14 @@ export function App(): JSX.Element {
       } else if (submittedThread) {
         // Keep failed input in its conversation without replacing a newer draft.
         preserveFailedComposerMessage(submittedThread.id, message);
+        if (composerDraftRecoveryEnabled()) {
+          const recoveryTab = createDraftSessionTab(`draft:recovery:${message.id}`, recoveryOwner?.context ?? currentState.activeContext!, recoveryDraft);
+          rememberCollapsedPromptParts(recoveryTab.id, recoveryDraft.prompt, recoveryDraft.contentParts);
+          const preserve = (state: AppState): AppState => ({ ...state, sessionTabs: [recoveryTab, ...state.sessionTabs] });
+          appStateRef.current = preserve(appStateRef.current);
+          setState(preserve);
+          setFailedDraftTabIDs((ids) => [...ids, recoveryTab.id]);
+        }
       } else {
         // Thread creation failed before there was a conversation to retain the
         // input. A separate draft must not replace newer work in the source tab.
@@ -5083,12 +5229,13 @@ export function App(): JSX.Element {
     return sendComposerMessage(message, targetThread, appStateRef.current.activePane, undefined, prepareThread);
   }
 
-  const failedDraftTabID = failedDraftTabIDs[0];
+  const failedDraftTabID = failedDraftTabIDs.find((id) => state.sessionTabs.some((tab) => tab.id === id));
   const failedDraftNotice = failedDraftTabID ? (
     <UILayerPortal layer="notice">
       <TopNotice
         key={failedDraftTabID}
-        message={t("composer.failedDraftSaved")}
+        message={t(recoveredDrafts.tabs.some((tab) => tab.id === failedDraftTabID)
+          ? "composer.recoveredInterruptedDraft" : "composer.failedDraftSaved")}
         icon={CircleAlert}
         isError
         persistent
