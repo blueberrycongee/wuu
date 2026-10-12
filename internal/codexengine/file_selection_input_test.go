@@ -24,7 +24,6 @@ func TestEngineTransmitsFileSelectionCanonicalText(t *testing.T) {
 				capture := filepath.Join(t.TempDir(), "input.json")
 				t.Setenv("WUU_TEST_CODEX_INPUT", capture)
 				host := NewHost(binary, t.TempDir())
-				defer host.Release()
 				sess, err := NewEngine(host).SessionForThread(context.Background(), agentengine.ThreadBinding{
 					ThreadID: t.Name(), RootDir: t.TempDir(), ExternalRef: ref,
 				})

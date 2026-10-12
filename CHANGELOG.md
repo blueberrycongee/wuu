@@ -41,6 +41,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Share one Codex startup across concurrent sessions, retry failed or closed
+  hosts on later turns, and release each turn's process ownership without
+  interrupting other sessions. Keep healthy hosts warm until their app-server
+  owners shut down or switch engines.
+
 - Keep the sidebar's recent-history range stable while a first message creates
   its conversation, avoiding a temporary extra row and subsequent layout jump,
   including while saving a draft's custom name.

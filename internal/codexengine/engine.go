@@ -31,6 +31,11 @@ func NewEngine(host *Host) *Engine {
 	return &Engine{host: host}
 }
 
+// Host returns the shared process host used by this engine's bindings.
+func (e *Engine) Host() *Host {
+	return e.host
+}
+
 // Descriptor describes the codex engine.
 func (e *Engine) Descriptor(context.Context) (agentengine.Descriptor, error) {
 	return agentengine.Descriptor{
@@ -101,7 +106,7 @@ func (e *Engine) newSession(ctx context.Context, opts sessionOptions) (agentengi
 	if e == nil || e.host == nil {
 		return nil, errors.New("codex engine is not configured")
 	}
-	client, err := e.host.Acquire(ctx)
+	client, release, err := e.host.Acquire(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -110,8 +115,8 @@ func (e *Engine) newSession(ctx context.Context, opts sessionOptions) (agentengi
 		approval = e.RequestApproval
 	}
 	return &Session{
-		engine:         e,
 		client:         client,
+		release:        release,
 		threadID:       opts.threadID,
 		rootDir:        opts.rootDir,
 		model:          opts.model,
@@ -131,8 +136,8 @@ func (e *Engine) newSession(ctx context.Context, opts sessionOptions) (agentengi
 // the binding's PersistRef; later turns run turn/start directly on the shared
 // app-server, or thread/resume first if the app-server restarted.
 type Session struct {
-	engine *Engine
-	client *Client
+	client  *Client
+	release func()
 
 	threadID       string
 	rootDir        string
@@ -473,12 +478,11 @@ func (s *Session) Interrupt(ctx context.Context, reason string) error {
 }
 
 // Close releases the client reference held by this session. The shared
-// app-server stays alive while other threads use it.
+// app-server stays alive while other threads or app-server owners use it.
 func (s *Session) Close(context.Context) error {
-	if s == nil || s.engine == nil || s.engine.host == nil {
-		return nil
+	if s != nil && s.release != nil {
+		s.release()
 	}
-	s.engine.host.Release()
 	return nil
 }
 

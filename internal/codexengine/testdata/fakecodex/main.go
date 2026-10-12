@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 )
 
 type request struct {
@@ -33,7 +34,35 @@ func notify(method string, params any) {
 	send(map[string]any{"method": method, "params": params})
 }
 
+func record(method string) {
+	if path := os.Getenv("WUU_TEST_CODEX_LIFECYCLE"); path != "" {
+		f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+		if err != nil {
+			panic(err)
+		}
+		defer f.Close()
+		_ = json.NewEncoder(f).Encode(map[string]any{"method": method, "pid": os.Getpid()})
+	}
+}
+
+func waitForGate(name string) {
+	if gate := os.Getenv(name); gate != "" {
+		for {
+			if _, err := os.Stat(gate); err == nil {
+				return
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+}
+
 func main() {
+	record("started")
+	defer func() {
+		record("exiting")
+		waitForGate("WUU_TEST_CODEX_EXIT_GATE")
+		record("exited")
+	}()
 	scanner := bufio.NewScanner(os.Stdin)
 	scanner.Buffer(make([]byte, 1024*1024), 16*1024*1024)
 	for scanner.Scan() {
@@ -55,6 +84,15 @@ func main() {
 		}
 		switch req.Method {
 		case "initialize":
+			record("initialize")
+			waitForGate("WUU_TEST_CODEX_INITIALIZE_GATE")
+			if marker := os.Getenv("WUU_TEST_CODEX_FAIL_INITIALIZE_ONCE"); marker != "" {
+				if f, err := os.OpenFile(marker, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600); err == nil {
+					f.Close()
+					respondError(req.ID, -32603, "initialization temporarily unavailable")
+					continue
+				}
+			}
 			respond(req.ID, map[string]any{
 				"userAgent":      "codex-cli/0.100.0 (test)",
 				"codexHome":      "/tmp/fake-codex-home",
@@ -81,6 +119,13 @@ func main() {
 				"cwd":    ".",
 			})
 		case "turn/start":
+			if marker := os.Getenv("WUU_TEST_CODEX_FAIL_TURN_ONCE"); marker != "" {
+				if f, err := os.OpenFile(marker, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600); err == nil {
+					f.Close()
+					respondError(req.ID, -32603, "turn temporarily unavailable")
+					continue
+				}
+			}
 			if path := os.Getenv("WUU_TEST_CODEX_INPUT"); path != "" {
 				if err := os.WriteFile(path, req.Params, 0600); err != nil {
 					panic(err)

@@ -2408,6 +2408,7 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 	if metadata, ok, err := session.Find(s.rt.SessionDir, th.ID); err == nil && ok {
 		sessionInstructions = effectiveSessionInstructions(metadata)
 	}
+	s.retainCodexHost()
 	engine := s.rt.EngineSessionForThread(ctx, threadRuntime, agentengine.ThreadBinding{
 		ThreadID:       th.ID,
 		RootDir:        firstNonEmpty(th.CWD, s.rt.RootDir),
@@ -2431,6 +2432,11 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 	if engine == nil {
 		engine = runtime.EngineUnavailableSession(agentengine.NormalizeEngineID(string(threadRuntime.EngineID)))
 	}
+	// Bindings are acquired for this turn, including external-engine process
+	// ownership. Release before publishing its terminal outcome or admitting
+	// another turn, with the deferred call covering early exits as well.
+	closeEngine := sync.OnceFunc(func() { _ = engine.Close(context.Background()) })
+	defer closeEngine()
 	turnWorktreePath := ""
 	var frozenTreeContext []agent.ContextSegment
 	if th != nil {
@@ -2828,6 +2834,7 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 			Event:    sanitizeStreamEvent(ev),
 		})
 	})
+	closeEngine()
 	// RunTurn returns the engine outcome; the built-in wuu engine's result is
 	// the native loop result the rest of the turn accounting consumes.
 	res := turnResult.Result
