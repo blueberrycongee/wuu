@@ -1,5 +1,7 @@
 package pluginhost
 
+import pluginapi "github.com/blueberrycongee/wuu/packages/plugin-go"
+
 const KernelModelRequestService = "host.model.request"
 
 func KernelModelRequestDescriptor() ServiceDescriptor {
@@ -35,10 +37,4 @@ type ModelRequestResult struct {
 
 // ModelRequestUsage is absent when the provider did not report token usage.
 // Cancellation cannot undo a provider submission or guarantee zero charges.
-type ModelRequestUsage struct {
-	InputTokens          int  `json:"input_tokens"`
-	OutputTokens         int  `json:"output_tokens"`
-	CacheCreationTokens  int  `json:"cache_creation_tokens"`
-	CacheReadTokens      int  `json:"cache_read_tokens"`
-	CacheCreationUnknown bool `json:"cache_creation_unknown"`
-}
+type ModelRequestUsage = pluginapi.ModelRequestUsage

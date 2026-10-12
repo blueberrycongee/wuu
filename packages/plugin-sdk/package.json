@@ -5,7 +5,7 @@
   "engines": {
     "node": ">=22"
   },
-  "description": "Wuu Plugin SDK — types and helpers for building Wuu plugins",
+  "description": "Wuu Plugin SDK \u2014 types and helpers for building Wuu plugins",
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
@@ -21,7 +21,9 @@
     "dist/theme-contract.generated.js",
     "dist/theme-contract.generated.d.ts",
     "dist/bundle-contract.js",
-    "dist/bundle-contract.d.ts"
+    "dist/bundle-contract.d.ts",
+    "dist/model.js",
+    "dist/model.d.ts"
   ],
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

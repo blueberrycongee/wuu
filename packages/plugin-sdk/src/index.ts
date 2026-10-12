@@ -10,6 +10,7 @@
  */
 
 import type { PluginDependency } from "./bundle-contract.js";
+import type { ModelAdapterDescriptor } from "./model.js";
 
 import type {
   PublicIconName,
@@ -712,6 +713,7 @@ export interface RuntimeInitializeParams {
 }
 
 export interface RuntimeInitializeResult {
+  model_adapters?: readonly ModelAdapterDescriptor[];
   tools?: ToolRegistration[];
   protocol_version?: 1 | 2 | 3;
   capabilities?: CapabilityDescriptor[];
@@ -963,6 +965,8 @@ export interface ArtifactPresentation {
 }
 
 export interface ToolContentPart {
+  /** Output-only deferred-media reference preserved in model snapshots. */
+  remote_ref?: string;
   type: ToolContentType;
   text?: string;
   data?: string;
@@ -1350,6 +1354,8 @@ export async function importArtifact(
 }
 
 export interface RuntimePlugin {
+  /** Additional reentrant handlers. model.adapter and model.middleware are always reentrant. */
+  concurrentCapabilities?: readonly string[];
   /**
    * Service names whose handlers may overlap tools, capabilities, and services.
    * Opt in only when handlers are safe for concurrent access. This permits a
@@ -1567,6 +1573,7 @@ export async function runJSONLRuntime(
   const executions = new Map<string, Set<AbortController>>();
   const active = new Set<Promise<void>>();
   const concurrentServices = new Set(plugin.concurrentServices ?? []);
+  const concurrentCapabilities = new Set(["model.adapter", "model.middleware", ...plugin.concurrentCapabilities ?? []]);
   let requests = Promise.resolve();
   let lifecycle = requests;
   let shuttingDown = false;
@@ -1603,7 +1610,8 @@ export async function runJSONLRuntime(
     }
     const isLifecycle = parsed.method === "initialize" || parsed.method === "activate" || parsed.method === "shutdown";
     if (parsed.method === "shutdown") shuttingDown = true;
-    const concurrent = parsed.method === "service.invoke" && concurrentServices.has(parsed.params.service);
+    const concurrent = (parsed.method === "service.invoke" && concurrentServices.has(parsed.params.service))
+      || (parsed.method === "capability.invoke" && concurrentCapabilities.has(parsed.params.capability));
     const executionId = runtimeRequestExecutionId(parsed);
     const controller = new AbortController();
     // Even legacy requests without an execution id must stop on transport loss.
@@ -2200,3 +2208,5 @@ export function createManifest(options: {
 }
 
 export * from "./bundle-contract.js";
+
+export * from "./model.js";

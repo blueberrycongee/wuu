@@ -260,11 +260,12 @@ type ProcessSandboxResult struct {
 }
 
 type Definition struct {
-	Tools                []Tool               `json:"tools,omitempty"`
-	Capabilities         []Capability         `json:"capabilities,omitempty"`
-	RequiredHostServices []HostService        `json:"required_host_services,omitempty"`
-	ProvidedServices     []Service            `json:"provided_services,omitempty"`
-	RequiredServices     []ServiceRequirement `json:"required_services,omitempty"`
+	ModelAdapters        []ModelAdapterDescriptor `json:"model_adapters,omitempty"`
+	Tools                []Tool                   `json:"tools,omitempty"`
+	Capabilities         []Capability             `json:"capabilities,omitempty"`
+	RequiredHostServices []HostService            `json:"required_host_services,omitempty"`
+	ProvidedServices     []Service                `json:"provided_services,omitempty"`
+	RequiredServices     []ServiceRequirement     `json:"required_services,omitempty"`
 }
 
 type ToolCall struct {
@@ -285,14 +286,16 @@ type ToolCall struct {
 }
 
 type ContentPart struct {
-	Type     string                `json:"type"`
-	Text     string                `json:"text,omitempty"`
-	Data     string                `json:"data,omitempty"`
-	MIMEType string                `json:"mime_type,omitempty"`
-	URI      string                `json:"uri,omitempty"`
-	Name     string                `json:"name,omitempty"`
-	Resource json.RawMessage       `json:"resource,omitempty"`
-	Artifact *ArtifactPresentation `json:"artifact,omitempty"`
+	// RemoteRef is an output-only deferred-media reference carried by model snapshots.
+	RemoteRef string                `json:"remote_ref,omitempty"`
+	Type      string                `json:"type"`
+	Text      string                `json:"text,omitempty"`
+	Data      string                `json:"data,omitempty"`
+	MIMEType  string                `json:"mime_type,omitempty"`
+	URI       string                `json:"uri,omitempty"`
+	Name      string                `json:"name,omitempty"`
+	Resource  json.RawMessage       `json:"resource,omitempty"`
+	Artifact  *ArtifactPresentation `json:"artifact,omitempty"`
 }
 
 type ArtifactPresentation struct {
@@ -890,6 +893,8 @@ type Handler struct {
 	// execution and each other. Opt in only for handlers safe under concurrent
 	// access; all other requests retain ordered dispatch. Initialize completes
 	// before these handlers run, and shutdown waits for them to finish.
+	// model.adapter and model.middleware are always reentrant so callbacks can
+	// delegate model work through the host without deadlocking their caller.
 	ConcurrentCapabilities []string
 
 	Definition       Definition
@@ -1209,7 +1214,7 @@ func ServeIO(ctx context.Context, input io.Reader, output io.Writer, handler Han
 		if acceptConcurrent && initialized.Load() && request.Method == "capability.invoke" {
 			var call CapabilityCall
 			_ = json.Unmarshal(request.Params, &call)
-			if slices.Contains(handler.ConcurrentCapabilities, call.Capability) {
+			if call.Capability == CapabilityModelAdapter || call.Capability == CapabilityModelMiddleware || slices.Contains(handler.ConcurrentCapabilities, call.Capability) {
 				concurrent.Add(1)
 				go func() {
 					defer concurrent.Done()

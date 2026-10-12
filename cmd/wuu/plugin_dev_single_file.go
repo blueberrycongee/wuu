@@ -63,7 +63,7 @@ func prepareSingleFilePlugin(ctx context.Context, source string) (string, func()
 		"loader.mjs":   []byte(singleFileRuntimeLoader),
 		"resolve.mjs":  []byte(singleFileSDKResolver),
 	}
-	for _, name := range []string{"index.ts", "theme-contract.generated.ts", "bundle-contract.ts"} {
+	for _, name := range []string{"index.ts", "theme-contract.generated.ts", "bundle-contract.ts", "model.ts"} {
 		data, err := pluginsdk.Sources.ReadFile("src/" + name)
 		if err != nil {
 			return fail(err)
@@ -113,7 +113,7 @@ export async function resolve(specifier, context, nextResolve) {
   if (specifier === "@wuu/plugin-sdk") {
     return { url: new URL("./sdk/index.ts", import.meta.url).href, shortCircuit: true };
   }
-  if (["./theme-contract.generated.js", "./bundle-contract.js"].includes(specifier) && context.parentURL === new URL("./sdk/index.ts", import.meta.url).href) {
+  if (["./theme-contract.generated.js", "./bundle-contract.js", "./model.js"].includes(specifier) && context.parentURL === new URL("./sdk/index.ts", import.meta.url).href) {
     return { url: new URL("./sdk/" + specifier.slice(2, -3) + ".ts", import.meta.url).href, shortCircuit: true };
   }
   if (context.parentURL === new URL("./extension.ts", import.meta.url).href && !isBuiltin(specifier)) {
