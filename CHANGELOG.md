@@ -10,6 +10,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- iOS conversation settings can select a computer's available engine before the
+  first message, and edit the selected engine's models, reasoning and advertised
+  permission modes. Existing conversations display their bound engine.
+
 - Side chat is a bundled plugin with a recommended-on onboarding choice and a
   persistent enable switch. Disabling it stops side answers and hides its entry
   points without deleting history. Extensions can supply attached-chat policy
@@ -46,6 +50,14 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   errors, refresh workspace file metadata, preserve the requested page, and cancel
   the previous viewer when switching files or closing.
 
+- Remember iOS model and reasoning choices for new conversations per account,
+  computer and engine, including first sends without reopening settings and app relaunches.
+- Preserve the iOS reading position across lazy layout updates when loading older
+  messages, including history pages that extend an existing folded process group.
+- Show the running indicator only on the current iOS process group when a turn
+  resumes after earlier replies; completed groups and their inspectors stay idle.
+- Make the iOS message input respond to taps across its padded text area, and
+  keep draft typing from invalidating the root view while preserving native text editing.
 - Keep the sidebar's recent-history range stable while a first message creates
   its conversation, avoiding a temporary extra row and subsequent layout jump,
   including while saving a draft's custom name.
