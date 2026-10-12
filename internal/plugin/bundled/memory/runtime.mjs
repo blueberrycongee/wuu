@@ -629,7 +629,7 @@ async function runSessionMemory(stateDir, args, threadId, lifecycleHost, executi
       const [target, path] = checkedTarget(args.target, paths);
       const content = args.content.trim();
       if (!content) throw new Error("session_memory content is required");
-      if (content.split("\n").some(unsafeLine)) throw new Error("session_memory content failed the prompt-injection safety scan");
+      if (args.content.split("\n").some(unsafeLine)) throw new Error("session_memory content failed the prompt-injection safety scan");
       if (Buffer.byteLength(content) > MAX_MEMORY_BYTES) throw new Error(`session_memory content exceeds ${MAX_MEMORY_BYTES} bytes`);
       execution.signal.throwIfAborted();
       const lock = await acquireFileLock(lifecycleHost, { root: "workspace_state", path: relative(stateDir, path + ".lock").split(sep).join("/") }, execution.executionId);

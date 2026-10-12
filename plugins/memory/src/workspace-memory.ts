@@ -57,7 +57,7 @@ export async function runSessionMemory(stateDir: string, args: SessionMemoryArgs
       const [target, path] = checkedTarget(args.target, paths);
       const content = args.content.trim();
       if (!content) throw new Error("session_memory content is required");
-      if (content.split("\n").some(unsafeLine)) throw new Error("session_memory content failed the prompt-injection safety scan");
+      if (args.content.split("\n").some(unsafeLine)) throw new Error("session_memory content failed the prompt-injection safety scan");
       if (Buffer.byteLength(content) > MAX_MEMORY_BYTES) throw new Error(`session_memory content exceeds ${MAX_MEMORY_BYTES} bytes`);
       execution.signal.throwIfAborted();
       // Wait for the authoritative acquire reply, even if cancellation races

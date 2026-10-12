@@ -40,6 +40,7 @@ ad-hoc 签名不能证明发布者身份，也不能保证更新后保留 macOS 
 ```bash
 git clone https://github.com/blueberrycongee/wuu.git
 cd wuu
+npm ci --prefix plugins
 make install
 wuu --version
 ```
