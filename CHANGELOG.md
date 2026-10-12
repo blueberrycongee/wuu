@@ -8,23 +8,21 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ## [Unreleased]
 
-### Added
+## [2026.10.12] - 2026-10-12
 
-- A Trigger button beside the latest assistant reply's timestamp shows background
-  task wakeups, scheduled checks, and recent output, with a control to cancel
-  automatic continuation without stopping the task.
+### Contributors
 
-- The desktop app bundles ripgrep, so search tools and agent shell commands can
-  use `rg` on machines without it installed. A user-installed `rg` still takes
-  precedence.
+@blueberrycongee
 
+### Highlights
+
+- See background task wakeups, scheduled checks, and recent output from a Trigger
+  button beside the latest reply, and cancel automatic continuation without
+  stopping the task. Scheduled checks now arrive while the task is still running.
+- Search tools and agent shells can use the bundled ripgrep on machines without
+  `rg`; a user-installed `rg` still takes precedence.
 - Model services show vendor marks for LM Studio, Lynkr, Privatemode AI, and
-  Atomic Chat instead of letter placeholders.
-
-### Fixed
-
-- Deliver scheduled background-process checks while the task is still running,
-  without treating them as process-exit notifications.
+  Atomic Chat.
 
 ## [2026.10.11] - 2026-10-11
 
