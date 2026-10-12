@@ -14,6 +14,8 @@ const pdfMocks = vi.hoisted(() => {
     currentPageNumber: 1,
     pagesCount: 3,
     setDocument: vi.fn(),
+    pagesPromise: Promise.resolve() as Promise<void>,
+    pdfDocument: { getPage: vi.fn(async (_page: number) => ({})) },
     cleanup: vi.fn(),
     decreaseScale: vi.fn(),
     increaseScale: vi.fn(),
@@ -97,7 +99,9 @@ beforeEach(() => {
   pdfMocks.getDocument.mockReturnValue(pdfMocks.loadingTask);
   pdfMocks.viewerSignals.length = 0;
   pdfMocks.loadingTask.destroy.mockClear();
-  pdfMocks.viewer.setDocument.mockClear();
+  pdfMocks.viewer.setDocument.mockReset();
+  pdfMocks.viewer.pagesPromise = Promise.resolve();
+  pdfMocks.viewer.pdfDocument.getPage.mockReset().mockResolvedValue({});
   pdfMocks.viewer.cleanup.mockClear();
   pdfMocks.viewer.decreaseScale.mockClear();
   pdfMocks.viewer.increaseScale.mockClear();
@@ -168,7 +172,7 @@ describe("WorkspacePdfPreview", () => {
     let resolve!: (document: { numPages: number }) => void;
     const retry = { promise: new Promise<{ numPages: number }>(done => { resolve = done; }), destroy: vi.fn(async () => {}) };
     pdfMocks.getDocument.mockReturnValueOnce(failed).mockReturnValueOnce(retry);
-    const source = { workspace: "/project", path: "document.pdf", revision: "immutable-revision" };
+    const source = { workspace: "/project", path: "document.pdf", revision: "observed-revision" };
     await act(async () => root.render(
       <WorkspacePdfPreview url="wuu-file://local/document" title="document.pdf" source={source} initialPage={2} pageRequest="first" />,
     ));
@@ -197,8 +201,72 @@ describe("WorkspacePdfPreview", () => {
     await act(async () => pdfMocks.eventBus?.dispatch("pagesinit", {}));
     expect(pdfMocks.viewer.currentPageNumber).toBe(3);
     expect(shadow.querySelector("[role=status]")).toBeNull();
-    expect(source.revision).toBe("immutable-revision");
+    expect(source.revision).toBe("observed-revision");
     expect(pdfMocks.getDocument).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(["initialization", "navigation", "render"])("recovers a %s failure after the document loads", async (phase) => {
+    let failPages!: (error: Error) => void;
+    pdfMocks.viewer.pagesPromise = new Promise<void>((_, reject) => { failPages = reject; });
+    await act(async () => root.render(<WorkspacePdfPreview url="wuu-file://local/document" title="document.pdf" initialPage={2} />));
+    const shadow = container.querySelector<HTMLElement>("[data-workspace-pdf-preview]")!.shadowRoot!;
+    await act(async () => {
+      if (phase === "initialization") failPages(new Error("Page initialization failed"));
+      else {
+        pdfMocks.eventBus?.dispatch("pagesinit", {});
+        if (phase === "navigation") pdfMocks.viewer.pdfDocument.getPage.mockRejectedValueOnce(new Error("Page fetch failed"));
+        pdfMocks.eventBus?.dispatch("pagechanging", { pageNumber: 3 });
+        if (phase === "render") pdfMocks.eventBus?.dispatch("pagerendered", { pageNumber: 3, error: new Error("Page render failed") });
+      }
+    });
+    expect(shadow.querySelector("[role=alert]")?.textContent).toContain("failed");
+    expect(shadow.querySelector<HTMLButtonElement>('button[aria-label="imagePreview.zoomIn"]')?.disabled).toBe(true);
+    pdfMocks.viewer.pagesPromise = Promise.resolve();
+    await act(async () => shadow.querySelector<HTMLButtonElement>('button[aria-label="appState.retryAction"]')!.click());
+    await act(async () => pdfMocks.eventBus?.dispatch("pagesinit", {}));
+    expect(pdfMocks.viewer.currentPageNumber).toBe(phase === "initialization" ? 2 : 3);
+    expect(shadow.querySelector("[role=alert]")).toBeNull();
+    expect(shadow.querySelector("[role=status]")).toBeNull();
+    expect(pdfMocks.getDocument).toHaveBeenCalledTimes(2);
+  });
+
+  it("waits for refreshed source metadata and keeps refresh failures retryable", async () => {
+    pdfMocks.getDocument.mockReturnValueOnce({ promise: Promise.reject(new Error("Retry me")), destroy: vi.fn(async () => {}) });
+    let rejectRefresh!: (error: Error) => void;
+    const refresh = vi.fn((_signal: AbortSignal) => new Promise<boolean>((_, reject) => { rejectRefresh = reject; }));
+    await act(async () => root.render(<WorkspacePdfPreview url="wuu-file://local/document" title="document.pdf" onRefresh={refresh} />));
+    const shadow = container.querySelector<HTMLElement>("[data-workspace-pdf-preview]")!.shadowRoot!;
+    await act(async () => {
+      const retry = shadow.querySelector<HTMLButtonElement>('button[aria-label="appState.retryAction"]')!;
+      retry.click(); retry.click();
+    });
+    expect(refresh).toHaveBeenCalledOnce();
+    expect(pdfMocks.getDocument).toHaveBeenCalledOnce();
+    expect(shadow.querySelector<HTMLButtonElement>('button[aria-label="appState.retryAction"]')?.disabled).toBe(true);
+    await act(async () => rejectRefresh(new Error("Metadata unavailable")));
+    expect(shadow.querySelector("[role=alert]")?.textContent).toContain("Metadata unavailable");
+    refresh.mockResolvedValueOnce(true);
+    await act(async () => shadow.querySelector<HTMLButtonElement>('button[aria-label="appState.retryAction"]')!.click());
+    await act(async () => pdfMocks.eventBus?.dispatch("pagesinit", {}));
+    expect(pdfMocks.getDocument).toHaveBeenCalledTimes(2);
+    expect(shadow.querySelector("[role=alert]")).toBeNull();
+  });
+
+  it.each(["close", "source"])("cancels a metadata refresh on %s before starting another PDF load", async (action) => {
+    pdfMocks.getDocument.mockReturnValueOnce({ promise: Promise.reject(new Error("Retry me")), destroy: vi.fn(async () => {}) });
+    let resolveRefresh!: (retry: boolean) => void;
+    const refresh = vi.fn((_signal: AbortSignal) => new Promise<boolean>(resolve => { resolveRefresh = resolve; }));
+    await act(async () => root.render(<WorkspacePdfPreview url="wuu-file://local/document" title="document.pdf" onRefresh={refresh} />));
+    const shadow = container.querySelector<HTMLElement>("[data-workspace-pdf-preview]")!.shadowRoot!;
+    await act(async () => shadow.querySelector<HTMLButtonElement>('button[aria-label="appState.retryAction"]')!.click());
+    await act(async () => {
+      if (action === "close") root.render(null);
+      else root.render(<WorkspacePdfPreview url="wuu-file://local/replacement" title="replacement.pdf" />);
+    });
+    expect(refresh.mock.calls[0][0].aborted).toBe(true);
+    await act(async () => resolveRefresh(true));
+    expect(pdfMocks.getDocument).toHaveBeenCalledTimes(action === "close" ? 1 : 2);
+    expect(pdfMocks.getDocument.mock.calls.filter(call => call[0].url === "wuu-file://local/document")).toHaveLength(1);
   });
 
   it("keeps a corrupt PDF retryable and releases each failed attempt", async () => {

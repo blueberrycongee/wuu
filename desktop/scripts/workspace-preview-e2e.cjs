@@ -9,10 +9,10 @@ const desktop = path.resolve(__dirname, "..");
 const output = path.join(desktop, "out/e2e/workspace-preview");
 
 // Minimal deterministic PDF bytes, served locally to the real PDF.js worker.
-function pdfFixture() {
+function pdfFixture(label = "Retry fixture") {
   const objects = ["<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Count 2 /Kids [4 0 R 6 0 R] >>", "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"];
   for (const page of [1, 2]) {
-    const content = `BT /F1 16 Tf 28 200 Td (Retry fixture page ${page}) Tj ET`;
+    const content = `BT /F1 16 Tf 28 200 Td (${label} page ${page}) Tj ET`;
     objects.push(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 420 260] /Resources << /Font << /F1 3 0 R >> >> /Contents ${page * 2 + 3} 0 R >>`,
       `<< /Length ${Buffer.byteLength(content)} >>\nstream\n${content}\nendstream`);
   }
@@ -84,7 +84,14 @@ if (!process.versions.electron) {
         initialLanguagePreference: "en-US",
         readWorkspaceFile: async (path) => {
           window.pdfReads.push(path);
-          return { path, binary: true, size_bytes: 1000, mtime_ms: 7, sha256: "a".repeat(64),
+          const count = window.pdfReads.filter(value => value === path).length;
+          if (path === "metadata.pdf" && count === 2) throw new Error("Metadata temporarily unavailable");
+          if (path.startsWith("metadata-") && count === 2) {
+            await fetch("/__pdf__/metadata?name=" + path);
+            window.dispatchEvent(new CustomEvent("pdf-metadata-settled", { detail: path }));
+          }
+          const changed = path === "changed.pdf" && count > 1;
+          return { path, binary: true, size_bytes: 1000, mtime_ms: changed ? 8 : 7, sha256: (changed ? "b" : "a").repeat(64),
             renderable_kind: "pdf", renderable_url: location.origin + "/__pdf__/" + path };
         },
       } });
@@ -96,7 +103,7 @@ if (!process.versions.electron) {
           onEdit={async () => false} onOpenFile={setSelected}>
           <div style={{display: "grid", gridTemplateColumns: "minmax(180px, 1fr) minmax(0, 1fr)", height: "100vh"}}>
             <section aria-label="Conversation"><textarea aria-label="Draft" value={draft} onChange={event => setDraft(event.target.value)} />
-              {["transient", "corrupt", "stale", "close", "replacement"].map(name =>
+              {["transient", "corrupt", "stale", "close", "replacement", "changed", "metadata", "metadata-stale", "metadata-close"].map(name =>
                 <button key={name} data-open-pdf={name} onClick={() => setSelected(name + ".pdf")}>{name}.pdf</button>)}
               <button data-close-pdf onClick={() => setSelected(undefined)}>Close preview</button>
             </section>
@@ -112,6 +119,7 @@ if (!process.versions.electron) {
     const pendingPDFs = new Map();
     const requestWaiters = [];
     const pdfBytes = pdfFixture();
+    const changedPDFBytes = pdfFixture("Updated fixture");
     const pdfServer = {
       name: "synthetic-pdf-recovery",
       configureServer(server) {
@@ -131,6 +139,13 @@ if (!process.versions.electron) {
             pendingPDFs.get(name)?.(); pendingPDFs.delete(name);
             return response.end("released");
           }
+          if (url.pathname === "/__pdf__/metadata") {
+            const name = "metadata:" + url.searchParams.get("name");
+            pdfRequests.push(name);
+            for (const resolve of requestWaiters) resolve();
+            pendingPDFs.set(name, () => { if (!response.destroyed) response.end("refreshed"); });
+            return;
+          }
           const name = url.pathname.slice("/__pdf__/".length);
           pdfRequests.push(name);
           for (const resolve of requestWaiters) resolve();
@@ -138,8 +153,9 @@ if (!process.versions.electron) {
           const sendPDF = () => {
             if (response.destroyed) return;
             response.setHeader("Content-Type", "application/pdf");
-            response.setHeader("Content-Length", pdfBytes.length);
-            response.end(pdfBytes);
+            const bytes = name === "changed.pdf" ? changedPDFBytes : pdfBytes;
+            response.setHeader("Content-Length", bytes.length);
+            response.end(bytes);
           };
           if (name === "corrupt.pdf") return response.end("corrupt PDF bytes");
           if (name !== "replacement.pdf" && count === 1) {
@@ -287,7 +303,7 @@ if (!process.versions.electron) {
       await waitForRequest("transient.pdf", 2);
       assert.equal((await requests()).filter(name => name === "transient.pdf").length, 2);
       assert.equal(await evaluate('document.querySelector("[aria-label=Draft]").value'), "Keep this conversation draft");
-      assert.deepEqual(await evaluate('window.pdfReads'), ["transient.pdf"]);
+      assert.deepEqual(await evaluate('window.pdfReads'), ["transient.pdf", "transient.pdf"]);
       await release("transient.pdf");
       await ready();
       assert.equal(await evaluate('window.originalPDFHost === document.querySelector("[data-workspace-pdf-preview]") && Boolean(window.documentSentinel)'), true);
@@ -306,6 +322,53 @@ if (!process.versions.electron) {
       assert.equal(quote.source.path, "transient.pdf");
       assert.deepEqual(quote.source.pdf, { start_page: 2, end_page: 2 });
       fs.writeFileSync(path.join(run, "pdf-recovered.png"), (await window.webContents.capturePage()).toPNG());
+      // Mutable workspace paths must refresh their owner-provided revision.
+      await click('[data-open-pdf="changed"]'); await failed();
+      await evaluate(`${retry}.click()`);
+      await waitForRequest("changed.pdf", 2);
+      await release("changed.pdf"); await ready();
+      await evaluate(`(() => {
+        const root = ${shadow}; const text = root.querySelector('.page[data-page-number="2"] .textLayer span');
+        const range = document.createRange(); range.selectNodeContents(text);
+        const selection = root.getSelection(); selection.removeAllRanges(); selection.addRange(range);
+        document.dispatchEvent(new Event("selectionchange"));
+      })()`);
+      await waitFor('document.querySelector(".pdf-selection-menu button")');
+      await click(".pdf-selection-menu button");
+      const changedQuote = (await evaluate('window.pdfParts')).find(part => part.type === "file_selection" && part.source.path === "changed.pdf");
+      assert.equal(changedQuote.source.revision, `workspace-pdf:1000:8:${"b".repeat(64)}`);
+      assert.match(changedQuote.source.quote, /Updated fixture page 2/);
+      assert.equal((await requests()).filter(name => name === "changed.pdf").length, 2);
+      assert.equal((await evaluate('window.pdfParts')).filter(part => part.type === "file_selection").length, 2, "one selection action must add only one excerpt after retry");
+      // Metadata read failures remain recoverable without another byte request.
+      await click('[data-open-pdf="metadata"]'); await failed();
+      await evaluate(`${retry}.click()`); await failed();
+      assert.equal((await requests()).filter(name => name === "metadata.pdf").length, 1);
+      assert.match(await evaluate(`${shadow}.querySelector('[role=alert]').textContent`), /Metadata temporarily unavailable/);
+      await evaluate(`${retry}.click()`); await waitForRequest("metadata.pdf", 2);
+      await release("metadata.pdf"); await ready();
+      for (const name of ["metadata-stale", "metadata-close"]) {
+        await click(`[data-open-pdf="${name}"]`); await failed();
+        await evaluate(`${retry}.click()`);
+        await waitForRequest(`metadata:${name}.pdf`, 1);
+        await waitFor(`${retry}?.disabled && ${shadow}?.querySelector('[role=status]')`);
+        if (name === "metadata-stale") {
+          await click('[data-open-pdf="replacement"]'); await ready();
+        } else {
+          await click("[data-close-pdf]"); await waitFor('!document.querySelector("[data-workspace-pdf-preview]")');
+        }
+        await evaluate(`window.metadataSettled = new Promise(resolve => {
+          const settled = event => {
+            if (event.detail !== ${JSON.stringify(name + ".pdf")}) return;
+            window.removeEventListener("pdf-metadata-settled", settled); resolve(true);
+          };
+          window.addEventListener("pdf-metadata-settled", settled);
+        }); true`);
+        await release(`metadata:${name}.pdf`); await evaluate('window.metadataSettled');
+        await evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+        assert.equal((await requests()).filter(value => value === `${name}.pdf`).length, 1);
+        assert.equal(await evaluate('document.querySelector("[data-workspace-pdf-preview]")?.shadowRoot?.querySelector("section")?.getAttribute("aria-label") ?? null'), name === "metadata-stale" ? "replacement.pdf" : null);
+      }
       await click('[data-open-pdf="corrupt"]');
       await failed();
       for (let i = 0; i < 2; i += 1) {
@@ -330,7 +393,7 @@ if (!process.versions.electron) {
       }
       assert.equal(await evaluate('document.querySelector("[aria-label=Draft]").value.endsWith("Keep this conversation draft")'), true);
       measurements.push({ view: "pdf-retry", boundary: "real renderer and PDF.js; synthetic workspace IPC and local HTTP",
-        requests: await requests(), quote: quote.source, checks: ["in-place-retry", "double-click", "source-revision", "page-identity", "corrupt-retry", "switch-during-retry", "close-during-retry", "draft-retained"] });
+        requests: await requests(), quote: quote.source, changedQuote: changedQuote.source, checks: ["in-place-retry", "double-click", "source-revision", "refreshed-source-revision", "metadata-retry", "switch-during-metadata", "close-during-metadata", "page-identity", "corrupt-retry", "switch-during-retry", "close-during-retry", "draft-retained"] });
       fs.writeFileSync(path.join(run, "browser-result.json"), JSON.stringify({ importFailureContained: true, navigationSurvived: true, reloadRecovered: true, measurements, logs }, null, 2));
     } finally {
       window.destroy();

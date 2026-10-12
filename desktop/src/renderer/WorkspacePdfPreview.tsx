@@ -24,10 +24,14 @@ GlobalWorkerOptions.workerSrc = pdfWorkerURL;
 
 type ScaleChangingEvent = { scale: number };
 type PageChangingEvent = { pageNumber: number };
+type PageRenderedEvent = { error?: unknown };
+
+// Return false when the owner replaces the source instead of retrying this one.
+type RefreshPdfSource = (signal: AbortSignal) => Promise<boolean>;
 
 export function WorkspacePdfPreview({
   url,
-  title, source, active = true, initialPage, pageRequest,
+  title, source, active = true, initialPage, pageRequest, onRefresh,
 }: {
   url: string;
   title: string;
@@ -35,6 +39,7 @@ export function WorkspacePdfPreview({
   active?: boolean;
   initialPage?: number;
   pageRequest?: string;
+  onRefresh?: RefreshPdfSource;
 }): JSX.Element {
   const hostRef = useRef<HTMLDivElement>(null);
   const [shadowRoot, setShadowRoot] = useState<ShadowRoot>();
@@ -60,7 +65,7 @@ export function WorkspacePdfPreview({
               <style>{pdfViewerCSS}</style>
               <style>{previewCSS}</style>
               <WorkspacePdfSurface key={JSON.stringify([url, source])} url={url} title={title}
-                hostRef={hostRef} source={source} active={active} initialPage={initialPage} pageRequest={pageRequest} />
+                hostRef={hostRef} source={source} active={active} initialPage={initialPage} pageRequest={pageRequest} onRefresh={onRefresh} />
             </>,
             shadowRoot,
           )
@@ -69,7 +74,7 @@ export function WorkspacePdfPreview({
   );
 }
 
-function WorkspacePdfSurface({ url, title, hostRef, source, active, initialPage, pageRequest }: {
+function WorkspacePdfSurface({ url, title, hostRef, source, active, initialPage, pageRequest, onRefresh }: {
   url: string;
   title: string;
   hostRef: RefObject<HTMLDivElement | null>;
@@ -77,6 +82,7 @@ function WorkspacePdfSurface({ url, title, hostRef, source, active, initialPage,
   active: boolean;
   initialPage?: number;
   pageRequest?: string;
+  onRefresh?: RefreshPdfSource;
 }): JSX.Element {
   const { t } = useI18n();
   const containerRef = useRef<HTMLDivElement>(null);
@@ -84,11 +90,16 @@ function WorkspacePdfSurface({ url, title, hostRef, source, active, initialPage,
   const viewerRef = useRef<PDFViewer | null>(null);
   const [attempt, setAttempt] = useState(0);
   const retryPendingRef = useRef(false);
+  const requestedPageRef = useRef(initialPage);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState("");
   const [zoom, setZoom] = useState(100);
   const [pageNumber, setPageNumber] = useState(1);
   const [pageCount, setPageCount] = useState(0);
+
+  useLayoutEffect(() => {
+    requestedPageRef.current = initialPage;
+  }, [initialPage, pageRequest]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -97,6 +108,8 @@ function WorkspacePdfSurface({ url, title, hostRef, source, active, initialPage,
 
     setReady(false); setError(""); setPageCount(0); setPageNumber(1);
     let active = true;
+    let failed = false;
+    let initialized = false;
     const lifetime = new AbortController();
     const eventBus = new EventBus();
     // PDF.js 5.4 supports abortSignal but does not yet declare it in its types.
@@ -109,28 +122,44 @@ function WorkspacePdfSurface({ url, title, hostRef, source, active, initialPage,
       abortSignal: lifetime.signal,
     };
     const viewer = new PDFViewer(viewerOptions);
-    const loadingTask = getDocument({
-      url,
-      isEvalSupported: false,
-      rangeChunkSize: 256 * 1024,
-    });
+    let loadingTask: ReturnType<typeof getDocument> | undefined;
     viewerRef.current = viewer;
 
+    const onError = (nextError: unknown): void => {
+      if (!active || failed) return;
+      failed = true;
+      retryPendingRef.current = false;
+      setReady(false);
+      setError(nextError instanceof Error ? nextError.message : translateCurrent("workspace.files.openFailed"));
+    };
     const onPagesInit = (): void => {
-      if (!active) return;
+      if (!active || failed) return;
+      const page = requestedPageRef.current;
       viewer.currentScaleValue = "page-width";
       setZoom(Math.round(viewer.currentScale * 100));
+      initialized = true;
+      if (page && Number.isSafeInteger(page) && page >= 1 && page <= viewer.pagesCount) viewer.currentPageNumber = page;
+      retryPendingRef.current = false;
       setReady(true);
-      if (initialPage && Number.isSafeInteger(initialPage) && initialPage >= 1 && initialPage <= viewer.pagesCount) viewer.currentPageNumber = initialPage;
     };
     const onScaleChanging = ({ scale }: ScaleChangingEvent): void => {
       if (!active) return;
       setZoom(Math.round(scale * 100));
     };
     const onPageChanging = ({ pageNumber: nextPage }: PageChangingEvent): void => {
-      if (!active) return;
+      if (!active || failed) return;
+      if (initialized) {
+        requestedPageRef.current = nextPage;
+        // PDF.js logs lazy page-fetch failures without dispatching pagerendered.
+        // Observe the same cached request for the page the user navigated to.
+        void viewer.pdfDocument!.getPage(nextPage).catch(onError);
+      }
       setPageNumber(nextPage);
     };
+    const onPageRendered = ({ error }: PageRenderedEvent): void => {
+      if (error) onError(error);
+    };
+    eventBus.on("pagerendered", onPageRendered);
     eventBus.on("pagesinit", onPagesInit);
     eventBus.on("scalechanging", onScaleChanging);
     eventBus.on("pagechanging", onPageChanging);
@@ -154,25 +183,25 @@ function WorkspacePdfSurface({ url, title, hostRef, source, active, initialPage,
     });
     resizeObserver.observe(container);
 
-    void loadingTask.promise
-      .then((document) => {
-        if (!active) return;
-        setPageCount(document.numPages);
-        viewer.setDocument(document);
-      })
-      .catch((nextError: unknown) => {
-        if (!active) return;
-        retryPendingRef.current = false;
-        setReady(false);
-        setError(
-          nextError instanceof Error
-            ? nextError.message
-            : translateCurrent("workspace.files.openFailed"),
-        );
-      });
+    const load = async (): Promise<void> => {
+      // Workspace URLs address mutable paths. Let their owner refresh metadata
+      // before loading bytes instead of retaining the pre-failure revision.
+      if (attempt > 0 && onRefresh && !await onRefresh(lifetime.signal)) return;
+      if (!active) return;
+      loadingTask = getDocument({ url, isEvalSupported: false, rangeChunkSize: 256 * 1024 });
+      const document = await loadingTask.promise;
+      if (!active) return;
+      setPageCount(document.numPages);
+      viewer.setDocument(document);
+      // setDocument is void; PDF.js reports asynchronous initialization errors
+      // through pagesPromise, after loadingTask has already succeeded.
+      await viewer.pagesPromise;
+    };
+    void load().catch(onError);
 
     return () => {
       active = false;
+      eventBus.off("pagerendered", onPageRendered);
       eventBus.off("pagesinit", onPagesInit);
       eventBus.off("scalechanging", onScaleChanging);
       eventBus.off("pagechanging", onPageChanging);
@@ -184,7 +213,7 @@ function WorkspacePdfSurface({ url, title, hostRef, source, active, initialPage,
       // @ts-expect-error PDF.js 5.4 omits the supported null teardown argument.
       viewer.setDocument(null);
       lifetime.abort();
-      void loadingTask.destroy().catch((error: unknown) => {
+      void loadingTask?.destroy().catch((error: unknown) => {
         console.warn("Could not destroy PDF preview loading task", error);
       });
       viewerRef.current = null;
@@ -194,7 +223,7 @@ function WorkspacePdfSurface({ url, title, hostRef, source, active, initialPage,
   useEffect(() => {
     const viewer = viewerRef.current;
     if (ready && viewer && initialPage && Number.isSafeInteger(initialPage) && initialPage >= 1 && initialPage <= viewer.pagesCount) viewer.currentPageNumber = initialPage;
-  }, [initialPage, pageRequest, ready]);
+  }, [initialPage, pageRequest]);
 
   function retry(): void {
     // A second click can arrive before React commits the loading state.
