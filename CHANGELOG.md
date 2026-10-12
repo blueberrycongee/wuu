@@ -48,6 +48,26 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Remote MCP notification streams recover after session expiry or credential
+  refresh, discard obsolete session messages, and report unrecoverable handshakes
+  as connection failures. Concurrent expired calls share one recovery, renewed
+  sessions clear old resume cursors, and closing the connection cancels recovery.
+
+- Remote MCP POST streams now close when their call completes or is cancelled.
+  An interrupted or malformed response fails only its originating call promptly,
+  without replaying tools or disconnecting healthy calls and notifications.
+  Responses cannot resolve a different call through a mismatched POST request ID.
+- MCP OAuth logout and newer logins now fence late token exchanges and refresh
+  writes across processes, preventing older credentials from becoming active
+  again after logout or a newer login.
+
+- Bind saved MCP OAuth credentials to the resource used for login, require
+  reauthentication after resource changes, and prevent credentials from reaching
+  cross-origin redirects or legacy SSE message endpoints.
+- Disconnecting or reconnecting an MCP server cancels older connection attempts,
+  preventing queued startup, delayed initialization or tool discovery from
+  restoring a stopped connection or replacing its newer tools and status.
+
 - Remember iOS model and reasoning choices for new conversations per account,
   computer and engine, including first sends without reopening settings and app relaunches.
 - Preserve the iOS reading position across lazy layout updates when loading older

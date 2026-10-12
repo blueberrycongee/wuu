@@ -28,6 +28,14 @@ For stdio, Wuu starts the executable directly with `args`, not through a shell. 
 
 For remote servers, `http` and `streamable-http` select streamable HTTP, while `sse` selects legacy SSE. Omitting transport enables HTTP probing with SSE fallback for an incompatible endpoint, not for an unreachable network. An explicitly selected transport does not fall back.
 
+Each streamable HTTP POST response belongs to its call. Completing or cancelling
+a call closes its response stream. If the stream ends before a result arrives,
+or sends an invalid or oversized message, that call fails promptly. Wuu does not
+replay a tool call after a broken stream because its effects may already have
+occurred. Other calls and the server notification stream stay connected.
+A POST response with another call's ID is rejected without resolving that other
+call. Server-initiated requests use a separate ID namespace.
+
 Remote `headers` are literal header values. Native `mcp_servers` does not expand `${VAR}` placeholders. Keep secrets out of committed configuration and do not assume a placeholder is a credential reference. `enabled: false` retains a definition without connecting at startup.
 
 ## Tool execution budgets
@@ -76,6 +84,26 @@ The enable toggle saves the startup preference. Use the connection controls when
 
 Tools receive model-visible names such as `mcp_docs_search`, with normalization for unsupported characters and long names. Large or infrequently used tool definitions can be deferred and found through tool search. The current tool surface and permission policy can still limit availability or execution.
 
+### Session and notification recovery
+
+For streamable HTTP servers, the optional GET notification stream follows the
+initialized session. Session expiry starts one shared recovery handshake even
+when several calls receive HTTP 404 together. A new session closes the old
+listener, clears its resume cursor, and starts listening after initialization
+completes. Queued notifications from obsolete sessions are discarded. HTTP 405
+turns off GET listening only for that session.
+
+With OAuth, a GET authentication failure refreshes credentials and retries once.
+A later successful POST credential refresh can restart the listener while
+preserving the same session's resume cursor. Disconnecting cancels listening and
+any pending recovery. An unsuccessful recovery appears as a connection error;
+use **Refresh** after resolving the reported problem.
+
+Recovery does not replay a tool because its response stream broke: the tool may
+already have taken effect. Wuu only retries requests explicitly rejected with
+HTTP 401 or a session-expiry HTTP 404, within the authentication and recovery
+limits. Other in-flight POST calls keep ownership of their own final responses.
+
 ## Project `.mcp.json`
 
 Wuu reads Claude-style `.mcp.json` in the project configuration directory:
@@ -109,6 +137,14 @@ Unlike native definitions, `.mcp.json` expands `${VAR}` and `${VAR:-default}` in
 Remote URL servers can use OAuth discovery, PKCE, scopes, and dynamic client registration. An ordinary definition does not need an `oauth` section in advance: after an authentication challenge, use the login action in settings.
 
 The current desktop flow opens the authorization URL and requires you to paste the returned authorization code into settings. It does not start an automatic callback listener. Tokens go to Wuu's credential store rather than the server definition.
+
+Saved credentials are bound to the resource URL used for login. Reusing a server name with a different URL requires another login; a path or query change also counts. Credentials from older versions without a saved resource URL require login again. Wuu keeps mismatched credentials until you explicitly replace or remove them. Logging in to the new resource replaces the credentials for that server name.
+
+Logging out invalidates older login attempts and in-flight credential refreshes across Wuu processes. Their late responses cannot restore the removed credentials. Starting another login supersedes earlier login attempts for that server name; complete the newest authorization flow. Browser or token-exchange failures do not clear an existing credential. Signing in again after logout remains available.
+
+Desktop credentials remain in Keychain. Owner-only lock files and credential-version records coordinate local access independently of project data directories; these files contain no tokens or client secrets. Keep these version records alongside your local Wuu state. Storage failures or a backend command that outlives a crashed Wuu process can make a credential unavailable and require another login; a stale or uncommitted credential is not accepted. All Wuu processes sharing credentials must use this version or newer for these guarantees.
+
+Requests carrying OAuth credentials or configured headers cannot redirect across origins (scheme, host, or port). Legacy SSE message endpoints must share the stream's origin; same-origin paths and session queries remain supported.
 
 If the service requires a fixed client, callback, or scopes, add an `oauth` object to that server:
 

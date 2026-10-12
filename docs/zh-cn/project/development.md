@@ -62,6 +62,24 @@ make build-go
 崩溃，检查恢复、重试上限、窗口隔离和 IPC。测试使用临时配置目录和模拟内容，不读取
 你的 Wuu 数据。请在图形桌面会话中运行；它不验证原生对话框外观或打包应用行为。
 
+### MCP 连接生命周期
+
+构建核心后，运行 loopback 生命周期验收：
+
+```sh
+go build -o bin/wuu ./cmd/wuu
+node scripts/mcp-connection-generations-e2e.mjs
+```
+
+此脚本使用独立临时数据、合成 MCP 服务和真实 app-server 进程，通过确定性的响应屏障，
+验证后台初始化及工具发现期间的 Disconnect、Connect、Refresh 与退出，以及之后的
+显式重连和其他服务不受影响。它还会占满四个后台连接名额，验证后续 Disconnect、
+Connect 和 Refresh 能覆盖尚在排队的启动任务。它不使用真实凭据，也不验证桌面界面。
+`WUU_E2E_CORE` 可指定其他核心二进制；`WUU_MCP_E2E_OUTPUT` 可指定证据目录，
+默认为 `.tmp/e2e/mcp-connection-generations/`，保存 JSON RPC 往返、服务端请求、
+二进制哈希与通过/失败记录。现有 manager 测试另行覆盖串行 app-server RPC 分发器
+无法同时发起的并发操作、永久撤销，以及旧客户端的延迟回调。
+
 ### 实时缩放布局护栏
 
 桌面生产构建完成后，在图形会话中运行
