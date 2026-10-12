@@ -5,6 +5,8 @@ Desktop modules export `activate(api)` and use the generation-scoped `PluginGene
 | Contract | Guide |
 | --- | --- |
 | Slots, surfaces, presenters, views, cards, and status sources | [Desktop UI plugins](../customize/desktop-plugins.md) |
+| Composer inline-completion providers | [Composer inline-completion providers](../customize/desktop-plugins.md#composer-inline-completions) |
+| Runtime model service | [One-shot model requests](../customize/plugin-authoring.md#one-shot-model-requests) |
 | A complete local package and build commands | [Desktop quickstart](../customize/desktop-plugin-quickstart.md) |
 | Draft actions, workspace pages, and runtime calls | [Desktop recipes](../customize/plugin-recipes.md) |
 | Manifest, runtime lifecycle, storage, and distribution | [Plugin authoring](../customize/plugin-authoring.md) |

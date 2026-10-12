@@ -826,6 +826,7 @@ describe("PluginHost", () => {
       generation: "one",
       method: "summary.get",
       input: { threadId: "thread-1" },
+      signal: expect.any(AbortSignal),
     }]);
 
     await host.activateGeneration({

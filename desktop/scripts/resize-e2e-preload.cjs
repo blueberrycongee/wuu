@@ -130,7 +130,7 @@ if (liveLayout) {
 }
 let submittedTurns = 0;
 
-contextBridge.exposeInMainWorld("wuu", {
+const desktopAPI = {
   listProjects: async () => projectList(),
   createBlankProject: async () => projectList(),
   chooseProjectFolder: async () => projectList(),
@@ -356,4 +356,10 @@ contextBridge.exposeInMainWorld("wuu", {
     return () => terminalListeners.delete(handler);
   },
   onWindowResizeState: () => () => undefined
-});
+};
+// Focused renderer journeys may extend this shared synthetic backend without
+// copying it or adding test-only hooks to production renderer code.
+const extend = process.env.WUU_RENDERER_E2E_EXTENSION
+  ? require(process.env.WUU_RENDERER_E2E_EXTENSION)
+  : (api) => api;
+contextBridge.exposeInMainWorld("wuu", extend(desktopAPI));

@@ -171,6 +171,7 @@ async function readCounter(host: RuntimeHost): Promise<string | null> {
 | --- | --- |
 | `host.storage.get/set/delete/keys` | String values in the plugin's user or workspace namespace |
 | `host.storage.compare-exchange` | Conditional replacement using `{ scope, key, expected, value }`; returns `{ swapped, value }` |
+| `host.model.request` | One bounded, text-only model request using host configuration |
 | `host.settings.get/list` | Declared setting values |
 | `host.session.create/send/list/inspect/cancel/control` | Create and manage sessions through host lifecycle rules |
 | `host.session.history.read/search` | Bounded history access with sequence snapshots and continuation cursors |
@@ -189,6 +190,37 @@ For session creation, provide a stable `request_id`, `visibility=user|plugin`, a
 A completed turn may have an empty `final_output`: normal provider completion does not require an outward reply or an acknowledgement tool. It records the end of execution, not proof that the user's objective was fulfilled. Consumers must inspect results and evidence; transport failures and abnormal stops still fail.
 
 The Peers plugin uses `if_running: "steer"` to deliver terminal replies into active work when possible. Replies arriving too late for that turn are retained for a follow-up; idle sessions still wake automatically. A `running` response with `steered: true` can still be an unconsumed input, not durable delivery. Peers keeps the reply pending until a durable receipt confirms delivery and retries inputs lost on restart with the same request ID.
+
+## One-shot model requests
+
+Declare `requireModelRequestService()` in your initialization result's `required_services`, then call `requestModel(host, input)` from a live tool or capability handler, including `plugin.client.request`. Use the handler-scoped `RuntimeHost`; the TypeScript SDK supplies its execution ID. Activation, detached background work, and service-only handlers cannot start these requests.
+
+```ts
+import { requestModel, type RuntimeHost } from "@wuu/plugin-sdk";
+
+async function requestText(host: RuntimeHost, content: string) {
+  return await requestModel(host, {
+    messages: [{ role: "user", content }],
+    max_output_tokens: 256,
+    timeout_ms: 10_000,
+  });
+}
+```
+
+`host.model.request` version `1.0.0` uses method `call`, with schema identifiers `host.model.request.input.v1` and `host.model.request.output.v1`. Service negotiation checks the declared major version; SDK helper availability or `host.supports("host.service.call")` alone does not prove this service is available on an older host.
+
+| Input | Contract |
+| --- | --- |
+| `messages` | 1–32 messages with `system`, `user`, or `assistant` roles; nonblank UTF-8 text, at most 256 KiB of content in total |
+| `model_alias` | Optional existing `agent.model_aliases` name; omitted or empty uses the saved effective configuration's main model |
+| `max_output_tokens` | Integer 1–8192; default 1024 |
+| `timeout_ms` | Integer 1–45000; default 45000 |
+
+The timeout is bounded by both `timeout_ms` and the owning invocation's remaining lifetime. The runtime's default capability timeout is 30 seconds, so a request may end before 45 seconds. Set the package's runtime timeout deliberately rather than assuming the model service extends it. Cancellation, invocation completion, or generation revocation cancels outstanding provider work.
+
+The result contains `text`, `provider`, `model`, `finish_reason`, and `truncated`. Optional `usage` contains input, output, cache-creation, and cache-read token counts plus `cache_creation_unknown`; missing usage does not mean zero cost. Empty/non-text responses and responses requesting tool calls fail instead of starting a tool loop.
+
+The host reuses configured credentials, provider preparation, capacity coordination, retries, and inference accounting. It adds no conversation history, agent-specific request hooks, or tools and creates no persistent session. Select and limit context in the plugin. The service does not accept credentials, endpoint URLs, or arbitrary provider overrides. Explain what draft/history text will reach the configured provider, bound request frequency and output, and treat cancellation as best effort at avoiding further work: a submitted request may already incur charges.
 
 ## Providing a service
 

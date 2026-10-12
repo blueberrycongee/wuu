@@ -169,6 +169,7 @@ async function readCounter(host: RuntimeHost): Promise<string | null> {
 | --- | --- |
 | `host.storage.get/set/delete/keys` | 插件用户或工作区命名空间中的字符串值 |
 | `host.storage.compare-exchange` | 用 `{ scope, key, expected, value }` 条件替换，返回 `{ swapped, value }` |
+| `host.model.request` | 使用宿主配置完成一次有界的纯文本模型请求 |
 | `host.settings.get/list` | 声明的设置值 |
 | `host.session.create/send/list/inspect/cancel/control` | 按宿主生命周期规则创建和管理会话 |
 | `host.session.history.read/search` | 使用序列快照和续读游标访问有限历史 |
@@ -187,6 +188,37 @@ async function readCounter(host: RuntimeHost): Promise<string | null> {
 已完成的轮次可以没有 `final_output`：提供商正常结束不要求对外回复或调用确认工具。这只表示本轮执行结束，不证明用户目标已经达成；接收方仍须检查结果和证据，连接失败和异常终止仍会报错。
 
 Peers 插件通过 `if_running: "steer"` 尽量把终态回执注入当前工作；来不及在本轮处理的回执保留到后续轮次，空闲会话仍会被自动唤醒。返回 `running` 和 `steered: true` 时，输入可能尚未被消费，不代表已持久送达。Peers 会保留待送达状态，直到持久记录确认送达；重启丢失的输入使用同一请求 ID 重试。
+
+## 单次模型请求
+
+在初始化结果的 `required_services` 中声明 `requireModelRequestService()`，再从活动的工具或 capability 处理函数中调用 `requestModel(host, input)`，包括 `plugin.client.request`。使用该处理函数作用域内的 `RuntimeHost`，TypeScript SDK 会补充 execution ID。激活阶段、脱离执行的后台工作和仅有服务调用作用域的处理函数不能发起这些请求。
+
+```ts
+import { requestModel, type RuntimeHost } from "@wuu/plugin-sdk";
+
+async function requestText(host: RuntimeHost, content: string) {
+  return await requestModel(host, {
+    messages: [{ role: "user", content }],
+    max_output_tokens: 256,
+    timeout_ms: 10_000,
+  });
+}
+```
+
+`host.model.request` 的版本为 `1.0.0`，使用 `call` 方法，schema 标识为 `host.model.request.input.v1` 和 `host.model.request.output.v1`。服务协商检查声明的主版本；SDK 中存在 helper 或 `host.supports("host.service.call")` 返回真，都不能单独证明旧宿主支持此服务。
+
+| 输入 | 契约 |
+| --- | --- |
+| `messages` | 1–32 条消息，角色为 `system`、`user` 或 `assistant`；内容为非空白 UTF-8 文本，总计最多 256 KiB |
+| `model_alias` | 可选的现有 `agent.model_aliases` 名称；省略或为空时使用已保存的有效配置中的主模型 |
+| `max_output_tokens` | 整数 1–8192，默认 1024 |
+| `timeout_ms` | 整数 1–45000，默认 45000 |
+
+超时同时受 `timeout_ms` 和所属调用的剩余生命周期限制。运行时默认 capability 超时为 30 秒，因此请求可能在 45 秒之前结束。应明确配置包的运行时超时，不要认为模型服务会延长它。取消、所属调用结束或 generation 撤销都会取消尚未完成的提供商工作。
+
+结果包含 `text`、`provider`、`model`、`finish_reason` 和 `truncated`。可选的 `usage` 包含输入、输出、缓存创建、缓存读取 token 数及 `cache_creation_unknown`；缺少用量不代表零费用。空或非文本响应，以及请求工具调用的响应都会报错，不会启动工具循环。
+
+宿主复用已配置的凭据、提供商请求准备、容量协调、重试和推理用量记录。不自动加入对话历史、代理专用请求 hook 或工具，也不创建持久会话。上下文由插件自行选择和限制。此服务不接受凭据、端点 URL 或任意提供商覆盖。应说明哪些草稿或历史文本会发送给已配置的提供商，限制请求频率和输出；取消只能尽量避免后续工作，已提交的请求仍可能产生费用。
 
 ## 提供服务
 

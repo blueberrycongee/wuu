@@ -888,6 +888,7 @@ func NewSession(opts Options) (*Session, error) {
 		compactions:   compactions,
 	}
 	if pluginKernel != nil {
+		pluginKernel.bindModelSession(runtimeSession, pluginHost)
 		runtimeSession.pluginGeneration.driverGateways = pluginKernel.driverGateways
 	}
 	// Bind the session-selected loop driver: an installed profile resolves to

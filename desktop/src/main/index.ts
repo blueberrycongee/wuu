@@ -28,6 +28,7 @@ import {
   type WebContents,
 } from "electron";
 import { readFile, readdir, rm, stat } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
@@ -39,6 +40,7 @@ import {
 } from "../shared/protocol";
 import type {
   ArtifactItemMenuParams,
+  AppServerResponse,
   ConfigAdvancedUpdateResult,
   ConfigGeneralUpdateResult,
   ConfigCodexModelsResult,
@@ -133,6 +135,8 @@ import type {
   PluginStorageSetParams,
   PluginStorageResult,
   PluginClientRequestParams,
+  PluginClientCancelParams,
+  PluginClientCancelResult,
   PluginClientRequestResult,
   WorkspaceFileSaveParams,
   CodexPetFeed,
@@ -629,8 +633,75 @@ function unregisterWindow(windowID: number): void {
 // independent of the per-workdir app-server pool. Events (pairing URI,
 // paired, exit) fan out to every window; the settings panel re-pulls its
 // snapshot on each one.
+// Window and remote-peer requests share one ownership rule. A cancellation
+// targets the exact process admitted for the original request, even if the
+// workspace moves or is re-registered before its response arrives.
+const pluginRuntimeRequests = new Map<string, Map<string, {
+  id: string;
+  fingerprint: string;
+  cancel: () => Promise<PluginClientCancelResult>;
+}>>();
+
+async function requestPluginRuntime(
+  owner: string,
+  context: RuntimeContext,
+  params: PluginClientRequestParams,
+  onResponse?: (response: AppServerResponse) => void,
+  onOwnerCreated?: () => void,
+): Promise<PluginClientRequestResult> {
+  const { workspace_id: _workspaceID, ...request } = params;
+  if (params.request_id === undefined) {
+    return appServerClientPool.requestInContext<PluginClientRequestResult>(context, "plugin/client/request", request, onResponse);
+  }
+  if (typeof params.request_id !== "string" || params.request_id.length > 128 || !params.request_id.trim()) {
+    throw new Error("Plugin request ID must contain 1 to 128 characters");
+  }
+  let requests = pluginRuntimeRequests.get(owner);
+  if (!requests) {
+    requests = new Map();
+    pluginRuntimeRequests.set(owner, requests);
+    onOwnerCreated?.();
+  }
+  if (requests.has(params.request_id)) throw new Error("Plugin request ID is already active");
+  const requestInOwner = appServerClientPool.bindContextRequest(context);
+  const identity = { id: params.id, fingerprint: params.fingerprint, request_id: randomUUID() };
+  let cancellation: Promise<PluginClientCancelResult> | undefined;
+  requests.set(params.request_id, {
+    id: params.id,
+    fingerprint: params.fingerprint,
+    cancel: () => cancellation ??= requestInOwner<PluginClientCancelResult>("plugin/client/cancel", identity),
+  });
+  try {
+    return await requestInOwner<PluginClientRequestResult>(
+      "plugin/client/request", { ...request, request_id: identity.request_id }, onResponse,
+    );
+  } finally {
+    requests.delete(params.request_id);
+  }
+}
+
+function cancelPluginRuntime(owner: string, params: PluginClientCancelParams): Promise<PluginClientCancelResult> {
+  const request = params && pluginRuntimeRequests.get(owner)?.get(params.request_id);
+  if (!request || request.id !== params.id || request.fingerprint !== params.fingerprint) {
+    return Promise.resolve({ cancelled: false });
+  }
+  return request.cancel();
+}
+
+function cancelPluginRuntimeOwner(owner: string): void {
+  const requests = pluginRuntimeRequests.get(owner);
+  pluginRuntimeRequests.delete(owner);
+  for (const request of requests?.values() ?? []) {
+    void request.cancel().catch((error: unknown) => console.error("Plugin runtime cancellation failed", error));
+  }
+}
+
 const remoteTerminals = new TerminalSessionManager((owner,event)=>remoteAppServerBridge.notifyPeer(owner,"desktop/terminal/event",event));
 const remoteAppServerBridge = new RemoteAppServerBridge(async (workdir, method, params, reply, peerID) => {
+  const pluginOwner = `remote:${peerID}`;
+  // Existing ownership is enough to cancel; the original workspace may no
+  // longer be listed by the time the paired client disconnects or switches.
+  if (method === "plugin/client/cancel") return cancelPluginRuntime(pluginOwner, params as PluginClientCancelParams);
   // Keep the desktop's reverse-RPC capabilities: a phone attachment must not
   // disable browser tools on the shared execution service.
   if (method === "initialize") params = desktopInitializeParams();
@@ -645,12 +716,16 @@ const remoteAppServerBridge = new RemoteAppServerBridge(async (workdir, method, 
   else if (state.active_context?.kind === "no_project" && resolve(state.active_context.cwd) === cwd) context = state.active_context;
   else if (cwd.startsWith(resolve(wuuHomePath(), "scratch") + sep)) context = { kind: "no_project", cwd };
   else throw new Error("Unknown or unavailable remote workspace");
+  if (method === "plugin/client/request") return requestPluginRuntime(pluginOwner, context, params as PluginClientRequestParams, reply);
   if (method.startsWith("desktop/terminal/")) return requestRemoteTerminal(remoteTerminals,context,peerID,method,params);
   if (method === "desktop/skill/content") return readCatalogSkill(await appServerClientPool.requestInContext<SkillListResult>(context,"skill/list"),params as SkillContentParams);
   if (method.startsWith("desktop/file/")) return requestRemoteFiles(context,method,params);
   if (method.startsWith("desktop/git/")) return requestRemoteGit(gitServiceForContext(() => context), method, params);
   return appServerClientPool.requestInContext(context, method, params, reply);
-}, peerID=>remoteTerminals.stopForOwner(peerID));
+}, (peerID) => {
+  remoteTerminals.stopForOwner(peerID);
+  cancelPluginRuntimeOwner(`remote:${peerID}`);
+});
 
 const remoteHostManager = new RemoteHostManager({
   appServerEndpoint: () => remoteAppServerBridge.currentEndpoint(),
@@ -1909,16 +1984,14 @@ app.whenReady().then(async () => {
     appServerRequest<PluginStorageResult>(event, "plugin/storage/set", params));
   ipcMain.handle("wuu:plugin-runtime-request", (event, params: PluginClientRequestParams) => {
     const workspaceID = params.workspace_id?.trim();
-    if (!workspaceID) {
-      return appServerRequest<PluginClientRequestResult>(event, "plugin/client/request", params);
-    }
-    const { workspace_id: _workspaceID, ...request } = params;
-    return appServerClientPool.requestInContext<PluginClientRequestResult>(
-      runtimeContextForWorkspaceID(workspaceID),
-      "plugin/client/request",
-      request,
-    );
+    const context = workspaceID ? runtimeContextForWorkspaceID(workspaceID) : runtimeContextForEvent(event);
+    const owner = `window:${event.sender.id}`;
+    return requestPluginRuntime(owner, context, params, undefined, () => {
+      event.sender.once("destroyed", () => cancelPluginRuntimeOwner(owner));
+    });
   });
+  ipcMain.handle("wuu:plugin-runtime-cancel", (event, params: PluginClientCancelParams) =>
+    cancelPluginRuntime(`window:${event.sender.id}`, params));
   ipcMain.handle(
     "wuu:config-provider-remove",
     (

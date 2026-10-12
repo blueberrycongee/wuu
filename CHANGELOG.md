@@ -10,6 +10,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Plugin APIs for host-rendered inline draft suffixes and bounded, text-only
+  model requests through configured providers, with cancellation and lifecycle
+  handling. Completion plugins supply their own policy; no completion provider
+  is registered by default.
+
 - A Trigger button beside the latest assistant reply's timestamp shows background
   task wakeups, scheduled checks, and recent output, with a control to cancel
   automatic continuation without stopping the task.

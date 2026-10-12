@@ -465,6 +465,13 @@ func (h *Host) ResolveToolExecution(callerPluginID, executionID string) (ToolExe
 	return h.executions.ResolveTool(callerPluginID, executionID)
 }
 
+func (h *Host) ResolveExecution(callerPluginID, executionID string) (ExecutionScope, *HostServiceError) {
+	if h == nil || h.executions == nil {
+		return ExecutionScope{}, &HostServiceError{Code: "service_unavailable", Message: "execution scope is unavailable"}
+	}
+	return h.executions.Resolve(callerPluginID, executionID)
+}
+
 func (h *Host) CancelExecutions(cause error) {
 	if h != nil && h.executions != nil {
 		h.executions.CancelAll(cause)

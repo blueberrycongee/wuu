@@ -690,6 +690,43 @@ export interface ContextUsageSummaryV1 {
 
 export type ComposerSubmissionModeV1 = "send" | "queue" | "steer";
 
+/** One immutable request for an append-only suggestion in the host-owned composer. */
+export interface ComposerInlineCompletionContext {
+  readonly contractVersion: 1;
+  /** Opaque identity for this mounted input and conversation/workspace context. */
+  readonly composerId: string;
+  /** Changes whenever input, selection, composition, focus, or conversation state changes. */
+  readonly revision: number;
+  readonly threadId?: string;
+  /** Side-conversation identity; threadId remains its owning main conversation. */
+  readonly sideThreadId?: string;
+  readonly draftText: string;
+  /** UTF-16 offsets into draftText. The host requests only at a collapsed end caret. */
+  readonly selectionStart: number;
+  readonly selectionEnd: number;
+  readonly running: boolean;
+}
+
+export interface ComposerInlineCompletion {
+  /** Literal text to append, never markup or a replacement of the current draft. */
+  readonly text: string;
+}
+
+export interface ComposerInlineCompletionProviderRegistration {
+  readonly id: string;
+  /** Lower orders run first; ties use plugin ID, then registration ID. */
+  readonly order?: number;
+  /**
+   * Return null to let the next provider try. The host owns rendering and Tab
+   * acceptance; providers own prompts, debouncing, and any context retrieval.
+   * Stop work when signal aborts. Late results never change the current input.
+   */
+  provideCompletion(
+    context: ComposerInlineCompletionContext,
+    signal: AbortSignal,
+  ): ComposerInlineCompletion | null | Promise<ComposerInlineCompletion | null>;
+}
+
 export interface ComposerSnapshotV1 {
   readonly contractVersion: 1;
   readonly draftText?: string;

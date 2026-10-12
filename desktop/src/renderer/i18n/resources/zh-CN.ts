@@ -1020,6 +1020,7 @@ export const zhCN = {
   "composer.noMatchingCommand": "没有匹配 “/{query}” 的命令",
   "composer.attachments": "附件",
   "composer.collapseInput": "收起输入框",
+  "composer.inlineCompletionAvailable": "建议：{text}。按 Tab 接受，按 Escape 关闭。",
   "composer.expandInput": "展开输入框",
   "composer.readOnlyCannotExpand": "只读对话不可展开",
   "composer.switchBranch": "切换分支：{branch}",

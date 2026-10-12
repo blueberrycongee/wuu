@@ -26,16 +26,33 @@ export interface DesktopPluginFailure {
 
 export const desktopPluginHost = new PluginHost({
   react: React,
-  invokeRuntime: async ({ pluginId, generation, method, input, workspaceId }) => {
-    const response = await window.wuu?.requestPluginRuntime?.({
-      id: pluginId,
-      fingerprint: generation,
+  invokeRuntime: async ({ pluginId, generation, method, input, workspaceId, signal }) => {
+    signal?.throwIfAborted();
+    const bridge = window.wuu;
+    if (!bridge?.requestPluginRuntime || !bridge.cancelPluginRuntime) {
+      throw new Error("Plugin runtime requests are unavailable");
+    }
+    const identity = { id: pluginId, fingerprint: generation, request_id: crypto.randomUUID() };
+    const response = bridge.requestPluginRuntime({
+      ...identity,
       method,
       input,
       ...(workspaceId ? { workspace_id: workspaceId } : {}),
     });
-    if (!response) throw new Error("Plugin runtime requests are unavailable");
-    return response.result;
+    const cancel = () => {
+      void bridge.cancelPluginRuntime(identity).catch((error: unknown) => {
+        console.error("Plugin runtime cancellation failed", error);
+      });
+    };
+    signal?.addEventListener("abort", cancel, { once: true });
+    if (signal?.aborted) cancel();
+    try {
+      const result = await response;
+      signal?.throwIfAborted();
+      return result.result;
+    } finally {
+      signal?.removeEventListener("abort", cancel);
+    }
   },
   listWorkspaces: async () => {
     const result = await window.wuu?.listProjects?.();

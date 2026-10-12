@@ -51,6 +51,7 @@ const (
 	MethodPluginStorageGet                = "plugin/storage/get"
 	MethodPluginStorageSet                = "plugin/storage/set"
 	MethodPluginClientRequest             = "plugin/client/request"
+	MethodPluginClientCancel              = "plugin/client/cancel"
 	MethodUserQuestionList                = "user-question/list"
 	MethodUserQuestionRespond             = "user-question/respond"
 	MethodUserQuestionCancel              = "user-question/cancel"

@@ -105,6 +105,7 @@ const (
 	KernelUserQuestionAskService        = "host.user-question.ask"
 	KernelUserQuestionOfferService      = "host.user-question.offer"
 	KernelArtifactImportService         = "host.artifact.import"
+	KernelModelRequestService           = "host.model.request"
 	KernelServiceMethod                 = "call"
 )
 
@@ -755,6 +756,49 @@ type ExecutionUpdate struct {
 	ExecutionID string          `json:"execution_id"`
 	Message     string          `json:"message,omitempty"`
 	Detail      json.RawMessage `json:"detail,omitempty"`
+}
+
+// ModelRequestMessage is plain text with no attachments or tool calls.
+type ModelRequestMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+// ModelRequestParams selects only configured host models. Messages contain
+// one to 32 nonempty entries and at most 256 KiB of UTF-8 content in total.
+type ModelRequestParams struct {
+	Messages   []ModelRequestMessage `json:"messages"`
+	ModelAlias string                `json:"model_alias,omitempty"`
+	// MaxOutputTokens is 1–8192; omitted defaults to 1024.
+	MaxOutputTokens int `json:"max_output_tokens,omitempty"`
+	// TimeoutMS is 1–45000 milliseconds; omitted defaults to 45000.
+	TimeoutMS int `json:"timeout_ms,omitempty"`
+}
+
+type ModelRequestUsage struct {
+	InputTokens          int  `json:"input_tokens"`
+	OutputTokens         int  `json:"output_tokens"`
+	CacheCreationTokens  int  `json:"cache_creation_tokens"`
+	CacheReadTokens      int  `json:"cache_read_tokens"`
+	CacheCreationUnknown bool `json:"cache_creation_unknown"`
+}
+
+type ModelRequestResult struct {
+	Text         string             `json:"text"`
+	Provider     string             `json:"provider"`
+	Model        string             `json:"model"`
+	FinishReason string             `json:"finish_reason"`
+	Truncated    bool               `json:"truncated"`
+	Usage        *ModelRequestUsage `json:"usage,omitempty"`
+}
+
+// RequestModel performs one bounded tools-free request. The plugin must declare
+// host.model.request v1 and call from a live tool or capability context. Ending or
+// cancelling that execution cancels the model request.
+func RequestModel(ctx context.Context, host Host, input ModelRequestParams) (ModelRequestResult, error) {
+	var result ModelRequestResult
+	err := CallService(ctx, host, KernelModelRequestService, KernelServiceMethod, input, &result)
+	return result, err
 }
 
 type ArtifactImportParams struct {

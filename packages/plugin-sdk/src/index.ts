@@ -486,6 +486,8 @@ export interface PluginGenerationApi {
   registerStyle(style: StyleRegistration): Disposable;
   registerLocale(locale: LocaleRegistration): Disposable;
   registerComposerStatusSource(source: ComposerStatusSourceRegistration): Disposable;
+  /** Supply append-only text for the host-owned composer ghost and Tab action. */
+  registerComposerInlineCompletionProvider(provider: ComposerInlineCompletionProviderRegistration): Disposable;
   registerCleanup(cleanup: () => void): Disposable;
   registerViewType(definition: ViewTypeDefinition): Disposable;
   registerViewPlacement(contribution: ViewPlacementContribution): Disposable;
@@ -500,6 +502,8 @@ export interface PluginGenerationApi {
 
 export interface PluginRuntimeInvokeOptions {
   readonly workspaceId?: string;
+  /** Cancel this invocation and the host work owned by its execution. */
+  readonly signal?: AbortSignal;
 }
 
 export interface PluginWorkspace {
@@ -590,6 +594,7 @@ export const EXECUTION_UPDATE_SERVICE = "execution.update" as const;
 export const INVOKE_TOOL_SERVICE = "execution.invoke-tool" as const;
 export const USER_QUESTION_ASK_SERVICE = "host.user-question.ask" as const;
 export const ARTIFACT_IMPORT_SERVICE = "host.artifact.import" as const;
+export const MODEL_REQUEST_SERVICE = "host.model.request" as const;
 export const SECURITY_AUTHORIZE_SERVICE = "security.authorize" as const;
 export const PROCESS_SANDBOX_SERVICE = "sandbox.process" as const;
 export const SECURITY_AUTHORIZE_METHOD = "authorize" as const;
@@ -636,6 +641,10 @@ export function requireKernelService(method: KernelHostServiceMethod): ServiceRe
 
 export function requireArtifactImportService(): ServiceRequirement {
   return { name: ARTIFACT_IMPORT_SERVICE, major_version: 1, required: true };
+}
+
+export function requireModelRequestService(): ServiceRequirement {
+  return { name: MODEL_REQUEST_SERVICE, major_version: 1, required: true };
 }
 
 export interface HostServiceDescriptor {
@@ -1240,6 +1249,53 @@ export async function invokeTool(host: RuntimeHost, params: InvokeToolParams): P
   }) as ToolResult;
 }
 
+/** Text-only input: no tools, attachments, credentials, or implicit conversation history. */
+export interface ModelRequestMessage {
+  readonly role: "system" | "user" | "assistant";
+  readonly content: string;
+}
+
+export interface ModelRequestParams {
+  /** One to 32 nonempty messages, at most 256 KiB of UTF-8 content in total. */
+  readonly messages: readonly ModelRequestMessage[];
+  /** Existing configured model alias; omitted uses the host's configured model. */
+  readonly model_alias?: string;
+  /** Integer 1–8192; defaults to 1024. */
+  readonly max_output_tokens?: number;
+  /** Integer 1–45000 milliseconds; defaults to 45000. */
+  readonly timeout_ms?: number;
+}
+
+export interface ModelRequestUsage {
+  readonly input_tokens: number;
+  readonly output_tokens: number;
+  readonly cache_creation_tokens: number;
+  readonly cache_read_tokens: number;
+  readonly cache_creation_unknown: boolean;
+}
+
+export interface ModelRequestResult {
+  readonly text: string;
+  readonly provider: string;
+  readonly model: string;
+  readonly finish_reason: string;
+  readonly truncated: boolean;
+  readonly usage?: ModelRequestUsage;
+}
+
+/**
+ * Run one bounded, tools-free model request through Wuu's configured provider.
+ * Requires host.model.request v1 and a host scoped to a live tool or capability.
+ * The request is cancelled when that execution ends or is cancelled.
+ */
+export async function requestModel(host: RuntimeHost, input: ModelRequestParams): Promise<ModelRequestResult> {
+  return await host.call("host.service.call", {
+    service: MODEL_REQUEST_SERVICE,
+    method: KERNEL_SERVICE_METHOD,
+    params: input,
+  }) as ModelRequestResult;
+}
+
 export interface ArtifactImportParams {
   /** Absolute path, or a path relative to the current tool execution's cwd. */
   path?: string;
@@ -1745,6 +1801,43 @@ export interface ContextUsageSummaryV1 {
 }
 
 export type ComposerSubmissionModeV1 = "send" | "queue" | "steer";
+
+/** One immutable request for an append-only suggestion in the host-owned composer. */
+export interface ComposerInlineCompletionContext {
+  readonly contractVersion: 1;
+  /** Opaque identity for this mounted input and conversation/workspace context. */
+  readonly composerId: string;
+  /** Changes whenever input, selection, composition, focus, or conversation state changes. */
+  readonly revision: number;
+  readonly threadId?: string;
+  /** Side-conversation identity; threadId remains its owning main conversation. */
+  readonly sideThreadId?: string;
+  readonly draftText: string;
+  /** UTF-16 offsets into draftText. The host requests only at a collapsed end caret. */
+  readonly selectionStart: number;
+  readonly selectionEnd: number;
+  readonly running: boolean;
+}
+
+export interface ComposerInlineCompletion {
+  /** Literal text to append, never markup or a replacement of the current draft. */
+  readonly text: string;
+}
+
+export interface ComposerInlineCompletionProviderRegistration {
+  readonly id: string;
+  /** Lower orders run first; ties use plugin ID, then registration ID. */
+  readonly order?: number;
+  /**
+   * Return null to let the next provider try. The host owns rendering and Tab
+   * acceptance; providers own prompts, debouncing, and any context retrieval.
+   * Stop work when signal aborts. Late results never change the current input.
+   */
+  provideCompletion(
+    context: ComposerInlineCompletionContext,
+    signal: AbortSignal,
+  ): ComposerInlineCompletion | null | Promise<ComposerInlineCompletion | null>;
+}
 
 export interface ComposerSnapshotV1 {
   readonly contractVersion: 1;

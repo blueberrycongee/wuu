@@ -3412,6 +3412,7 @@ export function App(): JSX.Element {
         }}
         queryHistorySessionID={activeThread?.id ?? currentSessionTab?.id}
         skillThreadID={activeThread?.id}
+        threadId={activeThread?.id}
         queryHistory={composerQueryHistory}
         requestedHandoffIntent={requestedHandoffIntentForThread(activeThread)}
       />
@@ -5808,6 +5809,8 @@ export function App(): JSX.Element {
                   running={sideThread.entry.streaming}
                   disabledReason={sideThread.sendDisabledReason}
                   error={sideThread.requestError}
+                  mainThreadId={activeThreadID}
+                  sideThreadId={sideThread.entry.summary?.side_thread_id}
                   queryHistorySessionID={
                     sideThread.entry.summary?.side_thread_id ?? `side:${activeThreadID}`
                   }

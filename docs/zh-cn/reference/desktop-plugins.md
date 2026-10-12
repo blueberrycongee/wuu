@@ -5,6 +5,8 @@
 | 契约 | 指南 |
 | --- | --- |
 | Slot、Surface、Presenter、View、卡片和状态源 | [桌面 UI 插件](../customize/desktop-plugins.md) |
+| 输入框行内补全 provider | [输入框行内补全 provider](../customize/desktop-plugins.md#输入框行内补全) |
+| 运行时模型服务 | [单次模型请求](../customize/plugin-authoring.md#单次模型请求) |
 | 完整本地包和构建命令 | [桌面插件快速上手](../customize/desktop-plugin-quickstart.md) |
 | 草稿动作、工作区页面和运行时调用 | [桌面插件配方](../customize/plugin-recipes.md) |
 | manifest、运行时生命周期、存储和分发 | [编写插件](../customize/plugin-authoring.md) |

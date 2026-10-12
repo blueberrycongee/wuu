@@ -2449,3 +2449,27 @@ html[data-focus-modality="keyboard"] :is(.composer-context-menu, .composer-proje
   opacity: 1;
   cursor: progress;
 }
+
+.composer-inline-completion {
+  position: absolute;
+  overflow: hidden;
+  pointer-events: none;
+  user-select: none;
+}
+
+.composer-inline-completion-mirror {
+  box-sizing: border-box;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
+
+.composer-inline-completion-prefix {
+  visibility: hidden;
+}
+
+.composer-inline-completion-text {
+  color: var(--ink-muted);
+  /* A proposed suffix must not move the existing word away from the native
+     caret when it wraps. Accepted text uses the textarea's normal wrapping. */
+  word-break: break-all;
+}

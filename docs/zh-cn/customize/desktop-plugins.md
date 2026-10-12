@@ -14,6 +14,7 @@
 | 渲染特定内容类型 | `registerRenderer` |
 | 在会话底部显示临时交互 | `showConversationCard` |
 | 发布简短的输入框状态 | `registerComposerStatusSource` |
+| 提供草稿行内后缀 | `registerComposerInlineCompletionProvider` |
 | 改变外观 | 声明式主题、主题 token 或样式 |
 
 选择能满足需求的最小边界。工具栏按钮不需要替换整个输入框，长仪表盘也不应放进工具栏。视图位置、导航、窗口生命周期和恢复控件由宿主管理。
@@ -62,6 +63,22 @@ View 是注册的组件，可以放在 `navigation`、`primary`、`auxiliary`、
 会话和插件主视图使用侧栏导航，包括通过 API 打开、没有声明导航入口的视图。它们的标题栏不提供 `tabs`、`activeTabId` 或 tab 操作。插件主视图提供 `canNavigateBack` 和 `header.navigate-back`。只有关闭会把页面从侧栏移除时，宿主才另外提供关闭控件，即通过 API 打开的视图和额外实例；已声明导航入口的页面通过返回或侧栏离开。紧凑工作区标题栏同样提供返回，并为当前标签提供关闭控件。这些仍是 contract version 1 的可选字段和动作，应检查快照和 `host.actions`，不要从已保存视图重建顶部标签栏。辅助面板和插件内容内部仍可使用各自的标签页。
 
 会话卡片用于临时交互，不是保存的历史或持久页面；卡片句柄可以更新状态或关闭卡片。输入框状态源通过 `getSnapshot(context)` 返回结构化条目，通过 `subscribe` 通知变化，数据未变时应保持快照引用稳定。状态行、溢出和可选的 `open-session` 动作由 Wuu 渲染处理，不接收每个条目的任意 React 内容。
+
+## 输入框行内补全
+
+在 `activate(api)` 中调用 `registerComposerInlineCompletionProvider({ id, order, provideCompletion })` 注册 provider。回调接收只读的 `ComposerInlineCompletionContext` 和 `AbortSignal`，同步或通过 promise 返回 `{ text: "字面文本后缀" }` 或 `null`。没有建议时返回 `null`。宿主将已接受的文本追加到草稿；回调不替换整份草稿，也不接管 textarea。
+
+版本 1 的 context 包含 `composerId`、`revision`、可选的 `threadId` 和 `sideThreadId`、`draftText`、`selectionStart`、`selectionEnd` 和 `running`。选区偏移使用 JavaScript UTF-16 索引。`composerId` 是不透明标识，作用域为已挂载输入框及其会话/工作区上下文；revision 不是全局会话版本。侧会话输入框的 `threadId` 表示所属主会话，`sideThreadId` 表示已创建的侧会话；尚未创建侧会话的新草稿也有独立的 `composerId`。插件自行根据 `running` 决定是否提供建议。
+
+Provider 按 `order` 升序调用，再依次按插件 ID、注册 ID 排序，逐个尝试。第一个非空结果生效；无结果或 provider 出错时继续尝试下一项。宿主渲染建议文本，并在接受前核对请求是否仍然有效。上下文获取、提示词、防抖和请求预算由插件负责。该 API 不会安装补全 provider 或自动调用模型的策略。
+
+原生输入框只在已聚焦、可编辑且光标折叠在草稿末尾时请求建议，空草稿也可使用。输入法组合输入、斜杠命令草稿、打开的菜单或对话框，以及隐藏的折叠提示内容不参与补全。斜杠命令保留 Tab 优先级。无修饰键且非重复触发的 Tab 接受当前建议；没有建议时保留正常焦点导航。Escape 关闭当前建议或取消待处理请求。接受只修改草稿，不发送，并保留原生撤销。后缀支持多行，CRLF 会规范为 LF。
+
+编辑、选区变化、IME 输入、焦点、上下文或运行状态变化、provider 释放、禁用、重载和卸载会使待处理结果失效。应响应 abort signal，并清理自己创建的定时器和订阅。释放注册句柄会移除贡献，generation 清理也会释放它。忽略取消不能让过期结果改动草稿，但可能让插件自己的工作继续运行。
+
+Provider 会收到尚未发送的草稿。应明确选择哪些数据可以离开机器，并向用户说明模型或网络用途。通过 `api.invokeRuntime` 委派时，将同一 signal 传入 options，再把运行时执行的 signal 继续传给下游工作。[单次模型请求](plugin-authoring.md#单次模型请求)使用已配置的提供商，可能产生费用；取消不会撤销已完成的请求，也不保证提供商已接收的请求免费。
+
+兼容旧桌面宿主时，注册前先检查 `typeof api.registerComposerInlineCompletionProvider === "function"`。context 中的 `contractVersion: 1` 只描述此回调结构，与运行时服务版本、Wuu 产品 CalVer 分开判断。准确的公开类型见 [TypeScript SDK](../../../packages/plugin-sdk/src/index.ts)。
 
 ## 外观和清理
 

@@ -67,6 +67,36 @@ jobs:
       - name: Test
         run: make test-go
 
+      - name: Build one-shot model acceptance prerequisites
+        run: |
+          npm ci --prefix packages/plugin-sdk
+          npm --prefix packages/plugin-sdk run build
+          mkdir -p .tmp/bin
+          go build -o .tmp/bin/wuu ./cmd/wuu
+
+      - name: Guard one-shot plugin model requests
+        timeout-minutes: 3
+        shell: bash
+        env:
+          WUU_E2E_CORE: ${{ github.workspace }}/.tmp/bin/wuu
+          WUU_MODEL_E2E_OUTPUT: ${{ runner.temp }}/wuu-plugin-model-evidence
+        run: |
+          mkdir -p "$WUU_MODEL_E2E_OUTPUT"
+          set -o pipefail
+          node scripts/plugin-model-request-e2e.mjs 2>&1 | tee "$WUU_MODEL_E2E_OUTPUT/run.log"
+
+      - name: Upload one-shot plugin model evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: plugin-model-request-evidence
+          path: |
+            ${{ runner.temp }}/wuu-plugin-model-evidence/*.json
+            ${{ runner.temp }}/wuu-plugin-model-evidence/*.jsonl
+            ${{ runner.temp }}/wuu-plugin-model-evidence/*.log
+          if-no-files-found: ignore
+          retention-days: 14
+
       - name: Build
         if: github.event_name == 'push'
         run: make build-go
@@ -178,6 +208,26 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y fonts-noto-cjk fonts-noto-color-emoji xdotool
+
+      - name: Guard composer inline extension foundation
+        if: ${{ !cancelled() && steps.build-renderer.outcome == 'success' }}
+        timeout-minutes: 3
+        shell: bash
+        env:
+          WUU_INLINE_E2E_OUTPUT: ${{ runner.temp }}/wuu-composer-inline-evidence
+        run: |
+          mkdir -p "$WUU_INLINE_E2E_OUTPUT"
+          set -o pipefail
+          xvfb-run --auto-servernum --server-args='-screen 0 1600x1200x24' desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/composer-inline-e2e.cjs 2>&1 | tee "$WUU_INLINE_E2E_OUTPUT/run.log"
+
+      - name: Upload composer inline extension evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: composer-inline-extension-evidence
+          path: ${{ runner.temp }}/wuu-composer-inline-evidence
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Guard workspace tabs and navigation
         if: ${{ !cancelled() && steps.build-renderer.outcome == 'success' }}

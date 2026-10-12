@@ -740,6 +740,8 @@ export interface PluginStorageResult {
   value: string | null;
 }
 export interface PluginClientRequestParams extends PluginIdentityParams {
+  /** Optional opaque ID enabling cancellation of this request. */
+  request_id?: string;
   method: string;
   input?: unknown;
   /** Desktop routing hint. The main process resolves this stable project id
@@ -747,6 +749,8 @@ export interface PluginClientRequestParams extends PluginIdentityParams {
   workspace_id?: string;
 }
 export interface PluginClientRequestResult { result?: unknown; }
+export interface PluginClientCancelParams extends PluginIdentityParams { request_id: string; }
+export interface PluginClientCancelResult { cancelled: boolean; }
 
 export type ConfigModelUpdateResult = {
   provider: string;
@@ -2959,6 +2963,7 @@ export type WuuDesktopApi = {
   getPluginStorage: (params: PluginStorageGetParams) => Promise<PluginStorageResult>;
   setPluginStorage: (params: PluginStorageSetParams) => Promise<PluginStorageResult>;
   requestPluginRuntime: (params: PluginClientRequestParams) => Promise<PluginClientRequestResult>;
+  cancelPluginRuntime: (params: PluginClientCancelParams) => Promise<PluginClientCancelResult>;
   listMCPServers: () => Promise<MCPListResult>;
   connectMCPServer: (name: string) => Promise<MCPServerActionResult>;
   disconnectMCPServer: (name: string) => Promise<MCPServerActionResult>;

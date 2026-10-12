@@ -3,6 +3,9 @@ import type { ExtensionIconDescriptor } from "../../shared/protocol";
 
 import type {
   CSSSnippet,
+  ComposerInlineCompletion,
+  ComposerInlineCompletionContext,
+  ComposerInlineCompletionProviderRegistration,
   InspectorSectionDefinition,
   PluginUIKit,
   PluginCommandPresentation,
@@ -184,6 +187,8 @@ export interface PluginGenerationApi {
   registerLocale(locale: PluginLocaleRegistration): Disposable;
   /** Publish structured status data for the host-owned composer capsule row. */
   registerComposerStatusSource(source: ComposerStatusSourceRegistration): Disposable;
+  /** Supply append-only text; the host owns ghost rendering and keyboard acceptance. */
+  registerComposerInlineCompletionProvider(provider: ComposerInlineCompletionProviderRegistration): Disposable;
   registerCleanup(cleanup: () => void): Disposable;
 
   // Phase C — Workbench API
@@ -208,6 +213,8 @@ export interface PluginGenerationApi {
 
 export interface PluginRuntimeInvokeOptions {
   readonly workspaceId?: string;
+  /** Cancel this invocation and the host work owned by its execution. */
+  readonly signal?: AbortSignal;
 }
 
 export interface PluginWorkspace {
@@ -320,6 +327,12 @@ export interface RegisteredStatusItem extends StatusItemDefinition {
   readonly order: number;
 }
 
+export interface RegisteredComposerInlineCompletionProvider extends ComposerInlineCompletionProviderRegistration {
+  readonly pluginId: string;
+  readonly generation: string;
+  readonly order: number;
+}
+
 export interface RegisteredToolActivityPresenter extends ToolActivityPresenterDefinition {
   readonly pluginId: string;
   readonly generation: string;
@@ -372,6 +385,7 @@ export interface PluginHostOptions {
     method: string;
     input?: unknown;
     workspaceId?: string;
+    signal?: AbortSignal;
   }>) => Promise<unknown>;
   listWorkspaces?: () => Promise<PluginWorkspaceSnapshot>;
   listThreads?: (workspaceRoot: string) => Promise<readonly PluginThreadSummary[]>;
@@ -462,6 +476,11 @@ interface ComposerStatusSourceRecord extends OrderedRecord {
   readonly subscribe: ComposerStatusSourceRegistration["subscribe"];
 }
 
+interface ComposerInlineCompletionProviderRecord extends OrderedRecord {
+  readonly provideCompletion: ComposerInlineCompletionProviderRegistration["provideCompletion"];
+  readonly requests: Set<AbortController>;
+}
+
 interface PresenterRecord extends OrderedRecord {
   readonly target: PresentationTarget;
   readonly key?: string;
@@ -490,10 +509,12 @@ interface GenerationState {
   readonly cssSnippets: CSSSnippetRecord[];
   readonly statusItems: StatusItemRecord[];
   readonly composerStatusSources: ComposerStatusSourceRecord[];
+  readonly composerInlineCompletionProviders: ComposerInlineCompletionProviderRecord[];
   readonly toolActivityPresenters: PresenterRecord[];
   readonly registrationKeys: Set<string>;
   readonly hostEventHandlers: Set<(event: unknown) => void>;
   readonly teardown: Disposable[];
+  readonly runtimeRequests: Set<AbortController>;
   acceptingRegistrations: boolean;
   active: boolean;
   disposed: boolean;
@@ -516,6 +537,7 @@ const EMPTY_RENDERER_SNAPSHOT: readonly RegisteredRenderer[] = Object.freeze([])
 const EMPTY_THEME_TOKEN_SNAPSHOT: readonly RegisteredThemeTokens[] = Object.freeze([]);
 const EMPTY_STATUS_ITEM_SNAPSHOT: readonly RegisteredStatusItem[] = Object.freeze([]);
 const EMPTY_COMPOSER_STATUS_SOURCE_SNAPSHOT: readonly RegisteredComposerStatusSource[] = Object.freeze([]);
+const EMPTY_COMPOSER_INLINE_COMPLETION_SNAPSHOT: readonly RegisteredComposerInlineCompletionProvider[] = Object.freeze([]);
 const EMPTY_PRESENTER_SNAPSHOT: readonly RegisteredPresenter[] = Object.freeze([]);
 const EMPTY_TOOL_ACTIVITY_PRESENTER_SNAPSHOT: readonly RegisteredToolActivityPresenter[] = Object.freeze([]);
 const EMPTY_LOCALE_SNAPSHOT: Readonly<Record<string, string>> = Object.freeze({});
@@ -568,6 +590,8 @@ export class PluginHost {
   private statusItemSnapshot: readonly RegisteredStatusItem[] = EMPTY_STATUS_ITEM_SNAPSHOT;
   private composerStatusSourceSnapshot: readonly RegisteredComposerStatusSource[] = EMPTY_COMPOSER_STATUS_SOURCE_SNAPSHOT;
   private readonly composerStatusSourceListeners = new Set<() => void>();
+  private composerInlineCompletionProviderSnapshot: readonly RegisteredComposerInlineCompletionProvider[] = EMPTY_COMPOSER_INLINE_COMPLETION_SNAPSHOT;
+  private readonly composerInlineCompletionProviderListeners = new Set<() => void>();
   private presenterSnapshot: readonly RegisteredPresenter[] = EMPTY_PRESENTER_SNAPSHOT;
   private toolActivityPresenterSnapshot: readonly RegisteredToolActivityPresenter[] = EMPTY_TOOL_ACTIVITY_PRESENTER_SNAPSHOT;
 
@@ -809,6 +833,15 @@ export class PluginHost {
     return () => this.composerStatusSourceListeners.delete(listener);
   }
 
+  getComposerInlineCompletionProviders(): readonly RegisteredComposerInlineCompletionProvider[] {
+    return this.composerInlineCompletionProviderSnapshot;
+  }
+
+  subscribeComposerInlineCompletionProviders(listener: () => void): () => void {
+    this.composerInlineCompletionProviderListeners.add(listener);
+    return () => this.composerInlineCompletionProviderListeners.delete(listener);
+  }
+
   getToolActivityPresenters(): readonly RegisteredToolActivityPresenter[] {
     return this.toolActivityPresenterSnapshot;
   }
@@ -977,15 +1010,27 @@ export class PluginHost {
           throw new Error("Plugin runtime requests are unavailable");
         }
         this.assertActive(state);
-        const result = await this.runtimeInvoker({
-          pluginId: state.pluginId,
-          generation: state.generation,
-          method: requireNonEmpty(method, "plugin runtime method"),
-          input,
-          ...(options?.workspaceId ? { workspaceId: options.workspaceId } : {}),
-        });
-        this.assertActive(state);
-        return result;
+        options?.signal?.throwIfAborted();
+        const controller = new AbortController();
+        const abort = () => controller.abort(options?.signal?.reason);
+        options?.signal?.addEventListener("abort", abort, { once: true });
+        state.runtimeRequests.add(controller);
+        try {
+          const result = await this.runtimeInvoker({
+            pluginId: state.pluginId,
+            generation: state.generation,
+            method: requireNonEmpty(method, "plugin runtime method"),
+            input,
+            signal: controller.signal,
+            ...(options?.workspaceId ? { workspaceId: options.workspaceId } : {}),
+          });
+          this.assertActive(state);
+          controller.signal.throwIfAborted();
+          return result;
+        } finally {
+          state.runtimeRequests.delete(controller);
+          options?.signal?.removeEventListener("abort", abort);
+        }
       },
       listWorkspaces: async () => {
         if (!this.workspaceLister) {
@@ -1181,6 +1226,27 @@ export class PluginHost {
         state.composerStatusSources.push(record);
         return this.ownRecord(state, record);
       },
+      registerComposerInlineCompletionProvider: (provider: ComposerInlineCompletionProviderRegistration) => {
+        this.assertAccepting(state);
+        const id = this.claimRegistrationId(state, "composer-inline-completion", provider.id);
+        if (typeof provider.provideCompletion !== "function") {
+          throw new Error("Composer inline completion provider requires a provideCompletion function");
+        }
+        const provideCompletion = provider.provideCompletion;
+        const record: ComposerInlineCompletionProviderRecord = {
+          pluginId: state.pluginId,
+          generation: state.generation,
+          id,
+          order: normalizeOrder(provider.order),
+          requests: new Set(),
+          removed: false,
+          provideCompletion: (context, signal) => this.requestComposerInlineCompletion(state, record, provideCompletion, context, signal),
+        };
+        state.composerInlineCompletionProviders.push(record);
+        return this.ownRecord(state, record, () => {
+          for (const request of record.requests) request.abort();
+        });
+      },
       registerCleanup: (cleanup: () => void) => {
         this.assertAccepting(state);
         const disposable = createDisposable(() => {
@@ -1326,6 +1392,56 @@ export class PluginHost {
         state.toolActivityPresenters.push(record);
         return this.ownRecord(state, record);
       },
+    });
+  }
+
+  private requestComposerInlineCompletion(
+    state: GenerationState,
+    record: ComposerInlineCompletionProviderRecord,
+    provideCompletion: ComposerInlineCompletionProviderRegistration["provideCompletion"],
+    context: ComposerInlineCompletionContext,
+    signal: AbortSignal,
+  ): Promise<ComposerInlineCompletion | null> {
+    // Fingerprints can recur after re-enabling the same code. Fence the exact
+    // activation and registration, not just their public string identities.
+    const active = () => !record.removed && !state.disposed && this.activeGenerations.get(state.pluginId) === state;
+    if (signal.aborted || !active()) return Promise.resolve(null);
+    const controller = new AbortController();
+    record.requests.add(controller);
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = (result: ComposerInlineCompletion | null) => {
+        if (settled) return;
+        settled = true;
+        signal.removeEventListener("abort", cancel);
+        controller.signal.removeEventListener("abort", aborted);
+        record.requests.delete(controller);
+        resolve(result);
+      };
+      const cancel = () => controller.abort();
+      const aborted = () => finish(null);
+      signal.addEventListener("abort", cancel, { once: true });
+      controller.signal.addEventListener("abort", aborted, { once: true });
+      Promise.resolve().then(() => {
+        if (controller.signal.aborted || !active()) return null;
+        return provideCompletion(Object.freeze({ ...context }), controller.signal);
+      }).then((result) => {
+        if (controller.signal.aborted || !active() || result == null) return finish(null);
+        if (typeof result.text !== "string") throw new Error("Composer inline completion text must be a string");
+        finish(result.text.length === 0 ? null : Object.freeze({ text: result.text }));
+      }).catch((error: unknown) => {
+        if (!controller.signal.aborted && active()) {
+          this.addDiagnostic({
+            pluginId: state.pluginId,
+            generation: state.generation,
+            contributionId: record.id,
+            kind: "render",
+            message: `Composer inline completion failed: ${errorMessage(error)}`,
+            cause: error,
+          });
+        }
+        finish(null);
+      });
     });
   }
 
@@ -1484,6 +1600,7 @@ export class PluginHost {
     }
     state.disposed = true;
     state.acceptingRegistrations = false;
+    for (const request of state.runtimeRequests) request.abort();
     for (const disposable of [...state.teardown].reverse()) {
       disposable.dispose();
     }
@@ -1505,6 +1622,7 @@ export class PluginHost {
     const cssSnippets: CSSSnippetRecord[] = [];
     const statusItems: StatusItemRecord[] = [];
     const composerStatusSources: ComposerStatusSourceRecord[] = [];
+    const composerInlineCompletionProviders: ComposerInlineCompletionProviderRecord[] = [];
     const toolActivityPresenters: PresenterRecord[] = [];
     const navigationEntries: RegisteredPluginViewEntry[] = [];
     const workspaceTools: RegisteredPluginViewEntry[] = [];
@@ -1536,6 +1654,7 @@ export class PluginHost {
       cssSnippets.push(...state.cssSnippets.filter((record) => !record.removed));
       statusItems.push(...state.statusItems.filter((record) => !record.removed));
       composerStatusSources.push(...state.composerStatusSources.filter((record) => !record.removed));
+      composerInlineCompletionProviders.push(...state.composerInlineCompletionProviders.filter((record) => !record.removed));
       toolActivityPresenters.push(...state.toolActivityPresenters.filter((record) => !record.removed));
       const declaredEntry = (entry: PluginViewEntryDeclaration): RegisteredPluginViewEntry => Object.freeze({
         ...entry,
@@ -1654,6 +1773,21 @@ export class PluginHost {
       this.composerStatusSourceSnapshot = nextComposerStatusSources;
       changed = true;
       for (const listener of this.composerStatusSourceListeners) listener();
+    }
+
+    const nextComposerInlineCompletionProviders = Object.freeze(
+      composerInlineCompletionProviders.sort(compareOrdered).map((record) => Object.freeze({
+        pluginId: record.pluginId,
+        generation: record.generation,
+        id: record.id,
+        order: record.order,
+        provideCompletion: record.provideCompletion,
+      })),
+    );
+    if (replaceSnapshots || !sameContributions(this.composerInlineCompletionProviderSnapshot, nextComposerInlineCompletionProviders)) {
+      this.composerInlineCompletionProviderSnapshot = nextComposerInlineCompletionProviders;
+      changed = true;
+      for (const listener of this.composerInlineCompletionProviderListeners) listener();
     }
 
     const resolvedPresenters = resolvePresenterConflicts(
@@ -1842,10 +1976,12 @@ function createGenerationState(
     cssSnippets: [],
     statusItems: [],
     composerStatusSources: [],
+    composerInlineCompletionProviders: [],
     toolActivityPresenters: [],
     registrationKeys: new Set(),
     hostEventHandlers: new Set(),
     teardown: [],
+    runtimeRequests: new Set(),
     acceptingRegistrations: true,
     active: false,
     disposed: false,

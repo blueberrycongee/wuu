@@ -14,6 +14,7 @@ A desktop plugin is a trusted JavaScript module loaded into Wuu's renderer. It u
 | Render a particular content type | `registerRenderer` |
 | Show temporary interaction beneath a conversation | `showConversationCard` |
 | Publish compact composer status | `registerComposerStatusSource` |
+| Supply an inline draft suffix | `registerComposerInlineCompletionProvider` |
 | Change appearance | Declarative themes, theme tokens, or styles |
 
 Use the smallest boundary that fits. A toolbar button does not need a replacement composer; a long dashboard does not belong in a toolbar. The host owns view placement, navigation, window lifecycle, and recovery controls.
@@ -62,6 +63,22 @@ A view is a registered component placed in `navigation`, `primary`, `auxiliary`,
 Conversations and primary plugin views use sidebar navigation, including API-opened views without a declared navigation entry. Their headers omit `tabs`, `activeTabId`, and tab actions. Primary plugin headers provide `canNavigateBack` and `header.navigate-back`. The host adds its own close control only when closing removes the page from the sidebar: API-opened views and additional instances. A declared navigation entry's page is left through Back or the sidebar. Compact workspace headers also provide back navigation, beside a close control for the open tab. These remain optional fields and actions in contract version 1: inspect the snapshot and `host.actions` instead of rebuilding a top tab strip from saved views. Auxiliary panels and plugin content can still have their own tabs.
 
 Conversation cards are transient interaction, not saved history or durable pages. A card handle can update its state or dismiss it. For composer status, return structured items from `getSnapshot(context)` and notify through `subscribe`; keep snapshots stable until data changes. Wuu renders the row and handles overflow and the optional `open-session` action, rather than accepting arbitrary React content for each status item.
+
+## Composer inline completions
+
+Register a provider during `activate(api)` with `registerComposerInlineCompletionProvider({ id, order, provideCompletion })`. Its callback receives a read-only `ComposerInlineCompletionContext` and an `AbortSignal`, and returns `{ text: "literal suffix" }` or `null`, directly or through a promise. Return `null` when your provider has no suggestion. The host appends accepted text; the callback does not replace the draft or own the textarea.
+
+The version-1 context contains `composerId`, `revision`, optional `threadId` and `sideThreadId`, `draftText`, `selectionStart`, `selectionEnd`, and `running`. Selection offsets use JavaScript UTF-16 indexing. `composerId` is opaque and scoped to the mounted input and its conversation/workspace context; a revision is not a global conversation version. For a side composer, `threadId` identifies the owning main conversation and `sideThreadId` identifies its side conversation when one exists. A new side draft still has its own `composerId`. Use `running` for your own eligibility policy.
+
+Providers run sequentially by ascending `order`, then plugin ID, then registration ID. The first nonempty result wins; no result or a provider error lets the next provider try. The host owns ghost-text rendering and verifies that the request is still current before accepting it. Providers own context retrieval, prompts, debouncing, and request budgets. No completion provider or model-calling policy is installed by this API.
+
+The native input requests suggestions only while focused and writable, with a collapsed caret at the end. Empty drafts are eligible. It excludes IME composition, slash-command drafts, open menus or dialogs, and hidden collapsed prompt content. Slash-command handling keeps Tab priority. An unmodified, nonrepeated Tab accepts a current suggestion; without one, ordinary focus navigation remains available. Escape dismisses the current suggestion or pending request. Acceptance changes the draft without submitting it, preserving native undo. Multiline suffixes are supported; CRLF is normalized to LF.
+
+Editing, selection changes, composition, focus/context or running-state changes, provider disposal, disable, reload, and unmount invalidate pending results. Honor the abort signal and release timers or subscriptions you create. Disposing the registration removes its contribution; generation teardown also disposes it. Ignoring cancellation cannot make a stale result change the draft, but it can leave your own work running.
+
+A provider receives unsent draft text. Choose deliberately what leaves the machine, and explain model/network use to users. When delegating through `api.invokeRuntime`, pass the same signal in its options and propagate the runtime execution's signal to downstream work. [One-shot model requests](plugin-authoring.md#one-shot-model-requests) use the configured provider and may incur charges; cancellation cannot undo completed requests or guarantee that an accepted provider request is free.
+
+For older desktop hosts, check `typeof api.registerComposerInlineCompletionProvider === "function"` before registering. The context's `contractVersion: 1` describes this callback shape; it is separate from runtime service versions and Wuu's product CalVer. Exact public types are in the [TypeScript SDK](../../../packages/plugin-sdk/src/index.ts).
 
 ## Appearance and cleanup
 

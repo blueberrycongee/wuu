@@ -238,6 +238,9 @@ type Server struct {
 	drainingQueuedTurns         map[string]bool
 	heldUserWorkMu              sync.Mutex
 
+	pluginClientMu       sync.Mutex
+	pluginClientRequests map[pluginClientRequestKey]*pluginClientRequest
+
 	pluginTurnUnbind   func()
 	pluginTurnWaiters  pluginTurnWaitHub
 	userQuestionUnbind func()
@@ -702,6 +705,7 @@ func (s *Server) Close() {
 	}
 	s.closeOnce.Do(func() {
 		s.closed.Store(true)
+		s.cancelPluginClientRequests()
 		s.closeProjectInboxDrains()
 		s.cancelEngineAuth("")
 		if s.storageMaintenanceCancel != nil {
@@ -1039,6 +1043,8 @@ func (s *Server) handleLine(ctx context.Context, raw []byte) error {
 		return s.handlePluginStorageSet(req)
 	case MethodPluginClientRequest:
 		return s.handlePluginClientRequest(ctx, req)
+	case MethodPluginClientCancel:
+		return s.handlePluginClientCancel(req)
 	case MethodUserQuestionList:
 		return s.handleUserQuestionList(req)
 	case MethodUserQuestionRespond:

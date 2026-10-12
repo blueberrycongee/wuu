@@ -1023,6 +1023,7 @@ export const enUS = {
   "composer.noMatchingCommand": "No commands match “/{query}”",
   "composer.attachments": "Attachments",
   "composer.collapseInput": "Collapse input",
+  "composer.inlineCompletionAvailable": "Suggestion: {text}. Press Tab to accept or Escape to dismiss.",
   "composer.expandInput": "Expand input",
   "composer.readOnlyCannotExpand": "A read-only conversation cannot be expanded",
   "composer.switchBranch": "Switch branch: {branch}",

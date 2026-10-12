@@ -304,6 +304,7 @@ func (s *Session) buildPluginGeneration(cfg config.Config, discovered []pluginpk
 		}
 		return nil, err
 	}
+	kernel.bindModelSession(s, host)
 	// Service negotiation can reject a prepared runtime after process startup.
 	// Treat that exactly like startup failure for required replacements.
 	for _, status := range host.Statuses() {
