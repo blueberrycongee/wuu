@@ -47,6 +47,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Remember iOS model and reasoning choices for new conversations per account,
   computer and engine, including first sends without reopening settings and app relaunches.
+- Make the iOS message input respond to taps across its padded text area, and
+  keep draft typing from invalidating the root view while preserving native text editing.
 - Keep the sidebar's recent-history range stable while a first message creates
   its conversation, avoiding a temporary extra row and subsequent layout jump,
   including while saving a draft's custom name.
