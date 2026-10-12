@@ -73,7 +73,8 @@ node scripts/mcp-connection-generations-e2e.mjs
 
 此脚本使用独立临时数据、合成 MCP 服务和真实 app-server 进程，通过确定性的响应屏障，
 验证后台初始化及工具发现期间的 Disconnect、Connect、Refresh 与退出，以及之后的
-显式重连和其他服务不受影响。它不使用真实凭据，也不验证桌面界面。
+显式重连和其他服务不受影响。它还会占满四个后台连接名额，验证后续 Disconnect、
+Connect 和 Refresh 能覆盖尚在排队的启动任务。它不使用真实凭据，也不验证桌面界面。
 `WUU_E2E_CORE` 可指定其他核心二进制；`WUU_MCP_E2E_OUTPUT` 可指定证据目录，
 默认为 `.tmp/e2e/mcp-connection-generations/`，保存 JSON RPC 往返、服务端请求、
 二进制哈希与通过/失败记录。现有 manager 测试另行覆盖串行 app-server RPC 分发器

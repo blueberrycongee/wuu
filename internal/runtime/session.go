@@ -2536,16 +2536,16 @@ func startMCPManager(cfg config.Config, plugins []pluginpkg.Plugin, requiredPlug
 				continue
 			}
 			wait.Add(1)
-			go func(name string, serverCfg mcp.ServerConfig) {
+			go func(name string) {
 				defer wait.Done()
 				semaphore <- struct{}{}
 				defer func() { <-semaphore }()
-				if err := mcpMgr.Add(ctx, serverCfg); err != nil {
+				if err := mcpMgr.ConnectIfUnstarted(ctx, name); err != nil {
 					providers.DebugLogf("mcp server %q failed to connect: %v", name, err)
 				} else {
 					providers.DebugLogf("mcp server %q connected (%d tools)", name, mcpMgr.Status()[name].ToolCount)
 				}
-			}(name, serverCfg)
+			}(name)
 		}
 		wait.Wait()
 	}()

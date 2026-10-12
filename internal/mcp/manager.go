@@ -21,6 +21,22 @@ type serverLifecycle struct {
 	pendingCancel context.CancelFunc
 }
 
+type connectionMode uint8
+
+const (
+	connectionAdd connectionMode = iota
+	connectionConfigured
+	connectionRefresh
+	connectionInitial
+)
+
+type connectionAttempt struct {
+	ctx        context.Context
+	config     ServerConfig
+	generation uint64
+	finish     func()
+}
+
 // Manager holds all active MCP client connections and exposes their tools.
 type Manager struct {
 	mu         sync.RWMutex
@@ -119,19 +135,21 @@ func (m *Manager) Configure(configs map[string]ServerConfig) {
 // for the same name. An existing client stays available until its replacement
 // is ready. A failed attempt is not registered.
 func (m *Manager) Add(ctx context.Context, cfg ServerConfig) error {
-	return m.add(ctx, cfg, false)
+	return m.add(ctx, cfg, connectionAdd)
 }
 
-func (m *Manager) add(ctx context.Context, cfg ServerConfig, reconnect bool) error {
+func (m *Manager) add(ctx context.Context, cfg ServerConfig, mode connectionMode) error {
 	cfg.Name = strings.TrimSpace(cfg.Name)
 	if cfg.Name == "" {
 		return fmt.Errorf("mcp server name is required")
 	}
-	ctx, generation, finish, err := m.beginConnection(ctx, cfg, reconnect)
+	attempt, err := m.beginConnection(ctx, cfg, mode)
 	if err != nil {
 		return err
 	}
-	defer finish()
+	defer attempt.finish()
+	ctx, cfg = attempt.ctx, attempt.config
+	generation := attempt.generation
 
 	if err := m.connectionError(cfg.Name, generation); err != nil {
 		return err
@@ -253,21 +271,33 @@ func (m *Manager) add(ctx context.Context, cfg ServerConfig, reconnect bool) err
 
 // Admission, configuration and reconnect teardown share one lock so Disconnect
 // cannot be followed by an older operation admitting a fresh attempt.
-func (m *Manager) beginConnection(parent context.Context, cfg ServerConfig, reconnect bool) (context.Context, uint64, func(), error) {
+func (m *Manager) beginConnection(parent context.Context, cfg ServerConfig, mode connectionMode) (*connectionAttempt, error) {
 	m.mu.Lock()
 	if m.closed {
 		m.mu.Unlock()
-		return nil, 0, nil, ErrManagerClosed
+		return nil, ErrManagerClosed
 	}
 	if m.serverRevoked(cfg.Name) {
 		m.mu.Unlock()
-		return nil, 0, nil, ErrServerRevoked
+		return nil, ErrServerRevoked
 	}
 	if err := parent.Err(); err != nil {
 		m.mu.Unlock()
-		return nil, 0, nil, err
+		return nil, err
+	}
+	if mode != connectionAdd {
+		configured, ok := m.configs[cfg.Name]
+		if !ok {
+			m.mu.Unlock()
+			return nil, fmt.Errorf("mcp server %q not configured", cfg.Name)
+		}
+		cfg = cloneServerConfig(configured)
 	}
 	server := m.servers[cfg.Name]
+	if mode == connectionInitial && server != nil {
+		m.mu.Unlock()
+		return nil, fmt.Errorf("mcp server %q initial connection superseded: %w", cfg.Name, context.Canceled)
+	}
 	if server == nil {
 		ctx, cancel := context.WithCancel(m.ctx)
 		server = &serverLifecycle{ctx: ctx, cancel: cancel}
@@ -282,7 +312,7 @@ func (m *Manager) beginConnection(parent context.Context, cfg ServerConfig, reco
 	server.pendingCancel = cancel
 	m.configs[cfg.Name] = cloneServerConfig(cfg)
 	state := MCPServerStateConnecting
-	if reconnect {
+	if mode == connectionRefresh {
 		state = MCPServerStateReconnecting
 	}
 	if !cfg.IsEnabled() {
@@ -290,7 +320,7 @@ func (m *Manager) beginConnection(parent context.Context, cfg ServerConfig, reco
 	}
 	m.statuses[cfg.Name] = ServerStatus{Name: cfg.Name, State: state, AuthStatus: authStatusForConfig(cfg)}
 	var old *Client
-	if reconnect || !cfg.IsEnabled() {
+	if mode == connectionRefresh || !cfg.IsEnabled() {
 		old = m.clients[cfg.Name]
 		if old != nil {
 			delete(m.clients, cfg.Name)
@@ -306,7 +336,7 @@ func (m *Manager) beginConnection(parent context.Context, cfg ServerConfig, reco
 	if old != nil {
 		_ = old.Close()
 	}
-	return ctx, generation, func() {
+	return &connectionAttempt{ctx: ctx, config: cfg, generation: generation, finish: func() {
 		m.mu.Lock()
 		if server.generation == generation {
 			server.pendingCancel = nil
@@ -316,7 +346,7 @@ func (m *Manager) beginConnection(parent context.Context, cfg ServerConfig, reco
 		cancel()
 		cancelBounded()
 		m.operations.Done()
-	}, nil
+	}}, nil
 }
 
 // serverRevoked requires m.mu to be held.
@@ -464,28 +494,27 @@ func (m *Manager) oauthManager() *OAuthManager {
 }
 
 func (m *Manager) Connect(ctx context.Context, name string) error {
-	cfg, ok := m.Config(name)
-	if !ok {
-		return fmt.Errorf("mcp server %q not configured", name)
-	}
-	return m.Add(ctx, cfg)
+	return m.add(ctx, ServerConfig{Name: name}, connectionConfigured)
+}
+
+// ConnectIfUnstarted connects a configured server only if no connection control
+// operation has addressed it yet. Delayed startup work must use this instead of
+// Connect so a user's Disconnect, Connect or Refresh supersedes queued startup.
+func (m *Manager) ConnectIfUnstarted(ctx context.Context, name string) error {
+	return m.add(ctx, ServerConfig{Name: name}, connectionInitial)
 }
 
 func (m *Manager) Refresh(ctx context.Context, name string) error {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		for _, cfg := range m.Configs() {
-			if err := m.Add(ctx, cfg); err != nil && !errors.Is(err, ErrServerRevoked) {
+			if err := m.Connect(ctx, cfg.Name); err != nil && !errors.Is(err, ErrServerRevoked) {
 				return err
 			}
 		}
 		return nil
 	}
-	cfg, ok := m.Config(name)
-	if !ok {
-		return fmt.Errorf("mcp server %q not configured", name)
-	}
-	return m.add(ctx, cfg, true)
+	return m.add(ctx, ServerConfig{Name: name}, connectionRefresh)
 }
 
 // Revoke permanently disables one server for this manager's lifetime. Pending
@@ -563,12 +592,15 @@ func (m *Manager) Disconnect(name string) error {
 		m.mu.Unlock()
 		return fmt.Errorf("mcp server %q not found", name)
 	}
-	var cancel context.CancelFunc
-	if server := m.servers[name]; server != nil {
-		server.generation++
-		cancel = server.pendingCancel
-		server.pendingCancel = nil
+	server := m.servers[name]
+	if server == nil {
+		ctx, cancel := context.WithCancel(m.ctx)
+		server = &serverLifecycle{ctx: ctx, cancel: cancel}
+		m.servers[name] = server
 	}
+	server.generation++
+	cancel := server.pendingCancel
+	server.pendingCancel = nil
 	authStatus := authStatusForConfig(cfg)
 	if current := m.statuses[name]; current.AuthStatus == MCPAuthStatusOAuth {
 		authStatus = MCPAuthStatusOAuth

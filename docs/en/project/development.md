@@ -80,7 +80,9 @@ node scripts/mcp-connection-generations-e2e.mjs
 It starts real app-server processes with disposable state and synthetic MCP
 servers. Deterministic response barriers cover Disconnect, Connect, Refresh and
 shutdown during background initialization and tool discovery, including later
-explicit reconnects and an unaffected server. It does not use real credentials
+explicit reconnects and unaffected servers. It also fills the four-connection
+startup limit, then verifies that newer Disconnect, Connect and Refresh actions
+supersede startup work still waiting in the queue. It does not use real credentials
 or validate the desktop UI. `WUU_E2E_CORE` selects another core binary;
 `WUU_MCP_E2E_OUTPUT` selects the evidence directory. The default is
 `.tmp/e2e/mcp-connection-generations/`, containing JSON RPC transcripts, server
