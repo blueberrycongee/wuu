@@ -41,6 +41,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Native engine questions now use the existing choice and free-text cards, return
+  answers to the original call, and clear on cancellation or disconnection.
+  Optional answers no longer need to become a separate user message.
+
 - Share one Codex startup across concurrent sessions, retry failed or closed
   hosts on later turns, and release each turn's process ownership without
   interrupting other sessions. Keep healthy hosts warm until their app-server

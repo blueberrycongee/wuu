@@ -402,3 +402,35 @@ type PermissionsApprovalResponse struct {
 	Permissions any    `json:"permissions"`
 	Scope       string `json:"scope"`
 }
+
+// ToolRequestUserInputParams is an inbound structured human question request.
+// Missing isBlocking keeps the legacy blocking behavior; autoResolutionMs is deprecated.
+type ToolRequestUserInputParams struct {
+	ThreadID   string                         `json:"threadId"`
+	TurnID     string                         `json:"turnId"`
+	ItemID     string                         `json:"itemId"`
+	Questions  []ToolRequestUserInputQuestion `json:"questions"`
+	IsBlocking *bool                          `json:"isBlocking,omitempty"`
+}
+
+type ToolRequestUserInputQuestion struct {
+	ID       string                       `json:"id"`
+	Header   string                       `json:"header"`
+	Question string                       `json:"question"`
+	IsOther  bool                         `json:"isOther"`
+	IsSecret bool                         `json:"isSecret"`
+	Options  []ToolRequestUserInputOption `json:"options"`
+}
+
+type ToolRequestUserInputOption struct {
+	Label       string `json:"label"`
+	Description string `json:"description"`
+}
+
+type ToolRequestUserInputAnswer struct {
+	Answers []string `json:"answers"`
+}
+
+type ToolRequestUserInputResponse struct {
+	Answers map[string]ToolRequestUserInputAnswer `json:"answers"`
+}

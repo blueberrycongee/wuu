@@ -207,3 +207,21 @@ wuu debug app-server send --workdir /path/to/project config/read '{}'
 stdio 协议是受信任的本地控制接口，不是带认证的网络服务。远程或托管部署必须在外围提供
 传输安全和隔离。[协议参考](../../en/integrations/app-server-protocol.md)（英文）说明消息
 格式、能力协商、选择规则和云端进程身份。
+
+## 回答原生引擎问题
+
+Codex 提问复用现有的 `user-question/requested`、`user-question/resolved`
+通知及 `user-question/list`、`user-question/respond`、`user-question/cancel`、
+`user-question/hold` 方法。请求携带所属 Wuu `thread_id` 和 `turn_id`，原生条目标识
+位于 `call_id`。问题 ID 仅在当前宿主请求内有效，回答时应原样返回。
+
+`reply_to_tool: true` 表示答案直接返回正在等待的引擎调用，不应再发送消息或追加 steer。
+`mode: "ask"` 使用常规问答表单；`mode: "offer"` 使用可跳过卡片，并沿用 20 秒过期时间，
+`user-question/hold` 可暂停倒计时。取消、跳过或过期均返回无答案，不会自动选择选项。
+回合完成、中断或原生进程断线会撤销问题，迟到的回复会被拒绝。原生请求省略阻塞标记时
+按阻塞问题处理。秘密输入请求明确不受支持，不会显示在明文输入框中。
+
+宿主问答桥接可用时，Wuu 为普通原生回合启用提问。原生配置显式设置
+`features.default_mode_request_user_input = false` 时会保留禁用，Wuu 也不会覆盖
+原生工具级别的禁用设置。功能配置在创建线程或冷恢复时生效；已加载的原生线程保留
+首次加载的功能配置。更改原生提问开关后，需重新连接原生引擎或开启新对话才能生效。

@@ -53,6 +53,8 @@ export type UserQuestionRequest = {
   actor_id?: string;
   call_id?: string;
   mode?: "ask" | "offer";
+  /** Return the answer to the waiting tool, without sending another message. */
+  reply_to_tool?: boolean;
   questions: UserQuestion[];
   created_at: string;
   expires_at?: string;

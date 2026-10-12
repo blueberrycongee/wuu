@@ -147,6 +147,35 @@ type ApprovalRequest struct {
 // or the owning turn context ends. Missing handlers must fail closed.
 type ApprovalHandler func(context.Context, ApprovalRequest) (ApprovalDecision, error)
 
+// UserInputRequest carries an engine question without granting any permission.
+// Blocking controls presentation; both modes return answers to the original call.
+type UserInputRequest struct {
+	EngineID  EngineID
+	ThreadID  string
+	TurnID    string
+	ItemID    string
+	Blocking  bool
+	Questions []UserInputQuestion
+}
+
+type UserInputQuestion struct {
+	ID          string
+	Header      string
+	Question    string
+	AllowCustom bool
+	Secret      bool
+	Options     []UserInputOption
+}
+
+type UserInputOption struct {
+	Label       string
+	Description string
+}
+
+// UserInputHandler returns question-ID keyed answers. An empty map means no answer.
+// The owning turn must cancel its context on completion, interruption or disconnect.
+type UserInputHandler func(context.Context, UserInputRequest) (map[string][]string, error)
+
 // TurnResult is the outcome of one engine turn.
 type TurnResult struct {
 	// Result is the native loop result of the built-in wuu engine. External
@@ -207,6 +236,8 @@ type ThreadBinding struct {
 	// broker and conversation card. Nil means interactive approval is not
 	// available and the engine must decline.
 	RequestApproval ApprovalHandler
+	// RequestUserInput reuses the host question UI; nil reports unavailable.
+	RequestUserInput UserInputHandler
 }
 
 // MCPServer is one host-provided Streamable HTTP MCP endpoint.

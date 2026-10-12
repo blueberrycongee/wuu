@@ -3186,11 +3186,19 @@ export function App(): JSX.Element {
             onAnswer={async (answer) => {
               const prompt = formatUserQuestionSteerPrompt(pendingUserQuestionOffer, answer);
               await answerUserQuestion(pendingUserQuestionOffer.request_id, answer);
-              await sendPrompt("steer", prompt);
+              if (!pendingUserQuestionOffer.reply_to_tool) await sendPrompt("steer", prompt);
             }}
             onCancel={() => cancelUserQuestion(pendingUserQuestionOffer.request_id)}
             onHold={() => holdUserQuestion(pendingUserQuestionOffer.request_id)}
             onCustom={async (text) => {
+              if (pendingUserQuestionOffer.reply_to_tool) {
+                if (text?.trim()) {
+                  await answerUserQuestion(pendingUserQuestionOffer.request_id, { answers: [{
+                    id: pendingUserQuestionOffer.questions[0].id, selected: [], custom: text.trim(),
+                  }] });
+                }
+                return;
+              }
               if (text?.trim()) {
                 await sendPrompt("steer", text.trim(), undefined, pendingUserQuestionOffer.request_id);
                 return;

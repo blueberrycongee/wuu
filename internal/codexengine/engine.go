@@ -22,7 +22,8 @@ type Engine struct {
 	host *Host
 	// RequestApproval bridges Codex's reverse-RPC approval requests to Wuu's
 	// host-owned interaction broker. Nil declines every request.
-	RequestApproval agentengine.ApprovalHandler
+	RequestApproval  agentengine.ApprovalHandler
+	RequestUserInput agentengine.UserInputHandler
 }
 
 // NewEngine builds the codex engine around a host (binary discovery +
@@ -45,6 +46,7 @@ func (e *Engine) Descriptor(context.Context) (agentengine.Descriptor, error) {
 			"native-tool-loop",
 			"native-session-resume",
 			"approval-requests",
+			"user-input-requests",
 			// engine/list with include_quota reads this engine's account
 			// allowance, so clients can reserve room for it beforehand.
 			"account-quota",
@@ -85,6 +87,7 @@ func (e *Engine) SessionForThread(ctx context.Context, binding agentengine.Threa
 		externalRef:    binding.ExternalRef,
 		persistRef:     binding.PersistRef,
 		approval:       binding.RequestApproval,
+		userInput:      binding.RequestUserInput,
 	})
 }
 
@@ -100,6 +103,7 @@ type sessionOptions struct {
 	externalRef    string
 	persistRef     func(string) error
 	approval       agentengine.ApprovalHandler
+	userInput      agentengine.UserInputHandler
 }
 
 func (e *Engine) newSession(ctx context.Context, opts sessionOptions) (agentengine.Session, error) {
@@ -113,6 +117,10 @@ func (e *Engine) newSession(ctx context.Context, opts sessionOptions) (agentengi
 	approval := opts.approval
 	if approval == nil {
 		approval = e.RequestApproval
+	}
+	userInput := opts.userInput
+	if userInput == nil {
+		userInput = e.RequestUserInput
 	}
 	return &Session{
 		client:         client,
@@ -128,6 +136,7 @@ func (e *Engine) newSession(ctx context.Context, opts sessionOptions) (agentengi
 		ref:            opts.externalRef,
 		persist:        opts.persistRef,
 		approval:       approval,
+		userInput:      userInput,
 	}, nil
 }
 
@@ -148,11 +157,14 @@ type Session struct {
 	instructions   string
 	mcpServers     []agentengine.MCPServer
 
-	mu          sync.Mutex
-	ref         string
-	persist     func(string) error
-	approval    agentengine.ApprovalHandler
-	approvalCtx context.Context
+	mu                   sync.Mutex
+	ref                  string
+	persist              func(string) error
+	approval             agentengine.ApprovalHandler
+	approvalCtx          context.Context
+	userInput            agentengine.UserInputHandler
+	userInputDefaultMode bool
+	cancelTurn           context.CancelFunc
 }
 
 // RunTurn starts a codex turn and translates its notifications into Wuu
@@ -164,12 +176,16 @@ func (s *Session) RunTurn(ctx context.Context, input agentengine.TurnInput, sink
 	if err := ctx.Err(); err != nil {
 		return agentengine.TurnResult{}, err
 	}
+	ctx, cancel := context.WithCancel(ctx)
 	s.mu.Lock()
 	s.approvalCtx = ctx
+	s.cancelTurn = cancel
 	s.mu.Unlock()
 	defer func() {
+		cancel()
 		s.mu.Lock()
 		s.approvalCtx = nil
+		s.cancelTurn = nil
 		s.mu.Unlock()
 	}()
 	// First turn: create the codex thread and persist its id so later turns
@@ -179,6 +195,14 @@ func (s *Session) RunTurn(ctx context.Context, input agentengine.TurnInput, sink
 	}
 	unregister := s.registerApprovalHandlers()
 	defer unregister()
+	// Native requests may precede the turn/start response. Fence them against
+	// that response before exposing a question in the host conversation.
+	ready := make(chan struct{})
+	var turnID string
+	removeInput := s.client.OnRequest(MethodToolRequestUserInput, func(raw json.RawMessage) (any, error) {
+		return s.handleUserInput(ctx, ready, &turnID, raw)
+	})
+	defer removeInput()
 	inputs := turnInputs(input.History)
 	// Subscribe before turn/start: the app-server streams notifications
 	// immediately after responding, so a late subscription would drop them.
@@ -189,7 +213,8 @@ func (s *Session) RunTurn(ctx context.Context, input agentengine.TurnInput, sink
 	if err != nil {
 		return agentengine.TurnResult{}, err
 	}
-	turnID := turnResp.Turn.ID
+	turnID = turnResp.Turn.ID
+	close(ready)
 	sub.setTurnID(turnID)
 
 	select {
@@ -311,7 +336,7 @@ func (s *Session) matchesThread(threadID string) bool {
 
 // ensureThread runs thread/start once and persists the native thread id.
 func (s *Session) ensureThread(ctx context.Context) error {
-	if s.speed == "" || s.model == "" || s.effort == "" {
+	if s.userInput != nil || s.speed == "" || s.model == "" || s.effort == "" {
 		// Omitting fields on a warm native thread inherits its previous
 		// overrides. Resolve the native configuration before every new binding.
 		var response struct {
@@ -319,10 +344,17 @@ func (s *Session) ensureThread(ctx context.Context) error {
 				Model       string          `json:"model"`
 				Effort      ReasoningEffort `json:"model_reasoning_effort"`
 				ServiceTier *string         `json:"service_tier"`
+				Features    struct {
+					DefaultModeUserInput *bool `json:"default_mode_request_user_input"`
+				} `json:"features"`
 			} `json:"config"`
 		}
 		if err := s.client.Request(ctx, "config/read", map[string]any{"cwd": s.rootDir, "includeLayers": false}, &response); err != nil {
 			return fmt.Errorf("codex config/read: %w", err)
+		}
+		if s.userInput != nil {
+			configured := response.Config.Features.DefaultModeUserInput
+			s.userInputDefaultMode = configured == nil || *configured
 		}
 		if s.model == "" {
 			s.model = response.Config.Model
@@ -406,6 +438,11 @@ func (s *Session) ensureThread(ctx context.Context) error {
 
 func (s *Session) threadConfig() map[string]any {
 	config := map[string]any{}
+	if s.userInput != nil {
+		// Enable the host question bridge in ordinary native turns while
+		// preserving explicit opt-outs. The native tool-level gate is untouched.
+		config["features.default_mode_request_user_input"] = s.userInputDefaultMode
+	}
 	if len(s.mcpServers) > 0 {
 		servers := make(map[string]any, len(s.mcpServers))
 		for _, server := range s.mcpServers {
@@ -480,8 +517,16 @@ func (s *Session) Interrupt(ctx context.Context, reason string) error {
 // Close releases the client reference held by this session. The shared
 // app-server stays alive while other threads or app-server owners use it.
 func (s *Session) Close(context.Context) error {
-	if s != nil && s.release != nil {
-		s.release()
+	if s != nil {
+		s.mu.Lock()
+		cancel := s.cancelTurn
+		s.mu.Unlock()
+		if cancel != nil {
+			cancel()
+		}
+		if s.release != nil {
+			s.release()
+		}
 	}
 	return nil
 }
@@ -577,6 +622,7 @@ type turnSubscription struct {
 	done   chan turnOutcome
 
 	events          chan turnNotification
+	stop            chan struct{}
 	mu              sync.Mutex
 	closed          bool
 	unsubs          []func()
@@ -594,6 +640,7 @@ func newTurnSubscription(client *Client, sink agentengine.EventSink, done chan t
 		sink:      sink,
 		done:      done,
 		events:    make(chan turnNotification, 512),
+		stop:      make(chan struct{}),
 		labels:    make(map[string]string),
 		tools:     make(map[string]struct{}),
 		reasoning: make(map[string]struct{}),
@@ -642,6 +689,7 @@ func (sub *turnSubscription) close() {
 		return
 	}
 	sub.closed = true
+	close(sub.stop)
 	unsubs := sub.unsubs
 	sub.unsubs = nil
 	sub.mu.Unlock()
@@ -661,7 +709,36 @@ func (sub *turnSubscription) run() {
 		usageCursor  int
 		reconnecting bool
 	)
-	for notification := range sub.events {
+	var clientDone <-chan struct{}
+	if sub.client != nil {
+		clientDone = sub.client.done
+	}
+	disconnected := false
+	for {
+		var notification turnNotification
+		var ok bool
+		// Drain notifications already read before EOF. A completed turn must
+		// keep its successful result when the process exits immediately after it.
+		select {
+		case notification, ok = <-sub.events:
+		default:
+			if disconnected {
+				sub.finish(agent.LoopResult{}, sub.client.err())
+				return
+			}
+			select {
+			case <-sub.stop:
+				return
+			case notification, ok = <-sub.events:
+			case <-clientDone:
+				disconnected = true
+				continue
+			}
+		}
+		if !ok {
+			sub.finish(agent.LoopResult{}, errors.New("codex turn stream closed before completion"))
+			return
+		}
 		if sub.turnID == "" {
 			// No turn id (should not happen); drop everything.
 			continue
@@ -822,8 +899,6 @@ func (sub *turnSubscription) run() {
 			return
 		}
 	}
-	// Stream closed without a terminal notification.
-	sub.finish(agent.LoopResult{}, errors.New("codex turn stream closed before completion"))
 }
 
 func (sub *turnSubscription) emitItem(method string, raw json.RawMessage) {

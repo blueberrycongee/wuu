@@ -41,6 +41,7 @@ type Client struct {
 	notify      map[string][]*notifHandler
 	requests    map[string][]*requestHandler
 	closed      bool
+	done        chan struct{}
 	closeErr    error
 }
 
@@ -68,6 +69,7 @@ type pendingRequest struct {
 func NewClient(t *Transport) *Client {
 	return &Client{
 		transport: t,
+		done:      make(chan struct{}),
 		pending:   make(map[int64]*pendingRequest),
 		notify:    make(map[string][]*notifHandler),
 		requests:  make(map[string][]*requestHandler),
@@ -78,24 +80,10 @@ func NewClient(t *Transport) *Client {
 // handlers are registered so no early line is missed (the transport buffers
 // lines until the first handler attaches).
 func (c *Client) Start() {
-	c.transport.OnLine(c.handleLine)
 	c.transport.OnClose(func(reason string) {
-		c.mu.Lock()
-		closed := c.closed
-		c.closed = true
-		c.closeErr = fmt.Errorf("codex app-server closed: %s", reason)
-		pending := make([]*pendingRequest, 0, len(c.pending))
-		for _, p := range c.pending {
-			pending = append(pending, p)
-		}
-		c.pending = map[int64]*pendingRequest{}
-		c.mu.Unlock()
-		if !closed {
-			for _, p := range pending {
-				p.fail(c.closeErr)
-			}
-		}
+		c.shutdown(fmt.Errorf("codex app-server closed: %s", reason))
 	})
+	c.transport.OnLine(c.handleLine)
 }
 
 // OnNotification registers a handler for a notification method. The returned
@@ -320,27 +308,36 @@ func (c *Client) writeError(id json.RawMessage, rpcErr *RPCError) {
 	_ = c.transport.WriteLine(context.Background(), string(payload))
 }
 
-func (c *Client) fatal(reason string) {
+func (c *Client) shutdown(err error) {
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
 		return
 	}
 	c.closed = true
-	c.closeErr = errors.New(reason)
+	c.closeErr = err
+	pending := c.pending
+	c.pending = make(map[int64]*pendingRequest)
+	close(c.done)
 	c.mu.Unlock()
+	for _, request := range pending {
+		request.fail(err)
+	}
+}
+
+func (c *Client) err() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.closeErr
+}
+
+func (c *Client) fatal(reason string) {
+	c.shutdown(errors.New(reason))
 	_ = c.transport.Close()
 }
 
-// Close shuts down the client and its transport.
+// Close releases all waiting turns and requests before closing the transport.
 func (c *Client) Close() error {
-	c.mu.Lock()
-	if c.closed {
-		err := c.closeErr
-		c.mu.Unlock()
-		return err
-	}
-	c.closed = true
-	c.mu.Unlock()
+	c.shutdown(errors.New("codex app-server client is closed"))
 	return c.transport.Close()
 }

@@ -2425,6 +2425,9 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 		RequestApproval: func(approvalCtx context.Context, request agentengine.ApprovalRequest) (agentengine.ApprovalDecision, error) {
 			return s.requestEngineApproval(approvalCtx, th.ID, turnID, request)
 		},
+		RequestUserInput: func(inputCtx context.Context, request agentengine.UserInputRequest) (map[string][]string, error) {
+			return s.requestEngineUserInput(inputCtx, th.ID, turnID, request)
+		},
 	})
 	if engine == nil {
 		engine = s.rt.WuuEngine().SessionForRunner(s.rt.StreamRunner)
