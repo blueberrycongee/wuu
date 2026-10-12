@@ -697,6 +697,17 @@ func TestLoadFrom_BrokenConfigIsNotNotFound(t *testing.T) {
 
 func TestLoadFrom_InvalidConfigIsNotNotFound(t *testing.T) {
 	workdir := t.TempDir()
+	// Invalid tool budgets must fail at the configuration boundary, never
+	// silently turn into an unlimited or default execution budget.
+	for _, value := range []string{"0", "-1", "3600001", "1.5", "null", `"infinity"`, "9223372036854775808"} {
+		data := `{"default_provider":"x","providers":{"x":{"type":"openai-compatible","base_url":"http://127.0.0.1","model":"test"}},"mcp_servers":{"docs":{"command":"unused","tool_timeout_ms":` + value + `}}}`
+		if err := os.WriteFile(filepath.Join(workdir, ".wuu.json"), []byte(data), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := LoadProjectConfig(workdir); err == nil || !strings.Contains(err.Error(), "tool_timeout_ms") {
+			t.Fatalf("tool_timeout_ms=%s: expected actionable validation error, got %v", value, err)
+		}
+	}
 	// Valid JSON, fails Validate (no providers).
 	if err := os.WriteFile(filepath.Join(workdir, ".wuu.json"), []byte(`{"default_provider":"x"}`), 0o644); err != nil {
 		t.Fatalf("seed: %v", err)

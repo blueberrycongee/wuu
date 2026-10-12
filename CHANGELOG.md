@@ -10,6 +10,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Bounded per-server MCP tool execution budgets through `tool_timeout_ms`,
+  shared by native and PTC calls while preserving earlier caller cancellation
+  and the 30-second default.
+
 - Side chat is a bundled plugin with a recommended-on onboarding choice and a
   persistent enable switch. Disabling it stops side answers and hides its entry
   points without deleting history. Extensions can supply attached-chat policy

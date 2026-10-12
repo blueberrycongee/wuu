@@ -11,7 +11,7 @@ import (
 
 // cancelNotificationTimeout bounds the best-effort notifications/cancelled that
 // follows a cancelled call, so an unresponsive server cannot hold the caller.
-var cancelNotificationTimeout = 2 * time.Second
+const cancelNotificationTimeout = 2 * time.Second
 
 // Transport is the low-level JSON-RPC transport for MCP.
 type Transport interface {
@@ -168,12 +168,16 @@ func callWithProtocol(ctx context.Context, t Transport, f *inFlight, method stri
 		if method != "initialize" && method != "server/discover" {
 			if p, err := json.Marshal(cancelledParams{RequestID: id, Reason: ctx.Err().Error()}); err == nil {
 				cancelCtx, stop := context.WithTimeout(context.Background(), cancelNotificationTimeout)
-				_ = t.Send(cancelCtx, Request{
-					JSONRPC: "2.0",
-					Method:  "notifications/cancelled",
-					Params:  p,
-				})
-				stop()
+				// The notification has its own cleanup budget. Waiting for it
+				// here would extend the expired tool/caller deadline.
+				go func() {
+					defer stop()
+					_ = t.Send(cancelCtx, Request{
+						JSONRPC: "2.0",
+						Method:  "notifications/cancelled",
+						Params:  p,
+					})
+				}()
 			}
 		}
 		return nil, ctx.Err()

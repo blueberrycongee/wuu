@@ -120,6 +120,9 @@ func (m *Manager) Add(ctx context.Context, cfg ServerConfig) error {
 	if cfg.Name == "" {
 		return fmt.Errorf("mcp server name is required")
 	}
+	if _, err := cfg.ToolTimeoutMS.Duration(); err != nil {
+		return fmt.Errorf("mcp server %q: %w", cfg.Name, err)
+	}
 	ctx, finish, err := m.beginConnection(ctx, cfg.Name)
 	if err != nil {
 		return err
@@ -541,7 +544,7 @@ func (m *Manager) NativeTools() []NativeTool {
 			out = append(out, NativeTool{
 				Definition: definition,
 				Client:     client,
-				Timeout:    30 * time.Second,
+				Timeout:    client.ToolTimeout(),
 				Provenance: extensions.Provenance{Kind: extensions.KindMCP, Source: name, Scope: "user"},
 			})
 		}
