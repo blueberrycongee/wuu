@@ -426,7 +426,11 @@ func (s *Session) startTurn(ctx context.Context, inputs []UserInput) (TurnStartR
 	if sandboxPolicy.Type == SandboxPolicyWorkspaceWrite && strings.TrimSpace(s.rootDir) != "" {
 		sandboxPolicy.WritableRoots = []string{s.rootDir}
 	}
+	// Loaded native threads can ignore resume overrides. Set CWD together
+	// with the sandbox so its implicit writable CWD cannot remain on the old
+	// worktree while WritableRoots points at the newly selected workspace.
 	err := s.client.Request(ctx, MethodTurnStart, TurnStartParams{
+		CWD:             s.rootDir,
 		ThreadID:        s.ref,
 		Input:           inputs,
 		Model:           s.model,

@@ -116,6 +116,9 @@ type turnAdmissionHooks struct {
 }
 
 type turnRuntimeSnapshot struct {
+	// CWD and permissions are captured at admission. Later metadata changes
+	// must not retarget an already-admitted external-engine turn.
+	CWD                string
 	ProviderName       string
 	Model              string
 	PermissionMode     string
@@ -2294,6 +2297,7 @@ func turnRuntimeSnapshotLocked(th *threadState) turnRuntimeSnapshot {
 		return turnRuntimeSnapshot{}
 	}
 	return turnRuntimeSnapshot{
+		CWD:            th.CWD,
 		ProviderName:   th.ModelProvider,
 		Model:          th.Model,
 		PermissionMode: th.PermissionMode,
@@ -2308,10 +2312,6 @@ func (snapshot turnRuntimeSnapshot) withPermissions(permissions config.ResolvedP
 	permissions = normalizeTurnPermissions(permissions)
 	snapshot.PermissionMode = permissions.Mode
 	return snapshot
-}
-
-func (snapshot turnRuntimeSnapshot) hasPermissions() bool {
-	return strings.TrimSpace(snapshot.PermissionMode) != ""
 }
 
 func normalizeTurnPermissions(permissions config.ResolvedPermissions) config.ResolvedPermissions {
@@ -2330,15 +2330,7 @@ func (s *Server) resolveTurnPermissions(permissionMode *string) (config.Resolved
 
 func (s *Server) resolveThreadTurnPermissions(th *threadState, requested *string) (config.ResolvedPermissions, error) {
 	if s != nil && s.rt != nil && s.rt.PermissionModeExplicit {
-		// A process-scoped explicit override (exec --permission-mode) beats
-		// the thread pin and persisted session metadata: a user asking for
-		// read_only must never silently run with a resumed session's broader
-		// pinned mode. The override is never written back into the session.
-		permissions := normalizeTurnPermissions(s.rt.Permissions)
-		if requested != nil && config.NormalizePermissionMode(*requested) != permissions.Mode {
-			return config.ResolvedPermissions{}, errors.New("permission mode does not match this process's explicit permission override")
-		}
-		return permissions, nil
+		return s.resolveTurnPermissionMode("", requested)
 	}
 	mode := ""
 	if th != nil {
@@ -2347,7 +2339,9 @@ func (s *Server) resolveThreadTurnPermissions(th *threadState, requested *string
 		persist := th.PersistHistory
 		threadID := th.ID
 		th.mu.Unlock()
-		if mode == "" && persist && s != nil && s.rt != nil {
+		// Preflight checks must see another app-server's latest saved pin.
+		// Admission revalidates it after acquiring execution ownership.
+		if persist && s != nil && s.rt != nil {
 			if metadata, ok, err := session.Find(s.rt.SessionDir, threadID); err != nil {
 				return config.ResolvedPermissions{}, err
 			} else if ok {
@@ -2355,6 +2349,20 @@ func (s *Server) resolveThreadTurnPermissions(th *threadState, requested *string
 			}
 		}
 	}
+	return s.resolveTurnPermissionMode(mode, requested)
+}
+
+func (s *Server) resolveTurnPermissionMode(mode string, requested *string) (config.ResolvedPermissions, error) {
+	if s != nil && s.rt != nil && s.rt.PermissionModeExplicit {
+		// A process-scoped explicit override (exec --permission-mode) beats
+		// the thread pin without being written back into session metadata.
+		permissions := normalizeTurnPermissions(s.rt.Permissions)
+		if requested != nil && config.NormalizePermissionMode(*requested) != permissions.Mode {
+			return config.ResolvedPermissions{}, errors.New("permission mode does not match this process's explicit permission override")
+		}
+		return permissions, nil
+	}
+	mode = strings.TrimSpace(mode)
 	if mode == "" && s != nil && s.rt != nil {
 		mode = s.rt.Permissions.Mode
 	}
@@ -2411,12 +2419,12 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 	s.retainCodexHost()
 	engine := s.rt.EngineSessionForThread(ctx, threadRuntime, agentengine.ThreadBinding{
 		ThreadID:       th.ID,
-		RootDir:        firstNonEmpty(th.CWD, s.rt.RootDir),
+		RootDir:        firstNonEmpty(turnRuntime.CWD, s.rt.RootDir),
 		Model:          th.Model,
 		Effort:         th.ModelEffort,
 		Speed:          th.Speed,
 		ModelOptions:   th.ModelOptions,
-		PermissionMode: th.PermissionMode,
+		PermissionMode: turnRuntime.permissions().Mode,
 		Instructions:   sessionInstructions,
 		ExternalRef:    th.EngineRef,
 		PersistRef: func(ref string) error {
@@ -3881,6 +3889,20 @@ func (s *Server) startThreadUserTurnWithAdmission(ctx context.Context, th *threa
 			return startedThreadTurn{}, false, nil
 		}
 	}
+	// Resolve only after the durable refresh and admission hooks. A queued
+	// or cached preflight selection cannot override the newly admitted pin.
+	// All entrypoints, including automatic completions, honor process limits.
+	var requestedPermission *string
+	if snapshot.PermissionExplicit {
+		requestedPermission = &snapshot.PermissionMode
+	}
+	permissions, err := s.resolveTurnPermissionMode(th.PermissionMode, requestedPermission)
+	if err != nil {
+		th.releaseThreadExecutionLeaseLocked()
+		th.mu.Unlock()
+		cancel()
+		return startedThreadTurn{}, false, err
+	}
 	var commitAfterAppend func() error
 	if hooks.beforeUserAppendLocked != nil {
 		var err error
@@ -3946,11 +3968,8 @@ func (s *Server) startThreadUserTurnWithAdmission(ctx context.Context, th *threa
 	} else {
 		turnID = turn.ID
 	}
-	turnRuntime := turnRuntimeSnapshotLocked(th)
-	if snapshot.hasPermissions() || snapshot.PermissionExplicit {
-		turnRuntime = turnRuntime.withPermissions(snapshot.permissions())
-		turnRuntime.PermissionExplicit = snapshot.PermissionExplicit
-	}
+	turnRuntime := turnRuntimeSnapshotLocked(th).withPermissions(permissions)
+	turnRuntime.PermissionExplicit = snapshot.PermissionExplicit
 	turnRuntime.ForceCompact = snapshot.ForceCompact
 	turnRuntime.CompactOnly = snapshot.CompactOnly
 	turnRuntime.HistoryBaselineSeq = th.historyHeadSeq
@@ -4013,15 +4032,10 @@ func (s *Server) startQueuedTurn(ctx context.Context, threadID string, entry que
 		return false, fmt.Errorf("thread %q not found", threadID)
 	}
 	var threadRuntime *runtime.ThreadRuntime
-	// Permissions are re-resolved at start time, never trusted from the
-	// queue-time snapshot: a permission change landing while the turn waited
-	// in the queue must govern the turn that actually runs.
-	permissions, err := s.resolveThreadTurnPermissions(th, nil)
-	if err != nil {
-		return false, err
-	}
-
-	snapshot := entry.snapshot.withPermissions(permissions)
+	// Queue-time permission validation does not pin the later execution.
+	// Admission resolves the current mode after refreshing durable metadata.
+	snapshot := entry.snapshot
+	snapshot.PermissionExplicit = false
 	started, ok, err := s.startThreadUserTurnWithAdmission(
 		ctx,
 		th,

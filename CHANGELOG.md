@@ -41,6 +41,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Keep resumed Codex turns in the admitted conversation workspace, including
+  linked worktree switches, and honor the turn's effective permission boundary
+  without restarting the native conversation.
+
 - Share one Codex startup across concurrent sessions, retry failed or closed
   hosts on later turns, and release each turn's process ownership without
   interrupting other sessions. Keep healthy hosts warm until their app-server

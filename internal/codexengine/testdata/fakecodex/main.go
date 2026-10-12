@@ -63,6 +63,7 @@ func main() {
 		waitForGate("WUU_TEST_CODEX_EXIT_GATE")
 		record("exited")
 	}()
+	workspace := newWorkspaceProbe()
 	scanner := bufio.NewScanner(os.Stdin)
 	scanner.Buffer(make([]byte, 1024*1024), 16*1024*1024)
 	for scanner.Scan() {
@@ -81,6 +82,9 @@ func main() {
 			}
 			fmt.Fprintln(f, line)
 			f.Close()
+		}
+		if workspace != nil && workspace.handle(req) {
+			continue
 		}
 		switch req.Method {
 		case "initialize":
