@@ -28,6 +28,7 @@ let failureUsageRewrites = 0;
 let budgetAttempts = 0;
 let budgetCallbacks = 0;
 let budgetFailure: { code?: string; message: string } | undefined;
+const unaryValidation: Array<{ mode: string; failed: boolean; usage?: ModelResponseV1["usage"] }> = [];
 
 async function compare(host: RuntimeHost, input: { request: LogicalModelRequestV1; mode?: string; stream?: boolean }) {
   const job = await startBackground(host, {
@@ -80,6 +81,18 @@ export default {
       const input = params.input as { request: LogicalModelRequestV1; continuation_id: string; stream: boolean; origin: unknown };
       const currentUser = [...input.request.messages].reverse().find(message => message.role === "user")?.content;
       middlewareOrigins.push({ tag: currentUser, origin: input.origin });
+      if (currentUser === "pipeline-unary-validation") {
+        for (const mode of ["negative-usage", "negative-usage-phase", "success", "malformed-response", "success"]) {
+          try {
+            const result = await invokeModel(host, { request: { ...input.request, adapter,
+              provider_options: { ...input.request.provider_options, fixture_mode: mode } }, max_output_tokens: 31 });
+            unaryValidation.push({ mode, failed: false, usage: result.response.usage });
+          } catch {
+            unaryValidation.push({ mode, failed: true });
+          }
+        }
+        return { output: { response: { content: "fixture:unary-validation-completed", finish_reason: "stop" } } };
+      }
       if (currentUser === "pipeline-mutation") {
         let rejected = false;
         try {
@@ -151,6 +164,12 @@ export default {
         return { output: { response } };
       }
       if (mode === "budget") budgetCallbacks++;
+      if (mode === "negative-usage" || mode === "negative-usage-phase" || mode === "malformed-response") {
+        return { output: { response: { content: "fixture:malformed-response", finish_reason: "stop",
+          phase: mode === "negative-usage" ? undefined : "fixture-invalid",
+          usage: { input_tokens: mode === "malformed-response" ? 3 : -1, output_tokens: 2,
+            cache_creation_tokens: 0, cache_read_tokens: 0, cache_creation_unknown: false } } } };
+      }
       if (mode === "no-usage" || mode === "budget") {
         const response = { content: "fixture:unknown-cost", finish_reason: "stop" };
         if (input.stream) { await emitResponse(host, response); return { output: {} }; }
@@ -183,7 +202,7 @@ export default {
     const { method, input } = params.input as { method: string; input: Record<string, unknown> };
     let result: unknown;
     switch (method) {
-      case "state": result = { jobs, baseline, adapterRequests: adapterRequests.slice(-8), adapterCancelled, adapterFinalReceiptHeld, observerFailures, phases, middlewareOrigins, middlewareCalls, middlewareHits, mutationRejections, failureUsageRewrites, budgetAttempts, budgetCallbacks, budgetFailure }; break;
+      case "state": result = { jobs, baseline, adapterRequests: adapterRequests.slice(-8), adapterCancelled, adapterFinalReceiptHeld, observerFailures, phases, middlewareOrigins, middlewareCalls, middlewareHits, mutationRejections, failureUsageRewrites, budgetAttempts, budgetCallbacks, budgetFailure, unaryValidation }; break;
       case "arm": automatic = String(input.tag); result = { armed: true }; break;
       case "start": result = await compare(host, input as { request: LogicalModelRequestV1 }); break;
       case "inspect": result = await inspectBackground(host, input as { job_id: string }); break;

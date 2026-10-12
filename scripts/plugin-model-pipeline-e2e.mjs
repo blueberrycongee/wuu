@@ -165,7 +165,7 @@ async function client(name, method, input = {}) {
 function adapterSubmissions() {
   const db = new DatabaseSync(join(home, "sessions/sessions.sqlite3"), { readOnly: true });
   try {
-    return db.prepare("SELECT operation_id FROM inference_submissions WHERE protocol = ? ORDER BY started_at").all("plugin:fixture.shadow");
+    return db.prepare("SELECT operation_id FROM inference_submissions WHERE protocol = ? ORDER BY started_at, rowid").all("plugin:fixture.shadow");
   } finally { db.close(); }
 }
 async function terminalJob(name, jobID) {
@@ -417,6 +417,23 @@ try {
   await client("shadow", "cancel", { job_id: lateCancel.job_id });
   assert.equal((await terminalJob("shadow", lateCancel.job_id)).state, "cancelled");
 
+  const beforeMalformedStream = adapterSubmissions().map(submission => submission.operation_id);
+  const malformedStream = await client("shadow", "start", { request: snapshot, mode: "malformed-response" });
+  const malformedStreamStatus = await terminalJob("shadow", malformedStream.job_id);
+  assert(malformedStreamStatus.result?.error || malformedStreamStatus.error, JSON.stringify(malformedStreamStatus));
+  assert.equal(malformedStreamStatus.result.events.filter(event => event.type === "done").length, 0);
+  const malformedStreamReceipts = adapterSubmissions().filter(submission => !beforeMalformedStream.includes(submission.operation_id));
+  assert.equal(malformedStreamReceipts.length, 1);
+
+  const beforeUnaryValidation = adapterSubmissions().map(submission => submission.operation_id);
+  await turn("pipeline-unary-validation");
+  const unaryValidation = (await client("shadow", "state")).unaryValidation;
+  assert.deepEqual(unaryValidation.map(call => call.failed), [true, true, false, true, false]);
+  assert(unaryValidation.filter(call => !call.failed).every(call => call.usage.input_tokens === 3 && call.usage.output_tokens === 2));
+  const unaryReceipts = adapterSubmissions().filter(submission => !beforeUnaryValidation.includes(submission.operation_id));
+  assert.equal(unaryReceipts.length, 5);
+  assert(!providerCalls.some(call => call.tag === "pipeline-unary-validation"));
+
   const nativeErrorRequest = structuredClone(snapshot);
   [...nativeErrorRequest.messages].reverse().find(message => message.role === "user").content = "pipeline-error";
   const nativeError = await client("replay", "start", { request: nativeErrorRequest });
@@ -594,7 +611,7 @@ try {
   const db = new DatabaseSync(join(home, "sessions/sessions.sqlite3"), { readOnly: true });
   try {
     result.accounting = {
-      operations: db.prepare("SELECT id, owner_id, kind, status FROM inference_operations ORDER BY created_at").all(),
+      operations: db.prepare("SELECT id, workflow_id, owner_id, kind, status FROM inference_operations ORDER BY created_at").all(),
       submissions: db.prepare("SELECT operation_id, cost_state, reported_input_tokens, reported_output_tokens, has_reported_usage, outcome FROM inference_submissions ORDER BY started_at").all(),
       workflows: db.prepare("SELECT owner_id, status FROM inference_workflows ORDER BY created_at").all(),
       sessions: db.prepare("SELECT count(*) AS count FROM sessions").get().count,
@@ -615,8 +632,8 @@ try {
   }
   const shadowOperations = accounting.operations.filter(operation => operation.owner_id === shadowOwner).map(operation => operation.id);
   const shadowUsage = accounting.submissions.filter(submission => shadowOperations.includes(submission.operation_id) && submission.has_reported_usage);
-  assert.equal(shadowUsage.length, 5, "native delegation duplicated a charged submission");
-  assert.equal(shadowUsage.reduce((total, submission) => total + submission.reported_input_tokens + submission.reported_output_tokens, 0), 36);
+  assert.equal(shadowUsage.length, 6, "native delegation duplicated a charged submission");
+  assert.equal(shadowUsage.reduce((total, submission) => total + submission.reported_input_tokens + submission.reported_output_tokens, 0), 41);
   result.adapter_terminal_receipts = [];
   for (const [mode, receipts] of [["throw", lateErrorReceipts], ["cancel", lateCancelReceipts]]) {
     const submitted = accounting.submissions.filter(submission => submission.operation_id === receipts[0].operation_id);
@@ -628,6 +645,31 @@ try {
     assert.equal(submitted[0].reported_output_tokens, 2);
     result.checks.push(`direct adapter final usage remains known when its callback later ${mode === "throw" ? "throws" : "is cancelled"}`);
   }
+  const malformedStreamReceipt = accounting.submissions.find(submission => submission.operation_id === malformedStreamReceipts[0].operation_id);
+  assert.equal(malformedStreamReceipt.outcome, "failed");
+  assert.equal(malformedStreamReceipt.cost_state, "known");
+  assert.equal(malformedStreamReceipt.reported_input_tokens, 3);
+  assert.equal(malformedStreamReceipt.reported_output_tokens, 2);
+  result.malformed_stream_receipt = malformedStreamReceipt;
+  result.checks.push("streaming adapter returned malformed response keeps its independently valid usage receipt");
+  const unarySubmissions = unaryReceipts.map(receipt => accounting.submissions.find(submission => submission.operation_id === receipt.operation_id));
+  result.unary_validation = unarySubmissions;
+  assert.equal(new Set(unaryReceipts.map(receipt => accounting.operations.find(operation => operation.id === receipt.operation_id).workflow_id)).size, 1);
+  for (const [index, submission] of unarySubmissions.entries()) {
+    assert.equal(submission.outcome, unaryValidation[index].failed ? "failed" : "succeeded");
+    if (index < 2) {
+      assert.equal(submission.cost_state, "unknown_but_billable");
+      assert.equal(submission.has_reported_usage, 0);
+      assert.equal(submission.reported_input_tokens, 0);
+      assert.equal(submission.reported_output_tokens, 0);
+    } else {
+      assert.equal(submission.cost_state, "known");
+      assert.equal(submission.reported_input_tokens, 3);
+      assert.equal(submission.reported_output_tokens, 2);
+    }
+  }
+  result.checks.push("invalid unary usage remains unknown and subsequent valid calls share a healthy workflow",
+    "valid unary usage survives unrelated malformed response metadata");
   assert(!accounting.submissions.some(submission => submission.operation_id === delegation.result.origin.operation_id && submission.has_reported_usage), "adapter echoed native usage as a second charged result");
   const unknownCost = accounting.submissions.filter(submission => submission.operation_id === noUsage.result.result.origin.operation_id);
   assert.equal(unknownCost.length, 1);

@@ -365,10 +365,10 @@ func invokePluginModelStream(ctx context.Context, host *pluginhost.Host, capabil
 		}
 		if callErr == nil && !emitted && output.Response != nil {
 			response, err := modelResponseFromLogical(*output.Response)
+			submission.ObserveUsage(response.Usage)
 			if err != nil {
 				callErr = err
 			} else {
-				submission.ObserveUsage(response.Usage)
 				events, err := providers.AdaptStreamClient(modelResponseClient{response: response}).StreamChat(ctx, providers.ChatRequest{})
 				if err != nil {
 					callErr = err

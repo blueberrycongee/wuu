@@ -442,7 +442,13 @@ func logicalModelResponse(in providers.ChatResponse) pluginhost.ModelResponseV1 
 }
 func modelResponseFromLogical(in pluginhost.ModelResponseV1) (providers.ChatResponse, error) {
 	out := modelChatResponseFromLogical(in)
-	if err := validateLogicalModelOutput(in.Phase, in.FinishReason, in.Usage); err != nil {
+	// Failed responses still carry valid physical receipts, but invalid usage
+	// must never reach accounting, even when another response field is invalid.
+	if err := validateLogicalModelUsage(in.Usage); err != nil {
+		out.Usage = nil
+		return out, err
+	}
+	if err := validateLogicalModelOutput(in.Phase, in.FinishReason); err != nil {
 		return out, err
 	}
 	if err := providers.ValidateAssistantToolCalls(out.ToolCalls); err != nil {
@@ -502,7 +508,10 @@ func modelStreamEventFromLogical(in pluginhost.ModelStreamEventV1) (providers.St
 	default:
 		return out, errors.New("unsupported model stream event")
 	}
-	if err := validateLogicalModelOutput(in.Phase, in.FinishReason, in.Usage); err != nil {
+	if err := validateLogicalModelOutput(in.Phase, in.FinishReason); err != nil {
+		return out, err
+	}
+	if err := validateLogicalModelUsage(in.Usage); err != nil {
 		return out, err
 	}
 	if len(in.ProviderState) > 0 {
@@ -591,7 +600,7 @@ func modelErrorView(err error) *pluginhost.ModelErrorV1 {
 	return &pluginhost.ModelErrorV1{Code: "inference_failed", Message: "model request failed"}
 }
 
-func validateLogicalModelOutput(phase, finish string, usage *pluginhost.ModelRequestUsage) error {
+func validateLogicalModelOutput(phase, finish string) error {
 	if phase != "" && providers.NormalizeMessagePhase(phase) == "" {
 		return errors.New("unsupported model output phase")
 	}
@@ -600,6 +609,10 @@ func validateLogicalModelOutput(phase, finish string, usage *pluginhost.ModelReq
 	default:
 		return errors.New("unsupported finish_reason")
 	}
+	return nil
+}
+
+func validateLogicalModelUsage(usage *pluginhost.ModelRequestUsage) error {
 	if usage != nil && (usage.InputTokens < 0 || usage.OutputTokens < 0 || usage.CacheCreationTokens < 0 || usage.CacheReadTokens < 0) {
 		return errors.New("model usage cannot be negative")
 	}
