@@ -20,6 +20,14 @@ development-only. Build the CLI using the [development guide](../project/develop
    also enter an existing absolute folder path on the computer. Messages and task
    controls use the encrypted connection to that computer.
 
+Open **… → Conversation settings** to choose an engine before sending the first
+message. The list comes from the connected computer's enabled, available engines.
+Existing conversations display their bound engine; start a new conversation to use
+another one. The same page offers models, reasoning and permission modes exposed
+by the selected engine. Changes apply only to this conversation and require an
+online computer and an idle task. Engine installation, sign-in and credentials
+remain on the computer.
+
 The app saves the pinned computer identity and phone key in the iOS keychain.
 It restores the last computer, folder and conversation after relaunch. Returning
 from the background creates a fresh encrypted connection; sent messages are never
