@@ -1035,14 +1035,17 @@ export function Composer({
     if (isComposerTextComposing(event)) {
       return;
     }
+    const currentPrompt = hasCollapsedPromptBlocks
+      ? `${collapsedPromptPrefix}${event.currentTarget.value}`
+      : event.currentTarget.value;
     // One owner arbitrates Tab against the live value, which may be ahead of
     // the rendered slash menu. Modified Tab always retains native focus travel.
     if (event.key === "Tab") {
       if (event.shiftKey || event.altKey || event.metaKey || event.ctrlKey) return;
       if (document.querySelector('[data-floating-menu-owner]:not([data-floating-menu-owner="composer-slash"]), .composer-textarea-context-menu, [aria-modal="true"]')) return;
       const currentDraft = !(textOnly && !slashCommandsOverride)
-        ? parseComposerSlashDraft(event.currentTarget.value) : undefined;
-      if (currentDraft && currentDraft.query !== "handoff" && slashDismissedValue !== event.currentTarget.value) {
+        ? parseComposerSlashDraft(currentPrompt) : undefined;
+      if (currentDraft && currentDraft.query !== "handoff" && slashDismissedValue !== currentPrompt) {
         const commands = filterComposerSlashCommands(slashCommands, currentDraft.query);
         const selected = currentDraft.query === slashQuery ? commands[selectedSlashIndex] : undefined;
         const command = selected && !selected.disabledReason
@@ -1096,9 +1099,6 @@ export function Composer({
       onInterrupt();
       return;
     }
-    const currentPrompt = hasCollapsedPromptBlocks
-      ? `${collapsedPromptPrefix}${event.currentTarget.value}`
-      : event.currentTarget.value;
     const currentHasDraft = currentPrompt.trim().length > 0 || hasAttachments;
     const primaryModifier = event.metaKey || event.ctrlKey;
     if (

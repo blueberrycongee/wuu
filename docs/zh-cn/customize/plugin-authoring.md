@@ -214,6 +214,8 @@ async function requestText(host: RuntimeHost, content: string) {
 | `max_output_tokens` | 整数 1–8192，默认 1024 |
 | `timeout_ms` | 整数 1–45000，默认 45000 |
 
+`max_output_tokens` 是请求的输出 token 上限，不是费用上限。已配置的 token 限制选项不能提高本次调用的上限。如果提供商适配器在准备请求时移除限制，或将其提高到请求值以上，调用会在提交推理前返回 `unsupported_limit`。这项宿主侧检查不保证远程服务器如何执行 token 限制或计费。
+
 超时同时受 `timeout_ms` 和所属调用的剩余生命周期限制。运行时默认 capability 超时为 30 秒，因此请求可能在 45 秒之前结束。应明确配置包的运行时超时，不要认为模型服务会延长它。取消、所属调用结束或 generation 撤销都会取消尚未完成的提供商工作。
 
 结果包含 `text`、`provider`、`model`、`finish_reason` 和 `truncated`。可选的 `usage` 包含输入、输出、缓存创建、缓存读取 token 数及 `cache_creation_unknown`；缺少用量不代表零费用。空或非文本响应，以及请求工具调用的响应都会报错，不会启动工具循环。

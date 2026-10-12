@@ -7,7 +7,7 @@ const crypto = require("node:crypto");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { app, BrowserWindow, protocol, ipcMain } = require("electron");
+const { app, BrowserWindow, protocol, ipcMain, clipboard } = require("electron");
 
 const root = path.resolve(__dirname, "..");
 const renderer = process.env.WUU_E2E_RENDERER || path.join(root, "out/renderer/index.html");
@@ -155,6 +155,21 @@ app.whenReady().then(async () => {
     assert.equal(await value(), "Baseline native input");
     assert.equal(await evaluate((selector) => document.activeElement === document.querySelector(selector), inputSelector), false);
     assert.equal(await evaluate(() => Boolean(window.__inlineCompletionE2E)), false);
+  });
+  await check("slash-like follow-up preserves folded content without providers", async () => {
+    await draft("");
+    const pasted = Array.from({ length: 20 }, (_, index) => `Pasted evidence line ${index + 1}.`).join("\n");
+    clipboard.writeText(pasted);
+    win.webContents.paste();
+    await until(() => Boolean(document.querySelector('[data-main-conversation-composer] .composer-collapsed-prompt-card')));
+    await draft("/rev");
+    assert.equal(await evaluate(() => Boolean(document.querySelector('[data-floating-menu-owner="composer-slash"]'))), false);
+    await key("Tab");
+    assert.equal(await value(), "/rev", "a suffix inside a folded draft is not a slash command");
+    assert.equal(await evaluate((selector) => document.activeElement === document.querySelector(selector), inputSelector), false);
+    await evaluate(() => document.querySelector('[data-main-conversation-composer] .composer-collapsed-prompt-card .composer-document-card-main').click());
+    await until(({ selector, expected }) => document.querySelector(selector)?.value === expected, { selector: inputSelector, expected: `/rev${pasted}` }, "folded content remains intact after Tab");
+    await draft("");
   });
   win.webContents.send("test:inline-inventory", { enabled: true, generation: 1 });
   await until(() => Boolean(window.__inlineCompletionE2E?.active));

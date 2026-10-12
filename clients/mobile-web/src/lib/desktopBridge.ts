@@ -840,11 +840,24 @@ export class RemoteDesktopBridge {
       requestPluginRuntime: async (params) => {
         const workdir = this.requestWorkdir(params);
         const requestID = params.request_id;
+        const identity = { id: params.id, fingerprint: params.fingerprint };
+        const revision = this.connection.revision;
         if (requestID && pluginRequests.has(requestID)) throw new Error("Plugin request ID is already active");
-        if (requestID) pluginRequests.set(requestID, { id: params.id, fingerprint: params.fingerprint, workdir, revision: this.connection.revision });
+        if (requestID) pluginRequests.set(requestID, { ...identity, workdir, revision });
         try {
           const { workspace_id: _workspaceID, ...request } = params;
           return await this.call("plugin/client/request", request, workdir);
+        } catch (error) {
+          // A local RPC deadline only forgets its reply. Stop the host work too,
+          // while the original connection still owns this request identity.
+          if (requestID && revision === this.connection.revision) {
+            void this.call<PluginClientCancelResult>("plugin/client/cancel", {
+              ...identity, request_id: requestID,
+            }, workdir).catch((cancelError: unknown) => {
+              console.error("Plugin runtime cancellation failed", cancelError);
+            });
+          }
+          throw error;
         } finally {
           if (requestID) pluginRequests.delete(requestID);
         }

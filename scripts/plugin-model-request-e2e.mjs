@@ -135,8 +135,17 @@ runJSONLRuntime({
     providers: { fixture: {
       type: "openai-compatible", base_url: `http://127.0.0.1:${provider.address().port}`,
       api_key: "synthetic-no-real-key", model: "gpt-test",
+      models: { "gpt-test": { options: {
+        maxOutputTokens: 128000, max_output_tokens: 128000, max_tokens: 128000, max_completion_tokens: 128000,
+      } } },
+    }, unsupported: {
+      type: "openai-codex", base_url: `http://127.0.0.1:${provider.address().port}`,
+      api_key: "synthetic-no-real-key", model: "gpt-test",
     } },
-    agent: { permission_mode: "standard", model_aliases: { short: { provider: "fixture", model: "gpt-test-alias" } } },
+    agent: { permission_mode: "standard", model_aliases: {
+      short: { provider: "fixture", model: "gpt-test-alias" },
+      unsupported: { provider: "unsupported", model: "gpt-test" },
+    } },
     skills: { enabled: false }, ptc: { enabled: false },
   }));
   const published = spawnSync(binary, ["plugin", "dev", "--watch=false", pkg], { env, encoding: "utf8", timeout: 20_000 });
@@ -173,14 +182,22 @@ runJSONLRuntime({
   assert.equal(success.truncated, false);
   result.success = success;
   assert.equal(providerCalls[0].body.max_tokens, 32);
+  for (const key of ["maxOutputTokens", "max_output_tokens", "max_completion_tokens"]) {
+    assert.equal(providerCalls[0].body[key], undefined, `${key} bypassed the requested output cap`);
+  }
   assert.equal(providerCalls[0].body.messages.length, 2);
   assert(!providerCalls[0].body.tools?.length);
   result.checks.push("public SDK response and usage", "explicit messages, output cap, no tools");
+  result.checks.push("configured provider options cannot override the output cap");
   const alias = await call("alias", { ...input("alias"), model_alias: "short" });
   assert.equal(alias.model, "gpt-test-alias");
   assert.equal(providerCalls.at(-1).body.model, "gpt-test-alias");
   result.checks.push("configured alias resolution");
   const count = providerCalls.length;
+  const unsupported = await call("unsupported-limit", { ...input("unsupported"), model_alias: "unsupported" });
+  assert.equal(unsupported.error?.code, "unsupported_limit", JSON.stringify(unsupported));
+  assert.equal(providerCalls.length, count, "unsupported output cap reached the provider");
+  result.checks.push("adapter dropping output cap is rejected before inference");
   for (const [name, value] of [
     ["bad-role", { messages: [{ role: "tool", content: "bad" }] }],
     ["oversize", input("x".repeat(262145))],

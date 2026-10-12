@@ -216,6 +216,8 @@ async function requestText(host: RuntimeHost, content: string) {
 | `max_output_tokens` | Integer 1–8192; default 1024 |
 | `timeout_ms` | Integer 1–45000; default 45000 |
 
+`max_output_tokens` is a requested output-token limit, not a billing ceiling. Configured token-limit options cannot raise this call's limit. If provider preparation removes the limit or raises it above the requested value, the call fails with `unsupported_limit` before inference submission. This host-side check does not guarantee how a remote server enforces token limits or bills requests.
+
 The timeout is bounded by both `timeout_ms` and the owning invocation's remaining lifetime. The runtime's default capability timeout is 30 seconds, so a request may end before 45 seconds. Set the package's runtime timeout deliberately rather than assuming the model service extends it. Cancellation, invocation completion, or generation revocation cancels outstanding provider work.
 
 The result contains `text`, `provider`, `model`, `finish_reason`, and `truncated`. Optional `usage` contains input, output, cache-creation, and cache-read token counts plus `cache_creation_unknown`; missing usage does not mean zero cost. Empty/non-text responses and responses requesting tool calls fail instead of starting a tool loop.

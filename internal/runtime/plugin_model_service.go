@@ -136,6 +136,21 @@ func (k *modelRequestInvoker) InvokeService(callCtx context.Context, params plug
 		Temperature: cfg.Agent.Temperature, Effort: selection.LegacyEffort,
 		ProviderOptions: provideroptions.Clone(selection.ProviderOptions),
 	}
+	// Model defaults and wire aliases must not override this invocation's cap.
+	for _, key := range []string{"maxOutputTokens", "max_output_tokens", "max_tokens", "max_completion_tokens"} {
+		delete(request.ProviderOptions, key)
+	}
+	if preparer, ok := client.(providers.InferenceRequestPreparer); ok {
+		request, err = preparer.PrepareInferenceRequest(ctx, request)
+		if err != nil {
+			return nil, modelRequestError(err)
+		}
+		// Some adapters remove unsupported token limits. Reject before any
+		// inference submission rather than silently running an unbounded call.
+		if request.MaxTokens <= 0 || request.MaxTokens > input.MaxOutputTokens {
+			return nil, serviceError("unsupported_limit", "configured model provider cannot preserve the requested output token limit")
+		}
+	}
 	// Preserve an existing workflow's owner and budget. Client-request
 	// capabilities have no parent inference journal, so attribute them to the
 	// validated plugin instead of creating a hidden conversation.

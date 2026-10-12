@@ -1260,7 +1260,11 @@ export interface ModelRequestParams {
   readonly messages: readonly ModelRequestMessage[];
   /** Existing configured model alias; omitted uses the host's configured model. */
   readonly model_alias?: string;
-  /** Integer 1–8192; defaults to 1024. */
+  /**
+   * Requested output-token limit, integer 1–8192; defaults to 1024.
+   * An adapter that cannot preserve the limit fails with unsupported_limit
+   * before inference. Remote-server enforcement and billing are not guaranteed.
+   */
   readonly max_output_tokens?: number;
   /** Integer 1–45000 milliseconds; defaults to 45000. */
   readonly timeout_ms?: number;
