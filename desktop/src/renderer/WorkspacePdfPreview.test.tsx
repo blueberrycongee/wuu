@@ -52,6 +52,10 @@ vi.mock("./styles/workspace-pdf-preview.css?inline", () => ({
 }));
 
 vi.mock("pdfjs-dist/web/pdf_viewer.mjs", () => ({
+  PDFLinkService: class {
+    setDocument(): void {}
+    setViewer(): void {}
+  },
   EventBus: class {
     private handlers = new Map<string, Set<(value: unknown) => void>>();
 

@@ -62,6 +62,20 @@ make build-go
 崩溃，检查恢复、重试上限、窗口隔离和 IPC。测试使用临时配置目录和模拟内容，不读取
 你的 Wuu 数据。请在图形桌面会话中运行；它不验证原生对话框外观或打包应用行为。
 
+### 工作区 PDF 预览
+
+在图形会话中运行 `npm --prefix desktop run test:e2e:workspace-preview`，
+用生成的 PDF 验证真实 renderer 和 PDF.js。检查包括重试、命名与显式目标、
+键盘和中键跳转、页码范围、来源替换、保留挂载的隐藏面板，以及关闭或重试期间的竞态。外链 IPC 仅记录，
+不打开系统浏览器；部分真实目标解析结果会被延迟，以检查过期结果。
+JSON、合成 PDF 和截图写入 `desktop/out/e2e/workspace-preview/`，
+不使用已安装应用的配置目录或 Go 核心。
+
+无图形会话时，运行
+`node desktop/scripts/workspace-preview-e2e.cjs --pdf-fixtures-only`，
+用真实 Node PDF.js 验证相同的 PDF 字节。此模式检查解析、命名和页面引用解析，
+以及不安全动作数据，不验证渲染或点击。
+
 ### 实时缩放布局护栏
 
 桌面生产构建完成后，在图形会话中运行

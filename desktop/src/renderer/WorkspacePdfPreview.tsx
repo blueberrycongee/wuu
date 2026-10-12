@@ -17,6 +17,7 @@ import {
 import pdfWorkerURL from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import pdfViewerCSS from "pdfjs-dist/web/pdf_viewer.css?inline";
 import { EventBus, PDFViewer } from "pdfjs-dist/web/pdf_viewer.mjs";
+import { WorkspacePdfLinkService } from "./WorkspacePdfLinkService";
 import previewCSS from "./styles/workspace-pdf-preview.css?inline";
 import { translateCurrent, useI18n } from "./i18n";
 
@@ -88,6 +89,8 @@ function WorkspacePdfSurface({ url, title, hostRef, source, active, initialPage,
   const containerRef = useRef<HTMLDivElement>(null);
   const viewerElementRef = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<PDFViewer | null>(null);
+  const linkServiceRef = useRef<WorkspacePdfLinkService | null>(null);
+  const visibleRef = useRef(active);
   const [attempt, setAttempt] = useState(0);
   const retryPendingRef = useRef(false);
   const requestedPageRef = useRef(initialPage);
@@ -98,6 +101,13 @@ function WorkspacePdfSurface({ url, title, hostRef, source, active, initialPage,
   const [pageCount, setPageCount] = useState(0);
 
   useLayoutEffect(() => {
+    visibleRef.current = active;
+    // Workspace tabs can hide a retained viewer without unmounting its source.
+    if (!active) linkServiceRef.current?.cancelNavigation();
+  }, [active]);
+
+  useLayoutEffect(() => {
+    linkServiceRef.current?.cancelNavigation();
     requestedPageRef.current = initialPage;
   }, [initialPage, pageRequest]);
 
@@ -112,16 +122,28 @@ function WorkspacePdfSurface({ url, title, hostRef, source, active, initialPage,
     let initialized = false;
     const lifetime = new AbortController();
     const eventBus = new EventBus();
+    const linkService = new WorkspacePdfLinkService(eventBus, () => active && visibleRef.current && initialized && !failed);
     // PDF.js 5.4 supports abortSignal but does not yet declare it in its types.
     const viewerOptions = {
       container,
       viewer: viewerElement,
       eventBus,
+      linkService,
       enableHWA: true,
       removePageBorders: true,
       abortSignal: lifetime.signal,
     };
     const viewer = new PDFViewer(viewerOptions);
+    linkService.setViewer(viewer);
+    linkServiceRef.current = linkService;
+    // PDF.js consumes ordinary internal-link clicks, but leaves middle clicks
+    // to the browser. Keep those destinations inside this preview as well.
+    container.addEventListener("auxclick", event => {
+      const link = event.target instanceof Element ? event.target.closest<HTMLAnchorElement>("[data-internal-link] a") : null;
+      if (event.button !== 1 || !link) return;
+      event.preventDefault();
+      link.click();
+    }, { signal: lifetime.signal });
     let loadingTask: ReturnType<typeof getDocument> | undefined;
     viewerRef.current = viewer;
 
@@ -192,6 +214,7 @@ function WorkspacePdfSurface({ url, title, hostRef, source, active, initialPage,
       const document = await loadingTask.promise;
       if (!active) return;
       setPageCount(document.numPages);
+      linkService.setDocument(document);
       viewer.setDocument(document);
       // setDocument is void; PDF.js reports asynchronous initialization errors
       // through pagesPromise, after loadingTask has already succeeded.
@@ -201,6 +224,9 @@ function WorkspacePdfSurface({ url, title, hostRef, source, active, initialPage,
 
     return () => {
       active = false;
+      linkService.setDocument(null);
+      linkService.setViewer(null);
+      linkServiceRef.current = null;
       eventBus.off("pagerendered", onPageRendered);
       eventBus.off("pagesinit", onPagesInit);
       eventBus.off("scalechanging", onScaleChanging);

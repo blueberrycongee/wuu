@@ -68,6 +68,21 @@ It uses a temporary profile and synthetic content, not your Wuu data. Run it in
 a graphical desktop session; it does not validate native dialog appearance or
 packaged-app behavior.
 
+### Workspace PDF preview
+
+Run `npm --prefix desktop run test:e2e:workspace-preview` in a graphical session
+to exercise the real renderer and PDF.js with generated PDFs. It checks retries,
+named and explicit destinations, keyboard/middle-click navigation, page bounds,
+source replacement, retained hidden panels, and close/retry races. External-link IPC is recorded rather
+than opening the system browser; selected real destination responses are delayed
+to check stale results. JSON, synthetic PDFs, and screenshots are written under
+`desktop/out/e2e/workspace-preview/`. No installed profile or Go core is used.
+
+Without a graphical session, run
+`node desktop/scripts/workspace-preview-e2e.cjs --pdf-fixtures-only` to verify the
+same PDF bytes with real Node PDF.js. This checks parsing, named/page-reference
+resolution, and unsafe action data, but does not verify rendering or clicks.
+
 ### Live resize layout guard
 
 After a desktop production build, run `npm --prefix desktop run test:e2e:resize-live-layout`

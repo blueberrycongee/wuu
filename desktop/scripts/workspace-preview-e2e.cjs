@@ -8,14 +8,7 @@ const { once } = require("node:events");
 const desktop = path.resolve(__dirname, "..");
 const output = path.join(desktop, "out/e2e/workspace-preview");
 
-// Minimal deterministic PDF bytes, served locally to the real PDF.js worker.
-function pdfFixture(label = "Retry fixture") {
-  const objects = ["<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Count 2 /Kids [4 0 R 6 0 R] >>", "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"];
-  for (const page of [1, 2]) {
-    const content = `BT /F1 16 Tf 28 200 Td (${label} page ${page}) Tj ET`;
-    objects.push(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 420 260] /Resources << /Font << /F1 3 0 R >> >> /Contents ${page * 2 + 3} 0 R >>`,
-      `<< /Length ${Buffer.byteLength(content)} >>\nstream\n${content}\nendstream`);
-  }
+function pdfBytes(objects) {
   let text = "%PDF-1.4\n";
   const offsets = [0];
   objects.forEach((object, i) => { offsets.push(Buffer.byteLength(text)); text += `${i + 1} 0 obj\n${object}\nendobj\n`; });
@@ -24,7 +17,100 @@ function pdfFixture(label = "Retry fixture") {
   return Buffer.from(text);
 }
 
-if (!process.versions.electron) {
+// Minimal deterministic PDF bytes, served locally to the real PDF.js worker.
+function pdfFixture(label = "Retry fixture") {
+  const objects = ["<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Count 2 /Kids [4 0 R 6 0 R] >>", "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"];
+  for (const page of [1, 2]) {
+    const content = `BT /F1 16 Tf 28 200 Td (${label} page ${page}) Tj ET`;
+    objects.push(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 420 260] /Resources << /Font << /F1 3 0 R >> >> /Contents ${page * 2 + 3} 0 R >>`,
+      `<< /Length ${Buffer.byteLength(content)} >>\nstream\n${content}\nendstream`);
+  }
+  return pdfBytes(objects);
+}
+
+// Original, generated PDF with a name tree, indirect page references, explicit
+// page indices, broken destinations, and safe/unsafe external actions.
+function pdfNavigationFixture() {
+  const links = [
+    ["named", "/Dest (chapter-two)", 2],
+    ["reference", "/Dest [8 0 R /XYZ null 740 null]", 3],
+    ["index", "/Dest [1 /Fit]", 2],
+    ["missing-name", "/Dest (missing)"],
+    ["missing-reference", "/Dest [999 0 R /Fit]"],
+    ["past-end", "/Dest [99 /Fit]"],
+    ["negative-page", "/Dest [-1 /Fit]"],
+    ["https", "/A << /S /URI /URI (https://example.com/pdf-link) >>"],
+    ["mailto", "/A << /S /URI /URI (mailto:pdf@example.com) >>"],
+    ["javascript-url", "/A << /S /URI /URI (javascript:alert\\(1\\)) >>"],
+    ["file-url", "/A << /S /URI /URI (file:///tmp/forbidden.pdf) >>"],
+    ["remote-file", "/A << /S /GoToR /F (file:///tmp/forbidden.pdf) /D [0 /Fit] >>"],
+    ["script-action", "/A << /S /JavaScript /JS (app.alert\\(1\\)) >>"],
+    ["named-action", "/A << /S /Named /N /LastPage >>"],
+  ];
+  const objects = [
+    "<< /Type /Catalog /Pages 2 0 R /Names << /Dests << /Names [(chapter-two) [6 0 R /Fit]] >> >> >>",
+    "<< /Type /Pages /Count 3 /Kids [4 0 R 6 0 R 8 0 R] >>",
+    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    ...Array(6).fill(""),
+  ];
+  const annotations = links.map(([name, action, targetPage], index) => {
+    const object = objects.length + 1;
+    const y = 700 - index * 34;
+    objects.push(`<< /Type /Annot /Subtype /Link /Rect [25 ${y - 5} 370 ${y + 19}] /Border [0 0 1] ${action} >>`);
+    return { name, object, id: `${object}R`, y, targetPage };
+  });
+  const backObject = objects.length + 1;
+  objects.push("<< /Type /Annot /Subtype /Link /Rect [25 695 370 719] /Border [0 0 1] /Dest [4 0 R /Fit] >>");
+  for (const page of [1, 2, 3]) {
+    const text = page === 1 ? annotations : [{ name: "back", y: 700 }];
+    const content = `BT /F1 16 Tf 28 750 Td (Navigation fixture page ${page}) Tj ET\n`
+      + text.map(({ name, y }) => `BT /F1 12 Tf 28 ${y} Td (${name}) Tj ET`).join("\n");
+    const refs = page === 1 ? annotations.map(item => `${item.object} 0 R`).join(" ") : `${backObject} 0 R`;
+    objects[page * 2 + 1] = `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 420 780] /Resources << /Font << /F1 3 0 R >> >> /Contents ${page * 2 + 3} 0 R /Annots [${refs}] >>`;
+    objects[page * 2 + 2] = `<< /Length ${Buffer.byteLength(content)} >>\nstream\n${content}\nendstream`;
+  }
+  return { bytes: pdfBytes(objects), annotations, backID: `${backObject}R` };
+}
+
+if (process.argv.includes("--pdf-fixtures-only")) {
+  (async () => {
+    const { getDocument, isValidExplicitDest } = await import("pdfjs-dist/legacy/build/pdf.mjs");
+    fs.mkdirSync(output, { recursive: true });
+    const navigation = pdfNavigationFixture();
+    const result = { boundary: "Real Node PDF.js parsing and destination resolution; no renderer or GUI", fixtures: [] };
+    for (const [name, bytes, pages] of [["retry", pdfFixture(), 2], ["navigation", navigation.bytes, 3]]) {
+      fs.writeFileSync(path.join(output, `${name}.pdf`), bytes);
+      const task = getDocument({ data: new Uint8Array(bytes), isEvalSupported: false, useSystemFonts: true });
+      try {
+        const pdf = await task.promise;
+        assert.equal(pdf.numPages, pages);
+        const texts = [];
+        for (let page = 1; page <= pages; page += 1) texts.push((await (await pdf.getPage(page)).getTextContent()).items.map(item => item.str).join(" "));
+        const destinations = [];
+        if (name === "navigation") {
+          const annotations = await (await pdf.getPage(1)).getAnnotations();
+          for (const fixture of navigation.annotations) {
+            const annotation = annotations.find(item => item.id === fixture.id);
+            assert.ok(annotation, fixture.name);
+            if (fixture.targetPage) {
+              const destination = typeof annotation.dest === "string" ? await pdf.getDestination(annotation.dest) : annotation.dest;
+              assert.equal(isValidExplicitDest(destination), true, fixture.name);
+              const page = typeof destination[0] === "number" ? destination[0] + 1 : await pdf.getPageIndex(destination[0]) + 1;
+              assert.equal(page, fixture.targetPage, fixture.name);
+              destinations.push({ name: fixture.name, page, destination });
+            }
+            if (["javascript-url", "file-url", "remote-file", "script-action"].includes(fixture.name)) assert.equal(annotation.url, undefined, fixture.name);
+          }
+          assert.equal(await pdf.getDestination("missing"), null);
+          await assert.rejects(pdf.getPageIndex({ num: 999, gen: 0 }));
+        }
+        result.fixtures.push({ name, pages, texts, destinations });
+      } finally { await task.destroy(); }
+    }
+    fs.writeFileSync(path.join(output, "node-pdf-fixtures.json"), JSON.stringify(result, null, 2));
+    console.log(JSON.stringify(result, null, 2));
+  })().catch(error => { console.error(error); process.exitCode = 1; });
+} else if (!process.versions.electron) {
   (async () => {
     const { createServer, loadConfigFromFile } = await import("vite");
     const { spawn } = require("node:child_process");
@@ -72,6 +158,7 @@ if (!process.versions.electron) {
       import { FileSelectionProvider } from "/src/renderer/FileSelectionContext";
       import { readCollapsedPromptParts } from "/src/renderer/ComposerCollapsedPrompt";
       import { applyMessageFlowFontSize } from "/src/renderer/MessageFlowFontSizeSection";
+      import { PDFViewer } from "pdfjs-dist/web/pdf_viewer.mjs";
       import "/src/renderer/styles.css";
       const query = new URLSearchParams(location.search);
       document.documentElement.dataset.theme = query.get("theme") || "light";
@@ -80,8 +167,40 @@ if (!process.versions.electron) {
       const context = { cwd: "/synthetic", thread_id: "pdf-retry" };
       window.pdfReads = [];
       window.pdfParts = [];
+      window.pdfExternalURLs = [];
+      const setDocument = PDFViewer.prototype.setDocument;
+      PDFViewer.prototype.setDocument = function(pdf) {
+        if (pdf) {
+          window.pdfViewer = this;
+          const navigate = this.linkService.goToDestination.bind(this.linkService);
+          this.linkService.goToDestination = destination => {
+            window.pdfNavigationPending = navigate(destination);
+            return window.pdfNavigationPending;
+          };
+        }
+        return setDocument.call(this, pdf);
+      };
+      // Delay a real PDF.js result, without replacing its parsed destination.
+      // The document restores its method before waiting so newer clicks proceed.
+      window.holdPDFDestination = method => {
+        const pdf = window.pdfViewer.pdfDocument;
+        const original = pdf[method].bind(pdf);
+        const cached = pdf.cachedPageNumber.bind(pdf);
+        if (method === "getPageIndex") pdf.cachedPageNumber = () => null;
+        window.pdfDestinationHeld = false;
+        const barrier = new Promise(resolve => { window.releasePDFDestination = resolve; });
+        pdf[method] = async (...args) => {
+          const result = await original(...args);
+          pdf[method] = original;
+          pdf.cachedPageNumber = cached;
+          window.pdfDestinationHeld = true;
+          await barrier;
+          return result;
+        };
+      };
       Object.defineProperty(window, "wuu", { value: {
         initialLanguagePreference: "en-US",
+        openExternal: async url => { window.pdfExternalURLs.push(url); },
         readWorkspaceFile: async (path) => {
           window.pdfReads.push(path);
           const count = window.pdfReads.filter(value => value === path).length;
@@ -98,17 +217,23 @@ if (!process.versions.electron) {
       function Fixture() {
         const [selected, setSelected] = useState();
         const [draft, setDraft] = useState("Keep this conversation draft");
+        const [navigationAnchor, setNavigationAnchor] = useState();
+        const [previewActive, setPreviewActive] = useState(true);
         return <FileSelectionProvider ownerKey="pdf-retry" getPrompt={() => draft}
           setPrompt={value => { setDraft(value); window.pdfParts = readCollapsedPromptParts("pdf-retry", value); }}
           onEdit={async () => false} onOpenFile={setSelected}>
           <div style={{display: "grid", gridTemplateColumns: "minmax(180px, 1fr) minmax(0, 1fr)", height: "100vh"}}>
             <section aria-label="Conversation"><textarea aria-label="Draft" value={draft} onChange={event => setDraft(event.target.value)} />
-              {["transient", "corrupt", "stale", "close", "replacement", "changed", "metadata", "metadata-stale", "metadata-close"].map(name =>
-                <button key={name} data-open-pdf={name} onClick={() => setSelected(name + ".pdf")}>{name}.pdf</button>)}
+              {["transient", "corrupt", "stale", "close", "replacement", "changed", "metadata", "metadata-stale", "metadata-close", "navigation", "navigation-other"].map(name =>
+                <button key={name} data-open-pdf={name} onClick={() => { setNavigationAnchor(undefined); setPreviewActive(true); setSelected(name + ".pdf"); }}>{name}.pdf</button>)}
               <button data-close-pdf onClick={() => setSelected(undefined)}>Close preview</button>
+              <button data-hide-pdf onClick={() => setPreviewActive(false)}>Hide preview</button>
+              <button data-show-pdf onClick={() => setPreviewActive(true)}>Show preview</button>
+              <button data-request-pdf-page onClick={() => setNavigationAnchor("pdf-page=2")}>Request PDF page 2</button>
             </section>
-            <aside aria-label="File preview" style={{minWidth: 0, minHeight: 0}}>
-              {selected ? <WorkspaceFilePreview activeContext={context} selectedFilePath={selected} anchor="pdf-page=2" /> : null}
+            <aside aria-label="File preview" hidden={!previewActive} style={{minWidth: 0, minHeight: 0}}>
+              {selected ? <WorkspaceFilePreview activeContext={context} selectedFilePath={selected} active={previewActive}
+                anchor={selected.startsWith("navigation") ? navigationAnchor : "pdf-page=2"} /> : null}
             </aside>
           </div>
         </FileSelectionProvider>;
@@ -120,6 +245,8 @@ if (!process.versions.electron) {
     const requestWaiters = [];
     const pdfBytes = pdfFixture();
     const changedPDFBytes = pdfFixture("Updated fixture");
+    const navigationPDF = pdfNavigationFixture();
+    fs.writeFileSync(path.join(run, "navigation.pdf"), navigationPDF.bytes);
     const pdfServer = {
       name: "synthetic-pdf-recovery",
       configureServer(server) {
@@ -153,15 +280,16 @@ if (!process.versions.electron) {
           const sendPDF = () => {
             if (response.destroyed) return;
             response.setHeader("Content-Type", "application/pdf");
-            const bytes = name === "changed.pdf" ? changedPDFBytes : pdfBytes;
+            const bytes = name.startsWith("navigation") ? navigationPDF.bytes : name === "changed.pdf" ? changedPDFBytes : pdfBytes;
             response.setHeader("Content-Length", bytes.length);
             response.end(bytes);
           };
           if (name === "corrupt.pdf") return response.end("corrupt PDF bytes");
-          if (name !== "replacement.pdf" && count === 1) {
+          const immediate = name === "replacement.pdf" || name.startsWith("navigation");
+          if (!immediate && count === 1) {
             response.statusCode = 503; return response.end("Temporary PDF failure");
           }
-          if (name !== "replacement.pdf") pendingPDFs.set(name, sendPDF);
+          if (!immediate) pendingPDFs.set(name, sendPDF);
           else sendPDF();
         });
       },
@@ -228,14 +356,14 @@ if (!process.versions.electron) {
       const check = () => {
         for (const host of document.querySelectorAll("*")) {
           if (host.shadowRoot && !roots.has(host.shadowRoot)) {
-            roots.add(host.shadowRoot); observer.observe(host.shadowRoot, { subtree: true, childList: true, attributes: true });
+            roots.add(host.shadowRoot); observer.observe(host.shadowRoot, { subtree: true, childList: true, attributes: true, characterData: true });
           }
         }
         if (${condition}) { observer.disconnect(); clearTimeout(timeout); resolve(true); }
       };
       const observer = new MutationObserver(check);
       const timeout = setTimeout(() => { observer.disconnect(); reject(new Error(${JSON.stringify(condition)})); }, 30000);
-      observer.observe(document.documentElement, { subtree: true, childList: true, attributes: true }); check();
+      observer.observe(document.documentElement, { subtree: true, childList: true, attributes: true, characterData: true }); check();
     })`);
     const click = (selector) => evaluate(`document.querySelector(${JSON.stringify(selector)}).click()`);
     // Hidden windows do not reliably advance paint-driven transitions. Finish
@@ -394,6 +522,121 @@ if (!process.versions.electron) {
       assert.equal(await evaluate('document.querySelector("[aria-label=Draft]").value.endsWith("Keep this conversation draft")'), true);
       measurements.push({ view: "pdf-retry", boundary: "real renderer and PDF.js; synthetic workspace IPC and local HTTP",
         requests: await requests(), quote: quote.source, changedQuote: changedQuote.source, checks: ["in-place-retry", "double-click", "source-revision", "refreshed-source-revision", "metadata-retry", "switch-during-metadata", "close-during-metadata", "page-identity", "corrupt-retry", "switch-during-retry", "close-during-retry", "draft-retained"] });
+
+      const navigation = pdfNavigationFixture();
+      const windows = [];
+      const navigations = [];
+      window.webContents.setWindowOpenHandler(details => { windows.push(details.url); return { action: "deny" }; });
+      window.webContents.on("will-navigate", (event, url) => { event.preventDefault(); navigations.push(url); });
+      const pageAt = page => waitFor(`${shadow}?.querySelector('.workspace-pdf-page-count')?.textContent === '${page} / 3' && ${shadow}?.querySelector('.page[data-page-number="${page}"] .textLayer span')`);
+      const linkSelector = name => `.page[data-page-number="1"] a[data-element-id="${navigation.annotations.find(item => item.name === name).id}"]`;
+      const destinationClick = async (name, middle = false) => {
+        const selector = linkSelector(name);
+        await waitFor(`${shadow}?.querySelector(${JSON.stringify(selector)})`);
+        await evaluate(`(() => {
+          const link = ${shadow}.querySelector(${JSON.stringify(selector)});
+          ${middle ? 'link.dispatchEvent(new MouseEvent("auxclick", { button: 1, bubbles: true, cancelable: true }))' : "link.click()"};
+        })()`);
+      };
+      const back = async () => {
+        const selector = `.page[data-page-number="${await evaluate('window.pdfViewer.currentPageNumber')}"] a[data-element-id="${navigation.backID}"]`;
+        await waitFor(`${shadow}?.querySelector(${JSON.stringify(selector)})`);
+        await evaluate(`${shadow}.querySelector(${JSON.stringify(selector)}).click()`);
+        await pageAt(1);
+      };
+      await click('[data-open-pdf="navigation"]'); await pageAt(1);
+      const navigationURL = await evaluate('location.href');
+      const initialScale = await evaluate('window.pdfViewer.currentScale');
+      for (const [name, page, middle] of [["named", 2, false], ["reference", 3, false], ["index", 2, true]]) {
+        await destinationClick(name, middle); await pageAt(page);
+        assert.equal(await evaluate('window.pdfViewer.currentScale'), initialScale, "internal links preserve the reader's zoom");
+        await back();
+      }
+      // Keyboard activation uses the annotation's ordinary anchor handler.
+      await evaluate(`${shadow}.querySelector(${JSON.stringify(linkSelector("named"))}).focus()`);
+      window.webContents.sendInputEvent({ type: "keyDown", keyCode: "Return" });
+      window.webContents.sendInputEvent({ type: "keyUp", keyCode: "Return" });
+      await pageAt(2); await back();
+      for (const name of ["missing-name", "missing-reference", "past-end", "negative-page", "named-action"]) {
+        await destinationClick(name);
+        await evaluate('window.pdfNavigationPending');
+        assert.equal(await evaluate('window.pdfViewer.currentPageNumber'), 1, name);
+        assert.equal(await evaluate(`Boolean(${shadow}.querySelector('[role=alert]'))`), false, name);
+      }
+      for (const name of ["https", "mailto"]) await destinationClick(name);
+      assert.deepEqual(await evaluate('window.pdfExternalURLs'), ["https://example.com/pdf-link", "mailto:pdf@example.com"]);
+      for (const name of ["javascript-url", "file-url", "remote-file", "script-action"]) {
+        assert.equal(await evaluate(`Boolean(${shadow}.querySelector(${JSON.stringify(linkSelector(name))}))`), false, name);
+      }
+      assert.equal(await evaluate('location.href'), navigationURL);
+      fs.writeFileSync(path.join(run, "pdf-navigation.png"), (await window.webContents.capturePage()).toPNG());
+
+      const holdDestination = async method => {
+        await evaluate(`window.holdPDFDestination(${JSON.stringify(method)})`);
+        await destinationClick(method === "getDestination" ? "named" : "reference");
+        // The promise changes a JS value rather than the DOM, so observe its
+        // barrier with a bounded frame probe instead of the DOM-only waiter.
+        await evaluate(`new Promise((resolve, reject) => {
+          const timeout = setTimeout(() => reject(new Error("Destination did not reach barrier")), 30000);
+          const check = () => {
+            if (window.pdfDestinationHeld) { clearTimeout(timeout); window.pdfHeldNavigationPending = window.pdfNavigationPending; resolve(true); }
+            else requestAnimationFrame(check);
+          }; check();
+        })`);
+      };
+      const releaseDestination = () => evaluate('window.releasePDFDestination(); window.pdfHeldNavigationPending');
+      for (const method of ["getDestination", "getPageIndex"]) {
+        await holdDestination(method);
+        await destinationClick("index"); await pageAt(2);
+        await releaseDestination();
+        assert.equal(await evaluate('window.pdfViewer.currentPageNumber'), 2, "newest click wins");
+        await back();
+        for (const showBeforeRelease of [false, true]) {
+          await holdDestination(method);
+          await evaluate('window.retainedPDFViewer = window.pdfViewer');
+          await click('[data-hide-pdf]');
+          await waitFor('document.querySelector("aside[hidden]")');
+          if (showBeforeRelease) {
+            await click('[data-show-pdf]'); await waitFor('!document.querySelector("aside[hidden]")');
+          }
+          await releaseDestination();
+          if (!showBeforeRelease) {
+            await click('[data-show-pdf]'); await waitFor('!document.querySelector("aside[hidden]")');
+          }
+          assert.equal(await evaluate('window.pdfViewer === window.retainedPDFViewer'), true, "hidden tabs retain their PDF viewer");
+          assert.equal(await evaluate('window.pdfViewer.currentPageNumber'), 1, "hidden navigation does not replay after showing the panel");
+        }
+        await holdDestination(method);
+        await click('[data-open-pdf="navigation-other"]'); await pageAt(1);
+        await releaseDestination();
+        assert.equal(await evaluate('window.pdfViewer.currentPageNumber'), 1, "source replacement fences old resolutions");
+        await click('[data-open-pdf="navigation"]'); await pageAt(1);
+        await holdDestination(method);
+        await click('[data-close-pdf]');
+        await waitFor('!document.querySelector("[data-workspace-pdf-preview]")');
+        await releaseDestination();
+        assert.equal(await evaluate('Boolean(document.querySelector("[data-workspace-pdf-preview]"))'), false);
+        await click('[data-open-pdf="navigation"]'); await pageAt(1);
+      }
+      await holdDestination("getDestination");
+      await click('[data-request-pdf-page]'); await pageAt(2);
+      await releaseDestination();
+      assert.equal(await evaluate('window.pdfViewer.currentPageNumber'), 2, "new page requests supersede pending links");
+      await back();
+      await holdDestination("getPageIndex");
+      // Reuse the existing recovery boundary while a real destination result is
+      // held. The loading task and replacement document remain real PDF.js.
+      await evaluate('window.pdfViewer.eventBus.dispatch("pagerendered", { error: new Error("Synthetic page render failure") })');
+      await failed();
+      await evaluate(`${retry}.click()`); await pageAt(1);
+      await releaseDestination();
+      assert.equal(await evaluate('window.pdfViewer.currentPageNumber'), 1, "retry fences pending page references");
+      await destinationClick("named"); await pageAt(2);
+      assert.deepEqual(windows, [], "annotations must not request new windows");
+      assert.deepEqual(navigations, [], "annotations must not navigate the renderer");
+      assert.equal(await evaluate('location.href'), navigationURL);
+      measurements.push({ view: "pdf-internal-navigation", boundary: "real renderer and PDF.js; synthetic workspace/external IPC, delayed real destination results, injected render failure",
+        checks: ["named", "indirect-reference", "explicit-page-index", "middle-click", "keyboard", "zoom-retained", "missing-destination", "page-bounds", "safe-external-IPC", "unsafe-actions-inert", "latest-click", "hidden-retained-viewer", "source-replacement", "close-reopen", "new-page-request", "retry", "no-new-windows", "no-renderer-navigation"], windows, navigations });
       fs.writeFileSync(path.join(run, "browser-result.json"), JSON.stringify({ importFailureContained: true, navigationSurvived: true, reloadRecovered: true, measurements, logs }, null, 2));
     } finally {
       window.destroy();
