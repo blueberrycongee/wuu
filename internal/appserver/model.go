@@ -1095,6 +1095,38 @@ func (th *threadState) applyMessageItemLocked(turnID string, msg providers.ChatM
 	}
 }
 
+// stampDurableAgentMessageSeqsLocked gives live agent message rows the seq of
+// the assistant message they render once that message is committed. Live rows
+// are numbered by stream events, restored rows per persisted message, so their
+// positional ids diverge (one message can stream several reasoning blocks).
+// Without a provider item id, the seq is the only identity both views share,
+// and fork resolves the row by it. seqs is index-aligned with messages.
+func (th *threadState) stampDurableAgentMessageSeqsLocked(turnID string, messages []providers.ChatMessage, seqs []int) {
+	for t := range th.Turns {
+		if th.Turns[t].ID != turnID {
+			continue
+		}
+		items := th.Turns[t].Items
+		next := 0
+		for m, msg := range messages {
+			if m >= len(seqs) || seqs[m] <= 0 || msg.Role != "assistant" || strings.TrimSpace(msg.Content) == "" {
+				continue
+			}
+			// Messages and their rows share order, so a repeated answer text
+			// stamps the next unstamped row instead of an earlier one.
+			for i := next; i < len(items); i++ {
+				if items[i].Type != ThreadItemAgentMessage || items[i].Seq > 0 || items[i].Text != msg.Content {
+					continue
+				}
+				items[i].Seq = seqs[m]
+				next = i + 1
+				break
+			}
+		}
+		return
+	}
+}
+
 func (th *threadState) ensureActiveAgentItemLocked(turnID string, now time.Time) (ThreadItem, bool) {
 	if th.activeAgentItemID != "" {
 		if item, ok := th.itemLocked(turnID, th.activeAgentItemID); ok {

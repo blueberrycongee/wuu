@@ -23,6 +23,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Forking a conversation from an assistant reply that streamed in the current
+  session no longer fails with "fork target not found" after the model used
+  several thinking blocks in one step.
+
 - Deliver scheduled background-process checks while the task is still running,
   without treating them as process-exit notifications.
 

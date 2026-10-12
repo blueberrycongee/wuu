@@ -2548,6 +2548,11 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 			if err != nil {
 				return agent.HistoryArchive{}, err
 			}
+			th.mu.Lock()
+			if th.currentTurn == turnID {
+				th.stampDurableAgentMessageSeqsLocked(turnID, messages, seqs)
+			}
+			th.mu.Unlock()
 			if endSeq > 0 {
 				return agent.HistoryArchive{Seqs: seqs, HeadSeq: endSeq}, nil
 			}
@@ -4909,6 +4914,7 @@ func (s *Server) persistTurnResultLocked(th *threadState, res agent.LoopResult, 
 				return err
 			}
 			th.History = applyPersistedHistorySeqs(th.History, res.DurableNewMessages, seqs)
+			th.stampDurableAgentMessageSeqsLocked(th.currentTurn, res.DurableNewMessages, seqs)
 			if endSeq > rewriteBaselineSeq {
 				rewriteBaselineSeq = endSeq
 			}
@@ -4932,9 +4938,11 @@ func (s *Server) persistTurnResultLocked(th *threadState, res agent.LoopResult, 
 		if res.DurableMessagesTracked {
 			messagesToAppend = res.DurableNewMessages
 		}
-		if err := appendChatMessages(s.rt.SessionDir, th.ID, messagesToAppend); err != nil {
+		seqs, _, err := appendChatMessagesReturningSeqs(s.rt.SessionDir, th.ID, messagesToAppend)
+		if err != nil {
 			return err
 		}
+		th.stampDurableAgentMessageSeqsLocked(th.currentTurn, messagesToAppend, seqs)
 	}
 	if err := appendTokenUsage(s.rt.SessionDir, th.ID, providerName, model, providers.TokenUsage{
 		InputTokens:         res.InputTokens,
