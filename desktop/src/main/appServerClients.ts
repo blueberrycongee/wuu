@@ -1061,6 +1061,26 @@ export function appServerHelperEnvironment(
       result[helper.environment] = discovered;
     }
   }
+  const rg = platform === "win32" ? "rg.exe" : "rg";
+  const toolsDir = [
+    resourcesPath ? join(resourcesPath, "tools") : undefined,
+    sourceRoot ? join(sourceRoot, "desktop", "build", "tools") : undefined,
+  ]
+    .filter((dir): dir is string => Boolean(dir))
+    .find((dir) => exists(join(dir, rg)));
+  if (toolsDir) {
+    // Appended so a user-installed rg keeps precedence; the bundled copy only
+    // fills the gap for core search tools and agent shell commands.
+    const pathKey =
+      Object.keys(result).find((key) =>
+        platform === "win32" ? key.toUpperCase() === "PATH" : key === "PATH",
+      ) ?? "PATH";
+    const delimiter = platform === "win32" ? ";" : ":";
+    const entries = (result[pathKey] ?? "").split(delimiter).filter(Boolean);
+    if (!entries.includes(toolsDir)) {
+      result[pathKey] = [...entries, toolsDir].join(delimiter);
+    }
+  }
   return result;
 }
 

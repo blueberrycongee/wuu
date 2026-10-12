@@ -20,11 +20,13 @@
     "dmg-background:generate": "electron scripts/generate-dmg-background.cjs",
     "build:core": "node scripts/build-core.cjs",
     "build:core:win": "node scripts/build-core.cjs --platform=win32",
+    "build:ripgrep": "node scripts/fetch-ripgrep.cjs",
+    "build:ripgrep:win": "node scripts/fetch-ripgrep.cjs --platform=win32",
     "build": "node scripts/build-web.cjs && electron-vite build",
-    "pack:mac": "npm run build:core && npm run build:cua-mac && npm run build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dir --publish=never --config.electronDist=node_modules/electron/dist",
-    "dist:mac": "npm run build:core && npm run build:cua-mac && npm run build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dmg zip --publish=never --config.electronDist=node_modules/electron/dist",
-    "pack:win": "npm run build:core:win && npm run build && electron-builder --win dir --publish=never",
-    "dist:win": "npm run build:core:win && npm run build && electron-builder --win nsis zip --publish=never",
+    "pack:mac": "npm run build:core && npm run build:ripgrep && npm run build:cua-mac && npm run build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dir --publish=never --config.electronDist=node_modules/electron/dist",
+    "dist:mac": "npm run build:core && npm run build:ripgrep && npm run build:cua-mac && npm run build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dmg zip --publish=never --config.electronDist=node_modules/electron/dist",
+    "pack:win": "npm run build:core:win && npm run build:ripgrep:win && npm run build && electron-builder --win dir --publish=never",
+    "dist:win": "npm run build:core:win && npm run build:ripgrep:win && npm run build && electron-builder --win nsis zip --publish=never",
     "release:desktop": "WUU_SKIP_CUA_MAC=1 npm run dist:mac",
     "test": "npm run test:dev-launcher && npm run test:unit",
     "test:dev-launcher": "node scripts/test-dev-launcher.cjs",
@@ -117,6 +119,18 @@
           "wuu-cua-mac",
           "wuu-cua-mac-pip"
         ]
+      },
+      {
+        "from": "build/tools",
+        "to": "tools",
+        "filter": [
+          "rg",
+          "rg.exe"
+        ]
+      },
+      {
+        "from": "build/licenses",
+        "to": "licenses"
       },
       {
         "from": "build/mobile-web",

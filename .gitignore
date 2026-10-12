@@ -23,6 +23,8 @@ desktop/out-e2e/
 # artifacts under tracked icon resources.
 desktop/build/mobile-web/
 desktop/build/bin/
+desktop/build/tools/
+desktop/build/licenses/
 desktop/build/dev-host/
 desktop/build/.icon-work/
 desktop/release/

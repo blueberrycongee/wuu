@@ -8,6 +8,12 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ## [Unreleased]
 
+### Added
+
+- The desktop app bundles ripgrep, so search tools and agent shell commands can
+  use `rg` on machines without it installed. A user-installed `rg` still takes
+  precedence.
+
 ## [2026.10.11] - 2026-10-11
 
 ### Contributors
