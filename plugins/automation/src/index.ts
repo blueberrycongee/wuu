@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { normalize } from "node:path";
+import { normalize, parse, sep } from "node:path";
 import type { RuntimeHost, RuntimePlugin, RuntimeInitializeParams, ToolExecuteParams, TurnLifecycleInput } from "@wuu/plugin-sdk";
 import { localTimezone, parseCronExpression, validateTimezone } from "./schedule.js";
 
@@ -21,6 +21,12 @@ interface Mutation {
   action?: string; id?: string; title?: string; prompt?: string; schedule?: string; cron?: string; timezone?: string;
   mode?: string; heartbeat_thread_id?: string; workspace?: string; workspace_id?: string; workspace_root?: string;
   recurring?: boolean; paused?: boolean; durable?: boolean;
+}
+
+function cleanPath(value: string): string {
+  const path = normalize(value || ".");
+  // Match filepath.Clean's treatment of trailing separators without trimming roots.
+  return path.endsWith(sep) && path !== parse(path).root ? path.slice(0, -1) : path;
 }
 
 function object(value: unknown): Record<string, unknown> {
@@ -100,7 +106,7 @@ export function createAutomationPlugin(): RuntimePlugin {
 
   function validated(input: Mutation, base?: Task): Task {
     if (input.workspace_id?.trim() && input.workspace_id.trim() !== workspaceID) throw new Error("automation target workspace does not match the active plugin workspace");
-    if (input.workspace_root?.trim() && normalize(input.workspace_root.trim()) !== normalize(workspaceRoot || ".")) throw new Error("automation target workspace root does not match the active plugin workspace");
+    if (input.workspace_root?.trim() && cleanPath(input.workspace_root.trim()) !== cleanPath(workspaceRoot)) throw new Error("automation target workspace root does not match the active plugin workspace");
     const value: Task = base ? { ...base } : { id: "", title: "", prompt: "", cron: "", timezone: "", mode: "", workspace_root: workspaceRoot, recurring: false, paused: false, durable: false, created_at: zeroTime, next_run_at: zeroTime };
     value.workspace_id = workspaceID || undefined;
     value.workspace_root = workspaceRoot;
@@ -211,7 +217,7 @@ export function createAutomationPlugin(): RuntimePlugin {
     }
     try {
       if (task.mode === "new_thread") {
-        if ((task.workspace_id || "") !== workspaceID || normalize(task.workspace_root || ".") !== normalize(workspaceRoot || ".")) throw new Error("automation target workspace does not match the active plugin workspace");
+        if ((task.workspace_id || "") !== workspaceID || cleanPath(task.workspace_root) !== cleanPath(workspaceRoot)) throw new Error("automation target workspace does not match the active plugin workspace");
         const created = await host.call("host.session.create", { request_id: `create-${runID}`, name: task.title, visibility: "user", context_source: "fresh", workspace: workspaceMode as "shared" | "worktree", workspace_id: task.workspace_id, workspace_root: task.workspace_root }, { signal: abort.signal });
         sessionID = created.session_id;
         executionRoot = created.workspace_root || "";

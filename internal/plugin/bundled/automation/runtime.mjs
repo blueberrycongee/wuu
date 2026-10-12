@@ -2,7 +2,7 @@
 
 // plugins/automation/src/index.ts
 import { randomBytes } from "node:crypto";
-import { normalize } from "node:path";
+import { normalize, parse, sep } from "node:path";
 
 // plugins/automation/src/schedule.ts
 var bounds = [[0, 59], [0, 23], [1, 31], [1, 12], [0, 7]];
@@ -105,6 +105,10 @@ function parseCronExpression(input) {
 var storageKey = "automation.state";
 var terminal = /* @__PURE__ */ new Set(["completed", "failed", "interrupted", "discarded"]);
 var zeroTime = "0001-01-01T00:00:00Z";
+function cleanPath(value) {
+  const path = normalize(value || ".");
+  return path.endsWith(sep) && path !== parse(path).root ? path.slice(0, -1) : path;
+}
 function object(value) {
   if (value == null) return {};
   if (typeof value !== "object" || Array.isArray(value)) throw new Error("expected a JSON object");
@@ -207,7 +211,7 @@ function createAutomationPlugin() {
   }
   function validated(input, base) {
     if (input.workspace_id?.trim() && input.workspace_id.trim() !== workspaceID) throw new Error("automation target workspace does not match the active plugin workspace");
-    if (input.workspace_root?.trim() && normalize(input.workspace_root.trim()) !== normalize(workspaceRoot || ".")) throw new Error("automation target workspace root does not match the active plugin workspace");
+    if (input.workspace_root?.trim() && cleanPath(input.workspace_root.trim()) !== cleanPath(workspaceRoot)) throw new Error("automation target workspace root does not match the active plugin workspace");
     const value = base ? { ...base } : { id: "", title: "", prompt: "", cron: "", timezone: "", mode: "", workspace_root: workspaceRoot, recurring: false, paused: false, durable: false, created_at: zeroTime, next_run_at: zeroTime };
     value.workspace_id = workspaceID || void 0;
     value.workspace_root = workspaceRoot;
@@ -357,7 +361,7 @@ triggered_at=${now.toISOString().replace(/\.\d{3}Z$/, "Z")}` }] },
     }
     try {
       if (task.mode === "new_thread") {
-        if ((task.workspace_id || "") !== workspaceID || normalize(task.workspace_root || ".") !== normalize(workspaceRoot || ".")) throw new Error("automation target workspace does not match the active plugin workspace");
+        if ((task.workspace_id || "") !== workspaceID || cleanPath(task.workspace_root) !== cleanPath(workspaceRoot)) throw new Error("automation target workspace does not match the active plugin workspace");
         const created = await host.call("host.session.create", { request_id: `create-${runID}`, name: task.title, visibility: "user", context_source: "fresh", workspace: workspaceMode, workspace_id: task.workspace_id, workspace_root: task.workspace_root }, { signal: abort.signal });
         sessionID = created.session_id;
         executionRoot = created.workspace_root || "";

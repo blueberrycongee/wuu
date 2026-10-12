@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { lstat, mkdir, readFile, readdir, unlink } from "node:fs/promises";
-import { basename, extname, join } from "node:path";
+import { basename, join } from "node:path";
 import {
   requireKernelService, FILE_LOCK_SERVICE,
   type CapabilityInvokeParams, type RuntimeExecutionContext, type RuntimeHost,
@@ -201,7 +201,7 @@ class MemoryPlugin implements RuntimePlugin {
 
   private safePath(name: string, allowIndex: boolean): string {
     name = name.trim();
-    if (!name || name !== basename(name) || extname(name) !== ".md") throw new Error("memory file must be a plain .md filename");
+    if (!name || name !== basename(name) || !name.endsWith(".md")) throw new Error("memory file must be a plain .md filename");
     if (!allowIndex && name.toLowerCase() === INDEX_FILE.toLowerCase()) throw new Error("MEMORY.md cannot be deleted");
     return join(this.notebook, name);
   }
@@ -221,7 +221,7 @@ class MemoryPlugin implements RuntimePlugin {
     const entries = await readdir(this.notebook, { withFileTypes: true });
     const files: FileInfo[] = [];
     for (const entry of entries) {
-      if (entry.isDirectory() || extname(entry.name) !== ".md" || entry.name.toLowerCase() === INDEX_FILE.toLowerCase()) continue;
+      if (entry.isDirectory() || !entry.name.endsWith(".md") || entry.name.toLowerCase() === INDEX_FILE.toLowerCase()) continue;
       const content = await this.readFile(entry.name);
       files.push({ name: entry.name, ...frontmatter(content), content });
     }
@@ -232,7 +232,7 @@ class MemoryPlugin implements RuntimePlugin {
     const out = new Map<string, FileStamp>();
     const entries = await readdir(this.notebook, { withFileTypes: true }).catch(() => []);
     for (const entry of entries) {
-      if (entry.isDirectory() || extname(entry.name) !== ".md") continue;
+      if (entry.isDirectory() || !entry.name.endsWith(".md")) continue;
       const info = await lstat(join(this.notebook, entry.name), { bigint: true }).catch(() => undefined);
       if (info) out.set(entry.name, { size: info.size, modified: info.mtimeNs });
     }
