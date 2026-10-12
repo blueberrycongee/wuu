@@ -68,6 +68,26 @@ It uses a temporary profile and synthetic content, not your Wuu data. Run it in
 a graphical desktop session; it does not validate native dialog appearance or
 packaged-app behavior.
 
+### MCP connection lifecycle
+
+After building the core, run the loopback lifecycle fixture:
+
+```sh
+go build -o bin/wuu ./cmd/wuu
+node scripts/mcp-connection-generations-e2e.mjs
+```
+
+It starts real app-server processes with disposable state and synthetic MCP
+servers. Deterministic response barriers cover Disconnect, Connect, Refresh and
+shutdown during background initialization and tool discovery, including later
+explicit reconnects and an unaffected server. It does not use real credentials
+or validate the desktop UI. `WUU_E2E_CORE` selects another core binary;
+`WUU_MCP_E2E_OUTPUT` selects the evidence directory. The default is
+`.tmp/e2e/mcp-connection-generations/`, containing JSON RPC transcripts, server
+requests, binary hashes and pass/fail receipts. Existing manager tests additionally
+cover concurrent operations that the serial app-server RPC dispatcher cannot
+issue together, plus permanent revocation and retired-client callbacks.
+
 ### Live resize layout guard
 
 After a desktop production build, run `npm --prefix desktop run test:e2e:resize-live-layout`

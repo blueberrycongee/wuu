@@ -44,6 +44,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Bind saved MCP OAuth credentials to the resource used for login, require
   reauthentication after resource changes, and prevent credentials from reaching
   cross-origin redirects or legacy SSE message endpoints.
+- Disconnecting or reconnecting an MCP server cancels older connection attempts,
+  preventing delayed initialization or tool discovery from restoring a stopped
+  connection or replacing its newer tools and status.
 
 - Keep the sidebar's recent-history range stable while a first message creates
   its conversation, avoiding a temporary extra row and subsequent layout jump,
