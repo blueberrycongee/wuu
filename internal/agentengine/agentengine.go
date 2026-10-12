@@ -203,6 +203,10 @@ type ThreadBinding struct {
 	// PersistRef stores a newly created native session reference back into
 	// the thread's persisted binding.
 	PersistRef func(ref string) error
+	// PersistTurnRef records native admission before dispatch, then its turn ID
+	// before consuming events. Pending stays true until a terminal outcome or
+	// an explicit admission rejection is durably confirmed.
+	PersistTurnRef func(turnID string, pending bool) error
 	// RequestApproval lets an external engine reuse the host's interaction
 	// broker and conversation card. Nil means interactive approval is not
 	// available and the engine must decline.
