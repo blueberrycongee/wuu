@@ -49,6 +49,7 @@ export type SidebarWorkspaceStateController = {
   loadWorkspaceThreads: (project: DesktopProject) => Promise<void>;
   cacheSidebarThreads: (threads: Thread[]) => void;
   updateCachedSidebarThread: (thread: Thread) => void;
+  patchCachedSidebarThread: (threadID: string, update: (thread: Thread) => Thread) => void;
   updateCachedSidebarThreadPinned: (threadID: string, pinned: boolean) => void;
   removeCachedSidebarThread: (threadID: string) => void;
   syncSidebarServerEvent: (event: ServerEvent) => void;
@@ -567,15 +568,14 @@ export function useSidebarWorkspaceState({
     cacheSidebarThreads([thread]);
   }
 
-  function updateCachedSidebarThreadPinned(threadID: string, pinned: boolean): void {
+  function patchCachedSidebarThread(threadID: string, update: (thread: Thread) => Thread): void {
     const patch = (threads: Thread[]): Thread[] => {
       let changed = false;
       const next = threads.map((thread) => {
-        if (thread.id !== threadID || thread.pinned === pinned) {
-          return thread;
-        }
-        changed = true;
-        return { ...thread, pinned };
+        if (thread.id !== threadID) return thread;
+        const updated = update(thread);
+        changed ||= updated !== thread;
+        return updated;
       });
       return changed ? sortThreads(next) : threads;
     };
@@ -592,6 +592,11 @@ export function useSidebarWorkspaceState({
       }
       return changed ? next : current;
     });
+  }
+
+  function updateCachedSidebarThreadPinned(threadID: string, pinned: boolean): void {
+    patchCachedSidebarThread(threadID, (thread) => thread.pinned === pinned
+      ? thread : { ...thread, pinned });
   }
 
   function removeCachedSidebarThread(threadID: string): void {
@@ -726,6 +731,7 @@ export function useSidebarWorkspaceState({
     loadWorkspaceThreads,
     cacheSidebarThreads,
     updateCachedSidebarThread,
+    patchCachedSidebarThread,
     updateCachedSidebarThreadPinned,
     removeCachedSidebarThread,
     syncSidebarServerEvent,

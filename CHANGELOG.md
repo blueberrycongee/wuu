@@ -30,6 +30,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Keep the sidebar's recent-history range stable while a first message creates
+  its conversation, avoiding a temporary extra row and subsequent layout jump,
+  including while saving a draft's custom name.
 - Align desktop navigation and control labels with icons using the selected
   font's rendered metrics, and preserve accents and descenders in workspace tabs.
 

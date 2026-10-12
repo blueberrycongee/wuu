@@ -912,11 +912,25 @@ describe("session tab switch latency", () => {
   it.each(["top", "workspace"])("keeps pending drafts separate when starting another conversation from %s", async (entry) => {
     const { threadsByID, startTurn } = installWuuApi();
     threadsByID.clear();
+    startTurn.mockImplementation(async (threadID: string, text: string) => ({
+      turn: { id: `turn-${threadID}`, items_view: "full", status: "in_progress", items: [
+        { id: `user-${threadID}`, type: "user_message", text, status: "completed" },
+      ] },
+    }));
     const first = deferred<{ thread: Thread }>();
     const second = deferred<{ thread: Thread }>();
+    const rename = deferred<{ thread: Thread }>();
+    window.wuu.renameThread = vi.fn(() => rename.promise);
     window.wuu.startThread = vi.fn().mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
     await act(async () => { root = createRoot(container); root.render(<App />); });
     await flushAsync();
+    await act(async () => { container.querySelector<HTMLButtonElement>(".conversation-title-rename")!.click(); });
+    const titleInput = container.querySelector<HTMLInputElement>(".conversation-title-edit")!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(titleInput, "Named conversation A");
+      titleInput.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => { titleInput.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })); });
     await act(async () => { setMainComposerPrompt("pending A"); });
     await act(async () => { mainComposerSendButton().click(); });
     const newConversation = container.querySelector<HTMLButtonElement>(entry === "top" ? '.primary-nav .nav-item' : '.project-row-new-thread');
@@ -933,11 +947,35 @@ describe("session tab switch latency", () => {
     expect(startTurn).toHaveBeenCalledTimes(1);
     expect(startTurn.mock.calls[0].slice(0, 2)).toEqual([threadBID, "pending B"]);
     expect(container.querySelector('.composer-stop-button')).not.toBeNull();
-    await act(async () => { first.resolve({ thread: { ...threadA(), preview: "", turns: [] } }); });
-    expect(startTurn).toHaveBeenCalledTimes(2);
-    expect(startTurn.mock.calls[1].slice(0, 2)).toEqual([threadAID, "pending A"]);
+    const created = { ...threadA(), preview: "", turns: [] };
+    await act(async () => { first.resolve({ thread: created }); });
+    expect(window.wuu.renameThread).toHaveBeenCalledWith(threadAID, "Named conversation A");
+    // The creation notification may arrive while persisting the draft name.
+    // It must not put a second row beside the still-pending first send.
+    await act(async () => { emitNotification("thread/started", { thread: created }); });
+    expect(container.querySelectorAll('.thread-row-main')).toHaveLength(2);
+    expect(threadRowButton("Named conversation A")).toBeDefined();
+    expect(activeSessionTabLabel()).toBe("Named conversation A");
+    expect(activeThreadProbe()?.dataset.latestUserText).toBe("pending A");
+    expect(startTurn).toHaveBeenCalledTimes(1);
+    if (entry === "workspace") {
+      await act(async () => { container.querySelector<HTMLButtonElement>('.composer-stop-button')!.click(); });
+      expect(activeThreadProbe()?.dataset.latestTurnStatus).toBe("interrupted");
+    } else {
+      await act(async () => { emitNotification("thread/updated", {
+        thread: { ...created, title: "Newer conversation name" },
+      }); });
+    }
+    await act(async () => {
+      if (entry === "workspace") rename.reject(new Error("Rename unavailable"));
+      else rename.resolve({ thread: { ...created, title: "Named conversation A" } });
+    });
+    expect(startTurn).toHaveBeenCalledTimes(entry === "workspace" ? 1 : 2);
+    if (entry === "top") expect(startTurn.mock.calls[1].slice(0, 2)).toEqual([threadAID, "pending A"]);
     expect(container.querySelectorAll('.thread-row-main')).toHaveLength(2);
     expect(activeThreadProbe()?.dataset.threadId).toBe(threadAID);
+    expect(threadRowButton(entry === "workspace" ? "pending A" : "Newer conversation name")).toBeDefined();
+    expect(activeThreadProbe()?.dataset.latestUserText).toBe("pending A");
   });
 
   it("keeps sidebar row titles and click targets after A-B-A switching and a delayed project list", async () => {

@@ -162,6 +162,7 @@ import {
   threadForPane,
   threadSessionTabID,
   turnStreamStatusForThread,
+  turnPreview,
   updateThreadByID,
   upsertThread,
   upsertTurn,
@@ -666,6 +667,7 @@ export function App(): JSX.Element {
     setSidebarSectionOrder,
     cacheSidebarThreads,
     updateCachedSidebarThread,
+    patchCachedSidebarThread,
     updateCachedSidebarThreadPinned,
     removeCachedSidebarThread,
     syncSidebarServerEvent,
@@ -4857,28 +4859,17 @@ export function App(): JSX.Element {
           }), cancelledCreation!]),
           "thread/start did not return a thread",
         );
-      if (!targetThread && !creationCancelled && !projectDraft) {
-        const draftTab = currentState.sessionTabs.find(
-          (tab) => tab.id === currentState.activeSessionTabID,
-        );
-        const customTitle = customDraftConversationTitle(
-          draftTab?.kind === "draft" ? draftTab.title : undefined,
-          t("tabs.newConversation"),
-        );
-        // Set the user's name before the first turn so a generated title
-        // cannot replace a name they already chose.
-        if (customTitle) {
-          try {
-            const renamed = await window.wuu.renameThread(thread.id, customTitle);
-            if (renamed.thread) {
-              thread = renamed.thread;
-              updateCachedSidebarThread(thread);
-            }
-          } catch (error) {
-            showErrorToast(error, t("thread.rename.failed"));
-          }
-        }
-      }
+      const draftTab = currentState.sessionTabs.find(
+        (tab) => tab.id === currentState.activeSessionTabID,
+      );
+      const customTitle = !targetThread && !creationCancelled && !projectDraft
+        ? customDraftConversationTitle(
+            draftTab?.kind === "draft" ? draftTab.title : undefined,
+            t("tabs.newConversation"),
+          )
+        : "";
+      const originalTitle = thread.title;
+      if (customTitle) thread = { ...thread, title: customTitle };
       admission.thread = thread;
       if (!targetThread) {
         const oldOwner = currentState.activeSessionTabID;
@@ -4933,6 +4924,33 @@ export function App(): JSX.Element {
         ),
       );
       clearPendingThreadCreation(optimisticTurn.id);
+      // Complete the draft-to-thread handoff before another IPC wait can
+      // expose both the pending row and the server's thread/started snapshot.
+      // Persist the draft name before sending, while retaining its optimistic
+      // title and first turn during that wait.
+      if (customTitle) {
+        // The persisted name is exactly the trimmed optimistic title. A late
+        // success must not replay its snapshot over a newer edit or deletion.
+        const renaming = window.wuu.renameThread(thread.id, customTitle).catch((error) => {
+          const revertTitle = (value: Thread): Thread => value.title === customTitle
+            ? { ...value, title: originalTitle } : value;
+          patchCachedSidebarThread(thread.id, revertTitle);
+          const fallbackTitle = baseThreadTitle({ ...thread, title: originalTitle,
+            preview: thread.preview || turnPreview(optimisticTurn) });
+          const revert = (current: AppState): AppState => {
+            const next = updateThreadByID(current, thread.id, revertTitle);
+            return { ...next, sessionTabs: next.sessionTabs.map((tab) =>
+              tab.kind === "thread" && tab.threadID === thread.id && tab.title === customTitle
+                ? { ...tab, title: fallbackTitle } : tab) };
+          };
+          appStateRef.current = revert(appStateRef.current);
+          setState(revert);
+          showErrorToast(error, t("thread.rename.failed"));
+        });
+        // Stop releases preparation immediately; a late failure still rolls
+        // back the title without starting a turn or dropping local input.
+        await Promise.race([renaming, admission.cancelled]);
+      }
       const attachments = await Promise.race([
         Promise.all([awaitComposerImages(message.images), awaitComposerFiles(message.files)]),
         admission.cancelled,
