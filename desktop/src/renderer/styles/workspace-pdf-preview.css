@@ -109,6 +109,8 @@ button:focus-visible {
 
 .workspace-pdf-container {
   position: absolute;
+  /* PDF.js layers must stay below the sibling recovery controls. */
+  isolation: isolate;
   inset: 0;
   overflow: auto;
   background: var(--paper);
@@ -126,6 +128,7 @@ button:focus-visible {
 
 .workspace-pdf-status {
   position: absolute;
+  z-index: 1;
   inset: 0;
   display: grid;
   place-content: center;
@@ -143,7 +146,8 @@ button:focus-visible {
 }
 
 .workspace-pdf-status.error span {
-  max-width: 420px;
+  max-width: min(420px, 100%);
+  overflow-wrap: anywhere;
   color: var(--ink-soft);
 }
 
