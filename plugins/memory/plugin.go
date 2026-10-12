@@ -159,14 +159,15 @@ func (c *controller) executeTool(_ context.Context, _ pluginapi.Host, call plugi
 func (c *controller) invokeCapability(ctx context.Context, _ pluginapi.Host, call pluginapi.CapabilityCall) (json.RawMessage, error) {
 	switch call.Capability {
 	case capabilityPrompt:
-		snapshot, err := c.readNotebookSnapshot("index", notebookReadParams{})
-		if err != nil {
-			return nil, err
+		raw, err := os.ReadFile(filepath.Join(c.notebookPath(), indexFileName))
+		if err != nil && !os.IsNotExist(err) {
+			return nil, fmt.Errorf("memory: read index: %w", err)
 		}
-		if snapshot.Truncated {
-			snapshot.Content += "\n\n> WARNING: MEMORY.md was truncated before prompt injection. Keep index entries short and move detail into topic files."
+		index, truncated := safeIndex(string(raw), maxIndexBytes)
+		if truncated {
+			index += "\n\n> WARNING: MEMORY.md was truncated before prompt injection. Keep index entries short and move detail into topic files."
 		}
-		return json.Marshal(map[string]string{"text": promptSection(c.notebookPath(), snapshot.Content)})
+		return json.Marshal(map[string]string{"text": promptSection(c.notebookPath(), index)})
 	case capabilityClient:
 		var request struct {
 			Method string          `json:"method"`

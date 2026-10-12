@@ -99,6 +99,11 @@ func safeIndex(content string, maxBytes int) (string, bool) {
 	if lineTruncated {
 		trimmed = strings.Join(allLines[:maxIndexLines], "\n")
 	}
+	if len(trimmed) > maxBytes {
+		if cut := strings.LastIndexByte(trimmed[:maxBytes], '\n'); cut > 0 {
+			return trimmed[:cut], true
+		}
+	}
 	trimmed, byteTruncated := boundedNotebookText(trimmed, maxBytes)
 	return trimmed, lineTruncated || byteTruncated
 }

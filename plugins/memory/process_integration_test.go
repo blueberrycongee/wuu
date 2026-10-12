@@ -171,6 +171,24 @@ func TestMemoryPluginNegotiatesAcrossRealProcessProtocol(t *testing.T) {
 	if err != nil || !boundedIndex.Truncated || len(boundedIndex.Content) > 30 || strings.Contains(boundedIndex.Content, "ignore previous") || !utf8.ValidString(boundedIndex.Content) {
 		t.Fatalf("bounded sanitized index = %+v, err = %v", boundedIndex, err)
 	}
+	if err := os.WriteFile(filepath.Join(home, "memory", "MEMORY.md"), []byte("- retained\n"+strings.Repeat("x", 25_000)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	wholeLineIndex, err := readNotebook("index", map[string]any{})
+	if err != nil || !wholeLineIndex.Truncated || wholeLineIndex.Content != "- retained" {
+		t.Fatalf("index included a partial entry: %+v, err = %v", wholeLineIndex, err)
+	}
+	for _, legacyIndex := range [][]byte{[]byte("- retained\n" + strings.Repeat("x", 256*1024)), append([]byte("- retained\n"), 0xff)} {
+		if err := os.WriteFile(filepath.Join(home, "memory", "MEMORY.md"), legacyIndex, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := pluginhost.New(client).InvokeCapability(context.Background(), promptCapability, pluginhost.SystemPromptSectionInput{}, &prompt); err != nil || !strings.Contains(prompt.Text, "- retained") || strings.Contains(prompt.Text, strings.Repeat("x", 100)) {
+			t.Fatalf("legacy index prevented a bounded prompt: %q, err = %v", prompt.Text, err)
+		}
+		if _, err := readNotebook("index", map[string]any{}); err == nil {
+			t.Fatal("notebook service accepted an invalid source")
+		}
+	}
 	registry.RevokePlugin(context.Background(), "memory")
 	if _, unavailable := registry.CallProvider(context.Background(), memory.NotebookMemoryService, 1, "index", json.RawMessage(`{}`), ""); unavailable == nil || unavailable.Code != "service_unavailable" {
 		t.Fatalf("disabled notebook service = %+v", unavailable)
