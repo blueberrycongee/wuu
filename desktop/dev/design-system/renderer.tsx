@@ -14,6 +14,7 @@ import { createPluginUIKit } from "../../src/shared/workbench";
 import { ImagePreviewProvider } from "../../src/renderer/ImagePreview";
 import { WuuUIRoot } from "../../src/renderer/ui/layers/UILayerHost";
 import { applyMessageFlowFontSize } from "../../src/renderer/MessageFlowFontSizeSection";
+import { applyAppearance, appearanceDefaults } from "../../src/renderer/AppearancePreferences";
 import "../../src/renderer/styles.css";
 import "./fixture.css";
 
@@ -41,6 +42,7 @@ function Fixture() {
   const params = new URLSearchParams(location.search);
   const [theme, setTheme] = useState(params.get("theme") || "light");
   const [size, setSize] = useState(Number(params.get("size")) || 14);
+  const font = params.get("font") || "";
   const [surface, setSurface] = useState(params.get("surface") || "controls");
   const [density, setDensity] = useState(Number(params.get("density")) || 1);
   const [sync, setSync] = useState(true);
@@ -48,14 +50,17 @@ function Fixture() {
   const [name, setName] = useState("工作区笔记");
   const [value, setValue] = useState("local");
   useEffect(() => { document.documentElement.dataset.theme = theme; }, [theme]);
-  useEffect(() => { applyMessageFlowFontSize(size); }, [size]);
+  useLayoutEffect(() => {
+    applyMessageFlowFontSize(size);
+    applyAppearance({ ...appearanceDefaults, uiFont: font });
+  }, [size, font]);
   useEffect(() => { document.documentElement.style.setProperty("--wuu-space-density", String(density)); }, [density]);
   useLayoutEffect(() => { applyMeasuredScrollbarWidth(); }, []);
   return <WuuUIRoot><ImagePreviewProvider>
     <header className="review-toolbar">
       <strong>生产组件对照 · 示例数据</strong>
       <label>主题<select value={theme} onChange={e => setTheme(e.target.value)}><option value="light">亮色</option><option value="dark">暗色</option></select></label>
-      <label>字号<select value={size} onChange={e => setSize(Number(e.target.value))}>{[13, 14, 20].map(n => <option key={n} value={n}>{n}px</option>)}</select></label>
+      <label>字号<select value={size} onChange={e => setSize(Number(e.target.value))}>{[13, 14, 14.5, 20].map(n => <option key={n} value={n}>{n}px</option>)}</select></label>
       <label>密度<select value={density} onChange={e => setDensity(Number(e.target.value))}><option value={1}>标准</option><option value={0.75}>紧凑</option><option value={1.25}>宽松</option></select></label>
       <label>页面<select value={surface} onChange={e => setSurface(e.target.value)}><option value="controls">设置与菜单</option><option value="conversation">对话与输入</option><option value="extension">插件控件</option><option value="spacing">间距与文件变更</option></select></label>
     </header>

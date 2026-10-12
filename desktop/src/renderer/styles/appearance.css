@@ -81,6 +81,34 @@
   height: var(--sidebar-primary-icon-size);
   flex-shrink: 0;
 }
+/* Shift only the text in icon/label controls. The measured, font-relative
+ * offset follows local fonts and UI sizes without changing row geometry,
+ * ellipsis boxes, hit targets, or the transforms used by animated icons.
+ * Keep composite labels here once, rather than shifting their children too. */
+:where(
+  .nav-item > span:not([aria-hidden], .plugin-icon-themed, .plugin-icon-asset),
+  .settings-nav-label,
+  .sidebar-functional-heading-label,
+  .project-row-name,
+  .thread-row-title,
+  .select-menu-value,
+  .select-menu-item-text,
+  .settings-button > span:not([aria-hidden]):not(:has(svg)),
+  .hero-project-pill-text,
+  .codex-runtime-label,
+  .codex-model-item-name,
+  .runtime-engine-option-name,
+  .runtime-panel-model-name,
+  .composer-project-menu button > span:not([aria-hidden], .composer-branch-trailing),
+  .thread-row-context-menu-item > span,
+  .workspace-tool-tab-main > span:not(.workspace-tab-dirty-indicator),
+  .workspace-tool-menu-copy,
+  .workspace-tool-menu-more > summary > span:not(.workspace-tool-menu-icon)
+) {
+  position: relative;
+  top: calc(var(--appearance-ui-text-offset, 0) * 1em);
+}
+
 pre, code, .rich-content pre.rich-code, .rich-content pre.rich-code code,
 .workspace-markdown-reading .rich-content pre.rich-code,
 .workspace-markdown-reading .rich-content pre.rich-code code {

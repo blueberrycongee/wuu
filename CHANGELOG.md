@@ -15,6 +15,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   handling. Completion plugins supply their own policy; no completion provider
   is registered by default.
 
+### Fixed
+
+- Align desktop navigation and control labels with icons using the selected
+  font's rendered metrics, and preserve accents and descenders in workspace tabs.
+
 ## [2026.10.12] - 2026-10-12
 
 ### Contributors
