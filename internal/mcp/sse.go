@@ -36,6 +36,9 @@ func newSSETransport(ctx context.Context, endpoint string, headers map[string]st
 
 func newSSETransportWithAuth(ctx context.Context, endpoint string, headers map[string]string, authProvider TokenProvider) (*SSETransport, error) {
 	client := newSSEHTTPClient()
+	if len(headers) > 0 || authProvider != nil {
+		client = withSameOriginRedirects(client)
+	}
 	transportCtx, cancel := context.WithCancel(context.Background())
 	stopCallerCancel := context.AfterFunc(ctx, cancel)
 	req, err := http.NewRequestWithContext(transportCtx, "GET", endpoint, nil)
@@ -100,7 +103,9 @@ func newSSETransportWithAuth(ctx context.Context, endpoint string, headers map[s
 		_ = transport.Close()
 		return nil, errors.New("sse stream did not declare an endpoint event")
 	}
-	messageEndpoint, err := resolveSSEEndpoint(endpoint, event.data)
+	// Resolve relative announcements against the response URL after any
+	// same-origin redirects, rather than the configured entry point.
+	messageEndpoint, err := resolveSSEEndpoint(resp.Request.URL.String(), event.data)
 	if err != nil {
 		_ = transport.Close()
 		return nil, fmt.Errorf("sse endpoint event: %w", err)
@@ -225,7 +230,11 @@ func resolveSSEEndpoint(streamURL, announced string) (string, error) {
 	if !target.IsAbs() && target.Path == "" && target.RawQuery == "" {
 		return "", errors.New("endpoint event is empty")
 	}
-	return base.ResolveReference(target).String(), nil
+	resolved := base.ResolveReference(target).String()
+	if !sameOrigin(streamURL, resolved) {
+		return "", errors.New("SSE message endpoint must share the stream origin")
+	}
+	return resolved, nil
 }
 
 func (t *SSETransport) Close() error {

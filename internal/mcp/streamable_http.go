@@ -136,9 +136,13 @@ func NewStreamableHTTPTransport(endpoint string, headers map[string]string) *Str
 // resolved for each request instead of being captured at connection time.
 func NewStreamableHTTPTransportWithAuth(endpoint string, headers map[string]string, authProvider TokenProvider) *StreamableHTTPTransport {
 	ctx, cancel := context.WithCancel(context.Background())
+	client := newStreamableHTTPClient()
+	if len(headers) > 0 || authProvider != nil {
+		client = withSameOriginRedirects(client)
+	}
 	return &StreamableHTTPTransport{
 		endpoint:     endpoint,
-		client:       newStreamableHTTPClient(),
+		client:       client,
 		headers:      cloneStringMap(headers),
 		authProvider: authProvider,
 		ctx:          ctx,
@@ -704,9 +708,10 @@ func (t *StreamableHTTPTransport) Close() error {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		if hreq, err := http.NewRequestWithContext(ctx, http.MethodDelete, t.endpoint, nil); err == nil {
 			t.applyHeaders(hreq, session, version)
-			_ = applyToken(hreq, t.authProvider, ctx, false)
-			if resp, err := t.client.Do(hreq); err == nil {
-				drainAndClose(resp.Body)
+			if err := applyToken(hreq, t.authProvider, ctx, false); err == nil {
+				if resp, err := t.client.Do(hreq); err == nil {
+					drainAndClose(resp.Body)
+				}
 			}
 		}
 		cancel()

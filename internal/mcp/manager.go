@@ -141,11 +141,14 @@ func (m *Manager) Add(ctx context.Context, cfg ServerConfig) error {
 		var token string
 		var tokenErr error
 		if oauth != nil {
-			token, tokenErr = oauth.AccessToken(ctx, cfg.Name)
+			token, tokenErr = oauth.AccessToken(ctx, cfg.Name, cfg.URL)
 		}
 		if tokenErr != nil && (!errors.Is(tokenErr, credentialstore.ErrNotFound) || cfg.OAuth != nil) {
 			if lifecycleErr := m.connectionError(cfg.Name); lifecycleErr != nil {
 				return lifecycleErr
+			}
+			if errors.Is(tokenErr, ErrOAuthResourceMismatch) {
+				m.closeClient(cfg.Name)
 			}
 			m.recordStatus(ServerStatus{Name: cfg.Name, State: MCPServerStateAuthRequired, AuthStatus: MCPAuthStatusNotLoggedIn, Error: tokenErr.Error()})
 			if errors.Is(tokenErr, credentialstore.ErrNotFound) {
@@ -155,10 +158,6 @@ func (m *Manager) Add(ctx context.Context, cfg ServerConfig) error {
 		}
 		if token != "" {
 			cfg = cloneServerConfig(cfg)
-			if cfg.Headers == nil {
-				cfg.Headers = make(map[string]string)
-			}
-			cfg.Headers["Authorization"] = "Bearer " + token
 			if cfg.OAuth == nil {
 				cfg.OAuth = &OAuthConfig{}
 			}
@@ -168,12 +167,12 @@ func (m *Manager) Add(ctx context.Context, cfg ServerConfig) error {
 	var tokenProvider TokenProvider
 	if cfg.URL != "" {
 		if oauth != nil && cfg.OAuth != nil {
-			serverName := cfg.Name
+			serverName, resourceURL := cfg.Name, cfg.URL
 			tokenProvider = func(tokenCtx context.Context, forceRefresh bool) (string, error) {
 				if forceRefresh {
-					return oauth.RefreshAccessToken(tokenCtx, serverName)
+					return oauth.RefreshAccessToken(tokenCtx, serverName, resourceURL)
 				}
-				return oauth.AccessToken(tokenCtx, serverName)
+				return oauth.AccessToken(tokenCtx, serverName, resourceURL)
 			}
 		}
 		client, err = connectRemoteWithTokenProvider(ctx, cfg, tokenProvider)
@@ -342,11 +341,11 @@ func (m *Manager) StartOAuth(ctx context.Context, name string) (OAuthStartResult
 }
 
 func (m *Manager) OAuthStatus(ctx context.Context, name string) (OAuthStatus, error) {
-	_, oauth, err := m.oauthConfig(name)
+	cfg, oauth, err := m.oauthConfig(name)
 	if err != nil {
 		return OAuthStatus{}, err
 	}
-	return oauth.Status(ctx, strings.TrimSpace(name))
+	return oauth.Status(ctx, cfg.Name, cfg.URL)
 }
 
 func (m *Manager) FinishOAuth(ctx context.Context, name, state, code string) (ServerStatus, error) {
@@ -354,7 +353,7 @@ func (m *Manager) FinishOAuth(ctx context.Context, name, state, code string) (Se
 	if err != nil {
 		return ServerStatus{}, err
 	}
-	if _, err := oauth.Finish(ctx, OAuthFinishOptions{ServerID: cfg.Name, State: state, Code: code}); err != nil {
+	if _, err := oauth.Finish(ctx, OAuthFinishOptions{ServerID: cfg.Name, ResourceURL: cfg.URL, State: state, Code: code}); err != nil {
 		return ServerStatus{}, err
 	}
 	status := ServerStatus{Name: cfg.Name, State: MCPServerStateStopped, AuthStatus: MCPAuthStatusOAuth}
@@ -784,6 +783,8 @@ func classifyConnectError(err error) MCPServerState {
 	}
 	msg := strings.ToLower(err.Error())
 	switch {
+	case errors.Is(err, ErrOAuthRequired):
+		return MCPServerStateNeedsAuth
 	case strings.Contains(msg, "401") || strings.Contains(msg, "unauthorized"):
 		return MCPServerStateNeedsAuth
 	case strings.Contains(msg, "client registration"):

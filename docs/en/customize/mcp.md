@@ -72,6 +72,10 @@ Remote URL servers can use OAuth discovery, PKCE, scopes, and dynamic client reg
 
 The current desktop flow opens the authorization URL and requires you to paste the returned authorization code into settings. It does not start an automatic callback listener. Tokens go to Wuu's credential store rather than the server definition.
 
+Saved credentials are bound to the resource URL used for login. Reusing a server name with a different URL requires another login; a path or query change also counts. Credentials from older versions without a saved resource URL require login again. Wuu keeps mismatched credentials until you explicitly replace or remove them. Logging in to the new resource replaces the credentials for that server name.
+
+Requests carrying OAuth credentials or configured headers cannot redirect across origins (scheme, host, or port). Legacy SSE message endpoints must share the stream's origin; same-origin paths and session queries remain supported.
+
 If the service requires a fixed client, callback, or scopes, add an `oauth` object to that server:
 
 ```json

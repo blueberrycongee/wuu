@@ -19,6 +19,10 @@ import (
 	"github.com/blueberrycongee/wuu/internal/credentialstore"
 )
 
+// ErrOAuthResourceMismatch requires a new login for the configured resource.
+// The stored credential is retained for the resource that originally issued it.
+var ErrOAuthResourceMismatch = fmt.Errorf("%w: stored credentials do not match the configured resource; sign in again", ErrOAuthRequired)
+
 type OAuthManager struct {
 	store     credentialstore.Store
 	client    *http.Client
@@ -44,9 +48,10 @@ type OAuthStartResult struct {
 }
 
 type OAuthFinishOptions struct {
-	ServerID string
-	State    string
-	Code     string
+	ServerID    string
+	ResourceURL string
+	State       string
+	Code        string
 }
 
 type OAuthStatus struct {
@@ -121,6 +126,9 @@ func (m *OAuthManager) Start(ctx context.Context, options OAuthStartOptions) (OA
 	redirectURI := strings.TrimSpace(options.RedirectURI)
 	if serverID == "" || resourceURL == "" || redirectURI == "" {
 		return OAuthStartResult{}, errors.New("server_id, resource_url, and redirect_uri are required")
+	}
+	if canonicalOAuthResource(resourceURL) == "" {
+		return OAuthStartResult{}, errors.New("MCP OAuth resource URL must be an absolute HTTP(S) URL without user info or fragment")
 	}
 	resourceMeta, challengedScopes, err := m.discoverProtectedResource(ctx, resourceURL, options.Headers)
 	if err != nil {
@@ -197,6 +205,9 @@ func (m *OAuthManager) Finish(ctx context.Context, options OAuthFinishOptions) (
 	if !ok || pending.State != options.State {
 		return OAuthStatus{}, errors.New("invalid or expired OAuth state")
 	}
+	if !sameOAuthResource(pending.ResourceURL, options.ResourceURL) {
+		return OAuthStatus{}, ErrOAuthResourceMismatch
+	}
 	form := url.Values{
 		"grant_type":    {"authorization_code"},
 		"code":          {options.Code},
@@ -210,15 +221,20 @@ func (m *OAuthManager) Finish(ctx context.Context, options OAuthFinishOptions) (
 		return OAuthStatus{}, err
 	}
 	token := storedOAuthToken{AccessToken: response.AccessToken, RefreshToken: response.RefreshToken, TokenType: response.TokenType, ExpiresAt: tokenExpiry(response.ExpiresIn), Scopes: scopesFromResponse(response.Scope, pending.Scopes), ClientID: pending.ClientID, ClientSecret: pending.ClientSecret, TokenAuthMode: pending.TokenAuthMode, TokenEndpoint: pending.TokenEndpoint, ResourceURL: pending.ResourceURL}
+	// Serialize this manager's login commit with its in-flight refreshes so
+	// the newer login replaces their result, rather than the reverse.
+	refreshLock := m.refreshLock(options.ServerID)
+	refreshLock.Lock()
+	defer refreshLock.Unlock()
 	if err := m.saveToken(ctx, options.ServerID, token); err != nil {
 		return OAuthStatus{}, err
 	}
 	return oauthStatus(options.ServerID, token), nil
 }
 
-func (m *OAuthManager) Status(ctx context.Context, serverID string) (OAuthStatus, error) {
-	token, err := m.loadToken(ctx, serverID)
-	if errors.Is(err, credentialstore.ErrNotFound) {
+func (m *OAuthManager) Status(ctx context.Context, serverID, resourceURL string) (OAuthStatus, error) {
+	token, err := m.loadResourceToken(ctx, serverID, resourceURL)
+	if errors.Is(err, credentialstore.ErrNotFound) || errors.Is(err, ErrOAuthResourceMismatch) {
 		return OAuthStatus{ServerID: serverID}, nil
 	}
 	if err != nil {
@@ -227,21 +243,22 @@ func (m *OAuthManager) Status(ctx context.Context, serverID string) (OAuthStatus
 	return oauthStatus(serverID, token), nil
 }
 
-func (m *OAuthManager) AccessToken(ctx context.Context, serverID string) (string, error) {
-	return m.accessToken(ctx, serverID, false)
+// AccessToken returns a credential only for the resource used during login.
+func (m *OAuthManager) AccessToken(ctx context.Context, serverID, resourceURL string) (string, error) {
+	return m.accessToken(ctx, serverID, resourceURL, false)
 }
 
 // RefreshAccessToken forces a fresh read and refresh when the server rejected
 // a token that still looked valid locally.
-func (m *OAuthManager) RefreshAccessToken(ctx context.Context, serverID string) (string, error) {
-	return m.accessToken(ctx, serverID, true)
+func (m *OAuthManager) RefreshAccessToken(ctx context.Context, serverID, resourceURL string) (string, error) {
+	return m.accessToken(ctx, serverID, resourceURL, true)
 }
 
-func (m *OAuthManager) accessToken(ctx context.Context, serverID string, forceRefresh bool) (string, error) {
+func (m *OAuthManager) accessToken(ctx context.Context, serverID, resourceURL string, forceRefresh bool) (string, error) {
 	refreshLock := m.refreshLock(serverID)
 	refreshLock.Lock()
 	defer refreshLock.Unlock()
-	token, err := m.loadToken(ctx, serverID)
+	token, err := m.loadResourceToken(ctx, serverID, resourceURL)
 	if err != nil {
 		return "", err
 	}
@@ -256,15 +273,18 @@ func (m *OAuthManager) accessToken(ctx context.Context, serverID string, forceRe
 		form.Set("resource", token.ResourceURL)
 	}
 	response, err := m.exchangeToken(ctx, token.TokenEndpoint, token.ClientSecret, token.TokenAuthMode, form)
+	// Another process may have rotated or replaced the stored credential while
+	// the request was in flight. Check successful exchanges too, so an observed
+	// replacement cannot be overwritten by this older resource's refresh.
+	latest, loadErr := m.loadResourceToken(ctx, serverID, resourceURL)
+	if loadErr != nil {
+		return "", loadErr
+	}
+	if latest.AccessToken != token.AccessToken &&
+		(latest.ExpiresAt.IsZero() || time.Now().Before(latest.ExpiresAt)) {
+		return latest.AccessToken, nil
+	}
 	if err != nil {
-		// Another process may have rotated the refresh token while this
-		// request was in flight. Prefer the credential now in the store over
-		// reporting the stale refresh failure.
-		if latest, loadErr := m.loadToken(ctx, serverID); loadErr == nil &&
-			latest.AccessToken != token.AccessToken &&
-			(latest.ExpiresAt.IsZero() || time.Now().Before(latest.ExpiresAt)) {
-			return latest.AccessToken, nil
-		}
 		return "", err
 	}
 	token.AccessToken = response.AccessToken
@@ -330,7 +350,7 @@ func (m *OAuthManager) discoverProtectedResource(ctx context.Context, resource s
 			discoveryErrors = append(discoveryErrors, err.Error())
 			continue
 		}
-		if metadata.Resource != "" && strings.TrimRight(metadata.Resource, "/") != strings.TrimRight(resource, "/") {
+		if metadata.Resource != "" && !sameOAuthResource(metadata.Resource, resource) {
 			discoveryErrors = append(discoveryErrors, fmt.Sprintf("%s returned mismatched resource %q", endpoint, metadata.Resource))
 			continue
 		}
@@ -388,7 +408,11 @@ func (m *OAuthManager) protectedResourceChallenge(ctx context.Context, resource 
 		return "", nil
 	}
 	applyHTTPHeaders(req, headers)
-	resp, err := m.client.Do(req)
+	client := m.client
+	if len(headers) > 0 {
+		client = withSameOriginRedirects(client)
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return "", nil
 	}
@@ -461,7 +485,7 @@ func (m *OAuthManager) exchangeToken(ctx context.Context, endpoint, clientSecret
 			req.SetBasicAuth(form.Get("client_id"), clientSecret)
 		}
 	}
-	resp, err := m.client.Do(req)
+	resp, err := withSameOriginRedirects(m.client).Do(req)
 	if err != nil {
 		return tokenResponse{}, err
 	}
@@ -490,7 +514,11 @@ func (m *OAuthManager) getJSONWithHeaders(ctx context.Context, endpoint string, 
 		return err
 	}
 	applyHTTPHeaders(req, headers)
-	resp, err := m.client.Do(req)
+	client := m.client
+	if len(headers) > 0 {
+		client = withSameOriginRedirects(client)
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return err
 	}
@@ -597,15 +625,6 @@ func sameIssuer(left, right string) bool {
 	return strings.TrimRight(strings.TrimSpace(left), "/") == strings.TrimRight(strings.TrimSpace(right), "/")
 }
 
-func sameOrigin(left, right string) bool {
-	leftURL, leftErr := url.Parse(left)
-	rightURL, rightErr := url.Parse(right)
-	if leftErr != nil || rightErr != nil {
-		return false
-	}
-	return strings.EqualFold(leftURL.Scheme, rightURL.Scheme) && strings.EqualFold(leftURL.Host, rightURL.Host)
-}
-
 func selectTokenAuthMode(supported []string, clientSecret string) string {
 	if clientSecret == "" {
 		return "none"
@@ -634,6 +653,43 @@ func (m *OAuthManager) saveToken(ctx context.Context, serverID string, token sto
 		return err
 	}
 	return m.store.Set(ctx, oauthNamespace(serverID), "oauth", data)
+}
+
+func (m *OAuthManager) loadResourceToken(ctx context.Context, serverID, resourceURL string) (storedOAuthToken, error) {
+	token, err := m.loadToken(ctx, serverID)
+	if err != nil {
+		return storedOAuthToken{}, err
+	}
+	if !sameOAuthResource(token.ResourceURL, resourceURL) {
+		return storedOAuthToken{}, ErrOAuthResourceMismatch
+	}
+	return token, nil
+}
+
+func sameOAuthResource(left, right string) bool {
+	canonical := canonicalOAuthResource(left)
+	return canonical != "" && canonical == canonicalOAuthResource(right)
+}
+
+// Normalize only equivalent HTTP URL spelling. Paths, escaped separators, and
+// queries remain distinct audiences, even when they share an origin.
+func canonicalOAuthResource(resource string) string {
+	parsed, err := url.Parse(strings.TrimSpace(resource))
+	if err != nil || parsed.Hostname() == "" || parsed.User != nil || parsed.Fragment != "" {
+		return ""
+	}
+	parsed.Scheme = strings.ToLower(parsed.Scheme)
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return ""
+	}
+	parsed.Host = strings.ToLower(parsed.Host)
+	if port := parsed.Port(); (parsed.Scheme == "http" && port == "80") || (parsed.Scheme == "https" && port == "443") {
+		parsed.Host = strings.TrimSuffix(parsed.Host, ":"+port)
+	}
+	if parsed.Path == "" {
+		parsed.Path = "/"
+	}
+	return parsed.String()
 }
 
 func (m *OAuthManager) loadToken(ctx context.Context, serverID string) (storedOAuthToken, error) {
