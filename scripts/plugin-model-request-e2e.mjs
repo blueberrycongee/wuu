@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { EventEmitter, once } from "node:events";
-import { cp, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, unlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
@@ -19,6 +19,8 @@ const output = resolve(root, process.env.WUU_MODEL_E2E_OUTPUT || ".tmp/e2e/plugi
 await mkdir(output, { recursive: true });
 const scratch = await mkdtemp(join(output, "run-"));
 const home = join(scratch, "state"), pkg = join(scratch, "plugin");
+const initializeAttempts = join(scratch, "initialize-attempts.jsonl");
+const initializeFailure = join(scratch, "initialize-failure");
 await mkdir(home);
 await mkdir(pkg);
 const events = new EventEmitter(), transcript = [], requests = [], providerCalls = [], closed = [];
@@ -123,9 +125,13 @@ try {
     name: "model-fixture", version: "0.1.0", type: "module", scripts: { build: 'node -e ""' },
   }));
   await writeFile(join(pkg, "runtime.mjs"), `
+import { appendFileSync, existsSync } from "node:fs";
 import { runJSONLRuntime, requestModel, requireModelRequestService, reportExecutionUpdate } from "./sdk/index.js";
 runJSONLRuntime({
   initialize() {
+    const failed = existsSync(${JSON.stringify(initializeFailure)});
+    appendFileSync(${JSON.stringify(initializeAttempts)}, JSON.stringify({ at: Date.now(), failed }) + "\\n");
+    if (failed) throw new Error("fixture candidate initialization refused");
     return {
       protocol_version: 3,
       host_services: [{ id: "host.service.call", required: true }],
@@ -235,11 +241,14 @@ runJSONLRuntime({
     const identity = { id: item.id, fingerprint: item.fingerprint, request_id: tag };
     return { identity, response: rpcRaw("plugin/client/request", { ...identity, method: "hold", input: { tag } }) };
   };
-  const reload = async () => {
+  const publishUpdate = async () => {
     const source = join(pkg, "runtime.mjs");
     await writeFile(source, (await readFile(source, "utf8")) + "\n// Same-source lifecycle fixture update.\n");
     const update = spawnSync(binary, ["plugin", "dev", "--watch=false", pkg], { env, encoding: "utf8", timeout: 20_000 });
     assert.equal(update.status, 0, update.stderr);
+  };
+  const reload = async () => {
+    await publishUpdate();
     const refreshed = await rpc("extension/catalog/refresh");
     const previous = item;
     item = refreshed.extension_inventory.find(plugin => plugin.id === previous.id);
@@ -265,7 +274,33 @@ runJSONLRuntime({
   assert.deepEqual(during.map(row => [row.generation_id, row.id]),
     [...during].sort((a, b) => a.generation_id < b.generation_id ? -1 : a.generation_id > b.generation_id ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
       .map(row => [row.generation_id, row.id]));
+  // The watcher rejects a broken replacement while both current and retained
+  // foreground calls stay owned by their original processes. Unrelated home
+  // notifications must not turn retry backoff into a process-spawn loop.
+  await writeFile(initializeFailure, "fail candidate only\n");
+  await publishUpdate();
+  let failedAttempts = [];
+  const retryDeadline = Date.now() + 15_000;
+  do {
+    failedAttempts = (await readFile(initializeAttempts, "utf8")).trim().split("\n")
+      .map(line => JSON.parse(line)).filter(attempt => attempt.failed);
+    if (failedAttempts.length >= 3) break;
+    await writeFile(join(home, "unrelated-refresh-noise"), String(Date.now()));
+    assert.deepEqual(await snapshots(), during, "failed refresh changed live generation ownership");
+    await new Promise(resolve => setTimeout(resolve, 50));
+  } while (Date.now() < retryDeadline);
+  assert.equal(failedAttempts.length, 3, "watcher did not retry the unchanged failed candidate");
+  const retryGaps = failedAttempts.slice(1).map((attempt, index) => attempt.at - failedAttempts[index].at);
+  assert(retryGaps[0] >= 900 && retryGaps[1] >= 1800,
+    `unrelated notifications bypassed candidate backoff: ${JSON.stringify(retryGaps)}`);
+  assert.deepEqual(await snapshots(), during, "failed candidate retired a healthy foreground process");
+  result.refresh_backoff = { failed_attempts: failedAttempts, retry_gaps_ms: retryGaps,
+    executions_during_failure: await snapshots() };
+  // A new source publication is the repair signal, not a wait for the old
+  // candidate's next delay. Remove only the fixture's synthetic failure flag.
+  await unlink(initializeFailure);
   await reload();
+  result.checks.push("failed refresh backs off across home notifications and preserves current/retained calls until repaired publication");
   const thirdHold = hold("diagnostics-third");
   const thirdRow = await waitForExecution("diagnostics-third");
   const multiple = await snapshots();
