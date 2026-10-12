@@ -77,7 +77,7 @@ func discoverBundled(wuuHome string, options DiscoverOptions) []Plugin {
 		}
 		resolveOfficialHelper(&item, options.LookupEnv)
 		if ValidateHostCompatibility(item, CompatibilityOptions{
-			GOOS: options.GOOS, WuuVersion: options.WuuVersion, LookPath: options.LookPath,
+			GOOS: options.GOOS, WuuVersion: options.WuuVersion, LookPath: options.LookPath, LookupEnv: options.LookupEnv,
 		}) != nil || !bundledPluginEnabled(item, options.LookupEnv) {
 			continue
 		}

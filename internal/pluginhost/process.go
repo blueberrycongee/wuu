@@ -110,9 +110,8 @@ func Start(ctx context.Context, config ProcessConfig) (*ProcessClient, error) {
 	if config.Timeout <= 0 {
 		config.Timeout = 30 * time.Second
 	}
-	cmd := exec.Command(config.Command, config.Args...)
+	cmd := RuntimeCommand(config.Command, config.Args, config.Env)
 	cmd.Dir = config.PluginRoot
-	cmd.Env = buildEnv(config.Env)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, fmt.Errorf("plugin %q stdout: %w", config.ID, err)
