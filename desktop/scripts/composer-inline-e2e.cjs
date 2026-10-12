@@ -26,6 +26,8 @@ process.env.WUU_RENDERER_E2E_EXTENSION = path.join(__dirname, "composer-inline-e
 protocol.registerSchemesAsPrivileged([{ scheme: "wuu-plugin", privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } }]);
 let win;
 let phase = "startup";
+let watchdog;
+let failing = false;
 const runtimeRequests = [];
 const submissions = [];
 const runtimePending = new Map();
@@ -40,8 +42,15 @@ async function runtimeRequest(text) {
 }
 const save = () => fs.writeFileSync(path.join(output, "results.json"), JSON.stringify(state, null, 2));
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+async function bounded(promise, label) {
+  let timeout;
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => { timeout = setTimeout(() => reject(new Error(`${label} timed out during ${phase}`)), 12000); }),
+  ]).finally(() => clearTimeout(timeout));
+}
 async function evaluate(fn, argument) {
-  const response = await win.webContents.executeJavaScript(`(async()=>{try{return {value:await (${fn})(${JSON.stringify(argument)})}}catch(error){return {error:String(error.stack||error)}}})()`, true);
+  const response = await bounded(win.webContents.executeJavaScript(`(async()=>{try{return {value:await (${fn})(${JSON.stringify(argument)})}}catch(error){return {error:String(error.stack||error)}}})()`, true), "Renderer evaluation");
   if (response.error) throw new Error(response.error);
   return response.value;
 }
@@ -100,23 +109,40 @@ async function noGhost(label) {
 async function check(name, body) {
   phase = name;
   state.phase = name;
+  const started = Date.now();
+  console.log(`${new Date().toISOString()} START ${name}`);
   save();
   await body();
-  state.checks.push({ name, passed: true });
+  state.checks.push({ name, passed: true, durationMs: Date.now() - started });
   save();
   console.log(`PASS ${name}`);
 }
 async function screenshot(name) {
   await frames();
   const file = `${name}.png`;
-  fs.writeFileSync(path.join(output, file), (await win.webContents.capturePage()).toPNG());
+  fs.writeFileSync(path.join(output, file), (await bounded(win.webContents.capturePage(), "Screenshot capture")).toPNG());
   state.screenshots.push(file);
   save();
+}
+async function fail(error) {
+  if (failing) return;
+  failing = true;
+  clearTimeout(watchdog);
+  state.passed = false;
+  state.failure = { phase, message: String(error.stack || error) };
+  save();
+  console.error(error);
+  if (win && !win.isDestroyed()) {
+    try { await screenshot("failure"); } catch { /* Keep the original failure. */ }
+  }
+  app.exit(1);
 }
 
 state.phase = "waiting for Electron startup";
 save();
 app.whenReady().then(async () => {
+  // Leave time to save the last frame and diagnostics before CI's step timeout.
+  watchdog = setTimeout(() => { void fail(new Error(`Composer E2E exceeded 150 seconds during ${phase}`)); }, 150000);
   ipcMain.on("test:inline-submitted", (_event, payload) => submissions.push(payload));
   ipcMain.handle("test:inline-runtime", (_event, params) => {
     const entry = { params, cancelled: false };
@@ -147,6 +173,11 @@ app.whenReady().then(async () => {
   });
   win.webContents.on("render-process-gone", (_event, details) => { state.errors.push({ phase, message: `renderer exited: ${details.reason}` }); save(); });
   await win.loadFile(renderer);
+  // Hidden Chromium windows throttle compositor frames even with background
+  // throttling disabled. Match the workspace fixture's real Xvfb render path.
+  win.showInactive();
+  win.webContents.debugger.attach("1.3");
+  await win.webContents.debugger.sendCommand("Emulation.setFocusEmulationEnabled", { enabled: true });
   await until((selector) => Boolean(document.querySelector(selector)), inputSelector);
   await check("no provider preserves native Tab and draft", async () => {
     await draft("Baseline native input");
@@ -237,7 +268,6 @@ app.whenReady().then(async () => {
       window.__inlineIMEEvents = [];
       for (const type of ["compositionstart", "compositionupdate", "compositionend"]) document.querySelector(selector).addEventListener(type, (event) => window.__inlineIMEEvents.push({ type, data: event.data }));
     }, inputSelector);
-    win.webContents.debugger.attach("1.3");
     await win.webContents.debugger.sendCommand("Input.imeSetComposition", { text: "拼", selectionStart: 1, selectionEnd: 1 });
     await until(() => window.__inlineIMEEvents.some((event) => event.type === "compositionstart"));
     await noGhost("composition hides pending text immediately");
@@ -249,7 +279,6 @@ app.whenReady().then(async () => {
     assert.ok(!(await value()).includes("should not be accepted"));
     await win.webContents.debugger.sendCommand("Input.insertText", { text: "拼音" });
     await until(() => window.__inlineIMEEvents.some((event) => event.type === "compositionend"));
-    win.webContents.debugger.detach();
     state.ime = await evaluate(() => window.__inlineIMEEvents);
     assert.ok(state.ime.length >= 2);
     state.imeRequestCountDuringComposition = count;
@@ -378,8 +407,14 @@ app.whenReady().then(async () => {
 
   await check("host text remains literal across theme, font and narrow layout", async () => {
     for (const [width, font, theme] of [[1200, 14, "light"], [480, 20, "dark"]]) {
+      state.visual = { width, font, theme, stage: "resize", before: win.getContentBounds() };
+      save();
+      console.log(`${new Date().toISOString()} VISUAL ${JSON.stringify(state.visual)}`);
       win.setContentSize(width, 850);
       await until((width) => innerWidth === width, width, "visual scenario viewport resize");
+      state.visual.actual = win.getContentBounds();
+      state.visual.stage = "configure typography";
+      save();
       await evaluate(({ font, theme }) => {
         document.documentElement.dataset.theme = theme;
         document.documentElement.style.setProperty("--wuu-font-size-ui", `${font}px`);
@@ -387,7 +422,11 @@ app.whenReady().then(async () => {
       }, { font, theme });
       const text = "Document a focused implementation plan.\n保留输入中的中文和换行。";
       const suffix = " <b>literal suffix</b>，然后验证结果。";
+      state.visual.stage = "offer multiline completion";
+      save();
       await suggestion(text, suffix);
+      state.visual.stage = "measure completion";
+      save();
       const geometry = await evaluate(({ inputSelector, ghostSelector }) => {
         const input = document.querySelector(inputSelector);
         const suffix = document.querySelector(ghostSelector);
@@ -401,9 +440,13 @@ app.whenReady().then(async () => {
       assert.ok(geometry.input.left >= 0 && geometry.input.right <= width + 1);
       assert.ok(Math.abs(geometry.input.left - geometry.overlay.left) <= 2 && Math.abs(geometry.input.width - geometry.overlay.width) <= 2, "overlay follows native input bounds");
       state.checks.push({ name: `geometry ${width}/${font}/${theme}`, passed: true, geometry });
+      state.visual.stage = "capture completion";
       await screenshot(`completion-${width}-${font}-${theme}`);
       if (width < 600) {
+        state.visual.stage = "offer unbroken suffix";
+        save();
         await suggestion("Keep the native input word at this narrow wrap boundary: word", "AContinuousUnbrokenCompletionMustWrapWithoutMovingTheNativeCaret");
+        state.visual.stage = "capture unbroken suffix";
         await screenshot("narrow-unbroken-suffix-wrap");
       }
     }
@@ -412,15 +455,7 @@ app.whenReady().then(async () => {
   assert.deepEqual(state.errors, [], "no unexpected renderer errors");
   state.passed = true;
   save();
+  clearTimeout(watchdog);
   win.destroy();
   app.quit();
-}).catch(async (error) => {
-  state.passed = false;
-  state.failure = { phase, message: String(error.stack || error) };
-  save();
-  if (win && !win.isDestroyed()) {
-    try { await screenshot("failure"); } catch { /* Keep the original failure. */ }
-  }
-  console.error(error);
-  app.exit(1);
-});
+}).catch(fail);
