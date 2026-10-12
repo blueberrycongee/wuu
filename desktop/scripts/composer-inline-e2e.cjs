@@ -344,9 +344,14 @@ app.whenReady().then(async () => {
     await draft("Previous context");
     const previous = await request("Previous context");
     await evaluate(() => document.querySelector(".session-tab-new").click());
-    await until(() => Boolean(document.querySelector(".empty-home textarea")));
+    // The welcome content and the persistent main composer are siblings.
+    await until(({ id, selector }) => Boolean(document.querySelector('[data-wuu-component="empty-session"]'))
+      && document.querySelector(selector)?.value === ""
+      && window.__inlineCompletionE2E.active.requests.find((request) => request.id === id)?.aborted,
+    { id: previous.id, selector: inputSelector });
     await resolve(previous.id, " stale thread suffix");
     await noGhost("another conversation never receives the previous suffix");
+    await screenshot("new-context-ignores-previous-reply");
     await draft("Next context");
     const next = await request("Next context");
     assert.notEqual(next.context.composerId, previous.context.composerId);
@@ -374,6 +379,7 @@ app.whenReady().then(async () => {
   await check("host text remains literal across theme, font and narrow layout", async () => {
     for (const [width, font, theme] of [[1200, 14, "light"], [480, 20, "dark"]]) {
       win.setContentSize(width, 850);
+      await until((width) => innerWidth === width, width, "visual scenario viewport resize");
       await evaluate(({ font, theme }) => {
         document.documentElement.dataset.theme = theme;
         document.documentElement.style.setProperty("--wuu-font-size-ui", `${font}px`);
