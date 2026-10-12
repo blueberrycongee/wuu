@@ -85,7 +85,9 @@
 
 主题 token 来自[生成的主题契约](theme-surface-matrix.md)，不是任意宿主 CSS 变量。设置支持 `boolean`、`string`、`number`、`enum`，作用域为 `user|workspace`，应用方式为 `live|restart`。运行时通过 `host.settings.get/list` 服务读取，桌面 View 通过 `host.getSetting` 读取。禁用或删除包默认保留设置和存储。
 
-`contributes.commands` 中的命令包含本地 ID 和 kind。`prompt_template` 引用包内有大小限制的 UTF-8 文件，提供宿主管理的输入框动作；`runtime_action` 指向桌面 generation 注册的命令，只有声明不会执行代码。
+`contributes.commands` 中的命令包含本地 ID 和 kind。`prompt_template` 引用包内有大小限制的 UTF-8 文件，提供宿主管理的输入框动作；`runtime_action` 指向桌面 generation 注册的命令，只有声明不会执行代码。`side_conversation` 引用包内提示词，打开宿主管理的附属会话界面；消息继续使用现有侧聊执行与历史机制，宿主保留当前权限边界。发送请求使用 `plugin.command` 公共 ID 标识命令；停用或移除所属插件会取消正在生成的回答，但不会删除历史。同 ID 更新从下一次回答生效，正在生成的回答保留其原有 generation。此类命令不需要桌面入口或辅助进程。
+
+首次设置在完成前中断时，会保留已经应用的插件选择。清单区分实际 `enabled` 状态与可选的 `enabled_override` 用户设置；没有 override 时使用插件默认值。
 
 UI 声明放在 `contributes.slots`、`surfaces`、`presenters`、`navigation`、`workspaceTools` 或 `settingsPages` 中，描述放置位置和入口，实际渲染仍由桌面模块注册。匹配与组合规则见[桌面 UI 插件](desktop-plugins.md)。
 
@@ -194,7 +196,7 @@ Peers 插件通过 `if_running: "steer"` 尽量把终态回执注入当前工作
 
 ## 单次模型请求
 
-在初始化结果的 `required_services` 中声明 `requireModelRequestService()`，再从活动的工具或 capability 处理函数中调用 `requestModel(host, input)`，包括 `plugin.client.request`。使用该处理函数作用域内的 `RuntimeHost`，TypeScript SDK 会补充 execution ID。激活阶段、脱离执行的后台工作和仅有服务调用作用域的处理函数不能发起这些请求。
+在初始化结果的 `required_services` 中声明 `requireModelRequestService()`，再从宿主管理的活动工具、capability（包括 `plugin.client.request`）或服务回调中调用 `requestModel(host, input)`。使用该处理函数作用域内的 `RuntimeHost`，TypeScript SDK 会补充 execution ID。generation 所有的后台任务也会提供活动的服务回调。需要在 observer 或其他处理函数返回后继续工作时，应启动这样的后台任务，并在其回调中发起请求。激活阶段及脱离执行的定时器或任务，没有活动执行作用域时不能直接调用模型服务。
 
 ```ts
 import { requestModel, type RuntimeHost } from "@wuu/plugin-sdk";

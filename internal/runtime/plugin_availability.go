@@ -76,3 +76,19 @@ func (g *PluginGeneration) filterSkills(items []skills.Skill) []skills.Skill {
 	}
 	return out
 }
+
+// PluginAvailable reports whether a retained generation can still execute a package.
+// Revocation remains terminal for that generation even if the package is re-enabled.
+func (g *PluginGeneration) PluginAvailable(pluginID string) bool {
+	g.revokedMu.Lock()
+	defer g.revokedMu.Unlock()
+	if g.revokedPlugins[pluginID] {
+		return false
+	}
+	for _, item := range g.active {
+		if item.ID == pluginID {
+			return true
+		}
+	}
+	return false
+}

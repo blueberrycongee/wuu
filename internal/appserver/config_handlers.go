@@ -534,6 +534,10 @@ func (s *Server) extensionInventory(snapshot runtime.ExtensionSnapshot) []Extens
 			Conflicts:            cloneSortedStrings(item.Conflicts),
 			Enabled:              &enabled,
 		}
+		// Absent means the package default applies; false is a saved disable.
+		if grants.Disabled[item.SubjectID] || grants.Enabled[item.SubjectID] {
+			packageRecord.EnabledOverride = &enabled
+		}
 		for _, issue := range packageActivationIssues[item.ID] {
 			packageRecord.ActivationIssues = append(packageRecord.ActivationIssues, ExtensionPluginActivationIssue{
 				Kind:            string(issue.Kind),

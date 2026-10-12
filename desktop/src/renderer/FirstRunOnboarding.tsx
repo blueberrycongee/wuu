@@ -120,7 +120,7 @@ export function FirstRunOnboarding({
   const bundledPlugins = useMemo(() => bundledOnboardingPlugins(inventory), [inventory]);
   const [step, setStep] = useState<OnboardingStep>("welcome");
   const [selectedPluginIDs, setSelectedPluginIDs] = useState<Set<string>>(
-    () => recommendedPluginSubjectIDs(bundledPlugins),
+    () => initialPluginSubjectIDs(bundledPlugins),
   );
   const initializedPluginSelection = useRef(bundledPlugins.length > 0);
   const [applyingPlugins, setApplyingPlugins] = useState(false);
@@ -173,7 +173,7 @@ export function FirstRunOnboarding({
   useEffect(() => {
     if (initializedPluginSelection.current || bundledPlugins.length === 0) return;
     initializedPluginSelection.current = true;
-    setSelectedPluginIDs(recommendedPluginSubjectIDs(bundledPlugins));
+    setSelectedPluginIDs(initialPluginSubjectIDs(bundledPlugins));
   }, [bundledPlugins]);
 
   useEffect(() => {
@@ -282,8 +282,9 @@ export function FirstRunOnboarding({
     try {
       for (const plugin of bundledPlugins) {
         const shouldEnable = selectedPluginIDs.has(plugin.id);
-        const enabled = plugin.enabled !== false;
-        if (shouldEnable !== enabled) {
+        // Persist the choice even when it matches a package default, so an
+        // interrupted setup cannot replace it with a recommended preset.
+        if (plugin.enabled_override !== shouldEnable) {
           await onUpdateExtensionPackage({
             id: plugin.id,
             action: shouldEnable ? "enable" : "disable",
@@ -683,6 +684,12 @@ function selectedPreset(
     return "recommended";
   }
   return "custom";
+}
+
+function initialPluginSubjectIDs(plugins: readonly ExtensionInventoryRecord[]): Set<string> {
+  return new Set(plugins.filter((plugin) =>
+    plugin.enabled_override ?? RECOMMENDED_PLUGIN_IDS.has(plugin.provenance.plugin_id ?? ""),
+  ).map((plugin) => plugin.id));
 }
 
 function recommendedPluginSubjectIDs(

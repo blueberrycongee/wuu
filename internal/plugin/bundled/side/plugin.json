@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "side",
+  "name": "Side",
+  "description": "Ask follow-up questions in an attached conversation.",
+  "icon": "message-square",
+  "version": "0.1.0",
+  "defaultEnabled": true,
+  "author": { "name": "Wuu" },
+  "contributes": {
+    "commands": [{
+      "id": "side",
+      "title": "Side chat",
+      "description": "Ask about progress, output, or alternatives in a separate chat.",
+      "kind": "side_conversation",
+      "prompt": "./prompt.md",
+      "keywords": ["side", "侧聊", "旁路", "进度"]
+    }]
+  },
+  "interface": { "displayName": "Side", "shortDescription": "Ask questions alongside your main conversation.", "developerName": "Wuu", "category": "Productivity" }
+}

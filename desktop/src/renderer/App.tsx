@@ -1,6 +1,7 @@
 import { validPdfSelectionReference } from "./PdfSelection";
 import { createArtifactComposerFile } from "./ArtifactComposerFile";
-import { composerSkillPrompt } from "./ComposerSlashCommands";
+import { SideConversationAvailableContext } from "./ResponseSelection";
+import { buildComposerSlashCommands, composerSkillPrompt } from "./ComposerSlashCommands";
 import { forgetLocalTurnTiming } from "./LocalTurnTiming";
 import { subscribeServerEvents } from "./ServerEvents";
 import { AccountScreen } from "./AccountScreen";
@@ -1390,9 +1391,20 @@ export function App(): JSX.Element {
   }, [activeThreadID]);
   const activeTabKind = activeSessionTab(state)?.kind;
   const environmentContext = workspacePanelContext(state.activeContext, activeThread);
+  const sideCommands = useMemo(() => buildComposerSlashCommands({
+    activeContext: state.activeContext, initialized: state.initialized, running: false,
+  }).filter((command) => command.action === "open-side-thread"), [state.activeContext, state.initialized]);
+  const [sideCommandByThread, setSideCommandByThread] = useState<Record<string, string>>({});
+  const sideCommandKey = `${state.activeContext?.cwd ?? ""}\0${activeThreadID ?? ""}`;
+  const selectedSideCommandID = sideCommandByThread[sideCommandKey];
+  const activeSideCommand = sideCommands.find((command) => !selectedSideCommandID || `${command.pluginId}.${command.pluginCommandId}` === selectedSideCommandID);
+  const sideCommandID = activeSideCommand ? `${activeSideCommand.pluginId}.${activeSideCommand.pluginCommandId}` : undefined;
+  const sideConversationAvailable = Boolean(sideCommandID);
   const sideThread = useSideThreadController({
     activeThreadId: activeThreadID,
     activeContext: state.activeContext,
+    commandID: sideCommandID,
+    disabled: sideCommands.length === 0,
   });
   const sideThreadPanelRef = useRef<SideThreadPanelHandle>(null);
   const pendingSideSelectionRef = useRef<{ threadID: string; selection: SideThreadSelection } | null>(null);
@@ -2910,7 +2922,13 @@ export function App(): JSX.Element {
     }
     return Array.from(names);
   }, [state.thread, state.secondaryThread, state.threads]);
-  const sideThreadPanelVisible = Boolean(activeThreadID && rightPanelOpen &&
+  useEffect(() => {
+    if (!state.initialized?.extension_inventory || sideConversationAvailable) return;
+    pendingSideSelectionRef.current = null;
+    if (sideThread.entry?.open) sideThread.close();
+    if (workspaceViewTabs.some((tab) => tab.id === "side-thread")) closeWorkspaceViewTab("side-thread");
+  }, [sideConversationAvailable, activeThreadID, workspaceViewTabs, state.initialized?.extension_inventory]);
+  const sideThreadPanelVisible = Boolean(sideConversationAvailable && activeThreadID && rightPanelOpen &&
     !workspaceConversationActive && workspaceActiveViewTabID === "side-thread");
   useEffect(() => {
     if (sideThreadPanelVisible && !sideThread.entry?.open) sideThread.open();
@@ -3039,21 +3057,22 @@ export function App(): JSX.Element {
     });
   }, [state.activeSessionTabID, state.thread, state.threads]);
 
-  function openSideThreadPanel(prompt?: string): void {
-    if (!activeThreadID) {
+  function openSideThreadPanel(prompt?: string, commandID = sideCommandID): void {
+    if (!activeThreadID || !commandID || !sideCommands.some((command) => `${command.pluginId}.${command.pluginCommandId}` === commandID)) {
       return;
     }
+    setSideCommandByThread((current) => ({ ...current, [sideCommandKey]: commandID }));
     openWorkspaceSideThread();
     if (!sideThread.entry?.open) sideThread.open();
     requestAnimationFrame(() => sideThreadPanelRef.current?.focusComposer());
     const trimmed = prompt?.trim();
     if (trimmed) {
-      sideThread.sendMessage(trimmed);
+      sideThread.sendMessage(trimmed, commandID);
     }
   }
 
   function openSideThreadWithSelection(selection: SideThreadSelection): void {
-    if (!activeThreadID) return;
+    if (!activeThreadID || !sideConversationAvailable) return;
     openSideThreadPanel();
     sideThread.setDraftSelection(selection);
     requestAnimationFrame(() => sideThreadPanelRef.current?.focusComposer());
@@ -3658,7 +3677,7 @@ export function App(): JSX.Element {
   useEffect(() => {
     const ask = (event: Event) => {
       const selection = (event as CustomEvent<ResponseSelection>).detail;
-      if (!selection?.source?.thread_id) return;
+      if (!sideConversationAvailable || !selection?.source?.thread_id) return;
       const reference: SideThreadSelection = { type: "response", response: selection };
       if (selection.source.thread_id === activeThreadID) {
         openSideThreadWithSelection(reference);
@@ -3669,7 +3688,7 @@ export function App(): JSX.Element {
     };
     window.addEventListener("wuu:ask-side-selection", ask);
     return () => window.removeEventListener("wuu:ask-side-selection", ask);
-  }, [activeThreadID, activateThread, sideThread.open, sideThread.setDraftSelection]);
+  }, [activeThreadID, activateThread, sideThread.open, sideThread.setDraftSelection, sideConversationAvailable]);
 
   useEffect(() => {
     const pending = pendingSideSelectionRef.current;
@@ -5261,13 +5280,14 @@ export function App(): JSX.Element {
       providers={mascotProviderNames}
       model={mascotRuntimePreview?.model ?? sessionRuntime?.model}
     >
+      <SideConversationAvailableContext.Provider value={sideConversationAvailable}>
       <FileSelectionProvider
         ownerKey={selectionThread?.id ?? currentSessionTab?.id}
         interactionOwnerKey={selectionThread ? fileSelectionDraftOwners.current.get(selectionThread.id) : undefined}
         getPrompt={() => selectionUsesSplitDraft ? splitComposerDrafts[appStateRef.current.activePane].prompt : currentPrimaryComposerDraft().prompt}
         setPrompt={(value) => selectionUsesSplitDraft ? setSplitComposerPrompt(appStateRef.current.activePane, value) : setPrompt(value)}
         onEdit={submitFileSelectionEdit}
-        onAskSide={activeThreadID ? (source) => openSideThreadWithSelection({ type: "file", file: source }) : undefined}
+        onAskSide={activeThreadID && sideConversationAvailable ? (source) => openSideThreadWithSelection({ type: "file", file: source }) : undefined}
         onOpenFile={openWorkspaceFile}
         onOpenPdf={(source) => {
           const pdf = source.pdf;
@@ -5808,7 +5828,7 @@ export function App(): JSX.Element {
             active: workspaceConversationActive,
             onSelect: focusWorkspaceConversation,
           } : undefined}
-          sideThreadContent={activeThreadID && sideThread.entry ? (
+          sideThreadContent={sideConversationAvailable && activeThreadID && sideThread.entry ? (
             <SideThreadPanel
               key={activeThreadID}
               ref={sideThreadPanelRef}
@@ -5970,6 +5990,7 @@ export function App(): JSX.Element {
     </ProjectActionsProvider>
     </ImagePreviewProvider>
     </FileSelectionProvider>
+    </SideConversationAvailableContext.Provider>
     </WuuMascotRuntimeProvider>
   );
 }

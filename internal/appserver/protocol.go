@@ -709,8 +709,9 @@ const (
 type ExtensionCommandKind string
 
 const (
-	ExtensionCommandPromptTemplate ExtensionCommandKind = "prompt_template"
-	ExtensionCommandRuntimeAction  ExtensionCommandKind = "runtime_action"
+	ExtensionCommandPromptTemplate   ExtensionCommandKind = "prompt_template"
+	ExtensionCommandRuntimeAction    ExtensionCommandKind = "runtime_action"
+	ExtensionCommandSideConversation ExtensionCommandKind = "side_conversation"
 )
 
 type ExtensionCommandDescriptor struct {
@@ -865,6 +866,7 @@ type ExtensionInventoryRecord struct {
 	Conflicts            []string                         `json:"conflicts,omitempty"`
 	ActivationIssues     []ExtensionPluginActivationIssue `json:"activation_issues,omitempty"`
 	Enabled              *bool                            `json:"enabled,omitempty"`
+	EnabledOverride      *bool                            `json:"enabled_override,omitempty"`
 	Desktop              *ExtensionDesktopDescriptor      `json:"desktop,omitempty"`
 	Contributions        *ExtensionContributions          `json:"contributions,omitempty"`
 	PendingUpdate        *ExtensionPendingUpdate          `json:"pending_update,omitempty"`
@@ -1733,6 +1735,7 @@ type SideThreadMainTaskSummary struct {
 }
 
 type SideThreadSendParams struct {
+	CommandID    string                         `json:"command_id,omitempty"`
 	MainThreadID string                         `json:"main_thread_id"`
 	Prompt       string                         `json:"prompt"`
 	Selection    *sidethread.SelectionReference `json:"selection,omitempty"`

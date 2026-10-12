@@ -89,6 +89,8 @@ const (
 	// CommandKindRuntimeAction is executable only through an approved desktop
 	// command registration with the same plugin and command id.
 	CommandKindRuntimeAction CommandKind = "runtime_action"
+	// CommandKindSideConversation supplies the policy prompt for an attached conversation.
+	CommandKindSideConversation CommandKind = "side_conversation"
 )
 
 // CommandSpec is a deterministic fingerprint input for a command descriptor.

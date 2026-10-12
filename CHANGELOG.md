@@ -10,6 +10,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Side chat is a bundled plugin with a recommended-on onboarding choice and a
+  persistent enable switch. Disabling it stops side answers and hides its entry
+  points without deleting history. Extensions can supply attached-chat policy
+  through the public `side_conversation` command contribution.
 - Inline completion providers can refresh asynchronously cached suggestions and
   receive scoped display, acceptance, dismissal, and dispatch interactions without
   receiving later draft text. Dispatch events do not imply backend delivery.

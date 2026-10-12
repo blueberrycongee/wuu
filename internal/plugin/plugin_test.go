@@ -204,6 +204,17 @@ func TestBundledOptionalPluginsAreInstalledButDisabledByDefault(t *testing.T) {
 			t.Errorf("bundled plugin %q was missing or enabled by default", id)
 		}
 	}
+	var side *Plugin
+	for i := range plugins {
+		if plugins[i].ID == "side" {
+			side = &plugins[i]
+			break
+		}
+	}
+	if side == nil || !side.EnabledByDefault() || !side.Official || len(side.Commands) != 1 || side.Commands[0].Kind != CommandKindSideConversation || side.Commands[0].ResolvedPrompt == nil {
+		t.Fatalf("bundled side command missing or not enabled by default: %+v", side)
+	}
+
 }
 
 func writePlugin(t *testing.T, dir, manifest string) {

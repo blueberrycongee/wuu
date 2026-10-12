@@ -451,7 +451,7 @@ export type ExtensionCommandDescriptor = {
   id: string;
   title: string;
   description?: string;
-  kind: "prompt_template" | "runtime_action";
+  kind: "prompt_template" | "runtime_action" | "side_conversation";
   template?: string;
   contexts?: string[];
   aliases?: string[];
@@ -587,6 +587,8 @@ export type ExtensionInventoryRecord = {
   conflicts?: string[];
   activation_issues?: ExtensionPluginActivationIssue[];
   enabled?: boolean;
+  // Explicit user policy; absent means the package default applies.
+  enabled_override?: boolean;
   desktop?: ExtensionDesktopDescriptor;
   contributions?: ExtensionContributions;
   pending_update?: ExtensionPendingUpdate;
@@ -2057,6 +2059,8 @@ export type SideThreadHistoryResult = {
 };
 
 export type SideThreadSendParams = {
+  // Public plugin command ID (plugin.command); omitted selects the first active side command.
+  command_id?: string;
   main_thread_id: string;
   // The user's prompt. Empty prompts are rejected by the IPC layer.
   prompt: string;

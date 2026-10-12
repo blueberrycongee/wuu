@@ -68,6 +68,12 @@ const workspace = "/tmp/wuu-artifact-tab-test";
 
 function initialized(): InitializeResult {
   return {
+    extension_inventory: [{
+      id: "plugin:bundled:side", kind: "plugin", name: "Side", state: "active", enabled: true,
+      approval_state: "official", runtime_state: "active",
+      provenance: { kind: "plugin", source: "bundled", scope: "bundled", plugin_id: "side", official: true },
+      contributions: { commands: [{ id: "side", title: "Side chat", kind: "side_conversation", template: "Side policy" }] },
+    }],
     protocol_version: "wuu-app-server/v0.1",
     provider: "fake",
     model: "fake-model",

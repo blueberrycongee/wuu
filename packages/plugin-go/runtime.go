@@ -796,7 +796,8 @@ type ModelRequestResult struct {
 }
 
 // RequestModel performs one bounded tools-free request. The plugin must declare
-// host.model.request v1 and call from a live tool or capability context. Ending or
+// host.model.request v1 and call from a live tool, capability, or service callback
+// context, including a generation-owned background job's callback. Ending or
 // cancelling that execution cancels the model request.
 func RequestModel(ctx context.Context, host Host, input ModelRequestParams) (ModelRequestResult, error) {
 	var result ModelRequestResult

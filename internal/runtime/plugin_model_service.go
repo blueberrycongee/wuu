@@ -50,9 +50,9 @@ func (k *modelRequestInvoker) InvokeService(callCtx context.Context, params plug
 	if !active || runtimeSession == nil || host == nil {
 		return nil, serviceError("service_unavailable", "model service is unavailable")
 	}
-	// A service-call execution alone is not authority to start inference. Bind
-	// it to the caller's live tool/capability invocation, so returning, cancelling
-	// or revoking that invocation terminates its outstanding provider work.
+	// Registry routing alone is not authority to start inference. Bind it to the
+	// caller's live host-owned execution (tool, capability, service callback or
+	// background job), so ending or revoking it cancels outstanding provider work.
 	scope, scopeErr := host.ResolveExecution(params.Caller, params.ExecutionID)
 	if scopeErr != nil {
 		return nil, scopeErr

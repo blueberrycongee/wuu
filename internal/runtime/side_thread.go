@@ -16,12 +16,6 @@ import (
 	"github.com/blueberrycongee/wuu/internal/workspaces"
 )
 
-const sideThreadSystemPrompt = `You are a read-only side agent attached to a coding task. Answer the user's questions from the supplied snapshot of the main task and the side-conversation history.
-
-The snapshot may have been captured while the main task was still running. Describe only what the snapshot proves, distinguish completed work from in-progress work, and say when the current outcome is not yet known. Do not claim to have inspected state newer than the snapshot.
-
-Use your read-only tools when current workspace evidence is needed. You may inspect files, search code, and perform other non-mutating investigation. You must not modify files, run mutating commands, start agents, or steer the main task. Keep the answer direct and useful.`
-
 // NewSideThreadRunner clones the attached conversation's model configuration
 // into an isolated runner with the same tool surface as a main agent in
 // read-only mode. selected is the main conversation's
@@ -31,7 +25,16 @@ Use your read-only tools when current workspace evidence is needed. You may insp
 // rooted at the main thread's workspace, and protected by ReadOnlyBoundary.
 // It shares no mutable callbacks, tool ledger, or usage tracker with the main
 // thread.
-func (s *Session) NewSideThreadRunner(sideThreadID, rootDir string, selected ThreadModelSelection, parentSession ...string) (*agent.StreamRunner, error) {
+func (s *Session) NewSideThreadRunner(sideThreadID, rootDir string, selected ThreadModelSelection, systemPrompt string, parentSession ...string) (*agent.StreamRunner, error) {
+	shadow, err := s.cloneForThreadModel()
+	if err != nil {
+		return nil, err
+	}
+	defer s.releasePluginGeneration(shadow.pluginGeneration)
+	return shadow.newSideThreadRunner(sideThreadID, rootDir, selected, systemPrompt, parentSession...)
+}
+
+func (s *Session) newSideThreadRunner(sideThreadID, rootDir string, selected ThreadModelSelection, systemPrompt string, parentSession ...string) (*agent.StreamRunner, error) {
 	if s == nil || s.StreamRunner == nil {
 		return nil, errors.New("stream runner is required")
 	}
@@ -40,6 +43,9 @@ func (s *Session) NewSideThreadRunner(sideThreadID, rootDir string, selected Thr
 		return nil, errors.New("side thread id is required")
 	}
 
+	if strings.TrimSpace(systemPrompt) == "" {
+		return nil, errors.New("side conversation prompt is required")
+	}
 	runner := s.newSideThreadBaseRunner(selected)
 	root := strings.TrimSpace(rootDir)
 	if root == "" {
@@ -78,7 +84,7 @@ func (s *Session) NewSideThreadRunner(sideThreadID, rootDir string, selected Thr
 		runner.Tools = toolExecutor
 
 		surface := kit.ActiveSurface()
-		promptParts := []string{sideThreadSystemPrompt, strings.TrimSpace(surface.SystemFragment)}
+		promptParts := []string{systemPrompt, strings.TrimSpace(surface.SystemFragment)}
 		if catalog, err := deferredToolCatalogPromptForToolkit(kit); err != nil {
 			return nil, err
 		} else {
@@ -87,7 +93,7 @@ func (s *Session) NewSideThreadRunner(sideThreadID, rootDir string, selected Thr
 		runner.SystemPrompt = joinNonEmptyPromptParts(promptParts...)
 	} else {
 		runner.Tools = nil
-		runner.SystemPrompt = sideThreadSystemPrompt
+		runner.SystemPrompt = systemPrompt
 	}
 	runner.ToolLedger = nil
 	runner.SystemPromptSections = nil

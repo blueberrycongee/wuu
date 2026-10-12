@@ -64,6 +64,12 @@ afterEach(() => {
 
 function initialized(permissions?: PermissionSummary): InitializeResult {
   return {
+    extension_inventory: [{
+      id: "plugin:bundled:side", kind: "plugin", name: "Side", state: "active", enabled: true,
+      approval_state: "official", runtime_state: "active",
+      provenance: { kind: "plugin", source: "bundled", scope: "bundled", plugin_id: "side", official: true },
+      contributions: { commands: [{ id: "side", title: "Side chat", kind: "side_conversation", template: "Side policy" }] },
+    }],
     protocol_version: "wuu-app-server/v0.1",
     provider: "fake",
     model: "fake-model",
@@ -2794,7 +2800,7 @@ describe("Composer send control", () => {
     act(() => sendButton?.click());
 
     expect(onOpenSideThread).toHaveBeenCalledTimes(1);
-    expect(onOpenSideThread).toHaveBeenCalledWith(undefined);
+    expect(onOpenSideThread).toHaveBeenCalledWith(undefined, "side.side");
     expect(setPrompt).toHaveBeenCalledWith("");
   });
 
@@ -2814,7 +2820,7 @@ describe("Composer send control", () => {
     act(() => sendButton?.click());
 
     expect(onOpenSideThread).toHaveBeenCalledTimes(1);
-    expect(onOpenSideThread).toHaveBeenCalledWith("现在进度怎么样");
+    expect(onOpenSideThread).toHaveBeenCalledWith("现在进度怎么样", "side.side");
     expect(setPrompt).toHaveBeenCalledWith("");
   });
 });

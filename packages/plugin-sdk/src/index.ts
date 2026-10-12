@@ -1321,7 +1321,8 @@ export interface ModelRequestResult {
 
 /**
  * Run one bounded, tools-free model request through Wuu's configured provider.
- * Requires host.model.request v1 and a host scoped to a live tool or capability.
+ * Requires host.model.request v1 and a host scoped to a live tool, capability,
+ * or service callback, including a generation-owned background job's callback.
  * The request is cancelled when that execution ends or is cancelled.
  */
 export async function requestModel(host: RuntimeHost, input: ModelRequestParams): Promise<ModelRequestResult> {

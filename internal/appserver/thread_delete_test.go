@@ -16,6 +16,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/agentcontrol"
 	"github.com/blueberrycongee/wuu/internal/agentthread"
 	"github.com/blueberrycongee/wuu/internal/harness"
+	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/session"
@@ -119,6 +120,11 @@ func TestServerThreadDeleteRejectsRunningThread(t *testing.T) {
 
 func TestServerThreadDeleteRejectsRunningSideThreadAndDoesNotRecreateIt(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
+	item, err := pluginpkg.LoadManifestWithOptions("../plugin/bundled/side/plugin.json", pluginpkg.LoadOptions{Source: "bundled", Official: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt.ActivePlugins = append(rt.ActivePlugins, item)
 	blocking := newBlockingStreamClient("side reply")
 	rt.StreamRunner.Client = blocking
 	out := &lockedBuffer{}

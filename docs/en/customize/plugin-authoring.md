@@ -85,7 +85,9 @@ Themes and settings need no desktop module. For example, merge this fragment int
 
 Theme tokens come from the [generated theme contract](theme-surface-matrix.md), not arbitrary host CSS variables. Settings support `boolean`, `string`, `number`, and `enum`, with `scope=user|workspace` and `apply=live|restart`. Read settings through `host.settings.get/list` services in the runtime or `host.getSetting` in a desktop view. Disabling or removing the package preserves settings and storage by default.
 
-Commands under `contributes.commands` have a local ID and a kind. `prompt_template` references a bounded UTF-8 file inside the package and supplies a host-owned composer action. `runtime_action` points to a command registered by the desktop generation; declaring it alone does not execute code.
+Commands under `contributes.commands` have a local ID and a kind. `prompt_template` references a bounded UTF-8 file inside the package and supplies a host-owned composer action. `runtime_action` points to a command registered by the desktop generation; declaring it alone does not execute code. `side_conversation` references a package-owned prompt and opens the host’s attached conversation surface. Its messages use the existing side-chat execution and history; the host retains its current permission boundary. The send request identifies the public `plugin.command` ID, and disabling or removing its owning package cancels active answers without deleting history. Same-ID updates apply to the next answer; an active answer keeps its retained generation. No desktop entry or helper process is required.
+
+First-run setup preserves applied plugin choices if it is interrupted before completion. Inventory distinguishes the effective `enabled` state from an optional `enabled_override` user policy; an absent override means the package default applies.
 
 UI declarations belong under `contributes.slots`, `surfaces`, `presenters`, `navigation`, `workspaceTools`, or `settingsPages`. They describe placement and discovery, while the desktop module registers rendering. See [desktop UI plugins](desktop-plugins.md) for matching and composition rules.
 
@@ -196,7 +198,7 @@ The Peers plugin uses `if_running: "steer"` to deliver terminal replies into act
 
 ## One-shot model requests
 
-Declare `requireModelRequestService()` in your initialization result's `required_services`, then call `requestModel(host, input)` from a live tool or capability handler, including `plugin.client.request`. Use the handler-scoped `RuntimeHost`; the TypeScript SDK supplies its execution ID. Activation, detached background work, and service-only handlers cannot start these requests.
+Declare `requireModelRequestService()` in your initialization result's `required_services`, then call `requestModel(host, input)` from a live host-owned tool, capability (including `plugin.client.request`), or service callback. Use the handler-scoped `RuntimeHost`; the TypeScript SDK supplies its execution ID. A generation-owned background job also supplies a live service callback. To outlive an observer or other handler, start such a job and make the request inside its callback. Activation and detached timers or tasks cannot call the model service directly without a live execution scope.
 
 ```ts
 import { requestModel, type RuntimeHost } from "@wuu/plugin-sdk";

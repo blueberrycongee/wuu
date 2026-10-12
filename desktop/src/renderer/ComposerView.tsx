@@ -335,7 +335,7 @@ export function Composer({
   onHandoffSession?: (input: { provider: string; model: string; effort?: string; intent: string }) => void;
   // Open or focus the side thread attached to the active main conversation.
   // When prompt is non-empty, also send it as the side-thread query.
-  onOpenSideThread?: (prompt?: string) => void;
+  onOpenSideThread?: (prompt?: string, commandID?: string) => void;
   onOpenWorkspaceTool: (view: WorkspacePanelView) => void;
   onOpenContextComposition?: () => void;
   onCompactContext?: () => void;
@@ -957,7 +957,7 @@ export function Composer({
         onStartNewThread();
         break;
       case "open-side-thread":
-        onOpenSideThread?.(draft?.args.trim() || undefined);
+        onOpenSideThread?.(draft?.args.trim() || undefined, `${command.pluginId}.${command.pluginCommandId}`);
         break;
       case "reset-side-thread":
         onResetSideThread?.();

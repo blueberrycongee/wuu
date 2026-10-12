@@ -204,7 +204,7 @@ func TestWorktreeProtocolGuidanceUsesSelectedCheckout(t *testing.T) {
 		if err != nil || !strings.Contains(global, "GLOBAL_SKILL_MARKER") {
 			t.Errorf("global skill lost: %s %v", global, err)
 		}
-		side, err := rt.NewSideThreadRunner("side-"+tc.name, tc.cwd, wuuRuntime.ThreadModelSelection{})
+		side, err := rt.NewSideThreadRunner("side-"+tc.name, tc.cwd, wuuRuntime.ThreadModelSelection{}, "Test side policy")
 		if err != nil {
 			t.Fatal(err)
 		}
