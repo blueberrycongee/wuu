@@ -1,0 +1,19 @@
+{
+  "name": "@wuu/bundled-plugins",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.7"
+  },
+  "scripts": {
+    "build": "node ../scripts/build-bundled-plugins.mjs",
+    "build:check": "node ../scripts/build-bundled-plugins.mjs --check",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "esbuild": "0.25.12",
+    "typescript": "^5.9.3"
+  }
+}

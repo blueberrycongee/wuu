@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "skipLibCheck": true,
+    "types": [
+      "node"
+    ],
+    "baseUrl": ".",
+    "paths": {
+      "@wuu/plugin-sdk": [
+        "../packages/plugin-sdk/src/index.ts"
+      ]
+    }
+  },
+  "include": [
+    "*/src/**/*.ts"
+  ]
+}

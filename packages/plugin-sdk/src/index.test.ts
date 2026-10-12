@@ -167,7 +167,7 @@ const plugin: RuntimePlugin = {
       protocol_version: CAPABILITY_PROTOCOL_V2,
       capabilities: [{ id: REQUEST_TRANSFORM_CAPABILITY, kind: "transform", version: 1 }],
       tools: [{ id: "echo", description: "Echo input", input_schema: { type: "object" } }],
-      required_host_services: [],
+      required_host_services: [{ id: "host.storage.compare_exchange", required: true }],
     };
   },
   invokeCapability(params) {
@@ -186,6 +186,12 @@ const initialized = await handleRuntimeRequest(plugin, {
 const initializedResult = "result" in initialized ? initialized.result as RuntimeInitializeResult | null : null;
 if (initializedResult === null || initializedResult.protocol_version === undefined) {
   throw new Error("initialize did not return the v2 descriptor");
+}
+if (initializedResult.protocol_version !== 3
+  || initializedResult.required_services?.[0]?.name !== "host.storage.compare-exchange"
+  || !initializedResult.required_services[0].required
+  || initializedResult.required_host_services?.length) {
+  throw new Error("legacy host-service declaration did not negotiate registry authority");
 }
 
 async function* input(): AsyncIterable<string> {
@@ -240,7 +246,6 @@ if (cancellationLines.length !== 1 || !cancellationLines[0]?.includes('"text":"c
 const servicePlugin: RuntimePlugin = {
   initialize() {
     return {
-      protocol_version: 3,
       provided_services: [{
         name: "search.provider",
         version: "1.0.0",
@@ -269,7 +274,8 @@ const serviceInit = await handleRuntimeRequest(servicePlugin, {
   params: { protocol_version: 1, capability_protocol_version: 3, plugin_id: "search", plugin_root: ".", project_root: ".", wuu_home: "." },
 });
 const serviceInitResult = "result" in serviceInit ? serviceInit.result as RuntimeInitializeResult | null : null;
-if (serviceInitResult === null || serviceInitResult.provided_services === undefined || serviceInitResult.required_services === undefined) {
+if (serviceInitResult === null || serviceInitResult.protocol_version !== 3
+  || serviceInitResult.provided_services === undefined || serviceInitResult.required_services === undefined) {
   throw new Error("initialize did not return the v3 service descriptor");
 }
 

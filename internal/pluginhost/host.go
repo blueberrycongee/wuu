@@ -127,6 +127,9 @@ func (h *Host) AttachServiceRegistry(registry *ServiceRegistry, conflicts []Serv
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.serviceRegistry = registry
+	if registry != nil {
+		registry.bindRootExecutionContext(h.ResolveExecutionContext)
+	}
 	for _, conflict := range conflicts {
 		if h.diagnostics[conflict.PluginID] == nil {
 			h.diagnostics[conflict.PluginID] = make(map[string]string)
@@ -463,6 +466,15 @@ func (h *Host) ResolveToolExecution(callerPluginID, executionID string) (ToolExe
 		return ToolExecutionScope{}, &HostServiceError{Code: "service_unavailable", Message: "execution scope is unavailable"}
 	}
 	return h.executions.ResolveTool(callerPluginID, executionID)
+}
+
+// ResolveExecutionContext validates a root tool/capability dispatch owner.
+// Registry-owned service IDs keep their separately routed execution context.
+func (h *Host) ResolveExecutionContext(callerPluginID, executionID string) (context.Context, bool, *HostServiceError) {
+	if h == nil || h.executions == nil {
+		return nil, true, &HostServiceError{Code: "service_unavailable", Message: "execution scope is unavailable"}
+	}
+	return h.executions.ResolveContext(callerPluginID, executionID)
 }
 
 func (h *Host) CancelExecutions(cause error) {

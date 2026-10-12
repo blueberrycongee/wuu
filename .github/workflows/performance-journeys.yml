@@ -56,6 +56,7 @@ jobs:
             npm ci --prefix "$tree/desktop"
             npm ci --prefix "$tree/clients/core"
             npm ci --prefix "$tree/clients/mobile-web"
+            if [ -f "$tree/plugins/package-lock.json" ]; then npm ci --prefix "$tree/plugins"; fi
             node "$tree/desktop/scripts/build-core.cjs"
             npm --prefix "$tree/desktop" run build
           done
@@ -128,8 +129,10 @@ jobs:
             WUU_DESKTOP_CORE="$RUNNER_TEMP/wuu-performance-baseline/desktop/build/bin/wuu-core" \
               desktop/node_modules/.bin/electron --no-sandbox --ozone-platform=headless \
               desktop/scripts/session-switch-e2e.cjs >"$output/prepare.log" 2>&1
-            # Resolve every normal bundled helper from the selected exact source.
+            # Older baselines use separate native business helpers; current runtimes are embedded.
+            unset WUU_ASK_USER_PLUGIN_HELPER WUU_AUTOMATION_PLUGIN_HELPER WUU_DREAM_PLUGIN_HELPER WUU_GOAL_PLUGIN_HELPER WUU_MEMORY_PLUGIN_HELPER WUU_PEERS_PLUGIN_HELPER WUU_SUBAGENT_PLUGIN_HELPER WUU_TODO_PLUGIN_HELPER
             for helper in "$tree"/desktop/build/bin/wuu-*-plugin; do
+              [ -f "$helper" ] || continue
               name="$(basename "$helper" | sed 's/^wuu-//;s/-plugin$//;y/abcdefghijklmnopqrstuvwxyz-/ABCDEFGHIJKLMNOPQRSTUVWXYZ_/')"
               export "WUU_${name}_PLUGIN_HELPER=$helper"
             done

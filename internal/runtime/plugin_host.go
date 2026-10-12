@@ -100,6 +100,7 @@ func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHo
 			WorkspaceStateDir: workspaceStateDir,
 			Timeout:           timeout,
 			ServiceRouter:     registry,
+			OnClose:           handler.close,
 			PrepareOnly:       true,
 		})
 		if err != nil {

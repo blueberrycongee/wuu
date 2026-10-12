@@ -192,9 +192,10 @@ async function lifecycleBarriers(): Promise<void> {
       events.push("initialized");
       return definition();
     },
-    async activate() {
+    async activate(_host, lifecycle) {
       assert(!lifetime.aborted, "initialization ended the background lifetime");
       activateStarted.resolve();
+      lifecycle.signal.addEventListener("abort", () => activateRelease.resolve(), { once: true });
       await activateRelease.promise;
       events.push("activated");
     },
@@ -218,12 +219,12 @@ async function lifecycleBarriers(): Promise<void> {
   initializeRelease.resolve();
   await activateStarted.promise;
   assert(events.join(",") === "initialized", "service bypassed activation barrier");
-  activateRelease.resolve();
-  await serviceStarted.promise;
   const shutdown = peer.request("shutdown");
   const rejected = peer.request("service.invoke", { service: "wait.service", method: "call", caller: "test" });
   const rejection = await rejected;
   assert(rejection.error?.message === "runtime is shutting down", "shutdown admitted a new service call");
+  assert(lifetime.aborted, "shutdown waited for activation before cancelling its background work");
+  await serviceStarted.promise;
   serviceRelease.resolve();
   await Promise.all([initialize, activate, service, shutdown]);
   assert(events.join(",") === "initialized,activated,service started,service completed,shutdown", `lifecycle ordering changed: ${events}`);

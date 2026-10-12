@@ -42,6 +42,9 @@ type ProcessConfig struct {
 	// generation's service registry. When nil, service.call requests are
 	// rejected as unavailable.
 	ServiceRouter ServiceRouter
+	// OnClose releases generation-owned resources when this runtime exits or
+	// fails to start. It is invoked once, including on unexpected transport EOF.
+	OnClose func()
 	// PrepareOnly leaves a lifecycle-aware runtime initialized but inactive.
 	// The owning generation activates it after its durable commit succeeds.
 	PrepareOnly bool
@@ -102,6 +105,15 @@ type ProcessClient struct {
 }
 
 func Start(ctx context.Context, config ProcessConfig) (*ProcessClient, error) {
+	if config.OnClose != nil {
+		config.OnClose = sync.OnceFunc(config.OnClose)
+	}
+	started := false
+	defer func() {
+		if !started && config.OnClose != nil {
+			config.OnClose()
+		}
+	}()
 	config.ID = strings.TrimSpace(config.ID)
 	config.Command = strings.TrimSpace(config.Command)
 	if config.ID == "" || config.Command == "" {
@@ -201,6 +213,7 @@ func Start(ctx context.Context, config ProcessConfig) (*ProcessClient, error) {
 			return nil, fmt.Errorf("activate plugin %q: %w", config.ID, err)
 		}
 	}
+	started = true
 	return client, nil
 }
 
@@ -689,6 +702,11 @@ func (c *ProcessClient) stopProcess() error {
 		return nil
 	}
 	c.stopMu.Lock()
+	defer func() {
+		if c.config.OnClose != nil {
+			c.config.OnClose()
+		}
+	}()
 	defer c.stopMu.Unlock()
 	if c.stopped {
 		return c.stopErr

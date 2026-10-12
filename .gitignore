@@ -155,6 +155,9 @@ landing/.redesign-ref/
 # local CLI build artifact (use ~/go/bin/wuu via `make install`)
 /wuu
 
+# Local authoring packages are generated from the canonical bundled assets.
+/plugins/*/plugin.json
+
 # Machine-specific first-run helper; never commit local credentials.
 scripts/reset-first-run.sh
 

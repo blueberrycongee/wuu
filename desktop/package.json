@@ -114,8 +114,6 @@
         "filter": [
           "wuu-core",
           "wuu-core.exe",
-          "wuu-*-plugin",
-          "wuu-*-plugin.exe",
           "wuu-cua-mac",
           "wuu-cua-mac-pip"
         ]

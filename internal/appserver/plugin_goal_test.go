@@ -3,21 +3,48 @@ package appserver
 import (
 	"context"
 	"encoding/json"
-	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
-	pluginapi "github.com/blueberrycongee/wuu/packages/plugin-go"
-	"github.com/blueberrycongee/wuu/plugins/goal"
 )
+
+// Keep the existing app-server behavioral tests connected to the shipped
+// TypeScript executable, including the same JSONL service boundary as production.
+func startBundledPluginTestProcess(t *testing.T, id string, router pluginhost.ServiceRouter) *pluginhost.ProcessClient {
+	t.Helper()
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Fatal("bundled TypeScript plugins require Node.js: ", err)
+	}
+	root, err := filepath.Abs(filepath.Join("..", "plugin", "bundled", id))
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := filepath.Join(root, "runtime.mjs")
+	if _, err := os.Stat(entry); err != nil {
+		t.Fatal("run node scripts/build-bundled-plugins.mjs before testing: ", err)
+	}
+	client, err := pluginhost.Start(context.Background(), pluginhost.ProcessConfig{
+		ID: id, Command: node, Args: []string{entry}, PluginRoot: root,
+		ProjectRoot: t.TempDir(), WuuHome: t.TempDir(), WorkspaceStateDir: t.TempDir(),
+		ServiceRouter: router, PrepareOnly: true, Timeout: 5 * time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = client.Close(context.Background()) })
+	return client
+}
 
 // Exercise the extension's public messages against the real session router and
 // settled-turn broadcast; storage writes signal completion without polling.
 type goalBridge struct {
-	handler pluginapi.Handler
 	server  *Server
 	mu      sync.Mutex
 	value   *string
@@ -25,105 +52,83 @@ type goalBridge struct {
 	once    sync.Once
 }
 
-func (b *goalBridge) ID() string { return "goal" }
-func (b *goalBridge) Status() pluginhost.Status {
-	return pluginhost.Status{ID: b.ID(), State: pluginhost.StateActive}
+type goalSnapshot struct {
+	Status     string `json:"status"`
+	TokensUsed int64  `json:"tokens_used"`
 }
-func (b *goalBridge) Close(ctx context.Context) error { return b.handler.Shutdown(ctx) }
-func (b *goalBridge) ProtocolVersion() int            { return pluginhost.CapabilityProtocolVersion }
-func (b *goalBridge) Capabilities() []pluginhost.CapabilityDescriptor {
-	raw, _ := json.Marshal(b.handler.Definition.Capabilities)
-	var result []pluginhost.CapabilityDescriptor
-	_ = json.Unmarshal(raw, &result)
-	return result
-}
-func (b *goalBridge) InvokeCapability(ctx context.Context, call pluginhost.CapabilityInvokeParams) (pluginhost.CapabilityInvokeResult, error) {
-	output, err := b.handler.InvokeCapability(ctx, b, pluginapi.CapabilityCall{Capability: call.Capability, Input: call.Input, Output: call.Output})
-	return pluginhost.CapabilityInvokeResult{Output: output}, err
-}
-func (b *goalBridge) InitializeParams() pluginapi.InitializeParams {
-	return pluginapi.InitializeParams{}
-}
-func (b *goalBridge) CallHost(ctx context.Context, _ string, input, out any) error {
-	raw, _ := json.Marshal(input)
-	var call struct {
-		Service string
-		Params  json.RawMessage
-	}
-	_ = json.Unmarshal(raw, &call)
+
+func (b *goalBridge) RouteServiceCall(ctx context.Context, id string, call pluginhost.ServiceCallParams) (json.RawMessage, *pluginhost.HostServiceError) {
 	var result any
 	var err error
 	switch call.Service {
-	case pluginapi.HostServiceStorageGet:
+	case string(pluginhost.HostServiceStorageGet):
 		b.mu.Lock()
-		result = pluginapi.StorageGetResult{Value: b.value}
+		result = pluginhost.StorageGetResult{Value: b.value}
 		b.mu.Unlock()
-	case pluginapi.HostServiceStorageSet:
-		var p pluginapi.StorageSetParams
+	case string(pluginhost.HostServiceStorageSet):
+		var p pluginhost.StorageSetParams
 		_ = json.Unmarshal(call.Params, &p)
 		b.mu.Lock()
 		b.value = &p.Value
 		b.mu.Unlock()
 		result = struct{}{}
-		var state map[string]goal.Goal
+		var state map[string]goalSnapshot
 		_ = json.Unmarshal([]byte(p.Value), &state)
 		for _, g := range state {
 			if g.Status == "complete" && g.TokensUsed == 20 {
 				b.once.Do(func() { close(b.settled) })
 			}
 		}
-	case pluginapi.HostServiceSessionSend:
+	case string(pluginhost.HostServiceSessionSend):
 		var p pluginhost.SessionSendParams
 		_ = json.Unmarshal(call.Params, &p)
-		result, err = b.server.sendPluginSession(ctx, b.ID(), p)
-	case pluginapi.HostServiceSessionInspect:
+		result, err = b.server.sendPluginSession(ctx, id, p)
+	case string(pluginhost.HostServiceSessionInspect):
 		var p pluginhost.SessionInspectParams
 		_ = json.Unmarshal(call.Params, &p)
-		result, err = b.server.inspectPluginSession(ctx, b.ID(), p)
-	case pluginapi.HostServiceSessionCancel:
+		result, err = b.server.inspectPluginSession(ctx, id, p)
+	case string(pluginhost.HostServiceSessionCancel):
 		var p pluginhost.SessionCancelParams
 		_ = json.Unmarshal(call.Params, &p)
-		result, err = b.server.cancelPluginSession(ctx, b.ID(), p)
+		result, err = b.server.cancelPluginSession(ctx, id, p)
 	default:
-		return fmt.Errorf("unexpected service %s", call.Service)
+		return nil, &pluginhost.HostServiceError{Code: "service_not_found", Message: "unexpected service " + call.Service}
 	}
 	if err != nil {
-		return err
+		return nil, &pluginhost.HostServiceError{Code: "host_error", Message: err.Error()}
 	}
-	raw, err = json.Marshal(result)
+	raw, err := json.Marshal(result)
 	if err != nil {
-		return err
+		return nil, &pluginhost.HostServiceError{Code: "host_error", Message: err.Error()}
 	}
-	return json.Unmarshal(raw, out)
+	return raw, nil
 }
 
 func TestGoalExtensionContinuesUserSessionThroughRealTurnLifecycle(t *testing.T) {
 	response := providersResponse("working")
 	response.Usage = &providers.TokenUsage{InputTokens: 5, OutputTokens: 5}
-	bridge := &goalBridge{handler: goal.Handler(), settled: make(chan struct{})}
+	bridge := &goalBridge{settled: make(chan struct{})}
+	client := startBundledPluginTestProcess(t, "goal", bridge)
 	var threadID string
 	rt := newTestRuntime(t, &fakeClient{response: response, onChat: func(n int, _ providers.ChatRequest) {
 		if n == 2 {
-			_, err := bridge.handler.ExecuteTool(context.Background(), bridge, pluginapi.ToolCall{ToolID: "update_goal", SessionID: threadID, Arguments: json.RawMessage(`{"status":"complete"}`)})
+			_, err := client.ExecuteTool(context.Background(), pluginhost.ToolExecuteParams{ToolID: "update_goal", ToolExecuteInput: pluginhost.ToolExecuteInput{SessionID: threadID, Arguments: json.RawMessage(`{"status":"complete"}`)}})
 			if err != nil {
 				t.Errorf("complete goal: %v", err)
 			}
 		}
 	}})
-	for _, capability := range bridge.Capabilities() {
+	for _, capability := range client.Capabilities() {
 		if err := pluginhost.ValidateCapabilityDescriptor(capability); err != nil {
 			t.Fatal(err)
 		}
 	}
-	rt.PluginHost = pluginhost.New(bridge)
+	rt.PluginHost = pluginhost.New(client)
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	bridge.server = srv
 	t.Cleanup(srv.Close)
-	if err := bridge.handler.Initialize(context.Background(), bridge, pluginapi.InitializeParams{}); err != nil {
-		t.Fatal(err)
-	}
-	if err := bridge.handler.Activate(context.Background()); err != nil {
+	if err := client.Activate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if err := srv.handleLine(context.Background(), []byte(`{"id":"goal-thread","method":"thread/start"}`)); err != nil {
@@ -131,7 +136,7 @@ func TestGoalExtensionContinuesUserSessionThroughRealTurnLifecycle(t *testing.T)
 	}
 	threadID = remarshal[ThreadStartResult](t, responseByID(t, parseOutput(t, out.String()), "goal-thread")["result"]).Thread.ID
 	input, _ := json.Marshal(map[string]any{"method": "create_goal", "input": map[string]any{"thread_id": threadID, "objective": "Finish the work"}})
-	if _, err := bridge.handler.InvokeCapability(context.Background(), bridge, pluginapi.CapabilityCall{Capability: "plugin.client.request", Input: input}); err != nil {
+	if _, err := client.InvokeCapability(context.Background(), pluginhost.CapabilityInvokeParams{Capability: "plugin.client.request", Input: input}); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -139,12 +144,12 @@ func TestGoalExtensionContinuesUserSessionThroughRealTurnLifecycle(t *testing.T)
 	case <-time.After(5 * time.Second):
 		t.Fatalf("goal did not settle after completion; output=%s", out.String())
 	}
-	result, err := bridge.handler.ExecuteTool(context.Background(), bridge, pluginapi.ToolCall{ToolID: "get_goal", SessionID: threadID, Arguments: json.RawMessage(`{}`)})
+	result, err := client.ExecuteTool(context.Background(), pluginhost.ToolExecuteParams{ToolID: "get_goal", ToolExecuteInput: pluginhost.ToolExecuteInput{SessionID: threadID, Arguments: json.RawMessage(`{}`)}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	var snapshot struct{ Goal goal.Goal }
-	if err := json.Unmarshal(result.StructuredContent, &snapshot); err != nil {
+	var snapshot struct{ Goal goalSnapshot }
+	if err := json.Unmarshal(result.Result.StructuredContent, &snapshot); err != nil {
 		t.Fatal(err)
 	}
 	if snapshot.Goal.TokensUsed != 20 || snapshot.Goal.Status != "complete" {

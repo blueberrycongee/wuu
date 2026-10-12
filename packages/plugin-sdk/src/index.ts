@@ -543,6 +543,7 @@ export const CAPABILITY_PROTOCOL_V2 = 2 as const;
 export const CAPABILITY_PROTOCOL_V3 = 3 as const;
 export const REQUEST_TRANSFORM_CAPABILITY = "agent.request.transform" as const;
 export const AGENT_PRE_STEP_CAPABILITY = "agent.pre_step" as const;
+export const AGENT_TURN_COMPLETED_CAPABILITY = "agent.turn.completed" as const;
 export const AGENT_TURN_LIFECYCLE_CAPABILITY = "agent.turn.lifecycle" as const;
 export const AGENT_TURN_INTERRUPTED_CAPABILITY = "agent.turn.interrupted" as const;
 export const SYSTEM_PROMPT_SECTION_CAPABILITY = "agent.system_prompt.section" as const;
@@ -593,6 +594,7 @@ export const INVOKE_TOOL_SERVICE = "execution.invoke-tool" as const;
 export const USER_QUESTION_ASK_SERVICE = "host.user-question.ask" as const;
 export const USER_QUESTION_OFFER_SERVICE = "host.user-question.offer" as const;
 export const ARTIFACT_IMPORT_SERVICE = "host.artifact.import" as const;
+export const FILE_LOCK_SERVICE = "host.file-lock" as const;
 export const SECURITY_AUTHORIZE_SERVICE = "security.authorize" as const;
 export const PROCESS_SANDBOX_SERVICE = "sandbox.process" as const;
 export const SECURITY_AUTHORIZE_METHOD = "authorize" as const;
@@ -888,6 +890,17 @@ export interface AgentTurnInterruptedInput {
   thread_id: string;
   turn_id: string;
   cause?: string;
+}
+
+/** Settled-turn observation, emitted after the host persists conversation history. */
+export interface AgentTurnCompletedInput {
+  thread_id: string;
+  turn_id: string;
+  started_at: string;
+  completed_at: string;
+  succeeded: boolean;
+  input_tokens: number;
+  output_tokens: number;
 }
 
 export interface TurnLifecycleInput {
@@ -1260,7 +1273,7 @@ export interface RuntimeLifecycleContext {
 
 export interface RuntimeExecutionContext {
   readonly executionId: string;
-  /** Aborts when this execution is cancelled or its runtime transport closes. */
+  /** Aborts when this execution ends, is cancelled, or its runtime transport closes. */
   readonly signal: AbortSignal;
 }
 
@@ -1346,6 +1359,55 @@ export async function importArtifact(
     method: KERNEL_SERVICE_METHOD,
     params: artifact,
   }) as ImportedArtifact;
+}
+
+export interface FileLockAcquireParams {
+  root: "workspace_state" | "wuu_home" | "project";
+  /** Relative lock-file path, separate from the data file it protects. */
+  path: string;
+}
+
+export interface FileLockAcquireResult {
+  lock_id: string;
+}
+
+export interface FileLockReleaseResult {
+  released: boolean;
+}
+
+/**
+ * Acquire a cross-process OS lock through the host retained from initialize/activate.
+ * An execution ID lets the kernel cancel a blocked acquisition. Wait for its
+ * reply even after cancellation so a successfully acquired lock can be released.
+ * The host releases outstanding locks when the runtime closes.
+ */
+export async function acquireFileLock(
+  host: RuntimeHost,
+  params: FileLockAcquireParams,
+  executionId?: string,
+): Promise<FileLockAcquireResult> {
+  return await host.call("host.service.call", {
+    service: FILE_LOCK_SERVICE,
+    method: "acquire",
+    execution_id: executionId,
+    params,
+  }) as FileLockAcquireResult;
+}
+
+/**
+ * Release a lock idempotently. Use the host retained from initialize/activate
+ * for cleanup after execution cancellation; an execution-scoped host is aborted.
+ */
+export async function releaseFileLock(
+  host: RuntimeHost,
+  lockId: string,
+  options?: RuntimeHostCallOptions,
+): Promise<FileLockReleaseResult> {
+  return await host.call("host.service.call", {
+    service: FILE_LOCK_SERVICE,
+    method: "release",
+    params: { lock_id: lockId },
+  }, options) as FileLockReleaseResult;
 }
 
 export interface RuntimePlugin {
@@ -1438,8 +1500,31 @@ export async function handleRuntimeRequest(
   const executionHost = scopedRuntimeHost(host, execution);
   try {
     switch (request.method) {
-      case "initialize":
-        return { id: request.id, result: { ...await plugin.initialize(request.params, host, lifecycle), lifecycle_version: 1 } };
+      case "initialize": {
+        const result = await plugin.initialize(request.params, host, lifecycle);
+        const legacy = result.required_host_services?.filter((service) => Object.hasOwn(KERNEL_SERVICE_NAMES, service.id)) ?? [];
+        if (legacy.length === 0) return { id: request.id, result: {
+          ...result,
+          protocol_version: result.required_services?.length || result.provided_services?.length
+            ? CAPABILITY_PROTOCOL_V3 : result.protocol_version,
+          lifecycle_version: 1,
+        } };
+        // The typed legacy conveniences use the registry gateway, as in the Go SDK.
+        const requirements = [...result.required_services ?? []];
+        for (const descriptor of legacy) {
+          const name = KERNEL_SERVICE_NAMES[descriptor.id as KernelHostServiceMethod];
+          const existing = requirements.findIndex((service) => service.name === name && service.major_version === 1);
+          if (existing < 0) requirements.push({ name, major_version: 1, required: descriptor.required });
+          else requirements[existing] = { ...requirements[existing]!, required: requirements[existing]!.required || descriptor.required };
+        }
+        return { id: request.id, result: {
+          ...result,
+          protocol_version: CAPABILITY_PROTOCOL_V3,
+          required_host_services: result.required_host_services?.filter((service) => !Object.hasOwn(KERNEL_SERVICE_NAMES, service.id)),
+          required_services: requirements,
+          lifecycle_version: 1,
+        } };
+      }
       case "activate":
         await plugin.activate?.(host, lifecycle);
         return { id: request.id, result: null };
@@ -1635,7 +1720,11 @@ export async function runJSONLRuntime(
       return;
     }
     const isLifecycle = parsed.method === "initialize" || parsed.method === "activate" || parsed.method === "shutdown";
-    if (parsed.method === "shutdown") shuttingDown = true;
+    if (parsed.method === "shutdown") {
+      shuttingDown = true;
+      // Background work may hold an active handler; stop it before waiting for the barrier.
+      lifetime.abort();
+    }
     const concurrent = (parsed.method === "service.invoke" && concurrentServices.has(parsed.params.service))
       || (parsed.method === "capability.invoke" && concurrentCapabilities.has(parsed.params.capability));
     const executionId = runtimeRequestExecutionId(parsed);
@@ -1652,7 +1741,6 @@ export async function runJSONLRuntime(
     const task = ready
       .then(() => {
         if (parsed.method === "initialize") host.configure(parsed.params.supported_host_services);
-        if (parsed.method === "shutdown") lifetime.abort();
         return handleRuntimeRequest(plugin, parsed, host, execution, { signal: lifetime.signal });
       })
       .then(send)
@@ -1660,6 +1748,7 @@ export async function runJSONLRuntime(
         const controllers = executions.get(executionId);
         controllers?.delete(controller);
         if (controllers?.size === 0) executions.delete(executionId);
+        controller.abort();
       });
     if (!concurrent) requests = task.catch(() => undefined);
     if (isLifecycle) lifecycle = requests;

@@ -136,6 +136,48 @@ wuu plugin dev .
 
 打开使用 Wuu 引擎的会话，让它调用问候工具向某个名字打招呼，确认工具结果包含问候语。这一步验证了契约测试未覆盖的实际行为。
 
+## 开发内置插件
+
+在源码 checkout 中先构建一次宿主，并准备内置插件工作区：
+
+```bash
+npm ci --prefix plugins
+npm --prefix plugins run build
+make build-go
+WUU_HOME="$PWD/.wuu-dev" ./bin/wuu plugin dev plugins/todo
+```
+
+保持最后一条命令运行，并让开发应用使用相同的 `WUU_HOME`。编辑
+`plugins/todo/src/index.ts` 并保存，普通包监听器就会重建并发布候选版本。
+这个经过明确授权的开发包会替换内置 `todo` 候选，但不会获得内置包的信任或
+来源标记。仅修改插件 TypeScript 无需重新构建 Go；修改 Go 宿主或公开服务
+仍需要重新构建。
+
+八个内置插件均使用此流程。源码目录中的 `plugin.json` 和 `dist/` 是生成的
+开发文件，应编辑源码或 `internal/plugin/bundled/<id>/` 下的规范 manifest。
+只构建一个运行时可运行 `node scripts/build-bundled-plugins.mjs --plugin=todo`；
+检查已提交内置运行时是否与源码一致可运行
+`npm --prefix plugins run build:check`。
+
+当前轮次保留原来的实现和文件。同一会话会在未完成工作结束后的下一次空闲边界
+采用新版本。候选被拒绝时，上一代仍然可用。应在该边界之后检查实际工具结果，
+构建成功不代表已经激活。
+
+在 checkout 中运行无需凭据的进程验收：
+
+```bash
+node scripts/bundled-plugins-e2e.mjs
+WUU_SELF_EXTENSION_BINARY="$PWD/bin/wuu" \
+  WUU_SELF_EXTENSION_EVIDENCE="$PWD/.tmp/e2e/plugin-generation" \
+  go test -count=1 -run '^TestAgentSelfExtensionProcess$' ./cmd/wuu
+```
+
+第一条命令通过 JSONL 驱动实际分发的插件可执行文件，使用一次性宿主服务，
+覆盖工具、持久状态、后台任务、取消和关闭。协议记录、运行时哈希和结果保存到
+`.tmp/e2e/bundled-plugins/`。第二条通过本地合成模型端点驱动真实 Go app-server，
+验证运行中轮次内发布、下一轮采用、保留最后可用版本，以及禁用清理，无需模型
+账号。两条命令都不检查桌面贡献的实际渲染。
+
 ## 分发插件包
 
 ```bash

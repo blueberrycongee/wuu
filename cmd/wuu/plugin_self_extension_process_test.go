@@ -36,6 +36,7 @@ func TestAgentSelfExtensionProcess(t *testing.T) {
 		t.Fatal(err)
 	}
 	source := filepath.Join(root, "self-extension.ts")
+	lifecyclePath := filepath.Join(root, "plugin-lifecycle.jsonl")
 	binary := strings.TrimSpace(os.Getenv("WUU_SELF_EXTENSION_BINARY"))
 	useManager := binary != ""
 	if !useManager {
@@ -50,17 +51,20 @@ func TestAgentSelfExtensionProcess(t *testing.T) {
 	cli := "WUU_EXEC_PROCESS_TEST=1 " + shellQuote(binary) + " -test.run=^TestExecProcessHelper$ -- plugin "
 	publish := cli + "dev --watch=false " + shellQuote(source)
 	fixture := func(version string) string {
-		return fmt.Sprintf(`import { readFileSync } from "node:fs";
+		return fmt.Sprintf(`import { appendFileSync, readFileSync } from "node:fs";
 import type { RuntimePlugin } from "@wuu/plugin-sdk";
 const version = %q;
+const lifecycle = %q;
 export default {
  initialize() { return { tools: [{ id: "read", description: "Self extension %s", input_schema: { type: "object" } }] }; },
+ shutdown() { appendFileSync(lifecycle, JSON.stringify({event:"shutdown",version}) + "\n"); },
  executeTool() {
+  appendFileSync(lifecycle, JSON.stringify({event:"tool",version}) + "\n");
   const disk = readFileSync(new URL(import.meta.url), "utf8").match(/const version = "([^"]+)"/)[1];
   return { result: { content: [{ type: "text", text: "memory:" + version + ";disk:" + disk }] } };
  }
 } satisfies RuntimePlugin;
-`, version, version)
+`, version, lifecyclePath, version)
 	}
 	encode := func(v any) string {
 		raw, err := json.Marshal(v)
@@ -255,6 +259,9 @@ export default {
 	}
 	cmd := exec.CommandContext(ctx, binary, args...)
 	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + root, "WUU_HOME=" + home}
+	if node := os.Getenv("WUU_NODE_EXECUTABLE"); node != "" {
+		cmd.Env = append(cmd.Env, "WUU_NODE_EXECUTABLE="+node)
+	}
 	if !useManager {
 		cmd.Env = append(cmd.Env, "WUU_EXEC_PROCESS_TEST=1")
 	}
@@ -404,6 +411,40 @@ export default {
 		}
 	}
 	runTurn("disabled")
+	// Disable must retire the active runtime, not merely hide its tool. The
+	// observable lifecycle journal also protects the old generation's lease:
+	// its update-turn call must finish before its shutdown is recorded.
+	journal, err := os.ReadFile(lifecyclePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lastTool := map[string]int{}
+	shutdown := map[string]int{}
+	for index, line := range strings.Split(strings.TrimSpace(string(journal)), "\n") {
+		var event struct{ Event, Version string }
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			t.Fatal(err)
+		}
+		if event.Event == "tool" {
+			lastTool[event.Version] = index + 1
+		}
+		if event.Event == "shutdown" {
+			shutdown[event.Version] = index + 1
+		}
+	}
+	for _, version := range []string{"v1", "v2"} {
+		if lastTool[version] == 0 || shutdown[version] <= lastTool[version] {
+			t.Fatalf("%s did not retire after its final tool call: %s", version, journal)
+		}
+	}
+	if dir := os.Getenv("WUU_SELF_EXTENSION_EVIDENCE"); dir != "" {
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "plugin-lifecycle.jsonl"), journal, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	request("shutdown", "shutdown", map[string]any{})
 	_ = stdin.Close()
 	if err := cmd.Wait(); err != nil {

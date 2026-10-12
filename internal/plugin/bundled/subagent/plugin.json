@@ -8,13 +8,12 @@
   "defaultEnabled": false,
   "author": { "name": "Wuu" },
   "minimumWuuVersion": "0.1.0",
-  "runtime": { "protocol": "wuu-plugin-v1", "command": "@wuu-official-helper:subagent", "timeout": 30 },
+  "runtime": { "protocol": "wuu-plugin-v1", "command": "node", "args": ["runtime.mjs"], "timeout": 30 },
   "desktop": { "entry": "desktop.js" },
   "contributes": {
     "settingsPages": [
       { "id": "subagent", "title": "Subagent", "description": "Configure model aliases used by delegated tasks", "view": "subagent.settings", "icon": "bot", "order": 30 }
     ]
   },
-  "interface": { "displayName": "Subagent", "shortDescription": "Delegate bounded work to child tasks.", "developerName": "Wuu", "category": "Productivity", "capabilities": ["Write"] },
-  "officialNativeHelper": { "id": "subagent", "environment": "WUU_SUBAGENT_PLUGIN_HELPER", "executable": "wuu-subagent-plugin" }
+  "interface": { "displayName": "Subagent", "shortDescription": "Delegate bounded work to child tasks.", "developerName": "Wuu", "category": "Productivity", "capabilities": ["Write"] }
 }

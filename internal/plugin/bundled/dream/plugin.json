@@ -8,13 +8,12 @@
   "defaultEnabled": false,
   "author": { "name": "Wuu" },
   "minimumWuuVersion": "0.1.0",
-  "runtime": { "protocol": "wuu-plugin-v1", "command": "@wuu-official-helper:dream", "timeout": 30 },
+  "runtime": { "protocol": "wuu-plugin-v1", "command": "node", "args": ["runtime.mjs"], "timeout": 30 },
   "desktop": { "entry": "desktop.js" },
   "contributes": {
     "settingsPages": [
       { "id": "dream", "title": "Dream", "description": "Configure background memory consolidation", "view": "dream.settings", "icon": "moon", "order": 31 }
     ]
   },
-  "interface": { "displayName": "Dream", "shortDescription": "Consolidate durable workspace knowledge in the background.", "developerName": "Wuu", "category": "Productivity", "capabilities": ["Write"] },
-  "officialNativeHelper": { "id": "dream", "environment": "WUU_DREAM_PLUGIN_HELPER", "executable": "wuu-dream-plugin" }
+  "interface": { "displayName": "Dream", "shortDescription": "Consolidate durable workspace knowledge in the background.", "developerName": "Wuu", "category": "Productivity", "capabilities": ["Write"] }
 }

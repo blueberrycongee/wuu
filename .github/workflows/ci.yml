@@ -61,15 +61,33 @@ jobs:
         with:
           node-version-file: .node-version
 
+      - name: Install plugin build dependencies
+        run: npm ci --prefix plugins
+
       - name: Check
-        run: make check-go
+        run: make check-go check-plugins
 
       - name: Test
-        run: make test-go
+        run: make test-go test-plugins
 
       - name: Build
-        if: github.event_name == 'push'
         run: make build-go
+
+      - name: Verify live plugin generation replacement
+        env:
+          WUU_SELF_EXTENSION_EVIDENCE: ${{ runner.temp }}/wuu-plugin-generation-evidence
+        run: WUU_SELF_EXTENSION_BINARY="$PWD/bin/wuu" go test -count=1 -run '^TestAgentSelfExtensionProcess$' ./cmd/wuu
+
+      - name: Upload plugin acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: plugin-runtime-evidence
+          path: |
+            .tmp/e2e/bundled-plugins/
+            ${{ runner.temp }}/wuu-plugin-generation-evidence/
+          if-no-files-found: ignore
+          retention-days: 14
 
   project-agent-check:
     name: Project Agent check
@@ -589,6 +607,7 @@ jobs:
             clients/mobile/package-lock.json
             clients/mobile-web/package-lock.json
             packages/plugin-sdk/package-lock.json
+            plugins/package-lock.json
             packages/protocol/package-lock.json
 
       - name: Install dependencies
@@ -601,6 +620,7 @@ jobs:
             clients/mobile \
             clients/mobile-web \
             packages/plugin-sdk \
+            plugins \
             packages/protocol; do
             npm ci --prefix "$workspace" &
             pids+=("$!")
@@ -612,7 +632,7 @@ jobs:
           exit "$status"
 
       - name: Check
-        run: make check-clients
+        run: make check-clients check-plugins
 
       - name: Test
         run: make test-clients
@@ -662,6 +682,10 @@ jobs:
           npm ci --prefix clients/core
           npm ci --prefix clients/mobile-web
 
+      - name: Install plugin build dependencies
+        if: github.event_name == 'push'
+        run: npm ci --prefix plugins
+
       - name: Package macOS app
         # Keep packaging on main; PRs still exercise the native helper above.
         if: github.event_name == 'push'
@@ -708,6 +732,10 @@ jobs:
         run: |
           npm ci --prefix clients/core
           npm ci --prefix clients/mobile-web
+
+      - name: Install plugin build dependencies
+        if: github.event_name == 'push'
+        run: npm ci --prefix plugins
 
       - name: Package unpacked Windows app
         if: github.event_name == 'push'
