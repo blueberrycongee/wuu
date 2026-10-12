@@ -41,6 +41,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- MCP OAuth credentials and pending sign-ins remain available across plugin
+  reloads, including startup and adding the first MCP server to a running session.
+
 - Bind saved MCP OAuth credentials to the resource used for login, require
   reauthentication after resource changes, and prevent credentials from reaching
   cross-origin redirects or legacy SSE message endpoints.

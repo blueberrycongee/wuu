@@ -90,6 +90,21 @@ requests, binary hashes and pass/fail receipts. Existing manager tests additiona
 cover concurrent operations that the serial app-server RPC dispatcher cannot
 issue together, plus permanent revocation and retired-client callbacks.
 
+### MCP authentication across reloads
+
+Run `go run ./scripts/mcp-auth-reload-e2e` to exercise the shared runtime and
+app-server protocol against a loopback OAuth/MCP service. It saves synthetic
+credentials in a disposable file store, then covers authenticated startup,
+manager replacement, a login started before replacement, a retained foreground
+tool call, disable/re-enable, and adding the first MCP server after empty startup.
+It checks that managers and transport sessions remain generation-owned and that
+RPC responses do not expose credentials. No model or external engine is invoked.
+
+The fixture uses the runtime's explicit OAuth-service injection; it does not test
+macOS Keychain or the desktop UI. Receipts, connection identities and RPC output
+are saved under `.tmp/e2e/mcp-auth-reload/`; set `WUU_MCP_AUTH_E2E_OUTPUT` to use
+another evidence directory.
+
 ### Live resize layout guard
 
 After a desktop production build, run `npm --prefix desktop run test:e2e:resize-live-layout`
