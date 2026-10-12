@@ -233,3 +233,10 @@ func (e *sessionToolPolicyExecutor) DiscoveredTools(call providers.ToolCall) []p
 	}
 	return out
 }
+
+func (e *sessionToolPolicyExecutor) PrepareModelStep(ctx context.Context, history []providers.ChatMessage) ([]providers.ChatMessage, error) {
+	if preparer, ok := e.base.(agent.ModelStepPreparer); ok {
+		return preparer.PrepareModelStep(ctx, history)
+	}
+	return nil, nil
+}

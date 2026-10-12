@@ -64,6 +64,13 @@ func (t *LoadSkillTool) Execute(ctx context.Context, argsJSON string) (string, e
 		return "", fmt.Errorf("skill %q not found. available: %s", args.Name, strings.Join(t.env.SkillNames(), ", "))
 	}
 
+	skill, err := skills.ReloadLocal(ctx, skill)
+	if err != nil {
+		return "", err
+	}
+	if skill.DisableModelInvoke || len(FilterSkillsForSurface([]skills.Skill{skill}, t.env.skillSurfaceSnapshot())) == 0 {
+		return "", fmt.Errorf("skill %q is no longer available to the model", args.Name)
+	}
 	body := t.env.ProcessSkillBody(ctx, skill, args.Arguments)
 	output := SkillContentBlock(skill, body)
 

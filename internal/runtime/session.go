@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -668,6 +667,7 @@ func NewSession(opts Options) (*Session, error) {
 				wkit.SetProcessManager(processMgr)
 				_, workerSkills, workerGeneration := runtimeSession.skillSnapshotForRoot(workerRoot, nil)
 				wkit.SetSkillsWithAvailability(workerSkills, workerGeneration.skillAvailable)
+				runtimeSession.bindLocalSkillRefresh(wkit, workerRoot, workerGeneration)
 				wkit.SetAgentControl(agentControl)
 				wkit.ConfigureSurfaceForProviderModel(workerToolProviderName, workerToolModeModel, false)
 				wkit.SetToolSearchEnabled(workerToolSearchEnabled)
@@ -905,6 +905,7 @@ func NewSession(opts Options) (*Session, error) {
 	if toolkit != nil {
 		toolkit.SetPluginManager(runtimeSession.pluginManager(runtimeSession.pluginGeneration, runPluginManagementCommand))
 		toolkit.SetSkillsWithAvailability(discoveredSkills, runtimeSession.pluginGeneration.skillAvailable)
+		runtimeSession.bindLocalSkillRefresh(toolkit, rootDir, runtimeSession.pluginGeneration)
 	}
 	snapshotsOwned = false
 	// The legacy/root control remains dormant until SetSessionID binds its real
@@ -1330,6 +1331,7 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 		kit.SetPluginManager(s.pluginManager(generation, runPluginManagementCommand))
 		kit.SetProcessManager(threadProcessManager)
 		kit.SetSkillsWithAvailability(threadSkills, generation.skillAvailable)
+		s.bindLocalSkillRefresh(kit, threadRoot, generation)
 		ConfigureToolkitPermissions(kit, s.Permissions)
 		kit.SetApproveForMe(false)
 		kit.SetSessionID(id)
@@ -1442,6 +1444,7 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 					workerKit.SetProcessManager(threadProcessManager)
 					_, workerSkills := s.guidanceForRoot(workerRoot, generation)
 					workerKit.SetSkills(workerSkills)
+					s.bindLocalSkillRefresh(workerKit, workerRoot, generation)
 					workerKit.SetAgentControl(control)
 					workerKit.SetSessionID(id)
 					workerKit.SetSessionDir(artifactDir)
@@ -2333,38 +2336,14 @@ func discoverSkills(rootDir, homeDir, wuuHome string, plugins []pluginpkg.Plugin
 }
 
 func discoverSkillsWithPlugins(rootDir, homeDir, wuuHome string, plugins pluginSkillSnapshot, cfg config.SkillsConfig) []skills.Skill {
-	if !cfg.IsEnabled() {
+	discovered, err := localSkillLoader(rootDir, homeDir, wuuHome, plugins, cfg)(context.Background(), true)
+	if err != nil {
+		// No partial precedence result is published. Execution and explicit
+		// selection retry through the context-aware loader and surface errors.
+		providers.DebugLogf("discover local skills: %v", err)
 		return nil
 	}
-	var userDirs []skills.SourceDir
-	if home := skillUserHome(homeDir); home != "" {
-		userDirs = append(userDirs,
-			skills.SourceDir{Path: filepath.Join(home, ".codex", "skills"), Source: "user"},
-			skills.SourceDir{Path: filepath.Join(home, ".claude", "skills"), Source: "user"},
-			skills.SourceDir{Path: filepath.Join(home, ".agents", "skills"), Source: "user"},
-			skills.SourceDir{Path: filepath.Join(home, ".config", "opencode", "skills"), Source: "user"},
-		)
-	}
-	if strings.TrimSpace(wuuHome) != "" {
-		userDirs = append(userDirs, skills.SourceDir{Path: filepath.Join(wuuHome, "skills"), Source: "user"})
-	}
-	// Keep plugin contents pinned while resolving ordinary disk skills at this root.
-	byName := make(map[string]skills.Skill)
-	for _, layer := range [][]skills.Skill{plugins.user, skills.DiscoverSourceDirs(nil, userDirs), plugins.project, skills.DiscoverSourceDirs(skillProjectDirs(rootDir), nil)} {
-		for _, skill := range layer {
-			byName[skill.Name] = skill
-		}
-	}
-	discovered := make([]skills.Skill, 0, len(byName))
-	for _, skill := range byName {
-		discovered = append(discovered, skill)
-	}
-	sort.Slice(discovered, func(i, j int) bool { return discovered[i].Name < discovered[j].Name })
-	// Claude Code-style command templates (.claude/commands/*.md) are read as
-	// pure content and adapted into lightweight skill entries. Native skills
-	// take precedence over commands with the same name.
-	commands := skills.DiscoverCommandsSourceDirs(commandProjectDirs(rootDir), commandUserDirs(wuuHome))
-	return skills.MergeWithBundled(skills.MergeCommands(discovered, commands), wuuHome)
+	return discovered
 }
 
 // commandProjectDirs returns the project-chain command directories, mirroring

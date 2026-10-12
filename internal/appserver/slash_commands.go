@@ -197,7 +197,7 @@ func (s *Server) renderExplicitSkillPrompt(threadID, prompt string) (string, boo
 		identity.Project.Root != sessionWorkspacePath(s.rt.RootDir) || !validProjectSkillPath(identity.Project.Path)) {
 		return "", true, fmt.Errorf("invalid project skill selection")
 	}
-	catalog, root, err := s.skillCatalog(threadID)
+	catalog, root, err := s.currentSkillCatalog(context.Background(), threadID, true)
 	if err != nil {
 		return "", true, err
 	}

@@ -793,13 +793,7 @@ func (e *Env) VisibleSkills() []skills.Skill {
 	if e == nil {
 		return nil
 	}
-	var surface capability.Surface
-	if e.skillSurface != nil {
-		surface = e.skillSurface()
-	} else {
-		surface = e.ActiveSurface
-	}
-	available := FilterSkillsForSurface(e.AvailableSkills(), surface)
+	available := FilterSkillsForSurface(e.AvailableSkills(), e.skillSurfaceSnapshot())
 	visible := make([]skills.Skill, 0, len(available))
 	for _, skill := range available {
 		if !skill.DisableModelInvoke {
@@ -807,6 +801,13 @@ func (e *Env) VisibleSkills() []skills.Skill {
 		}
 	}
 	return visible
+}
+
+func (e *Env) skillSurfaceSnapshot() capability.Surface {
+	if e.skillSurface != nil {
+		return e.skillSurface()
+	}
+	return e.ActiveSurface
 }
 
 // ProcessSkillBody processes a skill body with variable substitution. Inline

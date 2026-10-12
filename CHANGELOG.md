@@ -41,6 +41,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Refresh local skill instructions and metadata without restarting the runtime.
+  Model rounds adopt changed catalogs while loaded history and plugin package
+  generations remain pinned; stale or invalid file identities fail closed.
+
 - Honor manual-only skill invocation settings when loading skills by name, and
   recognize reachable plugin and MCP tools in skill requirements without
   enabling unavailable tools or changing permissions.

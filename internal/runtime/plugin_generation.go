@@ -703,6 +703,7 @@ func (s *Session) applyPluginGeneration(generation *PluginGeneration) {
 	if s.Toolkit != nil {
 		s.Toolkit.SetPluginManager(s.pluginManager(generation, runPluginManagementCommand))
 		s.Toolkit.SetSkillsWithAvailability(s.Skills, generation.skillAvailable)
+		s.bindLocalSkillRefresh(s.Toolkit, s.RootDir, generation)
 		s.Toolkit.SetMCPActivityBindings(generation.mcpBinding)
 		s.Toolkit.SetMCPManager(generation.mcp)
 		configureToolkitSecurityExtensions(s.Toolkit, generation.host.ServiceRegistry())

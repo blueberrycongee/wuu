@@ -1088,7 +1088,7 @@ func (s *Server) handleLine(ctx context.Context, raw []byte) error {
 	case MethodConfigProviderRemove:
 		return s.handleConfigProviderRemove(req)
 	case MethodSkillList:
-		return s.handleSkillList(req)
+		return s.handleSkillList(ctx, req)
 	case MethodThreadStart:
 		return s.handleThreadStart(req)
 	case MethodThreadResume:

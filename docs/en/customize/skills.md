@@ -14,7 +14,13 @@ Selecting a skill from the menu or catalog inserts a `/skill` draft with an expl
 
 The Wuu engine gives the model a catalog of skill names and descriptions. When a task matches, it can use `load_skill` to read the full workflow. A missing description keeps a skill out of that automatic-selection catalog. `disable-model-invocation: true` also prevents the model from loading it by name, while `user-invocable` independently controls direct user invocation.
 
-Availability depends on the workspace, discovered sources, and current tool surface. A skill that requires unavailable tools may be filtered out. Requirements can name reachable built-in, plugin, or MCP tools by their exact published names, including deferred and PTC tools. They never enable a disabled tool or grant permissions. Refresh the catalog after installing or editing one, and inspect the source path if the wrong version appears.
+Availability depends on the workspace, discovered sources, and current tool surface. A skill that requires unavailable tools may be filtered out. Requirements can name reachable built-in, plugin, or MCP tools by their exact published names, including deferred and PTC tools. They never enable a disabled tool or grant permissions. Inspect the source path if the wrong version appears.
+
+## Editing a local skill
+
+Project and user skill edits do not require a runtime restart. Browsing rereads the local catalog with a short cache; model rounds adopt changes at the next safe step boundary, adding a catalog update only when its visible entries change. Loading a local skill reads the current instructions from that admitted file and rechecks invocation and tool requirements. A missing, renamed, retargeted, or malformed file cannot silently supply stale instructions or switch that load to another same-name source.
+
+Instructions already loaded into history, including explicit selections submitted to a queue, keep their original contents. Plugin skills remain part of their pinned package generation and use the extension update lifecycle. Local discovery preserves the documented source precedence when a later step adopts a new catalog.
 
 ## Trust the workflow before using it
 
