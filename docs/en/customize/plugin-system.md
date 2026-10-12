@@ -64,6 +64,10 @@ Capabilities compose at defined points, such as adding prompt context or observi
 
 The desktop loads an eligible package's ESM entry and calls `activate(api)`. Registrations belong to that package generation. The host validates declared contributions and view targets before publishing it, then disposes the prior desktop generation. A failed candidate registration is disposed without replacing the existing desktop generation.
 
+Each candidate has a 30-second asynchronous staging budget covering the desktop module request, ESM import, and `activate(api)`. Timeout, unload, or a newer inventory sync settles pending activation without waiting for the plugin to finish. Its partial registrations are cleaned up and late registrations are rejected. A timed-out replacement leaves its last working generation active.
+
+`api.signal` is the generation's lifetime signal. Pass it to cancellable work and register resource cleanup before waiting. It is aborted on failed or superseded staging and on disposal of a published generation; successful activation clears the startup deadline. This is cooperative cancellation: it cannot interrupt synchronous JavaScript, stop an already-running import, or undo external side effects.
+
 Required providers must finish desktop activation successfully before consumers start. Independent branches may initialize concurrently. A provider replacement also reloads unchanged consumers; removing or disabling a required provider blocks them. Cleanup disposes consumers before providers. A failed replacement can preserve that package's previous desktop generation, but consumers do not activate against the unsuccessfully staged required replacement. Optional startup failures do not block consumers.
 
 This desktop transaction is separate from the Go runtime transaction. Do not assume one atomic rollback spans package installation, runtime activation, and every renderer window. Inspect the runtime and desktop diagnostics for the surface that failed.

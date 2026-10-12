@@ -41,6 +41,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Bound asynchronous desktop plugin startup, cancel superseded staging promptly,
+  and let optional consumers proceed after a provider times out while retaining
+  the last working replacement generation.
+
 - Keep the sidebar's recent-history range stable while a first message creates
   its conversation, avoiding a temporary extra row and subsequent layout jump,
   including while saving a draft's custom name.
