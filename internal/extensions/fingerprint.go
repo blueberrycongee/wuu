@@ -61,12 +61,13 @@ type RuntimeSpec struct {
 // MCPServerSpec is a deterministic, secret-free fingerprint input for an MCP
 // server declaration.
 type MCPServerSpec struct {
-	Command     string   `json:"command,omitempty"`
-	Args        []string `json:"args,omitempty"`
-	URL         string   `json:"url,omitempty"`
-	Transport   string   `json:"transport,omitempty"`
-	EnvNames    []string `json:"env_names,omitempty"`
-	HeaderNames []string `json:"header_names,omitempty"`
+	ToolTimeoutMS int64    `json:"tool_timeout_ms,omitempty"`
+	Command       string   `json:"command,omitempty"`
+	Args          []string `json:"args,omitempty"`
+	URL           string   `json:"url,omitempty"`
+	Transport     string   `json:"transport,omitempty"`
+	EnvNames      []string `json:"env_names,omitempty"`
+	HeaderNames   []string `json:"header_names,omitempty"`
 }
 
 // HookEntry is a deterministic fingerprint input for a single hook entry.
@@ -223,12 +224,13 @@ func normalizePackageSpec(spec PackageSpec) PackageSpec {
 		for _, name := range names {
 			server := spec.MCPServers[name]
 			normalized.MCPServers[name] = MCPServerSpec{
-				Command:     strings.TrimSpace(server.Command),
-				Args:        append([]string(nil), server.Args...),
-				URL:         strings.TrimSpace(server.URL),
-				Transport:   strings.TrimSpace(server.Transport),
-				EnvNames:    normalizedStrings(server.EnvNames),
-				HeaderNames: normalizedStrings(server.HeaderNames),
+				ToolTimeoutMS: server.ToolTimeoutMS,
+				Command:       strings.TrimSpace(server.Command),
+				Args:          append([]string(nil), server.Args...),
+				URL:           strings.TrimSpace(server.URL),
+				Transport:     strings.TrimSpace(server.Transport),
+				EnvNames:      normalizedStrings(server.EnvNames),
+				HeaderNames:   normalizedStrings(server.HeaderNames),
 			}
 		}
 	}

@@ -51,7 +51,7 @@ func TestLoadManifestNormalizesSupportedFormats(t *testing.T) {
 			if !reflect.DeepEqual(got.Skills, tt.wantSkills) {
 				t.Fatalf("Skills = %#v, want %#v", got.Skills, tt.wantSkills)
 			}
-			if got.MCPServers["docs"].Command != tt.wantMCP {
+			if got.MCPServers["docs"].Command != tt.wantMCP || got.MCPServers["docs"].ToolTimeoutMS != 45000 {
 				t.Fatalf("MCPServers = %+v", got.MCPServers)
 			}
 			if got.ManifestPath != tt.path {

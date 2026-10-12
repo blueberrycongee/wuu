@@ -20,6 +20,7 @@ type SSETransport struct {
 	endpoint        string
 	messageEndpoint string
 	client          *http.Client
+	toolClient      *http.Client
 	headers         map[string]string
 	authProvider    TokenProvider
 	reader          *bufio.Reader
@@ -84,6 +85,7 @@ func newSSETransportWithAuth(ctx context.Context, endpoint string, headers map[s
 	transport := &SSETransport{
 		endpoint:     endpoint,
 		client:       client,
+		toolClient:   toolHTTPClient(client),
 		headers:      cloneStringMap(headers),
 		authProvider: authProvider,
 		reader:       bufio.NewReader(resp.Body),
@@ -155,7 +157,11 @@ func (t *SSETransport) Send(ctx context.Context, req Request) error {
 		if err := applyToken(hreq, t.authProvider, ctx, attempt == 1); err != nil {
 			return err
 		}
-		resp, err := t.client.Do(hreq)
+		client := t.client
+		if req.Method == "tools/call" {
+			client = t.toolClient
+		}
+		resp, err := client.Do(hreq)
 		if err != nil {
 			if contextErr := ctx.Err(); contextErr != nil {
 				return contextErr
@@ -239,6 +245,8 @@ func resolveSSEEndpoint(streamURL, announced string) (string, error) {
 
 func (t *SSETransport) Close() error {
 	t.closeOnce.Do(func() {
+		defer t.client.CloseIdleConnections()
+		defer t.toolClient.CloseIdleConnections()
 		if t.cancel != nil {
 			t.cancel()
 		}

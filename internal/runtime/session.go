@@ -2528,6 +2528,7 @@ func startMCPManager(cfg config.Config, plugins []pluginpkg.Plugin, requiredPlug
 			OAuth:         mcpOAuthConfig(mcpCfg.OAuth),
 			Enabled:       mcpCfg.Enabled,
 			ToolOverrides: mcpToolOverrides(mcpCfg.ToolOverrides),
+			ToolTimeoutMS: mcpCfg.ToolTimeoutMS,
 		}
 	}
 	mcpMgr.Configure(serverConfigs)
@@ -2621,6 +2622,9 @@ func mcpServersFromConfigAndPlugins(cfg config.Config, plugins []pluginpkg.Plugi
 			}
 			if server.Enabled != nil {
 				pluginServer.Enabled = server.Enabled
+			}
+			if server.ToolTimeoutMS != 0 {
+				pluginServer.ToolTimeoutMS = server.ToolTimeoutMS
 			}
 			out[name] = pluginServer
 			continue

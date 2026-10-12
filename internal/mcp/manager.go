@@ -160,6 +160,13 @@ func (m *Manager) add(ctx context.Context, cfg ServerConfig, mode connectionMode
 		}
 		return err
 	}
+	if _, err := cfg.ToolTimeoutMS.Duration(); err != nil {
+		err = fmt.Errorf("mcp server %q: %w", cfg.Name, err)
+		if statusErr := m.recordConnectionStatus(generation, ServerStatus{Name: cfg.Name, State: MCPServerStateFailed, AuthStatus: authStatusForConfig(cfg), Error: err.Error()}, false); statusErr != nil {
+			return statusErr
+		}
+		return err
+	}
 	if !cfg.IsEnabled() {
 		return nil
 	}
@@ -459,7 +466,9 @@ func (m *Manager) RemoveOAuth(ctx context.Context, name string) error {
 	if err := oauth.Remove(ctx, cfg.Name); err != nil {
 		return err
 	}
-	m.closeClient(cfg.Name)
+	if err := m.Disconnect(cfg.Name); err != nil {
+		return err
+	}
 	m.recordStatus(ServerStatus{Name: cfg.Name, State: MCPServerStateAuthRequired, AuthStatus: MCPAuthStatusNotLoggedIn})
 	return nil
 }
@@ -647,7 +656,7 @@ func (m *Manager) NativeTools() []NativeTool {
 			out = append(out, NativeTool{
 				Definition: definition,
 				Client:     client,
-				Timeout:    30 * time.Second,
+				Timeout:    client.ToolTimeout(),
 				Provenance: extensions.Provenance{Kind: extensions.KindMCP, Source: name, Scope: "user"},
 			})
 		}
@@ -825,21 +834,6 @@ func (m *Manager) recordConnectionStatus(generation uint64, status ServerStatus,
 		_ = client.Close()
 	}
 	return nil
-}
-
-func (m *Manager) closeClient(name string) {
-	m.mu.Lock()
-	c := m.clients[name]
-	if c != nil {
-		delete(m.clients, name)
-		m.generation++
-		m.operations.Add(1)
-	}
-	m.mu.Unlock()
-	if c != nil {
-		defer m.operations.Done()
-		_ = c.Close()
-	}
 }
 
 func cloneServerConfig(cfg ServerConfig) ServerConfig {

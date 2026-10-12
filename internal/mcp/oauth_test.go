@@ -485,12 +485,12 @@ func TestOAuthPKCEDynamicRegistrationFinishRefreshAndRemove(t *testing.T) {
 	case <-concurrentCtx.Done():
 		t.Fatal("replacement login did not exchange its code during the refresh")
 	}
-	refreshRelease <- struct{}{}
-	if err := <-refreshDone; err != nil {
-		t.Fatalf("in-flight refresh before replacement login: %v", err)
-	}
 	if err := <-finishDone; err != nil {
 		t.Fatalf("replacement login during refresh: %v", err)
+	}
+	refreshRelease <- struct{}{}
+	if err := <-refreshDone; !errors.Is(err, ErrOAuthResourceMismatch) {
+		t.Fatalf("superseded refresh after replacement login: %v", err)
 	}
 	holdRefresh.Store(false)
 	if token, err := oauth.AccessToken(concurrentCtx, "docs", baseURL+"/replacement"); token != "access-authorization_code" || err != nil {
@@ -541,4 +541,12 @@ func TestOAuthPKCEDynamicRegistrationFinishRefreshAndRemove(t *testing.T) {
 		t.Fatalf("status after remove = %+v, %v", status, err)
 	}
 	t.Log("PKCE, refresh/recovery, replacement preservation after successful refresh, concurrent Finish, redirect rejection, canonical resource identity, and legacy audience migration passed")
+}
+
+func (m *OAuthManager) saveToken(ctx context.Context, serverID string, token storedOAuthToken) error {
+	data, err := json.Marshal(token)
+	if err != nil {
+		return err
+	}
+	return m.store.Set(ctx, oauthNamespace(serverID), "oauth", data)
 }

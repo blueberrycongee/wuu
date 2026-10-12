@@ -44,16 +44,23 @@ type wireEvent struct {
 }
 
 type fixture struct {
-	server      *httptest.Server
-	mu          sync.Mutex
-	nextSession int
-	wire        []wireEvent
-	held        chan string
-	release     chan struct{}
-	releaseOnce sync.Once
+	server         *httptest.Server
+	mu             sync.Mutex
+	nextSession    int
+	wire           []wireEvent
+	held           chan string
+	release        chan struct{}
+	releaseOnce    sync.Once
+	refreshStarted chan struct{}
+	refreshRelease chan struct{}
+	refreshOnce    sync.Once
+	holdCatalog    bool
+	catalogHeld    chan struct{}
+	catalogRelease chan struct{}
 }
 
-func (f *fixture) unblock() { f.releaseOnce.Do(func() { close(f.release) }) }
+func (f *fixture) unblock()        { f.releaseOnce.Do(func() { close(f.release) }) }
+func (f *fixture) releaseRefresh() { f.refreshOnce.Do(func() { close(f.refreshRelease) }) }
 func (f *fixture) serve(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	endpoint := f.server.URL
@@ -66,7 +73,17 @@ func (f *fixture) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	case "/token":
 		_ = r.ParseForm()
-		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "synthetic-" + r.Form.Get("code"), "refresh_token": "synthetic-refresh", "expires_in": 3600})
+		code := r.Form.Get("code")
+		if r.Form.Get("grant_type") == "refresh_token" {
+			close(f.refreshStarted)
+			select {
+			case <-f.refreshRelease:
+			case <-r.Context().Done():
+				return
+			}
+			code = "refreshed"
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "synthetic-" + code, "refresh_token": "synthetic-refresh", "expires_in": 3600})
 		return
 	}
 	if r.Method != http.MethodPost {
@@ -82,7 +99,8 @@ func (f *fixture) serve(w http.ResponseWriter, r *http.Request) {
 		Method string          `json:"method"`
 		Params struct {
 			Arguments struct {
-				Hold bool `json:"hold"`
+				Hold    bool `json:"hold"`
+				Refresh bool `json:"refresh"`
 			} `json:"arguments"`
 		} `json:"params"`
 	}
@@ -91,7 +109,7 @@ func (f *fixture) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	authorization := r.Header.Get("Authorization")
-	authorized := authorization == "Bearer synthetic-saved" || authorization == "Bearer synthetic-replacement"
+	authorized := authorization == "Bearer synthetic-saved" || authorization == "Bearer synthetic-replacement" || authorization == "Bearer synthetic-refreshed"
 	sessionID := r.Header.Get("Mcp-Session-Id")
 	f.mu.Lock()
 	f.wire = append(f.wire, wireEvent{request.Method, sessionID, authorized})
@@ -114,8 +132,24 @@ func (f *fixture) serve(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Mcp-Session-Id", id)
 		reply(map[string]any{"protocolVersion": "2025-06-18", "capabilities": map[string]any{"tools": map[string]any{}}, "serverInfo": map[string]any{"name": "loopback", "version": "1"}})
 	case "tools/list":
-		reply(map[string]any{"tools": []any{map[string]any{"name": "identity", "description": "Return this connection identity", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"hold": map[string]any{"type": "boolean"}}}}}})
+		f.mu.Lock()
+		hold := f.holdCatalog
+		f.holdCatalog = false
+		f.mu.Unlock()
+		if hold {
+			close(f.catalogHeld)
+			select {
+			case <-f.catalogRelease:
+			case <-r.Context().Done():
+				return
+			}
+		}
+		reply(map[string]any{"tools": []any{map[string]any{"name": "identity", "description": "Return this connection identity", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"hold": map[string]any{"type": "boolean"}, "refresh": map[string]any{"type": "boolean"}}}}}})
 	case "tools/call":
+		if request.Params.Arguments.Refresh && authorization != "Bearer synthetic-refreshed" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
 		if request.Params.Arguments.Hold {
 			select {
 			case f.held <- sessionID:
@@ -205,11 +239,12 @@ func replace(rt *runtime.Session, cfg config.Config) error {
 	return rt.ActivatePluginGeneration(candidate, nil)
 }
 func callTool(ctx context.Context, manager *mcp.Manager, args string) (string, error) {
-	tools := manager.AllTools()
-	if len(tools) != 1 {
-		return "", fmt.Errorf("expected one tool, got %d", len(tools))
+	for _, tool := range manager.NativeTools() {
+		if tool.Client.Name() == "docs" {
+			return mcp.NewMCPTool(tool.Client, tool.Definition).Execute(ctx, args)
+		}
 	}
-	return tools[0].Execute(ctx, args)
+	return "", errors.New("expected docs identity tool")
 }
 
 func run(report *receipt, output string) (err error) {
@@ -226,9 +261,10 @@ func run(report *receipt, output string) (err error) {
 	if err = os.Setenv("PATH", scratch); err != nil {
 		return err
 	}
-	f := &fixture{held: make(chan string, 1), release: make(chan struct{})}
+	f := &fixture{held: make(chan string, 1), release: make(chan struct{}), refreshStarted: make(chan struct{}), refreshRelease: make(chan struct{}), catalogHeld: make(chan struct{}), catalogRelease: make(chan struct{})}
 	f.server = httptest.NewServer(http.HandlerFunc(f.serve))
 	defer func() {
+		f.releaseRefresh()
 		f.unblock()
 		f.server.Close()
 		f.mu.Lock()
@@ -296,6 +332,9 @@ func run(report *receipt, output string) (err error) {
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+	replacementCfg := cfg.MCPServers["docs"]
+	replacementCfg.ToolTimeoutMS = 80
+	cfg.MCPServers["docs"] = replacementCfg
 	if err = replace(rt, cfg); err != nil {
 		return err
 	}
@@ -339,6 +378,58 @@ func run(report *receipt, output string) (err error) {
 	if newID == oldID {
 		return errors.New("replacement used old transport session")
 	}
+	// Both generations share authentication. A retained call may be refreshing
+	// while the replacement has a much shorter tool budget.
+	refreshCall := make(chan callResult, 1)
+	go func() { text, err := callTool(ctx, old, `{"refresh":true}`); refreshCall <- callResult{text, err} }()
+	select {
+	case <-f.refreshStarted:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	shortCall := make(chan callResult, 1)
+	started := time.Now()
+	go func() { text, err := callTool(ctx, current, `{}`); shortCall <- callResult{text, err} }()
+	select {
+	case result := <-shortCall:
+		if !errors.Is(result.err, context.DeadlineExceeded) {
+			return fmt.Errorf("short call waiting for retained refresh: %v", result.err)
+		}
+	case <-time.After(500 * time.Millisecond):
+		f.releaseRefresh()
+		return errors.New("80ms tool budget waited more than 500ms for retained-generation OAuth refresh")
+	}
+	report.Checks = append(report.Checks, fmt.Sprintf("Replacement 80ms tool budget cancels while retained-generation OAuth refresh is held (%dms)", time.Since(started).Milliseconds()))
+	cancelCtx, cancelWaiting := context.WithCancel(ctx)
+	stopCancel := time.AfterFunc(20*time.Millisecond, cancelWaiting)
+	canceledCall := make(chan callResult, 1)
+	go func() { text, err := callTool(cancelCtx, old, `{}`); canceledCall <- callResult{text, err} }()
+	select {
+	case result := <-canceledCall:
+		stopCancel.Stop()
+		cancelWaiting()
+		if !errors.Is(result.err, context.Canceled) {
+			return fmt.Errorf("canceled call waiting for shared refresh: %v", result.err)
+		}
+	case <-time.After(500 * time.Millisecond):
+		stopCancel.Stop()
+		cancelWaiting()
+		f.releaseRefresh()
+		return errors.New("caller cancellation waited for shared OAuth refresh")
+	}
+	report.Checks = append(report.Checks, "Caller cancellation interrupts shared-refresh waiting without canceling the active refresh")
+	f.releaseRefresh()
+	select {
+	case result := <-refreshCall:
+		if result.err != nil {
+			return fmt.Errorf("retained refresh was canceled by a short waiter: %w", result.err)
+		}
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	if _, err = callTool(ctx, current, `{}`); err != nil {
+		return fmt.Errorf("replacement did not recover after shared refresh: %w", err)
+	}
 	thread.AgentControl.Close()
 	rt.ReleasePluginGeneration(thread.PluginGeneration)
 	thread = nil
@@ -375,7 +466,7 @@ func run(report *receipt, output string) (err error) {
 		p = nil
 		return err
 	}
-	if strings.Contains(p.transcript.String(), "synthetic-saved") || strings.Contains(p.transcript.String(), "synthetic-replacement") || strings.Contains(p.transcript.String(), "synthetic-refresh") {
+	if strings.Contains(p.transcript.String(), "synthetic-") {
 		return errors.New("app-server RPC exposed synthetic credentials")
 	}
 	if err = os.WriteFile(filepath.Join(output, "rpc.jsonl"), p.transcript.Bytes(), 0600); err != nil {
@@ -410,6 +501,69 @@ func run(report *receipt, output string) (err error) {
 		return err
 	}
 	report.Checks = append(report.Checks, "First MCP added after zero-MCP startup uses persisted credentials and auth RPC")
+	// Logout must fence a background connection that already received its
+	// authentication and is only waiting for the final catalog response.
+	otherLogin, err := opts.MCPOAuth.Start(ctx, mcp.OAuthStartOptions{ServerID: "other", ResourceURL: f.server.URL + "/mcp", RedirectURI: "http://127.0.0.1/callback", ClientID: "fixture"})
+	if err != nil {
+		return err
+	}
+	if _, err = opts.MCPOAuth.Finish(ctx, mcp.OAuthFinishOptions{ServerID: "other", ResourceURL: f.server.URL + "/mcp", State: otherLogin.State, Code: "replacement"}); err != nil {
+		return err
+	}
+	manager := rt.Toolkit.MCPManager()
+	if err = manager.Add(ctx, mcp.ServerConfig{Name: "other", URL: f.server.URL + "/mcp", Transport: "http", OAuth: &mcp.OAuthConfig{}}); err != nil {
+		return err
+	}
+	f.mu.Lock()
+	f.holdCatalog = true
+	f.mu.Unlock()
+	reconnect := make(chan error, 1)
+	go func() { reconnect <- manager.Connect(ctx, "docs") }()
+	select {
+	case <-f.catalogHeld:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	var removed appserver.MCPAuthRemoveResult
+	err = p.client.Call(ctx, "mcp/auth/remove", map[string]string{"name": "docs"}, &removed)
+	close(f.catalogRelease)
+	if err != nil {
+		return err
+	}
+	select {
+	case err = <-reconnect:
+		if !errors.Is(err, context.Canceled) {
+			return fmt.Errorf("logout did not cancel pending authenticated connection: %v", err)
+		}
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	status := manager.Status()["docs"]
+	if status.Connected || status.State != mcp.MCPServerStateAuthRequired || status.AuthStatus != mcp.MCPAuthStatusNotLoggedIn || removed.Auth.Authenticated {
+		return fmt.Errorf("stale discovery replaced logout status: %+v", status)
+	}
+	remaining := manager.NativeTools()
+	if len(remaining) != 1 || remaining[0].Client.Name() != "other" || !manager.Status()["other"].Connected {
+		return fmt.Errorf("logout affected the other server or retained logged-out tools: %+v", manager.Status())
+	}
+	if _, err = mcp.NewMCPTool(remaining[0].Client, remaining[0].Definition).Execute(ctx, `{}`); err != nil {
+		return fmt.Errorf("other server stopped after logout: %w", err)
+	}
+	report.Checks = append(report.Checks, "Logout cancels a pending authenticated catalog, preserves auth-required status, and leaves another server usable")
+	var restarted appserver.MCPAuthStartResult
+	if err = p.client.Call(ctx, "mcp/auth/start", map[string]string{"name": "docs"}, &restarted); err != nil {
+		return err
+	}
+	if err = p.client.Call(ctx, "mcp/auth/finish", appserver.MCPAuthFinishParams{Name: "docs", State: restarted.State, Code: "replacement"}, &finished); err != nil {
+		return err
+	}
+	if err = manager.Connect(ctx, "docs"); err != nil {
+		return err
+	}
+	if _, err = callTool(ctx, manager, `{}`); err != nil {
+		return fmt.Errorf("explicit login after logout did not recover: %w", err)
+	}
+	report.Checks = append(report.Checks, "A later explicit login and connect restore the logged-out server")
 	if err = p.close(); err != nil {
 		p = nil
 		return err
