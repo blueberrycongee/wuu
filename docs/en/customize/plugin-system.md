@@ -44,7 +44,7 @@ After publication, an existing conversation adopts the new generation at its nex
 
 During preparation, a candidate that fails to initialize or negotiate required services cannot replace an already healthy runtime. A newly discovered optional plugin may remain failed without disabling other plugins. Intentional removal remains separate from a failed replacement.
 
-When automatic refresh cannot prepare the same candidate, retries back off from one second to a maximum of 30 seconds. The host continues checking for changed package content, configuration, or a newly published catalog epoch during that wait; changed inputs can retry sooner. Successful refresh resets the delay. Lease contention uses a separate short retry and does not count as a failed candidate. The catalog's explicit Refresh action bypasses this automatic delay, reports preparation errors, and retains the previous generation on a pre-commit failure.
+When automatic refresh cannot prepare the same candidate, retries back off from one second to a maximum of 30 seconds. During that wait, background notifications and waiting turns share package-content checks at a one-second cadence; configuration or newly published catalog epochs can trigger an immediate check. Changed inputs can retry sooner. Successful refresh resets the delay. Lease contention uses a separate short retry and does not count as a failed candidate. The catalog's explicit Refresh action bypasses this automatic delay, reports preparation errors, and retains the previous generation on a pre-commit failure.
 
 Reload preserves history, not an unconditional cache-hit guarantee. Identical model-facing definitions can reuse the provider prefix; changed tools, prompt sections, or deferred discovery state may invalidate it.
 

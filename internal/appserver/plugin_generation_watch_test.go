@@ -210,7 +210,18 @@ func TestPluginRefreshBackoffTracksCandidateInputsAndPreservesBusyRetry(t *testi
 	} {
 		before := calls
 		change.apply()
-		if err := srv.refreshPluginGenerationIfChanged(); !errors.Is(err, failure) || calls != before+1 {
+		var err error
+		if change.name == "package" {
+			// Nested package changes are observed at the shared polling cadence,
+			// while epoch and config changes bypass that observation limit.
+			waitPluginGenerationWatchTest(t, func() bool {
+				err = srv.refreshPluginGenerationIfChanged()
+				return calls > before
+			})
+		} else {
+			err = srv.refreshPluginGenerationIfChanged()
+		}
+		if !errors.Is(err, failure) || calls != before+1 {
 			t.Fatalf("%s change did not bypass old candidate backoff: calls=%d err=%v", change.name, calls, err)
 		}
 		if got := srv.pluginRefreshFailure.delay; got != pluginGenerationFailureRetryInterval {

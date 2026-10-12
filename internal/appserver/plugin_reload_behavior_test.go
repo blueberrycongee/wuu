@@ -174,6 +174,14 @@ func TestPluginRefreshFailureBackoffKeepsRealRuntimeAndManualRetry(t *testing.T)
 	}
 	for range 8 {
 		_ = srv.refreshPluginGenerationIfChanged()
+		thread := &threadState{ID: "waiting-for-recovery"}
+		thread.mu.Lock()
+		acquired, err := srv.tryAcquireThreadExecutionLeaseLocked(thread)
+		thread.mu.Unlock()
+		if err != nil || acquired {
+			t.Fatalf("turn admission did not wait for recovery: acquired=%t err=%v", acquired, err)
+		}
+		srv.backgroundWG.Wait()
 	}
 	if attempts() != 2 || rt.PluginHost != oldHost || srv.pluginGenerationEpoch.Load() == epoch {
 		t.Fatalf("failed candidate was rebuilt or published: attempts=%d epoch=%d", attempts(), srv.pluginGenerationEpoch.Load())

@@ -31,6 +31,8 @@ const (
 // admission. Only failed candidates advance this delay, never lease contention.
 type pluginGenerationRefreshFailure struct {
 	fingerprint [sha256.Size]byte
+	inputs      [sha256.Size]byte
+	observeAt   time.Time
 	delay       time.Duration
 	retryAt     time.Time
 	err         error
@@ -214,21 +216,37 @@ func (s *Server) refreshPluginGenerationIfChanged() error {
 	// advance again during activation; recording that newer epoch here would
 	// hide a change this candidate never loaded. The next refresh adopts it.
 	cfg := s.currentExtensionConfig()
-	discovered := pluginpkg.Discover(s.rt.RootDir, s.rt.WuuHome)
 	inputs, err := json.Marshal(struct {
 		Epoch         uint64
 		ConfigSources string
 		Config        config.Config
-		Plugins       []pluginpkg.Plugin
-	}{epoch, s.configSourceFingerprint(), cfg, discovered})
+	}{epoch, s.configSourceFingerprint(), cfg})
 	if err != nil {
 		return err
 	}
-	fingerprint := sha256.Sum256(inputs)
+	inputFingerprint := sha256.Sum256(inputs)
 	failure := &s.pluginRefreshFailure
+	// Discovery hashes every package file. Share an observation limit with
+	// turn admission so unrelated notifications cannot keep re-reading large
+	// packages during backoff. Epoch/config changes and a due retry still get
+	// an immediate observation; nested package repairs are polled each second.
+	if failure.inputs == inputFingerprint && time.Now().Before(failure.observeAt) && time.Now().Before(failure.retryAt) {
+		return errors.Join(errPluginGenerationRefreshDeferred, failure.err)
+	}
+	discovered := pluginpkg.Discover(s.rt.RootDir, s.rt.WuuHome)
+	packages, err := json.Marshal(struct {
+		Inputs  [sha256.Size]byte
+		Plugins []pluginpkg.Plugin
+	}{inputFingerprint, discovered})
+	if err != nil {
+		return err
+	}
+	fingerprint := sha256.Sum256(packages)
 	if failure.fingerprint != fingerprint {
 		*failure = pluginGenerationRefreshFailure{fingerprint: fingerprint}
 	}
+	failure.inputs = inputFingerprint
+	failure.observeAt = time.Now().Add(pluginGenerationPollingInterval)
 	if time.Now().Before(failure.retryAt) {
 		return errors.Join(errPluginGenerationRefreshDeferred, failure.err)
 	}
