@@ -406,13 +406,18 @@ app.whenReady().then(async () => {
   });
 
   await check("host text remains literal across theme, font and narrow layout", async () => {
-    for (const [width, font, theme] of [[1200, 14, "light"], [480, 20, "dark"]]) {
-      state.visual = { width, font, theme, stage: "resize", before: win.getContentBounds() };
+    for (const [width, font, theme, collapseSidebar] of [[1200, 14, "light", false], [480, 20, "dark", false], [480, 20, "dark", true]]) {
+      const scenario = `${width}-${font}-${theme}${collapseSidebar ? "-sidebar-collapsed" : ""}`;
+      state.visual = { width, font, theme, collapseSidebar, stage: "resize", before: win.getContentBounds() };
       save();
       console.log(`${new Date().toISOString()} VISUAL ${JSON.stringify(state.visual)}`);
       win.setContentSize(width, 850);
       await until((width) => innerWidth === width, width, "visual scenario viewport resize");
       state.visual.actual = win.getContentBounds();
+      if (collapseSidebar) {
+        await evaluate(() => document.querySelector('[data-wuu-component="sidebar-toggle"]').click());
+        await until(() => Boolean(document.querySelector('[data-wuu-sidebar-mode="collapsed"]')), null, "sidebar collapses for narrow composer");
+      }
       state.visual.stage = "configure typography";
       save();
       await evaluate(({ font, theme }) => {
@@ -433,16 +438,26 @@ app.whenReady().then(async () => {
         const overlay = suffix.closest('[data-wuu-component="composer-inline-completion"]');
         const inputBox = input.getBoundingClientRect();
         const overlayBox = overlay.getBoundingClientRect();
-        return { input: inputBox.toJSON(), overlay: overlayBox.toJSON(), ariaHidden: overlay.getAttribute("aria-hidden"), nestedMarkup: Boolean(suffix.querySelector("b")), text: suffix.textContent, inputFont: getComputedStyle(input).font, overlayFont: getComputedStyle(overlay).font };
+        const typography = (element) => {
+          const style = getComputedStyle(element);
+          return { family: style.fontFamily, size: style.fontSize, lineHeight: style.lineHeight };
+        };
+        return { input: inputBox.toJSON(), viewport: { left: inputBox.left + input.clientLeft, top: inputBox.top + input.clientTop, width: input.clientWidth, height: input.clientHeight },
+          overlay: overlayBox.toJSON(), ariaHidden: overlay.getAttribute("aria-hidden"), nestedMarkup: Boolean(suffix.querySelector("b")), text: suffix.textContent,
+          inputFont: typography(input), overlayFont: typography(suffix.parentElement) };
       }, { inputSelector, ghostSelector });
+      state.visual.geometry = geometry;
+      save();
       assert.equal(geometry.ariaHidden, "true");
       assert.equal(geometry.nestedMarkup, false, "plugin completion is plain text, never injected markup");
       assert.ok(geometry.input.left >= 0 && geometry.input.right <= width + 1);
-      assert.ok(Math.abs(geometry.input.left - geometry.overlay.left) <= 2 && Math.abs(geometry.input.width - geometry.overlay.width) <= 2, "overlay follows native input bounds");
-      state.checks.push({ name: `geometry ${width}/${font}/${theme}`, passed: true, geometry });
+      // Classic scrollbars consume part of the border box. The overlay must
+      // match the native client viewport, never paint over its scrollbar.
+      assert.ok(["left", "top", "width", "height"].every((key) => Math.abs(geometry.viewport[key] - geometry.overlay[key]) <= 2), "overlay follows native input viewport");
+      state.checks.push({ name: `geometry ${scenario}`, passed: true, geometry });
       state.visual.stage = "capture completion";
-      await screenshot(`completion-${width}-${font}-${theme}`);
-      if (width < 600) {
+      await screenshot(`completion-${scenario}`);
+      if (collapseSidebar) {
         state.visual.stage = "offer unbroken suffix";
         save();
         await suggestion("Keep the native input word at this narrow wrap boundary: word", "AContinuousUnbrokenCompletionMustWrapWithoutMovingTheNativeCaret");
