@@ -164,6 +164,37 @@ app.whenReady().then(async () => {
     await reload(); assert.equal(await input(), "Immediate reload draft");
     assert.equal(await evaluate(() => document.querySelectorAll(".composer-attachment-tray-item").length), 0);
   });
+  await check("attachment preparation failure preserves text through opt-in reload without replaying bytes", async () => {
+    const before = submissions.length;
+    await evaluate(() => {
+      const original = File.prototype.arrayBuffer;
+      File.prototype.arrayBuffer = function () {
+        if (this.name !== "unreadable-cross-group.txt") return original.call(this);
+        return new Promise((_resolve, reject) => { window.__failDraftAttachment = () => reject(new Error("Synthetic attachment unavailable")); });
+      };
+    });
+    await attachComposerFiles(win, owner, [{ name: "unreadable-cross-group.txt", type: "text/plain", contents: "private-attachment-marker" }]);
+    await type("Recover my text after an unreadable attachment");
+    await until(() => Boolean(window.__failDraftAttachment));
+    await click('[data-main-conversation-composer] [data-wuu-component="composer-send"]');
+    await evaluate(() => window.__failDraftAttachment());
+    await until(() => Boolean(document.querySelector(".composer-attachment-failed")) && document.querySelector("[data-main-conversation-composer] textarea").value === "Recover my text after an unreadable attachment");
+    assert.equal(submissions.length, before, "failed encoding must never reach the backend");
+    const serialized = JSON.stringify(await stored());
+    assert.ok(serialized.includes("Recover my text after an unreadable attachment"));
+    assert.ok(!serialized.includes("private-attachment-marker") && !serialized.includes("unreadable-cross-group.txt"));
+    await settle();
+    fs.writeFileSync(path.join(output, "attachment-failed-before-reload.png"), (await win.webContents.capturePage()).toPNG());
+    await reload();
+    assert.equal(await input(), "Recover my text after an unreadable attachment");
+    assert.equal(await evaluate(() => document.querySelectorAll(".composer-attachment-tray-item").length), 0);
+    assert.equal(submissions.length, before, "recovery must not retry or auto-submit");
+    await send();
+    assert.equal(submissions.length, before + 1);
+    const resolve = pendingSubmission; pendingSubmission = undefined; resolve(null);
+    await until(key => !sessionStorage.getItem(key), key);
+    await reload(); assert.equal(await input(), "");
+  });
   await check("file selection references never become stored plain text", async () => {
     await type("Typed question without its quoted file");
     await evaluate(() => {
