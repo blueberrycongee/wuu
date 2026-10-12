@@ -52,6 +52,7 @@ type queuedTurn struct {
 	followups []providers.ChatMessage
 	snapshot  turnRuntimeSnapshot
 	origin    string
+	durable   bool
 	// Captured only at explicit user submission, never by a background drain.
 	resumeBrowser func()
 }
@@ -104,6 +105,7 @@ const (
 )
 
 type turnAdmissionHooks struct {
+	acceptedUserWork *session.HeldUserWork
 	// afterLease runs without th.mu after the durable lease has been acquired
 	// and disk state refreshed. The lease remains attached to th, so helpers may
 	// take th.mu and perform admission-only side effects without racing another
@@ -570,43 +572,34 @@ func (s *Server) handleTurnQueue(req Request) error {
 	entry.snapshot.PermissionExplicit = params.PermissionMode != nil
 	entry.snapshot.ForceCompact = isManualCompactPrompt(params.Prompt)
 	entry.snapshot.ActiveDocument = cloneActiveDocument(params.ActiveDocument)
-	queued := queuedTurnSummary(params.ThreadID, entry)
 	th.mu.Lock()
-	if th.interrupting || params.Hold {
-		// Keep the cancellation check and held append in one queue-state critical
-		// section. Otherwise stopping the active turn could let an already-cancelled
-		// late submission bypass normal queue admission.
-		s.queuedTurnMu.Lock()
-		if s.isCancelledPendingSubmissionLocked(params.ThreadID, queueID, session.HeldUserWorkOriginQueue) {
-			s.queuedTurnMu.Unlock()
-			th.mu.Unlock()
-			return s.writeResponse(req.ID, nil, errors.New("queue submission was cancelled before arrival"))
-		}
-		held, holdErr := s.appendHeldUserTurns(params.ThreadID, []queuedTurn{entry})
-		s.queuedTurnMu.Unlock()
-		th.mu.Unlock()
-		if holdErr != nil {
-			return s.writeResponse(req.ID, nil, holdErr)
-		}
-		if err := s.writeResponse(req.ID, TurnQueueResult{Queued: queued}, nil); err != nil {
-			return err
-		}
-		s.notifyHeldUserTurns(params.ThreadID, held)
-		return nil
-	}
 	for _, pendingSteer := range th.pendingSteers {
 		if strings.TrimSpace(pendingSteer.ClientID) == queueID {
 			th.mu.Unlock()
 			return s.writeResponse(req.ID, nil, errors.New("client_id is already pending as steering input"))
 		}
 	}
-	enqueued := s.enqueueQueuedUserTurn(params.ThreadID, entry)
-	th.mu.Unlock()
-	if !enqueued {
-		if _, pending := s.findQueuedUserTurn(params.ThreadID, queueID); !pending {
-			return s.writeResponse(req.ID, nil, errors.New("queue submission was cancelled before arrival"))
+	hold := th.interrupting || params.Hold
+	var enqueued bool
+	if th.PersistHistory {
+		entry, enqueued, err = s.acceptQueuedUserTurn(params.ThreadID, entry, hold)
+	} else if hold {
+		err = errors.New("held input requires a persistent conversation")
+	} else {
+		enqueued = s.enqueueQueuedUserTurn(params.ThreadID, entry)
+		if !enqueued {
+			var found bool
+			entry, found = s.findQueuedUserTurn(params.ThreadID, queueID)
+			if !found {
+				err = errQueuedTurnCancelled
+			}
 		}
 	}
+	th.mu.Unlock()
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	queued := queuedTurnSummary(params.ThreadID, entry)
 	if err := s.writeResponse(req.ID, TurnQueueResult{Queued: queued}, nil); err != nil {
 		return err
 	}
@@ -615,6 +608,8 @@ func (s *Server) handleTurnQueue(req Request) error {
 			Queued: queued, Message: heldUserMessageSummary(params.ThreadID, entry),
 		})
 		s.kickQueuedTurnDrain(params.ThreadID)
+	} else if held, err := s.loadHeldUserTurns(params.ThreadID); err == nil {
+		s.notifyHeldUserTurns(params.ThreadID, held)
 	}
 	return nil
 }
@@ -650,6 +645,12 @@ func (s *Server) handleTurnUpdateQueued(req Request) error {
 	}
 	th.mu.Lock()
 	readOnly := th.ReadOnly
+	for _, steer := range th.pendingSteers {
+		if steer.ClientID == params.QueueID {
+			th.mu.Unlock()
+			return s.writeResponse(req.ID, nil, errors.New("requeue steering input before editing it"))
+		}
+	}
 	th.mu.Unlock()
 	if readOnly {
 		return s.writeResponse(req.ID, nil, errors.New("thread is read-only"))
@@ -659,7 +660,10 @@ func (s *Server) handleTurnUpdateQueued(req Request) error {
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	updated, ok := s.replaceQueuedUserTurn(params.ThreadID, params.QueueID, msg)
+	updated, ok, err := s.updateAcceptedQueuedTurn(params.ThreadID, params.QueueID, msg)
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
 	var held []queuedTurn
 	if !ok {
 		updated, held, ok, err = s.updateHeldUserTurn(params.ThreadID, params.QueueID, msg)
@@ -693,17 +697,19 @@ func (s *Server) handleTurnDequeue(req Request) error {
 	if queueID == "" {
 		return s.writeResponse(req.ID, nil, errors.New("queue_id is required"))
 	}
-	removedTurn, removed := s.removeQueuedUserTurn(threadID, queueID)
-	var held []queuedTurn
-	if !removed {
-		var err error
-		removedTurn, held, removed, err = s.removeHeldUserTurn(threadID, queueID)
-		if err != nil {
-			return s.writeResponse(req.ID, nil, err)
-		}
+	persist := true
+	if th := s.thread(threadID); th != nil {
+		th.mu.Lock()
+		persist = th.PersistHistory
+		th.mu.Unlock()
 	}
-	if !removed {
-		s.recordCancelledPendingSubmission(threadID, queueID, session.HeldUserWorkOriginQueue)
+	removedTurn, removed, err := s.cancelQueuedUserTurn(threadID, queueID, persist)
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	held, err := s.loadHeldUserTurns(threadID)
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
 	}
 	if err := s.writeResponse(req.ID, OKResult{OK: removed}, nil); err != nil {
 		return err
@@ -791,7 +797,6 @@ func (s *Server) handleTurnSteer(req Request) error {
 		if !isHeld {
 			return s.writeResponse(req.ID, nil, errors.New("no active turn to steer"))
 		}
-		heldTurn.msg.Steered = false
 		heldTurn.resumeBrowser, err = s.rt.ActivityRegistry.PrepareResume(params.ThreadID, activity.KindBrowser)
 		if err != nil {
 			return s.writeResponse(req.ID, nil, err)
@@ -806,10 +811,7 @@ func (s *Server) handleTurnSteer(req Request) error {
 		th.mu.Lock()
 		turnID := th.currentTurn
 		th.mu.Unlock()
-		_, remaining, removed, removeErr := s.removeHeldUserTurn(params.ThreadID, clientID)
-		if removeErr != nil {
-			providers.DebugLogf("remove started held message %q: %v", clientID, removeErr)
-		} else if removed {
+		if remaining, err := s.loadHeldUserTurns(params.ThreadID); err == nil {
 			s.notifyHeldUserTurns(params.ThreadID, remaining)
 		}
 		return s.writeResponse(req.ID, TurnSteerResult{TurnID: turnID}, nil)
@@ -825,33 +827,34 @@ func (s *Server) handleTurnSteer(req Request) error {
 			return s.writeResponse(req.ID, TurnSteerResult{TurnID: turnID}, nil)
 		}
 	}
-	var remaining []queuedTurn
-	var removedTurn queuedTurn
+	steerDocument := params.ActiveDocument
 	if isHeld {
-		var removed bool
-		removedTurn, remaining, removed, err = s.removeHeldUserTurn(params.ThreadID, clientID)
-		if err != nil {
-			th.mu.Unlock()
-			return s.writeResponse(req.ID, nil, err)
-		}
-		if !removed {
-			th.mu.Unlock()
-			return s.writeResponse(req.ID, nil, errors.New("held message no longer exists"))
-		}
-		steerMsg = removedTurn.msg
+		steerMsg = heldTurn.msg
+		steerDocument = heldTurn.snapshot.ActiveDocument
 	}
 	steerMsg.ClientID = clientID
 	steerMsg.Steered = true
+	steerEntry := queuedTurn{id: clientID, msg: steerMsg, snapshot: turnRuntimeSnapshotLocked(th), origin: session.HeldUserWorkOriginSteer, durable: th.PersistHistory}
+	steerEntry.snapshot.ActiveDocument = cloneActiveDocument(steerDocument)
+	if isHeld {
+		steerEntry.snapshot = heldTurn.snapshot
+		err = s.persistUpdatedUserTurn(params.ThreadID, heldTurn, steerEntry)
+	} else if th.PersistHistory {
+		var accepted bool
+		accepted, err = s.persistAcceptedUserTurn(params.ThreadID, steerEntry)
+		if err == nil && !accepted {
+			err = errors.New("client_id is already accepted; resume the held input")
+		}
+	}
+	if err != nil {
+		th.mu.Unlock()
+		return s.writeResponse(req.ID, nil, err)
+	}
 	removedQueuedTurn, removedQueued := s.removeQueuedUserTurn(params.ThreadID, clientID)
 	th.pendingSteers = append(th.pendingSteers, steerMsg)
 	th.signalSteerWakeLocked()
-	steerDocument := params.ActiveDocument
-	if isHeld {
-		steerDocument = removedTurn.snapshot.ActiveDocument
-	}
 	th.steerDocumentOverrides = append(th.steerDocumentOverrides, activeDocumentOverride{
-		steerID:  clientID,
-		document: cloneActiveDocument(steerDocument),
+		steerID: clientID, document: cloneActiveDocument(steerDocument),
 	})
 	th.applyLatestSteerDocumentOverrideLocked()
 	th.mu.Unlock()
@@ -864,8 +867,9 @@ func (s *Server) handleTurnSteer(req Request) error {
 		})
 	}
 	if isHeld {
-		s.notifyPluginTurnDiscarded(params.ThreadID, removedTurn, "held turn was converted to steering input")
-		s.notifyHeldUserTurns(params.ThreadID, remaining)
+		if remaining, err := s.loadHeldUserTurns(params.ThreadID); err == nil {
+			s.notifyHeldUserTurns(params.ThreadID, remaining)
+		}
 	}
 	_ = s.writeNotification(NotificationTurnSteered, TurnSteeredNotification{
 		Message: heldUserMessageSummary(params.ThreadID, queuedTurn{
@@ -971,20 +975,27 @@ func (s *Server) handleTurnUnsteer(req Request) error {
 		return s.writeResponse(req.ID, nil, fmt.Errorf("thread %q not found", threadID))
 	}
 	th.mu.Lock()
+	removedDurable := false
+	if s.rt != nil && th.PersistHistory {
+		var cancelErr error
+		removedDurable, cancelErr = session.CancelHeldUserWork(s.rt.SessionDir, threadID, steerID, session.HeldUserWorkOriginSteer)
+		if cancelErr != nil {
+			th.mu.Unlock()
+			return s.writeResponse(req.ID, nil, cancelErr)
+		}
+	}
 	removed := th.removePendingSteerLocked(steerID)
 	removedLive := removed
+	removed = removed || removedDurable
 	if removed {
 		th.removeSteerDocumentOverrideLocked(steerID)
 	}
 	th.mu.Unlock()
-	var held []queuedTurn
-	if !removed {
-		var err error
-		_, held, removed, err = s.removeHeldUserTurn(threadID, steerID)
-		if err != nil {
-			return s.writeResponse(req.ID, nil, err)
-		}
+	held, err := s.loadHeldUserTurns(threadID)
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
 	}
+
 	if removed && held != nil {
 		s.notifyHeldUserTurns(threadID, held)
 	}
@@ -1026,6 +1037,38 @@ func (s *Server) handleTurnRequeue(req Request) error {
 			break
 		}
 	}
+	var durableEntry *queuedTurn
+	if steerIndex >= 0 && s.rt != nil && th.PersistHistory {
+		entry := queuedTurn{id: steerID, msg: th.pendingSteers[steerIndex], snapshot: turnRuntimeSnapshot{ActiveDocument: document}, origin: session.HeldUserWorkOriginQueue, durable: true}
+		held, found, loadErr := s.findHeldUserTurn(threadID, steerID)
+		if loadErr != nil {
+			th.mu.Unlock()
+			return s.writeResponse(req.ID, nil, loadErr)
+		}
+		if found {
+			// Another window may have edited the accepted steer. Switching
+			// modes preserves that canonical input, not this owner's cache.
+			entry = held
+		}
+		entry.origin = session.HeldUserWorkOriginQueue
+		entry.msg.Steered = false
+		var persistErr error
+		if found {
+			persistErr = s.persistUpdatedUserTurn(threadID, held, entry)
+		} else {
+			// Legacy/non-durable callers may have a pending steer without a row.
+			var accepted bool
+			accepted, persistErr = s.persistAcceptedUserTurn(threadID, entry)
+			if persistErr == nil && !accepted {
+				persistErr = errors.New("accepted input changed before requeue; review the held message")
+			}
+		}
+		if persistErr != nil {
+			th.mu.Unlock()
+			return s.writeResponse(req.ID, nil, persistErr)
+		}
+		durableEntry = &entry
+	}
 	msg, removed := th.takePendingSteerLocked(steerID)
 	if removed {
 		msg.Steered = false
@@ -1034,6 +1077,10 @@ func (s *Server) handleTurnRequeue(req Request) error {
 			msg:      msg,
 			snapshot: turnRuntimeSnapshot{ActiveDocument: document},
 			origin:   session.HeldUserWorkOriginQueue,
+			durable:  s.rt != nil && th.PersistHistory,
+		}
+		if durableEntry != nil {
+			entry = *durableEntry
 		}
 		if !s.enqueueRequeuedUserTurn(threadID, entry) {
 			msg.Steered = true
@@ -2546,22 +2593,40 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 			}
 			return committed, checkpoint.ThroughSeq, nil
 		}
-		runner.ArchiveHistory = func(archiveCtx context.Context, messages []providers.ChatMessage) (agent.HistoryArchive, error) {
-			if th == nil || !th.PersistHistory {
-				return agent.HistoryArchive{}, errors.New("durable session history is unavailable")
+		runner.ArchiveHistory = nil
+		if th != nil && th.PersistHistory {
+			runner.ArchiveHistory = func(archiveCtx context.Context, messages []providers.ChatMessage) (agent.HistoryArchive, error) {
+				seqs, endSeq, err := appendChatMessagesReturningSeqs(s.rt.SessionDir, th.ID, messages)
+				if err != nil {
+					// These messages left the live steer queue but were not sent.
+					// Clear its optimistic view before publishing held recovery.
+					for _, message := range messages {
+						if message.Steered && isHumanUserMessage(message) {
+							notify(NotificationTurnUnsteered, TurnUnsteeredNotification{ThreadID: th.ID, SteerID: message.ClientID})
+						}
+					}
+					return agent.HistoryArchive{}, err
+				}
+				// A rejected steer remains held. Publish its transcript item only
+				// after the atomic history/receipt checkpoint has succeeded.
+				th.mu.Lock()
+				var batch []outboundNotification
+				for _, message := range messages {
+					if message.Steered && isHumanUserMessage(message) {
+						batch = append(batch, th.materializeSteerLocked(turnID, message, time.Now().UTC())...)
+					}
+				}
+				th.mu.Unlock()
+				notifyBatch(batch)
+				if endSeq > 0 {
+					return agent.HistoryArchive{Seqs: seqs, HeadSeq: endSeq}, nil
+				}
+				page, err := session.ReadHistoryPage(archiveCtx, s.rt.SessionDir, th.ID, 1, 1)
+				if err != nil {
+					return agent.HistoryArchive{}, err
+				}
+				return agent.HistoryArchive{Seqs: seqs, HeadSeq: page.HeadSeq}, nil
 			}
-			seqs, endSeq, err := appendChatMessagesReturningSeqs(s.rt.SessionDir, th.ID, messages)
-			if err != nil {
-				return agent.HistoryArchive{}, err
-			}
-			if endSeq > 0 {
-				return agent.HistoryArchive{Seqs: seqs, HeadSeq: endSeq}, nil
-			}
-			page, err := session.ReadHistoryPage(archiveCtx, s.rt.SessionDir, th.ID, 1, 1)
-			if err != nil {
-				return agent.HistoryArchive{}, err
-			}
-			return agent.HistoryArchive{Seqs: seqs, HeadSeq: page.HeadSeq}, nil
 		}
 	}
 	defer restoreRunner()
@@ -3043,7 +3108,27 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 				}
 			}
 			th.applySteerDocumentOverridesLocked(queuedSteers)
-			s.prependQueuedUserTurns(th.ID, queuedSteers)
+			ready := queuedSteers[:0]
+			for _, entry := range queuedSteers {
+				if isHumanUserMessage(entry.msg) {
+					held, found, loadErr := s.findHeldUserTurn(th.ID, entry.id)
+					if loadErr != nil {
+						providers.DebugLogf("recover pending steer %q: %v", entry.id, loadErr)
+						continue
+					}
+					if found {
+						entry = held
+						entry.origin = session.HeldUserWorkOriginQueue
+						entry.msg.Steered = false
+						if err := s.persistUpdatedUserTurn(th.ID, held, entry); err != nil {
+							providers.DebugLogf("requeue pending steer %q: %v", entry.id, err)
+							continue
+						}
+					}
+				}
+				ready = append(ready, entry)
+			}
+			s.prependQueuedUserTurns(th.ID, ready)
 		}
 	}
 	completionClaimFailed := len(turnRuntime.AgentCompletionResultIDs) > 0
@@ -3132,6 +3217,15 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 			TracePath:                tracePath,
 			AwaitingAutoContinuation: awaitingAutoContinuation,
 		})
+	}
+	if err != nil && th.PersistHistory {
+		// A steer removed from the live queue can fail its persistence fence
+		// before dispatch. Restore its editable held view without a reconnect.
+		if held, loadErr := s.loadHeldUserTurns(th.ID); loadErr != nil {
+			providers.DebugLogf("load held input after failed turn %q: %v", turnID, loadErr)
+		} else if len(held) > 0 {
+			s.notifyHeldUserTurnsWithError(th.ID, held, err.Error())
+		}
 	}
 	if hasRunUpdate {
 		notify(NotificationRunUpdated, RunUpdatedNotification{Run: runUpdate})
@@ -3650,7 +3744,7 @@ func (s *Server) drainQueuedTurns(threadID string) (capacityFull bool) {
 	capacityFull = errors.Is(err, session.ErrProjectWorkerCapacity)
 	requeueCandidate := !started && (err == nil || executionBusy || retryableAdmission)
 	cancelled := s.settleQueuedTurnClaim(threadID, entry, requeueCandidate)
-	if errors.Is(err, errQueuedTurnCancelled) || cancelled {
+	if errors.Is(err, errQueuedTurnCancelled) || errors.Is(err, session.ErrHeldUserWorkSettled) || cancelled {
 		err = errQueuedTurnCancelled
 		executionBusy = false
 		retryableAdmission = false
@@ -3825,6 +3919,16 @@ func (s *Server) startThreadUserTurnWithAdmission(ctx context.Context, th *threa
 			return startedThreadTurn{}, false, errSessionInputApplied
 		}
 	}
+	if th.PersistHistory && userMsg.ClientID != "" && hooks.acceptedUserWork == nil {
+		found, err := session.HasHeldUserWorkReceipt(s.rt.SessionDir, th.ID, userMsg.ClientID)
+		if err != nil || found {
+			abortAdmission()
+			if err != nil {
+				return startedThreadTurn{}, false, err
+			}
+			return startedThreadTurn{}, false, session.ErrHeldUserWorkSettled
+		}
+	}
 	if hooks.afterLease != nil {
 		if err := hooks.afterLease(th, &userMsg); err != nil {
 			abortAdmission()
@@ -3904,7 +4008,7 @@ func (s *Server) startThreadUserTurnWithAdmission(ctx context.Context, th *threa
 		}
 	}
 	if th.PersistHistory && !userAlreadyPersisted {
-		seq, err := appendControlledChatMessage(s.rt.SessionDir, th.ID, userMsg, snapshot.Control, snapshot.ExecutionControlBaseline)
+		seq, err := appendControlledChatMessage(s.rt.SessionDir, th.ID, userMsg, snapshot.Control, snapshot.ExecutionControlBaseline, hooks.acceptedUserWork)
 		if err != nil {
 			th.releaseThreadExecutionLeaseLocked()
 			th.mu.Unlock()
@@ -4000,6 +4104,14 @@ func (s *Server) startQueuedTurn(ctx context.Context, threadID string, entry que
 	if strings.TrimSpace(entry.msg.ClientID) == "" {
 		entry.msg.ClientID = entry.id
 	}
+	var acceptedUserWork *session.HeldUserWork
+	if entry.durable {
+		row, err := heldUserWorkRow(entry)
+		if err != nil {
+			return false, err
+		}
+		acceptedUserWork = &row
+	}
 	entry.msg.Steered = false
 
 	if s.beforeQueuedTurnThreadLookupForTest != nil {
@@ -4030,7 +4142,13 @@ func (s *Server) startQueuedTurn(ctx context.Context, threadID string, entry que
 		false,
 		turnReadOnlyFail,
 		turnAdmissionHooks{
+			acceptedUserWork: acceptedUserWork,
 			afterLease: func(admitted *threadState, _ *providers.ChatMessage) error {
+				if entry.durable {
+					if _, found := s.findSessionInput(admitted, entry.msg.ClientID); found {
+						return session.ErrHeldUserWorkSettled
+					}
+				}
 				var runtimeErr error
 				threadRuntime, runtimeErr = s.ensureThreadRuntimeAfterAdmission(admitted)
 				if runtimeErr != nil {

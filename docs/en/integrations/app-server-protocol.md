@@ -141,6 +141,25 @@ when the interrupted turn has already settled. This lets clients retain messages
 whose preparation or admission finishes after a Stop request. Held input remains
 available through the existing pending-input controls and resume snapshots.
 
+For persistent conversations, human queue/steer acceptance and pending-input edits
+or cancellation commit before a successful RPC response. Reuse a stable
+`client_id` when retrying an ambiguous response: a pending queue duplicate returns
+the original accepted input, while consumed IDs are rejected across input methods.
+Cancellation fences retries in that delivery mode; explicitly switching between
+queue and steering supersedes the previous mode's cancellation. Updates use
+`turn/update-queued`; resubmitting `turn/queue` does not edit or restart input.
+A restarted server exposes unconsumed input through `held_user_messages` and never
+reconstructs an automatic runnable queue. Live input appears only in
+`pending_user_messages`. Explicitly send a held item with `turn/steer`.
+
+User-history admission atomically settles the recovery record. Human steering
+checkpoints the unpersisted transcript before the next model request, preserving
+message order and preventing a crash from making dispatched input replayable.
+A concurrent edit or cancellation fences stale admission. Permission selection
+is re-resolved at execution; saved input does not restore old permissions.
+These are local process-crash guarantees, not automatic recovery of uncertain
+tool effects. Ephemeral conversations retain their memory-only behavior.
+
 Failed Wuu-engine streams can include `turn.error.recovery`. Its `attempt_count`
 and `retry_count` count recovery-executor calls that actually started; a prepared
 retry that never runs is excluded. `submission_count` counts physical provider

@@ -40,6 +40,8 @@ The composer supports these keyboard actions:
 
 The `/` menu handles Enter and Tab as command selection while it is open. Tab otherwise moves focus normally. The send control reflects whether the current engine can steer or only queue a message.
 
+In saved conversations, accepted queued messages and steering input are saved locally before acceptance is confirmed, including their attachments and document context. Edits and removals are saved too. After a core restart, input that had not reached conversation history appears as held work for you to review, edit, remove, or explicitly send. It does not run automatically. Input already admitted to history is not queued again, even if its execution was interrupted. Temporary conversations remain memory-only; this recovery does not save unsent drafts.
+
 Once the final answer is ready, Enter or the send button starts a normal follow-up, including in split view. Background cleanup and refreshing an already loaded conversation do not block sending. A submission keeps its original conversation and workspace even if you switch away while attachments are preparing.
 
 If sending fails, Wuu restores the input when that composer is still empty. If you have switched away or typed a newer draft, the failed input stays in the original conversation instead. If there is no conversation because its creation failed, the error notice lets you open the retained input as a separate draft or discard it. Failed input is not retried automatically.

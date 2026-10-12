@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 	"time"
 
@@ -415,6 +416,37 @@ func RunToolLoop(
 				appendMessage(msg)
 			}
 			usage.RecordPendingMessages(injected)
+		}
+		// Acknowledged human steering must reach history before a request can
+		// act on it. Archive the full unpersisted suffix to retain tool/message
+		// order, and settle the accepted-input receipt in that transaction.
+		if cfg.ArchiveHistory != nil {
+			for _, msg := range durableNewMessages {
+				if msg.Role != "user" || !msg.Steered || msg.ClientID == "" || msg.Hidden || msg.ReadOnly || (msg.Origin != "" && msg.Origin != "user") {
+					continue
+				}
+				archive, err := cfg.ArchiveHistory(ctx, providers.CloneChatMessages(durableNewMessages))
+				if err != nil {
+					// The checkpoint is atomic: none of these human steers reached
+					// history or the provider. Leave them recoverable, and keep
+					// the valid assistant/tool suffix without inventing sent input.
+					undispatched := func(message providers.ChatMessage) bool {
+						return message.Seq == 0 && message.Role == "user" && message.Steered && message.ClientID != "" && !message.Hidden && !message.ReadOnly && (message.Origin == "" || message.Origin == "user")
+					}
+					if historyRewritten {
+						messages = slices.DeleteFunc(messages, undispatched)
+					} else {
+						messages = append(messages[:startLen], slices.DeleteFunc(messages[startLen:], undispatched)...)
+					}
+					durableNewMessages = slices.DeleteFunc(durableNewMessages, undispatched)
+					return loopResultSnapshot(messages, startLen, historyRewritten, totalIn, totalOut, totalCacheCreation, totalCacheRead), fmt.Errorf("persist steering before dispatch: %w", err)
+				}
+				messages = applyArchivedHistorySeqs(messages, durableNewMessages, archive.Seqs)
+				providerMessages = applyArchivedHistorySeqs(providerMessages, durableNewMessages, archive.Seqs)
+				durableNewMessages = nil
+				historyArchiveHeadSeq = max(historyArchiveHeadSeq, archive.HeadSeq)
+				break
+			}
 		}
 		// No provider baseline means earlier assistant and tool-call tokens may
 		// be missing from the running total. Raise it to the outbound estimate

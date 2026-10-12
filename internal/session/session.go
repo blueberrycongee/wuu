@@ -113,6 +113,9 @@ type ManagedMetadata struct {
 // HistoryRecord is the durable session message shape. App-server remains
 // responsible for provider-specific ChatMessage conversion.
 type HistoryRecord struct {
+	// ExpectedHeldMessage is an admission-only compare-and-swap fence for an
+	// accepted steer. It is never serialized into conversation history.
+	ExpectedHeldMessage json.RawMessage `json:"-"`
 	// Seq is the record's per-session sequence (session_messages.seq), its
 	// stable address within the thread. Ordinary appends ignore it and allocate
 	// the next physical sequence. History checkpoints retain positive addresses
@@ -950,16 +953,23 @@ func AppendHistoryRecordReturningSeq(sessDir, id string, rec HistoryRecord) (int
 // AppendControlledHistoryRecord atomically fences automatic input against a
 // control change. An accepted input cannot appear after a committed takeover.
 func AppendControlledHistoryRecord(sessDir, id string, rec HistoryRecord, control *Control) (int, error) {
-	return appendFencedHistoryRecord(sessDir, id, rec, control, nil)
+	return appendFencedHistoryRecord(sessDir, id, rec, control, nil, nil)
 }
 
 // AppendContinuationHistoryRecord checks a Run's original control baseline in
 // the history transaction, including adoption or stop during admission hooks.
 func AppendContinuationHistoryRecord(sessDir, id string, rec HistoryRecord, control *Control, baseline Control) (int, error) {
-	return appendFencedHistoryRecord(sessDir, id, rec, control, &baseline)
+	return appendFencedHistoryRecord(sessDir, id, rec, control, &baseline, nil)
 }
 
-func appendFencedHistoryRecord(sessDir, id string, rec HistoryRecord, control, baseline *Control) (int, error) {
+// AppendAcceptedUserHistoryRecord fences concurrent edits and cancellation in
+// the same transaction that admits the input to conversation history.
+func AppendAcceptedUserHistoryRecord(sessDir, id string, rec HistoryRecord, accepted HeldUserWork) (int, error) {
+	rec.ExpectedHeldMessage = accepted.MessageJSON
+	return appendFencedHistoryRecord(sessDir, id, rec, nil, nil, &accepted)
+}
+
+func appendFencedHistoryRecord(sessDir, id string, rec HistoryRecord, control, baseline *Control, accepted *HeldUserWork) (int, error) {
 	db, err := openStore(sessDir)
 	if err != nil {
 		return 0, err
@@ -1005,6 +1015,19 @@ func appendFencedHistoryRecord(sessDir, id string, rec HistoryRecord, control, b
 	if rec.Role == "user" && rec.ClientID != "" {
 		if err := validateInboxControls(tx, rec.ClientID); err != nil {
 			return 0, err
+		}
+	}
+	if accepted != nil {
+		var state, messageJSON, runtimeJSON, origin string
+		err := tx.QueryRow(`SELECT state, origin, message_json, runtime_json FROM held_user_work WHERE session_id = ? AND id = ?`, id, rec.ClientID).Scan(&state, &origin, &messageJSON, &runtimeJSON)
+		if errors.Is(err, sql.ErrNoRows) || (err == nil && state != "pending") {
+			return 0, ErrHeldUserWorkSettled
+		}
+		if err != nil {
+			return 0, err
+		}
+		if origin != accepted.Origin || messageJSON != string(accepted.MessageJSON) || runtimeJSON != string(accepted.RuntimeJSON) {
+			return 0, errors.New("accepted input changed before admission; review the held message")
 		}
 	}
 	seq, err := appendHistoryRecordTx(tx, id, rec)
@@ -1742,6 +1765,9 @@ func migrateSchema(db *sql.DB) error {
 			return fmt.Errorf("migrate sessions database: %w", err)
 		}
 	}
+	if err := migration.addColumnIfMissing("held_user_work", "state", "TEXT NOT NULL DEFAULT 'pending'"); err != nil {
+		return err
+	}
 	if err := migration.addColumnIfMissing("inference_operations", "workflow_id", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
@@ -2303,6 +2329,11 @@ func sessionExistsTx(tx *sql.Tx, id string) (bool, error) {
 // returns that seq. seq is the message's stable address within the thread
 // The returned seq is the stable address of the appended record.
 func appendHistoryRecordTx(tx *sql.Tx, id string, rec HistoryRecord) (int, error) {
+	if rec.Role == "user" && rec.ClientID != "" {
+		if err := consumeHeldUserWorkTx(tx, id, rec); err != nil {
+			return 0, err
+		}
+	}
 	var nextSeq int
 	if err := tx.QueryRow(`SELECT COALESCE(MAX(seq), 0) + 1 FROM session_messages WHERE session_id = ?`, id).Scan(&nextSeq); err != nil {
 		return 0, fmt.Errorf("next history sequence: %w", err)

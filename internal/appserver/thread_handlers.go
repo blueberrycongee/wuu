@@ -436,7 +436,7 @@ func (s *Server) writeThreadResumeResult(req Request, thread Thread, responseOnl
 	if th := s.thread(thread.ID); th != nil {
 		s.startThreadPrewarm(th)
 	}
-	heldMessages := heldUserMessageSummaries(thread.ID, held)
+	heldMessages := s.heldUserMessageSnapshot(thread.ID, held)
 	pendingMessages := s.pendingUserMessageSummaries(thread.ID)
 	result := ThreadResumeResult{
 		Thread: thread, HeldUserMessages: heldMessages, PendingUserMessages: pendingMessages,

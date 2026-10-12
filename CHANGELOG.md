@@ -41,6 +41,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Persist accepted human queue and steering input before acknowledging it, with
+  durable edits, cancellation, and stable-ID deduplication. After a core restart,
+  unconsumed input returns as held work instead of automatically executing.
 - Share one Codex startup across concurrent sessions, retry failed or closed
   hosts on later turns, and release each turn's process ownership without
   interrupting other sessions. Keep healthy hosts warm until their app-server
