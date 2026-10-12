@@ -61,7 +61,7 @@ func (s *FileStore) Update(ctx context.Context, namespace, key string, update fu
 				return fmt.Errorf("credentialstore file decode: %w", err)
 			}
 		}
-		next, err := update(current)
+		next, err := update(bytes.Clone(current))
 		if err != nil {
 			return err
 		}

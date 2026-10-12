@@ -6,6 +6,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -31,6 +33,7 @@ type message struct {
 	Code          string `json:"code,omitempty"`
 	State         string `json:"state,omitempty"`
 	Gate          bool   `json:"gate,omitempty"`
+	BackendGate   bool   `json:"backend_gate,omitempty"`
 	Kind          string `json:"kind,omitempty"`
 	Token         string `json:"token,omitempty"`
 	Authenticated bool   `json:"authenticated,omitempty"`
@@ -82,27 +85,72 @@ func (s *gatedStore) Update(ctx context.Context, ns, key string, fn func([]byte)
 	return s.Store.(atomicStore).Update(ctx, ns, key, fn)
 }
 
-type syntheticKeyring struct{ backing *credentialstore.FileStore }
+type syntheticKeyring struct {
+	backing *credentialstore.FileStore
+	path    string
+	output  *json.Encoder
+	gate    bool
+}
 
-func (s syntheticKeyring) Get(service, account string) (string, error) {
+func (s *syntheticKeyring) Get(service, account string) (string, error) {
 	data, err := s.backing.Get(context.Background(), service, account)
 	if errors.Is(err, credentialstore.ErrNotFound) {
 		return "", keyring.ErrNotFound
 	}
 	return string(data), err
 }
-func (s syntheticKeyring) Set(service, account, value string) error {
+func (s *syntheticKeyring) Set(service, account, value string) error {
+	if s.gate {
+		s.gate = false
+		executable, err := os.Executable()
+		if err != nil {
+			return err
+		}
+		// Model a native backend command that has consumed its input but can
+		// outlive the caller. No real Keychain or account is involved.
+		cmd := exec.Command(executable, "orphan-keyring-write", s.path, service, account)
+		cmd.Stdin, cmd.Stderr = strings.NewReader(value), os.Stderr
+		if err := cmd.Start(); err != nil {
+			return err
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := waitFile(ctx, s.path+".orphan-ready"); err != nil {
+			return err
+		}
+		if err := s.output.Encode(message{Kind: "backend-write-started"}); err != nil {
+			return err
+		}
+		return cmd.Wait()
+	}
 	return s.backing.Set(context.Background(), service, account, []byte(value))
 }
-func (s syntheticKeyring) Delete(service, account string) error {
+func (s *syntheticKeyring) Delete(service, account string) error {
 	return s.backing.Delete(context.Background(), service, account)
+}
+
+func waitFile(ctx context.Context, path string) error {
+	for {
+		if _, err := os.Stat(path); err == nil {
+			return nil
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
 }
 
 func worker(path, mode string) {
 	input, output := json.NewDecoder(os.Stdin), json.NewEncoder(os.Stdout)
 	var backing credentialstore.Store = credentialstore.NewFileStore(path)
+	var backend *syntheticKeyring
 	if mode == "keyring" {
-		backing = credentialstore.NewKeyringStore("wuu-synthetic-e2e", syntheticKeyring{credentialstore.NewFileStore(path)})
+		backend = &syntheticKeyring{backing: credentialstore.NewFileStore(path), path: path, output: output}
+		backing = credentialstore.NewKeyringStore("wuu-synthetic-e2e", backend)
 	}
 	store := &gatedStore{Store: backing, input: input, output: output}
 	oauth := mcp.NewOAuthManager(store, &http.Client{Timeout: 10 * time.Second})
@@ -117,9 +165,25 @@ func worker(path, mode string) {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		result := message{Kind: "result"}
 		store.gate = request.Gate
+		if backend != nil {
+			backend.gate = request.BackendGate
+		}
 		var err error
 		switch request.Op {
-		case "hold-store", "increment", "contend-store":
+		case "seed-legacy":
+			var data []byte
+			data, err = json.Marshal(map[string]any{"access_token": "legacy-account", "refresh_token": "synthetic-rotation", "client_id": "synthetic-client", "token_endpoint": request.Code, "resource_url": request.Resource})
+			if err == nil {
+				err = backend.Set("wuu-synthetic-e2e", "mcp:docs:oauth", base64.StdEncoding.EncodeToString(data))
+			}
+		case "legacy-orphan":
+			var data []byte
+			data, err = backing.Get(ctx, "mcp:docs", "oauth")
+			if err == nil {
+				backend.gate = true
+				err = backend.Set("wuu-synthetic-e2e", "mcp:docs:oauth", base64.StdEncoding.EncodeToString(data))
+			}
+		case "hold-store", "increment", "increment-in-place", "contend-store":
 			if request.Op == "contend-store" {
 				var boundedCancel context.CancelFunc
 				ctx, boundedCancel = context.WithTimeout(ctx, 50*time.Millisecond)
@@ -134,6 +198,9 @@ func worker(path, mode string) {
 					if err := input.Decode(&release); err != nil {
 						return nil, err
 					}
+					if release.Op == "crash" {
+						os.Exit(0)
+					}
 					if release.Op != "release" {
 						return nil, errors.New("expected release")
 					}
@@ -147,7 +214,24 @@ func worker(path, mode string) {
 					}
 				}
 				result.Token = strconv.Itoa(value + 1)
+				if request.Op == "increment-in-place" {
+					if len(data) != len(result.Token) {
+						return nil, errors.New("in-place increment changed length")
+					}
+					copy(data, result.Token)
+					return data, nil
+				}
 				return []byte(result.Token), nil
+			})
+		case "make-legacy":
+			err = store.Store.(atomicStore).Update(ctx, "mcp:docs", "oauth", func(data []byte) ([]byte, error) {
+				var record map[string]any
+				if err := json.Unmarshal(data, &record); err != nil {
+					return nil, err
+				}
+				delete(record, "login_generation")
+				delete(record, "credential_version")
+				return json.Marshal(record)
 			})
 		case "start":
 			var start mcp.OAuthStartResult
@@ -161,6 +245,8 @@ func worker(path, mode string) {
 			result.Token, err = oauth.RefreshAccessToken(ctx, "docs", request.Resource)
 		case "remove":
 			err = oauth.Remove(ctx, "docs")
+		case "delete-slot":
+			err = backing.Delete(ctx, "mcp:docs", "oauth")
 		case "access":
 			result.Token, err = oauth.AccessToken(ctx, "docs", request.Resource)
 		case "status":
@@ -182,9 +268,11 @@ func worker(path, mode string) {
 }
 
 type process struct {
-	cmd *exec.Cmd
-	in  io.WriteCloser
-	out *json.Decoder
+	cmd    *exec.Cmd
+	in     io.WriteCloser
+	out    *json.Decoder
+	path   string
+	killed bool
 }
 
 func launch(ctx context.Context, path, mode string) *process {
@@ -198,7 +286,7 @@ func launch(ctx context.Context, path, mode string) *process {
 	must(err)
 	cmd.Stderr = os.Stderr
 	must(cmd.Start())
-	return &process{cmd: cmd, in: in, out: json.NewDecoder(bufio.NewReader(out))}
+	return &process{cmd: cmd, in: in, out: json.NewDecoder(bufio.NewReader(out)), path: path}
 }
 func (p *process) send(m message) { must(json.NewEncoder(p.in).Encode(m)) }
 func (p *process) read() message  { var m message; must(p.out.Decode(&m)); return m }
@@ -208,7 +296,14 @@ func (p *process) call(m message) message {
 	check(result.Kind == "result", "unexpected worker event")
 	return result
 }
-func (p *process) close() { _ = p.in.Close(); must(p.cmd.Wait()) }
+func (p *process) close() {
+	_ = p.in.Close()
+	err := p.cmd.Wait()
+	if !p.killed {
+		must(err)
+	}
+}
+func (p *process) kill() { p.killed = true; must(p.cmd.Process.Kill()) }
 func must(err error) {
 	if err != nil {
 		panic(err)
@@ -243,6 +338,18 @@ func gate(p *process, m message) {
 func release(p *process) message { p.send(message{Op: "release"}); return p.read() }
 
 func main() {
+	if len(os.Args) == 5 && os.Args[1] == "orphan-keyring-write" {
+		path, service, account := os.Args[2], os.Args[3], os.Args[4]
+		data, err := io.ReadAll(os.Stdin)
+		must(err)
+		must(os.WriteFile(path+".orphan-ready", nil, 0o600))
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		must(waitFile(ctx, path+".orphan-release"))
+		must(credentialstore.NewFileStore(path).Set(ctx, service, account, data))
+		must(os.WriteFile(path+".orphan-done", nil, 0o600))
+		return
+	}
 	if len(os.Args) == 4 && os.Args[1] == "worker" {
 		worker(os.Args[2], os.Args[3])
 		return
@@ -317,8 +424,11 @@ func main() {
 	}))
 	defer server.Close()
 	base = server.URL
-	run := func(name string, scenario func(*process, *process)) {
-		for _, mode := range []string{"file", "keyring"} {
+	run := func(name string, scenario func(*process, *process), modes ...string) {
+		if len(modes) == 0 {
+			modes = []string{"file", "keyring"}
+		}
+		for _, mode := range modes {
 			func() {
 				path := filepath.Join(root, name+"-"+mode, "synthetic.json")
 				a, b := launch(ctx, path, mode), launch(ctx, path, mode)
@@ -449,6 +559,107 @@ func main() {
 		check(success(release(a)).Token == "1", "first atomic mutation failed")
 		check(success(b.call(message{Op: "increment"})).Token == "2", "lock was not released or counter was overwritten")
 	})
+	run("atomic-store-process-exit-releases-lock", func(a, b *process) {
+		a.send(message{Op: "hold-store"})
+		check(a.read().Kind == "lock-held", "writer did not acquire store lock")
+		a.send(message{Op: "crash"})
+		check(success(b.call(message{Op: "increment"})).Token == "1", "exited writer left a stale lock or committed its callback")
+	})
+	run("legacy-credential-refresh-and-login", func(a, b *process) {
+		login(a, base+"/a", "legacy-account")
+		success(a.call(message{Op: "make-legacy"}))
+		token(b, base+"/a", "legacy-account")
+		gate(a, message{Op: "refresh", Resource: base + "/a"})
+		login(b, base+"/a", "new-account")
+		check(success(release(a)).Token == "new-account", "legacy refresh overwrote a newer login")
+		token(a, base+"/a", "new-account")
+	})
+	run("atomic-store-in-place-update", func(a, b *process) {
+		check(success(a.call(message{Op: "increment"})).Token == "1", "counter initialization failed")
+		check(success(a.call(message{Op: "increment-in-place"})).Token == "2", "in-place callback failed")
+		check(success(b.call(message{Op: "increment"})).Token == "3", "in-place Update was silently discarded")
+	})
+	for _, replacement := range []string{"logout", "new-login", "legacy-logout", "delete"} {
+		run("orphan-backend-write-after-"+replacement, func(a, b *process) {
+			if replacement == "legacy-logout" {
+				login(a, base+"/a", "old-account")
+				a.send(message{Op: "legacy-orphan"})
+			} else {
+				state := start(a, base+"/a")
+				a.send(message{Op: "finish", Resource: base + "/a", State: state, Code: "old-account", BackendGate: true})
+			}
+			check(a.read().Kind == "backend-write-started", "native-like backend did not start")
+			a.kill()
+			if replacement == "new-login" {
+				login(b, base+"/a", "new-account")
+				token(b, base+"/a", "new-account")
+			} else if replacement == "delete" {
+				success(b.call(message{Op: "delete-slot"}))
+			} else {
+				success(b.call(message{Op: "remove"}))
+			}
+			must(os.WriteFile(a.path+".orphan-release", nil, 0o600))
+			must(waitFile(ctx, a.path+".orphan-done"))
+			absent(b, base+"/a")
+			denied := b.call(message{Op: "access", Resource: base + "/a"})
+			check(denied.Error != "" && denied.Token == "", "orphaned native write restored bearer authority")
+			login(b, base+"/a", "recovered-account")
+			token(b, base+"/a", "recovered-account")
+		}, "keyring")
+	}
+	run("legacy-keyring-envelope-migration", func(a, b *process) {
+		success(a.call(message{Op: "seed-legacy", Resource: base + "/a", Code: base + "/token"}))
+		token(b, base+"/a", "legacy-account")
+		check(success(b.call(message{Op: "refresh", Resource: base + "/a"})).Token == "refreshed-synthetic-rotation", "legacy Keyring credential could not migrate")
+		token(a, base+"/a", "refreshed-synthetic-rotation")
+		success(b.call(message{Op: "remove"}))
+		absent(a, base+"/a")
+	}, "keyring")
+	run("keyring-authority-publication-failure", func(a, b *process) {
+		login(a, base+"/a", "old-account")
+		state := start(a, base+"/a")
+		a.send(message{Op: "finish", Resource: base + "/a", State: state, Code: "unpublished-account", BackendGate: true})
+		check(a.read().Kind == "backend-write-started", "backend did not reach authority publication boundary")
+		directory := filepath.Join(filepath.Dir(a.path), ".wuu", "credential-locks")
+		must(os.Rename(directory, directory+".saved"))
+		must(os.WriteFile(directory, nil, 0o600))
+		must(os.WriteFile(a.path+".orphan-release", nil, 0o600))
+		result := a.read()
+		check(strings.Contains(result.Error, "revision write"), "authority publication failure was not reported")
+		denied := b.call(message{Op: "access", Resource: base + "/a"})
+		check(denied.Error != "" && denied.Token == "", "authority I/O failure fell back to backend credentials")
+		must(os.Remove(directory))
+		must(os.Rename(directory+".saved", directory))
+		absent(b, base+"/a")
+		login(b, base+"/a", "recovered-account")
+		token(b, base+"/a", "recovered-account")
+	}, "keyring")
+	run("keyring-authority-missing-invalid-or-unsafe", func(a, b *process) {
+		login(a, base+"/a", "current-account")
+		paths, err := filepath.Glob(filepath.Join(filepath.Dir(a.path), ".wuu", "credential-locks", "*.revision"))
+		must(err)
+		check(len(paths) == 1, "expected one authority record")
+		path := paths[0]
+		data, err := os.ReadFile(path)
+		must(err)
+		check(!strings.Contains(string(data), "current-account") && !strings.Contains(string(data), "synthetic-rotation"), "authority record contains credentials")
+		must(os.Remove(path))
+		absent(b, base+"/a")
+		must(os.WriteFile(path, []byte("invalid"), 0o600))
+		check(b.call(message{Op: "access", Resource: base + "/a"}).Error != "", "corrupt authority was ignored")
+		must(os.WriteFile(path, data, 0o600))
+		if runtime.GOOS != "windows" {
+			must(os.Chmod(path, 0o644))
+			check(b.call(message{Op: "access", Resource: base + "/a"}).Error != "", "unsafe authority permissions were ignored")
+			must(os.Chmod(path, 0o600))
+			must(os.Rename(path, path+".saved"))
+			must(os.Symlink(path+".saved", path))
+			check(b.call(message{Op: "access", Resource: base + "/a"}).Error != "", "symlink authority was followed")
+			must(os.Remove(path))
+			must(os.Rename(path+".saved", path))
+		}
+		token(b, base+"/a", "current-account")
+	}, "keyring")
 	mu.Lock()
 	defer mu.Unlock()
 	for _, pair := range observed {
