@@ -248,6 +248,16 @@ try {
   assert(afterRejection.items.some(item => item.text === "context:;prompt:after-explicit-rejection"));
   check("an explicit native rejection clears admission uncertainty and ordinary continuation remains usable");
 
+  const internalErrorThread = (await rpc("thread/start", { engine: "codex" })).thread;
+  await mode("internal-error-after-admission");
+  assert.equal((await run(internalErrorThread.id, "admitted-with-error-response")).status, "failed");
+  assert(rows(internalErrorThread.id).some(row => row.engine_turn_pending), "internal RPC failure cannot prove rejection");
+  const admittedTurns = (await native()).threads[stored(internalErrorThread.id).engine_ref].turns.length;
+  await mode("");
+  assert.equal((await run(internalErrorThread.id, "must-not-repeat-uncertain-input")).status, "failed");
+  assert.equal((await native()).threads[stored(internalErrorThread.id).engine_ref].turns.length, admittedTurns);
+  check("internal RPC errors retain admission uncertainty and prevent another native input");
+
   await mode("long-turn");
   const longThread = (await rpc("thread/start", { engine: "codex" })).thread;
   const longTurn = await run(longThread.id, "many-large-tool-results");

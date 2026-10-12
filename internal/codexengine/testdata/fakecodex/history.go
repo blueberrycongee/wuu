@@ -211,6 +211,10 @@ func handleHistory(req request) bool {
 		thread.Turns = append(thread.Turns, turn)
 		db.Threads[thread.ID] = thread
 		save()
+		if control.Mode == "internal-error-after-admission" {
+			respondError(req.ID, -32603, "injected failure after native admission")
+			return true
+		}
 		respond(req.ID, map[string]any{"turn": map[string]any{"id": id}})
 		notify("turn/started", map[string]any{"threadId": thread.ID, "turn": map[string]any{"id": id}})
 		for _, item := range items[1:] {

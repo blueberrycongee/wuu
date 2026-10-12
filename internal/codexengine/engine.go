@@ -237,9 +237,10 @@ func (s *Session) RunTurn(ctx context.Context, input agentengine.TurnInput, sink
 	turnResp, err := s.startTurn(ctx, inputs)
 	if err != nil {
 		var rejected *RPCError
-		if s.persistTurnRef != nil && errors.As(err, &rejected) {
-			// An explicit RPC rejection proves no turn was accepted. Transport
-			// loss or cancellation cannot establish that and retains pending.
+		if s.persistTurnRef != nil && errors.As(err, &rejected) &&
+			(rejected.Code == -32600 || rejected.Code == -32601 || rejected.Code == -32602) {
+			// Only request/method/parameter rejection proves non-admission.
+			// Internal errors, transport loss and cancellation retain pending.
 			err = errors.Join(err, s.persistTurnRef("", false))
 		}
 		return agentengine.TurnResult{}, err
