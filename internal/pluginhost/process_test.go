@@ -522,10 +522,13 @@ func runOversizeHelper() {
 		case "initialize":
 			result = CapabilityInitializeResult{ProtocolVersion: CapabilityProtocolVersion, Capabilities: []CapabilityDescriptor{{ID: CapabilityPluginClientRequest, Kind: SeamDecision, Version: 1}}}
 		case "capability.invoke":
-			// Produce one JSON-lines token larger than maxResponseLineSize.
-			big := strings.Repeat("x", maxResponseLineSize+1024)
-			payload, _ := json.Marshal(map[string]string{"message": big})
-			result = CapabilityInvokeResult{Output: payload}
+			// Stream the same oversized JSONL response directly. Repeatedly
+			// marshaling a 64 MiB RawMessage makes the race-instrumented fixture
+			// hit its call deadline before it exercises the scanner's bound.
+			_, _ = fmt.Fprintf(os.Stdout, `{"id":%q,"result":{"output":{"message":"`, req.ID)
+			_, _ = io.WriteString(os.Stdout, strings.Repeat("x", maxResponseLineSize+1024))
+			_, _ = io.WriteString(os.Stdout, "\"}}}\n")
+			continue
 		case "shutdown":
 			_ = enc.Encode(map[string]any{"id": req.ID, "result": result})
 			return
