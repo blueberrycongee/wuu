@@ -41,6 +41,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Preserve Codex-native context when forking or editing conversation history.
+  Validate whole-turn cutoffs, commit the new native binding with the visible
+  history, and refuse unsupported cuts instead of silently losing context.
+
 - Share one Codex startup across concurrent sessions, retry failed or closed
   hosts on later turns, and release each turn's process ownership without
   interrupting other sessions. Keep healthy hosts warm until their app-server

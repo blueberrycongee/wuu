@@ -82,6 +82,9 @@ func main() {
 			fmt.Fprintln(f, line)
 			f.Close()
 		}
+		if handleHistory(req) {
+			continue
+		}
 		switch req.Method {
 		case "initialize":
 			record("initialize")

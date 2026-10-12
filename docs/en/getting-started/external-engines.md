@@ -73,3 +73,39 @@ Native subagent status is currently transient. Codex reports child activity thro
 These adapters launch trusted local programs with your user permissions. Wuu does not place their native tools inside its OS process sandbox. ACP agents that advertise a read-only or plan mode receive that native setting; otherwise `read_only` is refused because Wuu cannot enforce that boundary itself. OpenCode has no equivalent native mode and is refused. In Standard mode, the host maps onto a prompting native mode when advertised, and permission requests received over the protocol go through Wuu's approval flow; missing approval support declines them. `unconfined` maps onto a no-prompts native mode when advertised, otherwise it accepts supported one-shot requests. ACP approvals never become persistent `allow_always` rules. OpenCode refreshes an `ask` rule on each turn, including resumed turns. An agent that performs work without requesting permission is outside this approval boundary. New external-engine conversations default to `unconfined` when the caller omits a mode; choose deliberately in the composer access menu. See [permissions](../reference/permissions.md).
 
 Wuu saves the native session reference and reloads it on subsequent turns. If an ACP agent cannot load sessions, or a saved session fails to load, the turn fails without silently creating a replacement history. An ACP turn completes on the native prompt response. Grok can also complete on its `x.ai/session/prompt_complete` extension when that notification arrives first, because its prompt RPC can hang after the turn has finished. Quiet output after the agent has acknowledged the prompt is not treated as completion. Total silence after the prompt — no queue bookkeeping, updates, or requests — surfaces an error, because that is a wedged agent rather than extra-high reasoning. Stop requests cancel native work and clean up the child process. OpenCode uses a password-protected loopback server with a fresh password for each process; it is not exposed as a remote service.
+
+
+## Forking and editing history
+
+For Codex, fork a completed turn or its final reply. Editing a user message
+keeps the conversation before that native turn. Wuu creates an independent
+native branch and saves its reference together with the matching visible
+history; subsequent turns and restarts use that branch. The source native
+history remains unchanged. Neither operation reverts files or tool side effects.
+
+Codex must support bounded `thread/fork` and return complete turn history. Wuu
+checks the returned turn and item identities, including native tool context.
+An older CLI that ignores the cutoff fails explicitly; update the CLI rather
+than accepting a branch with extra context. Wait for the source turn to finish
+before forking. Cuts inside a native turn, such as a user message, commentary,
+or one tool result, are refused; choose the turn's final reply instead. Older
+Wuu conversations need a matching native output identity to establish the cut.
+
+Claude Code and the other external adapters do not yet expose a verified native
+history cutoff through Wuu. Their nonempty histories remain readable and
+resumable, but fork/edit requests fail before changing them. Empty, never-run
+threads can still be forked. Managed context-copy requests likewise reject
+external history instead of treating its display transcript as a native replay.
+
+If native forking or Wuu persistence fails, the original conversation stays
+usable. A native branch created before a failed Wuu commit may remain in the
+CLI's own history without a Wuu conversation; Wuu does not delete native audit
+history to conceal that failure.
+
+If a new Codex turn was sent but its native outcome cannot be confirmed, Wuu
+remembers that uncertainty across restarts and does not send another prompt
+into potentially running native work. When the turn ID is known, a later
+attempt first reads native history and continues only after confirming that
+turn has finished. If its ID could not be saved, fork an earlier verifiable
+completed turn. Ordinary older conversations without these uncertainty markers
+remain resumable. A Stop with a confirmed terminal outcome does not require this recovery.

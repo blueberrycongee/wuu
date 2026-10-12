@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/agentengine"
@@ -84,6 +85,7 @@ func (e *Engine) SessionForThread(ctx context.Context, binding agentengine.Threa
 		mcpServers:     binding.MCPServers,
 		externalRef:    binding.ExternalRef,
 		persistRef:     binding.PersistRef,
+		persistTurnRef: binding.PersistTurnRef,
 		approval:       binding.RequestApproval,
 	})
 }
@@ -99,6 +101,7 @@ type sessionOptions struct {
 	mcpServers     []agentengine.MCPServer
 	externalRef    string
 	persistRef     func(string) error
+	persistTurnRef func(string, bool) error
 	approval       agentengine.ApprovalHandler
 }
 
@@ -127,6 +130,7 @@ func (e *Engine) newSession(ctx context.Context, opts sessionOptions) (agentengi
 		mcpServers:     append([]agentengine.MCPServer(nil), opts.mcpServers...),
 		ref:            opts.externalRef,
 		persist:        opts.persistRef,
+		persistTurnRef: opts.persistTurnRef,
 		approval:       approval,
 	}, nil
 }
@@ -148,11 +152,12 @@ type Session struct {
 	instructions   string
 	mcpServers     []agentengine.MCPServer
 
-	mu          sync.Mutex
-	ref         string
-	persist     func(string) error
-	approval    agentengine.ApprovalHandler
-	approvalCtx context.Context
+	mu             sync.Mutex
+	ref            string
+	persist        func(string) error
+	persistTurnRef func(string, bool) error
+	approval       agentengine.ApprovalHandler
+	approvalCtx    context.Context
 }
 
 // RunTurn starts a codex turn and translates its notifications into Wuu
@@ -163,6 +168,45 @@ func (s *Session) RunTurn(ctx context.Context, input agentengine.TurnInput, sink
 	}
 	if err := ctx.Err(); err != nil {
 		return agentengine.TurnResult{}, err
+	}
+	// Pending is written only by the native admission protocol below. Missing
+	// IDs in older conversations do not imply uncertain work and stay usable.
+	if s.persistTurnRef != nil {
+		var native *historyThread
+		for _, message := range input.History {
+			if !message.EngineTurnPending {
+				continue
+			}
+			if message.EngineTurnID == "" {
+				return agentengine.TurnResult{}, errors.New("an earlier Codex admission has no verified native turn ID; fork an earlier completed turn before continuing")
+			}
+			if native == nil {
+				var response struct {
+					Thread historyThread `json:"thread"`
+				}
+				if err := s.client.Request(ctx, "thread/read", map[string]any{"threadId": s.ref, "includeTurns": true}, &response); err != nil {
+					return agentengine.TurnResult{}, fmt.Errorf("verify pending Codex turn: %w", err)
+				}
+				if response.Thread.ID != s.ref || response.Thread.Turns == nil {
+					return agentengine.TurnResult{}, errors.New("Codex did not return the pending native history; no new input was sent")
+				}
+				native = &response.Thread
+			}
+			matches := 0
+			terminal := false
+			for _, turn := range native.Turns {
+				if turn.ID == message.EngineTurnID {
+					matches++
+					terminal = turn.Status == "completed" || turn.Status == "interrupted" || turn.Status == "failed"
+				}
+			}
+			if matches != 1 || !terminal {
+				return agentengine.TurnResult{}, errors.New("an earlier Codex turn still has an unconfirmed native outcome; no new input was sent")
+			}
+			if err := s.persistTurnRef(message.EngineTurnID, false); err != nil {
+				return agentengine.TurnResult{}, fmt.Errorf("settle recovered native turn: %w", err)
+			}
+		}
 	}
 	s.mu.Lock()
 	s.approvalCtx = ctx
@@ -185,23 +229,57 @@ func (s *Session) RunTurn(ctx context.Context, input agentengine.TurnInput, sink
 	done := make(chan turnOutcome, 1)
 	sub := newTurnSubscription(s.client, sink, done)
 	defer sub.close()
+	if s.persistTurnRef != nil {
+		if err := s.persistTurnRef("", true); err != nil {
+			return agentengine.TurnResult{}, fmt.Errorf("persist native turn admission: %w", err)
+		}
+	}
 	turnResp, err := s.startTurn(ctx, inputs)
 	if err != nil {
+		var rejected *RPCError
+		if s.persistTurnRef != nil && errors.As(err, &rejected) {
+			// An explicit RPC rejection proves no turn was accepted. Transport
+			// loss or cancellation cannot establish that and retains pending.
+			err = errors.Join(err, s.persistTurnRef("", false))
+		}
 		return agentengine.TurnResult{}, err
 	}
 	turnID := turnResp.Turn.ID
+	if strings.TrimSpace(turnID) == "" {
+		return agentengine.TurnResult{}, errors.New("Codex accepted input without a native turn ID; native outcome is unconfirmed")
+	}
+	if s.persistTurnRef != nil {
+		if err := s.persistTurnRef(turnID, true); err != nil {
+			if cleanupErr := s.interruptBestEffort(turnID); cleanupErr != nil {
+				return agentengine.TurnResult{}, fmt.Errorf("persist native turn boundary: %w; Codex interruption is unconfirmed: %v", err, cleanupErr)
+			}
+			return agentengine.TurnResult{}, fmt.Errorf("persist native turn boundary: %w; native history remains unverified", err)
+		}
+	}
 	sub.setTurnID(turnID)
-
+	settle := func(out turnOutcome) (agentengine.TurnResult, error) {
+		switch out.result.Result.StopReason {
+		case "completed", "interrupted", "failed":
+			if s.persistTurnRef != nil {
+				if err := s.persistTurnRef(turnID, false); err != nil {
+					out.err = errors.Join(out.err, fmt.Errorf("persist native turn settlement: %w", err))
+				}
+			}
+		}
+		return out.result, out.err
+	}
 	select {
 	case out := <-done:
-		return out.result, out.err
+		return settle(out)
 	case <-ctx.Done():
-		_ = s.interrupt(context.Background(), turnID)
+		cleanupErr := s.interruptBestEffort(turnID)
+		timer := time.NewTimer(nativeCleanupTimeout)
+		defer timer.Stop()
 		select {
 		case out := <-done:
-			return out.result, out.err
-		default:
-			return agentengine.TurnResult{}, ctx.Err()
+			return settle(out)
+		case <-timer.C:
+			return agentengine.TurnResult{}, errors.Join(ctx.Err(), cleanupErr, errors.New("Codex interruption is unconfirmed; native admission remains pending"))
 		}
 	}
 }
@@ -458,6 +536,20 @@ func (s *Session) interrupt(ctx context.Context, turnID string) error {
 		ThreadID: s.ref,
 		TurnID:   turnID,
 	}, &out)
+}
+
+const nativeCleanupTimeout = 2 * time.Second
+
+// Cleanup must outlive a canceled turn without letting an unresponsive engine
+// hold its Wuu execution lease forever.
+func (s *Session) interruptBestEffort(turnID string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), nativeCleanupTimeout)
+	defer cancel()
+	if err := s.interrupt(ctx, turnID); err != nil {
+		providers.DebugLogf("interrupt Codex turn %q during cleanup: %v", turnID, err)
+		return err
+	}
+	return nil
 }
 
 // Interrupt cancels the in-flight turn via turn/interrupt.
