@@ -21,12 +21,12 @@ import {
   ChevronLeft,
   ChevronRight,
   Code2,
-  EyeOff,
   MoreHorizontal,
   Plus,
   RefreshCw,
   RotateCcw,
   Search,
+  Trash2,
 } from "./WuuIcons";
 import { CatalogSearchField } from "./CatalogSearchField";
 import { EngineIcon } from "./EngineIcons";
@@ -67,7 +67,7 @@ export type ModelServicesPageProps = {
   running: boolean;
   runningProviderNames: ReadonlySet<string>;
   onSave: SaveProvider;
-  onRemoveProvider: (provider: string) => Promise<void>;
+  onRemoveProvider: (provider: string, options?: { fallbackProvider?: string; fallbackModel?: string }) => Promise<void>;
   onRefreshModelCatalog: () => Promise<void>;
 };
 
@@ -313,8 +313,8 @@ export function ModelServicesPage({
           inUse={runningProviderNames.has(detailProvider.name)}
           onBack={() => setOpenService("")}
           onSave={onSave}
-          onRemove={async () => {
-            await onRemoveProvider(detailProvider.name);
+          onRemove={async (options) => {
+            await onRemoveProvider(detailProvider.name, options);
             setOpenService("");
           }}
         />
@@ -680,7 +680,7 @@ function ServiceDetail({
   inUse: boolean;
   onBack: () => void;
   onSave: SaveProvider;
-  onRemove: () => Promise<void>;
+  onRemove: (options?: { fallbackProvider?: string; fallbackModel?: string }) => Promise<void>;
 }): JSX.Element {
   const { t } = useI18n();
   const identity = serviceIdentity(provider, t);
@@ -692,7 +692,11 @@ function ServiceDetail({
   const [busy, setBusy] = useState(false);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const [confirmingRemove, setConfirmingRemove] = useState(false);
+  const [fallbackProvider, setFallbackProvider] = useState("");
   const removable = !provider.auto_discovered && !isCodexType(provider.type);
+  const fallbackProviders = (initialized?.providers ?? []).filter((item) => !item.auto_discovered && item.name !== provider.name);
+  const fallback = fallbackProviders.find((item) => item.name === fallbackProvider);
+  const lastProvider = fallbackProviders.length === 0;
   const disabled = running || busy;
 
   async function run(action: () => Promise<void>): Promise<boolean> {
@@ -720,6 +724,18 @@ function ServiceDetail({
       : onSave(provider.name, model, undefined, { keep_selection: true }));
   }
 
+  function removeModel(model: string, replacement: string): Promise<boolean> {
+    return run(() => onSave(
+      provider.name,
+      replacement,
+      undefined,
+      { remove_model: model, keep_selection: !isDefault || replacement === serviceModel },
+      isDefault && replacement !== serviceModel
+        ? normalizedVariantForProviderModel(currentVariant, provider, replacement)
+        : undefined,
+    ));
+  }
+
   return (
     <>
       <nav className="settings-page-back" aria-label={t("settings.providers")}>
@@ -741,6 +757,7 @@ function ServiceDetail({
               type="button"
               className="settings-button settings-button-ghost settings-icon-button"
               aria-label={t("provider.moreActions", { name: label })}
+              title={t("provider.moreActions", { name: label })}
               aria-haspopup="menu"
               disabled={disabled}
               onClick={(event) => {
@@ -771,7 +788,7 @@ function ServiceDetail({
         </div>
       </header>
 
-      {error ? <p className="settings-error" role="alert">{error}</p> : null}
+      {error && !confirmingRemove ? <p className="settings-error" role="alert">{error}</p> : null}
 
       <SettingsSection title={t("provider.connectionSection")}>
         <SettingsGroup>
@@ -783,8 +800,9 @@ function ServiceDetail({
         provider={provider}
         serviceModel={serviceModel}
         disabled={disabled}
+        error={error}
         onChoose={chooseModel}
-        onHide={(model) => void saveConnection({ remove_model: model })}
+        onRemove={removeModel}
         onAdd={(model) => saveConnection({ add_model: model })}
       />
 
@@ -795,12 +813,15 @@ function ServiceDetail({
           onClose={() => setMenu(null)}
           items={[{
             label: t("provider.removeAction"),
+            icon: <Trash2 className="icon" aria-hidden="true" />,
             danger: true,
             onSelect: () => {
               if (inUse) {
                 setError(t("provider.inUse"));
                 return;
               }
+              setError("");
+              setFallbackProvider("");
               setConfirmingRemove(true);
             },
           }]}
@@ -821,15 +842,36 @@ function ServiceDetail({
               type="button"
               className="settings-button settings-button-danger"
               data-testid="settings-provider-remove-confirm"
-              disabled={busy}
+              disabled={busy || lastProvider || (isDefault && !fallback)}
               onClick={() => {
-                void run(onRemove).then(() => setConfirmingRemove(false));
+                void run(() => onRemove(isDefault && fallback
+                  ? { fallbackProvider: fallback.name, fallbackModel: fallback.model }
+                  : undefined)).then((removed) => { if (removed) setConfirmingRemove(false); });
               }}
             >
               {t("provider.removeAction")}
             </button>
           </>}
-        />
+        >
+          <p>{t(lastProvider ? "provider.lastProvider" : "provider.removeDescription")}</p>
+          {isDefault && !lastProvider ? (
+            <div className="model-connect-field">
+              <span>{t("provider.chooseDefaultModel")}</span>
+              <SelectMenu
+                triggerClassName="settings-select-trigger"
+                ariaLabel={t("provider.chooseDefaultModel")}
+                dataTestid="settings-provider-removal-fallback"
+                value={fallbackProvider}
+                placeholder={t("provider.chooseDefaultModel")}
+                options={fallbackProviders.map((item) => ({ value: item.name, label: `${serviceIdentity(item, t).label} · ${modelLabel(item, item.model)}` }))}
+                disabled={busy}
+                onChange={setFallbackProvider}
+                flip
+              />
+            </div>
+          ) : null}
+          {error ? <p className="settings-error" role="alert">{error}</p> : null}
+        </Modal>
       ) : null}
     </>
   );
@@ -1083,23 +1125,30 @@ function ModelChoices({
   provider,
   serviceModel,
   disabled,
+  error,
   onChoose,
-  onHide,
+  onRemove,
   onAdd,
 }: {
   provider: ProviderSummary;
   serviceModel: string;
   disabled: boolean;
+  error: string;
   onChoose: (model: string) => void;
-  onHide: (model: string) => void;
+  onRemove: (model: string, replacement: string) => Promise<boolean>;
   onAdd: (model: string) => Promise<boolean>;
 }): JSX.Element {
   const { t } = useI18n();
   const [query, setQuery] = useState("");
   const [draft, setDraft] = useState("");
   const [adding, setAdding] = useState(false);
+  const [removing, setRemoving] = useState<ProviderModelSummary | null>(null);
+  const [replacement, setReplacement] = useState("");
+  const [removeError, setRemoveError] = useState("");
   const models = providerModels(provider);
   const hidden = provider.hidden_models ?? [];
+  const removingSelected = removing?.id === serviceModel;
+  const replacements = models.filter((model) => model.id !== removing?.id);
   const normalized = query.trim().toLocaleLowerCase();
   const visible = normalized
     ? models.filter((model) => `${providerModelDisplayName(model)} ${model.id}`.toLocaleLowerCase().includes(normalized))
@@ -1114,13 +1163,14 @@ function ModelChoices({
         ) : null}
         <button
           type="button"
-          className="settings-button settings-button-ghost"
+          className="settings-button settings-button-ghost settings-icon-button"
+          aria-label={t("provider.addModel")}
+          title={t("provider.addModel")}
           data-testid="settings-provider-add-model-open"
           disabled={disabled || adding}
           onClick={() => setAdding(true)}
         >
           <Plus className="icon" aria-hidden="true" />
-          {t("provider.addModel")}
         </button>
       </>}
     >
@@ -1143,18 +1193,23 @@ function ModelChoices({
                 <span className="model-choice-name">{name}</span>
                 {name !== model.id ? <code className="model-choice-id">{model.id}</code> : null}
               </button>
-              {selected ? <span className="model-choice-check" aria-hidden="true"><Check className="icon" /></span> : (
-                <button
-                  type="button"
-                  className="icon-button model-choice-hide"
-                  aria-label={t("provider.hideModel", { model: name })}
-                  title={t("provider.hideModel", { model: name })}
-                  disabled={disabled}
-                  onClick={() => onHide(model.id)}
-                >
-                  <EyeOff className="icon" aria-hidden="true" />
-                </button>
-              )}
+              <span className="model-choice-check" aria-hidden="true">{selected ? <Check className="icon" /> : null}</span>
+              <button
+                type="button"
+                className="icon-button model-choice-action"
+                data-testid="settings-provider-remove-model"
+                data-model={model.id}
+                aria-label={t("provider.removeModel", { model: name })}
+                title={t("provider.removeModel", { model: name })}
+                disabled={disabled}
+                onClick={() => {
+                  setRemoving(model);
+                  setReplacement("");
+                  setRemoveError("");
+                }}
+              >
+                <Trash2 className="icon" aria-hidden="true" />
+              </button>
             </div>
           );
         })}
@@ -1211,7 +1266,7 @@ function ModelChoices({
                 </span>
                 <button
                   type="button"
-                  className="icon-button model-choice-hide"
+                  className="icon-button model-choice-action"
                   aria-label={t("provider.restoreModel", { model })}
                   title={t("provider.restoreModel", { model })}
                   disabled={disabled}
@@ -1223,6 +1278,55 @@ function ModelChoices({
             ))}
           </div>
         </details>
+      ) : null}
+      {removing ? (
+        <Modal
+          ariaLabel={t("provider.removeModelTitle", { model: providerModelDisplayName(removing) })}
+          title={t("provider.removeModelTitle", { model: providerModelDisplayName(removing) })}
+          panelClassName="model-dialog model-remove-dialog"
+          closeDisabled={disabled}
+          onClose={() => setRemoving(null)}
+          footer={<>
+            <button type="button" className="settings-button settings-button-ghost" disabled={disabled} onClick={() => setRemoving(null)}>
+              {t("common.cancel")}
+            </button>
+            <button
+              type="button"
+              className="settings-button settings-button-danger"
+              data-testid="settings-provider-remove-model-confirm"
+              disabled={disabled || (removingSelected && !replacement)}
+              onClick={() => {
+                void onRemove(removing.id, removingSelected ? replacement : serviceModel).then((removed) => {
+                  if (removed) setRemoving(null);
+                  else setRemoveError(t("provider.saveFailed"));
+                });
+              }}
+            >
+              {t("common.delete")}
+            </button>
+          </>}
+        >
+          <p>{t("provider.removeModelDescription")}</p>
+          {removingSelected ? replacements.length ? (
+            <div className="model-connect-field">
+              <span>{t("provider.replacementModel")}</span>
+              <SelectMenu
+                triggerClassName="settings-select-trigger"
+                ariaLabel={t("provider.replacementModel")}
+                dataTestid="settings-provider-replacement-model"
+                value={replacement}
+                placeholder={t("provider.chooseReplacementModel")}
+                options={replacements.map((model) => ({ value: model.id, label: providerModelDisplayName(model), keywords: [model.id] }))}
+                searchable={replacements.length > MODEL_SEARCH_THRESHOLD}
+                searchPlaceholder={t("provider.searchModels")}
+                disabled={disabled}
+                onChange={setReplacement}
+                flip
+              />
+            </div>
+          ) : <p>{t("provider.lastModel")}</p> : null}
+          {removeError ? <p className="settings-error" role="alert">{error || removeError}</p> : null}
+        </Modal>
       ) : null}
     </SettingsSection>
   );

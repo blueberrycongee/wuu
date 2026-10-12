@@ -120,6 +120,8 @@ function installWuuApi(): {
     model: "gpt-5",
     effort: "medium",
     variant: "medium",
+    model_aliases: {},
+    model_roles: [{ role: "title", provider: "codex", model: "gpt-5", inherited: true }],
   });
   const loadCodexModels = vi.fn().mockResolvedValue({
     provider: "codex",
@@ -260,8 +262,8 @@ describe("createRuntimeSettingsActions", () => {
     expect(harness.clearThreadPendingComposerMessages).not.toHaveBeenCalled();
   });
 
-  it.each(settingsOperations)("preserves conversation progress and errors after saving $name", async ({ save }) => {
-    installWuuApi();
+  it.each(settingsOperations)("preserves conversation progress and errors after saving $name", async ({ save, api }) => {
+    const methods = installWuuApi();
     for (const status of ["running", "conversation request failed"]) {
       const initial: AppState = {
         ...initialState,
@@ -278,10 +280,25 @@ describe("createRuntimeSettingsActions", () => {
       const { initialized: updated, ...conversation } = harness.getAppState();
       const { initialized: previous, ...originalConversation } = initial;
       expect(updated).not.toBe(previous);
+      if (api === "removeProvider") {
+        expect(updated?.model_aliases).toEqual({});
+        expect(updated?.model_roles?.[0]).toMatchObject({ role: "title", provider: "codex", inherited: true });
+      }
       expect(conversation).toEqual(originalConversation);
       expect(harness.getAppState().thread).toBe(initial.thread);
       expect(harness.getAppState().secondaryThread).toBe(initial.secondaryThread);
     }
+    if (api === "removeProvider") {
+      const harness = buildActions({ initial: {
+        ...initialState,
+        initialized: initialized({ provider: "unused-provider", model: "old", effort: "high", variant: "high" }),
+      } });
+      methods.removeProvider.mockResolvedValueOnce({ provider: "fallback", model: "next-model", model_aliases: {}, model_roles: [] });
+      await save(harness.actions);
+      expect(harness.getAppState().initialized).toMatchObject({ provider: "fallback", model: "next-model", effort: "", variant: "" });
+      expect(readDraftRuntimeMemory()).toMatchObject({ provider: "fallback", model: "next-model", effort: "" });
+    }
+
   });
 
   it("saves provider defaults without targeting or patching running sessions", async () => {
