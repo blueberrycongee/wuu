@@ -155,7 +155,7 @@ runJSONLRuntime({
     parallel_tool_calls: true, parallelToolCalls: true,
     web_search_options: {}, search_parameters: { mode: "auto" }, plugins: [{ id: "web" }],
     stream: true, stream_options: { include_usage: true }, background: true, n: 2, best_of: 2,
-    modalities: ["text", "audio"], audio: { voice: "alloy", format: "wav" }, store: true, omitStore: true,
+    modalities: ["text", "audio"], audio: { voice: "alloy", format: "wav" }, store: true,
     maxOutputTokens: 128000, max_output_tokens: 128000, max_tokens: 128000, max_completion_tokens: 128000,
   };
   const fixtureConfig = (type, model, wire_api) => ({
@@ -165,7 +165,7 @@ runJSONLRuntime({
       ...shapeOverrides, temperature: 0.42, topP: 0.83, seed: 42,
       ...(type === "anthropic" ? { thinking: { type: "enabled", budgetTokens: 16 }, effort: "low", topK: 17 }
         : { reasoningEffort: "low", reasoningSummary: "auto", textVerbosity: "low",
-          ...(wire_api === "responses" ? { text: { format: { type: "text" } } } : { response_format: { type: "text" } }) }),
+          ...(wire_api === "responses" ? { text: { format: { type: "text" } }, omitStore: true } : { response_format: { type: "text" } }) }),
     } } },
   });
   await writeFile(configPath, JSON.stringify({
@@ -251,6 +251,7 @@ runJSONLRuntime({
     assert.equal(body.temperature, 0.42, `${name}: sampling option was lost`);
     assert.equal(body.top_p, 0.83, `${name}: sampling alias was lost`);
     if (wire === "responses") {
+      assert.equal(body.store, undefined, "Responses transport's omitStore compatibility flag was lost");
       assert.equal(body.max_output_tokens, 32);
       assert.equal(body.max_tokens, undefined);
       assert.equal(body.instructions, input(tag).messages[0].content);

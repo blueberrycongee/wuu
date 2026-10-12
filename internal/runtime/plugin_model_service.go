@@ -8,10 +8,10 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/blueberrycongee/wuu/internal/modelrequest"
 	"github.com/blueberrycongee/wuu/internal/modelroles"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providerfactory"
-	"github.com/blueberrycongee/wuu/internal/provideroptions"
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
 
@@ -134,19 +134,7 @@ func (k *modelRequestInvoker) InvokeService(callCtx context.Context, params plug
 		Provider: selection.Provider, Model: selection.APIModel,
 		Messages: messages, MaxTokens: input.MaxOutputTokens,
 		Temperature: cfg.Agent.Temperature, Effort: selection.LegacyEffort,
-		ProviderOptions: modelRequestProviderOptions(selection.ProviderOptions),
-	}
-	if preparer, ok := client.(providers.InferenceRequestPreparer); ok {
-		request, err = preparer.PrepareInferenceRequest(ctx, request)
-		if err != nil {
-			return nil, modelRequestError(err)
-		}
-		// Some adapters remove unsupported token limits. Reject before any
-		// inference submission rather than silently running an unbounded call.
-		if request.MaxTokens <= 0 || request.MaxTokens > input.MaxOutputTokens {
-			return nil, serviceError("unsupported_limit", "configured model provider cannot preserve the requested output token limit")
-		}
-		request.ProviderOptions = modelRequestProviderOptions(request.ProviderOptions)
+		ProviderOptions: selection.ProviderOptions,
 	}
 	// Preserve an existing workflow's owner and budget. Client-request
 	// capabilities have no parent inference journal, so attribute them to the
@@ -161,15 +149,15 @@ func (k *modelRequestInvoker) InvokeService(callCtx context.Context, params plug
 	// This auxiliary request intentionally has no agent-loop callbacks, injected
 	// history or tools. Provider preparation, credentials, capacity, retry and
 	// durable accounting use the ordinary host inference path.
-	response, err := providers.ExecuteChat(ctx, client, request, providers.InferenceOperationAuxiliary, providers.InferenceProfileInteractive)
+	response, err := modelrequest.Execute(ctx, client, request)
 	if err != nil {
+		if errors.Is(err, modelrequest.ErrUnsupportedLimit) {
+			return nil, serviceError("unsupported_limit", err.Error())
+		}
+		if errors.Is(err, modelrequest.ErrInvalidResponse) {
+			return nil, serviceError("invalid_response", err.Error())
+		}
 		return nil, modelRequestError(err)
-	}
-	if err := ctx.Err(); err != nil {
-		return nil, modelRequestError(err)
-	}
-	if len(response.ToolCalls) > 0 || strings.TrimSpace(response.Content) == "" {
-		return nil, serviceError("invalid_response", "model did not return a text-only response")
 	}
 	finishReason := response.FinishReason
 	if finishReason == "" {
@@ -190,26 +178,6 @@ func (k *modelRequestInvoker) InvokeService(callCtx context.Context, params plug
 		}
 	}
 	return marshalServiceResult(result)
-}
-
-func modelRequestProviderOptions(options map[string]any) map[string]any {
-	options = provideroptions.Clone(options)
-	// OpenAI-compatible adapters merge options over the final wire payload.
-	// Keep sampling, reasoning and text formatting, but reserve the selected
-	// model, explicit context, tool-free surface and bounded unary execution.
-	// Apply this on both sides of provider preparation, before journal hashing.
-	for _, key := range []string{
-		"model", "models", "messages", "input", "instructions", "system", "prompt", "suffix", "prediction",
-		"previous_response_id", "conversation", "context_management", "container",
-		"tools", "tool_choice", "functions", "function_call", "parallel_tool_calls", "parallelToolCalls",
-		"web_search_options", "search_parameters", "plugins",
-		"stream", "stream_options", "background", "n", "best_of", "modalities", "audio",
-		"store", "omitStore",
-		"maxOutputTokens", "max_output_tokens", "max_tokens", "max_completion_tokens",
-	} {
-		delete(options, key)
-	}
-	return options
 }
 
 func modelRequestError(err error) error {

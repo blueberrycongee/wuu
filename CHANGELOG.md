@@ -18,6 +18,16 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   handling. Completion plugins supply their own policy; no completion provider
   is registered by default.
 
+### Changed
+
+- Approve for me shares the one-shot text request foundation with plugins while
+  retaining host-owned permission decisions and the active conversation's model
+  and tuning. Provider options cannot replace review evidence, switch models, or
+  add tools; review keeps its existing timeout and output-token policy.
+- One-shot text requests preserve native provider preparation and transport
+  compatibility, including Codex journal identity and Responses endpoints that
+  require omission of the `store` field.
+
 ## [2026.10.12] - 2026-10-12
 
 ### Contributors
