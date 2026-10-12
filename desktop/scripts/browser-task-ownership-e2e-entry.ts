@@ -3,9 +3,8 @@
 // case holds the result of an actual CDP geometry read to exercise its async
 // boundary without replacing the browser or fabricating a command response.
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer, type ServerResponse } from "node:http";
-import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { app, BrowserWindow, nativeImage, type WebContentsView, type WebContentsViewConstructorOptions } from "electron";
@@ -23,7 +22,8 @@ import {
 
 const desktop = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const output = process.env.WUU_BROWSER_OWNERSHIP_OUTPUT ?? join(desktop, "out", "browser-task-ownership");
-const fixture = mkdtempSync(join(tmpdir(), "wuu-browser-ownership-"));
+const fixture = process.env.WUU_BROWSER_OWNERSHIP_FIXTURE;
+assert(fixture, "Run the fixture through browser-task-ownership-e2e.cjs");
 const home = join(fixture, "home");
 const workdir = join(fixture, "project");
 for (const directory of [output, home, workdir]) mkdirSync(directory, { recursive: true });
@@ -950,7 +950,6 @@ app.whenReady().then(async () => {
   host.destroyAll();
   main.destroy();
   server.close();
-  rmSync(fixture, { recursive: true, force: true });
   assert.equal(failures.length, 0, failures.join("\n"));
   console.log(`PASS: browser task ownership and takeover; evidence ${output}`);
   app.exit(0);
