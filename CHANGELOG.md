@@ -41,6 +41,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Remote MCP notification streams recover after session expiry or credential
+  refresh, discard obsolete session messages, and report unrecoverable handshakes
+  as connection failures. Concurrent expired calls share one recovery, renewed
+  sessions clear old resume cursors, and closing the connection cancels recovery.
+
 - Remote MCP POST streams now close when their call completes or is cancelled.
   An interrupted or malformed response fails only its originating call promptly,
   without replaying tools or disconnecting healthy calls and notifications.

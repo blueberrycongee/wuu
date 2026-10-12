@@ -46,6 +46,26 @@ The enable toggle saves the startup preference. Use the connection controls when
 
 Tools receive model-visible names such as `mcp_docs_search`, with normalization for unsupported characters and long names. Large or infrequently used tool definitions can be deferred and found through tool search. The current tool surface and permission policy can still limit availability or execution.
 
+### Session and notification recovery
+
+For streamable HTTP servers, the optional GET notification stream follows the
+initialized session. Session expiry starts one shared recovery handshake even
+when several calls receive HTTP 404 together. A new session closes the old
+listener, clears its resume cursor, and starts listening after initialization
+completes. Queued notifications from obsolete sessions are discarded. HTTP 405
+turns off GET listening only for that session.
+
+With OAuth, a GET authentication failure refreshes credentials and retries once.
+A later successful POST credential refresh can restart the listener while
+preserving the same session's resume cursor. Disconnecting cancels listening and
+any pending recovery. An unsuccessful recovery appears as a connection error;
+use **Refresh** after resolving the reported problem.
+
+Recovery does not replay a tool because its response stream broke: the tool may
+already have taken effect. Wuu only retries requests explicitly rejected with
+HTTP 401 or a session-expiry HTTP 404, within the authentication and recovery
+limits. Other in-flight POST calls keep ownership of their own final responses.
+
 ## Project `.mcp.json`
 
 Wuu reads Claude-style `.mcp.json` in the project configuration directory:

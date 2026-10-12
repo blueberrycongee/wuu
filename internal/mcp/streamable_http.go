@@ -36,7 +36,7 @@ package mcp
 //     notifications/tools/list_changed by re-running tools/list), and over
 //     streamable HTTP unsolicited server->client messages only arrive on the
 //     GET stream. Servers that do not offer the stream answer 405 (or another
-//     4xx) and the listener shuts up permanently. Reconnects send
+//     4xx) and the listener stops for that session. Reconnects send
 //     `Last-Event-ID` when the server tagged events with IDs.
 
 import (
@@ -78,6 +78,7 @@ type streamableHTTPError struct {
 	body       string // trimmed response body excerpt, for diagnostics
 	reason     string // non-empty for protocol mismatches (unexpected content type, non-JSON-RPC body)
 	hadSession bool   // request carried an Mcp-Session-Id header
+	generation uint64 // session owning the rejected request
 }
 
 func (e *streamableHTTPError) Error() string {
@@ -114,16 +115,45 @@ type StreamableHTTPTransport struct {
 
 	ctx    context.Context
 	cancel context.CancelFunc
-	inbox  chan Response
+	inbox  chan httpInboundMessage
+	failed chan struct{}
 
 	mu              sync.Mutex
 	sessionID       string
 	protocolVersion string          // as returned by the server's InitializeResult
 	initParams      json.RawMessage // params of the last initialize request, for session re-init
-	listenerStarted bool
+	generation      uint64
+	listener        *httpListener
+	recovery        *httpSessionRecovery
+	listenerBackoff time.Duration
 	closed          bool
+	terminalErr     error
 
 	wg sync.WaitGroup
+}
+
+// Notifications and reverse requests belong to their originating session,
+// including while buffered. POST responses still belong to their original call.
+type httpInboundMessage struct {
+	response   Response
+	generation uint64
+}
+
+// A listener and its resume cursor belong to one initialized session.
+type httpListener struct {
+	ctx              context.Context
+	cancel           context.CancelFunc
+	generation       uint64
+	session, version string
+	lastEventID      string // guarded by the transport mutex
+	initialDelay     time.Duration
+	unsupported      bool // a 405 disables GET only for this session
+}
+
+type httpSessionRecovery struct {
+	generation uint64
+	done       chan struct{}
+	err        error // published by closing done
 }
 
 // NewStreamableHTTPTransport creates a transport for the given MCP endpoint.
@@ -147,7 +177,8 @@ func NewStreamableHTTPTransportWithAuth(endpoint string, headers map[string]stri
 		authProvider: authProvider,
 		ctx:          ctx,
 		cancel:       cancel,
-		inbox:        make(chan Response, 32),
+		inbox:        make(chan httpInboundMessage, 32),
+		failed:       make(chan struct{}),
 	}
 }
 
@@ -170,17 +201,9 @@ func (t *StreamableHTTPTransport) Send(ctx context.Context, req Request) error {
 	if err != nil {
 		return fmt.Errorf("marshal message: %w", err)
 	}
-	err = t.post(ctx, req, body, false)
+	err = t.postWithAuthRetry(ctx, req, body)
 	if err == nil {
 		return nil
-	}
-	var authErr *streamableHTTPError
-	if errors.As(err, &authErr) && authErr.status == http.StatusUnauthorized && t.authProvider != nil {
-		if retryErr := t.post(ctx, req, body, true); retryErr == nil {
-			return nil
-		} else {
-			err = retryErr
-		}
 	}
 	// Session expiry (spec, Session Management #3-4): a 404 for a request
 	// that carried the session ID means the server terminated the session;
@@ -188,8 +211,12 @@ func (t *StreamableHTTPTransport) Send(ctx context.Context, req Request) error {
 	// Re-initialize once and retry the original message once.
 	var herr *streamableHTTPError
 	if errors.As(err, &herr) && herr.status == http.StatusNotFound && herr.hadSession && req.Method != "initialize" {
-		if rerr := t.reinitialize(ctx); rerr != nil {
+		if rerr := t.reinitialize(ctx, herr.generation); rerr != nil {
 			return fmt.Errorf("streamable HTTP session at %s expired (HTTP 404) and re-initialize failed: %w", t.endpoint, rerr)
+		}
+		// Recovery already completed this notification for the new session.
+		if req.Method == "notifications/initialized" {
+			return nil
 		}
 		if err := t.post(ctx, req, body, false); err != nil {
 			return fmt.Errorf("streamable HTTP retry after session re-initialize: %w", err)
@@ -199,10 +226,39 @@ func (t *StreamableHTTPTransport) Send(ctx context.Context, req Request) error {
 	return err
 }
 
+func (t *StreamableHTTPTransport) postWithAuthRetry(ctx context.Context, req Request, body []byte) error {
+	err := t.post(ctx, req, body, false)
+	var authErr *streamableHTTPError
+	if errors.As(err, &authErr) && authErr.status == http.StatusUnauthorized && t.authProvider != nil {
+		return t.post(ctx, req, body, true)
+	}
+	return err
+}
+
 // post performs one JSON-RPC POST and dispatches whatever comes back (202,
 // single JSON message, or SSE stream) into the inbox.
-func (t *StreamableHTTPTransport) post(ctx context.Context, req Request, body []byte, forceRefresh bool) error {
-	t.mu.Lock()
+func (t *StreamableHTTPTransport) post(ctx context.Context, req Request, body []byte, forceRefresh bool) (err error) {
+	for {
+		t.mu.Lock()
+		// Recovery owns the handshake notification. Ordinary messages must never
+		// observe its temporarily empty or not-yet-initialized session.
+		if recovery := t.recovery; recovery != nil && req.Method != "initialize" && req.Method != "notifications/initialized" {
+			select {
+			case <-recovery.done:
+				if recovery.err != nil {
+					t.mu.Unlock()
+					return recovery.err
+				}
+			default:
+				t.mu.Unlock()
+				if err := t.waitRecovery(ctx, recovery); err != nil {
+					return err
+				}
+				continue
+			}
+		}
+		break
+	}
 	if t.closed {
 		t.mu.Unlock()
 		return fmt.Errorf("streamable HTTP transport for %s is closed", t.endpoint)
@@ -212,7 +268,20 @@ func (t *StreamableHTTPTransport) post(ctx context.Context, req Request, body []
 	}
 	session := t.sessionID
 	version := t.protocolVersion
+	generation := t.generation
 	t.mu.Unlock()
+	defer func() {
+		if err == nil {
+			if req.Method == "notifications/initialized" {
+				t.startListener(generation, false)
+			} else if forceRefresh {
+				t.startListener(generation, true)
+			}
+		}
+	}()
+	if req.Method == "initialize" {
+		session, version = "", ""
+	}
 	if requestVersion := requestProtocolVersion(req.Params); requestVersion != "" {
 		version = requestVersion
 		if requestVersion == PreferredProtocolVersion {
@@ -255,15 +324,8 @@ func (t *StreamableHTTPTransport) post(ctx context.Context, req Request, body []
 		return fmt.Errorf("streamable HTTP POST %s: %w", t.endpoint, err)
 	}
 
-	// The server may assign a session at initialization time by putting an
-	// Mcp-Session-Id header on the response carrying the InitializeResult.
-	if req.Method == "initialize" {
-		if sid := strings.TrimSpace(resp.Header.Get(headerSessionID)); sid != "" {
-			t.mu.Lock()
-			t.sessionID = sid
-			t.mu.Unlock()
-		}
-	}
+	// Adopt the candidate session only with a valid matching InitializeResult.
+	responseSession := strings.TrimSpace(resp.Header.Get(headerSessionID))
 
 	if resp.StatusCode == http.StatusAccepted {
 		// Notifications and responses are accepted with 202 and no body.
@@ -280,6 +342,7 @@ func (t *StreamableHTTPTransport) post(ctx context.Context, req Request, body []
 			statusText: strings.TrimSpace(resp.Status),
 			body:       excerpt,
 			hadSession: session != "",
+			generation: generation,
 		}
 	}
 
@@ -321,8 +384,8 @@ func (t *StreamableHTTPTransport) post(ctx context.Context, req Request, body []
 				reason:   "response does not match the originating request",
 			}
 		}
-		t.observeInitialize(req, msg)
-		t.deliver(msg)
+		t.observeInitialize(req, msg, responseSession, generation)
+		t.deliverContext(t.ctx, msg, generation)
 		return nil
 	case "text/event-stream":
 		// The stream carries one or more JSON-RPC messages and SHOULD
@@ -337,7 +400,7 @@ func (t *StreamableHTTPTransport) post(ctx context.Context, req Request, body []
 		}
 		t.wg.Add(1)
 		t.mu.Unlock()
-		go t.consumeStream(reqCtx, resp.Body, finish, req)
+		go t.consumeStream(reqCtx, resp.Body, finish, req, responseSession, generation)
 		return nil
 	default:
 		drainAndClose(resp.Body)
@@ -392,6 +455,9 @@ func (t *StreamableHTTPTransport) applyHeaders(hreq *http.Request, session, vers
 		}
 		hreq.Header.Set(key, value)
 	}
+	hreq.Header.Del(headerSessionID)
+	hreq.Header.Del(headerProtocolVersion)
+	hreq.Header.Del(headerLastEventID)
 	if session != "" {
 		hreq.Header.Set(headerSessionID, session)
 	}
@@ -405,9 +471,9 @@ func (t *StreamableHTTPTransport) applyHeaders(hreq *http.Request, session, vers
 
 // observeInitialize sniffs the InitializeResult that answers our initialize
 // request to record the negotiated protocol version (echoed on subsequent
-// requests via MCP-Protocol-Version) and start the GET listening stream.
-func (t *StreamableHTTPTransport) observeInitialize(origin Request, msg Response) {
-	if origin.Method != "initialize" || !responseMatchesRequest(origin, msg) || msg.Error != nil {
+// requests via MCP-Protocol-Version). GET starts after initialized is accepted.
+func (t *StreamableHTTPTransport) observeInitialize(origin Request, msg Response, session string, generation uint64) {
+	if origin.Method != "initialize" || !responseMatchesRequest(origin, msg) || msg.Error != nil || msg.JSONRPC != "2.0" {
 		return
 	}
 	var result struct {
@@ -424,12 +490,18 @@ func (t *StreamableHTTPTransport) observeInitialize(origin Request, msg Response
 		_ = json.Unmarshal(origin.Params, &params)
 		version = strings.TrimSpace(params.ProtocolVersion)
 	}
-	if version != "" {
-		t.mu.Lock()
-		t.protocolVersion = version
+	t.mu.Lock()
+	if t.closed || t.generation != generation {
 		t.mu.Unlock()
+		return
 	}
-	t.startListener()
+	if t.listener != nil {
+		t.listener.cancel()
+		t.listener = nil
+	}
+	t.sessionID, t.protocolVersion = session, version
+	t.generation++
+	t.mu.Unlock()
 }
 
 func responseMatchesRequest(origin Request, msg Response) bool {
@@ -438,7 +510,7 @@ func responseMatchesRequest(origin Request, msg Response) bool {
 
 // consumeStream keeps a POST body alive only while its originating call is
 // pending. A broken stream is a failure of that call, not of the shared session.
-func (t *StreamableHTTPTransport) consumeStream(ctx context.Context, body io.ReadCloser, finish context.CancelFunc, origin Request) {
+func (t *StreamableHTTPTransport) consumeStream(ctx context.Context, body io.ReadCloser, finish context.CancelFunc, origin Request, session string, generation uint64) {
 	defer t.wg.Done()
 	defer finish()
 	defer body.Close()
@@ -452,7 +524,7 @@ func (t *StreamableHTTPTransport) consumeStream(ctx context.Context, body io.Rea
 			JSONRPC: "2.0", ID: origin.ID, StringID: origin.StringID,
 			stringID: origin.stringID, hasID: true,
 			Error: &RPCError{Code: -32000, Message: fmt.Sprintf("streamable HTTP POST %s: response stream ended before reply: %v", t.endpoint, err)},
-		})
+		}, generation)
 	}
 	reader := bufio.NewReader(body)
 	for {
@@ -479,8 +551,8 @@ func (t *StreamableHTTPTransport) consumeStream(ctx context.Context, body io.Rea
 			fail(errors.New("response does not match the originating request"))
 			return
 		}
-		t.observeInitialize(origin, msg)
-		if !t.deliverContext(ctx, msg) {
+		t.observeInitialize(origin, msg, session, generation)
+		if !t.deliverContext(ctx, msg, generation) {
 			return
 		}
 		// Server request IDs occupy the other direction's namespace. Even a
@@ -491,34 +563,88 @@ func (t *StreamableHTTPTransport) consumeStream(ctx context.Context, body io.Rea
 	}
 }
 
-// deliver pushes a message to Receive. Returns false when the transport shut
-// down before the message could be handed over.
-func (t *StreamableHTTPTransport) deliver(msg Response) bool {
-	return t.deliverContext(t.ctx, msg)
-}
-
-func (t *StreamableHTTPTransport) deliverContext(ctx context.Context, msg Response) bool {
+// deliverContext preserves the session owner until Receive consumes the message.
+func (t *StreamableHTTPTransport) deliverContext(ctx context.Context, msg Response, generation uint64) bool {
 	select {
 	case <-ctx.Done():
 		return false
-	case t.inbox <- msg:
+	case t.inbox <- httpInboundMessage{response: msg, generation: generation}:
 		return true
 	case <-t.ctx.Done():
 		return false
 	}
 }
 
-// reinitialize starts a new session after the server reported the old one
-// expired: POST a fresh InitializeRequest without a session ID (spec, Session
-// Management #4), adopt the new session/version, and re-send
-// notifications/initialized. It is synchronous so the caller can retry its
-// original request immediately afterwards.
-func (t *StreamableHTTPTransport) reinitialize(ctx context.Context) error {
+// reinitialize coalesces all 404s from an expired generation. Recovery is
+// transport-owned and bounded, so cancelling one waiter cannot cancel others.
+// A failed handshake is reported to all waiters; reconnect creates a new client.
+func (t *StreamableHTTPTransport) reinitialize(ctx context.Context, generation uint64) error {
 	t.mu.Lock()
-	params := t.initParams
-	t.sessionID = ""
-	t.protocolVersion = ""
+	if t.closed {
+		t.mu.Unlock()
+		return fmt.Errorf("streamable HTTP transport for %s is closed", t.endpoint)
+	}
+	recovery := t.recovery
+	if recovery != nil && recovery.generation == generation {
+		t.mu.Unlock()
+		return t.waitRecovery(ctx, recovery)
+	}
+	if generation != t.generation {
+		t.mu.Unlock()
+		return nil
+	}
+	recovery = &httpSessionRecovery{generation: generation, done: make(chan struct{})}
+	t.recovery = recovery
+	params := append(json.RawMessage(nil), t.initParams...)
+	t.sessionID, t.protocolVersion = "", ""
+	if t.listener != nil {
+		t.listener.cancel()
+		t.listener = nil
+	}
+	t.wg.Add(1)
 	t.mu.Unlock()
+	go func() {
+		defer t.wg.Done()
+		recoveryCtx, cancel := context.WithTimeout(t.ctx, defaultConnectionTimeout)
+		defer cancel()
+		recovery.err = t.initializeSession(recoveryCtx, params, generation)
+		if recovery.err != nil {
+			t.mu.Lock()
+			if t.recovery == recovery {
+				if !t.closed && t.terminalErr == nil {
+					t.terminalErr = fmt.Errorf("streamable HTTP session recovery: %w", recovery.err)
+					close(t.failed)
+				}
+				t.sessionID, t.protocolVersion = "", ""
+				if t.listener != nil {
+					t.listener.cancel()
+					t.listener = nil
+				}
+			}
+			t.mu.Unlock()
+		}
+		close(recovery.done)
+	}()
+	return t.waitRecovery(ctx, recovery)
+}
+
+func (t *StreamableHTTPTransport) waitRecovery(ctx context.Context, recovery *httpSessionRecovery) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.ctx.Done():
+		select {
+		case <-t.failed:
+			return t.terminalErr
+		default:
+			return t.ctx.Err()
+		}
+	case <-recovery.done:
+		return recovery.err
+	}
+}
+
+func (t *StreamableHTTPTransport) initializeSession(ctx context.Context, params json.RawMessage, generation uint64) error {
 	if len(params) == 0 {
 		return fmt.Errorf("no recorded initialize params")
 	}
@@ -528,19 +654,27 @@ func (t *StreamableHTTPTransport) reinitialize(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("marshal initialize: %w", err)
 	}
-	hreq, err := http.NewRequestWithContext(ctx, http.MethodPost, t.endpoint, bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	t.applyHeaders(hreq, "", "")
-	if err := applyToken(hreq, t.authProvider, ctx, false); err != nil {
-		return err
-	}
-	hreq.Header.Set("Content-Type", "application/json")
-	hreq.Header.Set("Accept", acceptStreamableHTTP)
-	resp, err := t.client.Do(hreq)
-	if err != nil {
-		return fmt.Errorf("streamable HTTP POST %s: %w", t.endpoint, err)
+	var resp *http.Response
+	for attempt := 0; ; attempt++ {
+		hreq, err := http.NewRequestWithContext(ctx, http.MethodPost, t.endpoint, bytes.NewReader(body))
+		if err != nil {
+			return err
+		}
+		t.applyHeaders(hreq, "", "")
+		if err := applyToken(hreq, t.authProvider, ctx, attempt > 0); err != nil {
+			return err
+		}
+		hreq.Header.Set("Content-Type", "application/json")
+		hreq.Header.Set("Accept", acceptStreamableHTTP)
+		resp, err = t.client.Do(hreq)
+		if err != nil {
+			return fmt.Errorf("streamable HTTP POST %s: %w", t.endpoint, err)
+		}
+		if resp.StatusCode == http.StatusUnauthorized && attempt == 0 && t.authProvider != nil {
+			resp.Body.Close()
+			continue
+		}
+		break
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
@@ -551,11 +685,6 @@ func (t *StreamableHTTPTransport) reinitialize(ctx context.Context) error {
 			body:       readBodyExcerpt(resp.Body),
 		}
 	}
-	if sid := strings.TrimSpace(resp.Header.Get(headerSessionID)); sid != "" {
-		t.mu.Lock()
-		t.sessionID = sid
-		t.mu.Unlock()
-	}
 
 	msg, err := readSingleResponse(resp, initReq.ID)
 	if err != nil {
@@ -564,11 +693,21 @@ func (t *StreamableHTTPTransport) reinitialize(ctx context.Context) error {
 	if msg.Error != nil {
 		return msg.Error
 	}
-	t.observeInitialize(initReq, msg)
+	var result InitializeResult
+	if err := json.Unmarshal(msg.Result, &result); err != nil {
+		return fmt.Errorf("initialize result: %w", err)
+	}
+	if err := validateProtocolVersion(result.ProtocolVersion); err != nil {
+		return fmt.Errorf("initialize compatibility: %w", err)
+	}
+	if result.ProtocolVersion == PreferredProtocolVersion {
+		return fmt.Errorf("initialize compatibility: protocol %s does not use initialize", result.ProtocolVersion)
+	}
+	t.observeInitialize(initReq, msg, strings.TrimSpace(resp.Header.Get(headerSessionID)), generation)
 
 	note := Request{JSONRPC: "2.0", Method: "notifications/initialized"}
 	noteBody, _ := json.Marshal(note)
-	if err := t.post(ctx, note, noteBody, false); err != nil {
+	if err := t.postWithAuthRetry(ctx, note, noteBody); err != nil {
 		return fmt.Errorf("notifications/initialized: %w", err)
 	}
 	return nil
@@ -588,6 +727,9 @@ func readSingleResponse(resp *http.Response, id int64) (Response, error) {
 		if err := json.Unmarshal(data, &msg); err != nil {
 			return Response{}, fmt.Errorf("not a JSON-RPC message: %w", err)
 		}
+		if msg.JSONRPC != "2.0" || !responseMatchesRequest(Request{ID: id}, msg) || (msg.Result == nil && msg.Error == nil) {
+			return Response{}, errors.New("initialize response does not match its request")
+		}
 		return msg, nil
 	case "text/event-stream":
 		reader := bufio.NewReader(resp.Body)
@@ -603,7 +745,7 @@ func readSingleResponse(resp *http.Response, id int64) (Response, error) {
 			if err := json.Unmarshal([]byte(event.data), &msg); err != nil {
 				continue
 			}
-			if msg.ID == id {
+			if msg.JSONRPC == "2.0" && responseMatchesRequest(Request{ID: id}, msg) && (msg.Result != nil || msg.Error != nil) {
 				return msg, nil
 			}
 		}
@@ -614,70 +756,111 @@ func readSingleResponse(resp *http.Response, id int64) (Response, error) {
 
 // startListener opens the optional GET SSE stream for server-initiated
 // messages. See the file comment for why wuu needs it (tools/list_changed).
-func (t *StreamableHTTPTransport) startListener() {
+func (t *StreamableHTTPTransport) startListener(generation uint64, afterAuthRefresh bool) {
 	t.mu.Lock()
-	if t.listenerStarted || t.closed {
+	if t.closed || t.generation == 0 || t.generation != generation {
 		t.mu.Unlock()
 		return
 	}
-	t.listenerStarted = true
-	t.wg.Add(1)
-	t.mu.Unlock()
-	go t.listen()
-}
-
-func (t *StreamableHTTPTransport) listen() {
-	defer t.wg.Done()
-	backoff := time.Second
-	var lastEventID string
-	for {
-		if t.ctx.Err() != nil {
+	if t.recovery != nil && t.recovery.generation == generation {
+		t.mu.Unlock()
+		return
+	}
+	cursor := ""
+	if previous := t.listener; previous != nil {
+		if !afterAuthRefresh || previous.unsupported {
+			t.mu.Unlock()
 			return
 		}
-		hreq, err := http.NewRequestWithContext(t.ctx, http.MethodGet, t.endpoint, nil)
+		cursor = previous.lastEventID
+		previous.cancel()
+	}
+	ctx, cancel := context.WithCancel(t.ctx)
+	listener := &httpListener{ctx: ctx, cancel: cancel, generation: t.generation,
+		session: t.sessionID, version: t.protocolVersion, lastEventID: cursor, initialDelay: t.listenerBackoff}
+	t.listener = listener
+	t.wg.Add(1)
+	t.mu.Unlock()
+	go t.listen(listener)
+}
+
+func (t *StreamableHTTPTransport) listen(listener *httpListener) {
+	defer t.wg.Done()
+	ctx := listener.ctx
+	if listener.initialDelay > 0 && !sleepHTTPListener(ctx, listener.initialDelay) {
+		return
+	}
+	backoff := time.Second
+	forceRefresh, retriedAuth := false, false
+	for {
+		if ctx.Err() != nil {
+			return
+		}
+		hreq, err := http.NewRequestWithContext(ctx, http.MethodGet, t.endpoint, nil)
 		if err != nil {
 			return
 		}
-		t.mu.Lock()
-		session, version := t.sessionID, t.protocolVersion
-		t.mu.Unlock()
-		t.applyHeaders(hreq, session, version)
-		if err := applyToken(hreq, t.authProvider, t.ctx, false); err != nil {
+		t.applyHeaders(hreq, listener.session, listener.version)
+		if err := applyToken(hreq, t.authProvider, ctx, forceRefresh); err != nil {
 			return
 		}
+		forceRefresh = false
 		hreq.Header.Set("Accept", "text/event-stream")
-		if lastEventID != "" {
-			// Resumability (spec, Resumability and Redelivery #2): resume the
-			// broken stream from the last SSE event ID the server tagged.
-			hreq.Header.Set(headerLastEventID, lastEventID)
+		t.mu.Lock()
+		cursor := listener.lastEventID
+		t.mu.Unlock()
+		if cursor != "" {
+			hreq.Header.Set(headerLastEventID, cursor)
 		}
 		resp, err := t.client.Do(hreq)
 		if err != nil {
-			if t.ctx.Err() != nil {
-				return
-			}
-			if !t.sleep(backoff) {
+			if !sleepHTTPListener(ctx, backoff) {
 				return
 			}
 			backoff = minDuration(backoff*2, 30*time.Second)
 			continue
 		}
 		if resp.StatusCode >= 400 && resp.StatusCode < 500 {
-			// 405 = the server does not offer a GET stream at this endpoint
-			// (allowed by spec); other 4xx are equally final. Stay quiet —
-			// the stream is optional and POST traffic is unaffected.
-			drainAndClose(resp.Body)
+			resp.Body.Close()
+			switch resp.StatusCode {
+			case http.StatusUnauthorized:
+				if t.authProvider != nil && !retriedAuth {
+					forceRefresh, retriedAuth = true, true
+					continue
+				}
+			case http.StatusNotFound:
+				if listener.session != "" {
+					// Repeatedly expired replacement sessions must not create
+					// an unbounded initialize/GET loop against a broken server.
+					t.mu.Lock()
+					if t.listener == listener {
+						t.listenerBackoff = minDuration(max(t.listenerBackoff*2, time.Second), 30*time.Second)
+					}
+					t.mu.Unlock()
+					_ = t.reinitialize(ctx, listener.generation)
+				}
+			case http.StatusMethodNotAllowed:
+				t.mu.Lock()
+				listener.unsupported = true
+				t.mu.Unlock()
+			}
 			return
 		}
 		contentType, _, _ := mime.ParseMediaType(resp.Header.Get("Content-Type"))
 		if resp.StatusCode != http.StatusOK || contentType != "text/event-stream" {
-			drainAndClose(resp.Body)
-			if !t.sleep(backoff) {
+			resp.Body.Close()
+			if !sleepHTTPListener(ctx, backoff) {
 				return
 			}
 			backoff = minDuration(backoff*2, 30*time.Second)
 			continue
 		}
+		retriedAuth = false
+		t.mu.Lock()
+		if t.listener == listener {
+			t.listenerBackoff = 0
+		}
+		t.mu.Unlock()
 		backoff = time.Second
 		reader := bufio.NewReader(resp.Body)
 		for {
@@ -686,47 +869,67 @@ func (t *StreamableHTTPTransport) listen() {
 				resp.Body.Close()
 				break
 			}
-			if event.id != "" {
-				lastEventID = event.id
+			t.mu.Lock()
+			current := t.listener == listener && !t.closed
+			if current && event.id != "" {
+				listener.lastEventID = event.id
+			}
+			t.mu.Unlock()
+			if !current || ctx.Err() != nil {
+				resp.Body.Close()
+				return
 			}
 			if strings.TrimSpace(event.data) == "" {
 				continue
 			}
 			var msg Response
-			if err := json.Unmarshal([]byte(event.data), &msg); err != nil {
+			if json.Unmarshal([]byte(event.data), &msg) != nil || msg.JSONRPC != "2.0" || msg.Method == "" {
+				// This GET only resumes its own notification stream, never a POST.
 				continue
 			}
-			if !t.deliver(msg) {
+			if !t.deliverContext(ctx, msg, listener.generation) {
 				resp.Body.Close()
 				return
 			}
 		}
-		if t.ctx.Err() != nil {
-			return
-		}
-		if !t.sleep(backoff) {
+		if !sleepHTTPListener(ctx, backoff) {
 			return
 		}
 	}
 }
 
-func (t *StreamableHTTPTransport) sleep(d time.Duration) bool {
+func sleepHTTPListener(ctx context.Context, d time.Duration) bool {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
 	select {
-	case <-time.After(d):
+	case <-timer.C:
 		return true
-	case <-t.ctx.Done():
+	case <-ctx.Done():
 		return false
 	}
 }
 
 func (t *StreamableHTTPTransport) Receive(ctx context.Context) (Response, error) {
-	select {
-	case <-ctx.Done():
-		return Response{}, ctx.Err()
-	case <-t.ctx.Done():
-		return Response{}, io.EOF
-	case msg := <-t.inbox:
-		return msg, nil
+	for {
+		select {
+		case <-ctx.Done():
+			return Response{}, ctx.Err()
+		case <-t.failed:
+			return Response{}, t.terminalErr
+		case <-t.ctx.Done():
+			return Response{}, io.EOF
+		case message := <-t.inbox:
+			t.mu.Lock()
+			current := !t.closed && t.terminalErr == nil
+			if message.response.Method != "" {
+				current = current && message.generation == t.generation &&
+					(t.recovery == nil || t.recovery.generation != message.generation)
+			}
+			t.mu.Unlock()
+			if current {
+				return message.response, nil
+			}
+		}
 	}
 }
 
@@ -740,6 +943,7 @@ func (t *StreamableHTTPTransport) Close() error {
 		return nil
 	}
 	t.closed = true
+	t.cancel()
 	session := t.sessionID
 	version := t.protocolVersion
 	t.mu.Unlock()
