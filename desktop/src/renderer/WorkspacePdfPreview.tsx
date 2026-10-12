@@ -1,6 +1,6 @@
 import { PdfSelectionMenu } from "./PdfSelectionMenu";
 import type { PdfPreviewSource } from "./PdfSelection";
-import { Minus, Plus } from "./WuuIcons";
+import { Minus, Plus, RefreshCw } from "./WuuIcons";
 import {
   type ReactNode,
   type RefObject,
@@ -82,6 +82,8 @@ function WorkspacePdfSurface({ url, title, hostRef, source, active, initialPage,
   const containerRef = useRef<HTMLDivElement>(null);
   const viewerElementRef = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<PDFViewer | null>(null);
+  const [attempt, setAttempt] = useState(0);
+  const retryPendingRef = useRef(false);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState("");
   const [zoom, setZoom] = useState(100);
@@ -95,14 +97,18 @@ function WorkspacePdfSurface({ url, title, hostRef, source, active, initialPage,
 
     setReady(false); setError(""); setPageCount(0); setPageNumber(1);
     let active = true;
+    const lifetime = new AbortController();
     const eventBus = new EventBus();
-    const viewer = new PDFViewer({
+    // PDF.js 5.4 supports abortSignal but does not yet declare it in its types.
+    const viewerOptions = {
       container,
       viewer: viewerElement,
       eventBus,
       enableHWA: true,
       removePageBorders: true,
-    });
+      abortSignal: lifetime.signal,
+    };
+    const viewer = new PDFViewer(viewerOptions);
     const loadingTask = getDocument({
       url,
       isEvalSupported: false,
@@ -111,15 +117,18 @@ function WorkspacePdfSurface({ url, title, hostRef, source, active, initialPage,
     viewerRef.current = viewer;
 
     const onPagesInit = (): void => {
+      if (!active) return;
       viewer.currentScaleValue = "page-width";
       setZoom(Math.round(viewer.currentScale * 100));
       setReady(true);
       if (initialPage && Number.isSafeInteger(initialPage) && initialPage >= 1 && initialPage <= viewer.pagesCount) viewer.currentPageNumber = initialPage;
     };
     const onScaleChanging = ({ scale }: ScaleChangingEvent): void => {
+      if (!active) return;
       setZoom(Math.round(scale * 100));
     };
     const onPageChanging = ({ pageNumber: nextPage }: PageChangingEvent): void => {
+      if (!active) return;
       setPageNumber(nextPage);
     };
     eventBus.on("pagesinit", onPagesInit);
@@ -153,6 +162,8 @@ function WorkspacePdfSurface({ url, title, hostRef, source, active, initialPage,
       })
       .catch((nextError: unknown) => {
         if (!active) return;
+        retryPendingRef.current = false;
+        setReady(false);
         setError(
           nextError instanceof Error
             ? nextError.message
@@ -168,15 +179,31 @@ function WorkspacePdfSurface({ url, title, hostRef, source, active, initialPage,
       resizeObserver.disconnect();
       cancelAnimationFrame(resizeFrame);
       viewer.cleanup();
-      void loadingTask.destroy();
+      // PDF.js accepts null to cancel renders and clear its document listeners.
+      // Remove this suppression when its setDocument types include teardown.
+      // @ts-expect-error PDF.js 5.4 omits the supported null teardown argument.
+      viewer.setDocument(null);
+      lifetime.abort();
+      void loadingTask.destroy().catch((error: unknown) => {
+        console.warn("Could not destroy PDF preview loading task", error);
+      });
       viewerRef.current = null;
     };
-  }, [url]);
+  }, [url, attempt]);
 
   useEffect(() => {
     const viewer = viewerRef.current;
     if (ready && viewer && initialPage && Number.isSafeInteger(initialPage) && initialPage >= 1 && initialPage <= viewer.pagesCount) viewer.currentPageNumber = initialPage;
   }, [initialPage, pageRequest, ready]);
+
+  function retry(): void {
+    // A second click can arrive before React commits the loading state.
+    if (!error || retryPendingRef.current) return;
+    retryPendingRef.current = true;
+    setError("");
+    setReady(false);
+    setAttempt(value => value + 1);
+  }
 
   function updateScale(action: "decrease" | "increase" | "fit"): void {
     const viewer = viewerRef.current;
@@ -224,18 +251,21 @@ function WorkspacePdfSurface({ url, title, hostRef, source, active, initialPage,
         </div>
       </header>
       <div className="workspace-pdf-viewport">
-        <div ref={containerRef} className="workspace-pdf-container">
+        <div key={attempt} ref={containerRef} className="workspace-pdf-container">
           <div ref={viewerElementRef} className="pdfViewer" />
         </div>
-        {!ready && !error ? (
-          <div className="workspace-pdf-status" role="status">
-            {t("workspace.files.opening")}
-          </div>
-        ) : null}
-        {error ? (
-          <div className="workspace-pdf-status error" role="alert">
-            <strong>{t("workspace.files.openFailedTitle")}</strong>
-            <span>{error}</span>
+        {!ready || error ? (
+          <div className={`workspace-pdf-status${error ? " error" : ""}`} role={error ? "alert" : "status"}>
+            {error ? <>
+              <strong>{t("workspace.files.openFailedTitle")}</strong>
+              <span>{error}</span>
+            </> : <span>{t("workspace.files.opening")}</span>}
+            {error || attempt > 0 ? (
+              <button type="button" className="workspace-pdf-retry" aria-label={t("appState.retryAction")}
+                title={t("appState.retryAction")} disabled={!error} onClick={retry}>
+                <RefreshCw size={15} />
+              </button>
+            ) : null}
           </div>
         ) : null}
       </div>

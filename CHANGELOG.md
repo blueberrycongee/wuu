@@ -41,6 +41,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Failed PDF previews can retry in the same panel without reloading the window
+  or losing conversation drafts. Retries retain the selected file revision and
+  requested page, and cancel the previous viewer when switching files or closing.
+
 - Keep the sidebar's recent-history range stable while a first message creates
   its conversation, avoiding a temporary extra row and subsequent layout jump,
   including while saving a draft's custom name.
