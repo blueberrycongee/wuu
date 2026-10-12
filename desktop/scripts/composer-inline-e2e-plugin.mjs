@@ -3,17 +3,18 @@
 export function activate(api) {
   const history = window.__inlineCompletionE2E ??= { generations: [] };
   const controller = {
-    requests: [], order: [], pending: new Map(), disposed: false,
+    requests: [], order: [], interactions: [], pending: new Map(), disposed: false,
     failFirst: false, fallbackText: "", runtimeMode: false, provider: undefined,
     resolve(id, text) {
       const resolve = this.pending.get(id);
       if (!resolve) throw new Error(`Unknown fixture completion ${id}`);
       this.pending.delete(id);
-      resolve(text === null ? null : { text });
+      resolve(text === null ? null : { id: `fixture:${id}`, text });
     },
     register() {
       this.provider = api.registerComposerInlineCompletionProvider({
         id: "controlled", order: 10,
+        onDidInteract: (event) => { this.interactions.push(event); },
         provideCompletion: (context, signal) => {
           const request = { id: this.requests.length + 1, context: { ...context }, aborted: signal.aborted };
           this.order.push(`controlled:${request.id}`);

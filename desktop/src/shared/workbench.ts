@@ -711,9 +711,48 @@ export interface ComposerInlineCompletionContext {
 }
 
 export interface ComposerInlineCompletion {
+  /** Optional provider-owned identity, preserved in interaction callbacks. */
+  readonly id?: string;
   /** Literal text to append, never markup or a replacement of the current draft. */
   readonly text: string;
 }
+
+/** Refresh only the exact input observation that produced a cached result. */
+export interface ComposerInlineCompletionRefresh {
+  readonly composerId: string;
+  readonly revision: number;
+}
+
+export interface ComposerInlineCompletionProviderHandle {
+  dispose(): void;
+  /**
+   * Recheck eligible inputs after external data changes; omit scope to recheck all.
+   * Coalesced at most once per 100 ms. A stale scope or disposed handle is ignored.
+   * Refresh never revives an explicitly dismissed observation.
+   */
+  refresh(scope?: ComposerInlineCompletionRefresh): void;
+}
+
+/** Attribution only: interaction callbacks never receive a later draft's text. */
+export type ComposerInlineCompletionSource = Pick<ComposerInlineCompletionContext,
+  "kind" | "composerId" | "revision" | "threadId" | "sideThreadId">;
+
+export type ComposerInlineCompletionInteraction = {
+  /** Host identity for this presentation, shared by its subsequent interactions. */
+  readonly interactionId: string;
+  /** The provider's result id, when supplied. */
+  readonly suggestionId?: string;
+  readonly source: ComposerInlineCompletionSource;
+} & (
+  | { readonly type: "shown" | "accepted" | "dismissed" }
+  | {
+    /** The composer callback accepted dispatch, not confirmation of backend delivery. */
+    readonly type: "dispatched";
+    readonly mode: ComposerSubmissionModeV1;
+    /** Draft text differs from the draft immediately after this acceptance. */
+    readonly edited: boolean;
+  }
+);
 
 export interface ComposerInlineCompletionProviderRegistration {
   readonly id: string;
@@ -728,6 +767,8 @@ export interface ComposerInlineCompletionProviderRegistration {
     context: ComposerInlineCompletionContext,
     signal: AbortSignal,
   ): ComposerInlineCompletion | null | Promise<ComposerInlineCompletion | null>;
+  /** Receives only this registration's interactions while its generation is active. */
+  onDidInteract?(event: ComposerInlineCompletionInteraction): void | Promise<void>;
 }
 
 export interface ComposerSnapshotV1 {

@@ -29,6 +29,7 @@ import {
   useContext,
   useEffect,
   useImperativeHandle,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -120,7 +121,7 @@ import { focusComposerTextarea, isTouchWebShell } from "./ComposerFocus";
 import { useComposerHeight } from "./useComposerHeight";
 import { useWorkbenchConnected } from "./WorkbenchConnectionContext";
 import type { TurnContextUsage } from "./AppState";
-import type { ComposerInlineCompletionContext } from "../shared/workbench";
+import type { ComposerInlineCompletionContext, ComposerSubmissionModeV1 } from "../shared/workbench";
 
 const MemoizedComposerPluginSlot = memo(PluginSlot);
 const MemoizedComposerPluginToolbar = memo(ComposerPluginToolbar);
@@ -410,6 +411,7 @@ export function Composer({
   // interval where two gestures can still read the same rendered draft, while
   // allowing a real input change (even to the same eventual text) to re-arm it.
   const submittedDraftSignatureRef = useRef<string | null>(null);
+  const inlineCompletionActionsRef = useRef<ComposerInlineCompletionActions | null>(null);
   if (promptRevision !== lastPromptRevision) {
     setLastPromptRevision(promptRevision);
     setLastCommittedPrompt(committedPrompt);
@@ -772,6 +774,7 @@ export function Composer({
   function submitComposerWith(
     onSubmit: (promptOverride?: string, contentParts?: MessageContentPart[]) => boolean | void,
     promptOverride = prompt,
+    mode: ComposerSubmissionModeV1 = "send",
   ): void {
     // A disconnected (or otherwise send-disabled) composer must not clear the
     // local draft before the bridge has a chance to reject the dispatch.
@@ -809,6 +812,7 @@ export function Composer({
       ? onSubmit(canonicalPrompt, contentParts)
       : onSubmit(promptOverride);
     if (accepted === false) return;
+    inlineCompletionActionsRef.current?.dispatched(canonicalPrompt, mode);
     submittedDraftSignatureRef.current = draftSignature;
     optimisticPromptQueueRef.current.length = 0;
     setLocalPrompt("");
@@ -856,6 +860,7 @@ export function Composer({
     submitComposerWith(
       running && submittingHasDraft && onSteer ? onSteer : onSend,
       promptOverride,
+      running && submittingHasDraft && onSteer ? "steer" : running && onQueue ? "queue" : "send",
     );
   }
 
@@ -1114,7 +1119,7 @@ export function Composer({
       onQueue
     ) {
       event.preventDefault();
-      submitComposerWith(onQueue, currentPrompt);
+      submitComposerWith(onQueue, currentPrompt, "queue");
       return;
     }
     if (event.key === "Enter" && !event.shiftKey && !primaryModifier) {
@@ -1364,6 +1369,8 @@ export function Composer({
                 && !menuOpen && !accessMenuOpen && !branchMenuOpen && !codexRuntimeMenu && !composerContextMenu}
               inlineCompletionContextKey={JSON.stringify([queryHistorySessionID, slashSkillContextKey, threadId, sideThreadId])}
               inlineCompletionRevisionKey={JSON.stringify([promptRevision, programmaticPromptRevision, submissionClearRevision, telemetryTurnID])}
+              inlineCompletionResetKey={JSON.stringify([promptRevision, programmaticPromptRevision])}
+              inlineCompletionActionsRef={inlineCompletionActionsRef}
               threadId={threadId}
               sideThreadId={sideThreadId}
               running={running}
@@ -1688,6 +1695,8 @@ type ComposerTextareaProps = {
   inlineCompletionEnabled: boolean;
   inlineCompletionContextKey: string;
   inlineCompletionRevisionKey: string;
+  inlineCompletionResetKey: string;
+  inlineCompletionActionsRef: RefObject<ComposerInlineCompletionActions | null>;
   threadId?: string;
   sideThreadId?: string;
   running: boolean;
@@ -1717,6 +1726,8 @@ const ComposerTextarea = forwardRef<HTMLTextAreaElement, ComposerTextareaProps>(
     inlineCompletionEnabled,
     inlineCompletionContextKey,
     inlineCompletionRevisionKey,
+    inlineCompletionResetKey,
+    inlineCompletionActionsRef,
     threadId,
     sideThreadId,
     running,
@@ -1735,6 +1746,7 @@ const ComposerTextarea = forwardRef<HTMLTextAreaElement, ComposerTextareaProps>(
     const [value, setValue] = useState(committedValue);
     useComposerHeight(inputRef, expanded, value);
     const [lastCommittedValue, setLastCommittedValue] = useState(committedValue);
+    const [externalResetRevision, setExternalResetRevision] = useState(0);
     const [lastValueRevision, setLastValueRevision] = useState(valueRevision);
     const [lastSubmissionClearRevision, setLastSubmissionClearRevision] = useState(
       submissionClearRevision,
@@ -1751,6 +1763,7 @@ const ComposerTextarea = forwardRef<HTMLTextAreaElement, ComposerTextareaProps>(
       setValue("");
     } else if (valueRevision !== lastValueRevision) {
       setLastValueRevision(valueRevision);
+      setExternalResetRevision((revision) => revision + 1);
       setLastCommittedValue(committedValue);
       optimisticValueQueueRef.current.length = 0;
       if (compositionActiveRef.current) {
@@ -1764,11 +1777,14 @@ const ComposerTextarea = forwardRef<HTMLTextAreaElement, ComposerTextareaProps>(
       const optimisticValueIndex = optimisticValueQueueRef.current.lastIndexOf(committedValue);
       if (optimisticValueIndex >= 0) {
         optimisticValueQueueRef.current.splice(0, optimisticValueIndex + 1);
-      } else if (compositionActiveRef.current) {
-        pendingProgrammaticValueRef.current = { value: committedValue };
       } else {
-        optimisticValueQueueRef.current.length = 0;
-        setValue(committedValue);
+        setExternalResetRevision((revision) => revision + 1);
+        if (compositionActiveRef.current) {
+          pendingProgrammaticValueRef.current = { value: committedValue };
+        } else {
+          optimisticValueQueueRef.current.length = 0;
+          setValue(committedValue);
+        }
       }
     }
 
@@ -1781,7 +1797,13 @@ const ComposerTextarea = forwardRef<HTMLTextAreaElement, ComposerTextareaProps>(
       host: pluginHost, inputRef, value, enabled: inlineCompletionEnabled && !disabled,
       kind: inlineCompletionKind,
       contextKey: inlineCompletionContextKey, revisionKey: inlineCompletionRevisionKey,
+      resetKey: JSON.stringify([inlineCompletionResetKey, externalResetRevision]),
       threadId, sideThreadId, running, compositionActive: compositionActiveRef.current, onInsert: publishValue,
+    });
+
+    useLayoutEffect(() => {
+      inlineCompletionActionsRef.current = inline.actions;
+      return () => { inlineCompletionActionsRef.current = null; };
     });
 
     return (

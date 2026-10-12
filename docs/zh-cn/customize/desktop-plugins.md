@@ -76,7 +76,22 @@ View 是注册的组件，可以放在 `navigation`、`primary`、`auxiliary`、
 
 Provider 按 `order` 升序调用，再依次按插件 ID、注册 ID 排序，逐个尝试。第一个非空结果生效；无结果或 provider 出错时继续尝试下一项。宿主渲染建议文本，并在接受前核对请求是否仍然有效。上下文获取、提示词、防抖和请求预算由插件负责。该 API 不会安装补全 provider 或自动调用模型的策略。
 
-宿主在符合条件的输入状态变化时调用 provider。版本 1 没有由 provider 主动请求刷新的方法；无关的宿主事件或插件设置变化本身不会重新调用已返回的回调。等待事件或防抖应限制在当前可取消请求内，并设定时限；不符合条件时返回 `null`。尚未返回的 provider 会阻塞后续 provider，宿主不自动为 provider 设置超时。
+宿主在符合条件的输入状态变化时调用 provider。注册返回带有 `dispose()` 和 `refresh(scope?)` 的句柄。异步缓存或设置更新后，可使用原请求的标识调用 `handle.refresh({ composerId, revision })`；省略作用域时重新检查所有当前符合条件的输入框。宿主取消原请求并重新按顺序调用 provider。刷新不改变输入 revision、不接受文本、不覆盖 Escape 关闭状态，也不会把旧作用域应用到新草稿。已释放或已替换 generation 的句柄不再生效。同一注册项的连续调用会合并，每 100 毫秒最多分发一批刷新；模型请求预算和防抖仍由插件负责，不应在 `provideCompletion` 中无条件触发刷新。
+
+独立工作尚未完成时应尽快返回 `null`，缓存就绪后再刷新。本地片段插件可在工作区索引完成后刷新，翻译插件可在术语表变化后刷新。它们与后台下一条消息预测共用同一边界，不要求调用模型，也不安装任何补全策略。尚未返回的 provider 会阻塞后续 provider，宿主不自动设置超时。
+
+### 建议交互
+
+结果可附带由 provider 管理的不透明 `id`：`{ id: "snippet-42", text: "字面文本后缀" }`。注册时提供 `onDidInteract(event)`，只接收本注册项建议的交互。每次渲染展示都有宿主生成的 `interactionId`；后续回调保留该 ID、可选的 `suggestionId`，以及来源的 `kind`、`composerId`、`revision` 和可选会话 ID。回调不包含后续草稿文本、消息正文或附件。
+
+- `shown`：符合条件的灰字预览已提交到输入框 DOM，不代表用户实际看到，也不保证整个后缀都在可视区域内。
+- `accepted`：Tab 已将完整后缀插入可编辑草稿，不代表发送。
+- `dismissed`：Escape 明确关闭了可见建议。尚无建议时取消请求、失去焦点或切换上下文均不计为拒绝。
+- `dispatched`：输入框调用提交回调，且回调没有抛错或返回 `false`。`mode` 表示请求的 `send`、`queue` 或 `steer` 动作；`edited` 比较交付文本与接受该建议后立即得到的草稿。
+
+`dispatched` 只是 UI 发起提交的边界，不是后端确认、持久化消息 ID、最终队列路由或送达保证。异步提交仍可能失败并恢复草稿。同步拒绝会保留归因供重试，成功发起提交后归因只消费一次。清空或程序替换草稿、切换会话、卸载输入框以及 provider 退役均丢弃归因。普通编辑保留归因，包括删去所有插入文本；`edited` 不保证最终还包含建议中的字符。同一草稿接受多个后缀时，各自保留独立标识和比较基线。目前只支持完整后缀接受。
+
+片段和翻译插件可据此区分插入、后续提交发起和编辑，无需监听其他 provider 的交互或无关消息正文。宿主不保存这些事件，也不发送统计数据。释放或重载后停止回调；回调错误写入诊断，不阻塞输入。事件处理、保存、排序和网络使用策略由插件负责。
 
 原生输入框只在已聚焦、可编辑且光标折叠在草稿末尾时请求建议，空草稿也可使用。输入法组合输入、斜杠命令草稿、打开的菜单或对话框，以及隐藏的折叠提示内容不参与补全。斜杠命令保留 Tab 优先级。无修饰键且非重复触发的 Tab 接受当前建议；没有建议时保留正常焦点导航。Escape 关闭当前建议或取消待处理请求。接受只修改草稿，不发送，并保留原生撤销。后缀支持多行，CRLF 会规范为 LF。
 
@@ -86,7 +101,7 @@ Provider 按 `order` 升序调用，再依次按插件 ID、注册 ID 排序，�
 
 Provider 会收到尚未发送的草稿。应明确选择哪些数据可以离开机器，并向用户说明模型或网络用途。通过 `api.invokeRuntime` 委派时，将同一 signal 传入 options，再把运行时执行的 signal 继续传给下游工作。[单次模型请求](plugin-authoring.md#单次模型请求)使用已配置的提供商，可能产生费用；取消不会撤销已完成的请求，也不保证提供商已接收的请求免费。
 
-兼容旧桌面宿主时，注册前先检查 `typeof api.registerComposerInlineCompletionProvider === "function"`。context 中的 `contractVersion: 1` 只描述此回调结构，与运行时服务版本、Wuu 产品 CalVer 分开判断。准确的公开类型见 [TypeScript SDK](../../../packages/plugin-sdk/src/index.ts)。
+兼容旧桌面宿主时，注册前先检查 `typeof api.registerComposerInlineCompletionProvider === "function"`。对于已支持注册的旧宿主，通过 `typeof handle.refresh === "function"` 检测刷新和交互能力。context 中的 `contractVersion: 1` 只描述此回调结构，与运行时服务版本、Wuu 产品 CalVer 分开判断。准确的公开类型见 [TypeScript SDK](../../../packages/plugin-sdk/src/index.ts)。
 
 ## 外观和清理
 

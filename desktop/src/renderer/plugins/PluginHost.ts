@@ -6,6 +6,8 @@ import type {
   ComposerInlineCompletion,
   ComposerInlineCompletionContext,
   ComposerInlineCompletionProviderRegistration,
+  ComposerInlineCompletionProviderHandle,
+  ComposerInlineCompletionRefresh,
   InspectorSectionDefinition,
   PluginUIKit,
   PluginCommandPresentation,
@@ -188,7 +190,7 @@ export interface PluginGenerationApi {
   /** Publish structured status data for the host-owned composer capsule row. */
   registerComposerStatusSource(source: ComposerStatusSourceRegistration): Disposable;
   /** Supply append-only text; the host owns ghost rendering and keyboard acceptance. */
-  registerComposerInlineCompletionProvider(provider: ComposerInlineCompletionProviderRegistration): Disposable;
+  registerComposerInlineCompletionProvider(provider: ComposerInlineCompletionProviderRegistration): ComposerInlineCompletionProviderHandle;
   registerCleanup(cleanup: () => void): Disposable;
 
   // Phase C — Workbench API
@@ -328,6 +330,7 @@ export interface RegisteredStatusItem extends StatusItemDefinition {
 }
 
 export interface RegisteredComposerInlineCompletionProvider extends ComposerInlineCompletionProviderRegistration {
+  subscribeRefresh(listener: (scope?: ComposerInlineCompletionRefresh) => void): () => void;
   readonly pluginId: string;
   readonly generation: string;
   readonly order: number;
@@ -477,6 +480,8 @@ interface ComposerStatusSourceRecord extends OrderedRecord {
 }
 
 interface ComposerInlineCompletionProviderRecord extends OrderedRecord {
+  readonly subscribeRefresh: RegisteredComposerInlineCompletionProvider["subscribeRefresh"];
+  readonly onDidInteract: ComposerInlineCompletionProviderRegistration["onDidInteract"];
   readonly provideCompletion: ComposerInlineCompletionProviderRegistration["provideCompletion"];
   readonly requests: Set<AbortController>;
 }
@@ -1233,6 +1238,12 @@ export class PluginHost {
           throw new Error("Composer inline completion provider requires a provideCompletion function");
         }
         const provideCompletion = provider.provideCompletion;
+        const onDidInteract = provider.onDidInteract;
+        const listeners = new Set<(scope?: ComposerInlineCompletionRefresh) => void>();
+        const scopes = new Map<string, ComposerInlineCompletionRefresh>();
+        let refreshAll = false;
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const active = () => !record.removed && !state.disposed && this.activeGenerations.get(state.pluginId) === state;
         const record: ComposerInlineCompletionProviderRecord = {
           pluginId: state.pluginId,
           generation: state.generation,
@@ -1241,10 +1252,50 @@ export class PluginHost {
           requests: new Set(),
           removed: false,
           provideCompletion: (context, signal) => this.requestComposerInlineCompletion(state, record, provideCompletion, context, signal),
+          subscribeRefresh: (listener) => {
+            if (!active()) return () => {};
+            listeners.add(listener);
+            return () => { listeners.delete(listener); };
+          },
+          onDidInteract: onDidInteract ? (event) => {
+            if (!active()) return;
+            try {
+              const result = onDidInteract(Object.freeze({ ...event, source: Object.freeze({ ...event.source }) }));
+              void Promise.resolve(result).catch(reportInteractionError);
+            } catch (error: unknown) { reportInteractionError(error); }
+          } : undefined,
+        };
+        const reportInteractionError = (error: unknown) => {
+          if (!active()) return;
+          this.addDiagnostic({ pluginId: state.pluginId, generation: state.generation, contributionId: id,
+            kind: "render", message: `Composer inline completion interaction failed: ${errorMessage(error)}`, cause: error });
         };
         state.composerInlineCompletionProviders.push(record);
-        return this.ownRecord(state, record, () => {
+        const disposable = this.ownRecord(state, record, () => {
           for (const request of record.requests) request.abort();
+          clearTimeout(timer);
+          timer = undefined;
+          listeners.clear();
+          scopes.clear();
+        });
+        return Object.freeze({
+          dispose: () => disposable.dispose(),
+          refresh: (scope?: ComposerInlineCompletionRefresh) => {
+            if (!active()) return;
+            if (scope) scopes.set(JSON.stringify([scope.composerId, scope.revision]), Object.freeze({ composerId: scope.composerId, revision: scope.revision }));
+            else refreshAll = true;
+            // Bound synchronous bursts and provider-triggered refresh loops without
+            // changing the plugin's own inference/debounce budget policy.
+            if (timer !== undefined) return;
+            timer = setTimeout(() => {
+              timer = undefined;
+              const targets = refreshAll ? [undefined] : [...scopes.values()];
+              refreshAll = false;
+              scopes.clear();
+              if (!active()) return;
+              for (const target of targets) for (const listener of listeners) listener(target);
+            }, 100);
+          },
         });
       },
       registerCleanup: (cleanup: () => void) => {
@@ -1428,7 +1479,11 @@ export class PluginHost {
       }).then((result) => {
         if (controller.signal.aborted || !active() || result == null) return finish(null);
         if (typeof result.text !== "string") throw new Error("Composer inline completion text must be a string");
-        finish(result.text.length === 0 ? null : Object.freeze({ text: result.text }));
+        if (result.id !== undefined && (typeof result.id !== "string" || result.id.length === 0)) {
+          throw new Error("Composer inline completion id must be a nonempty string");
+        }
+        finish(result.text.length === 0 ? null : Object.freeze({ text: result.text,
+          ...(result.id === undefined ? {} : { id: result.id }) }));
       }).catch((error: unknown) => {
         if (!controller.signal.aborted && active()) {
           this.addDiagnostic({
@@ -1782,6 +1837,8 @@ export class PluginHost {
         id: record.id,
         order: record.order,
         provideCompletion: record.provideCompletion,
+        subscribeRefresh: record.subscribeRefresh,
+        onDidInteract: record.onDidInteract,
       })),
     );
     if (replaceSnapshots || !sameContributions(this.composerInlineCompletionProviderSnapshot, nextComposerInlineCompletionProviders)) {

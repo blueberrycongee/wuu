@@ -1,7 +1,7 @@
 import * as React from "react";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { PRESENTATION_TARGETS, type PluginCommandActionContext } from "../../shared/workbench";
+import { PRESENTATION_TARGETS, type PluginCommandActionContext, type ComposerInlineCompletionProviderHandle, type ComposerInlineCompletionInteraction } from "../../shared/workbench";
 
 import {
   PLUGIN_SLOT_IDS,
@@ -180,14 +180,29 @@ describe("PluginHost", () => {
   it("replaces a generation and makes stale generation handles harmless", async () => {
     const host = new PluginHost({ react: React });
     const cleanup: string[] = [];
+    let completion!: ComposerInlineCompletionProviderHandle;
+    const interactions: ComposerInlineCompletionInteraction[] = [];
+    const interaction: ComposerInlineCompletionInteraction = { type: "shown", interactionId: "presentation-1",
+      suggestionId: "snippet-1", source: { composerId: "input-1", revision: 1, kind: "main" } };
     const oldHandle = await host.activateGeneration({
       pluginId: "notes",
       generation: "old",
       register(api) {
         registerCompleteGeneration(api, "old");
         api.registerCleanup(() => cleanup.push("old"));
+        completion = api.registerComposerInlineCompletionProvider({ id: "snippets",
+          provideCompletion: () => ({ id: "snippet-1", text: " suffix" }),
+          onDidInteract: (event) => { interactions.push(event); },
+        });
       },
     });
+
+    const retained = host.getComposerInlineCompletionProviders()[0];
+    retained.onDidInteract?.(interaction);
+    expect(interactions).toHaveLength(1);
+    let refreshes = 0;
+    retained.subscribeRefresh(() => { refreshes += 1; });
+    completion.refresh();
 
     const newHandle = await host.activateGeneration({
       pluginId: "notes",
@@ -205,6 +220,11 @@ describe("PluginHost", () => {
     expect(document.head.querySelector("style[data-wuu-plugin-generation=old]")).toBeNull();
     expect(document.head.querySelector("style[data-wuu-plugin-generation=new]")).not.toBeNull();
 
+    retained.onDidInteract?.(interaction);
+    completion.refresh();
+    expect(interactions).toHaveLength(1);
+    expect(refreshes).toBe(0);
+    expect(host.getComposerInlineCompletionProviders()).toEqual([]);
     oldHandle.dispose();
     expect(host.getCommands()).toHaveLength(1);
 

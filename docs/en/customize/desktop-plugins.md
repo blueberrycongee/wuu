@@ -76,7 +76,22 @@ For main-conversation context, pass `threadId` through `api.invokeRuntime` and r
 
 Providers run sequentially by ascending `order`, then plugin ID, then registration ID. The first nonempty result wins; no result or a provider error lets the next provider try. The host owns ghost-text rendering and verifies that the request is still current before accepting it. Providers own context retrieval, prompts, debouncing, and request budgets. No completion provider or model-calling policy is installed by this API.
 
-The host calls providers when an eligible input observation changes. Version 1 has no provider-triggered refresh method: an unrelated host event or plugin setting change does not itself recall a settled callback. Keep any event wait or debounce inside the current cancellable request bounded, and return `null` when ineligible. A pending provider delays later providers; there is no automatic provider timeout.
+The host calls providers when an eligible input observation changes. The registration returns a handle with `dispose()` and `refresh(scope?)`. After an asynchronous cache or setting update, call `handle.refresh({ composerId, revision })` using the original request's identity, or omit the scope to recheck all current eligible inputs. The host recalls the ordered provider chain, cancelling its previous request. Refresh does not change the input revision, accept text, override Escape dismissal, or make an old scope apply to a newer draft. Disposed and replaced-generation handles are inert. Bursts coalesce into at most one refresh batch per 100 ms per registration; plugins still own inference/debounce budgets and must not unconditionally refresh from `provideCompletion`.
+
+Return `null` promptly while independent work is pending, and refresh when its cache is ready. A local snippet provider can refresh after workspace indexing; a translation provider can refresh after its glossary changes. These use the same boundary as a background next-message predictor, without requiring a model call or installing any completion policy. A pending provider delays later providers; there is no automatic provider timeout.
+
+### Suggestion interactions
+
+Results may include an opaque provider-owned `id`: `{ id: "snippet-42", text: "literal suffix" }`. Supply `onDidInteract(event)` on the registration to observe only its own suggestions. Every rendered presentation receives a host-generated `interactionId`; callbacks preserve that ID, the optional `suggestionId`, and the source's `kind`, `composerId`, `revision`, and optional thread IDs. No later draft text, message body, or attachments are sent to this callback.
+
+- `shown`: the eligible ghost preview was committed to the input's DOM. This does not prove the user saw it or that the whole suffix fit in the viewport.
+- `accepted`: Tab inserted the whole suffix into the editable draft. This does not send it.
+- `dismissed`: Escape explicitly dismissed a visible suggestion. Cancelling a request before a suggestion exists, losing focus, or changing context is not a rejection event.
+- `dispatched`: the composer called its submission callback and it returned without throwing or returning `false`. `mode` is the requested `send`, `queue`, or `steer` action; `edited` compares the dispatched text with the draft immediately after that suggestion's acceptance.
+
+`dispatched` is a UI dispatch boundary, not a backend acknowledgement, persisted-message ID, final queue routing, or delivery guarantee. Asynchronous submission may still fail and restore the draft. A synchronous rejection keeps attribution for a retry; a successful dispatch consumes it once. A cleared or programmatically replaced draft, conversation switch, unmount, or retired provider drops attribution. Ordinary edits preserve it, including editing away the inserted text; `edited` does not prove any suggested characters remain. If several suffixes are accepted into one draft, each retains its own identity and comparison baseline. Only whole-suffix acceptance is supported.
+
+Snippet and translation plugins can distinguish insertion from later dispatch and edits through this contract, without observing another provider's interactions or unrelated message text. The host neither stores these events nor sends analytics. Callbacks stop on disposal/reload; callback errors are diagnosed and do not block editing. Event handling, retention, ranking, and network use belong to the plugin.
 
 The native input requests suggestions only while focused and writable, with a collapsed caret at the end. Empty drafts are eligible. It excludes IME composition, slash-command drafts, open menus or dialogs, and hidden collapsed prompt content. Slash-command handling keeps Tab priority. An unmodified, nonrepeated Tab accepts a current suggestion; without one, ordinary focus navigation remains available. Escape dismisses the current suggestion or pending request. Acceptance changes the draft without submitting it, preserving native undo. Multiline suffixes are supported; CRLF is normalized to LF.
 
@@ -86,7 +101,7 @@ Editing, selection changes, composition, focus/context or running-state changes,
 
 A provider receives unsent draft text. Choose deliberately what leaves the machine, and explain model/network use to users. When delegating through `api.invokeRuntime`, pass the same signal in its options and propagate the runtime execution's signal to downstream work. [One-shot model requests](plugin-authoring.md#one-shot-model-requests) use the configured provider and may incur charges; cancellation cannot undo completed requests or guarantee that an accepted provider request is free.
 
-For older desktop hosts, check `typeof api.registerComposerInlineCompletionProvider === "function"` before registering. The context's `contractVersion: 1` describes this callback shape; it is separate from runtime service versions and Wuu's product CalVer. Exact public types are in the [TypeScript SDK](../../../packages/plugin-sdk/src/index.ts).
+For older desktop hosts, check `typeof api.registerComposerInlineCompletionProvider === "function"` before registering. Feature-detect `typeof handle.refresh === "function"` for refresh and interaction support on hosts that already expose registration. The context's `contractVersion: 1` describes this callback shape; it is separate from runtime service versions and Wuu's product CalVer. Exact public types are in the [TypeScript SDK](../../../packages/plugin-sdk/src/index.ts).
 
 ## Appearance and cleanup
 

@@ -10,6 +10,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Inline completion providers can refresh asynchronously cached suggestions and
+  receive scoped display, acceptance, dismissal, and dispatch interactions without
+  receiving later draft text. Dispatch events do not imply backend delivery.
+
 - Composable model extensions with full logical request snapshots, request hooks,
   around-call middleware, independent inference streams, explicitly selected
   adapters, and generation-owned background service calls.

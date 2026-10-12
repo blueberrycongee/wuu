@@ -8,13 +8,14 @@ import {
   useSyncExternalStore,
   type RefObject,
 } from "react";
-import type { ComposerInlineCompletionContext } from "../shared/workbench";
+import type { ComposerInlineCompletionContext, ComposerInlineCompletionInteraction, ComposerSubmissionModeV1 } from "../shared/workbench";
 import type { PluginHost, RegisteredComposerInlineCompletionProvider } from "./plugins/PluginHost";
 import { parseComposerSlashDraft } from "./ComposerSlashCommands";
 
 export interface ComposerInlineCompletionActions {
   accept(): boolean;
   dismiss(): boolean;
+  dispatched(text: string, mode: ComposerSubmissionModeV1): void;
 }
 
 type Observation = {
@@ -27,12 +28,15 @@ type Suggestion = {
   observation: Observation;
   provider: RegisteredComposerInlineCompletionProvider;
   text: string;
+  id?: string;
+  interactionId: string;
+  shown: boolean;
 };
 
 // This lives beside the synchronous textarea value. App's persisted draft and
 // the surrounding composer chrome may still describe an earlier keystroke.
 export function useComposerInlineCompletion({
-  host, inputRef, value, enabled, kind, contextKey, revisionKey, threadId, sideThreadId, running, compositionActive, onInsert,
+  host, inputRef, value, enabled, kind, contextKey, revisionKey, resetKey, threadId, sideThreadId, running, compositionActive, onInsert,
 }: {
   host: PluginHost;
   inputRef: RefObject<HTMLTextAreaElement | null>;
@@ -41,6 +45,7 @@ export function useComposerInlineCompletion({
   kind: ComposerInlineCompletionContext["kind"];
   contextKey: string;
   revisionKey: string;
+  resetKey: string;
   threadId?: string;
   sideThreadId?: string;
   running: boolean;
@@ -63,6 +68,9 @@ export function useComposerInlineCompletion({
   const observed = useRef<Observation | null>(null);
   const request = useRef<AbortController | null>(null);
   const dismissed = useRef<Observation | null>(null);
+  const accepted = useRef<{ suggestion: Suggestion; draftText: string }[]>([]);
+  const attributionContext = useRef({ composerId, resetKey });
+  const [refreshRevision, setRefreshRevision] = useState(0);
   const [observation, setObservation] = useState<Observation | null>(null);
   const [suggestion, setSuggestion] = useState<Suggestion | null>(null);
 
@@ -70,6 +78,10 @@ export function useComposerInlineCompletion({
     if (composition !== undefined) composing.current = composition;
     const input = inputRef.current;
     if (!input || (providers.length === 0 && observed.current === null)) return null;
+    if (attributionContext.current.composerId !== composerId || attributionContext.current.resetKey !== resetKey || input.value === "") {
+      accepted.current = [];
+      attributionContext.current = { composerId, resetKey };
+    }
     const focused = document.activeElement === input;
     const menuOpen = Boolean(document.querySelector(
       '[data-floating-menu-owner], .composer-textarea-context-menu, [aria-modal="true"]',
@@ -122,6 +134,17 @@ export function useComposerInlineCompletion({
     };
   }, [inputRef, providers.length]);
   useEffect(() => {
+    const unsubscribes = providers.map((provider) => provider.subscribeRefresh((scope) => {
+      const current = observeRef.current();
+      if (!current?.eligible || dismissed.current === current) return;
+      if (scope && (scope.composerId !== current.context.composerId || scope.revision !== current.context.revision)) return;
+      request.current?.abort();
+      setSuggestion(null);
+      setRefreshRevision((value) => value + 1);
+    }));
+    return () => { for (const unsubscribe of unsubscribes) unsubscribe(); };
+  }, [providers]);
+  useEffect(() => {
     if (!observation?.eligible || dismissed.current === observation) return;
     const controller = new AbortController();
     request.current = controller;
@@ -132,15 +155,29 @@ export function useComposerInlineCompletion({
         if (!result?.text) continue;
         // Textareas normalize line endings; preview and accepted text must agree.
         const text = result.text.replace(/\r\n?/g, "\n");
-        setSuggestion({ observation, provider, text });
+        setSuggestion({ observation, provider, text, id: result.id,
+          interactionId: crypto.randomUUID(), shown: false });
         return;
       }
     })().finally(() => {
       if (request.current === controller) request.current = null;
     });
     return () => controller.abort();
-  }, [observation]);
+  }, [observation, refreshRevision]);
   useEffect(() => () => request.current?.abort(), []);
+
+  function notify(current: Suggestion, outcome: { type: "shown" | "accepted" | "dismissed" }
+    | { type: "dispatched"; mode: ComposerSubmissionModeV1; edited: boolean }): void {
+    const { kind, composerId, revision, threadId, sideThreadId } = current.observation.context;
+    const event: ComposerInlineCompletionInteraction = {
+      ...outcome, interactionId: current.interactionId,
+      ...(current.id === undefined ? {} : { suggestionId: current.id }),
+      source: { kind, composerId, revision,
+        ...(threadId === undefined ? {} : { threadId }),
+        ...(sideThreadId === undefined ? {} : { sideThreadId }) },
+    };
+    void current.provider.onDidInteract?.(event);
+  }
 
   function currentSuggestion(): Suggestion | null {
     const current = observe();
@@ -158,10 +195,17 @@ export function useComposerInlineCompletion({
       setSuggestion(null);
       // Chromium's native insertion keeps the accepted completion in its undo
       // history. Other hosts fall back to the standard textarea edit operation.
+      const acceptedText = input.value + current.text;
       const inserted = document.execCommand?.("insertText", false, current.text);
       if (!inserted) {
         input.setRangeText(current.text, input.selectionStart, input.selectionEnd, "end");
       }
+      if (input.value !== acceptedText) {
+        observe();
+        return false;
+      }
+      accepted.current.push({ suggestion: current, draftText: input.value });
+      notify(current, { type: "accepted" });
       if (observed.current?.context.draftText !== input.value) onInsert(input.value);
       observe();
       return true;
@@ -170,15 +214,30 @@ export function useComposerInlineCompletion({
       const current = currentSuggestion();
       const active = observed.current;
       if (!current && !(active?.eligible && request.current && !request.current.signal.aborted)) return false;
+      if (current) notify(current, { type: "dismissed" });
       dismissed.current = active;
       request.current?.abort();
       setSuggestion(null);
       return true;
     },
+    dispatched(text, mode) {
+      // This is called only after the composer's synchronous dispatch callback
+      // accepts. A later transport failure cannot be inferred from that boundary.
+      observe();
+      const pending = accepted.current;
+      accepted.current = [];
+      for (const item of pending) notify(item.suggestion, { type: "dispatched", mode, edited: text !== item.draftText });
+    },
   };
   const visible = suggestion && suggestion.observation === observation && observation.eligible
     && observation.context.draftText === value && dismissed.current !== observation
     && providers.includes(suggestion.provider) ? suggestion.text : "";
+  useLayoutEffect(() => {
+    if (visible && suggestion && !suggestion.shown && observeRef.current() === suggestion.observation) {
+      suggestion.shown = true;
+      notify(suggestion, { type: "shown" });
+    }
+  });
   return { text: visible, observe, actions, descriptionId: `${mountId}-inline-completion` };
 }
 

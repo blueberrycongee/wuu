@@ -151,6 +151,17 @@ export function SplitPaneComposer({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const composing = useRef(false);
   const [submissionRevision, setSubmissionRevision] = useState(0);
+  const inputDraftUpdates = useRef<string[]>([]);
+  const externalDraft = useRef({ prompt, revision: 0 });
+  if (externalDraft.current.prompt !== prompt) {
+    const echo = inputDraftUpdates.current.lastIndexOf(prompt);
+    if (echo >= 0) inputDraftUpdates.current.splice(0, echo + 1);
+    else {
+      inputDraftUpdates.current.length = 0;
+      externalDraft.current.revision += 1;
+    }
+    externalDraft.current.prompt = prompt;
+  }
   const attachmentInputRef = useRef<HTMLInputElement>(null);
   const photosInputRef = useRef<HTMLInputElement>(null);
   const shellRef = useRef<HTMLDivElement>(null);
@@ -233,13 +244,16 @@ export function SplitPaneComposer({
 
   function updateVisiblePrompt(value: string): void {
     resetQueryHistoryNavigation();
-    setPrompt(hasCollapsedPromptBlocks ? `${collapsedPromptPrefix}${value}` : value);
+    const nextPrompt = hasCollapsedPromptBlocks ? `${collapsedPromptPrefix}${value}` : value;
+    inputDraftUpdates.current.push(nextPrompt);
+    setPrompt(nextPrompt);
   }
   const inline = useComposerInlineCompletion({
     host: desktopPluginHost, inputRef: textareaRef, value: visiblePromptValue,
     kind: "main",
     enabled: !readOnly && connected && !hasCollapsedPromptBlocks && !cameraOpen,
     contextKey: queryHistorySessionID ?? "", revisionKey: JSON.stringify([submissionRevision, turnId, requestedHandoffIntent]),
+    resetKey: JSON.stringify([externalDraft.current.revision, requestedHandoffIntent]),
     threadId: queryHistorySessionID, running, compositionActive: composing.current, onInsert: updateVisiblePrompt,
   });
 
@@ -306,6 +320,7 @@ export function SplitPaneComposer({
     if (contentParts && queryHistorySessionID) rememberCollapsedPromptParts(queryHistorySessionID, canonicalPrompt, contentParts);
     const accepted = contentParts ? onSend(canonicalPrompt, contentParts) : onSend(currentPrompt);
     if (accepted === false) return;
+    inline.actions.dispatched(canonicalPrompt, running ? "queue" : "send");
     submittedDraftRef.current = currentSignature;
     composing.current = false;
     setSubmissionRevision((revision) => revision + 1);

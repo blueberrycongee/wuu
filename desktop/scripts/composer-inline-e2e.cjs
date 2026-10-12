@@ -234,7 +234,7 @@ app.whenReady().then(async () => {
   });
 
   await check("accept then immediate submit uses live text and refreshes after turn", async () => {
-    await suggestion("Send live", " accepted text");
+    const offered = await suggestion("Send live", " accepted text");
     const previousSubmissions = submissions.length;
     for (const keyCode of ["Tab", "Enter"]) {
       win.webContents.sendInputEvent({ type: "keyDown", keyCode });
@@ -246,12 +246,44 @@ app.whenReady().then(async () => {
     const submitted = submissions.at(-1);
     assert.equal(submitted.text, "Send live accepted text", "submission cannot use the pre-acceptance React draft");
     assert.ok(submitted.response.turn?.id, "synthetic backend created the turn");
+    const interactions = await evaluate((id) => window.__inlineCompletionE2E.active.interactions.filter((event) => event.suggestionId === `fixture:${id}`), offered.id);
+    assert.deepEqual(interactions.map((event) => event.type), ["shown", "accepted", "dispatched"]);
+    assert.equal(new Set(interactions.map((event) => event.interactionId)).size, 1);
+    assert.equal(interactions[2].mode, "send");
+    assert.equal(interactions[2].edited, false);
+    assert.equal(interactions[2].source.revision, offered.context.revision);
+    assert.equal(JSON.stringify(interactions).includes("Send live"), false, "feedback carries no draft text");
+    state.interactions = interactions;
     win.webContents.send("test:server-event", {
       kind: "notification", workdir: path.dirname(root),
       message: { method: "turn/completed", params: { thread_id: submitted.threadId, turn: { ...submitted.response.turn, status: "completed", completed_at: new Date().toISOString() } } },
     });
     await until(() => window.__inlineCompletionE2E.active.requests.some((request) => request.context.draftText === "" && request.context.running === false && !request.aborted));
     state.submissions = submissions.map(({ threadId, text, response }) => ({ threadId, text, turnId: response.turn.id }));
+  });
+
+  await check("scoped refresh wakes a settled null and coalesces bursts", async () => {
+    await draft("Refresh");
+    const before = await request("Refresh");
+    await resolve(before.id, null);
+    await noGhost("provider may abstain while independent cache work is pending");
+    const count = await evaluate(() => window.__inlineCompletionE2E.active.requests.length);
+    await evaluate((scope) => {
+      for (let index = 0; index < 20; index += 1) window.__inlineCompletionE2E.active.provider.refresh(scope);
+    }, before.context);
+    const after = await until((id) => window.__inlineCompletionE2E.active.requests.find((item) => item.id > id && !item.aborted), before.id);
+    assert.equal(after.context.revision, before.context.revision);
+    assert.equal(await evaluate(() => window.__inlineCompletionE2E.active.requests.length), count + 1);
+    await resolve(after.id, " cached suffix");
+    await until((selector) => document.querySelector(selector)?.textContent === " cached suffix", ghostSelector);
+    await win.webContents.insertText(" changed");
+    const current = await request("Refresh changed");
+    await resolve(current.id, null);
+    const currentCount = await evaluate(() => window.__inlineCompletionE2E.active.requests.length);
+    await evaluate((scope) => window.__inlineCompletionE2E.active.provider.refresh(scope), before.context);
+    await delay(150); // Negative check spans the documented 100 ms refresh batch.
+    assert.equal(await evaluate(() => window.__inlineCompletionE2E.active.requests.length), currentCount);
+    await noGhost("an old source revision cannot revive a newer draft");
   });
 
   await check("typing invalidates old async results", async () => {
@@ -303,10 +335,14 @@ app.whenReady().then(async () => {
   });
 
   await check("Escape dismisses one revision and preserves native Tab", async () => {
-    await suggestion("Dismiss", " this suffix");
+    const offered = await suggestion("Dismiss", " this suffix");
     const count = await evaluate(() => window.__inlineCompletionE2E.active.requests.length);
     await key("Escape");
     await noGhost("Escape clears the current completion");
+    await evaluate(() => window.__inlineCompletionE2E.active.provider.refresh());
+    await delay(150);
+    const interactions = await evaluate((id) => window.__inlineCompletionE2E.active.interactions.filter((event) => event.suggestionId === `fixture:${id}`), offered.id);
+    assert.deepEqual(interactions.map((event) => event.type), ["shown", "dismissed"]);
     assert.equal(await evaluate(() => window.__inlineCompletionE2E.active.requests.length), count, "dismissal must not immediately re-request the same revision");
     await key("Tab");
     assert.equal(await value(), "Dismiss");
