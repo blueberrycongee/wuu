@@ -53,6 +53,12 @@ struct MessageForkRequest: Identifiable {
     // A draft uses the conversation projection locally, but has no persisted activeID.
     var draftWorkspace: String?
     private var pendingSettings: [String: ThreadSettings] = [:]
+    private var modelPreferences: ModelPreferences? {
+        guard let host else { return nil }
+        if let selectedPair { return ModelPreferences(scope: ["paired", selectedPair.id, host.pub]) }
+        guard let account else { return nil }
+        return ModelPreferences(scope: ["account", account.server, account.username, account.pub, host.pub])
+    }
     private var pendingTitles: [String: String] = [:]
     private var composerDraftIDs: [String: String] = [:]
     var composerKey: String {
@@ -591,6 +597,9 @@ struct MessageForkRequest: Identifiable {
     func settingsSelection(for thread: ChatThread) -> ThreadSettings {
         pendingSettings[thread.id] ?? thread.settings
     }
+    func preferredDraftSettings(engine: String, defaults: ThreadSettings, providers: [RemoteProvider], engines: [RemoteEngine]) -> ThreadSettings {
+        modelPreferences?.selection(engine: engine, defaults: defaults, providers: providers, engines: engines) ?? defaults
+    }
     func loadSettingsChoices(threadID: String) async throws -> (providers: [RemoteProvider], engines: [RemoteEngine], defaultEngine: String, defaults: ThreadSettings) {
         guard connected, let remote, let live, live.id == threadID else { throw CancellationError() }
         let stamp = epoch, selection = opening
@@ -617,6 +626,7 @@ struct MessageForkRequest: Identifiable {
             self.live?.engine = engine
             self.live?.settings = settings
             pendingSettings[threadID] = settings
+            modelPreferences?.save(settings, engine: engine)
             return
         }
         guard engine == (live.engine.isEmpty ? "wuu" : live.engine) else {
@@ -629,6 +639,7 @@ struct MessageForkRequest: Identifiable {
         _ = try await remote.call("config/model/update", params: params)
         guard epoch == stamp, opening == selection, self.remote === remote else { throw CancellationError() }
         pendingSettings.removeValue(forKey: threadID)
+        modelPreferences?.save(settings, engine: engine)
     }
     func loadOlder(beforePrepend: () -> Void) async throws {
         guard connected, !refreshing, let remote, let live, !live.historyCursor.isEmpty, !loadingHistory else { return }
@@ -665,6 +676,14 @@ struct MessageForkRequest: Identifiable {
         let stamp = epoch, selection = opening
         sending = true; defer { if epoch == stamp { sending = false } }
         if let cwd = draftWorkspace {
+            var remembered: ThreadSettings?
+            if pendingSettings[thread.id] == nil, modelPreferences?.hasSavedChoices == true {
+                let choices = try await loadSettingsChoices(threadID: thread.id)
+                let engine = thread.engine.isEmpty ? choices.defaultEngine : thread.engine
+                remembered = modelPreferences?.selection(engine: engine, defaults: choices.defaults,
+                    providers: choices.providers, engines: choices.engines)
+                if remembered != nil { thread.engine = engine }
+            }
             var params: [String: JSONValue] = ["cwd": .string(cwd), "engine": .string(thread.engine)]
             if let id = workspaces.first(where: { $0["path"].string == cwd })?["id"].string {
                 params["workspace_id"] = .string(id)
@@ -676,6 +695,11 @@ struct MessageForkRequest: Identifiable {
             // Keep composer bindings stable, including an attachment still being prepared.
             composerDraftIDs[thread.id] = draftID
             pendingSettings[thread.id] = pendingSettings.removeValue(forKey: draftID)
+            if var remembered {
+                // A remembered model must never carry permissions into a new conversation.
+                remembered.permission = thread.settings.permission
+                pendingSettings[thread.id] = remembered
+            }
             pendingTitles[thread.id] = pendingTitles.removeValue(forKey: draftID)
             // Keep this session on failure so an explicit retry never creates another one.
             draftWorkspace = nil; live = thread; activeID = thread.id; workspace = thread.cwd

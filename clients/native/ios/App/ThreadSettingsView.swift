@@ -50,7 +50,7 @@ struct ThreadSettingsView: View {
                     if isDraft {
                         Picker("引擎", selection: Binding(get: { engine }, set: { value in
                             engine = value
-                            selection = value == originalEngine ? originalSettings : value == "wuu" ? defaults : ThreadSettings(["permission_mode": "unconfined"])
+                            selection = value == originalEngine ? originalSettings : draftSelection(engine: value)
                         })) {
                             if !engines.contains(where: { $0.available && $0.id == engine }) { Text(engineInfo?.name ?? engine).tag(engine) }
                             ForEach(engines.filter(\.available)) { Text($0.name).tag($0.id) }
@@ -86,7 +86,7 @@ struct ThreadSettingsView: View {
                             ForEach(variants, id: \.self) { Text($0).tag($0) }
                         }
                     }
-                } footer: { Text("仅影响当前会话。模型连接和凭据在电脑上管理。") }
+                } footer: { Text("模型与推理配置会用于此电脑上相同引擎的新会话。模型连接和凭据在电脑上管理。") }
                 Section {
                     Picker("执行权限", selection: $selection.permission) {
                         ForEach(["standard", "read_only", "unconfined"].filter { permissions.contains($0) || $0 == selection.permission }, id: \.self) { mode in
@@ -118,6 +118,11 @@ struct ThreadSettingsView: View {
                 .task { await load() }
         }
     }
+    private func draftSelection(engine: String) -> ThreadSettings {
+        model.preferredDraftSettings(engine: engine,
+            defaults: engine == "wuu" ? defaults : ThreadSettings(["permission_mode": "unconfined"]),
+            providers: providers, engines: engines)
+    }
     private func load() async {
         loading = true; error = nil
         defer { loading = false }
@@ -127,7 +132,7 @@ struct ThreadSettingsView: View {
             providers = choices.providers; engines = choices.engines; defaults = choices.defaults
             if let current = model.live, current.id == thread.id {
                 engine = current.engine.isEmpty ? (isDraft ? choices.defaultEngine : "wuu") : current.engine
-                selection = isDraft && current.engine.isEmpty ? (engine == "wuu" ? defaults : ThreadSettings(["permission_mode": "unconfined"])) : model.settingsSelection(for: current)
+                selection = isDraft && current.engine.isEmpty ? draftSelection(engine: engine) : model.settingsSelection(for: current)
                 originalEngine = engine; originalSettings = selection
             }
             loaded = true
