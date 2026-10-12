@@ -24,6 +24,9 @@ func (k *backgroundInvoker) InvokeService(ctx context.Context, params pluginhost
 	}
 	switch params.Method {
 	case "start":
+		if pluginhost.InShutdownCleanup(ctx) {
+			return nil, serviceError("generation_closed", "shutdown cleanup cannot start background work")
+		}
 		var input pluginhost.BackgroundStartParams
 		if err := decodeServiceParams(params.Params, &input); err != nil {
 			return nil, err

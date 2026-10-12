@@ -35,14 +35,18 @@ export default {
     return {
       protocol_version: 3,
       required_host_services: [{ id: "host.service.call", required: true }],
-      required_services: ["host.model.invoke", "host.background"].map(name => ({ name, major_version: 1, required: true })),
+      required_services: [
+        ...["host.model.invoke", "host.background"].map(name => ({ name, major_version: 1, required: true })),
+        { name: "fixture.shadow-compare", major_version: 1, required: false },
+      ],
       provided_services: [{ name: service, version: "1.0.0", methods: [{ name: "replay", input_schema: "fixture.replay.input.v1", output_schema: "fixture.replay.output.v1" }] }],
       capabilities: [
         { id: "model.request.observe", kind: "observe", version: 1, error_policy: "isolate" },
         { id: "model.request.transform", kind: "transform", version: 1, error_policy: "isolate" },
         { id: "plugin.client.request", kind: "decision", version: 1 },
       ],
-      tools: [{ id: "tripwire", description: "Synthetic acceptance tripwire; must never run during a replay.", input_schema: { type: "object" }, activity: { read_only: true, concurrency_safe: true } }],
+      tools: [{ id: "tripwire", description: "Synthetic acceptance tripwire; must never run during a replay.", input_schema: { type: "object", properties: { anything: {}, nested: { type: "object", properties: {} } } }, activity: { read_only: true, concurrency_safe: true } },
+        { id: "raw_result", description: "Return synthetic structured data for full-context acceptance.", input_schema: { type: "object" }, activity: { read_only: true, concurrency_safe: true } }],
     };
   },
   activate(host) { generationHost = host; },
@@ -54,8 +58,8 @@ export default {
         throw new Error("fixture-isolated-transform-error");
       }
       if ([...request.messages].reverse().find(message => message.role === "user")?.content !== "pipeline-transform") return { output: {} };
-      return { output: { request: { ...request,
-        messages: [...request.messages, { role: "system", content: "fixture:logical-transform" }],
+      return { output: { request: { ...request, temperature: 0.23,
+        messages: [{ role: "system", content: "fixture:logical-transform" }, ...request.messages],
         provider_options: { ...request.provider_options, temperature: 0.23 },
       } } };
     }
@@ -76,6 +80,9 @@ export default {
       case "state": result = { snapshots: snapshots.slice(-2), observed: snapshots.length, phases, jobs, invocations, tripwireCalls, transformFailures }; break;
       case "arm": automatic = String(input.tag); result = { armed: true }; break;
       case "start": result = await replay(input.generation_scope ? generationHost : host, input); break;
+      case "service": result = await host.call("host.service.call", {
+        service: "fixture.shadow-compare", method: "compare", params: input,
+      }); break;
       case "inspect": result = await inspectBackground(host, input as { job_id: string }); break;
       case "cancel": result = await cancelBackground(host, input as { job_id: string }); break;
       default: throw new Error(`Unknown fixture method: ${method}`);
@@ -105,7 +112,11 @@ export default {
       if (read.done) return { events: stream, result: read.result, error: read.error };
     }
   },
-  executeTool() {
+  executeTool(params) {
+    if (params.tool_id === "raw_result") {
+      const raw = JSON as typeof JSON & { rawJSON(source: string): unknown };
+      return { result: { content: [{ type: "text", text: "fixture:structured-result" }], structured_content: { score: raw.rawJSON("1.0") } } };
+    }
     tripwireCalls++;
     return { result: { content: [{ type: "text", text: "UNEXPECTED_REPLAY_TOOL_EXECUTION" }] } };
   },

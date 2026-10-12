@@ -37,6 +37,10 @@ func pluginModelPipelineClient(host *pluginhost.Host, native providers.StreamCli
 	return &modelPipelineClient{host: host, native: native, inner: inner, origin: origin}
 }
 
+// The adapter boundary records physical evidence before middleware and
+// response observers can transform its logical presentation.
+func (c *modelPipelineClient) OwnsStreamAccounting() bool { return true }
+
 func (c *modelPipelineClient) ResolveMediaInput(policy providers.MediaInputPolicy, options map[string]any) providers.MediaInputPolicy {
 	return providers.ResolveMediaInput(c.native, policy, options)
 }
@@ -132,6 +136,7 @@ func (c *modelPipelineClient) Chat(ctx context.Context, req providers.ChatReques
 		return providers.ChatResponse{}, err
 	}
 	response, err := c.inner.Chat(ctx, req)
+	response = stampModelResponse(req, response)
 	phase := "response"
 	if err != nil {
 		phase = "error"
@@ -154,26 +159,7 @@ func (c *modelPipelineClient) StreamChat(ctx context.Context, req providers.Chat
 		defer close(out)
 		accumulated := modelResponseAccumulator{model: req.Model}
 		for event := range stream {
-			if event.ProviderItem != nil {
-				item := *event.ProviderItem
-				if item.Provider == "" {
-					item.Provider = req.Provider
-				}
-				if item.Scope == "" {
-					item.Scope = req.ProviderStateScope
-				}
-				event.ProviderItem = &item
-			}
-			if event.ToolCall != nil && event.ToolCall.ProviderItemID != "" {
-				call := *event.ToolCall
-				if call.ProviderItemProvider == "" {
-					call.ProviderItemProvider = req.Provider
-				}
-				if call.ProviderItemModel == "" {
-					call.ProviderItemModel = req.Model
-				}
-				event.ToolCall = &call
-			}
+			event = stampModelStreamEvent(req, event)
 			accumulated.add(event)
 			if event.Type == providers.EventDone || event.Type == providers.EventError {
 				phase := "response"
@@ -274,4 +260,44 @@ func (a *modelResponseAccumulator) add(e providers.StreamEvent) {
 		a.response.FinishReason = e.FinishReason
 		a.response.Truncated = e.Truncated
 	}
+}
+
+func stampModelStreamEvent(req providers.ChatRequest, event providers.StreamEvent) providers.StreamEvent {
+	if event.ProviderItem != nil {
+		item := *event.ProviderItem
+		if item.Provider == "" {
+			item.Provider = req.Provider
+		}
+		if item.Scope == "" {
+			item.Scope = req.ProviderStateScope
+		}
+		event.ProviderItem = &item
+	}
+	if event.ToolCall != nil && event.ToolCall.ProviderItemID != "" {
+		call := *event.ToolCall
+		if call.ProviderItemProvider == "" {
+			call.ProviderItemProvider = req.Provider
+		}
+		if call.ProviderItemModel == "" {
+			call.ProviderItemModel = req.Model
+		}
+		event.ToolCall = &call
+	}
+
+	return event
+}
+
+func stampModelResponse(req providers.ChatRequest, response providers.ChatResponse) providers.ChatResponse {
+	for i, item := range response.ProviderItems {
+		event := stampModelStreamEvent(req, providers.StreamEvent{ProviderItem: &item})
+		response.ProviderItems[i] = *event.ProviderItem
+	}
+	for i, call := range response.ToolCalls {
+		event := stampModelStreamEvent(req, providers.StreamEvent{ToolCall: &call})
+		response.ToolCalls[i] = *event.ToolCall
+	}
+	if response.ProviderItemModel == "" && (response.ProviderItemID != "" || len(response.ProviderItems) > 0) {
+		response.ProviderItemModel = req.Model
+	}
+	return response
 }

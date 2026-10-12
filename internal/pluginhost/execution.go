@@ -10,8 +10,8 @@ import (
 	"time"
 )
 
-// Execution scope vocabulary. One execution is exactly one tool.execute or
-// capability.invoke dispatch: open rides the invoke frame itself (the
+// Execution scope vocabulary. One execution is one tool.execute,
+// capability.invoke or tracked service.invoke callback: open rides the invoke frame itself (the
 // execution_id param), close rides its response, and cancel is the only
 // mid-flight frame. Cancel is fire-and-forget on the host side — the core's
 // terminal state never waits for a plugin acknowledgement, and any response
@@ -174,8 +174,8 @@ func (t *ExecutionTracker) ResolveTool(callerPluginID, executionID string) (Tool
 	return t.resolve(callerPluginID, executionID, true)
 }
 
-// Resolve accepts any live host-owned invocation, including client-request
-// capabilities that have no session or tool call. It never grants tool access.
+// Resolve accepts any live host-owned invocation, including service callbacks
+// and client-request capabilities without a session. It never grants tool access.
 func (t *ExecutionTracker) Resolve(callerPluginID, executionID string) (ExecutionScope, *HostServiceError) {
 	return t.resolve(callerPluginID, executionID, false)
 }

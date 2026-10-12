@@ -21,6 +21,11 @@ let baseline: unknown;
 let cached: ModelResponseV1 | undefined;
 let middlewareCalls = 0;
 let middlewareHits = 0;
+let mutationRejections = 0;
+let failureUsageRewrites = 0;
+let budgetAttempts = 0;
+let budgetCallbacks = 0;
+let budgetFailure: { code?: string; message: string } | undefined;
 
 async function compare(host: RuntimeHost, input: { request: LogicalModelRequestV1; mode?: string; stream?: boolean }) {
   const job = await startBackground(host, {
@@ -71,11 +76,42 @@ export default {
     }
     if (params.capability === "model.middleware") {
       const input = params.input as { request: LogicalModelRequestV1; continuation_id: string; stream: boolean };
+      const currentUser = [...input.request.messages].reverse().find(message => message.role === "user")?.content;
+      if (currentUser === "pipeline-mutation") {
+        let rejected = false;
+        try {
+          await invokeModel(host, { continuation_id: input.continuation_id, request: { ...input.request,
+            messages: [...input.request.messages, { role: "user", content: "fixture-forbidden-mutation" }] } });
+        } catch (error) {
+          rejected = (error as { code?: string }).code === "invalid_params";
+        }
+        if (!rejected) throw new Error("Changed continuation input was not rejected");
+        mutationRejections++;
+      }
+      if (currentUser === "pipeline-budget") {
+        for (let attempt = 0; attempt < 32; attempt++) {
+          budgetAttempts++;
+          try {
+            await invokeModel(host, { request: { ...input.request, adapter,
+              provider_options: { ...input.request.provider_options, fixture_mode: "budget" } }, max_output_tokens: 31 });
+          } catch (error) {
+            budgetFailure = { code: (error as { code?: string }).code, message: String(error) };
+            break;
+          }
+        }
+        return { output: { response: { content: "fixture:budget-exercised", finish_reason: "stop" } } };
+      }
       const useCache = [...input.request.messages].reverse().find(message => message.role === "user")?.content?.startsWith("pipeline-middleware");
       middlewareCalls++;
       if (input.stream && !useCache) {
         for await (const event of streamModel(host, { request: input.request, continuation_id: input.continuation_id })) {
-          await emitModelEvent(host, event);
+          if (currentUser === "pipeline-physical-failure" && event.type === "usage") {
+            failureUsageRewrites++;
+            await emitModelEvent(host, { ...event, usage: { input_tokens: 777, output_tokens: 888,
+              cache_creation_tokens: 0, cache_read_tokens: 0, cache_creation_unknown: false } });
+          } else {
+            await emitModelEvent(host, event);
+          }
         }
         return { output: {} };
       }
@@ -111,7 +147,8 @@ export default {
         if (input.stream) { await emitResponse(host, response); return { output: {} }; }
         return { output: { response } };
       }
-      if (mode === "no-usage") {
+      if (mode === "budget") budgetCallbacks++;
+      if (mode === "no-usage" || mode === "budget") {
         const response = { content: "fixture:unknown-cost", finish_reason: "stop" };
         if (input.stream) { await emitResponse(host, response); return { output: {} }; }
         return { output: { response } };
@@ -132,7 +169,7 @@ export default {
     const { method, input } = params.input as { method: string; input: Record<string, unknown> };
     let result: unknown;
     switch (method) {
-      case "state": result = { jobs, baseline, adapterRequests, adapterCancelled, observerFailures, phases, middlewareCalls, middlewareHits }; break;
+      case "state": result = { jobs, baseline, adapterRequests: adapterRequests.slice(-8), adapterCancelled, observerFailures, phases, middlewareCalls, middlewareHits, mutationRejections, failureUsageRewrites, budgetAttempts, budgetCallbacks, budgetFailure }; break;
       case "arm": automatic = String(input.tag); result = { armed: true }; break;
       case "start": result = await compare(host, input as { request: LogicalModelRequestV1 }); break;
       case "inspect": result = await inspectBackground(host, input as { job_id: string }); break;

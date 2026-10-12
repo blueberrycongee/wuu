@@ -22,9 +22,10 @@ const scratch = await mkdtemp(join(output, "run-"));
 const home = join(scratch, "state");
 await mkdir(home);
 const events = new EventEmitter();
+const privateProviderMarker = "fixture-private-provider-body-sentinel";
 const transcript = [], requests = [], providerCalls = [], closed = [];
 const result = { started_at: new Date().toISOString(), scratch, checks: [], status: "failed",
-  limitations: ["Synthetic provider: wire equality and lifecycle evidence only; no real prompt-cache hit or cost saving is claimed.", "Budget-exhaustion refusal is not induced through the public process API; durable adapter admission before callback completion is verified instead."] };
+  limitations: ["Synthetic provider: wire equality and lifecycle evidence only; no real prompt-cache hit or cost saving is claimed."] };
 let child, stderr = "", sequence = 0;
 
 function waitFor(event, history, predicate, label, timeout = 20_000) {
@@ -74,14 +75,17 @@ const provider = createServer(async (request, response) => {
     let body = "";
     for await (const chunk of request) body += chunk;
     const value = JSON.parse(body);
-    const tag = [...(value.messages ?? [])].reverse().map(message => textContent(message.content)).find(text => text.includes("pipeline-")) ?? "auxiliary";
+    const tagged = [...(value.messages ?? [])].reverse().map(message => textContent(message.content)).find(text => text.startsWith("pipeline-"));
+    // Anthropic merges adjacent user messages after an unsuccessful turn.
+    const tail = tagged?.split("pipeline-").at(-1)?.match(/^[a-z-]+/)?.[0];
+    const tag = tail ? `pipeline-${tail}` : "auxiliary";
     const replay = value.max_tokens <= 64;
     const call = { index: providerCalls.length, tag, replay, url: request.url, body: value };
     providerCalls.push(call); events.emit("provider", call);
-    if (!replay && tag === "pipeline-retry" && providerCalls.filter(entry => entry.tag === tag).length === 1) {
+    if (["pipeline-retry", "pipeline-private-retry"].includes(tag) && providerCalls.filter(entry => entry.tag === tag).length === 1) {
       call.status = 503;
       response.writeHead(503, { "Content-Type": "application/json", "Retry-After": "0" });
-      response.end(JSON.stringify({ type: "error", error: { type: "overloaded_error", message: "fixture-retry-once" } }));
+      response.end(JSON.stringify({ type: "error", error: { type: "overloaded_error", message: privateProviderMarker } }));
       return;
     }
     response.on("close", () => {
@@ -99,10 +103,12 @@ const provider = createServer(async (request, response) => {
       return;
     }
     const tripwire = value.tools?.find(tool => tool.name.includes("tripwire"));
-    const toolReply = replay && tag.includes("context") && tripwire;
+    const rawTool = value.tools?.find(tool => tool.name.includes("raw_result"));
+    const rawReply = !replay && tag === "pipeline-raw-json" && !value.messages.some(message => Array.isArray(message.content) && message.content.some(block => block.type === "tool_result" && block.tool_use_id === "fixture-raw-json-tool"));
+    const toolReply = rawReply ? rawTool : replay && tag.includes("context") && tripwire;
     const text = `fixture:${tag}:${replay ? "replay" : "normal"}`;
     const content = toolReply
-      ? [{ type: "tool_use", id: "fixture-unexecuted-tool", name: tripwire.name, input: {} }]
+      ? [{ type: "tool_use", id: rawReply ? "fixture-raw-json-tool" : "fixture-unexecuted-tool", name: toolReply.name, input: {} }]
       : [{ type: "thinking", thinking: "Synthetic native context.", signature: "fixture-native-signature" }, { type: "text", text }];
     const stopReason = toolReply ? "tool_use" : "end_turn";
     if (!value.stream) {
@@ -113,6 +119,11 @@ const provider = createServer(async (request, response) => {
     }
     response.writeHead(200, { "Content-Type": "text/event-stream" });
     sendEvent(response, "message_start", { message: { id: "fixture-response", type: "message", role: "assistant", model: value.model, content: [], usage: { input_tokens: 11, output_tokens: 0 } } });
+    if (tag === "pipeline-physical-failure") {
+      sendEvent(response, "message_delta", { delta: {}, usage: { output_tokens: 5 } });
+      sendEvent(response, "error", { error: { type: "invalid_request_error", message: privateProviderMarker } });
+      response.end(); return;
+    }
     if (replay && tag.includes("error")) {
       sendEvent(response, "error", { error: { type: "invalid_request_error", message: "fixture-stream-failure" } });
       response.end(); return;
@@ -180,6 +191,10 @@ async function normalTurn(threadID, prompt) {
 
 try {
   result.core_sha256 = createHash("sha256").update(await readFile(binary)).digest("hex");
+  result.checkout = { revision: spawnSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).stdout.trim(), sources: {} };
+  for (const path of ["scripts/plugin-model-pipeline-e2e.mjs", "scripts/fixtures/model-pipeline/replay.ts", "scripts/fixtures/model-pipeline/shadow.ts"]) {
+    result.checkout.sources[path] = createHash("sha256").update(await readFile(join(root, path))).digest("hex");
+  }
   await writeFile(configPath, JSON.stringify({
     default_provider: "fixture",
     providers: { fixture: { type: "anthropic", base_url: `http://127.0.0.1:${provider.address().port}`,
@@ -219,6 +234,7 @@ try {
   let normalTurns = 0;
   const turn = async tag => { await normalTurn(thread.id, tag); normalTurns++; };
   await turn("pipeline-seed");
+  await turn("pipeline-raw-json");
   await client("replay", "arm", { tag: "pipeline-context" });
   await turn("pipeline-context");
   const observed = await client("replay", "state");
@@ -228,7 +244,11 @@ try {
   assert.equal(snapshot.model, "claude-fixture");
   assert(snapshot.messages.some(message => message.reasoning_blocks?.some(block => block.signature === "fixture-native-signature")), "native thinking/signature missing from full request");
   assert(snapshot.messages.some(message => message.role === "system"), "system context missing");
-  assert(snapshot.tools.some(tool => tool.name.includes("tripwire")), "full tool schema missing");
+  assert(snapshot.messages.some(message => message.tool_result?.structured_content?.score === 1), "structured tool-result context missing");
+  const logicalTool = snapshot.tools.find(tool => tool.name.includes("tripwire"));
+  assert(logicalTool, "full tool schema missing");
+  assert.deepEqual(logicalTool.input_schema.properties.anything, {}, "empty unconstrained schema became null");
+  assert.deepEqual(logicalTool.input_schema.properties.nested.properties, {}, "empty nested properties became null");
   assert(snapshot.cache_hint?.prompt_cache_key, "cache identity missing from full request");
   assert.equal(snapshot.provider_options.temperature, 0.42);
   const replayJob = observed.jobs.at(-1);
@@ -331,6 +351,11 @@ try {
   await fixtureState("shadow", state => state.adapterCancelled === 1, "custom adapter AbortSignal");
   result.checks.push("background cancellation delivers AbortSignal to custom adapter execution");
 
+  const serviceResult = await client("replay", "service", { request: { ...snapshot, adapter: "fixture.shadow" }, stream: false });
+  assert.equal(serviceResult.response.content, "fixture:shadow-result");
+  assert.equal(serviceResult.origin.plugin_id, fixtures.shadow.id.split(":").at(-1));
+  result.checks.push("cross-plugin ordinary service handler owns its live model invocation");
+
   const noUsageJob = await client("shadow", "start", { request: snapshot, mode: "no-usage" });
   const noUsage = await terminalJob("shadow", noUsageJob.job_id);
   assert.equal(noUsage.state, "completed", JSON.stringify(noUsage));
@@ -367,18 +392,30 @@ try {
   const retryOperation = (await client("replay", "state")).snapshots.at(-1).origin.operation_id;
   result.checks.push("transparent stream middleware preserves retryable native failure recovery");
 
-  await turn("pipeline-isolate");
-  assert((await client("replay", "state")).transformFailures > 0);
-  assert((await client("shadow", "state")).observerFailures >= 2);
-  assert(providerCalls.some(call => call.tag === "pipeline-isolate"));
-  result.checks.push("isolated transform and observer failures do not break normal inference");
+  const privateRetryRequest = structuredClone(snapshot);
+  [...privateRetryRequest.messages].reverse().find(message => message.role === "user").content = "pipeline-private-retry";
+  const privateRetryJob = await client("replay", "start", { request: privateRetryRequest });
+  const privateRetry = await terminalJob("replay", privateRetryJob.job_id);
+  assert.equal(privateRetry.state, "completed", JSON.stringify(privateRetry));
+  assert(!privateRetry.result.error, JSON.stringify(privateRetry));
+  assert(privateRetry.result.events.some(event => event.type === "lifecycle"), "retry lifecycle was not observed by plugin");
+  assert(!JSON.stringify(privateRetry).includes(privateProviderMarker), "raw provider error body crossed the public model boundary");
+  result.sanitized_retry = privateRetry;
+  result.checks.push("provider error body is excluded from public retry lifecycle events");
 
   await turn("pipeline-transform");
   const transformed = providerCalls.find(call => !call.replay && call.tag === "pipeline-transform");
+  result.transform = { state: await client("replay", "state"), diagnostics: await rpc("plugin/diagnostics/list", { id: fixtures.replay.id, fingerprint: fixtures.replay.fingerprint }) };
   assert.equal(transformed.body.temperature, 0.23);
   assert(JSON.stringify(transformed.body.system).includes("fixture:logical-transform"));
   assert((await client("replay", "state")).snapshots.at(-1).request.messages.some(message => message.content === "fixture:logical-transform"));
   result.checks.push("logical request transform reaches provider and observer before submission");
+
+  await turn("pipeline-mutation");
+  assert.equal((await client("shadow", "state")).mutationRejections, 1);
+  assert.equal(providerCalls.filter(call => call.tag === "pipeline-mutation").length, 1);
+  assert(!JSON.stringify(providerCalls).includes("fixture-forbidden-mutation"));
+  result.checks.push("semantically unchanged raw JSON crosses middleware while actual request mutation is rejected");
 
   await turn("pipeline-middleware-first");
   const middlewareOperation = (await client("replay", "state")).snapshots.at(-1).origin.operation_id;
@@ -388,6 +425,21 @@ try {
   assert.equal((await client("shadow", "state")).middlewareHits, 1);
   result.checks.push("around-call middleware can inspect result, rewrite output and short circuit provider");
 
+  const failedStart = await rpc("turn/start", { thread_id: thread.id, prompt: "pipeline-physical-failure" });
+  normalTurns++;
+  const failedTurn = await waitFor("message", transcript, message =>
+    message.method === "turn/error" && message.params?.turn?.id === failedStart.turn.id, "native usage failure termination");
+  assert.equal(failedTurn.params.turn.status, "failed");
+  const failureState = await client("shadow", "state");
+  assert(failureState.failureUsageRewrites > 0, "middleware never rewrote the native usage event");
+  const failedUsageOperation = (await client("replay", "state")).snapshots.at(-1).origin.operation_id;
+
+  await turn("pipeline-isolate");
+  assert((await client("replay", "state")).transformFailures > 0);
+  assert((await client("shadow", "state")).observerFailures >= 2);
+  assert(providerCalls.some(call => call.tag === "pipeline-isolate"));
+  result.checks.push("isolated transform and observer failures do not break normal inference");
+
   await rpc("config/model/update", { thread_id: thread.id, provider: "fixture", model: "claude-fixture-next" });
   const pinnedStart = await client("replay", "start", { request: snapshot, stream: false });
   const pinned = await terminalJob("replay", pinnedStart.job_id);
@@ -396,6 +448,19 @@ try {
   await turn("pipeline-model-changed");
   assert.equal(providerCalls.find(call => call.tag === "pipeline-model-changed").body.model, "claude-fixture-next");
   result.checks.push("saved request remains pinned while next foreground request uses changed model");
+
+  const budgetStart = await rpc("turn/start", { thread_id: thread.id, prompt: "pipeline-budget" });
+  normalTurns++;
+  const budgetTerminal = await waitFor("message", transcript, message =>
+    ["turn/completed", "turn/error"].includes(message.method) && message.params?.turn?.id === budgetStart.turn.id, "budget turn termination");
+  const budgetState = await client("shadow", "state");
+  assert(budgetState.budgetFailure, "default shared workflow budget never refused another physical request");
+  assert(budgetState.budgetCallbacks > 0);
+  assert.equal(budgetState.budgetAttempts, budgetState.budgetCallbacks + 1, "budget refusal happened after entering the direct adapter callback");
+  assert(/budget/i.test(budgetState.budgetFailure.message), JSON.stringify(budgetState.budgetFailure));
+  assert(!providerCalls.some(call => call.tag === "pipeline-budget"));
+  result.budget = { attempted: budgetState.budgetAttempts, callbacks: budgetState.budgetCallbacks, failure: budgetState.budgetFailure, turn_status: budgetTerminal.params.turn.status };
+  result.checks.push("shared workflow budget refuses another direct adapter before its callback starts");
 
   for (const action of ["cancel", "reload", "disable"]) {
     const tag = `pipeline-hold-${action}`;
@@ -427,18 +492,29 @@ try {
     result.checks.push(`${action} stops generation-owned background inference and provider transport`);
   }
 
+  const enabled = await rpc("extension/package/update", { id: fixtures.replay.id, fingerprint: fixtures.replay.fingerprint, action: "enable" });
+  fixtures.replay = enabled.extension_inventory.find(plugin => plugin.name === "replay");
+  fixtures.shadow = enabled.extension_inventory.find(plugin => plugin.name === "shadow");
+  await client("replay", "arm", { tag: "pipeline-hold-shutdown" });
+  await turn("pipeline-hold-shutdown");
+  const shutdownCall = await waitFor("provider", providerCalls, call => call.replay && call.tag === "pipeline-hold-shutdown", "shutdown provider started");
   await stopChild();
+  await waitFor("closed", closed, call => call.index === shutdownCall.index, "shutdown provider disconnected");
   const db = new DatabaseSync(join(home, "sessions/sessions.sqlite3"), { readOnly: true });
   try {
     result.accounting = {
       operations: db.prepare("SELECT id, owner_id, kind, status FROM inference_operations ORDER BY created_at").all(),
       submissions: db.prepare("SELECT operation_id, cost_state, reported_input_tokens, reported_output_tokens, has_reported_usage, outcome FROM inference_submissions ORDER BY started_at").all(),
+      workflows: db.prepare("SELECT owner_id, status FROM inference_workflows ORDER BY created_at").all(),
       sessions: db.prepare("SELECT count(*) AS count FROM sessions").get().count,
-      messages: db.prepare("SELECT role, content, tool_calls_json FROM session_messages ORDER BY seq").all(),
+      messages: db.prepare("SELECT role, content, tool_calls_json, tool_result_json FROM session_messages ORDER BY seq").all(),
     };
   } finally { db.close(); }
   const accounting = result.accounting;
   assert(accounting.operations.every(operation => operation.status !== "active"), "active inference accounting leaked");
+  assert(accounting.workflows.every(workflow => workflow.status !== "active"), "active inference workflow leaked on shutdown");
+  assert(accounting.submissions.every(submission => submission.outcome !== "in_flight"), "shutdown left an in-flight physical submission");
+  result.checks.push("process shutdown cancels live background transport and persists terminal accounting");
   const replayOwner = `plugin:${fixtures.replay.id.split(":").at(-1)}`;
   const shadowOwner = `plugin:${fixtures.shadow.id.split(":").at(-1)}`;
   for (const owner of [replayOwner, shadowOwner]) {
@@ -448,8 +524,8 @@ try {
   }
   const shadowOperations = accounting.operations.filter(operation => operation.owner_id === shadowOwner).map(operation => operation.id);
   const shadowUsage = accounting.submissions.filter(submission => shadowOperations.includes(submission.operation_id) && submission.has_reported_usage);
-  assert.equal(shadowUsage.length, 2, "native delegation duplicated a charged submission");
-  assert.equal(shadowUsage.reduce((total, submission) => total + submission.reported_input_tokens + submission.reported_output_tokens, 0), 21);
+  assert.equal(shadowUsage.length, 3, "native delegation duplicated a charged submission");
+  assert.equal(shadowUsage.reduce((total, submission) => total + submission.reported_input_tokens + submission.reported_output_tokens, 0), 26);
   assert(!accounting.submissions.some(submission => submission.operation_id === delegation.result.origin.operation_id && submission.has_reported_usage), "adapter echoed native usage as a second charged result");
   const unknownCost = accounting.submissions.filter(submission => submission.operation_id === noUsage.result.result.origin.operation_id);
   assert.equal(unknownCost.length, 1);
@@ -458,12 +534,21 @@ try {
   const retried = accounting.submissions.filter(submission => submission.operation_id === retryOperation);
   assert.equal(retried.length, 2);
   assert.deepEqual(retried.map(submission => submission.outcome), ["failed", "succeeded"]);
+  const failedPhysicalUsage = accounting.submissions.filter(submission => submission.operation_id === failedUsageOperation);
+  result.failed_physical_usage = failedPhysicalUsage[0];
+  assert.equal(failedPhysicalUsage.length, 1);
+  assert.equal(failedPhysicalUsage[0].outcome, "failed");
+  assert.equal(failedPhysicalUsage[0].reported_input_tokens, 11);
+  assert.equal(failedPhysicalUsage[0].reported_output_tokens, 5);
+  assert.equal(failedPhysicalUsage[0].cost_state, "known");
+  result.checks.push("middleware rewrite cannot corrupt physical native usage on a failed stream");
   const originalUsage = accounting.submissions.filter(submission => submission.operation_id === middlewareOperation);
   assert.equal(originalUsage.length, 1);
   assert.equal(originalUsage[0].reported_input_tokens, 11);
   assert.equal(originalUsage[0].reported_output_tokens, 5);
   result.checks.push("missing adapter usage stays unknown and native delegation is counted once",
     "middleware usage rewrite cannot replace native submission billing evidence");
+  assert(accounting.messages.some(message => /"score"\s*:\s*1\.0/.test(message.tool_result_json)), "raw 1.0 tool result was not exercised");
   assert.equal(accounting.sessions, 1, "independent inference created a hidden session");
   assert.equal(accounting.messages.filter(message => message.role === "user").length, normalTurns);
   assert(!accounting.messages.some(message => message.content.includes("fixture:shadow-result") || message.content.includes(":replay") || message.tool_calls_json.includes("fixture-unexecuted-tool")), "independent inference polluted user history");

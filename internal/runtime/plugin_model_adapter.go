@@ -9,7 +9,6 @@ import (
 	"sync"
 
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
-	"github.com/blueberrycongee/wuu/internal/provideroptions"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	pluginapi "github.com/blueberrycongee/wuu/packages/plugin-go"
 )
@@ -34,7 +33,7 @@ func selectedModelAdapter(req providers.ChatRequest) (providers.ChatRequest, err
 		if req.Adapter == "" {
 			req.Adapter = adapter
 		}
-		req.ProviderOptions = provideroptions.Clone(req.ProviderOptions)
+		req.ProviderOptions = providers.CloneRequestObject(req.ProviderOptions)
 		delete(req.ProviderOptions, "adapter")
 	}
 	req.Adapter = strings.TrimSpace(req.Adapter)
@@ -123,13 +122,15 @@ func (c *modelAdapterClient) Chat(ctx context.Context, req providers.ChatRequest
 	return response, callErr
 }
 
+func (c *modelAdapterClient) OwnsStreamAccounting() bool { return true }
+
 func (c *modelAdapterClient) StreamChat(ctx context.Context, req providers.ChatRequest) (<-chan providers.StreamEvent, error) {
 	req, err := selectedModelAdapter(req)
 	if err != nil {
 		return nil, err
 	}
 	if req.Adapter == "" || req.Adapter == "native" {
-		return c.inner.StreamChat(ctx, req)
+		return c.nativeModelStream(ctx, req)
 	}
 	capability, err := c.host.ModelAdapter(req.Adapter)
 	if err != nil {
@@ -164,6 +165,11 @@ func (c *modelAdapterClient) StreamChat(ctx context.Context, req providers.ChatR
 			}
 		}()
 		for event := range stream {
+			// This is still the direct adapter's own output. Observation here
+			// precedes all around-call middleware and its presentation changes.
+			if err := req.Attempt.ObserveStreamEvent(event); err != nil {
+				event = providers.StreamEvent{Type: providers.EventError, Error: err}
+			}
 			if event.Lifecycle != nil && event.Lifecycle.ResetPartial {
 				usage = nil
 			}
@@ -180,11 +186,87 @@ func (c *modelAdapterClient) StreamChat(ctx context.Context, req providers.ChatR
 			select {
 			case out <- event:
 			case <-ctx.Done():
+				if !settled {
+					settled = true
+					_ = req.Attempt.ObserveStreamEvent(providers.StreamEvent{Type: providers.EventError, Error: ctx.Err()})
+				}
+				drainModelReceipt(stream, req.Attempt, event.Type == providers.EventDone)
 				return
 			}
 		}
 	}()
 	return out, nil
+}
+
+// Native streams are observed at the selected physical provider boundary,
+// including continuations that deliberately bypass a second retry executor.
+func (c *modelAdapterClient) nativeModelStream(ctx context.Context, req providers.ChatRequest) (<-chan providers.StreamEvent, error) {
+	stream, err := c.inner.StreamChat(ctx, req)
+	if err == nil && stream == nil {
+		err = errors.New("native model stream is unavailable")
+	}
+	if err != nil {
+		return nil, errors.Join(err, req.Attempt.ObserveStreamEvent(providers.StreamEvent{Type: providers.EventError, Error: err}))
+	}
+	out := make(chan providers.StreamEvent, 32)
+	go func() {
+		defer close(out)
+		terminal := false
+		defer func() {
+			if !terminal {
+				cause := ctx.Err()
+				if cause == nil {
+					cause = providers.NewIncompleteStreamError("native model stream ended without a terminal event")
+				}
+				_ = req.Attempt.ObserveStreamEvent(providers.StreamEvent{Type: providers.EventError, Error: cause})
+			}
+		}()
+		for {
+			var event providers.StreamEvent
+			var open bool
+			select {
+			case event, open = <-stream:
+				if !open {
+					return
+				}
+			case <-ctx.Done():
+				drainModelReceipt(stream, req.Attempt, false)
+				return
+			}
+			if err := req.Attempt.ObserveStreamEvent(event); err != nil {
+				event = providers.StreamEvent{Type: providers.EventError, Error: err}
+			}
+			if event.Type == providers.EventDone || event.Type == providers.EventError {
+				terminal = true
+			}
+			select {
+			case out <- event:
+			case <-ctx.Done():
+				drainModelReceipt(stream, req.Attempt, false)
+				return
+			}
+			if event.Type == providers.EventDone || event.Type == providers.EventError {
+				drainModelReceipt(stream, req.Attempt, event.Type == providers.EventDone)
+				return
+			}
+		}
+	}()
+	return out, nil
+}
+
+// Cancellation must release the logical consumer immediately. Continue draining
+// the physical producer so buffered usage is retained and its lease can finish;
+// transport clients close promptly on cancellation under the stream contract.
+func drainModelReceipt(stream <-chan providers.StreamEvent, attempt providers.InferenceAttempt, done bool) {
+	go func() {
+		for event := range stream {
+			if done {
+				continue
+			}
+			_ = attempt.ObserveStreamEvent(event)
+			done = event.Type == providers.EventDone
+		}
+	}()
 }
 
 // Direct adapters receive durable, potentially billable admission before any

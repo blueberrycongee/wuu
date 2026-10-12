@@ -99,6 +99,15 @@ func sanitizeGeminiToolSchema(value any) any {
 	}
 }
 
+// CloneRequestObject preserves JSON object identity, including nested empty
+// schemas and provider options. Request round-trips must not turn {} into null.
+func CloneRequestObject(value map[string]any) map[string]any {
+	if value == nil {
+		return nil
+	}
+	return cloneSchemaValue(value).(map[string]any)
+}
+
 func cloneSchemaValue(value any) any {
 	switch typed := value.(type) {
 	case map[string]any:

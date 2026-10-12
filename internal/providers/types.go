@@ -801,6 +801,14 @@ type StreamClient interface {
 	StreamChat(ctx context.Context, req ChatRequest) (<-chan StreamEvent, error)
 }
 
+// StreamAccountingOwner identifies a stream boundary that records physical
+// provider evidence before forwarding logical or transformed events. Wrappers
+// that change stream events must preserve this ownership contract: an outer
+// retry executor still owns attempts, but must not rewrite physical receipts.
+type StreamAccountingOwner interface {
+	OwnsStreamAccounting() bool
+}
+
 var ErrNativeCompactionUnavailable = errors.New("native compaction unavailable")
 
 // NativeCompactionResult is a provider-generated replacement history. Opaque

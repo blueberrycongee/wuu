@@ -33,9 +33,10 @@ type modelInvocation struct {
 	stopScope func() bool
 }
 type modelInvocationStore struct {
-	mu   sync.Mutex
-	seq  atomic.Uint64
-	live map[string]*modelInvocation
+	mu       sync.Mutex
+	seq      atomic.Uint64
+	live     map[string]*modelInvocation
+	reserved int
 }
 
 func newModelInvocationStore() *modelInvocationStore {
@@ -81,6 +82,24 @@ func (k *modelInvokeInvoker) InvokeService(callCtx context.Context, params plugi
 	var request providers.ChatRequest
 	var err error
 	direct := input.ContinuationID != ""
+	reserved := false
+	if params.Method == "start" {
+		k.store.mu.Lock()
+		if len(k.store.live)+k.store.reserved >= 64 {
+			k.store.mu.Unlock()
+			return nil, serviceError("limit_exceeded", "too many live model invocations")
+		}
+		k.store.reserved++
+		reserved = true
+		k.store.mu.Unlock()
+		defer func() {
+			if reserved {
+				k.store.mu.Lock()
+				k.store.reserved--
+				k.store.mu.Unlock()
+			}
+		}()
+	}
 	ctx, cancel := context.WithCancel(scope.Context)
 	if params.Method == "call" {
 		stop := context.AfterFunc(callCtx, cancel)
@@ -107,8 +126,12 @@ func (k *modelInvokeInvoker) InvokeService(callCtx context.Context, params plugi
 		return nil, err
 	}
 	origin := pluginhost.ModelInvocationOriginV1{Kind: "plugin", PluginID: scope.PluginID, OperationID: request.Operation.ID, ParentOperationID: request.Operation.ParentOperationID, SessionID: scope.SessionID, ThreadID: scope.ThreadID, StepIndex: request.StepIndex}
-	if parent, ok := scope.Context.Value(modelRequestOriginKey{}).(pluginhost.ModelInvocationOriginV1); ok && origin.ParentOperationID == "" {
-		origin.ParentOperationID = parent.OperationID
+	if parent, ok := scope.Context.Value(modelRequestOriginKey{}).(pluginhost.ModelInvocationOriginV1); ok {
+		if direct {
+			origin = parent
+		} else if origin.ParentOperationID == "" {
+			origin.ParentOperationID = parent.OperationID
+		}
 	}
 	if providers.InferenceJournalFromContext(ctx) == nil && !direct {
 		journal := session.InferenceJournalForOwner("plugin:" + scope.PluginID)
@@ -142,16 +165,14 @@ func (k *modelInvokeInvoker) InvokeService(callCtx context.Context, params plugi
 		if err := ctx.Err(); err != nil {
 			return nil, modelRequestError(err)
 		}
+		response = stampModelResponse(request, response)
 		return marshalServiceResult(pluginhost.ModelInvokeResult{Response: logicalModelResponse(response), Origin: origin})
 	}
 	// A stream is a bounded child of its live invocation. A background service
 	// execution may own it, but an expired capability/tool cannot leave it running.
 	k.store.mu.Lock()
-	if len(k.store.live) >= 64 {
-		k.store.mu.Unlock()
-		cancel()
-		return nil, serviceError("limit_exceeded", "too many live model invocations")
-	}
+	k.store.reserved--
+	reserved = false
 	id := fmt.Sprintf("model-invoke-%d", k.store.seq.Add(1))
 	job := &modelInvocation{owner: scope.PluginID, execution: scope.ID, cancel: cancel, changed: make(chan struct{})}
 	k.store.live[id] = job
@@ -262,10 +283,14 @@ func (k *modelInvokeInvoker) runStream(ctx context.Context, job *modelInvocation
 				}
 				if event.Type == providers.EventError {
 					err = event.Error
+					if direct {
+						recordModelContinuationError(ctx, err)
+					}
 				}
 				if event.Type == providers.EventDone {
 					sawDone = true
 				}
+				event = stampModelStreamEvent(request, event)
 				accumulated.add(event)
 				view := logicalModelStreamEvent(event)
 				raw, marshalErr := json.Marshal(view)
@@ -303,7 +328,7 @@ func (k *modelInvokeInvoker) runStream(ctx context.Context, job *modelInvocation
 		if err != nil {
 			outcome = providers.InferenceOutcomeFailed
 			failure = providers.NormalizeFailure(err)
-			if ctx.Err() != nil {
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				outcome = providers.InferenceOutcomeCanceled
 			}
 		}

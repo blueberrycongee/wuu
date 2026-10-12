@@ -55,6 +55,11 @@ func (c *modelMiddlewareClient) PrepareInferenceRequest(ctx context.Context, req
 	return request, nil
 }
 
+func (c *modelMiddlewareClient) OwnsStreamAccounting() bool {
+	owner, ok := c.next.(providers.StreamAccountingOwner)
+	return ok && owner.OwnsStreamAccounting()
+}
+
 func (c *modelMiddlewareClient) ResolveMediaInput(policy providers.MediaInputPolicy, options map[string]any) providers.MediaInputPolicy {
 	return providers.ResolveMediaInput(c.next, policy, options)
 }
@@ -106,7 +111,7 @@ func (c *modelMiddlewareClient) StreamChat(ctx context.Context, request provider
 
 func (c *modelMiddlewareClient) invocation(ctx context.Context, request providers.ChatRequest, stream bool) (context.Context, pluginhost.ModelMiddlewareInput, error) {
 	logical := logicalModelRequest(request)
-	wire, err := json.Marshal(logical)
+	wire, err := canonicalModelContinuationRequest(logical)
 	if err != nil {
 		return ctx, pluginhost.ModelMiddlewareInput{}, fmt.Errorf("encode model middleware request: %w", err)
 	}
@@ -141,7 +146,7 @@ func resolveModelMiddlewareContinuation(scope pluginhost.ExecutionScope, input p
 	if input.ModelAlias != "" || input.MaxOutputTokens != 0 || input.TimeoutMS != 0 {
 		return nil, providers.ChatRequest{}, serviceError("invalid_params", "model continuation cannot override model selection or limits")
 	}
-	wire, err := json.Marshal(input.Request)
+	wire, err := canonicalModelContinuationRequest(input.Request)
 	if err != nil || !bytes.Equal(wire, continuation.wire) {
 		return nil, providers.ChatRequest{}, serviceError("invalid_params", "model continuation requires the unchanged request; use model.request.transform to edit input")
 	}
@@ -170,4 +175,19 @@ func modelContinuationError(ctx context.Context) error {
 		return continuation.nativeError
 	}
 	return nil
+}
+
+// JSON RPC clients round-trip RawMessage numbers and object key order through
+// their own JSON parsers. Compare values, while dispatching the original Go
+// request so its native state and immutable execution authority stay intact.
+func canonicalModelContinuationRequest(request pluginhost.LogicalModelRequestV1) ([]byte, error) {
+	raw, err := json.Marshal(request)
+	if err != nil {
+		return nil, err
+	}
+	var value any
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return nil, err
+	}
+	return json.Marshal(value)
 }

@@ -1111,9 +1111,11 @@ type rpcError struct {
 // goroutine that later reads any execution.cancel frame — so a cancel can
 // never arrive before the registration it targets.
 type queuedDispatch struct {
-	request rpcRequest
-	ctx     context.Context
-	release func()
+	request         rpcRequest
+	ctx             context.Context
+	release         func()
+	lifecycleDone   chan struct{}
+	priorConcurrent *sync.WaitGroup
 }
 
 func Serve(ctx context.Context, handler Handler) error {
@@ -1132,8 +1134,6 @@ func ServeIO(ctx context.Context, input io.Reader, output io.Writer, handler Han
 	incomingRequests := make(chan queuedDispatch)
 	requests := make(chan queuedDispatch)
 	workerDone := make(chan error, 1)
-	var initialized atomic.Bool
-	var pendingLifecycles atomic.Int32
 	var concurrent sync.WaitGroup
 	defer func() {
 		cancel()
@@ -1143,14 +1143,10 @@ func ServeIO(ctx context.Context, input io.Reader, output io.Writer, handler Han
 	go queueRequests(serveCtx, incomingRequests, requests)
 	go func() {
 		for envelope := range requests {
-			isLifecycle := envelope.request.Method == "initialize" || envelope.request.Method == "activate" || envelope.request.Method == "shutdown"
-			if isLifecycle {
-				concurrent.Wait()
+			if envelope.priorConcurrent != nil {
+				envelope.priorConcurrent.Wait()
 			}
 			result, stop, err := dispatch(envelope.ctx, client, handler, envelope.request)
-			if envelope.request.Method == "initialize" && err == nil {
-				initialized.Store(true)
-			}
 			if envelope.release != nil {
 				envelope.release()
 			}
@@ -1162,8 +1158,8 @@ func ServeIO(ctx context.Context, input io.Reader, output io.Writer, handler Han
 				workerDone <- writeErr
 				return
 			}
-			if isLifecycle {
-				pendingLifecycles.Add(-1)
+			if envelope.lifecycleDone != nil {
+				close(envelope.lifecycleDone)
 			}
 			if stop {
 				workerDone <- nil
@@ -1174,6 +1170,10 @@ func ServeIO(ctx context.Context, input io.Reader, output io.Writer, handler Han
 	}()
 
 	acceptConcurrent := true
+	initializationSeen := false
+	lifecycleReady := make(chan struct{})
+	close(lifecycleReady)
+	concurrentEpoch := &sync.WaitGroup{}
 	for scanner.Scan() {
 		if err := serveCtx.Err(); err != nil {
 			client.closeTransport(err)
@@ -1213,24 +1213,38 @@ func ServeIO(ctx context.Context, input io.Reader, output io.Writer, handler Han
 			_ = json.Unmarshal(request.Params, &probe)
 			envelope.ctx, envelope.release = client.trackExecution(serveCtx, probe.ExecutionID)
 		}
+		if request.Method == "initialize" {
+			initializationSeen = true
+		}
 		if request.Method == "initialize" || request.Method == "activate" || request.Method == "shutdown" {
-			// Close concurrent admission as soon as the lifecycle frame arrives,
-			// including while it is still queued behind an ordinary handler.
-			// The worker reopens it only after every queued lifecycle responds.
-			pendingLifecycles.Add(1)
+			// Each lifecycle waits only for concurrency admitted before its frame.
+			// Later callbacks wait for this barrier outside the serial work queue,
+			// so ordinary handlers after activation can still reenter an adapter.
+			envelope.priorConcurrent = concurrentEpoch
+			envelope.lifecycleDone = make(chan struct{})
+			lifecycleReady = envelope.lifecycleDone
+			concurrentEpoch = &sync.WaitGroup{}
 		}
 		if request.Method == "shutdown" {
 			acceptConcurrent = false
 		}
-		if acceptConcurrent && initialized.Load() && pendingLifecycles.Load() == 0 && request.Method == "capability.invoke" {
+		if acceptConcurrent && initializationSeen && request.Method == "capability.invoke" {
 			var call CapabilityCall
 			_ = json.Unmarshal(request.Params, &call)
 			if call.Capability == CapabilityModelAdapter || call.Capability == CapabilityModelMiddleware || slices.Contains(handler.ConcurrentCapabilities, call.Capability) {
+				ready, epoch := lifecycleReady, concurrentEpoch
 				concurrent.Add(1)
+				epoch.Add(1)
 				go func() {
 					defer concurrent.Done()
+					defer epoch.Done()
 					if envelope.release != nil {
 						defer envelope.release()
+					}
+					select {
+					case <-ready:
+					case <-serveCtx.Done():
+						return
 					}
 					result, _, err := dispatch(envelope.ctx, client, handler, envelope.request)
 					response := rpcResponse{ID: envelope.request.ID, Result: result}

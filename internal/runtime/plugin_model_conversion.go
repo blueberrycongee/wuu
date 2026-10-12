@@ -3,11 +3,11 @@ package runtime
 import (
 	"encoding/json"
 	"errors"
+	"strings"
+
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
-	"github.com/blueberrycongee/wuu/internal/provideroptions"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
-	"strings"
 )
 
 func modelCacheHintToLogical(in providers.CacheHint) (out pluginhost.ModelCacheHintV1) {
@@ -149,7 +149,7 @@ func modelToolCallFromLogical(in pluginhost.ModelToolCallV1) (out providers.Tool
 func modelToolDefinitionToLogical(in providers.ToolDefinition) (out pluginhost.ModelToolV1) {
 	out.Name = in.Name
 	out.Description = in.Description
-	out.InputSchema = provideroptions.Clone(in.InputSchema)
+	out.InputSchema = providers.CloneRequestObject(in.InputSchema)
 	out.Freeform = in.Freeform
 	out.DirectOnly = in.DirectOnly
 	out.DeferLoading = in.DeferLoading
@@ -160,7 +160,7 @@ func modelToolDefinitionToLogical(in providers.ToolDefinition) (out pluginhost.M
 func modelToolDefinitionFromLogical(in pluginhost.ModelToolV1) (out providers.ToolDefinition) {
 	out.Name = in.Name
 	out.Description = in.Description
-	out.InputSchema = provideroptions.Clone(in.InputSchema)
+	out.InputSchema = providers.CloneRequestObject(in.InputSchema)
 	out.Freeform = in.Freeform
 	out.DirectOnly = in.DirectOnly
 	out.DeferLoading = in.DeferLoading
@@ -172,7 +172,7 @@ func modelLoadableToolDefinitionToLogical(in providers.LoadableToolDefinition) (
 	out.Type = in.Type
 	out.Name = in.Name
 	out.Description = in.Description
-	out.InputSchema = provideroptions.Clone(in.InputSchema)
+	out.InputSchema = providers.CloneRequestObject(in.InputSchema)
 	out.DeferLoading = in.DeferLoading
 	return
 }
@@ -181,7 +181,7 @@ func modelLoadableToolDefinitionFromLogical(in pluginhost.ModelLoadableToolV1) (
 	out.Type = in.Type
 	out.Name = in.Name
 	out.Description = in.Description
-	out.InputSchema = provideroptions.Clone(in.InputSchema)
+	out.InputSchema = providers.CloneRequestObject(in.InputSchema)
 	out.DeferLoading = in.DeferLoading
 	return
 }
@@ -355,7 +355,7 @@ func modelChatResponseFromLogical(in pluginhost.ModelResponseV1) (out providers.
 // logicalModelRequest copies only the versioned model input. Retry authority,
 // credentials, routing leases, transcript addresses and local paths stay in Go.
 func logicalModelRequest(in providers.ChatRequest) pluginhost.LogicalModelRequestV1 {
-	out := pluginhost.LogicalModelRequestV1{Messages: []pluginhost.ModelMessageV1{}, Tools: []pluginhost.ModelToolV1{}, Version: 1, Adapter: in.Adapter, Provider: in.Provider, Model: in.Model, Temperature: in.Temperature, MaxTokens: in.MaxTokens, Effort: in.Effort, ProviderOptions: provideroptions.Clone(in.ProviderOptions), ProviderStateScope: in.ProviderStateScope, MediaInput: modelMediaInputPolicyToLogical(in.MediaInput), NativeDeferredToolDiscovery: in.NativeDeferredToolDiscovery, ForceToolName: in.ForceToolName}
+	out := pluginhost.LogicalModelRequestV1{Messages: []pluginhost.ModelMessageV1{}, Tools: []pluginhost.ModelToolV1{}, Version: 1, Adapter: in.Adapter, Provider: in.Provider, Model: in.Model, Temperature: in.Temperature, MaxTokens: in.MaxTokens, Effort: in.Effort, ProviderOptions: providers.CloneRequestObject(in.ProviderOptions), ProviderStateScope: in.ProviderStateScope, MediaInput: modelMediaInputPolicyToLogical(in.MediaInput), NativeDeferredToolDiscovery: in.NativeDeferredToolDiscovery, ForceToolName: in.ForceToolName}
 	for _, message := range in.Messages {
 		out.Messages = append(out.Messages, modelChatMessageToLogical(message))
 	}
@@ -392,7 +392,7 @@ func applyLogicalModelRequest(base providers.ChatRequest, in pluginhost.LogicalM
 	out.Temperature = in.Temperature
 	out.MaxTokens = in.MaxTokens
 	out.Effort = in.Effort
-	out.ProviderOptions = provideroptions.Clone(in.ProviderOptions)
+	out.ProviderOptions = providers.CloneRequestObject(in.ProviderOptions)
 	out.ProviderStateScope = in.ProviderStateScope
 	out.MediaInput = modelMediaInputPolicyFromLogical(in.MediaInput)
 	out.NativeDeferredToolDiscovery = in.NativeDeferredToolDiscovery
@@ -457,8 +457,14 @@ func logicalModelStreamEvent(in providers.StreamEvent) pluginhost.ModelStreamEve
 		out.ProviderState, _ = json.Marshal(in.ProviderState)
 	}
 	if in.Lifecycle != nil {
-		out.Lifecycle, _ = json.Marshal(in.Lifecycle)
-		out.ResetPartial = in.Lifecycle.ResetPartial
+		lifecycle := *in.Lifecycle
+		// Internal lifecycle diagnostics may contain provider response bodies.
+		// Keep retry metadata while excluding raw failure text from plugins.
+		if lifecycle.Reason != "" {
+			lifecycle.Reason = "Model request failed"
+		}
+		out.Lifecycle, _ = json.Marshal(lifecycle)
+		out.ResetPartial = lifecycle.ResetPartial
 	}
 	if in.Image != nil {
 		v := modelInputImageToLogical(*in.Image)

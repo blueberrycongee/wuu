@@ -546,7 +546,9 @@ func (h *Host) RetirePlugin(ctx context.Context, pluginID string, cause error) (
 	}
 	// Contributions and executions are already detached. Keep declared host
 	// services available while the plugin persists state and cancels its work.
+	finishCleanup := registry.allowShutdownCleanup(pluginID)
 	closeErr := client.Close(ctx)
+	finishCleanup()
 	if registry != nil {
 		registry.RevokePlugin(ctx, pluginID)
 	}
@@ -632,6 +634,7 @@ func (h *Host) CloseWithOutcomes(ctx context.Context) []ClientShutdownOutcome {
 	h.StopBackground()
 	h.mu.Lock()
 	clients := append([]Client(nil), h.clients...)
+	registry := h.serviceRegistry
 	h.clients = nil
 	h.tools = nil
 	h.toolOrder = nil
@@ -644,7 +647,9 @@ func (h *Host) CloseWithOutcomes(ctx context.Context) []ClientShutdownOutcome {
 
 	outcomes := make([]ClientShutdownOutcome, 0, len(clients))
 	for i := len(clients) - 1; i >= 0; i-- {
+		finishCleanup := registry.allowShutdownCleanup(clients[i].ID())
 		outcomes = append(outcomes, ClientShutdownOutcome{PluginID: clients[i].ID(), Err: clients[i].Close(ctx)})
+		finishCleanup()
 	}
 	return outcomes
 }
