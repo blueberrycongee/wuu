@@ -24,7 +24,7 @@
 
 ## 看它怎么干活
 
-![wuu 演示](landing/assets/readme/demo-zh.gif)
+![wuu 演示](landing/assets/readme/demo-zh.webp)
 
 ## Agent 基准测试
 

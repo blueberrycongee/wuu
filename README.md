@@ -24,7 +24,7 @@ Point wuu at a folder, describe the task, and let an agent read the code, run co
 
 ## See it in action
 
-![wuu demo](landing/assets/readme/demo-en.gif)
+![wuu demo](landing/assets/readme/demo-en.webp)
 
 ## Agent benchmark
 

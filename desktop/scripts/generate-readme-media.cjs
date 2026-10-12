@@ -3,11 +3,11 @@
 // no account, key or personal data appears in the output.
 //
 // Build the app being described (usually a release tag checkout), then run
-// with Node from this checkout. A display is required (xvfb-run on Linux), and
-// ffmpeg encodes the GIFs:
+// with Node from this checkout. A display is required (xvfb-run on Linux),
+// ffmpeg renders the demo, and img2webp and webpmux from libwebp encode it:
 //   (cd <app>/desktop && npm run build:core && npm run build)
 //   node desktop/scripts/generate-readme-media.cjs [<app>/desktop]
-// Output: landing/assets/readme/{hero-light,hero-dark,files,models,plugins}-<lang>.jpg and demo-<lang>.gif
+// Output: landing/assets/readme/{hero-light,hero-dark,files,models,plugins}-<lang>.jpg and demo-<lang>.webp
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const http = require('node:http');
@@ -21,6 +21,15 @@ const brand = path.join(repository, 'landing/assets/brand');
 // captureScale device pixels per CSS pixel.
 const captureScale = 2;
 const windowStage = { width: 1640, height: 1100, left: 100, top: 85 };
+// The demo camera frames the stage by its center and the share of the stage it
+// shows, and eases between framings over cameraMoveSeconds. The demo plays at
+// frameRate; while the camera moves, each frame averages shutterFrames renders
+// taken renderRate apart, a 180-degree shutter.
+const wideShot = { x: windowStage.width / 2, y: windowStage.height / 2, scale: 1 };
+const cameraMoveSeconds = 0.8;
+const frameRate = 24;
+const renderRate = 192;
+const shutterFrames = 4;
 
 if (!process.versions.electron) {
   const appDesktop = path.resolve(process.argv[2] || path.join(repository, 'desktop'));
@@ -44,22 +53,69 @@ if (!process.versions.electron) {
       // Each recorded frame fills the window on the stage; demo-frame.png then
       // covers everything outside the rounded window with the backdrop, shadow
       // and edge. Captures can come out a few pixels short of 1440x900, so they
-      // stretch to the window as the stills do. The palette covers the backdrop
-      // as well as the moving UI.
+      // stretch to the window as the stills do. The camera then crops the stage
+      // at renderRate.
       const [width, height, left, top] = ['width', 'height', 'left', 'top'].map(key => windowStage[key] * captureScale);
-      const encode = spawnSync('ffmpeg', [
+      const moves = JSON.parse(fs.readFileSync(path.join(temporary, 'camera.json'), 'utf8'));
+      // Each framing holds until the next move, which eases in and out.
+      const track = key => moves.reduceRight((rest, move, index) => {
+        const from = (index ? moves[index - 1].to : wideShot)[key];
+        const progress = `((it-${move.at})/${cameraMoveSeconds})`;
+        const eased = `${progress}*${progress}*(3-2*${progress})`;
+        return `if(lt(it,${move.at}),${from},if(lt(it,${move.at + cameraMoveSeconds}),${from}+(${move.to[key] - from})*${eased},${rest}))`;
+      }, String(moves.at(-1).to[key]));
+      const moving = moves.map(move => `between(t,${move.at},${move.at + cameraMoveSeconds})`).join('+');
+      const camera = [
+        `z='1/(${track('scale')})'`,
+        `x='(${track('x')})*${captureScale}-iw/zoom/2'`,
+        `y='(${track('y')})*${captureScale}-ih/zoom/2'`,
+        `d=1:s=1600x${Math.round(1600 * windowStage.height / windowStage.width)}:fps=${renderRate}`,
+      ].join(':');
+      const rendered = path.join(temporary, 'demo');
+      fs.mkdirSync(rendered);
+      const render = spawnSync('ffmpeg', [
         '-v', 'error', '-y', '-f', 'concat', '-safe', '0', '-i', path.join(temporary, 'frames.txt'),
         '-i', path.join(temporary, 'demo-frame.png'),
         '-filter_complex', [
           `[0:v]scale=${1440 * captureScale}:${900 * captureScale}:flags=lanczos,pad=${width}:${height}:${left}:${top}[stage]`,
-          '[stage][1:v]overlay=format=rgb,fps=12,scale=1600:-1:flags=lanczos,split[a][b]',
-          '[a]palettegen=max_colors=256:stats_mode=full[p]',
-          '[b][p]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle',
+          `[stage][1:v]overlay=format=rgb,fps=${renderRate},zoompan=${camera},split[sharp][moving]`,
+          // tmix only keeps its window current while it receives every frame, so
+          // it blurs the whole stream and the blurred copy shows during moves.
+          `[moving]tmix=frames=${shutterFrames}[blurred]`,
+          `[sharp][blurred]overlay=format=rgb:enable='${moving}',fps=${frameRate}`,
         ].join(';'),
-        '-loop', '0', path.join(output, `demo-${lang}.gif`),
+        path.join(rendered, '%05d.png'),
       ], { stdio: 'inherit' });
-      if (encode.error) throw encode.error;
-      assert.equal(encode.status, 0, `ffmpeg failed for ${lang}`);
+      if (render.error) throw render.error;
+      assert.equal(render.status, 0, `ffmpeg failed for ${lang}`);
+      // Lossy frames reuse nearly equal pixels from earlier frames, so the blur
+      // of a move could linger on the still shot after it. Each stretch between
+      // moves is encoded on its own and opens on a full frame; webpmux joins the
+      // stretches' frames unchanged.
+      const run = (command, args) => {
+        const result = spawnSync(command, args, { encoding: 'utf8' });
+        if (result.error) throw result.error;
+        assert.equal(result.status, 0, `${command} failed for ${lang}: ${result.stderr}`);
+        return result.stdout;
+      };
+      const files = fs.readdirSync(rendered).sort();
+      const duration = index => Math.round((index + 1) * 1000 / frameRate) - Math.round(index * 1000 / frameRate);
+      const cuts = [0, ...moves.map(move => Math.floor((move.at + cameraMoveSeconds) * frameRate) + 1), files.length];
+      const joined = [];
+      for (let k = 0; k + 1 < cuts.length; k++) {
+        const indices = files.map((_, index) => index).slice(cuts[k], cuts[k + 1]);
+        const stretch = path.join(temporary, `stretch-${k}.webp`);
+        run('img2webp', ['-loop', '0', '-mixed', '-q', '85', ...indices.flatMap(index => ['-d', String(duration(index)), path.join(rendered, files[index])]), '-o', stretch]);
+        // A stretch that never changes is a still image without a frame table.
+        const rows = [...run('webpmux', ['-info', stretch]).matchAll(/^\s*(\d+):\s+\d+\s+\d+\s+(?:yes|no)\s+(\d+)\s+(\d+)\s+(\d+)\s+(none|background)\s+(yes|no)/gm)];
+        if (!rows.length) joined.push('-frame', stretch, `+${indices.reduce((sum, index) => sum + duration(index), 0)}+0+0+0-b`);
+        for (const [, number, x, y, ms, dispose, blend] of rows) {
+          const frame = path.join(temporary, `stretch-${k}-${number}.webp`);
+          run('webpmux', ['-get', 'frame', number, stretch, '-o', frame]);
+          joined.push('-frame', frame, `+${ms}+${x}+${y}+${dispose === 'background' ? 1 : 0}${blend === 'yes' ? '+b' : '-b'}`);
+        }
+      }
+      run('webpmux', [...joined, '-loop', '0', '-o', path.join(output, `demo-${lang}.webp`)]);
     } finally {
       fs.rmSync(temporary, { recursive: true, force: true });
     }
@@ -501,18 +557,54 @@ When importing a CSV, unknown columns are ignored. Rows without a date or amount
     shots[name] = file;
   };
   // Bounds of the matched elements in window pixels, padded and kept in the
-  // window. The app zooms its page, so CSS pixels are rescaled to the window.
+  // window, or null when nothing matches. The app zooms its page, so CSS pixels
+  // are rescaled to the window.
   const bounds = (win, selector, pad) => evaluate(win, ({ selector, pad, width }) => {
     const zoom = width / innerWidth;
     const rects = [...document.querySelectorAll(selector)].map(element => element.getBoundingClientRect());
+    if (!rects.length) return null;
     const left = Math.max(0, Math.min(...rects.map(rect => rect.left)) - pad);
     const top = Math.max(0, Math.min(...rects.map(rect => rect.top)) - pad);
     const right = Math.min(innerWidth, Math.max(...rects.map(rect => rect.right)) + pad);
     const bottom = Math.min(innerHeight, Math.max(...rects.map(rect => rect.bottom)) + pad);
     return { x: Math.round(left * zoom), y: Math.round(top * zoom), width: Math.round((right - left) * zoom), height: Math.round((bottom - top) * zoom) };
   }, { selector, pad, width: win.getContentSize()[0] });
+  // Everything the matched elements cover until the returned stop() is awaited.
+  const sweep = (win, selector) => {
+    let area = null;
+    let active = true;
+    const loop = (async () => {
+      while (active) {
+        const rect = await bounds(win, selector, 0);
+        if (rect && area) {
+          const x = Math.min(area.x, rect.x);
+          const y = Math.min(area.y, rect.y);
+          area = { x, y, width: Math.max(area.x + area.width, rect.x + rect.width) - x, height: Math.max(area.y + area.height, rect.y + rect.height) - y };
+        } else {
+          area = rect || area;
+        }
+        await delay(200);
+      }
+    })();
+    return async () => {
+      active = false;
+      await loop;
+      return area;
+    };
+  };
+  // The framing that fits a window rect on the stage, zoomed in at most 1.8x and
+  // kept inside the stage.
+  const framing = (rect, pad = 48) => {
+    const { width, height, left, top } = windowStage;
+    const scale = Math.min(1, Math.max(1 / 1.8, (rect.width + 2 * pad) / width, (rect.height + 2 * pad) / height));
+    const fit = (center, size) => Math.min(Math.max(center, size * scale / 2), size * (1 - scale / 2));
+    const round = value => Number(value.toFixed(3));
+    return { x: round(fit(left + rect.x + rect.width / 2, width)), y: round(fit(top + rect.y + rect.height / 2, height)), scale: round(scale) };
+  };
 
   // Capture frames continuously while `body` runs; ffmpeg reads the timings.
+  // `body` receives mark(name); record returns each mark in seconds from the
+  // first frame.
   const record = async (win, body) => {
     const dir = path.join(temporary, 'frames');
     fs.mkdirSync(dir);
@@ -527,7 +619,8 @@ When importing a CSV, unknown columns are ignored. Rows without a date or amount
         await delay(Math.max(0, 90 - (Date.now() - at)));
       }
     })();
-    await body();
+    const marks = {};
+    await body(name => { marks[name] = Date.now(); });
     recording = false;
     await loop;
     const lines = frames.flatMap((frame, index) => {
@@ -537,6 +630,7 @@ When importing a CSV, unknown columns are ignored. Rows without a date or amount
     // The concat demuxer ignores the final duration unless the last file repeats.
     lines.push(`file '${frames.at(-1).file}'`);
     fs.writeFileSync(path.join(temporary, 'frames.txt'), `${lines.join('\n')}\n`);
+    return Object.fromEntries(Object.entries(marks).map(([name, at]) => [name, (at - frames[0].at) / 1000]));
   };
 
   // ---- framing ----------------------------------------------------------------
@@ -650,8 +744,11 @@ When importing a CSV, unknown columns are ignored. Rows without a date or amount
     await newThread(main, 'pocket-ledger');
     await delay(800);
     pace = true;
-    await record(main, async () => {
+    const focus = {};
+    const marks = await record(main, async mark => {
       await delay(700);
+      focus.composer = await bounds(main, '.composer', 0);
+      mark('type');
       const stride = zh ? 1 : 3;
       for (let i = stride; i < S.fixPrompt.length + stride; i += stride) {
         await draft(main, S.fixPrompt.slice(0, i));
@@ -659,14 +756,33 @@ When importing a CSV, unknown columns are ignored. Rows without a date or amount
       }
       await delay(600);
       await submit(main);
+      mark('submit');
+      const turn = sweep(main, '.turn');
       await waitTurn(main, 1600);
+      focus.turn = await turn();
+      mark('done');
       await delay(1200);
       await openTool(main, L.review);
       await delay(1500);
       await openReviewFile(main, 'totals.js');
-      await delay(3000);
+      focus.diff = await bounds(main, '.workspace-diff-detail-header, .workspace-review-diff-panel .view-line', 0);
+      mark('diff');
+      await delay(2600);
+      mark('outro');
+      await delay(1400);
     });
     pace = false;
+    // The camera opens on the whole window, moves in on the prompt, the agent's
+    // work and the diff, and ends on the whole window so the demo loops.
+    const moves = [
+      { at: Math.max(0, marks.type - 0.4), to: framing(focus.composer) },
+      { at: marks.submit, to: framing(focus.turn) },
+      { at: marks.done, to: wideShot },
+      { at: marks.diff, to: framing(focus.diff) },
+      { at: marks.outro, to: wideShot },
+    ].map(move => ({ at: Number(move.at.toFixed(3)), to: move.to }));
+    moves.forEach((move, index) => assert.ok(!index || move.at >= moves[index - 1].at + cameraMoveSeconds, 'Camera moves do not overlap'));
+    fs.writeFileSync(path.join(temporary, 'camera.json'), JSON.stringify(moves));
 
     for (const theme of ['light', 'dark']) {
       await reset(main);
