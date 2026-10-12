@@ -80,10 +80,19 @@ export function navigateToResponseSelection(selection: ResponseSelection): boole
       window.getSelection()?.removeAllRanges();
       window.getSelection()?.addRange(range);
     }
-    const observer = new MutationObserver(() => sourceHighlight?.clear());
+    const observer = new MutationObserver((records) => {
+      // Scrolling and composer reflow update ancestor styles without invalidating
+      // the source. Only content, visibility, or source identity changes clear it.
+      if (records.some(record => record.type !== "attributes") || !visible(article)
+        || article.dataset.responseItemId !== selection.source.item_id
+        || article.dataset.responseTurnId !== selection.source.turn_id
+        || article.closest<HTMLElement>("[data-thread-id]")?.dataset.threadId !== selection.source.thread_id) {
+        sourceHighlight?.clear();
+      }
+    });
     observer.observe(root, { childList: true, characterData: true, subtree: true });
     for (let node: HTMLElement | null = article; node; node = node.parentElement) {
-      observer.observe(node, { attributes: true, attributeFilter: ["hidden", "inert", "aria-hidden", "style", "class", "data-thread-id"] });
+      observer.observe(node, { attributes: true, attributeFilter: ["hidden", "inert", "aria-hidden", "style", "class", "data-thread-id", "data-response-item-id", "data-response-turn-id"] });
     }
     sourceHighlight = { root, clear: () => {
       observer.disconnect();

@@ -752,11 +752,8 @@
 
 .session-tab-close {
   display: grid;
-  width: 24px;
-  height: 24px;
   flex: 0 0 auto;
   place-items: center;
-  border-radius: var(--radius-pill);
   background: transparent;
   color: var(--ink-muted);
   cursor: pointer;
@@ -772,11 +769,6 @@
 .session-tab:focus-within .session-tab-close,
 .session-tab.active .session-tab-close {
   opacity: 1;
-}
-
-.session-tab-close:hover {
-  background: var(--ink-overlay-8);
-  color: var(--ink);
 }
 
 .icon-button {

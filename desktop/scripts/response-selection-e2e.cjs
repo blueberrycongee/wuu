@@ -88,17 +88,17 @@ function measureGeometry() {
     theme: document.documentElement.dataset.theme, userAgent: navigator.userAgent, regions };
 }
 async function select(text, last = false, physical = false, backward = false, align = "center") {
-  await evaluate((selector, align) => {
+  await evaluate((selector, align, physical) => {
     const root = [...document.querySelectorAll(selector)].find(node => node.getBoundingClientRect().width);
     document.activeElement?.blur();
-    root.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 1 }));
+    if (!physical) root.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 1 }));
     root.scrollIntoView({ block: align, behavior: "instant" });
-  }, surface, align);
+  }, surface, align, physical);
   // Source navigation and centering deliver scroll asynchronously. A user starts
   // the next drag after that movement; don't create a toolbar destined to be
   // dismissed by the previous operation's queued scroll event.
   await evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-  const selected = await evaluate((selector, text, last, backward) => {
+  const selected = await evaluate((selector, text, last, backward, physical) => {
     const root = [...document.querySelectorAll(selector)].find(node => node.getBoundingClientRect().width);
     const source = root.textContent;
     const start = last ? source.lastIndexOf(text) : source.indexOf(text);
@@ -116,12 +116,18 @@ async function select(text, last = false, physical = false, backward = false, al
     const first = range.cloneRange(); first.collapse(true);
     const final = range.cloneRange(); final.collapse(false);
     const a = first.getBoundingClientRect(), b = final.getBoundingClientRect();
-    const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range);
-    if (backward) selection.setBaseAndExtent(endNode, endOffset, startNode, startOffset);
-    document.dispatchEvent(new Event("selectionchange"));
-    root.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 1 }));
-    return { text, renderedText: selection.toString(), start, end, source, from: { x: Math.round(a.x), y: Math.round(a.y + a.height / 2) }, to: { x: Math.round(b.x), y: Math.round(b.y + b.height / 2) } };
-  }, surface, text, last, backward);
+    let renderedText = range.toString();
+    // A native drag must create its own selection. Preselecting here mounts a
+    // toolbar and its range-restoration observer before the mouse is pressed.
+    if (!physical) {
+      const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range);
+      if (backward) selection.setBaseAndExtent(endNode, endOffset, startNode, startOffset);
+      document.dispatchEvent(new Event("selectionchange"));
+      root.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 1 }));
+      renderedText = selection.toString();
+    }
+    return { text, renderedText, start, end, source, from: { x: Math.round(a.x), y: Math.round(a.y + a.height / 2) }, to: { x: Math.round(b.x), y: Math.round(b.y + b.height / 2) } };
+  }, surface, text, last, backward, physical);
   if (physical) {
     await evaluate(() => window.getSelection().removeAllRanges());
     win.focus();
@@ -223,6 +229,7 @@ async function checkSentReference(expected, name) {
       node.focus();
     }, selector, theme, font);
     await screenshot(`${name}-${theme}-${font}-${width}`);
+    await checkHighlight(expected);
   }
   win.setContentSize(1200, 820);
   await evaluate(() => {

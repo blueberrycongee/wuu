@@ -20,6 +20,8 @@ macOS LaunchServices 启动器也会转发该设置。
 
 `make dev` 运行桌面启动器，在启动 Electron 前构建共享 Web 资源、适用平台的原生辅助程序，以及当前 Go 核心和插件辅助程序。应用使用该检出目录的私有 `wuu-core`，不是 `PATH` 中另行安装的 `wuu`。renderer 修改通过 Vite 更新；修改 Go、原生辅助程序或进程启动代码后，应重启启动器，让运行中的进程使用新构建。
 
+桌面安装包在 `Resources/tools` 中内置一份校验过 checksum 的固定版本 ripgrep，并把该目录追加到核心的 `PATH` 末尾，因此即使系统没有安装 `rg`，搜索工具和 agent 的 shell 命令也能使用它；`PATH` 中已有的 `rg` 优先。`make dev` 不会下载它。如需在开发时使用内置版本，先运行一次 `npm --prefix desktop run build:ripgrep`；否则核心使用 `PATH` 中的 `rg`，或回退到内置的搜索实现。
+
 Project Agent 尚属实验功能，默认构建和发布构建均关闭，没有可供用户开启的设置。
 已有项目会话仍可阅读，但不能运行，也不会恢复队列中的任务。开发此功能时，运行
 `npm --prefix desktop run dev -- --project-agent`，或使用

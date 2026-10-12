@@ -70,7 +70,8 @@ struct ProcessGroupDetails: View {
                             ToolGroupView(model: model, messages: segment, settings: settings,
                                           active: active && segment.last?.id == messages.last?.id)
                         } else if !segment[0].text.isEmpty {
-                            MessageText(text: segment[0].text, markdown: segment[0].role == "assistant")
+                            MessageText(text: segment[0].text, markdown: segment[0].role == "assistant",
+                                        isLive: active && segment[0].role == "assistant" && segment[0].id == model.messages.last?.id)
                                 .foregroundStyle(segment[0].role == "error" ? Color.red : Color.primary)
                             if !segment[0].contentRef.isEmpty {
                                 Button("加载完整消息") { model.perform { try await model.expand(segment[0]) } }

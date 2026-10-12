@@ -23,7 +23,9 @@ struct ConversationTimeline: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     let rows = model.conversationRows
-                    let recentStart = rows.firstIndex { $0.messages[0].turnID == rows.last?.messages[0].turnID } ?? rows.endIndex
+                    let latestTurnID = rows.last?.messages[0].turnID
+                    let previousTurnID = rows.last { $0.messages[0].turnID != latestTurnID }?.messages[0].turnID
+                    let recentStart = rows.firstIndex { $0.messages[0].turnID == (previousTurnID ?? latestTurnID) } ?? rows.endIndex
                     VStack(alignment: .leading, spacing: rowSpacing) {
                         if model.live?.historyCursor.isEmpty == false {
                             HStack {
@@ -41,7 +43,7 @@ struct ConversationTimeline: View {
                                 ForEach(rows[..<recentStart]) { row in timelineRow(row, size: geometry.size) }
                             }
                         }
-                        // Keep the newest turn mounted while keyboard/menu transitions resize the viewport.
+                        // Keep the growing turn and its predecessor mounted as their boundary crosses the viewport.
                         // Rejoin the lazy history when iOS no longer loops row phases around embedded UIKit views.
                         ForEach(rows[recentStart...]) { row in timelineRow(row, size: geometry.size) }
                         if model.live?.running == true && model.messages.last?.tool == nil && model.conversationRows.last?.processActive != true {
@@ -226,7 +228,8 @@ private struct MessageBubble: View {
                 if !message.text.isEmpty {
                     VStack(alignment: .leading, spacing: 8) {
                         MessageText(text: collapsible && !expanded ? String(message.text.prefix(240)) + "…" : message.text,
-                                    markdown: message.role == "assistant", contextMenuEnabled: message.role != "user")
+                                    markdown: message.role == "assistant", contextMenuEnabled: message.role != "user",
+                                    isLive: message.role == "assistant" && message.turnActive && message.id == model.messages.last?.id)
                             .foregroundStyle(message.role == "error" ? Color.red : Color.primary)
                         if collapsible {
                             Button(expanded ? "收起" : "显示更多", systemImage: expanded ? "chevron.up" : "chevron.down") { expanded.toggle() }

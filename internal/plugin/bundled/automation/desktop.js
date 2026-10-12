@@ -112,7 +112,7 @@ export async function activate(api) {
     .plugin-automation-error { color:var(--danger); font-size:var(--font-sm); overflow-wrap:anywhere; }
     .plugin-automation-filtered-empty { margin:0; color:var(--ink-tertiary); }
     .plugin-automation-detail-title { flex:1; min-width:0; margin:0; color:var(--ink-strong); font-size:var(--font-ui); font-weight:var(--weight-semibold); line-height:1.4; }
-    .plugin-automation-detail-head > .plugin-automation-enable { flex:1; justify-content:start; grid-template-columns:auto auto; gap:var(--space-3); }
+    .plugin-automation-detail-head > .plugin-automation-enable { flex:none; margin-inline-end:auto; justify-content:start; grid-template-columns:auto auto; gap:var(--space-3); }
     .plugin-automation-detail { position:relative; display:flex; flex-direction:column; width:var(--automation-detail-width); min-width:var(--automation-detail-width); min-height:0; overflow:hidden; border-left:1px solid var(--hairline); transition:opacity var(--environment-panel-exit-duration) var(--ease-in), translate var(--environment-panel-exit-duration) var(--ease-in); }
     /* Content enters from the edge the column opens toward and leaves the
      * same way, shorter. Choosing another task while the panel stays open
