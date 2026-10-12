@@ -121,12 +121,10 @@ See [Contributing](CONTRIBUTING.md) to work on wuu, or [open an issue](https://g
 
 ## Core developers
 
-<table>
-  <tr>
-    <td align="center"><a href="https://github.com/blueberrycongee"><img src="https://github.com/blueberrycongee.png?size=160" width="80" alt="@blueberrycongee"><br><sub><b>@blueberrycongee</b></sub></a></td>
-    <td align="center"><a href="https://github.com/Rosemary1812"><img src="https://github.com/Rosemary1812.png?size=160" width="80" alt="@Rosemary1812"><br><sub><b>@Rosemary1812</b></sub></a></td>
-  </tr>
-</table>
+<p>
+  <a href="https://github.com/blueberrycongee"><picture><source media="(prefers-color-scheme: dark)" srcset="landing/assets/readme/core-blueberrycongee-dark.svg"><img src="landing/assets/readme/core-blueberrycongee-light.svg" width="160" height="152" alt="@blueberrycongee"></picture></a>
+  <a href="https://github.com/Rosemary1812"><picture><source media="(prefers-color-scheme: dark)" srcset="landing/assets/readme/core-rosemary1812-dark.svg"><img src="landing/assets/readme/core-rosemary1812-light.svg" width="160" height="152" alt="@Rosemary1812"></picture></a>
+</p>
 
 ## Acknowledgements
 
