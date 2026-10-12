@@ -1,32 +1,26 @@
 package credentialstore
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
-	"sync"
 
 	"github.com/blueberrycongee/wuu/internal/securefs"
 )
 
 type FileStore struct {
 	path string
-	mu   *sync.Mutex
 }
 
-var fileStoreLocks sync.Map
-
 func NewFileStore(path string) *FileStore {
-	lock, _ := fileStoreLocks.LoadOrStore(path, &sync.Mutex{})
-	return &FileStore{path: path, mu: lock.(*sync.Mutex)}
+	return &FileStore{path: path}
 }
 
 func (s *FileStore) Get(_ context.Context, namespace, key string) ([]byte, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	values, err := s.load()
 	if err != nil {
 		return nil, err
@@ -42,30 +36,62 @@ func (s *FileStore) Get(_ context.Context, namespace, key string) ([]byte, error
 	return value, nil
 }
 
-func (s *FileStore) Set(_ context.Context, namespace, key string, value []byte) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+func (s *FileStore) Set(ctx context.Context, namespace, key string, value []byte) error {
+	return s.mutate(ctx, func(values map[string]string) error {
+		values[credentialAccount(namespace, key)] = base64.StdEncoding.EncodeToString(value)
+		return nil
+	})
+}
+
+func (s *FileStore) Delete(ctx context.Context, namespace, key string) error {
+	return s.mutate(ctx, func(values map[string]string) error {
+		delete(values, credentialAccount(namespace, key))
+		return nil
+	})
+}
+
+func (s *FileStore) Update(ctx context.Context, namespace, key string, update func([]byte) ([]byte, error)) error {
+	return s.mutate(ctx, func(values map[string]string) error {
+		account := credentialAccount(namespace, key)
+		var current []byte
+		if encoded, ok := values[account]; ok {
+			var err error
+			current, err = base64.StdEncoding.DecodeString(encoded)
+			if err != nil {
+				return fmt.Errorf("credentialstore file decode: %w", err)
+			}
+		}
+		next, err := update(bytes.Clone(current))
+		if err != nil {
+			return err
+		}
+		if (current == nil) == (next == nil) && bytes.Equal(current, next) {
+			return nil
+		}
+		if next == nil {
+			delete(values, account)
+		} else {
+			values[account] = base64.StdEncoding.EncodeToString(next)
+		}
+		return nil
+	})
+}
+
+func (s *FileStore) mutate(ctx context.Context, mutate func(map[string]string) error) error {
+	lock, err := acquireStoreLock(ctx, s.path+".lock")
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
 	values, err := s.load()
 	if errors.Is(err, ErrNotFound) {
 		values = map[string]string{}
 	} else if err != nil {
 		return err
 	}
-	values[credentialAccount(namespace, key)] = base64.StdEncoding.EncodeToString(value)
-	return s.write(values)
-}
-
-func (s *FileStore) Delete(_ context.Context, namespace, key string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	values, err := s.load()
-	if errors.Is(err, ErrNotFound) {
-		return nil
-	}
-	if err != nil {
+	if err := mutate(values); err != nil {
 		return err
 	}
-	delete(values, credentialAccount(namespace, key))
 	return s.write(values)
 }
 

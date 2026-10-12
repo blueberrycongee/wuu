@@ -19,6 +19,9 @@ import (
 	"github.com/blueberrycongee/wuu/internal/credentialstore"
 )
 
+// ErrOAuthSuperseded rejects work started before logout or a newer login.
+var ErrOAuthSuperseded = fmt.Errorf("%w: OAuth operation was superseded; sign in again", ErrOAuthRequired)
+
 // ErrOAuthResourceMismatch requires a new login for the configured resource.
 // The stored credential is retained for the resource that originally issued it.
 var ErrOAuthResourceMismatch = fmt.Errorf("%w: stored credentials do not match the configured resource; sign in again", ErrOAuthRequired)
@@ -78,28 +81,31 @@ type authorizationServerMetadata struct {
 }
 
 type pendingOAuth struct {
-	State         string
-	Verifier      string
-	RedirectURI   string
-	ResourceURL   string
-	Scopes        []string
-	ClientID      string
-	ClientSecret  string
-	TokenAuthMode string
-	TokenEndpoint string
+	LoginGeneration string
+	State           string
+	Verifier        string
+	RedirectURI     string
+	ResourceURL     string
+	Scopes          []string
+	ClientID        string
+	ClientSecret    string
+	TokenAuthMode   string
+	TokenEndpoint   string
 }
 
 type storedOAuthToken struct {
-	AccessToken   string    `json:"access_token"`
-	RefreshToken  string    `json:"refresh_token,omitempty"`
-	TokenType     string    `json:"token_type,omitempty"`
-	ExpiresAt     time.Time `json:"expires_at,omitempty"`
-	Scopes        []string  `json:"scopes,omitempty"`
-	ClientID      string    `json:"client_id"`
-	ClientSecret  string    `json:"client_secret,omitempty"`
-	TokenAuthMode string    `json:"token_auth_mode,omitempty"`
-	TokenEndpoint string    `json:"token_endpoint"`
-	ResourceURL   string    `json:"resource_url,omitempty"`
+	LoginGeneration   string    `json:"login_generation,omitempty"`
+	CredentialVersion string    `json:"credential_version,omitempty"`
+	AccessToken       string    `json:"access_token,omitempty"`
+	RefreshToken      string    `json:"refresh_token,omitempty"`
+	TokenType         string    `json:"token_type,omitempty"`
+	ExpiresAt         time.Time `json:"expires_at,omitempty"`
+	Scopes            []string  `json:"scopes,omitempty"`
+	ClientID          string    `json:"client_id,omitempty"`
+	ClientSecret      string    `json:"client_secret,omitempty"`
+	TokenAuthMode     string    `json:"token_auth_mode,omitempty"`
+	TokenEndpoint     string    `json:"token_endpoint,omitempty"`
+	ResourceURL       string    `json:"resource_url,omitempty"`
 }
 
 type tokenResponse struct {
@@ -129,6 +135,30 @@ func (m *OAuthManager) Start(ctx context.Context, options OAuthStartOptions) (OA
 	}
 	if canonicalOAuthResource(resourceURL) == "" {
 		return OAuthStartResult{}, errors.New("MCP OAuth resource URL must be an absolute HTTP(S) URL without user info or fragment")
+	}
+	// Reserve ordering before discovery or registration. Last admitted Start wins,
+	// even when an older browser callback or discovery finishes later.
+	generation, err := randomURLToken(32)
+	if err != nil {
+		return OAuthStartResult{}, err
+	}
+	m.mu.Lock()
+	err = m.store.Update(ctx, oauthNamespace(serverID), "oauth", func(data []byte) ([]byte, error) {
+		var token storedOAuthToken
+		if len(data) > 0 {
+			if err := json.Unmarshal(data, &token); err != nil {
+				return nil, err
+			}
+		}
+		token.LoginGeneration = generation
+		return json.Marshal(token)
+	})
+	if err == nil {
+		delete(m.pending, serverID)
+	}
+	m.mu.Unlock()
+	if err != nil {
+		return OAuthStartResult{}, err
 	}
 	resourceMeta, challengedScopes, err := m.discoverProtectedResource(ctx, resourceURL, options.Headers)
 	if err != nil {
@@ -187,18 +217,25 @@ func (m *OAuthManager) Start(ctx context.Context, options OAuthStartOptions) (OA
 		return OAuthStartResult{}, fmt.Errorf("parse authorization endpoint: %w", err)
 	}
 	authorizationURL.RawQuery = query.Encode()
-	pending := pendingOAuth{State: state, Verifier: verifier, RedirectURI: redirectURI, ResourceURL: resourceURL, Scopes: append([]string(nil), scopes...), ClientID: clientID, ClientSecret: clientSecret, TokenAuthMode: tokenAuthMode, TokenEndpoint: authMeta.TokenEndpoint}
+	pending := pendingOAuth{LoginGeneration: generation, State: state, Verifier: verifier, RedirectURI: redirectURI, ResourceURL: resourceURL, Scopes: append([]string(nil), scopes...), ClientID: clientID, ClientSecret: clientSecret, TokenAuthMode: tokenAuthMode, TokenEndpoint: authMeta.TokenEndpoint}
 	m.mu.Lock()
-	m.pending[serverID+"\x00"+state] = pending
-	m.mu.Unlock()
+	defer m.mu.Unlock()
+	current, err := m.loadRecord(ctx, serverID)
+	if err != nil {
+		return OAuthStartResult{}, err
+	}
+	if current.LoginGeneration != generation {
+		return OAuthStartResult{}, ErrOAuthSuperseded
+	}
+	m.pending[serverID] = pending
 	return OAuthStartResult{AuthorizationURL: authorizationURL.String(), State: state, Scopes: append([]string(nil), scopes...)}, nil
 }
 
 func (m *OAuthManager) Finish(ctx context.Context, options OAuthFinishOptions) (OAuthStatus, error) {
-	key := strings.TrimSpace(options.ServerID) + "\x00" + strings.TrimSpace(options.State)
+	key := strings.TrimSpace(options.ServerID)
 	m.mu.Lock()
 	pending, ok := m.pending[key]
-	if ok {
+	if ok && pending.State == options.State {
 		delete(m.pending, key)
 	}
 	m.mu.Unlock()
@@ -207,6 +244,13 @@ func (m *OAuthManager) Finish(ctx context.Context, options OAuthFinishOptions) (
 	}
 	if !sameOAuthResource(pending.ResourceURL, options.ResourceURL) {
 		return OAuthStatus{}, ErrOAuthResourceMismatch
+	}
+	current, err := m.loadRecord(ctx, options.ServerID)
+	if err != nil {
+		return OAuthStatus{}, err
+	}
+	if current.LoginGeneration != pending.LoginGeneration {
+		return OAuthStatus{}, ErrOAuthSuperseded
 	}
 	form := url.Values{
 		"grant_type":    {"authorization_code"},
@@ -221,12 +265,24 @@ func (m *OAuthManager) Finish(ctx context.Context, options OAuthFinishOptions) (
 		return OAuthStatus{}, err
 	}
 	token := storedOAuthToken{AccessToken: response.AccessToken, RefreshToken: response.RefreshToken, TokenType: response.TokenType, ExpiresAt: tokenExpiry(response.ExpiresIn), Scopes: scopesFromResponse(response.Scope, pending.Scopes), ClientID: pending.ClientID, ClientSecret: pending.ClientSecret, TokenAuthMode: pending.TokenAuthMode, TokenEndpoint: pending.TokenEndpoint, ResourceURL: pending.ResourceURL}
-	// Serialize this manager's login commit with its in-flight refreshes so
-	// the newer login replaces their result, rather than the reverse.
-	refreshLock := m.refreshLock(options.ServerID)
-	refreshLock.Lock()
-	defer refreshLock.Unlock()
-	if err := m.saveToken(ctx, options.ServerID, token); err != nil {
+	token.LoginGeneration = pending.LoginGeneration
+	token.CredentialVersion, err = randomURLToken(32)
+	if err != nil {
+		return OAuthStatus{}, err
+	}
+	err = m.store.Update(ctx, oauthNamespace(options.ServerID), "oauth", func(data []byte) ([]byte, error) {
+		var current storedOAuthToken
+		if len(data) > 0 {
+			if err := json.Unmarshal(data, &current); err != nil {
+				return nil, err
+			}
+		}
+		if current.LoginGeneration != pending.LoginGeneration {
+			return nil, ErrOAuthSuperseded
+		}
+		return json.Marshal(token)
+	})
+	if err != nil {
 		return OAuthStatus{}, err
 	}
 	return oauthStatus(options.ServerID, token), nil
@@ -272,32 +328,56 @@ func (m *OAuthManager) accessToken(ctx context.Context, serverID, resourceURL st
 	if token.ResourceURL != "" {
 		form.Set("resource", token.ResourceURL)
 	}
-	response, err := m.exchangeToken(ctx, token.TokenEndpoint, token.ClientSecret, token.TokenAuthMode, form)
-	// Another process may have rotated or replaced the stored credential while
-	// the request was in flight. Check successful exchanges too, so an observed
-	// replacement cannot be overwritten by this older resource's refresh.
-	latest, loadErr := m.loadResourceToken(ctx, serverID, resourceURL)
-	if loadErr != nil {
-		return "", loadErr
-	}
-	if latest.AccessToken != token.AccessToken &&
-		(latest.ExpiresAt.IsZero() || time.Now().Before(latest.ExpiresAt)) {
-		return latest.AccessToken, nil
-	}
+	response, exchangeErr := m.exchangeToken(ctx, token.TokenEndpoint, token.ClientSecret, token.TokenAuthMode, form)
+	version, err := randomURLToken(32)
 	if err != nil {
 		return "", err
 	}
-	token.AccessToken = response.AccessToken
-	if response.RefreshToken != "" {
-		token.RefreshToken = response.RefreshToken
-	}
-	token.TokenType = response.TokenType
-	token.ExpiresAt = tokenExpiry(response.ExpiresIn)
-	token.Scopes = scopesFromResponse(response.Scope, token.Scopes)
-	if err := m.saveToken(ctx, serverID, token); err != nil {
+	var accessToken string
+	err = m.store.Update(ctx, oauthNamespace(serverID), "oauth", func(data []byte) ([]byte, error) {
+		var latest storedOAuthToken
+		if len(data) > 0 {
+			if err := json.Unmarshal(data, &latest); err != nil {
+				return nil, err
+			}
+		}
+		if latest.AccessToken == "" {
+			return nil, ErrOAuthSuperseded
+		}
+		if !sameOAuthResource(latest.ResourceURL, resourceURL) {
+			return nil, ErrOAuthResourceMismatch
+		}
+		// Start changes only login ordering. Refresh compares the credential version
+		// and the legacy payload, so it cannot overwrite a same-resource new account.
+		expected := token
+		expected.LoginGeneration = latest.LoginGeneration
+		expectedData, _ := json.Marshal(expected)
+		latestData, _ := json.Marshal(latest)
+		if !bytes.Equal(expectedData, latestData) {
+			if latest.ExpiresAt.IsZero() || time.Now().Before(latest.ExpiresAt) {
+				accessToken = latest.AccessToken
+				return data, nil
+			}
+			return nil, ErrOAuthSuperseded
+		}
+		if exchangeErr != nil {
+			return nil, exchangeErr
+		}
+		latest.AccessToken = response.AccessToken
+		if response.RefreshToken != "" {
+			latest.RefreshToken = response.RefreshToken
+		}
+		latest.TokenType = response.TokenType
+		latest.ExpiresAt = tokenExpiry(response.ExpiresIn)
+		latest.Scopes = scopesFromResponse(response.Scope, latest.Scopes)
+		latest.CredentialVersion = version
+		accessToken = latest.AccessToken
+		return json.Marshal(latest)
+	})
+	if err != nil {
 		return "", err
 	}
-	return token.AccessToken, nil
+	return accessToken, nil
 }
 
 func (m *OAuthManager) refreshLock(serverID string) *sync.Mutex {
@@ -316,7 +396,21 @@ func (m *OAuthManager) refreshLock(serverID string) *sync.Mutex {
 }
 
 func (m *OAuthManager) Remove(ctx context.Context, serverID string) error {
-	return m.store.Delete(ctx, oauthNamespace(serverID), "oauth")
+	generation, err := randomURLToken(32)
+	if err != nil {
+		return err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	// A token-free tombstone preserves logout authority across processes and
+	// restarts. Deleting the slot would lose the generation of pending logins.
+	err = m.store.Update(ctx, oauthNamespace(serverID), "oauth", func([]byte) ([]byte, error) {
+		return json.Marshal(storedOAuthToken{LoginGeneration: generation})
+	})
+	if err == nil {
+		delete(m.pending, strings.TrimSpace(serverID))
+	}
+	return err
 }
 
 func (m *OAuthManager) discoverProtectedResource(ctx context.Context, resource string, headers map[string]string) (protectedResourceMetadata, []string, error) {
@@ -647,14 +741,6 @@ func containsString(values []string, target string) bool {
 	return false
 }
 
-func (m *OAuthManager) saveToken(ctx context.Context, serverID string, token storedOAuthToken) error {
-	data, err := json.Marshal(token)
-	if err != nil {
-		return err
-	}
-	return m.store.Set(ctx, oauthNamespace(serverID), "oauth", data)
-}
-
 func (m *OAuthManager) loadResourceToken(ctx context.Context, serverID, resourceURL string) (storedOAuthToken, error) {
 	token, err := m.loadToken(ctx, serverID)
 	if err != nil {
@@ -693,6 +779,17 @@ func canonicalOAuthResource(resource string) string {
 }
 
 func (m *OAuthManager) loadToken(ctx context.Context, serverID string) (storedOAuthToken, error) {
+	token, err := m.loadRecord(ctx, serverID)
+	if err != nil {
+		return token, err
+	}
+	if token.AccessToken == "" {
+		return token, credentialstore.ErrNotFound
+	}
+	return token, nil
+}
+
+func (m *OAuthManager) loadRecord(ctx context.Context, serverID string) (storedOAuthToken, error) {
 	data, err := m.store.Get(ctx, oauthNamespace(serverID), "oauth")
 	if err != nil {
 		return storedOAuthToken{}, err
