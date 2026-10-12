@@ -1084,6 +1084,7 @@ func (s *Server) ensureThreadRuntime(th *threadState) (*runtime.ThreadRuntime, e
 	// of a managed session and reuse of a runtime cached before rerouting.
 	th.mu.Lock()
 	boundProject := th.WorkspaceID != ""
+	engineID := agentengine.NormalizeEngineID(th.EngineID)
 	binding := session.Session{WorkspaceID: th.WorkspaceID, CWD: th.CWD, WorktreeBaseRepo: th.WorktreeBaseRepo}
 	th.mu.Unlock()
 	if boundProject {
@@ -1098,7 +1099,7 @@ func (s *Server) ensureThreadRuntime(th *threadState) (*runtime.ThreadRuntime, e
 	// External-engine threads (codex, later claude) carry no native
 	// StreamRunner: the engine session drives the turn in the external
 	// process. Only the engine stamp is needed on the runtime handle.
-	if agentengine.NormalizeEngineID(th.EngineID) != agentengine.EngineWuu {
+	if engineID != agentengine.EngineWuu {
 		if remote, err := s.rt.RemoteProcesses(th.ID); err != nil {
 			return nil, err
 		} else if remote != nil {
@@ -2429,6 +2430,30 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 		ExternalRef:    th.EngineRef,
 		PersistRef: func(ref string) error {
 			return s.persistThreadEngineRef(th.ID, ref)
+		},
+		PersistTurnRef: func(nativeTurnID string, pending bool) error {
+			th.mu.Lock()
+			defer th.mu.Unlock()
+			for i := len(th.History) - 1; i >= 0; i-- {
+				msg := &th.History[i]
+				if msg.Role != "user" || msg.Steered {
+					continue
+				}
+				// Settlement may reconcile an earlier canceled native turn before
+				// admitting the new prompt. Match its durable ID, not the latest row.
+				if !pending && nativeTurnID != "" && msg.EngineTurnID != nativeTurnID {
+					continue
+				}
+				if th.PersistHistory {
+					if err := session.SetHistoryEngineTurnID(s.rt.SessionDir, th.ID, msg.Seq, th.EngineRef, nativeTurnID, pending); err != nil {
+						return err
+					}
+				}
+				msg.EngineTurnID = nativeTurnID
+				msg.EngineTurnPending = pending
+				return nil
+			}
+			return errors.New("native turn has no admitted user message")
 		},
 		RequestApproval: func(approvalCtx context.Context, request agentengine.ApprovalRequest) (agentengine.ApprovalDecision, error) {
 			return s.requestEngineApproval(approvalCtx, th.ID, turnID, request)

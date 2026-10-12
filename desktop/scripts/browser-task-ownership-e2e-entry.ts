@@ -318,7 +318,9 @@ app.whenReady().then(async () => {
     }
     return window;
   }
-  const main = watchPresentation(new BrowserWindow({ show: false, width: 900, height: 650 }));
+  const main = watchPresentation(new BrowserWindow({ show: false, width: 900, height: 650,
+    ...(process.platform === "linux" ? { frame: false, autoHideMenuBar: true } : {}),
+  }));
   const context: RuntimeContext = { kind: "no_project", cwd: workdir };
   pool = new AppServerClientPool(() => context, () => workdir, notify, undefined, () => ({
     protocol_version: APP_SERVER_PROTOCOL_VERSION,
@@ -342,7 +344,7 @@ app.whenReady().then(async () => {
     },
   }, defaultBrowserHostDeps(
     () => {
-      const window = watchPresentation(new BrowserWindow({ show: false, webPreferences: { sandbox: true } }));
+      const window = watchPresentation(new BrowserWindow({ show: false, skipTaskbar: true, frame: false, webPreferences: { sandbox: true } }));
       hostWindows.push(window);
       return window as unknown as BrowserHostWindowHandle;
     },

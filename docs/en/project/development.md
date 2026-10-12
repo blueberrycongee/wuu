@@ -68,6 +68,18 @@ It uses a temporary profile and synthetic content, not your Wuu data. Run it in
 a graphical desktop session; it does not validate native dialog appearance or
 packaged-app behavior.
 
+### Native history protocol E2E
+
+Build the CLI with `make build-go`, then build the local protocol fixture with
+`go build -o bin/fakecodex ./internal/codexengine/testdata/fakecodex` and run
+`node scripts/native-history-e2e.mjs`. The driver starts real Wuu and fake Codex
+processes with disposable stores; it uses no vendor credentials or inference.
+It covers native forks, edit cutoffs, transaction failures, unsupported replies,
+legacy identities, child/parent isolation, and restart recovery. Results and raw
+protocol logs are written under `.tmp/e2e/native-history/`; set
+`WUU_HISTORY_E2E_OUTPUT` to select another artifact directory. This checks the
+app-server protocol, not desktop rendering or a live vendor CLI.
+
 ### Live resize layout guard
 
 After a desktop production build, run `npm --prefix desktop run test:e2e:resize-live-layout`

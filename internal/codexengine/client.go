@@ -42,6 +42,7 @@ type Client struct {
 	requests    map[string][]*requestHandler
 	closed      bool
 	closeErr    error
+	done        chan struct{}
 }
 
 // notifHandler is one registered notification handler with a unique token so
@@ -71,6 +72,7 @@ func NewClient(t *Transport) *Client {
 		pending:   make(map[int64]*pendingRequest),
 		notify:    make(map[string][]*notifHandler),
 		requests:  make(map[string][]*requestHandler),
+		done:      make(chan struct{}),
 	}
 }
 
@@ -78,24 +80,33 @@ func NewClient(t *Transport) *Client {
 // handlers are registered so no early line is missed (the transport buffers
 // lines until the first handler attaches).
 func (c *Client) Start() {
-	c.transport.OnLine(c.handleLine)
 	c.transport.OnClose(func(reason string) {
-		c.mu.Lock()
-		closed := c.closed
-		c.closed = true
-		c.closeErr = fmt.Errorf("codex app-server closed: %s", reason)
-		pending := make([]*pendingRequest, 0, len(c.pending))
-		for _, p := range c.pending {
-			pending = append(pending, p)
-		}
-		c.pending = map[int64]*pendingRequest{}
-		c.mu.Unlock()
-		if !closed {
-			for _, p := range pending {
-				p.fail(c.closeErr)
-			}
-		}
+		c.terminate(fmt.Errorf("codex app-server closed: %s", reason))
 	})
+	c.transport.OnLine(c.handleLine)
+}
+
+// terminate settles both RPC waiters and turn streams, including failures that
+// happen after turn/start has already returned its response.
+func (c *Client) terminate(err error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		return
+	}
+	c.closed = true
+	c.closeErr = err
+	for id, pending := range c.pending {
+		pending.fail(err)
+		delete(c.pending, id)
+	}
+	close(c.done)
+}
+
+func (c *Client) terminalError() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.closeErr
 }
 
 // OnNotification registers a handler for a notification method. The returned
@@ -217,6 +228,12 @@ func (p *pendingRequest) fail(err error) {
 
 // handleLine dispatches one incoming NDJSON message.
 func (c *Client) handleLine(line string) {
+	c.mu.Lock()
+	closed := c.closed
+	c.mu.Unlock()
+	if closed {
+		return
+	}
 	var msg incomingMessage
 	if err := json.Unmarshal([]byte(line), &msg); err != nil {
 		c.fatal(fmt.Sprintf("codex app-server sent invalid JSON: %v", err))
@@ -321,26 +338,14 @@ func (c *Client) writeError(id json.RawMessage, rpcErr *RPCError) {
 }
 
 func (c *Client) fatal(reason string) {
-	c.mu.Lock()
-	if c.closed {
-		c.mu.Unlock()
-		return
-	}
-	c.closed = true
-	c.closeErr = errors.New(reason)
-	c.mu.Unlock()
-	_ = c.transport.Close()
+	c.terminate(errors.New(reason))
+	// A malformed line is detected on the stdout reader. Reaping the child must
+	// not wait for that same reader before this callback can return.
+	go func() { _ = c.transport.Close() }()
 }
 
 // Close shuts down the client and its transport.
 func (c *Client) Close() error {
-	c.mu.Lock()
-	if c.closed {
-		err := c.closeErr
-		c.mu.Unlock()
-		return err
-	}
-	c.closed = true
-	c.mu.Unlock()
+	c.terminate(errors.New("codex app-server client closed"))
 	return c.transport.Close()
 }
