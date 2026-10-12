@@ -28,6 +28,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   compatibility, including Codex journal identity and Responses endpoints that
   require omission of the `store` field.
 
+### Fixed
+
+- Align desktop navigation and control labels with icons using the selected
+  font's rendered metrics, and preserve accents and descenders in workspace tabs.
+
 ## [2026.10.12] - 2026-10-12
 
 ### Contributors
