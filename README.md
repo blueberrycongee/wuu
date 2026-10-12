@@ -122,8 +122,8 @@ See [Contributing](CONTRIBUTING.md) to work on wuu, or [open an issue](https://g
 ## Core developers
 
 <p>
-  <a href="https://github.com/blueberrycongee"><picture><source media="(prefers-color-scheme: dark)" srcset="landing/assets/readme/core-blueberrycongee-dark.svg"><img src="landing/assets/readme/core-blueberrycongee-light.svg" width="160" height="152" alt="@blueberrycongee"></picture></a>
-  <a href="https://github.com/Rosemary1812"><picture><source media="(prefers-color-scheme: dark)" srcset="landing/assets/readme/core-rosemary1812-dark.svg"><img src="landing/assets/readme/core-rosemary1812-light.svg" width="160" height="152" alt="@Rosemary1812"></picture></a>
+  <a href="https://github.com/blueberrycongee"><picture><source media="(prefers-color-scheme: dark)" srcset="landing/assets/readme/core-blueberrycongee-dark.svg"><img src="landing/assets/readme/core-blueberrycongee-light.svg" width="140" height="124" alt="@blueberrycongee"></picture></a>
+  <a href="https://github.com/Rosemary1812"><picture><source media="(prefers-color-scheme: dark)" srcset="landing/assets/readme/core-rosemary1812-dark.svg"><img src="landing/assets/readme/core-rosemary1812-light.svg" width="140" height="124" alt="@Rosemary1812"></picture></a>
 </p>
 
 ## Acknowledgements
