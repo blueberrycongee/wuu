@@ -246,7 +246,7 @@ async function requestText(host: RuntimeHost, content: string) {
 
 ### 独立调用与流式响应
 
-`invokeModel(host, { request, model_alias?, max_output_tokens?, timeout_ms? })` 返回 `{ response, origin }`。比较第二个模型时，选择已配置的模型别名。输出 token 和超时受宿主及所属执行约束；缺少用量不代表没有费用，取消也不能撤销已经提交的请求。完整请求保留自己的输出限制，除非显式通过 `max_output_tokens` 覆盖；独立调用默认超时 120 秒，最多 600 秒。输入和保留的流数据分别最多 16 MiB，每条流最多保留 4096 个事件。
+`invokeModel(host, { request, model_alias?, max_output_tokens?, timeout_ms? })` 返回 `{ response, origin }`。比较第二个模型时，选择已配置的模型别名。显式别名提供其已配置的选项和 effort 默认值；请求中的显式 effort 选择该模型对应的 variant，显式 `provider_options` 字段覆盖这些默认值，`request.adapter` 优先于合并后的 `provider_options.adapter`。不指定别名时保留完整请求快照，不用当前配置刷新它。输出 token 和超时受宿主及所属执行约束；缺少用量不代表没有费用，取消也不能撤销已经提交的请求。完整请求保留自己的输出限制，除非显式通过 `max_output_tokens` 覆盖；独立调用默认超时 120 秒，最多 600 秒。输入和保留的流数据分别最多 16 MiB，每条流最多保留 4096 个事件。
 
 `startModelInvocation` 返回 `invocation_id`。`readModelInvocation` 接收该 ID、`cursor` 和可选 `wait_ms`，返回有序事件、下一游标、`done` 和终态结果或错误。句柄绑定当前插件 generation 和执行。`cancelModelInvocation` 取消活动流；`streamModel` 将这些方法包装成异步迭代器，在消费者提前退出或抛错时取消未完成工作。应在处理函数的生命周期内消费流；需要跨越原调用生命周期时，使用后台任务。转发事件时保留不透明的 `provider_state` 和 `lifecycle` 数据；`reset_partial` 为真时，在接收重试的新事件前丢弃已累计的部分输出。
 

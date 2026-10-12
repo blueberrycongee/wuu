@@ -10,6 +10,7 @@ import {
 const service = "fixture.context-replay";
 const snapshots: ModelRequestObserveInput[] = [];
 const phases: Array<{ phase: string; origin: unknown }> = [];
+const transformOrigins: Array<{ tag?: string; origin: unknown }> = [];
 const jobs: BackgroundHandle[] = [];
 const invocations: ModelInvocationHandle[] = [];
 let tripwireCalls = 0;
@@ -17,13 +18,13 @@ let transformFailures = 0;
 let automatic = "";
 let generationHost: RuntimeHost;
 
-async function replay(host: RuntimeHost, input: { request?: LogicalModelRequestV1; stream?: boolean; key?: string; timeout_ms?: number; early_exit?: boolean; preserve_limits?: boolean }) {
+async function replay(host: RuntimeHost, input: { request?: LogicalModelRequestV1; stream?: boolean; key?: string; timeout_ms?: number; early_exit?: boolean; preserve_limits?: boolean; model_alias?: string }) {
   const request = input.request ?? snapshots.at(-1)?.request;
   if (!request) throw new Error("No observed request to replay");
   const job = await startBackground(host, {
     key: input.key ?? `replay-${jobs.length}`,
     service, method: "replay", timeout_ms: input.timeout_ms ?? 15_000,
-    params: { request, stream: input.stream ?? true, early_exit: input.early_exit, preserve_limits: input.preserve_limits },
+    params: { request, stream: input.stream ?? true, early_exit: input.early_exit, preserve_limits: input.preserve_limits, model_alias: input.model_alias },
   });
   jobs.push(job);
   return job;
@@ -52,7 +53,8 @@ export default {
   activate(host) { generationHost = host; },
   async invokeCapability(params, host) {
     if (params.capability === "model.request.transform") {
-      const { request } = params.input as { request: LogicalModelRequestV1 };
+      const { request, origin } = params.input as { request: LogicalModelRequestV1; origin: unknown };
+      transformOrigins.push({ tag: [...request.messages].reverse().find(message => message.role === "user")?.content, origin });
       if ([...request.messages].reverse().find(message => message.role === "user")?.content === "pipeline-isolate") {
         transformFailures++;
         throw new Error("fixture-isolated-transform-error");
@@ -77,7 +79,7 @@ export default {
     const { method, input } = params.input as { method: string; input: Record<string, unknown> };
     let result: unknown;
     switch (method) {
-      case "state": result = { snapshots: snapshots.slice(-2), observed: snapshots.length, phases, jobs, invocations, tripwireCalls, transformFailures }; break;
+      case "state": result = { snapshots: snapshots.slice(-2), observed: snapshots.length, phases, transformOrigins, jobs, invocations, tripwireCalls, transformFailures }; break;
       case "arm": automatic = String(input.tag); result = { armed: true }; break;
       case "start": result = await replay(input.generation_scope ? generationHost : host, input); break;
       case "service": result = await host.call("host.service.call", {
@@ -90,8 +92,8 @@ export default {
     return { output: { result } };
   },
   async invokeService(params, host) {
-    const input = params.params as { request: LogicalModelRequestV1; stream: boolean; early_exit?: boolean; preserve_limits?: boolean };
-    const bounded = { request: input.request, max_output_tokens: input.preserve_limits ? undefined : 31, timeout_ms: 12_000 };
+    const input = params.params as { request: LogicalModelRequestV1; stream: boolean; early_exit?: boolean; preserve_limits?: boolean; model_alias?: string };
+    const bounded = { request: input.request, model_alias: input.model_alias, max_output_tokens: input.preserve_limits ? undefined : 31, timeout_ms: 12_000 };
     if (!input.stream) return await invokeModel(host, bounded);
     if (input.early_exit) {
       const events = [];

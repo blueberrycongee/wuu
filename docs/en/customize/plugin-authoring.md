@@ -269,7 +269,12 @@ are host metadata; supplying copied metadata cannot impersonate an agent request
 
 `invokeModel(host, { request, model_alias?, max_output_tokens?, timeout_ms? })`
 returns `{ response, origin }`. Use an existing configured alias to compare a
-second model. Output-token limits and timeouts are bounded by the host and owning
+second model. An explicit alias supplies its configured options and effort defaults.
+An explicit request effort selects that model's corresponding variant, and explicit
+`provider_options` keys override those defaults. `request.adapter` takes precedence
+over the resulting `provider_options.adapter`. Without an alias, the complete
+request snapshot is preserved rather than refreshed from current configuration.
+Output-token limits and timeouts are bounded by the host and owning
 execution; missing usage does not imply zero cost, and cancellation cannot undo
 an already submitted request. Full requests preserve their output limit unless
 `max_output_tokens` overrides it. The independent-call timeout defaults to

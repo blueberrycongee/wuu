@@ -146,14 +146,13 @@ func (c *modelAdapterClient) StreamChat(ctx context.Context, req providers.ChatR
 	}
 	stream, err := invokePluginModelStream(ctx, c.host, capability.RegisteredCapability, pluginapi.ModelAdapterInput{
 		AdapterID: req.Adapter, Request: logicalModelRequest(req), Stream: true,
-	})
+	}, submission)
 	if err != nil {
 		return nil, errors.Join(err, settlePluginModelSubmission(req, submission, nil, err))
 	}
 	out := make(chan providers.StreamEvent, 32)
 	go func() {
 		defer close(out)
-		var usage *providers.TokenUsage
 		settled := false
 		defer func() {
 			if !settled {
@@ -161,25 +160,20 @@ func (c *modelAdapterClient) StreamChat(ctx context.Context, req providers.ChatR
 				if cause == nil {
 					cause = providers.NewIncompleteStreamError("model adapter stream ended without a terminal event")
 				}
-				_ = settlePluginModelSubmission(req, submission, usage, cause)
+				_ = settlePluginModelSubmission(req, submission, nil, cause)
 			}
 		}()
 		for event := range stream {
-			// This is still the direct adapter's own output. Observation here
-			// precedes all around-call middleware and its presentation changes.
-			if err := req.Attempt.ObserveStreamEvent(event); err != nil {
+			// Usage is recorded at the sink before buffering. Replaying it here
+			// could replace a newer receipt with an older queued event.
+			observation := event
+			observation.Usage = nil
+			if err := req.Attempt.ObserveStreamEvent(observation); err != nil {
 				event = providers.StreamEvent{Type: providers.EventError, Error: err}
-			}
-			if event.Lifecycle != nil && event.Lifecycle.ResetPartial {
-				usage = nil
-			}
-			if event.Usage != nil {
-				value := *event.Usage
-				usage = &value
 			}
 			if event.Type == providers.EventDone || event.Type == providers.EventError {
 				settled = true
-				if err := settlePluginModelSubmission(req, submission, usage, event.Error); err != nil {
+				if err := settlePluginModelSubmission(req, submission, nil, event.Error); err != nil {
 					event = providers.StreamEvent{Type: providers.EventError, Error: err}
 				}
 			}
@@ -190,7 +184,11 @@ func (c *modelAdapterClient) StreamChat(ctx context.Context, req providers.ChatR
 					settled = true
 					_ = req.Attempt.ObserveStreamEvent(providers.StreamEvent{Type: providers.EventError, Error: ctx.Err()})
 				}
-				drainModelReceipt(stream, req.Attempt, event.Type == providers.EventDone)
+				// The sink already owns receipts; only release its producer.
+				go func() {
+					for range stream {
+					}
+				}()
 				return
 			}
 		}
@@ -311,7 +309,7 @@ func invokePluginModelChat(ctx context.Context, host *pluginhost.Host, capabilit
 // Streaming capability invocations share one execution-scoped event sink.
 // Terminal events are held until the callback returns, so an exception after
 // emitting done cannot silently turn an unsuccessful invocation into success.
-func invokePluginModelStream(ctx context.Context, host *pluginhost.Host, capability pluginhost.RegisteredCapability, input any) (<-chan providers.StreamEvent, error) {
+func invokePluginModelStream(ctx context.Context, host *pluginhost.Host, capability pluginhost.RegisteredCapability, input any, submission providers.InferenceSubmission) (<-chan providers.StreamEvent, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -338,6 +336,10 @@ func invokePluginModelStream(ctx context.Context, host *pluginhost.Host, capabil
 				emitErr = err
 				return err
 			}
+			// Only direct adapters receive a physical submission. Preserve their
+			// validated receipts even if callback failure or cancellation prevents
+			// delivery of the held terminal event.
+			submission.ObserveUsage(event.Usage)
 			emitted = true
 			if event.Type == providers.EventDone || event.Type == providers.EventError {
 				terminal = &event
@@ -366,6 +368,7 @@ func invokePluginModelStream(ctx context.Context, host *pluginhost.Host, capabil
 			if err != nil {
 				callErr = err
 			} else {
+				submission.ObserveUsage(response.Usage)
 				events, err := providers.AdaptStreamClient(modelResponseClient{response: response}).StreamChat(ctx, providers.ChatRequest{})
 				if err != nil {
 					callErr = err
@@ -386,7 +389,11 @@ func invokePluginModelStream(ctx context.Context, host *pluginhost.Host, capabil
 			callErr = errors.New("model capability stream ended without a terminal event")
 		}
 		if callErr != nil {
-			terminal = &providers.StreamEvent{Type: providers.EventError, Error: callErr}
+			failure := providers.StreamEvent{Type: providers.EventError, Error: callErr}
+			if terminal != nil {
+				failure.Usage = terminal.Usage
+			}
+			terminal = &failure
 		}
 		mu.Unlock()
 		select {

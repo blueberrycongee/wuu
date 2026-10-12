@@ -162,6 +162,12 @@ async function client(name, method, input = {}) {
   return (await rpc("plugin/client/request", { id: item.id, fingerprint: item.fingerprint,
     request_id: `${name}-${++sequence}`, method, input })).result;
 }
+function adapterSubmissions() {
+  const db = new DatabaseSync(join(home, "sessions/sessions.sqlite3"), { readOnly: true });
+  try {
+    return db.prepare("SELECT operation_id FROM inference_submissions WHERE protocol = ? ORDER BY started_at").all("plugin:fixture.shadow");
+  } finally { db.close(); }
+}
 async function terminalJob(name, jobID) {
   const deadline = Date.now() + 20_000;
   let last;
@@ -201,8 +207,13 @@ try {
       api_key: "synthetic-no-real-key", model: "claude-fixture", models: {
         "claude-fixture": { options: { temperature: 0.42, thinking: { type: "enabled", budgetTokens: 16 }, anthropicCache: "auto" } },
         "claude-fixture-next": { options: { temperature: 0.42 } },
+        "claude-fixture-alias": { options: { adapter: "fixture.shadow", temperature: 0.61,
+          fixture_alias_default: "configured", maxOutputTokens: 4096 },
+          variants: { high: { effort: "high" }, low: { effort: "low" } } },
       } } },
-    agent: { permission_mode: "standard" }, skills: { enabled: false }, ptc: { enabled: false },
+    agent: { permission_mode: "standard", model_aliases: {
+      comparison: { provider: "fixture", model: "claude-fixture-alias", effort: "high" },
+    } }, skills: { enabled: false }, ptc: { enabled: false },
   }));
   for (const name of ["replay", "shadow"]) {
     const path = join(scratch, `${name}.ts`);
@@ -283,6 +294,28 @@ try {
     "plugin-origin inference bypasses observers and never executes returned tool calls",
     "stream has exactly one finish and reports attributable usage");
 
+  const assertOrigin = (origin, threadID) => {
+    assert.equal(origin.kind, "agent");
+    assert.equal(origin.session_id, threadID);
+    assert.equal(origin.thread_id, threadID);
+  };
+  assertOrigin(observed.snapshots.at(-1).origin, thread.id);
+  assert.equal(replay.result.result.origin.session_id, thread.id);
+  assert.equal(replay.result.result.origin.thread_id, thread.id);
+  const { thread: secondThread } = await rpc("thread/start", { model: "claude-fixture", provider: "fixture" });
+  assert.notEqual(secondThread.id, thread.id);
+  await normalTurn(secondThread.id, "pipeline-origin-second"); normalTurns++;
+  for (const [tag, threadID] of [["pipeline-origin-second", secondThread.id], ["pipeline-origin-first-again", thread.id]]) {
+    if (threadID === thread.id) await turn(tag);
+    const replayState = await client("replay", "state");
+    const shadowState = await client("shadow", "state");
+    assertOrigin(replayState.snapshots.at(-1).origin, threadID);
+    assertOrigin(replayState.transformOrigins.at(-1).origin, threadID);
+    assertOrigin(shadowState.middlewareOrigins.at(-1).origin, threadID);
+  }
+  result.origin_threads = [thread.id, secondThread.id];
+  result.checks.push("foreground transform, middleware and observer origins distinguish threads and preserve descendant attribution");
+
   const beforeUncapped = providerCalls.length;
   const unscoped = await client("replay", "start", { request: snapshot, stream: false, generation_scope: true, preserve_limits: true });
   const uncapped = await terminalJob("replay", unscoped.job_id);
@@ -292,6 +325,52 @@ try {
   assert.deepEqual(contextWire(providerCalls.at(-1).body), contextWire(native.body));
   result.checks.push("generation-scoped host starts background work without foreground execution authority",
     "general invocation preserves the original output limit when no override is requested");
+
+  const aliasRequest = { version: 1, model: snapshot.model, messages: [{ role: "user", content: "pipeline-alias" }], tools: [] };
+  const aliasStart = await client("replay", "start", { request: aliasRequest, model_alias: "comparison", stream: false });
+  const aliasResult = await terminalJob("replay", aliasStart.job_id);
+  assert.equal(aliasResult.state, "completed", JSON.stringify(aliasResult));
+  assert.equal(aliasResult.result.response.content, "fixture:shadow-result");
+  const inheritedAlias = (await client("shadow", "state")).adapterRequests.at(-1);
+  assert.equal(inheritedAlias.provider, "fixture");
+  assert.equal(inheritedAlias.model, "claude-fixture-alias");
+  assert.equal(inheritedAlias.adapter, "fixture.shadow");
+  assert.equal(inheritedAlias.provider_options.effort, "high");
+  assert.equal(inheritedAlias.provider_options.temperature, 0.61);
+  assert.equal(inheritedAlias.provider_options.fixture_alias_default, "configured");
+  assert.equal(inheritedAlias.max_tokens, 31);
+  assert(!("maxOutputTokens" in inheritedAlias.provider_options), "alias default bypassed the explicit output cap");
+  result.checks.push("model alias supplies omitted effort, provider options and custom adapter defaults");
+
+  const aliasOptionsStart = await client("replay", "start", { model_alias: "comparison", stream: false,
+    request: { ...aliasRequest, effort: "low", provider_options: { adapter: "fixture.native-delegate", fixture_mode: "native",
+      effort: "max", temperature: 0.19, maxOutputTokens: 900 } } });
+  const aliasOptions = await terminalJob("replay", aliasOptionsStart.job_id);
+  assert.equal(aliasOptions.state, "completed", JSON.stringify(aliasOptions));
+  const overriddenAlias = (await client("shadow", "state")).adapterRequests.at(-1);
+  assert.equal(overriddenAlias.adapter, "fixture.native-delegate");
+  assert.equal(overriddenAlias.provider_options.effort, "max");
+  assert.equal(overriddenAlias.provider_options.temperature, 0.19);
+  assert.equal(overriddenAlias.provider_options.fixture_alias_default, "configured");
+  assert.equal(overriddenAlias.max_tokens, 31);
+  assert.equal(providerCalls.at(-1).body.max_tokens, 31);
+  assert.equal(providerCalls.at(-1).body.model, "claude-fixture-alias");
+  assert.equal(providerCalls.at(-1).body.output_config.effort, "max");
+  result.checks.push("explicit alias invocation options override configured defaults while keeping its output cap");
+
+  const adapterCallsBeforeNative = (await client("shadow", "state")).adapterRequests.length;
+  const aliasNativeStart = await client("replay", "start", { model_alias: "comparison", stream: false,
+    request: { ...aliasRequest, adapter: "native", effort: "low", provider_options: {
+      adapter: "fixture.shadow", temperature: 0.17, maxOutputTokens: 900 } } });
+  const aliasNative = await terminalJob("replay", aliasNativeStart.job_id);
+  assert.equal(aliasNative.state, "completed", JSON.stringify(aliasNative));
+  assert.equal((await client("shadow", "state")).adapterRequests.length, adapterCallsBeforeNative);
+  assert.equal(providerCalls.at(-1).body.model, "claude-fixture-alias");
+  assert.equal(providerCalls.at(-1).body.max_tokens, 31);
+  assert.equal(providerCalls.at(-1).body.temperature, 0.17);
+  assert.equal(providerCalls.at(-1).body.output_config.effort, "low");
+  result.alias = { inherited: inheritedAlias, overridden: overriddenAlias, native: aliasNative };
+  result.checks.push("explicit native adapter selection overrides alias and request option adapter routing");
 
   await client("shadow", "arm", { tag: "pipeline-shadow" });
   await turn("pipeline-shadow");
@@ -321,11 +400,22 @@ try {
   result.adapter_error = errorStatus;
   result.checks.push("custom adapter streaming error remains failure rather than successful finish");
 
+  const beforeLateError = adapterSubmissions().map(submission => submission.operation_id);
   const lateError = await client("shadow", "start", { request: snapshot, mode: "late-error" });
   const lateStatus = await terminalJob("shadow", lateError.job_id);
   assert(lateStatus.result?.error || lateStatus.error, JSON.stringify(lateStatus));
   assert.equal(lateStatus.result.events.filter(event => event.type === "done").length, 0);
+  const lateErrorReceipts = adapterSubmissions().filter(submission => !beforeLateError.includes(submission.operation_id));
+  assert.equal(lateErrorReceipts.length, 1);
   result.checks.push("adapter exception after emitted done cannot masquerade as success");
+
+  const beforeLateCancel = adapterSubmissions().map(submission => submission.operation_id);
+  const lateCancel = await client("shadow", "start", { request: snapshot, mode: "late-cancel" });
+  await fixtureState("shadow", state => state.adapterFinalReceiptHeld === 1, "final adapter receipt acknowledged before cancellation");
+  const lateCancelReceipts = adapterSubmissions().filter(submission => !beforeLateCancel.includes(submission.operation_id));
+  assert.equal(lateCancelReceipts.length, 1);
+  await client("shadow", "cancel", { job_id: lateCancel.job_id });
+  assert.equal((await terminalJob("shadow", lateCancel.job_id)).state, "cancelled");
 
   const nativeErrorRequest = structuredClone(snapshot);
   [...nativeErrorRequest.messages].reverse().find(message => message.role === "user").content = "pipeline-error";
@@ -335,6 +425,7 @@ try {
   assert.equal(nativeErrorStatus.result.events.filter(event => event.type === "done").length, 0);
   result.checks.push("native transport streaming error is surfaced without successful finish");
 
+  const cancellationsBeforeHold = (await client("shadow", "state")).adapterCancelled;
   const heldAdapter = await client("shadow", "start", { request: snapshot, mode: "hold" });
   await fixtureState("shadow", state => state.adapterRequests.some(request => request.provider_options?.fixture_mode === "hold"), "custom adapter started");
   const liveDB = new DatabaseSync(join(home, "sessions/sessions.sqlite3"), { readOnly: true });
@@ -348,7 +439,7 @@ try {
   await client("shadow", "cancel", { job_id: heldAdapter.job_id });
   const adapterCancellation = await terminalJob("shadow", heldAdapter.job_id);
   assert.equal(adapterCancellation.state, "cancelled", JSON.stringify(adapterCancellation));
-  await fixtureState("shadow", state => state.adapterCancelled === 1, "custom adapter AbortSignal");
+  await fixtureState("shadow", state => state.adapterCancelled === cancellationsBeforeHold + 1, "custom adapter AbortSignal");
   result.checks.push("background cancellation delivers AbortSignal to custom adapter execution");
 
   const serviceResult = await client("replay", "service", { request: { ...snapshot, adapter: "fixture.shadow" }, stream: false });
@@ -524,8 +615,19 @@ try {
   }
   const shadowOperations = accounting.operations.filter(operation => operation.owner_id === shadowOwner).map(operation => operation.id);
   const shadowUsage = accounting.submissions.filter(submission => shadowOperations.includes(submission.operation_id) && submission.has_reported_usage);
-  assert.equal(shadowUsage.length, 3, "native delegation duplicated a charged submission");
-  assert.equal(shadowUsage.reduce((total, submission) => total + submission.reported_input_tokens + submission.reported_output_tokens, 0), 26);
+  assert.equal(shadowUsage.length, 5, "native delegation duplicated a charged submission");
+  assert.equal(shadowUsage.reduce((total, submission) => total + submission.reported_input_tokens + submission.reported_output_tokens, 0), 36);
+  result.adapter_terminal_receipts = [];
+  for (const [mode, receipts] of [["throw", lateErrorReceipts], ["cancel", lateCancelReceipts]]) {
+    const submitted = accounting.submissions.filter(submission => submission.operation_id === receipts[0].operation_id);
+    assert.equal(submitted.length, 1, `${mode} duplicated a direct adapter receipt`);
+    result.adapter_terminal_receipts.push({ mode, ...submitted[0] });
+    assert.equal(submitted[0].outcome, "failed");
+    assert.equal(submitted[0].cost_state, "known");
+    assert.equal(submitted[0].reported_input_tokens, 3);
+    assert.equal(submitted[0].reported_output_tokens, 2);
+    result.checks.push(`direct adapter final usage remains known when its callback later ${mode === "throw" ? "throws" : "is cancelled"}`);
+  }
   assert(!accounting.submissions.some(submission => submission.operation_id === delegation.result.origin.operation_id && submission.has_reported_usage), "adapter echoed native usage as a second charged result");
   const unknownCost = accounting.submissions.filter(submission => submission.operation_id === noUsage.result.result.origin.operation_id);
   assert.equal(unknownCost.length, 1);
@@ -549,7 +651,7 @@ try {
   result.checks.push("missing adapter usage stays unknown and native delegation is counted once",
     "middleware usage rewrite cannot replace native submission billing evidence");
   assert(accounting.messages.some(message => /"score"\s*:\s*1\.0/.test(message.tool_result_json)), "raw 1.0 tool result was not exercised");
-  assert.equal(accounting.sessions, 1, "independent inference created a hidden session");
+  assert.equal(accounting.sessions, 2, "independent inference created a hidden session");
   assert.equal(accounting.messages.filter(message => message.role === "user").length, normalTurns);
   assert(!accounting.messages.some(message => message.content.includes("fixture:shadow-result") || message.content.includes(":replay") || message.tool_calls_json.includes("fixture-unexecuted-tool")), "independent inference polluted user history");
   assert(accounting.messages.some(message => message.content.includes("fixture:middleware-cache-hit")), "middleware short-circuit response was not delivered");

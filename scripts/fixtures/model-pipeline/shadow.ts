@@ -14,7 +14,9 @@ const nativeAdapter = "fixture.native-delegate";
 const jobs: BackgroundHandle[] = [];
 const adapterRequests: LogicalModelRequestV1[] = [];
 const phases: Array<{ phase: string; origin: unknown }> = [];
+const middlewareOrigins: Array<{ tag?: string; origin: unknown }> = [];
 let adapterCancelled = 0;
+let adapterFinalReceiptHeld = 0;
 let observerFailures = 0;
 let automatic = "";
 let baseline: unknown;
@@ -75,8 +77,9 @@ export default {
       return { output: {} };
     }
     if (params.capability === "model.middleware") {
-      const input = params.input as { request: LogicalModelRequestV1; continuation_id: string; stream: boolean };
+      const input = params.input as { request: LogicalModelRequestV1; continuation_id: string; stream: boolean; origin: unknown };
       const currentUser = [...input.request.messages].reverse().find(message => message.role === "user")?.content;
+      middlewareOrigins.push({ tag: currentUser, origin: input.origin });
       if (currentUser === "pipeline-mutation") {
         let rejected = false;
         try {
@@ -153,8 +156,19 @@ export default {
         if (input.stream) { await emitResponse(host, response); return { output: {} }; }
         return { output: { response } };
       }
-      if (mode === "late-error") {
-        await emitModelEvent(host, { type: "done", finish_reason: "stop" });
+      if (mode === "late-error" || mode === "late-cancel") {
+        await emitModelEvent(host, { type: "usage", usage: { input_tokens: 1, output_tokens: 1,
+          cache_creation_tokens: 0, cache_read_tokens: 0, cache_creation_unknown: false } });
+        await emitModelEvent(host, { type: "done", finish_reason: "stop", usage: { input_tokens: 3, output_tokens: 2,
+          cache_creation_tokens: 0, cache_read_tokens: 0, cache_creation_unknown: false } });
+        if (mode === "late-cancel") {
+          adapterFinalReceiptHeld++;
+          await new Promise<void>(resolve => {
+            if (execution.signal.aborted) return resolve();
+            execution.signal.addEventListener("abort", () => resolve(), { once: true });
+          });
+          adapterCancelled++;
+        }
         throw new Error("fixture-failure-after-done");
       }
       if (mode === "error") {
@@ -169,7 +183,7 @@ export default {
     const { method, input } = params.input as { method: string; input: Record<string, unknown> };
     let result: unknown;
     switch (method) {
-      case "state": result = { jobs, baseline, adapterRequests: adapterRequests.slice(-8), adapterCancelled, observerFailures, phases, middlewareCalls, middlewareHits, mutationRejections, failureUsageRewrites, budgetAttempts, budgetCallbacks, budgetFailure }; break;
+      case "state": result = { jobs, baseline, adapterRequests: adapterRequests.slice(-8), adapterCancelled, adapterFinalReceiptHeld, observerFailures, phases, middlewareOrigins, middlewareCalls, middlewareHits, mutationRejections, failureUsageRewrites, budgetAttempts, budgetCallbacks, budgetFailure }; break;
       case "arm": automatic = String(input.tag); result = { armed: true }; break;
       case "start": result = await compare(host, input as { request: LogicalModelRequestV1 }); break;
       case "inspect": result = await inspectBackground(host, input as { job_id: string }); break;

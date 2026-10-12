@@ -13,7 +13,7 @@ export const MODEL_ADAPTER_CAPABILITY = "model.adapter" as const;
 /** Portable model input. Credentials, retry state and execution authority stay in the host. */
 export interface LogicalModelRequestV1 {
   readonly version: 1;
-  /** Exact adapter ID; omitted inherits model configuration, "native" selects the host protocol. */
+  /** Exact adapter ID; omitted uses provider_options.adapter or explicit model_alias defaults. "native" selects the host protocol. */
   readonly adapter?: string;
   readonly provider?: string;
   readonly model: string;

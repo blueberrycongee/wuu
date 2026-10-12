@@ -742,7 +742,7 @@ func NewSession(opts Options) (*Session, error) {
 		BeforeRequestContext:     RuntimeContextInjector(agentControl, agentthread.RootPath, toolkitContextBlockProvider(toolkit)),
 		BeforeModelStep:          pluginPreStepInjector(pluginHost, resolvedName, providerCfg.Model, "", rootDir),
 		BeforeRequest:            pluginRequestInterceptor(pluginHost, resolvedName, "", rootDir),
-		WrapModelClient:          pluginModelClientWrapper(pluginHost),
+		WrapModelClient:          pluginModelClientWrapper(pluginHost, ""),
 		InferenceOperationKind:   providers.InferenceOperationAgentRound,
 		InferenceWorkloadProfile: providers.InferenceProfileInteractive,
 		InferenceJournal:         workspaceJournal,
@@ -1538,7 +1538,7 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 	}
 	runner.BeforeModelStep = pluginPreStepInjector(pluginHost, s.ProviderName, s.Model, id, threadRoot)
 	runner.BeforeRequest = pluginRequestInterceptor(pluginHost, s.ProviderName, id, threadRoot)
-	runner.WrapModelClient = pluginModelClientWrapper(pluginHost)
+	runner.WrapModelClient = pluginModelClientWrapper(pluginHost, id)
 	releasedGeneration = true
 	return &ThreadRuntime{
 		StreamRunner:      runner,

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/modelroles"
+	"github.com/blueberrycongee/wuu/internal/modelvariant"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providerfactory"
 	"github.com/blueberrycongee/wuu/internal/providers"
@@ -125,13 +126,9 @@ func (k *modelInvokeInvoker) InvokeService(callCtx context.Context, params plugi
 		cancel()
 		return nil, err
 	}
-	origin := pluginhost.ModelInvocationOriginV1{Kind: "plugin", PluginID: scope.PluginID, OperationID: request.Operation.ID, ParentOperationID: request.Operation.ParentOperationID, SessionID: scope.SessionID, ThreadID: scope.ThreadID, StepIndex: request.StepIndex}
-	if parent, ok := scope.Context.Value(modelRequestOriginKey{}).(pluginhost.ModelInvocationOriginV1); ok {
-		if direct {
-			origin = parent
-		} else if origin.ParentOperationID == "" {
-			origin.ParentOperationID = parent.OperationID
-		}
+	origin := independentModelOrigin(scope, request)
+	if parent, ok := scope.Context.Value(modelRequestOriginKey{}).(pluginhost.ModelInvocationOriginV1); direct && ok {
+		origin = parent
 	}
 	if providers.InferenceJournalFromContext(ctx) == nil && !direct {
 		journal := session.InferenceJournalForOwner("plugin:" + scope.PluginID)
@@ -187,27 +184,13 @@ func (k *modelInvokeInvoker) prepareIndependent(ctx context.Context, session *Se
 	if err != nil {
 		return nil, request, serviceError("invalid_params", err.Error())
 	}
-	limit := request.MaxTokens
-	if input.MaxOutputTokens != 0 {
-		if input.MaxOutputTokens < 1 || input.MaxOutputTokens > 1_000_000 {
-			return nil, request, serviceError("invalid_params", "max_output_tokens must be between 1 and 1000000")
-		}
-		limit = input.MaxOutputTokens
-		request.MaxTokens = limit
-		for _, key := range []string{"maxOutputTokens", "max_output_tokens", "max_tokens", "max_completion_tokens"} {
-			delete(request.ProviderOptions, key)
-		}
-	}
-	request, err = selectedModelAdapter(request)
-	if err != nil {
-		return nil, request, err
-	}
+	input.ModelAlias = strings.TrimSpace(input.ModelAlias)
 	cfg, _, err := session.LoadEffectiveConfig()
 	if err != nil {
 		return nil, request, serviceError("service_unavailable", "model configuration is unavailable")
 	}
 	var selection modelroles.Selection
-	if strings.TrimSpace(input.ModelAlias) != "" {
+	if input.ModelAlias != "" {
 		selection, err = modelroles.ResolveAlias(cfg, input.ModelAlias)
 	} else {
 		roles, resolveErr := modelroles.Resolve(cfg, modelroles.ResolveOptions{ProviderName: request.Provider, Model: request.Model})
@@ -216,6 +199,45 @@ func (k *modelInvokeInvoker) prepareIndependent(ctx context.Context, session *Se
 	}
 	if err != nil {
 		return nil, request, serviceError("invalid_params", "configured model route is unavailable")
+	}
+	if input.ModelAlias != "" {
+		// Retargeting opts into the alias's defaults. An exact replay without
+		// an alias retains its snapshot, regardless of current model settings.
+		defaults := selection.ProviderOptions
+		if request.Effort != "" {
+			// Resolve an explicit effort as a replacement variant rather than
+			// leaking the alias variant's incompatible reasoning options.
+			effort := modelvariant.ResolveForProvider(selection.RuleProvider, selection.RuleProviderConfig, selection.Model, "", request.Effort)
+			defaults, request.Effort = effort.ProviderOptions, effort.LegacyEffort
+		} else {
+			request.Effort = selection.LegacyEffort
+		}
+		options := providers.CloneRequestObject(defaults)
+		if options == nil {
+			options = make(map[string]any)
+		}
+		if request.MaxTokens > 0 {
+			for _, key := range []string{"maxOutputTokens", "max_output_tokens", "max_tokens", "max_completion_tokens"} {
+				delete(options, key)
+			}
+		}
+		for key, value := range request.ProviderOptions {
+			options[key] = value
+		}
+		request.ProviderOptions = options
+	}
+	if input.MaxOutputTokens != 0 {
+		if input.MaxOutputTokens < 1 || input.MaxOutputTokens > 1_000_000 {
+			return nil, request, serviceError("invalid_params", "max_output_tokens must be between 1 and 1000000")
+		}
+		request.MaxTokens = input.MaxOutputTokens
+		for _, key := range []string{"maxOutputTokens", "max_output_tokens", "max_tokens", "max_completion_tokens"} {
+			delete(request.ProviderOptions, key)
+		}
+	}
+	request, err = selectedModelAdapter(request)
+	if err != nil {
+		return nil, request, err
 	}
 	client, err := providerfactory.BuildRuntimeStreamClient(selection.RuleProviderConfig, selection.Provider)
 	if err != nil && (client == nil || request.Adapter == "" || request.Adapter == "native") {
@@ -243,12 +265,26 @@ func (k *modelInvokeInvoker) prepareIndependent(ctx context.Context, session *Se
 	if parent, ok := scope.Context.Value(modelRequestOriginKey{}).(pluginhost.ModelInvocationOriginV1); ok && providers.InferenceWorkflowFromContext(ctx) != nil {
 		request.Operation.ParentOperationID = parent.OperationID
 	}
-	origin := pluginhost.ModelInvocationOriginV1{Kind: "plugin", PluginID: scope.PluginID, SessionID: scope.SessionID, ThreadID: scope.ThreadID}
-	if parent, ok := scope.Context.Value(modelRequestOriginKey{}).(pluginhost.ModelInvocationOriginV1); ok {
-		origin.ParentOperationID = parent.OperationID
-	}
-	wrapped := pluginModelPipelineClient(host, client, origin)
+	wrapped := pluginModelPipelineClient(host, client, independentModelOrigin(scope, request))
 	return wrapped, request, nil
+}
+
+// Retain authenticated attribution without borrowing the parent's execution
+// authority, cancellation, journal or workflow budget.
+func independentModelOrigin(scope pluginhost.ExecutionScope, request providers.ChatRequest) pluginhost.ModelInvocationOriginV1 {
+	origin := pluginhost.ModelInvocationOriginV1{Kind: "plugin", PluginID: scope.PluginID, OperationID: request.Operation.ID, ParentOperationID: request.Operation.ParentOperationID, SessionID: scope.SessionID, ThreadID: scope.ThreadID, StepIndex: request.StepIndex}
+	if parent, ok := scope.Context.Value(modelRequestOriginKey{}).(pluginhost.ModelInvocationOriginV1); ok {
+		if origin.ParentOperationID == "" {
+			origin.ParentOperationID = parent.OperationID
+		}
+		if origin.SessionID == "" {
+			origin.SessionID = parent.SessionID
+		}
+		if origin.ThreadID == "" {
+			origin.ThreadID = parent.ThreadID
+		}
+	}
+	return origin
 }
 
 func (k *modelInvokeInvoker) runStream(ctx context.Context, job *modelInvocation, client providers.StreamClient, request providers.ChatRequest, origin pluginhost.ModelInvocationOriginV1, direct bool) {

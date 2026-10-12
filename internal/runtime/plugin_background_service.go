@@ -35,9 +35,17 @@ func (k *backgroundInvoker) InvokeService(ctx context.Context, params pluginhost
 		// cancellation, journal or workflow budget. Timers have no parent scope.
 		provenance := context.Background()
 		if scope, err := host.ResolveExecution(params.Caller, params.ExecutionID); err == nil {
-			if origin, ok := scope.Context.Value(modelRequestOriginKey{}).(pluginhost.ModelInvocationOriginV1); ok {
-				provenance = context.WithValue(provenance, modelRequestOriginKey{}, origin)
+			origin, ok := scope.Context.Value(modelRequestOriginKey{}).(pluginhost.ModelInvocationOriginV1)
+			if !ok {
+				origin = pluginhost.ModelInvocationOriginV1{Kind: "plugin", PluginID: params.Caller}
 			}
+			if origin.SessionID == "" {
+				origin.SessionID = scope.SessionID
+			}
+			if origin.ThreadID == "" {
+				origin.ThreadID = scope.ThreadID
+			}
+			provenance = context.WithValue(provenance, modelRequestOriginKey{}, origin)
 		}
 		result, err := host.StartBackground(provenance, params.Caller, input)
 		if err != nil {

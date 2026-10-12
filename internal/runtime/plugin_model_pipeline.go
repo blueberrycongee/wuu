@@ -17,12 +17,12 @@ type modelPipelineClient struct {
 	origin pluginhost.ModelInvocationOriginV1
 }
 
-func pluginModelClientWrapper(host *pluginhost.Host) func(providers.StreamClient) providers.StreamClient {
+func pluginModelClientWrapper(host *pluginhost.Host, threadID string) func(providers.StreamClient) providers.StreamClient {
 	if host == nil {
 		return nil
 	}
 	return func(client providers.StreamClient) providers.StreamClient {
-		return pluginModelPipelineClient(host, client, pluginhost.ModelInvocationOriginV1{Kind: "agent"})
+		return pluginModelPipelineClient(host, client, pluginhost.ModelInvocationOriginV1{Kind: "agent", SessionID: threadID, ThreadID: threadID})
 	}
 }
 
@@ -61,6 +61,7 @@ func (c *modelPipelineClient) PrepareInferenceRequest(ctx context.Context, req p
 	}
 	req.Operation = providers.EnsureInferenceOperation(req.Operation, providers.InferenceOperationAgentRound, providers.InferenceProfileInteractive)
 	origin := c.requestOrigin(req)
+	ctx = context.WithValue(ctx, modelRequestOriginKey{}, origin)
 	for _, capability := range c.host.Capabilities(pluginhost.CapabilityModelRequestTransform) {
 		var output pluginhost.ModelRequestMiddlewareOutput
 		if err := c.host.InvokeCapability(ctx, capability, pluginhost.ModelRequestMiddlewareInput{Request: logicalModelRequest(req), Origin: origin}, &output); err != nil {

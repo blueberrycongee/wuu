@@ -88,7 +88,7 @@ func (c *modelMiddlewareClient) StreamChat(ctx context.Context, request provider
 	if err != nil {
 		return nil, err
 	}
-	stream, callErr := invokePluginModelStream(ctx, c.host, c.capability, input)
+	stream, callErr := invokePluginModelStream(ctx, c.host, c.capability, input, providers.InferenceSubmission{})
 	if callErr != nil {
 		return nil, errors.Join(callErr, modelContinuationError(ctx))
 	}
