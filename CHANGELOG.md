@@ -41,6 +41,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Remote MCP POST streams now close when their call completes or is cancelled.
+  An interrupted or malformed response fails only its originating call promptly,
+  without replaying tools or disconnecting healthy calls and notifications.
+
 - Bind saved MCP OAuth credentials to the resource used for login, require
   reauthentication after resource changes, and prevent credentials from reaching
   cross-origin redirects or legacy SSE message endpoints.

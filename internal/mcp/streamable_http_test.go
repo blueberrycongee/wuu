@@ -112,6 +112,8 @@ func TestStreamableHTTPJSONResponseSessionAndVersionHeaders(t *testing.T) {
 // server answers POSTs with a text/event-stream carrying an interleaved
 // notification and then the JSON-RPC response (split across two data lines).
 func TestStreamableHTTPSSEStreamResponse(t *testing.T) {
+	streamClosed := make(chan struct{})
+	release := make(chan struct{})
 	var mu sync.Mutex
 	headersByMethod := map[string]http.Header{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -140,11 +142,18 @@ func TestStreamableHTTPSSEStreamResponse(t *testing.T) {
 			fmt.Fprint(w, "data: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/message\",\"params\":{}}\n\n")
 			// Response split across two data lines: parser must join with \n.
 			fmt.Fprintf(w, "data: {\"jsonrpc\":\"2.0\",\"id\":%d,\ndata: \"result\":{\"tools\":[{\"name\":\"sse-tool\",\"inputSchema\":{\"type\":\"object\"}}]}}\n\n", req.ID)
+			w.(http.Flusher).Flush()
+			select {
+			case <-r.Context().Done():
+				close(streamClosed)
+			case <-release:
+			}
 		default:
 			w.WriteHeader(http.StatusAccepted)
 		}
 	}))
 	defer srv.Close()
+	defer close(release)
 
 	client, err := ConnectStreamableHTTP(context.Background(), ServerConfig{Name: "s", URL: srv.URL})
 	if err != nil {
@@ -157,6 +166,12 @@ func TestStreamableHTTPSSEStreamResponse(t *testing.T) {
 	}
 	if len(tools) != 1 || tools[0].Name != "sse-tool" {
 		t.Fatalf("unexpected tools: %+v", tools)
+	}
+
+	select {
+	case <-streamClosed:
+	case <-time.After(time.Second):
+		t.Fatal("completed call retained its POST response stream")
 	}
 
 	mu.Lock()
@@ -624,6 +639,7 @@ func TestCancelledCallDoesNotWaitForStalledCancelNotification(t *testing.T) {
 	defer func() { cancelNotificationTimeout = previous }()
 
 	release := make(chan struct{})
+	streamClosed := make(chan struct{})
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			w.WriteHeader(http.StatusMethodNotAllowed)
@@ -642,7 +658,13 @@ func TestCancelledCallDoesNotWaitForStalledCancelNotification(t *testing.T) {
 			w.WriteHeader(http.StatusAccepted)
 		}
 		w.(http.Flusher).Flush()
-		<-release
+		select {
+		case <-r.Context().Done():
+			if req.Method == "tools/call" {
+				close(streamClosed)
+			}
+		case <-release:
+		}
 	}))
 	defer srv.Close()
 	defer close(release)
@@ -667,5 +689,10 @@ func TestCancelledCallDoesNotWaitForStalledCancelNotification(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("cancelled call waited for the cancel notification response")
+	}
+	select {
+	case <-streamClosed:
+	case <-time.After(time.Second):
+		t.Fatal("cancelled call retained its POST response stream")
 	}
 }

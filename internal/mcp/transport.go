@@ -16,6 +16,7 @@ var cancelNotificationTimeout = 2 * time.Second
 // Transport is the low-level JSON-RPC transport for MCP.
 type Transport interface {
 	// Send writes a JSON-RPC request or notification to the server.
+	// The context also owns any asynchronous response stream for that message.
 	Send(ctx context.Context, req Request) error
 	// Receive reads the next JSON-RPC response or notification from the server.
 	Receive(ctx context.Context) (Response, error)
@@ -151,6 +152,11 @@ func callWithProtocol(ctx context.Context, t Transport, f *inFlight, method stri
 			return nil, fmt.Errorf("marshal modern MCP request metadata: %w", err)
 		}
 	}
+	// Completion must release request-owned transport resources even when the
+	// caller keeps its context alive for subsequent calls.
+	ctx, finish := context.WithCancel(ctx)
+	defer finish()
+
 	id := nextRequestID()
 	req := Request{JSONRPC: "2.0", ID: id, Method: method, Params: rawParams}
 	ch := f.register(id)

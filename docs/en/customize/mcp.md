@@ -28,6 +28,12 @@ For stdio, Wuu starts the executable directly with `args`, not through a shell. 
 
 For remote servers, `http` and `streamable-http` select streamable HTTP, while `sse` selects legacy SSE. Omitting transport enables HTTP probing with SSE fallback for an incompatible endpoint, not for an unreachable network. An explicitly selected transport does not fall back.
 
+Each streamable HTTP POST response belongs to its call. Completing or cancelling
+a call closes its response stream. If the stream ends before a result arrives,
+or sends an invalid or oversized message, that call fails promptly. Wuu does not
+replay a tool call after a broken stream because its effects may already have
+occurred. Other calls and the server notification stream stay connected.
+
 Remote `headers` are literal header values. Native `mcp_servers` does not expand `${VAR}` placeholders. Keep secrets out of committed configuration and do not assume a placeholder is a credential reference. `enabled: false` retains a definition without connecting at startup.
 
 ## Manage the connection

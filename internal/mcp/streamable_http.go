@@ -220,21 +220,24 @@ func (t *StreamableHTTPTransport) post(ctx context.Context, req Request, body []
 		}
 	}
 
-	// Tie the HTTP request to the transport lifetime so an SSE response body
-	// that outlives this Send is not killed when the caller's ctx ends, while
-	// still honoring caller cancellation during the synchronous phase.
+	// A POST response stream belongs to its request, including after Send
+	// returns. Keep caller cancellation attached until the body is released;
+	// transport shutdown must still interrupt every outstanding request.
 	reqCtx, cancelReq := context.WithCancel(t.ctx)
 	detach := context.AfterFunc(ctx, cancelReq)
+	finish := func() {
+		detach()
+		cancelReq()
+	}
 
 	hreq, err := http.NewRequestWithContext(reqCtx, http.MethodPost, t.endpoint, bytes.NewReader(body))
 	if err != nil {
-		detach()
-		cancelReq()
+		finish()
 		return fmt.Errorf("streamable HTTP POST %s: %w", t.endpoint, err)
 	}
 	t.applyHeaders(hreq, session, version)
 	if err := applyToken(hreq, t.authProvider, ctx, forceRefresh); err != nil {
-		cancelReq()
+		finish()
 		return err
 	}
 	if version == PreferredProtocolVersion && req.Method != "" {
@@ -248,8 +251,7 @@ func (t *StreamableHTTPTransport) post(ctx context.Context, req Request, body []
 
 	resp, err := t.client.Do(hreq)
 	if err != nil {
-		detach()
-		cancelReq()
+		finish()
 		return fmt.Errorf("streamable HTTP POST %s: %w", t.endpoint, err)
 	}
 
@@ -261,11 +263,6 @@ func (t *StreamableHTTPTransport) post(ctx context.Context, req Request, body []
 			t.sessionID = sid
 			t.mu.Unlock()
 		}
-	}
-
-	finish := func() {
-		detach()
-		cancelReq()
 	}
 
 	if resp.StatusCode == http.StatusAccepted {
@@ -323,19 +320,18 @@ func (t *StreamableHTTPTransport) post(ctx context.Context, req Request, body []
 		return nil
 	case "text/event-stream":
 		// The stream carries one or more JSON-RPC messages and SHOULD
-		// eventually include the response for the POSTed request. Consume it
-		// in the background; from here on its lifetime is the transport's.
-		detach()
+		// eventually include the response for the POSTed request. Reading in
+		// the background lets the shared read loop answer reverse requests.
 		t.mu.Lock()
 		if t.closed {
 			t.mu.Unlock()
-			cancelReq()
+			finish()
 			resp.Body.Close()
 			return fmt.Errorf("streamable HTTP transport for %s is closed", t.endpoint)
 		}
 		t.wg.Add(1)
 		t.mu.Unlock()
-		go t.consumeStream(resp.Body, cancelReq, req)
+		go t.consumeStream(reqCtx, resp.Body, finish, req)
 		return nil
 	default:
 		drainAndClose(resp.Body)
@@ -430,17 +426,29 @@ func (t *StreamableHTTPTransport) observeInitialize(origin Request, msg Response
 	t.startListener()
 }
 
-// consumeStream reads JSON-RPC messages off a POST-response SSE stream until
-// it ends. origin is the request that opened the stream (needed to sniff an
-// initialize response delivered over SSE).
-func (t *StreamableHTTPTransport) consumeStream(body io.ReadCloser, cancel context.CancelFunc, origin Request) {
+// consumeStream keeps a POST body alive only while its originating call is
+// pending. A broken stream is a failure of that call, not of the shared session.
+func (t *StreamableHTTPTransport) consumeStream(ctx context.Context, body io.ReadCloser, finish context.CancelFunc, origin Request) {
 	defer t.wg.Done()
-	defer cancel()
+	defer finish()
 	defer body.Close()
+	isCall := (origin.hasID || origin.ID != 0) && origin.Method != ""
+	fail := func(err error) {
+		if !isCall || ctx.Err() != nil {
+			return
+		}
+		// Do not replay the POST: the server may already have performed effects.
+		t.deliverContext(ctx, Response{
+			JSONRPC: "2.0", ID: origin.ID, StringID: origin.StringID,
+			stringID: origin.stringID, hasID: true,
+			Error: &RPCError{Code: -32000, Message: fmt.Sprintf("streamable HTTP POST %s: response stream ended before reply: %v", t.endpoint, err)},
+		})
+	}
 	reader := bufio.NewReader(body)
 	for {
 		event, err := readSSEEvent(reader)
 		if err != nil {
+			fail(err)
 			return
 		}
 		if strings.TrimSpace(event.data) == "" {
@@ -448,10 +456,20 @@ func (t *StreamableHTTPTransport) consumeStream(body io.ReadCloser, cancel conte
 		}
 		var msg Response
 		if err := json.Unmarshal([]byte(event.data), &msg); err != nil {
-			continue // tolerate non-JSON-RPC events (keep-alives etc.)
+			fail(fmt.Errorf("invalid JSON-RPC event: %w", err))
+			return
+		}
+		if msg.JSONRPC != "2.0" || (msg.Method == "" && (!msg.hasID || (msg.Result == nil && msg.Error == nil))) {
+			fail(errors.New("invalid JSON-RPC event"))
+			return
 		}
 		t.observeInitialize(origin, msg)
-		if !t.deliver(msg) {
+		if !t.deliverContext(ctx, msg) {
+			return
+		}
+		// Server request IDs occupy the other direction's namespace. Even a
+		// reverse request with the same ID must be delivered before continuing.
+		if isCall && msg.Method == "" && msg.hasID && msg.ID == origin.ID && msg.StringID == origin.StringID && msg.stringID == origin.stringID {
 			return
 		}
 	}
@@ -460,7 +478,13 @@ func (t *StreamableHTTPTransport) consumeStream(body io.ReadCloser, cancel conte
 // deliver pushes a message to Receive. Returns false when the transport shut
 // down before the message could be handed over.
 func (t *StreamableHTTPTransport) deliver(msg Response) bool {
+	return t.deliverContext(t.ctx, msg)
+}
+
+func (t *StreamableHTTPTransport) deliverContext(ctx context.Context, msg Response) bool {
 	select {
+	case <-ctx.Done():
+		return false
 	case t.inbox <- msg:
 		return true
 	case <-t.ctx.Done():
