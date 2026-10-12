@@ -591,39 +591,42 @@ struct MessageForkRequest: Identifiable {
     func settingsSelection(for thread: ChatThread) -> ThreadSettings {
         pendingSettings[thread.id] ?? thread.settings
     }
-    func loadModelChoices(threadID: String) async throws -> [RemoteProvider] {
-        guard connected, let remote, live?.id == threadID else { throw CancellationError() }
+    func loadSettingsChoices(threadID: String) async throws -> (providers: [RemoteProvider], engines: [RemoteEngine], defaultEngine: String, defaults: ThreadSettings) {
+        guard connected, let remote, let live, live.id == threadID else { throw CancellationError() }
         let stamp = epoch, selection = opening
         let result = try await remote.call("config/read")
-        guard epoch == stamp, opening == selection, self.remote === remote else { throw CancellationError() }
-        if draftWorkspace != nil, pendingSettings[threadID] == nil {
-            let engines = try await remote.call("engine/list")
-            guard epoch == stamp, opening == selection, self.remote === remote, live?.id == threadID,
-                  draftWorkspace != nil, !sending else { throw CancellationError() }
-            let preferred = engines["settings"]["default_engine"].string ?? ""
-            let engine = engines["engines"].array.first { $0["id"].string == preferred && $0["enabled"].bool }?["id"].string ?? "wuu"
-            self.live?.engine = engine
-            self.live?.settings = engine == "wuu" ? ThreadSettings([
-                "model_provider": result["provider"], "model": result["model"],
-                "model_variant": result["variant"], "model_effort": result["effort"],
-                "permission_mode": result["permissions"]["mode"]
-            ]) : ThreadSettings(["permission_mode": "unconfined"])
-        }
-        return result["providers"].array.map(RemoteProvider.init)
+        let inventory = try await remote.call("engine/list", params: ["cwd": .string(live.cwd)])
+        guard epoch == stamp, opening == selection, self.remote === remote, self.live?.id == threadID else { throw CancellationError() }
+        let engines = inventory["engines"].array.map(RemoteEngine.init)
+        let preferred = inventory["settings"]["default_engine"].string ?? ""
+        let defaultEngine = engines.first { $0.id == preferred && $0.available }?.id ?? "wuu"
+        let defaults = ThreadSettings([
+            "model_provider": result["provider"], "model": result["model"],
+            "model_variant": result["variant"], "model_effort": result["effort"],
+            "permission_mode": result["permissions"]["mode"]
+        ])
+        return (result["providers"].array.map(RemoteProvider.init), engines, defaultEngine, defaults)
     }
-    func updateSettings(_ settings: ThreadSettings, threadID: String) async throws {
-        guard connected, !refreshing, !sending, let remote, let live, live.id == threadID, !live.running, !live.readOnly, !live.archived,
-              live.engine.isEmpty || live.engine == "wuu" else { throw NativeError.invalid("请在会话空闲且电脑在线时修改设置") }
+    func updateSettings(_ settings: ThreadSettings, threadID: String, engine: String) async throws {
+        guard connected, !refreshing, !sending, let remote, let live, live.id == threadID, !live.running, !live.readOnly, !live.archived else {
+            throw NativeError.invalid("请在会话空闲且电脑在线时修改设置")
+        }
+        let params = try settings.updateParams(threadID: threadID, engine: engine,
+                                               resetModel: settings.model.isEmpty && !live.settings.model.isEmpty)
         if draftWorkspace != nil {
+            self.live?.engine = engine
             self.live?.settings = settings
             pendingSettings[threadID] = settings
             return
+        }
+        guard engine == (live.engine.isEmpty ? "wuu" : live.engine) else {
+            throw NativeError.invalid("已有会话不能更换引擎，请新建会话")
         }
         // A failed first-send update must retry the user's latest saved choice.
         if pendingSettings[threadID] != nil { pendingSettings[threadID] = settings }
         let stamp = epoch, selection = opening
         // The response describes global defaults. The ordered thread/updated event owns this selection.
-        _ = try await remote.call("config/model/update", params: settings.updateParams(threadID: threadID))
+        _ = try await remote.call("config/model/update", params: params)
         guard epoch == stamp, opening == selection, self.remote === remote else { throw CancellationError() }
         pendingSettings.removeValue(forKey: threadID)
     }
@@ -679,7 +682,8 @@ struct MessageForkRequest: Identifiable {
             perform { try await self.loadThreads() }
         }
         if let settings = pendingSettings[thread.id] {
-            _ = try await remote.call("config/model/update", params: settings.updateParams(threadID: thread.id))
+            _ = try await remote.call("config/model/update", params: settings.updateParams(threadID: thread.id,
+                engine: thread.engine.isEmpty ? "wuu" : thread.engine, resetModel: settings.model.isEmpty && !thread.settings.model.isEmpty))
             guard epoch == stamp, opening == selection, self.remote === remote else { throw CancellationError() }
             pendingSettings.removeValue(forKey: thread.id)
         }
