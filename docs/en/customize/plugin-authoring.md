@@ -398,6 +398,14 @@ Use this only for reentrant handlers: protect shared mutable state and propagate
 
 Tool and capability calls have a host-owned execution ID. The SDK supplies `execution.signal`; pass it to cancellable operations and stop work when it aborts. Returning from the invocation closes its scope. Late progress cannot reopen a completed execution, and cancellation does not wait for the plugin to acknowledge it.
 
+The Go and TypeScript runtimes reject cancelled tool, capability, and service
+requests before entering their handlers, including requests waiting behind other
+work or a lifecycle barrier. Cancelling an execution does not skip lifecycle
+callbacks needed for cleanup.
+Once a handler has started, cancellation remains cooperative: propagate the Go
+context or TypeScript signal to operations that support it. Cancellation cannot
+undo completed effects or forcibly interrupt arbitrary plugin code.
+
 `reportExecutionUpdate`, `invokeTool`, `askUserQuestions`, and `importArtifact` call versioned services and require the corresponding declarations. An orchestrator uses `activity.orchestrator=true` and `execution.invoke-tool` to delegate effects through the normal tool path. Keep a child `call_id` stable across retries with identical tool name and arguments; do not reuse it for different work.
 
 The `security.authorize` service may further restrict an operation, but cannot relax the host's mandatory boundary. A `sandbox.process` provider must supply real filesystem enforcement; it is not a command approval dialog. See [permissions](../reference/permissions.md) before implementing either.

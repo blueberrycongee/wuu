@@ -328,6 +328,11 @@ func TestExecutionCancelPreemptsRunning(t *testing.T) {
 			request:    `{"id":"invoke","method":"service.invoke","params":{"service":"search.provider","method":"query","caller":"notes","execution_id":"exec-1"}}`,
 			wantResult: map[string]string{"state": "cancelled"},
 		},
+		{
+			name:       "Capability",
+			request:    `{"id":"invoke","method":"capability.invoke","params":{"capability":"agent.request.transform","input":{},"execution_id":"exec-1"}}`,
+			wantResult: map[string]any{"output": map[string]string{"state": "cancelled"}},
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			reader, writer := io.Pipe()
@@ -335,11 +340,17 @@ func TestExecutionCancelPreemptsRunning(t *testing.T) {
 			defer writer.Close()
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
-			responses := make(responseSink, 4)
+			responses := make(responseSink, 8)
 			started := make(chan error, 1)
 			observedCancel := make(chan error, 1)
 			done := make(chan error, 1)
+			var queuedHandlerCalled atomic.Bool
+			var shutdownCalled atomic.Bool
 			waitForCancel := func(ctx context.Context, executionID string) {
+				if executionID == "exec-queued" {
+					queuedHandlerCalled.Store(true)
+					return
+				}
 				err := ctx.Err()
 				if executionID != "exec-1" {
 					err = fmt.Errorf("execution ID = %q, want exec-1", executionID)
@@ -357,6 +368,14 @@ func TestExecutionCancelPreemptsRunning(t *testing.T) {
 					InvokeService: func(ctx context.Context, _ Host, call ServiceCall) (json.RawMessage, error) {
 						waitForCancel(ctx, call.ExecutionID)
 						return json.RawMessage(`{"state":"cancelled"}`), nil
+					},
+					InvokeCapability: func(ctx context.Context, _ Host, call CapabilityCall) (json.RawMessage, error) {
+						waitForCancel(ctx, call.ExecutionID)
+						return json.RawMessage(`{"state":"cancelled"}`), nil
+					},
+					Shutdown: func(context.Context) error {
+						shutdownCalled.Store(true)
+						return nil
 					},
 				})
 			}()
@@ -380,9 +399,6 @@ func TestExecutionCancelPreemptsRunning(t *testing.T) {
 				t.Helper()
 				select {
 				case r := <-responses:
-					if r.Error != nil {
-						t.Fatalf("response %q: %+v", r.ID, r.Error)
-					}
 					return r
 				case <-time.After(3 * time.Second):
 					t.Fatal("missing runtime response")
@@ -397,6 +413,15 @@ func TestExecutionCancelPreemptsRunning(t *testing.T) {
 			if err := await(started, "handler start"); err != nil {
 				t.Fatalf("handler started with invalid execution: %v", err)
 			}
+			// Cancel the second request while the first handler owns the queue.
+			// Its handler must never enter, even if it ignores cancellation.
+			queued := strings.ReplaceAll(test.request, `"invoke"`, `"queued"`)
+			queued = strings.ReplaceAll(queued, `"exec-1"`, `"exec-queued"`)
+			write(queued)
+			write(`{"id":"cancel-queued","method":"execution.cancel","params":{"execution_id":"exec-queued"}}`)
+			if r := next(); r.ID != "cancel-queued" || r.Error != nil {
+				t.Fatalf("queued cancellation: %+v", r)
+			}
 			// Keep the input open and the parent context live: only this frame
 			// can cancel the already-running handler, bypassing serial dispatch.
 			write(`{"id":"cancel","method":"execution.cancel","params":{"execution_id":"exec-1"}}`)
@@ -410,8 +435,14 @@ func TestExecutionCancelPreemptsRunning(t *testing.T) {
 				t.Fatal(err)
 			}
 			want := map[string]string{"invoke": string(wantResult), "cancel": `{}`}
-			for range 2 {
+			for range 3 {
 				r := next()
+				if r.ID == "queued" {
+					if r.Error == nil || r.Error.Message != context.Canceled.Error() || queuedHandlerCalled.Load() {
+						t.Fatalf("cancelled queued request entered handler: response=%+v called=%v", r, queuedHandlerCalled.Load())
+					}
+					continue
+				}
 				result, ok := want[r.ID]
 				if !ok || string(r.Result) != result {
 					t.Fatalf("unexpected response: id=%q result=%s, remaining=%v", r.ID, r.Result, want)
@@ -419,8 +450,8 @@ func TestExecutionCancelPreemptsRunning(t *testing.T) {
 				delete(want, r.ID)
 			}
 			write(`{"id":"shutdown","method":"shutdown"}`)
-			if r := next(); r.ID != "shutdown" {
-				t.Fatalf("shutdown response = %+v", r)
+			if r := next(); r.ID != "shutdown" || r.Error != nil || !shutdownCalled.Load() {
+				t.Fatalf("shutdown response = %+v, cleanup called = %v", r, shutdownCalled.Load())
 			}
 			writer.Close()
 			if err := await(done, "runtime shutdown"); err != nil {

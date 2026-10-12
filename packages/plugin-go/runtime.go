@@ -1393,6 +1393,11 @@ func dispatch(ctx context.Context, client *Client, handler Handler, request rpcR
 		if err := json.Unmarshal(request.Params, &call); err != nil {
 			return nil, false, err
 		}
+		// Cancellation may arrive while this request waits in the dispatch
+		// queue. Do not enter user code after its execution has been cancelled.
+		if err := ctx.Err(); err != nil {
+			return nil, false, err
+		}
 		result, err := handler.ExecuteTool(ctx, client, call)
 		if err != nil {
 			return nil, false, err
@@ -1406,6 +1411,9 @@ func dispatch(ctx context.Context, client *Client, handler Handler, request rpcR
 		}
 		var call CapabilityCall
 		if err := json.Unmarshal(request.Params, &call); err != nil {
+			return nil, false, err
+		}
+		if err := ctx.Err(); err != nil {
 			return nil, false, err
 		}
 		value, err := handler.InvokeCapability(ctx, client, call)
@@ -1424,6 +1432,9 @@ func dispatch(ctx context.Context, client *Client, handler Handler, request rpcR
 		}
 		var call ServiceCall
 		if err := json.Unmarshal(request.Params, &call); err != nil {
+			return nil, false, err
+		}
+		if err := ctx.Err(); err != nil {
 			return nil, false, err
 		}
 		value, err := handler.InvokeService(ctx, client, call)

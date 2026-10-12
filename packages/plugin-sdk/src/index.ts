@@ -1478,15 +1478,19 @@ export async function handleRuntimeRequest(
         return { id: request.id, result: null };
       case "capability.invoke":
         if (!plugin.invokeCapability) throw new Error("capability.invoke is not implemented");
+        // Read the live signal after queue/lifecycle waiting, before user code.
+        execution.signal.throwIfAborted();
         return { id: request.id, result: await plugin.invokeCapability(request.params, executionHost, execution) };
       case "service.invoke":
         if (!plugin.invokeService) throw new Error("service.invoke is not implemented");
+        execution.signal.throwIfAborted();
         return { id: request.id, result: await plugin.invokeService(request.params, executionHost, execution) };
       case "service.changed":
         await plugin.serviceChanged?.(request.params, host);
         return { id: request.id, result: null };
       case "tool.execute":
         if (!plugin.executeTool) throw new Error("tool.execute is not implemented");
+        execution.signal.throwIfAborted();
         return { id: request.id, result: await plugin.executeTool(request.params, executionHost, execution) };
       case "shutdown":
         await plugin.shutdown?.();

@@ -41,6 +41,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Prevent cancelled queued plugin tool, capability, and service calls from
+  entering their handlers while preserving lifecycle cleanup.
 - Keep the sidebar's recent-history range stable while a first message creates
   its conversation, avoiding a temporary extra row and subsequent layout jump,
   including while saving a draft's custom name.
