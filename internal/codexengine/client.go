@@ -41,8 +41,8 @@ type Client struct {
 	notify      map[string][]*notifHandler
 	requests    map[string][]*requestHandler
 	closed      bool
-	done        chan struct{}
 	closeErr    error
+	done        chan struct{}
 }
 
 // notifHandler is one registered notification handler with a unique token so
@@ -69,10 +69,10 @@ type pendingRequest struct {
 func NewClient(t *Transport) *Client {
 	return &Client{
 		transport: t,
-		done:      make(chan struct{}),
 		pending:   make(map[int64]*pendingRequest),
 		notify:    make(map[string][]*notifHandler),
 		requests:  make(map[string][]*requestHandler),
+		done:      make(chan struct{}),
 	}
 }
 
@@ -81,9 +81,32 @@ func NewClient(t *Transport) *Client {
 // lines until the first handler attaches).
 func (c *Client) Start() {
 	c.transport.OnClose(func(reason string) {
-		c.shutdown(fmt.Errorf("codex app-server closed: %s", reason))
+		c.terminate(fmt.Errorf("codex app-server closed: %s", reason))
 	})
 	c.transport.OnLine(c.handleLine)
+}
+
+// terminate settles both RPC waiters and turn streams, including failures that
+// happen after turn/start has already returned its response.
+func (c *Client) terminate(err error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		return
+	}
+	c.closed = true
+	c.closeErr = err
+	for id, pending := range c.pending {
+		pending.fail(err)
+		delete(c.pending, id)
+	}
+	close(c.done)
+}
+
+func (c *Client) terminalError() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.closeErr
 }
 
 // OnNotification registers a handler for a notification method. The returned
@@ -205,6 +228,12 @@ func (p *pendingRequest) fail(err error) {
 
 // handleLine dispatches one incoming NDJSON message.
 func (c *Client) handleLine(line string) {
+	c.mu.Lock()
+	closed := c.closed
+	c.mu.Unlock()
+	if closed {
+		return
+	}
 	var msg incomingMessage
 	if err := json.Unmarshal([]byte(line), &msg); err != nil {
 		c.fatal(fmt.Sprintf("codex app-server sent invalid JSON: %v", err))
@@ -308,36 +337,15 @@ func (c *Client) writeError(id json.RawMessage, rpcErr *RPCError) {
 	_ = c.transport.WriteLine(context.Background(), string(payload))
 }
 
-func (c *Client) shutdown(err error) {
-	c.mu.Lock()
-	if c.closed {
-		c.mu.Unlock()
-		return
-	}
-	c.closed = true
-	c.closeErr = err
-	pending := c.pending
-	c.pending = make(map[int64]*pendingRequest)
-	close(c.done)
-	c.mu.Unlock()
-	for _, request := range pending {
-		request.fail(err)
-	}
-}
-
-func (c *Client) err() error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.closeErr
-}
-
 func (c *Client) fatal(reason string) {
-	c.shutdown(errors.New(reason))
-	_ = c.transport.Close()
+	c.terminate(errors.New(reason))
+	// A malformed line is detected on the stdout reader. Reaping the child must
+	// not wait for that same reader before this callback can return.
+	go func() { _ = c.transport.Close() }()
 }
 
 // Close releases all waiting turns and requests before closing the transport.
 func (c *Client) Close() error {
-	c.shutdown(errors.New("codex app-server client is closed"))
+	c.terminate(errors.New("codex app-server client closed"))
 	return c.transport.Close()
 }

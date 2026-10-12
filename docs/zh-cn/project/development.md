@@ -41,6 +41,21 @@ make build-go
 
 `make install` 从当前检出安装 CLI。当前发布工作流只打包 macOS arm64 桌面预览版；存在 Windows CI 和打包脚本，不代表已经发布 Windows 版本。用户可用的发行方式见[安装](../getting-started/installation.md)。
 
+### 原生引导端到端检查
+
+构建核心后，使用 Node 22.13 或更新版本运行
+`WUU_E2E_CORE=bin/wuu node scripts/native-steering-e2e.mjs`。
+该脚本启动真实 stdio app-server、受控的原生子进程和临时 SQLite 存储，
+检查当前轮次补充、轮次 ID 约束、延迟确认、拒绝、取消、持久化故障、重启恢复
+和不支持协议时的排队回退。结果、协议记录和被测二进制哈希保存在
+`.tmp/e2e/native-steering/`；可用 `WUU_STEER_E2E_OUTPUT` 指定其他输出目录。
+检查只使用合成数据，不调用外部模型，也不验证桌面渲染或已安装的原生引擎。
+
+构建桌面渲染器后，运行 `cd desktop && electron scripts/native-steering-e2e.cjs`，
+在正式 UI 中检查恢复出的未确认输入：只读恢复、完整复制、普通待处理项的操作，
+以及宽窗口默认字号和窄窗口大字号布局。结果和截图保存在
+`desktop/out/e2e/native-steering/`；可用 `WUU_STEER_UI_OUTPUT` 更改目录。
+
 ## 选择相关检查
 
 | 命令 | 检查或构建内容 |
@@ -245,3 +260,15 @@ macOS 拉取请求测试原生辅助程序，推送到 `main` 时还生成桌面
 `cmd/wuu` 和 `internal` 包含 CLI 与 Go 核心；`desktop` 负责 Electron main/preload、renderer UI、IPC 和打包。`packages/protocol` 保存共享客户端协议类型，`clients/core` 实现无 UI 的远程行为。插件 SDK 和内置实现位于 `packages/plugin-sdk`、`packages/plugin-go` 和 `plugins`。
 
 Electron API 应留在桌面外壳。新外壳应通过[协议（英文）](../../en/integrations/app-server-protocol.md)与 `wuu app-server` 通信，不应依赖桌面内部实现或另建一套核心。行为变化时同步更新公开文档的中英文版本，放置和检查规则见[文档维护（英文）](../../../docs/README.md)。
+
+
+## 原生历史协议端到端验证
+
+先运行 `make build-go` 构建 CLI，再运行
+`go build -o bin/fakecodex ./internal/codexengine/testdata/fakecodex` 构建本地协议
+替身，最后运行 `node scripts/native-history-e2e.mjs`。脚本启动真实 Wuu 与
+fake Codex 子进程，并使用临时存储，不使用供应商凭据或真实推理。
+覆盖原生分支、编辑截止点、事务失败、不支持的响应、旧记录标识、父子隔离
+与重启恢复。结果和原始协议日志保存在 `.tmp/e2e/native-history/`，可通过
+`WUU_HISTORY_E2E_OUTPUT` 更改目录。这验证应用服务器协议，不代表桌面渲染
+或真实供应商 CLI 已通过验收。

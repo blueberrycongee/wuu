@@ -8,7 +8,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/agentengine"
 )
 
-func (s *Session) handleUserInput(ctx context.Context, ready <-chan struct{}, turnID *string, raw json.RawMessage) (any, error) {
+func (s *Session) handleUserInput(ctx context.Context, sub *turnSubscription, raw json.RawMessage) (any, error) {
 	var params ToolRequestUserInputParams
 	if err := json.Unmarshal(raw, &params); err != nil {
 		return nil, &RPCError{Code: -32602, Message: "invalid user input request"}
@@ -20,9 +20,15 @@ func (s *Session) handleUserInput(ctx context.Context, ready <-chan struct{}, tu
 	select {
 	case <-ctx.Done():
 		return response, nil
-	case <-ready:
+	case <-sub.ready:
 	}
-	if params.TurnID == "" || params.TurnID != *turnID || strings.TrimSpace(params.ItemID) == "" {
+	sub.mu.Lock()
+	turnID, stopped := sub.turnID, sub.nativeDone
+	sub.mu.Unlock()
+	if stopped || ctx.Err() != nil {
+		return response, nil
+	}
+	if params.TurnID == "" || params.TurnID != turnID || strings.TrimSpace(params.ItemID) == "" {
 		return nil, &RPCError{Code: -32602, Message: "user input request does not belong to the active turn"}
 	}
 	if s.userInput == nil {

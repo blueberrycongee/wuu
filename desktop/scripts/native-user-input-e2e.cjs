@@ -144,7 +144,7 @@ async function run() {
   const duplicate = await evaluate(async q => { try { await window.wuu.cancelUserQuestion(q.request_id); return false; } catch { return true; } }, q);
   check('late duplicate reply cannot reuse a settled question', () => assert(duplicate));
 
-  for (const scenario of ['optional', 'optional-custom', 'optional-text-only', 'optional-closed', 'text-only', 'legacy', 'early', 'cancel', 'optional-skip']) {
+  for (const scenario of ['optional', 'optional-custom', 'optional-text-only', 'optional-closed', 'text-only', 'legacy', 'early', 'early-wait-for-answer', 'cancel', 'optional-skip']) {
     const started = await begin(scenario), pending = await until(async () => (await questions())[0], scenario);
     await until(() => evaluate(() => document.querySelector('.user-question-card')), 'rendered ' + scenario);
     if (scenario === 'optional-custom' || scenario === 'optional-text-only') {
@@ -160,7 +160,7 @@ async function run() {
       if (scenario === 'optional-closed') check('native option-only request has no unrequested free-text action', () => assert.equal(pending.questions[0].allow_custom, undefined));
       if (scenario === 'optional-closed') assert.equal(await evaluate(() => Boolean(document.querySelector('.user-question-offer-custom'))), false);
       await click('.user-question-card [role="radio"]', 1);
-      if (scenario === 'early') {
+      if (scenario.startsWith('early')) {
         await until(() => evaluate(() => document.querySelectorAll('.user-question-card [role="radio"]')[1]?.getAttribute('aria-checked') === 'true'), 'early option selected');
         await click('.user-question-custom', 1); await main.webContents.insertText('Early reply preserved');
         await until(() => evaluate(() => !document.querySelector('.user-question-submit').disabled), 'early form complete');
@@ -174,6 +174,10 @@ async function run() {
       if (scenario === 'optional-custom' || scenario === 'optional-text-only') assert.deepEqual(got.response.result.answers['approval.command_execution'].answers, ['Use the custom approach']);
       assert.equal(native().filter(row => row.started && row.threadID === started.threadID).at(-1).started, started.started);
       if (scenario === 'legacy') assert.equal(pending.mode, 'ask');
+      if (scenario === 'early-wait-for-answer') {
+        const records = native();
+        assert(records.findIndex(row => row.response && row.turnID === started.started) < records.findIndex(row => row.startResponse === started.started), 'question must be answered before the native start response exists');
+      }
     });
   }
   for (const scenario of ['secret', 'stale', 'wrong-thread', 'duplicate']) {

@@ -1,10 +1,13 @@
 #!/usr/bin/env node
 // A deterministic local native protocol peer for the user-input E2E journey.
 // No credentials, external services, or inference are used.
-import { appendFileSync, existsSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { createInterface } from "node:readline";
 const turns = new Map(), requests = new Map(), threads = new Map();
+const historyPath = process.env.WUU_INPUT_NATIVE_LOG + ".history.json";
+const nativeHistory = existsSync(historyPath) ? JSON.parse(readFileSync(historyPath, "utf8")) : {};
+const saveHistory = () => writeFileSync(historyPath, JSON.stringify(nativeHistory));
 const configured = () => process.env.WUU_INPUT_NATIVE_CONFIG && existsSync(process.env.WUU_INPUT_NATIVE_CONFIG)
   ? JSON.parse(readFileSync(process.env.WUU_INPUT_NATIVE_CONFIG, "utf8")) : {};
 function loadThread(threadID, overrides) {
@@ -21,6 +24,8 @@ function finish(turnID, status = "completed") {
   const turn = turns.get(turnID);
   if (!turn || turn.finished) return;
   turn.finished = true;
+  nativeHistory[turn.threadID].find(entry => entry.id === turnID).status = status;
+  saveHistory();
   const text = "Question journey completed: " + turn.scenario;
   write({ method: "item/completed", params: { threadId: turn.threadID, turnId: turnID, item: { id: "answer-" + turnID, type: "agentMessage", text, phase: "final_answer" } } });
   write({ method: "turn/completed", params: { threadId: turn.threadID, turn: { id: turnID, status } } });
@@ -31,6 +36,13 @@ const control = createServer(async (req, res) => {
   if (body.action === "finish" || body.action === "finish-disconnect") finish(body.turnID);
   res.end("ok", () => {
     if (body.action === "disconnect" || body.action === "finish-disconnect") {
+      if (body.action === "disconnect") {
+        // The fixture persists a stopped native state without delivering its
+        // notification. The replacement must read this proof before new input.
+        const turn = turns.get(body.turnID);
+        nativeHistory[turn.threadID].find(entry => entry.id === body.turnID).status = "interrupted";
+        saveHistory();
+      }
       process.stdout.write("", () => { control.close(); process.exit(0); });
     }
   });
@@ -42,7 +54,15 @@ createInterface({ input: process.stdin }).on("line", line => {
   log({ message });
   if (!message.method) {
     const turnID = requests.get(message.id);
-    if (turnID) { log({ response: message, turnID, scenario: turns.get(turnID).scenario }); finish(turnID); }
+    if (turnID) {
+      const turn = turns.get(turnID);
+      log({ response: message, turnID, scenario: turn.scenario });
+      if (turn.deferredStart !== undefined) {
+        log({ startResponse: turnID });
+        reply(turn.deferredStart, { turn: { id: turnID } });
+      }
+      finish(turnID);
+    }
     return;
   }
   switch (message.method) {
@@ -63,11 +83,13 @@ createInterface({ input: process.stdin }).on("line", line => {
       else log({ warmResume: p.threadId, retained: threads.get(p.threadId) });
       reply(message.id, { thread: { id: p.threadId }, model: "fixture" }); break;
     }
-    case "thread/read": reply(message.id, { thread: { id: p.threadId, turns: [] } }); break;
+    case "thread/read": reply(message.id, { thread: { id: p.threadId, turns: nativeHistory[p.threadId] ?? [] } }); break;
     case "turn/start": {
       const id = `native-turn-${process.pid}-${++turnIndex}`;
       const scenario = p.input.map(v => v.text ?? "").join(" ").trim();
       turns.set(id, { threadID: p.threadId, scenario });
+      (nativeHistory[p.threadId] ??= []).push({ id, status: "inProgress", items: [] });
+      saveHistory();
       const availability = threads.get(p.threadId);
       if (!availability?.defaultMode || !availability?.toolEnabled) {
         log({ started: id, threadID: p.threadId, scenario, gated: true, availability });
@@ -84,6 +106,12 @@ createInterface({ input: process.stdin }).on("line", line => {
       if (!scenario.includes("legacy")) params.isBlocking = !scenario.includes("optional");
       const request = { id: requestID, method: "item/tool/requestUserInput", params };
       log({ started: id, threadID: p.threadId, scenario, request });
+      if (scenario === "early-wait-for-answer") {
+        turns.get(id).deferredStart = message.id;
+        write({ method: "turn/started", params: { threadId: p.threadId, turn: { id } } });
+        write(request);
+        break;
+      }
       if (scenario.includes("early")) write(request);
       reply(message.id, { turn: { id } });
       if (!scenario.includes("early")) write(request);

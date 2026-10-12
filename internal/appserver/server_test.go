@@ -6247,6 +6247,42 @@ func TestServerThreadForkAtAssistantItem(t *testing.T) {
 	if forkStarted.Thread.ID != fork.ID {
 		t.Fatalf("unexpected fork started notification: %+v", forkStarted)
 	}
+
+	// An in-memory source includes its unpersisted system prompt. The fork's
+	// returned durable addresses must still match the rows that were committed.
+	memorySource := newThreadState("memory-fork-source", []providers.ChatMessage{
+		{Role: "system", Content: "unpersisted instructions"},
+		{Role: "user", Content: "memory prompt"},
+		{Role: "assistant", Content: "memory answer", Phase: providers.MessagePhaseFinalAnswer},
+	}, "fake-provider", "fake-model", rt.RootDir, false, time.Now())
+	srv.mu.Lock()
+	srv.threads[memorySource.ID] = memorySource
+	srv.mu.Unlock()
+	memoryTurn, memoryItem := finalAnswerItemForForkTest(t, memorySource.Turns, "memory answer")
+	raw, err = json.Marshal(map[string]any{"id": "memory-fork", "method": MethodThreadFork, "params": ThreadForkParams{
+		ThreadID: memorySource.ID, TurnID: memoryTurn.ID, ItemID: memoryItem.ID,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.handleLine(context.Background(), raw); err != nil {
+		t.Fatal(err)
+	}
+	memoryResponse := responseByID(t, parseOutput(t, out.String()), "memory-fork")
+	if memoryResponse["error"] != nil {
+		t.Fatalf("fork in-memory source: %+v", memoryResponse["error"])
+	}
+	memoryFork := remarshal[ThreadForkResult](t, memoryResponse["result"]).Thread
+	memoryHistory, err := loadChatMessages(rt.SessionDir, memoryFork.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	storedTurns := turnsFromHistory(memoryFork.ID, memoryHistory, time.Now())
+	for index, item := range memoryFork.Turns[0].Items {
+		if item.Seq != storedTurns[0].Items[index].Seq {
+			t.Fatalf("fork item %q returned seq %d, persisted seq %d", item.ID, item.Seq, storedTurns[0].Items[index].Seq)
+		}
+	}
 }
 
 func TestServerThreadForkDoesNotReuseSourceToolInvocationOwnership(t *testing.T) {

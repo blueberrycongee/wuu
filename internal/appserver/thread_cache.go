@@ -154,7 +154,7 @@ func cachedThreadStillIdle(th *threadState) bool {
 }
 
 func cachedThreadExecutionActiveLocked(th *threadState) bool {
-	if th.running || th.executionLease != nil || th.admissionReserved {
+	if th.running || th.executionLease != nil || th.admissionReserved || th.nativeHistoryMutation {
 		return true
 	}
 	return th.execRuntime != nil &&

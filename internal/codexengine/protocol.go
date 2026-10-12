@@ -12,6 +12,7 @@ const (
 	MethodThreadResume         = "thread/resume"
 	MethodThreadUnsubscribe    = "thread/unsubscribe"
 	MethodTurnStart            = "turn/start"
+	MethodTurnSteer            = "turn/steer"
 	MethodTurnInterrupt        = "turn/interrupt"
 	MethodAccountRateLimits    = "account/rateLimits/read"
 	MethodCommandExecApproval  = "item/commandExecution/requestApproval"
@@ -209,11 +210,13 @@ type UserInput struct {
 
 // TurnStartParams starts a turn on an existing thread.
 type TurnStartParams struct {
+	// CWD overrides the loaded thread for this turn and subsequent turns.
+	CWD                   string          `json:"cwd,omitempty"`
 	ServiceTier           *string         `json:"serviceTier,omitempty"`
 	ThreadID              string          `json:"threadId"`
 	Input                 []UserInput     `json:"input"`
 	Model                 string          `json:"model,omitempty"`
-	ReasoningEffort       ReasoningEffort `json:"reasoningEffort,omitempty"`
+	Effort                ReasoningEffort `json:"effort,omitempty"`
 	ApprovalPolicy        ApprovalPolicy  `json:"approvalPolicy,omitempty"`
 	SandboxPolicy         *SandboxPolicy  `json:"sandboxPolicy,omitempty"`
 	RuntimeWorkspaceRoots []string        `json:"runtimeWorkspaceRoots,omitempty"`
@@ -228,6 +231,18 @@ type TurnStartResponse struct {
 // TurnInfo is the turn envelope.
 type TurnInfo struct {
 	ID string `json:"id"`
+}
+
+// TurnSteerParams binds supplemental user input to one active native turn.
+type TurnSteerParams struct {
+	ThreadID            string      `json:"threadId"`
+	ExpectedTurnID      string      `json:"expectedTurnId"`
+	ClientUserMessageID string      `json:"clientUserMessageId"`
+	Input               []UserInput `json:"input"`
+}
+
+type TurnSteerResponse struct {
+	TurnID string `json:"turnId"`
 }
 
 // TurnInterruptParams cancels an in-flight turn.

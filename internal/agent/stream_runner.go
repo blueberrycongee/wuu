@@ -46,8 +46,8 @@ type StreamRunner struct {
 	// CompactionRegistry resolves a generation-owned compactor for each run.
 	CompactionRegistry  *CompactionRegistry
 	CompactionNoteStore CompactionNoteStore
-	// ArchiveHistory commits original in-run messages before a fresh context
-	// releases them. App-server installs this per turn for persisted sessions.
+	// ArchiveHistory commits in-run messages before accepted steering is
+	// dispatched or a fresh context releases them. App-server installs this per turn for persisted sessions.
 	ArchiveHistory     HistoryArchiveFunc
 	CommitFreshContext FreshContextCommitFunc
 	MaxSteps           int
@@ -617,8 +617,8 @@ func (r *StreamRunner) runModelToolLoop(ctx context.Context, history []providers
 		}
 	}
 	cfg.ForkCompactionNote = r.compactionNoteFork(cfg.RetainedRequestContext)
+	cfg.ArchiveHistory = r.ArchiveHistory
 	if contextWindowsEnabled {
-		cfg.ArchiveHistory = r.ArchiveHistory
 		cfg.FreshContextTokens = r.freshContextTargetTokens(compactThresholdTokens)
 		cfg.FreshContext = func(ctx context.Context, messages []providers.ChatMessage, head, fixed, target int) ([]providers.ChatMessage, error) {
 			if err := ctx.Err(); err != nil {

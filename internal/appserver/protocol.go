@@ -2123,18 +2123,20 @@ type TurnSteerParams struct {
 }
 
 type TurnSteerResult struct {
-	TurnID string `json:"turn_id"`
+	TurnID   string `json:"turn_id"`
+	Delivery string `json:"delivery,omitempty"`
 }
 
 type HeldUserMessage struct {
-	ID             string                         `json:"id"`
-	ThreadID       string                         `json:"thread_id"`
-	Origin         string                         `json:"origin"`
-	Prompt         string                         `json:"prompt,omitempty"`
-	Images         []TurnStartImage               `json:"images,omitempty"`
-	Files          []TurnStartFile                `json:"files,omitempty"`
-	ContentParts   []providers.MessageContentPart `json:"content_parts,omitempty"`
-	ActiveDocument *ActiveDocument                `json:"active_document,omitempty"`
+	DeliveryUnconfirmed bool                           `json:"delivery_unconfirmed,omitempty"`
+	ID                  string                         `json:"id"`
+	ThreadID            string                         `json:"thread_id"`
+	Origin              string                         `json:"origin"`
+	Prompt              string                         `json:"prompt,omitempty"`
+	Images              []TurnStartImage               `json:"images,omitempty"`
+	Files               []TurnStartFile                `json:"files,omitempty"`
+	ContentParts        []providers.MessageContentPart `json:"content_parts,omitempty"`
+	ActiveDocument      *ActiveDocument                `json:"active_document,omitempty"`
 }
 
 type TurnUnsteerParams struct {
