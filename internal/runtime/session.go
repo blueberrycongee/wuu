@@ -1514,10 +1514,11 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 	// available for explicit diagnostics, but do not persist receipts by default.
 	runner.BeforeRequestContext = RuntimeContextInjector(agentControl, agentthread.RootPath, toolkitContextBlockProvider(kit))
 	pluginHost := s.PluginHost
-	pluginHooks := s.HookDispatcher
 	if generation != nil {
 		pluginHost = generation.host
-		pluginHooks = generation.hooks
+		// Embedded sessions without a managed generation own their callbacks;
+		// only replace hooks when adopting a generation-owned dispatcher.
+		bindPluginCompactionHooks(runner, generation.hooks, id, threadRoot)
 		if runner.CompactionRegistry == nil {
 			runner.CompactionRegistry = generation.compactions
 		}
@@ -1527,7 +1528,6 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 			})
 		}
 	}
-	bindPluginCompactionHooks(runner, pluginHooks, id, threadRoot)
 	runner.BeforeModelStep = pluginPreStepInjector(pluginHost, s.ProviderName, s.Model, id, threadRoot)
 	runner.BeforeRequest = pluginRequestInterceptor(pluginHost, s.ProviderName, id, threadRoot)
 	releasedGeneration = true
