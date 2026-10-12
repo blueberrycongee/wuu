@@ -20,7 +20,7 @@ await mkdir(output, { recursive: true });
 const scratch = await mkdtemp(join(output, "run-")), home = join(scratch, "state");
 await mkdir(home);
 const env = { PATH: process.env.PATH, HOME: scratch, WUU_HOME: home, WUU_NODE_EXECUTABLE: process.execPath };
-const events = new EventEmitter(), messages = [], calls = [], sent = [], closed = [];
+const events = new EventEmitter(), messages = [], calls = [], sent = [], closed = [], responseTags = new Map();
 const result = { started_at: new Date().toISOString(), checks: [], status: "failed",
   limitations: ["Loopback synthetic inference; no real provider, user credentials or live billing.", "Disposable unconfined test profile; process-sandbox enforcement is not under test."] };
 let child, stderr = "", sequence = 0;
@@ -28,11 +28,18 @@ const source = 'text("literal: 中文 \\n \\t \\\\ ${value} `tick`");';
 const tool = { name: "run_code", description: "Run source text.", freeform: true,
   input_schema: { type: "object", properties: { input: { type: "string" } }, required: ["input"], additionalProperties: false } };
 const models = {
-  "gpt-fixture": {}, "portable-fixture": {},
-  "gpt-fixture-off": { options: { freeform_tool: false } },
+  "gpt-fixture": { id: "gpt-5" }, "portable-fixture": {},
+  "gpt-fixture-off": { id: "gpt-5", options: { freeform_tool: false } },
   "portable-fixture-on": { options: { freeform_tool: true } },
-  "friendly-model": { id: "portable-wire", options: { freeform_tool: false } },
+  "friendly-model": { id: "portable-wire" },
+  "gpt-5.4": { id: "portable-wire" }, "friendly-supported": { id: "gpt-5.2" },
+  ...Object.fromEntries(["gpt-4.1", "gpt-4o", "gpt-oss-120b", "openai/unknown-model", "codex-unknown-model",
+    "gpt-5-unknown", "gpt-5.99", "gpt-5-2025-08-07", "gpt-5.3-codex", "openai/gpt-5", "gpt-6-astra"].map(id => [id, {}])),
 };
+const routes = [["gpt-fixture", true], ["portable-fixture", false], ["gpt-fixture-off", false], ["portable-fixture-on", true],
+  ["gpt-4.1", false], ["gpt-4o", false], ["gpt-oss-120b", false], ["openai/unknown-model", false],
+  ["codex-unknown-model", false], ["gpt-5-unknown", false], ["gpt-5.99", false], ["gpt-5.4", false],
+  ["friendly-supported", true], ["gpt-5-2025-08-07", true], ["gpt-5.3-codex", true], ["openai/gpt-5", true], ["gpt-6-astra", true]];
 
 function waitFor(event, values, predicate, label, timeout = 20_000) {
   const previous = values.find(predicate);
@@ -65,7 +72,7 @@ async function stop() {
 }
 function handle(body, transport, send, onClose) {
   const tag = body.input?.filter(item => item.role === "user").map(item => typeof item.content === "string"
-    ? item.content : item.content?.map(part => part.text ?? "").join("")).findLast(text => text?.startsWith("wire-")) ?? "auxiliary";
+    ? item.content : item.content?.map(part => part.text ?? "").join("")).findLast(text => text?.startsWith("wire-")) ?? responseTags.get(body.previous_response_id) ?? "auxiliary";
   const call = { index: calls.length, transport, tag, body };
   calls.push(call); events.emit("provider", call);
   onClose(() => { closed.push(tag); events.emit("closed", tag); });
@@ -79,6 +86,7 @@ function handle(body, transport, send, onClose) {
     : { type: "message", id: "msg_current", role: "assistant", content: [{ type: "output_text", text: "fixture:completed" }] };
   const response = { id: `resp_${calls.length}`, status: "completed", model: body.model, output: [current],
     usage: { input_tokens: 7, output_tokens: 3, total_tokens: 10 } };
+  responseTags.set(response.id, tag);
   if (transport === "unary") { send(response); return; }
   send({ type: "response.output_item.added", output_index: 0, item: current });
   send({ type: "response.output_item.done", output_index: 0, item: current });
@@ -110,7 +118,7 @@ try {
   const service = stream_transport => ({ type: "openai-compatible", wire_api: "responses", stream_transport,
     base_url: `http://127.0.0.1:${provider.address().port}`, api_key: "synthetic-no-real-key", model: "gpt-fixture", models });
   await writeFile(config, JSON.stringify({ default_provider: "openai-named-bridge",
-    providers: { "openai-named-bridge": service("sse"), websocket: service("websocket") },
+    providers: { "openai-named-bridge": service("sse"), websocket: service("websocket"), cached: service("websocket-cached") },
     agent: { permission_mode: "unconfined", model_aliases: { fallback: { provider: "openai-named-bridge", model: "friendly-model" } } },
     skills: { enabled: false }, ptc: { enabled: true, node_executable: process.execPath } }));
   await writeFile(pluginPath, `
@@ -151,7 +159,7 @@ export default {
       { role: "assistant", tool_calls: [{ id: "call_history", name: "run_code", kind: "custom", provider_item_id: "ctc_history", arguments: JSON.stringify({ input: source }) }] },
       { role: "tool", tool_call_id: "call_history", tool_result_kind: "custom", content: "historical output" }] });
   for (const transport of ["unary", "sse", "websocket"]) {
-    for (const [model, custom] of [["gpt-fixture", true], ["portable-fixture", false], ["gpt-fixture-off", false], ["portable-fixture-on", true]]) {
+    for (const [model, custom] of routes) {
       const tag = `wire-${transport}-${model}`;
       const original = request(model, tag, transport === "websocket" ? "websocket" : "openai-named-bridge");
       // Aliases opt in to configured defaults; exact logical requests preserve
@@ -162,7 +170,8 @@ export default {
       const call = calls.find(item => item.tag === tag), wire = call.body;
       assert.equal(call.transport, transport);
       const declaration = wire.tools.find(item => item.name === "run_code");
-      assert.equal(declaration.type, custom ? "custom" : "function");
+      assert.equal(declaration.type, custom ? "custom" : "function", `wire capability: ${model}`);
+      assert.equal(wire.model, models[model].id ?? model);
       assert.deepEqual(wire.tool_choice, { type: declaration.type, name: "run_code" });
       assert.equal(wire.freeform_tool, undefined, "local option leaked to provider");
       assert(custom ? !declaration.parameters : declaration.parameters.properties.input.type === "string");
@@ -183,22 +192,29 @@ export default {
   assert.equal(aliasWire.model, "portable-wire");
   assert.equal(aliasWire.tools.find(item => item.name === "run_code").type, "function");
   assert.equal(aliasWire.freeform_tool, undefined);
-  result.checks.push("model alias uses API identity and configured compatibility option");
+  result.checks.push("model alias uses API identity without relying on an explicit compatibility option");
   const summaries = initialized.providers.find(provider => provider.name === "openai-named-bridge").models;
-  for (const [model, custom] of [["gpt-fixture", true], ["portable-fixture", false], ["gpt-fixture-off", false], ["portable-fixture-on", true], ["friendly-model", false]]) {
+  for (const [model, custom] of [...routes, ["friendly-model", false]]) {
     assert.equal(!!summaries.find(item => item.id === model)?.capabilities?.freeform_tool, custom, `capability summary: ${model}`);
   }
   result.checks.push("capability summaries use actual API identity and compatibility options");
-  for (const model of ["gpt-fixture", "portable-fixture", "gpt-fixture-off", "portable-fixture-on"]) {
-    const { thread } = await rpc("thread/start", { model, provider: "openai-named-bridge" });
-    const { turn } = await rpc("turn/start", { thread_id: thread.id, prompt: `wire-agent-${model}` });
-    const complete = await waitFor("message", messages, value => value.method === "turn/completed" && value.params?.turn?.id === turn.id, `agent ${model}`);
-    assert.equal(complete.params.turn.status, "completed", JSON.stringify(complete));
-    const wire = calls.filter(item => item.tag === `wire-agent-${model}`).at(-1).body;
-    const actual = wire.input.find(item => item.call_id === "call_current" && item.type.endsWith("_output"));
-    assert(actual?.output.includes("literal: 中文"), `PTC did not execute: ${JSON.stringify(actual)}`);
-    assert(!actual.output.includes("Error"), actual.output);
-    result.checks.push(`${model}: normal turn discovers, executes and replays PTC through completion`);
+  for (const providerName of ["openai-named-bridge", "cached"]) {
+    for (const [model, custom] of routes.slice(0, 4)) {
+      const { thread } = await rpc("thread/start", { model, provider: providerName });
+      const { turn } = await rpc("turn/start", { thread_id: thread.id, prompt: `wire-agent-${providerName}-${model}` });
+      const complete = await waitFor("message", messages, value => value.method === "turn/completed" && value.params?.turn?.id === turn.id, `agent ${model}`);
+      assert.equal(complete.params.turn.status, "completed", JSON.stringify(complete));
+      const journey = calls.filter(item => item.tag === `wire-agent-${providerName}-${model}`);
+      const wire = journey.at(-1).body;
+      if (providerName === "cached") assert(wire.previous_response_id, "tool result did not reuse WebSocket continuation");
+      const trace = (await readFile(complete.params.trace_path, "utf8")).trim().split("\n").map(line => JSON.parse(line));
+      const recorded = trace.find(item => item.type === "turn" && item.data?.turn_id === turn.id);
+      assert.equal(!!recorded?.data?.model_profile?.freeform_tool, custom, `trace capability: ${model}`);
+      const actual = wire.input.find(item => item.call_id === "call_current" && item.type.endsWith("_output"));
+      assert(actual?.output.includes("literal: 中文"), `PTC did not execute: ${JSON.stringify(actual)}`);
+      assert(!actual.output.includes("Error"), actual.output);
+      result.checks.push(`${providerName}/${model}: normal turn executes, replays PTC and records actual capability`);
+    }
   }
   const cancellation = rpcRaw("plugin/client/request", params("wire-cancel", { request: request("portable-fixture", "wire-cancel"), stream: true }));
   await waitFor("provider", calls, item => item.tag === "wire-cancel", "cancellable inference");
