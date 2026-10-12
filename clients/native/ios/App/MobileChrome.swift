@@ -47,8 +47,7 @@ struct MobileCircleButton: View {
 struct MobileComposer: View {
     @Environment(\.mobileTextSize) private var textSize
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Binding var text: String
-    @Binding var attachments: [InputAttachment]
+    @Bindable var draft: ComposerDraft
     var focused: FocusState<Bool>.Binding
     let model: AppModel
     var enabled = true
@@ -58,16 +57,16 @@ struct MobileComposer: View {
     var identifier = "native-composer"
     var stop: (() -> Void)? = nil
     var send: () -> Void
-    private var canSend: Bool { enabled && !sending && (!text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty) }
+    private var canSend: Bool { enabled && !sending && (!draft.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !draft.attachments.isEmpty) }
     var body: some View {
         VStack(spacing: 8) {
-            if !attachments.isEmpty {
+            if !draft.attachments.isEmpty {
                 ScrollView(.horizontal) {
                     HStack(spacing: 8) {
-                        ForEach(attachments) { file in
+                        ForEach(draft.attachments) { file in
                             if file.isImage {
                                 DraftImage(attachment: file).overlay(alignment: .topTrailing) {
-                                    Button { attachments.removeAll { $0.id == file.id } } label: {
+                                    Button { draft.attachments.removeAll { $0.id == file.id } } label: {
                                         // A small visible mark with a full-size touch target.
                                         Image(systemName: "xmark").font(.system(size: 10, weight: .bold)).padding(5)
                                             .background(.regularMaterial, in: Circle()).padding(4)
@@ -75,7 +74,7 @@ struct MobileComposer: View {
                                     }.accessibilityLabel("移除附件 " + file.filename).disabled(sending)
                                 }
                             } else {
-                            Button { attachments.removeAll { $0.id == file.id } } label: {
+                            Button { draft.attachments.removeAll { $0.id == file.id } } label: {
                                 HStack(spacing: 6) {
                                     Image(systemName: "doc")
                                     Text(file.filename).lineLimit(1).frame(maxWidth: 150)
@@ -90,13 +89,19 @@ struct MobileComposer: View {
             }
             HStack(alignment: .bottom, spacing: 8) {
                 // Drafts stay editable while the computer reconnects; only sending waits.
-                AttachmentPicker(attachments: $attachments, model: model).disabled(sending)
+                AttachmentPicker(attachments: $draft.attachments, model: model).disabled(sending)
                 HStack(alignment: .bottom, spacing: 4) {
-                    TextField(placeholder, text: $text, axis: .vertical)
+                    TextField(placeholder, text: $draft.text, axis: .vertical)
                         .focused(focused)
                         .textInputAutocapitalization(.never).autocorrectionDisabled()
                         .font(.system(size: textSize)).lineLimit(1...6)
                         .padding(.leading, 15).padding(.vertical, 12)
+                        .frame(minHeight: 44)
+                        .background {
+                            // Let the visible insets focus the field without intercepting native text gestures.
+                            Color.clear.contentShape(Rectangle())
+                                .onTapGesture { focused.wrappedValue = true }
+                        }
                         .accessibilityIdentifier(identifier)
                     if let stop {
                         Button(action: stop) {
@@ -126,6 +131,6 @@ struct MobileComposer: View {
                     .animation(chromeAnimation(reduceMotion), value: canSend)
             }
         }.padding(.horizontal, 12).padding(.vertical, 8)
-            .animation(chromeAnimation(reduceMotion), value: attachments.count)
+            .animation(chromeAnimation(reduceMotion), value: draft.attachments.count)
     }
 }
