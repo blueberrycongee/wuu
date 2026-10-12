@@ -57,7 +57,23 @@ export function applyAppearance(value: AppearancePreferences): void {
   const uiSize = Number.parseFloat(root.style.getPropertyValue("--conversation-message-font-size")) || MESSAGE_FLOW_FONT_SIZE_RANGE.default;
   root.style.setProperty("--appearance-scale", String(uiSize / 14));
   root.style.setProperty("--appearance-code-size", `${preferences.codeSize}px`);
-  root.style.setProperty("--appearance-ui-font", fontFamily(preferences.uiFont, "system-ui, sans-serif"));
+  const uiFont = fontFamily(preferences.uiFont, "system-ui, sans-serif");
+  root.style.setProperty("--appearance-ui-font", uiFont);
+  // Center control labels on the rendered capital band, not the font's
+  // asymmetric ascent/descent box. H keeps the baseline stable across labels;
+  // measuring at a large size avoids whole-pixel rounding at small UI sizes.
+  // Some local fonts report a cap-height that differs from their actual ink.
+  let textOffset = 0;
+  if (typeof OffscreenCanvas !== "undefined") {
+    const context = new OffscreenCanvas(1, 1).getContext("2d");
+    if (context) {
+      context.font = `500 1000px ${uiFont}`;
+      const metrics = context.measureText("H");
+      textOffset = (metrics.actualBoundingBoxAscent - metrics.actualBoundingBoxDescent
+        - metrics.fontBoundingBoxAscent + metrics.fontBoundingBoxDescent) / 2000;
+    }
+  }
+  root.style.setProperty("--appearance-ui-text-offset", String(textOffset));
   root.style.setProperty("--appearance-content-font", "var(--appearance-ui-font)");
   root.style.setProperty("--appearance-code-font", fontFamily(preferences.codeFont, 'ui-monospace, "SFMono-Regular", Consolas, monospace'));
   root.dataset.appearanceMotion = preferences.motion;
@@ -87,6 +103,12 @@ export function observeAppearance(callback: () => void): () => void {
 
 export function startAppearanceSync(): () => void {
   const update = () => applyAppearance(readAppearance());
+  // Re-measure if a requested face becomes available after the first paint.
+  document.fonts?.addEventListener("loadingdone", update);
   update();
-  return observeAppearance(update);
+  const stopObserving = observeAppearance(update);
+  return () => {
+    stopObserving();
+    document.fonts?.removeEventListener("loadingdone", update);
+  };
 }
