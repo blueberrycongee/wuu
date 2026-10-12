@@ -1084,7 +1084,7 @@ export function App(): JSX.Element {
         const pane = currentState.thread.id === threadID ? "primary"
           : currentState.secondaryThread.id === threadID ? "secondary" : undefined;
         if (pane) {
-          setSplitComposerDrafts((current) => ({ ...current, [pane]: draft }));
+          setSplitComposerDrafts((current) => ({ ...current, [pane]: cloneComposerDraft(draft) }));
           return;
         }
       }
@@ -4308,7 +4308,7 @@ export function App(): JSX.Element {
       if (stillTarget && !composerDraftHasContent(latestDraft)) {
         rememberCollapsedPromptParts(submittedThread?.id ?? sessionTabID, recoveryDraft.prompt, recoveryDraft.contentParts);
         if (pane) {
-          setSplitComposerDrafts((current) => ({ ...current, [pane]: recoveryDraft }));
+          setSplitComposerDrafts((current) => ({ ...current, [pane]: cloneComposerDraft(recoveryDraft) }));
         } else {
           restorePrimaryComposerDraft(recoveryDraft);
         }

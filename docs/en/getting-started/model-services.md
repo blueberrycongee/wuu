@@ -134,6 +134,11 @@ including all images, files, text, and metadata, must fit within 64 MiB. Base64
 encoding increases file sizes by about one third. If the request is too large,
 Wuu keeps the draft so you can remove attachments or shorten the message and retry.
 
+If an attachment cannot be read while preparing it, its card stays in the draft.
+Choose **Retry** to read the same selected file again, or remove it and select a
+replacement. A successful retry does not send the message. These unsent files
+remain in memory only; reattach them after closing or reloading the window.
+
 Path-only delivery counts the reference text toward context, not the file's
 disk or Base64 size. Native images use image estimates; other admitted native
 media currently use a bounded fallback without page/frame accounting. Provider

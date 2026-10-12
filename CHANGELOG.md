@@ -41,6 +41,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Keep unreadable composer attachments in their original draft with an explicit
+  retry action, including attachments restored after a failed send. Retrying
+  prepares the file again without sending the message automatically. If sending
+  fails after preparation completes, restore the ready attachment and preview.
+
 - Keep the sidebar's recent-history range stable while a first message creates
   its conversation, avoiding a temporary extra row and subsequent layout jump,
   including while saving a draft's custom name.

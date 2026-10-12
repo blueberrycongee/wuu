@@ -84,8 +84,9 @@ function initialSplitComposerDrafts(): Record<
 function cloneComposerDraft(draft: ComposerDraftState): ComposerDraftState {
   return {
     prompt: draft.prompt,
-    images: draft.images.map((image) => ({ ...image })),
-    files: draft.files.map((file) => ({ ...file })),
+    // A send or navigation snapshot may predate encoding completion.
+    images: draft.images.map((image) => ({ ...(image.preparation?.result ?? image) })),
+    files: draft.files.map((file) => ({ ...(file.preparation?.result ?? file) })),
     ...(draft.selections?.length ? {
       selections: draft.selections.map((selection) => ({
         ...selection,
