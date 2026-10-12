@@ -4,7 +4,7 @@ public struct ConversationRow: Identifiable, Sendable, Equatable {
     public var id: String { messages[0].id }
     public var messages: [ChatMessage]
     public var isProcessGroup: Bool { messages[0].isProcess }
-    public var processActive: Bool { isProcessGroup && messages.contains { $0.turnActive } }
+    public private(set) var processActive = false
     public var isToolGroup: Bool { !isProcessGroup && messages[0].tool != nil }
 
     /// Preserve turn boundaries and image publication order when folding completed work.
@@ -21,6 +21,11 @@ public struct ConversationRow: Identifiable, Sendable, Equatable {
             } else {
                 rows.append(ConversationRow(messages: [message]))
             }
+        }
+        // A turn can contain several replies separated by resumed work. Only the
+        // trailing process is current; earlier groups already led to an answer.
+        if let last = rows.indices.last {
+            rows[last].processActive = rows[last].isProcessGroup && rows[last].messages.contains { $0.turnActive }
         }
         return rows
     }
