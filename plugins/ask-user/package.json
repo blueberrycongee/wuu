@@ -5,5 +5,14 @@
   "type": "module",
   "scripts": {
     "build": "node ../../scripts/build-bundled-plugins.mjs --plugin=ask-user"
+  },
+  "wuu": {
+    "dev": {
+      "watch": [
+        "../../packages/plugin-sdk/src",
+        "../../scripts/build-bundled-plugins.mjs",
+        "../../internal/plugin/bundled/ask-user/plugin.json"
+      ]
+    }
   }
 }

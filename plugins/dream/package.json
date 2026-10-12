@@ -5,5 +5,15 @@
   "type": "module",
   "scripts": {
     "build": "node ../../scripts/build-bundled-plugins.mjs --plugin=dream"
+  },
+  "wuu": {
+    "dev": {
+      "watch": [
+        "../../packages/plugin-sdk/src",
+        "../../scripts/build-bundled-plugins.mjs",
+        "../../internal/plugin/bundled/dream/plugin.json",
+        "../../internal/plugin/bundled/dream/desktop.js"
+      ]
+    }
   }
 }

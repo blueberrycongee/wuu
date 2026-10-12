@@ -154,7 +154,9 @@ func (h *Host) addLocked(client Client) {
 		return
 	}
 	h.clients = append(h.clients, client)
-	if capabilityClient, ok := client.(CapabilityClient); ok && capabilityClient.ProtocolVersion() >= CapabilityProtocolVersion {
+	// Capabilities were introduced in v2; v3 adds service declarations without
+	// invalidating capability-only runtimes.
+	if capabilityClient, ok := client.(CapabilityClient); ok && capabilityClient.ProtocolVersion() >= 2 {
 		for _, descriptor := range capabilityClient.Capabilities() {
 			h.capabilities = append(h.capabilities, RegisteredCapability{
 				PluginID: client.ID(), Descriptor: descriptor, client: capabilityClient,

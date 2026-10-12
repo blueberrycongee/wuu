@@ -7,6 +7,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/extensions"
+	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/session"
@@ -60,6 +63,8 @@ func TestDisablingPeersCannotBlockOrdinaryMessageSends(t *testing.T) {
 	rt.Toolkit = kit
 	peers := &stuckPeersLifecycleClient{entered: make(chan struct{}), release: make(chan struct{})}
 	rt.PluginHost = pluginhost.New(peers)
+	rt.Plugins = []pluginpkg.Plugin{{Manifest: pluginpkg.Manifest{ID: peers.ID()}, SubjectID: "plugin:peers", Official: true}}
+	rt.ActivePlugins = rt.Plugins
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	t.Cleanup(func() {
@@ -103,9 +108,17 @@ func TestDisablingPeersCannotBlockOrdinaryMessageSends(t *testing.T) {
 		t.Fatal("turn drain synchronously re-entered the blocked peers helper")
 	}
 
-	// Disable peers while its turn is still active: the host no longer
-	// exposes the lifecycle capability.
-	rt.PluginHost = pluginhost.New()
+	// Disable peers through the real publication boundary while its turn is
+	// active. Retained callback leases must not delay explicit revocation.
+	settings := &extensions.Settings{}
+	settings.SetEnabled("plugin:peers", false)
+	candidate, err := rt.PreflightExtensionPolicy(config.Config{Extensions: settings})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.ActivatePluginGeneration(candidate, nil); err != nil {
+		t.Fatal(err)
+	}
 
 	// The peers-owned turn itself still completes; its terminal lifecycle
 	// event is undeliverable and must be dropped instead of replayed forever.

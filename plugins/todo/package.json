@@ -5,5 +5,15 @@
   "type": "module",
   "scripts": {
     "build": "node ../../scripts/build-bundled-plugins.mjs --plugin=todo"
+  },
+  "wuu": {
+    "dev": {
+      "watch": [
+        "../../packages/plugin-sdk/src",
+        "../../scripts/build-bundled-plugins.mjs",
+        "../../internal/plugin/bundled/todo/plugin.json",
+        "../../internal/plugin/bundled/todo/desktop.js"
+      ]
+    }
   }
 }

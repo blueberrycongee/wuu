@@ -56,7 +56,16 @@ import type { RuntimePlugin } from "@wuu/plugin-sdk";
 const version = %q;
 const lifecycle = %q;
 export default {
- initialize() { return { tools: [{ id: "read", description: "Self extension %s", input_schema: { type: "object" } }] }; },
+ initialize() { return { protocol_version: 2, tools: [{ id: "read", description: "Self extension %s", input_schema: { type: "object" } }], capabilities: [
+  { id: "agent.system_prompt.section", kind: "transform", version: 1 },
+  { id: "agent.request.transform", kind: "transform", version: 1 }
+ ] }; },
+ invokeCapability(call) {
+  appendFileSync(lifecycle, JSON.stringify({event:"capability",version,capability:call.capability}) + "\n");
+  if (call.capability === "agent.system_prompt.section") return { output: { text: "GENERATION_PROMPT_" + version } };
+  if (call.capability === "agent.request.transform") return { output: { prepend_system_messages: ["GENERATION_INTERCEPTOR_" + version] } };
+  throw new Error("unexpected capability");
+ },
  shutdown() { appendFileSync(lifecycle, JSON.stringify({event:"shutdown",version}) + "\n"); },
  executeTool() {
   appendFileSync(lifecycle, JSON.stringify({event:"tool",version}) + "\n");
@@ -141,6 +150,22 @@ export default {
 		}
 		if stage == "update" && strings.Contains(surface, "Self extension v2") {
 			fail("active update turn adopted v2 before completion")
+		}
+		// Prompt providers and request interceptors must follow the same pinned
+		// generation as tools, including later model calls in an updating turn.
+		expectedVersion := "v2"
+		switch stage {
+		case "discover-manager", "install", "disabled":
+			expectedVersion = ""
+		case "read-v1", "update":
+			expectedVersion = "v1"
+		}
+		for _, prefix := range []string{"GENERATION_PROMPT_", "GENERATION_INTERCEPTOR_"} {
+			for _, candidate := range []string{"v1", "v2"} {
+				if strings.Contains(surface, prefix+candidate) != (candidate == expectedVersion) {
+					fail("%s step %d has incorrect %s%s generation; expected %q", stage, call, prefix, candidate, expectedVersion)
+				}
+			}
 		}
 		code := ""
 		directTool := ""
@@ -328,6 +353,9 @@ export default {
 			mu.Unlock()
 			if err != nil {
 				t.Error(err)
+			}
+			if journal, err := os.ReadFile(lifecyclePath); err == nil {
+				_ = os.WriteFile(filepath.Join(dir, "plugin-lifecycle.jsonl"), journal, 0600)
 			}
 			t.Logf("Evidence: %s", dir)
 		}

@@ -272,6 +272,8 @@ host。`host.call(method, params, { signal })` 可附加取消信号，但不能
 
 用 `validate` 检查包结构，`test` 检查可执行初始化和协商描述，再通过真实会话或界面验证行为。`pack` 生成本地 zip，不会上传到 registry。分发前应检查压缩包内容：准备阶段排除 `.git` 和 `node_modules`，不会排除所有可能包含私人数据的本地文件。
 
+Monorepo 插件可在 `package.json` 声明额外构建输入：`"wuu": { "dev": { "watch": ["../shared/src", "../assets/prompt.md"] } }`。路径相对插件目录，支持相邻文件或目录；修改后会重新构建并发布，无需重启。绝对路径、插件祖先目录、经过符号链接的路径，以及超过 64 个额外输入会被拒绝。不要列入生成文件；输入目录中的 `.git`、`node_modules`、`dist` 仍被忽略。这只控制开发监听，不改变运行时权限。
+
 当前 install/update CLI 会先暂存包，再单独批准代码激活。开发目录授权不会成为分发包的信任。命令见[插件管理](plugins.md)，信任边界见[安全模型](../reference/security-model.md)。
 
 完整类型位于 [`packages/plugin-sdk/src/index.ts`](../../../packages/plugin-sdk/src/index.ts)，Go 接入使用 [`packages/plugin-go`](../../../packages/plugin-go/runtime.go)。请与目标 Wuu 版本匹配；产品 CalVer、包 schema、能力协议、服务版本和桌面快照版本是不同的兼容性检查。
