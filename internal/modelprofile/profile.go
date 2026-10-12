@@ -150,6 +150,17 @@ func Resolve(providerName, model string) Profile {
 	return profile
 }
 
+// SupportsFreeformTools resolves the native text-tool wire capability from the
+// actual API model. A configured provider's display name is not evidence that
+// a compatible endpoint supports custom tools. Explicit model options let a
+// gateway disable that wire form, or opt in an otherwise unknown model.
+func SupportsFreeformTools(model string, options map[string]any) bool {
+	if enabled, ok := options["freeform_tool"].(bool); ok {
+		return enabled
+	}
+	return Resolve("", model).APIShape.FreeformTool
+}
+
 func FamilyForProviderModel(providerName, model string) Family {
 	id := strings.ToLower(strings.TrimSpace(providerName + "/" + model))
 	provider := strings.ToLower(strings.TrimSpace(providerName))

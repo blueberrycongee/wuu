@@ -41,6 +41,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Responses connections keep text tools callable through JSON schemas when the
+  model or an explicit compatibility option disables custom tools. Forced choices
+  and replayed calls use the same wire format without changing saved history.
+
 - Keep the sidebar's recent-history range stable while a first message creates
   its conversation, avoiding a temporary extra row and subsequent layout jump,
   including while saving a draft's custom name.
