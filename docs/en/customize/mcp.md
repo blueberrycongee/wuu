@@ -74,6 +74,10 @@ The current desktop flow opens the authorization URL and requires you to paste t
 
 Saved credentials are bound to the resource URL used for login. Reusing a server name with a different URL requires another login; a path or query change also counts. Credentials from older versions without a saved resource URL require login again. Wuu keeps mismatched credentials until you explicitly replace or remove them. Logging in to the new resource replaces the credentials for that server name.
 
+Logging out invalidates older login attempts and in-flight credential refreshes across Wuu processes. Their late responses cannot restore the removed credentials. Starting another login supersedes earlier login attempts for that server name; complete the newest authorization flow. A failed new login does not remove an existing credential. Signing in again after logout remains available.
+
+Desktop credentials remain in Keychain. Empty owner-only lock files coordinate local writers independently of project data directories; they contain no tokens or client secrets. All Wuu processes sharing credentials must use this version or newer for the write-ordering guarantees.
+
 Requests carrying OAuth credentials or configured headers cannot redirect across origins (scheme, host, or port). Legacy SSE message endpoints must share the stream's origin; same-origin paths and session queries remain supported.
 
 If the service requires a fixed client, callback, or scopes, add an `oauth` object to that server:

@@ -41,6 +41,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- MCP OAuth logout and newer logins now fence late token exchanges and refresh
+  writes across processes, preserving the latest active credential binding.
+
+
 - Bind saved MCP OAuth credentials to the resource used for login, require
   reauthentication after resource changes, and prevent credentials from reaching
   cross-origin redirects or legacy SSE message endpoints.
