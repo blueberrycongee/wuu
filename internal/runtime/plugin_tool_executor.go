@@ -34,12 +34,14 @@ func newPluginToolExecutor(inner agent.ToolExecutor, host *pluginhost.Host, thre
 	if inner == nil || host == nil {
 		if kit, ok := inner.(*tools.Toolkit); ok {
 			kit.SetCodeModeAdditionalTools(nil)
+			kit.SetSkillToolProvider(nil)
 		}
 		return inner
 	}
 	executor := &pluginToolExecutor{inner: inner, host: host, threadID: threadID, cwd: cwd}
 	if kit, ok := inner.(*tools.Toolkit); ok {
 		kit.SetCodeModeAdditionalTools(executor.pluginDefinitions)
+		kit.SetSkillToolProvider(executor.livePluginDefinitions)
 	}
 	return executor
 }

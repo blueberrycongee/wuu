@@ -45,9 +45,14 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Honor manual-only skill invocation settings when loading skills by name, and
+  recognize reachable plugin and MCP tools in skill requirements without
+  enabling unavailable tools or changing permissions. Session tool restrictions
+  also apply to contributed, deferred, and nested tools and their dependent skills.
 - Bound skill resource sampling for both selected skills and model tool calls,
   honor request cancellation, and identify incomplete filename hints without
   changing the resource base directory.
+
 
 - Remember iOS model and reasoning choices for new conversations per account,
   computer and engine, including first sends without reopening settings and app relaunches.

@@ -74,6 +74,19 @@ func TestToolkit_LoadSkillRecordsResultAction(t *testing.T) {
 	if len(records) != 1 || records[0].ResultAction != "load_skill" {
 		t.Fatalf("load_skill telemetry missing result action: %+v", records)
 	}
+	manual := kit.Skills()[0]
+	manual.DisableModelInvoke = true
+	manual.UserInvocable = true
+	kit.SetSkills([]skills.Skill{manual})
+	if _, err := NewLoadSkillTool(kit.env).Execute(context.Background(), `{"name":"review"}`); err == nil {
+		t.Fatal("model loaded a manual-only skill")
+	}
+	if names := kit.env.SkillNames(); len(names) != 0 {
+		t.Fatalf("model error catalog exposes manual-only skills: %v", names)
+	}
+	if len(kit.Skills()) != 1 || !kit.Skills()[0].UserInvocable {
+		t.Fatal("model admission removed the user-invocable skill")
+	}
 }
 
 func TestToolkit_LoadSkillFiltersByActiveSurface(t *testing.T) {
