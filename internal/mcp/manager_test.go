@@ -62,53 +62,86 @@ func TestManagerCloseCancelsActiveConnectionAndPreventsLateRegistration(t *testi
 }
 
 func TestManagerCloseWaitsForDetachedClientClose(t *testing.T) {
-	transport := newBlockingCloseTransport()
-	client := &Client{name: "docs", transport: transport, inFlight: newInFlight()}
-	client.readLoop = newReadLoop(transport, client.inFlight, client.handleNotification, client.handleRequest, client.handleReadLoopExit)
-	client.readLoop.Start()
+	for _, action := range []string{"disconnect", "refresh"} {
+		t.Run(action, func(t *testing.T) {
+			transport := newBlockingCloseTransport()
+			client := &Client{name: "docs", transport: transport, inFlight: newInFlight()}
+			client.readLoop = newReadLoop(transport, client.inFlight, client.handleNotification, client.handleRequest, client.handleReadLoopExit)
+			client.readLoop.Start()
 
-	manager := NewManager()
-	manager.mu.Lock()
-	manager.configs["docs"] = ServerConfig{Name: "docs", Command: "unused"}
-	manager.clients["docs"] = client
-	manager.statuses["docs"] = ServerStatus{Name: "docs", State: MCPServerStateConnected, Connected: true}
-	manager.mu.Unlock()
+			manager := NewManager()
+			manager.mu.Lock()
+			manager.configs["docs"] = ServerConfig{Name: "docs", Command: "unused"}
+			manager.clients["docs"] = client
+			manager.statuses["docs"] = ServerStatus{Name: "docs", State: MCPServerStateConnected, Connected: true}
+			manager.mu.Unlock()
 
-	var releaseOnce sync.Once
-	release := func() { releaseOnce.Do(func() { close(transport.release) }) }
-	t.Cleanup(release)
-	disconnectDone := make(chan error, 1)
-	go func() { disconnectDone <- manager.Disconnect("docs") }()
-	select {
-	case <-transport.closeStarted:
-	case <-time.After(2 * time.Second):
-		t.Fatal("Disconnect did not start closing the client")
-	}
+			var releaseOnce sync.Once
+			release := func() { releaseOnce.Do(func() { close(transport.release) }) }
+			t.Cleanup(release)
+			disconnectDone := make(chan error, 1)
+			go func() {
+				if action == "refresh" {
+					disconnectDone <- manager.Refresh(context.Background(), "docs")
+				} else {
+					disconnectDone <- manager.Disconnect("docs")
+				}
+			}()
+			select {
+			case <-transport.closeStarted:
+			case <-time.After(2 * time.Second):
+				t.Fatal("Disconnect did not start closing the client")
+			}
 
-	managerCloseDone := make(chan error, 1)
-	go func() { managerCloseDone <- manager.Close() }()
-	select {
-	case err := <-managerCloseDone:
-		t.Fatalf("Manager.Close returned before detached client cleanup finished: %v", err)
-	case <-time.After(50 * time.Millisecond):
-	}
+			if action == "refresh" {
+				if err := manager.Disconnect("docs"); err != nil {
+					t.Fatal(err)
+				}
+				release()
+				select {
+				case err := <-disconnectDone:
+					if !errors.Is(err, context.Canceled) {
+						t.Fatalf("superseded Refresh = %v", err)
+					}
+				case <-time.After(2 * time.Second):
+					t.Fatal("superseded Refresh did not return after detached client cleanup")
+				}
+				if status := manager.Status()["docs"]; status.State != MCPServerStateStopped || status.Connected {
+					t.Fatalf("Refresh resumed after Disconnect: %+v", status)
+				}
+				if err := manager.Close(); err != nil {
+					t.Fatal(err)
+				}
+				return
+			}
 
-	release()
-	select {
-	case err := <-disconnectDone:
-		if err != nil {
-			t.Fatalf("Disconnect: %v", err)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("Disconnect did not finish after releasing transport Close")
-	}
-	select {
-	case err := <-managerCloseDone:
-		if err != nil {
-			t.Fatalf("Manager.Close: %v", err)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("Manager.Close did not finish after detached client cleanup")
+			managerCloseDone := make(chan error, 1)
+			go func() { managerCloseDone <- manager.Close() }()
+			select {
+			case err := <-managerCloseDone:
+				t.Fatalf("Manager.Close returned before detached client cleanup finished: %v", err)
+			case <-time.After(50 * time.Millisecond):
+			}
+
+			release()
+			select {
+			case err := <-disconnectDone:
+				if err != nil {
+					t.Fatalf("Disconnect: %v", err)
+				}
+			case <-time.After(2 * time.Second):
+				t.Fatal("Disconnect did not finish after releasing transport Close")
+			}
+			select {
+			case err := <-managerCloseDone:
+				if err != nil {
+					t.Fatalf("Manager.Close: %v", err)
+				}
+			case <-time.After(2 * time.Second):
+				t.Fatal("Manager.Close did not finish after detached client cleanup")
+			}
+
+		})
 	}
 }
 
@@ -169,6 +202,7 @@ func TestManagerNativeToolsAndGenerationTrackCatalogChanges(t *testing.T) {
 	client := &Client{name: "docs", tools: []Tool{{Name: "search", InputSchema: []byte(`{"type":"object"}`)}}}
 	manager.mu.Lock()
 	manager.clients["docs"] = client
+	manager.servers["docs"] = &serverLifecycle{generation: 1}
 	manager.statuses["docs"] = ServerStatus{Name: "docs", State: MCPServerStateReady, Connected: true}
 	manager.generation++
 	manager.mu.Unlock()
@@ -185,13 +219,37 @@ func TestManagerNativeToolsAndGenerationTrackCatalogChanges(t *testing.T) {
 	client.mu.Lock()
 	client.tools = []Tool{{Name: "fetch"}}
 	client.mu.Unlock()
-	manager.catalogChanged("docs")
+	manager.catalogChanged("docs", 1, client)
 	if manager.Generation() <= firstGeneration {
 		t.Fatalf("generation did not advance: %d -> %d", firstGeneration, manager.Generation())
 	}
 	native = manager.NativeTools()
 	if len(native) != 1 || native[0].Definition.Name != "fetch" {
 		t.Fatalf("stale native tools: %+v", native)
+	}
+
+	manager.mu.Lock()
+	manager.servers["docs"].generation++
+	manager.clients["docs"] = &Client{name: "docs", tools: []Tool{{Name: "replacement"}}}
+	manager.statuses["docs"] = ServerStatus{Name: "docs", State: MCPServerStateConnecting}
+	manager.mu.Unlock()
+	generation := manager.Generation()
+	manager.catalogChanged("docs", 1, client)
+	manager.clientConnectionFailed("docs", 1, client, errors.New("late connection failure"))
+	if err := manager.recordConnectionStatus(1, ServerStatus{Name: "docs", State: MCPServerStateAuthRequired}, true); !errors.Is(err, context.Canceled) {
+		t.Fatalf("retired OAuth failure = %v, want cancellation without closing the replacement", err)
+	}
+	if manager.Generation() != generation {
+		t.Fatal("retired client callback changed the current catalog generation")
+	}
+	manager.mu.RLock()
+	status := manager.statuses["docs"]
+	manager.mu.RUnlock()
+	if status.State != MCPServerStateConnecting {
+		t.Fatalf("retired client callback replaced a newer attempt's status: %+v", status)
+	}
+	if native := manager.NativeTools(); len(native) != 1 || native[0].Definition.Name != "replacement" {
+		t.Fatalf("retired client callback changed the current tools: %+v", native)
 	}
 }
 
@@ -293,98 +351,139 @@ func TestManagerDisconnectPreservesOAuthAuthenticationState(t *testing.T) {
 }
 
 func TestManagerRevokeFencesPendingConnectionsAndPreservesOtherServers(t *testing.T) {
-	for _, blockedMethod := range []string{"initialize", "tools/list"} {
-		t.Run(blockedMethod, func(t *testing.T) {
-			started := make(chan struct{})
-			release := make(chan struct{})
-			var once sync.Once
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.Method != http.MethodPost {
-					w.WriteHeader(http.StatusMethodNotAllowed)
+	for _, action := range []string{"revoke", "disconnect", "connect", "refresh"} {
+		for _, blockedMethod := range []string{"initialize", "tools/list"} {
+			t.Run(action+"/"+blockedMethod, func(t *testing.T) {
+				started := make(chan struct{})
+				release := make(chan struct{})
+				var once sync.Once
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if r.Method != http.MethodPost {
+						w.WriteHeader(http.StatusMethodNotAllowed)
+						return
+					}
+					var req Request
+					if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+						http.Error(w, err.Error(), http.StatusBadRequest)
+						return
+					}
+					if r.URL.Path == "/retired" && req.Method == blockedMethod {
+						blocked := false
+						once.Do(func() { blocked = true; close(started) })
+						if blocked {
+							<-release
+						}
+					}
+					w.Header().Set("Content-Type", "application/json")
+					switch req.Method {
+					case "server/discover":
+						fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%d,"error":{"code":-32601,"message":"unsupported"}}`, req.ID)
+					case "initialize":
+						fmt.Fprint(w, initializeResultJSON(req.ID, "2025-06-18"))
+					case "tools/list":
+						fmt.Fprint(w, toolsListResultJSON(req.ID, "search"))
+					default:
+						w.WriteHeader(http.StatusAccepted)
+					}
+				}))
+				defer server.Close()
+				defer close(release)
+				manager := NewManager()
+				defer manager.Close()
+				retired := ServerConfig{Name: "retired", URL: server.URL + "/retired", Transport: TransportStreamableHTTP}
+				retained := ServerConfig{Name: "retained", URL: server.URL + "/retained", Transport: TransportStreamableHTTP}
+				if err := manager.Add(context.Background(), retained); err != nil {
+					t.Fatal(err)
+				}
+				finished := make(chan error, 1)
+				go func() { finished <- manager.Add(context.Background(), retired) }()
+				select {
+				case <-started:
+				case err := <-finished:
+					t.Fatalf("connection ended before blocked request: %v", err)
+				case <-time.After(2 * time.Second):
+					t.Fatal("pending connection did not reach blocked request")
+				}
+				var stopErr error
+				wantErr := error(context.Canceled)
+				switch action {
+				case "revoke":
+					stopErr = manager.Revoke(retired.Name)
+					wantErr = ErrServerRevoked
+				case "disconnect":
+					stopErr = manager.Disconnect(retired.Name)
+				case "connect":
+					stopErr = manager.Connect(context.Background(), retired.Name)
+				case "refresh":
+					stopErr = manager.Refresh(context.Background(), retired.Name)
+				}
+				if stopErr != nil {
+					t.Fatal(stopErr)
+				}
+				select {
+				case err := <-finished:
+					if !errors.Is(err, wantErr) {
+						t.Fatalf("pending Add = %v, want %v", err, wantErr)
+					}
+				case <-time.After(2 * time.Second):
+					t.Fatalf("%s did not cancel the pending connection", action)
+				}
+				if action != "revoke" {
+					wantState := MCPServerStateConnected
+					if action == "disconnect" {
+						wantState = MCPServerStateStopped
+					}
+					if status := manager.Status()[retired.Name]; status.State != wantState {
+						t.Fatalf("%s status = %+v, want %s", action, status, wantState)
+					}
+					if err := manager.Connect(context.Background(), retired.Name); err != nil {
+						t.Fatalf("explicit reconnect after %s: %v", action, err)
+					}
+					if tools := manager.NativeTools(); len(tools) != 2 {
+						t.Fatalf("%s lost reconnected or unrelated tools: %+v", action, tools)
+					}
+					if err := manager.Disconnect(retired.Name); err != nil {
+						t.Fatal(err)
+					}
+					if tools := manager.NativeTools(); len(tools) != 1 || tools[0].Provenance.Source != retained.Name {
+						t.Fatalf("disconnect affected unrelated tools: %+v", tools)
+					}
 					return
 				}
-				var req Request
-				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-					http.Error(w, err.Error(), http.StatusBadRequest)
-					return
+				manager.Configure(map[string]ServerConfig{retired.Name: retired})
+				for name, attempt := range map[string]func() error{
+					"Add":     func() error { return manager.Add(context.Background(), retired) },
+					"Connect": func() error { return manager.Connect(context.Background(), retired.Name) },
+					"Refresh": func() error { return manager.Refresh(context.Background(), retired.Name) },
+				} {
+					if err := attempt(); !errors.Is(err, ErrServerRevoked) {
+						t.Fatalf("%s after revoke = %v, want ErrServerRevoked", name, err)
+					}
 				}
-				if r.URL.Path == "/retired" && req.Method == blockedMethod {
-					once.Do(func() { close(started) })
-					<-release
+				if cfg, ok := manager.Config(retired.Name); !ok || cfg.IsEnabled() {
+					t.Fatalf("revoked configuration resurrected: %+v, %v", cfg, ok)
 				}
-				w.Header().Set("Content-Type", "application/json")
-				switch req.Method {
-				case "server/discover":
-					fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%d,"error":{"code":-32601,"message":"unsupported"}}`, req.ID)
-				case "initialize":
-					fmt.Fprint(w, initializeResultJSON(req.ID, "2025-06-18"))
-				case "tools/list":
-					fmt.Fprint(w, toolsListResultJSON(req.ID, "search"))
-				default:
-					w.WriteHeader(http.StatusAccepted)
+				if status := manager.Status()[retired.Name]; status.State != MCPServerStateDisabled || status.Connected {
+					t.Fatalf("revoked status resurrected: %+v", status)
 				}
-			}))
-			defer server.Close()
-			defer close(release)
-			manager := NewManager()
-			defer manager.Close()
-			retired := ServerConfig{Name: "retired", URL: server.URL + "/retired", Transport: TransportStreamableHTTP}
-			retained := ServerConfig{Name: "retained", URL: server.URL + "/retained", Transport: TransportStreamableHTTP}
-			if err := manager.Add(context.Background(), retained); err != nil {
-				t.Fatal(err)
-			}
-			finished := make(chan error, 1)
-			go func() { finished <- manager.Add(context.Background(), retired) }()
-			select {
-			case <-started:
-			case err := <-finished:
-				t.Fatalf("connection ended before blocked request: %v", err)
-			case <-time.After(2 * time.Second):
-				t.Fatal("pending connection did not reach blocked request")
-			}
-			if err := manager.Revoke(retired.Name); err != nil {
-				t.Fatal(err)
-			}
-			select {
-			case err := <-finished:
-				if !errors.Is(err, ErrServerRevoked) {
-					t.Fatalf("pending Add = %v, want ErrServerRevoked", err)
+				if err := manager.Refresh(context.Background(), ""); err != nil {
+					t.Fatalf("refresh unrelated servers: %v", err)
 				}
-			case <-time.After(2 * time.Second):
-				t.Fatal("Revoke did not cancel the pending connection")
-			}
-			manager.Configure(map[string]ServerConfig{retired.Name: retired})
-			for name, attempt := range map[string]func() error{
-				"Add":     func() error { return manager.Add(context.Background(), retired) },
-				"Connect": func() error { return manager.Connect(context.Background(), retired.Name) },
-				"Refresh": func() error { return manager.Refresh(context.Background(), retired.Name) },
-			} {
-				if err := attempt(); !errors.Is(err, ErrServerRevoked) {
-					t.Fatalf("%s after revoke = %v, want ErrServerRevoked", name, err)
+				if tools := manager.NativeTools(); len(tools) != 1 || tools[0].Provenance.Source != retained.Name {
+					t.Fatalf("revocation affected unrelated tools: %+v", tools)
 				}
-			}
-			if cfg, ok := manager.Config(retired.Name); !ok || cfg.IsEnabled() {
-				t.Fatalf("revoked configuration resurrected: %+v, %v", cfg, ok)
-			}
-			if status := manager.Status()[retired.Name]; status.State != MCPServerStateDisabled || status.Connected {
-				t.Fatalf("revoked status resurrected: %+v", status)
-			}
-			if err := manager.Refresh(context.Background(), ""); err != nil {
-				t.Fatalf("refresh unrelated servers: %v", err)
-			}
-			if tools := manager.NativeTools(); len(tools) != 1 || tools[0].Provenance.Source != retained.Name {
-				t.Fatalf("revocation affected unrelated tools: %+v", tools)
-			}
-			if err := manager.Revoke(retained.Name); err != nil {
-				t.Fatal(err)
-			}
-			if tools := manager.NativeTools(); len(tools) != 0 {
-				t.Fatalf("active revoked client still publishes tools: %+v", tools)
-			}
-			generation := manager.Generation()
-			if err := manager.Revoke(retained.Name); err != nil || manager.Generation() != generation {
-				t.Fatalf("repeat revocation changed generation or failed: %v", err)
-			}
-		})
+				if err := manager.Revoke(retained.Name); err != nil {
+					t.Fatal(err)
+				}
+				if tools := manager.NativeTools(); len(tools) != 0 {
+					t.Fatalf("active revoked client still publishes tools: %+v", tools)
+				}
+				generation := manager.Generation()
+				if err := manager.Revoke(retained.Name); err != nil || manager.Generation() != generation {
+					t.Fatalf("repeat revocation changed generation or failed: %v", err)
+				}
+			})
+		}
 	}
+
 }

@@ -14,9 +14,27 @@ import (
 )
 
 type serverLifecycle struct {
-	ctx     context.Context
-	cancel  context.CancelFunc
-	revoked bool
+	ctx           context.Context
+	cancel        context.CancelFunc
+	revoked       bool
+	generation    uint64
+	pendingCancel context.CancelFunc
+}
+
+type connectionMode uint8
+
+const (
+	connectionAdd connectionMode = iota
+	connectionConfigured
+	connectionRefresh
+	connectionInitial
+)
+
+type connectionAttempt struct {
+	ctx        context.Context
+	config     ServerConfig
+	generation uint64
+	finish     func()
 }
 
 // Manager holds all active MCP client connections and exposes their tools.
@@ -113,29 +131,44 @@ func (m *Manager) Configure(configs map[string]ServerConfig) {
 	}
 }
 
-// Add connects and registers an MCP server. If the connection fails, the
-// error is returned and no client is kept.
+// Add connects and registers an MCP server, canceling older pending attempts
+// for the same name. An existing client stays available until its replacement
+// is ready. A failed attempt is not registered.
 func (m *Manager) Add(ctx context.Context, cfg ServerConfig) error {
+	return m.add(ctx, cfg, connectionAdd)
+}
+
+func (m *Manager) add(ctx context.Context, cfg ServerConfig, mode connectionMode) error {
 	cfg.Name = strings.TrimSpace(cfg.Name)
 	if cfg.Name == "" {
 		return fmt.Errorf("mcp server name is required")
 	}
-	ctx, finish, err := m.beginConnection(ctx, cfg.Name)
+	attempt, err := m.beginConnection(ctx, cfg, mode)
 	if err != nil {
 		return err
 	}
-	defer finish()
+	defer attempt.finish()
+	ctx, cfg = attempt.ctx, attempt.config
+	generation := attempt.generation
 
-	m.rememberConfig(cfg)
+	if err := m.connectionError(cfg.Name, generation); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		if statusErr := m.recordConnectionStatus(generation, ServerStatus{Name: cfg.Name, State: MCPServerStateFailed, AuthStatus: authStatusForConfig(cfg), Error: err.Error()}, false); statusErr != nil {
+			return statusErr
+		}
+		return err
+	}
 	if !cfg.IsEnabled() {
-		m.recordStatus(ServerStatus{Name: cfg.Name, State: MCPServerStateDisabled, AuthStatus: authStatusForConfig(cfg)})
 		return nil
 	}
-	m.recordStatus(ServerStatus{Name: cfg.Name, State: MCPServerStateConnecting, AuthStatus: authStatusForConfig(cfg)})
 	oauth := m.oauthManager()
 	if cfg.URL != "" {
 		if oauth == nil && cfg.OAuth != nil {
-			m.recordStatus(ServerStatus{Name: cfg.Name, State: MCPServerStateAuthRequired, AuthStatus: MCPAuthStatusNotLoggedIn, Error: ErrOAuthRequired.Error()})
+			if err := m.recordConnectionStatus(generation, ServerStatus{Name: cfg.Name, State: MCPServerStateAuthRequired, AuthStatus: MCPAuthStatusNotLoggedIn, Error: ErrOAuthRequired.Error()}, false); err != nil {
+				return err
+			}
 			return ErrOAuthRequired
 		}
 		var token string
@@ -144,13 +177,9 @@ func (m *Manager) Add(ctx context.Context, cfg ServerConfig) error {
 			token, tokenErr = oauth.AccessToken(ctx, cfg.Name, cfg.URL)
 		}
 		if tokenErr != nil && (!errors.Is(tokenErr, credentialstore.ErrNotFound) || cfg.OAuth != nil) {
-			if lifecycleErr := m.connectionError(cfg.Name); lifecycleErr != nil {
-				return lifecycleErr
+			if err := m.recordConnectionStatus(generation, ServerStatus{Name: cfg.Name, State: MCPServerStateAuthRequired, AuthStatus: MCPAuthStatusNotLoggedIn, Error: tokenErr.Error()}, errors.Is(tokenErr, ErrOAuthResourceMismatch)); err != nil {
+				return err
 			}
-			if errors.Is(tokenErr, ErrOAuthResourceMismatch) {
-				m.closeClient(cfg.Name)
-			}
-			m.recordStatus(ServerStatus{Name: cfg.Name, State: MCPServerStateAuthRequired, AuthStatus: MCPAuthStatusNotLoggedIn, Error: tokenErr.Error()})
 			if errors.Is(tokenErr, credentialstore.ErrNotFound) {
 				return ErrOAuthRequired
 			}
@@ -180,36 +209,35 @@ func (m *Manager) Add(ctx context.Context, cfg ServerConfig) error {
 		client, err = ConnectStdio(ctx, cfg)
 	}
 	if err != nil {
-		if lifecycleErr := m.connectionError(cfg.Name); lifecycleErr != nil {
-			return lifecycleErr
+		if err := m.recordConnectionStatus(generation, ServerStatus{Name: cfg.Name, State: classifyConnectError(err), AuthStatus: authStatusAfterConnectError(cfg, err), Connected: false, Error: err.Error()}, false); err != nil {
+			return err
 		}
-		m.recordStatus(ServerStatus{Name: cfg.Name, State: classifyConnectError(err), AuthStatus: authStatusAfterConnectError(cfg, err), Connected: false, Error: err.Error()})
 		return err
 	}
 	client.SetConnectionClosedCallback(func(err error) {
-		m.clientConnectionFailed(cfg.Name, client, err)
+		m.clientConnectionFailed(cfg.Name, generation, client, err)
 	})
 	// Eagerly discover tools so the toolkit can include them.
 	if _, derr := client.DiscoverTools(ctx); derr != nil {
 		_ = client.Close()
-		if lifecycleErr := m.connectionError(cfg.Name); lifecycleErr != nil {
-			return lifecycleErr
-		}
 		err := fmt.Errorf("discover tools for %q: %w", cfg.Name, derr)
-		m.recordStatus(ServerStatus{Name: cfg.Name, State: MCPServerStateFailed, AuthStatus: authStatusForConfig(cfg), Connected: false, Error: err.Error()})
+		if err := m.recordConnectionStatus(generation, ServerStatus{Name: cfg.Name, State: MCPServerStateFailed, AuthStatus: authStatusForConfig(cfg), Connected: false, Error: err.Error()}, false); err != nil {
+			return err
+		}
 		return err
 	}
-	client.SetToolsChangedCallback(func() { m.catalogChanged(cfg.Name) })
+	client.SetToolsChangedCallback(func() { m.catalogChanged(cfg.Name, generation, client) })
 	m.mu.Lock()
-	if m.closed {
+	if err := m.connectionErrorLocked(cfg.Name, generation); err != nil {
 		m.mu.Unlock()
 		_ = client.Close()
-		return ErrManagerClosed
+		return err
 	}
-	if m.serverRevoked(cfg.Name) {
+	if err := ctx.Err(); err != nil {
+		m.statuses[cfg.Name] = ServerStatus{Name: cfg.Name, State: MCPServerStateFailed, AuthStatus: authStatusForConfig(cfg), Error: err.Error()}
 		m.mu.Unlock()
 		_ = client.Close()
-		return ErrServerRevoked
+		return err
 	}
 	if connectionErr := client.ConnectionError(); connectionErr != nil {
 		err := fmt.Errorf("mcp server %q connection closed: %w", cfg.Name, connectionErr)
@@ -241,35 +269,84 @@ func (m *Manager) Add(ctx context.Context, cfg ServerConfig) error {
 	return nil
 }
 
-func (m *Manager) beginConnection(parent context.Context, name string) (context.Context, func(), error) {
+// Admission, configuration and reconnect teardown share one lock so Disconnect
+// cannot be followed by an older operation admitting a fresh attempt.
+func (m *Manager) beginConnection(parent context.Context, cfg ServerConfig, mode connectionMode) (*connectionAttempt, error) {
 	m.mu.Lock()
 	if m.closed {
 		m.mu.Unlock()
-		return nil, nil, ErrManagerClosed
+		return nil, ErrManagerClosed
 	}
-	if m.serverRevoked(name) {
+	if m.serverRevoked(cfg.Name) {
 		m.mu.Unlock()
-		return nil, nil, ErrServerRevoked
+		return nil, ErrServerRevoked
 	}
-	server := m.servers[name]
+	if err := parent.Err(); err != nil {
+		m.mu.Unlock()
+		return nil, err
+	}
+	if mode != connectionAdd {
+		configured, ok := m.configs[cfg.Name]
+		if !ok {
+			m.mu.Unlock()
+			return nil, fmt.Errorf("mcp server %q not configured", cfg.Name)
+		}
+		cfg = cloneServerConfig(configured)
+	}
+	server := m.servers[cfg.Name]
+	if mode == connectionInitial && server != nil {
+		m.mu.Unlock()
+		return nil, fmt.Errorf("mcp server %q initial connection superseded: %w", cfg.Name, context.Canceled)
+	}
 	if server == nil {
 		ctx, cancel := context.WithCancel(m.ctx)
 		server = &serverLifecycle{ctx: ctx, cancel: cancel}
-		m.servers[name] = server
+		m.servers[cfg.Name] = server
 	}
-	lifecycle := server.ctx
+	previousCancel := server.pendingCancel
+	server.generation++
+	generation := server.generation
+	bounded, cancelBounded := withDefaultConnectionTimeout(parent)
+	ctx, cancel := context.WithCancel(bounded)
+	stopLifecycleCancel := context.AfterFunc(server.ctx, cancel)
+	server.pendingCancel = cancel
+	m.configs[cfg.Name] = cloneServerConfig(cfg)
+	state := MCPServerStateConnecting
+	if mode == connectionRefresh {
+		state = MCPServerStateReconnecting
+	}
+	if !cfg.IsEnabled() {
+		state = MCPServerStateDisabled
+	}
+	m.statuses[cfg.Name] = ServerStatus{Name: cfg.Name, State: state, AuthStatus: authStatusForConfig(cfg)}
+	var old *Client
+	if mode == connectionRefresh || !cfg.IsEnabled() {
+		old = m.clients[cfg.Name]
+		if old != nil {
+			delete(m.clients, cfg.Name)
+			m.generation++
+		}
+	}
 	m.operations.Add(1)
 	m.mu.Unlock()
 
-	bounded, cancelBounded := withDefaultConnectionTimeout(parent)
-	ctx, cancel := context.WithCancel(bounded)
-	stopLifecycleCancel := context.AfterFunc(lifecycle, cancel)
-	return ctx, func() {
+	if previousCancel != nil {
+		previousCancel()
+	}
+	if old != nil {
+		_ = old.Close()
+	}
+	return &connectionAttempt{ctx: ctx, config: cfg, generation: generation, finish: func() {
+		m.mu.Lock()
+		if server.generation == generation {
+			server.pendingCancel = nil
+		}
+		m.mu.Unlock()
 		stopLifecycleCancel()
 		cancel()
 		cancelBounded()
 		m.operations.Done()
-	}, nil
+	}}, nil
 }
 
 // serverRevoked requires m.mu to be held.
@@ -278,19 +355,28 @@ func (m *Manager) serverRevoked(name string) bool {
 	return server != nil && server.revoked
 }
 
-func (m *Manager) connectionError(name string) error {
+func (m *Manager) connectionError(name string, generation uint64) error {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+	return m.connectionErrorLocked(name, generation)
+}
+
+// connectionErrorLocked requires m.mu to be held. Cancellation alone is not a
+// fence: a successful response or queued callback can race with cancellation.
+func (m *Manager) connectionErrorLocked(name string, generation uint64) error {
 	if m.closed {
 		return ErrManagerClosed
 	}
 	if m.serverRevoked(name) {
 		return ErrServerRevoked
 	}
+	if server := m.servers[name]; server == nil || server.generation != generation {
+		return fmt.Errorf("mcp server %q connection attempt superseded: %w", name, context.Canceled)
+	}
 	return nil
 }
 
-func (m *Manager) clientConnectionFailed(name string, client *Client, err error) {
+func (m *Manager) clientConnectionFailed(name string, generation uint64, client *Client, err error) {
 	if m == nil || client == nil || err == nil {
 		return
 	}
@@ -300,17 +386,21 @@ func (m *Manager) clientConnectionFailed(name string, client *Client, err error)
 		return
 	}
 	delete(m.clients, name)
-	status := m.statuses[name]
-	authStatus := status.AuthStatus
-	if authStatus == "" {
-		authStatus = connectedAuthStatus(m.configs[name])
-	}
-	m.statuses[name] = ServerStatus{
-		Name:       name,
-		State:      MCPServerStateFailed,
-		AuthStatus: authStatus,
-		Connected:  false,
-		Error:      err.Error(),
+	// A previous client can still serve tools while its replacement connects.
+	// Remove it if it fails, but leave the replacement's status untouched.
+	if m.connectionErrorLocked(name, generation) == nil {
+		status := m.statuses[name]
+		authStatus := status.AuthStatus
+		if authStatus == "" {
+			authStatus = connectedAuthStatus(m.configs[name])
+		}
+		m.statuses[name] = ServerStatus{
+			Name:       name,
+			State:      MCPServerStateFailed,
+			AuthStatus: authStatus,
+			Connected:  false,
+			Error:      err.Error(),
+		}
 	}
 	m.generation++
 	m.operations.Add(1)
@@ -369,7 +459,9 @@ func (m *Manager) RemoveOAuth(ctx context.Context, name string) error {
 	if err := oauth.Remove(ctx, cfg.Name); err != nil {
 		return err
 	}
-	m.closeClient(cfg.Name)
+	if err := m.Disconnect(cfg.Name); err != nil {
+		return err
+	}
 	m.recordStatus(ServerStatus{Name: cfg.Name, State: MCPServerStateAuthRequired, AuthStatus: MCPAuthStatusNotLoggedIn})
 	return nil
 }
@@ -404,30 +496,27 @@ func (m *Manager) oauthManager() *OAuthManager {
 }
 
 func (m *Manager) Connect(ctx context.Context, name string) error {
-	cfg, ok := m.Config(name)
-	if !ok {
-		return fmt.Errorf("mcp server %q not configured", name)
-	}
-	return m.Add(ctx, cfg)
+	return m.add(ctx, ServerConfig{Name: name}, connectionConfigured)
+}
+
+// ConnectIfUnstarted connects a configured server only if no connection control
+// operation has addressed it yet. Delayed startup work must use this instead of
+// Connect so a user's Disconnect, Connect or Refresh supersedes queued startup.
+func (m *Manager) ConnectIfUnstarted(ctx context.Context, name string) error {
+	return m.add(ctx, ServerConfig{Name: name}, connectionInitial)
 }
 
 func (m *Manager) Refresh(ctx context.Context, name string) error {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		for _, cfg := range m.Configs() {
-			if err := m.Add(ctx, cfg); err != nil && !errors.Is(err, ErrServerRevoked) {
+			if err := m.Connect(ctx, cfg.Name); err != nil && !errors.Is(err, ErrServerRevoked) {
 				return err
 			}
 		}
 		return nil
 	}
-	cfg, ok := m.Config(name)
-	if !ok {
-		return fmt.Errorf("mcp server %q not configured", name)
-	}
-	m.recordStatus(ServerStatus{Name: name, State: MCPServerStateReconnecting, AuthStatus: authStatusForConfig(cfg)})
-	m.closeClient(name)
-	return m.Add(ctx, cfg)
+	return m.add(ctx, ServerConfig{Name: name}, connectionRefresh)
 }
 
 // Revoke permanently disables one server for this manager's lifetime. Pending
@@ -486,37 +575,57 @@ func (m *Manager) Remove(name string) error {
 	return m.Disconnect(name)
 }
 
+// Disconnect invalidates pending attempts as well as the published client.
+// A later explicit Connect or Refresh can admit a new attempt.
 func (m *Manager) Disconnect(name string) error {
+	name = strings.TrimSpace(name)
 	m.mu.Lock()
+	if m.closed {
+		m.mu.Unlock()
+		return ErrManagerClosed
+	}
 	if m.serverRevoked(name) {
 		m.mu.Unlock()
 		return nil
 	}
-	c, ok := m.clients[name]
-	authStatus := authStatusForConfig(m.configs[name])
-	if current := m.statuses[name]; current.AuthStatus == MCPAuthStatusOAuth {
-		authStatus = MCPAuthStatusOAuth
-	}
-	if !ok {
-		if _, configured := m.configs[name]; configured {
-			state := MCPServerStateStopped
-			if !m.configs[name].IsEnabled() {
-				state = MCPServerStateDisabled
-			}
-			m.statuses[name] = ServerStatus{Name: name, State: state, AuthStatus: authStatus}
-			m.mu.Unlock()
-			return nil
-		}
+	c := m.clients[name]
+	cfg, configured := m.configs[name]
+	if c == nil && !configured {
 		m.mu.Unlock()
 		return fmt.Errorf("mcp server %q not found", name)
 	}
-	delete(m.clients, name)
-	m.statuses[name] = ServerStatus{Name: name, State: MCPServerStateStopped, AuthStatus: authStatus}
-	m.generation++
-	m.operations.Add(1)
+	server := m.servers[name]
+	if server == nil {
+		ctx, cancel := context.WithCancel(m.ctx)
+		server = &serverLifecycle{ctx: ctx, cancel: cancel}
+		m.servers[name] = server
+	}
+	server.generation++
+	cancel := server.pendingCancel
+	server.pendingCancel = nil
+	authStatus := authStatusForConfig(cfg)
+	if current := m.statuses[name]; current.AuthStatus == MCPAuthStatusOAuth {
+		authStatus = MCPAuthStatusOAuth
+	}
+	state := MCPServerStateStopped
+	if !cfg.IsEnabled() {
+		state = MCPServerStateDisabled
+	}
+	m.statuses[name] = ServerStatus{Name: name, State: state, AuthStatus: authStatus}
+	if c != nil {
+		delete(m.clients, name)
+		m.generation++
+		m.operations.Add(1)
+	}
 	m.mu.Unlock()
-	defer m.operations.Done()
-	return c.Close()
+	if cancel != nil {
+		cancel()
+	}
+	if c != nil {
+		defer m.operations.Done()
+		return c.Close()
+	}
+	return nil
 }
 
 func (m *Manager) Generation() uint64 {
@@ -564,24 +673,27 @@ func (m *Manager) AllTools() []*MCPTool {
 	return out
 }
 
-func (m *Manager) catalogChanged(name string) {
+func (m *Manager) catalogChanged(name string, generation uint64, client *Client) {
 	if m == nil {
 		return
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.closed || m.serverRevoked(name) {
+	if m.closed || m.serverRevoked(name) || m.clients[name] != client {
 		return
 	}
 	m.generation++
+	// The published client remains usable during Add. Its catalog can change,
+	// but its callbacks must not overwrite a newer connection attempt's status.
+	if m.connectionErrorLocked(name, generation) != nil {
+		return
+	}
 	if status, ok := m.statuses[name]; ok {
-		if client := m.clients[name]; client != nil {
-			status.ToolCount = len(client.Tools())
-			status.State = MCPServerStateReady
-			status.Connected = true
-			status.Error = ""
-			m.statuses[name] = status
-		}
+		status.ToolCount = len(client.Tools())
+		status.State = MCPServerStateReady
+		status.Connected = true
+		status.Error = ""
+		m.statuses[name] = status
 	}
 }
 
@@ -691,31 +803,30 @@ func (m *Manager) recordStatus(status ServerStatus) {
 	m.statuses[status.Name] = status
 }
 
-func (m *Manager) rememberConfig(cfg ServerConfig) {
+// recordConnectionStatus fences status writes and any resource-mismatch teardown
+// together. An OAuth lookup can finish after a replacement client was published.
+func (m *Manager) recordConnectionStatus(generation uint64, status ServerStatus, discardClient bool) error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.closed || m.serverRevoked(cfg.Name) {
-		return
+	if err := m.connectionErrorLocked(status.Name, generation); err != nil {
+		m.mu.Unlock()
+		return err
 	}
-	if m.configs == nil {
-		m.configs = make(map[string]ServerConfig)
-	}
-	m.configs[cfg.Name] = cloneServerConfig(cfg)
-}
-
-func (m *Manager) closeClient(name string) {
-	m.mu.Lock()
-	c := m.clients[name]
-	if c != nil {
-		delete(m.clients, name)
-		m.generation++
-		m.operations.Add(1)
+	m.statuses[status.Name] = status
+	var client *Client
+	if discardClient {
+		client = m.clients[status.Name]
+		if client != nil {
+			delete(m.clients, status.Name)
+			m.generation++
+			m.operations.Add(1)
+		}
 	}
 	m.mu.Unlock()
-	if c != nil {
+	if client != nil {
 		defer m.operations.Done()
-		_ = c.Close()
+		_ = client.Close()
 	}
+	return nil
 }
 
 func cloneServerConfig(cfg ServerConfig) ServerConfig {
