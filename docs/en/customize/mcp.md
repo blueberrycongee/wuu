@@ -51,6 +51,44 @@ invalidates them without sending them with the new session ID.
 
 Remote `headers` are literal header values. Native `mcp_servers` does not expand `${VAR}` placeholders. Keep secrets out of committed configuration and do not assume a placeholder is a credential reference. `enabled: false` retains a definition without connecting at startup.
 
+## Tool execution budgets
+
+Set `tool_timeout_ms` on a server to allow longer reports, exports, or builds:
+
+```json
+{
+  "mcp_servers": {
+    "docs": {
+      "url": "https://mcp.example.com/mcp",
+      "transport": "http",
+      "tool_timeout_ms": 120000
+    }
+  }
+}
+```
+
+The value is a whole number of milliseconds from `1` to `3600000` (one hour).
+Omit the field to keep the 30-second default. Zero, negative, fractional, null,
+string, and out-of-range values are rejected; there is no unlimited mode.
+The budget is a wall-clock limit for each tool call, including the wait for
+response headers. Progress notifications do not extend it. An earlier caller
+cancellation, turn deadline, or PTC deadline still wins. Timing out does not
+prove that a remote operation stopped or had no effect; Wuu does not replay a
+tool because it timed out.
+
+This setting applies to native calls and calls nested in PTC. It is separate
+from connection and tool-discovery budgets. Use the same field in a trusted
+project `.mcp.json` server or a plugin's `mcpServers` / `mcp_servers` declaration.
+A native preference entry containing only `tool_timeout_ms` (and optionally
+`enabled` or `tool_overrides`) overrides the budget of a same-named project
+server without replacing its definition. For a plugin server, use its qualified
+name, for example `plugin.my-plugin.docs`.
+
+Restart after editing settings on disk. A newly loaded plugin generation or
+reconnection uses its loaded budget; calls retained by an older foreground
+generation keep that generation's budget. The connection Refresh action does
+not reread configuration files.
+
 ## Manage the connection
 
 Open **Settings → MCP servers** to see connection state, tool count, and errors. Connect, disconnect, or refresh a server there. Disconnect ends the current connection without deleting its definition; refresh reconnects with the already-loaded configuration and discovers tools again.
@@ -114,6 +152,10 @@ Remote URL servers can use OAuth discovery, PKCE, scopes, and dynamic client reg
 The current desktop flow opens the authorization URL and requires you to paste the returned authorization code into settings. It does not start an automatic callback listener. Tokens go to Wuu's credential store rather than the server definition.
 
 Saved credentials are bound to the resource URL used for login. Reusing a server name with a different URL requires another login; a path or query change also counts. Credentials from older versions without a saved resource URL require login again. Wuu keeps mismatched credentials until you explicitly replace or remove them. Logging in to the new resource replaces the credentials for that server name.
+
+Logging out invalidates older login attempts and in-flight credential refreshes across Wuu processes. Their late responses cannot restore the removed credentials. Starting another login supersedes earlier login attempts for that server name; complete the newest authorization flow. Browser or token-exchange failures do not clear an existing credential. Signing in again after logout remains available.
+
+Desktop credentials remain in Keychain. Owner-only lock files and credential-version records coordinate local access independently of project data directories; these files contain no tokens or client secrets. Keep these version records alongside your local Wuu state. Storage failures or a backend command that outlives a crashed Wuu process can make a credential unavailable and require another login; a stale or uncommitted credential is not accepted. All Wuu processes sharing credentials must use this version or newer for these guarantees.
 
 Requests carrying OAuth credentials or configured headers cannot redirect across origins (scheme, host, or port). Legacy SSE message endpoints must share the stream's origin; same-origin paths and session queries remain supported.
 

@@ -110,6 +110,7 @@ func (e *streamableHTTPError) fallbackToSSE() bool {
 type StreamableHTTPTransport struct {
 	endpoint     string
 	client       *http.Client
+	toolClient   *http.Client
 	headers      map[string]string
 	authProvider TokenProvider
 
@@ -173,6 +174,7 @@ func NewStreamableHTTPTransportWithAuth(endpoint string, headers map[string]stri
 	return &StreamableHTTPTransport{
 		endpoint:     endpoint,
 		client:       client,
+		toolClient:   toolHTTPClient(client),
 		headers:      cloneStringMap(headers),
 		authProvider: authProvider,
 		ctx:          ctx,
@@ -327,7 +329,11 @@ func (t *StreamableHTTPTransport) post(ctx context.Context, req Request, body []
 	hreq.Header.Set("Content-Type", "application/json")
 	hreq.Header.Set("Accept", acceptStreamableHTTP)
 
-	resp, err := t.client.Do(hreq)
+	client := t.client
+	if req.Method == "tools/call" {
+		client = t.toolClient
+	}
+	resp, err := client.Do(hreq)
 	if err != nil {
 		finish()
 		return fmt.Errorf("streamable HTTP POST %s: %w", t.endpoint, err)
@@ -982,6 +988,8 @@ func (t *StreamableHTTPTransport) Close() error {
 
 	t.cancel()
 	t.wg.Wait()
+	t.client.CloseIdleConnections()
+	t.toolClient.CloseIdleConnections()
 	return nil
 }
 

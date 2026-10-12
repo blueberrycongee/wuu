@@ -634,12 +634,10 @@ func (t *sentSignalTransport) Send(ctx context.Context, req Request) error {
 // Cancelling a call sends notifications/cancelled. A server that accepts the
 // notification but never finishes the response must not keep the caller waiting.
 func TestCancelledCallDoesNotWaitForStalledCancelNotification(t *testing.T) {
-	previous := cancelNotificationTimeout
-	cancelNotificationTimeout = 100 * time.Millisecond
-	defer func() { cancelNotificationTimeout = previous }()
-
 	release := make(chan struct{})
 	streamClosed := make(chan struct{})
+	cancelStarted := make(chan struct{})
+	cancelFinished := make(chan struct{})
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			w.WriteHeader(http.StatusMethodNotAllowed)
@@ -655,6 +653,7 @@ func TestCancelledCallDoesNotWaitForStalledCancelNotification(t *testing.T) {
 			w.Header().Set("Content-Type", "text/event-stream")
 			w.WriteHeader(http.StatusOK)
 		case "notifications/cancelled":
+			close(cancelStarted)
 			w.WriteHeader(http.StatusAccepted)
 		}
 		w.(http.Flusher).Flush()
@@ -662,6 +661,8 @@ func TestCancelledCallDoesNotWaitForStalledCancelNotification(t *testing.T) {
 		case <-r.Context().Done():
 			if req.Method == "tools/call" {
 				close(streamClosed)
+			} else if req.Method == "notifications/cancelled" {
+				close(cancelFinished)
 			}
 		case <-release:
 		}
@@ -687,12 +688,22 @@ func TestCancelledCallDoesNotWaitForStalledCancelNotification(t *testing.T) {
 		if !errors.Is(err, context.Canceled) {
 			t.Fatalf("call error = %v, want context canceled", err)
 		}
-	case <-time.After(5 * time.Second):
+	case <-time.After(250 * time.Millisecond):
 		t.Fatal("cancelled call waited for the cancel notification response")
 	}
 	select {
 	case <-streamClosed:
 	case <-time.After(time.Second):
 		t.Fatal("cancelled call retained its POST response stream")
+	}
+	select {
+	case <-cancelStarted:
+	case <-time.After(time.Second):
+		t.Fatal("best-effort cancel notification was not dispatched")
+	}
+	select {
+	case <-cancelFinished:
+	case <-time.After(3 * time.Second):
+		t.Fatal("cancel notification outlived its own cleanup budget")
 	}
 }

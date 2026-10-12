@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/blueberrycongee/wuu/internal/mcpconfig"
 )
 
 // Claude Code project-level MCP compatibility (`.mcp.json`).
@@ -204,6 +206,9 @@ func translateMCPJson(data []byte, native map[string]MCPServerConfig, trust MCPJ
 		if exists {
 			sc.Enabled = preference.Enabled
 			sc.ToolOverrides = preference.ToolOverrides
+			if preference.ToolTimeoutMS != 0 {
+				sc.ToolTimeoutMS = preference.ToolTimeoutMS
+			}
 		}
 		out[name] = sc
 	}
@@ -227,12 +232,13 @@ func translateMCPJson(data []byte, native map[string]MCPServerConfig, trust MCPJ
 // explicit transport connects directly and never silently falls back.
 func translateMCPJsonServer(name string, raw json.RawMessage, lookup func(string) (string, bool)) (MCPServerConfig, []mcpJsonDiag, bool) {
 	var s struct {
-		Type    string            `json:"type"`
-		Command string            `json:"command"`
-		Args    []string          `json:"args"`
-		Env     map[string]string `json:"env"`
-		URL     string            `json:"url"`
-		Headers map[string]string `json:"headers"`
+		Type          string                  `json:"type"`
+		Command       string                  `json:"command"`
+		Args          []string                `json:"args"`
+		Env           map[string]string       `json:"env"`
+		URL           string                  `json:"url"`
+		Headers       map[string]string       `json:"headers"`
+		ToolTimeoutMS mcpconfig.ToolTimeoutMS `json:"tool_timeout_ms"`
 	}
 	if err := json.Unmarshal(raw, &s); err != nil {
 		return MCPServerConfig{}, []mcpJsonDiag{{
@@ -295,6 +301,8 @@ func translateMCPJsonServer(name string, raw json.RawMessage, lookup func(string
 			Message: fmt.Sprintf("mcp server %q from .mcp.json skipped: unsupported transport %q", name, strings.TrimSpace(s.Type)),
 		}}, false
 	}
+
+	sc.ToolTimeoutMS = s.ToolTimeoutMS
 
 	// Missing env vars are a warning, not a skip — Claude Code leaves the
 	// unexpanded ${VAR} literal in place and still loads the server.

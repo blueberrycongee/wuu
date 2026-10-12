@@ -1454,6 +1454,8 @@ func (t *Toolkit) refreshMCPToolSnapshot(force bool) {
 	native := manager.NativeTools()
 	tools := make([]*mcp.MCPTool, 0, len(native))
 	for _, item := range native {
+		// The client owns the same deadline reported by NativeTool.Timeout,
+		// including calls nested through PTC. Wrapping cannot reset it.
 		tools = append(tools, mcp.NewMCPTool(item.Client, item.Definition))
 	}
 	t.mcpCatalogMu.Lock()

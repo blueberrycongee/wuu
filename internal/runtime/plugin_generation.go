@@ -346,7 +346,7 @@ func (s *Session) buildPluginGeneration(cfg config.Config, discovered []pluginpk
 		ownedRoots:        append([]string(nil), ownedRoots...),
 		driverGateways:    kernel.driverGateways,
 	}
-	generation.mcp, err = startMCPManager(cfg, active, required)
+	generation.mcp, err = startMCPManager(cfg, active, required, s.mcpOAuth)
 	if err != nil {
 		_ = generation.close()
 		s.persistRevocationReport(generation)

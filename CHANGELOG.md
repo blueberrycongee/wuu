@@ -10,6 +10,13 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Bounded per-server MCP tool execution budgets through `tool_timeout_ms`,
+  shared by native and PTC calls while preserving earlier caller cancellation
+  and the 30-second default.
+- iOS conversation settings can select a computer's available engine before the
+  first message, and edit the selected engine's models, reasoning and advertised
+  permission modes. Existing conversations display their bound engine.
+
 - Side chat is a bundled plugin with a recommended-on onboarding choice and a
   persistent enable switch. Disabling it stops side answers and hides its entry
   points without deleting history. Extensions can supply attached-chat policy
@@ -45,6 +52,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   Reply work is bounded, follows its originating call's cancellation, and stops
   on connection close without replaying replies into a replacement session.
 
+- MCP OAuth credentials and pending sign-ins remain available across plugin
+  reloads, including startup and adding the first MCP server to a running session.
 - Remote MCP notification streams recover after session expiry or credential
   refresh, discard obsolete session messages, and report unrecoverable handshakes
   as connection failures. Concurrent expired calls share one recovery, renewed
@@ -54,11 +63,25 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   An interrupted or malformed response fails only its originating call promptly,
   without replaying tools or disconnecting healthy calls and notifications.
   Responses cannot resolve a different call through a mismatched POST request ID.
+- MCP OAuth logout and newer logins now fence late token exchanges and refresh
+  writes across processes, preventing older credentials from becoming active
+  again after logout or a newer login.
 
 - Bind saved MCP OAuth credentials to the resource used for login, require
   reauthentication after resource changes, and prevent credentials from reaching
   cross-origin redirects or legacy SSE message endpoints.
+- Disconnecting or reconnecting an MCP server cancels older connection attempts,
+  preventing queued startup, delayed initialization or tool discovery from
+  restoring a stopped connection or replacing its newer tools and status.
 
+- Remember iOS model and reasoning choices for new conversations per account,
+  computer and engine, including first sends without reopening settings and app relaunches.
+- Preserve the iOS reading position across lazy layout updates when loading older
+  messages, including history pages that extend an existing folded process group.
+- Show the running indicator only on the current iOS process group when a turn
+  resumes after earlier replies; completed groups and their inspectors stay idle.
+- Make the iOS message input respond to taps across its padded text area, and
+  keep draft typing from invalidating the root view while preserving native text editing.
 - Keep the sidebar's recent-history range stable while a first message creates
   its conversation, avoiding a temporary extra row and subsequent layout jump,
   including while saving a draft's custom name.

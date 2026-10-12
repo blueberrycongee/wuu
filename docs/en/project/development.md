@@ -68,6 +68,43 @@ It uses a temporary profile and synthetic content, not your Wuu data. Run it in
 a graphical desktop session; it does not validate native dialog appearance or
 packaged-app behavior.
 
+### MCP connection lifecycle
+
+After building the core, run the loopback lifecycle fixture:
+
+```sh
+go build -o bin/wuu ./cmd/wuu
+node scripts/mcp-connection-generations-e2e.mjs
+```
+
+It starts real app-server processes with disposable state and synthetic MCP
+servers. Deterministic response barriers cover Disconnect, Connect, Refresh and
+shutdown during background initialization and tool discovery, including later
+explicit reconnects and unaffected servers. It also fills the four-connection
+startup limit, then verifies that newer Disconnect, Connect and Refresh actions
+supersede startup work still waiting in the queue. It does not use real credentials
+or validate the desktop UI. `WUU_E2E_CORE` selects another core binary;
+`WUU_MCP_E2E_OUTPUT` selects the evidence directory. The default is
+`.tmp/e2e/mcp-connection-generations/`, containing JSON RPC transcripts, server
+requests, binary hashes and pass/fail receipts. Existing manager tests additionally
+cover concurrent operations that the serial app-server RPC dispatcher cannot
+issue together, plus permanent revocation and retired-client callbacks.
+
+### MCP authentication across reloads
+
+Run `go run ./scripts/mcp-auth-reload-e2e` to exercise the shared runtime and
+app-server protocol against a loopback OAuth/MCP service. It saves synthetic
+credentials in a disposable file store, then covers authenticated startup,
+manager replacement, a login started before replacement, a retained foreground
+tool call, disable/re-enable, and adding the first MCP server after empty startup.
+It checks that managers and transport sessions remain generation-owned and that
+RPC responses do not expose credentials. No model or external engine is invoked.
+
+The fixture uses the runtime's explicit OAuth-service injection; it does not test
+macOS Keychain or the desktop UI. Receipts, connection identities and RPC output
+are saved under `.tmp/e2e/mcp-auth-reload/`; set `WUU_MCP_AUTH_E2E_OUTPUT` to use
+another evidence directory.
+
 ### Live resize layout guard
 
 After a desktop production build, run `npm --prefix desktop run test:e2e:resize-live-layout`

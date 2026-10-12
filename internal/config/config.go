@@ -14,6 +14,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/executionenv"
 	"github.com/blueberrycongee/wuu/internal/extensions"
 	"github.com/blueberrycongee/wuu/internal/grokbuildspec"
+	"github.com/blueberrycongee/wuu/internal/mcpconfig"
 	"github.com/blueberrycongee/wuu/internal/securefs"
 	"github.com/blueberrycongee/wuu/internal/statepath"
 	"github.com/blueberrycongee/wuu/internal/storelock"
@@ -75,6 +76,7 @@ type MCPServerConfig struct {
 	OAuth         *MCPOAuthConfig            `json:"oauth,omitempty"`
 	Enabled       *bool                      `json:"enabled,omitempty"`
 	ToolOverrides map[string]MCPToolOverride `json:"tool_overrides,omitempty"`
+	ToolTimeoutMS mcpconfig.ToolTimeoutMS    `json:"tool_timeout_ms,omitempty"`
 }
 
 // definesServer reports whether the entry says how to reach a server, as
@@ -717,6 +719,11 @@ func (c Config) ResolveProvider(name string) (ProviderConfig, string, error) {
 
 // Validate performs semantic checks.
 func (c Config) Validate() error {
+	for name, server := range c.MCPServers {
+		if _, err := server.ToolTimeoutMS.Duration(); err != nil {
+			return fmt.Errorf("mcp_servers.%s: %w", name, err)
+		}
+	}
 	if err := c.ExecutionEnvironments.Validate(); err != nil {
 		return err
 	}
