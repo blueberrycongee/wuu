@@ -38,11 +38,21 @@ private struct PairingRequest: Identifiable {
     let link: String
 }
 
-/// Unsent composer text and attachments by computer and conversation. Owned above the
-/// per-computer view so switching computers or conversations keeps them.
-struct ComposerDrafts {
-    var text: [String: String] = [:]
-    var attachments: [String: [InputAttachment]] = [:]
+/// Unsent drafts survive computer and conversation switches. Only the composer
+/// observes each draft's contents; typing does not invalidate the navigation or transcript.
+@MainActor final class ComposerDrafts {
+    private var values: [String: ComposerDraft] = [:]
+    func draft(for key: String) -> ComposerDraft {
+        if let draft = values[key] { return draft }
+        let draft = ComposerDraft()
+        values[key] = draft
+        return draft
+    }
+}
+
+@MainActor @Observable final class ComposerDraft {
+    var text = ""
+    var attachments: [InputAttachment] = []
 }
 
 struct RootView: View {
@@ -59,14 +69,18 @@ struct RootView: View {
     }
     @ViewBuilder private var fixture: some View {
         #if DEBUG
-        NativeUIFixtureView(model: model)
+        if ProcessInfo.processInfo.arguments.contains("--native-composer-fixture") {
+            ConversationView(model: model, drafts: drafts)
+        } else {
+            NativeUIFixtureView(model: model)
+        }
         #endif
     }
     var body: some View {
         Group {
             if isFixture { fixture }
             else if model.recovery != nil { RecoveryView(model: model) }
-            else if model.host != nil { ConversationView(model: model, drafts: $drafts).id(model.host?.pub) }
+            else if model.host != nil { ConversationView(model: model, drafts: drafts).id(model.host?.pub) }
             else if model.hasSavedConnections { ComputersView(model: model, addComputer: pair) }
             else { WelcomeView(model: model, openPairing: pair) }
         }
@@ -85,7 +99,7 @@ struct RootView: View {
 
 struct ConversationView: View {
     @Bindable var model: AppModel
-    @Binding var drafts: ComposerDrafts
+    let drafts: ComposerDrafts
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var conversationPresented = false
     @State private var newConversation = false
@@ -102,24 +116,16 @@ struct ConversationView: View {
     @State private var exportDocument = ConversationDocument(text: "")
     @State private var settingsThread: ChatThread?
     @State private var accountSettings = false
-    init(model: AppModel, drafts: Binding<ComposerDrafts>) {
+    init(model: AppModel, drafts: ComposerDrafts) {
         self.model = model
-        _drafts = drafts
+        self.drafts = drafts
         _conversationPresented = State(initialValue: model.activeID != nil || model.draftWorkspace != nil)
     }
     /// Server history sync belongs to the account's own host connection, not to direct pairs.
     private var accountHistory: Bool { model.account != nil && model.selectedPair == nil }
     private var hostName: String { (model.host?.name).flatMap { $0.isEmpty ? nil : $0 } ?? "电脑" }
     private var query: String { model.search.trimmingCharacters(in: .whitespacesAndNewlines) }
-    private var draftKey: String { model.composerKey }
-    private var draft: Binding<String> {
-        let key = draftKey
-        return Binding(get: { drafts.text[key] ?? "" }, set: { drafts.text[key] = $0 })
-    }
-    private var attachments: Binding<[InputAttachment]> {
-        let key = draftKey
-        return Binding(get: { drafts.attachments[key] ?? [] }, set: { drafts.attachments[key] = $0 })
-    }
+    private var draft: ComposerDraft { drafts.draft(for: model.composerKey) }
     var body: some View {
         NavigationStack {
             conversationList
@@ -236,7 +242,7 @@ struct ConversationView: View {
             }
             if model.activeID != nil || model.draftWorkspace != nil {
                 PendingMessagesView(model: model)
-                MobileComposer(text: draft, attachments: attachments, focused: $composerFocused, model: model, enabled: composerEnabled,
+                MobileComposer(draft: draft, focused: $composerFocused, model: model, enabled: composerEnabled,
                     sending: model.sending, placeholder: composerPlaceholder, identifier: "harness-composer",
                     stop: model.live?.running == true ? stopTurn : nil,
                     send: send)
@@ -296,15 +302,15 @@ struct ConversationView: View {
         act { try await model.stop() }
     }
     private func send() {
-        let key = draftKey
-        let original = drafts.text[key] ?? ""
+        let draft = draft
+        let original = draft.text
         let text = original.trimmingCharacters(in: .whitespacesAndNewlines)
-        let files = drafts.attachments[key] ?? []
+        let files = draft.attachments
         Haptics.tap()
         act {
             try await model.send(text, attachments: files)
-            if drafts.text[key] == original { drafts.text[key] = "" }
-            drafts.attachments[key]?.removeAll { file in files.contains { $0.id == file.id } }
+            if draft.text == original { draft.text = "" }
+            draft.attachments.removeAll { file in files.contains { $0.id == file.id } }
         }
     }
 

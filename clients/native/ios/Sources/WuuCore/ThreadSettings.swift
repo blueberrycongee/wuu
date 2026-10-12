@@ -14,14 +14,33 @@ public struct ThreadSettings: Sendable, Equatable {
         if permission.isEmpty { permission = "standard" }
     }
     /// A missing thread ID would change the computer's defaults instead of this conversation.
-    public func updateParams(threadID: String) throws -> JSONValue {
+    public func updateParams(threadID: String, engine: String = "wuu", resetModel: Bool = false) throws -> JSONValue {
         guard !threadID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              !provider.isEmpty, !model.isEmpty,
+              (engine != "wuu" || (!provider.isEmpty && !model.isEmpty)),
               ["standard", "read_only", "unconfined"].contains(permission) else {
             throw NativeError.invalid("请选择当前会话的模型和权限")
         }
+        if engine != "wuu" {
+            return ["thread_id": .string(threadID), "model": .string(model), "reset_model": .bool(resetModel),
+                    "effort": .string(variant), "permission_mode": .string(permission)]
+        }
         return ["thread_id": .string(threadID), "provider": .string(provider), "model": .string(model),
                 "variant": .string(variant), "permission_mode": .string(permission)]
+    }
+}
+
+public struct RemoteEngine: Identifiable, Sendable {
+    public let id: String
+    public let name: String
+    public let available: Bool
+    public let models: [RemoteModel]
+    public let permissions: [String]
+    public init(_ value: JSONValue) {
+        id = value["id"].string ?? ""
+        name = value["display_name"].string.flatMap { $0.isEmpty ? nil : $0 } ?? (id == "wuu" ? "Wuu" : id)
+        available = value["enabled"].bool && value["binary_ok"].bool
+        models = value["models"].array.map(RemoteModel.init)
+        permissions = value["permission_modes"].array.compactMap { $0["mode"].string }
     }
 }
 
