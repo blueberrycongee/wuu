@@ -20,11 +20,12 @@ import (
 )
 
 type OAuthManager struct {
-	store     credentialstore.Store
-	client    *http.Client
-	mu        sync.Mutex
-	pending   map[string]pendingOAuth
-	refreshMu map[string]*sync.Mutex
+	store        credentialstore.Store
+	client       *http.Client
+	mu           sync.Mutex
+	pending      map[string]pendingOAuth
+	refreshMu    sync.Mutex
+	refreshLocks map[string]chan struct{}
 }
 
 type OAuthStartOptions struct {
@@ -109,7 +110,7 @@ func NewOAuthManager(store credentialstore.Store, client *http.Client) *OAuthMan
 	if client == nil {
 		client = http.DefaultClient
 	}
-	return &OAuthManager{store: store, client: client, pending: map[string]pendingOAuth{}, refreshMu: map[string]*sync.Mutex{}}
+	return &OAuthManager{store: store, client: client, pending: map[string]pendingOAuth{}, refreshLocks: map[string]chan struct{}{}}
 }
 
 func (m *OAuthManager) Start(ctx context.Context, options OAuthStartOptions) (OAuthStartResult, error) {
@@ -239,8 +240,17 @@ func (m *OAuthManager) RefreshAccessToken(ctx context.Context, serverID string) 
 
 func (m *OAuthManager) accessToken(ctx context.Context, serverID string, forceRefresh bool) (string, error) {
 	refreshLock := m.refreshLock(serverID)
-	refreshLock.Lock()
-	defer refreshLock.Unlock()
+	// Retained generations share this service, but not their call budgets.
+	// A short caller must stop waiting without canceling the active refresh.
+	select {
+	case refreshLock <- struct{}{}:
+		defer func() { <-refreshLock }()
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	token, err := m.loadToken(ctx, serverID)
 	if err != nil {
 		return "", err
@@ -280,18 +290,19 @@ func (m *OAuthManager) accessToken(ctx context.Context, serverID string, forceRe
 	return token.AccessToken, nil
 }
 
-func (m *OAuthManager) refreshLock(serverID string) *sync.Mutex {
+func (m *OAuthManager) refreshLock(serverID string) chan struct{} {
 	key := strings.TrimSpace(serverID)
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.refreshMu == nil {
-		m.refreshMu = make(map[string]*sync.Mutex)
+	// This lock protects only gate lookup, never credential-store I/O.
+	m.refreshMu.Lock()
+	defer m.refreshMu.Unlock()
+	if m.refreshLocks == nil {
+		m.refreshLocks = make(map[string]chan struct{})
 	}
-	if lock := m.refreshMu[key]; lock != nil {
+	if lock := m.refreshLocks[key]; lock != nil {
 		return lock
 	}
-	lock := &sync.Mutex{}
-	m.refreshMu[key] = lock
+	lock := make(chan struct{}, 1)
+	m.refreshLocks[key] = lock
 	return lock
 }
 
