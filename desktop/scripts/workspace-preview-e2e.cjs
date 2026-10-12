@@ -158,6 +158,9 @@ if (process.argv.includes("--pdf-fixtures-only")) {
       import { FileSelectionProvider } from "/src/renderer/FileSelectionContext";
       import { readCollapsedPromptParts } from "/src/renderer/ComposerCollapsedPrompt";
       import { applyMessageFlowFontSize } from "/src/renderer/MessageFlowFontSizeSection";
+      // PDFViewer requires the main PDF.js module before its first evaluation.
+      // The production preview imports that module itself, but is lazy here.
+      import "pdfjs-dist";
       import { PDFViewer } from "pdfjs-dist/web/pdf_viewer.mjs";
       import "/src/renderer/styles.css";
       const query = new URLSearchParams(location.search);
@@ -308,7 +311,7 @@ if (process.argv.includes("--pdf-fixtures-only")) {
       // Preserve the production namespace relationship without touching the
       // running developer desktop's cache. Removing its namespace must fail.
       cacheDir: path.resolve(probeCache, path.relative(defaultCache, renderer.cacheDir ?? defaultCache)),
-      server: { host: "127.0.0.1", port: 0, fs: { allow: [path.dirname(desktop)] } },
+      server: { host: "127.0.0.1", port: 0, fs: { allow: [path.dirname(desktop), fs.realpathSync(path.join(desktop, "node_modules/pdfjs-dist"))] } },
     });
     let competing;
     try {
@@ -326,8 +329,8 @@ if (process.argv.includes("--pdf-fixtures-only")) {
       assert.equal((await fetch(new URL(dependency, base))).status, 200, "another preview must not invalidate an already loaded desktop dependency");
       const env = { ...process.env, WUU_PREVIEW_E2E_PDF: `/${path.relative(desktop, path.join(pdfRoot, "index.html")).split(path.sep).join("/")}`, WUU_PREVIEW_E2E_URL: base, WUU_PREVIEW_E2E_REVIEW: `/${path.relative(desktop, path.join(reviewRoot, "index.html")).split(path.sep).join("/")}`, WUU_PREVIEW_E2E_OUTPUT: run, WUU_HOME: path.join(run, "wuu-home") };
       delete env.ELECTRON_RUN_AS_NODE;
-      const child = spawn(require("electron"), [__filename], { env, stdio: "inherit" });
-      const timeout = setTimeout(() => child.kill("SIGTERM"), 120_000);
+      const child = spawn(require("electron"), [...(process.env.WUU_PREVIEW_HEADLESS === "1" ? ["--no-sandbox", "--ozone-platform=headless", "--ozone-override-screen-size=1440,1100"] : []), __filename], { env, stdio: "inherit" });
+      const timeout = setTimeout(() => child.kill("SIGTERM"), 300_000);
       const [code] = await once(child, "exit");
       clearTimeout(timeout);
       assert.equal(code, 0, "workspace preview browser probe failed");
@@ -345,11 +348,14 @@ if (process.argv.includes("--pdf-fixtures-only")) {
   const base = process.env.WUU_PREVIEW_E2E_URL;
   const review = process.env.WUU_PREVIEW_E2E_REVIEW;
   app.setPath("userData", path.join(run, "profile"));
+  process.env.HOME = path.join(run, "profile");
   app.on("window-all-closed", () => {});
   app.whenReady().then(async () => {
-    const window = new BrowserWindow({ show: false, width: 1440, height: 1000, webPreferences: { partition: "workspace-preview-e2e", contextIsolation: true, nodeIntegration: false, backgroundThrottling: false } });
+    const window = new BrowserWindow({ show: true, width: 1440, height: 1000, ...(process.platform === "linux" ? { frame: false, autoHideMenuBar: true } : {}), webPreferences: { partition: "workspace-preview-e2e", contextIsolation: true, nodeIntegration: false, backgroundThrottling: false } });
     const logs = [];
     window.webContents.on("console-message", (event) => logs.push(event.message));
+    window.webContents.on("render-process-gone", (_event, details) => { logs.push(JSON.stringify({ rendererExit: details })); console.error("rendererExit", details); });
+    window.webContents.on("did-fail-load", (_event, errorCode, errorDescription, url) => logs.push(JSON.stringify({ errorCode, errorDescription, url })));
     const evaluate = (code) => window.webContents.executeJavaScript(code);
     const waitFor = (condition) => evaluate(`new Promise((resolve, reject) => {
       const roots = new Set();
@@ -365,13 +371,49 @@ if (process.argv.includes("--pdf-fixtures-only")) {
       const timeout = setTimeout(() => { observer.disconnect(); reject(new Error(${JSON.stringify(condition)})); }, 30000);
       observer.observe(document.documentElement, { subtree: true, childList: true, attributes: true, characterData: true }); check();
     })`);
-    const click = (selector) => evaluate(`document.querySelector(${JSON.stringify(selector)}).click()`);
-    // Hidden windows do not reliably advance paint-driven transitions. Finish
-    // finite effects before recording static surfaces; leave activity loops.
+    const trustedInteractions = [];
+    const nativeClick = async (expression, button = "left", count = 1) => {
+      await waitFor(`Boolean(${expression})`);
+      const marker = "preview-trusted-click:" + trustedInteractions.length;
+      const point = await evaluate(`(async () => {
+        const element = ${expression};
+        if (!element) throw new Error("Missing native click target");
+        element.scrollIntoView({ block: "center", inline: "center" });
+        let previous = "", stable = 0, bounds;
+        for (let frame = 0; frame < 120; frame += 1) {
+          await new Promise(resolve => requestAnimationFrame(resolve));
+          bounds = element.getBoundingClientRect();
+          const current = [bounds.x, bounds.y, bounds.width, bounds.height].join(",");
+          stable = current === previous ? stable + 1 : 0; previous = current;
+          if (stable >= 6) break;
+        }
+        if (stable < 6) throw new Error("Click target did not settle");
+        element.addEventListener(${JSON.stringify(button === "middle" ? "auxclick" : "click")}, event => {
+          if (event.isTrusted) console.info(${JSON.stringify(marker)});
+        }, { once: true });
+        return { x: Math.round(bounds.x + bounds.width / 2), y: Math.round(bounds.y + bounds.height / 2) };
+      })()`);
+      for (let index = 0; index < count; index += 1) {
+        window.webContents.sendInputEvent({ type: "mouseDown", button, clickCount: 1, ...point });
+        window.webContents.sendInputEvent({ type: "mouseUp", button, clickCount: 1, ...point });
+      }
+      const deadline = Date.now() + 5000;
+      while (!logs.includes(marker) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 10));
+      assert.equal(logs.includes(marker), true, expression);
+      trustedInteractions.push({ expression, button, count });
+    };
+    const click = selector => nativeClick(`document.querySelector(${JSON.stringify(selector)})`);
+    // Finish finite effects before recording static surfaces; leave activity loops.
     const settle = () => evaluate(`document.getAnimations().filter(animation => animation.effect.getComputedTiming().iterations !== Infinity).forEach(animation => animation.finish())`);
     const measurements = [];
+    const capture = async name => {
+      await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))');
+      fs.writeFileSync(path.join(run, name), (await window.webContents.capturePage()).toPNG());
+    };
     try {
       await window.loadURL(`${base}${review}?width=420`);
+      window.webContents.debugger.attach("1.3");
+      await window.webContents.debugger.sendCommand("Emulation.setFocusEmulationEnabled", { enabled: true });
       await waitFor('document.querySelector(".workspace-review-row")');
       // Cancel the real lazy module request, rather than throwing from a mock.
       session.fromPartition("workspace-preview-e2e").webRequest.onBeforeRequest({ urls: [`${base}/*WorkspaceMonacoDiffEditor*`] }, (_details, callback) => callback({ cancel: true }));
@@ -406,6 +448,7 @@ if (process.argv.includes("--pdf-fixtures-only")) {
       }
       // Real WorkspaceFilePreview -> lazy PDF.js -> worker/network failures.
       // Only the workspace-read IPC is synthetic; no PDF.js APIs are mocked.
+      console.log("PASS workspace import recovery and theme surfaces");
       await window.loadURL(`${base}${process.env.WUU_PREVIEW_E2E_PDF}`);
       const shadow = 'document.querySelector("[data-workspace-pdf-preview]")?.shadowRoot';
       const retry = `${shadow}?.querySelector("button.workspace-pdf-retry")`;
@@ -421,12 +464,25 @@ if (process.argv.includes("--pdf-fixtures-only")) {
       for (const theme of ["light", "dark"]) {
         for (const size of [14, 20]) {
           await evaluate(`document.documentElement.dataset.theme = ${JSON.stringify(theme)};
-            document.documentElement.style.setProperty("--ui-font-size", "${size}px");`);
+            document.documentElement.style.setProperty("--conversation-message-font-size", "${size}px");
+            document.documentElement.style.setProperty("--appearance-scale", "${size / 14}");`);
           window.setContentSize(size === 14 ? 1440 : 760, 900);
-          fs.writeFileSync(path.join(run, `pdf-error-${theme}-${size}.png`), (await window.webContents.capturePage()).toPNG());
+          await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))');
+          const errorBounds = await evaluate(`(() => {
+            const root = ${shadow};
+            const viewport = root.querySelector('.workspace-pdf-viewport').getBoundingClientRect();
+            const detail = root.querySelector('[role=alert] span');
+            const bounds = detail.getBoundingClientRect();
+            return { left: bounds.left, right: bounds.right, viewportLeft: viewport.left, viewportRight: viewport.right,
+              clientWidth: detail.clientWidth, scrollWidth: detail.scrollWidth };
+          })()`);
+          assert.ok(errorBounds.left >= errorBounds.viewportLeft && errorBounds.right <= errorBounds.viewportRight, "PDF error details fit the panel");
+          assert.ok(errorBounds.scrollWidth <= errorBounds.clientWidth, "long PDF errors wrap without clipping");
+          measurements.push({ view: "pdf-error", theme, size, ...errorBounds });
+          await capture(`pdf-error-${theme}-${size}.png`);
         }
       }
-      await evaluate(`(() => { const button = ${retry}; button.click(); button.click(); })()`);
+      await nativeClick(retry, "left", 2);
       await waitFor(`${retry}?.disabled && ${shadow}?.querySelector('[role=status]')`);
       await waitForRequest("transient.pdf", 2);
       assert.equal((await requests()).filter(name => name === "transient.pdf").length, 2);
@@ -449,10 +505,10 @@ if (process.argv.includes("--pdf-fixtures-only")) {
       assert.equal(quote.source.revision, `workspace-pdf:1000:7:${"a".repeat(64)}`);
       assert.equal(quote.source.path, "transient.pdf");
       assert.deepEqual(quote.source.pdf, { start_page: 2, end_page: 2 });
-      fs.writeFileSync(path.join(run, "pdf-recovered.png"), (await window.webContents.capturePage()).toPNG());
+      await capture("pdf-recovered.png");
       // Mutable workspace paths must refresh their owner-provided revision.
       await click('[data-open-pdf="changed"]'); await failed();
-      await evaluate(`${retry}.click()`);
+      await nativeClick(retry);
       await waitForRequest("changed.pdf", 2);
       await release("changed.pdf"); await ready();
       await evaluate(`(() => {
@@ -470,14 +526,14 @@ if (process.argv.includes("--pdf-fixtures-only")) {
       assert.equal((await evaluate('window.pdfParts')).filter(part => part.type === "file_selection").length, 2, "one selection action must add only one excerpt after retry");
       // Metadata read failures remain recoverable without another byte request.
       await click('[data-open-pdf="metadata"]'); await failed();
-      await evaluate(`${retry}.click()`); await failed();
+      await nativeClick(retry); await failed();
       assert.equal((await requests()).filter(name => name === "metadata.pdf").length, 1);
       assert.match(await evaluate(`${shadow}.querySelector('[role=alert]').textContent`), /Metadata temporarily unavailable/);
-      await evaluate(`${retry}.click()`); await waitForRequest("metadata.pdf", 2);
+      await nativeClick(retry); await waitForRequest("metadata.pdf", 2);
       await release("metadata.pdf"); await ready();
       for (const name of ["metadata-stale", "metadata-close"]) {
         await click(`[data-open-pdf="${name}"]`); await failed();
-        await evaluate(`${retry}.click()`);
+        await nativeClick(retry);
         await waitForRequest(`metadata:${name}.pdf`, 1);
         await waitFor(`${retry}?.disabled && ${shadow}?.querySelector('[role=status]')`);
         if (name === "metadata-stale") {
@@ -500,12 +556,12 @@ if (process.argv.includes("--pdf-fixtures-only")) {
       await click('[data-open-pdf="corrupt"]');
       await failed();
       for (let i = 0; i < 2; i += 1) {
-        await evaluate(`${retry}.click()`); await waitForRequest("corrupt.pdf", i + 2); await failed();
+        await nativeClick(retry); await waitForRequest("corrupt.pdf", i + 2); await failed();
       }
       assert.equal((await requests()).filter(name => name === "corrupt.pdf").length, 3);
       for (const name of ["stale", "close"]) {
         await click(`[data-open-pdf="${name}"]`); await failed();
-        await evaluate(`${retry}.click()`);
+        await nativeClick(retry);
         await waitFor(`${retry}?.disabled`);
         await waitForRequest(`${name}.pdf`, 2);
         if (name === "stale") {
@@ -523,6 +579,7 @@ if (process.argv.includes("--pdf-fixtures-only")) {
       measurements.push({ view: "pdf-retry", boundary: "real renderer and PDF.js; synthetic workspace IPC and local HTTP",
         requests: await requests(), quote: quote.source, changedQuote: changedQuote.source, checks: ["in-place-retry", "double-click", "source-revision", "refreshed-source-revision", "metadata-retry", "switch-during-metadata", "close-during-metadata", "page-identity", "corrupt-retry", "switch-during-retry", "close-during-retry", "draft-retained"] });
 
+      console.log("PASS PDF retry, metadata, source replacement and draft retention");
       const navigation = pdfNavigationFixture();
       const windows = [];
       const navigations = [];
@@ -533,15 +590,12 @@ if (process.argv.includes("--pdf-fixtures-only")) {
       const destinationClick = async (name, middle = false) => {
         const selector = linkSelector(name);
         await waitFor(`${shadow}?.querySelector(${JSON.stringify(selector)})`);
-        await evaluate(`(() => {
-          const link = ${shadow}.querySelector(${JSON.stringify(selector)});
-          ${middle ? 'link.dispatchEvent(new MouseEvent("auxclick", { button: 1, bubbles: true, cancelable: true }))' : "link.click()"};
-        })()`);
+        await nativeClick(`${shadow}.querySelector(${JSON.stringify(selector)})`, middle ? "middle" : "left");
       };
       const back = async () => {
         const selector = `.page[data-page-number="${await evaluate('window.pdfViewer.currentPageNumber')}"] a[data-element-id="${navigation.backID}"]`;
         await waitFor(`${shadow}?.querySelector(${JSON.stringify(selector)})`);
-        await evaluate(`${shadow}.querySelector(${JSON.stringify(selector)}).click()`);
+        await nativeClick(`${shadow}.querySelector(${JSON.stringify(selector)})`);
         await pageAt(1);
       };
       await click('[data-open-pdf="navigation"]'); await pageAt(1);
@@ -563,13 +617,13 @@ if (process.argv.includes("--pdf-fixtures-only")) {
         assert.equal(await evaluate('window.pdfViewer.currentPageNumber'), 1, name);
         assert.equal(await evaluate(`Boolean(${shadow}.querySelector('[role=alert]'))`), false, name);
       }
-      for (const name of ["https", "mailto"]) await destinationClick(name);
+      for (const name of ["https", "mailto"]) await destinationClick(name, name === "mailto");
       assert.deepEqual(await evaluate('window.pdfExternalURLs'), ["https://example.com/pdf-link", "mailto:pdf@example.com"]);
       for (const name of ["javascript-url", "file-url", "remote-file", "script-action"]) {
         assert.equal(await evaluate(`Boolean(${shadow}.querySelector(${JSON.stringify(linkSelector(name))}))`), false, name);
       }
       assert.equal(await evaluate('location.href'), navigationURL);
-      fs.writeFileSync(path.join(run, "pdf-navigation.png"), (await window.webContents.capturePage()).toPNG());
+      await capture("pdf-navigation.png");
 
       const holdDestination = async method => {
         await evaluate(`window.holdPDFDestination(${JSON.stringify(method)})`);
@@ -593,13 +647,15 @@ if (process.argv.includes("--pdf-fixtures-only")) {
         await back();
         for (const showBeforeRelease of [false, true]) {
           await holdDestination(method);
-          await evaluate('window.retainedPDFViewer = window.pdfViewer');
+          await evaluate('window.retainedPDFViewer = window.pdfViewer; true');
           await click('[data-hide-pdf]');
           await waitFor('document.querySelector("aside[hidden]")');
           if (showBeforeRelease) {
             await click('[data-show-pdf]'); await waitFor('!document.querySelector("aside[hidden]")');
           }
+          await click('[aria-label="Draft"]');
           await releaseDestination();
+          assert.equal(await evaluate(`document.activeElement === document.querySelector('[aria-label="Draft"]')`), true, "hidden completion does not steal draft focus");
           if (!showBeforeRelease) {
             await click('[data-show-pdf]'); await waitFor('!document.querySelector("aside[hidden]")');
           }
@@ -628,16 +684,35 @@ if (process.argv.includes("--pdf-fixtures-only")) {
       // held. The loading task and replacement document remain real PDF.js.
       await evaluate('window.pdfViewer.eventBus.dispatch("pagerendered", { error: new Error("Synthetic page render failure") })');
       await failed();
-      await evaluate(`${retry}.click()`); await pageAt(1);
+      await nativeClick(retry); await pageAt(1);
       await releaseDestination();
       assert.equal(await evaluate('window.pdfViewer.currentPageNumber'), 1, "retry fences pending page references");
       await destinationClick("named"); await pageAt(2);
+      await back();
+      // Inject only the requested page's transport failure; PDF parsing,
+      // annotations, navigation, error surface and retried document stay real.
+      await evaluate(`(() => {
+        const pdf = window.pdfViewer.pdfDocument;
+        const getPage = pdf.getPage.bind(pdf);
+        pdf.getPage = number => number === 3 ? Promise.reject(new Error("Synthetic page fetch failure")) : getPage(number);
+      })()`);
+      await destinationClick("reference"); await failed();
+      assert.match(await evaluate(`${shadow}.querySelector('[role=alert]').textContent`), /Synthetic page fetch failure/);
+      await capture("pdf-page-failure.png");
+      await nativeClick(retry); await pageAt(3);
+      await back();
+      await destinationClick("named"); await pageAt(2);
+      await capture("pdf-navigation-recovered.png");
       assert.deepEqual(windows, [], "annotations must not request new windows");
       assert.deepEqual(navigations, [], "annotations must not navigate the renderer");
       assert.equal(await evaluate('location.href'), navigationURL);
-      measurements.push({ view: "pdf-internal-navigation", boundary: "real renderer and PDF.js; synthetic workspace/external IPC, delayed real destination results, injected render failure",
-        checks: ["named", "indirect-reference", "explicit-page-index", "middle-click", "keyboard", "zoom-retained", "missing-destination", "page-bounds", "safe-external-IPC", "unsafe-actions-inert", "latest-click", "hidden-retained-viewer", "source-replacement", "close-reopen", "new-page-request", "retry", "no-new-windows", "no-renderer-navigation"], windows, navigations });
-      fs.writeFileSync(path.join(run, "browser-result.json"), JSON.stringify({ importFailureContained: true, navigationSurvived: true, reloadRecovered: true, measurements, logs }, null, 2));
+      measurements.push({ view: "pdf-internal-navigation", boundary: "real renderer and PDF.js; synthetic workspace/external IPC, delayed real destination results, injected page-fetch/render failures",
+        checks: ["named", "indirect-reference", "explicit-page-index", "middle-click", "keyboard", "zoom-retained", "missing-destination", "page-bounds", "safe-external-IPC", "unsafe-actions-inert", "latest-click", "hidden-retained-viewer", "source-replacement", "close-reopen", "new-page-request", "retry", "page-fetch-failure-retry", "hidden-focus-retained", "no-new-windows", "no-renderer-navigation"], windows, navigations });
+      fs.writeFileSync(path.join(run, "browser-result.json"), JSON.stringify({ importFailureContained: true, navigationSurvived: true, reloadRecovered: true, measurements, trustedInteractions, logs }, null, 2));
+    } catch (error) {
+      fs.writeFileSync(path.join(run, "browser-failure.json"), JSON.stringify({ error: String(error.stack || error), measurements, trustedInteractions, logs }, null, 2));
+      try { fs.writeFileSync(path.join(run, "failure.png"), (await window.webContents.capturePage()).toPNG()); } catch {}
+      throw error;
     } finally {
       window.destroy();
     }
