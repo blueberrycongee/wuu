@@ -1,6 +1,18 @@
 package tools
 
-import "github.com/blueberrycongee/wuu/internal/skills"
+import (
+	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/skills"
+)
+
+// SetSkillToolProvider binds the enclosing executor's live, scoped plugin
+// tools. Unlike a frozen model schema list, it must omit revoked tools.
+// Toolkit clones require their own enclosing executor to bind this provider.
+func (t *Toolkit) SetSkillToolProvider(provider func() []providers.ToolDefinition) {
+	t.codeModeMu.Lock()
+	t.skillToolProvider = provider
+	t.codeModeMu.Unlock()
+}
 
 // A catalog is immutable after publication. Its gate belongs to the generation
 // that supplied the skills, so retained clones observe revocation without

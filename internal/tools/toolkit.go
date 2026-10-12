@@ -72,6 +72,7 @@ type Toolkit struct {
 	codeMode                *codemode.Service
 	ptcConfig               config.PTCConfig
 	codeModeAdditionalTools func() []providers.ToolDefinition
+	skillToolProvider       func() []providers.ToolDefinition
 	// mcpManager, when set, exposes MCP server tools alongside built-in
 	// tools. MCP tools are appended after built-ins to preserve prompt
 	// cache stability (the built-in prefix stays constant).
@@ -353,6 +354,7 @@ func (t *Toolkit) CloneForRoot(rootDir string) (*Toolkit, error) {
 // Called at construction and whenever dependencies change.
 func (t *Toolkit) rebuildRegistry() {
 	e := t.env
+	e.skillSurface = t.ActiveSurface
 	registered := []Tool{
 		// File operations
 		NewReadFileTool(e),
@@ -1081,8 +1083,30 @@ func (t *Toolkit) ActiveSurface() capability.Surface {
 		return capability.Surface{}
 	}
 	t.activeProfileMu.RLock()
-	defer t.activeProfileMu.RUnlock()
-	return t.exposedSurfaceLocked()
+	surface := t.exposedSurfaceLocked()
+	t.activeProfileMu.RUnlock()
+	// Resolve outside activeProfileMu: normal tool exposure acquires it too.
+	// MCP retains its in-flight catalog pin; plugin admission observes live
+	// revocation through the enclosing executor's generation-owned provider.
+	t.refreshMCPToolSnapshot(false)
+	surface.ContributedTools = make(map[string]struct{})
+	compiled := t.activeCompiledSurface()
+	for _, tool := range t.allKnownTools() {
+		if classifyToolKind(tool.Name()) == ToolKindMCP && !t.IsToolDisabled(tool.Name()) && activeSurfaceAllowsKnownTool(compiled, tool) {
+			surface.ContributedTools[tool.Name()] = struct{}{}
+		}
+	}
+	t.codeModeMu.RLock()
+	additional := t.skillToolProvider
+	t.codeModeMu.RUnlock()
+	if additional != nil {
+		for _, definition := range additional() {
+			if !t.IsToolDisabled(definition.Name) {
+				surface.ContributedTools[definition.Name] = struct{}{}
+			}
+		}
+	}
+	return surface
 }
 
 // exposedSurfaceLocked returns a defensive copy of the active surface as the
@@ -1203,6 +1227,12 @@ func surfaceHasCapability(caps []capability.Capability, capName capability.Capab
 
 func cloneSurface(surface capability.Surface) capability.Surface {
 	out := surface
+	if surface.ContributedTools != nil {
+		out.ContributedTools = make(map[string]struct{}, len(surface.ContributedTools))
+		for name := range surface.ContributedTools {
+			out.ContributedTools[name] = struct{}{}
+		}
+	}
 	// Empty maps must also be copied: filtering and callers can mutate them.
 	if surface.Tools != nil {
 		out.Tools = make(map[string]capability.Capability, len(surface.Tools))

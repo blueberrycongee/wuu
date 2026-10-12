@@ -42,9 +42,6 @@ func skillAllowedBySurface(skill skills.Skill, surface capability.Surface) bool 
 		if name == "" {
 			continue
 		}
-		if !isKnownSurfaceSkillTool(name) {
-			return false
-		}
 		if !surfaceAllowsSkillTool(surface, name) {
 			return false
 		}
@@ -66,6 +63,9 @@ func surfaceAllowsSkillTool(surface capability.Surface, name string) bool {
 	if _, ok := surface.NestedTools[name]; ok {
 		return true
 	}
+	if _, ok := surface.ContributedTools[name]; ok {
+		return true
+	}
 	switch name {
 	case "bash":
 		return surfaceHasVisibleCapability(surface, capability.CapabilityCommandBash)
@@ -73,21 +73,6 @@ func surfaceAllowsSkillTool(surface capability.Surface, name string) bool {
 		return surfaceHasVisibleCapability(surface, capability.CapabilityCommandBackground)
 	case "git":
 		return false
-	default:
-		return false
-	}
-}
-
-func isKnownSurfaceSkillTool(name string) bool {
-	switch strings.TrimSpace(name) {
-	case "read_file", "list_files", "write_file", "edit_file", "apply_patch",
-		"grep", "glob",
-		"bash", "process", "git",
-		"tool_search", "load_skill",
-		"web_fetch", "web_search",
-		"wuu_browser",
-		"list_agent_profiles", "create_agent_profile":
-		return true
 	default:
 		return false
 	}

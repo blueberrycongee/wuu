@@ -1204,6 +1204,9 @@ func (s *Session) NewThreadRuntimeForRootModel(sessionID, rootDir string, select
 		kit.SetToolSearchEnabled(shadow.ToolSearchEnabled)
 		kit.SetNativeDeferredToolDiscovery(shadow.NativeDeferredToolDiscovery)
 		shadow.Toolkit = kit
+		// Prompt admission must see this clone's plugin tools before the final
+		// thread runtime binds its executor, including a different pinned model.
+		shadow.StreamRunner.Tools = newPluginAwareToolExecutor(kit, shadow.PluginHost, shadow.HookDispatcher, sessionID, "", threadRoot)
 		catalog, catalogErr := deferredToolCatalogPromptForToolkit(kit)
 		if catalogErr != nil {
 			return nil, catalogErr

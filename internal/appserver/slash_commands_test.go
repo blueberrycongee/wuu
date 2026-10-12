@@ -98,7 +98,7 @@ func TestExplicitSkillIdentityRejectsUnavailableSelection(t *testing.T) {
 
 func TestExplicitSkillIdentityLoadsWithoutExecutingInlineShell(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
-	skill := skills.Skill{Name: "review", Source: "bundled", UserInvocable: true, Content: "`!echo do-not-execute` ${ARGUMENTS}"}
+	skill := skills.Skill{Name: "review", Source: "bundled", UserInvocable: true, DisableModelInvoke: true, Content: "`!echo do-not-execute` ${ARGUMENTS}"}
 	rt.Skills = []skills.Skill{skill}
 	srv := New(rt, &lockedBuffer{})
 	identity, _ := json.Marshal(map[string]string{"name": skill.Name, "source": skill.Source, "path": skill.Path})

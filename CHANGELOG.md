@@ -41,6 +41,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Honor manual-only skill invocation settings when loading skills by name, and
+  recognize reachable plugin and MCP tools in skill requirements without
+  enabling unavailable tools or changing permissions.
+
 - Keep the sidebar's recent-history range stable while a first message creates
   its conversation, avoiding a temporary extra row and subsequent layout jump,
   including while saving a draft's custom name.
