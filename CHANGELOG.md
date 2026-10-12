@@ -10,6 +10,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Optional read-only `memory.notebook` service for bounded index and topic reads,
+  with source revisions, UTF-8 limits, and explicit missing-file results.
+
 - Composable model extensions with full logical request snapshots, request hooks,
   around-call middleware, independent inference streams, explicitly selected
   adapters, and generation-owned background service calls.
