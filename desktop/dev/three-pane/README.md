@@ -19,6 +19,10 @@ Compare light/dark and 14/20px, then inspect a wider 1440px viewport and a 900px
 window with the right panel closed. Check project indentation, long names,
 running/unread/forked rows, hover actions, keyboard focus, scrolling, the tool
 picker, and file-tree search. `?theme=dark&size=20` selects those preview settings.
+Add `&font=Georgia` (or another installed family, URL-encoded) to inspect the
+production appearance calculation. The design-system preview supports the same
+`font`, `size`, and `theme` parameters. An unavailable family falls back normally;
+check the renderer's actual platform fonts before claiming that family was tested.
 Titlebar information and sidebar buttons expose their selected states; the
 workspace expand button switches between expand and restore. Add `compact` to
 preview the compact titlebar menu, or `globalized` to start with an expanded panel.
@@ -29,3 +33,13 @@ environment data.
 
 Production resizing, collapsed drawers, and split-session behavior remain the
 responsibility of the app-level tests, not this fixed-width comparison shell.
+
+For repeatable font captures, run `./node_modules/.bin/electron
+dev/visual-review/font-alignment.cjs` from `desktop/` inside an isolated display
+(for example, Linux with Xvfb). `WUU_REVIEW_FONTS` accepts a JSON array of installed family
+names (an empty name selects system UI); `WUU_REVIEW_OUTPUT` selects the artifact
+directory. The capture covers 13/14.5/20px, light/dark, wide/narrow windows,
+production sidebar states, an open selection menu, and tab accents/descenders.
+It freezes animations for static glyph comparison and saves screenshots,
+label/control geometry, actual platform fonts and runtime versions.
+It is a component rendering check, not full-app or native-platform acceptance.
