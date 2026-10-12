@@ -72,7 +72,7 @@ struct ConversationTimeline: View {
                     .overlay(alignment: .bottomTrailing) {
                         ZStack {
                             if !nearBottom {
-                                Button { following = true; proxy.scrollTo("bottom", anchor: .bottom) } label: {
+                                Button { scrollState.cancelRestoration(); following = true; proxy.scrollTo("bottom", anchor: .bottom) } label: {
                                     Label("最新消息", systemImage: "arrow.down").font(.caption).padding(10).background(.regularMaterial, in: Capsule())
                                         .frame(minHeight: 44)
                                 }.padding(12).transition(.opacity)
@@ -152,19 +152,24 @@ struct ConversationTimeline: View {
             if row.isProcessGroup || row.isToolGroup, row.messages.contains(where: \.hasInlineAttachments) {
                 MessageAttachments(model: model, messages: row.messages)
             }
-        }.id(row.id).background { TimelineRowAnchor(id: row.id, state: scrollState) }
+        }.id(row.id).background { TimelineRowAnchor(id: row.messages.last!.id, state: scrollState) }
     }
     private var pausedEdit: HistoryMessageEdit? {
         guard let edit = model.historyEdit, edit.prepared, edit.threadID == model.activeID, !model.showingHistoryEdit else { return nil }
         return edit
     }
     private func loadHistory() {
-        guard historyRequest == nil, model.connected, !model.refreshing, !model.loadingHistory,
+        guard historyRequest == nil, !scrollState.preservingPosition, model.connected, !model.refreshing, !model.loadingHistory,
               model.live?.historyCursor.isEmpty == false else { return }
         historyFailed = false
         historyRequest = Task {
             defer { historyRequest = nil }
-            do { try await model.loadOlder(beforePrepend: scrollState.preservePosition) }
+            do {
+                try await model.loadOlder {
+                    following = false
+                    scrollState.preservePosition()
+                }
+            }
             catch is CancellationError {}
             catch { if !Task.isCancelled { historyFailed = true } }
         }

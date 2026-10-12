@@ -41,6 +41,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Preserve the iOS reading position across lazy layout updates when loading older
+  messages, including history pages that extend an existing folded process group.
 - Keep the sidebar's recent-history range stable while a first message creates
   its conversation, avoiding a temporary extra row and subsequent layout jump,
   including while saving a draft's custom name.
