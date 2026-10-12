@@ -45,6 +45,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   the stream buffer, retain partial output, and bound interruption cleanup.
   If a native turn cannot confirm it stopped, its shared process is closed and
   other attached turns receive explicit errors rather than staying running.
+  Preserve unrelated conversations after confirmed interruption, malformed
+  turn notifications, or cancellation of a queued protocol write.
 
 - Keep the sidebar's recent-history range stable while a first message creates
   its conversation, avoiding a temporary extra row and subsequent layout jump,

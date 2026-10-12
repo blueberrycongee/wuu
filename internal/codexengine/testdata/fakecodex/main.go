@@ -106,9 +106,11 @@ func main() {
 				mode = strings.TrimPrefix(params.Input[0].Text, "e2e:")
 			}
 			modes[params.ThreadID] = mode
-			respond(req.ID, map[string]any{
-				"turn": map[string]any{"id": turnID},
-			})
+			if mode != "cancel-start-confirmed" && mode != "start-response-invalid" {
+				respond(req.ID, map[string]any{
+					"turn": map[string]any{"id": turnID},
+				})
+			}
 			notify("turn/started", map[string]any{
 				"threadId": params.ThreadID,
 				"turn":     map[string]any{"id": turnID},
@@ -130,7 +132,16 @@ func main() {
 			case "invalid-json":
 				fmt.Fprintln(os.Stdout, "invalid JSON")
 				continue
-			case "pending", "overflow-completed", "overflow-unconfirmed", "cancel-unconfirmed":
+			case "start-response-invalid":
+				respond(req.ID, map[string]any{"turn": "invalid turn envelope"})
+				continue
+			case "error-unconfirmed":
+				notify("error", map[string]any{
+					"threadId": params.ThreadID, "turnId": turnID,
+					"willRetry": false, "error": map[string]any{"message": "native stream failed"},
+				})
+				continue
+			case "pending", "overflow-completed", "overflow-unconfirmed", "cancel-unconfirmed", "cancel-start-confirmed", "invalid-terminal":
 				continue
 			}
 			notify("item/reasoning/textDelta", map[string]any{
@@ -179,6 +190,15 @@ func main() {
 				"threadId": params.ThreadID,
 				"turn":     map[string]any{"id": turns[params.ThreadID], "status": "interrupted"},
 			})
+		case "test/emitInvalidTerminal":
+			var params struct {
+				ThreadID string `json:"threadId"`
+			}
+			_ = json.Unmarshal(req.Params, &params)
+			notify("turn/completed", map[string]any{
+				"threadId": params.ThreadID, "turn": map[string]any{"id": turns[params.ThreadID], "status": 42},
+			})
+			respond(req.ID, map[string]any{})
 		case "test/emitBurst":
 			var params struct {
 				ThreadID string `json:"threadId"`

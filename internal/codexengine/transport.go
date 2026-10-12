@@ -192,6 +192,8 @@ func (t *Transport) WriteLine(ctx context.Context, line string) error {
 		return err
 	}
 	done := make(chan error, 1)
+	var stateMu sync.Mutex
+	writing := false
 	go func() {
 		t.writeMu.Lock()
 		defer t.writeMu.Unlock()
@@ -209,17 +211,37 @@ func (t *Transport) WriteLine(ctx context.Context, line string) error {
 			done <- closeErr
 			return
 		}
+		stateMu.Lock()
+		if err := ctx.Err(); err != nil {
+			stateMu.Unlock()
+			done <- err
+			return
+		}
+		writing = true
+		stateMu.Unlock()
 		_, err := io.WriteString(stdin, line+"\n")
+		stateMu.Lock()
+		writing = false
+		stateMu.Unlock()
+		if err != nil {
+			t.fireClose(fmt.Sprintf("write stdin: %v", err))
+			go func() { _ = t.Close() }()
+		}
 		done <- err
 	}()
 	select {
 	case err := <-done:
 		return err
 	case <-ctx.Done():
-		// A canceled pipe write may have sent only part of a frame. Retire the
-		// transport rather than allow later requests to continue on that stream.
-		t.fireClose("codex app-server write canceled")
-		go func() { _ = t.Close() }()
+		stateMu.Lock()
+		uncertain := writing
+		stateMu.Unlock()
+		// Only an active pipe write can leave a partial frame. Cancellation
+		// while queued, or after a complete write, must not kill healthy peers.
+		if uncertain {
+			t.fireClose("codex app-server write canceled")
+			go func() { _ = t.Close() }()
+		}
 		return ctx.Err()
 	}
 }
