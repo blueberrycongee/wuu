@@ -47,6 +47,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Preserve the iOS reading position across lazy layout updates when loading older
   messages, including history pages that extend an existing folded process group.
+- Show the running indicator only on the current iOS process group when a turn
+  resumes after earlier replies; completed groups and their inspectors stay idle.
 - Make the iOS message input respond to taps across its padded text area, and
   keep draft typing from invalidating the root view while preserving native text editing.
 - Keep the sidebar's recent-history range stable while a first message creates
