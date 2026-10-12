@@ -315,6 +315,12 @@ func (t *StreamableHTTPTransport) post(ctx context.Context, req Request, body []
 				reason:   fmt.Sprintf("response body is not a JSON-RPC message: %v", err),
 			}
 		}
+		if isCall && !responseMatchesRequest(req, msg) {
+			return &streamableHTTPError{
+				endpoint: t.endpoint,
+				reason:   "response does not match the originating request",
+			}
+		}
 		t.observeInitialize(req, msg)
 		t.deliver(msg)
 		return nil
@@ -401,7 +407,7 @@ func (t *StreamableHTTPTransport) applyHeaders(hreq *http.Request, session, vers
 // request to record the negotiated protocol version (echoed on subsequent
 // requests via MCP-Protocol-Version) and start the GET listening stream.
 func (t *StreamableHTTPTransport) observeInitialize(origin Request, msg Response) {
-	if origin.Method != "initialize" || !msg.hasID || msg.ID != origin.ID || msg.StringID != origin.StringID || msg.stringID != origin.stringID || msg.Error != nil {
+	if origin.Method != "initialize" || !responseMatchesRequest(origin, msg) || msg.Error != nil {
 		return
 	}
 	var result struct {
@@ -424,6 +430,10 @@ func (t *StreamableHTTPTransport) observeInitialize(origin Request, msg Response
 		t.mu.Unlock()
 	}
 	t.startListener()
+}
+
+func responseMatchesRequest(origin Request, msg Response) bool {
+	return msg.Method == "" && msg.hasID && msg.ID == origin.ID && msg.StringID == origin.StringID && msg.stringID == origin.stringID
 }
 
 // consumeStream keeps a POST body alive only while its originating call is
@@ -463,13 +473,19 @@ func (t *StreamableHTTPTransport) consumeStream(ctx context.Context, body io.Rea
 			fail(errors.New("invalid JSON-RPC event"))
 			return
 		}
+		// A response on this POST may only settle its own call. Reverse
+		// requests still use their independent, server-owned ID namespace.
+		if isCall && msg.Method == "" && !responseMatchesRequest(origin, msg) {
+			fail(errors.New("response does not match the originating request"))
+			return
+		}
 		t.observeInitialize(origin, msg)
 		if !t.deliverContext(ctx, msg) {
 			return
 		}
 		// Server request IDs occupy the other direction's namespace. Even a
 		// reverse request with the same ID must be delivered before continuing.
-		if isCall && msg.Method == "" && msg.hasID && msg.ID == origin.ID && msg.StringID == origin.StringID && msg.stringID == origin.stringID {
+		if isCall && responseMatchesRequest(origin, msg) {
 			return
 		}
 	}

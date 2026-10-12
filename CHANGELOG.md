@@ -44,6 +44,7 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Remote MCP POST streams now close when their call completes or is cancelled.
   An interrupted or malformed response fails only its originating call promptly,
   without replaying tools or disconnecting healthy calls and notifications.
+  Responses cannot resolve a different call through a mismatched POST request ID.
 
 - Bind saved MCP OAuth credentials to the resource used for login, require
   reauthentication after resource changes, and prevent credentials from reaching
