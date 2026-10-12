@@ -280,7 +280,8 @@ func managedProcessSummary(p process.Process) ManagedProcessSummary {
 		case p.Status == process.StatusStopping || p.TerminalCause == process.EventCauseRequestedStop:
 			trigger.Status = "stopped"
 		case p.Status == process.StatusStopped || p.Status == process.StatusFailed:
-			if trigger.OnExit {
+			// A failed start records no terminal cause and never wakes the thread.
+			if trigger.OnExit && p.TerminalCause == process.EventCauseNaturalExit {
 				trigger.Status = "received"
 			} else {
 				trigger.Status = "stopped"
