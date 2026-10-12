@@ -79,8 +79,13 @@ func TestEngineSpeedSurvivesNativeResume(t *testing.T) {
 		if request.Params["serviceTier"] != want {
 			t.Fatalf("%s tier = %v, want %s", request.Method, request.Params["serviceTier"], want)
 		}
-		if request.Method == "turn/start" && request.Params["reasoningEffort"] != "high" {
-			t.Fatalf("speed changed effort: %v", request.Params)
+		if request.Method == "turn/start" {
+			if request.Params["effort"] != "high" {
+				t.Fatalf("speed changed native effort: %v", request.Params)
+			}
+			if _, exists := request.Params["reasoningEffort"]; exists {
+				t.Fatalf("turn/start uses effort, not the model/list reasoningEffort field: %v", request.Params)
+			}
 		}
 		methods = append(methods, request.Method)
 	}

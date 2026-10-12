@@ -427,13 +427,13 @@ func (s *Session) startTurn(ctx context.Context, inputs []UserInput) (TurnStartR
 		sandboxPolicy.WritableRoots = []string{s.rootDir}
 	}
 	err := s.client.Request(ctx, MethodTurnStart, TurnStartParams{
-		ThreadID:        s.ref,
-		Input:           inputs,
-		Model:           s.model,
-		ReasoningEffort: s.effort,
-		ServiceTier:     s.serviceTier(),
-		ApprovalPolicy:  approval,
-		SandboxPolicy:   &sandboxPolicy,
+		ThreadID:       s.ref,
+		Input:          inputs,
+		Model:          s.model,
+		Effort:         s.effort,
+		ServiceTier:    s.serviceTier(),
+		ApprovalPolicy: approval,
+		SandboxPolicy:  &sandboxPolicy,
 	}, &resp)
 	return resp, err
 }

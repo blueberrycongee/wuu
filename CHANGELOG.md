@@ -41,6 +41,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Apply the selected Codex reasoning effort to native turns, including changes
+  and restores to the configured or model default on resumed conversations.
+
 - Share one Codex startup across concurrent sessions, retry failed or closed
   hosts on later turns, and release each turn's process ownership without
   interrupting other sessions. Keep healthy hosts warm until their app-server

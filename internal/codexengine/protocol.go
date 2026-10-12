@@ -213,7 +213,7 @@ type TurnStartParams struct {
 	ThreadID              string          `json:"threadId"`
 	Input                 []UserInput     `json:"input"`
 	Model                 string          `json:"model,omitempty"`
-	ReasoningEffort       ReasoningEffort `json:"reasoningEffort,omitempty"`
+	Effort                ReasoningEffort `json:"effort,omitempty"`
 	ApprovalPolicy        ApprovalPolicy  `json:"approvalPolicy,omitempty"`
 	SandboxPolicy         *SandboxPolicy  `json:"sandboxPolicy,omitempty"`
 	RuntimeWorkspaceRoots []string        `json:"runtimeWorkspaceRoots,omitempty"`
