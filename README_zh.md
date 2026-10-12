@@ -119,8 +119,15 @@ wuu 会在当前权限模式允许的范围内读写本地文件、运行命令�
 
 开发相关说明见[贡献指南](CONTRIBUTING.md)。遇到问题可以[提交 issue](https://github.com/blueberrycongee/wuu/issues)；安全漏洞请按 [SECURITY.md](SECURITY.md) 报告。
 
-## 致谢
+## 核心开发者
 
-感谢 [@Rosemary1812](https://github.com/Rosemary1812) 为 Fusion 多 Agent 协作功能作出的贡献，包括 Lead/Sidekick 协作设计、交互体验和行为测试（[#489](https://github.com/blueberrycongee/wuu/pull/489)）。
+<table>
+  <tr>
+    <td align="center"><a href="https://github.com/blueberrycongee"><img src="https://github.com/blueberrycongee.png?size=160" width="80" alt="@blueberrycongee"><br><sub><b>@blueberrycongee</b></sub></a></td>
+    <td align="center"><a href="https://github.com/Rosemary1812"><img src="https://github.com/Rosemary1812.png?size=160" width="80" alt="@Rosemary1812"><br><sub><b>@Rosemary1812</b></sub></a></td>
+  </tr>
+</table>
+
+## 致谢
 
 项目采用 [MIT 许可证](LICENSE)。Agent 头像使用同为 MIT 许可的 [blobatar](https://github.com/Alain00/blobatar)。

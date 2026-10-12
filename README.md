@@ -119,8 +119,15 @@ wuu reads and changes local files and runs commands within the active permission
 
 See [Contributing](CONTRIBUTING.md) to work on wuu, or [open an issue](https://github.com/blueberrycongee/wuu/issues) to report a problem. Report security vulnerabilities through [SECURITY.md](SECURITY.md).
 
-## Acknowledgements
+## Core developers
 
-Thanks to [@Rosemary1812](https://github.com/Rosemary1812) for contributing to Fusion's multi-agent collaboration, including Lead/Sidekick collaboration design, user experience, and behavioral testing ([#489](https://github.com/blueberrycongee/wuu/pull/489)).
+<table>
+  <tr>
+    <td align="center"><a href="https://github.com/blueberrycongee"><img src="https://github.com/blueberrycongee.png?size=160" width="80" alt="@blueberrycongee"><br><sub><b>@blueberrycongee</b></sub></a></td>
+    <td align="center"><a href="https://github.com/Rosemary1812"><img src="https://github.com/Rosemary1812.png?size=160" width="80" alt="@Rosemary1812"><br><sub><b>@Rosemary1812</b></sub></a></td>
+  </tr>
+</table>
+
+## Acknowledgements
 
 Licensed under [MIT](LICENSE). Agent avatars use [blobatar](https://github.com/Alain00/blobatar), also MIT-licensed.
