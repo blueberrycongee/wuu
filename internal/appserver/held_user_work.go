@@ -31,7 +31,7 @@ func (s *Server) loadHeldUserTurns(threadID string) ([]queuedTurn, error) {
 		if !isHumanUserMessage(msg) || snapshot.PluginTurn != nil || msg.ClientID != row.ID {
 			return nil, fmt.Errorf("invalid held human input %q", row.ID)
 		}
-		turns = append(turns, queuedTurn{id: row.ID, msg: msg, snapshot: snapshot, origin: row.Origin, durable: true})
+		turns = append(turns, queuedTurn{id: row.ID, msg: msg, snapshot: snapshot, origin: row.Origin, durable: true, deliveryUnconfirmed: row.DeliveryUnconfirmed})
 	}
 	return turns, nil
 }
@@ -67,6 +67,9 @@ func (s *Server) persistAcceptedUserTurn(threadID string, turn queuedTurn) (bool
 }
 
 func (s *Server) persistUpdatedUserTurn(threadID string, previous, turn queuedTurn) error {
+	if turn.deliveryUnconfirmed {
+		return session.ErrHeldUserWorkUnconfirmed
+	}
 	row, err := heldUserWorkRow(turn)
 	if err != nil {
 		return err
@@ -91,7 +94,7 @@ func (s *Server) appendHeldUserTurns(threadID string, turns []queuedTurn) ([]que
 	for _, turn := range turns {
 		// Accepted work is already durable. Do not overwrite a newer edit or
 		// resurrect an input admitted before a launcher/notification failure.
-		if _, err := s.persistAcceptedUserTurn(threadID, turn); err != nil && !errors.Is(err, session.ErrHeldUserWorkSettled) {
+		if _, err := s.persistAcceptedUserTurn(threadID, turn); err != nil && !errors.Is(err, session.ErrHeldUserWorkSettled) && !errors.Is(err, session.ErrHeldUserWorkUnconfirmed) {
 			return nil, err
 		}
 	}
@@ -165,8 +168,9 @@ func heldUserMessageSummary(threadID string, turn queuedTurn) HeldUserMessage {
 	return HeldUserMessage{
 		ID: turn.id, ThreadID: threadID, Origin: turn.origin,
 		Prompt: strings.TrimSpace(chatMessageDisplayContent(turn.msg)), Images: images, Files: files,
-		ContentParts:   providers.CloneMessageContentParts(turn.msg.ContentParts),
-		ActiveDocument: cloneActiveDocument(turn.snapshot.ActiveDocument),
+		ContentParts:        providers.CloneMessageContentParts(turn.msg.ContentParts),
+		ActiveDocument:      cloneActiveDocument(turn.snapshot.ActiveDocument),
+		DeliveryUnconfirmed: turn.deliveryUnconfirmed,
 	}
 }
 

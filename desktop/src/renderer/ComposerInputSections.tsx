@@ -46,6 +46,7 @@ import { focusComposerTextarea, isTouchWebShell } from "./ComposerFocus";
 import { ComposerAttachMenuButton, ComposerCameraPanel } from "./ComposerCamera";
 import { useWorkbenchConnected } from "./WorkbenchConnectionContext";
 import { Tooltip } from "./Tooltip";
+import { MessageCopyButton } from "./MessageActions";
 import { ComposerFeedback } from "./ComposerFeedback";
 import type { MessageContentPart, ResponseSelection } from "../shared/protocol";
 
@@ -592,6 +593,7 @@ export function ComposerQueueStrip({
   }
 
   const hasHeldMessages = rows.some((row) => row.message.held);
+  const hasUnconfirmedMessages = rows.some((row) => row.message.deliveryUnconfirmed);
   const latestMessage = rows.at(-1)?.message;
 
   function setExpanded(next: boolean): void {
@@ -612,11 +614,11 @@ export function ComposerQueueStrip({
       icon={<ListTodo className="icon-sm" />}
       summary={
         <Tooltip
-          content={latestMessage ? queuedMessageFullPreview(latestMessage) : undefined}
+          content={hasUnconfirmedMessages ? t("composer.nativeDeliveryUnconfirmed") : latestMessage ? queuedMessageFullPreview(latestMessage) : undefined}
           disabled={
-            expanded ||
+            !hasUnconfirmedMessages && (expanded ||
             !latestMessage ||
-            queuedMessageFullPreview(latestMessage) === queuedMessagePreview(latestMessage)
+            queuedMessageFullPreview(latestMessage) === queuedMessagePreview(latestMessage))
           }
         >
           <span
@@ -624,7 +626,9 @@ export function ComposerQueueStrip({
             role="status"
             aria-live="polite"
           >
-            {expanded
+            {hasUnconfirmedMessages
+              ? t("composer.nativeDeliveryUnconfirmed")
+              : expanded
               ? hasHeldMessages
                 ? t("composer.heldNotice")
                 : t("composer.pendingMessages")
@@ -696,6 +700,7 @@ function ComposerQueueItem({
       className={`composer-queue-row ${kind}`}
       data-position={position}
       aria-busy={Boolean(message.operationState)}
+      aria-description={message.deliveryUnconfirmed ? t("composer.nativeDeliveryUnconfirmed") : undefined}
     >
       <span className="composer-queue-index" aria-hidden="true">
         {position}
@@ -704,27 +709,40 @@ function ComposerQueueItem({
         content={queuedMessageFullPreview(message)}
         disabled={queuedMessageFullPreview(message) === queuedMessagePreview(message)}
       >
-        <button
-          type="button"
-          className="composer-queue-preview"
-          aria-label={editContentLabel}
-          onClick={onEdit}
-          disabled={Boolean(message.operationState)}
-        >
-          {queuedMessagePreview(message)}
-        </button>
+        {message.deliveryUnconfirmed ? (
+          <span className="composer-queue-preview" aria-label={queuedMessageFullPreview(message)}>
+            {queuedMessagePreview(message)}
+          </span>
+        ) : (
+          <button
+            type="button"
+            className="composer-queue-preview"
+            aria-label={editContentLabel}
+            onClick={onEdit}
+            disabled={Boolean(message.operationState)}
+          >
+            {queuedMessagePreview(message)}
+          </button>
+        )}
       </Tooltip>
       <div className="composer-queue-actions composer-input-header-actions">
-        <button
-          type="button"
-          className="composer-queue-action composer-input-header-action edit"
-          aria-label={editLabel}
-          title={t("common.edit")}
-          onClick={onEdit}
-          disabled={Boolean(message.operationState)}
-        >
-          <PencilLine className="icon-sm" aria-hidden="true" />
-        </button>
+        {message.deliveryUnconfirmed ? (
+          <MessageCopyButton
+            className="composer-queue-action composer-input-header-action"
+            getText={() => message.text || queuedMessageFullPreview(message)}
+          />
+        ) : (
+          <button
+            type="button"
+            className="composer-queue-action composer-input-header-action edit"
+            aria-label={editLabel}
+            title={t("common.edit")}
+            onClick={onEdit}
+            disabled={Boolean(message.operationState)}
+          >
+            <PencilLine className="icon-sm" aria-hidden="true" />
+          </button>
+        )}
         {onGuide ? (
           <button
             type="button"
@@ -744,7 +762,7 @@ function ComposerQueueItem({
                   : t("composer.convertToGuideTitle")
             }
             onClick={onGuide}
-            disabled={dispatchDisabled}
+            disabled={dispatchDisabled || message.deliveryUnconfirmed}
           >
             {kind === "guide" && !message.held ? (
               <CornerUpLeft className="icon-sm" aria-hidden="true" />
@@ -759,7 +777,7 @@ function ComposerQueueItem({
           aria-label={t("composer.removeQueuedMessage", { position })}
           title={t("common.remove")}
           onClick={onRemove}
-          disabled={message.operationState === "switching"}
+          disabled={message.operationState === "switching" || message.deliveryUnconfirmed}
         >
           <X className="icon-sm" aria-hidden="true" />
         </button>

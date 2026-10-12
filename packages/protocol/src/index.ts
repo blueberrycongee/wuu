@@ -2499,6 +2499,7 @@ export type QueuedTurn = {
 };
 
 export type HeldUserMessage = {
+  delivery_unconfirmed?: boolean;
   id: string;
   thread_id: string;
   origin: "queue" | "steer";
@@ -3165,7 +3166,7 @@ export type WuuDesktopApi = {
     activeDocument?: ActiveDocumentContext,
     contentParts?: MessageContentPart[],
     targetContext?: RuntimeContext,
-  ) => Promise<{ turn_id: string }>;
+  ) => Promise<{ turn_id: string; delivery?: "active_turn" | "queued" }>;
   unsteerTurn: (threadId: string, steerId: string) => Promise<{ ok: boolean }>;
   requeueTurn: (
     threadId: string,

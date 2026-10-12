@@ -47,12 +47,13 @@ import (
 )
 
 type queuedTurn struct {
-	id        string
-	msg       providers.ChatMessage
-	followups []providers.ChatMessage
-	snapshot  turnRuntimeSnapshot
-	origin    string
-	durable   bool
+	id                  string
+	msg                 providers.ChatMessage
+	followups           []providers.ChatMessage
+	snapshot            turnRuntimeSnapshot
+	origin              string
+	durable             bool
+	deliveryUnconfirmed bool
 	// Captured only at explicit user submission, never by a background drain.
 	resumeBrowser func()
 }
@@ -761,6 +762,9 @@ func (s *Server) handleTurnSteer(req Request) error {
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
+	if isHeld && heldTurn.deliveryUnconfirmed {
+		return s.writeResponse(req.ID, nil, session.ErrHeldUserWorkUnconfirmed)
+	}
 	// Reject an obsolete UI submission before it revokes automatic management.
 	// The admission checks below still run after the control transition.
 	th.mu.Lock()
@@ -810,21 +814,23 @@ func (s *Server) handleTurnSteer(req Request) error {
 		}
 		th.mu.Lock()
 		turnID := th.currentTurn
+		delivery := s.steerDeliveryModeLocked(th)
 		th.mu.Unlock()
 		if remaining, err := s.loadHeldUserTurns(params.ThreadID); err == nil {
 			s.notifyHeldUserTurns(params.ThreadID, remaining)
 		}
-		return s.writeResponse(req.ID, TurnSteerResult{TurnID: turnID}, nil)
+		return s.writeResponse(req.ID, TurnSteerResult{TurnID: turnID, Delivery: delivery}, nil)
 	}
 	if err := th.validateSteerTargetLocked(params.ExpectedTurnID); err != nil {
 		th.mu.Unlock()
 		return s.writeResponse(req.ID, nil, err)
 	}
 	turnID := th.currentTurn
+	delivery := s.steerDeliveryModeLocked(th)
 	for _, pendingSteer := range th.pendingSteers {
 		if strings.TrimSpace(pendingSteer.ClientID) == clientID {
 			th.mu.Unlock()
-			return s.writeResponse(req.ID, TurnSteerResult{TurnID: turnID}, nil)
+			return s.writeResponse(req.ID, TurnSteerResult{TurnID: turnID, Delivery: delivery}, nil)
 		}
 	}
 	steerDocument := params.ActiveDocument
@@ -878,7 +884,7 @@ func (s *Server) handleTurnSteer(req Request) error {
 			origin:   session.HeldUserWorkOriginSteer,
 		}),
 	})
-	return s.writeResponse(req.ID, TurnSteerResult{TurnID: turnID}, nil)
+	return s.writeResponse(req.ID, TurnSteerResult{TurnID: turnID, Delivery: delivery}, nil)
 }
 
 func (th *threadState) validateSteerTargetLocked(expectedTurnID string) error {
@@ -975,6 +981,10 @@ func (s *Server) handleTurnUnsteer(req Request) error {
 		return s.writeResponse(req.ID, nil, fmt.Errorf("thread %q not found", threadID))
 	}
 	th.mu.Lock()
+	if th.nativeSteerInFlight == steerID {
+		th.mu.Unlock()
+		return s.writeResponse(req.ID, nil, session.ErrHeldUserWorkUnconfirmed)
+	}
 	removedDurable := false
 	if s.rt != nil && th.PersistHistory {
 		var cancelErr error
@@ -1029,6 +1039,17 @@ func (s *Server) handleTurnRequeue(req Request) error {
 	}
 
 	th.mu.Lock()
+	if th.nativeSteerInFlight == steerID {
+		th.mu.Unlock()
+		return s.writeResponse(req.ID, nil, session.ErrHeldUserWorkUnconfirmed)
+	}
+	if held, found, err := s.findHeldUserTurn(threadID, steerID); err != nil {
+		th.mu.Unlock()
+		return s.writeResponse(req.ID, nil, err)
+	} else if found && held.deliveryUnconfirmed {
+		th.mu.Unlock()
+		return s.writeResponse(req.ID, nil, session.ErrHeldUserWorkUnconfirmed)
+	}
 	document := th.steerDocumentOverrideLocked(steerID)
 	steerIndex := -1
 	for index, pending := range th.pendingSteers {
@@ -2872,6 +2893,13 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 		SessionID:   th.ID,
 		ExecutionID: turnID,
 	})
+	joinNativeSteering := func() {}
+	if native, ok := engine.(agentengine.SteeringSession); ok && th.PersistHistory {
+		th.mu.Lock()
+		th.nativeSteerUnsupported = false
+		th.mu.Unlock()
+		joinNativeSteering = s.startNativeSteering(driverCtx, th, turnID, native)
+	}
 	turnResult, err := engine.RunTurn(driverCtx, agentengine.TurnInput{History: history}, func(ev providers.StreamEvent) {
 		th.streamMu.Lock()
 		defer th.streamMu.Unlock()
@@ -2899,6 +2927,7 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 			Event:    sanitizeStreamEvent(ev),
 		})
 	})
+	joinNativeSteering()
 	closeEngine()
 	// RunTurn returns the engine outcome; the built-in wuu engine's result is
 	// the native loop result the rest of the turn accounting consumes.
@@ -3092,9 +3121,33 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 	}
 	// Keep the execution lease through trace persistence and runner cleanup so
 	// the next turn cannot observe a half-restored runtime.
+	var nativeHeld []queuedTurn
 	th.interrupting = false
 	s.pruneRevokedSteersLocked(th)
 	unconsumedSteers := th.drainPendingSteersLocked()
+	if _, native := engine.(agentengine.SteeringSession); native && th.PersistHistory && !th.nativeSteerUnsupported {
+		var human, generated []providers.ChatMessage
+		for _, message := range unconsumedSteers {
+			if isHumanUserMessage(message) {
+				human = append(human, message)
+			} else {
+				generated = append(generated, message)
+			}
+		}
+		if len(human) > 0 {
+			entries := queuedTurnsFromSteers(human)
+			th.applySteerDocumentOverridesLocked(entries)
+			for index := range entries {
+				entries[index].origin = session.HeldUserWorkOriginSteer
+			}
+			var holdErr error
+			nativeHeld, holdErr = s.appendHeldUserTurns(th.ID, entries)
+			if holdErr != nil {
+				providers.DebugLogf("retain native steering at turn completion for %q: %v", th.ID, holdErr)
+			}
+		}
+		unconsumedSteers = generated
+	}
 	if len(unconsumedSteers) > 0 {
 		if threadRuntime != nil && threadRuntime.AgentControl != nil {
 			unconsumedSteers = filterConsumedAgentCompletionSteers(unconsumedSteers, threadRuntime.AgentControl)
@@ -3167,6 +3220,9 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 	}
 	th.releaseTurnExecutionLocked(turnID)
 	th.mu.Unlock()
+	if len(nativeHeld) > 0 {
+		s.notifyHeldUserTurnsWithError(th.ID, nativeHeld, "native turn ended before steering input was accepted")
+	}
 	// A terminal notification is the client-visible completion barrier. By the
 	// time it is published all durable settlement and runtime cleanup
 	// is finished, and the execution lease is available for the next request.

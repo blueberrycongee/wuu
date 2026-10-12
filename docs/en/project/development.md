@@ -45,6 +45,25 @@ make build-go
 
 `make install` installs the CLI from the checkout. The current release workflow packages only the macOS arm64 desktop preview; Windows CI and packaging scripts do not imply a published Windows release. See [installation](../getting-started/installation.md) for user-facing availability.
 
+### Native steering end-to-end check
+
+Build the core, then run `WUU_E2E_CORE=bin/wuu node scripts/native-steering-e2e.mjs`
+with Node 22.13 or newer. The fixture starts the real stdio app-server, a controlled
+native subprocess, and a disposable SQLite store. It checks same-turn steering,
+turn-ID fencing, delayed acknowledgement, rejection, cancellation, persistence
+faults, restart recovery, and unsupported-protocol fallback. It saves results,
+protocol transcripts and the tested binary hash under `.tmp/e2e/native-steering/`;
+set `WUU_STEER_E2E_OUTPUT` to choose another output directory. It uses synthetic
+data and no external inference, and does not validate desktop rendering or an
+installed native engine.
+
+After building the desktop renderer, run
+`cd desktop && electron scripts/native-steering-e2e.cjs` to inspect restored
+unconfirmed input in the production UI. It checks read-only recovery, complete
+clipboard content, ordinary held input controls, and wide/default-font and
+narrow/large-font layouts. Results and screenshots are saved to
+`desktop/out/e2e/native-steering/`; set `WUU_STEER_UI_OUTPUT` to override it.
+
 ## Choose the relevant checks
 
 | Command | What it checks or builds |

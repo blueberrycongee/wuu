@@ -858,6 +858,15 @@ html[data-focus-modality="keyboard"] .composer > textarea:focus-visible {
   cursor: pointer;
 }
 
+/* Composer actions stay available without message-bubble hover. */
+.composer-input-header-action.message-copy-button {
+  opacity: 1;
+  pointer-events: auto;
+  transform: none;
+  box-shadow: none;
+  background: transparent;
+}
+
 .composer-input-header-action:hover:not(:disabled) {
   background: var(--ink-overlay-8);
   color: var(--ink);

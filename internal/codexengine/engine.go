@@ -44,6 +44,7 @@ func (e *Engine) Descriptor(context.Context) (agentengine.Descriptor, error) {
 		Capabilities: []string{
 			"native-tool-loop",
 			"native-session-resume",
+			"active-turn-steering",
 			"approval-requests",
 			// engine/list with include_quota reads this engine's account
 			// allowance, so clients can reserve room for it beforehand.
@@ -128,6 +129,7 @@ func (e *Engine) newSession(ctx context.Context, opts sessionOptions) (agentengi
 		ref:            opts.externalRef,
 		persist:        opts.persistRef,
 		approval:       approval,
+		steerReady:     make(chan struct{}),
 	}, nil
 }
 
@@ -148,11 +150,14 @@ type Session struct {
 	instructions   string
 	mcpServers     []agentengine.MCPServer
 
-	mu          sync.Mutex
-	ref         string
-	persist     func(string) error
-	approval    agentengine.ApprovalHandler
-	approvalCtx context.Context
+	mu             sync.Mutex
+	ref            string
+	persist        func(string) error
+	approval       agentengine.ApprovalHandler
+	approvalCtx    context.Context
+	activeTurnID   string
+	steerReady     chan struct{}
+	steerReadyOnce sync.Once
 }
 
 // RunTurn starts a codex turn and translates its notifications into Wuu
@@ -161,6 +166,7 @@ func (s *Session) RunTurn(ctx context.Context, input agentengine.TurnInput, sink
 	if s == nil || s.client == nil {
 		return agentengine.TurnResult{}, errors.New("codex session has no app-server client")
 	}
+	defer s.signalSteerReady()
 	if err := ctx.Err(); err != nil {
 		return agentengine.TurnResult{}, err
 	}
@@ -170,6 +176,7 @@ func (s *Session) RunTurn(ctx context.Context, input agentengine.TurnInput, sink
 	defer func() {
 		s.mu.Lock()
 		s.approvalCtx = nil
+		s.activeTurnID = ""
 		s.mu.Unlock()
 	}()
 	// First turn: create the codex thread and persist its id so later turns
@@ -190,6 +197,13 @@ func (s *Session) RunTurn(ctx context.Context, input agentengine.TurnInput, sink
 		return agentengine.TurnResult{}, err
 	}
 	turnID := turnResp.Turn.ID
+	if strings.TrimSpace(turnID) == "" {
+		return agentengine.TurnResult{}, errors.New("native turn admission returned no turn ID")
+	}
+	s.mu.Lock()
+	s.activeTurnID = turnID
+	s.mu.Unlock()
+	s.signalSteerReady()
 	sub.setTurnID(turnID)
 
 	select {
@@ -204,6 +218,60 @@ func (s *Session) RunTurn(ctx context.Context, input agentengine.TurnInput, sink
 			return agentengine.TurnResult{}, ctx.Err()
 		}
 	}
+}
+
+// signalSteerReady also unblocks waiting input when native startup fails.
+func (s *Session) signalSteerReady() {
+	s.steerReadyOnce.Do(func() {
+		if s.steerReady != nil {
+			close(s.steerReady)
+		}
+	})
+}
+
+// Steer preserves native ownership of the loop. A stable client ID identifies
+// the human message, while expectedTurnId fences it against a successor turn.
+func (s *Session) Steer(ctx context.Context, message providers.ChatMessage) (string, error) {
+	if s == nil || s.client == nil {
+		return "", fmt.Errorf("%w: no native session", agentengine.ErrSteerRejected)
+	}
+	if s.steerReady != nil {
+		select {
+		case <-s.steerReady:
+		case <-ctx.Done():
+			return "", fmt.Errorf("%w: %v", agentengine.ErrSteerRejected, ctx.Err())
+		}
+	}
+	s.mu.Lock()
+	ref, turnID := s.ref, s.activeTurnID
+	s.mu.Unlock()
+	if ref == "" || turnID == "" || ctx.Err() != nil {
+		return "", fmt.Errorf("%w: no active native turn", agentengine.ErrSteerRejected)
+	}
+	if message.Role != "user" || message.Hidden || message.ReadOnly || (message.Origin != "" && message.Origin != "user") || strings.TrimSpace(message.ClientID) == "" {
+		return "", fmt.Errorf("%w: explicit human input is required", agentengine.ErrSteerRejected)
+	}
+	var response TurnSteerResponse
+	err := s.client.Request(ctx, MethodTurnSteer, TurnSteerParams{
+		ThreadID: ref, ExpectedTurnID: turnID, ClientUserMessageID: message.ClientID,
+		Input: turnInputs([]providers.ChatMessage{message}),
+	}, &response)
+	if err != nil {
+		var rejected *RPCError
+		if errors.As(err, &rejected) {
+			if rejected.Code == -32601 {
+				return "", fmt.Errorf("%w: %v", agentengine.ErrSteerUnsupported, err)
+			}
+			if rejected.Code == -32600 || rejected.Code == -32602 {
+				return "", fmt.Errorf("%w: %v", agentengine.ErrSteerRejected, err)
+			}
+		}
+		return "", err
+	}
+	if response.TurnID != turnID {
+		return "", fmt.Errorf("native steering acknowledgement returned turn %q, expected %q; delivery is unconfirmed", response.TurnID, turnID)
+	}
+	return response.TurnID, nil
 }
 
 func (s *Session) registerApprovalHandlers() func() {

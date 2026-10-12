@@ -160,6 +160,30 @@ is re-resolved at execution; saved input does not restore old permissions.
 These are local process-crash guarantees, not automatic recovery of uncertain
 tool effects. Ephemeral conversations retain their memory-only behavior.
 
+Persistent Codex conversations support active-turn human steering. Wuu binds
+`expected_turn_id` to the current host turn, and the adapter binds the native
+request to the active native turn ID. Attachments and stable `client_id` values
+use the ordinary input path; steering does not change tools or permissions.
+The RPC response acknowledges local acceptance, while the user item appears in
+history only after a matching native acknowledgement and a successful local
+history commit. Several supplements can belong to the same turn.
+
+The steering result's optional `delivery` field reports the planned path,
+`active_turn` or `queued`; it does not acknowledge native consumption.
+Engines without active-turn steering, and ephemeral native conversations, retain
+the next-turn queue behavior. A native method-not-found response also falls back
+to the ordinary queue. A native rejection instead returns the input as held work;
+it is never silently injected into a later turn.
+
+If delivery loses its acknowledgement, is cancelled after sending, or cannot
+commit its receipt, the held item has `delivery_unconfirmed: true`. Its stable ID
+cannot be edited, withdrawn, requeued or resent, including after restart. The
+desktop shows the reason and keeps the original content available to view or copy. Inspect
+the native conversation before deciding whether to submit replacement input.
+This prevents automatic duplicate work; it does not claim exactly-once external
+tool execution. New input accepted while a native turn is settling is held if
+that turn can no longer accept it.
+
 Failed Wuu-engine streams can include `turn.error.recovery`. Its `attempt_count`
 and `retry_count` count recovery-executor calls that actually started; a prepared
 retry that never runs is excluded. `submission_count` counts physical provider

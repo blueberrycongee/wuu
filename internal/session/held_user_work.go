@@ -13,12 +13,13 @@ const (
 )
 
 type HeldUserWork struct {
-	SessionID   string
-	Position    int
-	ID          string
-	Origin      string
-	MessageJSON []byte
-	RuntimeJSON []byte
+	SessionID           string
+	Position            int
+	ID                  string
+	Origin              string
+	MessageJSON         []byte
+	RuntimeJSON         []byte
+	DeliveryUnconfirmed bool
 }
 
 func ReplaceHeldUserWork(sessDir, sessionID string, entries []HeldUserWork) error {
@@ -76,9 +77,9 @@ func LoadHeldUserWork(sessDir, sessionID string) ([]HeldUserWork, error) {
 	}
 	defer db.Close()
 	rows, err := db.Query(`
-SELECT position, id, origin, message_json, runtime_json
+SELECT position, id, origin, message_json, runtime_json, state
 FROM held_user_work
-WHERE session_id = ? AND state = 'pending'
+WHERE session_id = ? AND state IN ('pending', 'dispatching')
 ORDER BY CASE origin WHEN 'steer' THEN 0 ELSE 1 END, position`, sessionID)
 	if err != nil {
 		return nil, fmt.Errorf("load held user work: %w", err)
@@ -87,11 +88,12 @@ ORDER BY CASE origin WHEN 'steer' THEN 0 ELSE 1 END, position`, sessionID)
 	var entries []HeldUserWork
 	for rows.Next() {
 		var entry HeldUserWork
-		var messageJSON, runtimeJSON string
+		var messageJSON, runtimeJSON, state string
 		entry.SessionID = sessionID
-		if err := rows.Scan(&entry.Position, &entry.ID, &entry.Origin, &messageJSON, &runtimeJSON); err != nil {
+		if err := rows.Scan(&entry.Position, &entry.ID, &entry.Origin, &messageJSON, &runtimeJSON, &state); err != nil {
 			return nil, fmt.Errorf("scan held user work: %w", err)
 		}
+		entry.DeliveryUnconfirmed = state == "dispatching"
 		entry.MessageJSON = []byte(messageJSON)
 		entry.RuntimeJSON = []byte(runtimeJSON)
 		entries = append(entries, entry)
@@ -155,6 +157,10 @@ func DeleteHeldUserWork(sessDir, sessionID, id string) (bool, error) {
 // work after cancellation or admission, including after history is compacted.
 var ErrHeldUserWorkSettled = errors.New("accepted user input was already consumed or cancelled")
 
+// ErrHeldUserWorkUnconfirmed prevents replay while native delivery is in flight
+// or its acknowledgement was lost. The payload remains visible for recovery.
+var ErrHeldUserWorkUnconfirmed = errors.New("native input delivery is unconfirmed; inspect the native conversation before sending any replacement")
+
 // AcceptHeldUserWork records a human submission before acknowledging it. A
 // duplicate stable ID never replaces the original payload or starts it again.
 func AcceptHeldUserWork(sessDir, sessionID string, entry HeldUserWork) (bool, error) {
@@ -186,6 +192,9 @@ func AcceptHeldUserWork(sessDir, sessionID string, entry HeldUserWork) (bool, er
 				return false, err
 			}
 			return true, nil
+		}
+		if state == "dispatching" {
+			return false, ErrHeldUserWorkUnconfirmed
 		}
 		if state != "pending" {
 			return false, ErrHeldUserWorkSettled
@@ -260,6 +269,9 @@ func CancelHeldUserWork(sessDir, sessionID, id, origin string) (bool, error) {
 	defer tx.Rollback()
 	var state, storedOrigin string
 	err = tx.QueryRow(`SELECT state, origin FROM held_user_work WHERE session_id = ? AND id = ?`, sessionID, id).Scan(&state, &storedOrigin)
+	if err == nil && state == "dispatching" {
+		return false, ErrHeldUserWorkUnconfirmed
+	}
 	removed := err == nil && state == "pending" && (origin == "" || origin == storedOrigin)
 	if err == nil {
 		if removed {
@@ -292,7 +304,7 @@ func consumeHeldUserWorkTx(tx *sql.Tx, sessionID string, rec HistoryRecord) erro
 	if err != nil {
 		return err
 	}
-	if state != "pending" || rec.Hidden || rec.ReadOnly || (rec.Origin != "" && rec.Origin != "user") {
+	if (state != "pending" && state != "dispatching") || rec.Hidden || rec.ReadOnly || (rec.Origin != "" && rec.Origin != "user") {
 		return ErrHeldUserWorkSettled
 	}
 	if len(rec.ExpectedHeldMessage) == 0 || string(rec.ExpectedHeldMessage) != messageJSON {
@@ -313,4 +325,46 @@ func HasHeldUserWorkReceipt(sessDir, sessionID, id string) (bool, error) {
 	var found bool
 	err = db.QueryRow(`SELECT EXISTS(SELECT 1 FROM held_user_work WHERE session_id = ? AND id = ?)`, sessionID, id).Scan(&found)
 	return found, err
+}
+
+// ClaimHeldUserWork seals the exact accepted payload before a native dispatch.
+// The receipt survives a process crash; it is never automatically retried.
+func ClaimHeldUserWork(sessDir, sessionID string, entry HeldUserWork) error {
+	if err := validateHeldUserWork(entry); err != nil {
+		return err
+	}
+	db, err := openStore(sessDir)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	storeWriteMu.Lock()
+	defer storeWriteMu.Unlock()
+	result, err := db.Exec(`UPDATE held_user_work SET state = 'dispatching'
+WHERE session_id = ? AND id = ? AND state = 'pending' AND origin = ? AND message_json = ? AND runtime_json = ?`, sessionID, entry.ID, entry.Origin, string(entry.MessageJSON), string(entry.RuntimeJSON))
+	if err != nil {
+		return err
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n != 1 {
+		return errors.New("accepted input changed before native dispatch; review the held message")
+	}
+	return nil
+}
+
+// ReleaseHeldUserWork is allowed only after a definite native rejection. A lost
+// response or cancellation cannot establish rejection and must retain the claim.
+func ReleaseHeldUserWork(sessDir, sessionID, id string) error {
+	db, err := openStore(sessDir)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	storeWriteMu.Lock()
+	defer storeWriteMu.Unlock()
+	_, err = db.Exec(`UPDATE held_user_work SET state = 'pending' WHERE session_id = ? AND id = ? AND state = 'dispatching'`, sessionID, id)
+	return err
 }

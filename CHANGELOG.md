@@ -10,6 +10,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Steer active Codex turns with stable human-message IDs and native turn fencing.
+  Confirmed input is saved once; rejected or uncertain delivery remains held,
+  with unconfirmed submissions protected from replay after restart.
+
 - Side chat is a bundled plugin with a recommended-on onboarding choice and a
   persistent enable switch. Disabling it stops side answers and hides its entry
   points without deleting history. Extensions can supply attached-chat policy
@@ -48,6 +52,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   hosts on later turns, and release each turn's process ownership without
   interrupting other sessions. Keep healthy hosts warm until their app-server
   owners shut down or switch engines.
+- Persist accepted human queue and steering input before acknowledging it, with
+  durable edits, cancellation, and stable-ID deduplication. After a core restart,
+  unconsumed input returns as held work instead of automatically executing.
 
 - Keep the sidebar's recent-history range stable while a first message creates
   its conversation, avoiding a temporary extra row and subsequent layout jump,

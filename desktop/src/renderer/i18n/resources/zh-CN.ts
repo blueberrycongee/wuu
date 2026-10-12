@@ -1080,6 +1080,7 @@ export const zhCN = {
   "composer.pendingMessages": "待发送消息",
   "composer.expandPending": "展开待处理消息",
   "composer.collapsePending": "收起待处理消息",
+  "composer.nativeDeliveryUnconfirmed": "投递结果未确认。再次发送前，请先检查原生对话。",
   "composer.heldNotice": "当前回复已中断；这些引导和排队消息不会自动执行。",
   "composer.editGuideContent": "编辑引导内容 {position}",
   "composer.editQueuedContent": "编辑排队消息内容 {position}",

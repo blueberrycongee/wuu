@@ -41,6 +41,21 @@ make build-go
 
 `make install` 从当前检出安装 CLI。当前发布工作流只打包 macOS arm64 桌面预览版；存在 Windows CI 和打包脚本，不代表已经发布 Windows 版本。用户可用的发行方式见[安装](../getting-started/installation.md)。
 
+### 原生引导端到端检查
+
+构建核心后，使用 Node 22.13 或更新版本运行
+`WUU_E2E_CORE=bin/wuu node scripts/native-steering-e2e.mjs`。
+该脚本启动真实 stdio app-server、受控的原生子进程和临时 SQLite 存储，
+检查当前轮次补充、轮次 ID 约束、延迟确认、拒绝、取消、持久化故障、重启恢复
+和不支持协议时的排队回退。结果、协议记录和被测二进制哈希保存在
+`.tmp/e2e/native-steering/`；可用 `WUU_STEER_E2E_OUTPUT` 指定其他输出目录。
+检查只使用合成数据，不调用外部模型，也不验证桌面渲染或已安装的原生引擎。
+
+构建桌面渲染器后，运行 `cd desktop && electron scripts/native-steering-e2e.cjs`，
+在正式 UI 中检查恢复出的未确认输入：只读恢复、完整复制、普通待处理项的操作，
+以及宽窗口默认字号和窄窗口大字号布局。结果和截图保存在
+`desktop/out/e2e/native-steering/`；可用 `WUU_STEER_UI_OUTPUT` 更改目录。
+
 ## 选择相关检查
 
 | 命令 | 检查或构建内容 |

@@ -12,6 +12,7 @@ const (
 	MethodThreadResume         = "thread/resume"
 	MethodThreadUnsubscribe    = "thread/unsubscribe"
 	MethodTurnStart            = "turn/start"
+	MethodTurnSteer            = "turn/steer"
 	MethodTurnInterrupt        = "turn/interrupt"
 	MethodAccountRateLimits    = "account/rateLimits/read"
 	MethodCommandExecApproval  = "item/commandExecution/requestApproval"
@@ -228,6 +229,18 @@ type TurnStartResponse struct {
 // TurnInfo is the turn envelope.
 type TurnInfo struct {
 	ID string `json:"id"`
+}
+
+// TurnSteerParams binds supplemental user input to one active native turn.
+type TurnSteerParams struct {
+	ThreadID            string      `json:"threadId"`
+	ExpectedTurnID      string      `json:"expectedTurnId"`
+	ClientUserMessageID string      `json:"clientUserMessageId"`
+	Input               []UserInput `json:"input"`
+}
+
+type TurnSteerResponse struct {
+	TurnID string `json:"turnId"`
 }
 
 // TurnInterruptParams cancels an in-flight turn.

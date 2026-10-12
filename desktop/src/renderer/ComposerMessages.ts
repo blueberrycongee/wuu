@@ -83,6 +83,7 @@ export type QueuedComposerMessage = {
   contentParts?: MessageContentPart[];
   activeDocument?: ActiveDocumentContext;
   held?: boolean;
+  deliveryUnconfirmed?: boolean;
   heldPosition?: number;
   origin?: "queue" | "steer";
   operationState?: "preparing" | "sending" | "switching";

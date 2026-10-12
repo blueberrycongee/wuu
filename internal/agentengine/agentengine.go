@@ -162,6 +162,18 @@ type Session interface {
 	Close(context.Context) error
 }
 
+// SteeringSession accepts human input in its currently running native turn.
+// Implementations must bind the request to that turn and never start a new one.
+// A successful result is the native turn ID that acknowledged the input.
+// ErrSteerRejected proves the input was not accepted; other errors leave delivery
+// uncertain and must never cause an automatic retry.
+type SteeringSession interface {
+	Steer(context.Context, providers.ChatMessage) (string, error)
+}
+
+var ErrSteerRejected = errors.New("native steering input was not accepted")
+var ErrSteerUnsupported = errors.New("native engine does not support active-turn steering")
+
 // Factory creates and resumes engine sessions.
 type Factory interface {
 	Descriptor(context.Context) (Descriptor, error)

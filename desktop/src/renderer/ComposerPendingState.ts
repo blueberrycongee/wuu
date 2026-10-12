@@ -175,6 +175,7 @@ function heldComposerMessage(
     contentParts,
     activeDocument: activeDocumentPath ? { path: activeDocumentPath } : undefined,
     held,
+    ...(value.delivery_unconfirmed === true ? { deliveryUnconfirmed: true } : {}),
     heldPosition: held ? position : undefined,
     origin,
   };
@@ -588,6 +589,10 @@ export function useComposerPendingState({
       "queue",
       activeThreadIDForState(getAppState()),
     );
+    if (target?.message.deliveryUnconfirmed) {
+      setStatus(localizedText("composer.nativeDeliveryUnconfirmed"));
+      return false;
+    }
     if (!target) {
       return false;
     }
@@ -657,6 +662,10 @@ export function useComposerPendingState({
       "guide",
       activeThreadIDForState(getAppState()),
     );
+    if (target?.message.deliveryUnconfirmed) {
+      setStatus(localizedText("composer.nativeDeliveryUnconfirmed"));
+      return false;
+    }
     if (!target) {
       return false;
     }
@@ -780,6 +789,10 @@ export function useComposerPendingState({
       return;
     }
     const target = queuedTarget ?? guideTarget;
+    if (target?.message.deliveryUnconfirmed) {
+      setStatus(localizedText("composer.nativeDeliveryUnconfirmed"));
+      return;
+    }
     if (!target) {
       return;
     }
@@ -850,6 +863,10 @@ export function useComposerPendingState({
   async function requeueGuideMessage(
     target: LocatedPendingComposerMessage,
   ): Promise<void> {
+    if (target.message.deliveryUnconfirmed) {
+      setStatus(localizedText("composer.nativeDeliveryUnconfirmed"));
+      return;
+    }
     const { id } = target.message;
     if (target.message.operationState) {
       return;
