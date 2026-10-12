@@ -10,6 +10,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- iOS conversation settings can select a computer's available engine before the
+  first message, and edit the selected engine's models, reasoning and advertised
+  permission modes. Existing conversations display their bound engine.
+
 - Side chat is a bundled plugin with a recommended-on onboarding choice and a
   persistent enable switch. Disabling it stops side answers and hides its entry
   points without deleting history. Extensions can supply attached-chat policy
@@ -44,11 +48,36 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Persist accepted human queue and steering input before acknowledging it, with
   durable edits, cancellation, and stable-ID deduplication. After a core restart,
   unconsumed input returns as held work instead of automatically executing.
+- Apply the selected Codex reasoning effort to native turns, including changes
+  and restores to the configured or model default on resumed conversations.
+
+- Keep resumed Codex turns in the admitted conversation workspace, including
+  linked worktree switches, and honor the turn's effective permission boundary
+  without restarting the native conversation.
+
+- Preserve Codex-native context when forking or editing conversation history.
+  Validate whole-turn cutoffs, commit the new native binding with the visible
+  history, and refuse unsupported cuts instead of silently losing context.
+
+- Settle external-engine turns when their process disconnects or output exceeds
+  the stream buffer, retain partial output, and bound interruption cleanup.
+  If a native turn cannot confirm it stopped, its shared process is closed and
+  other attached turns receive explicit errors rather than staying running.
+  Preserve unrelated conversations after confirmed interruption, malformed
+  turn notifications, or cancellation of a queued protocol write.
 - Share one Codex startup across concurrent sessions, retry failed or closed
   hosts on later turns, and release each turn's process ownership without
   interrupting other sessions. Keep healthy hosts warm until their app-server
   owners shut down or switch engines.
 
+- Remember iOS model and reasoning choices for new conversations per account,
+  computer and engine, including first sends without reopening settings and app relaunches.
+- Preserve the iOS reading position across lazy layout updates when loading older
+  messages, including history pages that extend an existing folded process group.
+- Show the running indicator only on the current iOS process group when a turn
+  resumes after earlier replies; completed groups and their inspectors stay idle.
+- Make the iOS message input respond to taps across its padded text area, and
+  keep draft typing from invalidating the root view while preserving native text editing.
 - Keep the sidebar's recent-history range stable while a first message creates
   its conversation, avoiding a temporary extra row and subsequent layout jump,
   including while saving a draft's custom name.

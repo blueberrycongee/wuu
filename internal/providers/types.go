@@ -331,7 +331,12 @@ type ChatMessage struct {
 	Hidden bool
 	// ProviderItemID preserves provider-native assistant output item identity,
 	// such as OpenAI Responses msg_* ids, for same-model replay.
-	ProviderItemID       string
+	ProviderItemID string
+	// EngineTurnID binds an admitted user message to its native engine turn.
+	EngineTurnID string
+	// EngineTurnPending marks only newly admitted native work whose terminal
+	// state has not been durably confirmed. Legacy rows default to false.
+	EngineTurnPending    bool
 	ProviderItemProvider string
 	ProviderItemModel    string
 	// Steered marks user input that was injected into an already-running turn.

@@ -59,6 +59,8 @@ type persistedMessage struct {
 	ReadOnly            bool                               `json:"read_only,omitempty"`
 	Phase               string                             `json:"phase,omitempty"`
 	ProviderItemID      string                             `json:"provider_item_id,omitempty"`
+	EngineTurnID        string                             `json:"engine_turn_id,omitempty"`
+	EngineTurnPending   bool                               `json:"engine_turn_pending,omitempty"`
 	ProviderItemModel   string                             `json:"provider_item_model,omitempty"`
 	ClientID            string                             `json:"client_id,omitempty"`
 	Hidden              bool                               `json:"hidden,omitempty"`
@@ -148,6 +150,8 @@ func chatMessagesFromPersistedMessages(records []persistedMessage) []providers.C
 			Phase:                providers.NormalizeMessagePhase(rec.Phase),
 			Hidden:               rec.Hidden,
 			ProviderItemID:       rec.ProviderItemID,
+			EngineTurnID:         rec.EngineTurnID,
+			EngineTurnPending:    rec.EngineTurnPending,
 			ProviderItemProvider: rec.Provider,
 			ProviderItemModel:    rec.ProviderItemModel,
 			Steered:              rec.Steered,
@@ -367,6 +371,8 @@ func persistedMessageFromChatMessage(msg providers.ChatMessage) persistedMessage
 		Phase:             string(msg.Phase),
 		Hidden:            msg.Hidden,
 		ProviderItemID:    msg.ProviderItemID,
+		EngineTurnID:      msg.EngineTurnID,
+		EngineTurnPending: msg.EngineTurnPending,
 		ProviderItemModel: msg.ProviderItemModel,
 		Provider:          msg.ProviderItemProvider,
 		ClientID:          msg.ClientID,
@@ -508,6 +514,8 @@ func historyRecordFromPersistedMessage(rec persistedMessage) sessionstore.Histor
 		ReadOnly:            rec.ReadOnly,
 		Phase:               rec.Phase,
 		ProviderItemID:      rec.ProviderItemID,
+		EngineTurnID:        rec.EngineTurnID,
+		EngineTurnPending:   rec.EngineTurnPending,
 		ProviderItemModel:   rec.ProviderItemModel,
 		ClientID:            rec.ClientID,
 		Hidden:              rec.Hidden,
@@ -557,6 +565,8 @@ func persistedMessageFromHistoryRecord(rec sessionstore.HistoryRecord) (persiste
 		ReadOnly:            rec.ReadOnly,
 		Phase:               rec.Phase,
 		ProviderItemID:      rec.ProviderItemID,
+		EngineTurnID:        rec.EngineTurnID,
+		EngineTurnPending:   rec.EngineTurnPending,
 		ProviderItemModel:   rec.ProviderItemModel,
 		ClientID:            rec.ClientID,
 		Hidden:              rec.Hidden,

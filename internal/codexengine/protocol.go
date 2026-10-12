@@ -209,11 +209,13 @@ type UserInput struct {
 
 // TurnStartParams starts a turn on an existing thread.
 type TurnStartParams struct {
+	// CWD overrides the loaded thread for this turn and subsequent turns.
+	CWD                   string          `json:"cwd,omitempty"`
 	ServiceTier           *string         `json:"serviceTier,omitempty"`
 	ThreadID              string          `json:"threadId"`
 	Input                 []UserInput     `json:"input"`
 	Model                 string          `json:"model,omitempty"`
-	ReasoningEffort       ReasoningEffort `json:"reasoningEffort,omitempty"`
+	Effort                ReasoningEffort `json:"effort,omitempty"`
 	ApprovalPolicy        ApprovalPolicy  `json:"approvalPolicy,omitempty"`
 	SandboxPolicy         *SandboxPolicy  `json:"sandboxPolicy,omitempty"`
 	RuntimeWorkspaceRoots []string        `json:"runtimeWorkspaceRoots,omitempty"`

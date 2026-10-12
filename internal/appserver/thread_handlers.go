@@ -623,7 +623,7 @@ type forkSourceThread struct {
 	thread         Thread
 }
 
-func (s *Server) handleThreadFork(req Request) error {
+func (s *Server) handleThreadFork(ctx context.Context, req Request) error {
 	var params ThreadForkParams
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
@@ -640,6 +640,23 @@ func (s *Server) handleThreadFork(req Request) error {
 		return s.writeResponse(req.ID, nil, fmt.Errorf("unsupported fork mode %q", mode))
 	}
 
+	// Native history and its Wuu projection must come from the same idle
+	// session revision. This lease also fences edits/turns on other connections.
+	metadata, found, err := session.Find(s.rt.SessionDir, sourceID)
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	if found && agentengine.NormalizeEngineID(metadata.EngineID) != agentengine.EngineWuu {
+		lease, err := s.tryAcquireThreadMutationLease(sourceID)
+		if err != nil {
+			return s.writeResponse(req.ID, nil, fmt.Errorf("wait for the native turn to finish before forking: %w", err))
+		}
+		defer releaseThreadMutationLease(sourceID, lease)
+		metadata, _, err = session.Find(s.rt.SessionDir, sourceID)
+		if err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+	}
 	now := time.Now().UTC()
 	source, err := s.loadForkSourceThread(sourceID, now)
 	if err != nil {
@@ -685,6 +702,9 @@ func (s *Server) handleThreadFork(req Request) error {
 		}
 	}
 	if err != nil {
+		if errors.Is(err, errForkTargetNotFound) && agentengine.NormalizeEngineID(source.thread.EngineID) != agentengine.EngineWuu {
+			err = fmt.Errorf("%s cannot verify this item as a native history cutoff; choose a completed turn's final reply", source.thread.EngineID)
+		}
 		return s.writeResponse(req.ID, nil, err)
 	}
 
@@ -722,76 +742,59 @@ func (s *Server) handleThreadFork(req Request) error {
 		}
 	}
 
-	var sess *session.Session
-	if mode == "worktree" {
-		sess, err = session.CreateWithWorktree(s.rt.SessionDir, id, forkCWD, fork, forkWorktree)
-	} else {
-		sess, err = session.CreateForkWithMetadata(s.rt.SessionDir, id, forkCWD, fork)
+	nativeRef, err := s.forkNativeHistory(ctx, source.thread.EngineID, metadata.EngineRef, forkCWD, history, nil, params.ItemID == "")
+	if err == nil {
+		err = ctx.Err()
 	}
 	if err != nil {
 		cleanupWorktree()
 		return s.writeResponse(req.ID, nil, err)
 	}
-	// Bind first so native-default selections may persist an empty model.
-	// A fork inherits its source's engine; threads never silently switch.
-	if _, err := session.SetEngine(s.rt.SessionDir, sess.ID, source.thread.EngineID); err != nil {
-		_, _ = session.Delete(s.rt.SessionDir, sess.ID)
-		cleanupWorktree()
-		return s.writeResponse(req.ID, nil, err)
-	}
-	updatedSession, err := session.SetRuntimeSelection(s.rt.SessionDir, sess.ID, session.RuntimeSelection{
-		Provider:       source.modelProvider,
-		Model:          source.model,
-		Variant:        source.modelVariant,
-		Effort:         source.modelEffort,
-		Speed:          source.speed,
-		ModelOptions:   source.modelOptions,
-		PermissionMode: source.permissionMode,
-		ApproveForMe:   source.approveForMe,
-	})
-	if err != nil {
-		_, _ = session.Delete(s.rt.SessionDir, sess.ID)
-		cleanupWorktree()
-		return s.writeResponse(req.ID, nil, err)
-	}
-	// A fork belongs to the same workspace as its source, so it inherits the
-	// active workspace's stable id (empty for scratch/DM/group runtimes).
-	if wsID := strings.TrimSpace(s.rt.WorkspaceID); wsID != "" {
-		updatedSession, err = session.SetWorkspaceID(s.rt.SessionDir, id, wsID)
-		if err != nil {
-			cleanupWorktree()
-			return s.writeResponse(req.ID, nil, err)
+	if nativeRef != "" {
+		for i := range history {
+			// Native verification proved every copied turn is terminal.
+			history[i].EngineTurnPending = false
 		}
 	}
-	sess = &updatedSession
-	stateDir, stateDirErr := s.workspaceStateDir()
-	if stateDirErr != nil {
-		_, _ = session.Delete(s.rt.SessionDir, sess.ID)
-		cleanupWorktree()
-		return s.writeResponse(req.ID, nil, stateDirErr)
-	}
-	if err := s.rt.PinExecutionEnvironment(sess.ID, source.thread.ID); err != nil {
-		_, _ = session.Delete(s.rt.SessionDir, sess.ID)
+	stateDir, err := s.workspaceStateDir()
+	if err != nil {
 		cleanupWorktree()
 		return s.writeResponse(req.ID, nil, err)
 	}
-	if err := preserveForkArtifacts(stateDir, source.thread.ID, sess.ID, history); err != nil {
-		_, _ = session.Delete(s.rt.SessionDir, sess.ID)
-		_ = os.RemoveAll(statepath.SessionArtifactDir(stateDir, sess.ID))
+	if err := s.rt.PinExecutionEnvironment(id, source.thread.ID); err != nil {
 		cleanupWorktree()
 		return s.writeResponse(req.ID, nil, err)
 	}
-	if err := rewriteChatHistory(s.rt.SessionDir, sess.ID, history); err != nil {
-		_, _ = session.Delete(s.rt.SessionDir, sess.ID)
-		_ = os.RemoveAll(statepath.SessionArtifactDir(stateDir, sess.ID))
+	if err := preserveForkArtifacts(stateDir, source.thread.ID, id, history); err != nil {
+		_ = os.RemoveAll(statepath.SessionArtifactDir(stateDir, id))
 		cleanupWorktree()
 		return s.writeResponse(req.ID, nil, err)
 	}
-	if err := session.UpdateIndex(s.rt.SessionDir, sess.ID, persistableMessageCount(history), threadPreview(history)); err != nil {
-		_, _ = session.Delete(s.rt.SessionDir, sess.ID)
-		_ = os.RemoveAll(statepath.SessionArtifactDir(stateDir, sess.ID))
+	// Publish the binding and copied transcript together. A native fork can be
+	// orphaned if this commit fails, but an empty/misbound Wuu child cannot escape.
+	initial := session.Session{
+		ID: id, CWD: forkCWD, CreatedAt: now, UpdatedAt: now,
+		EngineID: source.thread.EngineID, EngineRef: nativeRef,
+		ForkedFromID: fork.ForkedFromID, ForkedFromTurnID: fork.ForkedFromTurnID, ForkedFromItemID: fork.ForkedFromItemID,
+		WorktreePath: forkWorktree.Path, WorktreeBaseHEAD: forkWorktree.BaseHEAD, WorktreeBaseRepo: forkWorktree.BaseRepo,
+		WorkspaceID: strings.TrimSpace(s.rt.WorkspaceID),
+		Provider:    source.modelProvider, Model: source.model, Variant: source.modelVariant, Effort: source.modelEffort,
+		Speed: source.speed, ModelOptions: source.modelOptions, PermissionMode: source.permissionMode, ApproveForMe: source.approveForMe,
+		Entries: persistableMessageCount(history), Summary: threadPreview(history),
+	}
+	sess, err := session.CreateInitialized(s.rt.SessionDir, initial, historyRecordsFromChatMessages(history))
+	if err != nil {
+		_ = os.RemoveAll(statepath.SessionArtifactDir(stateDir, id))
 		cleanupWorktree()
 		return s.writeResponse(req.ID, nil, err)
+	}
+	seq := 0
+	for i := range history {
+		history[i].Seq = 0
+		if shouldPersistMessage(history[i]) {
+			seq++
+			history[i].Seq = seq
+		}
 	}
 
 	th := newThreadState(sess.ID, history, source.modelProvider, source.model, forkCWD, true, now)
@@ -816,7 +819,7 @@ func (s *Server) handleThreadFork(req Request) error {
 	return nil
 }
 
-func (s *Server) handleThreadEditMessage(req Request) error {
+func (s *Server) handleThreadEditMessage(ctx context.Context, req Request) error {
 	var params ThreadEditMessageParams
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
@@ -868,16 +871,52 @@ func (s *Server) handleThreadEditMessage(req Request) error {
 		th.mu.Unlock()
 		return s.writeResponse(req.ID, nil, err)
 	}
+	engineID, oldNativeRef, cwd := th.EngineID, th.EngineRef, th.CWD
+	fromSeq := th.History[len(nextHistory)].Seq
+	removedHistory := cloneHistory(th.History[len(nextHistory):])
+	nativeEdit := agentengine.NormalizeEngineID(engineID) != agentengine.EngineWuu
+	if nativeEdit {
+		// The durable mutation lease fences turns/edits while the external RPC
+		// waits. Keep cached reads and Stop from blocking the stdio dispatcher.
+		th.nativeHistoryMutation = true
+		th.mu.Unlock()
+	}
+	nativeRef, err := s.forkNativeHistory(ctx, engineID, oldNativeRef, cwd, nextHistory, removedHistory, true)
+	if nativeEdit {
+		th.mu.Lock()
+		th.nativeHistoryMutation = false
+		if err == nil {
+			err = ctx.Err()
+		}
+	}
+	if err != nil {
+		releaseThreadMutationLease(th.ID, mutationLease)
+		th.mu.Unlock()
+		return s.writeResponse(req.ID, nil, err)
+	}
+	if nativeRef != "" {
+		for i := range nextHistory {
+			nextHistory[i].EngineTurnPending = false
+		}
+	}
 	committedHistory := nextHistory
 	var committedDisplay []persistedMessage
 	if th.PersistHistory {
 		// The resolved edit target supplies the physical cut, even when the
 		// provider context has already released the earlier conversation.
-		fromSeq := th.History[len(nextHistory)].Seq
-		if err := session.RewriteHistoryRecordsForEdit(s.rt.SessionDir, th.ID, historyRecordsFromChatMessages(nextHistory), fromSeq, historyBaselineSeq); err != nil {
+		var rewriteErr error
+		if nativeRef != "" {
+			rewriteErr = session.RewriteHistoryRecordsForEngineEdit(s.rt.SessionDir, th.ID, historyRecordsFromChatMessages(nextHistory), fromSeq, historyBaselineSeq, oldNativeRef, nativeRef)
+		} else {
+			rewriteErr = session.RewriteHistoryRecordsForEdit(s.rt.SessionDir, th.ID, historyRecordsFromChatMessages(nextHistory), fromSeq, historyBaselineSeq)
+		}
+		if err := rewriteErr; err != nil {
 			releaseThreadMutationLease(th.ID, mutationLease)
 			th.mu.Unlock()
 			return s.writeResponse(req.ID, nil, err)
+		}
+		if nativeRef != "" {
+			th.EngineRef = nativeRef
 		}
 		committedRecords, committedHeadSeq, loadErr := loadProviderPersistedMessages(s.rt.SessionDir, th.ID, false)
 		if loadErr != nil {

@@ -136,6 +136,7 @@ func TestCodexPerTurnBindingSubprocessLifecycle(t *testing.T) {
 		t.Fatalf("build fixture: %v\n%s", err, output)
 	}
 	t.Run("warm host ownership", func(t *testing.T) { testCodexWarmHostOwnership(t, binary) })
+	t.Run("workspace fidelity", func(t *testing.T) { testCodexWorkspaceFidelity(t, binary) })
 	t.Run("concurrent host replacement", func(t *testing.T) { testCodexConcurrentHostReplacement(t, binary) })
 	lifecycle := filepath.Join(root, "lifecycle.jsonl")
 	requests := filepath.Join(root, "requests.jsonl")
