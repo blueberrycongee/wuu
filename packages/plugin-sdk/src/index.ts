@@ -543,6 +543,8 @@ export const CAPABILITY_PROTOCOL_V2 = 2 as const;
 export const CAPABILITY_PROTOCOL_V3 = 3 as const;
 export const REQUEST_TRANSFORM_CAPABILITY = "agent.request.transform" as const;
 export const AGENT_PRE_STEP_CAPABILITY = "agent.pre_step" as const;
+export const AGENT_TURN_LIFECYCLE_CAPABILITY = "agent.turn.lifecycle" as const;
+export const AGENT_TURN_INTERRUPTED_CAPABILITY = "agent.turn.interrupted" as const;
 export const SYSTEM_PROMPT_SECTION_CAPABILITY = "agent.system_prompt.section" as const;
 /** @experimental No distributed first-party consumer has proven this contract. */
 export const COMPACTION_CAPABILITY = "agent.compaction" as const;
@@ -589,6 +591,7 @@ export const KERNEL_SERVICE_METHOD = "call" as const;
 export const EXECUTION_UPDATE_SERVICE = "execution.update" as const;
 export const INVOKE_TOOL_SERVICE = "execution.invoke-tool" as const;
 export const USER_QUESTION_ASK_SERVICE = "host.user-question.ask" as const;
+export const USER_QUESTION_OFFER_SERVICE = "host.user-question.offer" as const;
 export const ARTIFACT_IMPORT_SERVICE = "host.artifact.import" as const;
 export const SECURITY_AUTHORIZE_SERVICE = "security.authorize" as const;
 export const PROCESS_SANDBOX_SERVICE = "sandbox.process" as const;
@@ -696,7 +699,9 @@ export interface RuntimeInitializeParams {
   plugin_id: string;
   plugin_root: string;
   project_root: string;
+  workspace_id?: string;
   wuu_home: string;
+  workspace_state_dir?: string;
   capability_protocol_version?: number;
   supported_host_services?: HostServiceMethod[];
   lifecycle_version?: 1;
@@ -879,6 +884,28 @@ export interface AgentPreStepOutput {
   append_messages?: readonly AgentPreStepMessage[];
 }
 
+export interface AgentTurnInterruptedInput {
+  thread_id: string;
+  turn_id: string;
+  cause?: string;
+}
+
+export interface TurnLifecycleInput {
+  request_id: string;
+  state: string;
+  /** A queued input discarded by host shutdown may be resubmitted with the same request ID. */
+  retryable?: boolean;
+  thread_id: string;
+  turn_id?: string;
+  queue_id?: string;
+  error?: string;
+  started_at?: string;
+  completed_at?: string;
+  input_tokens?: number;
+  output_tokens?: number;
+  final_output?: string;
+}
+
 export interface SystemPromptSectionInput {
   cwd: string;
   provider: string;
@@ -940,6 +967,11 @@ export interface UserQuestionAnswerItem {
 
 export interface UserQuestionAnswer {
   answers: readonly UserQuestionAnswerItem[];
+}
+
+export interface UserQuestionOfferResult {
+  request_id: string;
+  expires_at: string;
 }
 
 export type ToolContentType = "text" | "image" | "audio" | "file" | "resource" | "resource_link";
@@ -1086,6 +1118,8 @@ export interface HostServiceContracts {
       turn?: {
         request_id?: string;
         state: string;
+        /** Only queued inputs discarded by host shutdown are retryable. */
+        retryable?: boolean;
         turn_id?: string;
         queue_id?: string;
         error?: string;
@@ -1204,16 +1238,29 @@ export class RuntimeHostServiceError extends Error {
   }
 }
 
+export interface RuntimeHostCallOptions {
+  /** Stop waiting for this call. This does not undo effects already accepted by the host. */
+  signal?: AbortSignal;
+}
+
 export interface RuntimeHost {
   supports(method: HostServiceMethod): boolean;
   call<M extends HostServiceMethod>(
     method: M,
     params: HostServiceContracts[M]["params"],
+    options?: RuntimeHostCallOptions,
   ): Promise<HostServiceContracts[M]["result"]>;
+}
+
+/** Lifetime of background work started by initialize or activate. */
+export interface RuntimeLifecycleContext {
+  /** Aborts on shutdown or transport loss. Background tasks must stop when it aborts. */
+  readonly signal: AbortSignal;
 }
 
 export interface RuntimeExecutionContext {
   readonly executionId: string;
+  /** Aborts when this execution is cancelled or its runtime transport closes. */
   readonly signal: AbortSignal;
 }
 
@@ -1277,6 +1324,18 @@ export async function askUserQuestions(
   }) as UserQuestionAnswer;
 }
 
+/** Offer a non-blocking question; any answer arrives through the conversation later. */
+export async function offerUserQuestions(
+  host: RuntimeHost,
+  questions: readonly UserQuestion[],
+): Promise<UserQuestionOfferResult> {
+  return await host.call("host.service.call", {
+    service: USER_QUESTION_OFFER_SERVICE,
+    method: KERNEL_SERVICE_METHOD,
+    params: { questions },
+  }) as UserQuestionOfferResult;
+}
+
 /** Copy a generated file into storage owned by the current tool execution's thread. */
 export async function importArtifact(
   host: RuntimeHost,
@@ -1297,8 +1356,10 @@ export interface RuntimePlugin {
    * requests remain ordered; lifecycle requests are barriers for all handlers.
    */
   concurrentServices?: readonly string[];
-  initialize(params: RuntimeInitializeParams, host: RuntimeHost): RuntimeInitializeResult | Promise<RuntimeInitializeResult>;
-  activate?(host: RuntimeHost): void | Promise<void>;
+  /** Capability IDs whose handlers may overlap other work, subject to the same lifecycle barriers as services. */
+  concurrentCapabilities?: readonly string[];
+  initialize(params: RuntimeInitializeParams, host: RuntimeHost, lifecycle: RuntimeLifecycleContext): RuntimeInitializeResult | Promise<RuntimeInitializeResult>;
+  activate?(host: RuntimeHost, lifecycle: RuntimeLifecycleContext): void | Promise<void>;
   invokeCapability?(params: CapabilityInvokeParams, host: RuntimeHost, execution: RuntimeExecutionContext): CapabilityInvokeResult | Promise<CapabilityInvokeResult>;
   invokeService?(params: ServiceInvokeParams, host: RuntimeHost, execution: RuntimeExecutionContext): unknown | Promise<unknown>;
   serviceChanged?(params: ServiceChangedParams, host: RuntimeHost): void | Promise<void>;
@@ -1372,14 +1433,15 @@ export async function handleRuntimeRequest(
   request: RuntimeRequest,
   host: RuntimeHost = unavailableRuntimeHost,
   execution: RuntimeExecutionContext = idleRuntimeExecution,
+  lifecycle: RuntimeLifecycleContext = idleRuntimeExecution,
 ): Promise<RuntimeResponse> {
-  const executionHost = scopedRuntimeHost(host, execution.executionId);
+  const executionHost = scopedRuntimeHost(host, execution);
   try {
     switch (request.method) {
       case "initialize":
-        return { id: request.id, result: { ...await plugin.initialize(request.params, host), lifecycle_version: 1 } };
+        return { id: request.id, result: { ...await plugin.initialize(request.params, host, lifecycle), lifecycle_version: 1 } };
       case "activate":
-        await plugin.activate?.(host);
+        await plugin.activate?.(host, lifecycle);
         return { id: request.id, result: null };
       case "capability.invoke":
         if (!plugin.invokeCapability) throw new Error("capability.invoke is not implemented");
@@ -1402,13 +1464,21 @@ export async function handleRuntimeRequest(
   }
 }
 
-function scopedRuntimeHost(host: RuntimeHost, executionId: string): RuntimeHost {
-  if (executionId === "") return host;
+function scopedRuntimeHost(host: RuntimeHost, execution: RuntimeExecutionContext): RuntimeHost {
   return {
     supports: (method) => host.supports(method),
-    call: (method, params) => host.call(method, method === "host.service.call"
-      ? { ...params, execution_id: executionId }
-      : params),
+    call: (method, params, options) => {
+      const signal = options?.signal
+        ? AbortSignal.any([execution.signal, options.signal])
+        : execution.signal;
+      const serviceParams = method === "host.service.call"
+        ? params as HostServiceContracts["host.service.call"]["params"]
+        : { service: KERNEL_SERVICE_NAMES[method as KernelHostServiceMethod], method: KERNEL_SERVICE_METHOD, params };
+      return host.call("host.service.call", {
+        ...serviceParams,
+        ...(execution.executionId ? { execution_id: execution.executionId } : {}),
+      }, { signal });
+    },
   } as RuntimeHost;
 }
 
@@ -1427,7 +1497,7 @@ const idleRuntimeExecution: RuntimeExecutionContext = {
 
 type PendingHostCall = {
   resolve(value: unknown): void;
-  reject(error: Error): void;
+  reject(error: unknown): void;
 };
 
 class JSONLRuntimeHost implements RuntimeHost {
@@ -1443,33 +1513,54 @@ class JSONLRuntimeHost implements RuntimeHost {
   }
 
   supports(method: HostServiceMethod): boolean {
-    return this.supported.has(method);
+    return this.supported.has("host.service.call") || this.supported.has(method);
   }
 
   call<M extends HostServiceMethod>(
     method: M,
     params: HostServiceContracts[M]["params"],
+    options?: RuntimeHostCallOptions,
   ): Promise<HostServiceContracts[M]["result"]> {
+    const signal = options?.signal;
+    if (signal?.aborted) return Promise.reject(signal.reason);
     if (this.closed) return Promise.reject(new Error("runtime transport closed"));
     if (!this.supports(method)) {
       return Promise.reject(new Error(`host service ${method} is not supported`));
     }
     const id = `plugin-${++this.sequence}`;
     return new Promise<HostServiceContracts[M]["result"]>((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
-      void this.send({ id, method, params }).catch((error: unknown) => {
+      const cleanup = (): void => {
         this.pending.delete(id);
-        reject(error instanceof Error ? error : new Error(String(error)));
+        signal?.removeEventListener("abort", abort);
+      };
+      const abort = (): void => {
+        cleanup();
+        reject(signal!.reason);
+      };
+      const fail = (error: unknown): void => {
+        cleanup();
+        reject(error);
+      };
+      this.pending.set(id, {
+        resolve(value) { cleanup(); resolve(value as HostServiceContracts[M]["result"]); },
+        reject: fail,
       });
+      signal?.addEventListener("abort", abort, { once: true });
+      const frame = method === "host.service.call"
+        ? { id, method, params }
+        : kernelServiceCall(id, method, params as HostServiceContracts[KernelHostServiceMethod]["params"]);
+      void this.send(frame).catch(fail);
     });
   }
 
   route(value: unknown): boolean {
     if (typeof value !== "object" || value === null) return false;
     const response = value as { id?: unknown; method?: unknown; result?: unknown; error?: unknown };
-    if (typeof response.id !== "string" || response.method !== undefined) return false;
+    if (typeof response.id !== "string" || response.method !== undefined
+      || (!("result" in response) && !("error" in response))) return false;
     const pending = this.pending.get(response.id);
-    if (!pending) return false;
+    // Cancelled calls may still receive a late response; never dispatch it as a request.
+    if (!pending) return true;
     this.pending.delete(response.id);
     if (response.error !== undefined) {
       const error = response.error as { code?: unknown; message?: unknown };
@@ -1504,9 +1595,11 @@ export async function runJSONLRuntime(
     return next;
   };
   const host = new JSONLRuntimeHost(send);
+  const lifetime = new AbortController();
   const executions = new Map<string, Set<AbortController>>();
   const active = new Set<Promise<void>>();
   const concurrentServices = new Set(plugin.concurrentServices ?? []);
+  const concurrentCapabilities = new Set(plugin.concurrentCapabilities ?? []);
   let requests = Promise.resolve();
   let lifecycle = requests;
   let shuttingDown = false;
@@ -1543,7 +1636,8 @@ export async function runJSONLRuntime(
     }
     const isLifecycle = parsed.method === "initialize" || parsed.method === "activate" || parsed.method === "shutdown";
     if (parsed.method === "shutdown") shuttingDown = true;
-    const concurrent = parsed.method === "service.invoke" && concurrentServices.has(parsed.params.service);
+    const concurrent = (parsed.method === "service.invoke" && concurrentServices.has(parsed.params.service))
+      || (parsed.method === "capability.invoke" && concurrentCapabilities.has(parsed.params.capability));
     const executionId = runtimeRequestExecutionId(parsed);
     const controller = new AbortController();
     // Even legacy requests without an execution id must stop on transport loss.
@@ -1552,13 +1646,14 @@ export async function runJSONLRuntime(
     controllers.add(controller);
     const execution = { executionId, signal: controller.signal } satisfies RuntimeExecutionContext;
     // A lifecycle frame waits for everything already admitted. Opted-in
-    // service calls may bypass ordinary work, but never an earlier lifecycle
+    // handlers may bypass ordinary work, but never an earlier lifecycle
     // frame. Capture the barrier now so later frames cannot create a cycle.
     const ready = isLifecycle ? Promise.all([...active]) : concurrent ? lifecycle : requests;
     const task = ready
       .then(() => {
         if (parsed.method === "initialize") host.configure(parsed.params.supported_host_services);
-        return handleRuntimeRequest(plugin, parsed, host, execution);
+        if (parsed.method === "shutdown") lifetime.abort();
+        return handleRuntimeRequest(plugin, parsed, host, execution, { signal: lifetime.signal });
       })
       .then(send)
       .finally(() => {
@@ -1582,6 +1677,7 @@ export async function runJSONLRuntime(
     buffered += decoder.decode();
     if (buffered.trim() !== "") processLine(buffered);
   } finally {
+    lifetime.abort();
     host.close();
     for (const controllers of executions.values()) {
       for (const controller of controllers) controller.abort();
