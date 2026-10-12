@@ -6,6 +6,17 @@ import WuuCore
 enum NativeUIFixture {
     static var enabled: Bool { ProcessInfo.processInfo.arguments.contains("--native-ui-fixture") }
     static func thread() -> ChatThread {
+        if ProcessInfo.processInfo.arguments.contains("--native-process-fixture") {
+            return ChatThread(["id": "local-ui-fixture", "status": "in_progress", "turns": [
+                ["id": "resumed", "status": "in_progress", "items": [
+                    ["id": "check-1", "type": "tool_call", "name": "bash", "status": "completed"],
+                    ["id": "reply-1", "type": "agent_message", "terminal": true, "text": "改动已提交，等待检查结果。"],
+                    ["id": "check-2", "type": "tool_call", "name": "bash", "status": "completed"],
+                    ["id": "reply-2", "type": "agent_message", "terminal": true, "text": "检查仍在运行，稍后继续处理。"],
+                    ["id": "check-3", "type": "tool_call", "name": "bash", "status": "in_progress"]
+                ]]
+            ]])
+        }
         let image = UIGraphicsImageRenderer(size: CGSize(width: 240, height: 480)).image { context in
             UIColor.systemTeal.setFill(); context.fill(CGRect(x: 0, y: 0, width: 240, height: 480))
             UIColor.systemIndigo.setFill(); context.fill(CGRect(x: 20, y: 30, width: 200, height: 160))
