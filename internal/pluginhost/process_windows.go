@@ -5,6 +5,7 @@ package pluginhost
 import (
 	"context"
 	"errors"
+	"os"
 	"os/exec"
 	"strconv"
 	"syscall"
@@ -30,4 +31,10 @@ func killPluginProcess(cmd *exec.Cmd) error {
 		return errors.Join(err, cmd.Process.Kill())
 	}
 	return nil
+}
+
+func pluginProcessWasKilled(state *os.ProcessState) bool {
+	// Forceful Windows termination uses exit code 1. The caller also requires
+	// a successful kill, so a failed taskkill cannot hide a runtime exit.
+	return state != nil && state.ExitCode() == 1
 }

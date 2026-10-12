@@ -32,12 +32,12 @@ func TestProcessClientLifecycle(t *testing.T) {
 		runPluginHelper()
 		return
 	}
-	for _, mode := range []string{"normal", "stderr-tail", "descendant", "blocked-write"} {
+	for _, mode := range []string{"normal", "stderr-tail", "descendant", "blocked-write", "cancel-delivery", "shutdown-failure"} {
 		t.Run(mode, func(t *testing.T) {
 			root := t.TempDir()
 			env := map[string]string{"WUU_PLUGINHOST_HELPER": "1", "WUU_PLUGINHOST_MODE": mode}
 			var listener *net.TCPListener
-			if mode == "descendant" || mode == "blocked-write" {
+			if mode == "descendant" || mode == "blocked-write" || mode == "cancel-delivery" {
 				var err error
 				listener, err = net.ListenTCP("tcp", &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)})
 				if err != nil {
@@ -47,11 +47,15 @@ func TestProcessClientLifecycle(t *testing.T) {
 				_ = listener.SetDeadline(time.Now().Add(5 * time.Second))
 				env["WUU_PLUGINHOST_CHILD_ADDR"] = listener.Addr().String()
 			}
+			timeout := 2 * time.Second
+			if mode == "cancel-delivery" {
+				timeout = 5 * time.Second
+			}
 			client, err := Start(context.Background(), ProcessConfig{
 				ID: "test-plugin", Command: os.Args[0],
 				Args: []string{"-test.run=^TestProcessClientLifecycle$"}, Env: env,
 				PluginRoot: root, ProjectRoot: filepath.Dir(root), WuuHome: t.TempDir(),
-				Timeout: 2 * time.Second,
+				Timeout: timeout,
 			})
 			if err != nil {
 				t.Fatal(err)
@@ -67,6 +71,45 @@ func TestProcessClientLifecycle(t *testing.T) {
 					t.Fatal(err)
 				}
 				defer conn.Close()
+			}
+			if mode == "cancel-delivery" {
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				go func() {
+					_, _ = client.ExecuteTool(ctx, ToolExecuteParams{
+						ToolID: "wait", ToolExecuteInput: ToolExecuteInput{ExecutionID: "running"},
+					})
+				}()
+				_ = conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+				var ready [1]byte
+				if _, err := io.ReadFull(conn, ready[:]); err != nil {
+					t.Fatal(err)
+				}
+				go func() {
+					_, _ = client.ExecuteTool(context.Background(), ToolExecuteParams{
+						ToolID: "blocked", ToolExecuteInput: ToolExecuteInput{Arguments: mustRaw(strings.Repeat("x", 2<<20))},
+					})
+				}()
+				if _, err := io.ReadFull(conn, ready[:]); err != nil {
+					t.Fatal(err)
+				}
+				// An ordinary request that never acquires the writer may be
+				// canceled without retiring other, already-running work.
+				queuedCtx, queuedCancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+				_, queuedErr := client.ExecuteTool(queuedCtx, ToolExecuteParams{ToolID: "queued"})
+				queuedCancel()
+				if !errors.Is(queuedErr, context.DeadlineExceeded) || client.Status().State != StateActive {
+					t.Fatalf("queued request cancellation = %v, status = %+v", queuedErr, client.Status())
+				}
+				cancel()
+				select {
+				case <-client.readerDone:
+				case <-time.After(2 * time.Second):
+					t.Fatal("undelivered execution cancellation left the runtime running")
+				}
+				if status := client.Status(); status.State != StateFailed || !strings.Contains(status.Error, "running") {
+					t.Fatalf("lost cancellation diagnostic = %+v", status)
+				}
 			}
 			if mode == "blocked-write" {
 				ctx, cancel := context.WithCancel(context.Background())
@@ -106,7 +149,12 @@ func TestProcessClientLifecycle(t *testing.T) {
 			go func() { done <- client.Close(context.Background()) }()
 			select {
 			case err := <-done:
-				if err != nil {
+				if mode == "shutdown-failure" {
+					var exitErr *exec.ExitError
+					if !errors.As(err, &exitErr) || exitErr.ExitCode() != 42 {
+						t.Fatalf("shutdown failure = %v, want exit status 42", err)
+					}
+				} else if err != nil {
 					t.Fatal(err)
 				}
 			case <-time.After(4 * time.Second):
@@ -274,6 +322,9 @@ func runPluginHelper() {
 			}
 			result = InitializeResult{}
 		case "shutdown":
+			if mode == "shutdown-failure" {
+				os.Exit(42)
+			}
 			_ = enc.Encode(map[string]any{"id": req.ID, "result": result})
 			return
 		default:
@@ -281,10 +332,16 @@ func runPluginHelper() {
 			continue
 		}
 		_ = enc.Encode(map[string]any{"id": req.ID, "result": result})
-		if mode == "blocked-write" && req.Method == "initialize" {
+		if (mode == "blocked-write" || mode == "cancel-delivery") && req.Method == "initialize" {
 			conn, err := net.Dial("tcp", os.Getenv("WUU_PLUGINHOST_CHILD_ADDR"))
 			if err != nil {
 				os.Exit(1)
+			}
+			if mode == "cancel-delivery" {
+				if !scanner.Scan() {
+					os.Exit(1)
+				}
+				_, _ = conn.Write([]byte{1})
 			}
 			var first [1]byte
 			if _, err := io.ReadFull(os.Stdin, first[:]); err != nil {

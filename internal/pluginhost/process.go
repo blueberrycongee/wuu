@@ -401,7 +401,11 @@ func (c *ProcessClient) notifyExecutionCancel(executionID string) {
 	}
 	ctx, cancel := context.WithTimeout(c.processCtx, time.Second)
 	defer cancel()
-	_ = c.writeLine(ctx, payload)
+	if err := c.writeLine(ctx, payload); err != nil {
+		// Unlike an unsent invocation, this frame cancels work already
+		// running in the plugin. Losing it must retire that work's transport.
+		c.fail(fmt.Errorf("cancel plugin execution %q: %w", executionID, err))
+	}
 }
 
 func (c *ProcessClient) Close(ctx context.Context) error {
@@ -490,14 +494,7 @@ func (c *ProcessClient) call(ctx context.Context, method string, params, result 
 
 func (c *ProcessClient) readLoop() {
 	defer func() {
-		c.stopMu.Lock()
-		stopped := c.stopped
-		c.stopMu.Unlock()
-		if !stopped {
-			err := c.readFailure()
-			_ = c.stopProcess()
-			c.setFailure(err)
-		}
+		c.fail(c.readFailure())
 		close(c.readerDone)
 	}()
 	for c.scanner.Scan() {
@@ -745,6 +742,11 @@ func (c *ProcessClient) stopProcess() error {
 	}
 	c.stopMu.Lock()
 	defer c.stopMu.Unlock()
+	return c.stopProcessLocked()
+}
+
+// stopProcessLocked serializes retirement with the failure that caused it.
+func (c *ProcessClient) stopProcessLocked() error {
 	if c.stopped {
 		return c.stopErr
 	}
@@ -757,14 +759,14 @@ func (c *ProcessClient) stopProcess() error {
 	}
 	_ = c.stdin.Close()
 	killErr := killPluginProcess(c.cmd)
+	killed := killErr == nil
 	if errors.Is(killErr, os.ErrProcessDone) {
 		killErr = nil
 	}
 	waitErr := c.cmd.Wait()
-	var exitErr *exec.ExitError
-	if killErr == nil && errors.As(waitErr, &exitErr) {
-		// Forceful retirement is expected on every supported platform; the
-		// transport failure, if any, is recorded separately in status.
+	if killed && pluginProcessWasKilled(c.cmd.ProcessState) {
+		// Ignore only the recognizable forceful-termination status. A runtime
+		// that exits nonzero during shutdown still failed its cleanup.
 		waitErr = nil
 	}
 	c.stopErr = errors.Join(killErr, waitErr)
@@ -782,7 +784,12 @@ func (c *ProcessClient) setFailure(err error) {
 }
 
 func (c *ProcessClient) fail(err error) {
-	_ = c.stopProcess()
+	c.stopMu.Lock()
+	defer c.stopMu.Unlock()
+	if c.stopped {
+		return
+	}
+	_ = c.stopProcessLocked()
 	c.setFailure(err)
 }
 
