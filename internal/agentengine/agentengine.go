@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/providers"
@@ -171,6 +172,7 @@ type Factory interface {
 // Registry maps engine ids to factories. The runtime registers the built-in
 // wuu engine at startup; external engines register as they are added.
 type Registry struct {
+	mu        sync.RWMutex
 	factories map[EngineID]Factory
 }
 
@@ -267,6 +269,8 @@ func (r *Registry) Register(f Factory) error {
 	if id == "" {
 		return errors.New("engine descriptor id is required")
 	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.factories[id] = f
 	return nil
 }
@@ -276,6 +280,8 @@ func (r *Registry) Lookup(id EngineID) (Factory, bool) {
 	if r == nil {
 		return nil, false
 	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	f, ok := r.factories[NormalizeEngineID(string(id))]
 	return f, ok
 }
@@ -287,6 +293,8 @@ func (r *Registry) Unregister(id EngineID) {
 	if r == nil {
 		return
 	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	delete(r.factories, NormalizeEngineID(string(id)))
 }
 
@@ -295,17 +303,21 @@ func (r *Registry) Descriptors() []Descriptor {
 	if r == nil {
 		return nil
 	}
+	// Factories may call back into the registry while describing themselves.
+	// Snapshot their identities without holding the lock across that call.
+	r.mu.RLock()
+	factories := make(map[EngineID]Factory, len(r.factories))
 	ids := make([]string, 0, len(r.factories))
-	for id := range r.factories {
+	for id, factory := range r.factories {
+		factories[id] = factory
 		ids = append(ids, string(id))
 	}
+	r.mu.RUnlock()
 	sort.Strings(ids)
 	out := make([]Descriptor, 0, len(ids))
 	for _, id := range ids {
-		if f, ok := r.factories[EngineID(id)]; ok {
-			if desc, err := f.Descriptor(context.Background()); err == nil {
-				out = append(out, desc)
-			}
+		if desc, err := factories[EngineID(id)].Descriptor(context.Background()); err == nil {
+			out = append(out, desc)
 		}
 	}
 	return out

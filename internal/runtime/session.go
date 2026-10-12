@@ -182,9 +182,6 @@ type Session struct {
 	// built-in wuu engine is registered at construction; external engines
 	// (Claude, Codex) register as they are added.
 	engines *agentengine.Registry
-	// codexHost is the host behind the registered codex engine, kept so
-	// settings updates can rebuild the engine around the same process.
-	codexHost *codexengine.Host
 	// DefaultEngine is the engine id used for new threads when the caller
 	// does not request one explicitly (settings default; empty = wuu).
 	DefaultEngine      agentengine.EngineID
@@ -846,9 +843,7 @@ func NewSession(opts Options) (*Session, error) {
 	}
 	if codexEnabled {
 		codexHost := codexengine.NewHost(codexBinary, rootDir)
-		if err := runtimeSession.engines.Register(codexengine.NewEngine(codexHost)); err == nil {
-			runtimeSession.codexHost = codexHost
-		}
+		_ = runtimeSession.engines.Register(codexengine.NewEngine(codexHost))
 	}
 	// The claude engine follows the same settings shape: auto when the CLI
 	// is found, explicit disable or binary override from settings.

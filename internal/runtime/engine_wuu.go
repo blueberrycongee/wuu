@@ -116,22 +116,18 @@ func (s *Session) SetEnginesForTest(reg *agentengine.Registry) {
 }
 
 // RebuildCodexEngine re-registers the codex engine after a settings change
-// (binary path override or enable/disable). The host instance is preserved
-// so a running app-server keeps its process; only future acquisitions use
-// the new binary path.
+// (binary path override or enable/disable). Existing turn leases keep their
+// old host alive; future bindings use the newly registered host.
 func (s *Session) RebuildCodexEngine(enabled bool, binaryPath string) {
 	if s == nil || s.engines == nil {
 		return
 	}
-	s.engines.Unregister(agentengine.EngineID("codex"))
 	if !enabled {
+		s.engines.Unregister(agentengine.EngineID("codex"))
 		return
 	}
 	host := codexengine.NewHost(binaryPath, s.RootDir)
-	if err := s.engines.Register(codexengine.NewEngine(host)); err != nil {
-		return
-	}
-	s.codexHost = host
+	_ = s.engines.Register(codexengine.NewEngine(host))
 }
 
 // RebuildClaudeEngine re-registers the claude engine after a settings
@@ -179,10 +175,15 @@ func (s *Session) RebuildProtocolEngines(cfg *config.EnginesConfig) {
 
 // CodexHost returns the currently registered codex engine host, if any.
 func (s *Session) CodexHost() *codexengine.Host {
-	if s == nil {
+	if s == nil || s.engines == nil {
 		return nil
 	}
-	return s.codexHost
+	factory, _ := s.engines.Lookup(agentengine.EngineID("codex"))
+	engine, ok := factory.(*codexengine.Engine)
+	if !ok {
+		return nil
+	}
+	return engine.Host()
 }
 
 // WuuEngine returns the built-in engine factory. The built-in engine only

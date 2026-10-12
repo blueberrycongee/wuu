@@ -51,6 +51,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   other attached turns receive explicit errors rather than staying running.
   Preserve unrelated conversations after confirmed interruption, malformed
   turn notifications, or cancellation of a queued protocol write.
+- Share one Codex startup across concurrent sessions, retry failed or closed
+  hosts on later turns, and release each turn's process ownership without
+  interrupting other sessions. Keep healthy hosts warm until their app-server
+  owners shut down or switch engines.
 
 - Remember iOS model and reasoning choices for new conversations per account,
   computer and engine, including first sends without reopening settings and app relaunches.

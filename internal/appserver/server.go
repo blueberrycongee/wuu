@@ -18,6 +18,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/agentcontrol"
 	"github.com/blueberrycongee/wuu/internal/claudeengine"
+	"github.com/blueberrycongee/wuu/internal/codexengine"
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/credentialstore"
 	"github.com/blueberrycongee/wuu/internal/execution"
@@ -282,6 +283,9 @@ type Server struct {
 	activityUnsubscribe          func()
 	backgroundMu                 sync.Mutex
 	backgroundWG                 sync.WaitGroup
+	engineHostMu                 sync.Mutex
+	codexHost                    *codexengine.Host
+	codexHostRelease             func()
 	engineAuthMu                 sync.Mutex
 	engineAuthCancels            map[string]context.CancelFunc
 	closeOnce                    sync.Once
@@ -349,6 +353,7 @@ func NewWithCredentialStore(rt *runtime.Session, out io.Writer, store credential
 		activeRunByThread:            make(map[string]string),
 		modelCatalogHTTPClient:       httpClient,
 	}
+	s.retainCodexHost()
 	s.bindUserQuestions()
 	if rt != nil {
 		catalogHome := strings.TrimSpace(rt.WuuHome)
@@ -813,6 +818,13 @@ func (s *Server) Close() {
 		s.interruptAttachedRunsOnClose()
 		for _, th := range threads {
 			s.releaseThreadRuntime(th)
+		}
+		s.engineHostMu.Lock()
+		releaseHost := s.codexHostRelease
+		s.codexHost, s.codexHostRelease = nil, nil
+		s.engineHostMu.Unlock()
+		if releaseHost != nil {
+			releaseHost()
 		}
 		s.releasePresence()
 	})
