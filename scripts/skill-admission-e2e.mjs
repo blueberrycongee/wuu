@@ -221,6 +221,24 @@ try {
   const laterFallback = await turn(thread, "skill-e2e:load:pinned-guide");
   assert(lastToolResult(laterFallback).includes("PINNED_PACKAGE_ORIGINAL"));
   result.checks.push("package content stays generation-pinned; deleting an admitted local override never switches its in-flight load to a same-name package");
+  await writeSkill("restricted-manual", "disable-model-invocation: true\nuser-invocable: true", "RESTRICTED_MANUAL_BODY");
+  const { thread: restricted } = await rpc("thread/start", { provider: "fixture", model: "fixture" });
+  // Seed isolated host-owned metadata before constructing the thread runtime.
+  const seededPolicy = spawnSync("python3", ["-c", "import sys,sqlite3; c=sqlite3.connect(sys.argv[1]); c.execute('update sessions set tool_policy_json=? where id=?',(sys.argv[3],sys.argv[2])); c.commit()", join(home, "sessions", "sessions.sqlite3"), restricted.id, JSON.stringify({ allow: ["load_skill"] })], { encoding: "utf8" });
+  assert.equal(seededPolicy.status, 0, seededPolicy.stderr);
+  const restrictedCatalog = (await rpc("skill/list", { thread_id: restricted.id })).skills;
+  assert(!restrictedCatalog.some(skill => skill.name === "plugin-guide"));
+  const restrictedLoad = await turn(restricted, "skill-e2e:load:plugin-guide");
+  assert.deepEqual(restrictedLoad[0].tools.map(tool => tool.function.name), ["load_skill"]);
+  assert.match(lastToolResult(restrictedLoad), /skill.*plugin-guide.*not found/i);
+  assert(!lastToolResult(restrictedLoad).includes("PLUGIN_SKILL_BODY"));
+  const latestCatalog = catalogNotices(restrictedLoad).at(-1);
+  assert(latestCatalog && !text(latestCatalog.content).includes("<name>plugin-guide</name>"));
+  const restrictedSelection = restrictedCatalog.find(skill => skill.name === "restricted-manual");
+  assert(restrictedSelection?.user_invocable && restrictedSelection.disable_model_invoke);
+  const restrictedManual = await turn(restricted, `/skill ${JSON.stringify({ name: restrictedSelection.name, source: restrictedSelection.source, ...(restrictedSelection.project ? { project: restrictedSelection.project } : { path: restrictedSelection.path }) })}`);
+  assert(restrictedManual.some(body => body.messages.some(message => message.role === "user" && text(message.content).includes("RESTRICTED_MANUAL_BODY"))));
+  result.checks.push("session policy excludes plugin-dependent skills from current catalogs and automatic loads while explicit manual-only selection remains valid");
   await rpc("extension/package/update", { id: plugin.id, fingerprint: plugin.fingerprint, action: "disable" });
   const revoked = await turn(thread, "skill-e2e:load:plugin-guide");
   assert.match(lastToolResult(revoked), /skill.*plugin-guide.*not found/i);

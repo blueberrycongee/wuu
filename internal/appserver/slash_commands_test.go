@@ -1,6 +1,7 @@
 package appserver
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -89,7 +90,7 @@ func TestExplicitSkillIdentityRejectsUnavailableSelection(t *testing.T) {
 			skill.UserInvocable = tc.invocable
 			rt.Skills = []skills.Skill{skill}
 			srv := New(rt, &lockedBuffer{})
-			if _, err := srv.userMessageWithInputImages("", tc.prompt, nil, nil, nil); err == nil {
+			if _, err := srv.userMessageWithInputImages(context.Background(), "", tc.prompt, nil, nil, nil); err == nil {
 				t.Fatal("invalid explicit selection must not fall through to model interpretation")
 			}
 		})
@@ -103,7 +104,7 @@ func TestExplicitSkillIdentityLoadsWithoutExecutingInlineShell(t *testing.T) {
 	srv := New(rt, &lockedBuffer{})
 	identity, _ := json.Marshal(map[string]string{"name": skill.Name, "source": skill.Source, "path": skill.Path})
 	prompt := "/skill " + string(identity) + "\nnotes"
-	msg, err := srv.userMessageWithInputImages("", prompt, nil, nil, nil)
+	msg, err := srv.userMessageWithInputImages(context.Background(), "", prompt, nil, nil, nil)
 	if err != nil || !strings.Contains(msg.Content, "`!echo do-not-execute` notes") || msg.DisplayContent != prompt {
 		t.Fatalf("loading should only expand instructions: %+v, %v", msg, err)
 	}
@@ -148,7 +149,7 @@ func TestExplicitSkillCatalogHonorsThreadBoundaries(t *testing.T) {
 			if (len(catalog.Skills) == 1) != wantAvailable {
 				t.Fatalf("unexpected catalog: %+v", catalog)
 			}
-			_, err = srv.userMessageWithInputImages(threadID, `/skill {"name":"review","source":"user","path":""}`, nil, nil, nil)
+			_, err = srv.userMessageWithInputImages(context.Background(), threadID, `/skill {"name":"review","source":"user","path":""}`, nil, nil, nil)
 			if (err == nil) != wantAvailable {
 				t.Fatalf("unexpected invocation error: %v", err)
 			}
@@ -236,7 +237,7 @@ func TestProjectSkillIdentityBoundaries(t *testing.T) {
 				identity["path"] = tc.absolute
 			}
 			encoded, _ := json.Marshal(identity)
-			msg, err := srv.userMessageWithInputImages("", "/skill "+string(encoded)+"\nnotes", nil, nil, nil)
+			msg, err := srv.userMessageWithInputImages(context.Background(), "", "/skill "+string(encoded)+"\nnotes", nil, nil, nil)
 			if (err == nil) != tc.valid {
 				t.Fatalf("valid=%v, error=%v, discovered=%+v", tc.valid, err, projectSkillIdentity(rt.Skills[0], owner, rt.RootDir))
 			}
@@ -272,7 +273,7 @@ func TestProjectSkillCatalogOwnership(t *testing.T) {
 		}
 		rt.Skills = []skills.Skill{candidate}
 		identity, _ := json.Marshal(map[string]string{"name": candidate.Name, "source": source, "path": file})
-		if _, err := srv.userMessageWithInputImages("", "/skill "+string(identity), nil, nil, nil); err != nil {
+		if _, err := srv.userMessageWithInputImages(context.Background(), "", "/skill "+string(identity), nil, nil, nil); err != nil {
 			t.Fatalf("absolute external identity failed: %v", err)
 		}
 	}
@@ -306,7 +307,7 @@ func TestProjectSkillCatalogOwnership(t *testing.T) {
 		}
 		rt.Skills = []skills.Skill{escaped}
 		identity, _ := json.Marshal(map[string]any{"name": "review", "source": "project", "project": map[string]string{"root": sessionWorkspacePath(workspace), "path": ".agents/skills/review/linked.md"}})
-		if _, err := srv.userMessageWithInputImages("", "/skill "+string(identity), nil, nil, nil); err == nil {
+		if _, err := srv.userMessageWithInputImages(context.Background(), "", "/skill "+string(identity), nil, nil, nil); err == nil {
 			t.Fatal("escaped symlink matched a project-relative selection")
 		}
 		rt.Skills = []skills.Skill{skill}
@@ -325,7 +326,7 @@ func TestProjectSkillCatalogOwnership(t *testing.T) {
 		t.Fatalf("foreign checkout inherited ownership: root=%q catalog=%+v error=%v", root, catalog, err)
 	}
 	identity, _ := json.Marshal(map[string]any{"name": "review", "source": "project", "project": map[string]string{"root": sessionWorkspacePath(workspace), "path": "SKILL.md"}})
-	if _, err := srv.userMessageWithInputImages("foreign", "/skill "+string(identity), nil, nil, nil); err == nil {
+	if _, err := srv.userMessageWithInputImages(context.Background(), "foreign", "/skill "+string(identity), nil, nil, nil); err == nil {
 		t.Fatal("foreign checkout accepted originating project identity")
 	}
 }

@@ -59,6 +59,7 @@ type Toolkit struct {
 	env                     *Env
 	registry                *Registry
 	disabledTools           map[string]struct{}
+	toolPolicy              func(string) bool
 	exposureMu              sync.RWMutex
 	loadedDeferredTools     map[string]struct{}
 	toolSearchEnabled       bool
@@ -337,6 +338,7 @@ func (t *Toolkit) CloneForRoot(rootDir string) (*Toolkit, error) {
 	clone.codeMode = t.codeMode
 	clone.ptcConfig = t.ptcConfig
 	t.codeModeMu.RUnlock()
+	clone.toolPolicy = t.toolPolicy
 	t.activeProfileMu.RLock()
 	clone.activeProfile = t.activeProfile
 	clone.activeSurface = cloneSurface(t.activeSurface)
@@ -694,6 +696,25 @@ func (t *Toolkit) DisableTools(names ...string) {
 	}
 }
 
+// SetToolPolicy binds an immutable session restriction before execution. Clones
+// retain it, including for tools discovered after the session was configured.
+func (t *Toolkit) SetToolPolicy(allowed func(string) bool) {
+	// The initial prompt was assembled before session attenuation. Preserve its
+	// catalog baseline so the next model boundary can append the corrected view.
+	for {
+		catalog := t.env.skillCatalog.Load()
+		if catalog == nil || catalog.baseline != "" {
+			break
+		}
+		next := *catalog
+		next.baseline = skills.FormatAvailable(t.env.VisibleSkills(), true)
+		if t.env.skillCatalog.CompareAndSwap(catalog, &next) {
+			break
+		}
+	}
+	t.toolPolicy = allowed
+}
+
 // EnableTools re-enables specific tools that were previously disabled.
 func (t *Toolkit) EnableTools(names ...string) {
 	for _, n := range names {
@@ -791,11 +812,8 @@ func (t *Toolkit) GitAttributionEnabled() bool {
 }
 
 func (t *Toolkit) IsToolDisabled(name string) bool {
-	if len(t.disabledTools) == 0 {
-		return false
-	}
 	_, ok := t.disabledTools[name]
-	return ok
+	return ok || t.toolPolicy != nil && !t.toolPolicy(name)
 }
 
 // ── ToolExecutor interface ─────────────────────────────────────────
@@ -1133,7 +1151,10 @@ func (t *Toolkit) exposedSurfaceLocked() capability.Surface {
 		for name, capName := range surface.DeferredTools {
 			surface.NestedTools[name] = capName
 		}
-		surface.Tools = map[string]capability.Capability{codeModeExecToolName: capability.CapabilityCodeMode}
+		surface.Tools = make(map[string]capability.Capability)
+		if !t.IsToolDisabled(codeModeExecToolName) {
+			surface.Tools[codeModeExecToolName] = capability.CapabilityCodeMode
+		}
 		for name, capName := range surface.NestedTools {
 			if t.CodeModeDirectCallAllowed(name) {
 				surface.Tools[name] = capName
@@ -1185,15 +1206,16 @@ func (t *Toolkit) activeCompiledSurface() capability.Surface {
 }
 
 func (t *Toolkit) withDisabledToolsRemoved(surface capability.Surface) capability.Surface {
-	if len(t.disabledTools) == 0 || surface.ProfileName == "" {
+	if len(t.disabledTools) == 0 && t.toolPolicy == nil || surface.ProfileName == "" {
 		return surface
 	}
 	out := cloneSurface(surface)
-	for name := range t.disabledTools {
-		delete(out.Tools, name)
-		delete(out.DeferredTools, name)
-		delete(out.NestedTools, name)
-		delete(out.HiddenTools, name)
+	for _, names := range []map[string]capability.Capability{out.Tools, out.DeferredTools, out.NestedTools, out.HiddenTools} {
+		for name := range names {
+			if t.IsToolDisabled(name) {
+				delete(names, name)
+			}
+		}
 	}
 	return out
 }

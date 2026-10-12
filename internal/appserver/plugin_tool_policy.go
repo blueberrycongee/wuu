@@ -52,11 +52,7 @@ func (s *Server) configureSessionToolPolicy(sessionID string, threadRuntime *run
 	}
 	threadRuntime.StreamRunner.Tools = guarded
 	if guard, ok := guarded.(*sessionToolPolicyExecutor); ok && threadRuntime.Toolkit != nil {
-		for _, definition := range threadRuntime.Toolkit.Definitions() {
-			if !guard.allowed(definition.Name) {
-				threadRuntime.Toolkit.DisableTools(definition.Name)
-			}
-		}
+		threadRuntime.Toolkit.SetToolPolicy(guard.allowed)
 	}
 	return nil
 }
@@ -102,11 +98,15 @@ func (e *sessionToolPolicyExecutor) allowed(name string) bool {
 	if _, denied := e.deny[name]; denied {
 		return false
 	}
-	if e.allow == nil {
-		return true
+	if e.allow != nil {
+		if _, allowed := e.allow[name]; !allowed {
+			return false
+		}
 	}
-	_, allowed := e.allow[name]
-	return allowed
+	if inner, ok := e.base.(*sessionToolPolicyExecutor); ok {
+		return inner.allowed(name)
+	}
+	return true
 }
 
 func (e *sessionToolPolicyExecutor) Definitions() []providers.ToolDefinition {
