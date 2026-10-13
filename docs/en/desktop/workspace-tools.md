@@ -147,7 +147,7 @@ The preview separates viewing from control:
 - **Finish takeover** ends a takeover. It does not restart the interrupted task; send another instruction to continue with fresh authority.
 - **Stop task** interrupts the task and stops its activity. Old requests remain revoked. A later explicit instruction can start a new run.
 
-Closing or stopping the preview does not quit the application being observed. Disabling or retiring the owning extension stops its preview activity. If a capture target disappears, permission is denied, or capture stops producing valid frames, the preview shows that condition rather than presenting an old frame as live. It does not silently switch to another app window or the whole screen.
+Closing or stopping the preview does not quit the application being observed. Disabling or retiring the owning extension stops its preview activity. If a capture target disappears, Wuu closes its preview; unchanged activity updates do not reopen that target. Permission failures and unavailable capture are shown explicitly, and a retained frame is labelled paused rather than live. The preview does not silently switch to another app window or the whole screen.
 
 Native app previews require a macOS build with Computer Use enabled and the relevant macOS permissions. The floating preview does not itself grant Screen Recording or Accessibility access. See [installation](../getting-started/installation.md) for build availability and permissions.
 

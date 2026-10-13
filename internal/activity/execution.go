@@ -136,7 +136,21 @@ func (r *Registry) PauseThread(threadID string) {
 	}
 	r.mu.Lock()
 	run := r.threadRunLocked(threadID)
-	events := r.revokeThreadLocked(threadID, run.stopped)
+	run.revision++
+	run.paused = true
+	if run.execution != nil {
+		run.execution.revoke(ErrControlRevoked)
+	}
+	var events []Event
+	for _, entry := range r.entries {
+		if entry.session.ThreadID != threadID || entry.session.Controller != ControllerAgent {
+			continue
+		}
+		// Interrupting work relinquishes agent control; it does not claim a
+		// user takeover. In particular, temporary browser pages must still be
+		// eligible for turn-end cleanup. Existing manual ownership is retained.
+		events = append(events, Event{Type: EventControlChanged, Activity: r.idleLocked(entry)})
+	}
 	r.mu.Unlock()
 	for _, event := range events {
 		r.emit(event)

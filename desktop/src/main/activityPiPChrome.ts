@@ -152,19 +152,22 @@ html,body{width:100%;height:100%;overflow:hidden;scrollbar-width:none;
   function buttonLabel(id,key){var button=document.getElementById(id);button.title=text(key);button.setAttribute("aria-label",text(key));}
   function render(){
     var terminal=activity.state==="stopped",manual=activity.controller==="user";
-    var captureBlocked=["blank","suspended","stopped","error"].includes(capture.status);
+    // Stopping capture leaves the last mounted frame valid, but no longer live.
+    var capturePaused=capture.status==="stopped";
+    var captureBlocked=["blank","suspended","error"].includes(capture.status);
     var unavailable=activity.state==="error"||capture.status==="error";
     var pending=activity.controlPending;
     var placeholder=!mounted||captureBlocked;
     ph.classList.toggle("gone",!placeholder);
     ph.setAttribute("aria-hidden",String(!placeholder));
-    phTitle.textContent=text(terminal?"activityStopped":activity.state==="waiting_confirmation"?"activityWaiting":unavailable?"activityUnavailable":captureBlocked?"activityPaused":"activityPreparing");
+    phTitle.textContent=text(terminal?"activityStopped":activity.state==="waiting_confirmation"?"activityWaiting":unavailable?"activityUnavailable":captureBlocked||capturePaused?"activityPaused":"activityPreparing");
     var detail=activity.error||capture.message||
       (capture.status==="blank"?text("activityBlank"):capture.status==="suspended"?text("activitySuspended"):"");
     if(activity.state==="waiting_confirmation"&&!detail)detail=text("activityConfirmationHint");
     phDetail.textContent=detail;phDetail.hidden=!detail;
     var statusText=pending?text("activityChangingControl"):activity.error||
-      (terminal?text("activityStopped"):manual?text("activityControlled"):activity.state==="waiting_confirmation"?text("activityWaiting"):
+      (terminal?text("activityStopped"):activity.state==="waiting_confirmation"?text("activityWaiting"):
+      capturePaused?text("activityPaused"):manual?text("activityControlled"):
       activity.controller==="none"&&activity.state!=="starting"?text("activityIdle"):"");
     status.textContent=statusText;status.hidden=placeholder||!statusText||completion.dataset.completed==="true";
     root.classList.toggle("attention",Boolean(placeholder||statusText));

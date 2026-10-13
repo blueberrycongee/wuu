@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"sync"
 	"time"
+
+	"github.com/blueberrycongee/wuu/internal/activity"
 )
 
 // cancelNotificationTimeout bounds the best-effort notifications/cancelled that
@@ -278,7 +280,7 @@ func call(ctx context.Context, t Transport, f *inFlight, method string, params a
 }
 
 func callWithProtocol(ctx context.Context, t Transport, f *inFlight, method string, params any, protocolVersion string) (json.RawMessage, error) {
-	if err := ctx.Err(); err != nil {
+	if err := activity.BoundControlErr(ctx); err != nil {
 		return nil, err
 	}
 	var rawParams json.RawMessage
@@ -303,6 +305,9 @@ func callWithProtocol(ctx context.Context, t Transport, f *inFlight, method stri
 
 	id := nextRequestID()
 	req := Request{JSONRPC: "2.0", ID: id, Method: method, Params: rawParams}
+	if err := activity.BoundControlErr(ctx); err != nil {
+		return nil, err
+	}
 	ch := f.register(id)
 	if err := t.Send(ctx, req); err != nil {
 		f.resolve(id, Response{Error: &RPCError{Code: -32000, Message: err.Error()}, ID: id, hasID: true})

@@ -317,9 +317,8 @@ app.whenReady().then(async () => {
   const nativePresentations: { windowID: number; event: string }[] = [];
   const hostWindows: BrowserWindow[] = [];
   function watchPresentation(window: BrowserWindow) {
-    for (const event of ["show", "focus"] as const) {
-      window.on(event, () => nativePresentations.push({ windowID: window.id, event }));
-    }
+    window.on("show", () => nativePresentations.push({ windowID: window.id, event: "show" }));
+    window.on("focus", () => nativePresentations.push({ windowID: window.id, event: "focus" }));
     return window;
   }
   const main = watchPresentation(new BrowserWindow({ show: false, width: 900, height: 650,
@@ -785,6 +784,9 @@ app.whenReady().then(async () => {
     await start(cMarker, c);
     await bounded("a real new C execution reconciles its retained tabs", controlledWaiter(cMarker).promise);
     check("C resumes with a fresh core execution identity", Boolean(activeExecutionIDs.get(c)) && activeExecutionIDs.get(c) !== previousExecution);
+    // Listing tabs does not acquire UI control. The first real Go observation
+    // must establish this run's activity lease before direct CDP race probes.
+    await controlledTool(cMarker, { action: "observe", tab_id: cTab });
   }
   const observation = await request(c, "browser/cdp", { tab_id: cTab, method: "observe", params: {} }) as { result: { nodes: { node_id: number; name: string }[] } };
   const target = observation.result.nodes.find(node => node.name === "Target");

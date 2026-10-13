@@ -1,4 +1,5 @@
 import type { ActivitySession, ServerEvent } from "../shared/protocol";
+import { activityTimestamp } from "../shared/activityTimestamp";
 
 export type ActivitySessionsState = {
   byKey: Record<string, ActivitySession>;
@@ -97,8 +98,8 @@ function mergeActivity(state: ActivitySessionsState, incoming: ActivitySession):
   const key = activityKey(incoming);
   const current = state.byKey[key];
   if (current) {
-    const incomingTime = eventTime(incoming.updated_at);
-    const currentTime = eventTime(current.updated_at);
+    const incomingTime = activityTimestamp(incoming.updated_at);
+    const currentTime = activityTimestamp(current.updated_at);
     if (incomingTime < currentTime) return state;
     const changedExecution = current.execution_id !== incoming.execution_id;
     // Activity IDs survive runs. Only a strictly newer, identified execution
@@ -114,12 +115,6 @@ function mergeActivity(state: ActivitySessionsState, incoming: ActivitySession):
 
 function activityKey(activity: ActivitySession): string {
   return `${activity.workdir}\u0000${activity.thread_id}\u0000${activity.id}`;
-}
-
-function eventTime(value: string): string {
-  // Core timestamps are UTC RFC3339Nano. Date.parse loses the ordering between
-  // an execution grant and a stop/control notification in the same millisecond.
-  return value.replace(/(?:\.(\d+))?Z$/, (_match, fraction: string | undefined) => `.${(fraction ?? "").padEnd(9, "0")}Z`);
 }
 
 function activityFromUnknown(value: unknown): ActivitySession | undefined {

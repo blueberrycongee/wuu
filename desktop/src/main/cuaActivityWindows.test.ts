@@ -55,6 +55,54 @@ describe("CUA native picture-in-picture", () => {
     expect(frameStreamRetryDelay(2)).toBe(4000);
     expect(frameStreamRetryDelay(3)).toBe(8000);
     expect(frameStreamRetryDelay(6)).toBe(16000);
+
+    vi.useFakeTimers();
+    let fail: (message: string) => void = () => undefined;
+    const retarget = vi.fn();
+    const coordinator = new ObservationCoordinator(
+      { mainWindow: () => undefined } as unknown as WindowRegistry, undefined,
+      (_activity, _key, sink) => {
+        fail = sink.onFailure;
+        return {
+          start: vi.fn(), setVisible: vi.fn(), setLive: vi.fn(), updateActivity: vi.fn(),
+          animateInteraction: vi.fn(), suspendContent: vi.fn(), retarget,
+          stop: (onStopped?: () => void) => onStopped?.(),
+        };
+      },
+    );
+    coordinator.setActiveThread("thread-1");
+    coordinator.update(activity({ execution_id: "turn-1" }));
+    for (let attempt = 1; attempt <= 4; attempt++) {
+      fail("Screen Recording permission required");
+      vi.advanceTimersByTime(frameStreamRetryDelay(attempt));
+    }
+    expect(retarget).toHaveBeenCalledTimes(3);
+    coordinator.update(activity({ execution_id: "turn-1", updated_at: "2026-07-10T10:00:02Z" }));
+    vi.advanceTimersByTime(60_000);
+    expect(retarget).toHaveBeenCalledTimes(3);
+
+    coordinator.showForThread("thread-1");
+    expect(retarget).toHaveBeenCalledTimes(4);
+    fail("Permission still required");
+    coordinator.update(activity({ execution_id: "turn-2", updated_at: "2026-07-10T10:00:03Z" }));
+    expect(retarget).toHaveBeenCalledTimes(5);
+    vi.advanceTimersByTime(60_000);
+    expect(retarget).toHaveBeenCalledTimes(5);
+    for (let attempt = 1; attempt <= 4; attempt++) {
+      fail("Permission still required");
+      vi.advanceTimersByTime(frameStreamRetryDelay(attempt));
+    }
+    expect(retarget).toHaveBeenCalledTimes(8);
+
+    coordinator.showForThread("thread-1");
+    fail("Retry after returning to this conversation");
+    coordinator.setActiveThread("thread-2");
+    coordinator.update(activity({ thread_id: "thread-2", execution_id: "other-turn", target: "other-app" }));
+    expect(retarget).toHaveBeenCalledTimes(10);
+    coordinator.setActiveThread("thread-1");
+    vi.advanceTimersByTime(frameStreamRetryDelay(1));
+    expect(retarget).toHaveBeenCalledTimes(11);
+    void coordinator.shutdown();
   });
 
   it("accepts CUA and browser lifecycle notifications", () => {
@@ -203,7 +251,7 @@ describe("browser observation surface", () => {
     stop: (onStopped?: () => void) => void;
   };
 
-  function makeCoordinator(): {
+  function makeCoordinator(snapshot?: (threadID: string) => Promise<ActivitySession[]>): {
     coordinator: ObservationCoordinator;
     surfaces: FakeSurface[];
     stops: string[];
@@ -212,7 +260,7 @@ describe("browser observation surface", () => {
     const stops: string[] = [];
     const coordinator = new ObservationCoordinator(
       { mainWindow: () => undefined } as unknown as WindowRegistry,
-      undefined,
+      snapshot,
       (next) => {
         const surface: FakeSurface = {
           start: vi.fn(),
@@ -310,6 +358,7 @@ describe("browser observation surface", () => {
       isDestroyed: () => false,
       isVisible: () => true,
       isMinimized: () => false,
+      isFocused: () => true,
       getContentBounds: () => content,
       webContents: { getZoomFactor: () => 1 },
     });
@@ -397,12 +446,19 @@ describe("browser observation surface", () => {
     const { coordinator, surfaces } = makeCoordinator();
     coordinator.setActiveThread("thread-1");
     coordinator.update(browserActivity());
+    const preciseUpdate = browserActivity({ updated_at: "2026-07-10T10:00:01.000000002Z" });
+    coordinator.update(preciseUpdate);
+    expect(surfaces[0].updateActivity).toHaveBeenLastCalledWith(preciseUpdate);
+    coordinator.update(browserActivity({ updated_at: "2026-07-10T10:00:01.000000001Z" }));
+    expect(surfaces[0].updateActivity).toHaveBeenLastCalledWith(preciseUpdate);
     coordinator.update(browserActivity({ state: "stopped", controller: "none", updated_at: "2026-07-10T10:00:02Z" }));
     expect(surfaces[0].setLive).toHaveBeenLastCalledWith(false);
     expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(true);
     expect(surfaces).toHaveLength(1); // kept, CUA observation semantics
 
     coordinator.update(browserActivity({ updated_at: "2026-07-10T10:00:03Z" }));
+    expect(surfaces[0].setLive).toHaveBeenLastCalledWith(false);
+    expect(surfaces[0].updateActivity).toHaveBeenLastCalledWith(expect.objectContaining({ state: "stopped", controller: "none" }));
     coordinator.setActiveThread(undefined);
     coordinator.setActiveThread("thread-1");
     expect(surfaces[0].setLive).toHaveBeenLastCalledWith(false);
@@ -438,18 +494,42 @@ describe("browser observation surface", () => {
     expect(surfaces[1].start).toHaveBeenCalledTimes(1);
   });
 
-  it("tears the surface down when the tab is gone and does not retry", () => {
+  it("does not reconcile a gone target until its source changes or the user retries", async () => {
     vi.useFakeTimers();
-    const { coordinator, surfaces, stops } = makeCoordinator();
+    let latest = browserActivity({ execution_id: "turn-1" });
+    const { coordinator, surfaces, stops } = makeCoordinator(async () => [latest]);
     coordinator.setActiveThread("thread-1");
-    coordinator.update(browserActivity());
+    coordinator.update(latest);
     const testCoordinator = coordinator as unknown as {
       handlePiPGone: (key: string) => void;
     };
-    testCoordinator.handlePiPGone(observationKey(browserActivity()));
+    testCoordinator.handlePiPGone(observationKey(latest));
     expect(stops).toEqual(["tab-1"]);
-    vi.advanceTimersByTime(60_000);
-    expect(surfaces).toHaveLength(1); // no retry respawn
+    const unrelated: ServerEvent = { workdir: "/repo", kind: "notification", message: {
+      method: "turn/started", params: { thread_id: "thread-1" },
+    } };
+    coordinator.handleServerEvent(unrelated);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(surfaces).toHaveLength(1);
+    coordinator.setActiveThread(undefined);
+    coordinator.setActiveThread("thread-1");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(surfaces).toHaveLength(1);
+
+    latest = browserActivity({ execution_id: "turn-1", target: "tab-2", updated_at: "2026-07-10T10:00:02Z" });
+    coordinator.update(latest);
+    expect(surfaces).toHaveLength(2);
+    testCoordinator.handlePiPGone(observationKey(latest));
+    coordinator.update(browserActivity({ execution_id: "turn-1" }));
+    coordinator.update({ ...latest, updated_at: "2026-07-10T10:00:02.5Z" });
+    expect(surfaces).toHaveLength(2);
+    latest = { ...latest, execution_id: "turn-2", updated_at: "2026-07-10T10:00:03Z" };
+    coordinator.update(latest);
+    expect(surfaces).toHaveLength(3);
+    testCoordinator.handlePiPGone(observationKey(latest));
+    coordinator.showForThread("thread-1");
+    expect(surfaces).toHaveLength(4);
+    await coordinator.shutdown();
   });
 
   it("drops the surface and observation on workdir teardown", () => {

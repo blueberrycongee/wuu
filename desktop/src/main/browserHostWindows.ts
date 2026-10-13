@@ -1,5 +1,6 @@
 import type { HandlerDetails, LoadURLOptions, Rectangle, Session, WebContents, WebContentsViewConstructorOptions, WindowOpenHandlerResponse } from "electron";
 import type { ActivitySession, BrowserListedTab, BrowserSurfaceSnapshot, BrowserTabStatus, BrowserTurnEndedResult, JsonValue, ServerEvent } from "../shared/protocol";
+import { activityTimestamp } from "../shared/activityTimestamp";
 import {
   agentCursorCommandScript,
   clearAgentCursorScript,
@@ -1663,10 +1664,6 @@ export const SPECTATOR_SCROLLBAR_PROBE = `(function(){
   probe.remove();
   return overlay;
 })()`;
-
-function activityTimestamp(value: string): string {
-  return value.replace(/(?:\.(\d+))?Z$/, (_match, fraction: string | undefined) => `.${(fraction ?? "").padEnd(9, "0")}Z`);
-}
 
 // Composite (workdir, tab_id) key. The pool mints up to 3 cores, each of which
 // generates its own tab_ids independently, so a bare tab_id can collide across

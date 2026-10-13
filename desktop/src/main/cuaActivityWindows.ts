@@ -9,6 +9,7 @@ import {
 } from "./browserPiPPlacement";
 import type { CUANativePiPEvent } from "./cuaFrameStreams";
 import type { ActivityPreviewAppearance } from "../shared/activityPreview";
+import { activityTimestamp } from "../shared/activityTimestamp";
 import type { WindowRegistry } from "./windowRegistry";
 import { activityPreviewIsLive } from "./activityPiPContent";
 
@@ -101,9 +102,9 @@ export interface BrowserPiPHostWindow {
   isMinimized(): boolean;
   getContentBounds(): Rectangle;
   readonly webContents: { getZoomFactor(): number };
-  on(event: "move" | "resize" | "show" | "hide" | "minimize" | "restore", listener: () => void): void;
-  removeListener(event: "move" | "resize" | "show" | "hide" | "minimize" | "restore", listener: () => void): void;
-  isFocused?(): boolean;
+  on(event: "move" | "resize" | "show" | "hide" | "minimize" | "restore" | "focus", listener: () => void): void;
+  removeListener(event: "move" | "resize" | "show" | "hide" | "minimize" | "restore" | "focus", listener: () => void): void;
+  isFocused(): boolean;
 }
 
 // Surface→coordinator reporting. onEvent carries ready/user_close/geometry
@@ -144,6 +145,7 @@ type PiPEntry = {
  */
 export class ObservationCoordinator {
   private readonly observations = new Map<string, ActivitySession>();
+  private readonly goneObservations = new Map<string, { key: string; executionID?: string }>();
   private readonly dismissedThreads = new Set<string>();
   private readonly lastInteractionRevisions = new Map<string, number>();
   private readonly retryAttempts = new Map<string, number>();
@@ -217,7 +219,9 @@ export class ObservationCoordinator {
 
   showForThread(threadID: string): void {
     this.dismissedThreads.delete(threadID);
+    this.goneObservations.delete(threadID);
     this.explicitlyShown.add(threadID);
+    this.resetRetryBudget(threadID);
     if (threadID === this.activeThreadID) this.syncActiveObservation();
   }
 
@@ -277,16 +281,17 @@ export class ObservationCoordinator {
     if (!activity.target?.trim()) return;
     const current = this.observations.get(activity.thread_id);
     if (current && !acceptsActivityUpdate(current, activity)) return;
-    if (current && observationKey(current) !== observationKey(activity)) {
+    const targetChanged = current && observationKey(current) !== observationKey(activity);
+    if (targetChanged) {
       // Task-wide stop/takeover also updates inactive providers. Those terminal
       // notifications must not move the preview back to an earlier target.
       if (current.execution_id === activity.execution_id && activity.controller !== "agent") return;
-      this.retryAttempts.delete(activity.thread_id);
-      const timer = this.retryTimers.get(activity.thread_id);
-      if (timer) clearTimeout(timer);
-      this.retryTimers.delete(activity.thread_id);
+    }
+    if (targetChanged || (current && activity.execution_id && current.execution_id !== activity.execution_id)) {
+      this.resetRetryBudget(activity.thread_id);
     }
     this.observations.set(activity.thread_id, activity);
+    if (!this.observationIsGone(activity)) this.goneObservations.delete(activity.thread_id);
     if (activity.thread_id === this.activeThreadID) this.syncActiveObservation();
   }
 
@@ -295,7 +300,10 @@ export class ObservationCoordinator {
   // the core that owned the page.
   dropWorkdir(workdir: string): void {
     for (const [threadID, activity] of [...this.observations]) {
-      if (activity.workdir === workdir) this.observations.delete(threadID);
+      if (activity.workdir === workdir) {
+        this.observations.delete(threadID);
+        this.goneObservations.delete(threadID);
+      }
     }
     if (this.replacement?.activity.workdir === workdir) this.replacement = undefined;
     if (this.current?.activity.workdir === workdir) this.stopCurrent();
@@ -306,6 +314,7 @@ export class ObservationCoordinator {
     this.activeThreadID = undefined;
     this.replacement = undefined;
     this.observations.clear();
+    this.goneObservations.clear();
     this.browserHost?.detach();
     this.browserHost = undefined;
     if (this.reconcileTimer) clearTimeout(this.reconcileTimer);
@@ -322,7 +331,7 @@ export class ObservationCoordinator {
       return;
     }
     const activity = this.observations.get(threadID);
-    if (!activity) {
+    if (!activity || this.observationIsGone(activity)) {
       this.current?.pip.setVisible(false);
       return;
     }
@@ -499,30 +508,45 @@ export class ObservationCoordinator {
       entry.phase = "failed";
       entry.pip.suspendContent(message);
     } else this.stopCurrent();
-    if (entry.threadID !== this.activeThreadID || this.dismissedThreads.has(entry.threadID)) return;
-    const attempts = (this.retryAttempts.get(entry.threadID) ?? 0) + 1;
-    this.retryAttempts.set(entry.threadID, attempts);
+    const threadID = entry.threadID;
+    if (threadID !== this.activeThreadID || this.dismissedThreads.has(threadID)) return;
+    const attempts = (this.retryAttempts.get(threadID) ?? 0) + 1;
+    this.retryAttempts.set(threadID, attempts);
     if (attempts >= 4) return;
     const timer = setTimeout(() => {
-      this.retryTimers.delete(entry.threadID);
-      this.syncActiveObservation();
+      if (this.retryTimers.get(threadID) !== timer) return;
+      this.retryTimers.delete(threadID);
+      if (this.activeThreadID === threadID) this.syncActiveObservation();
     }, frameStreamRetryDelay(attempts));
     timer.unref?.();
-    this.retryTimers.set(entry.threadID, timer);
+    this.retryTimers.set(threadID, timer);
+  }
+
+  private resetRetryBudget(threadID: string): void {
+    this.retryAttempts.delete(threadID);
+    const timer = this.retryTimers.get(threadID);
+    if (timer) clearTimeout(timer);
+    this.retryTimers.delete(threadID);
   }
 
   // The capture target disappeared (tab closed, view crashed, workdir torn
-  // down). Unlike a transient stream failure this is never retried: the
-  // surface comes down and the observation is forgotten so a later reconcile
-  // cannot resurrect a dead target.
+  // down). Retain its metadata as the ordering high-water mark, but fence this
+  // exact source until a different target/execution or an explicit user retry.
+  // A registry snapshot cannot establish that a disappeared target is back.
   private handlePiPGone(key: string): void {
     const entry = this.current?.key === key ? this.current : undefined;
     if (!entry) return;
     const observed = this.observations.get(entry.threadID);
     if (observed && observationKey(observed) === key) {
-      this.observations.delete(entry.threadID);
+      this.goneObservations.set(entry.threadID, { key, executionID: observed.execution_id });
     }
+    this.resetRetryBudget(entry.threadID);
     if (this.current?.key === key) this.stopCurrent();
+  }
+
+  private observationIsGone(activity: ActivitySession): boolean {
+    const gone = this.goneObservations.get(activity.thread_id);
+    return gone?.key === observationKey(activity) && gone.executionID === activity.execution_id;
   }
 
   private animateInteractionIfNew(activity: ActivitySession, pip: ObservationPiPHandle): void {
@@ -565,7 +589,7 @@ export class ObservationCoordinator {
       this.browserHost &&
       this.browserHost.id !== webContentsId &&
       !this.browserHost.window.isDestroyed() &&
-      hostWindow.isFocused?.() === false
+      !hostWindow.isFocused()
     ) {
       return;
     }
@@ -667,7 +691,7 @@ export function observationActivityFromServerEvent(event: ServerEvent): Activity
 }
 
 function acceptsActivityUpdate(previous: ActivitySession, next: ActivitySession): boolean {
-  return previous.updated_at <= next.updated_at
+  return activityTimestamp(previous.updated_at) <= activityTimestamp(next.updated_at)
     && !(previous.id === next.id && previous.execution_id === next.execution_id
       && previous.state === "stopped" && next.state !== "stopped");
 }

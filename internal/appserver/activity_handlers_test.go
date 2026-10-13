@@ -89,7 +89,7 @@ func TestServerActivityLifecycleRequestsAndNotifications(t *testing.T) {
 
 func TestServerActivityInputPausesUntilUserContinuation(t *testing.T) {
 	for _, kind := range []activity.Kind{activity.KindBrowser, activity.KindCUA} {
-		for _, controlMethod := range []string{MethodActivityTakeover, MethodActivityStop} {
+		for _, controlMethod := range []string{MethodActivityTakeover, MethodActivityStop, MethodTurnInterrupt} {
 			for _, method := range []string{MethodTurnStart, MethodTurnQueue, MethodTurnSteer} {
 				t.Run(string(kind)+"/"+controlMethod+"/"+method, func(t *testing.T) {
 					client := newBlockingStreamClient("done")
@@ -105,7 +105,10 @@ func TestServerActivityInputPausesUntilUserContinuation(t *testing.T) {
 					threadID := remarshal[ThreadStartResult](t, responseByID(t, parseOutput(t, out.String()), "thread")["result"]).Thread.ID
 					request := func(id, method, fields string) {
 						t.Helper()
-						raw := fmt.Sprintf(`{"id":%q,"method":%q,"params":{"thread_id":%q,%s}}`, id, method, threadID, fields)
+						if fields != "" {
+							fields = "," + fields
+						}
+						raw := fmt.Sprintf(`{"id":%q,"method":%q,"params":{"thread_id":%q%s}}`, id, method, threadID, fields)
 						if err := srv.handleLine(context.Background(), []byte(raw)); err != nil {
 							t.Fatal(err)
 						}
@@ -133,6 +136,11 @@ func TestServerActivityInputPausesUntilUserContinuation(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
+					for _, lease := range []activity.Lease{oldLease, siblingLease} {
+						if _, err := rt.ActivityRegistry.UpdateWithLease(lease, activity.UpdateOptions{Preview: "file:///previous-preview.png", ProcessID: 41, WindowID: 42}); err != nil {
+							t.Fatal(err)
+						}
+					}
 					expectedPauseError := activity.ErrControlRevoked
 					if controlMethod == MethodActivityStop {
 						expectedPauseError = activity.ErrStopped
@@ -140,10 +148,21 @@ func TestServerActivityInputPausesUntilUserContinuation(t *testing.T) {
 					if method == MethodTurnSteer {
 						request("queue", MethodTurnQueue, `"prompt":"continue","client_id":"held"`)
 					}
-					request("input", controlMethod, fmt.Sprintf(`"activity_id":%q,"execution_id":%q`, current.ID, current.ExecutionID))
+					controlFields := fmt.Sprintf(`"activity_id":%q,"execution_id":%q`, current.ID, current.ExecutionID)
+					if controlMethod == MethodTurnInterrupt {
+						controlFields = ""
+					}
+					request("input", controlMethod, controlFields)
 					waitForMethod(t, out, NotificationTurnError)
 					if _, _, err := rt.ActivityRegistry.Acquire(options); !errors.Is(err, expectedPauseError) {
 						t.Fatalf("activity after input = %v", err)
+					}
+					if controlMethod == MethodTurnInterrupt {
+						for _, interrupted := range rt.ActivityRegistry.List(threadID) {
+							if interrupted.Controller != activity.ControllerNone || interrupted.State != activity.StateActive {
+								t.Fatalf("ordinary interruption invented manual ownership: %+v", interrupted)
+							}
+						}
 					}
 					if err := rt.ActivityRegistry.CheckControl(threadID, sibling.ID, siblingLease.Token); !errors.Is(err, activity.ErrControlRevoked) {
 						t.Fatalf("sibling activity retained control: %v", err)
@@ -184,8 +203,20 @@ func TestServerActivityInputPausesUntilUserContinuation(t *testing.T) {
 						t.Fatalf("old idle activity stopped a newer text-only turn: %v", err)
 					}
 					for _, freshOptions := range []activity.StartOptions{options, siblingOptions} {
-						if _, _, err := rt.ActivityRegistry.Acquire(freshOptions); err != nil {
+						freshOptions.Target = "next-" + freshOptions.Target
+						var activation activity.Session
+						unsubscribe := rt.ActivityRegistry.Subscribe(func(event activity.Event) {
+							if event.Type == activity.EventControlChanged && event.Activity.Kind == freshOptions.Kind && event.Activity.Controller == activity.ControllerAgent {
+								activation = event.Activity
+							}
+						})
+						_, _, err := rt.ActivityRegistry.Acquire(freshOptions)
+						unsubscribe()
+						if err != nil {
 							t.Fatalf("new execution could not acquire UI control: %v", err)
+						}
+						if activation.Target != freshOptions.Target || activation.Preview != "" || activation.ProcessID != 0 || activation.WindowID != 0 {
+							t.Fatalf("first activation published the previous target or preview identity: %+v", activation)
 						}
 					}
 					close(client.release)

@@ -209,6 +209,9 @@ func (r *Registry) acquire(ctx context.Context, options StartOptions) (Session, 
 		if run := r.runs[options.ThreadID]; run != nil && run.execution != nil && run.execution.control.Err() == nil && session.Controller == ControllerNone && session.State != StateStopped {
 			r.releaseLocked(current, rand.Text())
 			current.session.ExecutionID = run.execution.id
+			if requestedTarget != "" {
+				current.session.Target = requestedTarget
+			}
 			current.session.State = StateStarting
 			current.session.Preview = ""
 			current.session.Interaction = nil
@@ -607,6 +610,16 @@ func ControlErr(ctx context.Context) error {
 		return context.Cause(control)
 	}
 	return nil
+}
+
+// BoundControlErr checks local UI authority at shared transport boundaries.
+// Unbound tools retain their caller lifetime when another UI operation's
+// execution is revoked; only BindControl opts into the local-control fence.
+func BoundControlErr(ctx context.Context) error {
+	if _, bound := ctx.Value(boundControlContextKey{}).(context.Context); bound {
+		return ControlErr(ctx)
+	}
+	return ctx.Err()
 }
 
 func (r *Registry) CheckControl(threadID, activityID, token string) error {

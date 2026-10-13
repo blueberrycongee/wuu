@@ -76,6 +76,8 @@ const contexts: { activity: ActivitySession; context: ActivityPiPContentContext 
 const controls: string[] = [];
 const helper = join(desktop, "scripts", "activity-preview-native-fixture.cjs");
 let surfaceCount = 0;
+let reconciliationCount = 0;
+let snapshotActivities: ActivitySession[] = [];
 
 app.whenReady().then(async () => {
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
@@ -100,7 +102,7 @@ app.whenReady().then(async () => {
     assert.equal(errors.get(id), undefined); assert(replies.has(id));
   }
   await open("browser-a", "#dcecff"); await open("browser-b", "#ffe5ca");
-  coordinator = new ObservationCoordinator(registry, undefined, (next, key, sink, bounds) => {
+  coordinator = new ObservationCoordinator(registry, async () => { reconciliationCount++; return snapshotActivities; }, (next, key, sink, bounds) => {
     surfaceCount++;
     return new ActivityPiPSurface({ activity: next, bounds: bounds(), sink, isPackaged: false, parent: () => main,
       createContent(next, context) {
@@ -173,10 +175,10 @@ app.whenReady().then(async () => {
   check("workbench appearance reaches the separate preview renderer", await overlay.webContents.executeJavaScript("document.documentElement.classList.contains('reduce-motion') && getComputedStyle(document.getElementById('ph')).backgroundColor === 'rgb(32, 36, 44)'"));
   writeFileSync(join(output, "native-permission-error-dark.png"), (await overlay.webContents.capturePage()).toPNG());
   current = activity("browser", "browser-b"); coordinator.update(current);
-  await waitFor("browser restored", () => browserViews[1].webContents.getOwnerBrowserWindow() === pip);
+  await waitFor("browser restored", () => BrowserWindow.fromWebContents(browserViews[1].webContents) === pip);
   check("native to browser keeps the same shell", pip.id === pipID && surfaceCount === 1 && overlay.webContents.id === overlayID);
   nativeContext.onGone(); nativeContext.onFailure("late native failure"); nativeContext.setMounted(false);
-  check("retired native events do not replace the browser", browserViews[1].webContents.getOwnerBrowserWindow() === pip && pip.isVisible());
+  check("retired native events do not replace the browser", BrowserWindow.fromWebContents(browserViews[1].webContents) === pip && pip.isVisible());
   await waitFor("retired native subprocess exits", () => !sources.has("native-a"));
 
   await overlay.webContents.executeJavaScript("document.getElementById('close').click()");
@@ -215,6 +217,12 @@ app.whenReady().then(async () => {
   await emitNative("native-b", { event: "gone" });
   await waitFor("target disappearance stops its source", () => !sources.has("native-b"));
   check("target disappearance does not destroy main or browser apps", !main.isDestroyed() && browserViews.every(view => !view.webContents.isDestroyed()));
+  const surfacesAfterGone = surfaceCount, reconciliationBeforeGone = reconciliationCount;
+  snapshotActivities = [current];
+  coordinator.handleServerEvent({ workdir, kind: "notification", message: { method: "turn/event", params: { thread_id: threadID } } });
+  await waitFor("registry snapshot reconciles after target disappearance", () => reconciliationCount > reconciliationBeforeGone);
+  check("unchanged registry snapshot cannot resurrect a disappeared target", surfaceCount === surfacesAfterGone && !sources.has("native-b"));
+  snapshotActivities = [];
   current = activity("cua", "native-c"); coordinator.update(current);
   await emitNative("native-c", frame(120, 30, 170));
   const finalPip = BrowserWindow.getAllWindows().find(window => window.getParentWindow() === main)!;
@@ -241,6 +249,10 @@ app.whenReady().then(async () => {
   await waitFor("fresh native run shown", () => controlOverlay!.webContents.executeJavaScript("document.getElementById('ph').classList.contains('gone')"));
   coordinator.update({ ...hiddenStop, updated_at: new Date(Date.now() + 10_000).toISOString() });
   check("late old-epoch stop cannot hide the new preview", finalPip.isVisible());
+  await emitNative("native-d", { event: "capture_status", status: "stopped" });
+  await waitFor("retained frame is labelled paused", () => controlOverlay!.webContents.executeJavaScript("!document.getElementById('status').hidden && document.getElementById('status').textContent === 'Preview paused'"));
+  check("stopped capture retains its frame with an explicit paused label", await controlOverlay.webContents.executeJavaScript("document.getElementById('ph').classList.contains('gone')"));
+  check("stopped capture never implies task completion", await controlOverlay.webContents.executeJavaScript("document.getElementById('completion').getAttribute('aria-hidden') === 'true'"));
   await controlOverlay.webContents.executeJavaScript("document.getElementById('takeover').click();document.getElementById('takeover').click()");
   await waitFor("takeover command handled", () => controls.length === 1);
   check("repeated takeover click dispatches one control action", controls[0] === "takeover");
