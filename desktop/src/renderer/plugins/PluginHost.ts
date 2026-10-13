@@ -1,5 +1,6 @@
 import type * as React from "react";
 import type { ExtensionIconDescriptor } from "../../shared/protocol";
+import { settleOnAbort } from "./activation";
 
 import type {
   CSSSnippet,
@@ -173,6 +174,8 @@ export interface PluginGenerationApi {
   readonly ui: PluginUIKit;
   readonly pluginId: string;
   readonly generation: string;
+  /** Aborted when staging fails, is superseded, or this generation is disposed. */
+  readonly signal: AbortSignal;
   invokeRuntime(method: string, input?: unknown, options?: PluginRuntimeInvokeOptions): Promise<unknown>;
   listWorkspaces(): Promise<PluginWorkspaceSnapshot>;
   /** List live threads inside a workspace, addressed by its root path (the
@@ -242,6 +245,8 @@ export interface ActivatePluginGenerationOptions {
   pluginId: string;
   generation: string;
   contributions?: PluginContributionDeclarations;
+  /** Cancels staging only; a published generation owns its own lifetime. */
+  signal?: AbortSignal;
   register(api: PluginGenerationApi): void | Promise<void>;
 }
 
@@ -381,6 +386,8 @@ export interface PluginGenerationDiagnostic {
 export interface PluginHostOptions {
   /** Inject the renderer's existing React runtime; the host never supplies another copy. */
   react: typeof React;
+  /** Internal startup budget override for deterministic host and renderer checks. */
+  activationTimeoutMs?: number;
   styleContainer?: HTMLElement | (() => HTMLElement | null);
   invokeRuntime?: (request: Readonly<{
     pluginId: string;
@@ -520,6 +527,7 @@ interface GenerationState {
   readonly hostEventHandlers: Set<(event: unknown) => void>;
   readonly teardown: Disposable[];
   readonly runtimeRequests: Set<AbortController>;
+  readonly lifetime: AbortController;
   acceptingRegistrations: boolean;
   active: boolean;
   disposed: boolean;
@@ -527,7 +535,6 @@ interface GenerationState {
 
 interface PendingActivation {
   readonly state: GenerationState;
-  cancelled: boolean;
 }
 
 const EMPTY_SLOT_SNAPSHOT: readonly RegisteredPluginSlotContribution[] = Object.freeze([]);
@@ -548,6 +555,8 @@ const EMPTY_TOOL_ACTIVITY_PRESENTER_SNAPSHOT: readonly RegisteredToolActivityPre
 const EMPTY_LOCALE_SNAPSHOT: Readonly<Record<string, string>> = Object.freeze({});
 const EMPTY_DIAGNOSTIC_SNAPSHOT: readonly PluginGenerationDiagnostic[] = Object.freeze([]);
 
+const ACTIVATION_TIMEOUT_MS = 30_000;
+
 export class PluginGenerationSupersededError extends Error {
   constructor(pluginId: string, generation: string) {
     super(`Plugin generation ${pluginId}@${generation} was superseded before activation`);
@@ -563,6 +572,7 @@ export class PluginHost {
   readonly react: typeof React;
   readonly ui: PluginUIKit;
 
+  private readonly activationTimeoutMs: number;
   private readonly styleContainer?: PluginHostOptions["styleContainer"];
   private readonly runtimeInvoker?: PluginHostOptions["invokeRuntime"];
   private readonly workspaceLister?: PluginHostOptions["listWorkspaces"];
@@ -601,6 +611,10 @@ export class PluginHost {
   private toolActivityPresenterSnapshot: readonly RegisteredToolActivityPresenter[] = EMPTY_TOOL_ACTIVITY_PRESENTER_SNAPSHOT;
 
   constructor(options: PluginHostOptions) {
+    this.activationTimeoutMs = options.activationTimeoutMs ?? ACTIVATION_TIMEOUT_MS;
+    if (!Number.isFinite(this.activationTimeoutMs) || this.activationTimeoutMs <= 0) {
+      throw new Error("Plugin activation timeout must be a positive finite duration");
+    }
     this.react = options.react;
     this.ui = createPluginUIKit(options.react);
     this.styleContainer = options.styleContainer;
@@ -613,17 +627,26 @@ export class PluginHost {
     const pluginId = requireNonEmpty(options.pluginId, "plugin id");
     const generation = requireNonEmpty(options.generation, "plugin generation");
     const state = createGenerationState(pluginId, generation, options.contributions);
-    const pending: PendingActivation = { state, cancelled: false };
+    const pending: PendingActivation = { state };
 
     const previousPending = this.pendingActivations.get(pluginId);
     if (previousPending) {
-      previousPending.cancelled = true;
-      this.disposeGeneration(previousPending.state);
+      this.disposeGeneration(previousPending.state, new PluginGenerationSupersededError(pluginId, previousPending.state.generation));
     }
     this.pendingActivations.set(pluginId, pending);
 
+    const cancel = () => this.disposeGeneration(state, new PluginGenerationSupersededError(pluginId, generation));
+    const timeout = setTimeout(() => {
+      this.disposeGeneration(state, new Error(`Plugin generation ${pluginId}@${generation} activation timed out after ${this.activationTimeoutMs}ms`));
+    }, this.activationTimeoutMs);
+    options.signal?.addEventListener("abort", cancel, { once: true });
+    if (options.signal?.aborted) cancel();
+
     try {
-      await options.register(this.createGenerationApi(state));
+      // The deadline bounds asynchronous staging, including module loading. It
+      // cannot preempt synchronous plugin code running on the renderer thread.
+      await settleOnAbort(() => options.register(this.createGenerationApi(state)), state.lifetime.signal);
+      state.lifetime.signal.throwIfAborted();
       state.acceptingRegistrations = false;
       this.assertDeclaredContributionsRegistered(state);
       this.assertViewPlacementTargets(state);
@@ -634,7 +657,7 @@ export class PluginHost {
       if (this.pendingActivations.get(pluginId) === pending) {
         this.pendingActivations.delete(pluginId);
       }
-      if (pending.cancelled || error instanceof PluginGenerationSupersededError) {
+      if (state.lifetime.signal.reason instanceof PluginGenerationSupersededError || error instanceof PluginGenerationSupersededError) {
         this.disposeGeneration(state);
         throw new PluginGenerationSupersededError(pluginId, generation);
       }
@@ -645,11 +668,14 @@ export class PluginHost {
         message: `Plugin generation registration failed: ${errorMessage(error)}`,
         cause: error,
       });
-      this.disposeGeneration(state);
+      this.disposeGeneration(state, error);
       throw error;
+    } finally {
+      clearTimeout(timeout);
+      options.signal?.removeEventListener("abort", cancel);
     }
 
-    if (pending.cancelled || this.pendingActivations.get(pluginId) !== pending) {
+    if (state.disposed || this.pendingActivations.get(pluginId) !== pending) {
       this.disposeGeneration(state);
       throw new PluginGenerationSupersededError(pluginId, generation);
     }
@@ -683,9 +709,8 @@ export class PluginHost {
     const normalizedPluginId = requireNonEmpty(pluginId, "plugin id");
     const pending = this.pendingActivations.get(normalizedPluginId);
     if (pending) {
-      pending.cancelled = true;
       this.pendingActivations.delete(normalizedPluginId);
-      this.disposeGeneration(pending.state);
+      this.disposeGeneration(pending.state, new PluginGenerationSupersededError(normalizedPluginId, pending.state.generation));
     }
 
     const active = this.activeGenerations.get(normalizedPluginId);
@@ -1010,6 +1035,7 @@ export class PluginHost {
       ui: this.ui,
       pluginId: state.pluginId,
       generation: state.generation,
+      signal: state.lifetime.signal,
       invokeRuntime: async (method: string, input?: unknown, options?: PluginRuntimeInvokeOptions) => {
         if (!this.runtimeInvoker) {
           throw new Error("Plugin runtime requests are unavailable");
@@ -1563,7 +1589,7 @@ export class PluginHost {
     }
     for (const pending of this.pendingActivations.values()) {
       const state = pending.state;
-      if (!pending.cancelled && state.pluginId !== pluginId
+      if (!state.disposed && state.pluginId !== pluginId
         && state.toolActivityPresenters.some((record) =>
           !record.removed && record.compatibilityRender !== undefined && record.key === key)) {
         throw new Error(`Tool activity presenter key is already owned by another plugin: ${key}`);
@@ -1649,12 +1675,13 @@ export class PluginHost {
     }
   }
 
-  private disposeGeneration(state: GenerationState): void {
+  private disposeGeneration(state: GenerationState, reason?: unknown): void {
     if (state.disposed) {
       return;
     }
     state.disposed = true;
     state.acceptingRegistrations = false;
+    state.lifetime.abort(reason);
     for (const request of state.runtimeRequests) request.abort();
     for (const disposable of [...state.teardown].reverse()) {
       disposable.dispose();
@@ -2039,6 +2066,7 @@ function createGenerationState(
     hostEventHandlers: new Set(),
     teardown: [],
     runtimeRequests: new Set(),
+    lifetime: new AbortController(),
     acceptingRegistrations: true,
     active: false,
     disposed: false,
