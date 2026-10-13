@@ -306,6 +306,15 @@ const plugin: RuntimePlugin = {
 
 Go 和 TypeScript 运行时会在进入处理函数前拒绝已取消的工具、能力和服务请求，包括等待其他工作或生命周期屏障的请求。取消某次执行不会跳过清理所需的生命周期回调，并会通知共享该执行 ID 的所有活跃回调。处理函数一旦开始，取消仍是协作式的：应将 Go context 或 TypeScript signal 传给支持取消的操作。取消不能撤销已完成的副作用，也不能强制中断任意插件代码。
 
+App-server 的只读 `plugin/executions/list` 返回 `{ executions: [...] }`，
+包含当前连接运行时的当前 generation，以及仍被活动工作持有的旧 generation。
+每行在宿主局部 `id`、所属 `plugin_id`、可用执行作用域和最新进度之外，增加
+`generation_id` 与 `retained`。用 `(generation_id, id)` 作为稳定的诊断标识：
+不同 generation 都可能存在 `exec-1`。原有 `id` 和取消路由保持不变。
+结果按 generation ID、执行 ID 排序；调用结束后移除，读取列表不会延长
+任何 generation 的寿命。这是即时快照，不是执行历史或跨工作区清单。
+禁用插件也会取消其旧 generation 中的工作。
+
 `reportExecutionUpdate`、`invokeTool`、`askUserQuestions` 和 `importArtifact` 都调用版本化服务，需要对应声明。编排工具使用 `activity.orchestrator=true` 和 `execution.invoke-tool`，通过正常工具链委托副作用。重试相同工具和参数时，保持子调用 `call_id` 不变；不要用同一个 ID 表示不同工作。
 
 `security.authorize` 服务可以进一步限制操作，但不能放宽宿主的强制边界。`sandbox.process` provider 必须提供真实的文件系统约束，不是命令审批弹窗。实现前请阅读[权限](../reference/permissions.md)。

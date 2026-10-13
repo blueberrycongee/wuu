@@ -473,6 +473,8 @@ export interface PluginGenerationApi {
   readonly ui: PluginUIKit;
   readonly pluginId: string;
   readonly generation: string;
+  /** Aborted when staging fails, is superseded, or this generation is disposed. */
+  readonly signal: AbortSignal;
   /** Invoke one method owned by this plugin's active runtime generation. */
   invokeRuntime(method: string, input?: unknown, options?: PluginRuntimeInvokeOptions): Promise<unknown>;
   /** List registered project workspaces that a trusted extension may target. */
