@@ -13,3 +13,5 @@ Desktop modules export `activate(api)` and use the generation-scoped `PluginGene
 | Public theme tokens and semantic anchors | [Theme surface matrix](../customize/theme-surface-matrix.md) |
 
 Registration methods return disposable handles and belong to the active generation. Actions advertised by a presentation host are specific to that render, not a global command permission. Private renderer modules, DOM nesting, and React internals are outside the public API.
+
+`api.signal` remains live after activation and aborts when that generation is disposed. Async startup is bounded; see [desktop generation lifecycle](../customize/plugin-system.md#desktop-generations-and-composition) for timeout and supersession behavior.
