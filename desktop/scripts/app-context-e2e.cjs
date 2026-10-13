@@ -57,6 +57,14 @@ preload = preload.replace('startTurn: async (threadId, text, images = [], _files
 preload = preload.replace('resumeThread: async (id) => ({ thread: threads.get(id) ?? null }),', 'resumeThread: async (id) => { await ipcRenderer.invoke("snapshot:resume"); return { thread: threads.get(id) ?? null }; },');
 const preloadPath = path.join(output, 'preload.cjs'); fs.writeFileSync(preloadPath, preload);
 const evaluate = (win, fn) => win.webContents.executeJavaScript(`(${fn.toString()})()`, true).catch(error => { console.error('Failed expression:', fn.toString()); throw error; });
+async function waitForSignal(signal, description) {
+  let timer;
+  try {
+    await Promise.race([signal, new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`Timed out waiting for ${description}`)), 12_000);
+    })]);
+  } finally { clearTimeout(timer); }
+}
 async function waitFor(win, fn) {
   const until = Date.now() + 12_000;
   while (Date.now() < until) { const value = await evaluate(win, fn); if (value) return value; await new Promise(resolve => setTimeout(resolve, 40)); }
@@ -122,7 +130,7 @@ app.whenReady().then(async () => {
   holdNextStateRead = true;
   const readStarted = new Promise(resolve => { stateReadStarted = resolve; });
   win.webContents.send('snapshot:changed');
-  await readStarted;
+  await waitForSignal(readStarted, "the delayed snapshot state read");
   await click(win, 'cancel');
   await waitFor(win, async () => (await window.wuu.getAppContextState()).phase === 'idle');
   releaseStateRead();
@@ -180,14 +188,15 @@ app.whenReady().then(async () => {
   assert.equal(await evaluate(win, () => document.querySelector('.composer textarea').value), 'Keep my existing draft');
 
   // Navigation owns the draft as soon as it starts, including before the
-  // delayed thread-load indicator appears. Do not attach to the outgoing view.
+  // delayed thread-load indicator appears. Startup restores Conversation 01,
+  // so select a different thread to enter the real pending navigation path.
   holdNextResume = true;
   const navigationStarted = new Promise(resolve => { resumeStarted = resolve; });
   await evaluate(win, () => {
-    const row = [...document.querySelectorAll('.thread-row')].find(element => element.textContent.includes('Conversation 01'));
+    const row = [...document.querySelectorAll('.thread-row')].find(element => element.textContent.includes('Conversation 02'));
     (row.querySelector('.thread-row-main') || row).click();
   });
-  await navigationStarted;
+  await waitForSignal(navigationStarted, "the held Conversation 02 resume");
   publish(win, { ...state, phase: 'ready', snapshot: { ...snapshot, id: 'navigation-pending' } });
   await waitFor(win, () => Boolean(document.querySelector('.app-context-preview img')));
   await click(win, 'add');
@@ -196,6 +205,16 @@ app.whenReady().then(async () => {
   assert.equal(await evaluate(win, () => document.querySelectorAll('.composer-attachment-tray-item').length), 4);
   await click(win, 'cancel');
   releaseResume();
+  await waitFor(win, () => document.querySelector('.thread-row.active')?.textContent.includes('Conversation 02')
+    && document.querySelector('.composer textarea')?.readOnly === false);
+  await evaluate(win, () => {
+    const row = [...document.querySelectorAll('.thread-row')].find(element => element.textContent.includes('Conversation 01'));
+    (row.querySelector('.thread-row-main') || row).click();
+  });
+  await waitFor(win, () => document.querySelector('.thread-row.active')?.textContent.includes('Conversation 01')
+    && document.querySelector('.composer textarea')?.readOnly === false);
+  assert.equal(await evaluate(win, () => document.querySelector('.composer textarea').value), 'Keep my existing draft');
+  assert.equal(await evaluate(win, () => document.querySelectorAll('.composer-attachment-tray-item').length), 4);
   // Open a real related-session split through its production message action.
   await waitFor(win, () => Boolean(document.querySelector('.user-message-actions button:has(svg[data-icon="info"])')));
   await evaluate(win, () => document.querySelector('.user-message-actions button:has(svg[data-icon="info"])').click());
