@@ -2006,12 +2006,12 @@ func (s *Server) runningTurnUsingProvider(providerName string) (string, bool) {
 	return "", false
 }
 
-func (s *Server) handleSkillList(req Request) error {
+func (s *Server) handleSkillList(ctx context.Context, req Request) error {
 	var params SkillListParams
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	catalog, root, err := s.skillCatalog(params.ThreadID)
+	catalog, root, err := s.currentSkillCatalog(ctx, params.ThreadID, false)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
@@ -2019,7 +2019,15 @@ func (s *Server) handleSkillList(req Request) error {
 }
 
 func (s *Server) skillCatalog(threadID string) ([]skills.Skill, string, error) {
+	return s.currentSkillCatalog(context.Background(), threadID, false)
+}
+
+func (s *Server) currentSkillCatalog(ctx context.Context, threadID string, force bool) ([]skills.Skill, string, error) {
 	if strings.TrimSpace(threadID) == "" {
+		if s.rt.Toolkit != nil {
+			items, err := s.rt.Toolkit.CurrentSkills(ctx, force)
+			return tools.FilterSkillsForSurface(items, s.rt.Toolkit.ActiveSurface()), s.rt.RootDir, err
+		}
 		return s.rt.ExtensionSnapshot().Skills, s.rt.RootDir, nil
 	}
 	th, err := s.ensureThreadLoaded(threadID)
@@ -2039,7 +2047,11 @@ func (s *Server) skillCatalog(threadID string) ([]skills.Skill, string, error) {
 			(baseRepo == "" || sessionWorkspacePath(baseRepo) != sessionWorkspacePath(s.rt.RootDir)) {
 			root = ""
 		}
-		return tools.FilterSkillsForSurface(threadRuntime.Toolkit.Skills(), threadRuntime.Toolkit.ActiveSurface()), root, nil
+		items, err := threadRuntime.Toolkit.CurrentSkills(ctx, force)
+		if err != nil {
+			return nil, root, err
+		}
+		return tools.FilterSkillsForSurface(items, threadRuntime.Toolkit.ActiveSurface()), root, nil
 	}
 	th.mu.Lock()
 	root := th.CWD
