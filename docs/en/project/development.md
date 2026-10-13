@@ -119,6 +119,15 @@ It uses a temporary profile and synthetic content, not your Wuu data. Run it in
 a graphical desktop session; it does not validate native dialog appearance or
 packaged-app behavior.
 
+`npm --prefix desktop run test:e2e:stream-settlement` checks that finishing a
+reply preserves its rendered paragraph, heading, list, quote and code geometry.
+It covers early and late final-answer classification in both themes, wide/narrow
+windows and 14/15/20px text. It starts its own fixture server and temporary
+Electron profile; no running desktop or model service is needed. Linux CI runs
+it with `xvfb-run --auto-servernum` and `-- --no-sandbox`. Measurements and
+screenshots go to `desktop/out/stream-settlement/` (`WUU_SETTLEMENT_OUTPUT`
+overrides this). Desktop CI runs the same gate and uploads its evidence.
+
 ### Native history protocol E2E
 
 Build the CLI with `make build-go`, then build the local protocol fixture with

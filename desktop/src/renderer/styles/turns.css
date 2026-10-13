@@ -2110,8 +2110,10 @@
   line-height: inherit;
 }
 
+/* A streamed reply can become the final answer at completion. Inherit the
+ * conversation's reading rhythm so that handoff cannot re-space its content. */
 .turn-process-entry.turn-process-entry-commentary .rich-content {
-  --conversation-prose-block-gap: 1.15em;
+  --conversation-prose-block-gap: inherit;
 }
 
 .turn-process-entry .rich-content .rich-paragraph,
@@ -2120,7 +2122,6 @@
   color: inherit;
   font-size: inherit;
   line-height: inherit;
-  margin: 0;
 }
 
 .turn-process-entry .activity-group {

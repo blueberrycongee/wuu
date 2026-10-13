@@ -195,7 +195,7 @@ function Fixture(): JSX.Element {
   const [theme, setTheme] = useState(params.get("theme") || "light");
   const [surface, setSurface] = useState(params.get("surface") || "stream");
   const turns = surface === "images" ? mediaTurns : conversationTurns;
-  const [live, setLive] = useState(params.has("lateTerminal"));
+  const [live, setLive] = useState(params.has("lateTerminal") || params.has("live"));
   const [playing, setPlaying] = useState(false);
   const [run, setRun] = useState(0);
   const key = `reading-fixture-${run}`;
@@ -235,7 +235,7 @@ function Fixture(): JSX.Element {
           {surface === "lifecycle" ? <WuuUIRoot><TurnView
             turn={{ id: "fixture-lifecycle", status: live ? "in_progress" : "completed", started_at: "2026-09-17T06:00:00Z", answer_ready_at: live ? undefined : "2026-09-17T06:00:06Z", items_view: "full", items: [
               { id: "fixture-request", type: "user_message", status: "completed", text: "检查回复完成后的空白。" },
-              { id: "fixture-answer", type: "agent_message", terminal: live && params.has("lateTerminal") ? undefined : true, status: live ? "in_progress" : "completed", text: params.has("lateTerminal") ? Array(4).fill("在技术演进与协作模式持续变迁的当下，软件工程的重心正逐渐从单纯的代码编写转向更高维度的系统设计、上下文维护与心智模型对齐。现代开发工作流不再是由孤立的函数或离散的代码提交拼凑而成，而是一个需要持续演进、自我校准并包容复杂性的动态生态系统。").join("\n\n") : "这段回答结束后，操作出现，但下一条消息的位置不应变化。" },
+              { id: "fixture-answer", type: "agent_message", terminal: live && params.has("lateTerminal") ? undefined : true, status: live ? "in_progress" : "completed", text: params.get("content") === "markdown" ? sample : params.has("lateTerminal") || params.get("content") === "prose" ? Array(4).fill("在技术演进与协作模式持续变迁的当下，软件工程的重心正逐渐从单纯的代码编写转向更高维度的系统设计、上下文维护与心智模型对齐。现代开发工作流不再是由孤立的函数或离散的代码提交拼凑而成，而是一个需要持续演进、自我校准并包容复杂性的动态生态系统。").join("\n\n") : "这段回答结束后，操作出现，但下一条消息的位置不应变化。" },
             ] }}
             isLatestTurn latestAgentMessageID="fixture-answer"
             streamStatus={live && params.has("notice") ? { text: "连接恢复提示需要在窄窗口和大字号下自然换行，而不是用一个固定高度的空白代替。", liveProgress: false } : undefined}

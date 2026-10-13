@@ -69,6 +69,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Preserve paragraph and quote spacing when a streamed reply becomes the final
+  answer. Desktop CI now checks rendered completion geometry across themes,
+  window widths and text sizes.
+
 - Keep plugin catalog switches and toolbar controls visually stable while enabling
   or disabling a plugin, while continuing to block duplicate changes.
 

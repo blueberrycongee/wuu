@@ -98,6 +98,14 @@ make build-go
 崩溃，检查恢复、重试上限、窗口隔离和 IPC。测试使用临时配置目录和模拟内容，不读取
 你的 Wuu 数据。请在图形桌面会话中运行；它不验证原生对话框外观或打包应用行为。
 
+`npm --prefix desktop run test:e2e:stream-settlement` 检查回复完成时段落、标题、
+列表、引用和代码的实际渲染位置与尺寸是否稳定，覆盖提前和结束时才确认为最终回答的
+两条路径，以及浅色/深色、宽/窄窗口和 14/15/20px 字号。脚本自行启动测试页面服务器
+和临时 Electron 配置目录，无需运行中的桌面或模型服务。Linux CI 使用
+`xvfb-run --auto-servernum` 并追加 `-- --no-sandbox`。
+测量结果和截图保存在 `desktop/out/stream-settlement/`，可用 `WUU_SETTLEMENT_OUTPUT`
+更改目录。桌面 CI 运行同一检查并上传证据。
+
 ### MCP 连接生命周期
 
 构建核心后，运行 loopback 生命周期验收：

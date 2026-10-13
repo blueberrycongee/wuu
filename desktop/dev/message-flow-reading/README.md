@@ -55,9 +55,14 @@ clearance; neither relies on an extra turn-boundary margin at the end.
 
 `?surface=lifecycle&lateTerminal=1` starts an unclassified multi-paragraph
 stream and confirms it as the final answer when the stream toggle is cleared.
-`scripts/stream-settlement-layout-e2e.cjs` compares paragraph positions, dimensions
-and total turn height across this handoff at default/large sizes and wide/narrow
-windows in both themes. Run it with the current checkout's Wuu Dev executable.
+`npm --prefix desktop run test:e2e:stream-settlement` starts an isolated server
+and compares rendered blocks across this handoff and already classified answers,
+using prose and mixed Markdown in both themes, wide/narrow windows and 14/15/20px
+text. New answer actions may extend a provisional reply; the existing text must
+stay in place. Results and screenshots are saved in `desktop/out/stream-settlement/`.
+See the [development guide](../../../docs/en/project/development.md) for CI and
+artifact options. The fixture accepts `live=1` and `content=prose|markdown` for
+manual replay of the same cases.
 
 The image surface (`?surface=images`) includes a user attachment, a tool image,
 and landscape, portrait, and panoramic Markdown images. Inspect the preview
