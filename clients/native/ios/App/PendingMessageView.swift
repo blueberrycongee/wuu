@@ -3,12 +3,27 @@ import WuuCore
 
 /// Keeps pending work within reach without letting the queue fill the conversation.
 struct PendingMessagesView: View {
-    @Bindable var model: AppModel
+    let model: AppModel
+    var body: some View {
+        PendingMessagesContent(model: model, pending: model.live?.pending ?? [],
+            editable: model.connected && !model.refreshing && model.live?.readOnly != true,
+            running: model.live?.running == true)
+            .equatable()
+    }
+}
+
+// Keep presentation state outside live observation so transcript deltas cannot update an open sheet or menu.
+private struct PendingMessagesContent: View, Equatable {
+    let model: AppModel
+    let pending: [PendingMessage]
+    let editable: Bool
+    let running: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var showingAll = false
-    private var pending: [PendingMessage] { model.live?.pending ?? [] }
-    private var editable: Bool { model.connected && !model.refreshing && model.live?.readOnly != true }
-    private var running: Bool { model.live?.running == true }
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.model === rhs.model && lhs.editable == rhs.editable && lhs.running == rhs.running
+            && lhs.pending.elementsEqual(rhs.pending) { $0.held == $1.held && $0.value == $1.value }
+    }
     var body: some View {
         VStack(spacing: 4) {
             if let first = pending.first {
@@ -62,7 +77,6 @@ private struct PendingStatus {
 struct PendingMessageView: View {
     let model: AppModel
     let message: PendingMessage
-    // Observe conversation state in the parent: streaming deltas must not rebuild an open menu.
     let editable: Bool
     let running: Bool
     @Environment(\.dynamicTypeSize) private var typeSize
