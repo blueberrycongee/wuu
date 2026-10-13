@@ -80,10 +80,9 @@ export interface BrowserWebContentsHandle {
   // scrollbar paint without giving the page a way to draw the bar back.
   insertCSS(css: string, options?: { cssOrigin?: "user" | "author" }): Promise<string>;
   removeInsertedCSS(key: string): Promise<void>;
-  // UI zoom scales rendering only. CDP input coordinates and the layout
-  // viewport are CSS-px based and unaffected, so the PiP can shrink the view
-  // for display without disturbing the agent's coordinate space.
   setZoomFactor(factor: number): void;
+  enableDeviceEmulation: WebContents["enableDeviceEmulation"];
+  disableDeviceEmulation(): void;
   on(event: string, listener: (...args: unknown[]) => void): void;
   loadURL(url: string, options?: LoadURLOptions): Promise<unknown>;
   getURL(): string;
@@ -192,6 +191,9 @@ type TabEntry = {
   // sheet currently hiding scrollbar paint while this tab is on the preview card.
   spectatorScrollbarEpoch: number;
   spectatorScrollbarKey?: string;
+  // Display-only scale of an observation view; public browser coordinates stay
+  // in the unscaled CSS viewport. Cleared whenever its owner changes.
+  preview?: { scale: number; restoreBounds: Rectangle };
 };
 
 type BrowserRendererSink = {
@@ -400,17 +402,16 @@ export class BrowserHostCoordinator {
     return () => this.tabReparentedListeners.delete(listener);
   }
 
-  // Current DIP bounds of the tab's view — i.e. its layout viewport while the
-  // zoom factor is 1. undefined when the tab is gone.
+  // Current native DIP bounds. These match the layout viewport unless an
+  // observation view is scaling it for display. Undefined when the tab is gone.
   tabBounds(workdir: string, tabID: string): Rectangle | undefined {
     const entry = this.tabs.get(tabKey(workdir, tabID));
     if (!entry || entry.contents.isDestroyed()) return undefined;
     return entry.view.getBounds();
   }
 
-  // Mount the tab onto an observation window (PiP): reparent, then shrink the
-  // rendering into `rect` via UI zoom so the layout viewport — and with it
-  // every CDP coordinate the agent uses — stays exactly what it was. Returns
+  // Mount the tab onto an observation window (PiP): reparent, then scale the
+  // live rendering into `rect` while keeping the original layout viewport. Returns
   // the pre-mount bounds for restoration on unmount; undefined when the tab
   // is gone.
   mountTabOnWindow(
@@ -418,7 +419,7 @@ export class BrowserHostCoordinator {
     tabID: string,
     parent: BrowserParentWindowHandle,
     rect: Rectangle,
-    zoom: number,
+    scale: number,
   ): Rectangle | undefined {
     const entry = this.tabs.get(tabKey(workdir, tabID));
     if (!entry || entry.contents.isDestroyed()) return undefined;
@@ -427,8 +428,7 @@ export class BrowserHostCoordinator {
     const wasPanel = entry.inPanel;
     entry.inPanel = false;
     entry.presented = true;
-    entry.contents.setZoomFactor(zoom);
-    entry.view.setBounds(rect);
+    this.relayoutMountedTab(workdir, tabID, parent.contentView, rect, scale);
     this.applyEntryActivity(entry);
     // The card is watch-only. Scrollbar paint reads as a control, and the
     // card cannot scroll or take the page over. The sheet comes off when the
@@ -446,12 +446,21 @@ export class BrowserHostCoordinator {
     tabID: string,
     owner: BrowserParentWindowHandle["contentView"],
     rect: Rectangle,
-    zoom: number,
+    scale: number,
   ): void {
     const entry = this.tabs.get(tabKey(workdir, tabID));
     if (!entry || entry.contents.isDestroyed()) return;
     if (entry.currentParent !== owner) return;
-    entry.contents.setZoomFactor(zoom);
+    // Chromium clamps UI zoom to at least 25%, even when older Electron
+    // versions report a smaller requested value. Emulation scales the surface
+    // independently of layout and devicePixelRatio, including compact cards.
+    entry.contents.enableDeviceEmulation({
+      screenPosition: "desktop", screenSize: { width: 0, height: 0 },
+      viewPosition: { x: 0, y: 0 }, deviceScaleFactor: 0,
+      viewSize: { width: Math.round(rect.width / scale), height: Math.round(rect.height / scale) },
+      scale,
+    });
+    entry.preview = { scale, restoreBounds: entry.preview?.restoreBounds ?? entry.view.getBounds() };
     entry.view.setBounds(rect);
   }
 
@@ -471,9 +480,7 @@ export class BrowserHostCoordinator {
     const wasPanel = entry.inPanel;
     entry.inPanel = false;
     entry.presented = false;
-    // The card lays the page out at its own size. Handing the view back
-    // must not leave that zoom on the hidden host.
-    entry.contents.setZoomFactor(1);
+    this.resetPreviewScale(entry);
     entry.view.setBounds(restore);
     this.applyEntryActivity(entry);
     if (wasPanel) this.rendererSink?.presented();
@@ -979,11 +986,13 @@ export class BrowserHostCoordinator {
     await this.glideCursor(entry, point[0], point[1], assertCurrent);
     await this.withAgentInput(entry, async () => {
       const dbg = entry.contents.debugger;
+      // Emulation expects displayed DIP input, unlike the public CSS-pixel
+      // coordinates. Re-read the scale for release after a possible resize.
       assertCurrent();
       await dbg.sendCommand("Input.dispatchMouseEvent", {
         type: "mousePressed",
-        x: point[0],
-        y: point[1],
+        x: point[0] * (entry.preview?.scale ?? 1),
+        y: point[1] * (entry.preview?.scale ?? 1),
         button: "left",
         buttons: 1,
         clickCount: 1,
@@ -991,8 +1000,8 @@ export class BrowserHostCoordinator {
       assertCurrent();
       await dbg.sendCommand("Input.dispatchMouseEvent", {
         type: "mouseReleased",
-        x: point[0],
-        y: point[1],
+        x: point[0] * (entry.preview?.scale ?? 1),
+        y: point[1] * (entry.preview?.scale ?? 1),
         button: "left",
         buttons: 1,
         clickCount: 1,
@@ -1037,12 +1046,13 @@ export class BrowserHostCoordinator {
     if (aimed) await this.glideCursor(entry, x, y, assertCurrent);
     await this.withAgentInput(entry, () => {
       assertCurrent();
+      const scale = entry.preview?.scale ?? 1;
       return entry.contents.debugger.sendCommand("Input.dispatchMouseEvent", {
         type: "mouseWheel",
-        x,
-        y,
-        deltaX: wheel.dx,
-        deltaY: wheel.dy,
+        x: x * scale,
+        y: y * scale,
+        deltaX: wheel.dx * scale,
+        deltaY: wheel.dy * scale,
       });
     });
     void this.emitInteraction(entry, { kind: "scroll", x, y, direction: scrollDirection(wheel.dx, wheel.dy) });
@@ -1187,7 +1197,7 @@ export class BrowserHostCoordinator {
     this.reparent(entry, window);
     entry.presented = true;
     entry.inPanel = true;
-    entry.contents.setZoomFactor(1);
+    this.resetPreviewScale(entry);
     entry.view.setBounds(rect);
     this.applyEntryActivity(entry);
     this.rendererSink?.presented();
@@ -1433,11 +1443,20 @@ export class BrowserHostCoordinator {
     if (changed) {
       // A parent change is an ownership handoff: the new owner decides the
       // display scale. Normalizing here means a visibility takeover never
-      // inherits the PiP's shrink-to-fit zoom or the card's hidden scrollbars.
-      entry.contents.setZoomFactor(1);
+      // inherits the PiP's input transform or the card's hidden scrollbars.
+      this.resetPreviewScale(entry);
       this.clearSpectatorScrollbars(entry);
       this.emitTabReparented(entry);
     }
+  }
+
+  private resetPreviewScale(entry: TabEntry): void {
+    if (entry.preview) {
+      entry.contents.disableDeviceEmulation();
+      entry.view.setBounds(entry.preview.restoreBounds);
+      entry.preview = undefined;
+    }
+    entry.contents.setZoomFactor(1);
   }
 
   private applySpectatorScrollbars(entry: TabEntry): void {

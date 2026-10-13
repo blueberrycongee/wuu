@@ -7,7 +7,7 @@ import { createServer, type ServerResponse } from "node:http";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { app, BrowserWindow, WebContentsView, nativeImage } from "electron";
-import type { ActivitySession } from "../src/shared/protocol";
+import type { ActivitySession, JsonValue } from "../src/shared/protocol";
 import { ActivityPiPSurface } from "../src/main/activityPiPWindow";
 import type { ActivityPiPContentContext } from "../src/main/activityPiPContent";
 import { BrowserPiPContent } from "../src/main/browserPiPWindow";
@@ -98,7 +98,7 @@ app.whenReady().then(async () => {
   async function open(tabID: string, color: string) {
     const id = `open-${tabID}`;
     await host!.handleServerRequest({ workdir, kind: "server-request", message: { id, method: "browser/open_tab", params: { workdir, thread_id: threadID, tab_id: tabID,
-      initial_url: `data:text/html,${encodeURIComponent(`<!doctype html><title>${tabID}</title><body style="margin:0;background:${color};font:24px system-ui"><h1>${tabID}</h1><button id="target">Target</button><script>window.clicks=0;document.onclick=()=>window.clicks++;</script></body>`)}` } } });
+      initial_url: `data:text/html,${encodeURIComponent(`<!doctype html><title>${tabID}</title><body style="margin:0;background:${color};font:24px system-ui"><h1>${tabID}</h1><button id="target" style="position:absolute;left:170px;top:170px;width:180px;height:60px">Target</button><button id="edge" style="position:absolute;right:30px;bottom:30px;width:100px;height:60px">Edge</button><script>window.clicks=0;document.onclick=e=>{window.clicks++;window.hit={x:e.clientX,y:e.clientY,target:e.target.id}};document.onwheel=e=>{window.wheel={x:e.clientX,y:e.clientY,dy:e.deltaY};e.preventDefault()};</script></body>`)}` } } });
     assert.equal(errors.get(id), undefined); assert(replies.has(id));
   }
   await open("browser-a", "#dcecff"); await open("browser-b", "#ffe5ca");
@@ -136,6 +136,64 @@ app.whenReady().then(async () => {
   main.show();
   await waitFor("browser shown", () => pip.isVisible());
   check("watch-only preview never focuses its target", !browserViews[0].webContents.isFocused());
+  let browserRequest = 0;
+  async function browserAction(method: string, params: Record<string, JsonValue>) {
+    const id = `input-${++browserRequest}`;
+    await host!.handleServerRequest({ workdir, kind: "server-request", message: { id, method: "browser/cdp",
+      params: { workdir, thread_id: threadID, tab_id: "browser-a", method, params } } });
+    assert.equal(errors.get(id), undefined); assert(replies.has(id));
+    return (replies.get(id) as { result: { nodes: { node_id: number; name: string }[] } }).result;
+  }
+  const browser = browserViews[0].webContents;
+  const originalDPR = await browserViews[1].webContents.executeJavaScript("devicePixelRatio");
+  async function checkBrowserInput(label: string, width = 1280, height = 800) {
+    await browser.executeJavaScript("new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))");
+    const metrics = await browser.executeJavaScript("({width:innerWidth,height:innerHeight,dpr:devicePixelRatio})");
+    check(`${label}: preserves browser layout and device scale`, metrics.width === width && metrics.height === height && metrics.dpr === originalDPR, metrics);
+    await browserAction("click", { x: 240, y: 200 });
+    const hit = await browser.executeJavaScript("window.hit");
+    check(`${label}: coordinate click reaches its target`, hit?.target === "target" && Math.abs(hit.x - 240) <= 1 && Math.abs(hit.y - 200) <= 1, hit);
+    const observed = await browserAction("observe", {});
+    const edge = observed.nodes.find(node => node.name === "Edge");
+    assert(edge);
+    await browserAction("click", { node_id: edge.node_id });
+    const edgeHit = await browser.executeJavaScript("window.hit");
+    check(`${label}: observed edge node remains clickable`, edgeHit?.target === "edge", edgeHit);
+    await browser.executeJavaScript("window.wheel = null");
+    await browserAction("scroll", { x: 240, y: 200, dy: 120 });
+    await waitFor(`${label}: wheel delivered`, () => browser.executeJavaScript("window.wheel"));
+    const wheel = await browser.executeJavaScript("window.wheel");
+    check(`${label}: scroll preserves aim and CSS-pixel distance`, Math.abs(wheel.x - 240) <= 1 && Math.abs(wheel.y - 200) <= 1 && Math.abs(wheel.dy - 120) < 0.1, wheel);
+    const image = await browser.capturePage();
+    const view = browserViews[0].getBounds();
+    writeFileSync(join(output, `${label.replace(/[^a-z0-9]+/gi, "-")}.png`), image.toPNG());
+    check(`${label}: capture contains the displayed browser surface`, image.getSize().width === Math.round(view.width * originalDPR) && image.getSize().height === Math.round(view.height * originalDPR), { image: image.getSize(), view });
+  }
+  check("default preview uses the compact card", pip.getBounds().width === 250 && pip.getBounds().height === 250, pip.getBounds());
+  await checkBrowserInput("default 250px preview");
+  await host.handleServerRequest({ workdir, kind: "server-request", message: { id: "takeover-before-panel-bounds", method: "browser/set_visibility", params: { workdir, thread_id: threadID, tab_id: "browser-a", visible: true } } });
+  const handoff = await browser.executeJavaScript("({width:innerWidth,height:innerHeight,dpr:devicePixelRatio})");
+  check("takeover before panel measurement restores original browser metrics", handoff.width === 1280 && handoff.height === 800 && handoff.dpr === originalDPR, handoff);
+  await host.handleServerRequest({ workdir, kind: "server-request", message: { id: "return-before-panel-bounds", method: "browser/set_visibility", params: { workdir, thread_id: threadID, tab_id: "browser-a", visible: false } } });
+  coordinator.refreshBrowserPresentation();
+  await waitFor("preview restored after unmeasured panel", () => BrowserWindow.fromWebContents(browser) === pip);
+  await checkBrowserInput("unmeasured panel round trip");
+  for (const size of [{ width: 160, height: 120 }, { width: 384, height: 240 }, { width: 250, height: 250 }]) {
+    pip.setBounds({ x: 120, y: 140, ...size });
+    await checkBrowserInput(`resized ${size.width}x${size.height} preview`);
+  }
+  await browserAction("navigate", { url: browser.getURL() });
+  await checkBrowserInput("navigated compact preview");
+  browser.debugger.detach();
+  await checkBrowserInput("debugger reattached after turn end");
+  host.reportBounds(workdir, "browser-a", main as unknown as BrowserHostWindowHandle, { x: 0, y: 0, width: 950, height: 620 }, 1, true);
+  await checkBrowserInput("restored browser panel", 950, 620);
+  // Returning to observation captures the panel's new viewport without leaving
+  // its display scale or input transform active on the normal panel.
+  await host.handleServerRequest({ workdir, kind: "server-request", message: { id: "hide-panel", method: "browser/set_visibility", params: { workdir, thread_id: threadID, tab_id: "browser-a", visible: false } } });
+  coordinator.refreshBrowserPresentation();
+  await waitFor("browser returns to compact preview", () => BrowserWindow.fromWebContents(browser) === pip);
+  await checkBrowserInput("remounted compact preview", 950, 620);
   pip.setBounds({ x: 120, y: 140, width: 360, height: 240 });
   const bounds = pip.getBounds();
   const browserContext = contexts.at(-1)!.context;

@@ -93,6 +93,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Preserve browser viewport and click/scroll coordinates in compact live previews,
+  including cards scaled below 25% and transitions back to the browser panel.
+
 - Keep iOS pending-message context-menu previews opaque so conversation text
   cannot show through, and constrain their width in landscape.
 

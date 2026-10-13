@@ -62,6 +62,7 @@ class FakeView implements BrowserViewHandle {
   backgroundThrottling = true;
   readonly backgroundThrottlingChanges: boolean[] = [];
   zoomFactor = 1;
+  emulation: Parameters<BrowserWebContentsHandle["enableDeviceEmulation"]>[0] | undefined;
   scriptResult: unknown = undefined;
   cssSerial = 0;
   readonly insertedCSS = new Map<string, string>();
@@ -142,6 +143,8 @@ class FakeView implements BrowserViewHandle {
       this.removedCSS.push(key);
       this.insertedCSS.delete(key);
     },
+    enableDeviceEmulation: (parameters) => { this.emulation = parameters; },
+    disableDeviceEmulation: () => { this.emulation = undefined; },
     setZoomFactor: (factor: number) => {
       this.zoomFactor = factor;
     },
@@ -1158,7 +1161,7 @@ describe("BrowserHostCoordinator preview surface accessors", () => {
     expect(harness.coordinator.tabBounds("/repo", "t1")).toBeUndefined();
   });
 
-  it("mounts a tab onto an observation window with zoom-fit and restores it on unmount", async () => {
+  it("preserves a compact observation viewport and restores it on unmount", async () => {
     const harness = makeHarness();
     await openTab(harness, "/repo", "t1");
     const view = harness.views[0];
@@ -1170,14 +1173,15 @@ describe("BrowserHostCoordinator preview surface accessors", () => {
       "/repo",
       "t1",
       pip,
-      { x: 0, y: 0, width: 260, height: 163 },
-      0.203,
+      { x: 0, y: 0, width: 260, height: 162.5 },
+      0.203125,
     );
     expect(restore).toEqual({ x: 0, y: 0, width: 1280, height: 800 });
     expect(pip.added).toContain(view);
     expect(hostWindow.removed).toContain(view);
-    expect(view.zoomFactor).toBeCloseTo(0.203);
-    expect(view.boundsSet).toEqual({ x: 0, y: 0, width: 260, height: 163 });
+    expect(view.zoomFactor).toBe(1);
+    expect(view.emulation).toMatchObject({ viewSize: { width: 1280, height: 800 }, deviceScaleFactor: 0, scale: 0.203125 });
+    expect(view.boundsSet).toEqual({ x: 0, y: 0, width: 260, height: 162.5 });
     expect(view.visibleState).toBe(true);
 
     expect(harness.coordinator.mountTabOnWindow("/repo", "missing", pip, { x: 0, y: 0, width: 1, height: 1 }, 1)).toBeUndefined();
@@ -1189,6 +1193,7 @@ describe("BrowserHostCoordinator preview surface accessors", () => {
       { x: 0, y: 0, width: 1280, height: 800 },
     );
     expect(view.zoomFactor).toBe(1);
+    expect(view.emulation).toBeUndefined();
     expect(pip.removed).toContain(view);
     expect(view.boundsSet).toEqual({ x: 0, y: 0, width: 1280, height: 800 });
   });
@@ -1222,7 +1227,7 @@ describe("BrowserHostCoordinator preview surface accessors", () => {
     expect(view.zoomFactor).toBe(1);
   });
 
-  it("normalizes zoom when a takeover adopts a PiP-mounted tab, and refuses to yank it back", async () => {
+  it("removes observation scaling when a takeover adopts a PiP-mounted tab, and refuses to yank it back", async () => {
     const harness = makeHarness();
     await openTab(harness, "/repo", "t1");
     const view = harness.views[0];
@@ -1235,6 +1240,8 @@ describe("BrowserHostCoordinator preview surface accessors", () => {
       serverRequest("browser/set_visibility", { workdir: "/repo", tab_id: "t1", visible: true }, "vis-1"),
     );
     expect(view.zoomFactor).toBe(1);
+    expect(view.emulation).toBeUndefined();
+    expect(view.boundsSet).toEqual({ x: 0, y: 0, width: 1280, height: 800 });
     expect(harness.mainWindow.added).toContain(view);
 
     // The PiP's unmount must not tear the adopted view out of the panel.
@@ -1262,7 +1269,8 @@ describe("BrowserHostCoordinator preview surface accessors", () => {
       { x: 10, y: 5, width: 300, height: 200 },
       0.234,
     );
-    expect(view.zoomFactor).toBeCloseTo(0.234);
+    expect(view.zoomFactor).toBe(1);
+    expect(view.emulation?.scale).toBeCloseTo(0.234);
     expect(view.boundsSet).toEqual({ x: 10, y: 5, width: 300, height: 200 });
 
     const stale = new FakeWindow();
