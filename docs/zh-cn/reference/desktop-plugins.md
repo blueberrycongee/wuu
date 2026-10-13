@@ -13,3 +13,5 @@
 | 公开主题 token 和语义锚点 | [主题界面矩阵](../customize/theme-surface-matrix.md) |
 
 注册方法返回可释放句柄，注册项属于当前 generation。展示边界公布的动作只适用于该次渲染，不是全局命令权限。私有 renderer 模块、DOM 嵌套和 React 内部对象不属于公开 API。
+
+`api.signal` 在激活后保持有效，直到该 generation 被释放时中止。异步启动有时间上限；超时和被更新操作取代的语义见[桌面 generation 生命周期](../customize/plugin-system.md#桌面-generation-与组合)。

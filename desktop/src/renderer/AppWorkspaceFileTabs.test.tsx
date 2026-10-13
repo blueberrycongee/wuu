@@ -649,7 +649,7 @@ describe("workspace file tabs", () => {
     await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="在 对话 中新建对话"]')!.click());
     await flushAsync();
     const attachment = { id: "file-selection-retry-attachment", filename: "context.pdf", media_type: "application/pdf", data: "JVBERg==" };
-    const encode = vi.spyOn(composerMessages, "composerFilePlaceholder").mockReturnValue({ ...attachment, encodePromise: Promise.resolve(attachment) });
+    const encode = vi.spyOn(composerMessages, "composerFilePlaceholder").mockReturnValue({ ...attachment, encodePromise: Promise.resolve(attachment), preparation: { filename: attachment.filename, promise: Promise.resolve(attachment), restart: vi.fn() } });
     try {
       const input = openComposerAttachmentPicker(container.querySelector("[data-main-conversation-composer]")!);
       Object.defineProperty(input, "files", { configurable: true, value: [new File(["%PDF"], attachment.filename, { type: attachment.media_type })] });
@@ -677,7 +677,7 @@ describe("workspace file tabs", () => {
     { pane: "main", action: "steer" },
     { pane: "split", action: "start" },
     { pane: "split", action: "queue" },
-  ] as const)("restores the exact $pane draft and attachments after an oversized $action rejection for retry", async ({ pane, action }) => {
+  ] as const)("restores completed attachments when $pane $action fails after sending during preparation", async ({ pane, action }) => {
     await openSelectionDocument();
     const target: Thread = {
       ...completedThread(),
@@ -716,11 +716,19 @@ describe("workspace file tabs", () => {
       { id: "retry-file-2", filename: "资料.txt", media_type: "text/plain", data: "Y29udGV4dA==" },
     ];
     const imageEncode = vi.spyOn(composerMessages, "composerImagePlaceholder")
-      .mockReturnValue({ ...image, encodePromise: Promise.resolve(image) });
+      .mockReturnValue({ ...image, encodePromise: Promise.resolve(image), preparation: { filename: "reference.png", promise: Promise.resolve(image), restart: vi.fn() } });
+    const fileRead = deferred<void>();
+    const encodings: Promise<composerMessages.ComposerFile>[] = [];
+    const prepareFile = composerMessages.composerFilePlaceholder;
     const fileEncode = vi.spyOn(composerMessages, "composerFilePlaceholder")
       .mockImplementation((file) => {
         const attachment = files.find((entry) => entry.filename === file.name)!;
-        return { ...attachment, encodePromise: Promise.resolve(attachment) };
+        Object.defineProperty(file, "arrayBuffer", { configurable: true,
+          value: () => fileRead.promise.then(() => Uint8Array.from(atob(attachment.data), value => value.charCodeAt(0)).buffer),
+        });
+        const placeholder = prepareFile(file);
+        encodings.push(placeholder.encodePromise!);
+        return placeholder;
       });
     try {
       const input = openComposerAttachmentPicker(composer);
@@ -747,9 +755,16 @@ describe("workspace file tabs", () => {
       await flushAsync();
     };
     await send();
+    expect(submit).not.toHaveBeenCalled();
+    await act(async () => {
+      fileRead.resolve();
+      await Promise.all(encodings);
+    });
+    await flushAsync();
     expect(submit).toHaveBeenCalledTimes(1);
     expect(composer.querySelector("textarea")!.value).toBe(prompt);
     expect(composer.querySelectorAll(".composer-attachment-card")).toHaveLength(3);
+    expect(composer.querySelector(".composer-attachment-preparing, .composer-attachment-failed")).toBeNull();
     if (otherComposer) expect(otherComposer.querySelector("textarea")!.value).toBe("Keep the primary draft");
 
     await send();

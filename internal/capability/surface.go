@@ -39,6 +39,11 @@ type Surface struct {
 	// a top-level call. Skill requirements can use these tools as well.
 	NestedTools map[string]Capability
 
+	// ContributedTools contains the exact reachable names supplied by live
+	// plugin and MCP catalogs. It supplements compiled names for instruction
+	// admission only; dispatch and authorization still use their owning hosts.
+	ContributedTools map[string]struct{}
+
 	// HiddenTools maps profile companion tool names that are known
 	// to this compiled surface but are not advertised to the model.
 	// Ordinary legacy command tools are not part of the profile

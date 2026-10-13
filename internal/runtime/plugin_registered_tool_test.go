@@ -8,10 +8,13 @@ import (
 	"testing"
 
 	"github.com/blueberrycongee/wuu/internal/agent"
+	"github.com/blueberrycongee/wuu/internal/modelprofile"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/skills"
 	"github.com/blueberrycongee/wuu/internal/toolctx"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
+	"github.com/blueberrycongee/wuu/internal/tools"
 )
 
 type registeredRuntimeToolClient struct {
@@ -96,6 +99,30 @@ func TestPluginToolExecutorExposesAndRunsRegisteredTool(t *testing.T) {
 	}
 	if plugin.params.ToolID != "lookup" || plugin.params.Tool != publicName || plugin.params.ThreadID != "thread-plugin" || plugin.params.StepIndex != 7 || string(plugin.params.Arguments) != `{"original":true}` {
 		t.Fatalf("params = %+v", plugin.params)
+	}
+	kit, err := tools.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	kit.SetActiveProfile(modelprofile.Resolve("openai", "gpt-5"), true)
+	kit.SetSkills([]skills.Skill{
+		{Name: "lookup-guide", Content: "Use the lookup tool.", AllowedTools: []string{publicName}},
+		{Name: "missing-guide", AllowedTools: []string{"plugin_missing_tool"}},
+	})
+	pluginExecutor := newPluginToolExecutor(kit, host, "thread-plugin", kit.RootDir())
+	if visible := tools.FilterSkillsForSurface(kit.Skills(), kit.ActiveSurface()); len(visible) != 1 || visible[0].Name != "lookup-guide" {
+		t.Fatalf("plugin skill admission = %+v", visible)
+	}
+	if _, err := pluginExecutor.Execute(context.Background(), providers.ToolCall{Name: "load_skill", Arguments: `{"name":"lookup-guide"}`}); err != nil {
+		t.Fatalf("load contributed-tool skill: %v", err)
+	}
+	pluginExecutor.(agent.ToolSurfaceFreezer).FreezeToolSurface()
+	defer pluginExecutor.(agent.ToolSurfaceFreezer).UnfreezeToolSurface()
+	if _, retired := host.RetirePlugin(context.Background(), plugin.ID(), nil); !retired {
+		t.Fatal("plugin was not retired")
+	}
+	if _, err := pluginExecutor.Execute(context.Background(), providers.ToolCall{Name: "load_skill", Arguments: `{"name":"lookup-guide"}`}); err == nil {
+		t.Fatal("retired plugin's pinned schema kept its dependent skill loadable")
 	}
 }
 
