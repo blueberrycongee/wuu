@@ -55,6 +55,13 @@ type ToolSurfaceFreezer interface {
 	UnfreezeToolSurface()
 }
 
+// ModelStepPreparer refreshes executor-owned context at a safe round boundary.
+// History is read-only. Returned messages are append-only and become part of
+// the ordinary turn history.
+type ModelStepPreparer interface {
+	PrepareModelStep(context.Context, []providers.ChatMessage) ([]providers.ChatMessage, error)
+}
+
 // RunToolLoop drives the shared multi-step tool-use loop both Runner
 // and StreamRunner depend on. It is transport-agnostic: callers
 // supply a Step that knows how to perform one model round-trip
@@ -405,6 +412,16 @@ func RunToolLoop(
 				}
 				usage.RecordPendingMessages(injected)
 			}
+		}
+		if preparer, ok := cfg.Tools.(ModelStepPreparer); ok {
+			injected, err := preparer.PrepareModelStep(ctx, messages)
+			if err != nil {
+				return loopResultSnapshot(messages, startLen, historyRewritten, totalIn, totalOut, totalCacheCreation, totalCacheRead), fmt.Errorf("prepare model step: %w", err)
+			}
+			for _, msg := range injected {
+				appendMessage(msg)
+			}
+			usage.RecordPendingMessages(injected)
 		}
 		if cfg.BeforeModelStep != nil {
 			injected, injectErr := cfg.BeforeModelStep(ctx, stepIdx, providers.CloneChatMessages(messages))

@@ -73,9 +73,10 @@ func (s *Server) handlePluginRegistryIntrospect(req Request) error {
 }
 
 // PluginExecutionsResult is the live execution table: open tool/capability
-// executions with their owning plugin and latest self-reported progress.
+// executions across current and retained generations, with owning plugin and
+// latest self-reported progress.
 type PluginExecutionsResult struct {
-	Executions []pluginhost.ExecutionSnapshot `json:"executions"`
+	Executions []runtime.PluginExecutionSnapshot `json:"executions"`
 }
 
 func (s *Server) handlePluginExecutionsList(req Request) error {
@@ -84,7 +85,7 @@ func (s *Server) handlePluginExecutionsList(req Request) error {
 	}
 	executions := s.rt.PluginExecutionSnapshots()
 	if executions == nil {
-		executions = []pluginhost.ExecutionSnapshot{}
+		executions = []runtime.PluginExecutionSnapshot{}
 	}
 	return s.writeResponse(req.ID, PluginExecutionsResult{Executions: executions}, nil)
 }

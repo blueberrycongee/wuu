@@ -1,6 +1,7 @@
 package appserver
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
@@ -21,12 +22,12 @@ const inputAttachmentRetention = 7 * 24 * time.Hour
 
 // Only submission creates working copies: loading history must not recreate
 // files the user or model has moved or deleted. Vision history stays separate.
-func (s *Server) userMessageWithInputImages(threadID, prompt string, images []providers.InputImage, files []providers.InputFile, received []TurnStartImage, parts ...[]providers.MessageContentPart) (msg providers.ChatMessage, err error) {
+func (s *Server) userMessageWithInputImages(ctx context.Context, threadID, prompt string, images []providers.InputImage, files []providers.InputFile, received []TurnStartImage, parts ...[]providers.MessageContentPart) (msg providers.ChatMessage, err error) {
 	msg, err = userMessageFromPrompt(prompt, images, files, parts...)
 	if err != nil {
 		return msg, err
 	}
-	content, selected, err := s.renderExplicitSkillPrompt(threadID, prompt)
+	content, selected, err := s.renderExplicitSkillPrompt(ctx, threadID, prompt)
 	if err != nil {
 		return msg, err
 	}
@@ -163,7 +164,7 @@ func (s *Server) userMessageWithInputImages(threadID, prompt string, images []pr
 		if selected {
 			// Validate skills before writing, then expand using file references
 			// rather than embedding the pasted snapshots in the skill prompt.
-			msg.Content, _, err = s.renderExplicitSkillPrompt(threadID, modelPrompt)
+			msg.Content, _, err = s.renderExplicitSkillPrompt(ctx, threadID, modelPrompt)
 			if err != nil {
 				return msg, err
 			}

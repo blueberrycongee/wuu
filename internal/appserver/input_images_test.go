@@ -146,7 +146,7 @@ func TestInputImagesPreserveReceivedBytesAndForkOwnership(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	msg, err := srv.userMessageWithInputImages("source", "edit this", images, nil, input)
+	msg, err := srv.userMessageWithInputImages(context.Background(), "source", "edit this", images, nil, input)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -194,7 +194,7 @@ func TestInputImageCacheRejectsEscapeAndPartialBatch(t *testing.T) {
 	srv := &Server{rt: &runtime.Session{StateDir: stateDir}}
 	raw := encodeTestJPEG(t, 1, 1, 90)
 	input := []TurnStartImage{{Data: base64.StdEncoding.EncodeToString(raw)}, {Data: "invalid"}}
-	if _, err := srv.userMessageWithInputImages("batch", "", nil, nil, input); err == nil {
+	if _, err := srv.userMessageWithInputImages(context.Background(), "batch", "", nil, nil, input); err == nil {
 		t.Fatal("accepted invalid batch")
 	}
 	paths, _ := filepath.Glob(filepath.Join(statepath.SessionArtifactDir(stateDir, "batch"), "input-images", "*"))
@@ -209,7 +209,7 @@ func TestInputImageCacheRejectsEscapeAndPartialBatch(t *testing.T) {
 	if err := os.Symlink(outside, filepath.Join(dir, "input-images")); err != nil {
 		t.Skip(err)
 	}
-	if _, err := srv.userMessageWithInputImages("escape", "", nil, nil, input[:1]); err == nil {
+	if _, err := srv.userMessageWithInputImages(context.Background(), "escape", "", nil, nil, input[:1]); err == nil {
 		t.Fatal("accepted symlinked cache")
 	}
 	entries, err := os.ReadDir(outside)
@@ -307,7 +307,7 @@ func TestPastedTextAttachmentSubmissionRecoveryAndExpiry(t *testing.T) {
 	if history[0].ContentParts[0].Text != text {
 		t.Fatal("expiry changed the snapshot")
 	}
-	retry, err := srv.userMessageWithInputImages(threadID, strings.TrimSpace(text+question), nil, nil, nil, history[0].ContentParts)
+	retry, err := srv.userMessageWithInputImages(context.Background(), threadID, strings.TrimSpace(text+question), nil, nil, nil, history[0].ContentParts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -321,7 +321,7 @@ func TestTextAttachmentCacheRejectsSymlinksAndMismatchedParts(t *testing.T) {
 	stateDir := t.TempDir()
 	srv := &Server{rt: &runtime.Session{StateDir: stateDir}}
 	parts := []providers.MessageContentPart{{Type: "pasted_text", Text: "payload"}}
-	msg, err := srv.userMessageWithInputImages("mismatch", "unrelated instruction", nil, nil, nil, parts)
+	msg, err := srv.userMessageWithInputImages(context.Background(), "mismatch", "unrelated instruction", nil, nil, nil, parts)
 	if err != nil || len(msg.ContentParts) != 0 {
 		t.Fatalf("accepted mismatched metadata: %v", err)
 	}
@@ -333,7 +333,7 @@ func TestTextAttachmentCacheRejectsSymlinksAndMismatchedParts(t *testing.T) {
 	if err := os.Symlink(outside, filepath.Join(dir, "input-attachments")); err != nil {
 		t.Skip(err)
 	}
-	if _, err := srv.userMessageWithInputImages("escape-text", "payload", nil, nil, nil, parts); err == nil {
+	if _, err := srv.userMessageWithInputImages(context.Background(), "escape-text", "payload", nil, nil, nil, parts); err == nil {
 		t.Fatal("accepted symlinked attachment storage")
 	}
 	entries, err := os.ReadDir(outside)

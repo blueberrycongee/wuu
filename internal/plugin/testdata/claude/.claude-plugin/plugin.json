@@ -2,7 +2,7 @@
   "name": "claude-demo",
   "description": "Claude-compatible package",
   "mcp_servers": {
-    "docs": {"command": "claude-docs"}
+    "docs": {"command": "claude-docs", "tool_timeout_ms": 45000}
   },
   "platforms": ["darwin"],
   "requested_permissions": ["process.spawn"]
