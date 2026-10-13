@@ -48,6 +48,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Desktop pet cards use static status icons instead of pulsing lights. The
+  composer removes placeholder and floating status copy, shows a static sending
+  icon, and offers a retry button after failed sends while keeping the draft and
+  reply target. Tooltips and screen-reader feedback retain state descriptions.
+
 - Improve conversation reading rhythm with 15px UI and 13px code defaults,
   tighter paragraph spacing and consistent file labels. Active process labels
   use a lighter tone with a brief, intermittent highlight; settled summaries

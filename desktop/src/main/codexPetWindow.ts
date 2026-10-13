@@ -59,7 +59,7 @@ export type CodexPetLayoutDecision = {
 const CODEX_PET_SCREEN_INSET = 24;
 
 // Cards: one per surfaced conversation, up to CODEX_PET_HINTS_MAX. Each is a
-// fixed two-line card (status dot and title, then the latest stable
+// fixed two-line card (status icon and title, then the latest stable
 // commentary, each ellipsized) so the stack height is a pure function of the
 // card count. The pet's job is a glance, not a paragraph.
 const CODEX_PET_CARD_WIDTH = 280;
@@ -452,6 +452,12 @@ const CODEX_PET_ICON_PATHS = {
   reply: '<path d="M6.5 4 3 7.5 6.5 11"/><path d="M3 7.5h6.5A3.5 3.5 0 0 1 13 11v1"/>',
   plus: '<path d="M8 3.5v9M3.5 8h9"/>',
   send: '<path d="M8 13V3.5"/><path d="M4 7.5 8 3.5l4 4"/>',
+  retry: '<path d="M3 7a5 5 0 1 1 1 4"/><path d="M3 3v4h4"/>',
+  idle: '<path d="M13 7.5a5 5 0 0 1-5 5H3l1-3a5 5 0 1 1 9-2z"/>',
+  running: '<circle cx="8" cy="8" r="5.5"/><path d="M8 4.5V8l2.5 1.5"/>',
+  done: '<path d="m3.5 8 3 3 6-6"/>',
+  failed: '<circle cx="8" cy="8" r="5.5"/><path d="M8 4.5v4M8 11h.01"/>',
+  needs_review: '<circle cx="8" cy="8" r="5.5"/><path d="M6.5 6a1.5 1.5 0 1 1 2 1.4c-.5.2-.5.6-.5 1.1M8 11h.01"/>',
   close: '<path d="M5 5l6 6M11 5l-6 6"/>',
 } as const;
 
@@ -474,9 +480,17 @@ export function codexPetWindowHTML(
     replyTo: mainTranslate("petReplyTo", {}, locale),
     answer: mainTranslate("petAnswer", {}, locale),
     cancelReply: mainTranslate("petCancelReply", {}, locale),
-    placeholder: mainTranslate("petInputPlaceholder", {}, locale),
+    message: mainTranslate("petMessage", {}, locale),
+    statuses: {
+      idle: mainTranslate("petIdle", {}, locale),
+      running: mainTranslate("petRunning", {}, locale),
+      done: mainTranslate("petDone", {}, locale),
+      failed: mainTranslate("petFailed", {}, locale),
+      needs_review: mainTranslate("petNeedsAnswer", {}, locale),
+    } satisfies Record<CodexPetHintStatus, string>,
     needsAnswer: mainTranslate("petNeedsAnswer", {}, locale),
     send: mainTranslate("petSend", {}, locale),
+    retry: mainTranslate("petRetry", {}, locale),
     sending: mainTranslate("petSending", {}, locale),
     sendFailed: mainTranslate("petSendFailed", {}, locale),
     dismiss: mainTranslate("petDismiss", {}, locale),
@@ -487,6 +501,16 @@ export function codexPetWindowHTML(
     reply: codexPetIcon("reply", 14),
     plus: codexPetIcon("plus", 12),
     close: codexPetIcon("close", 10),
+    send: codexPetIcon("send", 16),
+    retry: codexPetIcon("retry", 16),
+    sending: codexPetIcon("running", 16),
+    statuses: {
+      idle: codexPetIcon("idle", 14),
+      running: codexPetIcon("running", 14),
+      done: codexPetIcon("done", 14),
+      failed: codexPetIcon("failed", 14),
+      needs_review: codexPetIcon("needs_review", 14),
+    } satisfies Record<CodexPetHintStatus, string>,
   };
   const states = Object.fromEntries(
     CODEX_PET_STATES.map((state) => [state.id, { row: state.row, durations: state.durations }]),
@@ -524,8 +548,8 @@ html,body{width:100%;height:100%;margin:0;background:transparent;overflow:hidden
 /* Graphite ink on neutral glass, matching the app's monochrome theme: ink is
    the only accent, and status hues stay desaturated so the pet reads as part
    of the desktop rather than a notification. */
-.stage{--surface:rgba(255,255,255,.9);--fg:#111315;--muted:#6f7478;--edge:rgba(17,19,21,.09);--shadow:0 0 0 .5px var(--edge),0 1px 2px rgba(0,0,0,.05),0 10px 28px -8px rgba(0,0,0,.18);--hover-bg:rgba(31,35,40,.06);--accent:#1f2328;--accent-fg:#fff;--target-bg:rgba(31,35,40,.08);--dot-idle:#b0b6bb;--dot-running:#5b7fb8;--dot-done:#4f8f6c;--dot-failed:#c0533f;--dot-review:#b9842c;--dock-width:${CODEX_PET_TOOLBAR_WIDTH}px}
-@media (prefers-color-scheme:dark){.stage{--surface:rgba(36,36,41,.92);--fg:#e5e7e9;--muted:#a1a8ae;--edge:rgba(255,255,255,.1);--shadow:inset 0 0 0 .5px var(--edge),0 0 0 .5px rgba(0,0,0,.5),0 10px 28px -8px rgba(0,0,0,.55);--hover-bg:rgba(220,228,235,.08);--accent:#e5e7e9;--accent-fg:#111315;--target-bg:rgba(220,228,235,.12);--dot-idle:#70777e;--dot-running:#8fade0;--dot-done:#72b892;--dot-failed:#e3826f;--dot-review:#d8ad5e}}
+.stage{--surface:rgba(255,255,255,.9);--fg:#111315;--muted:#6f7478;--edge:rgba(17,19,21,.09);--shadow:0 0 0 .5px var(--edge),0 1px 2px rgba(0,0,0,.05),0 10px 28px -8px rgba(0,0,0,.18);--hover-bg:rgba(31,35,40,.06);--accent:#1f2328;--accent-fg:#fff;--target-bg:rgba(31,35,40,.08);--status-running:#5b7fb8;--status-done:#4f8f6c;--status-failed:#c0533f;--status-review:#b9842c;--dock-width:${CODEX_PET_TOOLBAR_WIDTH}px}
+@media (prefers-color-scheme:dark){.stage{--surface:rgba(36,36,41,.92);--fg:#e5e7e9;--muted:#a1a8ae;--edge:rgba(255,255,255,.1);--shadow:inset 0 0 0 .5px var(--edge),0 0 0 .5px rgba(0,0,0,.5),0 10px 28px -8px rgba(0,0,0,.55);--hover-bg:rgba(220,228,235,.08);--accent:#e5e7e9;--accent-fg:#111315;--target-bg:rgba(220,228,235,.12);--status-running:#8fade0;--status-done:#72b892;--status-failed:#e3826f;--status-review:#d8ad5e}}
 .stage.is-expanded{--dock-width:${CODEX_PET_COMPOSER_WIDTH}px}
 .stage{position:relative;width:100%;height:100%;padding:${pad}px;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;cursor:grab;-webkit-user-select:none;user-select:none}
 .stage.is-dragging{cursor:grabbing}
@@ -546,14 +570,13 @@ button:focus-visible,.card:focus-visible{outline:2px solid var(--accent);outline
 .stage.is-expanded .card.is-target{box-shadow:0 0 0 1.5px var(--accent),var(--shadow)}
 .card-body{flex:1;min-width:0}
 .card-head{display:flex;align-items:center;gap:7px;height:18px}
-.dot{width:7px;height:7px;border-radius:50%;flex-shrink:0;background:var(--dot-idle)}
-.card[data-status=running] .dot{background:var(--dot-running);animation:pulse 1.6s ease-in-out infinite}
-.card[data-status=done] .dot{background:var(--dot-done)}
-.card[data-status=failed] .dot{background:var(--dot-failed)}
-.card[data-status=needs_review] .dot{background:var(--dot-review)}
-@keyframes pulse{50%{opacity:.3}}
+.card-status{display:flex;align-items:center;justify-content:center;width:14px;height:14px;flex-shrink:0;color:var(--muted)}
+.card[data-status=running] .card-status{color:var(--status-running)}
+.card[data-status=done] .card-status{color:var(--status-done)}
+.card[data-status=failed] .card-status{color:var(--status-failed)}
+.card[data-status=needs_review] .card-status{color:var(--status-review)}
 .card-title{min-width:0;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.card-preview{height:18px;padding-left:14px;color:var(--muted);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.card-preview{height:18px;padding-left:21px;color:var(--muted);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .card-action{display:none;flex-shrink:0;align-items:center;justify-content:center;min-width:28px;height:28px;padding:0 6px;border:0;border-radius:14px;background:var(--hover-bg);font-size:12px;cursor:pointer}
 .card-action:hover{background:var(--target-bg)}
 .card-action[data-action=answer]{display:flex;padding:0 11px;background:var(--accent);color:var(--accent-fg);font-weight:500}
@@ -566,7 +589,7 @@ button:focus-visible,.card:focus-visible{outline:2px solid var(--accent);outline
 .sprite-frame{position:relative;left:var(--sprite-shift);width:var(--pet-frame-width);height:var(--pet-frame-height);display:flex;align-items:flex-end;justify-content:center;flex-shrink:0}
 .sprite{width:${CODEX_PET_CELL_WIDTH}px;height:${CODEX_PET_CELL_HEIGHT}px;flex-shrink:0;transform:scale(var(--pet-scale));transform-origin:bottom center;background-image:var(--pet-sheet);background-repeat:no-repeat;background-position:0 0;image-rendering:pixelated;filter:drop-shadow(0 10px 16px rgba(0,0,0,.18));pointer-events:none}
 .badge{position:absolute;top:0;right:0;min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:var(--accent);color:var(--accent-fg);box-shadow:var(--shadow);font-size:11px;font-weight:600;line-height:18px;text-align:center;pointer-events:none}
-.badge.is-urgent{background:var(--dot-review);color:#fff}
+.badge.is-urgent{background:var(--status-review);color:#fff}
 .badge[hidden]{display:none}
 /* The dock follows the sprite when the window slid along a screen edge, but
    never past the window's padding. */
@@ -590,18 +613,12 @@ button:focus-visible,.card:focus-visible{outline:2px solid var(--accent);outline
 .composer-target[hidden]{display:none}
 .target-label{min-width:0;overflow:hidden;text-overflow:ellipsis}
 .composer input{flex:1;min-width:0;height:100%;margin:0;padding:0 2px;border:0;background:transparent;color:inherit;font:inherit;outline:none;cursor:text;-webkit-user-select:text;user-select:text}
-.composer input::placeholder{color:var(--muted)}
 .composer input:disabled{cursor:default}
 .composer-send{display:flex;align-items:center;justify-content:center;flex-shrink:0;width:28px;height:28px;padding:0;border:0;border-radius:50%;background:var(--accent);color:var(--accent-fg);cursor:pointer}
 .composer-send:disabled{opacity:.35;cursor:default}
+.composer-send.is-error{background:var(--hover-bg);color:var(--status-failed)}
 .composer-send.is-sending{opacity:1}
-.composer-send.is-sending svg{display:none}
-.composer-send.is-sending::after{content:"";width:12px;height:12px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:spin .8s linear infinite}
-@keyframes spin{to{transform:rotate(360deg)}}
-.composer-status{position:absolute;left:50%;bottom:calc(100% + 6px);max-width:100%;padding:3px 10px;border-radius:11px;background:var(--surface);box-shadow:var(--shadow);font-size:12px;line-height:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transform:translateX(-50%);pointer-events:none}
-.composer-status.is-error{color:var(--dot-failed)}
-.composer-status.is-blocked{color:var(--dot-review)}
-.composer-status[hidden]{display:none}
+.composer-status{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap;pointer-events:none}
 .resize-handle{position:absolute;z-index:2}
 .stage.is-expanded .resize-handle{display:none}
 .resize-handle.edge-top{top:-6px;left:10px;right:10px;height:12px;cursor:ns-resize}
@@ -612,7 +629,7 @@ button:focus-visible,.card:focus-visible{outline:2px solid var(--accent);outline
 .resize-handle.corner-ne{top:-6px;right:-6px;width:16px;height:16px;cursor:nesw-resize}
 .resize-handle.corner-sw{bottom:-4px;left:-6px;width:16px;height:14px;cursor:nesw-resize}
 .resize-handle.corner-se{bottom:-4px;right:-6px;width:16px;height:14px;cursor:nwse-resize}
-@media (prefers-reduced-motion:reduce){.card,.cards.is-swapping .card,.dock-handle,.toolbar,.pet:hover .toolbar{transition:none}.card[data-status=running] .dot,.stage.is-expanded .composer,.composer-send.is-sending::after{animation:none}}
+@media (prefers-reduced-motion:reduce){.card,.cards.is-swapping .card,.dock-handle,.toolbar,.pet:hover .toolbar{transition:none}.stage.is-expanded .composer{animation:none}}
 </style></head><body><div class="stage" data-layout="${escapeHTML(view.layout)}" style="${escapeHTML(styleVars)}">
 <div class="bubble" hidden><div class="cards"></div></div>
 <div class="pet">
@@ -622,7 +639,7 @@ ${resizeHandles}
 <div class="dock">
 <div class="toolbar"><button type="button" class="tool" data-action="new" title="${newChatLabel}" aria-label="${newChatLabel}">${codexPetIcon("compose", 16)}</button><button type="button" class="tool" data-action="show" title="${showAppLabel}" aria-label="${showAppLabel}">${codexPetIcon("open", 16)}</button></div>
 <div class="dock-handle"></div>
-<div class="composer"><div class="composer-status" role="status" hidden></div><button type="button" class="composer-target"><span class="target-icon"></span><span class="target-label"></span></button><input type="text" maxlength="${CODEX_PET_SUBMIT_MAX}" spellcheck="false" autocomplete="off" /><button type="button" class="composer-send">${codexPetIcon("send", 16)}</button></div>
+<div class="composer"><div class="composer-status" role="status" aria-atomic="true"></div><button type="button" class="composer-target"><span class="target-icon"></span><span class="target-label"></span></button><input type="text" maxlength="${CODEX_PET_SUBMIT_MAX}" spellcheck="false" autocomplete="off" /><button type="button" class="composer-send">${codexPetIcon("send", 16)}</button></div>
 </div>
 </div>
 </div>
@@ -644,7 +661,7 @@ ${resizeHandles}
   const STATES = ${scriptJSON(states)};
   const TEXT = ${scriptJSON(text)};
   const ICONS = ${scriptJSON(icons)};
-  input.placeholder = TEXT.placeholder;
+  input.setAttribute('aria-label', TEXT.message);
   const MOOD_STATES = { idle: 'idle', running: 'running', waiting: 'waiting' };
   const CELL_WIDTH = ${CODEX_PET_CELL_WIDTH};
   const CELL_HEIGHT = ${CODEX_PET_CELL_HEIGHT};
@@ -763,16 +780,20 @@ ${resizeHandles}
       card.dataset.status = hint.status;
       card.setAttribute('role', 'button');
       card.title = fill(TEXT.openConversation, title);
+      card.setAttribute('aria-label', card.title + ' · ' + TEXT.statuses[hint.status]);
       const body = document.createElement('div');
       body.className = 'card-body';
       const head = document.createElement('div');
       head.className = 'card-head';
-      const dot = document.createElement('span');
-      dot.className = 'dot';
+      const status = document.createElement('span');
+      status.className = 'card-status';
+      status.innerHTML = ICONS.statuses[hint.status];
+      status.title = TEXT.statuses[hint.status];
+      status.setAttribute('aria-hidden', 'true');
       const titleEl = document.createElement('span');
       titleEl.className = 'card-title';
       titleEl.textContent = title;
-      head.append(dot, titleEl);
+      head.append(status, titleEl);
       const preview = document.createElement('div');
       preview.className = 'card-preview';
       preview.textContent = hint.preview;
@@ -854,13 +875,9 @@ ${resizeHandles}
       card.tabIndex = expanded ? 0 : -1;
       for (const button of card.querySelectorAll('button')) button.tabIndex = expanded ? 0 : -1;
     }
-    // A blocked reply keeps any draft in the disabled input, so the reason
-    // floats above the composer rather than in the placeholder.
-    const status = failed ? TEXT.sendFailed : sending ? '' : blocked ? TEXT.needsAnswer : unplaced ? TEXT.noWorkspace : '';
+    // Announce exceptional states without adding a visible caption over the pet.
+    const status = failed ? TEXT.sendFailed : sending ? TEXT.sending : blocked ? TEXT.needsAnswer : unplaced ? TEXT.noWorkspace : '';
     statusEl.textContent = status;
-    statusEl.hidden = !status;
-    statusEl.classList.toggle('is-error', failed);
-    statusEl.classList.toggle('is-blocked', !failed && blocked);
     targetEl.hidden = unplaced;
     targetEl.classList.toggle('is-reply', Boolean(reply));
     targetIcon.innerHTML = reply ? ICONS.reply : ICONS.plus;
@@ -869,10 +886,13 @@ ${resizeHandles}
     targetEl.title = reply ? targetText + ' · ' + TEXT.cancelReply : targetText;
     targetEl.setAttribute('aria-label', targetEl.title);
     input.disabled = blocked || unplaced;
+    input.title = blocked ? TEXT.needsAnswer : unplaced ? TEXT.noWorkspace : '';
     input.readOnly = sending;
     sendButton.classList.toggle('is-sending', sending);
+    sendButton.classList.toggle('is-error', failed && !sending);
+    sendButton.innerHTML = sending ? ICONS.sending : failed ? ICONS.retry : ICONS.send;
     sendButton.disabled = sending || input.disabled || !input.value.trim();
-    sendButton.title = sending ? TEXT.sending : TEXT.send;
+    sendButton.title = sending ? TEXT.sending : blocked ? TEXT.needsAnswer : unplaced ? TEXT.noWorkspace : failed ? TEXT.retry : TEXT.send;
     sendButton.setAttribute('aria-label', sendButton.title);
   };
   const setExpanded = (next) => {
