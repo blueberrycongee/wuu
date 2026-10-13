@@ -44,6 +44,8 @@ After publication, an existing conversation adopts the new generation at its nex
 
 During preparation, a candidate that fails to initialize or negotiate required services cannot replace an already healthy runtime. A newly discovered optional plugin may remain failed without disabling other plugins. Intentional removal remains separate from a failed replacement.
 
+When automatic refresh cannot prepare the same candidate, retries back off from one second to a maximum of 30 seconds. During that wait, background notifications and waiting turns share package-content checks at a one-second cadence; configuration or newly published catalog epochs can trigger an immediate check. Changed inputs can retry sooner. Successful refresh resets the delay. Lease contention uses a separate short retry and does not count as a failed candidate. The catalog's explicit Refresh action bypasses this automatic delay, reports preparation errors, and retains the previous generation on a pre-commit failure.
+
 Reload preserves history, not an unconditional cache-hit guarantee. Identical model-facing definitions can reuse the provider prefix; changed tools, prompt sections, or deferred discovery state may invalidate it.
 
 Dependent packages retire before their providers, including revocation of retained generations after a disable or removal. Optional dependency failures do not cascade into consumers. Retirement closes MCP connections, clears prompt and compaction registrations, cancels plugin executions, shuts down processes, revokes service routing, and removes owned snapshots. Shutdown retains access to the host services needed to release plugin-owned work before routing is closed. Plugins must still stop their own timers, subscriptions, and background work; the host cannot infer arbitrary resources created by extension code.
@@ -51,6 +53,8 @@ Dependent packages retire before their providers, including revocation of retain
 Cleanup produces structured revocation records, persisted in `plugin-generation-revocations.jsonl` under Wuu's home directory. These distinguish publication success from retirement failures and help diagnose resources that did not close normally.
 
 ## Services and executions
+
+Runtime process writes honor cancellation and a bounded transport deadline. If a frame is interrupted during delivery or an execution cancellation cannot be delivered, the host retires that transport. Canceling an invocation before it is sent leaves other running work intact. Shutdown terminates the runtime process group on macOS/Linux and requests process-tree termination on Windows, with a bounded pipe drain. Windows tree cleanup is best-effort if the runtime has already exited. Unexpected nonzero shutdown exits remain visible in retirement reports. Runtime stderr keeps the most recent 64 KiB and marks omitted earlier output; verbose logs cannot grow this buffer indefinitely. These limits do not shorten a running tool’s execution deadline or replace the generation-retention rules above.
 
 Runtime plugins communicate over JSONL. Versioned services use the `host.service.call` gateway: providers declare names, versions, and methods; consumers declare service names and major versions. The registry binds consumers to providers and supplies caller identity. A missing required provider prevents the consumer from becoming usable. Duplicate providers for the same name and major version are diagnosed, not combined.
 
@@ -63,6 +67,10 @@ Capabilities compose at defined points, such as adding prompt context or observi
 ## Desktop generations and composition
 
 The desktop loads an eligible package's ESM entry and calls `activate(api)`. Registrations belong to that package generation. The host validates declared contributions and view targets before publishing it, then disposes the prior desktop generation. A failed candidate registration is disposed without replacing the existing desktop generation.
+
+Each candidate has a 30-second asynchronous staging budget covering the desktop module request, ESM import, and `activate(api)`. Timeout, unload, or a newer inventory sync settles pending activation without waiting for the plugin to finish. Its partial registrations are cleaned up and late registrations are rejected. A timed-out replacement leaves its last working generation active.
+
+`api.signal` is the generation's lifetime signal. Pass it to cancellable work and register resource cleanup before waiting. It is aborted on failed or superseded staging and on disposal of a published generation; successful activation clears the startup deadline. This is cooperative cancellation: it cannot interrupt synchronous JavaScript, stop an already-running import, or undo external side effects.
 
 Required providers must finish desktop activation successfully before consumers start. Independent branches may initialize concurrently. A provider replacement also reloads unchanged consumers; removing or disabling a required provider blocks them. Cleanup disposes consumers before providers. A failed replacement can preserve that package's previous desktop generation, but consumers do not activate against the unsuccessfully staged required replacement. Optional startup failures do not block consumers.
 

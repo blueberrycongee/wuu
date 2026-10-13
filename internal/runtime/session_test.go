@@ -1169,14 +1169,14 @@ func TestMCPServersFromConfigAndPluginsPrefixesPluginServers(t *testing.T) {
 		Manifest: pluginpkg.Manifest{
 			ID: "docs",
 			MCPServers: map[string]config.MCPServerConfig{
-				"search": {Command: "plugin-docs"},
+				"search": {Command: "plugin-docs", ToolTimeoutMS: 45000},
 			},
 		},
 	}}
 	cfg := config.Config{
 		MCPServers: map[string]config.MCPServerConfig{
 			"search":                  {Command: "user-docs"},
-			"plugin.docs.search":      {Enabled: &disabled},
+			"plugin.docs.search":      {Enabled: &disabled, ToolTimeoutMS: 90000},
 			"plugin.cua-mac.computer": {},
 		},
 	}
@@ -1184,7 +1184,7 @@ func TestMCPServersFromConfigAndPluginsPrefixesPluginServers(t *testing.T) {
 	if servers["search"].Command != "user-docs" {
 		t.Fatalf("user MCP server changed: %+v", servers)
 	}
-	if got := servers["plugin.docs.search"]; got.Command != "plugin-docs" || got.Enabled == nil || *got.Enabled {
+	if got := servers["plugin.docs.search"]; got.Command != "plugin-docs" || got.Enabled == nil || *got.Enabled || got.ToolTimeoutMS != 90000 {
 		t.Fatalf("plugin MCP server missing or unprefixed: %+v", servers)
 	}
 	if _, ok := servers["plugin.cua-mac.computer"]; ok {

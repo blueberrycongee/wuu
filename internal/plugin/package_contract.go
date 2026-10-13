@@ -80,12 +80,13 @@ func (p Plugin) PackageContract() (PackageContract, error) {
 		spec.MCPServers = make(map[string]extensions.MCPServerSpec, len(p.MCPServers))
 		for name, server := range p.MCPServers {
 			spec.MCPServers[name] = extensions.MCPServerSpec{
-				Command:     server.Command,
-				Args:        append([]string(nil), server.Args...),
-				URL:         server.URL,
-				Transport:   server.Transport,
-				EnvNames:    sortedKeys(server.Env),
-				HeaderNames: sortedKeys(server.Headers),
+				ToolTimeoutMS: int64(server.ToolTimeoutMS),
+				Command:       server.Command,
+				Args:          append([]string(nil), server.Args...),
+				URL:           server.URL,
+				Transport:     server.Transport,
+				EnvNames:      sortedKeys(server.Env),
+				HeaderNames:   sortedKeys(server.Headers),
 			}
 		}
 	}

@@ -45,6 +45,8 @@ type Skill struct {
 	// Parsed from YAML frontmatter. Keys are event names, values are
 	// lists of hook configs.
 	Hooks map[string][]SkillHookConfig `json:"-"`
+
+	local *localFile // mutable file identity; absent for pinned packages and bundled skills
 }
 
 // SkillHookConfig is a hook entry declared in skill frontmatter.
@@ -179,6 +181,9 @@ func scanDir(dir, source string) []Skill {
 			}
 			skill.Name = name
 			skill.Dir = path
+			if skill.local != nil {
+				skill.local.directory = true
+			}
 			skills = append(skills, skill)
 			continue
 		}
@@ -223,6 +228,9 @@ func scanRecursiveDir(root, source string) []Skill {
 		}
 		skill.Name = name
 		skill.Dir = dir
+		if skill.local != nil {
+			skill.local.directory = true
+		}
 		skills = append(skills, skill)
 		return nil
 	})
@@ -290,6 +298,13 @@ func parseSkillFile(path, source string) (Skill, error) {
 		return Skill{}, err
 	}
 	skill.Path = path
+	if source == "project" || source == "user" {
+		resolved, err := filepath.EvalSymlinks(path)
+		if err != nil {
+			return Skill{}, err
+		}
+		skill.local = &localFile{resolved: resolved}
+	}
 	if skill.Name == "" {
 		base := filepath.Base(path)
 		if strings.EqualFold(base, "SKILL.md") {
