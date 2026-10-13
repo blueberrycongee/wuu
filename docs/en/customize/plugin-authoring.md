@@ -113,6 +113,25 @@ Initialization is preparation, not permission to start product behavior. The hos
 
 Register model tools in the initialization result's `tools` array. Each tool needs an `id`, `description`, and object `input_schema`. The host creates a namespaced public name. `execution_scopes` can limit availability to `root` or `child`; `activity` describes read-only behavior, concurrency safety, risk, and whether the tool orchestrates child tools. Declare real effects rather than marking a writer read-only to bypass scheduling or permission checks. These declarations are trusted-extension contracts, not a sandbox.
 
+Both SDK runtimes honor `activity.concurrency_safe: true` for tool dispatch.
+Adjacent explicitly safe tools may overlap, with at most eight tool handlers
+running per runtime. Omitted or false values, unknown tool IDs, and ordinary
+capability/service callbacks remain FIFO exclusive barriers. `read_only` alone
+does not enable concurrency. These barriers apply across both shared and distinct
+execution IDs. Initialize, activate, and shutdown also wait for previously
+admitted reentrant callbacks before proceeding.
+
+Protect shared mutable state before opting in. Keep each invocation's Go context
+or TypeScript execution context and scoped host with that invocation; do not
+store them in a shared current-call variable. Cancellation is registered while a
+frame is read and checked again before its handler starts, including after
+waiting for a tool slot. Canceling one execution aborts all its live callbacks
+without canceling independent executions. Already running code must cooperate
+with cancellation. Explicitly reentrant capabilities and services retain their
+separate lane so nested host callbacks can finish even when tool slots are full.
+The limit does not bound those callbacks or queued frames, and TypeScript overlap
+does not move synchronous CPU work to worker threads.
+
 Ordinary tools are PTC bindings by default when the session enables PTC. Set
 `direct_only: true` for user interaction, explicit delivery, or lifecycle
 controls that must remain model-direct. Such tools stay in the top-level
@@ -397,6 +416,26 @@ Use this only for reentrant handlers: protect shared mutable state and propagate
 ## Execution and cancellation
 
 Tool and capability calls have a host-owned execution ID. The SDK supplies `execution.signal`; pass it to cancellable operations and stop work when it aborts. Returning from the invocation closes its scope. Late progress cannot reopen a completed execution, and cancellation does not wait for the plugin to acknowledge it.
+
+The Go and TypeScript runtimes reject cancelled tool, capability, and service
+requests before entering their handlers, including requests waiting behind other
+work or a lifecycle barrier. Cancelling an execution does not skip lifecycle
+callbacks needed for cleanup, and reaches every live callback sharing that
+execution ID.
+Once a handler has started, cancellation remains cooperative: propagate the Go
+context or TypeScript signal to operations that support it. Cancellation cannot
+undo completed effects or forcibly interrupt arbitrary plugin code.
+
+App-server's read-only `plugin/executions/list` returns `{ executions: [...] }`
+for the connected runtime's current generation and older generations still held
+by active work. Each row adds `generation_id` and `retained` to the host-local
+`id`, owning `plugin_id`, available execution scope, and latest progress. Use the
+pair `(generation_id, id)` as a stable diagnostic key: different generations can
+both have `exec-1`. The original `id` and cancellation routes do not change.
+Rows are sorted by generation ID, then execution ID, and disappear when the
+invocation finishes; reading the list does not keep a generation alive. This is
+a point-in-time view, not execution history or a cross-workspace inventory.
+Disabling a plugin cancels its work across retained generations as well.
 
 `reportExecutionUpdate`, `invokeTool`, `askUserQuestions`, and `importArtifact` call versioned services and require the corresponding declarations. An orchestrator uses `activity.orchestrator=true` and `execution.invoke-tool` to delegate effects through the normal tool path. Keep a child `call_id` stable across retries with identical tool name and arguments; do not reuse it for different work.
 

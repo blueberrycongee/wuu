@@ -876,6 +876,7 @@ func NewSession(opts Options) (*Session, error) {
 	initialHooks := hooks.NewDispatcher(nil)
 	initialHooks.Replace(hookDispatcher)
 	runtimeSession.pluginGeneration = &PluginGeneration{
+		id:            newPluginGenerationID(wuuHome),
 		ownedRoots:    initialSnapshotRoots,
 		settings:      cfg,
 		plugins:       append([]pluginpkg.Plugin(nil), discoveredPlugins...),
