@@ -2862,6 +2862,7 @@ export type ActiveDocumentContext = {
 
 export type WuuDesktopApi = {
   getAppContextState?: () => Promise<AppContextState>;
+  setAppContextShortcutRecording?: (recording: boolean) => Promise<AppContextState>;
   updateAppContextSettings?: (settings: AppContextSettings) => Promise<AppContextState>;
   requestAppContextPermission?: (kind: "screen" | "text") => Promise<AppContextState>;
   discardAppContextSnapshot?: (id?: string) => Promise<AppContextState>;

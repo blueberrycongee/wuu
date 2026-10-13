@@ -6,6 +6,7 @@ import { release } from "node:os";
 import { createRequire } from "node:module";
 const requireFromMain = createRequire(import.meta.url);
 import type { AppContextSettings, AppContextSnapshot, AppContextState } from "../shared/protocol";
+import { normalizeAppContextShortcut } from "../shared/appContextShortcut";
 import { writeTextFileAtomicSync } from "./atomicFile";
 import { wuuHomePath } from "./projects";
 
@@ -18,17 +19,7 @@ function parseSettings(value: unknown): AppContextSettings {
   if (typeof record.enabled !== "boolean" || typeof record.include_text !== "boolean" || typeof record.shortcut !== "string") {
     throw new Error("Invalid app snapshot settings.");
   }
-  const parts = record.shortcut.trim().split("+");
-  const key = parts.pop()?.toUpperCase() ?? "";
-  const aliases: Record<string, string> = { commandorcontrol: "Command", cmdorctrl: "Command", command: "Command", cmd: "Command", ctrl: "Control", control: "Control", alt: "Alt", option: "Alt", shift: "Shift", super: "Command" };
-  const modifiers = parts.map(part => aliases[part.trim().toLowerCase()]);
-  if (record.shortcut.length > 100 || modifiers.some(modifier => !modifier)
-      || new Set(modifiers).size !== modifiers.length
-      || !modifiers.some(modifier => modifier !== "Shift")
-      || !/^(?:[A-Z0-9]|SPACE|F(?:[1-9]|1[0-9]|2[0-4]))$/.test(key)) {
-    throw new Error("Use Command, Control, or Option with a key, for example Control+Alt+Space.");
-  }
-  const shortcut = [...["Command", "Control", "Alt", "Shift"].filter(modifier => modifiers.includes(modifier)), key === "SPACE" ? "Space" : key].join("+");
+  const shortcut = normalizeAppContextShortcut(record.shortcut);
   return { enabled: record.enabled, shortcut, include_text: record.include_text };
 }
 
@@ -55,6 +46,7 @@ export class AppContextCapture {
   private owner?: string;
   private settings = { ...defaults };
   private registered?: string;
+  private recordingOwner?: string;
   private child?: ChildProcess;
   private epoch = 0;
   private phase: AppContextState["phase"] = "idle";
@@ -95,7 +87,8 @@ export class AppContextCapture {
     if (previousKey && previousKey !== (next.enabled ? next.shortcut : undefined)) globalShortcut.unregister(previousKey);
     this.registered = next.enabled ? next.shortcut : undefined;
     this.settings = next;
-    // Any settings change revokes an in-flight one-shot capture and its private preview.
+    this.recordingOwner = undefined;
+    // Any settings change revokes an in-flight one-shot capture.
     this.cancel();
     return this.state();
   }
@@ -114,7 +107,27 @@ export class AppContextCapture {
     this.registered = shortcut;
   }
 
+  setShortcutRecording(recording: boolean): AppContextState {
+    if (recording) {
+      const owner = this.currentOwner();
+      if (!owner) throw new Error("Open Wuu's main window before changing the shortcut.");
+      this.recordingOwner = owner;
+      if (this.registered) globalShortcut.unregister(this.registered);
+      this.registered = undefined;
+      this.cancel();
+    } else if (this.recordingOwner) {
+      this.recordingOwner = undefined;
+      if (this.settings.enabled) {
+        try { this.register(this.settings.shortcut); }
+        catch (error) { this.error = (error as Error).message; }
+      }
+      this.notify(false);
+    }
+    return this.state();
+  }
+
   invalidateOwner(windowID: number): void {
+    if (this.recordingOwner?.startsWith(`${windowID}:`)) this.setShortcutRecording(false);
     if (this.owner?.startsWith(`${windowID}:`)) this.cancel();
   }
 

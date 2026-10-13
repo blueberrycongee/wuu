@@ -1276,6 +1276,7 @@ function createWindow(options: { inactive?: boolean } = {}): void {
   });
   win.webContents.on("render-process-gone", invalidateAppContextOwner);
   win.webContents.once("destroyed", invalidateAppContextOwner);
+  win.on("blur", () => appContextCapture.setShortcutRecording(false));
   win.on("close", invalidateAppContextOwner);
   win.once("closed", () => { invalidateAppContextOwner(); appContextOwnerGenerations.delete(windowID); });
 
@@ -2776,6 +2777,11 @@ app.whenReady().then(async () => {
   ipcMain.handle("wuu:app-context-state", (event) => {
     requireAppContextSender(event);
     return appContextCapture.state();
+  });
+  ipcMain.handle("wuu:app-context-recording", (event, recording: unknown) => {
+    requireAppContextSender(event);
+    if (typeof recording !== "boolean") throw new Error("Invalid shortcut recording state.");
+    return appContextCapture.setShortcutRecording(recording);
   });
   ipcMain.handle("wuu:app-context-settings", (event, settings: unknown) => {
     requireAppContextSender(event);

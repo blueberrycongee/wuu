@@ -5314,6 +5314,11 @@ export function App(): JSX.Element {
     // A workspace panel may cover split panes without changing their draft
     // ownership. Route by the conversation state, never by panel visibility.
     const current = appStateRef.current;
+    setSettingsOpen(false);
+    setAccountOpen(false);
+    if (rightPanelGlobalized) focusWorkspaceConversation();
+    setRightPanelOpenWithMotion(false);
+    closePrimaryPluginView();
     if (current.thread && current.secondaryThread) {
       const pane = current.activePane;
       setSplitComposerDrafts((drafts) => ({ ...drafts, [pane]: {
@@ -5323,7 +5328,7 @@ export function App(): JSX.Element {
     } else {
       setComposerImages((images) => [...images, image]);
       setComposerFiles((files) => [...files, context]);
-      requestMainComposerFocus(documentComposerVisible ? "document" : "dock");
+      requestMainComposerFocus(emptyConversation ? "hero" : "dock");
     }
   });
 

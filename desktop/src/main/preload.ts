@@ -143,6 +143,7 @@ try {
 
 const api: WuuDesktopApi = {
   getAppContextState: () => ipcRenderer.invoke("wuu:app-context-state"),
+  setAppContextShortcutRecording: (recording) => ipcRenderer.invoke("wuu:app-context-recording", recording),
   updateAppContextSettings: (settings) => ipcRenderer.invoke("wuu:app-context-settings", settings),
   requestAppContextPermission: (kind) => ipcRenderer.invoke("wuu:app-context-permission", kind),
   discardAppContextSnapshot: (id) => ipcRenderer.invoke("wuu:app-context-discard", id),

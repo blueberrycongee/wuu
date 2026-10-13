@@ -12,7 +12,7 @@ process.env.WUU_STREAM_E2E_SIDEBAR_THREADS = "2";
 app.commandLine.appendSwitch('disable-gpu');
 app.on('window-all-closed', () => {});
 const empty = () => ({ available: true, settings: { enabled: false, shortcut: 'Control+Alt+Space', include_text: false }, shortcut_registered: false, phase: 'idle' });
-let state = empty(), sends = 0;
+let state = empty(), sends = 0, recording = false;
 const screenshots = process.env.WUU_APP_CONTEXT_E2E_SCREENSHOTS !== '0';
 let holdNextStateRead = false, releaseStateRead, stateReadStarted;
 ipcMain.handle('snapshot:state', () => {
@@ -22,6 +22,7 @@ ipcMain.handle('snapshot:state', () => {
   stateReadStarted?.();
   return new Promise(resolve => { releaseStateRead = () => resolve(result); });
 });
+ipcMain.handle('snapshot:recording', (_event, value) => { recording = value; return { ...state, shortcut_registered: !recording && state.settings.enabled }; });
 ipcMain.handle('snapshot:save', (_event, settings) => (state = { ...empty(), settings, shortcut_registered: settings.enabled }));
 ipcMain.handle('snapshot:discard', (_event, id) => {
   if (id && state.snapshot?.id !== id) throw new Error('This snapshot was replaced or discarded.');
@@ -49,6 +50,7 @@ preload = preload.replace('contextBridge.exposeInMainWorld("wuu", {', `contextBr
   getBuildInfo: async () => ({ core: undefined, desktop: { version: 'app-snapshot-e2e', date: '2026-10-09' } }),
   listMCPServers: async () => ({ servers: [] }),
   getAppContextState: () => ipcRenderer.invoke('snapshot:state'),
+  setAppContextShortcutRecording: value => ipcRenderer.invoke('snapshot:recording', value),
   updateAppContextSettings: value => ipcRenderer.invoke('snapshot:save', value),
   requestAppContextPermission: () => ipcRenderer.invoke('snapshot:state'),
   discardAppContextSnapshot: id => ipcRenderer.invoke('snapshot:discard', id),
@@ -89,6 +91,17 @@ async function capture(win, name) {
   const screenshot = await win.webContents.capturePage();
   assert.ok(screenshot.getSize().width > 1, 'A real display is required for visual evidence. Set WUU_APP_CONTEXT_E2E_SCREENSHOTS=0 for functional-only E2E.');
   fs.writeFileSync(path.join(output, name + '.png'), screenshot.toPNG());
+}
+async function holdEncoding(win) {
+  await evaluate(win, () => {
+    window.snapshotEncodingHeld = false;
+    const original = File.prototype.arrayBuffer;
+    File.prototype.arrayBuffer = function () {
+      File.prototype.arrayBuffer = original;
+      window.snapshotEncodingHeld = true;
+      return new Promise(resolve => { window.releaseSnapshotEncoding = () => resolve(original.call(this)); });
+    };
+  });
 }
 function publish(win, next) { state = next; win.webContents.send('snapshot:changed'); }
 function click(win, action) { return win.webContents.executeJavaScript(`document.querySelector('[data-app-context-action="${action}"]').click()`); }
@@ -133,68 +146,72 @@ app.whenReady().then(async () => {
     await win.webContents.executeJavaScript(`document.documentElement.dataset.theme=${JSON.stringify(theme)};document.documentElement.style.setProperty('--font-ui', '${size}px');document.querySelector('[data-testid="settings-app-context"]').scrollIntoView({block:'center'});`);
     await capture(win, `setup-${theme}-${width}-${size}`);
   }
-  await evaluate(win, () => {
-    const input = document.querySelector('[data-testid="settings-app-context"] input');
-    input.focus();
-    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, 'Control+Alt+K');
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-  });
-  await evaluate(win, () => document.querySelector('[data-testid="settings-app-context"] input').blur());
+  await evaluate(win, () => { const button = document.querySelector('[data-app-context-shortcut]'); button.focus(); button.click(); });
+  await waitFor(win, () => document.querySelector('[data-app-context-shortcut]').getAttribute('aria-pressed') === 'true');
+  assert.equal(recording, true);
+  await capture(win, 'shortcut-recording');
+  await evaluate(win, () => document.querySelector('[data-app-context-shortcut]').dispatchEvent(new KeyboardEvent('keydown', { key: '˚', code: 'KeyK', ctrlKey: true, altKey: true, bubbles: true })));
   await waitFor(win, async () => (await window.wuu.getAppContextState()).settings.shortcut === 'Control+Alt+K');
   await evaluate(win, () => document.querySelector('[data-testid="settings-app-context"] [role="switch"]').click());
   await waitFor(win, async () => (await window.wuu.getAppContextState()).shortcut_registered);
+  // Modifier-only presses keep recording open; Escape and focus loss preserve the saved shortcut.
+  await evaluate(win, () => { const button = document.querySelector('[data-app-context-shortcut]'); button.focus(); button.click(); });
+  await waitFor(win, () => document.querySelector('[data-app-context-shortcut]').getAttribute('aria-pressed') === 'true');
+  await evaluate(win, () => document.querySelector('[data-app-context-shortcut]').dispatchEvent(new KeyboardEvent('keydown', { key: 'Control', ctrlKey: true, bubbles: true })));
+  assert.equal(recording, true);
+  win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' });
+  win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Escape' });
+  await waitFor(win, () => document.querySelector('[data-app-context-shortcut]').getAttribute('aria-pressed') === 'false');
+  assert.equal(recording, false);
+  assert.equal(state.settings.shortcut, 'Control+Alt+K');
+  await evaluate(win, () => { const button = document.querySelector('[data-app-context-shortcut]'); button.focus(); button.click(); });
+  await waitFor(win, () => document.querySelector('[data-app-context-shortcut]').getAttribute('aria-pressed') === 'true');
+  await waitFor(win, () => document.activeElement === document.querySelector('[data-app-context-shortcut]'));
+  await evaluate(win, () => document.querySelector('.settings-back-button').focus());
+  await waitFor(win, () => document.querySelector('[data-app-context-shortcut]').getAttribute('aria-pressed') === 'false');
+  assert.equal(recording, false);
+  assert.equal(state.settings.shortcut, 'Control+Alt+K');
   await evaluate(win, () => document.querySelector('.settings-back-button').click());
   win.setContentSize(1150, 900);
   await evaluate(win, () => { document.documentElement.dataset.theme = 'light'; document.documentElement.style.setProperty('--font-ui', '15px'); });
   await waitFor(win, async () => (await window.wuu.getAppContextState()).phase === 'idle');
+  assert.equal(recording, false);
   publish(win, { ...state, phase: 'ready', snapshot });
-  await waitFor(win, () => Boolean(document.querySelector('.app-context-preview img')));
-  assert.equal(sends, 0);
-  // An old IPC read must not reopen content after Cancel has discarded it.
+  await waitFor(win, () => document.querySelectorAll('.composer-attachment-tray-item').length === 2);
+  assert.equal(await evaluate(win, () => Boolean(document.querySelector('.app-context-dialog'))), false);
+  assert.equal(await evaluate(win, () => document.querySelector('.composer textarea').value), 'Keep my existing draft');
+  await waitFor(win, () => document.activeElement === document.querySelector('.composer textarea'));
+  assert.equal(sends, 0, 'Capture must never submit the draft');
+  // A delayed duplicate notification cannot attach the consumed snapshot again.
+  state = { ...state, phase: 'ready', snapshot };
   holdNextStateRead = true;
   const readStarted = new Promise(resolve => { stateReadStarted = resolve; });
   win.webContents.send('snapshot:changed');
   await waitForSignal(readStarted, "the delayed snapshot state read");
-  await click(win, 'cancel');
-  await waitFor(win, async () => (await window.wuu.getAppContextState()).phase === 'idle');
+  publish(win, { ...state, phase: 'idle', snapshot: undefined });
+  await evaluate(win, () => window.wuu.getAppContextState());
   releaseStateRead();
-  await evaluate(win, async () => {
-    await window.wuu.getAppContextState();
-    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-  });
-  assert.equal(await evaluate(win, () => Boolean(document.querySelector('.app-context-dialog'))), false, 'A cancelled preview must not reopen from an earlier IPC result');
-  publish(win, { ...state, phase: 'ready', snapshot });
-  await waitFor(win, () => Boolean(document.querySelector('.app-context-preview img')));
-  for (const [theme, width, size] of [['light', 1150, 14], ['dark', 780, 14], ['light', 620, 20], ['dark', 620, 20]]) {
-    win.setContentSize(width, 900);
-    await win.webContents.executeJavaScript(`document.documentElement.dataset.theme=${JSON.stringify(theme)};document.documentElement.style.setProperty('--conversation-message-font-size', '${size}px')`);
-    await capture(win, `preview-${theme}-${width}-${size}`);
-    const layout = await evaluate(win, () => { const panel = document.querySelector('.app-context-dialog').getBoundingClientRect(); const image = document.querySelector('.app-context-preview img').getBoundingClientRect(); return { panelVisible: panel.left >= 0 && panel.right <= innerWidth, imageContained: image.left >= panel.left && image.right <= panel.right }; });
-    assert.ok(layout.panelVisible && layout.imageContained, JSON.stringify(layout));
-  }
-  await click(win, 'cancel');
-  await waitFor(win, async () => (await window.wuu.getAppContextState()).phase === 'idle');
-  assert.equal(await evaluate(win, () => document.querySelectorAll('.composer-attachment-tray-item').length), 0);
-  publish(win, { ...state, phase: 'ready', snapshot: { ...snapshot, id: 'fixture-add' } });
-  await waitFor(win, () => Boolean(document.querySelector('.app-context-preview img')));
-  await click(win, 'add');
-  await waitFor(win, () => !document.querySelector('.app-context-dialog'));
-  assert.equal(await evaluate(win, () => document.querySelector('.composer textarea').value), 'Keep my existing draft');
+  await evaluate(win, () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   assert.equal(await evaluate(win, () => document.querySelectorAll('.composer-attachment-tray-item').length), 2);
-  assert.equal(sends, 0, 'Adding must never submit the draft');
+  for (const [theme, width, size] of [['light', 1150, 15], ['dark', 1150, 15], ['light', 620, 20], ['dark', 620, 20]]) {
+    win.setContentSize(width, 900);
+    await win.webContents.executeJavaScript(`document.documentElement.dataset.theme=${JSON.stringify(theme)};document.documentElement.style.setProperty('--font-ui', '${size}px');`);
+    await capture(win, `attached-${theme}-${width}-${size}`);
+  }
   await capture(win, 'attached-draft');
   publish(win, { ...state, phase: 'error', error: 'The target window changed during capture.', snapshot: undefined });
   await waitFor(win, () => Boolean(document.querySelector('.app-context-dialog [role="alert"]')));
   assert.equal(await evaluate(win, () => Boolean(document.querySelector('[data-app-context-action="add"]'))), false);
   await capture(win, 'target-changed'); await click(win, 'cancel');
   await waitFor(win, async () => (await window.wuu.getAppContextState()).phase === 'idle');
+  await holdEncoding(win);
   publish(win, { ...state, phase: 'ready', snapshot: { ...snapshot, id: 'stale' } });
-  await waitFor(win, () => Boolean(document.querySelector('.app-context-preview img')));
+  await waitFor(win, () => window.snapshotEncodingHeld);
   state = { ...state, phase: 'idle', snapshot: undefined };
-  await click(win, 'add');
+  await evaluate(win, () => window.releaseSnapshotEncoding());
   await waitFor(win, () => document.querySelector('.app-context-dialog [role="alert"]')?.textContent.includes('replaced'));
   assert.equal(await evaluate(win, () => document.querySelectorAll('.composer-attachment-tray-item').length), 2);
-  assert.equal(sends, 0); await capture(win, 'revoked-preview');
+  assert.equal(sends, 0); await capture(win, 'revoked-capture');
   await click(win, 'cancel');
   await waitFor(win, async () => (await window.wuu.getAppContextState()).phase === 'idle');
   win.setContentSize(1450, 950);
@@ -203,11 +220,7 @@ app.whenReady().then(async () => {
   await evaluate(win, () => document.querySelector('[data-settings-page="providers"]').click());
   await waitFor(win, () => Boolean(document.querySelector('.settings-back-button')));
   publish(win, { ...state, phase: 'ready', snapshot: { ...snapshot, id: 'settings-visible' } });
-  await waitFor(win, () => Boolean(document.querySelector('.app-context-preview img')));
-  assert.ok(await evaluate(win, () => Boolean(document.querySelector('.settings-back-button'))), 'Preview must not destroy Settings navigation');
-  await capture(win, 'preview-over-settings'); await click(win, 'add');
-  await waitFor(win, () => !document.querySelector('.app-context-dialog'));
-  await evaluate(win, () => document.querySelector('.settings-back-button').click());
+  await waitFor(win, () => !document.querySelector('.settings-back-button'));
   await waitFor(win, () => document.querySelectorAll('.composer-attachment-tray-item').length === 4);
   assert.equal(await evaluate(win, () => document.querySelector('.composer textarea').value), 'Keep my existing draft');
 
@@ -222,21 +235,21 @@ app.whenReady().then(async () => {
   });
   await waitForSignal(navigationStarted, "the held Conversation 02 resume");
   publish(win, { ...state, phase: 'ready', snapshot: { ...snapshot, id: 'navigation-pending' } });
-  await waitFor(win, () => Boolean(document.querySelector('.app-context-preview img')));
-  await click(win, 'add');
   await waitFor(win, () => document.querySelector('.app-context-dialog [role="alert"]')?.textContent.includes('unavailable'));
-  assert.equal(state.snapshot?.id, 'navigation-pending', 'A pending navigation must preserve the preview instead of attaching to the outgoing draft');
+  assert.equal(state.snapshot?.id, 'navigation-pending', 'A pending navigation must not attach to the outgoing draft');
   assert.equal(await evaluate(win, () => document.querySelectorAll('.composer-attachment-tray-item').length), 4);
   await click(win, 'cancel');
   releaseResume();
   await waitFor(win, () => document.querySelector('.thread-row.active')?.textContent.includes('Conversation 02')
-    && document.querySelector('.composer textarea')?.readOnly === false);
+    && document.querySelector('[data-pip-anchor-host="conversation"]')?.inert === false
+    && document.querySelector('[data-main-conversation-composer] textarea')?.readOnly === false);
   await evaluate(win, () => {
     const row = [...document.querySelectorAll('.thread-row')].find(element => element.textContent.includes('Conversation 01'));
     (row.querySelector('.thread-row-main') || row).click();
   });
   await waitFor(win, () => document.querySelector('.thread-row.active')?.textContent.includes('Conversation 01')
-    && document.querySelector('.composer textarea')?.readOnly === false);
+    && document.querySelector('[data-pip-anchor-host="conversation"]')?.inert === false
+    && document.querySelector('[data-main-conversation-composer] textarea')?.readOnly === false);
   assert.equal(await evaluate(win, () => document.querySelector('.composer textarea').value), 'Keep my existing draft');
   assert.equal(await evaluate(win, () => document.querySelectorAll('.composer-attachment-tray-item').length), 4);
   // Open a real related-session split through its production message action.
@@ -260,10 +273,7 @@ app.whenReady().then(async () => {
   });
   await waitFor(win, () => document.querySelector('.conversation-pane')?.hasAttribute('inert'));
   publish(win, { ...state, phase: 'ready', snapshot: { ...snapshot, id: 'covered-split' } });
-  await waitFor(win, () => Boolean(document.querySelector('.app-context-preview img')));
-  await capture(win, 'preview-over-covered-split'); await click(win, 'add');
-  await waitFor(win, () => !document.querySelector('.app-context-dialog'));
-  await evaluate(win, () => document.querySelector('[data-wuu-component="right-sidebar-toggle"]').click());
+  await waitFor(win, () => document.querySelectorAll('.conversation-split-pane[data-thread-id="sidebar-fade-1"] .composer-attachment-tray-item').length === 2);
   await waitFor(win, () => !document.querySelector('.conversation-pane')?.hasAttribute('inert'));
   await waitFor(win, () => {
     const shell = document.querySelector('.app-shell');
@@ -278,19 +288,11 @@ app.whenReady().then(async () => {
   assert.equal(await evaluate(win, () => document.querySelectorAll('.conversation-split-pane[data-thread-id="sidebar-fade-1"] .composer-attachment-tray-item').length), 2);
   assert.deepEqual(await evaluate(win, () => [...document.querySelectorAll('.conversation-split-pane[data-thread-id="sidebar-fade-0"] .composer-attachment-tray-item')]
     .map(item => ({ text: item.textContent, image: item.querySelector('img')?.getAttribute('src') }))), primaryAttachmentsBefore);
+  await waitFor(win, () => document.activeElement === document.querySelector('.conversation-split-pane[data-thread-id="sidebar-fade-1"] textarea'));
   assert.equal(sends, 0); await capture(win, 'active-split-draft');
-  // A draft change while File encoding is pending must not redirect Add.
+  // A draft change during encoding must not redirect the capture.
+  await holdEncoding(win);
   publish(win, { ...state, phase: 'ready', snapshot: { ...snapshot, id: 'draft-changed' } });
-  await waitFor(win, () => Boolean(document.querySelector('.app-context-preview img')));
-  await evaluate(win, () => {
-    const original = File.prototype.arrayBuffer;
-    File.prototype.arrayBuffer = function () {
-      File.prototype.arrayBuffer = original;
-      window.snapshotEncodingHeld = true;
-      return new Promise(resolve => { window.releaseSnapshotEncoding = () => resolve(original.call(this)); });
-    };
-  });
-  await click(win, 'add');
   await waitFor(win, () => window.snapshotEncodingHeld);
   await evaluate(win, () => document.querySelector('.conversation-split-pane[data-thread-id="sidebar-fade-0"]').dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })));
   await waitFor(win, () => document.querySelector('.conversation-split-pane[data-thread-id="sidebar-fade-0"]').classList.contains('active'));
@@ -299,10 +301,10 @@ app.whenReady().then(async () => {
   assert.equal(await evaluate(win, () => document.querySelectorAll('.conversation-split-pane[data-thread-id="sidebar-fade-1"] .composer-attachment-tray-item').length), 2);
   assert.deepEqual(await evaluate(win, () => [...document.querySelectorAll('.conversation-split-pane[data-thread-id="sidebar-fade-0"] .composer-attachment-tray-item')]
     .map(item => ({ text: item.textContent, image: item.querySelector('img')?.getAttribute('src') }))), primaryAttachmentsBefore);
-  assert.equal(state.snapshot?.id, 'draft-changed', 'Failed preparation must retain the preview for an explicit retry');
+  assert.equal(state.snapshot?.id, 'draft-changed', 'Failed preparation must leave the snapshot unconsumed');
   assert.equal(sends, 0);
   await click(win, 'cancel');
-  const report = { result: 'passed', coverage: ['opt-in setup', 'local preview', 'cancel discards', 'late state reads cannot reopen cancelled previews', 'draft changes during Add are rejected', 'pending navigation cannot consume previews', 'add preserves draft', 'no implicit send', 'target failure has no Add', 'revoked preview cannot add', 'light/dark narrow/large renderer layouts', 'preview survives Settings route', 'covered split routes to actual active draft'], native_macos_capture: 'not exercised', screenshots: screenshots ? 'captured' : 'not exercised (functional-only mode)', console_errors: errors };
+  const report = { result: 'passed', coverage: ['opt-in setup', 'shortcut recording with Option symbols, modifier-only keys, Escape and blur', 'direct attachment and focus', 'late state reads cannot duplicate attachments', 'draft changes during preparation are rejected', 'pending navigation cannot consume captures', 'preserves draft text', 'no implicit send', 'target failure', 'revoked capture cannot attach', 'light/dark narrow/large renderer layouts', 'returns from Settings to draft', 'covered split routes to actual active draft'], native_macos_capture: 'not exercised', screenshots: screenshots ? 'captured' : 'not exercised (functional-only mode)', console_errors: errors };
   assert.deepEqual(errors, []);
   fs.writeFileSync(path.join(output, 'report.json'), JSON.stringify(report, null, 2));
   console.log(JSON.stringify(report)); console.log(`Evidence: ${output}`); app.exit(0);
