@@ -12,7 +12,7 @@ process.env.WUU_STREAM_E2E_SIDEBAR_THREADS = "2";
 app.commandLine.appendSwitch('disable-gpu');
 app.on('window-all-closed', () => {});
 const empty = () => ({ available: true, settings: { enabled: false, shortcut: 'Control+Alt+Space', include_text: false }, shortcut_registered: false, phase: 'idle' });
-let state = empty(), sends = 0;
+let state = empty(), sends = 0, mainWindow;
 const screenshots = process.env.WUU_APP_CONTEXT_E2E_SCREENSHOTS !== '0';
 let holdNextStateRead = false, releaseStateRead, stateReadStarted;
 ipcMain.handle('snapshot:state', () => {
@@ -60,7 +60,7 @@ const evaluate = (win, fn) => win.webContents.executeJavaScript(`(${fn.toString(
 async function waitForSignal(signal, description) {
   let timer;
   try {
-    await Promise.race([signal, new Promise((_, reject) => {
+    return await Promise.race([signal, new Promise((_, reject) => {
       timer = setTimeout(() => reject(new Error(`Timed out waiting for ${description}`)), 12_000);
     })]);
   } finally { clearTimeout(timer); }
@@ -103,11 +103,15 @@ app.whenReady().then(async () => {
   const image = Buffer.from(sourceImage, 'base64');
   fs.writeFileSync(path.join(output, 'source-window-fixture.png'), image); reference.destroy();
   const snapshot = { id: 'fixture-1', captured_at: '2026-10-09T19:00:00Z', app_name: 'Example Notes', bundle_id: 'example.notes', window_title: 'Project notes', window_id: 7, width: 720, height: 440, image_base64: image.toString('base64'), available_text: 'Design review\nResearch complete.\nNative Mac acceptance is pending.', text_status: 'included' };
-  const win = new BrowserWindow({ width: 1150, height: 900, show: true, webPreferences: { preload: preloadPath, contextIsolation: true, nodeIntegration: false, sandbox: false, backgroundThrottling: false } });
+  const win = mainWindow = new BrowserWindow({ width: 1150, height: 900, show: true, webPreferences: { preload: preloadPath, contextIsolation: true, nodeIntegration: false, sandbox: false, backgroundThrottling: false } });
   const errors = [];
   win.webContents.on('console-message', event => { if (event.level === 'error') { errors.push(event.message); console.error('Renderer:', event.message); } });
   await win.loadFile(path.join(desktop, 'out/renderer/index.html'));
-  await waitFor(win, () => Boolean(document.querySelector('.composer textarea')));
+  await waitFor(win, () => {
+    const input = document.querySelector('.composer textarea');
+    const region = document.querySelector('.scroll-region');
+    return input?.disabled === false && region && !region.hasAttribute('inert') && region.style.visibility !== 'hidden';
+  });
   assert.equal(await evaluate(win, () => Boolean(document.querySelector('.app-context-dialog'))), false);
   await evaluate(win, () => {
     const input = document.querySelector('.composer textarea');
@@ -205,14 +209,25 @@ app.whenReady().then(async () => {
   assert.equal(await evaluate(win, () => document.querySelectorAll('.composer-attachment-tray-item').length), 4);
   await click(win, 'cancel');
   releaseResume();
-  await waitFor(win, () => document.querySelector('.thread-row.active')?.textContent.includes('Conversation 02')
-    && document.querySelector('.composer textarea')?.readOnly === false);
+  // Composer readOnly is a React prop rendered as disabled/aria-readonly, not
+  // the DOM readOnly property. Wait for restoration before synthetic events,
+  // which can otherwise bypass the inert conversation and change its target.
+  await waitFor(win, () => {
+    const input = document.querySelector('.composer textarea');
+    const region = document.querySelector('.scroll-region');
+    return document.querySelector('.thread-row.active')?.textContent.includes('Conversation 02')
+      && input?.disabled === false && region && !region.hasAttribute('inert') && region.style.visibility !== 'hidden';
+  });
   await evaluate(win, () => {
     const row = [...document.querySelectorAll('.thread-row')].find(element => element.textContent.includes('Conversation 01'));
     (row.querySelector('.thread-row-main') || row).click();
   });
-  await waitFor(win, () => document.querySelector('.thread-row.active')?.textContent.includes('Conversation 01')
-    && document.querySelector('.composer textarea')?.readOnly === false);
+  await waitFor(win, () => {
+    const input = document.querySelector('.composer textarea');
+    const region = document.querySelector('.scroll-region');
+    return document.querySelector('.thread-row.active')?.textContent.includes('Conversation 01')
+      && input?.disabled === false && region && !region.hasAttribute('inert') && region.style.visibility !== 'hidden';
+  });
   assert.equal(await evaluate(win, () => document.querySelector('.composer textarea').value), 'Keep my existing draft');
   assert.equal(await evaluate(win, () => document.querySelectorAll('.composer-attachment-tray-item').length), 4);
   // Open a real related-session split through its production message action.
@@ -224,7 +239,15 @@ app.whenReady().then(async () => {
   await evaluate(win, () => {
     const pane = document.querySelector('.conversation-split-pane[data-thread-id="sidebar-fade-1"]');
     pane.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
-    const input = pane.querySelector('textarea');
+  });
+  await waitFor(win, () => {
+    const pane = document.querySelector('.conversation-split-pane[data-thread-id="sidebar-fade-1"]');
+    const region = document.querySelector('.scroll-region');
+    return pane?.classList.contains('active') && pane.querySelector('textarea')?.disabled === false
+      && region && !region.hasAttribute('inert') && region.style.visibility !== 'hidden';
+  });
+  await evaluate(win, () => {
+    const input = document.querySelector('.conversation-split-pane[data-thread-id="sidebar-fade-1"] textarea');
     Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(input, 'Preserve the secondary draft');
     input.dispatchEvent(new Event('input', { bubbles: true }));
     document.querySelector('[data-wuu-component="right-sidebar-toggle"]').click();
@@ -282,4 +305,31 @@ app.whenReady().then(async () => {
   assert.deepEqual(errors, []);
   fs.writeFileSync(path.join(output, 'report.json'), JSON.stringify(report, null, 2));
   console.log(JSON.stringify(report)); console.log(`Evidence: ${output}`); app.exit(0);
-}).catch(error => { console.error(error); app.exit(1); });
+}).catch(async error => {
+  console.error(error);
+  // Preserve the actual navigation gates on failure, without relying on a
+  // screenshot of a covered pane or collecting synthetic attachment contents.
+  try {
+    const renderer = mainWindow && !mainWindow.isDestroyed() ? await waitForSignal(evaluate(mainWindow, () => ({
+      alerts: [...document.querySelectorAll('.app-context-dialog [role="alert"]')].map(element => element.textContent),
+      activeThread: document.querySelector('.thread-row.active')?.textContent,
+      conversationCovered: document.querySelector('.conversation-pane')?.hasAttribute('inert'),
+      scrollRegions: [...document.querySelectorAll('.scroll-region')].map(element => ({
+        inert: element.hasAttribute('inert'), visibility: element.style.visibility,
+      })),
+      composers: [...document.querySelectorAll('[data-wuu-component="composer-input"]')].map(input => ({
+        thread: input.closest('.conversation-split-pane')?.getAttribute('data-thread-id'),
+        active: input.closest('.conversation-split-pane')?.classList.contains('active'),
+        disabled: input.disabled, readOnly: input.readOnly, ariaReadOnly: input.getAttribute('aria-readonly'),
+      })),
+      previewReady: Boolean(document.querySelector('.app-context-preview img')),
+      addDisabled: document.querySelector('[data-app-context-action="add"]')?.disabled,
+      focused: { tag: document.activeElement?.tagName, className: document.activeElement?.className },
+      viewport: [innerWidth, innerHeight],
+    })), "failure diagnostics") : undefined;
+    fs.writeFileSync(path.join(output, 'failure-diagnostic.json'), JSON.stringify({
+      error: String(error), phase: state.phase, snapshotID: state.snapshot?.id, sends, renderer,
+    }, null, 2));
+  } catch (diagnosticError) { console.error('Failure diagnostic:', diagnosticError); }
+  app.exit(1);
+});
