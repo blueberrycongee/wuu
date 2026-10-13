@@ -45,6 +45,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Keep the iOS conversation loading indicator centered and fully visible before
+  messages arrive, instead of squeezing it into a clipped capsule at the left edge.
 - Remember iOS model and reasoning choices for new conversations per account,
   computer and engine, including first sends without reopening settings and app relaunches.
 - Preserve the iOS reading position across lazy layout updates when loading older
