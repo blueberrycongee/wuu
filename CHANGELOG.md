@@ -51,6 +51,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Keep stopped agent subtrees stopped when child cancellation results arrive.
   Parked parents now finish cancellation durably, and explicit follow-ups reopen
   their edges for later work without blocking shutdown cancellation or restart recovery.
+- Keep shutdown cancellation from waiting on durable worker terminal retries,
+  allowing server close to hand unacknowledged state to recovery.
 
 - Native engine questions now use the existing choice and free-text cards, return
   answers to the original call, and clear on cancellation or disconnection.
