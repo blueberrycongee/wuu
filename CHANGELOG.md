@@ -48,6 +48,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- iOS conversation swipe actions show centered icons without visible labels,
+  retain screen-reader names, and distinguish pin/unpin and archive/restore.
+  Archive actions use a gray background for visibility in light and dark modes.
+
 - TypeScript is the single official plugin-authoring SDK. Remove the public Go
   plugin SDK and legacy `required_host_services` declarations; plugins use versioned
   `required_services` and the service gateway. The Go host and language-neutral

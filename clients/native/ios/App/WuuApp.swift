@@ -350,8 +350,16 @@ struct ConversationView: View {
                     }
                     .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                         if model.connected {
-                            Button(thread.archived ? "恢复" : "归档", systemImage: "archivebox") { archiveTarget = thread }
-                            Button(thread.pinned ? "取消置顶" : "置顶", systemImage: "pin") { act { try await model.pin(thread) } }.tint(.orange)
+                            Button { archiveTarget = thread } label: {
+                                Image(systemName: thread.archived ? "tray.and.arrow.up" : "archivebox")
+                            }
+                            .tint(.gray)
+                            .accessibilityLabel(thread.archived ? "恢复" : "归档")
+                            Button { act { try await model.pin(thread) } } label: {
+                                Image(systemName: thread.pinned ? "pin.slash" : "pin")
+                            }
+                            .tint(.orange)
+                            .accessibilityLabel(thread.pinned ? "取消置顶" : "置顶")
                         }
                     }
                     .contextMenu {
