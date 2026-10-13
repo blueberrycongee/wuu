@@ -794,17 +794,18 @@ it("keeps a short draft bubble in place when it is adopted by the new thread", (
   expect(scrollTop()).toBe(0);
 });
 
-it("lifts a short first bubble from the composer over its final layout", () => {
+it("settles a short first bubble into its final layout instead of crossing from the composer", () => {
   naturalHeight = 220;
   messageBottom = 100;
   render({ id: null, composer: true });
   act(() => api.requestSubmittedQueryScroll("submitted"));
   render({ id: null, messageID: "submitted", running: true, composer: true });
   const content = api.scrollContentRef.current!;
-  // The layout is already final; only the painted offset starts at the composer.
+  // The layout is already final; only a short painted rise remains.
   expect(scrollTop()).toBe(0);
   expect(placements).toHaveLength(1);
-  expect(shift()).toBeGreaterThan(100);
+  expect(shift()).toBeGreaterThan(0);
+  expect(shift()).toBeLessThan(viewportHeight / 10);
   expect(document.documentElement.hasAttribute("data-submit-glide")).toBe(true);
   expect(content.hasAttribute("data-submit-placing")).toBe(true);
   land();
