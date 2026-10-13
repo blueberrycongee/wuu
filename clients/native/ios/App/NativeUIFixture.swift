@@ -14,8 +14,8 @@ enum NativeUIFixture {
                     ["id": "reply", "type": "agent_message", "text": .string(String(repeating: "正文应保持清楚，长按待处理消息后，预览中的文字不应与这段正文重叠。\n\n", count: 12))]
                 ]]
             ]], pending: [
-                ["id": "steer", "thread_id": "local-ui-fixture", "origin": "steer", "prompt": .string(prompt)],
-                ["id": "queue", "thread_id": "local-ui-fixture", "origin": "queue", "prompt": "", "files": [["filename": "notes.txt"]]]
+                ["id": "queue", "thread_id": "local-ui-fixture", "origin": "queue", "prompt": .string(prompt)],
+                ["id": "steer", "thread_id": "local-ui-fixture", "origin": "steer", "prompt": "", "files": [["filename": "notes.txt"]]]
             ], held: [
                 ["id": "held", "thread_id": "local-ui-fixture", "origin": "queue", "prompt": ""]
             ])

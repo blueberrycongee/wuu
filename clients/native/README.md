@@ -110,6 +110,8 @@ iOS Debug 构建可通过 `xcrun simctl launch booted ai.wuu.native --native-ui-
 
 同时传入 `--native-composer-fixture` 可在同一份本地数据上打开实际会话页面及输入框；再加 `--native-empty-fixture` 可检查空会话。传入 `--native-refresh-fixture` 可停留在刷新状态，与 `--native-empty-fixture` 组合可复现尚未收到消息的首次加载，用于检查加载提示在明暗主题、大字号及不同屏幕宽度下是否居中、完整显示。检查输入框左侧与上下留白是否一次点击就弹出键盘、多行输入与长按选字，以及点击消息区域收起键盘后重新聚焦。此入口不连接电脑，发送与其他远程操作不在此样本的验收范围内。
 
+同时传入 `--native-composer-fixture --native-pending-fixture --native-stream-fixture` 可检查待处理消息菜单：本地回复每 50ms 追加文字，持续一分钟。长按输入栏上方的排队消息或“查看全部”中的消息，检查复制后菜单关闭且剪贴板包含完整原文，以及引导、改为排队、移除能够触发操作。此样本不连接电脑，远程操作会显示状态校验错误；实际队列变更由协议集成验证。去掉 `--native-stream-fixture` 可对照静止状态。
+
 ## 验收边界
 
 自动验证与模拟器视觉检查分别记录，不将编译或协议测试视为真机验收。发布前需要使用本次代码重新运行完整验证，并检查真机滚动帧率、键盘、VoiceOver/TalkBack、主题和屏幕尺寸。iOS 会话小球的 WebView 首次加载与内存表现也需覆盖真机。
