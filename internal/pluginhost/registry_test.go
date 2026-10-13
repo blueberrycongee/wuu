@@ -13,6 +13,7 @@ import (
 type fakeServiceProcess struct {
 	id          string
 	state       State
+	onStatus    func()
 	provided    []ServiceDescriptor
 	required    []ServiceRequirement
 	invoke      func(ctx context.Context, params ServiceInvokeParams) (json.RawMessage, error)
@@ -20,8 +21,13 @@ type fakeServiceProcess struct {
 	invokeCalls []ServiceInvokeParams
 }
 
-func (c *fakeServiceProcess) ID() string     { return c.id }
-func (c *fakeServiceProcess) Status() Status { return Status{ID: c.id, State: c.state} }
+func (c *fakeServiceProcess) ID() string { return c.id }
+func (c *fakeServiceProcess) Status() Status {
+	if c.onStatus != nil {
+		c.onStatus()
+	}
+	return Status{ID: c.id, State: c.state}
+}
 func (c *fakeServiceProcess) Close(context.Context) error {
 	if c.state == StateActive {
 		c.state = StateStopped
@@ -179,6 +185,32 @@ func TestServiceRegistryCall(t *testing.T) {
 	owner, ownerErr := host.ResolveExecution("notes", rootID)
 	if ownerErr != nil || owner.Context.Err() != nil {
 		t.Fatalf("service transport loss cancelled its independent owner: %+v, %v", owner, ownerErr)
+	}
+	releaseNested()
+	releaseRoot()
+	// Updates stop autonomous work through both plugin and kernel providers,
+	// while a retained foreground owner keeps its declared services.
+	host.StopBackground()
+	for _, kernel := range []bool{false, true} {
+		entry := registry.providers[key]
+		entry.kernel = kernel
+		registry.providers[key] = entry
+		if _, err := registry.Call(context.Background(), "notes", call); err == nil || err.Code != "generation_closed" {
+			t.Fatalf("retired autonomous call (kernel=%v) = %v", kernel, err)
+		}
+		scopedCall := call
+		scopedCall.ExecutionID = rootID
+		if _, err := registry.Call(context.Background(), "notes", scopedCall); err != nil {
+			t.Fatalf("retained foreground call (kernel=%v) failed: %v", kernel, err)
+		}
+	}
+	finishCleanup := registry.allowShutdownCleanup("notes")
+	finishCleanup()
+	finishReplacementCleanup := registry.allowShutdownCleanup("notes")
+	defer finishReplacementCleanup()
+	finishCleanup()
+	if _, err := registry.Call(context.Background(), "notes", call); err != nil {
+		t.Fatalf("old disposer revoked newer shutdown cleanup: %v", err)
 	}
 }
 

@@ -80,6 +80,22 @@ func TestGenerationCloseRecordsStructuredRevocationReport(t *testing.T) {
 	if _, statErr := os.Stat(ownedRoots[0]); !os.IsNotExist(statErr) {
 		t.Fatal("owned package snapshot survived retirement")
 	}
+	if repeated := generation.close(); !errors.Is(repeated, brokenClient.closeErr) {
+		t.Fatalf("repeated close lost the original failure: %v", repeated)
+	}
+	if repeated := generation.revocationReport(); repeated != report || !repeated.Failed() {
+		t.Fatalf("repeated close replaced the retirement report: %+v", repeated)
+	}
+	// A discarded prepared generation has no Session reference. It still owns
+	// its resources, and only the first release may claim their retirement.
+	preparedClient := &generationClient{id: "prepared"}
+	prepared := &PluginGeneration{id: "prepared", host: pluginhost.New(preparedClient)}
+	if !prepared.Release() || !preparedClient.closed {
+		t.Fatal("unpublished candidate was not retired")
+	}
+	if prepared.Release() {
+		t.Fatal("duplicate release claimed a second retirement")
+	}
 }
 
 func TestActivatePluginGenerationPersistsRevocationReports(t *testing.T) {

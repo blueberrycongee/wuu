@@ -135,6 +135,23 @@ func TestKernelHostServicesRouteThroughRegistryAndPreserveStorageScope(t *testin
 		if err != nil || string(foreign) != `{"released":false}` {
 			t.Fatalf("foreign release = %s, %v", foreign, err)
 		}
+		cleanupLock, lockErr := lockCall(ctx, "acquire", pluginhost.FileLockAcquireParams{Root: "workspace_state", Path: "retirement.lock"})
+		if lockErr != nil {
+			t.Fatal(lockErr)
+		}
+		var cleanupToken pluginhost.FileLockAcquireResult
+		if err := json.Unmarshal(cleanupLock, &cleanupToken); err != nil {
+			t.Fatal(err)
+		}
+		retiringHost := pluginhost.New()
+		retiringHost.AttachServiceRegistry(registry, nil)
+		retiringHost.StopBackground()
+		if _, err := lockCall(ctx, "acquire", pluginhost.FileLockAcquireParams{Root: "workspace_state", Path: "late.lock"}); err == nil || err.Code != "generation_closed" {
+			t.Fatalf("retired timer reacquired a lock: %v", err)
+		}
+		if released, err := lockCall(ctx, "release", pluginhost.FileLockReleaseParams{LockID: cleanupToken.LockID}); err != nil || string(released) != `{"released":true}` {
+			t.Fatalf("retained cleanup could not release its owned lock: %s, %v", released, err)
+		}
 		handler.close()
 		acquireRaw, _ := json.Marshal(pluginhost.FileLockAcquireParams{Root: "workspace_state", Path: "cross-process.lock"})
 		if _, err := other.invokeFileLock(ctx, "acquire", acquireRaw, workspace); err != nil {

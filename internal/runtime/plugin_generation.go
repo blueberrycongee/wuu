@@ -49,13 +49,15 @@ type PluginGeneration struct {
 	compactions       *agent.CompactionRegistry
 	ownedRoots        []string
 	revocation        *GenerationRevocationReport
+	closeErr          error
 	// driverGateways is this generation's remote-driver gateway routing
 	// table; executions registered here route only to this generation's
 	// kernel services.
 	driverGateways *driverGatewayTable
 	// refs counts the live Session plus any ThreadRuntime still bound to this
 	// generation. A retired generation stays open until the last conversation
-	// that started against it is released.
+	// that started against it is released. A negative count seals retirement;
+	// zero is reserved for a prepared candidate that has not been published.
 	refs         atomic.Int32
 	revocationMu sync.Mutex
 	// revokedMu also protects host detachment from read-only diagnostics.
@@ -595,7 +597,11 @@ func (g *PluginGeneration) retain() {
 	if g == nil {
 		return
 	}
-	g.refs.Add(1)
+	for refs := g.refs.Load(); refs >= 0; refs = g.refs.Load() {
+		if g.refs.CompareAndSwap(refs, refs+1) {
+			return
+		}
+	}
 }
 
 // Release drops one conversation or Session reference. It returns true when
@@ -605,12 +611,20 @@ func (g *PluginGeneration) Release() bool {
 	if g == nil {
 		return false
 	}
-	remaining := g.refs.Add(-1)
-	if remaining > 0 {
-		return false
-	}
-	if remaining < 0 {
-		g.refs.Store(0)
+	for refs := g.refs.Load(); ; refs = g.refs.Load() {
+		if refs < 0 {
+			return false
+		}
+		remaining := refs - 1
+		if remaining <= 0 {
+			remaining = -1
+		}
+		if g.refs.CompareAndSwap(refs, remaining) {
+			if remaining > 0 {
+				return false
+			}
+			break
+		}
 	}
 	if err := g.close(); err != nil {
 		providers.DebugLogf("plugin generation cleanup: %v", err)
@@ -756,6 +770,12 @@ func (g *PluginGeneration) close() error {
 	if g == nil {
 		return nil
 	}
+	g.revocationMu.Lock()
+	defer g.revocationMu.Unlock()
+	if g.revocation != nil {
+		return g.closeErr
+	}
+	g.refs.Store(-1)
 	g.revokedMu.Lock()
 	if g.revokedPlugins == nil {
 		g.revokedPlugins = make(map[string]bool)
@@ -765,7 +785,6 @@ func (g *PluginGeneration) close() error {
 	}
 	g.revokedMu.Unlock()
 	report := &GenerationRevocationReport{GenerationID: g.id, RetiredAt: time.Now().UTC()}
-	g.revocation = report
 	var err error
 	if g.mcp != nil {
 		mcpErr := g.mcp.Close()
@@ -812,6 +831,7 @@ func (g *PluginGeneration) close() error {
 		err = errors.Join(err, rootErr)
 	}
 	g.ownedRoots = nil
+	g.revocation, g.closeErr = report, err
 	return err
 }
 
@@ -820,6 +840,8 @@ func (g *PluginGeneration) revocationReport() *GenerationRevocationReport {
 	if g == nil {
 		return nil
 	}
+	g.revocationMu.Lock()
+	defer g.revocationMu.Unlock()
 	return g.revocation
 }
 
@@ -828,10 +850,10 @@ func (g *PluginGeneration) revocationReport() *GenerationRevocationReport {
 // gone. Persistence failure is only debug-logged: it must not block the
 // lifecycle transition the report describes.
 func (s *Session) persistRevocationReport(g *PluginGeneration) {
-	if s == nil || g == nil || g.revocation == nil {
+	if s == nil || g == nil {
 		return
 	}
-	if err := appendGenerationRevocation(s.WuuHome, g.revocation); err != nil {
+	if err := appendGenerationRevocation(s.WuuHome, g.revocationReport()); err != nil {
 		providers.DebugLogf("persist plugin generation revocation: %v", err)
 	}
 }

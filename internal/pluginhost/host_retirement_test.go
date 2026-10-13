@@ -59,9 +59,14 @@ func (c *cleanupServiceClient) Close(ctx context.Context) error { return c.clean
 
 func TestRetirementAllowsCleanupBeforeRevokingServices(t *testing.T) {
 	provider := &fakeServiceProcess{id: "storage", state: StateActive, provided: []ServiceDescriptor{searchService("1.0.0")}}
-	consumer := &cleanupServiceClient{fakeServiceProcess: &fakeServiceProcess{id: "workflow", state: StateActive, required: []ServiceRequirement{{Name: "search.provider", MajorVersion: 1, Required: true}}}}
-	host := New(provider, consumer)
-	registry, conflicts := BuildServiceRegistry(provider, consumer)
+	stateService := ServiceDescriptor{Name: "workflow.state", Version: "1.0.0", Methods: []ServiceMethodDescriptor{{Name: "save"}}}
+	consumer := &cleanupServiceClient{fakeServiceProcess: &fakeServiceProcess{
+		id: "workflow", state: StateActive, provided: []ServiceDescriptor{stateService},
+		required: []ServiceRequirement{{Name: "search.provider", MajorVersion: 1, Required: true}, {Name: stateService.Name, MajorVersion: 1, Required: true}},
+	}}
+	observer := &fakeServiceProcess{id: "observer", state: StateActive, required: []ServiceRequirement{{Name: stateService.Name, MajorVersion: 1, Required: true}}}
+	host := New(provider, consumer, observer)
+	registry, conflicts := BuildServiceRegistry(provider, consumer, observer)
 	host.AttachServiceRegistry(registry, conflicts)
 	registry.Activate()
 	consumer.cleanup = func(ctx context.Context) error {
@@ -69,6 +74,15 @@ func TestRetirementAllowsCleanupBeforeRevokingServices(t *testing.T) {
 			if status.ID == consumer.id {
 				t.Error("plugin still registered during shutdown")
 			}
+		}
+		if _, err := registry.Call(ctx, observer.id, ServiceCallParams{Service: stateService.Name, Method: "save"}); err == nil {
+			return errors.New("retiring provider accepted another consumer during shutdown")
+		}
+		if _, err := registry.CallProvider(ctx, stateService.Name, 1, "save", nil, "late-driver"); err == nil {
+			return errors.New("retiring provider accepted new kernel work during shutdown")
+		}
+		if _, err := registry.Call(ctx, consumer.id, ServiceCallParams{Service: stateService.Name, Method: "save"}); err != nil {
+			return err
 		}
 		_, err := registry.Call(ctx, consumer.id, ServiceCallParams{Service: "search.provider", Method: "query"})
 		if err != nil {

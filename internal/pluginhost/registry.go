@@ -85,6 +85,7 @@ type ServiceRegistry struct {
 	scopeTracker         *ExecutionTracker
 	backgroundStopped    bool
 	cleanupOwners        map[string]int
+	retiringProviders    map[string]bool
 	rootExecutionContext func(string, string) (context.Context, bool, *HostServiceError)
 }
 
@@ -286,6 +287,26 @@ func (r *ServiceRegistry) RevokePlugin(ctx context.Context, pluginID string) {
 	}
 }
 
+// stopProviderAdmission seals incoming work before the host takes its
+// cancellation snapshot. Declared shutdown cleanup remains routable until
+// RevokePlugin removes the consumer and provider bindings after Close returns.
+func (r *ServiceRegistry) stopProviderAdmission(pluginID string) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.retiringProviders == nil {
+		r.retiringProviders = make(map[string]bool)
+	}
+	r.retiringProviders[pluginID] = true
+	for _, execution := range r.executions {
+		if _, involved := execution.participants[pluginID]; involved {
+			execution.cancel()
+		}
+	}
+}
+
 func (r *ServiceRegistry) executionContinuation(executionID, caller string) bool {
 	executionID = strings.TrimSpace(executionID)
 	if executionID == "" {
@@ -322,14 +343,14 @@ func (r *ServiceRegistry) allowShutdownCleanup(pluginID string) func() {
 	}
 	r.cleanupOwners[pluginID]++
 	r.mu.Unlock()
-	return func() {
+	return sync.OnceFunc(func() {
 		r.mu.Lock()
 		r.cleanupOwners[pluginID]--
 		if r.cleanupOwners[pluginID] == 0 {
 			delete(r.cleanupOwners, pluginID)
 		}
 		r.mu.Unlock()
-	}
+	})
 }
 
 func (r *ServiceRegistry) acquireExecution(ctx context.Context, requestedID, caller string, key serviceKey, provider string, canStart bool) (context.Context, string, func(), *HostServiceError) {
@@ -338,10 +359,21 @@ func (r *ServiceRegistry) acquireExecution(ctx context.Context, requestedID, cal
 		return nil, "", nil, &HostServiceError{Code: "request_cancelled", Message: "calling transport was cancelled"}
 	}
 	r.mu.Lock()
+	// Call reads declarations before checking provider readiness. Revalidate
+	// identity at admission so revocation cannot leave a stale caller window.
+	if _, registered := r.consumers[caller]; caller != "kernel" && !registered {
+		r.mu.Unlock()
+		return nil, "", nil, &HostServiceError{Code: "service_not_authorized", Message: "service caller was revoked"}
+	}
 	current, registered := r.providers[key]
 	if !registered || current.pluginID != provider {
 		r.mu.Unlock()
 		return nil, "", nil, &HostServiceError{Code: "service_unavailable", Message: "service provider was revoked"}
+	}
+	cleanup := InShutdownCleanup(ctx) || r.cleanupOwners[caller] > 0
+	if r.retiringProviders[provider] && !cleanup {
+		r.mu.Unlock()
+		return nil, "", nil, &HostServiceError{Code: "generation_closed", Message: "service provider is retiring"}
 	}
 	id := strings.TrimSpace(requestedID)
 	if execution := r.executions[id]; id != "" && execution != nil {
@@ -376,12 +408,10 @@ func (r *ServiceRegistry) acquireExecution(ctx context.Context, requestedID, cal
 		r.mu.Unlock()
 		return nil, "", nil, &HostServiceError{Code: "request_cancelled", Message: "owning execution was cancelled"}
 	}
-	cleanup := InShutdownCleanup(ctx)
-	if r.cleanupOwners[caller] > 0 {
-		cleanup = true
+	if cleanup {
 		ctx = context.WithValue(ctx, serviceCleanupKey{}, true)
 	}
-	if r.backgroundStopped && !scoped && !cleanup && caller != "kernel" && !current.kernel {
+	if r.backgroundStopped && !scoped && !cleanup && caller != "kernel" {
 		r.mu.Unlock()
 		return nil, "", nil, &HostServiceError{Code: "generation_closed", Message: "generation is not accepting autonomous service calls"}
 	}
@@ -410,7 +440,7 @@ func (r *ServiceRegistry) acquireExecution(ctx context.Context, requestedID, cal
 	r.executions[id] = &serviceExecution{
 		ctx: execCtx, cancel: cancel, refs: 1,
 		participants: map[string]struct{}{caller: {}, provider: {}},
-		autonomous:   !scoped && !cleanup && caller != "kernel" && !current.kernel,
+		autonomous:   !scoped && !cleanup && caller != "kernel",
 	}
 	r.mu.Unlock()
 	return execCtx, id, r.releaseExecution(id), nil
@@ -599,6 +629,12 @@ func (r *ServiceRegistry) Call(ctx context.Context, consumerPluginID string, par
 	if state := provider.invoker.Status().State; state != StateActive && !(provider.kernel && !active) {
 		go r.notifyConsumers(context.Background(), key, "provider_unavailable")
 		return nil, &HostServiceError{Code: "service_unavailable", Message: fmt.Sprintf("service %s provider %q is %s", service, provider.pluginID, state)}
+	}
+	// A cancelled foreground or background callback must still be able to
+	// release its generation-owned lock through its unscoped lifecycle host.
+	// This grants cleanup only, never another acquisition or execution scope.
+	if provider.kernel && service == KernelFileLockService && method == "release" {
+		ctx = context.WithValue(ctx, serviceCleanupKey{}, true)
 	}
 	execCtx, executionID, release, executionErr := r.acquireExecution(ctx, params.ExecutionID, consumerPluginID, key, provider.pluginID, active || provider.kernel)
 	if executionErr != nil {

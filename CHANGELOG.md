@@ -52,6 +52,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   plugin SDK and legacy `required_host_services` declarations; plugins use versioned
   `required_services` and the service gateway. The Go host and language-neutral
   JSONL process protocol remain supported.
+- Retired plugin generations reject late unscoped callbacks and new calls to
+  providers as shutdown begins. Retained executions and owned cleanup remain
+  valid; repeated resource disposal cannot release a newer owner.
 
 - Simplify conversation triggers into compact task rows with inline cancellation
   and expandable output, removing repeated labels and command text.

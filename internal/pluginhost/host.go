@@ -561,6 +561,7 @@ func (h *Host) RetirePlugin(ctx context.Context, pluginID string, cause error) (
 	if cause == nil {
 		cause = &UserQuestionError{Code: "generation_closed", Message: "plugin generation retired"}
 	}
+	registry.stopProviderAdmission(pluginID)
 	if h.executions != nil {
 		h.executions.CancelPlugin(pluginID, cause)
 	}
@@ -663,6 +664,9 @@ func (h *Host) CloseWithOutcomes(ctx context.Context) []ClientShutdownOutcome {
 
 	// Revoke admission before taking the cancellation snapshot so no dispatch
 	// can register an execution after that snapshot and escape cancellation.
+	for _, client := range clients {
+		registry.stopProviderAdmission(client.ID())
+	}
 	h.CancelExecutions(&UserQuestionError{Code: "generation_closed", Message: "plugin generation retired"})
 
 	outcomes := make([]ClientShutdownOutcome, 0, len(clients))

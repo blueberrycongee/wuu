@@ -35,4 +35,14 @@ func TestServiceRegistryRevokePluginPreservesOtherProviders(t *testing.T) {
 	if _, err := registry.Call(context.Background(), consumer.id, ServiceCallParams{Service: "memory.index", Method: "query"}); err != nil {
 		t.Fatalf("unrelated provider call failed: %v", err)
 	}
+	// The provider's status check falls after declaration lookup and before
+	// admission. Revoke at that boundary to exercise the stale caller race.
+	memory.onStatus = func() { registry.RevokePlugin(context.Background(), consumer.id) }
+	callsBefore := len(memory.invokeCalls)
+	if _, err := registry.Call(context.Background(), consumer.id, ServiceCallParams{Service: "memory.index", Method: "query"}); err == nil || err.Code != "service_not_authorized" {
+		t.Fatalf("revoked caller passed stale admission: %v", err)
+	}
+	if len(memory.invokeCalls) != callsBefore {
+		t.Fatal("revoked caller reached the provider")
+	}
 }

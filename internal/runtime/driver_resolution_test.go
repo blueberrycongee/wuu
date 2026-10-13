@@ -127,4 +127,18 @@ func TestResolveLoopDriverRemoteRoutesThroughRegistry(t *testing.T) {
 	if _, ok := table.lookup("exec-1"); ok {
 		t.Fatalf("gateway must be unregistered after the run completes")
 	}
+	firstRelease, err := table.register("exec-1", nil, "first")
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstRelease()
+	secondRelease, err := table.register("exec-1", nil, "second")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer secondRelease()
+	firstRelease()
+	if entry, ok := table.lookup("exec-1"); !ok || entry.ownerPluginID != "second" {
+		t.Fatal("old gateway disposer removed the replacement registration")
+	}
 }
