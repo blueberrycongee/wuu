@@ -6,7 +6,7 @@ import {
   type CollapsedComposerPromptBlock
 } from "./ComposerCollapsedPrompt";
 import { ComposerDocumentCard } from "./ComposerDocumentCard";
-import { isComposerImagePending, type ComposerFile, type ComposerImage } from "./ComposerMessages";
+import { isComposerImagePending, type ComposerAttachmentPreparation, type ComposerFile, type ComposerImage } from "./ComposerMessages";
 import { ComposerResponseSelectionCard } from "./ComposerResponseSelectionCard";
 import type { FileSelectionPart } from "./FileSelectionCards";
 import { ComposerFileSelectionCard } from "./ComposerFileSelectionCard";
@@ -325,7 +325,16 @@ export function ComposerAttachmentTray({
             aria-hidden={leaving || undefined}
             inert={leaving}
           >
-            {card.kind === "image" ? (
+            {card.kind === "image" && card.image.preparation &&
+              (card.image.preparation.error || (!card.image.data && !card.image.previewSrc)) ? (
+              <ComposerPreparationCard preparation={card.image.preparation}
+                onRemove={() => dismiss(card.key, () => onRemoveImage(card.image.id))}
+                removeLabel={t("composer.removeImage", { number: card.number })} />
+            ) : card.kind === "file" && card.file.preparation && !card.file.data ? (
+              <ComposerPreparationCard preparation={card.file.preparation}
+                onRemove={() => dismiss(card.key, () => onRemoveFile(card.file.id))}
+                removeLabel={t("composer.removeFile", { number: card.number })} />
+            ) : card.kind === "image" ? (
               <ComposerImageCard
                 image={card.image}
                 number={card.number}
@@ -368,6 +377,29 @@ export function ComposerAttachmentTray({
         ))}
       </ul>
     </div>
+  );
+}
+
+function ComposerPreparationCard({ preparation, onRemove, removeLabel }: {
+  preparation: Pick<ComposerAttachmentPreparation<unknown>, "filename" | "error" | "retry">;
+  onRemove: () => void;
+  removeLabel: string;
+}): JSX.Element {
+  const { t } = useI18n();
+  const failed = Boolean(preparation.error);
+  return (
+    <ComposerDocumentCard
+      className={`composer-file-card ${failed ? "composer-attachment-failed" : "composer-attachment-preparing"}`}
+      icon={<FileText className="icon" />}
+      title={<strong className="composer-document-card-title" title={preparation.filename}>{preparation.filename}</strong>}
+      meta={<span role={failed ? "alert" : "status"} title={preparation.error}>
+        {t(failed ? "composer.attachment.retryRead" : "composer.attachment.preparing")}
+      </span>}
+      openLabel={failed ? t("composer.attachment.retryFile", { name: preparation.filename, reason: preparation.error ?? "" }) : undefined}
+      onOpen={failed ? () => { void preparation.retry?.(); } : undefined}
+      removeLabel={removeLabel}
+      onRemove={onRemove}
+    />
   );
 }
 

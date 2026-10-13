@@ -849,7 +849,7 @@ func TestRequiredCandidateMCPServerMustBeReady(t *testing.T) {
 				"broken": {Command: "/definitely/not/a/wuu-mcp-server"},
 			},
 		},
-	}}, map[string]bool{"candidate": true})
+	}}, map[string]bool{"candidate": true}, nil)
 	if err == nil {
 		if manager != nil {
 			_ = manager.Close()

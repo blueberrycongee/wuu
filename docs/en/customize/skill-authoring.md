@@ -59,6 +59,8 @@ The parser accepts `model`, `context`, `agent`, `effort`, `paths`, and `hooks` f
 
 The body supports `${ARGUMENTS}`, `${CLAUDE_SKILL_DIR}`, and `${CLAUDE_SESSION_ID}`. Wuu substitutes the invocation arguments, skill directory, and current session ID. The load result includes the base directory and a sample of resource filenames; resolve relative resource paths from that directory.
 
+Resource sampling shows at most 10 filenames in path order. It reads at most 1,024 directory entries, considers only complete directories of up to 256 entries, and descends at most 16 levels. Wider, deeper, or unreadable directories are omitted with a notice; the sample is not a complete inventory. Symlink names may appear, but their targets are not enumerated. Sampling honors request cancellation between filesystem operations. These limits do not change the base directory or grant access to resources.
+
 Inline shell expressions and code fences remain text during normal loading. If a workflow needs dynamic information, ask the agent to obtain it through an available tool, so the usual permission checks apply.
 
 ## Install and validate
@@ -72,4 +74,6 @@ wuu skills lint --json .wuu/skills
 
 Lint accepts a skill directory, a root containing skills, or a flat Markdown file. Errors mean discovery cannot use the file or its metadata and cause a nonzero exit. Warnings describe a skill that loads but may not behave as intended.
 
-Refresh the desktop catalog, preview the loaded source, and try a low-risk task. If the skill is missing, check its frontmatter and required tools. If the model never chooses it, check its description and invocation flags. If the wrong version loads, inspect same-name overrides. Structural validation does not establish that the workflow is safe or effective.
+Reopen the desktop catalog, preview the loaded source, and try a low-risk task. If the skill is missing, check its frontmatter and required tools. If the model never chooses it, check its description and invocation flags. If the wrong version loads, inspect same-name overrides. Structural validation does not establish that the workflow is safe or effective.
+
+Local runtime discovery requires complete YAML frontmatter, valid invocation flags, UTF-8 text, and regular instruction files no larger than 1 MiB. One refresh is limited to 512 roots, 8,192 directory entries, and 16 MiB of instruction reads. Invalid files are unavailable; an incomplete or over-budget scan rejects the refresh instead of publishing a partial precedence result. Cancellation is checked between filesystem operations; it does not interrupt a stalled operating-system filesystem call. Save complete files, preferably with an atomic replacement, and retry after correcting a reported discovery error.

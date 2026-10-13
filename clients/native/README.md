@@ -108,7 +108,7 @@ bash clients/native/verify.sh all
 
 iOS Debug 构建可通过 `xcrun simctl launch booted ai.wuu.native --native-ui-fixture` 打开本地长会话样本：80 轮消息、Markdown、图片网格、纯图片消息和工具图片，不读取账号或连接电脑。检查正常与辅助功能大字号、明暗主题、快速滚动、图片预览，以及会话上翻后点击“末尾追加”，或依次点击“模拟重连”“应用快照”，是否保留阅读位置。点击“流式动画”可检查每 20ms 到达的连续增量、Markdown 换行、Unicode、代码和表格；再次点击“停止”可检查中断后的正文。启动时同时传入 `--native-stream-fixture` 可自动播放，便于使用 `simctl io <device> recordVideo` 录制相同场景。正常启动恢复原入口；Release 不包含这些验收入口。样本只验证渲染，不替代真实协议集成或真机性能测试。
 
-同时传入 `--native-composer-fixture` 可在同一份本地数据上打开实际会话页面及输入框；再加 `--native-empty-fixture` 可检查空会话。检查输入框左侧与上下留白是否一次点击就弹出键盘、多行输入与长按选字，以及点击消息区域收起键盘后重新聚焦。此入口不连接电脑，发送与其他远程操作不在此样本的验收范围内。
+同时传入 `--native-composer-fixture` 可在同一份本地数据上打开实际会话页面及输入框；再加 `--native-empty-fixture` 可检查空会话。传入 `--native-refresh-fixture` 可停留在刷新状态，与 `--native-empty-fixture` 组合可复现尚未收到消息的首次加载，用于检查加载提示在明暗主题、大字号及不同屏幕宽度下是否居中、完整显示。检查输入框左侧与上下留白是否一次点击就弹出键盘、多行输入与长按选字，以及点击消息区域收起键盘后重新聚焦。此入口不连接电脑，发送与其他远程操作不在此样本的验收范围内。
 
 ## 验收边界
 

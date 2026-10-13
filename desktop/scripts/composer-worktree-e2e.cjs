@@ -40,13 +40,13 @@ git(project, 'config', 'user.name', 'E2E');
 fs.writeFileSync(path.join(project, 'README.md'), 'committed\n');
 const skillPath = path.join('.agents', 'skills', 'compact', 'SKILL.md');
 fs.mkdirSync(path.dirname(path.join(project, skillPath)), { recursive: true });
-fs.writeFileSync(path.join(project, skillPath), '---\nname: compact\ndescription: Explicit skill identity fixture\n---\nWORKSPACE_SKILL_MARKER ${ARGUMENTS}\nResource base: ${CLAUDE_SKILL_DIR}\n');
+fs.writeFileSync(path.join(project, skillPath), '---\nname: compact\ndescription: Explicit skill identity fixture\ndisable-model-invocation: true\n---\nWORKSPACE_SKILL_MARKER ${ARGUMENTS}\nResource base: ${CLAUDE_SKILL_DIR}\n');
 fs.writeFileSync(path.join(project, path.dirname(skillPath), 'resource.txt'), 'WORKSPACE_RESOURCE_MARKER');
 git(project, 'add', '.');
 git(project, 'commit', '-q', '-m', 'init');
 git(project, 'switch', '-q', '-c', 'feature');
 fs.writeFileSync(path.join(project, 'feature.txt'), 'feature\n');
-fs.writeFileSync(path.join(project, skillPath), '---\nname: compact\ndescription: Explicit skill identity fixture\n---\nSELECTED_SKILL_MARKER ${ARGUMENTS}\nResource base: ${CLAUDE_SKILL_DIR}\n');
+fs.writeFileSync(path.join(project, skillPath), '---\nname: compact\ndescription: Explicit skill identity fixture\ndisable-model-invocation: true\n---\nSELECTED_SKILL_MARKER ${ARGUMENTS}\nResource base: ${CLAUDE_SKILL_DIR}\n');
 fs.writeFileSync(path.join(project, path.dirname(skillPath), 'resource.txt'), 'SELECTED_RESOURCE_MARKER');
 git(project, 'add', '.');
 git(project, 'commit', '-q', '-m', 'feature');
@@ -60,6 +60,7 @@ fs.writeFileSync(path.join(plain, 'notes.txt'), 'not a repository\n');
 
 const requests = [];
 let rebindStage = 0;
+let skillAdmissionResult;
 const server = http.createServer((req, res) => {
   let body = '';
   req.on('data', chunk => { body += chunk; });
@@ -68,7 +69,22 @@ const server = http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/event-stream' });
     const chunk = delta => `data: ${JSON.stringify({ id: 'fixture', model: 'fixture', choices: [{ index: 0, delta, finish_reason: null }] })}\n\n`;
     const messages = requests.at(-1).body.messages || [];
-    const latestUser = messages.findLast(message => message.role === 'user');
+    const latestUser = messages.findLast(message => message.role === 'user' && !String(message.content).startsWith('<system-reminder>'));
+    if (latestUser?.content === 'Check manual skill admission fixture') {
+      if (messages.at(-1)?.role === 'user') {
+        const ptc = requests.at(-1).body.tools?.some(tool => tool.function?.name === 'run_code');
+        res.write(chunk({ role: 'assistant', tool_calls: [{ index: 0, id: 'skill-admission-fixture', type: 'function', function: {
+          name: ptc ? 'run_code' : 'load_skill',
+          arguments: JSON.stringify(ptc ? { code: 'text(await tools.load_skill({ name: "compact" }));' } : { name: 'compact' }),
+        } }] }));
+        res.end(`data: ${JSON.stringify({ id: 'fixture', choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] })}\n\ndata: [DONE]\n\n`);
+        return;
+      }
+      skillAdmissionResult = messages.findLast(message => message.role === 'tool')?.content;
+      res.write(chunk({ role: 'assistant', content: 'Manual-only skill admission verified.' }));
+      res.end(`data: ${JSON.stringify({ id: 'fixture', choices: [{ index: 0, delta: {}, finish_reason: 'stop' }], usage: { prompt_tokens: 10, completion_tokens: 4, total_tokens: 14 } })}\n\ndata: [DONE]\n\n`);
+      return;
+    }
     if (typeof latestUser?.content === 'string' && latestUser.content.includes('Rebind workspace fixture') && rebindStage === 0) {
       rebindStage++;
       res.write(chunk({ role: 'assistant', content: 'Moving this session back to the project.' }));
@@ -235,6 +251,19 @@ async function run() {
     'Current workspace metadata must not be inserted ahead of historical messages.');
   await capture(main, '04-conversation-without-worktree-banner.png');
   await waitFor(main, () => document.querySelector('.composer-send-button[data-wuu-state="send"]'));
+  await evaluate(main, () => {
+    const input = document.querySelector('.composer textarea');
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(input, 'Check manual skill admission fixture');
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await click(main, '.composer-send-button');
+  await waitFor(main, () => document.querySelector('.cached-conversation-pane[data-active="true"]')?.textContent.includes('Manual-only skill admission verified.'));
+  assert.equal(typeof skillAdmissionResult, 'string', 'The synthetic-provider tool round trip must return a tool result.');
+  assert.match(skillAdmissionResult, /skill.*compact.*not found/i, 'Model invocation must reject the manual-only skill.');
+  assert(!skillAdmissionResult.includes('SELECTED_SKILL_MARKER'), 'Rejected model invocation must not load the skill body.');
+  assert(requests.every(request => (request.body.messages || []).filter(message => message.role === 'system')
+    .every(message => !String(message.content).includes('<name>compact</name>'))), 'The manual-only skill stays out of the model catalog.');
+  await capture(main, '04a-skill-model-admission.png');
   // Explicit selection must beat the built-in control command and use this checkout.
   await waitFor(main, () => document.querySelector('.composer-send-button[data-wuu-state="send"]'));
   main.focus();
@@ -470,7 +499,7 @@ async function run() {
     providerRequests: requests.length,
     workspaceRebind: { cwd: rebound.cwd, chronologyVerified: true },
     crossProject,
-    selectedSkill: { initialDraft: initialSkillDraft, draft: selectedDraft, initialWorktreeInstructionsVerified: true, loadedInstructionsVerified: true },
+    selectedSkill: { initialDraft: initialSkillDraft, draft: selectedDraft, initialWorktreeInstructionsVerified: true, loadedInstructionsVerified: true, modelInvocationRejected: true, modelToolResult: skillAdmissionResult },
   }, null, 2)}\n`);
   console.log(`composer worktree E2E passed; artifacts in ${output}`);
 }
