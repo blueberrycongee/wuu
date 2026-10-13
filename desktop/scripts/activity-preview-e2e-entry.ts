@@ -98,7 +98,7 @@ app.whenReady().then(async () => {
   async function open(tabID: string, color: string) {
     const id = `open-${tabID}`;
     await host!.handleServerRequest({ workdir, kind: "server-request", message: { id, method: "browser/open_tab", params: { workdir, thread_id: threadID, tab_id: tabID,
-      initial_url: `data:text/html,${encodeURIComponent(`<!doctype html><title>${tabID}</title><body style="margin:0;background:${color};font:24px system-ui"><h1>${tabID}</h1><button id="target" style="position:absolute;left:170px;top:170px;width:180px;height:60px">Target</button><button id="edge" style="position:absolute;right:30px;bottom:30px;width:100px;height:60px">Edge</button><script>window.clicks=0;document.onclick=e=>{window.clicks++;window.hit={x:e.clientX,y:e.clientY,target:e.target.id}};document.onwheel=e=>{window.wheel={x:e.clientX,y:e.clientY,dy:e.deltaY};e.preventDefault()};</script></body>`)}` } } });
+      initial_url: `data:text/html,${encodeURIComponent(`<!doctype html><title>${tabID}</title><body style="margin:0;width:2400px;height:2400px;background:${color};font:24px system-ui"><h1>${tabID}</h1><button id="target" style="position:absolute;left:170px;top:170px;width:180px;height:60px">Target</button><button id="edge" style="position:absolute;right:30px;bottom:30px;width:100px;height:60px">Edge</button><div id="scroller" style="position:absolute;left:400px;top:300px;width:240px;height:160px;overflow:auto"><div style="width:1200px;height:1200px">Nested scrolling</div></div><script>window.clicks=0;document.onclick=e=>{window.clicks++;window.hit={x:e.clientX,y:e.clientY,target:e.target.id}};document.onwheel=e=>{window.wheel={x:e.clientX,y:e.clientY,dy:e.deltaY,cancelled:e.defaultPrevented}};document.getElementById('scroller').addEventListener('wheel',e=>{if(window.blockWheel)e.preventDefault()},{passive:false});</script></body>`)}` } } });
     assert.equal(errors.get(id), undefined); assert(replies.has(id));
   }
   await open("browser-a", "#dcecff"); await open("browser-b", "#ffe5ca");
@@ -159,11 +159,25 @@ app.whenReady().then(async () => {
     await browserAction("click", { node_id: edge.node_id });
     const edgeHit = await browser.executeJavaScript("window.hit");
     check(`${label}: observed edge node remains clickable`, edgeHit?.target === "edge", edgeHit);
-    await browser.executeJavaScript("window.wheel = null");
-    await browserAction("scroll", { x: 240, y: 200, dy: 120 });
+    await browser.executeJavaScript("window.wheel = null;window.scrollEnded = false;window.addEventListener('scrollend', () => { window.scrollEnded = true; }, { once: true })");
+    await browserAction("scroll", { x: 240, y: 200, dx: 90, dy: 120 });
     await waitFor(`${label}: wheel delivered`, () => browser.executeJavaScript("window.wheel"));
     const wheel = await browser.executeJavaScript("window.wheel");
-    check(`${label}: scroll preserves aim and CSS-pixel distance`, Math.abs(wheel.x - 240) <= 1 && Math.abs(wheel.y - 200) <= 1 && Math.abs(wheel.dy - 120) < 0.1, wheel);
+    check(`${label}: scroll preserves aim`, Math.abs(wheel.x - 240) <= 1 && Math.abs(wheel.y - 200) <= 1, wheel);
+    await waitFor(`${label}: page scrolling settles`, () => browser.executeJavaScript("window.scrollEnded"));
+    const scroll = await browser.executeJavaScript("({x:scrollX,y:scrollY})");
+    check(`${label}: actual page scroll preserves CSS-pixel distance`, Math.abs(scroll.x - 90) <= 1 && Math.abs(scroll.y - 120) <= 1, { scroll, wheel });
+    await browser.executeJavaScript("window.scrollTo({left:0,top:0,behavior:'instant'});window.scrollEnded = false;document.getElementById('scroller').addEventListener('scrollend', () => { window.scrollEnded = true; }, { once: true })");
+    await browserAction("scroll", { x: 450, y: 350, dx: 70, dy: 110 });
+    await waitFor(`${label}: nested scrolling settles`, () => browser.executeJavaScript("window.scrollEnded"));
+    const nested = await browser.executeJavaScript("({x:document.getElementById('scroller').scrollLeft,y:document.getElementById('scroller').scrollTop,rootX:scrollX,rootY:scrollY})");
+    check(`${label}: actual nested scroll preserves aim and distance`, Math.abs(nested.x - 70) <= 1 && Math.abs(nested.y - 110) <= 1 && nested.rootX === 0 && nested.rootY === 0, nested);
+    await browser.executeJavaScript("document.getElementById('scroller').scrollTo({left:0,top:0,behavior:'instant'});window.blockWheel=true;window.wheel=null");
+    await browserAction("scroll", { x: 450, y: 350, dx: 70, dy: 110 });
+    await waitFor(`${label}: nested handler cancels wheel`, () => browser.executeJavaScript("window.wheel?.cancelled"));
+    const cancelled = await browser.executeJavaScript("({x:document.getElementById('scroller').scrollLeft,y:document.getElementById('scroller').scrollTop,rootX:scrollX,rootY:scrollY})");
+    check(`${label}: page wheel cancellation prevents scrolling`, cancelled.x === 0 && cancelled.y === 0 && cancelled.rootX === 0 && cancelled.rootY === 0, cancelled);
+    await browser.executeJavaScript("window.blockWheel=false");
     const image = await browser.capturePage();
     const view = browserViews[0].getBounds();
     writeFileSync(join(output, `${label.replace(/[^a-z0-9]+/gi, "-")}.png`), image.toPNG());
@@ -178,7 +192,7 @@ app.whenReady().then(async () => {
   coordinator.refreshBrowserPresentation();
   await waitFor("preview restored after unmeasured panel", () => BrowserWindow.fromWebContents(browser) === pip);
   await checkBrowserInput("unmeasured panel round trip");
-  for (const size of [{ width: 160, height: 120 }, { width: 384, height: 240 }, { width: 250, height: 250 }]) {
+  for (const size of [{ width: 80, height: 64 }, { width: 160, height: 120 }, { width: 384, height: 240 }, { width: 250, height: 250 }]) {
     pip.setBounds({ x: 120, y: 140, ...size });
     await checkBrowserInput(`resized ${size.width}x${size.height} preview`);
   }

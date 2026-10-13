@@ -1051,8 +1051,10 @@ export class BrowserHostCoordinator {
         type: "mouseWheel",
         x: x * scale,
         y: y * scale,
-        deltaX: wheel.dx * scale,
-        deltaY: wheel.dy * scale,
+        // The compositor consumes logical wheel distances directly. Scaling
+        // them to match DOM WheelEvent deltas would shrink actual scrolling.
+        deltaX: wheel.dx,
+        deltaY: wheel.dy,
       });
     });
     void this.emitInteraction(entry, { kind: "scroll", x, y, direction: scrollDirection(wheel.dx, wheel.dy) });
