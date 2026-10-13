@@ -6,6 +6,20 @@ import WuuCore
 enum NativeUIFixture {
     static var enabled: Bool { ProcessInfo.processInfo.arguments.contains("--native-ui-fixture") }
     static func thread() -> ChatThread {
+        if ProcessInfo.processInfo.arguments.contains("--native-pending-fixture") {
+            let prompt = "请详细说明这项功能。" + String(repeating: "请保留关键结论和代码位置，说明实际影响。", count: 10)
+            return ChatThread(["id": "local-ui-fixture", "title": "待处理消息预览", "status": "in_progress", "turns": [
+                ["id": "active", "status": "in_progress", "items": [
+                    ["id": "user", "type": "user_message", "text": "请检查会话历史与工具详情的显示。"],
+                    ["id": "reply", "type": "agent_message", "text": .string(String(repeating: "正文应保持清楚，长按待处理消息后，预览中的文字不应与这段正文重叠。\n\n", count: 12))]
+                ]]
+            ]], pending: [
+                ["id": "steer", "thread_id": "local-ui-fixture", "origin": "steer", "prompt": .string(prompt)],
+                ["id": "queue", "thread_id": "local-ui-fixture", "origin": "queue", "prompt": "", "files": [["filename": "notes.txt"]]]
+            ], held: [
+                ["id": "held", "thread_id": "local-ui-fixture", "origin": "queue", "prompt": ""]
+            ])
+        }
         if ProcessInfo.processInfo.arguments.contains("--native-process-fixture") {
             return ChatThread(["id": "local-ui-fixture", "status": "in_progress", "turns": [
                 ["id": "resumed", "status": "in_progress", "items": [

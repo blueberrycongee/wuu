@@ -60,7 +60,9 @@ struct PendingMessageView: View {
     let model: AppModel
     let message: PendingMessage
     @Environment(\.dynamicTypeSize) private var typeSize
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var rowWidth: CGFloat = 0
     @State private var inspecting = false
     @State private var working = false
     private var status: PendingStatus { PendingStatus(message) }
@@ -74,25 +76,7 @@ struct PendingMessageView: View {
     var body: some View {
         HStack(spacing: 8) {
             Button { inspecting = true } label: {
-                HStack(alignment: .firstTextBaseline, spacing: 10) {
-                    Image(systemName: status.symbol).font(.system(size: 14)).frame(width: 18)
-                        .foregroundStyle(.secondary).accessibilityHidden(true)
-                    VStack(alignment: .leading, spacing: 2) {
-                        HStack(spacing: 8) {
-                            Text(status.title)
-                            if attachmentCount > 0 {
-                                HStack(spacing: 2) {
-                                    Image(systemName: "paperclip").font(.system(size: 11))
-                                    Text("\(attachmentCount)")
-                                }.accessibilityLabel("\(attachmentCount) 个附件")
-                            }
-                        }.font(.footnote).foregroundStyle(.secondary)
-                        Text(preview).foregroundStyle(.primary)
-                            .lineLimit(typeSize.isAccessibilitySize ? 3 : 2)
-                    }
-                    Spacer(minLength: 0)
-                }
-                .contentShape(Rectangle())
+                summary.contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .accessibilityElement(children: .combine)
@@ -120,6 +104,7 @@ struct PendingMessageView: View {
         }
         .padding(.horizontal, 12).padding(.vertical, 8)
         .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 14))
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { rowWidth = $0 }
         .contextMenu {
             if !message.text.isEmpty {
                 Button("复制", systemImage: "doc.on.doc") { UIPasteboard.general.string = message.text; Haptics.tap() }
@@ -135,11 +120,38 @@ struct PendingMessageView: View {
                 }
                 Button("移除", systemImage: "trash", role: .destructive) { act(.remove) }
             }.disabled(working || !editable)
+        } preview: {
+            summary
+                .padding(.horizontal, 12).padding(.vertical, 8)
+                // Compact-height menus sit beside the preview; keep both within the viewport.
+                .frame(width: min(rowWidth, verticalSizeClass == .compact ? 250 : 360))
+                // The lifted preview overlaps the transcript and must not let its text show through.
+                .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 14))
         }
         .accessibilityAction(named: "移除") { if editable && !working { act(.remove) } }
         .sheet(isPresented: $inspecting) {
             PendingMessageDetail(model: model, message: message, status: status)
                 .presentationDetents([.medium, .large])
+        }
+    }
+    private var summary: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Image(systemName: status.symbol).font(.system(size: 14)).frame(width: 18)
+                .foregroundStyle(.secondary).accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 8) {
+                    Text(status.title)
+                    if attachmentCount > 0 {
+                        HStack(spacing: 2) {
+                            Image(systemName: "paperclip").font(.system(size: 11))
+                            Text("\(attachmentCount)")
+                        }.accessibilityLabel("\(attachmentCount) 个附件")
+                    }
+                }.font(.footnote).foregroundStyle(.secondary)
+                Text(preview).foregroundStyle(.primary)
+                    .lineLimit(typeSize.isAccessibilitySize ? 3 : 2)
+            }
+            Spacer(minLength: 0)
         }
     }
     private func act(_ action: AppModel.PendingAction) {

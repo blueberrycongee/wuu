@@ -89,6 +89,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Keep iOS pending-message context-menu previews opaque so conversation text
+  cannot show through, and constrain their width in landscape.
+
 - iOS remembers saved permission modes, including Unrestricted, for new
   conversations on the same computer and engine. The first message preserves
   that choice, including when a previously selected model is no longer available.
